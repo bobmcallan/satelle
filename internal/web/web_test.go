@@ -11,11 +11,17 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/app"
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/web"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
+
+// ledgerInput builds a story_created entry for the given story.
+func ledgerInput(storyID string) ledger.AppendInput {
+	return ledger.AppendInput{StoryID: storyID, Kind: ledger.KindStoryCreated, Body: "created"}
+}
 
 func newServer(t *testing.T) (*httptest.Server, *store.DB) {
 	t.Helper()
@@ -86,5 +92,36 @@ func TestUnknownPath404(t *testing.T) {
 	srv, _ := newServer(t)
 	if code, _ := get(t, srv.URL+"/nope"); code != 404 {
 		t.Errorf("unknown path = %d, want 404", code)
+	}
+}
+
+func TestStoryDetailPageShowsTimeline(t *testing.T) {
+	srv, db := newServer(t)
+	ctx := context.Background()
+	it, err := db.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "Trackable story",
+		AcceptanceCriteria: "1. it renders", Status: workitem.StatusInProgress,
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A ledger event so the timeline is non-empty.
+	if _, err := db.Ledger.Append(ctx, ledgerInput(it.ID), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	code, body := get(t, srv.URL+"/story/"+it.ID)
+	if code != 200 {
+		t.Fatalf("detail status = %d", code)
+	}
+	for _, want := range []string{"Trackable story", it.ID, "Acceptance criteria", "it renders", "Timeline", "story_created", "← project"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("detail page missing %q", want)
+		}
+	}
+
+	// Unknown id → 404.
+	if code, _ := get(t, srv.URL+"/story/sty_missing"); code != 404 {
+		t.Errorf("missing story = %d, want 404", code)
 	}
 }
