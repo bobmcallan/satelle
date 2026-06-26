@@ -66,8 +66,17 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 			return nil, err
 		}
 		appendLedger(ctx, it.ID, ledgerKind, fmt.Sprintf("created %s %q", kind, it.Title), now)
+		notifyChange(panelTopic(kind))
 		return json.Marshal(it)
 	}
+}
+
+// panelTopic maps a work-item kind to its realtime panel topic.
+func panelTopic(kind workitem.Kind) string {
+	if kind == workitem.KindTask {
+		return TopicTasks
+	}
+	return TopicStories
 }
 
 // listReq is the request body for story-list / task-list.
@@ -169,6 +178,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		ledgerKind = ledger.KindTaskUpdated
 	}
 	appendLedger(ctx, it.ID, ledgerKind, fmt.Sprintf("updated %s", it.Kind), now)
+	notifyChange(panelTopic(it.Kind))
 	return json.Marshal(it)
 }
 

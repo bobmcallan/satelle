@@ -31,6 +31,31 @@ func SetLedgerStore(s *ledger.Store) { ledgerStore = s }
 // SetDocIndexStore wires the authored-doc index store.
 func SetDocIndexStore(s *docindex.Store) { docIndexStore = s }
 
+// Realtime change topics — coarse, panel-level. A mutating verb publishes one
+// after it commits so an open web page refetches just that panel.
+const (
+	TopicStories = "stories"
+	TopicTasks   = "tasks"
+	TopicDocs    = "docs"
+)
+
+// changeNotifier, when set, is invoked after a mutating verb commits, with a
+// topic constant above. The web server binds it to its SSE hub so connected
+// pages refetch; nil on the plain CLI path makes notifyChange a no-op. Keeping
+// it a package global (set once at bootstrap) mirrors the store wiring and lets
+// verb stay free of any web/transport import.
+var changeNotifier func(topic string)
+
+// SetChangeNotifier wires a realtime change sink. Pass nil to reset (tests).
+func SetChangeNotifier(fn func(topic string)) { changeNotifier = fn }
+
+// notifyChange fires the registered notifier, if any.
+func notifyChange(topic string) {
+	if changeNotifier != nil {
+		changeNotifier(topic)
+	}
+}
+
 // requireWorkItem returns the wired store or ErrStoreNotConfigured.
 func requireWorkItem() (*workitem.Store, error) {
 	if workItemStore == nil {

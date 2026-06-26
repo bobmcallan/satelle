@@ -247,6 +247,26 @@ func (s *Store) Count(ctx context.Context, kind Kind) (int, error) {
 	return n, nil
 }
 
+// Fingerprint returns a cheap change-signal for a kind — count plus the latest
+// updated_at. It changes on any insert, update, or status change, so a poller
+// can detect cross-process mutations (CLI edits) without loading rows.
+func (s *Store) Fingerprint(ctx context.Context, kind Kind) (string, error) {
+	q := `SELECT COUNT(*), COALESCE(MAX(updated_at), '') FROM work_items`
+	var args []any
+	if strings.TrimSpace(string(kind)) != "" {
+		q += ` WHERE kind = ?`
+		args = append(args, string(kind))
+	}
+	var (
+		n   int
+		max string
+	)
+	if err := s.db.QueryRowContext(ctx, q, args...).Scan(&n, &max); err != nil {
+		return "", fmt.Errorf("workitem: fingerprint: %w", err)
+	}
+	return fmt.Sprintf("%d:%s", n, max), nil
+}
+
 // selectCols is the shared SELECT prefix for Get/List, fixing column order so
 // one scan() serves both.
 const selectCols = `SELECT id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at FROM work_items`

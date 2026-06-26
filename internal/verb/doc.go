@@ -78,5 +78,8 @@ func docSync(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) 
 	if err != nil {
 		return nil, err
 	}
+	if res.Indexed > 0 || res.Pruned > 0 {
+		notifyChange(TopicDocs)
+	}
 	return json.Marshal(res)
 }
