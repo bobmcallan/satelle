@@ -1,0 +1,9 @@
+# Built binaries
+/satelle
+/cmd/satelle/satelle
+
+# Per-repo local state (created at runtime)
+/.satelle/
+
+# Gitignored local config overlay
+satelle.local.toml
