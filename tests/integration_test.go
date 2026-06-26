@@ -11,6 +11,7 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -20,17 +21,48 @@ import (
 	"time"
 )
 
-// buildBinary compiles satelle once into a temp dir and returns its path.
-func buildBinary(t *testing.T) string {
-	t.Helper()
-	bin := filepath.Join(t.TempDir(), "satelle")
-	// The test runs from tests/, so the module root is one level up.
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/satelle")
-	cmd.Dir = ".."
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build satelle: %v\n%s", err, out)
+// testBin is the satelle binary under test, resolved once by TestMain.
+var testBin string
+
+// TestMain resolves the binary the suite drives. If SATELLE_BIN points at an
+// existing binary it is used as-is — so the suite can run against a prebuilt or
+// installed binary without a rebuild:
+//
+//	cd tests && SATELLE_BIN=$(command -v satelle) go test -tags integration .
+//
+// Otherwise satelle is built once into a temp dir shared across all tests.
+func TestMain(m *testing.M) {
+	if env := os.Getenv("SATELLE_BIN"); env != "" {
+		abs, err := filepath.Abs(env)
+		if err != nil || !fileExists(abs) {
+			fmt.Fprintf(os.Stderr, "SATELLE_BIN=%q not usable: %v\n", env, err)
+			os.Exit(1)
+		}
+		testBin = abs
+		os.Exit(m.Run())
 	}
-	return bin
+	dir, err := os.MkdirTemp("", "satelle-itest")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mkdtemp:", err)
+		os.Exit(1)
+	}
+	defer os.RemoveAll(dir)
+	testBin = filepath.Join(dir, "satelle")
+	// The test runs from tests/, so the module root is one level up.
+	build := exec.Command("go", "build", "-o", testBin, "./cmd/satelle")
+	build.Dir = ".."
+	if out, berr := build.CombinedOutput(); berr != nil {
+		fmt.Fprintf(os.Stderr, "build satelle: %v\n%s", berr, out)
+		os.Exit(1)
+	}
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 // run executes the binary in dir with args and returns combined output.
@@ -53,7 +85,7 @@ func mustRun(t *testing.T, bin, dir string, args ...string) string {
 }
 
 func TestDogfoodFlow(t *testing.T) {
-	bin := buildBinary(t)
+	bin := testBin
 	repo := t.TempDir()
 
 	// init scaffolds the repo.
@@ -119,7 +151,7 @@ func TestDogfoodFlow(t *testing.T) {
 }
 
 func TestServeServesProjectPage(t *testing.T) {
-	bin := buildBinary(t)
+	bin := testBin
 	repo := t.TempDir()
 	mustRun(t, bin, repo, "init")
 	mustRun(t, bin, repo, "story", "create", "--title", "Render me")

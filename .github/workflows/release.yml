@@ -1,0 +1,161 @@
+name: release
+
+# .version is canonical: the release tag is v<satelle.version>. The binary is
+# built with its ldflag-injected version + build timestamp. Runs after `test`
+# succeeds on main (or on manual dispatch), and is a no-op when the tag for the
+# current .version already exists — so a release is cut exactly when .version is
+# bumped.
+on:
+  workflow_run:
+    workflows: ["test"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # tag push + gh release create
+
+jobs:
+  derive-tag:
+    name: derive release tag from .version
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.read.outputs.tag }}
+      version: ${{ steps.read.outputs.version }}
+      build: ${{ steps.read.outputs.build }}
+      needs_release: ${{ steps.check.outputs.needs_release }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+      - id: read
+        run: |
+          set -euo pipefail
+          VER=$(awk '$1=="satelle.version:" {print $2}' .version)
+          BUILD=$(awk '$1=="satelle.build:" {print $2}' .version)
+          for v in "$VER" "$BUILD"; do
+            [ -n "$v" ] || { echo ".version missing or malformed" >&2; exit 1; }
+          done
+          echo "version=$VER"   >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD"   >> "$GITHUB_OUTPUT"
+          echo "tag=v$VER"      >> "$GITHUB_OUTPUT"
+      - id: check
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.read.outputs.tag }}"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::notice::tag $TAG already exists — bump satelle.version in .version to cut a release"
+            echo "needs_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: derive-tag
+    if: needs.derive-tag.outputs.needs_release == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux,   goarch: amd64, validate: true  }
+          - { goos: linux,   goarch: arm64, validate: false }
+          - { goos: darwin,  goarch: amd64, validate: false }
+          - { goos: darwin,  goarch: arm64, validate: false }
+          - { goos: windows, goarch: amd64, validate: false }
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          check-latest: true
+      - name: build
+        env:
+          GOOS:    ${{ matrix.goos }}
+          GOARCH:  ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+          VER:     ${{ needs.derive-tag.outputs.version }}
+          BUILD:   ${{ needs.derive-tag.outputs.build }}
+          BUILD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          OUT="satelle-v${VER}-${GOOS}-${GOARCH}"
+          [ "$GOOS" = "windows" ] && OUT="${OUT}.exe"
+          go build \
+            -trimpath \
+            -ldflags="-s -w \
+              -X github.com/bobmcallan/satelle/internal/buildinfo.Version=v${VER} \
+              -X github.com/bobmcallan/satelle/internal/buildinfo.Commit=${BUILD_SHA} \
+              -X github.com/bobmcallan/satelle/internal/buildinfo.BuildTime=${BUILD}" \
+            -o "${OUT}" ./cmd/satelle
+          sha256sum "${OUT}" > "${OUT}.sha256"
+          echo "OUT=${OUT}" >> "$GITHUB_ENV"
+      - name: validate (linux/amd64 only)
+        if: matrix.validate
+        run: ./"${OUT}" version
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.OUT }}
+          path: |
+            ${{ env.OUT }}
+            ${{ env.OUT }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: tag + publish release
+    needs: [derive-tag, build]
+    if: needs.derive-tag.outputs.needs_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: verify checksums
+        run: |
+          set -euo pipefail
+          cd artifacts
+          for sum in *.sha256; do sha256sum -c "${sum}"; done
+      - name: stage installer bootstrap
+        # Publish scripts/install.sh as a release asset so the curl|sh bootstrap
+        # is a stable GitHub download alongside the binaries
+        # (releases/latest/download/install.sh).
+        run: cp scripts/install.sh artifacts/install.sh
+      - name: tag commit
+        env:
+          TAG: ${{ needs.derive-tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+      - name: gh release create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG:      ${{ needs.derive-tag.outputs.tag }}
+          VER:      ${{ needs.derive-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes "satelle v${VER}
+
+          Install:
+          \`\`\`
+          curl -fsSL https://github.com/bobmcallan/satelle/releases/latest/download/install.sh | sh
+          \`\`\`" \
+            artifacts/*

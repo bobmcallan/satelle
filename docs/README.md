@@ -69,6 +69,13 @@ V6 rebrand + open-core restructure of `satellites`. Porting *from*
   reaches it from WSL; native Windows (no systemd) gets Task Scheduler guidance. `make install`
   places the binary on PATH. Verified live here — service active+enabled, reachable on
   localhost and the WSL IP.
+- ✅ **Release pipeline done** — `.version` is canonical (release tag `v<satelle.version>`);
+  `scripts/install.sh` is the `curl … | sh` bootstrap (resolves latest release,
+  sha256-verifies, installs to `~/.local/bin`); `.github/workflows/test.yml` runs
+  build/vet/gofmt/unit+integration/no-cgo; `.github/workflows/release.yml` builds the
+  cross-platform matrix (linux/darwin amd64+arm64, windows amd64) with ldflag-stamped
+  buildinfo, tags, and publishes binaries + `install.sh` when `.version` is bumped.
+  Integration tests run against a prebuilt binary via `SATELLE_BIN` (`make integration`).
 - ⬜ **Next: build order step 6** — workspace aggregation: `~/.satelle/` registry +
   multi-repo web view (the global `~/.satelle/` home now exists). (Step 7: define the sync
   backend interface, shipped disabled.) Both are tracked as stories in the local db.

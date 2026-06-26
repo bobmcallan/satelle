@@ -1,0 +1,7 @@
+# Canonical version for the satelle binary. The release workflow reads
+# satelle.version to derive the release tag (v<version>); the version + build
+# timestamp are baked into the binary via -ldflags at build time. .version is a
+# build-time source file, NEVER deployed in release artifacts.
+
+satelle.version: 0.0.1
+satelle.build: 2026-06-26-20-52-28
