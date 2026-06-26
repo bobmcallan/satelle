@@ -28,6 +28,24 @@ trackable detail URL — `http://127.0.0.1:8787/story/<id>` (or `/task/<id>`) �
 showing status, acceptance criteria, and the full ledger timeline. The server is
 local-only (the OSS tier ships no hosted URL).
 
+### Always-on service
+
+`satelle serve` runs in the foreground. To keep the project page up across
+terminals and reboots, install it as a background service:
+
+```sh
+make install                 # build + place satelle on PATH (~/.local/bin)
+cd your-repo
+satelle service install      # systemd user service (Linux/WSL)
+satelle service status       # show state + URL
+```
+
+Settings live in the machine-wide `~/.satelle/config.toml` (`[service]` port /
+addr / repo). Change the port there (or pass `--port`) and re-run
+`satelle service install`. The service binds `0.0.0.0` by default, so in **WSL**
+it's reachable from a Windows browser at `http://localhost:<port>`. On native
+Windows (no systemd), `service install` prints Task Scheduler steps instead.
+
 `init` is idempotent and writes a managed `.gitignore` block (the local
 `.satelle/satelle.db` stays out of git; the config and authored markdown are
 committed). It's also optional — a repo with no `.satelle/satelle.toml` runs
