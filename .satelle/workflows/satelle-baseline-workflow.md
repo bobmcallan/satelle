@@ -23,8 +23,16 @@ changes.
 - **open → in_progress** — begin work on the item.
 - **in_progress → blocked** — record that work is stalled on a dependency.
 - **blocked → in_progress** — resume once unblocked.
-- **in_progress → done** — close the item with its acceptance criteria satisfied.
+- **in_progress → done** — close the item, in this order:
+  1. **after in_progress**, run the integration tests (`make integration`);
+  2. **once the integration tests pass**, commit and push the work;
+  3. then set the item to done with its acceptance criteria satisfied.
 - **open/in_progress → cancelled** — abandon the item (record why).
+
+The closing path is deliberate: `in_progress → (make integration passes) →
+commit/push → done`. Integration tests come *after* the work is in_progress and
+*before* the commit; the commit/push happens only once they are green; only then
+is the item done.
 
 ```yaml
 states:
@@ -37,7 +45,8 @@ transitions:
   - {from: open, to: in_progress}
   - {from: in_progress, to: blocked}
   - {from: blocked, to: in_progress}
-  - {from: in_progress, to: done}
+  # The in_progress → done edge carries the closing steps below.
+  - {from: in_progress, to: done, steps: ["run `make integration`", "commit + push once tests pass"]}
   - {from: open, to: cancelled}
   - {from: in_progress, to: cancelled}
 ```
@@ -54,8 +63,12 @@ guardrails:
     - Drive an engaged item to a terminal state (done or cancelled) — don't leave work open indefinitely.
     - Give a story/task numbered acceptance criteria before starting, and satisfy them before moving to done.
     - When work stalls, set status to blocked with a note on what it's waiting on, rather than leaving it silently in_progress.
+    - After moving an item to in_progress, run `make integration` (the local CLI + browser e2e suite) before closing it.
+    - Commit and push only once the integration tests pass; then set the item to done.
   ask_first: []
   never:
     - Move an item straight from open to done — pass through in_progress so the work is visible.
     - Mark an item done with unmet acceptance criteria.
+    - Commit or push while the integration tests are failing.
+    - Mark an item done before its commit/push has landed.
 ```
