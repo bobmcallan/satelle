@@ -15,6 +15,7 @@ no cgo.
 go build -o satelle ./cmd/satelle
 
 cd your-repo
+satelle init           # scaffold .satelle/ (config, database, authored dirs)
 satelle story create --title "Ship the thing" --priority high
 satelle task create  --title "write release notes"
 satelle index          # index authored markdown under .satelle/
@@ -22,8 +23,11 @@ satelle status         # config, database, and store counts
 satelle serve          # local web project page (http://127.0.0.1:8787)
 ```
 
-Zero-config: a repo with no `.satelle/satelle.toml` runs on defaults. Data lives
-in `.satelle/satelle.db`, travelling with the repo it governs.
+`init` is idempotent and writes a managed `.gitignore` block (the local
+`.satelle/satelle.db` stays out of git; the config and authored markdown are
+committed). It's also optional — a repo with no `.satelle/satelle.toml` runs
+zero-config on defaults, with data in `.satelle/satelle.db` travelling with the
+repo it governs.
 
 ## Commands
 
@@ -32,7 +36,7 @@ in `.satelle/satelle.db`, travelling with the repo it governs.
 | `story` / `task` | `create`, `get`, `list`, `set` |
 | `ledger` | `append`, `list` |
 | `doc` | `list`, `get` |
-| | `index`, `status`, `serve`, `version` |
+| | `init`, `index`, `status`, `serve`, `version` |
 
 Both the CLI and the web server reach data the same way — through one verb
 registry (`CLI / web → verb.Dispatch → store`), so the two surfaces never drift.

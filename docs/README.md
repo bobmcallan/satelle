@@ -50,6 +50,12 @@ V6 rebrand + open-core restructure of `satellites`. Porting *from*
   `satelle serve` runs it (port from config) and runs the directory monitor continuously
   (`DocIndex.Watch`) so the index stays fresh while serving, with graceful Ctrl-C shutdown.
   Single-repo, as specified. `go test ./...` green (httptest coverage); `CGO_ENABLED=0` ok.
+- ✅ **`satelle init` done (dogfooding prerequisite)** — scaffolds a repo idempotently:
+  `.satelle/`, a fully-commented `satelle.toml` (zero-config defaults), the authored dirs
+  (documents/workflows/principles/skills, each `.gitkeep`-tracked), the created+migrated
+  `.satelle/satelle.db`, and a managed `.gitignore` block (db out of git; config + authored
+  markdown committed). Local-only — none of satellites' server_url/MCP/OAuth/enforcement-hook
+  scaffolding. `go test ./...` green.
 - ⬜ **Next: build order step 6** — workspace aggregation: `~/.satelle/` registry +
   multi-repo web view. (Step 7: define the sync backend interface, shipped disabled.)
 
