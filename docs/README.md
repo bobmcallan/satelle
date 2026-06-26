@@ -69,6 +69,10 @@ V6 rebrand + open-core restructure of `satellites`. Porting *from*
   reaches it from WSL; native Windows (no systemd) gets Task Scheduler guidance. `make install`
   places the binary on PATH. Verified live here — service active+enabled, reachable on
   localhost and the WSL IP.
+- ✅ **Browser e2e automation** — `tests/browser_test.go` drives the web front end in
+  headless Chrome (chromedp): tab switching, inline expand-on-click, live filter chips, and
+  realtime cross-process updates are all asserted in a real browser (no eyeballing). Runs
+  LOCALLY via `make integration` (needs Chrome) — deliberately not in GitHub CI.
 - ✅ **Release pipeline done** — `.version` is canonical (release tag `v<satelle.version>`);
   `scripts/install.sh` is the `curl … | sh` bootstrap (resolves latest release,
   sha256-verifies, installs to `~/.local/bin`); `.github/workflows/test.yml` runs
