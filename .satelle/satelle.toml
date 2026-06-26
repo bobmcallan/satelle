@@ -1,0 +1,15 @@
+# satelle.toml — per-repo config (committed, secret-free). Every setting has a
+# default, so this file may stay fully commented; uncomment a key to override.
+# Per-user overrides go in satelle.local.toml beside this file (gitignored).
+
+# data_dir = ".satelle"          # home for the per-repo database (default)
+# db = ".satelle/satelle.db"     # database path (default: <data_dir>/satelle.db)
+# web_port = 8787                # 'satelle serve' listen port (default)
+# log_level = "info"             # debug | info | warn | error (default info)
+
+# substrate_roots — per-kind parent dir for authored markdown. Unset means
+# <data_dir>/<kind> (e.g. .satelle/documents). Point a kind elsewhere — even
+# outside .satelle/ — to author it at the repo root or another path:
+# [substrate_roots]
+# documents = "."                # → ./documents
+# skills = "."                   # → ./skills

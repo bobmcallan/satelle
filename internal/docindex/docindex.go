@@ -340,11 +340,22 @@ func (s *Store) delete(ctx context.Context, kind, path string) error {
 }
 
 // headline returns the first meaningful line of a markdown body — the first
-// non-blank line, with a leading "# " heading marker stripped. Empty for an
-// empty body.
+// non-blank line after any YAML frontmatter, with a leading "# " heading marker
+// stripped. Empty for an empty body.
 func headline(body string) string {
-	for _, line := range strings.Split(body, "\n") {
-		t := strings.TrimSpace(line)
+	lines := strings.Split(body, "\n")
+	i := 0
+	// Skip a leading YAML frontmatter block (--- … ---).
+	if len(lines) > 0 && strings.TrimSpace(lines[0]) == "---" {
+		for j := 1; j < len(lines); j++ {
+			if strings.TrimSpace(lines[j]) == "---" {
+				i = j + 1
+				break
+			}
+		}
+	}
+	for ; i < len(lines); i++ {
+		t := strings.TrimSpace(lines[i])
 		if t == "" {
 			continue
 		}

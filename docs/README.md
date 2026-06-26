@@ -56,8 +56,15 @@ V6 rebrand + open-core restructure of `satellites`. Porting *from*
   `.satelle/satelle.db`, and a managed `.gitignore` block (db out of git; config + authored
   markdown committed). Local-only — none of satellites' server_url/MCP/OAuth/enforcement-hook
   scaffolding. `go test ./...` green.
+- ✅ **Dogfooding live** — satelle now governs its own repo: `satelle init` run here;
+  remaining phases tracked as stories in `.satelle/satelle.db` (local, gitignored — see
+  `satelle story list`); a gateless baseline workflow authored at
+  `.satelle/workflows/satelle-baseline-workflow.md` (open→in_progress→done, mirrors the
+  satellites baseline, indexed by the monitor); black-box integration tests in `tests/`
+  drive the built binary end-to-end (`go test -tags integration ./tests/...`).
 - ⬜ **Next: build order step 6** — workspace aggregation: `~/.satelle/` registry +
   multi-repo web view. (Step 7: define the sync backend interface, shipped disabled.)
+  Both are tracked as stories in the local db.
 
 ## Start here (build order step 1)
 
