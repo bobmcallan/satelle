@@ -28,7 +28,8 @@ jobs:
           fi
       - name: unit tests
         run: go test ./...
-      - name: integration tests
-        run: go test -tags integration ./tests/...
       - name: no-cgo static build
         run: CGO_ENABLED=0 go build -o /dev/null ./cmd/satelle
+      # Integration + browser e2e tests (tests/, -tags integration) run LOCALLY
+      # via `make integration` — they need a real Chrome and exercise the running
+      # binary, so they are not part of GitHub CI by design.

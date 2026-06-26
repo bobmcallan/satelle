@@ -1,0 +1,313 @@
+//go:build integration
+
+// Browser-driven end-to-end tests: they launch the real satelle binary's web
+// server and drive it in headless Chrome (chromedp), exercising the actual
+// rendered page + JavaScript the user sees — tab switching, inline expand on
+// click, live filtering, and realtime updates pushed from a separate CLI
+// process. This is the front end under automation, not eyeballing.
+//
+// Requires a Chrome/Chromium binary; the test skips with a clear message if
+// none is found (CI installs one). Part of the `integration` tag.
+package tests
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/chromedp/chromedp"
+)
+
+// findBrowser returns a Chrome/Chromium executable path, or "".
+func findBrowser() string {
+	if p := os.Getenv("SATELLE_CHROME"); p != "" {
+		return p
+	}
+	for _, c := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser"} {
+		if p, err := exec.LookPath(c); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+// serveRepo inits a temp repo, seeds it, starts `satelle serve` on a free-ish
+// port, waits until healthy, and returns the base URL + repo path. Cleanup
+// stops the server.
+func serveRepo(t *testing.T, port string) (string, string) {
+	t.Helper()
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	cmd := exec.Command(testBin, "serve", "--port", port)
+	cmd.Dir = repo
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start serve: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+	base := "http://127.0.0.1:" + port
+	if !waitHealthy(t, base+"/healthz", 5*time.Second) {
+		t.Fatal("server did not become healthy")
+	}
+	return base, repo
+}
+
+// newChrome returns a chromedp context (and overall timeout) for the suite.
+func newChrome(t *testing.T) context.Context {
+	t.Helper()
+	browser := findBrowser()
+	if browser == "" {
+		t.Skip("no Chrome/Chromium found (set SATELLE_CHROME or install google-chrome); skipping browser e2e")
+	}
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.ExecPath(browser),
+		chromedp.NoSandbox,
+		chromedp.DisableGPU,
+		chromedp.Flag("disable-dev-shm-usage", true),
+		// Chrome 132+ removed the legacy headless mode chromedp defaults to;
+		// the new mode is required or the connection hangs.
+		chromedp.Flag("headless", "new"),
+	)
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+	t.Cleanup(cancelAlloc)
+	ctx, cancelCtx := chromedp.NewContext(allocCtx)
+	t.Cleanup(cancelCtx)
+	ctx, cancelTimeout := context.WithTimeout(ctx, 60*time.Second)
+	t.Cleanup(cancelTimeout)
+	return ctx
+}
+
+func TestBrowserProjectPageInteractions(t *testing.T) {
+	base, repo := serveRepo(t, "8801")
+
+	// Seed: one open story, one done story (so the default status:open filter is
+	// observable), one task, and an authored doc.
+	openID := createStory(t, repo, "Keep Me Open", "")
+	doneID := createStory(t, repo, "Already Done", "done")
+	mustRun(t, testBin, repo, "task", "create", "--title", "A task to do")
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "documents", "guide.md"), []byte("# Guide\n\nhello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, testBin, repo, "index")
+	_ = doneID
+
+	ctx := newChrome(t)
+	// Wait on a signal that the page loaded AND app.js initialized (it sets
+	// aria-selected on the active tab) — not on a specific row, which the
+	// default status:open filter may have hidden.
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/"),
+		chromedp.WaitVisible(`.tab[data-panel="stories"][aria-selected="true"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`#panel-stories table.panel-table`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("load page: %v", err)
+	}
+
+	t.Run("default_filter_hides_terminal", func(t *testing.T) {
+		// The done story must be hidden under the default status:open filter; the
+		// open story visible.
+		if visibleRow(t, ctx, openID) != true {
+			t.Errorf("open story %s should be visible by default", openID)
+		}
+		if visibleRow(t, ctx, doneID) != false {
+			t.Errorf("done story %s should be hidden by default (status:open)", doneID)
+		}
+		// A default status:open chip is rendered.
+		if !hasChip(t, ctx, "stories", "status:open") {
+			t.Error("expected default status:open chip")
+		}
+	})
+
+	t.Run("tab_switching", func(t *testing.T) {
+		clickJS(t, ctx, `.tab[data-panel="tasks"]`)
+		if !waitCond(t, ctx, `getComputedStyle(document.querySelector('#panel-tasks')).display === 'block'`, 5*time.Second) {
+			t.Fatal("tasks panel did not become visible after clicking its tab")
+		}
+		var hash, storiesDisplay string
+		if err := chromedp.Run(ctx,
+			chromedp.Evaluate(`location.hash`, &hash),
+			chromedp.Evaluate(`getComputedStyle(document.querySelector('#panel-stories')).display`, &storiesDisplay),
+		); err != nil {
+			t.Fatal(err)
+		}
+		if hash != "#tasks" {
+			t.Errorf("hash = %q, want #tasks", hash)
+		}
+		if storiesDisplay != "none" {
+			t.Errorf("stories panel display = %q, want none while tasks active", storiesDisplay)
+		}
+		// Documents tab shows the indexed doc card.
+		clickJS(t, ctx, `.tab[data-panel="docs"]`)
+		if !waitCond(t, ctx, `!!document.querySelector('#panel-docs .doc') && getComputedStyle(document.querySelector('#panel-docs')).display === 'block'`, 5*time.Second) {
+			t.Error("documents panel/card not visible after clicking its tab")
+		}
+		// Back to stories for the remaining checks.
+		clickJS(t, ctx, `.tab[data-panel="stories"]`)
+		if !waitCond(t, ctx, `getComputedStyle(document.querySelector('#panel-stories')).display === 'block'`, 5*time.Second) {
+			t.Fatal("could not return to stories tab")
+		}
+	})
+
+	t.Run("expand_on_click", func(t *testing.T) {
+		// Click the open story's row → an inline expansion with its ledger
+		// timeline appears.
+		rowSel := fmt.Sprintf(`#panel-stories tr.row[data-expand-url$="%s"]`, openID)
+		clickJS(t, ctx, rowSel)
+		if !waitCond(t, ctx, `(function(){var e=document.querySelector('#panel-stories tr.expansion .expbody');return !!e && e.textContent.includes('Timeline');})()`, 5*time.Second) {
+			t.Fatal("inline expansion with timeline did not appear on row click")
+		}
+		// Click again → collapses (expansion removed).
+		clickJS(t, ctx, rowSel)
+		if !waitCond(t, ctx, `!document.querySelector('#panel-stories tr.expansion')`, 5*time.Second) {
+			t.Error("row did not collapse on second click")
+		}
+	})
+
+	t.Run("live_filter", func(t *testing.T) {
+		// Type status:done → only the done story shows.
+		if err := chromedp.Run(ctx, setInput(`#panel-stories .filterbar input`, "status:done")); err != nil {
+			t.Fatalf("set filter: %v", err)
+		}
+		if !waitCond(t, ctx, jsRowVisible(doneID), 3*time.Second) {
+			t.Error("done story should be visible under status:done")
+		}
+		if visibleRow(t, ctx, openID) != false {
+			t.Error("open story should be hidden under status:done")
+		}
+		if !hasChip(t, ctx, "stories", "status:done") {
+			t.Error("expected status:done chip")
+		}
+		// Clear the filter; the default status:open returns.
+		if err := chromedp.Run(ctx, setInput(`#panel-stories .filterbar input`, "")); err != nil {
+			t.Fatal(err)
+		}
+		if !waitCond(t, ctx, jsRowVisible(openID), 3*time.Second) {
+			t.Error("open story should be visible again after clearing the filter")
+		}
+	})
+
+	t.Run("realtime_update_no_reload", func(t *testing.T) {
+		// Mark the page so we can prove no full reload happened.
+		if err := chromedp.Run(ctx, chromedp.Evaluate(`window.__noReload = true`, nil)); err != nil {
+			t.Fatal(err)
+		}
+		// Mutate from a SEPARATE process (the CLI), as a user would.
+		newID := createStory(t, repo, "Pushed Live RT", "")
+
+		// The open page must show the new row within a few seconds, with no reload.
+		deadline := time.Now().Add(8 * time.Second)
+		seen := false
+		for time.Now().Before(deadline) {
+			var present bool
+			if err := chromedp.Run(ctx, chromedp.Evaluate(
+				fmt.Sprintf(`[...document.querySelectorAll('#panel-stories .row')].some(r => r.getAttribute('data-expand-url')||''.includes('%s')) || document.body.innerHTML.includes('Pushed Live RT')`, newID),
+				&present)); err != nil {
+				t.Fatal(err)
+			}
+			if present {
+				seen = true
+				break
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
+		if !seen {
+			t.Fatal("new story did not appear on the open page via realtime within 8s")
+		}
+		var noReload bool
+		if err := chromedp.Run(ctx, chromedp.Evaluate(`window.__noReload === true`, &noReload)); err != nil {
+			t.Fatal(err)
+		}
+		if !noReload {
+			t.Error("page appears to have reloaded — realtime should update in place")
+		}
+	})
+}
+
+// --- chromedp helpers ---
+
+// clickJS clicks an element via element.click() — robust against chromedp's
+// position/visibility heuristics for elements in just-shown panels.
+func clickJS(t *testing.T, ctx context.Context, sel string) {
+	t.Helper()
+	js := fmt.Sprintf(`(function(){var e=document.querySelector(%q);if(e)e.click();return !!e;})()`, sel)
+	var ok bool
+	if err := chromedp.Run(ctx, chromedp.Evaluate(js, &ok)); err != nil {
+		t.Fatalf("clickJS %s: %v", sel, err)
+	}
+	if !ok {
+		t.Fatalf("clickJS: element not found: %s", sel)
+	}
+}
+
+// waitCond polls a JS boolean expression until true or the timeout elapses.
+func waitCond(t *testing.T, ctx context.Context, js string, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		var ok bool
+		if err := chromedp.Run(ctx, chromedp.Evaluate(js, &ok)); err == nil && ok {
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return false
+}
+
+// jsRowVisible is a JS expression: is the row for id visible (not display:none)?
+func jsRowVisible(id string) string {
+	return fmt.Sprintf(`(function(){var r=document.querySelector('tr.row[data-expand-url$="%s"]');return !!r && getComputedStyle(r).display!=='none';})()`, id)
+}
+
+// createStory creates a story via the CLI and returns its id.
+func createStory(t *testing.T, repo, title, status string) string {
+	t.Helper()
+	args := []string{"story", "create", "--title", title}
+	if status != "" {
+		args = append(args, "--status", status)
+	}
+	out := mustRun(t, testBin, repo, args...)
+	return extractID(out, "sty_")
+}
+
+// visibleRow reports whether the story/task row for id is visible (not
+// display:none) in the DOM.
+func visibleRow(t *testing.T, ctx context.Context, id string) bool {
+	t.Helper()
+	var vis bool
+	js := fmt.Sprintf(`(function(){
+		var r = document.querySelector('tr.row[data-expand-url$="%s"]');
+		if (!r) return false;
+		return getComputedStyle(r).display !== 'none';
+	})()`, id)
+	if err := chromedp.Run(ctx, chromedp.Evaluate(js, &vis)); err != nil {
+		t.Fatalf("visibleRow(%s): %v", id, err)
+	}
+	return vis
+}
+
+// hasChip reports whether the named panel shows a filter chip with the label.
+func hasChip(t *testing.T, ctx context.Context, panel, label string) bool {
+	t.Helper()
+	var has bool
+	js := fmt.Sprintf(`[...document.querySelectorAll('#panel-%s .chips .fchip')].some(c => c.textContent.replace('×','').trim() === '%s')`, panel, label)
+	if err := chromedp.Run(ctx, chromedp.Evaluate(js, &has)); err != nil {
+		t.Fatalf("hasChip: %v", err)
+	}
+	return has
+}
+
+// setInput sets an input's value and fires an 'input' event (so listeners run).
+func setInput(sel, val string) chromedp.Action {
+	js := fmt.Sprintf(`(function(){
+		var el = document.querySelector(%q);
+		el.value = %q;
+		el.dispatchEvent(new Event('input', { bubbles: true }));
+	})()`, sel, val)
+	return chromedp.Evaluate(js, nil)
+}

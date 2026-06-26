@@ -88,15 +88,19 @@ See [`docs/spec.md`](./docs/spec.md) and [`docs/architecture.md`](./docs/archite
 ## Development
 
 ```sh
-go test ./...           # unit + package tests
-make integration        # black-box: builds satelle once, drives it end-to-end via SATELLE_BIN
+go test ./...           # unit + package tests (also run in CI)
+make integration        # black-box CLI + browser end-to-end (local only)
 ```
 
 The integration suite (in `tests/`, behind the `integration` build tag) runs
-against a real binary. `make integration` builds it once and passes it through
-`SATELLE_BIN`; point that at any binary to test it directly:
-`cd tests && SATELLE_BIN=$(command -v satelle) go test -tags integration .`.
-Releases are cut by `.github/workflows/release.yml` when `.version` is bumped.
+against a real binary and **drives the web front end in headless Chrome**
+(chromedp) — tab switching, inline expand, live filtering, and realtime updates
+are all asserted in a real browser, not eyeballed. It needs a Chrome/Chromium
+binary (`SATELLE_CHROME` overrides the path); it **runs locally only**, not in
+GitHub CI, because it needs a browser and the running binary. `make integration`
+builds satelle once and passes it via `SATELLE_BIN` (point that at any binary to
+test it directly). Releases are cut by `.github/workflows/release.yml` when
+`.version` is bumped; CI (`test.yml`) runs unit tests + build/vet/gofmt only.
 
 satelle dogfoods itself — this repo is set up with `satelle init`, and its
 remaining build phases are tracked as stories in the local database.
