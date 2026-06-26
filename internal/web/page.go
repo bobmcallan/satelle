@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"html/template"
 	"strings"
 	"time"
@@ -17,6 +18,14 @@ var tmplFuncs = template.FuncMap{
 	"lower": strings.ToLower,
 	"join": func(ss []string, sep string) string {
 		return strings.Join(ss, sep)
+	},
+	// tabof maps a work-item kind to its panel/tab name (story→stories). Takes
+	// any so the workitem.Kind type (a distinct string type) is accepted.
+	"tabof": func(kind any) string {
+		if fmt.Sprint(kind) == "task" {
+			return "tasks"
+		}
+		return "stories"
 	},
 }
 
@@ -36,6 +45,7 @@ const templatesSrc = `
 </head>
 <body>
 <div class="wrap">
+  <nav class="crumbs"><a href="/">project</a> <span class="sep">/</span> <span class="cur" id="crumb-tab">stories</span></nav>
   <header class="app">
     <h1>satelle<span class="dot">.</span> project<span class="live-dot" title="realtime"></span></h1>
     <div class="meta">{{.RepoRoot}}</div>
@@ -49,22 +59,22 @@ const templatesSrc = `
 
   <section class="panel" data-topic="stories" id="panel-stories">
     <div class="filterbar">
-      <input type="text" placeholder="filter… e.g. status:open priority:high mvp" aria-label="filter stories">
+      <input type="text" placeholder="filter… e.g. status:open priority:high order:updated mvp" aria-label="filter stories">
       <div class="chips"></div>
     </div>
     <table class="panel-table">
-      <thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Tags</th></tr></thead>
+      <thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th></tr></thead>
       <tbody data-rows>{{template "workitemRows" .Stories}}</tbody>
     </table>
   </section>
 
   <section class="panel" data-topic="tasks" id="panel-tasks">
     <div class="filterbar">
-      <input type="text" placeholder="filter… e.g. status:open priority:high" aria-label="filter tasks">
+      <input type="text" placeholder="filter… e.g. status:open priority:high order:title" aria-label="filter tasks">
       <div class="chips"></div>
     </div>
     <table class="panel-table">
-      <thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Tags</th></tr></thead>
+      <thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th></tr></thead>
       <tbody data-rows>{{template "workitemRows" .Tasks}}</tbody>
     </table>
   </section>
@@ -83,13 +93,12 @@ const templatesSrc = `
 </body>
 </html>{{end}}
 
-{{define "workitemRows"}}{{range .}}<tr class="row" tabindex="0" role="button" aria-expanded="false" data-status="{{.Status}}" data-priority="{{.Priority}}" data-category="{{.Category}}" data-tags="{{join .Tags ","}}" data-search="{{printf "%s %s %s" .Title .ID (join .Tags " ") | lower}}" data-expand-url="/fragment/{{.Kind}}/{{.ID}}">
+{{define "workitemRows"}}{{range .}}<tr class="row" tabindex="0" role="button" aria-expanded="false" data-status="{{.Status}}" data-priority="{{.Priority}}" data-category="{{.Category}}" data-tags="{{join .Tags ","}}" data-title="{{lower .Title}}" data-updated="{{.UpdatedAt.Format "2006-01-02T15:04:05"}}" data-created="{{.CreatedAt.Format "2006-01-02T15:04:05"}}" data-search="{{printf "%s %s %s" .Title .ID (join .Tags " ") | lower}}" data-expand-url="/fragment/{{.Kind}}/{{.ID}}">
   <td class="id"><span class="caret"></span><a href="/{{.Kind}}/{{.ID}}">{{.ID}}</a></td>
-  <td>{{.Title}}</td>
+  <td><div class="wi-title">{{.Title}}</div>{{if .Tags}}<div class="wi-tags">{{range .Tags}}<span class="tagchip">{{.}}</span>{{end}}</div>{{end}}</td>
   <td><span class="badge s-{{.Status}}">{{.Status}}</span></td>
   <td>{{if .Priority}}{{.Priority}}{{else}}—{{end}}</td>
-  <td class="tag">{{range $i, $t := .Tags}}{{if $i}}, {{end}}{{$t}}{{end}}</td>
-</tr>{{else}}<tr><td colspan="5" class="empty">none yet</td></tr>{{end}}{{end}}
+</tr>{{else}}<tr><td colspan="4" class="empty">none yet</td></tr>{{end}}{{end}}
 
 {{define "docsRows"}}{{range .}}<div class="kind-h">{{.Kind}}</div>{{if .Docs}}<div class="docgrid">{{range .Docs}}<div class="doc" data-search="{{printf "%s %s" .Name .Headline | lower}}">
   <div class="name">{{.Name}}</div>
@@ -102,7 +111,7 @@ const templatesSrc = `
     <dt>Priority</dt><dd>{{if .Item.Priority}}{{.Item.Priority}}{{else}}—{{end}}</dd>
     <dt>Category</dt><dd>{{if .Item.Category}}{{.Item.Category}}{{else}}—{{end}}</dd>
     {{if .Item.ParentID}}<dt>Parent</dt><dd><a href="/story/{{.Item.ParentID}}">{{.Item.ParentID}}</a></dd>{{end}}
-    <dt>Tags</dt><dd class="tag">{{if .Item.Tags}}{{range $i, $t := .Item.Tags}}{{if $i}}, {{end}}{{$t}}{{end}}{{else}}—{{end}}</dd>
+    {{if .Item.Tags}}<dt>Tags</dt><dd class="wi-tags">{{range .Item.Tags}}<span class="tagchip">{{.}}</span>{{end}}</dd>{{end}}
     <dt>Updated</dt><dd>{{ftime .Item.UpdatedAt}}</dd>
   </dl>
   {{if .Item.Body}}<h4>Description</h4><pre class="prose">{{.Item.Body}}</pre>{{end}}
@@ -113,7 +122,6 @@ const templatesSrc = `
     <div class="ev-meta">{{ftime .CreatedAt}}{{if .Actor}} · {{.Actor}}{{end}}</div>
     {{if .Body}}<div class="ev-body">{{.Body}}</div>{{end}}
   </li>{{end}}</ol>{{else}}<div class="empty">No ledger events yet.</div>{{end}}
-  <p><a class="detail-link" href="/{{.Item.Kind}}/{{.Item.ID}}">open full page →</a></p>
 </div>{{end}}
 
 {{define "detailPage"}}<!doctype html>
@@ -126,14 +134,15 @@ const templatesSrc = `
 </head>
 <body>
 <div class="wrap">
-  <p><a href="/">← project</a></p>
+  <nav class="crumbs"><a href="/">project</a> <span class="sep">/</span> <a href="/#{{tabof .Item.Kind}}">{{.Item.Kind}}</a> <span class="sep">/</span> <span class="cur">{{.Item.ID}}</span></nav>
   <header class="app">
-    <div class="kind-h">{{.Item.Kind}}</div>
+    <div class="kind-h">{{.Item.Kind}}<span class="live-dot" title="realtime"></span></div>
     <h1>{{.Item.Title}}</h1>
     <div class="meta">{{.Item.ID}}</div>
   </header>
-  {{template "itemDetail" .}}
+  <div id="detail-live" data-kind="{{.Item.Kind}}" data-id="{{.Item.ID}}">{{template "itemDetail" .}}</div>
 </div>
+<script src="/static/app.js"></script>
 </body>
 </html>{{end}}
 `

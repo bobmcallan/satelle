@@ -229,7 +229,104 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 	})
 }
 
+// TestBrowserUserPath walks a realistic session: a user opens the project page
+// and expands a story while the agent (a separate CLI process) progresses that
+// story — asserting the open expansion's timeline grows LIVE without collapsing,
+// then breadcrumb-navigates to the detail page (which also live-updates) and
+// back, and sorts with order:. This is the "live, navigable" requirement under
+// automation.
+func TestBrowserUserPath(t *testing.T) {
+	base, repo := serveRepo(t, "8803")
+	// Two open stories so order: is observable; the first gets progressed live.
+	betaID := createStory(t, repo, "Beta story", "")
+	alphaID := createStory(t, repo, "Alpha story", "")
+	_ = alphaID
+
+	ctx := newChrome(t)
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/"),
+		chromedp.WaitVisible(`.tab[data-panel="stories"][aria-selected="true"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`#panel-stories table.panel-table`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	t.Run("expand_then_live_progress", func(t *testing.T) {
+		rowSel := fmt.Sprintf(`#panel-stories tr.row[data-expand-url$="%s"]`, betaID)
+		clickJS(t, ctx, rowSel)
+		if !waitCond(t, ctx, `(function(){var e=document.querySelector('#panel-stories tr.expansion .expbody');return !!e && e.textContent.includes('story_created');})()`, 5*time.Second) {
+			t.Fatal("expansion timeline did not show story_created")
+		}
+		before := evalInt(t, ctx, `document.querySelectorAll('#panel-stories tr.expansion .timeline li').length`)
+
+		// The agent progresses the story from ANOTHER process.
+		mustRun(t, testBin, repo, "story", "set", betaID, "--status", "in_progress")
+
+		// The OPEN expansion must gain the update event live, without collapsing.
+		grew := waitCond(t, ctx, fmt.Sprintf(
+			`(function(){var e=document.querySelector('#panel-stories tr.expansion .timeline');return !!e && e.querySelectorAll('li').length > %d && e.textContent.includes('story_updated');})()`, before),
+			8*time.Second)
+		if !grew {
+			t.Fatal("open expansion timeline did not grow live on status change")
+		}
+		var expanded bool
+		if err := chromedp.Run(ctx, chromedp.Evaluate(
+			fmt.Sprintf(`document.querySelector('tr.row[data-expand-url$="%s"]').getAttribute('aria-expanded')==='true'`, betaID), &expanded)); err != nil {
+			t.Fatal(err)
+		}
+		if !expanded {
+			t.Error("row collapsed during live refresh — expansion should persist")
+		}
+	})
+
+	t.Run("order_sort", func(t *testing.T) {
+		if err := chromedp.Run(ctx, setInput(`#panel-stories .filterbar input`, "order:title")); err != nil {
+			t.Fatal(err)
+		}
+		ok := waitCond(t, ctx, `(function(){
+			var titles=[...document.querySelectorAll('#panel-stories tr.row')].filter(r=>r.style.display!=='none').map(r=>r.dataset.title);
+			return titles.length>=2 && titles[0]==='alpha story' && titles.indexOf('beta story')>0;
+		})()`, 3*time.Second)
+		if !ok {
+			t.Error("order:title did not sort Alpha before Beta")
+		}
+		if !hasChip(t, ctx, "stories", "order:title") {
+			t.Error("expected order:title chip")
+		}
+		if err := chromedp.Run(ctx, setInput(`#panel-stories .filterbar input`, "")); err != nil {
+			t.Fatal(err)
+		}
+		waitCond(t, ctx, jsRowVisible(betaID), 3*time.Second)
+	})
+
+	t.Run("breadcrumb_to_detail_live_and_back", func(t *testing.T) {
+		clickJS(t, ctx, fmt.Sprintf(`#panel-stories tr.row[data-expand-url$="%s"] td.id a`, betaID))
+		if !waitCond(t, ctx, `!!document.querySelector('#detail-live') && !!document.querySelector('.crumbs')`, 8*time.Second) {
+			t.Fatal("did not land on the detail page with a breadcrumb")
+		}
+		beforeLi := evalInt(t, ctx, `document.querySelectorAll('#detail-live .timeline li').length`)
+		mustRun(t, testBin, repo, "story", "set", betaID, "--status", "blocked")
+		if !waitCond(t, ctx, fmt.Sprintf(`document.querySelectorAll('#detail-live .timeline li').length > %d`, beforeLi), 8*time.Second) {
+			t.Error("detail page timeline did not live-update")
+		}
+		clickJS(t, ctx, `.crumbs a[href="/"]`)
+		if !waitCond(t, ctx, `!!document.querySelector('.tabs') && !!document.querySelector('#panel-stories')`, 8*time.Second) {
+			t.Fatal("breadcrumb 'project' did not return to the project page")
+		}
+	})
+}
+
 // --- chromedp helpers ---
+
+// evalInt evaluates a JS expression to an int.
+func evalInt(t *testing.T, ctx context.Context, js string) int {
+	t.Helper()
+	var n int
+	if err := chromedp.Run(ctx, chromedp.Evaluate(js, &n)); err != nil {
+		t.Fatalf("evalInt: %v", err)
+	}
+	return n
+}
 
 // clickJS clicks an element via element.click() — robust against chromedp's
 // position/visibility heuristics for elements in just-shown panels.
