@@ -52,6 +52,16 @@ registry (`CLI / web → verb.Dispatch → store`), so the two surfaces never dr
 
 See [`docs/spec.md`](./docs/spec.md) and [`docs/architecture.md`](./docs/architecture.md).
 
+## Development
+
+```sh
+go test ./...                        # unit + package tests
+go test -tags integration ./tests/...  # black-box: builds the binary, drives it end-to-end
+```
+
+satelle dogfoods itself — this repo is set up with `satelle init`, and its
+remaining build phases are tracked as stories in the local database.
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).

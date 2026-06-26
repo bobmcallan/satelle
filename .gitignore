@@ -2,8 +2,17 @@
 /satelle
 /cmd/satelle/satelle
 
-# Per-repo local state (created at runtime)
-/.satelle/
+# satelle's own .satelle/ local state is governed by the managed block below
+# (added by `satelle init`): the local database is ignored, while the committed
+# satelle.toml and the authored markdown under .satelle/ stay tracked — satelle
+# dogfoods itself.
 
-# Gitignored local config overlay
-satelle.local.toml
+# >>> satelle (managed) >>>
+# satelle's per-repo database is local state — ignore it and its sidecars, plus
+# the per-user config overlay. The committed satelle.toml and the authored
+# markdown under .satelle/ stay tracked.
+.satelle/satelle.db
+.satelle/satelle.db-wal
+.satelle/satelle.db-shm
+.satelle/satelle.local.toml
+# <<< satelle (managed) <<<

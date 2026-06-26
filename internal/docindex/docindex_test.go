@@ -64,6 +64,23 @@ func TestSyncIndexesAndExtractsHeadline(t *testing.T) {
 	}
 }
 
+func TestSyncSkipsYAMLFrontmatterInHeadline(t *testing.T) {
+	db := openDB(t)
+	ctx := context.Background()
+	docsDir := filepath.Join(t.TempDir(), "workflows")
+	write(t, docsDir, "wf.md", "---\nname: wf\ntags: [kind:workflow]\n---\n\n# Real Heading\n\nbody")
+	if _, err := s(db).Sync(ctx, map[string]string{"workflows": docsDir}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := s(db).Get(ctx, "workflows", "wf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.Headline != "Real Heading" {
+		t.Errorf("headline = %q, want Real Heading (frontmatter skipped)", doc.Headline)
+	}
+}
+
 func TestSyncSkipsUnchangedAndReindexesChanged(t *testing.T) {
 	db := openDB(t)
 	ctx := context.Background()
