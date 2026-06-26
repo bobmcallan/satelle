@@ -16,6 +16,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -29,8 +30,49 @@ func Build(a *app.App) http.Handler {
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintln(w, "ok")
 	})
+	// Per-item detail pages — the URL you share to track one item's progress.
+	mux.HandleFunc("GET /story/{id}", itemDetail(a, "story"))
+	mux.HandleFunc("GET /task/{id}", itemDetail(a, "task"))
 	mux.HandleFunc("/", projectPage(a))
 	return mux
+}
+
+// itemDetail renders one story/task with its full fields and ledger timeline —
+// the trackable per-item URL. group is "story" or "task" (selects the get verb).
+func itemDetail(a *app.App, group string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		id := r.PathValue("id")
+
+		item, err := fetchOne[workitem.Item](ctx, group+"-get", map[string]any{"id": id})
+		if err != nil {
+			// An unknown id is a 404, not a 500.
+			http.Error(w, "not found: "+id, http.StatusNotFound)
+			return
+		}
+		// Ledger timeline for this item (newest first for display).
+		events, err := fetchList[ledger.Entry](ctx, "ledger-list", map[string]any{"story_id": id, "limit": 500})
+		if err != nil {
+			httpError(w, err)
+			return
+		}
+		for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+			events[i], events[j] = events[j], events[i]
+		}
+
+		data := detailData{Group: group, RepoRoot: a.RepoRoot, Item: item, Events: events}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := detailTmpl.Execute(w, data); err != nil {
+			httpError(w, err)
+		}
+	}
+}
+
+type detailData struct {
+	Group    string
+	RepoRoot string
+	Item     workitem.Item
+	Events   []ledger.Entry
 }
 
 // projectPage renders the single repo-overview page. It fetches stories,
@@ -118,10 +160,31 @@ func fetchList[T any](ctx context.Context, name string, req any) ([]T, error) {
 	return out, nil
 }
 
+// fetchOne dispatches a get verb and unmarshals the JSON object into T.
+func fetchOne[T any](ctx context.Context, name string, req any) (T, error) {
+	var zero T
+	body, err := json.Marshal(req)
+	if err != nil {
+		return zero, err
+	}
+	resp, err := verb.Dispatch(ctx, name, body)
+	if err != nil {
+		return zero, err
+	}
+	var out T
+	if err := json.Unmarshal(resp, &out); err != nil {
+		return zero, err
+	}
+	return out, nil
+}
+
 func httpError(w http.ResponseWriter, err error) {
 	http.Error(w, err.Error(), http.StatusInternalServerError)
 }
 
-// pageTmpl is the single self-contained project page (inline CSS, no static
-// assets) so the binary stays dependency-light and the page travels with it.
-var pageTmpl = template.Must(template.New("page").Parse(pageHTML))
+// pageTmpl / detailTmpl are the self-contained pages (inline CSS, no static
+// assets) so the binary stays dependency-light and the pages travel with it.
+var (
+	pageTmpl   = template.Must(template.New("page").Parse(pageHTML))
+	detailTmpl = template.Must(template.New("detail").Funcs(detailFuncs).Parse(detailHTML))
+)

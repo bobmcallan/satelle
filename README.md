@@ -23,6 +23,11 @@ satelle status         # config, database, and store counts
 satelle serve          # local web project page (http://127.0.0.1:8787)
 ```
 
+While `serve` runs, the project page lists every story/task, and each links to a
+trackable detail URL — `http://127.0.0.1:8787/story/<id>` (or `/task/<id>`) —
+showing status, acceptance criteria, and the full ledger timeline. The server is
+local-only (the OSS tier ships no hosted URL).
+
 `init` is idempotent and writes a managed `.gitignore` block (the local
 `.satelle/satelle.db` stays out of git; the config and authored markdown are
 committed). It's also optional — a repo with no `.satelle/satelle.toml` runs
