@@ -1,17 +1,18 @@
-// Package web is satelle's local web server — a basic project page for one
-// repo, rendered entirely through verb.Dispatch. It is the satellites portal
-// stripped to the bone: a plain http.ServeMux, no auth/OAuth/SSE, reaching
-// data the SAME way the CLI does (CLI command / web handler → verb.Dispatch →
-// store). When multiple repos are connected later, the aggregate becomes the
-// workspace; the MVP ships single-repo first.
+// Package web is satelle's local web server — a project page for one repo,
+// rendered through verb.Dispatch (the same seam the CLI uses), no auth. It is
+// the satellites portal style brought to the local tier: tabbed panels, an SSE
+// realtime doorbell, inline expand/collapse, and filter chips — but stripped of
+// auth/OAuth/sessions. Static assets and templates are embedded so the binary
+// stays self-contained.
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"net/http"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
@@ -21,107 +22,90 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-// Build returns the root handler for the given bootstrap. The handler renders
-// the project page at "/" and answers GET /healthz; data flows through the
-// verb registry, which the bootstrap already wired.
-func Build(a *app.App) http.Handler {
+// Server is the local web server: an http.Handler plus the realtime hub.
+type Server struct {
+	Handler http.Handler
+	a       *app.App
+	hub     *hub
+}
+
+// New wires the server for the given bootstrap. It registers the verb-change
+// notifier so web-initiated mutations ring the doorbell instantly; cross-
+// process mutations (CLI edits) are picked up by StartRealtime's poller.
+func New(a *app.App) *Server {
+	h := newHub()
+	verb.SetChangeNotifier(h.publish)
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /static/", http.FileServerFS(staticFS))
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintln(w, "ok")
 	})
-	// Per-item detail pages — the URL you share to track one item's progress.
-	mux.HandleFunc("GET /story/{id}", itemDetail(a, "story"))
-	mux.HandleFunc("GET /task/{id}", itemDetail(a, "task"))
-	mux.HandleFunc("/", projectPage(a))
-	return mux
+	mux.HandleFunc("GET /events", h.serveEvents)
+
+	// Realtime panel fragments (rows only) — what the SSE refetch swaps in.
+	mux.HandleFunc("GET /fragment/stories", fragmentRows(a, "workitemRows", verb.TopicStories))
+	mux.HandleFunc("GET /fragment/tasks", fragmentRows(a, "workitemRows", verb.TopicTasks))
+	mux.HandleFunc("GET /fragment/docs", fragmentRows(a, "docsRows", verb.TopicDocs))
+
+	// Inline expand fragments + standalone detail pages (shared template).
+	mux.HandleFunc("GET /fragment/story/{id}", itemFragment("story"))
+	mux.HandleFunc("GET /fragment/task/{id}", itemFragment("task"))
+	mux.HandleFunc("GET /story/{id}", itemDetailPage("story"))
+	mux.HandleFunc("GET /task/{id}", itemDetailPage("task"))
+
+	mux.HandleFunc("GET /{$}", projectPage(a))
+	return &Server{Handler: mux, a: a, hub: h}
 }
 
-// itemDetail renders one story/task with its full fields and ledger timeline —
-// the trackable per-item URL. group is "story" or "task" (selects the get verb).
-func itemDetail(a *app.App, group string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		id := r.PathValue("id")
+// Build is the thin handler-only constructor used by tests (no poller).
+func Build(a *app.App) http.Handler { return New(a).Handler }
 
-		item, err := fetchOne[workitem.Item](ctx, group+"-get", map[string]any{"id": id})
-		if err != nil {
-			// An unknown id is a 404, not a 500.
-			http.Error(w, "not found: "+id, http.StatusNotFound)
-			return
-		}
-		// Ledger timeline for this item (newest first for display).
-		events, err := fetchList[ledger.Entry](ctx, "ledger-list", map[string]any{"story_id": id, "limit": 500})
-		if err != nil {
-			httpError(w, err)
-			return
-		}
-		for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
-			events[i], events[j] = events[j], events[i]
-		}
-
-		data := detailData{Group: group, RepoRoot: a.RepoRoot, Item: item, Events: events}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := detailTmpl.Execute(w, data); err != nil {
-			httpError(w, err)
-		}
+// StartRealtime runs the cross-process DB-change poller until ctx is cancelled.
+// The CLI and the server are separate processes sharing one sqlite file, so the
+// in-process notifier alone can't see CLI edits; the poller fingerprints each
+// panel and rings the doorbell when one changes. interval<=0 uses 1.5s.
+func (s *Server) StartRealtime(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = 1500 * time.Millisecond
 	}
+	go s.pollDB(ctx, interval)
 }
 
-type detailData struct {
-	Group    string
-	RepoRoot string
-	Item     workitem.Item
-	Events   []ledger.Entry
-}
-
-// projectPage renders the single repo-overview page. It fetches stories,
-// tasks, and indexed docs via verbs, so the page can never diverge from what
-// the CLI reports.
-func projectPage(a *app.App) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		ctx := r.Context()
-
-		stories, err := fetchList[workitem.Item](ctx, "story-list", nil)
+// pollDB publishes a topic whenever its store fingerprint changes.
+func (s *Server) pollDB(ctx context.Context, interval time.Duration) {
+	prev := map[string]string{}
+	check := func(topic string, fp func(context.Context) (string, error)) {
+		cur, err := fp(ctx)
 		if err != nil {
-			httpError(w, err)
 			return
 		}
-		tasks, err := fetchList[workitem.Item](ctx, "task-list", nil)
-		if err != nil {
-			httpError(w, err)
+		if old, seen := prev[topic]; seen && old != cur {
+			s.hub.publish(topic)
+		}
+		prev[topic] = cur
+	}
+	tick := func() {
+		check(verb.TopicStories, func(c context.Context) (string, error) {
+			return s.a.Store.Stories.Fingerprint(c, workitem.KindStory)
+		})
+		check(verb.TopicTasks, func(c context.Context) (string, error) {
+			return s.a.Store.Stories.Fingerprint(c, workitem.KindTask)
+		})
+		check(verb.TopicDocs, func(c context.Context) (string, error) {
+			return s.a.Store.DocIndex.Fingerprint(c)
+		})
+	}
+	tick() // seed fingerprints without firing
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
 			return
-		}
-		allDocs, err := fetchList[docindex.Doc](ctx, "doc-list", nil)
-		if err != nil {
-			httpError(w, err)
-			return
-		}
-
-		// Group docs by kind, preserving the canonical kind order.
-		byKind := map[string][]docindex.Doc{}
-		for _, d := range allDocs {
-			byKind[d.Kind] = append(byKind[d.Kind], d)
-		}
-		kinds := make([]kindGroup, 0, len(config.AuthoredKinds))
-		for _, k := range config.AuthoredKinds {
-			kinds = append(kinds, kindGroup{Kind: k, Docs: byKind[k]})
-		}
-
-		data := pageData{
-			RepoRoot: a.RepoRoot,
-			DBPath:   a.DBPath,
-			Stories:  stories,
-			Tasks:    tasks,
-			DocKinds: kinds,
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := pageTmpl.Execute(w, data); err != nil {
-			httpError(w, err)
+		case <-ticker.C:
+			tick()
 		}
 	}
 }
@@ -132,6 +116,7 @@ type pageData struct {
 	Stories  []workitem.Item
 	Tasks    []workitem.Item
 	DocKinds []kindGroup
+	DocCount int
 }
 
 type kindGroup struct {
@@ -139,15 +124,125 @@ type kindGroup struct {
 	Docs []docindex.Doc
 }
 
+// loadPanels fetches the three panels' data through the verbs.
+func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
+	stories, err := fetchList[workitem.Item](ctx, "story-list", nil)
+	if err != nil {
+		return pageData{}, err
+	}
+	tasks, err := fetchList[workitem.Item](ctx, "task-list", nil)
+	if err != nil {
+		return pageData{}, err
+	}
+	allDocs, err := fetchList[docindex.Doc](ctx, "doc-list", nil)
+	if err != nil {
+		return pageData{}, err
+	}
+	byKind := map[string][]docindex.Doc{}
+	for _, d := range allDocs {
+		byKind[d.Kind] = append(byKind[d.Kind], d)
+	}
+	kinds := make([]kindGroup, 0, len(config.AuthoredKinds))
+	for _, k := range config.AuthoredKinds {
+		kinds = append(kinds, kindGroup{Kind: k, Docs: byKind[k]})
+	}
+	return pageData{
+		RepoRoot: a.RepoRoot, DBPath: a.DBPath,
+		Stories: stories, Tasks: tasks, DocKinds: kinds, DocCount: len(allDocs),
+	}, nil
+}
+
+func projectPage(a *app.App) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		data, err := loadPanels(r.Context(), a)
+		if err != nil {
+			httpError(w, err)
+			return
+		}
+		render(w, "page", data)
+	}
+}
+
+// fragmentRows renders just one panel's rows — the realtime refetch target.
+func fragmentRows(a *app.App, tmplName, topic string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		data, err := loadPanels(r.Context(), a)
+		if err != nil {
+			httpError(w, err)
+			return
+		}
+		switch topic {
+		case verb.TopicStories:
+			render(w, tmplName, data.Stories)
+		case verb.TopicTasks:
+			render(w, tmplName, data.Tasks)
+		case verb.TopicDocs:
+			render(w, tmplName, data.DocKinds)
+		}
+	}
+}
+
+// detailData backs the inline expand fragment and the standalone detail page.
+type detailData struct {
+	Item   workitem.Item
+	Events []ledger.Entry
+}
+
+// loadDetail fetches one item + its (newest-first) ledger timeline via verbs.
+func loadDetail(ctx context.Context, group, id string) (detailData, error) {
+	item, err := fetchOne[workitem.Item](ctx, group+"-get", map[string]any{"id": id})
+	if err != nil {
+		return detailData{}, err
+	}
+	events, err := fetchList[ledger.Entry](ctx, "ledger-list", map[string]any{"story_id": id, "limit": 500})
+	if err != nil {
+		return detailData{}, err
+	}
+	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+		events[i], events[j] = events[j], events[i]
+	}
+	return detailData{Item: item, Events: events}, nil
+}
+
+func itemFragment(group string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		d, err := loadDetail(r.Context(), group, r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		render(w, "itemDetail", d)
+	}
+}
+
+func itemDetailPage(group string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		d, err := loadDetail(r.Context(), group, r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "not found: "+r.PathValue("id"), http.StatusNotFound)
+			return
+		}
+		render(w, "detailPage", d)
+	}
+}
+
+// render executes a named template to a buffer first so a template error
+// surfaces as a 500 instead of a half-written response.
+func render(w http.ResponseWriter, name string, data any) {
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {
+		httpError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = buf.WriteTo(w)
+}
+
 // fetchList dispatches a list verb and unmarshals the JSON array into []T.
 func fetchList[T any](ctx context.Context, name string, req any) ([]T, error) {
-	var body json.RawMessage
-	if req != nil {
-		b, err := json.Marshal(req)
-		if err != nil {
-			return nil, err
-		}
-		body = b
+	body, err := marshalReq(req)
+	if err != nil {
+		return nil, err
 	}
 	resp, err := verb.Dispatch(ctx, name, body)
 	if err != nil {
@@ -162,29 +257,26 @@ func fetchList[T any](ctx context.Context, name string, req any) ([]T, error) {
 
 // fetchOne dispatches a get verb and unmarshals the JSON object into T.
 func fetchOne[T any](ctx context.Context, name string, req any) (T, error) {
-	var zero T
-	body, err := json.Marshal(req)
+	var out T
+	body, err := marshalReq(req)
 	if err != nil {
-		return zero, err
+		return out, err
 	}
 	resp, err := verb.Dispatch(ctx, name, body)
 	if err != nil {
-		return zero, err
+		return out, err
 	}
-	var out T
-	if err := json.Unmarshal(resp, &out); err != nil {
-		return zero, err
+	err = json.Unmarshal(resp, &out)
+	return out, err
+}
+
+func marshalReq(req any) (json.RawMessage, error) {
+	if req == nil {
+		return nil, nil
 	}
-	return out, nil
+	return json.Marshal(req)
 }
 
 func httpError(w http.ResponseWriter, err error) {
 	http.Error(w, err.Error(), http.StatusInternalServerError)
 }
-
-// pageTmpl / detailTmpl are the self-contained pages (inline CSS, no static
-// assets) so the binary stays dependency-light and the pages travel with it.
-var (
-	pageTmpl   = template.Must(template.New("page").Parse(pageHTML))
-	detailTmpl = template.Must(template.New("detail").Funcs(detailFuncs).Parse(detailHTML))
-)

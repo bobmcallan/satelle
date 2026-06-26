@@ -56,7 +56,9 @@ Press Ctrl-C to stop.`,
 				}()
 			}
 
-			srv := &http.Server{Addr: listenAddr, Handler: web.Build(a)}
+			webSrv := web.New(a)
+			webSrv.StartRealtime(ctx, 0) // cross-process DB poller for CLI edits
+			srv := &http.Server{Addr: listenAddr, Handler: webSrv.Handler}
 			// Shut the server down when the context is cancelled (Ctrl-C).
 			go func() {
 				<-ctx.Done()

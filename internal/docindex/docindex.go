@@ -200,6 +200,21 @@ func (s *Store) Count(ctx context.Context, kind string) (int, error) {
 	return n, nil
 }
 
+// Fingerprint returns a cheap change-signal for the index — count plus the
+// latest indexed_at — so a poller can detect mutations without loading bodies.
+func (s *Store) Fingerprint(ctx context.Context) (string, error) {
+	var (
+		n   int
+		max string
+	)
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*), COALESCE(MAX(indexed_at), '') FROM authored_docs`).Scan(&n, &max)
+	if err != nil {
+		return "", fmt.Errorf("docindex: fingerprint: %w", err)
+	}
+	return fmt.Sprintf("%d:%s", n, max), nil
+}
+
 // Get returns one indexed doc by (kind, name), or ErrNotFound.
 func (s *Store) Get(ctx context.Context, kind, name string) (Doc, error) {
 	row := s.db.QueryRowContext(ctx,
