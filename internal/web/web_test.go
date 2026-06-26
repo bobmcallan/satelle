@@ -192,7 +192,7 @@ func TestStoryDetailPageShowsTimeline(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("detail status = %d", code)
 	}
-	for _, want := range []string{"Trackable story", it.ID, "Acceptance criteria", "it renders", "Timeline", "story_created", "← project"} {
+	for _, want := range []string{"Trackable story", it.ID, "Acceptance criteria", "it renders", "Timeline", "story_created", `class="crumbs"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("detail page missing %q", want)
 		}

@@ -73,6 +73,14 @@ V6 rebrand + open-core restructure of `satellites`. Porting *from*
   headless Chrome (chromedp): tab switching, inline expand-on-click, live filter chips, and
   realtime cross-process updates are all asserted in a real browser (no eyeballing). Runs
   LOCALLY via `make integration` (needs Chrome) — deliberately not in GitHub CI.
+- ✅ **Live & navigable UI (round 2)** — an expanded story's progress + ledger timeline now
+  update in **realtime** (open expansions are preserved and refreshed across the SSE swap;
+  standalone detail pages live-update too; triggers debounced). Breadcrumb navigation
+  (project / kind / id). One shared filter component across stories/tasks/documents with
+  `order:<field>` client-side sort and `tag:`/`tags:` aliases. Tags render **under the
+  title** (not a column), like satellites. A `TestBrowserUserPath` e2e replicates a real
+  session — open → expand → agent progresses the story from the CLI → assert the open
+  timeline grows live → breadcrumb to the live detail page and back → order-sort.
 - ✅ **Release pipeline done** — `.version` is canonical (release tag `v<satelle.version>`);
   `scripts/install.sh` is the `curl … | sh` bootstrap (resolves latest release,
   sha256-verifies, installs to `~/.local/bin`); `.github/workflows/test.yml` runs

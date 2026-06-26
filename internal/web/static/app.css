@@ -10,6 +10,18 @@ body {
 a { color: var(--accent); }
 .wrap { max-width: 1040px; margin: 0 auto; padding: 28px 24px 64px; }
 
+/* Breadcrumbs */
+.crumbs { font-size: 12.5px; color: var(--muted); margin-bottom: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.crumbs a { color: var(--accent); text-decoration: none; }
+.crumbs a:hover { text-decoration: underline; }
+.crumbs .sep { margin: 0 7px; color: #cbd5e1; }
+.crumbs .cur { color: var(--ink); }
+
+/* Title cell + tags-under-title */
+.wi-title { }
+.wi-tags { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
+.tagchip { font-size: 10.5px; color: var(--muted); background: var(--chip); border-radius: 4px; padding: 0 6px; line-height: 1.6; }
+
 /* Header */
 header.app { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 18px; }
 header.app h1 { margin: 0; font-size: 22px; letter-spacing: -0.01em; }

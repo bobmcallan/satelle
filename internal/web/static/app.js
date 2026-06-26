@@ -1,16 +1,33 @@
 // app.js — satelle project page interactivity (vanilla, no framework).
 //
-//  * Tabs        — show one panel at a time; active tab in the URL hash.
-//  * Realtime    — /events SSE doorbell; on a topic trigger, refetch that
-//                  panel's rows fragment and swap it in, then re-apply filters.
-//  * Expand      — click a row to fetch + reveal its detail + ledger timeline
-//                  inline; click again to collapse.
-//  * Filter      — a query box parsed into removable chips (status:/priority:/
-//                  category:/tags: + free text); status:open hides terminal rows.
+//  * Tabs       — show one panel at a time; active tab in the URL hash + crumb.
+//  * Filter     — one shared component over every panel: a query box parsed into
+//                 removable chips (status:/priority:/category:/tags:|tag: + free
+//                 text) plus order:<field> client-side sort; status:open hides
+//                 terminal rows by default.
+//  * Expand     — click a row to fetch + reveal its detail + ledger timeline
+//                 inline; preserved (and refreshed) across realtime refreshes.
+//  * Realtime   — /events SSE doorbell; on a topic trigger (debounced) refetch
+//                 that panel's rows AND any open expansion, so a story's progress
+//                 and timeline update live. Detail pages live-refresh too.
 (function () {
   "use strict";
   var TERMINAL = { done: 1, cancelled: 1 };
   var PANELS = ["stories", "tasks", "docs"];
+  var FILTER_KEYS = { status: 1, priority: 1, category: 1, tags: 1, tag: 1 };
+  var ORDER_FIELDS = { updated: 1, created: 1, priority: 1, status: 1, title: 1, id: 1 };
+  var PRIORITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
+
+  function topicForKind(kind) { return kind === "task" ? "tasks" : "stories"; }
+
+  function debounce(fn, ms) {
+    var t = null;
+    return function () {
+      var args = arguments, self = this;
+      if (t) clearTimeout(t);
+      t = setTimeout(function () { t = null; fn.apply(self, args); }, ms);
+    };
+  }
 
   // ---- tabs ----------------------------------------------------------------
   function showTab(name) {
@@ -21,45 +38,44 @@
     document.querySelectorAll(".panel").forEach(function (p) {
       p.classList.toggle("active", p.dataset.topic === name);
     });
+    var crumb = document.getElementById("crumb-tab");
+    if (crumb) crumb.textContent = name;
   }
   function initTabs() {
     document.querySelectorAll(".tab").forEach(function (t) {
       t.addEventListener("click", function () {
-        var name = t.dataset.panel;
-        history.replaceState(null, "", "#" + name);
-        showTab(name);
+        history.replaceState(null, "", "#" + t.dataset.panel);
+        showTab(t.dataset.panel);
       });
     });
     showTab((location.hash || "#stories").slice(1));
   }
 
   // ---- filtering -----------------------------------------------------------
-  var FILTER_KEYS = { status: 1, priority: 1, category: 1, tags: 1 };
-
   function parseQuery(q) {
-    var tokens = [], free = [];
+    var filters = [], free = [], order = "";
     (q || "").trim().split(/\s+/).forEach(function (part) {
       if (!part) return;
       var i = part.indexOf(":");
-      if (i > 0 && FILTER_KEYS[part.slice(0, i).toLowerCase()]) {
-        tokens.push({ key: part.slice(0, i).toLowerCase(), vals: part.slice(i + 1).toLowerCase().split(",").filter(Boolean) });
-      } else {
-        free.push(part.toLowerCase());
+      var key = i > 0 ? part.slice(0, i).toLowerCase() : "";
+      if (key === "order") { order = part.slice(i + 1).toLowerCase(); return; }
+      if (i > 0 && FILTER_KEYS[key]) {
+        var k = key === "tag" ? "tags" : key;
+        filters.push({ key: k, vals: part.slice(i + 1).toLowerCase().split(",").filter(Boolean) });
+        return;
       }
+      free.push(part.toLowerCase());
     });
-    return { tokens: tokens, free: free };
+    return { filters: filters, order: order, free: free };
   }
 
   function rowMatches(row, parsed) {
     var hasStatus = false;
-    for (var k = 0; k < parsed.tokens.length; k++) {
-      var t = parsed.tokens[k];
+    for (var k = 0; k < parsed.filters.length; k++) {
+      var t = parsed.filters[k];
       if (t.key === "status") {
         hasStatus = true;
-        if (t.vals.indexOf("all") === -1) {
-          var st = row.dataset.status || "";
-          if (t.vals.indexOf(st) === -1) return false;
-        }
+        if (t.vals.indexOf("all") === -1 && t.vals.indexOf(row.dataset.status || "") === -1) return false;
       } else if (t.key === "tags") {
         var tags = (row.dataset.tags || "").toLowerCase().split(",");
         if (!t.vals.some(function (v) { return tags.indexOf(v) !== -1; })) return false;
@@ -68,10 +84,34 @@
         if (t.vals.indexOf("all") === -1 && t.vals.indexOf(val) === -1) return false;
       }
     }
-    // Default: hide terminal rows unless a status token was given.
-    if (!hasStatus && TERMINAL[row.dataset.status]) return false;
+    if (!hasStatus && TERMINAL[row.dataset.status]) return false; // default status:open
     var search = (row.dataset.search || "").toLowerCase();
     return parsed.free.every(function (term) { return search.indexOf(term) !== -1; });
+  }
+
+  function sortKey(row, field) {
+    if (field === "priority") {
+      var p = row.dataset.priority || "";
+      return String(p in PRIORITY_RANK ? PRIORITY_RANK[p] : 9);
+    }
+    if (field === "title") return row.dataset.title || "";
+    if (field === "id") return row.dataset.expandUrl || "";
+    return row.dataset[field] || ""; // updated, created, status
+  }
+
+  function applyOrder(panel, order) {
+    if (!order || !ORDER_FIELDS[order]) return;
+    var holder = panel.querySelector("[data-rows]");
+    if (!holder || holder.tagName !== "TBODY") return; // tables only
+    var rows = [].slice.call(holder.querySelectorAll("tr.row"));
+    var desc = order === "updated" || order === "created"; // newest first
+    rows.sort(function (a, b) {
+      var av = sortKey(a, order), bv = sortKey(b, order);
+      if (av < bv) return desc ? 1 : -1;
+      if (av > bv) return desc ? -1 : 1;
+      return 0;
+    });
+    rows.forEach(function (r) { holder.appendChild(r); });
   }
 
   function renderChips(panel, parsed, input) {
@@ -84,43 +124,38 @@
       c.appendChild(document.createTextNode(label));
       var b = document.createElement("button");
       b.type = "button"; b.textContent = "×"; b.setAttribute("aria-label", "remove " + label);
-      b.addEventListener("click", function () { onRemove(); });
+      b.addEventListener("click", onRemove);
       c.appendChild(b);
       box.appendChild(c);
     }
-    parsed.tokens.forEach(function (t) {
+    parsed.filters.forEach(function (t) {
       chip(t.key + ":" + t.vals.join(","), false, function () {
-        input.value = rebuild(parsed, t, null);
-        applyFilter(panel);
+        input.value = rebuild(parsed, t, null, false); applyFilter(panel);
       });
     });
+    if (parsed.order) {
+      chip("order:" + parsed.order, false, function () {
+        input.value = rebuild(parsed, null, null, true); applyFilter(panel);
+      });
+    }
     parsed.free.forEach(function (term) {
       chip(term, false, function () {
-        input.value = rebuild(parsed, null, term);
-        applyFilter(panel);
+        input.value = rebuild(parsed, null, term, false); applyFilter(panel);
       });
     });
-    var hasStatus = parsed.tokens.some(function (t) { return t.key === "status"; });
-    var isDocs = panel.dataset.topic === "docs";
-    if (!hasStatus && !isDocs) {
+    var hasStatus = parsed.filters.some(function (t) { return t.key === "status"; });
+    if (!hasStatus && panel.dataset.topic !== "docs") {
       chip("status:open", true, function () {
-        input.value = (input.value.trim() + " status:all").trim();
-        applyFilter(panel);
+        input.value = (input.value.trim() + " status:all").trim(); applyFilter(panel);
       });
     }
   }
 
-  // rebuild the query string from parsed tokens, dropping one token or free term.
-  function rebuild(parsed, dropTok, dropFree) {
+  function rebuild(parsed, dropFilter, dropFree, dropOrder) {
     var parts = [];
-    parsed.tokens.forEach(function (t) {
-      if (t === dropTok) return;
-      parts.push(t.key + ":" + t.vals.join(","));
-    });
-    parsed.free.forEach(function (f) {
-      if (f === dropFree) return;
-      parts.push(f);
-    });
+    parsed.filters.forEach(function (t) { if (t !== dropFilter) parts.push(t.key + ":" + t.vals.join(",")); });
+    if (parsed.order && !dropOrder) parts.push("order:" + parsed.order);
+    parsed.free.forEach(function (f) { if (f !== dropFree) parts.push(f); });
     return parts.join(" ");
   }
 
@@ -131,6 +166,7 @@
     panel.querySelectorAll("[data-rows] .row, [data-rows] .doc").forEach(function (row) {
       row.style.display = rowMatches(row, parsed) ? "" : "none";
     });
+    applyOrder(panel, parsed.order);
     if (input) renderChips(panel, parsed, input);
   }
 
@@ -144,21 +180,15 @@
 
   // ---- expand / collapse ---------------------------------------------------
   function collapseAll(panel) {
-    panel.querySelectorAll("tr.row[aria-expanded='true']").forEach(function (row) {
-      row.setAttribute("aria-expanded", "false");
-      var next = row.nextElementSibling;
-      if (next && next.classList.contains("expansion")) next.remove();
-    });
+    panel.querySelectorAll("tr.row[aria-expanded='true']").forEach(collapseRow);
   }
-
-  function toggleRow(row) {
-    var open = row.getAttribute("aria-expanded") === "true";
+  function collapseRow(row) {
+    row.setAttribute("aria-expanded", "false");
     var next = row.nextElementSibling;
-    if (open) {
-      row.setAttribute("aria-expanded", "false");
-      if (next && next.classList.contains("expansion")) next.remove();
-      return;
-    }
+    if (next && next.classList.contains("expansion")) next.remove();
+  }
+  function expandRow(row) {
+    if (row.getAttribute("aria-expanded") === "true") return;
     row.setAttribute("aria-expanded", "true");
     var exp = document.createElement("tr");
     exp.className = "expansion";
@@ -172,7 +202,9 @@
       .then(function (html) { td.innerHTML = html; })
       .catch(function () { td.innerHTML = '<div class="expbody">failed to load</div>'; });
   }
-
+  function toggleRow(row) {
+    if (row.getAttribute("aria-expanded") === "true") collapseRow(row); else expandRow(row);
+  }
   function initExpand() {
     document.querySelectorAll(".panel").forEach(function (panel) {
       panel.addEventListener("click", function (e) {
@@ -194,16 +226,21 @@
     if (!panel) return;
     var holder = panel.querySelector("[data-rows]");
     if (!holder) return;
+    // Capture which rows are open so the swap doesn't collapse what the user
+    // is reading; re-expand them afterwards (refreshing their live timeline).
+    var openUrls = [].slice.call(panel.querySelectorAll('tr.row[aria-expanded="true"]'))
+      .map(function (r) { return r.dataset.expandUrl; });
     fetch("/fragment/" + topic)
       .then(function (r) { return r.text(); })
       .then(function (html) {
         holder.innerHTML = html;
         applyFilter(panel);
+        openUrls.forEach(function (url) {
+          var row = holder.querySelector('tr.row[data-expand-url="' + url + '"]');
+          if (row && row.style.display !== "none") expandRow(row);
+        });
         var tab = document.querySelector('.tab[data-panel="' + topic + '"] .n');
-        if (tab) {
-          var n = panel.querySelectorAll("[data-rows] .row, [data-rows] .doc").length;
-          tab.textContent = n;
-        }
+        if (tab) tab.textContent = panel.querySelectorAll("[data-rows] .row").length;
       })
       .catch(function () {});
   }
@@ -212,8 +249,28 @@
     if (!window.EventSource) return;
     var dot = document.querySelector(".live-dot");
     var src = new EventSource("/events");
+    var refetch = {}; // per-topic debounced refetch
+    PANELS.forEach(function (tp) { refetch[tp] = debounce(function () { refetchPanel(tp); }, 250); });
     src.addEventListener("open", function () { if (dot) dot.classList.add("on"); });
-    src.addEventListener("trigger", function (ev) { refetchPanel(ev.data); });
+    src.addEventListener("trigger", function (ev) { if (refetch[ev.data]) refetch[ev.data](); });
+    src.onerror = function () { if (dot) dot.classList.remove("on"); };
+  }
+
+  // ---- detail page live ----------------------------------------------------
+  function initDetailLive() {
+    var el = document.getElementById("detail-live");
+    if (!el || !window.EventSource) return;
+    var kind = el.dataset.kind, id = el.dataset.id, topic = topicForKind(kind);
+    var dot = document.querySelector(".live-dot");
+    var src = new EventSource("/events");
+    var refresh = debounce(function () {
+      fetch("/fragment/" + kind + "/" + id)
+        .then(function (r) { return r.text(); })
+        .then(function (html) { el.innerHTML = html; })
+        .catch(function () {});
+    }, 250);
+    src.addEventListener("open", function () { if (dot) dot.classList.add("on"); });
+    src.addEventListener("trigger", function (ev) { if (ev.data === topic) refresh(); });
     src.onerror = function () { if (dot) dot.classList.remove("on"); };
   }
 
@@ -222,5 +279,6 @@
     initExpand();
     initFilters();
     initLive();
+    initDetailLive();
   });
 })();

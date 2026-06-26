@@ -3,5 +3,5 @@
 # timestamp are baked into the binary via -ldflags at build time. .version is a
 # build-time source file, NEVER deployed in release artifacts.
 
-satelle.version: 0.0.3
-satelle.build: 2026-06-27-05-42-00
+satelle.version: 0.0.4
+satelle.build: 2026-06-27-05-58-25
