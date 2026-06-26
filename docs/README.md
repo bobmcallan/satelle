@@ -62,9 +62,16 @@ V6 rebrand + open-core restructure of `satellites`. Porting *from*
   `.satelle/workflows/satelle-baseline-workflow.md` (open→in_progress→done, mirrors the
   satellites baseline, indexed by the monitor); black-box integration tests in `tests/`
   drive the built binary end-to-end (`go test -tags integration ./tests/...`).
+- ✅ **Background service done (`satelle service`)** — install/uninstall/status manage a
+  systemd **user** unit (Linux/WSL) running `satelle serve`, with linger so it survives
+  logout + WSL boot. Machine-wide settings (port/addr/repo) live in `~/.satelle/config.toml`
+  (the first use of the global `~/.satelle/` home). Binds `0.0.0.0` so a Windows browser
+  reaches it from WSL; native Windows (no systemd) gets Task Scheduler guidance. `make install`
+  places the binary on PATH. Verified live here — service active+enabled, reachable on
+  localhost and the WSL IP.
 - ⬜ **Next: build order step 6** — workspace aggregation: `~/.satelle/` registry +
-  multi-repo web view. (Step 7: define the sync backend interface, shipped disabled.)
-  Both are tracked as stories in the local db.
+  multi-repo web view (the global `~/.satelle/` home now exists). (Step 7: define the sync
+  backend interface, shipped disabled.) Both are tracked as stories in the local db.
 
 ## Start here (build order step 1)
 
