@@ -9,10 +9,20 @@ no cgo.
 > V6 rebrand and open-core restructure of `satellites`. See [`docs/`](./docs)
 > for the product spec and port architecture.
 
+## Install
+
+```sh
+curl -fsSL https://github.com/bobmcallan/satelle/releases/latest/download/install.sh | sh
+```
+
+Downloads the latest release binary for your platform, sha256-verifies it, and
+installs to `~/.local/bin` (override with `SATELLE_INSTALL_DIR`). Or build from
+source: `make install`.
+
 ## Quickstart
 
 ```sh
-go build -o satelle ./cmd/satelle
+go build -o satelle ./cmd/satelle   # or: make install
 
 cd your-repo
 satelle init           # scaffold .satelle/ (config, database, authored dirs)
@@ -78,9 +88,15 @@ See [`docs/spec.md`](./docs/spec.md) and [`docs/architecture.md`](./docs/archite
 ## Development
 
 ```sh
-go test ./...                        # unit + package tests
-go test -tags integration ./tests/...  # black-box: builds the binary, drives it end-to-end
+go test ./...           # unit + package tests
+make integration        # black-box: builds satelle once, drives it end-to-end via SATELLE_BIN
 ```
+
+The integration suite (in `tests/`, behind the `integration` build tag) runs
+against a real binary. `make integration` builds it once and passes it through
+`SATELLE_BIN`; point that at any binary to test it directly:
+`cd tests && SATELLE_BIN=$(command -v satelle) go test -tags integration .`.
+Releases are cut by `.github/workflows/release.yml` when `.version` is bumped.
 
 satelle dogfoods itself — this repo is set up with `satelle init`, and its
 remaining build phases are tracked as stories in the local database.
