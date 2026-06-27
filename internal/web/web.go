@@ -21,6 +21,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/help"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -57,10 +58,12 @@ func New(a *app.App) *Server {
 	// Inline expand fragments + standalone detail pages (shared template).
 	mux.HandleFunc("GET /fragment/story/{id}", itemFragment("story"))
 	mux.HandleFunc("GET /fragment/task/{id}", itemFragment("task"))
+	mux.HandleFunc("GET /fragment/workflow/{name}", workflowFragment())
 	mux.HandleFunc("GET /story/{id}", itemDetailPage("story"))
 	mux.HandleFunc("GET /task/{id}", itemDetailPage("task"))
 
 	mux.HandleFunc("GET /workspace", workspacePage(a))
+	mux.HandleFunc("GET /help", helpPage())
 	mux.HandleFunc("GET /{$}", projectPage(a))
 	return &Server{Handler: mux, a: a, hub: h}
 }
@@ -78,6 +81,25 @@ func workspacePage(a *app.App) http.HandlerFunc {
 			}
 		}
 		render(w, "workspace", workspace.Load(r.Context(), roots))
+	}
+}
+
+// helpTopic is one rendered help guide for the web /help page.
+type helpTopic struct {
+	Name  string
+	Title string
+	Body  string
+}
+
+// helpPage renders the embedded help topics (the same internal/help source the
+// CLI `satelle help` reads) as a read-only guide page.
+func helpPage() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		topics := make([]helpTopic, 0)
+		for _, t := range help.List() {
+			topics = append(topics, helpTopic{Name: t.Name, Title: t.Title, Body: t.Body})
+		}
+		render(w, "help", topics)
 	}
 }
 
@@ -139,6 +161,7 @@ type pageData struct {
 	Tasks       []rowVM
 	DocKinds    []kindGroup
 	DocCount    int
+	Workflows   []workflowRowVM
 	Version     string
 	FooterName  string
 	FooterEmail string
@@ -290,7 +313,8 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 		RepoRoot: a.RepoRoot, DBPath: a.DBPath,
 		Stories: attachLights(ctx, stories), Tasks: attachLights(ctx, tasks),
 		DocKinds: kinds, DocCount: len(allDocs),
-		Version: buildinfo.Resolve().Version, FooterName: name, FooterEmail: email,
+		Workflows: workflowRows(byKind["workflows"]),
+		Version:   buildinfo.Resolve().Version, FooterName: name, FooterEmail: email,
 	}, nil
 }
 
