@@ -121,7 +121,6 @@ const templatesSrc = `
   </section>
 
   <footer class="site-footer">
-    {{if .FooterName}}<span class="footer-name">{{.FooterName}}</span>{{end}}
     {{if .FooterEmail}}<a class="footer-email" href="mailto:{{.FooterEmail}}">{{.FooterEmail}}</a>{{end}}
     <span class="footer-version">satelle {{.Version}}</span>
   </footer>
