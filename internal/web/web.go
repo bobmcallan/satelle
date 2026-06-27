@@ -188,12 +188,16 @@ type lightPayload struct {
 	Skill string `json:"skill"`
 }
 
-// buildLights folds a story's ledger rows into the progress strip: each distinct
-// workflow edge gets a stable 1-based index; a gated transition is a pass
-// (green), an ungated one a fired checkpoint (slate), a review_reject a fail
-// (red). A non-terminal story trails a pulsing current light. Mirrors the
-// satellites review-lights algorithm over satelle's ledger kinds.
-func buildLights(entries []ledger.Entry, status string) []reviewLight {
+// buildLights folds a story's ledger rows into the progress strip. A light's
+// NUMBER is the workflow STEP it represents — stepOf maps a transition's target
+// state to its 1-based position on the workflow's gated spine — so the lights
+// read (1) → (2) → (3) as the steps, and a step attempted more than once (a
+// reject then a later accept of the same edge) renders lights that SHARE the step
+// number (e.g. 1 red then 1 green) rather than incrementing. A gated transition
+// is a pass (green), an ungated one a fired checkpoint (slate), a review_reject a
+// fail (red). A non-terminal story trails a pulsing current light at the next
+// step. Off-spine targets (e.g. blocked) fall back to ledger-appearance order.
+func buildLights(entries []ledger.Entry, status string, stepOf func(state string) int) []reviewLight {
 	es := make([]ledger.Entry, len(entries)) // oldest-first
 	copy(es, entries)
 	for i, j := 0, len(es)-1; i < j; i, j = i+1, j-1 {
@@ -211,49 +215,110 @@ func buildLights(entries []ledger.Entry, status string) []reviewLight {
 			accepted[lp.From+"→"+lp.To] = true
 		}
 	}
+	// Off-spine fallback: an edge whose target has no gated step still gets a
+	// stable number by order of first appearance, after the highest real step.
 	idx := map[string]int{}
-	next := 0
-	idxFor := func(edge string) int {
+	extra := 0
+	stepFor := func(to, edge string) int {
+		if s := stepOf(to); s > 0 {
+			return s
+		}
 		if _, ok := idx[edge]; !ok {
-			next++
-			idx[edge] = next
+			extra++
+			idx[edge] = extra
 		}
 		return idx[edge]
 	}
 	var lights []reviewLight
+	maxStep := 0
 	for _, e := range es {
 		lp := parse(e.Payload)
 		edge := lp.From + " → " + lp.To
 		switch e.Kind {
 		case ledger.KindReviewReject:
-			i := idxFor(edge)
+			i := stepFor(lp.To, edge)
 			lights = append(lights, reviewLight{i, "fail", fmt.Sprintf("%d. %s — rejected", i, edge)})
+			if i > maxStep {
+				maxStep = i
+			}
 		case ledger.KindStatusTransition:
-			i := idxFor(edge)
+			i := stepFor(lp.To, edge)
 			state := "fired"
 			if accepted[lp.From+"→"+lp.To] {
 				state = "pass"
 			}
 			lights = append(lights, reviewLight{i, state, fmt.Sprintf("%d. %s — %s", i, edge, state)})
+			if i > maxStep {
+				maxStep = i
+			}
 		}
 	}
-	// Trail a pulsing "current" light only once the item has actually entered the
-	// workflow (≥1 recorded transition). A freshly-created item still at its
-	// initial state (open/backlog) has not started a step — the initial state is
-	// not step 1 — so it shows no progress at all rather than a phantom current ①.
-	if next > 0 && status != "done" && status != "cancelled" {
-		lights = append(lights, reviewLight{next + 1, "current", "current stage"})
+	// Trail a pulsing "current" light at the NEXT step only once the item has
+	// actually entered the workflow (≥1 recorded transition). A freshly-created
+	// item still at its initial state has started no step — no phantom current ①.
+	if len(lights) > 0 && status != "done" && status != "cancelled" {
+		cur := maxStep + 1
+		if s := stepOf(status); s > 0 {
+			cur = s + 1
+		}
+		lights = append(lights, reviewLight{cur, "current", "current stage"})
 	}
 	return lights
 }
 
+// gatedDepths maps each state to its 1-based step on the workflow's gated spine —
+// the depth from the start state along gated edges (those carrying a reviewer
+// skill). The start state has depth 0; off-spine states (reached only by ungated
+// detours like blocked/cancelled) are absent. Longest-path relaxation handles the
+// linear gated chain without tripping on detour cycles.
+func gatedDepths(spec wfSpec) map[string]int {
+	var gated []wfTransition
+	isTo := map[string]bool{}
+	for _, t := range spec.Transitions {
+		if t.Skill != "" {
+			gated = append(gated, t)
+			isTo[t.To] = true
+		}
+	}
+	depth := map[string]int{}
+	for _, t := range gated {
+		if !isTo[t.From] {
+			depth[t.From] = 0 // a gated 'from' with no gated incoming edge is a start
+		}
+	}
+	for i := 0; i < len(gated); i++ {
+		for _, t := range gated {
+			if d, ok := depth[t.From]; ok {
+				if cur, ok2 := depth[t.To]; !ok2 || d+1 > cur {
+					depth[t.To] = d + 1
+				}
+			}
+		}
+	}
+	return depth
+}
+
+// storyStepOf builds the step resolver from the workflow with the deepest gated
+// spine among the indexed workflows (the active project lifecycle), so light
+// numbers track the authored workflow steps without hardcoding a workflow name.
+func storyStepOf(docs []docindex.Doc) func(string) int {
+	var best map[string]int
+	for _, d := range docs {
+		m := gatedDepths(parseWorkflow(d.Body))
+		if len(m) > len(best) {
+			best = m
+		}
+	}
+	return func(s string) int { return best[s] }
+}
+
 // attachLights wraps items with their progress lights, reading each item's
 // ledger via the same verb the detail view uses.
-func attachLights(ctx context.Context, items []workitem.Item) []rowVM {
+func attachLights(ctx context.Context, items []workitem.Item, stepOf func(string) int) []rowVM {
 	out := make([]rowVM, len(items))
 	for i, it := range items {
 		entries, _ := fetchList[ledger.Entry](ctx, "ledger-list", map[string]any{"story_id": it.ID, "limit": 500})
-		out[i] = rowVM{Item: it, Lights: buildLights(entries, it.Status)}
+		out[i] = rowVM{Item: it, Lights: buildLights(entries, it.Status, stepOf)}
 	}
 	return out
 }
@@ -317,10 +382,11 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 			backlog++
 		}
 	}
+	stepOf := storyStepOf(byKind["workflows"])
 	return pageData{
 		RepoRoot: a.RepoRoot, DBPath: a.DBPath,
-		Stories: attachLights(ctx, stories), BacklogCount: backlog,
-		Tasks:    attachLights(ctx, tasks),
+		Stories: attachLights(ctx, stories, stepOf), BacklogCount: backlog,
+		Tasks:    attachLights(ctx, tasks, stepOf),
 		DocKinds: kinds, DocCount: len(allDocs),
 		Workflows: workflowRows(byKind["workflows"]),
 		Version:   buildinfo.Resolve().Version, FooterEmail: email,
