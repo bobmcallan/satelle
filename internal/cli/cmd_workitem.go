@@ -114,5 +114,53 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 	set.Flags().StringSlice("tags", nil, "replace tags (comma-separated)")
 
 	parent.AddCommand(create, get, list, set)
+	if group == "story" {
+		parent.AddCommand(storyDocCommands()...)
+	}
 	return parent
+}
+
+// storyDocCommands builds the per-story document attachment surface: attach a
+// typed markdown doc, list a story's docs, and read one. They dispatch to the
+// story-doc-* verbs, which store each doc as portable markdown beside the story.
+func storyDocCommands() []*cobra.Command {
+	var aName, aType, aBody string
+	attach := &cobra.Command{
+		Use:         "attach <id>",
+		Short:       "Attach a typed markdown document to a story",
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := map[string]any{"story_id": args[0]}
+			putIf(req, "name", aName)
+			putIf(req, "type", aType)
+			putIf(req, "body", aBody)
+			return dispatch(cmd, "story-doc-attach", req)
+		},
+	}
+	attach.Flags().StringVar(&aName, "name", "", "document name (required)")
+	attach.Flags().StringVar(&aType, "type", "", "document type (plan|change|output|…)")
+	attach.Flags().StringVar(&aBody, "body", "", "document markdown body")
+	_ = attach.MarkFlagRequired("name")
+
+	docs := &cobra.Command{
+		Use:         "docs <id>",
+		Short:       "List a story's attached documents",
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return dispatch(cmd, "story-doc-list", map[string]any{"story_id": args[0]})
+		},
+	}
+
+	doc := &cobra.Command{
+		Use:         "doc <id> <name>",
+		Short:       "Read one of a story's attached documents",
+		Args:        cobra.ExactArgs(2),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return dispatch(cmd, "story-doc-get", map[string]any{"story_id": args[0], "name": args[1]})
+		},
+	}
+	return []*cobra.Command{attach, docs, doc}
 }
