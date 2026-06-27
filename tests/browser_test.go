@@ -176,6 +176,16 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		if !waitCond(t, ctx, `!!document.querySelector('#panel-docs .doc') && getComputedStyle(document.querySelector('#panel-docs')).display === 'block'`, 5*time.Second) {
 			t.Error("documents panel/card not visible after clicking its tab")
 		}
+		// Workflow tab lists the (embedded) baseline workflow and expands to its
+		// state/transition diagram — read-only.
+		clickJS(t, ctx, `.tab[data-panel="workflow"]`)
+		if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow tr.row[data-expand-url^="/fragment/workflow/"]') && getComputedStyle(document.querySelector('#panel-workflow')).display === 'block'`, 5*time.Second) {
+			t.Error("workflow panel/row not visible after clicking its tab")
+		}
+		clickJS(t, ctx, `#panel-workflow tr.row[data-expand-url^="/fragment/workflow/"]`)
+		if !waitCond(t, ctx, `(function(){var e=document.querySelector('#panel-workflow tr.expansion .expbody');return !!e && e.textContent.includes('Transitions') && !!document.querySelector('#panel-workflow .wf-node');})()`, 5*time.Second) {
+			t.Error("workflow diagram (states/transitions) did not appear on row click")
+		}
 		// Back to stories for the remaining checks.
 		clickJS(t, ctx, `.tab[data-panel="stories"]`)
 		if !waitCond(t, ctx, `getComputedStyle(document.querySelector('#panel-stories')).display === 'block'`, 5*time.Second) {
