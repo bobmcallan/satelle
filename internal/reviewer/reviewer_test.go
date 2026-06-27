@@ -2,6 +2,7 @@ package reviewer
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -37,6 +38,10 @@ type fakeDocs struct {
 	// extraWorkflows are returned by List in addition to the baseline — used to
 	// exercise category→workflow selection via applies_to.
 	extraWorkflows []docindex.Doc
+	// extraSkills are returned by List("skills") and resolved by Get("skills",…) —
+	// used to exercise the always-on system reviewer layer (tagged reviewer:always)
+	// and per-skill reviewer bodies.
+	extraSkills []docindex.Doc
 }
 
 func (d fakeDocs) Get(_ context.Context, kind, name string) (docindex.Doc, error) {
@@ -46,6 +51,11 @@ func (d fakeDocs) Get(_ context.Context, kind, name string) (docindex.Doc, error
 			return docindex.Doc{Kind: kind, Name: name, Body: d.workflow}, nil
 		}
 	case "skills":
+		for _, s := range d.extraSkills {
+			if s.Name == name {
+				return s, nil
+			}
+		}
 		if d.skillFound {
 			return docindex.Doc{Kind: kind, Name: name, Body: d.skillBody}, nil
 		}
@@ -55,11 +65,14 @@ func (d fakeDocs) Get(_ context.Context, kind, name string) (docindex.Doc, error
 }
 
 func (d fakeDocs) List(_ context.Context, kind string) ([]docindex.Doc, error) {
-	if kind != "workflows" {
-		return nil, nil
+	switch kind {
+	case "workflows":
+		out := []docindex.Doc{{Kind: "workflows", Name: baselineWorkflow, Body: d.workflow}}
+		return append(out, d.extraWorkflows...), nil
+	case "skills":
+		return d.extraSkills, nil
 	}
-	out := []docindex.Doc{{Kind: "workflows", Name: baselineWorkflow, Body: d.workflow}}
-	return append(out, d.extraWorkflows...), nil
+	return nil, nil
 }
 
 func gater(t *testing.T, out string, docs fakeDocs) (*Gater, *fakeRunner) {
@@ -145,15 +158,119 @@ func TestBadDecisionErrors(t *testing.T) {
 	}
 }
 
-func TestReviewerSkillFor(t *testing.T) {
-	if got, declared := reviewerSkillFor(testWorkflow, "in_progress", "done"); got != "satelle-story-done-review" || !declared {
-		t.Errorf("in_progress→done = (%q, %v), want (done-review, true)", got, declared)
+func TestReviewerSkillsFor(t *testing.T) {
+	if got, declared := reviewerSkillsFor(testWorkflow, "in_progress", "done"); len(got) != 1 || got[0] != "satelle-story-done-review" || !declared {
+		t.Errorf("in_progress→done = (%v, %v), want ([done-review], true)", got, declared)
 	}
-	if got, declared := reviewerSkillFor(testWorkflow, "backlog", "cancelled"); got != "" || !declared {
-		t.Errorf("declared ungated edge = (%q, %v), want (empty, true)", got, declared)
+	if got, declared := reviewerSkillsFor(testWorkflow, "backlog", "cancelled"); len(got) != 0 || !declared {
+		t.Errorf("declared ungated edge = (%v, %v), want (nil, true)", got, declared)
 	}
-	if got, declared := reviewerSkillFor(testWorkflow, "backlog", "nowhere"); got != "" || declared {
-		t.Errorf("undeclared edge = (%q, %v), want (empty, false)", got, declared)
+	if got, declared := reviewerSkillsFor(testWorkflow, "backlog", "nowhere"); len(got) != 0 || declared {
+		t.Errorf("undeclared edge = (%v, %v), want (nil, false)", got, declared)
+	}
+	// An ordered list: reviewer_skills takes precedence and preserves order.
+	multi := "transitions:\n  - {from: deployed, to: done, reviewer_skills: [first-review, second-review]}\n"
+	if got, declared := reviewerSkillsFor(multi, "deployed", "done"); len(got) != 2 || got[0] != "first-review" || got[1] != "second-review" || !declared {
+		t.Errorf("reviewer_skills list = (%v, %v), want ([first-review second-review], true)", got, declared)
+	}
+}
+
+// mapRunner returns a verdict keyed by the review_skill in the reviewer payload
+// and records the order skills were invoked — so a test can drive distinct
+// per-reviewer verdicts and assert run order / short-circuit.
+type mapRunner struct {
+	verdict map[string]string
+	seen    []string
+}
+
+func (m *mapRunner) Name() string { return "map" }
+func (m *mapRunner) Run(_ context.Context, req agentcli.Request) ([]byte, error) {
+	var p struct {
+		ReviewSkill string `json:"review_skill"`
+	}
+	_ = json.Unmarshal([]byte(req.Payload), &p)
+	m.seen = append(m.seen, p.ReviewSkill)
+	out := m.verdict[p.ReviewSkill]
+	if out == "" {
+		out = `{"decision":"accept"}`
+	}
+	return []byte(out), nil
+}
+
+func TestGateMultipleReviewersAllAccept(t *testing.T) {
+	wf := "transitions:\n  - {from: in_progress, to: done, reviewer_skills: [rev-a, rev-b, rev-c]}\n"
+	mr := &mapRunner{}
+	g := New(mr, fakeDocs{workflow: wf, skillBody: "rubric", skillFound: true}, "/repo", "")
+	dec, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec.Gated || !dec.Accept {
+		t.Fatalf("want gated accept, got %+v", dec)
+	}
+	if len(dec.Reviewers) != 3 {
+		t.Fatalf("want 3 reviewer verdicts, got %d: %+v", len(dec.Reviewers), dec.Reviewers)
+	}
+	for i, want := range []string{"rev-a", "rev-b", "rev-c"} {
+		rv := dec.Reviewers[i]
+		if rv.Skill != want || rv.Order != i || !rv.Accept || rv.System {
+			t.Errorf("reviewer[%d] = %+v, want skill %s order %d accept non-system", i, rv, want, i)
+		}
+	}
+	if len(mr.seen) != 3 {
+		t.Errorf("all reviewers should run when all accept, ran %v", mr.seen)
+	}
+}
+
+func TestGateMultipleReviewersRejectAttributedAndShortCircuits(t *testing.T) {
+	wf := "transitions:\n  - {from: in_progress, to: done, reviewer_skills: [rev-a, rev-b, rev-c]}\n"
+	mr := &mapRunner{verdict: map[string]string{"rev-b": `{"decision":"reject","notes":"b says no"}`}}
+	g := New(mr, fakeDocs{workflow: wf, skillBody: "rubric", skillFound: true}, "/repo", "")
+	dec, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec.Accept {
+		t.Fatalf("a reject must block the edge, got %+v", dec)
+	}
+	if dec.Skill != "rev-b" || dec.Notes != "b says no" {
+		t.Errorf("reject should be attributed to rev-b, got skill=%q notes=%q", dec.Skill, dec.Notes)
+	}
+	if len(dec.Reviewers) != 2 || !dec.Reviewers[0].Accept || dec.Reviewers[1].Accept {
+		t.Fatalf("want [accept(rev-a), reject(rev-b)], got %+v", dec.Reviewers)
+	}
+	if len(mr.seen) != 2 || mr.seen[1] != "rev-b" {
+		t.Errorf("rev-c must not run after rev-b rejected; ran %v", mr.seen)
+	}
+}
+
+func TestGateSystemReviewerRunsLast(t *testing.T) {
+	// An always-on system reviewer (tagged reviewer:always) runs AFTER the
+	// workflow-named reviewer — last in order, flagged System.
+	sysSkill := "---\nname: satelle-estimate-actual\nkind: skill\ntags: [kind:skill, reviewer:always]\n---\n# always-on\nrecord estimate/actual\n"
+	mr := &mapRunner{}
+	docs := fakeDocs{
+		workflow:   testWorkflow, // in_progress→done is gated by satelle-story-done-review
+		skillBody:  "rubric",
+		skillFound: true,
+		extraSkills: []docindex.Doc{
+			{Kind: "skills", Name: "satelle-estimate-actual", Body: sysSkill},
+		},
+	}
+	g := New(mr, docs, "/repo", "")
+	dec, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dec.Reviewers) != 2 {
+		t.Fatalf("want 2 reviewers (named + system), got %+v", dec.Reviewers)
+	}
+	first, last := dec.Reviewers[0], dec.Reviewers[1]
+	if first.Skill != "satelle-story-done-review" || first.System {
+		t.Errorf("first reviewer should be the workflow-named one, got %+v", first)
+	}
+	if last.Skill != "satelle-estimate-actual" || !last.System || last.Order != 1 {
+		t.Errorf("system reviewer should run last and be flagged System, got %+v", last)
 	}
 }
 

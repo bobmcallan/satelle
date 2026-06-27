@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -47,6 +48,13 @@ const baselineWorkflow = "satelle-baseline-workflow"
 // defaultCheckTimeout bounds a functional check (deploy/integration can be slow,
 // but a hung command must not block a transition forever).
 const defaultCheckTimeout = 20 * time.Minute
+
+// alwaysReviewerTag marks a skill as an always-on SYSTEM reviewer: the gater
+// discovers every skill whose frontmatter tags carry it and runs them on a
+// gated transition AFTER the workflow-named reviewers (the system layer always
+// runs last). Which skills carry the tag is authored substrate, not a binary
+// branch — so the system layer is configured, not compiled.
+const alwaysReviewerTag = "reviewer:always"
 
 // Gater judges status transitions against the active workflow's reviewer skills.
 // A skill is either an LLM reviewer (its body rides as an isolated agent's system
@@ -91,11 +99,16 @@ type transitionPayload struct {
 	ReviewSkill string        `json:"review_skill"`
 }
 
-// Gate judges item's transition to toStatus. It returns Gated=false (enact
-// directly) when no reviewer skill governs the edge; otherwise it runs the
-// isolated reviewer and returns its accept/reject verdict.
+// Gate judges item's transition to toStatus against every reviewer governing the
+// edge — the workflow-named reviewers (one, or an ordered list) followed by the
+// always-on system reviewer layer. Each reviewer runs in order and ALL must
+// accept; the first reject short-circuits and blocks the edge. It returns the
+// per-reviewer verdicts in run order plus a top-level verdict mirroring the
+// deciding reviewer (the first reject, or the last when all accept), so
+// single-reviewer callers keep their contract. Gated=false (enact directly)
+// when no reviewer governs the edge.
 func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (verb.GateDecision, error) {
-	skill, declared, err := g.reviewerSkill(ctx, item.Category, item.Status, toStatus)
+	skills, declared, err := g.reviewerSkills(ctx, item.Category, item.Status, toStatus)
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
@@ -106,14 +119,49 @@ func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (
 		return verb.GateDecision{}, fmt.Errorf(
 			"transition %s→%s is not a declared edge in the active workflow", item.Status, toStatus)
 	}
-	if skill == "" {
-		return verb.GateDecision{Gated: false}, nil // declared but ungated edge — advisory
+	// Append the always-on system reviewers AFTER the workflow-named ones — they
+	// always run last. Skills already named on the edge are not duplicated.
+	sys, err := g.systemReviewers(ctx, skills)
+	if err != nil {
+		return verb.GateDecision{}, err
 	}
+	sysStart := len(skills)
+	ordered := append(append([]string{}, skills...), sys...)
+
+	var result verb.GateDecision
+	for i, skill := range ordered {
+		if skill == "" {
+			continue
+		}
+		dec, rerr := g.runReviewer(ctx, item, toStatus, skill)
+		if rerr != nil {
+			return dec, rerr
+		}
+		if !dec.Gated {
+			continue // declared but this reviewer's rubric is absent — advisory, skip it
+		}
+		result.Gated = true
+		result.Skill = dec.Skill
+		result.Accept = dec.Accept
+		result.Notes = dec.Notes
+		result.Reviewers = append(result.Reviewers, verb.ReviewerVerdict{
+			Skill: skill, Order: i, Accept: dec.Accept, Notes: dec.Notes, System: i >= sysStart,
+		})
+		if !dec.Accept {
+			return result, nil // a reject blocks the edge — do not run later reviewers
+		}
+	}
+	return result, nil
+}
+
+// runReviewer runs ONE reviewer skill over item's transition and returns its
+// verdict. A skill carrying a functional check runs deterministically; otherwise
+// the skill body rides as an isolated LLM reviewer's system prompt. Gated=false
+// when the skill's rubric is not installed (advisory — keeps fresh repos working).
+func (g *Gater) runReviewer(ctx context.Context, item workitem.Item, toStatus, skill string) (verb.GateDecision, error) {
 	body, err := g.skillBody(ctx, skill)
 	if err != nil {
 		if errors.Is(err, docindex.ErrNotFound) {
-			// Workflow names a reviewer skill whose rubric is not installed yet —
-			// treat as advisory until the rubric ships (keeps fresh repos working).
 			return verb.GateDecision{Gated: false}, nil
 		}
 		return verb.GateDecision{}, err
@@ -128,7 +176,7 @@ func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (
 		return g.runCheck(ctx, skill, command), nil
 	}
 	if g.runner == nil {
-		return verb.GateDecision{Gated: true}, fmt.Errorf(
+		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
 			"reviewer: transition %s→%s is gated by %q but no agent runner is configured", item.Status, toStatus, skill)
 	}
 	payload, err := json.Marshal(transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: skill})
@@ -143,15 +191,38 @@ func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (
 		Dir:          g.repoRoot,
 	})
 	if err != nil {
-		return verb.GateDecision{Gated: true}, fmt.Errorf("reviewer: %s gate failed: %w", skill, err)
+		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf("reviewer: %s gate failed: %w", skill, err)
 	}
 	dec, err := parseDecision(out)
 	if err != nil {
-		return verb.GateDecision{Gated: true}, fmt.Errorf("reviewer: %s: %w", skill, err)
+		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf("reviewer: %s: %w", skill, err)
 	}
 	dec.Gated = true
 	dec.Skill = skill
 	return dec, nil
+}
+
+// systemReviewers returns the names of the always-on SYSTEM reviewers (skills
+// whose frontmatter tags carry alwaysReviewerTag), sorted for a deterministic
+// order, excluding any already named on the edge. A List failure degrades to no
+// system layer — it is additive and must never break the workflow's own gating.
+func (g *Gater) systemReviewers(ctx context.Context, exclude []string) ([]string, error) {
+	docs, err := g.docs.List(ctx, "skills")
+	if err != nil {
+		return nil, nil
+	}
+	var out []string
+	for _, d := range docs {
+		if !containsStr(frontmatterList(d.Body, "tags"), alwaysReviewerTag) {
+			continue
+		}
+		if containsStr(exclude, d.Name) {
+			continue
+		}
+		out = append(out, d.Name)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // structureSkill is the required-structure reviewer that judges a draft work
@@ -298,21 +369,21 @@ func (g *Gater) ReviewStructure(ctx context.Context, reviewerName, kind, name, b
 	return dec, nil
 }
 
-// reviewerSkill resolves the reviewer_skill governing the (from→to) edge from
-// the workflow active for the item's category, and reports whether the edge is a
-// DECLARED transition of that workflow. An absent workflow means no governance at
-// all — every edge is allowed and ungated (declared=true), so fresh repos and the
-// baseline keep working.
-func (g *Gater) reviewerSkill(ctx context.Context, category, from, to string) (skill string, declared bool, err error) {
+// reviewerSkills resolves the ordered reviewer skills governing the (from→to)
+// edge from the workflow active for the item's category, and reports whether the
+// edge is a DECLARED transition of that workflow. An absent workflow means no
+// governance at all — every edge is allowed and ungated (declared=true, no
+// skills), so fresh repos and the baseline keep working.
+func (g *Gater) reviewerSkills(ctx context.Context, category, from, to string) (skills []string, declared bool, err error) {
 	doc, err := g.activeWorkflow(ctx, category)
 	if errors.Is(err, docindex.ErrNotFound) {
-		return "", true, nil
+		return nil, true, nil
 	}
 	if err != nil {
-		return "", false, err
+		return nil, false, err
 	}
-	skill, declared = reviewerSkillFor(doc.Body, from, to)
-	return skill, declared, nil
+	skills, declared = reviewerSkillsFor(doc.Body, from, to)
+	return skills, declared, nil
 }
 
 // activeWorkflow returns the workflow doc governing an item of the given
@@ -540,27 +611,36 @@ func (g *Gater) skillBody(ctx context.Context, name string) (string, error) {
 	return doc.Body, nil
 }
 
-// reviewerSkillFor scans a workflow body's transition lines for the (from→to)
-// edge. It returns the edge's reviewer_skill (empty when the edge is declared but
-// ungated) and whether the edge is DECLARED at all. The two cases are distinct: a
-// declared ungated edge is advisory (enact directly), while an UNDECLARED edge is
-// not a legal move in this workflow and must be refused — otherwise a story could
-// skip a gate that rejected it by jumping to a later state across an edge the
-// workflow never declared. The transition format is the fixed inline-map shape the
-// substrate uses:
+// reviewerSkillsFor scans a workflow body's transition lines for the (from→to)
+// edge. It returns the edge's ordered reviewer skills (nil when the edge is
+// declared but ungated) and whether the edge is DECLARED at all. The two cases
+// are distinct: a declared ungated edge is advisory (enact directly), while an
+// UNDECLARED edge is not a legal move in this workflow and must be refused —
+// otherwise a story could skip a gate that rejected it by jumping to a later
+// state across an edge the workflow never declared. The transition format is the
+// inline-map shape the substrate uses, with either a single reviewer or a list:
 //
-//   - {from: backlog, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
-func reviewerSkillFor(body, from, to string) (skill string, declared bool) {
+//	- {from: backlog, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
+//	- {from: deployed, to: done, reviewer_skills: [satelle-story-done-review, satelle-estimate-actual]}
+//
+// reviewer_skills (the ordered list) takes precedence over reviewer_skill.
+func reviewerSkillsFor(body, from, to string) (skills []string, declared bool) {
 	for _, line := range strings.Split(body, "\n") {
 		l := strings.TrimSpace(line)
 		if !strings.HasPrefix(l, "- {") || !strings.Contains(l, "from:") || !strings.Contains(l, "to:") {
 			continue
 		}
 		if inlineField(l, "from") == from && inlineField(l, "to") == to {
-			return inlineField(l, "reviewer_skill"), true
+			if list := inlineListField(l, "reviewer_skills"); len(list) > 0 {
+				return list, true
+			}
+			if s := inlineField(l, "reviewer_skill"); s != "" {
+				return []string{s}, true
+			}
+			return nil, true
 		}
 	}
-	return "", false
+	return nil, false
 }
 
 // inlineField extracts key's value from an inline-map line, trimming quotes. The
@@ -575,6 +655,27 @@ func inlineField(line, key string) string {
 		rest = rest[:end]
 	}
 	return strings.Trim(strings.TrimSpace(rest), `"`)
+}
+
+// inlineListField extracts a bracketed list value (`key: [a, b, c]`) from an
+// inline-map line, trimming whitespace and quotes per element. Returns nil when
+// the key is absent or carries no bracketed list — so a single-valued field
+// falls through to inlineField.
+func inlineListField(line, key string) []string {
+	i := strings.Index(line, key+":")
+	if i < 0 {
+		return nil
+	}
+	rest := line[i+len(key)+1:]
+	open := strings.Index(rest, "[")
+	if open < 0 {
+		return nil
+	}
+	closeAt := strings.Index(rest[open:], "]")
+	if closeAt < 0 {
+		return nil
+	}
+	return splitTrimList(rest[open+1 : open+closeAt])
 }
 
 // rawDecision is the reviewer's JSON contract: {decision: accept|reject, notes}.
