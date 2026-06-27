@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS work_items (
     kind                TEXT NOT NULL,
     title               TEXT NOT NULL DEFAULT '',
     body                TEXT NOT NULL DEFAULT '',
-    status              TEXT NOT NULL DEFAULT 'open',
+    status              TEXT NOT NULL DEFAULT 'backlog',
     priority            TEXT NOT NULL DEFAULT '',
     category            TEXT NOT NULL DEFAULT '',
     parent_id           TEXT NOT NULL DEFAULT '',
@@ -33,10 +33,18 @@ CREATE TABLE IF NOT EXISTS work_items (
 CREATE INDEX IF NOT EXISTS idx_work_items_kind   ON work_items(kind, status);
 CREATE INDEX IF NOT EXISTS idx_work_items_parent ON work_items(parent_id);`
 
-// Migrate creates the work_items table on db. Idempotent.
+// Migrate creates the work_items table on db and brings existing rows to the
+// current conventions. Idempotent.
 func Migrate(db *sql.DB) error {
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("workitem: migrate: %w", err)
+	}
+	// 'open' was the former initial status; the canonical start state is now
+	// 'backlog' (see satelle-workflow-review). Rename any pre-existing 'open' rows
+	// so the backlog count, status, and progress lights read correctly. Idempotent
+	// — after the rename there are no 'open' rows left to touch.
+	if _, err := db.Exec(`UPDATE work_items SET status = 'backlog' WHERE status = 'open'`); err != nil {
+		return fmt.Errorf("workitem: migrate open→backlog: %w", err)
 	}
 	return nil
 }
@@ -75,7 +83,7 @@ func (s *Store) Create(ctx context.Context, in CreateInput, now time.Time) (Item
 	now = now.UTC()
 	status := strings.TrimSpace(in.Status)
 	if status == "" {
-		status = StatusOpen
+		status = StatusBacklog
 	}
 	it := Item{
 		ID:                 in.Kind.newID(),
@@ -130,7 +138,7 @@ func (s *Store) Upsert(ctx context.Context, it Item, now time.Time) (Item, error
 		it.UpdatedAt = now
 	}
 	if strings.TrimSpace(it.Status) == "" {
-		it.Status = StatusOpen
+		it.Status = StatusBacklog
 	}
 	it.Tags = nonNilTags(it.Tags)
 	tagsJSON, _ := json.Marshal(it.Tags)

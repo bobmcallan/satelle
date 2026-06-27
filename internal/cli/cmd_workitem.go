@@ -41,7 +41,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 	}
 	create.Flags().StringVar(&cTitle, "title", "", "title (required)")
 	create.Flags().StringVar(&cBody, "body", "", "body / description")
-	create.Flags().StringVar(&cStatus, "status", "", "status (default open)")
+	create.Flags().StringVar(&cStatus, "status", "", "status (default backlog)")
 	create.Flags().StringVar(&cPriority, "priority", "", "priority")
 	create.Flags().StringVar(&cCategory, "category", "", "category")
 	create.Flags().StringVar(&cParent, "parent", "", "parent item id")

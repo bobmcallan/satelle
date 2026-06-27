@@ -102,8 +102,8 @@ func TestBacklogCountRendered(t *testing.T) {
 		}
 	}
 	// 3 stories total; 2 in the open backlog, 1 in_progress.
-	mk("backlog one", workitem.StatusOpen)
-	mk("backlog two", workitem.StatusOpen)
+	mk("backlog one", workitem.StatusBacklog)
+	mk("backlog two", workitem.StatusBacklog)
 	mk("working", workitem.StatusInProgress)
 
 	code, body := get(t, srv.URL+"/")

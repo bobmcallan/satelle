@@ -106,17 +106,23 @@ func validateChanged(cmd *cobra.Command, a *app.App, changed []docindex.DocRef) 
 // docTag is the dedup key tagging a system story to the doc it tracks.
 func docTag(ch docindex.DocRef) string { return "doc:" + ch.Kind + "/" + ch.Name }
 
-// fileSystemStory creates a type:system story for a non-conforming doc, unless an
-// OPEN story already tracks it (same doc tag). Returns the story id, whether it
-// was newly filed, and any error. Created directly via the store, so the
-// auto-filed story does not itself re-enter the create gate.
+// fileSystemStory creates a type:system story for a non-conforming doc, unless a
+// still-open (non-terminal) story already tracks it (same doc tag). Returns the
+// story id, whether it was newly filed, and any error. Created directly via the
+// store, so the auto-filed story does not itself re-enter the create gate.
 func fileSystemStory(ctx context.Context, a *app.App, ch docindex.DocRef, notes string) (string, bool, error) {
 	tag := docTag(ch)
-	existing, err := a.Store.Stories.List(ctx, workitem.ListFilter{Kind: workitem.KindStory, Status: "open"})
+	existing, err := a.Store.Stories.List(ctx, workitem.ListFilter{Kind: workitem.KindStory})
 	if err != nil {
 		return "", false, err
 	}
 	for _, it := range existing {
+		// Dedup against any NON-TERMINAL tracking story (it now rests at backlog,
+		// or has moved further along) — a done/cancelled one should not suppress a
+		// fresh story for a doc that is still non-conforming.
+		if it.Status == workitem.StatusDone || it.Status == "cancelled" {
+			continue
+		}
 		for _, t := range it.Tags {
 			if t == tag {
 				return it.ID, false, nil // already tracked — no duplicate

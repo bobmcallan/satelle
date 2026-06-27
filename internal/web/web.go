@@ -447,7 +447,7 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 	email := footerIdentity(a.RepoRoot)
 	backlog := 0
 	for _, s := range stories {
-		if s.Status == workitem.StatusOpen {
+		if s.Status == workitem.StatusBacklog {
 			backlog++
 		}
 	}

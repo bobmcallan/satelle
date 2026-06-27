@@ -4,7 +4,7 @@ scope: project
 kind: workflow
 tags: [kind:workflow]
 applies_to: ["*"]
-description: This repo's project-scope workflow and its ACTIVE lifecycle — open → planned → in_progress → reviewed → integrated → deployed → done, with a blocked detour and a cancelled exit. The path to done is gated by isolated reviewers: a configuration-over-code plan check on open→planned, the intent check on planned→begin-work, a functional integration check (all tests pass), a functional deploy + health check, and the acceptance review on close. done stays terminal (see satelle-done-is-last). A project workflow takes precedence over the embedded system default satelle-baseline-workflow; no repo workflow is system-scoped.
+description: This repo's project-scope workflow and its ACTIVE lifecycle — backlog → planned → in_progress → reviewed → integrated → deployed → done, with a blocked detour and a cancelled exit. The path to done is gated by isolated reviewers: a configuration-over-code plan check on backlog→planned, the intent check on planned→begin-work, a functional integration check (all tests pass), a functional deploy + health check, and the acceptance review on close. done stays terminal (see satelle-done-is-last). A project workflow takes precedence over the embedded system default satelle-baseline-workflow; no repo workflow is system-scoped.
 ---
 
 # satelle workflow (project) — gated to done
@@ -15,7 +15,7 @@ description: This repo's project-scope workflow and its ACTIVE lifecycle — ope
 > workflow is never `scope: system` — system scope is reserved for the embedded
 > canonical defaults. See the `satelle-repo-agnostic` principle.
 
-A story or task moves **open → planned → in_progress → reviewed → integrated → deployed → done**, may
+A story or task moves **backlog → planned → in_progress → reviewed → integrated → deployed → done**, may
 detour through **blocked**, and may exit early to **cancelled**. Every edge on the
 path to `done` is **gated** by an isolated reviewer; the executor cannot self-enact
 a gated edge — a reject pushes back with notes. `done` is always the terminal
@@ -24,7 +24,7 @@ state — the integration and deploy gates come *before* it (see the
 
 ## Workflow
 
-- **open → planned** — judge the intended implementation; **gated** by
+- **backlog → planned** — judge the intended implementation; **gated** by
   `satelle-plan-config-over-code-review`, which accepts only a plan that lands
   process/gates/opinions as authored substrate rather than baking them into the
   binary (see the `satelle-configuration-over-code` principle).
@@ -49,7 +49,7 @@ state — the integration and deploy gates come *before* it (see the
   the CLI and the web UI**.
 - **deployed → done** — close the item; **gated** by `satelle-story-done-review`
   (the acceptance criteria must be satisfied). `done` is terminal.
-- **open/planned/in_progress/integrated/deployed → cancelled** — abandon (record why).
+- **backlog/planned/in_progress/integrated/deployed → cancelled** — abandon (record why).
 
 The closing path is deliberate and fully gated: `in_progress → (tech-lead code
 review) → reviewed → (integration tests pass) → integrated → (deploy + health
@@ -57,7 +57,7 @@ check pass) → deployed → (reviewer accepts the acceptance criteria) → done
 
 ```yaml
 states:
-  - open
+  - backlog
   - planned
   - {name: in_progress, actor: executor}
   - blocked
@@ -67,7 +67,7 @@ states:
   - done
   - cancelled
 transitions:
-  - {from: open, to: planned, reviewer_skill: "satelle-plan-config-over-code-review"}
+  - {from: backlog, to: planned, reviewer_skill: "satelle-plan-config-over-code-review"}
   - {from: planned, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
   - {from: in_progress, to: blocked}
   - {from: blocked, to: in_progress}
@@ -75,7 +75,7 @@ transitions:
   - {from: reviewed, to: integrated, reviewer_skill: "satelle-story-integration-review"}
   - {from: integrated, to: deployed, reviewer_skill: "satelle-story-deploy-review"}
   - {from: deployed, to: done, reviewer_skill: "satelle-story-done-review"}
-  - {from: open, to: cancelled}
+  - {from: backlog, to: cancelled}
   - {from: planned, to: cancelled}
   - {from: in_progress, to: cancelled}
   - {from: reviewed, to: cancelled}
@@ -85,7 +85,7 @@ transitions:
 
 ## Environment
 
-Drives a work item open → planned → in_progress → reviewed → integrated → deployed → done. The path to
+Drives a work item backlog → planned → in_progress → reviewed → integrated → deployed → done. The path to
 done is enforced by gates (a reject blocks the move); the guardrails below are the
 intent the reviewers read.
 
