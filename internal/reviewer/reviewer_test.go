@@ -33,6 +33,9 @@ type fakeDocs struct {
 	workflow   string
 	skillBody  string
 	skillFound bool
+	// extraWorkflows are returned by List in addition to the baseline — used to
+	// exercise category→workflow selection via applies_to.
+	extraWorkflows []docindex.Doc
 }
 
 func (d fakeDocs) Get(_ context.Context, kind, name string) (docindex.Doc, error) {
@@ -48,6 +51,14 @@ func (d fakeDocs) Get(_ context.Context, kind, name string) (docindex.Doc, error
 		return docindex.Doc{}, docindex.ErrNotFound
 	}
 	return docindex.Doc{}, docindex.ErrNotFound
+}
+
+func (d fakeDocs) List(_ context.Context, kind string) ([]docindex.Doc, error) {
+	if kind != "workflows" {
+		return nil, nil
+	}
+	out := []docindex.Doc{{Kind: "workflows", Name: baselineWorkflow, Body: d.workflow}}
+	return append(out, d.extraWorkflows...), nil
 }
 
 func gater(t *testing.T, out string, docs fakeDocs) (*Gater, *fakeRunner) {
@@ -263,5 +274,62 @@ func TestParseDecisionLenient(t *testing.T) {
 		if dec.Accept != c.accept || dec.Notes != c.notes {
 			t.Errorf("parseDecision(%q) = {accept:%v notes:%q}, want {accept:%v notes:%q}", c.in, dec.Accept, dec.Notes, c.accept, c.notes)
 		}
+	}
+}
+
+// webWorkflow is a category-specific workflow (applies_to: ["web"]) whose
+// in_progress→done edge names a different reviewer than the baseline.
+const webWorkflow = `---
+name: satelle-web-workflow
+applies_to: ["web"]
+---
+transitions:
+  - {from: in_progress, to: done, reviewer_skill: "satelle-web-done-review"}
+`
+
+func TestActiveWorkflowSelectByCategory(t *testing.T) {
+	docs := fakeDocs{
+		workflow:   testWorkflow, // baseline, applies_to absent → wildcard fallback via Get
+		skillBody:  "rubric body",
+		skillFound: true,
+		extraWorkflows: []docindex.Doc{
+			{Kind: "workflows", Name: "satelle-web-workflow", Body: webWorkflow},
+		},
+	}
+	cases := []struct {
+		name     string
+		category string
+		want     string
+	}{
+		{"specific category match wins", "web", "satelle-web-done-review"},
+		{"no match falls back to baseline", "infra", "satelle-story-done-review"},
+		{"empty category uses baseline", "", "satelle-story-done-review"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g, _ := gater(t, `{"decision":"accept","notes":""}`, docs)
+			dec, err := g.Gate(context.Background(),
+				workitem.Item{ID: "sty_1", Status: "in_progress", Category: tc.category}, "done")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if dec.Skill != tc.want {
+				t.Errorf("category %q → skill %q, want %q", tc.category, dec.Skill, tc.want)
+			}
+		})
+	}
+}
+
+func TestFrontmatterListForms(t *testing.T) {
+	inline := frontmatterList("---\napplies_to: [\"*\", web]\n---\nx", "applies_to")
+	if len(inline) != 2 || inline[0] != "*" || inline[1] != "web" {
+		t.Fatalf("inline: %v", inline)
+	}
+	block := frontmatterList("---\nname: w\napplies_to:\n  - web\n  - infra\nother: y\n---\nx", "applies_to")
+	if len(block) != 2 || block[1] != "infra" {
+		t.Fatalf("block: %v", block)
+	}
+	if frontmatterList("no frontmatter", "applies_to") != nil {
+		t.Fatalf("want nil without frontmatter")
 	}
 }

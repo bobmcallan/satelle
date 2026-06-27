@@ -1,0 +1,81 @@
+package cli
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/bobmcallan/satelle/internal/docindex"
+)
+
+func doc(name, body string) docindex.Doc {
+	return docindex.Doc{Kind: "principles", Name: name, Body: body}
+}
+
+const alwaysFM = "---\nname: c\ntags: [kind:principle, principles:always]\n---\n# Body\nresident text\n"
+const plainFM = "---\nname: p\ntags: [kind:principle]\n---\n# Other\nnot resident\n"
+
+func TestFrontmatterTags_inlineAndBlock(t *testing.T) {
+	inline := frontmatterTags("---\ntags: [a, principles:always, c]\n---\nx")
+	if len(inline) != 3 || inline[1] != "principles:always" {
+		t.Fatalf("inline parse: %v", inline)
+	}
+	block := frontmatterTags("---\nname: x\ntags:\n  - a\n  - principles:always\nother: y\n---\nbody")
+	if len(block) != 2 || block[1] != "principles:always" {
+		t.Fatalf("block parse: %v", block)
+	}
+	if frontmatterTags("no frontmatter here") != nil {
+		t.Fatalf("expected nil tags for no frontmatter")
+	}
+}
+
+func TestSelectAlwaysDocs_filtersAndSorts(t *testing.T) {
+	got := selectAlwaysDocs([]docindex.Doc{
+		doc("zeta", alwaysFM),
+		doc("plain", plainFM),
+		doc("alpha", alwaysFM),
+	})
+	if len(got) != 2 {
+		t.Fatalf("want 2 always-docs, got %d", len(got))
+	}
+	if got[0].Name != "alpha" || got[1].Name != "zeta" {
+		t.Fatalf("want name-sorted [alpha zeta], got [%s %s]", got[0].Name, got[1].Name)
+	}
+}
+
+func TestRenderAlwaysContent_bodyStrippedPlusInstruction(t *testing.T) {
+	content, truncated := renderAlwaysContent([]docindex.Doc{doc("c", alwaysFM)}, alwaysContextCeiling)
+	if truncated {
+		t.Fatalf("unexpected truncation")
+	}
+	if strings.Contains(content, "principles:always") {
+		t.Fatalf("frontmatter leaked into injected content:\n%s", content)
+	}
+	if !strings.Contains(content, "resident text") {
+		t.Fatalf("body missing from content:\n%s", content)
+	}
+	if !strings.Contains(content, alwaysIndexInstruction) {
+		t.Fatalf("standing index instruction missing")
+	}
+}
+
+func TestRenderAlwaysContent_emptySetStillTeachesIndex(t *testing.T) {
+	content, _ := renderAlwaysContent(nil, alwaysContextCeiling)
+	if strings.Contains(content, "Always-resident") {
+		t.Fatalf("no header expected with empty set:\n%s", content)
+	}
+	if !strings.Contains(content, alwaysIndexInstruction) {
+		t.Fatalf("instruction must always be present")
+	}
+}
+
+func TestRenderAlwaysContent_ceilingTruncates(t *testing.T) {
+	big := "---\ntags: [principles:always]\n---\n" + strings.Repeat("x", 200)
+	docs := []docindex.Doc{doc("a", big), doc("b", big), doc("c", big)}
+	content, truncated := renderAlwaysContent(docs, 250) // fits one, not three
+	if !truncated {
+		t.Fatalf("expected truncation under a tight ceiling")
+	}
+	if strings.Count(content, "### ") > 1 {
+		t.Fatalf("ceiling not enforced — too many docs injected:\n%s", content)
+	}
+}
