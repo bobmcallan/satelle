@@ -377,6 +377,16 @@ func TestBrowserUserPath(t *testing.T) {
 		if !waitCond(t, ctx, `!!document.querySelector('#detail-live') && !!document.querySelector('.crumbs')`, 8*time.Second) {
 			t.Fatal("did not land on the detail page with a breadcrumb")
 		}
+		// The standalone detail page hides its own "Open story →" self-link — it is
+		// present on the expanded project-page card (clicked just above) but redundant
+		// here.
+		var hasSelfLink bool
+		if err := chromedp.Run(ctx, chromedp.Evaluate(`!!document.querySelector('#detail-live a.open-story')`, &hasSelfLink)); err != nil {
+			t.Fatal(err)
+		}
+		if hasSelfLink {
+			t.Error("standalone detail page should not render its own Open story self-link")
+		}
 		beforeLi := evalInt(t, ctx, `document.querySelectorAll('#detail-live .timeline li').length`)
 		// Mutate the story from ANOTHER process — a priority change records a ledger
 		// row without depending on a particular workflow's edges — and the open

@@ -523,10 +523,14 @@ func fragmentRows(a *app.App, tmplName, topic string) http.HandlerFunc {
 }
 
 // detailData backs the inline expand fragment and the standalone detail page.
+// Standalone is true only on the standalone /story/<id> page, where the
+// "Open story →" self-link is redundant and hidden; the expanded project-page
+// card (the fragment) keeps it.
 type detailData struct {
-	Item   workitem.Item
-	Events []ledger.Entry
-	TopBar topBar
+	Item       workitem.Item
+	Events     []ledger.Entry
+	TopBar     topBar
+	Standalone bool
 }
 
 // loadDetail fetches one item + its (newest-first) ledger timeline via verbs.
@@ -563,6 +567,7 @@ func itemDetailPage(group string) http.HandlerFunc {
 			http.Error(w, "not found: "+r.PathValue("id"), http.StatusNotFound)
 			return
 		}
+		d.Standalone = true // the standalone page hides its own "Open story →" self-link
 		render(w, "detailPage", d)
 	}
 }
