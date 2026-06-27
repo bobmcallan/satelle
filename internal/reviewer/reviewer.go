@@ -229,6 +229,68 @@ func (g *Gater) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb.
 	return dec, nil
 }
 
+// StructureReviewerFor maps an authored-doc kind to its required-structure
+// reviewer (the satelle-<object>-review family). Empty for kinds with no
+// structure reviewer (e.g. free-form documents). Used by `satelle validate` and
+// the gated `satelle <object> create`.
+func StructureReviewerFor(kind string) string {
+	switch kind {
+	case "skills":
+		return "satelle-skill-review"
+	case "workflows":
+		return "satelle-workflow-review"
+	case "principles":
+		return "satelle-principle-review"
+	default:
+		return ""
+	}
+}
+
+// docPayload is the JSON handed to an authored-doc structure reviewer on stdin.
+type docPayload struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+	Body string `json:"body"`
+}
+
+// ReviewStructure runs the named structure reviewer over an authored doc and
+// returns its verdict. Gated=false (advisory) when the reviewer rubric is not
+// installed. The doc's full markdown rides as the payload; the reviewer judges
+// only its structure.
+func (g *Gater) ReviewStructure(ctx context.Context, reviewerName, kind, name, body string) (verb.GateDecision, error) {
+	rubric, err := g.skillBody(ctx, reviewerName)
+	if err != nil {
+		if errors.Is(err, docindex.ErrNotFound) {
+			return verb.GateDecision{Gated: false}, nil
+		}
+		return verb.GateDecision{}, err
+	}
+	if g.runner == nil {
+		return verb.GateDecision{Gated: true}, fmt.Errorf("reviewer: %s gate is on but no agent runner is configured", reviewerName)
+	}
+	payload, err := json.Marshal(docPayload{Kind: kind, Name: name, Body: body})
+	if err != nil {
+		return verb.GateDecision{}, err
+	}
+	out, err := g.runner.Run(ctx, agentcli.Request{
+		SystemPrompt: rubric,
+		Payload:      string(payload),
+		AllowedTools: g.tools,
+		Model:        g.model,
+		Dir:          g.repoRoot,
+	})
+	if err != nil {
+		return verb.GateDecision{Gated: true}, fmt.Errorf("reviewer: %s gate failed: %w", reviewerName, err)
+	}
+	dec, err := parseDecision(out)
+	if err != nil {
+		return verb.GateDecision{Gated: true}, fmt.Errorf("reviewer: %s: %w", reviewerName, err)
+	}
+	dec.Gated = true
+	dec.Skill = reviewerName
+	return dec, nil
+}
+
 // reviewerSkill resolves the reviewer_skill governing the (from→to) edge from
 // the workflow active for the item's category. An absent workflow means no
 // gating.

@@ -429,3 +429,46 @@ func names(ds []docindex.Doc) []string {
 	}
 	return out
 }
+
+func TestStructureReviewerFor(t *testing.T) {
+	cases := map[string]string{
+		"skills":     "satelle-skill-review",
+		"workflows":  "satelle-workflow-review",
+		"principles": "satelle-principle-review",
+		"documents":  "",
+		"":           "",
+	}
+	for kind, want := range cases {
+		if got := StructureReviewerFor(kind); got != want {
+			t.Errorf("StructureReviewerFor(%q) = %q, want %q", kind, got, want)
+		}
+	}
+}
+
+func TestReviewStructureAcceptReject(t *testing.T) {
+	ctx := context.Background()
+	g, r := gater(t, `{"decision":"accept","notes":""}`, fakeDocs{skillBody: "skill rubric", skillFound: true})
+	dec, err := g.ReviewStructure(ctx, "satelle-skill-review", "skills", "x", "---\nkind: skill\n---\nbody")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec.Gated || !dec.Accept || dec.Skill != "satelle-skill-review" {
+		t.Fatalf("want gated accept by satelle-skill-review, got %+v", dec)
+	}
+	if r.got.SystemPrompt != "skill rubric" {
+		t.Errorf("reviewer rubric should be the system prompt, got %q", r.got.SystemPrompt)
+	}
+
+	g2, _ := gater(t, `{"decision":"reject","notes":"missing kind"}`, fakeDocs{skillBody: "rubric", skillFound: true})
+	dec2, _ := g2.ReviewStructure(ctx, "satelle-workflow-review", "workflows", "w", "body")
+	if !dec2.Gated || dec2.Accept || dec2.Notes == "" {
+		t.Fatalf("want gated reject with notes, got %+v", dec2)
+	}
+
+	// Advisory when the rubric is absent.
+	g3, _ := gater(t, ``, fakeDocs{skillFound: false})
+	dec3, _ := g3.ReviewStructure(ctx, "satelle-skill-review", "skills", "x", "body")
+	if dec3.Gated {
+		t.Errorf("absent rubric should be advisory, got %+v", dec3)
+	}
+}
