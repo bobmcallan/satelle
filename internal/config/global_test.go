@@ -109,3 +109,25 @@ func TestAgentCLIRoundTripAndDefault(t *testing.T) {
 		t.Errorf("agent cli round-trip = %+v", got.Agent)
 	}
 }
+
+func TestUIThemeRoundTrip(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	gc, err := LoadGlobal()
+	if err != nil {
+		t.Fatalf("LoadGlobal: %v", err)
+	}
+	if gc.UI.Theme != "" {
+		t.Errorf("default UI.Theme = %q, want empty (light)", gc.UI.Theme)
+	}
+	gc.UI.Theme = "dark"
+	if err := SaveGlobal(gc); err != nil {
+		t.Fatalf("SaveGlobal: %v", err)
+	}
+	got, err := LoadGlobal()
+	if err != nil {
+		t.Fatalf("LoadGlobal (reload): %v", err)
+	}
+	if got.UI.Theme != "dark" {
+		t.Errorf("reloaded UI.Theme = %q, want dark", got.UI.Theme)
+	}
+}

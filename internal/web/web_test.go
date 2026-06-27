@@ -147,6 +147,47 @@ func TestUptimeButtonRendered(t *testing.T) {
 	}
 }
 
+func TestThemeGlobalRoundTrip(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	srv, _ := newServer(t)
+	// Default is light.
+	if _, body := get(t, srv.URL+"/theme"); !strings.Contains(body, "light") {
+		t.Fatalf("default /theme should be light, got %s", body)
+	}
+	// Persist dark to the machine-wide config.
+	resp, err := http.Post(srv.URL+"/theme", "application/x-www-form-urlencoded", strings.NewReader("theme=dark"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("POST /theme status = %d", resp.StatusCode)
+	}
+	// GET reflects dark, and the project page injects it server-side (no flash).
+	if _, body := get(t, srv.URL+"/theme"); !strings.Contains(body, "dark") {
+		t.Errorf("/theme not dark after set: %s", body)
+	}
+	if _, page := get(t, srv.URL+"/"); !strings.Contains(page, `data-theme="dark"`) {
+		t.Errorf("project page did not inject the global dark theme")
+	}
+
+	// Now switch to light: an EXPLICIT light must be authoritative too — the
+	// server injects data-theme="light" so it overrides any stale per-browser
+	// localStorage='dark' (the head script only applies localStorage when the
+	// server set no data-theme).
+	resp, err = http.Post(srv.URL+"/theme", "application/x-www-form-urlencoded", strings.NewReader("theme=light"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if _, body := get(t, srv.URL+"/theme"); !strings.Contains(body, "light") {
+		t.Errorf("/theme not light after set: %s", body)
+	}
+	if _, page := get(t, srv.URL+"/"); !strings.Contains(page, `data-theme="light"`) {
+		t.Errorf("project page did not inject the explicit light theme over localStorage")
+	}
+}
+
 func TestUnknownPath404(t *testing.T) {
 	srv, _ := newServer(t)
 	if code, _ := get(t, srv.URL+"/nope"); code != 404 {

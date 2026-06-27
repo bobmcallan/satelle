@@ -29,6 +29,13 @@ type GlobalConfig struct {
 	Service   ServiceConfig   `toml:"service"`
 	Agent     AgentConfig     `toml:"agent"`
 	Workspace WorkspaceConfig `toml:"workspace"`
+	UI        UIConfig        `toml:"ui"`
+}
+
+// UIConfig holds user-level UI preferences shared across every repo, so the
+// light/dark choice follows the operator rather than a single browser origin.
+type UIConfig struct {
+	Theme string `toml:"theme"` // "dark" | "light" (empty = light default)
 }
 
 // WorkspaceConfig is the connected-repo registry the workspace view aggregates.
@@ -166,7 +173,7 @@ func SaveGlobal(gc GlobalConfig) error {
 		}
 		repos = "[" + strings.Join(quoted, ", ") + "]"
 	}
-	body := fmt.Sprintf(globalTemplate, gc.Service.ResolvePort(), gc.Service.ResolveAddr(), gc.Service.Repo, gc.Agent.ResolveCLI(), repos)
+	body := fmt.Sprintf(globalTemplate, gc.Service.ResolvePort(), gc.Service.ResolveAddr(), gc.Service.Repo, gc.Agent.ResolveCLI(), repos, gc.UI.Theme)
 	path := GlobalConfigPath()
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		return fmt.Errorf("config: write %s: %w", path, err)
@@ -198,4 +205,9 @@ cli = %q
 # connected repo paths the /workspace view aggregates (per-repo DBs stay the
 # source of truth). Manage with 'satelle workspace add|remove|list'.
 repos = %s
+
+[ui]
+# light/dark theme shared across every repo's web UI ("dark" | "" = light).
+# Set by the theme toggle in the web header; follows the operator across repos.
+theme = %q
 `

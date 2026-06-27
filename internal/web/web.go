@@ -53,6 +53,53 @@ func formatUptime(d time.Duration) string {
 	return fmt.Sprintf("up %dh %dm", h, m)
 }
 
+// globalTheme returns the operator's explicit light/dark choice from the
+// machine-wide config — shared across every repo. An EXPLICIT "light" or "dark"
+// is authoritative (the server injects it so it overrides any stale per-browser
+// localStorage); an empty value means the choice was never made, so the page
+// falls back to localStorage/the light default.
+func globalTheme() string {
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		return ""
+	}
+	if gc.UI.Theme == "dark" || gc.UI.Theme == "light" {
+		return gc.UI.Theme
+	}
+	return ""
+}
+
+// getTheme reports the global theme as JSON so a page can reconcile after load.
+func getTheme(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	t := globalTheme()
+	if t == "" {
+		t = "light"
+	}
+	_ = json.NewEncoder(w).Encode(map[string]string{"theme": t})
+}
+
+// setTheme persists the light/dark choice to the machine-wide config, so the
+// toggle in one repo's UI follows the operator into every other repo.
+func setTheme(w http.ResponseWriter, r *http.Request) {
+	theme := strings.TrimSpace(r.FormValue("theme"))
+	if theme != "dark" && theme != "light" {
+		http.Error(w, "theme must be dark or light", http.StatusBadRequest)
+		return
+	}
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	gc.UI.Theme = theme // store the EXPLICIT choice ("light" or "dark") — both authoritative
+	if err := config.SaveGlobal(gc); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // New wires the server for the given bootstrap. It registers the verb-change
 // notifier so web-initiated mutations ring the doorbell instantly; cross-
 // process mutations (CLI edits) are picked up by StartRealtime's poller.
@@ -68,6 +115,8 @@ func New(a *app.App) *Server {
 		fmt.Fprintln(w, "ok")
 	})
 	mux.HandleFunc("GET /events", h.serveEvents)
+	mux.HandleFunc("GET /theme", getTheme)
+	mux.HandleFunc("POST /theme", setTheme)
 
 	// Realtime panel fragments (rows only) — what the SSE refetch swaps in.
 	mux.HandleFunc("GET /fragment/stories", fragmentRows(a, "workitemRows", verb.TopicStories))
@@ -184,6 +233,7 @@ type pageData struct {
 	Workflows   []workflowRowVM
 	Version     string
 	Uptime      string
+	Theme       string
 	FooterEmail string
 }
 
@@ -410,6 +460,7 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 		DocKinds: kinds, DocCount: len(allDocs),
 		Workflows: workflowRows(byKind["workflows"]),
 		Version:   buildinfo.Resolve().Version, Uptime: formatUptime(time.Since(serverStart)),
+		Theme:       globalTheme(),
 		FooterEmail: email,
 	}, nil
 }
