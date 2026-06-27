@@ -13,3 +13,8 @@
 # [substrate_roots]
 # documents = "."                # → ./documents
 # skills = "."                   # → ./skills
+
+[review]
+# Run the required-structure reviewer on every story/task creation, so a work
+# item's structure is ALWAYS validated by an isolated reviewer before it persists.
+gate_create = true
