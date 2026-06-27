@@ -16,6 +16,7 @@
   var PANELS = ["stories", "tasks", "docs"];
   var FILTER_KEYS = { status: 1, priority: 1, category: 1, tags: 1, tag: 1 };
   var ORDER_FIELDS = { updated: 1, created: 1, priority: 1, status: 1, title: 1, id: 1 };
+  var DEFAULT_ORDER = "updated"; // applied when no explicit order: token (order:none opts out)
   var PRIORITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
 
   function topicForKind(kind) { return kind === "task" ? "tasks" : "stories"; }
@@ -145,8 +146,16 @@
     });
     var hasStatus = parsed.filters.some(function (t) { return t.key === "status"; });
     if (!hasStatus && panel.dataset.topic !== "docs") {
+      // Default: terminal rows hidden. Removing it reveals all (status:all).
       chip("status:open", true, function () {
         input.value = (input.value.trim() + " status:all").trim(); applyFilter(panel);
+      });
+    }
+    if (!parsed.order && panel.dataset.topic !== "docs") {
+      // Default sort surfaced as a chip, like status:open. Removing it opts out
+      // of the default sort (order:none) rather than re-sorting.
+      chip("order:updated", true, function () {
+        input.value = (input.value.trim() + " order:none").trim(); applyFilter(panel);
       });
     }
   }
@@ -166,7 +175,7 @@
     panel.querySelectorAll("[data-rows] .row, [data-rows] .doc").forEach(function (row) {
       row.style.display = rowMatches(row, parsed) ? "" : "none";
     });
-    applyOrder(panel, parsed.order);
+    applyOrder(panel, parsed.order || DEFAULT_ORDER); // explicit default sort, not incidental order
     if (input) renderChips(panel, parsed, input);
   }
 
