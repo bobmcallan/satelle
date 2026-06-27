@@ -509,7 +509,7 @@ func TestBrowserSharedTopbar(t *testing.T) {
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(base+"/"),
 		chromedp.WaitVisible(`header.app #theme-toggle`, chromedp.ByQuery),
-		chromedp.WaitVisible(`header.app .live-dot`, chromedp.ByQuery),
+		chromedp.WaitVisible(`header.app .uptime`, chromedp.ByQuery),
 	); err != nil {
 		t.Fatalf("project page shared topbar missing: %v", err)
 	}
@@ -517,7 +517,7 @@ func TestBrowserSharedTopbar(t *testing.T) {
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(base+"/story/"+id),
 		chromedp.WaitVisible(`header.app #theme-toggle`, chromedp.ByQuery),
-		chromedp.WaitVisible(`header.app .live-dot`, chromedp.ByQuery),
+		chromedp.WaitVisible(`header.app .uptime`, chromedp.ByQuery),
 	); err != nil {
 		t.Fatalf("story page shared topbar missing: %v", err)
 	}

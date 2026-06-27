@@ -50,7 +50,7 @@ var tmplFuncs = template.FuncMap{
 var tmpl = template.Must(template.New("web").Funcs(tmplFuncs).Parse(templatesSrc))
 
 const templatesSrc = `
-{{define "topbar"}}<button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>{{if .Uptime}}<button class="uptime" type="button" disabled title="web service uptime">{{.Uptime}}</button>{{end}}<span class="live-dot" title="realtime"></span>{{end}}
+{{define "topbar"}}<button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>{{if .Uptime}}<button class="uptime" type="button" disabled title="web service uptime — green border means up">{{.Uptime}}</button>{{end}}{{end}}
 
 {{define "page"}}<!doctype html>
 <html lang="en"{{if .Theme}} data-theme="{{.Theme}}"{{end}}>
