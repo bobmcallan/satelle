@@ -187,6 +187,50 @@ func TestReviewCreateAdvisoryWhenRubricAbsent(t *testing.T) {
 	}
 }
 
+func TestSummariseReturnsTrimmedProse(t *testing.T) {
+	g, r := gater(t, "  Moved from in_progress to done after the criteria were met.\n",
+		fakeDocs{skillBody: "summariser rubric", skillFound: true})
+	s, err := g.Summarise(context.Background(), workitem.Item{Status: "in_progress"}, "in_progress", "done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s != "Moved from in_progress to done after the criteria were met." {
+		t.Errorf("summary = %q", s)
+	}
+	if r.got.SystemPrompt != "summariser rubric" {
+		t.Errorf("summariser rubric should be the system prompt, got %q", r.got.SystemPrompt)
+	}
+	// Read-only grant — the summariser must not be able to mutate the tree.
+	for _, banned := range []string{"Write", "Edit", "Bash"} {
+		if contains(r.got.AllowedTools, banned) {
+			t.Errorf("summariser tool grant %q should be read-only", r.got.AllowedTools)
+		}
+	}
+}
+
+func TestSummariseEmptyWhenRubricAbsent(t *testing.T) {
+	g, r := gater(t, "should not run", fakeDocs{skillFound: false})
+	s, err := g.Summarise(context.Background(), workitem.Item{Status: "in_progress"}, "in_progress", "done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s != "" {
+		t.Errorf("want empty summary when rubric absent, got %q", s)
+	}
+	if r.got.SystemPrompt != "" {
+		t.Error("summariser must not run without a rubric")
+	}
+}
+
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
 func TestParseDecisionStrict(t *testing.T) {
 	for _, in := range []string{`{"decision":"maybe"}`, `{"notes":"x"}`, ``} {
 		if _, err := parseDecision([]byte(in)); err == nil {

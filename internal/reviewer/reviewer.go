@@ -115,6 +115,47 @@ func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (
 // item at creation. Embedded by default; overridable under .satelle/skills.
 const structureSkill = "satelle-story-structure-review"
 
+// summariserSkill recaps an enacted transition. Embedded by default; overridable.
+const summariserSkill = "satelle-step-summary"
+
+// summaryPayload is the JSON handed to the summariser on stdin.
+type summaryPayload struct {
+	Story workitem.Item `json:"story"`
+	From  string        `json:"from"`
+	To    string        `json:"to"`
+}
+
+// Summarise runs the read-only summariser over an enacted transition and returns
+// its prose recap (empty when no summariser rubric is installed). The reviewer's
+// read-only tool grant means it observes but cannot mutate the work tree.
+func (g *Gater) Summarise(ctx context.Context, item workitem.Item, from, to string) (string, error) {
+	body, err := g.skillBody(ctx, summariserSkill)
+	if err != nil {
+		if errors.Is(err, docindex.ErrNotFound) {
+			return "", nil // no summariser rubric installed — nothing to record
+		}
+		return "", err
+	}
+	if g.runner == nil {
+		return "", nil
+	}
+	payload, err := json.Marshal(summaryPayload{Story: item, From: from, To: to})
+	if err != nil {
+		return "", err
+	}
+	out, err := g.runner.Run(ctx, agentcli.Request{
+		SystemPrompt: body,
+		Payload:      string(payload),
+		AllowedTools: g.tools, // read-only (Read,Grep,Glob) — narrate, never mutate
+		Model:        g.model,
+		Dir:          g.repoRoot,
+	})
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // ReviewCreate judges a draft work item's required structure before it is
 // persisted. Gated=false (advisory, persist) when the structure rubric is not
 // installed; otherwise it runs the isolated reviewer and returns its verdict.

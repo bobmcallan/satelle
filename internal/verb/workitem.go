@@ -194,6 +194,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	// Gate the transition through the isolated reviewer, if one is wired and the
 	// edge is governed by a reviewer skill. A reject blocks the whole set and
 	// pushes the reviewer's notes back to the executor; an ungated edge enacts.
+	gatedAccepted := false
 	if transitioning && transitionGater != nil {
 		dec, gerr := transitionGater.Gate(ctx, current, *req.Status)
 		if gerr != nil {
@@ -208,6 +209,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 				current.Status, *req.Status, dec.Skill, dec.Notes)
 		}
 		if dec.Gated {
+			gatedAccepted = true
 			appendLedgerEntry(ctx, current.ID, ledger.KindReviewAccept, "reviewer",
 				fmt.Sprintf("accepted %s→%s", current.Status, *req.Status),
 				transitionPayload(current.Status, *req.Status, dec.Skill), now)
@@ -233,6 +235,15 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		appendLedgerEntry(ctx, it.ID, ledger.KindStatusTransition, "executor",
 			fmt.Sprintf("%s → %s", current.Status, *req.Status),
 			transitionPayload(current.Status, *req.Status, ""), now)
+		// After a GATED transition is enacted, the read-only summariser recaps the
+		// step into a step_summary row. Best-effort: the work already committed, so
+		// a summariser failure must not fail the transition.
+		if gatedAccepted && stepSummariser != nil {
+			if summary, serr := stepSummariser.Summarise(ctx, it, current.Status, *req.Status); serr == nil && summary != "" {
+				appendLedgerEntry(ctx, it.ID, ledger.KindStepSummary, "reviewer", summary,
+					transitionPayload(current.Status, *req.Status, ""), now)
+			}
+		}
 	} else {
 		ledgerKind := ledger.KindStoryUpdated
 		if it.Kind == workitem.KindTask {

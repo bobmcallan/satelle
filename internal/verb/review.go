@@ -56,3 +56,15 @@ var createReviewer CreateReviewer
 
 // SetCreateReviewer wires the required-structure reviewer. Pass nil to disable.
 func SetCreateReviewer(r CreateReviewer) { createReviewer = r }
+
+// StepSummariser produces a read-only prose recap of an enacted transition,
+// recorded as a step_summary ledger row. Implemented in internal/reviewer.
+type StepSummariser interface {
+	Summarise(ctx context.Context, item workitem.Item, from, to string) (string, error)
+}
+
+// stepSummariser runs after a gated transition is enacted. Nil disables it.
+var stepSummariser StepSummariser
+
+// SetStepSummariser wires the per-transition summariser. Pass nil to disable.
+func SetStepSummariser(s StepSummariser) { stepSummariser = s }

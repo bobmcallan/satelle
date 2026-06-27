@@ -44,6 +44,8 @@ func openAppForCmd(cmd *cobra.Command) error {
 		if runner, rerr := agentcli.NewRunner(gc.Agent.ResolveCLI()); rerr == nil {
 			rev := reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, "")
 			verb.SetTransitionGater(rev)
+			// The summariser recaps gated transitions; inert until gating is active.
+			verb.SetStepSummariser(rev)
 			// Create-gating is opt-in per repo (satelle.toml [review] gate_create):
 			// the rubric ships embedded, but enforcing it is the operator's choice.
 			if a.Config.Review.GateCreate {
