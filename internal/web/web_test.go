@@ -91,6 +91,34 @@ func TestProjectPageRendersData(t *testing.T) {
 	}
 }
 
+func TestBacklogCountRendered(t *testing.T) {
+	srv, db := newServer(t)
+	ctx := context.Background()
+	mk := func(title, status string) {
+		if _, err := db.Stories.Create(ctx, workitem.CreateInput{
+			Kind: workitem.KindStory, Title: title, Status: status,
+		}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 3 stories total; 2 in the open backlog, 1 in_progress.
+	mk("backlog one", workitem.StatusOpen)
+	mk("backlog two", workitem.StatusOpen)
+	mk("working", workitem.StatusInProgress)
+
+	code, body := get(t, srv.URL+"/")
+	if code != 200 {
+		t.Fatalf("status = %d", code)
+	}
+	// Tab shows the backlog count (2 open) as a distinct badge alongside the total.
+	if !strings.Contains(body, "2 backlog") {
+		t.Errorf("page missing backlog count %q", "2 backlog")
+	}
+	if !strings.Contains(body, "n-backlog") {
+		t.Errorf("backlog badge should carry the distinct n-backlog class")
+	}
+}
+
 func TestUnknownPath404(t *testing.T) {
 	srv, _ := newServer(t)
 	if code, _ := get(t, srv.URL+"/nope"); code != 404 {

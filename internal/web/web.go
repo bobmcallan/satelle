@@ -157,10 +157,11 @@ func (s *Server) pollDB(ctx context.Context, interval time.Duration) {
 type pageData struct {
 	RepoRoot    string
 	DBPath      string
-	Stories     []rowVM
-	Tasks       []rowVM
-	DocKinds    []kindGroup
-	DocCount    int
+	Stories      []rowVM
+	BacklogCount int
+	Tasks        []rowVM
+	DocKinds     []kindGroup
+	DocCount     int
 	Workflows   []workflowRowVM
 	Version     string
 	FooterName  string
@@ -313,9 +314,16 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 		kinds = append(kinds, kindGroup{Kind: k, Docs: byKind[k]})
 	}
 	name, email := footerIdentity(a.RepoRoot)
+	backlog := 0
+	for _, s := range stories {
+		if s.Status == workitem.StatusOpen {
+			backlog++
+		}
+	}
 	return pageData{
 		RepoRoot: a.RepoRoot, DBPath: a.DBPath,
-		Stories: attachLights(ctx, stories), Tasks: attachLights(ctx, tasks),
+		Stories: attachLights(ctx, stories), BacklogCount: backlog,
+		Tasks:    attachLights(ctx, tasks),
 		DocKinds: kinds, DocCount: len(allDocs),
 		Workflows: workflowRows(byKind["workflows"]),
 		Version:   buildinfo.Resolve().Version, FooterName: name, FooterEmail: email,
