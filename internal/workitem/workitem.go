@@ -23,10 +23,11 @@ const (
 	KindTask  Kind = "task"
 )
 
-// Status values. New items default to StatusOpen; the set is open-ended (a
-// caller may set any status string), these are the names satelle itself uses.
+// Status values. New items default to StatusBacklog — every satelle workflow
+// starts at backlog (see satelle-workflow-review). The set is open-ended (a
+// caller may set any status string); these are the names satelle itself uses.
 const (
-	StatusOpen       = "open"
+	StatusBacklog    = "backlog"
 	StatusInProgress = "in_progress"
 	StatusDone       = "done"
 	StatusBlocked    = "blocked"

@@ -3,7 +3,7 @@
 //  * Tabs       — show one panel at a time; active tab in the URL hash + crumb.
 //  * Filter     — one shared component over every panel: a query box parsed into
 //                 removable chips (status:/priority:/category:/tags:|tag: + free
-//                 text) plus order:<field> client-side sort; status:open hides
+//                 text) plus order:<field> client-side sort; status:active hides
 //                 terminal rows by default.
 //  * Expand     — click a row to fetch + reveal its detail + ledger timeline
 //                 inline; preserved (and refreshed) across realtime refreshes.
@@ -92,7 +92,7 @@
         if (t.vals.indexOf("all") === -1 && t.vals.indexOf(val) === -1) return false;
       }
     }
-    if (!hasStatus && TERMINAL[row.dataset.status]) return false; // default status:open
+    if (!hasStatus && TERMINAL[row.dataset.status]) return false; // default status:active
     var search = (row.dataset.search || "").toLowerCase();
     return parsed.free.every(function (term) { return search.indexOf(term) !== -1; });
   }
@@ -154,12 +154,12 @@
     var hasStatus = parsed.filters.some(function (t) { return t.key === "status"; });
     if (!hasStatus && isItemPanel(panel)) {
       // Default: terminal rows hidden. Removing it reveals all (status:all).
-      chip("status:open", true, function () {
+      chip("status:active", true, function () {
         input.value = (input.value.trim() + " status:all").trim(); applyFilter(panel);
       });
     }
     if (!parsed.order && isItemPanel(panel)) {
-      // Default sort surfaced as a chip, like status:open. Removing it opts out
+      // Default sort surfaced as a chip, like status:active. Removing it opts out
       // of the default sort (order:none) rather than re-sorting.
       chip("order:updated", true, function () {
         input.value = (input.value.trim() + " order:none").trim(); applyFilter(panel);

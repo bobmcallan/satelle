@@ -72,7 +72,7 @@ func TestStoryCreateGetSetThroughVerbs(t *testing.T) {
 	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "T1", "priority": "high"}), &created); err != nil {
 		t.Fatal(err)
 	}
-	if created.ID[:4] != "sty_" || created.Status != workitem.StatusOpen {
+	if created.ID[:4] != "sty_" || created.Status != workitem.StatusBacklog {
 		t.Fatalf("bad created item: %+v", created)
 	}
 

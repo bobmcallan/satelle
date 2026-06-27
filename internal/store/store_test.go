@@ -42,6 +42,37 @@ func TestOpenCreatesDBAndIsReopenable(t *testing.T) {
 	db2.Close()
 }
 
+func TestMigrateRenamesOpenToBacklog(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".satelle", "satelle.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	// Simulate a row persisted under the former 'open' initial status.
+	ts := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := db.SQL().Exec(
+		`INSERT INTO work_items (id, kind, title, status, tags, created_at, updated_at) VALUES (?,?,?,?,?,?,?)`,
+		"sty_legacy", "story", "legacy", "open", "[]", ts, ts); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+	db.Close()
+
+	// Reopening re-runs Migrate, which renames any 'open' row to 'backlog'.
+	db2, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer db2.Close()
+	got, err := db2.Stories.Get(context.Background(), "sty_legacy")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Status != workitem.StatusBacklog {
+		t.Errorf("legacy 'open' row not migrated: status = %q, want backlog", got.Status)
+	}
+}
+
 func TestStoryLifecycle(t *testing.T) {
 	db := openTemp(t)
 	ctx := context.Background()
@@ -58,8 +89,8 @@ func TestStoryLifecycle(t *testing.T) {
 	if it.ID == "" || it.ID[:4] != "sty_" {
 		t.Errorf("story id = %q, want sty_ prefix", it.ID)
 	}
-	if it.Status != workitem.StatusOpen {
-		t.Errorf("default status = %q, want open", it.Status)
+	if it.Status != workitem.StatusBacklog {
+		t.Errorf("default status = %q, want backlog", it.Status)
 	}
 
 	got, err := db.Stories.Get(ctx, it.ID)

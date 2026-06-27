@@ -27,7 +27,14 @@ A conforming workflow has all of:
    the states; every `from`/`to` names a declared state.
 4. **`done` is the terminal state** — no transition leaves `done`, and no state
    follows it on the success path (see the `satelle-done-is-last` principle).
-5. **Naming** — `satelle-<kebab>-workflow`.
+5. **`backlog` is the initial state** — the lifecycle starts at `backlog`: it is a
+   declared state, no transition targets it (nothing precedes it), and the
+   begin-work edge originates from it. A workflow whose start state is `open` (or
+   anything other than `backlog`) is **rejected** — every satelle work item is
+   created at `backlog`, so a workflow that begins elsewhere desyncs the
+   backlog count, the status, and the progress lights. Tell the author to rename
+   the initial state to `backlog`.
+6. **Naming** — `satelle-<kebab>-workflow`.
 6. **Repo-agnostic placement** (the `satelle-repo-agnostic` guard). `scope: system`
    is reserved for the binary's embedded canonical default; a **repo** workflow
    MUST be `scope: project`. A workflow that encodes this repo's specific pipeline,
