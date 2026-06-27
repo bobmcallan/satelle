@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -22,6 +25,10 @@ func init() {
 		Register(&Verb{Name: group + "-get", Description: "Get a " + group + " by id", Invoke: workItemGet})
 		Register(&Verb{Name: group + "-set", Description: "Update a " + group, Invoke: workItemSet})
 	}
+	// Estimate/actual are story-only: an agent records the plan estimate at
+	// begin-work and the actual cost at close, scoped to the story.
+	Register(&Verb{Name: "story-estimate", Description: "Record a story's plan estimate (time/tokens)", Invoke: storyEstimate})
+	Register(&Verb{Name: "story-actual", Description: "Record a story's actual cost (time/tokens)", Invoke: storyActual})
 }
 
 // createReq is the request body for story-create / task-create.
@@ -264,6 +271,115 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	writeStoryFile(it)
 	notifyChange(panelTopic(it.Kind))
 	return json.Marshal(it)
+}
+
+// estimateReq is the request body for story-estimate / story-actual: a token
+// count and/or a duration string (e.g. "30m", "2h"), with an optional basis note
+// recorded only on the ledger row.
+type estimateReq struct {
+	ID     string `json:"id"`
+	Time   string `json:"time,omitempty"`
+	Tokens int    `json:"tokens,omitempty"`
+	Basis  string `json:"basis,omitempty"`
+}
+
+// storyEstimate records a story's plan estimate as estimate-minutes/estimate-tokens
+// tags; storyActual records the actual as actual-minutes/actual-tokens. Both
+// preserve the story's other tags and append a ledger row so the close-out can
+// compare estimate vs actual.
+func storyEstimate(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	return recordCost(ctx, raw, "estimate", ledger.KindEstimateRecorded)
+}
+
+func storyActual(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	return recordCost(ctx, raw, "actual", ledger.KindActualRecorded)
+}
+
+// recordCost upserts the prefix-minutes/prefix-tokens tags on a story (prefix is
+// "estimate" or "actual"), leaving every other tag intact, and records the
+// change on the ledger. At least one of tokens/time must be given.
+func recordCost(ctx context.Context, raw json.RawMessage, prefix, kind string) (json.RawMessage, error) {
+	store, err := requireWorkItem()
+	if err != nil {
+		return nil, err
+	}
+	var req estimateReq
+	if err := decode(raw, &req); err != nil {
+		return nil, err
+	}
+	if req.ID == "" {
+		return nil, fmt.Errorf("verb: id required")
+	}
+	if req.Tokens <= 0 && req.Time == "" {
+		return nil, fmt.Errorf("verb: %s requires --tokens and/or --time", prefix)
+	}
+	current, err := store.Get(ctx, req.ID)
+	if err != nil {
+		return nil, err
+	}
+	kv := map[string]string{}
+	if req.Tokens > 0 {
+		kv[prefix+"-tokens"] = strconv.Itoa(req.Tokens)
+	}
+	if req.Time != "" {
+		d, perr := time.ParseDuration(req.Time)
+		if perr != nil {
+			return nil, fmt.Errorf("verb: invalid --time %q: %w", req.Time, perr)
+		}
+		kv[prefix+"-minutes"] = strconv.Itoa(int(d.Minutes()))
+	}
+	merged := upsertKeyedTags(current.Tags, kv)
+	now := time.Now()
+	it, err := store.Update(ctx, req.ID, workitem.UpdateInput{Tags: &merged}, now)
+	if err != nil {
+		return nil, err
+	}
+	body := fmt.Sprintf("%s recorded: %s", prefix, joinKeyedTags(kv))
+	if req.Basis != "" {
+		body += " (basis: " + req.Basis + ")"
+	}
+	appendLedger(ctx, it.ID, kind, body, now)
+	writeStoryFile(it)
+	notifyChange(panelTopic(it.Kind))
+	return json.Marshal(it)
+}
+
+// upsertKeyedTags returns existing with any tag whose `key:` matches a key in kv
+// removed, then the kv pairs appended in key order — so re-recording an estimate
+// replaces the old value rather than duplicating it, and unrelated tags survive.
+func upsertKeyedTags(existing []string, kv map[string]string) []string {
+	out := make([]string, 0, len(existing)+len(kv))
+	for _, t := range existing {
+		key := t
+		if i := strings.IndexByte(t, ':'); i >= 0 {
+			key = t[:i]
+		}
+		if _, replacing := kv[key]; replacing {
+			continue
+		}
+		out = append(out, t)
+	}
+	out = append(out, joinedKeys(kv)...)
+	return out
+}
+
+// joinedKeys renders kv as sorted "key:value" tags.
+func joinedKeys(kv map[string]string) []string {
+	keys := make([]string, 0, len(kv))
+	for k := range kv {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(kv))
+	for _, k := range keys {
+		out = append(out, k+":"+kv[k])
+	}
+	return out
+}
+
+// joinKeyedTags renders kv as a comma-separated "key:value" list for a ledger body.
+func joinKeyedTags(kv map[string]string) string {
+	return strings.Join(joinedKeys(kv), ", ")
 }
 
 // appendLedger records a work-item lifecycle event, best-effort: a ledger

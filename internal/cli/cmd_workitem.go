@@ -116,8 +116,57 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 	parent.AddCommand(create, get, list, set)
 	if group == "story" {
 		parent.AddCommand(storyDocCommands()...)
+		parent.AddCommand(storyCostCommands()...)
 	}
 	return parent
+}
+
+// storyCostCommands builds `satelle story estimate` and `satelle story actual`:
+// the agent records a plan estimate at begin-work and the actual cost at close.
+// Each dispatches to the story-estimate / story-actual verb, which writes the
+// estimate-*/actual-* tags and a ledger row.
+func storyCostCommands() []*cobra.Command {
+	var eTime, eBasis string
+	var eTokens int
+	estimate := &cobra.Command{
+		Use:         "estimate <id>",
+		Short:       "Record a story's plan estimate (time/tokens)",
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := map[string]any{"id": args[0]}
+			putIf(req, "time", eTime)
+			putIf(req, "basis", eBasis)
+			if eTokens > 0 {
+				req["tokens"] = eTokens
+			}
+			return dispatch(cmd, "story-estimate", req)
+		},
+	}
+	estimate.Flags().StringVar(&eTime, "time", "", "estimated duration (e.g. 30m, 2h)")
+	estimate.Flags().IntVar(&eTokens, "tokens", 0, "estimated tokens")
+	estimate.Flags().StringVar(&eBasis, "basis", "", "optional note on the estimate basis")
+
+	var aTime string
+	var aTokens int
+	actual := &cobra.Command{
+		Use:         "actual <id>",
+		Short:       "Record a story's actual cost (time/tokens)",
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := map[string]any{"id": args[0]}
+			putIf(req, "time", aTime)
+			if aTokens > 0 {
+				req["tokens"] = aTokens
+			}
+			return dispatch(cmd, "story-actual", req)
+		},
+	}
+	actual.Flags().StringVar(&aTime, "time", "", "actual duration (e.g. 50m)")
+	actual.Flags().IntVar(&aTokens, "tokens", 0, "actual tokens")
+
+	return []*cobra.Command{estimate, actual}
 }
 
 // storyDocCommands builds the per-story document attachment surface: attach a
