@@ -187,6 +187,17 @@ a.doc:hover { border-color: var(--accent); }
 .empty { color: var(--muted); font-style: italic; padding: 10px; }
 
 /* --- workflow tab: state/transition diagram (read-only, server-rendered) --- */
+/* workflow flow diagram (dependency-free SVG) */
+.wf-diagram-wrap { overflow-x: auto; margin: 4px 0 8px; }
+.wf-diagram { max-width: 100%; height: auto; }
+.wf-diagram .wf-dnode rect { fill: var(--panel); stroke: var(--line); stroke-width: 1; }
+.wf-diagram .wf-dnode text { fill: var(--ink); font-family: var(--mono); font-size: 13px; text-anchor: middle; }
+.wf-diagram .wf-dnode.terminal rect { stroke: var(--accent); stroke-dasharray: 4 3; }
+.wf-diagram .wf-edge-path { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.wf-diagram .wf-edge-path.ungated { stroke: var(--line); stroke-dasharray: 4 3; }
+.wf-diagram .wf-arrowhead { fill: var(--accent); }
+.wf-diagram .wf-edge-label { fill: var(--muted); font-family: var(--mono); font-size: 10.5px; dominant-baseline: middle; }
+
 .wf-states { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .wf-node { display: inline-flex; align-items: baseline; gap: 6px; padding: 3px 11px;
   border: 1px solid var(--line); border-radius: 999px; background: var(--panel);

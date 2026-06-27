@@ -205,6 +205,10 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		if !waitCond(t, ctx, `(function(){var e=document.querySelector('#panel-workflow tr.expansion .expbody');return !!e && e.textContent.includes('Transitions') && !!document.querySelector('#panel-workflow .wf-node');})()`, 5*time.Second) {
 			t.Error("workflow diagram (states/transitions) did not appear on row click")
 		}
+		// The SVG flow diagram renders nodes and at least one edge (no mermaid).
+		if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow svg.wf-diagram .wf-dnode') && !!document.querySelector('#panel-workflow svg.wf-diagram .wf-edge-path')`, 5*time.Second) {
+			t.Error("workflow flow diagram (svg nodes + edges) did not render")
+		}
 		// Back to stories for the remaining checks.
 		clickJS(t, ctx, `.tab[data-panel="stories"]`)
 		if !waitCond(t, ctx, `getComputedStyle(document.querySelector('#panel-stories')).display === 'block'`, 5*time.Second) {

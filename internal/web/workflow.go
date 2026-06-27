@@ -1,6 +1,8 @@
 package web
 
 import (
+	"fmt"
+	"html/template"
 	"net/http"
 	"strings"
 	"time"
@@ -48,7 +50,152 @@ type workflowDetailVM struct {
 	Scope     string
 	AppliesTo []string
 	Spec      wfSpec
+	Diagram   template.HTML
 	Body      string
+}
+
+// spineOrder orders the states into a readable top-to-bottom flow: it starts at
+// the state nothing transitions into and walks forward, preferring GATED edges
+// (the main path is gated; blocked/cancelled side-exits are ungated), then
+// appends any states the walk did not reach (branches) in declared order.
+func spineOrder(spec wfSpec) []string {
+	type edge struct {
+		to    string
+		gated bool
+	}
+	adj := map[string][]edge{}
+	indeg := map[string]int{}
+	var names []string
+	seen := map[string]bool{}
+	for _, s := range spec.States {
+		if !seen[s.Name] {
+			seen[s.Name] = true
+			names = append(names, s.Name)
+			indeg[s.Name] = 0
+		}
+	}
+	for _, tr := range spec.Transitions {
+		if tr.From != tr.To {
+			adj[tr.From] = append(adj[tr.From], edge{tr.To, tr.Skill != ""})
+			indeg[tr.To]++
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	start := names[0]
+	for _, n := range names {
+		if indeg[n] == 0 {
+			start = n
+			break
+		}
+	}
+	visited := map[string]bool{}
+	var order []string
+	for cur := start; cur != "" && !visited[cur]; {
+		visited[cur] = true
+		order = append(order, cur)
+		next := ""
+		for _, e := range adj[cur] { // prefer a gated forward edge
+			if e.gated && !visited[e.to] {
+				next = e.to
+				break
+			}
+		}
+		if next == "" {
+			for _, e := range adj[cur] {
+				if !visited[e.to] {
+					next = e.to
+					break
+				}
+			}
+		}
+		cur = next
+	}
+	for _, n := range names {
+		if !visited[n] {
+			order = append(order, n)
+		}
+	}
+	return order
+}
+
+// shortSkill abbreviates a reviewer skill for an edge label (the full name rides
+// in a tooltip): satelle-story-intent-review → story-intent.
+func shortSkill(s string) string {
+	s = strings.TrimPrefix(s, "satelle-")
+	s = strings.TrimSuffix(s, "-review")
+	return s
+}
+
+// workflowDiagram renders the parsed lifecycle as a dependency-free SVG flow
+// diagram: states are nodes stacked top-to-bottom, transitions are directed
+// edges curving down the right with their gate labelled. No mermaid — the SVG is
+// generated here from parseWorkflow's output.
+func workflowDiagram(spec wfSpec) template.HTML {
+	order := spineOrder(spec)
+	if len(order) == 0 {
+		return ""
+	}
+	idx := map[string]int{}
+	for i, n := range order {
+		idx[n] = i
+	}
+	terminal := map[string]bool{}
+	for _, s := range spec.States {
+		terminal[s.Name] = s.Terminal
+	}
+	const (
+		nodeW, nodeH = 150, 32
+		gapY         = 58
+		topPad       = 14
+		leftX        = 14
+	)
+	height := topPad*2 + (len(order)-1)*gapY + nodeH
+	width := leftX + nodeW + 260
+	cy := func(i int) int { return topPad + i*gapY + nodeH/2 }
+	rx := leftX + nodeW
+
+	var b strings.Builder
+	fmt.Fprintf(&b, `<svg class="wf-diagram" viewBox="0 0 %d %d" preserveAspectRatio="xMinYMin meet" role="img" aria-label="workflow flow diagram">`, width, height)
+	b.WriteString(`<defs><marker id="wf-arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" class="wf-arrowhead"/></marker></defs>`)
+	// edges (under the nodes)
+	for _, tr := range spec.Transitions {
+		si, ok1 := idx[tr.From]
+		ti, ok2 := idx[tr.To]
+		if !ok1 || !ok2 || si == ti {
+			continue
+		}
+		y1, y2 := cy(si), cy(ti)
+		span := ti - si
+		if span < 0 {
+			span = -span
+		}
+		bulge := 26 + span*20
+		cx := rx + bulge
+		cls := "wf-edge-path"
+		if tr.Skill == "" {
+			cls += " ungated"
+		}
+		fmt.Fprintf(&b, `<path class="%s" d="M%d,%d C%d,%d %d,%d %d,%d" marker-end="url(#wf-arrow)"/>`,
+			cls, rx, y1, cx, y1, cx, y2, rx+5, y2)
+		if lbl := shortSkill(tr.Skill); lbl != "" {
+			fmt.Fprintf(&b, `<text class="wf-edge-label" x="%d" y="%d"><title>%s</title>%s</text>`,
+				cx+4, (y1+y2)/2, template.HTMLEscapeString(tr.Skill), template.HTMLEscapeString(lbl))
+		}
+	}
+	// nodes
+	for i, n := range order {
+		y := topPad + i*gapY
+		cls := "wf-dnode"
+		if terminal[n] {
+			cls += " terminal"
+		}
+		fmt.Fprintf(&b, `<g class="%s"><rect x="%d" y="%d" width="%d" height="%d" rx="7"/><text x="%d" y="%d">%s</text></g>`,
+			cls, leftX, y, nodeW, nodeH, leftX+nodeW/2, y+nodeH/2+4, template.HTMLEscapeString(n))
+	}
+	b.WriteString(`</svg>`)
+	return template.HTML(b.String())
 }
 
 // workflowRows builds the Workflow panel rows from the indexed workflow docs.
@@ -75,12 +222,14 @@ func workflowFragment() http.HandlerFunc {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		spec := parseWorkflow(doc.Body)
 		render(w, "workflowDetail", workflowDetailVM{
 			Name:      doc.Name,
 			Headline:  doc.Headline,
 			Scope:     workflowScope(doc),
 			AppliesTo: frontmatterList(doc.Body, "applies_to"),
-			Spec:      parseWorkflow(doc.Body),
+			Spec:      spec,
+			Diagram:   workflowDiagram(spec),
 			Body:      strings.TrimSpace(stripDocFrontmatter(doc.Body)),
 		})
 	}
