@@ -87,7 +87,11 @@ const templatesSrc = `
     <div data-rows>{{template "docsRows" .DocKinds}}</div>
   </section>
 
-  <footer class="app">Served locally by satelle · live updates over the same verbs the CLI uses.</footer>
+  <footer class="site-footer">
+    {{if .FooterName}}<span class="footer-name">{{.FooterName}}</span>{{end}}
+    {{if .FooterEmail}}<a class="footer-email" href="mailto:{{.FooterEmail}}">{{.FooterEmail}}</a>{{end}}
+    <span class="footer-version">satelle {{.Version}}</span>
+  </footer>
 </div>
 <script src="/static/app.js"></script>
 </body>

@@ -31,6 +31,11 @@ input::placeholder { color: #9aa1ab; }
 button { cursor: pointer; }
 footer { margin-top: 40px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
 
+/* Site footer — satellites .site-footer language: name · email · version */
+.site-footer { display: flex; align-items: center; gap: 14px; font-family: var(--mono); }
+.site-footer .footer-email { color: var(--muted); }
+.site-footer .footer-version { margin-left: auto; }
+
 .wrap { max-width: 1040px; margin: 0 auto; padding: 28px 24px 64px; }
 
 /* Breadcrumbs */

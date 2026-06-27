@@ -12,9 +12,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os/exec"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/app"
+	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -111,12 +115,42 @@ func (s *Server) pollDB(ctx context.Context, interval time.Duration) {
 }
 
 type pageData struct {
-	RepoRoot string
-	DBPath   string
-	Stories  []workitem.Item
-	Tasks    []workitem.Item
-	DocKinds []kindGroup
-	DocCount int
+	RepoRoot    string
+	DBPath      string
+	Stories     []workitem.Item
+	Tasks       []workitem.Item
+	DocKinds    []kindGroup
+	DocCount    int
+	Version     string
+	FooterName  string
+	FooterEmail string
+}
+
+// footerIdentity resolves the operator's name/email for the footer from the
+// repo's git config (their identity, not baked into the binary). Best-effort and
+// resolved once; empty when git or the keys are unavailable.
+var (
+	footerOnce  sync.Once
+	footerName  string
+	footerEmail string
+)
+
+func footerIdentity(repoRoot string) (string, string) {
+	footerOnce.Do(func() {
+		footerName = gitConfig(repoRoot, "user.name")
+		footerEmail = gitConfig(repoRoot, "user.email")
+	})
+	return footerName, footerEmail
+}
+
+func gitConfig(dir, key string) string {
+	cmd := exec.Command("git", "config", "--get", key)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 type kindGroup struct {
@@ -146,9 +180,11 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 	for _, k := range config.AuthoredKinds {
 		kinds = append(kinds, kindGroup{Kind: k, Docs: byKind[k]})
 	}
+	name, email := footerIdentity(a.RepoRoot)
 	return pageData{
 		RepoRoot: a.RepoRoot, DBPath: a.DBPath,
 		Stories: stories, Tasks: tasks, DocKinds: kinds, DocCount: len(allDocs),
+		Version: buildinfo.Resolve().Version, FooterName: name, FooterEmail: email,
 	}, nil
 }
 
