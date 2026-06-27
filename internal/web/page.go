@@ -173,7 +173,7 @@ const templatesSrc = `
 </div>{{end}}
 
 {{define "itemDetail"}}<div class="expbody">
-  <a class="detail-link open-story" href="/{{.Item.Kind}}/{{.Item.ID}}">Open story →</a>
+  {{if not .Standalone}}<a class="detail-link open-story" href="/{{.Item.Kind}}/{{.Item.ID}}">Open story →</a>{{end}}
   <dl>
     <dt>Status</dt><dd><span class="badge s-{{.Item.Status}}">{{.Item.Status}}</span></dd>
     <dt>Priority</dt><dd>{{if .Item.Priority}}{{.Item.Priority}}{{else}}—{{end}}</dd>
