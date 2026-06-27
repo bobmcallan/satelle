@@ -44,7 +44,16 @@ change, the body states a clear goal / what done looks like, and the acceptance
 criteria list at least one numbered, testable item. Unclear intent is rejected
 with notes; the story stays in backlog.
 
-## Integration gate — `satelle-story-integration-review` (in_progress → integrated)
+## In-progress tech-lead review — `satelle-story-code-review` (in_progress → reviewed)
+
+An isolated, **read-only** LLM reviewer acting as a tech lead pre-reviewing the
+PR. It reads the modified code in the working tree, judges it against the story's
+acceptance criteria, and checks that the integration tests written for the work
+actually align with the code — **without executing them** (that is the next gate).
+A change with an unmet criterion, wrong code, or a missing/misaligned test is
+rejected with specifics.
+
+## Integration gate — `satelle-story-integration-review` (reviewed → integrated)
 
 A **functional check** with a self-contained `check` script embedded in the skill.
 It builds the binary and runs the full integration suite — the black-box CLI tests
