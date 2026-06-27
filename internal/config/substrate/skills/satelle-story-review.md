@@ -1,5 +1,5 @@
 ---
-name: satelle-story-structure-review
+name: satelle-story-review
 scope: system
 kind: skill
 tags: [kind:skill, type:reviewer]

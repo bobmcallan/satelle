@@ -12,7 +12,7 @@ func TestNewRunnerMapping(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{"", CLIClaude, false},      // empty defaults to claude
+		{"", CLIClaude, false}, // empty defaults to claude
 		{"claude", CLIClaude, false},
 		{"CLAUDE", CLIClaude, false}, // case-insensitive
 		{"codex", CLICodex, false},

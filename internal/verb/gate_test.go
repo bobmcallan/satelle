@@ -80,7 +80,7 @@ func (c createStub) ReviewCreate(context.Context, verb.CreateDraft) (verb.GateDe
 
 func TestStoryCreateGatedRejectBlocksPersist(t *testing.T) {
 	wire(t)
-	verb.SetCreateReviewer(createStub{dec: verb.GateDecision{Gated: true, Accept: false, Notes: "add numbered acceptance criteria", Skill: "satelle-story-structure-review"}})
+	verb.SetCreateReviewer(createStub{dec: verb.GateDecision{Gated: true, Accept: false, Notes: "add numbered acceptance criteria", Skill: "satelle-story-review"}})
 	t.Cleanup(func() { verb.SetCreateReviewer(nil) })
 
 	_, err := dispatchRaw(t, "story-create", map[string]any{"title": "vague"})

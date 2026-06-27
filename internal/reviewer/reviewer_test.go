@@ -13,7 +13,7 @@ import (
 
 const testWorkflow = `
 transitions:
-  - {from: backlog, to: in_progress, reviewer_skill: "satelle-intent-plan-review"}
+  - {from: backlog, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
   - {from: in_progress, to: done, reviewer_skill: "satelle-story-done-review"}
   - {from: backlog, to: cancelled}
 `
@@ -335,11 +335,11 @@ func TestFrontmatterListForms(t *testing.T) {
 	}
 }
 
-const checkSkill = "---\nname: satelle-integration-review\nkind: skill\ncheck: \"run-the-suite\"\n---\n# Integration gate\nRuns the suite.\n"
+const checkSkill = "---\nname: satelle-story-integration-review\nkind: skill\ncheck: \"run-the-suite\"\n---\n# Integration gate\nRuns the suite.\n"
 
 func TestFunctionalCheckGate(t *testing.T) {
 	// A workflow edge whose reviewer skill carries a `check:` runs deterministically.
-	wf := "transitions:\n  - {from: in_progress, to: integrated, reviewer_skill: \"satelle-integration-review\"}\n"
+	wf := "transitions:\n  - {from: in_progress, to: integrated, reviewer_skill: \"satelle-story-integration-review\"}\n"
 
 	t.Run("pass accepts, agent not run", func(t *testing.T) {
 		g, r := gater(t, `{"decision":"reject"}`, fakeDocs{workflow: wf, skillBody: checkSkill, skillFound: true})
