@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/docindex"
 )
@@ -15,6 +16,7 @@ type workflowRowVM struct {
 	Headline  string
 	Scope     string
 	AppliesTo []string
+	Updated   time.Time
 }
 
 // wfState is a workflow state node. Terminal is true when no transition leaves it.
@@ -58,6 +60,7 @@ func workflowRows(docs []docindex.Doc) []workflowRowVM {
 			Headline:  d.Headline,
 			Scope:     workflowScope(d),
 			AppliesTo: frontmatterList(d.Body, "applies_to"),
+			Updated:   d.ModTime,
 		})
 	}
 	return out

@@ -108,7 +108,7 @@ const templatesSrc = `
       <div class="chips"></div>
     </div>
     <table class="panel-table">
-      <thead><tr><th>Name</th><th>Summary</th><th>Scope</th><th>Applies to</th></tr></thead>
+      <thead><tr><th>Name</th><th>Summary</th><th>Updated</th></tr></thead>
       <tbody data-rows>{{template "workflowRows" .Workflows}}</tbody>
     </table>
   </section>
@@ -146,11 +146,10 @@ const templatesSrc = `
 </div>{{end}}</div>{{else}}<div class="empty">none indexed — run <code>satelle index</code></div>{{end}}{{end}}{{end}}
 
 {{define "workflowRows"}}{{range .}}<tr class="row" tabindex="0" role="button" aria-expanded="false" data-search="{{printf "%s %s %s %s" .Name .Headline .Scope (join .AppliesTo " ") | lower}}" data-expand-url="/fragment/workflow/{{.Name}}">
-  <td><div class="wi-title">{{.Name}}</div></td>
+  <td><div class="wi-title">{{.Name}}</div><div class="wi-tags">{{if .Scope}}{{tagchip (printf "scope:%s" .Scope)}}{{end}}{{range .AppliesTo}}{{tagchip (printf "applies_to:%s" .)}}{{end}}</div></td>
   <td>{{.Headline}}</td>
-  <td class="wi-tags">{{if .Scope}}{{tagchip (printf "scope:%s" .Scope)}}{{end}}</td>
-  <td class="wi-tags">{{range .AppliesTo}}{{tagchip (printf "applies_to:%s" .)}}{{end}}</td>
-</tr>{{else}}<tr><td colspan="4" class="empty">none indexed — run <code>satelle index</code></td></tr>{{end}}{{end}}
+  <td class="updated">{{ftime .Updated}}</td>
+</tr>{{else}}<tr><td colspan="3" class="empty">none indexed — run <code>satelle index</code></td></tr>{{end}}{{end}}
 
 {{define "workflowDetail"}}<div class="expbody">
   <h4>{{.Name}}</h4>

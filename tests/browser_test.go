@@ -189,6 +189,18 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow tr.row[data-expand-url^="/fragment/workflow/"]') && getComputedStyle(document.querySelector('#panel-workflow')).display === 'block'`, 5*time.Second) {
 			t.Error("workflow panel/row not visible after clicking its tab")
 		}
+		// The workflow table carries an Updated column (the Applies-to column was
+		// replaced; scope/applies_to render as inline tag chips in the Name cell).
+		var hasUpdated, hasAppliesCol bool
+		if err := chromedp.Run(ctx,
+			chromedp.Evaluate(`[...document.querySelectorAll('#panel-workflow thead th')].some(t=>t.textContent.trim()==='Updated')`, &hasUpdated),
+			chromedp.Evaluate(`[...document.querySelectorAll('#panel-workflow thead th')].some(t=>t.textContent.trim()==='Applies to')`, &hasAppliesCol),
+		); err != nil {
+			t.Fatal(err)
+		}
+		if !hasUpdated || hasAppliesCol {
+			t.Errorf("workflow table headers wrong: hasUpdated=%v hasAppliesCol=%v", hasUpdated, hasAppliesCol)
+		}
 		clickJS(t, ctx, `#panel-workflow tr.row[data-expand-url^="/fragment/workflow/"]`)
 		if !waitCond(t, ctx, `(function(){var e=document.querySelector('#panel-workflow tr.expansion .expbody');return !!e && e.textContent.includes('Transitions') && !!document.querySelector('#panel-workflow .wf-node');})()`, 5*time.Second) {
 			t.Error("workflow diagram (states/transitions) did not appear on row click")
