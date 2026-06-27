@@ -18,7 +18,7 @@ func TestTagchipRendersKVAndBare(t *testing.T) {
 		Tags: []string{"ui", "epic:summariser"}, CreatedAt: now, UpdatedAt: now,
 	}
 	var buf bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&buf, "workitemRows", []workitem.Item{it}); err != nil {
+	if err := tmpl.ExecuteTemplate(&buf, "workitemRows", []rowVM{{Item: it}}); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()

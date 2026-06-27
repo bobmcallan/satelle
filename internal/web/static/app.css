@@ -100,6 +100,19 @@ header.app h1 .dot { color: var(--accent); }
 .id-copy.copied { color: var(--accent); }
 .tag { font-size: 11.5px; color: var(--muted); }
 
+/* Progress column — numbered stage lights folded from the review ledger. */
+.col-reviews { white-space: normal; width: 9rem; }
+.review-light { display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; margin: 0 3px 3px 0; border-radius: 50%;
+  font-size: 10px; font-weight: 600; line-height: 1; border: 1.5px solid var(--line);
+  background: transparent; color: var(--muted); vertical-align: middle; }
+.review-light-pass { background: #2ecc71; border-color: #2ecc71; color: #07321c; }
+.review-light-fail { background: #e74c3c; border-color: #e74c3c; color: #3a0807; }
+.review-light-fired { background: #4a6fa5; border-color: #4a6fa5; color: #07182e; }
+.review-light-current { background: transparent; border-color: #f1c40f; color: #f1c40f;
+  animation: review-pulse 1.4s ease-in-out infinite; }
+@keyframes review-pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+
 /* Status badges / pills */
 .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; background: var(--chip); color: #374151; }
 .badge.s-open { background: #eef2ff; color: #3730a3; }

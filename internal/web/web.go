@@ -117,13 +117,100 @@ func (s *Server) pollDB(ctx context.Context, interval time.Duration) {
 type pageData struct {
 	RepoRoot    string
 	DBPath      string
-	Stories     []workitem.Item
-	Tasks       []workitem.Item
+	Stories     []rowVM
+	Tasks       []rowVM
 	DocKinds    []kindGroup
 	DocCount    int
 	Version     string
 	FooterName  string
 	FooterEmail string
+}
+
+// rowVM is a work item plus its progress lights for the table row. Embedding the
+// item promotes its fields, so the row template reaches .Status/.Tags/etc.
+type rowVM struct {
+	workitem.Item
+	Lights []reviewLight
+}
+
+// reviewLight is one numbered stage circle in the progress column.
+type reviewLight struct {
+	Index int
+	State string // pass | fail | fired | current
+	Title string // tooltip
+}
+
+// lightPayload is the {from,to,skill} stamped on review/transition ledger rows.
+type lightPayload struct {
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Skill string `json:"skill"`
+}
+
+// buildLights folds a story's ledger rows into the progress strip: each distinct
+// workflow edge gets a stable 1-based index; a gated transition is a pass
+// (green), an ungated one a fired checkpoint (slate), a review_reject a fail
+// (red). A non-terminal story trails a pulsing current light. Mirrors the
+// satellites review-lights algorithm over satelle's ledger kinds.
+func buildLights(entries []ledger.Entry, status string) []reviewLight {
+	es := make([]ledger.Entry, len(entries)) // oldest-first
+	copy(es, entries)
+	for i, j := 0, len(es)-1; i < j; i, j = i+1, j-1 {
+		es[i], es[j] = es[j], es[i]
+	}
+	parse := func(p json.RawMessage) lightPayload {
+		var lp lightPayload
+		_ = json.Unmarshal(p, &lp)
+		return lp
+	}
+	accepted := map[string]bool{}
+	for _, e := range es {
+		if e.Kind == ledger.KindReviewAccept {
+			lp := parse(e.Payload)
+			accepted[lp.From+"→"+lp.To] = true
+		}
+	}
+	idx := map[string]int{}
+	next := 0
+	idxFor := func(edge string) int {
+		if _, ok := idx[edge]; !ok {
+			next++
+			idx[edge] = next
+		}
+		return idx[edge]
+	}
+	var lights []reviewLight
+	for _, e := range es {
+		lp := parse(e.Payload)
+		edge := lp.From + " → " + lp.To
+		switch e.Kind {
+		case ledger.KindReviewReject:
+			i := idxFor(edge)
+			lights = append(lights, reviewLight{i, "fail", fmt.Sprintf("%d. %s — rejected", i, edge)})
+		case ledger.KindStatusTransition:
+			i := idxFor(edge)
+			state := "fired"
+			if accepted[lp.From+"→"+lp.To] {
+				state = "pass"
+			}
+			lights = append(lights, reviewLight{i, state, fmt.Sprintf("%d. %s — %s", i, edge, state)})
+		}
+	}
+	if status != "done" && status != "cancelled" {
+		lights = append(lights, reviewLight{next + 1, "current", "current stage"})
+	}
+	return lights
+}
+
+// attachLights wraps items with their progress lights, reading each item's
+// ledger via the same verb the detail view uses.
+func attachLights(ctx context.Context, items []workitem.Item) []rowVM {
+	out := make([]rowVM, len(items))
+	for i, it := range items {
+		entries, _ := fetchList[ledger.Entry](ctx, "ledger-list", map[string]any{"story_id": it.ID, "limit": 500})
+		out[i] = rowVM{Item: it, Lights: buildLights(entries, it.Status)}
+	}
+	return out
 }
 
 // footerIdentity resolves the operator's name/email for the footer from the
@@ -183,7 +270,8 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 	name, email := footerIdentity(a.RepoRoot)
 	return pageData{
 		RepoRoot: a.RepoRoot, DBPath: a.DBPath,
-		Stories: stories, Tasks: tasks, DocKinds: kinds, DocCount: len(allDocs),
+		Stories: attachLights(ctx, stories), Tasks: attachLights(ctx, tasks),
+		DocKinds: kinds, DocCount: len(allDocs),
 		Version: buildinfo.Resolve().Version, FooterName: name, FooterEmail: email,
 	}, nil
 }
