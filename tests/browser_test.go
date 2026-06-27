@@ -486,6 +486,42 @@ func visibleRow(t *testing.T, ctx context.Context, id string) bool {
 	return vis
 }
 
+// TestBrowserDocRendersMarkdown opens a document from the Documents tab and
+// asserts its markdown was rendered to HTML server-side (a heading element
+// exists), not shown as raw text.
+func TestBrowserDocRendersMarkdown(t *testing.T) {
+	base, _ := serveRepo(t, "8807")
+	ctx := newChrome(t)
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/"),
+		chromedp.WaitVisible(`.tab[data-panel="docs"]`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	clickJS(t, ctx, `.tab[data-panel="docs"]`)
+	if !waitCond(t, ctx, `!!document.querySelector('#panel-docs a.doc[href^="/doc/"]')`, 5*time.Second) {
+		t.Fatal("no clickable doc card in the Documents tab")
+	}
+	var href string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('#panel-docs a.doc[href^="/doc/"]').getAttribute('href')`, &href)); err != nil {
+		t.Fatal(err)
+	}
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+href),
+		chromedp.WaitVisible(`article.doc-article`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("doc page %q: %v", href, err)
+	}
+	var hasHeading bool
+	if err := chromedp.Run(ctx, chromedp.Evaluate(
+		`!!document.querySelector('article.doc-article h1, article.doc-article h2, article.doc-article h3')`, &hasHeading)); err != nil {
+		t.Fatal(err)
+	}
+	if !hasHeading {
+		t.Error("doc viewer did not render markdown headings — body shown as raw text?")
+	}
+}
+
 // hasChip reports whether the named panel shows a filter chip with the label.
 func hasChip(t *testing.T, ctx context.Context, panel, label string) bool {
 	t.Helper()

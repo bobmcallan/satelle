@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -130,6 +131,7 @@ func New(a *app.App) *Server {
 	mux.HandleFunc("GET /story/{id}", itemDetailPage("story"))
 	mux.HandleFunc("GET /task/{id}", itemDetailPage("task"))
 
+	mux.HandleFunc("GET /doc/{kind}/{name}", docPage())
 	mux.HandleFunc("GET /workspace", workspacePage(a))
 	mux.HandleFunc("GET /help", helpPage())
 	mux.HandleFunc("GET /{$}", projectPage(a))
@@ -167,6 +169,36 @@ type helpTopic struct {
 	Name  string
 	Title string
 	Body  string
+}
+
+// docPageData backs the standalone authored-document viewer: the rendered
+// markdown plus the shared chrome.
+type docPageData struct {
+	TopBar   topBar
+	Kind     string
+	Name     string
+	Headline string
+	HTML     template.HTML
+}
+
+// docPage renders one authored document with its markdown formatted to HTML
+// server-side (renderMarkdown is safe by construction — see markdown.go).
+func docPage() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		kind, name := r.PathValue("kind"), r.PathValue("name")
+		doc, err := fetchOne[docindex.Doc](r.Context(), "doc-get", map[string]any{"kind": kind, "name": name})
+		if err != nil || doc.Name == "" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		render(w, "docPage", docPageData{
+			TopBar:   topBar{Uptime: formatUptime(time.Since(serverStart))},
+			Kind:     kind,
+			Name:     doc.Name,
+			Headline: doc.Headline,
+			HTML:     renderMarkdown(doc.Body),
+		})
+	}
 }
 
 // helpPage renders the embedded help topics (the same internal/help source the
