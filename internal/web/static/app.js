@@ -179,11 +179,17 @@
     var input = panel.querySelector(".filterbar input");
     var parsed = parseQuery(input ? input.value : "");
     collapseAll(panel);
+    var total = 0, shown = 0;
     panel.querySelectorAll("[data-rows] .row, [data-rows] .doc").forEach(function (row) {
-      row.style.display = rowMatches(row, parsed) ? "" : "none";
+      var match = rowMatches(row, parsed);
+      row.style.display = match ? "" : "none";
+      total++;
+      if (match) shown++;
     });
     applyOrder(panel, parsed.order || DEFAULT_ORDER); // explicit default sort, not incidental order
     if (input) renderChips(panel, parsed, input);
+    var count = panel.querySelector(".filter-count");
+    if (count) count.textContent = shown + " / " + total;
   }
 
   function initFilters() {

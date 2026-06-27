@@ -119,6 +119,19 @@ func TestBacklogCountRendered(t *testing.T) {
 	}
 }
 
+func TestStoriesFilterCountRendered(t *testing.T) {
+	srv, _ := newServer(t)
+	code, body := get(t, srv.URL+"/")
+	if code != 200 {
+		t.Fatalf("status = %d", code)
+	}
+	// The stories filterbar carries the filter-count element (filled with
+	// "<filtered> / <total>" by app.js on filter); assert it is present to render.
+	if !strings.Contains(body, "filter-count") {
+		t.Errorf("stories filterbar missing the filter-count element")
+	}
+}
+
 func TestUnknownPath404(t *testing.T) {
 	srv, _ := newServer(t)
 	if code, _ := get(t, srv.URL+"/nope"); code != 404 {
