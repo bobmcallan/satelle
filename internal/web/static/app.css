@@ -67,6 +67,7 @@ header.app h1 .dot { color: var(--accent); }
 .meta { color: var(--muted); font-size: 12.5px; margin-top: 5px; font-family: var(--mono); }
 .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #cbd5e1; margin-left: 8px; vertical-align: middle; transition: background .3s; }
 .live-dot.on { background: var(--accent); box-shadow: 0 0 0 3px rgba(47,111,79,.15); }
+header.app .live-dot { float: right; margin-top: 9px; margin-left: 0; margin-right: 12px; }
 .theme-toggle { float: right; margin-top: 2px; border: 1px solid var(--line); background: var(--panel);
   color: var(--muted); width: 30px; height: 30px; border-radius: 8px; font-size: 14px; line-height: 1; }
 .theme-toggle:hover { color: var(--ink); }
