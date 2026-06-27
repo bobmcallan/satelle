@@ -17,28 +17,26 @@ description: REPO OVERRIDE of the embedded canonical satelle-baseline-workflow (
 
 The default lifecycle every satelle repo gets: a story or task moves
 **open → in_progress → done**, may detour through **blocked**, and may exit early
-to **cancelled**. It mirrors the satellites baseline, but is **gateless** — the
-OSS local tier ships no reviewer engine, so each transition is advisory guidance
-the operator/agent follows, driven through the verb surface
-(`satelle story set <id> --status …`). When the paid server tier lands, the same
-states gain reviewer gates at the edges; nothing about the authored states
-changes.
+to **cancelled**. This repo now runs **gated** (the quality-management spine is
+built): the begin-work and close edges are judged by an isolated reviewer
+(`satelle-intent-plan-review` on `open → in_progress`, `satelle-story-done-review`
+on `in_progress → done`, both repo skills under `.satelle/skills`). The executor
+cannot self-enact a gated edge — a reject pushes back with notes. Ungated edges
+(blocked, cancelled) stay advisory.
 
 ## Workflow
 
-- **open → in_progress** — begin work on the item.
+- **open → in_progress** — begin work; **gated** by `satelle-intent-plan-review`
+  (the story must be well-formed before work starts).
 - **in_progress → blocked** — record that work is stalled on a dependency.
 - **blocked → in_progress** — resume once unblocked.
-- **in_progress → done** — close the item, in this order:
-  1. **after in_progress**, run the integration tests (`make integration`);
-  2. **once the integration tests pass**, commit and push the work;
-  3. then set the item to done with its acceptance criteria satisfied.
+- **in_progress → done** — close the item; **gated** by `satelle-story-done-review`.
+  Before requesting the close: run the integration tests (`make integration`) and
+  commit/push once they pass — the reviewer then judges the acceptance criteria.
 - **open/in_progress → cancelled** — abandon the item (record why).
 
 The closing path is deliberate: `in_progress → (make integration passes) →
-commit/push → done`. Integration tests come *after* the work is in_progress and
-*before* the commit; the commit/push happens only once they are green; only then
-is the item done.
+commit/push → request done → (reviewer accepts) → done`.
 
 ```yaml
 states:
@@ -48,11 +46,10 @@ states:
   - done
   - cancelled
 transitions:
-  - {from: open, to: in_progress}
+  - {from: open, to: in_progress, reviewer_skill: "satelle-intent-plan-review"}
   - {from: in_progress, to: blocked}
   - {from: blocked, to: in_progress}
-  # The in_progress → done edge carries the closing steps below.
-  - {from: in_progress, to: done, steps: ["run `make integration`", "commit + push once tests pass"]}
+  - {from: in_progress, to: done, reviewer_skill: "satelle-story-done-review"}
   - {from: open, to: cancelled}
   - {from: in_progress, to: cancelled}
 ```
