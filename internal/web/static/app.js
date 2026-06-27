@@ -337,12 +337,17 @@
   function currentTheme() {
     return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
   }
-  function applyTheme(theme) {
+  function applyTheme(theme, persist) {
     if (theme === "dark") document.documentElement.setAttribute("data-theme", "dark");
     else document.documentElement.removeAttribute("data-theme"); // light is the default (no attr)
     try { localStorage.setItem("satelle-theme", theme); } catch (e) {}
     var btn = document.getElementById("theme-toggle");
     if (btn) btn.textContent = theme === "dark" ? "☀" : "◐";
+    // Persist the choice to the machine-wide config so it follows the operator
+    // into every repo (best-effort; localStorage remains the fast-path cache).
+    if (persist) {
+      try { fetch("/theme", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "theme=" + theme }); } catch (e) {}
+    }
   }
   function initTheme() {
     // The <head> script already applied any saved choice pre-paint; sync the
@@ -350,7 +355,7 @@
     applyTheme(currentTheme());
     var btn = document.getElementById("theme-toggle");
     if (btn) btn.addEventListener("click", function () {
-      applyTheme(currentTheme() === "dark" ? "light" : "dark");
+      applyTheme(currentTheme() === "dark" ? "light" : "dark", true);
     });
   }
 

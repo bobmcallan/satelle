@@ -51,12 +51,12 @@ var tmpl = template.Must(template.New("web").Funcs(tmplFuncs).Parse(templatesSrc
 
 const templatesSrc = `
 {{define "page"}}<!doctype html>
-<html lang="en">
+<html lang="en"{{if .Theme}} data-theme="{{.Theme}}"{{end}}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>satelle · project</title>
-<script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<script>(function(){try{if(!document.documentElement.getAttribute('data-theme')){var t=localStorage.getItem('satelle-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
