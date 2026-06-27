@@ -122,6 +122,27 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		if !hasChip(t, ctx, "stories", "status:open") {
 			t.Error("expected default status:open chip")
 		}
+		// The default sort is surfaced the same way: an order:updated chip.
+		if !hasChip(t, ctx, "stories", "order:updated") {
+			t.Error("expected default order:updated chip")
+		}
+	})
+
+	t.Run("status_all_reveals_terminal", func(t *testing.T) {
+		if err := chromedp.Run(ctx, setInput(`#panel-stories .filterbar input`, "status:all")); err != nil {
+			t.Fatal(err)
+		}
+		if !waitCond(t, ctx, jsRowVisible(doneID), 3*time.Second) {
+			t.Errorf("status:all should reveal the terminal story %s", doneID)
+		}
+		if !hasChip(t, ctx, "stories", "status:all") {
+			t.Error("expected a status:all chip")
+		}
+		// Reset to the default for following subtests.
+		if err := chromedp.Run(ctx, setInput(`#panel-stories .filterbar input`, "")); err != nil {
+			t.Fatal(err)
+		}
+		waitCond(t, ctx, jsRowVisible(openID), 3*time.Second)
 	})
 
 	t.Run("tab_switching", func(t *testing.T) {
