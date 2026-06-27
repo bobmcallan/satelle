@@ -2,6 +2,7 @@ package reviewer
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
@@ -333,3 +334,52 @@ func TestFrontmatterListForms(t *testing.T) {
 		t.Fatalf("want nil without frontmatter")
 	}
 }
+
+const checkSkill = "---\nname: satelle-integration-review\nkind: skill\ncheck: \"run-the-suite\"\n---\n# Integration gate\nRuns the suite.\n"
+
+func TestFunctionalCheckGate(t *testing.T) {
+	// A workflow edge whose reviewer skill carries a `check:` runs deterministically.
+	wf := "transitions:\n  - {from: in_progress, to: integrated, reviewer_skill: \"satelle-integration-review\"}\n"
+
+	t.Run("pass accepts, agent not run", func(t *testing.T) {
+		g, r := gater(t, `{"decision":"reject"}`, fakeDocs{workflow: wf, skillBody: checkSkill, skillFound: true})
+		var ran string
+		g.check = func(_ context.Context, dir, command string) (string, error) { ran = command; return "ok\n", nil }
+		dec, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "integrated")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !dec.Gated || !dec.Accept {
+			t.Fatalf("want gated accept, got %+v", dec)
+		}
+		if ran != "run-the-suite" {
+			t.Errorf("check command = %q, want run-the-suite", ran)
+		}
+		if r.got.SystemPrompt != "" {
+			t.Errorf("LLM reviewer must not run for a functional-check gate")
+		}
+	})
+
+	t.Run("fail rejects with output tail", func(t *testing.T) {
+		g, _ := gater(t, ``, fakeDocs{workflow: wf, skillBody: checkSkill, skillFound: true})
+		g.check = func(_ context.Context, dir, command string) (string, error) {
+			return "FAIL tests\n2 failures\n", errFakeExit
+		}
+		dec, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "integrated")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !dec.Gated || dec.Accept {
+			t.Fatalf("want gated reject, got %+v", dec)
+		}
+		if !strings.Contains(dec.Notes, "2 failures") {
+			t.Errorf("reject notes should carry the check output tail, got %q", dec.Notes)
+		}
+	})
+}
+
+var errFakeExit = errFake("exit status 1")
+
+type errFake string
+
+func (e errFake) Error() string { return string(e) }

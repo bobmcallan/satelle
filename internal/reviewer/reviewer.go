@@ -19,7 +19,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/docindex"
@@ -42,20 +44,41 @@ const defaultTools = "Read,Grep,Glob"
 // skills. The repo override or the embedded canonical resolves under this name.
 const baselineWorkflow = "satelle-baseline-workflow"
 
-// Gater judges status transitions against the active workflow's reviewer skills,
-// running each as an isolated agent subprocess.
+// defaultCheckTimeout bounds a functional check (deploy/integration can be slow,
+// but a hung command must not block a transition forever).
+const defaultCheckTimeout = 20 * time.Minute
+
+// Gater judges status transitions against the active workflow's reviewer skills.
+// A skill is either an LLM reviewer (its body rides as an isolated agent's system
+// prompt) or a functional check (its frontmatter names a deterministic `check:`
+// command the gate runs — the command's exit code is the verdict).
 type Gater struct {
-	runner   agentcli.Runner
-	docs     DocGetter
-	repoRoot string
-	model    string
-	tools    string
+	runner       agentcli.Runner
+	docs         DocGetter
+	repoRoot     string
+	model        string
+	tools        string
+	checkTimeout time.Duration
+	// check runs a functional-check command in dir and returns its combined
+	// output. Swappable in tests; defaults to a real `sh -c` exec.
+	check func(ctx context.Context, dir, command string) (string, error)
 }
 
 // New builds a Gater over the agent runner and doc index. model "" inherits the
 // agent's default; the tool grant is read-only.
 func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Gater {
-	return &Gater{runner: runner, docs: docs, repoRoot: repoRoot, model: model, tools: defaultTools}
+	return &Gater{
+		runner: runner, docs: docs, repoRoot: repoRoot, model: model, tools: defaultTools,
+		checkTimeout: defaultCheckTimeout, check: execCheck,
+	}
+}
+
+// execCheck runs command via `sh -c` in dir, returning combined stdout+stderr.
+func execCheck(ctx context.Context, dir, command string) (string, error) {
+	c := exec.CommandContext(ctx, "sh", "-c", command)
+	c.Dir = dir
+	out, err := c.CombinedOutput()
+	return string(out), err
 }
 
 // transitionPayload is the JSON delivered to the reviewer on stdin.
@@ -85,6 +108,13 @@ func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (
 			return verb.GateDecision{Gated: false}, nil
 		}
 		return verb.GateDecision{}, err
+	}
+	// Functional-check gate: when the skill declares a `check:` command, the gate
+	// is deterministic — run the command in the repo root; exit 0 accepts,
+	// non-zero rejects with the output tail as notes. No LLM (the command IS the
+	// decision). This is the constitution's "skill + functional check" gate.
+	if command := frontmatterScalar(body, "check"); command != "" {
+		return g.runCheck(ctx, skill, command), nil
 	}
 	if g.runner == nil {
 		return verb.GateDecision{Gated: true}, fmt.Errorf(
@@ -235,6 +265,58 @@ func (g *Gater) activeWorkflow(ctx context.Context, category string) (docindex.D
 		}
 	}
 	return g.docs.Get(ctx, "workflows", baselineWorkflow)
+}
+
+// runCheck runs a skill's functional-check command and returns a deterministic
+// verdict: exit 0 accepts, any non-zero (or a run error / timeout) rejects with
+// the command's output tail as actionable notes.
+func (g *Gater) runCheck(ctx context.Context, skill, command string) verb.GateDecision {
+	timeout := g.checkTimeout
+	if timeout <= 0 {
+		timeout = defaultCheckTimeout
+	}
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	out, err := g.check(cctx, g.repoRoot, command)
+	dec := verb.GateDecision{Gated: true, Skill: skill}
+	if err != nil {
+		dec.Accept = false
+		dec.Notes = fmt.Sprintf("functional check failed (`%s`): %v\n%s", command, err, tailLines(out, 40))
+		return dec
+	}
+	dec.Accept = true
+	dec.Notes = "functional check passed: `" + command + "`"
+	return dec
+}
+
+// frontmatterScalar returns a single-line scalar value for key from a markdown
+// frontmatter block (quotes trimmed), or "" when absent. Used to read a gate's
+// `check:` command.
+func frontmatterScalar(body, key string) string {
+	lines := strings.Split(body, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return ""
+	}
+	for j := 1; j < len(lines); j++ {
+		t := strings.TrimSpace(lines[j])
+		if t == "---" {
+			return ""
+		}
+		if strings.HasPrefix(t, key+":") {
+			return strings.Trim(strings.TrimSpace(strings.TrimPrefix(t, key+":")), `"'`)
+		}
+	}
+	return ""
+}
+
+// tailLines returns the last n non-trailing-empty lines of s, so a long check log
+// is summarised to its most relevant (final) output for the reject notes.
+func tailLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // frontmatterList parses a list-valued key from a markdown frontmatter block,
