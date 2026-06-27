@@ -359,6 +359,19 @@
     });
   }
 
+  // Story document tabs: delegated so it survives detail-page live re-renders.
+  function initDocTabs() {
+    document.addEventListener("click", function (e) {
+      var tab = e.target.closest(".doc-tab");
+      if (!tab) return;
+      var wrap = tab.closest(".doc-tabs");
+      if (!wrap) return;
+      var idx = tab.dataset.doc;
+      wrap.querySelectorAll(".doc-tab").forEach(function (t) { t.classList.toggle("active", t.dataset.doc === idx); });
+      wrap.querySelectorAll(".doc-pane").forEach(function (p) { p.classList.toggle("active", p.dataset.doc === idx); });
+    });
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     initTheme();
     initTabs();
@@ -366,5 +379,6 @@
     initFilters();
     initLive();
     initDetailLive();
+    initDocTabs();
   });
 })();

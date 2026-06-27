@@ -522,6 +522,32 @@ func TestBrowserDocRendersMarkdown(t *testing.T) {
 	}
 }
 
+// TestBrowserStoryDocTabs attaches a document to a story and asserts it appears
+// as a tab on the detail page with its markdown rendered.
+func TestBrowserStoryDocTabs(t *testing.T) {
+	base, repo := serveRepo(t, "8808")
+	id := createStory(t, repo, "Doc tabs story", "")
+	mustRun(t, testBin, repo, "story", "attach", id, "--name", "plan", "--type", "plan",
+		"--body", "# Plan\n\n- step one\n- step two")
+
+	ctx := newChrome(t)
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/story/"+id),
+		chromedp.WaitVisible(`.doc-tabs .doc-tab`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.doc-pane.active .doc-article`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("story doc tab not rendered: %v", err)
+	}
+	var rendered bool
+	if err := chromedp.Run(ctx, chromedp.Evaluate(
+		`!!document.querySelector('.doc-pane.active .doc-article h1') && !!document.querySelector('.doc-pane.active .doc-article li')`, &rendered)); err != nil {
+		t.Fatal(err)
+	}
+	if !rendered {
+		t.Error("attached-document tab did not render its markdown (heading + list)")
+	}
+}
+
 // hasChip reports whether the named panel shows a filter chip with the label.
 func hasChip(t *testing.T, ctx context.Context, panel, label string) bool {
 	t.Helper()
