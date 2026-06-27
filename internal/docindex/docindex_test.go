@@ -151,3 +151,28 @@ func TestSyncMissingDirIsBenign(t *testing.T) {
 }
 
 func s(db *sql.DB) *Store { return New(db) }
+
+func TestSyncReportsChanged(t *testing.T) {
+	dir := t.TempDir()
+	wf := filepath.Join(dir, "workflows")
+	if err := os.MkdirAll(wf, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wf, "a.md"), []byte("# a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	db := openDB(t)
+	s := New(db)
+	res, err := s.Sync(context.Background(), map[string]string{"workflows": wf}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Changed) != 1 || res.Changed[0].Kind != "workflows" || res.Changed[0].Name != "a" {
+		t.Fatalf("Changed = %+v, want one workflows/a", res.Changed)
+	}
+	// A second sync with no change reports nothing changed.
+	res2, _ := s.Sync(context.Background(), map[string]string{"workflows": wf}, time.Now())
+	if len(res2.Changed) != 0 {
+		t.Fatalf("unchanged sync should report no Changed, got %+v", res2.Changed)
+	}
+}
