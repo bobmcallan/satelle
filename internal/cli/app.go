@@ -6,7 +6,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/app"
+	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/reviewer"
 	"github.com/bobmcallan/satelle/internal/verb"
 )
 
@@ -34,6 +37,14 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetWorkItemStore(a.Store.Stories)
 	verb.SetLedgerStore(a.Store.Ledger)
 	verb.SetDocIndexStore(a.Store.DocIndex)
+	// Wire the isolated reviewer that gates status transitions. The agent CLI is
+	// the install-time choice (global config); the gate is inert until a
+	// workflow names a reviewer skill whose rubric is installed.
+	if gc, gerr := config.LoadGlobal(); gerr == nil {
+		if runner, rerr := agentcli.NewRunner(gc.Agent.ResolveCLI()); rerr == nil {
+			verb.SetTransitionGater(reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, ""))
+		}
+	}
 	cmd.SetContext(context.WithValue(cmd.Context(), appCtxKey{}, a))
 	return nil
 }

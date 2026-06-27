@@ -123,7 +123,7 @@ func TestDogfoodFlow(t *testing.T) {
 
 	// Lifecycle events landed in the ledger.
 	out = mustRun(t, bin, repo, "ledger", "list", "--story", storyID)
-	if !strings.Contains(out, "story_created") || !strings.Contains(out, "story_updated") {
+	if !strings.Contains(out, "story_created") || !strings.Contains(out, "status_transition") {
 		t.Errorf("ledger missing lifecycle events:\n%s", out)
 	}
 

@@ -160,6 +160,38 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		return nil, fmt.Errorf("verb: id required")
 	}
 	now := time.Now()
+
+	// Resolve the current item so we can detect a status transition and gate it
+	// before anything is enacted.
+	current, err := store.Get(ctx, req.ID)
+	if err != nil {
+		return nil, err
+	}
+	transitioning := req.Status != nil && *req.Status != current.Status
+
+	// Gate the transition through the isolated reviewer, if one is wired and the
+	// edge is governed by a reviewer skill. A reject blocks the whole set and
+	// pushes the reviewer's notes back to the executor; an ungated edge enacts.
+	if transitioning && transitionGater != nil {
+		dec, gerr := transitionGater.Gate(ctx, current, *req.Status)
+		if gerr != nil {
+			return nil, gerr
+		}
+		if dec.Gated && !dec.Accept {
+			appendLedgerEntry(ctx, current.ID, ledger.KindReviewReject, "reviewer",
+				fmt.Sprintf("rejected %s→%s: %s", current.Status, *req.Status, dec.Notes),
+				transitionPayload(current.Status, *req.Status, dec.Skill), now)
+			notifyChange(panelTopic(current.Kind))
+			return nil, fmt.Errorf("transition %s→%s rejected by %s: %s",
+				current.Status, *req.Status, dec.Skill, dec.Notes)
+		}
+		if dec.Gated {
+			appendLedgerEntry(ctx, current.ID, ledger.KindReviewAccept, "reviewer",
+				fmt.Sprintf("accepted %s→%s", current.Status, *req.Status),
+				transitionPayload(current.Status, *req.Status, dec.Skill), now)
+		}
+	}
+
 	it, err := store.Update(ctx, req.ID, workitem.UpdateInput{
 		Title:              req.Title,
 		Body:               req.Body,
@@ -173,11 +205,19 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	if err != nil {
 		return nil, err
 	}
-	ledgerKind := ledger.KindStoryUpdated
-	if it.Kind == workitem.KindTask {
-		ledgerKind = ledger.KindTaskUpdated
+	if transitioning {
+		// An enacted status change records a transition row (feeds the progress
+		// column), regardless of whether the edge was gated.
+		appendLedgerEntry(ctx, it.ID, ledger.KindStatusTransition, "executor",
+			fmt.Sprintf("%s → %s", current.Status, *req.Status),
+			transitionPayload(current.Status, *req.Status, ""), now)
+	} else {
+		ledgerKind := ledger.KindStoryUpdated
+		if it.Kind == workitem.KindTask {
+			ledgerKind = ledger.KindTaskUpdated
+		}
+		appendLedger(ctx, it.ID, ledgerKind, fmt.Sprintf("updated %s", it.Kind), now)
 	}
-	appendLedger(ctx, it.ID, ledgerKind, fmt.Sprintf("updated %s", it.Kind), now)
 	notifyChange(panelTopic(it.Kind))
 	return json.Marshal(it)
 }
@@ -186,12 +226,35 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 // failure must not fail the work mutation that already committed. Skipped when
 // no ledger store is wired.
 func appendLedger(ctx context.Context, storyID, kind, body string, now time.Time) {
+	appendLedgerEntry(ctx, storyID, kind, "", body, nil, now)
+}
+
+// appendLedgerEntry is appendLedger with an actor and structured payload — used
+// by the transition gate (review verdicts, status transitions). Best-effort.
+func appendLedgerEntry(ctx context.Context, storyID, kind, actor, body string, payload json.RawMessage, now time.Time) {
 	if ledgerStore == nil {
 		return
 	}
 	_, _ = ledgerStore.Append(ctx, ledger.AppendInput{
 		StoryID: storyID,
 		Kind:    kind,
+		Actor:   actor,
 		Body:    body,
+		Payload: payload,
 	}, now)
+}
+
+// transitionPayload is the {from,to,skill} JSON stamped on review/transition
+// ledger rows so the progress column can reconstruct the workflow trail.
+func transitionPayload(from, to, skill string) json.RawMessage {
+	p := struct {
+		From  string `json:"from"`
+		To    string `json:"to"`
+		Skill string `json:"skill,omitempty"`
+	}{From: from, To: to, Skill: skill}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return nil
+	}
+	return b
 }
