@@ -10,8 +10,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/bobmcallan/satelle/internal/agentcli"
-	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/reviewer"
 )
 
@@ -27,10 +25,6 @@ narrow. Exit is non-zero if any doc fails.`,
 		Args:        cobra.MaximumNArgs(2),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			a, err := appFrom(cmd)
-			if err != nil {
-				return err
-			}
 			var kindFilter, nameFilter string
 			if len(args) > 0 {
 				kindFilter = args[0]
@@ -39,18 +33,10 @@ narrow. Exit is non-zero if any doc fails.`,
 				nameFilter = args[1]
 			}
 
-			// Build the reviewer over the install-time agent CLI (same as the
-			// transition gater wiring), read-only.
-			gc, err := config.LoadGlobal()
+			g, a, err := gaterForCmd(cmd)
 			if err != nil {
 				return err
 			}
-			runner, err := agentcli.NewRunner(gc.Agent.ResolveCLI())
-			if err != nil {
-				return fmt.Errorf("validate needs an agent CLI: %w", err)
-			}
-			g := reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, "")
-
 			docs, err := a.Store.DocIndex.List(context.Background(), kindFilter)
 			if err != nil {
 				return err
