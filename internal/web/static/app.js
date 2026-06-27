@@ -274,7 +274,29 @@
     src.onerror = function () { if (dot) dot.classList.remove("on"); };
   }
 
+  // ---- theme (light default, dark optional, persisted) --------------------
+  function currentTheme() {
+    return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+  }
+  function applyTheme(theme) {
+    if (theme === "dark") document.documentElement.setAttribute("data-theme", "dark");
+    else document.documentElement.removeAttribute("data-theme"); // light is the default (no attr)
+    try { localStorage.setItem("satelle-theme", theme); } catch (e) {}
+    var btn = document.getElementById("theme-toggle");
+    if (btn) btn.textContent = theme === "dark" ? "☀" : "◐";
+  }
+  function initTheme() {
+    // The <head> script already applied any saved choice pre-paint; sync the
+    // toggle label and wire the control. Default stays light when unset.
+    applyTheme(currentTheme());
+    var btn = document.getElementById("theme-toggle");
+    if (btn) btn.addEventListener("click", function () {
+      applyTheme(currentTheme() === "dark" ? "light" : "dark");
+    });
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
+    initTheme();
     initTabs();
     initExpand();
     initFilters();
