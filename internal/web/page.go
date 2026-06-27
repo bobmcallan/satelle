@@ -19,6 +19,17 @@ var tmplFuncs = template.FuncMap{
 	"join": func(ss []string, sep string) string {
 		return strings.Join(ss, sep)
 	},
+	// tagchip renders a tag chip. A key:value tag (e.g. epic:summariser) renders
+	// as a kv chip distinguishing key from value; a bare tag renders plain. No
+	// schema change — kv is a parsed string convention.
+	"tagchip": func(tag string) template.HTML {
+		esc := template.HTMLEscapeString
+		if i := strings.IndexByte(tag, ':'); i > 0 && i < len(tag)-1 {
+			return template.HTML(`<span class="tagchip kv"><span class="k">` + esc(tag[:i]) +
+				`</span><span class="v">` + esc(tag[i+1:]) + `</span></span>`)
+		}
+		return template.HTML(`<span class="tagchip">` + esc(tag) + `</span>`)
+	},
 	// tabof maps a work-item kind to its panel/tab name (story→stories). Takes
 	// any so the workitem.Kind type (a distinct string type) is accepted.
 	"tabof": func(kind any) string {
@@ -101,7 +112,7 @@ const templatesSrc = `
 
 {{define "workitemRows"}}{{range .}}<tr class="row" tabindex="0" role="button" aria-expanded="false" data-status="{{.Status}}" data-priority="{{.Priority}}" data-category="{{.Category}}" data-tags="{{join .Tags ","}}" data-title="{{lower .Title}}" data-updated="{{.UpdatedAt.Format "2006-01-02T15:04:05"}}" data-created="{{.CreatedAt.Format "2006-01-02T15:04:05"}}" data-search="{{printf "%s %s %s" .Title .ID (join .Tags " ") | lower}}" data-expand-url="/fragment/{{.Kind}}/{{.ID}}">
   <td class="id"><span class="id-copy" role="button" tabindex="0" data-id="{{.ID}}" title="Copy id to clipboard">{{.ID}}</span></td>
-  <td><div class="wi-title">{{.Title}}</div>{{if .Tags}}<div class="wi-tags">{{range .Tags}}<span class="tagchip">{{.}}</span>{{end}}</div>{{end}}</td>
+  <td><div class="wi-title">{{.Title}}</div>{{if .Tags}}<div class="wi-tags">{{range .Tags}}{{tagchip .}}{{end}}</div>{{end}}</td>
   <td><span class="badge s-{{.Status}}">{{.Status}}</span></td>
   <td>{{if .Priority}}{{.Priority}}{{else}}—{{end}}</td>
   <td class="updated">{{ftime .UpdatedAt}}</td>
@@ -120,7 +131,7 @@ const templatesSrc = `
     <dt>Priority</dt><dd>{{if .Item.Priority}}{{.Item.Priority}}{{else}}—{{end}}</dd>
     <dt>Category</dt><dd>{{if .Item.Category}}{{.Item.Category}}{{else}}—{{end}}</dd>
     {{if .Item.ParentID}}<dt>Parent</dt><dd><a href="/story/{{.Item.ParentID}}">{{.Item.ParentID}}</a></dd>{{end}}
-    {{if .Item.Tags}}<dt>Tags</dt><dd class="wi-tags">{{range .Item.Tags}}<span class="tagchip">{{.}}</span>{{end}}</dd>{{end}}
+    {{if .Item.Tags}}<dt>Tags</dt><dd class="wi-tags">{{range .Item.Tags}}{{tagchip .}}{{end}}</dd>{{end}}
     <dt>Updated</dt><dd>{{ftime .Item.UpdatedAt}}</dd>
   </dl>
   {{if .Item.Body}}<h4>Description</h4><pre class="prose">{{.Item.Body}}</pre>{{end}}
