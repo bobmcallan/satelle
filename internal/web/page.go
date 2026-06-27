@@ -78,7 +78,10 @@ const templatesSrc = `
 
   <section class="panel" data-topic="stories" id="panel-stories">
     <div class="filterbar">
-      <input type="text" placeholder="filter… e.g. status:open priority:high tags:epic:foo order:updated" aria-label="filter stories">
+      <div class="filter-input">
+        <input type="text" placeholder="filter… e.g. status:open priority:high tags:epic:foo order:updated" aria-label="filter stories">
+        <span class="filter-count" aria-live="polite"></span>
+      </div>
       <div class="chips"></div>
     </div>
     <table class="panel-table">

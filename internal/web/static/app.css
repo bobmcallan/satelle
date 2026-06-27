@@ -86,6 +86,10 @@ header.app .live-dot { float: right; margin-top: 9px; margin-left: 0; margin-rig
 /* Filter box + chips */
 .filterbar { margin: 0 0 12px; }
 .filterbar input { width: 100%; font-size: 13.5px; }
+.filter-input { position: relative; }
+.filter-input input { padding-right: 64px; }
+.filter-count { position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  color: var(--muted); font-size: 12px; font-family: var(--mono); pointer-events: none; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .fchip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px;
   background: var(--chip); color: #374151; font-size: 12px; }
