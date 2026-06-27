@@ -290,7 +290,7 @@
 
   function initLive() {
     if (!window.EventSource) return;
-    var dot = document.querySelector(".live-dot");
+    var dot = document.querySelector(".uptime");
     var src = new EventSource("/events");
     var refetch = {}; // per-topic debounced refetch
     LIVE_TOPICS.forEach(function (tp) { refetch[tp] = debounce(function () { refetchPanel(tp); }, 250); });
@@ -315,7 +315,7 @@
     var el = document.getElementById("detail-live");
     if (!el || !window.EventSource) return;
     var kind = el.dataset.kind, id = el.dataset.id, topic = topicForKind(kind);
-    var dot = document.querySelector(".live-dot");
+    var dot = document.querySelector(".uptime");
     var src = new EventSource("/events");
     var refresh = debounce(function () {
       fetch("/fragment/" + kind + "/" + id)
