@@ -31,3 +31,28 @@ var transitionGater TransitionGater
 // SetTransitionGater wires the reviewer that gates status transitions. Pass nil
 // to disable gating (tests / no-reviewer environments).
 func SetTransitionGater(g TransitionGater) { transitionGater = g }
+
+// CreateDraft is a proposed work item handed to the required-structure reviewer
+// before it is persisted.
+type CreateDraft struct {
+	Kind               string   `json:"kind"`
+	Title              string   `json:"title"`
+	Body               string   `json:"body,omitempty"`
+	AcceptanceCriteria string   `json:"acceptance_criteria,omitempty"`
+	Priority           string   `json:"priority,omitempty"`
+	Category           string   `json:"category,omitempty"`
+	Tags               []string `json:"tags,omitempty"`
+}
+
+// CreateReviewer judges a draft work item's required structure before creation,
+// in an isolated subprocess. Implemented in internal/reviewer.
+type CreateReviewer interface {
+	ReviewCreate(ctx context.Context, draft CreateDraft) (GateDecision, error)
+}
+
+// createReviewer is wired only when a repo opts into create-gating
+// (satelle.toml [review] gate_create). Nil means creation is ungated.
+var createReviewer CreateReviewer
+
+// SetCreateReviewer wires the required-structure reviewer. Pass nil to disable.
+func SetCreateReviewer(r CreateReviewer) { createReviewer = r }

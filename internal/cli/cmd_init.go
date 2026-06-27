@@ -133,6 +133,13 @@ const scaffoldToml = `# satelle.toml — per-repo config (committed, secret-free
 # web_port = 8787                # 'satelle serve' listen port (default)
 # log_level = "info"             # debug | info | warn | error (default info)
 
+# [review] — opt into reviewer-gated work (off by default). The reviewer rubrics
+# ship embedded; enabling enforcement is your choice (needs an agent CLI — see
+# 'satelle agent'). gate_create runs the required-structure reviewer on
+# 'story/task create', pushing non-conforming drafts back instead of persisting.
+# [review]
+# gate_create = true
+
 # substrate_roots — per-kind parent dir for authored markdown. Unset means
 # <data_dir>/<kind> (e.g. .satelle/documents). Point a kind elsewhere — even
 # outside .satelle/ — to author it at the repo root or another path:

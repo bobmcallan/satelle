@@ -111,6 +111,47 @@ func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (
 	return dec, nil
 }
 
+// structureSkill is the required-structure reviewer that judges a draft work
+// item at creation. Embedded by default; overridable under .satelle/skills.
+const structureSkill = "satelle-story-structure-review"
+
+// ReviewCreate judges a draft work item's required structure before it is
+// persisted. Gated=false (advisory, persist) when the structure rubric is not
+// installed; otherwise it runs the isolated reviewer and returns its verdict.
+func (g *Gater) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb.GateDecision, error) {
+	body, err := g.skillBody(ctx, structureSkill)
+	if err != nil {
+		if errors.Is(err, docindex.ErrNotFound) {
+			return verb.GateDecision{Gated: false}, nil
+		}
+		return verb.GateDecision{}, err
+	}
+	if g.runner == nil {
+		return verb.GateDecision{Gated: true}, fmt.Errorf("reviewer: create-gating is on but no agent runner is configured")
+	}
+	payload, err := json.Marshal(draft)
+	if err != nil {
+		return verb.GateDecision{}, err
+	}
+	out, err := g.runner.Run(ctx, agentcli.Request{
+		SystemPrompt: body,
+		Payload:      string(payload),
+		AllowedTools: g.tools,
+		Model:        g.model,
+		Dir:          g.repoRoot,
+	})
+	if err != nil {
+		return verb.GateDecision{Gated: true}, fmt.Errorf("reviewer: %s gate failed: %w", structureSkill, err)
+	}
+	dec, err := parseDecision(out)
+	if err != nil {
+		return verb.GateDecision{Gated: true}, fmt.Errorf("reviewer: %s: %w", structureSkill, err)
+	}
+	dec.Gated = true
+	dec.Skill = structureSkill
+	return dec, nil
+}
+
 // reviewerSkill resolves the reviewer_skill governing the (from→to) edge from
 // the active workflow doc. An absent workflow means no gating.
 func (g *Gater) reviewerSkill(ctx context.Context, from, to string) (string, error) {

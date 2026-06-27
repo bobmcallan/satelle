@@ -60,6 +60,17 @@ type Config struct {
 	WebPort int `toml:"web_port"`
 	// LogLevel is arbor's level (debug|info|warn|error); empty means info.
 	LogLevel string `toml:"log_level"`
+	// Review opts this repo into reviewer-gated work. Off by default — the
+	// rubrics ship embedded, but ENFORCEMENT is the operator's choice (the
+	// process is configured, not hardcoded-on).
+	Review ReviewConfig `toml:"review"`
+}
+
+// ReviewConfig toggles the quality-management gates for a repo.
+type ReviewConfig struct {
+	// GateCreate runs the required-structure reviewer on story/task creation,
+	// pushing non-conforming drafts back instead of persisting them.
+	GateCreate bool `toml:"gate_create"`
 }
 
 // ErrNotFound signals no satelle.toml was found walking up from CWD. Callers

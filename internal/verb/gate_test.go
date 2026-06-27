@@ -59,6 +59,43 @@ func TestStorySetGatedAcceptEnacts(t *testing.T) {
 	}
 }
 
+type createStub struct {
+	dec verb.GateDecision
+}
+
+func (c createStub) ReviewCreate(context.Context, verb.CreateDraft) (verb.GateDecision, error) {
+	return c.dec, nil
+}
+
+func TestStoryCreateGatedRejectBlocksPersist(t *testing.T) {
+	wire(t)
+	verb.SetCreateReviewer(createStub{dec: verb.GateDecision{Gated: true, Accept: false, Notes: "add numbered acceptance criteria", Skill: "satelle-story-structure-review"}})
+	t.Cleanup(func() { verb.SetCreateReviewer(nil) })
+
+	_, err := dispatchRaw(t, "story-create", map[string]any{"title": "vague"})
+	if err == nil || !strings.Contains(err.Error(), "rejected") {
+		t.Fatalf("expected create to be rejected, got err=%v", err)
+	}
+
+	var items []workitem.Item
+	json.Unmarshal(call(t, "story-list", map[string]any{}), &items)
+	if len(items) != 0 {
+		t.Errorf("rejected draft was persisted: %d items", len(items))
+	}
+}
+
+func TestStoryCreateGatedAcceptPersists(t *testing.T) {
+	wire(t)
+	verb.SetCreateReviewer(createStub{dec: verb.GateDecision{Gated: true, Accept: true}})
+	t.Cleanup(func() { verb.SetCreateReviewer(nil) })
+
+	var it workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "well formed", "acceptance_criteria": "1. works"}), &it)
+	if it.ID == "" {
+		t.Error("accepted draft should persist with an id")
+	}
+}
+
 func TestStorySetUngatedTransitionEnacts(t *testing.T) {
 	wire(t)
 	// No gater wired — the gateless baseline: transitions enact directly.

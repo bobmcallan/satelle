@@ -51,6 +51,28 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 			return nil, err
 		}
 		now := time.Now()
+
+		// Required-structure gate: when a repo opts in, an isolated reviewer
+		// judges the draft before it is persisted. A reject blocks creation and
+		// pushes the notes back to the executor; ungated/accept persists.
+		if createReviewer != nil {
+			dec, gerr := createReviewer.ReviewCreate(ctx, CreateDraft{
+				Kind:               string(kind),
+				Title:              req.Title,
+				Body:               req.Body,
+				AcceptanceCriteria: req.AcceptanceCriteria,
+				Priority:           req.Priority,
+				Category:           req.Category,
+				Tags:               req.Tags,
+			})
+			if gerr != nil {
+				return nil, gerr
+			}
+			if dec.Gated && !dec.Accept {
+				return nil, fmt.Errorf("%s rejected by %s: %s", kind, dec.Skill, dec.Notes)
+			}
+		}
+
 		it, err := store.Create(ctx, workitem.CreateInput{
 			Kind:               kind,
 			Title:              req.Title,

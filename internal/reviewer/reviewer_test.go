@@ -6,6 +6,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -141,6 +142,48 @@ func TestReviewerSkillFor(t *testing.T) {
 	}
 	if got := reviewerSkillFor(testWorkflow, "backlog", "nowhere"); got != "" {
 		t.Errorf("unknown edge skill = %q, want empty", got)
+	}
+}
+
+func TestReviewCreateAcceptAndReject(t *testing.T) {
+	ctx := context.Background()
+	draft := verb.CreateDraft{Kind: "story", Title: "x", AcceptanceCriteria: "1. a"}
+
+	g, r := gater(t, `the draft is well-formed {"decision":"accept","notes":""}`,
+		fakeDocs{skillBody: "structure rubric", skillFound: true})
+	dec, err := g.ReviewCreate(ctx, draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec.Gated || !dec.Accept || dec.Skill != structureSkill {
+		t.Fatalf("want gated accept by %s, got %+v", structureSkill, dec)
+	}
+	if r.got.SystemPrompt != "structure rubric" {
+		t.Errorf("structure rubric should be the system prompt, got %q", r.got.SystemPrompt)
+	}
+
+	g2, _ := gater(t, `{"decision":"reject","notes":"add numbered acceptance criteria"}`,
+		fakeDocs{skillBody: "rubric", skillFound: true})
+	dec2, err := g2.ReviewCreate(ctx, verb.CreateDraft{Kind: "story", Title: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec2.Gated || dec2.Accept || dec2.Notes == "" {
+		t.Fatalf("want gated reject with notes, got %+v", dec2)
+	}
+}
+
+func TestReviewCreateAdvisoryWhenRubricAbsent(t *testing.T) {
+	g, r := gater(t, `{"decision":"reject"}`, fakeDocs{skillFound: false})
+	dec, err := g.ReviewCreate(context.Background(), verb.CreateDraft{Kind: "story", Title: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec.Gated {
+		t.Errorf("absent structure rubric should be advisory, got %+v", dec)
+	}
+	if r.got.SystemPrompt != "" {
+		t.Errorf("reviewer must not run without a rubric")
 	}
 }
 
