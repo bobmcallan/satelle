@@ -4,10 +4,16 @@ scope: system
 kind: workflow
 tags: [kind:workflow]
 applies_to: ["*"]
-description: The order-zero baseline lifecycle for satelle work items — open to in_progress to done, with a blocked detour and a cancelled exit. Gateless by design — the OSS local tier ships no reviewer/gate engine, so transitions are advisory guidance, driven with `satelle story set --status` (or `satelle task set`). The richer gated lifecycle is a paid-server concern.
+description: REPO OVERRIDE of the embedded canonical satelle-baseline-workflow (config/substrate/workflows). This repo's own, currently-gateless variant — open to in_progress to done, with a blocked detour and a cancelled exit — driven advisorily with `satelle story set --status` until the quality-management spine (the isolated reviewer) lands and gating is wired in. It shadows, but never edits, the binary's canonical gated default.
 ---
 
-# Baseline workflow (order-zero)
+# Baseline workflow (order-zero) — repo override
+
+> **This file is a repo override**, not the canonical source. The binary ships an
+> embedded canonical `satelle-baseline-workflow` (gated `backlog → in_progress →
+> done`) under `config/substrate/workflows`; because this file shares its name it
+> shadows that default for this repo only. See the `satelle-repo-agnostic`
+> principle. It stays gateless until the reviewer engine (qms-spine) is wired in.
 
 The default lifecycle every satelle repo gets: a story or task moves
 **open → in_progress → done**, may detour through **blocked**, and may exit early

@@ -18,6 +18,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -69,12 +70,27 @@ func Open(path string) (*DB, error) {
 		}
 	}
 
+	di := docindex.New(sqldb)
+	di.SetDefaults(embeddedDefaultDocs())
+
 	return &DB{
 		db:       sqldb,
 		Ledger:   ledger.New(sqldb),
 		Stories:  workitem.New(sqldb),
-		DocIndex: docindex.New(sqldb),
+		DocIndex: di,
 	}, nil
+}
+
+// embeddedDefaultDocs maps the binary's canonical default substrate into
+// docindex.Doc seeds (Kind/Name/Body) for the read-time overlay. config is the
+// single source of those bytes; the doc index fills in headline/hash/path.
+func embeddedDefaultDocs() []docindex.Doc {
+	defs := config.EmbeddedDefaults()
+	out := make([]docindex.Doc, 0, len(defs))
+	for _, d := range defs {
+		out = append(out, docindex.Doc{Kind: d.Kind, Name: d.Name, Body: d.Body})
+	}
+	return out
 }
 
 // SQL exposes the raw handle for callers that need it (tests, future stores).
