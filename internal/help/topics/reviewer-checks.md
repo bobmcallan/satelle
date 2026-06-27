@@ -25,6 +25,18 @@ judges the **required structure** only — not whether the work is a good idea:
 This is the one opinionated thing satelle enforces; everything else (tags,
 priority, category, style) is non-opinionated.
 
+## Two gate kinds: LLM reviewers and functional checks
+
+A gate is either:
+
+- an **LLM reviewer** — the skill's markdown body rides as a fresh-context agent's
+  system prompt and the agent returns the verdict (used for judgment: structure,
+  intent, acceptance); or
+- a **functional check** — the skill's frontmatter names a deterministic
+  `check:` command. The gate runs it in the repo root; **exit 0 accepts,
+  non-zero rejects** with the command's output tail as notes. No LLM — the command
+  is the decision. This is how the integration and deploy gates work.
+
 ## Begin-work gate — `satelle-intent-plan-review` (backlog → in_progress)
 
 Judges readiness of **intent** before work starts: the title names a concrete
@@ -32,7 +44,22 @@ change, the body states a clear goal / what done looks like, and the acceptance
 criteria list at least one numbered, testable item. Unclear intent is rejected
 with notes; the story stays in backlog.
 
-## Close gate — `satelle-story-done-review` (in_progress → done)
+## Integration gate — `satelle-integration-review` (in_progress → integrated)
+
+A **functional check** (`check: make integration`). It runs the full integration
+suite — the black-box CLI tests plus the headless-Chrome browser e2e — and
+accepts only if **every** test passes. Any failure rejects the transition with the
+failing output. An item cannot advance past integration on a red suite.
+
+## Deploy gate — `satelle-deploy-review` (integrated → deployed)
+
+A **functional check** (`check: bash scripts/deploy-check.sh`). It deploys the
+service locally and validates it with a **health check on both surfaces**: the web
+UI (`/healthz` returns ok and the project page renders its tabs) and the CLI
+(`satelle status`). It accepts only if the deploy comes up healthy, then tears it
+down. Local-first — a throwaway deploy with no production blast radius.
+
+## Close gate — `satelle-story-done-review` (deployed → done)
 
 An isolated, read-only reviewer that **reads the repository** to verify the work.
 It works through each numbered acceptance criterion and looks for concrete

@@ -37,17 +37,23 @@ This edge is gated by `satelle-intent-plan-review`: the story must be well-forme
 enough to start — a clear goal and numbered, testable acceptance criteria. A
 reject keeps it in backlog with notes on what to clarify.
 
-## 3. Close (in_progress → done)
+## 3. Reach done through the workflow's gates
 
-When the work satisfies the acceptance criteria:
+The exact path to `done` is whatever the active workflow declares — `done` is
+always the terminal state, and every gate on the path runs before it (see
+`satelle help reviewer-checks`). The canonical baseline closes directly
+(`in_progress → done`), gated by `satelle-story-done-review` — an isolated,
+**read-only** reviewer that reads the repository and works through the numbered
+acceptance criteria one by one. A reject pushes back with the unmet criteria.
 
-    satelle story set <id> --status done
+This repo layers extra functional gates onto the path before `done`:
 
-This edge is gated by `satelle-story-done-review`: an isolated, **read-only**
-reviewer reads the repository (Read/Grep/Glob) and works through the numbered
-acceptance criteria one by one, looking for concrete evidence each is satisfied.
-A reject pushes back with the specific unmet criteria; the story stays
-in_progress.
+    satelle story set <id> --status integrated   # gate: all integration tests pass
+    satelle story set <id> --status deployed      # gate: deploy + health-check (web + CLI)
+    satelle story set <id> --status done          # gate: acceptance review
+
+Drive each transition and let its gate judge it; a reject blocks the move and
+records why. You never self-enact a gated edge.
 
 ## 4. Cancel (any → cancelled)
 

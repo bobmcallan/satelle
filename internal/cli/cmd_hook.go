@@ -32,10 +32,11 @@ import (
 const alwaysTag = "principles:always"
 
 // alwaysContextCeiling bounds the total injected always-content. The resident
-// set is meant to be small (each always doc is principle-sized); this is the
-// backstop that stops a mis-tagged large doc from blowing the context budget
-// the whole model is meant to protect.
-const alwaysContextCeiling = 8192
+// set is meant to be small (a handful of principle-sized docs); this is the
+// backstop that stops a mis-tagged large doc from blowing the context budget the
+// whole model is meant to protect. Sized to hold satelle's order-zero principles
+// (constitution, repo-agnostic, agent-goals, done-is-last) with headroom.
+const alwaysContextCeiling = 16384
 
 // alwaysIndexInstruction is the standing "pull, don't preload" directive
 // appended to every injection — the pivot of the always-context model: the
