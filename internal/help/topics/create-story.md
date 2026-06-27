@@ -22,7 +22,7 @@ A well-formed draft needs three things (the required structure):
 3. numbered, **testable acceptance criteria**.
 
 If the repo enables create-gating (`[review] gate_create = true` in
-`.satelle/satelle.toml`), the `satelle-story-structure-review` reviewer judges
+`.satelle/satelle.toml`), the `satelle-story-review` reviewer judges
 the draft against that structure before it is persisted. A reject pushes back
 with notes; nothing is created until the structure is sound. With gating off,
 the same structure is still the standard — the gate is advisory.
@@ -33,7 +33,7 @@ Move the story into work:
 
     satelle story set <id> --status in_progress
 
-This edge is gated by `satelle-intent-plan-review`: the story must be well-formed
+This edge is gated by `satelle-story-intent-review`: the story must be well-formed
 enough to start — a clear goal and numbered, testable acceptance criteria. A
 reject keeps it in backlog with notes on what to clarify.
 

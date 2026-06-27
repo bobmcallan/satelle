@@ -62,9 +62,16 @@ name alone:
 
 - **Principles** — kebab-case, no prefix (`satelle-repo-agnostic`,
   `satelle-constitution`).
-- **Skills / reviewers** — `satelle-<kebab>`; a reviewer gate is
-  `satelle-<object>-<stage>-review` (`satelle-story-done-review`).
-- **Workflows** — `satelle-<kebab>-workflow` (`satelle-baseline-workflow`).
+- **Reviewers** — every reviewer follows `satelle-<object>-<function>`. A bare
+  `satelle-<object>-review` is that object's **structure reviewer** (validates the
+  artifact on create/upsert): `satelle-story-review`, `satelle-skill-review`,
+  `satelle-workflow-review`, `satelle-principle-review`. A
+  `satelle-<object>-<stage>-review` is a **workflow stage gate**:
+  `satelle-story-intent-review`, `satelle-story-integration-review`,
+  `satelle-story-deploy-review`, `satelle-story-done-review`.
+- **Other skills** — `satelle-<kebab>` (e.g. the summariser `satelle-step-summary`).
+- **Workflows** — `satelle-<kebab>-workflow` (`satelle-baseline-workflow`). A repo
+  workflow is `scope: project`, never `system` — system is the embedded default.
 
 ## The test
 

@@ -13,7 +13,7 @@ An edge is gated only when the workflow names a reviewer skill **and** that
 skill's rubric is installed in the substrate. A named-but-absent rubric is
 treated as advisory, so a fresh repo keeps working until the rubrics ship.
 
-## Create gate — `satelle-story-structure-review`
+## Create gate — `satelle-story-review`
 
 Runs when a draft is created (opt-in per repo via `[review] gate_create`). It
 judges the **required structure** only — not whether the work is a good idea:
@@ -37,27 +37,28 @@ A gate is either:
   non-zero rejects** with the command's output tail as notes. No LLM — the command
   is the decision. This is how the integration and deploy gates work.
 
-## Begin-work gate — `satelle-intent-plan-review` (backlog → in_progress)
+## Begin-work gate — `satelle-story-intent-review` (backlog → in_progress)
 
 Judges readiness of **intent** before work starts: the title names a concrete
 change, the body states a clear goal / what done looks like, and the acceptance
 criteria list at least one numbered, testable item. Unclear intent is rejected
 with notes; the story stays in backlog.
 
-## Integration gate — `satelle-integration-review` (in_progress → integrated)
+## Integration gate — `satelle-story-integration-review` (in_progress → integrated)
 
-A **functional check** (`check: make integration`). It runs the full integration
-suite — the black-box CLI tests plus the headless-Chrome browser e2e — and
-accepts only if **every** test passes. Any failure rejects the transition with the
-failing output. An item cannot advance past integration on a red suite.
+A **functional check** with a self-contained `check` script embedded in the skill.
+It builds the binary and runs the full integration suite — the black-box CLI tests
+plus the headless-Chrome browser e2e — and accepts only if **every** test passes.
+Any failure rejects the transition with the failing output. An item cannot advance
+past integration on a red suite.
 
-## Deploy gate — `satelle-deploy-review` (integrated → deployed)
+## Deploy gate — `satelle-story-deploy-review` (integrated → deployed)
 
-A **functional check** (`check: bash scripts/deploy-check.sh`). It deploys the
-service locally and validates it with a **health check on both surfaces**: the web
-UI (`/healthz` returns ok and the project page renders its tabs) and the CLI
-(`satelle status`). It accepts only if the deploy comes up healthy, then tears it
-down. Local-first — a throwaway deploy with no production blast radius.
+A **functional check** with a self-contained `check` script embedded in the skill.
+It deploys the service locally and validates it with a **health check on both
+surfaces**: the web UI (`/healthz` returns ok and the project page renders its
+tabs) and the CLI (`satelle status`), leaving it running. Local-first — the
+service is a local systemd user unit, so the deploy has no production blast radius.
 
 ## Close gate — `satelle-story-done-review` (deployed → done)
 

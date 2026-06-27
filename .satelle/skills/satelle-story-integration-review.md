@@ -1,5 +1,5 @@
 ---
-name: satelle-integration-review
+name: satelle-story-integration-review
 scope: project
 kind: skill
 tags: [kind:skill, type:reviewer, type:functional-check]

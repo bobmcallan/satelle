@@ -15,7 +15,7 @@ states:
   - done
   - cancelled
 transitions:
-  - {from: backlog, to: in_progress, reviewer_skill: "satelle-intent-plan-review"}
+  - {from: backlog, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
   - {from: in_progress, to: done, reviewer_skill: "satelle-story-done-review"}
   - {from: backlog, to: cancelled}
 ` + "```" + `
@@ -53,7 +53,7 @@ func TestParseWorkflow(t *testing.T) {
 	if len(spec.Transitions) != 3 {
 		t.Fatalf("transitions = %d, want 3: %+v", len(spec.Transitions), spec.Transitions)
 	}
-	if spec.Transitions[0].Skill != "satelle-intent-plan-review" {
+	if spec.Transitions[0].Skill != "satelle-story-intent-review" {
 		t.Errorf("first transition skill = %q", spec.Transitions[0].Skill)
 	}
 	if spec.Transitions[2].Skill != "" {

@@ -1,5 +1,5 @@
 ---
-name: satelle-intent-plan-review
+name: satelle-story-intent-review
 scope: project
 kind: skill
 tags: [kind:skill, type:reviewer]

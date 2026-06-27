@@ -4,7 +4,7 @@ scope: system
 kind: workflow
 tags: [kind:workflow]
 applies_to: ["*"]
-description: The canonical order-zero lifecycle every satelle repo inherits from the binary — backlog → in_progress → done, with a cancelled exit. The edges are gated by reviewer skills (satelle-intent-plan-review on entry, satelle-story-done-review on exit) so a story is judged well-formed before work begins and quality-checked before it closes. This is the EMBEDDED canonical default (config/substrate/workflows); a repo MAY override it by placing a same-named file under .satelle/workflows, but never edits this source.
+description: The canonical order-zero lifecycle every satelle repo inherits from the binary — backlog → in_progress → done, with a cancelled exit. The edges are gated by reviewer skills (satelle-story-intent-review on entry, satelle-story-done-review on exit) so a story is judged well-formed before work begins and quality-checked before it closes. This is the EMBEDDED canonical default (config/substrate/workflows); a repo MAY override it by placing a same-named file under .satelle/workflows, but never edits this source.
 ---
 
 # Baseline workflow (order-zero, gated)
@@ -17,7 +17,7 @@ transition; quality management is the point.
 
 ## Workflow
 
-- **backlog → in_progress** — gated by `satelle-intent-plan-review`: the story
+- **backlog → in_progress** — gated by `satelle-story-intent-review`: the story
   must be well-formed (a clear goal and numbered acceptance criteria) before work
   begins. A reject pushes back with notes; the story stays in backlog.
 - **in_progress → done** — gated by `satelle-story-done-review`: the work must
@@ -33,7 +33,7 @@ states:
   - done
   - cancelled
 transitions:
-  - {from: backlog, to: in_progress, reviewer_skill: "satelle-intent-plan-review"}
+  - {from: backlog, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
   - {from: in_progress, to: done, reviewer_skill: "satelle-story-done-review"}
   - {from: backlog, to: cancelled, reviewer_skill: "satelle-story-cancel-review"}
   - {from: in_progress, to: cancelled, reviewer_skill: "satelle-story-cancel-review"}

@@ -149,7 +149,7 @@ func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (
 
 // structureSkill is the required-structure reviewer that judges a draft work
 // item at creation. Embedded by default; overridable under .satelle/skills.
-const structureSkill = "satelle-story-structure-review"
+const structureSkill = "satelle-story-review"
 
 // summariserSkill recaps an enacted transition. Embedded by default; overridable.
 const summariserSkill = "satelle-step-summary"
@@ -472,7 +472,7 @@ func (g *Gater) skillBody(ctx context.Context, name string) (string, error) {
 // edge and returns its reviewer_skill (empty if the edge is ungated or absent).
 // The transition format is the fixed inline-map shape the substrate uses:
 //
-//   - {from: backlog, to: in_progress, reviewer_skill: "satelle-intent-plan-review"}
+//   - {from: backlog, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
 func reviewerSkillFor(body, from, to string) string {
 	for _, line := range strings.Split(body, "\n") {
 		l := strings.TrimSpace(line)

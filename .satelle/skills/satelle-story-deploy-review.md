@@ -1,5 +1,5 @@
 ---
-name: satelle-deploy-review
+name: satelle-story-deploy-review
 scope: project
 kind: skill
 tags: [kind:skill, type:reviewer, type:functional-check]

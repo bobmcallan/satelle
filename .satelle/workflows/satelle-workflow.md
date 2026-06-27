@@ -24,13 +24,13 @@ state — the integration and deploy gates come *before* it (see the
 
 ## Workflow
 
-- **open → in_progress** — begin work; **gated** by `satelle-intent-plan-review`
+- **open → in_progress** — begin work; **gated** by `satelle-story-intent-review`
   (the story must be well-formed before work starts).
 - **in_progress → blocked** / **blocked → in_progress** — record/resume a stall.
-- **in_progress → integrated** — **gated** by `satelle-integration-review`, a
+- **in_progress → integrated** — **gated** by `satelle-story-integration-review`, a
   functional check that runs the full integration suite and accepts only if
   **every** test passes.
-- **integrated → deployed** — **gated** by `satelle-deploy-review`, a functional
+- **integrated → deployed** — **gated** by `satelle-story-deploy-review`, a functional
   check that deploys the service locally and validates it with a **health check on
   the CLI and the web UI**.
 - **deployed → done** — close the item; **gated** by `satelle-story-done-review`
@@ -51,11 +51,11 @@ states:
   - done
   - cancelled
 transitions:
-  - {from: open, to: in_progress, reviewer_skill: "satelle-intent-plan-review"}
+  - {from: open, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
   - {from: in_progress, to: blocked}
   - {from: blocked, to: in_progress}
-  - {from: in_progress, to: integrated, reviewer_skill: "satelle-integration-review"}
-  - {from: integrated, to: deployed, reviewer_skill: "satelle-deploy-review"}
+  - {from: in_progress, to: integrated, reviewer_skill: "satelle-story-integration-review"}
+  - {from: integrated, to: deployed, reviewer_skill: "satelle-story-deploy-review"}
   - {from: deployed, to: done, reviewer_skill: "satelle-story-done-review"}
   - {from: open, to: cancelled}
   - {from: in_progress, to: cancelled}
@@ -75,7 +75,7 @@ guardrails:
     - Drive an engaged item to a terminal state (done or cancelled) — don't leave work open indefinitely.
     - Give a story/task numbered acceptance criteria before starting, and satisfy them before moving to done.
     - When work stalls, set status to blocked with a note on what it's waiting on, rather than leaving it silently in_progress.
-    - Let the integration gate run the suite — request 'integrated' and let satelle-integration-review judge it, rather than self-asserting the tests pass.
+    - Let the integration gate run the suite — request 'integrated' and let satelle-story-integration-review judge it, rather than self-asserting the tests pass.
     - Commit and push once the work is integrated and deployed; done is the terminal sign-off.
   ask_first: []
   never:
