@@ -27,6 +27,27 @@ const (
 // GlobalConfig is the machine-wide config at ~/.satelle/config.toml.
 type GlobalConfig struct {
 	Service ServiceConfig `toml:"service"`
+	Agent   AgentConfig   `toml:"agent"`
+}
+
+// DefaultAgentCLI is the agent CLI the reviewer/summariser shell out to when
+// none is selected — claude, whose flag surface satelle's runner mirrors.
+const DefaultAgentCLI = "claude"
+
+// AgentConfig selects the headless agent CLI the quality-management spine uses
+// for isolated reviews/summaries. Set once at install (`satelle agent`).
+type AgentConfig struct {
+	// CLI is the agent CLI identifier (claude | codex). Empty resolves to
+	// DefaultAgentCLI.
+	CLI string `toml:"cli"`
+}
+
+// ResolveCLI returns the selected agent CLI, defaulting when unset.
+func (a AgentConfig) ResolveCLI() string {
+	if c := strings.TrimSpace(a.CLI); c != "" {
+		return c
+	}
+	return DefaultAgentCLI
 }
 
 // ServiceConfig configures the background web service (`satelle service`).
@@ -103,7 +124,7 @@ func SaveGlobal(gc GlobalConfig) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("config: mkdir %s: %w", dir, err)
 	}
-	body := fmt.Sprintf(globalTemplate, gc.Service.ResolvePort(), gc.Service.ResolveAddr(), gc.Service.Repo)
+	body := fmt.Sprintf(globalTemplate, gc.Service.ResolvePort(), gc.Service.ResolveAddr(), gc.Service.Repo, gc.Agent.ResolveCLI())
 	path := GlobalConfigPath()
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		return fmt.Errorf("config: write %s: %w", path, err)
@@ -125,4 +146,9 @@ port = %d
 addr = %q
 # repo the service serves (its working directory). Set by 'service install'.
 repo = %q
+
+[agent]
+# the headless agent CLI the reviewer/summariser shell out to (claude | codex).
+# Set by 'satelle agent set <cli>' / 'satelle agent detect'.
+cli = %q
 `
