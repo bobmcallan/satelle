@@ -32,6 +32,8 @@ const (
 	KindStatusTransition = "status_transition"
 	KindReviewAccept     = "review_accept"
 	KindReviewReject     = "review_reject"
+	// KindStepSummary is the summariser's prose recap of an enacted transition.
+	KindStepSummary = "step_summary"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional
