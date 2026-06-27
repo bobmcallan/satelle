@@ -237,7 +237,11 @@ func buildLights(entries []ledger.Entry, status string) []reviewLight {
 			lights = append(lights, reviewLight{i, state, fmt.Sprintf("%d. %s — %s", i, edge, state)})
 		}
 	}
-	if status != "done" && status != "cancelled" {
+	// Trail a pulsing "current" light only once the item has actually entered the
+	// workflow (≥1 recorded transition). A freshly-created item still at its
+	// initial state (open/backlog) has not started a step — the initial state is
+	// not step 1 — so it shows no progress at all rather than a phantom current ①.
+	if next > 0 && status != "done" && status != "cancelled" {
 		lights = append(lights, reviewLight{next + 1, "current", "current stage"})
 	}
 	return lights
