@@ -13,15 +13,6 @@ func ev(kind, from, to string) ledger.Entry {
 	return ledger.Entry{Kind: kind, Payload: p}
 }
 
-// reverse returns es newest-first, the order ledger-list yields.
-func newestFirst(es []ledger.Entry) []ledger.Entry {
-	out := make([]ledger.Entry, len(es))
-	for i := range es {
-		out[len(es)-1-i] = es[i]
-	}
-	return out
-}
-
 func states(ls []reviewLight) []string {
 	out := make([]string, len(ls))
 	for i, l := range ls {
@@ -42,7 +33,7 @@ func TestBuildLights(t *testing.T) {
 		ev(ledger.KindReviewAccept, "in_progress", "done"),
 		ev(ledger.KindStatusTransition, "in_progress", "done"),
 	}
-	lights := buildLights(newestFirst(chrono), "done", testStep)
+	lights := buildLights(chrono, "done", testStep)
 	// stage 1 passes; stage 2 fails then passes (shared index); no current (done).
 	got := states(lights)
 	want := []string{"pass", "fail", "pass"}
@@ -64,7 +55,7 @@ func TestBuildLightsNonTerminalTrailsCurrent(t *testing.T) {
 		ev(ledger.KindReviewAccept, "open", "in_progress"),
 		ev(ledger.KindStatusTransition, "open", "in_progress"),
 	}
-	lights := buildLights(newestFirst(chrono), "in_progress", testStep)
+	lights := buildLights(chrono, "in_progress", testStep)
 	if len(lights) != 2 || lights[1].State != "current" || lights[1].Index != 2 {
 		t.Fatalf("want [pass, current(2)], got %v", lights)
 	}
@@ -73,7 +64,7 @@ func TestBuildLightsNonTerminalTrailsCurrent(t *testing.T) {
 func TestBuildLightsUngatedIsFired(t *testing.T) {
 	// A status_transition with no matching review_accept is an ungated checkpoint.
 	chrono := []ledger.Entry{ev(ledger.KindStatusTransition, "open", "in_progress")}
-	lights := buildLights(newestFirst(chrono), "done", testStep)
+	lights := buildLights(chrono, "done", testStep)
 	if len(lights) != 1 || lights[0].State != "fired" {
 		t.Fatalf("want [fired], got %v", lights)
 	}
@@ -98,7 +89,7 @@ func TestBuildLightsNumbersByStepNotAppearance(t *testing.T) {
 		ev(ledger.KindStatusTransition, "in_progress", "done"), // step 2
 		ev(ledger.KindStatusTransition, "open", "in_progress"), // step 1
 	}
-	lights := buildLights(newestFirst(chrono), "done", testStep)
+	lights := buildLights(chrono, "done", testStep)
 	if len(lights) != 2 || lights[0].Index != 2 || lights[1].Index != 1 {
 		t.Fatalf("want indices [2,1] by step, got %v", lights)
 	}
@@ -112,7 +103,7 @@ func TestBuildLightsRetriedStepSharesNumber(t *testing.T) {
 		ev(ledger.KindReviewAccept, "open", "in_progress"),
 		ev(ledger.KindStatusTransition, "open", "in_progress"),
 	}
-	lights := buildLights(newestFirst(chrono), "in_progress", testStep)
+	lights := buildLights(chrono, "in_progress", testStep)
 	if len(lights) != 3 {
 		t.Fatalf("want 3 lights, got %v", lights)
 	}
@@ -124,6 +115,42 @@ func TestBuildLightsRetriedStepSharesNumber(t *testing.T) {
 	}
 	if lights[2].State != "current" || lights[2].Index != 2 {
 		t.Errorf("light[2] = %v, want current step 2", lights[2])
+	}
+}
+
+func TestBuildLightsChronologicalAscending(t *testing.T) {
+	// A forward run with a retry in the middle must render in ascending step
+	// order, each light +0/+1 from the previous (the retried step repeats in
+	// place): 1,2,3,3,4,5 — never reversed.
+	step := func(s string) int { return map[string]int{"b": 1, "c": 2, "d": 3, "e": 4, "f": 5}[s] }
+	chrono := []ledger.Entry{
+		ev(ledger.KindStatusTransition, "a", "b"), // 1
+		ev(ledger.KindStatusTransition, "b", "c"), // 2
+		ev(ledger.KindReviewReject, "c", "d"),     // 3 (fail)
+		ev(ledger.KindStatusTransition, "c", "d"), // 3 (retry)
+		ev(ledger.KindStatusTransition, "d", "e"), // 4
+		ev(ledger.KindStatusTransition, "e", "f"), // 5
+	}
+	lights := buildLights(chrono, "f", step) // non-terminal → trails a current at the next step
+	var idx []int
+	for _, l := range lights {
+		idx = append(idx, l.Index)
+	}
+	// Completed steps 1,2,3,3,4,5 then the current (pulsing) light LAST at step 6.
+	want := []int{1, 2, 3, 3, 4, 5, 6}
+	if len(idx) != len(want) {
+		t.Fatalf("indices = %v, want %v", idx, want)
+	}
+	for i := range want {
+		if idx[i] != want[i] {
+			t.Errorf("light[%d] index = %d, want %d (order %v)", i, idx[i], want[i], idx)
+		}
+		if i > 0 && idx[i]-idx[i-1] > 1 {
+			t.Errorf("non-sequential lights at %d: %d after %d (must be +0 or +1)", i, idx[i], idx[i-1])
+		}
+	}
+	if last := lights[len(lights)-1]; last.State != "current" {
+		t.Errorf("the last light must be the current stage, got %q", last.State)
 	}
 }
 
