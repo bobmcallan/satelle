@@ -139,11 +139,11 @@ const templatesSrc = `
   <td class="updated">{{ftime .UpdatedAt}}</td>
 </tr>{{else}}<tr><td colspan="6" class="empty">none yet</td></tr>{{end}}{{end}}
 
-{{define "docsRows"}}{{range .}}<div class="kind-h">{{.Kind}}</div>{{if .Docs}}<div class="docgrid">{{range .Docs}}<div class="doc" data-search="{{printf "%s %s" .Name .Headline | lower}}">
+{{define "docsRows"}}{{range .}}{{$k := .Kind}}<div class="kind-h">{{.Kind}}</div>{{if .Docs}}<div class="docgrid">{{range .Docs}}<a class="doc" href="/doc/{{$k}}/{{.Name}}" data-search="{{printf "%s %s" .Name .Headline | lower}}">
   <div class="name">{{.Name}}</div>
   {{if .Headline}}<div class="head">{{.Headline}}</div>{{end}}
   {{if not .ModTime.IsZero}}<div class="updated">updated {{ftime .ModTime}}</div>{{end}}
-</div>{{end}}</div>{{else}}<div class="empty">none indexed — run <code>satelle index</code></div>{{end}}{{end}}{{end}}
+</a>{{end}}</div>{{else}}<div class="empty">none indexed — run <code>satelle index</code></div>{{end}}{{end}}{{end}}
 
 {{define "workflowRows"}}{{range .}}<tr class="row" tabindex="0" role="button" aria-expanded="false" data-search="{{printf "%s %s %s %s" .Name .Headline .Scope (join .AppliesTo " ") | lower}}" data-expand-url="/fragment/workflow/{{.Name}}">
   <td><div class="wi-title">{{.Name}}</div><div class="wi-tags">{{if .Scope}}{{tagchip (printf "scope:%s" .Scope)}}{{end}}{{range .AppliesTo}}{{tagchip (printf "applies_to:%s" .)}}{{end}}</div></td>
@@ -246,6 +246,30 @@ const templatesSrc = `
   </section>{{else}}<div class="empty">no help topics</div>{{end}}
   <footer class="site-footer"><span class="footer-version">satelle help</span></footer>
 </div>
+</body>
+</html>{{end}}
+
+{{define "docPage"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>satelle · {{.Name}}</title>
+<script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="wrap">
+  <nav class="crumbs"><a href="/">project</a> <span class="sep">/</span> <a href="/#docs">docs</a> <span class="sep">/</span> <span class="cur">{{.Name}}</span></nav>
+  <header class="app">
+    {{template "topbar" .TopBar}}
+    <div class="kind-h">{{.Kind}}</div>
+    <h1>{{.Name}}</h1>
+    {{if .Headline}}<div class="meta">{{.Headline}}</div>{{end}}
+  </header>
+  <article class="doc-article">{{.HTML}}</article>
+</div>
+<script src="/static/app.js"></script>
 </body>
 </html>{{end}}
 
