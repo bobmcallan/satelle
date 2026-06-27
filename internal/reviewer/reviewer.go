@@ -253,22 +253,52 @@ func (g *Gater) reviewerSkill(ctx context.Context, category, from, to string) (s
 // the baseline so gating never silently disappears.
 func (g *Gater) activeWorkflow(ctx context.Context, category string) (docindex.Doc, error) {
 	if workflows, err := g.docs.List(ctx, "workflows"); err == nil {
-		var wildcard *docindex.Doc
-		for i := range workflows {
-			at := frontmatterList(workflows[i].Body, "applies_to")
-			if category != "" && containsStr(at, category) {
-				return workflows[i], nil // a specific category match wins
-			}
-			if wildcard == nil && containsStr(at, "*") {
-				w := workflows[i]
-				wildcard = &w
-			}
-		}
-		if wildcard != nil {
-			return *wildcard, nil
+		if ordered := OrderedWorkflows(workflows, category); len(ordered) > 0 {
+			return ordered[0], nil // the highest-priority applicable workflow
 		}
 	}
 	return g.docs.Get(ctx, "workflows", baselineWorkflow)
+}
+
+// OrderedWorkflows returns the workflows that APPLY to a story of the given
+// category, ordered by selection priority (highest first) — the list satelle
+// offers an agent starting a story, where the head is the active/default choice
+// and the gater enforces. A workflow applies when its `applies_to` lists the
+// category or the wildcard "*". Priority tiers, in order:
+//
+//  1. category-specific match on a PROJECT (repo) workflow,
+//  2. category-specific match on a SYSTEM (embedded) workflow,
+//  3. wildcard ("*") PROJECT workflow,
+//  4. wildcard SYSTEM workflow.
+//
+// So a repo's project workflow overrides the embedded system default, and a
+// category-specific workflow overrides a wildcard one. Within a tier, input
+// order (name-sorted, as the doc index yields) is preserved.
+func OrderedWorkflows(workflows []docindex.Doc, category string) []docindex.Doc {
+	var specRepo, specSys, wildRepo, wildSys []docindex.Doc
+	for _, w := range workflows {
+		at := frontmatterList(w.Body, "applies_to")
+		switch {
+		case category != "" && containsStr(at, category):
+			if w.Embedded {
+				specSys = append(specSys, w)
+			} else {
+				specRepo = append(specRepo, w)
+			}
+		case containsStr(at, "*"):
+			if w.Embedded {
+				wildSys = append(wildSys, w)
+			} else {
+				wildRepo = append(wildRepo, w)
+			}
+		}
+	}
+	out := make([]docindex.Doc, 0, len(workflows))
+	out = append(out, specRepo...)
+	out = append(out, specSys...)
+	out = append(out, wildRepo...)
+	out = append(out, wildSys...)
+	return out
 }
 
 // runCheck runs a skill's functional-check command and returns a deterministic

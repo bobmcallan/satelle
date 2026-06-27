@@ -400,3 +400,32 @@ func TestBodyCheckBlock_selfContained(t *testing.T) {
 		t.Fatal("frontmatter check: fallback broken")
 	}
 }
+
+func TestOrderedWorkflowsPriority(t *testing.T) {
+	sysWild := docindex.Doc{Name: "satelle-baseline-workflow", Embedded: true,
+		Body: "---\nscope: system\napplies_to: [\"*\"]\n---\n"}
+	repoWild := docindex.Doc{Name: "satelle-workflow", Embedded: false,
+		Body: "---\nscope: project\napplies_to: [\"*\"]\n---\n"}
+	repoSpec := docindex.Doc{Name: "satelle-web-workflow", Embedded: false,
+		Body: "---\nscope: project\napplies_to: [\"web\"]\n---\n"}
+	all := []docindex.Doc{sysWild, repoWild, repoSpec}
+
+	// No category: project wildcard beats the embedded system default.
+	got := OrderedWorkflows(all, "")
+	if len(got) != 2 || got[0].Name != "satelle-workflow" || got[1].Name != "satelle-baseline-workflow" {
+		t.Fatalf("wildcard order = %v, want [satelle-workflow, satelle-baseline-workflow]", names(got))
+	}
+	// Category 'web': the category-specific repo workflow leads.
+	got = OrderedWorkflows(all, "web")
+	if got[0].Name != "satelle-web-workflow" {
+		t.Fatalf("category-web head = %s, want satelle-web-workflow", got[0].Name)
+	}
+}
+
+func names(ds []docindex.Doc) []string {
+	out := make([]string, len(ds))
+	for i, d := range ds {
+		out[i] = d.Name
+	}
+	return out
+}

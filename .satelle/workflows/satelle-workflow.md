@@ -1,24 +1,25 @@
 ---
-name: satelle-baseline-workflow
-scope: system
+name: satelle-workflow
+scope: project
 kind: workflow
 tags: [kind:workflow]
 applies_to: ["*"]
-description: REPO OVERRIDE of the embedded canonical satelle-baseline-workflow (config/substrate/workflows). This repo's gated lifecycle — open → in_progress → integrated → deployed → done, with a blocked detour and a cancelled exit. The path to done is gated by isolated reviewers: intent-plan on begin-work, a functional integration check (all tests pass), a functional deploy + health check, and the acceptance review on close. done stays the terminal state (see satelle-done-is-last). It shadows, but never edits, the binary's canonical default.
+description: This repo's project-scope workflow and its ACTIVE lifecycle — open → in_progress → integrated → deployed → done, with a blocked detour and a cancelled exit. The path to done is gated by isolated reviewers: intent-plan on begin-work, a functional integration check (all tests pass), a functional deploy + health check, and the acceptance review on close. done stays terminal (see satelle-done-is-last). A project workflow takes precedence over the embedded system default satelle-baseline-workflow; no repo workflow is system-scoped.
 ---
 
-# Baseline workflow (repo override) — gated to done
+# satelle workflow (project) — gated to done
 
-> **This file is a repo override**, not the canonical source. The binary ships an
-> embedded canonical `satelle-baseline-workflow` under `config/substrate/workflows`;
-> because this file shares its name it shadows that default for this repo only.
-> See the `satelle-repo-agnostic` principle.
+> **This is a project workflow**, authored under `.satelle/workflows`. It is the
+> ACTIVE workflow for this repo: a project-scope workflow takes precedence over
+> the binary's embedded **system** default `satelle-baseline-workflow`. A repo
+> workflow is never `scope: system` — system scope is reserved for the embedded
+> canonical defaults. See the `satelle-repo-agnostic` principle.
 
 A story or task moves **open → in_progress → integrated → deployed → done**, may
 detour through **blocked**, and may exit early to **cancelled**. Every edge on the
 path to `done` is **gated** by an isolated reviewer; the executor cannot self-enact
 a gated edge — a reject pushes back with notes. `done` is always the terminal
-state — the integration and deploy gates come *before* it, never after (see the
+state — the integration and deploy gates come *before* it (see the
 `satelle-done-is-last` principle).
 
 ## Workflow
@@ -27,8 +28,8 @@ state — the integration and deploy gates come *before* it, never after (see th
   (the story must be well-formed before work starts).
 - **in_progress → blocked** / **blocked → in_progress** — record/resume a stall.
 - **in_progress → integrated** — **gated** by `satelle-integration-review`, a
-  functional check that runs the full integration suite (`make integration`) and
-  accepts only if **every** test passes.
+  functional check that runs the full integration suite and accepts only if
+  **every** test passes.
 - **integrated → deployed** — **gated** by `satelle-deploy-review`, a functional
   check that deploys the service locally and validates it with a **health check on
   the CLI and the web UI**.
