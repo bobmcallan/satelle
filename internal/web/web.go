@@ -35,10 +35,29 @@ type Server struct {
 	hub     *hub
 }
 
+// serverStart marks when the web service came up; the header shows the elapsed
+// uptime. Set once when the server is wired.
+var serverStart = time.Now()
+
+// formatUptime renders an elapsed duration as a compact "up Hh Mm" / "up Nm" /
+// "up Ns" string for the header.
+func formatUptime(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("up %ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("up %dm", int(d.Minutes()))
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	return fmt.Sprintf("up %dh %dm", h, m)
+}
+
 // New wires the server for the given bootstrap. It registers the verb-change
 // notifier so web-initiated mutations ring the doorbell instantly; cross-
 // process mutations (CLI edits) are picked up by StartRealtime's poller.
 func New(a *app.App) *Server {
+	serverStart = time.Now()
 	h := newHub()
 	verb.SetChangeNotifier(h.publish)
 
@@ -164,6 +183,7 @@ type pageData struct {
 	DocCount     int
 	Workflows   []workflowRowVM
 	Version     string
+	Uptime      string
 	FooterEmail string
 }
 
@@ -389,7 +409,8 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 		Tasks:    attachLights(ctx, tasks, stepOf),
 		DocKinds: kinds, DocCount: len(allDocs),
 		Workflows: workflowRows(byKind["workflows"]),
-		Version:   buildinfo.Resolve().Version, FooterEmail: email,
+		Version:   buildinfo.Resolve().Version, Uptime: formatUptime(time.Since(serverStart)),
+		FooterEmail: email,
 	}, nil
 }
 
