@@ -161,6 +161,16 @@ a.doc:hover { border-color: var(--accent); }
 .doc .head { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
 .doc .updated { color: var(--muted); font-size: 11px; margin-top: 6px; font-family: var(--mono); }
 
+/* story attached-document tabs (detail page) */
+.doc-tabs { margin: 6px 0 18px; }
+.doc-tabstrip { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+.doc-tab { border: 0; background: none; color: var(--muted); font: inherit; font-size: 13px; padding: 7px 12px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.doc-tab:hover { color: var(--ink); }
+.doc-tab.active { color: var(--ink); border-bottom-color: var(--accent); }
+.doc-tab-type { color: var(--muted); font-size: 11px; font-family: var(--mono); }
+.doc-pane { display: none; }
+.doc-pane.active { display: block; }
+
 /* rendered authored-document viewer */
 .doc-article { font-size: 14.5px; line-height: 1.65; max-width: 760px; }
 .doc-article h1, .doc-article h2, .doc-article h3, .doc-article h4 { margin: 1.4em 0 .5em; line-height: 1.25; }

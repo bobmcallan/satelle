@@ -173,6 +173,10 @@ const templatesSrc = `
 
 {{define "itemDetail"}}<div class="expbody">
   {{if not .Standalone}}<a class="detail-link open-story" href="/{{.Item.Kind}}/{{.Item.ID}}">Open story →</a>{{end}}
+  {{if .Docs}}<div class="doc-tabs">
+    <div class="doc-tabstrip" role="tablist">{{range $i, $d := .Docs}}<button class="doc-tab{{if eq $i 0}} active{{end}}" type="button" role="tab" data-doc="{{$i}}">{{$d.Name}}{{if $d.Type}} <span class="doc-tab-type">{{$d.Type}}</span>{{end}}</button>{{end}}</div>
+    {{range $i, $d := .Docs}}<div class="doc-pane{{if eq $i 0}} active{{end}}" data-doc="{{$i}}"><article class="doc-article">{{$d.HTML}}</article></div>{{end}}
+  </div>{{end}}
   <dl>
     <dt>Status</dt><dd><span class="badge s-{{.Item.Status}}">{{.Item.Status}}</span></dd>
     <dt>Priority</dt><dd>{{if .Item.Priority}}{{.Item.Priority}}{{else}}—{{end}}</dd>

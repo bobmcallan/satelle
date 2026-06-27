@@ -561,8 +561,25 @@ func fragmentRows(a *app.App, tmplName, topic string) http.HandlerFunc {
 type detailData struct {
 	Item       workitem.Item
 	Events     []ledger.Entry
+	Docs       []storyDocVM
 	TopBar     topBar
 	Standalone bool
+}
+
+// storyDocRef is one of a story's attached documents (from story-doc-list /
+// story-doc-get).
+type storyDocRef struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+	Body string `json:"body,omitempty"`
+}
+
+// storyDocVM is an attached document prepared for the detail-page tab strip: its
+// markdown rendered to safe HTML.
+type storyDocVM struct {
+	Name string
+	Type string
+	HTML template.HTML
 }
 
 // loadDetail fetches one item + its (newest-first) ledger timeline via verbs.
@@ -578,7 +595,20 @@ func loadDetail(ctx context.Context, group, id string) (detailData, error) {
 	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
 		events[i], events[j] = events[j], events[i]
 	}
-	return detailData{Item: item, Events: events, TopBar: topBar{Uptime: formatUptime(time.Since(serverStart))}}, nil
+	// A story's attached documents become tabs on the detail page. Best-effort:
+	// the timeline and detail still render if a doc fails to load. Tasks have none,
+	// so the list comes back empty and no tab strip shows.
+	var docs []storyDocVM
+	if refs, derr := fetchList[storyDocRef](ctx, "story-doc-list", map[string]any{"story_id": id}); derr == nil {
+		for _, ref := range refs {
+			full, gerr := fetchOne[storyDocRef](ctx, "story-doc-get", map[string]any{"story_id": id, "name": ref.Name})
+			if gerr != nil {
+				continue
+			}
+			docs = append(docs, storyDocVM{Name: ref.Name, Type: ref.Type, HTML: renderMarkdown(full.Body)})
+		}
+	}
+	return detailData{Item: item, Events: events, Docs: docs, TopBar: topBar{Uptime: formatUptime(time.Since(serverStart))}}, nil
 }
 
 func itemFragment(group string) http.HandlerFunc {
