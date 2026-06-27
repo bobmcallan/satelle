@@ -383,3 +383,20 @@ var errFakeExit = errFake("exit status 1")
 type errFake string
 
 func (e errFake) Error() string { return string(e) }
+
+func TestBodyCheckBlock_selfContained(t *testing.T) {
+	// A skill carrying an embedded ```check block is self-contained — no external
+	// file. skillCheck must extract the block (preferred over a frontmatter check).
+	body := "---\nname: x\ncheck: \"frontmatter-fallback\"\n---\n# Gate\n\n```check\n#!/usr/bin/env bash\nset -e\necho hello\n```\n\ntrailing prose\n"
+	got := skillCheck(body)
+	if got == "frontmatter-fallback" {
+		t.Fatal("body ```check block should win over frontmatter check:")
+	}
+	if !strings.Contains(got, "echo hello") || strings.Contains(got, "```") {
+		t.Fatalf("extracted block wrong: %q", got)
+	}
+	// No block → frontmatter fallback still works.
+	if skillCheck("---\ncheck: \"only-frontmatter\"\n---\nbody") != "only-frontmatter" {
+		t.Fatal("frontmatter check: fallback broken")
+	}
+}
