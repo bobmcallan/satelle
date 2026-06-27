@@ -25,7 +25,11 @@ var tmplFuncs = template.FuncMap{
 	"tagchip": func(tag string) template.HTML {
 		esc := template.HTMLEscapeString
 		if i := strings.IndexByte(tag, ':'); i > 0 && i < len(tag)-1 {
-			return template.HTML(`<span class="tagchip kv"><span class="k">` + esc(tag[:i]) +
+			cls := "tagchip kv"
+			if tag[:i] == "category" { // category gets a distinct key colour, like satellites
+				cls += " cat"
+			}
+			return template.HTML(`<span class="` + cls + `"><span class="k">` + esc(tag[:i]) +
 				`</span><span class="v">` + esc(tag[i+1:]) + `</span></span>`)
 		}
 		return template.HTML(`<span class="tagchip">` + esc(tag) + `</span>`)
@@ -73,7 +77,7 @@ const templatesSrc = `
 
   <section class="panel" data-topic="stories" id="panel-stories">
     <div class="filterbar">
-      <input type="text" placeholder="filter… e.g. status:open priority:high order:updated mvp" aria-label="filter stories">
+      <input type="text" placeholder="filter… e.g. status:open priority:high tags:epic:foo order:updated" aria-label="filter stories">
       <div class="chips"></div>
     </div>
     <table class="panel-table">
@@ -124,7 +128,7 @@ const templatesSrc = `
 
 {{define "workitemRows"}}{{range .}}<tr class="row" tabindex="0" role="button" aria-expanded="false" data-status="{{.Status}}" data-priority="{{.Priority}}" data-category="{{.Category}}" data-tags="{{join .Tags ","}}" data-title="{{lower .Title}}" data-updated="{{.UpdatedAt.Format "2006-01-02T15:04:05"}}" data-created="{{.CreatedAt.Format "2006-01-02T15:04:05"}}" data-search="{{printf "%s %s %s" .Title .ID (join .Tags " ") | lower}}" data-expand-url="/fragment/{{.Kind}}/{{.ID}}">
   <td class="id"><span class="id-copy" role="button" tabindex="0" data-id="{{.ID}}" title="Copy id to clipboard">{{.ID}}</span></td>
-  <td><div class="wi-title">{{.Title}}</div>{{if .Tags}}<div class="wi-tags">{{range .Tags}}{{tagchip .}}{{end}}</div>{{end}}</td>
+  <td><div class="wi-title">{{.Title}}</div>{{if or .Category .Tags}}<div class="wi-tags">{{if .Category}}{{tagchip (printf "category:%s" .Category)}}{{end}}{{range .Tags}}{{tagchip .}}{{end}}</div>{{end}}</td>
   <td><span class="badge s-{{.Status}}">{{.Status}}</span></td>
   <td class="col-reviews">{{range .Lights}}<span class="review-light review-light-{{.State}}" title="{{.Title}}">{{.Index}}</span>{{end}}</td>
   <td>{{if .Priority}}{{.Priority}}{{else}}—{{end}}</td>
