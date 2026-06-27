@@ -44,7 +44,8 @@ func TestStoryMarkdownMirrorAndSync(t *testing.T) {
 		t.Fatalf("create did not write the story markdown: %v", err)
 	}
 
-	// Edit the file and re-sync → the store reflects the file (file → store).
+	// Editing an EXISTING story's file must NOT overwrite the store on sync — the
+	// store is authoritative; a stale file can't revert live state.
 	data, _ := os.ReadFile(mdPath)
 	if err := os.WriteFile(mdPath, []byte(strings.Replace(string(data), "Mirror me", "Mirror edited", 1)), 0o644); err != nil {
 		t.Fatal(err)
@@ -56,8 +57,24 @@ func TestStoryMarkdownMirrorAndSync(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Title != "Mirror edited" {
-		t.Errorf("sync did not import the edited title, got %q", got.Title)
+	if got.Title != "Mirror me" {
+		t.Errorf("sync overwrote the store from a stale file (create-only violated), got %q", got.Title)
+	}
+
+	// A copied-in file for a story the store does NOT have is imported (restore /
+	// cross-repo portability).
+	restore := workitem.Item{
+		ID: "sty_restore01", Kind: workitem.KindStory, Title: "Restored",
+		Status: "open", AcceptanceCriteria: "1. restored",
+	}
+	if err := os.WriteFile(filepath.Join(storyDir, restore.ID+".md"), workitem.Marshal(restore), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if imp, _, err := verb.SyncStories(ctx); err != nil || imp < 1 {
+		t.Fatalf("expected the new file to import, got imp=%d err=%v", imp, err)
+	}
+	if r, err := db.Stories.Get(ctx, restore.ID); err != nil || r.Title != "Restored" {
+		t.Errorf("restored story not imported: %+v err=%v", r, err)
 	}
 
 	// A story written straight to the store (no file) is exported on sync.
