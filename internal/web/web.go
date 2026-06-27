@@ -164,7 +164,6 @@ type pageData struct {
 	DocCount     int
 	Workflows   []workflowRowVM
 	Version     string
-	FooterName  string
 	FooterEmail string
 }
 
@@ -259,21 +258,19 @@ func attachLights(ctx context.Context, items []workitem.Item) []rowVM {
 	return out
 }
 
-// footerIdentity resolves the operator's name/email for the footer from the
-// repo's git config (their identity, not baked into the binary). Best-effort and
-// resolved once; empty when git or the keys are unavailable.
+// footerIdentity resolves the operator's email for the footer from the repo's git
+// config (their identity, not baked into the binary). Best-effort and resolved
+// once; empty when git or the key is unavailable.
 var (
 	footerOnce  sync.Once
-	footerName  string
 	footerEmail string
 )
 
-func footerIdentity(repoRoot string) (string, string) {
+func footerIdentity(repoRoot string) string {
 	footerOnce.Do(func() {
-		footerName = gitConfig(repoRoot, "user.name")
 		footerEmail = gitConfig(repoRoot, "user.email")
 	})
-	return footerName, footerEmail
+	return footerEmail
 }
 
 func gitConfig(dir, key string) string {
@@ -313,7 +310,7 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 	for _, k := range config.AuthoredKinds {
 		kinds = append(kinds, kindGroup{Kind: k, Docs: byKind[k]})
 	}
-	name, email := footerIdentity(a.RepoRoot)
+	email := footerIdentity(a.RepoRoot)
 	backlog := 0
 	for _, s := range stories {
 		if s.Status == workitem.StatusOpen {
@@ -326,7 +323,7 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 		Tasks:    attachLights(ctx, tasks),
 		DocKinds: kinds, DocCount: len(allDocs),
 		Workflows: workflowRows(byKind["workflows"]),
-		Version:   buildinfo.Resolve().Version, FooterName: name, FooterEmail: email,
+		Version:   buildinfo.Resolve().Version, FooterEmail: email,
 	}, nil
 }
 
