@@ -91,9 +91,9 @@ header.app h1 .dot { color: var(--accent); }
 .panel-table tr.row:hover { background: var(--row-hover); }
 .panel-table td.id { font-family: var(--mono); font-size: 12.5px; color: var(--muted); white-space: nowrap; }
 .panel-table td.updated { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; }
-.caret { display: inline-block; width: 0; height: 0; border-left: 4px solid var(--muted);
-  border-top: 4px solid transparent; border-bottom: 4px solid transparent; margin-right: 7px; transition: transform .15s; }
-tr.row[aria-expanded="true"] .caret { transform: rotate(90deg); }
+.id-copy { cursor: pointer; border-radius: 4px; padding: 1px 3px; }
+.id-copy:hover { background: var(--chip); color: var(--ink); }
+.id-copy.copied { color: var(--accent); }
 .tag { font-size: 11.5px; color: var(--muted); }
 
 /* Status badges / pills */
@@ -114,6 +114,7 @@ tr.expansion > td { background: var(--expand-bg); padding: 0; }
 .expbody h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin: 14px 0 8px; }
 .expbody pre.prose { white-space: pre-wrap; font: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 0; }
 .detail-link { font-size: 12px; }
+.open-story { display: inline-block; margin-bottom: 12px; font-size: 12.5px; font-weight: 600; }
 
 /* Ledger timeline */
 ol.timeline { list-style: none; margin: 0; padding: 0; border-left: 2px solid var(--line); }

@@ -205,15 +205,33 @@
   function toggleRow(row) {
     if (row.getAttribute("aria-expanded") === "true") collapseRow(row); else expandRow(row);
   }
+  function copyId(el) {
+    var id = el.dataset.id || el.textContent;
+    function feedback() {
+      el.classList.add("copied");
+      el.textContent = "copied ✓";
+      setTimeout(function () { el.textContent = id; el.classList.remove("copied"); }, 1000);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(id).then(feedback, feedback);
+    } else {
+      feedback();
+    }
+  }
+
   function initExpand() {
     document.querySelectorAll(".panel").forEach(function (panel) {
       panel.addEventListener("click", function (e) {
-        if (e.target.closest("a")) return; // let real links through
+        var idEl = e.target.closest(".id-copy");
+        if (idEl) { e.preventDefault(); e.stopPropagation(); copyId(idEl); return; } // copy, don't toggle/navigate
+        if (e.target.closest("a")) return; // let real links (e.g. Open story) through
         var row = e.target.closest("tr.row[data-expand-url]");
         if (row) toggleRow(row);
       });
       panel.addEventListener("keydown", function (e) {
         if (e.key !== "Enter" && e.key !== " ") return;
+        var idEl = e.target.closest(".id-copy");
+        if (idEl) { e.preventDefault(); copyId(idEl); return; }
         var row = e.target.closest("tr.row[data-expand-url]");
         if (row) { e.preventDefault(); toggleRow(row); }
       });
