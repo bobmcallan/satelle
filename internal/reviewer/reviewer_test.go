@@ -232,9 +232,36 @@ func contains(s, sub string) bool {
 }
 
 func TestParseDecisionStrict(t *testing.T) {
-	for _, in := range []string{`{"decision":"maybe"}`, `{"notes":"x"}`, ``} {
+	for _, in := range []string{`{"decision":"maybe"}`, `{"notes":"x"}`, ``, `no json`} {
 		if _, err := parseDecision([]byte(in)); err == nil {
 			t.Errorf("parseDecision(%q) should error", in)
+		}
+	}
+}
+
+func TestParseDecisionLenient(t *testing.T) {
+	cases := []struct {
+		in     string
+		accept bool
+		notes  string
+	}{
+		// prose around the verdict
+		{`I judged it. {"decision":"accept","notes":""} Done.`, true, ""},
+		// wrapping braces — the brittle case dogfooding hit
+		{`{{"decision":"reject","notes":"add criteria"}}`, false, "add criteria"},
+		// a code-fenced example before the real verdict
+		{"```json\n{\"decision\": \"accept\"}\n```\nFinal: {\"decision\":\"reject\",\"notes\":\"no\"}", false, "no"},
+		// a brace inside the notes string must not unbalance extraction
+		{`{"decision":"reject","notes":"missing the {foo} block"}`, false, "missing the {foo} block"},
+	}
+	for _, c := range cases {
+		dec, err := parseDecision([]byte(c.in))
+		if err != nil {
+			t.Errorf("parseDecision(%q): %v", c.in, err)
+			continue
+		}
+		if dec.Accept != c.accept || dec.Notes != c.notes {
+			t.Errorf("parseDecision(%q) = {accept:%v notes:%q}, want {accept:%v notes:%q}", c.in, dec.Accept, dec.Notes, c.accept, c.notes)
 		}
 	}
 }

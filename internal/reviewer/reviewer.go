@@ -253,47 +253,77 @@ type rawDecision struct {
 	Notes    string `json:"notes"`
 }
 
-// parseDecision extracts the one JSON object from the agent's stdout (lenient on
-// surrounding prose) and maps decision strictly to accept/reject.
+// parseDecision finds the reviewer's verdict in the agent's stdout — lenient on
+// surrounding prose, extra wrapping braces, and example objects, but strict on
+// shape. It scans every balanced {…} candidate and returns the LAST that yields a
+// decision in {accept, reject}: a model reasons then concludes, so its final
+// verdict wins over any format example it echoed earlier.
 func parseDecision(out []byte) (verb.GateDecision, error) {
-	obj := extractJSONObject(out)
-	if obj == nil {
-		return verb.GateDecision{}, fmt.Errorf("no JSON object in reviewer output")
+	var found *verb.GateDecision
+	for _, obj := range jsonObjectCandidates(out) {
+		var rd rawDecision
+		if err := json.Unmarshal(obj, &rd); err != nil {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(rd.Decision)) {
+		case "accept":
+			d := verb.GateDecision{Accept: true, Notes: rd.Notes}
+			found = &d
+		case "reject":
+			d := verb.GateDecision{Accept: false, Notes: rd.Notes}
+			found = &d
+		}
 	}
-	var rd rawDecision
-	if err := json.Unmarshal(obj, &rd); err != nil {
-		return verb.GateDecision{}, fmt.Errorf("parse decision: %w", err)
+	if found != nil {
+		return *found, nil
 	}
-	switch strings.ToLower(strings.TrimSpace(rd.Decision)) {
-	case "accept":
-		return verb.GateDecision{Accept: true, Notes: rd.Notes}, nil
-	case "reject":
-		return verb.GateDecision{Accept: false, Notes: rd.Notes}, nil
-	default:
-		return verb.GateDecision{}, fmt.Errorf("decision %q not in {accept, reject}", rd.Decision)
-	}
+	return verb.GateDecision{}, fmt.Errorf("no {\"decision\": \"accept\"|\"reject\"} object in reviewer output")
 }
 
-// extractJSONObject returns the first balanced {…} object in b, or nil. Lenient
-// so a skill may print a sentence around its verdict.
-func extractJSONObject(b []byte) []byte {
-	start := -1
-	depth := 0
-	for i, c := range b {
-		switch c {
-		case '{':
-			if depth == 0 {
-				start = i
-			}
-			depth++
-		case '}':
-			if depth > 0 {
-				depth--
-				if depth == 0 && start >= 0 {
-					return b[start : i+1]
-				}
+// jsonObjectCandidates returns every balanced {…} substring, trying each '{'
+// start so wrapping braces (e.g. {{…}}), prose, or a code-fenced example don't
+// defeat extraction. Brace counting is string-aware so a '{' inside the notes
+// text does not unbalance it.
+func jsonObjectCandidates(b []byte) [][]byte {
+	var out [][]byte
+	for i := 0; i < len(b); i++ {
+		if b[i] == '{' {
+			if end := balancedEnd(b, i); end > i {
+				out = append(out, b[i:end+1])
 			}
 		}
 	}
-	return nil
+	return out
+}
+
+// balancedEnd returns the index of the '}' that closes the '{' at i, ignoring
+// braces inside JSON strings, or -1 if unbalanced.
+func balancedEnd(b []byte, i int) int {
+	depth, inStr, esc := 0, false, false
+	for j := i; j < len(b); j++ {
+		c := b[j]
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return j
+			}
+		}
+	}
+	return -1
 }
