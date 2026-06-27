@@ -28,9 +28,11 @@ import (
 )
 
 // DocGetter is the read surface the gater needs over the authored-doc index
-// (satisfied by *docindex.Store) — the active workflow and the reviewer skills.
+// (satisfied by *docindex.Store) — listing workflows (to resolve the one active
+// for an item's category) and getting the reviewer skills / the baseline.
 type DocGetter interface {
 	Get(ctx context.Context, kind, name string) (docindex.Doc, error)
+	List(ctx context.Context, kind string) ([]docindex.Doc, error)
 }
 
 // defaultTools is the reviewer's read-only tool grant — it judges, never mutates.
@@ -58,17 +60,17 @@ func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Gater 
 
 // transitionPayload is the JSON delivered to the reviewer on stdin.
 type transitionPayload struct {
-	Story      workitem.Item `json:"story"`
-	From       string        `json:"from"`
-	To         string        `json:"to"`
-	ReviewSkill string       `json:"review_skill"`
+	Story       workitem.Item `json:"story"`
+	From        string        `json:"from"`
+	To          string        `json:"to"`
+	ReviewSkill string        `json:"review_skill"`
 }
 
 // Gate judges item's transition to toStatus. It returns Gated=false (enact
 // directly) when no reviewer skill governs the edge; otherwise it runs the
 // isolated reviewer and returns its accept/reject verdict.
 func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (verb.GateDecision, error) {
-	skill, err := g.reviewerSkill(ctx, item.Status, toStatus)
+	skill, err := g.reviewerSkill(ctx, item.Category, item.Status, toStatus)
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
@@ -194,9 +196,10 @@ func (g *Gater) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb.
 }
 
 // reviewerSkill resolves the reviewer_skill governing the (from→to) edge from
-// the active workflow doc. An absent workflow means no gating.
-func (g *Gater) reviewerSkill(ctx context.Context, from, to string) (string, error) {
-	doc, err := g.docs.Get(ctx, "workflows", baselineWorkflow)
+// the workflow active for the item's category. An absent workflow means no
+// gating.
+func (g *Gater) reviewerSkill(ctx context.Context, category, from, to string) (string, error) {
+	doc, err := g.activeWorkflow(ctx, category)
 	if errors.Is(err, docindex.ErrNotFound) {
 		return "", nil
 	}
@@ -204,6 +207,101 @@ func (g *Gater) reviewerSkill(ctx context.Context, from, to string) (string, err
 		return "", err
 	}
 	return reviewerSkillFor(doc.Body, from, to), nil
+}
+
+// activeWorkflow returns the workflow doc governing an item of the given
+// category. Selection matches the item's category against each indexed
+// workflow's `applies_to` frontmatter: a workflow listing the category wins; a
+// wildcard (`applies_to: ["*"]`) workflow is the next-best; the embedded
+// baseline (resolved by name) is the final fallback. This is the
+// configuration-over-code path — a repo adds a category-specific workflow as
+// substrate and it takes effect with no binary change. A List error degrades to
+// the baseline so gating never silently disappears.
+func (g *Gater) activeWorkflow(ctx context.Context, category string) (docindex.Doc, error) {
+	if workflows, err := g.docs.List(ctx, "workflows"); err == nil {
+		var wildcard *docindex.Doc
+		for i := range workflows {
+			at := frontmatterList(workflows[i].Body, "applies_to")
+			if category != "" && containsStr(at, category) {
+				return workflows[i], nil // a specific category match wins
+			}
+			if wildcard == nil && containsStr(at, "*") {
+				w := workflows[i]
+				wildcard = &w
+			}
+		}
+		if wildcard != nil {
+			return *wildcard, nil
+		}
+	}
+	return g.docs.Get(ctx, "workflows", baselineWorkflow)
+}
+
+// frontmatterList parses a list-valued key from a markdown frontmatter block,
+// handling both the inline flow form (`applies_to: ["*", "web"]`) and the block
+// list form (`applies_to:` then `- web` lines). Returns nil when absent.
+func frontmatterList(body, key string) []string {
+	lines := strings.Split(body, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return nil
+	}
+	end := -1
+	for j := 1; j < len(lines); j++ {
+		if strings.TrimSpace(lines[j]) == "---" {
+			end = j
+			break
+		}
+	}
+	if end < 0 {
+		return nil
+	}
+	for i := 1; i < end; i++ {
+		t := strings.TrimSpace(lines[i])
+		if !strings.HasPrefix(t, key+":") {
+			continue
+		}
+		rest := strings.TrimSpace(strings.TrimPrefix(t, key+":"))
+		if strings.HasPrefix(rest, "[") { // inline flow form
+			rest = strings.TrimSuffix(strings.TrimPrefix(rest, "["), "]")
+			return splitTrimList(rest)
+		}
+		var out []string // block list form
+		for j := i + 1; j < end; j++ {
+			l2 := strings.TrimSpace(lines[j])
+			if l2 == "" {
+				continue
+			}
+			if strings.HasPrefix(l2, "- ") {
+				out = append(out, strings.Trim(strings.TrimSpace(l2[2:]), `"'`))
+				continue
+			}
+			break
+		}
+		return out
+	}
+	return nil
+}
+
+// splitTrimList splits a comma-separated inline list, trimming whitespace and
+// surrounding quotes, dropping empties.
+func splitTrimList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		v := strings.Trim(strings.TrimSpace(p), `"'`)
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func containsStr(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }
 
 // skillBody returns the reviewer skill's markdown body from the substrate.
@@ -219,7 +317,7 @@ func (g *Gater) skillBody(ctx context.Context, name string) (string, error) {
 // edge and returns its reviewer_skill (empty if the edge is ungated or absent).
 // The transition format is the fixed inline-map shape the substrate uses:
 //
-//	- {from: backlog, to: in_progress, reviewer_skill: "satelle-intent-plan-review"}
+//   - {from: backlog, to: in_progress, reviewer_skill: "satelle-intent-plan-review"}
 func reviewerSkillFor(body, from, to string) string {
 	for _, line := range strings.Split(body, "\n") {
 		l := strings.TrimSpace(line)
