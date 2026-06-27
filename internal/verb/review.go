@@ -10,11 +10,29 @@ import (
 // transition. Gated reports whether a reviewer skill governed the edge at all —
 // an ungated edge (no reviewer_skill, or its rubric not installed) is advisory
 // and enacts directly, preserving the gateless baseline.
+//
+// An edge may be judged by MORE THAN ONE reviewer: a transition can name an
+// ordered list of reviewers, and an always-on system reviewer layer runs after
+// them. Reviewers carries each reviewer's verdict in run order; the top-level
+// Accept/Skill/Notes mirror the deciding reviewer (the first reject, or the last
+// reviewer when all accept) so single-reviewer callers keep their contract.
 type GateDecision struct {
-	Gated  bool   // a reviewer skill judged this edge
-	Accept bool   // accept enacts the transition; reject blocks it
-	Notes  string // reviewer notes — pushback to the executor on reject
-	Skill  string // the reviewer skill that judged it
+	Gated     bool              // a reviewer skill judged this edge
+	Accept    bool              // accept enacts the transition; reject blocks it
+	Notes     string            // reviewer notes — pushback to the executor on reject
+	Skill     string            // the deciding reviewer skill
+	Reviewers []ReviewerVerdict // per-reviewer verdicts in run order (empty for the legacy single-reviewer path)
+}
+
+// ReviewerVerdict is one reviewer's verdict within a transition's ordered
+// review. Order is its position in the run (workflow-named reviewers first,
+// then the always-on system layer); System marks a verdict from that layer.
+type ReviewerVerdict struct {
+	Skill  string `json:"skill"`
+	Order  int    `json:"order"`
+	Accept bool   `json:"accept"`
+	Notes  string `json:"notes,omitempty"`
+	System bool   `json:"system,omitempty"`
 }
 
 // TransitionGater judges a requested status transition in an isolated,

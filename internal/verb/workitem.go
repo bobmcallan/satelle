@@ -201,19 +201,28 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		if gerr != nil {
 			return nil, gerr
 		}
-		if dec.Gated && !dec.Accept {
-			appendLedgerEntry(ctx, current.ID, ledger.KindReviewReject, "reviewer",
-				fmt.Sprintf("rejected %s→%s: %s", current.Status, *req.Status, dec.Notes),
-				transitionPayload(current.Status, *req.Status, dec.Skill), now)
-			notifyChange(panelTopic(current.Kind))
-			return nil, fmt.Errorf("transition %s→%s rejected by %s: %s",
-				current.Status, *req.Status, dec.Skill, dec.Notes)
+		// An edge may carry several reviewers (a transition's reviewer list plus
+		// the always-on system layer). Record each reviewer's verdict as its own
+		// ledger row, in order, so the trail names who judged the edge and how. The
+		// single-reviewer path returns no Reviewers — synthesise one from the
+		// top-level verdict so both paths record identically.
+		reviewers := dec.Reviewers
+		if len(reviewers) == 0 && dec.Gated {
+			reviewers = []ReviewerVerdict{{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes}}
 		}
-		if dec.Gated {
+		for _, rv := range reviewers {
+			if !rv.Accept {
+				appendLedgerEntry(ctx, current.ID, ledger.KindReviewReject, "reviewer",
+					fmt.Sprintf("rejected %s→%s by %s: %s", current.Status, *req.Status, rv.Skill, rv.Notes),
+					reviewerPayload(current.Status, *req.Status, rv), now)
+				notifyChange(panelTopic(current.Kind))
+				return nil, fmt.Errorf("transition %s→%s rejected by %s: %s",
+					current.Status, *req.Status, rv.Skill, rv.Notes)
+			}
 			gatedAccepted = true
 			appendLedgerEntry(ctx, current.ID, ledger.KindReviewAccept, "reviewer",
-				fmt.Sprintf("accepted %s→%s", current.Status, *req.Status),
-				transitionPayload(current.Status, *req.Status, dec.Skill), now)
+				fmt.Sprintf("accepted %s→%s by %s", current.Status, *req.Status, rv.Skill),
+				reviewerPayload(current.Status, *req.Status, rv), now)
 		}
 	}
 
@@ -287,6 +296,25 @@ func transitionPayload(from, to, skill string) json.RawMessage {
 		To    string `json:"to"`
 		Skill string `json:"skill,omitempty"`
 	}{From: from, To: to, Skill: skill}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+// reviewerPayload is transitionPayload enriched with a single reviewer's order
+// and system-layer flag — stamped on each per-reviewer review row so the trail
+// preserves who judged the edge, in what order, and whether from the always-on
+// system layer.
+func reviewerPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
+	p := struct {
+		From   string `json:"from"`
+		To     string `json:"to"`
+		Skill  string `json:"skill,omitempty"`
+		Order  int    `json:"order"`
+		System bool   `json:"system,omitempty"`
+	}{From: from, To: to, Skill: rv.Skill, Order: rv.Order, System: rv.System}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil
