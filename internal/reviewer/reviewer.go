@@ -73,9 +73,11 @@ func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Gater 
 	}
 }
 
-// execCheck runs command via `sh -c` in dir, returning combined stdout+stderr.
+// execCheck runs command via `bash -c` in dir, returning combined stdout+stderr.
+// bash (not sh) so a multi-line self-contained check embedded in a skill may use
+// ordinary shell scripting.
 func execCheck(ctx context.Context, dir, command string) (string, error) {
-	c := exec.CommandContext(ctx, "sh", "-c", command)
+	c := exec.CommandContext(ctx, "bash", "-c", command)
 	c.Dir = dir
 	out, err := c.CombinedOutput()
 	return string(out), err
@@ -109,11 +111,13 @@ func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (
 		}
 		return verb.GateDecision{}, err
 	}
-	// Functional-check gate: when the skill declares a `check:` command, the gate
-	// is deterministic — run the command in the repo root; exit 0 accepts,
-	// non-zero rejects with the output tail as notes. No LLM (the command IS the
-	// decision). This is the constitution's "skill + functional check" gate.
-	if command := frontmatterScalar(body, "check"); command != "" {
+	// Functional-check gate: when the skill carries a check — an embedded ```check
+	// script block in its body, or a single-line `check:` in frontmatter — the
+	// gate is deterministic. The check is SELF-CONTAINED in the skill (it never
+	// references an external script); satelle runs it in the repo root, exit 0
+	// accepts, non-zero rejects with the output tail as notes. No LLM (the command
+	// IS the decision). This is the constitution's "skill + functional check" gate.
+	if command := skillCheck(body); command != "" {
 		return g.runCheck(ctx, skill, command), nil
 	}
 	if g.runner == nil {
@@ -287,6 +291,45 @@ func (g *Gater) runCheck(ctx context.Context, skill, command string) verb.GateDe
 	dec.Accept = true
 	dec.Notes = "functional check passed: `" + command + "`"
 	return dec
+}
+
+// skillCheck returns a functional-check skill's command — the SELF-CONTAINED
+// check carried inside the skill artifact. It prefers an embedded fenced
+// ```check script block in the body (a multi-line, self-contained script), and
+// falls back to a single-line `check:` in frontmatter. Empty when the skill
+// carries no check (an LLM reviewer). A reviewer never references an external
+// file — see the satelle-reviewer-self-contained principle.
+func skillCheck(body string) string {
+	if block := bodyCheckBlock(body); block != "" {
+		return block
+	}
+	return frontmatterScalar(body, "check")
+}
+
+// bodyCheckBlock extracts the contents of the first fenced code block whose info
+// string is `check` (``` ```check ``` or ``` ```check sh ```) — the self-contained
+// functional check embedded in a skill's body. Returns "" when none.
+func bodyCheckBlock(body string) string {
+	lines := strings.Split(body, "\n")
+	in := false
+	var out []string
+	for _, ln := range lines {
+		t := strings.TrimSpace(ln)
+		if !in {
+			if strings.HasPrefix(t, "```") {
+				info := strings.TrimSpace(strings.TrimPrefix(t, "```"))
+				if info == "check" || strings.HasPrefix(info, "check ") {
+					in = true
+				}
+			}
+			continue
+		}
+		if strings.HasPrefix(t, "```") {
+			break // closing fence
+		}
+		out = append(out, ln)
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
 }
 
 // frontmatterScalar returns a single-line scalar value for key from a markdown
