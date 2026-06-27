@@ -95,12 +95,19 @@ type transitionPayload struct {
 // directly) when no reviewer skill governs the edge; otherwise it runs the
 // isolated reviewer and returns its accept/reject verdict.
 func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (verb.GateDecision, error) {
-	skill, err := g.reviewerSkill(ctx, item.Category, item.Status, toStatus)
+	skill, declared, err := g.reviewerSkill(ctx, item.Category, item.Status, toStatus)
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
+	if !declared {
+		// The active workflow does not declare this edge — it is not a legal move.
+		// Refuse it (the caller blocks the transition), so a story cannot skip a
+		// gate by jumping across an edge the workflow never declared.
+		return verb.GateDecision{}, fmt.Errorf(
+			"transition %s→%s is not a declared edge in the active workflow", item.Status, toStatus)
+	}
 	if skill == "" {
-		return verb.GateDecision{Gated: false}, nil // ungated edge — advisory
+		return verb.GateDecision{Gated: false}, nil // declared but ungated edge — advisory
 	}
 	body, err := g.skillBody(ctx, skill)
 	if err != nil {
@@ -292,17 +299,20 @@ func (g *Gater) ReviewStructure(ctx context.Context, reviewerName, kind, name, b
 }
 
 // reviewerSkill resolves the reviewer_skill governing the (from→to) edge from
-// the workflow active for the item's category. An absent workflow means no
-// gating.
-func (g *Gater) reviewerSkill(ctx context.Context, category, from, to string) (string, error) {
+// the workflow active for the item's category, and reports whether the edge is a
+// DECLARED transition of that workflow. An absent workflow means no governance at
+// all — every edge is allowed and ungated (declared=true), so fresh repos and the
+// baseline keep working.
+func (g *Gater) reviewerSkill(ctx context.Context, category, from, to string) (skill string, declared bool, err error) {
 	doc, err := g.activeWorkflow(ctx, category)
 	if errors.Is(err, docindex.ErrNotFound) {
-		return "", nil
+		return "", true, nil
 	}
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	return reviewerSkillFor(doc.Body, from, to), nil
+	skill, declared = reviewerSkillFor(doc.Body, from, to)
+	return skill, declared, nil
 }
 
 // activeWorkflow returns the workflow doc governing an item of the given
@@ -531,21 +541,26 @@ func (g *Gater) skillBody(ctx context.Context, name string) (string, error) {
 }
 
 // reviewerSkillFor scans a workflow body's transition lines for the (from→to)
-// edge and returns its reviewer_skill (empty if the edge is ungated or absent).
-// The transition format is the fixed inline-map shape the substrate uses:
+// edge. It returns the edge's reviewer_skill (empty when the edge is declared but
+// ungated) and whether the edge is DECLARED at all. The two cases are distinct: a
+// declared ungated edge is advisory (enact directly), while an UNDECLARED edge is
+// not a legal move in this workflow and must be refused — otherwise a story could
+// skip a gate that rejected it by jumping to a later state across an edge the
+// workflow never declared. The transition format is the fixed inline-map shape the
+// substrate uses:
 //
 //   - {from: backlog, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
-func reviewerSkillFor(body, from, to string) string {
+func reviewerSkillFor(body, from, to string) (skill string, declared bool) {
 	for _, line := range strings.Split(body, "\n") {
 		l := strings.TrimSpace(line)
 		if !strings.HasPrefix(l, "- {") || !strings.Contains(l, "from:") || !strings.Contains(l, "to:") {
 			continue
 		}
 		if inlineField(l, "from") == from && inlineField(l, "to") == to {
-			return inlineField(l, "reviewer_skill")
+			return inlineField(l, "reviewer_skill"), true
 		}
 	}
-	return ""
+	return "", false
 }
 
 // inlineField extracts key's value from an inline-map line, trimming quotes. The
