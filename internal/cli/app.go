@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -37,6 +38,9 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetWorkItemStore(a.Store.Stories)
 	verb.SetLedgerStore(a.Store.Ledger)
 	verb.SetDocIndexStore(a.Store.DocIndex)
+	// Mirror stories as portable markdown beside the per-repo database
+	// (<data_dir>/stories); the store stays the source of truth.
+	verb.SetStoryDir(filepath.Join(filepath.Dir(a.DBPath), "stories"))
 	// Wire the isolated reviewer that gates status transitions. The agent CLI is
 	// the install-time choice (global config); the gate is inert until a
 	// workflow names a reviewer skill whose rubric is installed.
