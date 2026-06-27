@@ -13,6 +13,7 @@ import (
 type workflowRowVM struct {
 	Name      string
 	Headline  string
+	Scope     string
 	AppliesTo []string
 }
 
@@ -42,6 +43,7 @@ type wfSpec struct {
 type workflowDetailVM struct {
 	Name      string
 	Headline  string
+	Scope     string
 	AppliesTo []string
 	Spec      wfSpec
 	Body      string
@@ -54,6 +56,7 @@ func workflowRows(docs []docindex.Doc) []workflowRowVM {
 		out = append(out, workflowRowVM{
 			Name:      d.Name,
 			Headline:  d.Headline,
+			Scope:     workflowScope(d),
 			AppliesTo: frontmatterList(d.Body, "applies_to"),
 		})
 	}
@@ -72,6 +75,7 @@ func workflowFragment() http.HandlerFunc {
 		render(w, "workflowDetail", workflowDetailVM{
 			Name:      doc.Name,
 			Headline:  doc.Headline,
+			Scope:     workflowScope(doc),
 			AppliesTo: frontmatterList(doc.Body, "applies_to"),
 			Spec:      parseWorkflow(doc.Body),
 			Body:      strings.TrimSpace(stripDocFrontmatter(doc.Body)),
@@ -218,6 +222,21 @@ func splitTrimList(s string) []string {
 		}
 	}
 	return out
+}
+
+// workflowScope returns a workflow doc's frontmatter scope, defaulting an
+// embedded canonical default to "system" when it declares none.
+func workflowScope(d docindex.Doc) string {
+	for _, ln := range strings.Split(d.Body, "\n") {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, "scope:") {
+			return strings.Trim(strings.TrimSpace(strings.TrimPrefix(t, "scope:")), `"'`)
+		}
+	}
+	if d.Embedded {
+		return "system"
+	}
+	return ""
 }
 
 // stripDocFrontmatter returns body with any leading YAML frontmatter removed.
