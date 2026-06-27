@@ -95,3 +95,33 @@ func TestEnsureGitignoreAppendsOnce(t *testing.T) {
 		t.Error("managed block appended more than once")
 	}
 }
+
+func TestEnsureClaudeHooksIdempotent(t *testing.T) {
+	repo := t.TempDir()
+	created, err := ensureClaudeHooks(repo)
+	if err != nil || !created {
+		t.Fatalf("first call: created=%v err=%v, want created", created, err)
+	}
+	path := filepath.Join(repo, ".claude", "settings.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("settings not written: %v", err)
+	}
+	for _, want := range []string{"satelle hook gate || exit 2", "satelle hook commitgate || exit 2", "satelle hook context", "Edit|Write"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("settings.json missing %q", want)
+		}
+	}
+	// Second call must NOT overwrite (idempotent).
+	if err := os.WriteFile(path, []byte("{\"custom\":true}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	created2, err := ensureClaudeHooks(repo)
+	if err != nil || created2 {
+		t.Fatalf("second call: created=%v err=%v, want not created", created2, err)
+	}
+	b2, _ := os.ReadFile(path)
+	if string(b2) != "{\"custom\":true}" {
+		t.Errorf("ensureClaudeHooks overwrote an existing settings.json")
+	}
+}

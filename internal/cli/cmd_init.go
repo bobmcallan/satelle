@@ -117,8 +117,68 @@ func runInit(out io.Writer, repoRoot string) error {
 		fmt.Fprintln(out, initLine(added, ".gitignore (satelle local-state block)"))
 	}
 
+	// 6. .claude/settings.json — the blocking process hooks that enforce the
+	//    workflow on the coding agent (created only if absent; never overwritten).
+	if added, herr := ensureClaudeHooks(repoRoot); herr != nil {
+		return herr
+	} else {
+		fmt.Fprintln(out, initLine(added, ".claude/settings.json (process hooks)"))
+	}
+
 	fmt.Fprintln(out, "\nReady. Try: satelle status · satelle story create --title \"…\" · satelle serve")
 	return nil
+}
+
+// claudeHookSettings is the .claude/settings.json satelle init scaffolds: the
+// SessionStart context injector plus the BLOCKING PreToolUse gates that enforce
+// the authored workflow — edits require an engaged story, and so do commits/
+// pushes. The agent must create stories and drive them through the gates.
+const claudeHookSettings = `{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "satelle index" },
+          { "type": "command", "command": "satelle hook context" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          { "type": "command", "command": "satelle hook gate || exit 2" }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "satelle hook commitgate || exit 2" }
+        ]
+      }
+    ]
+  }
+}
+`
+
+// ensureClaudeHooks writes .claude/settings.json with the process hooks when it
+// does not already exist. Returns whether it created the file. It never
+// overwrites an existing settings.json (the repo/user owns it).
+func ensureClaudeHooks(repoRoot string) (bool, error) {
+	dir := filepath.Join(repoRoot, ".claude")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return false, fmt.Errorf("init: mkdir %s: %w", dir, err)
+	}
+	path := filepath.Join(dir, "settings.json")
+	if _, err := os.Stat(path); err == nil {
+		return false, nil // exists — leave it
+	} else if !os.IsNotExist(err) {
+		return false, fmt.Errorf("init: stat %s: %w", path, err)
+	}
+	if err := os.WriteFile(path, []byte(claudeHookSettings), 0o644); err != nil {
+		return false, fmt.Errorf("init: write %s: %w", path, err)
+	}
+	return true, nil
 }
 
 // scaffoldToml is the documented config a fresh init writes. Every key is
