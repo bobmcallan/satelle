@@ -33,6 +33,13 @@ for implementation (deduped). The web server runs the same sync continuously
 			if err != nil {
 				return err
 			}
+			// Reconcile the portable story markdown mirror with the store: import
+			// edited/copied-in files, export any DB story lacking a file.
+			if imp, exp, serr := verb.SyncStories(cmd.Context()); serr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "index: story markdown sync — %v\n", serr)
+			} else if imp+exp > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "stories: %d imported, %d exported to markdown\n", imp, exp)
+			}
 			// Sync through the verb seam (CLI and web refresh via the same path).
 			body, _ := json.Marshal(map[string]any{"dirs": a.AuthoredDirs()})
 			resp, err := verb.Dispatch(cmd.Context(), "doc-sync", body)

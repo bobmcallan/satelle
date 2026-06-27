@@ -88,6 +88,7 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 			return nil, err
 		}
 		appendLedger(ctx, it.ID, ledgerKind, fmt.Sprintf("created %s %q", kind, it.Title), now)
+		writeStoryFile(it)
 		notifyChange(panelTopic(kind))
 		return json.Marshal(it)
 	}
@@ -251,6 +252,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		}
 		appendLedger(ctx, it.ID, ledgerKind, fmt.Sprintf("updated %s", it.Kind), now)
 	}
+	writeStoryFile(it)
 	notifyChange(panelTopic(it.Kind))
 	return json.Marshal(it)
 }

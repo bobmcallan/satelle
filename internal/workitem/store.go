@@ -105,6 +105,48 @@ func (s *Store) Create(ctx context.Context, in CreateInput, now time.Time) (Item
 	return it, nil
 }
 
+// Upsert inserts or replaces an item by its existing id — the import path for a
+// portable markdown story (Parse → Upsert), which must preserve the id and
+// timestamps rather than mint a new one the way Create does. Missing timestamps
+// default to now so a hand-authored file without them still lands.
+func (s *Store) Upsert(ctx context.Context, it Item, now time.Time) (Item, error) {
+	if strings.TrimSpace(it.ID) == "" {
+		return Item{}, fmt.Errorf("workitem: upsert needs an id")
+	}
+	if !it.Kind.valid() {
+		return Item{}, fmt.Errorf("workitem: invalid kind %q", it.Kind)
+	}
+	if strings.TrimSpace(it.Title) == "" {
+		return Item{}, fmt.Errorf("workitem: title required")
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	now = now.UTC()
+	if it.CreatedAt.IsZero() {
+		it.CreatedAt = now
+	}
+	if it.UpdatedAt.IsZero() {
+		it.UpdatedAt = now
+	}
+	if strings.TrimSpace(it.Status) == "" {
+		it.Status = StatusOpen
+	}
+	it.Tags = nonNilTags(it.Tags)
+	tagsJSON, _ := json.Marshal(it.Tags)
+	_, err := s.db.ExecContext(ctx, `
+        INSERT OR REPLACE INTO work_items
+            (id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		it.ID, string(it.Kind), it.Title, it.Body, it.Status, it.Priority, it.Category,
+		it.ParentID, it.AcceptanceCriteria, string(tagsJSON),
+		it.CreatedAt.UTC().Format(time.RFC3339Nano), it.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return Item{}, fmt.Errorf("workitem: upsert: %w", err)
+	}
+	return it, nil
+}
+
 // Get returns one item by id, or ErrNotFound.
 func (s *Store) Get(ctx context.Context, id string) (Item, error) {
 	row := s.db.QueryRowContext(ctx, selectCols+` WHERE id = ?`, id)

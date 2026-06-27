@@ -15,4 +15,7 @@
 .satelle/satelle.db-wal
 .satelle/satelle.db-shm
 .satelle/satelle.local.toml
+# the per-story markdown mirror is regenerated from the local database (the
+# source of truth); the files are portable but not versioned in this repo.
+.satelle/stories/
 # <<< satelle (managed) <<<
