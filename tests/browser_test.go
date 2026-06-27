@@ -262,9 +262,9 @@ func TestBrowserUserPath(t *testing.T) {
 		// The agent progresses the story from ANOTHER process.
 		mustRun(t, testBin, repo, "story", "set", betaID, "--status", "in_progress")
 
-		// The OPEN expansion must gain the update event live, without collapsing.
+		// The OPEN expansion must gain the transition event live, without collapsing.
 		grew := waitCond(t, ctx, fmt.Sprintf(
-			`(function(){var e=document.querySelector('#panel-stories tr.expansion .timeline');return !!e && e.querySelectorAll('li').length > %d && e.textContent.includes('story_updated');})()`, before),
+			`(function(){var e=document.querySelector('#panel-stories tr.expansion .timeline');return !!e && e.querySelectorAll('li').length > %d && e.textContent.includes('status_transition');})()`, before),
 			8*time.Second)
 		if !grew {
 			t.Fatal("open expansion timeline did not grow live on status change")

@@ -26,6 +26,12 @@ const (
 	KindTaskCreated  = "task_created"
 	KindTaskUpdated  = "task_updated"
 	KindComment      = "comment"
+	// Quality-management spine: a gated transition records the request and its
+	// verdict; every enacted status change records a transition. These feed the
+	// progress/review-lights column.
+	KindStatusTransition = "status_transition"
+	KindReviewAccept     = "review_accept"
+	KindReviewReject     = "review_reject"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional
