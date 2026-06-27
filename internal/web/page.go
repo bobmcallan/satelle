@@ -100,7 +100,7 @@ const templatesSrc = `
 </html>{{end}}
 
 {{define "workitemRows"}}{{range .}}<tr class="row" tabindex="0" role="button" aria-expanded="false" data-status="{{.Status}}" data-priority="{{.Priority}}" data-category="{{.Category}}" data-tags="{{join .Tags ","}}" data-title="{{lower .Title}}" data-updated="{{.UpdatedAt.Format "2006-01-02T15:04:05"}}" data-created="{{.CreatedAt.Format "2006-01-02T15:04:05"}}" data-search="{{printf "%s %s %s" .Title .ID (join .Tags " ") | lower}}" data-expand-url="/fragment/{{.Kind}}/{{.ID}}">
-  <td class="id"><span class="caret"></span><a href="/{{.Kind}}/{{.ID}}">{{.ID}}</a></td>
+  <td class="id"><span class="id-copy" role="button" tabindex="0" data-id="{{.ID}}" title="Copy id to clipboard">{{.ID}}</span></td>
   <td><div class="wi-title">{{.Title}}</div>{{if .Tags}}<div class="wi-tags">{{range .Tags}}<span class="tagchip">{{.}}</span>{{end}}</div>{{end}}</td>
   <td><span class="badge s-{{.Status}}">{{.Status}}</span></td>
   <td>{{if .Priority}}{{.Priority}}{{else}}—{{end}}</td>
@@ -114,6 +114,7 @@ const templatesSrc = `
 </div>{{end}}</div>{{else}}<div class="empty">none indexed — run <code>satelle index</code></div>{{end}}{{end}}{{end}}
 
 {{define "itemDetail"}}<div class="expbody">
+  <a class="detail-link open-story" href="/{{.Item.Kind}}/{{.Item.ID}}">Open story →</a>
   <dl>
     <dt>Status</dt><dd><span class="badge s-{{.Item.Status}}">{{.Item.Status}}</span></dd>
     <dt>Priority</dt><dd>{{if .Item.Priority}}{{.Item.Priority}}{{else}}—{{end}}</dd>

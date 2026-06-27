@@ -300,7 +300,13 @@ func TestBrowserUserPath(t *testing.T) {
 	})
 
 	t.Run("breadcrumb_to_detail_live_and_back", func(t *testing.T) {
-		clickJS(t, ctx, fmt.Sprintf(`#panel-stories tr.row[data-expand-url$="%s"] td.id a`, betaID))
+		// The id is a copy control now; navigation moved to the panel's Open story
+		// link. Expand the row, then click it.
+		clickJS(t, ctx, fmt.Sprintf(`#panel-stories tr.row[data-expand-url$="%s"]`, betaID))
+		if !waitCond(t, ctx, `!!document.querySelector('#panel-stories tr.expansion a.open-story')`, 5*time.Second) {
+			t.Fatal("Open story link not present after expanding the row")
+		}
+		clickJS(t, ctx, `#panel-stories tr.expansion a.open-story`)
 		if !waitCond(t, ctx, `!!document.querySelector('#detail-live') && !!document.querySelector('.crumbs')`, 8*time.Second) {
 			t.Fatal("did not land on the detail page with a breadcrumb")
 		}
