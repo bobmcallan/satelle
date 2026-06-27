@@ -191,9 +191,13 @@ func installUserUnit(out io.Writer, unit string, port int, addr string) error {
 	}
 	fmt.Fprintf(out, "unit:   %s\n", unitPath)
 
+	// enable (persist) then restart — restart starts the unit if stopped and
+	// reloads a NEW binary if it is already running, so re-running install after a
+	// rebuild actually redeploys (enable --now alone is a no-op on a live unit).
 	steps := [][]string{
 		{"systemctl", "--user", "daemon-reload"},
-		{"systemctl", "--user", "enable", "--now", serviceUnitName},
+		{"systemctl", "--user", "enable", serviceUnitName},
+		{"systemctl", "--user", "restart", serviceUnitName},
 	}
 	if u, err := user.Current(); err == nil {
 		// Linger lets the user service run without an active login + start on boot.

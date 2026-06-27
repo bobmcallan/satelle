@@ -74,3 +74,14 @@ func TestBuildLightsUngatedIsFired(t *testing.T) {
 		t.Fatalf("want [fired], got %v", lights)
 	}
 }
+
+func TestBuildLightsUnstartedHasNoCurrent(t *testing.T) {
+	// A freshly-created item at its initial state (no transitions) shows NO lights
+	// — the initial backlog/open state is not step 1, so no phantom current ①.
+	if got := buildLights(nil, "open"); len(got) != 0 {
+		t.Fatalf("unstarted open item should have no lights, got %v", got)
+	}
+	if got := buildLights([]ledger.Entry{ev(ledger.KindStoryCreated, "", "")}, "open"); len(got) != 0 {
+		t.Fatalf("created-only item should have no lights, got %v", got)
+	}
+}
