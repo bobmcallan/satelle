@@ -50,6 +50,8 @@ var tmplFuncs = template.FuncMap{
 var tmpl = template.Must(template.New("web").Funcs(tmplFuncs).Parse(templatesSrc))
 
 const templatesSrc = `
+{{define "topbar"}}<button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>{{if .Uptime}}<button class="uptime" type="button" disabled title="web service uptime">{{.Uptime}}</button>{{end}}<span class="live-dot" title="realtime"></span>{{end}}
+
 {{define "page"}}<!doctype html>
 <html lang="en"{{if .Theme}} data-theme="{{.Theme}}"{{end}}>
 <head>
@@ -63,9 +65,7 @@ const templatesSrc = `
 <div class="wrap">
   <nav class="crumbs"><a href="/">project</a> <span class="sep">/</span> <span class="cur" id="crumb-tab">stories</span></nav>
   <header class="app">
-    <button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>
-    {{if .Uptime}}<button class="uptime" type="button" disabled title="web service uptime">{{.Uptime}}</button>{{end}}
-    <span class="live-dot" title="realtime"></span>
+    {{template "topbar" .TopBar}}
     <h1>satelle<span class="dot">.</span> project</h1>
     <div class="meta">{{.RepoRoot}} · <a href="/workspace">workspace →</a> · <a href="/help">help →</a></div>
   </header>
@@ -205,6 +205,7 @@ const templatesSrc = `
 <div class="wrap">
   <nav class="crumbs"><a href="/">project</a> <span class="sep">/</span> <span class="cur">workspace</span></nav>
   <header class="app">
+    {{template "topbar" .TopBar}}
     <h1>satelle<span class="dot">.</span> workspace</h1>
     <div class="meta">{{len .Repos}} repos aggregated</div>
   </header>
@@ -236,10 +237,11 @@ const templatesSrc = `
 <div class="wrap">
   <nav class="crumbs"><a href="/">project</a> <span class="sep">/</span> <span class="cur">help</span></nav>
   <header class="app">
+    {{template "topbar" .TopBar}}
     <h1>satelle<span class="dot">.</span> help</h1>
     <div class="meta">process guides · the same content as <code>satelle help</code></div>
   </header>
-  {{range .}}<section class="help-topic" id="{{.Name}}">
+  {{range .Topics}}<section class="help-topic" id="{{.Name}}">
     <h2 class="kind-h">{{.Title}} <span class="meta">{{.Name}}</span></h2>
     <pre class="prose">{{.Body}}</pre>
   </section>{{else}}<div class="empty">no help topics</div>{{end}}
@@ -261,7 +263,8 @@ const templatesSrc = `
 <div class="wrap">
   <nav class="crumbs"><a href="/">project</a> <span class="sep">/</span> <a href="/#{{tabof .Item.Kind}}">{{.Item.Kind}}</a> <span class="sep">/</span> <span class="cur">{{.Item.ID}}</span></nav>
   <header class="app">
-    <div class="kind-h">{{.Item.Kind}}<span class="live-dot" title="realtime"></span></div>
+    {{template "topbar" .TopBar}}
+    <div class="kind-h">{{.Item.Kind}}</div>
     <h1>{{.Item.Title}}</h1>
     <div class="meta">{{.Item.ID}}</div>
   </header>

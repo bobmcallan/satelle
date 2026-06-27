@@ -148,8 +148,18 @@ func workspacePage(a *app.App) http.HandlerFunc {
 				roots = append(roots, rp)
 			}
 		}
-		render(w, "workspace", workspace.Load(r.Context(), roots))
+		render(w, "workspace", wsPageData{
+			Aggregate: workspace.Load(r.Context(), roots),
+			TopBar:    topBar{Uptime: formatUptime(time.Since(serverStart))},
+		})
 	}
+}
+
+// wsPageData embeds the workspace aggregate (so .Repos still resolves) and adds
+// the shared top bar.
+type wsPageData struct {
+	workspace.Aggregate
+	TopBar topBar
 }
 
 // helpTopic is one rendered help guide for the web /help page.
@@ -167,8 +177,17 @@ func helpPage() http.HandlerFunc {
 		for _, t := range help.List() {
 			topics = append(topics, helpTopic{Name: t.Name, Title: t.Title, Body: t.Body})
 		}
-		render(w, "help", topics)
+		render(w, "help", helpPageData{
+			Topics: topics,
+			TopBar: topBar{Uptime: formatUptime(time.Since(serverStart))},
+		})
 	}
+}
+
+// helpPageData carries the help topics plus the shared top bar.
+type helpPageData struct {
+	Topics []helpTopic
+	TopBar topBar
 }
 
 // Build is the thin handler-only constructor used by tests (no poller).
@@ -235,6 +254,14 @@ type pageData struct {
 	Uptime      string
 	Theme       string
 	FooterEmail string
+	TopBar      topBar
+}
+
+// topBar is the data the shared "topbar" template needs — the page-chrome
+// utility cluster (uptime indicator + theme toggle + live dot) rendered
+// identically on every page so the nav is one component, not a per-page copy.
+type topBar struct {
+	Uptime string
 }
 
 // rowVM is a work item plus its progress lights for the table row. Embedding the
@@ -461,6 +488,7 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 		Version:   buildinfo.Resolve().Version, Uptime: formatUptime(time.Since(serverStart)),
 		Theme:       globalTheme(),
 		FooterEmail: email,
+		TopBar:      topBar{Uptime: formatUptime(time.Since(serverStart))},
 	}, nil
 }
 
@@ -498,6 +526,7 @@ func fragmentRows(a *app.App, tmplName, topic string) http.HandlerFunc {
 type detailData struct {
 	Item   workitem.Item
 	Events []ledger.Entry
+	TopBar topBar
 }
 
 // loadDetail fetches one item + its (newest-first) ledger timeline via verbs.
@@ -513,7 +542,7 @@ func loadDetail(ctx context.Context, group, id string) (detailData, error) {
 	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
 		events[i], events[j] = events[j], events[i]
 	}
-	return detailData{Item: item, Events: events}, nil
+	return detailData{Item: item, Events: events, TopBar: topBar{Uptime: formatUptime(time.Since(serverStart))}}, nil
 }
 
 func itemFragment(group string) http.HandlerFunc {

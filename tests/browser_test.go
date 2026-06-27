@@ -110,17 +110,17 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 	}
 
 	t.Run("default_filter_hides_terminal", func(t *testing.T) {
-		// The done story must be hidden under the default status:open filter; the
-		// open story visible.
+		// The done story must be hidden under the default status:active filter (it
+		// hides terminal rows); the non-terminal story visible.
 		if visibleRow(t, ctx, openID) != true {
-			t.Errorf("open story %s should be visible by default", openID)
+			t.Errorf("active story %s should be visible by default", openID)
 		}
 		if visibleRow(t, ctx, doneID) != false {
-			t.Errorf("done story %s should be hidden by default (status:open)", doneID)
+			t.Errorf("done story %s should be hidden by default (status:active)", doneID)
 		}
-		// A default status:open chip is rendered.
-		if !hasChip(t, ctx, "stories", "status:open") {
-			t.Error("expected default status:open chip")
+		// A default status:active chip is rendered.
+		if !hasChip(t, ctx, "stories", "status:active") {
+			t.Error("expected default status:active chip")
 		}
 		// The default sort is surfaced the same way: an order:updated chip.
 		if !hasChip(t, ctx, "stories", "order:updated") {
@@ -378,7 +378,10 @@ func TestBrowserUserPath(t *testing.T) {
 			t.Fatal("did not land on the detail page with a breadcrumb")
 		}
 		beforeLi := evalInt(t, ctx, `document.querySelectorAll('#detail-live .timeline li').length`)
-		mustRun(t, testBin, repo, "story", "set", betaID, "--status", "blocked")
+		// Mutate the story from ANOTHER process — a priority change records a ledger
+		// row without depending on a particular workflow's edges — and the open
+		// detail page must gain it live.
+		mustRun(t, testBin, repo, "story", "set", betaID, "--priority", "high")
 		if !waitCond(t, ctx, fmt.Sprintf(`document.querySelectorAll('#detail-live .timeline li').length > %d`, beforeLi), 8*time.Second) {
 			t.Error("detail page timeline did not live-update")
 		}
@@ -470,6 +473,32 @@ func hasChip(t *testing.T, ctx context.Context, panel, label string) bool {
 		t.Fatalf("hasChip: %v", err)
 	}
 	return has
+}
+
+// TestBrowserSharedTopbar asserts the one shared top-bar component (theme toggle
+// + live dot) renders identically on both the project page and a story detail
+// page — the nav is one template, not a per-page copy.
+func TestBrowserSharedTopbar(t *testing.T) {
+	base, repo := serveRepo(t, "8806")
+	id := createStory(t, repo, "Topbar story", "")
+
+	ctx := newChrome(t)
+	// Project page renders the shared top bar.
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/"),
+		chromedp.WaitVisible(`header.app #theme-toggle`, chromedp.ByQuery),
+		chromedp.WaitVisible(`header.app .live-dot`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("project page shared topbar missing: %v", err)
+	}
+	// The same shared top bar renders on the story detail page.
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/story/"+id),
+		chromedp.WaitVisible(`header.app #theme-toggle`, chromedp.ByQuery),
+		chromedp.WaitVisible(`header.app .live-dot`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("story page shared topbar missing: %v", err)
+	}
 }
 
 // setInput sets an input's value and fires an 'input' event (so listeners run).
