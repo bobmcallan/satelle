@@ -28,6 +28,12 @@ A conforming workflow has all of:
 4. **`done` is the terminal state** — no transition leaves `done`, and no state
    follows it on the success path (see the `satelle-done-is-last` principle).
 5. **Naming** — `satelle-<kebab>-workflow`.
+6. **Repo-agnostic placement** (the `satelle-repo-agnostic` guard). `scope: system`
+   is reserved for the binary's embedded canonical default; a **repo** workflow
+   MUST be `scope: project`. A workflow that encodes this repo's specific pipeline,
+   states, or gates is opinionated substrate and belongs in the repo at
+   `scope: project` under `.satelle/workflows`. **Reject a repo workflow declaring
+   `scope: system`.**
 
 ## Verdict
 

@@ -25,6 +25,15 @@ A conforming principle has all of:
    a title-restating stub. A principle that is only a heading fails.
 3. **Naming** — kebab-case with no type suffix (`satelle-done-is-last`, not
    `*-review` or `*-workflow`).
+4. **Repo-agnostic placement** (the `satelle-repo-agnostic` guard). A
+   `scope: system` principle is EMBEDDED in the binary and travels to every repo,
+   so it must state satelle's own mechanism/required structure — never a
+   repo-specific or general/opinionated coding paradigm. A general coding
+   philosophy (e.g. YAGNI, naming taste, a stack-specific convention) or anything
+   that only makes sense for one repo is **opinionated substrate** and belongs in
+   that repo at `scope: project` under `.satelle/principles`. **Reject a
+   `scope: system` principle whose content is opinionated or repo-specific** —
+   tell the author to set `scope: project` and author it in the repo instead.
 
 ## Verdict
 

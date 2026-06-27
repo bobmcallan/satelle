@@ -28,6 +28,14 @@ A conforming skill has all of:
 3. **Naming** — if it is a reviewer, the name follows `satelle-<object>-<function>`
    (a structure reviewer is `satelle-<object>-review`; a stage gate is
    `satelle-<object>-<stage>-review`).
+4. **Repo-agnostic placement** (the `satelle-repo-agnostic` guard). A
+   `scope: system` skill is EMBEDDED in the binary and ships to every repo, so it
+   must encode satelle's own required mechanism — never a repo-specific process,
+   gate, or opinion. A skill whose logic only makes sense for one repo (this
+   repo's pipeline, a stack-specific check, an opinionated rule) is **opinionated
+   substrate** and belongs in that repo at `scope: project` under `.satelle/skills`.
+   **Reject a `scope: system` skill that bakes in repo-specifics or opinion** —
+   tell the author to set `scope: project` and author it in the repo.
 
 ## Verdict
 
