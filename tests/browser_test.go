@@ -145,6 +145,14 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		waitCond(t, ctx, jsRowVisible(openID), 3*time.Second)
 	})
 
+	t.Run("progress_column_lights", func(t *testing.T) {
+		// The open (non-terminal) story trails a current light in the Progress column.
+		sel := fmt.Sprintf(`#panel-stories tr.row[data-expand-url$="%s"] .col-reviews .review-light`, openID)
+		if !waitCond(t, ctx, fmt.Sprintf(`!!document.querySelector('%s')`, sel), 3*time.Second) {
+			t.Error("expected a review-light in the Progress column for the open story")
+		}
+	})
+
 	t.Run("tab_switching", func(t *testing.T) {
 		clickJS(t, ctx, `.tab[data-panel="tasks"]`)
 		if !waitCond(t, ctx, `getComputedStyle(document.querySelector('#panel-tasks')).display === 'block'`, 5*time.Second) {

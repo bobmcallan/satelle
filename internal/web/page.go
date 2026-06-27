@@ -76,7 +76,7 @@ const templatesSrc = `
       <div class="chips"></div>
     </div>
     <table class="panel-table">
-      <thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Updated</th></tr></thead>
+      <thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Progress</th><th>Priority</th><th>Updated</th></tr></thead>
       <tbody data-rows>{{template "workitemRows" .Stories}}</tbody>
     </table>
   </section>
@@ -87,7 +87,7 @@ const templatesSrc = `
       <div class="chips"></div>
     </div>
     <table class="panel-table">
-      <thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Updated</th></tr></thead>
+      <thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Progress</th><th>Priority</th><th>Updated</th></tr></thead>
       <tbody data-rows>{{template "workitemRows" .Tasks}}</tbody>
     </table>
   </section>
@@ -114,9 +114,10 @@ const templatesSrc = `
   <td class="id"><span class="id-copy" role="button" tabindex="0" data-id="{{.ID}}" title="Copy id to clipboard">{{.ID}}</span></td>
   <td><div class="wi-title">{{.Title}}</div>{{if .Tags}}<div class="wi-tags">{{range .Tags}}{{tagchip .}}{{end}}</div>{{end}}</td>
   <td><span class="badge s-{{.Status}}">{{.Status}}</span></td>
+  <td class="col-reviews">{{range .Lights}}<span class="review-light review-light-{{.State}}" title="{{.Title}}">{{.Index}}</span>{{end}}</td>
   <td>{{if .Priority}}{{.Priority}}{{else}}—{{end}}</td>
   <td class="updated">{{ftime .UpdatedAt}}</td>
-</tr>{{else}}<tr><td colspan="5" class="empty">none yet</td></tr>{{end}}{{end}}
+</tr>{{else}}<tr><td colspan="6" class="empty">none yet</td></tr>{{end}}{{end}}
 
 {{define "docsRows"}}{{range .}}<div class="kind-h">{{.Kind}}</div>{{if .Docs}}<div class="docgrid">{{range .Docs}}<div class="doc" data-search="{{printf "%s %s" .Name .Headline | lower}}">
   <div class="name">{{.Name}}</div>
