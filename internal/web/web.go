@@ -268,11 +268,10 @@ type lightPayload struct {
 // fail (red). A non-terminal story trails a pulsing current light at the next
 // step. Off-spine targets (e.g. blocked) fall back to ledger-appearance order.
 func buildLights(entries []ledger.Entry, status string, stepOf func(state string) int) []reviewLight {
-	es := make([]ledger.Entry, len(entries)) // oldest-first
-	copy(es, entries)
-	for i, j := 0, len(es)-1; i < j; i, j = i+1, j-1 {
-		es[i], es[j] = es[j], es[i]
-	}
+	// ledger-list yields entries oldest-first (the store orders created_at ASC),
+	// which is the order the lights render left-to-right — consume it as-is so
+	// the steps read 1 → N rather than reversed.
+	es := entries
 	parse := func(p json.RawMessage) lightPayload {
 		var lp lightPayload
 		_ = json.Unmarshal(p, &lp)
