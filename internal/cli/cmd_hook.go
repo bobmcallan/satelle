@@ -25,6 +25,8 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/reviewer"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // alwaysTag is the residency marker: a doc carrying it in its frontmatter tags
@@ -67,8 +69,145 @@ blocks a session.`,
 			return runHookContext(cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
-	hook.AddCommand(context)
+	gate := &cobra.Command{
+		Use:   "gate",
+		Short: "PreToolUse edit gate — block code edits unless a story is engaged",
+		Long: `gate is the PreToolUse handler for Edit|Write|MultiEdit|NotebookEdit. It
+exits non-zero (the wiring turns that into a block with '|| exit 2') unless a
+story is ENGAGED — in one of the active workflow's executor states (e.g.
+in_progress) — so the agent works under a tracked story. Fails open: an
+unconfigured repo or any internal error allows the edit. The "engaged" policy is
+authored substrate — it reads the workflow's executor-actor states, not a Go rule.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, _ = io.ReadAll(cmd.InOrStdin()) // drain the hook event; gate on global engagement
+			if storyEngaged() {
+				return nil
+			}
+			return fmt.Errorf("satelle: no engaged story — create or engage one before editing code " +
+				"(satelle story create …, then satelle story set <id> --status in_progress). " +
+				"The workflow requires work to proceed under a tracked story.")
+		},
+	}
+
+	commitgate := &cobra.Command{
+		Use:   "commitgate",
+		Short: "PreToolUse Bash gate — block git commit/push unless a story is engaged",
+		Long: `commitgate is the PreToolUse handler for Bash. It allows any command that is
+not a git commit/push; for a commit/push it exits non-zero (blocked via
+'|| exit 2') unless a story is engaged, so changes are committed under a tracked
+story. Fails open on any internal error.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			raw, _ := io.ReadAll(cmd.InOrStdin())
+			if !isGitCommitOrPush(bashCommandFromEvent(raw)) {
+				return nil // not a commit/push — allow
+			}
+			if storyEngaged() {
+				return nil
+			}
+			return fmt.Errorf("satelle: refusing to commit/push with no engaged story — " +
+				"engage a story (satelle story set <id> --status in_progress) so the change is tracked through the workflow.")
+		},
+	}
+
+	hook.AddCommand(context, gate, commitgate)
 	register(hook)
+}
+
+// storyEngaged reports whether any story is in one of the active workflow's
+// executor states (the authored definition of "engaged work"). Fails OPEN: an
+// unopenable store or list error returns true (allow), so the hooks never wedge a
+// session on an internal fault.
+func storyEngaged() bool {
+	a, err := app.Open()
+	if err != nil {
+		return true
+	}
+	defer func() { _ = a.Close() }()
+	ctx := context.Background()
+
+	engaged := map[string]bool{"in_progress": true} // fallback if no workflow resolves
+	if wfs, e := a.Store.DocIndex.List(ctx, "workflows"); e == nil {
+		if ordered := reviewer.OrderedWorkflows(wfs, ""); len(ordered) > 0 {
+			if es := executorStates(ordered[0].Body); len(es) > 0 {
+				engaged = map[string]bool{}
+				for _, s := range es {
+					engaged[s] = true
+				}
+			}
+		}
+	}
+	stories, e := a.Store.Stories.List(ctx, workitem.ListFilter{Kind: workitem.KindStory})
+	if e != nil {
+		return true // fail open
+	}
+	for _, s := range stories {
+		if engaged[s.Status] {
+			return true
+		}
+	}
+	return false
+}
+
+// executorStates parses the active workflow body for states marked
+// `actor: executor` — the states that represent engaged work. The "engaged"
+// policy is thus authored in the workflow, not hardcoded.
+func executorStates(body string) []string {
+	lines := strings.Split(body, "\n")
+	in := false
+	var out []string
+	for _, ln := range lines {
+		t := strings.TrimSpace(ln)
+		if t == "states:" {
+			in = true
+			continue
+		}
+		if !in {
+			continue
+		}
+		if !strings.HasPrefix(t, "- ") {
+			break // end of the states block
+		}
+		item := strings.TrimSpace(t[2:])
+		if strings.HasPrefix(item, "{") && strings.Contains(item, "actor:") && strings.Contains(item, "executor") {
+			if name := hookInlineField(item, "name"); name != "" {
+				out = append(out, name)
+			}
+		}
+	}
+	return out
+}
+
+// hookInlineField extracts key's value from a YAML inline-map line, to the next
+// comma or brace, quotes trimmed.
+func hookInlineField(line, key string) string {
+	i := strings.Index(line, key+":")
+	if i < 0 {
+		return ""
+	}
+	rest := strings.TrimLeft(line[i+len(key)+1:], " ")
+	if end := strings.IndexAny(rest, ",}"); end >= 0 {
+		rest = rest[:end]
+	}
+	return strings.Trim(strings.TrimSpace(rest), `"'`)
+}
+
+// isGitCommitOrPush reports whether a Bash command is a git commit or push.
+func isGitCommitOrPush(command string) bool {
+	c := strings.ToLower(command)
+	return strings.Contains(c, "git commit") || strings.Contains(c, "git push")
+}
+
+// bashCommandFromEvent pulls tool_input.command out of a PreToolUse Bash event.
+func bashCommandFromEvent(raw []byte) string {
+	var ev struct {
+		ToolInput struct {
+			Command string `json:"command"`
+		} `json:"tool_input"`
+	}
+	_ = json.Unmarshal(raw, &ev)
+	return ev.ToolInput.Command
 }
 
 // runHookContext assembles and emits the SessionStart injection. It fails open:

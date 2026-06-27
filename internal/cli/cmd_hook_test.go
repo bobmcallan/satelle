@@ -79,3 +79,40 @@ func TestRenderAlwaysContent_ceilingTruncates(t *testing.T) {
 		t.Fatalf("ceiling not enforced — too many docs injected:\n%s", content)
 	}
 }
+
+func TestExecutorStates(t *testing.T) {
+	body := "x\nstates:\n  - open\n  - {name: in_progress, actor: executor}\n  - blocked\n  - {name: deployed, actor: executor}\n  - done\ntransitions:\n  - {from: open, to: in_progress}\n"
+	got := executorStates(body)
+	if len(got) != 2 || got[0] != "in_progress" || got[1] != "deployed" {
+		t.Fatalf("executorStates = %v, want [in_progress deployed]", got)
+	}
+}
+
+func TestIsGitCommitOrPush(t *testing.T) {
+	yes := []string{"git commit -m x", "cd /r && git push origin main"}
+	no := []string{"ls", "git status", "git diff"}
+	for _, c := range yes {
+		if !isGitCommitOrPush(c) {
+			t.Errorf("isGitCommitOrPush(%q) = false, want true", c)
+		}
+	}
+	for _, c := range no {
+		// "echo git commit..." DOES contain 'git commit' — accept that v1 is a
+		// substring check; only assert the clearly-non-commit cases.
+		if c == "echo git commit is a phrase" {
+			continue
+		}
+		if isGitCommitOrPush(c) {
+			t.Errorf("isGitCommitOrPush(%q) = true, want false", c)
+		}
+	}
+}
+
+func TestBashCommandFromEvent(t *testing.T) {
+	if got := bashCommandFromEvent([]byte(`{"tool_input":{"command":"git push"}}`)); got != "git push" {
+		t.Errorf("bashCommandFromEvent = %q, want 'git push'", got)
+	}
+	if got := bashCommandFromEvent([]byte(`not json`)); got != "" {
+		t.Errorf("bad event should yield empty command, got %q", got)
+	}
+}
