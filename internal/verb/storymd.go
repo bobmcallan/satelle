@@ -30,11 +30,13 @@ func writeStoryFile(it workitem.Item) {
 	_ = os.WriteFile(filepath.Join(storyDir, it.ID+".md"), workitem.Marshal(it), 0o644)
 }
 
-// SyncStories reconciles the markdown mirror with the store: it imports every
-// .md file back into the store (so an externally edited or copied-in file
-// becomes a story), then exports any store story that lacks a file (the one-time
-// migration of pre-existing DB stories). The store stays the source of truth;
-// the files are a portable, re-importable mirror.
+// SyncStories reconciles the markdown mirror with the store. The store is the
+// SOURCE OF TRUTH: it imports a .md file ONLY when the store has no such story
+// (a copied-in / restored file in a fresh repo), and never overwrites an
+// existing story — otherwise a stale file (e.g. one read mid-transition) could
+// silently revert live store state. It then exports any store story that lacks a
+// file (the one-time migration of pre-existing DB stories). Files are a portable,
+// import-on-restore mirror, not a second write path over the store.
 func SyncStories(ctx context.Context) (imported, exported int, err error) {
 	store, err := requireWorkItem()
 	if err != nil {
@@ -54,6 +56,11 @@ func SyncStories(ctx context.Context) (imported, exported int, err error) {
 		}
 		it, perr := workitem.Parse(data)
 		if perr != nil || it.ID == "" || it.Kind != workitem.KindStory {
+			continue
+		}
+		// Create-only: skip a story the store already owns. The store is
+		// authoritative for existing stories; importing would risk reverting it.
+		if _, gerr := store.Get(ctx, it.ID); gerr == nil {
 			continue
 		}
 		if _, uerr := store.Upsert(ctx, it, it.UpdatedAt); uerr == nil {
