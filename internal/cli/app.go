@@ -42,7 +42,13 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// workflow names a reviewer skill whose rubric is installed.
 	if gc, gerr := config.LoadGlobal(); gerr == nil {
 		if runner, rerr := agentcli.NewRunner(gc.Agent.ResolveCLI()); rerr == nil {
-			verb.SetTransitionGater(reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, ""))
+			rev := reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, "")
+			verb.SetTransitionGater(rev)
+			// Create-gating is opt-in per repo (satelle.toml [review] gate_create):
+			// the rubric ships embedded, but enforcing it is the operator's choice.
+			if a.Config.Review.GateCreate {
+				verb.SetCreateReviewer(rev)
+			}
 		}
 	}
 	cmd.SetContext(context.WithValue(cmd.Context(), appCtxKey{}, a))
