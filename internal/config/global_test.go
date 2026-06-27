@@ -51,6 +51,38 @@ func TestSaveLoadGlobalRoundTrip(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRegistryCRUDAndRoundTrip(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SATELLE_HOME", home)
+
+	gc, err := LoadGlobal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gc.Workspace.AddRepo("/repo/a") || !gc.Workspace.AddRepo("/repo/b") {
+		t.Fatal("AddRepo should report new additions")
+	}
+	if gc.Workspace.AddRepo("/repo/a") {
+		t.Error("AddRepo should de-dup an already-registered repo")
+	}
+	if err := SaveGlobal(gc); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadGlobal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Workspace.Repos) != 2 || got.Workspace.Repos[0] != "/repo/a" || got.Workspace.Repos[1] != "/repo/b" {
+		t.Fatalf("workspace round-trip = %v", got.Workspace.Repos)
+	}
+	if !got.Workspace.RemoveRepo("/repo/a") || got.Workspace.RemoveRepo("/repo/a") {
+		t.Error("RemoveRepo should report presence once")
+	}
+	if len(got.Workspace.Repos) != 1 || got.Workspace.Repos[0] != "/repo/b" {
+		t.Fatalf("after remove = %v", got.Workspace.Repos)
+	}
+}
+
 func TestAgentCLIRoundTripAndDefault(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SATELLE_HOME", home)

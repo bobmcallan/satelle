@@ -24,6 +24,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
+	"github.com/bobmcallan/satelle/internal/workspace"
 )
 
 // Server is the local web server: an http.Handler plus the realtime hub.
@@ -59,8 +60,25 @@ func New(a *app.App) *Server {
 	mux.HandleFunc("GET /story/{id}", itemDetailPage("story"))
 	mux.HandleFunc("GET /task/{id}", itemDetailPage("task"))
 
+	mux.HandleFunc("GET /workspace", workspacePage(a))
 	mux.HandleFunc("GET /{$}", projectPage(a))
 	return &Server{Handler: mux, a: a, hub: h}
+}
+
+// workspacePage renders the multi-repo aggregate: the current repo plus every
+// repo registered in the global config, each read from its own database. The
+// single-repo project page (/) is untouched.
+func workspacePage(a *app.App) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		gc, _ := config.LoadGlobal()
+		roots := []string{a.RepoRoot}
+		for _, rp := range gc.Workspace.Repos {
+			if rp != a.RepoRoot {
+				roots = append(roots, rp)
+			}
+		}
+		render(w, "workspace", workspace.Load(r.Context(), roots))
+	}
 }
 
 // Build is the thin handler-only constructor used by tests (no poller).
