@@ -274,6 +274,42 @@ func TestGateSystemReviewerRunsLast(t *testing.T) {
 	}
 }
 
+func TestSystemReviewerScopedByOnList(t *testing.T) {
+	// An always-on reviewer that scopes itself with `on: [done]` joins the close
+	// edge but is skipped on an unlisted edge — so it costs nothing in between.
+	scoped := "---\nname: satelle-estimate-actual-review\nkind: skill\ntags: [kind:skill, reviewer:always]\non: [done]\n---\n# scoped\nrubric\n"
+	docs := func() fakeDocs {
+		return fakeDocs{
+			workflow:   "transitions:\n  - {from: in_progress, to: reviewed, reviewer_skill: \"satelle-story-code-review\"}\n  - {from: deployed, to: done, reviewer_skill: \"satelle-story-done-review\"}\n",
+			skillBody:  "rubric",
+			skillFound: true,
+			extraSkills: []docindex.Doc{
+				{Kind: "skills", Name: "satelle-estimate-actual-review", Body: scoped},
+			},
+		}
+	}
+
+	// to=reviewed is NOT in the scoped reviewer's on-list → only the named reviewer runs.
+	g1 := New(&mapRunner{}, docs(), "/repo", "")
+	dec1, err := g1.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "reviewed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dec1.Reviewers) != 1 || dec1.Reviewers[0].Skill != "satelle-story-code-review" {
+		t.Fatalf("reviewed edge should run only the named reviewer, got %+v", dec1.Reviewers)
+	}
+
+	// to=done IS in the on-list → the scoped system reviewer joins, last.
+	g2 := New(&mapRunner{}, docs(), "/repo", "")
+	dec2, err := g2.Gate(context.Background(), workitem.Item{Status: "deployed"}, "done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dec2.Reviewers) != 2 || !dec2.Reviewers[1].System || dec2.Reviewers[1].Skill != "satelle-estimate-actual-review" {
+		t.Fatalf("done edge should add the scoped system reviewer last, got %+v", dec2.Reviewers)
+	}
+}
+
 func TestGateRefusesUndeclaredEdge(t *testing.T) {
 	// in_progress→integrated is NOT a declared edge in testWorkflow. The gate must
 	// refuse it (error) so a story cannot skip a gate by jumping across an

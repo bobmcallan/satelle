@@ -120,8 +120,9 @@ func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (
 			"transition %s→%s is not a declared edge in the active workflow", item.Status, toStatus)
 	}
 	// Append the always-on system reviewers AFTER the workflow-named ones — they
-	// always run last. Skills already named on the edge are not duplicated.
-	sys, err := g.systemReviewers(ctx, skills)
+	// always run last. Skills already named on the edge are not duplicated, and a
+	// reviewer that scopes itself with `on:` only joins on its target statuses.
+	sys, err := g.systemReviewers(ctx, skills, toStatus)
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
@@ -202,11 +203,15 @@ func (g *Gater) runReviewer(ctx context.Context, item workitem.Item, toStatus, s
 	return dec, nil
 }
 
-// systemReviewers returns the names of the always-on SYSTEM reviewers (skills
-// whose frontmatter tags carry alwaysReviewerTag), sorted for a deterministic
-// order, excluding any already named on the edge. A List failure degrades to no
-// system layer — it is additive and must never break the workflow's own gating.
-func (g *Gater) systemReviewers(ctx context.Context, exclude []string) ([]string, error) {
+// systemReviewers returns the names of the always-on SYSTEM reviewers that join
+// the transition into toStatus — skills whose frontmatter tags carry
+// alwaysReviewerTag, sorted for a deterministic order, excluding any already
+// named on the edge. A reviewer may SCOPE itself with an `on:` frontmatter list
+// of target statuses: it then joins only on those edges, so a gate that governs
+// just begin-work/close costs nothing on the edges between. An `on:`-less skill
+// joins every edge (back-compat). A List failure degrades to no system layer —
+// it is additive and must never break the workflow's own gating.
+func (g *Gater) systemReviewers(ctx context.Context, exclude []string, toStatus string) ([]string, error) {
 	docs, err := g.docs.List(ctx, "skills")
 	if err != nil {
 		return nil, nil
@@ -218,6 +223,9 @@ func (g *Gater) systemReviewers(ctx context.Context, exclude []string) ([]string
 		}
 		if containsStr(exclude, d.Name) {
 			continue
+		}
+		if on := frontmatterList(d.Body, "on"); len(on) > 0 && !containsStr(on, toStatus) {
+			continue // scoped reviewer — this edge's target is not one it governs
 		}
 		out = append(out, d.Name)
 	}
