@@ -1,9 +1,16 @@
 :root {
+  /* Default theme is LIGHT. The dark palette overrides these on [data-theme="dark"]. */
   --ink: #16181d; --muted: #6b7280; --line: #e5e7eb; --bg: #fbfbfa;
   --accent: #2f6f4f; --chip: #f0f1ef; --panel: #ffffff;
+  --row-hover: #f6f7f6; --expand-bg: #fafbfc;
   /* One control-height knob shared by inputs/selects/buttons (satellites pattern). */
   --control-height: 2.2rem;
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+[data-theme="dark"] {
+  --ink: #e6e8eb; --muted: #9aa1ab; --line: #2a2d34; --bg: #0e1013;
+  --accent: #5fae86; --chip: #1b1e23; --panel: #16191e;
+  --row-hover: #1a1d22; --expand-bg: #121418;
 }
 * { box-sizing: border-box; }
 
@@ -55,6 +62,9 @@ header.app h1 .dot { color: var(--accent); }
 .meta { color: var(--muted); font-size: 12.5px; margin-top: 5px; font-family: var(--mono); }
 .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #cbd5e1; margin-left: 8px; vertical-align: middle; transition: background .3s; }
 .live-dot.on { background: var(--accent); box-shadow: 0 0 0 3px rgba(47,111,79,.15); }
+.theme-toggle { float: right; margin-top: 2px; border: 1px solid var(--line); background: var(--panel);
+  color: var(--muted); width: 30px; height: 30px; border-radius: 8px; font-size: 14px; line-height: 1; }
+.theme-toggle:hover { color: var(--ink); }
 
 /* Tabs */
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
@@ -78,7 +88,7 @@ header.app h1 .dot { color: var(--accent); }
 
 /* Tables — base th/td/table styling is global; these are the panel variants. */
 .panel-table tr.row { cursor: pointer; }
-.panel-table tr.row:hover { background: #f6f7f6; }
+.panel-table tr.row:hover { background: var(--row-hover); }
 .panel-table td.id { font-family: var(--mono); font-size: 12.5px; color: var(--muted); white-space: nowrap; }
 .panel-table td.updated { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; }
 .caret { display: inline-block; width: 0; height: 0; border-left: 4px solid var(--muted);
@@ -95,7 +105,7 @@ tr.row[aria-expanded="true"] .caret { transform: rotate(90deg); }
 .badge.s-cancelled { background: #f3f4f6; color: #6b7280; }
 
 /* Inline expansion */
-tr.expansion > td { background: #fafbfc; padding: 0; }
+tr.expansion > td { background: var(--expand-bg); padding: 0; }
 .expbody { padding: 14px 16px 18px 32px; }
 .expbody.loading { color: var(--muted); font-style: italic; }
 .expbody dl { display: grid; grid-template-columns: 130px 1fr; gap: 5px 16px; margin: 0 0 14px; }

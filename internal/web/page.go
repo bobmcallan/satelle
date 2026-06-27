@@ -41,12 +41,14 @@ const templatesSrc = `
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>satelle · project</title>
+<script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 <div class="wrap">
   <nav class="crumbs"><a href="/">project</a> <span class="sep">/</span> <span class="cur" id="crumb-tab">stories</span></nav>
   <header class="app">
+    <button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>
     <h1>satelle<span class="dot">.</span> project<span class="live-dot" title="realtime"></span></h1>
     <div class="meta">{{.RepoRoot}}</div>
   </header>
@@ -136,6 +138,7 @@ const templatesSrc = `
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>satelle · {{.Item.ID}}</title>
+<script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
