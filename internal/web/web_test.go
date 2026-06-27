@@ -13,6 +13,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/web"
@@ -201,5 +202,63 @@ func TestStoryDetailPageShowsTimeline(t *testing.T) {
 	// Unknown id → 404.
 	if code, _ := get(t, srv.URL+"/story/sty_missing"); code != 404 {
 		t.Errorf("missing story = %d, want 404", code)
+	}
+}
+
+func TestWorkspacePageAggregatesAcrossRepos(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SATELLE_HOME", home)
+	ctx := context.Background()
+
+	// Current repo (served) with one story.
+	cur := t.TempDir()
+	db1, err := store.Open(filepath.Join(cur, ".satelle", "satelle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db1.Stories.Create(ctx, workitem.CreateInput{Kind: workitem.KindStory, Title: "cur-story"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	verb.SetWorkItemStore(db1.Stories)
+	verb.SetLedgerStore(db1.Ledger)
+	verb.SetDocIndexStore(db1.DocIndex)
+
+	// A second repo, registered in the workspace registry.
+	other := t.TempDir()
+	db2, err := store.Open(filepath.Join(other, ".satelle", "satelle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db2.Stories.Create(ctx, workitem.CreateInput{Kind: workitem.KindStory, Title: "other-story"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	db2.Close()
+	gc, _ := config.LoadGlobal()
+	gc.Workspace.AddRepo(other)
+	if err := config.SaveGlobal(gc); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &app.App{RepoRoot: cur, DBPath: filepath.Join(cur, ".satelle", "satelle.db"), Store: db1}
+	srv := httptest.NewServer(web.Build(a))
+	t.Cleanup(func() {
+		srv.Close()
+		db1.Close()
+		verb.SetWorkItemStore(nil)
+		verb.SetLedgerStore(nil)
+		verb.SetDocIndexStore(nil)
+	})
+
+	code, body := get(t, srv.URL+"/workspace")
+	if code != 200 {
+		t.Fatalf("/workspace = %d", code)
+	}
+	if !strings.Contains(body, "cur-story") || !strings.Contains(body, "other-story") {
+		t.Errorf("workspace page should aggregate both repos' stories; got:\n%s", body)
+	}
+	// The single-repo project page stays single-repo (no other-story).
+	_, proj := get(t, srv.URL+"/")
+	if strings.Contains(proj, "other-story") {
+		t.Error("project page should remain single-repo")
 	}
 }

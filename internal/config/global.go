@@ -26,8 +26,42 @@ const (
 
 // GlobalConfig is the machine-wide config at ~/.satelle/config.toml.
 type GlobalConfig struct {
-	Service ServiceConfig `toml:"service"`
-	Agent   AgentConfig   `toml:"agent"`
+	Service   ServiceConfig   `toml:"service"`
+	Agent     AgentConfig     `toml:"agent"`
+	Workspace WorkspaceConfig `toml:"workspace"`
+}
+
+// WorkspaceConfig is the connected-repo registry the workspace view aggregates.
+// Per-repo databases stay the source of truth; this is just the list of paths.
+type WorkspaceConfig struct {
+	Repos []string `toml:"repos"`
+}
+
+// AddRepo adds an absolute repo path to the registry, de-duplicated. Reports
+// whether it was newly added.
+func (w *WorkspaceConfig) AddRepo(path string) bool {
+	for _, r := range w.Repos {
+		if r == path {
+			return false
+		}
+	}
+	w.Repos = append(w.Repos, path)
+	return true
+}
+
+// RemoveRepo drops a repo path from the registry. Reports whether it was present.
+func (w *WorkspaceConfig) RemoveRepo(path string) bool {
+	out := w.Repos[:0]
+	found := false
+	for _, r := range w.Repos {
+		if r == path {
+			found = true
+			continue
+		}
+		out = append(out, r)
+	}
+	w.Repos = out
+	return found
 }
 
 // DefaultAgentCLI is the agent CLI the reviewer/summariser shell out to when
@@ -124,7 +158,15 @@ func SaveGlobal(gc GlobalConfig) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("config: mkdir %s: %w", dir, err)
 	}
-	body := fmt.Sprintf(globalTemplate, gc.Service.ResolvePort(), gc.Service.ResolveAddr(), gc.Service.Repo, gc.Agent.ResolveCLI())
+	repos := "[]"
+	if len(gc.Workspace.Repos) > 0 {
+		quoted := make([]string, len(gc.Workspace.Repos))
+		for i, r := range gc.Workspace.Repos {
+			quoted[i] = fmt.Sprintf("%q", r)
+		}
+		repos = "[" + strings.Join(quoted, ", ") + "]"
+	}
+	body := fmt.Sprintf(globalTemplate, gc.Service.ResolvePort(), gc.Service.ResolveAddr(), gc.Service.Repo, gc.Agent.ResolveCLI(), repos)
 	path := GlobalConfigPath()
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		return fmt.Errorf("config: write %s: %w", path, err)
@@ -151,4 +193,9 @@ repo = %q
 # the headless agent CLI the reviewer/summariser shell out to (claude | codex).
 # Set by 'satelle agent set <cli>' / 'satelle agent detect'.
 cli = %q
+
+[workspace]
+# connected repo paths the /workspace view aggregates (per-repo DBs stay the
+# source of truth). Manage with 'satelle workspace add|remove|list'.
+repos = %s
 `

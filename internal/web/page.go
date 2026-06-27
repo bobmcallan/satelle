@@ -61,7 +61,7 @@ const templatesSrc = `
   <header class="app">
     <button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>
     <h1>satelle<span class="dot">.</span> project<span class="live-dot" title="realtime"></span></h1>
-    <div class="meta">{{.RepoRoot}}</div>
+    <div class="meta">{{.RepoRoot}} · <a href="/workspace">workspace →</a></div>
   </header>
 
   <div class="tabs" role="tablist">
@@ -144,6 +144,37 @@ const templatesSrc = `
     {{if .Body}}<div class="ev-body">{{.Body}}</div>{{end}}
   </li>{{end}}</ol>{{else}}<div class="empty">No ledger events yet.</div>{{end}}
 </div>{{end}}
+
+{{define "workspace"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>satelle · workspace</title>
+<script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="wrap">
+  <nav class="crumbs"><a href="/">project</a> <span class="sep">/</span> <span class="cur">workspace</span></nav>
+  <header class="app">
+    <h1>satelle<span class="dot">.</span> workspace</h1>
+    <div class="meta">{{len .Repos}} repos aggregated</div>
+  </header>
+  {{range .Repos}}<section class="ws-repo">
+    <h3 class="kind-h">{{.Name}} <span class="meta">{{.Path}}</span></h3>
+    {{if .Err}}<div class="empty">unreadable: {{.Err}}</div>{{else}}
+    <div class="meta">{{len .Stories}} stories · {{len .Tasks}} tasks · {{len .Docs}} docs</div>
+    {{if .Stories}}<table class="panel-table">
+      <thead><tr><th>ID</th><th>Title</th><th>Status</th></tr></thead>
+      <tbody>{{range .Stories}}<tr><td class="id">{{.ID}}</td><td>{{.Title}}</td><td><span class="badge s-{{.Status}}">{{.Status}}</span></td></tr>{{end}}</tbody>
+    </table>{{end}}
+    {{end}}
+  </section>{{else}}<div class="empty">no repos registered — run <code>satelle workspace add</code></div>{{end}}
+  <footer class="site-footer"><span class="footer-version">satelle workspace</span></footer>
+</div>
+</body>
+</html>{{end}}
 
 {{define "detailPage"}}<!doctype html>
 <html lang="en">
