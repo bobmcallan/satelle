@@ -146,14 +146,29 @@ func TestBadDecisionErrors(t *testing.T) {
 }
 
 func TestReviewerSkillFor(t *testing.T) {
-	if got := reviewerSkillFor(testWorkflow, "in_progress", "done"); got != "satelle-story-done-review" {
-		t.Errorf("in_progress→done skill = %q", got)
+	if got, declared := reviewerSkillFor(testWorkflow, "in_progress", "done"); got != "satelle-story-done-review" || !declared {
+		t.Errorf("in_progress→done = (%q, %v), want (done-review, true)", got, declared)
 	}
-	if got := reviewerSkillFor(testWorkflow, "backlog", "cancelled"); got != "" {
-		t.Errorf("ungated edge skill = %q, want empty", got)
+	if got, declared := reviewerSkillFor(testWorkflow, "backlog", "cancelled"); got != "" || !declared {
+		t.Errorf("declared ungated edge = (%q, %v), want (empty, true)", got, declared)
 	}
-	if got := reviewerSkillFor(testWorkflow, "backlog", "nowhere"); got != "" {
-		t.Errorf("unknown edge skill = %q, want empty", got)
+	if got, declared := reviewerSkillFor(testWorkflow, "backlog", "nowhere"); got != "" || declared {
+		t.Errorf("undeclared edge = (%q, %v), want (empty, false)", got, declared)
+	}
+}
+
+func TestGateRefusesUndeclaredEdge(t *testing.T) {
+	// in_progress→integrated is NOT a declared edge in testWorkflow. The gate must
+	// refuse it (error) so a story cannot skip a gate by jumping across an
+	// undeclared edge — and the reviewer must not run.
+	g, r := gater(t, `{"decision":"accept"}`,
+		fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
+	_, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "integrated")
+	if err == nil {
+		t.Fatal("expected an error refusing the undeclared in_progress→integrated edge")
+	}
+	if r.got.SystemPrompt != "" {
+		t.Errorf("reviewer must not run on an undeclared edge")
 	}
 }
 

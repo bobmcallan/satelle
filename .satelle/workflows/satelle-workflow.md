@@ -31,6 +31,10 @@ state — the integration and deploy gates come *before* it (see the
 - **planned → in_progress** — begin work; **gated** by `satelle-story-intent-review`
   (the story must be well-formed before work starts).
 - **in_progress → blocked** / **blocked → in_progress** — record/resume a stall.
+- **reviewed / integrated / deployed → in_progress** — **rework**: step back to the
+  work state to fix something (e.g. after a later check reveals a gap), then
+  re-drive forward so every gate on the path runs again. Ungated — returning to
+  work is always allowed; the forward gates re-judge on the way back up.
 - **in_progress → reviewed** — **gated** by `satelle-story-code-review`, an LLM
   tech-lead pre-review: it reads the modified code, judges it against the
   acceptance criteria, and checks the integration tests align with the code —
@@ -65,6 +69,9 @@ transitions:
   - {from: planned, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
   - {from: in_progress, to: blocked}
   - {from: blocked, to: in_progress}
+  - {from: reviewed, to: in_progress}
+  - {from: integrated, to: in_progress}
+  - {from: deployed, to: in_progress}
   - {from: in_progress, to: reviewed, reviewer_skill: "satelle-story-code-review"}
   - {from: reviewed, to: integrated, reviewer_skill: "satelle-story-integration-review"}
   - {from: integrated, to: deployed, reviewer_skill: "satelle-story-deploy-review"}
