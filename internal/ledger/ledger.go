@@ -34,6 +34,11 @@ const (
 	KindReviewReject     = "review_reject"
 	// KindStepSummary is the summariser's prose recap of an enacted transition.
 	KindStepSummary = "step_summary"
+	// Estimate/actual: an agent self-reports a plan estimate at begin-work and the
+	// actual cost at close. Recorded as story tags (estimate-*/actual-*) and as
+	// these ledger rows so the per-story close-out can compare estimate vs actual.
+	KindEstimateRecorded = "estimate_recorded"
+	KindActualRecorded   = "actual_recorded"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional
