@@ -64,6 +64,7 @@ const templatesSrc = `
   <nav class="crumbs"><a href="/">project</a> <span class="sep">/</span> <span class="cur" id="crumb-tab">stories</span></nav>
   <header class="app">
     <button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>
+    {{if .Uptime}}<button class="uptime" type="button" disabled title="web service uptime">{{.Uptime}}</button>{{end}}
     <span class="live-dot" title="realtime"></span>
     <h1>satelle<span class="dot">.</span> project</h1>
     <div class="meta">{{.RepoRoot}} · <a href="/workspace">workspace →</a> · <a href="/help">help →</a></div>

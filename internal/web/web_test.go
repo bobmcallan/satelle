@@ -132,6 +132,21 @@ func TestStoriesFilterCountRendered(t *testing.T) {
 	}
 }
 
+func TestUptimeButtonRendered(t *testing.T) {
+	srv, _ := newServer(t)
+	code, body := get(t, srv.URL+"/")
+	if code != 200 {
+		t.Fatalf("status = %d", code)
+	}
+	// A clear, non-pressable (disabled) uptime button shows in the header.
+	if !strings.Contains(body, `class="uptime"`) || !strings.Contains(body, "disabled") {
+		t.Errorf("header missing the clear (disabled) uptime button")
+	}
+	if !strings.Contains(body, "up ") {
+		t.Errorf("uptime button missing the 'up …' elapsed text")
+	}
+}
+
 func TestUnknownPath404(t *testing.T) {
 	srv, _ := newServer(t)
 	if code, _ := get(t, srv.URL+"/nope"); code != 404 {

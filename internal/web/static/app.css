@@ -71,6 +71,10 @@ header.app .live-dot { float: right; margin-top: 9px; margin-left: 0; margin-rig
 .theme-toggle { float: right; margin-top: 2px; border: 1px solid var(--line); background: var(--panel);
   color: var(--muted); width: 30px; height: 30px; border-radius: 8px; font-size: 14px; line-height: 1; }
 .theme-toggle:hover { color: var(--ink); }
+/* uptime: a clear, non-pressable button aligned with the theme toggle. */
+.uptime { float: right; margin-top: 2px; margin-right: 8px; height: 30px;
+  border: 0; background: none; color: var(--muted); font-size: 12px;
+  font-family: var(--mono); line-height: 30px; padding: 0; cursor: default; }
 
 /* Tabs */
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
