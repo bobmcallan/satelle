@@ -61,12 +61,13 @@ const templatesSrc = `
   <header class="app">
     <button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>
     <h1>satelle<span class="dot">.</span> project<span class="live-dot" title="realtime"></span></h1>
-    <div class="meta">{{.RepoRoot}} · <a href="/workspace">workspace →</a></div>
+    <div class="meta">{{.RepoRoot}} · <a href="/workspace">workspace →</a> · <a href="/help">help →</a></div>
   </header>
 
   <div class="tabs" role="tablist">
     <button class="tab" role="tab" data-panel="stories">Stories <span class="n">{{len .Stories}}</span></button>
     <button class="tab" role="tab" data-panel="tasks">Tasks <span class="n">{{len .Tasks}}</span></button>
+    <button class="tab" role="tab" data-panel="workflow">Workflow <span class="n">{{len .Workflows}}</span></button>
     <button class="tab" role="tab" data-panel="docs">Documents <span class="n">{{.DocCount}}</span></button>
   </div>
 
@@ -89,6 +90,17 @@ const templatesSrc = `
     <table class="panel-table">
       <thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Progress</th><th>Priority</th><th>Updated</th></tr></thead>
       <tbody data-rows>{{template "workitemRows" .Tasks}}</tbody>
+    </table>
+  </section>
+
+  <section class="panel" data-topic="workflow" id="panel-workflow">
+    <div class="filterbar">
+      <input type="text" placeholder="filter workflows…" aria-label="filter workflows">
+      <div class="chips"></div>
+    </div>
+    <table class="panel-table">
+      <thead><tr><th>Name</th><th>Summary</th><th>Applies to</th></tr></thead>
+      <tbody data-rows>{{template "workflowRows" .Workflows}}</tbody>
     </table>
   </section>
 
@@ -124,6 +136,32 @@ const templatesSrc = `
   {{if .Headline}}<div class="head">{{.Headline}}</div>{{end}}
   {{if not .ModTime.IsZero}}<div class="updated">updated {{ftime .ModTime}}</div>{{end}}
 </div>{{end}}</div>{{else}}<div class="empty">none indexed — run <code>satelle index</code></div>{{end}}{{end}}{{end}}
+
+{{define "workflowRows"}}{{range .}}<tr class="row" tabindex="0" role="button" aria-expanded="false" data-search="{{printf "%s %s %s" .Name .Headline (join .AppliesTo " ") | lower}}" data-expand-url="/fragment/workflow/{{.Name}}">
+  <td><div class="wi-title">{{.Name}}</div></td>
+  <td>{{.Headline}}</td>
+  <td class="wi-tags">{{range .AppliesTo}}{{tagchip (printf "applies_to:%s" .)}}{{end}}</td>
+</tr>{{else}}<tr><td colspan="3" class="empty">none indexed — run <code>satelle index</code></td></tr>{{end}}{{end}}
+
+{{define "workflowDetail"}}<div class="expbody">
+  <h4>{{.Name}}</h4>
+  {{if .Headline}}<div class="meta">{{.Headline}}</div>{{end}}
+  {{if .AppliesTo}}<div class="wi-tags">{{range .AppliesTo}}{{tagchip (printf "applies_to:%s" .)}}{{end}}</div>{{end}}
+
+  <h4>States</h4>
+  <div class="wf-states">{{range .Spec.States}}<span class="wf-node{{if .Terminal}} terminal{{end}}">{{.Name}}{{if .Actor}}<span class="wf-actor">{{.Actor}}</span>{{end}}</span>{{else}}<span class="empty">no states declared</span>{{end}}</div>
+
+  <h4>Transitions</h4>
+  {{if .Spec.Transitions}}<ul class="wf-edges">{{range .Spec.Transitions}}<li class="wf-edge">
+    <span class="wf-node sm">{{.From}}</span>
+    <span class="wf-arrow">→</span>
+    <span class="wf-node sm">{{.To}}</span>
+    {{if .Skill}}<span class="wf-gate" title="reviewer gate">{{.Skill}}</span>{{else}}<span class="wf-gate ungated" title="no reviewer skill — advisory">ungated</span>{{end}}
+  </li>{{end}}</ul>{{else}}<div class="empty">no transitions declared</div>{{end}}
+
+  <h4>Definition</h4>
+  <pre class="prose">{{.Body}}</pre>
+</div>{{end}}
 
 {{define "itemDetail"}}<div class="expbody">
   <a class="detail-link open-story" href="/{{.Item.Kind}}/{{.Item.ID}}">Open story →</a>
@@ -172,6 +210,31 @@ const templatesSrc = `
     {{end}}
   </section>{{else}}<div class="empty">no repos registered — run <code>satelle workspace add</code></div>{{end}}
   <footer class="site-footer"><span class="footer-version">satelle workspace</span></footer>
+</div>
+</body>
+</html>{{end}}
+
+{{define "help"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>satelle · help</title>
+<script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="wrap">
+  <nav class="crumbs"><a href="/">project</a> <span class="sep">/</span> <span class="cur">help</span></nav>
+  <header class="app">
+    <h1>satelle<span class="dot">.</span> help</h1>
+    <div class="meta">process guides · the same content as <code>satelle help</code></div>
+  </header>
+  {{range .}}<section class="help-topic" id="{{.Name}}">
+    <h2 class="kind-h">{{.Title}} <span class="meta">{{.Name}}</span></h2>
+    <pre class="prose">{{.Body}}</pre>
+  </section>{{else}}<div class="empty">no help topics</div>{{end}}
+  <footer class="site-footer"><span class="footer-version">satelle help</span></footer>
 </div>
 </body>
 </html>{{end}}

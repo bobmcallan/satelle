@@ -13,7 +13,14 @@
 (function () {
   "use strict";
   var TERMINAL = { done: 1, cancelled: 1 };
-  var PANELS = ["stories", "tasks", "docs"];
+  var PANELS = ["stories", "tasks", "workflow", "docs"];
+  // Panels of work items (status + priority + default sort). The workflow and
+  // docs panels are read-only catalogs: free-text filter only, no status/order
+  // default chips.
+  function isItemPanel(panel) {
+    var t = panel.dataset.topic;
+    return t === "stories" || t === "tasks";
+  }
   var FILTER_KEYS = { status: 1, priority: 1, category: 1, tags: 1, tag: 1 };
   var ORDER_FIELDS = { updated: 1, created: 1, priority: 1, status: 1, title: 1, id: 1 };
   var DEFAULT_ORDER = "updated"; // applied when no explicit order: token (order:none opts out)
@@ -145,13 +152,13 @@
       });
     });
     var hasStatus = parsed.filters.some(function (t) { return t.key === "status"; });
-    if (!hasStatus && panel.dataset.topic !== "docs") {
+    if (!hasStatus && isItemPanel(panel)) {
       // Default: terminal rows hidden. Removing it reveals all (status:all).
       chip("status:open", true, function () {
         input.value = (input.value.trim() + " status:all").trim(); applyFilter(panel);
       });
     }
-    if (!parsed.order && panel.dataset.topic !== "docs") {
+    if (!parsed.order && isItemPanel(panel)) {
       // Default sort surfaced as a chip, like status:open. Removing it opts out
       // of the default sort (order:none) rather than re-sorting.
       chip("order:updated", true, function () {

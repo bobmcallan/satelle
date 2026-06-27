@@ -12,8 +12,9 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/app"
-	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/web"
@@ -260,5 +261,43 @@ func TestWorkspacePageAggregatesAcrossRepos(t *testing.T) {
 	_, proj := get(t, srv.URL+"/")
 	if strings.Contains(proj, "other-story") {
 		t.Error("project page should remain single-repo")
+	}
+}
+
+func TestHelpPageRendersTopics(t *testing.T) {
+	srv, _ := newServer(t)
+	code, body := get(t, srv.URL+"/help")
+	if code != 200 {
+		t.Fatalf("/help = %d", code)
+	}
+	for _, want := range []string{"create-story", "reviewer-checks", "satelle-story-done-review", `class="prose"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/help page missing %q", want)
+		}
+	}
+}
+
+func TestWorkflowTabAndFragment(t *testing.T) {
+	srv, db := newServer(t)
+	// Seed a workflow via the embedded-defaults overlay (no disk needed): it
+	// surfaces through doc-list (the panel) and doc-get (the fragment).
+	body := "---\nname: wf-x\napplies_to: [\"web\"]\n---\nstates:\n  - backlog\n  - done\ntransitions:\n  - {from: backlog, to: done, reviewer_skill: \"x-done-review\"}\n"
+	db.DocIndex.SetDefaults([]docindex.Doc{{Kind: "workflows", Name: "wf-x", Body: body}})
+
+	code, page := get(t, srv.URL+"/")
+	if code != 200 || !strings.Contains(page, `data-panel="workflow"`) {
+		t.Fatalf("project page missing Workflow tab: %d", code)
+	}
+	if !strings.Contains(page, "wf-x") || !strings.Contains(page, "/fragment/workflow/wf-x") {
+		t.Errorf("workflow row/expand-url missing from page")
+	}
+	code, frag := get(t, srv.URL+"/fragment/workflow/wf-x")
+	if code != 200 {
+		t.Fatalf("workflow fragment = %d", code)
+	}
+	for _, want := range []string{"States", "Transitions", "wf-node", "x-done-review", "applies_to"} {
+		if !strings.Contains(frag, want) {
+			t.Errorf("workflow fragment missing %q", want)
+		}
 	}
 }
