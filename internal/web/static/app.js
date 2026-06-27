@@ -279,13 +279,27 @@
       .catch(function () {});
   }
 
+  // Panels with a rows fragment endpoint (the refetch targets); workflow has none.
+  var LIVE_TOPICS = ["stories", "tasks", "docs"];
+
   function initLive() {
     if (!window.EventSource) return;
     var dot = document.querySelector(".live-dot");
     var src = new EventSource("/events");
     var refetch = {}; // per-topic debounced refetch
-    PANELS.forEach(function (tp) { refetch[tp] = debounce(function () { refetchPanel(tp); }, 250); });
-    src.addEventListener("open", function () { if (dot) dot.classList.add("on"); });
+    LIVE_TOPICS.forEach(function (tp) { refetch[tp] = debounce(function () { refetchPanel(tp); }, 250); });
+    var firstOpen = true;
+    src.addEventListener("open", function () {
+      if (dot) dot.classList.add("on");
+      // Durability: on every RE-connect, reconcile every panel — any CLI update
+      // missed during a connection gap (reconnect, server restart, a dropped
+      // trigger) is picked up here, so the page is eventually consistent with the
+      // store even when a doorbell is lost. The first open is skipped: the page
+      // was just server-rendered fresh, so a refetch would be redundant (and
+      // would disrupt an expansion opened immediately after load).
+      if (firstOpen) { firstOpen = false; return; }
+      LIVE_TOPICS.forEach(function (tp) { refetchPanel(tp); });
+    });
     src.addEventListener("trigger", function (ev) { if (refetch[ev.data]) refetch[ev.data](); });
     src.onerror = function () { if (dot) dot.classList.remove("on"); };
   }
@@ -303,7 +317,12 @@
         .then(function (html) { el.innerHTML = html; })
         .catch(function () {});
     }, 250);
-    src.addEventListener("open", function () { if (dot) dot.classList.add("on"); });
+    var firstOpen = true;
+    src.addEventListener("open", function () {
+      if (dot) dot.classList.add("on");
+      if (firstOpen) { firstOpen = false; return; } // already server-rendered fresh
+      refresh(); // reconcile the detail on every RE-connect (durability)
+    });
     src.addEventListener("trigger", function (ev) { if (ev.data === topic) refresh(); });
     src.onerror = function () { if (dot) dot.classList.remove("on"); };
   }

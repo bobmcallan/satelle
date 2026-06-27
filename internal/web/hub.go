@@ -4,7 +4,13 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 )
+
+// heartbeatInterval keeps an idle SSE stream alive (and detects a dead peer via
+// the write error) so a connection — and the realtime it carries — survives idle
+// gaps through proxies/WSL rather than silently dying between CLI updates.
+const heartbeatInterval = 25 * time.Second
 
 // hub is the realtime doorbell — the satellites SSE model, stripped of auth.
 // It fans a topic string out to every connected /events client; the page then
@@ -70,15 +76,26 @@ func (h *hub) serveEvents(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	ctx := r.Context()
+	beat := time.NewTicker(heartbeatInterval)
+	defer beat.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-beat.C:
+			// Keepalive comment. A write error means the peer is gone — return so
+			// the client's EventSource reconnects (and reconciles on open).
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
 		case topic, open := <-ch:
 			if !open {
 				return
 			}
-			fmt.Fprintf(w, "event: trigger\ndata: %s\n\n", topic)
+			if _, err := fmt.Fprintf(w, "event: trigger\ndata: %s\n\n", topic); err != nil {
+				return
+			}
 			flusher.Flush()
 		}
 	}

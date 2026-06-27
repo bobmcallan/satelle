@@ -146,10 +146,17 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 	})
 
 	t.Run("progress_column_lights", func(t *testing.T) {
-		// The open (non-terminal) story trails a current light in the Progress column.
-		sel := fmt.Sprintf(`#panel-stories tr.row[data-expand-url$="%s"] .col-reviews .review-light`, openID)
-		if !waitCond(t, ctx, fmt.Sprintf(`!!document.querySelector('%s')`, sel), 3*time.Second) {
-			t.Error("expected a review-light in the Progress column for the open story")
+		// A fresh open story (still at its initial state, no transitions) shows NO
+		// progress light — the initial state is not step 1.
+		light := fmt.Sprintf(`document.querySelector('#panel-stories tr.row[data-expand-url$="%s"] .col-reviews .review-light')`, openID)
+		if !waitCond(t, ctx, "!"+light, 3*time.Second) {
+			t.Error("a fresh open story should have no progress light (no phantom current ①)")
+		}
+		// After a REAL transition (ungated in this fresh repo), a light appears —
+		// pushed live to the page over the realtime bus.
+		mustRun(t, testBin, repo, "story", "set", openID, "--status", "in_progress")
+		if !waitCond(t, ctx, "!!"+light, 8*time.Second) {
+			t.Error("a transitioned story should show a progress light, pushed live")
 		}
 	})
 
