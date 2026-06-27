@@ -73,3 +73,22 @@ func appFrom(cmd *cobra.Command) (*app.App, error) {
 	}
 	return a, nil
 }
+
+// gaterForCmd builds a reviewer.Gater over the opened store and the install-time
+// agent CLI — the concrete reviewer used by the read paths (`satelle validate`,
+// `satelle <object> create`) that need structure verdicts directly.
+func gaterForCmd(cmd *cobra.Command) (*reviewer.Gater, *app.App, error) {
+	a, err := appFrom(cmd)
+	if err != nil {
+		return nil, nil, err
+	}
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		return nil, nil, err
+	}
+	runner, err := agentcli.NewRunner(gc.Agent.ResolveCLI())
+	if err != nil {
+		return nil, nil, fmt.Errorf("an agent CLI is required: %w", err)
+	}
+	return reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, ""), a, nil
+}
