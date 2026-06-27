@@ -299,6 +299,27 @@ func TestBrowserUserPath(t *testing.T) {
 		waitCond(t, ctx, jsRowVisible(betaID), 3*time.Second)
 	})
 
+	t.Run("id_copy_does_not_toggle_or_navigate", func(t *testing.T) {
+		// Clicking the id copies it (shows "copied ✓" feedback) and must NOT toggle
+		// the row or navigate the page — stop-propagation.
+		before := evalInt(t, ctx, `document.querySelectorAll('#panel-stories tr.expansion').length`)
+		clickJS(t, ctx, fmt.Sprintf(`#panel-stories tr.row[data-expand-url$="%s"] .id-copy`, betaID))
+		if !waitCond(t, ctx, `[...document.querySelectorAll('#panel-stories .id-copy')].some(function(e){return e.classList.contains('copied')||e.textContent.indexOf('copied')>=0;})`, 3*time.Second) {
+			t.Error("id-copy did not show 'copied' feedback")
+		}
+		after := evalInt(t, ctx, `document.querySelectorAll('#panel-stories tr.expansion').length`)
+		if after != before {
+			t.Errorf("clicking the id changed expansion count %d→%d (should not toggle the row)", before, after)
+		}
+		var path string
+		if err := chromedp.Run(ctx, chromedp.Evaluate(`location.pathname`, &path)); err != nil {
+			t.Fatal(err)
+		}
+		if path != "/" {
+			t.Errorf("clicking the id navigated to %q (should stay on the project page)", path)
+		}
+	})
+
 	t.Run("breadcrumb_to_detail_live_and_back", func(t *testing.T) {
 		// The id is a copy control now; navigation moved to the panel's Open story
 		// link. Expand the row, then click it.
