@@ -79,6 +79,7 @@ header.app .live-dot { float: right; margin-top: 9px; margin-left: 0; margin-rig
 .tab:hover { color: var(--ink); }
 .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
 .tab .n { color: var(--muted); font-size: 12px; margin-left: 5px; }
+.tab .n-backlog { color: var(--accent); font-size: 11px; margin-left: 5px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 999px; }
 .panel { display: none; }
 .panel.active { display: block; }
 
