@@ -120,9 +120,16 @@ func (s *Store) unshadowedDefaults(kind string, present map[[2]string]struct{}) 
 
 // SyncResult reports what a Sync pass changed.
 type SyncResult struct {
-	Indexed int `json:"indexed"` // files inserted or updated
-	Pruned  int `json:"pruned"`  // index rows whose file no longer exists
-	Scanned int `json:"scanned"` // .md files seen on disk
+	Indexed int      `json:"indexed"`           // files inserted or updated
+	Pruned  int      `json:"pruned"`            // index rows whose file no longer exists
+	Scanned int      `json:"scanned"`           // .md files seen on disk
+	Changed []DocRef `json:"changed,omitempty"` // the (kind, name) upserted this pass
+}
+
+// DocRef identifies an authored doc by kind and name.
+type DocRef struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
 }
 
 // Sync brings the index in line with the markdown on disk for the given
@@ -159,6 +166,10 @@ func (s *Store) Sync(ctx context.Context, dirs map[string]string, now time.Time)
 				return res, err
 			}
 			res.Indexed++
+			res.Changed = append(res.Changed, DocRef{
+				Kind: kind,
+				Name: strings.TrimSuffix(filepath.Base(fileInfo.path), filepath.Ext(fileInfo.path)),
+			})
 		}
 		for path := range indexed {
 			if _, ok := seen[path]; !ok {
