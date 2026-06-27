@@ -156,6 +156,9 @@ const templatesSrc = `
   {{if .Headline}}<div class="meta">{{.Headline}}</div>{{end}}
   <div class="wi-tags">{{if .Scope}}{{tagchip (printf "scope:%s" .Scope)}}{{end}}{{range .AppliesTo}}{{tagchip (printf "applies_to:%s" .)}}{{end}}</div>
 
+  {{if .Diagram}}<h4>Flow</h4>
+  <div class="wf-diagram-wrap">{{.Diagram}}</div>{{end}}
+
   <h4>States</h4>
   <div class="wf-states">{{range .Spec.States}}<span class="wf-node{{if .Terminal}} terminal{{end}}">{{.Name}}{{if .Actor}}<span class="wf-actor">{{.Actor}}</span>{{end}}</span>{{else}}<span class="empty">no states declared</span>{{end}}</div>
 

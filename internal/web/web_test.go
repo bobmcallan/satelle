@@ -392,7 +392,8 @@ func TestWorkflowTabAndFragment(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("workflow fragment = %d", code)
 	}
-	for _, want := range []string{"States", "Transitions", "wf-node", "x-done-review", "applies_to"} {
+	for _, want := range []string{"States", "Transitions", "wf-node", "x-done-review", "applies_to",
+		"wf-diagram", "wf-dnode", "wf-edge-path"} {
 		if !strings.Contains(frag, want) {
 			t.Errorf("workflow fragment missing %q", want)
 		}
