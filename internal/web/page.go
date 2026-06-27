@@ -63,7 +63,7 @@ const templatesSrc = `
       <div class="chips"></div>
     </div>
     <table class="panel-table">
-      <thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th></tr></thead>
+      <thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Updated</th></tr></thead>
       <tbody data-rows>{{template "workitemRows" .Stories}}</tbody>
     </table>
   </section>
@@ -74,7 +74,7 @@ const templatesSrc = `
       <div class="chips"></div>
     </div>
     <table class="panel-table">
-      <thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th></tr></thead>
+      <thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Updated</th></tr></thead>
       <tbody data-rows>{{template "workitemRows" .Tasks}}</tbody>
     </table>
   </section>
@@ -98,11 +98,13 @@ const templatesSrc = `
   <td><div class="wi-title">{{.Title}}</div>{{if .Tags}}<div class="wi-tags">{{range .Tags}}<span class="tagchip">{{.}}</span>{{end}}</div>{{end}}</td>
   <td><span class="badge s-{{.Status}}">{{.Status}}</span></td>
   <td>{{if .Priority}}{{.Priority}}{{else}}—{{end}}</td>
-</tr>{{else}}<tr><td colspan="4" class="empty">none yet</td></tr>{{end}}{{end}}
+  <td class="updated">{{ftime .UpdatedAt}}</td>
+</tr>{{else}}<tr><td colspan="5" class="empty">none yet</td></tr>{{end}}{{end}}
 
 {{define "docsRows"}}{{range .}}<div class="kind-h">{{.Kind}}</div>{{if .Docs}}<div class="docgrid">{{range .Docs}}<div class="doc" data-search="{{printf "%s %s" .Name .Headline | lower}}">
   <div class="name">{{.Name}}</div>
   {{if .Headline}}<div class="head">{{.Headline}}</div>{{end}}
+  {{if not .ModTime.IsZero}}<div class="updated">updated {{ftime .ModTime}}</div>{{end}}
 </div>{{end}}</div>{{else}}<div class="empty">none indexed — run <code>satelle index</code></div>{{end}}{{end}}{{end}}
 
 {{define "itemDetail"}}<div class="expbody">
