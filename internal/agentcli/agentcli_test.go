@@ -2,9 +2,19 @@ package agentcli
 
 import (
 	"context"
+	"os/exec"
 	"strings"
 	"testing"
 )
+
+func contains(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
 
 func TestNewRunnerMapping(t *testing.T) {
 	cases := []struct {
@@ -43,9 +53,82 @@ func TestCodexStubErrorsClearly(t *testing.T) {
 	}
 	_, err = r.Run(context.Background(), Request{SystemPrompt: "x", Payload: "y"})
 	if err == nil {
-		t.Fatal("codex Run should error until implemented")
+		t.Fatal("codex Run should error until mapped")
 	}
-	if !strings.Contains(err.Error(), "not yet implemented") {
+	if !strings.Contains(err.Error(), "not yet mapped") {
 		t.Errorf("codex error should be explicit, got: %v", err)
+	}
+}
+
+// The claude preset must carry a read-only denylist so the grant is a CEILING.
+func TestDefaultClaudeHarnessHasDenylistCeiling(t *testing.T) {
+	for _, deny := range []string{"--disallowedTools", "Write", "Edit", "Bash"} {
+		if !strings.Contains(DefaultClaudeHarness, deny) {
+			t.Errorf("DefaultClaudeHarness must include %q (read-only ceiling): %q", deny, DefaultClaudeHarness)
+		}
+	}
+}
+
+// A multi-line {system} value must survive as a SINGLE argv token, and {tools}
+// must substitute in place.
+func TestBuildArgsSubstitutesTokens(t *testing.T) {
+	tmpl := strings.Fields("-p --append-system-prompt {system} --allowedTools {tools}")
+	sys := "first line\nsecond line with spaces\tand a tab"
+	args := buildArgs(tmpl, Request{SystemPrompt: sys, AllowedTools: "Read,Grep,Glob"})
+	if !contains(args, sys) {
+		t.Errorf("multi-line {system} was not preserved as one arg: %#v", args)
+	}
+	if !contains(args, "Read,Grep,Glob") {
+		t.Errorf("{tools} not substituted: %#v", args)
+	}
+	if !contains(args, "--append-system-prompt") || !contains(args, "-p") {
+		t.Errorf("literal flags missing: %#v", args)
+	}
+}
+
+// An empty model drops both the {model} placeholder and its preceding flag.
+func TestBuildArgsDropsEmptyModelFlag(t *testing.T) {
+	tmpl := strings.Fields("--allowedTools {tools} --model {model}")
+	args := buildArgs(tmpl, Request{AllowedTools: "Read", Model: ""})
+	for _, a := range args {
+		if a == "{model}" || a == "--model" || a == "" {
+			t.Errorf("empty model should drop --model {model}, got %#v", args)
+		}
+	}
+	if !contains(args, "Read") {
+		t.Errorf("non-model args should remain: %#v", args)
+	}
+}
+
+// A set model substitutes in place, keeping its flag.
+func TestBuildArgsKeepsSetModel(t *testing.T) {
+	tmpl := strings.Fields("--model {model}")
+	args := buildArgs(tmpl, Request{Model: "claude-opus-4-8"})
+	if len(args) != 2 || args[0] != "--model" || args[1] != "claude-opus-4-8" {
+		t.Errorf("set model should yield [--model claude-opus-4-8], got %#v", args)
+	}
+}
+
+// An unrecognised placeholder is passed through verbatim, not dropped or expanded.
+func TestBuildArgsLeavesUnknownTokens(t *testing.T) {
+	args := buildArgs(strings.Fields("--flag {unknown} value"), Request{})
+	if !contains(args, "{unknown}") || !contains(args, "--flag") || !contains(args, "value") {
+		t.Errorf("unknown tokens should pass through verbatim: %#v", args)
+	}
+}
+
+// The payload is delivered on the subprocess's stdin (verified via `cat`, which
+// echoes stdin to stdout). Exercises the full templateRunner.Run path.
+func TestRunDeliversPayloadOnStdin(t *testing.T) {
+	if _, err := exec.LookPath("cat"); err != nil {
+		t.Skip("cat not on PATH")
+	}
+	r := templateRunner{binary: "cat"}
+	out, err := r.Run(context.Background(), Request{Payload: "hello from stdin\n"})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if string(out) != "hello from stdin\n" {
+		t.Errorf("stdin not delivered: got %q", string(out))
 	}
 }

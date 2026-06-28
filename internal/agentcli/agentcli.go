@@ -1,13 +1,17 @@
 // Package agentcli abstracts the headless agent CLI the quality-management spine
 // shells out to for isolated reviews and summaries. satellites hardcoded claude's
 // flag surface (claude -p --append-system-prompt …); satelle routes every
-// subprocess through a Runner so the operator picks their agent (claude or codex)
-// at install time and no reviewer/summariser code names a binary directly.
+// subprocess through a Runner driven by a CONFIG TEMPLATE, so the operator picks
+// their agent and its exact argv in `.satelle/actors.toml` and no reviewer code
+// names a binary or a flag directly.
 //
-// A Runner takes a Request (system prompt + stdin payload + tool grant + optional
-// model, in a working dir) and returns the agent's stdout. The reviewer (A3) and
-// summariser (A5) build on this; this package ships the abstraction, the claude
-// implementation, a clearly-erroring codex stub, and PATH detection.
+// A harness string is a command template: the first token is the binary, the rest
+// are argv tokens that may carry the placeholders {system}, {tools}, and {model}.
+// At call time satelle substitutes each placeholder into its own argv token (so a
+// multi-line system prompt stays a single argument) and pipes the payload on stdin.
+// A bare CLI name (a single token, e.g. "claude") expands to that CLI's built-in
+// PRESET template — claude's preset carries a read-only --disallowedTools denylist
+// so the grant is a ceiling over the repo's settings, not just an allowlist floor.
 package agentcli
 
 import (
@@ -25,49 +29,59 @@ const (
 	CLICodex  = "codex"
 )
 
+// DefaultClaudeHarness is the claude preset template — the satellites gate argv
+// reproduced behind the template seam, hardened with a --disallowedTools denylist
+// so the reviewer's read-only grant is a CEILING (deny wins over allow) over any
+// permissions the repo's .claude/settings.json would otherwise inherit. {system}
+// is the gate/skill body, {tools} the allow-grant, {model} the optional model
+// (dropped, with its flag, when unset).
+const DefaultClaudeHarness = "claude -p --disallowedTools Write,Edit,Bash,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
+
 // Request is one headless agent invocation.
 type Request struct {
-	SystemPrompt string // appended as the system prompt (the gate/skill body)
+	SystemPrompt string // {system}: appended as the system prompt (the gate/skill body)
 	Payload      string // delivered on stdin (the review/summary input)
-	AllowedTools string // comma-separated tool grant
-	Model        string // optional model override; "" inherits the harness default
+	AllowedTools string // {tools}: comma-separated tool grant
+	Model        string // {model}: optional model override; "" drops the placeholder
 	Dir          string // working directory for the subprocess
 }
 
 // Runner invokes an agent CLI headlessly and returns its stdout.
 type Runner interface {
-	// Name reports the agent CLI identifier (claude | codex).
+	// Name reports the agent CLI identifier (the template's binary).
 	Name() string
 	// Run executes the agent over req and returns its raw stdout.
 	Run(ctx context.Context, req Request) ([]byte, error)
 }
 
-// NewRunner returns the Runner for the named CLI. An empty name defaults to
-// claude; an unknown name is an error.
+// NewRunner returns the Runner for a bare CLI NAME — the preset. An empty name
+// defaults to claude; "codex" is the not-yet-mapped stub; an unknown name errors.
+// Callers with a full harness template use RunnerFromHarness instead.
 func NewRunner(name string) (Runner, error) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "", CLIClaude:
-		return claudeRunner{binary: CLIClaude}, nil
+		return templateFromHarness(DefaultClaudeHarness), nil
 	case CLICodex:
 		return codexRunner{binary: CLICodex}, nil
 	default:
-		return nil, fmt.Errorf("agentcli: unknown agent cli %q (want %q or %q)", name, CLIClaude, CLICodex)
+		return nil, fmt.Errorf("agentcli: unknown agent cli %q (want %q or %q, or a full harness template)", name, CLIClaude, CLICodex)
 	}
 }
 
-// RunnerFromHarness resolves an actors-layer harness binding to a Runner by its
-// leading CLI name — e.g. "claude -p", "codex -p", or a bare "claude". An empty or
-// "in-loop" harness returns (nil, nil): no agent-CLI runner, so the caller keeps its
-// configured default. An unknown CLI name is an error (from NewRunner).
+// RunnerFromHarness resolves an actors-layer harness binding to a Runner. An empty
+// or "in-loop" harness returns (nil, nil): no agent-CLI runner, so the caller keeps
+// its configured default. A SINGLE-token harness is a preset CLI name, resolved via
+// NewRunner (so "codex" still errors as a stub). A MULTI-token harness is a literal
+// command template: the first token is the binary, the rest the argv template.
 func RunnerFromHarness(harness string) (Runner, error) {
 	fields := strings.Fields(harness)
-	if len(fields) == 0 {
+	if len(fields) == 0 || strings.ToLower(fields[0]) == "in-loop" {
 		return nil, nil
 	}
-	if cli := strings.ToLower(fields[0]); cli != "in-loop" {
-		return NewRunner(cli)
+	if len(fields) == 1 {
+		return NewRunner(fields[0])
 	}
-	return nil, nil
+	return templateRunner{binary: fields[0], argTemplate: fields[1:]}, nil
 }
 
 // Detect returns the first supported agent CLI found on PATH (claude preferred),
@@ -91,30 +105,64 @@ func Available(name string) bool {
 	return lerr == nil
 }
 
-// claudeRunner invokes `claude -p --allowedTools <tools> --append-system-prompt
-// <body> [--model m]` with the payload on stdin — the satellites gate argv,
-// reproduced behind the Runner seam.
-type claudeRunner struct{ binary string }
+// templateRunner executes a command template: a binary plus an argv template whose
+// tokens may carry {system}/{tools}/{model} placeholders. It is the single code
+// path for every agent CLI — claude, codex, or any operator-supplied binary.
+type templateRunner struct {
+	binary      string
+	argTemplate []string
+}
 
-func (c claudeRunner) Name() string { return CLIClaude }
+// templateFromHarness parses a full harness string into a templateRunner.
+func templateFromHarness(harness string) templateRunner {
+	fields := strings.Fields(harness)
+	return templateRunner{binary: fields[0], argTemplate: fields[1:]}
+}
 
-func (c claudeRunner) Run(ctx context.Context, req Request) ([]byte, error) {
-	args := []string{"-p", "--allowedTools", req.AllowedTools, "--append-system-prompt", req.SystemPrompt}
-	if m := strings.TrimSpace(req.Model); m != "" {
-		args = append(args, "--model", m)
+func (t templateRunner) Name() string { return t.binary }
+
+func (t templateRunner) Run(ctx context.Context, req Request) ([]byte, error) {
+	return runProcess(ctx, t.binary, buildArgs(t.argTemplate, req), req)
+}
+
+// buildArgs substitutes the placeholders in an argv template against req. Each of
+// {system}/{tools}/{model} must be its own token, so a multi-word value (a
+// multi-line system prompt) becomes exactly one argument. An empty {model} drops
+// the placeholder AND a directly preceding flag token (e.g. "--model {model}"), so
+// the default template carries the model flag without emitting an empty value.
+func buildArgs(argTemplate []string, req Request) []string {
+	args := make([]string, 0, len(argTemplate))
+	for _, tok := range argTemplate {
+		switch tok {
+		case "{system}":
+			args = append(args, req.SystemPrompt)
+		case "{tools}":
+			args = append(args, req.AllowedTools)
+		case "{model}":
+			if strings.TrimSpace(req.Model) == "" {
+				if n := len(args); n > 0 && strings.HasPrefix(args[n-1], "-") {
+					args = args[:n-1] // drop the now-valueless flag
+				}
+				continue
+			}
+			args = append(args, req.Model)
+		default:
+			args = append(args, tok)
+		}
 	}
-	return runProcess(ctx, c.binary, args, req)
+	return args
 }
 
 // codexRunner is a placeholder: codex's headless surface differs from claude's
-// (no --append-system-prompt), so a faithful argv mapping is follow-up work. It
-// is selectable so the seam is exercised, but Run errors clearly until mapped.
+// (no --append-system-prompt), so a faithful preset is follow-up work. It is
+// selectable so the seam is exercised, but Run errors clearly until mapped — a
+// repo can still use codex today by setting a full [reviewer] harness template.
 type codexRunner struct{ binary string }
 
 func (c codexRunner) Name() string { return CLICodex }
 
 func (c codexRunner) Run(ctx context.Context, req Request) ([]byte, error) {
-	return nil, fmt.Errorf("agentcli: the codex runner is not yet implemented — install claude and set [agent] cli = %q, or contribute the codex argv mapping", CLIClaude)
+	return nil, fmt.Errorf("agentcli: the codex preset is not yet mapped — install claude, or set [reviewer] harness to a full codex command template in .satelle/actors.toml")
 }
 
 // runProcess runs binary with args, feeding req.Payload on stdin in req.Dir, and
