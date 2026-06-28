@@ -91,6 +91,38 @@ func TestProjectPageRendersData(t *testing.T) {
 	}
 }
 
+func TestTagChipsCarryFilterToken(t *testing.T) {
+	srv, db := newServer(t)
+	ctx := context.Background()
+	if _, err := db.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "Taggy story", Status: workitem.StatusInProgress,
+		Category: "improvement", Tags: []string{"web", "epic:agent-rename"},
+	}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	code, body := get(t, srv.URL+"/")
+	if code != 200 {
+		t.Fatalf("status = %d", code)
+	}
+	// Each tag chip is a clickable <button> carrying the exact filter token it
+	// adds: a bare/kv tag → tags:<full-tag>; the category chip → category:<value>.
+	for _, want := range []string{
+		`<button type="button" class="tagchip clickable" data-filter="tags:web"`,
+		`data-filter="tags:epic:agent-rename"`,
+		`data-filter="category:improvement"`,
+		`aria-label="filter by epic:agent-rename"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing clickable tag chip affordance %q", want)
+		}
+	}
+	// The chips remain accessible-labelled buttons, not the old inert spans.
+	if strings.Contains(body, `<span class="tagchip kv cat">`) {
+		t.Errorf("category chip should be a clickable button, not an inert span")
+	}
+}
+
 func TestBacklogCountRendered(t *testing.T) {
 	srv, db := newServer(t)
 	ctx := context.Background()

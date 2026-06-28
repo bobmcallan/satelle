@@ -22,17 +22,39 @@ var tmplFuncs = template.FuncMap{
 	// tagchip renders a tag chip. A key:value tag (e.g. epic:summariser) renders
 	// as a kv chip distinguishing key from value; a bare tag renders plain. No
 	// schema change — kv is a parsed string convention.
+	//
+	// A chip that maps to a real filter facet renders as a <button> carrying the
+	// exact filter token it adds when clicked (app.js wires it to the panel's
+	// filter input): a category:<v> chip filters the category facet; every other
+	// tag filters the tags facet (tags:<full-tag>). scope:/applies_to: chips are
+	// workflow metadata, not filter facets, so they stay inert spans.
 	"tagchip": func(tag string) template.HTML {
 		esc := template.HTMLEscapeString
+		cls := "tagchip"
+		inner := esc(tag)
+		key := ""
 		if i := strings.IndexByte(tag, ':'); i > 0 && i < len(tag)-1 {
-			cls := "tagchip kv"
-			if tag[:i] == "category" { // category gets a distinct key colour, like satellites
+			key = tag[:i]
+			cls = "tagchip kv"
+			if key == "category" { // category gets a distinct key colour, like satellites
 				cls += " cat"
 			}
-			return template.HTML(`<span class="` + cls + `"><span class="k">` + esc(tag[:i]) +
-				`</span><span class="v">` + esc(tag[i+1:]) + `</span></span>`)
+			inner = `<span class="k">` + esc(key) + `</span><span class="v">` + esc(tag[i+1:]) + `</span>`
 		}
-		return template.HTML(`<span class="tagchip">` + esc(tag) + `</span>`)
+		token := ""
+		switch key {
+		case "scope", "applies_to":
+			// inert: workflow metadata, not a filter facet
+		case "category":
+			token = tag // category:<value> is itself the filter token
+		default:
+			token = "tags:" + tag
+		}
+		if token == "" {
+			return template.HTML(`<span class="` + cls + `">` + inner + `</span>`)
+		}
+		return template.HTML(`<button type="button" class="` + cls + ` clickable" data-filter="` +
+			esc(token) + `" aria-label="filter by ` + esc(tag) + `">` + inner + `</button>`)
 	},
 	// tabof maps a work-item kind to its panel/tab name (story→stories). Takes
 	// any so the workitem.Kind type (a distinct string type) is accepted.

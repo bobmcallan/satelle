@@ -204,6 +204,19 @@
     if (count) count.textContent = shown + " / " + total;
   }
 
+  // addFilterToken appends a filter token (e.g. tags:epic:foo or category:bar)
+  // to a panel's filter input and re-applies — the click-a-tag-chip path. Adding
+  // a token already present is a no-op (deduped on the whitespace-split input).
+  function addFilterToken(panel, token) {
+    var input = panel.querySelector(".filterbar input");
+    if (!input || !token) return;
+    var parts = input.value.trim().split(/\s+/).filter(Boolean);
+    if (parts.indexOf(token) === -1) {
+      input.value = (input.value.trim() + " " + token).trim();
+    }
+    applyFilter(panel);
+  }
+
   function initFilters() {
     document.querySelectorAll(".panel").forEach(function (panel) {
       var input = panel.querySelector(".filterbar input");
@@ -256,6 +269,8 @@
   function initExpand() {
     document.querySelectorAll(".panel").forEach(function (panel) {
       panel.addEventListener("click", function (e) {
+        var chip = e.target.closest(".tagchip[data-filter]");
+        if (chip) { e.preventDefault(); e.stopPropagation(); addFilterToken(panel, chip.dataset.filter); return; } // filter, don't toggle
         var idEl = e.target.closest(".id-copy");
         if (idEl) { e.preventDefault(); e.stopPropagation(); copyId(idEl); return; } // copy, don't toggle/navigate
         if (e.target.closest("a")) return; // let real links (e.g. Open story) through
@@ -264,6 +279,9 @@
       });
       panel.addEventListener("keydown", function (e) {
         if (e.key !== "Enter" && e.key !== " ") return;
+        // A tag chip is a native <button>: Enter/Space fires its click (handled
+        // above). Bail so the row toggle below doesn't also fire.
+        if (e.target.closest(".tagchip[data-filter]")) return;
         var idEl = e.target.closest(".id-copy");
         if (idEl) { e.preventDefault(); copyId(idEl); return; }
         var row = e.target.closest("tr.row[data-expand-url]");
