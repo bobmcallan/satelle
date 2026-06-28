@@ -18,12 +18,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/app"
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/reviewer"
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -81,7 +83,13 @@ unconfigured repo or any internal error allows the edit. The "engaged" policy is
 authored substrate — it reads the workflow's executor-actor states, not a Go rule.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, _ = io.ReadAll(cmd.InOrStdin()) // drain the hook event; gate on global engagement
+			raw, _ := io.ReadAll(cmd.InOrStdin())
+			// An edit whose target is OUTSIDE the repo (e.g. the session
+			// scratchpad under /tmp) is untracked scratch, not project code —
+			// never gated. Only in-repo edits require an engaged story.
+			if p := filePathFromEvent(raw); p != "" && !withinRepoTarget(p) {
+				return nil
+			}
 			if storyEngaged() {
 				return nil
 			}
@@ -228,6 +236,58 @@ func bashCommandFromEvent(raw []byte) string {
 	}
 	_ = json.Unmarshal(raw, &ev)
 	return ev.ToolInput.Command
+}
+
+// filePathFromEvent pulls the edit target out of a PreToolUse edit event.
+// Write/Edit/MultiEdit carry tool_input.file_path; NotebookEdit carries
+// notebook_path. Returns "" when neither is present.
+func filePathFromEvent(raw []byte) string {
+	var ev struct {
+		ToolInput struct {
+			FilePath     string `json:"file_path"`
+			NotebookPath string `json:"notebook_path"`
+		} `json:"tool_input"`
+	}
+	_ = json.Unmarshal(raw, &ev)
+	if ev.ToolInput.FilePath != "" {
+		return ev.ToolInput.FilePath
+	}
+	return ev.ToolInput.NotebookPath
+}
+
+// withinRepoTarget reports whether target resolves to a path inside this repo.
+// The repo root is derived from the committed config path; if it cannot be
+// resolved, it returns true (stay conservative — the edit gate still applies).
+func withinRepoTarget(target string) bool {
+	_, cfgPath, err := config.Load("")
+	if err != nil {
+		return true
+	}
+	return withinRoot(config.RepoRootFromConfigPath(cfgPath), target)
+}
+
+// withinRoot reports whether target resolves to a path inside root. A relative
+// target is taken relative to root (the hook runs in the repo cwd). Pure, so the
+// path classification is unit-tested without touching the filesystem; any
+// resolution failure returns true (treat as in-repo) so the gate never opens by
+// accident.
+func withinRoot(root, target string) bool {
+	if strings.TrimSpace(root) == "" || strings.TrimSpace(target) == "" {
+		return true
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return true
+	}
+	t := target
+	if !filepath.IsAbs(t) {
+		t = filepath.Join(absRoot, t)
+	}
+	rel, err := filepath.Rel(absRoot, filepath.Clean(t))
+	if err != nil {
+		return true
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // runHookContext assembles and emits the SessionStart injection. It fails open:
