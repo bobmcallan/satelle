@@ -84,9 +84,12 @@ func TestSyncSkipsYAMLFrontmatterInHeadline(t *testing.T) {
 func TestSyncSkipsUnchangedAndReindexesChanged(t *testing.T) {
 	db := openDB(t)
 	ctx := context.Background()
-	docsDir := filepath.Join(t.TempDir(), "documents")
+	// Use principles: a kind that is NOT rewritten at ingest, so the body
+	// roundtrips verbatim and this exercises pure sync mechanics (documents are
+	// normalised to OKF and workflows to DOT, which would mutate the body).
+	docsDir := filepath.Join(t.TempDir(), "principles")
 	p := write(t, docsDir, "a.md", "v1")
-	dirs := map[string]string{"documents": docsDir}
+	dirs := map[string]string{"principles": docsDir}
 
 	if _, err := s(db).Sync(ctx, dirs, time.Now()); err != nil {
 		t.Fatal(err)
@@ -109,7 +112,7 @@ func TestSyncSkipsUnchangedAndReindexesChanged(t *testing.T) {
 	if res.Indexed != 1 {
 		t.Errorf("changed not reindexed: %+v", res)
 	}
-	doc, _ := s(db).Get(ctx, "documents", "a")
+	doc, _ := s(db).Get(ctx, "principles", "a")
 	if doc.Body != "v2 longer" {
 		t.Errorf("body = %q, want v2 longer", doc.Body)
 	}
