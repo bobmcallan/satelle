@@ -162,9 +162,12 @@ behaviour:
 ```
 
 An absent file is exactly today's behaviour. A repo may rebind a backend or grant —
-run the executor as `agent -p`, point an actor at another harness — without touching
-the workflow; the read-only limit travels with the binding. The reviewer `Gater` reads
-the resolved reviewer grant via `SetReviewerTools`, wired in `internal/cli/app.go`.
+run the executor as `agent -p`, or point an actor at another harness, **including a
+remote one** — without touching the workflow; the read-only limit travels with the
+binding. **Remote/distributed execution is this binding, not a separate product:** a
+reviewer that runs on a remote backend is still the same reviewer model. The reviewer
+`Gater` reads the resolved reviewer grant via `SetReviewerTools`, wired in
+`internal/cli/app.go`.
 
 ## Implementation map
 

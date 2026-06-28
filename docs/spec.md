@@ -1,24 +1,22 @@
 # Satelle — V6 Spec
 
-Satelle is the V6 rebrand and open-core restructure of the `satellites` product.
-"Satelle" (domain `satelle.net`) keeps the satellites lineage — *satelle* is the
-Latin/French root of "satellite".
+Satelle is the V6 rebrand of the `satellites` product. "Satelle" (domain
+`satelle.net`) keeps the satellites lineage — *satelle* is the Latin/French root of
+"satellite".
 
-## Open-core model
+satelle runs **100% locally**: a single static binary, a per-repo SQLite database,
+no server, no cgo, no auth. It governs agent-driven work — stories, tasks, an
+evidence ledger, and authored markdown (documents, workflows, principles, skills) —
+through a **gated workflow**: the agent executes; isolated reviewers gate every
+status change (see [recursive-actor-model.md](./recursive-actor-model.md)).
 
-One binary, **pluggable backend**. A single storage/backend interface has two
-implementations; paid features light up when connected/licensed. No fork, no build
-tags.
+Distribution is a property of that model, not a separate product. An actor's
+backend is bound in `.satelle/actors.toml`, so a reviewer (or executor) may run
+in-loop, as an isolated `agent -p`, or on a **remote** harness — remote execution
+is the reviewer/actor model with a remote backend, *configured*, not a separate
+product.
 
-| Tier | What it is | How it's reached |
-|------|------------|------------------|
-| **OSS / standalone** | CLI-only. Local DB holding the work primitives. Single-user, zero server dependency. | Default — the local backend. |
-| **Paid / hosted** | The server tier: centralised MCP, shared documents, multi-user stories/projects, reviewers, the portal, embedded/semantic search. | The server-client backend, activated by config/license. |
-
-**MCP is the dividing line** — it lives only on the paid server. The OSS build is
-CLI-only.
-
-## OSS / local tier
+## Local-first
 
 Same setup surface as current satellites, but executes **100% locally** — no remote
 or online database connection.
@@ -36,7 +34,7 @@ or online database connection.
   `.satellites/index.db` and `.satellites/state.db` — so the port reuses a working
   pattern and keeps the single static binary (no native deps).
 - **Not libSQL/Turso (for now):** libSQL is SQLite-compatible and would natively give
-  the future sync (embedded replicas) and vector-search (paid embedded docs)
+  the future sync (embedded replicas) and vector-search
   features — but its embedded path needs cgo, regressing the no-cgo install for a
   benefit that's OFF in the MVP. Keep all SQL **libSQL-compatible** so adopting it
   later is a driver swap behind the backend interface, not a rewrite.
@@ -55,15 +53,17 @@ or online database connection.
 
 ### Documents
 
-- **Not embedded** in the OSS tier. MVP stores documents as plain sqlite rows;
-  optional FTS5 for keyword search.
-- Embedded / semantic search is a **paid-server** feature. Keeps the OSS build
-  dependency-light (no embedding model, no vector store).
+- **Not embedded.** Documents are stored as plain sqlite rows; optional FTS5 for
+  keyword search.
+- Embedded / semantic search is out of scope — it keeps the build dependency-light
+  (no embedding model, no vector store).
 
 ### Sync
 
-- Online connection / sync is **built in** (the pluggable server backend) but
-  **turned off** by default.
+- satelle is local-only — there is no remote database to sync to. Distributed work
+  is expressed through the **actors layer** (an actor bound to a remote backend),
+  not a sync protocol. SQL is kept libSQL-compatible so replica sync could be added
+  later.
 
 ### Logging
 
