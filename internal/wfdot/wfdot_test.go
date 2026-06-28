@@ -147,3 +147,61 @@ digraph b {
 		t.Errorf("baseline-shaped DOT should validate clean, got %v", p)
 	}
 }
+
+func TestToDOT(t *testing.T) {
+	yamlWF := `---
+name: satelle-x-workflow
+---
+# X
+
+` + "```yaml" + `
+states:
+  - backlog
+  - {name: in_progress, actor: executor}
+  - done
+transitions:
+  - {from: backlog, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
+  - {from: in_progress, to: done, reviewer_skill: "satelle-story-done-review"}
+` + "```" + `
+
+## Environment
+
+` + "```yaml" + `
+guardrails:
+  always:
+    - keep it
+` + "```" + `
+`
+	out, changed := ToDOT(yamlWF)
+	if !changed {
+		t.Fatal("expected YAML to convert")
+	}
+	if dotBlock(out) == "" {
+		t.Fatal("converted body has no dot block")
+	}
+	if !strings.Contains(out, "guardrails:") || !strings.Contains(out, "keep it") {
+		t.Error("the guardrails YAML block must be preserved")
+	}
+	// Round-trip: the converted DOT parses to the same gated lifecycle.
+	spec, ok := Parse(out)
+	if !ok {
+		t.Fatal("converted body should parse as DOT")
+	}
+	skill := map[string]string{}
+	for _, tr := range spec.Transitions {
+		skill[tr.From+"->"+tr.To] = tr.Skill
+	}
+	if skill["backlog->in_progress"] != "satelle-story-intent-review" {
+		t.Errorf("intent gate lost in conversion: %v", skill)
+	}
+	if skill["in_progress->done"] != "satelle-story-done-review" {
+		t.Errorf("done gate lost in conversion: %v", skill)
+	}
+	if p := Validate(spec); len(p) != 0 {
+		t.Errorf("converted workflow should validate clean: %v", p)
+	}
+	// Idempotent: a DOT body is returned unchanged.
+	if _, changed2 := ToDOT(out); changed2 {
+		t.Error("ToDOT must be idempotent on a DOT body")
+	}
+}

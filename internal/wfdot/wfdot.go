@@ -334,3 +334,206 @@ func parseDotAttrs(s string) map[string]string {
 func dotUnquote(s string) string {
 	return strings.Trim(s, `"`)
 }
+
+// ToDOT normalizes a workflow body to the DOT standard — the conversion satelle
+// runs at ingest (create/upload). A body that already carries a fenced ```dot
+// block is returned unchanged (changed=false). A body in the inline-YAML grammar
+// is parsed and re-emitted: its `states:`/`transitions:` block is replaced by an
+// equivalent ```dot graph (edge-centric — each gated transition keeps its gate as
+// a reviewer_skill attribute), and the frontmatter, prose, and any other YAML
+// block (e.g. guardrails) are preserved. ToDOT is idempotent.
+func ToDOT(body string) (string, bool) {
+	if dotBlock(body) != "" {
+		return body, false // already DOT
+	}
+	spec, ok := parseYAML(body)
+	if !ok {
+		return body, false
+	}
+	dot := "```dot\n" + emitDOT(spec, frontmatterName(body)) + "\n```"
+	return replaceYAMLLifecycleBlock(body, dot)
+}
+
+// parseYAML parses the inline-YAML lifecycle grammar (a `states:` block plus
+// `- {from, to[, reviewer_skill]}` transition lines) into a Spec. ok is false
+// when the body declares no states and no transitions.
+func parseYAML(body string) (Spec, bool) {
+	lines := strings.Split(body, "\n")
+	var spec Spec
+	for i, raw := range lines {
+		if strings.TrimSpace(raw) != "states:" {
+			continue
+		}
+		for j := i + 1; j < len(lines); j++ {
+			t := strings.TrimSpace(lines[j])
+			if t == "" {
+				continue
+			}
+			if !strings.HasPrefix(t, "- ") {
+				break
+			}
+			item := strings.TrimSpace(t[2:])
+			if strings.HasPrefix(item, "{") {
+				spec.States = append(spec.States, State{Name: inlineYAMLField(item, "name"), Actor: inlineYAMLField(item, "actor")})
+			} else {
+				spec.States = append(spec.States, State{Name: strings.Trim(item, `"'`)})
+			}
+		}
+		break
+	}
+	for _, raw := range lines {
+		t := strings.TrimSpace(raw)
+		if !strings.HasPrefix(t, "- {") || !strings.Contains(t, "from:") || !strings.Contains(t, "to:") {
+			continue
+		}
+		spec.Transitions = append(spec.Transitions, Transition{
+			From:  inlineYAMLField(t, "from"),
+			To:    inlineYAMLField(t, "to"),
+			Skill: inlineYAMLField(t, "reviewer_skill"),
+		})
+	}
+	if len(spec.States) == 0 && len(spec.Transitions) == 0 {
+		return Spec{}, false
+	}
+	if len(spec.States) == 0 {
+		seen := map[string]bool{}
+		for _, tr := range spec.Transitions {
+			for _, n := range []string{tr.From, tr.To} {
+				if n != "" && !seen[n] {
+					seen[n] = true
+					spec.States = append(spec.States, State{Name: n})
+				}
+			}
+		}
+	}
+	froms := map[string]bool{}
+	for _, tr := range spec.Transitions {
+		froms[tr.From] = true
+	}
+	for i := range spec.States {
+		spec.States[i].Terminal = !froms[spec.States[i].Name]
+	}
+	return spec, true
+}
+
+// emitDOT renders a Spec as a DOT digraph body (edge-centric: a gated transition
+// keeps its gate as a reviewer_skill attribute). Initial states (no incoming) get
+// shape=Mdiamond and terminals shape=Msquare, matching the authored convention.
+func emitDOT(spec Spec, name string) string {
+	indeg := map[string]int{}
+	for _, tr := range spec.Transitions {
+		indeg[tr.To]++
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "digraph %s {\n  rankdir=LR\n\n", sanitizeID(name))
+	for _, s := range spec.States {
+		var attrs []string
+		if indeg[s.Name] == 0 {
+			attrs = append(attrs, "shape=Mdiamond")
+		} else if s.Terminal {
+			attrs = append(attrs, "shape=Msquare")
+		}
+		if s.Actor != "" {
+			attrs = append(attrs, "actor="+s.Actor)
+		}
+		if len(attrs) > 0 {
+			fmt.Fprintf(&b, "  %s [%s]\n", s.Name, strings.Join(attrs, ", "))
+		} else {
+			fmt.Fprintf(&b, "  %s\n", s.Name)
+		}
+	}
+	b.WriteString("\n")
+	for _, tr := range spec.Transitions {
+		if tr.Skill != "" {
+			fmt.Fprintf(&b, "  %s -> %s [reviewer_skill=%q]\n", tr.From, tr.To, tr.Skill)
+		} else {
+			fmt.Fprintf(&b, "  %s -> %s\n", tr.From, tr.To)
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+// replaceYAMLLifecycleBlock swaps the fenced code block containing `states:` (the
+// inline-YAML lifecycle) for the given dot block, leaving every other block (e.g.
+// the guardrails YAML) intact. changed=false when no such block is found.
+func replaceYAMLLifecycleBlock(body, dot string) (string, bool) {
+	lines := strings.Split(body, "\n")
+	inFence, fenceStart, hasStates := false, -1, false
+	start, end := -1, -1
+	for i, ln := range lines {
+		t := strings.TrimSpace(ln)
+		if !inFence {
+			if strings.HasPrefix(t, "```") {
+				inFence, fenceStart, hasStates = true, i, false
+			}
+			continue
+		}
+		if strings.HasPrefix(t, "states:") {
+			hasStates = true
+		}
+		if strings.HasPrefix(t, "```") { // closing fence
+			if hasStates {
+				start, end = fenceStart, i
+				break
+			}
+			inFence = false
+		}
+	}
+	if start < 0 {
+		return body, false
+	}
+	out := append([]string{}, lines[:start]...)
+	out = append(out, strings.Split(dot, "\n")...)
+	out = append(out, lines[end+1:]...)
+	return strings.Join(out, "\n"), true
+}
+
+// frontmatterName returns the `name:` from a markdown frontmatter block, or "".
+func frontmatterName(body string) string {
+	lines := strings.Split(body, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return ""
+	}
+	for j := 1; j < len(lines); j++ {
+		t := strings.TrimSpace(lines[j])
+		if t == "---" {
+			return ""
+		}
+		if strings.HasPrefix(t, "name:") {
+			return strings.Trim(strings.TrimSpace(strings.TrimPrefix(t, "name:")), `"'`)
+		}
+	}
+	return ""
+}
+
+// inlineYAMLField extracts key's value from a YAML inline-map (`{key: val, …}`),
+// trimming quotes; the value runs to the next comma or closing brace.
+func inlineYAMLField(line, key string) string {
+	i := strings.Index(line, key+":")
+	if i < 0 {
+		return ""
+	}
+	rest := strings.TrimLeft(line[i+len(key)+1:], " ")
+	if end := strings.IndexAny(rest, ",}"); end >= 0 {
+		rest = rest[:end]
+	}
+	return strings.Trim(strings.TrimSpace(rest), `"'`)
+}
+
+// sanitizeID makes a safe DOT graph identifier from a workflow name.
+func sanitizeID(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "workflow"
+	}
+	return b.String()
+}
