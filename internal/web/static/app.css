@@ -164,6 +164,11 @@ ol.timeline li::before { content: ""; position: absolute; left: -7px; top: 4px; 
 
 /* Documents */
 .docgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+/* Multi-project homepage cards */
+.proj-card { display: block; border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin-bottom: 10px; background: var(--panel); color: inherit; text-decoration: none; transition: border-color .15s; }
+.proj-card:hover { border-color: var(--accent); }
+.proj-name { font-weight: 600; font-size: 15px; }
+.proj-slug { color: var(--muted); font-family: var(--mono); font-size: 12.5px; font-weight: 400; margin-left: 6px; }
 .doc { display: block; border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; background: var(--panel); color: inherit; text-decoration: none; transition: border-color .15s; }
 a.doc:hover { border-color: var(--accent); }
 .doc .name { font-weight: 600; font-size: 14px; color: var(--accent); }

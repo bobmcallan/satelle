@@ -36,7 +36,7 @@ func init() {
 				if err := config.SaveGlobal(gc); err != nil {
 					return err
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "added %s (%d repos)\n", path, len(gc.Workspace.Repos))
+				fmt.Fprintf(cmd.OutOrStdout(), "added %s (%d repos) — a running `satelle serve --multi` serves it within a few seconds\n", path, len(gc.Workspace.Repos))
 			} else {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s already registered\n", path)
 			}
@@ -62,7 +62,7 @@ func init() {
 				if err := config.SaveGlobal(gc); err != nil {
 					return err
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "removed %s (%d repos)\n", path, len(gc.Workspace.Repos))
+				fmt.Fprintf(cmd.OutOrStdout(), "removed %s (%d repos) — a running `satelle serve --multi` stops serving it within a few seconds\n", path, len(gc.Workspace.Repos))
 			} else {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s was not registered\n", path)
 			}

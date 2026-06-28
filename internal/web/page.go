@@ -252,6 +252,33 @@ const templatesSrc = `
 </body>
 </html>{{end}}
 
+{{define "home"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>satelle · projects</title>
+<script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="app">
+    {{template "topbar" .TopBar}}
+    <h1>satelle<span class="dot">.</span> projects</h1>
+    <div class="meta">{{len .Projects}} projects served · each on its own port</div>
+  </header>
+  {{range .Projects}}<a class="proj-card" href="{{.URL}}">
+    <div class="proj-name">{{.Name}} <span class="proj-slug">/{{.Slug}}</span></div>
+    <div class="meta">{{.Path}}</div>
+    <div class="meta">{{.Stories}} stories · {{.Tasks}} tasks · {{.Docs}} docs</div>
+  </a>{{else}}<div class="empty">no projects registered — run <code>satelle workspace add</code></div>{{end}}
+  <footer class="site-footer"><span class="footer-version">satelle multi-project</span></footer>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>{{end}}
+
 {{define "help"}}<!doctype html>
 <html lang="en">
 <head>
