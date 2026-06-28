@@ -24,7 +24,7 @@ web handler  ─┘
 
 **Satelle's whole local MVP = implement sqlite-backed stores, wire them into the verb
 registry. Then the CLI and the local web server both light up against the local DB,
-unchanged.** OSS is always-local, so dispatch is always in-process — no remote branch.
+unchanged.** satelle is always-local, so dispatch is always in-process — no remote branch.
 
 ## What's reused vs rewritten
 
@@ -71,7 +71,7 @@ trimmed `Config` struct:
   per-user overrides.
 - Keep `[substrate_roots]` (generalized — authored dirs may be outside `.satelle/`)
   and `data_dir`. Drop `server_url`, tokens, `global_publishers`, credstore.
-- Satellites has **no** dispatch `--local` flag (only `install --local`); OSS is
+- Satellites has **no** dispatch `--local` flag (only `install --local`); satelle is
   always-local, so the flag is implicit — keep `install --local`, drop the rest.
 
 ## Workspace

@@ -1,14 +1,14 @@
 # satelle
 
-Local-first, open-core substrate for agent-driven work. Satelle governs the
+Local-first substrate for agent-driven work. Satelle governs the
 authored process — stories, tasks, an evidence ledger, and authored markdown
 (documents, workflows, principles, skills) — backed by a per-repo SQLite
 database. Work moves through a **gated workflow**: the agent executes; isolated
-reviewers gate every status change. The OSS tier runs **100% locally**: a single
+reviewers gate every status change. satelle runs **100% locally**: a single
 static binary, no server, no cgo.
 
-> V6 rebrand and open-core restructure of `satellites`. See [`docs/`](./docs)
-> for the product spec and port architecture.
+> V6 rebrand of `satellites`. See [`docs/`](./docs) for the product spec, port
+> architecture, and the operating model.
 
 ## Install
 
@@ -37,7 +37,7 @@ satelle serve          # local web project page (http://127.0.0.1:8787)
 While `serve` runs, the project page lists every story/task, and each links to a
 trackable detail URL — `http://127.0.0.1:8787/story/<id>` (or `/task/<id>`) —
 showing status, acceptance criteria, and the full ledger timeline. The server is
-local-only (the OSS tier ships no hosted URL).
+local-only (there is no hosted URL).
 
 ### Always-on service
 

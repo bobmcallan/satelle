@@ -1,12 +1,12 @@
 # Satelle docs
 
-V6 rebrand + open-core restructure of `satellites`. Porting *from*
-`../satellites`; that repo stays the working tool until the satelle MVP lands.
+V6 rebrand of `satellites`. Porting *from* `../satellites`; that repo stays the
+working tool until the satelle MVP lands.
 
 ## Read these
 
-- **[spec.md](./spec.md)** — product spec: open-core model, OSS/local tier,
-  database, web server, documents, sync, versioning.
+- **[spec.md](./spec.md)** — product spec: the local-first design, database, web
+  server, documents, sync, versioning.
 - **[architecture.md](./architecture.md)** — the port plan, grounded in a scout of
   `satellites`: the single verb-registry seam, what's reused vs rewritten, the sqlite
   design, config model, the CLI verb-cleanup standard, and the MVP build order.
@@ -114,7 +114,7 @@ Then proceed through build order steps 2–7 in [architecture.md](./architecture
 
 ## Decisions locked (don't relitigate)
 
-- One binary, pluggable backend; OSS is CLI-only + local; MCP is paid-only.
+- One binary, local-only: a CLI plus a local web server, no server tier, no auth.
 - sqlite via pure-Go `modernc.org/sqlite`, per-repo `.satelle/satelle.db`; SQL kept
   libSQL-compatible. Self-migrating inlined schema (workstate pattern).
 - System-of-record split: stories/tasks/ledger in sqlite; workflows/principles/
