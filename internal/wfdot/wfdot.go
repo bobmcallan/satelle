@@ -126,11 +126,22 @@ func Parse(body string) (Spec, bool) {
 		}
 		if strings.Contains(t, "->") {
 			ids := dotEdgeNodes(t)
+			// An edge may carry its gate directly as a `reviewer_skill` attribute
+			// (the edge-centric form, e.g. an intent gate on backlog->in_progress
+			// where the target is an executor node, not a reviewer node).
+			edgeSkill := ""
+			if open := strings.Index(t, "["); open >= 0 {
+				closeAt := strings.LastIndex(t, "]")
+				if closeAt < open {
+					closeAt = len(t)
+				}
+				edgeSkill = strings.TrimPrefix(parseDotAttrs(t[open+1 : closeAt])["reviewer_skill"], "@skill:")
+			}
 			for _, id := range ids {
 				add(id)
 			}
 			for i := 0; i+1 < len(ids); i++ {
-				spec.Transitions = append(spec.Transitions, Transition{From: ids[i], To: ids[i+1]})
+				spec.Transitions = append(spec.Transitions, Transition{From: ids[i], To: ids[i+1], Skill: edgeSkill})
 			}
 			continue
 		}
@@ -155,8 +166,12 @@ func Parse(body string) (Spec, bool) {
 	for _, name := range order {
 		spec.States = append(spec.States, State{Name: name, Actor: nodes[name].actor})
 	}
-	// A transition into a reviewer node is gated by that node's skill.
+	// A transition into a reviewer node is gated by that node's skill — unless the
+	// edge already carries an explicit reviewer_skill attribute, which wins.
 	for i := range spec.Transitions {
+		if spec.Transitions[i].Skill != "" {
+			continue
+		}
 		if to := nodes[spec.Transitions[i].To]; to.actor == "reviewer" && to.skill != "" {
 			spec.Transitions[i].Skill = to.skill
 		}

@@ -112,3 +112,38 @@ func TestValidate(t *testing.T) {
 		t.Errorf("empty spec not caught: %v", p)
 	}
 }
+
+func TestEdgeLevelGate(t *testing.T) {
+	body := `---
+name: b
+---
+` + "```dot" + `
+digraph b {
+  backlog     [shape=Mdiamond]
+  in_progress [actor=executor]
+  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
+  backlog -> in_progress [reviewer_skill="satelle-story-intent-review"]
+  in_progress -> done
+}
+` + "```" + `
+`
+	spec, ok := Parse(body)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	skill := map[string]string{}
+	for _, tr := range spec.Transitions {
+		skill[tr.From+"->"+tr.To] = tr.Skill
+	}
+	// Edge-level reviewer_skill gates an edge into an EXECUTOR node (the intent gate).
+	if got := skill["backlog->in_progress"]; got != "satelle-story-intent-review" {
+		t.Errorf("edge-level gate = %q, want satelle-story-intent-review", got)
+	}
+	// Node-derived gate still works for a reviewer target.
+	if got := skill["in_progress->done"]; got != "satelle-story-done-review" {
+		t.Errorf("node gate = %q, want satelle-story-done-review", got)
+	}
+	if p := Validate(spec); len(p) != 0 {
+		t.Errorf("baseline-shaped DOT should validate clean, got %v", p)
+	}
+}
