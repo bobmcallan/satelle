@@ -1,6 +1,9 @@
 package wfdot
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const sampleDOT = `---
 name: x
@@ -66,5 +69,46 @@ func TestParse(t *testing.T) {
 func TestParseNoBlock(t *testing.T) {
 	if _, ok := Parse("no dot block here\n```yaml\nstates: []\n```"); ok {
 		t.Error("expected ok=false when the body has no dot block")
+	}
+}
+
+func hasProblem(ps []string, substr string) bool {
+	for _, p := range ps {
+		if strings.Contains(p, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestValidate(t *testing.T) {
+	// sampleDOT reaches a reviewer-gated `done` (done-review) — valid.
+	spec, _ := Parse(sampleDOT)
+	if p := Validate(spec); len(p) != 0 {
+		t.Errorf("sampleDOT should validate clean, got %v", p)
+	}
+	// dangling edge endpoint
+	if p := Validate(Spec{States: []State{{Name: "a"}}, Transitions: []Transition{{From: "a", To: "ghost"}}}); !hasProblem(p, "unknown state") {
+		t.Errorf("dangling edge not caught: %v", p)
+	}
+	// no terminal (2-cycle)
+	if p := Validate(Spec{States: []State{{Name: "a"}, {Name: "b"}}, Transitions: []Transition{{From: "a", To: "b"}, {From: "b", To: "a"}}}); !hasProblem(p, "no terminal") {
+		t.Errorf("no-terminal not caught: %v", p)
+	}
+	// done must be terminal
+	if p := Validate(Spec{States: []State{{Name: "done"}, {Name: "x"}}, Transitions: []Transition{{From: "done", To: "x"}}}); !hasProblem(p, "must be terminal") {
+		t.Errorf("done-not-terminal not caught: %v", p)
+	}
+	// missing mandatory spine gate on the edge into done
+	if p := Validate(Spec{States: []State{{Name: "a"}, {Name: "done"}}, Transitions: []Transition{{From: "a", To: "done"}}}); !hasProblem(p, "spine gate") {
+		t.Errorf("missing spine gate not caught: %v", p)
+	}
+	// spine gate present → valid
+	if p := Validate(Spec{States: []State{{Name: "a"}, {Name: "done"}}, Transitions: []Transition{{From: "a", To: "done", Skill: RequiredDoneGate}}}); len(p) != 0 {
+		t.Errorf("valid spine should pass, got %v", p)
+	}
+	// no states
+	if p := Validate(Spec{}); !hasProblem(p, "no states") {
+		t.Errorf("empty spec not caught: %v", p)
 	}
 }

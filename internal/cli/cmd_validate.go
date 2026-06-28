@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/reviewer"
+	"github.com/bobmcallan/satelle/internal/wfdot"
 )
 
 func init() {
@@ -64,6 +65,21 @@ narrow. Exit is non-zero if any doc fails.`,
 				default:
 					failed++
 					fmt.Fprintf(out, "FAIL  %s/%s — %s\n", d.Kind, d.Name, dec.Notes)
+				}
+				// Workflows additionally get a deterministic graph check (DOT only):
+				// structural soundness + the mandatory spine gate. The LLM structure
+				// reviewer judges prose; this judges the graph.
+				if d.Kind == "workflows" {
+					if spec, ok := wfdot.Parse(d.Body); ok {
+						if problems := wfdot.Validate(spec); len(problems) > 0 {
+							for _, p := range problems {
+								failed++
+								fmt.Fprintf(out, "FAIL  workflows/%s (graph) — %s\n", d.Name, p)
+							}
+						} else {
+							fmt.Fprintf(out, "PASS  workflows/%s (graph)\n", d.Name)
+						}
+					}
 				}
 			}
 			fmt.Fprintf(out, "\nvalidated %d, failed %d\n", validated, failed)
