@@ -116,10 +116,10 @@ story. Fails open on any internal error.`,
 	register(hook)
 }
 
-// storyEngaged reports whether any story is in one of the active workflow's
-// executor states (the authored definition of "engaged work"). Fails OPEN: an
-// unopenable store or list error returns true (allow), so the hooks never wedge a
-// session on an internal fault.
+// storyEngaged reports whether any work item — story OR task — is in one of the
+// active workflow's executor states (the authored definition of "engaged work").
+// Fails OPEN: an unopenable store or list error returns true (allow), so the
+// hooks never wedge a session on an internal fault.
 func storyEngaged() bool {
 	a, err := app.Open()
 	if err != nil {
@@ -139,12 +139,20 @@ func storyEngaged() bool {
 			}
 		}
 	}
-	stories, e := a.Store.Stories.List(ctx, workitem.ListFilter{Kind: workitem.KindStory})
+	// All kinds — a task engaged in an executor state counts exactly like a story,
+	// so the commit/edit gates treat engaged tasks the same (sty_3ed91a58).
+	items, e := a.Store.Stories.List(ctx, workitem.ListFilter{})
 	if e != nil {
 		return true // fail open
 	}
-	for _, s := range stories {
-		if engaged[s.Status] {
+	return anyEngaged(items, engaged)
+}
+
+// anyEngaged reports whether any work item (story or task) sits in one of the
+// engaged executor states — the pure core of storyEngaged, split out for testing.
+func anyEngaged(items []workitem.Item, engaged map[string]bool) bool {
+	for _, it := range items {
+		if engaged[it.Status] {
 			return true
 		}
 	}
