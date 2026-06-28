@@ -640,8 +640,8 @@ func (g *Gater) skillBody(ctx context.Context, name string) (string, error) {
 // state across an edge the workflow never declared. The transition format is the
 // inline-map shape the substrate uses, with either a single reviewer or a list:
 //
-//	- {from: backlog, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
-//	- {from: deployed, to: done, reviewer_skills: [satelle-story-done-review, satelle-estimate-actual]}
+//   - {from: backlog, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
+//   - {from: deployed, to: done, reviewer_skills: [satelle-story-done-review, satelle-estimate-actual]}
 //
 // reviewer_skills (the ordered list) takes precedence over reviewer_skill.
 func reviewerSkillsFor(body, from, to string) (skills []string, declared bool) {
