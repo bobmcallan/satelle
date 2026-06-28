@@ -4,7 +4,7 @@
 // node-centric: each DOT node is a step/state carrying an `actor`, each edge a
 // transition, and the edge INTO a reviewer node (whose gate is prompt="@skill:NAME")
 // carries that skill — so a story's status walks the nodes and entry to a reviewer
-// node is the gated transition. See the satelle-recursive-actor-model principle.
+// node is the gated transition. See the satelle-actor-model principle.
 package wfdot
 
 import (
@@ -15,7 +15,7 @@ import (
 // RequiredDoneGate is the mandatory close gate every workflow's path to a `done`
 // terminal must carry — the spine the binary guarantees. A custom workflow that
 // reaches `done` without it fails Validate: the gate cannot be dropped (see the
-// satelle-done-is-last and satelle-recursive-actor-model principles).
+// satelle-done-is-last and satelle-actor-model principles).
 const RequiredDoneGate = "satelle-story-done-review"
 
 // Validate checks a parsed workflow Spec for structural soundness and the

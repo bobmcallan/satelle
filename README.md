@@ -75,7 +75,7 @@ repo it governs.
 Both the CLI and the web server reach data the same way — through one verb
 registry (`CLI / web → verb.Dispatch → store`), so the two surfaces never drift.
 
-## Workflows & gates — the recursive-actor model
+## Workflows & gates — the actor model
 
 satelle governs work as a **gated workflow**: a story or task moves through a
 lifecycle of **steps**, and it is `done` only when its status says so — reached
@@ -101,7 +101,7 @@ the executor runs in-loop.
 
 Process is configuration — change the workflow or its skills, change the process,
 with no binary release. See `satelle help reviewer-checks` and the
-`satelle-recursive-actor-model` and `satelle-dot-standard` principles.
+`satelle-actor-model` and `satelle-dot-standard` principles.
 
 ## Architecture
 
@@ -115,7 +115,7 @@ with no binary release. See `satelle help reviewer-checks` and the
   and a gitignored `satelle.local.toml` overlay.
 
 See [`docs/spec.md`](./docs/spec.md), [`docs/architecture.md`](./docs/architecture.md),
-and [`docs/recursive-actor-model.md`](./docs/recursive-actor-model.md) (the operating
+and [`docs/actor-model.md`](./docs/actor-model.md) (the operating
 model: reviewer premise, DOT workflows, isolated fresh-context review).
 
 ## Development

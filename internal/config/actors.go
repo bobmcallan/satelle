@@ -14,7 +14,7 @@ const ActorsConfigName = "actors.toml"
 // Default actor grants — TODAY's behaviour, so an absent actors.toml changes
 // nothing: the executor drives in-loop (the agent itself); the reviewer runs as
 // an isolated agent with a READ-ONLY tool grant (see the
-// satelle-recursive-actor-model principle — the reviewer is limited to reviewing).
+// satelle-actor-model principle — the reviewer is limited to reviewing).
 const (
 	DefaultExecutorHarness = "in-loop"
 	DefaultReviewerHarness = "claude -p"

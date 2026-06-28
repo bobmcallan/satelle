@@ -1,6 +1,6 @@
-# Satelle — Design: the recursive-actor model
+# Satelle — Design: the actor model
 
-How satelle governs agent-driven work: the **recursive-actor** operating premise,
+How satelle governs agent-driven work: the **actor** operating premise,
 the **DOT** workflow format, and how reviewers run — and where each lives in the
 code. For the storage/port architecture see
 [architecture.md](./architecture.md); for the product framing see [spec.md](./spec.md).
@@ -36,7 +36,7 @@ story set <status>  ─→  reviewer.Gater.Gate  ─→  accept ? enact : block
   item's category, finds the reviewer(s) governing the requested edge, runs them,
   and returns an accept/reject the verb layer enacts.
 
-## Core reviewer operating premise (recursive-actor)
+## Core reviewer operating premise
 
 A workflow is a graph of **steps**, each run by a **defined actor** with a bounded
 grant:
@@ -53,10 +53,10 @@ accept, and *always* through it. Accept enacts the transition; reject blocks it 
 pushes the notes back to the executor, which fixes in place and retries the same
 forward edge. The forbidden move is routing *around* a gate (patching a status,
 relabelling to dodge an edge). This is the
-`satelle-recursive-actor-model` principle (`internal/config/substrate/principles`).
+`satelle-actor-model` principle (`internal/config/substrate/principles`).
 
 The old "reviewer-only" framing made only the reviewer first-class and left the
-executor an unenforced guide; the recursive-actor model **defines both** actors and
+executor an unenforced guide; the actor model **defines both** actors and
 their grants, so the boundary is enforced rather than hoped.
 
 ### Two gate kinds
@@ -144,9 +144,9 @@ payload (the work item + the transition), so the reviewer is *not* asked to codi
 context-retrieval pipeline; it reads what it needs through ordinary read-only tools.
 Second, each invocation is a **clean room** — fresh context, no shared state — which is
 what makes the verdict isolated and reproducible. There is no REPL, no model-driven
-context decomposition, and no recursive LM sub-calls; depth is one. (The "recursive"
-in *recursive-actor* is structural — agents gate agents — not a claim about recursive
-language-model decomposition.)
+context decomposition, and no recursive LM sub-calls; depth is one. (The model is
+structural — agents gate agents — not a claim about recursive language-model
+decomposition.)
 
 ## The actors layer — binding how a step runs
 
@@ -184,4 +184,4 @@ only the model that CLI calls; satelle does not run actors on remote machines.
 | Embedded substrate (defaults) | `internal/config/substrate/{workflows,skills,principles}` |
 
 See `satelle help reviewer-checks` for the live gate descriptions, and the
-`satelle-recursive-actor-model` and `satelle-dot-standard` principles.
+`satelle-actor-model` and `satelle-dot-standard` principles.

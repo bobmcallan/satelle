@@ -4,13 +4,13 @@ scope: system
 kind: workflow
 tags: [kind:workflow]
 applies_to: ["*"]
-description: The canonical order-zero lifecycle every satelle repo inherits from the binary — backlog → in_progress → done, with a cancelled exit — authored in the DOT standard (the recursive-actor model). The begin-work edge is gated by satelle-story-intent-review and the close by satelle-story-done-review (a reviewer node), so a story is judged well-formed before work and quality-checked before it closes. This is the EMBEDDED canonical default (config/substrate/workflows); a repo MAY override it by placing a same-named file under .satelle/workflows, but never edits this source.
+description: The canonical order-zero lifecycle every satelle repo inherits from the binary — backlog → in_progress → done, with a cancelled exit — authored in the DOT standard (the actor model). The begin-work edge is gated by satelle-story-intent-review and the close by satelle-story-done-review (a reviewer node), so a story is judged well-formed before work and quality-checked before it closes. This is the EMBEDDED canonical default (config/substrate/workflows); a repo MAY override it by placing a same-named file under .satelle/workflows, but never edits this source.
 ---
 
 # Baseline workflow (order-zero, gated, DOT)
 
 The default lifecycle the satelle binary ships, authored in the **DOT standard**
-(node-centric — see the `satelle-recursive-actor-model` principle): a story or task
+(node-centric — see the `satelle-actor-model` principle): a story or task
 moves **backlog → in_progress → done** and may exit early to **cancelled**. Each
 gate is an isolated reviewer; the executor never enacts its own transition —
 quality management is the point. This is the minimal order-zero lifecycle; a repo

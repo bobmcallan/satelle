@@ -10,7 +10,7 @@ description: satelle workflows are authored and stored in the DOT standard (Grap
 # Workflows use the DOT standard
 
 satelle workflows are authored and stored as **Graphviz DOT** graphs — the
-node-centric form of the recursive-actor model: each node is a step carrying an
+node-centric form of the actor model: each node is a step carrying an
 `actor`, and a gate is a reviewer node (`prompt="@skill:NAME"`) or an edge
 `reviewer_skill`. DOT is the canonical grammar; inline-YAML is legacy-compat input,
 converted to DOT on ingest.
@@ -18,4 +18,4 @@ converted to DOT on ingest.
 This is a **pointer**, not a tutorial — for the grammar itself see the Graphviz DOT
 language: <https://graphviz.org/doc/info/lang.html>.
 
-See [[satelle-recursive-actor-model]].
+See [[satelle-actor-model]].
