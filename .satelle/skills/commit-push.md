@@ -44,7 +44,7 @@ infra), record that in the evidence and surface it rather than silently retrying
 
 ## Hand-off to the gate
 
-The `commit-push` reviewer ([[satelle-commit-push-reviewer]]) reads your evidence:
+The `commit-push` reviewer ([[satelle-commit-push-review]]) reads your evidence:
 it confirms the CI run for the pushed commit concluded success and summarises the
 slice. Leave the commit SHA, the run URL, and the success conclusion where it can
 find them. You never enact your own status advance — the reviewer's accept does
