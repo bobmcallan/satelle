@@ -23,7 +23,10 @@ satelle is the gatekeeper of status: a status advances only through a reviewer's
 accept.
 
 The release path is deliberate. There is **no deploy state** — pushing to `main`
-IS the release, and CI is the deployment check. The **commit_push** executor step
+IS the release, and CI is the deployment check. The edge into **commit_push** is
+gated by `satelle-code-ac-review` — a read-only pre-commit reviewer that checks the
+implemented code satisfies the story's acceptance criteria and carries the test
+coverage the change warrants, before anything is committed. The **commit_push** executor step
 commits and pushes the slice and watches the GitHub Actions run to conclusion
 (skill `commit-push`); the **committed** gate (`satelle-commit-push-review`, a
 functional check) confirms that CI run concluded success and emits a PR-style
@@ -47,7 +50,9 @@ digraph satelle_workflow {
   done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
   cancelled   [actor=reviewer, prompt="@skill:satelle-story-cancel-review"]
 
-  backlog -> in_progress -> commit_push -> committed -> done
+  backlog -> in_progress
+  in_progress -> commit_push [reviewer_skill="satelle-code-ac-review"]
+  commit_push -> committed -> done
 
   committed   -> in_progress  // recovery: a done-review reject returns to work
 
