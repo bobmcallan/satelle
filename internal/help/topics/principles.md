@@ -13,7 +13,7 @@ Like every authored kind, principles resolve in two layers:
   satelle repo inherits, shipped under `config/substrate/principles`. These are
   the single source of those bytes; a repo never edits them. Current set:
   `satelle-constitution`, `satelle-repo-agnostic`, `satelle-agent-goals`,
-  `satelle-done-is-last`, `satelle-reviewer-model`.
+  `satelle-done-is-last`, `satelle-recursive-actor-model`.
 - **Repo (layered, under `.satelle/principles/`)** — a repo's own principles. A
   repo file with the same name **overrides** the embedded default; a new name
   **adds** to the set. The directory monitor (`satelle index`) syncs them into
@@ -73,7 +73,9 @@ Run `satelle hook context` by hand to see exactly what a session would receive.
   gate; status is the sole proof of done; never route around a gate.
 - **`satelle-done-is-last`** — `done` is always the terminal state; gates precede
   it.
-- **`satelle-reviewer-model`** — the reviewer is the only gate; it judges the
-  outcome (WHAT), not the procedure (HOW); process is configuration.
+- **`satelle-recursive-actor-model`** — every step is run by a defined actor
+  (executor does the work; reviewer is limited to read-only reviewing); each
+  invocation is a recursive call satelle hosts; satelle gates status; process is
+  configuration.
 
 See also: `satelle help reviewer-checks`, `satelle help create-story`.
