@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/reviewer"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 )
@@ -45,12 +46,25 @@ narrow. Exit is non-zero if any doc fails.`,
 			out := cmd.OutOrStdout()
 			validated, failed := 0, 0
 			for _, d := range docs {
-				rev := reviewer.StructureReviewerFor(d.Kind)
-				if rev == "" {
-					continue // no structure reviewer for this kind (e.g. documents)
-				}
 				if nameFilter != "" && d.Name != nameFilter {
 					continue
+				}
+				// Documents have no LLM structure reviewer; instead they get a
+				// deterministic OKF conformance check (a concept doc needs a
+				// non-empty `type`). Reserved index.md/log.md are exempt.
+				if d.Kind == "documents" {
+					validated++
+					if err := docindex.OKFConformance(d.Name, d.Body); err != nil {
+						failed++
+						fmt.Fprintf(out, "FAIL  documents/%s (okf) — %s\n", d.Name, err)
+					} else {
+						fmt.Fprintf(out, "PASS  documents/%s (okf)\n", d.Name)
+					}
+					continue
+				}
+				rev := reviewer.StructureReviewerFor(d.Kind)
+				if rev == "" {
+					continue // no structure reviewer for this kind
 				}
 				dec, err := g.ReviewStructure(context.Background(), rev, d.Kind, d.Name, d.Body)
 				if err != nil {

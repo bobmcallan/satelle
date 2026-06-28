@@ -147,6 +147,14 @@ func (s *Store) Sync(ctx context.Context, dirs map[string]string, now time.Time)
 	var res SyncResult
 	for _, kind := range sortedKeys(dirs) {
 		dir := dirs[kind]
+		// Documents are normalised to the OKF standard BEFORE the skip-unchanged
+		// check, so a frontmatter-less or type-less concept file is back-filled
+		// with OKF frontmatter (required `type` + recommended fields) even when it
+		// was indexed by an earlier build. Idempotent; reserved index.md/log.md and
+		// already-conformant docs are left untouched.
+		if kind == "documents" {
+			normalizeOKFDir(dir)
+		}
 		onDisk, err := walkMarkdown(dir)
 		if err != nil {
 			return res, fmt.Errorf("docindex: scan %s: %w", dir, err)
@@ -180,6 +188,14 @@ func (s *Store) Sync(ctx context.Context, dirs map[string]string, now time.Time)
 				}
 				res.Pruned++
 			}
+		}
+	}
+	// Regenerate the documents bundle-root index.md (OKF progressive disclosure)
+	// from the now-current index. Best-effort: an index write failure must not
+	// fail the whole sync.
+	if dir, ok := dirs["documents"]; ok {
+		if docs, err := s.List(ctx, "documents"); err == nil {
+			_ = s.writeOKFIndex(dir, docs)
 		}
 	}
 	return res, nil
