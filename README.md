@@ -113,7 +113,9 @@ principles.
 - **Config:** per-repo `.satelle/satelle.toml` with defaults for every setting
   and a gitignored `satelle.local.toml` overlay.
 
-See [`docs/spec.md`](./docs/spec.md) and [`docs/architecture.md`](./docs/architecture.md).
+See [`docs/spec.md`](./docs/spec.md), [`docs/architecture.md`](./docs/architecture.md),
+and [`docs/recursive-actor-model.md`](./docs/recursive-actor-model.md) (the operating
+model: reviewer premise, DOT workflows, RLM execution).
 
 ## Development
 

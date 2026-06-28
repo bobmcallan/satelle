@@ -10,6 +10,11 @@ V6 rebrand + open-core restructure of `satellites`. Porting *from*
 - **[architecture.md](./architecture.md)** — the port plan, grounded in a scout of
   `satellites`: the single verb-registry seam, what's reused vs rewritten, the sqlite
   design, config model, the CLI verb-cleanup standard, and the MVP build order.
+- **[recursive-actor-model.md](./recursive-actor-model.md)** — the operating model:
+  the recursive-actor reviewer premise (executor does the work, read-only reviewers
+  gate status), the flexible DOT workflow format (node + edge gates, YAML→DOT at
+  ingest, validation + spine), the RLM execution model and how it's implemented, and
+  the actors layer — with package/file pointers.
 
 ## Status (2026-06-26)
 
