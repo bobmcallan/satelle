@@ -8,7 +8,7 @@ satelle runs **100% locally**: a single static binary, a per-repo SQLite databas
 no server, no cgo, no auth. It governs agent-driven work — stories, tasks, an
 evidence ledger, and authored markdown (documents, workflows, principles, skills) —
 through a **gated workflow**: the agent executes; isolated reviewers gate every
-status change (see [recursive-actor-model.md](./recursive-actor-model.md)).
+status change (see [actor-model.md](./actor-model.md)).
 
 An actor's **agent CLI** and grant are bound in `.satelle/actors.toml`: a repo can
 select the reviewer's CLI (`claude` works; `codex` is a selectable stub) and its

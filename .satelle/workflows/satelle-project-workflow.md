@@ -1,18 +1,18 @@
 ---
-name: satelle-recursive-actor-workflow
+name: satelle-project-workflow
 scope: project
 kind: workflow
 tags: [kind:workflow]
 applies_to: ["*"]
-description: This repo's project-scope workflow, authored in DOT (the recursive-actor model). A story or task moves backlog → in_progress → commit_push → committed → done, with a cancelled exit. It is node-centric: each node is a step carrying an actor; the executor does the work, a reviewer node gates entry via its prompt=@skill gate. The commit_push executor step commits/pushes and watches CI; the committed reviewer (satelle-commit-push-review) confirms the CI run succeeded and emits a PR-style summary; done is the acceptance gate. There is no deploy state — the push to main IS the release, verified by CI. done stays terminal (satelle-done-is-last); a project workflow takes precedence over the embedded satelle-baseline-workflow.
+description: This repo's project-scope workflow, authored in DOT (the actor model). A story or task moves backlog → in_progress → commit_push → committed → done, with a cancelled exit. It is node-centric: each node is a step carrying an actor; the executor does the work, a reviewer node gates entry via its prompt=@skill gate. The commit_push executor step commits/pushes and watches CI; the committed reviewer (satelle-commit-push-review) confirms the CI run succeeded and emits a PR-style summary; done is the acceptance gate. There is no deploy state — the push to main IS the release, verified by CI. done stays terminal (satelle-done-is-last); a project workflow takes precedence over the embedded satelle-baseline-workflow.
 ---
 
-# satelle workflow (project) — recursive-actor, authored in DOT
+# satelle workflow (project) — the actor model, authored in DOT
 
 > **This is a project workflow** under `.satelle/workflows`, the ACTIVE workflow
 > for this repo: a project-scope workflow takes precedence over the binary's
 > embedded **system** default `satelle-baseline-workflow`. See the
-> `satelle-repo-agnostic` and `satelle-recursive-actor-model` principles.
+> `satelle-repo-agnostic` and `satelle-actor-model` principles.
 
 A work item moves **backlog → in_progress → commit_push → committed → done**, and
 may exit early to **cancelled**. The lifecycle is the **DOT graph** below

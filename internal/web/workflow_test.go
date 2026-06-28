@@ -72,7 +72,7 @@ func TestFrontmatterListWeb(t *testing.T) {
 }
 
 const sampleWorkflowDOT = `---
-name: satelle-recursive-actor-workflow
+name: satelle-project-workflow
 applies_to: ["*"]
 ---
 # Recursive-actor (DOT)

@@ -1,13 +1,13 @@
 ---
-name: satelle-recursive-actor-model
+name: satelle-actor-model
 scope: system
 kind: principle
 tags: [kind:principle, principles:global]
 applies_to: ["*"]
-description: The recursive-actor execution model (supersedes the reviewer-only model). A workflow is a graph of steps, each run by a DEFINED actor with a bounded grant — the executor does the work (mutates the tree), the reviewer is LIMITED to reviewing (read-only, judges the OUTCOME not the procedure, returns a verdict, never mutates). Each actor invocation is isolated: satelle spawns a fresh-context agent with the step's skill as the prompt over a payload it builds (the work item + the transition) and aggregates the structured return. satelle stays the status gatekeeper — a reviewer's accept is the only thing that advances a gated status. How and where an actor runs (in-loop, isolated `agent -p`, or another harness) is the actors layer. "Recursive" is structural — agents gate agents — not a claim about recursive context decomposition.
+description: The actor execution model (supersedes the reviewer-only model). A workflow is a graph of steps, each run by a DEFINED actor with a bounded grant — the executor does the work (mutates the tree), the reviewer is LIMITED to reviewing (read-only, judges the OUTCOME not the procedure, returns a verdict, never mutates). Each actor invocation is isolated: satelle spawns a fresh-context agent with the step's skill as the prompt over a payload it builds (the work item + the transition) and aggregates the structured return. satelle stays the status gatekeeper — a reviewer's accept is the only thing that advances a gated status. How and where an actor runs (in-loop, isolated `agent -p`, or another harness) is the actors layer. The model is structural — agents gate agents — not a claim about recursive context decomposition.
 ---
 
-# The recursive-actor execution model
+# The actor execution model
 
 satelle runs one model: a story moves through a graph of **steps**, each step is
 run by a **defined actor**, and the story's **status** decides what is valid now.
@@ -45,11 +45,11 @@ with the skill, the transition payload, and a read-only grant, and parses one
 constructs); the actor reads what it needs through its own tools. There is no
 shared state between invocations — each gate is a clean room.
 
-The "recursive" in recursive-actor is **structural**: agents gate agents — the
-executor's progress advances only when satelle invokes an isolated reviewer to
-judge it. It is *not* a claim that an actor recursively decomposes context; the
-context a reviewer sees is the payload satelle hands it plus what it reads under
-its grant. A reviewer reading more is still read-only.
+The model is **structural**: agents gate agents — the executor's progress
+advances only when satelle invokes an isolated reviewer to judge it. It is *not*
+a claim that an actor recursively decomposes context; the context a reviewer sees
+is the payload satelle hands it plus what it reads under its grant. A reviewer
+reading more is still read-only.
 
 ## The actors layer binds how a step runs
 

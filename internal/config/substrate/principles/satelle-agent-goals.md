@@ -29,4 +29,4 @@ the workflow, not a normal step on its path.
 **One story at a time.** Drive a single engaged story to its terminal state
 before engaging another.
 
-See [[satelle-recursive-actor-model]], [[satelle-done-is-last]], [[satelle-constitution]].
+See [[satelle-actor-model]], [[satelle-done-is-last]], [[satelle-constitution]].

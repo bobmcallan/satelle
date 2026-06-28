@@ -1,6 +1,6 @@
 # Reviewer checks — the gates on a story
 
-satelle runs the **recursive-actor model** (see the `satelle-recursive-actor-model`
+satelle runs the **actor model** (see the `satelle-actor-model`
 principle): a story moves through a graph of **steps**, each run by a **defined
 actor**, and the story's **status** decides what is valid now. The agent's goal is
 to drive the story to `done`; satelle is the **gatekeeper of status** — a status
