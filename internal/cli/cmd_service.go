@@ -161,14 +161,16 @@ func serviceStatusCmd() *cobra.Command {
 
 // systemdUnit renders the unit file content for the service. Pure (testable):
 // the ExecStart bakes in the resolved addr/port and WorkingDirectory selects
-// the served repo, so the running service needs no config lookup of its own.
+// the bound repo. --multi makes the service serve every registered project (the
+// bound repo plus the workspace registry); with only the bound repo registered
+// it transparently serves that one repo, so the default stays unchanged.
 func systemdUnit(binPath, repo, addr string, port int) string {
 	return fmt.Sprintf(`[Unit]
 Description=satelle web server (project page)
 After=network.target
 
 [Service]
-ExecStart=%s serve --addr %s --port %d
+ExecStart=%s serve --multi --addr %s --port %d
 WorkingDirectory=%s
 Restart=on-failure
 RestartSec=2
@@ -232,7 +234,7 @@ func printWindowsGuidance(out io.Writer, bin, repo, addr string, port int) {
 	fmt.Fprintln(out, "\nNative Windows has no systemd. To run the service on login, create a")
 	fmt.Fprintln(out, "Task Scheduler task (Trigger: At log on; Action: Start a program):")
 	fmt.Fprintf(out, "  Program:   %s\n", bin)
-	fmt.Fprintf(out, "  Arguments: serve --addr %s --port %d\n", addr, port)
+	fmt.Fprintf(out, "  Arguments: serve --multi --addr %s --port %d\n", addr, port)
 	fmt.Fprintf(out, "  Start in:  %s\n", repo)
 	fmt.Fprintf(out, "Then browse http://localhost:%d\n", port)
 }
