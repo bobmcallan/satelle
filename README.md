@@ -3,8 +3,9 @@
 Local-first, open-core substrate for agent-driven work. Satelle governs the
 authored process — stories, tasks, an evidence ledger, and authored markdown
 (documents, workflows, principles, skills) — backed by a per-repo SQLite
-database. The OSS tier runs **100% locally**: a single static binary, no server,
-no cgo.
+database. Work moves through a **gated workflow**: the agent executes; isolated
+reviewers gate every status change. The OSS tier runs **100% locally**: a single
+static binary, no server, no cgo.
 
 > V6 rebrand and open-core restructure of `satellites`. See [`docs/`](./docs)
 > for the product spec and port architecture.
@@ -74,9 +75,38 @@ repo it governs.
 Both the CLI and the web server reach data the same way — through one verb
 registry (`CLI / web → verb.Dispatch → store`), so the two surfaces never drift.
 
+## Workflows & gates — the recursive-actor model
+
+satelle governs work as a **gated workflow**: a story or task moves through a
+lifecycle of **steps**, and it is `done` only when its status says so — reached
+through every gate on the path.
+
+- **The agent is the executor** — it does the work and drives the story forward.
+- **satelle is the gatekeeper of status** — each forward transition is judged by
+  an isolated, fresh-context **reviewer** (an `agent -p` rubric, or a deterministic
+  functional check). Accept enacts the transition; reject pushes notes back. A
+  reviewer is **read-only** — it judges, never mutates. Each invocation is a
+  recursive LM call over a transformed context subset (the RLM pattern).
+
+Workflows are **authored substrate** in the **DOT standard** (Graphviz): a
+node-centric graph where each node is a step carrying an `actor`
+(`executor`/`reviewer`) and a reviewer node names its gate (`prompt="@skill:NAME"`,
+or an edge `reviewer_skill`). The embedded `satelle-baseline-workflow`
+(`backlog → in_progress → done`) is the order-zero default; a repo overrides it
+under `.satelle/workflows`, and a YAML lifecycle is auto-converted to DOT on
+ingest. How each actor runs (in-loop, isolated `agent -p`, or another harness) is
+bound in `.satelle/actors.toml`.
+
+Process is configuration — change the workflow or its skills, change the process,
+with no binary release. See `satelle help reviewer-checks` and the
+`satelle-recursive-actor-model`, `satelle-dot-standard`, and `satelle-rlm-standard`
+principles.
+
 ## Architecture
 
 - **Pure-Go SQLite** (`modernc.org/sqlite`, no cgo) — one static binary.
+- **Gated workflows:** authored DOT lifecycles drive each story; isolated
+  reviewers gate status transitions, with the actor backend bound per repo.
 - **System-of-record split:** stories/tasks/ledger are dynamic SQLite rows;
   authored markdown is the source of truth, synced into a SQLite index by a
   directory monitor.
