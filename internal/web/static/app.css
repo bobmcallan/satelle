@@ -101,6 +101,9 @@ header.app h1 .dot { color: var(--accent); }
 .fchip.is-default { background: #eef2f7; color: #64748b; }
 .fchip button { border: 0; background: none; color: inherit; font-size: 13px; line-height: 1; padding: 0; opacity: .6; }
 .fchip button:hover { opacity: 1; }
+.fchip-clear { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--chip); background: none; color: #64748b; font-size: 12px; cursor: pointer; }
+.fchip-clear:hover { color: #374151; border-color: #94a3b8; }
 
 /* Tables — base th/td/table styling is global; these are the panel variants. */
 .panel-table tr.row { cursor: pointer; }

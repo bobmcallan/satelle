@@ -165,6 +165,18 @@
         input.value = (input.value.trim() + " order:none").trim(); applyFilter(panel);
       });
     }
+    // Clear-all: one click back to defaults. Shown only when an explicit
+    // filter/order/free-text token is set (nothing to clear on an empty input),
+    // sitting in line with the default chips.
+    if (input && input.value.trim() !== "") {
+      var clr = document.createElement("button");
+      clr.type = "button";
+      clr.className = "fchip-clear";
+      clr.textContent = "clear all";
+      clr.setAttribute("aria-label", "clear all filters");
+      clr.addEventListener("click", function () { input.value = ""; applyFilter(panel); });
+      box.appendChild(clr);
+    }
   }
 
   function rebuild(parsed, dropFilter, dropFree, dropOrder) {
