@@ -24,9 +24,11 @@ accept.
 
 The release path is deliberate. There is **no deploy state** — pushing to `main`
 IS the release, and CI is the deployment check. The edge into **commit_push** is
-gated by `satelle-code-ac-review` — a read-only pre-commit reviewer that checks the
-implemented code satisfies the story's acceptance criteria and carries the test
-coverage the change warrants, before anything is committed. The **commit_push** executor step
+gated twice before anything is committed: `satelle-code-ac-review` — a read-only
+pre-commit reviewer that checks the implemented code satisfies the story's
+acceptance criteria and carries the test coverage the change warrants — then
+`satelle-integration-check`, an always-on functional gate that runs the local
+integration suite (`make integration`) and rejects on a red run. The **commit_push** executor step
 commits and pushes the slice and watches the GitHub Actions run to conclusion
 (skill `commit-push`); the **committed** gate (`satelle-commit-push-review`, a
 functional check) confirms that CI run concluded success and emits a PR-style
