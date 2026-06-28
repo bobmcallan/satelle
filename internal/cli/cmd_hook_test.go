@@ -118,6 +118,37 @@ func TestBashCommandFromEvent(t *testing.T) {
 	}
 }
 
+func TestFilePathFromEvent(t *testing.T) {
+	if got := filePathFromEvent([]byte(`{"tool_input":{"file_path":"/a/b.go"}}`)); got != "/a/b.go" {
+		t.Errorf("file_path = %q, want /a/b.go", got)
+	}
+	if got := filePathFromEvent([]byte(`{"tool_input":{"notebook_path":"/a/n.ipynb"}}`)); got != "/a/n.ipynb" {
+		t.Errorf("notebook_path = %q, want /a/n.ipynb", got)
+	}
+	if got := filePathFromEvent([]byte(`{}`)); got != "" {
+		t.Errorf("absent path should yield empty, got %q", got)
+	}
+}
+
+func TestWithinRoot(t *testing.T) {
+	const root = "/home/u/repo"
+	cases := []struct {
+		target string
+		want   bool // true = inside repo (gate applies); false = outside (allowed)
+	}{
+		{"/home/u/repo/internal/x.go", true},  // absolute, in-repo
+		{"internal/x.go", true},               // relative, resolved under the repo cwd
+		{"/tmp/claude/scratch/foo.sh", false}, // session scratchpad — outside
+		{"/home/u/other/x.go", false},         // sibling dir — outside
+		{"", true},                            // empty target — stay conservative
+	}
+	for _, c := range cases {
+		if got := withinRoot(root, c.target); got != c.want {
+			t.Errorf("withinRoot(%q, %q) = %v, want %v", root, c.target, got, c.want)
+		}
+	}
+}
+
 func TestExecutorStatesDOT(t *testing.T) {
 	body := `---
 name: x
