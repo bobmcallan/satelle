@@ -47,6 +47,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 	if gc, gerr := config.LoadGlobal(); gerr == nil {
 		if runner, rerr := agentcli.NewRunner(gc.Agent.ResolveCLI()); rerr == nil {
 			rev := reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, "")
+			applyActorGrants(rev, a)
 			verb.SetTransitionGater(rev)
 			// The summariser recaps gated transitions; inert until gating is active.
 			verb.SetStepSummariser(rev)
@@ -94,5 +95,16 @@ func gaterForCmd(cmd *cobra.Command) (*reviewer.Gater, *app.App, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("an agent CLI is required: %w", err)
 	}
-	return reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, ""), a, nil
+	rev := reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, "")
+	applyActorGrants(rev, a)
+	return rev, a, nil
+}
+
+// applyActorGrants resolves the actors layer (.satelle/actors.toml) and binds the
+// reviewer's tool grant onto the gater. An absent file yields today's read-only
+// default, so behaviour is unchanged unless a repo authors actors.toml.
+func applyActorGrants(rev *reviewer.Gater, a *app.App) {
+	if actors, err := config.LoadActors(filepath.Dir(a.DBPath)); err == nil {
+		rev.SetReviewerTools(actors.ReviewerBinding().Tools)
+	}
 }
