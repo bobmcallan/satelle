@@ -7,7 +7,72 @@
 // node is the gated transition. See the satelle-recursive-actor-model principle.
 package wfdot
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
+
+// RequiredDoneGate is the mandatory close gate every workflow's path to a `done`
+// terminal must carry — the spine the binary guarantees. A custom workflow that
+// reaches `done` without it fails Validate: the gate cannot be dropped (see the
+// satelle-done-is-last and satelle-recursive-actor-model principles).
+const RequiredDoneGate = "satelle-story-done-review"
+
+// Validate checks a parsed workflow Spec for structural soundness and the
+// mandatory spine, returning human-readable problems (empty = valid):
+//   - at least one state;
+//   - every transition endpoint is a declared state (no dangling edge);
+//   - at least one terminal state (a state with no outgoing edge);
+//   - a state named "done", if present, is terminal;
+//   - every path into "done" carries RequiredDoneGate (the spine gate).
+func Validate(spec Spec) []string {
+	if len(spec.States) == 0 {
+		return []string{"workflow has no states"}
+	}
+	known := map[string]bool{}
+	for _, s := range spec.States {
+		known[s.Name] = true
+	}
+	hasOut := map[string]bool{}
+	var problems []string
+	for _, tr := range spec.Transitions {
+		if !known[tr.From] {
+			problems = append(problems, fmt.Sprintf("transition from unknown state %q", tr.From))
+		}
+		if !known[tr.To] {
+			problems = append(problems, fmt.Sprintf("transition to unknown state %q", tr.To))
+		}
+		hasOut[tr.From] = true
+	}
+	terminal := 0
+	for _, s := range spec.States {
+		if !hasOut[s.Name] {
+			terminal++
+		}
+	}
+	if terminal == 0 {
+		problems = append(problems, "workflow has no terminal state (every state has an outgoing edge)")
+	}
+	if known["done"] {
+		if hasOut["done"] {
+			problems = append(problems, `state "done" must be terminal (it has an outgoing edge)`)
+		}
+		into, gated := 0, 0
+		for _, tr := range spec.Transitions {
+			if tr.To == "done" {
+				into++
+				if tr.Skill == RequiredDoneGate {
+					gated++
+				}
+			}
+		}
+		if into > 0 && gated == 0 {
+			problems = append(problems, fmt.Sprintf(
+				"the edge into \"done\" must be gated by the mandatory %s — the spine gate cannot be dropped", RequiredDoneGate))
+		}
+	}
+	return problems
+}
 
 // State is one workflow node. Terminal is true when no transition leaves it.
 type State struct {
