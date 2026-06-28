@@ -3,7 +3,7 @@ name: satelle-code-ac-review
 scope: project
 kind: skill
 tags: [kind:skill, type:reviewer]
-description: Pre-commit gate for in_progress → commit_push. An isolated, read-only reviewer judges that the implemented code in the working tree satisfies the story's acceptance criteria AND that test coverage appropriate to the change was developed — integration tests for behavioural/runtime changes, unit tests for logic, none required for docs/substrate-only changes. Repo skill for the satelle dogfood; pushes back with specifics so the executor fixes before committing.
+description: Pre-commit gate for the in_progress step. An isolated, read-only reviewer judges that the implemented code in the working tree satisfies the story's acceptance criteria AND that BOTH unit tests and integration tests were created for a code/behavioural change — rejecting when either is missing; only a docs/substrate-only change that cannot carry tests is exempt. Repo skill for the satelle dogfood; pushes back with specifics so the executor fixes before committing.
 ---
 
 # Code vs acceptance-criteria review (pre-commit gate)
@@ -21,25 +21,31 @@ the code present in the working tree plausibly satisfies each — the named file
 exist and contain the described change, the behaviour is implemented, not merely
 stubbed or TODO'd.
 
-Then judge **test coverage appropriate to the change**:
+Then confirm the change carries **both kinds of test**:
 
-- A **behavioural or runtime** change (a feature, a fix that changes what the app
-  does, a new endpoint or command path) should carry tests that exercise it —
-  an integration test where the behaviour only shows end-to-end, unit tests where
-  the logic is unit-checkable. Look for the tests in the diff/tree.
-- A **docs-only, comment-only, rename, or substrate-only** change (markdown,
-  workflow/skill/principle authoring, config) needs no integration test; treat
-  test coverage as satisfied when the change itself is the deliverable.
+- **Unit tests** for the change's logic — created/updated in the diff/tree,
+  asserting the new or fixed behaviour at the unit level.
+- **Integration tests** for the change's behaviour — created/updated so the
+  behaviour is exercised end-to-end (the project's integration suite).
+
+For a **code or behavioural** change (a feature, a fix that changes what the app
+does, a new endpoint or command path) **both** are required: reject if unit tests
+OR integration tests for the change are missing. Only a **docs-only, comment-only,
+rename, or substrate-only** change (markdown, workflow/skill/principle authoring,
+config) that genuinely cannot carry tests is exempt — there, treat coverage as
+satisfied when the change itself is the deliverable.
 
 - **Accept** when every acceptance criterion is plausibly met by visible code and
-  the change carries the test coverage its nature calls for.
+  the change carries both unit and integration tests (or is a test-exempt
+  docs/substrate change).
 - **Reject** when a criterion is unmet/unaddressed, the implementation is a stub,
-  OR a behavioural change ships with no test exercising it. Name the specific gap
-  so the executor can fix and resubmit.
+  OR a code change is missing unit tests, integration tests, or both. Name the
+  specific gap (which criterion, or which kind of test) so the executor can fix
+  and resubmit.
 
-Be a fair gate, not a perfectionist: judge the acceptance criteria as written and
-demand only the coverage the change genuinely warrants — do not require an
-integration test for a change that cannot have one.
+Be a fair gate, not a perfectionist: judge the acceptance criteria as written, and
+require both unit and integration tests only for a change that can actually carry
+them — do not demand tests of a pure docs/substrate change.
 
 ## Verdict
 
