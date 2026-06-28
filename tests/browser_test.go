@@ -315,6 +315,63 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 	})
 }
 
+// TestBrowserTagChipFiltering drives the click-a-tag-chip path: clicking a tag
+// chip on a row adds its token to the panel filter (not expand the row), and
+// clicking the same chip again is a deduped no-op.
+func TestBrowserTagChipFiltering(t *testing.T) {
+	base, repo := serveRepo(t, "8809")
+	mustRun(t, testBin, repo, "story", "create", "--title", "Tagged Story", "--tags", "demo")
+	mustRun(t, testBin, repo, "story", "create", "--title", "Untagged Story")
+
+	ctx := newChrome(t)
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/"),
+		chromedp.WaitVisible(`#panel-stories table.panel-table`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("load page: %v", err)
+	}
+
+	chipSel := `#panel-stories tr.row .tagchip[data-filter="tags:demo"]`
+	if !waitCond(t, ctx, fmt.Sprintf(`!!document.querySelector('%s')`, chipSel), 5*time.Second) {
+		t.Fatal("demo tag chip did not render")
+	}
+
+	// Click the chip → the filter input gains the token and the matching chip
+	// shows; the row must NOT have expanded.
+	clickJS(t, ctx, chipSel)
+	if !waitCond(t, ctx,
+		`document.querySelector('#panel-stories .filterbar input').value.trim() === 'tags:demo'`,
+		3*time.Second) {
+		t.Error("clicking the tag chip should set the filter input to tags:demo")
+	}
+	if !hasChip(t, ctx, "stories", "tags:demo") {
+		t.Error("expected a tags:demo removable chip after clicking the tag")
+	}
+	if c := countExpansions(t, ctx); c != 0 {
+		t.Errorf("clicking a tag chip must not expand a row; got %d expansions", c)
+	}
+
+	// Click the chip again → deduped: still a single token, no duplication.
+	clickJS(t, ctx, chipSel)
+	if !waitCond(t, ctx,
+		`document.querySelector('#panel-stories .filterbar input').value.trim() === 'tags:demo'`,
+		3*time.Second) {
+		t.Error("clicking the chip again should be a deduped no-op (no duplicate token)")
+	}
+}
+
+// countExpansions returns how many inline expansion rows are open in the stories
+// panel.
+func countExpansions(t *testing.T, ctx context.Context) int {
+	t.Helper()
+	var n int
+	if err := chromedp.Run(ctx, chromedp.Evaluate(
+		`document.querySelectorAll('#panel-stories tr.expansion').length`, &n)); err != nil {
+		t.Fatalf("countExpansions: %v", err)
+	}
+	return n
+}
+
 // TestBrowserUserPath walks a realistic session: a user opens the project page
 // and expands a story while the agent (a separate CLI process) progresses that
 // story — asserting the open expansion's timeline grows LIVE without collapsing,

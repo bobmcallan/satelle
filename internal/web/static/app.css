@@ -59,6 +59,12 @@ footer { margin-top: 40px; color: var(--muted); font-size: 12px; border-top: 1px
 .tagchip.kv .k { background: var(--accent); color: #fff; padding: 0 5px; font-weight: 600; }
 .tagchip.kv .v { background: var(--chip); color: var(--ink); padding: 0 6px; }
 .tagchip.kv.cat .k { background: #b45309; } /* category: distinct (amber) key, like satellites */
+/* A clickable chip is a <button> that adds its tag to the panel filter; reset the
+   button chrome so it reads identically to the span chip, plus a click affordance. */
+button.tagchip { font-family: inherit; border: 0; margin: 0; cursor: pointer; }
+button.tagchip:not(.kv) { padding: 0 6px; } /* match the span chip's box (kv resets padding itself) */
+button.tagchip:hover { filter: brightness(1.12); }
+button.tagchip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* Header */
 header.app { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 18px; }
