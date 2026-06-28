@@ -34,6 +34,12 @@ only judges).
    the story as evidence — a ledger note or a story tag — so the next gate can read
    it without re-deriving it. The commit SHA, the run URL, and the conclusion are
    the proof the deployment worked.
+5. **Refresh the local service.** This workflow has no deploy gate — CI is the real
+   deployment check — so nothing else restarts the running `satelle serve`. Once CI
+   is green, rebuild and reinstall the local service from the pushed code so the web
+   UI the operator views reflects released `main`:
+   `go build -o satelle ./cmd/satelle && satelle service install`. Without this the
+   UI stales (a freshly authored workflow renders "no states" from the old process).
 
 ## When it fails
 
