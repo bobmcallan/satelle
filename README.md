@@ -95,8 +95,9 @@ node-centric graph where each node is a step carrying an `actor`
 or an edge `reviewer_skill`). The embedded `satelle-baseline-workflow`
 (`backlog → in_progress → done`) is the order-zero default; a repo overrides it
 under `.satelle/workflows`, and a YAML lifecycle is auto-converted to DOT on
-ingest. How each actor runs (in-loop, isolated `agent -p`, or another harness) is
-bound in `.satelle/actors.toml`.
+ingest. How each actor runs is bound in `.satelle/actors.toml` — the reviewer's
+agent CLI (`claude` works; `codex` is a selectable stub) and its read-only grant;
+the executor runs in-loop.
 
 Process is configuration — change the workflow or its skills, change the process,
 with no binary release. See `satelle help reviewer-checks` and the

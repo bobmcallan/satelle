@@ -682,3 +682,16 @@ func TestSetReviewerTools(t *testing.T) {
 		t.Errorf("empty override should be a no-op, tools = %q", g.tools)
 	}
 }
+
+func TestSetRunner(t *testing.T) {
+	g := New(nil, nil, "", "")
+	r, _ := agentcli.NewRunner("codex")
+	g.SetRunner(r)
+	if g.runner == nil || g.runner.Name() != "codex" {
+		t.Fatalf("SetRunner should override the runner, got %v", g.runner)
+	}
+	g.SetRunner(nil) // nil is ignored
+	if g.runner == nil || g.runner.Name() != "codex" {
+		t.Errorf("a nil runner must be ignored")
+	}
+}

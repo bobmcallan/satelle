@@ -10,11 +10,11 @@ evidence ledger, and authored markdown (documents, workflows, principles, skills
 through a **gated workflow**: the agent executes; isolated reviewers gate every
 status change (see [recursive-actor-model.md](./recursive-actor-model.md)).
 
-Distribution is a property of that model, not a separate product. An actor's
-backend is bound in `.satelle/actors.toml`, so a reviewer (or executor) may run
-in-loop, as an isolated `agent -p`, or on a **remote** harness — remote execution
-is the reviewer/actor model with a remote backend, *configured*, not a separate
-product.
+An actor's **agent CLI** and grant are bound in `.satelle/actors.toml`: a repo can
+select the reviewer's CLI (`claude` works; `codex` is a selectable stub) and its
+read-only tool grant without touching the workflow. The CLI is a local subprocess
+that calls a remote model — that is the only "remote" in play; satelle itself stays
+local and runs no actors on remote machines.
 
 ## Local-first
 
@@ -60,10 +60,8 @@ or online database connection.
 
 ### Sync
 
-- satelle is local-only — there is no remote database to sync to. Distributed work
-  is expressed through the **actors layer** (an actor bound to a remote backend),
-  not a sync protocol. SQL is kept libSQL-compatible so replica sync could be added
-  later.
+- satelle is local-only — there is no remote database to sync to. SQL is kept
+  libSQL-compatible so replica sync could be added later.
 
 ### Logging
 

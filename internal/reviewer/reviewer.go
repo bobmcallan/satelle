@@ -93,6 +93,15 @@ func (g *Gater) SetReviewerTools(tools string) {
 	}
 }
 
+// SetRunner overrides the reviewer's agent-CLI runner — the actors layer's
+// `reviewer` harness binding, resolved to a Runner. A nil runner is ignored,
+// keeping the default configured at construction (the global `[agent] cli`).
+func (g *Gater) SetRunner(r agentcli.Runner) {
+	if r != nil {
+		g.runner = r
+	}
+}
+
 // execCheck runs command via `bash -c` in dir, returning combined stdout+stderr.
 // bash (not sh) so a multi-line self-contained check embedded in a skill may use
 // ordinary shell scripting.

@@ -160,13 +160,16 @@ behaviour:
 [reviewer] harness = "claude -p";  tools = "Read,Grep,Glob" # isolated, read-only
 ```
 
-An absent file is exactly today's behaviour. A repo may rebind a backend or grant —
-run the executor as `agent -p`, or point an actor at another harness, **including a
-remote one** — without touching the workflow; the read-only limit travels with the
-binding. **Remote/distributed execution is this binding, not a separate product:** a
-reviewer that runs on a remote backend is still the same reviewer model. The reviewer
-`Gater` reads the resolved reviewer grant via `SetReviewerTools`, wired in
-`internal/cli/app.go`.
+An absent file is exactly today's behaviour. A repo may rebind the reviewer's **agent
+CLI** or its grant without touching the workflow — e.g. `harness = "codex -p"` to
+select a different CLI; the read-only limit travels with the binding.
+
+What is **wired today**: the reviewer's tool grant (`SetReviewerTools`) and its agent
+CLI — `app.go` resolves the leading CLI name from the harness via
+`agentcli.RunnerFromHarness` and sets it on the `Gater` (`SetRunner`). `claude` works
+end-to-end; `codex` is **selectable but a stub** until its headless argv is mapped. The
+executor still runs in-loop. The harness is a local subprocess — the "remote" in play is
+only the model that CLI calls; satelle does not run actors on remote machines.
 
 ## Implementation map
 

@@ -115,10 +115,10 @@ clean break (new binary), so no back-comat burden.
 5. **Local web server**: strip auth/OAuth/SSE, render the project page from local
    sqlite via the same verbs. Single repo first.
 6. **Workspace aggregation**: `~/.satelle/` registry + multi-repo web view.
-7. **Remote actors (off by default)**: distributed execution is a configuration of
-   the reviewer/actor model — bind an actor to a remote backend in `.satelle/actors.toml`;
-   local-only out of the box. (SQL stays libSQL-compatible so replica sync could slot
-   in later.)
+7. **Pluggable actor CLI**: the actors layer (`.satelle/actors.toml`) selects the
+   reviewer's agent CLI (`claude` wired; `codex` a selectable stub) and its read-only
+   grant; the executor runs in-loop. (SQL stays libSQL-compatible so replica sync
+   could slot in later.)
 
 Versioning mirrors satellites (binary-embedded version, semver tags, bump on
 client-path change).
