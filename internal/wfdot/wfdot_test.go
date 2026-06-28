@@ -148,6 +148,72 @@ digraph b {
 	}
 }
 
+func TestParseStripsLineComments(t *testing.T) {
+	body := `---
+name: c
+---
+` + "```dot" + `
+digraph c {
+  in_progress [actor=executor]
+  committed   [actor=reviewer, prompt="@skill:satelle-commit-push-reviewer"]
+  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
+  in_progress -> committed -> done
+  committed   -> in_progress  // recovery: a done-review reject returns to work
+}
+` + "```" + `
+`
+	spec, ok := Parse(body)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	edges := map[string]bool{}
+	for _, tr := range spec.Transitions {
+		edges[tr.From+"->"+tr.To] = true
+	}
+	// The commented recovery edge must parse to the CLEAN target, not "in_progress // ...".
+	if !edges["committed->in_progress"] {
+		t.Errorf("commented edge committed->in_progress not parsed; transitions=%+v", spec.Transitions)
+	}
+	// No state name should carry comment text.
+	for _, s := range spec.States {
+		if strings.Contains(s.Name, "/") || strings.Contains(s.Name, "recovery") {
+			t.Errorf("garbled state from comment: %q", s.Name)
+		}
+	}
+}
+
+func TestParsePreservesSlashesInQuotes(t *testing.T) {
+	body := `---
+name: d
+---
+` + "```dot" + `
+digraph d {
+  graph [goal="see https://example.com/docs for details"]
+  in_progress [actor=executor]
+  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
+  in_progress -> done
+}
+` + "```" + `
+`
+	spec, ok := Parse(body)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	// The // inside the quoted goal must NOT split a statement or spawn a state.
+	for _, s := range spec.States {
+		if strings.Contains(s.Name, "http") || strings.Contains(s.Name, "example") {
+			t.Errorf("quoted URL leaked into a state name: %q", s.Name)
+		}
+	}
+	edges := map[string]bool{}
+	for _, tr := range spec.Transitions {
+		edges[tr.From+"->"+tr.To] = true
+	}
+	if !edges["in_progress->done"] {
+		t.Errorf("edge in_progress->done not parsed with a quoted URL present; transitions=%+v", spec.Transitions)
+	}
+}
+
 func TestToDOT(t *testing.T) {
 	yamlWF := `---
 name: satelle-x-workflow
