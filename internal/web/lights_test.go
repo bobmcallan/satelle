@@ -154,7 +154,9 @@ func TestBuildLightsChronologicalAscending(t *testing.T) {
 	}
 }
 
-func TestGatedDepthsSpine(t *testing.T) {
+func TestSpineDepthsExcludesDetour(t *testing.T) {
+	// A rejoining detour (blocked) and an unreachable terminal must NOT be numbered;
+	// only the forward chain on a shortest start→done path is.
 	body := `
 transitions:
   - {from: open, to: planned, reviewer_skill: "a"}
@@ -164,13 +166,117 @@ transitions:
   - {from: in_progress, to: reviewed, reviewer_skill: "c"}
   - {from: reviewed, to: done, reviewer_skill: "d"}
 `
-	d := gatedDepths(parseWorkflow(body))
+	d := spineDepths(parseWorkflow(body))
 	for st, want := range map[string]int{"planned": 1, "in_progress": 2, "reviewed": 3, "done": 4} {
 		if d[st] != want {
 			t.Errorf("depth[%s] = %d, want %d", st, d[st], want)
 		}
 	}
 	if _, ok := d["blocked"]; ok {
-		t.Errorf("blocked must be off the gated spine, got depth %d", d["blocked"])
+		t.Errorf("blocked (a rejoining detour) must be off the spine, got depth %d", d["blocked"])
+	}
+}
+
+// projSpec mirrors the project workflow: executor steps (in_progress, commit_push)
+// are NOT gated, a recovery back-edge (committed→in_progress) and a cancelled
+// detour exist. The OLD gated-only numbering rendered a clean run as 1 2 1 2.
+func projSpec() wfSpec {
+	return wfSpec{
+		States: []wfState{
+			{Name: "backlog"}, {Name: "in_progress", Actor: "executor"},
+			{Name: "commit_push", Actor: "executor"}, {Name: "committed", Actor: "reviewer"},
+			{Name: "done", Actor: "reviewer", Terminal: true},
+			{Name: "cancelled", Actor: "reviewer", Terminal: true},
+		},
+		Transitions: []wfTransition{
+			{From: "backlog", To: "in_progress"},
+			{From: "in_progress", To: "commit_push"},
+			{From: "commit_push", To: "committed"},
+			{From: "committed", To: "done"},
+			{From: "committed", To: "in_progress"}, // recovery back-edge
+			{From: "backlog", To: "cancelled"},
+			{From: "in_progress", To: "cancelled"},
+		},
+	}
+}
+
+func TestSpineDepthsProjectShape(t *testing.T) {
+	d := spineDepths(projSpec())
+	for st, want := range map[string]int{"in_progress": 1, "commit_push": 2, "committed": 3, "done": 4} {
+		if d[st] != want {
+			t.Errorf("spineDepths[%s] = %d, want %d (full=%v)", st, d[st], want, d)
+		}
+	}
+	if _, ok := d["cancelled"]; ok {
+		t.Errorf("cancelled must be off the spine, got %d", d["cancelled"])
+	}
+	if _, ok := d["backlog"]; ok {
+		t.Errorf("backlog (start) must be omitted, got %d", d["backlog"])
+	}
+}
+
+// projStep is the step resolver derived from the project spine.
+func projStep(s string) int { return spineDepths(projSpec())[s] }
+
+func TestBuildLightsFullSpineSequential(t *testing.T) {
+	// A clean project run must render 1→2→3→4, NOT the old 1 2 1 2.
+	chrono := []ledger.Entry{
+		ev(ledger.KindReviewAccept, "backlog", "in_progress"),
+		ev(ledger.KindStatusTransition, "backlog", "in_progress"),     // step 1
+		ev(ledger.KindStatusTransition, "in_progress", "commit_push"), // step 2 (ungated)
+		ev(ledger.KindReviewAccept, "commit_push", "committed"),
+		ev(ledger.KindStatusTransition, "commit_push", "committed"), // step 3
+		ev(ledger.KindReviewAccept, "committed", "done"),
+		ev(ledger.KindStatusTransition, "committed", "done"), // step 4
+	}
+	lights := buildLights(chrono, "done", projStep)
+	var idx []int
+	for _, l := range lights {
+		idx = append(idx, l.Index)
+	}
+	want := []int{1, 2, 3, 4}
+	if len(idx) != len(want) {
+		t.Fatalf("indices = %v, want %v", idx, want)
+	}
+	for i := range want {
+		if idx[i] != want[i] {
+			t.Fatalf("indices = %v, want %v (was 1 2 1 2 before the fix)", idx, want)
+		}
+	}
+}
+
+func TestBuildLightsRecoveryRepeatSharesSteps(t *testing.T) {
+	// A done-review reject (step 4 fail) then the committed→in_progress recovery
+	// loop: the repeated steps SHARE their numbers (1,2,3 again), and the repeat
+	// only follows the fail.
+	chrono := []ledger.Entry{
+		ev(ledger.KindStatusTransition, "backlog", "in_progress"),
+		ev(ledger.KindStatusTransition, "in_progress", "commit_push"),
+		ev(ledger.KindReviewAccept, "commit_push", "committed"),
+		ev(ledger.KindStatusTransition, "commit_push", "committed"),
+		ev(ledger.KindReviewReject, "committed", "done"),            // fail at step 4
+		ev(ledger.KindStatusTransition, "committed", "in_progress"), // recovery → step 1
+		ev(ledger.KindStatusTransition, "in_progress", "commit_push"),
+		ev(ledger.KindReviewAccept, "commit_push", "committed"),
+		ev(ledger.KindStatusTransition, "commit_push", "committed"),
+		ev(ledger.KindReviewAccept, "committed", "done"),
+		ev(ledger.KindStatusTransition, "committed", "done"),
+	}
+	lights := buildLights(chrono, "done", projStep)
+	var idx []int
+	for _, l := range lights {
+		idx = append(idx, l.Index)
+	}
+	want := []int{1, 2, 3, 4, 1, 2, 3, 4}
+	if len(idx) != len(want) {
+		t.Fatalf("indices = %v, want %v", idx, want)
+	}
+	for i := range want {
+		if idx[i] != want[i] {
+			t.Fatalf("indices = %v, want %v", idx, want)
+		}
+	}
+	if lights[3].State != "fail" {
+		t.Errorf("step 4 (first done attempt) should be a fail, got %q", lights[3].State)
 	}
 }

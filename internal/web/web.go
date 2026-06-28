@@ -14,6 +14,7 @@ import (
 	"html/template"
 	"net/http"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -319,13 +320,14 @@ type lightPayload struct {
 
 // buildLights folds a story's ledger rows into the progress strip. A light's
 // NUMBER is the workflow STEP it represents — stepOf maps a transition's target
-// state to its 1-based position on the workflow's gated spine — so the lights
-// read (1) → (2) → (3) as the steps, and a step attempted more than once (a
-// reject then a later accept of the same edge) renders lights that SHARE the step
-// number (e.g. 1 red then 1 green) rather than incrementing. A gated transition
-// is a pass (green), an ungated one a fired checkpoint (slate), a review_reject a
-// fail (red). A non-terminal story trails a pulsing current light at the next
-// step. Off-spine targets (e.g. blocked) fall back to ledger-appearance order.
+// state to its 1-based position on the workflow's forward spine (every step, not
+// only the gated ones) — so a clean run reads (1) → (2) → (3) → (4) sequentially,
+// and a step attempted more than once (a reject then a later accept of the same
+// edge, or a recovery loop) renders lights that SHARE the step number (e.g. 1 red
+// then 1 green) rather than incrementing. A gated transition is a pass (green), an
+// ungated one a fired checkpoint (slate), a review_reject a fail (red). A
+// non-terminal story trails a pulsing current light at the next step. Off-spine
+// targets (e.g. blocked) fall back to ledger-appearance order.
 func buildLights(entries []ledger.Entry, status string, stepOf func(state string) int) []reviewLight {
 	// ledger-list yields entries oldest-first (the store orders created_at ASC),
 	// which is the order the lights render left-to-right — consume it as-is so
@@ -394,45 +396,111 @@ func buildLights(entries []ledger.Entry, status string, stepOf func(state string
 	return lights
 }
 
-// gatedDepths maps each state to its 1-based step on the workflow's gated spine —
-// the depth from the start state along gated edges (those carrying a reviewer
-// skill). The start state has depth 0; off-spine states (reached only by ungated
-// detours like blocked/cancelled) are absent. Longest-path relaxation handles the
-// linear gated chain without tripping on detour cycles.
-func gatedDepths(spec wfSpec) map[string]int {
-	var gated []wfTransition
-	isTo := map[string]bool{}
+// spineDepths maps each state on the workflow's forward SUCCESS spine to its
+// 1-based step number — the BFS distance from the start state, restricted to
+// states that can reach the success terminal ("done"). EVERY step on that path is
+// numbered (executor and reviewer alike), so a clean run reads 1→2→3→…→N rather
+// than restarting at 1 for ungated executor steps. Off-spine states (cancelled or
+// blocked detours that cannot reach done) are absent — step 0 — and a back edge
+// (the committed→in_progress recovery) never inflates a number, because BFS keeps
+// the shortest distance. The start state itself is depth 0 and omitted.
+func spineDepths(spec wfSpec) map[string]int {
+	adj := map[string][]string{}
+	radj := map[string][]string{}
+	indeg := map[string]int{}
+	for _, s := range spec.States {
+		if _, ok := indeg[s.Name]; !ok {
+			indeg[s.Name] = 0
+		}
+	}
 	for _, t := range spec.Transitions {
-		if t.Skill != "" {
-			gated = append(gated, t)
-			isTo[t.To] = true
+		adj[t.From] = append(adj[t.From], t.To)
+		radj[t.To] = append(radj[t.To], t.From)
+		indeg[t.To]++
+	}
+	// Success terminal: prefer a state literally named "done"; else the first
+	// terminal (no outgoing edges).
+	done := ""
+	for _, s := range spec.States {
+		if s.Name == "done" {
+			done = s.Name
+			break
 		}
 	}
-	depth := map[string]int{}
-	for _, t := range gated {
-		if !isTo[t.From] {
-			depth[t.From] = 0 // a gated 'from' with no gated incoming edge is a start
-		}
-	}
-	for i := 0; i < len(gated); i++ {
-		for _, t := range gated {
-			if d, ok := depth[t.From]; ok {
-				if cur, ok2 := depth[t.To]; !ok2 || d+1 > cur {
-					depth[t.To] = d + 1
-				}
+	if done == "" {
+		for _, s := range spec.States {
+			if len(adj[s.Name]) == 0 {
+				done = s.Name
+				break
 			}
 		}
 	}
-	return depth
+	if done == "" {
+		return map[string]int{}
+	}
+	// Start states = no incoming edges (deterministic order).
+	var starts []string
+	for name, d := range indeg {
+		if d == 0 {
+			starts = append(starts, name)
+		}
+	}
+	sort.Strings(starts)
+	dStart := bfsDist(adj, starts)         // forward distance from the start(s)
+	dDone := bfsDist(radj, []string{done}) // distance to `done` (reverse BFS)
+	total, ok := dStart[done]
+	if !ok {
+		return map[string]int{} // start cannot reach done
+	}
+	// A state is a spine STEP when it lies on a shortest start→done path:
+	// dStart + dDone == total. This admits the forward chain (in_progress,
+	// commit_push, committed, done) and excludes both unreachable terminals
+	// (cancelled) and rejoining detours (blocked) — and a back edge never lowers
+	// any dStart, so the recovery loop leaves the numbering intact. The start(s)
+	// (depth 0) are omitted.
+	out := map[string]int{}
+	for name, ds := range dStart {
+		if ds < 1 {
+			continue
+		}
+		if dd, ok := dDone[name]; ok && ds+dd == total {
+			out[name] = ds
+		}
+	}
+	return out
 }
 
-// storyStepOf builds the step resolver from the workflow with the deepest gated
+// bfsDist returns the shortest-edge distance from any of starts to every
+// reachable node over the given adjacency.
+func bfsDist(adj map[string][]string, starts []string) map[string]int {
+	dist := map[string]int{}
+	var q []string
+	for _, s := range starts {
+		if _, seen := dist[s]; !seen {
+			dist[s] = 0
+			q = append(q, s)
+		}
+	}
+	for len(q) > 0 {
+		n := q[0]
+		q = q[1:]
+		for _, m := range adj[n] {
+			if _, seen := dist[m]; !seen {
+				dist[m] = dist[n] + 1
+				q = append(q, m)
+			}
+		}
+	}
+	return dist
+}
+
+// storyStepOf builds the step resolver from the workflow with the longest forward
 // spine among the indexed workflows (the active project lifecycle), so light
 // numbers track the authored workflow steps without hardcoding a workflow name.
 func storyStepOf(docs []docindex.Doc) func(string) int {
 	var best map[string]int
 	for _, d := range docs {
-		m := gatedDepths(parseWorkflow(d.Body))
+		m := spineDepths(parseWorkflow(d.Body))
 		if len(m) > len(best) {
 			best = m
 		}
