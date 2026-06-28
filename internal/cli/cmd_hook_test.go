@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 func doc(name, body string) docindex.Doc {
@@ -132,5 +133,23 @@ digraph w {
 	got := executorStates(body)
 	if len(got) != 1 || got[0] != "in_progress" {
 		t.Fatalf("executorStates = %v, want [in_progress]", got)
+	}
+}
+
+func TestAnyEngagedCountsTasks(t *testing.T) {
+	engaged := map[string]bool{"in_progress": true, "commit_push": true}
+	// A task in an executor state counts as engaged, exactly like a story.
+	if !anyEngaged([]workitem.Item{
+		{Kind: workitem.KindTask, Status: "commit_push"},
+		{Kind: workitem.KindStory, Status: "backlog"},
+	}, engaged) {
+		t.Error("a task in an executor state should count as engaged")
+	}
+	// Nothing engaged when no item is in an executor state.
+	if anyEngaged([]workitem.Item{
+		{Kind: workitem.KindTask, Status: "backlog"},
+		{Kind: workitem.KindStory, Status: "done"},
+	}, engaged) {
+		t.Error("no item in an executor state should not count as engaged")
 	}
 }
