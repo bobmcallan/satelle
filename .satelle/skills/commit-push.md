@@ -36,10 +36,15 @@ only judges).
    the proof the deployment worked.
 5. **Refresh the local service.** This workflow has no deploy gate — CI is the real
    deployment check — so nothing else restarts the running `satelle serve`. Once CI
-   is green, rebuild and reinstall the local service from the pushed code so the web
-   UI the operator views reflects released `main`:
-   `go build -o satelle ./cmd/satelle && satelle service install`. Without this the
-   UI stales (a freshly authored workflow renders "no states" from the old process).
+   is green, reinstall the binary and restart the service from the pushed code so the
+   web UI the operator views reflects released `main`:
+   `make install && satelle service install`. Use `make install`, **not** a bare
+   `go build -o satelle` — the service's `ExecStart` is the PATH binary
+   (`~/.local/bin/satelle`, baked from `os.Executable()` at install time), so a build
+   that only updates the repo `./satelle` leaves the service running the OLD binary;
+   `make install` refreshes the PATH binary, then `satelle service install` restarts
+   it. Without this the UI stales (old progress-light numbering, "no states" from the
+   old process). Confirm with `satelle version` (current commit) afterwards.
 
 ## When it fails
 
