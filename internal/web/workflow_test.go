@@ -75,7 +75,7 @@ const sampleWorkflowDOT = `---
 name: satelle-project-workflow
 applies_to: ["*"]
 ---
-# Recursive-actor (DOT)
+# Project workflow (DOT)
 
 ` + "```dot" + `
 digraph satelle_workflow {
