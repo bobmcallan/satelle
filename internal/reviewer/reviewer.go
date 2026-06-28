@@ -82,6 +82,17 @@ func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Gater 
 	}
 }
 
+// SetReviewerTools sets the reviewer's tool grant from the actors layer (the
+// resolved `reviewer` binding). It governs every isolated LLM reviewer this Gater
+// runs. The default remains the read-only grant; a repo may widen or narrow it in
+// .satelle/actors.toml without touching the workflow. An empty value is ignored
+// so callers can pass through an unset binding safely.
+func (g *Gater) SetReviewerTools(tools string) {
+	if strings.TrimSpace(tools) != "" {
+		g.tools = tools
+	}
+}
+
 // execCheck runs command via `bash -c` in dir, returning combined stdout+stderr.
 // bash (not sh) so a multi-line self-contained check embedded in a skill may use
 // ordinary shell scripting.

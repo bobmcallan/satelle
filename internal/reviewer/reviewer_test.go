@@ -667,3 +667,18 @@ func TestReviewerSkillsForDOT(t *testing.T) {
 		t.Errorf("committed->done should be declared and ungated: skills=%v declared=%v", skills, declared)
 	}
 }
+
+func TestSetReviewerTools(t *testing.T) {
+	g := New(nil, nil, "", "")
+	if g.tools != defaultTools {
+		t.Fatalf("default tools = %q, want %q", g.tools, defaultTools)
+	}
+	g.SetReviewerTools("Read,Edit,Write")
+	if g.tools != "Read,Edit,Write" {
+		t.Errorf("after override tools = %q, want Read,Edit,Write", g.tools)
+	}
+	g.SetReviewerTools("")
+	if g.tools != "Read,Edit,Write" {
+		t.Errorf("empty override should be a no-op, tools = %q", g.tools)
+	}
+}
