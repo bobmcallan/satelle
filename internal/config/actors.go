@@ -17,7 +17,11 @@ const ActorsConfigName = "actors.toml"
 // satelle-actor-model principle — the reviewer is limited to reviewing).
 const (
 	DefaultExecutorHarness = "in-loop"
-	DefaultReviewerHarness = "claude -p"
+	// DefaultReviewerHarness is the bare claude PRESET name — a single token, so
+	// agentcli.RunnerFromHarness expands it to the built-in claude template
+	// (which carries the read-only --disallowedTools denylist). A repo overrides
+	// it with a full command template (multi-token) in actors.toml.
+	DefaultReviewerHarness = "claude"
 	DefaultReviewerTools   = "Read,Grep,Glob"
 )
 

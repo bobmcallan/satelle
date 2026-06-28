@@ -157,19 +157,33 @@ behaviour:
 
 ```toml
 [executor] harness = "in-loop"                              # the driving agent
-[reviewer] harness = "claude -p";  tools = "Read,Grep,Glob" # isolated, read-only
+[reviewer] harness = "claude";  tools = "Read,Grep,Glob"    # isolated, read-only preset
 ```
 
-An absent file is exactly today's behaviour. A repo may rebind the reviewer's **agent
-CLI** or its grant without touching the workflow — e.g. `harness = "codex -p"` to
-select a different CLI; the read-only limit travels with the binding.
+The reviewer **harness is a command TEMPLATE**, not just a CLI name: the first token
+is the binary, the rest are argv tokens that may carry the placeholders `{system}`
+(the gate/skill body), `{tools}` (the grant), and `{model}`. satelle substitutes each
+into its own argument (so a multi-line system prompt stays one arg) and pipes the
+payload on stdin. A **single-token** harness (`claude`) expands to that CLI's built-in
+preset; a **multi-token** harness is taken verbatim, so a repo can point at *any* agent
+CLI by writing its full argv — no Go change:
 
-What is **wired today**: the reviewer's tool grant (`SetReviewerTools`) and its agent
-CLI — `app.go` resolves the leading CLI name from the harness via
-`agentcli.RunnerFromHarness` and sets it on the `Gater` (`SetRunner`). `claude` works
-end-to-end; `codex` is **selectable but a stub** until its headless argv is mapped. The
-executor still runs in-loop. The harness is a local subprocess — the "remote" in play is
-only the model that CLI calls; satelle does not run actors on remote machines.
+```toml
+[reviewer] harness = "claude -p --disallowedTools Write,Edit,Bash --append-system-prompt {system} --allowedTools {tools}"
+```
+
+The `claude` preset carries a `--disallowedTools` denylist, so the read-only grant is a
+**ceiling** (deny wins over allow) over whatever the repo's `.claude/settings.json`
+would inherit — not merely an allowlist floor. An absent file is exactly today's
+behaviour.
+
+What is **wired today**: the reviewer's tool grant (`SetReviewerTools`) and its harness
+template — `app.go` resolves the harness via `agentcli.RunnerFromHarness` and sets the
+resulting runner on the `Gater` (`SetRunner`). `claude` works end-to-end; `codex` is a
+**selectable preset stub** until its headless argv is mapped (a repo can use codex today
+by supplying a full template). The executor still runs in-loop. The harness is a local
+subprocess — the "remote" in play is only the model that CLI calls; satelle does not run
+actors on remote machines.
 
 ## Implementation map
 
