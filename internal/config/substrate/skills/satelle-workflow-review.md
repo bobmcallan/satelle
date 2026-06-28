@@ -22,9 +22,15 @@ A conforming workflow has all of:
    and a `scope`. A **repo/project** workflow MUST be `scope: project` — it may
    NOT be `scope: system` (system is reserved for the embedded canonical default;
    see the `satelle-repo-agnostic` principle).
-2. **A `states:` block** listing the lifecycle states.
-3. **A `transitions:` block** of `{from, to[, reviewer_skill]}` edges that connect
-   the states; every `from`/`to` names a declared state.
+2. **A lifecycle definition**, in ONE of two grammars:
+   - an inline-YAML `states:` block plus a `transitions:` block of
+     `{from, to[, reviewer_skill]}` edges; or
+   - a fenced ```dot graph (Graphviz `digraph`): each node is a step carrying an
+     `actor` (`executor`|`reviewer`), a reviewer node names its gate via
+     `prompt="@skill:NAME"`, and edges connect the states. This is the
+     node-centric grammar — the edge INTO a reviewer node is the gated transition.
+3. **Connected states** — every edge endpoint (YAML `from`/`to`, or a DOT node in
+   an edge) is a declared node, so the graph has no dangling reference.
 4. **`done` is the terminal state** — no transition leaves `done`, and no state
    follows it on the success path (see the `satelle-done-is-last` principle).
 5. **`backlog` is the initial state** — the lifecycle starts at `backlog`: it is a

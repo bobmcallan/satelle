@@ -1,0 +1,68 @@
+---
+name: satelle-recursive-actor-workflow
+scope: project
+kind: workflow
+tags: [kind:workflow]
+applies_to: ["*"]
+description: This repo's project-scope workflow, authored in DOT (the recursive-actor model). A story or task moves backlog → in_progress → commit_push → committed → done, with a cancelled exit. It is node-centric: each node is a step carrying an actor; the executor does the work, a reviewer node gates entry via its prompt=@skill gate. The commit_push executor step commits/pushes and watches CI; the committed reviewer (satelle-commit-push-review) confirms the CI run succeeded and emits a PR-style summary; done is the acceptance gate. There is no deploy state — the push to main IS the release, verified by CI. done stays terminal (satelle-done-is-last); a project workflow takes precedence over the embedded satelle-baseline-workflow.
+---
+
+# satelle workflow (project) — recursive-actor, authored in DOT
+
+> **This is a project workflow** under `.satelle/workflows`, the ACTIVE workflow
+> for this repo: a project-scope workflow takes precedence over the binary's
+> embedded **system** default `satelle-baseline-workflow`. See the
+> `satelle-repo-agnostic` and `satelle-recursive-actor-model` principles.
+
+A work item moves **backlog → in_progress → commit_push → committed → done**, and
+may exit early to **cancelled**. The lifecycle is the **DOT graph** below
+(node-centric): each node is a step carrying an `actor`; the **executor** does the
+work and mutates the tree, and a **reviewer** node gates *entry* to it via its
+`prompt="@skill:NAME"` gate (the reviewer is read-only — it judges, never mutates).
+satelle is the gatekeeper of status: a status advances only through a reviewer's
+accept.
+
+The release path is deliberate. There is **no deploy state** — pushing to `main`
+IS the release, and CI is the deployment check. The **commit_push** executor step
+commits and pushes the slice and watches the GitHub Actions run to conclusion
+(skill `commit-push`); the **committed** gate (`satelle-commit-push-review`, a
+functional check) confirms that CI run concluded success and emits a PR-style
+commit-summary; the **done** gate (`satelle-story-done-review`) checks the
+acceptance criteria. The commit happens while the story is **engaged** (an executor
+state), so commits are always tracked. The always-on system layer still applies: a
+plan estimate is required entering `in_progress` and the actual entering `done`.
+
+```dot
+digraph satelle_workflow {
+  graph [goal="Drive a story to done — every gate accepted, the commit-push release verified by CI", vars="story, repo_root"]
+  rankdir=LR
+
+  backlog     [shape=Mdiamond]
+  in_progress [actor=executor]
+  commit_push [actor=executor, prompt="@skill:commit-push"]
+  committed   [actor=reviewer, prompt="@skill:satelle-commit-push-review"]
+  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
+  cancelled   [actor=reviewer, prompt="@skill:satelle-story-cancel-review"]
+
+  backlog -> in_progress -> commit_push -> committed -> done
+
+  backlog     -> cancelled
+  in_progress -> cancelled
+  commit_push -> cancelled
+}
+```
+
+## Environment
+
+```yaml
+guardrails:
+  always:
+    - Drive an engaged item to a terminal state (done or cancelled) — don't leave work open indefinitely.
+    - Give a story/task numbered acceptance criteria before starting, and satisfy them before moving to done.
+    - Commit and push at the commit_push step (an executor state); the committed gate verifies the CI run before close.
+  ask_first: []
+  never:
+    - Place any state after done — done is always the terminal success state.
+    - Self-enact a gated edge the reviewer has not accepted.
+    - Mark an item done with unmet acceptance criteria, or advance committed with a failing CI run.
+```
