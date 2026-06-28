@@ -19,3 +19,8 @@
 # source of truth); the files are portable but not versioned in this repo.
 .satelle/stories/
 # <<< satelle (managed) <<<
+
+# commit-push gate artifacts — the PR-style commit summaries the commit-push
+# reviewer writes are generated and read locally per story; they are review
+# artifacts, not version-controlled.
+.satelle/documents/commit-summary-*.md
