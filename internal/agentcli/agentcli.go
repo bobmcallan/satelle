@@ -55,6 +55,21 @@ func NewRunner(name string) (Runner, error) {
 	}
 }
 
+// RunnerFromHarness resolves an actors-layer harness binding to a Runner by its
+// leading CLI name — e.g. "claude -p", "codex -p", or a bare "claude". An empty or
+// "in-loop" harness returns (nil, nil): no agent-CLI runner, so the caller keeps its
+// configured default. An unknown CLI name is an error (from NewRunner).
+func RunnerFromHarness(harness string) (Runner, error) {
+	fields := strings.Fields(harness)
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	if cli := strings.ToLower(fields[0]); cli != "in-loop" {
+		return NewRunner(cli)
+	}
+	return nil, nil
+}
+
 // Detect returns the first supported agent CLI found on PATH (claude preferred),
 // or "" when none is installed. Used by the install-time selection.
 func Detect() string {

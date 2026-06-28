@@ -105,6 +105,13 @@ func gaterForCmd(cmd *cobra.Command) (*reviewer.Gater, *app.App, error) {
 // default, so behaviour is unchanged unless a repo authors actors.toml.
 func applyActorGrants(rev *reviewer.Gater, a *app.App) {
 	if actors, err := config.LoadActors(filepath.Dir(a.DBPath)); err == nil {
-		rev.SetReviewerTools(actors.ReviewerBinding().Tools)
+		rb := actors.ReviewerBinding()
+		rev.SetReviewerTools(rb.Tools)
+		// Select the reviewer's agent CLI from the actors-layer harness binding
+		// (default claude). An unset/in-loop/unresolvable harness keeps the global
+		// [agent] cli configured at construction.
+		if r, rerr := agentcli.RunnerFromHarness(rb.Harness); rerr == nil {
+			rev.SetRunner(r)
+		}
 	}
 }
