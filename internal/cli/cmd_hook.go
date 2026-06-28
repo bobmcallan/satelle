@@ -26,6 +26,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/reviewer"
+	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -154,6 +155,17 @@ func storyEngaged() bool {
 // `actor: executor` — the states that represent engaged work. The "engaged"
 // policy is thus authored in the workflow, not hardcoded.
 func executorStates(body string) []string {
+	// DOT workflow: the executor states are the nodes marked actor=executor in
+	// the shared wfdot spec.
+	if spec, ok := wfdot.Parse(body); ok {
+		var out []string
+		for _, s := range spec.States {
+			if s.Actor == "executor" {
+				out = append(out, s.Name)
+			}
+		}
+		return out
+	}
 	lines := strings.Split(body, "\n")
 	in := false
 	var out []string

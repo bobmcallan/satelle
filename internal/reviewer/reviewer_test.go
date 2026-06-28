@@ -640,3 +640,30 @@ func TestReviewStructureAcceptReject(t *testing.T) {
 		t.Errorf("absent rubric should be advisory, got %+v", dec3)
 	}
 }
+
+const dotWF = `---
+name: x
+---
+# w
+
+` + "```dot" + `
+digraph w {
+  in_progress [actor=executor]
+  committed   [actor=reviewer, prompt="@skill:satelle-commit-push-reviewer"]
+  in_progress -> committed -> done
+}
+` + "```" + `
+`
+
+func TestReviewerSkillsForDOT(t *testing.T) {
+	skills, declared := reviewerSkillsFor(dotWF, "in_progress", "committed")
+	if !declared || len(skills) != 1 || skills[0] != "satelle-commit-push-reviewer" {
+		t.Fatalf("in_progress->committed: skills=%v declared=%v", skills, declared)
+	}
+	if _, declared := reviewerSkillsFor(dotWF, "in_progress", "nope"); declared {
+		t.Errorf("an undeclared edge should report declared=false")
+	}
+	if skills, declared := reviewerSkillsFor(dotWF, "committed", "done"); !declared || len(skills) != 0 {
+		t.Errorf("committed->done should be declared and ungated: skills=%v declared=%v", skills, declared)
+	}
+}

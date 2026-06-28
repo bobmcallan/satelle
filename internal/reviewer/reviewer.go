@@ -27,6 +27,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -633,6 +634,19 @@ func (g *Gater) skillBody(ctx context.Context, name string) (string, error) {
 //
 // reviewer_skills (the ordered list) takes precedence over reviewer_skill.
 func reviewerSkillsFor(body, from, to string) (skills []string, declared bool) {
+	// DOT workflow: resolve the edge from the shared wfdot spec — entry to a
+	// reviewer node is the gated transition, carrying that node's skill.
+	if spec, ok := wfdot.Parse(body); ok {
+		for _, tr := range spec.Transitions {
+			if tr.From == from && tr.To == to {
+				if tr.Skill != "" {
+					return []string{tr.Skill}, true
+				}
+				return nil, true
+			}
+		}
+		return nil, false
+	}
 	for _, line := range strings.Split(body, "\n") {
 		l := strings.TrimSpace(line)
 		if !strings.HasPrefix(l, "- {") || !strings.Contains(l, "from:") || !strings.Contains(l, "to:") {
