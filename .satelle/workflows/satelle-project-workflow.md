@@ -28,9 +28,12 @@ commits and pushes the slice and watches the GitHub Actions run to conclusion
 (skill `commit-push`); the **committed** gate (`satelle-commit-push-review`, a
 functional check) confirms that CI run concluded success and emits a PR-style
 commit-summary; the **done** gate (`satelle-story-done-review`) checks the
-acceptance criteria. The commit happens while the story is **engaged** (an executor
-state), so commits are always tracked. The always-on system layer still applies: a
-plan estimate is required entering `in_progress` and the actual entering `done`.
+acceptance criteria. If the **done** gate rejects, the `committed -> in_progress`
+recovery edge returns the story to work so it can fix the rejected slice and
+re-traverse to `done` — the gate is acted on, not bypassed. The commit happens while
+the story is **engaged** (an executor state), so commits are always tracked. The
+always-on system layer still applies: a plan estimate is required entering
+`in_progress` and the actual entering `done`.
 
 ```dot
 digraph satelle_workflow {
@@ -45,6 +48,8 @@ digraph satelle_workflow {
   cancelled   [actor=reviewer, prompt="@skill:satelle-story-cancel-review"]
 
   backlog -> in_progress -> commit_push -> committed -> done
+
+  committed   -> in_progress  // recovery: a done-review reject returns to work
 
   backlog     -> cancelled
   in_progress -> cancelled
