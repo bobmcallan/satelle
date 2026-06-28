@@ -12,10 +12,12 @@ advances only through a reviewer's accept, and always through it.
   `{"decision":"accept"|"reject","notes":"…"}`. It is **read-only** and never
   mutates — a quality-management invariant, enforced by its grant, not by trust.
 
-Each actor invocation is a recursive call satelle hosts: the step's **skill** is
-injected as the prompt over a transformed context subset (the work item + the
-requested transition), and the structured return is aggregated to gate the status.
-This applies to **stories and tasks** alike — gating is by category, kind-agnostic.
+Each gate is an isolated, fresh-context call: satelle builds the payload (the work
+item + the requested transition), spawns a fresh agent with the step's **skill** as
+its prompt and a read-only grant, and aggregates the one verdict to gate the status.
+satelle does the context selection; the reviewer reads what it needs through its
+tools. This applies to **stories and tasks** alike — gating is by category,
+kind-agnostic.
 
 ## Workflows are authored — YAML or DOT
 

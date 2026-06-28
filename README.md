@@ -85,8 +85,9 @@ through every gate on the path.
 - **satelle is the gatekeeper of status** — each forward transition is judged by
   an isolated, fresh-context **reviewer** (an `agent -p` rubric, or a deterministic
   functional check). Accept enacts the transition; reject pushes notes back. A
-  reviewer is **read-only** — it judges, never mutates. Each invocation is a
-  recursive LM call over a transformed context subset (the RLM pattern).
+  reviewer is **read-only** — it judges, never mutates. Each gate is one isolated,
+  fresh-context call over a payload satelle builds; satelle does the context
+  selection, the reviewer reads what it needs through its read-only tools.
 
 Workflows are **authored substrate** in the **DOT standard** (Graphviz): a
 node-centric graph where each node is a step carrying an `actor`
@@ -99,8 +100,7 @@ bound in `.satelle/actors.toml`.
 
 Process is configuration — change the workflow or its skills, change the process,
 with no binary release. See `satelle help reviewer-checks` and the
-`satelle-recursive-actor-model`, `satelle-dot-standard`, and `satelle-rlm-standard`
-principles.
+`satelle-recursive-actor-model` and `satelle-dot-standard` principles.
 
 ## Architecture
 
@@ -115,7 +115,7 @@ principles.
 
 See [`docs/spec.md`](./docs/spec.md), [`docs/architecture.md`](./docs/architecture.md),
 and [`docs/recursive-actor-model.md`](./docs/recursive-actor-model.md) (the operating
-model: reviewer premise, DOT workflows, RLM execution).
+model: reviewer premise, DOT workflows, isolated fresh-context review).
 
 ## Development
 

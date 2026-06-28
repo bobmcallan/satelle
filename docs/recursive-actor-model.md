@@ -1,8 +1,8 @@
 # Satelle — Design: the recursive-actor model
 
 How satelle governs agent-driven work: the **recursive-actor** operating premise,
-the **DOT** workflow format, and the **RLM** execution model — and where each lives
-in the code. For the storage/port architecture see
+the **DOT** workflow format, and how reviewers run — and where each lives in the
+code. For the storage/port architecture see
 [architecture.md](./architecture.md); for the product framing see [spec.md](./spec.md).
 
 ## Design premise
@@ -120,34 +120,33 @@ Pointers: `internal/wfdot/wfdot.go` (`Parse`, `Validate`, `ToDOT`), the diagram 
 `internal/web/workflow.go`, gating in `internal/reviewer/reviewer.go`
 (`reviewerSkillsFor`), executor states in `internal/cli/cmd_hook.go` (`executorStates`).
 
-## The RLM model and how it is implemented
+## How a reviewer runs — isolated, fresh-context review
 
-Execution is grounded in **Recursive Language Models** (RLM): a root agent holds the
-work and spawns isolated, depth-1 LM calls over *transformed subsets* of context,
-aggregating their structured returns — behind an interface identical to a plain
-completion. satelle already implements this primitive in the gater:
+A gate is **one isolated `agent -p` call** (or a deterministic functional check) —
+not a recursive or multi-step decomposition. satelle builds a small payload, spawns
+a fresh-context agent with the skill as its system prompt and a read-only grant, and
+parses one verdict:
 
 ```go
-// internal/reviewer/reviewer.go — runReviewer (depth-1 recursion)
-out, err := g.runner.Run(ctx, agentcli.Request{
-    SystemPrompt: skillBody,   // the step's skill = the injected prompt
-    Payload:      payload,     // a TRANSFORMED subset: the work item + the edge
-    AllowedTools: g.tools,     // the reviewer's read-only grant
-    Model:        g.model,
+// internal/reviewer/reviewer.go — runReviewer
+payload := transitionPayload{Story: item, From: ..., To: ..., ReviewSkill: skill}
+out, _ := g.runner.Run(ctx, agentcli.Request{
+    SystemPrompt: skillBody,        // the step's skill = the rubric
+    Payload:      payload,          // the work item + the requested transition (FIXED)
+    AllowedTools: "Read,Grep,Glob", // the reviewer's read-only grant
     Dir:          g.repoRoot,
 })
-dec, _ := parseDecision(out)   // structured return aggregated to gate status
+dec, _ := parseDecision(out)        // one {decision, notes}, aggregated to gate status
 ```
 
-Each actor invocation is such a recursive call: satelle injects the step's **skill**
-as the prompt over a **transformed context subset** (the work item plus just the slice
-the step needs — not the whole repo), runs it through the actor's bound backend, and
-aggregates the structured return. Recursion lets an actor manage unbounded context
-(peek, grep, partition, sub-call) without widening its grant — a reviewer that recurses
-to read more is still read-only. The model is satelle's own, written natively (not an
-imported engine); see the `satelle-rlm-standard` principle and, for the reference,
-the RLM writeup (<https://alexzhang13.github.io/blog/2025/rlm/>) and `rlm-go`
-(<https://github.com/XiaoConstantine/rlm-go>).
+Two things follow. First, **satelle does the context selection** — it constructs the
+payload (the work item + the transition), so the reviewer is *not* asked to codify a
+context-retrieval pipeline; it reads what it needs through ordinary read-only tools.
+Second, each invocation is a **clean room** — fresh context, no shared state — which is
+what makes the verdict isolated and reproducible. There is no REPL, no model-driven
+context decomposition, and no recursive LM sub-calls; depth is one. (The "recursive"
+in *recursive-actor* is structural — agents gate agents — not a claim about recursive
+language-model decomposition.)
 
 ## The actors layer — binding how a step runs
 
@@ -182,5 +181,4 @@ reviewer that runs on a remote backend is still the same reviewer model. The rev
 | Embedded substrate (defaults) | `internal/config/substrate/{workflows,skills,principles}` |
 
 See `satelle help reviewer-checks` for the live gate descriptions, and the
-`satelle-recursive-actor-model`, `satelle-dot-standard`, and `satelle-rlm-standard`
-principles.
+`satelle-recursive-actor-model` and `satelle-dot-standard` principles.
