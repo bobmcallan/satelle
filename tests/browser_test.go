@@ -145,6 +145,30 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		waitCond(t, ctx, jsRowVisible(openID), 3*time.Second)
 	})
 
+	t.Run("clear_all_resets_filters", func(t *testing.T) {
+		sel := `#panel-stories .chips .fchip-clear`
+		// Absent when the filter input is empty (nothing to clear).
+		if !waitCond(t, ctx, "!document.querySelector('"+sel+"')", 3*time.Second) {
+			t.Error("clear-all should be absent on an empty filter input")
+		}
+		// An explicit filter makes the clear-all control appear.
+		if err := chromedp.Run(ctx, setInput(`#panel-stories .filterbar input`, "status:all")); err != nil {
+			t.Fatal(err)
+		}
+		if !waitCond(t, ctx, "!!document.querySelector('"+sel+"')", 3*time.Second) {
+			t.Error("clear-all should appear when an explicit filter is set")
+		}
+		// Clicking it empties the input and returns to defaults (control gone again).
+		clickJS(t, ctx, sel)
+		if !waitCond(t, ctx, `document.querySelector('#panel-stories .filterbar input').value === ''`, 3*time.Second) {
+			t.Error("clear-all should empty the filter input")
+		}
+		if !waitCond(t, ctx, "!document.querySelector('"+sel+"')", 3*time.Second) {
+			t.Error("clear-all should disappear after clearing (back to defaults)")
+		}
+		waitCond(t, ctx, jsRowVisible(openID), 3*time.Second)
+	})
+
 	t.Run("progress_column_lights", func(t *testing.T) {
 		// A fresh open story (still at its initial state, no transitions) shows NO
 		// progress light — the initial state is not step 1.
