@@ -1,99 +1,106 @@
 # Reviewer checks — the gates on a story
 
-satelle's quality spine runs an isolated, fresh-context reviewer over each
-requested transition. The active workflow (`satelle-baseline-workflow`) names a
-reviewer skill per edge; the skill's markdown body rides as the reviewer's system
-prompt; the work item and the requested transition go in on stdin; the reviewer
-returns one JSON verdict `{"decision":"accept"|"reject","notes":"…"}`. Accept lets
-the transition enact; reject blocks it and pushes the notes back to the executor.
-Reviewers are **read-only** (`Read,Grep,Glob`) — they judge, never mutate. The
-executor never enacts its own transition.
+satelle runs the **recursive-actor model** (see the `satelle-recursive-actor-model`
+principle): a story moves through a graph of **steps**, each run by a **defined
+actor**, and the story's **status** decides what is valid now. The agent's goal is
+to drive the story to `done`; satelle is the **gatekeeper of status** — a status
+advances only through a reviewer's accept, and always through it.
 
-An edge is gated only when the workflow names a reviewer skill **and** that
-skill's rubric is installed in the substrate. A named-but-absent rubric is
-treated as advisory, so a fresh repo keeps working until the rubrics ship.
+- **executor** — does the work and mutates the tree.
+- **reviewer** — is **limited to reviewing**: an isolated, fresh-context judge that
+  reads the requested transition and returns one JSON verdict
+  `{"decision":"accept"|"reject","notes":"…"}`. It is **read-only** and never
+  mutates — a quality-management invariant, enforced by its grant, not by trust.
 
-## Create gate — `satelle-story-review`
+Each actor invocation is a recursive call satelle hosts: the step's **skill** is
+injected as the prompt over a transformed context subset (the work item + the
+requested transition), and the structured return is aggregated to gate the status.
+This applies to **stories and tasks** alike — gating is by category, kind-agnostic.
 
-Runs when a draft is created (opt-in per repo via `[review] gate_create`). It
-judges the **required structure** only — not whether the work is a good idea:
+## Workflows are authored — YAML or DOT
 
-1. a non-empty, specific **title**;
-2. a **clear goal** in the body (a blank or title-restating body fails);
-3. at least one numbered, **testable** acceptance criterion.
+The active workflow is authored substrate (the embedded `satelle-baseline-workflow`,
+or a repo override under `.satelle/workflows`). Its lifecycle may be written two
+ways, both parsed by the shared `wfdot`/web parser:
 
-This is the one opinionated thing satelle enforces; everything else (tags,
-priority, category, style) is non-opinionated.
+- an inline-YAML `states:`/`transitions:` block (transitions carry `reviewer_skill`); or
+- a fenced ```dot graph (node-centric): each node is a step carrying an `actor`,
+  a reviewer node names its gate as `prompt="@skill:NAME"`, and the edge **into**
+  a reviewer node is the gated transition. `satelle validate` graph-checks a DOT
+  workflow (structural soundness + the mandatory spine gate into `done`).
+
+An edge is gated only when the workflow names a reviewer skill **and** that skill's
+rubric is installed; a named-but-absent rubric is advisory, so a fresh repo keeps
+working until the rubrics ship.
+
+## The actors layer — how a step runs
+
+*What* is injected (the skill + context subset) is satelle's; *how and where* an
+actor runs is the **actors layer** (`.satelle/actors.toml`). It binds each actor to
+a backend and grant, defaulting to today's behaviour — the executor runs in-loop,
+the reviewer runs as an isolated `agent -p` with the read-only `Read,Grep,Glob`
+grant. A repo may rebind a backend or grant without touching the workflow; the
+read-only limit travels with the binding.
 
 ## Two gate kinds: LLM reviewers and functional checks
 
 A gate is either:
 
 - an **LLM reviewer** — the skill's markdown body rides as a fresh-context agent's
-  system prompt and the agent returns the verdict (used for judgment: structure,
-  intent, acceptance); or
-- a **functional check** — the skill's frontmatter names a deterministic
-  `check:` command. The gate runs it in the repo root; **exit 0 accepts,
-  non-zero rejects** with the command's output tail as notes. No LLM — the command
-  is the decision. This is how the integration and deploy gates work.
+  system prompt and the agent returns the verdict (judgment: structure, intent,
+  acceptance); or
+- a **functional check** — a self-contained ```check script (or a `check:` in
+  frontmatter). The gate runs it in the repo root; **exit 0 accepts, non-zero
+  rejects** with the output tail as notes. No LLM — the command is the decision.
+  Like the commit-push gate, a functional check may run real mechanism.
 
-## Begin-work gate — `satelle-story-intent-review` (backlog → in_progress)
+## Create gate — `satelle-story-review`
 
-Judges readiness of **intent** before work starts: the title names a concrete
-change, the body states a clear goal / what done looks like, and the acceptance
-criteria list at least one numbered, testable item. Unclear intent is rejected
-with notes; the story stays in backlog.
+Runs when a draft is created (opt-in per repo via `[review] gate_create`). Judges
+**required structure** only: a specific title, a clear goal in the body, and at
+least one numbered, testable acceptance criterion.
 
-## In-progress tech-lead review — `satelle-story-code-review` (in_progress → reviewed)
+## Begin-work gate — `satelle-story-intent-review` (→ in_progress)
 
-An isolated, **read-only** LLM reviewer acting as a tech lead pre-reviewing the
-PR. It reads the modified code in the working tree, judges it against the story's
-acceptance criteria, and checks that the integration tests written for the work
-actually align with the code — **without executing them** (that is the next gate).
-A change with an unmet criterion, wrong code, or a missing/misaligned test is
-rejected with specifics.
+Judges readiness of **intent** before work starts — concrete title, clear goal,
+testable criteria. Unclear intent is rejected; the story stays in backlog.
 
-## Integration gate — `satelle-story-integration-review` (reviewed → integrated)
+## Commit-push step — `commit-push` (executor) + `satelle-commit-push-review` (gate)
 
-A **functional check** with a self-contained `check` script embedded in the skill.
-It builds the binary and runs the full integration suite — the black-box CLI tests
-plus the headless-Chrome browser e2e — and accepts only if **every** test passes.
-Any failure rejects the transition with the failing output. An item cannot advance
-past integration on a red suite.
+The commit-push **executor** step stages and commits the slice (conventional
+message, the story id, no AI attribution), pushes to `main` (trunk-based release),
+and watches the GitHub Actions run to conclusion — recording the conclusion and run
+URL as evidence. The commit happens **while the story is engaged** (an executor
+state), so commits are always tracked. The **commit-push gate**
+(`satelle-commit-push-review`, a functional check) then confirms the CI run for the
+pushed commit concluded success — evidence the deployment worked — and emits a
+PR-style commit-summary document under `.satelle/documents/`.
 
-## Deploy gate — `satelle-story-deploy-review` (integrated → deployed)
+## Close gate — `satelle-story-done-review` (→ done)
 
-A **functional check** with a self-contained `check` script embedded in the skill.
-It deploys the service locally and validates it with a **health check on both
-surfaces**: the web UI (`/healthz` returns ok and the project page renders its
-tabs) and the CLI (`satelle status`), leaving it running. Local-first — the
-service is a local systemd user unit, so the deploy has no production blast radius.
+An isolated, read-only reviewer that **reads the repository** to verify each
+numbered acceptance criterion against concrete evidence. Unmet criteria are
+rejected with specifics. `done` is always terminal (see `satelle-done-is-last`),
+and the mandatory close gate is the spine a custom workflow cannot drop.
 
-## Close gate — `satelle-story-done-review` (deployed → done)
+## Always-on system layer — estimate/actual + cancel
 
-An isolated, read-only reviewer that **reads the repository** to verify the work.
-It works through each numbered acceptance criterion and looks for concrete
-evidence it is satisfied (the file exists / contains the change, a test asserts
-the behaviour). Unmet criteria are rejected with specifics; the story stays
-in_progress.
-
-## Cancel gate — `satelle-story-cancel-review` (any → cancelled)
-
-Named by the baseline workflow to record why an item is abandoned. Until the
-rubric ships it is advisory (the cancel enacts directly).
+`satelle-estimate-actual-review` runs on every gated transition (after the
+workflow-named reviewers) but only governs two edges: entry to `in_progress`
+requires a recorded plan estimate, and entry to `done` requires the recorded
+actual (`satelle story estimate` / `satelle story actual`).
+`satelle-story-cancel-review` records why an item is abandoned.
 
 ## Summariser — `satelle-step-summary`
 
-Not a gate. After a transition is enacted, this read-only observer produces a
-1–3 sentence prose recap of the step, recorded verbatim as a `step_summary`
-ledger row.
+Not a gate. After a transition enacts, this read-only observer produces a 1–3
+sentence recap recorded as a `step_summary` ledger row.
 
 ## Where the rubrics live
 
-The create-structure reviewer and the summariser are **embedded canonical
-defaults** shipped in the binary (`internal/config/substrate/skills`). A repo MAY
-override them — or add its own gates (like this repo's intent-plan and done
-reviewers) — by authoring markdown under `.satelle/skills/`. The binary runs the
-gates; the substrate defines them.
+The create-structure reviewer and summariser are **embedded canonical defaults**
+(`internal/config/substrate/skills`). A repo MAY override them — or add its own
+gates (this repo's commit-push reviewer) — under `.satelle/skills/`. The binary
+runs the gates; the substrate defines them.
 
 See also: `satelle help create-story`.

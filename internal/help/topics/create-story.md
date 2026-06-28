@@ -46,10 +46,12 @@ always the terminal state, and every gate on the path runs before it (see
 **read-only** reviewer that reads the repository and works through the numbered
 acceptance criteria one by one. A reject pushes back with the unmet criteria.
 
-This repo layers extra functional gates onto the path before `done`:
+A repo may layer extra steps onto the path before `done` — this repo's workflow
+adds a **commit-push** step, where the executor commits and pushes the slice and a
+functional gate confirms the CI run succeeded before close:
 
-    satelle story set <id> --status integrated   # gate: all integration tests pass
-    satelle story set <id> --status deployed      # gate: deploy + health-check (web + CLI)
+    satelle story set <id> --status commit_push   # executor: commit, push, watch CI
+    satelle story set <id> --status committed     # gate: CI run succeeded + summary doc
     satelle story set <id> --status done          # gate: acceptance review
 
 Drive each transition and let its gate judge it; a reject blocks the move and
