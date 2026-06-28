@@ -13,7 +13,7 @@ working tool until the satelle MVP lands.
 - **[recursive-actor-model.md](./recursive-actor-model.md)** — the operating model:
   the recursive-actor reviewer premise (executor does the work, read-only reviewers
   gate status), the flexible DOT workflow format (node + edge gates, YAML→DOT at
-  ingest, validation + spine), the RLM execution model and how it's implemented, and
+  ingest, validation + spine), how reviewers run (isolated fresh-context review), and
   the actors layer — with package/file pointers.
 
 ## Status (2026-06-26)

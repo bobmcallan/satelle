@@ -74,8 +74,8 @@ Run `satelle hook context` by hand to see exactly what a session would receive.
 - **`satelle-done-is-last`** — `done` is always the terminal state; gates precede
   it.
 - **`satelle-recursive-actor-model`** — every step is run by a defined actor
-  (executor does the work; reviewer is limited to read-only reviewing); each
-  invocation is a recursive call satelle hosts; satelle gates status; process is
+  (executor does the work; reviewer is limited to read-only reviewing); each gate
+  is an isolated fresh-context call; satelle gates status; process is
   configuration.
 
 See also: `satelle help reviewer-checks`, `satelle help create-story`.

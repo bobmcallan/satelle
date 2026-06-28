@@ -4,7 +4,7 @@ scope: system
 kind: principle
 tags: [kind:principle, principles:global]
 applies_to: ["*"]
-description: The recursive-actor execution model (supersedes the reviewer-only model). A workflow is a graph of steps, each run by a DEFINED actor with a bounded grant — the executor does the work (mutates the tree), the reviewer is LIMITED to reviewing (read-only, judges the OUTCOME not the procedure, returns a verdict, never mutates). Every actor invocation is a recursive language-model call satelle hosts: it injects the step's skill as the prompt over a transformed context subset and aggregates the structured return. satelle stays the status gatekeeper — a reviewer's accept is the only thing that advances a gated status. How and where an actor runs (in-loop, isolated `agent -p`, or another harness) is the actors layer; the model is satelle's own, modelled on recursive language models (RLM), not an imported engine.
+description: The recursive-actor execution model (supersedes the reviewer-only model). A workflow is a graph of steps, each run by a DEFINED actor with a bounded grant — the executor does the work (mutates the tree), the reviewer is LIMITED to reviewing (read-only, judges the OUTCOME not the procedure, returns a verdict, never mutates). Each actor invocation is isolated: satelle spawns a fresh-context agent with the step's skill as the prompt over a payload it builds (the work item + the transition) and aggregates the structured return. satelle stays the status gatekeeper — a reviewer's accept is the only thing that advances a gated status. How and where an actor runs (in-loop, isolated `agent -p`, or another harness) is the actors layer. "Recursive" is structural — agents gate agents — not a claim about recursive context decomposition.
 ---
 
 # The recursive-actor execution model
@@ -33,25 +33,23 @@ at execution time, and an executor that drifted into the reviewer's lane (acting
 where it should only judge) broke the model. Defining **both** actors, each with
 its grant, is the fix.
 
-## Every actor invocation is a recursive call satelle hosts
+## How an actor runs — an isolated, fresh-context invocation
 
-Roles are bounded; *execution* is recursive. Each actor invocation is a
-recursive language-model call satelle hosts: it injects the step's **skill** as
-the prompt over a **transformed context subset** (the work item plus just the
-slice the step needs, not the whole repo), runs it through the actor's bound
-backend, and **aggregates the structured return**. satelle already does this for
-reviewers — `internal/reviewer` spawns an isolated `agent -p` over a transformed
-payload and parses one `{decision, notes}`, a depth-1 recursion. The
-recursive-actor model names that primitive and extends it to every actor.
+Each actor invocation is **isolated**. satelle spawns a fresh-context agent with
+the step's **skill** as its system prompt, a **payload satelle builds** (the work
+item plus the requested transition — not the whole repo), and the actor's bound
+tool grant; it returns a structured result satelle **aggregates** to gate status.
+A reviewer runs exactly this way — `internal/reviewer` spawns an isolated `agent -p`
+with the skill, the transition payload, and a read-only grant, and parses one
+`{decision, notes}`. **satelle does the context selection** (the payload it
+constructs); the actor reads what it needs through its own tools. There is no
+shared state between invocations — each gate is a clean room.
 
-Recursion lets an actor manage **unbounded context** — peek, grep, partition, map
-over a large input set, spawn its own sub-calls — the recursive-language-model
-(RLM) pattern. Decomposition is the actor's freedom; it **never widens the
-actor's grant**. A reviewer that recurses to read more is still read-only.
-
-This is satelle's **own** model, written in satelle's idiom (modelled on RLM, not
-an imported engine), so the recursion, depth, and tracing are mechanism the binary
-owns.
+The "recursive" in recursive-actor is **structural**: agents gate agents — the
+executor's progress advances only when satelle invokes an isolated reviewer to
+judge it. It is *not* a claim that an actor recursively decomposes context; the
+context a reviewer sees is the payload satelle hands it plus what it reads under
+its grant. A reviewer reading more is still read-only.
 
 ## The actors layer binds how a step runs
 
