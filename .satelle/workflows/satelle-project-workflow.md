@@ -4,7 +4,7 @@ scope: project
 kind: workflow
 tags: [kind:workflow]
 applies_to: ["*"]
-description: This repo's project-scope workflow, authored in DOT (the actor model). A story or task moves backlog → in_progress → commit_push → committed → done, with a cancelled exit. It is node-centric: each node is a step carrying an actor; the executor does the work, a reviewer node gates entry via its prompt=@skill gate. The commit_push executor step commits/pushes and watches CI; the committed reviewer (satelle-commit-push-review) confirms the CI run succeeded and emits a PR-style summary; done is the acceptance gate. There is no deploy state — the push to main IS the release, verified by CI. done stays terminal (satelle-done-is-last); a project workflow takes precedence over the embedded satelle-baseline-workflow.
+description: This repo's project-scope workflow, authored in DOT (the actor model). A story or task moves backlog → in_progress → integration → commit_push → committed → done, with a cancelled exit. It is node-centric: each node is a step carrying an actor; the executor does the work, reviewers gate entry. Entering integration is gated by satelle-code-ac-review (ACs done + unit and integration tests created); leaving it for commit_push is gated by satelle-integration-review (the integration tests exercise the change) plus satelle-integration-check (runs make integration). The commit_push executor step commits/pushes and watches CI; the committed reviewer (satelle-commit-push-review) confirms the CI run succeeded and emits a PR-style summary; done is the acceptance gate. There is no deploy state — the push to main IS the release, verified by CI. done stays terminal (satelle-done-is-last); a project workflow takes precedence over the embedded satelle-baseline-workflow.
 ---
 
 # satelle workflow (project) — the actor model, authored in DOT
@@ -14,8 +14,8 @@ description: This repo's project-scope workflow, authored in DOT (the actor mode
 > embedded **system** default `satelle-baseline-workflow`. See the
 > `satelle-repo-agnostic` and `satelle-actor-model` principles.
 
-A work item moves **backlog → in_progress → commit_push → committed → done**, and
-may exit early to **cancelled**. The lifecycle is the **DOT graph** below
+A work item moves **backlog → in_progress → integration → commit_push → committed →
+done**, and may exit early to **cancelled**. The lifecycle is the **DOT graph** below
 (node-centric): each node is a step carrying an `actor`; the **executor** does the
 work and mutates the tree, and a **reviewer** node gates *entry* to it via its
 `prompt="@skill:NAME"` gate (the reviewer is read-only — it judges, never mutates).
@@ -23,12 +23,15 @@ satelle is the gatekeeper of status: a status advances only through a reviewer's
 accept.
 
 The release path is deliberate. There is **no deploy state** — pushing to `main`
-IS the release, and CI is the deployment check. The edge into **commit_push** is
-gated twice before anything is committed: `satelle-code-ac-review` — a read-only
-pre-commit reviewer that checks the implemented code satisfies the story's
-acceptance criteria and carries the test coverage the change warrants — then
-`satelle-integration-check`, an always-on functional gate that runs the local
-integration suite (`make integration`) and rejects on a red run. The **commit_push** executor step
+IS the release, and CI is the deployment check. The **integration** step is the
+test stage: entering it from `in_progress` is gated by `satelle-code-ac-review` —
+a read-only reviewer that the implemented code satisfies the story's acceptance
+criteria AND that both unit and integration tests were created. Leaving it for
+`commit_push` is gated by `satelle-integration-review` — a reviewer that the
+integration tests actually exercise the change — alongside `satelle-integration-check`,
+an always-on functional gate that runs the local suite (`make integration`) and
+rejects on a red run. So the slice is reviewed, its tests are executed, and those
+tests are reviewed, all before anything is committed. The **commit_push** executor step
 commits and pushes the slice and watches the GitHub Actions run to conclusion
 (skill `commit-push`); the **committed** gate (`satelle-commit-push-review`, a
 functional check) confirms that CI run concluded success and emits a PR-style
@@ -47,19 +50,22 @@ digraph satelle_workflow {
 
   backlog     [shape=Mdiamond]
   in_progress [actor=executor]
+  integration [actor=executor]
   commit_push [actor=executor, prompt="@skill:commit-push"]
   committed   [actor=reviewer, prompt="@skill:satelle-commit-push-review"]
   done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
   cancelled   [actor=reviewer, prompt="@skill:satelle-story-cancel-review"]
 
   backlog -> in_progress
-  in_progress -> commit_push [reviewer_skill="satelle-code-ac-review"]
+  in_progress -> integration [reviewer_skill="satelle-code-ac-review"]
+  integration -> commit_push [reviewer_skill="satelle-integration-review"]
   commit_push -> committed -> done
 
   committed   -> in_progress  // recovery: a done-review reject returns to work
 
   backlog     -> cancelled
   in_progress -> cancelled
+  integration -> cancelled
   commit_push -> cancelled
 }
 ```
