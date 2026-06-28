@@ -274,19 +274,19 @@ func (s *Server) pollDB(ctx context.Context, interval time.Duration) {
 }
 
 type pageData struct {
-	RepoRoot    string
-	DBPath      string
+	RepoRoot     string
+	DBPath       string
 	Stories      []rowVM
 	BacklogCount int
 	Tasks        []rowVM
 	DocKinds     []kindGroup
 	DocCount     int
-	Workflows   []workflowRowVM
-	Version     string
-	Uptime      string
-	Theme       string
-	FooterEmail string
-	TopBar      topBar
+	Workflows    []workflowRowVM
+	Version      string
+	Uptime       string
+	Theme        string
+	FooterEmail  string
+	TopBar       topBar
 }
 
 // topBar is the data the shared "topbar" template needs — the page-chrome
