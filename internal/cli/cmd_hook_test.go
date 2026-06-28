@@ -116,3 +116,21 @@ func TestBashCommandFromEvent(t *testing.T) {
 		t.Errorf("bad event should yield empty command, got %q", got)
 	}
 }
+
+func TestExecutorStatesDOT(t *testing.T) {
+	body := `---
+name: x
+---
+` + "```dot" + `
+digraph w {
+  in_progress [actor=executor]
+  committed   [actor=reviewer, prompt="@skill:r"]
+  in_progress -> committed -> done
+}
+` + "```" + `
+`
+	got := executorStates(body)
+	if len(got) != 1 || got[0] != "in_progress" {
+		t.Fatalf("executorStates = %v, want [in_progress]", got)
+	}
+}
