@@ -212,41 +212,70 @@ func dotBlock(body string) string {
 
 // dotStatements splits a DOT graph body into statements, keeping bracketed
 // attribute lists (which may span newlines) intact and treating graph braces as
-// separators.
+// separators. A `//` line comment OUTSIDE a quoted string is stripped to the end
+// of its line (so an edge like `a -> b // note` yields the clean `a -> b`); a
+// `//` inside a quoted attribute value (e.g. a URL) is preserved. Byte iteration
+// is safe: multi-byte runes only occur inside quoted strings, whose bytes are
+// copied verbatim.
 func dotStatements(block string) []string {
 	var stmts []string
 	var cur strings.Builder
 	depth := 0
+	inStr := false
 	flush := func() {
 		if s := strings.TrimSpace(cur.String()); s != "" {
 			stmts = append(stmts, s)
 		}
 		cur.Reset()
 	}
-	for _, r := range block {
-		switch r {
+	for i := 0; i < len(block); i++ {
+		c := block[i]
+		if inStr {
+			cur.WriteByte(c)
+			if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		// `//` line comment outside quotes — skip to end of line; the newline
+		// still acts as a statement separator (or a space inside an attr list).
+		if c == '/' && i+1 < len(block) && block[i+1] == '/' {
+			for i < len(block) && block[i] != '\n' {
+				i++
+			}
+			if depth == 0 {
+				flush()
+			} else {
+				cur.WriteByte(' ')
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+			cur.WriteByte(c)
 		case '[':
 			depth++
-			cur.WriteRune(r)
+			cur.WriteByte(c)
 		case ']':
 			if depth > 0 {
 				depth--
 			}
-			cur.WriteRune(r)
+			cur.WriteByte(c)
 		case '{', '}':
 			if depth == 0 {
 				flush()
 			} else {
-				cur.WriteRune(r)
+				cur.WriteByte(c)
 			}
 		case ';', '\n':
 			if depth == 0 {
 				flush()
 			} else {
-				cur.WriteRune(' ')
+				cur.WriteByte(' ')
 			}
 		default:
-			cur.WriteRune(r)
+			cur.WriteByte(c)
 		}
 	}
 	flush()
