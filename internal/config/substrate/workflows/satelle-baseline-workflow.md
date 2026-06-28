@@ -4,39 +4,34 @@ scope: system
 kind: workflow
 tags: [kind:workflow]
 applies_to: ["*"]
-description: The canonical order-zero lifecycle every satelle repo inherits from the binary — backlog → in_progress → done, with a cancelled exit. The edges are gated by reviewer skills (satelle-story-intent-review on entry, satelle-story-done-review on exit) so a story is judged well-formed before work begins and quality-checked before it closes. This is the EMBEDDED canonical default (config/substrate/workflows); a repo MAY override it by placing a same-named file under .satelle/workflows, but never edits this source.
+description: The canonical order-zero lifecycle every satelle repo inherits from the binary — backlog → in_progress → done, with a cancelled exit — authored in the DOT standard (the recursive-actor model). The begin-work edge is gated by satelle-story-intent-review and the close by satelle-story-done-review (a reviewer node), so a story is judged well-formed before work and quality-checked before it closes. This is the EMBEDDED canonical default (config/substrate/workflows); a repo MAY override it by placing a same-named file under .satelle/workflows, but never edits this source.
 ---
 
-# Baseline workflow (order-zero, gated)
+# Baseline workflow (order-zero, gated, DOT)
 
-The default lifecycle the satelle binary ships: a story or task moves
-**backlog → in_progress → done** and may exit early to **cancelled**. Each edge
-is **gated** — an isolated reviewer judges the requested transition and either
-enacts it or pushes back to the executor. The executor never enacts its own
-transition; quality management is the point.
+The default lifecycle the satelle binary ships, authored in the **DOT standard**
+(node-centric — see the `satelle-recursive-actor-model` principle): a story or task
+moves **backlog → in_progress → done** and may exit early to **cancelled**. Each
+gate is an isolated reviewer; the executor never enacts its own transition —
+quality management is the point. This is the minimal order-zero lifecycle; a repo
+layers richer steps (e.g. a commit-push gate) in its own project workflow.
 
-## Workflow
+```dot
+digraph satelle_baseline {
+  graph [goal="The order-zero lifecycle every satelle repo inherits", vars="story"]
+  rankdir=LR
 
-- **backlog → in_progress** — gated by `satelle-story-intent-review`: the story
-  must be well-formed (a clear goal and numbered acceptance criteria) before work
-  begins. A reject pushes back with notes; the story stays in backlog.
-- **in_progress → done** — gated by `satelle-story-done-review`: the work must
-  satisfy the acceptance criteria. A reject pushes back; the story stays
-  in_progress.
-- **backlog/in_progress → cancelled** — gated by `satelle-story-cancel-review`:
-  abandon the item, recording why.
+  backlog     [shape=Mdiamond]
+  in_progress [actor=executor]
+  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
+  cancelled   [actor=reviewer, prompt="@skill:satelle-story-cancel-review"]
 
-```yaml
-states:
-  - backlog
-  - {name: in_progress, actor: executor}
-  - done
-  - cancelled
-transitions:
-  - {from: backlog, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
-  - {from: in_progress, to: done, reviewer_skill: "satelle-story-done-review"}
-  - {from: backlog, to: cancelled, reviewer_skill: "satelle-story-cancel-review"}
-  - {from: in_progress, to: cancelled, reviewer_skill: "satelle-story-cancel-review"}
+  backlog -> in_progress [reviewer_skill="satelle-story-intent-review"]
+  in_progress -> done
+
+  backlog     -> cancelled
+  in_progress -> cancelled
+}
 ```
 
 ## Environment
