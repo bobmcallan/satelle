@@ -9,6 +9,7 @@ package wfdot
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -74,11 +75,88 @@ func Validate(spec Spec) []string {
 	return problems
 }
 
+// Start returns the workflow's initial state — the first declared state with no
+// incoming transition (the Mdiamond entry, e.g. "backlog"). Empty when every
+// state has an incoming edge (no clear start). The engagement edge leaves Start.
+func (s Spec) Start() string {
+	hasIn := map[string]bool{}
+	for _, tr := range s.Transitions {
+		hasIn[tr.To] = true
+	}
+	for _, st := range s.States {
+		if !hasIn[st.Name] {
+			return st.Name
+		}
+	}
+	return ""
+}
+
 // State is one workflow node. Terminal is true when no transition leaves it.
 type State struct {
 	Name     string
 	Actor    string
 	Terminal bool
+	// Skill is the node's own `@skill:NAME` prompt — the executor rubric an
+	// executor step performs, or the gate a reviewer node judges by (empty when
+	// the node carries no prompt). Populated from the DOT grammar.
+	Skill string
+}
+
+// doneReachable returns the set of states from which "done" is reachable
+// (inclusive of "done"), by reverse traversal. Empty when there is no "done".
+func (s Spec) doneReachable() map[string]bool {
+	reach := map[string]bool{}
+	hasDone := false
+	for _, st := range s.States {
+		if st.Name == "done" {
+			hasDone = true
+		}
+	}
+	if !hasDone {
+		return reach
+	}
+	rev := map[string][]string{}
+	for _, tr := range s.Transitions {
+		rev[tr.To] = append(rev[tr.To], tr.From)
+	}
+	reach["done"] = true
+	stack := []string{"done"}
+	for len(stack) > 0 {
+		n := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for _, from := range rev[n] {
+			if !reach[from] {
+				reach[from] = true
+				stack = append(stack, from)
+			}
+		}
+	}
+	return reach
+}
+
+// ExecutorPathToDoneSkills returns the `@skill:` prompts of EXECUTOR nodes that
+// lie on a path which can still reach "done", deduped and sorted. These are the
+// rubrics an executor must read to PERFORM a step (e.g. commit-push). Unlike
+// reviewer gates — which degrade to advisory when their rubric is absent — a
+// missing executor skill leaves the step unperformable, so its absence is the
+// genuine wasted-work trap to catch at engagement. Empty when there is no "done".
+func (s Spec) ExecutorPathToDoneSkills() []string {
+	reach := s.doneReachable()
+	if len(reach) == 0 {
+		return nil
+	}
+	set := map[string]bool{}
+	for _, st := range s.States {
+		if st.Actor == "executor" && st.Skill != "" && reach[st.Name] {
+			set[st.Skill] = true
+		}
+	}
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Transition is a directed edge; Skill is the reviewer gate admitting entry to
@@ -164,7 +242,7 @@ func Parse(body string) (Spec, bool) {
 	}
 
 	for _, name := range order {
-		spec.States = append(spec.States, State{Name: name, Actor: nodes[name].actor})
+		spec.States = append(spec.States, State{Name: name, Actor: nodes[name].actor, Skill: nodes[name].skill})
 	}
 	// A transition into a reviewer node is gated by that node's skill — unless the
 	// edge already carries an explicit reviewer_skill attribute, which wins.

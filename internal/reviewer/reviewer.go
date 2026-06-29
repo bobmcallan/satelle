@@ -216,6 +216,20 @@ func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (
 		return verb.GateDecision{}, fmt.Errorf(
 			"transition %s→%s is not a declared edge in the active workflow", item.Status, toStatus)
 	}
+	// Before a story is IMPLEMENTED, guard against engaging it into a workflow that
+	// cannot complete. On the ENGAGEMENT edge, deterministically (no agent) resolve
+	// every EXECUTOR-step skill on the path to done: an executor step whose rubric
+	// is missing leaves that step unperformable (the wasted-work trap — e.g. a
+	// removed commit-push). Reject engagement up front, naming the gap. This is the
+	// fast, in-process complement to the LLM satelle-workflow-review, which judges
+	// the workflow's full structure + actionability at create/update. Reviewer-gate
+	// skills are NOT required here — a missing reviewer rubric degrades to advisory
+	// by design, so fresh repos keep working.
+	if dec, blocked, gerr := g.guardEngagementExecutorSkills(ctx, item, toStatus); gerr != nil {
+		return verb.GateDecision{}, gerr
+	} else if blocked {
+		return dec, nil
+	}
 	// Append the always-on system reviewers AFTER the workflow-named ones — they
 	// always run last. Skills already named on the edge are not duplicated, and a
 	// reviewer that scopes itself with `on:` only joins on its target statuses.
@@ -250,6 +264,53 @@ func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (
 		}
 	}
 	return result, nil
+}
+
+// engagementSkillCheck is the synthetic reviewer name recorded when the
+// deterministic engagement guard blocks because the active workflow's path to
+// done has an executor step whose skill does not resolve.
+const engagementSkillCheck = "satelle-workflow-skill-check"
+
+// guardEngagementExecutorSkills is the fast, agent-free completability guard run
+// on the ENGAGEMENT edge (leaving the workflow's start state for a non-cancel
+// target). It resolves every EXECUTOR-step skill on the active workflow's path to
+// done and returns blocked=true, naming any that do not resolve in the substrate
+// (embedded ∪ project). It returns blocked=false to proceed: off the engagement
+// edge, when the workflow is not parseable DOT, or when every executor skill
+// resolves. A docs lookup error other than not-found is surfaced.
+func (g *Gater) guardEngagementExecutorSkills(ctx context.Context, item workitem.Item, toStatus string) (verb.GateDecision, bool, error) {
+	doc, err := g.activeWorkflow(ctx, item.Category)
+	if err != nil {
+		if errors.Is(err, docindex.ErrNotFound) {
+			return verb.GateDecision{}, false, nil
+		}
+		return verb.GateDecision{}, false, err
+	}
+	spec, ok := wfdot.Parse(doc.Body)
+	if !ok || item.Status != spec.Start() || toStatus == "cancelled" {
+		return verb.GateDecision{}, false, nil // not the engagement edge (or no DOT)
+	}
+	var missing []string
+	for _, name := range spec.ExecutorPathToDoneSkills() {
+		if _, gerr := g.docs.Get(ctx, "skills", name); gerr != nil {
+			if errors.Is(gerr, docindex.ErrNotFound) {
+				missing = append(missing, name)
+				continue
+			}
+			return verb.GateDecision{}, false, gerr
+		}
+	}
+	if len(missing) == 0 {
+		return verb.GateDecision{}, false, nil
+	}
+	notes := fmt.Sprintf(
+		"cannot engage: the active workflow's path to done has an executor step whose skill does not resolve in the substrate — %s. Author it under .satelle/skills (or embed it), or remove the step, before starting.",
+		strings.Join(missing, ", "))
+	dec := verb.GateDecision{Gated: true, Accept: false, Skill: engagementSkillCheck, Notes: notes}
+	dec.Reviewers = append(dec.Reviewers, verb.ReviewerVerdict{
+		Skill: engagementSkillCheck, Order: 0, Accept: false, Notes: notes, System: true,
+	})
+	return dec, true, nil
 }
 
 // runReviewer runs ONE reviewer skill over item's transition and returns its
