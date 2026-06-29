@@ -424,6 +424,12 @@ func (g *Gater) systemReviewers(ctx context.Context, exclude []string, toStatus 
 // item at creation. Embedded by default; overridable under .satelle/skills.
 const structureSkill = "satelle-story-review"
 
+// createReviewSkill is the OPT-IN content/alignment reviewer that runs AFTER the
+// deterministic structural check at creation (sty_345e9ae7). It is NOT embedded —
+// content/alignment is the operator's process, authored as repo substrate under
+// .satelle/skills; when absent, creation is deterministic-only (no content review).
+const createReviewSkill = "satelle-story-create-review"
+
 // summariserSkill recaps an enacted transition. Embedded by default; overridable.
 const summariserSkill = "satelle-step-summary"
 
@@ -499,10 +505,34 @@ func (g *Gater) stepSummaryDeclared(ctx context.Context, category string) (decla
 // one numbered, testable acceptance criterion. No LLM, no agent CLI: the contract
 // is code, so it is harness-independent and never flaky. Always Gated (the
 // structure is the one thing satelle enforces on creation).
-func (g *Gater) ReviewCreate(_ context.Context, draft verb.CreateDraft) (verb.GateDecision, error) {
+func (g *Gater) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb.GateDecision, error) {
+	// 1. Deterministic structural check FIRST — the one thing satelle always
+	// enforces on creation. A structural failure pre-empts: the content reviewer
+	// is never reached on a malformed draft.
 	if problems := structure.Story(draft.Title, draft.Body, draft.AcceptanceCriteria); len(problems) > 0 {
 		return verb.GateDecision{Gated: true, Accept: false, Skill: structureSkill, Notes: strings.Join(problems, "; ")}, nil
 	}
+	// 2. Optional content/alignment review — runs ONLY when a repo has authored the
+	// satelle-story-create-review rubric (opt-in by presence). runReviewer returns
+	// an UNGATED decision when the skill does not resolve, so a repo without the
+	// rubric stays deterministic-only. The draft is judged as a backlog-bound item.
+	draftItem := workitem.Item{
+		Title:              draft.Title,
+		Body:               draft.Body,
+		AcceptanceCriteria: draft.AcceptanceCriteria,
+		Category:           draft.Category,
+		Priority:           draft.Priority,
+		Tags:               draft.Tags,
+		Status:             "backlog",
+	}
+	dec, err := g.runReviewer(ctx, draftItem, "backlog", createReviewSkill)
+	if err != nil {
+		return verb.GateDecision{}, err
+	}
+	if dec.Gated {
+		return dec, nil // the content rubric accepted or rejected
+	}
+	// No content rubric authored — accept on structure alone.
 	return verb.GateDecision{Gated: true, Accept: true, Skill: structureSkill}, nil
 }
 
