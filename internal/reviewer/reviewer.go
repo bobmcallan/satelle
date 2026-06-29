@@ -230,7 +230,7 @@ func stripFrontmatter(body string) string {
 // single-reviewer callers keep their contract. Gated=false (enact directly)
 // when no reviewer governs the edge.
 func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (verb.GateDecision, error) {
-	skills, declared, err := g.reviewerSkills(ctx, item.Category, item.Status, toStatus)
+	skills, declared, err := g.reviewerSkills(ctx, item, item.Status, toStatus)
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
@@ -304,7 +304,7 @@ const engagementSkillCheck = "satelle-workflow-skill-check"
 // edge, when the workflow is not parseable DOT, or when every executor skill
 // resolves. A docs lookup error other than not-found is surfaced.
 func (g *Gater) guardEngagementExecutorSkills(ctx context.Context, item workitem.Item, toStatus string) (verb.GateDecision, bool, error) {
-	doc, err := g.activeWorkflow(ctx, item.Category)
+	doc, err := g.activeWorkflowPreferring(ctx, item.Category, stampedWorkflowName(item))
 	if err != nil {
 		if errors.Is(err, docindex.ErrNotFound) {
 			return verb.GateDecision{}, false, nil
@@ -449,7 +449,7 @@ func (g *Gater) Summarise(ctx context.Context, item workitem.Item, from, to stri
 	// The summariser runs ONLY when the active workflow DECLARES a step-summary
 	// node (transparent opt-in via the DOT) — there is no hidden always-on
 	// summariser (sty_9a139c78). A non-declaring workflow records nothing.
-	declared, mandatory := g.stepSummaryDeclared(ctx, item.Category)
+	declared, mandatory := g.stepSummaryDeclared(ctx, item)
 	if !declared {
 		return "", nil
 	}
@@ -490,8 +490,8 @@ func (g *Gater) Summarise(ctx context.Context, item workitem.Item, from, to stri
 
 // stepSummaryDeclared reports whether the workflow active for category declares a
 // step-summary node (wfdot StepSummary) and whether it is mandatory.
-func (g *Gater) stepSummaryDeclared(ctx context.Context, category string) (declared, mandatory bool) {
-	doc, err := g.activeWorkflow(ctx, category)
+func (g *Gater) stepSummaryDeclared(ctx context.Context, item workitem.Item) (declared, mandatory bool) {
+	doc, err := g.activeWorkflowPreferring(ctx, item.Category, stampedWorkflowName(item))
 	if err != nil {
 		return false, false
 	}
@@ -560,8 +560,8 @@ func (g *Gater) createReviewSkillFor(ctx context.Context, category string) strin
 // edge is a DECLARED transition of that workflow. An absent workflow means no
 // governance at all — every edge is allowed and ungated (declared=true, no
 // skills), so fresh repos and the baseline keep working.
-func (g *Gater) reviewerSkills(ctx context.Context, category, from, to string) (skills []string, declared bool, err error) {
-	doc, err := g.activeWorkflow(ctx, category)
+func (g *Gater) reviewerSkills(ctx context.Context, item workitem.Item, from, to string) (skills []string, declared bool, err error) {
+	doc, err := g.activeWorkflowPreferring(ctx, item.Category, stampedWorkflowName(item))
 	if errors.Is(err, docindex.ErrNotFound) {
 		return nil, true, nil
 	}
@@ -587,6 +587,47 @@ func (g *Gater) activeWorkflow(ctx context.Context, category string) (docindex.D
 		}
 	}
 	return g.docs.Get(ctx, "workflows", baselineWorkflow)
+}
+
+// WorkflowStampPrefix is the tag prefix that STAMPS the governing workflow on a
+// story at create (sty_3800ac23): `workflow:<name>`. Recorded once, so gating
+// reads the chosen workflow rather than re-deriving it by category every time.
+const WorkflowStampPrefix = "workflow:"
+
+// stampedWorkflowName returns the workflow stamped on the item (its
+// `workflow:<name>` tag), or "" when un-stamped (legacy/category-resolved).
+func stampedWorkflowName(item workitem.Item) string {
+	for _, t := range item.Tags {
+		if strings.HasPrefix(t, WorkflowStampPrefix) {
+			return strings.TrimSpace(strings.TrimPrefix(t, WorkflowStampPrefix))
+		}
+	}
+	return ""
+}
+
+// activeWorkflowPreferring resolves the governing workflow, preferring the item's
+// STAMPED workflow when present (deterministic after create); it falls back to
+// category selection when un-stamped or the stamped workflow no longer resolves.
+func (g *Gater) activeWorkflowPreferring(ctx context.Context, category, stamped string) (docindex.Doc, error) {
+	if stamped != "" {
+		if doc, err := g.docs.Get(ctx, "workflows", stamped); err == nil {
+			return doc, nil
+		}
+		// The stamped workflow is gone — fall back to category selection rather
+		// than losing governance.
+	}
+	return g.activeWorkflow(ctx, category)
+}
+
+// WorkflowNameFor returns the name of the workflow that governs a story of the
+// given category — the value stamped on the story at create. Empty when no
+// workflow governs the category. Used by the create path to record the choice.
+func (g *Gater) WorkflowNameFor(ctx context.Context, category string) string {
+	doc, err := g.activeWorkflow(ctx, category)
+	if err != nil {
+		return ""
+	}
+	return doc.Name
 }
 
 // OrderedWorkflows returns the workflows that APPLY to a story of the given

@@ -39,6 +39,9 @@ const (
 	// these ledger rows so the per-story close-out can compare estimate vs actual.
 	KindEstimateRecorded = "estimate_recorded"
 	KindActualRecorded   = "actual_recorded"
+	// KindWorkflowStamped records the workflow chosen to govern a story at create
+	// (sty_3800ac23) — the choice satelle's gates read thereafter.
+	KindWorkflowStamped = "workflow_stamped"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional

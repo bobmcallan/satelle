@@ -54,6 +54,11 @@ func (d fakeDocs) Get(_ context.Context, kind, name string) (docindex.Doc, error
 		if name == baselineWorkflow {
 			return docindex.Doc{Kind: kind, Name: name, Body: d.workflow}, nil
 		}
+		for _, w := range d.extraWorkflows {
+			if w.Name == name {
+				return w, nil
+			}
+		}
 	case "skills":
 		for _, s := range d.extraSkills {
 			if s.Name == name {
@@ -995,5 +1000,40 @@ func TestSetRunner(t *testing.T) {
 	g.SetRunner(nil) // nil is ignored
 	if g.runner == nil || g.runner.Name() != "codex" {
 		t.Errorf("a nil runner must be ignored")
+	}
+}
+
+// TestStampedWorkflowName reads the workflow:<name> stamp from an item's tags.
+func TestStampedWorkflowName(t *testing.T) {
+	if got := stampedWorkflowName(workitem.Item{Tags: []string{"a", "workflow:my-wf", "b"}}); got != "my-wf" {
+		t.Errorf("stampedWorkflowName = %q, want my-wf", got)
+	}
+	if got := stampedWorkflowName(workitem.Item{Tags: []string{"a", "b"}}); got != "" {
+		t.Errorf("un-stamped item = %q, want empty", got)
+	}
+}
+
+// TestActiveWorkflowPreferringStampWins: the STAMPED workflow governs the story,
+// overriding category selection; an un-stamped item resolves by category; a stamp
+// that no longer resolves falls back to category (sty_3800ac23).
+func TestActiveWorkflowPreferringStampWins(t *testing.T) {
+	wfFeature := docindex.Doc{Kind: "workflows", Name: "wf-feature",
+		Body: "---\nname: wf-feature\ntype: workflow\napplies_to: [\"feature\"]\n---\n# f\n"}
+	wfChore := docindex.Doc{Kind: "workflows", Name: "wf-chore",
+		Body: "---\nname: wf-chore\ntype: workflow\napplies_to: [\"chore\"]\n---\n# c\n"}
+	g, _ := gater(t, "", fakeDocs{workflow: plainWF, extraWorkflows: []docindex.Doc{wfFeature, wfChore}})
+	ctx := context.Background()
+
+	// Category "feature" alone selects wf-feature.
+	if doc, err := g.activeWorkflowPreferring(ctx, "feature", ""); err != nil || doc.Name != "wf-feature" {
+		t.Fatalf("category feature → %q,%v; want wf-feature", doc.Name, err)
+	}
+	// A stamp for wf-chore WINS even though the category is feature.
+	if doc, err := g.activeWorkflowPreferring(ctx, "feature", "wf-chore"); err != nil || doc.Name != "wf-chore" {
+		t.Fatalf("stamped wf-chore → %q,%v; want wf-chore (stamp wins over category)", doc.Name, err)
+	}
+	// A stamp that no longer resolves falls back to category selection.
+	if doc, err := g.activeWorkflowPreferring(ctx, "feature", "gone"); err != nil || doc.Name != "wf-feature" {
+		t.Fatalf("stale stamp → %q,%v; want wf-feature (fallback)", doc.Name, err)
 	}
 }

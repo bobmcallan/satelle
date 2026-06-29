@@ -43,6 +43,17 @@ type createReq struct {
 	Tags               []string `json:"tags,omitempty"`
 }
 
+// hasWorkflowStamp reports whether tags already carry a workflow:<name> stamp, so
+// an explicit caller-supplied workflow tag is never duplicated.
+func hasWorkflowStamp(tags []string) bool {
+	for _, t := range tags {
+		if strings.HasPrefix(t, "workflow:") {
+			return true
+		}
+	}
+	return false
+}
+
 func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (json.RawMessage, error) {
 	ledgerKind := ledger.KindStoryCreated
 	if kind == workitem.KindTask {
@@ -80,6 +91,19 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 			}
 		}
 
+		// Stamp the GOVERNING workflow on the story at create (sty_3800ac23): the
+		// chosen workflow is recorded as a workflow:<name> tag so gating reads the
+		// choice thereafter rather than re-deriving it by category. Independent of
+		// create-gating — a story is stamped whenever a workflow governs it.
+		tags := req.Tags
+		stampedWorkflow := ""
+		if workflowResolver != nil && !hasWorkflowStamp(tags) {
+			if wf := workflowResolver.WorkflowNameFor(ctx, req.Category); wf != "" {
+				stampedWorkflow = wf
+				tags = append(tags, "workflow:"+wf)
+			}
+		}
+
 		it, err := store.Create(ctx, workitem.CreateInput{
 			Kind:               kind,
 			Title:              req.Title,
@@ -89,12 +113,16 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 			Category:           req.Category,
 			ParentID:           req.ParentID,
 			AcceptanceCriteria: req.AcceptanceCriteria,
-			Tags:               req.Tags,
+			Tags:               tags,
 		}, now)
 		if err != nil {
 			return nil, err
 		}
 		appendLedger(ctx, it.ID, ledgerKind, fmt.Sprintf("created %s %q", kind, it.Title), now)
+		if stampedWorkflow != "" {
+			appendLedger(ctx, it.ID, ledger.KindWorkflowStamped,
+				fmt.Sprintf("governing workflow: %s", stampedWorkflow), now)
+		}
 		notifyChange(panelTopic(kind))
 		return json.Marshal(it)
 	}
