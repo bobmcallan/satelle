@@ -16,9 +16,23 @@ func TestListContainsCoreTopics(t *testing.T) {
 			t.Errorf("topic %q has empty body", top.Name)
 		}
 	}
-	for _, want := range []string{"create-story", "reviewer-checks", "principles"} {
+	for _, want := range []string{"create-story", "reviewer-checks", "principles", "projects"} {
 		if !names[want] {
 			t.Errorf("missing help topic %q", want)
+		}
+	}
+}
+
+func TestProjectsTopic(t *testing.T) {
+	top, ok := Get("projects")
+	if !ok {
+		t.Fatal("projects topic not found")
+	}
+	// The topic must teach the key agent rule: add another project with
+	// `workspace add`, served additively under /<slug>/.
+	for _, want := range []string{"workspace add", "/<slug>/", "service install", "~/.satelle/config.toml"} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("projects topic body missing %q", want)
 		}
 	}
 }
