@@ -15,9 +15,14 @@ func TestHelpProjectsTopic(t *testing.T) {
 		t.Errorf("`satelle help` does not list the projects topic:\n%s", list)
 	}
 	body := mustRun(t, testBin, dir, "help", "projects")
-	for _, want := range []string{"workspace add", "/<slug>/", "service install"} {
+	for _, want := range []string{"landing", "workspace add", "/<slug>/", "service install"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("`satelle help projects` missing %q:\n%s", want, body)
 		}
+	}
+	// The topic must teach the NEW model, not the retired "bound repo never moves
+	// from /" one.
+	if strings.Contains(body, "never moves") {
+		t.Errorf("`satelle help projects` still describes the retired bound-repo-at-/ model:\n%s", body)
 	}
 }
