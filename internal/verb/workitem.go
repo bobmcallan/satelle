@@ -253,10 +253,18 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 			fmt.Sprintf("%s → %s", current.Status, *req.Status),
 			transitionPayload(current.Status, *req.Status, ""), now)
 		// After a GATED transition is enacted, the read-only summariser recaps the
-		// step into a step_summary row. Best-effort: the work already committed, so
-		// a summariser failure must not fail the transition.
+		// step into a step_summary row — but ONLY where the active workflow declares
+		// a step-summary node (transparent opt-in; sty_9a139c78). The transition
+		// already committed, so a mandatory-summary failure is surfaced on the
+		// ledger (it records the gap, it does not revert the step).
 		if gatedAccepted && stepSummariser != nil {
-			if summary, serr := stepSummariser.Summarise(ctx, it, current.Status, *req.Status); serr == nil && summary != "" {
+			summary, serr := stepSummariser.Summarise(ctx, it, current.Status, *req.Status)
+			switch {
+			case serr != nil:
+				appendLedgerEntry(ctx, it.ID, ledger.KindStepSummary, "reviewer",
+					"step summary failed: "+serr.Error(),
+					transitionPayload(current.Status, *req.Status, ""), now)
+			case summary != "":
 				appendLedgerEntry(ctx, it.ID, ledger.KindStepSummary, "reviewer", summary,
 					transitionPayload(current.Status, *req.Status, ""), now)
 			}

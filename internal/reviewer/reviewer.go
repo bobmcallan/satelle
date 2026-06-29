@@ -401,15 +401,30 @@ type summaryPayload struct {
 // its prose recap (empty when no summariser rubric is installed). The reviewer's
 // read-only tool grant means it observes but cannot mutate the work tree.
 func (g *Gater) Summarise(ctx context.Context, item workitem.Item, from, to string) (string, error) {
+	// The summariser runs ONLY when the active workflow DECLARES a step-summary
+	// node (transparent opt-in via the DOT) — there is no hidden always-on
+	// summariser (sty_9a139c78). A non-declaring workflow records nothing.
+	declared, mandatory := g.stepSummaryDeclared(ctx, item.Category)
+	if !declared {
+		return "", nil
+	}
+	// soft returns "" on a non-mandatory failure (best-effort) and the error when
+	// the step node is mandatory, so the caller can surface the gap.
+	soft := func(format string, a ...any) (string, error) {
+		if mandatory {
+			return "", fmt.Errorf(format, a...)
+		}
+		return "", nil
+	}
 	body, err := g.skillBody(ctx, summariserSkill)
 	if err != nil {
 		if errors.Is(err, docindex.ErrNotFound) {
-			return "", nil // no summariser rubric installed — nothing to record
+			return soft("step summary is mandatory but the %s skill is not installed", summariserSkill)
 		}
 		return "", err
 	}
 	if g.runner == nil {
-		return "", nil
+		return soft("step summary is mandatory but no agent runner is configured")
 	}
 	payload, err := json.Marshal(summaryPayload{Story: item, From: from, To: to})
 	if err != nil {
@@ -423,9 +438,23 @@ func (g *Gater) Summarise(ctx context.Context, item workitem.Item, from, to stri
 		Dir:          g.repoRoot,
 	})
 	if err != nil {
-		return "", err
+		return soft("mandatory step summary failed: %v", err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// stepSummaryDeclared reports whether the workflow active for category declares a
+// step-summary node (wfdot StepSummary) and whether it is mandatory.
+func (g *Gater) stepSummaryDeclared(ctx context.Context, category string) (declared, mandatory bool) {
+	doc, err := g.activeWorkflow(ctx, category)
+	if err != nil {
+		return false, false
+	}
+	spec, ok := wfdot.Parse(doc.Body)
+	if !ok {
+		return false, false
+	}
+	return spec.StepSummary()
 }
 
 // ReviewCreate judges a draft work item's required structure before it is

@@ -511,9 +511,31 @@ func TestReviewCreateAlwaysGatedNoRunner(t *testing.T) {
 	}
 }
 
+// stepWF declares a step-summary node; stepWFOptional declares a non-mandatory
+// one; the bare baselineWorkflow body (testWorkflow) declares none.
+const stepWF = "---\nname: " + baselineWorkflow + "\ntype: workflow\n---\n" + "```dot" + `
+digraph w {
+  backlog     [shape=Mdiamond]
+  in_progress [actor=executor]
+  step        [actor=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
+  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
+  backlog -> in_progress -> done
+}
+` + "```"
+
+const stepWFOptional = "---\nname: " + baselineWorkflow + "\ntype: workflow\n---\n" + "```dot" + `
+digraph w {
+  backlog     [shape=Mdiamond]
+  in_progress [actor=executor]
+  step        [actor=reviewer, prompt="@skill:satelle-step-summary"]
+  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
+  backlog -> in_progress -> done
+}
+` + "```"
+
 func TestSummariseReturnsTrimmedProse(t *testing.T) {
 	g, r := gater(t, "  Moved from in_progress to done after the criteria were met.\n",
-		fakeDocs{skillBody: "summariser rubric", skillFound: true})
+		fakeDocs{workflow: stepWF, skillBody: "summariser rubric", skillFound: true})
 	s, err := g.Summarise(context.Background(), workitem.Item{Status: "in_progress"}, "in_progress", "done")
 	if err != nil {
 		t.Fatal(err)
@@ -537,8 +559,37 @@ func TestSummariseReturnsTrimmedProse(t *testing.T) {
 	}
 }
 
+// When the active workflow declares NO step node, the summariser does not run —
+// transparent opt-in (sty_9a139c78).
+func TestSummariseSkippedWhenNotDeclared(t *testing.T) {
+	g, r := gater(t, "should not run", fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
+	s, err := g.Summarise(context.Background(), workitem.Item{Status: "in_progress"}, "in_progress", "done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s != "" {
+		t.Errorf("no step node declared → no summary, got %q", s)
+	}
+	if r.got.SystemPrompt != "" {
+		t.Errorf("summariser must not run when the workflow declares no step node")
+	}
+}
+
+// A mandatory step node whose rubric is absent surfaces an error (the gap is not
+// silently swallowed); a non-mandatory one stays best-effort (empty, no error).
+func TestSummariseMandatoryVsOptionalWhenAbsent(t *testing.T) {
+	g, _ := gater(t, "", fakeDocs{workflow: stepWF, skillFound: false}) // mandatory
+	if _, err := g.Summarise(context.Background(), workitem.Item{Status: "in_progress"}, "in_progress", "done"); err == nil {
+		t.Error("mandatory step summary with an absent rubric should error")
+	}
+	g2, _ := gater(t, "", fakeDocs{workflow: stepWFOptional, skillFound: false}) // optional
+	if s, err := g2.Summarise(context.Background(), workitem.Item{Status: "in_progress"}, "in_progress", "done"); err != nil || s != "" {
+		t.Errorf("optional step summary with an absent rubric should be empty/no-error, got %q/%v", s, err)
+	}
+}
+
 func TestSummariseEmptyWhenRubricAbsent(t *testing.T) {
-	g, r := gater(t, "should not run", fakeDocs{skillFound: false})
+	g, r := gater(t, "should not run", fakeDocs{workflow: stepWFOptional, skillFound: false})
 	s, err := g.Summarise(context.Background(), workitem.Item{Status: "in_progress"}, "in_progress", "done")
 	if err != nil {
 		t.Fatal(err)

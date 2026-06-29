@@ -99,13 +99,10 @@ func TestValidate(t *testing.T) {
 	if p := Validate(Spec{States: []State{{Name: "done"}, {Name: "x"}}, Transitions: []Transition{{From: "done", To: "x"}}}); !hasProblem(p, "must be terminal") {
 		t.Errorf("done-not-terminal not caught: %v", p)
 	}
-	// missing mandatory spine gate on the edge into done
-	if p := Validate(Spec{States: []State{{Name: "a"}, {Name: "done"}}, Transitions: []Transition{{From: "a", To: "done"}}}); !hasProblem(p, "spine gate") {
-		t.Errorf("missing spine gate not caught: %v", p)
-	}
-	// spine gate present → valid
-	if p := Validate(Spec{States: []State{{Name: "a"}, {Name: "done"}}, Transitions: []Transition{{From: "a", To: "done", Skill: RequiredDoneGate}}}); len(p) != 0 {
-		t.Errorf("valid spine should pass, got %v", p)
+	// The done gate is NO LONGER mandated (sty_9a139c78): a workflow whose edge
+	// into done carries no gate still validates — the gate is the user's choice.
+	if p := Validate(Spec{States: []State{{Name: "a"}, {Name: "done"}}, Transitions: []Transition{{From: "a", To: "done"}}}); len(p) != 0 {
+		t.Errorf("done gate is no longer mandated; should validate, got %v", p)
 	}
 	// no states
 	if p := Validate(Spec{}); !hasProblem(p, "no states") {
@@ -269,5 +266,41 @@ guardrails:
 	// Idempotent: a DOT body is returned unchanged.
 	if _, changed2 := ToDOT(out); changed2 {
 		t.Error("ToDOT must be idempotent on a DOT body")
+	}
+}
+
+// TestStepSummaryNode covers the transparent step-summary declaration
+// (sty_9a139c78): a workflow declaring a step node whose gate is the
+// step-summary skill, marked mandatory, is reported by Spec.StepSummary.
+func TestStepSummaryNode(t *testing.T) {
+	withStep := `---
+name: x
+---
+` + "```dot" + `
+digraph x {
+  backlog     [shape=Mdiamond]
+  in_progress [actor=executor]
+  step        [actor=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
+  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
+  backlog -> in_progress -> done
+}
+` + "```" + `
+`
+	spec, ok := Parse(withStep)
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	declared, mandatory := spec.StepSummary()
+	if !declared || !mandatory {
+		t.Errorf("StepSummary = (%v,%v), want (true,true)", declared, mandatory)
+	}
+	// The disconnected step node must not desync the start (backlog is first).
+	if spec.Start() != "backlog" {
+		t.Errorf("Start = %q, want backlog", spec.Start())
+	}
+	// A workflow without a step node declares no summary.
+	noStep, _ := Parse(sampleDOT)
+	if d, _ := noStep.StepSummary(); d {
+		t.Errorf("sampleDOT declares no step node; StepSummary should be false")
 	}
 }
