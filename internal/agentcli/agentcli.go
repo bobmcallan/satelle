@@ -31,11 +31,19 @@ const (
 
 // DefaultClaudeHarness is the claude preset template — the satellites gate argv
 // reproduced behind the template seam, hardened with a --disallowedTools denylist
-// so the reviewer's read-only grant is a CEILING (deny wins over allow) over any
+// so the reviewer's grant is a CEILING (deny wins over allow) over any
 // permissions the repo's .claude/settings.json would otherwise inherit. {system}
 // is the gate/skill body, {tools} the allow-grant, {model} the optional model
 // (dropped, with its flag, when unset).
-const DefaultClaudeHarness = "claude -p --disallowedTools Write,Edit,Bash,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
+//
+// The denylist keeps the work-tree MUTATORS off (Write, Edit, NotebookEdit) so a
+// reviewer can never modify the repo it judges — the read-only invariant. Bash is
+// NOT denied wholesale: the allow-grant ({tools}) scopes Bash to read-only
+// `satelle` subcommands (Bash(satelle:*)), so a reviewer can resolve the substrate
+// it reasons about (skills, principles) via the CLI — which includes EMBEDDED
+// defaults that are not files on disk — without gaining a general shell. See the
+// reviewer tool grant in internal/reviewer.
+const DefaultClaudeHarness = "claude -p --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
 
 // Request is one headless agent invocation.
 type Request struct {

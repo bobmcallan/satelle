@@ -39,8 +39,14 @@ type DocGetter interface {
 	List(ctx context.Context, kind string) ([]docindex.Doc, error)
 }
 
-// defaultTools is the reviewer's read-only tool grant — it judges, never mutates.
-const defaultTools = "Read,Grep,Glob"
+// defaultTools is the reviewer's tool grant. It judges, never MUTATES the work
+// tree (Write/Edit/NotebookEdit are denied by the harness ceiling), but it is
+// granted scoped, read-only `satelle` CLI access so it can resolve the substrate
+// it reasons about — skills and principles, including EMBEDDED defaults that are
+// not files on disk and so are invisible to Read/Grep/Glob. Bash is scoped to the
+// `satelle` binary by the Bash(satelle:*) specifier; the harness denylist keeps
+// every mutating tool off, so this is read-only access, not a general shell.
+const defaultTools = "Read,Grep,Glob,Bash(satelle:*)"
 
 // baselineWorkflow is the workflow doc whose transitions carry the reviewer
 // skills. The repo override or the embedded canonical resolves under this name.
@@ -118,6 +124,76 @@ type transitionPayload struct {
 	From        string        `json:"from"`
 	To          string        `json:"to"`
 	ReviewSkill string        `json:"review_skill"`
+}
+
+// alwaysPrincipleTag marks a principle as always-resident — injected into the
+// agent's context at session start, and likewise into every reviewer's context
+// here so a reviewer judges with the same resident principles the executor sees.
+const alwaysPrincipleTag = "principles:always"
+
+// reviewerCallToAction is appended to a reviewer's injected context. It tells the
+// isolated reviewer it has read-only `satelle` CLI access and should resolve any
+// principle or skill its rubric references but does not inline — including
+// EMBEDDED defaults that are not files on disk — rather than assuming absence.
+const reviewerCallToAction = "## You are an isolated satelle reviewer\n\n" +
+	"You judge only — you CANNOT modify the repository. You DO have read-only " +
+	"`satelle` CLI access: to resolve anything this rubric references but does not " +
+	"inline, run e.g. `satelle doc get principles <name>`, `satelle doc get skills " +
+	"<name>`, or `satelle doc list`. Do NOT conclude a skill or principle is missing " +
+	"without checking via the CLI — an embedded default resolves even when no file " +
+	"exists under .satelle/."
+
+// reviewerSystemPrompt assembles the system prompt for an isolated reviewer: the
+// always-resident principles (so it judges with the resident set the executor
+// also sees), the read-only call-to-action, then the reviewer's own rubric.
+func (g *Gater) reviewerSystemPrompt(ctx context.Context, rubric string) string {
+	var b strings.Builder
+	if resident := g.alwaysPrinciples(ctx); resident != "" {
+		b.WriteString("# Always-resident principles (satelle)\n\n")
+		b.WriteString(resident)
+		b.WriteString("\n\n")
+	}
+	b.WriteString(reviewerCallToAction)
+	b.WriteString("\n\n---\n\n")
+	b.WriteString(rubric)
+	return b.String()
+}
+
+// alwaysPrinciples returns the bodies of the principles:always-tagged principle
+// docs, name-sorted and joined, frontmatter stripped. Empty when none resolve or
+// the list fails — injection is additive and must never break a gate.
+func (g *Gater) alwaysPrinciples(ctx context.Context) string {
+	docs, err := g.docs.List(ctx, "principles")
+	if err != nil {
+		return ""
+	}
+	sort.Slice(docs, func(i, j int) bool { return docs[i].Name < docs[j].Name })
+	var parts []string
+	for _, d := range docs {
+		if containsStr(frontmatterList(d.Body, "tags"), alwaysPrincipleTag) {
+			parts = append(parts, strings.TrimSpace(stripFrontmatter(d.Body)))
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// stripFrontmatter drops a leading `---`…`---` YAML block, returning the markdown
+// body. Returns body unchanged when there is no frontmatter.
+func stripFrontmatter(body string) string {
+	s := strings.TrimLeft(body, "\n")
+	if !strings.HasPrefix(s, "---") {
+		return body
+	}
+	rest := s[len("---"):]
+	i := strings.Index(rest, "\n---")
+	if i < 0 {
+		return body
+	}
+	after := rest[i+len("\n---"):]
+	if nl := strings.IndexByte(after, '\n'); nl >= 0 {
+		return strings.TrimLeft(after[nl+1:], "\n")
+	}
+	return ""
 }
 
 // Gate judges item's transition to toStatus against every reviewer governing the
@@ -206,7 +282,7 @@ func (g *Gater) runReviewer(ctx context.Context, item workitem.Item, toStatus, s
 		return verb.GateDecision{}, err
 	}
 	out, err := g.runner.Run(ctx, agentcli.Request{
-		SystemPrompt: body,
+		SystemPrompt: g.reviewerSystemPrompt(ctx, body),
 		Payload:      string(payload),
 		AllowedTools: g.tools,
 		Model:        g.model,
@@ -318,7 +394,7 @@ func (g *Gater) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb.
 		return verb.GateDecision{}, err
 	}
 	out, err := g.runner.Run(ctx, agentcli.Request{
-		SystemPrompt: body,
+		SystemPrompt: g.reviewerSystemPrompt(ctx, body),
 		Payload:      string(payload),
 		AllowedTools: g.tools,
 		Model:        g.model,
@@ -380,7 +456,7 @@ func (g *Gater) ReviewStructure(ctx context.Context, reviewerName, kind, name, b
 		return verb.GateDecision{}, err
 	}
 	out, err := g.runner.Run(ctx, agentcli.Request{
-		SystemPrompt: rubric,
+		SystemPrompt: g.reviewerSystemPrompt(ctx, rubric),
 		Payload:      string(payload),
 		AllowedTools: g.tools,
 		Model:        g.model,
