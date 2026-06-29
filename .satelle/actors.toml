@@ -1,0 +1,13 @@
+# actors.toml — the actors layer: how each actor runs (backend + tool grant).
+# An absent or fully-commented file is today's default: the executor drives
+# in-loop (the agent itself); the reviewer runs as an isolated, read-only agent
+# (tools = "Read,Grep,Glob"). Uncomment to override — the grant travels with the
+# binding, so the reviewer's read-only limit holds whatever the backend.
+
+# [executor]
+# harness = "in-loop"          # the driving agent itself (default)
+
+# [reviewer]
+# harness = "claude"           # the bare claude preset (read-only denylist) — default
+# tools   = "Read,Grep,Glob"   # the reviewer's tool grant (default; widen at your own risk)
+# model   = ""                 # optional model override for the reviewer
