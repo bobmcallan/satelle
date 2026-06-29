@@ -25,12 +25,16 @@ func TestInitSkeleton(t *testing.T) {
 		".satelle/principles/README.md",
 		".satelle/skills/README.md",
 		".satelle/stories/README.md",
-		".satelle/workflows/satelle-baseline-workflow.md",
 		".satelle/skills/satelle-step-summary.md",
 	} {
 		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
 			t.Errorf("init did not create %s: %v", rel, err)
 		}
+	}
+	// The baseline workflow is embedded-only — init must not write it as a repo
+	// file, so a repo's own workflow can take precedence (sty_3f9a6124).
+	if _, err := os.Stat(filepath.Join(repo, ".satelle/workflows/satelle-baseline-workflow.md")); err == nil {
+		t.Error("init must not scaffold the baseline workflow as a repo file")
 	}
 
 	// The scaffold actors.toml documents the reviewer-model knob (sty_dad271fd).

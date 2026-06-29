@@ -347,12 +347,12 @@ func materializeBaseline(dataDir string) []string {
 		return nil
 	}
 	var lines []string
-	wfPath := filepath.Join(wfDir, "satelle-baseline-workflow.md")
-	if !fileExists(wfPath) {
-		if err := os.WriteFile(wfPath, []byte(body), 0o644); err == nil {
-			lines = append(lines, initLine(true, config.DefaultDataDir+"/workflows/satelle-baseline-workflow.md"))
-		}
-	}
+	// The baseline WORKFLOW stays EMBEDDED-ONLY (sty_3f9a6124): it is the canonical
+	// default and must never exist as an editable repo file (satelle-repo-agnostic).
+	// A fresh repo resolves it from the embedded layer, so a repo's OWN workflow
+	// takes precedence (repo-wildcard beats the embedded wildcard) instead of tying
+	// with a scaffolded copy. Only the reviewer SKILLS the baseline references are
+	// materialised, so their rubrics are visible/editable on disk.
 	// Materialise every embedded skill the baseline references that exists in the
 	// embedded layer (advisory gates not embedded simply stay absent by design).
 	if spec, parsed := wfdot.Parse(body); parsed {

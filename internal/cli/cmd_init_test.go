@@ -16,7 +16,8 @@ func TestRunInitScaffolds(t *testing.T) {
 	}
 
 	// Core files exist: the tomls, the db, a README per authored dir (incl.
-	// stories), and the materialised baseline + the embedded skill it references.
+	// stories), and the materialised reviewer skills the baseline references. The
+	// baseline WORKFLOW itself is embedded-only — never a repo file (sty_3f9a6124).
 	for _, rel := range []string{
 		".satelle/satelle.toml",
 		".satelle/actors.toml",
@@ -26,13 +27,16 @@ func TestRunInitScaffolds(t *testing.T) {
 		".satelle/principles/README.md",
 		".satelle/skills/README.md",
 		".satelle/stories/README.md",
-		".satelle/workflows/satelle-baseline-workflow.md",
 		".satelle/skills/satelle-step-summary.md",
 		".gitignore",
 	} {
 		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
 			t.Errorf("missing %s: %v", rel, err)
 		}
+	}
+	// The baseline workflow must NOT be scaffolded as a repo file (embedded-only).
+	if _, err := os.Stat(filepath.Join(repo, ".satelle/workflows/satelle-baseline-workflow.md")); err == nil {
+		t.Error("init must not write the baseline workflow as a repo file — it is embedded-only")
 	}
 
 	// gitignore ignores the db but not the toml.
