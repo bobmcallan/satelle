@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/structure"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -127,11 +128,6 @@ type transitionPayload struct {
 	ReviewSkill string        `json:"review_skill"`
 }
 
-// alwaysPrincipleTag marks a principle as always-resident — injected into the
-// agent's context at session start, and likewise into every reviewer's context
-// here so a reviewer judges with the same resident principles the executor sees.
-const alwaysPrincipleTag = "principles:always"
-
 // reviewerCallToAction is appended to a reviewer's injected context. It tells the
 // isolated reviewer it has read-only `satelle` CLI access and should resolve any
 // principle or skill its rubric references but does not inline — including
@@ -160,22 +156,17 @@ func (g *Gater) reviewerSystemPrompt(ctx context.Context, rubric string) string 
 	return b.String()
 }
 
-// alwaysPrinciples returns the bodies of the principles:always-tagged principle
-// docs, name-sorted and joined, frontmatter stripped. Empty when none resolve or
-// the list fails — injection is additive and must never break a gate.
+// alwaysPrinciples returns the body of the single always-resident principle —
+// the operating principle (config.OperatingPrinciple), frontmatter stripped — so
+// a reviewer judges with the same one resident principle the executor sees
+// (sty_53a4233c). Empty when it does not resolve; injection is additive and must
+// never break a gate.
 func (g *Gater) alwaysPrinciples(ctx context.Context) string {
-	docs, err := g.docs.List(ctx, "principles")
+	d, err := g.docs.Get(ctx, "principles", config.OperatingPrinciple)
 	if err != nil {
 		return ""
 	}
-	sort.Slice(docs, func(i, j int) bool { return docs[i].Name < docs[j].Name })
-	var parts []string
-	for _, d := range docs {
-		if containsStr(frontmatterList(d.Body, "tags"), alwaysPrincipleTag) {
-			parts = append(parts, strings.TrimSpace(stripFrontmatter(d.Body)))
-		}
-	}
-	return strings.Join(parts, "\n\n")
+	return strings.TrimSpace(stripFrontmatter(d.Body))
 }
 
 // stripFrontmatter drops a leading `---`…`---` YAML block, returning the markdown
