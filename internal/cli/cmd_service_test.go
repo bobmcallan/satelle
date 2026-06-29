@@ -9,7 +9,7 @@ func TestSystemdUnitContent(t *testing.T) {
 	unit := systemdUnit("/usr/local/bin/satelle", "/home/u/repo", "0.0.0.0", 8787)
 	for _, want := range []string{
 		"Description=satelle web server",
-		"ExecStart=/usr/local/bin/satelle serve --multi --addr 0.0.0.0 --port 8787",
+		"ExecStart=/usr/local/bin/satelle serve --addr 0.0.0.0 --port 8787",
 		"WorkingDirectory=/home/u/repo",
 		"Restart=on-failure",
 		"WantedBy=default.target",
