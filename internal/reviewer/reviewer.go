@@ -79,6 +79,9 @@ type Gater struct {
 	// check runs a functional-check command in dir and returns its combined
 	// output. Swappable in tests; defaults to a real `sh -c` exec.
 	check func(ctx context.Context, dir, command string) (string, error)
+	// children resolves a parent's child stories (id + status) for a container
+	// close gate's payload. Nil when unwired (no children injected).
+	children func(ctx context.Context, parentID string) []ChildState
 }
 
 // New builds a Gater over the agent runner and doc index. model "" inherits the
@@ -99,6 +102,14 @@ func (g *Gater) SetReviewerTools(tools string) {
 	if strings.TrimSpace(tools) != "" {
 		g.tools = tools
 	}
+}
+
+// SetChildrenResolver wires the resolver that lists a parent's child stories
+// (id + status) so a container close gate judges the children-resolved rule from
+// the payload satelle builds — not an on-disk story mirror. Nil-safe: an unwired
+// resolver simply injects no children.
+func (g *Gater) SetChildrenResolver(fn func(ctx context.Context, parentID string) []ChildState) {
+	g.children = fn
 }
 
 // SetReviewerModel sets the reviewer's model from the actors layer (the resolved
@@ -137,6 +148,18 @@ type transitionPayload struct {
 	From        string        `json:"from"`
 	To          string        `json:"to"`
 	ReviewSkill string        `json:"review_skill"`
+	// Children carries a container's child stories (id + status) so a parent/epic
+	// close gate judges the children-resolved rule from the PAYLOAD — satelle does
+	// the context selection — rather than reading any on-disk story mirror. Empty
+	// for a non-container or when no resolver is wired.
+	Children []ChildState `json:"children,omitempty"`
+}
+
+// ChildState is one child story's id and status, injected into a parent/epic
+// close payload.
+type ChildState struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
 }
 
 // reviewerCallToAction is appended to a reviewer's injected context. It tells the
@@ -340,7 +363,11 @@ func (g *Gater) runReviewer(ctx context.Context, item workitem.Item, toStatus, s
 		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
 			"reviewer: transition %s→%s is gated by %q but no agent runner is configured", item.Status, toStatus, skill)
 	}
-	payload, err := json.Marshal(transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: skill})
+	tp := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: skill}
+	if g.children != nil {
+		tp.Children = g.children(ctx, item.ID)
+	}
+	payload, err := json.Marshal(tp)
 	if err != nil {
 		return verb.GateDecision{}, err
 	}

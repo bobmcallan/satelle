@@ -103,7 +103,7 @@ func runInit(out io.Writer, repoRoot string) error {
 
 	// 3. Authored-markdown dirs — create each with a tiny README.md describing
 	//    what it should contain (the README is also the tracked keep-file). The
-	//    `stories` dir holds the portable markdown mirror of the backlog.
+	//    `stories` dir holds per-story attachments (the DB is the story store).
 	for _, kind := range append(append([]string{}, config.AuthoredKinds...), "stories") {
 		dir := filepath.Join(dataDir, kind)
 		dirCreated, derr := ensureDir(dir)
@@ -311,7 +311,7 @@ var dirReadme = map[string]string{
 	"workflows":  "# workflows\n\nAuthored lifecycles in the DOT standard (the actor model): each node is a step\nwith an `actor` (executor|reviewer), each edge a transition, the edge into a\nreviewer node its gate. Frontmatter needs `type: workflow`, `scope`, `applies_to`.\nThe lifecycle must start at `backlog`; `done` is terminal.\n",
 	"principles": "# principles\n\nAuthored principles (markdown, `type: principle`). They are resolvable on demand;\nthe single always-resident operating principle is injected at session start.\n",
 	"skills":     "# skills\n\nAuthored skills (`type: skill`): executor rubrics, reviewer rubrics, or a\nself-contained functional check (a fenced ```check block or a `check:` key).\nEverything a reviewer needs lives inside the skill.\n",
-	"stories":    "# stories\n\nPortable markdown mirror of the story backlog. The per-repo database is the\nsource of truth; these files let stories travel in git and be edited by hand\n(re-imported on `satelle index`).\n",
+	"stories":    "# stories\n\nPer-story attachments live here under `<id>/…` (typed documents attached to a\nstory). The per-repo database is the sole story store — there is no markdown\nmirror of the backlog.\n",
 }
 
 // ensureReadme writes a dir's README.md (describing its contents) when absent.

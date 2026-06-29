@@ -12,6 +12,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/reviewer"
 	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // storeAnnotation marks a command as needing the local store. The root's
@@ -38,8 +39,8 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetWorkItemStore(a.Store.Stories)
 	verb.SetLedgerStore(a.Store.Ledger)
 	verb.SetDocIndexStore(a.Store.DocIndex)
-	// Mirror stories as portable markdown beside the per-repo database
-	// (<data_dir>/stories); the store stays the source of truth.
+	// The stories dir (<data_dir>/stories) holds per-story ATTACHMENTS only — the
+	// database is the sole story store (the markdown mirror was removed, sty_fa1e02e1).
 	verb.SetStoryDir(filepath.Join(filepath.Dir(a.DBPath), "stories"))
 	// Wire the isolated reviewer that gates status transitions. The agent CLI is
 	// the install-time choice (global config); the gate is inert until a
@@ -48,6 +49,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 		if runner, rerr := agentcli.NewRunner(gc.Agent.ResolveCLI()); rerr == nil {
 			rev := reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, "")
 			applyActorGrants(rev, a)
+			rev.SetChildrenResolver(childrenResolver(a))
 			verb.SetTransitionGater(rev)
 			// The summariser recaps gated transitions; inert until gating is active.
 			verb.SetStepSummariser(rev)
@@ -98,6 +100,26 @@ func gaterForCmd(cmd *cobra.Command) (*reviewer.Gater, *app.App, error) {
 	rev := reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, "")
 	applyActorGrants(rev, a)
 	return rev, a, nil
+}
+
+// childrenResolver lists a parent's child stories (id + status) from the DB, for
+// the container close gate's payload — so a parent/epic close is judged from the
+// database, never an on-disk story mirror (sty_fa1e02e1).
+func childrenResolver(a *app.App) func(ctx context.Context, parentID string) []reviewer.ChildState {
+	return func(ctx context.Context, parentID string) []reviewer.ChildState {
+		if parentID == "" {
+			return nil
+		}
+		kids, err := a.Store.Stories.List(ctx, workitem.ListFilter{ParentID: parentID})
+		if err != nil {
+			return nil
+		}
+		out := make([]reviewer.ChildState, 0, len(kids))
+		for _, k := range kids {
+			out = append(out, reviewer.ChildState{ID: k.ID, Status: k.Status})
+		}
+		return out
+	}
 }
 
 // skillResolver returns a predicate reporting whether a skill name resolves in

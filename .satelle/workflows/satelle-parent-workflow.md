@@ -21,8 +21,8 @@ The close is the only gate that matters, and it is the **mandatory spine gate**
 reviewer is **category-aware**: for a `parent`/`epic-parent` it does not judge the
 parent's own acceptance criteria — a container's work is its children — but
 instead accepts the close ONLY when **every child story is resolved** (`done` or
-`cancelled`), reading the repo's `.satelle/stories/*.md` records to check each
-child's status. So a parent cannot close while a child is still open; the operator
+`cancelled`), judging the children from the close-gate payload (satelle resolves
+them from the database). So a parent cannot close while a child is still open; the operator
 finishes or cancels the children first. See [[satelle-done-is-last]] and
 [[satelle-actor-model]].
 

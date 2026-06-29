@@ -23,12 +23,12 @@ it by the **children-resolved rule** below. Every other category is judged by it
 ### Parent / epic-parent — children resolved
 
 When the category is `parent` or `epic-parent`, accept the close ONLY when
-**every child story is resolved** (`done` or `cancelled`). Find the children:
-each story is persisted at `.satelle/stories/<id>.md` with frontmatter carrying
-`id`, `status`, and — for a child — a `parent: <parent-id>` line. Grep
-`.satelle/stories/` for the line `parent: <story.id>`; each matching file is a
-child. A child is resolved when its `status:` is `done` or `cancelled`; any other
-status (`backlog`, `in_progress`, `blocked`, …) is unresolved.
+**every child story is resolved** (`done` or `cancelled`). The children are
+provided in the payload's **`children`** array — each entry is `{id, status}`
+(satelle resolves them from the database; do NOT look for on-disk story files,
+there is no story mirror). A child is resolved when its `status` is `done` or
+`cancelled`; any other status (`backlog`, `in_progress`, `blocked`, …) is
+unresolved.
 
 - **Accept** when every child is resolved, or the parent has no children.
 - **Reject** when one or more children are unresolved — list them as

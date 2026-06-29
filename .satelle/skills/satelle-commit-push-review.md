@@ -61,11 +61,13 @@ out="${out_dir}/commit-summary-${sty:-${sha}}.md"
   echo
   echo "## Acceptance criteria"
   echo
-  story_file=".satelle/stories/${sty}.md"
-  if [ -n "${sty}" ] && [ -f "${story_file}" ]; then
-    awk '/^## Acceptance/{f=1;next} /^## /{f=0} f' "${story_file}"
+  if [ -n "${sty}" ]; then
+    # The database is the sole story store (no on-disk mirror) — read ACs from it.
+    satelle story get "${sty}" 2>/dev/null \
+      | python3 -c 'import sys,json; print(json.load(sys.stdin).get("acceptance_criteria","") or "_none recorded_")' 2>/dev/null \
+      || echo "_acceptance criteria not found for ${sty}_"
   else
-    echo "_acceptance criteria not found for ${sty:-this commit}_"
+    echo "_acceptance criteria not found for this commit_"
   fi
   echo
   echo "## Files changed"
