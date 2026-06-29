@@ -515,12 +515,19 @@ func TestReviewCreateAlwaysGatedNoRunner(t *testing.T) {
 // content reviewer is reached.
 var validDraft = verb.CreateDraft{Kind: "story", Title: "Add X", Body: "Make the thing do X", AcceptanceCriteria: "1. it does X"}
 
-// With the content rubric authored, a structurally-valid draft is judged by the
-// content/alignment reviewer; its reject blocks creation with the reviewer notes
-// (sty_345e9ae7).
+// createWF is a wildcard workflow that DECLARES a content/alignment create
+// reviewer via its create_review frontmatter (sty_b031b29f) — the binding lives on
+// the workflow, not a hardcoded constant.
+const createWF = "---\nname: " + baselineWorkflow + "\ntype: workflow\napplies_to: [\"*\"]\ncreate_review: my-create-review\n---\n# wf\n"
+
+// plainWF is a wildcard workflow with NO create_review declaration.
+const plainWF = "---\nname: " + baselineWorkflow + "\ntype: workflow\napplies_to: [\"*\"]\n---\n# wf\n"
+
+// When the active workflow declares create_review, a structurally-valid draft is
+// judged by that reviewer; its reject blocks creation with the notes.
 func TestReviewCreateContentReject(t *testing.T) {
 	g, _ := gater(t, `{"decision":"reject","notes":"ACs do not match the goal"}`,
-		fakeDocs{skillBody: "content/alignment rubric", skillFound: true})
+		fakeDocs{workflow: createWF, skillBody: "content/alignment rubric", skillFound: true})
 	dec, err := g.ReviewCreate(context.Background(), validDraft)
 	if err != nil {
 		t.Fatal(err)
@@ -528,29 +535,46 @@ func TestReviewCreateContentReject(t *testing.T) {
 	if !dec.Gated || dec.Accept {
 		t.Fatalf("want gated reject from content review, got %+v", dec)
 	}
-	if dec.Skill != createReviewSkill || dec.Notes == "" {
-		t.Errorf("want reject by %s with notes, got %+v", createReviewSkill, dec)
+	if dec.Skill != "my-create-review" || dec.Notes == "" {
+		t.Errorf("want reject by the workflow-declared skill with notes, got %+v", dec)
 	}
 }
 
-// The content reviewer's accept persists (structure + content both pass).
+// The declared reviewer's accept persists (structure + content both pass).
 func TestReviewCreateContentAccept(t *testing.T) {
 	g, _ := gater(t, `{"decision":"accept","notes":"aligned"}`,
-		fakeDocs{skillBody: "content/alignment rubric", skillFound: true})
+		fakeDocs{workflow: createWF, skillBody: "content/alignment rubric", skillFound: true})
 	dec, err := g.ReviewCreate(context.Background(), validDraft)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !dec.Gated || !dec.Accept || dec.Skill != createReviewSkill {
-		t.Fatalf("want gated accept by %s, got %+v", createReviewSkill, dec)
+	if !dec.Gated || !dec.Accept || dec.Skill != "my-create-review" {
+		t.Fatalf("want gated accept by the workflow-declared skill, got %+v", dec)
 	}
 }
 
-// A structural failure pre-empts: the content reviewer (an agent) is never run on
-// a malformed draft, even when the rubric is present.
+// With NO create_review declared, creation is deterministic-only: the content
+// reviewer (an agent) is never run.
+func TestReviewCreateNoWorkflowBinding(t *testing.T) {
+	g, r := gater(t, `{"decision":"reject","notes":"should not run"}`,
+		fakeDocs{workflow: plainWF, skillFound: false})
+	dec, err := g.ReviewCreate(context.Background(), validDraft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec.Gated || !dec.Accept || dec.Skill != structureSkill {
+		t.Fatalf("no create_review → deterministic accept, got %+v", dec)
+	}
+	if r.got.SystemPrompt != "" {
+		t.Error("no content reviewer should run when the workflow declares none")
+	}
+}
+
+// A structural failure pre-empts: the content reviewer is never run on a
+// malformed draft, even when the workflow declares one.
 func TestReviewCreateStructurePreemptsContent(t *testing.T) {
 	g, r := gater(t, `{"decision":"accept"}`,
-		fakeDocs{skillBody: "content/alignment rubric", skillFound: true})
+		fakeDocs{workflow: createWF, skillBody: "content/alignment rubric", skillFound: true})
 	bad := verb.CreateDraft{Kind: "story", Title: "x"} // no goal, no numbered AC
 	dec, err := g.ReviewCreate(context.Background(), bad)
 	if err != nil {

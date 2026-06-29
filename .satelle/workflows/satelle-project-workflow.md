@@ -4,6 +4,7 @@ scope: project
 type: workflow
 tags: [type:workflow]
 applies_to: ["*"]
+create_review: satelle-story-create-review
 description: This repo's project-scope workflow, authored in DOT (the actor model). A story or task moves backlog → in_progress → integration → commit_push → committed → done, with a cancelled exit. It is node-centric: each node is a step carrying an actor; the executor does the work, reviewers gate entry. Entering integration is gated by satelle-code-ac-review (ACs done + unit and integration tests created); leaving it for commit_push is gated by satelle-integration-review (the integration tests exercise the change) plus satelle-integration-check (runs make integration). The commit_push executor step commits/pushes and watches CI; the committed reviewer (satelle-commit-push-review) confirms the CI run succeeded and emits a PR-style summary; done is the acceptance gate. There is no deploy state — the push to main IS the release, verified by CI. done stays terminal (satelle-done-is-last); a project workflow takes precedence over the embedded satelle-baseline-workflow.
 ---
 

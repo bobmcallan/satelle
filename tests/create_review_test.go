@@ -34,6 +34,21 @@ func TestCreateContentReviewGate(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(repo, ".satelle", "skills", "satelle-story-create-review.md"), string(rubric))
 
+	// The create binding is DECLARED on the active workflow (sty_b031b29f), not a
+	// hardcoded filename — install this repo's project workflow (which declares
+	// create_review: satelle-story-create-review) so content review is wired.
+	wf, err := os.ReadFile(filepath.Join(repoRootForTest(), ".satelle", "workflows", "satelle-project-workflow.md"))
+	if err != nil {
+		t.Fatalf("read workflow source: %v", err)
+	}
+	// Scope it to the "feature" category so it wins as a category-specific match
+	// (independent of the embedded-baseline wildcard ordering).
+	wfBody := strings.Replace(string(wf), `applies_to: ["*"]`, `applies_to: ["feature"]`, 1)
+	if err := os.MkdirAll(filepath.Join(repo, ".satelle", "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "satelle-project-workflow.md"), wfBody)
+
 	// Stub the reviewer harness to a deterministic verdict script.
 	verdict := filepath.Join(repo, "verdict.sh")
 	setVerdict := func(decision, notes string) {
@@ -47,7 +62,7 @@ func TestCreateContentReviewGate(t *testing.T) {
 	mustRun(t, testBin, repo, "index")
 
 	// A structurally-valid draft is now blocked by the content reviewer's reject.
-	out, err := run(t, testBin, repo, "story", "create",
+	out, err := run(t, testBin, repo, "story", "create", "--category", "feature",
 		"--title", "Add a widget", "--body", "Render a widget on the dashboard", "--acceptance", "1. the widget renders")
 	if err == nil {
 		t.Fatalf("content-review reject should block creation; output:\n%s", out)
@@ -61,7 +76,7 @@ func TestCreateContentReviewGate(t *testing.T) {
 
 	// Flip the verdict to accept: the same draft now persists.
 	setVerdict("accept", "")
-	if out, err := run(t, testBin, repo, "story", "create",
+	if out, err := run(t, testBin, repo, "story", "create", "--category", "feature",
 		"--title", "Add a widget", "--body", "Render a widget on the dashboard", "--acceptance", "1. the widget renders"); err != nil {
 		t.Fatalf("content-review accept should allow creation: %v\n%s", err, out)
 	}
