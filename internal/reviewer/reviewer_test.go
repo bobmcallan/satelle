@@ -511,6 +511,59 @@ func TestReviewCreateAlwaysGatedNoRunner(t *testing.T) {
 	}
 }
 
+// validDraft is structurally conformant (clear goal + a numbered AC) so the
+// content reviewer is reached.
+var validDraft = verb.CreateDraft{Kind: "story", Title: "Add X", Body: "Make the thing do X", AcceptanceCriteria: "1. it does X"}
+
+// With the content rubric authored, a structurally-valid draft is judged by the
+// content/alignment reviewer; its reject blocks creation with the reviewer notes
+// (sty_345e9ae7).
+func TestReviewCreateContentReject(t *testing.T) {
+	g, _ := gater(t, `{"decision":"reject","notes":"ACs do not match the goal"}`,
+		fakeDocs{skillBody: "content/alignment rubric", skillFound: true})
+	dec, err := g.ReviewCreate(context.Background(), validDraft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec.Gated || dec.Accept {
+		t.Fatalf("want gated reject from content review, got %+v", dec)
+	}
+	if dec.Skill != createReviewSkill || dec.Notes == "" {
+		t.Errorf("want reject by %s with notes, got %+v", createReviewSkill, dec)
+	}
+}
+
+// The content reviewer's accept persists (structure + content both pass).
+func TestReviewCreateContentAccept(t *testing.T) {
+	g, _ := gater(t, `{"decision":"accept","notes":"aligned"}`,
+		fakeDocs{skillBody: "content/alignment rubric", skillFound: true})
+	dec, err := g.ReviewCreate(context.Background(), validDraft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec.Gated || !dec.Accept || dec.Skill != createReviewSkill {
+		t.Fatalf("want gated accept by %s, got %+v", createReviewSkill, dec)
+	}
+}
+
+// A structural failure pre-empts: the content reviewer (an agent) is never run on
+// a malformed draft, even when the rubric is present.
+func TestReviewCreateStructurePreemptsContent(t *testing.T) {
+	g, r := gater(t, `{"decision":"accept"}`,
+		fakeDocs{skillBody: "content/alignment rubric", skillFound: true})
+	bad := verb.CreateDraft{Kind: "story", Title: "x"} // no goal, no numbered AC
+	dec, err := g.ReviewCreate(context.Background(), bad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec.Gated || dec.Accept || dec.Skill != structureSkill {
+		t.Fatalf("structural failure must pre-empt with a %s reject, got %+v", structureSkill, dec)
+	}
+	if r.got.SystemPrompt != "" {
+		t.Error("the content reviewer must NOT run when the structural check fails")
+	}
+}
+
 // stepWF declares a step-summary node; stepWFOptional declares a non-mandatory
 // one; the bare baselineWorkflow body (testWorkflow) declares none.
 const stepWF = "---\nname: " + baselineWorkflow + "\ntype: workflow\n---\n" + "```dot" + `
