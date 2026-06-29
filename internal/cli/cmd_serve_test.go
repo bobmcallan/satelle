@@ -53,8 +53,10 @@ func TestChildRootsEmptyRegistry(t *testing.T) {
 	if len(roots) != 1 || roots[0] != bound {
 		t.Errorf("registeredRoots = %v, want [%s]", roots, bound)
 	}
-	if cr := childRoots(bound); cr != nil {
-		t.Errorf("childRoots with no registry = %v, want nil", cr)
+	// Every registered repo is a child now — including the launch repo — so an
+	// empty registry still yields the launch repo as the sole child.
+	if cr := childRoots(bound); len(cr) != 1 || cr[0] != bound {
+		t.Errorf("childRoots with no registry = %v, want [%s]", cr, bound)
 	}
 }
 
@@ -69,12 +71,12 @@ func TestTopHandlerRouting(t *testing.T) {
 	s.bySlug["alpha"] = child
 	s.order = []string{"/p/alpha"}
 
-	boundHit := false
-	bound := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		boundHit = true
-		w.WriteHeader(http.StatusNotFound) // the real bound mux 404s unknown paths
+	sharedHit := false
+	shared := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sharedHit = true
+		w.WriteHeader(http.StatusNotFound) // the shared chrome mux 404s unknown paths
 	})
-	h := s.topHandler(bound)
+	h := s.topHandler(shared)
 
 	do := func(path string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
@@ -82,24 +84,24 @@ func TestTopHandlerRouting(t *testing.T) {
 		return rec
 	}
 
-	// A known slug routes to its child (not the bound handler).
-	boundHit = false
-	if rec := do("/alpha/fragment/stories"); rec.Code != 299 || boundHit {
-		t.Errorf("/alpha/... did not route to its child (code=%d, bound=%v)", rec.Code, boundHit)
+	// A known slug routes to its child (not the shared handler).
+	sharedHit = false
+	if rec := do("/alpha/fragment/stories"); rec.Code != 299 || sharedHit {
+		t.Errorf("/alpha/... did not route to its child (code=%d, shared=%v)", rec.Code, sharedHit)
 	}
-	// /projects renders the launcher, not the bound handler.
-	boundHit = false
-	if rec := do("/projects"); boundHit || rec.Code != http.StatusOK {
-		t.Errorf("/projects did not render the launcher (code=%d, bound=%v)", rec.Code, boundHit)
+	// / renders the connected-projects landing, not the shared handler.
+	sharedHit = false
+	if rec := do("/"); sharedHit || rec.Code != http.StatusOK {
+		t.Errorf("/ did not render the landing (code=%d, shared=%v)", rec.Code, sharedHit)
 	}
-	// An UNKNOWN prefix falls through to the bound handler, which 404s (AC3).
-	boundHit = false
-	if rec := do("/bogus/fragment/stories"); !boundHit || rec.Code != http.StatusNotFound {
-		t.Errorf("unknown prefix should 404 via the bound handler (code=%d, bound=%v)", rec.Code, boundHit)
+	// /projects redirects to the landing at / (back-compat for older links).
+	sharedHit = false
+	if rec := do("/projects"); sharedHit || rec.Code != http.StatusFound || rec.Header().Get("Location") != "/" {
+		t.Errorf("/projects did not redirect to / (code=%d, loc=%q, shared=%v)", rec.Code, rec.Header().Get("Location"), sharedHit)
 	}
-	// A normal root path also falls through to the bound handler.
-	boundHit = false
-	if do("/"); !boundHit {
-		t.Error("root path should fall through to the bound handler")
+	// An UNKNOWN prefix falls through to the shared handler, which 404s.
+	sharedHit = false
+	if rec := do("/bogus/fragment/stories"); !sharedHit || rec.Code != http.StatusNotFound {
+		t.Errorf("unknown prefix should 404 via the shared handler (code=%d, shared=%v)", rec.Code, sharedHit)
 	}
 }

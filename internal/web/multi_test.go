@@ -43,11 +43,12 @@ func TestProjectsPageListsBoundAndChildren(t *testing.T) {
 	body := string(buf[:n])
 
 	for _, want := range []string{
-		"projects served",
-		`href="/#stories"`,                  // bound repo at root
-		"this project · /",                  // bound marked
+		"connected project",                 // landing header
+		`href="/satelle/#stories"`,          // launch repo under its own slug now
+		"launched here",                     // launch repo badged
 		`href="/satelle-homepage/#stories"`, // child under its slug
 		"/satelle-homepage/",                // child slug label
+		"satelle workspace add",             // getting-started panel
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("projects page missing %q\n---\n%s", want, body)

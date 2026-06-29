@@ -2,10 +2,10 @@ package web
 
 // Multi-project serving. The satelle web layer is single-tenant — verbs read
 // package-global stores (internal/verb/wiring.go), so one process serves exactly
-// one repo. `satelle serve` therefore serves the BOUND repo in-process at the
-// root and supervises one child `serve --base-path /<slug>` per OTHER registered
-// project, reverse-proxying /<slug>/ to it. The bound repo never moves from /, so
-// adding a project is purely additive; the /projects launcher lists them all.
+// one repo. `satelle serve` therefore serves a connected-projects LANDING at the
+// root and supervises one child `serve --base-path /<slug>` per registered
+// project (the launch repo included), reverse-proxying /<slug>/ to each. Adding a
+// project is purely additive; the / landing lists them all.
 
 import (
 	"context"
@@ -24,7 +24,8 @@ type Project struct {
 	Slug string
 	Name string
 	Path string
-	Root bool // the bound repo, served at / (not behind a /<slug>/ proxy)
+	Root bool // the launch repo — served under its own /<slug>/ like the rest, but
+	// flagged so the landing can badge it "launched here"
 }
 
 // Slugify turns a project name into a URL-safe slug: lowercased, with any run of
@@ -97,8 +98,8 @@ type projectsData struct {
 	Projects []projectRow
 }
 
-// ProjectsPage renders the /projects launcher: every served project with live
-// counts and a path link to its page (the bound repo at /, others at /<slug>/).
+// ProjectsPage renders the / landing: every served project with live counts and
+// a link to its page at /<slug>/ (the launch repo is flagged Root for a badge).
 func ProjectsPage(w http.ResponseWriter, r *http.Request, projects []Project) {
 	paths := make([]string, 0, len(projects))
 	for _, p := range projects {
@@ -113,9 +114,6 @@ func ProjectsPage(w http.ResponseWriter, r *http.Request, projects []Project) {
 	for _, p := range projects {
 		rv := counts[p.Path]
 		url := "/" + p.Slug + "/#stories"
-		if p.Root {
-			url = "/#stories"
-		}
 		data.Projects = append(data.Projects, projectRow{
 			Name: p.Name, Slug: p.Slug, Path: p.Path, URL: url, Root: p.Root,
 			Stories: len(rv.Stories), Tasks: len(rv.Tasks), Docs: len(rv.Docs),

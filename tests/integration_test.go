@@ -172,7 +172,19 @@ func TestServeServesProjectPage(t *testing.T) {
 		t.Fatal("server did not become healthy")
 	}
 
-	body := httpGet(t, base+"/")
+	slug := filepath.Base(repo)
+
+	// / is the connected-projects landing — it lists this lone repo at its slug,
+	// not the repo's project page directly.
+	landing := httpGet(t, base+"/")
+	for _, want := range []string{"connected project", `href="/` + slug + `/#stories"`, "satelle"} {
+		if !strings.Contains(landing, want) {
+			t.Errorf("landing missing %q:\n%s", want, landing)
+		}
+	}
+
+	// The project page itself is served under the repo's slug.
+	body := httpGet(t, base+"/"+slug+"/")
 	for _, want := range []string{"Render me", "Stories", "Tasks", "satelle"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("project page missing %q", want)

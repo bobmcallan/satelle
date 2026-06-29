@@ -33,11 +33,12 @@ func init() {
 
 	serve := &cobra.Command{
 		Use:   "serve",
-		Short: "Run the local web server (project page) for this repo",
-		Long: `serve runs the local web server. The bound repo is always served at the root
-(/). Every OTHER registered project (satelle workspace add) is served by a child
-process under /<slug>/, with a /projects launcher listing them all — so adding a
-project is additive and never moves the bound repo. Press Ctrl-C to stop.`,
+		Short: "Run the local web server — a connected-projects landing for this machine",
+		Long: `serve runs the local web server. The root (/) is a connected-projects
+landing: a launcher listing every registered project. Each project — including
+the repo you launched from — is served by a child process under /<slug>/.
+Register more with 'satelle workspace add'; the landing also links help and how
+to keep the binary current. Press Ctrl-C to stop.`,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := appFrom(cmd)
@@ -79,9 +80,9 @@ project is additive and never moves the bound repo. Press Ctrl-C to stop.`,
 					fmt.Sprintf("satelle serving http://%s under %s/  (Ctrl-C to stop)", listenAddr, strings.Trim(basePath, "/")))
 			}
 
-			// Supervisor: bound repo at root + a child per OTHER registered project
-			// proxied under /<slug>/, plus the /projects launcher. Always adaptive —
-			// with no other projects it is simply the bound repo at root.
+			// Supervisor: a connected-projects landing at / plus one child per
+			// registered project (the launch repo included) proxied under /<slug>/.
+			// Always adaptive — workspace add/remove reconciles live, no restart.
 			self, err := os.Executable()
 			if err != nil {
 				return fmt.Errorf("resolve own binary: %w", err)
@@ -166,14 +167,11 @@ func registeredRoots(boundRepo string) []string {
 	return roots
 }
 
-// childRoots returns the repos served as children — every registered repo except
-// the bound one (which is served in-process at the root).
+// childRoots returns every repo served as a child — the launch repo first, then
+// each registered workspace repo. ALL projects are children under /<slug>/; the
+// supervisor itself serves only the / landing and shared chrome.
 func childRoots(boundRepo string) []string {
-	all := registeredRoots(boundRepo)
-	if len(all) <= 1 {
-		return nil
-	}
-	return all[1:]
+	return registeredRoots(boundRepo)
 }
 
 // childProc is one supervised project: its child `serve`, the loopback port it
@@ -220,26 +218,30 @@ func newSupervisor(ctx context.Context, out, errw io.Writer, self, boundRepo str
 	}
 }
 
-// snapshot returns the bound project (Root) followed by every child, in display
-// order — what the /projects launcher renders.
+// snapshot returns every served project in display order (the launch repo
+// first), each reachable at /<slug>/ — what the / landing renders. The launch
+// repo is flagged Root so the landing can badge "launched here".
 func (s *supervisor) snapshot() []web.Project {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := []web.Project{{
-		Slug: web.Slugify(filepath.Base(s.boundRepo)),
-		Name: filepath.Base(s.boundRepo), Path: s.boundRepo, Root: true,
-	}}
+	var out []web.Project
 	for _, p := range s.order {
-		if c := s.children[p]; c != nil {
-			out = append(out, c.project)
+		c := s.children[p]
+		if c == nil {
+			continue
 		}
+		proj := c.project
+		proj.Root = (p == s.boundRepo)
+		out = append(out, proj)
 	}
 	return out
 }
 
-// topHandler routes /<slug>/… to the matching child's proxy, /projects to the
-// launcher, and everything else to the bound repo served at the root.
-func (s *supervisor) topHandler(bound http.Handler) http.Handler {
+// topHandler routes /<slug>/… to the matching child's proxy and serves the
+// connected-projects landing at / (with /projects kept as a redirect for older
+// links). Shared chrome — /static, /healthz, /theme, /events, /workspace — falls
+// through to the supervisor's in-process handler.
+func (s *supervisor) topHandler(shared http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seg := firstSegment(r.URL.Path)
 		s.mu.Lock()
@@ -249,11 +251,14 @@ func (s *supervisor) topHandler(bound http.Handler) http.Handler {
 			c.handler.ServeHTTP(w, r)
 			return
 		}
-		if r.URL.Path == "/projects" {
+		switch r.URL.Path {
+		case "/":
 			web.ProjectsPage(w, r, s.snapshot())
-			return
+		case "/projects":
+			http.Redirect(w, r, "/", http.StatusFound)
+		default:
+			shared.ServeHTTP(w, r)
 		}
-		bound.ServeHTTP(w, r)
 	})
 }
 
@@ -381,15 +386,11 @@ func (s *supervisor) shutdown() {
 	}
 }
 
-// banner prints where each project is reachable.
+// banner prints the landing URL and where each project is reachable.
 func (s *supervisor) banner(out io.Writer, listenAddr string) {
 	ps := s.snapshot()
-	fmt.Fprintf(out, "satelle serving %d project(s) at http://%s  (workspace add/remove is live; Ctrl-C to stop)\n", len(ps), listenAddr)
+	fmt.Fprintf(out, "satelle serving %d project(s) at http://%s/  (landing at /; workspace add/remove is live; Ctrl-C to stop)\n", len(ps), listenAddr)
 	for _, p := range ps {
-		path := "/" + p.Slug + "/"
-		if p.Root {
-			path = "/"
-		}
-		fmt.Fprintf(out, "  %-22s %s\n", path, p.Path)
+		fmt.Fprintf(out, "  %-22s %s\n", "/"+p.Slug+"/", p.Path)
 	}
 }
