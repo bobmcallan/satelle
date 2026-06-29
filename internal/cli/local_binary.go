@@ -134,6 +134,27 @@ func localDeterministicPort(repoRoot string) int {
 	return localWebPortBase + int(h.Sum32()%uint32(localWebPortSpan))
 }
 
+// binaryScopeLabelOf describes which install the path `self` is — the repo-local
+// pin (with its path) or the global install — so `satelle version`/`status` make
+// the active binary obvious (sty_fc1163dd). PURE core, keyed off the same
+// detection as the re-exec.
+func binaryScopeLabelOf(self string) string {
+	if root, ok := pinRepoRootOf(self); ok {
+		return "repo-local pin: " + filepath.Join(root, config.DefaultDataDir, localBinaryName)
+	}
+	return "global"
+}
+
+// binaryScopeLabel reports the scope of THIS running binary (repo-local pin vs
+// global), for the version/status line.
+func binaryScopeLabel() string {
+	self, err := os.Executable()
+	if err != nil {
+		return "global"
+	}
+	return binaryScopeLabelOf(resolvePathOrSelf(self))
+}
+
 // resolveServePort picks the web port for `serve`: an explicit --port wins, then
 // an explicit [web_port] in config, then the local-mode deterministic per-repo
 // port, then the global default. Pure, so the precedence is unit-tested.

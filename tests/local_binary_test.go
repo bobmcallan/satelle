@@ -158,3 +158,32 @@ func scanServePort(t *testing.T, r interface{ Read([]byte) (int, error) }, timeo
 		return 0
 	}
 }
+
+// TestVersionReportsBinaryScope checks the version line names which install is
+// active (sty_fc1163dd): the repo-local pin reports "repo-local pin: <path>",
+// the global build artifact reports "global".
+func TestVersionReportsBinaryScope(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	pin := filepath.Join(repo, ".satelle", "satelle")
+	b, err := os.ReadFile(testBin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pin, b, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Running the pin reports the repo-local scope and its path.
+	out := mustRun(t, pin, repo, "version")
+	if !strings.Contains(out, "repo-local pin") || !strings.Contains(out, pin) {
+		t.Errorf("pin version should report repo-local pin and its path, got:\n%s", out)
+	}
+
+	// The global build artifact (not under a .satelle/) reports global.
+	bare := t.TempDir()
+	out = mustRun(t, testBin, bare, "version")
+	if !strings.Contains(out, "global") || strings.Contains(out, "repo-local pin") {
+		t.Errorf("global binary version should report global, got:\n%s", out)
+	}
+}
