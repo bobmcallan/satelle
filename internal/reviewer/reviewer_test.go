@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -63,6 +64,12 @@ func (d fakeDocs) Get(_ context.Context, kind, name string) (docindex.Doc, error
 			return docindex.Doc{Kind: kind, Name: name, Body: d.skillBody}, nil
 		}
 		return docindex.Doc{}, docindex.ErrNotFound
+	case "principles":
+		for _, p := range d.extraPrinciples {
+			if p.Name == name {
+				return p, nil
+			}
+		}
 	}
 	return docindex.Doc{}, docindex.ErrNotFound
 }
@@ -98,8 +105,9 @@ func TestReviewerSystemPromptInjectsPrinciplesAndCTA(t *testing.T) {
 		skillBody:  "rubric body",
 		skillFound: true,
 		extraPrinciples: []docindex.Doc{
-			{Kind: "principles", Name: "satelle-test-belief", Body: alwaysPrincipleDoc},
-			{Kind: "principles", Name: "satelle-not-resident", Body: "---\nname: x\ntags: [kind:principle]\n---\nnot resident"},
+			// The single resident is the operating principle; anything else is not injected.
+			{Kind: "principles", Name: config.OperatingPrinciple, Body: alwaysPrincipleDoc},
+			{Kind: "principles", Name: "satelle-not-resident", Body: "---\nname: x\ntype: principle\n---\nnot resident"},
 		},
 	}
 	g, r := gater(t, `{"decision":"accept"}`, docs)

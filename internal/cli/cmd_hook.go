@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -316,17 +315,16 @@ func runHookContext(out, stderr io.Writer) error {
 	return emitAdditionalContext(out, "SessionStart", content)
 }
 
-// selectAlwaysDocs returns, name-sorted, the docs whose frontmatter tags carry
-// the residency marker.
+// selectAlwaysDocs returns the single always-resident principle — the one tight
+// operating principle (config.OperatingPrinciple). Every other principle is
+// resolvable substrate read on demand, never auto-injected (sty_53a4233c).
 func selectAlwaysDocs(docs []docindex.Doc) []docindex.Doc {
-	var out []docindex.Doc
 	for _, d := range docs {
-		if docHasTag(d.Body, alwaysTag) {
-			out = append(out, d)
+		if d.Kind == "principles" && d.Name == config.OperatingPrinciple {
+			return []docindex.Doc{d}
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
+	return nil
 }
 
 // renderAlwaysContent assembles the bounded injection body + the standing index

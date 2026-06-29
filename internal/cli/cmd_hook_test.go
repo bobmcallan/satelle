@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -29,17 +30,20 @@ func TestFrontmatterTags_inlineAndBlock(t *testing.T) {
 	}
 }
 
-func TestSelectAlwaysDocs_filtersAndSorts(t *testing.T) {
+// The resident set is exactly one principle — the operating principle
+// (sty_53a4233c). Other principles, even if present, are not auto-injected.
+func TestSelectAlwaysDocs_onlyOperatingPrinciple(t *testing.T) {
 	got := selectAlwaysDocs([]docindex.Doc{
-		doc("zeta", alwaysFM),
-		doc("plain", plainFM),
-		doc("alpha", alwaysFM),
+		doc("satelle-agile-increments", alwaysFM),
+		{Kind: "principles", Name: config.OperatingPrinciple, Body: alwaysFM},
+		doc("satelle-constitution", alwaysFM),
 	})
-	if len(got) != 2 {
-		t.Fatalf("want 2 always-docs, got %d", len(got))
+	if len(got) != 1 || got[0].Name != config.OperatingPrinciple {
+		t.Fatalf("want exactly the operating principle %q, got %v", config.OperatingPrinciple, got)
 	}
-	if got[0].Name != "alpha" || got[1].Name != "zeta" {
-		t.Fatalf("want name-sorted [alpha zeta], got [%s %s]", got[0].Name, got[1].Name)
+	// None present → nothing injected.
+	if n := len(selectAlwaysDocs([]docindex.Doc{doc("x", alwaysFM)})); n != 0 {
+		t.Fatalf("want 0 when operating principle absent, got %d", n)
 	}
 }
 
