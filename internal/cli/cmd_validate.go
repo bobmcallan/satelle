@@ -1,7 +1,7 @@
-// `satelle validate` runs each authored doc's required-structure reviewer
-// (satelle-<object>-review) over the indexed substrate and reports pass/fail with
-// the reviewer's notes — for manual or CI use. Read-only; it never mutates. Exit
-// is non-zero if any doc fails validation (sty_ccdf5a55).
+// `satelle validate` runs each authored doc's DETERMINISTIC structure check
+// (internal/structure) over the indexed substrate and reports pass/fail — for
+// manual or CI use. Read-only; it never mutates and needs no agent CLI (the
+// checks are code, not an LLM rubric). Exit is non-zero if any doc fails.
 package cli
 
 import (
@@ -11,19 +11,17 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/docindex"
-	"github.com/bobmcallan/satelle/internal/reviewer"
-	"github.com/bobmcallan/satelle/internal/wfdot"
+	"github.com/bobmcallan/satelle/internal/structure"
 )
 
 func init() {
 	cmd := &cobra.Command{
 		Use:   "validate [kind] [name]",
-		Short: "Validate authored docs against their structure reviewers",
-		Long: `validate runs the required-structure reviewer for each authored doc kind
-(skills → satelle-skill-review, workflows → satelle-workflow-review,
-principles → satelle-principle-review) and reports pass/fail. With no argument it
-validates every reviewer-backed doc; pass a kind (and optionally a name) to
-narrow. Exit is non-zero if any doc fails.`,
+		Short: "Validate authored docs against their deterministic structure checks",
+		Long: `validate runs the deterministic structure check for each authored doc kind
+(skills, workflows, principles) and reports pass/fail. Documents get the OKF
+conformance check. With no argument it validates everything; pass a kind (and
+optionally a name) to narrow. Exit is non-zero if any doc fails.`,
 		Args:        cobra.MaximumNArgs(2),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -35,7 +33,7 @@ narrow. Exit is non-zero if any doc fails.`,
 				nameFilter = args[1]
 			}
 
-			g, a, err := gaterForCmd(cmd)
+			a, err := appFrom(cmd)
 			if err != nil {
 				return err
 			}
@@ -44,15 +42,16 @@ narrow. Exit is non-zero if any doc fails.`,
 				return err
 			}
 			out := cmd.OutOrStdout()
+			resolve := skillResolver(a)
 			validated, failed := 0, 0
 			for _, d := range docs {
 				if nameFilter != "" && d.Name != nameFilter {
 					continue
 				}
-				// Documents have no LLM structure reviewer; instead they get a
-				// deterministic OKF conformance check (a concept doc needs a
-				// non-empty `type`). Reserved index.md/log.md are exempt.
-				if d.Kind == "documents" {
+				switch {
+				case d.Kind == "documents":
+					// Free-form documents get the deterministic OKF conformance
+					// check (a concept doc needs a non-empty `type`).
 					validated++
 					if err := docindex.OKFConformance(d.Name, d.Body); err != nil {
 						failed++
@@ -60,39 +59,15 @@ narrow. Exit is non-zero if any doc fails.`,
 					} else {
 						fmt.Fprintf(out, "PASS  documents/%s (okf)\n", d.Name)
 					}
-					continue
-				}
-				rev := reviewer.StructureReviewerFor(d.Kind)
-				if rev == "" {
-					continue // no structure reviewer for this kind
-				}
-				dec, err := g.ReviewStructure(context.Background(), rev, d.Kind, d.Name, d.Body)
-				if err != nil {
-					return err
-				}
-				validated++
-				switch {
-				case !dec.Gated:
-					fmt.Fprintf(out, "SKIP  %s/%s — %s rubric not installed\n", d.Kind, d.Name, rev)
-				case dec.Accept:
-					fmt.Fprintf(out, "PASS  %s/%s\n", d.Kind, d.Name)
-				default:
-					failed++
-					fmt.Fprintf(out, "FAIL  %s/%s — %s\n", d.Kind, d.Name, dec.Notes)
-				}
-				// Workflows additionally get a deterministic graph check (DOT only):
-				// structural soundness + the mandatory spine gate. The LLM structure
-				// reviewer judges prose; this judges the graph.
-				if d.Kind == "workflows" {
-					if spec, ok := wfdot.Parse(d.Body); ok {
-						if problems := wfdot.Validate(spec); len(problems) > 0 {
-							for _, p := range problems {
-								failed++
-								fmt.Fprintf(out, "FAIL  workflows/%s (graph) — %s\n", d.Name, p)
-							}
-						} else {
-							fmt.Fprintf(out, "PASS  workflows/%s (graph)\n", d.Name)
+				case structure.Checked(d.Kind):
+					validated++
+					if problems := structure.Doc(d.Kind, d.Name, d.Body, resolve); len(problems) > 0 {
+						for _, p := range problems {
+							failed++
+							fmt.Fprintf(out, "FAIL  %s/%s — %s\n", d.Kind, d.Name, p)
 						}
+					} else {
+						fmt.Fprintf(out, "PASS  %s/%s\n", d.Kind, d.Name)
 					}
 				}
 			}

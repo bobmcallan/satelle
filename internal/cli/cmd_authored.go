@@ -1,9 +1,8 @@
 // `satelle skill|workflow|principle create` is satelle's gated upsert path for
-// authored objects: it writes the markdown file THROUGH the object's
-// satelle-<object>-review structure gate, refusing to persist a non-conforming
+// authored objects: it writes the markdown file THROUGH the object's DETERMINISTIC
+// structure check (internal/structure), refusing to persist a non-conforming
 // artifact — the same discipline `satelle story create` applies to work items.
-// This is configuration-over-code: a repo authors substrate, the binary gates
-// its structure (sty_a792cff3).
+// The check is code, not an LLM rubric: harness-independent and never flaky.
 package cli
 
 import (
@@ -17,7 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/bobmcallan/satelle/internal/reviewer"
+	"github.com/bobmcallan/satelle/internal/structure"
 )
 
 func init() {
@@ -42,7 +41,7 @@ func authoredCreateCmd(kind string) *cobra.Command {
 		Use:   "create --name <name> [--from <file>]",
 		Short: "Create an authored " + kind + " doc through its structure gate",
 		Long: "create writes a " + kind + " markdown file under its substrate dir, but only\n" +
-			"after the " + reviewer.StructureReviewerFor(kind) + " structure reviewer accepts it.\n" +
+			"after the deterministic " + kind + " structure check accepts it.\n" +
 			"The markdown is read from --from <file>, or from stdin. A reject writes nothing.",
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -57,17 +56,12 @@ func authoredCreateCmd(kind string) *cobra.Command {
 				return fmt.Errorf("empty draft — provide markdown via --from <file> or stdin")
 			}
 
-			g, a, err := gaterForCmd(cmd)
+			a, err := appFrom(cmd)
 			if err != nil {
 				return err
 			}
-			rev := reviewer.StructureReviewerFor(kind)
-			dec, err := g.ReviewStructure(context.Background(), rev, kind, name, body)
-			if err != nil {
-				return err
-			}
-			if dec.Gated && !dec.Accept {
-				return fmt.Errorf("%s rejected by %s: %s", kind, rev, dec.Notes)
+			if problems := structure.Doc(kind, name, body, skillResolver(a)); len(problems) > 0 {
+				return fmt.Errorf("%s structure check rejected %q: %s", kind, name, strings.Join(problems, "; "))
 			}
 
 			dir := a.Config.ResolveAuthoredDirs(a.RepoRoot)[kind]
@@ -89,12 +83,7 @@ func authoredCreateCmd(kind string) *cobra.Command {
 			// Sync so the new doc is immediately queryable.
 			_, _ = a.Store.DocIndex.Sync(context.Background(), a.AuthoredDirs(), time.Now())
 
-			out := cmd.OutOrStdout()
-			if !dec.Gated {
-				fmt.Fprintf(out, "wrote %s (advisory — %s rubric not installed)\n", path, rev)
-			} else {
-				fmt.Fprintf(out, "wrote %s (accepted by %s)\n", path, rev)
-			}
+			fmt.Fprintf(cmd.OutOrStdout(), "wrote %s (passed the %s structure check)\n", path, kind)
 			return nil
 		},
 	}

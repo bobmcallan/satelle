@@ -406,7 +406,15 @@ func walkMarkdown(dir string) ([]fileInfo, error) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.EqualFold(filepath.Ext(path), ".md") {
+		// Skip testdata/ subtrees — by Go convention they hold fixtures, not
+		// authored substrate, so they must not be indexed or structure-checked.
+		if d.IsDir() {
+			if d.Name() == "testdata" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.EqualFold(filepath.Ext(path), ".md") {
 			return nil
 		}
 		fi, err := d.Info()

@@ -11,7 +11,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/docindex"
-	"github.com/bobmcallan/satelle/internal/reviewer"
+	"github.com/bobmcallan/satelle/internal/structure"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -62,41 +62,33 @@ for implementation (deduped). The web server runs the same sync continuously
 	register(cmd)
 }
 
-// validateChanged runs each changed reviewer-backed doc through its structure
-// reviewer and files a type:system story for any failure. Fail-soft: if no agent
-// CLI is configured (or a review errors), it notes that on stderr and indexing
-// stands — index never blocks (pass-through).
+// validateChanged runs each changed authored doc through its DETERMINISTIC
+// structure check (internal/structure) and files a type:system story for any
+// failure. Deterministic and fast — no agent CLI, no flakiness; index stays a
+// pass-through (it never blocks indexing).
 func validateChanged(cmd *cobra.Command, a *app.App, changed []docindex.DocRef) {
-	g, _, err := gaterForCmd(cmd)
-	if err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "index: skipping structure validation — %v\n", err)
-		return
-	}
 	ctx := context.Background()
 	out := cmd.OutOrStdout()
+	resolve := skillResolver(a)
 	for _, ch := range changed {
-		rev := reviewer.StructureReviewerFor(ch.Kind)
-		if rev == "" {
-			continue // no structure reviewer for this kind (e.g. documents)
+		if !structure.Checked(ch.Kind) {
+			continue // no structure check for this kind (e.g. documents)
 		}
 		doc, derr := a.Store.DocIndex.Get(ctx, ch.Kind, ch.Name)
 		if derr != nil {
 			continue
 		}
-		dec, rerr := g.ReviewStructure(ctx, rev, ch.Kind, ch.Name, doc.Body)
-		if rerr != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "index: validate %s/%s: %v\n", ch.Kind, ch.Name, rerr)
+		problems := structure.Doc(ch.Kind, ch.Name, doc.Body, resolve)
+		if len(problems) == 0 {
 			continue
 		}
-		if !dec.Gated || dec.Accept {
-			continue
-		}
-		id, filed, ferr := fileSystemStory(ctx, a, ch, dec.Notes)
+		notes := strings.Join(problems, "; ")
+		id, filed, ferr := fileSystemStory(ctx, a, ch, notes)
 		switch {
 		case ferr != nil:
 			fmt.Fprintf(cmd.ErrOrStderr(), "index: file story for %s/%s: %v\n", ch.Kind, ch.Name, ferr)
 		case filed:
-			fmt.Fprintf(out, "FAIL  %s/%s — filed %s (type:system): %s\n", ch.Kind, ch.Name, id, dec.Notes)
+			fmt.Fprintf(out, "FAIL  %s/%s — filed %s (type:system): %s\n", ch.Kind, ch.Name, id, notes)
 		default:
 			fmt.Fprintf(out, "FAIL  %s/%s — open story %s already tracks it\n", ch.Kind, ch.Name, id)
 		}
@@ -130,9 +122,9 @@ func fileSystemStory(ctx context.Context, a *app.App, ch docindex.DocRef, notes 
 		}
 	}
 	title := fmt.Sprintf("Fix %s structure: %s/%s", ch.Kind, ch.Kind, ch.Name)
-	body := fmt.Sprintf("The authored %s `%s` was indexed but failed its %s structure reviewer. "+
-		"Bring it into conformance, then re-index.\n\nReviewer notes:\n%s",
-		strings.TrimSuffix(ch.Kind, "s"), ch.Name, reviewer.StructureReviewerFor(ch.Kind), notes)
+	body := fmt.Sprintf("The authored %s `%s` was indexed but failed its deterministic structure check. "+
+		"Bring it into conformance, then re-index.\n\nProblems:\n%s",
+		strings.TrimSuffix(ch.Kind, "s"), ch.Name, notes)
 	ac := fmt.Sprintf("1. %s/%s passes `satelle validate %s %s`.\n2. The reviewer notes above are resolved.",
 		ch.Kind, ch.Name, ch.Kind, ch.Name)
 	it, err := a.Store.Stories.Create(ctx, workitem.CreateInput{

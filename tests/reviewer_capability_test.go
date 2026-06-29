@@ -33,20 +33,21 @@ func TestReviewerCanResolveEmbeddedSkillViaCLI(t *testing.T) {
 		t.Fatalf("index: %v\n%s", err, out)
 	}
 
-	// satelle-workflow-review is embedded canonical substrate; a fresh repo has no
-	// file for it on disk.
-	const embedded = "satelle-workflow-review"
+	// satelle-step-summary is embedded canonical substrate; a fresh repo has no
+	// file for it on disk. (The structure reviewers were retired in sty_a90d5c49,
+	// so the step summariser is the remaining embedded-only skill to probe.)
+	const embedded = "satelle-step-summary"
 	if _, err := os.Stat(filepath.Join(repo, ".satelle", "skills", embedded+".md")); !os.IsNotExist(err) {
 		t.Fatalf("precondition: %s should NOT exist on disk in a fresh repo", embedded)
 	}
 
-	// The CLI resolves it from the embedded layer — the read-only path the reviewer
-	// runs (Bash(satelle:*)) to confirm a gate skill is actionable.
+	// The CLI resolves it from the embedded layer — the read-only path used to
+	// confirm an embedded-only skill is reachable.
 	out, err := run("doc", "get", "skills", embedded)
 	if err != nil {
 		t.Fatalf("`satelle doc get skills %s` should resolve the embedded skill, got error: %v\n%s", embedded, err, out)
 	}
-	if !strings.Contains(out, embedded) || !strings.Contains(out, "Workflow structure reviewer") {
-		t.Errorf("resolved doc should be the embedded workflow reviewer body:\n%s", out)
+	if !strings.Contains(out, embedded) || !strings.Contains(out, "per-transition summariser") {
+		t.Errorf("resolved doc should be the embedded step-summary body:\n%s", out)
 	}
 }
