@@ -51,6 +51,9 @@ func openAppForCmd(cmd *cobra.Command) error {
 			applyActorGrants(rev, a)
 			rev.SetChildrenResolver(childrenResolver(a))
 			verb.SetTransitionGater(rev)
+			// Stamp the governing workflow on every story at create — independent of
+			// create-gating (sty_3800ac23).
+			verb.SetWorkflowResolver(rev)
 			// The summariser recaps gated transitions; inert until gating is active.
 			verb.SetStepSummariser(rev)
 			// Create-gating is opt-in per repo (satelle.toml [review] gate_create):
