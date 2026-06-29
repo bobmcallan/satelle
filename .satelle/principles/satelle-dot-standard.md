@@ -1,6 +1,6 @@
 ---
 name: satelle-dot-standard
-scope: system
+scope: project
 kind: principle
 tags: [kind:principle, principles:global]
 applies_to: ["*"]

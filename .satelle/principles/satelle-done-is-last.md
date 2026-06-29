@@ -1,10 +1,10 @@
 ---
 name: satelle-done-is-last
-scope: system
+scope: project
 kind: principle
 tags: [kind:principle, principles:always]
 applies_to: ["*"]
-description: done is ALWAYS the terminal state of a workflow. Quality gates (intent, commit-push, acceptance review) come BEFORE done, never after — reaching done means every gate on the path has already passed. This is an embedded canonical default the satelle binary ships; a repo's workflow may add states and gates, but done stays last.
+description: done is ALWAYS the terminal state of a workflow. Quality gates (intent, commit-push, acceptance review) come BEFORE done, never after — reaching done means every gate on the path has already passed. The binary enforces this (the mandatory done gate on the workflow spine); kept as this repo's project substrate documenting the invariant — a repo's workflow may add states and gates, but done stays last.
 ---
 
 # done is always last
