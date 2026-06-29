@@ -37,12 +37,11 @@ const (
 // (dropped, with its flag, when unset).
 //
 // The denylist keeps the work-tree MUTATORS off (Write, Edit, NotebookEdit) so a
-// reviewer can never modify the repo it judges — the read-only invariant. Bash is
-// NOT denied wholesale: the allow-grant ({tools}) scopes Bash to read-only
-// `satelle` subcommands (Bash(satelle:*)), so a reviewer can resolve the substrate
-// it reasons about (skills, principles) via the CLI — which includes EMBEDDED
-// defaults that are not files on disk — without gaining a general shell. See the
-// reviewer tool grant in internal/reviewer.
+// reviewer can never modify the repo it judges — the read-only invariant. The
+// reviewer's default allow-grant ({tools}) is read-only (Read, Grep, Glob) and
+// needs no shell: the substrate it reasons about is materialised as markdown
+// under .satelle, so it reads it directly. A repo MAY widen the grant in
+// .satelle/actors.toml (transparently), but the default is read-only.
 const DefaultClaudeHarness = "claude -p --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
 
 // Request is one headless agent invocation.

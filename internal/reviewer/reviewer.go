@@ -41,14 +41,14 @@ type DocGetter interface {
 	List(ctx context.Context, kind string) ([]docindex.Doc, error)
 }
 
-// defaultTools is the reviewer's tool grant. It judges, never MUTATES the work
-// tree (Write/Edit/NotebookEdit are denied by the harness ceiling), but it is
-// granted scoped, read-only `satelle` CLI access so it can resolve the substrate
-// it reasons about — skills and principles, including EMBEDDED defaults that are
-// not files on disk and so are invisible to Read/Grep/Glob. Bash is scoped to the
-// `satelle` binary by the Bash(satelle:*) specifier; the harness denylist keeps
-// every mutating tool off, so this is read-only access, not a general shell.
-const defaultTools = "Read,Grep,Glob,Bash(satelle:*)"
+// defaultTools is the reviewer's read-only tool grant. It judges, never MUTATES
+// the work tree (Write/Edit/NotebookEdit are also denied by the harness ceiling).
+// It needs NO shell: structural conformance is deterministic code (internal/
+// structure), and the substrate it reasons about — skills, principles, workflows —
+// is materialised as markdown under .satelle (satelle init), so Read/Grep/Glob
+// resolve everything. A repo may still widen this in .satelle/actors.toml
+// (transparently, the operator's choice); the default grant is read-only.
+const defaultTools = "Read,Grep,Glob"
 
 // baselineWorkflow is the workflow doc whose transitions carry the reviewer
 // skills. The repo override or the embedded canonical resolves under this name.
@@ -133,12 +133,11 @@ type transitionPayload struct {
 // principle or skill its rubric references but does not inline — including
 // EMBEDDED defaults that are not files on disk — rather than assuming absence.
 const reviewerCallToAction = "## You are an isolated satelle reviewer\n\n" +
-	"You judge only — you CANNOT modify the repository. You DO have read-only " +
-	"`satelle` CLI access: to resolve anything this rubric references but does not " +
-	"inline, run e.g. `satelle doc get principles <name>`, `satelle doc get skills " +
-	"<name>`, or `satelle doc list`. Do NOT conclude a skill or principle is missing " +
-	"without checking via the CLI — an embedded default resolves even when no file " +
-	"exists under .satelle/."
+	"You judge only — you CANNOT modify the repository, and your tool grant is " +
+	"read-only (Read, Grep, Glob). The substrate you reason about — skills, " +
+	"principles, workflows — lives as markdown under `.satelle/`; read it directly " +
+	"to resolve anything this rubric references but does not inline. Judge the " +
+	"OUTCOME the story claims against this rubric and return your verdict."
 
 // reviewerSystemPrompt assembles the system prompt for an isolated reviewer: the
 // always-resident principles (so it judges with the resident set the executor
