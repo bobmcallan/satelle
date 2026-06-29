@@ -135,6 +135,83 @@ func TestStripFrontmatter(t *testing.T) {
 	}
 }
 
+func skillDoc(name string) docindex.Doc {
+	return docindex.Doc{Kind: "skills", Name: name, Body: "rubric body"}
+}
+
+// engageDOT is a valid DOT workflow whose start state is backlog. Its path to done
+// runs through an executor step (commit_push) with an @skill: prompt — the thing
+// the engagement guard resolves.
+const engageDOT = "```dot\n" + `digraph w {
+  backlog     [shape=Mdiamond]
+  in_progress [actor=executor]
+  commit_push [actor=executor, prompt="@skill:commit-push"]
+  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
+  cancelled   [actor=reviewer, prompt="@skill:satelle-story-cancel-review"]
+  backlog -> in_progress [reviewer_skill="satelle-story-intent-review"]
+  in_progress -> commit_push
+  commit_push -> done
+  backlog -> cancelled
+}
+` + "```\n"
+
+// TestEngagementBlockedWhenExecutorSkillMissing: engaging under a workflow whose
+// path to done has an executor step with an unresolvable skill is rejected up
+// front (deterministically, no agent), naming the missing skill.
+func TestEngagementBlockedWhenExecutorSkillMissing(t *testing.T) {
+	// Only the intent + done reviewers resolve; the executor skill commit-push does NOT.
+	docs := fakeDocs{workflow: engageDOT, extraSkills: []docindex.Doc{
+		skillDoc("satelle-story-intent-review"),
+		skillDoc("satelle-story-done-review"),
+	}}
+	g, _ := gater(t, `{"decision":"accept"}`, docs)
+	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "in_progress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec.Accept {
+		t.Fatal("expected engagement blocked (commit-push missing), got accept")
+	}
+	if dec.Skill != "satelle-workflow-skill-check" {
+		t.Errorf("blocking skill = %q, want satelle-workflow-skill-check", dec.Skill)
+	}
+	if !strings.Contains(dec.Notes, "commit-push") {
+		t.Errorf("reject notes should name the missing executor skill: %q", dec.Notes)
+	}
+	if strings.Contains(dec.Notes, "satelle-story-cancel-review") {
+		t.Errorf("a reviewer gate on the cancel exit must NOT be required: %q", dec.Notes)
+	}
+}
+
+// TestEngagementProceedsWhenExecutorSkillsResolve: when every executor skill on
+// the path to done resolves, the guard passes and the edge proceeds normally.
+func TestEngagementProceedsWhenExecutorSkillsResolve(t *testing.T) {
+	docs := fakeDocs{workflow: engageDOT, skillBody: "rubric", skillFound: true}
+	g, _ := gater(t, `{"decision":"accept"}`, docs)
+	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "in_progress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec.Accept {
+		t.Fatalf("expected engagement to proceed (executor skills resolve), got %+v", dec)
+	}
+}
+
+// TestEngagementGuardSkippedOffEngagementEdge: the executor guard fires only on
+// the engagement edge — a later transition (in_progress->done) does not run it.
+func TestEngagementGuardSkippedOffEngagementEdge(t *testing.T) {
+	// commit-push is missing; if the guard ran off-edge it would block. It must not.
+	docs := fakeDocs{workflow: engageDOT, skillBody: "rubric", skillFound: true}
+	g, _ := gater(t, `{"decision":"accept"}`, docs)
+	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "commit_push")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec.Skill == "satelle-workflow-skill-check" {
+		t.Errorf("executor guard must not run off the engagement edge; skill=%q", dec.Skill)
+	}
+}
+
 func gater(t *testing.T, out string, docs fakeDocs) (*Gater, *fakeRunner) {
 	t.Helper()
 	r := &fakeRunner{out: out}

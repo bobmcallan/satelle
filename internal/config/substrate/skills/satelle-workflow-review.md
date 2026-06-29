@@ -31,6 +31,18 @@ A conforming workflow has all of:
      node-centric grammar — the edge INTO a reviewer node is the gated transition.
 3. **Connected states** — every edge endpoint (YAML `from`/`to`, or a DOT node in
    an edge) is a declared node, so the graph has no dangling reference.
+3a. **Actionable gates** — every skill the workflow REFERENCES resolves in the
+   substrate, so the workflow can actually be driven to its terminal state. Collect
+   every reference: each `reviewer_skill` on an edge, and each node's
+   `prompt="@skill:NAME"` (executor steps AND reviewer gates). For EACH referenced
+   skill, confirm it resolves by running `satelle doc get skills <name>` — exit 0
+   and a returned body means it is actionable; a "not found" means it is missing.
+   Resolve via the CLI, not by grepping `.satelle/skills`: an embedded canonical
+   default resolves even when no file exists on disk. **Reject** if any referenced
+   skill does not resolve, naming each missing skill, so a story is never engaged
+   into a workflow whose later step or gate cannot run (the wasted-work trap). A
+   reference to the cancelled-exit reviewer that is genuinely optional is still
+   reported if unresolved — name it so the author can author or embed it.
 4. **`done` is the terminal state** — no transition leaves `done`, and no state
    follows it on the success path (see the `satelle-done-is-last` principle).
 5. **`backlog` is the initial state** — the lifecycle starts at `backlog`: it is a
