@@ -2,7 +2,7 @@
 name: satelle-integration-check
 scope: project
 type: skill
-tags: [kind:skill, type:reviewer, type:functional-check, reviewer:always]
+tags: [type:skill, type:reviewer, type:functional-check, reviewer:always]
 on: [commit_push]
 description: Functional-check gate that runs the integration suite (make integration) before a slice is committed. An always-on system reviewer scoped to the commit_push edge (on: [commit_push]), so it runs on the integration → commit_push transition alongside satelle-integration-review (which judges the tests) — exit 0 accepts, non-zero rejects with the output tail as notes. Local-only (the suite is the project's local gate, never GitHub CI). Self-contained, per satelle-reviewer-self-contained.
 ---

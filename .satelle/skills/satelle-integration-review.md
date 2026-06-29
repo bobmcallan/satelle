@@ -2,7 +2,7 @@
 name: satelle-integration-review
 scope: project
 type: skill
-tags: [kind:skill, type:reviewer]
+tags: [type:skill, type:reviewer]
 description: Gate on the integration → commit_push edge. An isolated, read-only reviewer judging whether the integration tests are ADEQUATE — that they actually exercise the change's behaviour and acceptance criteria rather than being trivial (assert-true, empty, or unrelated). Distinct from satelle-integration-check, which only RUNS the suite; this reviewer judges that the suite meaningfully covers the change. Fair-gate for a docs/substrate change that genuinely has no integration tests to review.
 ---
 

@@ -2,7 +2,7 @@
 name: satelle-estimate-actual-review
 scope: project
 type: skill
-tags: [kind:skill, type:reviewer, reviewer:always]
+tags: [type:skill, type:reviewer, reviewer:always]
 on: [in_progress, done]
 description: Always-on system reviewer that judges PRESENCE of the agent's self-reported cost — a plan estimate at begin-work and the actual at close. It runs on every gated transition (the reviewer:always layer, after the workflow-named reviewers) but only governs two edges: a transition INTO in_progress is rejected with no estimate-minutes/estimate-tokens tag, and a transition INTO done is rejected with no actual-minutes/actual-tokens tag. Every other edge accepts. Presence is judged, not accuracy. Read-only — emits one {decision, notes} JSON.
 ---

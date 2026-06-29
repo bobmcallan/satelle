@@ -2,7 +2,7 @@
 name: satelle-story-create-review
 scope: project
 type: skill
-tags: [kind:skill, type:reviewer]
+tags: [type:skill, type:reviewer]
 description: Opt-in content/alignment gate for story creation. Runs AFTER the deterministic structural check (which already guarantees a goal body and a numbered AC), so this reviewer judges only what code cannot — whether the story's content is coherent and ALIGNED: the acceptance criteria actually verify the stated goal, the goal is a real outcome (not a vague aspiration or a contradiction), and the scope is a single sensible slice. Read-only; pushes back with specifics so the agent can correct the story input and retry.
 ---
 

@@ -2,7 +2,7 @@
 name: satelle-dot-standard
 scope: project
 type: principle
-tags: [kind:principle, principles:global]
+tags: [type:principle, principles:global]
 applies_to: ["*"]
 description: satelle workflows are authored and stored in the DOT standard (Graphviz) — node-centric steps with actors, reviewer nodes (or an edge reviewer_skill) as gates. A reference pointer to the external standard, not a restatement of it.
 ---

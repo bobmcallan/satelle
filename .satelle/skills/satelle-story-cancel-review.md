@@ -2,7 +2,7 @@
 name: satelle-story-cancel-review
 scope: project
 type: skill
-tags: [kind:skill, type:reviewer]
+tags: [type:skill, type:reviewer]
 description: Exit gate for cancel (any → cancelled). An isolated reviewer that lets a story be abandoned when the operator has recorded WHY — cancelling is a legitimate, operator-driven outcome, not a failure — while refusing a cancel that throws work away with no reason on record. This repo's project gate for the cancelled exit named by satelle-project-workflow and satelle-baseline-workflow; it sits off the path to done, so its absence would only degrade to advisory.
 ---
 

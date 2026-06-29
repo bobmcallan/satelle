@@ -2,7 +2,7 @@
 name: satelle-parent-workflow
 scope: project
 type: workflow
-tags: [kind:workflow]
+tags: [type:workflow]
 applies_to: ["epic-parent", "parent"]
 description: Lifecycle for container stories — a parent or epic-parent whose work IS its children. A minimal two-state path authored in the DOT standard (the actor model): backlog → done, with a cancelled exit. There is no in_progress/integration/commit_push — a container has no slice of its own to build; it closes when its children close. The close (backlog → done) carries the mandatory spine gate satelle-story-done-review, which is category-aware: for a parent/epic-parent it accepts only when every child story is done or cancelled. backlog is the initial state and done is terminal (satelle-done-is-last). For categories epic-parent and parent this project workflow overrides the wildcard satelle-project-workflow (a category-specific applies_to beats applies_to ["*"]).
 ---

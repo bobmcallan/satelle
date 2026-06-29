@@ -2,7 +2,7 @@
 name: satelle-story-done-review
 scope: project
 type: skill
-tags: [kind:skill, type:reviewer]
+tags: [type:skill, type:reviewer]
 description: Exit gate for close (→ done). An isolated, read-only reviewer judges whether a story may close, reading the repo to verify. The mandatory spine gate on every workflow's edge into done, and category-aware: a parent/epic-parent is a container judged by the children-resolved rule (every child done or cancelled); every other story is judged by its acceptance criteria. Repo skill for the satelle dogfood; pushes back with specifics.
 ---
 

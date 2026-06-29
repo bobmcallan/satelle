@@ -2,7 +2,7 @@
 name: satelle-plan-config-over-code-review
 scope: project
 type: skill
-tags: [kind:skill, type:reviewer]
+tags: [type:skill, type:reviewer]
 description: Plan gate for begin-work (open → planned). An isolated reviewer that judges ONLY whether a story's intended implementation honours configuration-over-code — process, gates, workflows, and opinions land as authored substrate (.satelle markdown), not new binary code, unless the change is genuine harness mechanism. Repo skill for the satelle dogfood; pushes back when a plan proposes shipping process as code.
 ---
 
