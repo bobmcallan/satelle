@@ -76,7 +76,7 @@ func Story(title, body, acceptance string) []string {
 	return p
 }
 
-// checkSkill: frontmatter (name == slug, kind: skill, description), a usable
+// checkSkill: frontmatter (name == slug, type: skill, description), a usable
 // definition (a rubric body OR a self-contained check), and a kebab name.
 func checkSkill(name, body string) []string {
 	fm, rest, ok := splitFM(body)
@@ -85,8 +85,8 @@ func checkSkill(name, body string) []string {
 	}
 	var p []string
 	p = append(p, requireName(fm, name)...)
-	if fmScalar(fm, "kind") != "skill" {
-		p = append(p, `frontmatter must have "kind: skill"`)
+	if fmScalar(fm, "type") != "skill" {
+		p = append(p, `frontmatter must have "type: skill" (OKF)`)
 	}
 	if fmScalar(fm, "description") == "" {
 		p = append(p, "frontmatter missing a non-empty description")
@@ -100,7 +100,7 @@ func checkSkill(name, body string) []string {
 	return p
 }
 
-// checkPrinciple: frontmatter (name == slug, kind: principle, description, tags)
+// checkPrinciple: frontmatter (name == slug, type: principle, description, tags)
 // and a substantive (non-stub) body.
 func checkPrinciple(name, body string) []string {
 	fm, rest, ok := splitFM(body)
@@ -109,8 +109,8 @@ func checkPrinciple(name, body string) []string {
 	}
 	var p []string
 	p = append(p, requireName(fm, name)...)
-	if fmScalar(fm, "kind") != "principle" {
-		p = append(p, `frontmatter must have "kind: principle"`)
+	if fmScalar(fm, "type") != "principle" {
+		p = append(p, `frontmatter must have "type: principle" (OKF)`)
 	}
 	if fmScalar(fm, "description") == "" {
 		p = append(p, "frontmatter missing a non-empty description")
@@ -124,7 +124,7 @@ func checkPrinciple(name, body string) []string {
 	return p
 }
 
-// checkWorkflow: frontmatter (name == slug, kind: workflow, description,
+// checkWorkflow: frontmatter (name == slug, type: workflow, description,
 // applies_to, scope), a parseable DOT lifecycle, a sound graph (connected /
 // terminal / spine / backlog-start), and resolvable executor-path skills.
 func checkWorkflow(name, body string, resolveSkill func(skill string) bool) []string {
@@ -134,8 +134,8 @@ func checkWorkflow(name, body string, resolveSkill func(skill string) bool) []st
 	}
 	var p []string
 	p = append(p, requireName(fm, name)...)
-	if fmScalar(fm, "kind") != "workflow" {
-		p = append(p, `frontmatter must have "kind: workflow"`)
+	if fmScalar(fm, "type") != "workflow" {
+		p = append(p, `frontmatter must have "type: workflow" (OKF)`)
 	}
 	if fmScalar(fm, "description") == "" {
 		p = append(p, "frontmatter missing a non-empty description")

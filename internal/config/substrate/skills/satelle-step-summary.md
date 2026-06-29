@@ -1,7 +1,7 @@
 ---
 name: satelle-step-summary
 scope: system
-kind: skill
+type: skill
 tags: [kind:skill, type:summariser]
 description: The per-transition summariser. After a gated transition is enacted, it produces a short, human-readable recap of the step, recorded verbatim as a step_summary ledger row. Read-only — it observes and narrates, never mutates. EMBEDDED canonical default (config/substrate/skills); a repo MAY override it under .satelle/skills.
 ---

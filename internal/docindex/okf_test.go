@@ -104,3 +104,39 @@ func TestNormalizeOKF_ReservedSkipped(t *testing.T) {
 		}
 	}
 }
+
+// TestNormalizeType covers the OKF type-key migration for authored substrate
+// (sty_889d277c): rename a legacy kind:, drop a redundant kind: beside an
+// existing type:, insert a missing type:, and leave a conformant doc unchanged.
+func TestNormalizeType(t *testing.T) {
+	// Legacy kind: -> type: (value preserved, other keys intact).
+	in := "---\nname: x\nkind: skill\ndescription: d\n---\n\nbody"
+	out, changed := normalizeType(in, "skill")
+	if !changed || !strings.Contains(out, "type: skill") || strings.Contains(out, "kind:") {
+		t.Errorf("rename kind->type failed: %q", out)
+	}
+	if !strings.Contains(out, "name: x") || !strings.Contains(out, "description: d") || !strings.Contains(out, "\nbody") {
+		t.Errorf("other content not preserved: %q", out)
+	}
+	// Redundant kind: alongside type: -> drop kind:.
+	in2 := "---\ntype: skill\nname: x\nkind: skill\n---\nb"
+	out2, changed2 := normalizeType(in2, "skill")
+	if !changed2 || strings.Contains(out2, "kind:") {
+		t.Errorf("redundant kind not dropped: %q", out2)
+	}
+	// Missing both -> insert type:.
+	in3 := "---\nname: x\ndescription: d\n---\nb"
+	out3, changed3 := normalizeType(in3, "principle")
+	if !changed3 || !strings.Contains(out3, "type: principle") {
+		t.Errorf("missing type not inserted: %q", out3)
+	}
+	// Already conformant -> unchanged.
+	in4 := "---\ntype: skill\nname: x\n---\nb"
+	if _, changed4 := normalizeType(in4, "skill"); changed4 {
+		t.Errorf("conformant doc should be unchanged")
+	}
+	// No frontmatter -> unchanged.
+	if _, changed5 := normalizeType("no frontmatter", "skill"); changed5 {
+		t.Errorf("frontmatter-less doc should be unchanged")
+	}
+}
