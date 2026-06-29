@@ -54,12 +54,6 @@ binary. --check reports availability without changing anything.`,
 				fmt.Fprintf(out, "update available: %s → %s  (run `satelle update`)\n", current, latest)
 				return nil
 			}
-			// Don't clobber a from-source build with a release — the developer
-			// manages those via `make install`. A custom release source (mirror/CI/
-			// test) opts in regardless.
-			if msg := selfUpdateBlocked(buildinfo.Resolve().Version, customReleaseSource()); msg != "" {
-				return fmt.Errorf("%s", msg)
-			}
 			fmt.Fprintf(out, "updating %s: %s → %s\n", target, current, latest)
 			if err := downloadAndReplace(cmd.Context(), updateRepo, latest, target); err != nil {
 				return err
@@ -74,23 +68,6 @@ binary. --check reports availability without changing anything.`,
 	cmd.Flags().BoolVar(&check, "check", false, "report whether an update is available without installing")
 	cmd.Flags().BoolVar(&noRestart, "no-restart", false, "do not restart the background service after updating")
 	register(cmd)
-}
-
-// customReleaseSource reports whether a non-default release source is configured
-// (a mirror, CI, or a test fixture) — which opts into self-update regardless of
-// the running build.
-func customReleaseSource() bool {
-	return os.Getenv("SATELLE_RELEASE_API") != "" || os.Getenv("SATELLE_RELEASE_BASE") != ""
-}
-
-// selfUpdateBlocked returns a non-empty refusal reason when self-update must not
-// proceed: a from-source (non-release) build with the default release source.
-// Such a build is managed by the developer, not by `satelle update`.
-func selfUpdateBlocked(version string, customSource bool) string {
-	if customSource || buildinfo.IsReleaseVersion(version) {
-		return ""
-	}
-	return fmt.Sprintf("from-source build %s — `satelle update` only refreshes released installs; reinstall with `make install` or the curl installer", version)
 }
 
 // installTarget is the binary update replaces: SATELLE_INSTALL_DIR (else

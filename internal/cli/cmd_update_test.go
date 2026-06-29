@@ -52,20 +52,20 @@ func TestUpdateAvailable(t *testing.T) {
 	}
 }
 
-func TestSelfUpdateBlocked(t *testing.T) {
-	// A from-source dev build refuses (default source) — actionable message.
-	if msg := selfUpdateBlocked("0.0.0-dev+abc-dirty", false); msg == "" {
-		t.Error("dev build should be blocked from self-update")
-	} else if !strings.Contains(msg, "make install") {
-		t.Errorf("refusal message not actionable: %q", msg)
+// TestFromSourceProceeds locks the behaviour `satelle update` shares with
+// `claude update` (sty_d2936170): a from-source/dev build is NOT blocked — it
+// proceeds to install whenever the latest release differs, and is a graceful
+// no-op ("already up to date") only when it already matches. The old
+// from-source refusal guard was removed; the dev escape hatch is `--local`
+// (sty_fe3ee313), not a refusal.
+func TestFromSourceProceeds(t *testing.T) {
+	// A from-source dev build with a differing latest release proceeds to install.
+	if !updateAvailable("0.0.0-dev+abc-dirty", "v0.0.9") {
+		t.Error("a from-source build must self-update when the latest release differs (no refusal)")
 	}
-	// A released install updates normally.
-	if msg := selfUpdateBlocked("v0.0.6", false); msg != "" {
-		t.Errorf("release build should not be blocked: %q", msg)
-	}
-	// A custom release source (mirror/CI/test) opts in regardless of the build.
-	if msg := selfUpdateBlocked("0.0.0-dev+abc-dirty", true); msg != "" {
-		t.Errorf("custom source should bypass the dev guard: %q", msg)
+	// Equal versions are a graceful no-op, not an error.
+	if updateAvailable("v0.0.9", "v0.0.9") {
+		t.Error("an up-to-date install must report no update available")
 	}
 }
 
