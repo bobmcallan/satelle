@@ -20,6 +20,11 @@ Downloads the latest release binary for your platform, sha256-verifies it, and
 installs to `~/.local/bin` (override with `SATELLE_INSTALL_DIR`). Or build from
 source: `make install`.
 
+Already installed? `satelle update` self-updates in place — it resolves the
+latest release, sha256-verifies it, replaces the binary, and restarts the
+background service. `satelle update --check` reports availability without
+installing.
+
 ## Quickstart
 
 ```sh
