@@ -34,6 +34,31 @@ func TestCategoryStepOf(t *testing.T) {
 	}
 }
 
+// TestCategoryStepOfActiveWorkflowWins reproduces the double-"1" bug (sty_1b548d7e):
+// when BOTH the embedded system baseline (backlog→in_progress→done) and the repo
+// project workflow (…→integration→commit_push→committed→done) carry applies_to
+// ["*"], a wildcard category must be numbered against the ACTIVE (repo) project
+// workflow — not whichever wildcard appears first in doc order. With the baseline
+// winning, integration was off-spine (step 0) and collided with in_progress at
+// step 1 (rendering ①①②③④). Baseline is listed FIRST here — the order that
+// triggered the bug.
+func TestCategoryStepOfActiveWorkflowWins(t *testing.T) {
+	baseline := docindex.Doc{Kind: "workflows", Name: "satelle-baseline-workflow", Embedded: true,
+		Body: "---\nname: satelle-baseline-workflow\ntype: workflow\napplies_to: [\"*\"]\n---\ntransitions:\n" +
+			"  - {from: backlog, to: in_progress}\n  - {from: in_progress, to: done}\n"}
+	project := docindex.Doc{Kind: "workflows", Name: "satelle-project-workflow", Embedded: false,
+		Body: "---\nname: satelle-project-workflow\ntype: workflow\napplies_to: [\"*\"]\n---\ntransitions:\n" +
+			"  - {from: backlog, to: in_progress}\n  - {from: in_progress, to: integration}\n" +
+			"  - {from: integration, to: commit_push}\n  - {from: commit_push, to: committed}\n" +
+			"  - {from: committed, to: done}\n"}
+	stepOf := categoryStepOf([]docindex.Doc{baseline, project})
+	for state, want := range map[string]int{"in_progress": 1, "integration": 2, "commit_push": 3, "committed": 4, "done": 5} {
+		if got := stepOf("chore", state); got != want {
+			t.Errorf("chore %q = %d, want %d (active project workflow must beat the embedded baseline)", state, got, want)
+		}
+	}
+}
+
 // ev builds a ledger entry with a {from,to} payload.
 func ev(kind, from, to string) ledger.Entry {
 	p, _ := json.Marshal(lightPayload{From: from, To: to})

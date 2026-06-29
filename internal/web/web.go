@@ -24,6 +24,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/help"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/reviewer"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 	"github.com/bobmcallan/satelle/internal/workspace"
@@ -499,45 +500,33 @@ func bfsDist(adj map[string][]string, starts []string) map[string]int {
 // fallback — so e.g. an epic-parent (parent workflow, backlog→done) numbers
 // `done` as step 1 while a feature (wildcard project workflow) numbers it 5.
 func categoryStepOf(docs []docindex.Doc) func(category, state string) int {
-	type wf struct {
-		applies []string
-		depths  map[string]int
-	}
-	var wfs []wf
+	// Longest spine = the final fallback, used ONLY when no workflow matches a
+	// category (neither a category-specific nor a wildcard one).
 	var longest map[string]int
 	for _, d := range docs {
-		depths := spineDepths(parseWorkflow(d.Body))
-		wfs = append(wfs, wf{applies: frontmatterList(d.Body, "applies_to"), depths: depths})
-		if len(depths) > len(longest) {
+		if depths := spineDepths(parseWorkflow(d.Body)); len(depths) > len(longest) {
 			longest = depths
 		}
 	}
-	pick := func(category string) map[string]int {
-		if category != "" {
-			for _, w := range wfs {
-				if sliceHas(w.applies, category) {
-					return w.depths
-				}
-			}
+	// Select the ACTIVE workflow per category via the single source of truth —
+	// reviewer.OrderedWorkflows (category-specific repo > category-specific system >
+	// wildcard repo > wildcard system), head = active. This is the same precedence
+	// the gater enforces and `satelle workflow list` surfaces, so the lights number
+	// each item against the workflow that actually drives it — a repo/project
+	// workflow beats the embedded system baseline. Cached per category (one parse).
+	cache := map[string]map[string]int{}
+	depthsFor := func(category string) map[string]int {
+		if d, ok := cache[category]; ok {
+			return d
 		}
-		for _, w := range wfs {
-			if sliceHas(w.applies, "*") {
-				return w.depths
-			}
+		depths := longest
+		if ordered := reviewer.OrderedWorkflows(docs, category); len(ordered) > 0 {
+			depths = spineDepths(parseWorkflow(ordered[0].Body))
 		}
-		return longest
+		cache[category] = depths
+		return depths
 	}
-	return func(category, state string) int { return pick(category)[state] }
-}
-
-// sliceHas reports whether ss contains want.
-func sliceHas(ss []string, want string) bool {
-	for _, s := range ss {
-		if s == want {
-			return true
-		}
-	}
-	return false
+	return func(category, state string) int { return depthsFor(category)[state] }
 }
 
 // attachLights wraps items with their progress lights, numbering each item
