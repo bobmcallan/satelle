@@ -5,6 +5,8 @@ import (
 	"html/template"
 	"strings"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/buildinfo"
 )
 
 // basePath is the URL prefix this server is mounted under, empty for the
@@ -34,6 +36,11 @@ func baseHref() string {
 // tmplFuncs are shared template helpers.
 var tmplFuncs = template.FuncMap{
 	"basehref": baseHref,
+	// version / footeremail back the one shared site footer (see the "footer"
+	// template) so it needs no per-page data: version is baked into the binary,
+	// the operator email is resolved once from git identity at server start.
+	"version":     func() string { return buildinfo.Resolve().Version },
+	"footeremail": func() string { return footerEmail },
 	"ftime": func(t time.Time) string {
 		if t.IsZero() {
 			return "—"
@@ -98,6 +105,8 @@ var tmpl = template.Must(template.New("web").Funcs(tmplFuncs).Parse(templatesSrc
 
 const templatesSrc = `
 {{define "topbar"}}<button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>{{if .Uptime}}<button class="uptime" type="button" disabled title="web service uptime — green border means up">{{.Uptime}}</button>{{end}}{{end}}
+
+{{define "footer"}}<footer class="site-footer">{{if footeremail}}<a class="footer-email" href="mailto:{{footeremail}}">{{footeremail}}</a>{{end}}<span class="footer-version">satelle {{version}}</span></footer>{{end}}
 
 {{define "page"}}<!doctype html>
 <html lang="en"{{if .Theme}} data-theme="{{.Theme}}"{{end}}>
@@ -169,10 +178,7 @@ const templatesSrc = `
     <div data-rows>{{template "docsRows" .DocKinds}}</div>
   </section>
 
-  <footer class="site-footer">
-    {{if .FooterEmail}}<a class="footer-email" href="mailto:{{.FooterEmail}}">{{.FooterEmail}}</a>{{end}}
-    <span class="footer-version">satelle {{.Version}}</span>
-  </footer>
+  {{template "footer"}}
 </div>
 <script src="static/app.js"></script>
 </body>
@@ -274,7 +280,7 @@ const templatesSrc = `
     </table>{{end}}
     {{end}}
   </section>{{else}}<div class="empty">no repos registered — run <code>satelle workspace add</code></div>{{end}}
-  <footer class="site-footer"><span class="footer-version">satelle workspace</span></footer>
+  {{template "footer"}}
 </div>
 </body>
 </html>{{end}}
@@ -312,7 +318,7 @@ Remove with: satelle workspace remove /path/to/repo
 Process guides:    <a href="help">help →</a>
 Keep current:      satelle update      (--check to peek first)</pre>
   </section>
-  <footer class="site-footer"><span class="footer-version">satelle · projects landing</span></footer>
+  {{template "footer"}}
 </div>
 <script src="static/app.js"></script>
 </body>
@@ -340,7 +346,7 @@ Keep current:      satelle update      (--check to peek first)</pre>
     <h2 class="kind-h">{{.Title}} <span class="meta">{{.Name}}</span></h2>
     <pre class="prose">{{.Body}}</pre>
   </section>{{else}}<div class="empty">no help topics</div>{{end}}
-  <footer class="site-footer"><span class="footer-version">satelle help</span></footer>
+  {{template "footer"}}
 </div>
 </body>
 </html>{{end}}
@@ -365,6 +371,7 @@ Keep current:      satelle update      (--check to peek first)</pre>
     {{if .Headline}}<div class="meta">{{.Headline}}</div>{{end}}
   </header>
   <article class="doc-article">{{.HTML}}</article>
+  {{template "footer"}}
 </div>
 <script src="static/app.js"></script>
 </body>
@@ -390,6 +397,7 @@ Keep current:      satelle update      (--check to peek first)</pre>
     <div class="meta">{{.Item.ID}}</div>
   </header>
   <div id="detail-live" data-kind="{{.Item.Kind}}" data-id="{{.Item.ID}}">{{template "itemDetail" .}}</div>
+  {{template "footer"}}
 </div>
 <script src="static/app.js"></script>
 </body>

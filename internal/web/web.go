@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/app"
-	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/help"
@@ -107,6 +106,7 @@ func setTheme(w http.ResponseWriter, r *http.Request) {
 // process mutations (CLI edits) are picked up by StartRealtime's poller.
 func New(a *app.App) *Server {
 	serverStart = time.Now()
+	footerIdentity(a.RepoRoot) // resolve the footer email once so every page's shared footer has it
 	h := newHub()
 	verb.SetChangeNotifier(h.publish)
 
@@ -283,10 +283,8 @@ type pageData struct {
 	DocKinds     []kindGroup
 	DocCount     int
 	Workflows    []workflowRowVM
-	Version      string
 	Uptime       string
 	Theme        string
-	FooterEmail  string
 	TopBar       topBar
 }
 
@@ -571,7 +569,6 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 	for _, k := range config.AuthoredKinds {
 		kinds = append(kinds, kindGroup{Kind: k, Docs: byKind[k]})
 	}
-	email := footerIdentity(a.RepoRoot)
 	backlog := 0
 	for _, s := range stories {
 		if s.Status == workitem.StatusBacklog {
@@ -585,10 +582,9 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 		Tasks:    attachLights(ctx, tasks, stepOf),
 		DocKinds: kinds, DocCount: len(allDocs),
 		Workflows: workflowRows(byKind["workflows"]),
-		Version:   buildinfo.Resolve().Version, Uptime: formatUptime(time.Since(serverStart)),
-		Theme:       globalTheme(),
-		FooterEmail: email,
-		TopBar:      topBar{Uptime: formatUptime(time.Since(serverStart))},
+		Uptime:    formatUptime(time.Since(serverStart)),
+		Theme:     globalTheme(),
+		TopBar:    topBar{Uptime: formatUptime(time.Since(serverStart))},
 	}, nil
 }
 

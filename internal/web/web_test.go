@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -390,6 +391,43 @@ func TestWorkspacePageAggregatesAcrossRepos(t *testing.T) {
 	_, proj := get(t, srv.URL+"/")
 	if strings.Contains(proj, "other-story") {
 		t.Error("project page should remain single-repo")
+	}
+}
+
+var footerVersionRe = regexp.MustCompile(`<span class="footer-version">([^<]*)</span>`)
+
+// TestFooterConsistentAcrossPages asserts the one shared footer (satelle
+// <version>) renders identically on the project, help, workspace, doc and detail
+// pages — it is one template, not a per-page copy.
+func TestFooterConsistentAcrossPages(t *testing.T) {
+	srv, db := newServer(t)
+	ctx := context.Background()
+	it, err := db.Stories.Create(ctx, workitem.CreateInput{Kind: workitem.KindStory, Title: "Footer story"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.DocIndex.SetDefaults([]docindex.Doc{{Kind: "documents", Name: "guide", Body: "# Guide\n\nhi"}})
+
+	footer := func(path string) string {
+		code, body := get(t, srv.URL+path)
+		if code != 200 {
+			t.Fatalf("%s = %d", path, code)
+		}
+		m := footerVersionRe.FindStringSubmatch(body)
+		if m == nil {
+			t.Fatalf("no shared footer on %s:\n%s", path, body)
+		}
+		return m[1]
+	}
+
+	want := footer("/")
+	if !strings.HasPrefix(want, "satelle ") {
+		t.Errorf("footer is not 'satelle <version>': %q", want)
+	}
+	for _, path := range []string{"/help", "/workspace", "/story/" + it.ID, "/doc/documents/guide"} {
+		if got := footer(path); got != want {
+			t.Errorf("footer on %s = %q, want %q (footers must match)", path, got, want)
+		}
 	}
 }
 

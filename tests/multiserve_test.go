@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -122,6 +123,34 @@ func TestMultiProjectServe(t *testing.T) {
 		t.Errorf("hot-add: landing shows %d projects after workspace add (want 3)", got)
 	}
 }
+
+// TestFooterConsistentAcrossPages asserts the one shared footer (satelle
+// <version>) renders identically on the landing, a project page, /help and
+// /workspace — the footer is one template, not a per-page copy.
+func TestFooterConsistentAcrossPages(t *testing.T) {
+	base, repo := serveRepo(t, "8823") // base is host+/<slug> (the project page)
+	host := strings.TrimSuffix(base, "/"+filepath.Base(repo))
+
+	footer := func(url string) string {
+		m := footerRe.FindStringSubmatch(httpGetBody(t, url))
+		if m == nil {
+			t.Fatalf("no site-footer on %s", url)
+		}
+		return m[1]
+	}
+
+	want := footer(base + "/") // the project page footer
+	if !strings.HasPrefix(want, "satelle ") {
+		t.Errorf("footer is not 'satelle <version>': %q", want)
+	}
+	for _, url := range []string{host + "/", host + "/help", host + "/workspace"} {
+		if got := footer(url); got != want {
+			t.Errorf("footer on %s = %q, want %q (footers must match)", url, got, want)
+		}
+	}
+}
+
+var footerRe = regexp.MustCompile(`<span class="footer-version">([^<]*)</span>`)
 
 // workspaceAdd runs `workspace add` in dir with an isolated SATELLE_HOME.
 func workspaceAdd(t *testing.T, home, dir, repo string) {
