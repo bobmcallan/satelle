@@ -95,7 +95,7 @@ func TestDogfoodFlow(t *testing.T) {
 			t.Errorf("init output missing %q:\n%s", want, out)
 		}
 	}
-	for _, rel := range []string{".satelle/satelle.toml", ".satelle/satelle.db", ".satelle/workflows/.gitkeep"} {
+	for _, rel := range []string{".satelle/satelle.toml", ".satelle/satelle.db", ".satelle/workflows/README.md"} {
 		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
 			t.Errorf("init did not create %s", rel)
 		}
@@ -106,6 +106,10 @@ func TestDogfoodFlow(t *testing.T) {
 	if strings.Contains(out, "  + ") {
 		t.Errorf("second init created something:\n%s", out)
 	}
+
+	// Index the substrate init materialised (baseline workflow + step skill), as a
+	// real session does at SessionStart, so a later authoring index is incremental.
+	mustRun(t, bin, repo, "index")
 
 	// Create a story and a task.
 	out = mustRun(t, bin, repo, "story", "create", "--title", "Dogfood satelle", "--priority", "high", "--tags", "mvp,core")

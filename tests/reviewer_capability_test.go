@@ -33,21 +33,21 @@ func TestReviewerCanResolveEmbeddedSkillViaCLI(t *testing.T) {
 		t.Fatalf("index: %v\n%s", err, out)
 	}
 
-	// satelle-step-summary is embedded canonical substrate; a fresh repo has no
-	// file for it on disk. (The structure reviewers were retired in sty_a90d5c49,
-	// so the step summariser is the remaining embedded-only skill to probe.)
-	const embedded = "satelle-step-summary"
-	if _, err := os.Stat(filepath.Join(repo, ".satelle", "skills", embedded+".md")); !os.IsNotExist(err) {
+	// satelle-actor-model is an embedded canonical PRINCIPLE; init does not
+	// materialise principles, so a fresh repo has no file for it on disk. (The
+	// step summariser IS materialised by init now, so it is no longer embedded-only.)
+	const embedded = "satelle-actor-model"
+	if _, err := os.Stat(filepath.Join(repo, ".satelle", "principles", embedded+".md")); !os.IsNotExist(err) {
 		t.Fatalf("precondition: %s should NOT exist on disk in a fresh repo", embedded)
 	}
 
 	// The CLI resolves it from the embedded layer — the read-only path used to
-	// confirm an embedded-only skill is reachable.
-	out, err := run("doc", "get", "skills", embedded)
+	// confirm an embedded-only doc is reachable.
+	out, err := run("doc", "get", "principles", embedded)
 	if err != nil {
-		t.Fatalf("`satelle doc get skills %s` should resolve the embedded skill, got error: %v\n%s", embedded, err, out)
+		t.Fatalf("`satelle doc get principles %s` should resolve the embedded principle, got error: %v\n%s", embedded, err, out)
 	}
-	if !strings.Contains(out, embedded) || !strings.Contains(out, "per-transition summariser") {
-		t.Errorf("resolved doc should be the embedded step-summary body:\n%s", out)
+	if !strings.Contains(out, embedded) || !strings.Contains(out, "actor execution model") {
+		t.Errorf("resolved doc should be the embedded actor-model body:\n%s", out)
 	}
 }

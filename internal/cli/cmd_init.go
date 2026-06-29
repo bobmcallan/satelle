@@ -19,6 +19,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/store"
+	"github.com/bobmcallan/satelle/internal/wfdot"
 )
 
 func init() {
@@ -84,19 +85,44 @@ func runInit(out io.Writer, repoRoot string) error {
 		return fmt.Errorf("init: stat %s: %w", tomlPath, statErr)
 	}
 
-	// 3. Authored-markdown dirs — create with a .gitkeep so they exist (and are
-	//    tracked) for the directory monitor and for dropping content into.
-	for _, kind := range config.AuthoredKinds {
+	// 2b. actors.toml — the actors layer (how each actor runs). Created only if
+	//     absent; an absent file is the read-only default, so this documents the
+	//     knobs without changing behaviour.
+	actorsPath := filepath.Join(dataDir, config.ActorsConfigName)
+	switch _, statErr := os.Stat(actorsPath); {
+	case statErr == nil:
+		fmt.Fprintln(out, initLine(false, config.DefaultDataDir+"/"+config.ActorsConfigName))
+	case os.IsNotExist(statErr):
+		if werr := os.WriteFile(actorsPath, []byte(scaffoldActorsToml), 0o644); werr != nil {
+			return fmt.Errorf("init: write %s: %w", actorsPath, werr)
+		}
+		fmt.Fprintln(out, initLine(true, config.DefaultDataDir+"/"+config.ActorsConfigName))
+	default:
+		return fmt.Errorf("init: stat %s: %w", actorsPath, statErr)
+	}
+
+	// 3. Authored-markdown dirs — create each with a tiny README.md describing
+	//    what it should contain (the README is also the tracked keep-file). The
+	//    `stories` dir holds the portable markdown mirror of the backlog.
+	for _, kind := range append(append([]string{}, config.AuthoredKinds...), "stories") {
 		dir := filepath.Join(dataDir, kind)
 		dirCreated, derr := ensureDir(dir)
 		if derr != nil {
 			return derr
 		}
-		if keepCreated, kerr := ensureGitkeep(dir); kerr != nil {
-			return kerr
-		} else {
-			fmt.Fprintln(out, initLine(dirCreated || keepCreated, config.DefaultDataDir+"/"+kind+"/"))
+		readmeCreated, rerr := ensureReadme(dir, kind)
+		if rerr != nil {
+			return rerr
 		}
+		fmt.Fprintln(out, initLine(dirCreated || readmeCreated, config.DefaultDataDir+"/"+kind+"/"))
+	}
+
+	// 3b. Seed the default substrate into a FRESH repo: materialise the embedded
+	//     baseline workflow and the embedded skills it references into .satelle so
+	//     they are visible/editable on disk. Only when the workflows dir has no
+	//     authored workflow yet — never clobbering or competing with an existing one.
+	for _, line := range materializeBaseline(dataDir) {
+		fmt.Fprintln(out, line)
 	}
 
 	// 4. The per-repo database — open (creating + migrating) then close, so a
@@ -208,6 +234,26 @@ const scaffoldToml = `# satelle.toml — per-repo config (committed, secret-free
 # skills = "."                   # → ./skills
 `
 
+// scaffoldActorsToml is the documented actors layer a fresh init writes. Every
+// key is commented: an absent/blank file is the read-only default (executor
+// in-loop, reviewer isolated with Read,Grep,Glob), so this only documents the
+// knobs. A repo may widen or rebind transparently — the override is a committed
+// file, the operator's choice.
+const scaffoldActorsToml = `# actors.toml — the actors layer: how each actor runs (backend + tool grant).
+# An absent or fully-commented file is today's default: the executor drives
+# in-loop (the agent itself); the reviewer runs as an isolated, read-only agent
+# (tools = "Read,Grep,Glob"). Uncomment to override — the grant travels with the
+# binding, so the reviewer's read-only limit holds whatever the backend.
+
+# [executor]
+# harness = "in-loop"          # the driving agent itself (default)
+
+# [reviewer]
+# harness = "claude"           # the bare claude preset (read-only denylist) — default
+# tools   = "Read,Grep,Glob"   # the reviewer's tool grant (default; widen at your own risk)
+# model   = ""                 # optional model override for the reviewer
+`
+
 // gitignoreMarker opens the managed block ensureGitignore maintains. Its
 // presence anywhere in the file makes a re-run a no-op.
 const gitignoreMarker = "# >>> satelle (managed) >>>"
@@ -256,17 +302,123 @@ func ensureGitignore(repoRoot string) (bool, error) {
 	}
 }
 
-// ensureGitkeep writes an empty .gitkeep into dir if absent, so an otherwise
-// empty authored dir is tracked. Returns whether it created the file.
-func ensureGitkeep(dir string) (bool, error) {
-	path := filepath.Join(dir, ".gitkeep")
+// dirReadme describes what each authored dir should contain — written as the
+// dir's README.md so the skeleton is self-documenting (and the README keeps the
+// otherwise-empty dir tracked).
+var dirReadme = map[string]string{
+	"documents":  "# documents\n\nFree-form knowledge documents in the Open Knowledge Format (OKF):\nplain markdown with YAML frontmatter carrying a required `type`. Drop reference\nnotes, designs, and commit summaries here; `index.md`/`log.md` are reserved.\n",
+	"workflows":  "# workflows\n\nAuthored lifecycles in the DOT standard (the actor model): each node is a step\nwith an `actor` (executor|reviewer), each edge a transition, the edge into a\nreviewer node its gate. Frontmatter needs `type: workflow`, `scope`, `applies_to`.\nThe lifecycle must start at `backlog`; `done` is terminal.\n",
+	"principles": "# principles\n\nAuthored principles (markdown, `type: principle`). They are resolvable on demand;\nthe single always-resident operating principle is injected at session start.\n",
+	"skills":     "# skills\n\nAuthored skills (`type: skill`): executor rubrics, reviewer rubrics, or a\nself-contained functional check (a fenced ```check block or a `check:` key).\nEverything a reviewer needs lives inside the skill.\n",
+	"stories":    "# stories\n\nPortable markdown mirror of the story backlog. The per-repo database is the\nsource of truth; these files let stories travel in git and be edited by hand\n(re-imported on `satelle index`).\n",
+}
+
+// ensureReadme writes a dir's README.md (describing its contents) when absent.
+func ensureReadme(dir, kind string) (bool, error) {
+	path := filepath.Join(dir, "README.md")
 	if fileExists(path) {
 		return false, nil
 	}
-	if err := os.WriteFile(path, nil, 0o644); err != nil {
+	body := dirReadme[kind]
+	if body == "" {
+		body = "# " + kind + "\n"
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		return false, fmt.Errorf("init: write %s: %w", path, err)
 	}
 	return true, nil
+}
+
+// materializeBaseline seeds a fresh repo's .satelle with the embedded baseline
+// workflow and the embedded skills it references, so the default substrate is
+// visible/editable on disk. It is a no-op when the workflows dir already holds an
+// authored workflow (never clobber, never create a competing wildcard workflow).
+// Returns report lines.
+func materializeBaseline(dataDir string) []string {
+	wfDir := filepath.Join(dataDir, "workflows")
+	if hasMarkdown(wfDir) {
+		return nil // an authored workflow exists — respect it
+	}
+	body, ok := embeddedDefault("workflows", "satelle-baseline-workflow")
+	if !ok {
+		return nil
+	}
+	var lines []string
+	wfPath := filepath.Join(wfDir, "satelle-baseline-workflow.md")
+	if !fileExists(wfPath) {
+		if err := os.WriteFile(wfPath, []byte(body), 0o644); err == nil {
+			lines = append(lines, initLine(true, config.DefaultDataDir+"/workflows/satelle-baseline-workflow.md"))
+		}
+	}
+	// Materialise every embedded skill the baseline references that exists in the
+	// embedded layer (advisory gates not embedded simply stay absent by design).
+	if spec, parsed := wfdot.Parse(body); parsed {
+		for _, name := range referencedSkills(spec) {
+			sBody, has := embeddedDefault("skills", name)
+			if !has {
+				continue
+			}
+			sPath := filepath.Join(dataDir, "skills", name+".md")
+			if fileExists(sPath) {
+				continue
+			}
+			if err := os.WriteFile(sPath, []byte(sBody), 0o644); err == nil {
+				lines = append(lines, initLine(true, config.DefaultDataDir+"/skills/"+name+".md"))
+			}
+		}
+	}
+	return lines
+}
+
+// referencedSkills returns every skill a workflow names — node prompts and edge
+// gates — deduped.
+func referencedSkills(spec wfdot.Spec) []string {
+	set := map[string]bool{}
+	for _, s := range spec.States {
+		if s.Skill != "" {
+			set[s.Skill] = true
+		}
+	}
+	for _, tr := range spec.Transitions {
+		if tr.Skill != "" {
+			set[tr.Skill] = true
+		}
+	}
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	return out
+}
+
+// embeddedDefault returns the body of the embedded canonical artifact for
+// (kind, name), if any.
+func embeddedDefault(kind, name string) (string, bool) {
+	for _, d := range config.EmbeddedDefaults() {
+		if d.Kind == kind && d.Name == name {
+			return d.Body, true
+		}
+	}
+	return "", false
+}
+
+// hasMarkdown reports whether dir contains at least one .md file (ignoring
+// README.md and .gitkeep).
+func hasMarkdown(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".md") {
+			continue
+		}
+		if e.Name() == "README.md" {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // initLine renders a one-line report: "+ created" or "= present".

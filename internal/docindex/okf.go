@@ -30,7 +30,9 @@ const okfVersion = "0.1"
 
 // okfReserved reports whether a document name (filename without .md) is an OKF
 // reserved file (index, log) rather than a concept.
-func okfReserved(name string) bool { return name == "index" || name == "log" }
+func okfReserved(name string) bool {
+	return name == "index" || name == "log" || strings.EqualFold(name, "README")
+}
 
 // splitFrontmatter splits a markdown body into its YAML frontmatter lines (the
 // content between a leading `---` fence and the next `---`) and the remaining

@@ -422,6 +422,11 @@ func walkMarkdown(dir string) ([]fileInfo, error) {
 		if !strings.EqualFold(filepath.Ext(path), ".md") {
 			return nil
 		}
+		// README.md is a dir-descriptor (what the dir should contain), not authored
+		// substrate — skip it so it is never indexed, validated, or normalised.
+		if strings.EqualFold(filepath.Base(path), "README.md") {
+			return nil
+		}
 		fi, err := d.Info()
 		if err != nil {
 			return err

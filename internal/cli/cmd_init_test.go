@@ -15,14 +15,19 @@ func TestRunInitScaffolds(t *testing.T) {
 		t.Fatalf("runInit: %v", err)
 	}
 
-	// Core files exist.
+	// Core files exist: the tomls, the db, a README per authored dir (incl.
+	// stories), and the materialised baseline + the embedded skill it references.
 	for _, rel := range []string{
 		".satelle/satelle.toml",
+		".satelle/actors.toml",
 		".satelle/satelle.db",
-		".satelle/documents/.gitkeep",
-		".satelle/workflows/.gitkeep",
-		".satelle/principles/.gitkeep",
-		".satelle/skills/.gitkeep",
+		".satelle/documents/README.md",
+		".satelle/workflows/README.md",
+		".satelle/principles/README.md",
+		".satelle/skills/README.md",
+		".satelle/stories/README.md",
+		".satelle/workflows/satelle-baseline-workflow.md",
+		".satelle/skills/satelle-step-summary.md",
 		".gitignore",
 	} {
 		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
