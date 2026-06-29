@@ -26,7 +26,6 @@ func TestRunInitScaffolds(t *testing.T) {
 		".satelle/workflows/README.md",
 		".satelle/principles/README.md",
 		".satelle/skills/README.md",
-		".satelle/stories/README.md",
 		".satelle/skills/satelle-step-summary.md",
 		".gitignore",
 	} {
@@ -37,6 +36,10 @@ func TestRunInitScaffolds(t *testing.T) {
 	// The baseline workflow must NOT be scaffolded as a repo file (embedded-only).
 	if _, err := os.Stat(filepath.Join(repo, ".satelle/workflows/satelle-baseline-workflow.md")); err == nil {
 		t.Error("init must not write the baseline workflow as a repo file — it is embedded-only")
+	}
+	// The removed .satelle/stories mirror must NOT be recreated (sty_746a0c98).
+	if _, err := os.Stat(filepath.Join(repo, ".satelle/stories")); err == nil {
+		t.Error("init must not scaffold .satelle/stories — the markdown mirror was removed")
 	}
 
 	// gitignore ignores the db but not the toml.

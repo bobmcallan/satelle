@@ -103,8 +103,10 @@ func runInit(out io.Writer, repoRoot string) error {
 
 	// 3. Authored-markdown dirs — create each with a tiny README.md describing
 	//    what it should contain (the README is also the tracked keep-file). The
-	//    `stories` dir holds per-story attachments (the DB is the story store).
-	for _, kind := range append(append([]string{}, config.AuthoredKinds...), "stories") {
+	//    per-story markdown mirror was removed (sty_fa1e02e1) and story attachments
+	//    create their dir on demand, so .satelle/stories is NOT scaffolded here
+	//    (sty_746a0c98).
+	for _, kind := range config.AuthoredKinds {
 		dir := filepath.Join(dataDir, kind)
 		dirCreated, derr := ensureDir(dir)
 		if derr != nil {
