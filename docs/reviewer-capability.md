@@ -1,8 +1,18 @@
 # Reviewer capability — scoped CLI access + principle injection
 
-Story `sty_e15c15a4`. satelle's isolated reviewers were too restrictive to do
-their job well: they ran read-only over the working **tree** only, with no way to
-see the substrate they reason about.
+> **SUPERSEDED (sty_659848ad).** The scoped `Bash(satelle:*)` CLI grant described
+> below was **reverted**: the reviewer's default grant is again read-only
+> `Read,Grep,Glob`, no shell. It no longer needs the CLI because structural
+> conformance is now deterministic code (`internal/structure`, sty_a90d5c49) and
+> the substrate it reasons about is materialised as markdown under `.satelle/`
+> (`satelle init`, sty_a2170bbf), so it reads it directly. Principle injection was
+> also narrowed to the single operating principle (sty_53a4233c). A repo may still
+> widen the grant transparently in `.satelle/actors.toml`. Kept for history; see
+> `satelle help substrate` and `satelle help reviewer-checks` for the current model.
+
+Story `sty_e15c15a4` (historical). satelle's isolated reviewers were too
+restrictive to do their job well: they ran read-only over the working **tree**
+only, with no way to see the substrate they reason about.
 
 ## What was wrong
 
