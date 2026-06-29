@@ -492,26 +492,61 @@ func bfsDist(adj map[string][]string, starts []string) map[string]int {
 	return dist
 }
 
-// storyStepOf builds the step resolver from the workflow with the longest forward
-// spine among the indexed workflows (the active project lifecycle), so light
-// numbers track the authored workflow steps without hardcoding a workflow name.
-func storyStepOf(docs []docindex.Doc) func(string) int {
-	var best map[string]int
+// categoryStepOf builds a per-CATEGORY step resolver: each item is numbered
+// against the workflow ACTIVE for its category, never a single hardcoded one. The
+// selection mirrors the reviewer's precedence — a workflow whose applies_to lists
+// the category wins; a wildcard ("*") is next; the longest spine is the final
+// fallback — so e.g. an epic-parent (parent workflow, backlog→done) numbers
+// `done` as step 1 while a feature (wildcard project workflow) numbers it 5.
+func categoryStepOf(docs []docindex.Doc) func(category, state string) int {
+	type wf struct {
+		applies []string
+		depths  map[string]int
+	}
+	var wfs []wf
+	var longest map[string]int
 	for _, d := range docs {
-		m := spineDepths(parseWorkflow(d.Body))
-		if len(m) > len(best) {
-			best = m
+		depths := spineDepths(parseWorkflow(d.Body))
+		wfs = append(wfs, wf{applies: frontmatterList(d.Body, "applies_to"), depths: depths})
+		if len(depths) > len(longest) {
+			longest = depths
 		}
 	}
-	return func(s string) int { return best[s] }
+	pick := func(category string) map[string]int {
+		if category != "" {
+			for _, w := range wfs {
+				if sliceHas(w.applies, category) {
+					return w.depths
+				}
+			}
+		}
+		for _, w := range wfs {
+			if sliceHas(w.applies, "*") {
+				return w.depths
+			}
+		}
+		return longest
+	}
+	return func(category, state string) int { return pick(category)[state] }
 }
 
-// attachLights wraps items with their progress lights, reading each item's
-// ledger via the same verb the detail view uses.
-func attachLights(ctx context.Context, items []workitem.Item, stepOf func(string) int) []rowVM {
+// sliceHas reports whether ss contains want.
+func sliceHas(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+// attachLights wraps items with their progress lights, numbering each item
+// against the workflow active for ITS category (catStepOf).
+func attachLights(ctx context.Context, items []workitem.Item, catStepOf func(category, state string) int) []rowVM {
 	out := make([]rowVM, len(items))
 	for i, it := range items {
 		entries, _ := fetchList[ledger.Entry](ctx, "ledger-list", map[string]any{"story_id": it.ID, "limit": 500})
+		stepOf := func(s string) int { return catStepOf(it.Category, s) }
 		out[i] = rowVM{Item: it, Lights: buildLights(entries, it.Status, stepOf)}
 	}
 	return out
@@ -575,11 +610,11 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 			backlog++
 		}
 	}
-	stepOf := storyStepOf(byKind["workflows"])
+	catStepOf := categoryStepOf(byKind["workflows"])
 	return pageData{
 		RepoRoot: a.RepoRoot, DBPath: a.DBPath,
-		Stories: attachLights(ctx, stories, stepOf), BacklogCount: backlog,
-		Tasks:    attachLights(ctx, tasks, stepOf),
+		Stories: attachLights(ctx, stories, catStepOf), BacklogCount: backlog,
+		Tasks:    attachLights(ctx, tasks, catStepOf),
 		DocKinds: kinds, DocCount: len(allDocs),
 		Workflows: workflowRows(byKind["workflows"]),
 		Uptime:    formatUptime(time.Since(serverStart)),
