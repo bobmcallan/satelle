@@ -9,11 +9,13 @@ they are the order-zero context the executor carries.
 
 Like every authored kind, principles resolve in two layers:
 
-- **Embedded (canonical, in the binary)** — the universal principles every
-  satelle repo inherits, shipped under `config/substrate/principles`. These are
-  the single source of those bytes; a repo never edits them. Current set:
-  `satelle-constitution`, `satelle-repo-agnostic`, `satelle-agent-goals`,
-  `satelle-done-is-last`, `satelle-actor-model`.
+- **Embedded (canonical, in the binary)** — the operating-essential principles
+  every satelle repo inherits, shipped under `config/substrate/principles`. These
+  are the single source of those bytes; a repo never edits them. The embedded set
+  is deliberately tiny — `satelle-agent-goals` (the operating discipline) and
+  `satelle-actor-model` (the execution model). Everything else (constitution,
+  yagni, done-is-last, …) is authoring/development substrate that lives in a repo
+  under `.satelle/principles`.
 - **Repo (layered, under `.satelle/principles/`)** — a repo's own principles. A
   repo file with the same name **overrides** the embedded default; a new name
   **adds** to the set. The directory monitor (`satelle index`) syncs them into
@@ -22,24 +24,22 @@ Like every authored kind, principles resolve in two layers:
 List them with `satelle doc list --kind principles`; read one with
 `satelle doc get principles <name>`.
 
-## Residency: `principles:always` vs `principles:global`
+## Residency: one resident principle, the rest on demand
 
-A principle's frontmatter `tags` decide whether it is *resident* or *on-demand*:
+The **resident set is exactly one** principle — the operating principle
+`satelle-agent-goals`. It is injected into the agent's context at the start of
+every session so the agent is driven to the result. Every other principle is
+**resolvable on demand**: the agent pulls it with `satelle doc get principles
+<name>` (or `satelle doc list`) when a task needs it. Keeping the resident set to
+one tight principle protects the context budget and keeps the standing guidance
+sharp.
 
-- **`principles:always`** — the **resident set**. These are injected into the
-  agent's context at the start of every session and are meant to stay small (a
-  handful of short, order-zero principles).
-- **`principles:global`** — discoverable but **not** auto-injected. The agent
-  pulls it on demand (`satelle doc get principles <name>`) when a task needs it.
-  Use this for longer reference principles.
+## How the resident principle reaches the agent (injection)
 
-## How the resident set reaches the agent (injection)
-
-A Claude Code **SessionStart hook** runs `satelle hook context`. It collects every
-`principles:always` doc, injects their bodies (bounded by a byte ceiling — an
-overflow is reported on stderr, never silently dropped), and appends the standing
-instruction to discover the rest via `satelle doc list`. It **fails open**: an
-unconfigured repo or any read error injects nothing and never blocks the session.
+A Claude Code **SessionStart hook** runs `satelle hook context`. It injects the
+operating principle's body and appends the standing instruction to discover the
+rest via `satelle doc list`. It **fails open**: an unconfigured repo or any read
+error injects nothing and never blocks the session.
 
 Wire it once, in `.claude/settings.json`:
 

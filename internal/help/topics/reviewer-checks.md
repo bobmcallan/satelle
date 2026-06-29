@@ -28,8 +28,12 @@ ways, both parsed by the shared `wfdot`/web parser:
 - an inline-YAML `states:`/`transitions:` block (transitions carry `reviewer_skill`); or
 - a fenced ```dot graph (node-centric): each node is a step carrying an `actor`,
   a reviewer node names its gate as `prompt="@skill:NAME"`, and the edge **into**
-  a reviewer node is the gated transition. `satelle validate` graph-checks a DOT
-  workflow (structural soundness + the mandatory spine gate into `done`).
+  a reviewer node is the gated transition. `satelle validate` runs a DETERMINISTIC
+  structure check on every authored doc — frontmatter (OKF `type`), naming, a
+  usable definition, and for a workflow the graph (connected, a terminal `done`,
+  a `backlog` start, resolvable executor skills). The structure check is code, not
+  an LLM rubric, so it is harness-independent and never flaky. The done gate is
+  **not** mandated — it is whatever the workflow declares (the author's choice).
 
 An edge is gated only when the workflow names a reviewer skill **and** that skill's
 rubric is installed; a named-but-absent rubric is advisory, so a fresh repo keeps
@@ -56,11 +60,14 @@ A gate is either:
   rejects** with the output tail as notes. No LLM — the command is the decision.
   Like the commit-push gate, a functional check may run real mechanism.
 
-## Create gate — `satelle-story-review`
+## Create gate — deterministic story structure (code)
 
-Runs when a draft is created (opt-in per repo via `[review] gate_create`). Judges
-**required structure** only: a specific title, a clear goal in the body, and at
-least one numbered, testable acceptance criterion.
+When a draft is created (opt-in per repo via `[review] gate_create`), satelle
+checks **required structure** deterministically in code (no LLM): a specific
+title, a clear goal in the body, and at least one numbered, testable acceptance
+criterion. The structure reviewers for skills/workflows/principles are likewise
+deterministic code (`internal/structure`), not LLM rubrics — conformance is
+mechanical, so a swapped harness can never change what "valid" means.
 
 ## Begin-work gate — `satelle-story-intent-review` (→ in_progress)
 
@@ -82,8 +89,11 @@ PR-style commit-summary document under `.satelle/documents/`.
 
 An isolated, read-only reviewer that **reads the repository** to verify each
 numbered acceptance criterion against concrete evidence. Unmet criteria are
-rejected with specifics. `done` is always terminal (see `satelle-done-is-last`),
-and the mandatory close gate is the spine a custom workflow cannot drop.
+rejected with specifics. `done` is always terminal (see `satelle-done-is-last`).
+The close gate is **declared by the workflow**, not mandated by the binary — a
+workflow may name it, name another, or drop it: if the user breaks their own
+process, so be it. The reviewer's grant is read-only (`Read,Grep,Glob`); it reads
+the substrate it reasons about as markdown under `.satelle/` (no shell, no CLI).
 
 ## Always-on system layer — estimate/actual + cancel
 
@@ -93,16 +103,22 @@ requires a recorded plan estimate, and entry to `done` requires the recorded
 actual (`satelle story estimate` / `satelle story actual`).
 `satelle-story-cancel-review` records why an item is abandoned.
 
-## Summariser — `satelle-step-summary`
+## Step summary — `satelle-step-summary` (transparent, opt-in)
 
-Not a gate. After a transition enacts, this read-only observer produces a 1–3
-sentence recap recorded as a `step_summary` ledger row.
+Not a gate. The step summary is **declared by the workflow**, not a hidden
+always-on behaviour: a workflow opts in by declaring an edge-less `step` node
+(`prompt="@skill:satelle-step-summary"`), optionally `mandatory=true`. Where
+declared, after each transition this read-only observer records a 1–3 sentence
+`step_summary` ledger row; a `mandatory` summary failure is surfaced on the
+ledger rather than swallowed. A workflow without the node records no summaries.
 
 ## Where the rubrics live
 
-The create-structure reviewer and summariser are **embedded canonical defaults**
-(`internal/config/substrate/skills`). A repo MAY override them — or add its own
-gates (this repo's commit-push reviewer) — under `.satelle/skills/`. The binary
-runs the gates; the substrate defines them.
+The summariser is an **embedded canonical default** (`internal/config/substrate/
+skills`) and is materialised into `.satelle/skills` by `satelle init`. The
+deterministic structure checks (skills/workflows/principles/story drafts) are
+**code** (`internal/structure`), not rubrics. A repo MAY override a materialised
+skill — or add its own gates (this repo's commit-push reviewer) — under
+`.satelle/skills/`. The binary runs the gates; the substrate declares them.
 
 See also: `satelle help create-story`.

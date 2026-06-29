@@ -15,6 +15,11 @@ import (
 )
 
 func init() {
+	register(newHelpCmd())
+}
+
+// newHelpCmd builds the `satelle help` command (extracted so routing is testable).
+func newHelpCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "help [topic]",
 		Short: "Read process guides (create-story path, reviewer checks)",
@@ -34,13 +39,17 @@ topics, or pass a topic name to print that guide. These document the process
 				}
 				return tw.Flush()
 			}
-			t, ok := help.Get(args[0])
-			if !ok {
-				return fmt.Errorf("unknown help topic %q — run `satelle help` to list topics, or `satelle %s --help` for command help", args[0], args[0])
+			if t, ok := help.Get(args[0]); ok {
+				fmt.Fprintln(out, t.Body)
+				return nil
 			}
-			fmt.Fprintln(out, t.Body)
-			return nil
+			// Not a process topic — if it names a command, route to that command's
+			// help (so `satelle help story` works) rather than a flat error.
+			if c, _, ferr := cmd.Root().Find(args); ferr == nil && c != nil && c != cmd.Root() {
+				return c.Help()
+			}
+			return fmt.Errorf("unknown help topic %q — run `satelle help` to list process topics, or `satelle <command> --help` for command flags", args[0])
 		},
 	}
-	register(cmd)
+	return cmd
 }
