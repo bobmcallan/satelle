@@ -424,11 +424,13 @@ func (g *Gater) systemReviewers(ctx context.Context, exclude []string, toStatus 
 // item at creation. Embedded by default; overridable under .satelle/skills.
 const structureSkill = "satelle-story-review"
 
-// createReviewSkill is the OPT-IN content/alignment reviewer that runs AFTER the
-// deterministic structural check at creation (sty_345e9ae7). It is NOT embedded —
-// content/alignment is the operator's process, authored as repo substrate under
-// .satelle/skills; when absent, creation is deterministic-only (no content review).
-const createReviewSkill = "satelle-story-create-review"
+// createReviewKey is the workflow-frontmatter key that DECLARES the opt-in
+// content/alignment reviewer run after the structural check at creation
+// (sty_b031b29f). The binding lives on the active workflow — configuration, not a
+// hardcoded filename — so a repo wires create review by declaring it on the
+// workflow that governs the story's category. Absent, creation is
+// deterministic-only.
+const createReviewKey = "create_review"
 
 // summariserSkill recaps an enacted transition. Embedded by default; overridable.
 const summariserSkill = "satelle-step-summary"
@@ -512,10 +514,14 @@ func (g *Gater) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb.
 	if problems := structure.Story(draft.Title, draft.Body, draft.AcceptanceCriteria); len(problems) > 0 {
 		return verb.GateDecision{Gated: true, Accept: false, Skill: structureSkill, Notes: strings.Join(problems, "; ")}, nil
 	}
-	// 2. Optional content/alignment review — runs ONLY when a repo has authored the
-	// satelle-story-create-review rubric (opt-in by presence). runReviewer returns
-	// an UNGATED decision when the skill does not resolve, so a repo without the
-	// rubric stays deterministic-only. The draft is judged as a backlog-bound item.
+	// 2. Optional content/alignment review — the reviewer skill is DECLARED by the
+	// active workflow's `create_review` frontmatter (selected by the draft's
+	// category), NOT a hardcoded filename. Absent a declaration (or the skill does
+	// not resolve), creation stays deterministic-only.
+	skill := g.createReviewSkillFor(ctx, draft.Category)
+	if skill == "" {
+		return verb.GateDecision{Gated: true, Accept: true, Skill: structureSkill}, nil
+	}
 	draftItem := workitem.Item{
 		Title:              draft.Title,
 		Body:               draft.Body,
@@ -525,15 +531,28 @@ func (g *Gater) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb.
 		Tags:               draft.Tags,
 		Status:             "backlog",
 	}
-	dec, err := g.runReviewer(ctx, draftItem, "backlog", createReviewSkill)
+	dec, err := g.runReviewer(ctx, draftItem, "backlog", skill)
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
 	if dec.Gated {
-		return dec, nil // the content rubric accepted or rejected
+		return dec, nil // the declared content reviewer accepted or rejected
 	}
-	// No content rubric authored — accept on structure alone.
+	// The workflow declared a skill but it does not resolve — accept on structure
+	// alone rather than blocking creation on a misconfigured binding.
 	return verb.GateDecision{Gated: true, Accept: true, Skill: structureSkill}, nil
+}
+
+// createReviewSkillFor resolves the content/alignment create reviewer DECLARED by
+// the workflow active for the category — its `create_review` frontmatter. Empty
+// when no workflow governs the category or none is declared, so creation stays
+// deterministic-only (the binding is configuration, never a hardcoded filename).
+func (g *Gater) createReviewSkillFor(ctx context.Context, category string) string {
+	doc, err := g.activeWorkflow(ctx, category)
+	if err != nil {
+		return ""
+	}
+	return frontmatterScalar(doc.Body, createReviewKey)
 }
 
 // reviewerSkills resolves the ordered reviewer skills governing the (from→to)
