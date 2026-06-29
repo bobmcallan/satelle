@@ -26,6 +26,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/structure"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -437,102 +438,15 @@ func (g *Gater) Summarise(ctx context.Context, item workitem.Item, from, to stri
 }
 
 // ReviewCreate judges a draft work item's required structure before it is
-// persisted. Gated=false (advisory, persist) when the structure rubric is not
-// installed; otherwise it runs the isolated reviewer and returns its verdict.
-func (g *Gater) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb.GateDecision, error) {
-	body, err := g.skillBody(ctx, structureSkill)
-	if err != nil {
-		if errors.Is(err, docindex.ErrNotFound) {
-			return verb.GateDecision{Gated: false}, nil
-		}
-		return verb.GateDecision{}, err
+// persisted, DETERMINISTICALLY (internal/structure) — a clear goal and at least
+// one numbered, testable acceptance criterion. No LLM, no agent CLI: the contract
+// is code, so it is harness-independent and never flaky. Always Gated (the
+// structure is the one thing satelle enforces on creation).
+func (g *Gater) ReviewCreate(_ context.Context, draft verb.CreateDraft) (verb.GateDecision, error) {
+	if problems := structure.Story(draft.Title, draft.Body, draft.AcceptanceCriteria); len(problems) > 0 {
+		return verb.GateDecision{Gated: true, Accept: false, Skill: structureSkill, Notes: strings.Join(problems, "; ")}, nil
 	}
-	if g.runner == nil {
-		return verb.GateDecision{Gated: true}, fmt.Errorf("reviewer: create-gating is on but no agent runner is configured")
-	}
-	payload, err := json.Marshal(draft)
-	if err != nil {
-		return verb.GateDecision{}, err
-	}
-	out, err := g.runner.Run(ctx, agentcli.Request{
-		SystemPrompt: g.reviewerSystemPrompt(ctx, body),
-		Payload:      string(payload),
-		AllowedTools: g.tools,
-		Model:        g.model,
-		Dir:          g.repoRoot,
-	})
-	if err != nil {
-		return verb.GateDecision{Gated: true}, fmt.Errorf("reviewer: %s gate failed: %w", structureSkill, err)
-	}
-	dec, err := parseDecision(out)
-	if err != nil {
-		return verb.GateDecision{Gated: true}, fmt.Errorf("reviewer: %s: %w", structureSkill, err)
-	}
-	dec.Gated = true
-	dec.Skill = structureSkill
-	return dec, nil
-}
-
-// StructureReviewerFor maps an authored-doc kind to its required-structure
-// reviewer (the satelle-<object>-review family). Empty for kinds with no
-// structure reviewer (e.g. free-form documents). Used by `satelle validate` and
-// the gated `satelle <object> create`.
-func StructureReviewerFor(kind string) string {
-	switch kind {
-	case "skills":
-		return "satelle-skill-review"
-	case "workflows":
-		return "satelle-workflow-review"
-	case "principles":
-		return "satelle-principle-review"
-	default:
-		return ""
-	}
-}
-
-// docPayload is the JSON handed to an authored-doc structure reviewer on stdin.
-type docPayload struct {
-	Kind string `json:"kind"`
-	Name string `json:"name"`
-	Body string `json:"body"`
-}
-
-// ReviewStructure runs the named structure reviewer over an authored doc and
-// returns its verdict. Gated=false (advisory) when the reviewer rubric is not
-// installed. The doc's full markdown rides as the payload; the reviewer judges
-// only its structure.
-func (g *Gater) ReviewStructure(ctx context.Context, reviewerName, kind, name, body string) (verb.GateDecision, error) {
-	rubric, err := g.skillBody(ctx, reviewerName)
-	if err != nil {
-		if errors.Is(err, docindex.ErrNotFound) {
-			return verb.GateDecision{Gated: false}, nil
-		}
-		return verb.GateDecision{}, err
-	}
-	if g.runner == nil {
-		return verb.GateDecision{Gated: true}, fmt.Errorf("reviewer: %s gate is on but no agent runner is configured", reviewerName)
-	}
-	payload, err := json.Marshal(docPayload{Kind: kind, Name: name, Body: body})
-	if err != nil {
-		return verb.GateDecision{}, err
-	}
-	out, err := g.runner.Run(ctx, agentcli.Request{
-		SystemPrompt: g.reviewerSystemPrompt(ctx, rubric),
-		Payload:      string(payload),
-		AllowedTools: g.tools,
-		Model:        g.model,
-		Dir:          g.repoRoot,
-	})
-	if err != nil {
-		return verb.GateDecision{Gated: true}, fmt.Errorf("reviewer: %s gate failed: %w", reviewerName, err)
-	}
-	dec, err := parseDecision(out)
-	if err != nil {
-		return verb.GateDecision{Gated: true}, fmt.Errorf("reviewer: %s: %w", reviewerName, err)
-	}
-	dec.Gated = true
-	dec.Skill = reviewerName
-	return dec, nil
+	return verb.GateDecision{Gated: true, Accept: true, Skill: structureSkill}, nil
 }
 
 // reviewerSkills resolves the ordered reviewer skills governing the (from→to)

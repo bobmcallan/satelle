@@ -45,23 +45,19 @@ func TestDevelopmentPrinciplesNotEmbedded(t *testing.T) {
 	}
 }
 
-func TestEmbeddedStructureReviewers(t *testing.T) {
-	want := map[string]bool{
-		"satelle-skill-review":     false,
-		"satelle-workflow-review":  false,
-		"satelle-principle-review": false,
-		"satelle-story-review":     false,
+// TestStructureReviewersNotEmbedded: the LLM structure reviewers were RETIRED
+// (sty_a90d5c49) — structural conformance is now deterministic code
+// (internal/structure), so these rubrics must NOT ship embedded.
+func TestStructureReviewersNotEmbedded(t *testing.T) {
+	retired := map[string]bool{
+		"satelle-skill-review":     true,
+		"satelle-workflow-review":  true,
+		"satelle-principle-review": true,
+		"satelle-story-review":     true,
 	}
 	for _, d := range EmbeddedDefaults() {
-		if d.Kind == "skills" {
-			if _, ok := want[d.Name]; ok {
-				want[d.Name] = true
-			}
-		}
-	}
-	for name, found := range want {
-		if !found {
-			t.Errorf("embedded structure reviewer %q missing from EmbeddedDefaults()", name)
+		if d.Kind == "skills" && retired[d.Name] {
+			t.Errorf("structure reviewer %q is still embedded — it should be retired (deterministic check in internal/structure)", d.Name)
 		}
 	}
 }

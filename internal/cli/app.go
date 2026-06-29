@@ -100,6 +100,16 @@ func gaterForCmd(cmd *cobra.Command) (*reviewer.Gater, *app.App, error) {
 	return rev, a, nil
 }
 
+// skillResolver returns a predicate reporting whether a skill name resolves in
+// the substrate (project ∪ embedded), for the deterministic workflow structure
+// check's executor-skill actionability. Used by `satelle validate` and `index`.
+func skillResolver(a *app.App) func(skill string) bool {
+	return func(skill string) bool {
+		_, err := a.Store.DocIndex.Get(context.Background(), "skills", skill)
+		return err == nil
+	}
+}
+
 // applyActorGrants resolves the actors layer (.satelle/actors.toml) and binds the
 // reviewer's tool grant onto the gater. An absent file yields today's read-only
 // default, so behaviour is unchanged unless a repo authors actors.toml.

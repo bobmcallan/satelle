@@ -462,26 +462,23 @@ func TestGateRefusesUndeclaredEdge(t *testing.T) {
 	}
 }
 
+// ReviewCreate is now DETERMINISTIC (internal/structure) — no rubric, no agent
+// CLI. A well-formed draft accepts; one missing the goal or numbered ACs rejects.
 func TestReviewCreateAcceptAndReject(t *testing.T) {
 	ctx := context.Background()
-	draft := verb.CreateDraft{Kind: "story", Title: "x", AcceptanceCriteria: "1. a"}
+	g, _ := gater(t, "", fakeDocs{})
 
-	g, r := gater(t, `the draft is well-formed {"decision":"accept","notes":""}`,
-		fakeDocs{skillBody: "structure rubric", skillFound: true})
-	dec, err := g.ReviewCreate(ctx, draft)
+	good := verb.CreateDraft{Kind: "story", Title: "Add X", Body: "Make the thing do X", AcceptanceCriteria: "1. a"}
+	dec, err := g.ReviewCreate(ctx, good)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !dec.Gated || !dec.Accept || dec.Skill != structureSkill {
 		t.Fatalf("want gated accept by %s, got %+v", structureSkill, dec)
 	}
-	if !strings.Contains(r.got.SystemPrompt, "structure rubric") {
-		t.Errorf("structure rubric should ride in the system prompt, got %q", r.got.SystemPrompt)
-	}
 
-	g2, _ := gater(t, `{"decision":"reject","notes":"add numbered acceptance criteria"}`,
-		fakeDocs{skillBody: "rubric", skillFound: true})
-	dec2, err := g2.ReviewCreate(ctx, verb.CreateDraft{Kind: "story", Title: "x"})
+	bad := verb.CreateDraft{Kind: "story", Title: "x"} // no goal body, no numbered ACs
+	dec2, err := g.ReviewCreate(ctx, bad)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -490,17 +487,19 @@ func TestReviewCreateAcceptAndReject(t *testing.T) {
 	}
 }
 
-func TestReviewCreateAdvisoryWhenRubricAbsent(t *testing.T) {
-	g, r := gater(t, `{"decision":"reject"}`, fakeDocs{skillFound: false})
+// The create check is ALWAYS gated (structure is the one thing satelle enforces
+// on creation) and never depends on a rubric being installed or an agent runner.
+func TestReviewCreateAlwaysGatedNoRunner(t *testing.T) {
+	g, r := gater(t, "", fakeDocs{skillFound: false})
 	dec, err := g.ReviewCreate(context.Background(), verb.CreateDraft{Kind: "story", Title: "x"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dec.Gated {
-		t.Errorf("absent structure rubric should be advisory, got %+v", dec)
+	if !dec.Gated || dec.Accept {
+		t.Errorf("want deterministic gated reject, got %+v", dec)
 	}
 	if r.got.SystemPrompt != "" {
-		t.Errorf("reviewer must not run without a rubric")
+		t.Errorf("create check must not run an agent")
 	}
 }
 
@@ -761,49 +760,6 @@ func names(ds []docindex.Doc) []string {
 		out[i] = d.Name
 	}
 	return out
-}
-
-func TestStructureReviewerFor(t *testing.T) {
-	cases := map[string]string{
-		"skills":     "satelle-skill-review",
-		"workflows":  "satelle-workflow-review",
-		"principles": "satelle-principle-review",
-		"documents":  "",
-		"":           "",
-	}
-	for kind, want := range cases {
-		if got := StructureReviewerFor(kind); got != want {
-			t.Errorf("StructureReviewerFor(%q) = %q, want %q", kind, got, want)
-		}
-	}
-}
-
-func TestReviewStructureAcceptReject(t *testing.T) {
-	ctx := context.Background()
-	g, r := gater(t, `{"decision":"accept","notes":""}`, fakeDocs{skillBody: "skill rubric", skillFound: true})
-	dec, err := g.ReviewStructure(ctx, "satelle-skill-review", "skills", "x", "---\nkind: skill\n---\nbody")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !dec.Gated || !dec.Accept || dec.Skill != "satelle-skill-review" {
-		t.Fatalf("want gated accept by satelle-skill-review, got %+v", dec)
-	}
-	if !strings.Contains(r.got.SystemPrompt, "skill rubric") {
-		t.Errorf("reviewer rubric should ride in the system prompt, got %q", r.got.SystemPrompt)
-	}
-
-	g2, _ := gater(t, `{"decision":"reject","notes":"missing kind"}`, fakeDocs{skillBody: "rubric", skillFound: true})
-	dec2, _ := g2.ReviewStructure(ctx, "satelle-workflow-review", "workflows", "w", "body")
-	if !dec2.Gated || dec2.Accept || dec2.Notes == "" {
-		t.Fatalf("want gated reject with notes, got %+v", dec2)
-	}
-
-	// Advisory when the rubric is absent.
-	g3, _ := gater(t, ``, fakeDocs{skillFound: false})
-	dec3, _ := g3.ReviewStructure(ctx, "satelle-skill-review", "skills", "x", "body")
-	if dec3.Gated {
-		t.Errorf("absent rubric should be advisory, got %+v", dec3)
-	}
 }
 
 const dotWF = `---

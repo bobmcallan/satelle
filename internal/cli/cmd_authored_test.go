@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bobmcallan/satelle/internal/reviewer"
+	"github.com/bobmcallan/satelle/internal/structure"
 )
 
 func TestValidArtifactName(t *testing.T) {
@@ -22,15 +22,16 @@ func TestValidArtifactName(t *testing.T) {
 	}
 }
 
-// The create command writes <kind-dir>/<name>.md only for reviewer-backed kinds.
-func TestAuthoredCreateWiredForReviewerKinds(t *testing.T) {
+// The create command writes <kind-dir>/<name>.md only for kinds with a
+// deterministic structure check, and its help names that check.
+func TestAuthoredCreateWiredForStructuredKinds(t *testing.T) {
 	for _, kind := range []string{"skills", "workflows", "principles"} {
-		if reviewer.StructureReviewerFor(kind) == "" {
-			t.Errorf("kind %q should map to a structure reviewer for gated create", kind)
+		if !structure.Checked(kind) {
+			t.Errorf("kind %q should have a deterministic structure check for gated create", kind)
 		}
 		c := authoredCreateCmd(kind)
-		if !strings.Contains(c.Long, reviewer.StructureReviewerFor(kind)) {
-			t.Errorf("create help for %q should name its structure reviewer", kind)
+		if !strings.Contains(c.Long, "structure check") {
+			t.Errorf("create help for %q should mention its structure check", kind)
 		}
 	}
 }
