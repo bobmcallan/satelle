@@ -60,12 +60,22 @@ func TestCodexStubErrorsClearly(t *testing.T) {
 	}
 }
 
-// The claude preset must carry a read-only denylist so the grant is a CEILING.
+// The claude preset must deny every work-tree MUTATOR so the grant is a CEILING
+// (deny wins over allow) — but it must NOT deny Bash wholesale, since the reviewer
+// grant scopes Bash to read-only `satelle` subcommands so a reviewer can resolve
+// the substrate (incl. embedded defaults) via the CLI.
 func TestDefaultClaudeHarnessHasDenylistCeiling(t *testing.T) {
-	for _, deny := range []string{"--disallowedTools", "Write", "Edit", "Bash"} {
+	for _, deny := range []string{"--disallowedTools", "Write", "Edit", "NotebookEdit"} {
 		if !strings.Contains(DefaultClaudeHarness, deny) {
-			t.Errorf("DefaultClaudeHarness must include %q (read-only ceiling): %q", deny, DefaultClaudeHarness)
+			t.Errorf("DefaultClaudeHarness must include %q (mutator ceiling): %q", deny, DefaultClaudeHarness)
 		}
+	}
+	rest := DefaultClaudeHarness[strings.Index(DefaultClaudeHarness, "--disallowedTools ")+len("--disallowedTools "):]
+	if end := strings.Index(rest, " "); end >= 0 {
+		rest = rest[:end]
+	}
+	if strings.Contains(rest, "Bash") {
+		t.Errorf("Bash must NOT be on the deny ceiling (it is scoped in the allow grant): %q", rest)
 	}
 }
 

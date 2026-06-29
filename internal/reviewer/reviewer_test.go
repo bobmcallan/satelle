@@ -42,6 +42,9 @@ type fakeDocs struct {
 	// used to exercise the always-on system reviewer layer (tagged reviewer:always)
 	// and per-skill reviewer bodies.
 	extraSkills []docindex.Doc
+	// extraPrinciples are returned by List("principles") — used to exercise the
+	// always-resident principle injection into the reviewer system prompt.
+	extraPrinciples []docindex.Doc
 }
 
 func (d fakeDocs) Get(_ context.Context, kind, name string) (docindex.Doc, error) {
@@ -71,8 +74,65 @@ func (d fakeDocs) List(_ context.Context, kind string) ([]docindex.Doc, error) {
 		return append(out, d.extraWorkflows...), nil
 	case "skills":
 		return d.extraSkills, nil
+	case "principles":
+		return d.extraPrinciples, nil
 	}
 	return nil, nil
+}
+
+const alwaysPrincipleDoc = `---
+name: satelle-test-belief
+kind: principle
+tags: [kind:principle, principles:always]
+---
+# Test belief
+
+This resident belief MUST be visible to every reviewer.`
+
+// TestReviewerSystemPromptInjectsPrinciplesAndCTA: a reviewer's system prompt
+// carries the always-resident principles, the read-only call-to-action (teaching
+// it to resolve substrate via the satelle CLI), and its own rubric.
+func TestReviewerSystemPromptInjectsPrinciplesAndCTA(t *testing.T) {
+	docs := fakeDocs{
+		workflow:   testWorkflow,
+		skillBody:  "rubric body",
+		skillFound: true,
+		extraPrinciples: []docindex.Doc{
+			{Kind: "principles", Name: "satelle-test-belief", Body: alwaysPrincipleDoc},
+			{Kind: "principles", Name: "satelle-not-resident", Body: "---\nname: x\ntags: [kind:principle]\n---\nnot resident"},
+		},
+	}
+	g, r := gater(t, `{"decision":"accept"}`, docs)
+	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done"); err != nil {
+		t.Fatal(err)
+	}
+	sp := r.got.SystemPrompt
+	if !strings.Contains(sp, "This resident belief MUST be visible") {
+		t.Errorf("always-resident principle not injected:\n%s", sp)
+	}
+	if strings.Contains(sp, "not resident") {
+		t.Errorf("a non-resident principle must NOT be injected:\n%s", sp)
+	}
+	if !strings.Contains(sp, "satelle doc get") || !strings.Contains(sp, "read-only") {
+		t.Errorf("call-to-action (satelle CLI, read-only) missing:\n%s", sp)
+	}
+	if !strings.Contains(sp, "rubric body") {
+		t.Errorf("the reviewer's own rubric must still ride in the prompt:\n%s", sp)
+	}
+	// Frontmatter of the injected principle must be stripped (no raw tags line).
+	if strings.Contains(sp, "principles:always") {
+		t.Errorf("injected principle frontmatter should be stripped:\n%s", sp)
+	}
+}
+
+func TestStripFrontmatter(t *testing.T) {
+	got := stripFrontmatter("---\nname: x\ntags: [a]\n---\n# Body\n\ntext")
+	if strings.Contains(got, "name:") || !strings.Contains(got, "# Body") {
+		t.Errorf("stripFrontmatter = %q", got)
+	}
+	if got := stripFrontmatter("no frontmatter here"); got != "no frontmatter here" {
+		t.Errorf("body without frontmatter should pass through, got %q", got)
+	}
 }
 
 func gater(t *testing.T, out string, docs fakeDocs) (*Gater, *fakeRunner) {
@@ -94,8 +154,8 @@ func TestGateAcceptEnacts(t *testing.T) {
 	if dec.Skill != "satelle-story-done-review" {
 		t.Errorf("skill = %q", dec.Skill)
 	}
-	if r.got.SystemPrompt != "rubric body" {
-		t.Errorf("skill body should ride as the system prompt, got %q", r.got.SystemPrompt)
+	if !strings.Contains(r.got.SystemPrompt, "rubric body") {
+		t.Errorf("skill body should ride in the system prompt, got %q", r.got.SystemPrompt)
 	}
 	if r.got.Dir != "/repo" {
 		t.Errorf("reviewer should run in repo root, got %q", r.got.Dir)
@@ -338,8 +398,8 @@ func TestReviewCreateAcceptAndReject(t *testing.T) {
 	if !dec.Gated || !dec.Accept || dec.Skill != structureSkill {
 		t.Fatalf("want gated accept by %s, got %+v", structureSkill, dec)
 	}
-	if r.got.SystemPrompt != "structure rubric" {
-		t.Errorf("structure rubric should be the system prompt, got %q", r.got.SystemPrompt)
+	if !strings.Contains(r.got.SystemPrompt, "structure rubric") {
+		t.Errorf("structure rubric should ride in the system prompt, got %q", r.got.SystemPrompt)
 	}
 
 	g2, _ := gater(t, `{"decision":"reject","notes":"add numbered acceptance criteria"}`,
@@ -380,11 +440,16 @@ func TestSummariseReturnsTrimmedProse(t *testing.T) {
 	if r.got.SystemPrompt != "summariser rubric" {
 		t.Errorf("summariser rubric should be the system prompt, got %q", r.got.SystemPrompt)
 	}
-	// Read-only grant — the summariser must not be able to mutate the tree.
-	for _, banned := range []string{"Write", "Edit", "Bash"} {
+	// Read-only grant — the agent must not be able to mutate the tree. Bash is
+	// permitted only SCOPED to the satelle CLI (Bash(satelle:*)), never as a bare
+	// shell, so resolving substrate stays read-only.
+	for _, banned := range []string{"Write", "Edit", "NotebookEdit"} {
 		if contains(r.got.AllowedTools, banned) {
-			t.Errorf("summariser tool grant %q should be read-only", r.got.AllowedTools)
+			t.Errorf("tool grant %q must not grant the mutator %q", r.got.AllowedTools, banned)
 		}
+	}
+	if contains(r.got.AllowedTools, "Bash") && !contains(r.got.AllowedTools, "Bash(satelle:*)") {
+		t.Errorf("any Bash grant must be scoped to satelle, got %q", r.got.AllowedTools)
 	}
 }
 
@@ -646,8 +711,8 @@ func TestReviewStructureAcceptReject(t *testing.T) {
 	if !dec.Gated || !dec.Accept || dec.Skill != "satelle-skill-review" {
 		t.Fatalf("want gated accept by satelle-skill-review, got %+v", dec)
 	}
-	if r.got.SystemPrompt != "skill rubric" {
-		t.Errorf("reviewer rubric should be the system prompt, got %q", r.got.SystemPrompt)
+	if !strings.Contains(r.got.SystemPrompt, "skill rubric") {
+		t.Errorf("reviewer rubric should ride in the system prompt, got %q", r.got.SystemPrompt)
 	}
 
 	g2, _ := gater(t, `{"decision":"reject","notes":"missing kind"}`, fakeDocs{skillBody: "rubric", skillFound: true})
