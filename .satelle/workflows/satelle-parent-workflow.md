@@ -34,6 +34,8 @@ digraph satelle_parent_workflow {
   backlog   [shape=Mdiamond]
   done      [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
   cancelled [actor=reviewer, prompt="@skill:satelle-story-cancel-review"]
+  // step opts into per-transition step summaries (sty_9a139c78): edge-less, mandatory.
+  step      [actor=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
 
   backlog -> done       // spine gate satelle-story-done-review (category-aware: children resolved)
   backlog -> cancelled

@@ -13,19 +13,27 @@ import (
 	"strings"
 )
 
-// RequiredDoneGate is the mandatory close gate every workflow's path to a `done`
-// terminal must carry — the spine the binary guarantees. A custom workflow that
-// reaches `done` without it fails Validate: the gate cannot be dropped (see the
-// satelle-done-is-last and satelle-actor-model principles).
-const RequiredDoneGate = "satelle-story-done-review"
+// DefaultDoneGate is satelle's conventional close gate. It is no longer MANDATED
+// by Validate (sty_9a139c78): the done gate is whatever the workflow's `done`
+// node declares, transparently — a workflow may name it, name another, or omit it
+// entirely ("if the user breaks the process, so be it"). The name remains the
+// convention init seeds and the docs reference.
+const DefaultDoneGate = "satelle-story-done-review"
 
-// Validate checks a parsed workflow Spec for structural soundness and the
-// mandatory spine, returning human-readable problems (empty = valid):
+// StepSummarySkill is the conventional step-review/summary skill. A workflow opts
+// into per-transition step summaries by declaring a node whose gate is this skill
+// (transparently, in the DOT), optionally marked mandatory=true. There is no
+// hidden always-on summariser — the flow declares it (sty_9a139c78).
+const StepSummarySkill = "satelle-step-summary"
+
+// Validate checks a parsed workflow Spec for structural soundness, returning
+// human-readable problems (empty = valid):
 //   - at least one state;
 //   - every transition endpoint is a declared state (no dangling edge);
 //   - at least one terminal state (a state with no outgoing edge);
-//   - a state named "done", if present, is terminal;
-//   - every path into "done" carries RequiredDoneGate (the spine gate).
+//   - a state named "done", if present, is terminal.
+//
+// The done gate is NOT mandated: it is whatever the workflow declares (sty_9a139c78).
 func Validate(spec Spec) []string {
 	if len(spec.States) == 0 {
 		return []string{"workflow has no states"}
@@ -54,23 +62,8 @@ func Validate(spec Spec) []string {
 	if terminal == 0 {
 		problems = append(problems, "workflow has no terminal state (every state has an outgoing edge)")
 	}
-	if known["done"] {
-		if hasOut["done"] {
-			problems = append(problems, `state "done" must be terminal (it has an outgoing edge)`)
-		}
-		into, gated := 0, 0
-		for _, tr := range spec.Transitions {
-			if tr.To == "done" {
-				into++
-				if tr.Skill == RequiredDoneGate {
-					gated++
-				}
-			}
-		}
-		if into > 0 && gated == 0 {
-			problems = append(problems, fmt.Sprintf(
-				"the edge into \"done\" must be gated by the mandatory %s — the spine gate cannot be dropped", RequiredDoneGate))
-		}
+	if known["done"] && hasOut["done"] {
+		problems = append(problems, `state "done" must be terminal (it has an outgoing edge)`)
 	}
 	return problems
 }
@@ -100,6 +93,23 @@ type State struct {
 	// executor step performs, or the gate a reviewer node judges by (empty when
 	// the node carries no prompt). Populated from the DOT grammar.
 	Skill string
+	// Mandatory is the node's `mandatory=true` attribute. For a step-summary node
+	// it means the step summary is required (a failure is surfaced, not swallowed);
+	// for other nodes it is advisory metadata. Populated from the DOT grammar.
+	Mandatory bool
+}
+
+// StepSummary reports whether the workflow declares a step-summary node (a node
+// whose gate skill is StepSummarySkill) and whether it is marked mandatory. The
+// summariser runs only when declared — there is no hidden always-on summariser
+// (sty_9a139c78).
+func (s Spec) StepSummary() (declared, mandatory bool) {
+	for _, st := range s.States {
+		if st.Skill == StepSummarySkill {
+			return true, st.Mandatory
+		}
+	}
+	return false, false
 }
 
 // doneReachable returns the set of states from which "done" is reachable
@@ -182,8 +192,9 @@ func Parse(body string) (Spec, bool) {
 		return Spec{}, false
 	}
 	type node struct {
-		actor string
-		skill string // resolved from prompt="@skill:NAME"
+		actor     string
+		skill     string // resolved from prompt="@skill:NAME"
+		mandatory bool   // mandatory=true attribute
 	}
 	nodes := map[string]node{}
 	var order []string
@@ -235,6 +246,9 @@ func Parse(body string) (Spec, bool) {
 		if p := attrs["prompt"]; strings.HasPrefix(p, "@skill:") {
 			n.skill = strings.TrimPrefix(p, "@skill:")
 		}
+		if strings.EqualFold(attrs["mandatory"], "true") {
+			n.mandatory = true
+		}
 		nodes[id] = n
 	}
 	if len(order) == 0 {
@@ -242,7 +256,7 @@ func Parse(body string) (Spec, bool) {
 	}
 
 	for _, name := range order {
-		spec.States = append(spec.States, State{Name: name, Actor: nodes[name].actor, Skill: nodes[name].skill})
+		spec.States = append(spec.States, State{Name: name, Actor: nodes[name].actor, Skill: nodes[name].skill, Mandatory: nodes[name].mandatory})
 	}
 	// A transition into a reviewer node is gated by that node's skill — unless the
 	// edge already carries an explicit reviewer_skill attribute, which wins.

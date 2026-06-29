@@ -25,6 +25,10 @@ digraph satelle_baseline {
   in_progress [actor=executor]
   done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
   cancelled   [actor=reviewer, prompt="@skill:satelle-story-cancel-review"]
+  // step is a transparent, edge-less declaration (sty_9a139c78): it opts this
+  // workflow into per-transition step summaries (satelle-step-summary), marked
+  // mandatory so a summary failure is surfaced. It is not a lifecycle state.
+  step        [actor=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
 
   backlog -> in_progress [reviewer_skill="satelle-story-intent-review"]
   in_progress -> done

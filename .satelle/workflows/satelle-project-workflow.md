@@ -55,6 +55,9 @@ digraph satelle_workflow {
   committed   [actor=reviewer, prompt="@skill:satelle-commit-push-review"]
   done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
   cancelled   [actor=reviewer, prompt="@skill:satelle-story-cancel-review"]
+  // step opts this workflow into per-transition step summaries (sty_9a139c78):
+  // an edge-less declaration, mandatory so a summary failure is surfaced.
+  step        [actor=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
 
   backlog -> in_progress
   in_progress -> integration [reviewer_skill="satelle-code-ac-review"]
