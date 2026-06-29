@@ -1,7 +1,7 @@
 ---
 name: satelle-actor-model
 scope: system
-kind: principle
+type: principle
 tags: [kind:principle, principles:global]
 applies_to: ["*"]
 description: The actor execution model (supersedes the reviewer-only model). A workflow is a graph of steps, each run by a DEFINED actor with a bounded grant — the executor does the work (mutates the tree), the reviewer is LIMITED to reviewing (read-only, judges the OUTCOME not the procedure, returns a verdict, never mutates). Each actor invocation is isolated: satelle spawns a fresh-context agent with the step's skill as the prompt over a payload it builds (the work item + the transition) and aggregates the structured return. satelle stays the status gatekeeper — a reviewer's accept is the only thing that advances a gated status. How and where an actor runs (in-loop, isolated `agent -p`, or another harness) is the actors layer. The model is structural — agents gate agents — not a claim about recursive context decomposition.

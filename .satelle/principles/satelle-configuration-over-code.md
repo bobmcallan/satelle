@@ -1,7 +1,7 @@
 ---
 name: satelle-configuration-over-code
 scope: project
-kind: principle
+type: principle
 tags: [kind:principle, principles:always]
 applies_to: ["*"]
 description: satelle runs a repo's process as configuration, never as code. Process, gates, workflows, and opinions are authored substrate (markdown the operator edits without a binary release); the binary holds mechanism only and runs that substrate — it never IS it. This articulates satelle's harness DESIGN — kept as this repo's project substrate (it explains how satelle is built, not a rule an agent needs to drive a story).

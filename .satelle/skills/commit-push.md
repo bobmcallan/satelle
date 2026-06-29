@@ -1,7 +1,7 @@
 ---
 name: commit-push
 scope: project
-kind: skill
+type: skill
 tags: [kind:skill, type:executor]
 description: Executor skill for the commit-push step. The executor stages and commits the slice (conventional message, the story id, no AI attribution), pushes to main, then WATCHES the GitHub Actions run for the pushed commit until it concludes — recording the conclusion and the run URL as evidence so the commit-push reviewer can see the deployment worked. Project-scope (this repo's trunk-based release + CI process).
 ---

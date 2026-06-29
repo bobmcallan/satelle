@@ -154,6 +154,11 @@ func (s *Store) Sync(ctx context.Context, dirs map[string]string, now time.Time)
 		// already-conformant docs are left untouched.
 		if kind == "documents" {
 			normalizeOKFDir(dir)
+		} else if t := authoredType(kind); t != "" {
+			// Authored substrate (skills/workflows/principles) is normalised to the
+			// OKF `type` key BEFORE the skip-unchanged check, migrating a legacy
+			// `kind:` and back-filling a missing one — idempotently, in place.
+			normalizeTypeDir(dir, t)
 		}
 		onDisk, err := walkMarkdown(dir)
 		if err != nil {

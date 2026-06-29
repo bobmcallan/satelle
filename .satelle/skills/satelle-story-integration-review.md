@@ -1,7 +1,7 @@
 ---
 name: satelle-story-integration-review
 scope: project
-kind: skill
+type: skill
 tags: [kind:skill, type:reviewer, type:functional-check]
 description: Functional-check gate on in_progress → integrated. Runs the FULL integration suite (the black-box CLI + headless-browser e2e) and accepts only if EVERY test passes, rejecting (with the failing output) if any test fails. A deterministic gate — no LLM judgment. Self-contained — the check is embedded below and depends on nothing outside this skill (see satelle-reviewer-self-contained).
 ---

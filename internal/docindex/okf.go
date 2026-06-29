@@ -78,6 +78,120 @@ func OKFConformance(name, body string) error {
 	return nil
 }
 
+// authoredType maps an authored-substrate directory kind to its OKF `type`
+// value (the singular). Empty for kinds not normalised this way.
+func authoredType(kind string) string {
+	switch kind {
+	case "skills":
+		return "skill"
+	case "workflows":
+		return "workflow"
+	case "principles":
+		return "principle"
+	default:
+		return ""
+	}
+}
+
+// normalizeTypeDir back-fills/repairs the OKF `type` key for authored substrate
+// (skills/workflows/principles) at ingest: it renames a legacy top-level `kind:`
+// key to `type:` (value preserved) and inserts `type: <singular>` when neither is
+// present, so every authored doc complies with OKF (`type` required) regardless
+// of how it was authored. Idempotent; all other frontmatter is preserved
+// untouched, testdata/ is skipped, and a frontmatter-less file is left for the
+// structure check to flag.
+func normalizeTypeDir(dir, typeVal string) {
+	if strings.TrimSpace(dir) == "" || typeVal == "" {
+		return
+	}
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if d.Name() == "testdata" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.EqualFold(filepath.Ext(path), ".md") {
+			return nil
+		}
+		body, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return nil
+		}
+		if out, changed := normalizeType(string(body), typeVal); changed {
+			_ = os.WriteFile(path, []byte(out), 0o644)
+		}
+		return nil
+	})
+}
+
+// normalizeType rewrites a single authored doc's frontmatter so it carries the
+// OKF `type` key: a legacy `kind:` is renamed to `type:` (value preserved), a
+// redundant `kind:` alongside an existing `type:` is dropped, and a missing key
+// is inserted. Returns changed=false when there is no frontmatter or nothing
+// needed changing.
+func normalizeType(body, typeVal string) (string, bool) {
+	lines := strings.Split(body, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return body, false
+	}
+	end := -1
+	for j := 1; j < len(lines); j++ {
+		if strings.TrimSpace(lines[j]) == "---" {
+			end = j
+			break
+		}
+	}
+	if end < 0 {
+		return body, false
+	}
+	hasType := false
+	for _, ln := range lines[1:end] {
+		if strings.HasPrefix(strings.TrimSpace(ln), "type:") {
+			hasType = true
+			break
+		}
+	}
+	var newFM []string
+	changed := false
+	for _, ln := range lines[1:end] {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, "kind:") {
+			if hasType {
+				changed = true // drop the redundant legacy kind
+				continue
+			}
+			newFM = append(newFM, "type: "+strings.TrimSpace(strings.TrimPrefix(t, "kind:")))
+			hasType = true
+			changed = true
+			continue
+		}
+		newFM = append(newFM, ln)
+	}
+	if !hasType {
+		newFM = append([]string{"type: " + typeVal}, newFM...)
+		changed = true
+	}
+	if !changed {
+		return body, false
+	}
+	var b strings.Builder
+	b.WriteString("---\n")
+	for _, ln := range newFM {
+		b.WriteString(ln)
+		b.WriteString("\n")
+	}
+	b.WriteString("---")
+	if end+1 <= len(lines)-1 {
+		b.WriteString("\n")
+		b.WriteString(strings.Join(lines[end+1:], "\n"))
+	}
+	return b.String(), true
+}
+
 // normalizeOKFDir rewrites every frontmatter-less or type-less concept file
 // under the documents directory (recursively, matching how walkMarkdown indexes)
 // with OKF frontmatter, in place. Best-effort and idempotent: reserved and

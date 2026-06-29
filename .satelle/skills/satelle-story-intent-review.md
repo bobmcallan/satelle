@@ -1,7 +1,7 @@
 ---
 name: satelle-story-intent-review
 scope: project
-kind: skill
+type: skill
 tags: [kind:skill, type:reviewer]
 description: Entry gate for begin-work (open → in_progress). An isolated reviewer judges that a story is well-formed enough to start — a clear goal and numbered, testable acceptance criteria — before the executor engages it. Repo skill for the satelle dogfood; pushes back when intent is unclear.
 ---

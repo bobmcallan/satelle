@@ -1,7 +1,7 @@
 ---
 name: satelle-commit-push-review
 scope: project
-kind: skill
+type: skill
 tags: [kind:skill, type:reviewer, type:functional-check]
 description: Functional-check gate for the commit-push step. Verifies the pushed commit's GitHub Actions run concluded SUCCESS (evidence the deployment worked) and emits a PR-style commit-summary document (each acceptance criterion, the files changed, the commit SHA, the CI run URL). Deterministic gate — the embedded check IS the verdict; a failed or missing run rejects. Self-contained (no external script), per satelle-reviewer-self-contained.
 ---

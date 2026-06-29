@@ -1,7 +1,7 @@
 ---
 name: satelle-story-deploy-review
 scope: project
-kind: skill
+type: skill
 tags: [kind:skill, type:reviewer, type:functional-check]
 description: Functional-check gate on integrated → deployed. Does a REAL local deploy of the service and validates it with a health check on BOTH surfaces — the web UI (/healthz returns ok AND the project page renders) and the CLI (satelle status) — then leaves it running. Accepts only if the deploy comes up healthy; rejects (with output) otherwise. Self-contained — the check is embedded below, depending on nothing outside this skill (see satelle-reviewer-self-contained).
 ---

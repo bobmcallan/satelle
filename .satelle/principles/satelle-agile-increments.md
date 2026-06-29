@@ -1,7 +1,7 @@
 ---
 name: satelle-agile-increments
 scope: project
-kind: principle
+type: principle
 tags: [kind:principle, principles:always]
 applies_to: ["*"]
 description: Agile increments — deliver work as the smallest independent stories, each driven on its own and paired with its own focused commit. A batch of feedback is decomposed into single small stories, not bundled into one large story or one sweeping commit. This is THIS repo's delivery paradigm (project scope), not a satelle mechanism.

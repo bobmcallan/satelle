@@ -1,7 +1,7 @@
 ---
 name: satelle-yagni
 scope: project
-kind: principle
+type: principle
 tags: [kind:principle, principles:always]
 applies_to: ["*"]
 description: YAGNI — build a capability when a real need calls for it, not when you merely foresee one. Premature generality (a speculative abstraction, contract, tool, config knob, or layer of indirection) is paid up front for a need that may never arrive — pure cost that also makes the system harder to change in the directions that do. Prefer the smallest change that serves the objective. This is THIS repo's coding paradigm (project scope), not a satelle mechanism — adapted from satellites' yagni.

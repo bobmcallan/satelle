@@ -1,7 +1,7 @@
 ---
 name: satelle-story-code-review
 scope: project
-kind: skill
+type: skill
 tags: [kind:skill, type:reviewer]
 description: Tech-lead pre-review on the transition out of in_progress (in_progress → reviewed). An isolated, read-only reviewer that reads the modified code in the working tree, judges it against the story's acceptance criteria, and checks that the integration tests written for the work actually align with the code. It does NOT execute the tests (that is the satelle-story-integration-review gate that follows) — it pre-reviews the PR. Repo skill for the satelle dogfood.
 ---

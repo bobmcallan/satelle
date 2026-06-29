@@ -1,7 +1,7 @@
 ---
 name: satelle-code-ac-review
 scope: project
-kind: skill
+type: skill
 tags: [kind:skill, type:reviewer]
 description: Pre-commit gate for the in_progress step. An isolated, read-only reviewer judges that the implemented code in the working tree satisfies the story's acceptance criteria AND that BOTH unit tests and integration tests were created for a code/behavioural change — rejecting when either is missing; only a docs/substrate-only change that cannot carry tests is exempt. Repo skill for the satelle dogfood; pushes back with specifics so the executor fixes before committing.
 ---
