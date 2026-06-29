@@ -60,3 +60,47 @@ func TestUpdateReplacesBinary(t *testing.T) {
 		t.Errorf("installed binary not replaced with the release asset:\n%q", got)
 	}
 }
+
+// TestUpdateLocalInstallsIntoRepo drives `satelle update --local` against a
+// fixture release server: it must install the release into THIS repo's
+// .satelle/satelle (the repo-local pin), not the global install dir
+// (sty_fe3ee313). The repo is init'd so .satelle/ exists for the pin to land in.
+func TestUpdateLocalInstallsIntoRepo(t *testing.T) {
+	const tag = "v9.9.9"
+	name := fmt.Sprintf("satelle-%s-%s-%s", tag, runtime.GOOS, runtime.GOARCH)
+	bin := []byte("repo-local satelle pin\n")
+	sum := sha256.Sum256(bin)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"tag_name":%q}`, tag)
+	})
+	mux.HandleFunc("/dl/"+tag+"/"+name, func(w http.ResponseWriter, r *http.Request) { w.Write(bin) })
+	mux.HandleFunc("/dl/"+tag+"/"+name+".sha256", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(sum[:]), name)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+
+	cmd := exec.Command(testBin, "update", "--local")
+	cmd.Dir = repo
+	cmd.Env = append(os.Environ(),
+		"SATELLE_RELEASE_API="+srv.URL+"/api/releases/latest",
+		"SATELLE_RELEASE_BASE="+srv.URL+"/dl",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("update --local: %v\n%s", err, out)
+	}
+
+	pin := filepath.Join(repo, ".satelle", "satelle")
+	got, err := os.ReadFile(pin)
+	if err != nil {
+		t.Fatalf("repo-local pin not installed at %s: %v", pin, err)
+	}
+	if string(got) != string(bin) {
+		t.Errorf("pin is not the release asset:\n%q", got)
+	}
+}

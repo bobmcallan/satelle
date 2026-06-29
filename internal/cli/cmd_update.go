@@ -28,19 +28,27 @@ import (
 const updateRepo = "bobmcallan/satelle"
 
 func init() {
-	var check, noRestart bool
+	var check, noRestart, local bool
 	cmd := &cobra.Command{
 		Use:   "update",
-		Short: "Update the installed satelle binary to the latest release",
-		Long: `update resolves the latest GitHub release and, if it is newer than the
+		Short: "Update satelle to the latest release (--local pins it under this repo's .satelle/)",
+		Long: `update resolves the latest GitHub release and, if it differs from the
 installed binary, downloads the platform asset, sha256-verifies it, and replaces
 the installed binary in place — the same asset/checksum/location scheme as the
 curl installer. If the background service is running it is restarted onto the new
-binary. --check reports availability without changing anything.`,
+binary. --check reports availability without changing anything.
+
+--local installs the release into THIS repo's .satelle/satelle instead of the
+global install dir; a present .satelle/satelle then takes precedence (satelle
+re-execs it) so the repo runs its own pinned binary. --local never restarts the
+global service.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 			target := installTarget()
+			if local {
+				target = repoLocalTarget()
+			}
 			latest, err := latestReleaseTag(cmd.Context(), updateRepo)
 			if err != nil {
 				return fmt.Errorf("resolve latest release: %w", err)
@@ -59,7 +67,9 @@ binary. --check reports availability without changing anything.`,
 				return err
 			}
 			fmt.Fprintf(out, "installed %s (%s)\n", target, latest)
-			if !noRestart {
+			// The global service runs the global binary; a repo-local pin does not
+			// drive it, so only restart for a global update.
+			if !noRestart && !local {
 				restartServiceIfRunning(out)
 			}
 			return nil
@@ -67,6 +77,7 @@ binary. --check reports availability without changing anything.`,
 	}
 	cmd.Flags().BoolVar(&check, "check", false, "report whether an update is available without installing")
 	cmd.Flags().BoolVar(&noRestart, "no-restart", false, "do not restart the background service after updating")
+	cmd.Flags().BoolVar(&local, "local", false, "install into this repo's .satelle/satelle (a repo-local pin) instead of the global binary")
 	register(cmd)
 }
 
