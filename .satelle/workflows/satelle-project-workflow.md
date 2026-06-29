@@ -70,6 +70,23 @@ digraph satelle_workflow {
 }
 ```
 
+## Skill resolution
+
+Every gate/skill this workflow names resolves through the doc-index, **project
+scope (`.satelle/skills`) layered over the embedded system defaults**. The
+executor step `commit-push` and the reviewer gates (`satelle-code-ac-review`,
+`satelle-integration-review`, `satelle-commit-push-review`,
+`satelle-story-intent-review`, `satelle-story-done-review`,
+`satelle-story-cancel-review`) are authored in this repo's `.satelle/skills` — so
+there is no dangling `@skill:`/`reviewer_skill` reference and a story drives to a
+terminal state without a missing-skill block. The engagement guard
+(`sty_09ef53d6`) deterministically resolves the **executor-step** skills on the
+path to done before work begins; reviewer gates degrade to advisory only if their
+rubric is genuinely absent. The embedded **baseline** workflow remains the
+order-zero fallback: it names the same gate reviewers but, being repo-agnostic,
+relies on a repo authoring them — a fresh repo's baseline still completes (its
+absent gates degrade to advisory) until the repo adds its own.
+
 ## Environment
 
 ```yaml
