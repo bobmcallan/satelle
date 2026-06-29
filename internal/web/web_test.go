@@ -417,7 +417,7 @@ func TestWorkflowTabAndFragment(t *testing.T) {
 	if code != 200 || !strings.Contains(page, `data-panel="workflow"`) {
 		t.Fatalf("project page missing Workflow tab: %d", code)
 	}
-	if !strings.Contains(page, "wf-x") || !strings.Contains(page, "/fragment/workflow/wf-x") {
+	if !strings.Contains(page, "wf-x") || !strings.Contains(page, "fragment/workflow/wf-x") {
 		t.Errorf("workflow row/expand-url missing from page")
 	}
 	code, frag := get(t, srv.URL+"/fragment/workflow/wf-x")

@@ -7,8 +7,32 @@ import (
 	"time"
 )
 
+// basePath is the URL prefix this server is mounted under, empty for the root
+// (bound) project and "/<slug>" for a project served behind the supervisor's
+// reverse proxy. It is a process global because each project is its own process.
+var basePath string
+
+// SetBasePath sets the mount prefix (trailing slash trimmed). Call before New.
+func SetBasePath(p string) {
+	basePath = "/" + strings.Trim(p, "/")
+	if basePath == "/" {
+		basePath = ""
+	}
+}
+
+// baseHref returns the value for the page's <base href> — always slash-terminated
+// so relative URLs in app.js resolve under the mount: "/" at root, "/slug/" under
+// the proxy.
+func baseHref() string {
+	if basePath == "" {
+		return "/"
+	}
+	return basePath + "/"
+}
+
 // tmplFuncs are shared template helpers.
 var tmplFuncs = template.FuncMap{
+	"basehref": baseHref,
 	"ftime": func(t time.Time) string {
 		if t.IsZero() {
 			return "—"
@@ -81,15 +105,16 @@ const templatesSrc = `
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>satelle · project</title>
 <script>(function(){try{if(!document.documentElement.getAttribute('data-theme')){var t=localStorage.getItem('satelle-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
-<link rel="stylesheet" href="/static/app.css">
+<base href="{{basehref}}">
+<link rel="stylesheet" href="static/app.css">
 </head>
 <body>
 <div class="wrap">
-  <nav class="crumbs"><a href="/">project</a> <span class="sep">/</span> <span class="cur" id="crumb-tab">stories</span></nav>
+  <nav class="crumbs"><a href="{{basehref}}">project</a> <span class="sep">/</span> <span class="cur" id="crumb-tab">stories</span></nav>
   <header class="app">
     {{template "topbar" .TopBar}}
     <h1>satelle<span class="dot">.</span> project</h1>
-    <div class="meta">{{.RepoRoot}} · <a href="/workspace">workspace →</a> · <a href="/help">help →</a></div>
+    <div class="meta">{{.RepoRoot}} · <a href="projects">projects →</a> · <a href="workspace">workspace →</a> · <a href="help">help →</a></div>
   </header>
 
   <div class="tabs" role="tablist">
@@ -148,11 +173,11 @@ const templatesSrc = `
     <span class="footer-version">satelle {{.Version}}</span>
   </footer>
 </div>
-<script src="/static/app.js"></script>
+<script src="static/app.js"></script>
 </body>
 </html>{{end}}
 
-{{define "workitemRows"}}{{range .}}<tr class="row" tabindex="0" role="button" aria-expanded="false" data-status="{{.Status}}" data-priority="{{.Priority}}" data-category="{{.Category}}" data-tags="{{join .Tags ","}}" data-title="{{lower .Title}}" data-updated="{{.UpdatedAt.Format "2006-01-02T15:04:05"}}" data-created="{{.CreatedAt.Format "2006-01-02T15:04:05"}}" data-search="{{printf "%s %s %s" .Title .ID (join .Tags " ") | lower}}" data-expand-url="/fragment/{{.Kind}}/{{.ID}}">
+{{define "workitemRows"}}{{range .}}<tr class="row" tabindex="0" role="button" aria-expanded="false" data-status="{{.Status}}" data-priority="{{.Priority}}" data-category="{{.Category}}" data-tags="{{join .Tags ","}}" data-title="{{lower .Title}}" data-updated="{{.UpdatedAt.Format "2006-01-02T15:04:05"}}" data-created="{{.CreatedAt.Format "2006-01-02T15:04:05"}}" data-search="{{printf "%s %s %s" .Title .ID (join .Tags " ") | lower}}" data-expand-url="fragment/{{.Kind}}/{{.ID}}">
   <td class="id"><span class="id-copy" role="button" tabindex="0" data-id="{{.ID}}" title="Copy id to clipboard">{{.ID}}</span></td>
   <td><div class="wi-title">{{.Title}}</div>{{if or .Category .Tags}}<div class="wi-tags">{{if .Category}}{{tagchip (printf "category:%s" .Category)}}{{end}}{{range .Tags}}{{tagchip .}}{{end}}</div>{{end}}</td>
   <td><span class="badge s-{{.Status}}">{{.Status}}</span></td>
@@ -161,13 +186,13 @@ const templatesSrc = `
   <td class="updated">{{ftime .UpdatedAt}}</td>
 </tr>{{else}}<tr><td colspan="6" class="empty">none yet</td></tr>{{end}}{{end}}
 
-{{define "docsRows"}}{{range .}}{{$k := .Kind}}<div class="kind-h">{{.Kind}}</div>{{if .Docs}}<div class="docgrid">{{range .Docs}}<a class="doc" href="/doc/{{$k}}/{{.Name}}" data-search="{{printf "%s %s" .Name .Headline | lower}}">
+{{define "docsRows"}}{{range .}}{{$k := .Kind}}<div class="kind-h">{{.Kind}}</div>{{if .Docs}}<div class="docgrid">{{range .Docs}}<a class="doc" href="doc/{{$k}}/{{.Name}}" data-search="{{printf "%s %s" .Name .Headline | lower}}">
   <div class="name">{{.Name}}</div>
   {{if .Headline}}<div class="head">{{.Headline}}</div>{{end}}
   {{if not .ModTime.IsZero}}<div class="updated">updated {{ftime .ModTime}}</div>{{end}}
 </a>{{end}}</div>{{else}}<div class="empty">none indexed — run <code>satelle index</code></div>{{end}}{{end}}{{end}}
 
-{{define "workflowRows"}}{{range .}}<tr class="row" tabindex="0" role="button" aria-expanded="false" data-search="{{printf "%s %s %s %s" .Name .Headline .Scope (join .AppliesTo " ") | lower}}" data-expand-url="/fragment/workflow/{{.Name}}">
+{{define "workflowRows"}}{{range .}}<tr class="row" tabindex="0" role="button" aria-expanded="false" data-search="{{printf "%s %s %s %s" .Name .Headline .Scope (join .AppliesTo " ") | lower}}" data-expand-url="fragment/workflow/{{.Name}}">
   <td><div class="wi-title">{{.Name}}</div><div class="wi-tags">{{if .Scope}}{{tagchip (printf "scope:%s" .Scope)}}{{end}}{{range .AppliesTo}}{{tagchip (printf "applies_to:%s" .)}}{{end}}</div></td>
   <td>{{.Headline}}</td>
   <td class="updated">{{ftime .Updated}}</td>
@@ -197,7 +222,7 @@ const templatesSrc = `
 </div>{{end}}
 
 {{define "itemDetail"}}<div class="expbody">
-  {{if not .Standalone}}<a class="detail-link open-story" href="/{{.Item.Kind}}/{{.Item.ID}}">Open story →</a>{{end}}
+  {{if not .Standalone}}<a class="detail-link open-story" href="{{.Item.Kind}}/{{.Item.ID}}">Open story →</a>{{end}}
   {{if .Docs}}<div class="doc-tabs">
     <div class="doc-tabstrip" role="tablist">{{range $i, $d := .Docs}}<button class="doc-tab{{if eq $i 0}} active{{end}}" type="button" role="tab" data-doc="{{$i}}">{{$d.Name}}{{if $d.Type}} <span class="doc-tab-type">{{$d.Type}}</span>{{end}}</button>{{end}}</div>
     {{range $i, $d := .Docs}}<div class="doc-pane{{if eq $i 0}} active{{end}}" data-doc="{{$i}}"><article class="doc-article">{{$d.HTML}}</article></div>{{end}}
@@ -206,7 +231,7 @@ const templatesSrc = `
     <dt>Status</dt><dd><span class="badge s-{{.Item.Status}}">{{.Item.Status}}</span></dd>
     <dt>Priority</dt><dd>{{if .Item.Priority}}{{.Item.Priority}}{{else}}—{{end}}</dd>
     <dt>Category</dt><dd>{{if .Item.Category}}{{.Item.Category}}{{else}}—{{end}}</dd>
-    {{if .Item.ParentID}}<dt>Parent</dt><dd><a href="/story/{{.Item.ParentID}}">{{.Item.ParentID}}</a></dd>{{end}}
+    {{if .Item.ParentID}}<dt>Parent</dt><dd><a href="story/{{.Item.ParentID}}">{{.Item.ParentID}}</a></dd>{{end}}
     {{if .Item.Tags}}<dt>Tags</dt><dd class="wi-tags">{{range .Item.Tags}}{{tagchip .}}{{end}}</dd>{{end}}
     <dt>Updated</dt><dd>{{ftime .Item.UpdatedAt}}</dd>
   </dl>
@@ -227,11 +252,12 @@ const templatesSrc = `
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>satelle · workspace</title>
 <script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
-<link rel="stylesheet" href="/static/app.css">
+<base href="{{basehref}}">
+<link rel="stylesheet" href="static/app.css">
 </head>
 <body>
 <div class="wrap">
-  <nav class="crumbs"><a href="/">project</a> <span class="sep">/</span> <span class="cur">workspace</span></nav>
+  <nav class="crumbs"><a href="{{basehref}}">project</a> <span class="sep">/</span> <span class="cur">workspace</span></nav>
   <header class="app">
     {{template "topbar" .TopBar}}
     <h1>satelle<span class="dot">.</span> workspace</h1>
@@ -252,30 +278,32 @@ const templatesSrc = `
 </body>
 </html>{{end}}
 
-{{define "home"}}<!doctype html>
+{{define "projects"}}<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>satelle · projects</title>
 <script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
-<link rel="stylesheet" href="/static/app.css">
+<base href="{{basehref}}">
+<link rel="stylesheet" href="static/app.css">
 </head>
 <body>
 <div class="wrap">
+  <nav class="crumbs"><a href="{{basehref}}">project</a> <span class="sep">/</span> <span class="cur">projects</span></nav>
   <header class="app">
     {{template "topbar" .TopBar}}
     <h1>satelle<span class="dot">.</span> projects</h1>
-    <div class="meta">{{len .Projects}} projects served · each on its own port</div>
+    <div class="meta">{{len .Projects}} projects served on this port</div>
   </header>
   {{range .Projects}}<a class="proj-card" href="{{.URL}}">
-    <div class="proj-name">{{.Name}} <span class="proj-slug">/{{.Slug}}</span></div>
+    <div class="proj-name">{{.Name}} {{if .Root}}<span class="proj-slug">this project · /</span>{{else}}<span class="proj-slug">/{{.Slug}}/</span>{{end}}</div>
     <div class="meta">{{.Path}}</div>
     <div class="meta">{{.Stories}} stories · {{.Tasks}} tasks · {{.Docs}} docs</div>
   </a>{{else}}<div class="empty">no projects registered — run <code>satelle workspace add</code></div>{{end}}
   <footer class="site-footer"><span class="footer-version">satelle multi-project</span></footer>
 </div>
-<script src="/static/app.js"></script>
+<script src="static/app.js"></script>
 </body>
 </html>{{end}}
 
@@ -286,11 +314,12 @@ const templatesSrc = `
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>satelle · help</title>
 <script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
-<link rel="stylesheet" href="/static/app.css">
+<base href="{{basehref}}">
+<link rel="stylesheet" href="static/app.css">
 </head>
 <body>
 <div class="wrap">
-  <nav class="crumbs"><a href="/">project</a> <span class="sep">/</span> <span class="cur">help</span></nav>
+  <nav class="crumbs"><a href="{{basehref}}">project</a> <span class="sep">/</span> <span class="cur">help</span></nav>
   <header class="app">
     {{template "topbar" .TopBar}}
     <h1>satelle<span class="dot">.</span> help</h1>
@@ -312,11 +341,12 @@ const templatesSrc = `
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>satelle · {{.Name}}</title>
 <script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
-<link rel="stylesheet" href="/static/app.css">
+<base href="{{basehref}}">
+<link rel="stylesheet" href="static/app.css">
 </head>
 <body>
 <div class="wrap">
-  <nav class="crumbs"><a href="/">project</a> <span class="sep">/</span> <a href="/#docs">docs</a> <span class="sep">/</span> <span class="cur">{{.Name}}</span></nav>
+  <nav class="crumbs"><a href="{{basehref}}">project</a> <span class="sep">/</span> <a href="{{basehref}}#docs">docs</a> <span class="sep">/</span> <span class="cur">{{.Name}}</span></nav>
   <header class="app">
     {{template "topbar" .TopBar}}
     <div class="kind-h">{{.Kind}}</div>
@@ -325,7 +355,7 @@ const templatesSrc = `
   </header>
   <article class="doc-article">{{.HTML}}</article>
 </div>
-<script src="/static/app.js"></script>
+<script src="static/app.js"></script>
 </body>
 </html>{{end}}
 
@@ -336,11 +366,12 @@ const templatesSrc = `
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>satelle · {{.Item.ID}}</title>
 <script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
-<link rel="stylesheet" href="/static/app.css">
+<base href="{{basehref}}">
+<link rel="stylesheet" href="static/app.css">
 </head>
 <body>
 <div class="wrap">
-  <nav class="crumbs"><a href="/">project</a> <span class="sep">/</span> <a href="/#{{tabof .Item.Kind}}">{{.Item.Kind}}</a> <span class="sep">/</span> <span class="cur">{{.Item.ID}}</span></nav>
+  <nav class="crumbs"><a href="{{basehref}}">project</a> <span class="sep">/</span> <a href="{{basehref}}#{{tabof .Item.Kind}}">{{.Item.Kind}}</a> <span class="sep">/</span> <span class="cur">{{.Item.ID}}</span></nav>
   <header class="app">
     {{template "topbar" .TopBar}}
     <div class="kind-h">{{.Item.Kind}}</div>
@@ -349,7 +380,7 @@ const templatesSrc = `
   </header>
   <div id="detail-live" data-kind="{{.Item.Kind}}" data-id="{{.Item.ID}}">{{template "itemDetail" .}}</div>
 </div>
-<script src="/static/app.js"></script>
+<script src="static/app.js"></script>
 </body>
 </html>{{end}}
 `

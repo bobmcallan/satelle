@@ -300,7 +300,7 @@
     // is reading; re-expand them afterwards (refreshing their live timeline).
     var openUrls = [].slice.call(panel.querySelectorAll('tr.row[aria-expanded="true"]'))
       .map(function (r) { return r.dataset.expandUrl; });
-    fetch("/fragment/" + topic)
+    fetch("fragment/" + topic)
       .then(function (r) { return r.text(); })
       .then(function (html) {
         holder.innerHTML = html;
@@ -321,7 +321,7 @@
   function initLive() {
     if (!window.EventSource) return;
     var dot = document.querySelector(".uptime");
-    var src = new EventSource("/events");
+    var src = new EventSource("events");
     var refetch = {}; // per-topic debounced refetch
     LIVE_TOPICS.forEach(function (tp) { refetch[tp] = debounce(function () { refetchPanel(tp); }, 250); });
     var firstOpen = true;
@@ -346,9 +346,9 @@
     if (!el || !window.EventSource) return;
     var kind = el.dataset.kind, id = el.dataset.id, topic = topicForKind(kind);
     var dot = document.querySelector(".uptime");
-    var src = new EventSource("/events");
+    var src = new EventSource("events");
     var refresh = debounce(function () {
-      fetch("/fragment/" + kind + "/" + id)
+      fetch("fragment/" + kind + "/" + id)
         .then(function (r) { return r.text(); })
         .then(function (html) { el.innerHTML = html; })
         .catch(function () {});
@@ -376,7 +376,7 @@
     // Persist the choice to the machine-wide config so it follows the operator
     // into every repo (best-effort; localStorage remains the fast-path cache).
     if (persist) {
-      try { fetch("/theme", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "theme=" + theme }); } catch (e) {}
+      try { fetch("theme", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "theme=" + theme }); } catch (e) {}
     }
   }
   function initTheme() {

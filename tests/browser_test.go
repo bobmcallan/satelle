@@ -44,6 +44,9 @@ func serveRepo(t *testing.T, port string) (string, string) {
 	mustRun(t, testBin, repo, "init")
 	cmd := exec.Command(testBin, "serve", "--port", port)
 	cmd.Dir = repo
+	// Isolate the machine-wide registry so `serve` (always adaptive) doesn't pick
+	// up unrelated repos and spawn child servers during these single-repo tests.
+	cmd.Env = append(os.Environ(), "SATELLE_HOME="+t.TempDir())
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start serve: %v", err)
 	}
@@ -210,7 +213,7 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		// Workflow tab lists the (embedded) baseline workflow and expands to its
 		// state/transition diagram — read-only.
 		clickJS(t, ctx, `.tab[data-panel="workflow"]`)
-		if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow tr.row[data-expand-url^="/fragment/workflow/"]') && getComputedStyle(document.querySelector('#panel-workflow')).display === 'block'`, 5*time.Second) {
+		if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow tr.row[data-expand-url^="fragment/workflow/"]') && getComputedStyle(document.querySelector('#panel-workflow')).display === 'block'`, 5*time.Second) {
 			t.Error("workflow panel/row not visible after clicking its tab")
 		}
 		// The workflow table carries an Updated column (the Applies-to column was
@@ -225,7 +228,7 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		if !hasUpdated || hasAppliesCol {
 			t.Errorf("workflow table headers wrong: hasUpdated=%v hasAppliesCol=%v", hasUpdated, hasAppliesCol)
 		}
-		clickJS(t, ctx, `#panel-workflow tr.row[data-expand-url^="/fragment/workflow/"]`)
+		clickJS(t, ctx, `#panel-workflow tr.row[data-expand-url^="fragment/workflow/"]`)
 		if !waitCond(t, ctx, `(function(){var e=document.querySelector('#panel-workflow tr.expansion .expbody');return !!e && e.textContent.includes('Transitions') && !!document.querySelector('#panel-workflow .wf-node');})()`, 5*time.Second) {
 			t.Error("workflow diagram (states/transitions) did not appear on row click")
 		}
@@ -584,15 +587,15 @@ func TestBrowserDocRendersMarkdown(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 	clickJS(t, ctx, `.tab[data-panel="docs"]`)
-	if !waitCond(t, ctx, `!!document.querySelector('#panel-docs a.doc[href^="/doc/"]')`, 5*time.Second) {
+	if !waitCond(t, ctx, `!!document.querySelector('#panel-docs a.doc[href^="doc/"]')`, 5*time.Second) {
 		t.Fatal("no clickable doc card in the Documents tab")
 	}
 	var href string
-	if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('#panel-docs a.doc[href^="/doc/"]').getAttribute('href')`, &href)); err != nil {
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('#panel-docs a.doc[href^="doc/"]').getAttribute('href')`, &href)); err != nil {
 		t.Fatal(err)
 	}
 	if err := chromedp.Run(ctx,
-		chromedp.Navigate(base+href),
+		chromedp.Navigate(base+"/"+href),
 		chromedp.WaitVisible(`article.doc-article`, chromedp.ByQuery),
 	); err != nil {
 		t.Fatalf("doc page %q: %v", href, err)

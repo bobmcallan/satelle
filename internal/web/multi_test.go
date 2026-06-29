@@ -23,29 +23,17 @@ func TestSlugify(t *testing.T) {
 	}
 }
 
-func TestAssignSlugsDeduplicates(t *testing.T) {
-	got := AssignSlugs([]Project{
-		{Name: "repo"}, {Name: "Repo"}, {Name: "repo"}, {Name: "other"},
-	})
-	want := []string{"repo", "repo-2", "repo-3", "other"}
-	for i, w := range want {
-		if got[i].Slug != w {
-			t.Errorf("project %d slug = %q, want %q", i, got[i].Slug, w)
-		}
+func TestProjectsPageListsBoundAndChildren(t *testing.T) {
+	projects := []Project{
+		{Slug: "satelle", Name: "satelle", Path: "/repos/satelle", Root: true},
+		{Slug: "satelle-homepage", Name: "satelle-homepage", Path: "/repos/satelle-homepage"},
 	}
-}
-
-func TestMultiHomeListsProjectsWithPerPortLinks(t *testing.T) {
-	projects := AssignSlugs([]Project{
-		{Name: "satelle", Path: "/repos/satelle", Port: 8801},
-		{Name: "satelle-homepage", Path: "/repos/satelle-homepage", Port: 8802},
-	})
-	srv := httptest.NewServer(NewMultiHandler(func() []Project { return projects }))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ProjectsPage(w, r, projects)
+	}))
 	defer srv.Close()
 
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
-	req.Host = "localhost:8787"
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.Get(srv.URL + "/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,27 +43,14 @@ func TestMultiHomeListsProjectsWithPerPortLinks(t *testing.T) {
 	body := string(buf[:n])
 
 	for _, want := range []string{
-		"satelle</div>", "/satelle</span>",
-		"satelle-homepage</div>", "/satelle-homepage</span>",
-		`href="http://localhost:8801/#stories"`,
-		`href="http://localhost:8802/#stories"`,
 		"projects served",
+		`href="/#stories"`,                  // bound repo at root
+		"this project · /",                  // bound marked
+		`href="/satelle-homepage/#stories"`, // child under its slug
+		"/satelle-homepage/",                // child slug label
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("homepage missing %q\n---\n%s", want, body)
+			t.Errorf("projects page missing %q\n---\n%s", want, body)
 		}
-	}
-}
-
-func TestMultiHandlerHealthz(t *testing.T) {
-	srv := httptest.NewServer(NewMultiHandler(func() []Project { return nil }))
-	defer srv.Close()
-	resp, err := http.Get(srv.URL + "/healthz")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Errorf("healthz = %d", resp.StatusCode)
 	}
 }
