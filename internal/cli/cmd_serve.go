@@ -45,9 +45,11 @@ to keep the binary current. Press Ctrl-C to stop.`,
 			if err != nil {
 				return err
 			}
-			if port == 0 {
-				port = a.Config.ResolveWebPort()
-			}
+			// Local mode (running as the repo-local pin) serves on a deterministic
+			// per-repo port and a single project; global mode keeps the default port
+			// and the workspace aggregation (sty_6b07cfb1).
+			localRoot, isLocal := localPinRepoRoot()
+			port = resolveServePort(port, a.Config.WebPort, localRoot, isLocal)
 			listenAddr := fmt.Sprintf("%s:%d", addr, port)
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
@@ -89,26 +91,33 @@ to keep the binary current. Press Ctrl-C to stop.`,
 			}
 			sup := newSupervisor(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), self)
 			defer sup.shutdown()
-			sup.reconcile(childRoots(a.RepoRoot))
 
-			// Watch the registry so workspace add/remove takes effect with no restart.
-			go func() {
-				t := time.NewTicker(3 * time.Second)
-				defer t.Stop()
-				prev := strings.Join(childRoots(a.RepoRoot), "\n")
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case <-t.C:
-						next := childRoots(a.RepoRoot)
-						if key := strings.Join(next, "\n"); key != prev {
-							prev = key
-							sup.reconcile(next)
+			// Local mode is a SINGLE project: serve only this repo and ignore the
+			// workspace registry (no aggregation, no registry watcher). Global mode
+			// aggregates registered repos and reconciles add/remove live.
+			if isLocal {
+				sup.reconcile([]string{a.RepoRoot})
+			} else {
+				sup.reconcile(childRoots(a.RepoRoot))
+				// Watch the registry so workspace add/remove takes effect, no restart.
+				go func() {
+					t := time.NewTicker(3 * time.Second)
+					defer t.Stop()
+					prev := strings.Join(childRoots(a.RepoRoot), "\n")
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case <-t.C:
+							next := childRoots(a.RepoRoot)
+							if key := strings.Join(next, "\n"); key != prev {
+								prev = key
+								sup.reconcile(next)
+							}
 						}
 					}
-				}
-			}()
+				}()
+			}
 
 			sup.banner(cmd.OutOrStdout(), listenAddr)
 			return listenServe(cmd, ctx, listenAddr, sup.topHandler(webSrv.Handler), "")
