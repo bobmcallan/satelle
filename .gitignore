@@ -2,6 +2,13 @@
 /satelle
 /cmd/satelle/satelle
 
+# Legacy pre-rebrand state. The old `satellites` CLI (V5) writes a workspace
+# state dir at ./.satellites/ in whatever cwd it runs in. satelle (V6) uses
+# .satelle/ exclusively; .satellites/ is dead and must never be tracked. Ignore
+# the whole dir so a stray legacy invocation can't be staged or committed.
+# See docs/legacy-satellites-dir.md.
+/.satellites
+
 # satelle's own .satelle/ local state is governed by the managed block below
 # (added by `satelle init`): the local database is ignored, while the committed
 # satelle.toml and the authored markdown under .satelle/ stay tracked — satelle
