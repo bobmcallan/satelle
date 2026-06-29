@@ -847,6 +847,24 @@ func TestReviewerSkillsForDOT(t *testing.T) {
 	}
 }
 
+// A container close gate is judged from the children SATELLE injects into the
+// payload (resolved from the DB), not any on-disk story mirror (sty_fa1e02e1).
+func TestGatePayloadIncludesChildren(t *testing.T) {
+	g, r := gater(t, `{"decision":"accept"}`, fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
+	g.SetChildrenResolver(func(_ context.Context, parentID string) []ChildState {
+		if parentID != "sty_parent" {
+			t.Errorf("resolver called with %q, want sty_parent", parentID)
+		}
+		return []ChildState{{ID: "sty_child1", Status: "done"}, {ID: "sty_child2", Status: "in_progress"}}
+	})
+	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_parent", Status: "in_progress", Category: "epic-parent"}, "done"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.got.Payload, `"children"`) || !strings.Contains(r.got.Payload, "sty_child2") {
+		t.Errorf("close-gate payload must carry the children:\n%s", r.got.Payload)
+	}
+}
+
 func TestSetReviewerModel(t *testing.T) {
 	g := New(nil, nil, "", "")
 	if g.model != "" {
