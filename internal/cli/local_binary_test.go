@@ -117,6 +117,19 @@ func TestLocalDeterministicPort(t *testing.T) {
 	}
 }
 
+func TestBinaryScopeLabelOf(t *testing.T) {
+	// A pin path → repo-local label naming the pin path.
+	if got := binaryScopeLabelOf("/home/me/proj/.satelle/satelle"); got != "repo-local pin: /home/me/proj/.satelle/satelle" {
+		t.Errorf("pin label = %q", got)
+	}
+	// Any non-pin path → global.
+	for _, p := range []string{"/usr/local/bin/satelle", "/home/me/proj/satelle"} {
+		if got := binaryScopeLabelOf(p); got != "global" {
+			t.Errorf("%q label = %q, want global", p, got)
+		}
+	}
+}
+
 func TestResolveServePort(t *testing.T) {
 	const cfg = 9001
 	// --port flag wins over everything.

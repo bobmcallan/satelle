@@ -22,6 +22,8 @@
 .satelle/satelle.db-wal
 .satelle/satelle.db-shm
 .satelle/satelle.local.toml
+# the repo-local pinned binary (satelle update --local) is local state, never committed
+.satelle/satelle
 # the per-story markdown mirror is regenerated from the local database (the
 # source of truth); the files are portable but not versioned in this repo.
 .satelle/stories/

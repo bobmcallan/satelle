@@ -270,6 +270,8 @@ const gitignoreBlock = gitignoreMarker + `
 .satelle/satelle.db-wal
 .satelle/satelle.db-shm
 .satelle/satelle.local.toml
+# the repo-local pinned binary (satelle update --local) is local state, never committed
+.satelle/satelle
 # <<< satelle (managed) <<<
 `
 
