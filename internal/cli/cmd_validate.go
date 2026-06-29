@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/reviewer"
 	"github.com/bobmcallan/satelle/internal/structure"
 )
 
@@ -71,6 +72,20 @@ optionally a name) to narrow. Exit is non-zero if any doc fails.`,
 					}
 				}
 			}
+			// Cross-workflow consistency (sty_4c0c7246): ambiguous applies_to and
+			// unresolved referenced skills — a whole-set check, so only when
+			// validating the workflows kind (all, or `workflows`) without a name.
+			if nameFilter == "" && (kindFilter == "" || kindFilter == "workflows") {
+				wfs, lerr := a.Store.DocIndex.List(context.Background(), "workflows")
+				if lerr != nil {
+					return lerr
+				}
+				for _, p := range reviewer.WorkflowConsistency(wfs, resolve) {
+					failed++
+					fmt.Fprintf(out, "FAIL  workflows (consistency) — %s\n", p)
+				}
+			}
+
 			fmt.Fprintf(out, "\nvalidated %d, failed %d\n", validated, failed)
 			if failed > 0 {
 				return fmt.Errorf("%d doc(s) failed structure validation", failed)
