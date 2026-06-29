@@ -87,7 +87,7 @@ to keep the binary current. Press Ctrl-C to stop.`,
 			if err != nil {
 				return fmt.Errorf("resolve own binary: %w", err)
 			}
-			sup := newSupervisor(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), self, a.RepoRoot)
+			sup := newSupervisor(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), self)
 			defer sup.shutdown()
 			sup.reconcile(childRoots(a.RepoRoot))
 
@@ -189,7 +189,6 @@ type supervisor struct {
 	self      string
 	ctx       context.Context
 	out, errw io.Writer
-	boundRepo string
 
 	mu       sync.Mutex
 	children map[string]*childProc // by repo path
@@ -206,33 +205,28 @@ var reservedSlugs = []string{
 	"events", "theme", "healthz", "projects",
 }
 
-func newSupervisor(ctx context.Context, out, errw io.Writer, self, boundRepo string) *supervisor {
+func newSupervisor(ctx context.Context, out, errw io.Writer, self string) *supervisor {
 	taken := map[string]bool{}
 	for _, r := range reservedSlugs {
 		taken[r] = true
 	}
 	return &supervisor{
-		self: self, ctx: ctx, out: out, errw: errw, boundRepo: boundRepo,
+		self: self, ctx: ctx, out: out, errw: errw,
 		children: map[string]*childProc{}, bySlug: map[string]*childProc{},
 		slugs: map[string]string{}, taken: taken,
 	}
 }
 
 // snapshot returns every served project in display order (the launch repo
-// first), each reachable at /<slug>/ — what the / landing renders. The launch
-// repo is flagged Root so the landing can badge "launched here".
+// first), each reachable at /<slug>/ — what the / landing renders.
 func (s *supervisor) snapshot() []web.Project {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []web.Project
 	for _, p := range s.order {
-		c := s.children[p]
-		if c == nil {
-			continue
+		if c := s.children[p]; c != nil {
+			out = append(out, c.project)
 		}
-		proj := c.project
-		proj.Root = (p == s.boundRepo)
-		out = append(out, proj)
 	}
 	return out
 }

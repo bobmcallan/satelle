@@ -17,7 +17,7 @@ on the landing.
   every repo added with `satelle workspace add` — is served by its own child
   process behind a reverse proxy at `/<slug>/` (the slug is derived from the
   repo's directory name). Each keeps its own database — no shared store, no
-  cross-project bleed. The launch repo is badged *launched here* on the landing.
+  cross-project bleed.
 - **`/projects`** redirects to `/` (back-compat for older links).
 
 So adding a project is **additive**: a new card appears on the landing and the

@@ -197,6 +197,9 @@ a.doc:hover { border-color: var(--accent); }
 .doc-article pre code { background: none; border: 0; padding: 0; }
 .doc-article blockquote { margin: .7em 0; padding: 2px 14px; border-left: 3px solid var(--line); color: var(--muted); }
 .doc-article a { color: var(--accent); }
+/* The landing's add-a-project/help block sits below the project cards. */
+.landing-help { margin-top: 10px; padding-top: 18px; border-top: 1px solid var(--line); }
+.landing-help h2:first-child { margin-top: .2em; }
 .kind-h { font-size: 12px; color: var(--accent); font-weight: 650; margin: 18px 0 8px; text-transform: lowercase; }
 .empty { color: var(--muted); font-style: italic; padding: 10px; }
 
