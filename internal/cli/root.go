@@ -9,6 +9,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -63,6 +64,11 @@ dependency. See https://github.com/bobmcallan/satelle for docs.`,
 // SilenceUsage/SilenceErrors set). Returns the command's error so the caller
 // sets a non-zero exit.
 func Execute() error {
+	// Repo-local binary precedence (sty_fe3ee313): if this repo pins its own
+	// satelle under .satelle/satelle, run THAT binary instead of the global one.
+	if code, handled := reexecLocalIfPresent(); handled {
+		os.Exit(code)
+	}
 	root := NewRootCmd()
 	err := root.Execute()
 	if err != nil {
