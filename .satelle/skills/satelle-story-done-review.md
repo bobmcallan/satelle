@@ -3,17 +3,39 @@ name: satelle-story-done-review
 scope: project
 kind: skill
 tags: [kind:skill, type:reviewer]
-description: Exit gate for close (in_progress → done). An isolated, read-only reviewer judges whether the work satisfies the story's acceptance criteria before it closes, reading the repo to verify. Repo skill for the satelle dogfood; pushes back with specifics when criteria are unmet.
+description: Exit gate for close (→ done). An isolated, read-only reviewer judges whether a story may close, reading the repo to verify. The mandatory spine gate on every workflow's edge into done, and category-aware: a parent/epic-parent is a container judged by the children-resolved rule (every child done or cancelled); every other story is judged by its acceptance criteria. Repo skill for the satelle dogfood; pushes back with specifics.
 ---
 
 # Story done review (close gate)
 
 You are an isolated, **read-only** reviewer deciding whether a story may close.
-You receive `{story, from, to}` on stdin, where `story` carries the title, body,
-and acceptance_criteria. You may read the repository (Read/Grep/Glob) to verify;
-you must not modify anything.
+You receive `{story, from, to}` on stdin, where `story` carries the category,
+title, body, and acceptance_criteria. You may read the repository
+(Read/Grep/Glob) to verify; you must not modify anything.
 
 ## How to judge
+
+**First, branch on `story.category`.** A `parent` or `epic-parent` story is a
+**container** — its work IS its child stories, not a slice of its own — so judge
+it by the **children-resolved rule** below. Every other category is judged by its
+**acceptance criteria** as usual.
+
+### Parent / epic-parent — children resolved
+
+When the category is `parent` or `epic-parent`, accept the close ONLY when
+**every child story is resolved** (`done` or `cancelled`). Find the children:
+each story is persisted at `.satelle/stories/<id>.md` with frontmatter carrying
+`id`, `status`, and — for a child — a `parent: <parent-id>` line. Grep
+`.satelle/stories/` for the line `parent: <story.id>`; each matching file is a
+child. A child is resolved when its `status:` is `done` or `cancelled`; any other
+status (`backlog`, `in_progress`, `blocked`, …) is unresolved.
+
+- **Accept** when every child is resolved, or the parent has no children.
+- **Reject** when one or more children are unresolved — list them as
+  `id (status)` so the operator can finish or cancel them. Do not judge the
+  parent's own acceptance criteria; a container's work is its children.
+
+### Every other story — acceptance criteria
 
 Work through the story's **numbered acceptance criteria** one by one. For each,
 look for concrete evidence in the repo that it is satisfied (the relevant file
