@@ -160,9 +160,10 @@ func serviceStatusCmd() *cobra.Command {
 }
 
 // systemdUnit renders the unit file content for the service. Pure (testable):
-// the ExecStart bakes in the resolved addr/port and WorkingDirectory selects
-// the bound repo. `serve` is always adaptive — it serves the bound repo at / and
-// any other registered project under /<slug>/ — so no extra flag is needed.
+// the ExecStart bakes in the resolved addr/port and WorkingDirectory selects the
+// launch repo. `serve` is always adaptive — it shows the connected-projects
+// landing at / and serves every registered project under /<slug>/ — so no extra
+// flag is needed.
 func systemdUnit(binPath, repo, addr string, port int) string {
 	return fmt.Sprintf(`[Unit]
 Description=satelle web server (project page)

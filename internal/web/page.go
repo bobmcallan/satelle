@@ -7,9 +7,10 @@ import (
 	"time"
 )
 
-// basePath is the URL prefix this server is mounted under, empty for the root
-// (bound) project and "/<slug>" for a project served behind the supervisor's
-// reverse proxy. It is a process global because each project is its own process.
+// basePath is the URL prefix this server is mounted under, empty for the
+// supervisor (which serves the / landing and shared chrome) and "/<slug>" for a
+// project served behind the supervisor's reverse proxy. It is a process global
+// because each project is its own process.
 var basePath string
 
 // SetBasePath sets the mount prefix (trailing slash trimmed). Call before New.
@@ -290,18 +291,28 @@ const templatesSrc = `
 </head>
 <body>
 <div class="wrap">
-  <nav class="crumbs"><a href="{{basehref}}">project</a> <span class="sep">/</span> <span class="cur">projects</span></nav>
+  <nav class="crumbs"><span class="cur">projects</span></nav>
   <header class="app">
     {{template "topbar" .TopBar}}
     <h1>satelle<span class="dot">.</span> projects</h1>
-    <div class="meta">{{len .Projects}} projects served on this port</div>
+    <div class="meta">{{len .Projects}} connected project{{if ne (len .Projects) 1}}s{{end}} · <a href="help">help →</a></div>
   </header>
   {{range .Projects}}<a class="proj-card" href="{{.URL}}">
-    <div class="proj-name">{{.Name}} {{if .Root}}<span class="proj-slug">this project · /</span>{{else}}<span class="proj-slug">/{{.Slug}}/</span>{{end}}</div>
+    <div class="proj-name">{{.Name}} <span class="proj-slug">/{{.Slug}}/</span>{{if .Root}} <span class="proj-slug">launched here</span>{{end}}</div>
     <div class="meta">{{.Path}}</div>
     <div class="meta">{{.Stories}} stories · {{.Tasks}} tasks · {{.Docs}} docs</div>
   </a>{{else}}<div class="empty">no projects registered — run <code>satelle workspace add</code></div>{{end}}
-  <footer class="site-footer"><span class="footer-version">satelle multi-project</span></footer>
+  <section class="help-topic">
+    <h2 class="kind-h">Add a project · install</h2>
+    <pre class="prose">Register a repo on this landing (live — no restart):
+    satelle workspace add /path/to/repo
+It appears here within a few seconds, served at /&lt;slug&gt;/.
+Remove with: satelle workspace remove /path/to/repo
+
+Process guides:    <a href="help">help →</a>
+Keep current:      satelle update      (--check to peek first)</pre>
+  </section>
+  <footer class="site-footer"><span class="footer-version">satelle · projects landing</span></footer>
 </div>
 <script src="static/app.js"></script>
 </body>

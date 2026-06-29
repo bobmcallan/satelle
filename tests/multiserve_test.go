@@ -6,22 +6,24 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"regexp"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
 
-// TestMultiProjectServe drives the always-adaptive `serve`: the bound repo is
-// served at /, every OTHER registered repo under /<slug>/ (reverse-proxied to a
-// child), with a /projects launcher. Asserts the bound repo never moves from /,
-// a child is reachable under its slug, and workspace add lands live.
+// TestMultiProjectServe drives the always-adaptive `serve`: the root (/) is a
+// connected-projects landing and EVERY registered repo — including the repo
+// serve was launched from — is served under /<slug>/ (reverse-proxied to a
+// child). Asserts the landing lists every project (counts, not story titles),
+// each project is reachable and isolated under its own slug, /projects redirects
+// to the landing, and a workspace add lands live.
 func TestMultiProjectServe(t *testing.T) {
 	home := t.TempDir()
 
-	repoA := t.TempDir() // bound (served at /)
-	repoB := t.TempDir() // child (served at /<slug>/)
+	repoA := t.TempDir() // launch repo — now served under its own /<slug>/ too
+	repoB := t.TempDir() // another registered project
 	mustRun(t, testBin, repoA, "init")
 	mustRun(t, testBin, repoB, "init")
 	// Distinct data per repo so we can prove no cross-project bleed.
@@ -52,55 +54,72 @@ func TestMultiProjectServe(t *testing.T) {
 		t.Fatal("serve did not become healthy")
 	}
 
-	// The bound repo is served at the root — its project page, base href "/",
-	// showing ONLY its own data (no bleed from repoB).
+	// Tempdir basenames are numeric (001, 002, …), so each slug is its basename.
+	slugA := filepath.Base(repoA)
+	slugB := filepath.Base(repoB)
+
+	// / is the connected-projects landing — a launcher, not any single repo's
+	// project page. It lists every project with counts (not story titles) and
+	// badges the launch repo "launched here".
 	root := httpGetBody(t, base+"/")
-	if !strings.Contains(root, `<base href="/">`) || !strings.Contains(root, "AlphaOnlyStory") {
-		t.Errorf("root is not the bound project page with its own data:\n%s", root)
+	for _, want := range []string{
+		"connected project",
+		"launched here",
+		"satelle workspace add",
+		`href="/` + slugA + `/#stories"`,
+		`href="/` + slugB + `/#stories"`,
+	} {
+		if !strings.Contains(root, want) {
+			t.Errorf("landing missing %q:\n%s", want, root)
+		}
 	}
-	if strings.Contains(root, "BetaOnlyStory") {
-		t.Error("bound repo page leaked the child repo's story (data bleed)")
+	if strings.Contains(root, "AlphaOnlyStory") || strings.Contains(root, "BetaOnlyStory") {
+		t.Errorf("landing leaked a project's story titles (it should show counts only):\n%s", root)
 	}
 
-	// An unknown /<prefix>/ is not a registered project → 404 via the bound mux (AC3).
+	// /projects redirects to the landing at / (back-compat for older links).
+	if loc, code := httpRedirect(t, base+"/projects"); code != http.StatusFound || loc != "/" {
+		t.Errorf("/projects = %d -> %q, want 302 -> /", code, loc)
+	}
+
+	// The launch repo is now served under its OWN slug — prefixed base href so its
+	// assets/SSE resolve under the prefix — and shows ONLY its own data.
+	aBody := httpGetBody(t, base+"/"+slugA+"/")
+	if !strings.Contains(aBody, `<base href="/`+slugA+`/">`) || !strings.Contains(aBody, "AlphaOnlyStory") {
+		t.Errorf("launch repo not served at /%s/ with its own data:\n%s", slugA, aBody)
+	}
+	if strings.Contains(aBody, "BetaOnlyStory") {
+		t.Error("launch repo page leaked the other repo's story (data bleed)")
+	}
+
+	// The other project under its slug, with its own base href and ONLY its data.
+	bBody := httpGetBody(t, base+"/"+slugB+"/")
+	if !strings.Contains(bBody, `<base href="/`+slugB+`/">`) || !strings.Contains(bBody, "BetaOnlyStory") {
+		t.Errorf("project not served at /%s/ with its own data:\n%s", slugB, bBody)
+	}
+	if strings.Contains(bBody, "AlphaOnlyStory") {
+		t.Error("project page leaked the launch repo's story (data bleed)")
+	}
+
+	// An unknown /<prefix>/ is not a registered project → 404 via shared chrome.
 	if code := httpStatus(t, base+"/bogus/fragment/stories"); code != http.StatusNotFound {
 		t.Errorf("unknown project prefix = %d, want 404", code)
 	}
 
-	// /projects lists the bound repo + the child (≥2 #stories links).
-	proj := httpGetBody(t, base+"/projects")
-	if !strings.Contains(proj, "projects served") {
-		t.Errorf("/projects is not the launcher:\n%s", proj)
-	}
-	childPath := firstChildPath(proj)
-	if childPath == "" {
-		t.Fatalf("no child /<slug>/ link on /projects:\n%s", proj)
-	}
-
-	// The child is reachable under its slug (proxied), with its own base href so
-	// its assets/SSE resolve under the prefix, and shows ONLY its own data.
-	childBody := httpGetBody(t, base+childPath)
-	if !strings.Contains(childBody, `<base href="`+childPath+`">`) || !strings.Contains(childBody, "BetaOnlyStory") {
-		t.Errorf("child at %s did not serve its own prefixed project page:\n%s", childPath, childBody)
-	}
-	if strings.Contains(childBody, "AlphaOnlyStory") {
-		t.Errorf("child repo page leaked the bound repo's story (data bleed)")
-	}
-
-	// Hot-add: register a THIRD repo while running; it must appear on /projects.
+	// Hot-add: register a THIRD repo while running; it must appear on the landing.
 	repoC := t.TempDir()
 	mustRun(t, testBin, repoC, "init")
 	workspaceAdd(t, home, repoA, repoC)
 	deadline := time.Now().Add(15 * time.Second)
 	got := 0
 	for time.Now().Before(deadline) {
-		if got = strings.Count(httpGetBody(t, base+"/projects"), `/#stories"`); got >= 3 {
+		if got = strings.Count(httpGetBody(t, base+"/"), `/#stories"`); got >= 3 {
 			break
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 	if got < 3 {
-		t.Errorf("hot-add: /projects shows %d projects after workspace add (want 3)", got)
+		t.Errorf("hot-add: landing shows %d projects after workspace add (want 3)", got)
 	}
 }
 
@@ -115,16 +134,17 @@ func workspaceAdd(t *testing.T, home, dir, repo string) {
 	}
 }
 
-var childPathRe = regexp.MustCompile(`href="(/[^"/]+/)#stories"`)
-
-// firstChildPath returns the first /<slug>/ launcher link that is not the root.
-func firstChildPath(body string) string {
-	for _, m := range childPathRe.FindAllStringSubmatch(body, -1) {
-		if m[1] != "/" {
-			return m[1]
-		}
+// httpRedirect issues a GET that does NOT follow redirects, returning the
+// Location header and status code.
+func httpRedirect(t *testing.T, url string) (string, int) {
+	t.Helper()
+	c := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := c.Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
 	}
-	return ""
+	defer resp.Body.Close()
+	return resp.Header.Get("Location"), resp.StatusCode
 }
 
 func httpGetBody(t *testing.T, url string) string {

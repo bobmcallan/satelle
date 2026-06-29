@@ -36,16 +36,22 @@ func findBrowser() string {
 }
 
 // serveRepo inits a temp repo, seeds it, starts `satelle serve` on a free-ish
-// port, waits until healthy, and returns the base URL + repo path. Cleanup
-// stops the server.
+// port, waits until healthy, and returns the project-page base URL + repo path.
+// Cleanup stops the server.
+//
+// serve is always adaptive: the root (/) is the connected-projects landing and
+// EVERY repo — including a lone one — is served under its own /<slug>/. So the
+// returned base is host+/<slug> (slug == the tempdir basename), making every
+// base+"/…" path target this repo's child consistently (project page, detail
+// pages, fragments, SSE), with the prefixed <base href> the page itself uses.
 func serveRepo(t *testing.T, port string) (string, string) {
 	t.Helper()
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	cmd := exec.Command(testBin, "serve", "--port", port)
 	cmd.Dir = repo
-	// Isolate the machine-wide registry so `serve` (always adaptive) doesn't pick
-	// up unrelated repos and spawn child servers during these single-repo tests.
+	// Isolate the machine-wide registry so `serve` doesn't pick up unrelated repos
+	// and spawn extra child servers during these single-repo tests.
 	cmd.Env = append(os.Environ(), "SATELLE_HOME="+t.TempDir())
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start serve: %v", err)
@@ -54,11 +60,11 @@ func serveRepo(t *testing.T, port string) (string, string) {
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
 	})
-	base := "http://127.0.0.1:" + port
-	if !waitHealthy(t, base+"/healthz", 5*time.Second) {
+	host := "http://127.0.0.1:" + port
+	if !waitHealthy(t, host+"/healthz", 5*time.Second) {
 		t.Fatal("server did not become healthy")
 	}
-	return base, repo
+	return host + "/" + filepath.Base(repo), repo
 }
 
 // newChrome returns a chromedp context (and overall timeout) for the suite.
@@ -383,6 +389,7 @@ func countExpansions(t *testing.T, ctx context.Context) int {
 // automation.
 func TestBrowserUserPath(t *testing.T) {
 	base, repo := serveRepo(t, "8803")
+	slugPath := "/" + filepath.Base(repo) + "/" // the project page's own path/<base href>
 	// Two open stories so order: is observable; the first gets progressed live.
 	betaID := createStory(t, repo, "Beta story", "")
 	alphaID := createStory(t, repo, "Alpha story", "")
@@ -461,8 +468,8 @@ func TestBrowserUserPath(t *testing.T) {
 		if err := chromedp.Run(ctx, chromedp.Evaluate(`location.pathname`, &path)); err != nil {
 			t.Fatal(err)
 		}
-		if path != "/" {
-			t.Errorf("clicking the id navigated to %q (should stay on the project page)", path)
+		if path != slugPath {
+			t.Errorf("clicking the id navigated to %q (should stay on the project page %q)", path, slugPath)
 		}
 	})
 
@@ -495,7 +502,7 @@ func TestBrowserUserPath(t *testing.T) {
 		if !waitCond(t, ctx, fmt.Sprintf(`document.querySelectorAll('#detail-live .timeline li').length > %d`, beforeLi), 8*time.Second) {
 			t.Error("detail page timeline did not live-update")
 		}
-		clickJS(t, ctx, `.crumbs a[href="/"]`)
+		clickJS(t, ctx, fmt.Sprintf(`.crumbs a[href=%q]`, slugPath))
 		if !waitCond(t, ctx, `!!document.querySelector('.tabs') && !!document.querySelector('#panel-stories')`, 8*time.Second) {
 			t.Fatal("breadcrumb 'project' did not return to the project page")
 		}
