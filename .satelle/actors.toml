@@ -7,7 +7,8 @@
 # [executor]
 # harness = "in-loop"          # the driving agent itself (default)
 
-# [reviewer]
-# harness = "claude"           # the bare claude preset (read-only denylist) — default
-# tools   = "Read,Grep,Glob"   # the reviewer's tool grant (default; widen at your own risk)
-# model   = ""                 # optional model override for the reviewer
+# The reviewer runs on sonnet here (cheaper/faster reviews) — harness + tools
+# stay at their read-only defaults (claude preset, Read,Grep,Glob); only the
+# model is overridden. Drop the block to fall back to the agent CLI default.
+[reviewer]
+model = "sonnet"               # review on sonnet (sty_5073df2f activates sty_dad271fd's knob)
