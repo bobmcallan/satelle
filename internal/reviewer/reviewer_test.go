@@ -847,6 +847,34 @@ func TestReviewerSkillsForDOT(t *testing.T) {
 	}
 }
 
+func TestSetReviewerModel(t *testing.T) {
+	g := New(nil, nil, "", "")
+	if g.model != "" {
+		t.Fatalf("default model = %q, want empty (inherits the agent CLI default)", g.model)
+	}
+	g.SetReviewerModel("sonnet")
+	if g.model != "sonnet" {
+		t.Errorf("after override model = %q, want sonnet", g.model)
+	}
+	g.SetReviewerModel("")
+	if g.model != "sonnet" {
+		t.Errorf("empty override should be a no-op, model = %q", g.model)
+	}
+}
+
+// The model set on the binding must reach the runner Request (so the harness
+// --model carries it to the reviewer subprocess).
+func TestReviewerModelReachesRunner(t *testing.T) {
+	g, r := gater(t, "  recap.\n", fakeDocs{workflow: stepWF, skillBody: "rubric", skillFound: true})
+	g.SetReviewerModel("sonnet")
+	if _, err := g.Summarise(context.Background(), workitem.Item{Status: "in_progress"}, "in_progress", "done"); err != nil {
+		t.Fatal(err)
+	}
+	if r.got.Model != "sonnet" {
+		t.Errorf("runner Request model = %q, want sonnet", r.got.Model)
+	}
+}
+
 func TestSetReviewerTools(t *testing.T) {
 	g := New(nil, nil, "", "")
 	if g.tools != defaultTools {

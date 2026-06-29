@@ -251,7 +251,8 @@ const scaffoldActorsToml = `# actors.toml — the actors layer: how each actor r
 # [reviewer]
 # harness = "claude"           # the bare claude preset (read-only denylist) — default
 # tools   = "Read,Grep,Glob"   # the reviewer's tool grant (default; widen at your own risk)
-# model   = ""                 # optional model override for the reviewer
+# model   = "sonnet"           # run the reviewer on a different (e.g. cheaper/faster) model
+#                              # than the executor; empty inherits the agent CLI's default
 `
 
 // gitignoreMarker opens the managed block ensureGitignore maintains. Its

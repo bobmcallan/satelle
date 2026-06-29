@@ -33,6 +33,15 @@ func TestInitSkeleton(t *testing.T) {
 		}
 	}
 
+	// The scaffold actors.toml documents the reviewer-model knob (sty_dad271fd).
+	actors, err := os.ReadFile(filepath.Join(repo, ".satelle", "actors.toml"))
+	if err != nil {
+		t.Fatalf("read actors.toml: %v", err)
+	}
+	if !strings.Contains(string(actors), "model") || !strings.Contains(string(actors), "sonnet") {
+		t.Errorf("scaffold actors.toml should document the reviewer model knob (sonnet):\n%s", actors)
+	}
+
 	// A second init is idempotent — it must report no new creations.
 	out := mustRun(t, testBin, repo, "init")
 	if strings.Contains(out, "  + ") {

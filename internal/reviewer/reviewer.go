@@ -101,6 +101,17 @@ func (g *Gater) SetReviewerTools(tools string) {
 	}
 }
 
+// SetReviewerModel sets the reviewer's model from the actors layer (the resolved
+// `reviewer` binding's `model`). It rides as `--model` to every isolated reviewer
+// this Gater runs, so a repo can review on a different model (e.g. sonnet) without
+// touching the executor. An empty value is ignored, keeping the agent CLI's
+// default model (no `--model` flag emitted).
+func (g *Gater) SetReviewerModel(model string) {
+	if strings.TrimSpace(model) != "" {
+		g.model = model
+	}
+}
+
 // SetRunner overrides the reviewer's agent-CLI runner — the actors layer's
 // `reviewer` harness binding, resolved to a Runner. A nil runner is ignored,
 // keeping the default configured at construction (the global `[agent] cli`).
