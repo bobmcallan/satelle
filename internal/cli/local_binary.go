@@ -7,6 +7,7 @@
 package cli
 
 import (
+	"hash/fnv"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -85,6 +86,68 @@ func localReexecTarget(cwd, self string, marker bool) (string, bool) {
 		return "", false // we ARE the local pin — run in-process
 	}
 	return local, true
+}
+
+// pinRepoRootOf reports whether self is a repo-local pin (a path of the shape
+// <root>/.satelle/satelle) and returns that repo root — the PURE core of
+// local-mode detection (sty_6b07cfb1). satelle's mode is implicit: a binary
+// living in a repo's .satelle/ runs in local mode; any other runs global.
+func pinRepoRootOf(self string) (string, bool) {
+	if filepath.Base(self) != localBinaryName {
+		return "", false
+	}
+	dir := filepath.Dir(self)
+	if filepath.Base(dir) != config.DefaultDataDir {
+		return "", false
+	}
+	return filepath.Dir(dir), true
+}
+
+// localPinRepoRoot reports whether THIS running binary is a repo-local pin and,
+// if so, the repo root it belongs to — the implicit local-mode signal.
+func localPinRepoRoot() (string, bool) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", false
+	}
+	return pinRepoRootOf(resolvePathOrSelf(self))
+}
+
+// localWebPortBase/Span define the deterministic local-mode web-port range
+// (8800–8999) — distinct from the global DefaultWebPort (8787).
+const (
+	localWebPortBase = 8800
+	localWebPortSpan = 200
+)
+
+// localDeterministicPort maps a repo root to a STABLE web port in the local-mode
+// range, so each repo's local instance gets its own predictable port that never
+// collides with the global default or (barring hash collisions) other repos. Same
+// root → same port.
+func localDeterministicPort(repoRoot string) int {
+	abs := repoRoot
+	if p, err := filepath.Abs(repoRoot); err == nil {
+		abs = p
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(abs))
+	return localWebPortBase + int(h.Sum32()%uint32(localWebPortSpan))
+}
+
+// resolveServePort picks the web port for `serve`: an explicit --port wins, then
+// an explicit [web_port] in config, then the local-mode deterministic per-repo
+// port, then the global default. Pure, so the precedence is unit-tested.
+func resolveServePort(portFlag, configPort int, localRoot string, isLocal bool) int {
+	switch {
+	case portFlag > 0:
+		return portFlag
+	case configPort > 0:
+		return configPort
+	case isLocal:
+		return localDeterministicPort(localRoot)
+	default:
+		return config.DefaultWebPort
+	}
 }
 
 // reexecLocalIfPresent runs the repo-local satelle pin in place of this process

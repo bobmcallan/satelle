@@ -38,3 +38,28 @@ This stays repo-agnostic (see the `satelle-repo-agnostic` principle): `--local`
 installs a released binary asset — it never compiles from source, which would not
 exist in a consuming repo. The mechanism is general; nothing about any one repo is
 baked into the binary.
+
+## Two operating modes
+
+The pin distinction gives satelle two implicit modes, keyed off the running
+binary's location — no flag:
+
+- **Global (default)** — the satelle on `PATH`. `serve` listens on the default
+  port (8787) and renders the connected-projects **landing**: every repo
+  registered via `satelle workspace add`, each under `/<slug>/`.
+- **Local/repo** — the pin at `<repo>/.satelle/satelle`. `serve` listens on a
+  **deterministic per-repo port** and shows exactly **one** project (this repo):
+  it ignores the workspace registry, so there is no aggregation and no cross-repo
+  bleed. This lets a repo run its own instance alongside the global one without
+  colliding.
+
+### Local web port
+
+Local mode derives a stable port from the repo path, in the range **8800–8999**,
+so each repo gets its own predictable port and many local instances can run at
+once. The same repo always resolves to the same port. Precedence:
+
+1. `--port` flag
+2. `[web_port]` in `.satelle/satelle.toml` (explicit override)
+3. local-mode deterministic per-repo port (local mode only)
+4. `8787` (global default)
