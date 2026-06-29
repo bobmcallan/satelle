@@ -4,8 +4,35 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/ledger"
 )
+
+// TestCategoryStepOf: each item is numbered against the workflow ACTIVE for its
+// category — an epic-parent against the parent workflow (done = step 1), a
+// wildcard category against the project workflow (done = step 4) — never a single
+// hardcoded longest-spine resolver (sty_8dafac0e).
+func TestCategoryStepOf(t *testing.T) {
+	project := docindex.Doc{Kind: "workflows", Name: "satelle-project-workflow",
+		Body: "---\nname: satelle-project-workflow\ntype: workflow\napplies_to: [\"*\"]\n---\ntransitions:\n" +
+			"  - {from: backlog, to: in_progress}\n  - {from: in_progress, to: commit_push}\n" +
+			"  - {from: commit_push, to: committed}\n  - {from: committed, to: done}\n"}
+	parent := docindex.Doc{Kind: "workflows", Name: "satelle-parent-workflow",
+		Body: "---\nname: satelle-parent-workflow\ntype: workflow\napplies_to: [\"epic-parent\", \"parent\"]\n---\ntransitions:\n" +
+			"  - {from: backlog, to: done}\n"}
+	stepOf := categoryStepOf([]docindex.Doc{project, parent})
+
+	if got := stepOf("epic-parent", "done"); got != 1 {
+		t.Errorf("epic-parent done = %d, want 1 (parent workflow)", got)
+	}
+	if got := stepOf("feature", "done"); got != 4 {
+		t.Errorf("feature done = %d, want 4 (wildcard project workflow)", got)
+	}
+	// An unknown category with a wildcard present still resolves to the wildcard.
+	if got := stepOf("", "done"); got != 4 {
+		t.Errorf("empty category done = %d, want 4 (wildcard)", got)
+	}
+}
 
 // ev builds a ledger entry with a {from,to} payload.
 func ev(kind, from, to string) ledger.Entry {
