@@ -1037,3 +1037,37 @@ func TestActiveWorkflowPreferringStampWins(t *testing.T) {
 		t.Fatalf("stale stamp → %q,%v; want wf-feature (fallback)", doc.Name, err)
 	}
 }
+
+// TestWorkflowConsistency: two REPO workflows claiming the same wildcard is
+// flagged (over-configuration); an unresolved referenced skill is flagged; a
+// clean set and embedded-only ties are not (sty_4c0c7246).
+func TestWorkflowConsistency(t *testing.T) {
+	repoWild := func(name string) docindex.Doc {
+		return docindex.Doc{Name: name, Embedded: false,
+			Body: "---\nname: " + name + "\ntype: workflow\napplies_to: [\"*\"]\n---\n# w\n"}
+	}
+	// (1) Two repo wildcards → ambiguity flagged.
+	probs := WorkflowConsistency([]docindex.Doc{repoWild("a"), repoWild("b")}, func(string) bool { return true })
+	if len(probs) == 0 || !strings.Contains(strings.Join(probs, "\n"), "same precedence") {
+		t.Errorf("two repo wildcards should be flagged ambiguous, got %v", probs)
+	}
+	// Embedded ties are NOT flagged (the canonical defaults are the single source).
+	emb := func(name string) docindex.Doc {
+		return docindex.Doc{Name: name, Embedded: true,
+			Body: "---\nname: " + name + "\ntype: workflow\napplies_to: [\"*\"]\n---\n# w\n"}
+	}
+	if p := WorkflowConsistency([]docindex.Doc{emb("e1"), emb("e2")}, nil); len(p) != 0 {
+		t.Errorf("embedded ties must not be flagged, got %v", p)
+	}
+	// (2) An unresolved referenced skill is flagged; resolved → clean.
+	wfSkill := docindex.Doc{Name: "x", Embedded: false,
+		Body: "---\nname: x\ntype: workflow\napplies_to: [\"feature\"]\n---\n" +
+			"```dot\ndigraph x {\n  backlog -> in_progress [reviewer_skill=\"missing-skill\"]\n}\n```\n"}
+	miss := WorkflowConsistency([]docindex.Doc{wfSkill}, func(s string) bool { return s != "missing-skill" })
+	if len(miss) == 0 || !strings.Contains(strings.Join(miss, "\n"), "missing-skill") {
+		t.Errorf("unresolved referenced skill should be flagged, got %v", miss)
+	}
+	if ok := WorkflowConsistency([]docindex.Doc{wfSkill}, func(string) bool { return true }); len(ok) != 0 {
+		t.Errorf("a resolved referenced skill is clean, got %v", ok)
+	}
+}

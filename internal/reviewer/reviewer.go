@@ -630,6 +630,82 @@ func (g *Gater) WorkflowNameFor(ctx context.Context, category string) string {
 	return doc.Name
 }
 
+// WorkflowConsistency reports cross-workflow inconsistencies an agent should
+// advise the user about (sty_4c0c7246): (1) OVER-CONFIGURATION — two or more REPO
+// workflows claim the same category (or the wildcard) at the same precedence, so
+// the tiebreak is arbitrary; (2) a workflow that REFERENCES a skill (an edge gate
+// or a node @skill: prompt) which does not resolve in the substrate. Empty when
+// the workflow set is consistent. resolve may be nil to skip the skill check.
+func WorkflowConsistency(workflows []docindex.Doc, resolve func(skill string) bool) []string {
+	var problems []string
+
+	// (1) Ambiguous applies_to among REPO workflows (the embedded defaults are the
+	// single canonical source, so a tie there is not the user's misconfiguration).
+	cats := map[string]bool{}
+	for _, w := range workflows {
+		for _, c := range frontmatterList(w.Body, "applies_to") {
+			cats[c] = true
+		}
+	}
+	for c := range cats {
+		var repo []string
+		for _, w := range workflows {
+			if !w.Embedded && containsStr(frontmatterList(w.Body, "applies_to"), c) {
+				repo = append(repo, w.Name)
+			}
+		}
+		if len(repo) >= 2 {
+			sort.Strings(repo)
+			label := c
+			if c == "*" {
+				label = "* (wildcard)"
+			}
+			problems = append(problems, fmt.Sprintf(
+				"category %s: workflows %s apply at the same precedence — give them distinct applies_to or remove the duplicate", label, strings.Join(repo, ", ")))
+		}
+	}
+
+	// (2) Referenced skills that do not resolve.
+	if resolve != nil {
+		for _, w := range workflows {
+			spec, ok := wfdot.Parse(w.Body)
+			if !ok {
+				continue
+			}
+			for _, s := range referencedWorkflowSkills(spec) {
+				if !resolve(s) {
+					problems = append(problems, fmt.Sprintf(
+						"workflow %s references skill %q which does not resolve in the substrate", w.Name, s))
+				}
+			}
+		}
+	}
+	sort.Strings(problems)
+	return problems
+}
+
+// referencedWorkflowSkills lists every skill a workflow names — node @skill:
+// prompts and edge gates — deduped.
+func referencedWorkflowSkills(spec wfdot.Spec) []string {
+	set := map[string]bool{}
+	for _, s := range spec.States {
+		if s.Skill != "" {
+			set[s.Skill] = true
+		}
+	}
+	for _, tr := range spec.Transitions {
+		if tr.Skill != "" {
+			set[tr.Skill] = true
+		}
+	}
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // OrderedWorkflows returns the workflows that APPLY to a story of the given
 // category, ordered by selection priority (highest first) — the list satelle
 // offers an agent starting a story, where the head is the active/default choice
