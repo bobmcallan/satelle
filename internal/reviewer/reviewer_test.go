@@ -121,8 +121,8 @@ func TestReviewerSystemPromptInjectsPrinciplesAndCTA(t *testing.T) {
 	if strings.Contains(sp, "not resident") {
 		t.Errorf("a non-resident principle must NOT be injected:\n%s", sp)
 	}
-	if !strings.Contains(sp, "satelle doc get") || !strings.Contains(sp, "read-only") {
-		t.Errorf("call-to-action (satelle CLI, read-only) missing:\n%s", sp)
+	if !strings.Contains(sp, "read-only") || !strings.Contains(sp, ".satelle/") {
+		t.Errorf("call-to-action (read-only, reads materialised .satelle substrate) missing:\n%s", sp)
 	}
 	if !strings.Contains(sp, "rubric body") {
 		t.Errorf("the reviewer's own rubric must still ride in the prompt:\n%s", sp)
@@ -546,16 +546,15 @@ func TestSummariseReturnsTrimmedProse(t *testing.T) {
 	if r.got.SystemPrompt != "summariser rubric" {
 		t.Errorf("summariser rubric should be the system prompt, got %q", r.got.SystemPrompt)
 	}
-	// Read-only grant — the agent must not be able to mutate the tree. Bash is
-	// permitted only SCOPED to the satelle CLI (Bash(satelle:*)), never as a bare
-	// shell, so resolving substrate stays read-only.
-	for _, banned := range []string{"Write", "Edit", "NotebookEdit"} {
-		if contains(r.got.AllowedTools, banned) {
-			t.Errorf("tool grant %q must not grant the mutator %q", r.got.AllowedTools, banned)
-		}
+	// Read-only grant (sty_659848ad) — the default is exactly Read,Grep,Glob: no
+	// mutators, and no shell at all (the reviewer reads materialised substrate).
+	if r.got.AllowedTools != "Read,Grep,Glob" {
+		t.Errorf("default reviewer grant = %q, want read-only Read,Grep,Glob", r.got.AllowedTools)
 	}
-	if contains(r.got.AllowedTools, "Bash") && !contains(r.got.AllowedTools, "Bash(satelle:*)") {
-		t.Errorf("any Bash grant must be scoped to satelle, got %q", r.got.AllowedTools)
+	for _, banned := range []string{"Write", "Edit", "NotebookEdit", "Bash"} {
+		if contains(r.got.AllowedTools, banned) {
+			t.Errorf("tool grant %q must not include %q", r.got.AllowedTools, banned)
+		}
 	}
 }
 
