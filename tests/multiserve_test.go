@@ -60,19 +60,22 @@ func TestMultiProjectServe(t *testing.T) {
 	slugB := filepath.Base(repoB)
 
 	// / is the connected-projects landing — a launcher, not any single repo's
-	// project page. It lists every project with counts (not story titles) and
-	// badges the launch repo "launched here".
+	// project page. It lists every project (uniform, no "launched here" badge)
+	// with counts (not story titles), plus the add-a-project help.
 	root := httpGetBody(t, base+"/")
 	for _, want := range []string{
 		"connected project",
-		"launched here",
 		"satelle workspace add",
+		"satelle update",
 		`href="/` + slugA + `/#stories"`,
 		`href="/` + slugB + `/#stories"`,
 	} {
 		if !strings.Contains(root, want) {
 			t.Errorf("landing missing %q:\n%s", want, root)
 		}
+	}
+	if strings.Contains(root, "launched here") {
+		t.Errorf("landing still renders the retired 'launched here' badge:\n%s", root)
 	}
 	if strings.Contains(root, "AlphaOnlyStory") || strings.Contains(root, "BetaOnlyStory") {
 		t.Errorf("landing leaked a project's story titles (it should show counts only):\n%s", root)

@@ -304,20 +304,18 @@ const templatesSrc = `
     <div class="meta">{{len .Projects}} connected project{{if ne (len .Projects) 1}}s{{end}} · <a href="help">help →</a></div>
   </header>
   {{range .Projects}}<a class="proj-card" href="{{.URL}}">
-    <div class="proj-name">{{.Name}} <span class="proj-slug">/{{.Slug}}/</span>{{if .Root}} <span class="proj-slug">launched here</span>{{end}}</div>
+    <div class="proj-name">{{.Name}} <span class="proj-slug">/{{.Slug}}/</span></div>
     <div class="meta">{{.Path}}</div>
     <div class="meta">{{.Stories}} stories · {{.Tasks}} tasks · {{.Docs}} docs</div>
   </a>{{else}}<div class="empty">no projects registered — run <code>satelle workspace add</code></div>{{end}}
-  <section class="help-topic">
-    <h2 class="kind-h">Add a project · install</h2>
-    <pre class="prose">Register a repo on this landing (live — no restart):
-    satelle workspace add /path/to/repo
-It appears here within a few seconds, served at /&lt;slug&gt;/.
-Remove with: satelle workspace remove /path/to/repo
-
-Process guides:    <a href="help">help →</a>
-Keep current:      satelle update      (--check to peek first)</pre>
-  </section>
+  <article class="doc-article landing-help">
+    <h2>Add a project</h2>
+    <p>Register any repo and it appears here within a few seconds, served at <code>/&lt;slug&gt;/</code> — live, no restart:</p>
+    <pre><code>satelle workspace add /path/to/repo</code></pre>
+    <p>Stop serving one with <code>satelle workspace remove &lt;path&gt;</code>; list them with <code>satelle workspace list</code>.</p>
+    <h2>Help &amp; updates</h2>
+    <p><a href="help">Process guides →</a> · keep the binary current with <code>satelle update</code> (<code>--check</code> to peek first).</p>
+  </article>
   {{template "footer"}}
 </div>
 <script src="static/app.js"></script>

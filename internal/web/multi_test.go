@@ -25,7 +25,7 @@ func TestSlugify(t *testing.T) {
 
 func TestProjectsPageListsBoundAndChildren(t *testing.T) {
 	projects := []Project{
-		{Slug: "satelle", Name: "satelle", Path: "/repos/satelle", Root: true},
+		{Slug: "satelle", Name: "satelle", Path: "/repos/satelle"},
 		{Slug: "satelle-homepage", Name: "satelle-homepage", Path: "/repos/satelle-homepage"},
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -45,13 +45,17 @@ func TestProjectsPageListsBoundAndChildren(t *testing.T) {
 	for _, want := range []string{
 		"connected project",                 // landing header
 		`href="/satelle/#stories"`,          // launch repo under its own slug now
-		"launched here",                     // launch repo badged
 		`href="/satelle-homepage/#stories"`, // child under its slug
 		"/satelle-homepage/",                // child slug label
-		"satelle workspace add",             // getting-started panel
+		"satelle workspace add",             // getting-started panel: the add command
+		"satelle update",                    // getting-started panel: keep-current hint
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("projects page missing %q\n---\n%s", want, body)
 		}
+	}
+	// The retired "launched here" badge must be gone — every project is uniform.
+	if strings.Contains(body, "launched here") {
+		t.Errorf("projects page still renders the retired 'launched here' badge:\n%s", body)
 	}
 }

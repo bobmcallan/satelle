@@ -28,7 +28,7 @@ func TestFirstSegment(t *testing.T) {
 }
 
 func TestAssignSlugDedupAndReserved(t *testing.T) {
-	s := newSupervisor(context.Background(), io.Discard, io.Discard, "self", "/repos/bound")
+	s := newSupervisor(context.Background(), io.Discard, io.Discard, "self")
 	// Same base name → de-duplicated.
 	if got := s.assignSlug("/a/repo"); got != "repo" {
 		t.Errorf("first repo slug = %q, want repo", got)
@@ -61,7 +61,7 @@ func TestChildRootsEmptyRegistry(t *testing.T) {
 }
 
 func TestTopHandlerRouting(t *testing.T) {
-	s := newSupervisor(context.Background(), io.Discard, io.Discard, "self", "/repos/bound")
+	s := newSupervisor(context.Background(), io.Discard, io.Discard, "self")
 	// Inject a child by hand (no real process).
 	child := &childProc{
 		project: web.Project{Slug: "alpha", Name: "alpha", Path: "/p/alpha"},
