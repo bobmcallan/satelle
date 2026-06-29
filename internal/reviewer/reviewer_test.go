@@ -590,6 +590,29 @@ func TestOrderedWorkflowsPriority(t *testing.T) {
 	}
 }
 
+// TestOrderedWorkflowsParentCategories asserts a category-specific repo workflow
+// listing several categories (applies_to ["epic-parent","parent"]) leads for EACH
+// of them, overriding the project wildcard — the selection that makes
+// satelle-parent-workflow the active lifecycle for container stories.
+func TestOrderedWorkflowsParentCategories(t *testing.T) {
+	repoWild := docindex.Doc{Name: "satelle-project-workflow", Embedded: false,
+		Body: "---\nscope: project\napplies_to: [\"*\"]\n---\n"}
+	repoParent := docindex.Doc{Name: "satelle-parent-workflow", Embedded: false,
+		Body: "---\nscope: project\napplies_to: [\"epic-parent\", \"parent\"]\n---\n"}
+	all := []docindex.Doc{repoWild, repoParent}
+
+	for _, cat := range []string{"epic-parent", "parent"} {
+		got := OrderedWorkflows(all, cat)
+		if len(got) == 0 || got[0].Name != "satelle-parent-workflow" {
+			t.Errorf("category %q head = %v, want satelle-parent-workflow first", cat, names(got))
+		}
+	}
+	// A non-container category still resolves to the wildcard project workflow.
+	if got := OrderedWorkflows(all, "feature"); len(got) == 0 || got[0].Name != "satelle-project-workflow" {
+		t.Errorf("category feature head = %v, want satelle-project-workflow", names(got))
+	}
+}
+
 func names(ds []docindex.Doc) []string {
 	out := make([]string, len(ds))
 	for i, d := range ds {
