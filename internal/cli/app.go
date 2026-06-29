@@ -117,6 +117,7 @@ func applyActorGrants(rev *reviewer.Gater, a *app.App) {
 	if actors, err := config.LoadActors(filepath.Dir(a.DBPath)); err == nil {
 		rb := actors.ReviewerBinding()
 		rev.SetReviewerTools(rb.Tools)
+		rev.SetReviewerModel(rb.Model)
 		// Select the reviewer's agent CLI from the actors-layer harness binding
 		// (default claude). An unset/in-loop/unresolvable harness keeps the global
 		// [agent] cli configured at construction.
