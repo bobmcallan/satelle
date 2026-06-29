@@ -2,7 +2,7 @@
 name: satelle-baseline-workflow
 scope: system
 type: workflow
-tags: [kind:workflow]
+tags: [type:workflow]
 applies_to: ["*"]
 description: The canonical order-zero lifecycle every satelle repo inherits from the binary — backlog → in_progress → done, with a cancelled exit — authored in the DOT standard (the actor model). The begin-work edge is gated by satelle-story-intent-review and the close by satelle-story-done-review (a reviewer node), so a story is judged well-formed before work and quality-checked before it closes. This is the EMBEDDED canonical default (config/substrate/workflows); a repo MAY override it by placing a same-named file under .satelle/workflows, but never edits this source.
 ---
