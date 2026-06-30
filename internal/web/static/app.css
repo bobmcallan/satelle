@@ -43,7 +43,10 @@ footer { margin-top: 40px; color: var(--muted); font-size: 12px; border-top: 1px
 .site-footer .footer-email { color: var(--muted); }
 .site-footer .footer-version { margin-left: auto; }
 
-.wrap { max-width: 1040px; margin: 0 auto; padding: 28px 24px 64px; }
+/* Page width (sty_aed93a00): standard/wide viewports get ~10% side margins
+   (content is 80% of the viewport); super-wide viewports cap at a reasonable
+   max-width so the layout never sprawls full-bleed. */
+.wrap { width: 80%; max-width: 1600px; margin: 0 auto; padding: 28px 24px 64px; }
 
 /* Breadcrumbs */
 .crumbs { font-size: 12.5px; color: var(--muted); margin-bottom: 14px; font-family: var(--mono); }
@@ -54,20 +57,23 @@ footer { margin-top: 40px; color: var(--muted); font-size: 12px; border-top: 1px
 /* Title cell + tags-under-title */
 .wi-tags { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
 .tagchip { font-size: 10.5px; color: var(--muted); background: var(--chip); border-radius: 0; padding: 0 6px; line-height: 1.6; }
-/* Key:value tag chip (e.g. epic:summariser) — the WHOLE chip reads as its
-   NAMESPACE colour (sty_970dbef3): a filled key + a tinted value + a matching
-   border, all driven by one --chip-c hue. Default namespace is green (--accent,
-   which already flips per theme); category:<v> is tan/amber, like the reference. */
+/* Key:value tag chip (e.g. epic:summariser) — the satellites language (sty_aed93a00):
+   ONE uniform, low-contrast chip, not a loud filled-key/tinted-value split. A single
+   translucent tint of the namespace --chip-c carries soft text mixed toward the
+   foreground, so it stays subtle and legible on BOTH themes. The key is just bolder
+   than the value, with a faint ':' separator. Default namespace is the satellites
+   blue-grey; category:<v> is amber. */
 .tagchip.kv {
-  --chip-c: var(--accent);
-  display: inline-flex; padding: 0; overflow: hidden; border-radius: 0;
+  --chip-c: #6a9fb5;
+  display: inline-flex; padding: 0 6px; border-radius: 0;
   font-size: 10.5px; line-height: 1.6;
-  border: 1px solid color-mix(in srgb, var(--chip-c) 50%, transparent);
+  background: color-mix(in srgb, var(--chip-c) 16%, transparent);
+  color: color-mix(in srgb, var(--chip-c) 60%, var(--ink));
 }
-.tagchip.kv .k { background: var(--chip-c); color: #fff; padding: 0 5px; font-weight: 600; }
-.tagchip.kv .v { background: color-mix(in srgb, var(--chip-c) 13%, transparent); color: var(--chip-c); padding: 0 6px; }
-.tagchip.kv.cat { --chip-c: #b45309; } /* category: tan/amber namespace, like satellites */
-[data-theme="dark"] .tagchip.kv.cat { --chip-c: #d98c1f; } /* brighter amber, legible on the dark panel */
+.tagchip.kv .k { font-weight: 600; }
+.tagchip.kv .k::after { content: ":"; opacity: .55; font-weight: 400; }
+.tagchip.kv .v { opacity: .9; }
+.tagchip.kv.cat { --chip-c: #b9863f; } /* category: amber namespace, like satellites */
 /* A clickable chip is a <button> that adds its tag to the panel filter; reset the
    button chrome so it reads identically to the span chip, plus a click affordance. */
 button.tagchip { font-family: inherit; border: 0; margin: 0; cursor: pointer; }
@@ -112,14 +118,17 @@ header.app h1 .dot { color: var(--accent); }
 .filter-count { position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
   color: var(--muted); font-size: 12px; font-family: var(--mono); pointer-events: none; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+/* Filter chips — theme-variable driven so they read on BOTH themes (sty_aed93a00:
+   the old hardcoded #374151/#eef2f7 were invisible on the dark panel). A muted,
+   dashed default chip, like the satellites filter strip. */
 .fchip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 0;
-  background: var(--chip); color: #374151; font-size: 12px; }
-.fchip.is-default { background: #eef2f7; color: #64748b; }
+  background: var(--chip); color: var(--ink); border: 1px solid var(--line); font-size: 12px; }
+.fchip.is-default { background: none; color: var(--muted); border-style: dashed; }
 .fchip button { border: 0; background: none; color: inherit; font-size: 13px; line-height: 1; padding: 0; opacity: .6; }
 .fchip button:hover { opacity: 1; }
 .fchip-clear { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 0;
-  border: 1px solid var(--chip); background: none; color: #64748b; font-size: 12px; cursor: pointer; }
-.fchip-clear:hover { color: #374151; border-color: #94a3b8; }
+  border: 1px solid var(--line); background: none; color: var(--muted); font-size: 12px; cursor: pointer; }
+.fchip-clear:hover { color: var(--ink); border-color: var(--muted); }
 
 /* Tables — base th/td/table styling is global; these are the panel variants. */
 .panel-table tr.row { cursor: pointer; }
@@ -144,19 +153,18 @@ header.app h1 .dot { color: var(--accent); }
   animation: review-pulse 1.4s ease-in-out infinite; }
 @keyframes review-pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
 
-/* Status badges / pills — UPPERCASE, OUTLINED pills (sty_970dbef3): a coloured
-   border + matching coloured text on a transparent fill, so the same per-status
-   --badge-c hue reads on BOTH themes (no light/dark fill to flip). Every workflow
-   state this repo uses carries its own --badge-c; --badge-c also drives a faint
-   tinted fill via color-mix for a touch of body without losing the outline look.
-   An unknown status falls back to --muted (only a status the workflow never
-   declares can land here). */
+/* Status badges / pills — UPPERCASE, SUBTLE pills (sty_aed93a00, softening
+   sty_970dbef3 to the satellites language): the per-status --badge-c hue drives a
+   faint tinted fill and a soft border, but the TEXT is mixed toward the foreground
+   (--ink) rather than laid on as a saturated hue — so the label reads cleanly on
+   BOTH themes (a bright mint on white was low-contrast). Every workflow state carries
+   its own --badge-c; an unknown status falls back to --muted. */
 .badge {
   display: inline-block; padding: 0 8px; border-radius: 0;
   font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
-  color: var(--badge-c, var(--muted));
-  border: 1px solid var(--badge-c, var(--muted));
-  background: color-mix(in srgb, var(--badge-c, var(--muted)) 9%, transparent);
+  color: color-mix(in srgb, var(--badge-c, var(--muted)) 62%, var(--ink));
+  border: 1px solid color-mix(in srgb, var(--badge-c, var(--muted)) 42%, transparent);
+  background: color-mix(in srgb, var(--badge-c, var(--muted)) 11%, transparent);
 }
 .badge.s-backlog     { --badge-c: #2ecc71; } /* mint green — reference: BACKLOG is a green pill */
 .badge.s-open        { --badge-c: #6366f1; } /* indigo */

@@ -239,13 +239,18 @@ func TestStatusBadgesOutlinedPills(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("/static/app.css = %d", code)
 	}
-	// Outlined + uppercase: the base .badge is text-transform uppercase with a
-	// border driven by the per-status hue, on a transparent (not filled) ground.
+	// Subtle + uppercase (sty_aed93a00): the base .badge is text-transform uppercase
+	// with a SOFTENED border driven by the per-status hue (color-mix toward
+	// transparent), and the label text mixed toward the foreground (--ink) so it
+	// reads on both themes rather than as a saturated hue on the panel.
 	if !strings.Contains(css, "text-transform: uppercase") {
 		t.Errorf("badge should be uppercase (text-transform: uppercase)")
 	}
-	if !strings.Contains(css, "border: 1px solid var(--badge-c") {
-		t.Errorf("badge should be outlined with the per-status --badge-c colour")
+	if !strings.Contains(css, "border: 1px solid color-mix(in srgb, var(--badge-c") {
+		t.Errorf("badge should be outlined with a softened (color-mix) --badge-c border")
+	}
+	if !strings.Contains(css, "color: color-mix(in srgb, var(--badge-c, var(--muted)) 62%, var(--ink))") {
+		t.Errorf("badge text should be softened toward --ink for both-theme legibility")
 	}
 	// Every workflow state used by this repo defines its own colour — no grey fallback.
 	for _, st := range []string{"backlog", "in_progress", "integration", "commit", "push", "committed", "done", "cancelled"} {
