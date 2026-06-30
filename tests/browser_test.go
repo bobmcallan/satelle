@@ -425,22 +425,137 @@ func TestBrowserStatusBadgesOutlined(t *testing.T) {
 		if tt := read(`#panel-stories .badge.s-backlog`, "textTransform"); tt != "uppercase" {
 			t.Errorf("[%s] backlog badge should be uppercase; got %q", mode, tt)
 		}
-		// Border colour matches the text colour (the outlined treatment).
+		// Subtle treatment (sty_aed93a00): a visible TINTED border, but the text is
+		// softened toward the foreground rather than the raw saturated hue — so the
+		// border colour no longer equals the text colour.
 		bc := read(`#panel-stories .badge.s-backlog`, "borderTopColor")
-		tc := read(`#panel-stories .badge.s-backlog`, "color")
-		if bc != tc {
-			t.Errorf("[%s] backlog badge border (%q) should match its text colour (%q)", mode, bc, tc)
+		if bc == "" || strings.HasPrefix(bc, "rgba(0, 0, 0, 0") {
+			t.Errorf("[%s] backlog badge should keep a visible tinted border; got %q", mode, bc)
 		}
-		// backlog (#2ecc71) and done (#16a34a) are distinct hues.
+		tc := read(`#panel-stories .badge.s-backlog`, "color")
+		if tc == bc {
+			t.Errorf("[%s] backlog badge text should be softened toward the foreground, not the raw border hue (both %q)", mode, tc)
+		}
+		// backlog (#2ecc71) and done (#16a34a) stay distinct hues.
 		if doneC := read(`#panel-stories .badge.s-done`, "color"); doneC == tc {
 			t.Errorf("[%s] backlog and done badges must be distinct colours; both %q", mode, tc)
 		}
-		// Legible in dark: the backlog hue is light/saturated enough to read.
-		if mode == "dark" {
-			r, g, b := parseRGB(t, tc)
-			if r+g+b < 200 {
-				t.Errorf("[dark] backlog badge text too dark to read; got %q", tc)
-			}
+		// Legible on BOTH themes: the softened text keeps enough channel sum to read
+		// against the panel (the readability goal — bright mint on white was poor).
+		r, g, b := parseRGB(t, tc)
+		if mode == "dark" && r+g+b < 200 {
+			t.Errorf("[dark] backlog badge text too dark to read; got %q", tc)
+		}
+		if mode == "light" && r+g+b > 690 {
+			t.Errorf("[light] backlog badge text too washed out to read on the light panel; got %q", tc)
+		}
+	}
+}
+
+// TestBrowserSubtleTagChips asserts the satellites subtle-tile alignment (sty_aed93a00):
+// a kv tag chip is ONE uniform translucent chip — the key carries NO opaque fill (the
+// loud filled key is gone), the chip background is a single translucent tint, and the
+// ':' separator is preserved — while filter chips stay legible in dark theme (the old
+// hardcoded light-only colours were invisible there).
+func TestBrowserSubtleTagChips(t *testing.T) {
+	base, repo := serveRepo(t, "8818")
+	// A category (→ category:feature kv chip) plus an epic kv tag.
+	mustRun(t, testBin, repo, "story", "create", "--title", "Subtle", "--category", "feature", "--tags", "epic:issue-intake")
+
+	ctx := newChrome(t)
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/"),
+		chromedp.WaitVisible(`#panel-stories table.panel-table`, chromedp.ByQuery),
+		chromedp.WaitVisible(`#panel-stories tr.row .tagchip.kv .k`, chromedp.ByQuery),
+		// surface a removable .fchip in the filter strip
+		setInput(`#panel-stories .filterbar input`, "status:all"),
+		chromedp.WaitVisible(`#panel-stories .chips .fchip`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("load page: %v", err)
+	}
+
+	read := func(sel, prop string) string {
+		var v string
+		js := fmt.Sprintf(`getComputedStyle(document.querySelector('%s')).%s`, sel, prop)
+		if err := chromedp.Run(ctx, chromedp.Evaluate(js, &v)); err != nil {
+			t.Fatalf("read %s.%s: %v", sel, prop, err)
+		}
+		return v
+	}
+	setTheme := func(mode string) {
+		if err := chromedp.Run(ctx, chromedp.Evaluate(
+			fmt.Sprintf(`document.documentElement.setAttribute('data-theme','%s')`, mode), nil)); err != nil {
+			t.Fatalf("set theme %s: %v", mode, err)
+		}
+	}
+
+	kv := `#panel-stories tr.row .tagchip.kv`
+	// AC1: the key carries NO opaque fill (the loud filled key is gone).
+	if bg := read(kv+` .k`, "backgroundColor"); bg != "rgba(0, 0, 0, 0)" && bg != "transparent" {
+		t.Errorf("kv key should have no fill (uniform subtle chip); got %q", bg)
+	}
+	// AC1: the chip itself is a single translucent tint (alpha < 1), not a solid block.
+	if chipBg := read(kv, "backgroundColor"); !translucent(chipBg) {
+		t.Errorf("kv chip background should be a translucent tint; got %q", chipBg)
+	}
+	// AC1: the key:value ':' separator is preserved (via .k::after).
+	var colon string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(
+		fmt.Sprintf(`getComputedStyle(document.querySelector('%s .k'), '::after').content`, kv), &colon)); err != nil {
+		t.Fatalf("read ::after content: %v", err)
+	}
+	if !strings.Contains(colon, ":") {
+		t.Errorf("kv chip should keep the ':' separator; got %q", colon)
+	}
+
+	// AC3: filter chips read in dark — the chip text must be light enough to see on
+	// the dark panel (the old hardcoded #374151 was invisible there).
+	for _, mode := range []string{"light", "dark"} {
+		setTheme(mode)
+		fc := read(`#panel-stories .chips .fchip`, "color")
+		r, g, b := parseRGB(t, fc)
+		if mode == "dark" && r+g+b < 300 {
+			t.Errorf("[dark] filter chip text too dark to read on the dark panel; got %q", fc)
+		}
+	}
+}
+
+// TestBrowserPageWidth asserts the wider layout (sty_aed93a00): the content wrap
+// takes ~80% of the viewport (≈10% side margins) but is capped at a reasonable
+// max-width so a super-wide viewport never goes full-bleed.
+func TestBrowserPageWidth(t *testing.T) {
+	base, repo := serveRepo(t, "8819")
+	createStory(t, repo, "Width", "")
+
+	ctx := newChrome(t)
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/"),
+		chromedp.WaitVisible(`.wrap`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("load page: %v", err)
+	}
+	var maxW string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`getComputedStyle(document.querySelector('.wrap')).maxWidth`, &maxW)); err != nil {
+		t.Fatalf("read maxWidth: %v", err)
+	}
+	if maxW != "1600px" {
+		t.Errorf("wrap should cap at a reasonable max-width (1600px); got %q", maxW)
+	}
+	var wrapW, innerW float64
+	if err := chromedp.Run(ctx,
+		chromedp.Evaluate(`document.querySelector('.wrap').getBoundingClientRect().width`, &wrapW),
+		chromedp.Evaluate(`window.innerWidth`, &innerW),
+	); err != nil {
+		t.Fatalf("measure widths: %v", err)
+	}
+	// Margins exist: the wrap is narrower than the viewport (not full-bleed).
+	if wrapW >= innerW {
+		t.Errorf("wrap (%.0f) should leave side margins, narrower than the viewport (%.0f)", wrapW, innerW)
+	}
+	// Below the cap, the wrap sits near 80% of the viewport (≈10% margins each side).
+	if innerW*0.8 <= 1600 {
+		if ratio := wrapW / innerW; ratio < 0.7 || ratio > 0.9 {
+			t.Errorf("wrap should be ~80%% of a sub-cap viewport; got ratio %.2f (wrap %.0f / inner %.0f)", ratio, wrapW, innerW)
 		}
 	}
 }
@@ -507,17 +622,45 @@ func TestBrowserSquaredEdges(t *testing.T) {
 	}
 }
 
-// parseRGB pulls the r,g,b channels out of a CSS "rgb(r, g, b)" / "rgba(...)"
-// computed-style string.
+// parseRGB pulls the r,g,b channels (0–255) out of a CSS computed-colour string,
+// handling both the legacy "rgb(...)"/"rgba(...)" forms and Chrome's "color(srgb
+// R G B [/ A])" output for color-mix() (where R,G,B are 0–1 floats).
 func parseRGB(t *testing.T, s string) (int, int, int) {
 	t.Helper()
 	var r, g, b int
-	if _, err := fmt.Sscanf(s, "rgb(%d, %d, %d)", &r, &g, &b); err != nil {
-		if _, err2 := fmt.Sscanf(s, "rgba(%d, %d, %d", &r, &g, &b); err2 != nil {
-			t.Fatalf("parseRGB %q: %v", s, err)
+	if _, err := fmt.Sscanf(s, "rgb(%d, %d, %d)", &r, &g, &b); err == nil {
+		return r, g, b
+	}
+	if _, err := fmt.Sscanf(s, "rgba(%d, %d, %d", &r, &g, &b); err == nil {
+		return r, g, b
+	}
+	var rf, gf, bf float64
+	if _, err := fmt.Sscanf(s, "color(srgb %g %g %g", &rf, &gf, &bf); err == nil {
+		return int(rf*255 + 0.5), int(gf*255 + 0.5), int(bf*255 + 0.5)
+	}
+	t.Fatalf("parseRGB %q: unrecognised colour format", s)
+	return 0, 0, 0
+}
+
+// translucent reports whether a computed colour string carries alpha < 1, across
+// both Chrome's "color(srgb R G B / A)" (color-mix) and "rgba(r, g, b, a)" forms.
+func translucent(s string) bool {
+	if i := strings.Index(s, "/"); i >= 0 {
+		var a float64
+		if _, err := fmt.Sscanf(s[i:], "/ %g", &a); err == nil {
+			return a < 1
 		}
 	}
-	return r, g, b
+	if strings.HasPrefix(s, "rgba(") {
+		parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(s, "rgba("), ")"), ",")
+		if len(parts) == 4 {
+			var a float64
+			if _, err := fmt.Sscanf(strings.TrimSpace(parts[3]), "%g", &a); err == nil {
+				return a < 1
+			}
+		}
+	}
+	return false
 }
 
 // TestBrowserTimelineDotsByOutcome asserts at the computed-colour level that the
