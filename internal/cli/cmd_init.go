@@ -134,6 +134,15 @@ func runInit(out io.Writer, repoRoot string) error {
 		fmt.Fprintln(out, line)
 	}
 
+	// 3c. Materialise the embedded operating PRINCIPLES into .satelle/principles when
+	//     absent. The runtime index no longer overlays embedded docs (sty_94da9ac9),
+	//     so the principles:always resident + the on-demand operating principles must
+	//     live on disk to be LISTED (SessionStart injection) and discoverable. The
+	//     baseline WORKFLOW stays embedded-only (Get fallback); only principles seed here.
+	for _, line := range materializePrinciples(dataDir) {
+		fmt.Fprintln(out, line)
+	}
+
 	// 4. The per-repo database — open (creating + migrating) then close, so a
 	//    fresh repo lands a ready satelle.db with no first-command surprise.
 	dbPath := filepath.Join(dataDir, config.DefaultDBName)
@@ -379,6 +388,29 @@ func ensureReadme(dir, kind string) (bool, error) {
 // visible/editable on disk. It is a no-op when the workflows dir already holds an
 // authored workflow (never clobber, never create a competing wildcard workflow).
 // Returns report lines.
+// materializePrinciples writes every embedded default PRINCIPLE into
+// .satelle/principles when absent, so the operating principles — including the
+// principles:always resident — live on disk and are LISTED for SessionStart
+// injection + doc-list discovery (the runtime index no longer overlays embedded
+// docs, sty_94da9ac9). Embedded principles remain the canonical seed; an existing
+// on-disk file is never clobbered.
+func materializePrinciples(dataDir string) []string {
+	var lines []string
+	for _, d := range config.EmbeddedDefaults() {
+		if d.Kind != "principles" {
+			continue
+		}
+		p := filepath.Join(dataDir, "principles", d.Name+".md")
+		if fileExists(p) {
+			continue
+		}
+		if err := os.WriteFile(p, []byte(d.Body), 0o644); err == nil {
+			lines = append(lines, initLine(true, config.DefaultDataDir+"/principles/"+d.Name+".md"))
+		}
+	}
+	return lines
+}
+
 func materializeBaseline(dataDir string) []string {
 	wfDir := filepath.Join(dataDir, "workflows")
 	if hasMarkdown(wfDir) {

@@ -16,6 +16,11 @@ import (
 	"github.com/bobmcallan/satelle/internal/reviewer"
 )
 
+// baselineWorkflowName is the canonical order-zero default the gater falls back to
+// by name (it is embedded-only — never an editable repo file, sty_3f9a6124). Kept
+// in sync with the reviewer package's const.
+const baselineWorkflowName = "satelle-baseline-workflow"
+
 func init() {
 	wf := &cobra.Command{Use: "workflow", Short: "Inspect workflows (read-only)"}
 
@@ -33,9 +38,27 @@ default. The head of the list is the active workflow the reviewer enforces.`,
 			if err != nil {
 				return err
 			}
-			docs, err := a.Store.DocIndex.List(context.Background(), "workflows")
+			ctx := context.Background()
+			docs, err := a.Store.DocIndex.List(ctx, "workflows")
 			if err != nil {
 				return err
+			}
+			// List enumerates only on-disk .satelle workflows (sty_94da9ac9). This is
+			// a RESOLUTION query — "what governs this category" — so include the embedded
+			// order-zero baseline as the fallback candidate (resolved by name via Get),
+			// since it governs any category no project workflow covers. A repo file of
+			// the same name already on disk wins and is not duplicated.
+			if base, gerr := a.Store.DocIndex.Get(ctx, "workflows", baselineWorkflowName); gerr == nil {
+				present := false
+				for _, d := range docs {
+					if d.Name == base.Name {
+						present = true
+						break
+					}
+				}
+				if !present {
+					docs = append(docs, base)
+				}
 			}
 			ordered := reviewer.OrderedWorkflows(docs, category)
 			out := make([]workflowChoice, 0, len(ordered))

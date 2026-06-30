@@ -11,8 +11,10 @@ import (
 
 // TestInitSkeleton drives the real binary to prove `satelle init` lays a
 // complete, self-documenting skeleton (sty_a2170bbf): the tomls, a README per
-// authored dir (incl. stories), and the materialised baseline workflow + the
-// embedded skill it references. A second run is idempotent.
+// authored dir (incl. stories), the embedded skill the baseline references, and the
+// embedded operating PRINCIPLES materialised on disk (sty_94da9ac9 — the runtime
+// index no longer overlays embedded docs, so they must live in .satelle). A second
+// run is idempotent.
 func TestInitSkeleton(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
@@ -25,6 +27,10 @@ func TestInitSkeleton(t *testing.T) {
 		".satelle/principles/README.md",
 		".satelle/skills/README.md",
 		".satelle/skills/satelle-step-summary.md",
+		// Embedded operating principles are materialised so List-based SessionStart
+		// injection + doc-list discovery find them on disk (sty_94da9ac9).
+		".satelle/principles/satelle-agent-goals.md",
+		".satelle/principles/satelle-agent-model.md",
 	} {
 		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
 			t.Errorf("init did not create %s: %v", rel, err)

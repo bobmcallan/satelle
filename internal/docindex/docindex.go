@@ -69,10 +69,11 @@ func Migrate(db *sql.DB) error {
 }
 
 // Store indexes authored markdown into the authored_docs table. It also carries
-// the binary's embedded canonical defaults, overlaid UNDER the on-disk index at
-// read time: a disk file with the same (kind, name) overrides its default, so a
-// repo layers its own authored markdown on top of the defaults without editing
-// them. The disk index itself (Sync) stays purely file-driven.
+// the binary's embedded canonical defaults, consulted ONLY as a by-name fallback in
+// Get (sty_94da9ac9): List and Count enumerate just the on-disk .satelle docs, so a
+// default is never shown as a project doc — it resolves by name (the gating baseline,
+// on-demand principles) but is otherwise materialised onto disk by init. The disk
+// index itself (Sync) stays purely file-driven.
 type Store struct {
 	db       *sql.DB
 	defaults []Doc // embedded canonical defaults, normalised; keyed by (Kind, Name)
@@ -102,22 +103,6 @@ func (s *Store) SetDefaults(defs []Doc) {
 		out = append(out, d)
 	}
 	s.defaults = out
-}
-
-// unshadowedDefaults returns the embedded defaults for kind (empty = all kinds)
-// that no on-disk doc shadows, keyed by the (kind, name) pairs already present.
-func (s *Store) unshadowedDefaults(kind string, present map[[2]string]struct{}) []Doc {
-	var out []Doc
-	for _, d := range s.defaults {
-		if kind != "" && d.Kind != kind {
-			continue
-		}
-		if _, shadowed := present[[2]string{d.Kind, d.Name}]; shadowed {
-			continue
-		}
-		out = append(out, d)
-	}
-	return out
 }
 
 // SyncResult reports what a Sync pass changed.
@@ -249,7 +234,6 @@ func (s *Store) List(ctx context.Context, kind string) ([]Doc, error) {
 	}
 	defer rows.Close()
 	out := []Doc{}
-	present := map[[2]string]struct{}{}
 	for rows.Next() {
 		var (
 			d              Doc
@@ -262,22 +246,15 @@ func (s *Store) List(ctx context.Context, kind string) ([]Doc, error) {
 		d.ModTime = parseTime(modS)
 		d.IndexedAt = parseTime(indexedS)
 		out = append(out, d)
-		present[[2]string{d.Kind, d.Name}] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// Overlay embedded defaults the disk index does not shadow, then re-sort so
-	// defaults interleave with disk docs in the same (kind, name) order.
-	if defs := s.unshadowedDefaults(kind, present); len(defs) > 0 {
-		out = append(out, defs...)
-		sort.Slice(out, func(i, j int) bool {
-			if out[i].Kind != out[j].Kind {
-				return out[i].Kind < out[j].Kind
-			}
-			return out[i].Name < out[j].Name
-		})
-	}
+	// Embedded defaults are NOT overlaid into List (sty_94da9ac9): the runtime list
+	// enumerates ONLY on-disk .satelle docs, so a canonical default is never shown as
+	// a project doc. Defaults remain resolvable by name via Get's fallback (the
+	// gating baseline + on-demand principles), and are materialised onto disk by init.
+	// The query's ORDER BY already sorts the result.
 	return out, nil
 }
 
@@ -294,41 +271,9 @@ func (s *Store) Count(ctx context.Context, kind string) (int, error) {
 	if err := s.db.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
 		return 0, fmt.Errorf("docindex: count: %w", err)
 	}
-	// Add embedded defaults the disk index does not shadow. Cheap to resolve via
-	// the per-kind present-set, matching what List would return.
-	if len(s.defaults) > 0 {
-		present, err := s.presentKeys(ctx, kind)
-		if err != nil {
-			return 0, err
-		}
-		n += len(s.unshadowedDefaults(kind, present))
-	}
+	// Count mirrors List: only on-disk docs (embedded defaults are not overlaid —
+	// sty_94da9ac9).
 	return n, nil
-}
-
-// presentKeys returns the (kind, name) pairs already in the disk index for kind
-// (empty = all kinds) — the shadow set the default overlay subtracts.
-func (s *Store) presentKeys(ctx context.Context, kind string) (map[[2]string]struct{}, error) {
-	q := `SELECT kind, name FROM authored_docs`
-	var args []any
-	if strings.TrimSpace(kind) != "" {
-		q += ` WHERE kind = ?`
-		args = append(args, kind)
-	}
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("docindex: present keys: %w", err)
-	}
-	defer rows.Close()
-	out := map[[2]string]struct{}{}
-	for rows.Next() {
-		var k, n string
-		if err := rows.Scan(&k, &n); err != nil {
-			return nil, err
-		}
-		out[[2]string{k, n}] = struct{}{}
-	}
-	return out, rows.Err()
 }
 
 // Fingerprint returns a cheap change-signal for the index — count plus the

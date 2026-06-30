@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -41,9 +40,9 @@ func TestProgressLightsPerCategoryWorkflow(t *testing.T) {
 	srv, db := newServer(t)
 	ctx := context.Background()
 
-	db.DocIndex.SetDefaults([]docindex.Doc{
-		{Kind: "workflows", Name: "satelle-project-workflow", Body: projectWFDoc},
-		{Kind: "workflows", Name: "satelle-parent-workflow", Body: parentWFDoc},
+	indexDocs(t, db, "workflows", map[string]string{
+		"satelle-project-workflow": projectWFDoc,
+		"satelle-parent-workflow":  parentWFDoc,
 	})
 
 	epic, err := db.Stories.Create(ctx, workitem.CreateInput{Kind: workitem.KindStory, Title: "Epic close", Category: "epic-parent", Status: "done"}, time.Now())

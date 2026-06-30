@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -46,6 +47,25 @@ func newServer(t *testing.T) (*httptest.Server, *store.DB) {
 		verb.SetDocIndexStore(nil)
 	})
 	return srv, db
+}
+
+// indexDocs writes each name→body of kind to a temp dir and Syncs it into the
+// index, making them LISTED on-disk docs. Embedded defaults are no longer overlaid
+// into List (sty_94da9ac9), so a test that needs a doc enumerated must put it on disk.
+func indexDocs(t *testing.T, db *store.DB, kind string, docs map[string]string) {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), kind)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range docs {
+		if err := os.WriteFile(filepath.Join(dir, name+".md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.DocIndex.Sync(context.Background(), map[string]string{kind: dir}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func get(t *testing.T, url string) (int, string) {
@@ -446,10 +466,11 @@ func TestHelpPageRendersTopics(t *testing.T) {
 
 func TestWorkflowTabAndFragment(t *testing.T) {
 	srv, db := newServer(t)
-	// Seed a workflow via the embedded-defaults overlay (no disk needed): it
-	// surfaces through doc-list (the panel) and doc-get (the fragment).
+	// Seed a workflow on disk: it surfaces through doc-list (the panel) and doc-get
+	// (the fragment). Embedded defaults are not listed (sty_94da9ac9), so the panel
+	// row requires an on-disk doc.
 	body := "---\nname: wf-x\napplies_to: [\"web\"]\n---\nstates:\n  - backlog\n  - done\ntransitions:\n  - {from: backlog, to: done, reviewer_skill: \"x-done-review\"}\n"
-	db.DocIndex.SetDefaults([]docindex.Doc{{Kind: "workflows", Name: "wf-x", Body: body}})
+	indexDocs(t, db, "workflows", map[string]string{"wf-x": body})
 
 	code, page := get(t, srv.URL+"/")
 	if code != 200 || !strings.Contains(page, `data-panel="workflow"`) {
