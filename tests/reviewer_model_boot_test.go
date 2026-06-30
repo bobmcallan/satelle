@@ -22,17 +22,20 @@ func TestReviewerModelActorsBoots(t *testing.T) {
 
 	mustRun(t, bin, repo, "init")
 
-	// Overwrite the scaffold actors.toml with this repo's real, activated one.
+	// Overwrite the scaffold agents.toml with this repo's real, activated binding
+	// (read from the repo's legacy actors.toml source — renamed to agents.toml in a
+	// later slice). Writing the canonical agents.toml ensures it is the binding the
+	// loader resolves (it wins over any legacy file).
 	src := filepath.Join(repoRootForTest(), ".satelle", "actors.toml")
 	body, err := os.ReadFile(src)
 	if err != nil {
-		t.Fatalf("read actors source %s: %v", src, err)
+		t.Fatalf("read agents source %s: %v", src, err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".satelle", "actors.toml"), body, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "agents.toml"), body, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	// The binary opens the store (applyActorGrants resolves the [reviewer] binding,
+	// The binary opens the store (applyAgentGrants resolves the [reviewer] binding,
 	// SetReviewerModel("sonnet")) on every command — these must succeed with the
 	// activated config present.
 	mustRun(t, bin, repo, "index")

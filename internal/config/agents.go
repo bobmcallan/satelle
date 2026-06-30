@@ -10,13 +10,13 @@ import (
 // AgentsConfigName is the canonical per-repo agents-binding file, beside
 // satelle.toml under the data dir (.satelle/agents.toml). ActorsConfigName is the
 // legacy filename, still loaded as a fallback (sty_536f9960) until the rename
-// completes; LoadActors prefers agents.toml when both are present.
+// completes; LoadAgents prefers agents.toml when both are present.
 const (
 	AgentsConfigName = "agents.toml"
 	ActorsConfigName = "actors.toml"
 )
 
-// Default actor grants — TODAY's behaviour, so an absent actors.toml changes
+// Default agent grants — TODAY's behaviour, so an absent agents.toml changes
 // nothing: the executor drives in-loop (the agent itself); the reviewer runs as
 // an isolated agent with a READ-ONLY tool grant (see the
 // satelle-actor-model principle — the reviewer is limited to reviewing).
@@ -25,31 +25,31 @@ const (
 	// DefaultReviewerHarness is the bare claude PRESET name — a single token, so
 	// agentcli.RunnerFromHarness expands it to the built-in claude template
 	// (which carries the read-only --disallowedTools denylist). A repo overrides
-	// it with a full command template (multi-token) in actors.toml.
+	// it with a full command template (multi-token) in agents.toml.
 	DefaultReviewerHarness = "claude"
 	DefaultReviewerTools   = "Read,Grep,Glob"
 )
 
-// ActorBinding binds one actor to a backend (how/where it runs) and its grant
+// AgentBinding binds one agent to a backend (how/where it runs) and its grant
 // (the tool allowance, and an optional model). Empty fields take the defaults.
-type ActorBinding struct {
+type AgentBinding struct {
 	Harness string `toml:"harness"`
 	Tools   string `toml:"tools"`
 	Model   string `toml:"model"`
 }
 
-// ActorsConfig is the on-disk shape at .satelle/actors.toml — the actors layer.
+// AgentsConfig is the on-disk shape at .satelle/agents.toml — the agents layer.
 // Every field is optional; the *Binding resolvers supply today's defaults, so
 // the zero value (and an absent file) is the current behaviour.
-type ActorsConfig struct {
-	Executor ActorBinding `toml:"executor"`
-	Reviewer ActorBinding `toml:"reviewer"`
+type AgentsConfig struct {
+	Executor AgentBinding `toml:"executor"`
+	Reviewer AgentBinding `toml:"reviewer"`
 }
 
-// ReviewerBinding resolves the reviewer actor's backend and grant, defaulting to
+// ReviewerBinding resolves the reviewer agent's backend and grant, defaulting to
 // an isolated agent with the read-only tool grant. The grant travels with the
 // binding, so the reviewer's read-only limit holds whatever the backend.
-func (a ActorsConfig) ReviewerBinding() ActorBinding {
+func (a AgentsConfig) ReviewerBinding() AgentBinding {
 	b := a.Reviewer
 	if b.Harness == "" {
 		b.Harness = DefaultReviewerHarness
@@ -60,9 +60,9 @@ func (a ActorsConfig) ReviewerBinding() ActorBinding {
 	return b
 }
 
-// ExecutorBinding resolves the executor actor's backend, defaulting to in-loop
+// ExecutorBinding resolves the executor agent's backend, defaulting to in-loop
 // (the driving agent itself).
-func (a ActorsConfig) ExecutorBinding() ActorBinding {
+func (a AgentsConfig) ExecutorBinding() AgentBinding {
 	b := a.Executor
 	if b.Harness == "" {
 		b.Harness = DefaultExecutorHarness
@@ -70,11 +70,11 @@ func (a ActorsConfig) ExecutorBinding() ActorBinding {
 	return b
 }
 
-// LoadActors reads the agents layer from <dataDir>, preferring the canonical
+// LoadAgents reads the agents layer from <dataDir>, preferring the canonical
 // agents.toml and falling back to the legacy actors.toml (sty_536f9960). An absent
-// file (neither present) yields the zero ActorsConfig — defaults via the *Binding
+// file (neither present) yields the zero AgentsConfig — defaults via the *Binding
 // resolvers — and a nil error, so a repo with no binding file runs exactly as today.
-func LoadActors(dataDir string) (ActorsConfig, error) {
+func LoadAgents(dataDir string) (AgentsConfig, error) {
 	path := filepath.Join(dataDir, AgentsConfigName)
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -83,13 +83,13 @@ func LoadActors(dataDir string) (ActorsConfig, error) {
 	}
 	if err != nil {
 		if os.IsNotExist(err) {
-			return ActorsConfig{}, nil
+			return AgentsConfig{}, nil
 		}
-		return ActorsConfig{}, err
+		return AgentsConfig{}, err
 	}
-	var ac ActorsConfig
+	var ac AgentsConfig
 	if _, err := toml.Decode(string(b), &ac); err != nil {
-		return ActorsConfig{}, err
+		return AgentsConfig{}, err
 	}
 	return ac, nil
 }

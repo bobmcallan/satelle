@@ -47,14 +47,43 @@ digraph w {
 	for _, s := range spec.States {
 		byName[s.Name] = s
 	}
-	if byName["in_progress"].Actor != "executor" {
-		t.Errorf("agent=executor parsed actor = %q, want executor", byName["in_progress"].Actor)
+	if byName["in_progress"].Agent != "executor" {
+		t.Errorf("agent=executor parsed actor = %q, want executor", byName["in_progress"].Agent)
 	}
-	if byName["review"].Actor != "reviewer" {
-		t.Errorf("agent wins over actor: got %q, want reviewer", byName["review"].Actor)
+	if byName["review"].Agent != "reviewer" {
+		t.Errorf("agent wins over actor: got %q, want reviewer", byName["review"].Agent)
 	}
-	if byName["done"].Actor != "reviewer" {
-		t.Errorf("legacy actor=reviewer still parses: got %q, want reviewer", byName["done"].Actor)
+	if byName["done"].Agent != "reviewer" {
+		t.Errorf("legacy actor=reviewer still parses: got %q, want reviewer", byName["done"].Agent)
+	}
+}
+
+// TestToDOTEmitsAgent proves the emitter now writes the canonical agent= keyword
+// (sty_384f0b11): an inline-YAML lifecycle with an executor node re-emits as a DOT
+// graph carrying agent=executor, not the legacy actor=.
+func TestToDOTEmitsAgent(t *testing.T) {
+	body := `---
+name: y
+---
+` + "```yaml" + `
+states:
+  - backlog
+  - {name: in_progress, actor: executor}
+  - done
+transitions:
+  - {from: backlog, to: in_progress}
+  - {from: in_progress, to: done}
+` + "```" + `
+`
+	out, changed := ToDOT(body)
+	if !changed {
+		t.Fatal("ToDOT should convert inline-YAML to DOT")
+	}
+	if !strings.Contains(out, "agent=executor") {
+		t.Errorf("emitted DOT should carry agent=executor:\n%s", out)
+	}
+	if strings.Contains(out, "actor=executor") {
+		t.Errorf("emitted DOT must not carry the legacy actor= keyword:\n%s", out)
 	}
 }
 
@@ -70,11 +99,11 @@ func TestParse(t *testing.T) {
 	for _, s := range spec.States {
 		byName[s.Name] = s
 	}
-	if byName["in_progress"].Actor != "executor" {
-		t.Errorf("in_progress actor = %q, want executor", byName["in_progress"].Actor)
+	if byName["in_progress"].Agent != "executor" {
+		t.Errorf("in_progress actor = %q, want executor", byName["in_progress"].Agent)
 	}
-	if byName["committed"].Actor != "reviewer" {
-		t.Errorf("committed actor = %q, want reviewer", byName["committed"].Actor)
+	if byName["committed"].Agent != "reviewer" {
+		t.Errorf("committed actor = %q, want reviewer", byName["committed"].Agent)
 	}
 	if !byName["done"].Terminal {
 		t.Errorf("done should be terminal")

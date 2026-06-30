@@ -20,7 +20,7 @@ func TestRunInitScaffolds(t *testing.T) {
 	// baseline WORKFLOW itself is embedded-only — never a repo file (sty_3f9a6124).
 	for _, rel := range []string{
 		".satelle/satelle.toml",
-		".satelle/actors.toml",
+		".satelle/agents.toml",
 		".satelle/satelle.db",
 		".satelle/documents/README.md",
 		".satelle/workflows/README.md",

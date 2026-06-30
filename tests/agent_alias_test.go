@@ -3,7 +3,6 @@
 package tests
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -56,11 +55,9 @@ func TestAgentKeywordParsesEndToEnd(t *testing.T) {
 func TestAgentsTomlBootsEndToEnd(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	// Remove the scaffolded legacy file and supply only the canonical agents.toml,
-	// so a loader that ignored agents.toml would resolve no binding at all.
-	if err := os.Remove(filepath.Join(repo, ".satelle", "actors.toml")); err != nil {
-		t.Fatalf("remove scaffold actors.toml: %v", err)
-	}
+	// init scaffolds the canonical agents.toml; overwrite it with a reviewer-model
+	// binding. With no legacy actors.toml present, a loader that ignored agents.toml
+	// would resolve no binding at all.
 	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"), "[reviewer]\nmodel = \"sonnet\"\n")
 	mustRun(t, testBin, repo, "index")
 	out := mustRun(t, testBin, repo, "status")

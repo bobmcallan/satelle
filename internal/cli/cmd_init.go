@@ -85,20 +85,27 @@ func runInit(out io.Writer, repoRoot string) error {
 		return fmt.Errorf("init: stat %s: %w", tomlPath, statErr)
 	}
 
-	// 2b. actors.toml — the actors layer (how each actor runs). Created only if
+	// 2b. agents.toml — the agents layer (how each agent runs). Created only if
 	//     absent; an absent file is the read-only default, so this documents the
-	//     knobs without changing behaviour.
-	actorsPath := filepath.Join(dataDir, config.ActorsConfigName)
-	switch _, statErr := os.Stat(actorsPath); {
+	//     knobs without changing behaviour. A repo still carrying the legacy
+	//     actors.toml is treated as present (no re-scaffold) — the loader reads
+	//     either (sty_536f9960).
+	agentsPath := filepath.Join(dataDir, config.AgentsConfigName)
+	legacyPath := filepath.Join(dataDir, config.ActorsConfigName)
+	_, legacyErr := os.Stat(legacyPath)
+	switch _, statErr := os.Stat(agentsPath); {
 	case statErr == nil:
+		fmt.Fprintln(out, initLine(false, config.DefaultDataDir+"/"+config.AgentsConfigName))
+	case os.IsNotExist(statErr) && legacyErr == nil:
+		// Legacy actors.toml present: leave it; report it rather than scaffolding.
 		fmt.Fprintln(out, initLine(false, config.DefaultDataDir+"/"+config.ActorsConfigName))
 	case os.IsNotExist(statErr):
-		if werr := os.WriteFile(actorsPath, []byte(scaffoldActorsToml), 0o644); werr != nil {
-			return fmt.Errorf("init: write %s: %w", actorsPath, werr)
+		if werr := os.WriteFile(agentsPath, []byte(scaffoldAgentsToml), 0o644); werr != nil {
+			return fmt.Errorf("init: write %s: %w", agentsPath, werr)
 		}
-		fmt.Fprintln(out, initLine(true, config.DefaultDataDir+"/"+config.ActorsConfigName))
+		fmt.Fprintln(out, initLine(true, config.DefaultDataDir+"/"+config.AgentsConfigName))
 	default:
-		return fmt.Errorf("init: stat %s: %w", actorsPath, statErr)
+		return fmt.Errorf("init: stat %s: %w", agentsPath, statErr)
 	}
 
 	// 3. Authored-markdown dirs — create each with a tiny README.md describing
@@ -236,12 +243,12 @@ const scaffoldToml = `# satelle.toml — per-repo config (committed, secret-free
 # skills = "."                   # → ./skills
 `
 
-// scaffoldActorsToml is the documented actors layer a fresh init writes. Every
+// scaffoldAgentsToml is the documented agents layer a fresh init writes. Every
 // key is commented: an absent/blank file is the read-only default (executor
 // in-loop, reviewer isolated with Read,Grep,Glob), so this only documents the
 // knobs. A repo may widen or rebind transparently — the override is a committed
 // file, the operator's choice.
-const scaffoldActorsToml = `# actors.toml — the actors layer: how each actor runs (backend + tool grant).
+const scaffoldAgentsToml = `# agents.toml — the agents layer: how each agent runs (backend + tool grant).
 #
 # The agent operating model (see the satelle-actor-model principle):
 #   - ORCHESTRATOR — the default driving session (the agent you run). It IS the

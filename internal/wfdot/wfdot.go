@@ -1,7 +1,8 @@
 // Package wfdot parses a workflow's fenced ```dot block into a neutral spec — the
 // SINGLE DOT-to-spec path shared by the web diagram, the reviewer gater, and the
 // commit/edit hooks (so the grammar is defined once, never copied). The model is
-// node-centric: each DOT node is a step/state carrying an `actor`, each edge a
+// node-centric: each DOT node is a step/state carrying an `agent` (the legacy
+// `actor` keyword still parses), each edge a
 // transition, and the edge INTO a reviewer node (whose gate is prompt="@skill:NAME")
 // carries that skill — so a story's status walks the nodes and entry to a reviewer
 // node is the gated transition. See the satelle-actor-model principle.
@@ -87,7 +88,7 @@ func (s Spec) Start() string {
 // State is one workflow node. Terminal is true when no transition leaves it.
 type State struct {
 	Name     string
-	Actor    string
+	Agent    string
 	Terminal bool
 	// Skill is the node's own `@skill:NAME` prompt — the executor rubric an
 	// executor step performs, or the gate a reviewer node judges by (empty when
@@ -157,7 +158,7 @@ func (s Spec) ExecutorPathToDoneSkills() []string {
 	}
 	set := map[string]bool{}
 	for _, st := range s.States {
-		if st.Actor == "executor" && st.Skill != "" && reach[st.Name] {
+		if st.Agent == "executor" && st.Skill != "" && reach[st.Name] {
 			set[st.Skill] = true
 		}
 	}
@@ -192,7 +193,7 @@ func Parse(body string) (Spec, bool) {
 		return Spec{}, false
 	}
 	type node struct {
-		actor     string
+		agent     string
 		skill     string // resolved from prompt="@skill:NAME"
 		mandatory bool   // mandatory=true attribute
 	}
@@ -241,7 +242,7 @@ func Parse(body string) (Spec, bool) {
 		add(id)
 		n := nodes[id]
 		if a := performer(attrs["agent"], attrs["actor"]); a != "" {
-			n.actor = a
+			n.agent = a
 		}
 		if p := attrs["prompt"]; strings.HasPrefix(p, "@skill:") {
 			n.skill = strings.TrimPrefix(p, "@skill:")
@@ -256,7 +257,7 @@ func Parse(body string) (Spec, bool) {
 	}
 
 	for _, name := range order {
-		spec.States = append(spec.States, State{Name: name, Actor: nodes[name].actor, Skill: nodes[name].skill, Mandatory: nodes[name].mandatory})
+		spec.States = append(spec.States, State{Name: name, Agent: nodes[name].agent, Skill: nodes[name].skill, Mandatory: nodes[name].mandatory})
 	}
 	// A transition into a reviewer node is gated by that node's skill — unless the
 	// edge already carries an explicit reviewer_skill attribute, which wins.
@@ -264,7 +265,7 @@ func Parse(body string) (Spec, bool) {
 		if spec.Transitions[i].Skill != "" {
 			continue
 		}
-		if to := nodes[spec.Transitions[i].To]; to.actor == "reviewer" && to.skill != "" {
+		if to := nodes[spec.Transitions[i].To]; to.agent == "reviewer" && to.skill != "" {
 			spec.Transitions[i].Skill = to.skill
 		}
 	}
@@ -506,7 +507,7 @@ func parseYAML(body string) (Spec, bool) {
 			}
 			item := strings.TrimSpace(t[2:])
 			if strings.HasPrefix(item, "{") {
-				spec.States = append(spec.States, State{Name: inlineYAMLField(item, "name"), Actor: performer(inlineYAMLField(item, "agent"), inlineYAMLField(item, "actor"))})
+				spec.States = append(spec.States, State{Name: inlineYAMLField(item, "name"), Agent: performer(inlineYAMLField(item, "agent"), inlineYAMLField(item, "actor"))})
 			} else {
 				spec.States = append(spec.States, State{Name: strings.Trim(item, `"'`)})
 			}
@@ -565,8 +566,8 @@ func emitDOT(spec Spec, name string) string {
 		} else if s.Terminal {
 			attrs = append(attrs, "shape=Msquare")
 		}
-		if s.Actor != "" {
-			attrs = append(attrs, "actor="+s.Actor)
+		if s.Agent != "" {
+			attrs = append(attrs, "agent="+s.Agent)
 		}
 		if len(attrs) > 0 {
 			fmt.Fprintf(&b, "  %s [%s]\n", s.Name, strings.Join(attrs, ", "))
