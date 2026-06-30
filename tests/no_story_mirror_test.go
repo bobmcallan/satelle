@@ -16,6 +16,7 @@ import (
 func TestNoStoryMirrorWritten(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
+	stubReviewerAccept(t, repo) // baseline gates are active (sty_5b8bd8b2) — keep hermetic
 
 	out := mustRun(t, testBin, repo, "story", "create",
 		"--title", "No mirror please", "--body", "the goal", "--acceptance", "1. it does X")

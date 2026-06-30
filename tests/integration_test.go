@@ -65,6 +65,22 @@ func fileExists(p string) bool {
 	return err == nil
 }
 
+// stubReviewerAccept points the repo's reviewer binding at a deterministic accept
+// script, so the now-active baseline gates (materialised by init, sty_5b8bd8b2) do
+// not invoke a real agent CLI in hermetic tests. Call after init, before any status
+// transition. Gate CONTENT is covered separately (create_review, baseline_skills).
+func stubReviewerAccept(t *testing.T, repo string) {
+	t.Helper()
+	verdict := filepath.Join(repo, "verdict-accept.sh")
+	if err := os.WriteFile(verdict, []byte("#!/bin/sh\necho '{\"decision\":\"accept\",\"notes\":\"\"}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "agents.toml"),
+		[]byte(fmt.Sprintf("[reviewer]\nharness = \"%s {system} {tools} {model}\"\n", verdict)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // run executes the binary in dir with args and returns combined output.
 func run(t *testing.T, bin, dir string, args ...string) (string, error) {
 	t.Helper()
@@ -106,6 +122,10 @@ func TestDogfoodFlow(t *testing.T) {
 	if strings.Contains(out, "  + ") {
 		t.Errorf("second init created something:\n%s", out)
 	}
+
+	// The materialised baseline gates are now active; stub the reviewer so the
+	// status transitions below stay hermetic (sty_5b8bd8b2).
+	stubReviewerAccept(t, repo)
 
 	// Index the substrate init materialised (baseline workflow + step skill), as a
 	// real session does at SessionStart, so a later authoring index is incremental.
