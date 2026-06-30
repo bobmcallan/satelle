@@ -46,9 +46,11 @@ digraph satelle_workflow {
   committed   [agent=reviewer, prompt="@skill:satelle-push-review"]
   done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
   cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
+  
   // step opts this workflow into per-transition step summaries (sty_9a139c78):
   // an edge-less declaration, mandatory so a summary failure is surfaced.
   step        [agent=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
+
   // Declared scoped reviewers (edge-less, on="<target states>"): always-on gates the
   // workflow itself declares, so the DOT is the sole gating authority — no skill-tag
   // scan injects an undeclared gate (sty_ca9f675f). estimate gates begin-work + close;
