@@ -36,10 +36,10 @@ jobs:
         run: |
           set -euo pipefail
           VER=$(awk '$1=="satelle.version:" {print $2}' .version)
-          BUILD=$(awk '$1=="satelle.build:" {print $2}' .version)
-          for v in "$VER" "$BUILD"; do
-            [ -n "$v" ] || { echo ".version missing or malformed" >&2; exit 1; }
-          done
+          [ -n "$VER" ] || { echo ".version missing or malformed" >&2; exit 1; }
+          # The build timestamp is GENERATED here, not read from .version — a
+          # release can never ship a stale, hand-edited build time (sty_27077b11).
+          BUILD=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           echo "version=$VER"   >> "$GITHUB_OUTPUT"
           echo "build=$BUILD"   >> "$GITHUB_OUTPUT"
           echo "tag=v$VER"      >> "$GITHUB_OUTPUT"
@@ -91,7 +91,7 @@ jobs:
           go build \
             -trimpath \
             -ldflags="-s -w \
-              -X github.com/bobmcallan/satelle/internal/buildinfo.Version=v${VER} \
+              -X github.com/bobmcallan/satelle/internal/buildinfo.Version=${VER} \
               -X github.com/bobmcallan/satelle/internal/buildinfo.Commit=${BUILD_SHA} \
               -X github.com/bobmcallan/satelle/internal/buildinfo.BuildTime=${BUILD}" \
             -o "${OUT}" ./cmd/satelle
