@@ -22,6 +22,42 @@ digraph w {
 ` + "```" + `
 `
 
+// TestParseAgentAlias proves the agent= back-compat parse (sty_536f9960): the
+// canonical agent= node attribute parses to the same performer as the legacy
+// actor=, and agent wins when a node carries both.
+func TestParseAgentAlias(t *testing.T) {
+	const dot = `---
+name: x
+---
+` + "```dot" + `
+digraph w {
+  start       [shape=Mdiamond]
+  in_progress [agent=executor]
+  review      [agent=reviewer, actor=executor]
+  done        [shape=Msquare, actor=reviewer]
+  start -> in_progress -> review -> done
+}
+` + "```" + `
+`
+	spec, ok := Parse(dot)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	byName := map[string]State{}
+	for _, s := range spec.States {
+		byName[s.Name] = s
+	}
+	if byName["in_progress"].Actor != "executor" {
+		t.Errorf("agent=executor parsed actor = %q, want executor", byName["in_progress"].Actor)
+	}
+	if byName["review"].Actor != "reviewer" {
+		t.Errorf("agent wins over actor: got %q, want reviewer", byName["review"].Actor)
+	}
+	if byName["done"].Actor != "reviewer" {
+		t.Errorf("legacy actor=reviewer still parses: got %q, want reviewer", byName["done"].Actor)
+	}
+}
+
 func TestParse(t *testing.T) {
 	spec, ok := Parse(sampleDOT)
 	if !ok {
