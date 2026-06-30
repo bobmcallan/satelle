@@ -22,6 +22,12 @@ type GateDecision struct {
 	Notes     string            // reviewer notes — pushback to the executor on reject
 	Skill     string            // the deciding reviewer skill
 	Reviewers []ReviewerVerdict // per-reviewer verdicts in run order (empty for the legacy single-reviewer path)
+	// Command/Context describe an isolated AGENT invocation (LLM reviewer): the
+	// resolved harness command and the injected-context source (skill/rubric file).
+	// Empty for a deterministic functional-check gate, which invokes no agent
+	// (sty_fb3e0873). They mirror the deciding reviewer for the single-reviewer path.
+	Command string
+	Context string
 }
 
 // ReviewerVerdict is one reviewer's verdict within a transition's ordered
@@ -33,6 +39,11 @@ type ReviewerVerdict struct {
 	Accept bool   `json:"accept"`
 	Notes  string `json:"notes,omitempty"`
 	System bool   `json:"system,omitempty"`
+	// Command/Context name the agent invocation behind an LLM reviewer's verdict —
+	// the resolved harness command and the injected skill/rubric file — so the trail
+	// records HOW it was judged, not just the outcome. Empty for a functional check.
+	Command string `json:"command,omitempty"`
+	Context string `json:"context,omitempty"`
 }
 
 // TransitionGater judges a requested status transition in an isolated,

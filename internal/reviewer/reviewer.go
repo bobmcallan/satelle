@@ -276,8 +276,11 @@ func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (
 		result.Skill = dec.Skill
 		result.Accept = dec.Accept
 		result.Notes = dec.Notes
+		result.Command = dec.Command
+		result.Context = dec.Context
 		result.Reviewers = append(result.Reviewers, verb.ReviewerVerdict{
 			Skill: skill, Order: i, Accept: dec.Accept, Notes: dec.Notes, System: i >= sysStart,
+			Command: dec.Command, Context: dec.Context,
 		})
 		if !dec.Accept {
 			return result, nil // a reject blocks the edge — do not run later reviewers
@@ -382,6 +385,11 @@ func (g *Gater) runReviewer(ctx context.Context, item workitem.Item, toStatus, s
 	}
 	dec.Gated = true
 	dec.Skill = skill
+	// Record HOW this isolated agent was invoked (sty_fb3e0873): the resolved
+	// harness command and the injected-context source (the rubric/skill file). Only
+	// the LLM path sets these — a functional check above invokes no agent.
+	dec.Command = g.runner.Command()
+	dec.Context = skill
 	return dec, nil
 }
 
