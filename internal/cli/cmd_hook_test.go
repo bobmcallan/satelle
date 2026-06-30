@@ -187,6 +187,39 @@ digraph w {
 	}
 }
 
+// TestExecutorStatesNamedAgent proves a node allocated to a NAMED agent (not
+// executor/reviewer) counts as an engaged performing state (sty_b2222b8a), so a
+// commit at that step is tracked, while reviewer nodes do not count.
+func TestExecutorStatesNamedAgent(t *testing.T) {
+	body := `---
+name: x
+---
+` + "```dot" + `
+digraph w {
+  in_progress [agent=executor]
+  commit_push [agent=commit-agent, prompt="@skill:commit-push"]
+  committed   [agent=reviewer, prompt="@skill:r"]
+  in_progress -> commit_push -> committed -> done
+}
+` + "```" + `
+`
+	got := executorStates(body)
+	has := func(n string) bool {
+		for _, s := range got {
+			if s == n {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("in_progress") || !has("commit_push") {
+		t.Fatalf("named-agent commit_push should be engaged: %v", got)
+	}
+	if has("committed") {
+		t.Errorf("a reviewer node must not count as engaged: %v", got)
+	}
+}
+
 func TestAnyEngagedCountsTasks(t *testing.T) {
 	engaged := map[string]bool{"in_progress": true, "commit_push": true}
 	// A task in an executor state counts as engaged, exactly like a story.

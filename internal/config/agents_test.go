@@ -42,6 +42,28 @@ func TestLoadAgentsOnlyAgentsToml(t *testing.T) {
 	}
 }
 
+// TestNamedBinding proves a named agent declared under [agents.<name>] resolves as
+// an isolated binding, and that an undeclared name reports ok=false so the caller
+// falls back to the in-loop executor (sty_b2222b8a).
+func TestNamedBinding(t *testing.T) {
+	dir := t.TempDir()
+	body := "[agents.commit-agent]\nharness = \"claude -p --allowedTools {tools}\"\ntools = \"Read,Bash(git:*)\"\n"
+	if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ac, err := LoadAgents(dir)
+	if err != nil {
+		t.Fatalf("LoadAgents: %v", err)
+	}
+	b, ok := ac.NamedBinding("commit-agent")
+	if !ok || b.Tools != "Read,Bash(git:*)" || b.Harness != "claude -p --allowedTools {tools}" {
+		t.Errorf("commit-agent binding = %+v ok=%v, want the declared harness+tools", b, ok)
+	}
+	if _, ok := ac.NamedBinding("nope"); ok {
+		t.Error("an undeclared named agent must report ok=false (fall back to in-loop)")
+	}
+}
+
 func TestLoadAgentsOverride(t *testing.T) {
 	dir := t.TempDir()
 	body := "[reviewer]\ntools = \"Read\"\nharness = \"other-harness\"\n[executor]\nharness = \"claude -p\"\n"

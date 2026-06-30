@@ -144,12 +144,13 @@ func (s Spec) doneReachable() map[string]bool {
 	return reach
 }
 
-// ExecutorPathToDoneSkills returns the `@skill:` prompts of EXECUTOR nodes that
-// lie on a path which can still reach "done", deduped and sorted. These are the
-// rubrics an executor must read to PERFORM a step (e.g. commit-push). Unlike
-// reviewer gates — which degrade to advisory when their rubric is absent — a
-// missing executor skill leaves the step unperformable, so its absence is the
-// genuine wasted-work trap to catch at engagement. Empty when there is no "done".
+// ExecutorPathToDoneSkills returns the `@skill:` prompts of PERFORMING nodes that
+// lie on a path which can still reach "done", deduped and sorted. A performing node
+// is any non-reviewer agent — the in-loop `executor` OR a named isolated agent a
+// node allocates a step to (e.g. commit-push). These are the rubrics that perform a
+// step. Unlike reviewer gates — which degrade to advisory when their rubric is
+// absent — a missing performer skill leaves the step unperformable, so its absence
+// is the genuine wasted-work trap to catch at engagement. Empty when no "done".
 func (s Spec) ExecutorPathToDoneSkills() []string {
 	reach := s.doneReachable()
 	if len(reach) == 0 {
@@ -157,7 +158,7 @@ func (s Spec) ExecutorPathToDoneSkills() []string {
 	}
 	set := map[string]bool{}
 	for _, st := range s.States {
-		if st.Agent == "executor" && st.Skill != "" && reach[st.Name] {
+		if st.Agent != "" && st.Agent != "reviewer" && st.Skill != "" && reach[st.Name] {
 			set[st.Skill] = true
 		}
 	}

@@ -40,10 +40,29 @@ type AgentBinding struct {
 
 // AgentsConfig is the on-disk shape at .satelle/agents.toml — the agents layer.
 // Every field is optional; the *Binding resolvers supply today's defaults, so
-// the zero value (and an absent file) is the current behaviour.
+// the zero value (and an absent file) is the current behaviour. Agents holds
+// OPTIONAL named agents (beyond the executor/reviewer roles) declared under
+// [agents.<name>] — a workflow node may allocate a step to one, and a named agent
+// is ALWAYS isolated (see satelle-agent-model).
 type AgentsConfig struct {
-	Executor AgentBinding `toml:"executor"`
-	Reviewer AgentBinding `toml:"reviewer"`
+	Executor AgentBinding            `toml:"executor"`
+	Reviewer AgentBinding            `toml:"reviewer"`
+	Agents   map[string]AgentBinding `toml:"agents"`
+}
+
+// NamedBinding resolves an optional named agent declared under [agents.<name>].
+// ok is false when none is declared, so a workflow node that allocates a step to an
+// absent agent degrades gracefully to the in-loop executor. A named agent is always
+// isolated; an unset harness defaults to the isolated claude preset.
+func (a AgentsConfig) NamedBinding(name string) (AgentBinding, bool) {
+	b, ok := a.Agents[name]
+	if !ok {
+		return AgentBinding{}, false
+	}
+	if b.Harness == "" {
+		b.Harness = DefaultReviewerHarness
+	}
+	return b, true
 }
 
 // ReviewerBinding resolves the reviewer agent's backend and grant, defaulting to
