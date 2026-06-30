@@ -7,9 +7,14 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// ActorsConfigName is the per-repo actors-binding file, beside satelle.toml under
-// the data dir (.satelle/actors.toml by default).
-const ActorsConfigName = "actors.toml"
+// AgentsConfigName is the canonical per-repo agents-binding file, beside
+// satelle.toml under the data dir (.satelle/agents.toml). ActorsConfigName is the
+// legacy filename, still loaded as a fallback (sty_536f9960) until the rename
+// completes; LoadActors prefers agents.toml when both are present.
+const (
+	AgentsConfigName = "agents.toml"
+	ActorsConfigName = "actors.toml"
+)
 
 // Default actor grants — TODAY's behaviour, so an absent actors.toml changes
 // nothing: the executor drives in-loop (the agent itself); the reviewer runs as
@@ -65,12 +70,17 @@ func (a ActorsConfig) ExecutorBinding() ActorBinding {
 	return b
 }
 
-// LoadActors reads <dataDir>/actors.toml (the actors layer). An absent file
-// yields the zero ActorsConfig — defaults via the *Binding resolvers — and a nil
-// error, so a repo with no actors.toml runs exactly as today.
+// LoadActors reads the agents layer from <dataDir>, preferring the canonical
+// agents.toml and falling back to the legacy actors.toml (sty_536f9960). An absent
+// file (neither present) yields the zero ActorsConfig — defaults via the *Binding
+// resolvers — and a nil error, so a repo with no binding file runs exactly as today.
 func LoadActors(dataDir string) (ActorsConfig, error) {
-	path := filepath.Join(dataDir, ActorsConfigName)
+	path := filepath.Join(dataDir, AgentsConfigName)
 	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		path = filepath.Join(dataDir, ActorsConfigName)
+		b, err = os.ReadFile(path)
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			return ActorsConfig{}, nil

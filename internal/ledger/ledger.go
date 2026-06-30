@@ -58,6 +58,26 @@ type Entry struct {
 	CreatedAt time.Time       `json:"created_at"`
 }
 
+// UnmarshalJSON reads an Entry, accepting both the canonical "agent" key and the
+// legacy "actor" alias for the performer field (sty_536f9960). When both are
+// present the canonical "agent" wins; a legacy entry carrying only "actor" still
+// reads back correctly. Emission is unchanged (still "actor") until a later slice.
+func (e *Entry) UnmarshalJSON(b []byte) error {
+	type alias Entry
+	aux := struct {
+		alias
+		Agent string `json:"agent,omitempty"`
+	}{alias: alias(*e)}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	*e = Entry(aux.alias)
+	if aux.Agent != "" {
+		e.Actor = aux.Agent
+	}
+	return nil
+}
+
 // NewID returns a fresh ledger-entry id in the evt_<8hex> form, visually
 // distinct from sty_/tsk_ ids in tool output.
 func NewID() string { return fmt.Sprintf("evt_%s", uuid.NewString()[:8]) }

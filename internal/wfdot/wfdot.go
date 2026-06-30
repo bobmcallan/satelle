@@ -240,7 +240,7 @@ func Parse(body string) (Spec, bool) {
 		}
 		add(id)
 		n := nodes[id]
-		if a := attrs["actor"]; a != "" {
+		if a := performer(attrs["agent"], attrs["actor"]); a != "" {
 			n.actor = a
 		}
 		if p := attrs["prompt"]; strings.HasPrefix(p, "@skill:") {
@@ -276,6 +276,17 @@ func Parse(body string) (Spec, bool) {
 		spec.States[i].Terminal = !froms[spec.States[i].Name]
 	}
 	return spec, true
+}
+
+// performer resolves a node's performer, preferring the canonical "agent" key and
+// falling back to the legacy "actor" alias (sty_536f9960). Both spellings parse to
+// the same internal field so authored workflows can migrate without breaking; when
+// both are present, agent wins.
+func performer(agent, actor string) string {
+	if agent != "" {
+		return agent
+	}
+	return actor
 }
 
 // dotBlock returns the contents of the first fenced ```dot code block in body.
@@ -495,7 +506,7 @@ func parseYAML(body string) (Spec, bool) {
 			}
 			item := strings.TrimSpace(t[2:])
 			if strings.HasPrefix(item, "{") {
-				spec.States = append(spec.States, State{Name: inlineYAMLField(item, "name"), Actor: inlineYAMLField(item, "actor")})
+				spec.States = append(spec.States, State{Name: inlineYAMLField(item, "name"), Actor: performer(inlineYAMLField(item, "agent"), inlineYAMLField(item, "actor"))})
 			} else {
 				spec.States = append(spec.States, State{Name: strings.Trim(item, `"'`)})
 			}

@@ -302,10 +302,16 @@ func parseWorkflow(body string) wfSpec {
 	return spec
 }
 
-// parseState parses one `states:` list item — a bare name or `{name:…, actor:…}`.
+// parseState parses one `states:` list item — a bare name or
+// `{name:…, agent:…}` (the legacy `actor:` spelling is still accepted, with
+// `agent` preferred when both are present — sty_536f9960).
 func parseState(item string) wfState {
 	if strings.HasPrefix(item, "{") {
-		return wfState{Name: inlineField(item, "name"), Actor: inlineField(item, "actor")}
+		performer := inlineField(item, "agent")
+		if performer == "" {
+			performer = inlineField(item, "actor")
+		}
+		return wfState{Name: inlineField(item, "name"), Actor: performer}
 	}
 	return wfState{Name: strings.Trim(item, `"'`)}
 }

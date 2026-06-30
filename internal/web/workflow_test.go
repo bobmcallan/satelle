@@ -34,6 +34,21 @@ guardrails:
 ` + "```" + `
 `
 
+// TestParseStateAgentAlias proves parseState accepts the canonical `agent:`
+// inline key as well as the legacy `actor:`, with agent winning when both are
+// present (sty_536f9960).
+func TestParseStateAgentAlias(t *testing.T) {
+	if got := parseState("{name: in_progress, agent: executor}").Actor; got != "executor" {
+		t.Errorf("agent: spelling = %q, want executor", got)
+	}
+	if got := parseState("{name: gate, actor: reviewer}").Actor; got != "reviewer" {
+		t.Errorf("legacy actor: spelling = %q, want reviewer", got)
+	}
+	if got := parseState("{name: gate, agent: reviewer, actor: executor}").Actor; got != "reviewer" {
+		t.Errorf("agent should win over actor, got %q", got)
+	}
+}
+
 func TestParseWorkflow(t *testing.T) {
 	spec := parseWorkflow(sampleWorkflow)
 	if len(spec.States) != 4 {
