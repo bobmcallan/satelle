@@ -457,6 +457,60 @@ func parseRGB(t *testing.T, s string) (int, int, int) {
 	return r, g, b
 }
 
+// TestBrowserTimelineDotsByOutcome asserts at the computed-colour level that the
+// story-detail timeline dots are coloured by event outcome (sty_f19d2ec4): a
+// review_reject dot is the fail red and a review_accept dot the pass green, matching
+// the process-light palette, while a neutral event keeps the default accent dot.
+// Checked on the standalone detail page (one of the two surfaces the shared
+// template feeds), in both light and dark themes.
+func TestBrowserTimelineDotsByOutcome(t *testing.T) {
+	base, repo := serveRepo(t, "8813")
+	id := createStory(t, repo, "Timeline Story", "")
+	// Seed outcome-bearing + neutral ledger events on this story.
+	mustRun(t, testBin, repo, "ledger", "append", "--kind", "review_reject", "--actor", "reviewer", "--story", id, "--body", "rejected a->b")
+	mustRun(t, testBin, repo, "ledger", "append", "--kind", "review_accept", "--actor", "reviewer", "--story", id, "--body", "accepted a->b")
+
+	ctx := newChrome(t)
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/story/"+id),
+		chromedp.WaitVisible(`ol.timeline li`, chromedp.ByQuery),
+		chromedp.WaitVisible(`ol.timeline li.tl-fail`, chromedp.ByQuery),
+		chromedp.WaitVisible(`ol.timeline li.tl-pass`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("load detail page: %v", err)
+	}
+
+	dotColour := func(sel string) string {
+		var v string
+		js := fmt.Sprintf(`getComputedStyle(document.querySelector('%s'), '::before').backgroundColor`, sel)
+		if err := chromedp.Run(ctx, chromedp.Evaluate(js, &v)); err != nil {
+			t.Fatalf("read %s ::before: %v", sel, err)
+		}
+		return v
+	}
+	setTheme := func(mode string) {
+		if err := chromedp.Run(ctx, chromedp.Evaluate(
+			fmt.Sprintf(`document.documentElement.setAttribute('data-theme','%s')`, mode), nil)); err != nil {
+			t.Fatalf("set theme %s: %v", mode, err)
+		}
+	}
+
+	for _, mode := range []string{"light", "dark"} {
+		setTheme(mode)
+		if c := dotColour(`ol.timeline li.tl-fail`); c != "rgb(231, 76, 60)" {
+			t.Errorf("[%s] review_reject dot should be fail red #e74c3c (rgb(231, 76, 60)); got %q", mode, c)
+		}
+		if c := dotColour(`ol.timeline li.tl-pass`); c != "rgb(46, 204, 113)" {
+			t.Errorf("[%s] review_accept dot should be pass green #2ecc71 (rgb(46, 204, 113)); got %q", mode, c)
+		}
+		// A neutral event (the story_created li, un-classed) keeps the accent dot —
+		// neither the fail red nor the pass green.
+		if c := dotColour(`ol.timeline li:not(.tl-pass):not(.tl-fail)`); c == "rgb(231, 76, 60)" || c == "rgb(46, 204, 113)" {
+			t.Errorf("[%s] a neutral event dot must not be an outcome colour; got %q", mode, c)
+		}
+	}
+}
+
 // countExpansions returns how many inline expansion rows are open in the stories
 // panel.
 func countExpansions(t *testing.T, ctx context.Context) int {

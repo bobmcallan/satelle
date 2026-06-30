@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/buildinfo"
+	"github.com/bobmcallan/satelle/internal/ledger"
 )
 
 // basePath is the URL prefix this server is mounted under, empty for the
@@ -50,6 +51,22 @@ var tmplFuncs = template.FuncMap{
 	"lower": strings.ToLower,
 	"join": func(ss []string, sep string) string {
 		return strings.Join(ss, sep)
+	},
+	// evdot maps a ledger event kind to the timeline dot's outcome class, so the
+	// dot speaks the same colour language as the process/progress lights: a
+	// review_accept is a pass (green) dot, a review_reject a fail (red) dot. Every
+	// neutral process event (story_created, status_transition, estimate/step rows,
+	// …) returns "" and keeps the default accent dot. Outcome is derived here,
+	// server-side, from the event kind alone. (sty_f19d2ec4)
+	"evdot": func(kind any) string {
+		switch fmt.Sprint(kind) {
+		case ledger.KindReviewAccept:
+			return "tl-pass"
+		case ledger.KindReviewReject:
+			return "tl-fail"
+		default:
+			return ""
+		}
 	},
 	// tagchip renders a tag chip. A key:value tag (e.g. epic:summariser) renders
 	// as a kv chip distinguishing key from value; a bare tag renders plain. No
@@ -250,7 +267,7 @@ const templatesSrc = `
   {{if .Item.Body}}<h4>Description</h4><pre class="prose">{{.Item.Body}}</pre>{{end}}
   {{if .Item.AcceptanceCriteria}}<h4>Acceptance criteria</h4><pre class="prose">{{.Item.AcceptanceCriteria}}</pre>{{end}}
   <h4>Timeline</h4>
-  {{if .Events}}<ol class="timeline">{{range .Events}}<li>
+  {{if .Events}}<ol class="timeline">{{range .Events}}<li{{with evdot .Kind}} class="{{.}}"{{end}}>
     <div class="ev-kind">{{.Kind}}</div>
     <div class="ev-meta">{{ftime .CreatedAt}}{{if .Actor}} · {{.Actor}}{{end}}</div>
     {{if .Body}}<div class="ev-body">{{.Body}}</div>{{end}}
