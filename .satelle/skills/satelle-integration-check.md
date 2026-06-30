@@ -2,16 +2,15 @@
 name: satelle-integration-check
 scope: project
 type: skill
-tags: [type:skill, type:reviewer, type:functional-check, reviewer:always]
-on: [commit_push]
-description: Functional-check gate that runs the integration suite (make integration) before a slice is committed. An always-on system reviewer scoped to the commit_push edge (on: [commit_push]), so it runs on the integration → commit_push transition alongside satelle-integration-review (which judges the tests) — exit 0 accepts, non-zero rejects with the output tail as notes. Local-only (the suite is the project's local gate, never GitHub CI). Self-contained, per satelle-reviewer-self-contained.
+tags: [type:skill, type:reviewer, type:functional-check]
+description: Functional-check gate that runs the integration suite (make integration) before a slice is committed. The workflow DECLARES it as a scoped reviewer node (on="commit_push"), so it runs on the integration → commit_push transition alongside satelle-integration-review (which judges the tests) — exit 0 accepts, non-zero rejects with the output tail as notes. Local-only (the suite is the project's local gate, never GitHub CI). Self-contained, per satelle-reviewer-self-contained.
 ---
 
 # Integration check (pre-commit functional gate)
 
-This is a **functional-check** gate on the path into `commit_push`. It is an
-always-on system reviewer (`reviewer:always`) scoped with `on: [commit_push]`, so
-on the `integration → commit_push` transition it runs alongside the edge's
+This is a **functional-check** gate on the path into `commit_push`. The workflow
+DECLARES it as a scoped reviewer node (`on="commit_push"`), so on the
+`integration → commit_push` transition it runs alongside the edge's
 `satelle-integration-review` reviewer (which judges the tests, while this one
 EXECUTES them) and **before** the slice is committed.
 

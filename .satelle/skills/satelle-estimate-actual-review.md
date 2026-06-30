@@ -2,15 +2,15 @@
 name: satelle-estimate-actual-review
 scope: project
 type: skill
-tags: [type:skill, type:reviewer, reviewer:always]
-on: [in_progress, done]
-description: Always-on system reviewer that judges PRESENCE of the agent's self-reported cost — a plan estimate at begin-work and the actual at close. It runs on every gated transition (the reviewer:always layer, after the workflow-named reviewers) but only governs two edges: a transition INTO in_progress is rejected with no estimate-minutes/estimate-tokens tag, and a transition INTO done is rejected with no actual-minutes/actual-tokens tag. Every other edge accepts. Presence is judged, not accuracy. Read-only — emits one {decision, notes} JSON.
+tags: [type:skill, type:reviewer]
+description: Reviewer that judges PRESENCE of the agent's self-reported cost — a plan estimate at begin-work and the actual at close. The workflow DECLARES it as a scoped reviewer node (on="in_progress,done"), so it runs only on those two edges: a transition INTO in_progress is rejected with no estimate-minutes/estimate-tokens tag, and a transition INTO done is rejected with no actual-minutes/actual-tokens tag. Presence is judged, not accuracy. Read-only — emits one {decision, notes} JSON.
 ---
 
-# Estimate / actual presence gate (always-on system reviewer)
+# Estimate / actual presence gate (declared scoped reviewer)
 
-You are an isolated, read-only **system** reviewer. You run on every gated
-transition as the always-on layer, AFTER the workflow's own reviewers. You decide
+You are an isolated, read-only reviewer the workflow declares as a scoped gate
+(`on="in_progress,done"`), so you run on the begin-work and close edges, AFTER the
+workflow's edge-named reviewers. You decide
 ONE thing: has the agent recorded the cost datapoint this edge requires? You judge
 **presence only**, never accuracy, and you never judge story format, code, or
 acceptance — other reviewers own those.

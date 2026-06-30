@@ -394,69 +394,77 @@ func TestGateMultipleReviewersRejectAttributedAndShortCircuits(t *testing.T) {
 	}
 }
 
-func TestGateSystemReviewerRunsLast(t *testing.T) {
-	// An always-on system reviewer (tagged reviewer:always) runs AFTER the
-	// workflow-named reviewer — last in order, flagged System.
-	sysSkill := "---\nname: satelle-estimate-actual\nkind: skill\ntags: [kind:skill, reviewer:always]\n---\n# always-on\nrecord estimate/actual\n"
+// scopedDOT wraps a digraph body in the frontmatter + fenced ```dot envelope a
+// workflow doc carries, so wfdot.Parse resolves it.
+func scopedDOT(graph string) string {
+	return "---\nname: satelle-baseline-workflow\n---\n" + "```dot" + "\n" + graph + "\n" + "```" + "\n"
+}
+
+func TestGateScopedReviewerRunsLast(t *testing.T) {
+	// A DECLARED scoped reviewer node (edge-less, on="done") runs AFTER the
+	// edge-named reviewer — last in order, flagged System. This replaces the removed
+	// reviewer:always tag layer: the DOT, not a skill tag, declares the gate
+	// (sty_ca9f675f).
+	wf := scopedDOT(`digraph t {
+  backlog [shape=Mdiamond]
+  in_progress [agent=executor]
+  done [shape=Msquare]
+  estimate [agent=reviewer, prompt="@skill:satelle-estimate-actual", on="done"]
+  backlog -> in_progress
+  in_progress -> done [reviewer_skill="satelle-story-done-review"]
+}`)
 	mr := &mapRunner{}
-	docs := fakeDocs{
-		workflow:   testWorkflow, // in_progress→done is gated by satelle-story-done-review
-		skillBody:  "rubric",
-		skillFound: true,
-		extraSkills: []docindex.Doc{
-			{Kind: "skills", Name: "satelle-estimate-actual", Body: sysSkill},
-		},
-	}
-	g := New(mr, docs, "/repo", "")
+	g := New(mr, fakeDocs{workflow: wf, skillBody: "rubric", skillFound: true}, "/repo", "")
 	dec, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "done")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(dec.Reviewers) != 2 {
-		t.Fatalf("want 2 reviewers (named + system), got %+v", dec.Reviewers)
+		t.Fatalf("want 2 reviewers (edge + scoped), got %+v", dec.Reviewers)
 	}
 	first, last := dec.Reviewers[0], dec.Reviewers[1]
 	if first.Skill != "satelle-story-done-review" || first.System {
-		t.Errorf("first reviewer should be the workflow-named one, got %+v", first)
+		t.Errorf("first reviewer should be the edge-named one, got %+v", first)
 	}
 	if last.Skill != "satelle-estimate-actual" || !last.System || last.Order != 1 {
-		t.Errorf("system reviewer should run last and be flagged System, got %+v", last)
+		t.Errorf("scoped reviewer should run last and be flagged System, got %+v", last)
 	}
 }
 
-func TestSystemReviewerScopedByOnList(t *testing.T) {
-	// An always-on reviewer that scopes itself with `on: [done]` joins the close
-	// edge but is skipped on an unlisted edge — so it costs nothing in between.
-	scoped := "---\nname: satelle-estimate-actual-review\nkind: skill\ntags: [kind:skill, reviewer:always]\non: [done]\n---\n# scoped\nrubric\n"
-	docs := func() fakeDocs {
-		return fakeDocs{
-			workflow:   "transitions:\n  - {from: in_progress, to: reviewed, reviewer_skill: \"satelle-story-code-review\"}\n  - {from: deployed, to: done, reviewer_skill: \"satelle-story-done-review\"}\n",
-			skillBody:  "rubric",
-			skillFound: true,
-			extraSkills: []docindex.Doc{
-				{Kind: "skills", Name: "satelle-estimate-actual-review", Body: scoped},
-			},
-		}
-	}
+func TestScopedReviewerByOnList(t *testing.T) {
+	// A scoped reviewer node (on="done") joins the close edge but is skipped on an
+	// unlisted edge — declared in the DOT, so it costs nothing in between and the
+	// workflow remains the sole gating authority.
+	wf := scopedDOT(`digraph t {
+  backlog [shape=Mdiamond]
+  in_progress [agent=executor]
+  reviewed [agent=executor]
+  done [shape=Msquare]
+  estimate [agent=reviewer, prompt="@skill:satelle-estimate-actual", on="done"]
+  backlog -> in_progress
+  in_progress -> reviewed [reviewer_skill="satelle-story-code-review"]
+  reviewed -> done [reviewer_skill="satelle-story-done-review"]
+}`)
+	docs := fakeDocs{workflow: wf, skillBody: "rubric", skillFound: true}
 
-	// to=reviewed is NOT in the scoped reviewer's on-list → only the named reviewer runs.
-	g1 := New(&mapRunner{}, docs(), "/repo", "")
+	// to=reviewed is NOT in the scoped node's on-list → only the edge reviewer runs.
+	g1 := New(&mapRunner{}, docs, "/repo", "")
 	dec1, err := g1.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "reviewed")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(dec1.Reviewers) != 1 || dec1.Reviewers[0].Skill != "satelle-story-code-review" {
-		t.Fatalf("reviewed edge should run only the named reviewer, got %+v", dec1.Reviewers)
+		t.Fatalf("reviewed edge should run only the edge reviewer, got %+v", dec1.Reviewers)
 	}
 
-	// to=done IS in the on-list → the scoped system reviewer joins, last.
-	g2 := New(&mapRunner{}, docs(), "/repo", "")
-	dec2, err := g2.Gate(context.Background(), workitem.Item{Status: "deployed"}, "done")
+	// to=done IS in the on-list → the scoped reviewer joins, last.
+	g2 := New(&mapRunner{}, docs, "/repo", "")
+	dec2, err := g2.Gate(context.Background(), workitem.Item{Status: "reviewed"}, "done")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(dec2.Reviewers) != 2 || !dec2.Reviewers[1].System || dec2.Reviewers[1].Skill != "satelle-estimate-actual-review" {
-		t.Fatalf("done edge should add the scoped system reviewer last, got %+v", dec2.Reviewers)
+	if len(dec2.Reviewers) != 2 || !dec2.Reviewers[1].System || dec2.Reviewers[1].Skill != "satelle-estimate-actual" {
+		t.Fatalf("done edge should add the scoped reviewer last, got %+v", dec2.Reviewers)
 	}
 }
 

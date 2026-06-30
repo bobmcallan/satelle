@@ -15,39 +15,21 @@ description: This repo's project-scope workflow, authored in DOT (the agent mode
 > embedded **system** default `satelle-baseline-workflow`. See the
 > `satelle-repo-agnostic` and `satelle-agent-model` principles.
 
-A work item moves **backlog → in_progress → integration → commit_push → committed →
-done**, and may exit early to **cancelled**. The lifecycle is the **DOT graph** below
-(node-centric): each node is a step carrying an `agent`; the **executor** does the
-work and mutates the tree, and a **reviewer** node gates *entry* to it via its
-`prompt="@skill:NAME"` gate (the reviewer is read-only — it judges, never mutates).
-satelle is the gatekeeper of status: a status advances only through a reviewer's
-accept.
+The lifecycle is the **DOT graph** below — read it as the authority; this prose
+only orients and must not restate it. Each node is a step carrying an `agent`: an
+**executor** does the work and mutates the tree; a **reviewer** node gates *entry*
+via its `prompt="@skill:NAME"` (read-only — it judges, never mutates). Status
+advances only through a reviewer's accept.
 
-The release path is deliberate. There is **no deploy state** — pushing to `main`
-IS the release, and CI is the deployment check. The **integration** step is the
-test stage: entering it from `in_progress` is gated by `satelle-code-ac-review` —
-a read-only reviewer that the implemented code satisfies the story's acceptance
-criteria AND that both unit and integration tests were created. Leaving it for
-`commit_push` is gated by `satelle-integration-review` — a reviewer that the
-integration tests actually exercise the change — alongside `satelle-integration-check`,
-an always-on functional gate that runs the local suite (`make integration`) and
-rejects on a red run. So the slice is reviewed, its tests are executed, and those
-tests are reviewed, all before anything is committed. The **commit_push** step
-commits and pushes the slice and watches the GitHub Actions run to conclusion
-(skill `commit-push`). It is allocated to the **`commit-agent`** — a named,
-isolated agent defined in `.satelle/agents.toml` (`agent=commit-agent`), so the
-commit/push runs as an isolated `claude -p` sub-process with the `commit-push`
-rubric and a scoped grant; if that binding is absent the step falls back to the
-in-loop executor. The **committed** gate (`satelle-commit-push-review`, a
-functional check) confirms that CI run concluded success and emits a PR-style
-commit-summary; the **done** gate (`satelle-story-done-review`) checks the
-acceptance criteria. If the **done** gate rejects, the `committed -> in_progress`
-recovery edge returns the story to work so it can fix the rejected slice and
-re-traverse to `done` — the gate is acted on, not bypassed. The commit happens while
-the story is **engaged** (a performing state — executor or a named agent), so commits
-are always tracked. The
-always-on system layer still applies: a plan estimate is required entering
-`in_progress` and the actual entering `done`.
+Two things the edges don't show. **There is no deploy state** — pushing to `main`
+IS the release, verified by CI. And the **always-on gates are declared, not
+injected**: the edge-less reviewer nodes `estimate` (`on="in_progress,done"`) and
+`intcheck` (`on="commit_push"`) run on the transitions their `on=` names, so the
+DOT is the sole gating authority — no skill tag adds a gate the workflow never
+declared (sty_ca9f675f). `estimate` requires a plan estimate entering
+`in_progress` and an actual entering `done`; `intcheck` runs `make integration`
+before a commit. The `committed -> in_progress` edge is recovery: a `done` reject
+returns the story to work to fix and re-traverse, never bypass.
 
 ```dot
 digraph satelle_workflow {
@@ -64,6 +46,12 @@ digraph satelle_workflow {
   // step opts this workflow into per-transition step summaries (sty_9a139c78):
   // an edge-less declaration, mandatory so a summary failure is surfaced.
   step        [agent=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
+  // Declared scoped reviewers (edge-less, on="<target states>"): always-on gates the
+  // workflow itself declares, so the DOT is the sole gating authority — no skill-tag
+  // scan injects an undeclared gate (sty_ca9f675f). estimate gates begin-work + close;
+  // intcheck runs `make integration` entering commit_push.
+  estimate    [agent=reviewer, prompt="@skill:satelle-estimate-actual-review", on="in_progress,done"]
+  intcheck    [agent=reviewer, prompt="@skill:satelle-integration-check", on="commit_push"]
 
   backlog -> in_progress
   in_progress -> integration [reviewer_skill="satelle-code-ac-review"]

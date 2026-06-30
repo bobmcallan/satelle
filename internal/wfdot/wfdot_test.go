@@ -403,3 +403,66 @@ digraph x {
 		t.Errorf("sampleDOT declares no step node; StepSummary should be false")
 	}
 }
+
+func has(ss []string, v string) bool {
+	for _, s := range ss {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+func TestScopedReviewers(t *testing.T) {
+	dot := "---\nname: x\n---\n" + "```dot" + `
+digraph w {
+  backlog [shape=Mdiamond]
+  in_progress [agent=executor]
+  done [shape=Msquare]
+  estimate [agent=reviewer, prompt="@skill:satelle-estimate-actual-review", on="in_progress,done"]
+  always   [agent=reviewer, prompt="@skill:rev-all", on="*"]
+  step     [agent=reviewer, prompt="@skill:satelle-step-summary", on="*"]
+  backlog -> in_progress -> done
+}
+` + "```" + "\n"
+	spec, ok := Parse(dot)
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	// estimate is scoped to in_progress + done; the wildcard joins every edge; the
+	// step summariser is NEVER returned as a blocking scoped gate (it runs via Summarise).
+	ip := spec.ScopedReviewers("in_progress")
+	if !has(ip, "satelle-estimate-actual-review") || !has(ip, "rev-all") || has(ip, "satelle-step-summary") {
+		t.Errorf("in_progress scoped = %v", ip)
+	}
+	integ := spec.ScopedReviewers("integration")
+	if has(integ, "satelle-estimate-actual-review") || !has(integ, "rev-all") || has(integ, "satelle-step-summary") {
+		t.Errorf("integration scoped should be wildcard-only (no estimate, no step), got %v", integ)
+	}
+}
+
+func TestMultiReviewerEdge(t *testing.T) {
+	dot := "---\nname: x\n---\n" + "```dot" + `
+digraph w {
+  in_progress [agent=executor]
+  done [shape=Msquare]
+  in_progress -> done [reviewer_skill="rev-a,rev-b"]
+}
+` + "```" + "\n"
+	spec, ok := Parse(dot)
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	var tr Transition
+	for _, x := range spec.Transitions {
+		if x.From == "in_progress" && x.To == "done" {
+			tr = x
+		}
+	}
+	if len(tr.Skills) != 2 || tr.Skills[0] != "rev-a" || tr.Skills[1] != "rev-b" {
+		t.Errorf("edge Skills = %v, want [rev-a rev-b]", tr.Skills)
+	}
+	if tr.Skill != "rev-a" {
+		t.Errorf("Skill back-compat = %q, want rev-a", tr.Skill)
+	}
+}

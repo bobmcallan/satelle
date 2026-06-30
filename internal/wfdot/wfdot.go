@@ -97,6 +97,12 @@ type State struct {
 	// it means the step summary is required (a failure is surfaced, not swallowed);
 	// for other nodes it is advisory metadata. Populated from the DOT grammar.
 	Mandatory bool
+	// On is the node's `on="s1,s2"` (or `on="*"`) attribute — the target states a
+	// declared, edge-less reviewer node gates as a blocking gate. Empty for an
+	// ordinary node. `*` means every transition. This is the declarative
+	// replacement for the old reviewer:always tag layer: the DOT, not a skill tag,
+	// is the sole authority for which always-on gates run. Populated from the grammar.
+	On []string
 }
 
 // StepSummary reports whether the workflow declares a step-summary node (a node
@@ -110,6 +116,29 @@ func (s Spec) StepSummary() (declared, mandatory bool) {
 		}
 	}
 	return false, false
+}
+
+// ScopedReviewers returns the skills of DECLARED, edge-less reviewer nodes that
+// gate the transition into toStatus — a reviewer node whose `on=` list includes
+// toStatus or the wildcard "*". These are the workflow-declared always-on gates,
+// replacing the old reviewer:always skill-tag scan so the DOT is the sole gating
+// authority. The step-summary node is excluded: it is a post-transition summariser
+// (run via Summarise), not a blocking gate. Sorted for a deterministic order.
+func (s Spec) ScopedReviewers(toStatus string) []string {
+	var out []string
+	for _, st := range s.States {
+		if st.Agent != "reviewer" || st.Skill == "" || len(st.On) == 0 {
+			continue
+		}
+		if st.Skill == StepSummarySkill {
+			continue
+		}
+		if containsStr(st.On, "*") || containsStr(st.On, toStatus) {
+			out = append(out, st.Skill)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // doneReachable returns the set of states from which "done" is reachable
@@ -170,12 +199,15 @@ func (s Spec) ExecutorPathToDoneSkills() []string {
 	return out
 }
 
-// Transition is a directed edge; Skill is the reviewer gate admitting entry to
-// the target node (empty = ungated).
+// Transition is a directed edge. Skills are the reviewer gates admitting entry to
+// the target node, in order (empty = ungated); Skill mirrors the first for
+// single-reviewer back-compat. An edge declares multiple gates via
+// `reviewer_skill="a,b"`.
 type Transition struct {
-	From  string
-	To    string
-	Skill string
+	From   string
+	To     string
+	Skill  string
+	Skills []string
 }
 
 // Spec is the parsed lifecycle: states and gated transitions.
@@ -194,8 +226,9 @@ func Parse(body string) (Spec, bool) {
 	}
 	type node struct {
 		agent     string
-		skill     string // resolved from prompt="@skill:NAME"
-		mandatory bool   // mandatory=true attribute
+		skill     string   // resolved from prompt="@skill:NAME"
+		mandatory bool     // mandatory=true attribute
+		on        []string // on="s1,s2" / on="*" scope (declared always-on gate)
 	}
 	nodes := map[string]node{}
 	var order []string
@@ -219,19 +252,19 @@ func Parse(body string) (Spec, bool) {
 			// An edge may carry its gate directly as a `reviewer_skill` attribute
 			// (the edge-centric form, e.g. an intent gate on backlog->in_progress
 			// where the target is an executor node, not a reviewer node).
-			edgeSkill := ""
+			var edgeSkills []string
 			if open := strings.Index(t, "["); open >= 0 {
 				closeAt := strings.LastIndex(t, "]")
 				if closeAt < open {
 					closeAt = len(t)
 				}
-				edgeSkill = strings.TrimPrefix(parseDotAttrs(t[open+1 : closeAt])["reviewer_skill"], "@skill:")
+				edgeSkills = splitCSVSkills(parseDotAttrs(t[open+1 : closeAt])["reviewer_skill"])
 			}
 			for _, id := range ids {
 				add(id)
 			}
 			for i := 0; i+1 < len(ids); i++ {
-				spec.Transitions = append(spec.Transitions, Transition{From: ids[i], To: ids[i+1], Skill: edgeSkill})
+				spec.Transitions = append(spec.Transitions, Transition{From: ids[i], To: ids[i+1], Skill: first(edgeSkills), Skills: edgeSkills})
 			}
 			continue
 		}
@@ -250,6 +283,9 @@ func Parse(body string) (Spec, bool) {
 		if strings.EqualFold(attrs["mandatory"], "true") {
 			n.mandatory = true
 		}
+		if on := splitCSV(attrs["on"]); len(on) > 0 {
+			n.on = on
+		}
 		nodes[id] = n
 	}
 	if len(order) == 0 {
@@ -257,16 +293,17 @@ func Parse(body string) (Spec, bool) {
 	}
 
 	for _, name := range order {
-		spec.States = append(spec.States, State{Name: name, Agent: nodes[name].agent, Skill: nodes[name].skill, Mandatory: nodes[name].mandatory})
+		spec.States = append(spec.States, State{Name: name, Agent: nodes[name].agent, Skill: nodes[name].skill, Mandatory: nodes[name].mandatory, On: nodes[name].on})
 	}
 	// A transition into a reviewer node is gated by that node's skill — unless the
 	// edge already carries an explicit reviewer_skill attribute, which wins.
 	for i := range spec.Transitions {
-		if spec.Transitions[i].Skill != "" {
+		if len(spec.Transitions[i].Skills) > 0 {
 			continue
 		}
 		if to := nodes[spec.Transitions[i].To]; to.agent == "reviewer" && to.skill != "" {
 			spec.Transitions[i].Skill = to.skill
+			spec.Transitions[i].Skills = []string{to.skill}
 		}
 	}
 	froms := map[string]bool{}
@@ -457,6 +494,47 @@ func dotUnquote(s string) string {
 	return strings.Trim(s, `"`)
 }
 
+// splitCSV splits a comma-separated attribute value into trimmed, non-empty
+// tokens (e.g. on="in_progress, done" → ["in_progress","done"]). Returns nil when
+// empty.
+func splitCSV(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if v := strings.TrimSpace(p); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// splitCSVSkills splits a comma-separated reviewer_skill value into skill names,
+// stripping any per-token `@skill:` prefix (e.g. reviewer_skill="a,@skill:b").
+func splitCSVSkills(s string) []string {
+	out := splitCSV(s)
+	for i, v := range out {
+		out[i] = strings.TrimPrefix(v, "@skill:")
+	}
+	return out
+}
+
+// first returns the first element of ss, or "" when empty.
+func first(ss []string) string {
+	if len(ss) > 0 {
+		return ss[0]
+	}
+	return ""
+}
+
+// containsStr reports whether ss contains v.
+func containsStr(ss []string, v string) bool {
+	for _, s := range ss {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
 // ToDOT normalizes a workflow body to the DOT standard — the conversion satelle
 // runs at ingest (create/upload). A body that already carries a fenced ```dot
 // block is returned unchanged (changed=false). A body in the inline-YAML grammar
@@ -508,10 +586,16 @@ func parseYAML(body string) (Spec, bool) {
 		if !strings.HasPrefix(t, "- {") || !strings.Contains(t, "from:") || !strings.Contains(t, "to:") {
 			continue
 		}
+		sk := inlineYAMLField(t, "reviewer_skill")
+		var skills []string
+		if sk != "" {
+			skills = []string{sk}
+		}
 		spec.Transitions = append(spec.Transitions, Transition{
-			From:  inlineYAMLField(t, "from"),
-			To:    inlineYAMLField(t, "to"),
-			Skill: inlineYAMLField(t, "reviewer_skill"),
+			From:   inlineYAMLField(t, "from"),
+			To:     inlineYAMLField(t, "to"),
+			Skill:  sk,
+			Skills: skills,
 		})
 	}
 	if len(spec.States) == 0 && len(spec.Transitions) == 0 {
@@ -566,7 +650,9 @@ func emitDOT(spec Spec, name string) string {
 	}
 	b.WriteString("\n")
 	for _, tr := range spec.Transitions {
-		if tr.Skill != "" {
+		if skills := tr.Skills; len(skills) > 0 {
+			fmt.Fprintf(&b, "  %s -> %s [reviewer_skill=%q]\n", tr.From, tr.To, strings.Join(skills, ","))
+		} else if tr.Skill != "" {
 			fmt.Fprintf(&b, "  %s -> %s [reviewer_skill=%q]\n", tr.From, tr.To, tr.Skill)
 		} else {
 			fmt.Fprintf(&b, "  %s -> %s\n", tr.From, tr.To)

@@ -31,6 +31,28 @@ var numberedAC = regexp.MustCompile(`(?m)^\s*\d+[.)]\s+\S`)
 // the DOT node attribute `actor=` or the inline-state map key `actor:` (sty_7db2ed7d).
 var deprecatedActorKeyword = regexp.MustCompile(`\bactor\s*[=:]`)
 
+// beforeArrow / afterArrow capture the identifier token on either side of a
+// lifecycle arrow ("→" or "->") in a workflow description — the tokens a reader
+// reads as the lifecycle states.
+var beforeArrow = regexp.MustCompile(`([A-Za-z][\w]*)\s*(?:→|->)`)
+var afterArrow = regexp.MustCompile(`(?:→|->)\s*([A-Za-z][\w]*)`)
+
+// arrowChainTokens returns the deduped state tokens adjacent to a lifecycle arrow
+// in s — used to check a description's stated lifecycle against the DOT's nodes.
+func arrowChainTokens(s string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, re := range []*regexp.Regexp{beforeArrow, afterArrow} {
+		for _, m := range re.FindAllStringSubmatch(s, -1) {
+			if t := m[1]; !seen[t] {
+				seen[t] = true
+				out = append(out, t)
+			}
+		}
+	}
+	return out
+}
+
 // Doc returns the structural problems with an authored doc of the given kind
 // (skills | workflows | principles), empty when conformant. resolveSkill reports
 // whether a referenced skill resolves in the substrate (embedded ∪ project); it is
@@ -163,6 +185,22 @@ func checkWorkflow(name, body string, resolveSkill func(skill string) bool) []st
 		return p
 	}
 	p = append(p, wfdot.Validate(spec)...)
+	// Drift guard (sty_ca9f675f): the description's lifecycle arrow-chain must name
+	// only states that exist in the DOT. Hand-maintained prose drifts from the graph
+	// — a renamed node left in the description silently lies about the lifecycle —
+	// so flag any arrow-adjacent token that is not a node. The DOT is the authority;
+	// the description is checked against it.
+	if desc := fmScalar(fm, "description"); desc != "" {
+		nodeSet := map[string]bool{}
+		for _, st := range spec.States {
+			nodeSet[st.Name] = true
+		}
+		for _, tok := range arrowChainTokens(desc) {
+			if !nodeSet[tok] {
+				p = append(p, fmt.Sprintf("description's lifecycle arrow-chain names %q, which is not a node in the DOT (prose/DOT drift)", tok))
+			}
+		}
+	}
 	// backlog is the initial state — every satelle work item is created at
 	// backlog, so a workflow that begins elsewhere desyncs status and the
 	// progress lights. Checked only when a start is determinable.

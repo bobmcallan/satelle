@@ -58,13 +58,6 @@ const baselineWorkflow = "satelle-baseline-workflow"
 // but a hung command must not block a transition forever).
 const defaultCheckTimeout = 20 * time.Minute
 
-// alwaysReviewerTag marks a skill as an always-on SYSTEM reviewer: the gater
-// discovers every skill whose frontmatter tags carry it and runs them on a
-// gated transition AFTER the workflow-named reviewers (the system layer always
-// runs last). Which skills carry the tag is authored substrate, not a binary
-// branch — so the system layer is configured, not compiled.
-const alwaysReviewerTag = "reviewer:always"
-
 // Gater judges status transitions against the active workflow's reviewer skills.
 // A skill is either an LLM reviewer (its body rides as an isolated agent's system
 // prompt) or a functional check (its frontmatter names a deterministic `check:`
@@ -255,10 +248,12 @@ func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (
 	} else if blocked {
 		return dec, nil
 	}
-	// Append the always-on system reviewers AFTER the workflow-named ones — they
-	// always run last. Skills already named on the edge are not duplicated, and a
-	// reviewer that scopes itself with `on:` only joins on its target statuses.
-	sys, err := g.systemReviewers(ctx, skills, toStatus)
+	// Append the workflow's DECLARED scoped reviewers (edge-less reviewer nodes
+	// whose on= includes this target, or "*") AFTER the edge-named ones — they run
+	// last. Skills already named on the edge are not duplicated. The DOT is the sole
+	// gating authority: there is no skill-tag scan that injects gates the workflow
+	// never declared (the reviewer:always layer was removed — sty_ca9f675f).
+	sys, err := g.scopedReviewers(ctx, item, toStatus, skills)
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
@@ -390,33 +385,33 @@ func (g *Gater) runReviewer(ctx context.Context, item workitem.Item, toStatus, s
 	return dec, nil
 }
 
-// systemReviewers returns the names of the always-on SYSTEM reviewers that join
-// the transition into toStatus — skills whose frontmatter tags carry
-// alwaysReviewerTag, sorted for a deterministic order, excluding any already
-// named on the edge. A reviewer may SCOPE itself with an `on:` frontmatter list
-// of target statuses: it then joins only on those edges, so a gate that governs
-// just begin-work/close costs nothing on the edges between. An `on:`-less skill
-// joins every edge (back-compat). A List failure degrades to no system layer —
-// it is additive and must never break the workflow's own gating.
-func (g *Gater) systemReviewers(ctx context.Context, exclude []string, toStatus string) ([]string, error) {
-	docs, err := g.docs.List(ctx, "skills")
+// scopedReviewers returns the active workflow's DECLARED scoped reviewers for the
+// transition into toStatus — edge-less reviewer nodes whose `on=` attribute lists
+// toStatus (or "*"), excluding any already named on the edge. This replaces the
+// old reviewer:always skill-tag scan: the scope is declared in the workflow DOT,
+// not inferred from a skill's frontmatter tag, so the workflow is the SOLE gating
+// authority (sty_ca9f675f). A workflow that is not parseable DOT (the inline-YAML
+// grammar) has no scoped-node concept and contributes none. A resolution failure
+// degrades to none — scoped reviewers are additive and must never break the
+// workflow's own edge gating.
+func (g *Gater) scopedReviewers(ctx context.Context, item workitem.Item, toStatus string, exclude []string) ([]string, error) {
+	doc, err := g.activeWorkflowPreferring(ctx, item.Category, stampedWorkflowName(item))
 	if err != nil {
+		if errors.Is(err, docindex.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	spec, ok := wfdot.Parse(doc.Body)
+	if !ok {
 		return nil, nil
 	}
 	var out []string
-	for _, d := range docs {
-		if !containsStr(frontmatterList(d.Body, "tags"), alwaysReviewerTag) {
-			continue
+	for _, s := range spec.ScopedReviewers(toStatus) {
+		if !containsStr(exclude, s) {
+			out = append(out, s)
 		}
-		if containsStr(exclude, d.Name) {
-			continue
-		}
-		if on := frontmatterList(d.Body, "on"); len(on) > 0 && !containsStr(on, toStatus) {
-			continue // scoped reviewer — this edge's target is not one it governs
-		}
-		out = append(out, d.Name)
 	}
-	sort.Strings(out)
 	return out, nil
 }
 
@@ -933,8 +928,8 @@ func reviewerSkillsFor(body, from, to string) (skills []string, declared bool) {
 	if spec, ok := wfdot.Parse(body); ok {
 		for _, tr := range spec.Transitions {
 			if tr.From == from && tr.To == to {
-				if tr.Skill != "" {
-					return []string{tr.Skill}, true
+				if len(tr.Skills) > 0 {
+					return tr.Skills, true
 				}
 				return nil, true
 			}

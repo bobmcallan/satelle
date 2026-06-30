@@ -109,6 +109,17 @@ func TestWorkflow(t *testing.T) {
 	if p := Doc("workflows", "wf-x", deprecated, resolveAll); !hasProb(p, `deprecated "actor"`) {
 		t.Errorf("deprecated actor= keyword: want a reject naming it, got %v", p)
 	}
+	// Prose/DOT drift (sty_ca9f675f): a description whose lifecycle arrow-chain names
+	// a state absent from the DOT is rejected.
+	drift := "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: moves backlog → commit_push → done\n---\n\n```dot\ndigraph x {\n  backlog [shape=Mdiamond]\n  done [shape=Msquare, agent=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  backlog -> done\n}\n```"
+	if p := Doc("workflows", "wf-x", drift, resolveAll); !hasProb(p, "prose/DOT drift") {
+		t.Errorf("description naming a non-node state: want a drift reject, got %v", p)
+	}
+	// An aligned arrow-chain passes the drift guard.
+	aligned := "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: moves backlog → done\n---\n\n```dot\ndigraph x {\n  backlog [shape=Mdiamond]\n  done [shape=Msquare, agent=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  backlog -> done\n}\n```"
+	if p := Doc("workflows", "wf-x", aligned, resolveAll); len(p) != 0 {
+		t.Errorf("aligned description should pass, got %v", p)
+	}
 }
 
 func hasProb(ps []string, sub string) bool {
