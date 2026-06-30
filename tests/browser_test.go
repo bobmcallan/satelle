@@ -384,7 +384,7 @@ func TestBrowserTagChipFiltering(t *testing.T) {
 // dark mode (the per-status hue subsuming the earlier sty_173e49a7 dark-only fix).
 func TestBrowserStatusBadgesOutlined(t *testing.T) {
 	base, repo := serveRepo(t, "8812")
-	createStory(t, repo, "Backlog Item", "")  // defaults to backlog
+	createStory(t, repo, "Backlog Item", "") // defaults to backlog
 	createStory(t, repo, "Finished Item", "done")
 
 	ctx := newChrome(t)
