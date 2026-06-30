@@ -64,6 +64,37 @@ func TestNamedBinding(t *testing.T) {
 	}
 }
 
+// TestFlatNamedAgent proves a named agent declared in the FLAT top-level form
+// [<name>] resolves as a named isolated agent, while [executor]/[reviewer] in the
+// same file remain the built-in roles (not named agents) — sty_6e0ba71c.
+func TestFlatNamedAgent(t *testing.T) {
+	dir := t.TempDir()
+	body := "[reviewer]\nmodel = \"sonnet\"\n" +
+		"[commit-agent]\nharness = \"claude -p --allowedTools {tools}\"\ntools = \"Read,Bash(git:*)\"\n"
+	if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ac, err := LoadAgents(dir)
+	if err != nil {
+		t.Fatalf("LoadAgents: %v", err)
+	}
+	// Flat [commit-agent] resolves as a named agent.
+	b, ok := ac.NamedBinding("commit-agent")
+	if !ok || b.Tools != "Read,Bash(git:*)" || b.Harness != "claude -p --allowedTools {tools}" {
+		t.Errorf("flat [commit-agent] = %+v ok=%v, want the declared harness+tools", b, ok)
+	}
+	// [reviewer] stays a built-in ROLE, not a named agent.
+	if ac.Reviewer.Model != "sonnet" {
+		t.Errorf("reviewer role model = %q, want sonnet", ac.Reviewer.Model)
+	}
+	if _, ok := ac.NamedBinding("reviewer"); ok {
+		t.Error("[reviewer] is a built-in role, must NOT be a named agent")
+	}
+	if _, ok := ac.NamedBinding("executor"); ok {
+		t.Error("[executor] is a built-in role, must NOT be a named agent")
+	}
+}
+
 func TestLoadAgentsOverride(t *testing.T) {
 	dir := t.TempDir()
 	body := "[reviewer]\ntools = \"Read\"\nharness = \"other-harness\"\n[executor]\nharness = \"claude -p\"\n"

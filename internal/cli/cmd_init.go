@@ -258,8 +258,10 @@ const scaffoldAgentsToml = `# agents.toml — the agents layer: how each agent r
 #     reads a step's rubric from .satelle/skills. Not an isolated process.
 #   - reviewer  — runs as an ISOLATED, read-only sub-process (the rubric rides as
 #     its system prompt); tools = "Read,Grep,Glob".
-#   - any OTHER agent you bind here ([agents.<name>]) is OPTIONAL and ALWAYS an
+#   - any OTHER top-level section [<name>] is an OPTIONAL named agent, ALWAYS an
 #     isolated sub-process; a workflow node allocates a step to it via agent=<name>.
+#     (Every top-level section is an agent: executor/reviewer are the built-in roles,
+#      anything else is a named agent. The legacy nested [agents.<name>] still loads.)
 #
 # An absent or fully-commented file is the default (executor in-loop, reviewer
 # isolated). Uncomment to override — the grant travels with the binding, so the
@@ -287,9 +289,10 @@ const scaffoldAgentsToml = `# agents.toml — the agents layer: how each agent r
 # model   = "sonnet"           # run the reviewer on a different (e.g. cheaper/faster) model
 #                              # than the executor; empty inherits the agent CLI's default
 
-# A named, isolated agent a workflow node can allocate via agent=commit-agent. The
-# grant is SCOPED to what the step needs, not blanket:
-# [agents.commit-agent]
+# A named, isolated agent a workflow node can allocate via agent=commit-agent —
+# declared as a flat top-level section. The grant is SCOPED to what the step needs,
+# not blanket:
+# [commit-agent]
 # harness = "claude -p --append-system-prompt {system} --allowedTools {tools}"
 # tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*)"
 `

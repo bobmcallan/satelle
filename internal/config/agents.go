@@ -41,19 +41,23 @@ type AgentBinding struct {
 // AgentsConfig is the on-disk shape at .satelle/agents.toml — the agents layer.
 // Every field is optional; the *Binding resolvers supply today's defaults, so
 // the zero value (and an absent file) is the current behaviour. Agents holds
-// OPTIONAL named agents (beyond the executor/reviewer roles) declared under
-// [agents.<name>] — a workflow node may allocate a step to one, and a named agent
-// is ALWAYS isolated (see satelle-agent-model).
+// OPTIONAL named agents (beyond the executor/reviewer roles) declared as flat
+// top-level [<name>] sections — consistent with [executor]/[reviewer] — or the
+// legacy nested [agents.<name>] (still read for back-compat). A workflow node may
+// allocate a step to one, and a named agent is ALWAYS isolated (see
+// satelle-agent-model). LoadAgents does the classification; the toml tag here is
+// retained only for the legacy nested form.
 type AgentsConfig struct {
 	Executor AgentBinding            `toml:"executor"`
 	Reviewer AgentBinding            `toml:"reviewer"`
 	Agents   map[string]AgentBinding `toml:"agents"`
 }
 
-// NamedBinding resolves an optional named agent declared under [agents.<name>].
-// ok is false when none is declared, so a workflow node that allocates a step to an
-// absent agent degrades gracefully to the in-loop executor. A named agent is always
-// isolated; an unset harness defaults to the isolated claude preset.
+// NamedBinding resolves an optional named agent declared as a flat top-level
+// [<name>] section (or the legacy nested [agents.<name>]). ok is false when none is
+// declared, so a workflow node that allocates a step to an absent agent degrades
+// gracefully to the in-loop executor. A named agent is always isolated; an unset
+// harness defaults to the isolated claude preset.
 func (a AgentsConfig) NamedBinding(name string) (AgentBinding, bool) {
 	b, ok := a.Agents[name]
 	if !ok {
@@ -102,9 +106,41 @@ func LoadAgents(dataDir string) (AgentsConfig, error) {
 		}
 		return AgentsConfig{}, err
 	}
-	var ac AgentsConfig
-	if _, err := toml.Decode(string(b), &ac); err != nil {
+	// Decode into a generic table so EVERY top-level section can be classified:
+	// `executor`/`reviewer` are the built-in roles; any OTHER top-level table is a
+	// named agent in the FLAT form [<name>] (sty_6e0ba71c). The legacy nested
+	// container [agents.<name>] is still read for back-compat.
+	var raw map[string]toml.Primitive
+	md, err := toml.Decode(string(b), &raw)
+	if err != nil {
 		return AgentsConfig{}, err
+	}
+	ac := AgentsConfig{Agents: map[string]AgentBinding{}}
+	for key, prim := range raw {
+		switch key {
+		case "executor":
+			if err := md.PrimitiveDecode(prim, &ac.Executor); err != nil {
+				return AgentsConfig{}, err
+			}
+		case "reviewer":
+			if err := md.PrimitiveDecode(prim, &ac.Reviewer); err != nil {
+				return AgentsConfig{}, err
+			}
+		case "agents": // legacy nested [agents.<name>] container (back-compat)
+			nested := map[string]AgentBinding{}
+			if err := md.PrimitiveDecode(prim, &nested); err != nil {
+				return AgentsConfig{}, err
+			}
+			for n, bnd := range nested {
+				ac.Agents[n] = bnd
+			}
+		default: // flat [<name>] — a named isolated agent
+			var bnd AgentBinding
+			if err := md.PrimitiveDecode(prim, &bnd); err != nil {
+				return AgentsConfig{}, err
+			}
+			ac.Agents[key] = bnd
+		}
 	}
 	return ac, nil
 }
