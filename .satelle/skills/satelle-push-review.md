@@ -8,8 +8,8 @@ description: Functional-check gate for the `push` step. Confirms the pushed HEAD
 
 # Push gate (functional check)
 
-This is a **functional-check** gate on the `push` step. The check is the embedded
-```check script below — **self-contained**, referencing no external file (see
+This is a **functional-check** gate on the `push` step. The check is the embedded,
+self-contained check script below, referencing no external file (see
 [[satelle-reviewer-self-contained]]). satelle runs it in the repo root on the gated
 transition; exit 0 accepts, non-zero rejects with the output tail as notes.
 
