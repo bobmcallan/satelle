@@ -141,6 +141,67 @@ func TestGatedTransitionRecordsStepSummary(t *testing.T) {
 	}
 }
 
+func TestGatedTransitionRecordsAgentInvocation(t *testing.T) {
+	wire(t)
+	// An LLM reviewer carries its invocation: the resolved command and the injected
+	// skill/rubric file. A functional check would leave Command empty (no agent).
+	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{
+		Gated: true, Accept: true, Skill: "satelle-story-done-review",
+		Reviewers: []verb.ReviewerVerdict{{
+			Skill:   "satelle-story-done-review",
+			Accept:  true,
+			Command: "claude -p --append-system-prompt {system}",
+			Context: "satelle-story-done-review",
+		}},
+	}})
+	t.Cleanup(func() { verb.SetTransitionGater(nil) })
+
+	var it workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it)
+	call(t, "story-set", map[string]any{"id": it.ID, "status": "done"})
+
+	var entries []ledger.Entry
+	json.Unmarshal(call(t, "ledger-list", map[string]any{"story_id": it.ID, "kind": ledger.KindAgentInvocation}), &entries)
+	if len(entries) != 1 {
+		t.Fatalf("want one agent_invocation row, got %d: %+v", len(entries), entries)
+	}
+	e := entries[0]
+	// AC: the entry names the agent and the injected skill/rubric file.
+	if !strings.Contains(e.Body, "satelle-story-done-review") || !strings.Contains(e.Body, "claude") {
+		t.Errorf("invocation body missing skill or command: %q", e.Body)
+	}
+	var p struct {
+		Agent   string `json:"agent"`
+		Command string `json:"command"`
+		Context string `json:"context"`
+	}
+	json.Unmarshal(e.Payload, &p)
+	if p.Agent != "reviewer" || p.Context != "satelle-story-done-review" || p.Command == "" {
+		t.Errorf("invocation payload wrong: %+v", p)
+	}
+}
+
+func TestFunctionalCheckRecordsNoInvocation(t *testing.T) {
+	wire(t)
+	// A deterministic functional-check gate invokes no agent (Command empty), so no
+	// agent_invocation row is written — only LLM agent invocations are recorded.
+	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{
+		Gated: true, Accept: true, Skill: "satelle-integration-check",
+		Reviewers: []verb.ReviewerVerdict{{Skill: "satelle-integration-check", Accept: true}},
+	}})
+	t.Cleanup(func() { verb.SetTransitionGater(nil) })
+
+	var it workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it)
+	call(t, "story-set", map[string]any{"id": it.ID, "status": "done"})
+
+	var entries []ledger.Entry
+	json.Unmarshal(call(t, "ledger-list", map[string]any{"story_id": it.ID, "kind": ledger.KindAgentInvocation}), &entries)
+	if len(entries) != 0 {
+		t.Errorf("functional check should record no agent_invocation, got %d", len(entries))
+	}
+}
+
 func TestUngatedTransitionSkipsSummariser(t *testing.T) {
 	wire(t)
 	// No transition gater → ungated edge → summariser must not run.

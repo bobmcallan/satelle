@@ -34,6 +34,11 @@ const (
 	KindReviewReject     = "review_reject"
 	// KindStepSummary is the summariser's prose recap of an enacted transition.
 	KindStepSummary = "step_summary"
+	// KindAgentInvocation records HOW an isolated agent was invoked for a step —
+	// the agent role, the resolved command/harness, and the injected-context source
+	// (the skill/rubric file) — so the timeline shows what command ran with what
+	// context, not just the verdict (sty_fb3e0873).
+	KindAgentInvocation = "agent_invocation"
 	// Estimate/actual: an agent self-reports a plan estimate at begin-work and the
 	// actual cost at close. Recorded as story tags (estimate-*/actual-*) and as
 	// these ledger rows so the per-story close-out can compare estimate vs actual.

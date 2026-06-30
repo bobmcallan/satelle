@@ -26,7 +26,8 @@ type fakeRunner struct {
 	got agentcli.Request
 }
 
-func (f *fakeRunner) Name() string { return "fake" }
+func (f *fakeRunner) Name() string    { return "fake" }
+func (f *fakeRunner) Command() string { return "fake -p --append-system-prompt {system}" }
 func (f *fakeRunner) Run(_ context.Context, req agentcli.Request) ([]byte, error) {
 	f.got = req
 	return []byte(f.out), f.err
@@ -333,7 +334,8 @@ type mapRunner struct {
 	seen    []string
 }
 
-func (m *mapRunner) Name() string { return "map" }
+func (m *mapRunner) Name() string    { return "map" }
+func (m *mapRunner) Command() string { return "map -p --append-system-prompt {system}" }
 func (m *mapRunner) Run(_ context.Context, req agentcli.Request) ([]byte, error) {
 	var p struct {
 		ReviewSkill string `json:"review_skill"`

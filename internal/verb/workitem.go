@@ -242,9 +242,18 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		// top-level verdict so both paths record identically.
 		reviewers := dec.Reviewers
 		if len(reviewers) == 0 && dec.Gated {
-			reviewers = []ReviewerVerdict{{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes}}
+			reviewers = []ReviewerVerdict{{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes, Command: dec.Command, Context: dec.Context}}
 		}
 		for _, rv := range reviewers {
+			// Record HOW the isolated agent was invoked before its verdict — the
+			// resolved command/harness and the injected skill/rubric file — so the
+			// timeline shows what command ran with what context (sty_fb3e0873). Only
+			// an LLM reviewer carries a Command; a functional check invokes no agent.
+			if rv.Command != "" {
+				appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "reviewer",
+					fmt.Sprintf("invoked reviewer (%s) for %s→%s with @skill:%s", rv.Command, current.Status, *req.Status, rv.Context),
+					invocationPayload(current.Status, *req.Status, rv), now)
+			}
 			if !rv.Accept {
 				appendLedgerEntry(ctx, current.ID, ledger.KindReviewReject, "reviewer",
 					fmt.Sprintf("rejected %s→%s by %s: %s", current.Status, *req.Status, rv.Skill, rv.Notes),
@@ -464,6 +473,25 @@ func reviewerPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		Order  int    `json:"order"`
 		System bool   `json:"system,omitempty"`
 	}{From: from, To: to, Skill: rv.Skill, Order: rv.Order, System: rv.System}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+// invocationPayload stamps an agent_invocation row with the resolved command and
+// the injected-context source (skill/rubric file), correlated to the edge, so the
+// timeline can show HOW the agent was invoked alongside its verdict (sty_fb3e0873).
+func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
+	p := struct {
+		From    string `json:"from"`
+		To      string `json:"to"`
+		Agent   string `json:"agent"`
+		Skill   string `json:"skill,omitempty"`
+		Command string `json:"command,omitempty"`
+		Context string `json:"context,omitempty"`
+	}{From: from, To: to, Agent: "reviewer", Skill: rv.Skill, Command: rv.Command, Context: rv.Context}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil

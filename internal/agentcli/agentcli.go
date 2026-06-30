@@ -57,6 +57,11 @@ type Request struct {
 type Runner interface {
 	// Name reports the agent CLI identifier (the template's binary).
 	Name() string
+	// Command reports the resolved command/harness template (binary + argv with the
+	// {system}/{tools}/{model} placeholders intact) — a concise, payload-free
+	// description of HOW the agent is invoked, recorded as invocation evidence
+	// (sty_fb3e0873). It never includes the rubric body or the stdin payload.
+	Command() string
 	// Run executes the agent over req and returns its raw stdout.
 	Run(ctx context.Context, req Request) ([]byte, error)
 }
@@ -128,6 +133,12 @@ func templateFromHarness(harness string) templateRunner {
 
 func (t templateRunner) Name() string { return t.binary }
 
+// Command joins the binary and argv template (placeholders intact) into the
+// payload-free harness string recorded as invocation evidence.
+func (t templateRunner) Command() string {
+	return strings.Join(append([]string{t.binary}, t.argTemplate...), " ")
+}
+
 func (t templateRunner) Run(ctx context.Context, req Request) ([]byte, error) {
 	return runProcess(ctx, t.binary, buildArgs(t.argTemplate, req), req)
 }
@@ -167,6 +178,9 @@ func buildArgs(argTemplate []string, req Request) []string {
 type codexRunner struct{ binary string }
 
 func (c codexRunner) Name() string { return CLICodex }
+
+// Command reports the codex binary; its full preset argv is not yet mapped.
+func (c codexRunner) Command() string { return c.binary }
 
 func (c codexRunner) Run(ctx context.Context, req Request) ([]byte, error) {
 	return nil, fmt.Errorf("agentcli: the codex preset is not yet mapped — install claude, or set [reviewer] harness to a full codex command template in .satelle/agents.toml")
