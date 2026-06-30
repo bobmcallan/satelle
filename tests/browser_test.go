@@ -445,6 +445,68 @@ func TestBrowserStatusBadgesOutlined(t *testing.T) {
 	}
 }
 
+// TestBrowserSquaredEdges asserts the industrial squared-edge restyle (sty_10c6c5b0)
+// at the computed-style level: the four label families the story enumerates — tag
+// chips (.tagchip), filter chips (.fchip), status badges (.badge), and the backlog
+// count pill (.tab .n-backlog) — all report a 0px border-radius, in BOTH themes,
+// while a non-label control (.uptime) keeps its rounded corner (the scope guard:
+// only chips/badges/pills square off, not buttons/panels/cards/inputs).
+func TestBrowserSquaredEdges(t *testing.T) {
+	base, repo := serveRepo(t, "8817")
+	// A tagged backlog story renders a tag chip AND a backlog badge AND the
+	// stories-tab backlog count pill, all on the default view.
+	mustRun(t, testBin, repo, "story", "create", "--title", "Tagged Backlog", "--tags", "demo")
+
+	ctx := newChrome(t)
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/"),
+		chromedp.WaitVisible(`#panel-stories table.panel-table`, chromedp.ByQuery),
+		chromedp.WaitVisible(`#panel-stories tr.row .tagchip`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tab[data-panel="stories"] .n-backlog`, chromedp.ByQuery),
+		chromedp.WaitVisible(`#panel-stories .badge.s-backlog`, chromedp.ByQuery),
+		// A filter token surfaces a removable .fchip in the stories filterbar.
+		setInput(`#panel-stories .filterbar input`, "status:all tags:demo"),
+		chromedp.WaitVisible(`#panel-stories .chips .fchip`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("load page: %v", err)
+	}
+
+	read := func(sel, prop string) string {
+		var v string
+		js := fmt.Sprintf(`getComputedStyle(document.querySelector('%s')).%s`, sel, prop)
+		if err := chromedp.Run(ctx, chromedp.Evaluate(js, &v)); err != nil {
+			t.Fatalf("read %s.%s: %v", sel, prop, err)
+		}
+		return v
+	}
+	setTheme := func(mode string) {
+		if err := chromedp.Run(ctx, chromedp.Evaluate(
+			fmt.Sprintf(`document.documentElement.setAttribute('data-theme','%s')`, mode), nil)); err != nil {
+			t.Fatalf("set theme %s: %v", mode, err)
+		}
+	}
+
+	// The four label families the story squares off.
+	squared := []string{
+		`#panel-stories tr.row .tagchip`,
+		`#panel-stories .chips .fchip`,
+		`#panel-stories .badge.s-backlog`,
+		`.tab[data-panel="stories"] .n-backlog`,
+	}
+	for _, mode := range []string{"light", "dark"} {
+		setTheme(mode)
+		for _, sel := range squared {
+			if r := read(sel, "borderTopLeftRadius"); r != "0px" {
+				t.Errorf("[%s] %s should have a squared (0px) corner; got %q", mode, sel, r)
+			}
+		}
+		// Scope guard: a non-label control (the uptime indicator) keeps its radius.
+		if r := read(`.uptime`, "borderTopLeftRadius"); r == "0px" || r == "" {
+			t.Errorf("[%s] .uptime is not a label and must keep its rounded corner; got %q", mode, r)
+		}
+	}
+}
+
 // parseRGB pulls the r,g,b channels out of a CSS "rgb(r, g, b)" / "rgba(...)"
 // computed-style string.
 func parseRGB(t *testing.T, s string) (int, int, int) {
