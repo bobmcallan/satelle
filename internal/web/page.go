@@ -133,10 +133,10 @@ const templatesSrc = `
   </header>
 
   <div class="tabs" role="tablist">
-    <button class="tab" role="tab" data-panel="stories">Stories <span class="n">{{len .Stories}}</span>{{if .BacklogCount}} <span class="n-backlog" title="stories in the open backlog">{{.BacklogCount}} backlog</span>{{end}}</button>
-    <button class="tab" role="tab" data-panel="tasks">Tasks <span class="n">{{len .Tasks}}</span></button>
-    <button class="tab" role="tab" data-panel="workflow">Workflow <span class="n">{{len .Workflows}}</span></button>
-    <button class="tab" role="tab" data-panel="docs">Documents <span class="n">{{.DocCount}}</span></button>
+    <a class="tab" role="tab" data-panel="stories" href="#stories">Stories <span class="n">{{len .Stories}}</span>{{if .BacklogCount}} <span class="n-backlog" title="stories in the open backlog">{{.BacklogCount}} backlog</span>{{end}}</a>
+    <a class="tab" role="tab" data-panel="tasks" href="#tasks">Tasks <span class="n">{{len .Tasks}}</span></a>
+    <a class="tab" role="tab" data-panel="workflow" href="#workflow">Workflow <span class="n">{{len .Workflows}}</span></a>
+    <a class="tab" role="tab" data-panel="docs" href="#docs">Documents <span class="n">{{.DocCount}}</span></a>
   </div>
 
   <section class="panel" data-topic="stories" id="panel-stories">

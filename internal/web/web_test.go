@@ -87,6 +87,27 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+// TestTabsRenderAsAnchorLinks: the Stories/Tasks/Workflow/Documents tabs render as
+// real <a href="#panel"> links in the server HTML (not <button>), so the browser
+// offers open-in-new-tab / middle-click and the active tab lives in the URL
+// (sty_918b2bf7).
+func TestTabsRenderAsAnchorLinks(t *testing.T) {
+	srv, _ := newServer(t)
+	code, body := get(t, srv.URL+"/")
+	if code != 200 {
+		t.Fatalf("/ = %d", code)
+	}
+	for _, panel := range []string{"stories", "tasks", "workflow", "docs"} {
+		anchor := `<a class="tab" role="tab" data-panel="` + panel + `" href="#` + panel + `">`
+		if !strings.Contains(body, anchor) {
+			t.Errorf("tab %q is not an anchor link with href=#%s:\n%s", panel, panel, body)
+		}
+	}
+	if strings.Contains(body, `<button class="tab"`) {
+		t.Error("a tab is still a <button> — tabs must be <a> links")
+	}
+}
+
 // TestFaviconLinkedAndServed: the green-dot logo is the favicon on every page —
 // the asset is served and each page <head> links it (sty_f00d40c9).
 func TestFaviconLinkedAndServed(t *testing.T) {

@@ -86,7 +86,8 @@ header.app h1 .dot { color: var(--accent); }
 /* Tabs */
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
 .tab { appearance: none; background: none; border: 0; border-bottom: 2px solid transparent;
-  padding: 9px 14px; font-size: 14px; color: var(--muted); margin-bottom: -1px; }
+  padding: 9px 14px; font-size: 14px; color: var(--muted); margin-bottom: -1px;
+  text-decoration: none; cursor: pointer; } /* tabs are <a> links — kill the anchor underline */
 .tab:hover { color: var(--ink); }
 .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
 .tab .n { color: var(--muted); font-size: 12px; margin-left: 5px; }
