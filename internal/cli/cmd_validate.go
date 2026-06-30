@@ -7,9 +7,13 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/reviewer"
 	"github.com/bobmcallan/satelle/internal/structure"
@@ -38,37 +42,61 @@ optionally a name) to narrow. Exit is non-zero if any doc fails.`,
 			if err != nil {
 				return err
 			}
-			docs, err := a.Store.DocIndex.List(context.Background(), kindFilter)
-			if err != nil {
-				return err
-			}
 			out := cmd.OutOrStdout()
 			resolve := skillResolver(a)
-			validated, failed := 0, 0
-			for _, d := range docs {
-				if nameFilter != "" && d.Name != nameFilter {
+			dirs := a.AuthoredDirs()
+			validated, failed, exempt := 0, 0, 0
+			// File-based (sty_fbd059d3): walk the authored markdown FILES, not just
+			// the indexed docs, so a malformed or never-indexed doc is caught instead
+			// of silently skipped. Reserved keep-files (README.md, index.md, log.md)
+			// are recognised and exempted — they are not authored concept docs.
+			for _, kind := range config.AuthoredKinds {
+				if kindFilter != "" && kindFilter != kind {
 					continue
 				}
-				switch {
-				case d.Kind == "documents":
-					// Free-form documents get the deterministic OKF conformance
-					// check (a concept doc needs a non-empty `type`).
-					validated++
-					if err := docindex.OKFConformance(d.Name, d.Body); err != nil {
-						failed++
-						fmt.Fprintf(out, "FAIL  documents/%s (okf) — %s\n", d.Name, err)
-					} else {
-						fmt.Fprintf(out, "PASS  documents/%s (okf)\n", d.Name)
+				entries, derr := os.ReadDir(dirs[kind])
+				if derr != nil {
+					continue // an absent authored dir has nothing to validate
+				}
+				for _, e := range entries {
+					fn := e.Name()
+					if e.IsDir() || !strings.HasSuffix(fn, ".md") {
+						continue
 					}
-				case structure.Checked(d.Kind):
+					name := strings.TrimSuffix(fn, ".md")
+					if nameFilter != "" && nameFilter != name {
+						continue
+					}
+					if reservedKeepFile(fn) {
+						exempt++
+						fmt.Fprintf(out, "EXEMPT %s/%s (reserved keep-file)\n", kind, name)
+						continue
+					}
+					body, rerr := os.ReadFile(filepath.Join(dirs[kind], fn))
+					if rerr != nil {
+						failed++
+						fmt.Fprintf(out, "FAIL  %s/%s — read: %v\n", kind, name, rerr)
+						continue
+					}
 					validated++
-					if problems := structure.Doc(d.Kind, d.Name, d.Body, resolve); len(problems) > 0 {
+					if kind == "documents" {
+						// Free-form documents get the OKF conformance check (a concept
+						// doc needs a non-empty `type`).
+						if err := docindex.OKFConformance(name, string(body)); err != nil {
+							failed++
+							fmt.Fprintf(out, "FAIL  documents/%s (okf) — %s\n", name, err)
+						} else {
+							fmt.Fprintf(out, "PASS  documents/%s (okf)\n", name)
+						}
+						continue
+					}
+					if problems := structure.Doc(kind, name, string(body), resolve); len(problems) > 0 {
 						for _, p := range problems {
 							failed++
-							fmt.Fprintf(out, "FAIL  %s/%s — %s\n", d.Kind, d.Name, p)
+							fmt.Fprintf(out, "FAIL  %s/%s — %s\n", kind, name, p)
 						}
 					} else {
-						fmt.Fprintf(out, "PASS  %s/%s\n", d.Kind, d.Name)
+						fmt.Fprintf(out, "PASS  %s/%s\n", kind, name)
 					}
 				}
 			}
@@ -86,7 +114,7 @@ optionally a name) to narrow. Exit is non-zero if any doc fails.`,
 				}
 			}
 
-			fmt.Fprintf(out, "\nvalidated %d, failed %d\n", validated, failed)
+			fmt.Fprintf(out, "\nvalidated %d, failed %d, exempt %d\n", validated, failed, exempt)
 			if failed > 0 {
 				return fmt.Errorf("%d doc(s) failed structure validation", failed)
 			}
@@ -94,4 +122,16 @@ optionally a name) to narrow. Exit is non-zero if any doc fails.`,
 		},
 	}
 	register(cmd)
+}
+
+// reservedKeepFile reports whether fn is a reserved, non-authored keep-file that
+// validate exempts (sty_fbd059d3): the per-dir README, and the documents layer's
+// reserved index.md/log.md. Everything else under the authored dirs must comply.
+func reservedKeepFile(fn string) bool {
+	switch fn {
+	case "README.md", "index.md", "log.md":
+		return true
+	default:
+		return false
+	}
 }
