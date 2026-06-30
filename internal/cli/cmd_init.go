@@ -323,6 +323,8 @@ const gitignoreBlock = gitignoreMarker + `
 .satelle/satelle.local.toml
 # the repo-local pinned binary (satelle update --local) is local state, never committed
 .satelle/satelle
+# the flat operation log (a read-only reviewer's read surface) is local evidence
+.satelle/logs/
 # <<< satelle (managed) <<<
 `
 

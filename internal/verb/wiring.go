@@ -5,6 +5,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/oplog"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -20,7 +21,13 @@ var (
 	workItemStore *workitem.Store
 	ledgerStore   *ledger.Store
 	docIndexStore *docindex.Store
+	// opLog mirrors each state-mutating verb to a flat file a read-only reviewer
+	// can scan (sty_be257fef). Nil-safe: an unwired log records nothing.
+	opLog *oplog.Logger
 )
+
+// SetOpLog wires the flat-file operation log. Pass nil to disable (tests).
+func SetOpLog(l *oplog.Logger) { opLog = l }
 
 // SetWorkItemStore wires the stories/tasks store. Pass nil to reset (tests).
 func SetWorkItemStore(s *workitem.Store) { workItemStore = s }
