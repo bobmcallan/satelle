@@ -171,12 +171,13 @@ func anyEngaged(items []workitem.Item, engaged map[string]bool) bool {
 // is thus authored in the workflow, not hardcoded. The retired `actor:` keyword is
 // no longer parsed (sty_7db2ed7d).
 func executorStates(body string) []string {
-	// DOT workflow: the executor states are the nodes marked agent=executor in
-	// the shared wfdot spec.
+	// DOT workflow: the engaged states are the PERFORMING nodes — any non-reviewer
+	// agent (the in-loop executor OR a named isolated agent a step is allocated to,
+	// e.g. commit-push) in the shared wfdot spec.
 	if spec, ok := wfdot.Parse(body); ok {
 		var out []string
 		for _, s := range spec.States {
-			if s.Agent == "executor" {
+			if s.Agent != "" && s.Agent != "reviewer" {
 				out = append(out, s.Name)
 			}
 		}
@@ -198,9 +199,13 @@ func executorStates(body string) []string {
 			break // end of the states block
 		}
 		item := strings.TrimSpace(t[2:])
-		if strings.HasPrefix(item, "{") && strings.Contains(item, "agent:") && strings.Contains(item, "executor") {
-			if name := hookInlineField(item, "name"); name != "" {
-				out = append(out, name)
+		// A performing node is any non-reviewer agent (in-loop executor or a named
+		// isolated agent); the retired actor: key is not parsed.
+		if strings.HasPrefix(item, "{") {
+			if ag := hookInlineField(item, "agent"); ag != "" && ag != "reviewer" {
+				if name := hookInlineField(item, "name"); name != "" {
+					out = append(out, name)
+				}
 			}
 		}
 	}

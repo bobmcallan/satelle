@@ -258,11 +258,25 @@ const scaffoldAgentsToml = `# agents.toml — the agents layer: how each agent r
 #     reads a step's rubric from .satelle/skills. Not an isolated process.
 #   - reviewer  — runs as an ISOLATED, read-only sub-process (the rubric rides as
 #     its system prompt); tools = "Read,Grep,Glob".
-#   - any OTHER agent you bind here is OPTIONAL and ALWAYS an isolated sub-process.
+#   - any OTHER agent you bind here ([agents.<name>]) is OPTIONAL and ALWAYS an
+#     isolated sub-process; a workflow node allocates a step to it via agent=<name>.
 #
 # An absent or fully-commented file is the default (executor in-loop, reviewer
 # isolated). Uncomment to override — the grant travels with the binding, so the
 # reviewer's read-only limit holds whatever the backend.
+#
+# ALLOCATING A STEP TO AN AGENT (in the workflow DOT). A node's agent= chooses HOW
+# the step runs — both forms perform the SAME @skill: rubric, only WHERE differs:
+#   commit_push [agent=executor,     prompt="@skill:commit-push"]  # IN-LOOP (default)
+#   commit_push [agent=commit-agent, prompt="@skill:commit-push"]  # ISOLATED sub-process
+# FALLBACK: if a node names an agent NOT defined here, the step falls back to the
+# in-loop executor (the current session) — a named binding is never required.
+#
+# THE HARNESS COMMAND TEMPLATE. A SINGLE-token harness (e.g. "claude") is a built-in
+# preset; a MULTI-token harness is a full command taken verbatim, so a repo can
+# point at any agent CLI by writing its argv. satelle substitutes {system} (the
+# skill/rubric body), {tools} (the grant), and {model}, each into its own argument,
+# and pipes the payload on stdin.
 
 # [executor]
 # harness = "in-loop"          # the orchestrator/driving session itself (default)
@@ -272,6 +286,12 @@ const scaffoldAgentsToml = `# agents.toml — the agents layer: how each agent r
 # tools   = "Read,Grep,Glob"   # the reviewer's tool grant (default; widen at your own risk)
 # model   = "sonnet"           # run the reviewer on a different (e.g. cheaper/faster) model
 #                              # than the executor; empty inherits the agent CLI's default
+
+# A named, isolated agent a workflow node can allocate via agent=commit-agent. The
+# grant is SCOPED to what the step needs, not blanket:
+# [agents.commit-agent]
+# harness = "claude -p --append-system-prompt {system} --allowedTools {tools}"
+# tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*)"
 `
 
 // gitignoreMarker opens the managed block ensureGitignore maintains. Its

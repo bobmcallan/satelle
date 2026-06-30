@@ -84,6 +84,43 @@ transitions:
 	}
 }
 
+// TestNamedAgentIsPerforming proves a node allocated to a NAMED agent (not
+// executor/reviewer) is treated as a PERFORMING node (sty_b2222b8a): its @skill is
+// collected by ExecutorPathToDoneSkills (so a missing rubric is caught), while a
+// reviewer node's is not.
+func TestNamedAgentIsPerforming(t *testing.T) {
+	const dot = `---
+name: x
+---
+` + "```dot" + `
+digraph w {
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor]
+  commit_push [agent=commit-agent, prompt="@skill:commit-push"]
+  done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
+  backlog -> in_progress -> commit_push -> done
+}
+` + "```" + `
+`
+	spec, ok := Parse(dot)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	skills := spec.ExecutorPathToDoneSkills()
+	found := false
+	for _, s := range skills {
+		if s == "commit-push" {
+			found = true
+		}
+		if s == "satelle-story-done-review" {
+			t.Errorf("a reviewer-node skill must NOT be a performing skill: %v", skills)
+		}
+	}
+	if !found {
+		t.Errorf("named-agent node skill commit-push should be a performing skill, got %v", skills)
+	}
+}
+
 func TestParse(t *testing.T) {
 	spec, ok := Parse(sampleDOT)
 	if !ok {

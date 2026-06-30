@@ -7,9 +7,37 @@
 #     principles, and skills via the substrate (the satelle CLI); it reads a
 #     step's rubric from .satelle/skills. Not an isolated process.
 #   - reviewer  — an ISOLATED, read-only sub-process (rubric as system prompt).
-#   - any OTHER agent bound here is OPTIONAL and ALWAYS an isolated sub-process.
+#   - any OTHER agent bound here ([agents.<name>]) is OPTIONAL and ALWAYS an
+#     isolated sub-process; a workflow node allocates a step to it via agent=<name>.
 #
-# An absent/commented file is the default (executor in-loop, reviewer isolated).
+# ALLOCATING A STEP TO AN AGENT (in the workflow DOT)
+# ---------------------------------------------------
+# A node's `agent=` value chooses HOW that step runs:
+#   commit_push [agent=executor,     prompt="@skill:commit-push"]  # IN-LOOP (default)
+#   commit_push [agent=commit-agent, prompt="@skill:commit-push"]  # ISOLATED sub-process
+# Both perform the SAME rubric (@skill:commit-push); only WHERE it runs differs.
+#   - agent=executor  → the current/driving session performs the step in-loop.
+#   - agent=reviewer  → an isolated, read-only gate.
+#   - agent=<name>    → the isolated named agent defined in [agents.<name>] below.
+# FALLBACK / default agent: if a node names an agent that is NOT defined here, the
+# step falls back to the in-loop executor (the current session) — so removing or
+# commenting a named binding never breaks the workflow; it just runs in-loop again.
+#
+# THE HARNESS COMMAND TEMPLATE (the "command" that runs an agent CLI)
+# -------------------------------------------------------------------
+# Each binding's `harness` is how/where the agent runs. Two forms:
+#   - SINGLE token (e.g. harness = "claude") — a built-in PRESET; the reviewer
+#     preset carries a read-only --disallowedTools denylist.
+#   - MULTI token (e.g. harness = "claude -p --append-system-prompt {system} ...")
+#     — a full COMMAND TEMPLATE taken verbatim, so a repo can point at ANY agent
+#     CLI by writing its argv. satelle substitutes these placeholders, each into
+#     its own argument (so a multi-line value stays one arg) and pipes the payload
+#     on stdin:
+#         {system}  the step's skill/rubric body (the system prompt)
+#         {tools}   the `tools` grant below (the agent CLI's --allowedTools)
+#         {model}   the `model` below (omit the placeholder to inherit the default)
+# `tools` is the capability grant; the grant travels with the binding, so a
+# reviewer's read-only ceiling holds whatever the backend.
 
 # [executor]
 # harness = "in-loop"          # the orchestrator/driving session itself (default)
@@ -19,3 +47,14 @@
 # model is overridden. Drop the block to fall back to the agent CLI default.
 [reviewer]
 model = "sonnet"               # review on sonnet (sty_5073df2f activates sty_dad271fd's knob)
+
+# commit-agent — a NAMED, isolated agent the project workflow allocates to the
+# commit_push step (agent=commit-agent). Per the operating model a named agent is
+# ALWAYS an isolated sub-process: satelle runs the commit-push.md rubric as the
+# system prompt on the agent CLI (claude -p) rather than in the driving loop. The
+# grant is SCOPED to exactly what commit-push needs — stage/commit/push, watch CI,
+# reinstall, and drive satelle — NOT a blanket allowance (sty_b2222b8a). Comment
+# this block out and the commit_push step falls back to the in-loop executor.
+[agents.commit-agent]
+harness = "claude -p --append-system-prompt {system} --allowedTools {tools}"
+tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*)"

@@ -32,15 +32,20 @@ criteria AND that both unit and integration tests were created. Leaving it for
 integration tests actually exercise the change — alongside `satelle-integration-check`,
 an always-on functional gate that runs the local suite (`make integration`) and
 rejects on a red run. So the slice is reviewed, its tests are executed, and those
-tests are reviewed, all before anything is committed. The **commit_push** executor step
+tests are reviewed, all before anything is committed. The **commit_push** step
 commits and pushes the slice and watches the GitHub Actions run to conclusion
-(skill `commit-push`); the **committed** gate (`satelle-commit-push-review`, a
+(skill `commit-push`). It is allocated to the **`commit-agent`** — a named,
+isolated agent defined in `.satelle/agents.toml` (`agent=commit-agent`), so the
+commit/push runs as an isolated `claude -p` sub-process with the `commit-push`
+rubric and a scoped grant; if that binding is absent the step falls back to the
+in-loop executor. The **committed** gate (`satelle-commit-push-review`, a
 functional check) confirms that CI run concluded success and emits a PR-style
 commit-summary; the **done** gate (`satelle-story-done-review`) checks the
 acceptance criteria. If the **done** gate rejects, the `committed -> in_progress`
 recovery edge returns the story to work so it can fix the rejected slice and
 re-traverse to `done` — the gate is acted on, not bypassed. The commit happens while
-the story is **engaged** (an executor state), so commits are always tracked. The
+the story is **engaged** (a performing state — executor or a named agent), so commits
+are always tracked. The
 always-on system layer still applies: a plan estimate is required entering
 `in_progress` and the actual entering `done`.
 
@@ -52,7 +57,7 @@ digraph satelle_workflow {
   backlog     [shape=Mdiamond]
   in_progress [agent=executor]
   integration [agent=executor]
-  commit_push [agent=executor, prompt="@skill:commit-push"]
+  commit_push [agent=commit-agent, prompt="@skill:commit-push"]
   committed   [agent=reviewer, prompt="@skill:satelle-commit-push-review"]
   done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
   cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
@@ -98,7 +103,7 @@ guardrails:
   always:
     - Drive an engaged item to a terminal state (done or cancelled) — don't leave work open indefinitely.
     - Give a story/task numbered acceptance criteria before starting, and satisfy them before moving to done.
-    - Commit and push at the commit_push step (an executor state); the committed gate verifies the CI run before close.
+    - Commit and push at the commit_push step (a performing state, run by the commit-agent or in-loop); the committed gate verifies the CI run before close.
   ask_first: []
   never:
     - Place any state after done — done is always the terminal success state.
