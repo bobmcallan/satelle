@@ -121,7 +121,13 @@ var tmplFuncs = template.FuncMap{
 var tmpl = template.Must(template.New("web").Funcs(tmplFuncs).Parse(templatesSrc))
 
 const templatesSrc = `
-{{define "topbar"}}<button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>{{if .Uptime}}<button class="uptime" type="button" disabled title="web service uptime — green border means up">{{.Uptime}}</button>{{end}}{{end}}
+{{/* uptime control: the TEXT is the elapsed time since the service process started,
+     measured at page-render time (a snapshot — it advances on reload, it does not
+     tick live, because the SSE refetch swaps only panel rows, not the header). The
+     green BORDER is a separate signal: the live /events (SSE) connection state, set
+     by app.js (on=connected). The tooltip names both accurately so the value is not
+     read as live or the border as "uptime". (sty_efeb2a69) */}}
+{{define "topbar"}}<button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>{{if .Uptime}}<button class="uptime" type="button" disabled title="service uptime at page load (updates on reload, not live) — green border = live updates connected">{{.Uptime}}</button>{{end}}{{end}}
 
 {{define "footer"}}<footer class="site-footer">{{if footeremail}}<a class="footer-email" href="mailto:{{footeremail}}">{{footeremail}}</a>{{end}}<span class="footer-version">satelle {{version}}</span></footer>{{end}}
 

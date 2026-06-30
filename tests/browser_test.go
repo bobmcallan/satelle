@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -559,6 +560,43 @@ func TestBrowserBacklogBadgeLiveOnRefetch(t *testing.T) {
 	}
 	if !noReload {
 		t.Error("the badge update must come from the live refetch, not a page reload")
+	}
+}
+
+// TestBrowserUptimeBorderTracksConnection validates the uptime indicator's two
+// fused signals end-to-end (sty_efeb2a69): the TEXT is the "up …" snapshot, and the
+// green border ('on' class) tracks the LIVE SSE connection — it turns on once the
+// /events stream opens. This confirms the documented finding that the border means
+// "live updates connected", not the elapsed duration.
+func TestBrowserUptimeBorderTracksConnection(t *testing.T) {
+	base, _ := serveRepo(t, "8815")
+	ctx := newChrome(t)
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/"),
+		chromedp.WaitVisible(`.uptime`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("load page: %v", err)
+	}
+	// The text is the snapshot "up …".
+	var txt string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('.uptime').textContent`, &txt)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(txt, "up ") {
+		t.Errorf("uptime text should be the 'up …' snapshot; got %q", txt)
+	}
+	// The green border ('on' class) appears once the SSE connection opens — the
+	// connection signal, distinct from the text.
+	if !waitCond(t, ctx, `document.querySelector('.uptime').classList.contains('on')`, 5*time.Second) {
+		t.Error("uptime border should turn on when the live SSE connection opens")
+	}
+	// The tooltip names both signals (reconciled, not misleading).
+	var title string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('.uptime').title`, &title)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(title, "at page load") || !strings.Contains(title, "live updates connected") {
+		t.Errorf("uptime tooltip not reconciled; got %q", title)
 	}
 }
 

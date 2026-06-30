@@ -387,6 +387,10 @@
 
   function initLive() {
     if (!window.EventSource) return;
+    // The .uptime control's green border ('on' class) tracks the live SSE
+    // connection state — added on open, removed on error below. It is the
+    // CONNECTION signal, distinct from the uptime TEXT (a server render-time
+    // snapshot of process elapsed time). See the topbar tooltip. (sty_efeb2a69)
     var dot = document.querySelector(".uptime");
     var src = new EventSource("events");
     var refetch = {}; // per-topic debounced refetch

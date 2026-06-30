@@ -328,6 +328,16 @@ func TestUptimeButtonRendered(t *testing.T) {
 	if !strings.Contains(body, "up ") {
 		t.Errorf("uptime button missing the 'up …' elapsed text")
 	}
+	// The tooltip is reconciled with actual behaviour (sty_efeb2a69): it states the
+	// value is a page-load snapshot ("at page load") AND that the green border is the
+	// live-connection signal ("live updates connected") — not the old misleading
+	// "web service uptime — green border means up".
+	if !strings.Contains(body, "at page load") || !strings.Contains(body, "live updates connected") {
+		t.Errorf("uptime tooltip not reconciled to describe the snapshot value + the connection border")
+	}
+	if strings.Contains(body, "green border means up") {
+		t.Errorf("the old misleading uptime tooltip is still present")
+	}
 }
 
 func TestThemeGlobalRoundTrip(t *testing.T) {
