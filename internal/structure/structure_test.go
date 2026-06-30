@@ -1,6 +1,9 @@
 package structure
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestChecked(t *testing.T) {
 	for _, k := range []string{"skills", "workflows", "principles"} {
@@ -77,7 +80,7 @@ func TestPrinciple(t *testing.T) {
 	}
 }
 
-const validWF = "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: test lifecycle\n---\n\n# wf\n\n```dot\ndigraph x {\n  backlog [shape=Mdiamond]\n  in_progress [actor=executor]\n  done [shape=Msquare, actor=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  backlog -> in_progress\n  in_progress -> done\n}\n```"
+const validWF = "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: test lifecycle\n---\n\n# wf\n\n```dot\ndigraph x {\n  backlog [shape=Mdiamond]\n  in_progress [agent=executor]\n  done [shape=Msquare, agent=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  backlog -> in_progress\n  in_progress -> done\n}\n```"
 
 func TestWorkflow(t *testing.T) {
 	resolveAll := func(string) bool { return true }
@@ -85,18 +88,34 @@ func TestWorkflow(t *testing.T) {
 		t.Errorf("valid workflow should pass, got %v", p)
 	}
 	// Missing applies_to.
-	noApplies := "---\nname: wf-x\ntype: workflow\nscope: project\ndescription: d\n---\n\n```dot\ndigraph x {\n  backlog [shape=Mdiamond]\n  done [shape=Msquare, actor=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  backlog -> done\n}\n```"
+	noApplies := "---\nname: wf-x\ntype: workflow\nscope: project\ndescription: d\n---\n\n```dot\ndigraph x {\n  backlog [shape=Mdiamond]\n  done [shape=Msquare, agent=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  backlog -> done\n}\n```"
 	if p := Doc("workflows", "wf-x", noApplies, resolveAll); len(p) == 0 {
 		t.Error("missing applies_to: want reject, got pass")
 	}
 	// Non-backlog start.
-	badStart := "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: d\n---\n\n```dot\ndigraph x {\n  open [shape=Mdiamond]\n  done [shape=Msquare, actor=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  open -> done\n}\n```"
+	badStart := "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: d\n---\n\n```dot\ndigraph x {\n  open [shape=Mdiamond]\n  done [shape=Msquare, agent=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  open -> done\n}\n```"
 	if p := Doc("workflows", "wf-x", badStart, resolveAll); len(p) == 0 {
 		t.Error("non-backlog start: want reject, got pass")
 	}
 	// Unresolved executor-step skill.
-	execSkill := "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: d\n---\n\n```dot\ndigraph x {\n  backlog [shape=Mdiamond]\n  in_progress [actor=executor, prompt=\"@skill:missing-skill\"]\n  done [shape=Msquare, actor=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  backlog -> in_progress\n  in_progress -> done\n}\n```"
+	execSkill := "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: d\n---\n\n```dot\ndigraph x {\n  backlog [shape=Mdiamond]\n  in_progress [agent=executor, prompt=\"@skill:missing-skill\"]\n  done [shape=Msquare, agent=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  backlog -> in_progress\n  in_progress -> done\n}\n```"
 	if p := Doc("workflows", "wf-x", execSkill, func(s string) bool { return s != "missing-skill" }); len(p) == 0 {
 		t.Error("unresolved executor skill: want reject, got pass")
 	}
+	// Deprecated actor= keyword is rejected (sty_7db2ed7d): the retired performer
+	// keyword must fail validation with an actionable message, not silently drop a
+	// node's performer.
+	deprecated := "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: d\n---\n\n```dot\ndigraph x {\n  backlog [shape=Mdiamond]\n  in_progress [actor=executor]\n  done [shape=Msquare, agent=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  backlog -> in_progress\n  in_progress -> done\n}\n```"
+	if p := Doc("workflows", "wf-x", deprecated, resolveAll); !hasProb(p, `deprecated "actor"`) {
+		t.Errorf("deprecated actor= keyword: want a reject naming it, got %v", p)
+	}
+}
+
+func hasProb(ps []string, sub string) bool {
+	for _, p := range ps {
+		if strings.Contains(p, sub) {
+			return true
+		}
+	}
+	return false
 }

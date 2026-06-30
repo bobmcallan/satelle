@@ -19,19 +19,10 @@ func TestLoadAgentsDefault(t *testing.T) {
 	}
 }
 
-// TestLoadAgentsAgentsTomlFallback proves the agents.toml/actors.toml back-compat
-// (sty_536f9960): the canonical agents.toml loads, the legacy actors.toml still
-// loads as a fallback, and agents.toml wins when both are present.
-func TestLoadAgentsAgentsTomlFallback(t *testing.T) {
-	// Legacy actors.toml only: still loads.
-	legacy := t.TempDir()
-	if err := os.WriteFile(filepath.Join(legacy, ActorsConfigName), []byte("[reviewer]\nmodel = \"legacy\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if ac, err := LoadAgents(legacy); err != nil || ac.Reviewer.Model != "legacy" {
-		t.Fatalf("legacy actors.toml fallback: ac=%+v err=%v", ac, err)
-	}
-
+// TestLoadAgentsOnlyAgentsToml proves the loader reads agents.toml and that the
+// legacy actors.toml is NO LONGER loaded (sty_7db2ed7d): a repo carrying only the
+// retired filename resolves to defaults (the zero config), not its bindings.
+func TestLoadAgentsOnlyAgentsToml(t *testing.T) {
 	// Canonical agents.toml: loads.
 	canon := t.TempDir()
 	if err := os.WriteFile(filepath.Join(canon, AgentsConfigName), []byte("[reviewer]\nmodel = \"canon\"\n"), 0o644); err != nil {
@@ -41,23 +32,20 @@ func TestLoadAgentsAgentsTomlFallback(t *testing.T) {
 		t.Fatalf("canonical agents.toml: ac=%+v err=%v", ac, err)
 	}
 
-	// Both present: agents.toml wins.
-	both := t.TempDir()
-	if err := os.WriteFile(filepath.Join(both, AgentsConfigName), []byte("[reviewer]\nmodel = \"canon\"\n"), 0o644); err != nil {
+	// Legacy actors.toml only: NOT loaded — resolves to the zero config.
+	legacy := t.TempDir()
+	if err := os.WriteFile(filepath.Join(legacy, ActorsConfigName), []byte("[reviewer]\nmodel = \"legacy\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(both, ActorsConfigName), []byte("[reviewer]\nmodel = \"legacy\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if ac, err := LoadAgents(both); err != nil || ac.Reviewer.Model != "canon" {
-		t.Fatalf("agents.toml should win over actors.toml: ac=%+v err=%v", ac, err)
+	if ac, err := LoadAgents(legacy); err != nil || ac.Reviewer.Model != "" {
+		t.Fatalf("legacy actors.toml must not load: ac=%+v err=%v", ac, err)
 	}
 }
 
 func TestLoadAgentsOverride(t *testing.T) {
 	dir := t.TempDir()
 	body := "[reviewer]\ntools = \"Read\"\nharness = \"other-harness\"\n[executor]\nharness = \"claude -p\"\n"
-	if err := os.WriteFile(filepath.Join(dir, ActorsConfigName), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ac, err := LoadAgents(dir)

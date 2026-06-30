@@ -7,10 +7,10 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// AgentsConfigName is the canonical per-repo agents-binding file, beside
-// satelle.toml under the data dir (.satelle/agents.toml). ActorsConfigName is the
-// legacy filename, still loaded as a fallback (sty_536f9960) until the rename
-// completes; LoadAgents prefers agents.toml when both are present.
+// AgentsConfigName is the per-repo agents-binding file, beside satelle.toml under
+// the data dir (.satelle/agents.toml). ActorsConfigName is the now-removed legacy
+// filename — it is no longer loaded (sty_7db2ed7d); `satelle validate` flags a repo
+// still carrying it so the rename is enforced rather than silently honoured.
 const (
 	AgentsConfigName = "agents.toml"
 	ActorsConfigName = "actors.toml"
@@ -70,17 +70,13 @@ func (a AgentsConfig) ExecutorBinding() AgentBinding {
 	return b
 }
 
-// LoadAgents reads the agents layer from <dataDir>, preferring the canonical
-// agents.toml and falling back to the legacy actors.toml (sty_536f9960). An absent
-// file (neither present) yields the zero AgentsConfig — defaults via the *Binding
-// resolvers — and a nil error, so a repo with no binding file runs exactly as today.
+// LoadAgents reads the agents layer from <dataDir>/agents.toml. The legacy
+// actors.toml is no longer read (sty_7db2ed7d); an absent agents.toml yields the
+// zero AgentsConfig — defaults via the *Binding resolvers — and a nil error, so a
+// repo with no binding file runs exactly as today.
 func LoadAgents(dataDir string) (AgentsConfig, error) {
 	path := filepath.Join(dataDir, AgentsConfigName)
 	b, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		path = filepath.Join(dataDir, ActorsConfigName)
-		b, err = os.ReadFile(path)
-	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			return AgentsConfig{}, nil

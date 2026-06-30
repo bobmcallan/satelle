@@ -157,10 +157,10 @@ func skillDoc(name string) docindex.Doc {
 // the engagement guard resolves.
 const engageDOT = "```dot\n" + `digraph w {
   backlog     [shape=Mdiamond]
-  in_progress [actor=executor]
-  commit_push [actor=executor, prompt="@skill:commit-push"]
-  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
-  cancelled   [actor=reviewer, prompt="@skill:satelle-story-cancel-review"]
+  in_progress [agent=executor]
+  commit_push [agent=executor, prompt="@skill:commit-push"]
+  done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
+  cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
   backlog -> in_progress [reviewer_skill="satelle-story-intent-review"]
   in_progress -> commit_push
   commit_push -> done
@@ -598,9 +598,9 @@ func TestReviewCreateStructurePreemptsContent(t *testing.T) {
 const stepWF = "---\nname: " + baselineWorkflow + "\ntype: workflow\n---\n" + "```dot" + `
 digraph w {
   backlog     [shape=Mdiamond]
-  in_progress [actor=executor]
-  step        [actor=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
-  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
+  in_progress [agent=executor]
+  step        [agent=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
+  done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
   backlog -> in_progress -> done
 }
 ` + "```"
@@ -608,9 +608,9 @@ digraph w {
 const stepWFOptional = "---\nname: " + baselineWorkflow + "\ntype: workflow\n---\n" + "```dot" + `
 digraph w {
   backlog     [shape=Mdiamond]
-  in_progress [actor=executor]
-  step        [actor=reviewer, prompt="@skill:satelle-step-summary"]
-  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
+  in_progress [agent=executor]
+  step        [agent=reviewer, prompt="@skill:satelle-step-summary"]
+  done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
   backlog -> in_progress -> done
 }
 ` + "```"
@@ -909,8 +909,8 @@ name: x
 
 ` + "```dot" + `
 digraph w {
-  in_progress [actor=executor]
-  committed   [actor=reviewer, prompt="@skill:satelle-commit-push-reviewer"]
+  in_progress [agent=executor]
+  committed   [agent=reviewer, prompt="@skill:satelle-commit-push-reviewer"]
   in_progress -> committed -> done
 }
 ` + "```" + `

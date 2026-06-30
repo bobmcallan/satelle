@@ -14,18 +14,18 @@ name: x
 digraph w {
   rankdir=LR
   start       [shape=Mdiamond]
-  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
-  in_progress [actor=executor]
-  committed   [actor=reviewer, prompt="@skill:satelle-commit-push-reviewer"]
+  done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
+  in_progress [agent=executor]
+  committed   [agent=reviewer, prompt="@skill:satelle-commit-push-reviewer"]
   start -> in_progress -> committed -> done
 }
 ` + "```" + `
 `
 
-// TestParseAgentAlias proves the agent= back-compat parse (sty_536f9960): the
-// canonical agent= node attribute parses to the same performer as the legacy
-// actor=, and agent wins when a node carries both.
-func TestParseAgentAlias(t *testing.T) {
+// TestActorKeywordIgnored proves the legacy actor= keyword no longer parses
+// (sty_7db2ed7d): only agent= sets a node's performer, so a node authored with the
+// retired actor= attribute gets no performer.
+func TestActorKeywordIgnored(t *testing.T) {
 	const dot = `---
 name: x
 ---
@@ -33,9 +33,9 @@ name: x
 digraph w {
   start       [shape=Mdiamond]
   in_progress [agent=executor]
-  review      [agent=reviewer, actor=executor]
-  done        [shape=Msquare, actor=reviewer]
-  start -> in_progress -> review -> done
+  legacy      [actor=reviewer]
+  done        [shape=Msquare, agent=reviewer]
+  start -> in_progress -> legacy -> done
 }
 ` + "```" + `
 `
@@ -48,19 +48,16 @@ digraph w {
 		byName[s.Name] = s
 	}
 	if byName["in_progress"].Agent != "executor" {
-		t.Errorf("agent=executor parsed actor = %q, want executor", byName["in_progress"].Agent)
+		t.Errorf("agent=executor should parse, got %q", byName["in_progress"].Agent)
 	}
-	if byName["review"].Agent != "reviewer" {
-		t.Errorf("agent wins over actor: got %q, want reviewer", byName["review"].Agent)
-	}
-	if byName["done"].Agent != "reviewer" {
-		t.Errorf("legacy actor=reviewer still parses: got %q, want reviewer", byName["done"].Agent)
+	if byName["legacy"].Agent != "" {
+		t.Errorf("legacy actor= must NOT set a performer, got %q", byName["legacy"].Agent)
 	}
 }
 
-// TestToDOTEmitsAgent proves the emitter now writes the canonical agent= keyword
+// TestToDOTEmitsAgent proves the emitter writes the canonical agent= keyword
 // (sty_384f0b11): an inline-YAML lifecycle with an executor node re-emits as a DOT
-// graph carrying agent=executor, not the legacy actor=.
+// graph carrying agent=executor, never the retired actor=.
 func TestToDOTEmitsAgent(t *testing.T) {
 	body := `---
 name: y
@@ -68,7 +65,7 @@ name: y
 ` + "```yaml" + `
 states:
   - backlog
-  - {name: in_progress, actor: executor}
+  - {name: in_progress, agent: executor}
   - done
 transitions:
   - {from: backlog, to: in_progress}
@@ -83,7 +80,7 @@ transitions:
 		t.Errorf("emitted DOT should carry agent=executor:\n%s", out)
 	}
 	if strings.Contains(out, "actor=executor") {
-		t.Errorf("emitted DOT must not carry the legacy actor= keyword:\n%s", out)
+		t.Errorf("emitted DOT must not carry the retired actor= keyword:\n%s", out)
 	}
 }
 
@@ -182,8 +179,8 @@ name: b
 ` + "```dot" + `
 digraph b {
   backlog     [shape=Mdiamond]
-  in_progress [actor=executor]
-  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
+  in_progress [agent=executor]
+  done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
   backlog -> in_progress [reviewer_skill="satelle-story-intent-review"]
   in_progress -> done
 }
@@ -216,9 +213,9 @@ name: c
 ---
 ` + "```dot" + `
 digraph c {
-  in_progress [actor=executor]
-  committed   [actor=reviewer, prompt="@skill:satelle-commit-push-reviewer"]
-  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
+  in_progress [agent=executor]
+  committed   [agent=reviewer, prompt="@skill:satelle-commit-push-reviewer"]
+  done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
   in_progress -> committed -> done
   committed   -> in_progress  // recovery: a done-review reject returns to work
 }
@@ -251,8 +248,8 @@ name: d
 ` + "```dot" + `
 digraph d {
   graph [goal="see https://example.com/docs for details"]
-  in_progress [actor=executor]
-  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
+  in_progress [agent=executor]
+  done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
   in_progress -> done
 }
 ` + "```" + `
@@ -285,7 +282,7 @@ name: satelle-x-workflow
 ` + "```yaml" + `
 states:
   - backlog
-  - {name: in_progress, actor: executor}
+  - {name: in_progress, agent: executor}
   - done
 transitions:
   - {from: backlog, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
@@ -344,9 +341,9 @@ name: x
 ` + "```dot" + `
 digraph x {
   backlog     [shape=Mdiamond]
-  in_progress [actor=executor]
-  step        [actor=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
-  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
+  in_progress [agent=executor]
+  step        [agent=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
+  done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
   backlog -> in_progress -> done
 }
 ` + "```" + `

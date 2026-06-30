@@ -30,10 +30,10 @@ description: Test workflow whose path to done has an executor step with a missin
 digraph w {
   rankdir=LR
   backlog     [shape=Mdiamond]
-  in_progress [actor=executor]
-  ship        [actor=executor, prompt="@skill:bogus-ship-skill"]
-  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
-  cancelled   [actor=reviewer, prompt="@skill:satelle-story-cancel-review"]
+  in_progress [agent=executor]
+  ship        [agent=executor, prompt="@skill:bogus-ship-skill"]
+  done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
+  cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
   backlog -> in_progress
   in_progress -> ship
   ship -> done

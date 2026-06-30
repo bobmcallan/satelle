@@ -167,9 +167,9 @@ func anyEngaged(items []workitem.Item, engaged map[string]bool) bool {
 }
 
 // executorStates parses the active workflow body for states marked
-// `agent: executor` (the legacy `actor:` still parses) — the states that
-// represent engaged work. The "engaged" policy is thus authored in the workflow,
-// not hardcoded.
+// `agent: executor` — the states that represent engaged work. The "engaged" policy
+// is thus authored in the workflow, not hardcoded. The retired `actor:` keyword is
+// no longer parsed (sty_7db2ed7d).
 func executorStates(body string) []string {
 	// DOT workflow: the executor states are the nodes marked agent=executor in
 	// the shared wfdot spec.
@@ -198,8 +198,7 @@ func executorStates(body string) []string {
 			break // end of the states block
 		}
 		item := strings.TrimSpace(t[2:])
-		// The performer key is `agent:` (the legacy `actor:` still parses).
-		if strings.HasPrefix(item, "{") && (strings.Contains(item, "agent:") || strings.Contains(item, "actor:")) && strings.Contains(item, "executor") {
+		if strings.HasPrefix(item, "{") && strings.Contains(item, "agent:") && strings.Contains(item, "executor") {
 			if name := hookInlineField(item, "name"); name != "" {
 				out = append(out, name)
 			}
