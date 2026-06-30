@@ -123,6 +123,8 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 			appendLedger(ctx, it.ID, ledger.KindWorkflowStamped,
 				fmt.Sprintf("governing workflow: %s", stampedWorkflow), now)
 		}
+		appendOpLog(string(kind)+"-create", it.ID,
+			fmt.Sprintf("status: %s; tags: [%s]", it.Status, strings.Join(it.Tags, ",")), now)
 		notifyChange(panelTopic(kind))
 		return json.Marshal(it)
 	}
@@ -312,6 +314,22 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		}
 		appendLedger(ctx, it.ID, ledgerKind, fmt.Sprintf("updated %s", it.Kind), now)
 	}
+	// Mirror the mutation to the flat operation log (sty_be257fef): the status
+	// transition and/or the tag before/after, so a read-only reviewer can verify a
+	// DB change (a sprint/order reconciliation, a status move) from a file.
+	detail := ""
+	if transitioning {
+		detail = fmt.Sprintf("status: %s -> %s", current.Status, *req.Status)
+	}
+	if td := tagsChanged(current.Tags, it.Tags); td != "" {
+		if detail != "" {
+			detail += "; "
+		}
+		detail += td
+	}
+	if detail != "" {
+		appendOpLog(string(it.Kind)+"-set", it.ID, detail, now)
+	}
 	notifyChange(panelTopic(it.Kind))
 	return json.Marshal(it)
 }
@@ -382,6 +400,7 @@ func recordCost(ctx context.Context, raw json.RawMessage, prefix, kind string) (
 		body += " (basis: " + req.Basis + ")"
 	}
 	appendLedger(ctx, it.ID, kind, body, now)
+	appendOpLog("story-"+prefix, it.ID, body, now)
 	notifyChange(panelTopic(it.Kind))
 	return json.Marshal(it)
 }
@@ -444,6 +463,43 @@ func appendLedgerEntry(ctx context.Context, storyID, kind, actor, body string, p
 		Body:    body,
 		Payload: payload,
 	}, now)
+}
+
+// appendOpLog mirrors a state-mutating verb to the flat-file operation log a
+// read-only reviewer can Read/Grep (sty_be257fef). Nil-safe via the Logger;
+// records METADATA only (op, ids, before/after of changed fields) — never bodies.
+func appendOpLog(op, storyID, detail string, now time.Time) {
+	opLog.Append(now, "executor", op, storyID, detail)
+}
+
+// tagsChanged reports the before/after tag sets as a one-line detail when they
+// differ, else "" — so a tag reconciliation (sprint/order) is greppable in the
+// operation log. Order-insensitive comparison; the rendered lists keep input order.
+func tagsChanged(before, after []string) string {
+	if equalStringSet(before, after) {
+		return ""
+	}
+	return fmt.Sprintf("tags: [%s] -> [%s]", strings.Join(before, ","), strings.Join(after, ","))
+}
+
+// equalStringSet reports whether two tag slices hold the same set of values.
+func equalStringSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := map[string]int{}
+	for _, s := range a {
+		seen[s]++
+	}
+	for _, s := range b {
+		seen[s]--
+	}
+	for _, n := range seen {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // transitionPayload is the {from,to,skill} JSON stamped on review/transition

@@ -47,6 +47,20 @@ Be a fair gate, not a perfectionist: judge the acceptance criteria as written, a
 require both unit and integration tests only for a change that can actually carry
 them — do not demand tests of a pure docs/substrate change.
 
+## Verifying DB-state acceptance criteria
+
+Some acceptance criteria assert **database state** rather than working-tree code —
+a story's tags, its status, a sprint/order reconciliation across many stories. You
+are read-only and cannot query the SQLite store, so that state is otherwise
+invisible to you. Do NOT reject such a criterion merely because you cannot see it
+in the diff. Instead read **`.satelle/logs/operations.log`** — the flat,
+append-only operation log that records every state-mutating CLI operation (one
+line per op: timestamp, actor, operation, story id, and the before/after of the
+changed fields, notably tags). Grep it for the story id or the expected tag/status
+to confirm the mutation actually happened. Treat a matching log line as evidence
+the DB change occurred; treat its absence (when the criterion claims a mutation) as
+grounds to reject, naming what you could not find.
+
 ## Verdict
 
 Reply with exactly one JSON object, nothing else of that shape:

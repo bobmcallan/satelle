@@ -10,6 +10,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/oplog"
 	"github.com/bobmcallan/satelle/internal/reviewer"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -42,6 +43,10 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// The stories dir (<data_dir>/stories) holds per-story ATTACHMENTS only — the
 	// database is the sole story store (the markdown mirror was removed, sty_fa1e02e1).
 	verb.SetStoryDir(filepath.Join(filepath.Dir(a.DBPath), "stories"))
+	// Wire the flat-file operation log (<data_dir>/logs/operations.log): a plain-text
+	// mirror of state-mutating verbs that a read-only reviewer can scan to verify a
+	// DB change the SQLite store hides from it (sty_be257fef).
+	verb.SetOpLog(oplog.New(filepath.Dir(a.DBPath)))
 	// Wire the isolated reviewer that gates status transitions. The agent CLI is
 	// the install-time choice (global config); the gate is inert until a
 	// workflow names a reviewer skill whose rubric is installed.

@@ -27,6 +27,8 @@
 # the per-story markdown mirror is regenerated from the local database (the
 # source of truth); the files are portable but not versioned in this repo.
 .satelle/stories/
+# the flat operation log (a read-only reviewer's read surface) is local evidence
+.satelle/logs/
 # <<< satelle (managed) <<<
 
 # commit-push gate artifacts — the PR-style commit summaries the commit-push
