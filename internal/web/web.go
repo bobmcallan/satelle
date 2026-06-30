@@ -37,12 +37,19 @@ type Server struct {
 	hub     *hub
 }
 
-// serverStart marks when the web service came up; the header shows the elapsed
-// uptime. Set once when the server is wired.
+// serverStart marks when the web service process came up: a package-level value
+// initialised at load, i.e. at process start for `satelle serve`. The header's
+// uptime TEXT is formatUptime(time.Since(serverStart)) evaluated at render time, so
+// it is the TRUE elapsed time since the process started — but a render-time SNAPSHOT,
+// not a live ticking clock (the SSE refetch re-renders only panel rows, never the
+// header, so the number advances on a full reload). The green border is a SEPARATE
+// signal — the live SSE connection state, toggled in app.js — not the duration. The
+// header tooltip states both so the value is not misread (sty_efeb2a69).
 var serverStart = time.Now()
 
 // formatUptime renders an elapsed duration as a compact "up Hh Mm" / "up Nm" /
-// "up Ns" string for the header.
+// "up Ns" string for the header (the render-time uptime snapshot described on
+// serverStart).
 func formatUptime(d time.Duration) string {
 	if d < time.Minute {
 		return fmt.Sprintf("up %ds", int(d.Seconds()))
