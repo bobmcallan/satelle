@@ -22,7 +22,7 @@
     return t === "stories" || t === "tasks";
   }
   var FILTER_KEYS = { status: 1, priority: 1, category: 1, tags: 1, tag: 1 };
-  var ORDER_FIELDS = { updated: 1, created: 1, priority: 1, status: 1, title: 1, id: 1 };
+  var ORDER_FIELDS = { updated: 1, created: 1, priority: 1, status: 1, title: 1, id: 1, order: 1 };
   var DEFAULT_ORDER = "updated"; // applied when no explicit order: token (order:none opts out)
   var PRIORITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
 
@@ -104,6 +104,20 @@
     }
     if (field === "title") return row.dataset.title || "";
     if (field === "id") return row.dataset.expandUrl || "";
+    if (field === "order") {
+      // The drive sequence within a sprint/epic lives in an `order:<N>` tag (see the
+      // satelle-story-classification principle). Extract its NUMBER and zero-pad to a
+      // fixed width so the string comparator sorts numerically (1,2,…,10); a row with
+      // no order tag returns a high sentinel so it sorts LAST.
+      var tags = (row.dataset.tags || "").split(",");
+      for (var i = 0; i < tags.length; i++) {
+        if (tags[i].indexOf("order:") === 0) {
+          var n = parseInt(tags[i].slice(6), 10);
+          if (!isNaN(n)) return ("000000" + n).slice(-6);
+        }
+      }
+      return "999999"; // no order tag → last
+    }
     return row.dataset[field] || ""; // updated, created, status
   }
 
@@ -117,7 +131,11 @@
       var av = sortKey(a, order), bv = sortKey(b, order);
       if (av < bv) return desc ? 1 : -1;
       if (av > bv) return desc ? -1 : 1;
-      return 0;
+      // Explicit, deterministic tie-break: equal primary keys (e.g. two stories
+      // sharing the same order:<N>) fall back to the row id ascending, so the
+      // order does not depend on the browser's sort stability.
+      var ai = sortKey(a, "id"), bi = sortKey(b, "id");
+      return ai < bi ? -1 : ai > bi ? 1 : 0;
     });
     rows.forEach(function (r) { holder.appendChild(r); });
   }
