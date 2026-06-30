@@ -102,6 +102,19 @@ tags: [kind:principle, principles:always]
 
 This resident belief MUST be visible to every reviewer.`
 
+// secondAlwaysDoc is a SECOND principles:always principle (not the operating one)
+// — proves the reviewer injects the full resident SET, matching SessionStart, not
+// just config.OperatingPrinciple. Its prose deliberately omits the literal tag so
+// the frontmatter-stripped assertion below still holds.
+const secondAlwaysDoc = `---
+name: satelle-second-resident
+type: principle
+tags: [type:principle, principles:always]
+---
+# Second belief
+
+The full resident SET must be injected, not just the operating principle.`
+
 // TestReviewerSystemPromptInjectsPrinciplesAndCTA: a reviewer's system prompt
 // carries the always-resident principles, the read-only call-to-action (teaching
 // it to resolve substrate via the satelle CLI), and its own rubric.
@@ -111,8 +124,10 @@ func TestReviewerSystemPromptInjectsPrinciplesAndCTA(t *testing.T) {
 		skillBody:  "rubric body",
 		skillFound: true,
 		extraPrinciples: []docindex.Doc{
-			// The single resident is the operating principle; anything else is not injected.
+			// The full principles:always SET is injected (operating principle + any
+			// other always-tagged principle); a non-tagged principle is not.
 			{Kind: "principles", Name: config.OperatingPrinciple, Body: alwaysPrincipleDoc},
+			{Kind: "principles", Name: "satelle-second-resident", Body: secondAlwaysDoc},
 			{Kind: "principles", Name: "satelle-not-resident", Body: "---\nname: x\ntype: principle\n---\nnot resident"},
 		},
 	}
@@ -122,7 +137,10 @@ func TestReviewerSystemPromptInjectsPrinciplesAndCTA(t *testing.T) {
 	}
 	sp := r.got.SystemPrompt
 	if !strings.Contains(sp, "This resident belief MUST be visible") {
-		t.Errorf("always-resident principle not injected:\n%s", sp)
+		t.Errorf("operating always-resident principle not injected:\n%s", sp)
+	}
+	if !strings.Contains(sp, "The full resident SET must be injected") {
+		t.Errorf("the full principles:always SET not injected (second resident missing):\n%s", sp)
 	}
 	if strings.Contains(sp, "not resident") {
 		t.Errorf("a non-resident principle must NOT be injected:\n%s", sp)
@@ -136,6 +154,32 @@ func TestReviewerSystemPromptInjectsPrinciplesAndCTA(t *testing.T) {
 	// Frontmatter of the injected principle must be stripped (no raw tags line).
 	if strings.Contains(sp, "principles:always") {
 		t.Errorf("injected principle frontmatter should be stripped:\n%s", sp)
+	}
+}
+
+// TestReviewerSystemPromptOmitsPrinciplesWhenDisabled: the agents-layer toggle
+// (default ON) omits the resident principles when turned off, while the reviewer's
+// own rubric and the call-to-action still ride (sty_46a40208).
+func TestReviewerSystemPromptOmitsPrinciplesWhenDisabled(t *testing.T) {
+	docs := fakeDocs{
+		workflow:   testWorkflow,
+		skillBody:  "rubric body",
+		skillFound: true,
+		extraPrinciples: []docindex.Doc{
+			{Kind: "principles", Name: config.OperatingPrinciple, Body: alwaysPrincipleDoc},
+		},
+	}
+	g, r := gater(t, `{"decision":"accept"}`, docs)
+	g.SetInjectPrinciples(false) // disable injection for this agent
+	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done"); err != nil {
+		t.Fatal(err)
+	}
+	sp := r.got.SystemPrompt
+	if strings.Contains(sp, "This resident belief MUST be visible") {
+		t.Errorf("principles injected despite the toggle being off:\n%s", sp)
+	}
+	if !strings.Contains(sp, "rubric body") || !strings.Contains(sp, "read-only") {
+		t.Errorf("rubric + call-to-action must still ride when injection is off:\n%s", sp)
 	}
 }
 

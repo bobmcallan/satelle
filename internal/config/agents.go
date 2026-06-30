@@ -32,10 +32,24 @@ const (
 
 // AgentBinding binds one agent to a backend (how/where it runs) and its grant
 // (the tool allowance, and an optional model). Empty fields take the defaults.
+//
+// InjectPrinciples toggles whether an ISOLATED agent receives the resident
+// (principles:always) principles in its system prompt — the same guardrails the
+// SessionStart injector gives the in-loop session (sty_46a40208). It DEFAULTS ON:
+// a nil pointer (the field absent from agents.toml) means inject. Set
+// inject_principles = false to omit them for that agent.
 type AgentBinding struct {
-	Harness string `toml:"harness"`
-	Tools   string `toml:"tools"`
-	Model   string `toml:"model"`
+	Harness          string `toml:"harness"`
+	Tools            string `toml:"tools"`
+	Model            string `toml:"model"`
+	InjectPrinciples *bool  `toml:"inject_principles"`
+}
+
+// InjectsPrinciples reports whether this binding injects the resident principles
+// into the isolated agent's context — true (the default) unless explicitly
+// disabled with inject_principles = false.
+func (b AgentBinding) InjectsPrinciples() bool {
+	return b.InjectPrinciples == nil || *b.InjectPrinciples
 }
 
 // AgentsConfig is the on-disk shape at .satelle/agents.toml — the agents layer.

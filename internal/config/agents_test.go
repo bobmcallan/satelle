@@ -112,3 +112,25 @@ func TestLoadAgentsOverride(t *testing.T) {
 		t.Errorf("executor override harness = %q, want claude -p", got.Harness)
 	}
 }
+
+func TestInjectPrinciplesDefaultsOnAndToggles(t *testing.T) {
+	// Absent from agents.toml → default ON.
+	if !(AgentBinding{}).InjectsPrinciples() {
+		t.Error("an unset binding must inject principles by default")
+	}
+	dir := t.TempDir()
+	body := "[reviewer]\ninject_principles = false\n[commit-agent]\ninject_principles = true\n"
+	if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ac, err := LoadAgents(dir)
+	if err != nil {
+		t.Fatalf("LoadAgents: %v", err)
+	}
+	if ac.ReviewerBinding().InjectsPrinciples() {
+		t.Error("inject_principles = false must disable injection for the reviewer")
+	}
+	if nb, ok := ac.NamedBinding("commit-agent"); !ok || !nb.InjectsPrinciples() {
+		t.Errorf("named agent with inject_principles = true must inject: ok=%v binding=%+v", ok, nb)
+	}
+}
