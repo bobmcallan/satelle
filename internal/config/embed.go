@@ -38,8 +38,10 @@ type EmbeddedDefault struct {
 }
 
 // EmbeddedDefaults returns every embedded default artifact, across all kinds.
-// The caller (the doc index) overlays these UNDER the on-disk .satelle authored
-// markdown, so a repo file with the same (kind, name) overrides its default.
+// These are the canonical SEED + reference: init materialises them onto disk, the
+// doc index resolves them by name as a Get fallback (e.g. the gating baseline), and
+// validate compares against them — but they are NOT overlaid into List/Count, so an
+// embedded default is never enumerated as a project doc (sty_94da9ac9).
 func EmbeddedDefaults() []EmbeddedDefault {
 	var out []EmbeddedDefault
 	_ = fs.WalkDir(substrateFS, "substrate", func(p string, d fs.DirEntry, err error) error {

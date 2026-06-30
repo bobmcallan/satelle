@@ -104,6 +104,13 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "documents", "guide.md"), []byte("# Guide\n\nhello"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Seed an on-disk workflow so the Workflow panel has a row: embedded defaults are
+	// not listed (sty_94da9ac9), so a fresh repo's panel would otherwise be empty.
+	wfBody := "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\n---\n" +
+		"```dot\n" + "digraph w {\n  backlog [shape=Mdiamond]\n  done [shape=Msquare, agent=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  backlog -> done\n}\n" + "```\n"
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "wf-x.md"), []byte(wfBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	mustRun(t, testBin, repo, "index")
 	_ = doneID
 
@@ -217,7 +224,7 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		if !waitCond(t, ctx, `!!document.querySelector('#panel-docs .doc') && getComputedStyle(document.querySelector('#panel-docs')).display === 'block'`, 5*time.Second) {
 			t.Error("documents panel/card not visible after clicking its tab")
 		}
-		// Workflow tab lists the (embedded) baseline workflow and expands to its
+		// Workflow tab lists the on-disk workflow and expands to its
 		// state/transition diagram — read-only.
 		clickJS(t, ctx, `.tab[data-panel="workflow"]`)
 		if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow tr.row[data-expand-url^="fragment/workflow/"]') && getComputedStyle(document.querySelector('#panel-workflow')).display === 'block'`, 5*time.Second) {

@@ -17,10 +17,12 @@ func defaultsStore(t *testing.T) *Store {
 	return st
 }
 
-func TestDefaultsSurfaceWhenNoDiskDoc(t *testing.T) {
+func TestDefaultResolvesByGetButIsNotListed(t *testing.T) {
 	st := defaultsStore(t)
 	ctx := context.Background()
 
+	// Get STILL resolves an embedded default by name (the gating baseline +
+	// on-demand principles) — the by-name fallback is retained (sty_94da9ac9, Option B).
 	got, err := st.Get(ctx, "workflows", "satelle-baseline-workflow")
 	if err != nil {
 		t.Fatalf("Get embedded default: %v", err)
@@ -35,15 +37,17 @@ func TestDefaultsSurfaceWhenNoDiskDoc(t *testing.T) {
 		t.Errorf("default not normalised: hash=%q path=%q", got.Hash, got.Path)
 	}
 
+	// But List/Count enumerate ONLY on-disk docs — an embedded default is never
+	// listed as a project doc (so e.g. the web doesn't show the embedded baseline).
 	list, err := st.List(ctx, "workflows")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 1 || !list[0].Embedded {
-		t.Fatalf("expected 1 embedded default in List, got %d", len(list))
+	if len(list) != 0 {
+		t.Fatalf("embedded defaults must NOT appear in List, got %d", len(list))
 	}
-	if n, _ := st.Count(ctx, "workflows"); n != 1 {
-		t.Errorf("Count = %d, want 1 (the unshadowed default)", n)
+	if n, _ := st.Count(ctx, "workflows"); n != 0 {
+		t.Errorf("Count = %d, want 0 (embedded defaults are not listed)", n)
 	}
 }
 
