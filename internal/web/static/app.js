@@ -287,8 +287,62 @@
     row.parentNode.insertBefore(exp, row.nextSibling);
     fetch(row.dataset.expandUrl, { headers: { "X-Requested-With": "fetch" } })
       .then(function (r) { return r.text(); })
-      .then(function (html) { td.innerHTML = html; })
+      .then(function (html) { td.innerHTML = html; enhanceWorkflowDiagrams(td); })
       .catch(function () { td.innerHTML = '<div class="expbody">failed to load</div>'; });
+  }
+
+  // enhanceWorkflowDiagrams wires the dependency-free SVG workflow diagram for
+  // interactivity (sty_19b2107a) — progressive enhancement over the server-rendered
+  // SVG (no JS ⇒ the plain, readable diagram still renders). Hovering or keyboard-
+  // focusing a node highlights that node and every edge touching it (matched by the
+  // data-from/data-to the server stamps) and dims the rest; clicking/activating a
+  // node correlates the transition rows below (data-from/data-to on .wf-edge) and
+  // scrolls the first match into view. Scoped to `container` so it works inside a
+  // freshly-expanded fragment. No external graph library.
+  function enhanceWorkflowDiagrams(container) {
+    if (!container) return;
+    [].slice.call(container.querySelectorAll(".wf-diagram")).forEach(function (svg) {
+      if (svg.dataset.enhanced) return;
+      svg.dataset.enhanced = "1";
+      function setHi(state) {
+        svg.querySelectorAll(".wf-dnode").forEach(function (g) {
+          var on = g.dataset.state === state;
+          g.classList.toggle("wf-hi", on);
+          g.classList.toggle("wf-dim", !on);
+        });
+        svg.querySelectorAll(".wf-edge-path, .wf-edge-label").forEach(function (el) {
+          var inc = el.dataset.from === state || el.dataset.to === state;
+          el.classList.toggle("wf-hi", inc);
+          el.classList.toggle("wf-dim", !inc);
+        });
+      }
+      function clearHi() {
+        svg.querySelectorAll(".wf-hi, .wf-dim").forEach(function (el) {
+          el.classList.remove("wf-hi");
+          el.classList.remove("wf-dim");
+        });
+      }
+      function correlate(state) {
+        var first = null;
+        container.querySelectorAll(".wf-edges .wf-edge").forEach(function (li) {
+          var hit = li.dataset.from === state || li.dataset.to === state;
+          li.classList.toggle("wf-edge-hi", hit);
+          if (hit && !first) first = li;
+        });
+        if (first && first.scrollIntoView) first.scrollIntoView({ block: "nearest" });
+      }
+      [].slice.call(svg.querySelectorAll(".wf-dnode[data-state]")).forEach(function (g) {
+        var state = g.dataset.state;
+        g.addEventListener("mouseenter", function () { setHi(state); });
+        g.addEventListener("mouseleave", clearHi);
+        g.addEventListener("focus", function () { setHi(state); });
+        g.addEventListener("blur", clearHi);
+        g.addEventListener("click", function () { correlate(state); });
+        g.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); correlate(state); }
+        });
+      });
+    });
   }
   function toggleRow(row) {
     if (row.getAttribute("aria-expanded") === "true") collapseRow(row); else expandRow(row);
@@ -481,5 +535,6 @@
     initLive();
     initDetailLive();
     initDocTabs();
+    enhanceWorkflowDiagrams(document); // any diagram already in the server-rendered page
   });
 })();
