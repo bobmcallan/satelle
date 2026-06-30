@@ -50,13 +50,28 @@
     if (crumb) crumb.textContent = name;
   }
   function initTabs() {
-    document.querySelectorAll(".tab").forEach(function (t) {
-      t.addEventListener("click", function () {
-        history.replaceState(null, "", "#" + t.dataset.panel);
-        showTab(t.dataset.panel);
-      });
+    // Tabs are real <a href="#panel"> links (so the browser offers open-in-new-tab,
+    // middle-click, and right-click open-in-new-window, and the active tab lives in
+    // the URL). A normal click changes the hash without reloading; we mirror the
+    // hash to the active panel here. Anchors preserve the query string, so the
+    // filters (stored as ?<panel>=… below) survive a tab switch and a new-tab open.
+    window.addEventListener("hashchange", function () {
+      showTab((location.hash || "#stories").slice(1));
     });
     showTab((location.hash || "#stories").slice(1));
+  }
+
+  // syncFilterToURL writes a panel's filter query to the URL as ?<topic>=<value>
+  // (replaceState, preserving the #tab hash) so a refresh restores the same list.
+  function syncFilterToURL(panel) {
+    var input = panel.querySelector(".filterbar input");
+    if (!input || !panel.dataset.topic) return;
+    var params = new URLSearchParams(location.search);
+    var v = input.value.trim();
+    if (v) params.set(panel.dataset.topic, v); else params.delete(panel.dataset.topic);
+    var qs = params.toString();
+    var base = location.href.split("?")[0].split("#")[0];
+    history.replaceState(null, "", base + (qs ? "?" + qs : "") + location.hash);
   }
 
   // ---- filtering -----------------------------------------------------------
@@ -220,6 +235,7 @@
     if (input) renderChips(panel, parsed, input);
     var count = panel.querySelector(".filter-count");
     if (count) count.textContent = shown + " / " + total;
+    syncFilterToURL(panel); // reflect the active filter in the URL (refresh-safe)
   }
 
   // addFilterToken appends a filter token (e.g. tags:epic:foo or category:bar)
@@ -236,9 +252,16 @@
   }
 
   function initFilters() {
+    // Restore each panel's filter from the URL on load (?<topic>=…), so a refresh
+    // or an opened link lands on the same filtered list.
+    var params = new URLSearchParams(location.search);
     document.querySelectorAll(".panel").forEach(function (panel) {
       var input = panel.querySelector(".filterbar input");
-      if (input) input.addEventListener("input", function () { applyFilter(panel); });
+      if (input) {
+        var fromURL = panel.dataset.topic ? params.get(panel.dataset.topic) : null;
+        if (fromURL !== null) input.value = fromURL;
+        input.addEventListener("input", function () { applyFilter(panel); });
+      }
       applyFilter(panel);
     });
   }
