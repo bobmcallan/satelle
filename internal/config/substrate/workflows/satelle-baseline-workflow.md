@@ -29,6 +29,11 @@ digraph satelle_baseline {
   // workflow into per-transition step summaries (satelle-step-summary), marked
   // mandatory so a summary failure is surfaced. It is not a lifecycle state.
   step        [agent=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
+  // estimate is a declared scoped reviewer (edge-less, on="<target states>"): the
+  // workflow itself declares the always-on plan-estimate/actual gate, so the DOT is
+  // the sole gating authority — no skill tag injects an undeclared gate (sty_ca9f675f).
+  // Advisory where the skill is absent (a fresh repo); enforced where present.
+  estimate    [agent=reviewer, prompt="@skill:satelle-estimate-actual-review", on="in_progress,done"]
 
   backlog -> in_progress [reviewer_skill="satelle-story-intent-review"]
   in_progress -> done
