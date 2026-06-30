@@ -1,9 +1,11 @@
-# Canonical version for the satelle binary — the SINGLE source of truth. The
-# release workflow derives the release tag (v<satelle.version>) from this value,
-# and every build (release CI and local `make build`) bakes it into the binary via
-# -ldflags alongside the commit SHA and a build-time-GENERATED timestamp. There is
-# no hand-edited build time: the timestamp is generated at build (date -u), so a
-# build can never ship a stale one. .version is a build-time source file, NEVER
-# deployed in release artifacts. Cutting a release = bump this one value.
+# Canonical version for the satelle binary — the SINGLE source of truth for BOTH
+# the version and the build date. The release workflow derives the release tag
+# (v<satelle.version>) from this value, and every build (release CI and local
+# `make build`) bakes satelle.version + satelle.build into the binary via -ldflags
+# alongside the live commit SHA. The `commit` workflow step bumps satelle.version
+# (patch) and stamps satelle.build (UTC, date -u +%Y-%m-%d-%H-%M-%S) on EVERY
+# commit (sty_3aeeab18), so cutting a release = making a commit. .version is a
+# build-time source file, NEVER deployed in release artifacts.
 
-satelle.version: 0.0.11
+satelle.version: 0.0.12
+satelle.build: 2026-06-30-06-25-48

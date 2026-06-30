@@ -2,14 +2,15 @@ BIN         := satelle
 PREFIX      ?= $(HOME)/.local
 INSTALL_DIR := $(PREFIX)/bin
 
-# Build identity baked into every binary via -ldflags, from the SINGLE canonical
-# source (.version) plus the live git SHA and a build-time-GENERATED timestamp — so
-# a local `make build` reports a real, non-empty version/commit/time, not the bare
-# "dev" sentinel (sty_27077b11). The release CI bakes the same three vars.
+# Build identity baked into every binary via -ldflags. The version AND the build
+# date come from the SINGLE canonical source (.version) — satelle.build is stamped
+# by the commit workflow step (sty_3aeeab18), not generated here — plus the live git
+# SHA. So a local `make build` reports a real, non-empty version/commit/time, not the
+# bare "dev" sentinel. The release CI bakes the same three vars from .version.
 PKG         := github.com/bobmcallan/satelle/internal/buildinfo
 VERSION     := $(shell awk '$$1=="satelle.version:" {print $$2}' .version)
 COMMIT      := $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo none)
-BUILD_TIME  := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+BUILD_TIME  := $(shell awk '$$1=="satelle.build:" {print $$2}' .version)
 LDFLAGS     := -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)
 
 .PHONY: build install uninstall test integration

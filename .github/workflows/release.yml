@@ -37,9 +37,11 @@ jobs:
           set -euo pipefail
           VER=$(awk '$1=="satelle.version:" {print $2}' .version)
           [ -n "$VER" ] || { echo ".version missing or malformed" >&2; exit 1; }
-          # The build timestamp is GENERATED here, not read from .version — a
-          # release can never ship a stale, hand-edited build time (sty_27077b11).
-          BUILD=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          # .version is the single source for BOTH version and build date: the commit
+          # workflow step stamps satelle.build on every commit (sty_3aeeab18), so the
+          # release bakes that exact value rather than a CI-generated one.
+          BUILD=$(awk '$1=="satelle.build:" {print $2}' .version)
+          [ -n "$BUILD" ] || { echo "satelle.build missing or malformed" >&2; exit 1; }
           echo "version=$VER"   >> "$GITHUB_OUTPUT"
           echo "build=$BUILD"   >> "$GITHUB_OUTPUT"
           echo "tag=v$VER"      >> "$GITHUB_OUTPUT"

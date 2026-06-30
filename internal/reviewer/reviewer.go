@@ -238,7 +238,7 @@ func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (
 	// cannot complete. On the ENGAGEMENT edge, deterministically (no agent) resolve
 	// every EXECUTOR-step skill on the path to done: an executor step whose rubric
 	// is missing leaves that step unperformable (the wasted-work trap — e.g. a
-	// removed commit-push). Reject engagement up front, naming the gap. This is the
+	// removed commit/push skill). Reject engagement up front, naming the gap. This is the
 	// fast, in-process complement to the LLM satelle-workflow-review, which judges
 	// the workflow's full structure + actionability at create/update. Reviewer-gate
 	// skills are NOT required here — a missing reviewer rubric degrades to advisory

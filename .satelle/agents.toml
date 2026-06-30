@@ -13,9 +13,9 @@
 # ALLOCATING A STEP TO AN AGENT (in the workflow DOT)
 # ---------------------------------------------------
 # A node's `agent=` value chooses HOW that step runs:
-#   commit_push [agent=executor,     prompt="@skill:commit-push"]  # IN-LOOP (default)
-#   commit_push [agent=commit-agent, prompt="@skill:commit-push"]  # ISOLATED sub-process
-# Both perform the SAME rubric (@skill:commit-push); only WHERE it runs differs.
+#   commit [agent=executor,     prompt="@skill:commit"]  # IN-LOOP (default)
+#   commit [agent=commit-agent, prompt="@skill:commit"]  # ISOLATED sub-process
+# Both perform the SAME rubric (@skill:commit); only WHERE it runs differs.
 #   - agent=executor  → the current/driving session performs the step in-loop.
 #   - agent=reviewer  → an isolated, read-only gate.
 #   - agent=<name>    → the isolated named agent defined in [agents.<name>] below.
@@ -49,12 +49,12 @@
 model = "sonnet"               # review on sonnet (sty_5073df2f activates sty_dad271fd's knob)
 
 # commit-agent — a NAMED, isolated agent the project workflow allocates to the
-# commit_push step (agent=commit-agent). Per the operating model a named agent is
-# ALWAYS an isolated sub-process: satelle runs the commit-push.md rubric as the
-# system prompt on the agent CLI (claude -p) rather than in the driving loop. The
-# grant is SCOPED to exactly what commit-push needs — stage/commit/push, watch CI,
+# commit and push steps (agent=commit-agent). Per the operating model a named agent
+# is ALWAYS an isolated sub-process: satelle runs the commit.md / push.md rubric as
+# the system prompt on the agent CLI (claude -p) rather than in the driving loop. The
+# grant is SCOPED to exactly what commit/push need — stage/commit/push, watch CI,
 # reinstall, and drive satelle — NOT a blanket allowance (sty_b2222b8a). Comment
-# this block out and the commit_push step falls back to the in-loop executor.
+# this block out and the commit/push steps fall back to the in-loop executor.
 [agents.commit-agent]
 harness = "claude -p --append-system-prompt {system} --allowedTools {tools}"
 tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*)"

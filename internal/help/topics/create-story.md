@@ -47,12 +47,15 @@ always the terminal state, and every gate on the path runs before it (see
 acceptance criteria one by one. A reject pushes back with the unmet criteria.
 
 A repo may layer extra steps onto the path before `done` — this repo's workflow
-adds a **commit-push** step, where the executor commits and pushes the slice and a
-functional gate confirms the CI run succeeded before close:
+adds sequential **commit** and **push** steps: the `commit` executor bumps the
+version and commits the slice, the `push` executor pushes and watches CI + the
+version-gated release, and a functional gate confirms the bump, CI, and the
+published release before close:
 
-    satelle story set <id> --status commit_push   # executor: commit, push, watch CI
-    satelle story set <id> --status committed     # gate: CI run succeeded + summary doc
-    satelle story set <id> --status done          # gate: acceptance review
+    satelle story set <id> --status commit      # executor: bump .version, commit
+    satelle story set <id> --status push        # executor: push, watch test + release
+    satelle story set <id> --status committed   # gate: bump + CI + release verified, summary doc
+    satelle story set <id> --status done        # gate: acceptance review
 
 Drive each transition and let its gate judge it; a reject blocks the move and
 records why. You never self-enact a gated edge.
