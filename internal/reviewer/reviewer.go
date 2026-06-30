@@ -75,6 +75,11 @@ type Gater struct {
 	// children resolves a parent's child stories (id + status) for a container
 	// close gate's payload. Nil when unwired (no children injected).
 	children func(ctx context.Context, parentID string) []ChildState
+	// injectPrinciples toggles whether the resident (principles:always) principles
+	// ride in an isolated reviewer's system prompt — the agents-layer option
+	// (sty_46a40208). Defaults ON (New sets it true); the reviewer binding's
+	// inject_principles = false turns it off.
+	injectPrinciples bool
 }
 
 // New builds a Gater over the agent runner and doc index. model "" inherits the
@@ -82,7 +87,7 @@ type Gater struct {
 func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Gater {
 	return &Gater{
 		runner: runner, docs: docs, repoRoot: repoRoot, model: model, tools: defaultTools,
-		checkTimeout: defaultCheckTimeout, check: execCheck,
+		checkTimeout: defaultCheckTimeout, check: execCheck, injectPrinciples: true,
 	}
 }
 
@@ -115,6 +120,11 @@ func (g *Gater) SetReviewerModel(model string) {
 		g.model = model
 	}
 }
+
+// SetInjectPrinciples sets whether the resident principles ride in an isolated
+// reviewer's system prompt, from the agents layer's resolved `reviewer` binding
+// (sty_46a40208). Defaults ON; a repo disables it with inject_principles = false.
+func (g *Gater) SetInjectPrinciples(on bool) { g.injectPrinciples = on }
 
 // SetRunner overrides the reviewer's agent-CLI runner — the agents layer's
 // `reviewer` harness binding, resolved to a Runner. A nil runner is ignored,
@@ -171,10 +181,14 @@ const reviewerCallToAction = "## You are an isolated satelle reviewer\n\n" +
 // also sees), the read-only call-to-action, then the reviewer's own rubric.
 func (g *Gater) reviewerSystemPrompt(ctx context.Context, rubric string) string {
 	var b strings.Builder
-	if resident := g.alwaysPrinciples(ctx); resident != "" {
-		b.WriteString("# Always-resident principles (satelle)\n\n")
-		b.WriteString(resident)
-		b.WriteString("\n\n")
+	// Principle injection is an agents-layer option, default ON (sty_46a40208): a
+	// repo may omit the resident principles for the reviewer via inject_principles.
+	if g.injectPrinciples {
+		if resident := g.alwaysPrinciples(ctx); resident != "" {
+			b.WriteString("# Always-resident principles (satelle)\n\n")
+			b.WriteString(resident)
+			b.WriteString("\n\n")
+		}
 	}
 	b.WriteString(reviewerCallToAction)
 	b.WriteString("\n\n---\n\n")
@@ -182,17 +196,58 @@ func (g *Gater) reviewerSystemPrompt(ctx context.Context, rubric string) string 
 	return b.String()
 }
 
-// alwaysPrinciples returns the body of the single always-resident principle —
-// the operating principle (config.OperatingPrinciple), frontmatter stripped — so
-// a reviewer judges with the same one resident principle the executor sees
-// (sty_53a4233c). Empty when it does not resolve; injection is additive and must
-// never break a gate.
+// alwaysPrinciples returns the bodies of the resident (principles:always)
+// principles — the SAME set the SessionStart injector gives the in-loop session
+// (sty_46a40208) — frontmatter stripped and joined in a stable (name-sorted)
+// order, so an isolated reviewer judges with the resident guardrails the executor
+// also sees. The operating principle (config.OperatingPrinciple) is guaranteed
+// even when it is embedded-only on a fresh repo, via Get's embedded fallback that
+// List lacks. Empty when none resolve; injection is additive and must never break
+// a gate.
 func (g *Gater) alwaysPrinciples(ctx context.Context) string {
-	d, err := g.docs.Get(ctx, "principles", config.OperatingPrinciple)
-	if err != nil {
-		return ""
+	seen := map[string]bool{}
+	var bodies []string
+	add := func(d docindex.Doc) {
+		if seen[d.Name] {
+			return
+		}
+		seen[d.Name] = true
+		if body := strings.TrimSpace(stripFrontmatter(d.Body)); body != "" {
+			bodies = append(bodies, body)
+		}
 	}
-	return strings.TrimSpace(stripFrontmatter(d.Body))
+	if docs, err := g.docs.List(ctx, "principles"); err == nil {
+		sort.Slice(docs, func(i, j int) bool { return docs[i].Name < docs[j].Name })
+		for _, d := range docs {
+			if hasAlwaysTag(d.Body) {
+				add(d)
+			}
+		}
+	}
+	// Guarantee the operating principle even when it is embedded-only (not yet
+	// materialised on disk) — Get carries the embedded fallback List does not.
+	if !seen[config.OperatingPrinciple] {
+		if d, err := g.docs.Get(ctx, "principles", config.OperatingPrinciple); err == nil {
+			add(d)
+		}
+	}
+	return strings.Join(bodies, "\n\n")
+}
+
+// hasAlwaysTag reports whether a doc's FRONTMATTER carries the principles:always
+// residency marker — checked only within the leading `---`…`---` block so prose
+// mentioning the tag never counts.
+func hasAlwaysTag(body string) bool {
+	s := strings.TrimLeft(body, "\n")
+	if !strings.HasPrefix(s, "---") {
+		return false
+	}
+	rest := s[len("---"):]
+	i := strings.Index(rest, "\n---")
+	if i < 0 {
+		return false
+	}
+	return strings.Contains(rest[:i], "principles:always")
 }
 
 // stripFrontmatter drops a leading `---`…`---` YAML block, returning the markdown

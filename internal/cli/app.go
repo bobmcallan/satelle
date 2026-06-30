@@ -143,6 +143,9 @@ func applyAgentGrants(rev *reviewer.Gater, a *app.App) {
 		rb := agents.ReviewerBinding()
 		rev.SetReviewerTools(rb.Tools)
 		rev.SetReviewerModel(rb.Model)
+		// Resident-principle injection is an agents-layer option, default ON
+		// (sty_46a40208): inject_principles = false in the reviewer binding omits it.
+		rev.SetInjectPrinciples(rb.InjectsPrinciples())
 		// Select the reviewer's agent CLI from the agents-layer harness binding
 		// (default claude). An unset/in-loop/unresolvable harness keeps the global
 		// [agent] cli configured at construction.
