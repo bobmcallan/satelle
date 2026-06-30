@@ -600,6 +600,113 @@ func TestBrowserUptimeBorderTracksConnection(t *testing.T) {
 	}
 }
 
+// TestBrowserWorkflowDiagramInteractive exercises sty_19b2107a end-to-end: the
+// dependency-free SVG diagram is enhanced in vanilla JS so focusing a node
+// highlights it and its incident edges (and dims the rest), and activating a node
+// correlates the transition rows below. No graph library is loaded.
+func TestBrowserWorkflowDiagramInteractive(t *testing.T) {
+	base, repo := serveRepo(t, "8816")
+	// A workflow with a node (in_progress) carrying both an inbound and an outbound
+	// edge, plus an off-node edge (commit->done) that must DIM when in_progress is
+	// active.
+	wf := "---\nname: wf-int\ntype: workflow\nscope: project\napplies_to: [\"*\"]\n---\n" +
+		"```dot\n" + `digraph w {
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor]
+  commit      [agent=executor]
+  done        [shape=Msquare]
+  rev         [agent=reviewer, prompt="@skill:satelle-story-done-review"]
+  backlog -> in_progress -> commit -> rev -> done
+}` + "\n```\n"
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "wf-int.md"), []byte(wf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, testBin, repo, "index")
+
+	ctx := newChrome(t)
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/"),
+		chromedp.WaitVisible(`#panel-stories table.panel-table`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("load page: %v", err)
+	}
+	clickJS(t, ctx, `.tab[data-panel="workflow"]`)
+	if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow tr.row[data-expand-url^="fragment/workflow/"]')`, 5*time.Second) {
+		t.Fatal("workflow row did not list")
+	}
+	clickJS(t, ctx, `#panel-workflow tr.row[data-expand-url^="fragment/workflow/"]`)
+	if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow svg.wf-diagram .wf-dnode[data-state="in_progress"]')`, 5*time.Second) {
+		t.Fatal("diagram did not render with identifiers")
+	}
+
+	// No graph library: only our app.js script tag is present.
+	var scriptSrcs []string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(
+		`[...document.querySelectorAll('script[src]')].map(s=>s.getAttribute('src'))`, &scriptSrcs)); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range scriptSrcs {
+		if strings.Contains(strings.ToLower(s), "mermaid") || strings.Contains(strings.ToLower(s), "d3") || strings.Contains(strings.ToLower(s), "cytoscape") {
+			t.Errorf("a graph library was loaded (%q) — the diagram must stay dependency-free", s)
+		}
+	}
+
+	// Hovering OR focusing the in_progress node highlights it + its incident edges
+	// and dims a non-incident edge (rev->done, which does not touch in_progress).
+	// Both trigger paths are exercised (mouseenter, then a focus event); leaving
+	// clears the state. (SVG <g>.focus() is unreliable in headless Chrome, so the
+	// focus path is driven by dispatching the event the handler listens for.)
+	for _, trigger := range []string{"mouseenter", "focus"} {
+		readState := `(function(){
+			var n=document.querySelector('#panel-workflow .wf-dnode[data-state="in_progress"]');
+			n.dispatchEvent(new Event("` + trigger + `"));
+			var inc=document.querySelector('#panel-workflow .wf-edge-path[data-from="in_progress"][data-to="commit"]');
+			var off=document.querySelector('#panel-workflow .wf-edge-path[data-from="rev"][data-to="done"]');
+			return JSON.stringify({
+				node: n.classList.contains("wf-hi"),
+				inc: inc && inc.classList.contains("wf-hi"),
+				off: off && off.classList.contains("wf-dim")
+			});
+		})()`
+		var got string
+		if err := chromedp.Run(ctx, chromedp.Evaluate(readState, &got)); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(got, `"node":true`) || !strings.Contains(got, `"inc":true`) || !strings.Contains(got, `"off":true`) {
+			t.Errorf("%s on a node should highlight it + incident edges and dim the rest; got %s", trigger, got)
+		}
+		// Leaving restores the default (no highlight/dim).
+		var cleared bool
+		clearEv := "mouseleave"
+		if trigger == "focus" {
+			clearEv = "blur"
+		}
+		if err := chromedp.Run(ctx, chromedp.Evaluate(`(function(){
+			document.querySelector('#panel-workflow .wf-dnode[data-state="in_progress"]').dispatchEvent(new Event("`+clearEv+`"));
+			return !document.querySelector('#panel-workflow .wf-diagram .wf-hi') && !document.querySelector('#panel-workflow .wf-diagram .wf-dim');
+		})()`, &cleared)); err != nil {
+			t.Fatal(err)
+		}
+		if !cleared {
+			t.Errorf("%s leave should clear the highlight/dim state", trigger)
+		}
+	}
+
+	// Activating (click) the in_progress node correlates the transition rows below.
+	clickAndRead := `(function(){
+		document.querySelector('#panel-workflow .wf-dnode[data-state="in_progress"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));
+		var hi=[...document.querySelectorAll('#panel-workflow .wf-edge.wf-edge-hi')].map(function(li){return li.dataset.from+"->"+li.dataset.to;});
+		return JSON.stringify(hi);
+	})()`
+	var rows string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(clickAndRead, &rows)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rows, "backlog->in_progress") || !strings.Contains(rows, "in_progress->commit") {
+		t.Errorf("clicking a node should highlight its incident transition rows; got %s", rows)
+	}
+}
+
 // countExpansions returns how many inline expansion rows are open in the stories
 // panel.
 func countExpansions(t *testing.T, ctx context.Context) int {

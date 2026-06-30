@@ -248,6 +248,17 @@ a.doc:hover { border-color: var(--accent); }
 .wf-diagram .wf-edge-path.ungated { stroke: var(--line); stroke-dasharray: 4 3; }
 .wf-diagram .wf-arrowhead { fill: var(--accent); }
 .wf-diagram .wf-edge-label { fill: var(--muted); font-family: var(--mono); font-size: 10.5px; dominant-baseline: middle; }
+/* Interactivity (sty_19b2107a) — progressive enhancement layered by app.js on top
+   of the SSR SVG: a hovered/focused node highlights itself + its incident edges and
+   dims the rest. Pure CSS state classes; no JS = no classes = the plain diagram. */
+.wf-diagram .wf-dnode { cursor: pointer; }
+.wf-diagram .wf-dnode:focus { outline: none; }
+.wf-diagram .wf-dnode:focus rect, .wf-diagram .wf-dnode.wf-hi rect { stroke: var(--accent); stroke-width: 2.5; }
+.wf-diagram .wf-edge-path.wf-hi { stroke: var(--accent); stroke-width: 2.5; }
+.wf-diagram .wf-edge-label.wf-hi { fill: var(--ink); font-weight: 600; }
+.wf-diagram .wf-dim { opacity: 0.25; }
+/* The correlated transition row (clicking a node) gets a brief accent wash. */
+.wf-edge.wf-edge-hi { background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 4px; }
 
 .wf-states { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .wf-node { display: inline-flex; align-items: baseline; gap: 6px; padding: 3px 11px;

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -153,5 +154,78 @@ func TestWorkflowDiagramFromDOT(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("diagram HTML missing %q", want)
 		}
+	}
+}
+
+// TestWorkflowDiagramCarriesIdentifiers covers sty_19b2107a AC1/AC2: every node
+// carries a stable data-state and is focusable, and every edge path + label carries
+// data-from/data-to so JS can correlate a node with its incident edges.
+func TestWorkflowDiagramCarriesIdentifiers(t *testing.T) {
+	spec := parseWorkflow(sampleWorkflowDOT)
+	html := string(workflowDiagram(spec))
+
+	// Nodes: a stable data-state and focusability (tabindex) for keyboard a11y.
+	for _, want := range []string{
+		`data-state="in_progress"`, `data-state="commit_push"`, `data-state="done"`,
+		`tabindex="0"`, `role="button"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("node markup missing %q", want)
+		}
+	}
+	// Edge paths AND labels carry data-from/data-to for the edge into commit_review.
+	if !strings.Contains(html, `<path class="wf-edge-path" data-from="commit_push" data-to="commit_review"`) {
+		t.Errorf("edge path missing data-from/data-to identifiers:\n%s", html)
+	}
+	if !strings.Contains(html, `<text class="wf-edge-label" data-from="commit_push" data-to="commit_review"`) {
+		t.Errorf("edge label missing data-from/data-to identifiers:\n%s", html)
+	}
+}
+
+// TestWorkflowDiagramLabelsDoNotOverprint covers sty_19b2107a AC4: when several
+// edges target the same node (here all the cancel edges, plus the gated forward
+// edges), their labels must not collapse onto the same coordinate. The anti-collision
+// pass guarantees no two labels share an x-overlap at the same y.
+func TestWorkflowDiagramLabelsDoNotOverprint(t *testing.T) {
+	// A workflow with multiple gated edges into the same target (cancelled) — the
+	// shape that produced the run-together "code-acstory-cancel" label.
+	dot := `---
+name: w
+applies_to: ["*"]
+---
+` + "```dot" + `
+digraph w {
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor]
+  integration [agent=executor]
+  commit      [agent=executor]
+  done        [shape=Msquare]
+  cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
+  rev1        [agent=reviewer, prompt="@skill:code-ac-review"]
+  backlog -> in_progress -> rev1 -> integration -> commit -> done
+  backlog -> cancelled
+  in_progress -> cancelled
+  integration -> cancelled
+  commit -> cancelled
+}
+` + "```" + `
+`
+	spec := parseWorkflow(dot)
+	html := string(workflowDiagram(spec))
+
+	// Pull each <text class="wf-edge-label" … x=".." y=".."> and assert no two labels
+	// occupy the same (x,y) — the overprint the story reports.
+	re := regexp.MustCompile(`<text class="wf-edge-label"[^>]*\bx="(\d+)" y="(\d+)"`)
+	seen := map[string]bool{}
+	matches := re.FindAllStringSubmatch(html, -1)
+	if len(matches) < 2 {
+		t.Fatalf("expected several edge labels, got %d:\n%s", len(matches), html)
+	}
+	for _, m := range matches {
+		key := m[1] + "," + m[2]
+		if seen[key] {
+			t.Errorf("two edge labels overprint at the same coordinate %s:\n%s", key, html)
+		}
+		seen[key] = true
 	}
 }

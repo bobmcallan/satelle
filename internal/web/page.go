@@ -245,7 +245,7 @@ const templatesSrc = `
   <div class="wf-states">{{range .Spec.States}}<span class="wf-node{{if .Terminal}} terminal{{end}}">{{.Name}}{{if .Agent}}<span class="wf-agent">{{.Agent}}</span>{{end}}</span>{{else}}<span class="empty">no states declared</span>{{end}}</div>
 
   <h4>Transitions</h4>
-  {{if .Spec.Transitions}}<ul class="wf-edges">{{range .Spec.Transitions}}<li class="wf-edge">
+  {{if .Spec.Transitions}}<ul class="wf-edges">{{range .Spec.Transitions}}<li class="wf-edge" data-from="{{.From}}" data-to="{{.To}}">
     <span class="wf-node sm">{{.From}}</span>
     <span class="wf-arrow">→</span>
     <span class="wf-node sm">{{.To}}</span>
