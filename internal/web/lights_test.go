@@ -235,10 +235,10 @@ transitions:
 func projSpec() wfSpec {
 	return wfSpec{
 		States: []wfState{
-			{Name: "backlog"}, {Name: "in_progress", Actor: "executor"},
-			{Name: "commit_push", Actor: "executor"}, {Name: "committed", Actor: "reviewer"},
-			{Name: "done", Actor: "reviewer", Terminal: true},
-			{Name: "cancelled", Actor: "reviewer", Terminal: true},
+			{Name: "backlog"}, {Name: "in_progress", Agent: "executor"},
+			{Name: "commit_push", Agent: "executor"}, {Name: "committed", Agent: "reviewer"},
+			{Name: "done", Agent: "reviewer", Terminal: true},
+			{Name: "cancelled", Agent: "reviewer", Terminal: true},
 		},
 		Transitions: []wfTransition{
 			{From: "backlog", To: "in_progress"},

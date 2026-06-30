@@ -55,7 +55,7 @@ func TestCreateContentReviewGate(t *testing.T) {
 		writeFile(t, verdict, fmt.Sprintf("#!/bin/sh\necho '{\"decision\":\"%s\",\"notes\":\"%s\"}'\n", decision, notes))
 		_ = os.Chmod(verdict, 0o755)
 	}
-	writeFile(t, filepath.Join(repo, ".satelle", "actors.toml"),
+	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
 		fmt.Sprintf("[reviewer]\nharness = \"%s {system} {tools} {model}\"\n", verdict))
 
 	setVerdict("reject", "stub: the ACs do not verify the goal")

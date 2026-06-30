@@ -38,13 +38,13 @@ guardrails:
 // inline key as well as the legacy `actor:`, with agent winning when both are
 // present (sty_536f9960).
 func TestParseStateAgentAlias(t *testing.T) {
-	if got := parseState("{name: in_progress, agent: executor}").Actor; got != "executor" {
+	if got := parseState("{name: in_progress, agent: executor}").Agent; got != "executor" {
 		t.Errorf("agent: spelling = %q, want executor", got)
 	}
-	if got := parseState("{name: gate, actor: reviewer}").Actor; got != "reviewer" {
+	if got := parseState("{name: gate, actor: reviewer}").Agent; got != "reviewer" {
 		t.Errorf("legacy actor: spelling = %q, want reviewer", got)
 	}
-	if got := parseState("{name: gate, agent: reviewer, actor: executor}").Actor; got != "reviewer" {
+	if got := parseState("{name: gate, agent: reviewer, actor: executor}").Agent; got != "reviewer" {
 		t.Errorf("agent should win over actor, got %q", got)
 	}
 }
@@ -59,8 +59,8 @@ func TestParseWorkflow(t *testing.T) {
 	for _, s := range spec.States {
 		byName[s.Name] = s
 	}
-	if byName["in_progress"].Actor != "executor" {
-		t.Errorf("in_progress actor = %q, want executor", byName["in_progress"].Actor)
+	if byName["in_progress"].Agent != "executor" {
+		t.Errorf("in_progress actor = %q, want executor", byName["in_progress"].Agent)
 	}
 	if !byName["done"].Terminal || !byName["cancelled"].Terminal {
 		t.Errorf("done/cancelled should be terminal")
@@ -118,11 +118,11 @@ func TestParseWorkflowDOT(t *testing.T) {
 	for _, s := range spec.States {
 		byName[s.Name] = s
 	}
-	if byName["commit_push"].Actor != "executor" {
-		t.Errorf("commit_push actor = %q, want executor", byName["commit_push"].Actor)
+	if byName["commit_push"].Agent != "executor" {
+		t.Errorf("commit_push actor = %q, want executor", byName["commit_push"].Agent)
 	}
-	if byName["commit_review"].Actor != "reviewer" {
-		t.Errorf("commit_review actor = %q, want reviewer", byName["commit_review"].Actor)
+	if byName["commit_review"].Agent != "reviewer" {
+		t.Errorf("commit_review actor = %q, want reviewer", byName["commit_review"].Agent)
 	}
 	if !byName["done"].Terminal {
 		t.Errorf("done should be terminal")

@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-func TestLoadActorsDefault(t *testing.T) {
-	ac, err := LoadActors(t.TempDir()) // no actors.toml present
+func TestLoadAgentsDefault(t *testing.T) {
+	ac, err := LoadAgents(t.TempDir()) // no actors.toml present
 	if err != nil {
-		t.Fatalf("LoadActors: %v", err)
+		t.Fatalf("LoadAgents: %v", err)
 	}
 	if got := ac.ReviewerBinding(); got.Tools != DefaultReviewerTools || got.Harness != DefaultReviewerHarness {
 		t.Errorf("reviewer default = %+v, want tools=%q harness=%q", got, DefaultReviewerTools, DefaultReviewerHarness)
@@ -19,16 +19,16 @@ func TestLoadActorsDefault(t *testing.T) {
 	}
 }
 
-// TestLoadActorsAgentsTomlFallback proves the agents.toml/actors.toml back-compat
+// TestLoadAgentsAgentsTomlFallback proves the agents.toml/actors.toml back-compat
 // (sty_536f9960): the canonical agents.toml loads, the legacy actors.toml still
 // loads as a fallback, and agents.toml wins when both are present.
-func TestLoadActorsAgentsTomlFallback(t *testing.T) {
+func TestLoadAgentsAgentsTomlFallback(t *testing.T) {
 	// Legacy actors.toml only: still loads.
 	legacy := t.TempDir()
 	if err := os.WriteFile(filepath.Join(legacy, ActorsConfigName), []byte("[reviewer]\nmodel = \"legacy\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if ac, err := LoadActors(legacy); err != nil || ac.Reviewer.Model != "legacy" {
+	if ac, err := LoadAgents(legacy); err != nil || ac.Reviewer.Model != "legacy" {
 		t.Fatalf("legacy actors.toml fallback: ac=%+v err=%v", ac, err)
 	}
 
@@ -37,7 +37,7 @@ func TestLoadActorsAgentsTomlFallback(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(canon, AgentsConfigName), []byte("[reviewer]\nmodel = \"canon\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if ac, err := LoadActors(canon); err != nil || ac.Reviewer.Model != "canon" {
+	if ac, err := LoadAgents(canon); err != nil || ac.Reviewer.Model != "canon" {
 		t.Fatalf("canonical agents.toml: ac=%+v err=%v", ac, err)
 	}
 
@@ -49,20 +49,20 @@ func TestLoadActorsAgentsTomlFallback(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(both, ActorsConfigName), []byte("[reviewer]\nmodel = \"legacy\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if ac, err := LoadActors(both); err != nil || ac.Reviewer.Model != "canon" {
+	if ac, err := LoadAgents(both); err != nil || ac.Reviewer.Model != "canon" {
 		t.Fatalf("agents.toml should win over actors.toml: ac=%+v err=%v", ac, err)
 	}
 }
 
-func TestLoadActorsOverride(t *testing.T) {
+func TestLoadAgentsOverride(t *testing.T) {
 	dir := t.TempDir()
 	body := "[reviewer]\ntools = \"Read\"\nharness = \"other-harness\"\n[executor]\nharness = \"claude -p\"\n"
 	if err := os.WriteFile(filepath.Join(dir, ActorsConfigName), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ac, err := LoadActors(dir)
+	ac, err := LoadAgents(dir)
 	if err != nil {
-		t.Fatalf("LoadActors: %v", err)
+		t.Fatalf("LoadAgents: %v", err)
 	}
 	if got := ac.ReviewerBinding(); got.Tools != "Read" || got.Harness != "other-harness" {
 		t.Errorf("reviewer override = %+v, want tools=Read harness=other-harness", got)

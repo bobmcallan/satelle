@@ -19,7 +19,7 @@ func TestInitSkeleton(t *testing.T) {
 
 	for _, rel := range []string{
 		".satelle/satelle.toml",
-		".satelle/actors.toml",
+		".satelle/agents.toml",
 		".satelle/documents/README.md",
 		".satelle/workflows/README.md",
 		".satelle/principles/README.md",
@@ -40,13 +40,13 @@ func TestInitSkeleton(t *testing.T) {
 		t.Error("init must not scaffold .satelle/stories")
 	}
 
-	// The scaffold actors.toml documents the reviewer-model knob (sty_dad271fd).
-	actors, err := os.ReadFile(filepath.Join(repo, ".satelle", "actors.toml"))
+	// The scaffold agents.toml documents the reviewer-model knob (sty_dad271fd).
+	agents, err := os.ReadFile(filepath.Join(repo, ".satelle", "agents.toml"))
 	if err != nil {
-		t.Fatalf("read actors.toml: %v", err)
+		t.Fatalf("read agents.toml: %v", err)
 	}
-	if !strings.Contains(string(actors), "model") || !strings.Contains(string(actors), "sonnet") {
-		t.Errorf("scaffold actors.toml should document the reviewer model knob (sonnet):\n%s", actors)
+	if !strings.Contains(string(agents), "model") || !strings.Contains(string(agents), "sonnet") {
+		t.Errorf("scaffold agents.toml should document the reviewer model knob (sonnet):\n%s", agents)
 	}
 
 	// A second init is idempotent — it must report no new creations.

@@ -214,7 +214,7 @@ const templatesSrc = `
   <div class="wf-diagram-wrap">{{.Diagram}}</div>{{end}}
 
   <h4>States</h4>
-  <div class="wf-states">{{range .Spec.States}}<span class="wf-node{{if .Terminal}} terminal{{end}}">{{.Name}}{{if .Actor}}<span class="wf-actor">{{.Actor}}</span>{{end}}</span>{{else}}<span class="empty">no states declared</span>{{end}}</div>
+  <div class="wf-states">{{range .Spec.States}}<span class="wf-node{{if .Terminal}} terminal{{end}}">{{.Name}}{{if .Agent}}<span class="wf-agent">{{.Agent}}</span>{{end}}</span>{{else}}<span class="empty">no states declared</span>{{end}}</div>
 
   <h4>Transitions</h4>
   {{if .Spec.Transitions}}<ul class="wf-edges">{{range .Spec.Transitions}}<li class="wf-edge">

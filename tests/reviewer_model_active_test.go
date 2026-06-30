@@ -18,7 +18,7 @@ import (
 func TestRepoReviewerModelIsSonnet(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	dataDir := filepath.Join(filepath.Dir(filepath.Dir(file)), ".satelle")
-	ac, err := config.LoadActors(dataDir)
+	ac, err := config.LoadAgents(dataDir)
 	if err != nil {
 		t.Fatalf("load %s/actors.toml: %v", dataDir, err)
 	}

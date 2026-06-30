@@ -25,7 +25,7 @@ type workflowRowVM struct {
 // wfState is a workflow state node. Terminal is true when no transition leaves it.
 type wfState struct {
 	Name     string
-	Actor    string
+	Agent    string
 	Terminal bool
 }
 
@@ -311,7 +311,7 @@ func parseState(item string) wfState {
 		if performer == "" {
 			performer = inlineField(item, "actor")
 		}
-		return wfState{Name: inlineField(item, "name"), Actor: performer}
+		return wfState{Name: inlineField(item, "name"), Agent: performer}
 	}
 	return wfState{Name: strings.Trim(item, `"'`)}
 }
@@ -326,7 +326,7 @@ func parseWorkflowDOT(body string) (wfSpec, bool) {
 	}
 	spec := wfSpec{}
 	for _, st := range s.States {
-		spec.States = append(spec.States, wfState{Name: st.Name, Actor: st.Actor, Terminal: st.Terminal})
+		spec.States = append(spec.States, wfState{Name: st.Name, Agent: st.Agent, Terminal: st.Terminal})
 	}
 	for _, tr := range s.Transitions {
 		spec.Transitions = append(spec.Transitions, wfTransition{From: tr.From, To: tr.To, Skill: tr.Skill})

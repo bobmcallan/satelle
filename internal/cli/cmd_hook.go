@@ -167,15 +167,16 @@ func anyEngaged(items []workitem.Item, engaged map[string]bool) bool {
 }
 
 // executorStates parses the active workflow body for states marked
-// `actor: executor` — the states that represent engaged work. The "engaged"
-// policy is thus authored in the workflow, not hardcoded.
+// `agent: executor` (the legacy `actor:` still parses) — the states that
+// represent engaged work. The "engaged" policy is thus authored in the workflow,
+// not hardcoded.
 func executorStates(body string) []string {
-	// DOT workflow: the executor states are the nodes marked actor=executor in
+	// DOT workflow: the executor states are the nodes marked agent=executor in
 	// the shared wfdot spec.
 	if spec, ok := wfdot.Parse(body); ok {
 		var out []string
 		for _, s := range spec.States {
-			if s.Actor == "executor" {
+			if s.Agent == "executor" {
 				out = append(out, s.Name)
 			}
 		}

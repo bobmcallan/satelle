@@ -48,7 +48,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 	if gc, gerr := config.LoadGlobal(); gerr == nil {
 		if runner, rerr := agentcli.NewRunner(gc.Agent.ResolveCLI()); rerr == nil {
 			rev := reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, "")
-			applyActorGrants(rev, a)
+			applyAgentGrants(rev, a)
 			rev.SetChildrenResolver(childrenResolver(a))
 			verb.SetTransitionGater(rev)
 			// Stamp the governing workflow on every story at create — independent of
@@ -101,7 +101,7 @@ func gaterForCmd(cmd *cobra.Command) (*reviewer.Gater, *app.App, error) {
 		return nil, nil, fmt.Errorf("an agent CLI is required: %w", err)
 	}
 	rev := reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, "")
-	applyActorGrants(rev, a)
+	applyAgentGrants(rev, a)
 	return rev, a, nil
 }
 
@@ -135,15 +135,15 @@ func skillResolver(a *app.App) func(skill string) bool {
 	}
 }
 
-// applyActorGrants resolves the actors layer (.satelle/actors.toml) and binds the
+// applyAgentGrants resolves the agents layer (.satelle/agents.toml) and binds the
 // reviewer's tool grant onto the gater. An absent file yields today's read-only
-// default, so behaviour is unchanged unless a repo authors actors.toml.
-func applyActorGrants(rev *reviewer.Gater, a *app.App) {
-	if actors, err := config.LoadActors(filepath.Dir(a.DBPath)); err == nil {
-		rb := actors.ReviewerBinding()
+// default, so behaviour is unchanged unless a repo authors agents.toml.
+func applyAgentGrants(rev *reviewer.Gater, a *app.App) {
+	if agents, err := config.LoadAgents(filepath.Dir(a.DBPath)); err == nil {
+		rb := agents.ReviewerBinding()
 		rev.SetReviewerTools(rb.Tools)
 		rev.SetReviewerModel(rb.Model)
-		// Select the reviewer's agent CLI from the actors-layer harness binding
+		// Select the reviewer's agent CLI from the agents-layer harness binding
 		// (default claude). An unset/in-loop/unresolvable harness keeps the global
 		// [agent] cli configured at construction.
 		if r, rerr := agentcli.RunnerFromHarness(rb.Harness); rerr == nil {
