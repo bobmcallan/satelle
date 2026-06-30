@@ -108,6 +108,10 @@ const templatesSrc = `
 
 {{define "footer"}}<footer class="site-footer">{{if footeremail}}<a class="footer-email" href="mailto:{{footeremail}}">{{footeremail}}</a>{{end}}<span class="footer-version">satelle {{version}}</span></footer>{{end}}
 
+{{/* favicon: the green-dot logo (the wordmark's .dot), one shared partial so every
+     page <head> links the same icon — no per-page drift. */}}
+{{define "favicon"}}<link rel="icon" type="image/svg+xml" href="static/favicon.svg"><link rel="apple-touch-icon" href="static/favicon.svg">{{end}}
+
 {{define "page"}}<!doctype html>
 <html lang="en"{{if .Theme}} data-theme="{{.Theme}}"{{end}}>
 <head>
@@ -116,6 +120,7 @@ const templatesSrc = `
 <title>satelle · project</title>
 <script>(function(){try{if(!document.documentElement.getAttribute('data-theme')){var t=localStorage.getItem('satelle-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
 <base href="{{basehref}}">
+{{template "favicon"}}
 <link rel="stylesheet" href="static/app.css">
 </head>
 <body>
@@ -260,6 +265,7 @@ const templatesSrc = `
 <title>satelle · workspace</title>
 <script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <base href="{{basehref}}">
+{{template "favicon"}}
 <link rel="stylesheet" href="static/app.css">
 </head>
 <body>
@@ -293,6 +299,7 @@ const templatesSrc = `
 <title>satelle · projects</title>
 <script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <base href="{{basehref}}">
+{{template "favicon"}}
 <link rel="stylesheet" href="static/app.css">
 </head>
 <body>
@@ -330,6 +337,7 @@ const templatesSrc = `
 <title>satelle · help</title>
 <script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <base href="{{basehref}}">
+{{template "favicon"}}
 <link rel="stylesheet" href="static/app.css">
 </head>
 <body>
@@ -357,6 +365,7 @@ const templatesSrc = `
 <title>satelle · {{.Name}}</title>
 <script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <base href="{{basehref}}">
+{{template "favicon"}}
 <link rel="stylesheet" href="static/app.css">
 </head>
 <body>
@@ -383,6 +392,7 @@ const templatesSrc = `
 <title>satelle · {{.Item.ID}}</title>
 <script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <base href="{{basehref}}">
+{{template "favicon"}}
 <link rel="stylesheet" href="static/app.css">
 </head>
 <body>
