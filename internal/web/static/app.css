@@ -54,11 +54,20 @@ footer { margin-top: 40px; color: var(--muted); font-size: 12px; border-top: 1px
 /* Title cell + tags-under-title */
 .wi-tags { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
 .tagchip { font-size: 10.5px; color: var(--muted); background: var(--chip); border-radius: 4px; padding: 0 6px; line-height: 1.6; }
-/* Key:value tag chip (e.g. epic:summariser) — key tinted, value neutral. */
-.tagchip.kv { display: inline-flex; padding: 0; background: none; overflow: hidden; border-radius: 4px; font-size: 10.5px; line-height: 1.6; }
-.tagchip.kv .k { background: var(--accent); color: #fff; padding: 0 5px; font-weight: 600; }
-.tagchip.kv .v { background: var(--chip); color: var(--ink); padding: 0 6px; }
-.tagchip.kv.cat .k { background: #b45309; } /* category: distinct (amber) key, like satellites */
+/* Key:value tag chip (e.g. epic:summariser) — the WHOLE chip reads as its
+   NAMESPACE colour (sty_970dbef3): a filled key + a tinted value + a matching
+   border, all driven by one --chip-c hue. Default namespace is green (--accent,
+   which already flips per theme); category:<v> is tan/amber, like the reference. */
+.tagchip.kv {
+  --chip-c: var(--accent);
+  display: inline-flex; padding: 0; overflow: hidden; border-radius: 4px;
+  font-size: 10.5px; line-height: 1.6;
+  border: 1px solid color-mix(in srgb, var(--chip-c) 50%, transparent);
+}
+.tagchip.kv .k { background: var(--chip-c); color: #fff; padding: 0 5px; font-weight: 600; }
+.tagchip.kv .v { background: color-mix(in srgb, var(--chip-c) 13%, transparent); color: var(--chip-c); padding: 0 6px; }
+.tagchip.kv.cat { --chip-c: #b45309; } /* category: tan/amber namespace, like satellites */
+[data-theme="dark"] .tagchip.kv.cat { --chip-c: #d98c1f; } /* brighter amber, legible on the dark panel */
 /* A clickable chip is a <button> that adds its tag to the panel filter; reset the
    button chrome so it reads identically to the span chip, plus a click affordance. */
 button.tagchip { font-family: inherit; border: 0; margin: 0; cursor: pointer; }
@@ -135,18 +144,30 @@ header.app h1 .dot { color: var(--accent); }
   animation: review-pulse 1.4s ease-in-out infinite; }
 @keyframes review-pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
 
-/* Status badges / pills */
-.badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; background: var(--chip); color: #374151; }
-/* Dark mode: the base badge text (#374151) is dark-on-dark against the near-black
-   --chip, so backlog/committed (no per-status rule) are illegible. Lighten the base
-   text to --ink. Placed BEFORE the .s-* variants so they keep their own colours
-   (equal specificity, later source wins); light mode is untouched. (sty_173e49a7) */
-[data-theme="dark"] .badge { color: var(--ink); }
-.badge.s-open { background: #eef2ff; color: #3730a3; }
-.badge.s-in_progress { background: #fff7ed; color: #9a3412; }
-.badge.s-done { background: #ecfdf5; color: #065f46; }
-.badge.s-blocked { background: #fef2f2; color: #991b1b; }
-.badge.s-cancelled { background: #f3f4f6; color: #6b7280; }
+/* Status badges / pills — UPPERCASE, OUTLINED pills (sty_970dbef3): a coloured
+   border + matching coloured text on a transparent fill, so the same per-status
+   --badge-c hue reads on BOTH themes (no light/dark fill to flip). Every workflow
+   state this repo uses carries its own --badge-c; --badge-c also drives a faint
+   tinted fill via color-mix for a touch of body without losing the outline look.
+   An unknown status falls back to --muted (only a status the workflow never
+   declares can land here). */
+.badge {
+  display: inline-block; padding: 0 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--badge-c, var(--muted));
+  border: 1px solid var(--badge-c, var(--muted));
+  background: color-mix(in srgb, var(--badge-c, var(--muted)) 9%, transparent);
+}
+.badge.s-backlog     { --badge-c: #2ecc71; } /* mint green — reference: BACKLOG is a green pill */
+.badge.s-open        { --badge-c: #6366f1; } /* indigo */
+.badge.s-in_progress { --badge-c: #e0a200; } /* amber/gold — actively in work */
+.badge.s-integration { --badge-c: #4a6fa5; } /* slate blue — matches the 'fired' light */
+.badge.s-commit      { --badge-c: #8b5cf6; } /* violet */
+.badge.s-push        { --badge-c: #0ea5a4; } /* teal */
+.badge.s-committed   { --badge-c: #2563eb; } /* strong blue */
+.badge.s-done        { --badge-c: #16a34a; } /* deep green — distinct shade from backlog */
+.badge.s-blocked     { --badge-c: #e74c3c; } /* red — matches the 'fail' light */
+.badge.s-cancelled   { --badge-c: #b08aa6; } /* desaturated mauve — abandoned, but not an undifferentiated grey */
 
 /* Inline expansion */
 tr.expansion > td { background: var(--expand-bg); padding: 0; }

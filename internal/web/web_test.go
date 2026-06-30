@@ -227,21 +227,56 @@ func TestBacklogCountRendered(t *testing.T) {
 	}
 }
 
-func TestDarkBadgeTextLightened(t *testing.T) {
-	srv, _ := newServer(t)
+// TestStatusBadgesOutlinedPills asserts the badge restyle (sty_970dbef3): an
+// UPPERCASE, OUTLINED pill (border + matching text on a near-transparent fill)
+// where every workflow state this repo uses carries its OWN --badge-c hue, so no
+// state falls back to an undifferentiated grey. The transparent-fill outline means
+// the one hue reads on both themes. This supersedes the earlier dark-only badge fix
+// (sty_173e49a7), whose dark-legibility intent the per-status light hues preserve.
+func TestStatusBadgesOutlinedPills(t *testing.T) {
+	srv, db := newServer(t)
 	code, css := get(t, srv.URL+"/static/app.css")
 	if code != 200 {
 		t.Fatalf("/static/app.css = %d", code)
 	}
-	// The dark-mode fix is theme-scoped: a [data-theme="dark"] .badge rule lightens
-	// the base badge text off the light-mode #374151 so backlog/committed are legible
-	// against the near-black --chip. Light-mode values stay untouched. (sty_173e49a7)
-	if !strings.Contains(css, `[data-theme="dark"] .badge`) {
-		t.Errorf("app.css missing the theme-scoped dark badge override [data-theme=\"dark\"] .badge")
+	// Outlined + uppercase: the base .badge is text-transform uppercase with a
+	// border driven by the per-status hue, on a transparent (not filled) ground.
+	if !strings.Contains(css, "text-transform: uppercase") {
+		t.Errorf("badge should be uppercase (text-transform: uppercase)")
 	}
-	// The light-mode base badge keeps its dark #374151 text (unchanged).
-	if !strings.Contains(css, `.badge { display: inline-block`) || !strings.Contains(css, "color: #374151") {
-		t.Errorf("light-mode base .badge text should be unchanged (#374151)")
+	if !strings.Contains(css, "border: 1px solid var(--badge-c") {
+		t.Errorf("badge should be outlined with the per-status --badge-c colour")
+	}
+	// Every workflow state used by this repo defines its own colour — no grey fallback.
+	for _, st := range []string{"backlog", "in_progress", "integration", "commit", "push", "committed", "done", "cancelled"} {
+		re := regexp.MustCompile(`\.badge\.s-` + st + `\s+\{ --badge-c:`)
+		if !re.MatchString(css) {
+			t.Errorf("status %q is missing its own .badge.s-%s { --badge-c: … } rule", st, st)
+		}
+	}
+	// backlog and done carry DISTINCT hues (AC4 names these two explicitly).
+	if !strings.Contains(css, ".badge.s-backlog     { --badge-c: #2ecc71;") {
+		t.Errorf("backlog badge should be the reference mint green #2ecc71")
+	}
+	if !strings.Contains(css, ".badge.s-done        { --badge-c: #16a34a;") {
+		t.Errorf("done badge should be the deep green #16a34a (distinct from backlog)")
+	}
+
+	// The markup carries the per-status class for backlog and done (the pill colour
+	// is keyed off it). Seed one of each and confirm the class is emitted in the page.
+	ctx := context.Background()
+	for _, st := range []string{workitem.StatusBacklog, workitem.StatusDone} {
+		if _, err := db.Stories.Create(ctx, workitem.CreateInput{
+			Kind: workitem.KindStory, Title: "badge " + st, Status: st,
+		}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, page := get(t, srv.URL+"/")
+	for _, want := range []string{`class="badge s-backlog"`, `class="badge s-done"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page missing the per-status badge class %q", want)
+		}
 	}
 }
 

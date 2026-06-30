@@ -377,49 +377,70 @@ func TestBrowserTagChipFiltering(t *testing.T) {
 	}
 }
 
-// TestBrowserDarkBadgeLegible asserts the dark-mode fix at the computed-colour
-// level: a backlog badge (base .badge, no per-status rule) renders lightened text
-// in dark mode rather than the near-black #374151 it carries in light mode, so it
-// is legible against the dark --chip. This is AC4's chromedp computed-colour check
-// for sty_173e49a7.
-func TestBrowserDarkBadgeLegible(t *testing.T) {
+// TestBrowserStatusBadgesOutlined asserts the badge restyle (sty_970dbef3) at the
+// computed-style level, in BOTH themes: a status badge is an UPPERCASE, OUTLINED
+// pill (a real border + matching coloured text, not the old filled light pill), the
+// backlog and done badges carry DISTINCT hues, and the backlog text stays legible in
+// dark mode (the per-status hue subsuming the earlier sty_173e49a7 dark-only fix).
+func TestBrowserStatusBadgesOutlined(t *testing.T) {
 	base, repo := serveRepo(t, "8812")
-	createStory(t, repo, "Backlog Item", "") // status defaults to backlog → base .badge
+	createStory(t, repo, "Backlog Item", "")  // defaults to backlog
+	createStory(t, repo, "Finished Item", "done")
 
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(base+"/"),
+		// status:all so the terminal 'done' row is visible alongside backlog.
+		chromedp.WaitVisible(`#panel-stories table.panel-table`, chromedp.ByQuery),
+		setInput(`#panel-stories .filterbar input`, "status:all"),
 		chromedp.WaitVisible(`#panel-stories .badge.s-backlog`, chromedp.ByQuery),
+		chromedp.WaitVisible(`#panel-stories .badge.s-done`, chromedp.ByQuery),
 	); err != nil {
 		t.Fatalf("load page: %v", err)
 	}
 
-	colourOf := `getComputedStyle(document.querySelector('#panel-stories .badge.s-backlog')).color`
+	read := func(sel, prop string) string {
+		var v string
+		js := fmt.Sprintf(`getComputedStyle(document.querySelector('%s')).%s`, sel, prop)
+		if err := chromedp.Run(ctx, chromedp.Evaluate(js, &v)); err != nil {
+			t.Fatalf("read %s.%s: %v", sel, prop, err)
+		}
+		return v
+	}
+	setTheme := func(mode string) {
+		if err := chromedp.Run(ctx, chromedp.Evaluate(
+			fmt.Sprintf(`document.documentElement.setAttribute('data-theme','%s')`, mode), nil)); err != nil {
+			t.Fatalf("set theme %s: %v", mode, err)
+		}
+	}
 
-	// Light mode: the base badge keeps its dark #374151 = rgb(55, 65, 81).
-	var light string
-	if err := chromedp.Run(ctx,
-		chromedp.Evaluate(`document.documentElement.setAttribute('data-theme','light'); `+colourOf, &light),
-	); err != nil {
-		t.Fatalf("read light colour: %v", err)
-	}
-	if light != "rgb(55, 65, 81)" {
-		t.Errorf("light-mode backlog badge text should be #374151 (rgb(55, 65, 81)); got %q", light)
-	}
-
-	// Dark mode: the text is lightened off #374151 to a high-luminance colour.
-	var dark string
-	if err := chromedp.Run(ctx,
-		chromedp.Evaluate(`document.documentElement.setAttribute('data-theme','dark'); `+colourOf, &dark),
-	); err != nil {
-		t.Fatalf("read dark colour: %v", err)
-	}
-	if dark == "rgb(55, 65, 81)" {
-		t.Errorf("dark-mode backlog badge text must be lightened off #374151; got %q", dark)
-	}
-	r, g, b := parseRGB(t, dark)
-	if r < 150 || g < 150 || b < 150 {
-		t.Errorf("dark-mode backlog badge text should be light (each channel >=150 for legibility on the dark chip); got %q", dark)
+	for _, mode := range []string{"light", "dark"} {
+		setTheme(mode)
+		// Outlined: a real border whose colour matches the text (transparent-ish fill).
+		if w := read(`#panel-stories .badge.s-backlog`, "borderTopWidth"); w == "0px" || w == "" {
+			t.Errorf("[%s] backlog badge should have a visible border (outlined pill); got %q", mode, w)
+		}
+		// Uppercase.
+		if tt := read(`#panel-stories .badge.s-backlog`, "textTransform"); tt != "uppercase" {
+			t.Errorf("[%s] backlog badge should be uppercase; got %q", mode, tt)
+		}
+		// Border colour matches the text colour (the outlined treatment).
+		bc := read(`#panel-stories .badge.s-backlog`, "borderTopColor")
+		tc := read(`#panel-stories .badge.s-backlog`, "color")
+		if bc != tc {
+			t.Errorf("[%s] backlog badge border (%q) should match its text colour (%q)", mode, bc, tc)
+		}
+		// backlog (#2ecc71) and done (#16a34a) are distinct hues.
+		if doneC := read(`#panel-stories .badge.s-done`, "color"); doneC == tc {
+			t.Errorf("[%s] backlog and done badges must be distinct colours; both %q", mode, tc)
+		}
+		// Legible in dark: the backlog hue is light/saturated enough to read.
+		if mode == "dark" {
+			r, g, b := parseRGB(t, tc)
+			if r+g+b < 200 {
+				t.Errorf("[dark] backlog badge text too dark to read; got %q", tc)
+			}
+		}
 	}
 }
 
