@@ -267,8 +267,8 @@ const scaffoldAgentsToml = `# agents.toml — the agents layer: how each agent r
 #
 # ALLOCATING A STEP TO AN AGENT (in the workflow DOT). A node's agent= chooses HOW
 # the step runs — both forms perform the SAME @skill: rubric, only WHERE differs:
-#   commit_push [agent=executor,     prompt="@skill:commit-push"]  # IN-LOOP (default)
-#   commit_push [agent=commit-agent, prompt="@skill:commit-push"]  # ISOLATED sub-process
+#   commit [agent=executor,     prompt="@skill:commit"]  # IN-LOOP (default)
+#   commit [agent=commit-agent, prompt="@skill:commit"]  # ISOLATED sub-process
 # FALLBACK: if a node names an agent NOT defined here, the step falls back to the
 # in-loop executor (the current session) — a named binding is never required.
 #

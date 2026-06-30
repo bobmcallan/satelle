@@ -58,7 +58,7 @@ A gate is either:
 - a **functional check** — a self-contained ```check script (or a `check:` in
   frontmatter). The gate runs it in the repo root; **exit 0 accepts, non-zero
   rejects** with the output tail as notes. No LLM — the command is the decision.
-  Like the commit-push gate, a functional check may run real mechanism.
+  Like the push gate, a functional check may run real mechanism.
 
 ## Create gate — deterministic story structure (code)
 
@@ -74,16 +74,19 @@ mechanical, so a swapped harness can never change what "valid" means.
 Judges readiness of **intent** before work starts — concrete title, clear goal,
 testable criteria. Unclear intent is rejected; the story stays in backlog.
 
-## Commit-push step — `commit-push` (executor) + `satelle-commit-push-review` (gate)
+## Commit + push steps — `commit`, `push` (executors) + `satelle-push-review` (gate)
 
-The commit-push **executor** step stages and commits the slice (conventional
-message, the story id, no AI attribution), pushes to `main` (trunk-based release),
-and watches the GitHub Actions run to conclusion — recording the conclusion and run
-URL as evidence. The commit happens **while the story is engaged** (an executor
-state), so commits are always tracked. The **commit-push gate**
-(`satelle-commit-push-review`, a functional check) then confirms the CI run for the
-pushed commit concluded success — evidence the deployment worked — and emits a
-PR-style commit-summary document under `.satelle/documents/`.
+Two sequential **executor** steps. The **`commit`** step formats and stages the
+slice, **bumps `satelle.version` (patch) and stamps `satelle.build` in `.version`**
+— mandatory on every commit, because `.version` is the single source the release
+tag and build identity derive from — then makes a conventional commit (the story
+id, no AI attribution). The **`push`** step pushes to `main` (trunk-based release),
+watches the GitHub Actions `test` run, then — because the version bumped — watches
+the version-gated `release` run and confirms it published `v<version>`. Both happen
+**while the story is engaged**, so commits are always tracked. The **push gate**
+(`satelle-push-review`, a functional check) then confirms the bump, the green
+`test` run, and the published release, and emits a PR-style summary under
+`.satelle/documents/`.
 
 ## Close gate — `satelle-story-done-review` (→ done)
 
@@ -95,13 +98,18 @@ workflow may name it, name another, or drop it: if the user breaks their own
 process, so be it. The reviewer's grant is read-only (`Read,Grep,Glob`); it reads
 the substrate it reasons about as markdown under `.satelle/` (no shell, no CLI).
 
-## Always-on system layer — estimate/actual + cancel
+## Declared scoped gates — estimate/actual + integration check
 
-`satelle-estimate-actual-review` runs on every gated transition (after the
-workflow-named reviewers) but only governs two edges: entry to `in_progress`
-requires a recorded plan estimate, and entry to `done` requires the recorded
-actual (`satelle story estimate` / `satelle story actual`).
-`satelle-story-cancel-review` records why an item is abandoned.
+Always-on gates are **declared in the workflow DOT**, not injected by a skill tag
+— the DOT is the sole gating authority (no hidden `reviewer:always` layer). A
+reviewer node carries an `on="<states>"` (or `on="*"`) attribute and runs on the
+transitions into those target states, after the edge-named reviewers.
+`satelle-estimate-actual-review` (`on="in_progress,done"`) requires a recorded plan
+estimate entering `in_progress` and the recorded actual entering `done`
+(`satelle story estimate` / `satelle story actual`); `satelle-integration-check`
+(`on="commit"`) runs `make integration` before a commit. An edge may also name
+multiple reviewers directly (`reviewer_skill="a,b"`). `satelle-story-cancel-review`
+records why an item is abandoned.
 
 ## Step summary — `satelle-step-summary` (transparent, opt-in)
 
@@ -118,7 +126,7 @@ The summariser is an **embedded canonical default** (`internal/config/substrate/
 skills`) and is materialised into `.satelle/skills` by `satelle init`. The
 deterministic structure checks (skills/workflows/principles/story drafts) are
 **code** (`internal/structure`), not rubrics. A repo MAY override a materialised
-skill — or add its own gates (this repo's commit-push reviewer) — under
+skill — or add its own gates (this repo's push reviewer) — under
 `.satelle/skills/`. The binary runs the gates; the substrate declares them.
 
 See also: `satelle help create-story`.

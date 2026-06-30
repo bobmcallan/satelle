@@ -14,7 +14,7 @@ The default lifecycle the satelle binary ships, authored in the **DOT standard**
 moves **backlog → in_progress → done** and may exit early to **cancelled**. Each
 gate is an isolated reviewer; the executor never enacts its own transition —
 quality management is the point. This is the minimal order-zero lifecycle; a repo
-layers richer steps (e.g. a commit-push gate) in its own project workflow.
+layers richer steps (e.g. commit + push gates) in its own project workflow.
 
 ```dot
 digraph satelle_baseline {
