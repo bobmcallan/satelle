@@ -87,6 +87,40 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+// TestFaviconLinkedAndServed: the green-dot logo is the favicon on every page —
+// the asset is served and each page <head> links it (sty_f00d40c9).
+func TestFaviconLinkedAndServed(t *testing.T) {
+	srv, db := newServer(t)
+	it, err := db.Stories.Create(context.Background(),
+		workitem.CreateInput{Kind: workitem.KindStory, Title: "Icon story"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The asset is served as an SVG green dot.
+	code, svg := get(t, srv.URL+"/static/favicon.svg")
+	if code != 200 {
+		t.Fatalf("/static/favicon.svg = %d", code)
+	}
+	if !strings.Contains(svg, "<svg") || !strings.Contains(svg, "<circle") {
+		t.Errorf("favicon is not an SVG circle:\n%s", svg)
+	}
+	if !strings.Contains(svg, "#2f6f4f") {
+		t.Errorf("favicon is not the brand accent green #2f6f4f:\n%s", svg)
+	}
+
+	// Every page <head> links it — a main page and the sub-pages.
+	for _, path := range []string{"/", "/help", "/workspace", "/story/" + it.ID} {
+		code, body := get(t, srv.URL+path)
+		if code != 200 {
+			t.Fatalf("%s = %d", path, code)
+		}
+		if !strings.Contains(body, `rel="icon"`) || !strings.Contains(body, "favicon.svg") {
+			t.Errorf("page %s does not link the favicon:\n%s", path, body)
+		}
+	}
+}
+
 func TestProjectPageRendersData(t *testing.T) {
 	srv, db := newServer(t)
 	ctx := context.Background()
