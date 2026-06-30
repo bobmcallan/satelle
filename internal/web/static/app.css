@@ -53,14 +53,14 @@ footer { margin-top: 40px; color: var(--muted); font-size: 12px; border-top: 1px
 
 /* Title cell + tags-under-title */
 .wi-tags { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
-.tagchip { font-size: 10.5px; color: var(--muted); background: var(--chip); border-radius: 4px; padding: 0 6px; line-height: 1.6; }
+.tagchip { font-size: 10.5px; color: var(--muted); background: var(--chip); border-radius: 0; padding: 0 6px; line-height: 1.6; }
 /* Key:value tag chip (e.g. epic:summariser) — the WHOLE chip reads as its
    NAMESPACE colour (sty_970dbef3): a filled key + a tinted value + a matching
    border, all driven by one --chip-c hue. Default namespace is green (--accent,
    which already flips per theme); category:<v> is tan/amber, like the reference. */
 .tagchip.kv {
   --chip-c: var(--accent);
-  display: inline-flex; padding: 0; overflow: hidden; border-radius: 4px;
+  display: inline-flex; padding: 0; overflow: hidden; border-radius: 0;
   font-size: 10.5px; line-height: 1.6;
   border: 1px solid color-mix(in srgb, var(--chip-c) 50%, transparent);
 }
@@ -100,7 +100,7 @@ header.app h1 .dot { color: var(--accent); }
 .tab:hover { color: var(--ink); }
 .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
 .tab .n { color: var(--muted); font-size: 12px; margin-left: 5px; }
-.tab .n-backlog { color: var(--accent); font-size: 11px; margin-left: 5px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 999px; }
+.tab .n-backlog { color: var(--accent); font-size: 11px; margin-left: 5px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 0; }
 .panel { display: none; }
 .panel.active { display: block; }
 
@@ -112,12 +112,12 @@ header.app h1 .dot { color: var(--accent); }
 .filter-count { position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
   color: var(--muted); font-size: 12px; font-family: var(--mono); pointer-events: none; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.fchip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px;
+.fchip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 0;
   background: var(--chip); color: #374151; font-size: 12px; }
 .fchip.is-default { background: #eef2f7; color: #64748b; }
 .fchip button { border: 0; background: none; color: inherit; font-size: 13px; line-height: 1; padding: 0; opacity: .6; }
 .fchip button:hover { opacity: 1; }
-.fchip-clear { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;
+.fchip-clear { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 0;
   border: 1px solid var(--chip); background: none; color: #64748b; font-size: 12px; cursor: pointer; }
 .fchip-clear:hover { color: #374151; border-color: #94a3b8; }
 
@@ -152,7 +152,7 @@ header.app h1 .dot { color: var(--accent); }
    An unknown status falls back to --muted (only a status the workflow never
    declares can land here). */
 .badge {
-  display: inline-block; padding: 0 8px; border-radius: 999px;
+  display: inline-block; padding: 0 8px; border-radius: 0;
   font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
   color: var(--badge-c, var(--muted));
   border: 1px solid var(--badge-c, var(--muted));
