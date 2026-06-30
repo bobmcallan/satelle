@@ -79,7 +79,7 @@ exits non-zero (the wiring turns that into a block with '|| exit 2') unless a
 story is ENGAGED — in one of the active workflow's executor states (e.g.
 in_progress) — so the agent works under a tracked story. Fails open: an
 unconfigured repo or any internal error allows the edit. The "engaged" policy is
-authored substrate — it reads the workflow's executor-actor states, not a Go rule.`,
+authored substrate — it reads the workflow's executor states, not a Go rule.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
@@ -198,7 +198,8 @@ func executorStates(body string) []string {
 			break // end of the states block
 		}
 		item := strings.TrimSpace(t[2:])
-		if strings.HasPrefix(item, "{") && strings.Contains(item, "actor:") && strings.Contains(item, "executor") {
+		// The performer key is `agent:` (the legacy `actor:` still parses).
+		if strings.HasPrefix(item, "{") && (strings.Contains(item, "agent:") || strings.Contains(item, "actor:")) && strings.Contains(item, "executor") {
 			if name := hookInlineField(item, "name"); name != "" {
 				out = append(out, name)
 			}

@@ -1,8 +1,10 @@
-# Satelle — Design: the actor model
+# Satelle — Design: the agent model
 
-How satelle governs agent-driven work: the **actor** operating premise,
+How satelle governs agent-driven work: the **agent** operating premise,
 the **DOT** workflow format, and how reviewers run — and where each lives in the
-code. For the storage/port architecture see
+code. Here **agent** is the step's **performer role** (`executor`/`reviewer`),
+distinct from the **agent CLI** (claude|codex, selected by `satelle agent`) that a
+step runs on. For the storage/port architecture see
 [architecture.md](./architecture.md); for the product framing see [spec.md](./spec.md).
 
 ## Design premise
@@ -38,25 +40,25 @@ story set <status>  ─→  reviewer.Gater.Gate  ─→  accept ? enact : block
 
 ## Core reviewer operating premise
 
-A workflow is a graph of **steps**, each run by a **defined actor** with a bounded
-grant:
+A workflow is a graph of **steps**, each run by a **defined agent role** with a
+bounded grant:
 
 - **executor** — the agent. It does the work, mutates the working tree, and requests
   the next status. Full tool grant.
 - **reviewer** — **limited to reviewing**. An isolated, fresh-context judge that reads
   the requested transition and returns one verdict
   `{"decision":"accept"|"reject","notes":"…"}`. It is **read-only** and never mutates
-  — a quality-management invariant enforced by its *grant*, not by trusting the actor.
+  — a quality-management invariant enforced by its *grant*, not by trusting the agent.
 
 satelle is the **gatekeeper of status**: a status advances only through a reviewer's
 accept, and *always* through it. Accept enacts the transition; reject blocks it and
 pushes the notes back to the executor, which fixes in place and retries the same
 forward edge. The forbidden move is routing *around* a gate (patching a status,
 relabelling to dodge an edge). This is the
-`satelle-actor-model` principle (`internal/config/substrate/principles`).
+`satelle-agent-model` principle (`internal/config/substrate/principles`).
 
 The old "reviewer-only" framing made only the reviewer first-class and left the
-executor an unenforced guide; the actor model **defines both** actors and
+executor an unenforced guide; the agent model **defines both** agent roles and
 their grants, so the boundary is enforced rather than hoped.
 
 ### Two gate kinds
@@ -76,7 +78,8 @@ Workflows are authored substrate in the **DOT standard** (Graphviz), parsed once
 `internal/wfdot` and shared by the diagram, the gater, and the commit/edit hooks (no
 divergent copy). The model is **node-centric**:
 
-- each **node** is a step carrying an `actor` (`executor`/`reviewer`);
+- each **node** is a step carrying an `agent` (`executor`/`reviewer`); the legacy
+  `actor` keyword still parses;
 - a **reviewer node** names its gate inline: `prompt="@skill:NAME"`. The edge *into* a
   reviewer node is the gated transition;
 - an **edge** may also carry an explicit gate: `a -> b [reviewer_skill="NAME"]` — the
@@ -88,10 +91,10 @@ divergent copy). The model is **node-centric**:
 digraph satelle_workflow {
   rankdir=LR
   backlog     [shape=Mdiamond]
-  in_progress [actor=executor]
-  commit_push [actor=executor, prompt="@skill:commit-push"]
-  committed   [actor=reviewer, prompt="@skill:satelle-commit-push-review"]
-  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
+  in_progress [agent=executor]
+  commit_push [agent=executor, prompt="@skill:commit-push"]
+  committed   [agent=reviewer, prompt="@skill:satelle-commit-push-review"]
+  done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
 
   backlog -> in_progress [reviewer_skill="satelle-story-intent-review"]
   in_progress -> commit_push -> committed -> done
@@ -99,7 +102,7 @@ digraph satelle_workflow {
 ```
 
 The lifecycle **statuses** are the node names; the executor states (where commits and
-edits are allowed) are the `actor=executor` nodes. The embedded
+edits are allowed) are the `agent=executor` nodes. The embedded
 `satelle-baseline-workflow` (`backlog → in_progress → done`) is the order-zero default;
 a repo overrides it under `.satelle/workflows`.
 
@@ -148,12 +151,12 @@ context decomposition, and no recursive LM sub-calls; depth is one. (The model i
 structural — agents gate agents — not a claim about recursive language-model
 decomposition.)
 
-## The actors layer — binding how a step runs
+## The agents layer — binding how a step runs
 
-*What* is injected (the skill + context subset) is satelle's; *how and where* an actor
-runs is the **actors layer**, `.satelle/actors.toml` (`internal/config/actors.go`). It
-binds each actor to a backend (harness) and grant (tools/model), defaulting to today's
-behaviour:
+*What* is injected (the skill + context subset) is satelle's; *how and where* an agent
+role runs is the **agents layer**, `.satelle/agents.toml` (`internal/config/agents.go`).
+It binds each role to a backend (an agent CLI / harness) and grant (tools/model),
+defaulting to today's behaviour:
 
 ```toml
 [executor] harness = "in-loop"                              # the driving agent
@@ -183,7 +186,7 @@ resulting runner on the `Gater` (`SetRunner`). `claude` works end-to-end; `codex
 **selectable preset stub** until its headless argv is mapped (a repo can use codex today
 by supplying a full template). The executor still runs in-loop. The harness is a local
 subprocess — the "remote" in play is only the model that CLI calls; satelle does not run
-actors on remote machines.
+agents on remote machines.
 
 ## Implementation map
 
@@ -192,10 +195,10 @@ actors on remote machines.
 | Status gating (the one enforced thing) | `internal/reviewer/reviewer.go` (`Gater.Gate`, `runReviewer`, `runCheck`, `reviewerSkillsFor`) |
 | DOT parse / validate / YAML→DOT convert | `internal/wfdot/wfdot.go` (`Parse`, `Validate`, `ToDOT`) |
 | Normalize-to-DOT at ingest | `internal/docindex/docindex.go` (`upsert`) |
-| Actors layer (backend + grant) | `internal/config/actors.go`, wired in `internal/cli/app.go` |
+| Agents layer (backend + grant) | `internal/config/agents.go`, wired in `internal/cli/app.go` |
 | Executor-state hooks (engaged = can edit/commit) | `internal/cli/cmd_hook.go` (`executorStates`, `storyEngaged`) |
 | Workflow diagram (web) | `internal/web/workflow.go` |
 | Embedded substrate (defaults) | `internal/config/substrate/{workflows,skills,principles}` |
 
 See `satelle help reviewer-checks` for the live gate descriptions, and the
-`satelle-actor-model` and `satelle-dot-standard` principles.
+`satelle-agent-model` and `satelle-dot-standard` principles.

@@ -10,11 +10,11 @@ working tool until the satelle MVP lands.
 - **[architecture.md](./architecture.md)** — the port plan, grounded in a scout of
   `satellites`: the single verb-registry seam, what's reused vs rewritten, the sqlite
   design, config model, the CLI verb-cleanup standard, and the MVP build order.
-- **[actor-model.md](./actor-model.md)** — the operating model:
-  the actor reviewer premise (executor does the work, read-only reviewers
+- **[agent-model.md](./agent-model.md)** — the operating model:
+  the agent reviewer premise (executor does the work, read-only reviewers
   gate status), the flexible DOT workflow format (node + edge gates, YAML→DOT at
   ingest, validation + spine), how reviewers run (isolated fresh-context review), and
-  the actors layer — with package/file pointers.
+  the agents layer — with package/file pointers.
 
 ## Status (2026-06-26)
 

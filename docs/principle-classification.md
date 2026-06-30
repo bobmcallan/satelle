@@ -11,7 +11,7 @@ story through its gated workflow?*
 | Principle | Why it stays embedded |
 |---|---|
 | `satelle-agent-goals` | It *is* the operating discipline — drive to the terminal state, status is the sole proof of done, never route around a gate, one story at a time. |
-| `satelle-actor-model` | The model the agent operates within — executor mutates, reviewer judges, status advances only on a reviewer accept. |
+| `satelle-agent-model` | The model the agent operates within — executor mutates, reviewer judges, status advances only on a reviewer accept. |
 
 These two are what an agent must know to operate; they are repo-agnostic and ship
 to every satelle repo.

@@ -23,10 +23,9 @@ func TestReviewerModelActorsBoots(t *testing.T) {
 	mustRun(t, bin, repo, "init")
 
 	// Overwrite the scaffold agents.toml with this repo's real, activated binding
-	// (read from the repo's legacy actors.toml source — renamed to agents.toml in a
-	// later slice). Writing the canonical agents.toml ensures it is the binding the
-	// loader resolves (it wins over any legacy file).
-	src := filepath.Join(repoRootForTest(), ".satelle", "actors.toml")
+	// (read from the repo's own agents.toml). Writing the canonical agents.toml
+	// ensures it is the binding the loader resolves.
+	src := filepath.Join(repoRootForTest(), ".satelle", "agents.toml")
 	body, err := os.ReadFile(src)
 	if err != nil {
 		t.Fatalf("read agents source %s: %v", src, err)

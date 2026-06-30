@@ -46,7 +46,7 @@ type DocGetter interface {
 // It needs NO shell: structural conformance is deterministic code (internal/
 // structure), and the substrate it reasons about — skills, principles, workflows —
 // is materialised as markdown under .satelle (satelle init), so Read/Grep/Glob
-// resolve everything. A repo may still widen this in .satelle/actors.toml
+// resolve everything. A repo may still widen this in .satelle/agents.toml
 // (transparently, the operator's choice); the default grant is read-only.
 const defaultTools = "Read,Grep,Glob"
 
@@ -93,10 +93,10 @@ func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Gater 
 	}
 }
 
-// SetReviewerTools sets the reviewer's tool grant from the actors layer (the
+// SetReviewerTools sets the reviewer's tool grant from the agents layer (the
 // resolved `reviewer` binding). It governs every isolated LLM reviewer this Gater
 // runs. The default remains the read-only grant; a repo may widen or narrow it in
-// .satelle/actors.toml without touching the workflow. An empty value is ignored
+// .satelle/agents.toml without touching the workflow. An empty value is ignored
 // so callers can pass through an unset binding safely.
 func (g *Gater) SetReviewerTools(tools string) {
 	if strings.TrimSpace(tools) != "" {
@@ -112,7 +112,7 @@ func (g *Gater) SetChildrenResolver(fn func(ctx context.Context, parentID string
 	g.children = fn
 }
 
-// SetReviewerModel sets the reviewer's model from the actors layer (the resolved
+// SetReviewerModel sets the reviewer's model from the agents layer (the resolved
 // `reviewer` binding's `model`). It rides as `--model` to every isolated reviewer
 // this Gater runs, so a repo can review on a different model (e.g. sonnet) without
 // touching the executor. An empty value is ignored, keeping the agent CLI's
@@ -123,7 +123,7 @@ func (g *Gater) SetReviewerModel(model string) {
 	}
 }
 
-// SetRunner overrides the reviewer's agent-CLI runner — the actors layer's
+// SetRunner overrides the reviewer's agent-CLI runner — the agents layer's
 // `reviewer` harness binding, resolved to a Runner. A nil runner is ignored,
 // keeping the default configured at construction (the global `[agent] cli`).
 func (g *Gater) SetRunner(r agentcli.Runner) {

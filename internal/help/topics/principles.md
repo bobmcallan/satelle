@@ -13,7 +13,7 @@ Like every authored kind, principles resolve in two layers:
   every satelle repo inherits, shipped under `config/substrate/principles`. These
   are the single source of those bytes; a repo never edits them. The embedded set
   is deliberately tiny — `satelle-agent-goals` (the operating discipline) and
-  `satelle-actor-model` (the execution model). Everything else (constitution,
+  `satelle-agent-model` (the execution model). Everything else (constitution,
   yagni, done-is-last, …) is authoring/development substrate that lives in a repo
   under `.satelle/principles`.
 - **Repo (layered, under `.satelle/principles/`)** — a repo's own principles. A
@@ -73,7 +73,7 @@ Run `satelle hook context` by hand to see exactly what a session would receive.
   gate; status is the sole proof of done; never route around a gate.
 - **`satelle-done-is-last`** — `done` is always the terminal state; gates precede
   it.
-- **`satelle-actor-model`** — every step is run by a defined actor
+- **`satelle-agent-model`** — every step is run by a defined agent role
   (executor does the work; reviewer is limited to read-only reviewing); each gate
   is an isolated fresh-context call; satelle gates status; process is
   configuration.

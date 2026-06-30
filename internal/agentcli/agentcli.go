@@ -2,7 +2,7 @@
 // shells out to for isolated reviews and summaries. satellites hardcoded claude's
 // flag surface (claude -p --append-system-prompt …); satelle routes every
 // subprocess through a Runner driven by a CONFIG TEMPLATE, so the operator picks
-// their agent and its exact argv in `.satelle/actors.toml` and no reviewer code
+// their agent and its exact argv in `.satelle/agents.toml` and no reviewer code
 // names a binary or a flag directly.
 //
 // A harness string is a command template: the first token is the binary, the rest
@@ -41,7 +41,7 @@ const (
 // reviewer's default allow-grant ({tools}) is read-only (Read, Grep, Glob) and
 // needs no shell: the substrate it reasons about is materialised as markdown
 // under .satelle, so it reads it directly. A repo MAY widen the grant in
-// .satelle/actors.toml (transparently), but the default is read-only.
+// .satelle/agents.toml (transparently), but the default is read-only.
 const DefaultClaudeHarness = "claude -p --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
 
 // Request is one headless agent invocation.
@@ -75,7 +75,7 @@ func NewRunner(name string) (Runner, error) {
 	}
 }
 
-// RunnerFromHarness resolves an actors-layer harness binding to a Runner. An empty
+// RunnerFromHarness resolves an agents-layer harness binding to a Runner. An empty
 // or "in-loop" harness returns (nil, nil): no agent-CLI runner, so the caller keeps
 // its configured default. A SINGLE-token harness is a preset CLI name, resolved via
 // NewRunner (so "codex" still errors as a stub). A MULTI-token harness is a literal
@@ -169,7 +169,7 @@ type codexRunner struct{ binary string }
 func (c codexRunner) Name() string { return CLICodex }
 
 func (c codexRunner) Run(ctx context.Context, req Request) ([]byte, error) {
-	return nil, fmt.Errorf("agentcli: the codex preset is not yet mapped — install claude, or set [reviewer] harness to a full codex command template in .satelle/actors.toml")
+	return nil, fmt.Errorf("agentcli: the codex preset is not yet mapped — install claude, or set [reviewer] harness to a full codex command template in .satelle/agents.toml")
 }
 
 // runProcess runs binary with args, feeding req.Payload on stdin in req.Dir, and

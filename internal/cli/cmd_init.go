@@ -250,7 +250,7 @@ const scaffoldToml = `# satelle.toml — per-repo config (committed, secret-free
 // file, the operator's choice.
 const scaffoldAgentsToml = `# agents.toml — the agents layer: how each agent runs (backend + tool grant).
 #
-# The agent operating model (see the satelle-actor-model principle):
+# The agent operating model (see the satelle-agent-model principle):
 #   - ORCHESTRATOR — the default driving session (the agent you run). It IS the
 #     in-loop executor below.
 #   - executor  — by default runs IN-LOOP as that full session: it has the normal
@@ -329,7 +329,7 @@ func ensureGitignore(repoRoot string) (bool, error) {
 // otherwise-empty dir tracked).
 var dirReadme = map[string]string{
 	"documents":  "# documents\n\nFree-form knowledge documents in the Open Knowledge Format (OKF):\nplain markdown with YAML frontmatter carrying a required `type`. Drop reference\nnotes, designs, and commit summaries here; `index.md`/`log.md` are reserved.\n",
-	"workflows":  "# workflows\n\nAuthored lifecycles in the DOT standard (the actor model): each node is a step\nwith an `actor` (executor|reviewer), each edge a transition, the edge into a\nreviewer node its gate. Frontmatter needs `type: workflow`, `scope`, `applies_to`.\nThe lifecycle must start at `backlog`; `done` is terminal.\n",
+	"workflows":  "# workflows\n\nAuthored lifecycles in the DOT standard (the agent model): each node is a step\nwith an `agent` (executor|reviewer), each edge a transition, the edge into a\nreviewer node its gate. Frontmatter needs `type: workflow`, `scope`, `applies_to`.\nThe lifecycle must start at `backlog`; `done` is terminal.\n",
 	"principles": "# principles\n\nAuthored principles (markdown, `type: principle`). They are resolvable on demand;\nthe single always-resident operating principle is injected at session start.\n",
 	"skills":     "# skills\n\nAuthored skills (`type: skill`): executor rubrics, reviewer rubrics, or a\nself-contained functional check (a fenced ```check block or a `check:` key).\nEverything a reviewer needs lives inside the skill.\n",
 	"stories":    "# stories\n\nPer-story attachments live here under `<id>/…` (typed documents attached to a\nstory). The per-repo database is the sole story store — there is no markdown\nmirror of the backlog.\n",
