@@ -48,6 +48,7 @@ func serveRepo(t *testing.T, port string) (string, string) {
 	t.Helper()
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
+	stubReviewerAccept(t, repo) // baseline gates are active (sty_5b8bd8b2) — keep hermetic
 	cmd := exec.Command(testBin, "serve", "--port", port)
 	cmd.Dir = repo
 	// Isolate the machine-wide registry so `serve` doesn't pick up unrelated repos
