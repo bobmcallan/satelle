@@ -227,6 +227,24 @@ func TestBacklogCountRendered(t *testing.T) {
 	}
 }
 
+func TestDarkBadgeTextLightened(t *testing.T) {
+	srv, _ := newServer(t)
+	code, css := get(t, srv.URL+"/static/app.css")
+	if code != 200 {
+		t.Fatalf("/static/app.css = %d", code)
+	}
+	// The dark-mode fix is theme-scoped: a [data-theme="dark"] .badge rule lightens
+	// the base badge text off the light-mode #374151 so backlog/committed are legible
+	// against the near-black --chip. Light-mode values stay untouched. (sty_173e49a7)
+	if !strings.Contains(css, `[data-theme="dark"] .badge`) {
+		t.Errorf("app.css missing the theme-scoped dark badge override [data-theme=\"dark\"] .badge")
+	}
+	// The light-mode base badge keeps its dark #374151 text (unchanged).
+	if !strings.Contains(css, `.badge { display: inline-block`) || !strings.Contains(css, "color: #374151") {
+		t.Errorf("light-mode base .badge text should be unchanged (#374151)")
+	}
+}
+
 func TestStoriesFilterCountRendered(t *testing.T) {
 	srv, _ := newServer(t)
 	code, body := get(t, srv.URL+"/")

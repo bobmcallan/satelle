@@ -377,6 +377,65 @@ func TestBrowserTagChipFiltering(t *testing.T) {
 	}
 }
 
+// TestBrowserDarkBadgeLegible asserts the dark-mode fix at the computed-colour
+// level: a backlog badge (base .badge, no per-status rule) renders lightened text
+// in dark mode rather than the near-black #374151 it carries in light mode, so it
+// is legible against the dark --chip. This is AC4's chromedp computed-colour check
+// for sty_173e49a7.
+func TestBrowserDarkBadgeLegible(t *testing.T) {
+	base, repo := serveRepo(t, "8812")
+	createStory(t, repo, "Backlog Item", "") // status defaults to backlog → base .badge
+
+	ctx := newChrome(t)
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/"),
+		chromedp.WaitVisible(`#panel-stories .badge.s-backlog`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("load page: %v", err)
+	}
+
+	colourOf := `getComputedStyle(document.querySelector('#panel-stories .badge.s-backlog')).color`
+
+	// Light mode: the base badge keeps its dark #374151 = rgb(55, 65, 81).
+	var light string
+	if err := chromedp.Run(ctx,
+		chromedp.Evaluate(`document.documentElement.setAttribute('data-theme','light'); `+colourOf, &light),
+	); err != nil {
+		t.Fatalf("read light colour: %v", err)
+	}
+	if light != "rgb(55, 65, 81)" {
+		t.Errorf("light-mode backlog badge text should be #374151 (rgb(55, 65, 81)); got %q", light)
+	}
+
+	// Dark mode: the text is lightened off #374151 to a high-luminance colour.
+	var dark string
+	if err := chromedp.Run(ctx,
+		chromedp.Evaluate(`document.documentElement.setAttribute('data-theme','dark'); `+colourOf, &dark),
+	); err != nil {
+		t.Fatalf("read dark colour: %v", err)
+	}
+	if dark == "rgb(55, 65, 81)" {
+		t.Errorf("dark-mode backlog badge text must be lightened off #374151; got %q", dark)
+	}
+	r, g, b := parseRGB(t, dark)
+	if r < 150 || g < 150 || b < 150 {
+		t.Errorf("dark-mode backlog badge text should be light (each channel >=150 for legibility on the dark chip); got %q", dark)
+	}
+}
+
+// parseRGB pulls the r,g,b channels out of a CSS "rgb(r, g, b)" / "rgba(...)"
+// computed-style string.
+func parseRGB(t *testing.T, s string) (int, int, int) {
+	t.Helper()
+	var r, g, b int
+	if _, err := fmt.Sscanf(s, "rgb(%d, %d, %d)", &r, &g, &b); err != nil {
+		if _, err2 := fmt.Sscanf(s, "rgba(%d, %d, %d", &r, &g, &b); err2 != nil {
+			t.Fatalf("parseRGB %q: %v", s, err)
+		}
+	}
+	return r, g, b
+}
+
 // countExpansions returns how many inline expansion rows are open in the stories
 // panel.
 func countExpansions(t *testing.T, ctx context.Context) int {
