@@ -137,6 +137,11 @@ header.app h1 .dot { color: var(--accent); }
 
 /* Status badges / pills */
 .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; background: var(--chip); color: #374151; }
+/* Dark mode: the base badge text (#374151) is dark-on-dark against the near-black
+   --chip, so backlog/committed (no per-status rule) are illegible. Lighten the base
+   text to --ink. Placed BEFORE the .s-* variants so they keep their own colours
+   (equal specificity, later source wins); light mode is untouched. (sty_173e49a7) */
+[data-theme="dark"] .badge { color: var(--ink); }
 .badge.s-open { background: #eef2ff; color: #3730a3; }
 .badge.s-in_progress { background: #fff7ed; color: #9a3412; }
 .badge.s-done { background: #ecfdf5; color: #065f46; }
