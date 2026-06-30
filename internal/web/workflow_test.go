@@ -14,7 +14,7 @@ applies_to: ["*"]
 ` + "```yaml" + `
 states:
   - backlog
-  - {name: in_progress, actor: executor}
+  - {name: in_progress, agent: executor}
   - done
   - cancelled
 transitions:
@@ -34,18 +34,14 @@ guardrails:
 ` + "```" + `
 `
 
-// TestParseStateAgentAlias proves parseState accepts the canonical `agent:`
-// inline key as well as the legacy `actor:`, with agent winning when both are
-// present (sty_536f9960).
-func TestParseStateAgentAlias(t *testing.T) {
+// TestParseStateAgentKey proves parseState reads the canonical `agent:` inline key
+// and that the retired `actor:` key no longer sets a performer (sty_7db2ed7d).
+func TestParseStateAgentKey(t *testing.T) {
 	if got := parseState("{name: in_progress, agent: executor}").Agent; got != "executor" {
 		t.Errorf("agent: spelling = %q, want executor", got)
 	}
-	if got := parseState("{name: gate, actor: reviewer}").Agent; got != "reviewer" {
-		t.Errorf("legacy actor: spelling = %q, want reviewer", got)
-	}
-	if got := parseState("{name: gate, agent: reviewer, actor: executor}").Agent; got != "reviewer" {
-		t.Errorf("agent should win over actor, got %q", got)
+	if got := parseState("{name: gate, actor: reviewer}").Agent; got != "" {
+		t.Errorf("retired actor: key must not set a performer, got %q", got)
 	}
 }
 
@@ -99,10 +95,10 @@ digraph satelle_workflow {
   start [shape=Mdiamond]
   done  [shape=Msquare]
 
-  in_progress   [actor=executor]
-  commit_push   [actor=executor, prompt="@skill:commit-push"]
-  commit_review [actor=reviewer, prompt="@skill:satelle-commit-push-reviewer"]
-  done_review   [actor=reviewer, prompt="@skill:satelle-story-done-review"]
+  in_progress   [agent=executor]
+  commit_push   [agent=executor, prompt="@skill:commit-push"]
+  commit_review [agent=reviewer, prompt="@skill:satelle-commit-push-reviewer"]
+  done_review   [agent=reviewer, prompt="@skill:satelle-story-done-review"]
 
   start -> in_progress -> commit_push -> commit_review -> done_review -> done
 }

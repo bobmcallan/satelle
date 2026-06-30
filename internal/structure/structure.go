@@ -27,6 +27,10 @@ var kebab = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 // numberedAC matches a numbered acceptance-criterion line ("1. …" or "2) …").
 var numberedAC = regexp.MustCompile(`(?m)^\s*\d+[.)]\s+\S`)
 
+// deprecatedActorKeyword matches the retired performer keyword in either grammar:
+// the DOT node attribute `actor=` or the inline-state map key `actor:` (sty_7db2ed7d).
+var deprecatedActorKeyword = regexp.MustCompile(`\bactor\s*[=:]`)
+
 // Doc returns the structural problems with an authored doc of the given kind
 // (skills | workflows | principles), empty when conformant. resolveSkill reports
 // whether a referenced skill resolves in the substrate (embedded ∪ project); it is
@@ -145,6 +149,13 @@ func checkWorkflow(name, body string, resolveSkill func(skill string) bool) []st
 	}
 	if fmScalar(fm, "scope") == "" {
 		p = append(p, "frontmatter missing scope")
+	}
+	// Enforce the actor→agent rename (sty_7db2ed7d): the performer keyword is
+	// `agent` now; the legacy `actor=` (DOT) / `actor:` (inline state) no longer
+	// parses, so flag it explicitly rather than letting a node silently lose its
+	// performer.
+	if deprecatedActorKeyword.MatchString(body) {
+		p = append(p, `deprecated "actor" performer keyword — use "agent" (actor=/actor: no longer parses)`)
 	}
 	spec, parsed := wfdot.Parse(body)
 	if !parsed {

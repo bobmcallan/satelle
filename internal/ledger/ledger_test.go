@@ -5,42 +5,35 @@ import (
 	"testing"
 )
 
-// TestEntryAgentAlias proves an Entry decodes both the canonical "agent" key and
-// the legacy "actor" alias for the performer field (sty_536f9960): a legacy row
-// reads back via "actor", a new payload via "agent", and "agent" wins when both
-// are present. Emission is unchanged — still "actor".
-func TestEntryAgentAlias(t *testing.T) {
-	var legacy Entry
-	if err := json.Unmarshal([]byte(`{"id":"evt_1","kind":"k","actor":"reviewer"}`), &legacy); err != nil {
+// TestEntryActorIsAuthorField proves the ledger's Actor field is the recorded
+// event-AUTHOR, an intentional exemption from the actor→agent rename (sty_7db2ed7d):
+// it reads and writes the "actor" JSON key, and the workflow-performer "agent" key
+// is NOT a synonym for it (no alias).
+func TestEntryActorIsAuthorField(t *testing.T) {
+	var e Entry
+	if err := json.Unmarshal([]byte(`{"id":"evt_1","kind":"k","actor":"reviewer"}`), &e); err != nil {
 		t.Fatal(err)
 	}
-	if legacy.Actor != "reviewer" {
-		t.Errorf("legacy actor read back = %q, want reviewer", legacy.Actor)
+	if e.Actor != "reviewer" {
+		t.Errorf("actor read back = %q, want reviewer", e.Actor)
 	}
 
-	var modern Entry
-	if err := json.Unmarshal([]byte(`{"id":"evt_2","kind":"k","agent":"executor"}`), &modern); err != nil {
+	// The retired performer key "agent" is NOT an alias for the ledger author field.
+	var bogus Entry
+	if err := json.Unmarshal([]byte(`{"id":"evt_2","kind":"k","agent":"executor"}`), &bogus); err != nil {
 		t.Fatal(err)
 	}
-	if modern.Actor != "executor" {
-		t.Errorf("agent key read into Actor = %q, want executor", modern.Actor)
+	if bogus.Actor != "" {
+		t.Errorf("an 'agent' key must not populate the ledger Actor field, got %q", bogus.Actor)
 	}
 
-	var both Entry
-	if err := json.Unmarshal([]byte(`{"id":"evt_3","kind":"k","agent":"executor","actor":"reviewer"}`), &both); err != nil {
-		t.Fatal(err)
-	}
-	if both.Actor != "executor" {
-		t.Errorf("agent should win over actor, got %q", both.Actor)
-	}
-
-	// Emission is still the legacy "actor" key in this slice.
-	out, err := json.Marshal(Entry{ID: "evt_4", Kind: "k", Actor: "executor"})
+	// Emission uses the "actor" key (the exempted storage name).
+	out, err := json.Marshal(Entry{ID: "evt_3", Kind: "k", Actor: "executor"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !json.Valid(out) || !contains(string(out), `"actor":"executor"`) {
-		t.Errorf("emission should keep the actor key, got %s", out)
+		t.Errorf("emission should use the actor key, got %s", out)
 	}
 }
 

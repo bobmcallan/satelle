@@ -12,9 +12,9 @@ func wildcardWF(name string) string {
 	return "---\nname: " + name + "\ntype: workflow\napplies_to: [\"*\"]\ndescription: a test wildcard workflow\n---\n" +
 		"```dot\n" + `digraph w {
   backlog [shape=Mdiamond]
-  in_progress [actor=executor]
-  done [shape=Msquare, actor=reviewer]
-  cancelled [actor=reviewer]
+  in_progress [agent=executor]
+  done [shape=Msquare, agent=reviewer]
+  cancelled [agent=reviewer]
   backlog -> in_progress
   in_progress -> done
   backlog -> cancelled

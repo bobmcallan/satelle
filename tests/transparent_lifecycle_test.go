@@ -21,8 +21,8 @@ func TestWorkflowWithoutDoneGateValidates(t *testing.T) {
 	wf := "---\nname: satelle-project-workflow\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: minimal lifecycle with no mandated done gate and a transparent step node\n---\n" + "```dot" + `
 digraph w {
   backlog     [shape=Mdiamond]
-  in_progress [actor=executor]
-  step        [actor=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
+  in_progress [agent=executor]
+  step        [agent=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
   done        [shape=Msquare]
   backlog -> in_progress -> done
 }

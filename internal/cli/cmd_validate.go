@@ -114,6 +114,18 @@ optionally a name) to narrow. Exit is non-zero if any doc fails.`,
 				}
 			}
 
+			// Enforce the actors.toml→agents.toml rename (sty_7db2ed7d): the legacy
+			// filename is no longer loaded, so a repo still carrying it is silently
+			// running on defaults — flag it as a failure with the fix.
+			if kindFilter == "" {
+				dataDir := filepath.Dir(a.DBPath)
+				if _, statErr := os.Stat(filepath.Join(dataDir, config.ActorsConfigName)); statErr == nil {
+					failed++
+					fmt.Fprintf(out, "FAIL  agents-layer — deprecated %s/%s: rename it to %s (the legacy filename is no longer loaded)\n",
+						config.DefaultDataDir, config.ActorsConfigName, config.AgentsConfigName)
+				}
+			}
+
 			fmt.Fprintf(out, "\nvalidated %d, failed %d, exempt %d\n", validated, failed, exempt)
 			if failed > 0 {
 				return fmt.Errorf("%d doc(s) failed structure validation", failed)

@@ -25,24 +25,9 @@ type ledgerAppendReq struct {
 	Refs      json.RawMessage `json:"refs,omitempty"`
 }
 
-// UnmarshalJSON accepts both the canonical "agent" key and the legacy "actor"
-// alias for the performer field (sty_536f9960); "agent" wins when both are
-// present, so a caller may move to the new key while old payloads still parse.
-func (r *ledgerAppendReq) UnmarshalJSON(b []byte) error {
-	type alias ledgerAppendReq
-	aux := struct {
-		alias
-		Agent string `json:"agent,omitempty"`
-	}{alias: alias(*r)}
-	if err := json.Unmarshal(b, &aux); err != nil {
-		return err
-	}
-	*r = ledgerAppendReq(aux.alias)
-	if aux.Agent != "" {
-		r.Actor = aux.Agent
-	}
-	return nil
-}
+// The ledger Actor field is the event-author (who recorded the event), a recorded
+// internal exemption from the actor→agent rename (sty_7db2ed7d) — see the note in
+// internal/ledger/ledger.go — so it stays the "actor" JSON key.
 
 func ledgerAppend(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	store, err := requireLedger()

@@ -238,7 +238,7 @@ func workflowFragment() http.HandlerFunc {
 
 // parseWorkflow extracts the states and transitions from a workflow markdown
 // body. States come from the `states:` YAML block (a bare name or an inline
-// `{name:…, agent:…}` map (legacy `actor:` parses)); transitions are every `- {from:…, to:…}` line
+// `{name:…, agent:…}` map); transitions are every `- {from:…, to:…}` line
 // anywhere in the body (so the guardrails block is ignored). Terminal states are
 // those no transition leaves. When there is no states block, states are derived
 // from the transition endpoints.
@@ -302,16 +302,10 @@ func parseWorkflow(body string) wfSpec {
 	return spec
 }
 
-// parseState parses one `states:` list item — a bare name or
-// `{name:…, agent:…}` (the legacy `actor:` spelling is still accepted, with
-// `agent` preferred when both are present — sty_536f9960).
+// parseState parses one `states:` list item — a bare name or `{name:…, agent:…}`.
 func parseState(item string) wfState {
 	if strings.HasPrefix(item, "{") {
-		performer := inlineField(item, "agent")
-		if performer == "" {
-			performer = inlineField(item, "actor")
-		}
-		return wfState{Name: inlineField(item, "name"), Agent: performer}
+		return wfState{Name: inlineField(item, "name"), Agent: inlineField(item, "agent")}
 	}
 	return wfState{Name: strings.Trim(item, `"'`)}
 }

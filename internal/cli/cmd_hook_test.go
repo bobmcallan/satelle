@@ -86,20 +86,26 @@ func TestRenderAlwaysContent_ceilingTruncates(t *testing.T) {
 }
 
 func TestExecutorStates(t *testing.T) {
-	body := "x\nstates:\n  - open\n  - {name: in_progress, actor: executor}\n  - blocked\n  - {name: deployed, actor: executor}\n  - done\ntransitions:\n  - {from: open, to: in_progress}\n"
+	body := "x\nstates:\n  - open\n  - {name: in_progress, agent: executor}\n  - blocked\n  - {name: deployed, agent: executor}\n  - done\ntransitions:\n  - {from: open, to: in_progress}\n"
 	got := executorStates(body)
 	if len(got) != 2 || got[0] != "in_progress" || got[1] != "deployed" {
 		t.Fatalf("executorStates = %v, want [in_progress deployed]", got)
 	}
 }
 
-// TestExecutorStatesAgentKey proves the inline-YAML executor-state parser accepts
-// the canonical `agent:` key as well as the legacy `actor:` (sty_0d4f5961).
+// TestExecutorStatesAgentKey proves the inline-YAML executor-state parser reads the
+// canonical `agent:` key and that the retired `actor:` key is NOT parsed
+// (sty_7db2ed7d): a node authored with actor: executor is not treated as engaged.
 func TestExecutorStatesAgentKey(t *testing.T) {
 	body := "x\nstates:\n  - open\n  - {name: in_progress, agent: executor}\n  - {name: gate, agent: reviewer}\n  - done\ntransitions:\n  - {from: open, to: in_progress}\n"
 	got := executorStates(body)
 	if len(got) != 1 || got[0] != "in_progress" {
 		t.Fatalf("executorStates(agent:) = %v, want [in_progress]", got)
+	}
+	// The retired actor: key must NOT register an executor state.
+	legacy := "x\nstates:\n  - open\n  - {name: in_progress, actor: executor}\n  - done\ntransitions:\n  - {from: open, to: in_progress}\n"
+	if got := executorStates(legacy); len(got) != 0 {
+		t.Fatalf("retired actor: key must not register an executor state, got %v", got)
 	}
 }
 
@@ -169,8 +175,8 @@ name: x
 ---
 ` + "```dot" + `
 digraph w {
-  in_progress [actor=executor]
-  committed   [actor=reviewer, prompt="@skill:r"]
+  in_progress [agent=executor]
+  committed   [agent=reviewer, prompt="@skill:r"]
   in_progress -> committed -> done
 }
 ` + "```" + `

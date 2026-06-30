@@ -65,3 +65,56 @@ func TestAgentsTomlBootsEndToEnd(t *testing.T) {
 		t.Errorf("status should boot cleanly with only agents.toml present:\n%s", out)
 	}
 }
+
+// deprecatedActorWF is a wildcard workflow declaring its executor node with the
+// retired actor= keyword — which validate must now reject (sty_7db2ed7d).
+func deprecatedActorWF(name string) string {
+	return "---\nname: " + name + "\ntype: workflow\napplies_to: [\"*\"]\ndescription: a workflow using the retired actor keyword\n---\n" +
+		"```dot\n" + `digraph w {
+  backlog [shape=Mdiamond]
+  in_progress [actor=executor]
+  done [shape=Msquare, agent=reviewer]
+  cancelled [agent=reviewer]
+  backlog -> in_progress
+  in_progress -> done
+  backlog -> cancelled
+}` + "\n```\n"
+}
+
+// TestValidateRejectsActorKeyword proves the rename is ENFORCED end-to-end
+// (sty_7db2ed7d): a workflow authored with the retired actor= keyword fails
+// `satelle validate` with an actionable message, so the rename cannot silently
+// regress.
+func TestValidateRejectsActorKeyword(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "legacy-kw.md"), deprecatedActorWF("legacy-kw"))
+	mustRun(t, testBin, repo, "index")
+
+	out, err := run(t, testBin, repo, "validate", "workflows")
+	if err == nil {
+		t.Fatalf("validate should fail on a workflow using the retired actor= keyword:\n%s", out)
+	}
+	if !strings.Contains(out, `deprecated "actor"`) {
+		t.Errorf("validate should name the deprecated actor keyword:\n%s", out)
+	}
+}
+
+// TestValidateFlagsActorsToml proves validate flags the retired actors.toml
+// filename (sty_7db2ed7d): a repo still carrying it is silently on defaults, so
+// validate fails telling the operator to rename it to agents.toml.
+func TestValidateFlagsActorsToml(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	// init scaffolds agents.toml; drop a legacy actors.toml beside it.
+	writeFile(t, filepath.Join(repo, ".satelle", "actors.toml"), "[reviewer]\nmodel = \"sonnet\"\n")
+	mustRun(t, testBin, repo, "index")
+
+	out, err := run(t, testBin, repo, "validate")
+	if err == nil {
+		t.Fatalf("validate should fail on a repo still carrying actors.toml:\n%s", out)
+	}
+	if !strings.Contains(out, "actors.toml") || !strings.Contains(out, "agents.toml") {
+		t.Errorf("validate should name actors.toml and the agents.toml fix:\n%s", out)
+	}
+}
