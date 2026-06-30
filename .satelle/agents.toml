@@ -7,8 +7,10 @@
 #     principles, and skills via the substrate (the satelle CLI); it reads a
 #     step's rubric from .satelle/skills. Not an isolated process.
 #   - reviewer  — an ISOLATED, read-only sub-process (rubric as system prompt).
-#   - any OTHER agent bound here ([agents.<name>]) is OPTIONAL and ALWAYS an
+#   - any OTHER top-level section [<name>] is an OPTIONAL named agent, ALWAYS an
 #     isolated sub-process; a workflow node allocates a step to it via agent=<name>.
+#     (Every top-level section is an agent: executor/reviewer are the built-in roles,
+#      anything else is a named agent. The legacy nested [agents.<name>] still loads.)
 #
 # ALLOCATING A STEP TO AN AGENT (in the workflow DOT)
 # ---------------------------------------------------
@@ -18,7 +20,7 @@
 # Both perform the SAME rubric (@skill:commit); only WHERE it runs differs.
 #   - agent=executor  → the current/driving session performs the step in-loop.
 #   - agent=reviewer  → an isolated, read-only gate.
-#   - agent=<name>    → the isolated named agent defined in [agents.<name>] below.
+#   - agent=<name>    → the isolated named agent defined as a top-level [<name>] below.
 # FALLBACK / default agent: if a node names an agent that is NOT defined here, the
 # step falls back to the in-loop executor (the current session) — so removing or
 # commenting a named binding never breaks the workflow; it just runs in-loop again.
@@ -49,12 +51,13 @@
 model = "sonnet"               # review on sonnet (sty_5073df2f activates sty_dad271fd's knob)
 
 # commit-agent — a NAMED, isolated agent the project workflow allocates to the
-# commit and push steps (agent=commit-agent). Per the operating model a named agent
-# is ALWAYS an isolated sub-process: satelle runs the commit.md / push.md rubric as
-# the system prompt on the agent CLI (claude -p) rather than in the driving loop. The
-# grant is SCOPED to exactly what commit/push need — stage/commit/push, watch CI,
-# reinstall, and drive satelle — NOT a blanket allowance (sty_b2222b8a). Comment
-# this block out and the commit/push steps fall back to the in-loop executor.
-[agents.commit-agent]
+# commit and push steps (agent=commit-agent), declared as a flat top-level section
+# (sty_6e0ba71c). Per the operating model a named agent is ALWAYS an isolated
+# sub-process: satelle runs the commit.md / push.md rubric as the system prompt on
+# the agent CLI (claude -p) rather than in the driving loop. The grant is SCOPED to
+# exactly what commit/push need — stage/commit/push, watch CI, reinstall, and drive
+# satelle — NOT a blanket allowance (sty_b2222b8a). Comment this block out and the
+# commit/push steps fall back to the in-loop executor.
+[commit-agent]
 harness = "claude -p --append-system-prompt {system} --allowedTools {tools}"
 tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*)"

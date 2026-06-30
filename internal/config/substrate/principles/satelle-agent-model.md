@@ -64,10 +64,13 @@ runs this isolated way.
 
 A workflow node **allocates** its performer through `agent=`: `agent=executor`
 runs the step in-loop (the default), `agent=reviewer` is the isolated read-only
-gate, and `agent=<name>` allocates the step to a **named agent** defined under
-`[agents.<name>]` in `.satelle/agents.toml` — always isolated, with its own scoped
-grant (e.g. the project's `commit` + `push` steps are allocated to a `commit-agent`
-that runs the `commit`/`push` rubric as an isolated `claude -p`). The named agent is a
+gate, and `agent=<name>` allocates the step to a **named agent** declared as a flat
+top-level `[<name>]` section in `.satelle/agents.toml` — every top-level section is
+an agent: `[executor]`/`[reviewer]` are the built-in roles, any other (e.g.
+`[commit-agent]`) is a named agent (the legacy nested `[agents.<name>]` still
+loads). A named agent is always isolated, with its own scoped grant (e.g. the
+project's `commit` + `push` steps are allocated to a `commit-agent` that runs the
+`commit`/`push` rubric as an isolated `claude -p`). The named agent is a
 binding, not a new mechanism: if `<name>` is **not** defined in the agents layer,
 the step **falls back to the in-loop executor** (the current session), so a node
 can name an agent the repo has not configured and still run.
