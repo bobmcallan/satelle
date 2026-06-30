@@ -31,7 +31,7 @@ engagement.
 ## AC2 — Root cause / resolution scope
 
 `@skill:commit-push` on the `commit_push` node is an **executor** prompt
-(`actor=executor`), not a reviewer gate. It resolves against authored skills via
+(`agent=executor`), not a reviewer gate. It resolves against authored skills via
 the docindex store, **project scope first** (`.satelle/skills`) then embedded
 **system** scope. The artifact that was historically missing was the
 global/system commit-push skill; the fix was to author it as a **project** skill

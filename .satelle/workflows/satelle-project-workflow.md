@@ -5,19 +5,19 @@ type: workflow
 tags: [type:workflow]
 applies_to: ["*"]
 create_review: satelle-story-create-review
-description: This repo's project-scope workflow, authored in DOT (the actor model). A story or task moves backlog → in_progress → integration → commit_push → committed → done, with a cancelled exit. It is node-centric: each node is a step carrying an actor; the executor does the work, reviewers gate entry. Entering integration is gated by satelle-code-ac-review (ACs done + unit and integration tests created); leaving it for commit_push is gated by satelle-integration-review (the integration tests exercise the change) plus satelle-integration-check (runs make integration). The commit_push executor step commits/pushes and watches CI; the committed reviewer (satelle-commit-push-review) confirms the CI run succeeded and emits a PR-style summary; done is the acceptance gate. There is no deploy state — the push to main IS the release, verified by CI. done stays terminal (satelle-done-is-last); a project workflow takes precedence over the embedded satelle-baseline-workflow.
+description: This repo's project-scope workflow, authored in DOT (the agent model). A story or task moves backlog → in_progress → integration → commit_push → committed → done, with a cancelled exit. It is node-centric: each node is a step carrying an agent; the executor does the work, reviewers gate entry. Entering integration is gated by satelle-code-ac-review (ACs done + unit and integration tests created); leaving it for commit_push is gated by satelle-integration-review (the integration tests exercise the change) plus satelle-integration-check (runs make integration). The commit_push executor step commits/pushes and watches CI; the committed reviewer (satelle-commit-push-review) confirms the CI run succeeded and emits a PR-style summary; done is the acceptance gate. There is no deploy state — the push to main IS the release, verified by CI. done stays terminal (satelle-done-is-last); a project workflow takes precedence over the embedded satelle-baseline-workflow.
 ---
 
-# satelle workflow (project) — the actor model, authored in DOT
+# satelle workflow (project) — the agent model, authored in DOT
 
 > **This is a project workflow** under `.satelle/workflows`, the ACTIVE workflow
 > for this repo: a project-scope workflow takes precedence over the binary's
 > embedded **system** default `satelle-baseline-workflow`. See the
-> `satelle-repo-agnostic` and `satelle-actor-model` principles.
+> `satelle-repo-agnostic` and `satelle-agent-model` principles.
 
 A work item moves **backlog → in_progress → integration → commit_push → committed →
 done**, and may exit early to **cancelled**. The lifecycle is the **DOT graph** below
-(node-centric): each node is a step carrying an `actor`; the **executor** does the
+(node-centric): each node is a step carrying an `agent`; the **executor** does the
 work and mutates the tree, and a **reviewer** node gates *entry* to it via its
 `prompt="@skill:NAME"` gate (the reviewer is read-only — it judges, never mutates).
 satelle is the gatekeeper of status: a status advances only through a reviewer's
@@ -50,15 +50,15 @@ digraph satelle_workflow {
   rankdir=LR
 
   backlog     [shape=Mdiamond]
-  in_progress [actor=executor]
-  integration [actor=executor]
-  commit_push [actor=executor, prompt="@skill:commit-push"]
-  committed   [actor=reviewer, prompt="@skill:satelle-commit-push-review"]
-  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
-  cancelled   [actor=reviewer, prompt="@skill:satelle-story-cancel-review"]
+  in_progress [agent=executor]
+  integration [agent=executor]
+  commit_push [agent=executor, prompt="@skill:commit-push"]
+  committed   [agent=reviewer, prompt="@skill:satelle-commit-push-review"]
+  done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
+  cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
   // step opts this workflow into per-transition step summaries (sty_9a139c78):
   // an edge-less declaration, mandatory so a summary failure is surfaced.
-  step        [actor=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
+  step        [agent=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
 
   backlog -> in_progress
   in_progress -> integration [reviewer_skill="satelle-code-ac-review"]

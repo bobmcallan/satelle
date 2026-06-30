@@ -20,7 +20,7 @@ Actions run for the pushed `HEAD` commit concluded `success`, rejecting on a fai
 or missing run; and (2) it **emits a PR-style commit-summary** document under
 `.satelle/documents/` noting each acceptance criterion (read from the story the
 commit names), the files changed, the commit SHA, and the CI run URL — the reviewer
-authoring the summary the operator reads. See [[satelle-actor-model]].
+authoring the summary the operator reads. See [[satelle-agent-model]].
 
 ```check
 #!/usr/bin/env bash

@@ -19,7 +19,7 @@ const (
 // Default agent grants — TODAY's behaviour, so an absent agents.toml changes
 // nothing: the executor drives in-loop (the agent itself); the reviewer runs as
 // an isolated agent with a READ-ONLY tool grant (see the
-// satelle-actor-model principle — the reviewer is limited to reviewing).
+// satelle-agent-model principle — the reviewer is limited to reviewing).
 const (
 	DefaultExecutorHarness = "in-loop"
 	// DefaultReviewerHarness is the bare claude PRESET name — a single token, so

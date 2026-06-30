@@ -1,8 +1,8 @@
 # Reviewer checks — the gates on a story
 
-satelle runs the **actor model** (see the `satelle-actor-model`
+satelle runs the **agent model** (see the `satelle-agent-model`
 principle): a story moves through a graph of **steps**, each run by a **defined
-actor**, and the story's **status** decides what is valid now. The agent's goal is
+agent role**, and the story's **status** decides what is valid now. The agent's goal is
 to drive the story to `done`; satelle is the **gatekeeper of status** — a status
 advances only through a reviewer's accept, and always through it.
 
@@ -26,7 +26,7 @@ or a repo override under `.satelle/workflows`). Its lifecycle may be written two
 ways, both parsed by the shared `wfdot`/web parser:
 
 - an inline-YAML `states:`/`transitions:` block (transitions carry `reviewer_skill`); or
-- a fenced ```dot graph (node-centric): each node is a step carrying an `actor`,
+- a fenced ```dot graph (node-centric): each node is a step carrying an `agent`,
   a reviewer node names its gate as `prompt="@skill:NAME"`, and the edge **into**
   a reviewer node is the gated transition. `satelle validate` runs a DETERMINISTIC
   structure check on every authored doc — frontmatter (OKF `type`), naming, a
@@ -39,10 +39,10 @@ An edge is gated only when the workflow names a reviewer skill **and** that skil
 rubric is installed; a named-but-absent rubric is advisory, so a fresh repo keeps
 working until the rubrics ship.
 
-## The actors layer — how a step runs
+## The agents layer — how a step runs
 
 *What* is injected (the skill + context subset) is satelle's; *how and where* an
-actor runs is the **actors layer** (`.satelle/actors.toml`). It binds each actor to
+agent role runs is the **agents layer** (`.satelle/agents.toml`). It binds each agent role to
 a backend and grant, defaulting to today's behaviour — the executor runs in-loop,
 the reviewer runs as an isolated `agent -p` with the read-only `Read,Grep,Glob`
 grant. A repo may rebind a backend or grant without touching the workflow; the

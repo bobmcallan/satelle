@@ -1,6 +1,6 @@
-# actors.toml — the actors layer: how each actor runs (backend + tool grant).
+# agents.toml — the agents layer: how each agent runs (backend + tool grant).
 #
-# The agent operating model (see the satelle-actor-model principle):
+# The agent operating model (see the satelle-agent-model principle):
 #   - ORCHESTRATOR — the default driving session (the agent you run). It IS the
 #     in-loop executor below.
 #   - executor  — by default runs IN-LOOP as that full session: normal context,

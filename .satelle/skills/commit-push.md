@@ -12,7 +12,7 @@ You are the **executor** in the `commit-push` step of the workflow. The slice is
 built and the prior gates have accepted it; your job is to **land it and prove the
 release succeeded**, then leave the evidence for the gate that follows. This is an
 executor rubric, not a reviewer — you DO the work (see the
-[[satelle-actor-model]] principle: the executor mutates; the reviewer
+[[satelle-agent-model]] principle: the executor mutates; the reviewer
 only judges).
 
 ## What to do
@@ -59,4 +59,4 @@ The `commit-push` reviewer ([[satelle-commit-push-review]]) reads your evidence:
 it confirms the CI run for the pushed commit concluded success and summarises the
 slice. Leave the commit SHA, the run URL, and the success conclusion where it can
 find them. You never enact your own status advance — the reviewer's accept does
-that (see [[satelle-actor-model]]).
+that (see [[satelle-agent-model]]).

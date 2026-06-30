@@ -5,7 +5,7 @@
 // `actor` keyword still parses), each edge a
 // transition, and the edge INTO a reviewer node (whose gate is prompt="@skill:NAME")
 // carries that skill — so a story's status walks the nodes and entry to a reviewer
-// node is the gated transition. See the satelle-actor-model principle.
+// node is the gated transition. See the satelle-agent-model principle.
 package wfdot
 
 import (

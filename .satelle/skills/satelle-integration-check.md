@@ -20,7 +20,7 @@ no external file (see [[satelle-reviewer-self-contained]]). satelle runs it in t
 repo root; exit 0 accepts, a non-zero exit rejects with the output tail as the
 notes the executor fixes. It is **mechanism, not judgment** — the deterministic
 gate path, like the commit-push CI check — so the read-only LLM-reviewer invariant
-is untouched. See [[satelle-actor-model]].
+is untouched. See [[satelle-agent-model]].
 
 The integration suite is the project's **local** gate for "it runs end-to-end"
 ([[integration-tests-local-only]] in spirit): it is run here, before the commit,

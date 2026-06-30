@@ -15,11 +15,11 @@ func embeddedPrinciples() map[string]string {
 
 // TestEmbeddedOperatingPrinciples: the binary embeds exactly the principles an
 // agent needs to OPERATE satelle — the operating discipline (agent-goals) and the
-// execution model (actor-model). Everything else is authoring/development
+// execution model (agent-model). Everything else is authoring/development
 // substrate that lives in a repo's .satelle/principles (sty_807ae744).
 func TestEmbeddedOperatingPrinciples(t *testing.T) {
 	embedded := embeddedPrinciples()
-	for _, name := range []string{"satelle-agent-goals", "satelle-actor-model"} {
+	for _, name := range []string{"satelle-agent-goals", "satelle-agent-model"} {
 		if body, ok := embedded[name]; !ok {
 			t.Errorf("operating principle %q must be embedded, but is missing from EmbeddedDefaults()", name)
 		} else if len(body) == 0 {

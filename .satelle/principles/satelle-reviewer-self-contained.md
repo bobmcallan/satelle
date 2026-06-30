@@ -38,4 +38,4 @@ Read the skill alone. If you can see exactly what the gate judges and how —
 without opening another file — it is self-contained. If the gate's behaviour lives
 in a script the skill merely names, move that script's body into the skill.
 
-See [[satelle-constitution]], [[satelle-actor-model]].
+See [[satelle-constitution]], [[satelle-agent-model]].

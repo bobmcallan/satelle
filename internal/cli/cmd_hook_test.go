@@ -93,6 +93,16 @@ func TestExecutorStates(t *testing.T) {
 	}
 }
 
+// TestExecutorStatesAgentKey proves the inline-YAML executor-state parser accepts
+// the canonical `agent:` key as well as the legacy `actor:` (sty_0d4f5961).
+func TestExecutorStatesAgentKey(t *testing.T) {
+	body := "x\nstates:\n  - open\n  - {name: in_progress, agent: executor}\n  - {name: gate, agent: reviewer}\n  - done\ntransitions:\n  - {from: open, to: in_progress}\n"
+	got := executorStates(body)
+	if len(got) != 1 || got[0] != "in_progress" {
+		t.Fatalf("executorStates(agent:) = %v, want [in_progress]", got)
+	}
+}
+
 func TestIsGitCommitOrPush(t *testing.T) {
 	yes := []string{"git commit -m x", "cd /r && git push origin main"}
 	no := []string{"ls", "git status", "git diff"}

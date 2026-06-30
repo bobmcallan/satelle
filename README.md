@@ -80,7 +80,7 @@ repo it governs.
 Both the CLI and the web server reach data the same way — through one verb
 registry (`CLI / web → verb.Dispatch → store`), so the two surfaces never drift.
 
-## Workflows & gates — the actor model
+## Workflows & gates — the agent model
 
 satelle governs work as a **gated workflow**: a story or task moves through a
 lifecycle of **steps**, and it is `done` only when its status says so — reached
@@ -95,24 +95,24 @@ through every gate on the path.
   selection, the reviewer reads what it needs through its read-only tools.
 
 Workflows are **authored substrate** in the **DOT standard** (Graphviz): a
-node-centric graph where each node is a step carrying an `actor`
+node-centric graph where each node is a step carrying an `agent`
 (`executor`/`reviewer`) and a reviewer node names its gate (`prompt="@skill:NAME"`,
 or an edge `reviewer_skill`). The embedded `satelle-baseline-workflow`
 (`backlog → in_progress → done`) is the order-zero default; a repo overrides it
 under `.satelle/workflows`, and a YAML lifecycle is auto-converted to DOT on
-ingest. How each actor runs is bound in `.satelle/actors.toml` — the reviewer's
+ingest. How each agent runs is bound in `.satelle/agents.toml` — the reviewer's
 agent CLI (`claude` works; `codex` is a selectable stub) and its read-only grant;
 the executor runs in-loop.
 
 Process is configuration — change the workflow or its skills, change the process,
 with no binary release. See `satelle help reviewer-checks` and the
-`satelle-actor-model` and `satelle-dot-standard` principles.
+`satelle-agent-model` and `satelle-dot-standard` principles.
 
 ## Architecture
 
 - **Pure-Go SQLite** (`modernc.org/sqlite`, no cgo) — one static binary.
 - **Gated workflows:** authored DOT lifecycles drive each story; isolated
-  reviewers gate status transitions, with the actor backend bound per repo.
+  reviewers gate status transitions, with the agent backend bound per repo.
 - **System-of-record split:** stories/tasks/ledger are dynamic SQLite rows;
   authored markdown is the source of truth, synced into a SQLite index by a
   directory monitor.
@@ -120,7 +120,7 @@ with no binary release. See `satelle help reviewer-checks` and the
   and a gitignored `satelle.local.toml` overlay.
 
 See [`docs/spec.md`](./docs/spec.md), [`docs/architecture.md`](./docs/architecture.md),
-and [`docs/actor-model.md`](./docs/actor-model.md) (the operating
+and [`docs/agent-model.md`](./docs/agent-model.md) (the operating
 model: reviewer premise, DOT workflows, isolated fresh-context review).
 
 ## Development

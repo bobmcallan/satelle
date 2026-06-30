@@ -4,13 +4,13 @@ scope: system
 type: workflow
 tags: [type:workflow]
 applies_to: ["*"]
-description: The canonical order-zero lifecycle every satelle repo inherits from the binary — backlog → in_progress → done, with a cancelled exit — authored in the DOT standard (the actor model). The begin-work edge is gated by satelle-story-intent-review and the close by satelle-story-done-review (a reviewer node), so a story is judged well-formed before work and quality-checked before it closes. This is the EMBEDDED canonical default (config/substrate/workflows); a repo MAY override it by placing a same-named file under .satelle/workflows, but never edits this source.
+description: The canonical order-zero lifecycle every satelle repo inherits from the binary — backlog → in_progress → done, with a cancelled exit — authored in the DOT standard (the agent model). The begin-work edge is gated by satelle-story-intent-review and the close by satelle-story-done-review (a reviewer node), so a story is judged well-formed before work and quality-checked before it closes. This is the EMBEDDED canonical default (config/substrate/workflows); a repo MAY override it by placing a same-named file under .satelle/workflows, but never edits this source.
 ---
 
 # Baseline workflow (order-zero, gated, DOT)
 
 The default lifecycle the satelle binary ships, authored in the **DOT standard**
-(node-centric — see the `satelle-actor-model` principle): a story or task
+(node-centric — see the `satelle-agent-model` principle): a story or task
 moves **backlog → in_progress → done** and may exit early to **cancelled**. Each
 gate is an isolated reviewer; the executor never enacts its own transition —
 quality management is the point. This is the minimal order-zero lifecycle; a repo
@@ -22,13 +22,13 @@ digraph satelle_baseline {
   rankdir=LR
 
   backlog     [shape=Mdiamond]
-  in_progress [actor=executor]
-  done        [shape=Msquare, actor=reviewer, prompt="@skill:satelle-story-done-review"]
-  cancelled   [actor=reviewer, prompt="@skill:satelle-story-cancel-review"]
+  in_progress [agent=executor]
+  done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
+  cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
   // step is a transparent, edge-less declaration (sty_9a139c78): it opts this
   // workflow into per-transition step summaries (satelle-step-summary), marked
   // mandatory so a summary failure is surfaced. It is not a lifecycle state.
-  step        [actor=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
+  step        [agent=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
 
   backlog -> in_progress [reviewer_skill="satelle-story-intent-review"]
   in_progress -> done

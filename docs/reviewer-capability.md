@@ -7,7 +7,7 @@
 > the substrate it reasons about is materialised as markdown under `.satelle/`
 > (`satelle init`, sty_a2170bbf), so it reads it directly. Principle injection was
 > also narrowed to the single operating principle (sty_53a4233c). A repo may still
-> widen the grant transparently in `.satelle/actors.toml`. Kept for history; see
+> widen the grant transparently in `.satelle/agents.toml`. Kept for history; see
 > `satelle help substrate` and `satelle help reviewer-checks` for the current model.
 
 Story `sty_e15c15a4` (historical). satelle's isolated reviewers were too

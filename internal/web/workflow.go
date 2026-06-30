@@ -238,7 +238,7 @@ func workflowFragment() http.HandlerFunc {
 
 // parseWorkflow extracts the states and transitions from a workflow markdown
 // body. States come from the `states:` YAML block (a bare name or an inline
-// `{name:…, actor:…}` map); transitions are every `- {from:…, to:…}` line
+// `{name:…, agent:…}` map (legacy `actor:` parses)); transitions are every `- {from:…, to:…}` line
 // anywhere in the body (so the guardrails block is ignored). Terminal states are
 // those no transition leaves. When there is no states block, states are derived
 // from the transition endpoints.

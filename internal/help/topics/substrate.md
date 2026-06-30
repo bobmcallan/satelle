@@ -8,7 +8,7 @@ the format it follows, and how it is validated.
 
 `satelle init` lays a complete, self-documenting skeleton under `.satelle/`:
 
-- `satelle.toml` and `actors.toml` (both documented, both optional to edit);
+- `satelle.toml` and `agents.toml` (both documented, both optional to edit);
 - a dir per kind — `documents/ workflows/ principles/ skills/ stories/` — each
   with a `README.md` describing what it should contain (READMEs are dir
   descriptors; the indexer and OKF normaliser skip them);
