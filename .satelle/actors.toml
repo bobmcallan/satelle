@@ -1,11 +1,18 @@
 # actors.toml — the actors layer: how each actor runs (backend + tool grant).
-# An absent or fully-commented file is today's default: the executor drives
-# in-loop (the agent itself); the reviewer runs as an isolated, read-only agent
-# (tools = "Read,Grep,Glob"). Uncomment to override — the grant travels with the
-# binding, so the reviewer's read-only limit holds whatever the backend.
+#
+# The agent operating model (see the satelle-actor-model principle):
+#   - ORCHESTRATOR — the default driving session (the agent you run). It IS the
+#     in-loop executor below.
+#   - executor  — by default runs IN-LOOP as that full session: normal context,
+#     principles, and skills via the substrate (the satelle CLI); it reads a
+#     step's rubric from .satelle/skills. Not an isolated process.
+#   - reviewer  — an ISOLATED, read-only sub-process (rubric as system prompt).
+#   - any OTHER agent bound here is OPTIONAL and ALWAYS an isolated sub-process.
+#
+# An absent/commented file is the default (executor in-loop, reviewer isolated).
 
 # [executor]
-# harness = "in-loop"          # the driving agent itself (default)
+# harness = "in-loop"          # the orchestrator/driving session itself (default)
 
 # The reviewer runs on sonnet here (cheaper/faster reviews) — harness + tools
 # stay at their read-only defaults (claude preset, Read,Grep,Glob); only the

@@ -242,13 +242,23 @@ const scaffoldToml = `# satelle.toml — per-repo config (committed, secret-free
 // knobs. A repo may widen or rebind transparently — the override is a committed
 // file, the operator's choice.
 const scaffoldActorsToml = `# actors.toml — the actors layer: how each actor runs (backend + tool grant).
-# An absent or fully-commented file is today's default: the executor drives
-# in-loop (the agent itself); the reviewer runs as an isolated, read-only agent
-# (tools = "Read,Grep,Glob"). Uncomment to override — the grant travels with the
-# binding, so the reviewer's read-only limit holds whatever the backend.
+#
+# The agent operating model (see the satelle-actor-model principle):
+#   - ORCHESTRATOR — the default driving session (the agent you run). It IS the
+#     in-loop executor below.
+#   - executor  — by default runs IN-LOOP as that full session: it has the normal
+#     context, principles, and skills via the substrate (the satelle CLI) and
+#     reads a step's rubric from .satelle/skills. Not an isolated process.
+#   - reviewer  — runs as an ISOLATED, read-only sub-process (the rubric rides as
+#     its system prompt); tools = "Read,Grep,Glob".
+#   - any OTHER agent you bind here is OPTIONAL and ALWAYS an isolated sub-process.
+#
+# An absent or fully-commented file is the default (executor in-loop, reviewer
+# isolated). Uncomment to override — the grant travels with the binding, so the
+# reviewer's read-only limit holds whatever the backend.
 
 # [executor]
-# harness = "in-loop"          # the driving agent itself (default)
+# harness = "in-loop"          # the orchestrator/driving session itself (default)
 
 # [reviewer]
 # harness = "claude"           # the bare claude preset (read-only denylist) — default

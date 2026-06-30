@@ -33,17 +33,40 @@ at execution time, and an executor that drifted into the reviewer's lane (acting
 where it should only judge) broke the model. Defining **both** actors, each with
 its grant, is the fix.
 
-## How an actor runs — an isolated, fresh-context invocation
+## Two ways an actor runs — in-loop, or an isolated invocation
 
-Each actor invocation is **isolated**. satelle spawns a fresh-context agent with
-the step's **skill** as its system prompt, a **payload satelle builds** (the work
-item plus the requested transition — not the whole repo), and the actor's bound
-tool grant; it returns a structured result satelle **aggregates** to gate status.
-A reviewer runs exactly this way — `internal/reviewer` spawns an isolated `agent -p`
-with the skill, the transition payload, and a read-only grant, and parses one
-`{decision, notes}`. **satelle does the context selection** (the payload it
-constructs); the actor reads what it needs through its own tools. There is no
-shared state between invocations — each gate is a clean room.
+The **orchestrator** is the default driving session — the agent the operator runs
+(this session). It IS the in-loop **executor**: by default the executor is not a
+separate process but the orchestrator itself, a FULL session with the normal
+context, principles, and skills available through the substrate (the `satelle`
+CLI and `.satelle/`). At an executor step it reads the step's rubric from
+`.satelle/skills` and follows it; the step's `@skill:NAME` is a **declaration** of
+which rubric to follow, NOT an invocation of any agent CLI's native skill
+mechanism (see below).
+
+A **reviewer**, by contrast, runs as an **isolated, fresh-context invocation**:
+satelle spawns a fresh agent with the step's **skill as its system prompt**, a
+**payload satelle builds** (the work item plus the requested transition — not the
+whole repo), and the actor's bound read-only grant; it returns a structured
+`{decision, notes}` satelle **aggregates** to gate status. `internal/reviewer`
+spawns this isolated `agent -p`. **satelle does the context selection** (the
+payload); the reviewer reads what it needs under its grant. There is no shared
+state — each gate is a clean room. Any actor OTHER than the in-loop executor
+(the reviewer, or an optional extra agent a repo binds) runs this isolated way.
+
+## @skill: is an agent-agnostic declaration — the process never locks to a CLI
+
+A step's `@skill:NAME` (a node's `prompt="@skill:…"` or an edge's
+`reviewer_skill`) names the rubric that governs the step. It is **satelle's own
+declaration**, resolved against `.satelle/skills` — it is **not** any particular
+agent CLI's native skill call (it is not Claude's `SKILL()`; satelle uses no
+`.claude/skills`). The in-loop executor **reads** that rubric from the substrate
+and follows it; a reviewer receives the rubric **as its system prompt**. Either
+way the rubric is plain authored markdown delivered through satelle, so the same
+workflow drives any configured agent CLI — the process is never coded to one
+agent's skill mechanism. And skills only **guide** the executor; the **gates
+enforce** the outcome — an executor that ignores its rubric is still judged by the
+reviewer on the edge, so correctness never depends on a CLI honouring a skill.
 
 The model is **structural**: agents gate agents — the executor's progress
 advances only when satelle invokes an isolated reviewer to judge it. It is *not*
