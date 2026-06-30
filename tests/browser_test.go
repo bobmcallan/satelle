@@ -511,6 +511,57 @@ func TestBrowserTimelineDotsByOutcome(t *testing.T) {
 	}
 }
 
+// TestBrowserBacklogBadgeLiveOnRefetch asserts the Stories tab 'N backlog' badge
+// stays live across a realtime (SSE-driven) refetch (sty_af09a484): creating a
+// backlog story from a SEPARATE CLI process bumps the badge without a reload, and
+// the badge is removed when the live backlog count reaches zero.
+func TestBrowserBacklogBadgeLiveOnRefetch(t *testing.T) {
+	base, repo := serveRepo(t, "8814")
+	id1 := createStory(t, repo, "First Backlog", "") // defaults to backlog
+
+	ctx := newChrome(t)
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/"),
+		chromedp.WaitVisible(`.tab[data-panel="stories"] .n-backlog`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("load page: %v", err)
+	}
+	badgeText := `(document.querySelector('.tab[data-panel="stories"] .n-backlog')||{}).textContent`
+	noBadge := `!document.querySelector('.tab[data-panel="stories"] .n-backlog')`
+
+	// Server-rendered initial value.
+	if !waitCond(t, ctx, badgeText+" === '1 backlog'", 3*time.Second) {
+		t.Error("initial badge should read '1 backlog'")
+	}
+	// Sentinel to prove no full reload happens across the live update.
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`window.__t4 = true`, nil)); err != nil {
+		t.Fatal(err)
+	}
+
+	// A SECOND backlog story created by a separate CLI process must bump the badge
+	// live (the bug: it stayed frozen at the page-load value).
+	id2 := createStory(t, repo, "Second Backlog", "")
+	if !waitCond(t, ctx, badgeText+" === '2 backlog'", 6*time.Second) {
+		t.Error("badge should update live to '2 backlog' after a backlog story is created via CLI")
+	}
+
+	// And it must disappear when the live backlog count drops to zero.
+	mustRun(t, testBin, repo, "story", "set", id1, "--status", "in_progress")
+	mustRun(t, testBin, repo, "story", "set", id2, "--status", "in_progress")
+	if !waitCond(t, ctx, noBadge, 6*time.Second) {
+		t.Error("badge should be removed when the live backlog count reaches 0")
+	}
+
+	// No full-page reload occurred — the update was the SSE refetch path.
+	var noReload bool
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`window.__t4 === true`, &noReload)); err != nil {
+		t.Fatal(err)
+	}
+	if !noReload {
+		t.Error("the badge update must come from the live refetch, not a page reload")
+	}
+}
+
 // countExpansions returns how many inline expansion rows are open in the stories
 // panel.
 func countExpansions(t *testing.T, ctx context.Context) int {

@@ -352,8 +352,34 @@
         });
         var tab = document.querySelector('.tab[data-panel="' + topic + '"] .n');
         if (tab) tab.textContent = panel.querySelectorAll("[data-rows] .row").length;
+        if (topic === "stories") refreshBacklogBadge(panel);
       })
       .catch(function () {});
+  }
+
+  // refreshBacklogBadge recomputes the Stories tab's 'N backlog' badge from the
+  // live rows (sty_af09a484). The server renders it at page load from BacklogCount,
+  // but a realtime refetch only refreshed the total .n — so the badge stayed frozen
+  // at the page-load value. Recompute from the rows carrying data-status="backlog"
+  // and create / update / remove the badge consistently with the server template's
+  // {{if .BacklogCount}} (shown when > 0, gone when 0). The badge's spacing comes
+  // from its CSS margin, so no literal separator node is needed.
+  function refreshBacklogBadge(panel) {
+    var tabEl = document.querySelector('.tab[data-panel="stories"]');
+    if (!tabEl) return;
+    var n = panel.querySelectorAll('[data-rows] .row[data-status="backlog"]').length;
+    var badge = tabEl.querySelector(".n-backlog");
+    if (n > 0) {
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "n-backlog";
+        badge.title = "stories in the open backlog";
+        tabEl.appendChild(badge);
+      }
+      badge.textContent = n + " backlog";
+    } else if (badge) {
+      badge.remove();
+    }
   }
 
   // Panels with a rows fragment endpoint (the refetch targets); workflow has none.

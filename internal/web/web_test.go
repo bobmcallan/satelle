@@ -280,6 +280,28 @@ func TestStatusBadgesOutlinedPills(t *testing.T) {
 	}
 }
 
+// TestBacklogBadgeRecomputedOnRefetch asserts the served app.js recomputes the
+// 'N backlog' badge from the live rows in the same refetch path that refreshes the
+// total .n count (sty_af09a484) — so the badge no longer freezes at the page-load
+// value on an SSE refetch.
+func TestBacklogBadgeRecomputedOnRefetch(t *testing.T) {
+	srv, _ := newServer(t)
+	code, js := get(t, srv.URL+"/static/app.js")
+	if code != 200 {
+		t.Fatalf("/static/app.js = %d", code)
+	}
+	if !strings.Contains(js, "refreshBacklogBadge") {
+		t.Errorf("app.js missing the refreshBacklogBadge recompute helper")
+	}
+	// It counts the live backlog rows and is wired into the refetch path.
+	if !strings.Contains(js, `.row[data-status="backlog"]`) {
+		t.Errorf("backlog badge must be recomputed from live data-status=\"backlog\" rows")
+	}
+	if !strings.Contains(js, `if (topic === "stories") refreshBacklogBadge(panel)`) {
+		t.Errorf("refreshBacklogBadge must run inside refetchPanel where .n is refreshed")
+	}
+}
+
 func TestStoriesFilterCountRendered(t *testing.T) {
 	srv, _ := newServer(t)
 	code, body := get(t, srv.URL+"/")
