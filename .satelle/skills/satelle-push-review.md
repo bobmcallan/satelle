@@ -17,7 +17,8 @@ It verifies, deterministically (mechanism, not judgment — the read-only review
 invariant holds): (1) HEAD **bumped** `satelle.version` and **stamped** `satelle.build`
 in `.version`; (2) the commit carries **no AI attribution**; (3) the `test` run for
 HEAD **concluded success**; (4) the `release` workflow **published** the tag
-`v<satelle.version>`. Then it emits a PR-style summary under `.satelle/documents/`.
+`v<satelle.version>`. Then it emits a PR-style summary into the OKF sub-bundle
+`.satelle/documents/story-implementation-summary/`.
 See [[satelle-agent-model]].
 
 ```check
@@ -78,11 +79,19 @@ fi
 rel_url="$(gh release view "v${ver}" --json url -q .url 2>/dev/null || echo '')"
 echo "push-review: v${ver} released; test ${tid} success"
 
-# 5. emit the PR-style summary document.
-out_dir=".satelle/documents"
+# 5. emit the PR-style summary document into the OKF sub-bundle (kept out of the
+#    flat root documents index; the indexer surfaces the sub-bundle as one entry).
+out_dir=".satelle/documents/story-implementation-summary"
 mkdir -p "${out_dir}"
 out="${out_dir}/commit-summary-${sty:-${sha}}.md"
 {
+  echo "---"
+  echo "type: story-implementation-summary"
+  echo "title: Push summary — ${sty:-${sha}}"
+  echo "description: v${ver} — ${subject}"
+  echo "timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "---"
+  echo
   echo "# Push summary — ${sty:-${sha}}"
   echo
   echo "- **Commit:** \`${sha}\`"
