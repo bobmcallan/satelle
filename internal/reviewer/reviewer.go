@@ -19,7 +19,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -80,6 +82,19 @@ type Gater struct {
 	// (sty_46a40208). Defaults ON (New sets it true); the reviewer binding's
 	// inject_principles = false turns it off.
 	injectPrinciples bool
+	// attempts bounds how many times an LLM reviewer is retried when it produces NO
+	// verdict — a TRANSIENT failure (a rate-limited/killed/empty subprocess under
+	// concurrent sessions, sty_d71b0791), distinct from a genuine accept/reject which
+	// returns on the first try. Defaults to defaultReviewerAttempts (New sets it).
+	attempts int
+	// backoff returns the wait before retry N (N ≥ 2) so transient contention can
+	// clear. Swappable in tests (return 0 to avoid real waits); defaults to
+	// defaultReviewerBackoff.
+	backoff func(attempt int) time.Duration
+	// logDir is <data_dir>/logs — where a transient reviewer failure (the failing
+	// subprocess's own output) is appended to reviewer.log so API contention is
+	// REVIEWABLE, not lost (sty_d71b0791). Empty disables logging (tests/unwired).
+	logDir string
 }
 
 // New builds a Gater over the agent runner and doc index. model "" inherits the
@@ -88,7 +103,52 @@ func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Gater 
 	return &Gater{
 		runner: runner, docs: docs, repoRoot: repoRoot, model: model, tools: defaultTools,
 		checkTimeout: defaultCheckTimeout, check: execCheck, injectPrinciples: true,
+		attempts: defaultReviewerAttempts, backoff: defaultReviewerBackoff,
 	}
+}
+
+// defaultReviewerAttempts is how many times an LLM reviewer is tried before a
+// no-verdict transient failure is surfaced. A gated transition must be
+// deterministic (advance or a clear error), and a nested reviewer subprocess can
+// transiently return no verdict under concurrent load (sty_d71b0791), so it is
+// retried a few times before giving up.
+const defaultReviewerAttempts = 3
+
+// defaultReviewerBackoff is the wait before retry N (called only for N ≥ 2), a
+// short escalating pause so transient contention (e.g. many claude subprocesses
+// across sessions) can clear before the next attempt.
+func defaultReviewerBackoff(attempt int) time.Duration {
+	if attempt <= 2 {
+		return 2 * time.Second
+	}
+	return 5 * time.Second
+}
+
+// SetLogDir points the reviewer's transient-failure log at dir (the repo's
+// <data_dir>/logs). When set, each transient reviewer failure — the failing
+// subprocess's own output, e.g. a rate-limit message — is appended to
+// reviewer.log so cross-session API contention is reviewable (sty_d71b0791). An
+// empty dir disables logging.
+func (g *Gater) SetLogDir(dir string) { g.logDir = dir }
+
+// logReviewerFailure appends one transient-failure record (the failing
+// subprocess's output tail and error) to <logDir>/reviewer.log so the actual
+// cause — typically a rate-limited nested agent under concurrent sessions — is
+// surfaced for review. Best-effort: a logging error never affects the gate.
+func (g *Gater) logReviewerFailure(skill string, attempt, attempts int, rerr error, out []byte) {
+	if g.logDir == "" {
+		return
+	}
+	if err := os.MkdirAll(g.logDir, 0o755); err != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(g.logDir, "reviewer.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+	fmt.Fprintf(f, "%s\t%s\tattempt %d/%d\ttransient reviewer failure: %v%s\n",
+		time.Now().UTC().Format(time.RFC3339), skill, attempt, attempts, rerr, outputTail(out))
 }
 
 // SetReviewerTools sets the reviewer's tool grant from the agents layer (the
@@ -425,28 +485,81 @@ func (g *Gater) runReviewer(ctx context.Context, item workitem.Item, toStatus, s
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
-	out, err := g.runner.Run(ctx, agentcli.Request{
+	req := agentcli.Request{
 		SystemPrompt: g.reviewerSystemPrompt(ctx, body),
 		Payload:      string(payload),
 		AllowedTools: g.tools,
 		Model:        g.model,
 		Dir:          g.repoRoot,
-	})
-	if err != nil {
-		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf("reviewer: %s gate failed: %w", skill, err)
 	}
-	dec, err := parseDecision(out)
-	if err != nil {
-		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf("reviewer: %s: %w", skill, err)
+	// A gated transition must be DETERMINISTIC: the reviewer either returns a
+	// verdict (accept/reject) or the transition fails with a CLEAR error — never a
+	// silent one-shot non-advance. A nested reviewer subprocess can TRANSIENTLY
+	// produce no verdict (a rate-limited/killed/empty run under concurrent sessions
+	// across repos — sty_d71b0791), so retry that transient failure with bounded
+	// backoff. A genuine accept/reject parses on the first try and returns at once;
+	// only an agent error or no-verdict output is retried.
+	attempts := g.attempts
+	if attempts < 1 {
+		attempts = 1
 	}
-	dec.Gated = true
-	dec.Skill = skill
-	// Record HOW this isolated agent was invoked (sty_fb3e0873): the resolved
-	// harness command and the injected-context source (the rubric/skill file). Only
-	// the LLM path sets these — a functional check above invokes no agent.
-	dec.Command = g.runner.Command()
-	dec.Context = skill
-	return dec, nil
+	var lastErr error
+	var lastOut []byte
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if attempt > 1 {
+			// Back off so transient contention can clear; abort if cancelled.
+			wait := time.Duration(0)
+			if g.backoff != nil {
+				wait = g.backoff(attempt)
+			}
+			select {
+			case <-ctx.Done():
+				return verb.GateDecision{Gated: true, Skill: skill}, ctx.Err()
+			case <-time.After(wait):
+			}
+		}
+		out, rerr := g.runner.Run(ctx, req)
+		if rerr != nil {
+			lastErr, lastOut = rerr, nil
+			g.logReviewerFailure(skill, attempt, attempts, rerr, nil) // surface the contention
+			continue                                                  // transient agent failure — retry
+		}
+		dec, perr := parseDecision(out)
+		if perr != nil {
+			lastErr, lastOut = perr, out
+			g.logReviewerFailure(skill, attempt, attempts, perr, out) // capture the subprocess output
+			continue                                                  // no verdict in the output — transient, retry
+		}
+		dec.Gated = true
+		dec.Skill = skill
+		// Record HOW this isolated agent was invoked (sty_fb3e0873): the resolved
+		// harness command and the injected-context source (the rubric/skill file).
+		// Only the LLM path sets these — a functional check above invokes no agent.
+		dec.Command = g.runner.Command()
+		dec.Context = skill
+		return dec, nil
+	}
+	// Every attempt failed to produce a verdict — surface a CLEAR, actionable error
+	// (a transient reviewer failure, NOT a rejection), naming the retry count and a
+	// tail of the last output so contention is distinguishable from a real gap.
+	return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
+		"reviewer: %s produced no verdict after %d attempts (transient agent failure — e.g. a rate-limited or killed subprocess under concurrent sessions; retry, or reduce concurrent satelle sessions): %w%s",
+		skill, attempts, lastErr, outputTail(lastOut))
+}
+
+// outputTail returns a short, trimmed tail of a reviewer's last output for an
+// error message — empty when there was none, so a runner error (no output) and a
+// no-verdict output are both reported clearly.
+func outputTail(out []byte) string {
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		return ""
+	}
+	const max = 300
+	if len(s) > max {
+		s = "…" + s[len(s)-max:]
+	}
+	return " — last output: " + s
 }
 
 // scopedReviewers returns the active workflow's DECLARED scoped reviewers for the

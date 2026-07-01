@@ -3,8 +3,10 @@ package reviewer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
@@ -274,6 +276,82 @@ func gater(t *testing.T, out string, docs fakeDocs) (*Gater, *fakeRunner) {
 	t.Helper()
 	r := &fakeRunner{out: out}
 	return New(r, docs, "/repo", ""), r
+}
+
+var errFakeAgent = errors.New("fake agent failure")
+
+// scriptedRunner returns a queued sequence of (out, err) — one per Run call — to
+// exercise transient reviewer failures (sty_d71b0791). Once exhausted it repeats
+// the last result.
+type scriptedRunner struct {
+	results []struct {
+		out string
+		err error
+	}
+	calls int
+}
+
+func (s *scriptedRunner) Name() string    { return "scripted" }
+func (s *scriptedRunner) Command() string { return "scripted" }
+func (s *scriptedRunner) Run(_ context.Context, _ agentcli.Request) ([]byte, error) {
+	i := s.calls
+	s.calls++
+	if i >= len(s.results) {
+		i = len(s.results) - 1
+	}
+	return []byte(s.results[i].out), s.results[i].err
+}
+
+// A transient no-verdict reviewer result (an empty/garbled/rate-limited subprocess
+// under concurrent load) is RETRIED with backoff, so the gate still advances
+// rather than failing on the first shot (sty_d71b0791).
+func TestGate_retriesTransientNoVerdictThenAdvances(t *testing.T) {
+	docs := fakeDocs{workflow: testWorkflow, skillBody: "rubric body", skillFound: true}
+	r := &scriptedRunner{results: []struct {
+		out string
+		err error
+	}{
+		{out: "rate limited, please retry"}, // no verdict → transient
+		{err: errFakeAgent},                 // agent error → transient
+		{out: `{"decision":"accept"}`},      // verdict on the 3rd try
+	}}
+	g := New(r, docs, "/repo", "")
+	g.backoff = func(int) time.Duration { return 0 } // no real waits in the test
+
+	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done")
+	if err != nil {
+		t.Fatalf("gate should advance after a transient retry, got err: %v", err)
+	}
+	if !dec.Accept {
+		t.Fatalf("gate should accept once the reviewer returns a verdict: %+v", dec)
+	}
+	if r.calls != 3 {
+		t.Fatalf("expected 3 reviewer attempts (2 transient + 1 verdict), got %d", r.calls)
+	}
+}
+
+// When every attempt fails to produce a verdict, the gate surfaces a CLEAR error
+// (naming the retry exhaustion) rather than a silent non-advance — the transition
+// is deterministic (sty_d71b0791).
+func TestGate_clearErrorWhenNoVerdictAfterRetries(t *testing.T) {
+	docs := fakeDocs{workflow: testWorkflow, skillBody: "rubric body", skillFound: true}
+	r := &scriptedRunner{results: []struct {
+		out string
+		err error
+	}{{out: "still no verdict"}}}
+	g := New(r, docs, "/repo", "")
+	g.backoff = func(int) time.Duration { return 0 }
+
+	_, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done")
+	if err == nil {
+		t.Fatal("expected a clear error when the reviewer never returns a verdict")
+	}
+	if !strings.Contains(err.Error(), "no verdict after") {
+		t.Errorf("error should name the no-verdict retry exhaustion, got: %v", err)
+	}
+	if r.calls != defaultReviewerAttempts {
+		t.Errorf("expected %d attempts, got %d", defaultReviewerAttempts, r.calls)
+	}
 }
 
 func TestGateAcceptEnacts(t *testing.T) {
