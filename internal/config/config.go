@@ -28,6 +28,11 @@ const (
 	DefaultDataDir = ".satelle"
 	// DefaultDBName is the sqlite database file inside data_dir.
 	DefaultDBName = "satelle.db"
+	// DefaultConstitutionName is the project constitution file at the data-dir
+	// root (.satelle/constitution.md) — the order-zero doc injected every session
+	// (epic:session-context). It lives OUTSIDE the authored-kind dirs, so it is
+	// read directly, not indexed as a kind.
+	DefaultConstitutionName = "constitution.md"
 	// DefaultWebPort is the local web server's listen port.
 	DefaultWebPort = 8787
 	// DefaultLogLevel is arbor's level when log_level is unset.
@@ -96,6 +101,13 @@ func (c Config) ResolveDataDir(repoRoot string) string {
 		p = DefaultDataDir
 	}
 	return resolveUnder(repoRoot, p)
+}
+
+// ResolveConstitution returns the absolute path to the repo's project
+// constitution — <data_dir>/constitution.md — the order-zero doc injected every
+// session (epic:session-context). Read directly (it is not an indexed kind).
+func (c Config) ResolveConstitution(repoRoot string) string {
+	return filepath.Join(c.ResolveDataDir(repoRoot), DefaultConstitutionName)
 }
 
 // ResolveDB returns the absolute sqlite database path. An explicit db wins;
