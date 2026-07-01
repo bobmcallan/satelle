@@ -159,6 +159,14 @@ func runInit(out io.Writer, repoRoot string) error {
 		fmt.Fprintln(out, line)
 	}
 
+	// 3d. Tasks are AUTHORED substrate but ingested into the workitem store (not the
+	//     OKF doc index), so .satelle/tasks is scaffolded here — NOT via AuthoredKinds
+	//     (that would route it through the OKF normalizer). Create the dir + README
+	//     keep-file and seed one starter task HEADER, idempotently (sty_c1b3b4e3).
+	for _, line := range seedTasks(dataDir) {
+		fmt.Fprintln(out, line)
+	}
+
 	// 4. The per-repo database — open (creating + migrating) then close, so a
 	//    fresh repo lands a ready satelle.db with no first-command surprise.
 	dbPath := filepath.Join(dataDir, config.DefaultDBName)
@@ -407,6 +415,55 @@ var dirReadme = map[string]string{
 	"principles": "# principles\n\nAuthored principles (markdown, `type: principle`). They are resolvable on demand;\nthe single always-resident operating principle is injected at session start.\n",
 	"skills":     "# skills\n\nAuthored skills (`type: skill`): executor rubrics, reviewer rubrics, or a\nself-contained functional check (a fenced ```check block or a `check:` key).\nEverything a reviewer needs lives inside the skill.\n",
 	"stories":    "# stories\n\nPer-story attachments live here under `<id>/…` (typed documents attached to a\nstory). The per-repo database is the sole story store — there is no markdown\nmirror of the backlog.\n",
+	"tasks":      "# tasks\n\nAuthored task HEADERS (`tsk_*.md`, `type: task`): re-runnable work-definitions\nthat declare an ACTION and how success is VERIFIED. The file is the source of\ntruth; the DB indexes it. Each RUN is an execution under a per-task folder\n`<tsk_id>/exe_*.md`; create one with `satelle execution create --parent <tsk_id>`.\n",
+}
+
+// starterTaskID is the fixed id of the example task header init seeds — fixed so
+// re-init is idempotent (it is never duplicated).
+const starterTaskID = "tsk_example1"
+
+// scaffoldStarterTask is the example task header seeded into a fresh repo's
+// .satelle/tasks — a template demonstrating the ACTION + VERIFICATION contract
+// (sty_c1b3b4e3). It passes the deterministic task structure check.
+const scaffoldStarterTask = `---
+id: tsk_example1
+type: task
+status: backlog
+tags: example
+---
+
+# Example task — replace or delete me
+
+A task is a re-runnable work-definition (a HEADER). Declare the ACTION and how
+success is VERIFIED, then run it by creating an execution:
+` + "`satelle execution create --parent tsk_example1 --title \"run 1\"`" + `.
+
+ACTION: describe the concrete work this task performs.
+
+VERIFICATION: describe the checkable evidence that the ACTION succeeded.
+`
+
+// seedTasks scaffolds .satelle/tasks (dir + README keep-file) and seeds the
+// starter task header when absent — idempotent (re-init reports it as present and
+// never clobbers an authored task). Returns report lines.
+func seedTasks(dataDir string) []string {
+	var lines []string
+	dir := filepath.Join(dataDir, "tasks")
+	dirCreated, derr := ensureDir(dir)
+	if derr != nil {
+		return lines
+	}
+	readmeCreated, _ := ensureReadme(dir, "tasks")
+	lines = append(lines, initLine(dirCreated || readmeCreated, config.DefaultDataDir+"/tasks/"))
+	starter := filepath.Join(dir, starterTaskID+".md")
+	if !fileExists(starter) {
+		if err := os.WriteFile(starter, []byte(scaffoldStarterTask), 0o644); err == nil {
+			lines = append(lines, initLine(true, config.DefaultDataDir+"/tasks/"+starterTaskID+".md"))
+		}
+	} else {
+		lines = append(lines, initLine(false, config.DefaultDataDir+"/tasks/"+starterTaskID+".md"))
+	}
+	return lines
 }
 
 // ensureReadme writes a dir's README.md (describing its contents) when absent.
