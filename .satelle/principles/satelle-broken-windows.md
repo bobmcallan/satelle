@@ -2,7 +2,7 @@
 name: satelle-broken-windows
 scope: project
 type: principle
-tags: [type:principle, principles:always]
+tags: [type:principle]
 applies_to: ["*"]
 description: Broken windows — a failure you encounter is yours: fix it if cheap or in your change's path, otherwise file a tracked story naming it and surface it. Never silently pass a failure by. Never add a new red (a failing test, a skipped check, undocumented debt); known debt only shrinks, every quarantined failure named in a technical-debt register and owned by a story. This is THIS repo's working discipline (project scope), not a satelle mechanism — adapted from satellites' broken-windows.
 ---

@@ -2,15 +2,16 @@
 // `satelle hook context` — the SessionStart always-context injector
 // (sty_e3922598).
 //
-// At session start it fetches every `principles:always`-flagged authored doc
+// At session start it fetches every `principles:session`-flagged authored doc
 // and injects their bodies as session context, followed by the standing "pull
-// the rest on demand" instruction. This keeps the small resident set (the
-// constitution + repo-agnostic principle) in front of the agent without
-// auto-injecting an unbounded list — the bodies are bounded by a byte ceiling,
-// and an overflow is reported on stderr (never silently dropped). It FAILS OPEN:
-// an unconfigured repo or any read error injects nothing and never blocks the
-// session. This is the mechanism that makes the `principles:always` residency
-// marker live (see the satelle-constitution / satelle-repo-agnostic principles).
+// the rest on demand" instruction. This keeps the minimal SESSION set (the
+// operating principle) in front of the agent without auto-injecting an unbounded
+// list — the bodies are bounded by a byte ceiling, and an overflow is reported on
+// stderr (never silently dropped). It FAILS OPEN: an unconfigured repo or any read
+// error injects nothing and never blocks the session. This is the mechanism that
+// makes the `principles:session` residency marker live: residency is TWO tiers —
+// session (carries the marker → injected every session) and on-demand (the
+// default, no marker → pulled only when a skill or workflow references it).
 package cli
 
 import (
@@ -31,9 +32,11 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-// alwaysTag is the residency marker: a doc carrying it in its frontmatter tags
-// is part of the resident set injected every session.
-const alwaysTag = "principles:always"
+// sessionTag is the residency marker: a doc carrying it in its frontmatter tags
+// is part of the SESSION set injected every session start. A doc WITHOUT it is
+// on-demand (the default) — resolvable substrate pulled only when a skill or
+// workflow references it, never auto-injected.
+const sessionTag = "principles:session"
 
 // alwaysContextCeiling bounds the total injected always-content. The resident
 // set is meant to be small (a handful of principle-sized docs); this is the
@@ -43,9 +46,12 @@ const alwaysTag = "principles:always"
 const alwaysContextCeiling = 16384
 
 // alwaysIndexInstruction is the standing "pull, don't preload" directive
-// appended to every injection — the pivot of the always-context model: the
-// resident set is pushed, everything else is discovered on demand.
-const alwaysIndexInstruction = "To discover other documents and principles beyond the resident set above, run `satelle doc list` and load only the ones the task needs — do not preload everything."
+// appended to every injection — the pivot of the session-context model: the
+// session set is pushed, everything else is on-demand. On-demand substrate is
+// pulled when a skill or workflow REFERENCES it (recall on reference), not by
+// browsing — `satelle doc list` is the quality-management / authoring browse
+// surface, not the session-context path.
+const alwaysIndexInstruction = "The session set above is everything auto-loaded. Other principles and documents are on-demand: pull one with `satelle doc get <kind> <name>` when a skill or workflow references it — do not preload. (`satelle doc list` is the quality-management browse surface for authoring/curating substrate, not a step in the work loop.)"
 
 func init() {
 	hook := &cobra.Command{
@@ -54,12 +60,12 @@ func init() {
 	}
 	context := &cobra.Command{
 		Use:   "context",
-		Short: "SessionStart always-context injector — inject principles:always docs + the index pointer",
-		Long: `context is the SessionStart handler. It injects every principles:always
-authored doc (the resident set — e.g. the project constitution) as session
-context, then the standing instruction to discover the rest via ` + "`satelle doc list`" + `.
-Bounded by a byte ceiling (overflow noted on stderr); fails open so it never
-blocks a session.`,
+		Short: "SessionStart session-context injector — inject principles:session docs + the on-demand pointer",
+		Long: `context is the SessionStart handler. It injects every principles:session
+authored doc (the SESSION set — the minimal operating principle) as session
+context, then the standing instruction that the rest is on-demand: pulled via
+` + "`satelle doc get`" + ` only when a skill or workflow references it. Bounded by a
+byte ceiling (overflow noted on stderr); fails open so it never blocks a session.`,
 		Args: cobra.NoArgs,
 		// No store annotation: this command opens the store itself, defensively,
 		// so any bootstrap failure fails OPEN (exit 0, inject nothing) rather than
@@ -313,7 +319,7 @@ func runHookContext(out, stderr io.Writer) error {
 	if truncated {
 		fmt.Fprintf(stderr,
 			"satelle hook context: always-content exceeded %d bytes and was truncated — trim an always-tagged doc or drop its %s tag\n",
-			alwaysContextCeiling, alwaysTag)
+			alwaysContextCeiling, sessionTag)
 	}
 	if strings.TrimSpace(content) == "" {
 		return nil
@@ -321,16 +327,20 @@ func runHookContext(out, stderr io.Writer) error {
 	return emitAdditionalContext(out, "SessionStart", content)
 }
 
-// selectAlwaysDocs returns the single always-resident principle — the one tight
-// operating principle (config.OperatingPrinciple). Every other principle is
-// resolvable substrate read on demand, never auto-injected (sty_53a4233c).
+// selectAlwaysDocs returns the SESSION set — every principle carrying the
+// principles:session residency marker, in the order the index lists them. The
+// marker is the single residency authority (the same one the reviewer reads),
+// so which principles are resident is authored substrate, not a hardcoded name:
+// a principle is session because it is tagged, or on-demand because it is not.
+// Kept minimal by keeping the marker on few docs (the operating principle).
 func selectAlwaysDocs(docs []docindex.Doc) []docindex.Doc {
+	var out []docindex.Doc
 	for _, d := range docs {
-		if d.Kind == "principles" && d.Name == config.OperatingPrinciple {
-			return []docindex.Doc{d}
+		if d.Kind == "principles" && docHasTag(d.Body, sessionTag) {
+			out = append(out, d)
 		}
 	}
-	return nil
+	return out
 }
 
 // renderAlwaysContent assembles the bounded injection body + the standing index

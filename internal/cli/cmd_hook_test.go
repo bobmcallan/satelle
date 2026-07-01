@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -13,16 +12,16 @@ func doc(name, body string) docindex.Doc {
 	return docindex.Doc{Kind: "principles", Name: name, Body: body}
 }
 
-const alwaysFM = "---\nname: c\ntags: [kind:principle, principles:always]\n---\n# Body\nresident text\n"
+const sessionFM = "---\nname: c\ntags: [kind:principle, principles:session]\n---\n# Body\nresident text\n"
 const plainFM = "---\nname: p\ntags: [kind:principle]\n---\n# Other\nnot resident\n"
 
 func TestFrontmatterTags_inlineAndBlock(t *testing.T) {
-	inline := frontmatterTags("---\ntags: [a, principles:always, c]\n---\nx")
-	if len(inline) != 3 || inline[1] != "principles:always" {
+	inline := frontmatterTags("---\ntags: [a, principles:session, c]\n---\nx")
+	if len(inline) != 3 || inline[1] != "principles:session" {
 		t.Fatalf("inline parse: %v", inline)
 	}
-	block := frontmatterTags("---\nname: x\ntags:\n  - a\n  - principles:always\nother: y\n---\nbody")
-	if len(block) != 2 || block[1] != "principles:always" {
+	block := frontmatterTags("---\nname: x\ntags:\n  - a\n  - principles:session\nother: y\n---\nbody")
+	if len(block) != 2 || block[1] != "principles:session" {
 		t.Fatalf("block parse: %v", block)
 	}
 	if frontmatterTags("no frontmatter here") != nil {
@@ -30,29 +29,35 @@ func TestFrontmatterTags_inlineAndBlock(t *testing.T) {
 	}
 }
 
-// The resident set is exactly one principle — the operating principle
-// (sty_53a4233c). Other principles, even if present, are not auto-injected.
-func TestSelectAlwaysDocs_onlyOperatingPrinciple(t *testing.T) {
+// selectAlwaysDocs is tag-driven: a principle carrying principles:session is the
+// SESSION set (injected); one without the marker is on-demand (not injected).
+// Residency is authored substrate, not a hardcoded name (epic:session-context).
+func TestSelectAlwaysDocs_byResidencyTag(t *testing.T) {
 	got := selectAlwaysDocs([]docindex.Doc{
-		doc("satelle-agile-increments", alwaysFM),
-		{Kind: "principles", Name: config.OperatingPrinciple, Body: alwaysFM},
-		doc("satelle-constitution", alwaysFM),
+		doc("satelle-agent-goals", sessionFM),    // tagged → session
+		doc("satelle-agile-increments", plainFM), // untagged → on-demand
+		doc("satelle-constitution", sessionFM),   // tagged → session
 	})
-	if len(got) != 1 || got[0].Name != config.OperatingPrinciple {
-		t.Fatalf("want exactly the operating principle %q, got %v", config.OperatingPrinciple, got)
+	if len(got) != 2 {
+		t.Fatalf("want the 2 session-tagged docs, got %d: %v", len(got), got)
 	}
-	// None present → nothing injected.
-	if n := len(selectAlwaysDocs([]docindex.Doc{doc("x", alwaysFM)})); n != 0 {
-		t.Fatalf("want 0 when operating principle absent, got %d", n)
+	for _, d := range got {
+		if d.Name == "satelle-agile-increments" {
+			t.Fatalf("on-demand (untagged) principle must not be injected: %v", got)
+		}
+	}
+	// No session-tagged docs → nothing injected.
+	if n := len(selectAlwaysDocs([]docindex.Doc{doc("p", plainFM)})); n != 0 {
+		t.Fatalf("want 0 when no doc carries the session tag, got %d", n)
 	}
 }
 
 func TestRenderAlwaysContent_bodyStrippedPlusInstruction(t *testing.T) {
-	content, truncated := renderAlwaysContent([]docindex.Doc{doc("c", alwaysFM)}, alwaysContextCeiling)
+	content, truncated := renderAlwaysContent([]docindex.Doc{doc("c", sessionFM)}, alwaysContextCeiling)
 	if truncated {
 		t.Fatalf("unexpected truncation")
 	}
-	if strings.Contains(content, "principles:always") {
+	if strings.Contains(content, "principles:session") {
 		t.Fatalf("frontmatter leaked into injected content:\n%s", content)
 	}
 	if !strings.Contains(content, "resident text") {
@@ -74,7 +79,7 @@ func TestRenderAlwaysContent_emptySetStillTeachesIndex(t *testing.T) {
 }
 
 func TestRenderAlwaysContent_ceilingTruncates(t *testing.T) {
-	big := "---\ntags: [principles:always]\n---\n" + strings.Repeat("x", 200)
+	big := "---\ntags: [principles:session]\n---\n" + strings.Repeat("x", 200)
 	docs := []docindex.Doc{doc("a", big), doc("b", big), doc("c", big)}
 	content, truncated := renderAlwaysContent(docs, 250) // fits one, not three
 	if !truncated {

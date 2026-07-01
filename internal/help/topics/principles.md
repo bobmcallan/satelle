@@ -24,22 +24,25 @@ Like every authored kind, principles resolve in two layers:
 List them with `satelle doc list --kind principles`; read one with
 `satelle doc get principles <name>`.
 
-## Residency: one resident principle, the rest on demand
+## Residency: two tiers — session and on-demand
 
-The **resident set is exactly one** principle — the operating principle
-`satelle-agent-goals`. It is injected into the agent's context at the start of
-every session so the agent is driven to the result. Every other principle is
-**resolvable on demand**: the agent pulls it with `satelle doc get principles
-<name>` (or `satelle doc list`) when a task needs it. Keeping the resident set to
-one tight principle protects the context budget and keeps the standing guidance
-sharp.
+Residency has **two tiers**, set by a frontmatter tag:
 
-## How the resident principle reaches the agent (injection)
+- **session** (`principles:session`) — injected into the agent's context at the
+  start of every session so the agent is driven to the result. Kept **minimal** —
+  currently the operating principle `satelle-agent-goals` — to protect the context
+  budget and keep the standing guidance sharp.
+- **on-demand** (the default — no residency tag) — **resolvable when referenced**:
+  the agent pulls it with `satelle doc get principles <name>` when a skill or
+  workflow references it. Not auto-injected. (`satelle doc list` is the
+  quality-management browse surface for authoring, not a step in the work loop.)
+
+## How the session set reaches the agent (injection)
 
 A Claude Code **SessionStart hook** runs `satelle hook context`. It injects the
-operating principle's body and appends the standing instruction to discover the
-rest via `satelle doc list`. It **fails open**: an unconfigured repo or any read
-error injects nothing and never blocks the session.
+body of every `principles:session` doc and appends the standing note that the rest
+is on-demand (pulled via `satelle doc get` when referenced). It **fails open**: an
+unconfigured repo or any read error injects nothing and never blocks the session.
 
 Wire it once, in `.claude/settings.json`:
 
@@ -57,11 +60,11 @@ Run `satelle hook context` by hand to see exactly what a session would receive.
 1. Add a markdown file under `.satelle/principles/<name>.md` (repo) — or, for a
    universal default, under `config/substrate/principles` in the binary.
 2. Give it frontmatter: `name`, `kind: principle`, a `description`, and `tags`.
-   Tag it `principles:always` only if it is short and belongs in every session;
-   otherwise `principles:global`.
+   Tag it `principles:session` only if it is short and belongs in every session;
+   otherwise leave it untagged — on-demand is the default.
 3. Link related principles with `[[other-principle-name]]`.
 4. `satelle index`, then confirm with `satelle doc get principles <name>` (and,
-   for an always-principle, that it appears in `satelle hook context`).
+   for a session principle, that it appears in `satelle hook context`).
 
 ## The order-zero principles
 

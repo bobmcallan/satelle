@@ -22,12 +22,14 @@ import (
 //go:embed substrate
 var substrateFS embed.FS
 
-// OperatingPrinciple is the single always-resident principle — the one tight
-// operating principle injected at session start and into every reviewer's
-// context, so the agent (and the reviewer) is driven to the result. Every other
-// principle is resolvable substrate read on demand, never auto-injected
-// (sty_53a4233c). Its content is overridable by a repo (.satelle/principles),
-// but the resident set is always exactly this one name.
+// OperatingPrinciple is the one tight operating principle — injected at session
+// start (it ships carrying the principles:session residency marker) and
+// guaranteed into every reviewer's context, so the agent (and the reviewer) is
+// driven to the result. Residency is otherwise authored via the principles:session
+// marker (see internal/cli hook + internal/reviewer): a principle is session
+// because it is tagged, or on-demand (the default) because it is not — never
+// auto-injected (sty_53a4233c). Its content is overridable by a repo
+// (.satelle/principles).
 const OperatingPrinciple = "satelle-agent-goals"
 
 // EmbeddedDefault is one canonical default artifact carried in the binary.

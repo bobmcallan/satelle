@@ -2,7 +2,7 @@
 name: satelle-enable-then-operate
 scope: system
 type: principle
-tags: [type:principle, principles:always]
+tags: [type:principle]
 applies_to: ["*"]
 description: satelle has two phases — ENABLE (install + `satelle init` scaffolds one `.satelle/` root into a repo, idempotently) and OPERATE (every command thereafter resolves that root and reads/writes only there). `.satelle/` is the single home for config, authored substrate, the database, the work items, and the evidence ledger; the binary is the load-and-run layer that operates ON that root, never a parallel store. Enabled is a precondition operating commands assume, never a side effect they cause.
 ---

@@ -136,7 +136,7 @@ func runInit(out io.Writer, repoRoot string) error {
 
 	// 3c. Materialise the embedded operating PRINCIPLES into .satelle/principles when
 	//     absent. The runtime index no longer overlays embedded docs (sty_94da9ac9),
-	//     so the principles:always resident + the on-demand operating principles must
+	//     so the principles:session session set + the on-demand principles must
 	//     live on disk to be LISTED (SessionStart injection) and discoverable. The
 	//     baseline WORKFLOW stays embedded-only (Get fallback); only principles seed here.
 	for _, line := range materializePrinciples(dataDir) {
@@ -392,7 +392,7 @@ func ensureReadme(dir, kind string) (bool, error) {
 // Returns report lines.
 // materializePrinciples writes every embedded default PRINCIPLE into
 // .satelle/principles when absent, so the operating principles — including the
-// principles:always resident — live on disk and are LISTED for SessionStart
+// principles:session session set — live on disk and are LISTED for SessionStart
 // injection + doc-list discovery (the runtime index no longer overlays embedded
 // docs, sty_94da9ac9). Embedded principles remain the canonical seed; an existing
 // on-disk file is never clobbered.

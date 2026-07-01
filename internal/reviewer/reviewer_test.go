@@ -96,20 +96,20 @@ func (d fakeDocs) List(_ context.Context, kind string) ([]docindex.Doc, error) {
 const alwaysPrincipleDoc = `---
 name: satelle-test-belief
 kind: principle
-tags: [kind:principle, principles:always]
+tags: [kind:principle, principles:session]
 ---
 # Test belief
 
 This resident belief MUST be visible to every reviewer.`
 
-// secondAlwaysDoc is a SECOND principles:always principle (not the operating one)
-// — proves the reviewer injects the full resident SET, matching SessionStart, not
+// secondAlwaysDoc is a SECOND principles:session principle (not the operating one)
+// — proves the reviewer injects the full session SET, matching SessionStart, not
 // just config.OperatingPrinciple. Its prose deliberately omits the literal tag so
 // the frontmatter-stripped assertion below still holds.
 const secondAlwaysDoc = `---
 name: satelle-second-resident
 type: principle
-tags: [type:principle, principles:always]
+tags: [type:principle, principles:session]
 ---
 # Second belief
 
@@ -124,8 +124,8 @@ func TestReviewerSystemPromptInjectsPrinciplesAndCTA(t *testing.T) {
 		skillBody:  "rubric body",
 		skillFound: true,
 		extraPrinciples: []docindex.Doc{
-			// The full principles:always SET is injected (operating principle + any
-			// other always-tagged principle); a non-tagged principle is not.
+			// The full principles:session SET is injected (operating principle + any
+			// other session-tagged principle); a non-tagged principle is not.
 			{Kind: "principles", Name: config.OperatingPrinciple, Body: alwaysPrincipleDoc},
 			{Kind: "principles", Name: "satelle-second-resident", Body: secondAlwaysDoc},
 			{Kind: "principles", Name: "satelle-not-resident", Body: "---\nname: x\ntype: principle\n---\nnot resident"},
@@ -140,7 +140,7 @@ func TestReviewerSystemPromptInjectsPrinciplesAndCTA(t *testing.T) {
 		t.Errorf("operating always-resident principle not injected:\n%s", sp)
 	}
 	if !strings.Contains(sp, "The full resident SET must be injected") {
-		t.Errorf("the full principles:always SET not injected (second resident missing):\n%s", sp)
+		t.Errorf("the full principles:session SET not injected (second resident missing):\n%s", sp)
 	}
 	if strings.Contains(sp, "not resident") {
 		t.Errorf("a non-resident principle must NOT be injected:\n%s", sp)
@@ -152,7 +152,7 @@ func TestReviewerSystemPromptInjectsPrinciplesAndCTA(t *testing.T) {
 		t.Errorf("the reviewer's own rubric must still ride in the prompt:\n%s", sp)
 	}
 	// Frontmatter of the injected principle must be stripped (no raw tags line).
-	if strings.Contains(sp, "principles:always") {
+	if strings.Contains(sp, "principles:session") {
 		t.Errorf("injected principle frontmatter should be stripped:\n%s", sp)
 	}
 }

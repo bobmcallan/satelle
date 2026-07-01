@@ -9,18 +9,23 @@ import (
 	"testing"
 )
 
-// TestHookContextInjectsOnlyOperatingPrinciple drives the real binary to prove
-// the SessionStart resident set is exactly ONE principle — the operating
-// principle satelle-agent-goals (sty_53a4233c). A project principle tagged
-// principles:always must NOT be auto-injected; it is resolvable on demand only.
-func TestHookContextInjectsOnlyOperatingPrinciple(t *testing.T) {
+// TestHookContextInjectsSessionSet drives the real binary to prove SessionStart
+// residency is TAG-DRIVEN (epic:session-context): a project principle carrying
+// principles:session IS injected, while one WITHOUT the marker is on-demand and is
+// NOT. The operating principle satelle-agent-goals ships session-tagged, so it
+// rides too.
+func TestHookContextInjectsSessionSet(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	// A project principle that, under the OLD tag-based model, would have been
-	// injected. It must now be excluded from the resident set.
-	belief := "---\nname: my-belief\ntype: principle\ntags: [type:principle, principles:always]\n---\n\n# My belief\n\nThis project belief must NOT be auto-injected at session start."
-	if err := os.WriteFile(filepath.Join(repo, ".satelle", "principles", "my-belief.md"), []byte(belief), 0o644); err != nil {
+	// A session-tagged project principle → must be injected.
+	session := "---\nname: my-session-belief\ntype: principle\ntags: [type:principle, principles:session]\n---\n\n# Session belief\n\nThis project belief MUST be auto-injected at session start."
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "principles", "my-session-belief.md"), []byte(session), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// An untagged project principle → on-demand, must NOT be injected.
+	demand := "---\nname: my-demand-belief\ntype: principle\ntags: [type:principle]\n---\n\n# On-demand belief\n\nThis project belief stays on demand, never auto-injected."
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "principles", "my-demand-belief.md"), []byte(demand), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	mustRun(t, testBin, repo, "index", "--validate=false")
@@ -29,7 +34,10 @@ func TestHookContextInjectsOnlyOperatingPrinciple(t *testing.T) {
 	if !strings.Contains(out, "satelle-agent-goals") {
 		t.Errorf("the operating principle satelle-agent-goals must be injected:\n%s", out)
 	}
-	if strings.Contains(out, "my-belief") || strings.Contains(out, "must NOT be auto-injected") {
-		t.Errorf("a non-operating principle was injected into the resident set:\n%s", out)
+	if !strings.Contains(out, "MUST be auto-injected") {
+		t.Errorf("a principles:session project principle must be injected:\n%s", out)
+	}
+	if strings.Contains(out, "my-demand-belief") || strings.Contains(out, "stays on demand") {
+		t.Errorf("an on-demand (untagged) principle must NOT be injected:\n%s", out)
 	}
 }

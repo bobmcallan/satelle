@@ -2,7 +2,7 @@
 name: satelle-reviewer-self-contained
 scope: project
 type: principle
-tags: [type:principle, principles:always]
+tags: [type:principle]
 applies_to: ["*"]
 description: A reviewer is self-contained. Everything it needs — its rubric (LLM judgment) and any functional check (the deterministic command) — lives ENTIRELY within the skill artifact. A reviewer must never depend on an external script, helper file, or sibling artifact. The binary runs the gate from the skill alone, so the gate travels with the skill and cannot silently break when an outside file moves.
 ---
