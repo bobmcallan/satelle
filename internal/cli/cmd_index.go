@@ -48,6 +48,14 @@ for implementation (deduped). The web server runs the same sync continuously
 			} else if idx > 0 || mig > 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "tasks: indexed %d, migrated %d\n", idx, mig)
 			}
+			// Regenerate the read-only OKF backlog reference under .satelle/stories/
+			// from the store (the DB stays the sole story store; this is a disposable
+			// view). Best-effort — a render failure must not fail indexing.
+			if n, serr := verb.SyncStoryBacklog(cmd.Context(), a.Store.Stories, time.Now()); serr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "index: story backlog: %v\n", serr)
+			} else if n > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "stories: backlog reference +%d\n", n)
+			}
 			if !validate {
 				return nil
 			}
