@@ -40,11 +40,17 @@ if ! printf '%s' "$vdiff" | grep -q '^+satelle\.build:'; then
 fi
 ver="$(awk '$1=="satelle.version:"{print $2}' .version)"
 
-# 2. no AI attribution in the commit message. Match ATTRIBUTION patterns (the
-# trailer forms), not the bare word "claude" — a commit about this subsystem may
-# legitimately mention the `claude -p` subprocess in prose (sty_d71b0791).
-if git log -1 --format='%B' | grep -qiE 'co-authored-by:|generated with|noreply@anthropic'; then
-  echo "push-review: commit carries AI attribution (forbidden in this repo)" >&2
+# 2. no AI attribution — detected STRUCTURALLY, not by substring-grepping prose, so
+# a commit that merely DESCRIBES the attribution check (like this skill's own fixes)
+# is not caught (sty_db4f96e9). Co-authors are read from the PARSED trailer block (a
+# mid-prose mention is not a trailer); the tool line is matched by its distinctive
+# full form, which ordinary prose does not reproduce.
+if [ -n "$(git log -1 --format='%(trailers:key=Co-authored-by,valueonly)' | tr -d '[:space:]')" ]; then
+  echo "push-review: commit carries a Co-authored-by trailer (attribution forbidden in this repo)" >&2
+  exit 1
+fi
+if git log -1 --format='%B' | grep -qF 'Generated with [Claude Code](https://claude.com/claude-code)'; then
+  echo "push-review: commit carries a tool-attribution line (forbidden in this repo)" >&2
   exit 1
 fi
 
