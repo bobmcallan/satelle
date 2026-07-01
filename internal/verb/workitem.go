@@ -125,6 +125,11 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 		}
 		appendOpLog(string(kind)+"-create", it.ID,
 			fmt.Sprintf("status: %s; tags: [%s]", it.Status, strings.Join(it.Tags, ",")), now)
+		// A task is authored substrate — materialise its work-definition file (the
+		// source of truth); a no-op for stories (sty_c1f9e74c).
+		if err := writeTaskFile(it); err != nil {
+			return nil, fmt.Errorf("write task file: %w", err)
+		}
 		notifyChange(panelTopic(kind))
 		return json.Marshal(it)
 	}
@@ -329,6 +334,11 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	}
 	if detail != "" {
 		appendOpLog(string(it.Kind)+"-set", it.ID, detail, now)
+	}
+	// Keep the task's work-definition file (the source of truth) current; a no-op
+	// for stories (sty_c1f9e74c).
+	if err := writeTaskFile(it); err != nil {
+		return nil, fmt.Errorf("write task file: %w", err)
 	}
 	notifyChange(panelTopic(it.Kind))
 	return json.Marshal(it)

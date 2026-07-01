@@ -43,6 +43,11 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// The stories dir (<data_dir>/stories) holds per-story ATTACHMENTS only — the
 	// database is the sole story store (the markdown mirror was removed, sty_fa1e02e1).
 	verb.SetStoryDir(filepath.Join(filepath.Dir(a.DBPath), "stories"))
+	// A task, unlike a story, IS authored substrate: its <data_dir>/tasks/tsk_*.md
+	// work-definition file is the source of truth and the store is its index
+	// (sty_c1f9e74c). Wire the dir so create/set materialise the file and `index`
+	// ingests it.
+	verb.SetTaskDir(filepath.Join(filepath.Dir(a.DBPath), "tasks"))
 	// Wire the flat-file operation log (<data_dir>/logs/operations.log): a plain-text
 	// mirror of state-mutating verbs that a read-only reviewer can scan to verify a
 	// DB change the SQLite store hides from it (sty_be257fef).

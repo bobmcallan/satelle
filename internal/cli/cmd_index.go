@@ -40,6 +40,14 @@ for implementation (deduped). The web server runs the same sync continuously
 				return err
 			}
 			_ = printJSON(cmd, resp)
+			// Tasks are authored substrate (sty_c1f9e74c): ingest every .satelle/tasks
+			// work-definition file into the store (the file is the source of truth) and
+			// adopt any legacy DB-only task by writing its file.
+			if idx, mig, terr := verb.SyncTasks(cmd.Context(), a.Store.Stories, time.Now()); terr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "index: task sync: %v\n", terr)
+			} else if idx > 0 || mig > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "tasks: indexed %d, migrated %d\n", idx, mig)
+			}
 			if !validate {
 				return nil
 			}
