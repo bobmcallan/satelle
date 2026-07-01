@@ -59,7 +59,7 @@ func TestGateRetriesTransientReviewerFailure(t *testing.T) {
 	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
 		fmt.Sprintf("[reviewer]\nharness = \"%s {system} {tools} {model}\"\n", verdict))
 
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 
 	// The first reviewer call returns no verdict; the gate must retry and accept.
 	if out, err := run(t, testBin, repo, "story", "create", "--category", "feature",

@@ -35,7 +35,7 @@ func TestInitScaffoldsConstitutionAndInjects(t *testing.T) {
 	}
 
 	// Injected at session start as order-zero context, frontmatter stripped.
-	mustRun(t, testBin, repo, "index", "--validate=false")
+	mustRun(t, testBin, repo, "reindex", "--validate=false")
 	ctx := mustRun(t, testBin, repo, "hook", "context")
 	if !strings.Contains(ctx, "This repo's order-zero rule.") {
 		t.Errorf("constitution not injected into session context:\n%s", ctx)

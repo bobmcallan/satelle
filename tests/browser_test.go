@@ -112,7 +112,7 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "wf-x.md"), []byte(wfBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 	_ = doneID
 
 	ctx := newChrome(t)
@@ -826,7 +826,7 @@ func TestBrowserWorkflowDiagramInteractive(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "wf-int.md"), []byte(wf), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,

@@ -42,7 +42,7 @@ func TestCommitAgentBindingInspectable(t *testing.T) {
 			mustRun(t, testBin, repo, "init")
 			writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"), tc.agents)
 			writeFile(t, filepath.Join(repo, ".satelle", "workflows", "named.md"), namedAgentWF("named"))
-			mustRun(t, testBin, repo, "index")
+			mustRun(t, testBin, repo, "reindex")
 
 			// validate stays green — a named-agent node is valid, and the binary
 			// loads the agents.toml (flat or nested) without error.

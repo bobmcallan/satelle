@@ -69,7 +69,7 @@ func TestEngagementBlockedOnMissingExecutorSkill(t *testing.T) {
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
-	if out, err := run("index"); err != nil {
+	if out, err := run("reindex"); err != nil {
 		t.Fatalf("index: %v\n%s", err, out)
 	}
 

@@ -28,7 +28,7 @@ func TestHookContextInjectsSessionSet(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "principles", "my-demand-belief.md"), []byte(demand), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mustRun(t, testBin, repo, "index", "--validate=false")
+	mustRun(t, testBin, repo, "reindex", "--validate=false")
 
 	out := mustRun(t, testBin, repo, "hook", "context")
 	if !strings.Contains(out, "satelle-agent-goals") {

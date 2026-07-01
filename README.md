@@ -34,7 +34,7 @@ cd your-repo
 satelle init           # scaffold .satelle/ (config, database, authored dirs)
 satelle story create --title "Ship the thing" --priority high
 satelle task create  --title "write release notes"
-satelle index          # index authored markdown under .satelle/
+satelle reindex          # index authored markdown under .satelle/
 satelle status         # config, database, and store counts
 satelle serve          # local web project page (http://127.0.0.1:8787)
 ```

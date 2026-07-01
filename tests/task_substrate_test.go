@@ -52,7 +52,7 @@ func TestTaskFilesAreSourceOfTruth(t *testing.T) {
 	if err := os.Remove(file); err != nil {
 		t.Fatal(err)
 	}
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 	if _, err := os.Stat(file); err != nil {
 		t.Errorf("index should re-adopt a store task lacking a file (legacy-DB migration): %v", err)
 	}
@@ -62,7 +62,7 @@ func TestTaskFilesAreSourceOfTruth(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tasksDir, "tsk_manual01.md"), []byte(manual), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 	list := mustRun(t, testBin, repo, "task", "list")
 	if !strings.Contains(list, "tsk_manual01") || !strings.Contains(list, "Hand authored") {
 		t.Errorf("hand-authored task file was not ingested into the store:\n%s", list)

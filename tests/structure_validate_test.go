@@ -22,7 +22,7 @@ func TestValidateDeterministicStructure(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(skillsDir, "bad-skill.md"), []byte("# bad\n\nno frontmatter here"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mustRun(t, testBin, repo, "index", "--validate=false")
+	mustRun(t, testBin, repo, "reindex", "--validate=false")
 
 	out, err := run(t, testBin, repo, "validate", "skills", "bad-skill")
 	if err == nil {
@@ -37,7 +37,7 @@ func TestValidateDeterministicStructure(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(skillsDir, "good-skill.md"), []byte(good), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mustRun(t, testBin, repo, "index", "--validate=false")
+	mustRun(t, testBin, repo, "reindex", "--validate=false")
 	out = mustRun(t, testBin, repo, "validate", "skills", "good-skill")
 	if !strings.Contains(out, "PASS") {
 		t.Errorf("well-formed skill should PASS validate:\n%s", out)

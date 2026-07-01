@@ -51,7 +51,7 @@ func TestVersionDoesNotCreateDB(t *testing.T) {
 	}
 }
 
-func TestIndexThenStatus(t *testing.T) {
+func TestReindexThenStatus(t *testing.T) {
 	repo := tempRepo(t)
 	docs := filepath.Join(repo, ".satelle", "documents")
 	if err := os.MkdirAll(docs, 0o755); err != nil {
@@ -61,7 +61,7 @@ func TestIndexThenStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := runRoot(t, "index")
+	out, err := runRoot(t, "reindex")
 	if err != nil {
 		t.Fatalf("index: %v\n%s", err, out)
 	}

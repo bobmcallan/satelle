@@ -32,7 +32,7 @@ func TestInitMaterializesBaselineGateSkills(t *testing.T) {
 
 	// The materialised substrate validates clean (the embedded gate skills pass the
 	// deterministic skill structure check).
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 	if out, err := run(t, testBin, repo, "validate", "skills"); err != nil {
 		t.Fatalf("validate skills should pass on a fresh init:\n%s\n%v", out, err)
 	}

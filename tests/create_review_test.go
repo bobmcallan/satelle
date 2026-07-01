@@ -59,7 +59,7 @@ func TestCreateContentReviewGate(t *testing.T) {
 		fmt.Sprintf("[reviewer]\nharness = \"%s {system} {tools} {model}\"\n", verdict))
 
 	setVerdict("reject", "stub: the ACs do not verify the goal")
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 
 	// A structurally-valid draft is now blocked by the content reviewer's reject.
 	out, err := run(t, testBin, repo, "story", "create", "--category", "feature",

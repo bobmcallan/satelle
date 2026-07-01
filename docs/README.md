@@ -38,7 +38,7 @@ working tool until the satelle MVP lands.
   The CLI opens it in-process **only for store-backed commands** (cobra annotation +
   persistent pre/post-run), so `version`/`--help` never create a database. Two commands
   prove the wiring end-to-end: `satelle status` (config + db + store counts) and
-  `satelle index` (one-shot run of the directory monitor). `go test ./...` green;
+  `satelle reindex` (one-shot run of the directory monitor). `go test ./...` green;
   `CGO_ENABLED=0` static build verified.
 - ✅ **Verb/command surface done (build order step 4)** — ported the verb registry
   (`internal/verb`, MCP/auth surface dropped): CLI → `verb.Dispatch` → store, the one seam

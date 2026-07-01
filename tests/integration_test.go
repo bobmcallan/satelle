@@ -129,7 +129,7 @@ func TestDogfoodFlow(t *testing.T) {
 
 	// Index the substrate init materialised (baseline workflow + step skill), as a
 	// real session does at SessionStart, so a later authoring index is incremental.
-	mustRun(t, bin, repo, "index")
+	mustRun(t, bin, repo, "reindex")
 
 	// Create a story and a task.
 	out = mustRun(t, bin, repo, "story", "create", "--title", "Dogfood satelle", "--priority", "high", "--tags", "mvp,core")
@@ -156,7 +156,7 @@ func TestDogfoodFlow(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(docsDir, "onboarding.md"), []byte("# Onboarding\n\nhi"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out = mustRun(t, bin, repo, "index")
+	out = mustRun(t, bin, repo, "reindex")
 	if !strings.Contains(out, `"indexed": 1`) {
 		t.Errorf("index output:\n%s", out)
 	}

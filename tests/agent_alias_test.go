@@ -35,7 +35,7 @@ func TestAgentKeywordParsesEndToEnd(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agent-kw.md"), agentAliasWF("agent-kw"))
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 
 	out, err := run(t, testBin, repo, "validate", "workflows")
 	if err == nil {
@@ -59,7 +59,7 @@ func TestAgentsTomlBootsEndToEnd(t *testing.T) {
 	// binding. With no legacy actors.toml present, a loader that ignored agents.toml
 	// would resolve no binding at all.
 	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"), "[reviewer]\nmodel = \"sonnet\"\n")
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 	out := mustRun(t, testBin, repo, "status")
 	if !strings.Contains(out, "repo root") {
 		t.Errorf("status should boot cleanly with only agents.toml present:\n%s", out)
@@ -89,7 +89,7 @@ func TestValidateRejectsActorKeyword(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "legacy-kw.md"), deprecatedActorWF("legacy-kw"))
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 
 	out, err := run(t, testBin, repo, "validate", "workflows")
 	if err == nil {
@@ -108,7 +108,7 @@ func TestValidateFlagsActorsToml(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 	// init scaffolds agents.toml; drop a legacy actors.toml beside it.
 	writeFile(t, filepath.Join(repo, ".satelle", "actors.toml"), "[reviewer]\nmodel = \"sonnet\"\n")
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 
 	out, err := run(t, testBin, repo, "validate")
 	if err == nil {

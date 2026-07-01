@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// TestStoryBacklogOKFReference drives the real binary to prove `satelle index`
+// TestStoryBacklogOKFReference drives the real binary to prove `satelle reindex`
 // materializes the read-only OKF backlog reference under .satelle/stories/
 // (sty_3c7c043d): open stories become generated concept files + index.md/log.md,
 // and a planted legacy flat mirror leftover is pruned. The DB stays the sole
@@ -29,7 +29,7 @@ func TestStoryBacklogOKFReference(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 
 	// index.md is a backlog reference listing both open stories.
 	idx, err := os.ReadFile(filepath.Join(storiesDir, "index.md"))
