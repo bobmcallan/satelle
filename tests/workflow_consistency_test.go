@@ -22,7 +22,7 @@ func wildcardWF(name string) string {
 }
 
 // TestValidateFlagsWorkflowAmbiguity proves the inconsistency-advice slice
-// (sty_4c0c7246): two REPO wildcard workflows are flagged by `satelle validate`
+// (sty_4c0c7246): two REPO wildcard workflows are flagged by `satelle workflow validate`
 // with an actionable message, and `workflow list` surfaces both candidates for
 // the agent to choose between.
 func TestValidateFlagsWorkflowAmbiguity(t *testing.T) {
@@ -32,7 +32,7 @@ func TestValidateFlagsWorkflowAmbiguity(t *testing.T) {
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-b.md"), wildcardWF("wf-b"))
 	mustRun(t, testBin, repo, "reindex")
 
-	out, err := run(t, testBin, repo, "validate", "workflows")
+	out, err := run(t, testBin, repo, "workflow", "validate")
 	if err == nil {
 		t.Fatalf("validate should fail on two repo workflows tying for the wildcard:\n%s", out)
 	}

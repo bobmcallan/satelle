@@ -19,7 +19,7 @@ func TestValidateFileBasedCatchesMalformed(t *testing.T) {
 	// still catch it because it reads the file.
 	writeFile(t, filepath.Join(repo, ".satelle", "skills", "bad-skill.md"), "# a heading, no frontmatter\n")
 
-	out, err := run(t, testBin, repo, "validate", "skills")
+	out, err := run(t, testBin, repo, "skill", "validate")
 	if err == nil {
 		t.Fatalf("validate should fail on a malformed skill file:\n%s", out)
 	}
@@ -37,7 +37,7 @@ func TestValidateFileBasedCatchesMalformed(t *testing.T) {
 	if err := os.Remove(filepath.Join(repo, ".satelle", "skills", "bad-skill.md")); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := run(t, testBin, repo, "validate", "skills"); err != nil {
+	if out, err := run(t, testBin, repo, "skill", "validate"); err != nil {
 		t.Fatalf("validate should pass once the malformed file is gone: %v\n%s", err, out)
 	}
 }

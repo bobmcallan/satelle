@@ -9,7 +9,7 @@ import (
 
 // AgentsConfigName is the per-repo agents-binding file, beside satelle.toml under
 // the data dir (.satelle/agents.toml). ActorsConfigName is the now-removed legacy
-// filename — it is no longer loaded (sty_7db2ed7d); `satelle validate` flags a repo
+// filename — it is no longer loaded (sty_7db2ed7d); `satelle reindex` warns a repo
 // still carrying it so the rename is enforced rather than silently honoured.
 const (
 	AgentsConfigName = "agents.toml"

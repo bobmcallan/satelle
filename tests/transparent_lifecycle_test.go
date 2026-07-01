@@ -32,7 +32,7 @@ digraph w {
 	}
 	mustRun(t, testBin, repo, "reindex", "--validate=false")
 
-	out := mustRun(t, testBin, repo, "validate", "workflows", "satelle-project-workflow")
+	out := mustRun(t, testBin, repo, "workflow", "validate", "satelle-project-workflow")
 	if !strings.Contains(out, "PASS") || strings.Contains(out, "FAIL") {
 		t.Errorf("a workflow without a done gate + a transparent step node should validate clean:\n%s", out)
 	}

@@ -43,7 +43,7 @@ fixed once it begins (deterministic after create).
 
 ## Avoiding misconfiguration
 
-Flexibility is not a licence to over-configure. `satelle validate` flags
+Flexibility is not a licence to over-configure. `satelle workflow validate` flags
 inconsistencies the operator should fix, and the agent should advise on them:
 
 - **Ambiguous `applies_to`** — two repo workflows that claim the same category (or
@@ -51,4 +51,4 @@ inconsistencies the operator should fix, and the agent should advise on them:
 - **An unresolved reviewer skill** — a workflow names a gate (`reviewer_skill=` or
   an `@skill:` node) that does not resolve in the substrate.
 
-Run `satelle validate workflows` to surface these before they bite.
+Run `satelle workflow validate` to surface these before they bite.

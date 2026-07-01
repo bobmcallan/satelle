@@ -114,7 +114,7 @@ YAML blocks like guardrails). A DOT workflow is returned unchanged — the conve
 idempotent.
 
 **Validation.** `wfdot.Validate` is a deterministic graph check (run by
-`satelle validate` on DOT workflows): states present, no dangling edge endpoints, a
+`satelle workflow validate` on DOT workflows): states present, no dangling edge endpoints, a
 terminal exists, `done` is terminal, and every path into `done` carries the mandatory
 **spine gate** `satelle-story-done-review` — a custom workflow cannot drop the close
 gate. The structure reviewer (`satelle-workflow-review`) accepts either grammar.

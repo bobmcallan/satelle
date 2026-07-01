@@ -37,7 +37,7 @@ func TestEmbeddedSubstrateTagsAreOKF(t *testing.T) {
 // TestEmbeddedSubstrateStructure runs the deterministic structure check on every
 // embedded substrate doc — the canonical defaults that ship in the binary must be
 // OKF/structure-conformant (sty_31069c05). This also covers the embedded layer
-// that the file-based `satelle validate` (which walks .satelle/) does not see.
+// that the file-based per-noun validators (which walk .satelle/) does not see.
 func TestEmbeddedSubstrateStructure(t *testing.T) {
 	err := fs.WalkDir(substrateFS, "substrate", func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil || d.IsDir() || !strings.HasSuffix(p, ".md") {

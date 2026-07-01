@@ -46,7 +46,7 @@ func TestCommitAgentBindingInspectable(t *testing.T) {
 
 			// validate stays green — a named-agent node is valid, and the binary
 			// loads the agents.toml (flat or nested) without error.
-			if out, err := run(t, testBin, repo, "validate", "workflows", "named"); err != nil {
+			if out, err := run(t, testBin, repo, "workflow", "validate", "named"); err != nil {
 				t.Fatalf("validate should pass for a named-agent workflow:\n%s\n%v", out, err)
 			}
 

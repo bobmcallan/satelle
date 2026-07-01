@@ -29,12 +29,12 @@ ordinary markdown — a workflow's body carries its DOT graph, a skill's its rub
 
 ## Validation is deterministic code
 
-`satelle validate` (and the reindex pass) check each doc with a **deterministic
+The per-noun `satelle <noun> validate` (and the reindex pass) check each doc with a **deterministic
 structure check** (`internal/structure`) — frontmatter keys, kebab name matching
 the file, a usable definition, a non-stub body, and for a workflow the graph
 (connected, terminal `done`, `backlog` start, resolvable executor skills). These
 are CODE, not LLM rubrics: harness-independent and never flaky. A swapped agent
-(claude, codex, …) cannot change what "valid" means. `satelle validate` needs no
+(claude, codex, …) cannot change what "valid" means. `satelle <noun> validate` needs no
 agent CLI.
 
 `satelle-repo-agnostic` (only satelle's OWN embedded `scope: system` substrate

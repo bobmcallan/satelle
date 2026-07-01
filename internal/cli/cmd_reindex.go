@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/app"
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/structure"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -56,6 +59,13 @@ the same sync continuously (without validation, to keep the poll loop cheap).`,
 				fmt.Fprintf(cmd.ErrOrStderr(), "reindex: story backlog: %v\n", serr)
 			} else if n > 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "stories: backlog reference +%d\n", n)
+			}
+			// Repo-health warning (sty_7db2ed7d): the legacy actors.toml filename is no
+			// longer loaded, so a repo still carrying it is silently on defaults. Warn
+			// on reindex (a pass-through — it does not fail).
+			if _, statErr := os.Stat(filepath.Join(filepath.Dir(a.DBPath), config.ActorsConfigName)); statErr == nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "reindex: WARN deprecated %s/%s — rename it to %s (the legacy filename is no longer loaded)\n",
+					config.DefaultDataDir, config.ActorsConfigName, config.AgentsConfigName)
 			}
 			if !validate {
 				return nil
@@ -135,8 +145,8 @@ func fileSystemStory(ctx context.Context, a *app.App, ch docindex.DocRef, notes 
 	body := fmt.Sprintf("The authored %s `%s` was indexed but failed its deterministic structure check. "+
 		"Bring it into conformance, then re-index.\n\nProblems:\n%s",
 		strings.TrimSuffix(ch.Kind, "s"), ch.Name, notes)
-	ac := fmt.Sprintf("1. %s/%s passes `satelle validate %s %s`.\n2. The reviewer notes above are resolved.",
-		ch.Kind, ch.Name, ch.Kind, ch.Name)
+	ac := fmt.Sprintf("1. %s/%s passes `satelle %s validate %s`.\n2. The reviewer notes above are resolved.",
+		ch.Kind, ch.Name, strings.TrimSuffix(ch.Kind, "s"), ch.Name)
 	it, err := a.Store.Stories.Create(ctx, workitem.CreateInput{
 		Kind: workitem.KindStory, Title: title, Body: body, AcceptanceCriteria: ac,
 		Category: "system", Priority: "high",

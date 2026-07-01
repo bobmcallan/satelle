@@ -13,7 +13,7 @@ import (
 // creating a task writes its .satelle/tasks/tsk_<id>.md work-definition file; a
 // store task whose file was removed is re-adopted on `index` (the migration path
 // for legacy DB-only tasks); a hand-authored task file is ingested into the store
-// by `index` (the FILE is the source of truth); and `satelle validate` covers the
+// by `reindex` (the FILE is the source of truth); and `satelle task validate` covers the
 // task files. This is NOT the removed story DB->disk mirror (sty_fa1e02e1) — there
 // the DB was primary; here the file is primary.
 func TestTaskFilesAreSourceOfTruth(t *testing.T) {
@@ -68,9 +68,9 @@ func TestTaskFilesAreSourceOfTruth(t *testing.T) {
 		t.Errorf("hand-authored task file was not ingested into the store:\n%s", list)
 	}
 
-	// 4. `satelle validate` covers the task files.
-	vout := mustRun(t, testBin, repo, "validate")
+	// 4. `satelle task validate` covers the task files.
+	vout := mustRun(t, testBin, repo, "task", "validate")
 	if !strings.Contains(vout, "tasks/tsk_manual01") {
-		t.Errorf("satelle validate did not cover the task file:\n%s", vout)
+		t.Errorf("satelle task validate did not cover the task file:\n%s", vout)
 	}
 }
