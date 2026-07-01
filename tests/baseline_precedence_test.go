@@ -32,7 +32,7 @@ func wfList(t *testing.T, repo, category string) []wfListRow {
 func TestEmbeddedBaselinePrecedence(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 
 	// (a) Embedded baseline is the active default of an unconfigured repo.
 	var sawBaseline bool
@@ -57,7 +57,7 @@ func TestEmbeddedBaselinePrecedence(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "satelle-project-workflow.md"), string(wf))
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 	rows := wfList(t, repo, "feature")
 	if len(rows) == 0 || rows[0].Name != "satelle-project-workflow" || !rows[0].Active {
 		t.Errorf("a repo wildcard workflow must beat the embedded baseline, got %+v", rows)

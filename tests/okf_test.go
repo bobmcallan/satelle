@@ -11,7 +11,7 @@ import (
 
 // TestOKFDocumentsNormalizedOnIndex drives the real binary: a frontmatter-less
 // concept document dropped into .satelle/documents is normalised to OKF
-// frontmatter at `satelle index`, and a bundle-root index.md (progressive
+// frontmatter at `satelle reindex`, and a bundle-root index.md (progressive
 // disclosure, okf_version) is generated — the end-to-end OKF conformance path.
 func TestOKFDocumentsNormalizedOnIndex(t *testing.T) {
 	repo := t.TempDir()
@@ -24,7 +24,7 @@ func TestOKFDocumentsNormalizedOnIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 
 	// The concept file is rewritten in place with OKF frontmatter (required type
 	// plus the recommended fields).
@@ -54,7 +54,7 @@ func TestOKFDocumentsNormalizedOnIndex(t *testing.T) {
 
 	// Re-indexing converges: index.md is reserved and the now-conformant concept
 	// is left untouched (no churn, no second rewrite of content).
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 	got2, _ := os.ReadFile(filepath.Join(docsDir, "demo.md"))
 	if string(got2) != string(got) {
 		t.Errorf("re-index changed an already-conformant doc:\n%s", got2)

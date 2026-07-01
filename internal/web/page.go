@@ -225,13 +225,13 @@ const templatesSrc = `
   <div class="name">{{.Name}}</div>
   {{if .Headline}}<div class="head">{{.Headline}}</div>{{end}}
   {{if not .ModTime.IsZero}}<div class="updated">updated {{ftime .ModTime}}</div>{{end}}
-</a>{{end}}</div>{{else}}<div class="empty">none indexed — run <code>satelle index</code></div>{{end}}{{end}}{{end}}
+</a>{{end}}</div>{{else}}<div class="empty">none indexed — run <code>satelle reindex</code></div>{{end}}{{end}}{{end}}
 
 {{define "workflowRows"}}{{range .}}<tr class="row" tabindex="0" role="button" aria-expanded="false" data-search="{{printf "%s %s %s %s" .Name .Headline .Scope (join .AppliesTo " ") | lower}}" data-expand-url="fragment/workflow/{{.Name}}">
   <td><div class="wi-title">{{.Name}}</div><div class="wi-tags">{{if .Scope}}{{tagchip (printf "scope:%s" .Scope)}}{{end}}{{range .AppliesTo}}{{tagchip (printf "applies_to:%s" .)}}{{end}}</div></td>
   <td>{{.Headline}}</td>
   <td class="updated">{{ftime .Updated}}</td>
-</tr>{{else}}<tr><td colspan="3" class="empty">none indexed — run <code>satelle index</code></td></tr>{{end}}{{end}}
+</tr>{{else}}<tr><td colspan="3" class="empty">none indexed — run <code>satelle reindex</code></td></tr>{{end}}{{end}}
 
 {{define "workflowDetail"}}<div class="expbody">
   <h4>{{.Name}}</h4>

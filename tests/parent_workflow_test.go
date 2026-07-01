@@ -44,7 +44,7 @@ func TestParentWorkflowSelectedAndValid(t *testing.T) {
 		return string(out), err
 	}
 
-	if out, err := run("index"); err != nil {
+	if out, err := run("reindex"); err != nil {
 		t.Fatalf("index: %v\n%s", err, out)
 	}
 

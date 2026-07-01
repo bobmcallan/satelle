@@ -30,7 +30,7 @@ func TestValidateFlagsWorkflowAmbiguity(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-a.md"), wildcardWF("wf-a"))
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-b.md"), wildcardWF("wf-b"))
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 
 	out, err := run(t, testBin, repo, "validate", "workflows")
 	if err == nil {

@@ -30,7 +30,7 @@ digraph w {
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "satelle-project-workflow.md"), []byte(wf), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mustRun(t, testBin, repo, "index", "--validate=false")
+	mustRun(t, testBin, repo, "reindex", "--validate=false")
 
 	out := mustRun(t, testBin, repo, "validate", "workflows", "satelle-project-workflow")
 	if !strings.Contains(out, "PASS") || strings.Contains(out, "FAIL") {

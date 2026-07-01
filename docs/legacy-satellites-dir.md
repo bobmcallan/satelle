@@ -22,7 +22,7 @@ the backlog, before realising satelle uses its own `./satelle` binary and
   trigger. The binary creates `./.satellites/` on use.
 - **satelle automation — ruled out.** No satelle code, hook, or skill shells out
   to the legacy `satellites` CLI. The `.claude/settings.json` hooks all invoke
-  `satelle` (`satelle index`, `satelle hook context|gate|commitgate`). A
+  `satelle` (`satelle reindex`, `satelle hook context|gate|commitgate`). A
   word-boundary grep across the repo (`*.go|*.sh|*.md|*.toml|*.json|*.yml`) finds
   only **documentation** references to `satellites` (the rebrand/porting history)
   — none invoke the binary.

@@ -19,14 +19,15 @@ import (
 func init() {
 	var validate bool
 	cmd := &cobra.Command{
-		Use:   "index",
-		Short: "Sync authored markdown (documents, workflows, principles, skills) into the index",
-		Long: `index runs the directory monitor once: it walks the configured authored
-dirs, (re)indexes changed markdown files, and prunes entries whose files were
-removed. It is a PASS-THROUGH — it never blocks indexing; instead, each changed
-authored doc that fails its structure reviewer is filed as a type:system story
-for implementation (deduped). The web server runs the same sync continuously
-(without validation, to keep the poll loop cheap).`,
+		Use:   "reindex",
+		Short: "Normalize authored markdown to OKF and sync it into the index; regenerate the read-only views",
+		Long: `reindex runs the directory monitor once: it walks the configured authored
+dirs, (re)indexes changed markdown files, prunes entries whose files were
+removed, ingests tasks, and regenerates the read-only OKF views (the stories
+backlog, the summary sub-bundle). It is a PASS-THROUGH — it never blocks
+indexing; instead, each changed authored doc that fails its structure reviewer is
+filed as a type:system story for implementation (deduped). The web server runs
+the same sync continuously (without validation, to keep the poll loop cheap).`,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := appFrom(cmd)
@@ -44,7 +45,7 @@ for implementation (deduped). The web server runs the same sync continuously
 			// work-definition file into the store (the file is the source of truth) and
 			// adopt any legacy DB-only task by writing its file.
 			if idx, mig, terr := verb.SyncTasks(cmd.Context(), a.Store.Stories, time.Now()); terr != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "index: task sync: %v\n", terr)
+				fmt.Fprintf(cmd.ErrOrStderr(), "reindex: task sync: %v\n", terr)
 			} else if idx > 0 || mig > 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "tasks: indexed %d, migrated %d\n", idx, mig)
 			}
@@ -52,7 +53,7 @@ for implementation (deduped). The web server runs the same sync continuously
 			// from the store (the DB stays the sole story store; this is a disposable
 			// view). Best-effort — a render failure must not fail indexing.
 			if n, serr := verb.SyncStoryBacklog(cmd.Context(), a.Store.Stories, time.Now()); serr != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "index: story backlog: %v\n", serr)
+				fmt.Fprintf(cmd.ErrOrStderr(), "reindex: story backlog: %v\n", serr)
 			} else if n > 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "stories: backlog reference +%d\n", n)
 			}

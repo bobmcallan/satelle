@@ -198,7 +198,7 @@ const claudeHookSettings = `{
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "satelle index" },
+          { "type": "command", "command": "satelle reindex" },
           { "type": "command", "command": "satelle hook context" }
         ]
       }

@@ -37,6 +37,6 @@ func TestReviewerModelActorsBoots(t *testing.T) {
 	// The binary opens the store (applyAgentGrants resolves the [reviewer] binding,
 	// SetReviewerModel("sonnet")) on every command — these must succeed with the
 	// activated config present.
-	mustRun(t, bin, repo, "index")
+	mustRun(t, bin, repo, "reindex")
 	mustRun(t, bin, repo, "status")
 }

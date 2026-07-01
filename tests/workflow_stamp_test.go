@@ -23,7 +23,7 @@ func TestWorkflowStampedAtCreate(t *testing.T) {
 	}
 	wfBody := strings.Replace(string(wf), `applies_to: ["*"]`, `applies_to: ["feature"]`, 1)
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "satelle-project-workflow.md"), wfBody)
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 
 	out := mustRun(t, testBin, repo, "story", "create", "--category", "feature",
 		"--title", "Stamp me", "--body", "Record the governing workflow on creation", "--acceptance", "1. it is stamped")
@@ -83,7 +83,7 @@ func TestStampedWorkflowGovernsGating(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-x.md"), wfXFeature)
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-y.md"), wfYChore)
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 
 	create := func(category string) string {
 		out := mustRun(t, testBin, repo, "story", "create", "--category", category,

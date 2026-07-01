@@ -18,7 +18,7 @@ Like every authored kind, principles resolve in two layers:
   under `.satelle/principles`.
 - **Repo (layered, under `.satelle/principles/`)** — a repo's own principles. A
   repo file with the same name **overrides** the embedded default; a new name
-  **adds** to the set. The directory monitor (`satelle index`) syncs them into
+  **adds** to the set. The directory monitor (`satelle reindex`) syncs them into
   the doc index.
 
 List them with `satelle doc list --kind principles`; read one with
@@ -48,7 +48,7 @@ Wire it once, in `.claude/settings.json`:
 
 ```json
 { "hooks": { "SessionStart": [ { "hooks": [
-  { "type": "command", "command": "satelle index" },
+  { "type": "command", "command": "satelle reindex" },
   { "type": "command", "command": "satelle hook context" }
 ] } ] } }
 ```
@@ -63,7 +63,7 @@ Run `satelle hook context` by hand to see exactly what a session would receive.
    Tag it `principles:session` only if it is short and belongs in every session;
    otherwise leave it untagged — on-demand is the default.
 3. Link related principles with `[[other-principle-name]]`.
-4. `satelle index`, then confirm with `satelle doc get principles <name>` (and,
+4. `satelle reindex`, then confirm with `satelle doc get principles <name>` (and,
    for a session principle, that it appears in `satelle hook context`).
 
 ## The order-zero context

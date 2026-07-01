@@ -11,7 +11,7 @@ import (
 
 // TestSummaryBundleMigratesAndDeclutters drives the real binary to prove the
 // per-story implementation summaries are organised into their OKF sub-bundle and
-// no longer flood the root documents list (sty_13388123): `satelle index`
+// no longer flood the root documents list (sty_13388123): `satelle reindex`
 // migrates top-level commit-summary-*.md into
 // documents/story-implementation-summary/ (its own index.md/log.md), and
 // `satelle doc list documents` no longer lists them individually while the
@@ -27,7 +27,7 @@ func TestSummaryBundleMigratesAndDeclutters(t *testing.T) {
 	writeFile(t, filepath.Join(docs, "commit-summary-sty_bbb.md"), "# Push summary sty_bbb\n\n- y\n")
 	writeFile(t, filepath.Join(docs, "real-note.md"), "---\ntype: document\n---\n\n# Real note\n")
 
-	mustRun(t, testBin, repo, "index")
+	mustRun(t, testBin, repo, "reindex")
 
 	sub := filepath.Join(docs, "story-implementation-summary")
 	for _, n := range []string{"commit-summary-sty_aaa.md", "commit-summary-sty_bbb.md"} {
