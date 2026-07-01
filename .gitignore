@@ -39,6 +39,10 @@
 # reviewer writes are generated and read locally per story; they are review
 # artifacts, not version-controlled.
 .satelle/documents/commit-summary-*.md
+# The per-story implementation summaries live in an OKF sub-bundle (sty_13388123);
+# the whole sub-bundle (generated summaries + its regenerated index.md/log.md) is
+# local evidence, like the root commit-summaries above.
+.satelle/documents/story-implementation-summary/
 # OKF bundle-root index / changelog — regenerated locally from the documents
 # (which here are the ignored commit summaries), so they are local artifacts too.
 .satelle/documents/index.md
