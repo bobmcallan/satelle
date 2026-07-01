@@ -53,7 +53,7 @@ func TestSelectAlwaysDocs_byResidencyTag(t *testing.T) {
 }
 
 func TestRenderAlwaysContent_bodyStrippedPlusInstruction(t *testing.T) {
-	content, truncated := renderAlwaysContent([]docindex.Doc{doc("c", sessionFM)}, alwaysContextCeiling)
+	content, truncated := renderAlwaysContent("", []docindex.Doc{doc("c", sessionFM)}, alwaysContextCeiling)
 	if truncated {
 		t.Fatalf("unexpected truncation")
 	}
@@ -69,7 +69,7 @@ func TestRenderAlwaysContent_bodyStrippedPlusInstruction(t *testing.T) {
 }
 
 func TestRenderAlwaysContent_emptySetStillTeachesIndex(t *testing.T) {
-	content, _ := renderAlwaysContent(nil, alwaysContextCeiling)
+	content, _ := renderAlwaysContent("", nil, alwaysContextCeiling)
 	if strings.Contains(content, "Always-resident") {
 		t.Fatalf("no header expected with empty set:\n%s", content)
 	}
@@ -78,10 +78,24 @@ func TestRenderAlwaysContent_emptySetStillTeachesIndex(t *testing.T) {
 	}
 }
 
+// The project constitution rides FIRST (order-zero), ahead of the principles.
+func TestRenderAlwaysContent_constitutionFirst(t *testing.T) {
+	content, truncated := renderAlwaysContent("This repo's constitution.", []docindex.Doc{doc("c", sessionFM)}, alwaysContextCeiling)
+	if truncated {
+		t.Fatalf("unexpected truncation")
+	}
+	if !strings.Contains(content, "# Project constitution") || !strings.Contains(content, "This repo's constitution.") {
+		t.Fatalf("constitution not injected:\n%s", content)
+	}
+	if ci, pi := strings.Index(content, "This repo's constitution."), strings.Index(content, "resident text"); ci < 0 || pi < 0 || ci > pi {
+		t.Fatalf("constitution must precede the principles:\n%s", content)
+	}
+}
+
 func TestRenderAlwaysContent_ceilingTruncates(t *testing.T) {
 	big := "---\ntags: [principles:session]\n---\n" + strings.Repeat("x", 200)
 	docs := []docindex.Doc{doc("a", big), doc("b", big), doc("c", big)}
-	content, truncated := renderAlwaysContent(docs, 250) // fits one, not three
+	content, truncated := renderAlwaysContent("", docs, 250) // fits one, not three
 	if !truncated {
 		t.Fatalf("expected truncation under a tight ceiling")
 	}

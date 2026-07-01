@@ -1,10 +1,7 @@
 ---
-name: satelle-constitution
-scope: project
-type: principle
-tags: [type:principle, area:substrate]
-applies_to: ["*"]
-description: The project constitution — the local/repo definition the agent reads as order-zero context. satelle is a HARNESS that runs this repo's process as configuration; it ships no process of its own as code. Process, gates, workflows, and opinions are authored substrate (documents, principles, skills, workflow config) the operator edits without a binary release — never Go branches. The binary holds MECHANISM only.
+type: constitution
+title: Project constitution
+description: The project constitution — the local/repo definition the agent reads as order-zero context, injected every session. satelle is a HARNESS that runs this repo's process as configuration; it ships no process of its own as code. Process, gates, workflows, and opinions are authored substrate (documents, principles, skills, workflow config) the operator edits without a binary release — never Go branches. The binary holds MECHANISM only.
 ---
 
 # satelle constitution

@@ -108,6 +108,22 @@ func runInit(out io.Writer, repoRoot string) error {
 		return fmt.Errorf("init: stat %s: %w", agentsPath, statErr)
 	}
 
+	// 2c. constitution.md — the project constitution injected every session as
+	//     order-zero context (epic:session-context). Created only if absent; a repo
+	//     authors its own, and re-init never clobbers it.
+	constitutionPath := filepath.Join(dataDir, config.DefaultConstitutionName)
+	switch _, statErr := os.Stat(constitutionPath); {
+	case statErr == nil:
+		fmt.Fprintln(out, initLine(false, config.DefaultDataDir+"/"+config.DefaultConstitutionName))
+	case os.IsNotExist(statErr):
+		if werr := os.WriteFile(constitutionPath, []byte(scaffoldConstitution), 0o644); werr != nil {
+			return fmt.Errorf("init: write %s: %w", constitutionPath, werr)
+		}
+		fmt.Fprintln(out, initLine(true, config.DefaultDataDir+"/"+config.DefaultConstitutionName))
+	default:
+		return fmt.Errorf("init: stat %s: %w", constitutionPath, statErr)
+	}
+
 	// 3. Authored-markdown dirs — create each with a tiny README.md describing
 	//    what it should contain (the README is also the tracked keep-file). The
 	//    per-story markdown mirror was removed (sty_fa1e02e1) and story attachments
@@ -304,6 +320,28 @@ const scaffoldAgentsToml = `# agents.toml — the agents layer: how each agent r
 # [commit-agent]
 # harness = "claude -p --append-system-prompt {system} --allowedTools {tools}"
 # tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*)"
+`
+
+// scaffoldConstitution is the project-constitution template a fresh init writes to
+// .satelle/constitution.md — the order-zero doc injected into every session
+// (epic:session-context). It is a starting point the operator rewrites for THIS
+// repo; kept short so the session budget stays lean. Re-init never clobbers it.
+const scaffoldConstitution = `---
+type: constitution
+title: Project constitution
+description: The local/repo definition the agent reads as order-zero context, injected every session. Rewrite this for your repo.
+---
+
+# Project constitution
+
+<!-- This is your repo's order-zero context — injected into every session. Keep it
+short and high-signal: what an agent must know to work in THIS repo. Replace this
+placeholder. -->
+
+- **What this repo is:** …
+- **Ground rules:** …
+- **Where the process lives:** authored substrate under ` + "`.satelle/`" + ` (workflows,
+  principles, skills) — edited without a binary release.
 `
 
 // gitignoreMarker opens the managed block ensureGitignore maintains. Its

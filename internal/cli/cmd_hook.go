@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -315,7 +316,8 @@ func runHookContext(out, stderr io.Writer) error {
 		return nil // fail open
 	}
 	always := selectAlwaysDocs(docs)
-	content, truncated := renderAlwaysContent(always, alwaysContextCeiling)
+	constitution := readConstitution(a.Config.ResolveConstitution(a.RepoRoot))
+	content, truncated := renderAlwaysContent(constitution, always, alwaysContextCeiling)
 	if truncated {
 		fmt.Fprintf(stderr,
 			"satelle hook context: always-content exceeded %d bytes and was truncated — trim an always-tagged doc or drop its %s tag\n",
@@ -344,15 +346,26 @@ func selectAlwaysDocs(docs []docindex.Doc) []docindex.Doc {
 }
 
 // renderAlwaysContent assembles the bounded injection body + the standing index
-// instruction. Each doc's frontmatter is stripped; docs are added whole until
-// the next would breach the ceiling, at which point truncated=true and the rest
-// are dropped (reported by the caller on stderr). The instruction is always
-// present, even with no always-docs, so the pull-the-index discipline is taught
-// from day one.
-func renderAlwaysContent(docs []docindex.Doc, ceiling int) (string, bool) {
-	var parts []string
+// instruction. The project constitution (when present) rides FIRST as order-zero
+// context, then the session-resident principles. Each doc's frontmatter is
+// stripped; content is added whole until the next block would breach the ceiling,
+// at which point truncated=true and the rest are dropped (reported by the caller
+// on stderr). The instruction is always present, even with no session content, so
+// the pull-on-reference discipline is taught from day one.
+func renderAlwaysContent(constitution string, docs []docindex.Doc, ceiling int) (string, bool) {
+	var b strings.Builder
 	truncated := false
 	used := 0
+	// Order-zero: the project constitution — the repo's definition — rides first.
+	if constitution != "" {
+		part := "# Project constitution\n\n" + constitution
+		b.WriteString(part + "\n\n")
+		used += len(part)
+		if used > ceiling {
+			truncated = true // the constitution alone rides, but flag it
+		}
+	}
+	var parts []string
 	for _, d := range docs {
 		body := strings.TrimSpace(stripFrontmatter(d.Body))
 		if body == "" {
@@ -369,7 +382,6 @@ func renderAlwaysContent(docs []docindex.Doc, ceiling int) (string, bool) {
 			truncated = true // a single oversized doc still rides, but flag it
 		}
 	}
-	var b strings.Builder
 	if len(parts) > 0 {
 		b.WriteString("# Always-resident principles (satelle)\n\n")
 		b.WriteString(strings.Join(parts, "\n\n"))
@@ -377,6 +389,18 @@ func renderAlwaysContent(docs []docindex.Doc, ceiling int) (string, bool) {
 	}
 	b.WriteString(alwaysIndexInstruction)
 	return b.String(), truncated
+}
+
+// readConstitution returns the project constitution body (frontmatter stripped),
+// or "" when absent or unreadable — the order-zero session context injected every
+// session (epic:session-context). Fails open: a missing constitution injects
+// nothing and never blocks the session.
+func readConstitution(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(stripFrontmatter(string(b)))
 }
 
 // docHasTag reports whether the markdown's frontmatter `tags:` includes tag.

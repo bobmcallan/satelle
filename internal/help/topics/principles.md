@@ -66,10 +66,13 @@ Run `satelle hook context` by hand to see exactly what a session would receive.
 4. `satelle index`, then confirm with `satelle doc get principles <name>` (and,
    for a session principle, that it appears in `satelle hook context`).
 
-## The order-zero principles
+## The order-zero context
 
-- **`satelle-constitution`** — satelle is a harness that runs your repo's process
-  as configuration; the binary holds mechanism, the substrate holds behaviour.
+- **The project constitution** — `.satelle/constitution.md` (repo root, NOT a
+  principle): the local/repo definition injected first every session. satelle is a
+  harness that runs your repo's process as configuration; the binary holds
+  mechanism, the substrate holds behaviour. Authored per repo; `satelle init`
+  scaffolds a template.
 - **`satelle-repo-agnostic`** — keep the product separable from the one repo that
   dogfoods it; configuration over code.
 - **`satelle-agent-goals`** — drive a story to its terminal state through every
