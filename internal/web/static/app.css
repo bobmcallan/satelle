@@ -90,6 +90,12 @@ header.app h1 .dot { color: var(--accent); }
 .theme-toggle { float: right; margin-top: 2px; border: 1px solid var(--line); background: none;
   color: var(--ink); width: 30px; height: 30px; border-radius: 8px; font-size: 14px; line-height: 1; cursor: pointer; }
 .theme-toggle:hover { border-color: var(--ink); }
+/* brand-mark: the ◐ halfmoon monogram (the satelle mark, matching satelle.dev),
+   a borderless accent-green link at the header's right that opens the home page in
+   a new tab. Distinct from the boxed theme toggle: no border, brand colour. */
+.brand-mark { float: right; margin-top: 2px; margin-right: 8px; width: 30px; height: 30px;
+  color: var(--accent); font-size: 20px; line-height: 30px; text-align: center; cursor: pointer; }
+.brand-mark:hover { color: var(--ink); }
 /* uptime: a non-pressable status pill aligned with the theme toggle — a green
    border signals the service is up; the border glows while live updates stream. */
 .uptime { float: right; margin-top: 2px; margin-right: 8px; height: 30px;
