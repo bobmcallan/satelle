@@ -1,6 +1,8 @@
 package docindex
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -139,4 +141,109 @@ func TestNormalizeType(t *testing.T) {
 	if _, changed5 := normalizeType("no frontmatter", "skill"); changed5 {
 		t.Errorf("frontmatter-less doc should be unchanged")
 	}
+}
+
+func TestMaterializeOKF_RendersFilesIndexAndLog(t *testing.T) {
+	dir := t.TempDir()
+	ts := time.Date(2026, 7, 1, 9, 30, 0, 0, time.UTC)
+	items := []OKFItem{
+		{Name: "sty_aaa", Type: "story", Title: "Alpha", Description: "first", Body: "# Alpha\n\nbody a", Timestamp: ts},
+		{Name: "sty_bbb", Type: "story", Title: "Beta", Body: "# Beta\n\nbody b", Timestamp: ts.Add(time.Hour)},
+	}
+	if err := MaterializeOKF(dir, "Backlog", items, ts); err != nil {
+		t.Fatal(err)
+	}
+	// per-item files exist, are OKF-conformant, carry the generated marker + banner.
+	for _, it := range items {
+		b, err := os.ReadFile(filepath.Join(dir, it.Name+".md"))
+		if err != nil {
+			t.Fatalf("missing %s.md: %v", it.Name, err)
+		}
+		s := string(b)
+		if err := OKFConformance(it.Name, s); err != nil {
+			t.Errorf("%s not OKF-conformant: %v", it.Name, err)
+		}
+		if !isGenerated(s) {
+			t.Errorf("%s missing generated marker", it.Name)
+		}
+		if !strings.Contains(s, "do not edit") {
+			t.Errorf("%s missing do-not-edit banner", it.Name)
+		}
+		if !strings.Contains(s, "body "+strings.TrimPrefix(it.Name, "sty_")[:1]) {
+			t.Errorf("%s body not preserved:\n%s", it.Name, s)
+		}
+	}
+	// index.md lists both, okf_version + heading.
+	idx, err := os.ReadFile(filepath.Join(dir, "index.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`okf_version: "0.1"`, "# Backlog", "[Alpha](sty_aaa.md)", "[Beta](sty_bbb.md)"} {
+		if !strings.Contains(string(idx), want) {
+			t.Errorf("index.md missing %q:\n%s", want, idx)
+		}
+	}
+	// log.md is a date-grouped changelog.
+	lg, err := os.ReadFile(filepath.Join(dir, "log.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(lg), "## 2026-07-01") || !strings.Contains(string(lg), "sty_bbb.md") {
+		t.Errorf("log.md not a proper changelog:\n%s", lg)
+	}
+}
+
+func TestMaterializeOKF_PrunesStaleGeneratedOnly(t *testing.T) {
+	dir := t.TempDir()
+	ts := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
+	// author a NON-generated file that must survive prune.
+	authored := "---\ntype: document\n---\n\n# keep me"
+	if err := os.WriteFile(filepath.Join(dir, "authored.md"), []byte(authored), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// first pass writes two generated items.
+	first := []OKFItem{
+		{Name: "sty_aaa", Type: "story", Title: "A", Body: "a", Timestamp: ts},
+		{Name: "sty_bbb", Type: "story", Title: "B", Body: "b", Timestamp: ts},
+	}
+	if err := MaterializeOKF(dir, "Backlog", first, ts); err != nil {
+		t.Fatal(err)
+	}
+	// second pass drops sty_bbb — it must be pruned; sty_aaa + authored survive.
+	if err := MaterializeOKF(dir, "Backlog", first[:1], ts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "sty_bbb.md")); !os.IsNotExist(err) {
+		t.Errorf("stale generated sty_bbb.md was not pruned")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "sty_aaa.md")); err != nil {
+		t.Errorf("live sty_aaa.md was wrongly removed")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "authored.md")); err != nil {
+		t.Errorf("authored (non-generated) file was wrongly pruned")
+	}
+}
+
+func TestMaterializeOKF_WriteOnlyOnChange(t *testing.T) {
+	dir := t.TempDir()
+	ts := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
+	items := []OKFItem{{Name: "sty_aaa", Type: "story", Title: "A", Body: "a", Timestamp: ts}}
+	if err := MaterializeOKF(dir, "Backlog", items, ts); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, "sty_aaa.md")
+	fi, _ := os.Stat(p)
+	older := ts.Add(-48 * time.Hour)
+	if err := os.Chtimes(p, older, older); err != nil {
+		t.Fatal(err)
+	}
+	// identical re-materialize must NOT rewrite the unchanged file.
+	if err := MaterializeOKF(dir, "Backlog", items, ts); err != nil {
+		t.Fatal(err)
+	}
+	fi2, _ := os.Stat(p)
+	if !fi2.ModTime().Equal(older) {
+		t.Errorf("unchanged file was rewritten (mtime advanced from set value): %v", fi2.ModTime())
+	}
+	_ = fi
 }

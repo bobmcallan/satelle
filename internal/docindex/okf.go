@@ -377,14 +377,48 @@ func yamlUnquote(v string) string {
 	return v
 }
 
+// okfEntry is one row of a bundle-root index.md: the link target (name), its
+// display title, and an optional one-line description.
+type okfEntry struct{ name, title, desc string }
+
+// renderOKFIndex renders a bundle-root index.md body: the okf_version root plus a
+// progressive-disclosure link list (name-sorted). It is the SINGLE index
+// renderer, shared by the documents index writer and MaterializeOKF, so every
+// OKF folder's index has one format. heading is the "# …" title (e.g. "Documents").
+func renderOKFIndex(heading string, entries []okfEntry) string {
+	sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
+	var b strings.Builder
+	fmt.Fprintf(&b, "---\nokf_version: \"%s\"\n---\n\n# %s\n\n", okfVersion, heading)
+	for _, e := range entries {
+		if e.desc != "" && e.desc != e.title { // omit a description that just echoes the title
+			fmt.Fprintf(&b, "* [%s](%s.md) - %s\n", e.title, e.name, e.desc)
+		} else {
+			fmt.Fprintf(&b, "* [%s](%s.md)\n", e.title, e.name)
+		}
+	}
+	return b.String()
+}
+
+// writeIfChanged writes content to path only when it differs from what is there
+// (so a regenerated file converges and does not churn). It creates the parent
+// directory as needed. Returns whether it wrote.
+func writeIfChanged(path, content string) (bool, error) {
+	if existing, err := os.ReadFile(path); err == nil && string(existing) == content {
+		return false, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false, err
+	}
+	return true, os.WriteFile(path, []byte(content), 0o644)
+}
+
 // writeOKFIndex regenerates the bundle-root index.md for the documents directory
 // from the indexed concept documents — a progressive-disclosure link list with
 // the root declaring okf_version. It is written only when its content changes
 // (so it converges and does not churn the index), and is skipped entirely when
 // there are no concepts and no existing index.
 func (s *Store) writeOKFIndex(dir string, docs []Doc) error {
-	type entry struct{ name, title, desc string }
-	var entries []entry
+	var entries []okfEntry
 	for _, d := range docs {
 		if d.Kind != "documents" || okfReserved(d.Name) {
 			continue
@@ -397,7 +431,7 @@ func (s *Store) writeOKFIndex(dir string, docs []Doc) error {
 		if title == "" {
 			title = d.Name
 		}
-		entries = append(entries, entry{d.Name, title, fmScalar(fm, "description")})
+		entries = append(entries, okfEntry{d.Name, title, fmScalar(fm, "description")})
 	}
 	path := filepath.Join(dir, "index.md")
 	if len(entries) == 0 {
@@ -405,20 +439,170 @@ func (s *Store) writeOKFIndex(dir string, docs []Doc) error {
 			return nil // nothing to list and no stale index to maintain
 		}
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
+	content := renderOKFIndex("Documents", entries)
+	_, err := writeIfChanged(path, content)
+	return err
+}
 
+// okfGeneratedKey is the frontmatter marker every MaterializeOKF-written concept
+// file carries. It flags the file as a regenerated read-only VIEW (the source of
+// truth is the store, not the file) and is what prune targets — so a materialized
+// folder that is also authored (e.g. documents) never has an authored file
+// deleted, only stale generated ones.
+const okfGeneratedKey = "generated"
+const okfGeneratedVal = "satelle" // written as generated: satelle
+
+// OKFItem is one record to materialize into an OKF folder as a read-only concept
+// document. Name is the filename stem; Type is the required OKF type; Body is the
+// markdown body (frontmatter is synthesized around it).
+type OKFItem struct {
+	Name        string
+	Type        string
+	Title       string
+	Description string
+	Body        string
+	Tags        []string
+	Timestamp   time.Time
+}
+
+// renderOKFItem renders one OKFItem to a full concept-document body: synthesized
+// OKF frontmatter (required type, recommended fields, and the generated marker)
+// followed by a "do not edit" banner and the item body.
+func renderOKFItem(it OKFItem) string {
+	desc := it.Description
+	if desc == "" {
+		desc = it.Title
+	}
+	typ := it.Type
+	if typ == "" {
+		typ = "document"
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "---\nokf_version: \"%s\"\n---\n\n# Documents\n\n", okfVersion)
-	for _, e := range entries {
-		if e.desc != "" && e.desc != e.title { // omit a description that just echoes the title
-			fmt.Fprintf(&b, "* [%s](%s.md) - %s\n", e.title, e.name, e.desc)
-		} else {
-			fmt.Fprintf(&b, "* [%s](%s.md)\n", e.title, e.name)
+	b.WriteString("---\n")
+	fmt.Fprintf(&b, "type: %s\n", yamlScalar(typ))
+	fmt.Fprintf(&b, "title: %s\n", yamlScalar(it.Title))
+	fmt.Fprintf(&b, "description: %s\n", yamlScalar(desc))
+	tags := it.Tags
+	if len(tags) == 0 {
+		tags = []string{typ}
+	}
+	b.WriteString("tags:\n")
+	for _, t := range tags {
+		fmt.Fprintf(&b, "- %s\n", yamlScalar(t))
+	}
+	fmt.Fprintf(&b, "timestamp: %s\n", yamlScalar(it.Timestamp.UTC().Format(time.RFC3339)))
+	fmt.Fprintf(&b, "%s: %s\n", okfGeneratedKey, okfGeneratedVal)
+	b.WriteString("---\n\n")
+	b.WriteString("<!-- generated by satelle — do not edit; the store is the source of truth, this file is a regenerated read-only view. -->\n\n")
+	b.WriteString(strings.TrimLeft(it.Body, "\n"))
+	if !strings.HasSuffix(b.String(), "\n") {
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// isGenerated reports whether a file body carries the OKF generated marker (so it
+// is a MaterializeOKF-written view file, safe to prune when its record is gone).
+func isGenerated(body string) bool {
+	fm, _, ok := splitFrontmatter(body)
+	return ok && fmScalar(fm, okfGeneratedKey) != ""
+}
+
+// MaterializeOKF renders items into dir as a read-only OKF reference folder: one
+// <Name>.md per item (via renderOKFItem), plus the reserved index.md (link list)
+// and log.md (date-grouped changelog). It is the SINGLE materialization path for
+// generated OKF surfaces (the story backlog, the summary sub-bundle). It is
+// idempotent — each file is written only when its content changes — and it prunes
+// stale generated files: a *generated* concept file (carrying the marker) whose
+// name is not in items is deleted, while authored files and reserved files are
+// left untouched. heading titles the index (e.g. "Backlog").
+func MaterializeOKF(dir, heading string, items []OKFItem, now time.Time) error {
+	if strings.TrimSpace(dir) == "" {
+		return fmt.Errorf("docindex: MaterializeOKF: empty dir")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	want := make(map[string]struct{}, len(items))
+	var entries []okfEntry
+	for _, it := range items {
+		if it.Name == "" || okfReserved(it.Name) {
+			continue
+		}
+		want[it.Name] = struct{}{}
+		path := filepath.Join(dir, it.Name+".md")
+		if _, err := writeIfChanged(path, renderOKFItem(it)); err != nil {
+			return err
+		}
+		desc := it.Description
+		if desc == "" {
+			desc = it.Title
+		}
+		title := it.Title
+		if title == "" {
+			title = it.Name
+		}
+		entries = append(entries, okfEntry{it.Name, title, desc})
+	}
+
+	// Prune stale generated files (never authored or reserved ones).
+	ents, _ := os.ReadDir(dir)
+	for _, de := range ents {
+		if de.IsDir() || !strings.EqualFold(filepath.Ext(de.Name()), ".md") {
+			continue
+		}
+		name := strings.TrimSuffix(de.Name(), filepath.Ext(de.Name()))
+		if okfReserved(name) {
+			continue
+		}
+		if _, keep := want[name]; keep {
+			continue
+		}
+		p := filepath.Join(dir, de.Name())
+		if body, err := os.ReadFile(p); err == nil && isGenerated(string(body)) {
+			_ = os.Remove(p)
 		}
 	}
-	content := b.String()
-	if existing, err := os.ReadFile(path); err == nil && string(existing) == content {
-		return nil // unchanged
+
+	if _, err := writeIfChanged(filepath.Join(dir, "index.md"), renderOKFIndex(heading, entries)); err != nil {
+		return err
 	}
-	return os.WriteFile(path, []byte(content), 0o644)
+	return okfWriteLog(dir, items)
+}
+
+// okfWriteLog regenerates the reserved log.md — a date-grouped changelog of the
+// materialized items, newest date first, each entry a timestamped bullet. It
+// gives an OKF folder its second reserved file so the bundle is complete.
+func okfWriteLog(dir string, items []OKFItem) error {
+	byDate := map[string][]OKFItem{}
+	var dates []string
+	for _, it := range items {
+		if it.Name == "" || okfReserved(it.Name) {
+			continue
+		}
+		day := it.Timestamp.UTC().Format("2006-01-02")
+		if _, ok := byDate[day]; !ok {
+			dates = append(dates, day)
+		}
+		byDate[day] = append(byDate[day], it)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(dates)))
+	var b strings.Builder
+	b.WriteString("# Log\n\n")
+	for _, day := range dates {
+		day := day
+		list := byDate[day]
+		sort.Slice(list, func(i, j int) bool { return list[i].Timestamp.After(list[j].Timestamp) })
+		fmt.Fprintf(&b, "## %s\n\n", day)
+		for _, it := range list {
+			title := it.Title
+			if title == "" {
+				title = it.Name
+			}
+			fmt.Fprintf(&b, "* %s — [%s](%s.md)\n", it.Timestamp.UTC().Format("15:04"), title, it.Name)
+		}
+		b.WriteString("\n")
+	}
+	_, err := writeIfChanged(filepath.Join(dir, "log.md"), b.String())
+	return err
 }

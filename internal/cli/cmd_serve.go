@@ -87,6 +87,12 @@ to keep the binary current. Press Ctrl-C to stop.`,
 							} else if idx > 0 {
 								fmt.Fprintf(cmd.ErrOrStderr(), "index: tasks +%d\n", idx)
 							}
+							// Keep the read-only OKF backlog reference (.satelle/stories/)
+							// fresh while serving — regenerated from the store, nothing
+							// reads it for decisions. Best-effort.
+							if _, err := verb.SyncStoryBacklog(ctx, a.Store.Stories, time.Now()); err != nil {
+								fmt.Fprintf(cmd.ErrOrStderr(), "index: story backlog: %v\n", err)
+							}
 						}
 					}
 				}()
