@@ -58,6 +58,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 	if gc, gerr := config.LoadGlobal(); gerr == nil {
 		if runner, rerr := agentcli.NewRunner(gc.Agent.ResolveCLI()); rerr == nil {
 			rev := reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, "")
+			rev.SetLogDir(filepath.Join(filepath.Dir(a.DBPath), "logs"))
 			applyAgentGrants(rev, a)
 			rev.SetChildrenResolver(childrenResolver(a))
 			verb.SetTransitionGater(rev)
@@ -111,6 +112,7 @@ func gaterForCmd(cmd *cobra.Command) (*reviewer.Gater, *app.App, error) {
 		return nil, nil, fmt.Errorf("an agent CLI is required: %w", err)
 	}
 	rev := reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, "")
+	rev.SetLogDir(filepath.Join(filepath.Dir(a.DBPath), "logs"))
 	applyAgentGrants(rev, a)
 	return rev, a, nil
 }
