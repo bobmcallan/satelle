@@ -13,8 +13,9 @@ import (
 )
 
 // SyncStoryBacklog regenerates the read-only OKF backlog reference under the
-// stories dir (.satelle/stories): every OPEN (non-terminal) story rendered as a
-// generated concept file plus the reserved index.md/log.md. The SQLite store
+// stories dir (.satelle/stories): every status:backlog story rendered as a
+// generated concept file plus the reserved index.md/log.md. An engaged story
+// (any non-backlog status) is NOT in the folder — the folder is the backlog. The SQLite store
 // stays the SOLE story store (sty_fa1e02e1) — these files are a disposable,
 // gitignored VIEW that no control logic reads (epic/parent close and the gates
 // re-source from the DB); they exist only so the agent can browse the backlog on
@@ -41,21 +42,19 @@ func SyncStoryBacklog(ctx context.Context, store *workitem.Store, now time.Time)
 	return len(items), nil
 }
 
-// storyBacklogItems lists the OPEN backlog (non-terminal stories) and renders
-// each to an OKFItem. done/cancelled stories are excluded — the reference is the
-// live worklist, not the archive.
+// storyBacklogItems lists the BACKLOG (status:backlog only) and renders each to
+// an OKFItem. The folder is the backlog surface, not the worklist: once a story
+// engages (moves to in_progress or any other status) it leaves the folder — the
+// DB stays prime and the reconcile prunes its file.
 func storyBacklogItems(ctx context.Context, store *workitem.Store) ([]docindex.OKFItem, error) {
-	stories, err := store.List(ctx, workitem.ListFilter{Kind: workitem.KindStory, Limit: 2000})
+	stories, err := store.List(ctx, workitem.ListFilter{
+		Kind: workitem.KindStory, Status: workitem.StatusBacklog, Limit: 2000,
+	})
 	if err != nil {
 		return nil, err
 	}
 	var items []docindex.OKFItem
 	for _, s := range stories {
-		// Exclude terminal states — the reference is the live worklist, not the
-		// archive. "cancelled" has no named constant (the status set is open-ended).
-		if s.Status == workitem.StatusDone || s.Status == "cancelled" {
-			continue
-		}
 		items = append(items, storyToOKFItem(s))
 	}
 	return items, nil
