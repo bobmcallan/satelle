@@ -75,7 +75,7 @@ repo it governs.
 | `story` / `task` | `create`, `get`, `list`, `set` |
 | `ledger` | `append`, `list` |
 | `doc` | `list`, `get` |
-| | `init`, `index`, `status`, `serve`, `version` |
+| | `init`, `reindex`, `status`, `serve`, `version` |
 
 Both the CLI and the web server reach data the same way — through one verb
 registry (`CLI / web → verb.Dispatch → store`), so the two surfaces never drift.
