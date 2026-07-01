@@ -10,6 +10,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/oplog"
 	"github.com/bobmcallan/satelle/internal/reviewer"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -51,14 +52,14 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// Wire the flat-file operation log (<data_dir>/logs/operations.log): a plain-text
 	// mirror of state-mutating verbs that a read-only reviewer can scan to verify a
 	// DB change the SQLite store hides from it (sty_be257fef).
-	verb.SetOpLog(oplog.New(filepath.Dir(a.DBPath)))
+	verb.SetOpLog(oplog.New(filepath.Dir(a.DBPath), logRotation(a)))
 	// Wire the isolated reviewer that gates status transitions. The agent CLI is
 	// the install-time choice (global config); the gate is inert until a
 	// workflow names a reviewer skill whose rubric is installed.
 	if gc, gerr := config.LoadGlobal(); gerr == nil {
 		if runner, rerr := agentcli.NewRunner(gc.Agent.ResolveCLI()); rerr == nil {
 			rev := reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, "")
-			rev.SetLogDir(filepath.Join(filepath.Dir(a.DBPath), "logs"))
+			rev.SetLogDir(filepath.Join(filepath.Dir(a.DBPath), "logs"), logRotation(a))
 			applyAgentGrants(rev, a)
 			rev.SetChildrenResolver(childrenResolver(a))
 			verb.SetTransitionGater(rev)
@@ -112,9 +113,19 @@ func gaterForCmd(cmd *cobra.Command) (*reviewer.Gater, *app.App, error) {
 		return nil, nil, fmt.Errorf("an agent CLI is required: %w", err)
 	}
 	rev := reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, "")
-	rev.SetLogDir(filepath.Join(filepath.Dir(a.DBPath), "logs"))
+	rev.SetLogDir(filepath.Join(filepath.Dir(a.DBPath), "logs"), logRotation(a))
 	applyAgentGrants(rev, a)
 	return rev, a, nil
+}
+
+// logRotation builds the shared flat-log rotation config from the repo's resolved
+// satelle.toml (logs_max_size_kb / logs_max_files), used for operations.log and
+// reviewer.log alike (sty_a67e6e8c).
+func logRotation(a *app.App) logfile.Config {
+	return logfile.Config{
+		MaxSizeBytes: a.Config.ResolveLogsMaxSizeBytes(),
+		MaxFiles:     a.Config.ResolveLogsMaxFiles(),
+	}
 }
 
 // childrenResolver lists a parent's child stories (id + status) from the DB, for

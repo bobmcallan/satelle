@@ -252,6 +252,8 @@ const scaffoldToml = `# satelle.toml — per-repo config (committed, secret-free
 # db = ".satelle/satelle.db"     # database path (default: <data_dir>/satelle.db)
 # web_port = 8787                # 'satelle serve' listen port (default)
 # log_level = "info"             # debug | info | warn | error (default info)
+# logs_max_size_kb = 5120        # roll a .satelle/logs file past this size (default 5 MiB)
+# logs_max_files = 7             # keep at most this many rotated log files (default 7)
 
 # [review] — opt into reviewer-gated work (off by default). The reviewer rubrics
 # ship embedded; enabling enforcement is your choice (needs an agent CLI — see

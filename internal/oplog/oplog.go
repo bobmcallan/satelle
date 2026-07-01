@@ -16,9 +16,11 @@
 //     produce churny diffs and merge conflicts. A reviewer runs in the SAME working
 //     tree where the operation happened, so the local file is present for it. The
 //     repo's .gitignore carries `.satelle/logs/`.
-//   - Rotation/size: one line per mutation (tens of bytes), so growth is slow.
-//     A single operations.log with no rotation is enough for the local single-dev
-//     loop; size-based rotation is deferred until a real need appears.
+//   - Rotation/size: bounded via the shared internal/logfile writer — daily
+//     rolling plus a size cap, keeping a configured number of rotations
+//     (satelle.toml logs_max_size_kb / logs_max_files). The ACTIVE file stays
+//     operations.log so a reviewer's grep still finds the current record
+//     (sty_a67e6e8c superseded the earlier "rotation deferred" decision).
 //   - Redaction: only METADATA is logged — timestamp, actor, operation, story id,
 //     and the before/after of scalar/tag fields. Story bodies and acceptance text
 //     are NEVER written, so no large or sensitive content lands in the log.
@@ -29,26 +31,30 @@ package oplog
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/logfile"
 )
 
-// Logger appends operation lines to <dataDir>/logs/operations.log. Best-effort:
-// every write swallows its error (logging must never break a mutation), exactly
-// like the ledger append helper. A nil *Logger is a no-op, so callers need not
-// guard — an unwired log simply records nothing.
+// Logger appends operation lines to <dataDir>/logs/operations.log through the
+// shared rotating writer (internal/logfile). Best-effort: every write swallows
+// its error (logging must never break a mutation), exactly like the ledger append
+// helper. A nil *Logger is a no-op, so callers need not guard — an unwired log
+// simply records nothing.
 type Logger struct {
 	mu   sync.Mutex
 	path string
+	cfg  logfile.Config
 }
 
-// New returns a Logger writing under dataDir/logs/operations.log. dataDir is the
-// repo's .satelle directory (the same dir that holds satelle.db).
-func New(dataDir string) *Logger {
-	return &Logger{path: filepath.Join(dataDir, "logs", "operations.log")}
+// New returns a Logger writing under dataDir/logs/operations.log, rotated per cfg
+// (daily + size cap + retention). dataDir is the repo's .satelle directory (the
+// same dir that holds satelle.db).
+func New(dataDir string, cfg logfile.Config) *Logger {
+	return &Logger{path: filepath.Join(dataDir, "logs", "operations.log"), cfg: cfg}
 }
 
 // Path reports the log file path (used by tests and tooling).
@@ -68,16 +74,9 @@ func (l *Logger) Append(now time.Time, actor, op, storyID, detail string) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(l.path), 0o755); err != nil {
-		return
-	}
-	f, err := os.OpenFile(l.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
 	// Keep each record on ONE line so a reviewer's grep returns whole operations.
 	clean := func(s string) string { return strings.ReplaceAll(s, "\n", " ") }
-	fmt.Fprintf(f, "%s\t%s\t%s\t%s\t%s\n",
+	line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s",
 		now.UTC().Format(time.RFC3339), clean(actor), clean(op), clean(storyID), clean(detail))
+	_ = logfile.Append(now, l.path, l.cfg, line)
 }

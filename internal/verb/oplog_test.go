@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/oplog"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -18,7 +19,7 @@ import (
 func TestOpLogMirrorsMutations(t *testing.T) {
 	wire(t)
 	dir := t.TempDir()
-	verb.SetOpLog(oplog.New(dir))
+	verb.SetOpLog(oplog.New(dir, logfile.Config{}))
 	t.Cleanup(func() { verb.SetOpLog(nil) })
 
 	var it workitem.Item
