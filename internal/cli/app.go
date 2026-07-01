@@ -46,7 +46,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetStoryDir(filepath.Join(filepath.Dir(a.DBPath), "stories"))
 	// A task, unlike a story, IS authored substrate: its <data_dir>/tasks/tsk_*.md
 	// work-definition file is the source of truth and the store is its index
-	// (sty_c1f9e74c). Wire the dir so create/set materialise the file and `index`
+	// (sty_c1f9e74c). Wire the dir so create/set materialise the file and `reindex`
 	// ingests it.
 	verb.SetTaskDir(filepath.Join(filepath.Dir(a.DBPath), "tasks"))
 	// Wire the flat-file operation log (<data_dir>/logs/operations.log): a plain-text
@@ -150,7 +150,7 @@ func childrenResolver(a *app.App) func(ctx context.Context, parentID string) []r
 
 // skillResolver returns a predicate reporting whether a skill name resolves in
 // the substrate (project ∪ embedded), for the deterministic workflow structure
-// check's executor-skill actionability. Used by `satelle validate` and `index`.
+// check's executor-skill actionability. Used by `satelle validate` and `reindex`.
 func skillResolver(a *app.App) func(skill string) bool {
 	return func(skill string) bool {
 		_, err := a.Store.DocIndex.Get(context.Background(), "skills", skill)

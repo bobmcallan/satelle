@@ -96,7 +96,7 @@ func validateChanged(cmd *cobra.Command, a *app.App, changed []docindex.DocRef) 
 		id, filed, ferr := fileSystemStory(ctx, a, ch, notes)
 		switch {
 		case ferr != nil:
-			fmt.Fprintf(cmd.ErrOrStderr(), "index: file story for %s/%s: %v\n", ch.Kind, ch.Name, ferr)
+			fmt.Fprintf(cmd.ErrOrStderr(), "reindex: file story for %s/%s: %v\n", ch.Kind, ch.Name, ferr)
 		case filed:
 			fmt.Fprintf(out, "FAIL  %s/%s — filed %s (type:system): %s\n", ch.Kind, ch.Name, id, notes)
 		default:
