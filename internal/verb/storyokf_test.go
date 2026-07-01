@@ -36,9 +36,19 @@ func TestSyncStoryBacklog(t *testing.T) {
 	if _, err := db.Stories.SetStatus(ctx, doneIt.ID, workitem.StatusDone, now); err != nil {
 		t.Fatal(err)
 	}
+	// an ENGAGED story (in_progress) — the folder is the backlog, so it must be
+	// excluded even though it is non-terminal.
+	engagedIt, _ := db.Stories.Create(ctx, workitem.CreateInput{Kind: workitem.KindStory, Title: "Engaged one"}, now)
+	if _, err := db.Stories.SetStatus(ctx, engagedIt.ID, workitem.StatusInProgress, now); err != nil {
+		t.Fatal(err)
+	}
 
-	// plant a legacy flat mirror leftover + a live attachment subdir.
+	// plant a legacy flat mirror leftover + a stale file for the engaged story +
+	// a live attachment subdir.
 	if err := os.WriteFile(filepath.Join(dir, "sty_deadbeef.md"), []byte("# stale legacy mirror"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, engagedIt.ID+".md"), []byte("# a story that has since engaged"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(dir, open1.ID), 0o755); err != nil {
@@ -53,14 +63,17 @@ func TestSyncStoryBacklog(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n != 2 {
-		t.Errorf("materialized %d stories, want 2 (open only)", n)
+		t.Errorf("materialized %d stories, want 2 (backlog only)", n)
 	}
-	// open stories rendered; done excluded.
+	// backlog stories rendered; done AND engaged (in_progress) excluded.
 	if _, err := os.Stat(filepath.Join(dir, open1.ID+".md")); err != nil {
-		t.Errorf("open story file missing: %v", err)
+		t.Errorf("backlog story file missing: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, doneIt.ID+".md")); !os.IsNotExist(err) {
 		t.Errorf("done story was NOT excluded from the backlog reference")
+	}
+	if _, err := os.Stat(filepath.Join(dir, engagedIt.ID+".md")); !os.IsNotExist(err) {
+		t.Errorf("engaged (in_progress) story was NOT excluded / its stale file not pruned")
 	}
 	// legacy leftover pruned; attachment subdir + its file preserved.
 	if _, err := os.Stat(filepath.Join(dir, "sty_deadbeef.md")); !os.IsNotExist(err) {
