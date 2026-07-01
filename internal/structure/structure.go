@@ -126,6 +126,35 @@ func checkSkill(name, body string) []string {
 	return p
 }
 
+// CheckTask validates a task work-definition FILE (.satelle/tasks/tsk_*.md).
+// Tasks are authored substrate (sty_c1f9e74c) — the file is the source of truth —
+// so, like the other authored kinds, their on-disk form carries a deterministic
+// STRUCTURAL contract: frontmatter with an id, kind: task, and a status, plus a
+// title. The richer work-definition contract (a body declaring the ACTION and how
+// success is VERIFIED) is judged by the validate-before GATE, not this structural
+// check. Exported because tasks are ingested into the workitem store (not the doc
+// index), so `satelle validate` checks them on a dedicated pass rather than Doc().
+func CheckTask(body string) []string {
+	fm, rest, ok := splitFM(body)
+	if !ok {
+		return []string{"missing YAML frontmatter"}
+	}
+	var p []string
+	if fmScalar(fm, "id") == "" {
+		p = append(p, "frontmatter missing id")
+	}
+	if fmScalar(fm, "kind") != "task" {
+		p = append(p, `frontmatter must have "kind: task"`)
+	}
+	if fmScalar(fm, "status") == "" {
+		p = append(p, "frontmatter missing status")
+	}
+	if !strings.Contains(rest, "# ") {
+		p = append(p, "body missing a `# Title` heading")
+	}
+	return p
+}
+
 // checkPrinciple: frontmatter (name == slug, type: principle, description, tags)
 // and a substantive (non-stub) body.
 func checkPrinciple(name, body string) []string {

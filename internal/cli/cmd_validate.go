@@ -126,6 +126,40 @@ optionally a name) to narrow. Exit is non-zero if any doc fails.`,
 				}
 			}
 
+			// Tasks are authored substrate (sty_c1f9e74c) ingested into the workitem
+			// store, not the doc index, so they get their own validation pass over
+			// .satelle/tasks/tsk_*.md.
+			if kindFilter == "" || kindFilter == "tasks" {
+				taskDir := filepath.Join(filepath.Dir(a.DBPath), "tasks")
+				if entries, derr := os.ReadDir(taskDir); derr == nil {
+					for _, e := range entries {
+						fn := e.Name()
+						if e.IsDir() || !strings.HasPrefix(fn, "tsk_") || !strings.HasSuffix(fn, ".md") {
+							continue
+						}
+						name := strings.TrimSuffix(fn, ".md")
+						if nameFilter != "" && nameFilter != name {
+							continue
+						}
+						body, rerr := os.ReadFile(filepath.Join(taskDir, fn))
+						if rerr != nil {
+							failed++
+							fmt.Fprintf(out, "FAIL  tasks/%s — read: %v\n", name, rerr)
+							continue
+						}
+						validated++
+						if problems := structure.CheckTask(string(body)); len(problems) > 0 {
+							for _, p := range problems {
+								failed++
+								fmt.Fprintf(out, "FAIL  tasks/%s — %s\n", name, p)
+							}
+						} else {
+							fmt.Fprintf(out, "PASS  tasks/%s\n", name)
+						}
+					}
+				}
+			}
+
 			fmt.Fprintf(out, "\nvalidated %d, failed %d, exempt %d\n", validated, failed, exempt)
 			if failed > 0 {
 				return fmt.Errorf("%d doc(s) failed structure validation", failed)

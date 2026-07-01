@@ -22,6 +22,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/web"
 )
 
@@ -66,6 +67,28 @@ to keep the binary current. Press Ctrl-C to stop.`,
 								fmt.Fprintf(cmd.ErrOrStderr(), "index: +%d -%d\n", res.Indexed, res.Pruned)
 							}
 						})
+				}()
+				// Tasks are authored substrate but ingested into the workitem store
+				// (not the doc index), so the doc watcher above doesn't cover them —
+				// poll .satelle/tasks/ on the same cadence so a hand-edited or newly
+				// created task file goes live during serve, like the other authored
+				// kinds (sty_c1f9e74c). SyncTasks skips unchanged files, so this is
+				// cheap and does not churn the store.
+				go func() {
+					t := time.NewTicker(2 * time.Second)
+					defer t.Stop()
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case <-t.C:
+							if idx, _, err := verb.SyncTasks(ctx, a.Store.Stories, time.Now()); err != nil {
+								fmt.Fprintf(cmd.ErrOrStderr(), "index: task sync: %v\n", err)
+							} else if idx > 0 {
+								fmt.Fprintf(cmd.ErrOrStderr(), "index: tasks +%d\n", idx)
+							}
+						}
+					}
 				}()
 			}
 

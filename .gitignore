@@ -27,6 +27,10 @@
 # the per-story markdown mirror is regenerated from the local database (the
 # source of truth); the files are portable but not versioned in this repo.
 .satelle/stories/
+# task work-definition files are authored substrate (the file is the source of
+# truth, the DB its index — sty_c1f9e74c) but, like the local database and story
+# state, they are per-repo LOCAL work, not versioned here.
+.satelle/tasks/
 # the flat operation log (a read-only reviewer's read surface) is local evidence
 .satelle/logs/
 # <<< satelle (managed) <<<
