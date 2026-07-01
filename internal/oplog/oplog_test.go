@@ -6,12 +6,16 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/logfile"
 )
 
 func TestAppendWritesReadableLines(t *testing.T) {
 	dir := t.TempDir()
-	l := New(dir)
-	when := time.Date(2026, 6, 30, 10, 0, 0, 0, time.UTC)
+	l := New(dir, logfile.Config{})
+	// Same-day writes must both land in the active file (daily rolling only rolls
+	// across a real day boundary, keyed off the file's modtime).
+	when := time.Now().UTC()
 	l.Append(when, "executor", "story-set", "sty_123", "tags: [a] -> [a,b]")
 	l.Append(when, "executor", "story-create", "sty_456", "status: backlog")
 
@@ -20,7 +24,7 @@ func TestAppendWritesReadableLines(t *testing.T) {
 		t.Fatalf("operation log not written: %v", err)
 	}
 	s := string(b)
-	for _, want := range []string{"sty_123", "story-set", "tags: [a] -> [a,b]", "sty_456", "2026-06-30T10:00:00Z"} {
+	for _, want := range []string{"sty_123", "story-set", "tags: [a] -> [a,b]", "sty_456", when.Format(time.RFC3339)} {
 		if !strings.Contains(s, want) {
 			t.Errorf("log missing %q:\n%s", want, s)
 		}
@@ -32,7 +36,7 @@ func TestAppendWritesReadableLines(t *testing.T) {
 
 func TestAppendNewlineSafe(t *testing.T) {
 	dir := t.TempDir()
-	l := New(dir)
+	l := New(dir, logfile.Config{})
 	// A detail carrying a newline must stay on one line so a grep returns the whole record.
 	l.Append(time.Date(2026, 6, 30, 10, 0, 0, 0, time.UTC), "executor", "story-set", "sty_1", "a\nb")
 	b, _ := os.ReadFile(filepath.Join(dir, "logs", "operations.log"))

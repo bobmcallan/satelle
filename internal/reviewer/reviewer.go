@@ -19,12 +19,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/logfile"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
@@ -94,7 +95,9 @@ type Gater struct {
 	// logDir is <data_dir>/logs — where a transient reviewer failure (the failing
 	// subprocess's own output) is appended to reviewer.log so API contention is
 	// REVIEWABLE, not lost (sty_d71b0791). Empty disables logging (tests/unwired).
+	// logCfg bounds that log's growth (daily + size + retention, sty_a67e6e8c).
 	logDir string
+	logCfg logfile.Config
 }
 
 // New builds a Gater over the agent runner and doc index. model "" inherits the
@@ -125,30 +128,26 @@ func defaultReviewerBackoff(attempt int) time.Duration {
 }
 
 // SetLogDir points the reviewer's transient-failure log at dir (the repo's
-// <data_dir>/logs). When set, each transient reviewer failure — the failing
-// subprocess's own output, e.g. a rate-limit message — is appended to
-// reviewer.log so cross-session API contention is reviewable (sty_d71b0791). An
-// empty dir disables logging.
-func (g *Gater) SetLogDir(dir string) { g.logDir = dir }
+// <data_dir>/logs) and bounds it per cfg. When set, each transient reviewer
+// failure — the failing subprocess's own output, e.g. a rate-limit message — is
+// appended to reviewer.log so cross-session API contention is reviewable
+// (sty_d71b0791), rotated daily + by size (sty_a67e6e8c). An empty dir disables
+// logging.
+func (g *Gater) SetLogDir(dir string, cfg logfile.Config) { g.logDir, g.logCfg = dir, cfg }
 
 // logReviewerFailure appends one transient-failure record (the failing
-// subprocess's output tail and error) to <logDir>/reviewer.log so the actual
-// cause — typically a rate-limited nested agent under concurrent sessions — is
-// surfaced for review. Best-effort: a logging error never affects the gate.
+// subprocess's output tail and error) to <logDir>/reviewer.log via the shared
+// rotating writer, so the actual cause — typically a rate-limited nested agent
+// under concurrent sessions — is surfaced for review. Best-effort: a logging
+// error never affects the gate.
 func (g *Gater) logReviewerFailure(skill string, attempt, attempts int, rerr error, out []byte) {
 	if g.logDir == "" {
 		return
 	}
-	if err := os.MkdirAll(g.logDir, 0o755); err != nil {
-		return
-	}
-	f, err := os.OpenFile(filepath.Join(g.logDir, "reviewer.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
-	}
-	defer func() { _ = f.Close() }()
-	fmt.Fprintf(f, "%s\t%s\tattempt %d/%d\ttransient reviewer failure: %v%s\n",
-		time.Now().UTC().Format(time.RFC3339), skill, attempt, attempts, rerr, outputTail(out))
+	now := time.Now()
+	line := fmt.Sprintf("%s\t%s\tattempt %d/%d\ttransient reviewer failure: %v%s",
+		now.UTC().Format(time.RFC3339), skill, attempt, attempts, rerr, outputTail(out))
+	_ = logfile.Append(now, filepath.Join(g.logDir, "reviewer.log"), g.logCfg, line)
 }
 
 // SetReviewerTools sets the reviewer's tool grant from the agents layer (the

@@ -37,6 +37,11 @@ const (
 	DefaultWebPort = 8787
 	// DefaultLogLevel is arbor's level when log_level is unset.
 	DefaultLogLevel = "info"
+	// DefaultLogsMaxSizeKB caps each flat evidence log (.satelle/logs/*.log) before
+	// it rolls; DefaultLogsMaxFiles bounds how many rotations are kept. Daily
+	// rolling is always on regardless of these (sty_a67e6e8c).
+	DefaultLogsMaxSizeKB = 5120 // 5 MiB
+	DefaultLogsMaxFiles  = 7
 	// ConfigName / LocalConfigName are the committed config and its gitignored
 	// per-user overlay, both under <repo>/.satelle/.
 	ConfigName      = "satelle.toml"
@@ -65,6 +70,11 @@ type Config struct {
 	WebPort int `toml:"web_port"`
 	// LogLevel is arbor's level (debug|info|warn|error); empty means info.
 	LogLevel string `toml:"log_level"`
+	// LogsMaxSizeKB caps each flat evidence log under .satelle/logs before it rolls;
+	// zero means DefaultLogsMaxSizeKB. LogsMaxFiles bounds kept rotations; zero means
+	// DefaultLogsMaxFiles. Daily rolling is always on.
+	LogsMaxSizeKB int `toml:"logs_max_size_kb"`
+	LogsMaxFiles  int `toml:"logs_max_files"`
 	// Review opts this repo into reviewer-gated work. Off by default — the
 	// rubrics ship embedded, but ENFORCEMENT is the operator's choice (the
 	// process is configured, not hardcoded-on).
@@ -125,6 +135,24 @@ func (c Config) ResolveWebPort() int {
 		return c.WebPort
 	}
 	return DefaultWebPort
+}
+
+// ResolveLogsMaxSizeBytes returns the per-file size cap (bytes) for the flat
+// evidence logs under .satelle/logs, before a file rolls.
+func (c Config) ResolveLogsMaxSizeBytes() int64 {
+	kb := c.LogsMaxSizeKB
+	if kb <= 0 {
+		kb = DefaultLogsMaxSizeKB
+	}
+	return int64(kb) * 1024
+}
+
+// ResolveLogsMaxFiles returns how many rotated flat-log files to keep per log.
+func (c Config) ResolveLogsMaxFiles() int {
+	if c.LogsMaxFiles > 0 {
+		return c.LogsMaxFiles
+	}
+	return DefaultLogsMaxFiles
 }
 
 // ResolveLogLevel returns the log level, defaulting empty to info.
