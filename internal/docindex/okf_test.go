@@ -247,3 +247,44 @@ func TestMaterializeOKF_WriteOnlyOnChange(t *testing.T) {
 	}
 	_ = fi
 }
+
+func TestRefreshSummaryBundle_MigratesAndIndexes(t *testing.T) {
+	docs := t.TempDir()
+	// two top-level commit summaries (as push-review writes them today) + a normal doc.
+	must := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(docs, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	must("commit-summary-sty_aaa.md", "---\ntype: commit-summary\ntitle: Push summary — sty_aaa\ntimestamp: 2026-07-01T09:00:00Z\n---\n\n# Push summary")
+	must("commit-summary-sty_bbb.md", "---\ntype: commit-summary\ntitle: Push summary — sty_bbb\ntimestamp: 2026-07-01T10:00:00Z\n---\n\n# Push summary")
+	must("real-note.md", "---\ntype: document\n---\n\n# a real doc")
+
+	refreshSummaryBundle(docs)
+
+	sub := filepath.Join(docs, summaryBundleDir)
+	// summaries migrated OUT of root INTO the sub-bundle.
+	for _, n := range []string{"commit-summary-sty_aaa.md", "commit-summary-sty_bbb.md"} {
+		if _, err := os.Stat(filepath.Join(docs, n)); !os.IsNotExist(err) {
+			t.Errorf("%s was not migrated out of the root", n)
+		}
+		if _, err := os.Stat(filepath.Join(sub, n)); err != nil {
+			t.Errorf("%s missing from the sub-bundle: %v", n, err)
+		}
+	}
+	// the real doc stays at root.
+	if _, err := os.Stat(filepath.Join(docs, "real-note.md")); err != nil {
+		t.Errorf("non-summary doc was wrongly moved: %v", err)
+	}
+	// sub-bundle has its own reserved index.md + log.md.
+	idx, err := os.ReadFile(filepath.Join(sub, "index.md"))
+	if err != nil {
+		t.Fatalf("sub-bundle index.md missing: %v", err)
+	}
+	if !strings.Contains(string(idx), "commit-summary-sty_aaa.md") || !strings.Contains(string(idx), "Story implementation summaries") {
+		t.Errorf("sub-bundle index.md is wrong:\n%s", idx)
+	}
+	if _, err := os.Stat(filepath.Join(sub, "log.md")); err != nil {
+		t.Errorf("sub-bundle log.md missing: %v", err)
+	}
+}

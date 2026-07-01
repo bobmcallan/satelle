@@ -139,6 +139,11 @@ func (s *Store) Sync(ctx context.Context, dirs map[string]string, now time.Time)
 		// already-conformant docs are left untouched.
 		if kind == "documents" {
 			normalizeOKFDir(dir)
+			// Organise per-story implementation summaries into their OKF sub-bundle
+			// (migrate + regenerate its index/log) BEFORE the walk, so the sub-bundle
+			// carries an index.md and walkMarkdown skips its ~100 files — keeping them
+			// out of the flat root documents index.
+			refreshSummaryBundle(dir)
 		} else if t := authoredType(kind); t != "" {
 			// Authored substrate (skills/workflows/principles) is normalised to the
 			// OKF `type` key BEFORE the skip-unchanged check, migrating a legacy
@@ -361,6 +366,16 @@ func walkMarkdown(dir string) ([]fileInfo, error) {
 		if d.IsDir() {
 			if d.Name() == "testdata" {
 				return fs.SkipDir
+			}
+			// A non-root subdirectory carrying its own index.md is a self-managed OKF
+			// SUB-BUNDLE (e.g. documents/story-implementation-summary/): it owns its
+			// index/log and is surfaced as ONE entry in the parent, so its concept
+			// files are NOT flattened into the parent kind's index (progressive
+			// disclosure). Skip its subtree.
+			if path != dir {
+				if _, err := os.Stat(filepath.Join(path, "index.md")); err == nil {
+					return fs.SkipDir
+				}
 			}
 			return nil
 		}
