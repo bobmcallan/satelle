@@ -417,7 +417,7 @@ const engagementSkillCheck = "satelle-workflow-skill-check"
 // edge, when the workflow is not parseable DOT, or when every executor skill
 // resolves. A docs lookup error other than not-found is surfaced.
 func (g *Gater) guardEngagementExecutorSkills(ctx context.Context, item workitem.Item, toStatus string) (verb.GateDecision, bool, error) {
-	doc, err := g.activeWorkflowPreferring(ctx, item.Category, stampedWorkflowName(item))
+	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
 	if err != nil {
 		if errors.Is(err, docindex.ErrNotFound) {
 			return verb.GateDecision{}, false, nil
@@ -571,7 +571,7 @@ func outputTail(out []byte) string {
 // degrades to none — scoped reviewers are additive and must never break the
 // workflow's own edge gating.
 func (g *Gater) scopedReviewers(ctx context.Context, item workitem.Item, toStatus string, exclude []string) ([]string, error) {
-	doc, err := g.activeWorkflowPreferring(ctx, item.Category, stampedWorkflowName(item))
+	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
 	if err != nil {
 		if errors.Is(err, docindex.ErrNotFound) {
 			return nil, nil
@@ -662,7 +662,7 @@ func (g *Gater) Summarise(ctx context.Context, item workitem.Item, from, to stri
 // stepSummaryDeclared reports whether the workflow active for category declares a
 // step-summary node (wfdot StepSummary) and whether it is mandatory.
 func (g *Gater) stepSummaryDeclared(ctx context.Context, item workitem.Item) (declared, mandatory bool) {
-	doc, err := g.activeWorkflowPreferring(ctx, item.Category, stampedWorkflowName(item))
+	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
 	if err != nil {
 		return false, false
 	}
@@ -732,7 +732,7 @@ func (g *Gater) createReviewSkillFor(ctx context.Context, category string) strin
 // governance at all — every edge is allowed and ungated (declared=true, no
 // skills), so fresh repos and the baseline keep working.
 func (g *Gater) reviewerSkills(ctx context.Context, item workitem.Item, from, to string) (skills []string, declared bool, err error) {
-	doc, err := g.activeWorkflowPreferring(ctx, item.Category, stampedWorkflowName(item))
+	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
 	if errors.Is(err, docindex.ErrNotFound) {
 		return nil, true, nil
 	}
@@ -764,6 +764,19 @@ func (g *Gater) activeWorkflow(ctx context.Context, category string) (docindex.D
 // story at create (sty_3800ac23): `workflow:<name>`. Recorded once, so gating
 // reads the chosen workflow rather than re-deriving it by category every time.
 const WorkflowStampPrefix = "workflow:"
+
+// workflowCategory returns the key used to resolve an item's governing workflow.
+// A story resolves by its authored category; an EXECUTION resolves by its KIND
+// ("execution"), so a task-execution workflow (applies_to:["execution"]) governs
+// runs without depending on a per-item category, and an execution never falls
+// through to the wildcard STORY workflow (sty_ef08ce2a). Tasks keep their
+// category (a task header has no running lifecycle to gate).
+func workflowCategory(item workitem.Item) string {
+	if item.Kind == workitem.KindExecution {
+		return string(workitem.KindExecution)
+	}
+	return item.Category
+}
 
 // stampedWorkflowName returns the workflow stamped on the item (its
 // `workflow:<name>` tag), or "" when un-stamped (legacy/category-resolved).

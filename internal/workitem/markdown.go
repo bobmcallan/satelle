@@ -14,7 +14,10 @@ func Marshal(it Item) []byte {
 	var b strings.Builder
 	b.WriteString("---\n")
 	fmt.Fprintf(&b, "id: %s\n", it.ID)
-	fmt.Fprintf(&b, "kind: %s\n", it.Kind)
+	// OKF discriminator: `type:` names the kind (task|execution), matching the
+	// authored-doc convention (type: workflow|skill|principle). Legacy files used
+	// `kind:`; Parse still reads it for back-compat (sty_ef08ce2a).
+	fmt.Fprintf(&b, "type: %s\n", it.Kind)
 	fmt.Fprintf(&b, "status: %s\n", it.Status)
 	if it.Priority != "" {
 		fmt.Fprintf(&b, "priority: %s\n", it.Priority)
@@ -73,7 +76,9 @@ func Parse(data []byte) (Item, error) {
 		switch k {
 		case "id":
 			it.ID = v
-		case "kind":
+		case "type", "kind":
+			// `type:` is the OKF discriminator; `kind:` is the legacy key still
+			// accepted so pre-conversion files keep parsing (sty_ef08ce2a).
 			it.Kind = Kind(v)
 		case "status":
 			it.Status = v

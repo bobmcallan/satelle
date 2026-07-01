@@ -10,6 +10,10 @@ import (
 func init() {
 	register(workItemGroup("story", "stories", "Manage stories (units of work / goals)"))
 	register(workItemGroup("task", "tasks", "Manage tasks (project-level to-dos)"))
+	// An execution is an isolated RUN of a task (create with --parent <tsk_id>);
+	// it carries the run lifecycle while the task header stays a stable definition
+	// (sty_ef08ce2a).
+	register(workItemGroup("execution", "executions", "Manage task executions (isolated runs of a task)"))
 }
 
 // workItemGroup builds a `satelle <group>` command with create/get/list/set
