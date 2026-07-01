@@ -287,6 +287,22 @@ func TestRefreshSummaryBundle_MigratesAndIndexes(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(sub, "log.md")); err != nil {
 		t.Errorf("sub-bundle log.md missing: %v", err)
 	}
+	// the whole sub-bundle is a generated view — every .md is read-only 0o444,
+	// including a concept file planted 0o644 (as the push-review skill writes them).
+	if err := os.WriteFile(filepath.Join(sub, "commit-summary-sty_ccc.md"),
+		[]byte("---\ntype: commit-summary\ntitle: c\ntimestamp: 2026-07-01T11:00:00Z\n---\n\n# c"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	refreshSummaryBundle(docs) // second pass converges modes
+	for _, f := range []string{"commit-summary-sty_aaa.md", "commit-summary-sty_ccc.md", "index.md", "log.md"} {
+		fi, err := os.Stat(filepath.Join(sub, f))
+		if err != nil {
+			t.Fatalf("%s missing: %v", f, err)
+		}
+		if fi.Mode().Perm() != 0o444 {
+			t.Errorf("sub-bundle %s mode = %o, want 0444 (generated view)", f, fi.Mode().Perm())
+		}
+	}
 }
 
 func TestMaterializeOKF_WritesReadOnlyViews(t *testing.T) {
@@ -318,5 +334,18 @@ func TestMaterializeOKF_WritesReadOnlyViews(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(dir, "sty_aaa.md"))
 	if !strings.Contains(string(b), "a changed") {
 		t.Errorf("changed view was not regenerated:\n%s", b)
+	}
+
+	// a pre-existing 0o644 view (materialized before this rule) converges to 0o444
+	// on the next materialize EVEN when content is unchanged (chmod, no rewrite).
+	p := filepath.Join(dir, "sty_aaa.md")
+	if err := os.Chmod(p, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := MaterializeOKF(dir, "Backlog", items, ts); err != nil { // identical content
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o444 {
+		t.Errorf("unchanged view did not converge to 0o444: mode=%o", fi.Mode().Perm())
 	}
 }

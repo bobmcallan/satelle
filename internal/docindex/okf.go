@@ -412,6 +412,12 @@ const okfViewMode = 0o444
 // succeeds. Returns whether it wrote.
 func writeIfChanged(path, content string) (bool, error) {
 	if existing, err := os.ReadFile(path); err == nil && string(existing) == content {
+		// Content unchanged — but still CONVERGE the mode to read-only, so a view
+		// materialized before this rule (or chmod'd writable by a tool) becomes
+		// 0o444 on the next reindex without needing a content change.
+		if fi, serr := os.Stat(path); serr == nil && fi.Mode().Perm() != okfViewMode {
+			_ = os.Chmod(path, okfViewMode)
+		}
 		return false, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -533,9 +539,15 @@ func writeBundleIndexFromDir(dir, heading string) {
 		if okfReserved(name) {
 			continue
 		}
-		body, rerr := os.ReadFile(filepath.Join(dir, de.Name()))
+		p := filepath.Join(dir, de.Name())
+		body, rerr := os.ReadFile(p)
 		if rerr != nil {
 			continue
+		}
+		// The whole sub-bundle is a generated view — converge every concept file to
+		// read-only (0o444), including summaries the push-review skill wrote 0o644.
+		if fi, serr := os.Stat(p); serr == nil && fi.Mode().Perm() != okfViewMode {
+			_ = os.Chmod(p, okfViewMode)
 		}
 		fm, _, _ := splitFrontmatter(string(body))
 		title := fmScalar(fm, "title")
