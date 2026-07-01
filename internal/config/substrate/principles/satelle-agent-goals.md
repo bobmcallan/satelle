@@ -2,7 +2,7 @@
 name: satelle-agent-goals
 scope: system
 type: principle
-tags: [type:principle, principles:always]
+tags: [type:principle, principles:session]
 applies_to: ["*"]
 description: The executor's goal and discipline. Drive a story to the terminal state of its configured workflow with every reviewer gate on the path accepted. Status is the sole proof of done — not "code written" or "tests pass locally". Never route around a gate; surface a gap and stop. One story at a time. Adapted from satellites' agent-goals.
 ---

@@ -31,13 +31,18 @@ development/authoring substrate and belongs with this repo's other development
 principles (`agile-increments`, `broken-windows`, `yagni`, `constitution`,
 `repo-agnostic`).
 
-## Residency is preserved
+## Residency (redefined by epic:session-context)
 
-Relocating does not change what the agent sees each session: each moved file keeps
-its residency tag, so the `principles:always` ones (`configuration-over-code`,
-`done-is-last`, `reviewer-self-contained`) are still injected at SessionStart from
-`.satelle/principles`. The change is **scope** (`system → project`) and **home**
-(embedded → repo substrate), not residency.
+Relocating (this story) did not by itself change what the agent sees each session.
+Residency was later redefined by `epic:session-context` into **two tiers** set by a
+frontmatter marker: `principles:session` (injected at SessionStart) vs **on-demand**
+(the default — no marker; pulled via `satelle doc get` when a skill or workflow
+references it). The session set is kept **minimal** — currently only the operating
+principle `satelle-agent-goals`. The principles that once carried the blanket
+`principles:always` tag (`configuration-over-code`, `done-is-last`,
+`reviewer-self-contained`, and the rest) are now **on-demand**; their considered
+per-principle re-classification and trim is tracked as a dogfooded task. This is
+orthogonal to scope (`system → project`) and home (embedded → repo substrate).
 
 ## Note on the reviewer rubric
 

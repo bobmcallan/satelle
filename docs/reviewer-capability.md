@@ -45,7 +45,7 @@ Two consequences:
    work-tree mutators (`Write`, `Edit`, `NotebookEdit`) stay denied, so the
    read-only invariant holds: a reviewer judges, it never modifies the repo.
 2. **Principle injection.** Every reviewer's system prompt is assembled by
-   `reviewerSystemPrompt`: the always-resident principles (`principles:always`,
+   `reviewerSystemPrompt`: the session-resident principles (`principles:session`,
    the same set the executor receives at SessionStart) + a read-only
    call-to-action + the reviewer's own rubric.
 3. **Call-to-action.** The injected preamble tells the reviewer it has read-only

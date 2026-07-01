@@ -75,7 +75,7 @@ type Gater struct {
 	// children resolves a parent's child stories (id + status) for a container
 	// close gate's payload. Nil when unwired (no children injected).
 	children func(ctx context.Context, parentID string) []ChildState
-	// injectPrinciples toggles whether the resident (principles:always) principles
+	// injectPrinciples toggles whether the session (principles:session) principles
 	// ride in an isolated reviewer's system prompt — the agents-layer option
 	// (sty_46a40208). Defaults ON (New sets it true); the reviewer binding's
 	// inject_principles = false turns it off.
@@ -196,11 +196,12 @@ func (g *Gater) reviewerSystemPrompt(ctx context.Context, rubric string) string 
 	return b.String()
 }
 
-// alwaysPrinciples returns the bodies of the resident (principles:always)
+// alwaysPrinciples returns the bodies of the SESSION-resident (principles:session)
 // principles — the SAME set the SessionStart injector gives the in-loop session
-// (sty_46a40208) — frontmatter stripped and joined in a stable (name-sorted)
-// order, so an isolated reviewer judges with the resident guardrails the executor
-// also sees. The operating principle (config.OperatingPrinciple) is guaranteed
+// (sty_46a40208), read via the SAME residency marker so the two never diverge —
+// frontmatter stripped and joined in a stable (name-sorted) order, so an isolated
+// reviewer judges with the session guardrails the executor also sees. The
+// operating principle (config.OperatingPrinciple) is guaranteed
 // even when it is embedded-only on a fresh repo, via Get's embedded fallback that
 // List lacks. Empty when none resolve; injection is additive and must never break
 // a gate.
@@ -219,7 +220,7 @@ func (g *Gater) alwaysPrinciples(ctx context.Context) string {
 	if docs, err := g.docs.List(ctx, "principles"); err == nil {
 		sort.Slice(docs, func(i, j int) bool { return docs[i].Name < docs[j].Name })
 		for _, d := range docs {
-			if hasAlwaysTag(d.Body) {
+			if hasSessionTag(d.Body) {
 				add(d)
 			}
 		}
@@ -234,10 +235,10 @@ func (g *Gater) alwaysPrinciples(ctx context.Context) string {
 	return strings.Join(bodies, "\n\n")
 }
 
-// hasAlwaysTag reports whether a doc's FRONTMATTER carries the principles:always
+// hasSessionTag reports whether a doc's FRONTMATTER carries the principles:session
 // residency marker — checked only within the leading `---`…`---` block so prose
 // mentioning the tag never counts.
-func hasAlwaysTag(body string) bool {
+func hasSessionTag(body string) bool {
 	s := strings.TrimLeft(body, "\n")
 	if !strings.HasPrefix(s, "---") {
 		return false
@@ -247,7 +248,7 @@ func hasAlwaysTag(body string) bool {
 	if i < 0 {
 		return false
 	}
-	return strings.Contains(rest[:i], "principles:always")
+	return strings.Contains(rest[:i], "principles:session")
 }
 
 // stripFrontmatter drops a leading `---`…`---` YAML block, returning the markdown
