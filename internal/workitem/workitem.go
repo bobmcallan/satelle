@@ -21,6 +21,12 @@ type Kind string
 const (
 	KindStory Kind = "story"
 	KindTask  Kind = "task"
+	// KindExecution is an isolated RUN of a task (sty_ef08ce2a). A task is a
+	// stable authored header/work-definition; each execution is a separate item
+	// parented to its task, carrying the run lifecycle backlog→in_progress→done.
+	// "Re-running" a task means creating a NEW execution — a done execution is
+	// terminal and never moved backward (satelle-done-is-last).
+	KindExecution Kind = "execution"
 )
 
 // Status values. New items default to StatusBacklog — every satelle workflow
@@ -49,12 +55,17 @@ type Item struct {
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 
-// idPrefix returns the id prefix for a kind: sty_ for stories, tsk_ for tasks.
+// idPrefix returns the id prefix for a kind: sty_ for stories, tsk_ for tasks,
+// exe_ for executions.
 func (k Kind) idPrefix() string {
-	if k == KindTask {
+	switch k {
+	case KindTask:
 		return "tsk_"
+	case KindExecution:
+		return "exe_"
+	default:
+		return "sty_"
 	}
-	return "sty_"
 }
 
 // newID returns a fresh id for the kind in the <prefix><8hex> form.
@@ -63,4 +74,6 @@ func (k Kind) newID() string {
 }
 
 // valid reports whether k is a known kind.
-func (k Kind) valid() bool { return k == KindStory || k == KindTask }
+func (k Kind) valid() bool {
+	return k == KindStory || k == KindTask || k == KindExecution
+}

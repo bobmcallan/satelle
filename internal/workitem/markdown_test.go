@@ -44,3 +44,41 @@ func TestParseRejectsNonFrontmatter(t *testing.T) {
 		t.Error("expected an error parsing markdown without frontmatter")
 	}
 }
+
+// TestMarshalEmitsOKFType asserts the marshaller writes the OKF `type:`
+// discriminator (not the legacy `kind:`) for the kind (sty_ef08ce2a).
+func TestMarshalEmitsOKFType(t *testing.T) {
+	md := string(Marshal(Item{ID: "tsk_1", Kind: KindTask, Title: "T", Status: "backlog"}))
+	if !strings.Contains(md, "type: task") {
+		t.Errorf("Marshal should emit `type: task`:\n%s", md)
+	}
+	if strings.Contains(md, "kind:") {
+		t.Errorf("Marshal should not emit legacy `kind:`:\n%s", md)
+	}
+}
+
+// TestParseAcceptsLegacyKind proves Parse still reads the legacy `kind:` key so
+// pre-conversion task files keep ingesting (back-compat, sty_ef08ce2a).
+func TestParseAcceptsLegacyKind(t *testing.T) {
+	legacy := "---\nid: tsk_1\nkind: task\nstatus: backlog\n---\n\n# T\n\nbody"
+	it, err := Parse([]byte(legacy))
+	if err != nil {
+		t.Fatalf("Parse legacy: %v", err)
+	}
+	if it.Kind != KindTask {
+		t.Errorf("legacy kind: not read as KindTask, got %q", it.Kind)
+	}
+}
+
+// TestExecutionRoundTrip round-trips an execution item — the new kind (with an
+// exe_ id) whose parentage points at its task (sty_ef08ce2a).
+func TestExecutionRoundTrip(t *testing.T) {
+	it := Item{ID: "exe_abc12345", Kind: KindExecution, Title: "run", Status: "in_progress", ParentID: "tsk_parent01"}
+	got, err := Parse(Marshal(it))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got.Kind != KindExecution || got.ParentID != it.ParentID {
+		t.Errorf("execution round-trip mismatch: got kind=%q parent=%q", got.Kind, got.ParentID)
+	}
+}

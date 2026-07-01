@@ -18,7 +18,7 @@ import (
 // kind-agnostic get/set handlers are shared. Each is registered under both the
 // "story-" and "task-" name prefixes so the CLI groups map 1:1.
 func init() {
-	for _, kind := range []workitem.Kind{workitem.KindStory, workitem.KindTask} {
+	for _, kind := range []workitem.Kind{workitem.KindStory, workitem.KindTask, workitem.KindExecution} {
 		group := string(kind)
 		Register(&Verb{Name: group + "-create", Description: "Create a " + group, Invoke: workItemCreate(kind)})
 		Register(&Verb{Name: group + "-list", Description: "List " + group + "s", Invoke: workItemList(kind)})
@@ -56,7 +56,7 @@ func hasWorkflowStamp(tags []string) bool {
 
 func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (json.RawMessage, error) {
 	ledgerKind := ledger.KindStoryCreated
-	if kind == workitem.KindTask {
+	if kind == workitem.KindTask || kind == workitem.KindExecution {
 		ledgerKind = ledger.KindTaskCreated
 	}
 	return func(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
@@ -95,9 +95,13 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 		// chosen workflow is recorded as a workflow:<name> tag so gating reads the
 		// choice thereafter rather than re-deriving it by category. Independent of
 		// create-gating — a story is stamped whenever a workflow governs it.
+		// Only STORIES are stamped. A task is an authored header with no running
+		// lifecycle, and an execution resolves its workflow KIND-awarely at gate
+		// time (sty_ef08ce2a) — stamping either risks pinning the wildcard story
+		// workflow onto a task/execution, exactly what this epic forbids.
 		tags := req.Tags
 		stampedWorkflow := ""
-		if workflowResolver != nil && !hasWorkflowStamp(tags) {
+		if kind == workitem.KindStory && workflowResolver != nil && !hasWorkflowStamp(tags) {
 			if wf := workflowResolver.WorkflowNameFor(ctx, req.Category); wf != "" {
 				stampedWorkflow = wf
 				tags = append(tags, "workflow:"+wf)
@@ -125,10 +129,11 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 		}
 		appendOpLog(string(kind)+"-create", it.ID,
 			fmt.Sprintf("status: %s; tags: [%s]", it.Status, strings.Join(it.Tags, ",")), now)
-		// A task is authored substrate — materialise its work-definition file (the
-		// source of truth); a no-op for stories (sty_c1f9e74c).
-		if err := writeTaskFile(it); err != nil {
-			return nil, fmt.Errorf("write task file: %w", err)
+		// A task/execution is authored substrate — materialise its file (the source
+		// of truth): a task header flat, an execution run under its task's folder
+		// (sty_c1f9e74c, sty_ef08ce2a). A no-op for stories.
+		if err := writeItemFile(it); err != nil {
+			return nil, fmt.Errorf("write item file: %w", err)
 		}
 		notifyChange(panelTopic(kind))
 		return json.Marshal(it)
@@ -137,7 +142,7 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 
 // panelTopic maps a work-item kind to its realtime panel topic.
 func panelTopic(kind workitem.Kind) string {
-	if kind == workitem.KindTask {
+	if kind == workitem.KindTask || kind == workitem.KindExecution {
 		return TopicTasks
 	}
 	return TopicStories
@@ -314,7 +319,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		}
 	} else {
 		ledgerKind := ledger.KindStoryUpdated
-		if it.Kind == workitem.KindTask {
+		if it.Kind == workitem.KindTask || it.Kind == workitem.KindExecution {
 			ledgerKind = ledger.KindTaskUpdated
 		}
 		appendLedger(ctx, it.ID, ledgerKind, fmt.Sprintf("updated %s", it.Kind), now)
@@ -335,10 +340,10 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	if detail != "" {
 		appendOpLog(string(it.Kind)+"-set", it.ID, detail, now)
 	}
-	// Keep the task's work-definition file (the source of truth) current; a no-op
-	// for stories (sty_c1f9e74c).
-	if err := writeTaskFile(it); err != nil {
-		return nil, fmt.Errorf("write task file: %w", err)
+	// Keep the task/execution file (the source of truth) current; a no-op for
+	// stories (sty_c1f9e74c, sty_ef08ce2a).
+	if err := writeItemFile(it); err != nil {
+		return nil, fmt.Errorf("write item file: %w", err)
 	}
 	notifyChange(panelTopic(it.Kind))
 	return json.Marshal(it)

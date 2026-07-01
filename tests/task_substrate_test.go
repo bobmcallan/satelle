@@ -34,7 +34,7 @@ func TestTaskFilesAreSourceOfTruth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("task file %s not written: %v", file, err)
 	}
-	if !strings.Contains(string(data), "Alpha task") || !strings.Contains(string(data), "kind: task") {
+	if !strings.Contains(string(data), "Alpha task") || !strings.Contains(string(data), "type: task") {
 		t.Errorf("task file missing expected content:\n%s", data)
 	}
 
@@ -58,7 +58,7 @@ func TestTaskFilesAreSourceOfTruth(t *testing.T) {
 	}
 
 	// 3. Hand-author a task file -> index ingests it into the store (file is source).
-	manual := "---\nid: tsk_manual01\nkind: task\nstatus: backlog\n---\n\n# Hand authored\n\nAudit the thing; verify the audit ran.\n"
+	manual := "---\nid: tsk_manual01\ntype: task\nstatus: backlog\n---\n\n# Hand authored\n\nAudit the thing; verify the audit ran.\n"
 	if err := os.WriteFile(filepath.Join(tasksDir, "tsk_manual01.md"), []byte(manual), 0o644); err != nil {
 		t.Fatal(err)
 	}
