@@ -90,6 +90,34 @@ func TestExecutionLifecycleE2E(t *testing.T) {
 	}
 }
 
+// TestInitSeedsTasks proves `satelle init` scaffolds .satelle/tasks/ with a
+// README keep-file and a seeded starter task header, idempotently, and that the
+// seed appears in `task list` via the index after reindex (sty_c1b3b4e3).
+func TestInitSeedsTasks(t *testing.T) {
+	repo := t.TempDir()
+	out := mustRun(t, testBin, repo, "init")
+	if !strings.Contains(out, ".satelle/tasks/") || !strings.Contains(out, "tsk_example1.md") {
+		t.Errorf("init report missing the tasks scaffold:\n%s", out)
+	}
+	for _, rel := range []string{".satelle/tasks/README.md", ".satelle/tasks/tsk_example1.md"} {
+		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
+			t.Errorf("init did not seed %s: %v", rel, err)
+		}
+	}
+	// Idempotent: a second init creates nothing new.
+	if out2 := mustRun(t, testBin, repo, "init"); strings.Contains(out2, "+ .satelle/tasks/tsk_example1.md") {
+		t.Errorf("second init re-created the starter task:\n%s", out2)
+	}
+	// The seed appears in `task list` via the index, and validates.
+	mustRun(t, testBin, repo, "reindex")
+	if list := mustRun(t, testBin, repo, "task", "list"); !strings.Contains(list, "tsk_example1") {
+		t.Errorf("seeded task not indexed / listed:\n%s", list)
+	}
+	if v := mustRun(t, testBin, repo, "task", "validate"); !strings.Contains(v, "failed 0") {
+		t.Errorf("seeded task failed validate:\n%s", v)
+	}
+}
+
 // TestExecutionEntity proves the task/execution split (sty_ef08ce2a): a task
 // header is a flat file, while each EXECUTION is a separate item materialised
 // UNDER its parent task's folder (.satelle/tasks/<tsk_id>/exe_*.md). A store-only

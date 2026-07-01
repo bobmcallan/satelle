@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/structure"
 )
 
 func TestRunInitScaffolds(t *testing.T) {
@@ -33,6 +35,14 @@ func TestRunInitScaffolds(t *testing.T) {
 			t.Errorf("missing %s: %v", rel, err)
 		}
 	}
+	// Tasks are scaffolded: the dir + README keep-file and the seeded starter task
+	// header (sty_c1b3b4e3).
+	for _, rel := range []string{".satelle/tasks/README.md", ".satelle/tasks/tsk_example1.md"} {
+		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
+			t.Errorf("init did not seed %s: %v", rel, err)
+		}
+	}
+
 	// The baseline workflow must NOT be scaffolded as a repo file (embedded-only).
 	if _, err := os.Stat(filepath.Join(repo, ".satelle/workflows/satelle-baseline-workflow.md")); err == nil {
 		t.Error("init must not write the baseline workflow as a repo file — it is embedded-only")
@@ -82,6 +92,28 @@ func TestRunInitIdempotent(t *testing.T) {
 	after, _ := os.ReadFile(tomlPath)
 	if !strings.Contains(string(after), "web_port = 9123") {
 		t.Error("second init clobbered the user's toml edit")
+	}
+
+	// A user edit to the seeded task also survives re-init (never clobbered).
+	taskPath := filepath.Join(repo, ".satelle", "tasks", "tsk_example1.md")
+	edited := "---\nid: tsk_example1\ntype: task\nstatus: in_progress\n---\n\n# Mine\n\nACTION; VERIFICATION.\n"
+	if err := os.WriteFile(taskPath, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runInit(io.Discard, repo); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(taskPath); string(got) != edited {
+		t.Errorf("re-init clobbered the authored task:\n%s", got)
+	}
+}
+
+// TestStarterTaskIsValid asserts the seeded starter task header passes the
+// deterministic task structure check — a fresh repo's example is valid substrate
+// (sty_c1b3b4e3).
+func TestStarterTaskIsValid(t *testing.T) {
+	if p := structure.CheckTask(scaffoldStarterTask); len(p) != 0 {
+		t.Errorf("seeded starter task fails CheckTask: %v", p)
 	}
 }
 
