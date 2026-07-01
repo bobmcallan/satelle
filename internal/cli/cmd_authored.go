@@ -29,7 +29,7 @@ func init() {
 // authoredGroup builds a `satelle <singular>` group with a gated `create`.
 func authoredGroup(singular, kind string) *cobra.Command {
 	g := &cobra.Command{Use: singular, Short: "Manage authored " + kind + " (markdown substrate)"}
-	g.AddCommand(authoredCreateCmd(kind))
+	g.AddCommand(authoredCreateCmd(kind), authoredValidateCmd(kind))
 	return g
 }
 

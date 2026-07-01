@@ -79,7 +79,7 @@ default. The head of the list is the active workflow the reviewer enforces.`,
 	}
 	list.Flags().StringVar(&category, "category", "", "story category to match (empty = wildcard workflows only)")
 
-	wf.AddCommand(list, authoredCreateCmd("workflows"))
+	wf.AddCommand(list, authoredCreateCmd("workflows"), authoredValidateCmd("workflows"))
 	register(wf)
 }
 

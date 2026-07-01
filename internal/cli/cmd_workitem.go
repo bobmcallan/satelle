@@ -118,6 +118,11 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storyDocCommands()...)
 		parent.AddCommand(storyCostCommands()...)
 	}
+	if group == "task" {
+		// tasks are authored substrate → `satelle task validate` runs the
+		// deterministic task structure check (ACTION+VERIFICATION contract).
+		parent.AddCommand(authoredValidateCmd("tasks"))
+	}
 	return parent
 }
 

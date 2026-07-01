@@ -28,7 +28,7 @@ ways, both parsed by the shared `wfdot`/web parser:
 - an inline-YAML `states:`/`transitions:` block (transitions carry `reviewer_skill`); or
 - a fenced ```dot graph (node-centric): each node is a step carrying an `agent`,
   a reviewer node names its gate as `prompt="@skill:NAME"`, and the edge **into**
-  a reviewer node is the gated transition. `satelle validate` runs a DETERMINISTIC
+  a reviewer node is the gated transition. the per-noun `satelle <noun> validate` runs a DETERMINISTIC
   structure check on every authored doc — frontmatter (OKF `type`), naming, a
   usable definition, and for a workflow the graph (connected, a terminal `done`,
   a `backlog` start, resolvable executor skills). The structure check is code, not

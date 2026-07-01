@@ -11,7 +11,7 @@ import (
 
 // TestValidateDeterministicStructure drives the real binary end-to-end to prove
 // the structure check is deterministic CODE (sty_a90d5c49): a malformed skill
-// fails `satelle validate` with a named problem and no agent CLI involved, and a
+// fails `satelle skill validate` with a named problem and no agent CLI involved, and a
 // well-formed one passes. No claude -p subprocess, so no flakiness.
 func TestValidateDeterministicStructure(t *testing.T) {
 	repo := t.TempDir()
@@ -24,7 +24,7 @@ func TestValidateDeterministicStructure(t *testing.T) {
 	}
 	mustRun(t, testBin, repo, "reindex", "--validate=false")
 
-	out, err := run(t, testBin, repo, "validate", "skills", "bad-skill")
+	out, err := run(t, testBin, repo, "skill", "validate", "bad-skill")
 	if err == nil {
 		t.Fatalf("expected validate to FAIL for a malformed skill, but it passed:\n%s", out)
 	}
@@ -38,7 +38,7 @@ func TestValidateDeterministicStructure(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustRun(t, testBin, repo, "reindex", "--validate=false")
-	out = mustRun(t, testBin, repo, "validate", "skills", "good-skill")
+	out = mustRun(t, testBin, repo, "skill", "validate", "good-skill")
 	if !strings.Contains(out, "PASS") {
 		t.Errorf("well-formed skill should PASS validate:\n%s", out)
 	}

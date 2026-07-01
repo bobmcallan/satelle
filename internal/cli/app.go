@@ -97,7 +97,7 @@ func appFrom(cmd *cobra.Command) (*app.App, error) {
 }
 
 // gaterForCmd builds a reviewer.Gater over the opened store and the install-time
-// agent CLI — the concrete reviewer used by the read paths (`satelle validate`,
+// agent CLI — the concrete reviewer used by the read paths (the per-noun `satelle <noun> validate`,
 // `satelle <object> create`) that need structure verdicts directly.
 func gaterForCmd(cmd *cobra.Command) (*reviewer.Gater, *app.App, error) {
 	a, err := appFrom(cmd)
@@ -150,7 +150,7 @@ func childrenResolver(a *app.App) func(ctx context.Context, parentID string) []r
 
 // skillResolver returns a predicate reporting whether a skill name resolves in
 // the substrate (project ∪ embedded), for the deterministic workflow structure
-// check's executor-skill actionability. Used by `satelle validate` and `reindex`.
+// check's executor-skill actionability. Used by the per-noun `satelle <noun> validate` and `reindex`.
 func skillResolver(a *app.App) func(skill string) bool {
 	return func(skill string) bool {
 		_, err := a.Store.DocIndex.Get(context.Background(), "skills", skill)

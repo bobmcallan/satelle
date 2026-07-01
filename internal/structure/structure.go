@@ -133,7 +133,7 @@ func checkSkill(name, body string) []string {
 // title. The richer work-definition contract (a body declaring the ACTION and how
 // success is VERIFIED) is judged by the validate-before GATE, not this structural
 // check. Exported because tasks are ingested into the workitem store (not the doc
-// index), so `satelle validate` checks them on a dedicated pass rather than Doc().
+// index), so `satelle task validate` checks them on a dedicated pass rather than Doc().
 func CheckTask(body string) []string {
 	fm, rest, ok := splitFM(body)
 	if !ok {

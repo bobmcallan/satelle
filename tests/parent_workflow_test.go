@@ -51,7 +51,7 @@ func TestParentWorkflowSelectedAndValid(t *testing.T) {
 	// validate passes: the LLM structure review is advisory with no agent
 	// configured, and the graph check (backlog initial, done terminal, the spine
 	// gate present) is deterministic.
-	if out, err := run("validate", "workflows", "satelle-parent-workflow"); err != nil {
+	if out, err := run("workflow", "validate", "satelle-parent-workflow"); err != nil {
 		t.Fatalf("validate failed: %v\n%s", err, out)
 	} else if !strings.Contains(out, "PASS") || strings.Contains(out, "FAIL") {
 		t.Errorf("validate did not pass cleanly:\n%s", out)

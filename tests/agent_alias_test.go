@@ -28,7 +28,7 @@ func agentAliasWF(name string) string {
 
 // TestAgentKeywordParsesEndToEnd proves the agent= back-compat parse end-to-end
 // through the real binary (sty_536f9960): a workflow authored with agent=executor
-// is parsed as having an executor node, so `satelle validate` reports its
+// is parsed as having an executor node, so `satelle workflow validate` reports its
 // unresolved executor-path skill — which it could only do if agent= was honoured
 // as the performer keyword.
 func TestAgentKeywordParsesEndToEnd(t *testing.T) {
@@ -37,7 +37,7 @@ func TestAgentKeywordParsesEndToEnd(t *testing.T) {
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agent-kw.md"), agentAliasWF("agent-kw"))
 	mustRun(t, testBin, repo, "reindex")
 
-	out, err := run(t, testBin, repo, "validate", "workflows")
+	out, err := run(t, testBin, repo, "workflow", "validate")
 	if err == nil {
 		t.Fatalf("validate should fail: the agent=executor node names an unresolved skill:\n%s", out)
 	}
@@ -83,7 +83,7 @@ func deprecatedActorWF(name string) string {
 
 // TestValidateRejectsActorKeyword proves the rename is ENFORCED end-to-end
 // (sty_7db2ed7d): a workflow authored with the retired actor= keyword fails
-// `satelle validate` with an actionable message, so the rename cannot silently
+// `satelle workflow validate` with an actionable message, so the rename cannot silently
 // regress.
 func TestValidateRejectsActorKeyword(t *testing.T) {
 	repo := t.TempDir()
@@ -91,7 +91,7 @@ func TestValidateRejectsActorKeyword(t *testing.T) {
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "legacy-kw.md"), deprecatedActorWF("legacy-kw"))
 	mustRun(t, testBin, repo, "reindex")
 
-	out, err := run(t, testBin, repo, "validate", "workflows")
+	out, err := run(t, testBin, repo, "workflow", "validate")
 	if err == nil {
 		t.Fatalf("validate should fail on a workflow using the retired actor= keyword:\n%s", out)
 	}
@@ -100,21 +100,18 @@ func TestValidateRejectsActorKeyword(t *testing.T) {
 	}
 }
 
-// TestValidateFlagsActorsToml proves validate flags the retired actors.toml
+// TestReindexWarnsActorsToml proves reindex flags the retired actors.toml
 // filename (sty_7db2ed7d): a repo still carrying it is silently on defaults, so
-// validate fails telling the operator to rename it to agents.toml.
-func TestValidateFlagsActorsToml(t *testing.T) {
+// reindex WARNS telling the operator to rename it to agents.toml (the legacy
+// filename is no longer loaded).
+func TestReindexWarnsActorsToml(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	// init scaffolds agents.toml; drop a legacy actors.toml beside it.
 	writeFile(t, filepath.Join(repo, ".satelle", "actors.toml"), "[reviewer]\nmodel = \"sonnet\"\n")
-	mustRun(t, testBin, repo, "reindex")
 
-	out, err := run(t, testBin, repo, "validate")
-	if err == nil {
-		t.Fatalf("validate should fail on a repo still carrying actors.toml:\n%s", out)
-	}
+	out := mustRun(t, testBin, repo, "reindex") // a pass-through — warns, does not fail
 	if !strings.Contains(out, "actors.toml") || !strings.Contains(out, "agents.toml") {
-		t.Errorf("validate should name actors.toml and the agents.toml fix:\n%s", out)
+		t.Errorf("reindex should warn about the legacy actors.toml and name the agents.toml fix:\n%s", out)
 	}
 }
