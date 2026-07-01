@@ -127,7 +127,7 @@ const templatesSrc = `
      green BORDER is a separate signal: the live /events (SSE) connection state, set
      by app.js (on=connected). The tooltip names both accurately so the value is not
      read as live or the border as "uptime". (sty_efeb2a69) */}}
-{{define "topbar"}}<button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>{{if .Uptime}}<button class="uptime" type="button" disabled title="service uptime at page load (updates on reload, not live) — green border = live updates connected">{{.Uptime}}</button>{{end}}{{end}}
+{{define "topbar"}}<a class="brand-mark" href="https://satelle.dev/" target="_blank" rel="noopener" title="satelle — home" aria-label="satelle home (opens in a new tab)">◐</a><button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>{{if .Uptime}}<button class="uptime" type="button" disabled title="service uptime at page load (updates on reload, not live) — green border = live updates connected">{{.Uptime}}</button>{{end}}{{end}}
 
 {{define "footer"}}<footer class="site-footer">{{if footeremail}}<a class="footer-email" href="mailto:{{footeremail}}">{{footeremail}}</a>{{end}}<span class="footer-version">satelle {{version}}</span></footer>{{end}}
 
@@ -151,7 +151,7 @@ const templatesSrc = `
   <nav class="crumbs"><a href="{{basehref}}">project</a> <span class="sep">/</span> <span class="cur" id="crumb-tab">stories</span></nav>
   <header class="app">
     {{template "topbar" .TopBar}}
-    <h1>satelle<span class="dot">.</span> project</h1>
+    <h1>{{.ProjectName}}</h1>
     <div class="meta">{{.RepoRoot}} · <a href="projects">projects →</a> · <a href="workspace">workspace →</a> · <a href="help">help →</a></div>
   </header>
 

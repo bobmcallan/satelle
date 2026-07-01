@@ -1,6 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <!-- satelle's logo: the green dot from the wordmark (satelle.). #2f6f4f is the
-       canonical brand green (--accent, light theme); a favicon is a static asset
-       and cannot be theme-reactive, so one brand green is chosen. -->
-  <circle cx="16" cy="16" r="11" fill="#2f6f4f"/>
+  <!-- ◐ monogram: full circle outline, left half filled — the satelle mark at
+       favicon scale. #2f6f4f is the canonical brand green (--accent, light theme);
+       a favicon is a static asset and cannot be theme-reactive, so one brand green
+       is chosen. Matches the satelle.dev homepage mark. -->
+  <circle cx="16" cy="16" r="11" fill="none" stroke="#2f6f4f" stroke-width="2"/>
+  <path d="M16 5 A11 11 0 0 0 16 27 Z" fill="#2f6f4f"/>
 </svg>

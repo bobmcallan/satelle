@@ -129,6 +129,11 @@ func TestFaviconLinkedAndServed(t *testing.T) {
 	if !strings.Contains(svg, "#2f6f4f") {
 		t.Errorf("favicon is not the brand accent green #2f6f4f:\n%s", svg)
 	}
+	// The ◐ halfmoon monogram (matching satelle.dev): an outline circle plus a
+	// <path> filling the left half — not the old solid dot.
+	if !strings.Contains(svg, "<path") {
+		t.Errorf("favicon is not the halfmoon monogram (missing the left-half <path>):\n%s", svg)
+	}
 
 	// Every page <head> links it — a main page and the sub-pages.
 	for _, path := range []string{"/", "/help", "/workspace", "/story/" + it.ID} {
@@ -164,6 +169,43 @@ func TestProjectPageRendersData(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("page missing %q", want)
 		}
+	}
+}
+
+// TestHeaderBrandingProjectNameAndHomeMark asserts the satelle.dev-aligned header
+// branding: the project page leads with the repo's project name (not the old
+// hardcoded "satelle. project" wordmark), and the shared topbar carries the ◐
+// halfmoon brand mark linking home in a new tab.
+func TestHeaderBrandingProjectNameAndHomeMark(t *testing.T) {
+	srv, db := newServer(t)
+	if _, err := db.Stories.Create(context.Background(),
+		workitem.CreateInput{Kind: workitem.KindStory, Title: "Branding story"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	code, body := get(t, srv.URL+"/")
+	if code != 200 {
+		t.Fatalf("status = %d", code)
+	}
+	// H1 is the project name — newServer's RepoRoot is "/repo".
+	if !strings.Contains(body, "<h1>repo</h1>") {
+		t.Errorf("project header H1 is not the project name:\n%s", body)
+	}
+	if strings.Contains(body, "satelle<span class=\"dot\">.</span> project") {
+		t.Errorf("project header still shows the old 'satelle. project' wordmark:\n%s", body)
+	}
+	// The far-right brand mark: a ◐ link to the home page, opening a new tab.
+	if !strings.Contains(body, `class="brand-mark"`) ||
+		!strings.Contains(body, `href="https://satelle.dev/"`) ||
+		!strings.Contains(body, `target="_blank"`) ||
+		!strings.Contains(body, `rel="noopener"`) {
+		t.Errorf("header missing the ◐ home brand mark (new-tab link to satelle.dev):\n%s", body)
+	}
+	// The topbar controls are float:right, so the FIRST in source order claims the
+	// rightmost slot. The brand mark must precede the theme toggle so it renders at
+	// the far right of the header.
+	if bm, tt := strings.Index(body, `class="brand-mark"`), strings.Index(body, `class="theme-toggle"`); bm < 0 || tt < 0 || bm > tt {
+		t.Errorf("brand mark is not source-ordered before the theme toggle (needed for the far-right float slot): brand-mark=%d theme-toggle=%d", bm, tt)
 	}
 }
 

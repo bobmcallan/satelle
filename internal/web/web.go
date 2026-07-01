@@ -14,6 +14,7 @@ import (
 	"html/template"
 	"net/http"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -284,6 +285,7 @@ func (s *Server) pollDB(ctx context.Context, interval time.Duration) {
 
 type pageData struct {
 	RepoRoot     string
+	ProjectName  string
 	DBPath       string
 	Stories      []rowVM
 	BacklogCount int
@@ -608,7 +610,7 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 	}
 	catStepOf := categoryStepOf(byKind["workflows"])
 	return pageData{
-		RepoRoot: a.RepoRoot, DBPath: a.DBPath,
+		RepoRoot: a.RepoRoot, ProjectName: filepath.Base(a.RepoRoot), DBPath: a.DBPath,
 		Stories: attachLights(ctx, stories, catStepOf), BacklogCount: backlog,
 		Tasks:    attachLights(ctx, tasks, catStepOf),
 		DocKinds: kinds, DocCount: len(allDocs),
