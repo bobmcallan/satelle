@@ -29,7 +29,7 @@ ordinary markdown — a workflow's body carries its DOT graph, a skill's its rub
 
 ## Validation is deterministic code
 
-`satelle validate` (and the index pass) check each doc with a **deterministic
+`satelle validate` (and the reindex pass) check each doc with a **deterministic
 structure check** (`internal/structure`) — frontmatter keys, kebab name matching
 the file, a usable definition, a non-stub body, and for a workflow the graph
 (connected, terminal `done`, `backlog` start, resolvable executor skills). These
@@ -44,7 +44,7 @@ project substrate is meant to be opinionated; satelle never judges it for that.
 ## Authoring
 
 Drop a markdown file under the right `.satelle/<kind>/` dir and run `satelle
-index` — or use `satelle skill|workflow|principle create --from <file>`, which
+reindex` — or use `satelle skill|workflow|principle create --from <file>`, which
 writes through the deterministic structure check and refuses a non-conforming
 artifact. List with `satelle doc list`; read one with `satelle doc get <kind>
 <name>`.
