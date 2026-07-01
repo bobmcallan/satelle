@@ -2,7 +2,7 @@
 name: satelle-agent-model
 scope: system
 type: principle
-tags: [type:principle, principles:global]
+tags: [type:principle]
 applies_to: ["*"]
 description: The agent execution model (supersedes the reviewer-only model). A workflow is a graph of steps, each run by a DEFINED agent role with a bounded grant — the executor does the work (mutates the tree), the reviewer is LIMITED to reviewing (read-only, judges the OUTCOME not the procedure, returns a verdict, never mutates). "agent" here is the step's PERFORMER ROLE (executor|reviewer), distinct from the "agent CLI" (claude|codex) that a step may run on. Any agent other than the in-loop executor is an isolated invocation: satelle spawns a fresh-context process with the step's skill as the prompt over a payload it builds (the work item + the transition) and aggregates the structured return. satelle stays the status gatekeeper — a reviewer's accept is the only thing that advances a gated status. How and where an agent runs (in-loop, isolated `agent -p`, or another harness) is the agents layer. The model is structural — agents gate agents — not a claim about recursive context decomposition.
 ---

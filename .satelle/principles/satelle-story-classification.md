@@ -2,7 +2,7 @@
 name: satelle-story-classification
 scope: project
 type: principle
-tags: [type:principle, principles:global]
+tags: [type:principle]
 applies_to: ["*"]
 description: How stories are classified and tagged — an epic carries a theme (epic:<theme>) and parents its members; a sprint carries an incremental number (sprint:<N>); and every story inside an epic or sprint carries order:<N> giving its drive sequence. The taxonomy that makes a backlog navigable, where a bare 'sprint' tag does not.
 ---
