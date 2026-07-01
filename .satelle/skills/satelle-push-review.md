@@ -40,8 +40,10 @@ if ! printf '%s' "$vdiff" | grep -q '^+satelle\.build:'; then
 fi
 ver="$(awk '$1=="satelle.version:"{print $2}' .version)"
 
-# 2. no AI attribution in the commit message.
-if git log -1 --format='%B' | grep -qiE 'co-authored-by|generated with|[^a-z]claude'; then
+# 2. no AI attribution in the commit message. Match ATTRIBUTION patterns (the
+# trailer forms), not the bare word "claude" — a commit about this subsystem may
+# legitimately mention the `claude -p` subprocess in prose (sty_d71b0791).
+if git log -1 --format='%B' | grep -qiE 'co-authored-by:|generated with|noreply@anthropic'; then
   echo "push-review: commit carries AI attribution (forbidden in this repo)" >&2
   exit 1
 fi
