@@ -399,9 +399,17 @@ func renderOKFIndex(heading string, entries []okfEntry) string {
 	return b.String()
 }
 
+// okfViewMode is the file mode of a generated OKF view: READ-ONLY (0o444). These
+// files are a regenerated view of the store (the source of truth), never authored
+// — read-only makes a stray hand-edit fail at the OS layer even if a hook is
+// bypassed, while reindex still regenerates them (writeIfChanged removes first).
+const okfViewMode = 0o444
+
 // writeIfChanged writes content to path only when it differs from what is there
 // (so a regenerated file converges and does not churn). It creates the parent
-// directory as needed. Returns whether it wrote.
+// directory as needed and writes the file READ-ONLY (okfViewMode) — removing any
+// existing (possibly read-only) file first so the rewrite of a changed view
+// succeeds. Returns whether it wrote.
 func writeIfChanged(path, content string) (bool, error) {
 	if existing, err := os.ReadFile(path); err == nil && string(existing) == content {
 		return false, nil
@@ -409,7 +417,8 @@ func writeIfChanged(path, content string) (bool, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return false, err
 	}
-	return true, os.WriteFile(path, []byte(content), 0o644)
+	_ = os.Remove(path) // the existing view may be read-only (0o444)
+	return true, os.WriteFile(path, []byte(content), okfViewMode)
 }
 
 // writeOKFIndex regenerates the bundle-root index.md for the documents directory
