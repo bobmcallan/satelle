@@ -209,6 +209,27 @@ func TestHeaderBrandingProjectNameAndHomeMark(t *testing.T) {
 	}
 }
 
+// TestBrandMarkNoHoverUnderline asserts the ◐ brand mark suppresses the global
+// a:hover underline — it is an icon, not body text (sty_6ee88532).
+func TestBrandMarkNoHoverUnderline(t *testing.T) {
+	srv, _ := newServer(t)
+	code, css := get(t, srv.URL+"/static/app.css")
+	if code != 200 {
+		t.Fatalf("/static/app.css = %d", code)
+	}
+	i := strings.Index(css, ".brand-mark:hover")
+	if i < 0 {
+		t.Fatalf("no .brand-mark:hover rule in served CSS")
+	}
+	rule := css[i:]
+	if j := strings.IndexByte(rule, '}'); j >= 0 {
+		rule = rule[:j]
+	}
+	if !strings.Contains(rule, "text-decoration: none") {
+		t.Errorf(".brand-mark:hover does not kill the underline (needs text-decoration: none):\n%s", rule)
+	}
+}
+
 func TestTagChipsCarryFilterToken(t *testing.T) {
 	srv, db := newServer(t)
 	ctx := context.Background()
