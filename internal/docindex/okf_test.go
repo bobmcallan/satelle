@@ -288,3 +288,35 @@ func TestRefreshSummaryBundle_MigratesAndIndexes(t *testing.T) {
 		t.Errorf("sub-bundle log.md missing: %v", err)
 	}
 }
+
+func TestMaterializeOKF_WritesReadOnlyViews(t *testing.T) {
+	dir := t.TempDir()
+	ts := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
+	items := []OKFItem{{Name: "sty_aaa", Type: "story", Title: "A", Body: "a", Timestamp: ts}}
+	if err := MaterializeOKF(dir, "Backlog", items, ts); err != nil {
+		t.Fatal(err)
+	}
+	// every generated file (per-item + reserved index.md/log.md) is read-only 0o444.
+	for _, f := range []string{"sty_aaa.md", "index.md", "log.md"} {
+		fi, err := os.Stat(filepath.Join(dir, f))
+		if err != nil {
+			t.Fatalf("%s missing: %v", f, err)
+		}
+		if fi.Mode().Perm() != 0o444 {
+			t.Errorf("%s mode = %o, want 0444 (read-only generated view)", f, fi.Mode().Perm())
+		}
+	}
+	// a direct write to a read-only view fails at the OS layer.
+	if err := os.WriteFile(filepath.Join(dir, "sty_aaa.md"), []byte("tampered"), 0o444); err == nil {
+		t.Errorf("a direct write to the read-only view unexpectedly succeeded")
+	}
+	// but reindex still regenerates a CHANGED view (remove-then-write).
+	items[0].Body = "a changed"
+	if err := MaterializeOKF(dir, "Backlog", items, ts); err != nil {
+		t.Fatalf("regeneration of a changed read-only view failed: %v", err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "sty_aaa.md"))
+	if !strings.Contains(string(b), "a changed") {
+		t.Errorf("changed view was not regenerated:\n%s", b)
+	}
+}
