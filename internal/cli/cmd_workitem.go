@@ -128,6 +128,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storyDocCommands()...)
 		parent.AddCommand(storyCostCommands()...)
 		parent.AddCommand(storySyncCommand())
+		parent.AddCommand(storyRestampCommand())
 	}
 	if group == "task" {
 		// tasks are authored substrate → `satelle task validate` runs the
@@ -231,6 +232,42 @@ func storyCostCommands() []*cobra.Command {
 	actual.Flags().IntVar(&aTokens, "tokens", 0, "actual tokens")
 
 	return []*cobra.Command{estimate, actual}
+}
+
+// storyRestampCommand builds `satelle story restamp <id> [--workflow <name>]`:
+// the first-class re-stamp of a story's governing workflow (sty_ed3386cf) — the
+// sanctioned replacement for hand-editing the tag list when the right workflow
+// changes mid-flight (a re-categorised story, or a more specific category
+// workflow authored after create). Dispatches to the story-restamp verb, which
+// validates the target (it must resolve, and the story's current status must be
+// one of its states), upserts the workflow: tag preserving every other tag, and
+// records a workflow_stamped ledger row plus an operation-log line.
+func storyRestampCommand() *cobra.Command {
+	var wfName string
+	restamp := &cobra.Command{
+		Use:   "restamp <id>",
+		Short: "Re-stamp the story's governing workflow (re-resolve by category, or --workflow)",
+		Long: `restamp re-stamps the workflow that governs a story. Without --workflow it
+re-resolves from the story's CURRENT category — the same resolution create uses —
+so a re-categorised story picks up its category-specific workflow. With
+--workflow <name> it stamps that workflow explicitly.
+
+The target is validated before anything changes: the workflow must resolve in
+the substrate, and the story's current status must be a state the workflow
+declares (else the story would be stranded mid-lifecycle). Every other tag —
+estimate/actual, category, ad-hoc — survives untouched, and the change is
+recorded as a workflow_stamped ledger row and an operation-log line. Stories
+only: tasks and executions are unstamped by design.`,
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := map[string]any{"id": args[0]}
+			putIf(req, "workflow", wfName)
+			return dispatch(cmd, "story-restamp", req)
+		},
+	}
+	restamp.Flags().StringVar(&wfName, "workflow", "", "explicit workflow to stamp (default: re-resolve from the story's category)")
+	return restamp
 }
 
 // storyDocCommands builds the per-story document attachment surface: attach a

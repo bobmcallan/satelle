@@ -386,3 +386,69 @@ func TestRebaseResetsSubstrate(t *testing.T) {
 		t.Error("backup missing the drifted skill bytes")
 	}
 }
+
+// TestStoryRestamp exercises the first-class re-stamp (sty_ed3386cf): a story
+// stamped at create picks up a category-specific workflow authored later — the
+// re-categorise → restamp flow — with the change ledgered; an invalid target is
+// rejected without touching the stamp.
+func TestStoryRestamp(t *testing.T) {
+	bin := testBin
+	repo := t.TempDir()
+	mustRun(t, bin, repo, "init")
+	mustRun(t, bin, repo, "reindex")
+
+	// A feature story stamps the seeded wildcard project workflow at create.
+	out := mustRun(t, bin, repo, "story", "create", "--title", "Assess the rollout", "--category", "feature")
+	if !strings.Contains(out, `"workflow:satelle-project-workflow"`) {
+		t.Fatalf("create did not stamp the seeded project workflow:\n%s", out)
+	}
+	id := extractID(out, "sty_")
+
+	// A category-specific governance workflow is authored AFTER create.
+	gov := `---
+name: gov-workflow
+scope: project
+type: workflow
+tags: [type:workflow]
+applies_to: ["governance"]
+description: Governance lifecycle moving backlog → in_progress → done with a cancelled exit.
+---
+
+# governance workflow
+
+` + "```dot\n" + `digraph w {
+  backlog [shape=Mdiamond]
+  in_progress [agent=executor]
+  done [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
+  cancelled [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
+  backlog -> in_progress
+  in_progress -> done
+  backlog -> cancelled
+  in_progress -> cancelled
+}` + "\n```\n"
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "gov-workflow.md"), gov)
+	mustRun(t, bin, repo, "reindex")
+
+	// Re-categorise, then restamp re-resolves from the CURRENT category.
+	mustRun(t, bin, repo, "story", "set", id, "--category", "governance")
+	out = mustRun(t, bin, repo, "story", "restamp", id)
+	if !strings.Contains(out, `"workflow:gov-workflow"`) || strings.Contains(out, `"workflow:satelle-project-workflow"`) {
+		t.Fatalf("restamp did not swap the governing workflow:\n%s", out)
+	}
+
+	// The trail records old -> new. The ledger JSON escapes ">" (>), so
+	// match the escaped body as printed.
+	out = mustRun(t, bin, repo, "ledger", "list", "--story", id)
+	if !strings.Contains(out, "re-stamped: satelle-project-workflow -\\u003e gov-workflow") {
+		t.Errorf("ledger missing the re-stamp row:\n%s", out)
+	}
+
+	// An unknown target is rejected and the stamp is untouched.
+	if out, err := run(t, bin, repo, "story", "restamp", id, "--workflow", "nope"); err == nil || !strings.Contains(out, "does not resolve") {
+		t.Errorf("unknown-workflow restamp should fail: err=%v\n%s", err, out)
+	}
+	out = mustRun(t, bin, repo, "story", "get", id)
+	if !strings.Contains(out, `"workflow:gov-workflow"`) {
+		t.Errorf("stamp changed after a rejected restamp:\n%s", out)
+	}
+}

@@ -29,6 +29,9 @@ func init() {
 	// begin-work and the actual cost at close, scoped to the story.
 	Register(&Verb{Name: "story-estimate", Description: "Record a story's plan estimate (time/tokens)", Invoke: storyEstimate})
 	Register(&Verb{Name: "story-actual", Description: "Record a story's actual cost (time/tokens)", Invoke: storyActual})
+	// Restamp is story-only too: tasks/executions are unstamped by design
+	// (sty_3800ac23 / sty_ef08ce2a) — they resolve their workflow at gate time.
+	Register(&Verb{Name: "story-restamp", Description: "Re-stamp a story's governing workflow (re-resolve by category, or an explicit workflow)", Invoke: storyRestamp})
 }
 
 // createReq is the request body for story-create / task-create.
@@ -43,16 +46,20 @@ type createReq struct {
 	Tags               []string `json:"tags,omitempty"`
 }
 
-// hasWorkflowStamp reports whether tags already carry a workflow:<name> stamp, so
-// an explicit caller-supplied workflow tag is never duplicated.
-func hasWorkflowStamp(tags []string) bool {
+// workflowStamp returns the workflow:<name> stamp carried in tags, or "" when
+// un-stamped.
+func workflowStamp(tags []string) string {
 	for _, t := range tags {
 		if strings.HasPrefix(t, "workflow:") {
-			return true
+			return strings.TrimSpace(strings.TrimPrefix(t, "workflow:"))
 		}
 	}
-	return false
+	return ""
 }
+
+// hasWorkflowStamp reports whether tags already carry a workflow:<name> stamp, so
+// an explicit caller-supplied workflow tag is never duplicated.
+func hasWorkflowStamp(tags []string) bool { return workflowStamp(tags) != "" }
 
 func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (json.RawMessage, error) {
 	ledgerKind := ledger.KindStoryCreated
@@ -350,6 +357,91 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	}
 	notifyChange(panelTopic(it.Kind))
 	return json.Marshal(it)
+}
+
+// restampReq is the request body for story-restamp: the story id and an optional
+// explicit workflow name (empty re-resolves from the story's current category).
+type restampReq struct {
+	ID       string `json:"id"`
+	Workflow string `json:"workflow,omitempty"`
+}
+
+// storyRestamp re-stamps the governing workflow on an existing story
+// (sty_ed3386cf) — the first-class replacement for a hand-edited tag list. It
+// re-resolves from the story's CURRENT category through the same seam create
+// uses (or stamps an explicit workflow), validates the target before enacting
+// (the workflow must resolve, and the story's current status must be a state it
+// declares), upserts the workflow: tag leaving every other tag intact, and
+// records the change on the ledger and the operation log. Stories only: a task
+// header has no running lifecycle and an execution resolves kind-awarely at gate
+// time — stamping either is exactly what the stamp design forbids.
+func storyRestamp(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	store, err := requireWorkItem()
+	if err != nil {
+		return nil, err
+	}
+	var req restampReq
+	if err := decode(raw, &req); err != nil {
+		return nil, err
+	}
+	if req.ID == "" {
+		return nil, fmt.Errorf("verb: id required")
+	}
+	current, err := store.Get(ctx, req.ID)
+	if err != nil {
+		return nil, err
+	}
+	if current.Kind != workitem.KindStory {
+		return nil, fmt.Errorf("verb: restamp is story-only — a %s is not stamped (it resolves its workflow kind-awarely at gate time)", current.Kind)
+	}
+	if workflowResolver == nil {
+		return nil, fmt.Errorf("verb: no workflow resolver wired — cannot restamp")
+	}
+	target := req.Workflow
+	if target == "" {
+		if target = workflowResolver.WorkflowNameFor(ctx, current.Category); target == "" {
+			return nil, fmt.Errorf("verb: no workflow governs category %q — pass --workflow", current.Category)
+		}
+	}
+	states, resolved := workflowResolver.WorkflowStates(ctx, target)
+	if !resolved {
+		return nil, fmt.Errorf("verb: workflow %q does not resolve in the substrate", target)
+	}
+	if len(states) > 0 && !containsState(states, current.Status) {
+		return nil, fmt.Errorf("verb: story status %q is not a state of workflow %q (states: %s) — re-stamp at a compatible point",
+			current.Status, target, strings.Join(states, ", "))
+	}
+	old := workflowStamp(current.Tags)
+	if old == target {
+		return json.Marshal(current) // already governed by the target — nothing to enact
+	}
+	merged := upsertKeyedTags(current.Tags, map[string]string{"workflow": target})
+	now := time.Now()
+	it, err := store.Update(ctx, req.ID, workitem.UpdateInput{Tags: &merged}, now)
+	if err != nil {
+		return nil, err
+	}
+	oldLabel := old
+	if oldLabel == "" {
+		oldLabel = "(unstamped)"
+	}
+	appendLedger(ctx, it.ID, ledger.KindWorkflowStamped,
+		fmt.Sprintf("governing workflow re-stamped: %s -> %s", oldLabel, target), now)
+	if td := tagsChanged(current.Tags, it.Tags); td != "" {
+		appendOpLog("story-restamp", it.ID, td, now)
+	}
+	notifyChange(panelTopic(it.Kind))
+	return json.Marshal(it)
+}
+
+// containsState reports whether states holds s.
+func containsState(states []string, s string) bool {
+	for _, st := range states {
+		if st == s {
+			return true
+		}
+	}
+	return false
 }
 
 // estimateReq is the request body for story-estimate / story-actual: a token
