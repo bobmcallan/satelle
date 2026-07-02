@@ -25,25 +25,36 @@ func wfList(t *testing.T, repo, category string) []wfListRow {
 	return rows
 }
 
-// TestEmbeddedBaselinePrecedence proves the baseline-scaffold fix (sty_3f9a6124):
-// a fresh repo has NO baseline repo file, the EMBEDDED baseline is the active
-// default (embedded=true), and a repo's OWN wildcard workflow then takes
-// precedence over it.
+// TestEmbeddedBaselinePrecedence proves the baseline-scaffold fix (sty_3f9a6124)
+// under the seeded default solution (sty_a7cbd6dd): a fresh repo has NO baseline
+// repo file — the baseline stays embedded-only (listed as a fallback candidate,
+// embedded=true) — while the SEEDED project workflow (a real, editable repo file)
+// is the active default, and a repo's OWN wildcard workflow takes precedence.
 func TestEmbeddedBaselinePrecedence(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	mustRun(t, testBin, repo, "reindex")
 
-	// (a) Embedded baseline is the active default of an unconfigured repo.
+	// (a) The seeded project workflow (a repo file, not embedded) is the active
+	// default of a fresh repo; the embedded baseline is still listed as the
+	// order-zero fallback, never as a repo file.
 	var sawBaseline bool
 	for _, r := range wfList(t, repo, "feature") {
-		if r.Name == "satelle-baseline-workflow" {
+		switch r.Name {
+		case "satelle-baseline-workflow":
 			sawBaseline = true
 			if !r.Embedded {
-				t.Errorf("the default baseline must be the EMBEDDED one (no repo file), got embedded=false")
+				t.Errorf("the baseline must be the EMBEDDED one (no repo file), got embedded=false")
+			}
+			if r.Active {
+				t.Errorf("the baseline must not be active — the seeded project workflow governs a fresh repo")
+			}
+		case "satelle-project-workflow":
+			if r.Embedded {
+				t.Errorf("the seeded project workflow must be a real repo file, got embedded=true")
 			}
 			if !r.Active {
-				t.Errorf("the embedded baseline must be active for an unconfigured repo")
+				t.Errorf("the seeded project workflow must be active for a fresh repo")
 			}
 		}
 	}

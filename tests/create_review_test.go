@@ -100,6 +100,11 @@ func writeFile(t *testing.T, path, content string) {
 func TestWorkflowValidateFlagsUnresolvedCreateReview(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
+	// This test authors its own wildcard workflow; drop the seeded wildcard so the
+	// consistency check judges the binding under test, not an applies_to tie.
+	if err := os.Remove(filepath.Join(repo, ".satelle", "workflows", "satelle-project-workflow.md")); err != nil {
+		t.Fatal(err)
+	}
 
 	wf := `---
 name: my-project-workflow

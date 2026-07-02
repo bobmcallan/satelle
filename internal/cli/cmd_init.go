@@ -150,11 +150,13 @@ func runInit(out io.Writer, repoRoot string) error {
 		fmt.Fprintln(out, initLine(dirCreated || readmeCreated, config.DefaultDataDir+"/"+kind+"/"))
 	}
 
-	// 3b. Seed the default substrate into a FRESH repo: materialise the embedded
-	//     baseline workflow and the embedded skills it references into .satelle so
-	//     they are visible/editable on disk. Only when the workflows dir has no
-	//     authored workflow yet — never clobbering or competing with an existing one.
-	for _, line := range materializeBaseline(dataDir) {
+	// 3b. Seed the COMPLETE default solution into a FRESH repo: materialise the
+	//     embedded generic project/parent/task-execution workflows and every gate
+	//     skill they (or the baseline fallback) reference into .satelle, so a fresh
+	//     repo works end-to-end and validates green immediately after init. Only
+	//     when the workflows dir has no authored workflow yet — never clobbering or
+	//     competing with an existing set (sty_a7cbd6dd).
+	for _, line := range materializeDefaultSolution(dataDir) {
 		fmt.Fprintln(out, line)
 	}
 
@@ -527,11 +529,6 @@ func ensureReadme(dir, kind string) (bool, error) {
 	return true, nil
 }
 
-// materializeBaseline seeds a fresh repo's .satelle with the embedded baseline
-// workflow and the embedded skills it references, so the default substrate is
-// visible/editable on disk. It is a no-op when the workflows dir already holds an
-// authored workflow (never clobber, never create a competing wildcard workflow).
-// Returns report lines.
 // materializePrinciples writes every embedded default PRINCIPLE into
 // .satelle/principles when absent, so the operating principles — including the
 // principles:session session set — live on disk and are LISTED for SessionStart
@@ -555,37 +552,75 @@ func materializePrinciples(dataDir string) []string {
 	return lines
 }
 
-func materializeBaseline(dataDir string) []string {
+// defaultSolutionWorkflows are the embedded workflows init (and rebase) deploy
+// into a repo as EDITABLE substrate — the complete default solution: the generic
+// project lifecycle, the parent/epic container close, and the task-execution run.
+// The BASELINE workflow stays EMBEDDED-ONLY (sty_3f9a6124): it is the order-zero
+// Get fallback and must never exist as a disk copy competing with a repo's own.
+var defaultSolutionWorkflows = []string{
+	"satelle-project-workflow",
+	"satelle-parent-workflow",
+	"satelle-task-workflow",
+}
+
+// materializeDefaultSolution seeds a fresh repo's .satelle with the complete
+// embedded default solution: the generic project/parent/task-execution workflows
+// plus every gate skill they — or the embedded baseline fallback — reference
+// (sty_a7cbd6dd). It is a no-op (reported) when the workflows dir already holds
+// an authored workflow: seeding the wildcard project default beside a repo's own
+// set would compete with it, so an existing set is respected wholesale. Skills
+// seed per-file when absent, never clobbering. Returns report lines.
+func materializeDefaultSolution(dataDir string) []string {
 	wfDir := filepath.Join(dataDir, "workflows")
 	if hasMarkdown(wfDir) {
-		return nil // an authored workflow exists — respect it
-	}
-	body, ok := embeddedDefault("workflows", "satelle-baseline-workflow")
-	if !ok {
-		return nil
+		return []string{"  = " + config.DefaultDataDir + "/workflows/ (authored workflows present — default solution not seeded)"}
 	}
 	var lines []string
-	// The baseline WORKFLOW stays EMBEDDED-ONLY (sty_3f9a6124): it is the canonical
-	// default and must never exist as an editable repo file (satelle-repo-agnostic).
-	// A fresh repo resolves it from the embedded layer, so a repo's OWN workflow
-	// takes precedence (repo-wildcard beats the embedded wildcard) instead of tying
-	// with a scaffolded copy. Only the reviewer SKILLS the baseline references are
-	// materialised, so their rubrics are visible/editable on disk.
-	// Materialise every embedded skill the baseline references that exists in the
-	// embedded layer (advisory gates not embedded simply stay absent by design).
-	if spec, parsed := wfdot.Parse(body); parsed {
-		for _, name := range referencedSkills(spec) {
-			sBody, has := embeddedDefault("skills", name)
-			if !has {
-				continue
+	skills := map[string]bool{}
+	collectSkills := func(body string) {
+		if spec, parsed := wfdot.Parse(body); parsed {
+			for _, s := range referencedSkills(spec) {
+				skills[s] = true
 			}
-			sPath := filepath.Join(dataDir, "skills", name+".md")
-			if fileExists(sPath) {
-				continue
-			}
-			if err := os.WriteFile(sPath, []byte(sBody), 0o644); err == nil {
-				lines = append(lines, initLine(true, config.DefaultDataDir+"/skills/"+name+".md"))
-			}
+		}
+	}
+	for _, name := range defaultSolutionWorkflows {
+		body, ok := embeddedDefault("workflows", name)
+		if !ok {
+			continue
+		}
+		collectSkills(body)
+		p := filepath.Join(wfDir, name+".md")
+		if fileExists(p) {
+			lines = append(lines, initLine(false, config.DefaultDataDir+"/workflows/"+name+".md"))
+			continue
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err == nil {
+			lines = append(lines, initLine(true, config.DefaultDataDir+"/workflows/"+name+".md"))
+		}
+	}
+	// The embedded baseline remains the order-zero fallback; the skills IT names
+	// must resolve on disk too (they overlap the project defaults' set today, but
+	// the union is computed, not assumed).
+	if body, ok := embeddedDefault("workflows", "satelle-baseline-workflow"); ok {
+		collectSkills(body)
+	}
+	names := make([]string, 0, len(skills))
+	for s := range skills {
+		names = append(names, s)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		sBody, has := embeddedDefault("skills", name)
+		if !has {
+			continue // a referenced skill without an embedded rubric stays advisory by design
+		}
+		sPath := filepath.Join(dataDir, "skills", name+".md")
+		if fileExists(sPath) {
+			continue
+		}
+		if err := os.WriteFile(sPath, []byte(sBody), 0o644); err == nil {
+			lines = append(lines, initLine(true, config.DefaultDataDir+"/skills/"+name+".md"))
 		}
 	}
 	return lines

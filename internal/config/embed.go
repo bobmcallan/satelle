@@ -6,8 +6,11 @@ package config
 // config/embed.go pattern. A repo layers its own authored markdown under
 // .satelle/<kind>/ ON TOP of these defaults (a same-named file overrides the
 // embedded default); it never edits this source. See the satelle-repo-agnostic
-// principle: only the required structure is embedded, everything opinionated
-// stays in a repo's substrate.
+// principle and the constitution: the binary embeds the required structure PLUS
+// the canonical DEFAULT SOLUTION (the generic project/parent/task-execution
+// workflows and the gate skills they reference) that init seeds as EDITABLE repo
+// substrate — the lifecycle is still configuration, never a Go branch; anything
+// beyond the generic defaults stays in a repo's own substrate.
 
 import (
 	"embed"

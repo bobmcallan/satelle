@@ -41,10 +41,11 @@ reject keeps it in backlog with notes on what to clarify.
 
 The exact path to `done` is whatever the active workflow declares — `done` is
 always the terminal state, and every gate on the path runs before it (see
-`satelle help reviewer-checks`). The canonical baseline closes directly
-(`in_progress → done`), gated by `satelle-story-done-review` — an isolated,
-**read-only** reviewer that reads the repository and works through the numbered
-acceptance criteria one by one. A reject pushes back with the unmet criteria.
+`satelle help reviewer-checks`). The seeded default project workflow passes
+through `integration` (entry gated by `satelle-code-ac-review`) before the
+close, which is gated by `satelle-story-done-review` — an isolated, **read-only**
+reviewer that reads the repository and works through the numbered acceptance
+criteria one by one. A reject pushes back with the unmet criteria.
 
 A repo may layer extra steps onto the path before `done` — this repo's workflow
 adds sequential **commit** and **push** steps: the `commit` executor bumps the

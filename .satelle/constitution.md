@@ -42,8 +42,14 @@ The binary holds **mechanism only**:
 - the per-repo SQLite stores (stories, tasks, ledger) and the directory monitor
   that indexes authored markdown,
 - the reviewer run path (isolated, read-only `agent -p` → JSON verdict),
-- the embedded *canonical defaults* (the baseline workflow and the
-  required-structure reviewer) as the single source of those bytes,
+- the embedded *canonical defaults* as the single source of those bytes: the
+  order-zero baseline workflow (embedded-only) PLUS the **canonical default
+  solution** — the generic project, parent, and task-execution workflows and the
+  gate skills they reference — which `satelle init` **seeds into a fresh repo as
+  editable substrate** (and `satelle rebase` redeploys after a backup). Seeding
+  widens what init ships beyond the bare required structure, but keeps
+  config-over-code intact: the lifecycle lands as markdown the operator edits,
+  never as a Go branch, and an existing authored workflow set is never clobbered,
 - the local web project page and the CLI surface.
 
 **Behaviour** — which gate runs, what it judges, the lifecycle a repo enforces,
@@ -72,10 +78,12 @@ name alone:
 
 ## The test
 
-If another repo installs satelle, only the **required structure** travels with
-the binary; everything opinionated — the states beyond the baseline, this repo's
-discipline, deploy mechanics — stays in *that* repo's authored substrate. A
-change that only makes sense because of how *this* repo works belongs in
-`.satelle/`, not in the binary.
+If another repo installs satelle, the **required structure** and the **generic
+canonical default solution** travel with the binary (the latter seeded at init
+as *that* repo's editable substrate); everything opinionated beyond the generic
+defaults — this repo's discipline, its release flow, deploy mechanics — stays in
+*this* repo's authored substrate and never rides in the binary. A change that
+only makes sense because of how *this* repo works belongs in `.satelle/`, not in
+the binary.
 
 See [[satelle-repo-agnostic]].

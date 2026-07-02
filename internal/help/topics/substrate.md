@@ -12,12 +12,20 @@ the format it follows, and how it is validated.
 - a dir per kind — `documents/ workflows/ principles/ skills/ stories/` — each
   with a `README.md` describing what it should contain (READMEs are dir
   descriptors; the indexer and OKF normaliser skip them);
-- the embedded **baseline workflow** and the embedded skills it references,
-  materialised on disk so the default substrate is visible and editable.
+- the complete **default solution**, materialised on disk so the default
+  substrate is visible and editable: the generic project workflow, the
+  parent/epic container workflow, the task-execution workflow, and every gate
+  skill they reference. (The order-zero **baseline workflow** stays embedded-only
+  — a fallback, never a competing repo file.)
 
 The binary still ships embedded canonical defaults; a repo file with the same
 (kind, name) overrides its default. `init` materialises the defaults so you never
-have to reason about invisible substrate.
+have to reason about invisible substrate — and never clobbers an authored file
+(an existing workflow set is respected wholesale). `satelle restore` re-installs
+the embedded skills/principles over drifted copies; `satelle rebase` goes
+further — it backs up `workflows/ skills/ principles/` to a timestamped
+`.satelle/backups/` dir, wipes them, and redeploys the complete default
+solution (the "start clean" recovery).
 
 ## Format: Open Knowledge Format (OKF)
 

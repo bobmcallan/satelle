@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/reviewer"
 	"github.com/bobmcallan/satelle/internal/structure"
 )
 
@@ -105,6 +107,118 @@ func TestRunInitIdempotent(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(taskPath); string(got) != edited {
 		t.Errorf("re-init clobbered the authored task:\n%s", got)
+	}
+}
+
+// defaultSolutionSkills is every gate/executor skill the seeded default solution
+// references — the set a fresh repo must hold on disk so nothing dangles.
+var defaultSolutionSkills = []string{
+	"satelle-code-ac-review",
+	"satelle-estimate-actual-review",
+	"satelle-step-summary",
+	"satelle-story-cancel-review",
+	"satelle-story-done-review",
+	"satelle-story-intent-review",
+	"satelle-task-validate-before-review",
+	"satelle-task-validate-after-review",
+}
+
+// TestRunInitSeedsDefaultSolution asserts a fresh init deploys the COMPLETE
+// default solution (sty_a7cbd6dd): the generic project/parent/task-execution
+// workflows plus every gate skill they reference — and that the seeded set is
+// structure-conformant and consistent (what `satelle workflow validate` checks:
+// no dangling refs, no ambiguous applies_to).
+func TestRunInitSeedsDefaultSolution(t *testing.T) {
+	repo := t.TempDir()
+	if err := runInit(io.Discard, repo); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+	dataDir := filepath.Join(repo, ".satelle")
+
+	for _, wf := range defaultSolutionWorkflows {
+		if !fileExists(filepath.Join(dataDir, "workflows", wf+".md")) {
+			t.Errorf("init did not seed workflows/%s.md", wf)
+		}
+	}
+	for _, sk := range defaultSolutionSkills {
+		if !fileExists(filepath.Join(dataDir, "skills", sk+".md")) {
+			t.Errorf("init did not seed skills/%s.md", sk)
+		}
+	}
+
+	// The seeded set validates: every file passes the deterministic structure
+	// check, and the workflow set is consistent with every referenced skill
+	// resolving on disk.
+	resolve := func(skill string) bool {
+		return fileExists(filepath.Join(dataDir, "skills", skill+".md"))
+	}
+	var docs []docindex.Doc
+	for _, wf := range defaultSolutionWorkflows {
+		body, err := os.ReadFile(filepath.Join(dataDir, "workflows", wf+".md"))
+		if err != nil {
+			t.Fatalf("read seeded %s: %v", wf, err)
+		}
+		for _, p := range structure.Doc("workflows", wf, string(body), resolve) {
+			t.Errorf("seeded workflows/%s: %s", wf, p)
+		}
+		docs = append(docs, docindex.Doc{Name: wf, Body: string(body)})
+	}
+	for _, p := range reviewer.WorkflowConsistency(docs, resolve) {
+		t.Errorf("seeded workflow set inconsistent: %s", p)
+	}
+	for _, sk := range defaultSolutionSkills {
+		body, err := os.ReadFile(filepath.Join(dataDir, "skills", sk+".md"))
+		if err != nil {
+			t.Fatalf("read seeded %s: %v", sk, err)
+		}
+		for _, p := range structure.Doc("skills", sk, string(body), nil) {
+			t.Errorf("seeded skills/%s: %s", sk, p)
+		}
+	}
+
+	// An execution resolves to the task-execution workflow out of the box: the
+	// kind-aware category ("execution") selects it ahead of the wildcard.
+	ordered := reviewer.OrderedWorkflows(docs, "execution")
+	if len(ordered) == 0 || ordered[0].Name != "satelle-task-workflow" {
+		t.Errorf("execution does not resolve to satelle-task-workflow: %+v", ordered)
+	}
+
+	// The generic project default carries no release mechanics (repo-specific
+	// states stay out, sty_a7cbd6dd AC2).
+	projBody, _ := os.ReadFile(filepath.Join(dataDir, "workflows", "satelle-project-workflow.md"))
+	for _, state := range []string{"commit", "push", "committed"} {
+		if strings.Contains(string(projBody), state+" [") || strings.Contains(string(projBody), state+"  [") {
+			t.Errorf("generic project workflow declares release state %q", state)
+		}
+	}
+}
+
+// TestRunInitRespectsAuthoredWorkflows asserts init never seeds the default
+// solution beside an existing authored workflow set (it would compete with it).
+func TestRunInitRespectsAuthoredWorkflows(t *testing.T) {
+	repo := t.TempDir()
+	wfDir := filepath.Join(repo, ".satelle", "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	own := filepath.Join(wfDir, "my-workflow.md")
+	if err := os.WriteFile(own, []byte("---\nname: my-workflow\n---\n\n# mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := runInit(&out, repo); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+	for _, wf := range defaultSolutionWorkflows {
+		if fileExists(filepath.Join(wfDir, wf+".md")) {
+			t.Errorf("init seeded %s beside an authored workflow set", wf)
+		}
+	}
+	if !strings.Contains(out.String(), "authored workflows present") {
+		t.Errorf("report does not say the authored set was respected:\n%s", out.String())
+	}
+	if got, _ := os.ReadFile(own); !strings.Contains(string(got), "# mine") {
+		t.Error("authored workflow was modified")
 	}
 }
 

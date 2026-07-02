@@ -21,9 +21,10 @@ kind-agnostic.
 
 ## Workflows are authored — YAML or DOT
 
-The active workflow is authored substrate (the embedded `satelle-baseline-workflow`,
-or a repo override under `.satelle/workflows`). Its lifecycle may be written two
-ways, both parsed by the shared `wfdot`/web parser:
+The active workflow is authored substrate (the default set `satelle init` seeds
+under `.satelle/workflows`, a repo's own workflow, or the embedded
+`satelle-baseline-workflow` as the order-zero fallback). Its lifecycle may be
+written two ways, both parsed by the shared `wfdot`/web parser:
 
 - an inline-YAML `states:`/`transitions:` block (transitions carry `reviewer_skill`); or
 - a fenced ```dot graph (node-centric): each node is a step carrying an `agent`,
