@@ -133,6 +133,21 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 	return parent
 }
 
+// attachBody resolves the document body for `story attach`: --file reads it
+// from a file (sty_97c53d72 — a multi-KB summary should not shell-quote through
+// a flag), otherwise --body is used verbatim. The flags are declared mutually
+// exclusive; a read failure is surfaced with the path context.
+func attachBody(body, file string) (string, error) {
+	if file == "" {
+		return body, nil
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return "", fmt.Errorf("attach: read --file: %w", err)
+	}
+	return string(data), nil
+}
+
 // storyCostCommands builds `satelle story estimate` and `satelle story actual`:
 // the agent records a plan estimate at begin-work and the actual cost at close.
 // Each dispatches to the story-estimate / story-actual verb, which writes the
@@ -192,15 +207,9 @@ func storyDocCommands() []*cobra.Command {
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			body := aBody
-			// --file reads the body from a file (sty_97c53d72): a multi-KB
-			// summary should not shell-quote through a flag.
-			if aFile != "" {
-				data, err := os.ReadFile(aFile)
-				if err != nil {
-					return fmt.Errorf("attach: read --file: %w", err)
-				}
-				body = string(data)
+			body, err := attachBody(aBody, aFile)
+			if err != nil {
+				return err
 			}
 			req := map[string]any{"story_id": args[0]}
 			putIf(req, "name", aName)
