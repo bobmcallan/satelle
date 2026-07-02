@@ -87,11 +87,18 @@ var createReviewer CreateReviewer
 func SetCreateReviewer(r CreateReviewer) { createReviewer = r }
 
 // WorkflowResolver names the workflow that governs a story of a given category,
-// so the create path can STAMP the choice on the story (sty_3800ac23). Wired
-// independently of create-gating — a story is stamped whenever a workflow governs
-// it. Implemented in internal/reviewer.
+// so the create path can STAMP the choice on the story (sty_3800ac23) and the
+// restamp path can re-resolve it mid-flight (sty_ed3386cf). Wired independently
+// of create-gating — a story is stamped whenever a workflow governs it.
+// Implemented in internal/reviewer.
 type WorkflowResolver interface {
 	WorkflowNameFor(ctx context.Context, category string) string
+	// WorkflowStates returns the lifecycle states the named workflow declares and
+	// whether the workflow resolves at all — the restamp validation seam. An empty
+	// state list on a resolved workflow means the lifecycle was not statically
+	// parseable; the caller skips the status-compatibility check rather than
+	// blocking the restamp.
+	WorkflowStates(ctx context.Context, name string) ([]string, bool)
 }
 
 var workflowResolver WorkflowResolver

@@ -911,6 +911,35 @@ func (g *Gater) WorkflowNameFor(ctx context.Context, category string) string {
 	return doc.Name
 }
 
+// WorkflowStates returns the lifecycle states the named workflow declares — the
+// nodes on its TRANSITIONS (an edge-less declared reviewer node like estimate/
+// step is a gate declaration, not a lifecycle state) — and whether the workflow
+// resolves at all. The restamp validation seam (sty_ed3386cf): a story may only
+// be re-stamped onto a workflow that declares its current status. A resolved
+// workflow whose lifecycle is not parseable DOT returns no states, so the caller
+// skips the status check rather than stranding the story.
+func (g *Gater) WorkflowStates(ctx context.Context, name string) ([]string, bool) {
+	doc, err := g.docs.Get(ctx, "workflows", name)
+	if err != nil {
+		return nil, false
+	}
+	spec, ok := wfdot.Parse(doc.Body)
+	if !ok {
+		return nil, true
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, tr := range spec.Transitions {
+		for _, s := range []string{tr.From, tr.To} {
+			if s != "" && !seen[s] {
+				seen[s] = true
+				out = append(out, s)
+			}
+		}
+	}
+	return out, true
+}
+
 // WorkflowConsistency reports cross-workflow inconsistencies an agent should
 // advise the user about (sty_4c0c7246): (1) OVER-CONFIGURATION — two or more REPO
 // workflows claim the same category (or the wildcard) at the same precedence, so
