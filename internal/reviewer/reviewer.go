@@ -15,12 +15,14 @@
 package reviewer
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -135,18 +137,45 @@ func defaultReviewerBackoff(attempt int) time.Duration {
 // logging.
 func (g *Gater) SetLogDir(dir string, cfg logfile.Config) { g.logDir, g.logCfg = dir, cfg }
 
-// logReviewerFailure appends one transient-failure record (the failing
-// subprocess's output tail and error) to <logDir>/reviewer.log via the shared
-// rotating writer, so the actual cause — typically a rate-limited nested agent
-// under concurrent sessions — is surfaced for review. Best-effort: a logging
-// error never affects the gate.
+// logReviewerFailure appends one no-verdict failure record to
+// <logDir>/reviewer.log via the shared rotating writer, so the actual cause —
+// a rate-limited nested agent, or a reviewer that answered outside the JSON
+// contract — is surfaced for review. The subprocess's FULL output is logged
+// (newlines flattened), not a truncated tail: when the reviewer wrote real
+// reasons without a parseable verdict, those words must be recoverable by the
+// executor (sty_9485d47e). Rotation (daily + size + retention) bounds growth.
+// Best-effort: a logging error never affects the gate.
 func (g *Gater) logReviewerFailure(skill string, attempt, attempts int, rerr error, out []byte) {
 	if g.logDir == "" {
 		return
 	}
+	label := "reviewer subprocess error"
+	full := ""
+	if s := strings.TrimSpace(string(out)); s != "" {
+		label = "no verdict in reviewer output"
+		full = " — full output: " + strings.ReplaceAll(s, "\n", "\\n")
+	}
 	now := time.Now()
-	line := fmt.Sprintf("%s\t%s\tattempt %d/%d\ttransient reviewer failure: %v%s",
-		now.UTC().Format(time.RFC3339), skill, attempt, attempts, rerr, outputTail(out))
+	line := fmt.Sprintf("%s\t%s\tattempt %d/%d\t%s: %v%s",
+		now.UTC().Format(time.RFC3339), skill, attempt, attempts, label, rerr, full)
+	_ = logfile.Append(now, filepath.Join(g.logDir, "reviewer.log"), g.logCfg, line)
+}
+
+// logProseFallback records that a reviewer's verdict was recovered from PROSE
+// (no JSON decision object) — a normal decision, logged for observability so a
+// reviewer drifting off the JSON contract is visible without failing the gate
+// (sty_9485d47e). Best-effort.
+func (g *Gater) logProseFallback(skill string, accept bool) {
+	if g.logDir == "" {
+		return
+	}
+	verdict := "reject"
+	if accept {
+		verdict = "accept"
+	}
+	now := time.Now()
+	line := fmt.Sprintf("%s\t%s\tprose-verdict fallback: parsed %q from non-JSON reviewer output",
+		now.UTC().Format(time.RFC3339), skill, verdict)
 	_ = logfile.Append(now, filepath.Join(g.logDir, "reviewer.log"), g.logCfg, line)
 }
 
@@ -525,6 +554,21 @@ func (g *Gater) runReviewer(ctx context.Context, item workitem.Item, toStatus, s
 		}
 		dec, perr := parseDecision(out)
 		if perr != nil {
+			// The strict JSON contract failed — but a reviewer that reasoned to an
+			// unambiguous PROSE verdict ("Verdict: reject. <reasons>") still decided
+			// (sty_9485d47e). Treating that as a transient no-verdict discarded the
+			// decision AND its reasons, retried pointlessly, and surfaced a misleading
+			// "transient agent failure" to the executor. Extract the prose verdict and
+			// return it as a normal decision; only genuinely ambiguous/empty output
+			// remains a no-verdict retry.
+			if pd, ok := parseProseDecision(out); ok {
+				g.logProseFallback(skill, pd.Accept)
+				pd.Gated = true
+				pd.Skill = skill
+				pd.Command = g.runner.Command()
+				pd.Context = skill
+				return pd, nil
+			}
 			lastErr, lastOut = perr, out
 			g.logReviewerFailure(skill, attempt, attempts, perr, out) // capture the subprocess output
 			continue                                                  // no verdict in the output — transient, retry
@@ -539,11 +583,17 @@ func (g *Gater) runReviewer(ctx context.Context, item workitem.Item, toStatus, s
 		return dec, nil
 	}
 	// Every attempt failed to produce a verdict — surface a CLEAR, actionable error
-	// (a transient reviewer failure, NOT a rejection), naming the retry count and a
-	// tail of the last output so contention is distinguishable from a real gap.
+	// (a no-verdict failure, NOT a rejection), naming the retry count, a tail of
+	// the last output, and — when output existed — where its FULL text was logged,
+	// so the executor can read the reviewer's actual words instead of guessing
+	// (sty_9485d47e). An empty/errored run keeps the transient-contention hint.
+	where := ""
+	if len(bytes.TrimSpace(lastOut)) > 0 && g.logDir != "" {
+		where = " — full reviewer output logged to " + filepath.Join(g.logDir, "reviewer.log")
+	}
 	return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
-		"reviewer: %s produced no verdict after %d attempts (transient agent failure — e.g. a rate-limited or killed subprocess under concurrent sessions; retry, or reduce concurrent satelle sessions): %w%s",
-		skill, attempts, lastErr, outputTail(lastOut))
+		"reviewer: %s produced no verdict after %d attempts (empty/ambiguous reviewer output or a transient agent failure — e.g. a rate-limited or killed subprocess under concurrent sessions; retry, or reduce concurrent satelle sessions): %w%s%s",
+		skill, attempts, lastErr, outputTail(lastOut), where)
 }
 
 // outputTail returns a short, trimmed tail of a reviewer's last output for an
@@ -1209,6 +1259,42 @@ func parseDecision(out []byte) (verb.GateDecision, error) {
 		return *found, nil
 	}
 	return verb.GateDecision{}, fmt.Errorf("no {\"decision\": \"accept\"|\"reject\"} object in reviewer output")
+}
+
+// proseVerdict matches an explicit prose decision statement — the word
+// "verdict" or "decision" followed (allowing punctuation/markdown/an "is") by
+// accept or reject, e.g. `Verdict: **reject**.` or `decision is accept`. The
+// marker word is REQUIRED so rubric prose the reviewer echoes ("Reject when a
+// criterion is unmet…") can never read as a verdict.
+var proseVerdict = regexp.MustCompile(`(?i)\b(?:verdict|decision)\b(?:\s+is)?[^a-zA-Z0-9]{0,12}(accept|reject)`)
+
+// parseProseDecision recovers a verdict from reviewer output that carries no
+// parseable JSON decision object but states its conclusion in prose
+// (sty_9485d47e). Every prose-verdict marker in the output must agree: one or
+// more consistent markers yield that decision (with the full trimmed output as
+// the notes — the reviewer's reasons ARE the prose); conflicting markers or none
+// at all yield ok=false, leaving the caller's no-verdict handling in place.
+func parseProseDecision(out []byte) (verb.GateDecision, bool) {
+	text := strings.TrimSpace(string(out))
+	if text == "" {
+		return verb.GateDecision{}, false
+	}
+	matches := proseVerdict.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return verb.GateDecision{}, false
+	}
+	verdict := strings.ToLower(matches[0][1])
+	for _, m := range matches[1:] {
+		if strings.ToLower(m[1]) != verdict {
+			return verb.GateDecision{}, false // conflicting statements — genuinely ambiguous
+		}
+	}
+	notes := text
+	const maxNotes = 4000
+	if len(notes) > maxNotes {
+		notes = "…" + notes[len(notes)-maxNotes:]
+	}
+	return verb.GateDecision{Accept: verdict == "accept", Notes: notes}, true
 }
 
 // jsonObjectCandidates returns every balanced {…} substring, trying each '{'
