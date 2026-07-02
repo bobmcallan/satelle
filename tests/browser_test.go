@@ -194,8 +194,9 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		if !waitCond(t, ctx, "!"+light, 3*time.Second) {
 			t.Error("a fresh open story should have no progress light (no phantom current ①)")
 		}
-		// After a REAL transition (ungated in this fresh repo), a light appears —
-		// pushed live to the page over the realtime bus.
+		// After a REAL transition, a light appears — pushed live to the page over
+		// the realtime bus. (The coded estimate gate enforces OOTB — record one.)
+		mustRun(t, testBin, repo, "story", "estimate", openID, "--time", "10m")
 		mustRun(t, testBin, repo, "story", "set", openID, "--status", "in_progress")
 		if !waitCond(t, ctx, "!!"+light, 8*time.Second) {
 			t.Error("a transitioned story should show a progress light, pushed live")
@@ -752,6 +753,8 @@ func TestBrowserBacklogBadgeLiveOnRefetch(t *testing.T) {
 	}
 
 	// And it must disappear when the live backlog count drops to zero.
+	mustRun(t, testBin, repo, "story", "estimate", id1, "--time", "10m")
+	mustRun(t, testBin, repo, "story", "estimate", id2, "--time", "10m")
 	mustRun(t, testBin, repo, "story", "set", id1, "--status", "in_progress")
 	mustRun(t, testBin, repo, "story", "set", id2, "--status", "in_progress")
 	if !waitCond(t, ctx, noBadge, 6*time.Second) {
@@ -957,7 +960,9 @@ func TestBrowserUserPath(t *testing.T) {
 		}
 		before := evalInt(t, ctx, `document.querySelectorAll('#panel-stories tr.expansion .timeline li').length`)
 
-		// The agent progresses the story from ANOTHER process.
+		// The agent progresses the story from ANOTHER process. (The coded
+		// estimate gate enforces OOTB — record one first.)
+		mustRun(t, testBin, repo, "story", "estimate", betaID, "--time", "10m")
 		mustRun(t, testBin, repo, "story", "set", betaID, "--status", "in_progress")
 
 		// The OPEN expansion must gain the transition event live, without collapsing.

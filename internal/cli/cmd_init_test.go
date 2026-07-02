@@ -111,9 +111,11 @@ func TestRunInitIdempotent(t *testing.T) {
 }
 
 // defaultSolutionSkills is every gate/executor skill the seeded default solution
-// references — the set a fresh repo must hold on disk so nothing dangles.
+// references — the set a fresh repo must hold on disk so nothing dangles. (The
+// story reviewers seed via the parent workflow and the embedded baseline
+// fallback; the seeded PROJECT default itself is gateless apart from the coded
+// estimate check and the step summary, sty_f804caaa.)
 var defaultSolutionSkills = []string{
-	"satelle-code-ac-review",
 	"satelle-estimate-actual-review",
 	"satelle-step-summary",
 	"satelle-story-cancel-review",
@@ -183,13 +185,32 @@ func TestRunInitSeedsDefaultSolution(t *testing.T) {
 		t.Errorf("execution does not resolve to satelle-task-workflow: %+v", ordered)
 	}
 
-	// The generic project default carries no release mechanics (repo-specific
-	// states stay out, sty_a7cbd6dd AC2).
+	// The generic project default is the MOST BASIC lifecycle (sty_f804caaa): no
+	// release mechanics, no reviewer gates — no reviewer_skill on any edge and no
+	// gate prompt beyond the coded estimate check and the step summary.
 	projBody, _ := os.ReadFile(filepath.Join(dataDir, "workflows", "satelle-project-workflow.md"))
-	for _, state := range []string{"commit", "push", "committed"} {
+	for _, state := range []string{"commit", "push", "committed", "integration"} {
 		if strings.Contains(string(projBody), state+" [") || strings.Contains(string(projBody), state+"  [") {
-			t.Errorf("generic project workflow declares release state %q", state)
+			t.Errorf("generic project workflow declares extra state %q", state)
 		}
+	}
+	if strings.Contains(string(projBody), "reviewer_skill") {
+		t.Error("generic project workflow must carry no edge reviewers")
+	}
+	for _, gate := range []string{"satelle-story-intent-review", "satelle-code-ac-review", "satelle-story-done-review", "satelle-story-cancel-review"} {
+		if strings.Contains(string(projBody), gate) {
+			t.Errorf("generic project workflow must not reference reviewer %q", gate)
+		}
+	}
+	// The estimate gate it declares is CODED — the seeded skill carries a
+	// self-contained check block, so no agent CLI is needed for it.
+	estBody, _ := os.ReadFile(filepath.Join(dataDir, "skills", "satelle-estimate-actual-review.md"))
+	if !strings.Contains(string(estBody), "```check") {
+		t.Error("seeded estimate skill must carry a self-contained ```check block")
+	}
+	// The embedded code-ac reviewer was removed with the gates (sty_f804caaa).
+	if fileExists(filepath.Join(dataDir, "skills", "satelle-code-ac-review.md")) {
+		t.Error("init must not seed satelle-code-ac-review — no seeded workflow references it")
 	}
 }
 

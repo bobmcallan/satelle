@@ -43,6 +43,10 @@ func TestProseVerdictGatesTransition(t *testing.T) {
 		t.Fatalf("no story id: %s", out)
 	}
 
+	// Satisfy the coded estimate gate up front — this test exercises the PROSE
+	// verdict path of the LLM intent reviewer, not the estimate check.
+	mustRun(t, testBin, repo, "story", "estimate", id, "--time", "10m")
+
 	// Prose REJECT blocks, surfacing the reviewer's reasons.
 	stubReviewerProse(t, repo, "Verdict: **reject**. Missing a plan estimate — record one first.")
 	rejOut, err := run(t, testBin, repo, "story", "set", id, "--status", "in_progress")
