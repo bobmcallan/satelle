@@ -781,3 +781,51 @@ func TestBrandMarkAnimatedSVG(t *testing.T) {
 		t.Error("brand mark still renders the bare ◐ text glyph")
 	}
 }
+
+// TestMontserratSelfHosted asserts the web UI typography matches satelle-homepage
+// (sty_cdac294e): both Montserrat woff2 faces are embedded and served under
+// /static/fonts/, and the served stylesheet declares the @font-face pair and a
+// Montserrat-first body stack — no external font request anywhere.
+func TestMontserratSelfHosted(t *testing.T) {
+	srv, _ := newServer(t)
+
+	for _, f := range []string{"montserrat-latin.woff2", "montserrat-latin-italic.woff2"} {
+		resp, err := http.Get(srv.URL + "/static/fonts/" + f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := make([]byte, 4)
+		n, _ := io.ReadFull(resp.Body, b)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("/static/fonts/%s = %d", f, resp.StatusCode)
+		}
+		if n != 4 || string(b) != "wOF2" {
+			t.Errorf("/static/fonts/%s is not woff2 (magic %q)", f, b[:n])
+		}
+	}
+
+	code, css := get(t, srv.URL+"/static/app.css")
+	if code != 200 {
+		t.Fatalf("/static/app.css = %d", code)
+	}
+	for _, want := range []string{
+		`font-family: "Montserrat"`,
+		"font-weight: 300 700",
+		"font-display: swap",
+		`url("fonts/montserrat-latin.woff2")`,
+		`url("fonts/montserrat-latin-italic.woff2")`,
+		`font: 15px/1.5 "Montserrat",`,
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("app.css missing %q", want)
+		}
+	}
+	if strings.Contains(css, "fonts.googleapis") || strings.Contains(css, "@import") {
+		t.Error("stylesheet must not reference an external font host")
+	}
+	// Mono surfaces keep the mono token (the product's display/mono split).
+	if !strings.Contains(css, "--mono: ui-monospace") {
+		t.Error("the --mono token must stay monospace")
+	}
+}
