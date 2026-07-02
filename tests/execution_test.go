@@ -90,6 +90,24 @@ func TestExecutionLifecycleE2E(t *testing.T) {
 	}
 }
 
+// TestInstallAliasesInit proves `satelle install` is a full alias of init
+// (sty_77367228): it scaffolds a fresh repo identically, and help names it.
+func TestInstallAliasesInit(t *testing.T) {
+	repo := t.TempDir()
+	out := mustRun(t, testBin, repo, "install")
+	for _, rel := range []string{".satelle/satelle.toml", ".satelle/satelle.db", ".satelle/tasks/README.md"} {
+		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
+			t.Errorf("install did not scaffold %s: %v", rel, err)
+		}
+	}
+	if !strings.Contains(out, "Ready.") {
+		t.Errorf("install should report like init:\n%s", out)
+	}
+	if help := mustRun(t, testBin, repo, "init", "--help"); !strings.Contains(help, "install") {
+		t.Errorf("init help should list the install alias:\n%s", help)
+	}
+}
+
 // TestInitSeedsTasks proves `satelle init` scaffolds .satelle/tasks/ with a
 // README keep-file and a seeded starter task header, idempotently, and that the
 // seed appears in `task list` via the index after reindex (sty_c1b3b4e3).

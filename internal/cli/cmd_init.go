@@ -25,8 +25,13 @@ import (
 func init() {
 	var configArg string
 	cmd := &cobra.Command{
-		Use:   "init",
-		Short: "Scaffold this repo for satelle (.satelle/, config, database, authored dirs)",
+		Use: "init",
+		// `satelle install` reads naturally at first contact — an alias, same
+		// implementation and flags (sty_77367228). (No `verify` alias: the generic
+		// `satelle validate` it would have aliased was removed for per-noun
+		// validators.)
+		Aliases: []string{"install"},
+		Short:   "Scaffold this repo for satelle (.satelle/, config, database, authored dirs)",
 		Long: `init makes a repo ready for satelle, idempotently. It ensures:
 
   - the .satelle/ directory,
