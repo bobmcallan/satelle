@@ -90,14 +90,22 @@ type projectRow struct {
 	Stories, Tasks, Docs  int
 }
 
+// FailedProject is a registered project whose child could not be served — shown
+// on the landing as an errored row rather than silently omitted (sty_4ea4d4df),
+// so "added but not shown" is diagnosable.
+type FailedProject struct {
+	Name, Path, Err string
+}
+
 type projectsData struct {
 	TopBar   topBar
 	Projects []projectRow
+	Failed   []FailedProject
 }
 
 // ProjectsPage renders the / landing: every served project with live counts and
 // a link to its page at /<slug>/.
-func ProjectsPage(w http.ResponseWriter, r *http.Request, projects []Project) {
+func ProjectsPage(w http.ResponseWriter, r *http.Request, projects []Project, failed []FailedProject) {
 	paths := make([]string, 0, len(projects))
 	for _, p := range projects {
 		paths = append(paths, p.Path)
@@ -107,7 +115,7 @@ func ProjectsPage(w http.ResponseWriter, r *http.Request, projects []Project) {
 	for _, rv := range agg.Repos {
 		counts[rv.Path] = rv
 	}
-	data := projectsData{TopBar: topBar{Uptime: formatUptime(time.Since(serverStart))}}
+	data := projectsData{TopBar: topBar{Uptime: formatUptime(time.Since(serverStart))}, Failed: failed}
 	for _, p := range projects {
 		rv := counts[p.Path]
 		url := "/" + p.Slug + "/#stories"

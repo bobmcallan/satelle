@@ -29,7 +29,7 @@ func TestProjectsPageListsBoundAndChildren(t *testing.T) {
 		{Slug: "satelle-homepage", Name: "satelle-homepage", Path: "/repos/satelle-homepage"},
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ProjectsPage(w, r, projects)
+		ProjectsPage(w, r, projects, []FailedProject{{Name: "broken", Path: "/repos/broken", Err: "spawn: exec failed"}})
 	}))
 	defer srv.Close()
 
@@ -57,5 +57,22 @@ func TestProjectsPageListsBoundAndChildren(t *testing.T) {
 	// The retired "launched here" badge must be gone — every project is uniform.
 	if strings.Contains(body, "launched here") {
 		t.Errorf("projects page still renders the retired 'launched here' badge:\n%s", body)
+	}
+	// Branded header parity (sty_4ea4d4df): the legacy "satelle." wordmark is gone
+	// (the halfmoon brand-mark is the brand), the H1 matches the shared treatment,
+	// and the body carries the live-refresh page marker.
+	if strings.Contains(body, "satelle<span class=\"dot\">") {
+		t.Errorf("landing still renders the legacy wordmark header:\n%s", body)
+	}
+	for _, want := range []string{"<h1>projects</h1>", `data-page="projects"`, "brand-mark"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("landing missing shared-header element %q", want)
+		}
+	}
+	// A registered-but-failed child is an errored row, not silently omitted.
+	for _, want := range []string{"not serving", "/repos/broken", "spawn: exec failed"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("landing missing errored-row element %q\n---\n%s", want, body)
+		}
 	}
 }

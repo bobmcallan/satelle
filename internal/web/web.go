@@ -239,6 +239,11 @@ func Build(a *app.App) http.Handler { return New(a).Handler }
 // The CLI and the server are separate processes sharing one sqlite file, so the
 // in-process notifier alone can't see CLI edits; the poller fingerprints each
 // panel and rings the doorbell when one changes. interval<=0 uses 1.5s.
+// Publish fans a topic to every connected /events client — the seam an OUTSIDE
+// supervisor uses to doorbell pages the poller can't see (e.g. the / landing's
+// "projects" topic when the served set changes; sty_4ea4d4df).
+func (s *Server) Publish(topic string) { s.hub.publish(topic) }
+
 func (s *Server) StartRealtime(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = 1500 * time.Millisecond

@@ -3,6 +3,7 @@
 package tests
 
 import (
+	"bufio"
 	"net/http"
 	"os"
 	"os/exec"
@@ -110,7 +111,34 @@ func TestMultiProjectServe(t *testing.T) {
 		t.Errorf("unknown project prefix = %d, want 404", code)
 	}
 
-	// Hot-add: register a THIRD repo while running; it must appear on the landing.
+	// Branded shared header + live-refresh marker (sty_4ea4d4df), over real HTTP.
+	for _, want := range []string{"<h1>projects</h1>", `data-page="projects"`, "brand-mark"} {
+		if !strings.Contains(root, want) {
+			t.Errorf("landing missing shared-header element %q", want)
+		}
+	}
+
+	// Hot-add: register a THIRD repo while running; it must appear on the landing
+	// AND doorbell the "projects" SSE topic so an OPEN tab refreshes without a
+	// manual reload (sty_4ea4d4df). Subscribe BEFORE the add.
+	evResp, err := http.Get(base + "/events")
+	if err != nil {
+		t.Fatalf("open /events: %v", err)
+	}
+	defer evResp.Body.Close()
+	evTimer := time.AfterFunc(20*time.Second, func() { evResp.Body.Close() })
+	defer evTimer.Stop()
+	gotProjects := make(chan struct{}, 1)
+	go func() {
+		sc := bufio.NewScanner(evResp.Body)
+		for sc.Scan() {
+			if strings.TrimSpace(sc.Text()) == "data: projects" {
+				gotProjects <- struct{}{}
+				return
+			}
+		}
+	}()
+
 	repoC := t.TempDir()
 	mustRun(t, testBin, repoC, "init")
 	workspaceAdd(t, home, repoA, repoC)
@@ -124,6 +152,11 @@ func TestMultiProjectServe(t *testing.T) {
 	}
 	if got < 3 {
 		t.Errorf("hot-add: landing shows %d projects after workspace add (want 3)", got)
+	}
+	select {
+	case <-gotProjects:
+	case <-time.After(15 * time.Second):
+		t.Error("workspace add did not doorbell the 'projects' SSE topic (open landing tabs stay stale)")
 	}
 }
 

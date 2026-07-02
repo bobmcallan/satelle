@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -119,6 +120,7 @@ to keep the binary current. Press Ctrl-C to stop.`,
 				return fmt.Errorf("resolve own binary: %w", err)
 			}
 			sup := newSupervisor(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), self)
+			sup.notify = webSrv.Publish // landing live-refresh doorbell (sty_4ea4d4df)
 			defer sup.shutdown()
 
 			// Local mode is a SINGLE project: serve only this repo and ignore the
@@ -234,6 +236,10 @@ type supervisor struct {
 	order    []string              // child repo paths in display order
 	slugs    map[string]string     // path -> stable slug
 	taken    map[string]bool       // assigned slugs (de-dup, seeded with reserved routes)
+	failed   map[string]string     // path -> spawn error (errored landing rows, sty_4ea4d4df)
+	// notify doorbells the bound server's /events hub when the served set
+	// changes, so an OPEN landing tab refreshes without a manual reload.
+	notify func(topic string)
 }
 
 // reservedSlugs are the bound server's own first path segments; a project slug
@@ -251,7 +257,7 @@ func newSupervisor(ctx context.Context, out, errw io.Writer, self string) *super
 	return &supervisor{
 		self: self, ctx: ctx, out: out, errw: errw,
 		children: map[string]*childProc{}, bySlug: map[string]*childProc{},
-		slugs: map[string]string{}, taken: taken,
+		slugs: map[string]string{}, taken: taken, failed: map[string]string{},
 	}
 }
 
@@ -285,7 +291,7 @@ func (s *supervisor) topHandler(shared http.Handler) http.Handler {
 		}
 		switch r.URL.Path {
 		case "/":
-			web.ProjectsPage(w, r, s.snapshot())
+			web.ProjectsPage(w, r, s.snapshot(), s.snapshotFailed())
 		case "/projects":
 			http.Redirect(w, r, "/", http.StatusFound)
 		default:
@@ -320,6 +326,7 @@ func (s *supervisor) assignSlug(path string) string {
 // reconcile brings live children in line with roots: spawn for newly-registered
 // repos, kill de-registered ones. Spawning runs outside the lock.
 func (s *supervisor) reconcile(roots []string) {
+	changed := false
 	want := map[string]bool{}
 	for _, p := range roots {
 		want[p] = true
@@ -346,8 +353,18 @@ func (s *supervisor) reconcile(roots []string) {
 		if c != nil && c.cmd.Process != nil {
 			_ = c.cmd.Process.Kill()
 		}
+		changed = true
 		fmt.Fprintf(s.out, "project removed: /%s/ (%s)\n", slug, p)
 	}
+	// A failed entry no longer registered is dropped too.
+	s.mu.Lock()
+	for p := range s.failed {
+		if !want[p] {
+			delete(s.failed, p)
+			changed = true
+		}
+	}
+	s.mu.Unlock()
 
 	for _, p := range roots {
 		s.mu.Lock()
@@ -359,13 +376,20 @@ func (s *supervisor) reconcile(roots []string) {
 		}
 		c, err := s.spawn(p, slug)
 		if err != nil {
+			// Not silently omitted: the landing shows the failure (sty_4ea4d4df).
+			s.mu.Lock()
+			s.failed[p] = err.Error()
+			s.mu.Unlock()
+			changed = true
 			fmt.Fprintf(s.errw, "spawn child for %s: %v\n", p, err)
 			continue
 		}
 		s.mu.Lock()
 		s.children[p] = c
 		s.bySlug[slug] = c
+		delete(s.failed, p)
 		s.mu.Unlock()
+		changed = true
 		fmt.Fprintf(s.out, "project added: /%s/ (%s)\n", slug, p)
 	}
 
@@ -377,6 +401,21 @@ func (s *supervisor) reconcile(roots []string) {
 		}
 	}
 	s.mu.Unlock()
+	if changed && s.notify != nil {
+		s.notify("projects") // doorbell open landing tabs (sty_4ea4d4df)
+	}
+}
+
+// snapshotFailed lists registered projects whose child failed to serve.
+func (s *supervisor) snapshotFailed() []web.FailedProject {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []web.FailedProject
+	for p, e := range s.failed {
+		out = append(out, web.FailedProject{Name: filepath.Base(p), Path: p, Err: e})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
 }
 
 // spawn starts a child `serve --base-path /<slug>` for one repo on a fresh
