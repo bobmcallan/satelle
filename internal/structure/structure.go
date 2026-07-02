@@ -85,7 +85,7 @@ func Checked(kind string) bool {
 // conformant: a specific title, a goal body that is not a title restatement, and
 // at least one numbered acceptance criterion. This is the deterministic
 // replacement for the create-time satelle-story-review rubric.
-func Story(title, body, acceptance string) []string {
+func Story(title, body, acceptance, category string) []string {
 	var p []string
 	if strings.TrimSpace(title) == "" {
 		p = append(p, "title is empty")
@@ -98,6 +98,12 @@ func Story(title, body, acceptance string) []string {
 	}
 	if !numberedAC.MatchString(acceptance) {
 		p = append(p, "acceptance_criteria needs at least one numbered, testable item (e.g. \"1. …\")")
+	}
+	// A non-empty category is a deterministic conformance rule, not an LLM rubric
+	// clause (sty_af239840): the category selects the governing workflow
+	// (applies_to), so an uncategorised story silently falls to the wildcard.
+	if strings.TrimSpace(category) == "" {
+		p = append(p, "category is empty — pass --category (e.g. feature, fix, docs, process; it selects the governing workflow)")
 	}
 	return p
 }

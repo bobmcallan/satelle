@@ -19,22 +19,29 @@ func TestChecked(t *testing.T) {
 }
 
 func TestStory(t *testing.T) {
-	if p := Story("Add X", "Make the thing do X", "1. it does X"); len(p) != 0 {
+	if p := Story("Add X", "Make the thing do X", "1. it does X", "feature"); len(p) != 0 {
 		t.Errorf("well-formed story should pass, got %v", p)
 	}
 	cases := []struct {
-		name                    string
-		title, body, acceptance string
+		name                              string
+		title, body, acceptance, category string
 	}{
-		{"empty title", "", "goal", "1. a"},
-		{"empty body", "T", "", "1. a"},
-		{"body restates title", "Same", "same", "1. a"},
-		{"no numbered AC", "T", "goal", "do it well"},
+		{"empty title", "", "goal", "1. a", "feature"},
+		{"empty body", "T", "", "1. a", "feature"},
+		{"body restates title", "Same", "same", "1. a", "feature"},
+		{"no numbered AC", "T", "goal", "do it well", "feature"},
+		// category is a deterministic conformance rule (sty_af239840) — it selects
+		// the governing workflow, so an empty one is a structural reject.
+		{"empty category", "T", "goal", "1. a", ""},
 	}
 	for _, c := range cases {
-		if p := Story(c.title, c.body, c.acceptance); len(p) == 0 {
+		if p := Story(c.title, c.body, c.acceptance, c.category); len(p) == 0 {
 			t.Errorf("%s: want reject, got pass", c.name)
 		}
+	}
+	// The empty-category reject names the flag to pass (actionable message).
+	if p := Story("T", "goal", "1. a", ""); len(p) != 1 || !strings.Contains(p[0], "--category") {
+		t.Errorf("empty-category reject should name --category, got %v", p)
 	}
 }
 

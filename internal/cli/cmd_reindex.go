@@ -67,6 +67,12 @@ the same sync continuously (without validation, to keep the poll loop cheap).`,
 				fmt.Fprintf(cmd.ErrOrStderr(), "reindex: WARN deprecated %s/%s — rename it to %s (the legacy filename is no longer loaded)\n",
 					config.DefaultDataDir, config.ActorsConfigName, config.AgentsConfigName)
 			}
+			// Story-conformance warning (sty_af239840): a non-empty category is a
+			// DETERMINISTIC conformance rule (it selects the governing workflow), and
+			// reindex is where structural conformance is reported for the DB-only
+			// story store. A pass-through warning — bare stubs stay legal at create;
+			// the operator fixes with `satelle story set <id> --category <c>`.
+			warnUncategorisedStories(cmd, a)
 			if !validate {
 				return nil
 			}
@@ -113,6 +119,45 @@ func validateChanged(cmd *cobra.Command, a *app.App, changed []docindex.DocRef) 
 			fmt.Fprintf(out, "FAIL  %s/%s — open story %s already tracks it\n", ch.Kind, ch.Name, id)
 		}
 	}
+}
+
+// warnUncategorisedStories reports every OPEN (non-terminal) story with an
+// empty category as a reindex warning (sty_af239840) — deterministic code at
+// the index path, no LLM, independent of gate_create. The message names the
+// exact fix (--category). Best-effort: a list error never fails the reindex.
+func warnUncategorisedStories(cmd *cobra.Command, a *app.App) {
+	items, err := a.Store.Stories.List(context.Background(), workitem.ListFilter{Kind: workitem.KindStory})
+	if err != nil {
+		return
+	}
+	var ids []string
+	for _, it := range items {
+		if it.Status == workitem.StatusDone || it.Status == "cancelled" {
+			continue
+		}
+		if strings.TrimSpace(it.Category) == "" {
+			ids = append(ids, it.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	const show = 5
+	listed := strings.Join(ids[:min(len(ids), show)], ", ")
+	if len(ids) > show {
+		listed += fmt.Sprintf(", … (+%d more)", len(ids)-show)
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(),
+		"reindex: WARN %d open stor%s without a category (%s) — set one with `satelle story set <id> --category <c>` (or pass --category at create); the category selects the governing workflow\n",
+		len(ids), plural(len(ids), "y", "ies"), listed)
+}
+
+// plural returns sing when n==1, else plur.
+func plural(n int, sing, plur string) string {
+	if n == 1 {
+		return sing
+	}
+	return plur
 }
 
 // docTag is the dedup key tagging a system story to the doc it tracks.
