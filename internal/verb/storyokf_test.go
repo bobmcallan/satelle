@@ -58,7 +58,7 @@ func TestSyncStoryBacklog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	n, err := verb.SyncStoryBacklog(ctx, db.Stories, now)
+	n, _, err := verb.SyncStoryBacklog(ctx, db.Stories, now)
 	if err != nil {
 		t.Fatal(err)
 	}

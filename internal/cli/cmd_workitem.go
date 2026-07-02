@@ -3,8 +3,11 @@ package cli
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/bobmcallan/satelle/internal/verb"
 )
 
 // Story and task are the same primitive; their command groups are built by one
@@ -124,6 +127,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 	if group == "story" {
 		parent.AddCommand(storyDocCommands()...)
 		parent.AddCommand(storyCostCommands()...)
+		parent.AddCommand(storySyncCommand())
 	}
 	if group == "task" {
 		// tasks are authored substrate → `satelle task validate` runs the
@@ -146,6 +150,39 @@ func attachBody(body, file string) (string, error) {
 		return "", fmt.Errorf("attach: read --file: %w", err)
 	}
 	return string(data), nil
+}
+
+// storySyncCommand builds `satelle story sync` (sty_8f7b2157): the dedicated,
+// inspectable reconciliation of .satelle/stories — backlog-only views + an
+// artifact review that REPORTS orphans/misfiles (never deletes evidence).
+func storySyncCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:         "sync",
+		Short:       "Reconcile .satelle/stories: backlog-only views; review artifact dirs against the DB",
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := appFrom(cmd)
+			if err != nil {
+				return err
+			}
+			rep, err := verb.SyncStories(cmd.Context(), a.Store.Stories, time.Now())
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "stories: %d backlog view(s) materialized; %d pruned; %d artifact dir(s)\n", rep.Materialized, rep.Pruned, rep.ArtifactDirs)
+			for _, id := range rep.Orphaned {
+				fmt.Fprintf(out, "  ORPHANED %s/ — no story in the database (authored evidence; remove manually if unwanted)\n", id)
+			}
+			for _, p := range rep.Problems {
+				fmt.Fprintf(out, "  PROBLEM  %s\n", p)
+			}
+			if len(rep.Orphaned) == 0 && len(rep.Problems) == 0 {
+				fmt.Fprintln(out, "artifacts: clean")
+			}
+			return nil
+		},
+	}
 }
 
 // storyCostCommands builds `satelle story estimate` and `satelle story actual`:

@@ -52,7 +52,9 @@ harness = "in-loop"            # the orchestrator/driving session itself
 # Write/Edit/NotebookEdit/Bash on top of the read-only grant, so a rubric that
 # says "you cannot run commands" is enforced, not aspirational.
 [reviewer]
-harness = "claude"             # preset: claude -p --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model}
+# The FULL command template — transparent and swappable: satelle substitutes
+# {system}/{tools}/{model} (payload on stdin); point it at ANY agent CLI.
+harness = "claude -p --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob"     # read-only grant
 model   = "sonnet"             # review on sonnet (sty_5073df2f activates sty_dad271fd's knob)
 

@@ -19,6 +19,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -337,7 +338,7 @@ const scaffoldToml = `# satelle.toml — per-repo config (committed, secret-free
 // in-loop, reviewer isolated with Read,Grep,Glob), so this only documents the
 // knobs. A repo may widen or rebind transparently — the override is a committed
 // file, the operator's choice.
-const scaffoldAgentsToml = `# agents.toml — the agents layer: how each agent runs (backend + tool grant).
+var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer: how each agent runs (backend + tool grant).
 # FULLY DEFINED by init (no hidden coded configuration, sty_892517e7): every
 # value below is the ACTIVE default, written out so the operator sees exactly
 # what runs. Edit freely; an absent file falls back to these same defaults.
@@ -360,7 +361,12 @@ const scaffoldAgentsToml = `# agents.toml — the agents layer: how each agent r
 harness = "in-loop"            # the orchestrator/driving session itself
 
 [reviewer]
-harness = "claude"             # preset: claude -p --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model}
+# The FULL command template — transparent and swappable (sty_892517e7, user
+# feedback): satelle substitutes {system} (the rubric), {tools} (the grant
+# below), and {model}, each into its own argument, and pipes the payload on
+# stdin; an empty model drops the --model pair. Point this at ANY agent CLI by
+# rewriting the command.
+harness = "REVIEWER_HARNESS_TEMPLATE"
 tools   = "Read,Grep,Glob"     # read-only grant — widen at your own risk
 model   = ""                   # empty inherits the CLI's default; e.g. "sonnet" reviews on a cheaper/faster model
 
@@ -369,7 +375,7 @@ model   = ""                   # empty inherits the CLI's default; e.g. "sonnet"
 # [commit-agent]
 # harness = "claude -p --append-system-prompt {system} --allowedTools {tools}"
 # tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*)"
-`
+`, "REVIEWER_HARNESS_TEMPLATE", agentcli.DefaultClaudeHarness)
 
 // scaffoldConstitution is the project-constitution template a fresh init writes to
 // .satelle/constitution.md — the order-zero doc injected into every session

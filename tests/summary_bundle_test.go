@@ -89,3 +89,43 @@ func TestAttachFileAndDropAllocation(t *testing.T) {
 		t.Errorf("--body with --file should be rejected:\n%s", out)
 	}
 }
+
+// TestStorySyncVerb drives `satelle story sync` end-to-end (sty_8f7b2157): the
+// backlog-only view invariant holds, artifact dirs survive, and an orphaned
+// artifact dir is REPORTED, not deleted.
+func TestStorySyncVerb(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	stubReviewerAccept(t, repo)
+
+	id := extractID(mustRun(t, testBin, repo, "story", "create", "--title", "Open", "--body", "goal", "--acceptance", "1. a", "--category", "feature"), "sty_")
+	// An engaged story leaves the view; its artifact dir persists.
+	idEng := extractID(mustRun(t, testBin, repo, "story", "create", "--title", "Engaged", "--body", "goal", "--acceptance", "1. b", "--category", "feature", "--status", "in_progress"), "sty_")
+	if err := os.MkdirAll(filepath.Join(repo, ".satelle", "stories", idEng), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, ".satelle", "stories", idEng, "evidence.md"), "---\nstory: "+idEng+"\ntype: evidence\n---\n\n# e\n")
+	// An orphaned artifact dir (no such story).
+	if err := os.MkdirAll(filepath.Join(repo, ".satelle", "stories", "sty_00000000"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, ".satelle", "stories", "sty_00000000", "old.md"), "# orphan\n")
+
+	out := mustRun(t, testBin, repo, "story", "sync")
+	if !strings.Contains(out, "ORPHANED sty_00000000") {
+		t.Errorf("orphaned artifact dir not reported:\n%s", out)
+	}
+	// Backlog-only invariant: the open story's view exists; the engaged one's doesn't.
+	if _, err := os.Stat(filepath.Join(repo, ".satelle", "stories", id+".md")); err != nil {
+		t.Errorf("backlog story view missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".satelle", "stories", idEng+".md")); err == nil {
+		t.Error("engaged story must not have a view file")
+	}
+	// Artifacts preserved.
+	for _, p := range []string{filepath.Join(repo, ".satelle", "stories", idEng, "evidence.md"), filepath.Join(repo, ".satelle", "stories", "sty_00000000", "old.md")} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("artifact deleted by sync: %s (%v)", p, err)
+		}
+	}
+}
