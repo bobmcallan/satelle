@@ -459,9 +459,16 @@
       // was just server-rendered fresh, so a refetch would be redundant (and
       // would disrupt an expansion opened immediately after load).
       if (firstOpen) { firstOpen = false; return; }
+      if (document.body.getAttribute("data-page") === "projects") { location.reload(); return; }
       LIVE_TOPICS.forEach(function (tp) { refetchPanel(tp); });
     });
-    src.addEventListener("trigger", function (ev) { if (refetch[ev.data]) refetch[ev.data](); });
+    src.addEventListener("trigger", function (ev) {
+      if (refetch[ev.data]) refetch[ev.data]();
+      // The / landing has no panels — a "projects" doorbell (the served set
+      // changed: workspace add/remove, a child failed) reloads it so an open
+      // tab is never stale (sty_4ea4d4df).
+      if (ev.data === "projects" && document.body.getAttribute("data-page") === "projects") location.reload();
+    });
     src.onerror = function () { if (dot) dot.classList.remove("on"); };
   }
 
