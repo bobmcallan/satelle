@@ -56,9 +56,14 @@ func TestProseVerdictGatesTransition(t *testing.T) {
 		t.Errorf("a prose verdict must not be misread as a transient failure:\n%s", rejOut)
 	}
 
-	// Prose ACCEPT advances.
+	// Prose ACCEPT advances — and the gate emits progress to stderr while the
+	// reviewer runs, so a slow gate is visibly distinct from a hang (sty_6c88ca10;
+	// mustRun captures combined output, so stderr progress appears here).
 	stubReviewerProse(t, repo, "All good. Verdict: accept.")
-	mustRun(t, testBin, repo, "story", "set", id, "--status", "in_progress")
+	setOut := mustRun(t, testBin, repo, "story", "set", id, "--status", "in_progress")
+	if !strings.Contains(setOut, "running reviewer") {
+		t.Errorf("gated set should emit 'running reviewer …' progress to stderr:\n%s", setOut)
+	}
 	got := mustRun(t, testBin, repo, "story", "get", id)
 	if !strings.Contains(got, `"status": "in_progress"`) {
 		t.Errorf("prose accept should advance the story:\n%s", got)

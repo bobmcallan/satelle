@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -60,6 +61,10 @@ func openAppForCmd(cmd *cobra.Command) error {
 		if runner, rerr := agentcli.NewRunner(gc.Agent.ResolveCLI()); rerr == nil {
 			rev := reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, "")
 			rev.SetLogDir(filepath.Join(filepath.Dir(a.DBPath), "logs"), logRotation(a))
+			// A gated transition legitimately blocks for minutes while the nested
+			// reviewer runs — emit progress to stderr so it is visibly distinct from
+			// a hang (sty_6c88ca10). stderr keeps stdout's JSON payload clean.
+			rev.SetProgress(func(msg string) { fmt.Fprintln(os.Stderr, msg) })
 			applyAgentGrants(rev, a)
 			rev.SetChildrenResolver(childrenResolver(a))
 			verb.SetTransitionGater(rev)
