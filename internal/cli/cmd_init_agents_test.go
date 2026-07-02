@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 )
 
@@ -16,7 +17,7 @@ import (
 func TestScaffoldAgentsTomlFullyDefined(t *testing.T) {
 	for _, want := range []string{
 		"[executor]", `harness = "in-loop"`,
-		"[reviewer]", `harness = "claude"`, `tools   = "Read,Grep,Glob"`,
+		"[reviewer]", agentcli.DefaultClaudeHarness, `tools   = "Read,Grep,Glob"`,
 	} {
 		if !strings.Contains(scaffoldAgentsToml, want) {
 			t.Errorf("scaffold missing active entry %q", want)
@@ -33,8 +34,10 @@ func TestScaffoldAgentsTomlFullyDefined(t *testing.T) {
 		t.Fatalf("scaffold does not parse: %v", err)
 	}
 	rev := ag.ReviewerBinding()
-	if rev.Harness != config.DefaultReviewerHarness || rev.Tools != config.DefaultReviewerTools {
-		t.Errorf("scaffold reviewer = (%q, %q), want coded defaults (%q, %q)",
-			rev.Harness, rev.Tools, config.DefaultReviewerHarness, config.DefaultReviewerTools)
+	// The written harness is the FULL command template (transparent, swappable) —
+	// exactly what the bare "claude" preset expands to, so behaviour is unchanged.
+	if rev.Harness != agentcli.DefaultClaudeHarness || rev.Tools != config.DefaultReviewerTools {
+		t.Errorf("scaffold reviewer = (%q, %q), want (%q, %q)",
+			rev.Harness, rev.Tools, agentcli.DefaultClaudeHarness, config.DefaultReviewerTools)
 	}
 }

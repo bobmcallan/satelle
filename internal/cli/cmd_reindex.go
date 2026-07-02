@@ -55,7 +55,7 @@ the same sync continuously (without validation, to keep the poll loop cheap).`,
 			// Regenerate the read-only OKF backlog reference under .satelle/stories/
 			// from the store (the DB stays the sole story store; this is a disposable
 			// view). Best-effort — a render failure must not fail indexing.
-			if n, serr := verb.SyncStoryBacklog(cmd.Context(), a.Store.Stories, time.Now()); serr != nil {
+			if n, _, serr := verb.SyncStoryBacklog(cmd.Context(), a.Store.Stories, time.Now()); serr != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "reindex: story backlog: %v\n", serr)
 			} else if n > 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "stories: backlog reference +%d\n", n)

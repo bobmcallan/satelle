@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,30 +23,110 @@ import (
 // re-source from the DB); they exist only so the agent can browse the backlog on
 // disk. Per-story attachment subdirs (<id>/) are left untouched, and the legacy
 // pre-mirror-removal sty_*.md leftovers are cleaned up. Best-effort; a nil store
-// or unset dir is a no-op. Returns the number of stories materialized.
-func SyncStoryBacklog(ctx context.Context, store *workitem.Store, now time.Time) (int, error) {
+// or unset dir is a no-op. Returns the stories materialized and views pruned.
+func SyncStoryBacklog(ctx context.Context, store *workitem.Store, now time.Time) (materialized, pruned int, err error) {
 	if store == nil || strings.TrimSpace(storyDir) == "" {
-		return 0, nil
+		return 0, 0, nil
 	}
 	items, err := storyBacklogItems(ctx, store)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	// The stories dir's only legitimate top-level .md files are the ones we
 	// generate, so any top-level sty_*.md NOT in the current backlog is stale — the
 	// pre-sty_fa1e02e1 mirror leftovers, or a story that left the backlog. Remove
 	// them (MaterializeOKF then writes the current set); <id>/ attachment subdirs
 	// are untouched.
-	pruneStoryFiles(storyDir, items)
+	pruned = pruneStoryFiles(storyDir, items)
 	if err := docindex.MaterializeOKF(storyDir, "Backlog", items, now); err != nil {
-		return 0, err
+		return 0, pruned, err
 	}
 	// One-time adoption (sty_97c53d72): implementation summaries now live WITH
 	// their story (an attachment under <id>/), not in the retired
 	// documents/story-implementation-summary sub-bundle — migrate any legacy
 	// commit-summary-sty_*.md into the owning story's folder.
 	migrateLegacySummaries(storyDir)
-	return len(items), nil
+	return len(items), pruned, nil
+}
+
+// StorySyncReport summarises one full .satelle/stories reconciliation
+// (sty_8f7b2157): the view counts plus the artifact review — orphaned artifact
+// dirs (story id absent from the DB) and artifact files whose frontmatter
+// contradicts their location are REPORTED, never deleted (artifacts are
+// authored evidence; the operator decides).
+type StorySyncReport struct {
+	Materialized int      `json:"materialized"`       // backlog views written/refreshed
+	Pruned       int      `json:"pruned"`             // stale/non-backlog views removed
+	ArtifactDirs int      `json:"artifact_dirs"`      // <sty_id>/ dirs present
+	Orphaned     []string `json:"orphaned,omitempty"` // artifact dirs with no DB story
+	Problems     []string `json:"problems,omitempty"` // artifact frontmatter mismatches
+}
+
+// SyncStories runs the full stories-dir reconciliation and REVIEWS the
+// artifacts (sty_8f7b2157): the shared SyncStoryBacklog core (materialize the
+// backlog-only views, prune stale, migrate legacy summaries) plus a review of
+// every <sty_id>/ artifact dir against the database. The dedicated
+// `satelle story sync` verb calls this; reindex/serve keep calling the core.
+func SyncStories(ctx context.Context, store *workitem.Store, now time.Time) (StorySyncReport, error) {
+	var rep StorySyncReport
+	n, pruned, err := SyncStoryBacklog(ctx, store, now)
+	if err != nil {
+		return rep, err
+	}
+	rep.Materialized, rep.Pruned = n, pruned
+	ents, derr := os.ReadDir(storyDir)
+	if derr != nil {
+		return rep, nil // no dir yet — nothing to review
+	}
+	for _, de := range ents {
+		if !de.IsDir() || !strings.HasPrefix(de.Name(), "sty_") {
+			continue
+		}
+		rep.ArtifactDirs++
+		id := de.Name()
+		if _, gerr := store.Get(ctx, id); gerr != nil {
+			rep.Orphaned = append(rep.Orphaned, id)
+			continue
+		}
+		// Frontmatter review: an artifact claiming a DIFFERENT story than the
+		// dir it lives in is a misfiled artifact — report it.
+		files, _ := os.ReadDir(filepath.Join(storyDir, id))
+		for _, f := range files {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
+				continue
+			}
+			body, rerr := os.ReadFile(filepath.Join(storyDir, id, f.Name()))
+			if rerr != nil {
+				continue
+			}
+			if claimed := artifactStoryClaim(string(body)); claimed != "" && claimed != id {
+				rep.Problems = append(rep.Problems,
+					fmt.Sprintf("%s/%s claims story %s (misfiled artifact)", id, f.Name(), claimed))
+			}
+		}
+	}
+	sort.Strings(rep.Orphaned)
+	sort.Strings(rep.Problems)
+	return rep, nil
+}
+
+// artifactStoryClaim reads the `story:` frontmatter key from an artifact file
+// (best-effort; empty when absent or unfenced).
+func artifactStoryClaim(s string) string {
+	if !strings.HasPrefix(s, "---\n") {
+		return ""
+	}
+	rest := s[len("---\n"):]
+	end := strings.Index(rest, "\n---")
+	if end < 0 {
+		return ""
+	}
+	for _, line := range strings.Split(rest[:end], "\n") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(line), ":"); ok && strings.TrimSpace(k) == "story" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 // summaryStoryID extracts the owning story id from a legacy summary filename
@@ -181,11 +262,12 @@ func firstProseLine(body string) string {
 // pruneStoryFiles removes every top-level sty_*.md in dir whose id is not in the
 // current backlog set — the legacy DB→disk mirror leftovers and stories that have
 // left the backlog. Attachment subdirs and non-story files are untouched.
-func pruneStoryFiles(dir string, items []docindex.OKFItem) {
+func pruneStoryFiles(dir string, items []docindex.OKFItem) int {
 	ents, err := os.ReadDir(dir)
 	if err != nil {
-		return
+		return 0
 	}
+	n := 0
 	want := make(map[string]struct{}, len(items))
 	for _, it := range items {
 		want[it.Name] = struct{}{}
@@ -201,6 +283,9 @@ func pruneStoryFiles(dir string, items []docindex.OKFItem) {
 		if _, keep := want[strings.TrimSuffix(name, ".md")]; keep {
 			continue // MaterializeOKF (re)writes it as the generated view
 		}
-		_ = os.Remove(filepath.Join(dir, name))
+		if os.Remove(filepath.Join(dir, name)) == nil {
+			n++
+		}
 	}
+	return n
 }
