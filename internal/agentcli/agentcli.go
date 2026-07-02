@@ -36,13 +36,15 @@ const (
 // is the gate/skill body, {tools} the allow-grant, {model} the optional model
 // (dropped, with its flag, when unset).
 //
-// The denylist keeps the work-tree MUTATORS off (Write, Edit, NotebookEdit) so a
+// The denylist keeps the work-tree MUTATORS off (Write, Edit, NotebookEdit, and
+// Bash — a shell redirect writes files whatever the user's ~/.claude permission
+// allows; sty_892517e7) so a
 // reviewer can never modify the repo it judges — the read-only invariant. The
 // reviewer's default allow-grant ({tools}) is read-only (Read, Grep, Glob) and
 // needs no shell: the substrate it reasons about is materialised as markdown
 // under .satelle, so it reads it directly. A repo MAY widen the grant in
 // .satelle/agents.toml (transparently), but the default is read-only.
-const DefaultClaudeHarness = "claude -p --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
+const DefaultClaudeHarness = "claude -p --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model}"
 
 // Request is one headless agent invocation.
 type Request struct {
