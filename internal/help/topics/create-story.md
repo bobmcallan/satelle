@@ -33,19 +33,25 @@ Move the story into work:
 
     satelle story set <id> --status in_progress
 
-This edge is gated by `satelle-story-intent-review`: the story must be well-formed
-enough to start — a clear goal and numbered, testable acceptance criteria. A
-reject keeps it in backlog with notes on what to clarify.
+On the seeded default workflow this edge carries one CODED gate: the
+estimate/actual check rejects begin-work until a plan estimate is recorded
+(`satelle story estimate <id> --time <dur> --tokens <n>`). A repo that authors
+richer gates (e.g. `satelle-story-intent-review`, judging the story is
+well-formed enough to start) adds them to its workflow; a reject keeps the story
+in backlog with notes on what to clarify.
 
 ## 3. Reach done through the workflow's gates
 
 The exact path to `done` is whatever the active workflow declares — `done` is
 always the terminal state, and every gate on the path runs before it (see
-`satelle help reviewer-checks`). The seeded default project workflow passes
-through `integration` (entry gated by `satelle-code-ac-review`) before the
-close, which is gated by `satelle-story-done-review` — an isolated, **read-only**
-reviewer that reads the repository and works through the numbered acceptance
-criteria one by one. A reject pushes back with the unmet criteria.
+`satelle help reviewer-checks`). The seeded default project workflow is the most
+basic lifecycle — it closes directly (`in_progress → done`) with **no LLM
+reviewers**; only the coded estimate/actual check (the actual cost must be
+recorded before the close) and the per-transition step summary run. Reviewer
+gates like `satelle-story-done-review` — an isolated, **read-only** reviewer
+that reads the repository and works through the numbered acceptance criteria one
+by one — are authored substrate a repo layers into its own workflow (the parent
+workflow and this repo's workflow both declare it).
 
 A repo may layer extra steps onto the path before `done` — this repo's workflow
 adds sequential **commit** and **push** steps: the `commit` executor bumps the

@@ -75,8 +75,11 @@ type Gater struct {
 	tools        string
 	checkTimeout time.Duration
 	// check runs a functional-check command in dir and returns its combined
-	// output. Swappable in tests; defaults to a real `sh -c` exec.
-	check func(ctx context.Context, dir, command string) (string, error)
+	// output. The command receives the SAME stdin transition payload an LLM
+	// reviewer gets ({story, from, to, review_skill}), so a coded gate can judge
+	// the story's tags/edge deterministically (sty_f804caaa). Swappable in
+	// tests; defaults to a real `bash -c` exec.
+	check func(ctx context.Context, dir, command, payload string) (string, error)
 	// children resolves a parent's child stories (id + status) for a container
 	// close gate's payload. Nil when unwired (no children injected).
 	children func(ctx context.Context, parentID string) []ChildState
@@ -263,9 +266,10 @@ func (g *Gater) SetRunner(r agentcli.Runner) {
 // execCheck runs command via `bash -c` in dir, returning combined stdout+stderr.
 // bash (not sh) so a multi-line self-contained check embedded in a skill may use
 // ordinary shell scripting.
-func execCheck(ctx context.Context, dir, command string) (string, error) {
+func execCheck(ctx context.Context, dir, command, payload string) (string, error) {
 	c := exec.CommandContext(ctx, "bash", "-c", command)
 	c.Dir = dir
+	c.Stdin = strings.NewReader(payload)
 	out, err := c.CombinedOutput()
 	return string(out), err
 }
@@ -529,19 +533,6 @@ func (g *Gater) runReviewer(ctx context.Context, item workitem.Item, toStatus, s
 		}
 		return verb.GateDecision{}, err
 	}
-	// Functional-check gate: when the skill carries a check — an embedded ```check
-	// script block in its body, or a single-line `check:` in frontmatter — the
-	// gate is deterministic. The check is SELF-CONTAINED in the skill (it never
-	// references an external script); satelle runs it in the repo root, exit 0
-	// accepts, non-zero rejects with the output tail as notes. No LLM (the command
-	// IS the decision). This is the constitution's "skill + functional check" gate.
-	if command := skillCheck(body); command != "" {
-		return g.runCheck(ctx, skill, command), nil
-	}
-	if g.runner == nil {
-		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
-			"reviewer: transition %s→%s is gated by %q but no agent runner is configured", item.Status, toStatus, skill)
-	}
 	tp := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: skill}
 	if g.children != nil {
 		tp.Children = g.children(ctx, item.ID)
@@ -549,6 +540,20 @@ func (g *Gater) runReviewer(ctx context.Context, item workitem.Item, toStatus, s
 	payload, err := json.Marshal(tp)
 	if err != nil {
 		return verb.GateDecision{}, err
+	}
+	// Functional-check gate: when the skill carries a check — an embedded ```check
+	// script block in its body, or a single-line `check:` in frontmatter — the
+	// gate is deterministic. The check is SELF-CONTAINED in the skill (it never
+	// references an external script); satelle runs it in the repo root with the
+	// transition payload on stdin, exit 0 accepts, non-zero rejects with the
+	// output tail as notes. No LLM (the command IS the decision). This is the
+	// constitution's "skill + functional check" gate.
+	if command := skillCheck(body); command != "" {
+		return g.runCheck(ctx, skill, command, string(payload)), nil
+	}
+	if g.runner == nil {
+		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
+			"reviewer: transition %s→%s is gated by %q but no agent runner is configured", item.Status, toStatus, skill)
 	}
 	req := agentcli.Request{
 		SystemPrompt: g.reviewerSystemPrompt(ctx, body),
@@ -1067,14 +1072,14 @@ func OrderedWorkflows(workflows []docindex.Doc, category string) []docindex.Doc 
 // runCheck runs a skill's functional-check command and returns a deterministic
 // verdict: exit 0 accepts, any non-zero (or a run error / timeout) rejects with
 // the command's output tail as actionable notes.
-func (g *Gater) runCheck(ctx context.Context, skill, command string) verb.GateDecision {
+func (g *Gater) runCheck(ctx context.Context, skill, command, payload string) verb.GateDecision {
 	timeout := g.checkTimeout
 	if timeout <= 0 {
 		timeout = defaultCheckTimeout
 	}
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	out, err := g.check(cctx, g.repoRoot, command)
+	out, err := g.check(cctx, g.repoRoot, command, payload)
 	dec := verb.GateDecision{Gated: true, Skill: skill}
 	if err != nil {
 		dec.Accept = false

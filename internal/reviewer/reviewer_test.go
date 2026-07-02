@@ -1118,7 +1118,13 @@ func TestFunctionalCheckGate(t *testing.T) {
 	t.Run("pass accepts, agent not run", func(t *testing.T) {
 		g, r := gater(t, `{"decision":"reject"}`, fakeDocs{workflow: wf, skillBody: checkSkill, skillFound: true})
 		var ran string
-		g.check = func(_ context.Context, dir, command string) (string, error) { ran = command; return "ok\n", nil }
+		g.check = func(_ context.Context, dir, command, payload string) (string, error) {
+			ran = command
+			if !strings.Contains(payload, `"to":"integrated"`) {
+				t.Errorf("check payload missing the transition: %q", payload)
+			}
+			return "ok\n", nil
+		}
 		dec, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "integrated")
 		if err != nil {
 			t.Fatal(err)
@@ -1136,7 +1142,7 @@ func TestFunctionalCheckGate(t *testing.T) {
 
 	t.Run("fail rejects with output tail", func(t *testing.T) {
 		g, _ := gater(t, ``, fakeDocs{workflow: wf, skillBody: checkSkill, skillFound: true})
-		g.check = func(_ context.Context, dir, command string) (string, error) {
+		g.check = func(_ context.Context, dir, command, payload string) (string, error) {
 			return "FAIL tests\n2 failures\n", errFakeExit
 		}
 		dec, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "integrated")
@@ -1432,5 +1438,56 @@ func TestWorkflowConsistency(t *testing.T) {
 	}
 	if ok := WorkflowConsistency([]docindex.Doc{wfCreate}, func(string) bool { return true }); len(ok) != 0 {
 		t.Errorf("a resolved create_review is clean, got %v", ok)
+	}
+}
+
+// TestCodedEstimateGate runs the EMBEDDED estimate/actual skill's self-contained
+// check end-to-end — real bash, the transition payload on stdin (sty_f804caaa):
+// begin-work without an estimate tag rejects, close without an actual tag
+// rejects, other edges pass — and the agent is never invoked.
+func TestCodedEstimateGate(t *testing.T) {
+	var body string
+	for _, d := range config.EmbeddedDefaults() {
+		if d.Kind == "skills" && d.Name == "satelle-estimate-actual-review" {
+			body = d.Body
+		}
+	}
+	if body == "" || !strings.Contains(body, "```check") {
+		t.Fatalf("embedded estimate skill must carry a self-contained check block")
+	}
+	g, r := gater(t, `{"decision":"reject"}`, fakeDocs{skillBody: body, skillFound: true})
+	g.repoRoot = t.TempDir() // the check runs in the repo root — use a real dir
+
+	cases := []struct {
+		name   string
+		to     string
+		tags   []string
+		accept bool
+		want   string // substring of the reject notes
+	}{
+		{"in_progress without estimate rejects", "in_progress", []string{"cli"}, false, "no plan estimate recorded"},
+		{"in_progress with estimate accepts", "in_progress", []string{"estimate-minutes:30"}, true, ""},
+		{"done without actual rejects", "done", []string{"estimate-tokens:5000"}, false, "no actual recorded"},
+		{"done with actual accepts", "done", []string{"actual-tokens:9000"}, true, ""},
+		{"other edges pass", "integration", nil, true, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dec, err := g.runReviewer(context.Background(),
+				workitem.Item{ID: "sty_x", Kind: workitem.KindStory, Status: "backlog", Tags: c.tags},
+				c.to, "satelle-estimate-actual-review")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !dec.Gated || dec.Accept != c.accept {
+				t.Fatalf("decision = %+v, want gated accept=%v", dec, c.accept)
+			}
+			if c.want != "" && !strings.Contains(dec.Notes, c.want) {
+				t.Errorf("notes = %q, want substring %q", dec.Notes, c.want)
+			}
+		})
+	}
+	if r.got.SystemPrompt != "" {
+		t.Error("the coded gate must never invoke the agent")
 	}
 }

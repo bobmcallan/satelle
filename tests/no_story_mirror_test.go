@@ -24,6 +24,7 @@ func TestNoStoryMirrorWritten(t *testing.T) {
 	if id == "" {
 		t.Fatalf("no story id in create output:\n%s", out)
 	}
+	mustRun(t, testBin, repo, "story", "estimate", id, "--time", "10m") // the coded estimate gate enforces OOTB
 	mustRun(t, testBin, repo, "story", "set", id, "--status", "in_progress")
 
 	// No mirror file written by the transition.

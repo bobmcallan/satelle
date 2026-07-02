@@ -139,7 +139,14 @@ func TestDogfoodFlow(t *testing.T) {
 	storyID := extractID(out, "sty_")
 	mustRun(t, bin, repo, "task", "create", "--title", "write release notes")
 
-	// Move the story along the baseline workflow.
+	// The seeded default's CODED estimate gate enforces out of the box
+	// (sty_f804caaa): begin-work without an estimate is rejected deterministically.
+	if out, err := run(t, bin, repo, "story", "set", storyID, "--status", "in_progress"); err == nil || !strings.Contains(out, "no plan estimate recorded") {
+		t.Fatalf("begin-work without an estimate should be rejected by the coded gate: err=%v\n%s", err, out)
+	}
+	mustRun(t, bin, repo, "story", "estimate", storyID, "--time", "10m")
+
+	// Move the story along the seeded default workflow.
 	out = mustRun(t, bin, repo, "story", "set", storyID, "--status", "in_progress")
 	if !strings.Contains(out, `"status": "in_progress"`) {
 		t.Errorf("story set status:\n%s", out)
@@ -292,7 +299,6 @@ func TestInitDeploysDefaultSolution(t *testing.T) {
 		".satelle/workflows/satelle-project-workflow.md",
 		".satelle/workflows/satelle-parent-workflow.md",
 		".satelle/workflows/satelle-task-workflow.md",
-		".satelle/skills/satelle-code-ac-review.md",
 		".satelle/skills/satelle-estimate-actual-review.md",
 		".satelle/skills/satelle-task-validate-before-review.md",
 		".satelle/skills/satelle-task-validate-after-review.md",
