@@ -278,3 +278,111 @@ func httpStatus(t *testing.T, url string) int {
 	defer resp.Body.Close()
 	return resp.StatusCode
 }
+
+// TestInitDeploysDefaultSolution asserts a fresh init lands the COMPLETE default
+// solution (sty_a7cbd6dd): the generic project/parent/task-execution workflows
+// plus every referenced gate skill, validating green with no dangling refs, and
+// an execution resolving to the task-execution workflow out of the box.
+func TestInitDeploysDefaultSolution(t *testing.T) {
+	bin := testBin
+	repo := t.TempDir()
+	mustRun(t, bin, repo, "init")
+
+	for _, rel := range []string{
+		".satelle/workflows/satelle-project-workflow.md",
+		".satelle/workflows/satelle-parent-workflow.md",
+		".satelle/workflows/satelle-task-workflow.md",
+		".satelle/skills/satelle-code-ac-review.md",
+		".satelle/skills/satelle-estimate-actual-review.md",
+		".satelle/skills/satelle-task-validate-before-review.md",
+		".satelle/skills/satelle-task-validate-after-review.md",
+		".satelle/skills/satelle-story-intent-review.md",
+		".satelle/skills/satelle-story-done-review.md",
+		".satelle/skills/satelle-story-cancel-review.md",
+		".satelle/skills/satelle-step-summary.md",
+	} {
+		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
+			t.Errorf("init did not seed %s", rel)
+		}
+	}
+
+	// Index the seeded substrate (as a session does at SessionStart), then the
+	// per-noun validators must pass out of the box.
+	mustRun(t, bin, repo, "reindex")
+	mustRun(t, bin, repo, "workflow", "validate")
+	mustRun(t, bin, repo, "skill", "validate")
+
+	// An execution resolves to the task-execution workflow, not the wildcard: the
+	// head (active) entry of the ordered list for the execution kind-category.
+	out := mustRun(t, bin, repo, "workflow", "list", "--category", "execution")
+	firstObj := out
+	if i := strings.Index(out, "}"); i >= 0 {
+		firstObj = out[:i]
+	}
+	if !strings.Contains(firstObj, `"name": "satelle-task-workflow"`) {
+		t.Errorf("head workflow for an execution is not satelle-task-workflow:\n%s", out)
+	}
+
+	// And a run can be created against the seeded starter task immediately.
+	out = mustRun(t, bin, repo, "execution", "create", "--parent", "tsk_example1", "--title", "run 1")
+	if !strings.Contains(out, `"exe_`) {
+		t.Fatalf("execution create output:\n%s", out)
+	}
+}
+
+// TestRebaseResetsSubstrate asserts `satelle rebase` aborts without confirmation,
+// and with --yes backs up the customized substrate to a timestamped dir, wipes
+// it, and redeploys the complete default solution (sty_a7cbd6dd).
+func TestRebaseResetsSubstrate(t *testing.T) {
+	bin := testBin
+	repo := t.TempDir()
+	mustRun(t, bin, repo, "init")
+
+	// Customize: drift a seeded skill, add an extra authored workflow.
+	skill := filepath.Join(repo, ".satelle", "skills", "satelle-code-ac-review.md")
+	if err := os.WriteFile(skill, []byte("# drifted\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	extra := filepath.Join(repo, ".satelle", "workflows", "extra-workflow.md")
+	if err := os.WriteFile(extra, []byte("# extra\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// No confirmation (empty stdin) → abort, nothing changed.
+	out, err := run(t, bin, repo, "rebase")
+	if err != nil || !strings.Contains(out, "aborted") {
+		t.Fatalf("unconfirmed rebase: err=%v\n%s", err, out)
+	}
+	if _, serr := os.Stat(extra); serr != nil {
+		t.Error("unconfirmed rebase removed the extra workflow")
+	}
+
+	// Confirmed rebase: backup + wipe + redeploy.
+	out = mustRun(t, bin, repo, "rebase", "--yes")
+	if !strings.Contains(out, "backed up") || !strings.Contains(out, "deployed") {
+		t.Errorf("rebase report incomplete:\n%s", out)
+	}
+	if b, _ := os.ReadFile(skill); strings.Contains(string(b), "# drifted") {
+		t.Error("rebase did not reset the drifted skill to the embedded default")
+	}
+	if _, serr := os.Stat(extra); serr == nil {
+		t.Error("rebase left the extra authored workflow in the live dir")
+	}
+	if _, serr := os.Stat(filepath.Join(repo, ".satelle", "workflows", "satelle-project-workflow.md")); serr != nil {
+		t.Error("rebase did not redeploy the default project workflow")
+	}
+
+	// The backup holds the pre-rebase files.
+	backups := filepath.Join(repo, ".satelle", "backups")
+	entries, rerr := os.ReadDir(backups)
+	if rerr != nil || len(entries) != 1 {
+		t.Fatalf("expected one timestamped backup dir: %v %v", entries, rerr)
+	}
+	backupDir := filepath.Join(backups, entries[0].Name())
+	if _, serr := os.Stat(filepath.Join(backupDir, "workflows", "extra-workflow.md")); serr != nil {
+		t.Error("backup missing the extra authored workflow")
+	}
+	if b, _ := os.ReadFile(filepath.Join(backupDir, "skills", "satelle-code-ac-review.md")); !strings.Contains(string(b), "# drifted") {
+		t.Error("backup missing the drifted skill bytes")
+	}
+}

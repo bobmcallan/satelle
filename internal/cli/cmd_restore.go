@@ -24,10 +24,11 @@ under .satelle. It is the recovery path when a repo's substrate is broken or has
 drifted: the inverse of init's never-clobber seeding.
 
 Because it overwrites files it asks for confirmation first (pass --yes to
-confirm non-interactively). The embedded baseline WORKFLOW is deliberately NOT
-written to disk (it stays the binary's fallback; a disk copy would compete with
-the repo's own workflow), and authored files with no embedded counterpart —
-your workflows, documents, tasks, configs, constitution — are never touched.`,
+confirm non-interactively). Embedded WORKFLOWS are deliberately NOT restored —
+a repo's workflow set is its own (the same-named embedded defaults would clobber
+a customized lifecycle); use 'satelle rebase' to reset workflows to the default
+solution with a backup. Authored files with no embedded counterpart — your
+workflows, documents, tasks, configs, constitution — are never touched.`,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := appFrom(cmd)
@@ -51,14 +52,15 @@ type restorePlanEntry struct {
 
 // runRestore re-materialises the embedded default skills + principles into
 // dataDir, overwriting drifted copies after an explicit confirmation
-// (sty_9e2426b3). It never touches the embedded baseline workflow (embedded-only
-// by design — a disk copy would compete with the repo's authored workflow) or
-// any file without an embedded counterpart.
+// (sty_9e2426b3). It never touches WORKFLOWS — the repo's workflow set is its
+// own, and the same-named embedded defaults would clobber a customized
+// lifecycle (`satelle rebase` owns the workflow reset, with a backup) — or any
+// file without an embedded counterpart.
 func runRestore(out io.Writer, in io.Reader, dataDir string, yes bool) error {
 	var plan []restorePlanEntry
 	for _, d := range config.EmbeddedDefaults() {
 		if d.Kind == "workflows" {
-			continue // baseline workflow stays embedded-only (init parity)
+			continue // never restore workflows over a repo's own lifecycle — rebase owns that reset
 		}
 		rel := filepath.Join(d.Kind, d.Name+".md")
 		p := filepath.Join(dataDir, rel)

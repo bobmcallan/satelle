@@ -836,10 +836,12 @@ func TestBrowserWorkflowDiagramInteractive(t *testing.T) {
 		t.Fatalf("load page: %v", err)
 	}
 	clickJS(t, ctx, `.tab[data-panel="workflow"]`)
-	if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow tr.row[data-expand-url^="fragment/workflow/"]')`, 5*time.Second) {
+	// Target the authored wf-int row specifically — init seeds the default
+	// workflow set, so the first row is no longer the one under test.
+	if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow tr.row[data-expand-url="fragment/workflow/wf-int"]')`, 5*time.Second) {
 		t.Fatal("workflow row did not list")
 	}
-	clickJS(t, ctx, `#panel-workflow tr.row[data-expand-url^="fragment/workflow/"]`)
+	clickJS(t, ctx, `#panel-workflow tr.row[data-expand-url="fragment/workflow/wf-int"]`)
 	if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow svg.wf-diagram .wf-dnode[data-state="in_progress"]')`, 5*time.Second) {
 		t.Fatal("diagram did not render with identifiers")
 	}
