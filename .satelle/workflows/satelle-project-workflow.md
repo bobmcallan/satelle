@@ -5,7 +5,7 @@ type: workflow
 tags: [type:workflow]
 applies_to: ["*"]
 create_review: satelle-story-create-review
-description: This repo's project-scope workflow, authored in DOT (the agent model). A story or task moves backlog → in_progress → integration → commit → push → committed → done, with a cancelled exit. It is node-centric: each node is a step carrying an agent; the executor does the work, reviewers gate entry. Entering integration is gated by satelle-code-ac-review (ACs done + unit and integration tests created); leaving it for commit is gated by satelle-integration-review (the integration tests exercise the change) plus the declared intcheck node (runs make integration). The commit executor step bumps satelle.version + stamps the build date and commits; the push executor step pushes and watches the test run + the version-gated release; the committed reviewer (satelle-push-review) confirms the bump, the green CI, and the published release, and emits a PR-style summary; done is the acceptance gate. There is no deploy state — the push to main IS the release, verified by CI. done stays terminal (satelle-done-is-last); a project workflow takes precedence over the embedded satelle-baseline-workflow.
+description: This repo's project-scope workflow, authored in DOT (the agent model). A story or task moves backlog → in_progress → integration → commit → push → committed → done, with a cancelled exit. It is node-centric: each node is a step carrying an agent; the executor does the work, reviewers gate entry. Entering integration is gated by satelle-code-ac-review (ACs done + unit and integration tests created); leaving it for commit is gated by satelle-integration-review (the integration tests exercise the change) plus the declared intcheck node (runs make integration). The commit executor step bumps satelle.version + stamps the build date and commits; the push executor step pushes and watches the test run + the version-gated release; the committed executor step (record-release) verifies the bump, the green CI, and the published release, and records a PR-style summary WITH the story (a .satelle/stories/<id>/ attachment); done is the acceptance gate that judges the recorded evidence. There is no deploy state — the push to main IS the release, verified by CI. done stays terminal (satelle-done-is-last); a project workflow takes precedence over the embedded satelle-baseline-workflow.
 ---
 
 # satelle workflow (project) — the agent model, authored in DOT
@@ -43,7 +43,7 @@ digraph satelle_workflow {
   integration [agent=executor]
   commit      [agent=commit-agent, prompt="@skill:commit"]
   push        [agent=commit-agent, prompt="@skill:push"]
-  committed   [agent=reviewer, prompt="@skill:satelle-push-review"]
+  committed   [agent=commit-agent, prompt="@skill:record-release"]
   done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
   cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
   
@@ -77,8 +77,8 @@ digraph satelle_workflow {
 
 Every gate/skill this workflow names resolves through the doc-index, **project
 scope (`.satelle/skills`) layered over the embedded system defaults**. The
-executor steps `commit` + `push` and the reviewer gates (`satelle-code-ac-review`,
-`satelle-integration-review`, `satelle-push-review`,
+executor steps `commit` + `push` + `record-release` and the reviewer gates
+(`satelle-code-ac-review`, `satelle-integration-review`,
 `satelle-story-intent-review`, `satelle-story-done-review`,
 `satelle-story-cancel-review`) are authored in this repo's `.satelle/skills` — so
 there is no dangling `@skill:`/`reviewer_skill` reference and a story drives to a

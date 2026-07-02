@@ -10,7 +10,7 @@ description: Executor skill for the `push` step. Pushes the committed slice to m
 
 You are the **executor** in the `push` step. The `commit` step has committed the
 slice with a bumped `.version`; your job is to **push it and prove the release**,
-then leave the evidence for the `satelle-push-review` gate. You DO the work (see
+then leave the evidence for the `record-release` step. You DO the work (see
 [[satelle-agent-model]]).
 
 ## The pipeline has TWO workflows
@@ -51,7 +51,7 @@ release. Watch BOTH runs; do not stop after `test`.
    confirm `satelle version` reports the pushed commit + the new version.
 5. **Record the evidence.** Capture on the story (a ledger note or tag): the SHA, the
    `test` run URL + conclusion, the `release` run URL + conclusion, and the published
-   `v<version>` tag. The `satelle-push-review` gate reads exactly this.
+   `v<version>` tag. The `record-release` step and the `done` gate read exactly this.
 
 ## When it fails
 
@@ -63,7 +63,8 @@ success. **Do not auto-retry, amend, or force-push** — surface the failure and
 
 ## Hand-off to the gate
 
-The `satelle-push-review` gate ([[satelle-agent-model]]) reads your evidence: it
-confirms `.version` was bumped + dated, the `test` run for the SHA concluded success,
-the `release` published the tag/assets, and the commit follows conventions. You never
-enact your own status advance — the gate's accept does that.
+The `record-release` executor step ([[satelle-agent-model]]) verifies your
+evidence — the `.version` bump + date, the green `test` run for the SHA, the
+published release, the commit conventions — and records the PR-style summary as
+a story attachment. The `done` gate then judges the recorded evidence. You never
+enact your own status advance — a gate's accept does that.

@@ -49,6 +49,6 @@ binary (what `satelle update` serves) stale — the binary-drift trap. Therefore
 ## Hand-off to the next step
 
 The `push` step pushes `HEAD`, watches the `test` run, then the version-gated
-`release` run, and confirms the tag/assets. The `satelle-push-review` gate then
+`release` run, and confirms the tag/assets. The `record-release` step then
 verifies the bump, the green CI, and the published release. You never enact your own
 status advance — the workflow's gates do that (see [[satelle-agent-model]]).

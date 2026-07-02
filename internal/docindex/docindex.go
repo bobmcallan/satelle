@@ -139,11 +139,6 @@ func (s *Store) Sync(ctx context.Context, dirs map[string]string, now time.Time)
 		// already-conformant docs are left untouched.
 		if kind == "documents" {
 			normalizeOKFDir(dir)
-			// Organise per-story implementation summaries into their OKF sub-bundle
-			// (migrate + regenerate its index/log) BEFORE the walk, so the sub-bundle
-			// carries an index.md and walkMarkdown skips its ~100 files — keeping them
-			// out of the flat root documents index.
-			refreshSummaryBundle(dir)
 		} else if t := authoredType(kind); t != "" {
 			// Authored substrate (skills/workflows/principles) is normalised to the
 			// OKF `type` key BEFORE the skip-unchanged check, migrating a legacy
