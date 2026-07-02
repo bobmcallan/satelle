@@ -13,6 +13,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -192,8 +194,10 @@ func runInit(out io.Writer, repoRoot string) error {
 
 	// 6. .claude/settings.json — the blocking process hooks that enforce the
 	//    workflow on the coding agent (created only if absent; never overwritten).
-	if added, herr := ensureClaudeHooks(repoRoot); herr != nil {
+	if added, updated, herr := ensureClaudeHooks(repoRoot); herr != nil {
 		return herr
+	} else if len(updated) > 0 {
+		fmt.Fprintf(out, "  ~ .claude/settings.json (hook updated: %s)\n", strings.Join(updated, "; "))
 	} else {
 		fmt.Fprintln(out, initLine(added, ".claude/settings.json (process hooks)"))
 	}
@@ -237,21 +241,66 @@ const claudeHookSettings = `{
 // ensureClaudeHooks writes .claude/settings.json with the process hooks when it
 // does not already exist. Returns whether it created the file. It never
 // overwrites an existing settings.json (the repo/user owns it).
-func ensureClaudeHooks(repoRoot string) (bool, error) {
+// retiredHookCommands maps RETIRED satelle CLI commands to their replacements —
+// the reconciliation seam for hook commands in an existing .claude/settings.json
+// (sty_6a919dff): a repo initialised before a rename otherwise invokes a removed
+// command forever (observed: a SessionStart hook still running `satelle index`).
+// Extend this map on every future rename/removal.
+var retiredHookCommands = map[string]string{
+	"satelle index": "satelle reindex",
+}
+
+// reconcileClaudeHooks surgically rewrites known-retired satelle commands inside
+// an existing settings.json — an exact-command string swap (word-boundary
+// guarded), so every other byte of the user-owned file is preserved. Returns the
+// applied renames ("old -> new"), empty when nothing was stale. Idempotent.
+func reconcileClaudeHooks(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	s := string(data)
+	var changed []string
+	for old, repl := range retiredHookCommands {
+		re := regexp.MustCompile(regexp.QuoteMeta(old) + `\b`)
+		if re.MatchString(s) {
+			s = re.ReplaceAllString(s, repl)
+			changed = append(changed, old+" -> "+repl)
+		}
+	}
+	if len(changed) == 0 {
+		return nil, nil
+	}
+	if err := os.WriteFile(path, []byte(s), 0o644); err != nil {
+		return nil, err
+	}
+	sort.Strings(changed)
+	return changed, nil
+}
+
+// ensureClaudeHooks writes .claude/settings.json with the process hooks when
+// absent, and RECONCILES known-retired satelle hook commands in an existing one
+// (sty_6a919dff) — the user-owned file is otherwise preserved byte-for-byte.
+// Returns whether it created the file and any applied hook renames.
+func ensureClaudeHooks(repoRoot string) (bool, []string, error) {
 	dir := filepath.Join(repoRoot, ".claude")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return false, fmt.Errorf("init: mkdir %s: %w", dir, err)
+		return false, nil, fmt.Errorf("init: mkdir %s: %w", dir, err)
 	}
 	path := filepath.Join(dir, "settings.json")
 	if _, err := os.Stat(path); err == nil {
-		return false, nil // exists — leave it
+		updated, rerr := reconcileClaudeHooks(path)
+		if rerr != nil {
+			return false, nil, fmt.Errorf("init: reconcile %s: %w", path, rerr)
+		}
+		return false, updated, nil
 	} else if !os.IsNotExist(err) {
-		return false, fmt.Errorf("init: stat %s: %w", path, err)
+		return false, nil, fmt.Errorf("init: stat %s: %w", path, err)
 	}
 	if err := os.WriteFile(path, []byte(claudeHookSettings), 0o644); err != nil {
-		return false, fmt.Errorf("init: write %s: %w", path, err)
+		return false, nil, fmt.Errorf("init: write %s: %w", path, err)
 	}
-	return true, nil
+	return true, nil, nil
 }
 
 // scaffoldToml is the documented config a fresh init writes. Every key is
