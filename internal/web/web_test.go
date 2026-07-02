@@ -752,3 +752,32 @@ func TestProjectHeaderLinks(t *testing.T) {
 		t.Error("project header must not render the removed projects link")
 	}
 }
+
+// TestBrandMarkAnimatedSVG asserts the topbar brand mark is the inline
+// moon-phase SVG (sty_8c00b58a): a SMIL-animated terminator path plus the
+// static reduced-motion fallback, using currentColor — no bare ◐ glyph inside
+// the anchor (the theme toggle keeps its own glyph).
+func TestBrandMarkAnimatedSVG(t *testing.T) {
+	srv, _ := newServer(t)
+	code, body := get(t, srv.URL+"/")
+	if code != 200 {
+		t.Fatalf("/ = %d", code)
+	}
+	i := strings.Index(body, `class="brand-mark"`)
+	j := strings.Index(body, `class="theme-toggle"`)
+	if i < 0 || j < 0 || i > j {
+		t.Fatalf("brand-mark/theme-toggle not found in order: %d %d", i, j)
+	}
+	mark := body[i:j]
+	for _, want := range []string{
+		"<svg", `<animate attributeName="d"`, `dur="12s"`,
+		"prefers-reduced-motion", `id="static"`, "currentColor",
+	} {
+		if !strings.Contains(mark, want) {
+			t.Errorf("brand mark missing %q:\n%s", want, mark)
+		}
+	}
+	if strings.Contains(mark, ">◐</a>") {
+		t.Error("brand mark still renders the bare ◐ text glyph")
+	}
+}

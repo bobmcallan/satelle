@@ -127,7 +127,33 @@ const templatesSrc = `
      green BORDER is a separate signal: the live /events (SSE) connection state, set
      by app.js (on=connected). The tooltip names both accurately so the value is not
      read as live or the border as "uptime". (sty_efeb2a69) */}}
-{{define "topbar"}}<a class="brand-mark" href="https://satelle.dev/" target="_blank" rel="noopener" title="satelle — home" aria-label="satelle home (opens in a new tab)">◐</a><button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>{{if .Uptime}}<button class="uptime" type="button" disabled title="service uptime at page load (updates on reload, not live) — green border = live updates connected">{{.Uptime}}</button>{{end}}{{end}}
+{{define "topbar"}}<a class="brand-mark" href="https://satelle.dev/" target="_blank" rel="noopener" title="satelle — home" aria-label="satelle home (opens in a new tab)">{{template "brandmark-svg"}}</a><button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>{{if .Uptime}}<button class="uptime" type="button" disabled title="service uptime at page load (updates on reload, not live) — green border = live updates connected">{{.Uptime}}</button>{{end}}{{end}}
+
+{{/* brandmark-svg: the satelle mark — a half-shaded sphere whose terminator sweeps
+     the moon-phase cycle. Pure SMIL, no JS; fill/stroke use currentColor so it
+     inherits the .brand-mark anchor colour (accent, --ink on hover, both themes).
+     Reduced-motion users get the static ◐ via the embedded media rule (sty_8c00b58a). */}}
+{{define "brandmark-svg"}}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="20" height="20" role="img" aria-label="satelle">
+    <style>
+      #static { display: none; }
+      @media (prefers-reduced-motion: reduce) {
+        #anim { display: none; }
+        #static { display: block; }
+      }
+    </style>
+    <circle cx="50" cy="50" r="40" fill="none" stroke="currentColor" stroke-width="3"/>
+    <path id="anim" fill="currentColor" d="M50 11 C-2 11 -2 89 50 89 C50 89 50 11 50 11 Z">
+      <animate attributeName="d" dur="12s" repeatCount="indefinite" calcMode="linear"
+        keyTimes="0;0.25;0.2501;0.5;0.75;1"
+        values="M50 11 C-2 11 -2 89 50 89 C50 89 50 11 50 11 Z;
+                M50 11 C-2 11 -2 89 50 89 C-2 89 -2 11 50 11 Z;
+                M50 11 C102 11 102 89 50 89 C102 89 102 11 50 11 Z;
+                M50 11 C50 11 50 89 50 89 C102 89 102 11 50 11 Z;
+                M50 11 C-2 11 -2 89 50 89 C102 89 102 11 50 11 Z;
+                M50 11 C-2 11 -2 89 50 89 C50 89 50 11 50 11 Z"/>
+    </path>
+    <path id="static" fill="currentColor" d="M50 11 A39 39 0 0 0 50 89 Z"/>
+  </svg>{{end}}
 
 {{define "footer"}}<footer class="site-footer">{{if footeremail}}<a class="footer-email" href="mailto:{{footeremail}}">{{footeremail}}</a>{{end}}<span class="footer-version">satelle {{version}}</span></footer>{{end}}
 
