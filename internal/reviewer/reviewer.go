@@ -100,6 +100,16 @@ type Gater struct {
 	// logCfg bounds that log's growth (daily + size + retention, sty_a67e6e8c).
 	logDir string
 	logCfg logfile.Config
+	// progress, when set, receives one-line status messages while a slow gate
+	// runs ("running reviewer <skill>…"), so a legitimate multi-minute review is
+	// visibly distinct from a hang (sty_6c88ca10). The CLI wires it to stderr;
+	// nil (web/tests) disables emission.
+	progress func(msg string)
+	// agentTimeout bounds EACH nested agent invocation (a reviewer attempt or a
+	// step summary) with a context deadline, so a wedged subprocess yields a
+	// clear bounded failure instead of an open-ended block (sty_6c88ca10).
+	// Zero/negative disables the bound (tests).
+	agentTimeout time.Duration
 }
 
 // New builds a Gater over the agent runner and doc index. model "" inherits the
@@ -109,7 +119,34 @@ func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Gater 
 		runner: runner, docs: docs, repoRoot: repoRoot, model: model, tools: defaultTools,
 		checkTimeout: defaultCheckTimeout, check: execCheck, injectPrinciples: true,
 		attempts: defaultReviewerAttempts, backoff: defaultReviewerBackoff,
+		agentTimeout: defaultAgentTimeout,
 	}
+}
+
+// defaultAgentTimeout bounds one nested agent invocation. A real review takes
+// ~3-6 minutes; ten gives honest slack while turning a wedged subprocess into a
+// bounded, legible failure instead of an indefinite block (sty_6c88ca10).
+const defaultAgentTimeout = 10 * time.Minute
+
+// SetProgress wires the sink for one-line gate progress messages (the CLI
+// prints them to stderr). nil disables emission.
+func (g *Gater) SetProgress(fn func(msg string)) { g.progress = fn }
+
+// emitProgress sends one progress line to the wired sink, if any.
+func (g *Gater) emitProgress(format string, a ...any) {
+	if g.progress != nil {
+		g.progress(fmt.Sprintf(format, a...))
+	}
+}
+
+// runAgent invokes the nested agent once under the per-invocation deadline.
+func (g *Gater) runAgent(ctx context.Context, req agentcli.Request) ([]byte, error) {
+	if g.agentTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, g.agentTimeout)
+		defer cancel()
+	}
+	return g.runner.Run(ctx, req)
 }
 
 // defaultReviewerAttempts is how many times an LLM reviewer is tried before a
@@ -546,8 +583,17 @@ func (g *Gater) runReviewer(ctx context.Context, item workitem.Item, toStatus, s
 			case <-time.After(wait):
 			}
 		}
-		out, rerr := g.runner.Run(ctx, req)
+		g.emitProgress("running reviewer %s (attempt %d/%d, may take several minutes)…", skill, attempt, attempts)
+		out, rerr := g.runAgent(ctx, req)
 		if rerr != nil {
+			// A DEADLINE expiry is a bound, not contention — retrying would just
+			// re-block for another full window. Fail fast with a legible timeout so
+			// wrapping tooling gets a bounded, non-enacting error (sty_6c88ca10).
+			if errors.Is(rerr, context.DeadlineExceeded) && ctx.Err() == nil {
+				g.logReviewerFailure(skill, attempt, attempts, rerr, nil)
+				return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
+					"reviewer: %s timed out after %s — the gate did not complete and the transition was NOT enacted; retry when the agent backend is responsive", skill, g.agentTimeout)
+			}
 			lastErr, lastOut = rerr, nil
 			g.logReviewerFailure(skill, attempt, attempts, rerr, nil) // surface the contention
 			continue                                                  // transient agent failure — retry
@@ -696,7 +742,8 @@ func (g *Gater) Summarise(ctx context.Context, item workitem.Item, from, to stri
 	if err != nil {
 		return "", err
 	}
-	out, err := g.runner.Run(ctx, agentcli.Request{
+	g.emitProgress("summarising step %s→%s (may take a minute)…", from, to)
+	out, err := g.runAgent(ctx, agentcli.Request{
 		SystemPrompt: body,
 		Payload:      string(payload),
 		AllowedTools: g.tools, // read-only (Read,Grep,Glob) — narrate, never mutate

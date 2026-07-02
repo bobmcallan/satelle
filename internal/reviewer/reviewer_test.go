@@ -496,6 +496,57 @@ func TestReviewerLog_fullOutputAndProseFallback(t *testing.T) {
 	}
 }
 
+// blockingRunner blocks until its context is done — a wedged nested agent.
+type blockingRunner struct{ calls int }
+
+func (b *blockingRunner) Name() string    { return "blocking" }
+func (b *blockingRunner) Command() string { return "blocking" }
+func (b *blockingRunner) Run(ctx context.Context, _ agentcli.Request) ([]byte, error) {
+	b.calls++
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// A running gate emits progress so a slow-but-working reviewer is visibly
+// distinct from a hang (sty_6c88ca10).
+func TestGate_emitsProgress(t *testing.T) {
+	g, _ := gater(t, `{"decision":"accept"}`,
+		fakeDocs{workflow: testWorkflow, skillBody: "rubric body", skillFound: true})
+	var msgs []string
+	g.SetProgress(func(m string) { msgs = append(msgs, m) })
+	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done"); err != nil {
+		t.Fatalf("gate: %v", err)
+	}
+	if len(msgs) == 0 || !strings.Contains(msgs[0], "running reviewer") {
+		t.Errorf("expected a 'running reviewer …' progress line, got %v", msgs)
+	}
+}
+
+// A wedged reviewer subprocess is BOUNDED by the per-invocation deadline: the
+// gate fails fast with a legible timeout (no blind retries of another full
+// window) and does not enact (sty_6c88ca10).
+func TestGate_agentTimeoutBoundsAWedgedReviewer(t *testing.T) {
+	r := &blockingRunner{}
+	g := New(r, fakeDocs{workflow: testWorkflow, skillBody: "rubric body", skillFound: true}, "/repo", "")
+	g.agentTimeout = 20 * time.Millisecond
+	g.backoff = func(int) time.Duration { return 0 }
+
+	start := time.Now()
+	_, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done")
+	if err == nil {
+		t.Fatal("a timed-out gate must surface an error, not enact")
+	}
+	if !strings.Contains(err.Error(), "timed out") || !strings.Contains(err.Error(), "NOT enacted") {
+		t.Errorf("timeout error should be legible and name the non-enactment: %v", err)
+	}
+	if r.calls != 1 {
+		t.Errorf("a deadline expiry must fail fast, not retry; got %d attempts", r.calls)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("gate was not bounded: took %v", elapsed)
+	}
+}
+
 func TestGateAcceptEnacts(t *testing.T) {
 	g, r := gater(t, `the story is ready {"decision":"accept","notes":"looks good"} done`,
 		fakeDocs{workflow: testWorkflow, skillBody: "rubric body", skillFound: true})
