@@ -806,7 +806,7 @@ func TestReviewCreateAcceptAndReject(t *testing.T) {
 	ctx := context.Background()
 	g, _ := gater(t, "", fakeDocs{})
 
-	good := verb.CreateDraft{Kind: "story", Title: "Add X", Body: "Make the thing do X", AcceptanceCriteria: "1. a"}
+	good := verb.CreateDraft{Kind: "story", Title: "Add X", Body: "Make the thing do X", AcceptanceCriteria: "1. a", Category: "feature"}
 	dec, err := g.ReviewCreate(ctx, good)
 	if err != nil {
 		t.Fatal(err)
@@ -843,7 +843,7 @@ func TestReviewCreateAlwaysGatedNoRunner(t *testing.T) {
 
 // validDraft is structurally conformant (clear goal + a numbered AC) so the
 // content reviewer is reached.
-var validDraft = verb.CreateDraft{Kind: "story", Title: "Add X", Body: "Make the thing do X", AcceptanceCriteria: "1. it does X"}
+var validDraft = verb.CreateDraft{Kind: "story", Title: "Add X", Body: "Make the thing do X", AcceptanceCriteria: "1. it does X", Category: "feature"}
 
 // createWF is a wildcard workflow that DECLARES a content/alignment create
 // reviewer via its create_review frontmatter (sty_b031b29f) — the binding lives on

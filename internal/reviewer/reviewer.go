@@ -779,7 +779,7 @@ func (g *Gater) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb.
 	// 1. Deterministic structural check FIRST — the one thing satelle always
 	// enforces on creation. A structural failure pre-empts: the content reviewer
 	// is never reached on a malformed draft.
-	if problems := structure.Story(draft.Title, draft.Body, draft.AcceptanceCriteria); len(problems) > 0 {
+	if problems := structure.Story(draft.Title, draft.Body, draft.AcceptanceCriteria, draft.Category); len(problems) > 0 {
 		return verb.GateDecision{Gated: true, Accept: false, Skill: structureSkill, Notes: strings.Join(problems, "; ")}, nil
 	}
 	// 2. Optional content/alignment review — the reviewer skill is DECLARED by the

@@ -71,8 +71,11 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 		now := time.Now()
 
 		// Required-structure gate: when a repo opts in, an isolated reviewer
-		// judges the draft before it is persisted. A reject blocks creation and
-		// pushes the notes back to the executor; ungated/accept persists.
+		// judges the draft before it is persisted (the deterministic
+		// structure.Story check — including the category rule, sty_af239840 —
+		// runs first inside it). A bare create stays legal by design: stories
+		// start as stubs and the WORKFLOW gates enforce structure progressively;
+		// `satelle reindex` reports non-conformant open stories as warnings.
 		if createReviewer != nil {
 			dec, gerr := createReviewer.ReviewCreate(ctx, CreateDraft{
 				Kind:               string(kind),
