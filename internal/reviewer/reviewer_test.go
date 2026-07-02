@@ -1422,4 +1422,15 @@ func TestWorkflowConsistency(t *testing.T) {
 	if ok := WorkflowConsistency([]docindex.Doc{wfSkill}, func(string) bool { return true }); len(ok) != 0 {
 		t.Errorf("a resolved referenced skill is clean, got %v", ok)
 	}
+	// (3) An unresolved create_review binding is flagged (sty_51ad783b): it would
+	// silently degrade creation to deterministic-only; resolved -> clean.
+	wfCreate := docindex.Doc{Name: "y", Embedded: false,
+		Body: "---\nname: y\ntype: workflow\napplies_to: [\"fix\"]\ncreate_review: my-create-review\n---\n# w\n"}
+	crMiss := WorkflowConsistency([]docindex.Doc{wfCreate}, func(s string) bool { return s != "my-create-review" })
+	if len(crMiss) == 0 || !strings.Contains(strings.Join(crMiss, "\n"), "create_review") {
+		t.Errorf("unresolved create_review should be flagged, got %v", crMiss)
+	}
+	if ok := WorkflowConsistency([]docindex.Doc{wfCreate}, func(string) bool { return true }); len(ok) != 0 {
+		t.Errorf("a resolved create_review is clean, got %v", ok)
+	}
 }

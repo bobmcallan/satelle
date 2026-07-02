@@ -16,9 +16,31 @@ func TestListContainsCoreTopics(t *testing.T) {
 			t.Errorf("topic %q has empty body", top.Name)
 		}
 	}
-	for _, want := range []string{"create-story", "reviewer-checks", "principles", "projects"} {
+	for _, want := range []string{"create-story", "reviewer-checks", "principles", "projects", "create-review"} {
 		if !names[want] {
 			t.Errorf("missing help topic %q", want)
+		}
+	}
+}
+
+// TestCreateReviewTopic asserts the worked example is complete enough to
+// self-serve (sty_51ad783b): the full skill anatomy, the workflow binding, the
+// opt-in framing, and how to confirm the wiring.
+func TestCreateReviewTopic(t *testing.T) {
+	top, ok := Get("create-review")
+	if !ok {
+		t.Fatal("create-review topic not found")
+	}
+	for _, want := range []string{
+		"type: skill",                         // the rubric skill frontmatter
+		`{"decision": "accept", "notes": ""}`, // the verdict contract
+		"create_review: my-create-review",     // the workflow binding
+		"gate_create = true",                  // the repo opt-in
+		"workflow validate",                   // how a broken binding is surfaced
+		"deterministic",                       // the degradation story (opt-in framing)
+	} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("create-review topic missing %q", want)
 		}
 	}
 }
