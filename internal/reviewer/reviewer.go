@@ -949,6 +949,13 @@ func WorkflowConsistency(workflows []docindex.Doc, resolve func(skill string) bo
 	// (2) Referenced skills that do not resolve.
 	if resolve != nil {
 		for _, w := range workflows {
+			// A declared create_review binding must resolve too (sty_51ad783b):
+			// an unresolved one silently degrades creation to deterministic-only,
+			// which is exactly the misconfiguration to surface here.
+			if cr := frontmatterScalar(w.Body, createReviewKey); cr != "" && !resolve(cr) {
+				problems = append(problems, fmt.Sprintf(
+					"workflow %s declares create_review %q which does not resolve in the substrate", w.Name, cr))
+			}
 			spec, ok := wfdot.Parse(w.Body)
 			if !ok {
 				continue
