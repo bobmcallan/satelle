@@ -458,3 +458,20 @@ description: Governance lifecycle moving backlog → in_progress → done with a
 		t.Errorf("stamp changed after a rejected restamp:\n%s", out)
 	}
 }
+
+// TestInitAgentGuidance asserts real init output ends with the agent-facing note
+// when the repo carries CLAUDE.md (sty_4c406061): fold satelle into the
+// instruction file, preferring `satelle help` over duplicated docs.
+func TestInitAgentGuidance(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, filepath.Join(repo, "CLAUDE.md"), "# my instructions\n")
+	out := mustRun(t, testBin, repo, "init")
+	for _, want := range []string{"Agent note:", "CLAUDE.md", `"## satelle" section`, "satelle help"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("init output missing %q:\n%s", want, out)
+		}
+	}
+	if got, _ := os.ReadFile(filepath.Join(repo, "CLAUDE.md")); string(got) != "# my instructions\n" {
+		t.Errorf("init modified CLAUDE.md:\n%s", got)
+	}
+}
