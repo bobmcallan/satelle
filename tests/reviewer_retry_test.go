@@ -74,10 +74,12 @@ func TestGateRetriesTransientReviewerFailure(t *testing.T) {
 	if b, _ := os.ReadFile(counter); strings.TrimSpace(string(b)) == "" || strings.TrimSpace(string(b)) == "1" {
 		t.Errorf("expected >= 2 reviewer calls (a retry), counter = %q", strings.TrimSpace(string(b)))
 	}
-	// The transient failure (the subprocess's own output) must be captured to
+	// The no-verdict failure (the subprocess's own output) must be captured to
 	// .satelle/logs/reviewer.log so cross-session API contention is reviewable.
+	// (Label reworded from "transient reviewer failure" by sty_9485d47e — output-
+	// bearing failures now read "no verdict in reviewer output" with full text.)
 	logb, _ := os.ReadFile(filepath.Join(repo, ".satelle", "logs", "reviewer.log"))
-	if !strings.Contains(string(logb), "transient reviewer failure") || !strings.Contains(string(logb), "rate limited") {
-		t.Errorf("transient failure + its output not captured to reviewer.log:\n%s", string(logb))
+	if !strings.Contains(string(logb), "no verdict in reviewer output") || !strings.Contains(string(logb), "rate limited") {
+		t.Errorf("no-verdict failure + its output not captured to reviewer.log:\n%s", string(logb))
 	}
 }

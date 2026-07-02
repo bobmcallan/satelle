@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -351,6 +354,145 @@ func TestGate_clearErrorWhenNoVerdictAfterRetries(t *testing.T) {
 	}
 	if r.calls != defaultReviewerAttempts {
 		t.Errorf("expected %d attempts, got %d", defaultReviewerAttempts, r.calls)
+	}
+}
+
+// TestParseProseDecision covers the prose-verdict fallback (sty_9485d47e): a
+// reviewer that states its conclusion in prose (no JSON object) still yields a
+// decision; ambiguous or marker-less output does not.
+func TestParseProseDecision(t *testing.T) {
+	cases := []struct {
+		name       string
+		out        string
+		wantOK     bool
+		wantAccept bool
+	}{
+		{"prose reject", "Verdict: **reject**. The sweep missed .claude/settings.json:6 — fix and resubmit.", true, false},
+		{"prose accept", "All criteria verified in the tree.\n\nVerdict: accept", true, true},
+		{"decision is form", "My decision is reject — AC2 unmet.", true, false},
+		{"rubric echo is not a verdict", "Reject when a criterion is unmet; accept when all pass.", false, false},
+		{"conflicting markers", "Verdict: accept. Wait — verdict: reject.", false, false},
+		{"no marker", "rate limited, please retry", false, false},
+		{"empty", "", false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dec, ok := parseProseDecision([]byte(c.out))
+			if ok != c.wantOK {
+				t.Fatalf("ok = %v, want %v (dec %+v)", ok, c.wantOK, dec)
+			}
+			if ok && dec.Accept != c.wantAccept {
+				t.Errorf("accept = %v, want %v", dec.Accept, c.wantAccept)
+			}
+			if ok && dec.Notes == "" {
+				t.Error("prose verdict should carry the prose as notes")
+			}
+		})
+	}
+}
+
+// A JSON decision object always wins over prose wording in the same output —
+// parseDecision runs first and the fallback is never consulted (sty_9485d47e).
+func TestGate_jsonVerdictPrecedesProse(t *testing.T) {
+	g, _ := gater(t, `verdict: reject — but formally: {"decision":"accept","notes":"fine"}`,
+		fakeDocs{workflow: testWorkflow, skillBody: "rubric body", skillFound: true})
+	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done")
+	if err != nil {
+		t.Fatalf("gate: %v", err)
+	}
+	if !dec.Accept {
+		t.Fatalf("JSON accept must win over prose wording: %+v", dec)
+	}
+}
+
+// A prose-only REJECT verdict blocks the transition immediately — one attempt,
+// no transient retries — and its reasons reach the caller as notes (sty_9485d47e).
+func TestGate_proseRejectBlocksWithReasons(t *testing.T) {
+	r := &scriptedRunner{results: []struct {
+		out string
+		err error
+	}{{out: "Verdict: **reject**. No reason recorded for cancelling — add one first."}}}
+	g := New(r, fakeDocs{workflow: testWorkflow, skillBody: "rubric body", skillFound: true}, "/repo", "")
+	g.backoff = func(int) time.Duration { return 0 }
+
+	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done")
+	if err != nil {
+		t.Fatalf("a prose verdict is a decision, not an error: %v", err)
+	}
+	if dec.Accept {
+		t.Fatalf("prose reject must block: %+v", dec)
+	}
+	if !strings.Contains(dec.Notes, "No reason recorded") {
+		t.Errorf("the prose reasons must reach the caller as notes, got: %q", dec.Notes)
+	}
+	if r.calls != 1 {
+		t.Errorf("a prose verdict must not consume retries; got %d attempts", r.calls)
+	}
+}
+
+// A prose-only ACCEPT verdict advances the gate on the first attempt (sty_9485d47e).
+func TestGate_proseAcceptAdvances(t *testing.T) {
+	r := &scriptedRunner{results: []struct {
+		out string
+		err error
+	}{{out: "Everything checks out.\nVerdict: accept."}}}
+	g := New(r, fakeDocs{workflow: testWorkflow, skillBody: "rubric body", skillFound: true}, "/repo", "")
+	g.backoff = func(int) time.Duration { return 0 }
+
+	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done")
+	if err != nil {
+		t.Fatalf("gate: %v", err)
+	}
+	if !dec.Accept || r.calls != 1 {
+		t.Fatalf("prose accept should advance on the first attempt: accept=%v calls=%d", dec.Accept, r.calls)
+	}
+}
+
+// On a genuine no-verdict, reviewer.log captures the subprocess's FULL output
+// (not a 300-char tail) and the surfaced error names where to find it; a prose
+// fallback writes its own observability record (sty_9485d47e).
+func TestReviewerLog_fullOutputAndProseFallback(t *testing.T) {
+	dir := t.TempDir()
+	long := strings.Repeat("x", 400) + " the real reason is at the very end"
+	r := &scriptedRunner{results: []struct {
+		out string
+		err error
+	}{{out: "garbled " + long}}}
+	g := New(r, fakeDocs{workflow: testWorkflow, skillBody: "rubric body", skillFound: true}, "/repo", "")
+	g.backoff = func(int) time.Duration { return 0 }
+	g.SetLogDir(dir, logfile.Config{})
+
+	_, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done")
+	if err == nil {
+		t.Fatal("expected a no-verdict error")
+	}
+	if !strings.Contains(err.Error(), "reviewer.log") {
+		t.Errorf("error should name where the full output is logged: %v", err)
+	}
+	logBytes, rerr := os.ReadFile(filepath.Join(dir, "reviewer.log"))
+	if rerr != nil {
+		t.Fatalf("reviewer.log not written: %v", rerr)
+	}
+	if !strings.Contains(string(logBytes), "the real reason is at the very end") {
+		t.Error("reviewer.log must carry the FULL output, not a truncated tail")
+	}
+	if !strings.Contains(string(logBytes), "no verdict in reviewer output") {
+		t.Errorf("no-verdict-with-output should be labelled as such:\n%s", logBytes)
+	}
+
+	// A prose verdict writes a fallback record instead of a failure line.
+	r2 := &scriptedRunner{results: []struct {
+		out string
+		err error
+	}{{out: "Verdict: accept."}}}
+	g2 := New(r2, fakeDocs{workflow: testWorkflow, skillBody: "rubric body", skillFound: true}, "/repo", "")
+	g2.SetLogDir(dir, logfile.Config{})
+	if _, err := g2.Gate(context.Background(), workitem.Item{ID: "sty_2", Status: "in_progress"}, "done"); err != nil {
+		t.Fatalf("prose accept gate: %v", err)
+	}
+	logBytes, _ = os.ReadFile(filepath.Join(dir, "reviewer.log"))
+	if !strings.Contains(string(logBytes), "prose-verdict fallback") {
+		t.Errorf("prose fallback should be recorded for observability:\n%s", logBytes)
 	}
 }
 
