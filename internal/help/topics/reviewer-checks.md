@@ -74,7 +74,7 @@ mechanical, so a swapped harness can never change what "valid" means.
 Judges readiness of **intent** before work starts — concrete title, clear goal,
 testable criteria. Unclear intent is rejected; the story stays in backlog.
 
-## Commit + push steps — `commit`, `push` (executors) + `satelle-push-review` (gate)
+## Commit + push + record steps — `commit`, `push`, `record-release` (executors)
 
 Two sequential **executor** steps. The **`commit`** step formats and stages the
 slice, **bumps `satelle.version` (patch) and stamps `satelle.build` in `.version`**
@@ -83,10 +83,12 @@ tag and build identity derive from — then makes a conventional commit (the sto
 id, no AI attribution). The **`push`** step pushes to `main` (trunk-based release),
 watches the GitHub Actions `test` run, then — because the version bumped — watches
 the version-gated `release` run and confirms it published `v<version>`. Both happen
-**while the story is engaged**, so commits are always tracked. The **push gate**
-(`satelle-push-review`, a functional check) then confirms the bump, the green
-`test` run, and the published release, and emits a PR-style summary under
-`.satelle/documents/`.
+**while the story is engaged**, so commits are always tracked. The
+**`record-release`** step then verifies the bump, the green `test` run, and the
+published release, and records a PR-style summary **with the story** — an
+attachment under `.satelle/stories/<id>/` (`satelle story attach … --file`),
+readable via `satelle story docs <id>`. The `done` gate judges the recorded
+evidence.
 
 ## Close gate — `satelle-story-done-review` (→ done)
 

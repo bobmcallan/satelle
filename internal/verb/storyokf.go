@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -39,7 +40,70 @@ func SyncStoryBacklog(ctx context.Context, store *workitem.Store, now time.Time)
 	if err := docindex.MaterializeOKF(storyDir, "Backlog", items, now); err != nil {
 		return 0, err
 	}
+	// One-time adoption (sty_97c53d72): implementation summaries now live WITH
+	// their story (an attachment under <id>/), not in the retired
+	// documents/story-implementation-summary sub-bundle — migrate any legacy
+	// commit-summary-sty_*.md into the owning story's folder.
+	migrateLegacySummaries(storyDir)
 	return len(items), nil
+}
+
+// summaryStoryID extracts the owning story id from a legacy summary filename
+// (commit-summary-sty_<8hex>.md). Empty when the name carries no story id.
+var summaryStoryID = regexp.MustCompile(`(sty_[0-9a-f]{8})\.md$`)
+
+// migrateLegacySummaries moves legacy per-story implementation summaries — the
+// retired documents/story-implementation-summary sub-bundle and any root
+// documents/commit-summary-*.md — into the owning story's attachment folder
+// (<storyDir>/<sty_id>/), where they persist across the story's whole lifecycle
+// (the backlog-only view prune leaves <id>/ dirs untouched). The emptied
+// sub-bundle (its regenerated index.md/log.md included) is removed. Files whose
+// name carries no story id are left in place. Best-effort and idempotent.
+func migrateLegacySummaries(storyDir string) {
+	docsDir := filepath.Join(filepath.Dir(storyDir), "documents")
+	sub := filepath.Join(docsDir, "story-implementation-summary")
+	for _, dir := range []string{sub, docsDir} {
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, de := range ents {
+			name := de.Name()
+			if de.IsDir() || !strings.HasPrefix(name, "commit-summary") || !strings.HasSuffix(name, ".md") {
+				continue
+			}
+			m := summaryStoryID.FindStringSubmatch(name)
+			if m == nil {
+				continue // no story id in the name — leave it where it is
+			}
+			body, rerr := os.ReadFile(filepath.Join(dir, name))
+			if rerr != nil {
+				continue
+			}
+			dest := filepath.Join(storyDir, m[1], name)
+			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+				continue
+			}
+			// Attachments are authored/portable — writable, unlike the generated views.
+			if err := os.WriteFile(dest, body, 0o644); err != nil {
+				continue
+			}
+			_ = os.Remove(filepath.Join(dir, name))
+		}
+	}
+	// Remove the retired sub-bundle once only its regenerated index/log remain.
+	if ents, err := os.ReadDir(sub); err == nil {
+		removable := true
+		for _, de := range ents {
+			if n := de.Name(); n != "index.md" && n != "log.md" {
+				removable = false
+				break
+			}
+		}
+		if removable {
+			_ = os.RemoveAll(sub)
+		}
+	}
 }
 
 // storyBacklogItems lists the BACKLOG (status:backlog only) and renders each to
