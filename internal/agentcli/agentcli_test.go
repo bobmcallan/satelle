@@ -61,11 +61,15 @@ func TestCodexStubErrorsClearly(t *testing.T) {
 }
 
 // The claude preset must deny every work-tree MUTATOR so the grant is a CEILING
-// (deny wins over allow) — but it must NOT deny Bash wholesale, since the reviewer
-// grant scopes Bash to read-only `satelle` subcommands so a reviewer can resolve
-// the substrate (incl. embedded defaults) via the CLI.
+// (deny wins over allow) — INCLUDING Bash (sty_892517e7): a headless reviewer
+// inherits the user's ~/.claude permission allows, so without Bash on the deny
+// ceiling a "read-only" reviewer can write files via a shell redirect — observed
+// live (the old push-review wrote summaries). Every reviewer rubric states "you
+// cannot run commands"; the denylist now makes that true. An agent that MUST
+// mutate is a named agent with an explicit full-command harness (no preset
+// denylist), e.g. commit-agent.
 func TestDefaultClaudeHarnessHasDenylistCeiling(t *testing.T) {
-	for _, deny := range []string{"--disallowedTools", "Write", "Edit", "NotebookEdit"} {
+	for _, deny := range []string{"--disallowedTools", "Write", "Edit", "NotebookEdit", "Bash"} {
 		if !strings.Contains(DefaultClaudeHarness, deny) {
 			t.Errorf("DefaultClaudeHarness must include %q (mutator ceiling): %q", deny, DefaultClaudeHarness)
 		}
@@ -74,8 +78,8 @@ func TestDefaultClaudeHarnessHasDenylistCeiling(t *testing.T) {
 	if end := strings.Index(rest, " "); end >= 0 {
 		rest = rest[:end]
 	}
-	if strings.Contains(rest, "Bash") {
-		t.Errorf("Bash must NOT be on the deny ceiling (it is scoped in the allow grant): %q", rest)
+	if !strings.Contains(rest, "Bash") {
+		t.Errorf("Bash must be on the deny ceiling (reviewers judge, never run commands): %q", rest)
 	}
 }
 

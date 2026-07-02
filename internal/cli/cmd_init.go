@@ -289,49 +289,34 @@ const scaffoldToml = `# satelle.toml — per-repo config (committed, secret-free
 // knobs. A repo may widen or rebind transparently — the override is a committed
 // file, the operator's choice.
 const scaffoldAgentsToml = `# agents.toml — the agents layer: how each agent runs (backend + tool grant).
+# FULLY DEFINED by init (no hidden coded configuration, sty_892517e7): every
+# value below is the ACTIVE default, written out so the operator sees exactly
+# what runs. Edit freely; an absent file falls back to these same defaults.
 #
 # The agent operating model (see the satelle-agent-model principle):
-#   - ORCHESTRATOR — the default driving session (the agent you run). It IS the
-#     in-loop executor below.
-#   - executor  — by default runs IN-LOOP as that full session: it has the normal
-#     context, principles, and skills via the substrate (the satelle CLI) and
-#     reads a step's rubric from .satelle/skills. Not an isolated process.
-#   - reviewer  — runs as an ISOLATED, read-only sub-process (the rubric rides as
-#     its system prompt); tools = "Read,Grep,Glob".
-#   - any OTHER top-level section [<name>] is an OPTIONAL named agent, ALWAYS an
-#     isolated sub-process; a workflow node allocates a step to it via agent=<name>.
-#     (Every top-level section is an agent: executor/reviewer are the built-in roles,
-#      anything else is a named agent. The legacy nested [agents.<name>] still loads.)
+#   - executor  — runs IN-LOOP as the driving session (context, principles,
+#     skills via the substrate). Not an isolated process.
+#   - reviewer  — an ISOLATED, READ-ONLY sub-process: the rubric rides as its
+#     system prompt; it judges, never mutates (the claude preset denylists
+#     Write/Edit/NotebookEdit/Bash on top of the read-only grant).
+#   - any OTHER top-level [<name>] is an optional named agent, always isolated;
+#     a workflow node allocates a step to it via agent=<name>. A named agent
+#     that MUTATES declares its own full-command harness + wide grant.
 #
-# An absent or fully-commented file is the default (executor in-loop, reviewer
-# isolated). Uncomment to override — the grant travels with the binding, so the
-# reviewer's read-only limit holds whatever the backend.
-#
-# ALLOCATING A STEP TO AN AGENT (in the workflow DOT). A node's agent= chooses HOW
-# the step runs — both forms perform the SAME @skill: rubric, only WHERE differs:
-#   commit [agent=executor,     prompt="@skill:commit"]  # IN-LOOP (default)
-#   commit [agent=commit-agent, prompt="@skill:commit"]  # ISOLATED sub-process
-# FALLBACK: if a node names an agent NOT defined here, the step falls back to the
-# in-loop executor (the current session) — a named binding is never required.
-#
-# THE HARNESS COMMAND TEMPLATE. A SINGLE-token harness (e.g. "claude") is a built-in
-# preset; a MULTI-token harness is a full command taken verbatim, so a repo can
-# point at any agent CLI by writing its argv. satelle substitutes {system} (the
-# skill/rubric body), {tools} (the grant), and {model}, each into its own argument,
-# and pipes the payload on stdin.
+# THE HARNESS TEMPLATE: a SINGLE token (e.g. "claude") is a built-in preset; a
+# MULTI-token value is a full command taken verbatim ({system}/{tools}/{model}
+# substituted, payload on stdin).
 
-# [executor]
-# harness = "in-loop"          # the orchestrator/driving session itself (default)
+[executor]
+harness = "in-loop"            # the orchestrator/driving session itself
 
-# [reviewer]
-# harness = "claude"           # the bare claude preset (read-only denylist) — default
-# tools   = "Read,Grep,Glob"   # the reviewer's tool grant (default; widen at your own risk)
-# model   = "sonnet"           # run the reviewer on a different (e.g. cheaper/faster) model
-#                              # than the executor; empty inherits the agent CLI's default
+[reviewer]
+harness = "claude"             # preset: claude -p --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model}
+tools   = "Read,Grep,Glob"     # read-only grant — widen at your own risk
+model   = ""                   # empty inherits the CLI's default; e.g. "sonnet" reviews on a cheaper/faster model
 
-# A named, isolated agent a workflow node can allocate via agent=commit-agent —
-# declared as a flat top-level section. The grant is SCOPED to what the step needs,
-# not blanket:
+# A named EXECUTOR agent for isolated mutating steps (e.g. a commit/push step),
+# with an explicit full-command harness and a wide grant:
 # [commit-agent]
 # harness = "claude -p --append-system-prompt {system} --allowedTools {tools}"
 # tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*)"
