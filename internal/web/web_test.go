@@ -615,6 +615,20 @@ func TestWorkspacePageAggregatesAcrossRepos(t *testing.T) {
 	if !strings.Contains(body, "cur-story") || !strings.Contains(body, "other-story") {
 		t.Errorf("workspace page should aggregate both repos' stories; got:\n%s", body)
 	}
+	// The aggregate is ONE flattened table carrying the PROJECT name as a column
+	// (sty_a4633eff): a Project header, each repo's name rendered as a row cell,
+	// and the old per-repo section tables gone.
+	if !strings.Contains(body, "<th>Project</th>") {
+		t.Errorf("workspace table missing the Project column header:\n%s", body)
+	}
+	for _, repo := range []string{filepath.Base(cur), filepath.Base(other)} {
+		if !strings.Contains(body, "<td>"+repo+"</td>") {
+			t.Errorf("workspace table missing a Project cell for %q", repo)
+		}
+	}
+	if strings.Contains(body, `class="ws-repo"`) {
+		t.Error("workspace page still renders per-repo section tables")
+	}
 	// The single-repo project page stays single-repo (no other-story).
 	_, proj := get(t, srv.URL+"/")
 	if strings.Contains(proj, "other-story") {
@@ -696,5 +710,45 @@ func TestWorkflowTabAndFragment(t *testing.T) {
 		if !strings.Contains(frag, want) {
 			t.Errorf("workflow fragment missing %q", want)
 		}
+	}
+}
+
+// TestFaviconIcoServed asserts the bare /favicon.ico request (what a browser
+// issues on a direct-address visit, bypassing the page's <link rel=icon>) gets
+// the ◐ SVG mark (sty_a4633eff).
+func TestFaviconIcoServed(t *testing.T) {
+	srv, _ := newServer(t)
+	resp, err := http.Get(srv.URL + "/favicon.ico")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("/favicon.ico = %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "image/svg+xml" {
+		t.Errorf("content-type = %q, want image/svg+xml", ct)
+	}
+	b := make([]byte, 1<<12)
+	n, _ := resp.Body.Read(b)
+	if !strings.Contains(string(b[:n]), "<svg") {
+		t.Errorf("favicon.ico body is not the SVG mark:\n%s", b[:n])
+	}
+}
+
+// TestProjectHeaderLinks asserts the project page's header meta carries the
+// root-absolute workspace link and no projects link (sty_a4633eff): the old
+// relative "projects" href resolved per-slug to a 404 on every child.
+func TestProjectHeaderLinks(t *testing.T) {
+	srv, _ := newServer(t)
+	code, body := get(t, srv.URL+"/")
+	if code != 200 {
+		t.Fatalf("/ = %d", code)
+	}
+	if !strings.Contains(body, `<a href="/workspace">workspace →</a>`) {
+		t.Error("project header must link the ROOT /workspace (absolute href)")
+	}
+	if strings.Contains(body, "projects →") {
+		t.Error("project header must not render the removed projects link")
 	}
 }

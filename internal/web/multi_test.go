@@ -43,7 +43,7 @@ func TestProjectsPageListsBoundAndChildren(t *testing.T) {
 	body := string(buf[:n])
 
 	for _, want := range []string{
-		"connected project",                 // landing header
+		"in the workspace",                  // landing header (the workspace lists its projects)
 		`href="/satelle/#stories"`,          // launch repo under its own slug now
 		`href="/satelle-homepage/#stories"`, // child under its slug
 		"/satelle-homepage/",                // child slug label
@@ -64,7 +64,7 @@ func TestProjectsPageListsBoundAndChildren(t *testing.T) {
 	if strings.Contains(body, "satelle<span class=\"dot\">") {
 		t.Errorf("landing still renders the legacy wordmark header:\n%s", body)
 	}
-	for _, want := range []string{"<h1>projects</h1>", `data-page="projects"`, "brand-mark"} {
+	for _, want := range []string{"<h1>workspace</h1>", `data-page="projects"`, "brand-mark"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("landing missing shared-header element %q", want)
 		}
