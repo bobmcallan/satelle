@@ -782,14 +782,15 @@ func TestBrandMarkAnimatedSVG(t *testing.T) {
 	}
 }
 
-// TestMontserratSelfHosted asserts the web UI typography matches satelle-homepage
-// (sty_cdac294e): both Montserrat woff2 faces are embedded and served under
-// /static/fonts/, and the served stylesheet declares the @font-face pair and a
-// Montserrat-first body stack — no external font request anywhere.
-func TestMontserratSelfHosted(t *testing.T) {
+// TestSpaceGroteskSelfHosted asserts the web UI typography is self-hosted
+// (sty_92163102): the Space Grotesk variable woff2 is embedded and served under
+// /static/fonts/, and the served stylesheet declares its @font-face and a
+// Space Grotesk-first body stack — no external font request anywhere. (The
+// family ships no italic face, so a single normal-style face is the whole set.)
+func TestSpaceGroteskSelfHosted(t *testing.T) {
 	srv, _ := newServer(t)
 
-	for _, f := range []string{"montserrat-latin.woff2", "montserrat-latin-italic.woff2"} {
+	for _, f := range []string{"space-grotesk-latin.woff2"} {
 		resp, err := http.Get(srv.URL + "/static/fonts/" + f)
 		if err != nil {
 			t.Fatal(err)
@@ -810,12 +811,11 @@ func TestMontserratSelfHosted(t *testing.T) {
 		t.Fatalf("/static/app.css = %d", code)
 	}
 	for _, want := range []string{
-		`font-family: "Montserrat"`,
+		`font-family: "Space Grotesk"`,
 		"font-weight: 300 700",
 		"font-display: swap",
-		`url("fonts/montserrat-latin.woff2")`,
-		`url("fonts/montserrat-latin-italic.woff2")`,
-		`font: 15px/1.5 "Montserrat",`,
+		`url("fonts/space-grotesk-latin.woff2")`,
+		`font: 15px/1.5 "Space Grotesk",`,
 	} {
 		if !strings.Contains(css, want) {
 			t.Errorf("app.css missing %q", want)
