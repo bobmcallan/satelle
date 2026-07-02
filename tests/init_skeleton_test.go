@@ -61,3 +61,31 @@ func TestInitSkeleton(t *testing.T) {
 		t.Errorf("second init created something (not idempotent):\n%s", out)
 	}
 }
+
+// TestInitReconcilesStaleHooks proves `satelle init` on a repo whose
+// .claude/settings.json still invokes a RETIRED command rewrites it
+// (sty_6a919dff): satelle index -> satelle reindex, other content preserved,
+// idempotent.
+func TestInitReconcilesStaleHooks(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	p := filepath.Join(repo, ".claude", "settings.json")
+	stale := `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"satelle index"},{"type":"command","command":"my-hook"}]}]}}`
+	writeFile(t, p, stale)
+
+	out := mustRun(t, testBin, repo, "init")
+	if !strings.Contains(out, "hook updated") || !strings.Contains(out, "satelle index -> satelle reindex") {
+		t.Errorf("init should report the hook reconciliation:\n%s", out)
+	}
+	got, _ := os.ReadFile(p)
+	if !strings.Contains(string(got), `"satelle reindex"`) || strings.Contains(string(got), `"satelle index"`) {
+		t.Errorf("stale hook not rewritten:\n%s", got)
+	}
+	if !strings.Contains(string(got), `"my-hook"`) {
+		t.Errorf("user hook not preserved:\n%s", got)
+	}
+	// Idempotent: a third init reports present, no further update.
+	if out3 := mustRun(t, testBin, repo, "init"); strings.Contains(out3, "hook updated") {
+		t.Errorf("reconciliation should be idempotent:\n%s", out3)
+	}
+}

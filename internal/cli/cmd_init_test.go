@@ -142,7 +142,7 @@ func TestEnsureGitignoreAppendsOnce(t *testing.T) {
 
 func TestEnsureClaudeHooksIdempotent(t *testing.T) {
 	repo := t.TempDir()
-	created, err := ensureClaudeHooks(repo)
+	created, _, err := ensureClaudeHooks(repo)
 	if err != nil || !created {
 		t.Fatalf("first call: created=%v err=%v, want created", created, err)
 	}
@@ -160,7 +160,7 @@ func TestEnsureClaudeHooksIdempotent(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{\"custom\":true}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	created2, err := ensureClaudeHooks(repo)
+	created2, _, err := ensureClaudeHooks(repo)
 	if err != nil || created2 {
 		t.Fatalf("second call: created=%v err=%v, want not created", created2, err)
 	}
