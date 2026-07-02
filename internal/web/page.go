@@ -152,7 +152,7 @@ const templatesSrc = `
   <header class="app">
     {{template "topbar" .TopBar}}
     <h1>{{.ProjectName}}</h1>
-    <div class="meta">{{.RepoRoot}} · <a href="projects">projects →</a> · <a href="workspace">workspace →</a> · <a href="help">help →</a></div>
+    <div class="meta">{{.RepoRoot}} · <a href="/workspace">workspace →</a> · <a href="help">help →</a></div>
   </header>
 
   <div class="tabs" role="tablist">
@@ -293,22 +293,17 @@ const templatesSrc = `
 </head>
 <body>
 <div class="wrap">
-  <nav class="crumbs"><a href="{{basehref}}">project</a> <span class="sep">/</span> <span class="cur">workspace</span></nav>
+  <nav class="crumbs"><a href="/">workspace</a> <span class="sep">/</span> <span class="cur">items</span></nav>
   <header class="app">
     {{template "topbar" .TopBar}}
     <h1>workspace</h1>
     <div class="meta">{{len .Repos}} repos aggregated</div>
   </header>
-  {{range .Repos}}<section class="ws-repo">
-    <h3 class="kind-h">{{.Name}} <span class="meta">{{.Path}}</span></h3>
-    {{if .Err}}<div class="empty">unreadable: {{.Err}}</div>{{else}}
-    <div class="meta">{{len .Stories}} stories · {{len .Tasks}} tasks · {{len .Docs}} docs</div>
-    {{if .Stories}}<table class="panel-table">
-      <thead><tr><th>ID</th><th>Title</th><th>Status</th></tr></thead>
-      <tbody>{{range .Stories}}<tr><td class="id">{{.ID}}</td><td>{{.Title}}</td><td><span class="badge s-{{.Status}}">{{.Status}}</span></td></tr>{{end}}</tbody>
-    </table>{{end}}
-    {{end}}
-  </section>{{else}}<div class="empty">no repos registered — run <code>satelle workspace add</code></div>{{end}}
+  {{range .Repos}}<div class="meta ws-repo-line"><strong>{{.Name}}</strong> · {{.Path}}{{if .Err}} · unreadable: {{.Err}}{{else}} · {{len .Stories}} stories · {{len .Tasks}} tasks · {{len .Docs}} docs{{end}}</div>{{else}}<div class="empty">no repos registered — run <code>satelle workspace add</code></div>{{end}}
+  {{if gt .TotalStories 0}}<table class="panel-table">
+    <thead><tr><th>Project</th><th>ID</th><th>Title</th><th>Status</th></tr></thead>
+    <tbody>{{range .Repos}}{{$repo := .Name}}{{range .Stories}}<tr><td>{{$repo}}</td><td class="id">{{.ID}}</td><td>{{.Title}}</td><td><span class="badge s-{{.Status}}">{{.Status}}</span></td></tr>{{end}}{{end}}</tbody>
+  </table>{{end}}
   {{template "footer"}}
 </div>
 </body>
@@ -319,7 +314,7 @@ const templatesSrc = `
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>satelle · projects</title>
+<title>satelle · workspace</title>
 <script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <base href="{{basehref}}">
 {{template "favicon"}}
@@ -327,11 +322,11 @@ const templatesSrc = `
 </head>
 <body data-page="projects">
 <div class="wrap">
-  <nav class="crumbs"><span class="cur">projects</span></nav>
+  <nav class="crumbs"><span class="cur">workspace</span></nav>
   <header class="app">
     {{template "topbar" .TopBar}}
-    <h1>projects</h1>
-    <div class="meta">{{len .Projects}} connected project{{if ne (len .Projects) 1}}s{{end}} · <a href="help">help →</a></div>
+    <h1>workspace</h1>
+    <div class="meta">{{len .Projects}} project{{if ne (len .Projects) 1}}s{{end}} in the workspace · <a href="help">help →</a></div>
   </header>
   {{range .Projects}}<a class="proj-card" href="{{.URL}}">
     <div class="proj-name">{{.Name}} <span class="proj-slug">/{{.Slug}}/</span></div>

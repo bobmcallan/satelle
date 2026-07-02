@@ -208,7 +208,7 @@ func TestServeServesProjectPage(t *testing.T) {
 	// / is the connected-projects landing — it lists this lone repo at its slug,
 	// not the repo's project page directly.
 	landing := httpGet(t, base+"/")
-	for _, want := range []string{"connected project", `href="/` + slug + `/#stories"`, "satelle"} {
+	for _, want := range []string{"in the workspace", `href="/` + slug + `/#stories"`, "satelle"} {
 		if !strings.Contains(landing, want) {
 			t.Errorf("landing missing %q:\n%s", want, landing)
 		}

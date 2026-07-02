@@ -65,7 +65,7 @@ func TestMultiProjectServe(t *testing.T) {
 	// with counts (not story titles), plus the add-a-project help.
 	root := httpGetBody(t, base+"/")
 	for _, want := range []string{
-		"connected project",
+		"in the workspace",
 		"satelle workspace add",
 		"satelle update",
 		`href="/` + slugA + `/#stories"`,
@@ -112,7 +112,7 @@ func TestMultiProjectServe(t *testing.T) {
 	}
 
 	// Branded shared header + live-refresh marker (sty_4ea4d4df), over real HTTP.
-	for _, want := range []string{"<h1>projects</h1>", `data-page="projects"`, "brand-mark"} {
+	for _, want := range []string{"<h1>workspace</h1>", `data-page="projects"`, "brand-mark"} {
 		if !strings.Contains(root, want) {
 			t.Errorf("landing missing shared-header element %q", want)
 		}

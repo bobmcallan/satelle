@@ -121,6 +121,19 @@ func New(a *app.App) *Server {
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
+	// Browsers request the bare /favicon.ico on direct-address visits, bypassing
+	// the page's <link rel=icon>. Serve the same ◐ SVG there (sty_a4633eff) so a
+	// tab opened straight at any URL still gets the mark; the supervisor's root
+	// falls this through to the launch repo's handler like the rest of /static.
+	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		b, err := staticFS.ReadFile("static/favicon.svg")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "image/svg+xml")
+		_, _ = w.Write(b)
+	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintln(w, "ok")
@@ -160,18 +173,26 @@ func workspacePage(a *app.App) http.HandlerFunc {
 				roots = append(roots, rp)
 			}
 		}
+		agg := workspace.Load(r.Context(), roots)
+		total := 0
+		for _, rp := range agg.Repos {
+			total += len(rp.Stories)
+		}
 		render(w, "workspace", wsPageData{
-			Aggregate: workspace.Load(r.Context(), roots),
-			TopBar:    topBar{Uptime: formatUptime(time.Since(serverStart))},
+			Aggregate:    agg,
+			TotalStories: total,
+			TopBar:       topBar{Uptime: formatUptime(time.Since(serverStart))},
 		})
 	}
 }
 
 // wsPageData embeds the workspace aggregate (so .Repos still resolves) and adds
-// the shared top bar.
+// the shared top bar. TotalStories is the story count across every repo — the
+// flattened project-column table renders only when there is something to show.
 type wsPageData struct {
 	workspace.Aggregate
-	TopBar topBar
+	TotalStories int
+	TopBar       topBar
 }
 
 // helpTopic is one rendered help guide for the web /help page.
