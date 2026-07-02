@@ -205,8 +205,55 @@ func runInit(out io.Writer, repoRoot string) error {
 		fmt.Fprintln(out, initLine(added, ".claude/settings.json (process hooks)"))
 	}
 
+	// 7. Agent guidance — init is usually run BY a coding agent, and this report is
+	//    its cue: when the repo carries an agent instruction file (CLAUDE.md /
+	//    AGENTS.md), tell the reading agent to fold satelle into it. init never
+	//    edits those files itself (they are user/agent-owned); it emits the
+	//    instruction, the agent applies it (sty_4c406061).
+	for _, line := range agentGuidance(repoRoot) {
+		fmt.Fprintln(out, line)
+	}
+
 	fmt.Fprintln(out, "\nReady. Try: satelle status · satelle story create --title \"…\" · satelle serve")
 	return nil
+}
+
+// agentInstructionFiles returns the agent instruction files present at the repo
+// root — CLAUDE.md / AGENTS.md, matched case-insensitively — as their on-disk names.
+func agentInstructionFiles(repoRoot string) []string {
+	entries, err := os.ReadDir(repoRoot)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		switch strings.ToLower(e.Name()) {
+		case "claude.md", "agents.md":
+			out = append(out, e.Name())
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// agentGuidance renders the agent-facing note init appends to its report when
+// the repo carries an agent instruction file: add/update a satelle section
+// there with the basic loop, pointing agents at `satelle help` as the preferred
+// reference — a short pointer, never a doc dump. Empty when no such file exists.
+func agentGuidance(repoRoot string) []string {
+	files := agentInstructionFiles(repoRoot)
+	if len(files) == 0 {
+		return nil
+	}
+	return []string{
+		"",
+		"Agent note: this repo carries " + strings.Join(files, " and ") + " — add a \"## satelle\" section there (or update the existing one) with the basics:",
+		"  - satelle runs this repo's workflow: create a story (`satelle story create`), drive it through its gates (`satelle story set <id> --status …`); status is the sole proof of done.",
+		"  - keep the section a short pointer: agents should consult `satelle help` (and `satelle help <topic>`) for the process — prefer that over duplicating satelle docs into " + strings.Join(files, "/") + ".",
+	}
 }
 
 // claudeHookSettings is the .claude/settings.json satelle init scaffolds: the
