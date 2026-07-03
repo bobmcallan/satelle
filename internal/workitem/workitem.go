@@ -53,6 +53,11 @@ type Item struct {
 	Tags               []string  `json:"tags"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
+	// Archived is record DISPOSITION, orthogonal to workflow Status (sty_cd209b8a):
+	// an archived item is excluded from the default List but still returned by Get
+	// with its full lineage. It is set by the Archive verb, never by an authored
+	// file — so it is not marshalled into the item's markdown.
+	Archived bool `json:"archived,omitempty"`
 }
 
 // idPrefix returns the id prefix for a kind: sty_ for stories, tsk_ for tasks,
