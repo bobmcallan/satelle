@@ -42,10 +42,12 @@ digraph satelle_workflow {
   in_progress [agent=executor]
   // STAGED FLIP (sty_1c543ecd): to dispatch the implementation step to the
   // isolated opus builder, replace the line above with
-  //   in_progress [agent=builder, prompt="@skill:..."]
-  // ONLY once (a) a dispatched-integration story has proven the loop and (b)
-  // stories are authored self-sufficient — a dispatched builder sees ONLY the
-  // story body/acceptance criteria + its rubric, never the conversation.
+  //   in_progress [agent=builder, prompt="@skill:build"]
+  // The build rubric is authored (.satelle/skills/build.md, sty_52dd7746).
+  // Flip ONLY once (a) a dispatched-integration story has proven the loop and
+  // (b) stories are authored self-sufficient — a dispatched builder sees ONLY
+  // the story body/acceptance criteria + its rubric, never the conversation
+  // (the planning step, sty_47d31300, is what closes that gap).
   integration [agent=integrator, prompt="@skill:integrate"]
   commit      [agent=commit-agent, prompt="@skill:commit"]
   push        [agent=commit-agent, prompt="@skill:push"]

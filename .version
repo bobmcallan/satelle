@@ -7,5 +7,5 @@
 # commit (sty_3aeeab18), so cutting a release = making a commit. .version is a
 # build-time source file, NEVER deployed in release artifacts.
 
-satelle.version: 0.0.83
-satelle.build: 2026-07-03-02-43-22
+satelle.version: 0.0.84
+satelle.build: 2026-07-03-03-26-37
