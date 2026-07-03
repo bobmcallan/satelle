@@ -329,8 +329,14 @@ func TestInitDeploysDefaultSolution(t *testing.T) {
 		t.Errorf("head workflow for an execution is not satelle-task-workflow:\n%s", out)
 	}
 
-	// And a run can be created against the seeded starter task immediately.
-	out = mustRun(t, bin, repo, "execution", "create", "--parent", "tsk_example1", "--title", "run 1")
+	// And a run can be created against an authored task: init seeds no example
+	// task (sty_04ec1fe6), so author one, then create a run against it.
+	authored := "---\nid: tsk_run\ntype: task\nstatus: backlog\n---\n\n# Runnable\n\nACTION: do the thing. VERIFICATION: it is done.\n"
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "tasks", "tsk_run.md"), []byte(authored), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, bin, repo, "reindex")
+	out = mustRun(t, bin, repo, "execution", "create", "--parent", "tsk_run", "--title", "run 1")
 	if !strings.Contains(out, `"exe_`) {
 		t.Fatalf("execution create output:\n%s", out)
 	}

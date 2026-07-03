@@ -543,34 +543,12 @@ var dirReadme = map[string]string{
 	"tasks":      "# tasks\n\nAuthored task HEADERS (`tsk_*.md`, `type: task`): re-runnable work-definitions\nthat declare an ACTION and how success is VERIFIED. The file is the source of\ntruth; the DB indexes it. Each RUN is an execution under a per-task folder\n`<tsk_id>/exe_*.md`; create one with `satelle execution create --parent <tsk_id>`.\n",
 }
 
-// starterTaskID is the fixed id of the example task header init seeds — fixed so
-// re-init is idempotent (it is never duplicated).
-const starterTaskID = "tsk_example1"
-
-// scaffoldStarterTask is the example task header seeded into a fresh repo's
-// .satelle/tasks — a template demonstrating the ACTION + VERIFICATION contract
-// (sty_c1b3b4e3). It passes the deterministic task structure check.
-const scaffoldStarterTask = `---
-id: tsk_example1
-type: task
-status: backlog
-tags: example
----
-
-# Example task — replace or delete me
-
-A task is a re-runnable work-definition (a HEADER). Declare the ACTION and how
-success is VERIFIED, then run it by creating an execution:
-` + "`satelle execution create --parent tsk_example1 --title \"run 1\"`" + `.
-
-ACTION: describe the concrete work this task performs.
-
-VERIFICATION: describe the checkable evidence that the ACTION succeeded.
-`
-
-// seedTasks scaffolds .satelle/tasks (dir + README keep-file) and seeds the
-// starter task header when absent — idempotent (re-init reports it as present and
-// never clobbers an authored task). Returns report lines.
+// seedTasks scaffolds .satelle/tasks (dir + README keep-file). It seeds NO
+// example task (sty_04ec1fe6): a fresh repo starts with an empty tasks dir —
+// tasks are authored substrate the operator writes, and an example header only
+// adds noise beside a repo's own set. The reported "+"/"=" tracks the DIRECTORY
+// (created vs already present), not the README keep-file, so a repo that already
+// has an authored tasks dir reports "=". Returns report lines.
 func seedTasks(dataDir string) []string {
 	var lines []string
 	dir := filepath.Join(dataDir, "tasks")
@@ -578,16 +556,8 @@ func seedTasks(dataDir string) []string {
 	if derr != nil {
 		return lines
 	}
-	readmeCreated, _ := ensureReadme(dir, "tasks")
-	lines = append(lines, initLine(dirCreated || readmeCreated, config.DefaultDataDir+"/tasks/"))
-	starter := filepath.Join(dir, starterTaskID+".md")
-	if !fileExists(starter) {
-		if err := os.WriteFile(starter, []byte(scaffoldStarterTask), 0o644); err == nil {
-			lines = append(lines, initLine(true, config.DefaultDataDir+"/tasks/"+starterTaskID+".md"))
-		}
-	} else {
-		lines = append(lines, initLine(false, config.DefaultDataDir+"/tasks/"+starterTaskID+".md"))
-	}
+	ensureReadme(dir, "tasks")
+	lines = append(lines, initLine(dirCreated, config.DefaultDataDir+"/tasks/"))
 	return lines
 }
 
