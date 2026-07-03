@@ -917,6 +917,147 @@ func TestBrowserWorkflowDiagramInteractive(t *testing.T) {
 	}
 }
 
+// TestBrowserWorkflowDiagramPanZoomToggle exercises sty_677c604c's interactions
+// end-to-end in the real JS: wheel-zoom and drag-pan mutate the SVG viewBox and
+// double-click resets it; clicking a gate label swaps its short text for the
+// FULL reviewer skill name and back; and the cancel/recovery toggle applies
+// wf-hide-alt, actually hiding the de-emphasised edges.
+func TestBrowserWorkflowDiagramPanZoomToggle(t *testing.T) {
+	base, repo := serveRepo(t, "8821")
+	wf := "---\nname: wf-ia\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: interactive layout fixture\n---\n" +
+		"```dot\n" + `digraph w {
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor]
+  done        [shape=Msquare]
+  cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
+  backlog -> in_progress
+  in_progress -> done [reviewer_skill="satelle-story-done-review"]
+  backlog -> cancelled
+  in_progress -> cancelled
+  done -> cancelled
+}` + "\n```\n"
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "wf-ia.md"), []byte(wf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, testBin, repo, "reindex")
+
+	ctx := newChrome(t)
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/"),
+		chromedp.WaitVisible(`#panel-stories table.panel-table`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("load page: %v", err)
+	}
+	clickJS(t, ctx, `.tab[data-panel="workflow"]`)
+	if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow tr.row[data-expand-url="fragment/workflow/wf-ia"]')`, 5*time.Second) {
+		t.Fatal("workflow row did not list")
+	}
+	clickJS(t, ctx, `#panel-workflow tr.row[data-expand-url="fragment/workflow/wf-ia"]`)
+	svgSel := `#panel-workflow svg.wf-diagram`
+	if !waitCond(t, ctx, `!!document.querySelector('`+svgSel+`[data-vb]')`, 5*time.Second) {
+		t.Fatal("diagram with data-vb did not render")
+	}
+
+	readVB := func() string {
+		var vb string
+		if err := chromedp.Run(ctx, chromedp.Evaluate(
+			`document.querySelector('`+svgSel+`').getAttribute('viewBox')`, &vb)); err != nil {
+			t.Fatal(err)
+		}
+		return vb
+	}
+	base0 := readVB()
+
+	t.Run("wheel_zoom_drag_pan_dblclick_reset", func(t *testing.T) {
+		// Wheel zooms: the viewBox mutates away from the original.
+		if err := chromedp.Run(ctx, chromedp.Evaluate(`(function(){
+			var s=document.querySelector('`+svgSel+`');
+			var r=s.getBoundingClientRect();
+			s.dispatchEvent(new WheelEvent('wheel',{deltaY:-120,clientX:r.left+r.width/2,clientY:r.top+r.height/2,bubbles:true,cancelable:true}));
+		})()`, nil)); err != nil {
+			t.Fatal(err)
+		}
+		afterZoom := readVB()
+		if afterZoom == base0 {
+			t.Error("wheel should mutate the viewBox (zoom)")
+		}
+		// Drag pans: pointerdown on empty canvas, move, up — x/y shift again.
+		if err := chromedp.Run(ctx, chromedp.Evaluate(`(function(){
+			var s=document.querySelector('`+svgSel+`');
+			var r=s.getBoundingClientRect();
+			var o={bubbles:true,cancelable:true,pointerId:7,clientX:r.left+5,clientY:r.top+r.height-5};
+			s.dispatchEvent(new PointerEvent('pointerdown',o));
+			o.clientX+=60;o.clientY+=10;
+			s.dispatchEvent(new PointerEvent('pointermove',o));
+			s.dispatchEvent(new PointerEvent('pointerup',o));
+		})()`, nil)); err != nil {
+			t.Fatal(err)
+		}
+		afterPan := readVB()
+		if afterPan == afterZoom {
+			t.Error("drag should mutate the viewBox (pan)")
+		}
+		// Double-click resets to the original box.
+		if err := chromedp.Run(ctx, chromedp.Evaluate(`(function(){
+			document.querySelector('`+svgSel+`').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+		})()`, nil)); err != nil {
+			t.Fatal(err)
+		}
+		if got := readVB(); got != base0 {
+			t.Errorf("dblclick should reset the viewBox to %q; got %q", base0, got)
+		}
+	})
+
+	t.Run("gate_label_click_reveals_full_skill", func(t *testing.T) {
+		labelSel := `#panel-workflow .wf-edge-label[data-from="in_progress"][data-to="done"]`
+		readLabel := `(function(){var e=document.querySelector('` + labelSel + `');return e.childNodes[e.childNodes.length-1].textContent;})()`
+		// SVG text nodes have no HTMLElement.click() — dispatch the event.
+		clickLabel := `document.querySelector('` + labelSel + `').dispatchEvent(new MouseEvent('click',{bubbles:true}))`
+		var short0 string
+		if err := chromedp.Run(ctx, chromedp.Evaluate(readLabel, &short0)); err != nil {
+			t.Fatal(err)
+		}
+		if short0 != "story-done" {
+			t.Fatalf("expected the short gate label, got %q", short0)
+		}
+		if err := chromedp.Run(ctx, chromedp.Evaluate(clickLabel, nil)); err != nil {
+			t.Fatal(err)
+		}
+		var full string
+		if err := chromedp.Run(ctx, chromedp.Evaluate(readLabel, &full)); err != nil {
+			t.Fatal(err)
+		}
+		if full != "satelle-story-done-review" {
+			t.Errorf("clicking the gate label should reveal the full skill; got %q", full)
+		}
+		if err := chromedp.Run(ctx, chromedp.Evaluate(clickLabel, nil)); err != nil {
+			t.Fatal(err)
+		}
+		var back string
+		if err := chromedp.Run(ctx, chromedp.Evaluate(readLabel, &back)); err != nil {
+			t.Fatal(err)
+		}
+		if back != short0 {
+			t.Errorf("clicking again should restore the short label; got %q", back)
+		}
+	})
+
+	t.Run("toggle_hides_alt_edges", func(t *testing.T) {
+		altSel := `#panel-workflow .wf-edge-path.wf-edge-alt`
+		if !waitCond(t, ctx, `getComputedStyle(document.querySelector('`+altSel+`')).display !== 'none'`, 3*time.Second) {
+			t.Fatal("alt edges should start visible (de-emphasised, not hidden)")
+		}
+		clickJS(t, ctx, `#panel-workflow .wf-toggle-alt`)
+		if !waitCond(t, ctx, `document.querySelector('`+svgSel+`').classList.contains('wf-hide-alt') && getComputedStyle(document.querySelector('`+altSel+`')).display === 'none'`, 3*time.Second) {
+			t.Error("toggle should apply wf-hide-alt and hide the alt edges")
+		}
+		clickJS(t, ctx, `#panel-workflow .wf-toggle-alt`)
+		if !waitCond(t, ctx, `!document.querySelector('`+svgSel+`').classList.contains('wf-hide-alt') && getComputedStyle(document.querySelector('`+altSel+`')).display !== 'none'`, 3*time.Second) {
+			t.Error("toggling again should restore the alt edges")
+		}
+	})
+}
+
 // countExpansions returns how many inline expansion rows are open in the stories
 // panel.
 func countExpansions(t *testing.T, ctx context.Context) int {

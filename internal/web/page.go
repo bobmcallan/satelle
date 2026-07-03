@@ -265,6 +265,10 @@ const templatesSrc = `
   <div class="wi-tags">{{if .Scope}}{{tagchip (printf "scope:%s" .Scope)}}{{end}}{{range .AppliesTo}}{{tagchip (printf "applies_to:%s" .)}}{{end}}</div>
 
   {{if .Diagram}}<h4>Flow</h4>
+  <div class="wf-controls">
+    <button class="wf-toggle-alt" type="button" aria-pressed="true" title="show or hide cancel/recovery edges">cancel/recovery edges</button>
+    <span class="wf-hint">drag to pan · scroll to zoom · double-click to reset · hover a state to trace it · click a gate for its full skill</span>
+  </div>
   <div class="wf-diagram-wrap">{{.Diagram}}</div>{{end}}
 
   <h4>States</h4>
