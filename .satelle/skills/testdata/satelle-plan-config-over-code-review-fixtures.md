@@ -40,8 +40,8 @@ Input:
   "to": "planned",
   "story": {
     "title": "Hardcode the deploy gate verdict in Go",
-    "body": "Add a deploy check by writing a Go branch in internal/reviewer that returns accept when a version-bump rule and a debt rule pass, deciding the verdict in code rather than a reviewer rubric.",
-    "acceptance_criteria": "1. internal/reviewer/deploy.go decides the gate verdict in a Go branch.\n2. The version-bump rule and debt rule are compiled into the binary."
+    "body": "Add a deploy check by writing a Go branch in internal/agentstep that returns accept when a version-bump rule and a debt rule pass, deciding the verdict in code rather than a reviewer rubric.",
+    "acceptance_criteria": "1. internal/agentstep/deploy.go decides the gate verdict in a Go branch.\n2. The version-bump rule and debt rule are compiled into the binary."
   }
 }
 ```

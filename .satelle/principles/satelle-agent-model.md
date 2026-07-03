@@ -56,7 +56,7 @@ satelle spawns a fresh process (on the configured agent CLI) with the step's
 **skill as its system prompt**, a **payload satelle builds** (the work item plus
 the requested transition — not the whole repo), and the role's bound read-only
 grant; it returns a structured `{decision, notes}` satelle **aggregates** to gate
-status. `internal/reviewer` spawns this isolated `agent -p`. **satelle does the
+status. `internal/agentstep` spawns this isolated `agent -p`. **satelle does the
 context selection** (the payload); the reviewer reads what it needs under its
 grant. There is no shared state — each gate is a clean room. Any agent role OTHER
 than the in-loop executor (the reviewer, or a named agent a step is allocated to)

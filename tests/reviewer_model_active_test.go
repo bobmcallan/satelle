@@ -13,7 +13,7 @@ import (
 // (sty_5073df2f turns on sty_dad271fd's configurable knob). It guards against the
 // activation silently regressing — being re-commented or cleared — so the reviewer
 // keeps reviewing on sonnet here. The wiring from binding → reviewer subprocess is
-// covered by internal/reviewer.TestReviewerModelReachesRunner; this asserts the
+// covered by internal/agentstep.TestReviewerModelReachesRunner; this asserts the
 // repo's own config feeds that wiring "sonnet".
 func TestRepoReviewerModelIsSonnet(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)

@@ -23,18 +23,18 @@ written" or "tests pass locally".
 
 Both the CLI and the web server reach data through one **verb registry**
 (`internal/verb`), and status transitions pass through one **gater**
-(`internal/reviewer`). Nothing else gates.
+(`internal/agentstep`). Nothing else gates.
 
 ```
 CLI / web  ─→  verb.Dispatch  ─→  store          (read/write work items)
-story set <status>  ─→  reviewer.Gater.Gate  ─→  accept ? enact : block
+story set <status>  ─→  agentstep.Engine.Gate  ─→  accept ? enact : block
 ```
 
 - **Work items**: `internal/workitem` (stories + tasks, one kind-partitioned store).
 - **Evidence**: `internal/ledger` (append-only log of what happened).
 - **Authored substrate**: markdown on disk (workflows, skills, principles,
   documents), synced into a SQLite index by `internal/docindex`.
-- **The gate**: `internal/reviewer.Gater` resolves the active workflow for a work
+- **The gate**: `internal/agentstep.Engine` resolves the active workflow for a work
   item's category, finds the reviewer(s) governing the requested edge, runs them,
   and returns an accept/reject the verb layer enacts.
 
@@ -70,7 +70,7 @@ their grants, so the boundary is enforced rather than hoped.
   (or a `check:` in frontmatter). Run in the repo root; **exit 0 accepts, non-zero
   rejects** with the output tail as notes. No LLM — the command is the decision. Like
   the commit-push gate, a functional check may run real mechanism. Implementation:
-  `Gater.runReviewer` / `runCheck` in `internal/reviewer/reviewer.go`.
+  `Engine.runReviewer` / `runCheck` in `internal/agentstep/engine.go`.
 
 ## Flexible DOT workflows
 
@@ -120,7 +120,7 @@ terminal exists, `done` is terminal, and every path into `done` carries the mand
 gate. The structure reviewer (`satelle-workflow-review`) accepts either grammar.
 
 Pointers: `internal/wfdot/wfdot.go` (`Parse`, `Validate`, `ToDOT`), the diagram in
-`internal/web/workflow.go`, gating in `internal/reviewer/reviewer.go`
+`internal/web/workflow.go`, gating in `internal/agentstep/engine.go`
 (`reviewerSkillsFor`), executor states in `internal/cli/cmd_hook.go` (`executorStates`).
 
 ## How a reviewer runs — isolated, fresh-context review
@@ -131,7 +131,7 @@ a fresh-context agent with the skill as its system prompt and a read-only grant,
 parses one verdict:
 
 ```go
-// internal/reviewer/reviewer.go — runReviewer
+// internal/agentstep/engine.go — runReviewer
 payload := transitionPayload{Story: item, From: ..., To: ..., ReviewSkill: skill}
 out, _ := g.runner.Run(ctx, agentcli.Request{
     SystemPrompt: skillBody,        // the step's skill = the rubric
@@ -182,7 +182,7 @@ behaviour.
 
 What is **wired today**: the reviewer's tool grant (`SetReviewerTools`) and its harness
 template — `app.go` resolves the harness via `agentcli.RunnerFromHarness` and sets the
-resulting runner on the `Gater` (`SetRunner`). `claude` works end-to-end; `codex` is a
+resulting runner on the `Engine` (`SetRunner`). `claude` works end-to-end; `codex` is a
 **selectable preset stub** until its headless argv is mapped (a repo can use codex today
 by supplying a full template). The executor still runs in-loop. The harness is a local
 subprocess — the "remote" in play is only the model that CLI calls; satelle does not run
@@ -192,7 +192,7 @@ agents on remote machines.
 
 | Concern | Where |
 |---|---|
-| Status gating (the one enforced thing) | `internal/reviewer/reviewer.go` (`Gater.Gate`, `runReviewer`, `runCheck`, `reviewerSkillsFor`) |
+| Status gating (the one enforced thing) | `internal/agentstep/engine.go` (`Engine.Gate`, `runReviewer`, `runCheck`, `reviewerSkillsFor`) |
 | DOT parse / validate / YAML→DOT convert | `internal/wfdot/wfdot.go` (`Parse`, `Validate`, `ToDOT`) |
 | Normalize-to-DOT at ingest | `internal/docindex/docindex.go` (`upsert`) |
 | Agents layer (backend + grant) | `internal/config/agents.go`, wired in `internal/cli/app.go` |
