@@ -34,6 +34,27 @@ func TestResolveDBOverride(t *testing.T) {
 	}
 }
 
+func TestResolveEditExemptPaths(t *testing.T) {
+	// Unset → nil (default binary exempts only the data dir).
+	var zero Config
+	if got := zero.ResolveEditExemptPaths("/repo"); got != nil {
+		t.Errorf("unconfigured ResolveEditExemptPaths = %v, want nil", got)
+	}
+	// Blanks/whitespace dropped; relative resolved under repo; absolute passes
+	// through. filepath.Join strips the trailing slash of ".claude/".
+	c := Config{Gate: GateConfig{EditExemptPaths: []string{".claude/", "", "  ", "/opt/authoring"}}}
+	got := c.ResolveEditExemptPaths("/repo")
+	want := []string{"/repo/.claude", "/opt/authoring"}
+	if len(got) != len(want) {
+		t.Fatalf("ResolveEditExemptPaths = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("ResolveEditExemptPaths[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestResolveAuthoredDirs(t *testing.T) {
 	c := Config{SubstrateRoots: map[string]string{
 		"skills": "/elsewhere", // absolute override → /elsewhere/skills

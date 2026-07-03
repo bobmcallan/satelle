@@ -88,6 +88,8 @@ type Config struct {
 	// rubrics ship embedded, but ENFORCEMENT is the operator's choice (the
 	// process is configured, not hardcoded-on).
 	Review ReviewConfig `toml:"review"`
+	// Gate tunes the PreToolUse edit gate (the `satelle hook gate` handler).
+	Gate GateConfig `toml:"gate"`
 }
 
 // ReviewConfig toggles the quality-management gates for a repo.
@@ -95,6 +97,16 @@ type ReviewConfig struct {
 	// GateCreate runs the required-structure reviewer on story/task creation,
 	// pushing non-conforming drafts back instead of persisting them.
 	GateCreate bool `toml:"gate_create"`
+}
+
+// GateConfig tunes the PreToolUse edit gate. EditExemptPaths lists repo-relative
+// (or absolute) path prefixes whose edits are exempt from the engaged-story gate,
+// IN ADDITION to the always-exempt data dir. Empty by default so the binary stays
+// CLI-vendor-neutral — a repo opts a harness authoring dir (e.g. ".claude/", which
+// holds authored skills, not product code) in as configuration, never a Go rule
+// (satelle-repo-agnostic / the constitution).
+type GateConfig struct {
+	EditExemptPaths []string `toml:"edit_exempt_paths"`
 }
 
 // ErrNotFound signals no satelle.toml was found walking up from CWD. Callers
@@ -120,6 +132,25 @@ func (c Config) ResolveDataDir(repoRoot string) string {
 		p = DefaultDataDir
 	}
 	return resolveUnder(repoRoot, p)
+}
+
+// ResolveEditExemptPaths returns the configured [gate] edit_exempt_paths as
+// absolute prefixes under repoRoot. Blank entries are DROPPED (a blank prefix
+// would classify every edit as exempt and silently disable the gate — see
+// withinRoot's fail-open-toward-inside default), and an absolute entry passes
+// through unchanged. Returns nil when nothing is configured, so the default
+// binary exempts only the data dir.
+func (c Config) ResolveEditExemptPaths(repoRoot string) []string {
+	if len(c.Gate.EditExemptPaths) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(c.Gate.EditExemptPaths))
+	for _, p := range c.Gate.EditExemptPaths {
+		if s := strings.TrimSpace(p); s != "" {
+			out = append(out, resolveUnder(repoRoot, s))
+		}
+	}
+	return out
 }
 
 // ResolveConstitution returns the absolute path to the repo's project

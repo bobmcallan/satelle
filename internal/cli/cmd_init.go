@@ -405,6 +405,13 @@ const scaffoldToml = `# satelle.toml — per-repo config (committed, secret-free
 # [review]
 # gate_create = true
 
+# [gate] — extra edit-gate exemptions. edit_exempt_paths lists repo-root-relative
+# path prefixes whose edits are exempt from the engaged-story edit gate, alongside
+# the always-exempt data dir (.satelle/). Point it at a harness authoring dir that
+# holds authored markdown (skills, prompts) rather than product code. Default empty.
+# [gate]
+# edit_exempt_paths = [".claude/"]
+
 # substrate_roots — per-kind parent dir for authored markdown. Unset means
 # <data_dir>/<kind> (e.g. .satelle/documents). Point a kind elsewhere — even
 # outside .satelle/ — to author it at the repo root or another path:
