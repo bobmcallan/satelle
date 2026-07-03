@@ -77,5 +77,37 @@ entry-gated state followed by an ungated commit/push ships the dispatched agent'
 mutations **unjudged**. When you allocate a step to a named agent, make sure the
 edge *out* of that state carries the review that vets what the agent did.
 
+## Custom agents — a worked example
+
+To add a custom agent (say an `architect` that runs on a stronger model), you
+define it as a **binding** and **allocate a step to it** — both in satelle's own
+substrate, never in a harness's agent directory.
+
+1. **Define the binding** in `.satelle/agents.toml`:
+
+   ```toml
+   [architect]
+   harness = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
+   tools   = "Read,Grep,Glob,Bash(satelle:*)"   # read-only + the pull-context CLI
+   model   = "opus"                              # per-step model selection is the model key
+   ```
+
+2. **Allocate a workflow node** to it in the DOT:
+
+   ```dot
+   design [agent=architect, prompt="@skill:architect"]
+   ```
+
+3. **satelle dispatches it** on entry to `design`: the item on stdin, the
+   `architect` rubric (+ charter + pull-context call-to-action) as the system
+   prompt, the binding's tools/model as the grant — on whatever CLI the harness
+   names.
+
+**Anti-pattern:** defining that agent in a harness-specific agent directory (e.g.
+`.claude/agents/architect.md`) works *for that one harness*, but hides the process
+configuration from satelle — it cannot see, validate, dispatch, or carry it
+repo-agnostically, and it silently pins the repo to one CLI vendor. Keep process
+agents in `.satelle/agents.toml` + the workflow DOT.
+
 See also: `satelle help workflows` (choosing a lifecycle) and
 `satelle help reviewer-checks` (gate skills).

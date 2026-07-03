@@ -276,6 +276,7 @@ func agentGuidance(repoRoot string) []string {
 		"Agent note: this repo carries " + strings.Join(files, " and ") + " — add a \"## satelle\" section there (or update the existing one) with the basics:",
 		"  - satelle runs this repo's workflow: create a story (`satelle story create`), drive it through its gates (`satelle story set <id> --status …`); status is the sole proof of done.",
 		"  - keep the section a short pointer: agents should consult `satelle help` (and `satelle help <topic>`) for the process — prefer that over duplicating satelle docs into " + strings.Join(files, "/") + ".",
+		"  - define process agents and workflow steps in `.satelle/agents.toml` (a `[<name>]` binding: harness/tools/model) and allocate a workflow node `agent=<name>` — NOT in a harness-specific agent dir (e.g. `.claude/agents`), which satelle cannot see, validate, dispatch, or carry repo-agnostically. See `satelle help agent-dispatch`.",
 	}
 }
 
@@ -439,6 +440,11 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer:
 #     named agent that MUTATES declares its own full-command harness + wide
 #     grant; its model key pins the step's model ({model} in the template), so
 #     per-step model selection is pure configuration.
+#
+# Define process/step agents HERE (a [<name>] binding + an agent=<name> node),
+# NEVER in a harness-specific agent dir (e.g. .claude/agents): those are invisible
+# to satelle — it cannot see, validate, dispatch, or carry them repo-agnostically —
+# and they silently pin the repo to one CLI vendor. See "satelle help agent-dispatch".
 #
 # THE HARNESS TEMPLATE: a SINGLE token (e.g. "claude") is a built-in preset; a
 # MULTI-token value is a full command taken verbatim ({system}/{tools}/{model}

@@ -66,6 +66,14 @@ to the operator; change nothing yourself.
    `satelle ledger list --story <id>`) — are the sanctioned channel for
    carrying context to an isolated step; the conversation is not.
 
+6. **Process agents live in the agents layer.** Flag as an anti-pattern any
+   process/step agent defined OUTSIDE `.satelle/agents.toml` — e.g. a
+   harness-specific agent dir (`.claude/agents/*.md`, or any vendor's equivalent)
+   describing what is really a workflow step. satelle cannot see, validate,
+   dispatch, or carry such an agent repo-agnostically, and it silently pins the
+   repo to one CLI vendor. Advise moving it to a `[<name>]` binding
+   (harness/tools/model) plus an `agent=<name>` node allocation.
+
 ## How to report
 
 Produce a short advisory: one line per finding, each naming the node/edge, the
