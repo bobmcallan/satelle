@@ -360,8 +360,11 @@ type lightPayload struct {
 // edge, or a recovery loop) renders lights that SHARE the step number (e.g. 1 red
 // then 1 green) rather than incrementing. A gated transition is a pass (green), an
 // ungated one a fired checkpoint (slate), a review_reject a fail (red). A
-// non-terminal story trails a pulsing current light at the next step. Off-spine
-// targets (e.g. blocked) fall back to ledger-appearance order.
+// non-terminal story is actively IN its current state, so that state is the
+// pulsing current light at stepOf(status): the entry transition INTO the current
+// state is not ALSO rendered as a completed light (that would double the step),
+// while prior steps stay done and rejects stay red. Off-spine targets (e.g.
+// blocked) fall back to ledger-appearance order and a maxStep+1 current.
 func buildLights(entries []ledger.Entry, status string, stepOf func(state string) int) []reviewLight {
 	// ledger-list yields entries oldest-first (the store orders created_at ASC),
 	// which is the order the lights render left-to-right — consume it as-is so
@@ -393,7 +396,25 @@ func buildLights(entries []ledger.Entry, status string, stepOf func(state string
 		}
 		return idx[edge]
 	}
+	// The story is actively IN its current state, so the entry transition into that
+	// state is rendered as the pulsing current light (below), NOT as a completed
+	// step. Suppress that one transition — the LAST one landing in the current state
+	// (an earlier visit in a recovery loop stays a completed prior step) — but only
+	// for a non-terminal story sitting on the spine (curStep > 0). Terminal stories
+	// render every transition (the entry into done IS the final completed light), and
+	// an off-spine current state keeps today's maxStep+1 fallback.
+	curStep := stepOf(status)
+	terminal := status == "done" || status == "cancelled"
+	suppress := -1
+	if !terminal && curStep > 0 {
+		for pos, e := range es {
+			if e.Kind == ledger.KindStatusTransition && parse(e.Payload).To == status {
+				suppress = pos
+			}
+		}
+	}
 	var lights []reviewLight
+	entered := false
 	maxStep := 0
 	minStep := 0
 	note := func(i int) {
@@ -404,22 +425,29 @@ func buildLights(entries []ledger.Entry, status string, stepOf func(state string
 			minStep = i
 		}
 	}
-	for _, e := range es {
+	for pos, e := range es {
 		lp := parse(e.Payload)
 		edge := lp.From + " → " + lp.To
 		switch e.Kind {
 		case ledger.KindReviewReject:
+			entered = true
 			i := stepFor(lp.To, edge)
 			lights = append(lights, reviewLight{i, "fail", fmt.Sprintf("%d. %s — rejected", i, edge)})
 			note(i)
 		case ledger.KindStatusTransition:
+			entered = true
 			i := stepFor(lp.To, edge)
+			// note() before the suppress skip so the suppressed step still feeds
+			// minStep/maxStep — the leading-gap fillers depend on it.
+			note(i)
+			if pos == suppress {
+				continue
+			}
 			state := "fired"
 			if accepted[lp.From+"→"+lp.To] {
 				state = "pass"
 			}
 			lights = append(lights, reviewLight{i, state, fmt.Sprintf("%d. %s — %s", i, edge, state)})
-			note(i)
 		}
 	}
 	// If the earliest recorded step is beyond step 1 — e.g. an item engaged before
@@ -434,13 +462,15 @@ func buildLights(entries []ledger.Entry, status string, stepOf func(state string
 		}
 		lights = append(fillers, lights...)
 	}
-	// Trail a pulsing "current" light at the NEXT step only once the item has
-	// actually entered the workflow (≥1 recorded transition). A freshly-created
-	// item still at its initial state has started no step — no phantom current ①.
-	if len(lights) > 0 && status != "done" && status != "cancelled" {
+	// Trail a pulsing "current" light AT the current step, once the item has
+	// actually entered the workflow (≥1 recorded transition/reject). A
+	// freshly-created item still at its initial state has started no step — no
+	// phantom current ①. The suppressed entry transition above leaves this light as
+	// the sole render of the current state (no duplicate done light one step back).
+	if entered && !terminal {
 		cur := maxStep + 1
-		if s := stepOf(status); s > 0 {
-			cur = s + 1
+		if curStep > 0 {
+			cur = curStep
 		}
 		lights = append(lights, reviewLight{cur, "current", "current stage"})
 	}
