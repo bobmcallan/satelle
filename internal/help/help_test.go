@@ -43,6 +43,9 @@ func TestAgentDispatchTopic(t *testing.T) {
 		"entry",                           // dispatch fires on entry
 		"EXIT edge",                       // judge the exit edge
 		"{story, from, to, review_skill}", // the stdin shape (pull model, not push)
+		"[architect]",                     // the custom-agent worked example (binding)
+		"agent=architect",                 // the allocation
+		".claude/agents",                  // the harness-agent-dir anti-pattern
 	} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("agent-dispatch topic missing %q", want)

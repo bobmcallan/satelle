@@ -64,7 +64,8 @@ func TestAgentDispatchContractDiscoverableFromInit(t *testing.T) {
 	// grant + entry-dispatch/exit-review sequencing).
 	mustRun(t, testBin, repo, "reindex")
 	advisor := mustRun(t, testBin, repo, "doc", "get", "skills", "satelle-workflow-advisor")
-	for _, want := range []string{"Bash(satelle:*)", "EXIT edge", "pulls by id"} {
+	for _, want := range []string{"Bash(satelle:*)", "EXIT edge", "pulls by id",
+		".claude/agents", "anti-pattern"} { // sty_fd4b1cd4: process agents live in the agents layer
 		if !strings.Contains(advisor, want) {
 			t.Errorf("seeded advisor skill missing %q:\n%s", want, advisor)
 		}

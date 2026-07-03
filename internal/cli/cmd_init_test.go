@@ -467,6 +467,20 @@ func TestRunInitAgentGuidance(t *testing.T) {
 					t.Errorf("agent note missing %q:\n%s", want, out.String())
 				}
 			}
+			// AC1 (sty_fd4b1cd4): the note points custom/process agents at
+			// .satelle/agents.toml, explicitly NOT a harness-specific agent dir.
+			for _, want := range []string{"agents.toml", ".claude/agents"} {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("agent note missing the agents-layer pointer %q:\n%s", want, out.String())
+				}
+			}
+			// AC4: the seeded agents.toml scaffold names the anti-pattern.
+			toml, _ := os.ReadFile(filepath.Join(repo, ".satelle", "agents.toml"))
+			for _, want := range []string{".claude/agents", "invisible", "one CLI vendor"} {
+				if !strings.Contains(string(toml), want) {
+					t.Errorf("seeded agents.toml missing anti-pattern comment %q:\n%s", want, toml)
+				}
+			}
 			// init never edits the agent-owned file.
 			for _, f := range c.files {
 				if got, _ := os.ReadFile(filepath.Join(repo, f)); string(got) != owned {
