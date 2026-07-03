@@ -3,7 +3,7 @@ name: satelle-estimate-actual-review
 scope: system
 type: skill
 tags: [type:skill, type:reviewer]
-description: CODED gate that judges PRESENCE of the agent's self-reported cost — a plan estimate at begin-work and the actual at close. The workflow DECLARES it as a scoped reviewer node (on="in_progress,done"), and the skill carries a self-contained functional check (no agent involved) that reads the transition payload on stdin: a transition INTO in_progress is rejected with no estimate-minutes/estimate-tokens tag, and a transition INTO done is rejected with no actual-minutes/actual-tokens tag. Presence is judged, not accuracy. The embedded default; a repo may override it under .satelle/skills.
+description: CODED gate that judges PRESENCE of the agent's self-reported cost — a plan estimate entering in_progress and the actual entering done. Declared as a scoped reviewer node (on="in_progress,done"); carries a self-contained functional check (no agent) that reads the transition payload. Presence is judged, not accuracy.
 ---
 
 # Estimate / actual presence gate (coded functional check)

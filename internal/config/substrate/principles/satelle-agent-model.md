@@ -2,9 +2,9 @@
 name: satelle-agent-model
 scope: system
 type: principle
-tags: [type:principle, principles:global]
+tags: [type:principle]
 applies_to: ["*"]
-description: The agent execution model (supersedes the reviewer-only model). A workflow is a graph of steps, each run by a DEFINED agent role with a bounded grant — the executor does the work (mutates the tree), the reviewer is LIMITED to reviewing (read-only, judges the OUTCOME not the procedure, returns a verdict, never mutates). "agent" here is the step's PERFORMER ROLE (executor|reviewer), distinct from the "agent CLI" (claude|codex) that a step may run on. Any agent other than the in-loop executor is an isolated invocation: satelle spawns a fresh-context process with the step's skill as the prompt over a payload it builds (the work item + the transition) and aggregates the structured return. satelle stays the status gatekeeper — a reviewer's accept is the only thing that advances a gated status. How and where an agent runs (in-loop, isolated `agent -p`, or another harness) is the agents layer. The model is structural — agents gate agents — not a claim about recursive context decomposition.
+description: The agent model. A workflow is a graph of steps, each run by a defined role with a bounded grant: the executor does the work; the reviewer is read-only, returning a verdict on the OUTCOME. Any role but the in-loop executor runs isolated over a satelle-built payload. satelle is the status gatekeeper — only a reviewer's accept advances gated status.
 ---
 
 # The agent execution model
@@ -77,14 +77,14 @@ an agent: `[executor]`/`[reviewer]` are the built-in roles, any other (e.g.
 loads). A named agent is always isolated, with its own scoped grant (e.g. the
 project's `commit` + `push` steps are allocated to a `commit-agent` that runs the
 `commit`/`push` rubric as an isolated `claude -p`). Entering a named-agent state
-**dispatches** the step to that binding's harness (sty_fd427546): the item —
+**dispatches** the step to that binding's harness: the item —
 title, body, acceptance criteria — rides on stdin, the node's `@skill:` rubric as
 the system prompt, tools/model from the binding; a failed run **refuses the
 transition** (status unchanged), and the spawned agent never advances status
 itself — the state's exit gate still governs the next edge. If `<name>` is
 **not** defined in the agents layer, the transition is **refused** naming the
 missing binding — a broken allocation never silently falls back in-loop
-(fail-fast, consistent with sty_d0d6bb67); a binding whose harness is explicitly
+(fail-fast); a binding whose harness is explicitly
 `in-loop` keeps the step with the orchestrator.
 
 ## @skill: is an agent-agnostic declaration — the process never locks to a CLI
@@ -130,10 +130,9 @@ gate has abandoned the job just as surely as one that routes around it.
 
 ## Process is configuration; status gates what is valid
 
-The steps a story moves through, their order, each step's agent role and skill,
-and which steps gate status are **workflows and skills** — authored substrate (the
-workflow's step graph and the skills it names), configured per repo, not branches
-in the binary. Change the substrate, change the process; no release. A story's
+Process is configuration: the steps, their order, each step's agent role and
+skill, and which steps gate status are **workflows and skills** — authored
+substrate, per [[satelle-constitution]], not branches in the binary. A story's
 **status** decides which step (and which gate) applies now; the terminal state is
 reached only with every gate on the path accepted.
 
