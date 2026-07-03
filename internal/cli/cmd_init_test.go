@@ -31,6 +31,7 @@ func TestRunInitScaffolds(t *testing.T) {
 		".satelle/principles/README.md",
 		".satelle/skills/README.md",
 		".satelle/skills/satelle-step-summary.md",
+		".satelle/skills/satelle-workflow-advisor.md",
 		".gitignore",
 	} {
 		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
@@ -74,6 +75,33 @@ func TestRunInitScaffolds(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("report missing %q:\n%s", want, out.String())
 		}
+	}
+}
+
+// TestRunInitSeedsAdvisorySkillsBesideAuthoredWorkflows: advisory skills are
+// workflow-independent guidance, so they seed even when the default solution is
+// withheld because the repo authored its own workflow set (sty_f4c1bd90).
+func TestRunInitSeedsAdvisorySkillsBesideAuthoredWorkflows(t *testing.T) {
+	repo := t.TempDir()
+	wfDir := filepath.Join(repo, ".satelle", "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	own := "---\nname: my-workflow\ntype: workflow\ndescription: my own lifecycle\napplies_to: [\"*\"]\nscope: project\n---\n\n```dot\ndigraph w {\n  backlog -> in_progress -> done\n}\n```\n"
+	if err := os.WriteFile(filepath.Join(wfDir, "my-workflow.md"), []byte(own), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runInit(io.Discard, repo); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+	p := filepath.Join(repo, ".satelle", "skills", "satelle-workflow-advisor.md")
+	body, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("advisor skill not seeded beside an authored workflow set: %v", err)
+	}
+	// And it is valid substrate.
+	if problems := structure.Doc("skills", "satelle-workflow-advisor", string(body), nil); len(problems) > 0 {
+		t.Errorf("seeded advisor skill fails its structure check: %v", problems)
 	}
 }
 

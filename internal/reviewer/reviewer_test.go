@@ -902,6 +902,15 @@ func TestDispatchExecutorRunsNamedBinding(t *testing.T) {
 	if !strings.Contains(r.got.Payload, "Align the stories") {
 		t.Errorf("item payload missing from stdin: %q", r.got.Payload)
 	}
+	// No reviewer-only framing may leak into a dispatched EXECUTOR's context
+	// (sty_f4c1bd90): the read-only call-to-action is reviewer-specific — a
+	// performing agent is not "an isolated satelle reviewer" and is not told it
+	// cannot modify the repository.
+	for _, banned := range []string{"isolated satelle reviewer", "You judge only", "return your verdict"} {
+		if strings.Contains(r.got.SystemPrompt, banned) {
+			t.Errorf("reviewer-only context %q leaked into the executor dispatch prompt:\n%s", banned, r.got.SystemPrompt)
+		}
+	}
 }
 
 // TestDispatchExecutorMissingBindingRefuses: agent=<name> with no [<name>]

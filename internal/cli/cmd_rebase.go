@@ -118,6 +118,13 @@ func runRebase(out io.Writer, in io.Reader, dataDir string, yes bool, now time.T
 		fmt.Fprintln(out, line)
 		deployed++
 	}
+	// Advisory skills are referenced by no workflow, so the default-solution
+	// deploy above never carries them — redeploy them explicitly, exactly as
+	// init seeds them (sty_f4c1bd90).
+	for _, line := range materializeAdvisorySkills(dataDir) {
+		fmt.Fprintln(out, line)
+		deployed++
+	}
 
 	fmt.Fprintf(out, "rebase: backed up %d dir(s) to %s; deployed %d default file(s) (run `satelle reindex` to sync the index)\n",
 		backedUp, backupDir, deployed)

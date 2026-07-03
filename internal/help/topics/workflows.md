@@ -52,3 +52,15 @@ inconsistencies the operator should fix, and the agent should advise on them:
   an `@skill:` node) that does not resolve in the substrate.
 
 Run `satelle workflow validate` to surface these before they bite.
+
+## Beyond validate: the semantic review
+
+`workflow validate` is deterministic structure only. The judgment it deliberately
+does not make — is each performing step's `agent=` allocation (and its binding's
+model) deliberate; does each performing step carry a reviewer gate on its exit
+edge; is a dispatched binding's grant scoped to its step; is a dispatched
+implementation step self-sufficient (an isolated agent sees only the item and
+its rubric, never the conversation) — is the **agent's** review, guided by the
+embedded `satelle-workflow-advisor` skill (`satelle doc get skills
+satelle-workflow-advisor`). Its findings are ADVICE to the operator; the coded
+structural check stays the only hard rule.

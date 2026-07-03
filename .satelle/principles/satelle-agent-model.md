@@ -59,8 +59,14 @@ grant; it returns a structured `{decision, notes}` satelle **aggregates** to gat
 status. `internal/reviewer` spawns this isolated `agent -p`. **satelle does the
 context selection** (the payload); the reviewer reads what it needs under its
 grant. There is no shared state — each gate is a clean room. Any agent role OTHER
-than the in-loop executor (the reviewer, or an optional extra agent a repo binds)
-runs this isolated way.
+than the in-loop executor (the reviewer, or a named agent a step is allocated to)
+runs this isolated way — but the two isolated roles differ in KIND: a reviewer
+**judges** (read-only, returns a verdict), while a dispatched named executor
+**performs** (its grant and model come from its binding, its output is run
+evidence in the executor log, and it never returns a verdict or advances
+status). Because a binding's `{model}` placeholder selects the model per
+binding, allocating steps to named agents gives **per-step model selection** as
+pure configuration.
 
 A workflow node **allocates** its performer through `agent=`: `agent=executor`
 runs the step in-loop (the default), `agent=reviewer` is the isolated read-only

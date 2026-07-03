@@ -175,6 +175,14 @@ func runInit(out io.Writer, repoRoot string) error {
 		fmt.Fprintln(out, line)
 	}
 
+	// 3c-bis. Advisory skills — embedded executor rubrics NOT referenced by any
+	//     workflow (so the default-solution seeding never carries them), seeded
+	//     unconditionally when absent, even beside an authored workflow set
+	//     (sty_f4c1bd90): they guide the in-loop agent, they don't gate anything.
+	for _, line := range materializeAdvisorySkills(dataDir) {
+		fmt.Fprintln(out, line)
+	}
+
 	// 3d. Tasks are AUTHORED substrate but ingested into the workitem store (not the
 	//     OKF doc index), so .satelle/tasks is scaffolded here — NOT via AuthoredKinds
 	//     (that would route it through the OKF normalizer). Create the dir + README
@@ -417,8 +425,13 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer:
 #     system prompt; it judges, never mutates (the claude preset denylists
 #     Write/Edit/NotebookEdit/Bash on top of the read-only grant).
 #   - any OTHER top-level [<name>] is an optional named agent, always isolated;
-#     a workflow node allocates a step to it via agent=<name>. A named agent
-#     that MUTATES declares its own full-command harness + wide grant.
+#     a workflow node allocates a step to it via agent=<name>, and entering that
+#     state DISPATCHES the step to this binding's harness (item on stdin, the
+#     node's @skill rubric as the system prompt, tools/model from the binding).
+#     A node naming an agent with NO binding here REFUSES the transition. A
+#     named agent that MUTATES declares its own full-command harness + wide
+#     grant; its model key pins the step's model ({model} in the template), so
+#     per-step model selection is pure configuration.
 #
 # THE HARNESS TEMPLATE: a SINGLE token (e.g. "claude") is a built-in preset; a
 # MULTI-token value is a full command taken verbatim ({system}/{tools}/{model}
@@ -435,7 +448,7 @@ harness = "in-loop"            # the orchestrator/driving session itself
 # rewriting the command.
 harness = "REVIEWER_HARNESS_TEMPLATE"
 tools   = "Read,Grep,Glob"     # read-only grant — widen at your own risk
-model   = ""                   # empty inherits the CLI's default; e.g. "sonnet" reviews on a cheaper/faster model
+model   = ""                   # empty inherits the CLI's default; each binding may pin its own (e.g. "sonnet"), so steps allocated to different bindings run on different models
 
 # A named EXECUTOR agent for isolated mutating steps (e.g. a commit/push step),
 # with an explicit full-command harness and a wide grant:
@@ -612,6 +625,34 @@ func materializePrinciples(dataDir string) []string {
 		}
 		if err := os.WriteFile(p, []byte(d.Body), 0o644); err == nil {
 			lines = append(lines, initLine(true, config.DefaultDataDir+"/principles/"+d.Name+".md"))
+		}
+	}
+	return lines
+}
+
+// advisorySkills are embedded executor rubrics that guide the IN-LOOP agent and
+// are referenced by no workflow — so the default-solution seeding (which walks
+// workflow references) never carries them. init seeds each when absent,
+// regardless of whether the repo authored its own workflows (sty_f4c1bd90).
+var advisorySkills = []string{
+	"satelle-workflow-advisor",
+}
+
+// materializeAdvisorySkills writes each embedded advisory skill into
+// .satelle/skills when absent — never clobbering an authored copy. Report lines.
+func materializeAdvisorySkills(dataDir string) []string {
+	var lines []string
+	for _, name := range advisorySkills {
+		body, ok := embeddedDefault("skills", name)
+		if !ok {
+			continue
+		}
+		p := filepath.Join(dataDir, "skills", name+".md")
+		if fileExists(p) {
+			continue
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err == nil {
+			lines = append(lines, initLine(true, config.DefaultDataDir+"/skills/"+name+".md"))
 		}
 	}
 	return lines
