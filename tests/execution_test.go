@@ -90,6 +90,91 @@ func TestExecutionLifecycleE2E(t *testing.T) {
 	}
 }
 
+// TestExecutionCodedEntryGateRejects proves the coded begin-run gate
+// (sty_3c1a2a9d): backlog -> in_progress is a deterministic structural check —
+// no LLM verdict — that REFUSES a run whose parent task header is missing or
+// structurally invalid, naming the problem. Reviewers are stubbed to accept, so
+// any rejection observed here can only come from the coded check.
+func TestExecutionCodedEntryGateRejects(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	stubReviewerAccept(t, repo) // every LLM gate accepts — rejections below are the coded check's
+	copyTaskExecSubstrate(t, repo)
+	mustRun(t, testBin, repo, "reindex")
+
+	tid := extractID(mustRun(t, testBin, repo, "task", "create",
+		"--title", "Runnable", "--body", "ACTION: do. VERIFICATION: done."), "tsk_")
+	eid := extractID(mustRun(t, testBin, repo, "execution", "create", "--parent", tid,
+		"--title", "Run 1", "--body", "ACTION: do it. VERIFICATION: done."), "exe_")
+	if tid == "" || eid == "" {
+		t.Fatalf("missing ids: task=%q exec=%q", tid, eid)
+	}
+	headerFile := filepath.Join(repo, ".satelle", "tasks", tid+".md")
+	valid, err := os.ReadFile(headerFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Missing parent header: the gate refuses, naming the absent file.
+	if err := os.Remove(headerFile); err != nil {
+		t.Fatal(err)
+	}
+	out, err := run(t, testBin, repo, "execution", "set", eid, "--status", "in_progress")
+	if err == nil {
+		t.Fatalf("gate must refuse a run with a missing parent header, got:\n%s", out)
+	}
+	if !strings.Contains(out, "does not exist") {
+		t.Errorf("refusal should name the missing header, got:\n%s", out)
+	}
+
+	// Structurally invalid header (no `type: task`): the gate refuses, naming the problem.
+	broken := strings.Replace(string(valid), "type: task\n", "", 1)
+	if err := os.WriteFile(headerFile, []byte(broken), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err = run(t, testBin, repo, "execution", "set", eid, "--status", "in_progress")
+	if err == nil {
+		t.Fatalf("gate must refuse a run with a structurally invalid parent, got:\n%s", out)
+	}
+	if !strings.Contains(out, "type: task") {
+		t.Errorf("refusal should name the structural problem, got:\n%s", out)
+	}
+
+	// Restore the valid header: the same edge now accepts (the coded check's accept branch).
+	if err := os.WriteFile(headerFile, valid, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, testBin, repo, "execution", "set", eid, "--status", "in_progress")
+}
+
+// TestTaskHeaderRoutesToTaskWorkflow proves the kind-aware routing fix
+// (sty_3c1a2a9d): an UNSTAMPED task header (authored category, no workflow: tag)
+// resolves to satelle-task-workflow — driving it to in_progress hits the task
+// workflow's coded entry gate, which refuses with the create-an-execution
+// remedy (a header has no parent task). Before the fix the header fell through
+// to the wildcard story workflow; the distinctive coded-gate message proves the
+// governing workflow end-to-end via the real binary.
+func TestTaskHeaderRoutesToTaskWorkflow(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	stubReviewerAccept(t, repo)
+	copyTaskExecSubstrate(t, repo)
+	mustRun(t, testBin, repo, "reindex")
+
+	tid := extractID(mustRun(t, testBin, repo, "task", "create",
+		"--title", "Header only", "--body", "ACTION: definition. VERIFICATION: per run."), "tsk_")
+	if tid == "" {
+		t.Fatal("no task id")
+	}
+	out, err := run(t, testBin, repo, "task", "set", tid, "--status", "in_progress")
+	if err == nil {
+		t.Fatalf("driving a bare header must be refused by the task workflow's coded gate, got:\n%s", out)
+	}
+	if !strings.Contains(out, "execution create --parent") {
+		t.Errorf("refusal should carry the create-an-execution remedy (proving satelle-task-workflow governs the header), got:\n%s", out)
+	}
+}
+
 // TestInstallAliasesInit proves `satelle install` is a full alias of init
 // (sty_77367228): it scaffolds a fresh repo identically, and help names it.
 func TestInstallAliasesInit(t *testing.T) {
