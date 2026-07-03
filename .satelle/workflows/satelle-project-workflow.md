@@ -40,7 +40,13 @@ digraph satelle_workflow {
 
   backlog     [shape=Mdiamond]
   in_progress [agent=executor]
-  integration [agent=executor]
+  // STAGED FLIP (sty_1c543ecd): to dispatch the implementation step to the
+  // isolated opus builder, replace the line above with
+  //   in_progress [agent=builder, prompt="@skill:..."]
+  // ONLY once (a) a dispatched-integration story has proven the loop and (b)
+  // stories are authored self-sufficient — a dispatched builder sees ONLY the
+  // story body/acceptance criteria + its rubric, never the conversation.
+  integration [agent=integrator, prompt="@skill:integrate"]
   commit      [agent=commit-agent, prompt="@skill:commit"]
   push        [agent=commit-agent, prompt="@skill:push"]
   committed   [agent=commit-agent, prompt="@skill:record-release"]
@@ -77,7 +83,7 @@ digraph satelle_workflow {
 
 Every gate/skill this workflow names resolves through the doc-index, **project
 scope (`.satelle/skills`) layered over the embedded system defaults**. The
-executor steps `commit` + `push` + `record-release` and the reviewer gates
+executor steps `integrate` + `commit` + `push` + `record-release` and the reviewer gates
 (`satelle-code-ac-review`, `satelle-integration-review`,
 `satelle-story-intent-review`, `satelle-story-done-review`,
 `satelle-story-cancel-review`) are authored in this repo's `.satelle/skills` — so

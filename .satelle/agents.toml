@@ -70,5 +70,28 @@ model   = "sonnet"             # review on sonnet (sty_5073df2f activates sty_da
 # the commit/push transitions (sty_fd427546); set harness = "in-loop" instead to
 # hand those steps back to the orchestrator.
 [commit-agent]
-harness = "claude -p --append-system-prompt {system} --allowedTools {tools}"
+harness = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*)"
+model   = "sonnet"
+
+# integrator — the INTEGRATION step's named agent (sty_1c543ecd): runs the
+# @skill:integrate rubric isolated on a cheaper/faster model. Per-step model
+# allocation is pure config — this binding's model applies to this step alone.
+# The grant covers verifying and trivially repairing the tree (fmt/vet/suites);
+# the integration→commit EDGE gates (satelle-integration-review + the coded
+# intcheck) still judge the outcome, so a failed integration cannot reach commit.
+[integrator]
+harness = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
+tools   = "Read,Grep,Glob,Edit,Bash(make:*),Bash(go:*),Bash(gofmt:*)"
+model   = "sonnet"
+
+# builder — STAGED (sty_1c543ecd), not yet allocated: the implementation step's
+# named agent for when in_progress flips from in-loop to dispatched-opus. An
+# isolated builder sees ONLY the story body/acceptance criteria + its rubric —
+# never the conversation — so flip in_progress to agent=builder (see the
+# commented allocation in satelle-project-workflow.md) only once stories are
+# authored self-sufficient and a dispatched-integration story has proven the loop.
+[builder]
+harness = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
+tools   = "Read,Grep,Glob,Edit,Write,Bash(git:*),Bash(go:*),Bash(gofmt:*),Bash(make:*),Bash(satelle:*)"
+model   = "opus"

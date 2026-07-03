@@ -23,11 +23,16 @@ binary (what `satelle update` serves) stale — the binary-drift trap. Therefore
 
 ## What to do
 
-1. **Stage and format.** Format Go and stage everything:
+1. **Stage and format.** Format Go, then stage the STORY'S SLICE — the files
+   this story changed (read the story body/acceptance criteria on stdin and
+   `git status --short` to identify them):
    ```bash
-   gofmt -s -w internal/ cmd/ 2>/dev/null; git add -A
+   gofmt -s -w internal/ cmd/ 2>/dev/null; git add <the story's files>
    ```
-   Confirm the staged set is the slice you intend (`git diff --cached --stat`).
+   Do NOT `git add -A`: the tree may carry ANOTHER session's in-flight changes —
+   sweeping a file the story did not touch into the commit is a defect. Confirm
+   the staged set is exactly the slice (`git diff --cached --stat`) and that
+   anything left unstaged genuinely belongs to other work.
 2. **Bump `.version`** — MANDATORY. `.version` carries one canonical version plus a
    build date:
    ```
