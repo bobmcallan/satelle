@@ -312,6 +312,17 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 				fmt.Sprintf("dispatched step %q to named agent %q (%s) with @skill:%s",
 					*req.Status, res.Agent, res.Command, res.Skill),
 				transitionPayload(current.Status, *req.Status, res.Skill), now)
+			// A dispatched task-execution run's captured output is written through as
+			// an OKF run-output doc under its task folder (sty_890b86cb) — the same
+			// write seam the in-loop execution-record verb uses. Best-effort: a write
+			// failure is recorded, not fatal (the run already happened).
+			if current.Kind == workitem.KindExecution && res.Output != "" {
+				if _, werr := recordRunOutput(current, res.Output, now); werr != nil {
+					appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "executor",
+						"run-output record failed: "+werr.Error(),
+						transitionPayload(current.Status, *req.Status, res.Skill), now)
+				}
+			}
 		}
 	}
 

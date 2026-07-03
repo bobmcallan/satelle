@@ -34,7 +34,11 @@ satisfied:
 
 The op-log (`.satelle/logs/operations.log`) and the ledger record what the run
 did; consult them when the deliverable is a state change rather than a working-tree
-file.
+file. A run's OUTPUT is also collected per task as an OKF doc at
+`.satelle/tasks/<tsk_id>/output-<exe_id>.md` (sty_890b86cb) — read it as run
+evidence. An in-loop run records this as its final act via
+`satelle execution record <exe_id>`; a dispatched run's output is written through
+automatically.
 
 - **Accept** when the ACTION is plausibly done and its VERIFICATION is satisfied
   by evidence you can see.

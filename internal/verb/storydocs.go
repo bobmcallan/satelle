@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 func init() {
@@ -20,9 +22,45 @@ func init() {
 // KindStoryDocAttached records a document attachment on the story's ledger.
 const KindStoryDocAttached = "story_doc_attached"
 
-// storyDocsDir is the per-story attachment directory, co-located with the story
-// markdown so a story's documents travel with it.
-func storyDocsDir(id string) string { return filepath.Join(storyDir, id) }
+// attachmentDir resolves an item's attachment/bundle directory by KIND
+// (sty_890b86cb). A story's docs live under .satelle/stories/<id>/, but a TASK or
+// EXECUTION is NOT a story: its artifacts belong in the task's own bundle under
+// .satelle/tasks/<tsk_id>/ (an execution roots at its PARENT task's folder). This
+// closes the kind-blind root where `attach` on a task materialised under
+// .satelle/stories/tsk_*/. Empty when the dir wiring for that kind is unset.
+func attachmentDir(it workitem.Item) string {
+	switch it.Kind {
+	case workitem.KindTask:
+		if taskDir == "" {
+			return ""
+		}
+		return filepath.Join(taskDir, it.ID)
+	case workitem.KindExecution:
+		if taskDir == "" || it.ParentID == "" {
+			return ""
+		}
+		return filepath.Join(taskDir, it.ParentID)
+	default:
+		if storyDir == "" {
+			return ""
+		}
+		return filepath.Join(storyDir, it.ID)
+	}
+}
+
+// resolveAttachmentDir looks up an item by id and returns its kind-resolved
+// attachment dir, or an error if the item is unknown / its dir wiring is unset.
+func resolveAttachmentDir(ctx context.Context, store *workitem.Store, id string) (string, error) {
+	it, err := store.Get(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	dir := attachmentDir(it)
+	if dir == "" {
+		return "", fmt.Errorf("verb: attachment dir for %s (%s) not configured", id, it.Kind)
+	}
+	return dir, nil
+}
 
 // safeName reduces a doc name to a bare filename (no path traversal) and ensures
 // a single .md extension.
@@ -53,15 +91,13 @@ func storyDocAttach(ctx context.Context, raw json.RawMessage) (json.RawMessage, 
 	if err != nil {
 		return nil, err
 	}
-	if storyDir == "" {
-		return nil, fmt.Errorf("verb: story document dir not configured")
-	}
 	var req docAttachReq
 	if err := decode(raw, &req); err != nil {
 		return nil, err
 	}
-	if _, err := store.Get(ctx, req.StoryID); err != nil {
-		return nil, fmt.Errorf("verb: attach: story %s: %w", req.StoryID, err)
+	item, err := store.Get(ctx, req.StoryID)
+	if err != nil {
+		return nil, fmt.Errorf("verb: attach: %s: %w", req.StoryID, err)
 	}
 	file := safeName(req.Name)
 	if file == "" {
@@ -71,7 +107,10 @@ func storyDocAttach(ctx context.Context, raw json.RawMessage) (json.RawMessage, 
 	if typ == "" {
 		typ = "document"
 	}
-	dir := storyDocsDir(req.StoryID)
+	dir := attachmentDir(item)
+	if dir == "" {
+		return nil, fmt.Errorf("verb: attach: attachment dir for %s (%s) not configured", req.StoryID, item.Kind)
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("verb: attach: %w", err)
 	}
@@ -87,17 +126,25 @@ func storyDocAttach(ctx context.Context, raw json.RawMessage) (json.RawMessage, 
 }
 
 func storyDocList(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	store, err := requireWorkItem()
+	if err != nil {
+		return nil, err
+	}
 	var req docRef
 	if err := decode(raw, &req); err != nil {
 		return nil, err
 	}
+	dir, err := resolveAttachmentDir(ctx, store, req.StoryID)
+	if err != nil {
+		return nil, err
+	}
 	out := []docRef{}
-	entries, _ := os.ReadDir(storyDocsDir(req.StoryID))
+	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
-		data, rerr := os.ReadFile(filepath.Join(storyDocsDir(req.StoryID), e.Name()))
+		data, rerr := os.ReadFile(filepath.Join(dir, e.Name()))
 		if rerr != nil {
 			continue
 		}
@@ -112,18 +159,23 @@ func storyDocList(ctx context.Context, raw json.RawMessage) (json.RawMessage, er
 }
 
 func storyDocGet(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
-	if storyDir == "" {
-		return nil, fmt.Errorf("verb: story document dir not configured")
+	store, err := requireWorkItem()
+	if err != nil {
+		return nil, err
 	}
 	var req docRef
 	if err := decode(raw, &req); err != nil {
+		return nil, err
+	}
+	dir, err := resolveAttachmentDir(ctx, store, req.StoryID)
+	if err != nil {
 		return nil, err
 	}
 	file := safeName(req.Name)
 	if file == "" {
 		return nil, fmt.Errorf("verb: doc: a document name is required")
 	}
-	data, err := os.ReadFile(filepath.Join(storyDocsDir(req.StoryID), file))
+	data, err := os.ReadFile(filepath.Join(dir, file))
 	if err != nil {
 		return nil, fmt.Errorf("verb: doc %s/%s: %w", req.StoryID, req.Name, err)
 	}

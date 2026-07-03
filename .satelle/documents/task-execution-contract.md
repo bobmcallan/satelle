@@ -48,6 +48,26 @@ Reviewers judge; they never enact. A status transition runs the edge's gate
 through the shared reviewer dispatch (`transitionGater`), updates the execution's
 file frontmatter + the op-log on accept, and blocks on a reject.
 
+## A run's OUTPUT is collected per task (sty_890b86cb)
+
+Beyond the execution's `<exe_id>.md` work-definition, each run's **output** — what
+the executor actually did and produced — is collected as an OKF document beside it
+under the task's bundle, `.satelle/tasks/<tsk_id>/output-<exe_id>.md` (frontmatter
+`type: task-execution-output` + the `generated: satelle` marker). One write seam
+serves both run modes:
+
+- **Dispatched runs** (a named agents.toml agent): satelle already holds the
+  spawned agent's stdout at the dispatch site and writes it through mechanically —
+  nothing for the run to do.
+- **In-loop runs** (the driving session performs the step): the orchestrator holds
+  the outcome, so it calls **`satelle execution record <exe_id>`** as the run's
+  final act (piping the run output on stdin, or `--output`). This is a REQUIRED
+  closing step of an in-loop run — the exit gate expects the run's evidence to be
+  discoverable per task, not only interleaved in the central `.satelle/logs/executor.log`.
+
+The output doc is per-run (a new run's `<exe_id>` never overwrites a prior run's),
+and the central `executor.log` is unchanged (it stays the operational log).
+
 ## The executor may be an agents.toml agent
 
 While `in_progress`, the work is done by the **executor**. The executor MAY be a
