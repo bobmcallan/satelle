@@ -201,8 +201,10 @@ func (s Spec) ExecutorPathToDoneSkills() []string {
 
 // Transition is a directed edge. Skills are the reviewer gates admitting entry to
 // the target node, in order (empty = ungated); Skill mirrors the first for
-// single-reviewer back-compat. An edge declares multiple gates via
-// `reviewer_skill="a,b"`.
+// single-reviewer back-compat. An edge declares its gate(s) either edge-centric
+// (`reviewer_skill="a,b"`) or in the NODE-CONSISTENT form
+// (`agent=reviewer, prompt="@skill:a"`) — the same vocabulary a reviewer node
+// uses (sty_be67919a); reviewer_skill wins when both are present.
 type Transition struct {
 	From   string
 	To     string
@@ -249,16 +251,24 @@ func Parse(body string) (Spec, bool) {
 		}
 		if strings.Contains(t, "->") {
 			ids := dotEdgeNodes(t)
-			// An edge may carry its gate directly as a `reviewer_skill` attribute
-			// (the edge-centric form, e.g. an intent gate on backlog->in_progress
-			// where the target is an executor node, not a reviewer node).
+			// An edge may carry its gate directly (e.g. an intent gate on
+			// backlog->in_progress where the target is an executor node). Two
+			// equivalent forms are accepted (sty_be67919a): the edge-centric
+			// `reviewer_skill="NAME"`, and the NODE-CONSISTENT form
+			// `agent=reviewer, prompt="@skill:NAME"` — the same vocabulary a
+			// reviewer node uses — so every step reads the same way. reviewer_skill
+			// wins when both are present.
 			var edgeSkills []string
 			if open := strings.Index(t, "["); open >= 0 {
 				closeAt := strings.LastIndex(t, "]")
 				if closeAt < open {
 					closeAt = len(t)
 				}
-				edgeSkills = splitCSVSkills(parseDotAttrs(t[open+1 : closeAt])["reviewer_skill"])
+				attrs := parseDotAttrs(t[open+1 : closeAt])
+				edgeSkills = splitCSVSkills(attrs["reviewer_skill"])
+				if len(edgeSkills) == 0 && attrs["agent"] == "reviewer" && strings.HasPrefix(attrs["prompt"], "@skill:") {
+					edgeSkills = splitCSVSkills(attrs["prompt"])
+				}
 			}
 			for _, id := range ids {
 				add(id)

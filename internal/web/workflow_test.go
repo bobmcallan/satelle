@@ -148,6 +148,33 @@ func TestParseWorkflowDOT(t *testing.T) {
 	}
 }
 
+// TestWorkflowDiagramNodeConsistentEdgeGate: the web DAG parser reads an edge
+// gate declared in the node-consistent form (agent=reviewer, prompt="@skill:…")
+// and the rendered diagram labels that edge with the gate (sty_be67919a).
+func TestWorkflowDiagramNodeConsistentEdgeGate(t *testing.T) {
+	dot := "---\nname: nc\n---\n" + "```dot" + `
+digraph nc {
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor]
+  done        [shape=Msquare]
+  backlog -> in_progress [agent=reviewer, prompt="@skill:satelle-story-intent-review"]
+  in_progress -> done
+}
+` + "```\n"
+	spec := parseWorkflow(dot)
+	skillByTarget := map[string]string{}
+	for _, tr := range spec.Transitions {
+		skillByTarget[tr.To] = tr.Skill
+	}
+	if got := skillByTarget["in_progress"]; got != "satelle-story-intent-review" {
+		t.Errorf("node-consistent edge gate = %q, want satelle-story-intent-review", got)
+	}
+	html := string(workflowDiagram(spec))
+	if !strings.Contains(html, "satelle-story-intent-review") {
+		t.Errorf("diagram did not label the node-consistent edge gate:\n%s", html)
+	}
+}
+
 func TestWorkflowDiagramFromDOT(t *testing.T) {
 	spec := parseWorkflow(sampleWorkflowDOT)
 	html := string(workflowDiagram(spec))
