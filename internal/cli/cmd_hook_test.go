@@ -188,6 +188,29 @@ func TestWithinRoot(t *testing.T) {
 	}
 }
 
+// TestDataDirExemptionClassification proves the classification the edit gate's
+// substrate exemption relies on (sty_103af456): a path under the data dir
+// (.satelle/) resolves inside it (→ exempt from the story gate), while in-repo
+// CODE outside it does not.
+func TestDataDirExemptionClassification(t *testing.T) {
+	const dataDir = "/home/u/repo/.satelle"
+	cases := []struct {
+		target string
+		inData bool // true = under the data dir (edit exempt); false = code (gated)
+	}{
+		{"/home/u/repo/.satelle/skills/plan.md", true},
+		{"/home/u/repo/.satelle/workflows/satelle-project-workflow.md", true},
+		{"/home/u/repo/.satelle/agents.toml", true},
+		{"/home/u/repo/internal/cli/cmd_hook.go", false}, // code — still gated
+		{"/home/u/repo/README.md", false},                // repo-root non-substrate
+	}
+	for _, c := range cases {
+		if got := withinRoot(dataDir, c.target); got != c.inData {
+			t.Errorf("withinRoot(dataDir, %q) = %v, want %v", c.target, got, c.inData)
+		}
+	}
+}
+
 func TestExecutorStatesDOT(t *testing.T) {
 	body := `---
 name: x
