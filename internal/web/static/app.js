@@ -585,18 +585,8 @@
     });
   }
 
-  // Story document tabs: delegated so it survives detail-page live re-renders.
-  function initDocTabs() {
-    document.addEventListener("click", function (e) {
-      var tab = e.target.closest(".doc-tab");
-      if (!tab) return;
-      var wrap = tab.closest(".doc-tabs");
-      if (!wrap) return;
-      var idx = tab.dataset.doc;
-      wrap.querySelectorAll(".doc-tab").forEach(function (t) { t.classList.toggle("active", t.dataset.doc === idx); });
-      wrap.querySelectorAll(".doc-pane").forEach(function (p) { p.classList.toggle("active", p.dataset.doc === idx); });
-    });
-  }
+  // Attached documents are now a native <details> list (sty_1a239b4d) — no JS
+  // needed; the disclosure works without a handler and survives live re-renders.
 
   document.addEventListener("DOMContentLoaded", function () {
     initTheme();
@@ -605,7 +595,6 @@
     initFilters();
     initLive();
     initDetailLive();
-    initDocTabs();
     enhanceWorkflowDiagrams(document); // any diagram already in the server-rendered page
   });
 })();

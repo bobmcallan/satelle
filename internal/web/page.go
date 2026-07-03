@@ -289,10 +289,6 @@ const templatesSrc = `
 {{define "itemDetail"}}<div class="expbody">
   {{$isTask := eq (printf "%s" .Item.Kind) "task"}}
   {{if not .Standalone}}<a class="detail-link open-story" href="{{.Item.Kind}}/{{.Item.ID}}">Open {{if $isTask}}task{{else}}story{{end}} →</a>{{end}}
-  {{if .Docs}}<div class="doc-tabs">
-    <div class="doc-tabstrip" role="tablist">{{range $i, $d := .Docs}}<button class="doc-tab{{if eq $i 0}} active{{end}}" type="button" role="tab" data-doc="{{$i}}">{{$d.Name}}{{if $d.Type}} <span class="doc-tab-type">{{$d.Type}}</span>{{end}}</button>{{end}}</div>
-    {{range $i, $d := .Docs}}<div class="doc-pane{{if eq $i 0}} active{{end}}" data-doc="{{$i}}"><article class="doc-article">{{$d.HTML}}</article></div>{{end}}
-  </div>{{end}}
   <dl>
     <dt>Status</dt><dd><span class="badge s-{{.Item.Status}}">{{.Item.Status}}</span></dd>
     {{if not $isTask}}<dt>Priority</dt><dd>{{if .Item.Priority}}{{.Item.Priority}}{{else}}—{{end}}</dd>
@@ -309,6 +305,8 @@ const templatesSrc = `
     <div class="run-meta">created {{ftime .CreatedAt}} · updated {{ftime .UpdatedAt}}</div>
     {{if .Output}}<pre class="run-output prose">{{.Output}}</pre>{{else}}<div class="run-noout">no output recorded</div>{{end}}
   </li>{{end}}</ol>{{else}}<div class="empty">No runs yet — create one with <code>satelle execution create --parent {{.Item.ID}}</code>.</div>{{end}}{{end}}
+  {{if .Docs}}<h4>Documents</h4>
+  <ul class="doc-list">{{range .Docs}}<li><details class="doc-item"><summary>{{.Name}}{{if .Type}} <span class="doc-item-type">{{.Type}}</span>{{end}}</summary><article class="doc-article">{{.HTML}}</article></details></li>{{end}}</ul>{{end}}
   <h4>Timeline</h4>
   {{if .Events}}<ol class="timeline">{{range .Events}}<li{{with evdot .Kind}} class="{{.}}"{{end}}>
     <div class="ev-kind">{{.Kind}}</div>

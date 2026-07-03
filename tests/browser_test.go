@@ -1367,29 +1367,60 @@ func TestBrowserDocRendersMarkdown(t *testing.T) {
 	}
 }
 
-// TestBrowserStoryDocTabs attaches a document to a story and asserts it appears
-// as a tab on the detail page with its markdown rendered.
-func TestBrowserStoryDocTabs(t *testing.T) {
+// TestBrowserStoryDocList attaches a document to a story and asserts it renders
+// as a collapsible LIST entry before the Timeline (sty_1a239b4d) — collapsed by
+// default (a list, not a wall of text), expanding on click to reveal the rendered
+// markdown, with no legacy tabstrip.
+func TestBrowserStoryDocList(t *testing.T) {
 	base, repo := serveRepo(t, "8808")
-	id := createStory(t, repo, "Doc tabs story", "")
+	id := createStory(t, repo, "Doc list story", "")
 	mustRun(t, testBin, repo, "story", "attach", id, "--name", "plan", "--type", "plan",
 		"--body", "# Plan\n\n- step one\n- step two")
 
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(base+"/story/"+id),
-		chromedp.WaitVisible(`.doc-tabs .doc-tab`, chromedp.ByQuery),
-		chromedp.WaitVisible(`.doc-pane.active .doc-article`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.doc-list .doc-item > summary`, chromedp.ByQuery),
 	); err != nil {
-		t.Fatalf("story doc tab not rendered: %v", err)
+		t.Fatalf("story document list entry not rendered: %v", err)
 	}
-	var rendered bool
-	if err := chromedp.Run(ctx, chromedp.Evaluate(
-		`!!document.querySelector('.doc-pane.active .doc-article h1') && !!document.querySelector('.doc-pane.active .doc-article li')`, &rendered)); err != nil {
+	// The legacy tabstrip is gone; the body is collapsed by default; and the
+	// documents list sits before the timeline.
+	var checks struct {
+		NoTabs    bool
+		Collapsed bool
+		BeforeTL  bool
+	}
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`(function(){
+		var tabs = document.querySelector('.doc-tabstrip, .doc-tab, .doc-pane');
+		var det = document.querySelector('.doc-list .doc-item');
+		var collapsed = !!det && !det.open;
+		var list = document.querySelector('.doc-list');
+		var tl = [...document.querySelectorAll('h4')].find(h => h.textContent.trim()==='Timeline');
+		var before = !!list && !!tl && (list.compareDocumentPosition(tl) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+		return {NoTabs: !tabs, Collapsed: collapsed, BeforeTL: before};
+	})()`, &checks)); err != nil {
 		t.Fatal(err)
 	}
+	if !checks.NoTabs {
+		t.Error("legacy doc tabstrip/panes must be gone")
+	}
+	if !checks.Collapsed {
+		t.Error("document body must be collapsed by default (a list, not a wall of text)")
+	}
+	if !checks.BeforeTL {
+		t.Error("the documents list must sit before the Timeline")
+	}
+	// Clicking the summary reveals the rendered markdown.
+	clickJS(t, ctx, `.doc-list .doc-item > summary`)
+	var rendered bool
+	if !waitCond(t, ctx, `(function(){var d=document.querySelector('.doc-list .doc-item[open] .doc-article');return !!d && !!d.querySelector('h1') && !!d.querySelector('li');})()`, 5*time.Second) {
+		rendered = false
+	} else {
+		rendered = true
+	}
 	if !rendered {
-		t.Error("attached-document tab did not render its markdown (heading + list)")
+		t.Error("expanding a document did not render its markdown (heading + list)")
 	}
 }
 
