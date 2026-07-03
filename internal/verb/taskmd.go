@@ -66,10 +66,53 @@ func writeItemFile(it workitem.Item) error {
 	}
 }
 
+// archiveTaskFiles MOVES an archived task's on-disk evidence — its flat header
+// (tsk_<id>.md) and its executions folder (tsk_<id>/) — into a mandatory
+// timestamped backup at .satelle/backups/tasks/<ts>/<id>/, mirroring rebase's
+// backup-not-delete pattern (sty_cd209b8a). Nothing is deleted in place. Returns
+// the backup dir (empty when taskDir is unset). Idempotent-ish: missing sources
+// are skipped.
+func archiveTaskFiles(id string, now time.Time) (string, error) {
+	if taskDir == "" {
+		return "", nil
+	}
+	ts := now.UTC().Format("20060102-150405")
+	dst := filepath.Join(filepath.Dir(taskDir), "backups", "tasks", ts, id)
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return "", fmt.Errorf("archive backup dir: %w", err)
+	}
+	// Header file → dst/<id>.md.
+	if hdr := taskFilePath(id); fileStat(hdr) {
+		if err := os.Rename(hdr, filepath.Join(dst, id+".md")); err != nil {
+			return "", fmt.Errorf("archive header %s: %w", id, err)
+		}
+	}
+	// Executions folder contents → dst/ (each run beside the header); the emptied
+	// folder is then removed so reindex never walks it again.
+	ed := execDir(id)
+	if entries, err := os.ReadDir(ed); err == nil {
+		for _, e := range entries {
+			if err := os.Rename(filepath.Join(ed, e.Name()), filepath.Join(dst, e.Name())); err != nil {
+				return "", fmt.Errorf("archive execution %s: %w", e.Name(), err)
+			}
+		}
+		_ = os.Remove(ed)
+	}
+	return dst, nil
+}
+
+// fileStat reports whether path exists (a small helper for the archive move).
+func fileStat(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 // SyncTasks reconciles the task files under taskDir with the store: any store
 // task lacking a file is first ADOPTED by writing its file (migrating legacy
 // DB-only tasks, e.g. tasks created before tasks became substrate), then every
 // tsk_*.md is parsed and upserted so the FILE wins — it is the source of truth.
+// Archived tasks are excluded from the store List that drives adoption, so an
+// archived record is never resurrected to a file (sty_cd209b8a).
 // Returns (indexed, migrated). A no-op when taskDir is unset or the store is nil.
 func SyncTasks(ctx context.Context, store *workitem.Store, now time.Time) (indexed, migrated int, err error) {
 	if taskDir == "" || store == nil {

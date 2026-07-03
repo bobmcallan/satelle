@@ -134,8 +134,26 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		// tasks are authored substrate → `satelle task validate` runs the
 		// deterministic task structure check (ACTION+VERIFICATION contract).
 		parent.AddCommand(authoredValidateCmd("tasks"))
+		parent.AddCommand(taskArchiveCommand())
 	}
 	return parent
+}
+
+// taskArchiveCommand builds `satelle task archive <id>` — a task's disposal path
+// (sty_cd209b8a): it marks the store record archived (excluded from the default
+// task list, still readable via task get) and MOVES the header + executions to a
+// mandatory timestamped backup. Archive is record disposition, distinct from the
+// workflow status a task never runs through.
+func taskArchiveCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:         "archive <id>",
+		Short:       "Archive a task: move its files to backups and mark the record archived (excluded from list)",
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return dispatch(cmd, "task-archive", map[string]any{"id": args[0]})
+		},
+	}
 }
 
 // attachBody resolves the document body for `story attach`: --file reads it

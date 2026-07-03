@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS work_items (
     acceptance_criteria TEXT NOT NULL DEFAULT '',
     tags                TEXT NOT NULL DEFAULT '[]',
     created_at          TEXT NOT NULL,
-    updated_at          TEXT NOT NULL
+    updated_at          TEXT NOT NULL,
+    archived            INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_work_items_kind   ON work_items(kind, status);
 CREATE INDEX IF NOT EXISTS idx_work_items_parent ON work_items(parent_id);`
@@ -45,6 +46,13 @@ func Migrate(db *sql.DB) error {
 	// — after the rename there are no 'open' rows left to touch.
 	if _, err := db.Exec(`UPDATE work_items SET status = 'backlog' WHERE status = 'open'`); err != nil {
 		return fmt.Errorf("workitem: migrate open→backlog: %w", err)
+	}
+	// archived is record DISPOSITION, orthogonal to workflow status (sty_cd209b8a):
+	// add it to pre-existing tables (CREATE IF NOT EXISTS never alters an existing
+	// schema). Tolerate the column already existing so migration stays idempotent.
+	if _, err := db.Exec(`ALTER TABLE work_items ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("workitem: migrate archived column: %w", err)
 	}
 	return nil
 }
@@ -175,6 +183,10 @@ type ListFilter struct {
 	Status   string
 	ParentID string
 	Limit    int // <=0 ⇒ default 500, capped at 2000
+	// IncludeArchived returns archived (disposed) items too. The default (false)
+	// excludes them — archive is a terminal disposition kept out of the working
+	// list (sty_cd209b8a).
+	IncludeArchived bool
 }
 
 // List returns items matching the filter, newest-updated first.
@@ -199,6 +211,9 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]Item, error) {
 	add("kind", string(f.Kind))
 	add("status", f.Status)
 	add("parent_id", f.ParentID)
+	if !f.IncludeArchived {
+		conds = append(conds, "archived = 0")
+	}
 
 	q := selectCols
 	if len(conds) > 0 {
@@ -281,6 +296,27 @@ func (s *Store) SetStatus(ctx context.Context, id, status string, now time.Time)
 	return s.Update(ctx, id, UpdateInput{Status: &status}, now)
 }
 
+// Archive marks an item archived — a terminal bookkeeping DISPOSITION, orthogonal
+// to workflow status (sty_cd209b8a). It uses a targeted UPDATE (not the
+// INSERT-OR-REPLACE upsert path) so no other column is touched, and Get still
+// returns the row with its full lineage. Idempotent; ErrNotFound if the id is
+// unknown.
+func (s *Store) Archive(ctx context.Context, id string, now time.Time) (Item, error) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	now = now.UTC()
+	res, err := s.db.ExecContext(ctx, `UPDATE work_items SET archived = 1, updated_at = ? WHERE id = ?`,
+		now.Format(time.RFC3339Nano), id)
+	if err != nil {
+		return Item{}, fmt.Errorf("workitem: archive: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return Item{}, ErrNotFound
+	}
+	return s.Get(ctx, id)
+}
+
 // Count returns the number of items of a kind (empty kind = all kinds). Cheaper
 // than List+len since it loads no rows.
 func (s *Store) Count(ctx context.Context, kind Kind) (int, error) {
@@ -319,7 +355,7 @@ func (s *Store) Fingerprint(ctx context.Context, kind Kind) (string, error) {
 
 // selectCols is the shared SELECT prefix for Get/List, fixing column order so
 // one scan() serves both.
-const selectCols = `SELECT id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at FROM work_items`
+const selectCols = `SELECT id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, archived FROM work_items`
 
 // scanner is satisfied by both *sql.Row and *sql.Rows.
 type scanner interface{ Scan(dest ...any) error }
@@ -329,10 +365,11 @@ func scan(sc scanner) (Item, error) {
 		it               Item
 		kind, tags       string
 		created, updated string
+		archived         int
 	)
 	if err := sc.Scan(&it.ID, &kind, &it.Title, &it.Body, &it.Status,
 		&it.Priority, &it.Category, &it.ParentID, &it.AcceptanceCriteria,
-		&tags, &created, &updated); err != nil {
+		&tags, &created, &updated, &archived); err != nil {
 		return Item{}, err
 	}
 	it.Kind = Kind(kind)
@@ -340,6 +377,7 @@ func scan(sc scanner) (Item, error) {
 	it.Tags = nonNilTags(it.Tags)
 	it.CreatedAt = parseTime(created)
 	it.UpdatedAt = parseTime(updated)
+	it.Archived = archived != 0
 	return it, nil
 }
 

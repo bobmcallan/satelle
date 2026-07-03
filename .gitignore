@@ -32,6 +32,8 @@
 
 # the flat operation log (a read-only reviewer's read surface) is local evidence
 .satelle/logs/
+# mandatory backups from rebase and task archive are local disposal evidence
+.satelle/backups/
 # <<< satelle (managed) <<<
 
 # OKF bundle-root index / changelog — regenerated locally, local artifacts.
