@@ -5,7 +5,7 @@ type: workflow
 tags: [type:workflow]
 applies_to: ["*"]
 create_review: satelle-story-create-review
-description: This repo's project-scope workflow, authored in DOT (the agent model). A story moves backlog → plan → in_progress → release → done, with a cancelled exit. It is REVIEWER-ONLY for execution (sty_d9a0b573): the driving session performs in_progress and release IN-LOOP (agent=executor, never an isolated sub-process), and reviewers only gate transitions — so no context is lost to a dispatched executor and no narrow-grant permission wall can strand a step. The one dispatched step is plan, allocated to a cheap FABLE model that produces an implementation plan and attaches it to the story, so the in-loop implementer works from a self-contained plan. Every stage is reviewed against the story's acceptance criteria: plan → in_progress is gated by satelle-story-plan-review (the plan covers the ACs), in_progress → release by satelle-code-ac-review (the implementation matches the ACs, with tests) plus the declared satelle-integration-review + satelle-integration-check (make integration) on release entry, and release → done by the single satelle-story-release-review (the merged commit+push+release evidence — version bump, conventional commit with no AI attribution, green CI, published release, recorded summary — and the ACs satisfied). release → in_progress is the recovery edge for any reject. There is no deploy state — the push to main IS the release, verified by CI. done stays terminal (satelle-done-is-last); a project workflow takes precedence over the embedded satelle-baseline-workflow.
+description: This repo's project-scope workflow, authored in DOT (the agent model). A story moves backlog → plan → in_progress → integration → release → done, with a cancelled exit. It is REVIEWER-ONLY for execution (sty_d9a0b573): the driving session performs in_progress, integration, and release IN-LOOP (agent=executor, never an isolated sub-process), and reviewers only gate transitions — so no context is lost to a dispatched executor and no narrow-grant permission wall can strand a step. The one dispatched step is plan, allocated to a cheap FABLE model that produces an implementation plan and attaches it to the story, so the in-loop implementer works from a self-contained plan. Every stage is reviewed against the story's acceptance criteria: plan → in_progress is gated by satelle-story-plan-review (the plan covers the ACs); in_progress → integration by satelle-code-ac-review (the implementation matches the ACs, with tests); integration is the VISIBLE testing stage — integration → release is gated by satelle-integration-review (the tests are adequate) plus the scoped satelle-integration-check (make integration) on release entry, so make integration is its own step rather than a hidden gate (sty_15dbc0dd); and release → done by the single satelle-story-release-review (the merged commit+push+release evidence — version bump, conventional commit with no AI attribution, green CI, published release, recorded summary — and the ACs satisfied). integration → in_progress and release → in_progress are recovery edges for any reject. There is no deploy state — the push to main IS the release, verified by CI. done stays terminal (satelle-done-is-last); a project workflow takes precedence over the embedded satelle-baseline-workflow.
 ---
 
 # satelle workflow (project) — the agent model, authored in DOT
@@ -17,13 +17,13 @@ description: This repo's project-scope workflow, authored in DOT (the agent mode
 
 The lifecycle is the **DOT graph** below — read it as the authority; this prose
 only orients and must not restate it. Each node is a step carrying an `agent`.
-This workflow is **reviewer-only for execution** (sty_d9a0b573): `in_progress`
-and `release` carry `agent=executor`, so the **in-loop driving session** performs
-them with full context and the session's own permissions — no isolated executor
-sub-process is spawned for integration/commit/push, which is what previously lost
-context and hit narrow-grant permission walls. A **reviewer** node only gates
-*entry* via its `prompt="@skill:NAME"` (read-only — it judges, never mutates).
-Status advances only through a reviewer's accept.
+This workflow is **reviewer-only for execution** (sty_d9a0b573): `in_progress`,
+`integration`, and `release` carry `agent=executor`, so the **in-loop driving
+session** performs them with full context and the session's own permissions — no
+isolated executor sub-process is spawned for integration/commit/push, which is what
+previously lost context and hit narrow-grant permission walls. A **reviewer** node
+only gates *entry* via its `prompt="@skill:NAME"` (read-only — it judges, never
+mutates). Status advances only through a reviewer's accept.
 
 The **one dispatched step is `plan`**: it is allocated to a named agent
 (`agent=planner`, a cheap FABLE model in `.satelle/agents.toml`) that reads the
@@ -32,13 +32,15 @@ attaches it to the story — so the implementer works from a self-contained plan
 
 Two things the edges don't show. **There is no deploy state** — pushing to `main`
 IS the release, verified by CI. And the **always-on gates are declared, not
-injected**: the edge-less reviewer nodes `estimate` (`on="in_progress,done"`),
-`intcheck` and `intreview` (`on="release"`) run on the transitions their `on=`
-names, so the DOT is the sole gating authority. `estimate` requires a plan
-estimate entering `in_progress` and an actual entering `done`; `intcheck` runs
-`make integration` and `intreview` judges the tests entering `release`. The
-`release -> in_progress` edge is recovery: a release/done reject returns the story
-to work to fix and re-traverse, never bypass.
+injected**: the edge-less reviewer nodes `estimate` (`on="in_progress,done"`) and
+`intcheck` (`on="release"`) run on the transitions their `on=` names, so the DOT is
+the sole gating authority. `estimate` requires a plan estimate entering
+`in_progress` and an actual entering `done`; `intcheck` runs `make integration` on
+entry to `release` (the `integration -> release` edge), alongside that edge's
+`satelle-integration-review` — so `integration` is a **visible testing step**, not a
+gate hidden inside another transition (sty_15dbc0dd). The `integration -> in_progress`
+and `release -> in_progress` edges are recovery: a reject returns the story to work
+to fix and re-traverse, never bypass.
 
 ```dot
 digraph satelle_workflow {
@@ -48,6 +50,7 @@ digraph satelle_workflow {
   backlog     [shape=Mdiamond]
   plan        [agent=planner, prompt="@skill:plan"]   // DISPATCHED to the fable planner
   in_progress [agent=executor]                          // in-loop: the session implements
+  integration [agent=executor]                          // in-loop: the testing stage — make integration runs on exit
   release     [agent=executor]                          // in-loop: the session commits+pushes+records
   done        [shape=Msquare]                           // terminal (release-review gates the edge in)
   cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
@@ -58,21 +61,24 @@ digraph satelle_workflow {
 
   // Declared scoped reviewers (edge-less, on="<target states>"): always-on gates the
   // workflow itself declares. estimate gates begin-work + close; intcheck runs
-  // `make integration` and intreview judges test adequacy, both entering release.
+  // `make integration` on entry to release — i.e. on the integration -> release edge,
+  // alongside that edge's satelle-integration-review — so integration is a VISIBLE step.
   estimate    [agent=reviewer, prompt="@skill:satelle-estimate-actual-review", on="in_progress,done"]
   intcheck    [agent=reviewer, prompt="@skill:satelle-integration-check", on="release"]
-  intreview   [agent=reviewer, prompt="@skill:satelle-integration-review", on="release"]
 
   backlog     -> plan
-  plan        -> in_progress [reviewer_skill="satelle-story-plan-review"]
-  in_progress -> release     [reviewer_skill="satelle-code-ac-review"]
-  release     -> done        [reviewer_skill="satelle-story-release-review"]
+  plan        -> in_progress  [reviewer_skill="satelle-story-plan-review"]
+  in_progress -> integration  [reviewer_skill="satelle-code-ac-review"]     // code matches the ACs -> enter integration
+  integration -> release      [reviewer_skill="satelle-integration-review"] // tests adequate (+ scoped intcheck runs make integration) -> enter release
+  release     -> done         [reviewer_skill="satelle-story-release-review"]
 
+  integration -> in_progress  // recovery: a test/review reject returns to work
   release     -> in_progress  // recovery: a release/done reject returns to work
 
   backlog     -> cancelled
   plan        -> cancelled
   in_progress -> cancelled
+  integration -> cancelled
   release     -> cancelled
 }
 ```
@@ -97,12 +103,12 @@ guardrails:
   always:
     - Drive an engaged item to a terminal state (done or cancelled) — don't leave work open indefinitely.
     - Give a story numbered acceptance criteria before starting, and satisfy them before moving to done.
-    - Perform in_progress and release IN-LOOP as the driving session; the plan step is the only dispatched agent.
+    - Perform in_progress, integration, and release IN-LOOP as the driving session; the plan step is the only dispatched agent.
     - Bump the version + commit + push + record the release in the single in-loop release step; the release gate verifies the bump, CI, the published release, and the acceptance criteria before close.
   ask_first: []
   never:
     - Place any state after done — done is always the terminal success state.
     - Self-enact a gated edge the reviewer has not accepted.
     - Mark an item done with unmet acceptance criteria, or release with a failing CI run.
-    - Spawn an isolated sub-process to perform in_progress or release — execution is in-loop; only plan dispatches.
+    - Spawn an isolated sub-process to perform in_progress, integration, or release — execution is in-loop; only plan dispatches.
 ```
