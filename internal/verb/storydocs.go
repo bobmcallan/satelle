@@ -99,30 +99,46 @@ func storyDocAttach(ctx context.Context, raw json.RawMessage) (json.RawMessage, 
 	if err != nil {
 		return nil, fmt.Errorf("verb: attach: %s: %w", req.StoryID, err)
 	}
-	file := safeName(req.Name)
-	if file == "" {
-		return nil, fmt.Errorf("verb: attach: a document name is required")
+	name, typ, err := writeAttachedDoc(ctx, item, req.Name, req.Type, req.Body, time.Now())
+	if err != nil {
+		return nil, err
 	}
-	typ := strings.TrimSpace(req.Type)
+	return json.Marshal(docRef{StoryID: req.StoryID, Name: name, Type: typ})
+}
+
+// writeAttachedDoc materialises a typed markdown document into an item's
+// kind-resolved attachment dir (.satelle/stories/<id>/ or .satelle/tasks/<id>/)
+// with the standard frontmatter, and records a KindStoryDocAttached ledger row. It
+// is the shared core of the story-doc-attach verb and the step-summary deposit
+// (sty_47d31300), so a dispatched agent can PULL prior step summaries via
+// `story docs`/`story doc` — the same path it pulls the plan. Returns the bare
+// (extension-less) doc name and the normalised type.
+func writeAttachedDoc(ctx context.Context, item workitem.Item, name, typ, body string, now time.Time) (string, string, error) {
+	file := safeName(name)
+	if file == "" {
+		return "", "", fmt.Errorf("verb: attach: a document name is required")
+	}
+	typ = strings.TrimSpace(typ)
 	if typ == "" {
 		typ = "document"
 	}
 	dir := attachmentDir(item)
 	if dir == "" {
-		return nil, fmt.Errorf("verb: attach: attachment dir for %s (%s) not configured", req.StoryID, item.Kind)
+		return "", "", fmt.Errorf("verb: attach: attachment dir for %s (%s) not configured", item.ID, item.Kind)
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("verb: attach: %w", err)
+		return "", "", fmt.Errorf("verb: attach: %w", err)
 	}
+	bare := strings.TrimSuffix(file, ".md")
 	var b strings.Builder
 	fmt.Fprintf(&b, "---\nstory: %s\ntype: %s\nname: %s\n---\n\n%s\n",
-		req.StoryID, typ, strings.TrimSuffix(file, ".md"), strings.TrimRight(req.Body, "\n"))
+		item.ID, typ, bare, strings.TrimRight(body, "\n"))
 	if err := os.WriteFile(filepath.Join(dir, file), []byte(b.String()), 0o644); err != nil {
-		return nil, fmt.Errorf("verb: attach: %w", err)
+		return "", "", fmt.Errorf("verb: attach: %w", err)
 	}
-	appendLedger(ctx, req.StoryID, KindStoryDocAttached,
-		fmt.Sprintf("attached %s document %q", typ, strings.TrimSuffix(file, ".md")), time.Now())
-	return json.Marshal(docRef{StoryID: req.StoryID, Name: strings.TrimSuffix(file, ".md"), Type: typ})
+	appendLedger(ctx, item.ID, KindStoryDocAttached,
+		fmt.Sprintf("attached %s document %q", typ, bare), now)
+	return bare, typ, nil
 }
 
 func storyDocList(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {

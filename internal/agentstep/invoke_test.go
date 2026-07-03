@@ -76,14 +76,43 @@ func TestBuildRequestCanonicalOrderAndOmitsEmpty(t *testing.T) {
 		t.Errorf("payload not marshalled onto stdin: %q", req.Payload)
 	}
 
-	// Summariser shape: no charter + no principle injection → the prompt is the
-	// rubric verbatim (empty sections omitted).
+	// Summariser shape: no charter + no principle injection, but the pull-context
+	// call-to-action rides in EVERY prompt (sty_47d31300) — so the prompt is the
+	// call-to-action then the rubric, with no charter or principles section.
 	req2, err := g.buildRequest(context.Background(), invocation{rubric: "JUST-RUBRIC"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req2.SystemPrompt != "JUST-RUBRIC" {
-		t.Errorf("an empty charter/principles must yield a rubric-only prompt, got %q", req2.SystemPrompt)
+	sp2 := req2.SystemPrompt
+	if !strings.Contains(sp2, "satelle story get") || !strings.Contains(sp2, "JUST-RUBRIC") {
+		t.Errorf("summariser prompt must carry the pull call-to-action + rubric:\n%s", sp2)
+	}
+	if strings.Contains(sp2, "isolated satelle reviewer") || strings.Contains(sp2, "isolated satelle executor") || strings.Contains(sp2, "Always-resident principles") {
+		t.Errorf("summariser prompt must have no charter/principles section:\n%s", sp2)
+	}
+}
+
+// TestPullContextCallToActionInEveryRole: the pull-context call-to-action (the CLI
+// commands a clean-start agent uses to reconstruct context) rides in the reviewer,
+// executor, AND summariser prompts alike — one seam (buildRequest), applied
+// uniformly (AC1, sty_47d31300).
+func TestPullContextCallToActionInEveryRole(t *testing.T) {
+	g := New(&fakeRunner{}, fakeDocs{workflow: testWorkflow}, "/repo", "")
+	roles := map[string]invocation{
+		"reviewer":   {charter: reviewerCharter(), rubric: "r"},
+		"executor":   {charter: executorCharter("planner", "plan", "wf"), rubric: "r"},
+		"summariser": {rubric: "r"},
+	}
+	for name, inv := range roles {
+		req, err := g.buildRequest(context.Background(), inv)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, cmd := range []string{"satelle story get", "satelle story docs", "satelle story doc ", "satelle ledger list --story"} {
+			if !strings.Contains(req.SystemPrompt, cmd) {
+				t.Errorf("%s prompt missing pull command %q:\n%s", name, cmd, req.SystemPrompt)
+			}
+		}
 	}
 }
 

@@ -958,7 +958,7 @@ func TestDispatchExecutorRunFailureSurfaces(t *testing.T) {
 	docs := fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true}
 	g, _ := newEngine(t, "", docs)
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
-		return config.AgentBinding{Harness: "fake -p {system}"}, true
+		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Bash(satelle:*)"}, true
 	})
 	g.newRunner = func(string) (agentcli.Runner, error) { return &fakeRunner{err: errFakeAgent}, nil }
 	res, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan")
@@ -967,6 +967,66 @@ func TestDispatchExecutorRunFailureSurfaces(t *testing.T) {
 	}
 	if !res.Dispatched || !strings.Contains(err.Error(), "architect") {
 		t.Errorf("failure should be attributed to the named agent: res=%+v err=%v", res, err)
+	}
+}
+
+// TestDispatchExecutorRefusesWithoutSatelleCLI: an executor binding whose grant
+// omits the read-only satelle CLI is refused at dispatch — an isolated agent cannot
+// PULL the story/documents/ledger without it (sty_47d31300), so satelle names the
+// fix rather than run a context-starved agent.
+func TestDispatchExecutorRefusesWithoutSatelleCLI(t *testing.T) {
+	docs := fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	fr := &fakeRunner{out: "ok"}
+	g.newRunner = func(string) (agentcli.Runner, error) { return fr, nil }
+
+	// No Bash(satelle:*) → refused, and the agent is NOT run (got stays zero).
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Grep,Glob"}, true
+	})
+	_, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan")
+	if err == nil || !strings.Contains(err.Error(), "Bash(satelle:*)") {
+		t.Fatalf("want refusal naming the grant fix, got %v", err)
+	}
+	if fr.got.SystemPrompt != "" {
+		t.Error("must refuse BEFORE running the agent")
+	}
+
+	// With the grant → the agent runs.
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Bash(satelle:*)"}, true
+	})
+	if _, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan"); err != nil {
+		t.Fatalf("a granted binding should dispatch: %v", err)
+	}
+	if fr.got.SystemPrompt == "" {
+		t.Error("a granted binding must reach the run")
+	}
+}
+
+// TestDispatchPayloadCarriesIdNotDocuments: AC2 (sty_47d31300) — the dispatch
+// payload is the fetch HANDLE (the item record with its id), not a PUSH of
+// documents or the ledger. The agent pulls those by id; they are never marshalled
+// into stdin.
+func TestDispatchPayloadCarriesIdNotDocuments(t *testing.T) {
+	docs := fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	fr := &fakeRunner{out: "ok"}
+	g.newRunner = func(string) (agentcli.Runner, error) { return fr, nil }
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Bash(satelle:*)"}, true
+	})
+	if _, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_pull1", Status: "backlog", Title: "T"}, "plan"); err != nil {
+		t.Fatal(err)
+	}
+	p := fr.got.Payload
+	if !strings.Contains(p, `"sty_pull1"`) {
+		t.Errorf("payload must carry the story id as the fetch handle: %s", p)
+	}
+	for _, forbidden := range []string{`"documents"`, `"ledger"`, `"attachments"`, `"plan_body"`} {
+		if strings.Contains(p, forbidden) {
+			t.Errorf("payload must NOT push %s (pull-context, not push): %s", forbidden, p)
+		}
 	}
 }
 

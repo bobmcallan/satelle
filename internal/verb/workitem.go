@@ -360,6 +360,19 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 			case summary != "":
 				appendLedgerEntry(ctx, it.ID, ledger.KindStepSummary, "reviewer", summary,
 					transitionPayload(current.Status, *req.Status, ""), now)
+				// ALSO deposit the summary as an attached step-summary DOC so a later
+				// dispatched agent can PULL prior summaries via `story docs`/`story doc`
+				// — the pull-context contract (sty_47d31300) rests on this chain. The
+				// per-edge name overwrites on re-entry (latest wins); the ledger keeps
+				// full history. Best-effort like the run-output doc: a write failure is
+				// recorded, never fails the already-enacted transition.
+				if _, _, derr := writeAttachedDoc(ctx, it,
+					fmt.Sprintf("step-summary-%s-%s", current.Status, *req.Status),
+					"step-summary", summary, now); derr != nil {
+					appendLedgerEntry(ctx, it.ID, ledger.KindStepSummary, "reviewer",
+						"step summary doc deposit failed: "+derr.Error(),
+						transitionPayload(current.Status, *req.Status, ""), now)
+				}
 			}
 		}
 	} else {

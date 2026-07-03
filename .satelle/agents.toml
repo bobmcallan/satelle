@@ -82,7 +82,7 @@ model   = "sonnet"
 # intcheck) still judge the outcome, so a failed integration cannot reach commit.
 [integrator]
 harness = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
-tools   = "Read,Grep,Glob,Edit,Bash(make:*),Bash(go:*),Bash(gofmt:*)"
+tools   = "Read,Grep,Glob,Edit,Bash(make:*),Bash(go:*),Bash(gofmt:*),Bash(satelle:*)"
 model   = "sonnet"
 
 # planner — the ONLY dispatched executor in the reviewer-only workflow
