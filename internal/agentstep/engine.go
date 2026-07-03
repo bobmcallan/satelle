@@ -536,6 +536,17 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	if runner == nil {
 		return verb.DispatchResult{}, nil // harness "in-loop": the orchestrator performs the step
 	}
+	// A dispatched executor starts fresh and reconstructs its context by PULLING the
+	// story, its documents, and the ledger via the read-only satelle CLI (the
+	// pull-context call-to-action every prompt carries, sty_47d31300). That requires
+	// the binding to grant satelle CLI access; without it the agent is silently
+	// context-starved. Refuse the dispatch with an actionable fix rather than run a
+	// blind agent — the no-silent-fallback style the engine uses for a missing binding.
+	if !grantsSatelleCLI(binding.Tools) {
+		return verb.DispatchResult{}, fmt.Errorf(
+			"named agent %q cannot perform step %q: its .satelle/agents.toml [%s] tools grant does not include the read-only satelle CLI (add `Bash(satelle:*)`), so it cannot pull the story/documents/ledger an isolated dispatch needs",
+			target.Agent, toStatus, target.Agent)
+	}
 	// The step's own @skill rubric when the node declares one (absent stays
 	// advisory — the engagement guard already vets executor-path skills). The
 	// executor charter, the rubric, the per-binding principle injection, and the
@@ -572,6 +583,21 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		return res, fmt.Errorf("named agent %q failed performing step %q: %w", target.Agent, toStatus, runErr)
 	}
 	return res, nil
+}
+
+// grantsSatelleCLI reports whether a binding's tool grant lets a dispatched agent
+// run the read-only satelle CLI — the pull-context contract (sty_47d31300) needs
+// `satelle story get/docs/doc` and `satelle ledger list` to reconstruct context. A
+// `Bash(satelle…)` grant, a broad `Bash`/`Bash(*)`, or a `*` wildcard all satisfy
+// it; a Bash-less or narrowly-scoped grant does not. (Reviewer bindings are
+// Bash-less by design and never reach here — they run via runReviewer, not dispatch.)
+func grantsSatelleCLI(tools string) bool {
+	for _, t := range splitTrimList(tools) {
+		if t == "*" || t == "Bash" || t == "Bash(*)" || strings.HasPrefix(t, "Bash(satelle") {
+			return true
+		}
+	}
+	return false
 }
 
 // logExecutorRun appends a named-agent run's output (or failure) to

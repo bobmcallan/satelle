@@ -108,7 +108,7 @@ func TestDispatchedExecutionCapturesOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.WriteString("\n[runner]\nharness = \"" + script + " {system}\"\n"); err != nil {
+	if _, err := f.WriteString("\n[runner]\nharness = \"" + script + " {system}\"\ntools = \"Read,Bash(satelle:*)\"\n"); err != nil {
 		t.Fatal(err)
 	}
 	_ = f.Close()

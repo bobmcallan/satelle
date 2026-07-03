@@ -75,7 +75,9 @@ func TestNamedAgentDispatchRunsBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.WriteString("\n[architect]\nharness = \"" + script + " {system}\"\n"); err != nil {
+	// The grant must include the read-only satelle CLI so the dispatched agent can
+	// pull its context (sty_47d31300); a binding without it is refused at dispatch.
+	if _, err := f.WriteString("\n[architect]\nharness = \"" + script + " {system}\"\ntools = \"Read,Bash(satelle:*)\"\n"); err != nil {
 		t.Fatal(err)
 	}
 	_ = f.Close()

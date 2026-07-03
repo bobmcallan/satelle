@@ -49,11 +49,18 @@ func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Req
 	}
 	if inv.charter != "" {
 		b.WriteString(inv.charter)
-		if inv.rubric != "" {
-			b.WriteString("\n\n---\n\n")
-		}
+		b.WriteString("\n\n")
 	}
-	b.WriteString(inv.rubric)
+	// The pull-context call-to-action rides in EVERY isolated-agent prompt — reviewer,
+	// executor, AND the charter-less summariser — so a clean-start dispatch always
+	// knows how to reconstruct its context by id from the read-only CLI (sty_47d31300).
+	// It lives HERE, in buildRequest, not in a charter: the summariser has no charter,
+	// so a charter-only home would silently miss one of the three roles.
+	b.WriteString(pullContextCallToAction)
+	if inv.rubric != "" {
+		b.WriteString("\n\n---\n\n")
+		b.WriteString(inv.rubric)
+	}
 	payload, err := json.Marshal(inv.payload)
 	if err != nil {
 		return agentcli.Request{}, err
@@ -92,6 +99,28 @@ const isolatedAgentBriefing = "The work item arrives on stdin as JSON. The " +
 	"substrate you reason about — skills, principles, workflows — lives as markdown " +
 	"under `.satelle/`; read it directly to resolve anything this rubric references " +
 	"but does not inline (including embedded defaults that are not files on disk)."
+
+// pullContextCallToAction rides in EVERY isolated-agent prompt (via buildRequest),
+// so a reviewer, executor, and summariser alike know how to reconstruct the full
+// context of a clean-start dispatch. The stdin payload carries the work item and its
+// id; the agent PULLS the rest itself, by id, via the read-only satelle CLI — satelle
+// never pushes documents or the ledger into the payload. This works because every
+// prior gated transition deposits a step-summary doc + ledger row (satelle-step-summary
+// is mandatory), so the accumulated artifacts ARE the reconstructed context (sty_47d31300).
+const pullContextCallToAction = "## Reconstruct your context (you start fresh)\n\n" +
+	"You are dispatched with NO conversation history — the stdin payload carries the " +
+	"work item (its `id`, title, body, acceptance criteria) and the transition. Pull " +
+	"everything else yourself, by id, with the read-only satelle CLI:\n\n" +
+	"- `satelle story get <id>` — the full current record.\n" +
+	"- `satelle story docs <id>`, then `satelle story doc <id> <name>` — the attached " +
+	"documents: the implementation `plan` and every prior step summary (each gated " +
+	"transition deposits one), which together narrate the work so far.\n" +
+	"- `satelle ledger list --story <id>` — the evidence ledger (transitions, review " +
+	"verdicts, summaries).\n\n" +
+	"If your grant excludes Bash (a read-only reviewer), the same attachments are on " +
+	"disk under `.satelle/stories/<id>/` (tasks: `.satelle/tasks/<id>/`) — read them " +
+	"with Read/Glob. Do not assume absence: fetch before concluding a document or a " +
+	"prior step is missing."
 
 // reviewerCharter is the charter for an isolated gate reviewer: read-only, judges
 // the OUTCOME against the rubric and returns a verdict. It never implements.
