@@ -616,7 +616,9 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 	if err != nil {
 		return pageData{}, err
 	}
-	allDocs, err := fetchList[docindex.Doc](ctx, "doc-list", nil)
+	// full=true: the web renders workflow DOT bodies, so it needs whole Doc
+	// records, not the CLI's lightweight headline-only index (sty_adab13cb).
+	allDocs, err := fetchList[docindex.Doc](ctx, "doc-list", map[string]any{"full": true})
 	if err != nil {
 		return pageData{}, err
 	}
