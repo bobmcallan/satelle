@@ -64,3 +64,8 @@ its rubric, never the conversation) — is the **agent's** review, guided by the
 embedded `satelle-workflow-advisor` skill (`satelle doc get skills
 satelle-workflow-advisor`). Its findings are ADVICE to the operator; the coded
 structural check stays the only hard rule.
+
+For the full contract a dispatched (`agent=<name>`) step runs under — how it is
+briefed, how it pulls the story/documents/ledger by id, what makes it
+self-sufficient, and why its EXIT edge must carry the review — see
+`satelle help agent-dispatch`.

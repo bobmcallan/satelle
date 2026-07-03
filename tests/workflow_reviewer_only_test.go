@@ -10,11 +10,11 @@ import (
 )
 
 // TestProjectWorkflowIsReviewerOnly asserts this repo's project workflow has the
-// simplified reviewer-only shape (sty_d9a0b573): execution steps run in-loop
-// (agent=executor, no isolated dispatch), the only dispatched step is the fable
-// planner, the former commit/push/committed states are merged into one `release`
-// state, and there is a release→in_progress recovery edge (no dead-end at
-// release).
+// reviewer-only shape (sty_d9a0b573): execution steps run in-loop (agent=executor,
+// no isolated dispatch), the only dispatched step is the fable planner, the former
+// commit/push/committed states are merged into one `release` state, and there is a
+// recovery edge back to in_progress (no dead-end). `integration` is an explicit,
+// visible testing step between in_progress and release (sty_15dbc0dd).
 func TestProjectWorkflowIsReviewerOnly(t *testing.T) {
 	body, err := os.ReadFile("../.satelle/workflows/satelle-project-workflow.md")
 	if err != nil {
@@ -31,7 +31,7 @@ func TestProjectWorkflowIsReviewerOnly(t *testing.T) {
 	}
 
 	// Execution steps are in-loop (agent=executor), never a named dispatch agent.
-	for _, name := range []string{"in_progress", "release"} {
+	for _, name := range []string{"in_progress", "integration", "release"} {
 		s, present := states[name]
 		if !present {
 			t.Errorf("missing execution state %q", name)
@@ -50,7 +50,7 @@ func TestProjectWorkflowIsReviewerOnly(t *testing.T) {
 	}
 
 	// The dispatched executor experiment states are gone (merged into release).
-	for _, gone := range []string{"commit", "push", "committed", "integration"} {
+	for _, gone := range []string{"commit", "push", "committed"} {
 		if _, present := states[gone]; present {
 			t.Errorf("state %q should be merged away in the reviewer-only workflow", gone)
 		}
@@ -69,7 +69,8 @@ func TestProjectWorkflowIsReviewerOnly(t *testing.T) {
 	for _, want := range []edge{
 		{"backlog", "plan", ""},
 		{"plan", "in_progress", "satelle-story-plan-review"},
-		{"in_progress", "release", "satelle-code-ac-review"},
+		{"in_progress", "integration", "satelle-code-ac-review"},
+		{"integration", "release", "satelle-integration-review"},
 		{"release", "done", "satelle-story-release-review"},
 	} {
 		if !got[want] {

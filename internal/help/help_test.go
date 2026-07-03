@@ -16,9 +16,36 @@ func TestListContainsCoreTopics(t *testing.T) {
 			t.Errorf("topic %q has empty body", top.Name)
 		}
 	}
-	for _, want := range []string{"create-story", "reviewer-checks", "principles", "projects", "create-review"} {
+	for _, want := range []string{"create-story", "reviewer-checks", "principles", "projects", "create-review", "agent-dispatch"} {
 		if !names[want] {
 			t.Errorf("missing help topic %q", want)
+		}
+	}
+}
+
+func TestAgentDispatchTopic(t *testing.T) {
+	top, ok := Get("agent-dispatch")
+	if !ok {
+		t.Fatal("agent-dispatch topic not found")
+	}
+	// The topic must teach the whole dispatch contract from deployed docs alone:
+	// how the agent is briefed, how it PULLS context by id, the refusals, what
+	// makes a step self-sufficient, and the entry-dispatch / exit-review rule.
+	for _, want := range []string{
+		"agents.toml",            // where the binding lives
+		"@skill:",                // the rubric requirement
+		"inject_principles",      // the principle-injection toggle
+		"refuse",                 // fail-loud on a missing binding / grant
+		"Bash(satelle:*)",        // the grant a dispatched agent needs
+		"satelle story get <id>", // the pull commands (must match the shipped prompt)
+		"satelle ledger list --story <id>",
+		"self-sufficient",                 // the sufficiency precondition
+		"entry",                           // dispatch fires on entry
+		"EXIT edge",                       // judge the exit edge
+		"{story, from, to, review_skill}", // the stdin shape (pull model, not push)
+	} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("agent-dispatch topic missing %q", want)
 		}
 	}
 }

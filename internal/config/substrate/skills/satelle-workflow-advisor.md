@@ -22,10 +22,14 @@ to the operator; change nothing yourself.
      in-loop, with full conversation context.
    - `agent=<name>` — satelle DISPATCHES the step to the `[<name>]` binding in
      `.satelle/agents.toml`: the item (title, body, acceptance criteria) rides
-     on stdin, the node's `@skill:` rubric + an executor charter as the system
-     prompt, tools/model from the binding. A missing binding **refuses the
-     transition** — verify every named agent resolves, and flag one that
-     doesn't before it blocks work.
+     on stdin, the node's `@skill:` rubric + an executor charter + a
+     pull-context call-to-action as the system prompt, tools/model from the
+     binding. A missing binding **refuses the transition** — verify every named
+     agent resolves, and flag one that doesn't before it blocks work. The
+     binding's `tools` must also grant the read-only satelle CLI
+     (`Bash(satelle:*)`, or a broad `Bash`/`*`) so the isolated agent can PULL
+     its context by id; a Bash-less named-executor binding **refuses the
+     dispatch** — flag it.
    Ask of each allocation: does this step *need* isolation (a scoped grant, a
    different model, a clean room), or is in-loop context more valuable?
 
@@ -36,12 +40,16 @@ to the operator; change nothing yourself.
    repo's bar. A binding whose template omits `{model}` silently inherits the
    CLI default — flag it when the operator clearly intended a pinned model.
 
-3. **Reviewer coverage.** Prefer every performing step's exit edge to carry a
-   reviewer gate (`reviewer_skill=` or a reviewer node) beyond satelle's coded
-   structural checks — an unreviewed performing step advances on the executor's
-   own say-so. This is ADVICE, not enforcement: name each ungated performing
-   edge and let the operator decide. Terminal/cancel exits follow the same
-   preference.
+3. **Reviewer coverage — judge the EXIT edge.** Prefer every performing step's
+   exit edge to carry a reviewer gate (`reviewer_skill=` or a reviewer node)
+   beyond satelle's coded structural checks — an unreviewed performing step
+   advances on the executor's own say-so. This matters most for a **dispatched**
+   step: dispatch fires on ENTRY to the state, after the entry gate accepts, so
+   the agent's work is judged only by its EXIT edge. An entry-gated dispatched
+   state followed by an ungated commit/push ships the agent's mutations
+   **unjudged** — flag it. This is ADVICE, not enforcement: name each ungated
+   performing edge and let the operator decide. Terminal/cancel exits follow the
+   same preference.
 
 4. **Grant scoping.** A dispatched binding's `tools` is its capability ceiling.
    Advise when a step's grant is wider than the step's rubric needs (a
@@ -53,7 +61,10 @@ to the operator; change nothing yourself.
    For any dispatched implementation step, advise the operator that story
    bodies must stand alone; a rubric-less dispatched node (`agent=<name>` with
    no `@skill:`) gets only the charter and the item, which is rarely enough —
-   flag it.
+   flag it. The **attached documents** — the plan and the per-transition step
+   summaries, which the agent pulls by id (`satelle story doc <id> <name>`,
+   `satelle ledger list --story <id>`) — are the sanctioned channel for
+   carrying context to an isolated step; the conversation is not.
 
 ## How to report
 
