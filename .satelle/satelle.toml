@@ -18,3 +18,11 @@
 # Run the required-structure reviewer on every story/task creation, so a work
 # item's structure is ALWAYS validated by an isolated reviewer before it persists.
 gate_create = true
+
+[gate]
+# Repo-root-relative path prefixes whose edits are EXEMPT from the engaged-story
+# edit gate, in addition to the always-exempt data dir (.satelle/). A harness
+# authoring dir holds authored markdown (skills, prompts), not product code, so it
+# is edited freely like substrate. This repo authors Claude Code skills under
+# .claude/. Default is empty — the binary stays CLI-vendor-neutral.
+edit_exempt_paths = [".claude/"]

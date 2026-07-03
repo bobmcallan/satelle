@@ -84,15 +84,18 @@ byte ceiling (overflow noted on stderr); fails open so it never blocks a session
 		Long: `gate is the PreToolUse handler for Edit|Write|MultiEdit|NotebookEdit. It
 exits non-zero (the wiring turns that into a block with '|| exit 2') unless a
 story is ENGAGED — in one of the active workflow's executor states (e.g.
-in_progress) — so the agent works under a tracked story. Two edits are NEVER
-gated: an edit OUTSIDE the repo (session scratch), and an edit to authored
-SUBSTRATE under the data dir (.satelle/ by default — workflows, skills,
-principles, documents, tasks, and config). Authored substrate is the source of
-truth, edited freely without a binary release (the constitution and
-satelle-generated-readonly); generated views under it stay protected by their
-0o444 file mode. Only in-repo CODE requires an engaged story. Fails open: an
-unconfigured repo or any internal error allows the edit. The "engaged" policy is
-authored substrate — it reads the workflow's executor states, not a Go rule.`,
+in_progress) — so the agent works under a tracked story. Edits are NEVER gated
+when: the target is OUTSIDE the repo (session scratch); it is authored SUBSTRATE
+under the data dir (.satelle/ by default — workflows, skills, principles,
+documents, tasks, and config); or it falls under a configured [gate]
+edit_exempt_paths prefix. Authored substrate is the source of truth, edited
+freely without a binary release (the constitution and satelle-generated-readonly);
+generated views under it stay protected by their 0o444 file mode. A repo may add
+its own authored dirs to [gate] edit_exempt_paths (repo-root-relative prefixes,
+default empty) — e.g. a harness authoring dir like .claude/ that holds authored
+skills, not product code. Only in-repo CODE requires an engaged story. Fails open:
+an unconfigured repo or any internal error allows the edit. The "engaged" policy
+is authored substrate — it reads the workflow's executor states, not a Go rule.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
@@ -108,9 +111,12 @@ authored substrate — it reads the workflow's executor states, not a Go rule.`,
 				// constitution and satelle-generated-readonly say to edit it freely.
 				// So workflows, skills, principles, documents, tasks, and config
 				// (agents.toml/satelle.toml/constitution.md) are NOT gated; generated
-				// views under it stay protected by their 0o444 file mode. Only in-repo
-				// CODE requires an engaged story (sty_103af456).
-				if withinDataDir(p) {
+				// views under it stay protected by their 0o444 file mode. A repo may
+				// exempt additional authored dirs via [gate] edit_exempt_paths — a
+				// harness authoring dir like .claude/ holds authored skills, not
+				// product code (sty_103af456, sty_41416b76). Only in-repo CODE requires
+				// an engaged story.
+				if exemptTarget(p) {
 					return nil
 				}
 			}
@@ -296,18 +302,39 @@ func withinRepoTarget(target string) bool {
 	return withinRoot(config.RepoRootFromConfigPath(cfgPath), target)
 }
 
-// withinDataDir reports whether target resolves under the repo's authored-substrate
-// data dir (.satelle/ by default, honoring a relocated data_dir). Such edits are
-// exempt from the engaged-story gate — authored substrate is edited freely
-// (sty_103af456). Returns false if the config/root cannot be resolved, so the gate
-// stays conservative (still applies) on any resolution failure.
-func withinDataDir(target string) bool {
+// exemptTarget reports whether an edit to target is exempt from the engaged-story
+// gate: it resolves under the authored-substrate data dir (.satelle/ by default,
+// honoring a relocated data_dir), OR under a configured [gate] edit_exempt_paths
+// prefix — a harness authoring dir a repo opts in (e.g. .claude/), keeping the
+// binary CLI-vendor-neutral (sty_103af456, sty_41416b76). Returns false if the
+// config/root cannot be resolved, so the gate stays conservative (still applies)
+// on any resolution failure.
+func exemptTarget(target string) bool {
 	cfg, cfgPath, err := config.Load("")
 	if err != nil {
 		return false
 	}
 	root := config.RepoRootFromConfigPath(cfgPath)
-	return withinRoot(cfg.ResolveDataDir(root), target)
+	return editExempt(cfg.ResolveDataDir(root), cfg.ResolveEditExemptPaths(root), target)
+}
+
+// editExempt is the pure classification the edit-gate exemption rests on: target
+// is exempt when it resolves under the data dir or any configured exempt prefix.
+// Kept pure (no config/filesystem) so the path classification is unit-tested
+// directly. Blank roots are skipped — withinRoot fails open TOWARD inside on a
+// blank root (returns true), which is the conservative default for the gate but
+// would exempt everything here; ResolveEditExemptPaths already drops blanks, and
+// this is the second guard.
+func editExempt(dataDir string, exemptRoots []string, target string) bool {
+	if strings.TrimSpace(dataDir) != "" && withinRoot(dataDir, target) {
+		return true
+	}
+	for _, r := range exemptRoots {
+		if strings.TrimSpace(r) != "" && withinRoot(r, target) {
+			return true
+		}
+	}
+	return false
 }
 
 // withinRoot reports whether target resolves to a path inside root. A relative

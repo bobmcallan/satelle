@@ -211,6 +211,34 @@ func TestDataDirExemptionClassification(t *testing.T) {
 	}
 }
 
+// TestEditExemptClassification proves the config-driven exempt list generalizes
+// the data-dir exemption (sty_41416b76): a configured harness authoring dir
+// (.claude/) is exempt while in-repo code stays gated, the data-dir leg still
+// works, and a blank prefix must NOT silently exempt everything.
+func TestEditExemptClassification(t *testing.T) {
+	const dataDir = "/home/u/repo/.satelle"
+	exemptRoots := []string{"/home/u/repo/.claude"}
+	cases := []struct {
+		name        string
+		dataDir     string
+		exemptRoots []string
+		target      string
+		want        bool
+	}{
+		{"configured harness dir exempt", dataDir, exemptRoots, "/home/u/repo/.claude/skills/foo/SKILL.md", true},
+		{"data dir still exempt", dataDir, exemptRoots, "/home/u/repo/.satelle/skills/x.md", true},
+		{"in-repo code stays gated", dataDir, exemptRoots, "/home/u/repo/internal/cli/app.go", false},
+		{"unconfigured: code not exempt", dataDir, nil, "/home/u/repo/internal/cli/app.go", false},
+		{"unconfigured: harness dir not exempt", dataDir, nil, "/home/u/repo/.claude/skills/x.md", false},
+		{"blank prefix does not exempt everything", dataDir, []string{"  "}, "/home/u/repo/internal/cli/app.go", false},
+	}
+	for _, c := range cases {
+		if got := editExempt(c.dataDir, c.exemptRoots, c.target); got != c.want {
+			t.Errorf("%s: editExempt(%q) = %v, want %v", c.name, c.target, got, c.want)
+		}
+	}
+}
+
 func TestExecutorStatesDOT(t *testing.T) {
 	body := `---
 name: x
