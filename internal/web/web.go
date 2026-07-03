@@ -395,6 +395,15 @@ func buildLights(entries []ledger.Entry, status string, stepOf func(state string
 	}
 	var lights []reviewLight
 	maxStep := 0
+	minStep := 0
+	note := func(i int) {
+		if i > maxStep {
+			maxStep = i
+		}
+		if minStep == 0 || i < minStep {
+			minStep = i
+		}
+	}
 	for _, e := range es {
 		lp := parse(e.Payload)
 		edge := lp.From + " → " + lp.To
@@ -402,9 +411,7 @@ func buildLights(entries []ledger.Entry, status string, stepOf func(state string
 		case ledger.KindReviewReject:
 			i := stepFor(lp.To, edge)
 			lights = append(lights, reviewLight{i, "fail", fmt.Sprintf("%d. %s — rejected", i, edge)})
-			if i > maxStep {
-				maxStep = i
-			}
+			note(i)
 		case ledger.KindStatusTransition:
 			i := stepFor(lp.To, edge)
 			state := "fired"
@@ -412,10 +419,20 @@ func buildLights(entries []ledger.Entry, status string, stepOf func(state string
 				state = "pass"
 			}
 			lights = append(lights, reviewLight{i, state, fmt.Sprintf("%d. %s — %s", i, edge, state)})
-			if i > maxStep {
-				maxStep = i
-			}
+			note(i)
 		}
+	}
+	// If the earliest recorded step is beyond step 1 — e.g. an item engaged before
+	// the workflow gained an earlier step, so its first transition lands mid-spine
+	// (sty_d9a0b573) — prepend muted placeholders so the strip ALWAYS reads in
+	// order from 1 rather than starting at a gap. A clean run (first step == 1)
+	// prepends nothing.
+	if minStep > 1 {
+		fillers := make([]reviewLight, 0, minStep-1)
+		for i := 1; i < minStep; i++ {
+			fillers = append(fillers, reviewLight{i, "pending", fmt.Sprintf("%d. not run", i)})
+		}
+		lights = append(fillers, lights...)
 	}
 	// Trail a pulsing "current" light at the NEXT step only once the item has
 	// actually entered the workflow (≥1 recorded transition). A freshly-created

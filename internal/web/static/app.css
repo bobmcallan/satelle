@@ -173,6 +173,9 @@ header.app h1 .dot { color: var(--accent); }
 .review-light-fired { background: #4a6fa5; border-color: #4a6fa5; color: #07182e; }
 .review-light-current { background: transparent; border-color: #f1c40f; color: #f1c40f;
   animation: review-pulse 1.4s ease-in-out infinite; }
+/* pending: a spine step not run (a leading placeholder so the strip reads from 1) —
+   muted, hollow, no fill, clearly behind the live/passed steps. */
+.review-light-pending { background: transparent; border-style: dashed; border-color: var(--line); color: var(--muted); opacity: .7; }
 @keyframes review-pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
 
 /* Status badges / pills — UPPERCASE, SUBTLE pills (sty_aed93a00, softening
