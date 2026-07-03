@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/docindex"
-	"github.com/bobmcallan/satelle/internal/reviewer"
 	"github.com/bobmcallan/satelle/internal/structure"
 )
 
@@ -230,7 +230,7 @@ func TestRunInitSeedsDefaultSolution(t *testing.T) {
 		}
 		docs = append(docs, docindex.Doc{Name: wf, Body: string(body)})
 	}
-	for _, p := range reviewer.WorkflowConsistency(docs, resolve) {
+	for _, p := range agentstep.WorkflowConsistency(docs, resolve) {
 		t.Errorf("seeded workflow set inconsistent: %s", p)
 	}
 	for _, sk := range defaultSolutionSkills {
@@ -245,7 +245,7 @@ func TestRunInitSeedsDefaultSolution(t *testing.T) {
 
 	// An execution resolves to the task-execution workflow out of the box: the
 	// kind-aware category ("execution") selects it ahead of the wildcard.
-	ordered := reviewer.OrderedWorkflows(docs, "execution")
+	ordered := agentstep.OrderedWorkflows(docs, "execution")
 	if len(ordered) == 0 || ordered[0].Name != "satelle-task-workflow" {
 		t.Errorf("execution does not resolve to satelle-task-workflow: %+v", ordered)
 	}

@@ -17,9 +17,9 @@ import (
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
-	"github.com/bobmcallan/satelle/internal/reviewer"
 )
 
 // validateDeployment validates the deployed system under dataDir and returns an
@@ -63,7 +63,7 @@ func validateDeployment(out io.Writer, dataDir string) error {
 	// Cross-workflow consistency over the deployed set (ambiguous applies_to,
 	// unresolved referenced skills) — the whole-set check `satelle workflow
 	// validate` runs.
-	for _, p := range reviewer.WorkflowConsistency(deployedWorkflowDocs(dataDir), resolve) {
+	for _, p := range agentstep.WorkflowConsistency(deployedWorkflowDocs(dataDir), resolve) {
 		failed++
 		fmt.Fprintf(out, "FAIL  workflows (consistency) — %s\n", p)
 	}

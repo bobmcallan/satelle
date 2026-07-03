@@ -1,18 +1,23 @@
-// Package reviewer runs an isolated, fresh-context reviewer over a requested
-// status transition and returns its verdict — the quality-management spine.
-// Mirrors satellites' request_review_dispatcher: the active workflow names a
-// reviewer_skill per edge; the skill's markdown body rides as the agent's
-// appended system prompt; the work item + requested transition go in on stdin;
-// the agent prints one JSON object {decision, notes}, parsed strictly into an
-// accept/reject. Accept lets the caller enact; reject blocks and pushes the
-// notes back to the executor.
+// Package agentstep is satelle's isolated-agent dispatch engine — the
+// quality-management spine that runs a fresh-context agent over a workflow step
+// and folds its result back in. It dispatches three kinds of isolated agent, all
+// briefed and run through one seam (invoke.go): a GATE REVIEWER judging a status
+// transition and returning a verdict, a NAMED EXECUTOR performing a step's work,
+// and the STEP SUMMARISER narrating a transition. A reviewer is just one agent
+// kind, so the engine (type Engine) is not named for it.
+//
+// Reviewer path: the active workflow names a reviewer_skill per edge; the skill's
+// markdown body rides as the agent's appended system prompt; the work item +
+// requested transition go in on stdin; the agent prints one JSON object
+// {decision, notes}, parsed strictly into an accept/reject. Accept lets the
+// caller enact; reject blocks and pushes the notes back to the executor.
 //
 // The edge is gated only when the workflow names a reviewer_skill AND that
 // skill's rubric is installed in the substrate. A named-but-absent rubric (e.g.
 // the canonical default referencing a skill not yet embedded) is treated as
 // advisory, so gating switches on exactly when the rubrics ship — the gateless
 // baseline keeps working until then.
-package reviewer
+package agentstep
 
 import (
 	"bytes"
@@ -38,7 +43,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-// DocGetter is the read surface the gater needs over the authored-doc index
+// DocGetter is the read surface the engine needs over the authored-doc index
 // (satisfied by *docindex.Store) — listing workflows (to resolve the one active
 // for an item's category) and getting the reviewer skills / the baseline.
 type DocGetter interface {
@@ -63,11 +68,11 @@ const baselineWorkflow = "satelle-baseline-workflow"
 // but a hung command must not block a transition forever).
 const defaultCheckTimeout = 20 * time.Minute
 
-// Gater judges status transitions against the active workflow's reviewer skills.
+// Engine judges status transitions against the active workflow's reviewer skills.
 // A skill is either an LLM reviewer (its body rides as an isolated agent's system
 // prompt) or a functional check (its frontmatter names a deterministic `check:`
 // command the gate runs — the command's exit code is the verdict).
-type Gater struct {
+type Engine struct {
 	runner       agentcli.Runner
 	docs         DocGetter
 	repoRoot     string
@@ -122,10 +127,10 @@ type Gater struct {
 	newRunner func(harness string) (agentcli.Runner, error)
 }
 
-// New builds a Gater over the agent runner and doc index. model "" inherits the
+// New builds a Engine over the agent runner and doc index. model "" inherits the
 // agent's default; the tool grant is read-only.
-func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Gater {
-	return &Gater{
+func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Engine {
+	return &Engine{
 		runner: runner, docs: docs, repoRoot: repoRoot, model: model, tools: defaultTools,
 		checkTimeout: defaultCheckTimeout, check: execCheck, injectPrinciples: true,
 		attempts: defaultReviewerAttempts, backoff: defaultReviewerBackoff,
@@ -140,23 +145,13 @@ const defaultAgentTimeout = 10 * time.Minute
 
 // SetProgress wires the sink for one-line gate progress messages (the CLI
 // prints them to stderr). nil disables emission.
-func (g *Gater) SetProgress(fn func(msg string)) { g.progress = fn }
+func (g *Engine) SetProgress(fn func(msg string)) { g.progress = fn }
 
 // emitProgress sends one progress line to the wired sink, if any.
-func (g *Gater) emitProgress(format string, a ...any) {
+func (g *Engine) emitProgress(format string, a ...any) {
 	if g.progress != nil {
 		g.progress(fmt.Sprintf(format, a...))
 	}
-}
-
-// runAgent invokes the nested agent once under the per-invocation deadline.
-func (g *Gater) runAgent(ctx context.Context, req agentcli.Request) ([]byte, error) {
-	if g.agentTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, g.agentTimeout)
-		defer cancel()
-	}
-	return g.runner.Run(ctx, req)
 }
 
 // defaultReviewerAttempts is how many times an LLM reviewer is tried before a
@@ -182,7 +177,7 @@ func defaultReviewerBackoff(attempt int) time.Duration {
 // appended to reviewer.log so cross-session API contention is reviewable
 // (sty_d71b0791), rotated daily + by size (sty_a67e6e8c). An empty dir disables
 // logging.
-func (g *Gater) SetLogDir(dir string, cfg logfile.Config) { g.logDir, g.logCfg = dir, cfg }
+func (g *Engine) SetLogDir(dir string, cfg logfile.Config) { g.logDir, g.logCfg = dir, cfg }
 
 // logReviewerFailure appends one no-verdict failure record to
 // <logDir>/reviewer.log via the shared rotating writer, so the actual cause —
@@ -192,7 +187,7 @@ func (g *Gater) SetLogDir(dir string, cfg logfile.Config) { g.logDir, g.logCfg =
 // reasons without a parseable verdict, those words must be recoverable by the
 // executor (sty_9485d47e). Rotation (daily + size + retention) bounds growth.
 // Best-effort: a logging error never affects the gate.
-func (g *Gater) logReviewerFailure(skill string, attempt, attempts int, rerr error, out []byte) {
+func (g *Engine) logReviewerFailure(skill string, attempt, attempts int, rerr error, out []byte) {
 	if g.logDir == "" {
 		return
 	}
@@ -212,7 +207,7 @@ func (g *Gater) logReviewerFailure(skill string, attempt, attempts int, rerr err
 // (no JSON decision object) — a normal decision, logged for observability so a
 // reviewer drifting off the JSON contract is visible without failing the gate
 // (sty_9485d47e). Best-effort.
-func (g *Gater) logProseFallback(skill string, accept bool) {
+func (g *Engine) logProseFallback(skill string, accept bool) {
 	if g.logDir == "" {
 		return
 	}
@@ -227,11 +222,11 @@ func (g *Gater) logProseFallback(skill string, accept bool) {
 }
 
 // SetReviewerTools sets the reviewer's tool grant from the agents layer (the
-// resolved `reviewer` binding). It governs every isolated LLM reviewer this Gater
+// resolved `reviewer` binding). It governs every isolated LLM reviewer this Engine
 // runs. The default remains the read-only grant; a repo may widen or narrow it in
 // .satelle/agents.toml without touching the workflow. An empty value is ignored
 // so callers can pass through an unset binding safely.
-func (g *Gater) SetReviewerTools(tools string) {
+func (g *Engine) SetReviewerTools(tools string) {
 	if strings.TrimSpace(tools) != "" {
 		g.tools = tools
 	}
@@ -241,16 +236,16 @@ func (g *Gater) SetReviewerTools(tools string) {
 // (id + status) so a container close gate judges the children-resolved rule from
 // the payload satelle builds — not an on-disk story mirror. Nil-safe: an unwired
 // resolver simply injects no children.
-func (g *Gater) SetChildrenResolver(fn func(ctx context.Context, parentID string) []ChildState) {
+func (g *Engine) SetChildrenResolver(fn func(ctx context.Context, parentID string) []ChildState) {
 	g.children = fn
 }
 
 // SetReviewerModel sets the reviewer's model from the agents layer (the resolved
 // `reviewer` binding's `model`). It rides as `--model` to every isolated reviewer
-// this Gater runs, so a repo can review on a different model (e.g. sonnet) without
+// this Engine runs, so a repo can review on a different model (e.g. sonnet) without
 // touching the executor. An empty value is ignored, keeping the agent CLI's
 // default model (no `--model` flag emitted).
-func (g *Gater) SetReviewerModel(model string) {
+func (g *Engine) SetReviewerModel(model string) {
 	if strings.TrimSpace(model) != "" {
 		g.model = model
 	}
@@ -259,12 +254,12 @@ func (g *Gater) SetReviewerModel(model string) {
 // SetInjectPrinciples sets whether the resident principles ride in an isolated
 // reviewer's system prompt, from the agents layer's resolved `reviewer` binding
 // (sty_46a40208). Defaults ON; a repo disables it with inject_principles = false.
-func (g *Gater) SetInjectPrinciples(on bool) { g.injectPrinciples = on }
+func (g *Engine) SetInjectPrinciples(on bool) { g.injectPrinciples = on }
 
 // SetRunner overrides the reviewer's agent-CLI runner — the agents layer's
 // `reviewer` harness binding, resolved to a Runner. A nil runner is ignored,
 // keeping the default configured at construction (the global `[agent] cli`).
-func (g *Gater) SetRunner(r agentcli.Runner) {
+func (g *Engine) SetRunner(r agentcli.Runner) {
 	if r != nil {
 		g.runner = r
 	}
@@ -301,37 +296,6 @@ type ChildState struct {
 	Status string `json:"status"`
 }
 
-// reviewerCallToAction is appended to a reviewer's injected context. It tells the
-// isolated reviewer it has read-only `satelle` CLI access and should resolve any
-// principle or skill its rubric references but does not inline — including
-// EMBEDDED defaults that are not files on disk — rather than assuming absence.
-const reviewerCallToAction = "## You are an isolated satelle reviewer\n\n" +
-	"You judge only — you CANNOT modify the repository, and your tool grant is " +
-	"read-only (Read, Grep, Glob). The substrate you reason about — skills, " +
-	"principles, workflows — lives as markdown under `.satelle/`; read it directly " +
-	"to resolve anything this rubric references but does not inline. Judge the " +
-	"OUTCOME the story claims against this rubric and return your verdict."
-
-// reviewerSystemPrompt assembles the system prompt for an isolated reviewer: the
-// always-resident principles (so it judges with the resident set the executor
-// also sees), the read-only call-to-action, then the reviewer's own rubric.
-func (g *Gater) reviewerSystemPrompt(ctx context.Context, rubric string) string {
-	var b strings.Builder
-	// Principle injection is an agents-layer option, default ON (sty_46a40208): a
-	// repo may omit the resident principles for the reviewer via inject_principles.
-	if g.injectPrinciples {
-		if resident := g.alwaysPrinciples(ctx); resident != "" {
-			b.WriteString("# Always-resident principles (satelle)\n\n")
-			b.WriteString(resident)
-			b.WriteString("\n\n")
-		}
-	}
-	b.WriteString(reviewerCallToAction)
-	b.WriteString("\n\n---\n\n")
-	b.WriteString(rubric)
-	return b.String()
-}
-
 // alwaysPrinciples returns the bodies of the SESSION-resident (principles:session)
 // principles — the SAME set the SessionStart injector gives the in-loop session
 // (sty_46a40208), read via the SAME residency marker so the two never diverge —
@@ -341,7 +305,7 @@ func (g *Gater) reviewerSystemPrompt(ctx context.Context, rubric string) string 
 // even when it is embedded-only on a fresh repo, via Get's embedded fallback that
 // List lacks. Empty when none resolve; injection is additive and must never break
 // a gate.
-func (g *Gater) alwaysPrinciples(ctx context.Context) string {
+func (g *Engine) alwaysPrinciples(ctx context.Context) string {
 	seen := map[string]bool{}
 	var bodies []string
 	add := func(d docindex.Doc) {
@@ -414,7 +378,7 @@ func stripFrontmatter(body string) string {
 // deciding reviewer (the first reject, or the last when all accept), so
 // single-reviewer callers keep their contract. Gated=false (enact directly)
 // when no reviewer governs the edge.
-func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (verb.GateDecision, error) {
+func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) (verb.GateDecision, error) {
 	// Broken substrate refuses to run (sty_d0d6bb67): a governing workflow that
 	// fails its deterministic structure check must never gate work — refuse the
 	// transition with the problems, instead of silently proceeding under a broken
@@ -495,7 +459,7 @@ func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (
 // Embedded canonical defaults are the binary's own bytes (validated by satelle's
 // tests), so only authored (non-embedded) substrate is judged here; no resolvable
 // workflow at all keeps the gateless path working.
-func (g *Gater) guardWorkflowStructure(ctx context.Context, item workitem.Item) error {
+func (g *Engine) guardWorkflowStructure(ctx context.Context, item workitem.Item) error {
 	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
 	if err != nil {
 		if errors.Is(err, docindex.ErrNotFound) {
@@ -521,7 +485,7 @@ func (g *Gater) guardWorkflowStructure(ctx context.Context, item workitem.Item) 
 // SetNamedAgents wires the resolver for NAMED agent bindings from the agents
 // layer (.satelle/agents.toml [<name>] sections) — the WHO of a workflow node's
 // agent=<name> allocation (sty_fd427546). Nil keeps every step in-loop.
-func (g *Gater) SetNamedAgents(fn func(name string) (config.AgentBinding, bool)) { g.namedAgents = fn }
+func (g *Engine) SetNamedAgents(fn func(name string) (config.AgentBinding, bool)) { g.namedAgents = fn }
 
 // DispatchExecutor implements verb.ExecutorDispatcher: when the TARGET state of
 // an accepted transition is allocated to a NAMED agent (agent=<name>, neither
@@ -533,7 +497,7 @@ func (g *Gater) SetNamedAgents(fn func(name string) (config.AgentBinding, bool))
 // silently falls back in-loop, consistent with sty_d0d6bb67). agent=executor,
 // agent-less, and reviewer states dispatch nothing; a named binding whose
 // harness is explicitly "in-loop" also stays with the orchestrator.
-func (g *Gater) DispatchExecutor(ctx context.Context, item workitem.Item, toStatus string) (verb.DispatchResult, error) {
+func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toStatus string) (verb.DispatchResult, error) {
 	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
 	if err != nil {
 		if errors.Is(err, docindex.ErrNotFound) {
@@ -572,45 +536,33 @@ func (g *Gater) DispatchExecutor(ctx context.Context, item workitem.Item, toStat
 	if runner == nil {
 		return verb.DispatchResult{}, nil // harness "in-loop": the orchestrator performs the step
 	}
-	// The system prompt: the step's own @skill rubric when the node declares one
-	// (absent stays advisory — the engagement guard already vets executor-path
-	// skills), under a short executor charter. Principles ride per the binding.
-	sys := fmt.Sprintf(
-		"You are the isolated executor agent %q performing step %q of the workflow %q. "+
-			"The work item (title, body, acceptance criteria) arrives on stdin as JSON. "+
-			"Perform the step's work in this repository. Do NOT change the item's status — the workflow's gates govern every advance.",
-		target.Agent, toStatus, doc.Name)
+	// The step's own @skill rubric when the node declares one (absent stays
+	// advisory — the engagement guard already vets executor-path skills). The
+	// executor charter, the rubric, the per-binding principle injection, and the
+	// payload all flow through the shared buildRequest seam (invoke.go), so the
+	// executor is briefed the same way a reviewer is.
+	rubric := ""
 	if target.Skill != "" {
-		if rubric, rerr := g.skillBody(ctx, target.Skill); rerr == nil {
-			sys += "\n\n" + rubric
+		if body, rerr := g.skillBody(ctx, target.Skill); rerr == nil {
+			rubric = body
 		} else if !errors.Is(rerr, docindex.ErrNotFound) {
 			return verb.DispatchResult{}, rerr
 		}
 	}
-	if binding.InjectsPrinciples() {
-		if p := g.alwaysPrinciples(ctx); p != "" {
-			sys += "\n\n" + p
-		}
-	}
-	payload, err := json.Marshal(transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: target.Skill})
+	req, err := g.buildRequest(ctx, invocation{
+		charter:          executorCharter(target.Agent, toStatus, doc.Name),
+		rubric:           rubric,
+		injectPrinciples: binding.InjectsPrinciples(),
+		payload:          transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: target.Skill},
+		tools:            binding.Tools,
+		model:            binding.Model,
+	})
 	if err != nil {
 		return verb.DispatchResult{}, err
 	}
 	res := verb.DispatchResult{Dispatched: true, Agent: target.Agent, Command: runner.Command(), Skill: target.Skill}
 	g.emitProgress("dispatching step %s to named agent %s (may take several minutes)…", toStatus, target.Agent)
-	dctx := ctx
-	if g.checkTimeout > 0 {
-		var cancel context.CancelFunc
-		dctx, cancel = context.WithTimeout(ctx, g.checkTimeout)
-		defer cancel()
-	}
-	out, runErr := runner.Run(dctx, agentcli.Request{
-		SystemPrompt: sys,
-		Payload:      string(payload),
-		AllowedTools: binding.Tools,
-		Model:        binding.Model,
-		Dir:          g.repoRoot,
-	})
+	out, runErr := g.runOnce(ctx, runner, req, g.checkTimeout)
 	g.logExecutorRun(target.Agent, item.ID, toStatus, out, runErr)
 	// Carry the captured stdout back so the verb layer can write it through as an
 	// OKF run-output doc for a task execution (sty_890b86cb). The central
@@ -625,7 +577,7 @@ func (g *Gater) DispatchExecutor(ctx context.Context, item workitem.Item, toStat
 // logExecutorRun appends a named-agent run's output (or failure) to
 // <data_dir>/logs/executor.log — the run log that makes an isolated executor's
 // work reviewable (sty_fd427546). Best-effort, like the reviewer log.
-func (g *Gater) logExecutorRun(agent, itemID, state string, out []byte, runErr error) {
+func (g *Engine) logExecutorRun(agent, itemID, state string, out []byte, runErr error) {
 	if g.logDir == "" {
 		return
 	}
@@ -652,7 +604,7 @@ const engagementSkillCheck = "satelle-workflow-skill-check"
 // (embedded ∪ project). It returns blocked=false to proceed: off the engagement
 // edge, when the workflow is not parseable DOT, or when every executor skill
 // resolves. A docs lookup error other than not-found is surfaced.
-func (g *Gater) guardEngagementExecutorSkills(ctx context.Context, item workitem.Item, toStatus string) (verb.GateDecision, bool, error) {
+func (g *Engine) guardEngagementExecutorSkills(ctx context.Context, item workitem.Item, toStatus string) (verb.GateDecision, bool, error) {
 	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
 	if err != nil {
 		if errors.Is(err, docindex.ErrNotFound) {
@@ -691,7 +643,7 @@ func (g *Gater) guardEngagementExecutorSkills(ctx context.Context, item workitem
 // verdict. A skill carrying a functional check runs deterministically; otherwise
 // the skill body rides as an isolated LLM reviewer's system prompt. Gated=false
 // when the skill's rubric is not installed (advisory — keeps fresh repos working).
-func (g *Gater) runReviewer(ctx context.Context, item workitem.Item, toStatus, skill string) (verb.GateDecision, error) {
+func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, skill string) (verb.GateDecision, error) {
 	body, err := g.skillBody(ctx, skill)
 	if err != nil {
 		if errors.Is(err, docindex.ErrNotFound) {
@@ -730,12 +682,20 @@ func (g *Gater) runReviewer(ctx context.Context, item workitem.Item, toStatus, s
 		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
 			"reviewer: transition %s→%s is gated by %q but no agent runner is configured", item.Status, toStatus, skill)
 	}
-	req := agentcli.Request{
-		SystemPrompt: g.reviewerSystemPrompt(ctx, body),
-		Payload:      string(payload),
-		AllowedTools: g.tools,
-		Model:        g.model,
-		Dir:          g.repoRoot,
+	// Build the request ONCE (build-once, run-many): every retry re-runs the SAME
+	// assembled prompt+payload, so a transient no-verdict is retried without
+	// re-composing. The reviewer charter, principle injection, and payload marshal
+	// all flow through the shared buildRequest seam (invoke.go).
+	req, err := g.buildRequest(ctx, invocation{
+		charter:          reviewerCharter(),
+		rubric:           body,
+		injectPrinciples: g.injectPrinciples,
+		payload:          tp,
+		tools:            g.tools,
+		model:            g.model,
+	})
+	if err != nil {
+		return verb.GateDecision{}, err
 	}
 	// A gated transition must be DETERMINISTIC: the reviewer either returns a
 	// verdict (accept/reject) or the transition fails with a CLEAR error — never a
@@ -764,7 +724,7 @@ func (g *Gater) runReviewer(ctx context.Context, item workitem.Item, toStatus, s
 			}
 		}
 		g.emitProgress("running reviewer %s (attempt %d/%d, may take several minutes)…", skill, attempt, attempts)
-		out, rerr := g.runAgent(ctx, req)
+		out, rerr := g.runOnce(ctx, g.runner, req, g.agentTimeout)
 		if rerr != nil {
 			// A DEADLINE expiry is a bound, not contention — retrying would just
 			// re-block for another full window. Fail fast with a legible timeout so
@@ -846,7 +806,7 @@ func outputTail(out []byte) string {
 // grammar) has no scoped-node concept and contributes none. A resolution failure
 // degrades to none — scoped reviewers are additive and must never break the
 // workflow's own edge gating.
-func (g *Gater) scopedReviewers(ctx context.Context, item workitem.Item, toStatus string, exclude []string) ([]string, error) {
+func (g *Engine) scopedReviewers(ctx context.Context, item workitem.Item, toStatus string, exclude []string) ([]string, error) {
 	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
 	if err != nil {
 		if errors.Is(err, docindex.ErrNotFound) {
@@ -892,7 +852,7 @@ type summaryPayload struct {
 // Summarise runs the read-only summariser over an enacted transition and returns
 // its prose recap (empty when no summariser rubric is installed). The reviewer's
 // read-only tool grant means it observes but cannot mutate the work tree.
-func (g *Gater) Summarise(ctx context.Context, item workitem.Item, from, to string) (string, error) {
+func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to string) (string, error) {
 	// The summariser runs ONLY when the active workflow DECLARES a step-summary
 	// node (transparent opt-in via the DOT) — there is no hidden always-on
 	// summariser (sty_9a139c78). A non-declaring workflow records nothing.
@@ -918,18 +878,20 @@ func (g *Gater) Summarise(ctx context.Context, item workitem.Item, from, to stri
 	if g.runner == nil {
 		return soft("step summary is mandatory but no agent runner is configured")
 	}
-	payload, err := json.Marshal(summaryPayload{Story: item, From: from, To: to})
+	// The summariser prompt is rubric-only (no charter, no principle injection) so
+	// it stays a plain narrator — buildRequest omits the empty charter section, so
+	// the assembled prompt is the skill body verbatim. Grant is read-only.
+	req, err := g.buildRequest(ctx, invocation{
+		rubric:  body,
+		payload: summaryPayload{Story: item, From: from, To: to},
+		tools:   g.tools, // read-only (Read,Grep,Glob) — narrate, never mutate
+		model:   g.model,
+	})
 	if err != nil {
 		return "", err
 	}
 	g.emitProgress("summarising step %s→%s (may take a minute)…", from, to)
-	out, err := g.runAgent(ctx, agentcli.Request{
-		SystemPrompt: body,
-		Payload:      string(payload),
-		AllowedTools: g.tools, // read-only (Read,Grep,Glob) — narrate, never mutate
-		Model:        g.model,
-		Dir:          g.repoRoot,
-	})
+	out, err := g.runOnce(ctx, g.runner, req, g.agentTimeout)
 	if err != nil {
 		return soft("mandatory step summary failed: %v", err)
 	}
@@ -938,7 +900,7 @@ func (g *Gater) Summarise(ctx context.Context, item workitem.Item, from, to stri
 
 // stepSummaryDeclared reports whether the workflow active for category declares a
 // step-summary node (wfdot StepSummary) and whether it is mandatory.
-func (g *Gater) stepSummaryDeclared(ctx context.Context, item workitem.Item) (declared, mandatory bool) {
+func (g *Engine) stepSummaryDeclared(ctx context.Context, item workitem.Item) (declared, mandatory bool) {
 	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
 	if err != nil {
 		return false, false
@@ -955,7 +917,7 @@ func (g *Gater) stepSummaryDeclared(ctx context.Context, item workitem.Item) (de
 // one numbered, testable acceptance criterion. No LLM, no agent CLI: the contract
 // is code, so it is harness-independent and never flaky. Always Gated (the
 // structure is the one thing satelle enforces on creation).
-func (g *Gater) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb.GateDecision, error) {
+func (g *Engine) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb.GateDecision, error) {
 	// 1. Deterministic structural check FIRST — the one thing satelle always
 	// enforces on creation. A structural failure pre-empts: the content reviewer
 	// is never reached on a malformed draft.
@@ -995,7 +957,7 @@ func (g *Gater) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb.
 // the workflow active for the category — its `create_review` frontmatter. Empty
 // when no workflow governs the category or none is declared, so creation stays
 // deterministic-only (the binding is configuration, never a hardcoded filename).
-func (g *Gater) createReviewSkillFor(ctx context.Context, category string) string {
+func (g *Engine) createReviewSkillFor(ctx context.Context, category string) string {
 	doc, err := g.activeWorkflow(ctx, category)
 	if err != nil {
 		return ""
@@ -1008,7 +970,7 @@ func (g *Gater) createReviewSkillFor(ctx context.Context, category string) strin
 // edge is a DECLARED transition of that workflow. An absent workflow means no
 // governance at all — every edge is allowed and ungated (declared=true, no
 // skills), so fresh repos and the baseline keep working.
-func (g *Gater) reviewerSkills(ctx context.Context, item workitem.Item, from, to string) (skills []string, declared bool, err error) {
+func (g *Engine) reviewerSkills(ctx context.Context, item workitem.Item, from, to string) (skills []string, declared bool, err error) {
 	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
 	if errors.Is(err, docindex.ErrNotFound) {
 		return nil, true, nil
@@ -1028,7 +990,7 @@ func (g *Gater) reviewerSkills(ctx context.Context, item workitem.Item, from, to
 // configuration-over-code path — a repo adds a category-specific workflow as
 // substrate and it takes effect with no binary change. A List error degrades to
 // the baseline so gating never silently disappears.
-func (g *Gater) activeWorkflow(ctx context.Context, category string) (docindex.Doc, error) {
+func (g *Engine) activeWorkflow(ctx context.Context, category string) (docindex.Doc, error) {
 	if workflows, err := g.docs.List(ctx, "workflows"); err == nil {
 		if ordered := OrderedWorkflows(workflows, category); len(ordered) > 0 {
 			return ordered[0], nil // the highest-priority applicable workflow
@@ -1074,7 +1036,7 @@ func stampedWorkflowName(item workitem.Item) string {
 // activeWorkflowPreferring resolves the governing workflow, preferring the item's
 // STAMPED workflow when present (deterministic after create); it falls back to
 // category selection when un-stamped or the stamped workflow no longer resolves.
-func (g *Gater) activeWorkflowPreferring(ctx context.Context, category, stamped string) (docindex.Doc, error) {
+func (g *Engine) activeWorkflowPreferring(ctx context.Context, category, stamped string) (docindex.Doc, error) {
 	if stamped != "" {
 		if doc, err := g.docs.Get(ctx, "workflows", stamped); err == nil {
 			return doc, nil
@@ -1088,7 +1050,7 @@ func (g *Gater) activeWorkflowPreferring(ctx context.Context, category, stamped 
 // WorkflowNameFor returns the name of the workflow that governs a story of the
 // given category — the value stamped on the story at create. Empty when no
 // workflow governs the category. Used by the create path to record the choice.
-func (g *Gater) WorkflowNameFor(ctx context.Context, category string) string {
+func (g *Engine) WorkflowNameFor(ctx context.Context, category string) string {
 	doc, err := g.activeWorkflow(ctx, category)
 	if err != nil {
 		return ""
@@ -1103,7 +1065,7 @@ func (g *Gater) WorkflowNameFor(ctx context.Context, category string) string {
 // be re-stamped onto a workflow that declares its current status. A resolved
 // workflow whose lifecycle is not parseable DOT returns no states, so the caller
 // skips the status check rather than stranding the story.
-func (g *Gater) WorkflowStates(ctx context.Context, name string) ([]string, bool) {
+func (g *Engine) WorkflowStates(ctx context.Context, name string) ([]string, bool) {
 	doc, err := g.docs.Get(ctx, "workflows", name)
 	if err != nil {
 		return nil, false
@@ -1211,7 +1173,7 @@ func referencedWorkflowSkills(spec wfdot.Spec) []string {
 // OrderedWorkflows returns the workflows that APPLY to a story of the given
 // category, ordered by selection priority (highest first) — the list satelle
 // offers an agent starting a story, where the head is the active/default choice
-// and the gater enforces. A workflow applies when its `applies_to` lists the
+// and the engine enforces. A workflow applies when its `applies_to` lists the
 // category or the wildcard "*". Priority tiers, in order:
 //
 //  1. category-specific match on a PROJECT (repo) workflow,
@@ -1252,7 +1214,7 @@ func OrderedWorkflows(workflows []docindex.Doc, category string) []docindex.Doc 
 // runCheck runs a skill's functional-check command and returns a deterministic
 // verdict: exit 0 accepts, any non-zero (or a run error / timeout) rejects with
 // the command's output tail as actionable notes.
-func (g *Gater) runCheck(ctx context.Context, skill, command, payload string) verb.GateDecision {
+func (g *Engine) runCheck(ctx context.Context, skill, command, payload string) verb.GateDecision {
 	timeout := g.checkTimeout
 	if timeout <= 0 {
 		timeout = defaultCheckTimeout
@@ -1408,7 +1370,7 @@ func containsStr(ss []string, want string) bool {
 }
 
 // skillBody returns the reviewer skill's markdown body from the substrate.
-func (g *Gater) skillBody(ctx context.Context, name string) (string, error) {
+func (g *Engine) skillBody(ctx context.Context, name string) (string, error) {
 	doc, err := g.docs.Get(ctx, "skills", name)
 	if err != nil {
 		return "", err

@@ -20,12 +20,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/help"
 	"github.com/bobmcallan/satelle/internal/ledger"
-	"github.com/bobmcallan/satelle/internal/reviewer"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 	"github.com/bobmcallan/satelle/internal/workspace"
@@ -591,9 +591,9 @@ func categoryStepOf(docs []docindex.Doc) func(category, state string) int {
 		}
 	}
 	// Select the ACTIVE workflow per category via the single source of truth —
-	// reviewer.OrderedWorkflows (category-specific repo > category-specific system >
+	// agentstep.OrderedWorkflows (category-specific repo > category-specific system >
 	// wildcard repo > wildcard system), head = active. This is the same precedence
-	// the gater enforces and `satelle workflow list` surfaces, so the lights number
+	// the engine enforces and `satelle workflow list` surfaces, so the lights number
 	// each item against the workflow that actually drives it — a repo/project
 	// workflow beats the embedded system baseline. Cached per category (one parse).
 	cache := map[string]map[string]int{}
@@ -602,7 +602,7 @@ func categoryStepOf(docs []docindex.Doc) func(category, state string) int {
 			return d
 		}
 		depths := longest
-		if ordered := reviewer.OrderedWorkflows(docs, category); len(ordered) > 0 {
+		if ordered := agentstep.OrderedWorkflows(docs, category); len(ordered) > 0 {
 			depths = spineDepths(parseWorkflow(ordered[0].Body))
 		}
 		cache[category] = depths

@@ -9,11 +9,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/oplog"
-	"github.com/bobmcallan/satelle/internal/reviewer"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -71,7 +71,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// workflow names a reviewer skill whose rubric is installed.
 	if gc, gerr := config.LoadGlobal(); gerr == nil {
 		if runner, rerr := agentcli.NewRunner(gc.Agent.ResolveCLI()); rerr == nil {
-			rev := reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, "")
+			rev := agentstep.New(runner, a.Store.DocIndex, a.RepoRoot, "")
 			rev.SetLogDir(filepath.Join(filepath.Dir(a.DBPath), "logs"), logRotation(a))
 			// A gated transition legitimately blocks for minutes while the nested
 			// reviewer runs — emit progress to stderr so it is visibly distinct from
@@ -121,10 +121,10 @@ func appFrom(cmd *cobra.Command) (*app.App, error) {
 	return a, nil
 }
 
-// gaterForCmd builds a reviewer.Gater over the opened store and the install-time
+// engineForCmd builds a agentstep.Engine over the opened store and the install-time
 // agent CLI — the concrete reviewer used by the read paths (the per-noun `satelle <noun> validate`,
 // `satelle <object> create`) that need structure verdicts directly.
-func gaterForCmd(cmd *cobra.Command) (*reviewer.Gater, *app.App, error) {
+func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 	a, err := appFrom(cmd)
 	if err != nil {
 		return nil, nil, err
@@ -137,7 +137,7 @@ func gaterForCmd(cmd *cobra.Command) (*reviewer.Gater, *app.App, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("an agent CLI is required: %w", err)
 	}
-	rev := reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, "")
+	rev := agentstep.New(runner, a.Store.DocIndex, a.RepoRoot, "")
 	rev.SetLogDir(filepath.Join(filepath.Dir(a.DBPath), "logs"), logRotation(a))
 	agents, err := requireAgents(a)
 	if err != nil {
@@ -162,8 +162,8 @@ func logRotation(a *app.App) logfile.Config {
 // childrenResolver lists a parent's child stories (id + status) from the DB, for
 // the container close gate's payload — so a parent/epic close is judged from the
 // database, never an on-disk story mirror (sty_fa1e02e1).
-func childrenResolver(a *app.App) func(ctx context.Context, parentID string) []reviewer.ChildState {
-	return func(ctx context.Context, parentID string) []reviewer.ChildState {
+func childrenResolver(a *app.App) func(ctx context.Context, parentID string) []agentstep.ChildState {
+	return func(ctx context.Context, parentID string) []agentstep.ChildState {
 		if parentID == "" {
 			return nil
 		}
@@ -171,9 +171,9 @@ func childrenResolver(a *app.App) func(ctx context.Context, parentID string) []r
 		if err != nil {
 			return nil
 		}
-		out := make([]reviewer.ChildState, 0, len(kids))
+		out := make([]agentstep.ChildState, 0, len(kids))
 		for _, k := range kids {
-			out = append(out, reviewer.ChildState{ID: k.ID, Status: k.Status})
+			out = append(out, agentstep.ChildState{ID: k.ID, Status: k.Status})
 		}
 		return out
 	}
@@ -214,10 +214,10 @@ func requireAgents(a *app.App) (config.AgentsConfig, error) {
 	return agents, nil
 }
 
-// applyAgentGrants binds the loaded agents layer onto the gater: the reviewer's
+// applyAgentGrants binds the loaded agents layer onto the engine: the reviewer's
 // tool grant, model, principle injection, and harness. A broken harness value is
 // an error — the configuration executes as defined or refuses (sty_d0d6bb67).
-func applyAgentGrants(rev *reviewer.Gater, agents config.AgentsConfig) error {
+func applyAgentGrants(rev *agentstep.Engine, agents config.AgentsConfig) error {
 	rb := agents.ReviewerBinding()
 	rev.SetReviewerTools(rb.Tools)
 	rev.SetReviewerModel(rb.Model)

@@ -1,6 +1,6 @@
 // `satelle workflow list` surfaces the workflows that apply to a story category,
 // in selection-priority order — the list satelle offers an agent starting a
-// story. The head is the active/default workflow the gater enforces; a PROJECT
+// story. The head is the active/default workflow the engine enforces; a PROJECT
 // (repo) workflow overrides the embedded SYSTEM default, and a category-specific
 // workflow overrides a wildcard (applies_to ["*"]). Read-only.
 package cli
@@ -13,10 +13,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/bobmcallan/satelle/internal/reviewer"
+	"github.com/bobmcallan/satelle/internal/agentstep"
 )
 
-// baselineWorkflowName is the canonical order-zero default the gater falls back to
+// baselineWorkflowName is the canonical order-zero default the engine falls back to
 // by name (it is embedded-only — never an editable repo file, sty_3f9a6124). Kept
 // in sync with the reviewer package's const.
 const baselineWorkflowName = "satelle-baseline-workflow"
@@ -60,7 +60,7 @@ default. The head of the list is the active workflow the reviewer enforces.`,
 					docs = append(docs, base)
 				}
 			}
-			ordered := reviewer.OrderedWorkflows(docs, category)
+			ordered := agentstep.OrderedWorkflows(docs, category)
 			out := make([]workflowChoice, 0, len(ordered))
 			for i, d := range ordered {
 				scope, applies := wfMeta(d.Body)
@@ -90,7 +90,7 @@ type workflowChoice struct {
 	Scope     string   `json:"scope,omitempty"`
 	AppliesTo []string `json:"applies_to,omitempty"`
 	Embedded  bool     `json:"embedded"`
-	Active    bool     `json:"active"` // the head — the workflow the gater enforces
+	Active    bool     `json:"active"` // the head — the workflow the engine enforces
 }
 
 // wfMeta parses a workflow's scope (scalar) and applies_to (list) from its
