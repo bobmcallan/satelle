@@ -13,9 +13,27 @@ func init() {
 	Register(&Verb{Name: "doc-sync", Description: "Run the directory monitor once over the authored dirs", Invoke: docSync})
 }
 
+// summaryBundleName is the story-implementation-summary OKF sub-bundle (kind
+// documents). It is auto-generated commit evidence, not authored discovery
+// substrate, so the default (lightweight) doc-list omits it (sty_adab13cb).
+const summaryBundleName = "story-implementation-summary"
+
 // docListReq filters the authored-doc index. Empty kind lists every kind.
+// Full=true returns whole Doc records (bodies included) for consumers that need
+// them (the web workflow renderer); the default is the lightweight index —
+// kind/name/headline only, with the commit-summary bundle excluded — so the CLI
+// discovery surface is a small fraction of the full-body dump (sty_adab13cb).
 type docListReq struct {
 	Kind string `json:"kind,omitempty"`
+	Full bool   `json:"full,omitempty"`
+}
+
+// docListItem is the lightweight projection returned by the default doc-list:
+// enough to discover a doc and address it with doc-get, without its body.
+type docListItem struct {
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+	Headline string `json:"headline,omitempty"`
 }
 
 func docList(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
@@ -31,7 +49,17 @@ func docList(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) 
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(docs)
+	if req.Full {
+		return json.Marshal(docs)
+	}
+	items := make([]docListItem, 0, len(docs))
+	for _, d := range docs {
+		if d.Kind == "documents" && d.Name == summaryBundleName {
+			continue // auto-generated commit evidence, not discovery substrate
+		}
+		items = append(items, docListItem{Kind: d.Kind, Name: d.Name, Headline: d.Headline})
+	}
+	return json.Marshal(items)
 }
 
 // docGetReq addresses one indexed doc by (kind, name).
