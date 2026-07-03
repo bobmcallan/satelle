@@ -669,18 +669,26 @@ var defaultSolutionWorkflows = []string{
 	"satelle-task-workflow",
 }
 
-// materializeDefaultSolution seeds a fresh repo's .satelle with the complete
-// embedded default solution: the generic project/parent/task-execution workflows
-// plus every gate skill they — or the embedded baseline fallback — reference
-// (sty_a7cbd6dd). It is a no-op (reported) when the workflows dir already holds
-// an authored workflow: seeding the wildcard project default beside a repo's own
-// set would compete with it, so an existing set is respected wholesale. Skills
-// seed per-file when absent, never clobbering. Returns report lines.
+// materializeDefaultSolution seeds a repo's .satelle with the embedded default
+// solution ADDITIVELY, per file: the generic project/parent/task-execution
+// workflows plus every gate skill they — or the embedded baseline fallback —
+// reference (sty_a7cbd6dd). Each file is seeded only when ABSENT; a same-named
+// authored file is never overwritten or modified.
+//
+// There is no all-or-nothing guard (sty_f6bd6f84): a repo that authored one
+// workflow but is missing others (observed: satelle-server had a project
+// workflow but no satelle-parent-workflow and was missing a referenced gate
+// skill) is HEALED by re-running init — the absent defaults land, the present
+// ones and any authored files are untouched, and validation passes because the
+// skills a default workflow references are seeded even when that workflow's own
+// file is skipped. The ONE guard that survives is routing safety: a default
+// workflow whose applies_to overlaps a category an AUTHORED workflow already
+// claims is NOT seeded (it would create the same-precedence duplicate the
+// reindex consistency check rejects) — its gate skills are still collected and
+// seeded. rebase remains the reset path (backup+wipe+redeploy); init is the heal
+// path. Returns report lines.
 func materializeDefaultSolution(dataDir string) []string {
 	wfDir := filepath.Join(dataDir, "workflows")
-	if hasMarkdown(wfDir) {
-		return []string{"  = " + config.DefaultDataDir + "/workflows/ (authored workflows present — default solution not seeded)"}
-	}
 	var lines []string
 	skills := map[string]bool{}
 	collectSkills := func(body string) {
@@ -690,15 +698,23 @@ func materializeDefaultSolution(dataDir string) []string {
 			}
 		}
 	}
+	// Categories already claimed by an authored (on-disk) workflow. A default
+	// whose applies_to overlaps one of these is skipped to avoid a
+	// same-precedence routing duplicate.
+	claimed := authoredWorkflowCategories(wfDir)
 	for _, name := range defaultSolutionWorkflows {
 		body, ok := embeddedDefault("workflows", name)
 		if !ok {
 			continue
 		}
-		collectSkills(body)
+		collectSkills(body) // collect refs even if the workflow file is skipped
 		p := filepath.Join(wfDir, name+".md")
 		if fileExists(p) {
 			lines = append(lines, initLine(false, config.DefaultDataDir+"/workflows/"+name+".md"))
+			continue
+		}
+		if conflict := overlappingCategory(body, claimed); conflict != "" {
+			lines = append(lines, "  = "+config.DefaultDataDir+"/workflows/"+name+".md (applies_to "+conflict+" claimed by an authored workflow — not seeded)")
 			continue
 		}
 		if err := os.WriteFile(p, []byte(body), 0o644); err == nil {
@@ -753,6 +769,82 @@ func referencedSkills(spec wfdot.Spec) []string {
 	return out
 }
 
+// authoredWorkflowCategories returns the set of applies_to categories declared
+// by the on-disk (authored) workflows in wfDir. Used to skip seeding a default
+// workflow that would duplicate a category an authored workflow already claims
+// at the same precedence (sty_f6bd6f84).
+func authoredWorkflowCategories(wfDir string) map[string]bool {
+	claimed := map[string]bool{}
+	entries, err := os.ReadDir(wfDir)
+	if err != nil {
+		return claimed
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".md") ||
+			strings.EqualFold(e.Name(), "README.md") {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(wfDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		for _, c := range appliesToCategories(string(body)) {
+			claimed[c] = true
+		}
+	}
+	return claimed
+}
+
+// overlappingCategory returns the first applies_to category the workflow body
+// declares that is already present in claimed, or "" when none overlaps.
+func overlappingCategory(body string, claimed map[string]bool) string {
+	for _, c := range appliesToCategories(body) {
+		if claimed[c] {
+			return c
+		}
+	}
+	return ""
+}
+
+// appliesToCategories extracts the applies_to categories from a workflow's
+// frontmatter, handling the inline flow form (applies_to: ["*", "web"]) and the
+// block list form (applies_to: then subsequent "- web" lines).
+func appliesToCategories(body string) []string {
+	lines := strings.Split(body, "\n")
+	var out []string
+	for i, ln := range lines {
+		t := strings.TrimSpace(ln)
+		if !strings.HasPrefix(t, "applies_to:") {
+			continue
+		}
+		rest := strings.TrimSpace(strings.TrimPrefix(t, "applies_to:"))
+		if rest != "" {
+			for _, part := range strings.Split(strings.Trim(rest, "[]"), ",") {
+				if c := strings.Trim(strings.TrimSpace(part), `"'`); c != "" {
+					out = append(out, c)
+				}
+			}
+			break
+		}
+		// Block list form: consume following "- item" lines.
+		for _, bl := range lines[i+1:] {
+			bt := strings.TrimSpace(bl)
+			if strings.HasPrefix(bt, "- ") {
+				if c := strings.Trim(strings.TrimSpace(bt[2:]), `"'`); c != "" {
+					out = append(out, c)
+				}
+				continue
+			}
+			if bt == "" {
+				continue
+			}
+			break
+		}
+		break
+	}
+	return out
+}
+
 // embeddedDefault returns the body of the embedded canonical artifact for
 // (kind, name), if any.
 func embeddedDefault(kind, name string) (string, bool) {
@@ -762,25 +854,6 @@ func embeddedDefault(kind, name string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// hasMarkdown reports whether dir contains at least one .md file (ignoring
-// README.md and .gitkeep).
-func hasMarkdown(dir string) bool {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".md") {
-			continue
-		}
-		if e.Name() == "README.md" {
-			continue
-		}
-		return true
-	}
-	return false
 }
 
 // initLine renders a one-line report: "+ created" or "= present".
