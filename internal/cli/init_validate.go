@@ -1,0 +1,100 @@
+// The init deployment validation (sty_d0d6bb67): `satelle init` ends by PROVING
+// the deployed system green, not just intending it — the agents layer must load
+// (and its reviewer harness resolve), every deployed substrate artifact must pass
+// its deterministic structure check, and the workflow set must be consistent. A
+// repo that fails here would refuse to run, so init surfaces it immediately and
+// exits non-zero. Deterministic and store-free: it reads the files init just
+// wrote (or preserved), matching what `satelle <noun> validate` reports once the
+// substrate is indexed.
+
+package cli
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/reviewer"
+)
+
+// validateDeployment validates the deployed system under dataDir and returns an
+// error (init exits non-zero) when it does not validate green.
+func validateDeployment(out io.Writer, dataDir string) error {
+	fmt.Fprintln(out, "\nValidating the deployed system:")
+	failed := 0
+
+	// The agents layer: present, parseable, and a resolvable reviewer harness.
+	// The runtime refuses to run without it (requireAgents), so init must not
+	// report success while leaving the repo unrunnable.
+	agentsRel := config.DefaultDataDir + "/" + config.AgentsConfigName
+	if _, statErr := os.Stat(filepath.Join(dataDir, config.AgentsConfigName)); os.IsNotExist(statErr) {
+		failed++
+		if _, lerr := os.Stat(filepath.Join(dataDir, config.ActorsConfigName)); lerr == nil {
+			fmt.Fprintf(out, "FAIL  %s — missing; the retired %s is present — rename it to %s\n",
+				agentsRel, config.ActorsConfigName, config.AgentsConfigName)
+		} else {
+			fmt.Fprintf(out, "FAIL  %s — missing (the agents layer must be defined)\n", agentsRel)
+		}
+	} else if agents, lerr := config.LoadAgents(dataDir); lerr != nil {
+		failed++
+		fmt.Fprintf(out, "FAIL  %s — %v\n", agentsRel, lerr)
+	} else if _, herr := agentcli.RunnerFromHarness(agents.ReviewerBinding().Harness); herr != nil {
+		failed++
+		fmt.Fprintf(out, "FAIL  %s — reviewer harness: %v\n", agentsRel, herr)
+	} else {
+		fmt.Fprintf(out, "PASS  %s\n", agentsRel)
+	}
+
+	// Structure checks per deployed kind, resolving skills against the deployed
+	// files — the same disk set the doc index holds after `satelle reindex`.
+	resolve := func(skill string) bool {
+		return fileExists(filepath.Join(dataDir, "skills", skill+".md"))
+	}
+	for _, kind := range []string{"workflows", "skills", "principles", "tasks"} {
+		_, f, _ := validateAuthoredDir(out, kind, filepath.Join(dataDir, kind), "", resolve)
+		failed += f
+	}
+
+	// Cross-workflow consistency over the deployed set (ambiguous applies_to,
+	// unresolved referenced skills) — the whole-set check `satelle workflow
+	// validate` runs.
+	for _, p := range reviewer.WorkflowConsistency(deployedWorkflowDocs(dataDir), resolve) {
+		failed++
+		fmt.Fprintf(out, "FAIL  workflows (consistency) — %s\n", p)
+	}
+
+	if failed > 0 {
+		return fmt.Errorf("init: the deployed system failed validation (%d problem(s)) — fix the reported files and re-run `satelle init`", failed)
+	}
+	fmt.Fprintln(out, "PASS  deployed system validates green")
+	return nil
+}
+
+// deployedWorkflowDocs reads the deployed workflow files under dataDir as
+// docindex.Docs for the consistency check — store-free (init runs before
+// anything is indexed). Reserved keep-files are skipped.
+func deployedWorkflowDocs(dataDir string) []docindex.Doc {
+	dir := filepath.Join(dataDir, "workflows")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var docs []docindex.Doc
+	for _, e := range entries {
+		fn := e.Name()
+		if e.IsDir() || !strings.HasSuffix(fn, ".md") || reservedKeepFile(fn) {
+			continue
+		}
+		body, rerr := os.ReadFile(filepath.Join(dir, fn))
+		if rerr != nil {
+			continue
+		}
+		docs = append(docs, docindex.Doc{Kind: "workflows", Name: strings.TrimSuffix(fn, ".md"), Body: string(body)})
+	}
+	return docs
+}

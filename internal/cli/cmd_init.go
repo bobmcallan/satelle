@@ -4,7 +4,9 @@
 // per-repo SQLite database (created + migrated), and a managed .gitignore block
 // that keeps the local database out of git while committing the toml and the
 // authored markdown. Re-running is safe: it reports what it added versus what
-// was already present and never overwrites existing files.
+// was already present and never overwrites existing files. It ends by
+// VALIDATING the deployed system (sty_d0d6bb67) and exits non-zero when the
+// deployment does not validate green.
 
 package cli
 
@@ -45,6 +47,10 @@ func init() {
   - the per-repo SQLite database at .satelle/satelle.db (created and migrated),
   - a managed .gitignore block keeping the local database out of git while
     committing the config and the authored markdown.
+
+init ends by VALIDATING the deployed system — the agents layer must load and
+every substrate artifact must pass its deterministic structure check — and
+exits non-zero when it does not validate (broken configuration refuses to run).
 
 Re-running is safe: existing files are preserved and the report shows what was
 added versus already present.`,
@@ -212,6 +218,15 @@ func runInit(out io.Writer, repoRoot string) error {
 	//    instruction, the agent applies it (sty_4c406061).
 	for _, line := range agentGuidance(repoRoot) {
 		fmt.Fprintln(out, line)
+	}
+
+	// 8. Validate the deployed system (sty_d0d6bb67): init ends by PROVING the
+	//    deployment green — agents layer loadable, every substrate artifact
+	//    passing its deterministic structure check, workflow set consistent. A
+	//    failing validation exits non-zero: the runtime refuses to run broken
+	//    configuration, so init must not report success over it.
+	if verr := validateDeployment(out, dataDir); verr != nil {
+		return verr
 	}
 
 	fmt.Fprintln(out, "\nReady. Try: satelle status · satelle story create --title \"…\" · satelle serve")
@@ -382,15 +397,18 @@ const scaffoldToml = `# satelle.toml — per-repo config (committed, secret-free
 # skills = "."                   # → ./skills
 `
 
-// scaffoldAgentsToml is the documented agents layer a fresh init writes. Every
-// key is commented: an absent/blank file is the read-only default (executor
-// in-loop, reviewer isolated with Read,Grep,Glob), so this only documents the
-// knobs. A repo may widen or rebind transparently — the override is a committed
-// file, the operator's choice.
+// scaffoldAgentsToml is the documented agents layer a fresh init writes. The
+// file is REQUIRED once a repo is initialized (sty_d0d6bb67): a missing or
+// unparseable agents.toml refuses to run rather than silently falling back to
+// compiled defaults — the configuration executes as defined. A repo may widen
+// or rebind transparently — the override is a committed file, the operator's
+// choice.
 var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer: how each agent runs (backend + tool grant).
 # FULLY DEFINED by init (no hidden coded configuration, sty_892517e7): every
 # value below is the ACTIVE default, written out so the operator sees exactly
-# what runs. Edit freely; an absent file falls back to these same defaults.
+# what runs. Edit freely. This file is REQUIRED in an initialized repo
+# (sty_d0d6bb67): a missing or unparseable agents.toml refuses to run — delete
+# it and re-run "satelle init" to reseed the default.
 #
 # The agent operating model (see the satelle-agent-model principle):
 #   - executor  — runs IN-LOOP as the driving session (context, principles,

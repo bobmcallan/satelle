@@ -16,10 +16,13 @@ const (
 	ActorsConfigName = "actors.toml"
 )
 
-// Default agent grants — TODAY's behaviour, so an absent agents.toml changes
-// nothing: the executor drives in-loop (the agent itself); the reviewer runs as
-// an isolated agent with a READ-ONLY tool grant (see the
-// satelle-agent-model principle — the reviewer is limited to reviewing).
+// Default agent grants — the BOOTSTRAP values a binding's empty fields resolve
+// to: the executor drives in-loop (the agent itself); the reviewer runs as an
+// isolated agent with a READ-ONLY tool grant (see the satelle-agent-model
+// principle — the reviewer is limited to reviewing). They fill blanks INSIDE a
+// loaded agents.toml; they are not a substitute for the file itself — an
+// initialized repo without a loadable agents.toml refuses to run (the CLI
+// bootstrap's requireAgents, sty_d0d6bb67).
 const (
 	DefaultExecutorHarness = "in-loop"
 	// DefaultReviewerHarness is the bare claude PRESET name — a single token, so
@@ -109,8 +112,10 @@ func (a AgentsConfig) ExecutorBinding() AgentBinding {
 
 // LoadAgents reads the agents layer from <dataDir>/agents.toml. The legacy
 // actors.toml is no longer read (sty_7db2ed7d); an absent agents.toml yields the
-// zero AgentsConfig — defaults via the *Binding resolvers — and a nil error, so a
-// repo with no binding file runs exactly as today.
+// zero AgentsConfig — defaults via the *Binding resolvers — and a nil error.
+// Absence is judged by the CALLER: the CLI bootstrap treats a missing file in an
+// initialized repo as broken and refuses to run (requireAgents, sty_d0d6bb67);
+// pre-init surfaces (nothing to load yet) keep the zero-config bootstrap.
 func LoadAgents(dataDir string) (AgentsConfig, error) {
 	path := filepath.Join(dataDir, AgentsConfigName)
 	b, err := os.ReadFile(path)

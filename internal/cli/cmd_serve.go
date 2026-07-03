@@ -433,7 +433,14 @@ func (s *supervisor) spawn(path, slug string) (*childProc, error) {
 	if err := child.Start(); err != nil {
 		return nil, err
 	}
-	if !web.WaitHealthy(s.ctx, port, 10*time.Second) {
+	// Reap the child and expose its exit, so the health wait can abort EARLY: a
+	// child that refuses to boot (e.g. broken .satelle configuration —
+	// sty_d0d6bb67 refuses to run over a broken agents layer) fails in
+	// milliseconds, and waiting the full health window for it would stall
+	// workspace startup by that window per broken project.
+	exited := make(chan error, 1)
+	go func() { exited <- child.Wait() }()
+	if !waitHealthyOrExit(s.ctx, port, 10*time.Second, exited) {
 		fmt.Fprintf(s.errw, "warning: %s (:%d) did not become healthy\n", slug, port)
 	}
 	target := &url.URL{Scheme: "http", Host: fmt.Sprintf("127.0.0.1:%d", port)}
@@ -444,6 +451,22 @@ func (s *supervisor) spawn(path, slug string) (*childProc, error) {
 		project: web.Project{Slug: slug, Name: filepath.Base(path), Path: path},
 		handler: http.StripPrefix("/"+slug, proxy),
 	}, nil
+}
+
+// waitHealthyOrExit waits for the child's /healthz like web.WaitHealthy, but
+// returns immediately (unhealthy) when the child process exits first — a child
+// that refused to boot must not hold the supervisor for the full health window.
+func waitHealthyOrExit(ctx context.Context, port int, timeout time.Duration, exited <-chan error) bool {
+	hctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	healthy := make(chan bool, 1)
+	go func() { healthy <- web.WaitHealthy(hctx, port, timeout) }()
+	select {
+	case ok := <-healthy:
+		return ok
+	case <-exited:
+		return false
+	}
 }
 
 // shutdown kills every child.

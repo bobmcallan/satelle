@@ -67,6 +67,41 @@ func TestRunInitScaffolds(t *testing.T) {
 	if !strings.Contains(out.String(), "+ .satelle/satelle.db") {
 		t.Errorf("report missing db creation:\n%s", out.String())
 	}
+
+	// init ends by PROVING the deployment green (sty_d0d6bb67): the validation
+	// pass runs and the fresh seeded system validates.
+	for _, want := range []string{"Validating the deployed system:", "PASS  deployed system validates green"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("report missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+// TestRunInitFailsValidationOnBrokenSubstrate: init on a repo whose authored
+// substrate does not validate exits non-zero, naming the failures — the runtime
+// refuses broken configuration, so init must not report success over it
+// (sty_d0d6bb67).
+func TestRunInitFailsValidationOnBrokenSubstrate(t *testing.T) {
+	repo := t.TempDir()
+	wfDir := filepath.Join(repo, ".satelle", "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A structurally broken authored workflow (missing type/description/scope/DOT).
+	if err := os.WriteFile(filepath.Join(wfDir, "broken.md"), []byte("---\nname: broken\n---\n# broken\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	err := runInit(&out, repo)
+	if err == nil {
+		t.Fatal("init must exit non-zero when the deployed system fails validation")
+	}
+	if !strings.Contains(err.Error(), "failed validation") {
+		t.Errorf("error should say the deployed system failed validation: %v", err)
+	}
+	if !strings.Contains(out.String(), "FAIL  workflows/broken") {
+		t.Errorf("report should name the failing artifact:\n%s", out.String())
+	}
 }
 
 func TestRunInitIdempotent(t *testing.T) {
@@ -222,8 +257,12 @@ func TestRunInitRespectsAuthoredWorkflows(t *testing.T) {
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The authored workflow is CONFORMANT — init now validates the deployed
+	// system and exits non-zero over broken substrate (sty_d0d6bb67), so a repo
+	// whose own set is respected must still validate green.
 	own := filepath.Join(wfDir, "my-workflow.md")
-	if err := os.WriteFile(own, []byte("---\nname: my-workflow\n---\n\n# mine\n"), 0o644); err != nil {
+	ownBody := "---\nname: my-workflow\ntype: workflow\ndescription: my own lifecycle\napplies_to: [\"*\"]\nscope: project\n---\n\n# mine\n\n```dot\ndigraph w {\n  backlog -> in_progress -> done\n}\n```\n"
+	if err := os.WriteFile(own, []byte(ownBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var out strings.Builder

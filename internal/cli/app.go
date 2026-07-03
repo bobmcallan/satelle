@@ -36,6 +36,15 @@ func openAppForCmd(cmd *cobra.Command) error {
 	if err != nil {
 		return fmt.Errorf("bootstrap: %w", err)
 	}
+	// Broken configuration refuses to run (sty_d0d6bb67): an initialized repo
+	// (this command reached the store, so .satelle exists) must carry a loadable
+	// agents layer — no silent fallback to compiled defaults. `satelle init` is
+	// not store-backed, so a fresh repo still bootstraps and (re)seeds the file.
+	agents, err := requireAgents(a)
+	if err != nil {
+		_ = a.Close()
+		return err
+	}
 	// Wire the opened stores into the verb registry — the single seam both the
 	// CLI and the web server dispatch through. The CLI is one-shot, so wiring
 	// the package globals per invocation is correct.
@@ -65,7 +74,10 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// reviewer runs — emit progress to stderr so it is visibly distinct from
 			// a hang (sty_6c88ca10). stderr keeps stdout's JSON payload clean.
 			rev.SetProgress(func(msg string) { fmt.Fprintln(os.Stderr, msg) })
-			applyAgentGrants(rev, a)
+			if aerr := applyAgentGrants(rev, agents); aerr != nil {
+				_ = a.Close()
+				return aerr
+			}
 			rev.SetChildrenResolver(childrenResolver(a))
 			verb.SetTransitionGater(rev)
 			// Stamp the governing workflow on every story at create — independent of
@@ -119,7 +131,13 @@ func gaterForCmd(cmd *cobra.Command) (*reviewer.Gater, *app.App, error) {
 	}
 	rev := reviewer.New(runner, a.Store.DocIndex, a.RepoRoot, "")
 	rev.SetLogDir(filepath.Join(filepath.Dir(a.DBPath), "logs"), logRotation(a))
-	applyAgentGrants(rev, a)
+	agents, err := requireAgents(a)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := applyAgentGrants(rev, agents); err != nil {
+		return nil, nil, err
+	}
 	return rev, a, nil
 }
 
@@ -163,22 +181,51 @@ func skillResolver(a *app.App) func(skill string) bool {
 	}
 }
 
-// applyAgentGrants resolves the agents layer (.satelle/agents.toml) and binds the
-// reviewer's tool grant onto the gater. An absent file yields today's read-only
-// default, so behaviour is unchanged unless a repo authors agents.toml.
-func applyAgentGrants(rev *reviewer.Gater, a *app.App) {
-	if agents, err := config.LoadAgents(filepath.Dir(a.DBPath)); err == nil {
-		rb := agents.ReviewerBinding()
-		rev.SetReviewerTools(rb.Tools)
-		rev.SetReviewerModel(rb.Model)
-		// Resident-principle injection is an agents-layer option, default ON
-		// (sty_46a40208): inject_principles = false in the reviewer binding omits it.
-		rev.SetInjectPrinciples(rb.InjectsPrinciples())
-		// Select the reviewer's agent CLI from the agents-layer harness binding
-		// (default claude). An unset/in-loop/unresolvable harness keeps the global
-		// [agent] cli configured at construction.
-		if r, rerr := agentcli.RunnerFromHarness(rb.Harness); rerr == nil {
-			rev.SetRunner(r)
+// requireAgents loads the agents layer (.satelle/agents.toml) for an INITIALIZED
+// repo and refuses when it is broken (sty_d0d6bb67): a malformed file, or an
+// absent one — `satelle init` always seeds it, so absence means a broken
+// deployment, not "use compiled defaults". The error names the file and the fix;
+// the compiled defaults remain only the pre-init bootstrap (a repo with no
+// .satelle at all never reaches this — init is not store-backed).
+func requireAgents(a *app.App) (config.AgentsConfig, error) {
+	dataDir := filepath.Dir(a.DBPath)
+	rel := config.DefaultDataDir + "/" + config.AgentsConfigName
+	if _, err := os.Stat(filepath.Join(dataDir, config.AgentsConfigName)); os.IsNotExist(err) {
+		if _, lerr := os.Stat(filepath.Join(dataDir, config.ActorsConfigName)); lerr == nil {
+			return config.AgentsConfig{}, fmt.Errorf(
+				"missing %s but found the retired %s/%s — rename it to %s (the legacy filename is no longer loaded)",
+				rel, config.DefaultDataDir, config.ActorsConfigName, config.AgentsConfigName)
 		}
+		return config.AgentsConfig{}, fmt.Errorf(
+			"missing %s — an initialized repo must define its agents layer; run `satelle init` to seed the default", rel)
 	}
+	agents, err := config.LoadAgents(dataDir)
+	if err != nil {
+		return config.AgentsConfig{}, fmt.Errorf("broken %s: %w — fix it, or delete it and run `satelle init` to reseed the default", rel, err)
+	}
+	return agents, nil
+}
+
+// applyAgentGrants binds the loaded agents layer onto the gater: the reviewer's
+// tool grant, model, principle injection, and harness. A broken harness value is
+// an error — the configuration executes as defined or refuses (sty_d0d6bb67).
+func applyAgentGrants(rev *reviewer.Gater, agents config.AgentsConfig) error {
+	rb := agents.ReviewerBinding()
+	rev.SetReviewerTools(rb.Tools)
+	rev.SetReviewerModel(rb.Model)
+	// Resident-principle injection is an agents-layer option, default ON
+	// (sty_46a40208): inject_principles = false in the reviewer binding omits it.
+	rev.SetInjectPrinciples(rb.InjectsPrinciples())
+	// Select the reviewer's agent CLI from the agents-layer harness binding
+	// (default claude). An unset/in-loop harness keeps the global [agent] cli
+	// configured at construction; an unresolvable one refuses.
+	r, err := agentcli.RunnerFromHarness(rb.Harness)
+	if err != nil {
+		return fmt.Errorf("broken %s/%s: reviewer harness: %w",
+			config.DefaultDataDir, config.AgentsConfigName, err)
+	}
+	if r != nil {
+		rev.SetRunner(r)
+	}
+	return nil
 }

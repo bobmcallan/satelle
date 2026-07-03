@@ -18,12 +18,32 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-const testWorkflow = `
-transitions:
-  - {from: backlog, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
-  - {from: in_progress, to: done, reviewer_skill: "satelle-story-done-review"}
-  - {from: backlog, to: cancelled}
-`
+// wfDoc wraps a digraph in the conformant workflow-doc envelope (frontmatter +
+// fenced ```dot) a Gate-path fixture needs: the gate's structure guard refuses a
+// governing workflow that fails its deterministic check (sty_d0d6bb67), so any
+// workflow a test drives Gate under must be a well-formed doc, exactly like the
+// authored substrate.
+func wfDoc(name, appliesTo, graph string) string {
+	return "---\nname: " + name + "\ntype: workflow\ndescription: test lifecycle\napplies_to: [" + appliesTo +
+		"]\nscope: system\n---\n\n" + "```dot\n" + graph + "\n```\n"
+}
+
+// conformantSkill wraps a bare rubric in the conformant skill-doc envelope for
+// the same reason (the gate refuses an invalid PRESENT reviewer skill); a body
+// already carrying frontmatter is returned as-is so fixtures with authored
+// frontmatter (e.g. a check: skill) stay verbatim.
+func conformantSkill(name, rubric string) string {
+	if strings.HasPrefix(rubric, "---\n") {
+		return rubric
+	}
+	return "---\nname: " + name + "\ntype: skill\ndescription: test rubric\n---\n\n" + rubric + "\n"
+}
+
+var testWorkflow = wfDoc(baselineWorkflow, `"*"`, `digraph w {
+  backlog -> in_progress [reviewer_skill="satelle-story-intent-review"]
+  in_progress -> done [reviewer_skill="satelle-story-done-review"]
+  backlog -> cancelled
+}`)
 
 type fakeRunner struct {
 	out string
@@ -72,7 +92,7 @@ func (d fakeDocs) Get(_ context.Context, kind, name string) (docindex.Doc, error
 			}
 		}
 		if d.skillFound {
-			return docindex.Doc{Kind: kind, Name: name, Body: d.skillBody}, nil
+			return docindex.Doc{Kind: kind, Name: name, Body: conformantSkill(name, d.skillBody)}, nil
 		}
 		return docindex.Doc{}, docindex.ErrNotFound
 	case "principles":
@@ -199,13 +219,13 @@ func TestStripFrontmatter(t *testing.T) {
 }
 
 func skillDoc(name string) docindex.Doc {
-	return docindex.Doc{Kind: "skills", Name: name, Body: "rubric body"}
+	return docindex.Doc{Kind: "skills", Name: name, Body: conformantSkill(name, "rubric body")}
 }
 
 // engageDOT is a valid DOT workflow whose start state is backlog. Its path to done
 // runs through an executor step (commit_push) with an @skill: prompt — the thing
 // the engagement guard resolves.
-const engageDOT = "```dot\n" + `digraph w {
+var engageDOT = wfDoc(baselineWorkflow, `"*"`, `digraph w {
   backlog     [shape=Mdiamond]
   in_progress [agent=executor]
   commit_push [agent=executor, prompt="@skill:commit-push"]
@@ -215,8 +235,7 @@ const engageDOT = "```dot\n" + `digraph w {
   in_progress -> commit_push
   commit_push -> done
   backlog -> cancelled
-}
-` + "```\n"
+}`)
 
 // TestEngagementBlockedWhenExecutorSkillMissing: engaging under a workflow whose
 // path to done has an executor step with an unresolvable skill is rejected up
@@ -665,7 +684,10 @@ func (m *mapRunner) Run(_ context.Context, req agentcli.Request) ([]byte, error)
 }
 
 func TestGateMultipleReviewersAllAccept(t *testing.T) {
-	wf := "transitions:\n  - {from: in_progress, to: done, reviewer_skills: [rev-a, rev-b, rev-c]}\n"
+	wf := wfDoc(baselineWorkflow, `"*"`, `digraph w {
+  backlog -> in_progress
+  in_progress -> done [reviewer_skill="rev-a,rev-b,rev-c"]
+}`)
 	mr := &mapRunner{}
 	g := New(mr, fakeDocs{workflow: wf, skillBody: "rubric", skillFound: true}, "/repo", "")
 	dec, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "done")
@@ -690,7 +712,10 @@ func TestGateMultipleReviewersAllAccept(t *testing.T) {
 }
 
 func TestGateMultipleReviewersRejectAttributedAndShortCircuits(t *testing.T) {
-	wf := "transitions:\n  - {from: in_progress, to: done, reviewer_skills: [rev-a, rev-b, rev-c]}\n"
+	wf := wfDoc(baselineWorkflow, `"*"`, `digraph w {
+  backlog -> in_progress
+  in_progress -> done [reviewer_skill="rev-a,rev-b,rev-c"]
+}`)
 	mr := &mapRunner{verdict: map[string]string{"rev-b": `{"decision":"reject","notes":"b says no"}`}}
 	g := New(mr, fakeDocs{workflow: wf, skillBody: "rubric", skillFound: true}, "/repo", "")
 	dec, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "done")
@@ -711,10 +736,10 @@ func TestGateMultipleReviewersRejectAttributedAndShortCircuits(t *testing.T) {
 	}
 }
 
-// scopedDOT wraps a digraph body in the frontmatter + fenced ```dot envelope a
-// workflow doc carries, so wfdot.Parse resolves it.
+// scopedDOT wraps a digraph body in the conformant workflow-doc envelope, so
+// wfdot.Parse resolves it and the gate's structure guard passes it.
 func scopedDOT(graph string) string {
-	return "---\nname: satelle-baseline-workflow\n---\n" + "```dot" + "\n" + graph + "\n" + "```" + "\n"
+	return wfDoc(baselineWorkflow, `"*"`, graph)
 }
 
 func TestGateScopedReviewerRunsLast(t *testing.T) {
@@ -782,6 +807,49 @@ func TestScopedReviewerByOnList(t *testing.T) {
 	}
 	if len(dec2.Reviewers) != 2 || !dec2.Reviewers[1].System || dec2.Reviewers[1].Skill != "satelle-estimate-actual" {
 		t.Fatalf("done edge should add the scoped reviewer last, got %+v", dec2.Reviewers)
+	}
+}
+
+// TestGateRefusesBrokenWorkflowStructure: a governing workflow that fails its
+// deterministic structure check must never gate work — the transition is
+// refused with the problems (sty_d0d6bb67), instead of silently proceeding
+// under a broken definition.
+func TestGateRefusesBrokenWorkflowStructure(t *testing.T) {
+	broken := "---\nname: " + baselineWorkflow + "\n---\n# no type/description/scope, no DOT\n"
+	g, r := gater(t, `{"decision":"accept"}`, fakeDocs{workflow: broken, skillBody: "rubric", skillFound: true})
+	_, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "in_progress")
+	if err == nil {
+		t.Fatal("want the gate refused under a structurally broken workflow")
+	}
+	for _, want := range []string{baselineWorkflow, "structure validation"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal should carry %q: %v", want, err)
+		}
+	}
+	if r.got.SystemPrompt != "" {
+		t.Error("no reviewer may run under a broken workflow definition")
+	}
+}
+
+// TestGateRefusesBrokenReviewerSkill: a PRESENT reviewer skill that fails its
+// structure check refuses the gate (an absent one stays advisory by design).
+func TestGateRefusesBrokenReviewerSkill(t *testing.T) {
+	docs := fakeDocs{workflow: testWorkflow, skillFound: true, extraSkills: []docindex.Doc{
+		// present but broken: frontmatter carries no type/description.
+		{Kind: "skills", Name: "satelle-story-done-review", Body: "---\nname: satelle-story-done-review\n---\nrubric\n"},
+	}}
+	g, r := gater(t, `{"decision":"accept"}`, docs)
+	_, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done")
+	if err == nil {
+		t.Fatal("want the gate refused under a structurally broken reviewer skill")
+	}
+	for _, want := range []string{"satelle-story-done-review", "structure validation"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal should carry %q: %v", want, err)
+		}
+	}
+	if r.got.SystemPrompt != "" {
+		t.Error("a broken reviewer skill must not run")
 	}
 }
 
@@ -950,8 +1018,10 @@ func TestSummariseReturnsTrimmedProse(t *testing.T) {
 	if s != "Moved from in_progress to done after the criteria were met." {
 		t.Errorf("summary = %q", s)
 	}
-	if r.got.SystemPrompt != "summariser rubric" {
-		t.Errorf("summariser rubric should be the system prompt, got %q", r.got.SystemPrompt)
+	// The skill doc's body (frontmatter included, as authored substrate carries
+	// it) rides as the system prompt — the rubric must be in it.
+	if !strings.Contains(r.got.SystemPrompt, "summariser rubric") {
+		t.Errorf("summariser rubric should ride in the system prompt, got %q", r.got.SystemPrompt)
 	}
 	// Read-only grant (sty_659848ad) — the default is exactly Read,Grep,Glob: no
 	// mutators, and no shell at all (the reviewer reads materialised substrate).
@@ -1054,13 +1124,10 @@ func TestParseDecisionLenient(t *testing.T) {
 
 // webWorkflow is a category-specific workflow (applies_to: ["web"]) whose
 // in_progress→done edge names a different reviewer than the baseline.
-const webWorkflow = `---
-name: satelle-web-workflow
-applies_to: ["web"]
----
-transitions:
-  - {from: in_progress, to: done, reviewer_skill: "satelle-web-done-review"}
-`
+var webWorkflow = wfDoc("satelle-web-workflow", `"web"`, `digraph w {
+  backlog -> in_progress
+  in_progress -> done [reviewer_skill="satelle-web-done-review"]
+}`)
 
 func TestActiveWorkflowSelectByCategory(t *testing.T) {
 	docs := fakeDocs{
@@ -1109,11 +1176,15 @@ func TestFrontmatterListForms(t *testing.T) {
 	}
 }
 
-const checkSkill = "---\nname: satelle-story-integration-review\nkind: skill\ncheck: \"run-the-suite\"\n---\n# Integration gate\nRuns the suite.\n"
+const checkSkill = "---\nname: satelle-story-integration-review\ntype: skill\ndescription: integration functional check\ncheck: \"run-the-suite\"\n---\n# Integration gate\nRuns the suite.\n"
 
 func TestFunctionalCheckGate(t *testing.T) {
 	// A workflow edge whose reviewer skill carries a `check:` runs deterministically.
-	wf := "transitions:\n  - {from: in_progress, to: integrated, reviewer_skill: \"satelle-story-integration-review\"}\n"
+	wf := wfDoc(baselineWorkflow, `"*"`, `digraph w {
+  backlog -> in_progress
+  in_progress -> integrated [reviewer_skill="satelle-story-integration-review"]
+  integrated -> done
+}`)
 
 	t.Run("pass accepts, agent not run", func(t *testing.T) {
 		g, r := gater(t, `{"decision":"reject"}`, fakeDocs{workflow: wf, skillBody: checkSkill, skillFound: true})

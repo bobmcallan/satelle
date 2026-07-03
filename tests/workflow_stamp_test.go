@@ -53,7 +53,7 @@ func TestWorkflowStampedAtCreate(t *testing.T) {
 	}
 }
 
-const wfXFeature = "---\nname: wf-x\ntype: workflow\napplies_to: [\"feature\"]\n---\n# X declares the engage edge\n" +
+const wfXFeature = "---\nname: wf-x\ntype: workflow\ndescription: engage-edge lifecycle for feature stories\napplies_to: [\"feature\"]\nscope: project\n---\n# X declares the engage edge\n" +
 	"```dot\n" + `digraph x {
   backlog [shape=Mdiamond]
   in_progress [agent=executor]
@@ -64,7 +64,7 @@ const wfXFeature = "---\nname: wf-x\ntype: workflow\napplies_to: [\"feature\"]\n
   backlog -> cancelled
 }` + "\n```\n"
 
-const wfYChore = "---\nname: wf-y\ntype: workflow\napplies_to: [\"chore\"]\n---\n# Y has NO in_progress (engage edge undeclared)\n" +
+const wfYChore = "---\nname: wf-y\ntype: workflow\ndescription: direct-close lifecycle for chore stories\napplies_to: [\"chore\"]\nscope: project\n---\n# Y has NO in_progress (engage edge undeclared)\n" +
 	"```dot\n" + `digraph y {
   backlog [shape=Mdiamond]
   done [shape=Msquare, agent=reviewer]

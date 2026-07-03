@@ -33,6 +33,12 @@ func tempRepo(t *testing.T) string {
 	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// An initialized repo must carry its agents layer — store-backed commands
+	// refuse without it (requireAgents, sty_d0d6bb67). init always seeds it; the
+	// hand-scaffolded test repo does the same.
+	if err := os.WriteFile(filepath.Join(satelleDir, "agents.toml"), []byte("[executor]\nharness = \"in-loop\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("SATELLE_CONFIG", cfgPath)
 	return repo
 }
