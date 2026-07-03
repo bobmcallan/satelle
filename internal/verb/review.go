@@ -107,6 +107,32 @@ var workflowResolver WorkflowResolver
 // stamping.
 func SetWorkflowResolver(r WorkflowResolver) { workflowResolver = r }
 
+// DispatchResult reports a named-agent executor dispatch (sty_fd427546):
+// whether the target state was allocated to a named isolated agent and, when it
+// was, which agent/harness performed it and under which rubric.
+type DispatchResult struct {
+	Dispatched bool   `json:"dispatched"`
+	Agent      string `json:"agent,omitempty"`
+	Command    string `json:"command,omitempty"`
+	Skill      string `json:"skill,omitempty"`
+}
+
+// ExecutorDispatcher runs the named isolated agent a workflow node allocates a
+// step to (agent=<name> — sty_fd427546): agents.toml defines WHO, the workflow
+// DOT defines WHERE, the binary only RUNS it. Called after the edge's gates
+// accept and BEFORE the status is enacted — an error refuses the transition
+// (status unchanged). Implemented in internal/reviewer.
+type ExecutorDispatcher interface {
+	DispatchExecutor(ctx context.Context, item workitem.Item, toStatus string) (DispatchResult, error)
+}
+
+// executorDispatcher is wired at bootstrap beside the transition gater. Nil
+// keeps every step in-loop (today's behaviour).
+var executorDispatcher ExecutorDispatcher
+
+// SetExecutorDispatcher wires the named-agent dispatch. Pass nil to disable.
+func SetExecutorDispatcher(d ExecutorDispatcher) { executorDispatcher = d }
+
 // StepSummariser produces a read-only prose recap of an enacted transition,
 // recorded as a step_summary ledger row. Implemented in internal/reviewer.
 type StepSummariser interface {

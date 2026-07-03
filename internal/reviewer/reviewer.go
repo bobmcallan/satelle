@@ -113,6 +113,13 @@ type Gater struct {
 	// clear bounded failure instead of an open-ended block (sty_6c88ca10).
 	// Zero/negative disables the bound (tests).
 	agentTimeout time.Duration
+	// namedAgents resolves a NAMED agent binding from the agents layer
+	// (.satelle/agents.toml [<name>] sections) for executor dispatch
+	// (sty_fd427546). Nil keeps every step in-loop.
+	namedAgents func(name string) (config.AgentBinding, bool)
+	// newRunner builds the runner for a named binding's harness — swappable in
+	// tests; defaults to agentcli.RunnerFromHarness.
+	newRunner func(harness string) (agentcli.Runner, error)
 }
 
 // New builds a Gater over the agent runner and doc index. model "" inherits the
@@ -122,7 +129,7 @@ func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Gater 
 		runner: runner, docs: docs, repoRoot: repoRoot, model: model, tools: defaultTools,
 		checkTimeout: defaultCheckTimeout, check: execCheck, injectPrinciples: true,
 		attempts: defaultReviewerAttempts, backoff: defaultReviewerBackoff,
-		agentTimeout: defaultAgentTimeout,
+		agentTimeout: defaultAgentTimeout, newRunner: agentcli.RunnerFromHarness,
 	}
 }
 
@@ -509,6 +516,124 @@ func (g *Gater) guardWorkflowStructure(ctx context.Context, item workitem.Item) 
 			doc.Name, strings.Join(problems, "; "), doc.Name)
 	}
 	return nil
+}
+
+// SetNamedAgents wires the resolver for NAMED agent bindings from the agents
+// layer (.satelle/agents.toml [<name>] sections) — the WHO of a workflow node's
+// agent=<name> allocation (sty_fd427546). Nil keeps every step in-loop.
+func (g *Gater) SetNamedAgents(fn func(name string) (config.AgentBinding, bool)) { g.namedAgents = fn }
+
+// DispatchExecutor implements verb.ExecutorDispatcher: when the TARGET state of
+// an accepted transition is allocated to a NAMED agent (agent=<name>, neither
+// "executor" nor "reviewer"), the binding's harness performs the step
+// synchronously — prompt assembled from the item (title, body, acceptance
+// criteria on stdin) plus the node's @skill rubric, tools/model/principles from
+// the binding, nothing hardcoded (sty_fd427546). A missing binding or a failed
+// run is an ERROR — the caller refuses the transition (broken definition never
+// silently falls back in-loop, consistent with sty_d0d6bb67). agent=executor,
+// agent-less, and reviewer states dispatch nothing; a named binding whose
+// harness is explicitly "in-loop" also stays with the orchestrator.
+func (g *Gater) DispatchExecutor(ctx context.Context, item workitem.Item, toStatus string) (verb.DispatchResult, error) {
+	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
+	if err != nil {
+		if errors.Is(err, docindex.ErrNotFound) {
+			return verb.DispatchResult{}, nil
+		}
+		return verb.DispatchResult{}, err
+	}
+	spec, ok := wfdot.Parse(doc.Body)
+	if !ok {
+		return verb.DispatchResult{}, nil
+	}
+	var target *wfdot.State
+	for i := range spec.States {
+		if spec.States[i].Name == toStatus {
+			target = &spec.States[i]
+			break
+		}
+	}
+	if target == nil || target.Agent == "" || target.Agent == "executor" || target.Agent == "reviewer" {
+		return verb.DispatchResult{}, nil
+	}
+	if g.namedAgents == nil {
+		return verb.DispatchResult{}, fmt.Errorf(
+			"workflow %q allocates state %q to named agent %q but no agents layer is wired", doc.Name, toStatus, target.Agent)
+	}
+	binding, found := g.namedAgents(target.Agent)
+	if !found {
+		return verb.DispatchResult{}, fmt.Errorf(
+			"workflow %q allocates state %q to agent %q but .satelle/agents.toml defines no [%s] binding — define it, or reassign the step",
+			doc.Name, toStatus, target.Agent, target.Agent)
+	}
+	runner, err := g.newRunner(binding.Harness)
+	if err != nil {
+		return verb.DispatchResult{}, fmt.Errorf("named agent %q: broken harness in .satelle/agents.toml: %w", target.Agent, err)
+	}
+	if runner == nil {
+		return verb.DispatchResult{}, nil // harness "in-loop": the orchestrator performs the step
+	}
+	// The system prompt: the step's own @skill rubric when the node declares one
+	// (absent stays advisory — the engagement guard already vets executor-path
+	// skills), under a short executor charter. Principles ride per the binding.
+	sys := fmt.Sprintf(
+		"You are the isolated executor agent %q performing step %q of the workflow %q. "+
+			"The work item (title, body, acceptance criteria) arrives on stdin as JSON. "+
+			"Perform the step's work in this repository. Do NOT change the item's status — the workflow's gates govern every advance.",
+		target.Agent, toStatus, doc.Name)
+	if target.Skill != "" {
+		if rubric, rerr := g.skillBody(ctx, target.Skill); rerr == nil {
+			sys += "\n\n" + rubric
+		} else if !errors.Is(rerr, docindex.ErrNotFound) {
+			return verb.DispatchResult{}, rerr
+		}
+	}
+	if binding.InjectsPrinciples() {
+		if p := g.alwaysPrinciples(ctx); p != "" {
+			sys += "\n\n" + p
+		}
+	}
+	payload, err := json.Marshal(transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: target.Skill})
+	if err != nil {
+		return verb.DispatchResult{}, err
+	}
+	res := verb.DispatchResult{Dispatched: true, Agent: target.Agent, Command: runner.Command(), Skill: target.Skill}
+	g.emitProgress("dispatching step %s to named agent %s (may take several minutes)…", toStatus, target.Agent)
+	dctx := ctx
+	if g.checkTimeout > 0 {
+		var cancel context.CancelFunc
+		dctx, cancel = context.WithTimeout(ctx, g.checkTimeout)
+		defer cancel()
+	}
+	out, runErr := runner.Run(dctx, agentcli.Request{
+		SystemPrompt: sys,
+		Payload:      string(payload),
+		AllowedTools: binding.Tools,
+		Model:        binding.Model,
+		Dir:          g.repoRoot,
+	})
+	g.logExecutorRun(target.Agent, item.ID, toStatus, out, runErr)
+	if runErr != nil {
+		return res, fmt.Errorf("named agent %q failed performing step %q: %w", target.Agent, toStatus, runErr)
+	}
+	return res, nil
+}
+
+// logExecutorRun appends a named-agent run's output (or failure) to
+// <data_dir>/logs/executor.log — the run log that makes an isolated executor's
+// work reviewable (sty_fd427546). Best-effort, like the reviewer log.
+func (g *Gater) logExecutorRun(agent, itemID, state string, out []byte, runErr error) {
+	if g.logDir == "" {
+		return
+	}
+	now := time.Now()
+	status := "ok"
+	if runErr != nil {
+		status = "error: " + runErr.Error()
+	}
+	line := fmt.Sprintf("%s\t%s\t%s\tstate %s\t%s — output: %s",
+		now.UTC().Format(time.RFC3339), agent, itemID, state, status,
+		strings.ReplaceAll(strings.TrimSpace(string(out)), "\n", "\\n"))
+	_ = logfile.Append(now, filepath.Join(g.logDir, "executor.log"), g.logCfg, line)
 }
 
 // engagementSkillCheck is the synthetic reviewer name recorded when the

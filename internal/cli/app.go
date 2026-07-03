@@ -83,6 +83,11 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// Stamp the governing workflow on every story at create — independent of
 			// create-gating (sty_3800ac23).
 			verb.SetWorkflowResolver(rev)
+			// Named-agent executor dispatch (sty_fd427546): a workflow node's
+			// agent=<name> allocation runs that binding's harness at the transition.
+			// agents.toml defines WHO, the DOT defines WHERE, the binary only runs it.
+			rev.SetNamedAgents(agents.NamedBinding)
+			verb.SetExecutorDispatcher(rev)
 			// The summariser recaps gated transitions; inert until gating is active.
 			verb.SetStepSummariser(rev)
 			// Create-gating is opt-in per repo (satelle.toml [review] gate_create):

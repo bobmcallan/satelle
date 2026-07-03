@@ -291,6 +291,30 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		}
 	}
 
+	// A workflow node may allocate the TARGET state to a NAMED isolated agent
+	// (agent=<name> — sty_fd427546). The binding's harness performs the step
+	// synchronously here, after the edge's gates accepted and BEFORE the status is
+	// enacted: a dispatch failure refuses the whole transition (status unchanged),
+	// and the spawned agent never advances status itself — the state's exit gate
+	// still governs the next edge. agent=executor and agent-less states dispatch
+	// nothing (the in-loop orchestrator performs, today's behaviour).
+	if transitioning && executorDispatcher != nil {
+		res, derr := executorDispatcher.DispatchExecutor(ctx, current, *req.Status)
+		if derr != nil {
+			appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "executor",
+				fmt.Sprintf("named-agent dispatch failed for %s→%s: %v", current.Status, *req.Status, derr),
+				transitionPayload(current.Status, *req.Status, res.Skill), now)
+			notifyChange(panelTopic(current.Kind))
+			return nil, fmt.Errorf("transition %s→%s refused: %v", current.Status, *req.Status, derr)
+		}
+		if res.Dispatched {
+			appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "executor",
+				fmt.Sprintf("dispatched step %q to named agent %q (%s) with @skill:%s",
+					*req.Status, res.Agent, res.Command, res.Skill),
+				transitionPayload(current.Status, *req.Status, res.Skill), now)
+		}
+	}
+
 	it, err := store.Update(ctx, req.ID, workitem.UpdateInput{
 		Title:              req.Title,
 		Body:               req.Body,
