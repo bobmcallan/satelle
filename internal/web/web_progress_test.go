@@ -47,12 +47,18 @@ func TestProgressLightsFillLeadingGap(t *testing.T) {
 	if !strings.Contains(body, `review-light-pending" title="1. not run"`) {
 		t.Errorf("expected a muted 'not run' placeholder at step 1 so the strip reads from 1")
 	}
-	// … then the real step-2 light for the recorded transition.
-	if !strings.Contains(body, `title="2. backlog → in_progress`) {
-		t.Errorf("expected the in_progress transition numbered as step 2")
+	// … then the PULSING current light at step 2 — the story is actively IN
+	// in_progress, so its current step pulses (sty_1b170b73).
+	if !strings.Contains(body, `review-light-current" title="current stage">2</span>`) {
+		t.Errorf("expected the current (pulsing) light at step 2 for the in_progress story")
 	}
-	// It must NOT start the strip at 2 with no leading 1.
-	if strings.Contains(body, `title="2. backlog → in_progress`) && !strings.Contains(body, `>1</span>`) {
+	// The entry transition into the current state must NOT ALSO render as a
+	// completed step-2 light (that would double the step number).
+	if strings.Contains(body, `title="2. backlog → in_progress`) {
+		t.Errorf("the entry into the current state must not render as a completed step-2 light")
+	}
+	// It must still start the strip at 1.
+	if !strings.Contains(body, `>1</span>`) {
 		t.Errorf("progress strip did not start from 1")
 	}
 }

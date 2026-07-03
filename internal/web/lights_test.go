@@ -102,14 +102,39 @@ func TestBuildLights(t *testing.T) {
 	}
 }
 
-func TestBuildLightsNonTerminalTrailsCurrent(t *testing.T) {
+func TestBuildLightsCurrentStepPulses(t *testing.T) {
+	// A story sitting IN step 1 (open→in_progress is step 1, its current state):
+	// the entry transition is NOT a completed light — step 1 itself pulses.
 	chrono := []ledger.Entry{
 		ev(ledger.KindReviewAccept, "open", "in_progress"),
 		ev(ledger.KindStatusTransition, "open", "in_progress"),
 	}
 	lights := buildLights(chrono, "in_progress", testStep)
-	if len(lights) != 2 || lights[1].State != "current" || lights[1].Index != 2 {
-		t.Fatalf("want [pass, current(2)], got %v", lights)
+	if len(lights) != 1 || lights[0].State != "current" || lights[0].Index != 1 {
+		t.Fatalf("want [current(1)], got %v", lights)
+	}
+}
+
+func TestBuildLightsPriorStepDoneCurrentPulses(t *testing.T) {
+	// Step 1 (open→in_progress) done, then the NON-terminal step 2 (in_progress→
+	// release) is the current state: step 1 stays a completed pass, step 2 pulses —
+	// no duplicate step-2 done light for the entry into release.
+	step := func(s string) int { return map[string]int{"in_progress": 1, "release": 2}[s] }
+	chrono := []ledger.Entry{
+		ev(ledger.KindReviewAccept, "open", "in_progress"),
+		ev(ledger.KindStatusTransition, "open", "in_progress"),
+		ev(ledger.KindReviewAccept, "in_progress", "release"),
+		ev(ledger.KindStatusTransition, "in_progress", "release"),
+	}
+	lights := buildLights(chrono, "release", step)
+	if len(lights) != 2 {
+		t.Fatalf("want 2 lights, got %v", lights)
+	}
+	if lights[0].State != "pass" || lights[0].Index != 1 {
+		t.Errorf("light[0] = %v, want step 1 pass", lights[0])
+	}
+	if lights[1].State != "current" || lights[1].Index != 2 {
+		t.Errorf("light[1] = %v, want current step 2", lights[1])
 	}
 }
 
@@ -148,25 +173,23 @@ func TestBuildLightsNumbersByStepNotAppearance(t *testing.T) {
 }
 
 func TestBuildLightsRetriedStepSharesNumber(t *testing.T) {
-	// Step 1 (open→in_progress) rejected then accepted: both lights are step 1
-	// (1 red then 1 green), with a current light at the next step.
+	// Step 1 (open→in_progress) rejected then accepted, and step 1 is the CURRENT
+	// state: the reject stays a red step-1 light, but the accepted entry transition
+	// into the current state is not a completed light — step 1 itself pulses.
 	chrono := []ledger.Entry{
 		ev(ledger.KindReviewReject, "open", "in_progress"),
 		ev(ledger.KindReviewAccept, "open", "in_progress"),
 		ev(ledger.KindStatusTransition, "open", "in_progress"),
 	}
 	lights := buildLights(chrono, "in_progress", testStep)
-	if len(lights) != 3 {
-		t.Fatalf("want 3 lights, got %v", lights)
+	if len(lights) != 2 {
+		t.Fatalf("want 2 lights, got %v", lights)
 	}
 	if lights[0].Index != 1 || lights[0].State != "fail" {
 		t.Errorf("light[0] = %v, want step 1 fail", lights[0])
 	}
-	if lights[1].Index != 1 || lights[1].State != "pass" {
-		t.Errorf("light[1] = %v, want step 1 pass", lights[1])
-	}
-	if lights[2].State != "current" || lights[2].Index != 2 {
-		t.Errorf("light[2] = %v, want current step 2", lights[2])
+	if lights[1].State != "current" || lights[1].Index != 1 {
+		t.Errorf("light[1] = %v, want current step 1", lights[1])
 	}
 }
 
@@ -183,13 +206,14 @@ func TestBuildLightsChronologicalAscending(t *testing.T) {
 		ev(ledger.KindStatusTransition, "d", "e"), // 4
 		ev(ledger.KindStatusTransition, "e", "f"), // 5
 	}
-	lights := buildLights(chrono, "f", step) // non-terminal → trails a current at the next step
+	lights := buildLights(chrono, "f", step) // non-terminal → step 5 (its current state) pulses
 	var idx []int
 	for _, l := range lights {
 		idx = append(idx, l.Index)
 	}
-	// Completed steps 1,2,3,3,4,5 then the current (pulsing) light LAST at step 6.
-	want := []int{1, 2, 3, 3, 4, 5, 6}
+	// Completed steps 1,2,3,3,4 then the current (pulsing) light LAST at step 5 — the
+	// entry into "f" (step 5) is the current light, not an extra completed step.
+	want := []int{1, 2, 3, 3, 4, 5}
 	if len(idx) != len(want) {
 		t.Fatalf("indices = %v, want %v", idx, want)
 	}
