@@ -211,6 +211,21 @@ tr.expansion > td { background: var(--expand-bg); padding: 0; }
 .detail-link { font-size: 12px; }
 .open-story { display: inline-block; margin-bottom: 12px; font-size: 12.5px; font-weight: 600; }
 
+/* Task runs (sty_30a917f8): a task's executions rendered as a native run list —
+   each run its own card with a status badge, timestamps, and recorded output. An
+   in-progress run is set apart by an amber left rail (matching the s-in_progress
+   badge colour) so an active run reads distinct from done/cancelled at a glance. */
+ol.run-list { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+ol.run-list li.run { border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 8px; padding: 8px 12px; background: var(--panel); }
+li.run.run-s-in_progress { border-left-color: #e0a200; }
+li.run.run-s-done { border-left-color: #16a34a; }
+li.run.run-s-cancelled { border-left-color: var(--muted); }
+.run-head { display: flex; align-items: center; gap: 8px; }
+.run-id { font-family: var(--mono, monospace); font-size: 12.5px; }
+.run-meta { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+.run-output { margin-top: 8px; font-size: 12px; }
+.run-noout { color: var(--muted); font-style: italic; font-size: 11.5px; margin-top: 6px; }
+
 /* Ledger timeline */
 ol.timeline { list-style: none; margin: 0; padding: 0; border-left: 2px solid var(--line); }
 ol.timeline li { position: relative; padding: 0 0 14px 16px; }

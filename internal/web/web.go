@@ -687,8 +687,20 @@ type detailData struct {
 	Item       workitem.Item
 	Events     []ledger.Entry
 	Docs       []storyDocVM
+	Executions []executionVM // populated only for a TASK — its runs (sty_30a917f8)
 	TopBar     topBar
 	Standalone bool
+}
+
+// executionVM is one RUN of a task prepared for the task-native detail panel: its
+// status, timestamps, and recorded output (sty_30a917f8). A task is not a story —
+// its detail reads as a work-definition plus a run list, not a story clone.
+type executionVM struct {
+	ID        string
+	Status    string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	Output    string // recorded run output (frontmatter stripped); "" when none
 }
 
 // storyDocRef is one of a story's attached documents (from story-doc-list /
@@ -720,12 +732,17 @@ func loadDetail(ctx context.Context, group, id string) (detailData, error) {
 	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
 		events[i], events[j] = events[j], events[i]
 	}
-	// A story's attached documents become tabs on the detail page. Best-effort:
-	// the timeline and detail still render if a doc fails to load. Tasks have none,
-	// so the list comes back empty and no tab strip shows.
+	// An item's attached documents become tabs on the detail page. Best-effort:
+	// the timeline and detail still render if a doc fails to load. For a TASK the
+	// attachment dir also holds run files (exe_*.md work-definitions and
+	// output-*.md run outputs) — those are NOT artifacts: they belong to the run
+	// list, so they are filtered out here (sty_30a917f8).
 	var docs []storyDocVM
 	if refs, derr := fetchList[storyDocRef](ctx, "story-doc-list", map[string]any{"story_id": id}); derr == nil {
 		for _, ref := range refs {
+			if group == "task" && (strings.HasPrefix(ref.Name, "exe_") || strings.HasPrefix(ref.Name, "output-")) {
+				continue
+			}
 			full, gerr := fetchOne[storyDocRef](ctx, "story-doc-get", map[string]any{"story_id": id, "name": ref.Name})
 			if gerr != nil {
 				continue
@@ -733,7 +750,37 @@ func loadDetail(ctx context.Context, group, id string) (detailData, error) {
 			docs = append(docs, storyDocVM{Name: ref.Name, Type: ref.Type, HTML: renderMarkdown(full.Body)})
 		}
 	}
-	return detailData{Item: item, Events: events, Docs: docs, TopBar: topBar{Uptime: formatUptime(time.Since(serverStart))}}, nil
+	// A task's RUNS are its executions (store items parented to the task), rendered
+	// as a native run list with per-run status, timestamps, and recorded output
+	// read from the task's OKF output-<exe>.md docs (sty_30a917f8).
+	var executions []executionVM
+	if group == "task" {
+		if runs, rerr := fetchList[workitem.Item](ctx, "execution-list", map[string]any{"parent_id": id}); rerr == nil {
+			for _, run := range runs {
+				out := ""
+				if od, gerr := fetchOne[storyDocRef](ctx, "story-doc-get", map[string]any{"story_id": id, "name": "output-" + run.ID}); gerr == nil {
+					out = stripFrontmatter(od.Body)
+				}
+				executions = append(executions, executionVM{
+					ID: run.ID, Status: run.Status, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt, Output: out,
+				})
+			}
+		}
+	}
+	return detailData{Item: item, Events: events, Docs: docs, Executions: executions, TopBar: topBar{Uptime: formatUptime(time.Since(serverStart))}}, nil
+}
+
+// stripFrontmatter removes a leading `---\n…\n---\n` YAML block, returning the
+// body — so a generated OKF doc's run output renders without its frontmatter.
+func stripFrontmatter(s string) string {
+	if !strings.HasPrefix(s, "---\n") {
+		return strings.TrimSpace(s)
+	}
+	if end := strings.Index(s[4:], "\n---"); end >= 0 {
+		rest := s[4+end+len("\n---"):]
+		return strings.TrimSpace(strings.TrimPrefix(rest, "\n"))
+	}
+	return strings.TrimSpace(s)
 }
 
 func itemFragment(group string) http.HandlerFunc {
