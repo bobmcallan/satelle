@@ -118,7 +118,10 @@ with no binary release. See `satelle help reviewer-checks` and the
   authored markdown is the source of truth, synced into a SQLite index by a
   directory monitor.
 - **Config:** per-repo `.satelle/satelle.toml` with defaults for every setting
-  and a gitignored `satelle.local.toml` overlay.
+  and a gitignored `satelle.local.toml` overlay. Optional `stories_keep_closed`
+  (count) and `stories_keep_days` (age) prune closed stories' attachment dirs
+  under `.satelle/stories` — moving them to `.satelle/backups/stories/`; a
+  non-terminal story's dir is always kept.
 
 See [`docs/spec.md`](./docs/spec.md), [`docs/architecture.md`](./docs/architecture.md),
 and [`docs/agent-model.md`](./docs/agent-model.md) (the operating

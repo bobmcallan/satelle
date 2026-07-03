@@ -75,6 +75,15 @@ type Config struct {
 	// DefaultLogsMaxFiles. Daily rolling is always on.
 	LogsMaxSizeKB int `toml:"logs_max_size_kb"`
 	LogsMaxFiles  int `toml:"logs_max_files"`
+	// StoriesKeepClosed keeps the N most-recently-updated CLOSED-story attachment
+	// dirs under .satelle/stories; 0 (default) disables count-based pruning.
+	// StoriesKeepDays prunes a closed story's dir when the story's terminal update
+	// is older than N days; 0 (default) disables age-based pruning. The two
+	// compose — either triggers pruning. A NON-terminal story's dir is ALWAYS kept
+	// regardless of either setting. Pruning MOVES the dir to
+	// .satelle/backups/stories/ (never deletes in place). (sty_aba7200c)
+	StoriesKeepClosed int `toml:"stories_keep_closed"`
+	StoriesKeepDays   int `toml:"stories_keep_days"`
 	// Review opts this repo into reviewer-gated work. Off by default — the
 	// rubrics ship embedded, but ENFORCEMENT is the operator's choice (the
 	// process is configured, not hardcoded-on).

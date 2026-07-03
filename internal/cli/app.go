@@ -54,6 +54,9 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// The stories dir (<data_dir>/stories) holds per-story ATTACHMENTS only — the
 	// database is the sole story store (the markdown mirror was removed, sty_fa1e02e1).
 	verb.SetStoryDir(filepath.Join(filepath.Dir(a.DBPath), "stories"))
+	// Archive-retention policy for the closed-story attachment dirs — a no-op
+	// unless satelle.toml sets a count/age policy (sty_aba7200c).
+	verb.SetStoryRetention(a.Config.StoriesKeepClosed, a.Config.StoriesKeepDays)
 	// A task, unlike a story, IS authored substrate: its <data_dir>/tasks/tsk_*.md
 	// work-definition file is the source of truth and the store is its index
 	// (sty_c1f9e74c). Wire the dir so create/set materialise the file and `reindex`
