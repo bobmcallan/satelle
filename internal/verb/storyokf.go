@@ -46,6 +46,14 @@ func SyncStoryBacklog(ctx context.Context, store *workitem.Store, now time.Time)
 	// documents/story-implementation-summary sub-bundle — migrate any legacy
 	// commit-summary-sty_*.md into the owning story's folder.
 	migrateLegacySummaries(storyDir)
+	// Enforce archive retention over the closed-story attachment dirs — a no-op
+	// unless satelle.toml configures a count/age policy (sty_aba7200c). Best-effort:
+	// a prune failure is surfaced but the backlog view is already regenerated.
+	archived, aerr := pruneClosedStoryDirs(ctx, store, now)
+	if aerr != nil {
+		return len(items), pruned, aerr
+	}
+	pruned += archived
 	return len(items), pruned, nil
 }
 

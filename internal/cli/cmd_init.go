@@ -390,6 +390,13 @@ const scaffoldToml = `# satelle.toml — per-repo config (committed, secret-free
 # logs_max_size_kb = 5120        # roll a .satelle/logs file past this size (default 5 MiB)
 # logs_max_files = 7             # keep at most this many rotated log files (default 7)
 
+# Archive retention for CLOSED-story attachment dirs under .satelle/stories.
+# Unset (default) = keep everything. The two compose — either triggers pruning.
+# A NON-terminal (open/engaged) story's dir is ALWAYS kept regardless. Pruned
+# dirs are MOVED to .satelle/backups/stories/ (never deleted in place).
+# stories_keep_closed = 50       # keep the N most-recently-updated closed-story dirs
+# stories_keep_days = 90         # drop a closed story's dir older than N days
+
 # [review] — opt into reviewer-gated work (off by default). The reviewer rubrics
 # ship embedded; enabling enforcement is your choice (needs an agent CLI — see
 # 'satelle agent'). gate_create runs the required-structure reviewer on
