@@ -408,6 +408,13 @@ func stripFrontmatter(body string) string {
 // single-reviewer callers keep their contract. Gated=false (enact directly)
 // when no reviewer governs the edge.
 func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (verb.GateDecision, error) {
+	// Broken substrate refuses to run (sty_d0d6bb67): a governing workflow that
+	// fails its deterministic structure check must never gate work — refuse the
+	// transition with the problems, instead of silently proceeding under a broken
+	// definition.
+	if err := g.guardWorkflowStructure(ctx, item); err != nil {
+		return verb.GateDecision{}, err
+	}
 	skills, declared, err := g.reviewerSkills(ctx, item, item.Status, toStatus)
 	if err != nil {
 		return verb.GateDecision{}, err
@@ -474,6 +481,36 @@ func (g *Gater) Gate(ctx context.Context, item workitem.Item, toStatus string) (
 	return result, nil
 }
 
+// guardWorkflowStructure refuses a gate whose governing DEFINITION is broken
+// (sty_d0d6bb67): the active workflow must pass its deterministic structure
+// check (internal/structure) before it may gate a transition. The substrate
+// executes as defined or refuses — a broken workflow never silently governs.
+// Embedded canonical defaults are the binary's own bytes (validated by satelle's
+// tests), so only authored (non-embedded) substrate is judged here; no resolvable
+// workflow at all keeps the gateless path working.
+func (g *Gater) guardWorkflowStructure(ctx context.Context, item workitem.Item) error {
+	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
+	if err != nil {
+		if errors.Is(err, docindex.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if doc.Embedded {
+		return nil
+	}
+	// resolveSkill is nil DELIBERATELY: executor-skill actionability is the
+	// engagement guard's territory (guardEngagementExecutorSkills — a recorded,
+	// edge-scoped DECISION), not a hard structural error on every edge. This
+	// guard judges only whether the workflow DEFINITION itself is well-formed.
+	if problems := structure.Doc("workflows", doc.Name, doc.Body, nil); len(problems) > 0 {
+		return fmt.Errorf(
+			"gate refused: governing workflow %q fails structure validation: %s — fix the substrate (`satelle workflow validate %s`) before gated transitions can run",
+			doc.Name, strings.Join(problems, "; "), doc.Name)
+	}
+	return nil
+}
+
 // engagementSkillCheck is the synthetic reviewer name recorded when the
 // deterministic engagement guard blocks because the active workflow's path to
 // done has an executor step whose skill does not resolve.
@@ -532,6 +569,15 @@ func (g *Gater) runReviewer(ctx context.Context, item workitem.Item, toStatus, s
 			return verb.GateDecision{Gated: false}, nil
 		}
 		return verb.GateDecision{}, err
+	}
+	// Broken substrate refuses to run (sty_d0d6bb67): a PRESENT reviewer skill
+	// that fails its deterministic structure check must not judge the edge. An
+	// ABSENT rubric stays advisory by design (fresh repos keep working); an
+	// invalid one is a broken definition and refuses, naming the problems.
+	if problems := structure.Doc("skills", skill, body, nil); len(problems) > 0 {
+		return verb.GateDecision{}, fmt.Errorf(
+			"gate refused: reviewer skill %q fails structure validation: %s — fix the substrate (`satelle skill validate %s`)",
+			skill, strings.Join(problems, "; "), skill)
 	}
 	tp := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: skill}
 	if g.children != nil {

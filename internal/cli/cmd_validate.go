@@ -9,6 +9,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,58 +50,12 @@ func authoredValidateCmd(kind string) *cobra.Command {
 func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error {
 	out := cmd.OutOrStdout()
 	resolve := skillResolver(a)
-	validated, failed, exempt := 0, 0, 0
 
 	dir := a.AuthoredDirs()[kind]
 	if kind == "tasks" {
 		dir = filepath.Join(filepath.Dir(a.DBPath), "tasks")
 	}
-	if entries, derr := os.ReadDir(dir); derr == nil {
-		for _, e := range entries {
-			fn := e.Name()
-			if e.IsDir() || !strings.HasSuffix(fn, ".md") {
-				continue
-			}
-			if kind == "tasks" && !strings.HasPrefix(fn, "tsk_") {
-				continue
-			}
-			name := strings.TrimSuffix(fn, ".md")
-			if nameFilter != "" && nameFilter != name {
-				continue
-			}
-			if reservedKeepFile(fn) {
-				exempt++
-				fmt.Fprintf(out, "EXEMPT %s/%s (reserved keep-file)\n", kind, name)
-				continue
-			}
-			body, rerr := os.ReadFile(filepath.Join(dir, fn))
-			if rerr != nil {
-				failed++
-				fmt.Fprintf(out, "FAIL  %s/%s — read: %v\n", kind, name, rerr)
-				continue
-			}
-			validated++
-			var problems []string
-			switch kind {
-			case "documents":
-				if err := docindex.OKFConformance(name, string(body)); err != nil {
-					problems = []string{err.Error()}
-				}
-			case "tasks":
-				problems = structure.CheckTask(string(body))
-			default:
-				problems = structure.Doc(kind, name, string(body), resolve)
-			}
-			if len(problems) > 0 {
-				for _, p := range problems {
-					failed++
-					fmt.Fprintf(out, "FAIL  %s/%s — %s\n", kind, name, p)
-				}
-			} else {
-				fmt.Fprintf(out, "PASS  %s/%s\n", kind, name)
-			}
-		}
-	}
+	validated, failed, exempt := validateAuthoredDir(out, kind, dir, nameFilter, resolve)
 
 	// Cross-workflow consistency (ambiguous applies_to, unresolved referenced
 	// skills) — a whole-set check, so only for the workflows kind without a name.
@@ -120,6 +75,63 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 		return fmt.Errorf("%d %s failed validation", failed, kind)
 	}
 	return nil
+}
+
+// validateAuthoredDir runs the deterministic per-file check for one kind over a
+// directory's markdown files (nameFilter narrows to one), printing PASS/FAIL
+// lines to out and returning the counts. It is file-based and store-free, so it
+// serves both the per-noun `satelle <noun> validate` (validateKind) and the init
+// deployment validation (sty_d0d6bb67), which runs before anything is indexed.
+func validateAuthoredDir(out io.Writer, kind, dir, nameFilter string, resolve func(skill string) bool) (validated, failed, exempt int) {
+	entries, derr := os.ReadDir(dir)
+	if derr != nil {
+		return 0, 0, 0
+	}
+	for _, e := range entries {
+		fn := e.Name()
+		if e.IsDir() || !strings.HasSuffix(fn, ".md") {
+			continue
+		}
+		if kind == "tasks" && !strings.HasPrefix(fn, "tsk_") {
+			continue
+		}
+		name := strings.TrimSuffix(fn, ".md")
+		if nameFilter != "" && nameFilter != name {
+			continue
+		}
+		if reservedKeepFile(fn) {
+			exempt++
+			fmt.Fprintf(out, "EXEMPT %s/%s (reserved keep-file)\n", kind, name)
+			continue
+		}
+		body, rerr := os.ReadFile(filepath.Join(dir, fn))
+		if rerr != nil {
+			failed++
+			fmt.Fprintf(out, "FAIL  %s/%s — read: %v\n", kind, name, rerr)
+			continue
+		}
+		validated++
+		var problems []string
+		switch kind {
+		case "documents":
+			if err := docindex.OKFConformance(name, string(body)); err != nil {
+				problems = []string{err.Error()}
+			}
+		case "tasks":
+			problems = structure.CheckTask(string(body))
+		default:
+			problems = structure.Doc(kind, name, string(body), resolve)
+		}
+		if len(problems) > 0 {
+			for _, p := range problems {
+				failed++
+				fmt.Fprintf(out, "FAIL  %s/%s — %s\n", kind, name, p)
+			}
+		} else {
+			fmt.Fprintf(out, "PASS  %s/%s\n", kind, name)
+		}
+	}
+	return validated, failed, exempt
 }
 
 // reservedKeepFile reports whether fn is a reserved, non-authored keep-file that

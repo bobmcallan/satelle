@@ -31,7 +31,7 @@ installing.
 go build -o satelle ./cmd/satelle   # or: make install
 
 cd your-repo
-satelle init           # scaffold .satelle/ (config, database, default workflows + skills)
+satelle init           # scaffold .satelle/ (config, database, default workflows + skills) + validate the deployment
 satelle story create --title "Ship the thing" --priority high
 satelle task create  --title "write release notes"
 satelle reindex          # index authored markdown under .satelle/
