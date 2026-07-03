@@ -1042,11 +1042,16 @@ const WorkflowStampPrefix = "workflow:"
 // A story resolves by its authored category; an EXECUTION resolves by its KIND
 // ("execution"), so a task-execution workflow (applies_to:["execution"]) governs
 // runs without depending on a per-item category, and an execution never falls
-// through to the wildcard STORY workflow (sty_ef08ce2a). Tasks keep their
-// category (a task header has no running lifecycle to gate).
+// through to the wildcard STORY workflow (sty_ef08ce2a). A TASK header resolves
+// by its kind too (sty_3c1a2a9d): a header carries an authored category
+// ("substrate", "docs", …) no workflow declares, so category resolution would
+// fall through to the wildcard story workflow — the misrouting this closes. A
+// header driven directly lands on the task workflow, whose coded entry gate
+// refuses with the remedy (create an execution), instead of story gates.
 func workflowCategory(item workitem.Item) string {
-	if item.Kind == workitem.KindExecution {
-		return string(workitem.KindExecution)
+	switch item.Kind {
+	case workitem.KindExecution, workitem.KindTask:
+		return string(item.Kind)
 	}
 	return item.Category
 }

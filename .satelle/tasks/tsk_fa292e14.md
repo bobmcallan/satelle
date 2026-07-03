@@ -4,7 +4,7 @@ type: task
 status: done
 priority: medium
 category: substrate
-tags: context, substrate, principles, epic:session-context, workflow:satelle-project-workflow
+tags: context, substrate, principles, epic:session-context
 created: 2026-07-01T03:14:09Z
 updated: 2026-07-01T07:02:16Z
 ---

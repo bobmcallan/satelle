@@ -1391,24 +1391,37 @@ func TestOrderedWorkflowsPriority(t *testing.T) {
 }
 
 // TestExecutionResolvesToTaskExecutionWorkflow asserts the kind-aware resolution
-// (sty_ef08ce2a): an execution resolves by its KIND ("execution") to a workflow
-// declaring applies_to:["execution"], and NEVER falls through to the wildcard
-// story workflow. A story still resolves by category to the wildcard.
+// (sty_ef08ce2a, extended by sty_3c1a2a9d): an execution resolves by its KIND
+// ("execution") and a task HEADER by its kind ("task") to a workflow declaring
+// applies_to:["execution","task"], and NEITHER falls through to the wildcard
+// story workflow — a header's authored category ("substrate", "docs", …) is
+// never the resolution key. A story still resolves by category to the wildcard.
 func TestExecutionResolvesToTaskExecutionWorkflow(t *testing.T) {
 	storyWild := docindex.Doc{Name: "satelle-project-workflow", Embedded: false,
 		Body: "---\nscope: project\napplies_to: [\"*\"]\n---\n"}
 	taskExec := docindex.Doc{Name: "satelle-task-workflow", Embedded: false,
-		Body: "---\nscope: project\napplies_to: [\"execution\"]\n---\n"}
+		Body: "---\nscope: project\napplies_to: [\"execution\", \"task\"]\n---\n"}
 	all := []docindex.Doc{storyWild, taskExec}
 
 	// The resolution key for an execution is its kind, not its (empty) category.
 	if got := workflowCategory(workitem.Item{Kind: workitem.KindExecution}); got != "execution" {
 		t.Fatalf("workflowCategory(execution) = %q, want \"execution\"", got)
 	}
+	// The resolution key for a task header is its kind, not its authored category.
+	if got := workflowCategory(workitem.Item{Kind: workitem.KindTask, Category: "substrate"}); got != "task" {
+		t.Fatalf("workflowCategory(task) = %q, want \"task\"", got)
+	}
 	// An execution resolves to the task-execution workflow, not the story wildcard.
 	got := OrderedWorkflows(all, workflowCategory(workitem.Item{Kind: workitem.KindExecution}))
 	if len(got) == 0 || got[0].Name != "satelle-task-workflow" {
 		t.Fatalf("execution head = %v, want satelle-task-workflow (not the story workflow)", names(got))
+	}
+	// An unstamped task header ALSO resolves to the task workflow (sty_3c1a2a9d):
+	// its authored category matches no workflow, and falling through to the
+	// wildcard story workflow was the misrouting that ran headers through story gates.
+	tk := OrderedWorkflows(all, workflowCategory(workitem.Item{Kind: workitem.KindTask, Category: "substrate"}))
+	if len(tk) == 0 || tk[0].Name != "satelle-task-workflow" {
+		t.Fatalf("task-header head = %v, want satelle-task-workflow (not the story workflow)", names(tk))
 	}
 	// A story keeps resolving by category to the wildcard project workflow.
 	sk := OrderedWorkflows(all, workflowCategory(workitem.Item{Kind: workitem.KindStory, Category: "feature"}))

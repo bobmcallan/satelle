@@ -2,57 +2,51 @@
 name: satelle-task-validate-before-review
 scope: project
 type: skill
-tags: [type:skill, type:reviewer]
-description: Entry gate for a task EXECUTION (backlog → in_progress). An isolated reviewer judges that the run about to start is a well-formed, re-runnable execution of a VALID task — the task header it names exists and declares an ACTION and how success is VERIFIED. Reviewers-only (judges, never enacts). Repo skill for the satelle executable-task machinery (sty_a25337ae); pushes back when a run is not ready to begin.
+tags: [type:skill, type:reviewer, type:functional-check]
+description: CODED entry gate for a task EXECUTION (backlog → in_progress). The skill carries a self-contained functional check (no agent run) that reads the transition payload on stdin and judges STRUCTURE deterministically — the run names a parent task header that exists and is structurally valid (frontmatter id, type task, status, a title heading — the same contract as structure.CheckTask / satelle task validate). Whether the work was DONE is not judged here: completion is the close gate's job (satelle-task-validate-after-review, LLM). Repo skill for the satelle executable-task machinery; pushes back when a run is not ready to begin.
 ---
 
-# Task execution — validate-before (begin-run gate)
+# Task execution — validate-before (coded begin-run gate)
 
-You are an isolated reviewer deciding whether a task **execution** is ready for
-work to **begin** (`backlog → in_progress`). An execution is one isolated RUN of
-a task; the task itself is a stable authored header/work-definition. You receive
-`{story, from, to}` on stdin — here `story` is the **execution** item, carrying
-its title, body, and `parent_id` (the `tsk_` task it runs). You may read the
-repository (Read/Grep/Glob) to verify the task header; you must not modify
-anything. Judge readiness of the run — not whether the work is done (it has not
-started).
+This is the **coded** entry gate on `backlog → in_progress` for a task
+**execution** — one isolated RUN of a task (the task header is a stable authored
+work-definition; the run is the item transitioning). The check below IS the
+decision — deterministic shell, no LLM (see [[satelle-agent-model]]: mechanism
+runs, the gate decides; the decision stays configuration per
+[[satelle-constitution]]). It receives the `{story, from, to}` transition
+payload on stdin, where `story` is the execution item carrying `parent_id` —
+the `tsk_` header it runs.
 
-## How to judge
+What it judges — structure only, mirroring `structure.CheckTask`
+(`satelle task validate`):
 
-An execution is a run of its parent task, so first confirm the run is anchored to
-a real, well-formed task, then confirm the run itself declares its contract.
+- the execution names a parent task (`parent_id`), and that header file exists
+  under `.satelle/tasks/`;
+- the header is structurally valid: YAML frontmatter with an `id`, `type: task`
+  (OKF), a `status`, and a `# Title` heading in the body.
 
-## Accept when
+What it deliberately does NOT judge: whether the task's items were completed —
+that is the close gate (`satelle-task-validate-after-review`), and the richness
+of the work-definition prose is the author's business. A task may update
+code/files; shipping those changes is the operator's, not this workflow's.
 
-1. **The execution names a parent task.** `parent_id` is a `tsk_` id, and that
-   task header exists under `.satelle/tasks/<parent_id>.md` (the file is the
-   source of truth). A run with no resolvable parent task is not a valid run.
-2. **The parent task is a valid work-definition.** Its header declares a concrete
-   **ACTION** (what to do) and how success is **VERIFIED** — the executable
-   contract. If the task body is vague ("make it nicer") or states no way to check
-   success, the run cannot be judged done later, so it is not ready to begin.
-3. **The execution's own body carries the run's ACTION + VERIFICATION** — what
-   this run will do and how it will show it worked. It may restate or refine the
-   task's contract; it must not be empty.
-
-That is the whole bar. satelle is non-opinionated beyond this — do not demand a
-design, estimates, tags, an assigned agent, or a particular style. An execution
-that names an executor `agent` (from agents.toml) is fine but not required.
-
-## Reject when
-
-The run is not anchored to a valid task (no `parent_id`, or the task header is
-missing), the task or the execution states no ACTION or no VERIFICATION, or the
-contract is untestable. On reject, give a short, actionable list of what to add so
-the executor can fix and resubmit.
-
-## Verdict
-
-Reply with exactly one JSON object, nothing else of that shape:
-
-```json
-{"decision": "accept", "notes": ""}
+```check
+# Coded structural entry gate. Reads {story, from, to} on stdin; exit 0
+# accepts, non-zero rejects with the reason on stdout.
+IN=$(cat)
+rest=${IN##*\"to\":\"}; to=${rest%%\"*}
+[ "$to" = "in_progress" ] || exit 0
+case "$IN" in
+  *'"parent_id":"tsk_'*) ;;
+  *) echo "execution names no parent task header — create the run with: satelle execution create --parent <tsk_id> ..."; exit 1;;
+esac
+rest=${IN#*\"parent_id\":\"}; parent=${rest%%\"*}
+F=".satelle/tasks/$parent.md"
+[ -f "$F" ] || { echo "parent task header $F does not exist — a run executes an authored task"; exit 1; }
+head -1 "$F" | grep -q '^---$'   || { echo "$F: missing YAML frontmatter"; exit 1; }
+grep -q '^id:' "$F"              || { echo "$F: frontmatter missing id"; exit 1; }
+grep -Eq '^type:[[:space:]]*task[[:space:]]*$' "$F" || { echo "$F: frontmatter must have 'type: task' (OKF)"; exit 1; }
+grep -q '^status:' "$F"          || { echo "$F: frontmatter missing status"; exit 1; }
+grep -q '^# ' "$F"               || { echo "$F: body missing a '# Title' heading"; exit 1; }
+exit 0
 ```
-
-`decision` is `"accept"` or `"reject"`; `notes` is a brief actionable string
-(may be empty on accept).

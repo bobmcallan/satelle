@@ -4,7 +4,7 @@ type: task
 status: backlog
 priority: high
 category: substrate
-tags: context, substrate, doc-list, cli, epic:session-context, workflow:satelle-project-workflow
+tags: context, substrate, doc-list, cli, epic:session-context
 created: 2026-07-01T02:22:53Z
 updated: 2026-07-01T03:14:38Z
 ---
