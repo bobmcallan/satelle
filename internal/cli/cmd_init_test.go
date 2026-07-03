@@ -277,17 +277,20 @@ func TestRunInitSeedsDefaultSolution(t *testing.T) {
 	}
 }
 
-// TestRunInitRespectsAuthoredWorkflows asserts init never seeds the default
-// solution beside an existing authored workflow set (it would compete with it).
-func TestRunInitRespectsAuthoredWorkflows(t *testing.T) {
+// TestRunInitSeedsAdditivelyBesideAuthoredWorkflow asserts init seeds the
+// default solution ADDITIVELY, per file (sty_f6bd6f84): beside an authored
+// wildcard project workflow, the wildcard default is SKIPPED (routing safety —
+// it would duplicate the "*" precedence), but the non-overlapping parent and
+// task-execution defaults DO seed, the authored file is untouched, and the
+// deployed system still validates.
+func TestRunInitSeedsAdditivelyBesideAuthoredWorkflow(t *testing.T) {
 	repo := t.TempDir()
 	wfDir := filepath.Join(repo, ".satelle", "workflows")
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// The authored workflow is CONFORMANT — init now validates the deployed
-	// system and exits non-zero over broken substrate (sty_d0d6bb67), so a repo
-	// whose own set is respected must still validate green.
+	// A CONFORMANT authored wildcard project workflow — init validates the
+	// deployed system, so the healed set must still validate green.
 	own := filepath.Join(wfDir, "my-workflow.md")
 	ownBody := "---\nname: my-workflow\ntype: workflow\ndescription: my own lifecycle\napplies_to: [\"*\"]\nscope: project\n---\n\n# mine\n\n```dot\ndigraph w {\n  backlog -> in_progress -> done\n}\n```\n"
 	if err := os.WriteFile(own, []byte(ownBody), 0o644); err != nil {
@@ -297,16 +300,78 @@ func TestRunInitRespectsAuthoredWorkflows(t *testing.T) {
 	if err := runInit(&out, repo); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
-	for _, wf := range defaultSolutionWorkflows {
-		if fileExists(filepath.Join(wfDir, wf+".md")) {
-			t.Errorf("init seeded %s beside an authored workflow set", wf)
+	// The wildcard project default is skipped (it would compete with the authored
+	// "*" workflow); the report explains why.
+	if fileExists(filepath.Join(wfDir, "satelle-project-workflow.md")) {
+		t.Error("init seeded the wildcard project default beside an authored wildcard workflow")
+	}
+	if !strings.Contains(out.String(), "claimed by an authored workflow") {
+		t.Errorf("report does not explain the skipped wildcard default:\n%s", out.String())
+	}
+	// The non-overlapping defaults DO seed — this is the additive heal.
+	for _, wf := range []string{"satelle-parent-workflow", "satelle-task-workflow"} {
+		if !fileExists(filepath.Join(wfDir, wf+".md")) {
+			t.Errorf("init did not additively seed %s beside the authored workflow", wf)
 		}
 	}
-	if !strings.Contains(out.String(), "authored workflows present") {
-		t.Errorf("report does not say the authored set was respected:\n%s", out.String())
+	// The gate skills the defaults reference are seeded even though the project
+	// default's own file was skipped (its refs are still collected).
+	for _, sk := range defaultSolutionSkills {
+		if !fileExists(filepath.Join(repo, ".satelle", "skills", sk+".md")) {
+			t.Errorf("init did not seed referenced gate skill %s", sk)
+		}
 	}
 	if got, _ := os.ReadFile(own); !strings.Contains(string(got), "# mine") {
 		t.Error("authored workflow was modified")
+	}
+}
+
+// TestRunInitHealsMissingGateSkillDeadlock reproduces the satelle-server field
+// failure (sty_f6bd6f84): a repo authored its own wildcard project workflow and,
+// under an older binary, had some gate skills seeded but not
+// satelle-estimate-actual-review — so the current binary's fail-fast validation
+// would refuse over the dangling reference while holding the file embedded.
+// Per-file additive seeding must HEAL it: re-running init seeds the missing gate
+// skill (the default solution references it), leaves the present files untouched,
+// and validates green. A second init is idempotent.
+func TestRunInitHealsMissingGateSkillDeadlock(t *testing.T) {
+	repo := t.TempDir()
+	dataDir := filepath.Join(repo, ".satelle")
+	wfDir := filepath.Join(dataDir, "workflows")
+	skDir := filepath.Join(dataDir, "skills")
+	for _, d := range []string{wfDir, skDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Authored wildcard project workflow whose estimate gate references the gate
+	// skill that is MISSING on disk — the dangling reference the old init deadlocked on.
+	own := "---\nname: my-workflow\ntype: workflow\ndescription: my own lifecycle\napplies_to: [\"*\"]\nscope: project\n---\n\n# mine\n\n```dot\ndigraph w {\n  backlog -> in_progress -> done\n  estimate [agent=reviewer, prompt=\"@skill:satelle-estimate-actual-review\", on=\"in_progress,done\"]\n}\n```\n"
+	if err := os.WriteFile(filepath.Join(wfDir, "my-workflow.md"), []byte(own), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// satelle-estimate-actual-review is intentionally absent; init must seed it.
+	if fileExists(filepath.Join(skDir, "satelle-estimate-actual-review.md")) {
+		t.Fatal("precondition: the gate skill must start absent")
+	}
+
+	if err := runInit(io.Discard, repo); err != nil {
+		t.Fatalf("init must HEAL the missing default and validate green, got: %v", err)
+	}
+	if !fileExists(filepath.Join(skDir, "satelle-estimate-actual-review.md")) {
+		t.Error("init did not seed the missing gate skill — deadlock not healed")
+	}
+	// The authored workflow is untouched.
+	if got, _ := os.ReadFile(filepath.Join(wfDir, "my-workflow.md")); string(got) != own {
+		t.Error("init modified the authored workflow while healing")
+	}
+	// Idempotent: a second init creates nothing new.
+	var out strings.Builder
+	if err := runInit(&out, repo); err != nil {
+		t.Fatalf("second init: %v", err)
+	}
+	if strings.Contains(out.String(), "  + ") {
+		t.Errorf("second init created something (not idempotent):\n%s", out.String())
 	}
 }
 
