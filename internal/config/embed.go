@@ -29,7 +29,7 @@ var substrateFS embed.FS
 // start (it ships carrying the principles:session residency marker) and
 // guaranteed into every reviewer's context, so the agent (and the reviewer) is
 // driven to the result. Residency is otherwise authored via the principles:session
-// marker (see internal/cli hook + internal/reviewer): a principle is session
+// marker (see internal/cli hook + internal/agentstep): a principle is session
 // because it is tagged, or on-demand (the default) because it is not — never
 // auto-injected (sty_53a4233c). Its content is overridable by a repo
 // (.satelle/principles).

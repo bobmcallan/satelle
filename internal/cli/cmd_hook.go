@@ -25,10 +25,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
-	"github.com/bobmcallan/satelle/internal/reviewer"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -162,7 +162,7 @@ func storyEngaged() bool {
 
 	engaged := map[string]bool{"in_progress": true} // fallback if no workflow resolves
 	if wfs, e := a.Store.DocIndex.List(ctx, "workflows"); e == nil {
-		if ordered := reviewer.OrderedWorkflows(wfs, ""); len(ordered) > 0 {
+		if ordered := agentstep.OrderedWorkflows(wfs, ""); len(ordered) > 0 {
 			if es := executorStates(ordered[0].Body); len(es) > 0 {
 				engaged = map[string]bool{}
 				for _, s := range es {

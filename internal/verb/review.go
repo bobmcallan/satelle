@@ -47,7 +47,7 @@ type ReviewerVerdict struct {
 }
 
 // TransitionGater judges a requested status transition in an isolated,
-// fresh-context subprocess. The implementation lives in internal/reviewer; verb
+// fresh-context subprocess. The implementation lives in internal/agentstep; verb
 // holds only the seam so the dispatch layer stays free of the agent CLI.
 type TransitionGater interface {
 	Gate(ctx context.Context, item workitem.Item, toStatus string) (GateDecision, error)
@@ -74,7 +74,7 @@ type CreateDraft struct {
 }
 
 // CreateReviewer judges a draft work item's required structure before creation,
-// in an isolated subprocess. Implemented in internal/reviewer.
+// in an isolated subprocess. Implemented in internal/agentstep.
 type CreateReviewer interface {
 	ReviewCreate(ctx context.Context, draft CreateDraft) (GateDecision, error)
 }
@@ -90,7 +90,7 @@ func SetCreateReviewer(r CreateReviewer) { createReviewer = r }
 // so the create path can STAMP the choice on the story (sty_3800ac23) and the
 // restamp path can re-resolve it mid-flight (sty_ed3386cf). Wired independently
 // of create-gating — a story is stamped whenever a workflow governs it.
-// Implemented in internal/reviewer.
+// Implemented in internal/agentstep.
 type WorkflowResolver interface {
 	WorkflowNameFor(ctx context.Context, category string) string
 	// WorkflowStates returns the lifecycle states the named workflow declares and
@@ -126,7 +126,7 @@ type DispatchResult struct {
 // step to (agent=<name> — sty_fd427546): agents.toml defines WHO, the workflow
 // DOT defines WHERE, the binary only RUNS it. Called after the edge's gates
 // accept and BEFORE the status is enacted — an error refuses the transition
-// (status unchanged). Implemented in internal/reviewer.
+// (status unchanged). Implemented in internal/agentstep.
 type ExecutorDispatcher interface {
 	DispatchExecutor(ctx context.Context, item workitem.Item, toStatus string) (DispatchResult, error)
 }
@@ -139,7 +139,7 @@ var executorDispatcher ExecutorDispatcher
 func SetExecutorDispatcher(d ExecutorDispatcher) { executorDispatcher = d }
 
 // StepSummariser produces a read-only prose recap of an enacted transition,
-// recorded as a step_summary ledger row. Implemented in internal/reviewer.
+// recorded as a step_summary ledger row. Implemented in internal/agentstep.
 type StepSummariser interface {
 	Summarise(ctx context.Context, item workitem.Item, from, to string) (string, error)
 }

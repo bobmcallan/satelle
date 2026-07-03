@@ -1,4 +1,4 @@
-package reviewer
+package agentstep
 
 import (
 	"context"
@@ -156,7 +156,7 @@ func TestReviewerSystemPromptInjectsPrinciplesAndCTA(t *testing.T) {
 			{Kind: "principles", Name: "satelle-not-resident", Body: "---\nname: x\ntype: principle\n---\nnot resident"},
 		},
 	}
-	g, r := gater(t, `{"decision":"accept"}`, docs)
+	g, r := newEngine(t, `{"decision":"accept"}`, docs)
 	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done"); err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func TestReviewerSystemPromptOmitsPrinciplesWhenDisabled(t *testing.T) {
 			{Kind: "principles", Name: config.OperatingPrinciple, Body: alwaysPrincipleDoc},
 		},
 	}
-	g, r := gater(t, `{"decision":"accept"}`, docs)
+	g, r := newEngine(t, `{"decision":"accept"}`, docs)
 	g.SetInjectPrinciples(false) // disable injection for this agent
 	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done"); err != nil {
 		t.Fatal(err)
@@ -246,7 +246,7 @@ func TestEngagementBlockedWhenExecutorSkillMissing(t *testing.T) {
 		skillDoc("satelle-story-intent-review"),
 		skillDoc("satelle-story-done-review"),
 	}}
-	g, _ := gater(t, `{"decision":"accept"}`, docs)
+	g, _ := newEngine(t, `{"decision":"accept"}`, docs)
 	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "in_progress")
 	if err != nil {
 		t.Fatal(err)
@@ -269,7 +269,7 @@ func TestEngagementBlockedWhenExecutorSkillMissing(t *testing.T) {
 // the path to done resolves, the guard passes and the edge proceeds normally.
 func TestEngagementProceedsWhenExecutorSkillsResolve(t *testing.T) {
 	docs := fakeDocs{workflow: engageDOT, skillBody: "rubric", skillFound: true}
-	g, _ := gater(t, `{"decision":"accept"}`, docs)
+	g, _ := newEngine(t, `{"decision":"accept"}`, docs)
 	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "in_progress")
 	if err != nil {
 		t.Fatal(err)
@@ -284,7 +284,7 @@ func TestEngagementProceedsWhenExecutorSkillsResolve(t *testing.T) {
 func TestEngagementGuardSkippedOffEngagementEdge(t *testing.T) {
 	// commit-push is missing; if the guard ran off-edge it would block. It must not.
 	docs := fakeDocs{workflow: engageDOT, skillBody: "rubric", skillFound: true}
-	g, _ := gater(t, `{"decision":"accept"}`, docs)
+	g, _ := newEngine(t, `{"decision":"accept"}`, docs)
 	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "commit_push")
 	if err != nil {
 		t.Fatal(err)
@@ -294,7 +294,7 @@ func TestEngagementGuardSkippedOffEngagementEdge(t *testing.T) {
 	}
 }
 
-func gater(t *testing.T, out string, docs fakeDocs) (*Gater, *fakeRunner) {
+func newEngine(t *testing.T, out string, docs fakeDocs) (*Engine, *fakeRunner) {
 	t.Helper()
 	r := &fakeRunner{out: out}
 	return New(r, docs, "/repo", ""), r
@@ -413,7 +413,7 @@ func TestParseProseDecision(t *testing.T) {
 // A JSON decision object always wins over prose wording in the same output —
 // parseDecision runs first and the fallback is never consulted (sty_9485d47e).
 func TestGate_jsonVerdictPrecedesProse(t *testing.T) {
-	g, _ := gater(t, `verdict: reject — but formally: {"decision":"accept","notes":"fine"}`,
+	g, _ := newEngine(t, `verdict: reject — but formally: {"decision":"accept","notes":"fine"}`,
 		fakeDocs{workflow: testWorkflow, skillBody: "rubric body", skillFound: true})
 	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done")
 	if err != nil {
@@ -529,7 +529,7 @@ func (b *blockingRunner) Run(ctx context.Context, _ agentcli.Request) ([]byte, e
 // A running gate emits progress so a slow-but-working reviewer is visibly
 // distinct from a hang (sty_6c88ca10).
 func TestGate_emitsProgress(t *testing.T) {
-	g, _ := gater(t, `{"decision":"accept"}`,
+	g, _ := newEngine(t, `{"decision":"accept"}`,
 		fakeDocs{workflow: testWorkflow, skillBody: "rubric body", skillFound: true})
 	var msgs []string
 	g.SetProgress(func(m string) { msgs = append(msgs, m) })
@@ -567,7 +567,7 @@ func TestGate_agentTimeoutBoundsAWedgedReviewer(t *testing.T) {
 }
 
 func TestGateAcceptEnacts(t *testing.T) {
-	g, r := gater(t, `the story is ready {"decision":"accept","notes":"looks good"} done`,
+	g, r := newEngine(t, `the story is ready {"decision":"accept","notes":"looks good"} done`,
 		fakeDocs{workflow: testWorkflow, skillBody: "rubric body", skillFound: true})
 	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done")
 	if err != nil {
@@ -588,7 +588,7 @@ func TestGateAcceptEnacts(t *testing.T) {
 }
 
 func TestGateRejectBlocks(t *testing.T) {
-	g, _ := gater(t, `{"decision":"reject","notes":"no acceptance criteria"}`,
+	g, _ := newEngine(t, `{"decision":"reject","notes":"no acceptance criteria"}`,
 		fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
 	dec, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "done")
 	if err != nil {
@@ -604,7 +604,7 @@ func TestGateRejectBlocks(t *testing.T) {
 
 func TestUngatedEdgeIsAdvisory(t *testing.T) {
 	// backlog→cancelled has no reviewer_skill — must not gate (and must not run).
-	g, r := gater(t, `{"decision":"reject"}`,
+	g, r := newEngine(t, `{"decision":"reject"}`,
 		fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
 	dec, err := g.Gate(context.Background(), workitem.Item{Status: "backlog"}, "cancelled")
 	if err != nil {
@@ -621,7 +621,7 @@ func TestUngatedEdgeIsAdvisory(t *testing.T) {
 func TestNamedSkillButRubricAbsentIsAdvisory(t *testing.T) {
 	// Workflow names a reviewer skill, but its rubric is not installed — advisory
 	// until it ships (keeps fresh repos / pre-A4 working).
-	g, r := gater(t, `{"decision":"reject"}`,
+	g, r := newEngine(t, `{"decision":"reject"}`,
 		fakeDocs{workflow: testWorkflow, skillFound: false})
 	dec, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "done")
 	if err != nil {
@@ -636,7 +636,7 @@ func TestNamedSkillButRubricAbsentIsAdvisory(t *testing.T) {
 }
 
 func TestBadDecisionErrors(t *testing.T) {
-	g, _ := gater(t, `no json here`,
+	g, _ := newEngine(t, `no json here`,
 		fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
 	if _, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "done"); err == nil {
 		t.Fatal("expected error on unparseable reviewer output")
@@ -816,7 +816,7 @@ func TestScopedReviewerByOnList(t *testing.T) {
 // under a broken definition.
 func TestGateRefusesBrokenWorkflowStructure(t *testing.T) {
 	broken := "---\nname: " + baselineWorkflow + "\n---\n# no type/description/scope, no DOT\n"
-	g, r := gater(t, `{"decision":"accept"}`, fakeDocs{workflow: broken, skillBody: "rubric", skillFound: true})
+	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: broken, skillBody: "rubric", skillFound: true})
 	_, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "in_progress")
 	if err == nil {
 		t.Fatal("want the gate refused under a structurally broken workflow")
@@ -838,7 +838,7 @@ func TestGateRefusesBrokenReviewerSkill(t *testing.T) {
 		// present but broken: frontmatter carries no type/description.
 		{Kind: "skills", Name: "satelle-story-done-review", Body: "---\nname: satelle-story-done-review\n---\nrubric\n"},
 	}}
-	g, r := gater(t, `{"decision":"accept"}`, docs)
+	g, r := newEngine(t, `{"decision":"accept"}`, docs)
 	_, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done")
 	if err == nil {
 		t.Fatal("want the gate refused under a structurally broken reviewer skill")
@@ -868,7 +868,7 @@ var dispatchWF = wfDoc(baselineWorkflow, `"*"`, `digraph w {
 // tools/model — nothing hardcoded (sty_fd427546).
 func TestDispatchExecutorRunsNamedBinding(t *testing.T) {
 	docs := fakeDocs{workflow: dispatchWF, skillBody: "alignment rubric", skillFound: true}
-	g, _ := gater(t, "", docs)
+	g, _ := newEngine(t, "", docs)
 	r := &fakeRunner{out: "did the work"}
 	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
 		if name != "architect" {
@@ -917,7 +917,7 @@ func TestDispatchExecutorRunsNamedBinding(t *testing.T) {
 // binding in agents.toml is a broken definition — the dispatch errors (the
 // transition is refused), never silently falling back in-loop.
 func TestDispatchExecutorMissingBindingRefuses(t *testing.T) {
-	g, r := gater(t, "", fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true})
+	g, r := newEngine(t, "", fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true})
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) { return config.AgentBinding{}, false })
 	_, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan")
 	if err == nil {
@@ -937,7 +937,7 @@ func TestDispatchExecutorMissingBindingRefuses(t *testing.T) {
 // states dispatch nothing — the in-loop orchestrator performs, today's
 // behaviour.
 func TestDispatchExecutorInLoopStatesUnchanged(t *testing.T) {
-	g, _ := gater(t, "", fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true})
+	g, _ := newEngine(t, "", fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true})
 	called := false
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
 		called = true
@@ -956,7 +956,7 @@ func TestDispatchExecutorInLoopStatesUnchanged(t *testing.T) {
 // caller refuses the transition (status unchanged).
 func TestDispatchExecutorRunFailureSurfaces(t *testing.T) {
 	docs := fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true}
-	g, _ := gater(t, "", docs)
+	g, _ := newEngine(t, "", docs)
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
 		return config.AgentBinding{Harness: "fake -p {system}"}, true
 	})
@@ -974,7 +974,7 @@ func TestGateRefusesUndeclaredEdge(t *testing.T) {
 	// in_progress→integrated is NOT a declared edge in testWorkflow. The gate must
 	// refuse it (error) so a story cannot skip a gate by jumping across an
 	// undeclared edge — and the reviewer must not run.
-	g, r := gater(t, `{"decision":"accept"}`,
+	g, r := newEngine(t, `{"decision":"accept"}`,
 		fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
 	_, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "integrated")
 	if err == nil {
@@ -989,7 +989,7 @@ func TestGateRefusesUndeclaredEdge(t *testing.T) {
 // CLI. A well-formed draft accepts; one missing the goal or numbered ACs rejects.
 func TestReviewCreateAcceptAndReject(t *testing.T) {
 	ctx := context.Background()
-	g, _ := gater(t, "", fakeDocs{})
+	g, _ := newEngine(t, "", fakeDocs{})
 
 	good := verb.CreateDraft{Kind: "story", Title: "Add X", Body: "Make the thing do X", AcceptanceCriteria: "1. a", Category: "feature"}
 	dec, err := g.ReviewCreate(ctx, good)
@@ -1013,7 +1013,7 @@ func TestReviewCreateAcceptAndReject(t *testing.T) {
 // The create check is ALWAYS gated (structure is the one thing satelle enforces
 // on creation) and never depends on a rubric being installed or an agent runner.
 func TestReviewCreateAlwaysGatedNoRunner(t *testing.T) {
-	g, r := gater(t, "", fakeDocs{skillFound: false})
+	g, r := newEngine(t, "", fakeDocs{skillFound: false})
 	dec, err := g.ReviewCreate(context.Background(), verb.CreateDraft{Kind: "story", Title: "x"})
 	if err != nil {
 		t.Fatal(err)
@@ -1041,7 +1041,7 @@ const plainWF = "---\nname: " + baselineWorkflow + "\ntype: workflow\napplies_to
 // When the active workflow declares create_review, a structurally-valid draft is
 // judged by that reviewer; its reject blocks creation with the notes.
 func TestReviewCreateContentReject(t *testing.T) {
-	g, _ := gater(t, `{"decision":"reject","notes":"ACs do not match the goal"}`,
+	g, _ := newEngine(t, `{"decision":"reject","notes":"ACs do not match the goal"}`,
 		fakeDocs{workflow: createWF, skillBody: "content/alignment rubric", skillFound: true})
 	dec, err := g.ReviewCreate(context.Background(), validDraft)
 	if err != nil {
@@ -1057,7 +1057,7 @@ func TestReviewCreateContentReject(t *testing.T) {
 
 // The declared reviewer's accept persists (structure + content both pass).
 func TestReviewCreateContentAccept(t *testing.T) {
-	g, _ := gater(t, `{"decision":"accept","notes":"aligned"}`,
+	g, _ := newEngine(t, `{"decision":"accept","notes":"aligned"}`,
 		fakeDocs{workflow: createWF, skillBody: "content/alignment rubric", skillFound: true})
 	dec, err := g.ReviewCreate(context.Background(), validDraft)
 	if err != nil {
@@ -1071,7 +1071,7 @@ func TestReviewCreateContentAccept(t *testing.T) {
 // With NO create_review declared, creation is deterministic-only: the content
 // reviewer (an agent) is never run.
 func TestReviewCreateNoWorkflowBinding(t *testing.T) {
-	g, r := gater(t, `{"decision":"reject","notes":"should not run"}`,
+	g, r := newEngine(t, `{"decision":"reject","notes":"should not run"}`,
 		fakeDocs{workflow: plainWF, skillFound: false})
 	dec, err := g.ReviewCreate(context.Background(), validDraft)
 	if err != nil {
@@ -1088,7 +1088,7 @@ func TestReviewCreateNoWorkflowBinding(t *testing.T) {
 // A structural failure pre-empts: the content reviewer is never run on a
 // malformed draft, even when the workflow declares one.
 func TestReviewCreateStructurePreemptsContent(t *testing.T) {
-	g, r := gater(t, `{"decision":"accept"}`,
+	g, r := newEngine(t, `{"decision":"accept"}`,
 		fakeDocs{workflow: createWF, skillBody: "content/alignment rubric", skillFound: true})
 	bad := verb.CreateDraft{Kind: "story", Title: "x"} // no goal, no numbered AC
 	dec, err := g.ReviewCreate(context.Background(), bad)
@@ -1126,7 +1126,7 @@ digraph w {
 ` + "```"
 
 func TestSummariseReturnsTrimmedProse(t *testing.T) {
-	g, r := gater(t, "  Moved from in_progress to done after the criteria were met.\n",
+	g, r := newEngine(t, "  Moved from in_progress to done after the criteria were met.\n",
 		fakeDocs{workflow: stepWF, skillBody: "summariser rubric", skillFound: true})
 	s, err := g.Summarise(context.Background(), workitem.Item{Status: "in_progress"}, "in_progress", "done")
 	if err != nil {
@@ -1155,7 +1155,7 @@ func TestSummariseReturnsTrimmedProse(t *testing.T) {
 // When the active workflow declares NO step node, the summariser does not run —
 // transparent opt-in (sty_9a139c78).
 func TestSummariseSkippedWhenNotDeclared(t *testing.T) {
-	g, r := gater(t, "should not run", fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
+	g, r := newEngine(t, "should not run", fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
 	s, err := g.Summarise(context.Background(), workitem.Item{Status: "in_progress"}, "in_progress", "done")
 	if err != nil {
 		t.Fatal(err)
@@ -1171,18 +1171,18 @@ func TestSummariseSkippedWhenNotDeclared(t *testing.T) {
 // A mandatory step node whose rubric is absent surfaces an error (the gap is not
 // silently swallowed); a non-mandatory one stays best-effort (empty, no error).
 func TestSummariseMandatoryVsOptionalWhenAbsent(t *testing.T) {
-	g, _ := gater(t, "", fakeDocs{workflow: stepWF, skillFound: false}) // mandatory
+	g, _ := newEngine(t, "", fakeDocs{workflow: stepWF, skillFound: false}) // mandatory
 	if _, err := g.Summarise(context.Background(), workitem.Item{Status: "in_progress"}, "in_progress", "done"); err == nil {
 		t.Error("mandatory step summary with an absent rubric should error")
 	}
-	g2, _ := gater(t, "", fakeDocs{workflow: stepWFOptional, skillFound: false}) // optional
+	g2, _ := newEngine(t, "", fakeDocs{workflow: stepWFOptional, skillFound: false}) // optional
 	if s, err := g2.Summarise(context.Background(), workitem.Item{Status: "in_progress"}, "in_progress", "done"); err != nil || s != "" {
 		t.Errorf("optional step summary with an absent rubric should be empty/no-error, got %q/%v", s, err)
 	}
 }
 
 func TestSummariseEmptyWhenRubricAbsent(t *testing.T) {
-	g, r := gater(t, "should not run", fakeDocs{workflow: stepWFOptional, skillFound: false})
+	g, r := newEngine(t, "should not run", fakeDocs{workflow: stepWFOptional, skillFound: false})
 	s, err := g.Summarise(context.Background(), workitem.Item{Status: "in_progress"}, "in_progress", "done")
 	if err != nil {
 		t.Fatal(err)
@@ -1266,7 +1266,7 @@ func TestActiveWorkflowSelectByCategory(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			g, _ := gater(t, `{"decision":"accept","notes":""}`, docs)
+			g, _ := newEngine(t, `{"decision":"accept","notes":""}`, docs)
 			dec, err := g.Gate(context.Background(),
 				workitem.Item{ID: "sty_1", Status: "in_progress", Category: tc.category}, "done")
 			if err != nil {
@@ -1304,7 +1304,7 @@ func TestFunctionalCheckGate(t *testing.T) {
 }`)
 
 	t.Run("pass accepts, agent not run", func(t *testing.T) {
-		g, r := gater(t, `{"decision":"reject"}`, fakeDocs{workflow: wf, skillBody: checkSkill, skillFound: true})
+		g, r := newEngine(t, `{"decision":"reject"}`, fakeDocs{workflow: wf, skillBody: checkSkill, skillFound: true})
 		var ran string
 		g.check = func(_ context.Context, dir, command, payload string) (string, error) {
 			ran = command
@@ -1329,7 +1329,7 @@ func TestFunctionalCheckGate(t *testing.T) {
 	})
 
 	t.Run("fail rejects with output tail", func(t *testing.T) {
-		g, _ := gater(t, ``, fakeDocs{workflow: wf, skillBody: checkSkill, skillFound: true})
+		g, _ := newEngine(t, ``, fakeDocs{workflow: wf, skillBody: checkSkill, skillFound: true})
 		g.check = func(_ context.Context, dir, command, payload string) (string, error) {
 			return "FAIL tests\n2 failures\n", errFakeExit
 		}
@@ -1491,7 +1491,7 @@ func TestReviewerSkillsForDOT(t *testing.T) {
 // A container close gate is judged from the children SATELLE injects into the
 // payload (resolved from the DB), not any on-disk story mirror (sty_fa1e02e1).
 func TestGatePayloadIncludesChildren(t *testing.T) {
-	g, r := gater(t, `{"decision":"accept"}`, fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
+	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
 	g.SetChildrenResolver(func(_ context.Context, parentID string) []ChildState {
 		if parentID != "sty_parent" {
 			t.Errorf("resolver called with %q, want sty_parent", parentID)
@@ -1524,7 +1524,7 @@ func TestSetReviewerModel(t *testing.T) {
 // The model set on the binding must reach the runner Request (so the harness
 // --model carries it to the reviewer subprocess).
 func TestReviewerModelReachesRunner(t *testing.T) {
-	g, r := gater(t, "  recap.\n", fakeDocs{workflow: stepWF, skillBody: "rubric", skillFound: true})
+	g, r := newEngine(t, "  recap.\n", fakeDocs{workflow: stepWF, skillBody: "rubric", skillFound: true})
 	g.SetReviewerModel("sonnet")
 	if _, err := g.Summarise(context.Background(), workitem.Item{Status: "in_progress"}, "in_progress", "done"); err != nil {
 		t.Fatal(err)
@@ -1580,7 +1580,7 @@ func TestActiveWorkflowPreferringStampWins(t *testing.T) {
 		Body: "---\nname: wf-feature\ntype: workflow\napplies_to: [\"feature\"]\n---\n# f\n"}
 	wfChore := docindex.Doc{Kind: "workflows", Name: "wf-chore",
 		Body: "---\nname: wf-chore\ntype: workflow\napplies_to: [\"chore\"]\n---\n# c\n"}
-	g, _ := gater(t, "", fakeDocs{workflow: plainWF, extraWorkflows: []docindex.Doc{wfFeature, wfChore}})
+	g, _ := newEngine(t, "", fakeDocs{workflow: plainWF, extraWorkflows: []docindex.Doc{wfFeature, wfChore}})
 	ctx := context.Background()
 
 	// Category "feature" alone selects wf-feature.
@@ -1656,7 +1656,7 @@ func TestCodedEstimateGate(t *testing.T) {
 	if body == "" || !strings.Contains(body, "```check") {
 		t.Fatalf("embedded estimate skill must carry a self-contained check block")
 	}
-	g, r := gater(t, `{"decision":"reject"}`, fakeDocs{skillBody: body, skillFound: true})
+	g, r := newEngine(t, `{"decision":"reject"}`, fakeDocs{skillBody: body, skillFound: true})
 	g.repoRoot = t.TempDir() // the check runs in the repo root — use a real dir
 
 	cases := []struct {

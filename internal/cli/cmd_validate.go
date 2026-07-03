@@ -16,9 +16,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/docindex"
-	"github.com/bobmcallan/satelle/internal/reviewer"
 	"github.com/bobmcallan/satelle/internal/structure"
 )
 
@@ -64,7 +64,7 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 		if lerr != nil {
 			return lerr
 		}
-		for _, p := range reviewer.WorkflowConsistency(wfs, resolve) {
+		for _, p := range agentstep.WorkflowConsistency(wfs, resolve) {
 			failed++
 			fmt.Fprintf(out, "FAIL  workflows (consistency) — %s\n", p)
 		}
