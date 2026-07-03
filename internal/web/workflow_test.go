@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -182,6 +183,119 @@ func TestWorkflowDiagramCarriesIdentifiers(t *testing.T) {
 	}
 }
 
+// layeredDOT mirrors the project workflow's shape: a gated spine, a recovery
+// (back) edge, a cancel fan, scoped (on=…) reviewers, and an edge-less
+// step-summary declaration — the fixture for the layered layout (sty_677c604c).
+const layeredDOT = `---
+name: w
+applies_to: ["*"]
+---
+` + "```dot" + `
+digraph w {
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor]
+  integration [agent=integrator, prompt="@skill:integrate"]
+  commit      [agent=commit-agent, prompt="@skill:commit"]
+  done        [shape=Msquare]
+  cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
+  step        [agent=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
+  estimate    [agent=reviewer, prompt="@skill:satelle-estimate-actual-review", on="in_progress,done"]
+  backlog -> in_progress
+  in_progress -> integration [reviewer_skill="satelle-code-ac-review"]
+  integration -> commit [reviewer_skill="satelle-integration-review"]
+  commit -> done
+  commit -> in_progress
+  backlog -> cancelled
+  in_progress -> cancelled
+  integration -> cancelled
+}
+` + "```" + `
+`
+
+// nodePos extracts each wf-dnode's rect x/y keyed by data-state.
+func nodePos(t *testing.T, html string) map[string][2]int {
+	t.Helper()
+	re := regexp.MustCompile(`<g class="wf-dnode[^"]*" data-state="([^"]+)"[^>]*><rect x="(\d+)" y="(\d+)"`)
+	out := map[string][2]int{}
+	for _, m := range re.FindAllStringSubmatch(html, -1) {
+		var x, y int
+		fmt.Sscanf(m[2], "%d", &x)
+		fmt.Sscanf(m[3], "%d", &y)
+		out[m[1]] = [2]int{x, y}
+	}
+	return out
+}
+
+// TestWorkflowDiagramLayeredSpine covers sty_677c604c AC1: the main spine reads
+// left-to-right on ONE row (strictly increasing x, equal y), instead of the old
+// vertical stack with every edge arcing through the same right-hand field.
+func TestWorkflowDiagramLayeredSpine(t *testing.T) {
+	html := string(workflowDiagram(parseWorkflow(layeredDOT)))
+	pos := nodePos(t, html)
+	spine := []string{"backlog", "in_progress", "integration", "commit", "done"}
+	for i := 1; i < len(spine); i++ {
+		prev, cur := pos[spine[i-1]], pos[spine[i]]
+		if cur[0] <= prev[0] {
+			t.Errorf("spine x must increase: %s(x=%d) !> %s(x=%d)", spine[i], cur[0], spine[i-1], prev[0])
+		}
+		if cur[1] != prev[1] {
+			t.Errorf("spine must share one row: %s(y=%d) != %s(y=%d)", spine[i], cur[1], spine[i-1], prev[1])
+		}
+	}
+	// A gate label anchors BETWEEN its edge's nodes.
+	re := regexp.MustCompile(`<text class="wf-edge-label" data-from="in_progress" data-to="integration" x="(\d+)"`)
+	m := re.FindStringSubmatch(html)
+	if m == nil {
+		t.Fatalf("code-ac gate label missing:\n%s", html)
+	}
+	var lx int
+	fmt.Sscanf(m[1], "%d", &lx)
+	if lx <= pos["in_progress"][0] || lx >= pos["integration"][0]+148 {
+		t.Errorf("gate label x=%d not anchored between its nodes (%d..%d)", lx, pos["in_progress"][0], pos["integration"][0])
+	}
+	// The diagram keeps its original viewBox for JS pan/zoom reset.
+	if !strings.Contains(html, `data-vb="0 0 `) {
+		t.Error("diagram missing data-vb (pan/zoom reset box)")
+	}
+}
+
+// TestWorkflowDiagramAltAndAnnotations covers sty_677c604c AC2: cancel-fan and
+// recovery edges are de-emphasised (wf-edge-alt, the JS toggle's target), and a
+// scoped (on=…) reviewer renders as an annotation on each target state — never
+// as a free-floating node — while an edge-less unscoped declaration becomes a
+// footnote.
+func TestWorkflowDiagramAltAndAnnotations(t *testing.T) {
+	html := string(workflowDiagram(parseWorkflow(layeredDOT)))
+	// Recovery commit→in_progress is a BACK edge: muted + toggleable.
+	if !regexp.MustCompile(`<path class="wf-edge-path[^"]*back wf-edge-alt" data-from="commit" data-to="in_progress"`).MatchString(html) {
+		t.Errorf("recovery edge should carry back + wf-edge-alt:\n%s", html)
+	}
+	// Every cancel edge is de-emphasised.
+	for _, from := range []string{"backlog", "in_progress", "integration"} {
+		re := regexp.MustCompile(`<path class="wf-edge-path[^"]*wf-edge-alt" data-from="` + from + `" data-to="cancelled"`)
+		if !re.MatchString(html) {
+			t.Errorf("cancel edge %s→cancelled should carry wf-edge-alt:\n%s", from, html)
+		}
+	}
+	// estimate (on="in_progress,done") annotates BOTH targets and is NOT a node.
+	for _, target := range []string{"in_progress", "done"} {
+		if !strings.Contains(html, `<text class="wf-annot" data-state="`+target+`"`) {
+			t.Errorf("scoped reviewer should annotate %s:\n%s", target, html)
+		}
+	}
+	if strings.Contains(html, `data-state="estimate"`) && strings.Contains(html, `<g class="wf-dnode" data-state="estimate"`) {
+		t.Error("a scoped reviewer must not render as a free-floating node")
+	}
+	// step (edge-less, no on=) becomes the footnote line.
+	if !strings.Contains(html, `class="wf-foot"`) || !strings.Contains(html, "step-summary") {
+		t.Errorf("edge-less step declaration should render as a footnote:\n%s", html)
+	}
+	// A named-agent state carries its @agent badge.
+	if !strings.Contains(html, `class="wf-agent-badge"`) || !strings.Contains(html, "@integrator") {
+		t.Errorf("named-agent state should carry its badge:\n%s", html)
+	}
+}
+
 // TestWorkflowDiagramLabelsDoNotOverprint covers sty_19b2107a AC4: when several
 // edges target the same node (here all the cancel edges, plus the gated forward
 // edges), their labels must not collapse onto the same coordinate. The anti-collision
@@ -215,7 +329,7 @@ digraph w {
 
 	// Pull each <text class="wf-edge-label" … x=".." y=".."> and assert no two labels
 	// occupy the same (x,y) — the overprint the story reports.
-	re := regexp.MustCompile(`<text class="wf-edge-label"[^>]*\bx="(\d+)" y="(\d+)"`)
+	re := regexp.MustCompile(`<text class="wf-edge-label[^"]*"[^>]*\bx="(\d+)" y="(\d+)"`)
 	seen := map[string]bool{}
 	matches := re.FindAllStringSubmatch(html, -1)
 	if len(matches) < 2 {

@@ -287,6 +287,22 @@ a.doc:hover { border-color: var(--accent); }
 .wf-diagram .wf-edge-path.wf-hi { stroke: var(--accent); stroke-width: 2.5; }
 .wf-diagram .wf-edge-label.wf-hi { fill: var(--ink); font-weight: 600; }
 .wf-diagram .wf-dim { opacity: 0.25; }
+/* Layered layout extras (sty_677c604c): de-emphasised cancel/recovery edges
+   (toggleable), scoped-reviewer annotations, the named-agent badge, pan cursor. */
+.wf-diagram .wf-edge-path.wf-edge-alt { stroke: var(--line); stroke-width: 1.1; opacity: 0.75; }
+.wf-diagram .wf-edge-label.wf-edge-alt { opacity: 0.7; }
+.wf-diagram.wf-hide-alt .wf-edge-alt { display: none; }
+.wf-diagram .wf-edge-label { text-anchor: start; }
+.wf-diagram .wf-annot { fill: var(--muted); font-family: var(--mono); font-size: 10px; text-anchor: middle; }
+.wf-diagram .wf-foot { fill: var(--muted); font-family: var(--mono); font-size: 10px; }
+.wf-diagram .wf-agent-badge { fill: var(--muted); font-family: var(--mono); font-size: 9.5px; text-anchor: middle; letter-spacing: .04em; }
+.wf-diagram { cursor: grab; touch-action: none; }
+.wf-diagram.wf-panning { cursor: grabbing; }
+.wf-controls { display: flex; align-items: center; gap: 12px; margin: 2px 0 6px; }
+.wf-toggle-alt { font-family: var(--mono); font-size: 11px; color: var(--muted); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; cursor: pointer; }
+.wf-toggle-alt[aria-pressed="true"] { color: var(--ink); border-color: var(--accent); }
+.wf-hint { font-size: 11px; color: var(--muted); }
 /* The correlated transition row (clicking a node) gets a brief accent wash. */
 .wf-edge.wf-edge-hi { background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 4px; }
 

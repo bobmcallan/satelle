@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,10 +24,15 @@ type workflowRowVM struct {
 }
 
 // wfState is a workflow state node. Terminal is true when no transition leaves it.
+// Skill is the node's own @skill: prompt; On lists the target states an edge-less
+// scoped reviewer node gates (its `on=` attribute) — the diagram renders such a
+// node as an ANNOTATION on its targets, not as a free-floating state.
 type wfState struct {
 	Name     string
 	Agent    string
 	Terminal bool
+	Skill    string
+	On       []string
 }
 
 // wfTransition is a directed edge between states; Skill is its reviewer gate
@@ -55,72 +61,6 @@ type workflowDetailVM struct {
 	Body      string
 }
 
-// spineOrder orders the states into a readable top-to-bottom flow: it starts at
-// the state nothing transitions into and walks forward, preferring GATED edges
-// (the main path is gated; blocked/cancelled side-exits are ungated), then
-// appends any states the walk did not reach (branches) in declared order.
-func spineOrder(spec wfSpec) []string {
-	type edge struct {
-		to    string
-		gated bool
-	}
-	adj := map[string][]edge{}
-	indeg := map[string]int{}
-	var names []string
-	seen := map[string]bool{}
-	for _, s := range spec.States {
-		if !seen[s.Name] {
-			seen[s.Name] = true
-			names = append(names, s.Name)
-			indeg[s.Name] = 0
-		}
-	}
-	for _, tr := range spec.Transitions {
-		if tr.From != tr.To {
-			adj[tr.From] = append(adj[tr.From], edge{tr.To, tr.Skill != ""})
-			indeg[tr.To]++
-		}
-	}
-	if len(names) == 0 {
-		return nil
-	}
-	start := names[0]
-	for _, n := range names {
-		if indeg[n] == 0 {
-			start = n
-			break
-		}
-	}
-	visited := map[string]bool{}
-	var order []string
-	for cur := start; cur != "" && !visited[cur]; {
-		visited[cur] = true
-		order = append(order, cur)
-		next := ""
-		for _, e := range adj[cur] { // prefer a gated forward edge
-			if e.gated && !visited[e.to] {
-				next = e.to
-				break
-			}
-		}
-		if next == "" {
-			for _, e := range adj[cur] {
-				if !visited[e.to] {
-					next = e.to
-					break
-				}
-			}
-		}
-		cur = next
-	}
-	for _, n := range names {
-		if !visited[n] {
-			order = append(order, n)
-		}
-	}
-	return order
-}
-
 // shortSkill abbreviates a reviewer skill for an edge label (the full name rides
 // in a tooltip): satelle-story-intent-review → story-intent.
 func shortSkill(s string) string {
@@ -129,39 +69,197 @@ func shortSkill(s string) string {
 	return s
 }
 
-// workflowDiagram renders the parsed lifecycle as a dependency-free SVG flow
-// diagram: states are nodes stacked top-to-bottom, transitions are directed
-// edges curving down the right with their gate labelled. No mermaid — the SVG is
-// generated here from parseWorkflow's output.
+// workflowDiagram renders the parsed lifecycle as a dependency-free, read-only
+// SVG the user can actually FOLLOW (sty_677c604c): a layered left-to-right DAG.
+// States are ranked by longest path from the start, so the main spine reads as
+// one row; gate labels anchor ON their own edges; recovery (backward) edges and
+// the cancel fan (many edges into one terminal exit) are de-emphasised
+// (`wf-edge-alt`, toggleable in JS); an edge-less scoped reviewer node
+// (`on="…"`) renders as an ANNOTATION under each state it gates, never as a
+// free-floating node. Interactivity (pan/zoom, hover highlight, the alt-edge
+// toggle) is progressive enhancement in app.js over the same data-state /
+// data-from/data-to identifiers as before (sty_19b2107a).
 func workflowDiagram(spec wfSpec) template.HTML {
-	order := spineOrder(spec)
-	if len(order) == 0 {
+	// Split ANNOTATION nodes out of the flow: an edge-less reviewer node is a
+	// declaration (a scoped gate or the step-summary opt-in), not a lifecycle
+	// state. Scoped (on=…) reviewers annotate their targets; the rest become a
+	// footnote line.
+	incident := map[string]bool{}
+	for _, tr := range spec.Transitions {
+		incident[tr.From], incident[tr.To] = true, true
+	}
+	annByTarget := map[string][]wfState{}
+	var footers []wfState
+	flow := wfSpec{Transitions: spec.Transitions}
+	for _, s := range spec.States {
+		if s.Agent == "reviewer" && !incident[s.Name] {
+			if len(s.On) > 0 {
+				for _, target := range s.On {
+					annByTarget[target] = append(annByTarget[target], s)
+				}
+			} else {
+				footers = append(footers, s)
+			}
+			continue
+		}
+		flow.States = append(flow.States, s)
+	}
+
+	terminal := map[string]bool{}
+	agentOf := map[string]string{}
+	var names []string
+	known := map[string]bool{}
+	for _, s := range flow.States {
+		terminal[s.Name] = s.Terminal
+		agentOf[s.Name] = s.Agent
+		if !known[s.Name] {
+			known[s.Name] = true
+			names = append(names, s.Name)
+		}
+	}
+	if len(names) == 0 {
 		return ""
 	}
-	idx := map[string]int{}
-	for i, n := range order {
-		idx[n] = i
-	}
-	terminal := map[string]bool{}
-	for _, s := range spec.States {
-		terminal[s.Name] = s.Terminal
-	}
-	const (
-		nodeW, nodeH = 150, 32
-		gapY         = 58
-		topPad       = 14
-		leftX        = 14
-	)
-	baseHeight := topPad*2 + (len(order)-1)*gapY + nodeH
-	width := leftX + nodeW + 260
-	cy := func(i int) int { return topPad + i*gapY + nodeH/2 }
-	rx := leftX + nodeW
 
-	// Build edges + labels first: each edge carries data-from/data-to so JS can
-	// correlate a node with its incident edges (sty_19b2107a), and labels are placed
-	// through a deterministic anti-collision pass so several edges into the same
-	// target no longer overprint into a run-together string. The canvas grows to fit
-	// any nudged label. The full skill text rides in the label's <title> (hover).
+	// Topological order via DFS from the start (the state nothing transitions
+	// into), detecting true BACK edges (cycles — e.g. a recovery edge) as edges
+	// into a node still on the stack. Deterministic: edges iterate in declared
+	// order, unreached states are visited in declared order.
+	indeg := map[string]int{}
+	for _, tr := range flow.Transitions {
+		if tr.From != tr.To && known[tr.From] && known[tr.To] {
+			indeg[tr.To]++
+		}
+	}
+	start := names[0]
+	for _, n := range names {
+		if indeg[n] == 0 {
+			start = n
+			break
+		}
+	}
+	state := map[string]int{} // 0 unvisited, 1 on-stack, 2 done
+	backEdge := map[string]bool{}
+	ekey := func(from, to string) string { return from + "\x00" + to }
+	var post []string
+	var visit func(n string)
+	visit = func(n string) {
+		state[n] = 1
+		for _, tr := range flow.Transitions {
+			if tr.From != n || tr.From == tr.To || !known[tr.To] {
+				continue
+			}
+			switch state[tr.To] {
+			case 0:
+				visit(tr.To)
+			case 1:
+				backEdge[ekey(tr.From, tr.To)] = true
+			}
+		}
+		state[n] = 2
+		post = append(post, n)
+	}
+	visit(start)
+	for _, n := range names {
+		if state[n] == 0 {
+			visit(n)
+		}
+	}
+	order := make([]string, 0, len(post)) // reverse postorder = topological
+	for i := len(post) - 1; i >= 0; i-- {
+		order = append(order, post[i])
+	}
+
+	// Rank = longest path from the start over forward (non-back) edges, so the
+	// main spine reads as one row of increasing columns; row = arrival order
+	// within a rank.
+	rank := map[string]int{}
+	for _, n := range order {
+		for _, tr := range flow.Transitions {
+			if tr.From != n || tr.From == tr.To || !known[tr.To] || backEdge[ekey(tr.From, tr.To)] {
+				continue
+			}
+			if r := rank[n] + 1; r > rank[tr.To] {
+				rank[tr.To] = r
+			}
+		}
+	}
+	// The cancel fan: every edge into a terminal state with several inbound edges
+	// is an EXIT, not the spine — de-emphasise it, and keep its target off the
+	// spine row.
+	inCount := map[string]int{}
+	for _, tr := range flow.Transitions {
+		if tr.From != tr.To && known[tr.From] && known[tr.To] {
+			inCount[tr.To]++
+		}
+	}
+	fanExit := func(n string) bool { return terminal[n] && inCount[n] >= 3 }
+
+	// Rows within a rank: follow the predecessors' rows (the spine stays on row
+	// 0), pushing fan exits below; topo position breaks the remaining ties.
+	row := map[string]int{}
+	maxRank, maxRow := 0, 0
+	for _, n := range order {
+		if rank[n] > maxRank {
+			maxRank = rank[n]
+		}
+	}
+	topoPos := map[string]int{}
+	for i, n := range order {
+		topoPos[n] = i
+	}
+	for r := 0; r <= maxRank; r++ {
+		var members []string
+		for _, n := range order {
+			if rank[n] == r {
+				members = append(members, n)
+			}
+		}
+		desired := func(n string) int {
+			d := 1 << 20
+			for _, tr := range flow.Transitions {
+				if tr.To != n || tr.From == tr.To || !known[tr.From] || backEdge[ekey(tr.From, tr.To)] {
+					continue
+				}
+				if pr, ok := row[tr.From]; ok && pr < d {
+					d = pr
+				}
+			}
+			return d
+		}
+		sort.SliceStable(members, func(i, j int) bool {
+			a, b := members[i], members[j]
+			if fanExit(a) != fanExit(b) {
+				return !fanExit(a) // spine candidates before fan exits
+			}
+			da, db := desired(a), desired(b)
+			if da != db {
+				return da < db
+			}
+			return topoPos[a] < topoPos[b]
+		})
+		for i, n := range members {
+			row[n] = i
+			if i > maxRow {
+				maxRow = i
+			}
+		}
+	}
+
+	const (
+		nodeW, nodeH = 148, 40
+		gapX, gapY   = 84, 64
+		pad          = 16
+	)
+	topGutter := pad
+	if len(backEdge) > 0 {
+		topGutter += 34 // a lane above the grid for recovery arcs
+	}
+	nx := func(n string) int { return pad + rank[n]*(nodeW+gapX) }
+	ny := func(n string) int { return topGutter + row[n]*(nodeH+gapY) }
+	gridBottom := topGutter + (maxRow+1)*nodeH + maxRow*gapY
+	width := pad*2 + (maxRank+1)*nodeW + maxRank*gapX
+
 	esc := template.HTMLEscapeString
 	type labelBox struct{ x1, x2, y int }
 	var placed []labelBox
@@ -177,61 +275,124 @@ func workflowDiagram(spec wfSpec) template.HTML {
 		}
 		return false
 	}
-	maxY := baseHeight
+	maxY := gridBottom
+	label := func(b *strings.Builder, tr wfTransition, lx, ly int, extra string) {
+		lbl := shortSkill(tr.Skill)
+		if lbl == "" {
+			return
+		}
+		lw := len(lbl) * 6
+		lx -= lw / 2
+		for overlaps(lx, lx+lw, ly) {
+			ly += 15 // deterministic anti-collision nudge, source-order stable
+		}
+		placed = append(placed, labelBox{lx, lx + lw, ly})
+		if ly+10 > maxY {
+			maxY = ly + 10
+		}
+		cls := "wf-edge-label" + extra
+		fmt.Fprintf(b, `<text class="%s" data-from="%s" data-to="%s" x="%d" y="%d"><title>%s</title>%s</text>`,
+			cls, esc(tr.From), esc(tr.To), lx, ly, esc(tr.Skill), esc(lbl))
+	}
+
 	var edgeB strings.Builder
-	for _, tr := range spec.Transitions {
-		si, ok1 := idx[tr.From]
-		ti, ok2 := idx[tr.To]
-		if !ok1 || !ok2 || si == ti {
+	altLane, backLane := 0, 0
+	for _, tr := range flow.Transitions {
+		if !known[tr.From] || !known[tr.To] || tr.From == tr.To {
 			continue
 		}
-		y1, y2 := cy(si), cy(ti)
-		span := ti - si
-		if span < 0 {
-			span = -span
-		}
-		bulge := 26 + span*20
-		cx := rx + bulge
+		back := backEdge[ekey(tr.From, tr.To)]
+		fan := !back && terminal[tr.To] && inCount[tr.To] >= 3
 		cls := "wf-edge-path"
 		if tr.Skill == "" {
 			cls += " ungated"
 		}
-		fmt.Fprintf(&edgeB, `<path class="%s" data-from="%s" data-to="%s" d="M%d,%d C%d,%d %d,%d %d,%d" marker-end="url(#wf-arrow)"/>`,
-			cls, esc(tr.From), esc(tr.To), rx, y1, cx, y1, cx, y2, rx+5, y2)
-		if lbl := shortSkill(tr.Skill); lbl != "" {
-			lx := cx + 4
-			ly := (y1 + y2) / 2
-			lw := len(lbl)*6 + 6 // rough text width to keep neighbours apart
-			for overlaps(lx, lx+lw, ly) {
-				ly += 15 // nudge down into a free slot — deterministic, source-order stable
+		switch {
+		case back: // recovery — arc over the top, muted + toggleable
+			cls += " back wf-edge-alt"
+			x1, y1 := nx(tr.From)+nodeW/2, ny(tr.From)
+			x2, y2 := nx(tr.To)+nodeW/2, ny(tr.To)
+			laneY := pad + backLane*12
+			backLane++
+			fmt.Fprintf(&edgeB, `<path class="%s" data-from="%s" data-to="%s" d="M%d,%d C%d,%d %d,%d %d,%d" marker-end="url(#wf-arrow)"/>`,
+				cls, esc(tr.From), esc(tr.To), x1, y1, x1, laneY, x2, laneY, x2, y2-2)
+			label(&edgeB, tr, (x1+x2)/2, laneY+12, " wf-edge-alt")
+		case fan: // exit fan (e.g. cancel) — sag below the grid, muted + toggleable
+			cls += " wf-edge-alt"
+			x1, y1 := nx(tr.From)+nodeW/2, ny(tr.From)+nodeH
+			x2, y2 := nx(tr.To)+nodeW/2, ny(tr.To)+nodeH
+			sag := gridBottom + 26 + altLane*14
+			altLane++
+			if sag+16 > maxY {
+				maxY = sag + 16
 			}
-			placed = append(placed, labelBox{lx, lx + lw, ly})
-			if ly+10 > maxY {
-				maxY = ly + 10
-			}
-			fmt.Fprintf(&edgeB, `<text class="wf-edge-label" data-from="%s" data-to="%s" x="%d" y="%d"><title>%s</title>%s</text>`,
-				esc(tr.From), esc(tr.To), lx, ly, esc(tr.Skill), esc(lbl))
+			fmt.Fprintf(&edgeB, `<path class="%s" data-from="%s" data-to="%s" d="M%d,%d C%d,%d %d,%d %d,%d" marker-end="url(#wf-arrow)"/>`,
+				cls, esc(tr.From), esc(tr.To), x1, y1, x1, sag, x2, sag, x2, y2+2)
+			label(&edgeB, tr, (x1+x2)/2, sag-5, " wf-edge-alt")
+		case rank[tr.To] == rank[tr.From]+1 && row[tr.To] == row[tr.From]: // spine — straight
+			x1, x2 := nx(tr.From)+nodeW, nx(tr.To)
+			y := ny(tr.From) + nodeH/2
+			fmt.Fprintf(&edgeB, `<path class="%s" data-from="%s" data-to="%s" d="M%d,%d L%d,%d" marker-end="url(#wf-arrow)"/>`,
+				cls, esc(tr.From), esc(tr.To), x1, y, x2-2, y)
+			label(&edgeB, tr, (x1+x2)/2, y-8, "")
+		default: // forward skip / row change — gentle curve
+			x1, y1 := nx(tr.From)+nodeW, ny(tr.From)+nodeH/2
+			x2, y2 := nx(tr.To), ny(tr.To)+nodeH/2
+			mx := (x1 + x2) / 2
+			fmt.Fprintf(&edgeB, `<path class="%s" data-from="%s" data-to="%s" d="M%d,%d C%d,%d %d,%d %d,%d" marker-end="url(#wf-arrow)"/>`,
+				cls, esc(tr.From), esc(tr.To), x1, y1, mx, y1, mx, y2, x2-2, y2)
+			label(&edgeB, tr, mx, (y1+y2)/2-6, "")
 		}
 	}
-	height := maxY + topPad
 
 	var b strings.Builder
-	fmt.Fprintf(&b, `<svg class="wf-diagram" viewBox="0 0 %d %d" preserveAspectRatio="xMinYMin meet" role="img" aria-label="workflow flow diagram">`, width, height)
 	b.WriteString(`<defs><marker id="wf-arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" class="wf-arrowhead"/></marker></defs>`)
 	b.WriteString(edgeB.String()) // edges under the nodes
 	// nodes — each is focusable (tabindex) and carries a stable data-state so hover,
 	// keyboard focus, and click can be wired in vanilla JS (progressive enhancement).
-	for i, n := range order {
-		y := topPad + i*gapY
+	for _, n := range order {
+		x, y := nx(n), ny(n)
 		cls := "wf-dnode"
 		if terminal[n] {
 			cls += " terminal"
 		}
-		fmt.Fprintf(&b, `<g class="%s" data-state="%s" tabindex="0" role="button" aria-label="state %s — highlight its transitions"><rect x="%d" y="%d" width="%d" height="%d" rx="7"/><text x="%d" y="%d">%s</text></g>`,
-			cls, esc(n), esc(n), leftX, y, nodeW, nodeH, leftX+nodeW/2, y+nodeH/2+4, esc(n))
+		nameY := y + nodeH/2 + 4
+		agentBadge := ""
+		if ag := agentOf[n]; ag != "" && ag != "executor" && ag != "reviewer" {
+			nameY = y + nodeH/2 - 2
+			agentBadge = fmt.Sprintf(`<text class="wf-agent-badge" x="%d" y="%d">@%s</text>`, x+nodeW/2, y+nodeH-7, esc(ag))
+		}
+		fmt.Fprintf(&b, `<g class="%s" data-state="%s" tabindex="0" role="button" aria-label="state %s — highlight its transitions"><rect x="%d" y="%d" width="%d" height="%d" rx="7"/><text x="%d" y="%d">%s</text>%s</g>`,
+			cls, esc(n), esc(n), x, y, nodeW, nodeH, x+nodeW/2, nameY, esc(n), agentBadge)
+		// Scoped (on=…) reviewers annotate the states they gate.
+		for k, ann := range annByTarget[n] {
+			ay := y + nodeH + 13 + k*13
+			if ay+8 > maxY {
+				maxY = ay + 8
+			}
+			fmt.Fprintf(&b, `<text class="wf-annot" data-state="%s" x="%d" y="%d"><title>%s gates entry to %s</title>⊙ %s</text>`,
+				esc(n), x+nodeW/2, ay, esc(ann.Skill), esc(n), esc(shortSkill(ann.Skill)))
+		}
 	}
-	b.WriteString(`</svg>`)
-	return template.HTML(b.String())
+	// Edge-less, un-scoped reviewer declarations (e.g. the step-summary opt-in)
+	// become one footnote line.
+	if len(footers) > 0 {
+		var parts []string
+		for _, f := range footers {
+			parts = append(parts, f.Name+": "+shortSkill(f.Skill))
+		}
+		fy := maxY + 20
+		maxY = fy
+		fmt.Fprintf(&b, `<text class="wf-foot" x="%d" y="%d">every transition — %s</text>`, pad, fy, esc(strings.Join(parts, " · ")))
+	}
+
+	height := maxY + pad
+	var svg strings.Builder
+	fmt.Fprintf(&svg, `<svg class="wf-diagram" viewBox="0 0 %d %d" data-vb="0 0 %d %d" preserveAspectRatio="xMinYMin meet" role="img" aria-label="workflow flow diagram">`,
+		width, height, width, height)
+	svg.WriteString(b.String())
+	svg.WriteString(`</svg>`)
+	return template.HTML(svg.String())
 }
 
 // workflowRows builds the Workflow panel rows from the indexed workflow docs.
@@ -355,7 +516,7 @@ func parseWorkflowDOT(body string) (wfSpec, bool) {
 	}
 	spec := wfSpec{}
 	for _, st := range s.States {
-		spec.States = append(spec.States, wfState{Name: st.Name, Agent: st.Agent, Terminal: st.Terminal})
+		spec.States = append(spec.States, wfState{Name: st.Name, Agent: st.Agent, Terminal: st.Terminal, Skill: st.Skill, On: st.On})
 	}
 	for _, tr := range s.Transitions {
 		spec.Transitions = append(spec.Transitions, wfTransition{From: tr.From, To: tr.To, Skill: tr.Skill})
