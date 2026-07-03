@@ -3,7 +3,7 @@ name: satelle-story-cancel-review
 scope: system
 type: skill
 tags: [type:skill, type:reviewer]
-description: Exit gate for cancel (any → cancelled). An isolated reviewer that lets a story be abandoned when the operator has recorded WHY — cancelling is a legitimate, operator-driven outcome, not a failure — while refusing a cancel that throws work away with no reason on record. The embedded order-zero default named by the baseline workflow for the cancelled exit; it sits off the path to done, so its absence would only degrade to advisory.
+description: Exit gate for cancel (any → cancelled). An isolated reviewer that lets a story be abandoned when the operator has recorded WHY — cancelling is a legitimate, operator-driven outcome, not a failure — while refusing a cancel that throws work away with no reason on record.
 ---
 
 # Story cancel review (abandon gate)

@@ -3,7 +3,7 @@ name: satelle-story-intent-review
 scope: system
 type: skill
 tags: [type:skill, type:reviewer]
-description: Entry gate for begin-work (backlog → in_progress). An isolated reviewer judges that a story is well-formed enough to start — a clear goal and numbered, testable acceptance criteria — before the executor engages it. The embedded order-zero default named by the baseline workflow; a repo may override it under .satelle/skills.
+description: Entry gate for begin-work (backlog → in_progress). An isolated reviewer judges that a story is well-formed enough to start — a clear goal and numbered, testable acceptance criteria — before the executor engages it.
 ---
 
 # Intent / plan review (begin-work gate)

@@ -3,7 +3,7 @@ name: satelle-task-validate-after-review
 scope: system
 type: skill
 tags: [type:skill, type:reviewer]
-description: Exit gate for a task EXECUTION (in_progress → done). An isolated, read-only reviewer judges whether the run may close — that the task's ACTION was actually carried out and its VERIFICATION is satisfied, reading the repo for evidence. Reviewers-only (judges, never enacts). The gate into a task execution's terminal done (satelle-done-is-last). The embedded default named by the seeded task-execution workflow; a repo may override it under .satelle/skills. Pushes back with specifics.
+description: Exit gate for a task EXECUTION (in_progress → done). An isolated, read-only reviewer judges whether the run may close — that the task's ACTION was actually carried out and its VERIFICATION is satisfied, reading the repo for evidence. Reviewers-only (judges, never enacts). The gate into a task execution's terminal done (satelle-done-is-last). Pushes back with specifics.
 ---
 
 # Task execution — validate-after (close-run gate)
@@ -35,7 +35,7 @@ satisfied:
 The op-log (`.satelle/logs/operations.log`) and the ledger record what the run
 did; consult them when the deliverable is a state change rather than a working-tree
 file. A run's OUTPUT is also collected per task as an OKF doc at
-`.satelle/tasks/<tsk_id>/output-<exe_id>.md` (sty_890b86cb) — read it as run
+`.satelle/tasks/<tsk_id>/output-<exe_id>.md` — read it as run
 evidence. An in-loop run records this as its final act via
 `satelle execution record <exe_id>`; a dispatched run's output is written through
 automatically.

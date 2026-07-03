@@ -3,7 +3,7 @@ name: satelle-story-done-review
 scope: system
 type: skill
 tags: [type:skill, type:reviewer]
-description: Exit gate for close (→ done). An isolated, read-only reviewer judges whether a story may close, reading the repo to verify. The mandatory spine gate on every workflow's edge into done, and category-aware: a parent/epic-parent is a container judged by the children-resolved rule (every child done or cancelled); every other story is judged by its acceptance criteria. The embedded order-zero default named by the baseline workflow; a repo may override it under .satelle/skills.
+description: Exit gate for close (→ done). An isolated, read-only reviewer judges whether a story may close, reading the repo to verify. The mandatory spine gate on every workflow's edge into done, and category-aware: a parent/epic-parent is a container judged by the children-resolved rule (every child done or cancelled); every other story is judged by its acceptance criteria.
 ---
 
 # Story done review (close gate)
