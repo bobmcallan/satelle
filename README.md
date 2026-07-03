@@ -73,6 +73,7 @@ repo it governs.
 | Group | Verbs |
 |-------|-------|
 | `story` / `task` | `create`, `get`, `list`, `set` |
+| `task` (only) | `archive` — dispose of a superseded header (record archived + files moved to `.satelle/backups/`) |
 | `ledger` | `append`, `list` |
 | `doc` | `list`, `get` |
 | | `init`, `reindex`, `status`, `serve`, `version` |
