@@ -244,6 +244,56 @@ digraph b {
 	}
 }
 
+// TestEdgeGateNodeConsistentForm: an edge may declare its gate in the
+// node-consistent form (agent=reviewer, prompt="@skill:NAME"), equivalent to
+// reviewer_skill="NAME"; reviewer_skill wins when both are present; and a prompt
+// without agent=reviewer (or an agent=reviewer without a @skill: prompt) is not a
+// gate (sty_be67919a).
+func TestEdgeGateNodeConsistentForm(t *testing.T) {
+	parse := func(edge string) map[string]string {
+		body := "---\nname: b\n---\n" + "```dot" + `
+digraph b {
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor]
+  done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
+  ` + edge + `
+  in_progress -> done
+}
+` + "```\n"
+		spec, ok := Parse(body)
+		if !ok {
+			t.Fatalf("parse failed for edge %q", edge)
+		}
+		skill := map[string]string{}
+		for _, tr := range spec.Transitions {
+			skill[tr.From+"->"+tr.To] = tr.Skill
+		}
+		return skill
+	}
+
+	// Node-consistent form gates the edge exactly like reviewer_skill does.
+	if got := parse(`backlog -> in_progress [agent=reviewer, prompt="@skill:satelle-story-intent-review"]`)["backlog->in_progress"]; got != "satelle-story-intent-review" {
+		t.Errorf("node-consistent edge gate = %q, want satelle-story-intent-review", got)
+	}
+	// reviewer_skill wins when both are present.
+	if got := parse(`backlog -> in_progress [reviewer_skill="a", agent=reviewer, prompt="@skill:b"]`)["backlog->in_progress"]; got != "a" {
+		t.Errorf("both-present precedence = %q, want a (reviewer_skill wins)", got)
+	}
+	// A prompt WITHOUT agent=reviewer is not an edge gate.
+	if got := parse(`backlog -> in_progress [prompt="@skill:nope"]`)["backlog->in_progress"]; got != "" {
+		t.Errorf("prompt without agent=reviewer must not gate, got %q", got)
+	}
+	// agent=reviewer WITHOUT a @skill: prompt is not an edge gate.
+	if got := parse(`backlog -> in_progress [agent=reviewer]`)["backlog->in_progress"]; got != "" {
+		t.Errorf("agent=reviewer without @skill: prompt must not gate, got %q", got)
+	}
+	// A node-consistent edge gate into a reviewer node keeps the EDGE's skill,
+	// not the target node's derived skill.
+	if got := parse(`backlog -> done [agent=reviewer, prompt="@skill:edge-wins"]`)["backlog->done"]; got != "edge-wins" {
+		t.Errorf("edge gate into a reviewer node = %q, want edge-wins (edge overrides node)", got)
+	}
+}
+
 func TestParseStripsLineComments(t *testing.T) {
 	body := `---
 name: c
