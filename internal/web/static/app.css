@@ -257,15 +257,18 @@ a.doc:hover { border-color: var(--accent); }
 .doc .head { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
 .doc .updated { color: var(--muted); font-size: 11px; margin-top: 6px; font-family: var(--mono); }
 
-/* story attached-document tabs (detail page) */
-.doc-tabs { margin: 6px 0 18px; }
-.doc-tabstrip { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
-.doc-tab { border: 0; background: none; color: var(--muted); font: inherit; font-size: 13px; padding: 7px 12px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
-.doc-tab:hover { color: var(--ink); }
-.doc-tab.active { color: var(--ink); border-bottom-color: var(--accent); }
-.doc-tab-type { color: var(--muted); font-size: 11px; font-family: var(--mono); }
-.doc-pane { display: none; }
-.doc-pane.active { display: block; }
+/* story/task attached documents — a compact collapsible LIST before the timeline
+   (sty_1a239b4d), each entry a native <details> disclosure: name + type, click to
+   reveal the rendered body. Collapsed by default so it reads as a list. */
+ul.doc-list { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+ul.doc-list li { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.doc-item > summary { cursor: pointer; padding: 8px 12px; font-size: 13px; list-style: none; display: flex; align-items: center; gap: 8px; }
+.doc-item > summary::-webkit-details-marker { display: none; }
+.doc-item > summary::before { content: "▸"; color: var(--muted); font-size: 11px; }
+.doc-item[open] > summary::before { content: "▾"; }
+.doc-item > summary:hover { color: var(--ink); }
+.doc-item-type { color: var(--muted); font-size: 11px; font-family: var(--mono); }
+.doc-item[open] > .doc-article { padding: 2px 12px 12px; border-top: 1px solid var(--line); margin-top: 2px; }
 
 /* rendered authored-document viewer */
 .doc-article { font-size: 14.5px; line-height: 1.65; max-width: 760px; }
