@@ -853,6 +853,114 @@ func TestGateRefusesBrokenReviewerSkill(t *testing.T) {
 	}
 }
 
+// dispatchWF allocates the plan step to the NAMED agent "architect" with a
+// rubric — the executor-dispatch fixture (sty_fd427546).
+var dispatchWF = wfDoc(baselineWorkflow, `"*"`, `digraph w {
+  backlog [shape=Mdiamond]
+  plan [agent=architect, prompt="@skill:architecture-alignment"]
+  in_progress [agent=executor]
+  done [shape=Msquare]
+  backlog -> plan -> in_progress -> done
+}`)
+
+// TestDispatchExecutorRunsNamedBinding: entering a named-agent state spawns the
+// binding's harness with the item payload, the node's rubric, and the binding's
+// tools/model — nothing hardcoded (sty_fd427546).
+func TestDispatchExecutorRunsNamedBinding(t *testing.T) {
+	docs := fakeDocs{workflow: dispatchWF, skillBody: "alignment rubric", skillFound: true}
+	g, _ := gater(t, "", docs)
+	r := &fakeRunner{out: "did the work"}
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		if name != "architect" {
+			return config.AgentBinding{}, false
+		}
+		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Edit,Bash", Model: "fable"}, true
+	})
+	g.newRunner = func(harness string) (agentcli.Runner, error) {
+		if harness != "fake -p {system}" {
+			t.Errorf("runner built from %q, want the binding's harness", harness)
+		}
+		return r, nil
+	}
+	res, err := g.DispatchExecutor(context.Background(),
+		workitem.Item{ID: "sty_1", Title: "Align the stories", Status: "backlog"}, "plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Dispatched || res.Agent != "architect" || res.Skill != "architecture-alignment" {
+		t.Fatalf("result = %+v, want dispatched by architect under architecture-alignment", res)
+	}
+	if r.got.AllowedTools != "Read,Edit,Bash" || r.got.Model != "fable" {
+		t.Errorf("binding grant not applied: tools=%q model=%q", r.got.AllowedTools, r.got.Model)
+	}
+	if !strings.Contains(r.got.SystemPrompt, "alignment rubric") {
+		t.Errorf("node rubric missing from the system prompt:\n%s", r.got.SystemPrompt)
+	}
+	if !strings.Contains(r.got.SystemPrompt, "Do NOT change the item's status") {
+		t.Errorf("executor charter missing:\n%s", r.got.SystemPrompt)
+	}
+	if !strings.Contains(r.got.Payload, "Align the stories") {
+		t.Errorf("item payload missing from stdin: %q", r.got.Payload)
+	}
+}
+
+// TestDispatchExecutorMissingBindingRefuses: agent=<name> with no [<name>]
+// binding in agents.toml is a broken definition — the dispatch errors (the
+// transition is refused), never silently falling back in-loop.
+func TestDispatchExecutorMissingBindingRefuses(t *testing.T) {
+	g, r := gater(t, "", fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true})
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) { return config.AgentBinding{}, false })
+	_, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan")
+	if err == nil {
+		t.Fatal("want refusal for a missing named-agent binding")
+	}
+	for _, want := range []string{"architect", "agents.toml"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should carry %q: %v", want, err)
+		}
+	}
+	if r.got.SystemPrompt != "" {
+		t.Error("nothing may run without a binding")
+	}
+}
+
+// TestDispatchExecutorInLoopStatesUnchanged: agent=executor (and agent-less)
+// states dispatch nothing — the in-loop orchestrator performs, today's
+// behaviour.
+func TestDispatchExecutorInLoopStatesUnchanged(t *testing.T) {
+	g, _ := gater(t, "", fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true})
+	called := false
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		called = true
+		return config.AgentBinding{}, false
+	})
+	res, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "plan"}, "in_progress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Dispatched || called {
+		t.Errorf("agent=executor must stay in-loop: %+v (resolver called: %v)", res, called)
+	}
+}
+
+// TestDispatchExecutorRunFailureSurfaces: a failed named-agent run errors so the
+// caller refuses the transition (status unchanged).
+func TestDispatchExecutorRunFailureSurfaces(t *testing.T) {
+	docs := fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true}
+	g, _ := gater(t, "", docs)
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Harness: "fake -p {system}"}, true
+	})
+	g.newRunner = func(string) (agentcli.Runner, error) { return &fakeRunner{err: errFakeAgent}, nil }
+	res, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan")
+	if err == nil {
+		t.Fatal("want the run failure surfaced")
+	}
+	if !res.Dispatched || !strings.Contains(err.Error(), "architect") {
+		t.Errorf("failure should be attributed to the named agent: res=%+v err=%v", res, err)
+	}
+}
+
 func TestGateRefusesUndeclaredEdge(t *testing.T) {
 	// in_progress→integrated is NOT a declared edge in testWorkflow. The gate must
 	// refuse it (error) so a story cannot skip a gate by jumping across an

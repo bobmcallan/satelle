@@ -70,10 +70,16 @@ an agent: `[executor]`/`[reviewer]` are the built-in roles, any other (e.g.
 `[commit-agent]`) is a named agent (the legacy nested `[agents.<name>]` still
 loads). A named agent is always isolated, with its own scoped grant (e.g. the
 project's `commit` + `push` steps are allocated to a `commit-agent` that runs the
-`commit`/`push` rubric as an isolated `claude -p`). The named agent is a
-binding, not a new mechanism: if `<name>` is **not** defined in the agents layer,
-the step **falls back to the in-loop executor** (the current session), so a node
-can name an agent the repo has not configured and still run.
+`commit`/`push` rubric as an isolated `claude -p`). Entering a named-agent state
+**dispatches** the step to that binding's harness (sty_fd427546): the item —
+title, body, acceptance criteria — rides on stdin, the node's `@skill:` rubric as
+the system prompt, tools/model from the binding; a failed run **refuses the
+transition** (status unchanged), and the spawned agent never advances status
+itself — the state's exit gate still governs the next edge. If `<name>` is
+**not** defined in the agents layer, the transition is **refused** naming the
+missing binding — a broken allocation never silently falls back in-loop
+(fail-fast, consistent with sty_d0d6bb67); a binding whose harness is explicitly
+`in-loop` keeps the step with the orchestrator.
 
 ## @skill: is an agent-agnostic declaration — the process never locks to a CLI
 

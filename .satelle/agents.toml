@@ -21,9 +21,11 @@
 #   - agent=executor  → the current/driving session performs the step in-loop.
 #   - agent=reviewer  → an isolated, read-only gate.
 #   - agent=<name>    → the isolated named agent defined as a top-level [<name>] below.
-# FALLBACK / default agent: if a node names an agent that is NOT defined here, the
-# step falls back to the in-loop executor (the current session) — so removing or
-# commenting a named binding never breaks the workflow; it just runs in-loop again.
+# NO SILENT FALLBACK (sty_fd427546): entering a named-agent state DISPATCHES the
+# step to that binding's harness (item on stdin, the node's rubric as the system
+# prompt). If a node names an agent NOT defined here, the transition is REFUSED
+# naming the missing binding — define the binding, or set its harness = "in-loop"
+# to keep that step with the orchestrator.
 #
 # THE HARNESS COMMAND TEMPLATE (the "command" that runs an agent CLI)
 # -------------------------------------------------------------------
@@ -64,8 +66,9 @@ model   = "sonnet"             # review on sonnet (sty_5073df2f activates sty_da
 # sub-process: satelle runs the commit.md / push.md rubric as the system prompt on
 # the agent CLI (claude -p) rather than in the driving loop. The grant is SCOPED to
 # exactly what commit/push need — stage/commit/push, watch CI, reinstall, and drive
-# satelle — NOT a blanket allowance (sty_b2222b8a). Comment this block out and the
-# commit/push steps fall back to the in-loop executor.
+# satelle — NOT a blanket allowance (sty_b2222b8a). Removing this block REFUSES
+# the commit/push transitions (sty_fd427546); set harness = "in-loop" instead to
+# hand those steps back to the orchestrator.
 [commit-agent]
 harness = "claude -p --append-system-prompt {system} --allowedTools {tools}"
 tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*)"
