@@ -1214,6 +1214,65 @@ func evalInt(t *testing.T, ctx context.Context, js string) int {
 
 // clickJS clicks an element via element.click() — robust against chromedp's
 // position/visibility heuristics for elements in just-shown panels.
+// TestBrowserTaskPanelNativeRuns drives headless Chrome to prove the tasks panel
+// is task-native (sty_30a917f8): expanding a task row shows its runs (executions)
+// with a status badge, and a live execution-status change refreshes the open
+// expansion without a reload.
+func TestBrowserTaskPanelNativeRuns(t *testing.T) {
+	base, repo := serveRepo(t, "8803")
+
+	taskID := extractID(mustRun(t, testBin, repo, "task", "create",
+		"--title", "Runnable task", "--body", "ACTION: do it. VERIFICATION: done."), "tsk_")
+	if taskID == "" {
+		t.Fatal("no task id")
+	}
+	exeID := extractID(mustRun(t, testBin, repo, "execution", "create",
+		"--parent", taskID, "--title", "run 1", "--status", "in_progress"), "exe_")
+	if exeID == "" {
+		t.Fatal("no execution id")
+	}
+
+	ctx := newChrome(t)
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/"),
+		chromedp.WaitVisible(`.tab[data-panel="stories"]`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	// Switch to the tasks panel and expand the task row.
+	clickJS(t, ctx, `.tab[data-panel="tasks"]`)
+	if !waitCond(t, ctx, `getComputedStyle(document.querySelector('#panel-tasks')).display === 'block'`, 5*time.Second) {
+		t.Fatal("tasks panel did not show")
+	}
+	rowSel := fmt.Sprintf(`#panel-tasks tr.row[data-expand-url$="%s"]`, taskID)
+	clickJS(t, ctx, rowSel)
+
+	// The expansion is task-native: a Runs section listing the in-progress run.
+	runShown := fmt.Sprintf(`(function(){var e=document.querySelector('#panel-tasks tr.expansion .expbody');return !!e && e.textContent.includes('Runs') && e.textContent.includes('%s') && !!e.querySelector('.badge.s-in_progress');})()`, exeID)
+	if !waitCond(t, ctx, runShown, 5*time.Second) {
+		t.Fatal("task expansion did not render the native run list with the in-progress run")
+	}
+
+	// Live update: close the run from a separate process; the open expansion must
+	// refresh to show it done, with no reload.
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`window.__noReload = true`, nil)); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, testBin, repo, "execution", "set", exeID, "--status", "done")
+	doneShown := `(function(){var e=document.querySelector('#panel-tasks tr.expansion .expbody');return !!e && !!e.querySelector('.badge.s-done');})()`
+	if !waitCond(t, ctx, doneShown, 10*time.Second) {
+		t.Error("open task expansion did not refresh to show the run done on a live status change")
+	}
+	var reloaded bool
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`window.__noReload !== true`, &reloaded)); err != nil {
+		t.Fatal(err)
+	}
+	if reloaded {
+		t.Error("a full page reload happened; the update should be live")
+	}
+}
+
 func clickJS(t *testing.T, ctx context.Context, sel string) {
 	t.Helper()
 	js := fmt.Sprintf(`(function(){var e=document.querySelector(%q);if(e)e.click();return !!e;})()`, sel)

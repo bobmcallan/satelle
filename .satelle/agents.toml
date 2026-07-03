@@ -71,7 +71,7 @@ model   = "sonnet"             # review on sonnet (sty_5073df2f activates sty_da
 # hand those steps back to the orchestrator.
 [commit-agent]
 harness = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
-tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*)"
+tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*),Bash(gofmt:*)"
 model   = "sonnet"
 
 # integrator — the INTEGRATION step's named agent (sty_1c543ecd): runs the

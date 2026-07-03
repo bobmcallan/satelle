@@ -287,21 +287,28 @@ const templatesSrc = `
 </div>{{end}}
 
 {{define "itemDetail"}}<div class="expbody">
-  {{if not .Standalone}}<a class="detail-link open-story" href="{{.Item.Kind}}/{{.Item.ID}}">Open story →</a>{{end}}
+  {{$isTask := eq (printf "%s" .Item.Kind) "task"}}
+  {{if not .Standalone}}<a class="detail-link open-story" href="{{.Item.Kind}}/{{.Item.ID}}">Open {{if $isTask}}task{{else}}story{{end}} →</a>{{end}}
   {{if .Docs}}<div class="doc-tabs">
     <div class="doc-tabstrip" role="tablist">{{range $i, $d := .Docs}}<button class="doc-tab{{if eq $i 0}} active{{end}}" type="button" role="tab" data-doc="{{$i}}">{{$d.Name}}{{if $d.Type}} <span class="doc-tab-type">{{$d.Type}}</span>{{end}}</button>{{end}}</div>
     {{range $i, $d := .Docs}}<div class="doc-pane{{if eq $i 0}} active{{end}}" data-doc="{{$i}}"><article class="doc-article">{{$d.HTML}}</article></div>{{end}}
   </div>{{end}}
   <dl>
     <dt>Status</dt><dd><span class="badge s-{{.Item.Status}}">{{.Item.Status}}</span></dd>
-    <dt>Priority</dt><dd>{{if .Item.Priority}}{{.Item.Priority}}{{else}}—{{end}}</dd>
-    <dt>Category</dt><dd>{{if .Item.Category}}{{.Item.Category}}{{else}}—{{end}}</dd>
+    {{if not $isTask}}<dt>Priority</dt><dd>{{if .Item.Priority}}{{.Item.Priority}}{{else}}—{{end}}</dd>
+    <dt>Category</dt><dd>{{if .Item.Category}}{{.Item.Category}}{{else}}—{{end}}</dd>{{end}}
     {{if .Item.ParentID}}<dt>Parent</dt><dd><a href="story/{{.Item.ParentID}}">{{.Item.ParentID}}</a></dd>{{end}}
     {{if .Item.Tags}}<dt>Tags</dt><dd class="wi-tags">{{range .Item.Tags}}{{tagchip .}}{{end}}</dd>{{end}}
     <dt>Updated</dt><dd>{{ftime .Item.UpdatedAt}}</dd>
   </dl>
-  {{if .Item.Body}}<h4>Description</h4><pre class="prose">{{.Item.Body}}</pre>{{end}}
+  {{if .Item.Body}}<h4>{{if $isTask}}Work definition{{else}}Description{{end}}</h4><pre class="prose">{{.Item.Body}}</pre>{{end}}
   {{if .Item.AcceptanceCriteria}}<h4>Acceptance criteria</h4><pre class="prose">{{.Item.AcceptanceCriteria}}</pre>{{end}}
+  {{if $isTask}}<h4>Runs</h4>
+  {{if .Executions}}<ol class="run-list">{{range .Executions}}<li class="run run-s-{{.Status}}">
+    <div class="run-head"><span class="run-id">{{.ID}}</span> <span class="badge s-{{.Status}}">{{.Status}}</span></div>
+    <div class="run-meta">created {{ftime .CreatedAt}} · updated {{ftime .UpdatedAt}}</div>
+    {{if .Output}}<pre class="run-output prose">{{.Output}}</pre>{{else}}<div class="run-noout">no output recorded</div>{{end}}
+  </li>{{end}}</ol>{{else}}<div class="empty">No runs yet — create one with <code>satelle execution create --parent {{.Item.ID}}</code>.</div>{{end}}{{end}}
   <h4>Timeline</h4>
   {{if .Events}}<ol class="timeline">{{range .Events}}<li{{with evdot .Kind}} class="{{.}}"{{end}}>
     <div class="ev-kind">{{.Kind}}</div>
