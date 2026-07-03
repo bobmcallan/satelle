@@ -38,12 +38,13 @@ func TestRunInitScaffolds(t *testing.T) {
 			t.Errorf("missing %s: %v", rel, err)
 		}
 	}
-	// Tasks are scaffolded: the dir + README keep-file and the seeded starter task
-	// header (sty_c1b3b4e3).
-	for _, rel := range []string{".satelle/tasks/README.md", ".satelle/tasks/tsk_example1.md"} {
-		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
-			t.Errorf("init did not seed %s: %v", rel, err)
-		}
+	// Tasks: the dir + README keep-file are scaffolded, but NO example task is
+	// seeded (sty_04ec1fe6) — a fresh repo starts with an empty tasks dir.
+	if _, err := os.Stat(filepath.Join(repo, ".satelle/tasks/README.md")); err != nil {
+		t.Errorf("init did not scaffold .satelle/tasks/README.md: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".satelle/tasks/tsk_example1.md")); err == nil {
+		t.Error("init must not seed an example task (tsk_example1.md)")
 	}
 
 	// The baseline workflow must NOT be scaffolded as a repo file (embedded-only).
@@ -159,16 +160,17 @@ func TestRunInitIdempotent(t *testing.T) {
 		t.Error("second init clobbered the user's toml edit")
 	}
 
-	// A user edit to the seeded task also survives re-init (never clobbered).
-	taskPath := filepath.Join(repo, ".satelle", "tasks", "tsk_example1.md")
-	edited := "---\nid: tsk_example1\ntype: task\nstatus: in_progress\n---\n\n# Mine\n\nACTION; VERIFICATION.\n"
-	if err := os.WriteFile(taskPath, []byte(edited), 0o644); err != nil {
+	// An authored task the operator wrote survives re-init (never clobbered),
+	// even though init no longer seeds any example task (sty_04ec1fe6).
+	taskPath := filepath.Join(repo, ".satelle", "tasks", "tsk_mine.md")
+	authored := "---\nid: tsk_mine\ntype: task\nstatus: in_progress\n---\n\n# Mine\n\nACTION; VERIFICATION.\n"
+	if err := os.WriteFile(taskPath, []byte(authored), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := runInit(io.Discard, repo); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := os.ReadFile(taskPath); string(got) != edited {
+	if got, _ := os.ReadFile(taskPath); string(got) != authored {
 		t.Errorf("re-init clobbered the authored task:\n%s", got)
 	}
 }
@@ -372,15 +374,6 @@ func TestRunInitHealsMissingGateSkillDeadlock(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "  + ") {
 		t.Errorf("second init created something (not idempotent):\n%s", out.String())
-	}
-}
-
-// TestStarterTaskIsValid asserts the seeded starter task header passes the
-// deterministic task structure check — a fresh repo's example is valid substrate
-// (sty_c1b3b4e3).
-func TestStarterTaskIsValid(t *testing.T) {
-	if p := structure.CheckTask(scaffoldStarterTask); len(p) != 0 {
-		t.Errorf("seeded starter task fails CheckTask: %v", p)
 	}
 }
 
