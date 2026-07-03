@@ -84,17 +84,35 @@ byte ceiling (overflow noted on stderr); fails open so it never blocks a session
 		Long: `gate is the PreToolUse handler for Edit|Write|MultiEdit|NotebookEdit. It
 exits non-zero (the wiring turns that into a block with '|| exit 2') unless a
 story is ENGAGED — in one of the active workflow's executor states (e.g.
-in_progress) — so the agent works under a tracked story. Fails open: an
+in_progress) — so the agent works under a tracked story. Two edits are NEVER
+gated: an edit OUTSIDE the repo (session scratch), and an edit to authored
+SUBSTRATE under the data dir (.satelle/ by default — workflows, skills,
+principles, documents, tasks, and config). Authored substrate is the source of
+truth, edited freely without a binary release (the constitution and
+satelle-generated-readonly); generated views under it stay protected by their
+0o444 file mode. Only in-repo CODE requires an engaged story. Fails open: an
 unconfigured repo or any internal error allows the edit. The "engaged" policy is
 authored substrate — it reads the workflow's executor states, not a Go rule.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
-			// An edit whose target is OUTSIDE the repo (e.g. the session
-			// scratchpad under /tmp) is untracked scratch, not project code —
-			// never gated. Only in-repo edits require an engaged story.
-			if p := filePathFromEvent(raw); p != "" && !withinRepoTarget(p) {
-				return nil
+			if p := filePathFromEvent(raw); p != "" {
+				// An edit whose target is OUTSIDE the repo (e.g. the session
+				// scratchpad under /tmp) is untracked scratch, not project code —
+				// never gated.
+				if !withinRepoTarget(p) {
+					return nil
+				}
+				// Authored SUBSTRATE under the data dir (.satelle/ by default) is the
+				// source of truth, "edited without a binary release" — the
+				// constitution and satelle-generated-readonly say to edit it freely.
+				// So workflows, skills, principles, documents, tasks, and config
+				// (agents.toml/satelle.toml/constitution.md) are NOT gated; generated
+				// views under it stay protected by their 0o444 file mode. Only in-repo
+				// CODE requires an engaged story (sty_103af456).
+				if withinDataDir(p) {
+					return nil
+				}
 			}
 			if storyEngaged() {
 				return nil
@@ -276,6 +294,20 @@ func withinRepoTarget(target string) bool {
 		return true
 	}
 	return withinRoot(config.RepoRootFromConfigPath(cfgPath), target)
+}
+
+// withinDataDir reports whether target resolves under the repo's authored-substrate
+// data dir (.satelle/ by default, honoring a relocated data_dir). Such edits are
+// exempt from the engaged-story gate — authored substrate is edited freely
+// (sty_103af456). Returns false if the config/root cannot be resolved, so the gate
+// stays conservative (still applies) on any resolution failure.
+func withinDataDir(target string) bool {
+	cfg, cfgPath, err := config.Load("")
+	if err != nil {
+		return false
+	}
+	root := config.RepoRootFromConfigPath(cfgPath)
+	return withinRoot(cfg.ResolveDataDir(root), target)
 }
 
 // withinRoot reports whether target resolves to a path inside root. A relative
