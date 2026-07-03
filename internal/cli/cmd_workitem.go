@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -136,7 +137,36 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(authoredValidateCmd("tasks"))
 		parent.AddCommand(taskArchiveCommand())
 	}
+	if group == "execution" {
+		parent.AddCommand(executionRecordCommand())
+	}
 	return parent
+}
+
+// executionRecordCommand builds `satelle execution record <exe_id>` — the in-loop
+// path for collecting a run's OUTPUT as an OKF doc under the parent task's folder
+// (sty_890b86cb). The orchestrator calls it as the run's final act (the task
+// workflow's exit-gate rubric instructs it to). Output comes from --output or,
+// when absent, stdin — so a run's captured log can be piped in.
+func executionRecordCommand() *cobra.Command {
+	var output string
+	cmd := &cobra.Command{
+		Use:         "record <exe_id>",
+		Short:       "Record a task execution's run output as an OKF doc under its task folder",
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			out := output
+			if !cmd.Flags().Changed("output") {
+				if data, err := io.ReadAll(cmd.InOrStdin()); err == nil {
+					out = string(data)
+				}
+			}
+			return dispatch(cmd, "execution-record", map[string]any{"id": args[0], "output": out})
+		},
+	}
+	cmd.Flags().StringVar(&output, "output", "", "run output text (default: read from stdin)")
+	return cmd
 }
 
 // taskArchiveCommand builds `satelle task archive <id>` — a task's disposal path

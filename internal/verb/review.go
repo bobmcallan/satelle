@@ -115,6 +115,11 @@ type DispatchResult struct {
 	Agent      string `json:"agent,omitempty"`
 	Command    string `json:"command,omitempty"`
 	Skill      string `json:"skill,omitempty"`
+	// Output is the dispatched agent's captured stdout (sty_890b86cb). For a task
+	// EXECUTION run, the verb layer writes it through as an OKF run-output document
+	// under the parent task's folder, so a run's evidence is discoverable per task
+	// rather than only in the central executor.log.
+	Output string `json:"output,omitempty"`
 }
 
 // ExecutorDispatcher runs the named isolated agent a workflow node allocates a

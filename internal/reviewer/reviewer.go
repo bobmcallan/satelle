@@ -612,6 +612,10 @@ func (g *Gater) DispatchExecutor(ctx context.Context, item workitem.Item, toStat
 		Dir:          g.repoRoot,
 	})
 	g.logExecutorRun(target.Agent, item.ID, toStatus, out, runErr)
+	// Carry the captured stdout back so the verb layer can write it through as an
+	// OKF run-output doc for a task execution (sty_890b86cb). The central
+	// executor.log above is unchanged — the per-task doc is the reviewable record.
+	res.Output = string(out)
 	if runErr != nil {
 		return res, fmt.Errorf("named agent %q failed performing step %q: %w", target.Agent, toStatus, runErr)
 	}
