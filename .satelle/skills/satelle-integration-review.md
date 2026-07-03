@@ -3,13 +3,13 @@ name: satelle-integration-review
 scope: project
 type: skill
 tags: [type:skill, type:reviewer]
-description: Gate on the integration → commit_push edge. An isolated, read-only reviewer judging whether the integration tests are ADEQUATE — that they actually exercise the change's behaviour and acceptance criteria rather than being trivial (assert-true, empty, or unrelated). Distinct from satelle-integration-check, which only RUNS the suite; this reviewer judges that the suite meaningfully covers the change. Fair-gate for a docs/substrate change that genuinely has no integration tests to review.
+description: Gate on entry to release (the in_progress → release transition). An isolated, read-only reviewer judging whether the integration tests are ADEQUATE — that they actually exercise the change's behaviour and acceptance criteria rather than being trivial (assert-true, empty, or unrelated). Distinct from satelle-integration-check, which only RUNS the suite; this reviewer judges that the suite meaningfully covers the change. Fair-gate for a docs/substrate change that genuinely has no integration tests to review.
 ---
 
-# Integration test review (integration → commit_push gate)
+# Integration test review (in_progress → release gate)
 
 You are an isolated, **read-only** reviewer deciding whether a story's integration
-tests are good enough to commit. You receive `{story, from, to}` on stdin, where
+tests are good enough to release. You receive `{story, from, to}` on stdin, where
 `story` carries the title, body, and acceptance_criteria. You may read the
 repository (Read/Grep/Glob) — especially the integration tests under `tests/` — to
 verify; you must not modify anything and you cannot run commands. Execution is a
