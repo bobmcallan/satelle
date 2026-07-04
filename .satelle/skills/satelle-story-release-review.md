@@ -3,18 +3,20 @@ name: satelle-story-release-review
 scope: project
 type: skill
 tags: [type:skill, type:reviewer]
-description: The single gate on the release → done edge (sty_d9a0b573), merging the former push/committed/done reviewers into one. An isolated, read-only reviewer judging whether the story may close — that the merged in-loop release step shipped correctly (version bumped + build stamped in HEAD, conventional commit ending in the story id with NO AI attribution, green CI test run, published version-gated release, recorded summary attachment) AND that the story's acceptance criteria are satisfied by the shipped evidence. Judges the recorded evidence; never commits, pushes, or records.
+description: The single gate on the release → done edge (sty_d9a0b573), merging the former push/committed/done reviewers into one. An isolated, read-only reviewer judging whether the story may close — that the merged in-loop release step shipped correctly (version bumped + build stamped in HEAD, conventional commit ending in the story id with NO AI attribution, and — as the AUTHORITY on CI-green — a green `test` run + published version-gated release CONFIRMED from the recorded run URLs, conclusions, and tag, rejecting any failing/absent/unconcluded run, plus a recorded summary attachment) AND that the story's acceptance criteria are satisfied by the shipped evidence. Judges the recorded evidence; never commits, pushes, or records.
 ---
 
 # Story release review (release → done gate)
 
 You are an isolated, **read-only** reviewer deciding whether a story may close
 (`release → done`). The merged `release` step (run in-loop) committed the slice
-with a version bump, pushed it, watched CI, confirmed the published release, and
-recorded a summary. Your job is to **judge that recorded evidence and the
-acceptance criteria** — you read to verify; you never commit, push, edit, or
-record anything yourself. You receive `{story, from, to}` on stdin; `story`
-carries the title, body, and acceptance criteria.
+with a version bump, pushed it, and recorded the CI run URLs + conclusions and the
+published release as a summary — without babysitting the runs. Your job is to
+**judge that recorded evidence and the acceptance criteria** — you read to verify; you never commit, push, edit, or
+record anything yourself. You run read-only with no shell, so you judge the
+recorded run conclusions; you do not fetch the CI runs live. You receive
+`{story, from, to}` on stdin; `story` carries the title, body, and acceptance
+criteria.
 
 ## 1. Judge the release evidence
 
@@ -26,9 +28,13 @@ Read the repository and the recorded evidence (the story's
 - **Commit convention**: the subject is a conventional commit ending with the
   story id in parens, and there is **NO AI attribution** — no `Co-Authored-By`,
   no "generated with" trailer (inspect the actual trailers/body).
-- **CI + release**: the recorded evidence shows the `test` run for the pushed SHA
-  concluded success and the version-gated `release` run published the tag
-  `v<satelle.version>` (the summary names the run URLs/conclusions + the tag).
+- **CI + release**: you are the authority on "CI is green" — judge it from the
+  RECORDED evidence (the summary's `test` and `release` run URLs, their
+  conclusions, and the published tag `v<satelle.version>`). **Reject** when a
+  recorded run concluded failure, is ABSENT, or has not concluded — a
+  pending/in-progress or missing conclusion is absent evidence, never an implied
+  pass; name it so the executor re-checks the runs and re-attaches corrected
+  evidence under this story.
 - **Recorded summary**: a story-implementation-summary attachment exists on the
   story capturing what shipped.
 

@@ -3,7 +3,7 @@ name: release
 scope: project
 type: skill
 tags: [type:skill]
-description: In-loop executor skill for the merged `release` step (sty_d9a0b573). The driving session — NOT an isolated sub-process — stages the story's slice, bumps .version + stamps the build date, makes a conventional commit ending in the story id with NO AI attribution, pushes to main, watches the `test` run and the version-gated `release` run to conclusion, confirms the published tag, refreshes the local service, and records a PR-style summary as a story attachment. Merges the former commit + push + record-release steps into one in-loop step so no isolated agent is spawned and no context is lost. The `satelle-story-release-review` gate then judges the recorded evidence.
+description: In-loop executor skill for the merged `release` step (sty_d9a0b573). The driving session — NOT an isolated sub-process — stages the story's slice, bumps .version + stamps the build date, makes a conventional commit ending in the story id with NO AI attribution, pushes to main, refreshes the local service during the CI window, then RECORDS the `test` + version-gated `release` run URLs with their real conclusions and the published tag as evidence — via one consolidated check, NOT in-loop `gh run watch` babysitting of both runs (sty_bfb2b392) — and records a PR-style summary as a story attachment. Merges the former commit + push + record-release steps into one in-loop step so no isolated agent is spawned and no context is lost. The `satelle-story-release-review` gate is the authority on CI-green, judging the recorded conclusions.
 ---
 
 # Release (in-loop executor step)
@@ -35,30 +35,50 @@ never enact your own status advance — the `release → done` gate does that.
    `Co-Authored-By`, no "generated with" trailer (this repo's convention). Verify
    the commit captured the intended files (`git show --stat HEAD`).
 
-## 2. Push and prove the release
+## 2. Push, then capture the release evidence (no watch loops)
 
 Pushing to `main` triggers **`test`** (build, vet, gofmt, unit tests). On its
-success the version-gated **`release`** workflow cuts the tag and publishes assets.
-There is no deploy workflow — the push to main IS the release. Watch BOTH.
+success the version-gated **`release`** workflow cuts the tag `v<satelle.version>`
+and publishes assets. There is no deploy workflow — the push to main IS the
+release. **Do not `gh run watch` either run** — that idle babysitting (~5-8 min) is
+what this step removes (sty_bfb2b392). You RECORD the run conclusions; the
+`satelle-story-release-review` gate is the authority on "CI is green" and judges
+exactly the evidence you record here.
+
+Push and confirm the `test` run exists (it appears within seconds):
 
 ```bash
 git push origin main
 SHA=$(git rev-parse HEAD)
-TID=$(gh run list --commit "$SHA" --workflow test --limit 1 --json databaseId -q '.[0].databaseId')
-gh run watch "$TID" --exit-status
-for i in $(seq 1 20); do RID=$(gh run list --commit "$SHA" --workflow release --limit 1 --json databaseId -q '.[0].databaseId'); [ -n "$RID" ] && break; sleep 3; done
-gh run watch "$RID" --exit-status
-gh release view "v$(awk '$1=="satelle.version:"{print $2}' .version)"
+for i in $(seq 1 10); do TID=$(gh run list --commit "$SHA" --workflow test --limit 1 --json databaseId -q '.[0].databaseId'); [ -n "$TID" ] && break; sleep 3; done
 ```
 
-**Do not auto-retry, amend, or force-push.** If `test` fails the slice is not
-landed — read `gh run view "$TID" --log-failed`, fix under this same story, and
-re-run the release step. If `release` fails, the publish did not happen — surface
-it and stop; never record success over a red run.
+Now do the wrap-up that does NOT depend on CI, **during the CI window** — this is
+where the old watch time goes. **Refresh the local service** from the pushed code
+(local HEAD already equals the pushed SHA): `make install && satelle service
+install`; confirm `satelle version` reports the pushed commit + new version. Draft
+the PR-style summary body (§3) while the runs proceed.
 
-Then **refresh the local service** from the pushed code so the running binary is
-current: `make install && satelle service install`; confirm `satelle version`
-reports the pushed commit + new version.
+Then make **ONE consolidated evidence check** — both workflows and the tag in a
+single look, with a SHORT bounded poll only if a run has not concluded yet (the
+`release` run and its tag only exist AFTER `test` succeeds, via the `workflow_run`
+trigger, so the tag is recorded once SEEN, never as an expectation):
+
+```bash
+for i in $(seq 1 8); do
+  gh run list --commit "$SHA" --json name,status,conclusion,url
+  gh release view "v$(awk '$1=="satelle.version:"{print $2}' .version)" 2>/dev/null && break
+  sleep 15
+done
+```
+
+Record what you actually SEE — the `test` and `release` run URLs with their **real
+conclusions** and the published tag. **Do not auto-retry, amend, or force-push, and
+never record success over a red or unconcluded run.** If `test` failed the slice is
+not landed — read `gh run view "$TID" --log-failed`, fix under this same story, and
+re-run the release step. If `release` failed the publish did not happen — surface
+it and stop. If a run is still in progress when the bounded check ends, record the
+true state and surface it; the release gate rejects unconcluded evidence by design.
 
 ## 3. Record the summary WITH the story
 
