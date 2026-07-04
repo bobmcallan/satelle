@@ -325,12 +325,15 @@ type pageData struct {
 	Projects     []crumbProject // workspace project switcher for the breadcrumb
 }
 
-// crumbProject is one entry in the breadcrumb project-switcher dropdown — the
-// slug+name the supervisor injected, plus whether it is the current project.
+// crumbProject is one entry in the breadcrumb project-switcher dropdown. It shows
+// the project Name; Path is the full repo path (a hover title, and the visible
+// disambiguator when Ambiguous — i.e. another project in the list shares this Name).
 type crumbProject struct {
-	Name    string
-	Slug    string
-	Current bool
+	Name      string
+	Slug      string
+	Path      string
+	Current   bool
+	Ambiguous bool
 }
 
 // topBar is the data the shared "topbar" template needs — the page-chrome
@@ -727,11 +730,21 @@ func crumbProjects(header, currentName string) []crumbProject {
 	if len(projs) < 2 {
 		return nil
 	}
+	nameCount := map[string]int{}
+	for _, p := range projs {
+		nameCount[p.Name]++
+	}
 	cur := strings.TrimPrefix(basePath, "/")
 	out := make([]crumbProject, 0, len(projs))
 	for _, p := range projs {
 		current := (cur != "" && p.Slug == cur) || (cur == "" && p.Name == currentName)
-		out = append(out, crumbProject{Name: p.Name, Slug: p.Slug, Current: current})
+		out = append(out, crumbProject{
+			Name:      p.Name,
+			Slug:      p.Slug,
+			Path:      p.Path,
+			Current:   current,
+			Ambiguous: nameCount[p.Name] > 1,
+		})
 	}
 	return out
 }

@@ -85,8 +85,8 @@ func TestEncodeDecodeProjects(t *testing.T) {
 	if len(out) != 2 || out[0].Slug != "repo" || out[1].Name != "satellité" {
 		t.Fatalf("round-trip mismatch: %+v", out)
 	}
-	if out[0].Path != "" {
-		t.Errorf("Path must not survive the header: %q", out[0].Path)
+	if out[0].Path != "/x/repo" {
+		t.Errorf("Path must round-trip through the header: %q", out[0].Path)
 	}
 	if DecodeProjects("not*base64") != nil {
 		t.Error("garbage header must decode to nil (degrade, never panic)")

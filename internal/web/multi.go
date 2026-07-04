@@ -41,7 +41,7 @@ const ProjectsHeader = "X-Satelle-Projects"
 func EncodeProjects(projects []Project) string {
 	slim := make([]slimProject, len(projects))
 	for i, p := range projects {
-		slim[i] = slimProject{Slug: p.Slug, Name: p.Name}
+		slim[i] = slimProject{Slug: p.Slug, Name: p.Name, Path: p.Path}
 	}
 	b, err := json.Marshal(slim)
 	if err != nil {
@@ -66,7 +66,7 @@ func DecodeProjects(header string) []Project {
 	}
 	out := make([]Project, len(slim))
 	for i, s := range slim {
-		out[i] = Project{Slug: s.Slug, Name: s.Name}
+		out[i] = Project{Slug: s.Slug, Name: s.Name, Path: s.Path}
 	}
 	return out
 }
@@ -74,6 +74,7 @@ func DecodeProjects(header string) []Project {
 type slimProject struct {
 	Slug string `json:"slug"`
 	Name string `json:"name"`
+	Path string `json:"path,omitempty"`
 }
 
 // Slugify turns a project name into a URL-safe slug: lowercased, with any run of

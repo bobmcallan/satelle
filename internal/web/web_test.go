@@ -778,24 +778,37 @@ func TestBreadcrumbProjectSwitcher(t *testing.T) {
 	// With the supervisor's project header → the switcher renders, listing a
 	// sibling and marking the current project (basePath is empty in tests, so
 	// current is matched by name == ProjectName "repo").
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
-	req.Header.Set(web.ProjectsHeader, web.EncodeProjects([]web.Project{
-		{Slug: "repo", Name: "repo"}, {Slug: "other", Name: "other"},
-	}))
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	body := string(b)
+	// Unique names → each entry shows the NAME only (no suffix), a title tooltip
+	// with the path, and the current project marked (basePath empty in tests, so
+	// current matches by name == ProjectName "repo").
+	body := switcherBody(t, srv, []web.Project{
+		{Slug: "repo", Name: "repo", Path: "/home/u/repo"},
+		{Slug: "other", Name: "other", Path: "/home/u/other"},
+	})
 	for _, want := range []string{
 		`<details class="proj-switch">`,
-		`href="/other/"`,
-		`href="/repo/" class="current" aria-current="page"`,
+		`href="/other/" title="/home/u/other">other</a>`, // link + tooltip, name only
+		`aria-current="page">repo</a>`,                   // current, name only
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("switcher body missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "proj-slug") {
+		t.Errorf("unique names must not render a disambiguating suffix:\n%s", body)
+	}
+
+	// Same name in two dirs → BOTH entries show the path to disambiguate.
+	dup := switcherBody(t, srv, []web.Project{
+		{Slug: "satelle", Name: "satelle", Path: "/a/satelle"},
+		{Slug: "satelle-2", Name: "satelle", Path: "/b/satelle"},
+	})
+	for _, want := range []string{
+		`<span class="proj-slug">/a/satelle</span>`,
+		`<span class="proj-slug">/b/satelle</span>`,
+	} {
+		if !strings.Contains(dup, want) {
+			t.Errorf("same-name entries must show the path to disambiguate, missing %q:\n%s", want, dup)
 		}
 	}
 
@@ -807,6 +820,20 @@ func TestBreadcrumbProjectSwitcher(t *testing.T) {
 	if !strings.Contains(plain, `<span class="cur">repo</span>`) {
 		t.Error("no-header request must render the plain project name")
 	}
+}
+
+// switcherBody fetches / with the project header set to projs and returns the body.
+func switcherBody(t *testing.T, srv *httptest.Server, projs []web.Project) string {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+	req.Header.Set(web.ProjectsHeader, web.EncodeProjects(projs))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	return string(b)
 }
 
 // TestBrandMarkAnimatedSVG asserts the topbar brand mark is the inline
