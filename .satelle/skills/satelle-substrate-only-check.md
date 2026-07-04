@@ -3,7 +3,7 @@ name: satelle-substrate-only-check
 scope: project
 type: skill
 tags: [type:skill, type:reviewer, type:functional-check]
-description: Functional-check gate for the substrate workflow's close (in_progress → done). It confirms the story's committed slice is SUBSTRATE-ONLY — every touched path is under .satelle/ or docs/ — and rejects if any code, build, CI, or command path appears. This is the guardrail that keeps the category-driven workflow choice honest: because category "substrate" selects the lighter satelle-substrate-workflow, a code change mis-filed there would skip the project workflow's plan/code-ac/integration gates; this check catches it because the diff itself betrays the code. Local, deterministic (the command IS the decision — no LLM). Self-contained, per satelle-reviewer-self-contained.
+description: Functional-check gate for the substrate workflow's close (in_progress → done). It confirms the story's committed slice is SUBSTRATE-ONLY — every touched path is under .satelle/, docs/, or a configured [gate] edit_exempt_paths prefix (a harness authoring dir like .claude/) — and rejects if any code, build, CI, or command path appears. This is the guardrail that keeps the category-driven workflow choice honest: because category "substrate" selects the lighter satelle-substrate-workflow, a code change mis-filed there would skip the project workflow's plan/code-ac/integration gates; this check catches it because the diff itself betrays the code. Local, deterministic (the command IS the decision — no LLM). Self-contained, per satelle-reviewer-self-contained.
 ---
 
 # Substrate-only check (substrate workflow close gate)
@@ -12,9 +12,11 @@ This is a **functional-check** gate on the substrate workflow's close. The workf
 DECLARES it as a scoped reviewer node (`on="done"`), so on the `in_progress → done`
 transition it verifies that the story's committed slice touched **only** authored
 substrate — markdown under `.satelle/` (workflows, skills, principles, documents,
-tasks) or `docs/`. If any other path (a `.go` file, `cmd/`, build/CI config) is in
-the slice, the change is **not** substrate-only and belongs on the project
-workflow, so the close is **rejected**.
+tasks), `docs/`, or any prefix listed in `[gate] edit_exempt_paths` in
+`satelle.toml` (a harness authoring dir like `.claude/` that holds authored
+markdown, not product code — the same knob the edit gate uses). If any other path
+(a `.go` file, `cmd/`, build/CI config) is in the slice, the change is **not**
+substrate-only and belongs on the project workflow, so the close is **rejected**.
 
 The check is the embedded ```check script below — **self-contained**, referencing
 no external file (see [[satelle-reviewer-self-contained]]). satelle runs it in the
@@ -44,7 +46,18 @@ if [ -z "$commits" ]; then
   exit 1
 fi
 changed=$(for c in $commits; do git show --name-only --format= "$c"; done | grep -v '^$' | sort -u)
-offenders=$(printf '%s\n' "$changed" | grep -vE '^(\.satelle/|docs/)' || true)
+# Allowed prefixes: authored substrate (.satelle/, docs/) plus any [gate]
+# edit_exempt_paths configured in satelle.toml — a harness authoring dir (e.g.
+# .claude/) holds authored markdown, not product code, so it rides the substrate
+# lane too. Reuses v0.0.104's edit_exempt_paths knob (config-over-code, no new
+# knob); unset → .satelle/ + docs/ exactly as before.
+allow='\.satelle/|docs/'
+extra=$(grep -E '^[[:space:]]*edit_exempt_paths' .satelle/satelle.toml 2>/dev/null | grep -oE '"[^"]+"' | tr -d '"')
+for p in $extra; do
+  esc=$(printf '%s' "$p" | sed 's#[^A-Za-z0-9/]#\\&#g')
+  allow="$allow|$esc"
+done
+offenders=$(printf '%s\n' "$changed" | grep -vE "^($allow)" || true)
 if [ -n "$offenders" ]; then
   echo "the slice for $sid touches non-substrate paths — this is not a substrate-only change; use the project workflow (category fix/feature/chore):"
   printf '%s\n' "$offenders"
