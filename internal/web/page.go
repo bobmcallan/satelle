@@ -174,7 +174,7 @@ const templatesSrc = `
 </head>
 <body>
 <div class="wrap">
-  <nav class="crumbs"><a href="/">workspace</a> <span class="sep">/</span> <span class="cur">{{.ProjectName}}</span></nav>
+  <nav class="crumbs"><a href="/">workspace</a> <span class="sep">/</span> {{if gt (len .Projects) 1}}<details class="proj-switch"><summary class="cur">{{.ProjectName}} <span class="chev" aria-hidden="true">▾</span></summary><ul class="proj-menu">{{range .Projects}}<li><a href="/{{.Slug}}/"{{if .Current}} class="current" aria-current="page"{{end}}>{{.Name}} <span class="proj-slug">/{{.Slug}}/</span></a></li>{{end}}</ul></details>{{else}}<span class="cur">{{.ProjectName}}</span>{{end}}</nav>
   <header class="app">
     {{template "topbar" .TopBar}}
     <h1>{{.ProjectName}}</h1>

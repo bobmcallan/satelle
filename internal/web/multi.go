@@ -9,6 +9,8 @@ package web
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -24,6 +26,54 @@ type Project struct {
 	Slug string
 	Name string
 	Path string
+}
+
+// ProjectsHeader carries the supervisor's live project list (slug+name only) into
+// each proxied request, so a supervised child's breadcrumb can render the project
+// switcher without knowing the registry or recomputing slugs (sty_2bc00a9d). The
+// supervisor is the single source of the slug table (request routing), so the child
+// never disagrees with it.
+const ProjectsHeader = "X-Satelle-Projects"
+
+// EncodeProjects serializes each project's slug+name (Path omitted) for
+// ProjectsHeader: JSON, base64url-wrapped so a non-ASCII repo basename never yields
+// a spec-hostile header value. Empty on marshal error.
+func EncodeProjects(projects []Project) string {
+	slim := make([]slimProject, len(projects))
+	for i, p := range projects {
+		slim[i] = slimProject{Slug: p.Slug, Name: p.Name}
+	}
+	b, err := json.Marshal(slim)
+	if err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// DecodeProjects reverses EncodeProjects. ANY error (absent, malformed, spoofed)
+// yields nil, so a bad header degrades to no switcher rather than a 500.
+func DecodeProjects(header string) []Project {
+	if header == "" {
+		return nil
+	}
+	b, err := base64.RawURLEncoding.DecodeString(header)
+	if err != nil {
+		return nil
+	}
+	var slim []slimProject
+	if json.Unmarshal(b, &slim) != nil {
+		return nil
+	}
+	out := make([]Project, len(slim))
+	for i, s := range slim {
+		out[i] = Project{Slug: s.Slug, Name: s.Name}
+	}
+	return out
+}
+
+type slimProject struct {
+	Slug string `json:"slug"`
+	Name string `json:"name"`
 }
 
 // Slugify turns a project name into a URL-safe slug: lowercased, with any run of

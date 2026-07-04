@@ -68,6 +68,20 @@ footer { margin-top: 40px; color: var(--muted); font-size: 12px; border-top: 1px
 .crumbs .sep { margin: 0 7px; color: #cbd5e1; }
 .crumbs .cur { color: var(--ink); }
 
+/* Breadcrumb project switcher (sty_2bc00a9d): the <project> segment as a dropdown. */
+.proj-switch { display: inline-block; position: relative; }
+.proj-switch > summary { display: inline-flex; align-items: center; gap: 5px; color: var(--ink); cursor: pointer; list-style: none; }
+.proj-switch > summary::-webkit-details-marker { display: none; }
+.proj-switch > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.proj-switch .chev { color: var(--muted); font-size: 10px; }
+.proj-menu { position: absolute; left: 0; top: calc(100% + 4px); z-index: 20; margin: 0; padding: 4px; min-width: 200px; list-style: none;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.18); }
+.proj-menu li { margin: 0; }
+.proj-menu a { display: flex; align-items: baseline; gap: 6px; padding: 6px 9px; border-radius: 6px; color: var(--ink); text-decoration: none; }
+.proj-menu a:hover { background: var(--hover, rgba(127,127,127,.12)); }
+.proj-menu a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.proj-menu a.current { font-weight: 600; }
+
 /* Title cell + tags-under-title */
 .wi-tags { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
 .tagchip { font-size: 10.5px; color: var(--muted); background: var(--chip); border-radius: 0; padding: 0 6px; line-height: 1.6; }

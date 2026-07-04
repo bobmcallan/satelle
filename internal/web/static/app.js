@@ -586,6 +586,25 @@
   // Attached documents are now a native <details> list (sty_1a239b4d) — no JS
   // needed; the disclosure works without a handler and survives live re-renders.
 
+  // Project switcher (sty_2bc00a9d): the breadcrumb <details> dropdown works without
+  // JS (native disclosure + tabbable links); this only adds the expected dropdown
+  // ergonomics — close on outside click and on Escape (returning focus to summary).
+  function initProjectSwitcher() {
+    document.addEventListener("click", function (e) {
+      document.querySelectorAll("details.proj-switch[open]").forEach(function (d) {
+        if (!d.contains(e.target)) d.removeAttribute("open");
+      });
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key !== "Escape") return;
+      document.querySelectorAll("details.proj-switch[open]").forEach(function (d) {
+        d.removeAttribute("open");
+        var s = d.querySelector("summary");
+        if (s) s.focus();
+      });
+    });
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     initTheme();
     initTabs();
@@ -593,6 +612,7 @@
     initFilters();
     initLive();
     initDetailLive();
+    initProjectSwitcher();
     enhanceWorkflowDiagrams(document); // any diagram already in the server-rendered page
   });
 })();

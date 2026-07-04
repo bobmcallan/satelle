@@ -322,6 +322,15 @@ type pageData struct {
 	Uptime       string
 	Theme        string
 	TopBar       topBar
+	Projects     []crumbProject // workspace project switcher for the breadcrumb
+}
+
+// crumbProject is one entry in the breadcrumb project-switcher dropdown — the
+// slug+name the supervisor injected, plus whether it is the current project.
+type crumbProject struct {
+	Name    string
+	Slug    string
+	Current bool
 }
 
 // topBar is the data the shared "topbar" template needs — the page-chrome
@@ -703,8 +712,28 @@ func projectPage(a *app.App) http.HandlerFunc {
 			httpError(w, err)
 			return
 		}
+		data.Projects = crumbProjects(r.Header.Get(ProjectsHeader), data.ProjectName)
 		render(w, "page", data)
 	}
+}
+
+// crumbProjects decodes the supervisor-injected project list into the breadcrumb
+// switcher VM, marking the current project by the child's own mount slug (or, when
+// served without a mount prefix, by name). Fewer than two projects yields nil so the
+// breadcrumb renders the plain project name — graceful degradation for local/single
+// or unsupervised serving.
+func crumbProjects(header, currentName string) []crumbProject {
+	projs := DecodeProjects(header)
+	if len(projs) < 2 {
+		return nil
+	}
+	cur := strings.TrimPrefix(basePath, "/")
+	out := make([]crumbProject, 0, len(projs))
+	for _, p := range projs {
+		current := (cur != "" && p.Slug == cur) || (cur == "" && p.Name == currentName)
+		out = append(out, crumbProject{Name: p.Name, Slug: p.Slug, Current: current})
+	}
+	return out
 }
 
 // fragmentRows renders just one panel's rows — the realtime refetch target.
