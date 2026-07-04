@@ -501,60 +501,94 @@
   // Panels with a rows fragment endpoint (the refetch targets); workflow has none.
   var LIVE_TOPICS = ["stories", "tasks", "docs"];
 
+  // initLive wires realtime through ONE visibility-gated EventSource that serves
+  // both consumers — the panel refetch (list pages) and the detail-fragment
+  // refresh (detail pages). It is held ONLY while the tab is visible: browsers
+  // cap HTTP/1.1 connections at ~6 PER HOST across all tabs, and a persistent SSE
+  // per open tab starves that pool, so a REFRESH of the active tab can't get a
+  // connection and hangs (sty_a4fc4d00). Closing the stream on a hidden tab (and
+  // on pagehide) frees the slot; the on-reconnect reconcile keeps a returning tab
+  // current. window.__satelleLive exposes the connection state for tests.
   function initLive() {
     if (!window.EventSource) return;
     // The .uptime control's green border ('on' class) tracks the live SSE
-    // connection state — added on open, removed on error below. It is the
+    // connection state — added on open, removed on close/error. It is the
     // CONNECTION signal, distinct from the uptime TEXT (a server render-time
     // snapshot of process elapsed time). See the topbar tooltip. (sty_efeb2a69)
     var dot = document.querySelector(".uptime");
-    var src = new EventSource("events");
-    var refetch = {}; // per-topic debounced refetch
-    LIVE_TOPICS.forEach(function (tp) { refetch[tp] = debounce(function () { refetchPanel(tp); }, 250); });
-    var firstOpen = true;
-    src.addEventListener("open", function () {
-      if (dot) dot.classList.add("on");
-      // Durability: on every RE-connect, reconcile every panel — any CLI update
-      // missed during a connection gap (reconnect, server restart, a dropped
-      // trigger) is picked up here, so the page is eventually consistent with the
-      // store even when a doorbell is lost. The first open is skipped: the page
-      // was just server-rendered fresh, so a refetch would be redundant (and
-      // would disrupt an expansion opened immediately after load).
-      if (firstOpen) { firstOpen = false; return; }
-      if (document.body.getAttribute("data-page") === "projects") { location.reload(); return; }
-      LIVE_TOPICS.forEach(function (tp) { refetchPanel(tp); });
-    });
-    src.addEventListener("trigger", function (ev) {
-      if (refetch[ev.data]) refetch[ev.data]();
-      // The / landing has no panels — a "projects" doorbell (the served set
-      // changed: workspace add/remove, a child failed) reloads it so an open
-      // tab is never stale (sty_4ea4d4df).
-      if (ev.data === "projects" && document.body.getAttribute("data-page") === "projects") location.reload();
-    });
-    src.onerror = function () { if (dot) dot.classList.remove("on"); };
-  }
+    var isProjects = document.body.getAttribute("data-page") === "projects";
+    var detailEl = document.getElementById("detail-live");
+    var detailKind = detailEl ? detailEl.dataset.kind : null;
+    var detailId = detailEl ? detailEl.dataset.id : null;
+    var detailTopic = detailEl ? topicForKind(detailKind) : null;
 
-  // ---- detail page live ----------------------------------------------------
-  function initDetailLive() {
-    var el = document.getElementById("detail-live");
-    if (!el || !window.EventSource) return;
-    var kind = el.dataset.kind, id = el.dataset.id, topic = topicForKind(kind);
-    var dot = document.querySelector(".uptime");
-    var src = new EventSource("events");
-    var refresh = debounce(function () {
-      fetch("fragment/" + kind + "/" + id)
+    var refetch = {}; // per-topic debounced panel refetch (built once, reused)
+    LIVE_TOPICS.forEach(function (tp) { refetch[tp] = debounce(function () { refetchPanel(tp); }, 250); });
+    var refreshDetail = detailEl ? debounce(function () {
+      fetch("fragment/" + detailKind + "/" + detailId)
         .then(function (r) { return r.text(); })
-        .then(function (html) { el.innerHTML = html; })
+        .then(function (html) { detailEl.innerHTML = html; })
         .catch(function () {});
-    }, 250);
-    var firstOpen = true;
-    src.addEventListener("open", function () {
-      if (dot) dot.classList.add("on");
-      if (firstOpen) { firstOpen = false; return; } // already server-rendered fresh
-      refresh(); // reconcile the detail on every RE-connect (durability)
+    }, 250) : null;
+
+    // reconcile pulls fresh state after ANY connection gap (reconnect, or a
+    // reopen after hidden→visible) so nothing is missed while disconnected.
+    function reconcile() {
+      if (isProjects) { location.reload(); return; }
+      LIVE_TOPICS.forEach(function (tp) { refetchPanel(tp); });
+      if (refreshDetail) refreshDetail();
+    }
+
+    var src = null;
+    // firstOpen is PAGE-lifetime (not per-EventSource): only the first open of a
+    // freshly server-rendered page skips reconcile; every later open (SSE
+    // auto-reconnect OR a reopen after the tab returns to visible) reconciles.
+    var firstOpen = document.visibilityState === "visible";
+
+    window.__satelleLive = { open: false, opens: 0 };
+
+    function connectLive() {
+      if (src || document.visibilityState !== "visible") return;
+      src = new EventSource("events");
+      window.__satelleLive.open = true;
+      window.__satelleLive.opens++;
+      src.addEventListener("open", function () {
+        if (dot) dot.classList.add("on");
+        if (firstOpen) { firstOpen = false; return; }
+        reconcile();
+      });
+      src.addEventListener("trigger", function (ev) {
+        if (refetch[ev.data]) refetch[ev.data]();
+        if (refreshDetail && ev.data === detailTopic) refreshDetail();
+        // The / landing has no panels — a "projects" doorbell (the served set
+        // changed: workspace add/remove, a child failed) reloads it (sty_4ea4d4df).
+        if (ev.data === "projects" && isProjects) location.reload();
+      });
+      src.onerror = function () { if (dot) dot.classList.remove("on"); };
+    }
+
+    function disconnectLive() {
+      if (!src) return;
+      src.close();
+      src = null;
+      window.__satelleLive.open = false;
+      if (dot) dot.classList.remove("on"); // no live border while holding no connection
+      // A page that first loads hidden must reconcile on its first (deferred)
+      // open, so it is not the skip-me first-open of a fresh render.
+      firstOpen = false;
+    }
+
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible") connectLive(); else disconnectLive();
     });
-    src.addEventListener("trigger", function (ev) { if (ev.data === topic) refresh(); });
-    src.onerror = function () { if (dot) dot.classList.remove("on"); };
+    // Free the slot promptly on navigation/close and before bfcache entry.
+    window.addEventListener("pagehide", disconnectLive);
+    // bfcache restore does not always fire visibilitychange — reopen on show.
+    window.addEventListener("pageshow", function () {
+      if (document.visibilityState === "visible") connectLive();
+    });
+
+    connectLive(); // opens only if visible; a background-opened tab waits for view
   }
 
   // ---- theme (light default, dark optional, persisted) --------------------
@@ -610,8 +644,7 @@
     initTabs();
     initExpand();
     initFilters();
-    initLive();
-    initDetailLive();
+    initLive(); // one visibility-gated SSE serves both panels and detail
     initProjectSwitcher();
     enhanceWorkflowDiagrams(document); // any diagram already in the server-rendered page
   });

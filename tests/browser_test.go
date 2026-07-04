@@ -1470,3 +1470,102 @@ func setInput(sel, val string) chromedp.Action {
 	})()`, sel, val)
 	return chromedp.Evaluate(js, nil)
 }
+
+// TestBrowserSSEVisibilityGating drives the served UI in headless Chrome and
+// asserts the live-update EventSource is held ONLY while the tab is visible: it
+// closes when the tab is hidden and reopens when visible again — so background
+// tabs release their HTTP/1.1 connection slot and the active tab can always load
+// or refresh (sty_a4fc4d00). It also asserts a single EventSource per page
+// (previously a detail page opened two).
+func TestBrowserSSEVisibilityGating(t *testing.T) {
+	base, repo := serveRepo(t, "8813")
+	storyID := createStory(t, repo, "VisibilityGateStory", "")
+	ctx := newChrome(t)
+
+	// --- List page: one connection, held while visible ---
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/#stories"),
+		chromedp.WaitVisible(`.uptime.on`, chromedp.ByQuery), // SSE connected (open fired)
+	); err != nil {
+		t.Fatalf("navigate/connect: %v", err)
+	}
+
+	var open bool
+	var opens int
+	if err := chromedp.Run(ctx,
+		chromedp.Evaluate(`window.__satelleLive.open`, &open),
+		chromedp.Evaluate(`window.__satelleLive.opens`, &opens),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !open {
+		t.Fatal("expected the live connection open while visible")
+	}
+	if opens != 1 {
+		t.Fatalf("expected exactly ONE EventSource on load, got %d", opens)
+	}
+
+	// --- Hide the tab → the connection must close (slot released) ---
+	hide := `Object.defineProperty(document,'visibilityState',{configurable:true,get:function(){return 'hidden';}});document.dispatchEvent(new Event('visibilitychange'));window.__satelleLive.open`
+	if err := chromedp.Run(ctx, chromedp.Evaluate(hide, &open)); err != nil {
+		t.Fatal(err)
+	}
+	if open {
+		t.Fatal("live connection must CLOSE when the tab is hidden (connection-pool fix)")
+	}
+	// The .uptime green border reflects the released connection.
+	var hasOn bool
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('.uptime').classList.contains('on')`, &hasOn)); err != nil {
+		t.Fatal(err)
+	}
+	if hasOn {
+		t.Fatal("uptime 'on' border must clear while holding no connection")
+	}
+
+	// --- AC2: create a story WHILE HIDDEN (SSE closed → no live push), so the
+	// tab is now stale; returning to visible must reconcile it in. ---
+	createStory(t, repo, "ReconcileWhileHidden", "")
+
+	// --- Show again → reopen + reconcile ---
+	show := `Object.defineProperty(document,'visibilityState',{configurable:true,get:function(){return 'visible';}});document.dispatchEvent(new Event('visibilitychange'));window.__satelleLive.open`
+	if err := chromedp.Run(ctx, chromedp.Evaluate(show, &open)); err != nil {
+		t.Fatal(err)
+	}
+	if !open {
+		t.Fatal("live connection must REOPEN when the tab becomes visible again")
+	}
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`window.__satelleLive.opens`, &opens)); err != nil {
+		t.Fatal(err)
+	}
+	if opens != 2 {
+		t.Fatalf("reopen should be the 2nd connection, got opens=%d", opens)
+	}
+	// The reconcile on reopen must refetch the panel so the story created while
+	// hidden appears — with NO live 'trigger' (none was received while closed).
+	if err := chromedp.Run(ctx,
+		chromedp.WaitVisible(`#panel-stories .row[data-title="reconcilewhilehidden"]`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("returning tab did not reconcile the story created while hidden (AC2): %v", err)
+	}
+
+	// --- pagehide releases the slot ---
+	if err := chromedp.Run(ctx, chromedp.Evaluate(
+		`window.dispatchEvent(new Event('pagehide'));window.__satelleLive.open`, &open)); err != nil {
+		t.Fatal(err)
+	}
+	if open {
+		t.Fatal("live connection must close on pagehide")
+	}
+
+	// --- Detail page: still exactly ONE connection (was two before the fix) ---
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/story/"+storyID),
+		chromedp.WaitVisible(`.uptime.on`, chromedp.ByQuery),
+		chromedp.Evaluate(`window.__satelleLive.opens`, &opens),
+	); err != nil {
+		t.Fatalf("detail page: %v", err)
+	}
+	if opens != 1 {
+		t.Fatalf("detail page must open exactly ONE EventSource, got %d", opens)
+	}
+}
