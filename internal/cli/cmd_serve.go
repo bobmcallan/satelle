@@ -252,7 +252,7 @@ type supervisor struct {
 // reservedSlugs are the bound server's own first path segments; a project slug
 // must not shadow them.
 var reservedSlugs = []string{
-	"static", "fragment", "story", "task", "doc", "workspace", "help",
+	"static", "fragment", "story", "task", "doc", "workspace", "help", "settings", "oauth",
 	"events", "theme", "healthz", "projects",
 }
 
@@ -468,6 +468,9 @@ func (s *supervisor) spawn(path, slug string) (*childProc, error) {
 func (s *supervisor) withProjects(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Header.Set(web.ProjectsHeader, web.EncodeProjects(s.snapshot()))
+		// The true client address for the settings-write loopback gate — Set (not
+		// Add) so an inbound value cannot spoof it (same guarantee as above).
+		r.Header.Set(web.ClientAddrHeader, r.RemoteAddr)
 		next.ServeHTTP(w, r)
 	})
 }
