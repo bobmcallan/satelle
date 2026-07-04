@@ -26,6 +26,11 @@ var slowThreshold = 1 * time.Second
 // LEVEL is INFO, WARN when slow (SSE /events exempt — it is open for its lifetime),
 // or ERROR for status >= 500 or a recovered panic. Only r.URL.Path is logged (no
 // query string) to keep lines short and avoid logging anything sensitive-ish.
+//
+// http.ErrAbortHandler is re-panicked (not recovered), so the net/http server
+// aborts and closes the connection as designed — recovering it would return a
+// mid-stream (aborted-SSE) connection to the keep-alive pool, hanging the next
+// request that reuses it (sty_fa24469a).
 func RequestLog(next http.Handler, logPath string, cfg logfile.Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -33,6 +38,17 @@ func RequestLog(next http.Handler, logPath string, cfg logfile.Config) http.Hand
 		defer func() {
 			dur := time.Since(start)
 			if rec := recover(); rec != nil {
+				// http.ErrAbortHandler is the sentinel the net/http server uses to
+				// abort AND close the connection silently. httputil.ReverseProxy
+				// raises it when a proxied stream (a child's /<slug>/events SSE)
+				// aborts — e.g. a browser tab closes. Recovering it would return the
+				// connection to the keep-alive pool mid-stream, so the next request
+				// reusing it hangs (the browser times out on an unrelated GET /).
+				// Re-panic BEFORE any write so the server closes it as designed; an
+				// aborted stream is normal client behaviour, so it is not logged.
+				if rec == http.ErrAbortHandler {
+					panic(rec)
+				}
 				if !sr.wrote {
 					sr.ResponseWriter.WriteHeader(http.StatusInternalServerError)
 				}
