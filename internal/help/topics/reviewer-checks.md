@@ -75,21 +75,22 @@ mechanical, so a swapped harness can never change what "valid" means.
 Judges readiness of **intent** before work starts — concrete title, clear goal,
 testable criteria. Unclear intent is rejected; the story stays in backlog.
 
-## Commit + push + record steps — `commit`, `push`, `record-release` (executors)
+## Release step — `release` (in-loop executor)
 
-Two sequential **executor** steps. The **`commit`** step formats and stages the
-slice, **bumps `satelle.version` (patch) and stamps `satelle.build` in `.version`**
-— mandatory on every commit, because `.version` is the single source the release
-tag and build identity derive from — then makes a conventional commit (the story
-id, no AI attribution). The **`push`** step pushes to `main` (trunk-based release),
-watches the GitHub Actions `test` run, then — because the version bumped — watches
-the version-gated `release` run and confirms it published `v<version>`. Both happen
-**while the story is engaged**, so commits are always tracked. The
-**`record-release`** step then verifies the bump, the green `test` run, and the
-published release, and records a PR-style summary **with the story** — an
-attachment under `.satelle/stories/<id>/` (`satelle story attach … --file`),
-readable via `satelle story docs <id>`. The `done` gate judges the recorded
-evidence.
+One in-loop **executor** step (the driving session, not a dispatched sub-process).
+It formats and stages the slice, **bumps `satelle.version` (patch) and stamps
+`satelle.build` in `.version`** — mandatory, because `.version` is the single
+source the release tag and build identity derive from — makes a conventional
+commit ending in the story id (no AI attribution), and pushes to `main`
+(trunk-based release). Pushing triggers the GitHub Actions `test` run and, on its
+success, the version-gated `release` run that publishes `v<version>`. Rather than
+block watching both runs, the step refreshes the local service during the CI
+window and then **records** the `test` + `release` run URLs, their conclusions, and
+the published tag as a PR-style summary **with the story** — an attachment under
+`.satelle/stories/<id>/` (`satelle story attach … --file`), readable via
+`satelle story docs <id>`. The `satelle-story-release-review` gate is the authority
+on "CI is green": it judges that recorded evidence and rejects a failing, absent,
+or unconcluded run.
 
 ## Close gate — `satelle-story-done-review` (→ done)
 

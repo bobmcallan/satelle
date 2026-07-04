@@ -54,15 +54,15 @@ by one — are authored substrate a repo layers into its own workflow (the paren
 workflow and this repo's workflow both declare it).
 
 A repo may layer extra steps onto the path before `done` — this repo's workflow
-adds sequential **commit** and **push** steps: the `commit` executor bumps the
-version and commits the slice, the `push` executor pushes and watches CI + the
-version-gated release, and a functional gate confirms the bump, CI, and the
-published release before close:
+adds one in-loop **release** step: the executor bumps the version, commits the
+slice, pushes to `main`, and — rather than block watching CI — refreshes the
+service during the CI window and records the `test` + version-gated `release` run
+URLs, their conclusions, and the published tag as evidence. The
+`satelle-story-release-review` gate is the authority on CI-green, judging that
+recorded evidence before close:
 
-    satelle story set <id> --status commit      # executor: bump .version, commit
-    satelle story set <id> --status push        # executor: push, watch test + release
-    satelle story set <id> --status committed   # gate: bump + CI + release verified, summary doc
-    satelle story set <id> --status done        # gate: acceptance review
+    satelle story set <id> --status release     # executor: bump .version, commit, push, record CI evidence
+    satelle story set <id> --status done        # gate: release evidence (CI green) + acceptance review
 
 Drive each transition and let its gate judge it; a reject blocks the move and
 records why. You never self-enact a gated edge.
