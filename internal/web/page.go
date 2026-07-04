@@ -174,7 +174,7 @@ const templatesSrc = `
 </head>
 <body>
 <div class="wrap">
-  <nav class="crumbs"><a href="/workspace">workspace</a> <span class="sep">/</span> <span class="cur">{{.ProjectName}}</span></nav>
+  <nav class="crumbs"><a href="/">workspace</a> <span class="sep">/</span> <span class="cur">{{.ProjectName}}</span></nav>
   <header class="app">
     {{template "topbar" .TopBar}}
     <h1>{{.ProjectName}}</h1>
