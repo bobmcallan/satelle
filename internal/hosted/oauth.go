@@ -57,6 +57,55 @@ type LoginOptions struct {
 	Out io.Writer
 }
 
+// Flow is a split OAuth 2.1 + PKCE authorization-code flow: the CLI runs it in
+// one blocking call (Login), while the web server runs it across two HTTP
+// requests (AuthorizeURL on sign-in, Exchange on the callback). Both go through
+// this one seam so there is exactly one OAuth code path. A Flow is single-use.
+type Flow struct {
+	server      string
+	redirectURI string
+	pk          pkce
+	state       string
+}
+
+// NewFlow builds a flow for server with the given loopback redirect URI,
+// generating a fresh PKCE (S256) verifier + challenge and a random state. The
+// redirectURI MUST be reused byte-identically at Exchange (the server matches it
+// exactly) — holding it on the Flow guarantees that.
+func NewFlow(server, redirectURI string) (*Flow, error) {
+	server = normalizeServerURL(server)
+	if server == "" {
+		return nil, fmt.Errorf("hosted: server URL not set")
+	}
+	pk, err := newPKCE()
+	if err != nil {
+		return nil, err
+	}
+	state, err := randomURLToken(16)
+	if err != nil {
+		return nil, err
+	}
+	return &Flow{server: server, redirectURI: redirectURI, pk: pk, state: state}, nil
+}
+
+// State is the CSRF state the callback must echo back.
+func (f *Flow) State() string { return f.state }
+
+// AuthorizeURL is the /oauth/authorize URL to send the browser to.
+func (f *Flow) AuthorizeURL() string {
+	return buildAuthorizeURL(f.server, f.redirectURI, f.pk.challenge, f.state)
+}
+
+// Exchange trades the authorization code for tokens and returns the resulting
+// (unpersisted) Credential. The caller persists it.
+func (f *Flow) Exchange(ctx context.Context, httpClient *http.Client, code string) (Credential, error) {
+	tok, err := exchangeCode(ctx, httpClient, f.server, code, f.redirectURI, f.pk.verifier)
+	if err != nil {
+		return Credential{}, err
+	}
+	return credentialFromToken(f.server, tok), nil
+}
+
 // pkce holds one flow's verifier + S256 challenge.
 type pkce struct {
 	verifier  string
@@ -106,15 +155,14 @@ func Login(ctx context.Context, httpClient *http.Client, server string, opts Log
 	port := ln.Addr().(*net.TCPAddr).Port
 	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
 
-	// 2. PKCE (S256) + CSRF state.
-	pk, err := newPKCE()
+	// 2. Build the flow — the same OAuth seam the web server uses. PKCE (S256) +
+	//    CSRF state live on it, and it holds redirectURI for a byte-identical
+	//    reuse at Exchange.
+	flow, err := NewFlow(server, redirectURI)
 	if err != nil {
 		return Credential{}, err
 	}
-	state, err := randomURLToken(16)
-	if err != nil {
-		return Credential{}, err
-	}
+	state := flow.State()
 
 	// 3. One-shot callback handler. A state mismatch or an error= param fails the
 	//    flow WITHOUT calling the token endpoint.
@@ -150,7 +198,7 @@ func Login(ctx context.Context, httpClient *http.Client, server string, opts Log
 	}()
 
 	// 4. Send the operator to the authorize URL (always print it; open if we can).
-	authURL := buildAuthorizeURL(server, redirectURI, pk.challenge, state)
+	authURL := flow.AuthorizeURL()
 	if opts.Out != nil {
 		fmt.Fprintf(opts.Out, "Open this URL to authenticate:\n\n  %s\n\n", authURL)
 	}
@@ -174,12 +222,9 @@ func Login(ctx context.Context, httpClient *http.Client, server string, opts Log
 		return Credential{}, ctx.Err()
 	}
 
-	// 6. Exchange the code — redirectURI is the SAME string sent to authorize.
-	tok, err := exchangeCode(ctx, httpClient, server, code, redirectURI, pk.verifier)
-	if err != nil {
-		return Credential{}, err
-	}
-	return credentialFromToken(server, tok), nil
+	// 6. Exchange the code through the flow — redirectURI is the SAME string sent
+	//    to authorize (held on the flow), so the server's exact match holds.
+	return flow.Exchange(ctx, httpClient, code)
 }
 
 // buildAuthorizeURL builds the /oauth/authorize URL. Method is always S256.

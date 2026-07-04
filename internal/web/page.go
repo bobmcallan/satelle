@@ -127,7 +127,14 @@ const templatesSrc = `
      green BORDER is a separate signal: the live /events (SSE) connection state, set
      by app.js (on=connected). The tooltip names both accurately so the value is not
      read as live or the border as "uptime". (sty_efeb2a69) */}}
-{{define "topbar"}}<a class="brand-mark" href="https://satelle.dev/" target="_blank" rel="noopener" title="satelle — home" aria-label="satelle home (opens in a new tab)">{{template "brandmark-svg"}}</a><button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>{{if .Uptime}}<button class="uptime" type="button" disabled title="service uptime at page load (updates on reload, not live) — green border = live updates connected">{{.Uptime}}</button>{{end}}{{end}}
+{{define "topbar"}}<a class="brand-mark" href="https://satelle.dev/" target="_blank" rel="noopener" title="satelle — home" aria-label="satelle home (opens in a new tab)">{{template "brandmark-svg"}}</a>{{template "account" .User}}<button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>{{if .Uptime}}<button class="uptime" type="button" disabled title="service uptime at page load (updates on reload, not live) — green border = live updates connected">{{.Uptime}}</button>{{end}}{{end}}
+
+{{/* account: the hosted-server sign-in control (sty_9ae98484). Signed out → a
+     "Sign in" link (relative href, so the <base> resolves the /slug/ prefix on a
+     supervised child). Signed in → an avatar (initial, email tooltip) that opens
+     a dropdown with the identity + a Sign out form (POST, it mutates state). The
+     dropdown reuses the <details> idiom the breadcrumb switcher proves. */}}
+{{define "account"}}{{if .}}<details class="account"><summary class="avatar" title="{{.Email}}" aria-label="Account menu for {{.Name}}">{{.Initial}}</summary><div class="account-menu"><div class="acct-id"><strong>{{.Name}}</strong><span class="acct-email">{{.Email}}</span></div><div class="acct-div"></div><form method="post" action="oauth/logout"><button type="submit" class="acct-signout">Sign out</button></form></div></details>{{else}}<a class="signin" href="oauth/login" title="Sign in to the hosted satelle-server">Sign in</a>{{end}}{{end}}
 
 {{/* brandmark-svg: the satelle mark — a half-shaded sphere whose terminator sweeps
      the moon-phase cycle. Pure SMIL, no JS; fill/stroke use currentColor so it

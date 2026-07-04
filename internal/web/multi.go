@@ -167,7 +167,7 @@ func ProjectsPage(w http.ResponseWriter, r *http.Request, projects []Project, fa
 	for _, rv := range agg.Repos {
 		counts[rv.Path] = rv
 	}
-	data := projectsData{TopBar: topBar{Uptime: formatUptime(time.Since(serverStart))}, Failed: failed}
+	data := projectsData{TopBar: newTopBar(), Failed: failed}
 	for _, p := range projects {
 		rv := counts[p.Path]
 		url := "/" + p.Slug + "/#stories"
