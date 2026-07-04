@@ -6,8 +6,10 @@ package web
 // server; /oauth/callback verifies state, exchanges the code, and persists tokens
 // to the per-user XDG credential store the CLI also writes — so `satelle whoami`
 // and the web UI agree. All additive: with no [hosted] server configured (or the
-// server unreachable) the UI simply shows a "Sign in" affordance and never errors,
-// and page renders NEVER block on the network (identity is cache + local file).
+// server unreachable) the UI simply shows a "Sign in" affordance and never errors.
+// Page renders NEVER call the network: identity is read from the local credential
+// (stamped at login), and a legacy credential self-heals via a background warm
+// (sty_467c6944).
 
 import (
 	"context"
@@ -42,18 +44,16 @@ var (
 
 const pendingTTL = 10 * time.Minute
 
-// Principal cache: keeps a page render from making a network call on every hit.
+// Background identity warm for a legacy credential (tokens but no stored
+// identity). Single-flight with a min interval so a legacy cred against a down
+// server never spawns a goroutine per render (sty_467c6944).
 var (
-	principalMu   sync.Mutex
-	cachedPrinc   *hosted.Principal
-	principalAt   time.Time
-	principalMiss time.Time
+	warmMu   sync.Mutex
+	warmBusy bool
+	warmLast time.Time
 )
 
-const (
-	principalTTL     = 60 * time.Second
-	principalMissTTL = 30 * time.Second
-)
+const warmMinInterval = 30 * time.Second
 
 // topBarUser is the signed-in identity the topbar renders.
 type topBarUser struct {
@@ -69,43 +69,67 @@ func newTopBar() topBar {
 	return topBar{Uptime: formatUptime(time.Since(serverStart)), User: resolveUser()}
 }
 
-// resolveUser returns the signed-in identity, or nil (render "Sign in"). Order:
-// unconfigured → nil; no local credential → nil; fresh cache → it; else ONE
-// bounded Me() fetch (its failure is cached briefly so a down server does not
-// stall or hammer every render).
+// resolveUser returns the signed-in identity from the LOCAL credential file —
+// NEVER a network call on the render path (sty_467c6944). Unconfigured or no
+// credential → nil (render "Sign in"). A credential with a stored identity → it.
+// A legacy credential (tokens but no identity) renders signed-out this once and
+// triggers a background warm that writes identity back for the next render.
 func resolveUser() *topBarUser {
 	if hostedServer == "" {
 		return nil
 	}
 	store := hosted.FileStore{}
-	if _, err := store.Load(hostedServer); err != nil {
+	cred, err := store.Load(hostedServer)
+	if err != nil {
 		return nil // no credential for this server → signed out
 	}
+	if strings.TrimSpace(cred.DisplayName) != "" || strings.TrimSpace(cred.Email) != "" {
+		return topBarUserFrom(hosted.Principal{DisplayName: cred.DisplayName, Email: cred.Email})
+	}
+	warmIdentityAsync(store)
+	return nil
+}
 
-	principalMu.Lock()
-	if cachedPrinc != nil && time.Since(principalAt) < principalTTL {
-		u := topBarUserFrom(*cachedPrinc)
-		principalMu.Unlock()
-		return u
+// warmIdentityAsync fetches the principal once, off the render path, and writes
+// it into the credential so a later render resolves locally. Single-flight with
+// a min interval so a down server cannot spawn a goroutine per render.
+func warmIdentityAsync(store hosted.FileStore) {
+	warmMu.Lock()
+	if warmBusy || time.Since(warmLast) < warmMinInterval {
+		warmMu.Unlock()
+		return
 	}
-	if time.Since(principalMiss) < principalMissTTL {
-		principalMu.Unlock()
-		return nil // recently failed — show Sign in this render, don't re-hit
-	}
-	principalMu.Unlock()
+	warmBusy = true
+	warmMu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	who, err := hosted.NewClient(hostedServer, store, nil).Me(ctx)
-	principalMu.Lock()
-	defer principalMu.Unlock()
-	if err != nil {
-		principalMiss = time.Now()
-		return nil
-	}
-	cachedPrinc = &who
-	principalAt = time.Now()
-	return topBarUserFrom(who)
+	go func() {
+		defer func() {
+			warmMu.Lock()
+			warmBusy, warmLast = false, time.Now()
+			warmMu.Unlock()
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		who, err := hosted.NewClient(hostedServer, store, nil).Me(ctx)
+		if err != nil {
+			return
+		}
+		// Re-load so we stamp identity onto the CURRENT credential — Me() may have
+		// rotated tokens mid-flight; never resurrect a stale token pair.
+		cur, err := store.Load(hostedServer)
+		if err != nil {
+			return
+		}
+		cur.DisplayName, cur.Email = who.DisplayName, who.Email
+		_ = store.Save(cur)
+	}()
+}
+
+// resetWarmState clears the background-warm guard (tests).
+func resetWarmState() {
+	warmMu.Lock()
+	warmBusy, warmLast = false, time.Time{}
+	warmMu.Unlock()
 }
 
 func topBarUserFrom(p hosted.Principal) *topBarUser {
@@ -119,12 +143,6 @@ func topBarUserFrom(p hosted.Principal) *topBarUser {
 		break
 	}
 	return &topBarUser{Name: name, Email: p.Email, Initial: initial}
-}
-
-func clearPrincipalCache() {
-	principalMu.Lock()
-	cachedPrinc, principalMiss = nil, time.Time{}
-	principalMu.Unlock()
 }
 
 // callbackURI builds the redirect target from the browser-facing host and the
@@ -189,11 +207,20 @@ func oauthCallback(w http.ResponseWriter, r *http.Request) {
 		authPage(w, http.StatusBadGateway, "Sign-in failed", "Token exchange failed: "+html.EscapeString(err.Error()))
 		return
 	}
-	if err := (hosted.FileStore{}).Save(cred); err != nil {
+	store := hosted.FileStore{}
+	if err := store.Save(cred); err != nil {
 		authPage(w, http.StatusInternalServerError, "Sign-in failed", "Could not store the credential: "+html.EscapeString(err.Error()))
 		return
 	}
-	clearPrincipalCache() // force a fresh identity for the new session
+	// Stamp the principal so the topbar resolves identity locally with no
+	// render-time fetch. Never fail the sign-in over the identity call — a legacy
+	// credential self-heals via the background warm.
+	if who, mErr := hosted.NewClient(hostedServer, store, nil).Me(ctx); mErr == nil {
+		if fresh, lErr := store.Load(hostedServer); lErr == nil {
+			fresh.DisplayName, fresh.Email = who.DisplayName, who.Email
+			_ = store.Save(fresh)
+		}
+	}
 	http.Redirect(w, r, baseHref(), http.StatusFound)
 }
 
@@ -202,7 +229,6 @@ func oauthLogout(w http.ResponseWriter, r *http.Request) {
 	if hostedServer != "" {
 		_ = (hosted.FileStore{}).Delete(hostedServer)
 	}
-	clearPrincipalCache()
 	http.Redirect(w, r, baseHref(), http.StatusFound)
 }
 

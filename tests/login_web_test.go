@@ -79,7 +79,8 @@ func TestWebLoginSignedInAvatar(t *testing.T) {
 	if err := os.MkdirAll(credDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	credToml := "[[credential]]\nserver_url = \"" + me.URL + "\"\naccess_token = \"acc\"\nrefresh_token = \"ref\"\n"
+	// Identity is stamped at login and read locally on render (sty_467c6944).
+	credToml := "[[credential]]\nserver_url = \"" + me.URL + "\"\naccess_token = \"acc\"\nrefresh_token = \"ref\"\ndisplay_name = \"Dev User\"\nemail = \"dev@satelle.dev\"\n"
 	if err := os.WriteFile(filepath.Join(credDir, "credentials.toml"), []byte(credToml), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -109,11 +109,17 @@ func runLogin(cmd *cobra.Command, serverArg, projectArg string, noBrowser bool, 
 		return fmt.Errorf("record hosted server in satelle.toml: %w", err)
 	}
 
-	// Print the signed-in identity.
+	// Fetch and print the signed-in identity, and persist it into the credential
+	// so the web UI resolves identity locally with no render-time fetch
+	// (sty_467c6944). A failed identity fetch does not fail the login.
 	who, err := hosted.NewClient(server, store, nil).Me(cmd.Context())
 	if err != nil {
 		fmt.Fprintf(out, "Signed in to %s (could not fetch identity: %v)\n", server, err)
 		return nil
+	}
+	if fresh, lErr := store.Load(server); lErr == nil {
+		fresh.DisplayName, fresh.Email = who.DisplayName, who.Email
+		_ = store.Save(fresh)
 	}
 	printPrincipal(cmd, server, who)
 	return nil

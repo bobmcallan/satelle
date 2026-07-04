@@ -136,6 +136,11 @@ func TestLoginFlowEndToEnd(t *testing.T) {
 	if !strings.Contains(string(cred), "ref") {
 		t.Fatalf("refresh token not persisted:\n%s", cred)
 	}
+	// Login stamps the principal into the credential so the web UI resolves
+	// identity locally, with no render-time fetch (sty_467c6944).
+	if !strings.Contains(string(cred), "dev@satelle.dev") || !strings.Contains(string(cred), "display_name") {
+		t.Fatalf("identity not persisted at login:\n%s", cred)
+	}
 	if fileExists(filepath.Join(repo, ".satelle", "credentials.toml")) {
 		t.Error("credentials must NOT be written inside the repo")
 	}
