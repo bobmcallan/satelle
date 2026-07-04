@@ -28,16 +28,17 @@ type Project struct {
 	Path string
 }
 
-// ProjectsHeader carries the supervisor's live project list (slug+name only) into
-// each proxied request, so a supervised child's breadcrumb can render the project
-// switcher without knowing the registry or recomputing slugs (sty_2bc00a9d). The
-// supervisor is the single source of the slug table (request routing), so the child
-// never disagrees with it.
+// ProjectsHeader carries the supervisor's live project list (slug, name, and path)
+// into each proxied request, so a supervised child's breadcrumb can render the
+// project switcher without knowing the registry or recomputing slugs (sty_2bc00a9d).
+// The supervisor is the single source of the slug table (request routing), so the
+// child never disagrees with it. Path lets the switcher disambiguate same-name
+// projects (sty_de54f9fb).
 const ProjectsHeader = "X-Satelle-Projects"
 
-// EncodeProjects serializes each project's slug+name (Path omitted) for
-// ProjectsHeader: JSON, base64url-wrapped so a non-ASCII repo basename never yields
-// a spec-hostile header value. Empty on marshal error.
+// EncodeProjects serializes each project's slug, name, and path for ProjectsHeader:
+// JSON, base64url-wrapped so a non-ASCII repo basename never yields a spec-hostile
+// header value. Empty on marshal error.
 func EncodeProjects(projects []Project) string {
 	slim := make([]slimProject, len(projects))
 	for i, p := range projects {

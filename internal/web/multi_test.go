@@ -77,8 +77,8 @@ func TestProjectsPageListsBoundAndChildren(t *testing.T) {
 	}
 }
 
-// TestEncodeDecodeProjects round-trips the project-switcher header, drops Path, and
-// degrades bad input to nil (sty_2bc00a9d).
+// TestEncodeDecodeProjects round-trips the project-switcher header (slug, name, and
+// path) and degrades bad input to nil (sty_2bc00a9d, sty_de54f9fb).
 func TestEncodeDecodeProjects(t *testing.T) {
 	in := []Project{{Slug: "repo", Name: "repo", Path: "/x/repo"}, {Slug: "hp", Name: "satellité"}}
 	out := DecodeProjects(EncodeProjects(in))
