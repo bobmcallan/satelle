@@ -185,7 +185,7 @@ const templatesSrc = `
   <header class="app">
     {{template "topbar" .TopBar}}
     <h1>{{.ProjectName}}</h1>
-    <div class="meta">{{.RepoRoot}} · <a href="help">help →</a></div>
+    <div class="meta">{{.RepoRoot}} · <a href="help">help →</a> · <a href="settings">settings →</a></div>
   </header>
 
   <div class="tabs" role="tablist">
@@ -419,6 +419,46 @@ const templatesSrc = `
   </section>{{else}}<div class="empty">no help topics</div>{{end}}
   {{template "footer"}}
 </div>
+</body>
+</html>{{end}}
+
+{{define "settings"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>satelle · settings</title>
+<script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<base href="{{basehref}}">
+{{template "favicon"}}
+<link rel="stylesheet" href="static/app.css">
+</head>
+<body>
+<div class="wrap">
+  <nav class="crumbs"><a href="{{basehref}}">project</a> <span class="sep">/</span> <span class="cur">settings</span></nav>
+  <header class="app">
+    {{template "topbar" .TopBar}}
+    <h1>satelle<span class="dot">.</span> settings</h1>
+    <div class="meta">{{.RepoRoot}} · editing <code>.satelle/satelle.toml</code></div>
+  </header>
+  {{if .Saved}}<div class="settings-saved" role="status">Saved.</div>{{end}}
+  <form id="settings-form" class="settings" method="post" action="settings">
+    {{range .Rows}}{{if .SectHead}}<h2 class="kind-h settings-sect">{{.SectHead}}</h2>{{end}}<div class="setting-row">
+      <div class="setting-label"><label for="f-{{.Key}}">{{.Label}}</label>{{if .Help}}<span class="setting-help">{{.Help}}</span>{{end}}</div>
+      <div class="setting-field">{{if .IsBool}}<label class="toggle"><input type="checkbox" id="f-{{.Key}}" name="{{.FieldID}}"{{if .Checked}} checked{{end}}><span class="toggle-track"></span></label>{{else if .IsList}}<textarea id="f-{{.Key}}" name="{{.FieldID}}" rows="3" spellcheck="false">{{.Value}}</textarea>{{else}}<input type="text" id="f-{{.Key}}" name="{{.FieldID}}" value="{{.Value}}" spellcheck="false" autocomplete="off">{{end}}</div>
+    </div>{{end}}
+    <div class="settings-actions"><button type="submit" class="settings-save">Save</button><span class="settings-note">Config writes are accepted only from this machine (loopback). Port / data-dir / DB apply on the next serve start; overlay (satelle.local.toml) values are not shown here.</span></div>
+    <div class="settings-error" id="settings-error" role="alert" hidden></div>
+  </form>
+  {{template "footer"}}
+</div>
+<script>
+(function(){var f=document.getElementById('settings-form');if(!f)return;
+f.addEventListener('submit',function(e){e.preventDefault();var err=document.getElementById('settings-error');err.hidden=true;
+fetch('settings',{method:'POST',headers:{'X-Satelle-Settings':'1'},body:new FormData(f)})
+.then(function(r){if(r.ok){window.location='settings?saved=1';}else{return r.text().then(function(t){err.textContent=t||('Error '+r.status);err.hidden=false;});}})
+.catch(function(){err.textContent='Network error';err.hidden=false;});});})();
+</script>
 </body>
 </html>{{end}}
 

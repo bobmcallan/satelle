@@ -36,6 +36,14 @@ type Project struct {
 // projects (sty_de54f9fb).
 const ProjectsHeader = "X-Satelle-Projects"
 
+// ClientAddrHeader carries the TRUE client remote address the supervisor saw,
+// into each proxied request (sty_ffe53865). A supervised child's own r.RemoteAddr
+// is always the supervisor's loopback socket, so the settings-write loopback gate
+// cannot judge the real caller from it. The supervisor Sets (never Adds) this
+// header — overwriting any inbound value — so a client cannot spoof it; children
+// bind 127.0.0.1 only, which is what makes the header trustworthy.
+const ClientAddrHeader = "X-Satelle-Client-Addr"
+
 // EncodeProjects serializes each project's slug, name, and path for ProjectsHeader:
 // JSON, base64url-wrapped so a non-ASCII repo basename never yields a spec-hostile
 // header value. Empty on marshal error.
