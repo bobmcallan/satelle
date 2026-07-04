@@ -107,8 +107,15 @@ to keep the binary current. Press Ctrl-C to stop.`,
 			webSrv := web.New(a)
 			webSrv.StartRealtime(ctx, 0) // cross-process DB poller for CLI edits
 
+			// Request logging → <data_dir>/logs/server.log, same rotating writer and
+			// config as operations/reviewer/executor. Wrapped at the listener so each
+			// serve process logs to ITS OWN repo's log and httptest servers stay
+			// log-free (sty_07cec95f).
+			serverLog := filepath.Join(filepath.Dir(a.DBPath), "logs", "server.log")
+			logCfg := logRotation(a)
+
 			if basePath != "" {
-				return listenServe(cmd, ctx, listenAddr, webSrv.Handler,
+				return listenServe(cmd, ctx, listenAddr, web.RequestLog(webSrv.Handler, serverLog, logCfg),
 					fmt.Sprintf("satelle serving http://%s under %s/  (Ctrl-C to stop)", listenAddr, strings.Trim(basePath, "/")))
 			}
 
@@ -151,7 +158,7 @@ to keep the binary current. Press Ctrl-C to stop.`,
 			}
 
 			sup.banner(cmd.OutOrStdout(), listenAddr)
-			return listenServe(cmd, ctx, listenAddr, sup.topHandler(webSrv.Handler), "")
+			return listenServe(cmd, ctx, listenAddr, web.RequestLog(sup.topHandler(webSrv.Handler), serverLog, logCfg), "")
 		},
 	}
 	serve.Flags().StringVar(&addr, "addr", "127.0.0.1", "bind address")
