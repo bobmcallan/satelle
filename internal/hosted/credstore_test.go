@@ -43,6 +43,22 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSaveLoadIdentityFields(t *testing.T) {
+	s := tempStore(t)
+	in := Credential{ServerURL: "https://h", AccessToken: "a", RefreshToken: "r",
+		DisplayName: "Dev User", Email: "dev@x.io"}
+	if err := s.Save(in); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Load("https://h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DisplayName != "Dev User" || got.Email != "dev@x.io" {
+		t.Fatalf("identity fields not round-tripped: %+v", got)
+	}
+}
+
 func TestSaveUpsertByServer(t *testing.T) {
 	s := tempStore(t)
 	_ = s.Save(Credential{ServerURL: "https://a", AccessToken: "1", RefreshToken: "1"})

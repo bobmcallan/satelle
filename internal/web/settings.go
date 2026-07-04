@@ -170,9 +170,9 @@ func settingsPost(a *app.App) http.HandlerFunc {
 		}
 		if hostedChanged {
 			// Keep the live sign-in binding in step with the edited file (AC4).
+			// resolveUser reads the new server's credential directly (no cache).
 			ncfg, _, _ := config.Load(configPathFor(a))
 			setHostedServer(ncfg.Hosted.Server)
-			clearPrincipalCache()
 		}
 		http.Redirect(w, r, baseHref()+"settings?saved=1", http.StatusSeeOther)
 	}

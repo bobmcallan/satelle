@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/hosted"
 )
@@ -19,13 +20,13 @@ func resetAuthState(t *testing.T) {
 	pendingMu.Lock()
 	pending = map[string]*pendingFlow{}
 	pendingMu.Unlock()
-	clearPrincipalCache()
+	resetWarmState()
 	setHostedServer("")
 	t.Cleanup(func() {
 		pendingMu.Lock()
 		pending = map[string]*pendingFlow{}
 		pendingMu.Unlock()
-		clearPrincipalCache()
+		resetWarmState()
 		setHostedServer("")
 	})
 }
@@ -43,6 +44,12 @@ func tokenStub(t *testing.T) (*httptest.Server, *int) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"access_token": "acc", "refresh_token": "ref",
 				"token_type": "Bearer", "expires_in": 3600, "scope": "satelle",
+			})
+			return
+		}
+		if r.URL.Path == "/api/v1/me" {
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"id": "u1", "email": "dev@satelle.dev", "display_name": "Dev User", "role": "member",
 			})
 			return
 		}
@@ -85,6 +92,72 @@ func TestOAuthCallbackHappyPathSharesStore(t *testing.T) {
 	}
 	if *calls != 1 {
 		t.Fatalf("expected 1 token call, got %d", *calls)
+	}
+	// The callback stamped the principal into the credential (AC2 web half).
+	if cred.DisplayName != "Dev User" || cred.Email != "dev@satelle.dev" {
+		t.Fatalf("identity not persisted at sign-in: %+v", cred)
+	}
+	// And resolveUser now renders it from the LOCAL file — with the stub stopped.
+	ts.Close()
+	if u := resolveUser(); u == nil || u.Email != "dev@satelle.dev" {
+		t.Fatalf("resolveUser should read identity locally, got %+v", u)
+	}
+}
+
+// AC1: a render must not call the network. With identity stored, resolveUser
+// returns it even when the hosted server is unreachable (a network call would
+// hang/fail).
+func TestResolveUserNoNetworkWhenIdentityStored(t *testing.T) {
+	resetAuthState(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	setHostedServer("http://127.0.0.1:1") // unreachable (a fetch would fail/block)
+	if err := (hosted.FileStore{}).Save(hosted.Credential{
+		ServerURL: "http://127.0.0.1:1", AccessToken: "a", RefreshToken: "r",
+		DisplayName: "Local Only", Email: "local@x.io",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	u := resolveUser()
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("resolveUser blocked %v — it must not call the network", elapsed)
+	}
+	if u == nil || u.Name != "Local Only" || u.Email != "local@x.io" {
+		t.Fatalf("identity not resolved locally: %+v", u)
+	}
+}
+
+// AC3: a legacy credential (tokens, no identity) does not block; the background
+// warm writes identity for a later render.
+func TestResolveUserLegacyWarmsInBackground(t *testing.T) {
+	resetAuthState(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	ts, _ := tokenStub(t) // serves /api/v1/me
+	setHostedServer(ts.URL)
+	if err := (hosted.FileStore{}).Save(hosted.Credential{
+		ServerURL: ts.URL, AccessToken: "acc", RefreshToken: "ref", // no identity
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// First render: signed-out (nil), non-blocking, kicks the warm.
+	if u := resolveUser(); u != nil {
+		t.Fatalf("legacy cred should render signed-out first, got %+v", u)
+	}
+	// The warm writes identity into the credential; poll until it lands.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if c, _ := (hosted.FileStore{}).Load(ts.URL); c.Email != "" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	c, _ := (hosted.FileStore{}).Load(ts.URL)
+	if c.Email != "dev@satelle.dev" {
+		t.Fatalf("background warm did not persist identity: %+v", c)
+	}
+	resetWarmState()
+	if u := resolveUser(); u == nil || u.Email != "dev@satelle.dev" {
+		t.Fatalf("second render should show warmed identity, got %+v", u)
 	}
 }
 

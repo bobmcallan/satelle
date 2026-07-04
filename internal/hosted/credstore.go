@@ -32,6 +32,12 @@ type Credential struct {
 	RefreshToken string `toml:"refresh_token"`
 	TokenType    string `toml:"token_type,omitempty"`
 	Scope        string `toml:"scope,omitempty"`
+	// DisplayName/Email cache the principal from /api/v1/me, stamped at login, so
+	// the UI resolves identity from this local file — never a render-time network
+	// call (sty_467c6944). Optional: an older credential without them is the
+	// "legacy" case that self-heals via a background warm.
+	DisplayName string `toml:"display_name,omitempty"`
+	Email       string `toml:"email,omitempty"`
 	// ExpiresAt is the access token's expiry as RFC3339 (advisory — refresh is
 	// driven by an actual 401, not by this clock).
 	ExpiresAt string `toml:"expires_at,omitempty"`

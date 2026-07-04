@@ -92,6 +92,42 @@ func TestClientRefreshRotationOn401(t *testing.T) {
 	}
 }
 
+// The 401→refresh path must PRESERVE the stored identity onto the rotated
+// credential, else display_name/email vanish ~1h after login (sty_467c6944).
+func TestClientRefreshPreservesIdentity(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/me", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer access-2" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(Principal{ID: "u1", Email: "a@b.c"})
+	})
+	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "access-2", "refresh_token": "refresh-2",
+			"token_type": "Bearer", "expires_in": 3600,
+		})
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	store := &memStore{}
+	_ = store.Save(Credential{ServerURL: ts.URL, AccessToken: "access-1", RefreshToken: "refresh-1",
+		DisplayName: "Kept Name", Email: "kept@x.io"})
+
+	if _, err := NewClient(ts.URL, store, ts.Client()).Me(context.Background()); err != nil {
+		t.Fatalf("Me: %v", err)
+	}
+	got, _ := store.Load(ts.URL)
+	if got.AccessToken != "access-2" || got.RefreshToken != "refresh-2" {
+		t.Fatalf("tokens not rotated: %+v", got)
+	}
+	if got.DisplayName != "Kept Name" || got.Email != "kept@x.io" {
+		t.Fatalf("identity lost across refresh: %+v", got)
+	}
+}
+
 func TestClientFailedRefreshIsLoginRequired(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/me", func(w http.ResponseWriter, r *http.Request) {
