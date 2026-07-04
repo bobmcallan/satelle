@@ -746,9 +746,13 @@ func TestProjectHeaderLinks(t *testing.T) {
 		t.Fatalf("/ = %d", code)
 	}
 	// The breadcrumb is the up-navigation: workspace / <project name> (sty_89e85f51).
-	// The ROOT /workspace link lives in the breadcrumb now, not the subtitle.
-	if !strings.Contains(body, `<a href="/workspace">workspace</a>`) {
-		t.Error("breadcrumb must link the ROOT /workspace (absolute href)")
+	// It links the ROOT / landing (the canonical connected-projects page), not the
+	// heavier /workspace view (sty_ac5b157d).
+	if !strings.Contains(body, `<a href="/">workspace</a>`) {
+		t.Error("breadcrumb must link the ROOT / landing (absolute href)")
+	}
+	if strings.Contains(body, `<a href="/workspace">workspace</a>`) {
+		t.Error("breadcrumb must not link the heavier /workspace view")
 	}
 	if !strings.Contains(body, `<span class="cur">repo</span>`) {
 		t.Error("breadcrumb current segment must be the project name (base of /repo)")
