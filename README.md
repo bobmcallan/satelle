@@ -76,6 +76,7 @@ repo it governs.
 | `task` (only) | `archive` — dispose of a superseded header (record archived + files moved to `.satelle/backups/`) |
 | `ledger` | `append`, `list` |
 | `doc` | `list`, `get` |
+| `hosted` | `login`, `logout`, `whoami` — authenticate to a hosted satelle-server (OAuth 2.1 + PKCE); optional, the local service runs standalone without it |
 | | `init`, `reindex`, `status`, `serve`, `version` |
 
 Both the CLI and the web server reach data the same way — through one verb
