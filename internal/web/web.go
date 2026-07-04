@@ -1,9 +1,12 @@
 // Package web is satelle's local web server — a project page for one repo,
-// rendered through verb.Dispatch (the same seam the CLI uses), no auth. It is
-// the satellites portal style brought to the local tier: tabbed panels, an SSE
-// realtime doorbell, inline expand/collapse, and filter chips — but stripped of
-// auth/OAuth/sessions. Static assets and templates are embedded so the binary
-// stays self-contained.
+// rendered through verb.Dispatch (the same seam the CLI uses). Viewing needs no
+// auth; the local data is served unauthenticated. It is the satellites portal
+// style brought to the local tier: tabbed panels, an SSE realtime doorbell,
+// inline expand/collapse, and filter chips. An OPTIONAL hosted-server sign-in
+// (auth.go) lets the UI authenticate to satelle-server via the same OAuth client
+// and per-user credential store the CLI uses — additive, never required for local
+// operation. Static assets and templates are embedded so the binary stays
+// self-contained.
 package web
 
 import (
@@ -116,6 +119,7 @@ func setTheme(w http.ResponseWriter, r *http.Request) {
 func New(a *app.App) *Server {
 	serverStart = time.Now()
 	footerIdentity(a.RepoRoot) // resolve the footer email once so every page's shared footer has it
+	setHostedServer(a.Config.Hosted.Server)
 	h := newHub()
 	verb.SetChangeNotifier(h.publish)
 
@@ -141,6 +145,13 @@ func New(a *app.App) *Server {
 	mux.HandleFunc("GET /events", h.serveEvents)
 	mux.HandleFunc("GET /theme", getTheme)
 	mux.HandleFunc("POST /theme", setTheme)
+
+	// Optional hosted-server sign-in (sty_9ae98484): the local web server acts as
+	// an OAuth 2.1 client, sharing the CLI's per-user credential store. Purely
+	// additive — unconfigured/unreachable degrades to a "Sign in" affordance.
+	mux.HandleFunc("GET /oauth/login", oauthLogin)
+	mux.HandleFunc("GET /oauth/callback", oauthCallback)
+	mux.HandleFunc("POST /oauth/logout", oauthLogout)
 
 	// Realtime panel fragments (rows only) — what the SSE refetch swaps in.
 	mux.HandleFunc("GET /fragment/stories", fragmentRows(a, "workitemRows", verb.TopicStories))
@@ -181,7 +192,7 @@ func workspacePage(a *app.App) http.HandlerFunc {
 		render(w, "workspace", wsPageData{
 			Aggregate:    agg,
 			TotalStories: total,
-			TopBar:       topBar{Uptime: formatUptime(time.Since(serverStart))},
+			TopBar:       newTopBar(),
 		})
 	}
 }
@@ -223,7 +234,7 @@ func docPage() http.HandlerFunc {
 			return
 		}
 		render(w, "docPage", docPageData{
-			TopBar:   topBar{Uptime: formatUptime(time.Since(serverStart))},
+			TopBar:   newTopBar(),
 			Kind:     kind,
 			Name:     doc.Name,
 			Headline: doc.Headline,
@@ -242,7 +253,7 @@ func helpPage() http.HandlerFunc {
 		}
 		render(w, "help", helpPageData{
 			Topics: topics,
-			TopBar: topBar{Uptime: formatUptime(time.Since(serverStart))},
+			TopBar: newTopBar(),
 		})
 	}
 }
@@ -337,10 +348,14 @@ type crumbProject struct {
 }
 
 // topBar is the data the shared "topbar" template needs — the page-chrome
-// utility cluster (uptime indicator + theme toggle + live dot) rendered
-// identically on every page so the nav is one component, not a per-page copy.
+// utility cluster (account control + uptime indicator + theme toggle + live dot)
+// rendered identically on every page so the nav is one component, not a per-page
+// copy.
 type topBar struct {
 	Uptime string
+	// User is the signed-in hosted-server identity, or nil when signed out /
+	// unconfigured — the account control renders an avatar+menu vs a Sign in link.
+	User *topBarUser
 }
 
 // rowVM is a work item plus its progress lights for the table row. Embedding the
@@ -704,7 +719,7 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 		Workflows: workflowRows(byKind["workflows"]),
 		Uptime:    formatUptime(time.Since(serverStart)),
 		Theme:     globalTheme(),
-		TopBar:    topBar{Uptime: formatUptime(time.Since(serverStart))},
+		TopBar:    newTopBar(),
 	}, nil
 }
 
@@ -856,7 +871,7 @@ func loadDetail(ctx context.Context, group, id string) (detailData, error) {
 			}
 		}
 	}
-	return detailData{Item: item, Events: events, Docs: docs, Executions: executions, TopBar: topBar{Uptime: formatUptime(time.Since(serverStart))}}, nil
+	return detailData{Item: item, Events: events, Docs: docs, Executions: executions, TopBar: newTopBar()}, nil
 }
 
 // stripFrontmatter removes a leading `---\n…\n---\n` YAML block, returning the
