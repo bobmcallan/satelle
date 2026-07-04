@@ -745,8 +745,20 @@ func TestProjectHeaderLinks(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("/ = %d", code)
 	}
-	if !strings.Contains(body, `<a href="/workspace">workspace →</a>`) {
-		t.Error("project header must link the ROOT /workspace (absolute href)")
+	// The breadcrumb is the up-navigation: workspace / <project name> (sty_89e85f51).
+	// The ROOT /workspace link lives in the breadcrumb now, not the subtitle.
+	if !strings.Contains(body, `<a href="/workspace">workspace</a>`) {
+		t.Error("breadcrumb must link the ROOT /workspace (absolute href)")
+	}
+	if !strings.Contains(body, `<span class="cur">repo</span>`) {
+		t.Error("breadcrumb current segment must be the project name (base of /repo)")
+	}
+	// The subtitle's redundant workspace link and the old dynamic tab crumb are gone.
+	if strings.Contains(body, "workspace →") {
+		t.Error("subtitle must not render the removed workspace → link")
+	}
+	if strings.Contains(body, `id="crumb-tab"`) {
+		t.Error("the dynamic crumb-tab segment must be gone (breadcrumb is now workspace / project)")
 	}
 	if strings.Contains(body, "projects →") {
 		t.Error("project header must not render the removed projects link")

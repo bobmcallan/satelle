@@ -1,6 +1,6 @@
 // app.js — satelle project page interactivity (vanilla, no framework).
 //
-//  * Tabs       — show one panel at a time; active tab in the URL hash + crumb.
+//  * Tabs       — show one panel at a time; active tab in the URL hash.
 //  * Filter     — one shared component over every panel: a query box parsed into
 //                 removable chips (status:/priority:/category:/tags:|tag: + free
 //                 text) plus order:<field> client-side sort; status:active hides
@@ -46,8 +46,6 @@
     document.querySelectorAll(".panel").forEach(function (p) {
       p.classList.toggle("active", p.dataset.topic === name);
     });
-    var crumb = document.getElementById("crumb-tab");
-    if (crumb) crumb.textContent = name;
   }
   function initTabs() {
     // Tabs are real <a href="#panel"> links (so the browser offers open-in-new-tab,

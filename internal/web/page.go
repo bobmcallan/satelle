@@ -174,11 +174,11 @@ const templatesSrc = `
 </head>
 <body>
 <div class="wrap">
-  <nav class="crumbs"><a href="{{basehref}}">project</a> <span class="sep">/</span> <span class="cur" id="crumb-tab">stories</span></nav>
+  <nav class="crumbs"><a href="/workspace">workspace</a> <span class="sep">/</span> <span class="cur">{{.ProjectName}}</span></nav>
   <header class="app">
     {{template "topbar" .TopBar}}
     <h1>{{.ProjectName}}</h1>
-    <div class="meta">{{.RepoRoot}} · <a href="/workspace">workspace →</a> · <a href="help">help →</a></div>
+    <div class="meta">{{.RepoRoot}} · <a href="help">help →</a></div>
   </header>
 
   <div class="tabs" role="tablist">
