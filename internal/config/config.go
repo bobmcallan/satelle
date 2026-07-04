@@ -90,6 +90,21 @@ type Config struct {
 	Review ReviewConfig `toml:"review"`
 	// Gate tunes the PreToolUse edit gate (the `satelle hook gate` handler).
 	Gate GateConfig `toml:"gate"`
+	// Hosted records the hosted-server binding for `satelle login` — the server
+	// URL and the project slug. Both are committed (secret-free); the OAuth
+	// access/refresh TOKENS are NEVER stored here — they live in the user-level
+	// credential store outside the repo (see internal/hosted). (sty_2fc93374)
+	Hosted HostedConfig `toml:"hosted"`
+}
+
+// HostedConfig binds a repo to a hosted satelle-server. Secret-free and
+// committed in satelle.toml; the login tokens are stored per-user outside the
+// repo (internal/hosted credential store), never here.
+type HostedConfig struct {
+	// Server is the hosted-server base URL (e.g. https://hosted.satelle.dev).
+	Server string `toml:"server"`
+	// Project is the hosted project slug this repo maps to (optional).
+	Project string `toml:"project"`
 }
 
 // ReviewConfig toggles the quality-management gates for a repo.
