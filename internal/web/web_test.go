@@ -769,6 +769,46 @@ func TestProjectHeaderLinks(t *testing.T) {
 	}
 }
 
+// TestBreadcrumbProjectSwitcher proves the breadcrumb <project> segment becomes a
+// dropdown when the supervisor injects the project header, and degrades to the plain
+// name without it (sty_2bc00a9d).
+func TestBreadcrumbProjectSwitcher(t *testing.T) {
+	srv, _ := newServer(t)
+
+	// With the supervisor's project header → the switcher renders, listing a
+	// sibling and marking the current project (basePath is empty in tests, so
+	// current is matched by name == ProjectName "repo").
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+	req.Header.Set(web.ProjectsHeader, web.EncodeProjects([]web.Project{
+		{Slug: "repo", Name: "repo"}, {Slug: "other", Name: "other"},
+	}))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	body := string(b)
+	for _, want := range []string{
+		`<details class="proj-switch">`,
+		`href="/other/"`,
+		`href="/repo/" class="current" aria-current="page"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("switcher body missing %q:\n%s", want, body)
+		}
+	}
+
+	// No header → plain project name, no switcher (single-project / degraded).
+	_, plain := get(t, srv.URL+"/")
+	if strings.Contains(plain, "proj-switch") {
+		t.Error("no-header request must not render the switcher")
+	}
+	if !strings.Contains(plain, `<span class="cur">repo</span>`) {
+		t.Error("no-header request must render the plain project name")
+	}
+}
+
 // TestBrandMarkAnimatedSVG asserts the topbar brand mark is the inline
 // moon-phase SVG (sty_8c00b58a): a SMIL-animated terminator path plus the
 // static reduced-motion fallback, using currentColor — no bare ◐ glyph inside

@@ -97,6 +97,16 @@ func TestMultiProjectServe(t *testing.T) {
 		t.Error("launch repo page leaked the other repo's story (data bleed)")
 	}
 
+	// The breadcrumb is a project switcher listing every project and linking the
+	// sibling — proof the supervisor injects its live slug table into the proxied
+	// child so the child never recomputes slugs (sty_2bc00a9d).
+	if !strings.Contains(aBody, `class="proj-switch"`) {
+		t.Errorf("project page missing the breadcrumb project switcher:\n%s", aBody)
+	}
+	if !strings.Contains(aBody, `href="/`+slugB+`/"`) {
+		t.Errorf("switcher on /%s/ does not link the sibling /%s/", slugA, slugB)
+	}
+
 	// The other project under its slug, with its own base href and ONLY its data.
 	bBody := httpGetBody(t, base+"/"+slugB+"/")
 	if !strings.Contains(bBody, `<base href="/`+slugB+`/">`) || !strings.Contains(bBody, "BetaOnlyStory") {

@@ -456,8 +456,20 @@ func (s *supervisor) spawn(path, slug string) (*childProc, error) {
 	return &childProc{
 		cmd:     child,
 		project: web.Project{Slug: slug, Name: filepath.Base(path), Path: path},
-		handler: http.StripPrefix("/"+slug, proxy),
+		handler: http.StripPrefix("/"+slug, s.withProjects(proxy)),
 	}, nil
+}
+
+// withProjects injects the live project snapshot (slug+name) into each proxied
+// request as web.ProjectsHeader, so the child's breadcrumb can render the project
+// switcher (sty_2bc00a9d). Read at request time so a workspace add/remove reflects
+// on the next request. Set (never Add) overwrites any inbound value, so a client
+// cannot spoof the project list through the supervisor.
+func (s *supervisor) withProjects(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Header.Set(web.ProjectsHeader, web.EncodeProjects(s.snapshot()))
+		next.ServeHTTP(w, r)
+	})
 }
 
 // waitHealthyOrExit waits for the child's /healthz like web.WaitHealthy, but

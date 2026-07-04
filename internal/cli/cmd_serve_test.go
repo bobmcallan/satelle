@@ -105,3 +105,31 @@ func TestTopHandlerRouting(t *testing.T) {
 		t.Errorf("unknown prefix should 404 via the shared handler (code=%d, shared=%v)", rec.Code, sharedHit)
 	}
 }
+
+// TestWithProjectsHeader proves the supervisor injects its live child snapshot into
+// each proxied request (in display order) and overwrites any spoofed inbound value
+// (sty_2bc00a9d).
+func TestWithProjectsHeader(t *testing.T) {
+	s := &supervisor{
+		children: map[string]*childProc{
+			"/x/a": {project: web.Project{Slug: "a", Name: "a"}},
+			"/x/b": {project: web.Project{Slug: "b", Name: "b"}},
+		},
+		order: []string{"/x/a", "/x/b"},
+	}
+	var got string
+	rec := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get(web.ProjectsHeader)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/a/", nil)
+	req.Header.Set(web.ProjectsHeader, "SPOOFED") // must be overwritten by the supervisor
+	s.withProjects(rec).ServeHTTP(httptest.NewRecorder(), req)
+
+	if got == "SPOOFED" || got == "" {
+		t.Fatalf("supervisor did not overwrite/set the header: %q", got)
+	}
+	projs := web.DecodeProjects(got)
+	if len(projs) != 2 || projs[0].Slug != "a" || projs[1].Slug != "b" {
+		t.Fatalf("header did not carry both children in display order: %+v", projs)
+	}
+}

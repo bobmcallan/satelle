@@ -76,3 +76,22 @@ func TestProjectsPageListsBoundAndChildren(t *testing.T) {
 		}
 	}
 }
+
+// TestEncodeDecodeProjects round-trips the project-switcher header, drops Path, and
+// degrades bad input to nil (sty_2bc00a9d).
+func TestEncodeDecodeProjects(t *testing.T) {
+	in := []Project{{Slug: "repo", Name: "repo", Path: "/x/repo"}, {Slug: "hp", Name: "satellité"}}
+	out := DecodeProjects(EncodeProjects(in))
+	if len(out) != 2 || out[0].Slug != "repo" || out[1].Name != "satellité" {
+		t.Fatalf("round-trip mismatch: %+v", out)
+	}
+	if out[0].Path != "" {
+		t.Errorf("Path must not survive the header: %q", out[0].Path)
+	}
+	if DecodeProjects("not*base64") != nil {
+		t.Error("garbage header must decode to nil (degrade, never panic)")
+	}
+	if DecodeProjects("") != nil {
+		t.Error("empty header must decode to nil")
+	}
+}
