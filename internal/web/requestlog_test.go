@@ -1,6 +1,8 @@
 package web
 
 import (
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -102,5 +104,67 @@ func TestRequestLogRotationWiring(t *testing.T) {
 	}
 	if rolled == 0 {
 		t.Errorf("expected at least one rotated server-*.log; dir has %d entries", len(entries))
+	}
+}
+
+// TestRequestLogAbortHandlerRepanics asserts http.ErrAbortHandler propagates
+// (is NOT recovered) and emits no ERROR line — the fix that stops an aborted SSE
+// stream from poisoning a keep-alive connection (sty_fa24469a).
+func TestRequestLogAbortHandlerRepanics(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "abort.log")
+	h := RequestLog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { panic(http.ErrAbortHandler) }),
+		logPath, logfile.DefaultConfig)
+
+	func() {
+		defer func() {
+			rec := recover()
+			if rec != http.ErrAbortHandler {
+				t.Fatalf("expected http.ErrAbortHandler to propagate, got %v", rec)
+			}
+		}()
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/satelle/events", nil))
+		t.Fatal("ServeHTTP should have propagated the abort panic")
+	}()
+
+	if data, _ := os.ReadFile(logPath); strings.Contains(string(data), "ERROR") {
+		t.Errorf("aborted stream should not log an ERROR line, got:\n%s", data)
+	}
+}
+
+// TestRequestLogAbortClosesConnection is the connection-reuse regression: a real
+// server whose /events aborts mid-stream must not poison the keep-alive
+// connection — a following GET / on the same client must still succeed quickly.
+func TestRequestLogAbortClosesConnection(t *testing.T) {
+	cfg := logfile.DefaultConfig
+	logPath := filepath.Join(t.TempDir(), "server.log")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, ": open\n\n")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		panic(http.ErrAbortHandler) // mimic the reverse-proxy backend aborting the stream
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
+
+	srv := httptest.NewServer(RequestLog(mux, logPath, cfg))
+	defer srv.Close()
+
+	// One client → one keep-alive transport shared across both requests.
+	client := &http.Client{Timeout: 3 * time.Second}
+	if resp, err := client.Get(srv.URL + "/events"); err == nil {
+		io.Copy(io.Discard, resp.Body) // drain until the abort surfaces
+		resp.Body.Close()
+	}
+	// The reused/replacement connection must serve / promptly (pre-fix: hangs).
+	resp, err := client.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatalf("GET / after an aborted stream failed (connection poisoned?): %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET / = %d, want 200", resp.StatusCode)
 	}
 }
