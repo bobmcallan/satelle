@@ -121,15 +121,17 @@ var tmplFuncs = template.FuncMap{
 var tmpl = template.Must(template.New("web").Funcs(tmplFuncs).Parse(templatesSrc))
 
 const templatesSrc = `
-{{/* topbar: the ONE shared navbar (sty_cd2fe2f3), a full-bleed band placed directly
-     inside <body>, above every page's .wrap. Per the Satelle Design System header:
-     the ◐ satelle mark LEADS at the left (accent green), the controls cluster is
-     right-aligned, and the theme toggle is LAST. The mark folds in what were two
-     separate signals: the uptime snapshot rides in its title tooltip, and the live
-     /events (SSE) connection state is its colour — accent when connected, red
-     (.sse-down, added by app.js) when the stream drops. The retired 'up Nm' pill and
-     the far-right mark are gone. The theme toggle glyph is ☾/☀ (app.js), never ◐. */}}
-{{define "topbar"}}<header class="topbar"><div class="topbar-inner"><a class="brand-mark" href="https://satelle.dev/" target="_blank" rel="noopener" title="satelle — home{{if .Uptime}} · {{.Uptime}} at page load · mark colour = live-update connection{{end}}" aria-label="satelle home (opens in a new tab)">{{template "brandmark-svg"}}<span class="brand-word">satelle</span></a><div class="topbar-controls">{{template "account" .User}}<button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">☾</button></div></div></header>{{end}}
+{{/* topbar: the ONE shared navbar, a full-bleed band placed directly inside <body>,
+     above every page's .wrap. Matches the Satelle Design System SiteHeader
+     (sty_cd2fe2f3, sty_523f93b3): the ◐ satelle mark LEADS at the left (accent
+     green); a right-aligned nav row (Home · Install · Docs · Help · GitHub ·
+     Projects, active link = accent via .Active, external links open in a new tab);
+     the account control; and the theme toggle LAST. The mark folds in two signals:
+     the uptime snapshot rides in its title tooltip, and the live /events (SSE)
+     connection state is its colour — accent when connected, red (.sse-down, added by
+     app.js) when the stream drops. The theme toggle glyph is ☾/☀ (app.js), never ◐.
+     Mobile-collapsible nav is out of scope — the row stays inline. */}}
+{{define "topbar"}}<header class="topbar"><div class="topbar-inner"><a class="brand-mark" href="https://satelle.dev/" target="_blank" rel="noopener" title="satelle — home{{if .Uptime}} · {{.Uptime}} at page load · mark colour = live-update connection{{end}}" aria-label="satelle home (opens in a new tab)">{{template "brandmark-svg"}}<span class="brand-word">satelle</span></a><div class="topbar-controls"><nav class="topnav"><a href="/"{{if eq .Active "home"}} class="active" aria-current="page"{{end}}>Home</a><a href="https://satelle.dev/install" target="_blank" rel="noopener">Install</a><a href="https://satelle.dev/docs" target="_blank" rel="noopener">Docs</a><a href="help"{{if eq .Active "help"}} class="active" aria-current="page"{{end}}>Help</a><a href="https://github.com/bobmcallan/satelle" target="_blank" rel="noopener">GitHub</a><a href="workspace"{{if eq .Active "projects"}} class="active" aria-current="page"{{end}}>Projects</a></nav>{{template "account" .User}}<button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">☾</button></div></div></header>{{end}}
 
 {{/* account: the hosted-server sign-in control (sty_9ae98484). Signed out → a
      "Sign in" link (relative href, so the <base> resolves the /slug/ prefix on a

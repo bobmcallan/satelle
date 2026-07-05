@@ -198,7 +198,7 @@ func workspacePage(a *app.App) http.HandlerFunc {
 		render(w, "workspace", wsPageData{
 			Aggregate:    agg,
 			TotalStories: total,
-			TopBar:       newTopBar(),
+			TopBar:       newTopBar("projects"),
 		})
 	}
 }
@@ -240,7 +240,7 @@ func docPage() http.HandlerFunc {
 			return
 		}
 		render(w, "docPage", docPageData{
-			TopBar:   newTopBar(),
+			TopBar:   newTopBar(""),
 			Kind:     kind,
 			Name:     doc.Name,
 			Headline: doc.Headline,
@@ -259,7 +259,7 @@ func helpPage() http.HandlerFunc {
 		}
 		render(w, "help", helpPageData{
 			Topics: topics,
-			TopBar: newTopBar(),
+			TopBar: newTopBar("help"),
 		})
 	}
 }
@@ -362,6 +362,9 @@ type topBar struct {
 	// User is the signed-in hosted-server identity, or nil when signed out /
 	// unconfigured — the account control renders an avatar+menu vs a Sign in link.
 	User *topBarUser
+	// Active names the current nav item so its link renders accent (DS SiteHeader):
+	// "home", "projects", "help", or "" for a page no nav item represents.
+	Active string
 }
 
 // rowVM is a work item plus its progress lights for the table row. Embedding the
@@ -725,7 +728,7 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 		Workflows: workflowRows(byKind["workflows"]),
 		Uptime:    formatUptime(time.Since(serverStart)),
 		Theme:     globalTheme(),
-		TopBar:    newTopBar(),
+		TopBar:    newTopBar("home"),
 	}, nil
 }
 
@@ -877,7 +880,7 @@ func loadDetail(ctx context.Context, group, id string) (detailData, error) {
 			}
 		}
 	}
-	return detailData{Item: item, Events: events, Docs: docs, Executions: executions, TopBar: newTopBar()}, nil
+	return detailData{Item: item, Events: events, Docs: docs, Executions: executions, TopBar: newTopBar("")}, nil
 }
 
 // stripFrontmatter removes a leading `---\n…\n---\n` YAML block, returning the

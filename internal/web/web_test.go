@@ -275,6 +275,79 @@ func TestNavbarCSSTokens(t *testing.T) {
 	}
 }
 
+// TestTopbarNavRow asserts the shared navbar carries the DS SiteHeader nav row
+// (Home · Install · Docs · Help · GitHub · Projects) between the brand and the
+// theme-toggle-last, with external links opening in a new tab, active-marking per
+// page, and the DS link styling in the served CSS (sty_523f93b3).
+func TestTopbarNavRow(t *testing.T) {
+	srv, _ := newServer(t)
+
+	// The nav appears on every surface via the one shared partial, in DS order,
+	// after the brand and before the theme toggle (which stays last).
+	for _, path := range []string{"/", "/workspace", "/help", "/settings"} {
+		code, body := get(t, srv.URL+path)
+		if code != 200 {
+			t.Fatalf("%s = %d", path, code)
+		}
+		idx := []struct {
+			label, needle string
+		}{
+			{"brand-mark", `class="brand-mark"`},
+			{"Home", `>Home</a>`},
+			{"Install", `>Install</a>`},
+			{"Docs", `>Docs</a>`},
+			{"Help", `>Help</a>`},
+			{"GitHub", `>GitHub</a>`},
+			{"Projects", `>Projects</a>`},
+			{"theme-toggle", `class="theme-toggle"`},
+		}
+		prev := -1
+		for _, it := range idx {
+			at := strings.Index(body, it.needle)
+			if at < 0 {
+				t.Errorf("%s: navbar missing %q", path, it.label)
+				continue
+			}
+			if at < prev {
+				t.Errorf("%s: %q is out of DS order (brand → nav → theme-toggle-last)", path, it.label)
+			}
+			prev = at
+		}
+	}
+
+	// External links open in a new tab.
+	_, home := get(t, srv.URL+"/")
+	for _, ext := range []string{"https://satelle.dev/install", "https://satelle.dev/docs", "https://github.com/bobmcallan/satelle"} {
+		i := strings.Index(home, ext)
+		if i < 0 {
+			t.Errorf("nav missing external link %q", ext)
+			continue
+		}
+		start := strings.LastIndex(home[:i], "<a ")
+		anchor := home[start : start+strings.Index(home[start:], ">")]
+		if !strings.Contains(anchor, `target="_blank"`) || !strings.Contains(anchor, `rel="noopener"`) {
+			t.Errorf("external link %q not new-tab (target=_blank rel=noopener): %s", ext, anchor)
+		}
+	}
+
+	// Active marking is per page: / → Home active, /help → Help active.
+	if !strings.Contains(home, `<a href="/" class="active" aria-current="page">Home</a>`) {
+		t.Errorf("project page did not mark Home active:\n%s", home)
+	}
+	_, helpBody := get(t, srv.URL+"/help")
+	if !strings.Contains(helpBody, `class="active" aria-current="page">Help</a>`) {
+		t.Errorf("/help did not mark Help active")
+	}
+
+	// The served CSS carries the DS link styling.
+	_, css := get(t, srv.URL+"/static/app.css")
+	for _, want := range []string{".topnav a.active", "var(--accent)", ".topnav a:hover", "var(--chip)"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("served CSS missing DS nav styling %q", want)
+		}
+	}
+}
+
 // TestBrandMarkNoHoverUnderline asserts the ◐ brand mark suppresses the global
 // a:hover underline — it is an icon, not body text (sty_6ee88532).
 func TestBrandMarkNoHoverUnderline(t *testing.T) {
