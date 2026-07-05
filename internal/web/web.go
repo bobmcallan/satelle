@@ -119,7 +119,11 @@ func setTheme(w http.ResponseWriter, r *http.Request) {
 func New(a *app.App) *Server {
 	serverStart = time.Now()
 	footerIdentity(a.RepoRoot) // resolve the footer email once so every page's shared footer has it
-	setHostedServer(a.Config.Hosted.Server)
+	// Resolve the hosted server global-first (sty_53ccf845): every project's web UI
+	// binds to the SAME machine-wide server, so one sign-in shows the same identity
+	// on every project page — not a per-repo login. The repo [hosted] server is only
+	// the read-only fallback for a repo bound before the global model.
+	setHostedServer(config.ResolveHostedServer(a.Config))
 	h := newHub()
 	verb.SetChangeNotifier(h.publish)
 

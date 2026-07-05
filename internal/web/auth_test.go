@@ -11,8 +11,44 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
 )
+
+// TestGlobalLoginReflectedOnRepoWithoutHostedConfig proves the point of the epic
+// (sty_53ccf845): with the hosted server bound GLOBALLY, one sign-in shows the
+// same identity on a project whose own satelle.toml has NO [hosted] server — the
+// per-project signed-in-here/signed-out-there split is gone.
+func TestGlobalLoginReflectedOnRepoWithoutHostedConfig(t *testing.T) {
+	resetAuthState(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // credential store
+	t.Setenv("SATELLE_HOME", t.TempDir())    // global config
+
+	const server = "https://global.example"
+	if err := config.SaveGlobalHostedServer(server); err != nil {
+		t.Fatal(err)
+	}
+
+	// web.New binds the topbar server global-first; a repo Config with no [hosted]
+	// still resolves to the global server.
+	setHostedServer(config.ResolveHostedServer(config.Config{}))
+	if hostedServer != server {
+		t.Fatalf("web did not bind to the global hosted server: got %q", hostedServer)
+	}
+
+	// The credential from one global login makes the topbar signed-in here even
+	// though this repo carries no hosted server of its own.
+	if err := (hosted.FileStore{}).Save(hosted.Credential{
+		ServerURL: server, AccessToken: "a", RefreshToken: "r",
+		DisplayName: "Dev", Email: "dev@x.io",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	u := resolveUser()
+	if u == nil || u.Email != "dev@x.io" {
+		t.Fatalf("global login not reflected on a repo without [hosted]: %+v", u)
+	}
+}
 
 // resetAuthState clears the package-level sign-in state between tests.
 func resetAuthState(t *testing.T) {

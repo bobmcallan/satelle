@@ -65,7 +65,8 @@ func stubOAuthServer(t *testing.T) *httptest.Server {
 func TestLoginFlowEndToEnd(t *testing.T) {
 	bin := testBin
 	repo := t.TempDir()
-	xdg := t.TempDir() // credential home, deliberately outside the repo
+	xdg := t.TempDir()   // credential home, deliberately outside the repo
+	ghome := t.TempDir() // global config home (SATELLE_HOME), isolated from the real ~/.satelle
 	mustRun(t, bin, repo, "init")
 
 	ts := stubOAuthServer(t)
@@ -74,7 +75,7 @@ func TestLoginFlowEndToEnd(t *testing.T) {
 	// the test itself GETs that URL to drive the callback (no real browser).
 	cmd := exec.Command(bin, "login", "--no-browser", "--server", ts.URL, "--project", "demo", "--timeout", "20s")
 	cmd.Dir = repo
-	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+xdg)
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+xdg, "SATELLE_HOME="+ghome)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -115,16 +116,33 @@ func TestLoginFlowEndToEnd(t *testing.T) {
 		t.Error("login did not print the signed-in identity")
 	}
 
-	// satelle.toml (committed, in-repo) gained the [hosted] block.
+	// satelle.toml (committed, in-repo) gained ONLY the project slug — the server
+	// is a GLOBAL binding now (sty_53ccf845), never written to the repo file.
 	cfg, err := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(cfg), "[hosted]") || !strings.Contains(string(cfg), "project = \"demo\"") {
-		t.Fatalf("satelle.toml missing [hosted]/project:\n%s", cfg)
+	if !strings.Contains(string(cfg), `project = "demo"`) {
+		t.Fatalf("satelle.toml missing the project slug:\n%s", cfg)
+	}
+	if strings.Contains(string(cfg), "server =") {
+		t.Fatalf("committed satelle.toml must NOT gain a hosted server (it is global now):\n%s", cfg)
 	}
 	if strings.Contains(string(cfg), "access_token") || strings.Contains(string(cfg), "refresh_token") || strings.Contains(string(cfg), `"acc"`) || strings.Contains(string(cfg), `"ref"`) {
 		t.Fatalf("committed satelle.toml must not contain tokens:\n%s", cfg)
+	}
+
+	// The server landed in the GLOBAL config (~/.satelle/config.toml via SATELLE_HOME),
+	// so one sign-in serves every repo. No tokens there either.
+	gcfg, err := os.ReadFile(filepath.Join(ghome, "config.toml"))
+	if err != nil {
+		t.Fatalf("global config not written: %v", err)
+	}
+	if !strings.Contains(string(gcfg), ts.URL) {
+		t.Fatalf("global config missing the hosted server %q:\n%s", ts.URL, gcfg)
+	}
+	if strings.Contains(string(gcfg), `"acc"`) || strings.Contains(string(gcfg), `"ref"`) || strings.Contains(string(gcfg), "token") {
+		t.Fatalf("global config must not contain tokens:\n%s", gcfg)
 	}
 
 	// The credential file landed under XDG (outside the repo), not in the repo.

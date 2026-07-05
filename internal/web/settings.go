@@ -169,10 +169,11 @@ func settingsPost(a *app.App) http.HandlerFunc {
 			}
 		}
 		if hostedChanged {
-			// Keep the live sign-in binding in step with the edited file (AC4).
-			// resolveUser reads the new server's credential directly (no cache).
+			// Keep the live sign-in binding in step, resolved global-first
+			// (sty_53ccf845): editing the repo hosted.server key only moves the live
+			// binding when no global server is set (the global one wins otherwise).
 			ncfg, _, _ := config.Load(configPathFor(a))
-			setHostedServer(ncfg.Hosted.Server)
+			setHostedServer(config.ResolveHostedServer(ncfg))
 		}
 		http.Redirect(w, r, baseHref()+"settings?saved=1", http.StatusSeeOther)
 	}

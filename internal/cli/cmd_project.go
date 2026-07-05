@@ -4,7 +4,7 @@ package cli
 // projects API (sty_2da92fd5). create POSTs to /api/v1/projects (the caller
 // becomes owner); list GETs the caller's projects so they can confirm a create
 // and pick one for later document operations. Both reuse the login flow's
-// resolveServer (--server → [hosted] server in satelle.toml) and the per-user
+// resolveServer (--server → global [hosted] server → repo satelle.toml) and the per-user
 // credential store. Like login/whoami these commands never touch the local DB,
 // so they carry no store annotation and work in a fresh clone.
 
@@ -38,7 +38,7 @@ and name. Requires a prior "satelle login".`,
 			return runProjectCreate(cmd, createServer, slug, name)
 		},
 	}
-	create.Flags().StringVar(&createServer, "server", "", "Hosted server URL (overrides [hosted] server in satelle.toml).")
+	create.Flags().StringVar(&createServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
 	create.Flags().StringVar(&slug, "slug", "", "Project slug (required).")
 	create.Flags().StringVar(&name, "name", "", "Human-readable project name (required).")
 	project.AddCommand(create)
@@ -51,7 +51,7 @@ and name. Requires a prior "satelle login".`,
 			return runProjectList(cmd, listServer)
 		},
 	}
-	list.Flags().StringVar(&listServer, "server", "", "Hosted server URL (overrides [hosted] server in satelle.toml).")
+	list.Flags().StringVar(&listServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
 	project.AddCommand(list)
 
 	register(project)
@@ -68,7 +68,7 @@ func runProjectCreate(cmd *cobra.Command, serverArg, slug, name string) error {
 	}
 	server, _ := resolveServer(serverArg)
 	if server == "" {
-		return fmt.Errorf("no hosted server configured — pass --server <url> (or set [hosted] server in satelle.toml)")
+		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}
 
 	p, err := hosted.NewClient(server, hosted.FileStore{}, nil).CreateProject(cmd.Context(), slug, name)
@@ -89,7 +89,7 @@ func runProjectCreate(cmd *cobra.Command, serverArg, slug, name string) error {
 func runProjectList(cmd *cobra.Command, serverArg string) error {
 	server, _ := resolveServer(serverArg)
 	if server == "" {
-		return fmt.Errorf("no hosted server configured — pass --server <url> (or set [hosted] server in satelle.toml)")
+		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}
 
 	projects, err := hosted.NewClient(server, hosted.FileStore{}, nil).ListProjects(cmd.Context())
