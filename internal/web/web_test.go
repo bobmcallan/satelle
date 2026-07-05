@@ -194,18 +194,84 @@ func TestHeaderBrandingProjectNameAndHomeMark(t *testing.T) {
 	if strings.Contains(body, "satelle<span class=\"dot\">.</span> project") {
 		t.Errorf("project header still shows the old 'satelle. project' wordmark:\n%s", body)
 	}
-	// The far-right brand mark: a ◐ link to the home page, opening a new tab.
-	if !strings.Contains(body, `class="brand-mark"`) ||
+	// The leading brand mark: a ◐ satelle wordmark linking home in a new tab, inside
+	// the shared full-bleed navbar band.
+	if !strings.Contains(body, `<header class="topbar">`) ||
+		!strings.Contains(body, `class="brand-mark"`) ||
+		!strings.Contains(body, `class="brand-word">satelle`) ||
 		!strings.Contains(body, `href="https://satelle.dev/"`) ||
 		!strings.Contains(body, `target="_blank"`) ||
 		!strings.Contains(body, `rel="noopener"`) {
-		t.Errorf("header missing the ◐ home brand mark (new-tab link to satelle.dev):\n%s", body)
+		t.Errorf("navbar missing the leading ◐ satelle wordmark (new-tab link to satelle.dev) in the topbar band:\n%s", body)
 	}
-	// The topbar controls are float:right, so the FIRST in source order claims the
-	// rightmost slot. The brand mark must precede the theme toggle so it renders at
-	// the far right of the header.
-	if bm, tt := strings.Index(body, `class="brand-mark"`), strings.Index(body, `class="theme-toggle"`); bm < 0 || tt < 0 || bm > tt {
-		t.Errorf("brand mark is not source-ordered before the theme toggle (needed for the far-right float slot): brand-mark=%d theme-toggle=%d", bm, tt)
+	// The navbar is flex (no floats), so source order == visual order: the brand mark
+	// LEADS at the left, the account/nav controls follow, and the theme toggle is LAST.
+	bm, ac, tt := strings.Index(body, `class="brand-mark"`), strings.Index(body, `class="signin"`), strings.Index(body, `class="theme-toggle"`)
+	if bm < 0 || ac < 0 || tt < 0 || !(bm < ac && ac < tt) {
+		t.Errorf("navbar order is not brand-mark → account → theme-toggle (mark leads, toggle last): brand-mark=%d account=%d theme-toggle=%d", bm, ac, tt)
+	}
+	// The theme toggle uses the DS ☾ glyph, never ◐ (which is reserved for the mark).
+	if ti := strings.Index(body, `class="theme-toggle"`); ti >= 0 {
+		btn := body[ti:]
+		if end := strings.Index(btn, "</button>"); end >= 0 {
+			btn = btn[:end]
+		}
+		if strings.Contains(btn, "◐") || !strings.Contains(btn, "☾") {
+			t.Errorf("theme toggle must use the ☾ glyph, not ◐:\n%s", btn)
+		}
+	}
+}
+
+// TestNavbarConsistentAcrossSurfaces asserts the ONE shared full-bleed navbar
+// renders identically on every in-process surface — project page, aggregate
+// /workspace, and settings — with the mark leading, no per-surface drift, and the
+// retired uptime pill gone (sty_cd2fe2f3). The supervisor landing is covered by
+// multi_test.go's projects-page test.
+func TestNavbarConsistentAcrossSurfaces(t *testing.T) {
+	srv, _ := newServer(t)
+	for _, path := range []string{"/", "/workspace", "/settings"} {
+		code, body := get(t, srv.URL+path)
+		if code != 200 {
+			t.Fatalf("%s = %d", path, code)
+		}
+		if n := strings.Count(body, `<header class="topbar">`); n != 1 {
+			t.Errorf("%s: expected exactly one navbar band, got %d", path, n)
+		}
+		if !strings.Contains(body, `class="brand-word">satelle`) {
+			t.Errorf("%s: navbar missing the leading ◐ satelle wordmark", path)
+		}
+		bm, tt := strings.Index(body, `class="brand-mark"`), strings.Index(body, `class="theme-toggle"`)
+		if bm < 0 || tt < 0 || bm > tt {
+			t.Errorf("%s: mark not source-ordered before the theme toggle: brand=%d toggle=%d", path, bm, tt)
+		}
+		if strings.Contains(body, `class="uptime"`) {
+			t.Errorf("%s: retired uptime pill still present", path)
+		}
+		// Every surface loads app.js so the theme toggle + live wiring work uniformly.
+		if !strings.Contains(body, `src="static/app.js"`) {
+			t.Errorf("%s: does not load app.js (theme toggle would be dead)", path)
+		}
+	}
+}
+
+// TestNavbarCSSTokens asserts the served CSS carries the full-bleed band with the
+// DS 2px ink rule + shared content-width token, and the mark's disconnected-red
+// state (sty_cd2fe2f3).
+func TestNavbarCSSTokens(t *testing.T) {
+	srv, _ := newServer(t)
+	code, css := get(t, srv.URL+"/static/app.css")
+	if code != 200 {
+		t.Fatalf("/static/app.css = %d", code)
+	}
+	for _, want := range []string{
+		".topbar {", "2px solid var(--ink)", // full-bleed band + DS ink rule
+		"var(--content-w)",     // shared content-width token
+		".brand-mark.sse-down", // disconnected-red state
+		"--fail:",              // the one shared red token
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("served CSS missing %q", want)
+		}
 	}
 }
 
@@ -383,28 +449,30 @@ func TestStoriesFilterCountRendered(t *testing.T) {
 	}
 }
 
-func TestUptimeButtonRendered(t *testing.T) {
+// TestUptimeFoldedIntoBrandMark asserts the retired 'up Nm' pill is gone and the
+// uptime snapshot now rides in the brand mark's title tooltip (sty_cd2fe2f3).
+func TestUptimeFoldedIntoBrandMark(t *testing.T) {
 	srv, _ := newServer(t)
 	code, body := get(t, srv.URL+"/")
 	if code != 200 {
 		t.Fatalf("status = %d", code)
 	}
-	// A clear, non-pressable (disabled) uptime button shows in the header.
-	if !strings.Contains(body, `class="uptime"`) || !strings.Contains(body, "disabled") {
-		t.Errorf("header missing the clear (disabled) uptime button")
+	// The separate uptime pill is removed.
+	if strings.Contains(body, `class="uptime"`) {
+		t.Errorf("the retired uptime pill is still rendered")
 	}
-	if !strings.Contains(body, "up ") {
-		t.Errorf("uptime button missing the 'up …' elapsed text")
+	// The uptime snapshot is now in the brand-mark title, alongside the note that the
+	// mark's colour signals the live-update connection.
+	bm := strings.Index(body, `class="brand-mark"`)
+	if bm < 0 {
+		t.Fatalf("no brand-mark in the topbar")
 	}
-	// The tooltip is reconciled with actual behaviour (sty_efeb2a69): it states the
-	// value is a page-load snapshot ("at page load") AND that the green border is the
-	// live-connection signal ("live updates connected") — not the old misleading
-	// "web service uptime — green border means up".
-	if !strings.Contains(body, "at page load") || !strings.Contains(body, "live updates connected") {
-		t.Errorf("uptime tooltip not reconciled to describe the snapshot value + the connection border")
+	tag := body[bm:]
+	if end := strings.Index(tag, ">"); end >= 0 {
+		tag = tag[:end]
 	}
-	if strings.Contains(body, "green border means up") {
-		t.Errorf("the old misleading uptime tooltip is still present")
+	if !strings.Contains(tag, "up ") || !strings.Contains(tag, "at page load") || !strings.Contains(tag, "live-update connection") {
+		t.Errorf("brand-mark title does not fold in the uptime snapshot + connection note:\n%s", tag)
 	}
 }
 
