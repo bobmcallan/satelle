@@ -158,7 +158,7 @@ func callbackURI(r *http.Request) string {
 func oauthLogin(w http.ResponseWriter, r *http.Request) {
 	if hostedServer == "" {
 		authPage(w, http.StatusOK, "Not configured",
-			"No hosted server is configured for this repo. Set <code>[hosted] server</code> in <code>.satelle/satelle.toml</code> (or run <code>satelle login --server &lt;url&gt;</code>) to enable sign-in.")
+			"No hosted server is configured. Run <code>satelle login --server &lt;url&gt;</code> once — it records the server in the machine-wide config so every project signs in to the same account.")
 		return
 	}
 	flow, err := hosted.NewFlow(hostedServer, callbackURI(r))

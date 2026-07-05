@@ -1,15 +1,17 @@
 package cli
 
 // `satelle login` / `logout` / `whoami` — the client half of the hosted-server
-// auth (sty_2fc93374). login runs an OAuth 2.1 + PKCE loopback flow, persists
-// the tokens to the per-user credential store, records server+project in the
-// committed satelle.toml, and prints the signed-in identity. None of these
-// commands touch the local DB, so they carry no store annotation and work in a
-// fresh clone.
+// auth (sty_2fc93374). login runs an OAuth 2.1 + PKCE loopback flow, persists the
+// tokens to the per-user credential store, records the server in the GLOBAL config
+// (~/.satelle/config.toml) so one sign-in serves every repo (sty_53ccf845) — with
+// the optional project slug written to the committed repo satelle.toml — and prints
+// the signed-in identity. None of these commands touch the local DB, so they carry
+// no store annotation and work in a fresh clone.
 
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,14 +33,16 @@ func init() {
 		Short: "Authenticate to the hosted satelle-server (OAuth 2.1 + PKCE)",
 		Long: `login runs a browser-based OAuth 2.1 + PKCE flow against the hosted
 satelle-server, stores the access + refresh tokens in the per-user credential
-store ($XDG_CONFIG_HOME/satelle/credentials.toml), records the server URL and
-project slug in the committed .satelle/satelle.toml, and prints your identity.`,
+store ($XDG_CONFIG_HOME/satelle/credentials.toml), records the server URL in the
+machine-wide global config (~/.satelle/config.toml) so one sign-in serves every
+repo, writes the optional project slug to the committed .satelle/satelle.toml, and
+prints your identity.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runLogin(cmd, serverArg, projectArg, noBrowser, timeout)
 		},
 	}
-	login.Flags().StringVar(&serverArg, "server", "", "Hosted server URL (overrides [hosted] server in satelle.toml).")
-	login.Flags().StringVar(&projectArg, "project", "", "Hosted project slug to record in satelle.toml.")
+	login.Flags().StringVar(&serverArg, "server", "", "Hosted server URL (recorded in the global config; overrides the configured server).")
+	login.Flags().StringVar(&projectArg, "project", "", "Hosted project slug to record in this repo's satelle.toml.")
 	login.Flags().BoolVar(&noBrowser, "no-browser", false, "Print the authorize URL instead of opening a browser.")
 	login.Flags().DurationVar(&timeout, "timeout", 3*time.Minute, "How long to wait for the browser approval.")
 	register(login)
@@ -51,7 +55,7 @@ project slug in the committed .satelle/satelle.toml, and prints your identity.`,
 			return runLogout(cmd, logoutServer)
 		},
 	}
-	logout.Flags().StringVar(&logoutServer, "server", "", "Hosted server URL (overrides [hosted] server in satelle.toml).")
+	logout.Flags().StringVar(&logoutServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
 	register(logout)
 
 	var whoamiServer string
@@ -62,30 +66,51 @@ project slug in the committed .satelle/satelle.toml, and prints your identity.`,
 			return runWhoami(cmd, whoamiServer)
 		},
 	}
-	whoami.Flags().StringVar(&whoamiServer, "server", "", "Hosted server URL (overrides [hosted] server in satelle.toml).")
+	whoami.Flags().StringVar(&whoamiServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
 	register(whoami)
 }
 
-// resolveServer picks the server from the flag, else the committed config's
-// [hosted] server. Returns the resolved server and the committed config path
-// (for writing server/project back). A blank result is an error at the caller.
+// resolveServer picks the server: the flag wins, else the GLOBAL config's
+// [hosted] server (the machine-wide binding), else the committed repo config's
+// [hosted] server (the read-only backward-compat fallback). Returns the resolved
+// server and the committed repo config path (for writing the project slug back).
+// A blank result is an error at the caller.
 func resolveServer(flagServer string) (server, cfgPath string) {
 	cfg, path, err := config.Load("")
 	if err != nil && !errors.Is(err, config.ErrNotFound) {
-		// A malformed config still lets --server drive login; surface nothing here.
+		// A malformed repo config still lets --server (or global) drive login.
 		path = ""
 	}
-	server = strings.TrimSpace(flagServer)
-	if server == "" {
-		server = cfg.Hosted.Server
+	if s := strings.TrimSpace(flagServer); s != "" {
+		return strings.TrimRight(s, "/"), path
 	}
-	return strings.TrimRight(strings.TrimSpace(server), "/"), path
+	// Global-first, with the repo config as the read-only fallback.
+	return config.ResolveHostedServer(cfg), path
+}
+
+// recordLoginBinding persists the post-authentication binding: the server goes to
+// the GLOBAL config (one sign-in serves every repo), and ONLY the optional project
+// slug is written to the committed repo satelle.toml (à-la-carte, so an existing
+// [hosted] table and its comments survive and no server key is ever added there).
+// Tokens are handled separately by the credential store. Factored out so the
+// persistence is unit-testable without the browser OAuth flow.
+func recordLoginBinding(cfgPath, server, project string) error {
+	if err := config.SaveGlobalHostedServer(server); err != nil {
+		return fmt.Errorf("record hosted server in the global config: %w", err)
+	}
+	if strings.TrimSpace(project) != "" {
+		edit := config.KeyEdit{Section: "hosted", Key: "project", Value: strconv.Quote(strings.TrimSpace(project))}
+		if err := config.SaveConfigValues(cfgPath, []config.KeyEdit{edit}); err != nil {
+			return fmt.Errorf("record hosted project in satelle.toml: %w", err)
+		}
+	}
+	return nil
 }
 
 func runLogin(cmd *cobra.Command, serverArg, projectArg string, noBrowser bool, timeout time.Duration) error {
 	server, cfgPath := resolveServer(serverArg)
 	if server == "" {
-		return fmt.Errorf("no hosted server configured — pass --server <url> (or set [hosted] server in satelle.toml)")
+		return fmt.Errorf("no hosted server configured — pass --server <url> (it is recorded globally for every repo)")
 	}
 	out := cmd.OutOrStdout()
 
@@ -103,10 +128,11 @@ func runLogin(cmd *cobra.Command, serverArg, projectArg string, noBrowser bool, 
 	if err := store.Save(cred); err != nil {
 		return err
 	}
-	// Record server + project in the committed config (secret-free; tokens stay
-	// in the per-user store).
-	if err := config.SaveHostedServer(cfgPath, server, projectArg); err != nil {
-		return fmt.Errorf("record hosted server in satelle.toml: %w", err)
+	// Record the binding: server → global config (one sign-in serves every repo);
+	// the optional project slug → the committed repo satelle.toml. Tokens stay in
+	// the per-user store.
+	if err := recordLoginBinding(cfgPath, server, projectArg); err != nil {
+		return err
 	}
 
 	// Fetch and print the signed-in identity, and persist it into the credential

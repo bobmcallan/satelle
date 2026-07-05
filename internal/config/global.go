@@ -26,10 +26,26 @@ const (
 
 // GlobalConfig is the machine-wide config at ~/.satelle/config.toml.
 type GlobalConfig struct {
-	Service   ServiceConfig   `toml:"service"`
-	Agent     AgentConfig     `toml:"agent"`
-	Workspace WorkspaceConfig `toml:"workspace"`
-	UI        UIConfig        `toml:"ui"`
+	Service   ServiceConfig      `toml:"service"`
+	Agent     AgentConfig        `toml:"agent"`
+	Workspace WorkspaceConfig    `toml:"workspace"`
+	UI        UIConfig           `toml:"ui"`
+	Hosted    GlobalHostedConfig `toml:"hosted"`
+}
+
+// GlobalHostedConfig binds this MACHINE to one hosted satelle-server — the single
+// account the operator signs in to, shared across every repo (sty_53ccf845). Like
+// UIConfig.Theme it follows the operator rather than a repo, so one `satelle login`
+// signs in everywhere. Secret-free: the OAuth tokens live in the per-user
+// credential store outside any config (internal/hosted), never here.
+type GlobalHostedConfig struct {
+	Server string `toml:"server"`
+}
+
+// ResolveServer returns the global hosted-server URL, trimmed of whitespace and a
+// trailing slash so it matches the credential-store key exactly. Empty when unset.
+func (h GlobalHostedConfig) ResolveServer() string {
+	return strings.TrimRight(strings.TrimSpace(h.Server), "/")
 }
 
 // UIConfig holds user-level UI preferences shared across every repo, so the
@@ -173,12 +189,31 @@ func SaveGlobal(gc GlobalConfig) error {
 		}
 		repos = "[" + strings.Join(quoted, ", ") + "]"
 	}
-	body := fmt.Sprintf(globalTemplate, gc.Service.ResolvePort(), gc.Service.ResolveAddr(), gc.Service.Repo, gc.Agent.ResolveCLI(), repos, gc.UI.Theme)
+	body := fmt.Sprintf(globalTemplate, gc.Service.ResolvePort(), gc.Service.ResolveAddr(), gc.Service.Repo, gc.Agent.ResolveCLI(), repos, gc.UI.Theme, gc.Hosted.ResolveServer())
 	path := GlobalConfigPath()
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		return fmt.Errorf("config: write %s: %w", path, err)
 	}
 	return nil
+}
+
+// SaveGlobalHostedServer records the machine-wide hosted-server URL in the global
+// config, preserving the other sections (load-modify-save is correct here because
+// SaveGlobal re-renders the whole managed template). It is the global analogue of
+// the retired repo-file SaveHostedServer; `satelle login` calls it so one sign-in
+// serves every repo. Tokens never pass through here — they go to the credential
+// store.
+func SaveGlobalHostedServer(server string) error {
+	server = strings.TrimRight(strings.TrimSpace(server), "/")
+	if server == "" {
+		return fmt.Errorf("config: hosted server URL is empty")
+	}
+	gc, err := LoadGlobal()
+	if err != nil {
+		return err
+	}
+	gc.Hosted.Server = server
+	return SaveGlobal(gc)
 }
 
 // globalTemplate is the documented global config shape. Order/format are fixed
@@ -210,4 +245,10 @@ repos = %s
 # light/dark theme shared across every repo's web UI ("dark" | "" = light).
 # Set by the theme toggle in the web header; follows the operator across repos.
 theme = %q
+
+[hosted]
+# the hosted satelle-server this machine signs in to (e.g. https://satelle.dev).
+# Set by 'satelle login --server <url>'; follows the operator across repos so one
+# sign-in serves every project. Tokens are stored separately (never here).
+server = %q
 `
