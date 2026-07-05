@@ -445,27 +445,18 @@ const templatesSrc = `
   <nav class="crumbs"><a href="{{basehref}}">project</a> <span class="sep">/</span> <span class="cur">settings</span></nav>
   <header class="app">
     <h1>satelle<span class="dot">.</span> settings</h1>
-    <div class="meta">{{.RepoRoot}} · editing <code>.satelle/satelle.toml</code></div>
+    <div class="meta">{{.RepoRoot}} · read-only view of <code>.satelle/satelle.toml</code></div>
   </header>
-  {{if .Saved}}<div class="settings-saved" role="status">Saved.</div>{{end}}
-  <form id="settings-form" class="settings" method="post" action="settings">
+  <div class="settings-note settings-readonly-note">Repo settings are read-only here — edit <code>.satelle/satelle.toml</code> directly (and commit it under the workflow) to change them. Account and machine-wide settings live on the <a href="settings/global">global settings</a> page. Overlay (<code>satelle.local.toml</code>) values are not shown here.</div>
+  <div class="settings">
     {{range .Rows}}{{if .SectHead}}<h2 class="kind-h settings-sect">{{.SectHead}}</h2>{{end}}<div class="setting-row">
-      <div class="setting-label"><label for="f-{{.Key}}">{{.Label}}</label>{{if .Help}}<span class="setting-help">{{.Help}}</span>{{end}}</div>
-      <div class="setting-field">{{if .IsBool}}<label class="toggle"><input type="checkbox" id="f-{{.Key}}" name="{{.FieldID}}"{{if .Checked}} checked{{end}}><span class="toggle-track"></span></label>{{else if .IsList}}<textarea id="f-{{.Key}}" name="{{.FieldID}}" rows="3" spellcheck="false">{{.Value}}</textarea>{{else}}<input type="text" id="f-{{.Key}}" name="{{.FieldID}}" value="{{.Value}}" spellcheck="false" autocomplete="off">{{end}}</div>
+      <div class="setting-label"><span class="setting-key">{{.FieldID}}</span><span class="setting-label-name">{{.Label}}</span>{{if .Help}}<span class="setting-help">{{.Help}}</span>{{end}}</div>
+      <div class="setting-field"><div class="setting-value{{if not .Value}} setting-value-unset{{end}}">{{if .Value}}{{.Value}}{{else}}—{{end}}</div></div>
     </div>{{end}}
-    <div class="settings-actions"><button type="submit" class="settings-save">Save</button><span class="settings-note">Config writes are accepted only from this machine (loopback). Port / data-dir / DB apply on the next serve start; overlay (satelle.local.toml) values are not shown here.</span></div>
-    <div class="settings-error" id="settings-error" role="alert" hidden></div>
-  </form>
+  </div>
   {{template "footer"}}
 </div>
 <script src="static/app.js"></script>
-<script>
-(function(){var f=document.getElementById('settings-form');if(!f)return;
-f.addEventListener('submit',function(e){e.preventDefault();var err=document.getElementById('settings-error');err.hidden=true;
-fetch('settings',{method:'POST',headers:{'X-Satelle-Settings':'1'},body:new FormData(f)})
-.then(function(r){if(r.ok){window.location='settings?saved=1';}else{return r.text().then(function(t){err.textContent=t||('Error '+r.status);err.hidden=false;});}})
-.catch(function(){err.textContent='Network error';err.hidden=false;});});})();
-</script>
 </body>
 </html>{{end}}
 

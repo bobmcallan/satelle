@@ -172,8 +172,9 @@ func New(a *app.App) *Server {
 	mux.HandleFunc("GET /doc/{kind}/{name}", docPage())
 	mux.HandleFunc("GET /workspace", workspacePage(a))
 	mux.HandleFunc("GET /help", helpPage())
+	// Per-project settings is READ-ONLY (sty_e1740d82) — no POST route; repo config
+	// is edited by changing .satelle/satelle.toml directly.
 	mux.HandleFunc("GET /settings", settingsGet(a))
-	mux.HandleFunc("POST /settings", settingsPost(a))
 	// Global (machine-wide) settings — the hosted server + theme (sty_432bdeb7).
 	mux.HandleFunc("GET /settings/global", globalSettingsGet())
 	mux.HandleFunc("POST /settings/global", globalSettingsPost(a))
