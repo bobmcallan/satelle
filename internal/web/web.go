@@ -174,6 +174,9 @@ func New(a *app.App) *Server {
 	mux.HandleFunc("GET /help", helpPage())
 	mux.HandleFunc("GET /settings", settingsGet(a))
 	mux.HandleFunc("POST /settings", settingsPost(a))
+	// Global (machine-wide) settings — the hosted server + theme (sty_432bdeb7).
+	mux.HandleFunc("GET /settings/global", globalSettingsGet())
+	mux.HandleFunc("POST /settings/global", globalSettingsPost(a))
 	mux.HandleFunc("GET /{$}", projectPage(a))
 	return &Server{Handler: mux, a: a, hub: h}
 }

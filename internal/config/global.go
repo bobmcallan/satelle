@@ -216,6 +216,18 @@ func SaveGlobalHostedServer(server string) error {
 	return SaveGlobal(gc)
 }
 
+// ClearGlobalHostedServer removes the machine-wide hosted-server binding (the
+// "remove server" action), leaving the other sections intact. Separate from
+// SaveGlobalHostedServer, which guards against an empty URL.
+func ClearGlobalHostedServer() error {
+	gc, err := LoadGlobal()
+	if err != nil {
+		return err
+	}
+	gc.Hosted.Server = ""
+	return SaveGlobal(gc)
+}
+
 // globalTemplate is the documented global config shape. Order/format are fixed
 // so SaveGlobal produces a stable, human-readable file.
 const globalTemplate = `# satelle global config (machine-wide, ~/.satelle/config.toml).

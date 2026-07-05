@@ -78,6 +78,7 @@ repo it governs.
 | `doc` | `list`, `get` |
 | `hosted` | `login`, `logout`, `whoami` — authenticate to a hosted satelle-server (OAuth 2.1 + PKCE); optional, the local service runs standalone without it |
 | `project` | `create`, `list` — create and list your projects on the hosted server (requires `login`) |
+| `settings` | `server` — show/set/clear the machine-wide hosted server in `~/.satelle/config.toml` (no login needed; sign in after via the UI or `login`) |
 | | `init`, `reindex`, `status`, `serve`, `version` |
 
 Both the CLI and the web server reach data the same way — through one verb

@@ -185,6 +185,10 @@ header.app h1 .dot { color: var(--accent); }
 .account-menu .acct-signout { display: block; width: 100%; text-align: left; padding: 7px 8px;
   border: none; border-radius: 7px; background: none; color: var(--ink); font: inherit; font-size: 12.5px; cursor: pointer; }
 .account-menu .acct-signout:hover { background: var(--hover, rgba(127,127,127,.12)); }
+.account-menu .acct-link { display: block; padding: 7px 8px; border-radius: 7px; color: var(--ink);
+  font-size: 12.5px; text-decoration: none; }
+.account-menu .acct-link:hover { background: var(--hover, rgba(127,127,127,.12)); text-decoration: none; }
+.gs-radio { font-size: 13.5px; color: var(--ink); margin-right: 12px; }
 
 /* Settings editor (sty_ffe53865): a quiet key/value config table, Claude-settings
    aesthetic inside the existing design system; styled for both themes. */
