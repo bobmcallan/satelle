@@ -511,11 +511,13 @@
   // current. window.__satelleLive exposes the connection state for tests.
   function initLive() {
     if (!window.EventSource) return;
-    // The .uptime control's green border ('on' class) tracks the live SSE
-    // connection state — added on open, removed on close/error. It is the
-    // CONNECTION signal, distinct from the uptime TEXT (a server render-time
-    // snapshot of process elapsed time). See the topbar tooltip. (sty_efeb2a69)
-    var dot = document.querySelector(".uptime");
+    // The ◐ brand mark carries the live SSE connection state as its COLOUR
+    // (sty_cd2fe2f3): accent-green by default (connected), red via the 'sse-down'
+    // class when the /events stream drops — added on close/error, removed on open.
+    // Inverted from a positive 'connected' flag so a fresh render shows green with
+    // no red flash before the first open. The uptime snapshot rides in the mark's
+    // title tooltip (a server render-time value). (was the .uptime pill, sty_efeb2a69)
+    var dot = document.querySelector(".brand-mark");
     var isProjects = document.body.getAttribute("data-page") === "projects";
     var detailEl = document.getElementById("detail-live");
     var detailKind = detailEl ? detailEl.dataset.kind : null;
@@ -553,7 +555,7 @@
       window.__satelleLive.open = true;
       window.__satelleLive.opens++;
       src.addEventListener("open", function () {
-        if (dot) dot.classList.add("on");
+        if (dot) dot.classList.remove("sse-down"); // connected → mark is accent-green
         if (firstOpen) { firstOpen = false; return; }
         reconcile();
       });
@@ -564,7 +566,7 @@
         // changed: workspace add/remove, a child failed) reloads it (sty_4ea4d4df).
         if (ev.data === "projects" && isProjects) location.reload();
       });
-      src.onerror = function () { if (dot) dot.classList.remove("on"); };
+      src.onerror = function () { if (dot) dot.classList.add("sse-down"); }; // stream dropped → mark red
     }
 
     function disconnectLive() {
@@ -572,7 +574,7 @@
       src.close();
       src = null;
       window.__satelleLive.open = false;
-      if (dot) dot.classList.remove("on"); // no live border while holding no connection
+      if (dot) dot.classList.add("sse-down"); // holding no connection (invisible on a hidden tab; cleared on reopen)
       // A page that first loads hidden must reconcile on its first (deferred)
       // open, so it is not the skip-me first-open of a fresh render.
       firstOpen = false;
@@ -600,7 +602,7 @@
     else document.documentElement.removeAttribute("data-theme"); // light is the default (no attr)
     try { localStorage.setItem("satelle-theme", theme); } catch (e) {}
     var btn = document.getElementById("theme-toggle");
-    if (btn) btn.textContent = theme === "dark" ? "☀" : "◐";
+    if (btn) btn.textContent = theme === "dark" ? "☀" : "☾"; // ☾ in light (→dark), ☀ in dark (→light); ◐ is the brand mark only
     // Persist the choice to the machine-wide config so it follows the operator
     // into every repo (best-effort; localStorage remains the fast-path cache).
     if (persist) {

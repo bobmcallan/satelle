@@ -121,13 +121,15 @@ var tmplFuncs = template.FuncMap{
 var tmpl = template.Must(template.New("web").Funcs(tmplFuncs).Parse(templatesSrc))
 
 const templatesSrc = `
-{{/* uptime control: the TEXT is the elapsed time since the service process started,
-     measured at page-render time (a snapshot — it advances on reload, it does not
-     tick live, because the SSE refetch swaps only panel rows, not the header). The
-     green BORDER is a separate signal: the live /events (SSE) connection state, set
-     by app.js (on=connected). The tooltip names both accurately so the value is not
-     read as live or the border as "uptime". (sty_efeb2a69) */}}
-{{define "topbar"}}<a class="brand-mark" href="https://satelle.dev/" target="_blank" rel="noopener" title="satelle — home" aria-label="satelle home (opens in a new tab)">{{template "brandmark-svg"}}</a>{{template "account" .User}}<button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">◐</button>{{if .Uptime}}<button class="uptime" type="button" disabled title="service uptime at page load (updates on reload, not live) — green border = live updates connected">{{.Uptime}}</button>{{end}}{{end}}
+{{/* topbar: the ONE shared navbar (sty_cd2fe2f3), a full-bleed band placed directly
+     inside <body>, above every page's .wrap. Per the Satelle Design System header:
+     the ◐ satelle mark LEADS at the left (accent green), the controls cluster is
+     right-aligned, and the theme toggle is LAST. The mark folds in what were two
+     separate signals: the uptime snapshot rides in its title tooltip, and the live
+     /events (SSE) connection state is its colour — accent when connected, red
+     (.sse-down, added by app.js) when the stream drops. The retired 'up Nm' pill and
+     the far-right mark are gone. The theme toggle glyph is ☾/☀ (app.js), never ◐. */}}
+{{define "topbar"}}<header class="topbar"><div class="topbar-inner"><a class="brand-mark" href="https://satelle.dev/" target="_blank" rel="noopener" title="satelle — home{{if .Uptime}} · {{.Uptime}} at page load · mark colour = live-update connection{{end}}" aria-label="satelle home (opens in a new tab)">{{template "brandmark-svg"}}<span class="brand-word">satelle</span></a><div class="topbar-controls">{{template "account" .User}}<button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">☾</button></div></div></header>{{end}}
 
 {{/* account: the hosted-server sign-in control (sty_9ae98484). Signed out → a
      "Sign in" link (relative href, so the <base> resolves the /slug/ prefix on a
@@ -180,10 +182,10 @@ const templatesSrc = `
 <link rel="stylesheet" href="static/app.css">
 </head>
 <body>
+{{template "topbar" .TopBar}}
 <div class="wrap">
   <nav class="crumbs"><a href="/">workspace</a> <span class="sep">/</span> {{if gt (len .Projects) 1}}<details class="proj-switch"><summary class="cur">{{.ProjectName}} <span class="chev" aria-hidden="true">▾</span></summary><ul class="proj-menu">{{range .Projects}}<li><a href="/{{.Slug}}/" title="{{.Path}}"{{if .Current}} class="current" aria-current="page"{{end}}>{{.Name}}{{if .Ambiguous}} <span class="proj-slug">{{.Path}}</span>{{end}}</a></li>{{end}}</ul></details>{{else}}<span class="cur">{{.ProjectName}}</span>{{end}}</nav>
   <header class="app">
-    {{template "topbar" .TopBar}}
     <h1>{{.ProjectName}}</h1>
     <div class="meta">{{.RepoRoot}} · <a href="help">help →</a> · <a href="settings">settings →</a></div>
   </header>
@@ -334,10 +336,10 @@ const templatesSrc = `
 <link rel="stylesheet" href="static/app.css">
 </head>
 <body>
+{{template "topbar" .TopBar}}
 <div class="wrap">
   <nav class="crumbs"><a href="/">workspace</a> <span class="sep">/</span> <span class="cur">items</span></nav>
   <header class="app">
-    {{template "topbar" .TopBar}}
     <h1>workspace</h1>
     <div class="meta">{{len .Repos}} repos aggregated</div>
   </header>
@@ -348,6 +350,7 @@ const templatesSrc = `
   </table>{{end}}
   {{template "footer"}}
 </div>
+<script src="static/app.js"></script>
 </body>
 </html>{{end}}
 
@@ -363,10 +366,10 @@ const templatesSrc = `
 <link rel="stylesheet" href="static/app.css">
 </head>
 <body data-page="projects">
+{{template "topbar" .TopBar}}
 <div class="wrap">
   <nav class="crumbs"><span class="cur">workspace</span></nav>
   <header class="app">
-    {{template "topbar" .TopBar}}
     <h1>workspace</h1>
     <div class="meta">{{len .Projects}} project{{if ne (len .Projects) 1}}s{{end}} in the workspace · <a href="help">help →</a></div>
   </header>
@@ -406,10 +409,10 @@ const templatesSrc = `
 <link rel="stylesheet" href="static/app.css">
 </head>
 <body>
+{{template "topbar" .TopBar}}
 <div class="wrap">
   <nav class="crumbs"><a href="{{basehref}}">project</a> <span class="sep">/</span> <span class="cur">help</span></nav>
   <header class="app">
-    {{template "topbar" .TopBar}}
     <h1>satelle<span class="dot">.</span> help</h1>
     <div class="meta">process guides · the same content as <code>satelle help</code></div>
   </header>
@@ -419,6 +422,7 @@ const templatesSrc = `
   </section>{{else}}<div class="empty">no help topics</div>{{end}}
   {{template "footer"}}
 </div>
+<script src="static/app.js"></script>
 </body>
 </html>{{end}}
 
@@ -434,10 +438,10 @@ const templatesSrc = `
 <link rel="stylesheet" href="static/app.css">
 </head>
 <body>
+{{template "topbar" .TopBar}}
 <div class="wrap">
   <nav class="crumbs"><a href="{{basehref}}">project</a> <span class="sep">/</span> <span class="cur">settings</span></nav>
   <header class="app">
-    {{template "topbar" .TopBar}}
     <h1>satelle<span class="dot">.</span> settings</h1>
     <div class="meta">{{.RepoRoot}} · editing <code>.satelle/satelle.toml</code></div>
   </header>
@@ -452,6 +456,7 @@ const templatesSrc = `
   </form>
   {{template "footer"}}
 </div>
+<script src="static/app.js"></script>
 <script>
 (function(){var f=document.getElementById('settings-form');if(!f)return;
 f.addEventListener('submit',function(e){e.preventDefault();var err=document.getElementById('settings-error');err.hidden=true;
@@ -474,10 +479,10 @@ fetch('settings',{method:'POST',headers:{'X-Satelle-Settings':'1'},body:new Form
 <link rel="stylesheet" href="static/app.css">
 </head>
 <body>
+{{template "topbar" .TopBar}}
 <div class="wrap">
   <nav class="crumbs"><a href="{{basehref}}">project</a> <span class="sep">/</span> <a href="{{basehref}}#docs">docs</a> <span class="sep">/</span> <span class="cur">{{.Name}}</span></nav>
   <header class="app">
-    {{template "topbar" .TopBar}}
     <div class="kind-h">{{.Kind}}</div>
     <h1>{{.Name}}</h1>
     {{if .Headline}}<div class="meta">{{.Headline}}</div>{{end}}
@@ -501,10 +506,10 @@ fetch('settings',{method:'POST',headers:{'X-Satelle-Settings':'1'},body:new Form
 <link rel="stylesheet" href="static/app.css">
 </head>
 <body>
+{{template "topbar" .TopBar}}
 <div class="wrap">
   <nav class="crumbs"><a href="{{basehref}}">project</a> <span class="sep">/</span> <a href="{{basehref}}#{{tabof .Item.Kind}}">{{.Item.Kind}}</a> <span class="sep">/</span> <span class="cur">{{.Item.ID}}</span></nav>
   <header class="app">
-    {{template "topbar" .TopBar}}
     <div class="kind-h">{{.Item.Kind}}</div>
     <h1>{{.Item.Title}}</h1>
     <div class="meta">{{.Item.ID}}</div>

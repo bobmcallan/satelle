@@ -64,9 +64,9 @@ func TestProjectsPageListsBoundAndChildren(t *testing.T) {
 	if strings.Contains(body, "satelle<span class=\"dot\">") {
 		t.Errorf("landing still renders the legacy wordmark header:\n%s", body)
 	}
-	for _, want := range []string{"<h1>workspace</h1>", `data-page="projects"`, "brand-mark"} {
+	for _, want := range []string{"<h1>workspace</h1>", `data-page="projects"`, `<header class="topbar">`, "brand-mark", `class="brand-word">satelle`} {
 		if !strings.Contains(body, want) {
-			t.Errorf("landing missing shared-header element %q", want)
+			t.Errorf("landing missing shared-navbar element %q", want)
 		}
 	}
 	// A registered-but-failed child is an errored row, not silently omitted.

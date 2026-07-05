@@ -565,8 +565,8 @@ func TestBrowserPageWidth(t *testing.T) {
 // at the computed-style level: the four label families the story enumerates — tag
 // chips (.tagchip), filter chips (.fchip), status badges (.badge), and the backlog
 // count pill (.tab .n-backlog) — all report a 0px border-radius, in BOTH themes,
-// while a non-label control (.uptime) keeps its rounded corner (the scope guard:
-// only chips/badges/pills square off, not buttons/panels/cards/inputs).
+// while a non-label control (.theme-toggle) keeps its rounded corner (the scope
+// guard: only chips/badges/pills square off, not buttons/panels/cards/inputs).
 func TestBrowserSquaredEdges(t *testing.T) {
 	base, repo := serveRepo(t, "8817")
 	// A tagged backlog story renders a tag chip AND a backlog badge AND the
@@ -616,9 +616,9 @@ func TestBrowserSquaredEdges(t *testing.T) {
 				t.Errorf("[%s] %s should have a squared (0px) corner; got %q", mode, sel, r)
 			}
 		}
-		// Scope guard: a non-label control (the uptime indicator) keeps its radius.
-		if r := read(`.uptime`, "borderTopLeftRadius"); r == "0px" || r == "" {
-			t.Errorf("[%s] .uptime is not a label and must keep its rounded corner; got %q", mode, r)
+		// Scope guard: a non-label control (the theme toggle) keeps its radius.
+		if r := read(`.theme-toggle`, "borderTopLeftRadius"); r == "0px" || r == "" {
+			t.Errorf("[%s] .theme-toggle is not a label and must keep its rounded corner; got %q", mode, r)
 		}
 	}
 }
@@ -771,40 +771,38 @@ func TestBrowserBacklogBadgeLiveOnRefetch(t *testing.T) {
 	}
 }
 
-// TestBrowserUptimeBorderTracksConnection validates the uptime indicator's two
-// fused signals end-to-end (sty_efeb2a69): the TEXT is the "up …" snapshot, and the
-// green border ('on' class) tracks the LIVE SSE connection — it turns on once the
-// /events stream opens. This confirms the documented finding that the border means
-// "live updates connected", not the elapsed duration.
-func TestBrowserUptimeBorderTracksConnection(t *testing.T) {
+// TestBrowserMarkTracksConnection validates the ◐ brand mark's fused signals
+// end-to-end (sty_cd2fe2f3): its TITLE carries the "up …" snapshot, and its COLOUR
+// tracks the LIVE SSE connection — the mark is accent-green (no 'sse-down' class)
+// once the /events stream is open, and the retired uptime pill is gone.
+func TestBrowserMarkTracksConnection(t *testing.T) {
 	base, _ := serveRepo(t, "8815")
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(base+"/"),
-		chromedp.WaitVisible(`.uptime`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.brand-mark`, chromedp.ByQuery),
 	); err != nil {
 		t.Fatalf("load page: %v", err)
 	}
-	// The text is the snapshot "up …".
-	var txt string
-	if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('.uptime').textContent`, &txt)); err != nil {
+	// The retired uptime pill is gone.
+	var pill bool
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`!!document.querySelector('.uptime')`, &pill)); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(txt, "up ") {
-		t.Errorf("uptime text should be the 'up …' snapshot; got %q", txt)
+	if pill {
+		t.Error("retired uptime pill is still rendered")
 	}
-	// The green border ('on' class) appears once the SSE connection opens — the
-	// connection signal, distinct from the text.
-	if !waitCond(t, ctx, `document.querySelector('.uptime').classList.contains('on')`, 5*time.Second) {
-		t.Error("uptime border should turn on when the live SSE connection opens")
-	}
-	// The tooltip names both signals (reconciled, not misleading).
+	// The mark's title carries the "up …" snapshot + the connection note.
 	var title string
-	if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('.uptime').title`, &title)); err != nil {
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('.brand-mark').title`, &title)); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(title, "at page load") || !strings.Contains(title, "live updates connected") {
-		t.Errorf("uptime tooltip not reconciled; got %q", title)
+	if !strings.Contains(title, "up ") || !strings.Contains(title, "at page load") || !strings.Contains(title, "live-update connection") {
+		t.Errorf("brand-mark title should fold in the uptime snapshot + connection note; got %q", title)
+	}
+	// Once the SSE stream opens, the mark is connected (no 'sse-down' red class).
+	if !waitCond(t, ctx, `!document.querySelector('.brand-mark').classList.contains('sse-down')`, 5*time.Second) {
+		t.Error("brand mark should be connected (no sse-down class) once the live SSE stream opens")
 	}
 }
 
@@ -1435,29 +1433,68 @@ func hasChip(t *testing.T, ctx context.Context, panel, label string) bool {
 	return has
 }
 
-// TestBrowserSharedTopbar asserts the one shared top-bar component (theme toggle
-// + live dot) renders identically on both the project page and a story detail
-// page — the nav is one template, not a per-page copy.
+// TestBrowserSharedTopbar asserts the one shared navbar band renders identically
+// across all four named surfaces — project page, story detail, /workspace, and
+// /settings — with the Satelle Design System order (◐ satelle mark leads LEFT,
+// account controls right-aligned, theme toggle rightmost), the DS ☾ glyph (not ◐),
+// and the retired uptime pill gone. Real served binary via chromedp: source AND
+// visual (getBoundingClientRect) order, so a CSS regression that reorders the flex
+// row is caught, not just markup presence (sty_cd2fe2f3).
 func TestBrowserSharedTopbar(t *testing.T) {
 	base, repo := serveRepo(t, "8806")
 	id := createStory(t, repo, "Topbar story", "")
-
 	ctx := newChrome(t)
-	// Project page renders the shared top bar.
-	if err := chromedp.Run(ctx,
-		chromedp.Navigate(base+"/"),
-		chromedp.WaitVisible(`header.app #theme-toggle`, chromedp.ByQuery),
-		chromedp.WaitVisible(`header.app .uptime`, chromedp.ByQuery),
-	); err != nil {
-		t.Fatalf("project page shared topbar missing: %v", err)
+
+	// One evaluate per surface: element presence, source order (compareDocumentPosition),
+	// visual left-to-right order (bounding rects), the toggle glyph, and no uptime pill.
+	const probe = `(function(){
+		var bm = document.querySelector('header.topbar .brand-mark');
+		var acct = document.querySelector('header.topbar .account, header.topbar .signin');
+		var tt = document.querySelector('header.topbar #theme-toggle');
+		if (!bm || !acct || !tt) return {OK:false};
+		var srcOrder = (bm.compareDocumentPosition(acct) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 &&
+		               (acct.compareDocumentPosition(tt) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+		var b = bm.getBoundingClientRect(), a = acct.getBoundingClientRect(), c = tt.getBoundingClientRect();
+		var visOrder = b.left < a.left && a.left < c.left; // mark leads, toggle last
+		return {OK:true, SrcOrder:srcOrder, VisOrder:visOrder,
+		        Glyph: tt.textContent.trim(), Uptime: !!document.querySelector('.uptime')};
+	})()`
+
+	type navState struct {
+		OK, SrcOrder, VisOrder, Uptime bool
+		Glyph                          string
 	}
-	// The same shared top bar renders on the story detail page.
-	if err := chromedp.Run(ctx,
-		chromedp.Navigate(base+"/story/"+id),
-		chromedp.WaitVisible(`header.app #theme-toggle`, chromedp.ByQuery),
-		chromedp.WaitVisible(`header.app .uptime`, chromedp.ByQuery),
-	); err != nil {
-		t.Fatalf("story page shared topbar missing: %v", err)
+	for _, s := range []struct{ name, path string }{
+		{"project", "/"},
+		{"detail", "/story/" + id},
+		{"workspace", "/workspace"},
+		{"settings", "/settings"},
+	} {
+		var st navState
+		if err := chromedp.Run(ctx,
+			chromedp.Navigate(base+s.path),
+			chromedp.WaitVisible(`header.topbar .brand-mark`, chromedp.ByQuery),
+			chromedp.WaitVisible(`header.topbar #theme-toggle`, chromedp.ByQuery),
+			chromedp.Evaluate(probe, &st),
+		); err != nil {
+			t.Fatalf("%s (%s): %v", s.name, s.path, err)
+		}
+		if !st.OK {
+			t.Errorf("%s: navbar missing brand-mark / account / theme-toggle", s.name)
+			continue
+		}
+		if !st.SrcOrder {
+			t.Errorf("%s: source order is not brand-mark → account → theme-toggle", s.name)
+		}
+		if !st.VisOrder {
+			t.Errorf("%s: visual order is not mark-left → controls → toggle-rightmost", s.name)
+		}
+		if st.Glyph != "☾" {
+			t.Errorf("%s: theme toggle glyph = %q, want the DS ☾ (never ◐)", s.name, st.Glyph)
+		}
+		if st.Uptime {
+			t.Errorf("%s: retired uptime pill still present", s.name)
+		}
 	}
 }
 
@@ -1485,9 +1522,13 @@ func TestBrowserSSEVisibilityGating(t *testing.T) {
 	// --- List page: one connection, held while visible ---
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(base+"/#stories"),
-		chromedp.WaitVisible(`.uptime.on`, chromedp.ByQuery), // SSE connected (open fired)
+		chromedp.WaitVisible(`.brand-mark`, chromedp.ByQuery),
 	); err != nil {
 		t.Fatalf("navigate/connect: %v", err)
+	}
+	// SSE connected: the mark carries no 'sse-down' red class once /events opens.
+	if !waitCond(t, ctx, `window.__satelleLive.open && !document.querySelector('.brand-mark').classList.contains('sse-down')`, 5*time.Second) {
+		t.Fatal("live SSE did not connect (mark still sse-down)")
 	}
 
 	var open bool
@@ -1513,13 +1554,13 @@ func TestBrowserSSEVisibilityGating(t *testing.T) {
 	if open {
 		t.Fatal("live connection must CLOSE when the tab is hidden (connection-pool fix)")
 	}
-	// The .uptime green border reflects the released connection.
-	var hasOn bool
-	if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('.uptime').classList.contains('on')`, &hasOn)); err != nil {
+	// The ◐ mark goes red (sse-down) while holding no connection.
+	var down bool
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('.brand-mark').classList.contains('sse-down')`, &down)); err != nil {
 		t.Fatal(err)
 	}
-	if hasOn {
-		t.Fatal("uptime 'on' border must clear while holding no connection")
+	if !down {
+		t.Fatal("brand mark must be sse-down (red) while holding no connection")
 	}
 
 	// --- AC2: create a story WHILE HIDDEN (SSE closed → no live push), so the
@@ -1560,10 +1601,15 @@ func TestBrowserSSEVisibilityGating(t *testing.T) {
 	// --- Detail page: still exactly ONE connection (was two before the fix) ---
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(base+"/story/"+storyID),
-		chromedp.WaitVisible(`.uptime.on`, chromedp.ByQuery),
-		chromedp.Evaluate(`window.__satelleLive.opens`, &opens),
+		chromedp.WaitVisible(`.brand-mark`, chromedp.ByQuery),
 	); err != nil {
 		t.Fatalf("detail page: %v", err)
+	}
+	if !waitCond(t, ctx, `window.__satelleLive.open && !document.querySelector('.brand-mark').classList.contains('sse-down')`, 5*time.Second) {
+		t.Fatal("detail page live SSE did not connect")
+	}
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`window.__satelleLive.opens`, &opens)); err != nil {
+		t.Fatalf("detail page opens: %v", err)
 	}
 	if opens != 1 {
 		t.Fatalf("detail page must open exactly ONE EventSource, got %d", opens)

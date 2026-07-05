@@ -26,7 +26,7 @@ func TestWebHeaderBrandingEndToEnd(t *testing.T) {
 		t.Errorf("project header still shows the old 'satelle. project' wordmark")
 	}
 
-	// The far-right brand mark: a ◐ link to the home page, opening a new tab.
+	// The leading ◐ satelle brand mark: a link to the home page, opening a new tab.
 	for _, want := range []string{
 		`class="brand-mark"`,
 		`href="https://satelle.dev/"`,

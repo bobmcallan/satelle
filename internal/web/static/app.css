@@ -15,6 +15,12 @@
   --ink: #16181d; --muted: #6b7280; --line: #e5e7eb; --bg: #fbfbfa;
   --accent: #2f6f4f; --chip: #f0f1ef; --panel: #ffffff;
   --row-hover: #f6f7f6; --expand-bg: #fafbfc;
+  /* Fail/down red — the ONE red, shared by the fail review light, the blocked
+     badge, the timeline, and the brand mark's disconnected state. */
+  --fail: #e74c3c;
+  /* One content-width knob (sty_aed93a00) shared by every page container: the
+     in-flow .wrap AND the full-bleed navbar's inner row, so their left edges align. */
+  --content-w: 80%; --content-max: 1600px;
   /* One control-height knob shared by inputs/selects/buttons (satellites pattern). */
   --control-height: 2.2rem;
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -60,7 +66,7 @@ footer { margin-top: 40px; color: var(--muted); font-size: 12px; border-top: 1px
 /* Page width (sty_aed93a00): standard/wide viewports get ~10% side margins
    (content is 80% of the viewport); super-wide viewports cap at a reasonable
    max-width so the layout never sprawls full-bleed. */
-.wrap { width: 80%; max-width: 1600px; margin: 0 auto; padding: 28px 24px 64px; }
+.wrap { width: var(--content-w); max-width: var(--content-max); margin: 0 auto; padding: 28px 24px 64px; }
 
 /* Breadcrumbs */
 .crumbs { font-size: 12.5px; color: var(--muted); margin-bottom: 14px; font-family: var(--mono); }
@@ -109,40 +115,51 @@ button.tagchip:not(.kv) { padding: 0 6px; } /* match the span chip's box (kv res
 button.tagchip:hover { filter: brightness(1.12); }
 button.tagchip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-/* Header */
-header.app { border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 18px; }
+/* Navbar (sty_cd2fe2f3): ONE shared, full-bleed band above every page's .wrap —
+   the Satelle Design System header: "◐ satelle wordmark leading, nav right-aligned,
+   theme toggle last". The band spans edge-to-edge with a 2px ink rule; its inner
+   row is capped to the shared content-width token so the ◐ aligns with page content.
+   Layout is flex (no floats): brand-mark leads left, the controls cluster is pushed
+   right by margin-left:auto, theme toggle is the rightmost control. */
+.topbar { border-bottom: 2px solid var(--ink); background: var(--bg); }
+.topbar-inner { width: var(--content-w); max-width: var(--content-max); margin: 0 auto;
+  padding: 12px 24px; display: flex; align-items: center; gap: 8px; }
+.topbar-controls { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+/* Header (per-page title block, inside .wrap). The 2px rule now lives on the
+   navbar band, so this carries a light 1px hairline — the two never stack. */
+header.app { border-bottom: 1px solid var(--line); padding-bottom: 14px; margin-bottom: 18px; }
 header.app h1 { font-size: 22px; }
 header.app h1 .dot { color: var(--accent); }
 .meta { color: var(--muted); font-size: 12.5px; margin-top: 5px; font-family: var(--mono); }
-/* theme toggle: outlined, transparent, normal-colour text — same in both themes. */
-.theme-toggle { float: right; margin-top: 2px; border: 1px solid var(--line); background: none;
+/* theme toggle: outlined, transparent, normal-colour text — same in both themes.
+   Glyph is ☾ (light) / ☀ (dark), set by app.js; ◐ is reserved for the brand mark. */
+.theme-toggle { border: 1px solid var(--line); background: none;
   color: var(--ink); width: 30px; height: 30px; border-radius: 8px; font-size: 14px; line-height: 1; cursor: pointer; }
 .theme-toggle:hover { border-color: var(--ink); }
-/* brand-mark: the satelle halfmoon mark (matching satelle.dev) — an inline SVG
-   whose terminator sweeps the moon-phase cycle (currentColor inherits this
-   anchor's colour). A borderless accent-green link at the header's right that
-   opens the home page in a new tab. Distinct from the boxed theme toggle. */
-.brand-mark { float: right; margin-top: 2px; margin-right: 8px; width: 30px; height: 30px;
-  color: var(--accent); text-align: center; cursor: pointer; }
-.brand-mark svg { width: 20px; height: 20px; margin-top: 5px; }
-.brand-mark:hover { color: var(--ink); text-decoration: none; } /* icon, not text — no hover underline */
-/* uptime: a non-pressable status pill aligned with the theme toggle — a green
-   border signals the service is up; the border glows while live updates stream. */
-.uptime { float: right; margin-top: 2px; margin-right: 8px; height: 30px;
-  border: 1px solid var(--accent); background: none; color: var(--ink); font-size: 12px;
-  font-family: var(--mono); line-height: 28px; padding: 0 10px; border-radius: 8px; cursor: default;
-  transition: box-shadow .3s; }
-.uptime.on { box-shadow: 0 0 0 3px rgba(47,111,79,.15); }
+/* brand-mark: the leading ◐ satelle wordmark (matching satelle.dev) — the inline
+   SVG whose terminator sweeps the moon-phase cycle (currentColor inherits this
+   anchor's colour) followed by the "satelle" wordmark. A borderless accent-green
+   link that opens the home page in a new tab. It doubles as the live-status
+   element: default accent = the SSE /events stream is connected; .sse-down turns
+   it red (currentColor flows into the SVG, so the reduced-motion static ◐ is red
+   too). Its title carries the uptime snapshot. */
+.brand-mark { display: inline-flex; align-items: center; gap: 8px;
+  color: var(--accent); cursor: pointer; }
+.brand-mark svg { width: 20px; height: 20px; }
+.brand-word { font-weight: 600; letter-spacing: -0.01em; }
+.brand-mark:hover { color: var(--ink); text-decoration: none; } /* icon+wordmark, one unit — no hover underline */
+.brand-mark.sse-down { color: var(--fail); } /* live /events stream disconnected */
 
 /* Account control (hosted-server sign-in, sty_9ae98484): a "Sign in" link when
    signed out; an avatar that opens an identity + Sign out dropdown when signed
-   in. Floats right in the topbar cluster, second from the brand-mark. Quiet,
+   in. Sits in the right-aligned controls cluster, before the theme toggle. Quiet,
    rounded, Claude-account-menu aesthetic; styled for both themes. */
-.signin { float: right; margin-top: 2px; margin-right: 8px; height: 30px; line-height: 28px;
+.signin { height: 30px; line-height: 28px;
   padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink);
   font-size: 12.5px; text-decoration: none; cursor: pointer; }
 .signin:hover { border-color: var(--ink); text-decoration: none; }
-.account { float: right; margin-top: 2px; margin-right: 8px; position: relative; }
+.account { position: relative; display: inline-flex; }
 .account > summary { list-style: none; cursor: pointer; }
 .account > summary::-webkit-details-marker { display: none; }
 .account > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 50%; }
