@@ -77,7 +77,7 @@ repo it governs.
 | `ledger` | `append`, `list` |
 | `doc` | `list`, `get` |
 | `hosted` | `login`, `logout`, `whoami` — authenticate to a hosted satelle-server (OAuth 2.1 + PKCE); optional, the local service runs standalone without it |
-| `project` | `create`, `list` — create and list your projects on the hosted server (requires `login`) |
+| `project` | `create`, `list`, `bind <slug>`, `show`, `push`, `pull` — manage hosted projects and back up / restore this repo's authored `.satelle/` substrate to its bound project (`bind` records the slug; `push` uploads only git-tracked substrate; `pull` reconstructs it byte-for-byte). Requires `login` |
 | `settings` | Read/write config in two scopes: repo `<key> [value]` (committed `.satelle/satelle.toml`; no args lists all) is the default; `--global server <url>` sets the machine-wide hosted server in `~/.satelle/config.toml` (no login; sign in after via the UI or `login`) |
 | | `init`, `reindex`, `status`, `serve`, `version` |
 

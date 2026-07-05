@@ -11,9 +11,12 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/subsync"
 	"github.com/spf13/cobra"
 )
 
@@ -54,7 +57,207 @@ and name. Requires a prior "satelle login".`,
 	list.Flags().StringVar(&listServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
 	project.AddCommand(list)
 
+	// bind — record which hosted project this repo backs up to (AC1).
+	bind := &cobra.Command{
+		Use:   "bind <slug>",
+		Short: "Bind this repo to a hosted project slug (for push/pull backup)",
+		Long: `bind records which hosted project this repo backs up to via
+"satelle project push"/"pull". The slug is written to the committed
+.satelle/satelle.toml [hosted] project key — secret-free, since tokens live only
+in the per-user credential store. "satelle project show" prints the binding.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runProjectBind(cmd, args[0])
+		},
+	}
+	project.AddCommand(bind)
+
+	var showServer string
+	show := &cobra.Command{
+		Use:   "show",
+		Short: "Show this repo's hosted server, bound project, and sign-in state",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runProjectShow(cmd, showServer)
+		},
+	}
+	show.Flags().StringVar(&showServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	project.AddCommand(show)
+
+	// push — back up this repo's authored .satelle/ substrate (AC2, AC5).
+	var (
+		pushServer  string
+		pushProject string
+	)
+	push := &cobra.Command{
+		Use:   "push",
+		Short: "Back up this repo's authored .satelle/ substrate to its bound hosted project",
+		Long: `push bundles this repo's git-TRACKED authored substrate under .satelle/
+and uploads it to the bound hosted project, replacing the project's stored
+snapshot. Only authored, git-tracked files are sent — local/generated state
+(satelle.db + WAL/SHM, logs/, backups/, generated story/index views,
+satelle.local.toml, the pinned binary) is never uploaded. An identical re-push is
+idempotent (the server reports all-unchanged).`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runProjectPush(cmd, pushServer, pushProject)
+		},
+	}
+	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	push.Flags().StringVar(&pushProject, "project", "", "Project slug (overrides the repo's bound project).")
+	project.AddCommand(push)
+
+	// pull — restore this repo's authored .satelle/ substrate (AC3).
+	var (
+		pullServer  string
+		pullProject string
+		pullDir     string
+	)
+	pull := &cobra.Command{
+		Use:   "pull",
+		Short: "Restore this repo's authored .satelle/ substrate from its bound hosted project",
+		Long: `pull downloads the bound hosted project's stored substrate snapshot and
+reconstructs .satelle/ from it, byte-for-byte. It writes only authored files and
+never touches local-only paths (satelle.db, the local overlay). Use --dir to
+restore into a different repo root (e.g. a clean checkout).`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runProjectPull(cmd, pullServer, pullProject, pullDir)
+		},
+	}
+	pull.Flags().StringVar(&pullServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	pull.Flags().StringVar(&pullProject, "project", "", "Project slug (overrides the repo's bound project).")
+	pull.Flags().StringVar(&pullDir, "dir", "", "Repo root to restore into (default: the current repo).")
+	project.AddCommand(pull)
+
 	register(project)
+}
+
+// resolveProjectTarget resolves the hosted server, the bound project slug, and
+// the repo root for a substrate push/pull. server precedence = --server → the
+// configured global/repo server; slug precedence = --project → the repo's bound
+// hosted.project. It errors clearly when either is missing.
+func resolveProjectTarget(serverArg, projectArg string) (server, slug, repoRoot string, err error) {
+	cfg, cfgPath, lerr := config.Load("")
+	if lerr != nil && !errors.Is(lerr, config.ErrNotFound) {
+		return "", "", "", fmt.Errorf("load config: %w", lerr)
+	}
+	server = strings.TrimRight(strings.TrimSpace(serverArg), "/")
+	if server == "" {
+		server = config.ResolveHostedServer(cfg)
+	}
+	if server == "" {
+		return "", "", "", fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
+	}
+	slug = strings.TrimSpace(projectArg)
+	if slug == "" {
+		slug = strings.TrimSpace(cfg.Hosted.Project)
+	}
+	if slug == "" {
+		return "", "", "", fmt.Errorf("no bound project — run \"satelle project bind <slug>\" or pass --project <slug>")
+	}
+	return server, slug, config.RepoRootFromConfigPath(cfgPath), nil
+}
+
+func runProjectBind(cmd *cobra.Command, slug string) error {
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		return fmt.Errorf("a project slug is required")
+	}
+	_, cfgPath, err := config.Load("")
+	if err != nil && !errors.Is(err, config.ErrNotFound) {
+		return fmt.Errorf("load config: %w", err)
+	}
+	if cfgPath == "" {
+		return fmt.Errorf("not in a satelle repo — run \"satelle init\" first")
+	}
+	edit := config.KeyEdit{Section: "hosted", Key: "project", Value: strconv.Quote(slug)}
+	if err := config.SaveConfigValues(cfgPath, []config.KeyEdit{edit}); err != nil {
+		return fmt.Errorf("record hosted project in satelle.toml: %w", err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Bound this repo to project %q (recorded in %s).\n", slug, cfgPath)
+	return nil
+}
+
+func runProjectShow(cmd *cobra.Command, serverArg string) error {
+	cfg, _, err := config.Load("")
+	if err != nil && !errors.Is(err, config.ErrNotFound) {
+		return fmt.Errorf("load config: %w", err)
+	}
+	server := strings.TrimRight(strings.TrimSpace(serverArg), "/")
+	if server == "" {
+		server = config.ResolveHostedServer(cfg)
+	}
+	out := cmd.OutOrStdout()
+	if server == "" {
+		fmt.Fprintln(out, "hosted server: (none configured)")
+	} else {
+		fmt.Fprintf(out, "hosted server: %s\n", server)
+	}
+	if slug := strings.TrimSpace(cfg.Hosted.Project); slug == "" {
+		fmt.Fprintln(out, "bound project: (none — run \"satelle project bind <slug>\")")
+	} else {
+		fmt.Fprintf(out, "bound project: %s\n", slug)
+	}
+	signed := "signed out"
+	if server != "" {
+		if _, lerr := (hosted.FileStore{}).Load(server); lerr == nil {
+			signed = "signed in"
+		}
+	}
+	fmt.Fprintf(out, "sign-in state: %s\n", signed)
+	return nil
+}
+
+func runProjectPush(cmd *cobra.Command, serverArg, projectArg string) error {
+	server, slug, repoRoot, err := resolveProjectTarget(serverArg, projectArg)
+	if err != nil {
+		return err
+	}
+	files, err := subsync.Bundle(repoRoot)
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("no git-tracked authored substrate under %s/.satelle — nothing to push", repoRoot)
+	}
+	sum, err := hosted.NewClient(server, hosted.FileStore{}, nil).PushSubstrate(cmd.Context(), slug, files)
+	if err != nil {
+		if errors.Is(err, hosted.ErrLoginRequired) {
+			return err
+		}
+		return fmt.Errorf("push substrate: %w", err)
+	}
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Pushed %d authored file(s) to project %q on %s.\n", len(files), slug, server)
+	fmt.Fprintf(out, "  added %d · updated %d · unchanged %d · removed %d\n", sum.Added, sum.Updated, sum.Unchanged, sum.Removed)
+	if sum.Added == 0 && sum.Updated == 0 && sum.Removed == 0 {
+		fmt.Fprintln(out, "  (already up to date — idempotent re-push)")
+	}
+	return nil
+}
+
+func runProjectPull(cmd *cobra.Command, serverArg, projectArg, dir string) error {
+	server, slug, repoRoot, err := resolveProjectTarget(serverArg, projectArg)
+	if err != nil {
+		return err
+	}
+	if d := strings.TrimSpace(dir); d != "" {
+		repoRoot = d
+	}
+	files, err := hosted.NewClient(server, hosted.FileStore{}, nil).PullSubstrate(cmd.Context(), slug)
+	if err != nil {
+		if errors.Is(err, hosted.ErrLoginRequired) {
+			return err
+		}
+		return fmt.Errorf("pull substrate: %w", err)
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("project %q has no substrate backup yet — run \"satelle project push\" first", slug)
+	}
+	n, err := subsync.Restore(repoRoot, files)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Restored %d authored file(s) from project %q on %s into %s/.satelle.\n", n, slug, server, repoRoot)
+	return nil
 }
 
 func runProjectCreate(cmd *cobra.Command, serverArg, slug, name string) error {
