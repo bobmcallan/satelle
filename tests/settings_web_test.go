@@ -12,18 +12,23 @@ import (
 	"time"
 )
 
-// TestWebSettingsEditor drives the real served binary: the settings page renders
-// the config table, a loopback POST with the CSRF header writes satelle.toml
-// (comment preserved), and a POST without the header is rejected 403 (sty_ffe53865).
-func TestWebSettingsEditor(t *testing.T) {
+// TestWebSettingsReadOnly drives the real served binary: the per-project settings page
+// is a READ-ONLY view of .satelle/satelle.toml (sty_e1740d82). GET renders resolved
+// values with no form/inputs/Save and links the global settings page; a loopback POST
+// with the CSRF header — which the removed write path would have accepted — is answered
+// 405 and leaves the committed satelle.toml byte-for-byte unchanged. hosted.server does
+// not appear (it is machine-wide now).
+func TestWebSettingsReadOnly(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	// Seed a comment we can assert survives the write.
-	orig, _ := os.ReadFile(cfgPath)
-	if err := os.WriteFile(cfgPath, append([]byte("# sentinel-comment\n"), orig...), 0o644); err != nil {
+	// Replace the seeded config with known content (incl. a sentinel comment and a
+	// hosted.server we assert is NOT shown) so the assertions are deterministic.
+	known := "# sentinel-comment\nweb_port = 8798\nlog_level = \"debug\"\n\n[hosted]\nproject = \"acme\"\nserver = \"https://should-not-show.example\"\n"
+	if err := os.WriteFile(cfgPath, []byte(known), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	before, _ := os.ReadFile(cfgPath)
 
 	const port = "8798"
 	cmd := exec.Command(testBin, "serve", "--port", port, "--no-watch")
@@ -38,51 +43,36 @@ func TestWebSettingsEditor(t *testing.T) {
 		t.Fatal("server did not become healthy")
 	}
 
-	// GET renders the config table.
+	// GET renders the read-only table: resolved values + help, the global-settings link,
+	// and NONE of the old write UI.
 	page := httpGet(t, base+"/settings")
-	for _, want := range []string{"satelle", "settings", `name="log_level"`, "Hosted server"} {
+	for _, want := range []string{"settings", "read-only view", "debug", "acme", `href="settings/global"`, ".satelle/satelle.toml"} {
 		if !strings.Contains(page, want) {
-			t.Fatalf("settings page missing %q", want)
+			t.Fatalf("read-only settings page missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{`name="log_level"`, `<textarea`, "settings-save", "Hosted server", "should-not-show"} {
+		if strings.Contains(page, forbidden) {
+			t.Fatalf("read-only settings page must not contain %q", forbidden)
 		}
 	}
 
-	// POST without the CSRF header → 403, file untouched.
-	noHdr, _ := http.NewRequest(http.MethodPost, base+"/settings", strings.NewReader("log_level=warn"))
-	noHdr.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if resp, err := http.DefaultClient.Do(noHdr); err != nil {
+	// POST /settings with a valid loopback + CSRF request → 405 (no write route), file
+	// untouched.
+	req, _ := http.NewRequest(http.MethodPost, base+"/settings", strings.NewReader("log_level=warn&web_port=8890"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Satelle-Settings", "1")
+	if resp, err := http.DefaultClient.Do(req); err != nil {
 		t.Fatal(err)
 	} else {
 		resp.Body.Close()
-		if resp.StatusCode != http.StatusForbidden {
-			t.Fatalf("POST without CSRF header = %d, want 403", resp.StatusCode)
+		if resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Fatalf("POST /settings = %d, want 405 (read-only, no write route)", resp.StatusCode)
 		}
 	}
 
-	// POST with the CSRF header from loopback → accepted; the value lands and the
-	// comment survives.
-	withHdr, _ := http.NewRequest(http.MethodPost, base+"/settings", strings.NewReader("log_level=warn&web_port=8890"))
-	withHdr.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	withHdr.Header.Set("X-Satelle-Settings", "1")
-	if resp, err := http.DefaultClient.Do(withHdr); err != nil {
-		t.Fatal(err)
-	} else {
-		resp.Body.Close()
-		if resp.StatusCode >= 400 {
-			t.Fatalf("POST with CSRF header = %d, want < 400", resp.StatusCode)
-		}
-	}
-
-	saved, _ := os.ReadFile(cfgPath)
-	s := string(saved)
-	if !strings.Contains(s, "# sentinel-comment") {
-		t.Fatalf("comment not preserved after write:\n%s", s)
-	}
-	if !strings.Contains(s, `log_level = "warn"`) || !strings.Contains(s, "web_port = 8890") {
-		t.Fatalf("edits not written:\n%s", s)
-	}
-	// A subsequent GET reflects the saved values.
-	page2 := httpGet(t, base+"/settings")
-	if !strings.Contains(page2, `value="warn"`) || !strings.Contains(page2, `value="8890"`) {
-		t.Fatalf("GET did not reflect saved values")
+	after, _ := os.ReadFile(cfgPath)
+	if string(after) != string(before) {
+		t.Fatalf("read-only settings must not mutate satelle.toml:\nbefore=%q\nafter=%q", before, after)
 	}
 }

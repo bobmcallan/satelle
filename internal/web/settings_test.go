@@ -41,6 +41,10 @@ func postSettings(form url.Values, remoteAddr, clientAddr string, csrf bool) *ht
 	return req
 }
 
+// TestSettingsWriteGate exercises the shared settings write gate (settingsWriteAllowed,
+// now the guard on the GLOBAL settings POST — the per-project page is read-only): only a
+// loopback request carrying the CSRF header is allowed, and a supervisor-forwarded
+// non-loopback client is rejected.
 func TestSettingsWriteGate(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -66,97 +70,65 @@ func TestSettingsWriteGate(t *testing.T) {
 	}
 }
 
-func TestSettingsPostRoundTripPreservesUnmodeled(t *testing.T) {
+// TestSettingsPostDoesNotWrite proves AC2: the per-project settings page has NO write
+// path. A POST to /settings — even loopback + CSRF, which the removed handler would have
+// accepted — is answered 405 by the mux (only GET is registered) and leaves the committed
+// satelle.toml byte-for-byte unchanged.
+func TestSettingsPostDoesNotWrite(t *testing.T) {
 	resetAuthState(t)
-	a := settingsRepo(t, "# keep me\nweb_port = 8787\nfuture_key = \"x\"\n\n[review]\ngate_create = true\n")
+	body := "# keep me\nweb_port = 8787\nfuture_key = \"x\"\n\n[review]\ngate_create = true\n"
+	a := settingsRepo(t, body)
+	cfgPath := filepath.Join(a.RepoRoot, config.DefaultDataDir, config.ConfigName)
+	before, _ := os.ReadFile(cfgPath)
 
 	form := url.Values{}
-	form.Set("web_port", "9100")
-	form.Set("log_level", "warn")
-	form.Set("hosted.server", "https://hosted.example")
-	// review.gate_create checkbox omitted → unchecked → false (a change from true).
-
+	form.Set("web_port", "9100") // the old write path would have persisted this
 	rec := httptest.NewRecorder()
-	settingsPost(a)(rec, postSettings(form, "127.0.0.1:5000", "", true))
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("post status = %d, body=%s", rec.Code, rec.Body.String())
-	}
+	Build(a).ServeHTTP(rec, postSettings(form, "127.0.0.1:5000", "", true))
 
-	got, _ := os.ReadFile(filepath.Join(a.RepoRoot, config.DefaultDataDir, config.ConfigName))
-	if !strings.Contains(string(got), "# keep me") || !strings.Contains(string(got), `future_key = "x"`) {
-		t.Fatalf("unmodeled content lost:\n%s", got)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /settings should be 405 (no write route), got %d", rec.Code)
 	}
-	cfg, _, _ := config.Load(filepath.Join(a.RepoRoot, config.DefaultDataDir, config.ConfigName))
-	if cfg.WebPort != 9100 || cfg.LogLevel != "warn" || cfg.Hosted.Server != "https://hosted.example" {
-		t.Fatalf("edits not applied: %+v", cfg)
-	}
-	if cfg.Review.GateCreate {
-		t.Fatal("gate_create should have flipped to false")
-	}
-	// The hosted rebind updated the live sign-in server (AC4).
-	if hostedServer != "https://hosted.example" {
-		t.Fatalf("hostedServer not rebound, got %q", hostedServer)
-	}
-
-	// A following GET renders the new values.
-	recGet := httptest.NewRecorder()
-	settingsGet(a)(recGet, httptest.NewRequest(http.MethodGet, "/settings", nil))
-	body := recGet.Body.String()
-	if !strings.Contains(body, `value="9100"`) || !strings.Contains(body, `value="warn"`) {
-		t.Fatalf("GET did not reflect saved values:\n%s", body)
+	after, _ := os.ReadFile(cfgPath)
+	if string(after) != string(before) {
+		t.Fatalf("read-only settings must not mutate satelle.toml:\nbefore=%q\nafter=%q", before, after)
 	}
 }
 
-// A partial POST (only some fields) must not blank or add the keys it omitted.
-func TestSettingsPostPartialDoesNotBlankOthers(t *testing.T) {
+// TestSettingsGetReadOnly proves AC1/AC3/AC4: the page renders resolved values + help as a
+// read-only table (no form, no inputs, no Save), points the user at the file and the global
+// settings page, and omits hosted.server while keeping hosted.project.
+func TestSettingsGetReadOnly(t *testing.T) {
 	resetAuthState(t)
-	a := settingsRepo(t, "[hosted]\nserver = \"https://keep.example\"\nproject = \"keep\"\n")
-	form := url.Values{}
-	form.Set("log_level", "warn") // only this field submitted
-	rec := httptest.NewRecorder()
-	settingsPost(a)(rec, postSettings(form, "127.0.0.1:5000", "", true))
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("post status = %d", rec.Code)
-	}
-	cfg, _, _ := config.Load(filepath.Join(a.RepoRoot, config.DefaultDataDir, config.ConfigName))
-	if cfg.Hosted.Server != "https://keep.example" || cfg.Hosted.Project != "keep" {
-		t.Fatalf("omitted hosted keys were blanked: %+v", cfg.Hosted)
-	}
-	if cfg.LogLevel != "warn" {
-		t.Fatalf("submitted key not applied: %q", cfg.LogLevel)
-	}
-	got, _ := os.ReadFile(filepath.Join(a.RepoRoot, config.DefaultDataDir, config.ConfigName))
-	if strings.Contains(string(got), `data_dir =`) || strings.Contains(string(got), `db =`) {
-		t.Fatalf("omitted keys were added:\n%s", got)
-	}
-}
-
-func TestSettingsPostRejectedWhenNotLoopback(t *testing.T) {
-	resetAuthState(t)
-	a := settingsRepo(t, "web_port = 8787\n")
-	form := url.Values{}
-	form.Set("web_port", "9999")
-	rec := httptest.NewRecorder()
-	settingsPost(a)(rec, postSettings(form, "203.0.113.9:5000", "", true))
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d", rec.Code)
-	}
-	// The file must be untouched.
-	got, _ := os.ReadFile(filepath.Join(a.RepoRoot, config.DefaultDataDir, config.ConfigName))
-	if strings.Contains(string(got), "9999") {
-		t.Fatalf("rejected write must not touch the file:\n%s", got)
-	}
-}
-
-func TestSettingsGetRenders(t *testing.T) {
-	resetAuthState(t)
-	a := settingsRepo(t, "web_port = 8123\nlog_level = \"debug\"\n")
+	a := settingsRepo(t, "web_port = 8123\nlog_level = \"debug\"\n\n[hosted]\nproject = \"acme\"\nserver = \"https://should-not-show.example\"\n\n[gate]\nedit_exempt_paths = [\".claude/\"]\n")
 	rec := httptest.NewRecorder()
 	settingsGet(a)(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
 	body := rec.Body.String()
-	for _, want := range []string{"settings", `value="8123"`, `value="debug"`, "Hosted server", "Edit-gate exempt paths"} {
+
+	// AC1: resolved values + help + labels render.
+	for _, want := range []string{"8123", "debug", "acme", ".claude/", "Web port", "read-only view"} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("settings page missing %q", want)
+			t.Errorf("read-only settings page missing %q", want)
 		}
+	}
+	// AC1: no editable controls — the write UI is gone.
+	for _, forbidden := range []string{`<textarea`, "settings-save", `action="settings"`, `type="checkbox"`} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("read-only settings page must not contain the write control %q", forbidden)
+		}
+	}
+	// AC3: the note points at the file and links the global settings page.
+	if !strings.Contains(body, `href="settings/global"`) {
+		t.Error("read-only settings page must link to the global settings page")
+	}
+	if !strings.Contains(body, ".satelle/satelle.toml") {
+		t.Error("read-only settings page must tell the user to edit .satelle/satelle.toml directly")
+	}
+	// AC4: hosted.server absent (now global), hosted.project present.
+	if strings.Contains(body, "Hosted server") || strings.Contains(body, "should-not-show") {
+		t.Error("hosted.server must not appear on the per-project settings surface")
+	}
+	if !strings.Contains(body, "Hosted project") {
+		t.Error("hosted.project should still render read-only")
 	}
 }

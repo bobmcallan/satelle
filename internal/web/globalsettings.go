@@ -10,12 +10,44 @@ package web
 // becomes an unauthenticated LAN/CSRF write vector.
 
 import (
+	"net"
 	"net/http"
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 )
+
+// settingsCSRFHeader must be present on a settings write; a cross-origin page cannot
+// set a custom header without a CORS preflight this server never grants.
+const settingsCSRFHeader = "X-Satelle-Settings"
+
+// settingsWriteAllowed is the settings write gate: the CSRF header, a loopback child
+// socket, and (when the supervisor forwarded it) a loopback true client address. The
+// per-project settings page is read-only; only the global settings POST writes, so
+// this gate lives with it — the 0.0.0.0-bound view never becomes an unauthenticated
+// LAN (or CSRF) write vector.
+func settingsWriteAllowed(r *http.Request) bool {
+	if r.Header.Get(settingsCSRFHeader) != "1" {
+		return false
+	}
+	if !addrIsLoopback(r.RemoteAddr) {
+		return false
+	}
+	if ca := r.Header.Get(ClientAddrHeader); ca != "" && !addrIsLoopback(ca) {
+		return false
+	}
+	return true
+}
+
+func addrIsLoopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	return ip != nil && ip.IsLoopback()
+}
 
 type globalSettingsData struct {
 	TopBar topBar
