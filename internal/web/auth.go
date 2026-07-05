@@ -65,8 +65,8 @@ type topBarUser struct {
 // newTopBar builds the shared topbar data, including the signed-in identity when
 // there is a usable credential. It never blocks a render on the network beyond a
 // single short, cached-on-failure identity fetch.
-func newTopBar() topBar {
-	return topBar{Uptime: formatUptime(time.Since(serverStart)), User: resolveUser()}
+func newTopBar(active string) topBar {
+	return topBar{Uptime: formatUptime(time.Since(serverStart)), User: resolveUser(), Active: active}
 }
 
 // resolveUser returns the signed-in identity from the LOCAL credential file —

@@ -96,7 +96,7 @@ func settingsGet(a *app.App) http.HandlerFunc {
 		cfg, _, _ := config.Load(configPathFor(a))
 		render(w, "settings", settingsData{
 			Rows:     settingsRows(cfg),
-			TopBar:   newTopBar(),
+			TopBar:   newTopBar(""),
 			RepoRoot: a.RepoRoot,
 			Saved:    r.URL.Query().Get("saved") == "1",
 		})
