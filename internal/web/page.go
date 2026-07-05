@@ -138,7 +138,7 @@ const templatesSrc = `
      supervised child). Signed in → an avatar (initial, email tooltip) that opens
      a dropdown with the identity + a Sign out form (POST, it mutates state). The
      dropdown reuses the <details> idiom the breadcrumb switcher proves. */}}
-{{define "account"}}{{if .}}<details class="account"><summary class="avatar" title="{{.Email}}" aria-label="Account menu for {{.Name}}">{{.Initial}}</summary><div class="account-menu"><div class="acct-id"><strong>{{.Name}}</strong><span class="acct-email">{{.Email}}</span></div><div class="acct-div"></div><form method="post" action="oauth/logout"><button type="submit" class="acct-signout">Sign out</button></form></div></details>{{else}}<a class="signin" href="oauth/login" title="Sign in to the hosted satelle-server">Sign in</a>{{end}}{{end}}
+{{define "account"}}{{if .}}<details class="account"><summary class="avatar" title="{{.Email}}" aria-label="Account menu for {{.Name}}">{{.Initial}}</summary><div class="account-menu"><div class="acct-id"><strong>{{.Name}}</strong><span class="acct-email">{{.Email}}</span></div><div class="acct-div"></div><a class="acct-link" href="settings/global" role="menuitem">Global settings</a><form method="post" action="oauth/logout"><button type="submit" class="acct-signout">Sign out</button></form></div></details>{{else}}<a class="signin" href="oauth/login" title="Sign in to the hosted satelle-server">Sign in</a>{{end}}{{end}}
 
 {{/* brandmark-svg: the satelle mark — a half-shaded sphere whose terminator sweeps
      the moon-phase cycle. Pure SMIL, no JS; fill/stroke use currentColor so it
@@ -464,6 +464,51 @@ const templatesSrc = `
 f.addEventListener('submit',function(e){e.preventDefault();var err=document.getElementById('settings-error');err.hidden=true;
 fetch('settings',{method:'POST',headers:{'X-Satelle-Settings':'1'},body:new FormData(f)})
 .then(function(r){if(r.ok){window.location='settings?saved=1';}else{return r.text().then(function(t){err.textContent=t||('Error '+r.status);err.hidden=false;});}})
+.catch(function(){err.textContent='Network error';err.hidden=false;});});})();
+</script>
+</body>
+</html>{{end}}
+
+{{define "globalSettings"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>satelle · global settings</title>
+<script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<base href="{{basehref}}">
+{{template "favicon"}}
+<link rel="stylesheet" href="static/app.css">
+</head>
+<body>
+{{template "topbar" .TopBar}}
+<div class="wrap">
+  <nav class="crumbs"><a href="/">workspace</a> <span class="sep">/</span> <span class="cur">global settings</span></nav>
+  <header class="app">
+    <h1>global settings</h1>
+    <div class="meta">machine-wide · <code>~/.satelle/config.toml</code> · follows you across every project</div>
+  </header>
+  {{if .Saved}}<div class="settings-saved" role="status">Saved.</div>{{end}}
+  <form id="gsettings-form" class="settings" method="post" action="settings/global">
+    <div class="setting-row">
+      <div class="setting-label"><label for="g-server">Hosted server</label><span class="setting-help">The satelle-server you sign in to. Configuring it needs no login — sign in afterwards from the topbar. Leave blank to remove.</span></div>
+      <div class="setting-field"><input type="text" id="g-server" name="server" value="{{.Server}}" spellcheck="false" autocomplete="off" placeholder="https://satelle.dev"></div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label"><label>Theme</label><span class="setting-help">Light/dark, shared across every repo.</span></div>
+      <div class="setting-field"><label class="gs-radio"><input type="radio" name="theme" value="light"{{if eq .Theme "light"}} checked{{end}}> light</label> <label class="gs-radio"><input type="radio" name="theme" value="dark"{{if eq .Theme "dark"}} checked{{end}}> dark</label></div>
+    </div>
+    <div class="settings-actions"><button type="submit" class="settings-save">Save</button><span class="settings-note">Writes are accepted only from this machine (loopback).</span></div>
+    <div class="settings-error" id="gsettings-error" role="alert" hidden></div>
+  </form>
+  {{template "footer"}}
+</div>
+<script src="static/app.js"></script>
+<script>
+(function(){var f=document.getElementById('gsettings-form');if(!f)return;
+f.addEventListener('submit',function(e){e.preventDefault();var err=document.getElementById('gsettings-error');err.hidden=true;
+fetch('settings/global',{method:'POST',headers:{'X-Satelle-Settings':'1'},body:new FormData(f)})
+.then(function(r){if(r.ok){window.location='settings/global?saved=1';}else{return r.text().then(function(t){err.textContent=t||('Error '+r.status);err.hidden=false;});}})
 .catch(function(){err.textContent='Network error';err.hidden=false;});});})();
 </script>
 </body>

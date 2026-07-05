@@ -81,4 +81,10 @@ func TestWebHeaderBrandingEndToEnd(t *testing.T) {
 	if h := httpGet(t, base+"/help"); !strings.Contains(h, `class="active" aria-current="page">Help</a>`) {
 		t.Errorf("/help did not mark the Help nav link active")
 	}
+
+	// The global settings page (sty_432bdeb7) renders with the shared navbar and the
+	// hosted-server field. (Folded in to reuse the one serve — no extra subprocess.)
+	if g := httpGet(t, base+"/settings/global"); !strings.Contains(g, `name="server"`) || !strings.Contains(g, "global settings") {
+		t.Errorf("/settings/global did not render the global settings form")
+	}
 }

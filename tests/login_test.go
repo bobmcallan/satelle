@@ -16,6 +16,54 @@ import (
 	"time"
 )
 
+// TestSettingsServerCLIEndToEnd drives the real binary: `satelle settings server`
+// configures the machine-wide hosted server WITHOUT a login, writing only the
+// global config (never the repo satelle.toml, never a token) — the decoupled
+// config path the user asked for (sty_432bdeb7).
+func TestSettingsServerCLIEndToEnd(t *testing.T) {
+	bin := testBin
+	repo := t.TempDir()
+	ghome := t.TempDir()
+	mustRun(t, bin, repo, "init")
+	run := func(args ...string) (string, error) {
+		c := exec.Command(bin, args...)
+		c.Dir = repo
+		c.Env = append(os.Environ(), "SATELLE_HOME="+ghome)
+		out, err := c.CombinedOutput()
+		return string(out), err
+	}
+
+	if out, err := run("settings", "server", "https://demo.example"); err != nil {
+		t.Fatalf("settings server set: %v\n%s", err, out)
+	}
+	// Server landed in the GLOBAL config, no token.
+	gcfg, err := os.ReadFile(filepath.Join(ghome, "config.toml"))
+	if err != nil {
+		t.Fatalf("global config not written: %v", err)
+	}
+	if !strings.Contains(string(gcfg), "https://demo.example") {
+		t.Fatalf("global config missing the server:\n%s", gcfg)
+	}
+	if strings.Contains(string(gcfg), "token") {
+		t.Fatalf("global config must not contain a token:\n%s", gcfg)
+	}
+	// The repo satelle.toml never gains a hosted server.
+	if rcfg, _ := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.toml")); strings.Contains(string(rcfg), "server =") {
+		t.Fatalf("repo satelle.toml must NOT gain a hosted server:\n%s", rcfg)
+	}
+	// Print shows it.
+	if out, _ := run("settings", "server"); !strings.Contains(out, "https://demo.example") {
+		t.Fatalf("settings server print: %s", out)
+	}
+	// Clear removes it.
+	if out, err := run("settings", "server", "--clear"); err != nil {
+		t.Fatalf("settings server --clear: %v\n%s", err, out)
+	}
+	if out, _ := run("settings", "server"); !strings.Contains(out, "no global hosted server") {
+		t.Fatalf("server not cleared: %s", out)
+	}
+}
+
 // stubOAuthServer is a hermetic OAuth 2.1 + PKCE authorization server plus a
 // /api/v1/me principal endpoint, for driving the real `satelle login` binary.
 func stubOAuthServer(t *testing.T) *httptest.Server {
