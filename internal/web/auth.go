@@ -158,7 +158,7 @@ func callbackURI(r *http.Request) string {
 func oauthLogin(w http.ResponseWriter, r *http.Request) {
 	if hostedServer == "" {
 		authPage(w, http.StatusOK, "Not configured",
-			"No hosted server is configured yet. Set it in <a href=\""+baseHref()+"settings/global\">global settings</a> (or the account menu → Global settings), then sign in here — no CLI needed. (Terminal alternative: <code>satelle settings server &lt;url&gt;</code>.)")
+			"No hosted server is configured yet. Set it in <a href=\""+baseHref()+"settings/global\">global settings</a> (or the account menu → Global settings), then sign in here — no CLI needed. (Terminal alternative: <code>satelle settings --global server &lt;url&gt;</code>.)")
 		return
 	}
 	flow, err := hosted.NewFlow(hostedServer, callbackURI(r))

@@ -25,7 +25,9 @@ func TestWebLoginSignedOutAffordance(t *testing.T) {
 	const port = "8796"
 	cmd := exec.Command(testBin, "serve", "--port", port, "--no-watch")
 	cmd.Dir = repo
-	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir()) // isolated, empty cred store
+	// Isolated, empty cred store + empty global config so the topbar state never
+	// reflects the operator's real ~/.satelle login.
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir(), "SATELLE_HOME="+t.TempDir())
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start serve: %v", err)
 	}
@@ -88,7 +90,10 @@ func TestWebLoginSignedInAvatar(t *testing.T) {
 	const port = "8797"
 	cmd := exec.Command(testBin, "serve", "--port", port, "--no-watch")
 	cmd.Dir = repo
-	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+xdg)
+	// Empty global config (isolated SATELLE_HOME) so hosted resolution uses the
+	// repo's [hosted] server (the stub) rather than the operator's real global
+	// server — otherwise the seeded credential's server would never match.
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+xdg, "SATELLE_HOME="+t.TempDir())
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start serve: %v", err)
 	}
