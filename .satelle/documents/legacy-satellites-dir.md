@@ -1,3 +1,13 @@
+---
+type: document
+title: Legacy .satellites/ directory — cause and prevention
+description: Why the pre-rebrand .satellites/ state dir reappeared and the gitignore guardrail that keeps any stray dir out of version control.
+tags:
+- document
+- assessment
+timestamp: '2026-07-05T00:00:00Z'
+---
+
 # Legacy `.satellites/` directory — cause and prevention
 
 Story `sty_54df7b31`. The pre-rebrand `.satellites/` state directory kept

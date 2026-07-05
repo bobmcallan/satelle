@@ -1,3 +1,14 @@
+---
+type: document
+title: The agent model
+description: How satelle governs agent-driven work: the executor/reviewer agent model, DOT workflows, and how isolated reviewers gate every status transition — with an implementation map.
+tags:
+- document
+- design
+- architecture
+timestamp: '2026-07-05T00:00:00Z'
+---
+
 # Satelle — Design: the agent model
 
 How satelle governs agent-driven work: the **agent** operating premise,
@@ -5,7 +16,7 @@ the **DOT** workflow format, and how reviewers run — and where each lives in t
 code. Here **agent** is the step's **performer role** (`executor`/`reviewer`),
 distinct from the **agent CLI** (claude|codex, selected by `satelle agent`) that a
 step runs on. For the storage/port architecture see
-[architecture.md](./architecture.md); for the product framing see [spec.md](./spec.md).
+the retired port-architecture plan; for the product framing see [[spec]].
 
 ## Design premise
 

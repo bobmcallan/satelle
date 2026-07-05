@@ -1,3 +1,14 @@
+---
+type: document
+title: Principle classification — embedded vs project
+description: Criterion for which principles ship embedded (operating) vs live in .satelle/principles (authoring), plus the session/on-demand residency tiers.
+tags:
+- document
+- design
+- principles
+timestamp: '2026-07-05T00:00:00Z'
+---
+
 # Principle classification — embedded (operating) vs project (authoring/dev)
 
 Story `sty_807ae744`. Which principles ship **embedded** in the binary

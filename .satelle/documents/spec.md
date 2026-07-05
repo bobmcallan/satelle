@@ -1,3 +1,16 @@
+---
+type: document
+title: Satelle — V6 product spec
+description: Satelle product spec: local-first primitives, per-repo pure-Go sqlite, workspace aggregation, versioning. Predates the additive hosted tier (see caveat).
+tags:
+- document
+- design
+- spec
+timestamp: '2026-07-05T00:00:00Z'
+---
+
+> **Caveat (current architecture).** This is the original V6/port-era spec; its local-first primitives, per-repo pure-Go sqlite, workspace registry, and versioning are still accurate, but the headline "no server, no auth" is now **additively false**: satelle has since grown an OPTIONAL hosted tier — `satelle login` (OAuth 2.1 + PKCE), a machine-wide global identity, and the satelle-server sync target (`internal/hosted`, `internal/web/auth.go`, `~/.satelle/config.toml [hosted]`). Local operation stays fully standalone; the hosted tier is opt-in.
+
 # Satelle — V6 Spec
 
 Satelle is the V6 rebrand of the `satellites` product. "Satelle" (domain
@@ -8,7 +21,7 @@ satelle runs **100% locally**: a single static binary, a per-repo SQLite databas
 no server, no cgo, no auth. It governs agent-driven work — stories, tasks, an
 evidence ledger, and authored markdown (documents, workflows, principles, skills) —
 through a **gated workflow**: the agent executes; isolated reviewers gate every
-status change (see [agent-model.md](./agent-model.md)).
+status change (see [[agent-model]]).
 
 An agent role.s **agent CLI** and grant are bound in `.satelle/agents.toml`: a repo can
 select the reviewer's CLI (`claude` works; `codex` is a selectable stub) and its

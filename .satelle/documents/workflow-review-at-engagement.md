@@ -1,3 +1,16 @@
+---
+type: document
+title: Validating a workflow before implementing — split by cost
+description: Split workflow validation: a thorough LLM review at create/update vs a deterministic executor-skill guard at engagement, so routine engagement stays instant.
+tags:
+- document
+- design
+- workflow
+timestamp: '2026-07-05T00:00:00Z'
+---
+
+> **Caveat (current architecture).** Two names here have drifted: the create/update LLM reviewer called `satelle-workflow-review` is now the embedded `satelle-workflow-advisor`, and the reviewer's scoped `satelle` CLI grant (sty_e15c15a4) was later reverted to the read-only default `Read,Grep,Glob`. The engagement-guard design below (`guardEngagementExecutorSkills`, executor-skill resolution) is current.
+
 # Validating a workflow before implementing — split by cost
 
 Story `sty_09ef53d6` (the re-scoped goal of the cancelled `sty_318708ed`). A story

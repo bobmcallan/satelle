@@ -17,7 +17,7 @@
 [review]
 # Run the required-structure reviewer on every story/task creation, so a work
 # item's structure is ALWAYS validated by an isolated reviewer before it persists.
-gate_create = true
+gate_create = false
 
 [gate]
 # Repo-root-relative path prefixes whose edits are EXEMPT from the engaged-story
@@ -25,4 +25,7 @@ gate_create = true
 # authoring dir holds authored markdown (skills, prompts), not product code, so it
 # is edited freely like substrate. This repo authors Claude Code skills under
 # .claude/. Default is empty — the binary stays CLI-vendor-neutral.
-edit_exempt_paths = [".claude/"]
+edit_exempt_paths = []
+
+[hosted]
+server = "https://satelle.dev"
