@@ -30,6 +30,10 @@ func ledgerInput(storyID string) ledger.AppendInput {
 
 func newServer(t *testing.T) (*httptest.Server, *store.DB) {
 	t.Helper()
+	// Isolate the machine-wide config so the topbar's signed-in/out state is
+	// deterministic and never reflects the operator's real ~/.satelle login
+	// (which would otherwise render an avatar instead of the "Sign in" link).
+	t.Setenv("SATELLE_HOME", t.TempDir())
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
