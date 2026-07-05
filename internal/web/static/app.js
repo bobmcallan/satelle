@@ -641,6 +641,24 @@
     });
   }
 
+  // Account menu (sty_2faa7dd4): the "Remove server" quick action clears the global
+  // [hosted] server. The backend is the existing global-settings POST (a blank
+  // `server` calls ClearGlobalHostedServer), gated by loopback + the X-Satelle-Settings
+  // CSRF header — which a bare <form> POST cannot set, so intercept the submit and
+  // fetch it (mirroring the global-settings form). A relative URL so the page's <base>
+  // resolves the /slug/ prefix on a supervised child. On success reload: clearing the
+  // server drops the signed-in identity, so the topbar must repaint.
+  function initAccountMenu() {
+    document.addEventListener("submit", function (e) {
+      var form = e.target.closest ? e.target.closest(".acct-remove-form") : null;
+      if (!form) return;
+      e.preventDefault();
+      fetch("settings/global", { method: "POST", headers: { "X-Satelle-Settings": "1" }, body: new FormData(form) })
+        .then(function (r) { if (r.ok) location.reload(); })
+        .catch(function () {});
+    });
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     initTheme();
     initTabs();
@@ -648,6 +666,7 @@
     initFilters();
     initLive(); // one visibility-gated SSE serves both panels and detail
     initProjectSwitcher();
+    initAccountMenu();
     enhanceWorkflowDiagrams(document); // any diagram already in the server-rendered page
   });
 })();

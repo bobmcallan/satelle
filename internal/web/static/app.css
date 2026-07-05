@@ -16,8 +16,11 @@
   --accent: #2f6f4f; --chip: #f0f1ef; --panel: #ffffff;
   --row-hover: #f6f7f6; --expand-bg: #fafbfc;
   /* Fail/down red — the ONE red, shared by the fail review light, the blocked
-     badge, the timeline, and the brand mark's disconnected state. */
+     badge, and the timeline. */
   --fail: #e74c3c;
+  /* A MUTED/soft red — used ONLY for the brand mark's disconnected ◐ state, where
+     the saturated --fail reads too alarmingly for a transient live-stream drop. */
+  --fail-soft: #bf6b62;
   /* One content-width knob (sty_aed93a00) shared by every page container: the
      in-flow .wrap AND the full-bleed navbar's inner row, so their left edges align. */
   --content-w: 80%; --content-max: 1600px;
@@ -29,6 +32,7 @@
   --ink: #e6e8eb; --muted: #9aa1ab; --line: #2a2d34; --bg: #0e1013;
   --accent: #5fae86; --chip: #1b1e23; --panel: #16191e;
   --row-hover: #1a1d22; --expand-bg: #121418;
+  --fail-soft: #cf837b;
 }
 * { box-sizing: border-box; }
 
@@ -117,11 +121,12 @@ button.tagchip:focus-visible { outline: 2px solid var(--accent); outline-offset:
 
 /* Navbar (sty_cd2fe2f3): ONE shared, full-bleed band above every page's .wrap —
    the Satelle Design System header: "◐ satelle wordmark leading, nav right-aligned,
-   theme toggle last". The band spans edge-to-edge with a 2px ink rule; its inner
-   row is capped to the shared content-width token so the ◐ aligns with page content.
-   Layout is flex (no floats): brand-mark leads left, the controls cluster is pushed
-   right by margin-left:auto, theme toggle is the rightmost control. */
-.topbar { border-bottom: 2px solid var(--ink); background: var(--bg); }
+   theme toggle last". The band spans edge-to-edge with a 1px hairline rule (matching
+   satelle.dev's .site-header, sty_2faa7dd4); its inner row is capped to the shared
+   content-width token so the ◐ aligns with page content. Layout is flex (no floats):
+   brand-mark leads left, the controls cluster is pushed right by margin-left:auto,
+   theme toggle is the rightmost control. */
+.topbar { border-bottom: 1px solid var(--line); background: var(--bg); }
 .topbar-inner { width: var(--content-w); max-width: var(--content-max); margin: 0 auto;
   padding: 12px 24px; display: flex; align-items: center; gap: 8px; }
 .topbar-controls { margin-left: auto; display: flex; align-items: center; gap: 8px; }
@@ -133,6 +138,14 @@ button.tagchip:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .topnav a { color: var(--ink); text-decoration: none; padding: 0.35rem 0.6rem; border-radius: 6px; }
 .topnav a:hover { background: var(--chip); text-decoration: none; }
 .topnav a.active { color: var(--accent); }
+/* GitHub icon button (sty_2faa7dd4): an OUTLINED icon control in the nav row —
+   styled like the theme toggle (outlined square, border-lift on hover), NOT a
+   text nav link (matching satelle.dev's .github-btn). The octocat inherits the
+   ink colour via currentColor. */
+.topnav a.github-btn { display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); }
+.topnav a.github-btn:hover { background: none; border-color: var(--ink); }
+.topnav a.github-btn svg { display: block; }
 
 /* Header (per-page title block, inside .wrap). The 2px rule now lives on the
    navbar band, so this carries a light 1px hairline — the two never stack. */
@@ -146,18 +159,20 @@ header.app h1 .dot { color: var(--accent); }
   color: var(--ink); width: 30px; height: 30px; border-radius: 8px; font-size: 14px; line-height: 1; cursor: pointer; }
 .theme-toggle:hover { border-color: var(--ink); }
 /* brand-mark: the leading ◐ satelle wordmark (matching satelle.dev) — the inline
-   SVG whose terminator sweeps the moon-phase cycle (currentColor inherits this
-   anchor's colour) followed by the "satelle" wordmark. A borderless accent-green
-   link that opens the home page in a new tab. It doubles as the live-status
-   element: default accent = the SSE /events stream is connected; .sse-down turns
-   it red (currentColor flows into the SVG, so the reduced-motion static ◐ is red
-   too). Its title carries the uptime snapshot. */
+   SVG whose terminator sweeps the moon-phase cycle (currentColor inherits the
+   .brand-mark svg colour) followed by the "satelle" wordmark. Per satelle.dev
+   (.brand ink + .mark accent, sty_2faa7dd4): the WORDMARK is --ink and only the ◐
+   MARK is --accent — the whole brand is no longer accent-green. The mark doubles
+   as the live-status element: accent = the SSE /events stream is connected;
+   .sse-down turns ONLY the mark a MUTED --fail-soft (currentColor flows into the
+   SVG, so the reduced-motion static ◐ softens too) while the wordmark stays ink.
+   The link opens the home page in a new tab; its title carries the uptime snapshot. */
 .brand-mark { display: inline-flex; align-items: center; gap: 8px;
-  color: var(--accent); cursor: pointer; }
-.brand-mark svg { width: 20px; height: 20px; }
+  color: var(--ink); cursor: pointer; }
+.brand-mark svg { width: 20px; height: 20px; color: var(--accent); }
 .brand-word { font-weight: 600; letter-spacing: -0.01em; }
-.brand-mark:hover { color: var(--ink); text-decoration: none; } /* icon+wordmark, one unit — no hover underline */
-.brand-mark.sse-down { color: var(--fail); } /* live /events stream disconnected */
+.brand-mark:hover { text-decoration: none; } /* icon+wordmark, one unit — no hover underline */
+.brand-mark.sse-down svg { color: var(--fail-soft); } /* live /events stream dropped — the ◐ only */
 
 /* Account control (hosted-server sign-in, sty_9ae98484): a "Sign in" link when
    signed out; an avatar that opens an identity + Sign out dropdown when signed
@@ -171,9 +186,14 @@ header.app h1 .dot { color: var(--accent); }
 .account > summary { list-style: none; cursor: pointer; }
 .account > summary::-webkit-details-marker { display: none; }
 .account > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 50%; }
-.account .avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--accent);
-  color: var(--panel); display: inline-flex; align-items: center; justify-content: center;
-  font-size: 13px; font-weight: 600; letter-spacing: .02em; user-select: none; }
+/* Avatar (sty_2faa7dd4): an OUTLINED circle matching satelle.dev's .avatar — a 1px
+   --line ring with the ink initial and a border-lift on hover, NOT the filled-accent
+   disc order:1 shipped. */
+.account .avatar { width: 30px; height: 30px; border-radius: 50%;
+  border: 1px solid var(--line); background: none; color: var(--ink);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 600; letter-spacing: .02em; user-select: none; text-transform: uppercase; }
+.account .avatar:hover { border-color: var(--ink); }
 .account-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 220px;
   padding: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
   box-shadow: 0 8px 28px rgba(0,0,0,.14); }
@@ -182,9 +202,14 @@ header.app h1 .dot { color: var(--accent); }
 .account-menu .acct-email { font-size: 12px; color: var(--muted); font-family: var(--mono); word-break: break-all; }
 .account-menu .acct-div { height: 1px; background: var(--line); margin: 2px 0 6px; }
 .account-menu form { margin: 0; }
-.account-menu .acct-signout { display: block; width: 100%; text-align: left; padding: 7px 8px;
+.account-menu .acct-signout,
+.account-menu .acct-remove-server { display: block; width: 100%; text-align: left; padding: 7px 8px;
   border: none; border-radius: 7px; background: none; color: var(--ink); font: inherit; font-size: 12.5px; cursor: pointer; }
 .account-menu .acct-signout:hover { background: var(--hover, rgba(127,127,127,.12)); }
+/* Remove-server: a destructive global-config quick action (clears ~/.satelle/config.toml
+   [hosted] server); tinted with the muted --fail-soft to read as consequential, not alarming. */
+.account-menu .acct-remove-server { color: var(--fail-soft); }
+.account-menu .acct-remove-server:hover { background: var(--hover, rgba(127,127,127,.12)); }
 .account-menu .acct-link { display: block; padding: 7px 8px; border-radius: 7px; color: var(--ink);
   font-size: 12.5px; text-decoration: none; }
 .account-menu .acct-link:hover { background: var(--hover, rgba(127,127,127,.12)); text-decoration: none; }

@@ -122,23 +122,29 @@ var tmpl = template.Must(template.New("web").Funcs(tmplFuncs).Parse(templatesSrc
 
 const templatesSrc = `
 {{/* topbar: the ONE shared navbar, a full-bleed band placed directly inside <body>,
-     above every page's .wrap. Matches the Satelle Design System SiteHeader
-     (sty_cd2fe2f3, sty_523f93b3): the ◐ satelle mark LEADS at the left (accent
-     green); a right-aligned nav row (Home · Install · Docs · Help · GitHub ·
-     Projects, active link = accent via .Active, external links open in a new tab);
-     the account control; and the theme toggle LAST. The mark folds in two signals:
-     the uptime snapshot rides in its title tooltip, and the live /events (SSE)
-     connection state is its colour — accent when connected, red (.sse-down, added by
-     app.js) when the stream drops. The theme toggle glyph is ☾/☀ (app.js), never ◐.
-     Mobile-collapsible nav is out of scope — the row stays inline. */}}
-{{define "topbar"}}<header class="topbar"><div class="topbar-inner"><a class="brand-mark" href="https://satelle.dev/" target="_blank" rel="noopener" title="satelle — home{{if .Uptime}} · {{.Uptime}} at page load · mark colour = live-update connection{{end}}" aria-label="satelle home (opens in a new tab)">{{template "brandmark-svg"}}<span class="brand-word">satelle</span></a><div class="topbar-controls"><nav class="topnav"><a href="/"{{if eq .Active "home"}} class="active" aria-current="page"{{end}}>Home</a><a href="https://satelle.dev/install" target="_blank" rel="noopener">Install</a><a href="https://satelle.dev/docs" target="_blank" rel="noopener">Docs</a><a href="help"{{if eq .Active "help"}} class="active" aria-current="page"{{end}}>Help</a><a href="https://github.com/bobmcallan/satelle" target="_blank" rel="noopener">GitHub</a><a href="workspace"{{if eq .Active "projects"}} class="active" aria-current="page"{{end}}>Projects</a></nav>{{template "account" .User}}<button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">☾</button></div></div></header>{{end}}
+     above every page's .wrap. Matches the LIVE satelle.dev header (sty_2faa7dd4):
+     the ◐ satelle mark LEADS at the left (the ◐ is accent, the wordmark is ink); a
+     right-aligned nav row of TEXT links (Install · Docs · Projects) — Install/Docs
+     open satelle.dev in a new tab, Projects is the local workspace landing (active
+     via .Active) — then a GitHub OUTLINED ICON button (new tab, not a text link);
+     the account control; and the theme toggle LAST. There are no Home/Help top-nav
+     items — the mark IS the home affordance and Help stays on the meta/breadcrumb
+     line. The mark folds in two signals: the uptime snapshot rides in its title
+     tooltip, and the live /events (SSE) connection state is its colour — accent when
+     connected, muted --fail-soft on the ◐ only (.sse-down, added by app.js) when the
+     stream drops. The theme toggle glyph is ☾/☀ (app.js), never ◐. Mobile-collapsible
+     nav is out of scope — the row stays inline. */}}
+{{define "topbar"}}<header class="topbar"><div class="topbar-inner"><a class="brand-mark" href="https://satelle.dev/" target="_blank" rel="noopener" title="satelle — home{{if .Uptime}} · {{.Uptime}} at page load · mark colour = live-update connection{{end}}" aria-label="satelle home (opens in a new tab)">{{template "brandmark-svg"}}<span class="brand-word">satelle</span></a><div class="topbar-controls"><nav class="topnav"><a href="https://satelle.dev/install" target="_blank" rel="noopener">Install</a><a href="https://satelle.dev/docs" target="_blank" rel="noopener">Docs</a><a href="workspace"{{if eq .Active "projects"}} class="active" aria-current="page"{{end}}>Projects</a><a class="github-btn" href="https://github.com/bobmcallan/satelle" target="_blank" rel="noopener" aria-label="GitHub" title="GitHub">{{template "github-svg"}}</a></nav>{{template "account" .User}}<button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">☾</button></div></div></header>{{end}}
 
-{{/* account: the hosted-server sign-in control (sty_9ae98484). Signed out → a
-     "Sign in" link (relative href, so the <base> resolves the /slug/ prefix on a
-     supervised child). Signed in → an avatar (initial, email tooltip) that opens
-     a dropdown with the identity + a Sign out form (POST, it mutates state). The
+{{/* account: the hosted-server sign-in control (sty_9ae98484, sty_2faa7dd4).
+     Signed out → a "Sign in" link (relative href, so the <base> resolves the /slug/
+     prefix on a supervised child). Signed in → an avatar (initial, email tooltip)
+     that opens a dropdown with: the identity; the LOCAL Project settings + GLOBAL
+     settings links; a "Remove server" quick action that clears the global [hosted]
+     server (a POST to settings/global with an empty server — a fetch in app.js
+     attaches the CSRF header a bare form can't set); and a Sign out form (POST). The
      dropdown reuses the <details> idiom the breadcrumb switcher proves. */}}
-{{define "account"}}{{if .}}<details class="account"><summary class="avatar" title="{{.Email}}" aria-label="Account menu for {{.Name}}">{{.Initial}}</summary><div class="account-menu"><div class="acct-id"><strong>{{.Name}}</strong><span class="acct-email">{{.Email}}</span></div><div class="acct-div"></div><a class="acct-link" href="settings/global" role="menuitem">Global settings</a><form method="post" action="oauth/logout"><button type="submit" class="acct-signout">Sign out</button></form></div></details>{{else}}<a class="signin" href="oauth/login" title="Sign in to the hosted satelle-server">Sign in</a>{{end}}{{end}}
+{{define "account"}}{{if .}}<details class="account"><summary class="avatar" title="{{.Email}}" aria-label="Account menu for {{.Name}}">{{.Initial}}</summary><div class="account-menu"><div class="acct-id"><strong>{{.Name}}</strong><span class="acct-email">{{.Email}}</span></div><div class="acct-div"></div><a class="acct-link" href="settings" role="menuitem">Project settings</a><a class="acct-link" href="settings/global" role="menuitem">Global settings</a><form class="acct-remove-form" method="post" action="settings/global"><input type="hidden" name="server" value=""><button type="submit" class="acct-remove-server" role="menuitem" title="Clear the global hosted server (~/.satelle/config.toml) and sign out everywhere">Remove server</button></form><div class="acct-div"></div><form method="post" action="oauth/logout"><button type="submit" class="acct-signout">Sign out</button></form></div></details>{{else}}<a class="signin" href="oauth/login" title="Sign in to the hosted satelle-server">Sign in</a>{{end}}{{end}}
 
 {{/* brandmark-svg: the satelle mark — a half-shaded sphere whose terminator sweeps
      the moon-phase cycle. Pure SMIL, no JS; fill/stroke use currentColor so it
@@ -165,6 +171,10 @@ const templatesSrc = `
     </path>
     <path id="static" fill="currentColor" d="M50 11 A39 39 0 0 0 50 89 Z"/>
   </svg>{{end}}
+
+{{/* github-svg: the octocat mark for the nav's outlined GitHub icon button
+     (sty_2faa7dd4). fill=currentColor so it inherits the .github-btn ink colour. */}}
+{{define "github-svg"}}<svg viewBox="0 0 16 16" width="16" height="16" role="img" aria-hidden="true" focusable="false" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.02-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>{{end}}
 
 {{define "footer"}}<footer class="site-footer">{{if footeremail}}<a class="footer-email" href="mailto:{{footeremail}}">{{footeremail}}</a>{{end}}<span class="footer-version">satelle {{version}}</span></footer>{{end}}
 

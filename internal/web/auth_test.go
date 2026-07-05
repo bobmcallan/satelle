@@ -261,7 +261,17 @@ func TestTopbarRendersSignedIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	for _, want := range []string{`class="avatar"`, ">D<", "Dev User", "dev@satelle.dev", `action="oauth/logout"`} {
+	for _, want := range []string{
+		`class="avatar"`, ">D<", "Dev User", "dev@satelle.dev", `action="oauth/logout"`,
+		// The dropdown carries the local + global settings links and the "remove server"
+		// quick action alongside identity + sign out (sty_2faa7dd4).
+		`href="settings"`,        // local project settings
+		`href="settings/global"`, // global settings
+		`class="acct-remove-server"`,
+		`class="acct-remove-form"`,
+		`action="settings/global"`, // remove-server posts a blank server to clear it
+		`>Remove server<`,
+	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("signed-in topbar missing %q:\n%s", want, out)
 		}
