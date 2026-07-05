@@ -259,8 +259,9 @@ func TestNavbarConsistentAcrossSurfaces(t *testing.T) {
 }
 
 // TestNavbarCSSTokens asserts the served CSS carries the full-bleed band with the
-// DS 2px ink rule + shared content-width token, and the mark's disconnected-red
-// state (sty_cd2fe2f3).
+// satelle.dev 1px --line hairline rule + shared content-width token, the brand ink
+// wordmark / accent ◐ split, and the mark's MUTED disconnected state on the ◐ only
+// (sty_cd2fe2f3, sty_2faa7dd4).
 func TestNavbarCSSTokens(t *testing.T) {
 	srv, _ := newServer(t)
 	code, css := get(t, srv.URL+"/static/app.css")
@@ -268,26 +269,54 @@ func TestNavbarCSSTokens(t *testing.T) {
 		t.Fatalf("/static/app.css = %d", code)
 	}
 	for _, want := range []string{
-		".topbar {", "2px solid var(--ink)", // full-bleed band + DS ink rule
-		"var(--content-w)",     // shared content-width token
-		".brand-mark.sse-down", // disconnected-red state
-		"--fail:",              // the one shared red token
+		".topbar {", "border-bottom: 1px solid var(--line)", // full-bleed band + hairline rule
+		"var(--content-w)",         // shared content-width token
+		".brand-mark.sse-down svg", // disconnected state scoped to the ◐ mark only
+		"--fail-soft:",             // the dedicated muted red token
+		".brand-mark svg { width: 20px; height: 20px; color: var(--accent)", // ◐ is accent
 	} {
 		if !strings.Contains(css, want) {
 			t.Errorf("served CSS missing %q", want)
 		}
 	}
+	// The wordmark is ink, and the disconnect no longer reddens the whole brand: the
+	// old 2px-ink band rule and the whole-brand sse-down rule must be gone.
+	if strings.Contains(css, "2px solid var(--ink)") {
+		t.Errorf("navbar band should be a 1px --line hairline, not the old 2px ink rule")
+	}
+	if strings.Contains(css, ".brand-mark.sse-down {") {
+		t.Errorf("sse-down must be scoped to the ◐ svg, not the whole brand-mark (the wordmark stays ink)")
+	}
+	// AC4: the account avatar is an OUTLINED circle (1px --line ring, ink initial),
+	// not the old filled-accent disc.
+	i := strings.Index(css, ".account .avatar {")
+	if i < 0 {
+		t.Fatalf("no .account .avatar rule in served CSS")
+	}
+	avatarRule := css[i:]
+	if j := strings.Index(avatarRule, "}"); j >= 0 {
+		avatarRule = avatarRule[:j]
+	}
+	for _, want := range []string{"border: 1px solid var(--line)", "background: none", "color: var(--ink)"} {
+		if !strings.Contains(avatarRule, want) {
+			t.Errorf(".account .avatar should be outlined (%q); rule:\n%s", want, avatarRule)
+		}
+	}
+	if strings.Contains(avatarRule, "background: var(--accent)") {
+		t.Errorf(".account .avatar must not be the old filled-accent disc")
+	}
 }
 
-// TestTopbarNavRow asserts the shared navbar carries the DS SiteHeader nav row
-// (Home · Install · Docs · Help · GitHub · Projects) between the brand and the
-// theme-toggle-last, with external links opening in a new tab, active-marking per
-// page, and the DS link styling in the served CSS (sty_523f93b3).
+// TestTopbarNavRow asserts the shared navbar carries the satelle.dev nav row
+// (Install · Docs · Projects text links + a GitHub OUTLINED ICON button) between the
+// brand and the theme-toggle-last, with NO Home/Help top-nav items, external links
+// opening in a new tab, Projects active-marked on the workspace landing, and the DS
+// link styling in the served CSS (sty_523f93b3, sty_2faa7dd4).
 func TestTopbarNavRow(t *testing.T) {
 	srv, _ := newServer(t)
 
-	// The nav appears on every surface via the one shared partial, in DS order,
-	// after the brand and before the theme toggle (which stays last).
+	// The nav appears on every surface via the one shared partial, in satelle.dev
+	// order, after the brand and before the theme toggle (which stays last).
 	for _, path := range []string{"/", "/workspace", "/help", "/settings"} {
 		code, body := get(t, srv.URL+path)
 		if code != 200 {
@@ -297,12 +326,10 @@ func TestTopbarNavRow(t *testing.T) {
 			label, needle string
 		}{
 			{"brand-mark", `class="brand-mark"`},
-			{"Home", `>Home</a>`},
 			{"Install", `>Install</a>`},
 			{"Docs", `>Docs</a>`},
-			{"Help", `>Help</a>`},
-			{"GitHub", `>GitHub</a>`},
 			{"Projects", `>Projects</a>`},
+			{"GitHub icon button", `class="github-btn"`},
 			{"theme-toggle", `class="theme-toggle"`},
 		}
 		prev := -1
@@ -313,9 +340,26 @@ func TestTopbarNavRow(t *testing.T) {
 				continue
 			}
 			if at < prev {
-				t.Errorf("%s: %q is out of DS order (brand → nav → theme-toggle-last)", path, it.label)
+				t.Errorf("%s: %q is out of order (brand → Install → Docs → Projects → GitHub icon → theme-toggle-last)", path, it.label)
 			}
 			prev = at
+		}
+		// The dropped Home/Help top-nav text items must be gone (Help stays on the
+		// meta/breadcrumb line; the brand IS the home affordance).
+		if strings.Contains(body, `>Home</a>`) {
+			t.Errorf("%s: navbar should not carry a Home top-nav text item", path)
+		}
+		if strings.Contains(body, `class="topnav"`) && strings.Contains(body[strings.Index(body, `class="topnav"`):], `>Help</a>`) {
+			// Only flag a Help link inside the topnav; the meta line may still link Help.
+			nav := body[strings.Index(body, `class="topnav"`):]
+			nav = nav[:strings.Index(nav, "</nav>")]
+			if strings.Contains(nav, `>Help</a>`) {
+				t.Errorf("%s: navbar should not carry a Help top-nav text item", path)
+			}
+		}
+		// GitHub is an ICON button, not a text link.
+		if strings.Contains(body, `>GitHub</a>`) {
+			t.Errorf("%s: GitHub must be an outlined icon button (.github-btn), not a text link", path)
 		}
 	}
 
@@ -334,18 +378,15 @@ func TestTopbarNavRow(t *testing.T) {
 		}
 	}
 
-	// Active marking is per page: / → Home active, /help → Help active.
-	if !strings.Contains(home, `<a href="/" class="active" aria-current="page">Home</a>`) {
-		t.Errorf("project page did not mark Home active:\n%s", home)
-	}
-	_, helpBody := get(t, srv.URL+"/help")
-	if !strings.Contains(helpBody, `class="active" aria-current="page">Help</a>`) {
-		t.Errorf("/help did not mark Help active")
+	// Active marking: the workspace landing marks Projects active.
+	_, ws := get(t, srv.URL+"/workspace")
+	if !strings.Contains(ws, `class="active" aria-current="page">Projects</a>`) {
+		t.Errorf("workspace landing did not mark Projects active:\n%s", ws)
 	}
 
-	// The served CSS carries the DS link styling.
+	// The served CSS carries the DS link styling and the outlined GitHub button.
 	_, css := get(t, srv.URL+"/static/app.css")
-	for _, want := range []string{".topnav a.active", "var(--accent)", ".topnav a:hover", "var(--chip)"} {
+	for _, want := range []string{".topnav a.active", "var(--accent)", ".topnav a:hover", "var(--chip)", ".topnav a.github-btn"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("served CSS missing DS nav styling %q", want)
 		}

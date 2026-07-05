@@ -806,6 +806,99 @@ func TestBrowserMarkTracksConnection(t *testing.T) {
 	}
 }
 
+// TestBrowserMarkSoftRedOnDisconnect drives AC3 of sty_2faa7dd4 in the real browser:
+// on a live /events disconnect only the ◐ MARK turns a MUTED soft-red (not the
+// saturated fail red) while the "satelle" WORDMARK stays ink, and it returns to the
+// accent on reconnect. The disconnect is driven through app.js's real teardown path
+// (a visibilitychange to hidden closes the EventSource and adds .sse-down); restoring
+// visibility reopens it and clears the class.
+func TestBrowserMarkSoftRedOnDisconnect(t *testing.T) {
+	base, _ := serveRepo(t, "8822")
+	ctx := newChrome(t)
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/"),
+		chromedp.WaitVisible(`.brand-mark svg`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("load page: %v", err)
+	}
+
+	markColour := func() (int, int, int) {
+		var v string
+		if err := chromedp.Run(ctx, chromedp.Evaluate(`getComputedStyle(document.querySelector('.brand-mark svg')).color`, &v)); err != nil {
+			t.Fatalf("read mark colour: %v", err)
+		}
+		return parseRGB(t, v)
+	}
+	wordColour := func() string {
+		var v string
+		if err := chromedp.Run(ctx, chromedp.Evaluate(`getComputedStyle(document.querySelector('.brand-word')).color`, &v)); err != nil {
+			t.Fatalf("read wordmark colour: %v", err)
+		}
+		return v
+	}
+
+	// Connected: the stream opens (no sse-down) and the ◐ is the accent green
+	// (green-dominant channel), distinct from the ink wordmark.
+	if !waitCond(t, ctx, `!document.querySelector('.brand-mark').classList.contains('sse-down')`, 5*time.Second) {
+		t.Fatal("mark should start connected (no sse-down) once the SSE stream opens")
+	}
+	cr, cg, cb := markColour()
+	if !(cg > cr && cg >= cb) {
+		t.Errorf("connected ◐ should be the accent green (green-dominant); got rgb(%d,%d,%d)", cr, cg, cb)
+	}
+	wordConnected := wordColour()
+	// The wordmark ink differs from the accent ◐ — the whole brand is not one colour.
+	var svgConnected string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`getComputedStyle(document.querySelector('.brand-mark svg')).color`, &svgConnected)); err != nil {
+		t.Fatal(err)
+	}
+	if wordConnected == svgConnected {
+		t.Errorf("wordmark and ◐ should be different colours (ink vs accent); both %q", wordConnected)
+	}
+
+	// Disconnect via the REAL teardown path: hide the tab → app.js closes the
+	// EventSource and adds .sse-down.
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`(function(){
+		Object.defineProperty(document, 'visibilityState', {configurable:true, get:function(){return 'hidden';}});
+		document.dispatchEvent(new Event('visibilitychange'));
+	})()`, nil)); err != nil {
+		t.Fatal(err)
+	}
+	if !waitCond(t, ctx, `document.querySelector('.brand-mark').classList.contains('sse-down')`, 5*time.Second) {
+		t.Fatal("hiding the tab should add sse-down (the /events stream is torn down)")
+	}
+
+	// The ◐ is now a MUTED red — red-dominant, but softer than the saturated fail
+	// red (#e74c3c = rgb(231,76,60)): its red channel is visibly lower.
+	dr, dg, db := markColour()
+	if !(dr > dg && dr > db) {
+		t.Errorf("disconnected ◐ should be red-dominant (soft red); got rgb(%d,%d,%d)", dr, dg, db)
+	}
+	if dr >= 231 {
+		t.Errorf("disconnected ◐ should be a MUTED red, not the saturated fail red (#e74c3c); got rgb(%d,%d,%d)", dr, dg, db)
+	}
+	// The wordmark stays ink — the disconnect never reddens the word.
+	if wd := wordColour(); wd != wordConnected {
+		t.Errorf("wordmark should stay ink on disconnect (was %q, now %q)", wordConnected, wd)
+	}
+
+	// Reconnect: show the tab → app.js reopens the stream and clears sse-down; the ◐
+	// returns to the accent green.
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`(function(){
+		Object.defineProperty(document, 'visibilityState', {configurable:true, get:function(){return 'visible';}});
+		document.dispatchEvent(new Event('visibilitychange'));
+	})()`, nil)); err != nil {
+		t.Fatal(err)
+	}
+	if !waitCond(t, ctx, `!document.querySelector('.brand-mark').classList.contains('sse-down')`, 6*time.Second) {
+		t.Error("showing the tab again should reopen the stream and clear sse-down")
+	}
+	rr, rg, rb := markColour()
+	if !(rg > rr && rg >= rb) {
+		t.Errorf("reconnected ◐ should return to the accent green; got rgb(%d,%d,%d)", rr, rg, rb)
+	}
+}
+
 // TestBrowserWorkflowDiagramInteractive exercises sty_19b2107a end-to-end: the
 // dependency-free SVG diagram is enhanced in vanilla JS so focusing a node
 // highlights it and its incident edges (and dims the rest), and activating a node

@@ -45,12 +45,13 @@ func TestWebHeaderBrandingEndToEnd(t *testing.T) {
 		t.Errorf("favicon is not the halfmoon monogram:\n%s", fav)
 	}
 
-	// The shared navbar carries the DS SiteHeader nav row (sty_523f93b3), in order
-	// between the brand and the theme-toggle-last. (Folded into this test so it
-	// reuses the one serve — no extra serve subprocess added to the suite.)
+	// The shared navbar carries the satelle.dev nav row (sty_523f93b3, sty_2faa7dd4):
+	// Install · Docs · Projects text links then a GitHub OUTLINED ICON button, in
+	// order between the brand and the theme-toggle-last, with NO Home/Help top-nav
+	// items. (Folded into this test so it reuses the one serve — no extra subprocess.)
 	order := []string{
-		`class="brand-mark"`, `>Home</a>`, `>Install</a>`, `>Docs</a>`,
-		`>Help</a>`, `>GitHub</a>`, `>Projects</a>`, `class="theme-toggle"`,
+		`class="brand-mark"`, `>Install</a>`, `>Docs</a>`,
+		`>Projects</a>`, `class="github-btn"`, `class="theme-toggle"`,
 	}
 	prev := -1
 	for _, needle := range order {
@@ -60,9 +61,15 @@ func TestWebHeaderBrandingEndToEnd(t *testing.T) {
 			continue
 		}
 		if at < prev {
-			t.Errorf("navbar element %q is out of DS order", needle)
+			t.Errorf("navbar element %q is out of order", needle)
 		}
 		prev = at
+	}
+	// The dropped Home/Help text items and the GitHub text link must be gone.
+	for _, gone := range []string{`>Home</a>`, `>Help</a>`, `>GitHub</a>`} {
+		if strings.Contains(body, gone) {
+			t.Errorf("navbar should no longer carry %q (Home/Help dropped; GitHub is an icon button)", gone)
+		}
 	}
 	// External nav links open in a new tab.
 	for _, ext := range []string{"https://satelle.dev/install", "https://satelle.dev/docs", "https://github.com/bobmcallan/satelle"} {
@@ -77,9 +84,9 @@ func TestWebHeaderBrandingEndToEnd(t *testing.T) {
 			t.Errorf("external link %q is not new-tab: %s", ext, anchor)
 		}
 	}
-	// The /help page marks the Help nav link active (per-page active marking).
-	if h := httpGet(t, base+"/help"); !strings.Contains(h, `class="active" aria-current="page">Help</a>`) {
-		t.Errorf("/help did not mark the Help nav link active")
+	// The workspace landing marks the Projects nav link active (per-page active marking).
+	if w := httpGet(t, base+"/workspace"); !strings.Contains(w, `class="active" aria-current="page">Projects</a>`) {
+		t.Errorf("workspace landing did not mark the Projects nav link active")
 	}
 
 	// The global settings page (sty_432bdeb7) renders with the shared navbar and the
