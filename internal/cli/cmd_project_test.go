@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -121,6 +123,66 @@ func TestRunProjectListHappy(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("list output missing %q: %q", want, out)
 		}
+	}
+}
+
+// TestRunProjectBindAndShow proves AC1: bind writes the slug into the committed
+// satelle.toml (preserving unrelated content), and show reads it back.
+func TestRunProjectBindAndShow(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".satelle")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	toml := filepath.Join(dir, "satelle.toml")
+	if err := os.WriteFile(toml, []byte("data_dir = \".satelle\"\n[hosted]\n# keep this comment\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SATELLE_CONFIG", toml)
+
+	// bind writes project = "acme" without clobbering the existing content.
+	cmd, buf := testCmd()
+	if err := runProjectBind(cmd, "acme"); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	b, _ := os.ReadFile(toml)
+	if !strings.Contains(string(b), `project = "acme"`) {
+		t.Fatalf("bind did not record the project:\n%s", b)
+	}
+	if !strings.Contains(string(b), "keep this comment") || !strings.Contains(string(b), "data_dir") {
+		t.Fatalf("bind clobbered unrelated config:\n%s", b)
+	}
+	if !strings.Contains(buf.String(), "acme") {
+		t.Errorf("bind output missing slug: %q", buf.String())
+	}
+
+	// show reads the binding back.
+	cmd2, buf2 := testCmd()
+	if err := runProjectShow(cmd2, ""); err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	if !strings.Contains(buf2.String(), "bound project: acme") {
+		t.Errorf("show did not report the bound project:\n%s", buf2.String())
+	}
+}
+
+// TestResolveProjectTargetNoBinding: with a server but no bound project (and no
+// --project), push/pull fail with a clear, network-free message.
+func TestResolveProjectTargetNoBinding(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".satelle")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	toml := filepath.Join(dir, "satelle.toml")
+	// A repo config with a fallback server but no [hosted] project.
+	if err := os.WriteFile(toml, []byte("[hosted]\nserver = \"https://demo.example\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SATELLE_CONFIG", toml)
+	t.Setenv("SATELLE_HOME", t.TempDir()) // isolate the global config
+
+	_, _, _, err := resolveProjectTarget("", "")
+	if err == nil || !strings.Contains(err.Error(), "no bound project") {
+		t.Fatalf("expected a 'no bound project' error, got %v", err)
 	}
 }
 
