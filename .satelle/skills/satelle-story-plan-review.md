@@ -35,6 +35,15 @@ artifact, a checkable result) that will satisfy that AC.
 Judge coverage and coherence, not perfection: you are gating that the plan is a
 sound basis to implement from, not grading its prose.
 
+**DRY / single-source (sty_b53730e2).** Also check the plan does not propose
+**avoidable duplication** — a new type, struct set, constant, or block of logic
+that MIRRORS something the codebase already defines and could instead be
+single-sourced (defined once and imported/referenced). Reject a plan that
+duplicates when consolidation is clearly available, naming the duplicated
+artifact and the existing source. This is not a bar on genuinely independent
+definitions (e.g. a deliberately decoupled published interface) — only on
+copy-and-maintain-in-parallel where one source would do.
+
 ## Verdict
 
 Reply with exactly one JSON object, nothing else of that shape:

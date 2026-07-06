@@ -165,6 +165,18 @@ var executorDispatcher ExecutorDispatcher
 // SetExecutorDispatcher wires the named-agent dispatch. Pass nil to disable.
 func SetExecutorDispatcher(d ExecutorDispatcher) { executorDispatcher = d }
 
+// Retrospector dispatches the retrospective agent over a finished story to emit
+// improvement proposals (sty_b53730e2). Implemented in internal/agentstep; verb
+// holds only the seam.
+type Retrospector interface {
+	Retrospect(ctx context.Context, item workitem.Item) (DispatchResult, error)
+}
+
+var retrospector Retrospector
+
+// SetRetrospector wires the retrospective dispatcher. Pass nil to disable.
+func SetRetrospector(r Retrospector) { retrospector = r }
+
 // StepSummariser produces a read-only prose recap of an enacted transition,
 // recorded as a step_summary ledger row. Implemented in internal/agentstep.
 type StepSummariser interface {

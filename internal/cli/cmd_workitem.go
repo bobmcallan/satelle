@@ -312,7 +312,20 @@ func storyCostCommands() []*cobra.Command {
 		},
 	}
 
-	return []*cobra.Command{estimate, actual, cost}
+	// retrospect — dispatch the retrospective agent over a finished story to file
+	// improvement proposals (sty_b53730e2). Opt-in per story, so its cost (visible
+	// via `story cost`) is measured before it is ever made auto-on-done.
+	retrospect := &cobra.Command{
+		Use:         "retrospect <id>",
+		Short:       "Run the retrospective agent over a finished story to file improvement proposals",
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return dispatch(cmd, "story-retrospect", map[string]any{"id": args[0]})
+		},
+	}
+
+	return []*cobra.Command{estimate, actual, cost, retrospect}
 }
 
 // fmtDurationMs renders a millisecond duration compactly (e.g. 3.1s, 2m4s). Zero

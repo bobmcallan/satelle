@@ -47,6 +47,14 @@ Be a fair gate, not a perfectionist: judge the acceptance criteria as written, a
 require both unit and integration tests only for a change that can actually carry
 them — do not demand tests of a pure docs/substrate change.
 
+**DRY / single-source (sty_b53730e2).** Scan the diff for **avoidable
+duplication** — a new type, struct set, constant, or block of logic that mirrors
+something already in the codebase and could be single-sourced (defined once and
+imported/referenced) instead of copied and kept in sync. Reject when consolidation
+is clearly available, naming the duplicated artifact and its existing source. Do
+NOT flag a genuinely independent definition (e.g. a deliberately decoupled
+published interface) — only copy-and-maintain-in-parallel where one source suffices.
+
 ## Verifying DB-state acceptance criteria
 
 Some acceptance criteria assert **database state** rather than working-tree code —
