@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 )
 
@@ -53,6 +54,12 @@ type Request struct {
 	AllowedTools string // {tools}: comma-separated tool grant
 	Model        string // {model}: optional model override; "" drops the placeholder
 	Dir          string // working directory for the subprocess
+	// Env sets environment variables on the subprocess, layered onto the parent
+	// env with these keys winning (composeEnv). Already ${VAR}-resolved by the
+	// caller (config.ResolveAgentEnvs). Values MAY be secrets (an API token), so
+	// Env is NEVER included in Command() evidence, logs, or error strings
+	// (sty_001558ce).
+	Env map[string]string
 }
 
 // Runner invokes an agent CLI headlessly and returns its stdout.
@@ -188,6 +195,37 @@ func (c codexRunner) Run(ctx context.Context, req Request) ([]byte, error) {
 	return nil, fmt.Errorf("agentcli: the codex preset is not yet mapped — install claude, or set [reviewer] harness to a full codex command template in .satelle/agents.toml")
 }
 
+// composeEnv layers overlay onto base ("KEY=VALUE" entries, as from os.Environ),
+// with overlay keys WINNING: any base entry whose key is in overlay is dropped,
+// then overlay's pairs are appended in sorted-key order. The binding-wins
+// guarantee and the deterministic order are OURS — not delegated to os/exec's
+// duplicate-key behaviour — so it is unit-testable without an exec. An empty
+// overlay returns base unchanged (sty_001558ce).
+func composeEnv(base []string, overlay map[string]string) []string {
+	if len(overlay) == 0 {
+		return base
+	}
+	out := make([]string, 0, len(base)+len(overlay))
+	for _, kv := range base {
+		key := kv
+		if i := strings.IndexByte(kv, '='); i >= 0 {
+			key = kv[:i]
+		}
+		if _, shadowed := overlay[key]; !shadowed {
+			out = append(out, kv)
+		}
+	}
+	keys := make([]string, 0, len(overlay))
+	for k := range overlay {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		out = append(out, k+"="+overlay[k])
+	}
+	return out
+}
+
 // runProcess runs binary with args, feeding req.Payload on stdin in req.Dir, and
 // returns stdout. A non-zero exit surfaces stderr in the error.
 func runProcess(ctx context.Context, binary string, args []string, req Request) ([]byte, error) {
@@ -196,7 +234,7 @@ func runProcess(ctx context.Context, binary string, args []string, req Request) 
 	if req.Dir != "" {
 		cmd.Dir = req.Dir
 	}
-	cmd.Env = os.Environ()
+	cmd.Env = composeEnv(os.Environ(), req.Env)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

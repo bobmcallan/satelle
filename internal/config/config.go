@@ -95,6 +95,14 @@ type Config struct {
 	// access/refresh TOKENS are NEVER stored here — they live in the user-level
 	// credential store outside the repo (see internal/hosted). (sty_2fc93374)
 	Hosted HostedConfig `toml:"hosted"`
+	// Vars is the operator KV an agents.toml binding's env values substitute via
+	// ${NAME} (sty_001558ce) — how a dispatched step points at an alternate model
+	// backend (e.g. GLM's Anthropic-compatible endpoint) without a wrapper binary.
+	// NON-secret vars MAY live in the committed satelle.toml; SECRETS (API keys)
+	// go in the gitignored satelle.local.toml overlay, whose keys win per-key. The
+	// KV is file-only — never persisted to the DB and never included in a substrate
+	// push (satelle.local.toml is excluded), so secrets do not leave the machine.
+	Vars map[string]string `toml:"vars"`
 }
 
 // HostedConfig binds a repo to a hosted satelle-server. Secret-free and

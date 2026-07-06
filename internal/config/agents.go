@@ -42,10 +42,17 @@ const (
 // a nil pointer (the field absent from agents.toml) means inject. Set
 // inject_principles = false to omit them for that agent.
 type AgentBinding struct {
-	Harness          string `toml:"harness"`
-	Tools            string `toml:"tools"`
-	Model            string `toml:"model"`
-	InjectPrinciples *bool  `toml:"inject_principles"`
+	Harness string `toml:"harness"`
+	Tools   string `toml:"tools"`
+	Model   string `toml:"model"`
+	// Env sets environment variables on the dispatched agent's process (layered
+	// onto os.Environ, binding keys winning). Each value may reference the [vars]
+	// KV via ${NAME}, resolved at CLI wiring time (ResolveAgentEnvs) — how a step
+	// points at an alternate model backend, e.g. env = { ANTHROPIC_BASE_URL =
+	// "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }.
+	// The in-loop executor never execs a child, so its Env is inert (sty_001558ce).
+	Env              map[string]string `toml:"env"`
+	InjectPrinciples *bool             `toml:"inject_principles"`
 }
 
 // InjectsPrinciples reports whether this binding injects the resident principles

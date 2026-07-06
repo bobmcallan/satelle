@@ -46,6 +46,11 @@ func validateDeployment(out io.Writer, dataDir string) error {
 	} else if _, herr := agentcli.RunnerFromHarness(agents.ReviewerBinding().Harness); herr != nil {
 		failed++
 		fmt.Fprintf(out, "FAIL  %s — reviewer harness: %v\n", agentsRel, herr)
+	} else if _, verr := config.ResolveAgentEnvs(agents, deployedVars(dataDir)); verr != nil {
+		// Every binding's env ${VAR} must resolve against the [vars] KV, or the
+		// runtime (requireAgents) would refuse to run — fail fast here (sty_001558ce).
+		failed++
+		fmt.Fprintf(out, "FAIL  %s — %v\n", agentsRel, verr)
 	} else {
 		fmt.Fprintf(out, "PASS  %s\n", agentsRel)
 	}
@@ -73,6 +78,18 @@ func validateDeployment(out io.Writer, dataDir string) error {
 	}
 	fmt.Fprintln(out, "PASS  deployed system validates green")
 	return nil
+}
+
+// deployedVars loads the [vars] KV from the deployed satelle.toml (overlaid by the
+// gitignored satelle.local.toml) for the init-time env-resolution check. A missing
+// or unreadable config yields a nil map — the seeded default declares no env, so
+// resolution is a no-op then (sty_001558ce).
+func deployedVars(dataDir string) map[string]string {
+	cfg, _, err := config.Load(filepath.Join(dataDir, config.ConfigName))
+	if err != nil {
+		return nil
+	}
+	return cfg.Vars
 }
 
 // deployedWorkflowDocs reads the deployed workflow files under dataDir as

@@ -211,7 +211,15 @@ func requireAgents(a *app.App) (config.AgentsConfig, error) {
 	if err != nil {
 		return config.AgentsConfig{}, fmt.Errorf("broken %s: %w — fix it, or delete it and run `satelle init` to reseed the default", rel, err)
 	}
-	return agents, nil
+	// Resolve every binding's env ${VAR} against the [vars] KV ONCE, here at load —
+	// fail-fast, the same style as the broken-file refusal above: an unknown var in
+	// any binding refuses the command with an actionable message rather than
+	// dispatching an agent with a blank credential later (sty_001558ce).
+	resolved, err := config.ResolveAgentEnvs(agents, a.Config.Vars)
+	if err != nil {
+		return config.AgentsConfig{}, fmt.Errorf("%s: %w", rel, err)
+	}
+	return resolved, nil
 }
 
 // applyAgentGrants binds the loaded agents layer onto the engine: the reviewer's
@@ -221,6 +229,9 @@ func applyAgentGrants(rev *agentstep.Engine, agents config.AgentsConfig) error {
 	rb := agents.ReviewerBinding()
 	rev.SetReviewerTools(rb.Tools)
 	rev.SetReviewerModel(rb.Model)
+	// The reviewer binding's env (already ${VAR}-resolved by requireAgents) rides
+	// every isolated reviewer + summariser subprocess (sty_001558ce).
+	rev.SetReviewerEnv(rb.Env)
 	// Resident-principle injection is an agents-layer option, default ON
 	// (sty_46a40208): inject_principles = false in the reviewer binding omits it.
 	rev.SetInjectPrinciples(rb.InjectsPrinciples())

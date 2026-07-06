@@ -73,11 +73,16 @@ const defaultCheckTimeout = 20 * time.Minute
 // prompt) or a functional check (its frontmatter names a deterministic `check:`
 // command the gate runs — the command's exit code is the verdict).
 type Engine struct {
-	runner       agentcli.Runner
-	docs         DocGetter
-	repoRoot     string
-	model        string
-	tools        string
+	runner   agentcli.Runner
+	docs     DocGetter
+	repoRoot string
+	model    string
+	tools    string
+	// reviewerEnv is the reviewer binding's resolved env (config.ResolveAgentEnvs),
+	// layered onto the reviewer AND summariser subprocesses — both are isolated
+	// children, so both carry the binding's env (sty_001558ce). A named executor
+	// uses its OWN binding.Env instead.
+	reviewerEnv  map[string]string
 	checkTimeout time.Duration
 	// check runs a functional-check command in dir and returns its combined
 	// output. The command receives the SAME stdin transition payload an LLM
@@ -250,6 +255,13 @@ func (g *Engine) SetReviewerModel(model string) {
 		g.model = model
 	}
 }
+
+// SetReviewerEnv sets the reviewer binding's resolved env (config.ResolveAgentEnvs),
+// applied to every isolated reviewer AND step-summariser subprocess this Engine
+// runs — so a repo can point its reviews at an alternate model backend the same
+// way a named executor does (sty_001558ce). Absent/empty leaves the child env at
+// the inherited process env.
+func (g *Engine) SetReviewerEnv(env map[string]string) { g.reviewerEnv = env }
 
 // SetInjectPrinciples sets whether the resident principles ride in an isolated
 // reviewer's system prompt, from the agents layer's resolved `reviewer` binding
@@ -567,6 +579,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		payload:          transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: target.Skill},
 		tools:            binding.Tools,
 		model:            binding.Model,
+		env:              binding.Env, // already ${VAR}-resolved at wiring (config.ResolveAgentEnvs)
 	})
 	if err != nil {
 		return verb.DispatchResult{}, err
@@ -719,6 +732,7 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 		payload:          tp,
 		tools:            g.tools,
 		model:            g.model,
+		env:              g.reviewerEnv,
 	})
 	if err != nil {
 		return verb.GateDecision{}, err
@@ -912,6 +926,7 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 		payload: summaryPayload{Story: item, From: from, To: to},
 		tools:   g.tools, // read-only (Read,Grep,Glob) — narrate, never mutate
 		model:   g.model,
+		env:     g.reviewerEnv,
 	})
 	if err != nil {
 		return "", err

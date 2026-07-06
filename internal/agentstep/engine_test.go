@@ -913,6 +913,31 @@ func TestDispatchExecutorRunsNamedBinding(t *testing.T) {
 	}
 }
 
+// TestDispatchExecutorAppliesBindingEnv pins AC2: a named binding's (already
+// ${VAR}-resolved) Env reaches the dispatched agent's Request, so runProcess can
+// layer it onto the child env — how a step points at an alternate backend
+// (sty_001558ce).
+func TestDispatchExecutorAppliesBindingEnv(t *testing.T) {
+	docs := fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	r := &fakeRunner{out: "ok"}
+	env := map[string]string{
+		"ANTHROPIC_BASE_URL":   "https://api.z.ai/api/anthropic",
+		"ANTHROPIC_AUTH_TOKEN": "sk-resolved",
+	}
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Bash(satelle:*)", Env: env}, true
+	})
+	g.newRunner = func(string) (agentcli.Runner, error) { return r, nil }
+	if _, err := g.DispatchExecutor(context.Background(),
+		workitem.Item{ID: "sty_1", Title: "T", Status: "backlog"}, "plan"); err != nil {
+		t.Fatal(err)
+	}
+	if r.got.Env["ANTHROPIC_AUTH_TOKEN"] != "sk-resolved" || r.got.Env["ANTHROPIC_BASE_URL"] != "https://api.z.ai/api/anthropic" {
+		t.Errorf("binding env not threaded to the Request: %v", r.got.Env)
+	}
+}
+
 // TestDispatchExecutorMissingBindingRefuses: agent=<name> with no [<name>]
 // binding in agents.toml is a broken definition — the dispatch errors (the
 // transition is refused), never silently falling back in-loop.

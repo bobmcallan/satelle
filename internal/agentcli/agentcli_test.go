@@ -146,3 +146,53 @@ func TestRunDeliversPayloadOnStdin(t *testing.T) {
 		t.Errorf("stdin not delivered: got %q", string(out))
 	}
 }
+
+// TestRunInjectsEnv drives the whole runProcess env seam against a real
+// subprocess: req.Env must reach the child's environment (sty_001558ce).
+func TestRunInjectsEnv(t *testing.T) {
+	if _, err := exec.LookPath("printenv"); err != nil {
+		t.Skip("printenv not on PATH")
+	}
+	r := templateRunner{binary: "printenv", argTemplate: []string{"SATELLE_TEST_TOKEN"}}
+	out, err := r.Run(context.Background(), Request{Env: map[string]string{"SATELLE_TEST_TOKEN": "sk-injected"}})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if strings.TrimSpace(string(out)) != "sk-injected" {
+		t.Errorf("env not injected into child: got %q", string(out))
+	}
+}
+
+func TestComposeEnv(t *testing.T) {
+	base := []string{"PATH=/bin", "HOME=/root", "ANTHROPIC_BASE_URL=https://api.anthropic.com"}
+
+	// Empty overlay returns base unchanged (same slice).
+	if got := composeEnv(base, nil); len(got) != len(base) {
+		t.Fatalf("empty overlay changed base: %v", got)
+	}
+
+	// Overlay key WINS: the base ANTHROPIC_BASE_URL entry is dropped, ours appended;
+	// disjoint base keys (PATH, HOME) survive; a new key is added. Sorted overlay order.
+	overlay := map[string]string{
+		"ANTHROPIC_BASE_URL":   "https://api.z.ai/api/anthropic",
+		"ANTHROPIC_AUTH_TOKEN": "sk-secret",
+	}
+	got := composeEnv(base, overlay)
+	seen := map[string]int{}
+	for _, kv := range got {
+		i := strings.IndexByte(kv, '=')
+		seen[kv[:i]]++
+	}
+	if seen["ANTHROPIC_BASE_URL"] != 1 {
+		t.Errorf("ANTHROPIC_BASE_URL appears %d times, want 1 (no duplicate)", seen["ANTHROPIC_BASE_URL"])
+	}
+	if !contains(got, "ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic") {
+		t.Errorf("overlay did not win: %v", got)
+	}
+	if !contains(got, "ANTHROPIC_AUTH_TOKEN=sk-secret") {
+		t.Errorf("new overlay key missing: %v", got)
+	}
+	if !contains(got, "PATH=/bin") || !contains(got, "HOME=/root") {
+		t.Errorf("disjoint base keys lost: %v", got)
+	}
+}

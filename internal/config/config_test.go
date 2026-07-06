@@ -100,3 +100,33 @@ func TestLoadWithLocalOverlay(t *testing.T) {
 		t.Errorf("repo root = %q, want %q", RepoRootFromConfigPath(path), repo)
 	}
 }
+
+// TestLoadVarsOverlay pins the per-key merge the env substitution relies on: a
+// committed [vars] provides non-secret defaults, and the gitignored local overlay
+// adds/overrides keys WITHOUT dropping committed-only keys (sty_001558ce).
+func TestLoadVarsOverlay(t *testing.T) {
+	repo := t.TempDir()
+	satelleDir := filepath.Join(repo, ".satelle")
+	if err := os.MkdirAll(satelleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	committed := "[vars]\nA = \"1\"\nB = \"2\"\n"
+	if err := os.WriteFile(filepath.Join(satelleDir, ConfigName), []byte(committed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Overlay overrides B and adds C; A (committed only) must survive.
+	local := "[vars]\nB = \"9\"\nC = \"3\"\n"
+	if err := os.WriteFile(filepath.Join(satelleDir, LocalConfigName), []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(filepath.Join(satelleDir, ConfigName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"A": "1", "B": "9", "C": "3"}
+	for k, v := range want {
+		if cfg.Vars[k] != v {
+			t.Errorf("vars[%q] = %q, want %q (full: %v)", k, cfg.Vars[k], v, cfg.Vars)
+		}
+	}
+}

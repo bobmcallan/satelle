@@ -456,6 +456,20 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer:
 # THE HARNESS TEMPLATE: a SINGLE token (e.g. "claude") is a built-in preset; a
 # MULTI-token value is a full command taken verbatim ({system}/{tools}/{model}
 # substituted, payload on stdin).
+#
+# PER-BINDING ENV — point a step at an alternate model backend WITHOUT a wrapper
+# binary. A binding may set env = { KEY = "value" }; each value may reference the
+# [vars] KV via ${NAME}. The resolved env is layered onto the dispatched agent's
+# process (binding keys win). Put SECRETS (API keys) under [vars] in the gitignored
+# satelle.local.toml — NEVER here (this file is committed). Example — GLM via its
+# Anthropic-compatible endpoint, same claude CLI, model reads naturally:
+#   [planner]
+#   harness = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
+#   model   = "glm-4.6"
+#   env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
+# and in satelle.local.toml (gitignored):
+#   [vars]
+#   GLM_API_KEY = "sk-…"
 
 [executor]
 harness = "in-loop"            # the orchestrator/driving session itself
