@@ -22,6 +22,7 @@ func (s *summariserStub) Summarise(context.Context, workitem.Item, string, strin
 	s.calls++
 	return s.out, nil
 }
+func (s *summariserStub) MandatorySummary(context.Context, workitem.Item) bool { return false }
 
 // edgeSummariser returns a summary naming the edge, so a chain of transitions
 // deposits distinguishable step-summary docs.
@@ -30,6 +31,7 @@ type edgeSummariser struct{}
 func (edgeSummariser) Summarise(_ context.Context, _ workitem.Item, from, to string) (string, error) {
 	return "summary of " + from + " → " + to, nil
 }
+func (edgeSummariser) MandatorySummary(context.Context, workitem.Item) bool { return false }
 
 type stubGater struct {
 	dec verb.GateDecision

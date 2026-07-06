@@ -376,6 +376,76 @@ func TestGate_clearErrorWhenNoVerdictAfterRetries(t *testing.T) {
 	}
 }
 
+// summaryWorkflow declares a MANDATORY step-summary node, so Summarise runs.
+var summaryWorkflow = wfDoc(baselineWorkflow, `"*"`, `digraph w {
+  backlog -> in_progress [reviewer_skill="satelle-story-intent-review"]
+  in_progress -> done [reviewer_skill="satelle-story-done-review"]
+  step [agent=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
+  backlog -> cancelled
+}`)
+
+// TestSummarise_retriesTransientKillThenSucceeds pins AC1 (sty_a1151fb0): the
+// summariser now retries the SAME transient a reviewer does (a killed/empty
+// subprocess) instead of losing the summary on the first shot.
+func TestSummarise_retriesTransientKillThenSucceeds(t *testing.T) {
+	docs := fakeDocs{workflow: summaryWorkflow, skillBody: "summarise rubric", skillFound: true}
+	r := &scriptedRunner{results: []struct {
+		out string
+		err error
+	}{
+		{err: errFakeAgent},     // signal: killed → transient
+		{out: "   "},            // empty output → transient
+		{out: "the step recap"}, // succeeds on the 3rd try
+	}}
+	g := New(r, docs, "/repo", "")
+	g.backoff = func(int) time.Duration { return 0 }
+
+	got, err := g.Summarise(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "in_progress", "done")
+	if err != nil {
+		t.Fatalf("summarise should succeed after a transient retry, got err: %v", err)
+	}
+	if got != "the step recap" {
+		t.Fatalf("want the recap once the summariser returns text, got %q", got)
+	}
+	if r.calls != 3 {
+		t.Fatalf("expected 3 attempts (2 transient + 1 success), got %d", r.calls)
+	}
+}
+
+// TestSummarise_failsFastOnDeadline: a deadline is a bound, not contention — the
+// summariser must NOT retry it (one attempt), and for a mandatory node surfaces the
+// gap as an error rather than looping a full window each try.
+func TestSummarise_failsFastOnDeadline(t *testing.T) {
+	docs := fakeDocs{workflow: summaryWorkflow, skillBody: "r", skillFound: true}
+	r := &scriptedRunner{results: []struct {
+		out string
+		err error
+	}{{err: context.DeadlineExceeded}}}
+	g := New(r, docs, "/repo", "")
+	g.backoff = func(int) time.Duration { return 0 }
+
+	_, err := g.Summarise(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "in_progress", "done")
+	if err == nil {
+		t.Fatal("a deadline should surface an error for a mandatory summary")
+	}
+	if r.calls != 1 {
+		t.Fatalf("a deadline must fail fast (no retry), got %d calls", r.calls)
+	}
+}
+
+// TestMandatorySummary reports the workflow's mandatory-summary policy — the gate for
+// the done-time missing-summary surfacing.
+func TestMandatorySummary(t *testing.T) {
+	g := New(&fakeRunner{}, fakeDocs{workflow: summaryWorkflow, skillFound: true}, "/repo", "")
+	if !g.MandatorySummary(context.Background(), workitem.Item{ID: "sty_1"}) {
+		t.Error("summaryWorkflow declares a mandatory step node — want true")
+	}
+	g2 := New(&fakeRunner{}, fakeDocs{workflow: testWorkflow, skillFound: true}, "/repo", "")
+	if g2.MandatorySummary(context.Background(), workitem.Item{ID: "sty_1"}) {
+		t.Error("testWorkflow declares no step node — want false")
+	}
+}
+
 // TestParseProseDecision covers the prose-verdict fallback (sty_9485d47e): a
 // reviewer that states its conclusion in prose (no JSON object) still yields a
 // decision; ambiguous or marker-less output does not.

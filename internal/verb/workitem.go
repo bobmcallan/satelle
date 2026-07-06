@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,6 +32,7 @@ func init() {
 	Register(&Verb{Name: "story-estimate", Description: "Record a story's plan estimate (time/tokens)", Invoke: storyEstimate})
 	Register(&Verb{Name: "story-actual", Description: "Record a story's actual cost (time/tokens)", Invoke: storyActual})
 	Register(&Verb{Name: "story-step-cost", Description: "Record a single step's actual cost / estimate (tokens/time)", Invoke: storyStepCost})
+	Register(&Verb{Name: "story-resummarise", Description: "Re-run the step summariser for one edge to close a missing-summary gap", Invoke: storyResummarise})
 	Register(&Verb{Name: "story-retrospect", Description: "Run the retrospective agent over a finished story to file improvement proposals", Invoke: storyRetrospect})
 	// Restamp is story-only too: tasks/executions are unstamped by design
 	// (sty_3800ac23 / sty_ef08ce2a) — they resolve their workflow at gate time.
@@ -362,28 +365,14 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		// ledger (it records the gap, it does not revert the step).
 		if gatedAccepted && stepSummariser != nil {
 			summary, serr := stepSummariser.Summarise(ctx, it, current.Status, *req.Status)
-			switch {
-			case serr != nil:
-				appendLedgerEntry(ctx, it.ID, ledger.KindStepSummary, "reviewer",
-					"step summary failed: "+serr.Error(),
-					transitionPayload(current.Status, *req.Status, ""), now)
-			case summary != "":
-				appendLedgerEntry(ctx, it.ID, ledger.KindStepSummary, "reviewer", summary,
-					transitionPayload(current.Status, *req.Status, ""), now)
-				// ALSO deposit the summary as an attached step-summary DOC so a later
-				// dispatched agent can PULL prior summaries via `story docs`/`story doc`
-				// — the pull-context contract (sty_47d31300) rests on this chain. The
-				// per-edge name overwrites on re-entry (latest wins); the ledger keeps
-				// full history. Best-effort like the run-output doc: a write failure is
-				// recorded, never fails the already-enacted transition.
-				if _, _, derr := writeAttachedDoc(ctx, it,
-					fmt.Sprintf("step-summary-%s-%s", current.Status, *req.Status),
-					"step-summary", summary, now); derr != nil {
-					appendLedgerEntry(ctx, it.ID, ledger.KindStepSummary, "reviewer",
-						"step summary doc deposit failed: "+derr.Error(),
-						transitionPayload(current.Status, *req.Status, ""), now)
-				}
-			}
+			recordStepSummary(ctx, it, current.Status, *req.Status, summary, serr, now)
+		}
+		// On reaching the terminal state, surface (NON-BLOCKING) any mandatory
+		// step-summary that never produced its doc — a silent hole in the pull-context
+		// chain a dispatched coder reads (sty_a1151fb0). The transition still stands;
+		// the gap is made loud + fixable, not reverted.
+		if *req.Status == "done" && stepSummariser != nil && stepSummariser.MandatorySummary(ctx, it) {
+			surfaceMissingSummaries(ctx, it, now)
 		}
 	} else {
 		ledgerKind := ledger.KindStoryUpdated
@@ -522,6 +511,125 @@ func storyEstimate(ctx context.Context, raw json.RawMessage) (json.RawMessage, e
 
 func storyActual(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	return recordCost(ctx, raw, "actual", ledger.KindActualRecorded)
+}
+
+// recordStepSummary writes the outcome of a step-summary run to the ledger, and on
+// success deposits the step-summary-<from>-<to> DOC the pull-context chain reads
+// (sty_47d31300). A failure records the gap only — an enacted transition is never
+// reverted for a best-effort recap. Shared by the post-transition summariser and
+// `satelle story resummarise` (sty_a1151fb0), so the write path is single-sourced.
+func recordStepSummary(ctx context.Context, item workitem.Item, from, to, summary string, serr error, now time.Time) {
+	switch {
+	case serr != nil:
+		appendLedgerEntry(ctx, item.ID, ledger.KindStepSummary, "reviewer",
+			"step summary failed: "+serr.Error(),
+			transitionPayload(from, to, ""), now)
+	case summary != "":
+		appendLedgerEntry(ctx, item.ID, ledger.KindStepSummary, "reviewer", summary,
+			transitionPayload(from, to, ""), now)
+		if _, _, derr := writeAttachedDoc(ctx, item,
+			fmt.Sprintf("step-summary-%s-%s", from, to), "step-summary", summary, now); derr != nil {
+			appendLedgerEntry(ctx, item.ID, ledger.KindStepSummary, "reviewer",
+				"step summary doc deposit failed: "+derr.Error(),
+				transitionPayload(from, to, ""), now)
+		}
+	}
+}
+
+// stepSummaryDocExists reports whether the step-summary-<from>-<to> doc is present
+// on disk — the pull-context artifact, distinct from the ledger row (a killed run
+// writes a "failed" row but NO doc).
+func stepSummaryDocExists(item workitem.Item, from, to string) bool {
+	dir := attachmentDir(item)
+	if dir == "" {
+		return false
+	}
+	file := safeName(fmt.Sprintf("step-summary-%s-%s", from, to))
+	_, err := os.Stat(filepath.Join(dir, file))
+	return err == nil
+}
+
+// surfaceMissingSummaries records a NON-BLOCKING warning when a story reaches done
+// with a step-summary that was attempted (a KindStepSummary ledger row exists for the
+// edge) but whose DOC is absent — a hole in the pull-context chain (sty_a1151fb0).
+// Each gap names its edge and the exact remediation that re-runs just that summary.
+func surfaceMissingSummaries(ctx context.Context, item workitem.Item, now time.Time) {
+	ls, err := requireLedger()
+	if err != nil {
+		return
+	}
+	entries, err := ls.ListByStory(ctx, item.ID, ledger.KindStepSummary)
+	if err != nil {
+		return
+	}
+	seen := map[string]bool{}
+	var gaps [][2]string
+	for _, e := range entries {
+		var p struct {
+			From string `json:"from"`
+			To   string `json:"to"`
+		}
+		if json.Unmarshal(e.Payload, &p) != nil || p.From == "" || p.To == "" {
+			continue
+		}
+		key := p.From + "\x00" + p.To
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if !stepSummaryDocExists(item, p.From, p.To) {
+			gaps = append(gaps, [2]string{p.From, p.To})
+		}
+	}
+	if len(gaps) == 0 {
+		return
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%s reached done with %d missing step-summary doc(s) — the pull-context chain is holed. Re-run each:", item.ID, len(gaps)))
+	for _, g := range gaps {
+		b.WriteString(fmt.Sprintf("\n  satelle story resummarise %s --from %s --to %s", item.ID, g[0], g[1]))
+	}
+	appendLedgerEntry(ctx, item.ID, ledger.KindStepSummary, "executor", b.String(), nil, now)
+	appendOpLog("story-summary-gap", item.ID, b.String(), now)
+	notifyChange(panelTopic(item.Kind))
+}
+
+// storyResummarise re-runs the step summariser for exactly one edge and records the
+// result (the remediation surfaceMissingSummaries names). It closes a hole left by a
+// transient summariser kill without re-driving the whole transition (sty_a1151fb0).
+func storyResummarise(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	if stepSummariser == nil {
+		return nil, fmt.Errorf("verb: no step summariser is wired")
+	}
+	store, err := requireWorkItem()
+	if err != nil {
+		return nil, err
+	}
+	var req struct {
+		ID   string `json:"id"`
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	if err := decode(raw, &req); err != nil {
+		return nil, err
+	}
+	if req.ID == "" || req.From == "" || req.To == "" {
+		return nil, fmt.Errorf("verb: resummarise requires id, --from, and --to")
+	}
+	it, err := store.Get(ctx, req.ID)
+	if err != nil {
+		return nil, err
+	}
+	summary, serr := stepSummariser.Summarise(ctx, it, req.From, req.To)
+	now := time.Now()
+	recordStepSummary(ctx, it, req.From, req.To, summary, serr, now)
+	if serr != nil {
+		return nil, fmt.Errorf("resummarise %s→%s failed: %w", req.From, req.To, serr)
+	}
+	if summary == "" {
+		return nil, fmt.Errorf("resummarise %s→%s produced no summary (the workflow may not declare a step-summary node)", req.From, req.To)
+	}
+	return json.Marshal(map[string]any{"story_id": it.ID, "from": req.From, "to": req.To, "resummarised": true})
 }
 
 // stepCostReq is the request for story-step-cost: a per-STEP actual (tokens/time)
