@@ -48,9 +48,10 @@ func TestEnvOverlayWinsEndToEnd(t *testing.T) {
 	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat > /dev/null\necho \"OBSERVED-TOKEN=$TOKEN\"\necho \"VERIFICATION satisfied\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Named run binding: env TOKEN resolves from ${TOKEN} in the [vars] KV.
+	// Named run binding: env TOKEN resolves from ${TOKEN} in the [vars] KV. The
+	// pinned model is recorded on the dispatch (audit signal for model mixing).
 	appendToFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
-		"\n[runner]\nharness = \""+script+" {system}\"\ntools = \"Read,Bash(satelle:*)\"\nenv = { TOKEN = \"${TOKEN}\" }\n")
+		"\n[runner]\nharness = \""+script+" {system}\"\ntools = \"Read,Bash(satelle:*)\"\nmodel = \"glm-4.6\"\nenv = { TOKEN = \"${TOKEN}\" }\n")
 	// Committed vars: a decoy the overlay must beat.
 	appendToFile(t, filepath.Join(repo, ".satelle", "satelle.toml"), "\n[vars]\nTOKEN = \"COMMITTED\"\n")
 	// Gitignored overlay: the winning value.
@@ -77,6 +78,32 @@ func TestEnvOverlayWinsEndToEnd(t *testing.T) {
 	}
 	if strings.Contains(string(body), "OBSERVED-TOKEN=COMMITTED") {
 		t.Errorf("committed var wrongly won over the local overlay:\n%s", body)
+	}
+	// The ledger records WHICH model ran the step (per-step mixing audit trail),
+	// without ever recording the env (endpoint/token).
+	led := mustRun(t, testBin, repo, "ledger", "list", "--story", exe)
+	if !strings.Contains(led, "on model glm-4.6") {
+		t.Errorf("dispatch ledger should record the resolved model:\n%s", led)
+	}
+	if strings.Contains(led, "LOCAL") || strings.Contains(led, "ANTHROPIC_") {
+		t.Errorf("env (endpoint/token) must never appear in the ledger:\n%s", led)
+	}
+}
+
+// TestDefaultConfigNeedsNoGLMKey pins AC2: the committed default (an Anthropic
+// planner with the GLM binding present only as an inert COMMENT) boots with NO
+// satelle.local.toml and no GLM key — a clone without a key still runs; GLM is
+// strictly opt-in (sty_5d48317b).
+func TestDefaultConfigNeedsNoGLMKey(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	// A commented GLM opt-in block, exactly as the committed agents.toml carries it —
+	// inert unless the operator activates it. No [vars], no key anywhere.
+	appendToFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
+		"\n# OPT-IN GLM:\n# [planner]\n# model = \"glm-4.6\"\n# env = { ANTHROPIC_AUTH_TOKEN = \"${GLM_API_KEY}\" }\n")
+	out := mustRun(t, testBin, repo, "status")
+	if !strings.Contains(out, "repo root") {
+		t.Errorf("the default config must boot with no GLM key present:\n%s", out)
 	}
 }
 

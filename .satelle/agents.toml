@@ -109,8 +109,19 @@ model   = "sonnet"
 # criterion, and attaches it to the story (Bash(satelle:*) for `satelle story
 # attach`) — read-only on the source (no Edit/Write); it plans, it does not build.
 # Per-step model allocation is pure config: fable plans, the in-loop session
-# (opus) implements.
+# (opus) implements. The committed DEFAULT is Anthropic so a clone with no GLM key
+# still runs (epic:model-mixing AC2, sty_5d48317b).
 [planner]
 harness = "claude -p --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Bash(satelle:*)"
 model   = "fable"
+
+# OPT-IN: run the planner on GLM instead (z.ai's Anthropic-compatible endpoint,
+# same claude CLI) — the model-mixing dogfood (epic:model-mixing, sty_5d48317b).
+# Put GLM_API_KEY under [vars] in the gitignored satelle.local.toml, then replace
+# the [planner] model/env above with:
+#   model = "glm-4.6"   # fast + reliable today; "glm-5.2" is the newest coding
+#                       # model but can return 529 (overloaded) under load
+#   env   = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
+# The plan→in_progress gate re-judges the plan on Anthropic, so a weak GLM plan
+# cannot corrupt the build.

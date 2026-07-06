@@ -114,7 +114,13 @@ type DispatchResult struct {
 	Dispatched bool   `json:"dispatched"`
 	Agent      string `json:"agent,omitempty"`
 	Command    string `json:"command,omitempty"`
-	Skill      string `json:"skill,omitempty"`
+	// Model is the binding's resolved model id ({model}), recorded on the
+	// agent_invocation so the ledger shows WHICH model actually ran a step — the
+	// audit signal for per-step model mixing (e.g. a GLM planner vs an opus
+	// in-loop session, sty_5d48317b). The model id is not a secret; the binding's
+	// env (endpoint + token) is deliberately NEVER recorded.
+	Model string `json:"model,omitempty"`
+	Skill string `json:"skill,omitempty"`
 	// Output is the dispatched agent's captured stdout (sty_890b86cb). For a task
 	// EXECUTION run, the verb layer writes it through as an OKF run-output document
 	// under the parent task's folder, so a run's evidence is discoverable per task
