@@ -8,7 +8,8 @@ description: Audit a satelle repo's active workflow DOT against its agents.toml 
 A satelle repo carries its process in two authored files that must **agree**:
 
 - a **workflow** DOT (`.satelle/workflows/*-workflow.md`) — the state graph:
-  nodes with an `agent=` role, edges with `reviewer_skill=` gates, and edge-less
+  nodes with an `agent=` role, edges with `agent=reviewer, prompt="@skill:NAME"`
+  gates (or the legacy `reviewer_skill=` attribute), and edge-less
   scoped reviewer nodes (`on="<states>"`).
 - the **agents layer** (`.satelle/agents.toml`) — one binding per agent:
   `[executor]`, `[reviewer]`, and each named `[<name>]` a node allocates to, plus
@@ -40,7 +41,8 @@ advice. Defer per-step allocation *quality* to the advisor; own *agreement* here
    - **allocated agents** — every distinct `agent=<value>` across nodes (plus the
      built-ins the graph relies on: `executor`, `reviewer`).
    - **topology facts** — the node names, each node's `agent=`, the edges
-     (`a -> b`), and each edge's `reviewer_skill=`; the edge-less scoped reviewers
+     (`a -> b`), and each edge's gate (`prompt="@skill:NAME"` or the legacy
+     `reviewer_skill=`); the edge-less scoped reviewers
      and their `on=` targets.
 4. Run the five drift checks below. Collect findings.
 5. Report (structure at the end), then **file the optimise story**.
@@ -66,7 +68,8 @@ superseded (e.g. before commit/push/integration were pulled in-loop). Fix: rewri
 the comment to the current topology, or delete it with the orphaned binding.
 
 ### 3. Gate precondition with no documented producer
-For each edge-less scoped reviewer (`on="<states>"`) and each `reviewer_skill=` that
+For each edge-less scoped reviewer (`on="<states>"`) and each edge gate
+(`prompt="@skill:NAME"` or legacy `reviewer_skill=`) that
 requires a **precondition** — a tag, an attachment, an estimate — identify what
 produces it and confirm *something* (a node, a binding comment, the rubric) says so.
 Flag a required precondition whose **producer is unstated**. Example: an `estimate`

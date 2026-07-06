@@ -89,8 +89,8 @@ missing binding — a broken allocation never silently falls back in-loop
 
 ## @skill: is an agent-agnostic declaration — the process never locks to a CLI
 
-A step's `@skill:NAME` (a node's `prompt="@skill:…"` or an edge's
-`reviewer_skill`) names the rubric that governs the step. It is **satelle's own
+A step's `@skill:NAME` (a `prompt="@skill:…"` on a node or an edge) names the
+rubric that governs the step. It is **satelle's own
 declaration**, resolved against `.satelle/skills` — it is **not** any particular
 agent CLI's native skill call (it is not Claude's `SKILL()`; satelle uses no
 `.claude/skills`). The in-loop executor **reads** that rubric from the substrate

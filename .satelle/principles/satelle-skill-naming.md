@@ -54,6 +54,6 @@ The name is the fastest audit surface: `satelle-story-release-review` says
 the name and the artifact (a `-review` that mutates, an executor with a
 `satelle-` prefix, an object that is not a real noun) is a design smell a reviewer
 should reject. Workflows reference skills by these names, so a consistent scheme
-keeps `@skill:`/`reviewer_skill` references predictable and dangling-free.
+keeps `@skill:` references predictable and dangling-free.
 
 See [[satelle-constitution]], [[satelle-reviewer-self-contained]].

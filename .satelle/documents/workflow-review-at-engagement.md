@@ -24,7 +24,7 @@ needs model judgement, so a routine `story set in_progress` never waits on an LL
 `satelle-workflow-review` (an isolated `claude -p` reviewer, granted scoped
 `satelle` CLI access by `sty_e15c15a4`) judges a workflow's full **structure AND
 actionability**: requirement 3a of its rubric has it resolve every referenced
-skill — each `reviewer_skill` edge and each `@skill:` node prompt — via
+skill — each `@skill:` node and edge prompt (and any legacy `reviewer_skill` edge) — via
 `satelle doc get skills <name>` (so embedded defaults count as resolved), and
 reject naming any that do not. This runs when the workflow is **authored or
 edited**, where a slow, reasoning review is appropriate and only happens when the

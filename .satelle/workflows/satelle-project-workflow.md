@@ -67,10 +67,10 @@ digraph satelle_workflow {
   intcheck    [agent=reviewer, prompt="@skill:satelle-integration-check", on="release"]
 
   backlog     -> plan
-  plan        -> in_progress  [reviewer_skill="satelle-story-plan-review"]
-  in_progress -> integration  [reviewer_skill="satelle-code-ac-review"]     // code matches the ACs -> enter integration
-  integration -> release      [reviewer_skill="satelle-integration-review"] // tests adequate (+ scoped intcheck runs make integration) -> enter release
-  release     -> done         [reviewer_skill="satelle-story-release-review"]
+  plan        -> in_progress  [agent=reviewer, prompt="@skill:satelle-story-plan-review"]
+  in_progress -> integration  [agent=reviewer, prompt="@skill:satelle-code-ac-review"]     // code matches the ACs -> enter integration
+  integration -> release      [agent=reviewer, prompt="@skill:satelle-integration-review"] // tests adequate (+ scoped intcheck runs make integration) -> enter release
+  release     -> done         [agent=reviewer, prompt="@skill:satelle-story-release-review"]
 
   integration -> in_progress  // recovery: a test/review reject returns to work
   release     -> in_progress  // recovery: a release/done reject returns to work
@@ -92,7 +92,7 @@ reviewer gates (`satelle-story-plan-review`, `satelle-code-ac-review`,
 `satelle-integration-review`, `satelle-integration-check`,
 `satelle-story-release-review`, `satelle-estimate-actual-review`,
 `satelle-story-cancel-review`, `satelle-step-summary`) are authored in this repo's
-`.satelle/skills` — so there is no dangling `@skill:`/`reviewer_skill` reference
+`.satelle/skills` — so there is no dangling `@skill:` reference
 and a story drives to a terminal state without a missing-skill block. Reviewer
 gates degrade to advisory only if their rubric is genuinely absent.
 

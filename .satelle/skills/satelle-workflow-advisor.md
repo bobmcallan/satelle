@@ -41,7 +41,7 @@ to the operator; change nothing yourself.
    CLI default — flag it when the operator clearly intended a pinned model.
 
 3. **Reviewer coverage — judge the EXIT edge.** Prefer every performing step's
-   exit edge to carry a reviewer gate (`reviewer_skill=` or a reviewer node)
+   exit edge to carry a reviewer gate (`prompt="@skill:NAME"` on a reviewer node or edge)
    beyond satelle's coded structural checks — an unreviewed performing step
    advances on the executor's own say-so. This matters most for a **dispatched**
    step: dispatch fires on ENTRY to the state, after the entry gate accepts, so

@@ -112,7 +112,8 @@ transitions into those target states, after the edge-named reviewers.
 estimate entering `in_progress` and the recorded actual entering `done`
 (`satelle story estimate` / `satelle story actual`); `satelle-integration-check`
 (`on="commit"`) runs `make integration` before a commit. An edge may also name
-multiple reviewers directly (`reviewer_skill="a,b"`). `satelle-story-cancel-review`
+multiple reviewers directly (`prompt="@skill:a,b"`; the legacy `reviewer_skill="a,b"`
+attribute still parses). `satelle-story-cancel-review`
 records why an item is abandoned.
 
 ## Step summary — `satelle-step-summary` (transparent, opt-in)

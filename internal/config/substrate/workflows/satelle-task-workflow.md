@@ -20,7 +20,7 @@ description: The default lifecycle for a task EXECUTION — one isolated run of 
 The lifecycle is the **DOT graph** below — read it as the authority; this prose
 only orients and must not restate it. Each node is a step carrying an `agent`: an
 **executor** does the work and mutates the tree; a reviewer gates an edge via its
-`reviewer_skill` (read-only — it judges, never mutates). Status advances only
+`prompt="@skill:NAME"` (read-only — it judges, never mutates). Status advances only
 through a reviewer's accept.
 
 Two reviewer gates bracket the run and are the ONLY gates: the begin-run edge
@@ -48,8 +48,8 @@ digraph satelle_task_workflow {
   done        [shape=Msquare]
   cancelled   [shape=Msquare]
 
-  backlog     -> in_progress [reviewer_skill="satelle-task-validate-before-review"]
-  in_progress -> done        [reviewer_skill="satelle-task-validate-after-review"]
+  backlog     -> in_progress [agent=reviewer, prompt="@skill:satelle-task-validate-before-review"]
+  in_progress -> done        [agent=reviewer, prompt="@skill:satelle-task-validate-after-review"]
 
   backlog     -> cancelled
   in_progress -> cancelled
@@ -61,7 +61,7 @@ digraph satelle_task_workflow {
 The two gate reviewers this workflow names —
 `satelle-task-validate-before-review` and `satelle-task-validate-after-review` —
 are seeded by `satelle init` into `.satelle/skills` beside this file, so there is
-no dangling `reviewer_skill` reference and a run drives to `done` without a
+no dangling `@skill:` reference and a run drives to `done` without a
 missing-skill block. Reviewer gates degrade to advisory only if their rubric is
 genuinely absent.
 

@@ -100,8 +100,8 @@ through every gate on the path.
 
 Workflows are **authored substrate** in the **DOT standard** (Graphviz): a
 node-centric graph where each node is a step carrying an `agent`
-(`executor`/`reviewer`) and a reviewer node names its gate (`prompt="@skill:NAME"`,
-or an edge `reviewer_skill`). The embedded `satelle-baseline-workflow`
+(`executor`/`reviewer`) and a gate is named `prompt="@skill:NAME"` on a reviewer
+node or an edge (the legacy edge `reviewer_skill=` attribute still parses). The embedded `satelle-baseline-workflow`
 (`backlog → in_progress → done`) is the order-zero default; a repo overrides it
 under `.satelle/workflows`, and a YAML lifecycle is auto-converted to DOT on
 ingest. How each agent runs is bound in `.satelle/agents.toml` — the reviewer's

@@ -93,9 +93,10 @@ divergent copy). The model is **node-centric**:
   `actor` keyword still parses;
 - a **reviewer node** names its gate inline: `prompt="@skill:NAME"`. The edge *into* a
   reviewer node is the gated transition;
-- an **edge** may also carry an explicit gate: `a -> b [reviewer_skill="NAME"]` — the
-  edge-centric form, needed when the gated target is an *executor* node (e.g. the
-  intent gate on `backlog → in_progress`). Edge skill wins over the node-derived gate;
+- an **edge** may also carry an explicit gate: `a -> b [agent=reviewer, prompt="@skill:NAME"]`
+  — the same vocabulary a reviewer node uses, needed when the gated target is an
+  *executor* node (e.g. the intent gate on `backlog → in_progress`). The legacy
+  edge-centric form `[reviewer_skill="NAME"]` still parses. Edge skill wins over the node-derived gate;
 - `backlog` (`shape=Mdiamond`) is the start, `done` (`shape=Msquare`) the terminal.
 
 ```dot
@@ -107,7 +108,7 @@ digraph satelle_workflow {
   committed   [agent=reviewer, prompt="@skill:satelle-commit-push-review"]
   done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
 
-  backlog -> in_progress [reviewer_skill="satelle-story-intent-review"]
+  backlog -> in_progress [agent=reviewer, prompt="@skill:satelle-story-intent-review"]
   in_progress -> commit_push -> committed -> done
 }
 ```
