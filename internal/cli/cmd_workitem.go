@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"text/tabwriter"
 	"time"
 
@@ -280,6 +281,40 @@ func storyCostCommands() []*cobra.Command {
 	actual.Flags().StringVar(&aTime, "time", "", "actual duration (e.g. 50m)")
 	actual.Flags().IntVar(&aTokens, "tokens", 0, "actual tokens")
 
+	// step-cost — record ONE step's actual cost and/or per-step estimate
+	// (sty_3b2e55f5). This is how an IN-LOOP step's tokens get onto the record:
+	// satelle (a subprocess of the driving session) cannot measure the session's own
+	// tokens, so the orchestrator self-reports them here. Per-step wall-time is
+	// derived from transition timestamps by `story cost`; --time is an optional
+	// override. Payload carries numbers + the step name only — never env/secrets.
+	var scTime, scEstTime string
+	var scTokens, scEstTokens int
+	var scStep string
+	stepCost := &cobra.Command{
+		Use:         "step-cost <id> --step <name>",
+		Short:       "Record a step's actual cost / estimate (tokens/time)",
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := map[string]any{"id": args[0]}
+			putIf(req, "step", scStep)
+			putIf(req, "time", scTime)
+			putIf(req, "est_time", scEstTime)
+			if scTokens > 0 {
+				req["tokens"] = scTokens
+			}
+			if scEstTokens > 0 {
+				req["est_tokens"] = scEstTokens
+			}
+			return dispatch(cmd, "story-step-cost", req)
+		},
+	}
+	stepCost.Flags().StringVar(&scStep, "step", "", "the step/state name (e.g. in_progress) — required")
+	stepCost.Flags().IntVar(&scTokens, "tokens", 0, "the step's actual tokens (self-reported)")
+	stepCost.Flags().StringVar(&scTime, "time", "", "the step's actual duration (overrides the derived wall-time)")
+	stepCost.Flags().IntVar(&scEstTokens, "est-tokens", 0, "the step's estimated tokens")
+	stepCost.Flags().StringVar(&scEstTime, "est-time", "", "the step's estimated duration")
+
 	// cost — the observability VIEW (sty_a699ad14): the per-gate token + wall-time
 	// cost recorded on the story's agent_invocation ledger entries, so an operator
 	// sees which reviewer/dispatch spent what. Distinct from estimate/actual (the
@@ -298,6 +333,7 @@ func storyCostCommands() []*cobra.Command {
 				return err
 			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			// Dispatched/reviewed invocations — the precise sub-process cost.
 			fmt.Fprintln(w, "TRANSITION\tSTEP\tMODEL\tTOKENS in/out\tTOTAL\tDURATION")
 			for _, r := range sc.Rows {
 				step := r.Agent
@@ -308,7 +344,29 @@ func storyCostCommands() []*cobra.Command {
 					r.From, r.To, step, dashIfEmpty(r.Model), r.TokensIn, r.TokensOut, r.TokensTotal, fmtDurationMs(r.DurationMs))
 			}
 			fmt.Fprintf(w, "TOTAL\t\t\t\t%d\t%s\n", sc.TotalTokens, fmtDurationMs(sc.TotalDurationMs))
-			return w.Flush()
+			if err := w.Flush(); err != nil {
+				return err
+			}
+			// Per-step report — every step's wall-time (derived from transition
+			// timestamps, so IN-LOOP steps are covered too) with any self-reported
+			// actual tokens and per-step estimate (satelle story step-cost).
+			if len(sc.Steps) > 0 {
+				sw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+				fmt.Fprintln(sw, "\nSTEP\tWALL-TIME\tACTUAL TOKENS\tEST TOKENS\tEST TIME")
+				for _, s := range sc.Steps {
+					fmt.Fprintf(sw, "%s\t%s\t%s\t%s\t%s\n",
+						s.Step, fmtDurationMs(s.WallTimeMs),
+						stepTokens(s.TokensTotal, s.HasTokens),
+						dashIfZero(s.EstTokens), fmtDurationMs(s.EstDurationMs))
+				}
+				fmt.Fprintf(sw, "TOTAL\t%s\t\t\t\n", fmtDurationMs(sc.TotalWallMs))
+				if err := sw.Flush(); err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(),
+					"note: ACTUAL TOKENS is '—' for an in-loop step until self-reported (satelle story step-cost) — the driving session's own tokens aren't measurable by the CLI; '—' means unmeasured, not free.")
+			}
+			return nil
 		},
 	}
 
@@ -325,7 +383,25 @@ func storyCostCommands() []*cobra.Command {
 		},
 	}
 
-	return []*cobra.Command{estimate, actual, cost, retrospect}
+	return []*cobra.Command{estimate, actual, stepCost, cost, retrospect}
+}
+
+// stepTokens renders an in-loop step's self-reported actual tokens. A step with no
+// recorded tokens shows '—' (unmeasured — the CLI can't see the driving session's
+// tokens), deliberately distinct from a recorded 0.
+func stepTokens(total int, has bool) string {
+	if !has {
+		return "—"
+	}
+	return strconv.Itoa(total)
+}
+
+// dashIfZero renders a count, or '—' when zero (no estimate recorded).
+func dashIfZero(n int) string {
+	if n <= 0 {
+		return "—"
+	}
+	return strconv.Itoa(n)
 }
 
 // fmtDurationMs renders a millisecond duration compactly (e.g. 3.1s, 2m4s). Zero
