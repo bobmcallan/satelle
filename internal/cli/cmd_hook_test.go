@@ -290,20 +290,96 @@ digraph w {
 	}
 }
 
+// TestExecutorStatesCoderNodeEngaged: a repo that opts in_progress into a
+// dispatched coder (agent=coder) still has in_progress as an ENGAGED performing
+// state (sty_f5bd176f) — so the edit gate allows the coder's edits while the story
+// is in_progress, and would NOT treat the non-performing backlog as engaged.
+func TestExecutorStatesCoderNodeEngaged(t *testing.T) {
+	body := `---
+name: x
+---
+` + "```dot" + `
+digraph w {
+  backlog     [shape=Mdiamond]
+  plan        [agent=planner, prompt="@skill:plan"]
+  in_progress [agent=coder, prompt="@skill:code"]
+  done        [shape=Msquare]
+  backlog -> plan -> in_progress -> done
+}
+` + "```" + `
+`
+	got := executorStates(body)
+	engaged := map[string]bool{}
+	for _, s := range got {
+		engaged[s] = true
+	}
+	if !engaged["plan"] || !engaged["in_progress"] {
+		t.Fatalf("plan and coder in_progress should be engaged: %v", got)
+	}
+	if engaged["backlog"] || engaged["done"] {
+		t.Errorf("terminal markers must not be engaged: %v", got)
+	}
+}
+
+// wfDoc builds a workflow Doc with the given name, applies_to frontmatter value
+// (e.g. `["*"]`), and DOT node/edge lines.
+func wfDoc(name, appliesTo, dot string) docindex.Doc {
+	body := "---\nname: " + name + "\napplies_to: " + appliesTo + "\n---\n" +
+		"```dot\ndigraph w {\n" + dot + "\n}\n```\n"
+	return docindex.Doc{Kind: "workflows", Name: name, Body: body}
+}
+
 func TestAnyEngagedCountsTasks(t *testing.T) {
-	engaged := map[string]bool{"in_progress": true, "commit_push": true}
-	// A task in an executor state counts as engaged, exactly like a story.
+	// One wildcard workflow governs both the story and the task; commit_push is a
+	// performing named-agent node.
+	wfs := []docindex.Doc{wfDoc("wf", `["*"]`, `
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor]
+  commit_push [agent=commit-agent, prompt="@skill:commit-push"]
+  done        [shape=Msquare]
+  backlog -> in_progress -> commit_push -> done`)}
+	// A task in a performing state counts as engaged, exactly like a story.
 	if !anyEngaged([]workitem.Item{
 		{Kind: workitem.KindTask, Status: "commit_push"},
 		{Kind: workitem.KindStory, Status: "backlog"},
-	}, engaged) {
-		t.Error("a task in an executor state should count as engaged")
+	}, wfs) {
+		t.Error("a task in a performing state should count as engaged")
 	}
-	// Nothing engaged when no item is in an executor state.
+	// Nothing engaged when no item is in a performing state.
 	if anyEngaged([]workitem.Item{
 		{Kind: workitem.KindTask, Status: "backlog"},
 		{Kind: workitem.KindStory, Status: "done"},
-	}, engaged) {
-		t.Error("no item in an executor state should not count as engaged")
+	}, wfs) {
+		t.Error("no item in a performing state should not count as engaged")
+	}
+}
+
+// TestAnyEngagedPerStoryWorkflow: engagement is judged against the story's OWN
+// governing workflow, not one global "primary" workflow (sty_f5bd176f). A feature
+// story in a feature-workflow's performing `plan` state is engaged even though the
+// wildcard workflow has no `plan` node — the exact gap that blocked a dispatched
+// coder reached from `plan`.
+func TestAnyEngagedPerStoryWorkflow(t *testing.T) {
+	wfs := []docindex.Doc{
+		wfDoc("wild", `["*"]`, `
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor]
+  done        [shape=Msquare]
+  backlog -> in_progress -> done`),
+		wfDoc("feat", `["feature"]`, `
+  backlog     [shape=Mdiamond]
+  plan        [agent=executor]
+  in_progress [agent=coder, prompt="@skill:code"]
+  done        [shape=Msquare]
+  backlog -> plan -> in_progress -> done`),
+	}
+	// A feature story in plan is engaged via the feature workflow (plan performs).
+	if !anyEngaged([]workitem.Item{{Kind: workitem.KindStory, Category: "feature", Status: "plan"}}, wfs) {
+		t.Error("a feature story in its workflow's performing plan state should be engaged")
+	}
+	// The same status under the wildcard workflow (no plan node) is NOT engaged —
+	// engagement follows the governing workflow, not a global state list.
+	if anyEngaged([]workitem.Item{{Kind: workitem.KindStory, Category: "chore", Status: "plan"}}, wfs) {
+		t.Error("a chore story in plan is governed by the wildcard workflow (no plan state) — not engaged")
 	}
 }

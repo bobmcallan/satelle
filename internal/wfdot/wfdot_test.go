@@ -121,6 +121,51 @@ digraph w {
 	}
 }
 
+// TestPerformingStates: PerformingStates / IsPerforming / IsPerformingState are the
+// single-sourced predicate the edit-gate engaged scan and the dispatch lock-guard
+// share. A performing node carries a non-reviewer agent (executor OR a named
+// isolated agent); terminal markers and reviewer nodes do not perform.
+func TestPerformingStates(t *testing.T) {
+	const dot = `---
+name: x
+---
+` + "```dot" + `
+digraph w {
+  backlog     [shape=Mdiamond]
+  plan        [agent=planner, prompt="@skill:plan"]
+  in_progress [agent=coder, prompt="@skill:code"]
+  review      [agent=reviewer, prompt="@skill:r"]
+  done        [shape=Msquare]
+  backlog -> plan -> in_progress -> review -> done
+}
+` + "```" + `
+`
+	spec, ok := Parse(dot)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	got := spec.PerformingStates()
+	want := map[string]bool{"plan": true, "in_progress": true}
+	if len(got) != len(want) {
+		t.Fatalf("PerformingStates = %v, want keys %v", got, want)
+	}
+	for _, s := range got {
+		if !want[s] {
+			t.Errorf("PerformingStates included non-performing %q: %v", s, got)
+		}
+	}
+	// IsPerformingState: named agent (planner/coder) yes; reviewer/terminal no;
+	// unknown state no.
+	for name, wantPerform := range map[string]bool{
+		"plan": true, "in_progress": true,
+		"review": false, "backlog": false, "done": false, "nope": false,
+	} {
+		if spec.IsPerformingState(name) != wantPerform {
+			t.Errorf("IsPerformingState(%q) = %v, want %v", name, spec.IsPerformingState(name), wantPerform)
+		}
+	}
+}
+
 func TestParse(t *testing.T) {
 	spec, ok := Parse(sampleDOT)
 	if !ok {

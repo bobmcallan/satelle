@@ -542,6 +542,22 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 			"workflow %q allocates state %q to agent %q but .satelle/agents.toml defines no [%s] binding — define it, or reassign the step",
 			doc.Name, toStatus, target.Agent, target.Agent)
 	}
+	// Edit-gate timing lock (sty_f5bd176f): a named CODE-WRITING agent (e.g. a
+	// `coder`) edits product files while the status is STILL the FROM state — the
+	// enact happens only after this dispatch returns (verb/workitem.go). Those edits
+	// pass the engaged-story edit gate ONLY when that FROM state is itself a
+	// PERFORMING node (storyEngaged reads exactly this predicate via
+	// wfdot.PerformingStates). If the FROM state does not perform, the agent's edits
+	// would be blocked — unless a running serve happens to fail storyEngaged() open,
+	// an accident, not a guarantee. Refuse such a dispatch so an opt-in like
+	// in_progress[agent=coder] is only ever wired where engagement is REAL. A
+	// read-only agent (e.g. the planner, no Write/Edit grant) edits nothing, so the
+	// gate never applies to it and this lock does not constrain it.
+	if grantsCodeEdit(binding.Tools) && !spec.IsPerformingState(item.Status) {
+		return verb.DispatchResult{}, fmt.Errorf(
+			"workflow %q dispatches state %q to code-writing agent %q from non-performing state %q: the agent would edit code while the story is not in an engaged state, so the edit gate could allow it only via the serve fail-open — route the step from a performing state (or make %q performing)",
+			doc.Name, toStatus, target.Agent, item.Status, item.Status)
+	}
 	runner, err := g.newRunner(binding.Harness)
 	if err != nil {
 		return verb.DispatchResult{}, fmt.Errorf("named agent %q: broken harness in .satelle/agents.toml: %w", target.Agent, err)
@@ -687,6 +703,20 @@ func (g *Engine) setDecisionUsage(d *verb.GateDecision, u agentcli.UsageResult) 
 func grantsSatelleCLI(tools string) bool {
 	for _, t := range splitTrimList(tools) {
 		if t == "*" || t == "Bash" || t == "Bash(*)" || strings.HasPrefix(t, "Bash(satelle") {
+			return true
+		}
+	}
+	return false
+}
+
+// grantsCodeEdit reports whether a binding's tools grant lets the agent WRITE
+// product files — Write/Edit/MultiEdit/NotebookEdit or the `*` wildcard. Only a
+// code-writing agent is subject to the edit-gate timing lock in DispatchExecutor;
+// a read-only agent (Read/Grep/Glob only, e.g. the planner) edits nothing.
+func grantsCodeEdit(tools string) bool {
+	for _, t := range splitTrimList(tools) {
+		switch t {
+		case "*", "Write", "Edit", "MultiEdit", "NotebookEdit":
 			return true
 		}
 	}
@@ -1335,6 +1365,26 @@ func OrderedWorkflows(workflows []docindex.Doc, category string) []docindex.Doc 
 	out = append(out, wildRepo...)
 	out = append(out, wildSys...)
 	return out
+}
+
+// GoverningWorkflow resolves the workflow that governs item from an already-listed
+// set: the stamped `workflow:<name>` if present and still in the set, else the
+// highest-priority workflow applicable to the item's category (OrderedWorkflows).
+// This is the single, list-based mirror of activeWorkflowPreferring — used where
+// the caller already holds the full workflow list (e.g. the edit gate deciding
+// engagement per story). Returns false when no workflow applies.
+func GoverningWorkflow(workflows []docindex.Doc, item workitem.Item) (docindex.Doc, bool) {
+	if name := stampedWorkflowName(item); name != "" {
+		for _, w := range workflows {
+			if w.Name == name {
+				return w, true
+			}
+		}
+	}
+	if ordered := OrderedWorkflows(workflows, workflowCategory(item)); len(ordered) > 0 {
+		return ordered[0], true
+	}
+	return docindex.Doc{}, false
 }
 
 // runCheck runs a skill's functional-check command and returns a deterministic

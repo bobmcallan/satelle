@@ -173,13 +173,47 @@ func (s Spec) doneReachable() map[string]bool {
 	return reach
 }
 
+// IsPerforming reports whether a node PERFORMS work — any node carrying a
+// non-reviewer agent (the in-loop `executor` OR a named isolated agent a node
+// allocates a step to, e.g. planner/coder/commit-push). A reviewer node judges,
+// it does not perform; an agent-less node (a terminal marker) performs nothing.
+// This is the single definition of "a performing/engaged state" the whole binary
+// shares — the edit gate's engaged-state scan (cmd_hook.executorStates) and the
+// dispatch lock-guard both read it, so they never diverge.
+func (st State) IsPerforming() bool {
+	return st.Agent != "" && st.Agent != "reviewer"
+}
+
+// PerformingStates returns the names of every performing node (see IsPerforming),
+// in declaration order — the workflow's engaged states.
+func (s Spec) PerformingStates() []string {
+	var out []string
+	for _, st := range s.States {
+		if st.IsPerforming() {
+			out = append(out, st.Name)
+		}
+	}
+	return out
+}
+
+// IsPerformingState reports whether the named state exists and performs work.
+// An unknown name is not performing (false). Used by the dispatch lock-guard to
+// verify a named agent's FROM state is genuinely engaged.
+func (s Spec) IsPerformingState(name string) bool {
+	for _, st := range s.States {
+		if st.Name == name {
+			return st.IsPerforming()
+		}
+	}
+	return false
+}
+
 // ExecutorPathToDoneSkills returns the `@skill:` prompts of PERFORMING nodes that
-// lie on a path which can still reach "done", deduped and sorted. A performing node
-// is any non-reviewer agent — the in-loop `executor` OR a named isolated agent a
-// node allocates a step to (e.g. commit-push). These are the rubrics that perform a
-// step. Unlike reviewer gates — which degrade to advisory when their rubric is
-// absent — a missing performer skill leaves the step unperformable, so its absence
-// is the genuine wasted-work trap to catch at engagement. Empty when no "done".
+// lie on a path which can still reach "done", deduped and sorted. These are the
+// rubrics that perform a step. Unlike reviewer gates — which degrade to advisory
+// when their rubric is absent — a missing performer skill leaves the step
+// unperformable, so its absence is the genuine wasted-work trap to catch at
+// engagement. Empty when no "done".
 func (s Spec) ExecutorPathToDoneSkills() []string {
 	reach := s.doneReachable()
 	if len(reach) == 0 {
@@ -187,7 +221,7 @@ func (s Spec) ExecutorPathToDoneSkills() []string {
 	}
 	set := map[string]bool{}
 	for _, st := range s.States {
-		if st.Agent != "" && st.Agent != "reviewer" && st.Skill != "" && reach[st.Name] {
+		if st.IsPerforming() && st.Skill != "" && reach[st.Name] {
 			set[st.Skill] = true
 		}
 	}

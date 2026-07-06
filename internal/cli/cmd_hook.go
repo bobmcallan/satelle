@@ -154,10 +154,14 @@ story. Fails open on any internal error.`,
 	register(hook)
 }
 
-// storyEngaged reports whether any work item — story OR task — is in one of the
-// active workflow's executor states (the authored definition of "engaged work").
-// Fails OPEN: an unopenable store or list error returns true (allow), so the
-// hooks never wedge a session on an internal fault.
+// storyEngaged reports whether any work item — story OR task — sits in a
+// performing state of ITS OWN governing workflow (the authored definition of
+// "engaged work"). Resolving per story, not against one arbitrary "primary"
+// workflow, is what makes engagement correct rather than accidental: a repo that
+// runs a category-specific workflow (or opts a step into a dispatched coder) is
+// judged by the workflow that actually governs the item (sty_f5bd176f). Fails
+// OPEN: an unopenable store or list error returns true (allow), so the hooks never
+// wedge a session on an internal fault.
 func storyEngaged() bool {
 	a, err := app.Open()
 	if err != nil {
@@ -166,31 +170,37 @@ func storyEngaged() bool {
 	defer func() { _ = a.Close() }()
 	ctx := context.Background()
 
-	engaged := map[string]bool{"in_progress": true} // fallback if no workflow resolves
-	if wfs, e := a.Store.DocIndex.List(ctx, "workflows"); e == nil {
-		if ordered := agentstep.OrderedWorkflows(wfs, ""); len(ordered) > 0 {
-			if es := executorStates(ordered[0].Body); len(es) > 0 {
-				engaged = map[string]bool{}
-				for _, s := range es {
-					engaged[s] = true
-				}
-			}
-		}
-	}
-	// All kinds — a task engaged in an executor state counts exactly like a story,
+	// The full workflow set (nil on error → each item falls back to {in_progress}).
+	wfs, _ := a.Store.DocIndex.List(ctx, "workflows")
+	// All kinds — a task engaged in a performing state counts exactly like a story,
 	// so the commit/edit gates treat engaged tasks the same (sty_3ed91a58).
 	items, e := a.Store.Stories.List(ctx, workitem.ListFilter{})
 	if e != nil {
 		return true // fail open
 	}
-	return anyEngaged(items, engaged)
+	return anyEngaged(items, wfs)
 }
 
-// anyEngaged reports whether any work item (story or task) sits in one of the
-// engaged executor states — the pure core of storyEngaged, split out for testing.
-func anyEngaged(items []workitem.Item, engaged map[string]bool) bool {
+// anyEngaged reports whether any work item sits in a performing state of the
+// workflow that governs IT — the stamped workflow, else its category-selected one
+// (agentstep.GoverningWorkflow). When no workflow resolves (or a non-DOT body
+// yields no states), it falls back to {in_progress}. Pure core, split for testing.
+func anyEngaged(items []workitem.Item, wfs []docindex.Doc) bool {
+	perfCache := map[string]map[string]bool{} // workflow name → performing-state set
 	for _, it := range items {
-		if engaged[it.Status] {
+		perf := map[string]bool{"in_progress": true} // fallback
+		if wf, ok := agentstep.GoverningWorkflow(wfs, it); ok {
+			if cached, seen := perfCache[wf.Name]; seen {
+				perf = cached
+			} else if es := executorStates(wf.Body); len(es) > 0 {
+				perf = map[string]bool{}
+				for _, s := range es {
+					perf[s] = true
+				}
+				perfCache[wf.Name] = perf
+			}
+		}
+		if perf[it.Status] {
 			return true
 		}
 	}
@@ -204,15 +214,10 @@ func anyEngaged(items []workitem.Item, engaged map[string]bool) bool {
 func executorStates(body string) []string {
 	// DOT workflow: the engaged states are the PERFORMING nodes — any non-reviewer
 	// agent (the in-loop executor OR a named isolated agent a step is allocated to,
-	// e.g. commit-push) in the shared wfdot spec.
+	// e.g. commit-push) in the shared wfdot spec. PerformingStates is the single
+	// source of that predicate, shared with the dispatch lock-guard so they agree.
 	if spec, ok := wfdot.Parse(body); ok {
-		var out []string
-		for _, s := range spec.States {
-			if s.Agent != "" && s.Agent != "reviewer" {
-				out = append(out, s.Name)
-			}
-		}
-		return out
+		return spec.PerformingStates()
 	}
 	lines := strings.Split(body, "\n")
 	in := false

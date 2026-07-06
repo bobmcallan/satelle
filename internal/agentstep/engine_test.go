@@ -874,7 +874,11 @@ func TestDispatchExecutorRunsNamedBinding(t *testing.T) {
 		if name != "architect" {
 			return config.AgentBinding{}, false
 		}
-		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Edit,Bash", Model: "fable"}, true
+		// A backlog-dispatched agent is realistically READ-ONLY (like the planner) —
+		// a code-editing grant here would trip the edit-gate timing lock (a
+		// code-writer dispatched from a non-performing state), covered by
+		// TestDispatchExecutorCodeWriterFromNonPerformingRefused.
+		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Grep,Glob,Bash(satelle:*)", Model: "fable"}, true
 	})
 	g.newRunner = func(harness string) (agentcli.Runner, error) {
 		if harness != "fake -p {system}" {
@@ -890,7 +894,7 @@ func TestDispatchExecutorRunsNamedBinding(t *testing.T) {
 	if !res.Dispatched || res.Agent != "architect" || res.Skill != "architecture-alignment" {
 		t.Fatalf("result = %+v, want dispatched by architect under architecture-alignment", res)
 	}
-	if r.got.AllowedTools != "Read,Edit,Bash" || r.got.Model != "fable" {
+	if r.got.AllowedTools != "Read,Grep,Glob,Bash(satelle:*)" || r.got.Model != "fable" {
 		t.Errorf("binding grant not applied: tools=%q model=%q", r.got.AllowedTools, r.got.Model)
 	}
 	// The resolved model is carried on the result so the ledger can record WHICH
@@ -1031,6 +1035,72 @@ func TestDispatchExecutorRefusesWithoutSatelleCLI(t *testing.T) {
 	}
 	if fr.got.SystemPrompt == "" {
 		t.Error("a granted binding must reach the run")
+	}
+}
+
+// coderWF is a repo opting `in_progress` into a dispatched code-writing agent
+// (agent=coder) — the sty_f5bd176f opt-in. The coder is reached from `plan`, a
+// PERFORMING node, so the story is engaged while the coder edits.
+var coderWF = wfDoc(baselineWorkflow, `"*"`, `digraph w {
+  backlog [shape=Mdiamond]
+  plan [agent=planner, prompt="@skill:plan"]
+  in_progress [agent=coder, prompt="@skill:code"]
+  done [shape=Msquare]
+  backlog -> plan -> in_progress -> done
+}`)
+
+// TestDispatchExecutorCodeWriterFromNonPerformingRefused: the edit-gate timing
+// lock (sty_f5bd176f) refuses dispatching a CODE-WRITING named agent (Write/Edit
+// grant) from a non-performing FROM state — its edits would be blocked by the
+// engaged-story edit gate unless a running serve fails storyEngaged() open, an
+// accident. Here dispatchWF sends `plan` from `backlog` (a non-performing
+// Mdiamond); a code-editing grant there is refused before the agent runs.
+func TestDispatchExecutorCodeWriterFromNonPerformingRefused(t *testing.T) {
+	docs := fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	fr := &fakeRunner{out: "ok"}
+	g.newRunner = func(string) (agentcli.Runner, error) { return fr, nil }
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Edit,Write,Bash(satelle:*)"}, true
+	})
+	_, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan")
+	if err == nil {
+		t.Fatal("want refusal: a code-writer dispatched from the non-performing backlog state")
+	}
+	for _, want := range []string{"non-performing", "backlog", "fail-open"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should carry %q: %v", want, err)
+		}
+	}
+	if fr.got.SystemPrompt != "" {
+		t.Error("must refuse BEFORE running the agent")
+	}
+}
+
+// TestDispatchExecutorCodeWriterFromPerformingProceeds: the same code-writing grant
+// dispatched from a PERFORMING FROM state (plan → in_progress in coderWF, where
+// `plan` performs) is allowed — the story is legitimately engaged while the coder
+// edits, so the lock does not fire.
+func TestDispatchExecutorCodeWriterFromPerformingProceeds(t *testing.T) {
+	docs := fakeDocs{workflow: coderWF, skillBody: "code rubric", skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	fr := &fakeRunner{out: "built the slice"}
+	g.newRunner = func(string) (agentcli.Runner, error) { return fr, nil }
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		if name != "coder" {
+			return config.AgentBinding{}, false
+		}
+		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Edit,Write,Bash(satelle:*)"}, true
+	})
+	res, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "plan"}, "in_progress")
+	if err != nil {
+		t.Fatalf("a code-writer from a performing state should dispatch: %v", err)
+	}
+	if !res.Dispatched || res.Agent != "coder" {
+		t.Fatalf("result = %+v, want dispatched by coder", res)
+	}
+	if fr.got.SystemPrompt == "" {
+		t.Error("the coder must reach the run")
 	}
 }
 

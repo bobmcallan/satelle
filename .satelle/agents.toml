@@ -127,3 +127,27 @@ harness = "claude -p --output-format json --append-system-prompt {system} --allo
 tools   = "Read,Grep,Glob,Bash(satelle:*)"
 model   = "glm-4.6"
 env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
+
+# coder — an OPTIONAL named code-writing agent for the in_progress step
+# (sty_f5bd176f). It proves the orchestration/coding separation: a fresh isolated
+# coder reconstructs context from the story + plan via the read-only CLI
+# (pull-context contract), implements exactly the plan's slice with unit +
+# integration tests, then stops for code-ac-review. Its grant adds Write/Edit (it
+# writes product code) plus gofmt/go for a self-check, on top of the mandatory
+# Bash(satelle:*) every dispatched agent needs to pull its context.
+#
+# DORMANT BY DEFAULT — this binding runs ONLY if a workflow node allocates the step
+# to it. To opt a repo in, edit that repo's project workflow's in_progress node:
+#     in_progress [agent=coder, prompt="@skill:code"]   # dispatched (isolated)
+# instead of the in-loop default:
+#     in_progress [agent=executor]                        # in-loop (this repo)
+# The embedded default and THIS repo stay in-loop; dispatched coding is an explicit
+# opt-in a repo authors. The coder must be reached from a PERFORMING state (e.g.
+# plan) so the engaged-story edit gate legitimately allows its edits — the dispatch
+# lock-guard (agentstep.DispatchExecutor) REFUSES a code-writer dispatched from a
+# non-performing state rather than let it ride the serve fail-open.
+[coder]
+harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
+tools   = "Read,Grep,Glob,Edit,Write,Bash(satelle:*),Bash(gofmt:*),Bash(go:*)"
+model   = "glm-4.6"
+env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
