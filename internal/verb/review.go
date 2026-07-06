@@ -181,6 +181,10 @@ func SetRetrospector(r Retrospector) { retrospector = r }
 // recorded as a step_summary ledger row. Implemented in internal/agentstep.
 type StepSummariser interface {
 	Summarise(ctx context.Context, item workitem.Item, from, to string) (string, error)
+	// MandatorySummary reports whether item's active workflow declares a MANDATORY
+	// step-summary node — the gate for surfacing a missing-summary gap at done
+	// (sty_a1151fb0).
+	MandatorySummary(ctx context.Context, item workitem.Item) bool
 }
 
 // stepSummariser runs after a gated transition is enacted. Nil disables it.

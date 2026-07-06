@@ -788,6 +788,27 @@ func (g *Engine) guardEngagementExecutorSkills(ctx context.Context, item workite
 	return dec, true, nil
 }
 
+// retryWait backs off before a retry (attempt > 1) so transient contention can
+// clear, aborting if the context is cancelled. Returns ctx.Err() on cancellation,
+// else nil. The single source of the bounded-backoff step (sty_d71b0791), shared by
+// the reviewer gate loop and the step summariser so both retry a transient the same
+// way. attempt == 1 waits not at all.
+func (g *Engine) retryWait(ctx context.Context, attempt int) error {
+	if attempt <= 1 {
+		return nil
+	}
+	wait := time.Duration(0)
+	if g.backoff != nil {
+		wait = g.backoff(attempt)
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(wait):
+		return nil
+	}
+}
+
 // runReviewer runs ONE reviewer skill over item's transition and returns its
 // verdict. A skill carrying a functional check runs deterministically; otherwise
 // the skill body rides as an isolated LLM reviewer's system prompt. Gated=false
@@ -861,17 +882,8 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 	var lastErr error
 	var lastOut []byte
 	for attempt := 1; attempt <= attempts; attempt++ {
-		if attempt > 1 {
-			// Back off so transient contention can clear; abort if cancelled.
-			wait := time.Duration(0)
-			if g.backoff != nil {
-				wait = g.backoff(attempt)
-			}
-			select {
-			case <-ctx.Done():
-				return verb.GateDecision{Gated: true, Skill: skill}, ctx.Err()
-			case <-time.After(wait):
-			}
+		if werr := g.retryWait(ctx, attempt); werr != nil {
+			return verb.GateDecision{Gated: true, Skill: skill}, werr
 		}
 		g.emitProgress("running reviewer %s (attempt %d/%d, may take several minutes)…", skill, attempt, attempts)
 		out, usage, rerr := g.runOnce(ctx, g.runner, req, g.agentTimeout)
@@ -1047,11 +1059,46 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 	// The summariser writes a step_summary ledger entry (not agent_invocation), so
 	// its usage is not rolled into the per-gate cost view here — a documented gap
 	// (sty_a699ad14); the cost view covers the agent_invocation gates.
-	out, _, err := g.runOnce(ctx, g.runner, req, g.agentTimeout)
-	if err != nil {
-		return soft("mandatory step summary failed: %v", err)
+	//
+	// Retry the SAME transient a reviewer retries (a rate-limited/killed/empty
+	// subprocess under concurrent sessions — sty_d71b0791, sty_a1151fb0): a single
+	// runOnce permanently LOST the summary on a transient kill, silently holing the
+	// pull-context chain. Bounded by g.attempts with g.backoff; fail fast on a
+	// deadline (a bound, not contention — retrying just re-blocks a full window).
+	attempts := g.attempts
+	if attempts < 1 {
+		attempts = 1
 	}
-	return strings.TrimSpace(string(out)), nil
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if werr := g.retryWait(ctx, attempt); werr != nil {
+			lastErr = werr
+			break
+		}
+		out, _, rerr := g.runOnce(ctx, g.runner, req, g.agentTimeout)
+		if rerr != nil {
+			if errors.Is(rerr, context.DeadlineExceeded) && ctx.Err() == nil {
+				return soft("mandatory step summary timed out after %s", g.agentTimeout)
+			}
+			lastErr = rerr
+			g.logReviewerFailure(summariserSkill, attempt, attempts, rerr, nil)
+			continue // transient — retry
+		}
+		if s := strings.TrimSpace(string(out)); s != "" {
+			return s, nil
+		}
+		lastErr = fmt.Errorf("empty summary output")
+		g.logReviewerFailure(summariserSkill, attempt, attempts, lastErr, out)
+	}
+	return soft("mandatory step summary failed after %d attempts: %v", attempts, lastErr)
+}
+
+// MandatorySummary reports whether item's active workflow declares a MANDATORY
+// step-summary node — used to gate the done-time missing-summary surfacing
+// (sty_a1151fb0). Implements verb.StepSummariser.
+func (g *Engine) MandatorySummary(ctx context.Context, item workitem.Item) bool {
+	_, mandatory := g.stepSummaryDeclared(ctx, item)
+	return mandatory
 }
 
 // stepSummaryDeclared reports whether the workflow active for category declares a

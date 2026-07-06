@@ -370,6 +370,22 @@ func storyCostCommands() []*cobra.Command {
 		},
 	}
 
+	// resummarise — re-run the step summariser for one edge to close a missing-
+	// summary gap (sty_a1151fb0). The remediation `satelle story cost`/the done-time
+	// warning names when a transient kill holed the pull-context chain.
+	var rsFrom, rsTo string
+	resummarise := &cobra.Command{
+		Use:         "resummarise <id> --from <state> --to <state>",
+		Short:       "Re-run the step summariser for one edge to close a missing-summary gap",
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return dispatch(cmd, "story-resummarise", map[string]any{"id": args[0], "from": rsFrom, "to": rsTo})
+		},
+	}
+	resummarise.Flags().StringVar(&rsFrom, "from", "", "the edge's FROM state — required")
+	resummarise.Flags().StringVar(&rsTo, "to", "", "the edge's TO state — required")
+
 	// retrospect — dispatch the retrospective agent over a finished story to file
 	// improvement proposals (sty_b53730e2). Opt-in per story, so its cost (visible
 	// via `story cost`) is measured before it is ever made auto-on-done.
@@ -383,7 +399,7 @@ func storyCostCommands() []*cobra.Command {
 		},
 	}
 
-	return []*cobra.Command{estimate, actual, stepCost, cost, retrospect}
+	return []*cobra.Command{estimate, actual, stepCost, cost, resummarise, retrospect}
 }
 
 // stepTokens renders an in-loop step's self-reported actual tokens. A step with no
