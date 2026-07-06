@@ -91,7 +91,7 @@ model   = "sonnet"             # TIERED (operator decision): gates run on the ri
 [commit-agent]
 harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*),Bash(gofmt:*)"
-model   = "glm-5.2"
+model   = "glm-4.6"
 env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
 
 # integrator — the INTEGRATION step's named agent (sty_1c543ecd): runs the
@@ -103,7 +103,7 @@ env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUT
 [integrator]
 harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Edit,Bash(make:*),Bash(go:*),Bash(gofmt:*),Bash(satelle:*)"
-model   = "glm-5.2"
+model   = "glm-4.6"
 env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
 
 # planner — the `plan` step's named agent (sty_d9a0b573). It reads the story,
@@ -113,7 +113,7 @@ env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUT
 [planner]
 harness = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Bash(satelle:*)"
-model   = "glm-5.2"            # GLM-5.2 (retested working 2026-07-06 — earlier glm-5-turbo 529-looped on long runs; the GLM-5.2 line is reliable). Fallback: glm-4.6.
+model   = "glm-4.6"            # GLM-4.6 — the reliable-enough worker line. glm-5.2 tried 2026-07-06 but is DEAD (the planner dispatch was `signal: killed` mid-run, not a timeout); glm-5-turbo 529-loops. glm-4.6 it is.
 env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
 
 # retrospective — the post-story improvement agent (sty_b53730e2): `satelle story
@@ -125,7 +125,7 @@ env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUT
 [retrospective]
 harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Bash(satelle:*)"
-model   = "glm-5.2"
+model   = "glm-4.6"
 env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
 
 # coder — an OPTIONAL named code-writing agent for the in_progress step
@@ -149,5 +149,5 @@ env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUT
 [coder]
 harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Edit,Write,Bash(satelle:*),Bash(gofmt:*),Bash(go:*)"
-model   = "glm-5.2"
+model   = "glm-4.6"
 env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
