@@ -584,7 +584,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	if err != nil {
 		return verb.DispatchResult{}, err
 	}
-	res := verb.DispatchResult{Dispatched: true, Agent: target.Agent, Command: runner.Command(), Skill: target.Skill}
+	res := verb.DispatchResult{Dispatched: true, Agent: target.Agent, Command: runner.Command(), Model: binding.Model, Skill: target.Skill}
 	g.emitProgress("dispatching step %s to named agent %s (may take several minutes)…", toStatus, target.Agent)
 	out, runErr := g.runOnce(ctx, runner, req, g.checkTimeout)
 	g.logExecutorRun(target.Agent, item.ID, toStatus, out, runErr)

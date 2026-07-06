@@ -308,9 +308,16 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 			return nil, fmt.Errorf("transition %s→%s refused: %v", current.Status, *req.Status, derr)
 		}
 		if res.Dispatched {
+			// Record the resolved model (when the binding pins one) so the ledger shows
+			// WHICH model ran the step — the audit trail for per-step model mixing
+			// (sty_5d48317b). The env (endpoint + token) is never recorded.
+			modelNote := ""
+			if res.Model != "" {
+				modelNote = " on model " + res.Model
+			}
 			appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "executor",
-				fmt.Sprintf("dispatched step %q to named agent %q (%s) with @skill:%s",
-					*req.Status, res.Agent, res.Command, res.Skill),
+				fmt.Sprintf("dispatched step %q to named agent %q%s (%s) with @skill:%s",
+					*req.Status, res.Agent, modelNote, res.Command, res.Skill),
 				transitionPayload(current.Status, *req.Status, res.Skill), now)
 			// A dispatched task-execution run's captured output is written through as
 			// an OKF run-output doc under its task folder (sty_890b86cb) — the same

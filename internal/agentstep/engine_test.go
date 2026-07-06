@@ -893,6 +893,11 @@ func TestDispatchExecutorRunsNamedBinding(t *testing.T) {
 	if r.got.AllowedTools != "Read,Edit,Bash" || r.got.Model != "fable" {
 		t.Errorf("binding grant not applied: tools=%q model=%q", r.got.AllowedTools, r.got.Model)
 	}
+	// The resolved model is carried on the result so the ledger can record WHICH
+	// model ran the step — the audit signal for per-step model mixing (sty_5d48317b).
+	if res.Model != "fable" {
+		t.Errorf("resolved model not carried on the dispatch result: %q", res.Model)
+	}
 	if !strings.Contains(r.got.SystemPrompt, "alignment rubric") {
 		t.Errorf("node rubric missing from the system prompt:\n%s", r.got.SystemPrompt)
 	}

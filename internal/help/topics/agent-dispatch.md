@@ -109,5 +109,43 @@ configuration from satelle — it cannot see, validate, dispatch, or carry it
 repo-agnostically, and it silently pins the repo to one CLI vendor. Keep process
 agents in `.satelle/agents.toml` + the workflow DOT.
 
+## Mixing model backends — per-binding env + `${VAR}` (sty_001558ce)
+
+`model` selects the model *within* the harness's CLI; to point one step at a
+*different backend* (a non-default API), a binding may also set **`env`** —
+environment variables layered onto that dispatched agent's process, binding keys
+winning. Each value may reference the **`[vars]` KV** via `${NAME}`, resolved at
+load; an unknown `${VAR}` refuses the command (naming the binding + var) rather
+than dispatching with a blank credential. `${...}` appears only in env values, so
+it never collides with the `{system}/{tools}/{model}` argv placeholders.
+
+Put the KV in `[vars]`: NON-secret values may sit in the committed `satelle.toml`;
+**secrets go in the gitignored `satelle.local.toml`**, whose keys win per-key. The
+KV is file-only (no DB) and `satelle.local.toml` is excluded from the substrate
+push, so a key never leaves the machine.
+
+Worked example — run one step on **GLM** through z.ai's Anthropic-compatible
+endpoint (the *same* `claude` CLI, no wrapper binary), while the in-loop session
+stays on its own model:
+
+```toml
+# .satelle/agents.toml
+[planner]
+harness = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
+tools   = "Read,Grep,Glob,Bash(satelle:*)"
+model   = "glm-4.6"   # the model id the endpoint expects (glm-5.2 is the newest)
+env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
+```
+```toml
+# satelle.local.toml  (gitignored — never commit the key)
+[vars]
+GLM_API_KEY = "sk-…"
+```
+
+Keep the **committed default** on your always-available backend so a clone with no
+key still runs; make the alternate backend an **opt-in** the operator switches on.
+An exit gate that re-judges the step (e.g. `plan → in_progress`) on the default
+backend keeps a weak alternate-model output from reaching the build.
+
 See also: `satelle help workflows` (choosing a lifecycle) and
 `satelle help reviewer-checks` (gate skills).
