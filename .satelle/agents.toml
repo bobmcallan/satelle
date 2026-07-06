@@ -76,9 +76,8 @@ harness = "in-loop"            # the orchestrator/driving session itself
 # {system}/{tools}/{model} (payload on stdin); point it at ANY agent CLI.
 harness = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob"     # read-only grant
-model   = "sonnet"             # TEMP: z.ai 5h quota exhausted — reviewer on Anthropic to unblock; revert to glm-5-turbo when quota resets
-# env dropped while the reviewer is on Anthropic (Anthropic default endpoint):
-# env   = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
+model   = "sonnet"             # TIERED (operator decision): gates run on the rigorous "parent" model — sonnet caught release-evidence gaps GLM waved through, and avoids GLM's 529/5h-quota flakiness. Workers (planner/retrospective) stay on GLM for cost.
+# No GLM env here: the reviewer uses the Anthropic default endpoint (the tiering split).
 
 # commit-agent — a NAMED, isolated agent the project workflow allocates to the
 # commit and push steps (agent=commit-agent), declared as a flat top-level section
@@ -92,7 +91,7 @@ model   = "sonnet"             # TEMP: z.ai 5h quota exhausted — reviewer on A
 [commit-agent]
 harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*),Bash(gofmt:*)"
-model   = "glm-5-turbo"
+model   = "glm-4.6"
 env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
 
 # integrator — the INTEGRATION step's named agent (sty_1c543ecd): runs the
@@ -104,7 +103,7 @@ env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUT
 [integrator]
 harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Edit,Bash(make:*),Bash(go:*),Bash(gofmt:*),Bash(satelle:*)"
-model   = "glm-5-turbo"
+model   = "glm-4.6"
 env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
 
 # planner — the `plan` step's named agent (sty_d9a0b573). It reads the story,
