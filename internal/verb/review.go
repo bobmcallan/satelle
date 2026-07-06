@@ -28,6 +28,14 @@ type GateDecision struct {
 	// (sty_fb3e0873). They mirror the deciding reviewer for the single-reviewer path.
 	Command string
 	Context string
+	Model   string // the reviewer's resolved model id (sty_a699ad14) — for the cost view
+	// TokensIn/Out/Total and DurationMs are the invocation's cost (sty_a699ad14),
+	// recorded on the agent_invocation ledger entry so per-gate cost is auditable.
+	// Zero for a functional-check gate or a plain-text harness that emits no usage.
+	TokensIn    int
+	TokensOut   int
+	TokensTotal int
+	DurationMs  int64
 }
 
 // ReviewerVerdict is one reviewer's verdict within a transition's ordered
@@ -44,6 +52,13 @@ type ReviewerVerdict struct {
 	// records HOW it was judged, not just the outcome. Empty for a functional check.
 	Command string `json:"command,omitempty"`
 	Context string `json:"context,omitempty"`
+	Model   string `json:"model,omitempty"` // reviewer's resolved model id (sty_a699ad14)
+	// Token/wall-time cost of this reviewer's invocation (sty_a699ad14), recorded
+	// on its agent_invocation entry for the per-gate cost view.
+	TokensIn    int   `json:"tokens_in,omitempty"`
+	TokensOut   int   `json:"tokens_out,omitempty"`
+	TokensTotal int   `json:"tokens_total,omitempty"`
+	DurationMs  int64 `json:"duration_ms,omitempty"`
 }
 
 // TransitionGater judges a requested status transition in an isolated,
@@ -120,7 +135,13 @@ type DispatchResult struct {
 	// in-loop session, sty_5d48317b). The model id is not a secret; the binding's
 	// env (endpoint + token) is deliberately NEVER recorded.
 	Model string `json:"model,omitempty"`
-	Skill string `json:"skill,omitempty"`
+	// Token/wall-time cost of the dispatch (sty_a699ad14), recorded on the
+	// agent_invocation entry. Zero for a plain-text harness with no usage envelope.
+	TokensIn    int    `json:"-"`
+	TokensOut   int    `json:"-"`
+	TokensTotal int    `json:"-"`
+	DurationMs  int64  `json:"-"`
+	Skill       string `json:"skill,omitempty"`
 	// Output is the dispatched agent's captured stdout (sty_890b86cb). For a task
 	// EXECUTION run, the verb layer writes it through as an OKF run-output document
 	// under the parent task's folder, so a run's evidence is discoverable per task

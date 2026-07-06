@@ -17,11 +17,13 @@ package agentcli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Supported agent CLI identifiers.
@@ -45,7 +47,7 @@ const (
 // needs no shell: the substrate it reasons about is materialised as markdown
 // under .satelle, so it reads it directly. A repo MAY widen the grant in
 // .satelle/agents.toml (transparently), but the default is read-only.
-const DefaultClaudeHarness = "claude -p --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model}"
+const DefaultClaudeHarness = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model}"
 
 // Request is one headless agent invocation.
 type Request struct {
@@ -60,6 +62,52 @@ type Request struct {
 	// Env is NEVER included in Command() evidence, logs, or error strings
 	// (sty_001558ce).
 	Env map[string]string
+}
+
+// UsageResult is the cost of one agent invocation — token counts and, when the
+// caller times the run, its wall-clock duration. Populated from a machine-readable
+// agent envelope (claude's `--output-format json`); a plain-text harness yields the
+// zero value, so cost capture degrades gracefully (sty_a699ad14). It never carries
+// the env or any secret — only numbers.
+type UsageResult struct {
+	InputTokens  int
+	OutputTokens int
+	TotalTokens  int
+	Duration     time.Duration
+}
+
+// claudeJSONEnvelope is the shape of `claude -p --output-format json` output: the
+// model's text lands in `result`, with token usage alongside. Only the fields we
+// record are declared; extra fields are ignored.
+type claudeJSONEnvelope struct {
+	Result string `json:"result"`
+	Usage  struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage"`
+}
+
+// UnwrapUsage splits an agent's raw stdout into the INNER result text (what verdict
+// parsing consumes, unchanged) and its token UsageResult. If stdout is a claude
+// `--output-format json` envelope, the model's `result` text is returned with the
+// usage; otherwise stdout is returned verbatim with a zero UsageResult — so a
+// plain-text or non-claude harness keeps working and simply reports no cost. The
+// Duration is set by the caller (UnwrapUsage measures only tokens).
+func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
+	trimmed := bytes.TrimSpace(stdout)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return stdout, UsageResult{}
+	}
+	var env claudeJSONEnvelope
+	if err := json.Unmarshal(trimmed, &env); err != nil || env.Result == "" {
+		return stdout, UsageResult{}
+	}
+	u := UsageResult{
+		InputTokens:  env.Usage.InputTokens,
+		OutputTokens: env.Usage.OutputTokens,
+		TotalTokens:  env.Usage.InputTokens + env.Usage.OutputTokens,
+	}
+	return []byte(env.Result), u
 }
 
 // Runner invokes an agent CLI headlessly and returns its stdout.

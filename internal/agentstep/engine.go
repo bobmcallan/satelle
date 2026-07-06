@@ -455,7 +455,8 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 		result.Context = dec.Context
 		result.Reviewers = append(result.Reviewers, verb.ReviewerVerdict{
 			Skill: skill, Order: i, Accept: dec.Accept, Notes: dec.Notes, System: i >= sysStart,
-			Command: dec.Command, Context: dec.Context,
+			Command: dec.Command, Context: dec.Context, Model: dec.Model,
+			TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 		})
 		if !dec.Accept {
 			return result, nil // a reject blocks the edge — do not run later reviewers
@@ -586,7 +587,9 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	}
 	res := verb.DispatchResult{Dispatched: true, Agent: target.Agent, Command: runner.Command(), Model: binding.Model, Skill: target.Skill}
 	g.emitProgress("dispatching step %s to named agent %s (may take several minutes)…", toStatus, target.Agent)
-	out, runErr := g.runOnce(ctx, runner, req, g.checkTimeout)
+	out, usage, runErr := g.runOnce(ctx, runner, req, g.checkTimeout)
+	res.TokensIn, res.TokensOut, res.TokensTotal = usage.InputTokens, usage.OutputTokens, usage.TotalTokens
+	res.DurationMs = usage.Duration.Milliseconds()
 	g.logExecutorRun(target.Agent, item.ID, toStatus, out, runErr)
 	// Carry the captured stdout back so the verb layer can write it through as an
 	// OKF run-output doc for a task execution (sty_890b86cb). The central
@@ -596,6 +599,15 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		return res, fmt.Errorf("named agent %q failed performing step %q: %w", target.Agent, toStatus, runErr)
 	}
 	return res, nil
+}
+
+// setDecisionUsage copies an invocation's token/wall-time cost onto a gate
+// decision so the verb layer can record it on the agent_invocation entry — the
+// per-gate cost the observability view rolls up (sty_a699ad14).
+func (g *Engine) setDecisionUsage(d *verb.GateDecision, u agentcli.UsageResult) {
+	d.TokensIn, d.TokensOut, d.TokensTotal = u.InputTokens, u.OutputTokens, u.TotalTokens
+	d.DurationMs = u.Duration.Milliseconds()
+	d.Model = g.model
 }
 
 // grantsSatelleCLI reports whether a binding's tool grant lets a dispatched agent
@@ -764,7 +776,7 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 			}
 		}
 		g.emitProgress("running reviewer %s (attempt %d/%d, may take several minutes)…", skill, attempt, attempts)
-		out, rerr := g.runOnce(ctx, g.runner, req, g.agentTimeout)
+		out, usage, rerr := g.runOnce(ctx, g.runner, req, g.agentTimeout)
 		if rerr != nil {
 			// A DEADLINE expiry is a bound, not contention — retrying would just
 			// re-block for another full window. Fail fast with a legible timeout so
@@ -793,6 +805,7 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 				pd.Skill = skill
 				pd.Command = g.runner.Command()
 				pd.Context = skill
+				g.setDecisionUsage(&pd, usage)
 				return pd, nil
 			}
 			lastErr, lastOut = perr, out
@@ -806,6 +819,7 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 		// Only the LLM path sets these — a functional check above invokes no agent.
 		dec.Command = g.runner.Command()
 		dec.Context = skill
+		g.setDecisionUsage(&dec, usage)
 		return dec, nil
 	}
 	// Every attempt failed to produce a verdict — surface a CLEAR, actionable error
@@ -932,7 +946,10 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 		return "", err
 	}
 	g.emitProgress("summarising step %s→%s (may take a minute)…", from, to)
-	out, err := g.runOnce(ctx, g.runner, req, g.agentTimeout)
+	// The summariser writes a step_summary ledger entry (not agent_invocation), so
+	// its usage is not rolled into the per-gate cost view here — a documented gap
+	// (sty_a699ad14); the cost view covers the agent_invocation gates.
+	out, _, err := g.runOnce(ctx, g.runner, req, g.agentTimeout)
 	if err != nil {
 		return soft("mandatory step summary failed: %v", err)
 	}

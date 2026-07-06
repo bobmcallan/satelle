@@ -264,7 +264,8 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		// top-level verdict so both paths record identically.
 		reviewers := dec.Reviewers
 		if len(reviewers) == 0 && dec.Gated {
-			reviewers = []ReviewerVerdict{{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes, Command: dec.Command, Context: dec.Context}}
+			reviewers = []ReviewerVerdict{{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes, Command: dec.Command, Context: dec.Context, Model: dec.Model,
+				TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs}}
 		}
 		for _, rv := range reviewers {
 			// Record HOW the isolated agent was invoked before its verdict — the
@@ -318,7 +319,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 			appendLedgerEntry(ctx, current.ID, ledger.KindAgentInvocation, "executor",
 				fmt.Sprintf("dispatched step %q to named agent %q%s (%s) with @skill:%s",
 					*req.Status, res.Agent, modelNote, res.Command, res.Skill),
-				transitionPayload(current.Status, *req.Status, res.Skill), now)
+				dispatchPayload(current.Status, *req.Status, res), now)
 			// A dispatched task-execution run's captured output is written through as
 			// an OKF run-output doc under its task folder (sty_890b86cb) — the same
 			// write seam the in-loop execution-record verb uses. Best-effort: a write
@@ -701,18 +702,48 @@ func reviewerPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 	return b
 }
 
+// dispatchPayload stamps a named-executor agent_invocation row with its model and
+// token/wall-time cost (sty_a699ad14), so the per-gate cost view can roll up a
+// dispatched step (planner, coder) the same way it does a reviewer gate.
+func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
+	p := struct {
+		From        string `json:"from"`
+		To          string `json:"to"`
+		Agent       string `json:"agent"`
+		Skill       string `json:"skill,omitempty"`
+		Command     string `json:"command,omitempty"`
+		Model       string `json:"model,omitempty"`
+		TokensIn    int    `json:"tokens_in,omitempty"`
+		TokensOut   int    `json:"tokens_out,omitempty"`
+		TokensTotal int    `json:"tokens_total,omitempty"`
+		DurationMs  int64  `json:"duration_ms,omitempty"`
+	}{From: from, To: to, Agent: res.Agent, Skill: res.Skill, Command: res.Command, Model: res.Model,
+		TokensIn: res.TokensIn, TokensOut: res.TokensOut, TokensTotal: res.TokensTotal, DurationMs: res.DurationMs}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
 // invocationPayload stamps an agent_invocation row with the resolved command and
 // the injected-context source (skill/rubric file), correlated to the edge, so the
 // timeline can show HOW the agent was invoked alongside its verdict (sty_fb3e0873).
 func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 	p := struct {
-		From    string `json:"from"`
-		To      string `json:"to"`
-		Agent   string `json:"agent"`
-		Skill   string `json:"skill,omitempty"`
-		Command string `json:"command,omitempty"`
-		Context string `json:"context,omitempty"`
-	}{From: from, To: to, Agent: "reviewer", Skill: rv.Skill, Command: rv.Command, Context: rv.Context}
+		From        string `json:"from"`
+		To          string `json:"to"`
+		Agent       string `json:"agent"`
+		Skill       string `json:"skill,omitempty"`
+		Command     string `json:"command,omitempty"`
+		Context     string `json:"context,omitempty"`
+		Model       string `json:"model,omitempty"`
+		TokensIn    int    `json:"tokens_in,omitempty"`
+		TokensOut   int    `json:"tokens_out,omitempty"`
+		TokensTotal int    `json:"tokens_total,omitempty"`
+		DurationMs  int64  `json:"duration_ms,omitempty"`
+	}{From: from, To: to, Agent: "reviewer", Skill: rv.Skill, Command: rv.Command, Context: rv.Context, Model: rv.Model,
+		TokensIn: rv.TokensIn, TokensOut: rv.TokensOut, TokensTotal: rv.TokensTotal, DurationMs: rv.DurationMs}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil

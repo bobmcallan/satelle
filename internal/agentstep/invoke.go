@@ -81,13 +81,24 @@ func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Req
 // under agentTimeout), the summariser (same), and the named executor (its binding's
 // own runner under checkTimeout) all run through one seam. timeout ≤0 disables the
 // deadline (tests).
-func (g *Engine) runOnce(ctx context.Context, runner agentcli.Runner, req agentcli.Request, timeout time.Duration) ([]byte, error) {
+func (g *Engine) runOnce(ctx context.Context, runner agentcli.Runner, req agentcli.Request, timeout time.Duration) ([]byte, agentcli.UsageResult, error) {
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	return runner.Run(ctx, req)
+	// Time the run and unwrap any machine-readable usage envelope, so every gate/
+	// dispatch records its token + wall-time cost (sty_a699ad14). A plain-text
+	// harness unwraps to (stdout, zero-usage), so the cost fields are simply empty.
+	start := time.Now()
+	raw, err := runner.Run(ctx, req)
+	elapsed := time.Since(start)
+	if err != nil {
+		return raw, agentcli.UsageResult{Duration: elapsed}, err
+	}
+	text, usage := agentcli.UnwrapUsage(raw)
+	usage.Duration = elapsed
+	return text, usage, nil
 }
 
 // isolatedAgentBriefing is the shared body of every isolated-agent charter: the
