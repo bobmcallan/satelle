@@ -37,7 +37,7 @@
 # Each binding's `harness` is how/where the agent runs. Two forms:
 #   - SINGLE token (e.g. harness = "claude") — a built-in PRESET; the reviewer
 #     preset carries a read-only --disallowedTools denylist.
-#   - MULTI token (e.g. harness = "claude -p --append-system-prompt {system} ...")
+#   - MULTI token (e.g. harness = "claude -p --output-format json --append-system-prompt {system} ...")
 #     — a full COMMAND TEMPLATE taken verbatim, so a repo can point at ANY agent
 #     CLI by writing its argv. satelle substitutes these placeholders, each into
 #     its own argument (so a multi-line value stays one arg) and pipes the payload
@@ -56,7 +56,7 @@
 # NEVER here (committed). Example — GLM via its Anthropic-compatible endpoint, the
 # same claude CLI, model reads naturally:
 #   [planner]
-#   harness = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
+#   harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
 #   model   = "glm-4.6"
 #   env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
 # and in satelle.local.toml:  [vars] / GLM_API_KEY = "sk-…"
@@ -74,7 +74,7 @@ harness = "in-loop"            # the orchestrator/driving session itself
 [reviewer]
 # The FULL command template — transparent and swappable: satelle substitutes
 # {system}/{tools}/{model} (payload on stdin); point it at ANY agent CLI.
-harness = "claude -p --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model}"
+harness = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob"     # read-only grant
 model   = "glm-5-turbo"        # all agents on GLM (z.ai) — the model-mixing switch (epic:model-mixing)
 env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
@@ -89,7 +89,7 @@ env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUT
 # the commit/push transitions (sty_fd427546); set harness = "in-loop" instead to
 # hand those steps back to the orchestrator.
 [commit-agent]
-harness = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
+harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*),Bash(gofmt:*)"
 model   = "glm-5-turbo"
 env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
@@ -101,7 +101,7 @@ env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUT
 # the integration→commit EDGE gates (satelle-integration-review + the coded
 # intcheck) still judge the outcome, so a failed integration cannot reach commit.
 [integrator]
-harness = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
+harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Edit,Bash(make:*),Bash(go:*),Bash(gofmt:*),Bash(satelle:*)"
 model   = "glm-5-turbo"
 env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
@@ -111,7 +111,7 @@ env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUT
 # it to the story (Bash(satelle:*) for `satelle story attach`) — read-only on the
 # source (no Edit/Write); it plans, it does not build.
 [planner]
-harness = "claude -p --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
+harness = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Bash(satelle:*)"
-model   = "glm-5-turbo"
+model   = "glm-4.6"            # GLM-4 line: reliable under sustained agentic load (glm-5-turbo 529-retry-loops on long planner runs)
 env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }

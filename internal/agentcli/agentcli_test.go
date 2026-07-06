@@ -196,3 +196,28 @@ func TestComposeEnv(t *testing.T) {
 		t.Errorf("disjoint base keys lost: %v", got)
 	}
 }
+
+func TestUnwrapUsage(t *testing.T) {
+	// A claude --output-format json envelope: result text extracted, usage captured.
+	env := `{"type":"result","result":"the verdict text","usage":{"input_tokens":54,"output_tokens":59}}`
+	text, u := UnwrapUsage([]byte(env))
+	if string(text) != "the verdict text" {
+		t.Errorf("result not extracted: %q", text)
+	}
+	if u.InputTokens != 54 || u.OutputTokens != 59 || u.TotalTokens != 113 {
+		t.Errorf("usage = %+v, want 54/59/113", u)
+	}
+	// Plain text (a non-json harness) passes through verbatim with zero usage.
+	raw := "Verdict: accept.\n"
+	text, u = UnwrapUsage([]byte(raw))
+	if string(text) != raw || u.TotalTokens != 0 {
+		t.Errorf("plain text should pass through with zero usage: %q %+v", text, u)
+	}
+	// A JSON object that is NOT the envelope (no result) passes through untouched,
+	// so verdict parsing still sees the original bytes (never a silent empty).
+	other := `{"decision":"accept"}`
+	text, u = UnwrapUsage([]byte(other))
+	if string(text) != other || u.TotalTokens != 0 {
+		t.Errorf("non-envelope json should pass through: %q %+v", text, u)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -279,7 +280,55 @@ func storyCostCommands() []*cobra.Command {
 	actual.Flags().StringVar(&aTime, "time", "", "actual duration (e.g. 50m)")
 	actual.Flags().IntVar(&aTokens, "tokens", 0, "actual tokens")
 
-	return []*cobra.Command{estimate, actual}
+	// cost — the observability VIEW (sty_a699ad14): the per-gate token + wall-time
+	// cost recorded on the story's agent_invocation ledger entries, so an operator
+	// sees which reviewer/dispatch spent what. Distinct from estimate/actual (the
+	// plan's own time/token figures) — this is measured runtime cost.
+	cost := &cobra.Command{
+		Use:         "cost <id>",
+		Short:       "Show the measured per-gate token + wall-time cost recorded for a story",
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := appFrom(cmd); err != nil {
+				return err
+			}
+			sc, err := verb.ComputeStoryCost(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "TRANSITION\tSTEP\tMODEL\tTOKENS in/out\tTOTAL\tDURATION")
+			for _, r := range sc.Rows {
+				step := r.Agent
+				if r.Skill != "" {
+					step = r.Skill
+				}
+				fmt.Fprintf(w, "%s→%s\t%s\t%s\t%d/%d\t%d\t%s\n",
+					r.From, r.To, step, dashIfEmpty(r.Model), r.TokensIn, r.TokensOut, r.TokensTotal, fmtDurationMs(r.DurationMs))
+			}
+			fmt.Fprintf(w, "TOTAL\t\t\t\t%d\t%s\n", sc.TotalTokens, fmtDurationMs(sc.TotalDurationMs))
+			return w.Flush()
+		},
+	}
+
+	return []*cobra.Command{estimate, actual, cost}
+}
+
+// fmtDurationMs renders a millisecond duration compactly (e.g. 3.1s, 2m4s). Zero
+// (an uninstrumented/plain-text invocation) renders as a dash.
+func fmtDurationMs(ms int64) string {
+	if ms <= 0 {
+		return "-"
+	}
+	return (time.Duration(ms) * time.Millisecond).Round(100 * time.Millisecond).String()
+}
+
+func dashIfEmpty(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 // storyRestampCommand builds `satelle story restamp <id> [--workflow <name>]`:
