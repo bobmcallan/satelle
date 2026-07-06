@@ -29,3 +29,4 @@ edit_exempt_paths = []
 
 [hosted]
 server = "https://satelle.dev"
+project = "satelle"

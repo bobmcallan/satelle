@@ -76,7 +76,8 @@ harness = "in-loop"            # the orchestrator/driving session itself
 # {system}/{tools}/{model} (payload on stdin); point it at ANY agent CLI.
 harness = "claude -p --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob"     # read-only grant
-model   = "sonnet"             # review on sonnet (sty_5073df2f activates sty_dad271fd's knob)
+model   = "glm-5-turbo"        # all agents on GLM (z.ai) — the model-mixing switch (epic:model-mixing)
+env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
 
 # commit-agent — a NAMED, isolated agent the project workflow allocates to the
 # commit and push steps (agent=commit-agent), declared as a flat top-level section
@@ -90,7 +91,8 @@ model   = "sonnet"             # review on sonnet (sty_5073df2f activates sty_da
 [commit-agent]
 harness = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*),Bash(gofmt:*)"
-model   = "sonnet"
+model   = "glm-5-turbo"
+env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
 
 # integrator — the INTEGRATION step's named agent (sty_1c543ecd): runs the
 # @skill:integrate rubric isolated on a cheaper/faster model. Per-step model
@@ -101,27 +103,15 @@ model   = "sonnet"
 [integrator]
 harness = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Edit,Bash(make:*),Bash(go:*),Bash(gofmt:*),Bash(satelle:*)"
-model   = "sonnet"
+model   = "glm-5-turbo"
+env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
 
-# planner — the ONLY dispatched executor in the reviewer-only workflow
-# (sty_d9a0b573): the `plan` step's named agent, bound to a cheap FABLE model. It
-# reads the story, writes an implementation plan covering every acceptance
-# criterion, and attaches it to the story (Bash(satelle:*) for `satelle story
-# attach`) — read-only on the source (no Edit/Write); it plans, it does not build.
-# Per-step model allocation is pure config: fable plans, the in-loop session
-# (opus) implements. The committed DEFAULT is Anthropic so a clone with no GLM key
-# still runs (epic:model-mixing AC2, sty_5d48317b).
+# planner — the `plan` step's named agent (sty_d9a0b573). It reads the story,
+# writes an implementation plan covering every acceptance criterion, and attaches
+# it to the story (Bash(satelle:*) for `satelle story attach`) — read-only on the
+# source (no Edit/Write); it plans, it does not build.
 [planner]
 harness = "claude -p --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Bash(satelle:*)"
-model   = "fable"
-
-# OPT-IN: run the planner on GLM instead (z.ai's Anthropic-compatible endpoint,
-# same claude CLI) — the model-mixing dogfood (epic:model-mixing, sty_5d48317b).
-# Put GLM_API_KEY under [vars] in the gitignored satelle.local.toml, then replace
-# the [planner] model/env above with:
-#   model = "glm-4.6"   # fast + reliable today; "glm-5.2" is the newest coding
-#                       # model but can return 529 (overloaded) under load
-#   env   = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
-# The plan→in_progress gate re-judges the plan on Anthropic, so a weak GLM plan
-# cannot corrupt the build.
+model   = "glm-5-turbo"
+env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
