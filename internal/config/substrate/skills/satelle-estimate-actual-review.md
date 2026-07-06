@@ -3,23 +3,22 @@ name: satelle-estimate-actual-review
 scope: system
 type: skill
 tags: [type:skill, type:reviewer]
-description: CODED gate that judges PRESENCE of the agent's self-reported cost — a plan estimate entering in_progress and the actual entering done. Declared as a scoped reviewer node (on="in_progress,done"); carries a self-contained functional check (no agent) that reads the transition payload. Presence is judged, not accuracy.
+description: CODED gate judging PRESENCE of self-reported cost tags — an estimate entering in_progress and an actual entering done. Scoped reviewer node (on="in_progress,done"); self-contained functional check, no agent. Presence is judged, not accuracy.
 ---
 
 # Estimate / actual presence gate (coded functional check)
 
-The workflow declares this skill as a scoped gate (`on="in_progress,done"`), and
-the check below IS the decision — deterministic code, no LLM. It receives the
-transition payload `{story, from, to, review_skill}` on stdin; the estimate and
-actual are recorded as story tags by `satelle story estimate` /
+Scoped gate (`on="in_progress,done"`); the check below IS the decision —
+deterministic code, no LLM. Reads `{story, from, to, review_skill}` on stdin.
+Estimate/actual are story tags set by `satelle story estimate` /
 `satelle story actual`:
 
-- `estimate-minutes:<n>` and/or `estimate-tokens:<n>` — the plan estimate.
-- `actual-minutes:<n>` and/or `actual-tokens:<n>` — the actual cost.
+- `estimate-minutes:<n>` and/or `estimate-tokens:<n>` — plan estimate.
+- `actual-minutes:<n>` and/or `actual-tokens:<n>` — actual cost.
 
-The rule: entering `in_progress` requires an estimate tag; entering `done`
-requires an actual tag; any other edge passes. Presence only — any non-empty
-value satisfies; accuracy is never judged.
+Rule: entering `in_progress` requires an estimate tag; entering `done`
+requires an actual tag; other edges pass. Presence only — any non-empty value
+satisfies; accuracy is never judged.
 
 ```check
 # Coded estimate/actual presence gate. Reads {story, from, to, review_skill}
