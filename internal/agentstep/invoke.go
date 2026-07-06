@@ -20,14 +20,15 @@ import (
 // sty_47d31300 pull-context call-to-action) is authored in ONE place and reaches
 // every dispatched agent.
 type invocation struct {
-	charter          string          // role charter; empty for the summariser (rubric-only prompt)
-	rubric           string          // the skill body (the reviewer/executor/summariser rubric)
-	injectPrinciples bool            // prepend the session-resident principles
-	payload          any             // marshalled to JSON and delivered on stdin
-	tools            string          // the tool grant ({tools})
-	model            string          // optional model override ({model})
-	runner           agentcli.Runner // the agent CLI to invoke (g.runner, or a binding's own runner)
-	timeout          time.Duration   // per-invocation deadline; ≤0 disables the bound
+	charter          string            // role charter; empty for the summariser (rubric-only prompt)
+	rubric           string            // the skill body (the reviewer/executor/summariser rubric)
+	injectPrinciples bool              // prepend the session-resident principles
+	payload          any               // marshalled to JSON and delivered on stdin
+	tools            string            // the tool grant ({tools})
+	model            string            // optional model override ({model})
+	env              map[string]string // resolved env layered onto the subprocess (binding.Env / reviewerEnv)
+	runner           agentcli.Runner   // the agent CLI to invoke (g.runner, or a binding's own runner)
+	timeout          time.Duration     // per-invocation deadline; ≤0 disables the bound
 }
 
 // buildRequest composes an isolated agent's system prompt in ONE canonical order —
@@ -70,6 +71,7 @@ func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Req
 		Payload:      string(payload),
 		AllowedTools: inv.tools,
 		Model:        inv.model,
+		Env:          inv.env,
 		Dir:          g.repoRoot,
 	}, nil
 }

@@ -47,6 +47,19 @@
 #         {model}   the `model` below (omit the placeholder to inherit the default)
 # `tools` is the capability grant; the grant travels with the binding, so a
 # reviewer's read-only ceiling holds whatever the backend.
+#
+# PER-BINDING ENV (sty_001558ce) — point a step at an alternate model backend
+# WITHOUT a wrapper binary. A binding may set `env = { KEY = "value" }`; each value
+# may reference the [vars] KV via ${NAME} (resolved at load, fail-fast on an unknown
+# var). The resolved env layers onto the dispatched agent's process (binding keys
+# win). SECRETS (API keys) go under [vars] in the gitignored satelle.local.toml —
+# NEVER here (committed). Example — GLM via its Anthropic-compatible endpoint, the
+# same claude CLI, model reads naturally:
+#   [planner]
+#   harness = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
+#   model   = "glm-4.6"
+#   env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
+# and in satelle.local.toml:  [vars] / GLM_API_KEY = "sk-…"
 
 # FULLY DEFINED (sty_892517e7, user feedback): every binding below writes out
 # its ACTIVE values — nothing hidden in code defaults — so what runs is exactly
