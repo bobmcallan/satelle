@@ -44,6 +44,13 @@ const (
 	// these ledger rows so the per-story close-out can compare estimate vs actual.
 	KindEstimateRecorded = "estimate_recorded"
 	KindActualRecorded   = "actual_recorded"
+	// KindStepCost records a single STEP's self-reported actual token cost and/or
+	// its per-step estimate (`satelle story step-cost`) — the only way to attribute
+	// cost to an IN-LOOP step, whose tokens the CLI (a subprocess of the driving
+	// session) cannot introspect. Per-step wall-time is derived from transition
+	// timestamps, not stored here. Payload carries numbers + the step name only —
+	// never env/secrets (sty_3b2e55f5).
+	KindStepCost = "step_cost"
 	// KindWorkflowStamped records the workflow chosen to govern a story at create
 	// (sty_3800ac23) — the choice satelle's gates read thereafter.
 	KindWorkflowStamped = "workflow_stamped"

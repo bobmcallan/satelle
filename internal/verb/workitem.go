@@ -29,6 +29,7 @@ func init() {
 	// begin-work and the actual cost at close, scoped to the story.
 	Register(&Verb{Name: "story-estimate", Description: "Record a story's plan estimate (time/tokens)", Invoke: storyEstimate})
 	Register(&Verb{Name: "story-actual", Description: "Record a story's actual cost (time/tokens)", Invoke: storyActual})
+	Register(&Verb{Name: "story-step-cost", Description: "Record a single step's actual cost / estimate (tokens/time)", Invoke: storyStepCost})
 	Register(&Verb{Name: "story-retrospect", Description: "Run the retrospective agent over a finished story to file improvement proposals", Invoke: storyRetrospect})
 	// Restamp is story-only too: tasks/executions are unstamped by design
 	// (sty_3800ac23 / sty_ef08ce2a) — they resolve their workflow at gate time.
@@ -521,6 +522,72 @@ func storyEstimate(ctx context.Context, raw json.RawMessage) (json.RawMessage, e
 
 func storyActual(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	return recordCost(ctx, raw, "actual", ledger.KindActualRecorded)
+}
+
+// stepCostReq is the request for story-step-cost: a per-STEP actual (tokens/time)
+// and/or per-step estimate. It carries numbers and the step name only.
+type stepCostReq struct {
+	ID        string `json:"id"`
+	Step      string `json:"step"`
+	Tokens    int    `json:"tokens,omitempty"`
+	Time      string `json:"time,omitempty"`
+	EstTokens int    `json:"est_tokens,omitempty"`
+	EstTime   string `json:"est_time,omitempty"`
+}
+
+// storyStepCost records a KindStepCost ledger entry for one step — the only way to
+// attribute token cost to an IN-LOOP step (the driving session's own tokens are not
+// visible to satelle, a subprocess it spawns) and to capture a per-step estimate.
+// Per-step wall-time is DERIVED from transition timestamps in ComputeStoryCost, so
+// --time here is an optional explicit override. The payload carries numbers + the
+// step name only — never env/secrets (sty_3b2e55f5).
+func storyStepCost(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	store, err := requireWorkItem()
+	if err != nil {
+		return nil, err
+	}
+	var req stepCostReq
+	if err := decode(raw, &req); err != nil {
+		return nil, err
+	}
+	if req.ID == "" {
+		return nil, fmt.Errorf("verb: id required")
+	}
+	if req.Step == "" {
+		return nil, fmt.Errorf("verb: step-cost requires --step")
+	}
+	if req.Tokens <= 0 && req.Time == "" && req.EstTokens <= 0 && req.EstTime == "" {
+		return nil, fmt.Errorf("verb: step-cost requires at least one of --tokens/--time/--est-tokens/--est-time")
+	}
+	it, err := store.Get(ctx, req.ID)
+	if err != nil {
+		return nil, err
+	}
+	d := stepCostData{Step: req.Step, TokensTotal: req.Tokens, EstTokens: req.EstTokens}
+	if req.Time != "" {
+		dur, perr := time.ParseDuration(req.Time)
+		if perr != nil {
+			return nil, fmt.Errorf("verb: invalid --time %q: %w", req.Time, perr)
+		}
+		d.DurationMs = dur.Milliseconds()
+	}
+	if req.EstTime != "" {
+		dur, perr := time.ParseDuration(req.EstTime)
+		if perr != nil {
+			return nil, fmt.Errorf("verb: invalid --est-time %q: %w", req.EstTime, perr)
+		}
+		d.EstDurationMs = dur.Milliseconds()
+	}
+	payload, err := json.Marshal(d)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	body := fmt.Sprintf("step-cost recorded for %q", req.Step)
+	appendLedgerEntry(ctx, it.ID, ledger.KindStepCost, "executor", body, payload, now)
+	appendOpLog("story-step-cost", it.ID, body, now)
+	notifyChange(panelTopic(it.Kind))
+	return json.Marshal(map[string]any{"story_id": it.ID, "step": req.Step, "recorded": true})
 }
 
 // storyRetrospect dispatches the retrospective agent over a finished story
