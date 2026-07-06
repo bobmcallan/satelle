@@ -48,8 +48,9 @@ inconsistencies the operator should fix, and the agent should advise on them:
 
 - **Ambiguous `applies_to`** — two repo workflows that claim the same category (or
   the wildcard) at the same precedence, so the tiebreak is arbitrary.
-- **An unresolved reviewer skill** — a workflow names a gate (`reviewer_skill=` or
-  an `@skill:` node) that does not resolve in the substrate.
+- **An unresolved reviewer skill** — a workflow names a gate (an `@skill:NAME`
+  node or edge, or the legacy `reviewer_skill=` attribute) that does not resolve
+  in the substrate.
 
 Run `satelle workflow validate` to surface these before they bite.
 

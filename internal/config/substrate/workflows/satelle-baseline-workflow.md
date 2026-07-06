@@ -35,7 +35,7 @@ digraph satelle_baseline {
   // Advisory where the skill is absent (a fresh repo); enforced where present.
   estimate    [agent=reviewer, prompt="@skill:satelle-estimate-actual-review", on="in_progress,done"]
 
-  backlog -> in_progress [reviewer_skill="satelle-story-intent-review"]
+  backlog -> in_progress [agent=reviewer, prompt="@skill:satelle-story-intent-review"]
   in_progress -> done
 
   backlog     -> cancelled
