@@ -8,21 +8,22 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 )
 
-// TestRepoReviewerModelIsSonnet pins this repo's dogfood substrate: the activated
-// .satelle/actors.toml resolves the reviewer binding's model to "sonnet"
-// (sty_5073df2f turns on sty_dad271fd's configurable knob). It guards against the
-// activation silently regressing — being re-commented or cleared — so the reviewer
-// keeps reviewing on sonnet here. The wiring from binding → reviewer subprocess is
-// covered by internal/agentstep.TestReviewerModelReachesRunner; this asserts the
-// repo's own config feeds that wiring "sonnet".
-func TestRepoReviewerModelIsSonnet(t *testing.T) {
+// TestRepoReviewerModelIsActive pins this repo's dogfood substrate: the reviewer
+// binding's model knob stays ACTIVE (a non-empty value), so the reviewer runs on a
+// pinned model rather than silently falling back to the CLI default. It guards
+// against the activation regressing — the knob being re-commented or cleared. The
+// SPECIFIC model is an operator choice that changes (this repo has run sonnet and,
+// under the model-mixing work, GLM), so the test asserts the knob is set, not a
+// particular value. The wiring from binding → reviewer subprocess is covered by
+// internal/agentstep.TestReviewerModelReachesRunner.
+func TestRepoReviewerModelIsActive(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	dataDir := filepath.Join(filepath.Dir(filepath.Dir(file)), ".satelle")
 	ac, err := config.LoadAgents(dataDir)
 	if err != nil {
-		t.Fatalf("load %s/actors.toml: %v", dataDir, err)
+		t.Fatalf("load %s/agents.toml: %v", dataDir, err)
 	}
-	if got := ac.ReviewerBinding().Model; got != "sonnet" {
-		t.Errorf("reviewer model = %q, want sonnet (.satelle/actors.toml must keep the reviewer-model knob active)", got)
+	if got := ac.ReviewerBinding().Model; got == "" {
+		t.Errorf("reviewer model is empty — .satelle/agents.toml must keep the reviewer-model knob active (a pinned model)")
 	}
 }
