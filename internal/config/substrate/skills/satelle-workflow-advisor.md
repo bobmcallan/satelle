@@ -54,7 +54,13 @@ to the operator; change nothing yourself.
 4. **Grant scoping.** A dispatched binding's `tools` is its capability ceiling.
    Advise when a step's grant is wider than the step's rubric needs (a
    verify-only step with mutating tools) or too narrow to complete (a commit
-   step without its VCS tools).
+   step without its VCS tools). A **code-writing** dispatched step (Write/Edit in
+   the grant, e.g. a `coder` on `in_progress`) must be reached ONLY from a
+   PERFORMING state — dispatch fires while the status is still the FROM state, and
+   the engaged-story edit gate allows the agent's edits only when that FROM state
+   is itself performing. satelle REFUSES a code-writer dispatched from a
+   non-performing state (e.g. `backlog`) rather than let it ride the serve
+   fail-open; route such a step from a performing predecessor.
 
 5. **Dispatched-step self-sufficiency.** An isolated agent sees ONLY the item
    body/acceptance criteria and the node's rubric — never the conversation.
