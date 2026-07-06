@@ -3,23 +3,22 @@ name: satelle-estimate-actual-review
 scope: project
 type: skill
 tags: [type:skill, type:reviewer]
-description: CODED gate that judges PRESENCE of the agent's self-reported cost — a plan estimate at begin-work and the actual at close. The workflow DECLARES it as a scoped reviewer node (on="in_progress,done"), and the skill carries a self-contained functional check (no agent involved) that reads the transition payload on stdin: a transition INTO in_progress is rejected with no estimate-minutes/estimate-tokens tag, and a transition INTO done is rejected with no actual-minutes/actual-tokens tag. Presence is judged, not accuracy. This repo's copy of the embedded default (a presence check needs no agent run).
+description: CODED gate judging PRESENCE of self-reported cost tags — rejects entry into in_progress with no estimate-minutes/estimate-tokens tag, and entry into done with no actual-minutes/actual-tokens tag. Presence only, not accuracy; self-contained functional check, no agent. Repo copy of the embedded default.
 ---
 
 # Estimate / actual presence gate (coded functional check)
 
-The workflow declares this skill as a scoped gate (`on="in_progress,done"`), and
-the check below IS the decision — deterministic code, no LLM. It receives the
-transition payload `{story, from, to, review_skill}` on stdin; the estimate and
-actual are recorded as story tags by `satelle story estimate` /
+Scoped gate (`on="in_progress,done"`); the check below IS the decision —
+deterministic code, no LLM. Reads `{story, from, to, review_skill}` on stdin.
+Estimate/actual are story tags set by `satelle story estimate` /
 `satelle story actual`:
 
-- `estimate-minutes:<n>` and/or `estimate-tokens:<n>` — the plan estimate.
-- `actual-minutes:<n>` and/or `actual-tokens:<n>` — the actual cost.
+- `estimate-minutes:<n>` and/or `estimate-tokens:<n>` — plan estimate.
+- `actual-minutes:<n>` and/or `actual-tokens:<n>` — actual cost.
 
-The rule: entering `in_progress` requires an estimate tag; entering `done`
-requires an actual tag; any other edge passes. Presence only — any non-empty
-value satisfies; accuracy is never judged.
+Rule: entering `in_progress` requires an estimate tag; entering `done`
+requires an actual tag; other edges pass. Presence only — any non-empty value
+satisfies; accuracy is never judged.
 
 ```check
 # Coded estimate/actual presence gate. Reads {story, from, to, review_skill}

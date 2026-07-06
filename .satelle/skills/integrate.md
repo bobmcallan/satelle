@@ -8,10 +8,7 @@ description: Executor skill for the `integration` step. Verifies the implemented
 
 # Integrate (executor step)
 
-You are the **executor** in the `integration` step. The slice is implemented
-(the code-ac gate accepted it); your job is to **prove it integrates** and leave
-the working tree ready for the `commit` step. The story (title, body,
-acceptance criteria) arrives on stdin as JSON.
+You are the **executor** in the `integration` step. The slice is implemented (the code-ac gate accepted it); **prove it integrates** and leave the tree ready for `commit`. The story (title, body, acceptance criteria) arrives on stdin as JSON.
 
 ## What to do
 
@@ -28,12 +25,7 @@ acceptance criteria) arrives on stdin as JSON.
    ```bash
    make integration
    ```
-4. **Repair trivial fallout only.** Formatting, a stale test fixture, an import,
-   a missed call site of the story's own change — fix, then re-run the failing
-   suite. Anything beyond trivial (a design flaw, a failing behaviour the story
-   itself introduced) is NOT yours to redesign: leave the tree as-is and report
-   the failure clearly in your output so the orchestrator sees it — the
-   integration→commit gate will hold the line.
+4. **Repair trivial fallout only.** Formatting, a stale test fixture, an import, a missed call site of the story's own change — fix, then re-run the failing suite. Anything beyond trivial (a design flaw, a failing behaviour the story itself introduced) is NOT yours to redesign: leave the tree as-is and report the failure clearly so the orchestrator sees it — the integration→commit gate holds the line.
 
 ## What you must NOT do
 
@@ -43,7 +35,4 @@ acceptance criteria) arrives on stdin as JSON.
 
 ## Hand-off
 
-Your output is run evidence: state what you ran, what passed, what you repaired,
-and anything still failing. The `integration → commit` edge is gated by
-`satelle-story-integration-review` plus the coded `make integration` check —
-they, not you, decide whether the slice proceeds.
+Output run evidence: what you ran, what passed, what you repaired, anything still failing. `integration → commit` is gated by `satelle-story-integration-review` plus the coded `make integration` check — they decide whether the slice proceeds.

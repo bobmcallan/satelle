@@ -8,33 +8,20 @@ description: Executor skill for the `commit` step. Stages the slice, bumps the c
 
 # Commit (executor step)
 
-You are the **executor** in the `commit` step. The slice is built and the prior
-gates have accepted it; your job is to **stage it, bump the version, and commit** —
-then leave the push to the next step. You DO the work (see [[satelle-agent-model]]:
-the executor mutates; the reviewer only judges). You do **not** push here.
+You are the **executor** in the `commit` step. The slice is built and prior gates accepted it; **stage it, bump the version, and commit** — leave the push to the next step. You DO the work (see [[satelle-agent-model]]: executor mutates, reviewer only judges). You do **not** push here.
 
 ## Why the bump is mandatory
 
-`.version` is the **single source of truth** for both the release tag (`v<satelle.version>`)
-and the build identity baked into the binary. The `release` workflow cuts a tag
-**only when `.version` changed**, so a commit that does not bump leaves the released
-binary (what `satelle update` serves) stale — the binary-drift trap. Therefore
-**every** commit on this step bumps the patch version and stamps the build date.
+`.version` is the **single source of truth** for the release tag (`v<satelle.version>`) and the build identity baked into the binary. `release` cuts a tag **only when `.version` changed** — a commit that doesn't bump leaves the released binary (what `satelle update` serves) stale (binary-drift trap). **Every** commit on this step bumps the patch version and stamps the build date.
 
 ## What to do
 
-1. **Stage and format.** Format Go, then stage the STORY'S SLICE — the files
-   this story changed (read the story body/acceptance criteria on stdin and
-   `git status --short` to identify them):
+1. **Stage and format.** Format Go, then stage the STORY'S SLICE — the files this story changed (read the story body/acceptance criteria on stdin and `git status --short`):
    ```bash
    gofmt -s -w internal/ cmd/ 2>/dev/null; git add <the story's files>
    ```
-   Do NOT `git add -A`: the tree may carry ANOTHER session's in-flight changes —
-   sweeping a file the story did not touch into the commit is a defect. Confirm
-   the staged set is exactly the slice (`git diff --cached --stat`) and that
-   anything left unstaged genuinely belongs to other work.
-2. **Bump `.version`** — MANDATORY. `.version` carries one canonical version plus a
-   build date:
+   Do NOT `git add -A`: the tree may carry ANOTHER session's in-flight changes — sweeping an untouched file into the commit is a defect. Confirm the staged set is exactly the slice (`git diff --cached --stat`) and anything left unstaged genuinely belongs elsewhere.
+2. **Bump `.version`** — MANDATORY. Carries one canonical version plus a build date:
    ```
    satelle.version: <x.y.z>
    satelle.build:   <UTC>
@@ -42,18 +29,10 @@ binary (what `satelle update` serves) stale — the binary-drift trap. Therefore
    - Increment the **patch** of `satelle.version` (`0.0.11` → `0.0.12`).
    - Set `satelle.build` to `date -u +"%Y-%m-%d-%H-%M-%S"`.
    - `git add .version`.
-   The release tag will be `v<satelle.version>`; a missed bump means no tag is cut.
-3. **Commit.** A **conventional commit** subject ending with the story id in parens,
-   e.g. `feat(web): add the X view (sty_1234abcd)`. **No AI attribution** — no
-   `Co-Authored-By`, no "generated with" trailer (this repo's convention). Verify the
-   commit captured every intended file (`git show --stat HEAD`) — a partial commit is
-   a defect.
-4. **Do NOT push.** The `push` step pushes to `main` and watches CI. Leave `HEAD`
-   committed locally with the bumped `.version`.
+   Release tag will be `v<satelle.version>`; a missed bump means no tag is cut.
+3. **Commit.** A **conventional commit** subject ending with the story id in parens, e.g. `feat(web): add the X view (sty_1234abcd)`. **No AI attribution** — no `Co-Authored-By`, no "generated with" trailer (this repo's convention). Verify the commit captured every intended file (`git show --stat HEAD`) — a partial commit is a defect.
+4. **Do NOT push.** `push` pushes to `main` and watches CI. Leave `HEAD` committed locally with the bumped `.version`.
 
 ## Hand-off to the next step
 
-The `push` step pushes `HEAD`, watches the `test` run, then the version-gated
-`release` run, and confirms the tag/assets. The `record-release` step then
-verifies the bump, the green CI, and the published release. You never enact your own
-status advance — the workflow's gates do that (see [[satelle-agent-model]]).
+`push` pushes `HEAD`, watches the `test` run, then the version-gated `release` run, and confirms the tag/assets. `record-release` then verifies the bump, green CI, and the published release. You never enact your own status advance — the workflow's gates do that (see [[satelle-agent-model]]).

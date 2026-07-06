@@ -3,32 +3,30 @@ name: satelle-task-validate-before-review
 scope: project
 type: skill
 tags: [type:skill, type:reviewer, type:functional-check]
-description: CODED entry gate for a task EXECUTION (backlog → in_progress). The skill carries a self-contained functional check (no agent run) that reads the transition payload on stdin and judges STRUCTURE deterministically — the run names a parent task header that exists and is structurally valid (frontmatter id, type task, status, a title heading — the same contract as structure.CheckTask / satelle task validate). Whether the work was DONE is not judged here: completion is the close gate's job (satelle-task-validate-after-review, LLM). Repo skill for the satelle executable-task machinery; pushes back when a run is not ready to begin.
+description: CODED entry gate for a task EXECUTION (backlog → in_progress): self-contained functional check judging STRUCTURE only — the run names a parent task header that exists and is structurally valid (frontmatter id, type task, status, a title heading; same contract as structure.CheckTask / satelle task validate). Completion is NOT judged here — that's the close gate's job (satelle-task-validate-after-review, LLM). Pushes back when a run isn't ready to begin.
 ---
 
 # Task execution — validate-before (coded begin-run gate)
 
-This is the **coded** entry gate on `backlog → in_progress` for a task
-**execution** — one isolated RUN of a task (the task header is a stable authored
-work-definition; the run is the item transitioning). The check below IS the
-decision — deterministic shell, no LLM (see [[satelle-agent-model]]: mechanism
-runs, the gate decides; the decision stays configuration per
-[[satelle-constitution]]). It receives the `{story, from, to}` transition
-payload on stdin, where `story` is the execution item carrying `parent_id` —
-the `tsk_` header it runs.
+**Coded** entry gate on `backlog → in_progress` for a task **execution** — one
+isolated RUN of a task (the header is a stable authored work-definition; the
+run is the item transitioning). The check below IS the decision —
+deterministic shell, no LLM (see [[satelle-agent-model]]: mechanism runs, the
+gate decides; per [[satelle-constitution]]). Receives `{story, from, to}` on
+stdin; `story` is the execution item carrying `parent_id` — the `tsk_` header
+it runs.
 
-What it judges — structure only, mirroring `structure.CheckTask`
-(`satelle task validate`):
+Judges structure only, mirroring `structure.CheckTask` (`satelle task validate`):
 
 - the execution names a parent task (`parent_id`), and that header file exists
   under `.satelle/tasks/`;
-- the header is structurally valid: YAML frontmatter with an `id`, `type: task`
-  (OKF), a `status`, and a `# Title` heading in the body.
+- the header is structurally valid: YAML frontmatter with `id`, `type: task`
+  (OKF), `status`, and a `# Title` heading in the body.
 
-What it deliberately does NOT judge: whether the task's items were completed —
-that is the close gate (`satelle-task-validate-after-review`), and the richness
-of the work-definition prose is the author's business. A task may update
-code/files; shipping those changes is the operator's, not this workflow's.
+NOT judged: whether the task's items were completed (the close gate,
+`satelle-task-validate-after-review`), or the richness of the work-definition
+prose. A task may update code/files; shipping those changes is the operator's
+business, not this workflow's.
 
 ```check
 # Coded structural entry gate. Reads {story, from, to} on stdin; exit 0

@@ -3,21 +3,22 @@ name: satelle-story-deploy-review
 scope: project
 type: skill
 tags: [type:skill, type:reviewer, type:functional-check]
-description: Functional-check gate on integrated → deployed. Does a REAL local deploy of the service and validates it with a health check on BOTH surfaces — the web UI (/healthz returns ok AND the project page renders) and the CLI (satelle status) — then leaves it running. Accepts only if the deploy comes up healthy; rejects (with output) otherwise. Self-contained — the check is embedded below, depending on nothing outside this skill (see satelle-reviewer-self-contained).
+description: Functional-check gate on integrated → deployed. Does a REAL local deploy and health-checks BOTH surfaces — web UI (/healthz + project page renders) and CLI (satelle status) — then leaves it running. Accepts only if healthy; rejects with output otherwise. Self-contained (see satelle-reviewer-self-contained).
 ---
 
 # Deploy gate (functional check)
 
-This is a **functional-check** gate. The check is the embedded ```check script
-below — it is **self-contained** (it references no external script or file).
-satelle runs it in the repo root on `integrated → deployed`; exit 0 accepts,
-non-zero rejects with the output tail as notes.
+**Functional-check** gate. The check is the embedded ```check script below —
+self-contained (references no external script or file). satelle runs it in
+the repo root on `integrated → deployed`; exit 0 accepts, non-zero rejects
+with the output tail as notes.
 
-It does a **real local deploy**: build the binary, install it, (re)start the
-background service via satelle's own `service install` mechanism, then health-check
-both surfaces and **leave the service running**. After this gate passes, the
-project page is live on the service port. Local-first — the service is a local
-systemd user unit, so a real deploy has no production blast radius.
+Does a **real local deploy**: build the binary, install it, (re)start the
+background service via satelle's own `service install` mechanism, then
+health-check both surfaces and **leave the service running**. After this
+gate passes, the project page is live on the service port. Local-first — the
+service is a local systemd user unit, so a real deploy has no production
+blast radius.
 
 ```check
 #!/usr/bin/env bash
