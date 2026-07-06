@@ -601,6 +601,74 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	return res, nil
 }
 
+// retrospectAgent / retrospectSkill name the post-story improvement step: an
+// isolated named agent that reads a finished story and proposes improvements
+// (sty_b53730e2). It is a dispatched EXECUTOR (it creates backlog proposals via
+// the CLI), never a read-only reviewer — the constitution keeps reviewers judging
+// only, so a step that MUTATES is a named agent.
+const (
+	retrospectAgent = "retrospective"
+	retrospectSkill = "satelle-retrospective"
+)
+
+// Retrospect dispatches the retrospective agent over a finished story: it pulls
+// the story + its plan/summary/ledger by id, then emits 1–3 improvement PROPOSALS
+// as backlog stories (its Bash(satelle:*) grant). Invoked per-story by
+// `satelle story retrospect` — kept opt-in rather than auto-on-done so its cost
+// (visible via `satelle story cost`, sty_a699ad14) is measured before it is made
+// always-on. Returns the dispatch result (with captured output + token/wall-time
+// cost) so the verb layer can record an agent_invocation for the cost view.
+func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.DispatchResult, error) {
+	if g.namedAgents == nil {
+		return verb.DispatchResult{}, fmt.Errorf("no agents layer is wired — cannot dispatch the %q agent", retrospectAgent)
+	}
+	binding, found := g.namedAgents(retrospectAgent)
+	if !found {
+		return verb.DispatchResult{}, fmt.Errorf(
+			"no [%s] binding in .satelle/agents.toml — define it (with Bash(satelle:*) so it can file proposals) to run the retrospective", retrospectAgent)
+	}
+	runner, err := g.newRunner(binding.Harness)
+	if err != nil {
+		return verb.DispatchResult{}, fmt.Errorf("%s agent: broken harness: %w", retrospectAgent, err)
+	}
+	if runner == nil {
+		return verb.DispatchResult{}, fmt.Errorf("%s agent harness is in-loop; set a real harness to dispatch it", retrospectAgent)
+	}
+	if !grantsSatelleCLI(binding.Tools) {
+		return verb.DispatchResult{}, fmt.Errorf(
+			"[%s] tools grant lacks the satelle CLI (add `Bash(satelle:*)`) — it needs it to pull the story and file proposal stories", retrospectAgent)
+	}
+	rubric := ""
+	if body, rerr := g.skillBody(ctx, retrospectSkill); rerr == nil {
+		rubric = body
+	} else if !errors.Is(rerr, docindex.ErrNotFound) {
+		return verb.DispatchResult{}, rerr
+	}
+	req, err := g.buildRequest(ctx, invocation{
+		charter:          executorCharter(retrospectAgent, "retrospect", "post-story retrospective"),
+		rubric:           rubric,
+		injectPrinciples: binding.InjectsPrinciples(),
+		payload:          transitionPayload{Story: item, From: item.Status, To: item.Status, ReviewSkill: retrospectSkill},
+		tools:            binding.Tools,
+		model:            binding.Model,
+		env:              binding.Env,
+	})
+	if err != nil {
+		return verb.DispatchResult{}, err
+	}
+	res := verb.DispatchResult{Dispatched: true, Agent: retrospectAgent, Command: runner.Command(), Model: binding.Model, Skill: retrospectSkill}
+	g.emitProgress("running retrospective on %s (may take a few minutes)…", item.ID)
+	out, usage, runErr := g.runOnce(ctx, runner, req, g.checkTimeout)
+	res.TokensIn, res.TokensOut, res.TokensTotal = usage.InputTokens, usage.OutputTokens, usage.TotalTokens
+	res.DurationMs = usage.Duration.Milliseconds()
+	g.logExecutorRun(retrospectAgent, item.ID, "retrospect", out, runErr)
+	res.Output = string(out)
+	if runErr != nil {
+		return res, fmt.Errorf("%s agent failed on %s: %w", retrospectAgent, item.ID, runErr)
+	}
+	return res, nil
+}
+
 // setDecisionUsage copies an invocation's token/wall-time cost onto a gate
 // decision so the verb layer can record it on the agent_invocation entry — the
 // per-gate cost the observability view rolls up (sty_a699ad14).

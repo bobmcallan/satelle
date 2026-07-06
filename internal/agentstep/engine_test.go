@@ -1782,3 +1782,54 @@ func TestCodedEstimateGate(t *testing.T) {
 		t.Error("the coded gate must never invoke the agent")
 	}
 }
+
+// TestRetrospectDispatchesNamedAgent: Retrospect resolves the [retrospective]
+// binding, runs its harness with the retrospective rubric + the story payload,
+// and returns the dispatch result carrying the resolved model (sty_b53730e2).
+func TestRetrospectDispatchesNamedAgent(t *testing.T) {
+	g, _ := newEngine(t, "PROPOSALS FILED: none", fakeDocs{skillBody: "retro rubric", skillFound: true})
+	r := &fakeRunner{out: "PROPOSALS FILED: none"}
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		if name != "retrospective" {
+			return config.AgentBinding{}, false
+		}
+		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Bash(satelle:*)", Model: "glm-4.6"}, true
+	})
+	g.newRunner = func(string) (agentcli.Runner, error) { return r, nil }
+	res, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1", Title: "T", Status: "done"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Dispatched || res.Agent != "retrospective" || res.Model != "glm-4.6" {
+		t.Fatalf("res = %+v", res)
+	}
+	if !strings.Contains(r.got.SystemPrompt, "retro rubric") {
+		t.Errorf("retrospective rubric missing from prompt:\n%s", r.got.SystemPrompt)
+	}
+	if !strings.Contains(r.got.Payload, "sty_1") {
+		t.Errorf("story payload missing: %q", r.got.Payload)
+	}
+}
+
+// TestRetrospectMissingBindingErrors: no [retrospective] binding is a clear
+// refusal (the mechanism never silently no-ops).
+func TestRetrospectMissingBindingErrors(t *testing.T) {
+	g, _ := newEngine(t, "", fakeDocs{})
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) { return config.AgentBinding{}, false })
+	if _, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1"}); err == nil {
+		t.Fatal("want an error naming the missing [retrospective] binding")
+	}
+}
+
+// TestRetrospectRequiresSatelleCLI: the binding must grant the satelle CLI so the
+// agent can pull the story and file proposals — refuse otherwise.
+func TestRetrospectRequiresSatelleCLI(t *testing.T) {
+	g, _ := newEngine(t, "", fakeDocs{skillBody: "x", skillFound: true})
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Grep,Glob"}, true
+	})
+	g.newRunner = func(string) (agentcli.Runner, error) { return &fakeRunner{}, nil }
+	if _, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1"}); err == nil {
+		t.Fatal("want an error when the grant lacks Bash(satelle:*)")
+	}
+}

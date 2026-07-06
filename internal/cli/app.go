@@ -91,6 +91,9 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// agents.toml defines WHO, the DOT defines WHERE, the binary only runs it.
 			rev.SetNamedAgents(agents.NamedBinding)
 			verb.SetExecutorDispatcher(rev)
+			// The retrospective dispatcher (sty_b53730e2): `satelle story retrospect`
+			// runs the [retrospective] agent over a finished story to file proposals.
+			verb.SetRetrospector(rev)
 			// The summariser recaps gated transitions; inert until gating is active.
 			verb.SetStepSummariser(rev)
 			// Create-gating is opt-in per repo (satelle.toml [review] gate_create):

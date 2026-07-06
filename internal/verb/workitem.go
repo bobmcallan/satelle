@@ -29,6 +29,7 @@ func init() {
 	// begin-work and the actual cost at close, scoped to the story.
 	Register(&Verb{Name: "story-estimate", Description: "Record a story's plan estimate (time/tokens)", Invoke: storyEstimate})
 	Register(&Verb{Name: "story-actual", Description: "Record a story's actual cost (time/tokens)", Invoke: storyActual})
+	Register(&Verb{Name: "story-retrospect", Description: "Run the retrospective agent over a finished story to file improvement proposals", Invoke: storyRetrospect})
 	// Restamp is story-only too: tasks/executions are unstamped by design
 	// (sty_3800ac23 / sty_ef08ce2a) — they resolve their workflow at gate time.
 	Register(&Verb{Name: "story-restamp", Description: "Re-stamp a story's governing workflow (re-resolve by category, or an explicit workflow)", Invoke: storyRestamp})
@@ -520,6 +521,45 @@ func storyEstimate(ctx context.Context, raw json.RawMessage) (json.RawMessage, e
 
 func storyActual(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	return recordCost(ctx, raw, "actual", ledger.KindActualRecorded)
+}
+
+// storyRetrospect dispatches the retrospective agent over a finished story
+// (sty_b53730e2): it reads the story + its plan/summary/ledger and files 1–3
+// improvement PROPOSALS as backlog stories. The dispatch's token/wall-time cost is
+// recorded on an agent_invocation entry so `satelle story cost` rolls it up like
+// any other gate/step.
+func storyRetrospect(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	if retrospector == nil {
+		return nil, fmt.Errorf("verb: no retrospective agent is wired")
+	}
+	store, err := requireWorkItem()
+	if err != nil {
+		return nil, err
+	}
+	var req idReq
+	if err := decode(raw, &req); err != nil {
+		return nil, err
+	}
+	if req.ID == "" {
+		return nil, fmt.Errorf("verb: id required")
+	}
+	it, err := store.Get(ctx, req.ID)
+	if err != nil {
+		return nil, err
+	}
+	res, rerr := retrospector.Retrospect(ctx, it)
+	now := time.Now()
+	if res.Dispatched {
+		// Record the dispatch's cost/model on an agent_invocation entry, so the
+		// retrospective shows in `satelle story cost` beside the gates it reviews.
+		appendLedgerEntry(ctx, it.ID, ledger.KindAgentInvocation, "executor",
+			fmt.Sprintf("retrospective on %s (%s) with @skill:%s", it.ID, res.Model, res.Skill),
+			dispatchPayload("done", "retrospect", res), now)
+	}
+	if rerr != nil {
+		return nil, rerr
+	}
+	return json.Marshal(map[string]any{"story_id": it.ID, "output": res.Output, "tokens_total": res.TokensTotal, "duration_ms": res.DurationMs})
 }
 
 // recordCost upserts the prefix-minutes/prefix-tokens tags on a story (prefix is
