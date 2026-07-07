@@ -43,13 +43,16 @@ The binary holds **mechanism only**:
   that indexes authored markdown,
 - the reviewer run path (isolated, read-only `agent -p` → JSON verdict),
 - the embedded *canonical defaults* as the single source of those bytes: the
-  order-zero baseline workflow (embedded-only) PLUS the **canonical default
-  solution** — the generic project, parent, and task-execution workflows and the
-  gate skills they reference — which `satelle init` **seeds into a fresh repo as
-  editable substrate** (and `satelle rebase` redeploys after a backup). Seeding
-  widens what init ships beyond the bare required structure, but keeps
-  config-over-code intact: the lifecycle lands as markdown the operator edits,
-  never as a Go branch, and an existing authored workflow set is never clobbered,
+  **canonical default solution** — the generic base, parent, and task-execution
+  workflows and the gate skills they reference — which `satelle init` **seeds
+  into a fresh repo as editable substrate** (and `satelle rebase` redeploys
+  after a backup). The base workflow is also the order-zero Get fallback, so it
+  still backstops gating when a repo has no workflow on disk at all, or skips
+  seeding it because its applies_to overlaps a category an authored workflow
+  already claims. Seeding widens what init ships beyond the bare required
+  structure, but keeps config-over-code intact: the lifecycle lands as markdown
+  the operator edits, never as a Go branch, and an existing authored workflow
+  set is never clobbered,
 - the local web project page and the CLI surface.
 
 **Behaviour** — which gate runs, what it judges, the lifecycle a repo enforces,

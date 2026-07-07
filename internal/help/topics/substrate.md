@@ -13,10 +13,12 @@ the format it follows, and how it is validated.
   with a `README.md` describing what it should contain (READMEs are dir
   descriptors; the indexer and OKF normaliser skip them);
 - the complete **default solution**, materialised on disk so the default
-  substrate is visible and editable: the generic project workflow, the
-  parent/epic container workflow, the task-execution workflow, and every gate
-  skill they reference. (The order-zero **baseline workflow** stays embedded-only
-  — a fallback, never a competing repo file.)
+  substrate is visible and editable: the order-zero **baseline workflow** (the
+  minimal repo-agnostic lifecycle — edit it in place to layer your own gates),
+  the parent/epic container workflow, the task-execution workflow, and every
+  gate skill they reference. A workflow whose `applies_to` category is already
+  claimed by an authored workflow is skipped (no same-precedence duplicate);
+  the embedded copy still backstops the order-zero fallback either way.
 
 The binary still ships embedded canonical defaults; a repo file with the same
 (kind, name) overrides its default. `init` materialises the defaults so you never

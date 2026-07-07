@@ -287,16 +287,17 @@ func httpStatus(t *testing.T, url string) int {
 }
 
 // TestInitDeploysDefaultSolution asserts a fresh init lands the COMPLETE default
-// solution (sty_a7cbd6dd): the generic project/parent/task-execution workflows
-// plus every referenced gate skill, validating green with no dangling refs, and
-// an execution resolving to the task-execution workflow out of the box.
+// solution (sty_a7cbd6dd, reversed to seed the base by sty_bf153cbf): the generic
+// base/parent/task-execution workflows plus every referenced gate skill,
+// validating green with no dangling refs, and an execution resolving to the
+// task-execution workflow out of the box.
 func TestInitDeploysDefaultSolution(t *testing.T) {
 	bin := testBin
 	repo := t.TempDir()
 	mustRun(t, bin, repo, "init")
 
 	for _, rel := range []string{
-		".satelle/workflows/satelle-project-workflow.md",
+		".satelle/workflows/satelle-baseline-workflow.md",
 		".satelle/workflows/satelle-parent-workflow.md",
 		".satelle/workflows/satelle-task-workflow.md",
 		".satelle/skills/satelle-estimate-actual-review.md",
@@ -380,8 +381,8 @@ func TestRebaseResetsSubstrate(t *testing.T) {
 	if _, serr := os.Stat(extra); serr == nil {
 		t.Error("rebase left the extra authored workflow in the live dir")
 	}
-	if _, serr := os.Stat(filepath.Join(repo, ".satelle", "workflows", "satelle-project-workflow.md")); serr != nil {
-		t.Error("rebase did not redeploy the default project workflow")
+	if _, serr := os.Stat(filepath.Join(repo, ".satelle", "workflows", "satelle-baseline-workflow.md")); serr != nil {
+		t.Error("rebase did not redeploy the default base workflow")
 	}
 
 	// The backup holds the pre-rebase files.
@@ -409,10 +410,10 @@ func TestStoryRestamp(t *testing.T) {
 	mustRun(t, bin, repo, "init")
 	mustRun(t, bin, repo, "reindex")
 
-	// A feature story stamps the seeded wildcard project workflow at create.
+	// A feature story stamps the seeded wildcard base workflow at create.
 	out := mustRun(t, bin, repo, "story", "create", "--title", "Assess the rollout", "--category", "feature")
-	if !strings.Contains(out, `"workflow:satelle-project-workflow"`) {
-		t.Fatalf("create did not stamp the seeded project workflow:\n%s", out)
+	if !strings.Contains(out, `"workflow:satelle-baseline-workflow"`) {
+		t.Fatalf("create did not stamp the seeded base workflow:\n%s", out)
 	}
 	id := extractID(out, "sty_")
 
@@ -444,14 +445,14 @@ description: Governance lifecycle moving backlog → in_progress → done with a
 	// Re-categorise, then restamp re-resolves from the CURRENT category.
 	mustRun(t, bin, repo, "story", "set", id, "--category", "governance")
 	out = mustRun(t, bin, repo, "story", "restamp", id)
-	if !strings.Contains(out, `"workflow:gov-workflow"`) || strings.Contains(out, `"workflow:satelle-project-workflow"`) {
+	if !strings.Contains(out, `"workflow:gov-workflow"`) || strings.Contains(out, `"workflow:satelle-baseline-workflow"`) {
 		t.Fatalf("restamp did not swap the governing workflow:\n%s", out)
 	}
 
 	// The trail records old -> new. The ledger JSON escapes ">" (>), so
 	// match the escaped body as printed.
 	out = mustRun(t, bin, repo, "ledger", "list", "--story", id)
-	if !strings.Contains(out, "re-stamped: satelle-project-workflow -\\u003e gov-workflow") {
+	if !strings.Contains(out, "re-stamped: satelle-baseline-workflow -\\u003e gov-workflow") {
 		t.Errorf("ledger missing the re-stamp row:\n%s", out)
 	}
 

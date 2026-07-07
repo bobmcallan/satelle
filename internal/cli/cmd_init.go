@@ -665,21 +665,26 @@ func materializeAdvisorySkills(dataDir string) []string {
 }
 
 // defaultSolutionWorkflows are the embedded workflows init (and rebase) deploy
-// into a repo as EDITABLE substrate — the complete default solution: the generic
-// project lifecycle, the parent/epic container close, and the task-execution run.
-// The BASELINE workflow stays EMBEDDED-ONLY (sty_3f9a6124): it is the order-zero
-// Get fallback and must never exist as a disk copy competing with a repo's own.
+// into a repo as EDITABLE substrate — the complete default solution: the minimal
+// repo-agnostic BASE lifecycle, the parent/epic container close, and the
+// task-execution run. sty_bf153cbf REVERSES sty_3f9a6124's embedded-only stance:
+// the base workflow is now seeded too, so a repo edits its lifecycle FROM it
+// rather than authoring one from scratch. This is collision-safe — the
+// overlappingCategory guard below skips seeding a default (base included) whose
+// applies_to overlaps a category an authored workflow already claims — and the
+// embedded copy still backstops the order-zero Get fallback when a repo has no
+// workflow on disk at all.
 var defaultSolutionWorkflows = []string{
-	"satelle-project-workflow",
+	"satelle-baseline-workflow",
 	"satelle-parent-workflow",
 	"satelle-task-workflow",
 }
 
 // materializeDefaultSolution seeds a repo's .satelle with the embedded default
-// solution ADDITIVELY, per file: the generic project/parent/task-execution
-// workflows plus every gate skill they — or the embedded baseline fallback —
-// reference (sty_a7cbd6dd). Each file is seeded only when ABSENT; a same-named
-// authored file is never overwritten or modified.
+// solution ADDITIVELY, per file: the generic base/parent/task-execution
+// workflows plus every gate skill they reference (sty_a7cbd6dd). Each file is
+// seeded only when ABSENT; a same-named authored file is never overwritten or
+// modified.
 //
 // There is no all-or-nothing guard (sty_f6bd6f84): a repo that authored one
 // workflow but is missing others (observed: satelle-server had a project
@@ -726,12 +731,6 @@ func materializeDefaultSolution(dataDir string) []string {
 		if err := os.WriteFile(p, []byte(body), 0o644); err == nil {
 			lines = append(lines, initLine(true, config.DefaultDataDir+"/workflows/"+name+".md"))
 		}
-	}
-	// The embedded baseline remains the order-zero fallback; the skills IT names
-	// must resolve on disk too (they overlap the project defaults' set today, but
-	// the union is computed, not assumed).
-	if body, ok := embeddedDefault("workflows", "satelle-baseline-workflow"); ok {
-		collectSkills(body)
 	}
 	names := make([]string, 0, len(skills))
 	for s := range skills {

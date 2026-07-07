@@ -31,15 +31,13 @@ func TestInitSkeleton(t *testing.T) {
 		// injection + doc-list discovery find them on disk (sty_94da9ac9).
 		".satelle/principles/satelle-agent-goals.md",
 		".satelle/principles/satelle-agent-model.md",
+		// sty_bf153cbf reverses sty_3f9a6124: the baseline is now the single seeded
+		// lifecycle workflow — a real, editable repo file a fresh repo builds from.
+		".satelle/workflows/satelle-baseline-workflow.md",
 	} {
 		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
 			t.Errorf("init did not create %s: %v", rel, err)
 		}
-	}
-	// The baseline workflow is embedded-only — init must not write it as a repo
-	// file, so a repo's own workflow can take precedence (sty_3f9a6124).
-	if _, err := os.Stat(filepath.Join(repo, ".satelle/workflows/satelle-baseline-workflow.md")); err == nil {
-		t.Error("init must not scaffold the baseline workflow as a repo file")
 	}
 	// The removed .satelle/stories mirror must NOT be recreated (sty_746a0c98).
 	if _, err := os.Stat(filepath.Join(repo, ".satelle/stories")); err == nil {
