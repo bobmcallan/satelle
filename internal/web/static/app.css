@@ -373,6 +373,22 @@ ol.timeline li.tl-fail::before { background: #e74c3c; }
 .ev-meta { color: var(--muted); font-size: 11.5px; font-family: var(--mono); }
 .ev-body { font-size: 13.5px; margin-top: 2px; }
 
+/* Data-driven agent-action chips on a timeline event (sty_43d228e4). Each chip's
+   chip-<type> class is toggled off by a hide-<type> class the viewer's Timeline
+   fields preference stamps on ol.timeline — the data stays in the DOM, only its
+   display flips. */
+.ev-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+.chip { font-size: 11px; font-family: var(--mono); padding: 0 7px; line-height: 1.7;
+  color: var(--muted); background: var(--chip); border: 1px solid var(--line); border-radius: 0; }
+.chip-outcome { color: var(--ink); border-color: var(--muted); }
+ol.timeline.hide-walltime .chip-walltime,
+ol.timeline.hide-tokens .chip-tokens,
+ol.timeline.hide-model .chip-model,
+ol.timeline.hide-outcome .chip-outcome { display: none; }
+.tlfields { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 6px 0 4px; font-size: 13px; }
+.tlfields-label { flex-basis: 100%; color: var(--muted); font-size: 12.5px; }
+.tlfields label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+
 /* Documents */
 .docgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
 /* Multi-project homepage cards */

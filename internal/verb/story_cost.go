@@ -22,6 +22,52 @@ type StoryCostRow struct {
 	DurationMs  int64  `json:"duration_ms"`
 }
 
+// EventTelemetry extracts the display-ready agent-action fields a SINGLE ledger
+// entry carries, reusing the SAME payload models the cost view uses — StoryCostRow
+// for an agent_invocation, the telemetryEnvelope for a telemetry_event — so the web
+// timeline and `satelle story cost` never model the same payload twice
+// (sty_43d228e4). A row that carries no such fields returns zeros/empties. The
+// outcome comes from the row's OWN kind (a review verdict is its own row, never a
+// field on an invocation): review_accept/review_reject, or a telemetry_event's
+// data.outcome (else its envelope kind, e.g. agent-retry). Values only — no secrets.
+func EventTelemetry(e ledger.Entry) (agent, model, outcome string, tokensTotal int, durationMs int64) {
+	switch e.Kind {
+	case ledger.KindAgentInvocation:
+		var row StoryCostRow
+		if len(e.Payload) > 0 && json.Unmarshal(e.Payload, &row) == nil {
+			return row.Agent, row.Model, "", row.TokensTotal, row.DurationMs
+		}
+	case ledger.KindTelemetryEvent:
+		var env telemetryEnvelope
+		if len(e.Payload) > 0 && json.Unmarshal(e.Payload, &env) == nil {
+			oc, _ := env.Data["outcome"].(string)
+			if oc == "" {
+				oc = env.Kind // the envelope kind IS the outcome (agent-retry/agent-failure/agent-timeout)
+			}
+			return "", "", oc, int(mapNum(env.Data, "tokens_total")), mapNum(env.Data, "duration_ms")
+		}
+	case ledger.KindReviewAccept:
+		return "", "", "accept", 0, 0
+	case ledger.KindReviewReject:
+		return "", "", "reject", 0, 0
+	}
+	return "", "", "", 0, 0
+}
+
+// mapNum coerces a telemetry data value (a JSON number decodes into map[string]any
+// as float64) to int64; a missing or non-numeric key yields 0.
+func mapNum(m map[string]any, k string) int64 {
+	switch v := m[k].(type) {
+	case float64:
+		return int64(v)
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	}
+	return 0
+}
+
 // stepCostData is a single step's self-reported actual tokens and/or its
 // per-step estimate. It carries numbers and the step name ONLY — never env or
 // secrets (sty_3b2e55f5). Read from two sources: the legacy KindStepCost ledger

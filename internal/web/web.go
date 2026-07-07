@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -802,7 +803,7 @@ func fragmentRows(a *app.App, tmplName, topic string) http.HandlerFunc {
 // card (the fragment) keeps it.
 type detailData struct {
 	Item       workitem.Item
-	Events     []ledger.Entry
+	Events     []eventVM
 	Docs       []storyDocVM
 	Executions []executionVM // populated only for a TASK — its runs (sty_30a917f8)
 	TopBar     topBar
@@ -834,6 +835,75 @@ type storyDocVM struct {
 	Name string
 	Type string
 	HTML template.HTML
+}
+
+// chipVM is one data-driven telemetry chip on a timeline event. Type is the field
+// family (walltime|tokens|model|outcome) — the class the viewer's Timeline-fields
+// toggle shows/hides — and Label is the rendered value. Chips are derived from
+// whatever structured fields a ledger entry actually holds (verb.EventTelemetry),
+// never hardcoded per agent type (sty_43d228e4; ui-agnostic-agent-data).
+type chipVM struct {
+	Type  string
+	Label string
+}
+
+// eventVM is a ledger entry plus the telemetry chips parsed from it. It embeds
+// ledger.Entry so the timeline template still reads .Kind/.Actor/.Body/.CreatedAt.
+type eventVM struct {
+	ledger.Entry
+	Chips []chipVM
+}
+
+// eventChips builds the viewer-selectable telemetry chips for a ledger entry,
+// data-driven via the shared verb.EventTelemetry reader (single-sourced with the
+// cost view). A chip appears only when the entry actually carries that field, so a
+// plain status_transition or step_summary row shows none.
+func eventChips(e ledger.Entry) []chipVM {
+	agent, model, outcome, tokens, durMs := verb.EventTelemetry(e)
+	var chips []chipVM
+	if outcome != "" {
+		chips = append(chips, chipVM{Type: "outcome", Label: outcome})
+	}
+	if durMs > 0 {
+		chips = append(chips, chipVM{Type: "walltime", Label: humanMs(durMs)})
+	}
+	if tokens > 0 {
+		chips = append(chips, chipVM{Type: "tokens", Label: humanTokens(tokens) + " tok"})
+	}
+	if model != "" {
+		chips = append(chips, chipVM{Type: "model", Label: model})
+	} else if agent != "" && agent != "reviewer" && agent != "executor" {
+		chips = append(chips, chipVM{Type: "model", Label: agent})
+	}
+	return chips
+}
+
+// humanMs renders a duration compactly: sub-minute as seconds (2.4s), longer as
+// whole minutes (19m) — enough to read a step's cost at a glance.
+func humanMs(ms int64) string {
+	if ms <= 0 {
+		return ""
+	}
+	if ms < 60000 {
+		return strconv.FormatFloat(float64(ms)/1000, 'f', 1, 64) + "s"
+	}
+	return strconv.FormatInt(ms/60000, 10) + "m"
+}
+
+// humanTokens renders a token count with thousands separators (2000 -> "2,000").
+func humanTokens(n int) string {
+	s := strconv.Itoa(n)
+	if n < 1000 {
+		return s
+	}
+	var out []byte
+	for i, c := range []byte(s) {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			out = append(out, ',')
+		}
+		out = append(out, c)
+	}
+	return string(out)
 }
 
 // loadDetail fetches one item + its (newest-first) ledger timeline via verbs.
@@ -884,7 +954,11 @@ func loadDetail(ctx context.Context, group, id string) (detailData, error) {
 			}
 		}
 	}
-	return detailData{Item: item, Events: events, Docs: docs, Executions: executions, TopBar: newTopBar("")}, nil
+	evs := make([]eventVM, len(events))
+	for i, e := range events {
+		evs[i] = eventVM{Entry: e, Chips: eventChips(e)}
+	}
+	return detailData{Item: item, Events: evs, Docs: docs, Executions: executions, TopBar: newTopBar("")}, nil
 }
 
 // stripFrontmatter removes a leading `---\n…\n---\n` YAML block, returning the
