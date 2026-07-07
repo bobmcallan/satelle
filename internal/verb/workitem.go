@@ -31,7 +31,6 @@ func init() {
 	// begin-work and the actual cost at close, scoped to the story.
 	Register(&Verb{Name: "story-estimate", Description: "Record a story's plan estimate (time/tokens)", Invoke: storyEstimate})
 	Register(&Verb{Name: "story-actual", Description: "Record a story's actual cost (time/tokens)", Invoke: storyActual})
-	Register(&Verb{Name: "story-step-cost", Description: "Record a single step's actual cost / estimate (tokens/time)", Invoke: storyStepCost})
 	Register(&Verb{Name: "story-resummarise", Description: "Re-run the step summariser for one edge to close a missing-summary gap", Invoke: storyResummarise})
 	Register(&Verb{Name: "story-retrospect", Description: "Run the retrospective agent over a finished story to file improvement proposals", Invoke: storyRetrospect})
 	// Restamp is story-only too: tasks/executions are unstamped by design
@@ -364,8 +363,8 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		// already committed, so a mandatory-summary failure is surfaced on the
 		// ledger (it records the gap, it does not revert the step).
 		if gatedAccepted && stepSummariser != nil {
-			summary, serr := stepSummariser.Summarise(ctx, it, current.Status, *req.Status)
-			recordStepSummary(ctx, it, current.Status, *req.Status, summary, serr, now)
+			result, serr := stepSummariser.Summarise(ctx, it, current.Status, *req.Status)
+			recordStepSummary(ctx, it, current.Status, *req.Status, result, serr, now)
 		}
 		// On reaching the terminal state, surface (NON-BLOCKING) any mandatory
 		// step-summary that never produced its doc — a silent hole in the pull-context
@@ -518,17 +517,25 @@ func storyActual(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 // (sty_47d31300). A failure records the gap only — an enacted transition is never
 // reverted for a best-effort recap. Shared by the post-transition summariser and
 // `satelle story resummarise` (sty_a1151fb0), so the write path is single-sourced.
-func recordStepSummary(ctx context.Context, item workitem.Item, from, to, summary string, serr error, now time.Time) {
+// When result carries a billable invocation (Command/TokensTotal set), an
+// agent_invocation row is also written so the summariser's own cost — a
+// documented gap (sty_a699ad14) — folds into `satelle story cost` (sty_b73c3236).
+func recordStepSummary(ctx context.Context, item workitem.Item, from, to string, result SummaryResult, serr error, now time.Time) {
 	switch {
 	case serr != nil:
 		appendLedgerEntry(ctx, item.ID, ledger.KindStepSummary, "reviewer",
 			"step summary failed: "+serr.Error(),
 			transitionPayload(from, to, ""), now)
-	case summary != "":
-		appendLedgerEntry(ctx, item.ID, ledger.KindStepSummary, "reviewer", summary,
+	case result.Text != "":
+		appendLedgerEntry(ctx, item.ID, ledger.KindStepSummary, "reviewer", result.Text,
 			transitionPayload(from, to, ""), now)
+		if result.Command != "" {
+			appendLedgerEntry(ctx, item.ID, ledger.KindAgentInvocation, "reviewer",
+				fmt.Sprintf("invoked summariser (%s) for %s→%s with @skill:%s", result.Command, from, to, result.Context),
+				summariserInvocationPayload(from, to, result), now)
+		}
 		if _, _, derr := writeAttachedDoc(ctx, item,
-			fmt.Sprintf("step-summary-%s-%s", from, to), "step-summary", summary, now); derr != nil {
+			fmt.Sprintf("step-summary-%s-%s", from, to), "step-summary", result.Text, now); derr != nil {
 			appendLedgerEntry(ctx, item.ID, ledger.KindStepSummary, "reviewer",
 				"step summary doc deposit failed: "+derr.Error(),
 				transitionPayload(from, to, ""), now)
@@ -620,82 +627,16 @@ func storyResummarise(ctx context.Context, raw json.RawMessage) (json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	summary, serr := stepSummariser.Summarise(ctx, it, req.From, req.To)
+	result, serr := stepSummariser.Summarise(ctx, it, req.From, req.To)
 	now := time.Now()
-	recordStepSummary(ctx, it, req.From, req.To, summary, serr, now)
+	recordStepSummary(ctx, it, req.From, req.To, result, serr, now)
 	if serr != nil {
 		return nil, fmt.Errorf("resummarise %s→%s failed: %w", req.From, req.To, serr)
 	}
-	if summary == "" {
+	if result.Text == "" {
 		return nil, fmt.Errorf("resummarise %s→%s produced no summary (the workflow may not declare a step-summary node)", req.From, req.To)
 	}
 	return json.Marshal(map[string]any{"story_id": it.ID, "from": req.From, "to": req.To, "resummarised": true})
-}
-
-// stepCostReq is the request for story-step-cost: a per-STEP actual (tokens/time)
-// and/or per-step estimate. It carries numbers and the step name only.
-type stepCostReq struct {
-	ID        string `json:"id"`
-	Step      string `json:"step"`
-	Tokens    int    `json:"tokens,omitempty"`
-	Time      string `json:"time,omitempty"`
-	EstTokens int    `json:"est_tokens,omitempty"`
-	EstTime   string `json:"est_time,omitempty"`
-}
-
-// storyStepCost records a KindStepCost ledger entry for one step — the only way to
-// attribute token cost to an IN-LOOP step (the driving session's own tokens are not
-// visible to satelle, a subprocess it spawns) and to capture a per-step estimate.
-// Per-step wall-time is DERIVED from transition timestamps in ComputeStoryCost, so
-// --time here is an optional explicit override. The payload carries numbers + the
-// step name only — never env/secrets (sty_3b2e55f5).
-func storyStepCost(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
-	store, err := requireWorkItem()
-	if err != nil {
-		return nil, err
-	}
-	var req stepCostReq
-	if err := decode(raw, &req); err != nil {
-		return nil, err
-	}
-	if req.ID == "" {
-		return nil, fmt.Errorf("verb: id required")
-	}
-	if req.Step == "" {
-		return nil, fmt.Errorf("verb: step-cost requires --step")
-	}
-	if req.Tokens <= 0 && req.Time == "" && req.EstTokens <= 0 && req.EstTime == "" {
-		return nil, fmt.Errorf("verb: step-cost requires at least one of --tokens/--time/--est-tokens/--est-time")
-	}
-	it, err := store.Get(ctx, req.ID)
-	if err != nil {
-		return nil, err
-	}
-	d := stepCostData{Step: req.Step, TokensTotal: req.Tokens, EstTokens: req.EstTokens}
-	if req.Time != "" {
-		dur, perr := time.ParseDuration(req.Time)
-		if perr != nil {
-			return nil, fmt.Errorf("verb: invalid --time %q: %w", req.Time, perr)
-		}
-		d.DurationMs = dur.Milliseconds()
-	}
-	if req.EstTime != "" {
-		dur, perr := time.ParseDuration(req.EstTime)
-		if perr != nil {
-			return nil, fmt.Errorf("verb: invalid --est-time %q: %w", req.EstTime, perr)
-		}
-		d.EstDurationMs = dur.Milliseconds()
-	}
-	payload, err := json.Marshal(d)
-	if err != nil {
-		return nil, err
-	}
-	now := time.Now()
-	body := fmt.Sprintf("step-cost recorded for %q", req.Step)
-	appendLedgerEntry(ctx, it.ID, ledger.KindStepCost, "executor", body, payload, now)
-	appendOpLog("story-step-cost", it.ID, body, now)
-	notifyChange(panelTopic(it.Kind))
-	return json.Marshal(map[string]any{"story_id": it.ID, "step": req.Step, "recorded": true})
 }
 
 // storyRetrospect dispatches the retrospective agent over a finished story
@@ -959,6 +900,32 @@ func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		DurationMs  int64  `json:"duration_ms,omitempty"`
 	}{From: from, To: to, Agent: "reviewer", Skill: rv.Skill, Command: rv.Command, Context: rv.Context, Model: rv.Model,
 		TokensIn: rv.TokensIn, TokensOut: rv.TokensOut, TokensTotal: rv.TokensTotal, DurationMs: rv.DurationMs}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+// summariserInvocationPayload stamps the step summariser's OWN agent_invocation
+// row — the same shape invocationPayload uses for a reviewer verdict, so the
+// summariser's token/wall-time cost rolls into `satelle story cost` identically
+// (closing the documented gap, sty_a699ad14 / sty_b73c3236).
+func summariserInvocationPayload(from, to string, result SummaryResult) json.RawMessage {
+	p := struct {
+		From        string `json:"from"`
+		To          string `json:"to"`
+		Agent       string `json:"agent"`
+		Skill       string `json:"skill,omitempty"`
+		Command     string `json:"command,omitempty"`
+		Context     string `json:"context,omitempty"`
+		Model       string `json:"model,omitempty"`
+		TokensIn    int    `json:"tokens_in,omitempty"`
+		TokensOut   int    `json:"tokens_out,omitempty"`
+		TokensTotal int    `json:"tokens_total,omitempty"`
+		DurationMs  int64  `json:"duration_ms,omitempty"`
+	}{From: from, To: to, Agent: "reviewer", Skill: result.Context, Command: result.Command, Context: result.Context, Model: result.Model,
+		TokensIn: result.TokensIn, TokensOut: result.TokensOut, TokensTotal: result.TokensTotal, DurationMs: result.DurationMs}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil

@@ -404,11 +404,17 @@ func TestSummarise_retriesTransientKillThenSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("summarise should succeed after a transient retry, got err: %v", err)
 	}
-	if got != "the step recap" {
-		t.Fatalf("want the recap once the summariser returns text, got %q", got)
+	if got.Text != "the step recap" {
+		t.Fatalf("want the recap once the summariser returns text, got %q", got.Text)
 	}
 	if r.calls != 3 {
 		t.Fatalf("expected 3 attempts (2 transient + 1 success), got %d", r.calls)
+	}
+	// AC3 (sty_b73c3236): the summariser's OWN invocation (command/model) rides on
+	// the result so the verb layer can fold its cost into an agent_invocation row —
+	// closing the documented gap where its usage was previously discarded.
+	if got.Command == "" {
+		t.Error("summarise result should carry the resolved command (its own cost is no longer discarded)")
 	}
 }
 
@@ -1362,8 +1368,8 @@ func TestSummariseReturnsTrimmedProse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s != "Moved from in_progress to done after the criteria were met." {
-		t.Errorf("summary = %q", s)
+	if s.Text != "Moved from in_progress to done after the criteria were met." {
+		t.Errorf("summary = %q", s.Text)
 	}
 	// The skill doc's body (frontmatter included, as authored substrate carries
 	// it) rides as the system prompt — the rubric must be in it.
@@ -1390,8 +1396,8 @@ func TestSummariseSkippedWhenNotDeclared(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s != "" {
-		t.Errorf("no step node declared → no summary, got %q", s)
+	if s.Text != "" {
+		t.Errorf("no step node declared → no summary, got %q", s.Text)
 	}
 	if r.got.SystemPrompt != "" {
 		t.Errorf("summariser must not run when the workflow declares no step node")
@@ -1406,8 +1412,8 @@ func TestSummariseMandatoryVsOptionalWhenAbsent(t *testing.T) {
 		t.Error("mandatory step summary with an absent rubric should error")
 	}
 	g2, _ := newEngine(t, "", fakeDocs{workflow: stepWFOptional, skillFound: false}) // optional
-	if s, err := g2.Summarise(context.Background(), workitem.Item{Status: "in_progress"}, "in_progress", "done"); err != nil || s != "" {
-		t.Errorf("optional step summary with an absent rubric should be empty/no-error, got %q/%v", s, err)
+	if s, err := g2.Summarise(context.Background(), workitem.Item{Status: "in_progress"}, "in_progress", "done"); err != nil || s.Text != "" {
+		t.Errorf("optional step summary with an absent rubric should be empty/no-error, got %q/%v", s.Text, err)
 	}
 }
 
@@ -1417,8 +1423,8 @@ func TestSummariseEmptyWhenRubricAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s != "" {
-		t.Errorf("want empty summary when rubric absent, got %q", s)
+	if s.Text != "" {
+		t.Errorf("want empty summary when rubric absent, got %q", s.Text)
 	}
 	if r.got.SystemPrompt != "" {
 		t.Error("summariser must not run without a rubric")
@@ -1971,5 +1977,208 @@ func TestRetrospectRequiresSatelleCLI(t *testing.T) {
 	g.newRunner = func(string) (agentcli.Runner, error) { return &fakeRunner{}, nil }
 	if _, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1"}); err == nil {
 		t.Fatal("want an error when the grant lacks Bash(satelle:*)")
+	}
+}
+
+// --- AC2 dispatch-outcome telemetry (sty_b73c3236) --------------------------
+//
+// The dispatch engine records STRUCTURED, queryable outcomes for every agent
+// failure mode a wrapping verb never sees — a killed/timed-out/no-verdict
+// subprocess: classifyOutcome names WHY, and each reviewer/summariser/executor
+// retry/failure/timeout site emits a telemetry event via the wired sink. These
+// pin that wiring (the gap satelle-code-ac-review flagged).
+
+type telemetryRec struct {
+	storyID, actor, kind string
+	data                 map[string]any
+}
+
+// captureTelemetry wires g's telemetry sink to append to the returned slice, so
+// a test can assert exactly which events the engine emitted, with what outcome.
+func captureTelemetry(g *Engine) *[]telemetryRec {
+	recs := &[]telemetryRec{}
+	g.SetTelemetry(func(_ context.Context, storyID, actor, kind string, data map[string]any) {
+		*recs = append(*recs, telemetryRec{storyID, actor, kind, data})
+	})
+	return recs
+}
+
+func countKind(recs []telemetryRec, kind string) int {
+	n := 0
+	for _, r := range recs {
+		if r.kind == kind {
+			n++
+		}
+	}
+	return n
+}
+
+func hasOutcome(recs []telemetryRec, kind, want string) bool {
+	for _, r := range recs {
+		if r.kind == kind {
+			if o, _ := r.data["outcome"].(string); o == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// classifyOutcome names WHY a dispatched invocation failed — the label that
+// makes the telemetry queryable rather than a free-text body string.
+func TestClassifyOutcome(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"nil is a parsed no-verdict, not a run error", nil, "no-verdict"},
+		{"a bounded deadline is a timeout", context.DeadlineExceeded, "timeout"},
+		{"a killed subprocess surfaces signal:killed", errors.New("agentcli: claude: signal: killed"), "signal:killed"},
+		{"anything else is a generic error", errors.New("boom"), "error"},
+	}
+	for _, c := range cases {
+		if got := classifyOutcome(c.err); got != c.want {
+			t.Errorf("%s: classifyOutcome(%v) = %q, want %q", c.name, c.err, got, c.want)
+		}
+	}
+}
+
+// A reviewer that never returns a verdict records one agent-retry per transient
+// attempt (carrying the classified outcome) and one terminal agent-failure — the
+// structured capture AC2 asks for, not only a reviewer.log line.
+func TestGate_recordsRetryAndFailureTelemetry(t *testing.T) {
+	docs := fakeDocs{workflow: testWorkflow, skillBody: "rubric body", skillFound: true}
+	r := &scriptedRunner{results: []struct {
+		out string
+		err error
+	}{
+		{out: "no verdict here"}, // transient no-verdict → agent-retry outcome=no-verdict
+		{err: errFakeAgent},      // transient run error   → agent-retry outcome=error
+	}}
+	g := New(r, docs, "/repo", "")
+	g.backoff = func(int) time.Duration { return 0 }
+	recs := captureTelemetry(g)
+
+	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done"); err == nil {
+		t.Fatal("gate should fail once every attempt is a transient non-verdict")
+	}
+	if got := countKind(*recs, "agent-retry"); got != defaultReviewerAttempts {
+		t.Errorf("want %d agent-retry events (one per attempt), got %d", defaultReviewerAttempts, got)
+	}
+	if got := countKind(*recs, "agent-failure"); got != 1 {
+		t.Errorf("want exactly 1 terminal agent-failure event, got %d", got)
+	}
+	if !hasOutcome(*recs, "agent-retry", "no-verdict") {
+		t.Error("a no-verdict attempt should record outcome=no-verdict")
+	}
+	if !hasOutcome(*recs, "agent-retry", "error") {
+		t.Error("an errored attempt should record outcome=error")
+	}
+	for _, rec := range *recs {
+		if rec.actor != "reviewer" {
+			t.Errorf("reviewer telemetry actor = %q, want reviewer", rec.actor)
+		}
+		if s, _ := rec.data["skill"].(string); s == "" {
+			t.Errorf("telemetry event %q missing the skill field", rec.kind)
+		}
+	}
+}
+
+// A reviewer deadline is a bound, not contention — it records a single
+// agent-timeout and fails fast (no retry, no agent-failure).
+func TestGate_recordsTimeoutTelemetry(t *testing.T) {
+	docs := fakeDocs{workflow: testWorkflow, skillBody: "rubric body", skillFound: true}
+	r := &scriptedRunner{results: []struct {
+		out string
+		err error
+	}{{err: context.DeadlineExceeded}}}
+	g := New(r, docs, "/repo", "")
+	g.backoff = func(int) time.Duration { return 0 }
+	recs := captureTelemetry(g)
+
+	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done"); err == nil {
+		t.Fatal("a reviewer deadline should surface an error")
+	}
+	if got := countKind(*recs, "agent-timeout"); got != 1 {
+		t.Errorf("want exactly 1 agent-timeout event, got %d", got)
+	}
+	if got := countKind(*recs, "agent-failure"); got != 0 {
+		t.Errorf("a fail-fast timeout must not also record agent-failure, got %d", got)
+	}
+	if r.calls != 1 {
+		t.Errorf("a deadline must fail fast (1 attempt), got %d", r.calls)
+	}
+}
+
+// The summariser (a mandatory step node) records the same structured retry/
+// failure telemetry as a reviewer — closing AC2 over the summariser path too.
+func TestSummarise_recordsRetryAndFailureTelemetry(t *testing.T) {
+	docs := fakeDocs{workflow: summaryWorkflow, skillBody: "summarise rubric", skillFound: true}
+	r := &scriptedRunner{results: []struct {
+		out string
+		err error
+	}{
+		{err: errFakeAgent}, // transient run error → agent-retry outcome=error
+		{out: "   "},        // empty output        → agent-retry outcome=empty-output
+	}}
+	g := New(r, docs, "/repo", "")
+	g.backoff = func(int) time.Duration { return 0 }
+	recs := captureTelemetry(g)
+
+	if _, err := g.Summarise(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "in_progress", "done"); err == nil {
+		t.Fatal("a mandatory summary that never succeeds should surface an error")
+	}
+	if got := countKind(*recs, "agent-retry"); got != defaultReviewerAttempts {
+		t.Errorf("want %d summariser agent-retry events, got %d", defaultReviewerAttempts, got)
+	}
+	if got := countKind(*recs, "agent-failure"); got != 1 {
+		t.Errorf("want 1 terminal summariser agent-failure, got %d", got)
+	}
+	if !hasOutcome(*recs, "agent-retry", "empty-output") {
+		t.Error("an empty summary attempt should record outcome=empty-output")
+	}
+	for _, rec := range *recs {
+		if s, _ := rec.data["skill"].(string); s != summariserSkill {
+			t.Errorf("summariser telemetry skill = %q, want %q", s, summariserSkill)
+		}
+	}
+}
+
+// A named executor whose dispatch runner errors records a structured
+// agent-failure naming the agent, step, and classified outcome (AC2) — the
+// coded capture of a killed sub-process only the binary observes.
+func TestDispatchExecutor_recordsFailureTelemetry(t *testing.T) {
+	docs := fakeDocs{workflow: dispatchWF, skillBody: "alignment rubric", skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		if name != "architect" {
+			return config.AgentBinding{}, false
+		}
+		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Grep,Glob,Bash(satelle:*)", Model: "fable"}, true
+	})
+	g.newRunner = func(string) (agentcli.Runner, error) {
+		return &fakeRunner{err: errors.New("agentcli: claude: signal: killed")}, nil
+	}
+	recs := captureTelemetry(g)
+
+	if _, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan"); err == nil {
+		t.Fatal("dispatch should fail when the binding runner errors")
+	}
+	if got := countKind(*recs, "agent-failure"); got != 1 {
+		t.Fatalf("want 1 executor agent-failure event, got %d", got)
+	}
+	rec := (*recs)[0]
+	if rec.actor != "executor" {
+		t.Errorf("executor telemetry actor = %q, want executor", rec.actor)
+	}
+	if a, _ := rec.data["agent"].(string); a != "architect" {
+		t.Errorf("telemetry agent = %q, want architect", a)
+	}
+	if s, _ := rec.data["step"].(string); s != "plan" {
+		t.Errorf("telemetry step = %q, want plan", s)
+	}
+	if o, _ := rec.data["outcome"].(string); o != "signal:killed" {
+		t.Errorf("telemetry outcome = %q, want signal:killed", o)
 	}
 }

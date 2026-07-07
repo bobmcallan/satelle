@@ -130,6 +130,49 @@ type Engine struct {
 	// newRunner builds the runner for a named binding's harness — swappable in
 	// tests; defaults to agentcli.RunnerFromHarness.
 	newRunner func(harness string) (agentcli.Runner, error)
+	// telemetry records a structured, queryable dispatch outcome (a reviewer/
+	// executor retry, failure, or timeout) that only the binary observes — the
+	// verb layer sees just the final result, not each attempt (sty_b73c3236). Nil
+	// disables it (tests / no-ledger environments); best-effort like the other
+	// engine-owned logging.
+	telemetry TelemetryFunc
+}
+
+// TelemetryFunc records one typed telemetry/quality event for storyID. Callers
+// pass the event's outcome/kind and its typed data (never env/secrets — the
+// implementation validates). Implemented by verb.AppendTelemetry and wired via
+// SetTelemetry; best-effort by contract, so it takes no error return.
+type TelemetryFunc func(ctx context.Context, storyID, actor, kind string, data map[string]any)
+
+// SetTelemetry wires the sink the engine uses to record a dispatch-level
+// telemetry event (agent-retry/agent-failure/agent-timeout). Pass nil to
+// disable (the default) — every call site nil-checks via telemetryEvent.
+func (g *Engine) SetTelemetry(fn TelemetryFunc) { g.telemetry = fn }
+
+// telemetryEvent records one telemetry event via the wired sink, if any.
+func (g *Engine) telemetryEvent(ctx context.Context, storyID, actor, kind string, data map[string]any) {
+	if g.telemetry != nil {
+		g.telemetry(ctx, storyID, actor, kind, data)
+	}
+}
+
+// classifyOutcome names WHY a dispatched agent invocation failed, for the
+// structured telemetry payload (AC2, sty_b73c3236): a bounded deadline is a
+// timeout, a process killed out from under the caller (e.g. OOM, a session
+// cancelling a concurrent claude subprocess) surfaces Go's "signal: killed" in
+// the error text, and anything else is a generic error. A nil err (a parsed
+// no-verdict output, not a run error) is reported as such by the caller instead.
+func classifyOutcome(err error) string {
+	if err == nil {
+		return "no-verdict"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	if strings.Contains(err.Error(), "signal: killed") {
+		return "signal:killed"
+	}
+	return "error"
 }
 
 // New builds a Engine over the agent runner and doc index. model "" inherits the
@@ -612,6 +655,10 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	// executor.log above is unchanged — the per-task doc is the reviewable record.
 	res.Output = string(out)
 	if runErr != nil {
+		g.telemetryEvent(ctx, item.ID, "executor", "agent-failure", map[string]any{
+			"agent": target.Agent, "step": toStatus, "outcome": classifyOutcome(runErr),
+			"tokens_total": res.TokensTotal, "duration_ms": res.DurationMs,
+		})
 		return res, fmt.Errorf("named agent %q failed performing step %q: %w", target.Agent, toStatus, runErr)
 	}
 	return res, nil
@@ -893,12 +940,18 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 			// wrapping tooling gets a bounded, non-enacting error (sty_6c88ca10).
 			if errors.Is(rerr, context.DeadlineExceeded) && ctx.Err() == nil {
 				g.logReviewerFailure(skill, attempt, attempts, rerr, nil)
+				g.telemetryEvent(ctx, item.ID, "reviewer", "agent-timeout", map[string]any{
+					"skill": skill, "step": toStatus, "attempt": attempt, "attempts": attempts,
+				})
 				return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
 					"reviewer: %s timed out after %s — the gate did not complete and the transition was NOT enacted; retry when the agent backend is responsive", skill, g.agentTimeout)
 			}
 			lastErr, lastOut = rerr, nil
 			g.logReviewerFailure(skill, attempt, attempts, rerr, nil) // surface the contention
-			continue                                                  // transient agent failure — retry
+			g.telemetryEvent(ctx, item.ID, "reviewer", "agent-retry", map[string]any{
+				"skill": skill, "step": toStatus, "attempt": attempt, "attempts": attempts, "outcome": classifyOutcome(rerr),
+			})
+			continue // transient agent failure — retry
 		}
 		dec, perr := parseDecision(out)
 		if perr != nil {
@@ -920,7 +973,10 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 			}
 			lastErr, lastOut = perr, out
 			g.logReviewerFailure(skill, attempt, attempts, perr, out) // capture the subprocess output
-			continue                                                  // no verdict in the output — transient, retry
+			g.telemetryEvent(ctx, item.ID, "reviewer", "agent-retry", map[string]any{
+				"skill": skill, "step": toStatus, "attempt": attempt, "attempts": attempts, "outcome": "no-verdict",
+			})
+			continue // no verdict in the output — transient, retry
 		}
 		dec.Gated = true
 		dec.Skill = skill
@@ -941,6 +997,9 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 	if len(bytes.TrimSpace(lastOut)) > 0 && g.logDir != "" {
 		where = " — full reviewer output logged to " + filepath.Join(g.logDir, "reviewer.log")
 	}
+	g.telemetryEvent(ctx, item.ID, "reviewer", "agent-failure", map[string]any{
+		"skill": skill, "step": toStatus, "attempts": attempts, "outcome": classifyOutcome(lastErr),
+	})
 	return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
 		"reviewer: %s produced no verdict after %d attempts (empty/ambiguous reviewer output or a transient agent failure — e.g. a rate-limited or killed subprocess under concurrent sessions; retry, or reduce concurrent satelle sessions): %w%s%s",
 		skill, attempts, lastErr, outputTail(lastOut), where)
@@ -1016,28 +1075,28 @@ type summaryPayload struct {
 // Summarise runs the read-only summariser over an enacted transition and returns
 // its prose recap (empty when no summariser rubric is installed). The reviewer's
 // read-only tool grant means it observes but cannot mutate the work tree.
-func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to string) (string, error) {
+func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to string) (verb.SummaryResult, error) {
 	// The summariser runs ONLY when the active workflow DECLARES a step-summary
 	// node (transparent opt-in via the DOT) — there is no hidden always-on
 	// summariser (sty_9a139c78). A non-declaring workflow records nothing.
 	declared, mandatory := g.stepSummaryDeclared(ctx, item)
 	if !declared {
-		return "", nil
+		return verb.SummaryResult{}, nil
 	}
-	// soft returns "" on a non-mandatory failure (best-effort) and the error when
-	// the step node is mandatory, so the caller can surface the gap.
-	soft := func(format string, a ...any) (string, error) {
+	// soft returns a zero result on a non-mandatory failure (best-effort) and the
+	// error when the step node is mandatory, so the caller can surface the gap.
+	soft := func(format string, a ...any) (verb.SummaryResult, error) {
 		if mandatory {
-			return "", fmt.Errorf(format, a...)
+			return verb.SummaryResult{}, fmt.Errorf(format, a...)
 		}
-		return "", nil
+		return verb.SummaryResult{}, nil
 	}
 	body, err := g.skillBody(ctx, summariserSkill)
 	if err != nil {
 		if errors.Is(err, docindex.ErrNotFound) {
 			return soft("step summary is mandatory but the %s skill is not installed", summariserSkill)
 		}
-		return "", err
+		return verb.SummaryResult{}, err
 	}
 	if g.runner == nil {
 		return soft("step summary is mandatory but no agent runner is configured")
@@ -1053,13 +1112,9 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 		env:     g.reviewerEnv,
 	})
 	if err != nil {
-		return "", err
+		return verb.SummaryResult{}, err
 	}
 	g.emitProgress("summarising step %s→%s (may take a minute)…", from, to)
-	// The summariser writes a step_summary ledger entry (not agent_invocation), so
-	// its usage is not rolled into the per-gate cost view here — a documented gap
-	// (sty_a699ad14); the cost view covers the agent_invocation gates.
-	//
 	// Retry the SAME transient a reviewer retries (a rate-limited/killed/empty
 	// subprocess under concurrent sessions — sty_d71b0791, sty_a1151fb0): a single
 	// runOnce permanently LOST the summary on a transient kill, silently holing the
@@ -1075,21 +1130,40 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 			lastErr = werr
 			break
 		}
-		out, _, rerr := g.runOnce(ctx, g.runner, req, g.agentTimeout)
+		out, usage, rerr := g.runOnce(ctx, g.runner, req, g.agentTimeout)
 		if rerr != nil {
 			if errors.Is(rerr, context.DeadlineExceeded) && ctx.Err() == nil {
+				g.telemetryEvent(ctx, item.ID, "reviewer", "agent-timeout", map[string]any{
+					"skill": summariserSkill, "step": to, "attempt": attempt, "attempts": attempts,
+				})
 				return soft("mandatory step summary timed out after %s", g.agentTimeout)
 			}
 			lastErr = rerr
 			g.logReviewerFailure(summariserSkill, attempt, attempts, rerr, nil)
+			g.telemetryEvent(ctx, item.ID, "reviewer", "agent-retry", map[string]any{
+				"skill": summariserSkill, "step": to, "attempt": attempt, "attempts": attempts, "outcome": classifyOutcome(rerr),
+			})
 			continue // transient — retry
 		}
 		if s := strings.TrimSpace(string(out)); s != "" {
-			return s, nil
+			// The summariser's own token/wall-time cost (sty_a699ad14, a documented
+			// gap now closed): the verb layer folds this into an agent_invocation row
+			// alongside the step_summary text, so `satelle story cost` sees it too.
+			return verb.SummaryResult{
+				Text: s, Command: g.runner.Command(), Context: summariserSkill, Model: g.model,
+				TokensIn: usage.InputTokens, TokensOut: usage.OutputTokens, TokensTotal: usage.TotalTokens,
+				DurationMs: usage.Duration.Milliseconds(),
+			}, nil
 		}
 		lastErr = fmt.Errorf("empty summary output")
 		g.logReviewerFailure(summariserSkill, attempt, attempts, lastErr, out)
+		g.telemetryEvent(ctx, item.ID, "reviewer", "agent-retry", map[string]any{
+			"skill": summariserSkill, "step": to, "attempt": attempt, "attempts": attempts, "outcome": "empty-output",
+		})
 	}
+	g.telemetryEvent(ctx, item.ID, "reviewer", "agent-failure", map[string]any{
+		"skill": summariserSkill, "step": to, "attempts": attempts, "outcome": classifyOutcome(lastErr),
+	})
 	return soft("mandatory step summary failed after %d attempts: %v", attempts, lastErr)
 }
 

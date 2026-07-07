@@ -54,6 +54,13 @@ const (
 	// KindWorkflowStamped records the workflow chosen to govern a story at create
 	// (sty_3800ac23) — the choice satelle's gates read thereafter.
 	KindWorkflowStamped = "workflow_stamped"
+	// KindTelemetryEvent records a generic, typed quality/telemetry event: an
+	// orchestrator self-report (e.g. an in-loop step's cost, retiring the narrow
+	// KindStepCost verb) or a dispatch-engine outcome only the binary observes — a
+	// reviewer/executor retry, failure, or timeout on a killed/timed-out
+	// subprocess. Payload shape: {"kind": "<event-kind>", "data": {...}} — data
+	// carries typed fields only, never env/secrets (sty_b73c3236).
+	KindTelemetryEvent = "telemetry_event"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional

@@ -19,8 +19,8 @@ type stubSummariser struct {
 	mandatory bool
 }
 
-func (s stubSummariser) Summarise(_ context.Context, _ workitem.Item, _, _ string) (string, error) {
-	return s.out, s.err
+func (s stubSummariser) Summarise(_ context.Context, _ workitem.Item, _, _ string) (verb.SummaryResult, error) {
+	return verb.SummaryResult{Text: s.out}, s.err
 }
 func (s stubSummariser) MandatorySummary(_ context.Context, _ workitem.Item) bool { return s.mandatory }
 

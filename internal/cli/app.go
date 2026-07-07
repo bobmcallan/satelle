@@ -82,6 +82,12 @@ func openAppForCmd(cmd *cobra.Command) error {
 				return aerr
 			}
 			rev.SetChildrenResolver(childrenResolver(a))
+			// Structured retry/failure/timeout telemetry (sty_b73c3236): the engine
+			// sees each dispatch ATTEMPT (a killed/timed-out subprocess) the verb
+			// layer never does, so it writes those events itself via this sink.
+			rev.SetTelemetry(func(ctx context.Context, storyID, actor, kind string, data map[string]any) {
+				_ = verb.AppendTelemetry(ctx, storyID, actor, kind, data)
+			})
 			verb.SetTransitionGater(rev)
 			// Stamp the governing workflow on every story at create — independent of
 			// create-gating (sty_3800ac23).

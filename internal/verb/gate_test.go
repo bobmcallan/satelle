@@ -18,9 +18,9 @@ type summariserStub struct {
 	calls int
 }
 
-func (s *summariserStub) Summarise(context.Context, workitem.Item, string, string) (string, error) {
+func (s *summariserStub) Summarise(context.Context, workitem.Item, string, string) (verb.SummaryResult, error) {
 	s.calls++
-	return s.out, nil
+	return verb.SummaryResult{Text: s.out}, nil
 }
 func (s *summariserStub) MandatorySummary(context.Context, workitem.Item) bool { return false }
 
@@ -28,8 +28,8 @@ func (s *summariserStub) MandatorySummary(context.Context, workitem.Item) bool {
 // deposits distinguishable step-summary docs.
 type edgeSummariser struct{}
 
-func (edgeSummariser) Summarise(_ context.Context, _ workitem.Item, from, to string) (string, error) {
-	return "summary of " + from + " → " + to, nil
+func (edgeSummariser) Summarise(_ context.Context, _ workitem.Item, from, to string) (verb.SummaryResult, error) {
+	return verb.SummaryResult{Text: "summary of " + from + " → " + to}, nil
 }
 func (edgeSummariser) MandatorySummary(context.Context, workitem.Item) bool { return false }
 

@@ -22,10 +22,12 @@ type StoryCostRow struct {
 	DurationMs  int64  `json:"duration_ms"`
 }
 
-// stepCostData is the payload of a KindStepCost ledger entry: a single step's
-// self-reported actual tokens and/or its per-step estimate. It carries numbers and
-// the step name ONLY — never env or secrets (sty_3b2e55f5). Shared by the writer
-// (storyStepCost) and the reader (ComputeStoryCost), so the shape is single-sourced.
+// stepCostData is a single step's self-reported actual tokens and/or its
+// per-step estimate. It carries numbers and the step name ONLY — never env or
+// secrets (sty_3b2e55f5). Read from two sources: the legacy KindStepCost ledger
+// entry (retired writer, kept readable for history) and a KindTelemetryEvent row
+// whose kind is "step-self-report" (the current writer, `satelle story log`,
+// sty_b73c3236) — so the shape is single-sourced across both.
 type stepCostData struct {
 	Step          string `json:"step"`
 	TokensTotal   int    `json:"tokens_total,omitempty"`
@@ -33,6 +35,10 @@ type stepCostData struct {
 	EstTokens     int    `json:"est_tokens,omitempty"`
 	EstDurationMs int64  `json:"est_duration_ms,omitempty"`
 }
+
+// stepSelfReportKind is the telemetry event kind that expresses the retired
+// step-cost verb's function via the generic `satelle story log` primitive.
+const stepSelfReportKind = "step-self-report"
 
 // StoryStepRow is one workflow STEP's cost report: the wall-time the story spent in
 // that state (derived from the transition timestamps — this is how an IN-LOOP step,
@@ -60,6 +66,25 @@ type StoryCost struct {
 	TotalTokens     int            `json:"total_tokens"`
 	TotalDurationMs int64          `json:"total_duration_ms"`
 	TotalWallMs     int64          `json:"total_wall_ms,omitempty"`
+}
+
+// mergeStepCost folds a self-reported actual + estimate onto r — the last
+// report for a step wins (a re-record overrides), matching whichever writer
+// produced it (the retired KindStepCost verb, or the current `story log
+// --kind step-self-report`).
+func mergeStepCost(r *StoryStepRow, d stepCostData) {
+	if d.TokensTotal > 0 {
+		r.TokensTotal, r.HasTokens = d.TokensTotal, true
+	}
+	if d.EstTokens > 0 {
+		r.EstTokens = d.EstTokens
+	}
+	if d.EstDurationMs > 0 {
+		r.EstDurationMs = d.EstDurationMs
+	}
+	if d.DurationMs > 0 {
+		r.WallTimeMs = d.DurationMs // an explicit actual duration overrides the derived one
+	}
 }
 
 // ComputeStoryCost reads the story's ledger and builds two complementary views:
@@ -137,6 +162,7 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 			sc.TotalTokens += row.TokensTotal
 			sc.TotalDurationMs += row.DurationMs
 		case ledger.KindStepCost:
+			// Legacy writer (retired, sty_b73c3236) — kept readable for history.
 			if len(e.Payload) == 0 {
 				continue
 			}
@@ -144,20 +170,24 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 			if err := json.Unmarshal(e.Payload, &d); err != nil || d.Step == "" {
 				continue
 			}
-			r := addStep(d.Step)
-			// Last step_cost for a step wins (a re-record overrides).
-			if d.TokensTotal > 0 {
-				r.TokensTotal, r.HasTokens = d.TokensTotal, true
+			mergeStepCost(addStep(d.Step), d)
+		case ledger.KindTelemetryEvent:
+			if len(e.Payload) == 0 {
+				continue
 			}
-			if d.EstTokens > 0 {
-				r.EstTokens = d.EstTokens
+			var env telemetryEnvelope
+			if err := json.Unmarshal(e.Payload, &env); err != nil || env.Kind != stepSelfReportKind {
+				continue
 			}
-			if d.EstDurationMs > 0 {
-				r.EstDurationMs = d.EstDurationMs
+			raw, err := json.Marshal(env.Data)
+			if err != nil {
+				continue
 			}
-			if d.DurationMs > 0 {
-				r.WallTimeMs = d.DurationMs // an explicit actual duration overrides the derived one
+			var d stepCostData
+			if err := json.Unmarshal(raw, &d); err != nil || d.Step == "" {
+				continue
 			}
+			mergeStepCost(addStep(d.Step), d)
 		}
 	}
 
