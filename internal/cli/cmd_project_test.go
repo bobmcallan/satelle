@@ -5,8 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -126,66 +124,6 @@ func TestRunProjectListHappy(t *testing.T) {
 	}
 }
 
-// TestRunProjectBindAndShow proves AC1: bind writes the slug into the committed
-// satelle.toml (preserving unrelated content), and show reads it back.
-func TestRunProjectBindAndShow(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), ".satelle")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	toml := filepath.Join(dir, "satelle.toml")
-	if err := os.WriteFile(toml, []byte("data_dir = \".satelle\"\n[hosted]\n# keep this comment\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SATELLE_CONFIG", toml)
-
-	// bind writes project = "acme" without clobbering the existing content.
-	cmd, buf := testCmd()
-	if err := runProjectBind(cmd, "acme"); err != nil {
-		t.Fatalf("bind: %v", err)
-	}
-	b, _ := os.ReadFile(toml)
-	if !strings.Contains(string(b), `project = "acme"`) {
-		t.Fatalf("bind did not record the project:\n%s", b)
-	}
-	if !strings.Contains(string(b), "keep this comment") || !strings.Contains(string(b), "data_dir") {
-		t.Fatalf("bind clobbered unrelated config:\n%s", b)
-	}
-	if !strings.Contains(buf.String(), "acme") {
-		t.Errorf("bind output missing slug: %q", buf.String())
-	}
-
-	// show reads the binding back.
-	cmd2, buf2 := testCmd()
-	if err := runProjectShow(cmd2, ""); err != nil {
-		t.Fatalf("show: %v", err)
-	}
-	if !strings.Contains(buf2.String(), "bound project: acme") {
-		t.Errorf("show did not report the bound project:\n%s", buf2.String())
-	}
-}
-
-// TestResolveProjectTargetNoBinding: with a server but no bound project (and no
-// --project), push/pull fail with a clear, network-free message.
-func TestResolveProjectTargetNoBinding(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), ".satelle")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	toml := filepath.Join(dir, "satelle.toml")
-	// A repo config with a fallback server but no [hosted] project.
-	if err := os.WriteFile(toml, []byte("[hosted]\nserver = \"https://demo.example\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SATELLE_CONFIG", toml)
-	t.Setenv("SATELLE_HOME", t.TempDir()) // isolate the global config
-
-	_, _, _, err := resolveProjectTarget("", "")
-	if err == nil || !strings.Contains(err.Error(), "no bound project") {
-		t.Fatalf("expected a 'no bound project' error, got %v", err)
-	}
-}
-
 func TestRunProjectListEmpty(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	mux := http.NewServeMux()
@@ -202,5 +140,44 @@ func TestRunProjectListEmpty(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "No projects") {
 		t.Fatalf("expected empty-list message, got %q", buf.String())
+	}
+}
+
+// TestRunProjectShow covers show's surviving output after the substrate-backup
+// removal (sty_ea7f2c39): it still reports the hosted server and sign-in state,
+// and no longer prints a 'bound project' line (that binding went with push/pull).
+func TestRunProjectShow(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	// Signed out, explicit server: the server + sign-in lines render; no binding.
+	cmd, buf := testCmd()
+	if err := runProjectShow(cmd, "https://h.example"); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "hosted server: https://h.example") {
+		t.Fatalf("show missing hosted-server line: %q", out)
+	}
+	if !strings.Contains(out, "sign-in state: signed out") {
+		t.Fatalf("show missing signed-out state: %q", out)
+	}
+	if strings.Contains(out, "bound project") {
+		t.Fatalf("show must NOT print a 'bound project' line after removal: %q", out)
+	}
+
+	// Signed in for the server: sign-in state flips; still no binding line.
+	ts := httptest.NewServer(http.NewServeMux())
+	defer ts.Close()
+	seedCred(t, ts.URL)
+	cmd2, buf2 := testCmd()
+	if err := runProjectShow(cmd2, ts.URL); err != nil {
+		t.Fatal(err)
+	}
+	out2 := buf2.String()
+	if !strings.Contains(out2, "sign-in state: signed in") {
+		t.Fatalf("show should report signed in after seedCred: %q", out2)
+	}
+	if strings.Contains(out2, "bound project") {
+		t.Fatalf("show must NOT print a 'bound project' line after removal: %q", out2)
 	}
 }

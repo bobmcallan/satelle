@@ -117,8 +117,6 @@ type Config struct {
 type HostedConfig struct {
 	// Server is the hosted-server base URL (e.g. https://hosted.satelle.dev).
 	Server string `toml:"server"`
-	// Project is the hosted project slug this repo maps to (optional).
-	Project string `toml:"project"`
 }
 
 // ReviewConfig toggles the quality-management gates for a repo.
