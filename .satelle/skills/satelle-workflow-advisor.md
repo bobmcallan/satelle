@@ -54,7 +54,7 @@ nothing yourself.
    Advise when a step's grant is wider than its rubric needs (a verify-only
    step with mutating tools) or too narrow to complete (a commit step without
    its VCS tools). A **code-writing** dispatched step (Write/Edit in the grant,
-   e.g. a `coder` on `in_progress`) must be reached ONLY from a PERFORMING
+   e.g. a `worker` on `in_progress`) must be reached ONLY from a PERFORMING
    state — dispatch fires while the status is still the FROM state, and the
    engaged-story edit gate allows the agent's edits only when that FROM state
    is itself performing. satelle REFUSES a code-writer dispatched from a

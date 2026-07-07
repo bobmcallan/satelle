@@ -73,10 +73,10 @@ runs the step in-loop (the default), `agent=reviewer` is the isolated read-only
 gate, and `agent=<name>` allocates the step to a **named agent** declared as a flat
 top-level `[<name>]` section in `.satelle/agents.toml` — every top-level section is
 an agent: `[executor]`/`[reviewer]` are the built-in roles, any other (e.g.
-`[commit-agent]`) is a named agent (the legacy nested `[agents.<name>]` still
-loads). A named agent is always isolated, with its own scoped grant (e.g. the
-project's `commit` + `push` steps are allocated to a `commit-agent` that runs the
-`commit`/`push` rubric as an isolated `claude -p`). Entering a named-agent state
+`[worker]`) is a named agent (the legacy nested `[agents.<name>]` still
+loads). A named agent is always isolated, with its own scoped grant (e.g. this
+repo allocates its `in_progress` step to a `worker` that runs the `code` rubric
+as an isolated `claude -p`). Entering a named-agent state
 **dispatches** the step to that binding's harness (sty_fd427546): the item —
 title, body, acceptance criteria — rides on stdin, the node's `@skill:` rubric as
 the system prompt, tools/model from the binding; a failed run **refuses the
