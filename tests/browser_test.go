@@ -379,6 +379,55 @@ func TestBrowserTagChipFiltering(t *testing.T) {
 	}
 }
 
+// TestBrowserTimelineFieldToggle drives the real client-side wiring behind the
+// per-viewer Timeline-fields control (sty_43d228e4): unchecking a field on the
+// Settings page must actually HIDE the matching chip on a story's timeline (via
+// localStorage + the hide-<type> class app.js stamps on load), while the other
+// chips stay. A telemetry_event supplies the outcome + tokens chips without
+// depending on reviewer internals.
+func TestBrowserTimelineFieldToggle(t *testing.T) {
+	base, repo := serveRepo(t, "8815")
+	id := createStory(t, repo, "Telemetry Story", "")
+	mustRun(t, testBin, repo, "story", "log", id, "--kind", "step-quality",
+		"--data", "outcome=smooth", "--data", "tokens_total=2000", "--data", "duration_ms=2400")
+
+	ctx := newChrome(t)
+
+	// The story timeline renders the chips; tokens visible by default (all fields on).
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/story/"+id),
+		chromedp.WaitVisible(`ol.timeline .chip-tokens`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("timeline chips did not render: %v", err)
+	}
+	if !waitCond(t, ctx, `!!document.querySelector('ol.timeline .chip-tokens') && document.querySelector('ol.timeline .chip-tokens').offsetParent!==null`, 3*time.Second) {
+		t.Fatal("the tokens chip should be visible by default")
+	}
+
+	// Uncheck 'Tokens' on the Settings page (the approved control location).
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/settings"),
+		chromedp.WaitVisible(`input[data-tlfield="tokens"]`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("settings tokens checkbox missing: %v", err)
+	}
+	clickJS(t, ctx, `input[data-tlfield="tokens"]`) // starts checked → unchecks, writes localStorage
+
+	// Back on the story page: the tokens chip is now hidden; the outcome chip stays.
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/story/"+id),
+		chromedp.WaitVisible(`ol.timeline .chip-outcome`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("reload story: %v", err)
+	}
+	if !waitCond(t, ctx, `(function(){var c=document.querySelector('ol.timeline .chip-tokens');return !c || c.offsetParent===null;})()`, 3*time.Second) {
+		t.Error("after unchecking Tokens, the tokens chip must be hidden on the timeline")
+	}
+	if !waitCond(t, ctx, `!!document.querySelector('ol.timeline .chip-outcome') && document.querySelector('ol.timeline .chip-outcome').offsetParent!==null`, 3*time.Second) {
+		t.Error("the outcome chip must stay visible (only Tokens was unchecked)")
+	}
+}
+
 // TestBrowserStatusBadgesOutlined asserts the badge restyle (sty_970dbef3) at the
 // computed-style level, in BOTH themes: a status badge is an UPPERCASE, OUTLINED
 // pill (a real border + matching coloured text, not the old filled light pill), the

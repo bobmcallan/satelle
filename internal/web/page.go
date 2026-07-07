@@ -333,6 +333,7 @@ const templatesSrc = `
     <div class="ev-kind">{{.Kind}}</div>
     <div class="ev-meta">{{ftime .CreatedAt}}{{if .Actor}} · {{.Actor}}{{end}}</div>
     {{if .Body}}<div class="ev-body">{{.Body}}</div>{{end}}
+    {{if .Chips}}<div class="ev-chips">{{range .Chips}}<span class="chip chip-{{.Type}}">{{.Label}}</span>{{end}}</div>{{end}}
   </li>{{end}}</ol>{{else}}<div class="empty">No ledger events yet.</div>{{end}}
 </div>{{end}}
 
@@ -463,6 +464,16 @@ const templatesSrc = `
       <div class="setting-label"><span class="setting-key">{{.FieldID}}</span><span class="setting-label-name">{{.Label}}</span>{{if .Help}}<span class="setting-help">{{.Help}}</span>{{end}}</div>
       <div class="setting-field"><div class="setting-value{{if not .Value}} setting-value-unset{{end}}">{{if .Value}}{{.Value}}{{else}}—{{end}}</div></div>
     </div>{{end}}
+  </div>
+
+  <h2 class="kind-h settings-sect">Display preferences</h2>
+  <div class="settings-note">These are per-viewer display preferences stored in your browser (like the theme), not repo config — they change nothing on disk.</div>
+  <div class="tlfields" role="group" aria-label="Timeline fields">
+    <div class="tlfields-label">Timeline fields — which agent-action chips the story timeline shows:</div>
+    <label><input type="checkbox" data-tlfield="walltime" checked> Wall-time</label>
+    <label><input type="checkbox" data-tlfield="tokens" checked> Tokens</label>
+    <label><input type="checkbox" data-tlfield="model" checked> Model/agent</label>
+    <label><input type="checkbox" data-tlfield="outcome" checked> Outcome</label>
   </div>
   {{template "footer"}}
 </div>

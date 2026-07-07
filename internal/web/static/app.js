@@ -285,7 +285,7 @@
     row.parentNode.insertBefore(exp, row.nextSibling);
     fetch(row.dataset.expandUrl, { headers: { "X-Requested-With": "fetch" } })
       .then(function (r) { return r.text(); })
-      .then(function (html) { td.innerHTML = html; enhanceWorkflowDiagrams(td); })
+      .then(function (html) { td.innerHTML = html; enhanceWorkflowDiagrams(td); applyTimelineFields(); })
       .catch(function () { td.innerHTML = '<div class="expbody">failed to load</div>'; });
   }
 
@@ -529,7 +529,7 @@
     var refreshDetail = detailEl ? debounce(function () {
       fetch("fragment/" + detailKind + "/" + detailId)
         .then(function (r) { return r.text(); })
-        .then(function (html) { detailEl.innerHTML = html; })
+        .then(function (html) { detailEl.innerHTML = html; applyTimelineFields(); })
         .catch(function () {});
     }, 250) : null;
 
@@ -659,6 +659,41 @@
     });
   }
 
+  // ---- timeline fields (viewer-local display preference) -------------------
+  // Per-viewer choice of which agent-action chips the story timeline shows
+  // (sty_43d228e4). Client-side only — persisted in localStorage like the theme,
+  // never repo config. The Settings page hosts the checkboxes; the preference
+  // applies to every ol.timeline (detail pages + inline expansions) via CSS
+  // hide-<type> classes, so the data stays in the DOM and only its display toggles.
+  var TLFIELDS = ["walltime", "tokens", "model", "outcome"];
+  function tlFieldsState() {
+    var s = {};
+    try { s = JSON.parse(localStorage.getItem("satelle-tlfields") || "{}"); } catch (e) {}
+    var out = {};
+    TLFIELDS.forEach(function (f) { out[f] = s[f] !== false; }); // default ON
+    return out;
+  }
+  function applyTimelineFields() {
+    var st = tlFieldsState();
+    document.querySelectorAll("ol.timeline").forEach(function (tl) {
+      TLFIELDS.forEach(function (f) { tl.classList.toggle("hide-" + f, !st[f]); });
+    });
+    document.querySelectorAll("input[data-tlfield]").forEach(function (cb) {
+      cb.checked = st[cb.getAttribute("data-tlfield")] !== false;
+    });
+  }
+  function initTimelineFields() {
+    document.addEventListener("change", function (e) {
+      var cb = e.target;
+      if (!cb || !cb.getAttribute || !cb.getAttribute("data-tlfield")) return;
+      var st = tlFieldsState();
+      st[cb.getAttribute("data-tlfield")] = cb.checked;
+      try { localStorage.setItem("satelle-tlfields", JSON.stringify(st)); } catch (e2) {}
+      applyTimelineFields();
+    });
+    applyTimelineFields();
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     initTheme();
     initTabs();
@@ -667,6 +702,7 @@
     initLive(); // one visibility-gated SSE serves both panels and detail
     initProjectSwitcher();
     initAccountMenu();
+    initTimelineFields();
     enhanceWorkflowDiagrams(document); // any diagram already in the server-rendered page
   });
 })();
