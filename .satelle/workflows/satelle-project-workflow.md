@@ -5,7 +5,7 @@ type: workflow
 tags: [type:workflow]
 applies_to: ["*"]
 create_review: satelle-story-create-review
-description: This repo's project-scope workflow, authored in DOT (the agent model). A story moves backlog → plan → in_progress → integration → release → done, with a cancelled exit. It is REVIEWER-FIRST (a reviewer gates every transition) and splits execution by stage (sty_5d9648f2, reversing the reviewer-only-execution of sty_d9a0b573 for in_progress ONLY): in_progress is performed by a DISPATCHED, isolated sonnet worker (agent=worker) reached from the performing plan state, while integration and release run IN-LOOP as the driving session (agent=executor, never an isolated sub-process) — so the tree-touching integration/release steps keep full context and the session's own permissions, and only the plan-driven code slice is dispatched. Two steps dispatch: plan (a cheap FABLE model that produces an implementation plan and attaches it to the story) and in_progress (the sonnet worker that implements exactly the plan's slice with tests, then stops for the gate). Every stage is reviewed against the story's acceptance criteria: plan → in_progress is gated by satelle-story-plan-review (the plan covers the ACs); in_progress → integration by satelle-code-ac-review (the implementation matches the ACs, with tests); integration is the VISIBLE testing stage — integration → release is gated by satelle-integration-review (the tests are adequate) plus the scoped satelle-integration-check (make integration) on release entry, so make integration is its own step rather than a hidden gate (sty_15dbc0dd); and release → done by the single satelle-story-release-review (the merged commit+push+release evidence — version bump, conventional commit with no AI attribution, green CI, published release, recorded summary — and the ACs satisfied). integration → in_progress and release → in_progress are recovery edges for any reject. There is no deploy state — the push to main IS the release, verified by CI. done stays terminal (satelle-done-is-last); a project workflow takes precedence over the embedded satelle-baseline-workflow.
+description: This repo's project-scope workflow, authored in DOT (the agent model). A story moves backlog → plan → in_progress → integration → release → done, with a cancelled exit. It is REVIEWER-FIRST (a reviewer gates every transition) and splits execution by stage (sty_5d9648f2, reversing the reviewer-only-execution of sty_d9a0b573 for in_progress ONLY): in_progress is performed by a DISPATCHED, isolated sonnet worker (agent=worker) reached from the performing plan state, while integration and release run IN-LOOP as the driving session (agent=executor, never an isolated sub-process) — so the tree-touching integration/release steps keep full context and the session's own permissions, and only the plan-driven code slice is dispatched. Two steps dispatch: plan (a cheap FABLE model that produces an implementation plan and attaches it to the story) and in_progress (the sonnet worker that implements exactly the plan's slice with tests, then stops for the gate). Every stage is reviewed: backlog → plan is gated by satelle-story-intent-review (an INTAKE quality gate — the story is well-formed and passes UI-agnostic fitness, open-story collision, architectural soundness, and YAGNI before planning begins); plan → in_progress is gated by satelle-story-plan-review (the plan covers the ACs); in_progress → integration by satelle-code-ac-review (the implementation matches the ACs, with tests); integration is the VISIBLE testing stage — integration → release is gated by satelle-integration-review (the tests are adequate) plus the scoped satelle-integration-check (make integration) on release entry, so make integration is its own step rather than a hidden gate (sty_15dbc0dd); and release → done by the single satelle-story-release-review (the merged commit+push+release evidence — version bump, conventional commit with no AI attribution, green CI, published release, recorded summary — and the ACs satisfied). integration → in_progress and release → in_progress are recovery edges for any reject. There is no deploy state — the push to main IS the release, verified by CI. done stays terminal (satelle-done-is-last); a project workflow takes precedence over the embedded satelle-baseline-workflow.
 ---
 
 # satelle workflow (project) — the agent model, authored in DOT
@@ -26,7 +26,11 @@ and the session's own permissions — no isolated sub-process is spawned for
 integration/commit/push, which is what previously lost context and hit
 narrow-grant permission walls. A **reviewer** node only gates *entry* via its
 `prompt="@skill:NAME"` (read-only — it judges, never mutates). Status advances only
-through a reviewer's accept.
+through a reviewer's accept. The gating begins at intake: `backlog -> plan` is
+gated by `satelle-story-intent-review`, so a story must earn entry to planning —
+well-formed, UI-agnostic, non-colliding, architecturally sound, and YAGNI — before
+any dispatch spends tokens on it. A reject leaves the story at `backlog` to be
+fixed and re-requested (or cancelled via `backlog -> cancelled`).
 
 **Two steps dispatch.** `plan` is allocated to a named agent (`agent=planner`, a
 cheap FABLE model in `.satelle/agents.toml`) that reads the story, writes an
@@ -76,7 +80,7 @@ digraph satelle_workflow {
   estimate    [agent=reviewer, prompt="@skill:satelle-estimate-actual-review", on="in_progress,done"]
   intcheck    [agent=reviewer, prompt="@skill:satelle-integration-check", on="release"]
 
-  backlog     -> plan
+  backlog     -> plan         [agent=reviewer, prompt="@skill:satelle-story-intent-review"] // intake gate: a story must pass intent-review to enter plan
   plan        -> in_progress  [agent=reviewer, prompt="@skill:satelle-story-plan-review"]
   in_progress -> integration  [agent=reviewer, prompt="@skill:satelle-code-ac-review"]     // code matches the ACs -> enter integration
   integration -> release      [agent=reviewer, prompt="@skill:satelle-integration-review"] // tests adequate (+ scoped intcheck runs make integration) -> enter release
@@ -99,7 +103,7 @@ Every gate/skill this workflow names resolves through the doc-index, **project
 scope (`.satelle/skills`) layered over the embedded system defaults**. The
 dispatched `plan` (`@skill:plan`) and `in_progress` (`@skill:code`, the sonnet
 worker) rubrics, the in-loop `release` executor rubric, and the reviewer gates
-(`satelle-story-plan-review`, `satelle-code-ac-review`,
+(`satelle-story-intent-review`, `satelle-story-plan-review`, `satelle-code-ac-review`,
 `satelle-integration-review`, `satelle-integration-check`,
 `satelle-story-release-review`, `satelle-estimate-actual-review`,
 `satelle-story-cancel-review`, `satelle-step-summary`) are authored in this repo's
