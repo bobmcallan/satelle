@@ -20,9 +20,9 @@
 # ALLOCATING A STEP TO AN AGENT (in the workflow DOT)
 # ---------------------------------------------------
 # A node's `agent=` value chooses HOW that step runs:
-#   commit [agent=executor,     prompt="@skill:commit"]  # IN-LOOP (default)
-#   commit [agent=commit-agent, prompt="@skill:commit"]  # ISOLATED sub-process
-# Both perform the SAME rubric (@skill:commit); only WHERE it runs differs.
+#   in_progress [agent=executor, prompt="@skill:code"]  # IN-LOOP (default)
+#   in_progress [agent=worker,   prompt="@skill:code"]  # ISOLATED sub-process
+# Both perform the SAME rubric (@skill:code); only WHERE it runs differs.
 #   - agent=executor  → the current/driving session performs the step in-loop.
 #   - agent=reviewer  → an isolated, read-only gate.
 #   - agent=<name>    → the isolated named agent defined as a top-level [<name>] below.
@@ -79,33 +79,6 @@ tools   = "Read,Grep,Glob"     # read-only grant
 model   = "sonnet"             # TIERED (operator decision): gates run on the rigorous "parent" model — sonnet caught release-evidence gaps GLM waved through, and avoids GLM's 529/5h-quota flakiness. Workers (planner/retrospective) stay on GLM for cost.
 # No GLM env here: the reviewer uses the Anthropic default endpoint (the tiering split).
 
-# commit-agent — a NAMED, isolated agent the project workflow allocates to the
-# commit and push steps (agent=commit-agent), declared as a flat top-level section
-# (sty_6e0ba71c). Per the operating model a named agent is ALWAYS an isolated
-# sub-process: satelle runs the commit.md / push.md rubric as the system prompt on
-# the agent CLI (claude -p) rather than in the driving loop. The grant is SCOPED to
-# exactly what commit/push need — stage/commit/push, watch CI, reinstall, and drive
-# satelle — NOT a blanket allowance (sty_b2222b8a). Removing this block REFUSES
-# the commit/push transitions (sty_fd427546); set harness = "in-loop" instead to
-# hand those steps back to the orchestrator.
-[commit-agent]
-harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
-tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*),Bash(gofmt:*)"
-model   = "glm-4.6"
-env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
-
-# integrator — the INTEGRATION step's named agent (sty_1c543ecd): runs the
-# @skill:integrate rubric isolated on a cheaper/faster model. Per-step model
-# allocation is pure config — this binding's model applies to this step alone.
-# The grant covers verifying and trivially repairing the tree (fmt/vet/suites);
-# the integration→commit EDGE gates (satelle-integration-review + the coded
-# intcheck) still judge the outcome, so a failed integration cannot reach commit.
-[integrator]
-harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
-tools   = "Read,Grep,Glob,Edit,Bash(make:*),Bash(go:*),Bash(gofmt:*),Bash(satelle:*)"
-model   = "glm-4.6"
-env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
-
 # planner — the `plan` step's named agent (sty_d9a0b573). It reads the story,
 # writes an implementation plan covering every acceptance criterion, and attaches
 # it to the story (Bash(satelle:*) for `satelle story attach`) — read-only on the
@@ -128,26 +101,23 @@ tools   = "Read,Grep,Glob,Bash(satelle:*)"
 model   = "glm-4.6"
 env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
 
-# coder — an OPTIONAL named code-writing agent for the in_progress step
-# (sty_f5bd176f). It proves the orchestration/coding separation: a fresh isolated
-# coder reconstructs context from the story + plan via the read-only CLI
-# (pull-context contract), implements exactly the plan's slice with unit +
-# integration tests, then stops for code-ac-review. Its grant adds Write/Edit (it
-# writes product code) plus gofmt/go for a self-check, on top of the mandatory
-# Bash(satelle:*) every dispatched agent needs to pull its context.
+# worker — this repo's ACTIVE in_progress code-writer (sty_5d9648f2, was the
+# dormant `coder` of sty_f5bd176f). The project workflow allocates in_progress to
+# it (agent=worker, prompt="@skill:code"): a fresh isolated worker reconstructs
+# context from the story + plan via the read-only CLI (pull-context contract),
+# implements exactly the plan's slice with unit + integration tests, then stops for
+# code-ac-review. Its grant adds Write/Edit (it writes product code) plus gofmt/go
+# for a self-check, on top of the mandatory Bash(satelle:*) every dispatched agent
+# needs to pull its context.
 #
-# DORMANT BY DEFAULT — this binding runs ONLY if a workflow node allocates the step
-# to it. To opt a repo in, edit that repo's project workflow's in_progress node:
-#     in_progress [agent=coder, prompt="@skill:code"]   # dispatched (isolated)
-# instead of the in-loop default:
-#     in_progress [agent=executor]                        # in-loop (this repo)
-# The embedded default and THIS repo stay in-loop; dispatched coding is an explicit
-# opt-in a repo authors. The coder must be reached from a PERFORMING state (e.g.
-# plan) so the engaged-story edit gate legitimately allows its edits — the dispatch
-# lock-guard (agentstep.DispatchExecutor) REFUSES a code-writer dispatched from a
+# On SONNET via the Anthropic default endpoint (no GLM env) — the tiering decision
+# (sty_5d9648f2): the worker writes product code judged by the code-ac gate, so it
+# runs on the same rigorous model as the reviewer rather than the cheaper GLM
+# worker line. in_progress is reached from the PERFORMING plan state, so the
+# engaged-story edit gate legitimately allows its edits — the dispatch lock-guard
+# (agentstep.DispatchExecutor) REFUSES a code-writer dispatched from a
 # non-performing state rather than let it ride the serve fail-open.
-[coder]
+[worker]
 harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Edit,Write,Bash(satelle:*),Bash(gofmt:*),Bash(go:*)"
-model   = "glm-4.6"
-env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
+model   = "sonnet"

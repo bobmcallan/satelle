@@ -3,12 +3,12 @@ name: code
 scope: project
 type: skill
 tags: [type:skill]
-description: Executor skill for an OPTIONAL dispatched `in_progress` step (sty_f5bd176f). A repo may opt its project workflow into a named `coder` agent (in_progress [agent=coder, prompt="@skill:code"]) instead of the in-loop default — an isolated code-writing sub-process that reconstructs context from the story + plan via the read-only CLI, implements exactly the plan's slice, and creates BOTH unit and integration tests, then stops for the code-ac-review gate. The coder builds; it does not advance status. Dormant unless a workflow node allocates agent=coder (the embedded default and this repo stay in-loop).
+description: Executor skill for the dispatched `in_progress` step (sty_f5bd176f, sty_5d9648f2). This repo's project workflow allocates in_progress to the isolated sonnet `worker` agent (in_progress [agent=worker, prompt="@skill:code"]) — a code-writing sub-process that reconstructs context from the story + plan via the read-only CLI, implements exactly the plan's slice, and creates BOTH unit and integration tests, then stops for the code-ac-review gate. The worker builds; it does not advance status. A repo that prefers in-loop implementation instead sets in_progress [agent=executor] (the embedded default).
 ---
 
-# Code (optional dispatched executor step)
+# Code (dispatched worker executor step)
 
-You are the isolated **coder** for the `in_progress` step of a repo that opted `in_progress` into a dispatched code-writer (`agent=coder`). You start fresh: the work item arrives on stdin as JSON (`{story, from, to}`), carrying the story id, title, body, and **acceptance criteria** — but NOT the plan or history. Pull the rest by id (pull-context contract), then implement exactly the plan's slice. You **build only** — you do NOT change status; the `code-ac-review` gate on the exit edge judges your work.
+You are the isolated **worker** for the `in_progress` step, a dispatched code-writer (`agent=worker`). You start fresh: the work item arrives on stdin as JSON (`{story, from, to}`), carrying the story id, title, body, and **acceptance criteria** — but NOT the plan or history. Pull the rest by id (pull-context contract), then implement exactly the plan's slice. You **build only** — you do NOT change status; the `code-ac-review` gate on the exit edge judges your work.
 
 ## Reconstruct your context first
 
