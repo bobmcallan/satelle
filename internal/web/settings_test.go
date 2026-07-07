@@ -111,11 +111,18 @@ func TestSettingsGetReadOnly(t *testing.T) {
 			t.Errorf("read-only settings page missing %q", want)
 		}
 	}
-	// AC1: no editable controls — the write UI is gone.
-	for _, forbidden := range []string{`<textarea`, "settings-save", `action="settings"`, `type="checkbox"`} {
+	// AC1: no REPO-CONFIG write UI — the editor is gone. Viewer-local DISPLAY
+	// preferences (localStorage only, e.g. the Timeline-fields checkboxes,
+	// sty_43d228e4) are NOT a repo-config write and may appear.
+	for _, forbidden := range []string{`<textarea`, "settings-save", `action="settings"`} {
 		if strings.Contains(body, forbidden) {
-			t.Errorf("read-only settings page must not contain the write control %q", forbidden)
+			t.Errorf("read-only settings page must not contain the repo-config write control %q", forbidden)
 		}
+	}
+	// The viewer-local Timeline-fields checkboxes must carry no name= (so a stray
+	// submit could never post them as server settings) — a display pref, not a write.
+	if strings.Contains(body, `<input type="checkbox" name=`) {
+		t.Error("a settings-page checkbox must not be a named server form field (viewer prefs are localStorage-only)")
 	}
 	// AC3: the note points at the file and links the global settings page.
 	if !strings.Contains(body, `href="settings/global"`) {
