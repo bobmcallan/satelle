@@ -15,14 +15,17 @@
 package agentcli
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -62,6 +65,14 @@ type Request struct {
 	// Env is NEVER included in Command() evidence, logs, or error strings
 	// (sty_001558ce).
 	Env map[string]string
+	// Sink, when non-nil, receives a live TEE of the subprocess's stdout/stderr AS
+	// IT RUNS (stderr lines prefixed "[stderr] "), so a caller can write it to a
+	// tailable per-dispatch log an operator watches while a long dispatch runs —
+	// the only way to see a hang or an approaching timeout before the SIGKILL
+	// (sty_0aa67b7f). It never affects the accumulated bytes runProcess returns for
+	// the final JSON/usage parse; nil is a no-op (the default, unchanged behaviour).
+	// Sink.Write errors are ignored (best-effort, like the reviewer/executor logs).
+	Sink io.Writer
 }
 
 // UsageResult is the cost of one agent invocation — token counts and, when the
@@ -275,7 +286,13 @@ func composeEnv(base []string, overlay map[string]string) []string {
 }
 
 // runProcess runs binary with args, feeding req.Payload on stdin in req.Dir, and
-// returns stdout. A non-zero exit surfaces stderr in the error.
+// returns the accumulated stdout. It streams via StdoutPipe/StderrPipe rather than
+// buffering with cmd.Output(), so a non-nil req.Sink observes both streams
+// INCREMENTALLY, before the process exits — a hang or an approaching timeout is
+// visible on the sink, and a SIGKILL (ctx deadline) leaves whatever was already
+// streamed on disk (sty_0aa67b7f). The returned bytes are the exact accumulated
+// stdout regardless of req.Sink, so the caller's final JSON/usage parse is
+// unaffected. A non-zero exit surfaces stderr in the error, as before.
 func runProcess(ctx context.Context, binary string, args []string, req Request) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Stdin = strings.NewReader(req.Payload)
@@ -283,14 +300,57 @@ func runProcess(ctx context.Context, binary string, args []string, req Request) 
 		cmd.Dir = req.Dir
 	}
 	cmd.Env = composeEnv(os.Environ(), req.Env)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+
+	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return nil, fmt.Errorf("agentcli: %s: %w: %s", binary, err, msg)
-		}
 		return nil, fmt.Errorf("agentcli: %s: %w", binary, err)
 	}
-	return out, nil
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("agentcli: %s: %w", binary, err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("agentcli: %s: %w", binary, err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); teeLines(stdoutPipe, &stdout, req.Sink, "") }()
+	go func() { defer wg.Done(); teeLines(stderrPipe, &stderr, req.Sink, "[stderr] ") }()
+	wg.Wait()
+
+	if err := cmd.Wait(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return stdout.Bytes(), fmt.Errorf("agentcli: %s: %w: %s", binary, err, msg)
+		}
+		return stdout.Bytes(), fmt.Errorf("agentcli: %s: %w", binary, err)
+	}
+	return stdout.Bytes(), nil
+}
+
+// teeLines reads r line-by-line until EOF (the pipe closing, whether from a clean
+// exit or a SIGKILL), accumulating each RAW line into buf — the exact bytes a
+// non-streaming read would have produced — and, when sink is non-nil, writing an
+// immediate copy (with prefix, for stderr) to sink so a tailing observer sees it
+// before the process finishes. Reading line-by-line rather than with io.Copy keeps
+// stderr's "[stderr] " prefix aligned to real lines without a token-length limit
+// (unlike bufio.Scanner). Sink write errors are ignored (best-effort).
+func teeLines(r io.Reader, buf *bytes.Buffer, sink io.Writer, prefix string) {
+	reader := bufio.NewReader(r)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			buf.Write(line)
+			if sink != nil {
+				if prefix != "" {
+					_, _ = sink.Write([]byte(prefix))
+				}
+				_, _ = sink.Write(line)
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
 }

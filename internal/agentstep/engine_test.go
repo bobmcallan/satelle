@@ -1206,6 +1206,84 @@ func TestDispatchPayloadCarriesIdNotDocuments(t *testing.T) {
 	}
 }
 
+// streamingFakeRunner writes each of lines to req.Sink DURING Run, standing in
+// for a real subprocess that streams incremental output — so a test can assert
+// DispatchExecutor wired a live sink into the Request without spawning a real
+// agent CLI (sty_0aa67b7f).
+type streamingFakeRunner struct {
+	lines []string
+	got   agentcli.Request
+}
+
+func (s *streamingFakeRunner) Name() string    { return "streaming-fake" }
+func (s *streamingFakeRunner) Command() string { return "streaming-fake" }
+func (s *streamingFakeRunner) Run(_ context.Context, req agentcli.Request) ([]byte, error) {
+	s.got = req
+	for _, l := range s.lines {
+		if req.Sink != nil {
+			_, _ = req.Sink.Write([]byte(l))
+		}
+	}
+	return []byte("ok"), nil
+}
+
+// TestDispatchExecutorWiresLiveSink pins AC1/AC3: when a log dir is configured,
+// DispatchExecutor opens a per-dispatch live log file and passes it through as
+// req.Sink, so the runner can stream incremental output to it AS THE RUN
+// PROCEEDS — verified here by writing through the sink mid-Run and reading the
+// file back once the (closed) dispatch returns.
+func TestDispatchExecutorWiresLiveSink(t *testing.T) {
+	dir := t.TempDir()
+	docs := fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	g.SetLogDir(dir, logfile.Config{})
+	r := &streamingFakeRunner{lines: []string{"first line\n", "second line\n"}}
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Bash(satelle:*)"}, true
+	})
+	g.newRunner = func(string) (agentcli.Runner, error) { return r, nil }
+
+	if _, err := g.DispatchExecutor(context.Background(),
+		workitem.Item{ID: "sty_1", Status: "backlog"}, "plan"); err != nil {
+		t.Fatal(err)
+	}
+	if r.got.Sink == nil {
+		t.Fatal("DispatchExecutor did not pass a Sink through to the runner's Request")
+	}
+	matches, err := filepath.Glob(filepath.Join(dir, "dispatch", "dispatch-*.log"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("expected exactly one dispatch log file, got %v (err %v)", matches, err)
+	}
+	data, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "first line") || !strings.Contains(string(data), "second line") {
+		t.Errorf("dispatch log missing streamed lines: %q", data)
+	}
+}
+
+// TestDispatchExecutorNoSinkWithoutLogDir pins AC2's other backward-compat half:
+// when no log dir is configured (as in most engine tests, and any embedder that
+// never called SetLogDir), the Request carries a nil Sink — the pre-existing
+// callers are unaffected by this change.
+func TestDispatchExecutorNoSinkWithoutLogDir(t *testing.T) {
+	docs := fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	r := &fakeRunner{out: "ok"}
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Bash(satelle:*)"}, true
+	})
+	g.newRunner = func(string) (agentcli.Runner, error) { return r, nil }
+	if _, err := g.DispatchExecutor(context.Background(),
+		workitem.Item{ID: "sty_1", Status: "backlog"}, "plan"); err != nil {
+		t.Fatal(err)
+	}
+	if r.got.Sink != nil {
+		t.Error("no log dir is configured — the Request should carry a nil Sink")
+	}
+}
+
 func TestGateRefusesUndeclaredEdge(t *testing.T) {
 	// in_progress→integrated is NOT a declared edge in testWorkflow. The gate must
 	// refuse it (error) so a story cannot skip a gate by jumping across an
