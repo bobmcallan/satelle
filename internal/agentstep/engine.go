@@ -25,6 +25,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -653,7 +655,16 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	if terr != nil {
 		return verb.DispatchResult{}, fmt.Errorf("named agent %q: invalid timeout in .satelle/agents.toml [%s]: %w", target.Agent, target.Agent, terr)
 	}
-	g.emitProgress("dispatching step %s to named agent %s (may take several minutes)…", toStatus, target.Agent)
+	sink, sinkPath, closeSink := g.dispatchSink(target.Agent, item.ID)
+	if closeSink != nil {
+		defer closeSink()
+	}
+	req.Sink = sink
+	if sinkPath != "" {
+		g.emitProgress("dispatching step %s to named agent %s (may take several minutes)… live output: %s", toStatus, target.Agent, sinkPath)
+	} else {
+		g.emitProgress("dispatching step %s to named agent %s (may take several minutes)…", toStatus, target.Agent)
+	}
 	out, usage, runErr := g.runOnce(ctx, runner, req, timeout)
 	res.TokensIn, res.TokensOut, res.TokensTotal = usage.InputTokens, usage.OutputTokens, usage.TotalTokens
 	res.DurationMs = usage.Duration.Milliseconds()
@@ -776,6 +787,31 @@ func grantsCodeEdit(tools string) bool {
 		}
 	}
 	return false
+}
+
+// dispatchSink opens a per-dispatch live log file under <data_dir>/logs/dispatch/
+// so a named executor's subprocess streams its stdout/stderr somewhere an
+// operator can `tail -f` WHILE it runs — observable before a hang or an
+// approaching timeout SIGKILLs it (sty_0aa67b7f), unlike executor.log which is
+// only written after the run completes. Returns a nil writer, empty path, and nil
+// closer when no log dir is configured (most engine tests) or the file cannot be
+// created, so streaming degrades to a no-op rather than failing the dispatch —
+// best-effort, like the executor/reviewer logs. The caller must invoke the
+// returned closer (when non-nil) once the dispatch finishes.
+func (g *Engine) dispatchSink(agent, itemID string) (io.Writer, string, func()) {
+	if g.logDir == "" {
+		return nil, "", nil
+	}
+	dir := filepath.Join(g.logDir, "dispatch")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, "", nil
+	}
+	path := filepath.Join(dir, fmt.Sprintf("dispatch-%s-%d-%s.log", agent, time.Now().UnixNano(), itemID))
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, "", nil
+	}
+	return f, path, func() { _ = f.Close() }
 }
 
 // logExecutorRun appends a named-agent run's output (or failure) to

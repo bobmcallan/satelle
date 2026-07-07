@@ -1,11 +1,34 @@
 package agentcli
 
 import (
+	"bytes"
 	"context"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
+
+// syncBuffer is a concurrency-safe io.Writer: runProcess tees stdout/stderr from
+// two goroutines, and these tests read the sink WHILE the subprocess is still
+// running, so a plain bytes.Buffer would race.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
 
 func contains(ss []string, want string) bool {
 	for _, s := range ss {
@@ -219,5 +242,114 @@ func TestUnwrapUsage(t *testing.T) {
 	text, u = UnwrapUsage([]byte(other))
 	if string(text) != other || u.TotalTokens != 0 {
 		t.Errorf("non-envelope json should pass through: %q %+v", text, u)
+	}
+}
+
+// TestRunStreamsOutputBeforeExit pins AC1/AC3: a non-nil Sink observes stdout
+// INCREMENTALLY — a line is visible on the sink while the subprocess is still
+// sleeping between echoes, not only after it exits.
+func TestRunStreamsOutputBeforeExit(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH")
+	}
+	r := templateRunner{binary: "sh", argTemplate: []string{"-c", "echo before-sleep; sleep 0.3; echo after-sleep"}}
+	sink := &syncBuffer{}
+	done := make(chan []byte, 1)
+	go func() {
+		out, err := r.Run(context.Background(), Request{Sink: sink})
+		if err != nil {
+			t.Errorf("run: %v", err)
+		}
+		done <- out
+	}()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for !strings.Contains(sink.String(), "before-sleep") {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for streamed output to reach the sink")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	// The subprocess is still sleeping — it must not have finished yet, proving the
+	// sink saw the first line BEFORE exit, not merely as a post-exit flush.
+	select {
+	case out := <-done:
+		t.Fatalf("process already exited when the sink observed the first line — not incremental: %q", out)
+	default:
+	}
+
+	out := <-done
+	if !strings.Contains(string(out), "before-sleep") || !strings.Contains(string(out), "after-sleep") {
+		t.Errorf("final accumulated stdout incomplete: %q", out)
+	}
+	if !strings.Contains(sink.String(), "after-sleep") {
+		t.Errorf("sink should also carry the second line once it's written: %q", sink.String())
+	}
+}
+
+// TestRunStreamsStderrWithPrefixWithoutLeakingIntoStdout pins the [stderr]
+// interleaving decision: stderr reaches the sink prefixed, but never contaminates
+// the returned stdout bytes the caller parses as the result.
+func TestRunStreamsStderrWithPrefixWithoutLeakingIntoStdout(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH")
+	}
+	r := templateRunner{binary: "sh", argTemplate: []string{"-c", "echo out-line; echo err-line 1>&2"}}
+	sink := &syncBuffer{}
+	out, err := r.Run(context.Background(), Request{Sink: sink})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !strings.Contains(string(out), "out-line") {
+		t.Errorf("stdout missing its own line: %q", out)
+	}
+	if strings.Contains(string(out), "err-line") {
+		t.Errorf("stderr must not leak into the returned stdout buffer: %q", out)
+	}
+	if !strings.Contains(sink.String(), "[stderr] err-line") {
+		t.Errorf("stderr should reach the sink prefixed [stderr]: %q", sink.String())
+	}
+}
+
+// TestRunKillRetainsStreamedOutputOnTimeout pins AC4: a ctx deadline SIGKILLs the
+// child (exec.CommandContext), but whatever was already streamed to the sink
+// before the kill is retained for diagnosis, not lost with an in-memory buffer.
+func TestRunKillRetainsStreamedOutputOnTimeout(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH")
+	}
+	// "exec sleep 5" replaces the shell's own process image rather than forking a
+	// grandchild, so killing the direct child pid actually kills the sleeper too —
+	// a bare "sleep 5" as a separate grandchild would keep the pipe's write end
+	// open (inherited fd) until it finished on its own, making Wait() hang for the
+	// full 5s regardless of the kill (a pre-existing os/exec characteristic, not
+	// something this change introduces).
+	r := templateRunner{binary: "sh", argTemplate: []string{"-c", "echo partial; exec sleep 5"}}
+	sink := &syncBuffer{}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	_, err := r.Run(ctx, Request{Sink: sink})
+	if err == nil {
+		t.Fatal("expected the timeout to kill the child and surface an error")
+	}
+	if !strings.Contains(sink.String(), "partial") {
+		t.Errorf("sink should retain the streamed line from before the kill: %q", sink.String())
+	}
+}
+
+// TestRunWithoutSinkUnchanged pins AC2's backward-compat half: a nil Sink (every
+// existing caller) behaves exactly as before — no streaming machinery visible,
+// same accumulated stdout returned.
+func TestRunWithoutSinkUnchanged(t *testing.T) {
+	if _, err := exec.LookPath("cat"); err != nil {
+		t.Skip("cat not on PATH")
+	}
+	r := templateRunner{binary: "cat"}
+	out, err := r.Run(context.Background(), Request{Payload: "hello\n"})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if string(out) != "hello\n" {
+		t.Errorf("nil-sink run should behave as before: got %q", out)
 	}
 }
