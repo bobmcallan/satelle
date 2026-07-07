@@ -121,3 +121,8 @@ env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUT
 harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Edit,Write,Bash(satelle:*),Bash(gofmt:*),Bash(go:*)"
 model   = "sonnet"
+# A from-scratch worker implementing a real feature needs more than the engine's
+# 20m default dispatch bound — sty_b73c3236's worker was SIGKILLed at exactly 20m
+# with its work complete, and the transition was refused. 45m gives a real
+# implementation room to finish and return before the kill (sty_446c38b7).
+timeout = "45m"

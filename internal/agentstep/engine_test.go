@@ -2145,6 +2145,36 @@ func TestSummarise_recordsRetryAndFailureTelemetry(t *testing.T) {
 	}
 }
 
+// A named binding's own timeout bounds its dispatch (sty_446c38b7): a 1ms bound on
+// a runner that blocks until cancelled surfaces DeadlineExceeded fast — proof the
+// binding's timeout is applied, not the engine's 20m default (which would hang the
+// test). The default-when-unset path is covered by config.TestTimeoutDuration.
+func TestDispatchExecutor_honorsBindingTimeout(t *testing.T) {
+	docs := fakeDocs{workflow: dispatchWF, skillBody: "alignment rubric", skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		if name != "architect" {
+			return config.AgentBinding{}, false
+		}
+		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Grep,Glob,Bash(satelle:*)", Model: "fable", Timeout: "1ms"}, true
+	})
+	g.newRunner = func(string) (agentcli.Runner, error) { return &blockingRunner{}, nil }
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
+			t.Fatalf("want a deadline-exceeded dispatch failure from the 1ms binding timeout, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the binding's 1ms timeout was not applied — dispatch did not return (fell back to the long default)")
+	}
+}
+
 // A named executor whose dispatch runner errors records a structured
 // agent-failure naming the agent, step, and classified outcome (AC2) — the
 // coded capture of a killed sub-process only the binary observes.

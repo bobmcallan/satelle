@@ -3,8 +3,73 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
+
+// TestTimeoutDuration pins the per-binding dispatch bound resolution (sty_446c38b7):
+// a set value parses, an empty value inherits the caller's default, and a
+// malformed or non-positive value is an error.
+func TestTimeoutDuration(t *testing.T) {
+	def := 20 * time.Minute
+	cases := []struct {
+		name    string
+		timeout string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"set value parses", "45m", 45 * time.Minute, false},
+		{"empty inherits the default", "", def, false},
+		{"malformed is an error", "notaduration", 0, true},
+		{"non-positive is an error", "0s", 0, true},
+	}
+	for _, c := range cases {
+		got, err := AgentBinding{Timeout: c.timeout}.TimeoutDuration(def)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("%s: want an error, got %v", c.name, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: unexpected error: %v", c.name, err)
+		}
+		if got != c.want {
+			t.Errorf("%s: TimeoutDuration = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestLoadAgentsFailsFastOnBadTimeout pins AC1: a malformed [<section>] timeout is
+// rejected at LOAD, naming the offending section — not deferred to dispatch time.
+func TestLoadAgentsFailsFastOnBadTimeout(t *testing.T) {
+	dir := t.TempDir()
+	body := "[worker]\nharness = \"claude {system}\"\ntimeout = \"nope\"\n"
+	if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadAgents(dir)
+	if err == nil {
+		t.Fatal("LoadAgents must reject a malformed binding timeout")
+	}
+	if !strings.Contains(err.Error(), "worker") || !strings.Contains(err.Error(), "timeout") {
+		t.Errorf("error should name the [worker] timeout, got: %v", err)
+	}
+
+	// A well-formed timeout loads and is readable on the binding.
+	ok := "[worker]\nharness = \"claude {system}\"\ntimeout = \"45m\"\n"
+	if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(ok), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ac, err := LoadAgents(dir)
+	if err != nil {
+		t.Fatalf("a valid timeout should load: %v", err)
+	}
+	if b := ac.Agents["worker"]; b.Timeout != "45m" {
+		t.Errorf("worker binding timeout = %q, want 45m", b.Timeout)
+	}
+}
 
 func TestLoadAgentsDefault(t *testing.T) {
 	ac, err := LoadAgents(t.TempDir()) // no actors.toml present
