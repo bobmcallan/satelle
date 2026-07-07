@@ -30,3 +30,14 @@ edit_exempt_paths = []
 [hosted]
 server = "https://satelle.dev"
 project = "satelle"
+
+# [sync] — foundation only today (epic:scoped-sync, no sync engine yet): each
+# .satelle area sits on the local|personal|shared ladder. Unset = local (never
+# leaves this machine). satelle.local.toml overrides an area per developer.
+# Inside a "personal" area, an individual file can promote itself to shared via
+# its own frontmatter: `shared: true`. Inspect resolution with `satelle sync
+# scopes`. Areas: documents, workflows, principles, skills, constitution,
+# agents, tasks, stories, ledger, executions.
+# [sync]
+# skills = "shared"
+# documents = "personal"

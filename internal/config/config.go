@@ -103,6 +103,12 @@ type Config struct {
 	// KV is file-only — never persisted to the DB and never included in a substrate
 	// push (satelle.local.toml is excluded), so secrets do not leave the machine.
 	Vars map[string]string `toml:"vars"`
+	// Sync maps a .satelle area name (see SyncAreas) to its scope on the
+	// local|personal|shared ladder (epic:scoped-sync). Unset means "local" —
+	// nothing syncs without explicit opt-in. A committed [sync] table sets team
+	// defaults; satelle.local.toml overrides per-area for a single developer, the
+	// same per-key overlay merge as Vars (sty_a2d2e057).
+	Sync map[string]string `toml:"sync"`
 }
 
 // HostedConfig binds a repo to a hosted satelle-server. Secret-free and
