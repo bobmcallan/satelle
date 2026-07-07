@@ -9,13 +9,17 @@ import (
 	"github.com/bobmcallan/satelle/internal/wfdot"
 )
 
-// TestProjectWorkflowIsReviewerOnly asserts this repo's project workflow has the
-// reviewer-only shape (sty_d9a0b573): execution steps run in-loop (agent=executor,
-// no isolated dispatch), the only dispatched step is the fable planner, the former
-// commit/push/committed states are merged into one `release` state, and there is a
-// recovery edge back to in_progress (no dead-end). `integration` is an explicit,
-// visible testing step between in_progress and release (sty_15dbc0dd).
-func TestProjectWorkflowIsReviewerOnly(t *testing.T) {
+// TestProjectWorkflowReviewerFirst asserts this repo's project workflow has the
+// reviewer-first, split-execution shape: a reviewer gates every transition, and
+// execution is split by stage (sty_5d9648f2, which reversed the reviewer-only
+// sty_d9a0b573 for in_progress ONLY). in_progress is DISPATCHED to the isolated
+// sonnet worker (agent=worker, @skill:code); integration and release stay in-loop
+// (agent=executor). Two steps dispatch: the fable planner and the sonnet worker.
+// backlog -> plan is gated by the intake reviewer satelle-story-intent-review
+// (sty_3437b803). The former commit/push/committed states are merged into one
+// `release` state, and there is a recovery edge back to in_progress (no dead-end).
+// `integration` is an explicit, visible testing step (sty_15dbc0dd).
+func TestProjectWorkflowReviewerFirst(t *testing.T) {
 	body, err := os.ReadFile("../.satelle/workflows/satelle-project-workflow.md")
 	if err != nil {
 		t.Fatalf("read project workflow: %v", err)
@@ -30,8 +34,8 @@ func TestProjectWorkflowIsReviewerOnly(t *testing.T) {
 		states[s.Name] = s
 	}
 
-	// Execution steps are in-loop (agent=executor), never a named dispatch agent.
-	for _, name := range []string{"in_progress", "integration", "release"} {
+	// integration and release run in-loop (agent=executor), never a named dispatch.
+	for _, name := range []string{"integration", "release"} {
 		s, present := states[name]
 		if !present {
 			t.Errorf("missing execution state %q", name)
@@ -42,11 +46,16 @@ func TestProjectWorkflowIsReviewerOnly(t *testing.T) {
 		}
 	}
 
-	// The ONLY dispatched executor is the fable planner.
+	// Two steps dispatch: the fable planner and the sonnet worker (in_progress).
 	if p, present := states["plan"]; !present {
 		t.Error("missing plan state")
 	} else if p.Agent != "planner" || p.Skill != "plan" {
 		t.Errorf("plan step must dispatch agent=planner @skill:plan, got agent=%q skill=%q", p.Agent, p.Skill)
+	}
+	if w, present := states["in_progress"]; !present {
+		t.Error("missing in_progress state")
+	} else if w.Agent != "worker" || w.Skill != "code" {
+		t.Errorf("in_progress must dispatch agent=worker @skill:code, got agent=%q skill=%q", w.Agent, w.Skill)
 	}
 
 	// The dispatched executor experiment states are gone (merged into release).
@@ -67,7 +76,7 @@ func TestProjectWorkflowIsReviewerOnly(t *testing.T) {
 		}
 	}
 	for _, want := range []edge{
-		{"backlog", "plan", ""},
+		{"backlog", "plan", "satelle-story-intent-review"},
 		{"plan", "in_progress", "satelle-story-plan-review"},
 		{"in_progress", "integration", "satelle-code-ac-review"},
 		{"integration", "release", "satelle-integration-review"},

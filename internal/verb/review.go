@@ -177,10 +177,26 @@ var retrospector Retrospector
 // SetRetrospector wires the retrospective dispatcher. Pass nil to disable.
 func SetRetrospector(r Retrospector) { retrospector = r }
 
+// SummaryResult is the step summariser's read-only recap plus the cost of the
+// isolated agent invocation that produced it (sty_a699ad14): Command/Context/
+// Model/tokens/duration mirror a reviewer's ReviewerVerdict so the same
+// agent_invocation payload shape covers both. Zero-value cost fields mean the
+// summariser produced no billable invocation (e.g. it never ran).
+type SummaryResult struct {
+	Text        string
+	Command     string
+	Context     string
+	Model       string
+	TokensIn    int
+	TokensOut   int
+	TokensTotal int
+	DurationMs  int64
+}
+
 // StepSummariser produces a read-only prose recap of an enacted transition,
 // recorded as a step_summary ledger row. Implemented in internal/agentstep.
 type StepSummariser interface {
-	Summarise(ctx context.Context, item workitem.Item, from, to string) (string, error)
+	Summarise(ctx context.Context, item workitem.Item, from, to string) (SummaryResult, error)
 	// MandatorySummary reports whether item's active workflow declares a MANDATORY
 	// step-summary node — the gate for surfacing a missing-summary gap at done
 	// (sty_a1151fb0).

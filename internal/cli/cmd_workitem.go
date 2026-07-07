@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -281,39 +282,33 @@ func storyCostCommands() []*cobra.Command {
 	actual.Flags().StringVar(&aTime, "time", "", "actual duration (e.g. 50m)")
 	actual.Flags().IntVar(&aTokens, "tokens", 0, "actual tokens")
 
-	// step-cost — record ONE step's actual cost and/or per-step estimate
-	// (sty_3b2e55f5). This is how an IN-LOOP step's tokens get onto the record:
-	// satelle (a subprocess of the driving session) cannot measure the session's own
-	// tokens, so the orchestrator self-reports them here. Per-step wall-time is
-	// derived from transition timestamps by `story cost`; --time is an optional
-	// override. Payload carries numbers + the step name only — never env/secrets.
-	var scTime, scEstTime string
-	var scTokens, scEstTokens int
-	var scStep string
-	stepCost := &cobra.Command{
-		Use:         "step-cost <id> --step <name>",
-		Short:       "Record a step's actual cost / estimate (tokens/time)",
+	// log — the generic typed telemetry/quality event write primitive (AC1,
+	// sty_b73c3236), retiring `story step-cost`: any typed event — an in-loop
+	// step's self-reported actual tokens/duration and per-step estimate (`--kind
+	// step-self-report`), or a future prompted quality signal — is recorded the
+	// same way. --data is repeatable; a value that parses as a number is recorded
+	// numerically, else as a string. Refused when a key/value looks like a secret.
+	var logKind string
+	var logData []string
+	log := &cobra.Command{
+		Use:         "log <id> --kind <kind> [--data key=val ...]",
+		Short:       "Record a typed telemetry/quality event against a story",
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			req := map[string]any{"id": args[0]}
-			putIf(req, "step", scStep)
-			putIf(req, "time", scTime)
-			putIf(req, "est_time", scEstTime)
-			if scTokens > 0 {
-				req["tokens"] = scTokens
+			data, derr := parseLogData(logData)
+			if derr != nil {
+				return derr
 			}
-			if scEstTokens > 0 {
-				req["est_tokens"] = scEstTokens
+			req := map[string]any{"id": args[0], "kind": logKind}
+			if len(data) > 0 {
+				req["data"] = data
 			}
-			return dispatch(cmd, "story-step-cost", req)
+			return dispatch(cmd, "story-log", req)
 		},
 	}
-	stepCost.Flags().StringVar(&scStep, "step", "", "the step/state name (e.g. in_progress) — required")
-	stepCost.Flags().IntVar(&scTokens, "tokens", 0, "the step's actual tokens (self-reported)")
-	stepCost.Flags().StringVar(&scTime, "time", "", "the step's actual duration (overrides the derived wall-time)")
-	stepCost.Flags().IntVar(&scEstTokens, "est-tokens", 0, "the step's estimated tokens")
-	stepCost.Flags().StringVar(&scEstTime, "est-time", "", "the step's estimated duration")
+	log.Flags().StringVar(&logKind, "kind", "", "the event kind (e.g. step-self-report, agent-retry) — required")
+	log.Flags().StringArrayVar(&logData, "data", nil, "a key=value telemetry field; repeatable")
 
 	// cost — the observability VIEW (sty_a699ad14): the per-gate token + wall-time
 	// cost recorded on the story's agent_invocation ledger entries, so an operator
@@ -349,7 +344,7 @@ func storyCostCommands() []*cobra.Command {
 			}
 			// Per-step report — every step's wall-time (derived from transition
 			// timestamps, so IN-LOOP steps are covered too) with any self-reported
-			// actual tokens and per-step estimate (satelle story step-cost).
+			// actual tokens and per-step estimate (satelle story log --kind step-self-report).
 			if len(sc.Steps) > 0 {
 				sw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 				fmt.Fprintln(sw, "\nSTEP\tWALL-TIME\tACTUAL TOKENS\tEST TOKENS\tEST TIME")
@@ -364,7 +359,7 @@ func storyCostCommands() []*cobra.Command {
 					return err
 				}
 				fmt.Fprintln(cmd.OutOrStdout(),
-					"note: ACTUAL TOKENS is '—' for an in-loop step until self-reported (satelle story step-cost) — the driving session's own tokens aren't measurable by the CLI; '—' means unmeasured, not free.")
+					"note: ACTUAL TOKENS is '—' for an in-loop step until self-reported (satelle story log --kind step-self-report) — the driving session's own tokens aren't measurable by the CLI; '—' means unmeasured, not free.")
 			}
 			return nil
 		},
@@ -399,7 +394,34 @@ func storyCostCommands() []*cobra.Command {
 		},
 	}
 
-	return []*cobra.Command{estimate, actual, stepCost, cost, resummarise, retrospect}
+	return []*cobra.Command{estimate, actual, log, cost, resummarise, retrospect}
+}
+
+// parseLogData turns a list of "key=value" flags into a typed data map: a
+// value that parses as an int64 or a float64 is recorded numerically, else as
+// a string — so a caller passes `--data tokens_total=42000` and gets a JSON
+// number, not a quoted string, in the telemetry payload.
+func parseLogData(kv []string) (map[string]any, error) {
+	if len(kv) == 0 {
+		return nil, nil
+	}
+	data := make(map[string]any, len(kv))
+	for _, pair := range kv {
+		key, val, ok := strings.Cut(pair, "=")
+		if !ok || key == "" {
+			return nil, fmt.Errorf("invalid --data %q: want key=value", pair)
+		}
+		if n, err := strconv.ParseInt(val, 10, 64); err == nil {
+			data[key] = n
+			continue
+		}
+		if f, err := strconv.ParseFloat(val, 64); err == nil {
+			data[key] = f
+			continue
+		}
+		data[key] = val
+	}
+	return data, nil
 }
 
 // stepTokens renders an in-loop step's self-reported actual tokens. A step with no
