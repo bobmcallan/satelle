@@ -108,8 +108,8 @@ func stubOAuthServer(t *testing.T) *httptest.Server {
 }
 
 // TestLoginFlowEndToEnd drives the real binary through a full login against a
-// stub server, then whoami and logout — asserting the committed satelle.toml
-// gains [hosted] and the credential file lands OUTSIDE the repo (per-user XDG).
+// stub server, then whoami and logout — asserting the credential file lands
+// OUTSIDE the repo (per-user XDG) and the server lands only in the GLOBAL config.
 func TestLoginFlowEndToEnd(t *testing.T) {
 	bin := testBin
 	repo := t.TempDir()
@@ -121,7 +121,7 @@ func TestLoginFlowEndToEnd(t *testing.T) {
 
 	// `login --no-browser` prints the authorize URL and waits on the loopback;
 	// the test itself GETs that URL to drive the callback (no real browser).
-	cmd := exec.Command(bin, "login", "--no-browser", "--server", ts.URL, "--project", "demo", "--timeout", "20s")
+	cmd := exec.Command(bin, "login", "--no-browser", "--server", ts.URL, "--timeout", "20s")
 	cmd.Dir = repo
 	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+xdg, "SATELLE_HOME="+ghome)
 	stdout, err := cmd.StdoutPipe()
@@ -164,14 +164,11 @@ func TestLoginFlowEndToEnd(t *testing.T) {
 		t.Error("login did not print the signed-in identity")
 	}
 
-	// satelle.toml (committed, in-repo) gained ONLY the project slug — the server
-	// is a GLOBAL binding now (sty_53ccf845), never written to the repo file.
+	// satelle.toml (committed, in-repo) is left byte-untouched by login — the
+	// server is a GLOBAL binding now (sty_53ccf845), never written to the repo file.
 	cfg, err := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.toml"))
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !strings.Contains(string(cfg), `project = "demo"`) {
-		t.Fatalf("satelle.toml missing the project slug:\n%s", cfg)
 	}
 	if strings.Contains(string(cfg), "server =") {
 		t.Fatalf("committed satelle.toml must NOT gain a hosted server (it is global now):\n%s", cfg)

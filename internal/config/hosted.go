@@ -8,8 +8,7 @@ package config
 // written any more. This file owns the one precedence rule every consumer routes
 // through, so a single login is reflected uniformly across every project. The
 // OAuth tokens are secrets and live in the per-user credential store outside any
-// config (internal/hosted), never here. The repo project slug (hosted.project)
-// stays in the committed satelle.toml, written à-la-carte via SaveConfigValues.
+// config (internal/hosted), never here.
 
 import "strings"
 

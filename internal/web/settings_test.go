@@ -97,16 +97,16 @@ func TestSettingsPostDoesNotWrite(t *testing.T) {
 
 // TestSettingsGetReadOnly proves AC1/AC3/AC4: the page renders resolved values + help as a
 // read-only table (no form, no inputs, no Save), points the user at the file and the global
-// settings page, and omits hosted.server while keeping hosted.project.
+// settings page, and omits hosted.server.
 func TestSettingsGetReadOnly(t *testing.T) {
 	resetAuthState(t)
-	a := settingsRepo(t, "web_port = 8123\nlog_level = \"debug\"\n\n[hosted]\nproject = \"acme\"\nserver = \"https://should-not-show.example\"\n\n[gate]\nedit_exempt_paths = [\".claude/\"]\n")
+	a := settingsRepo(t, "web_port = 8123\nlog_level = \"debug\"\n\n[hosted]\nserver = \"https://should-not-show.example\"\n\n[gate]\nedit_exempt_paths = [\".claude/\"]\n")
 	rec := httptest.NewRecorder()
 	settingsGet(a)(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
 	body := rec.Body.String()
 
 	// AC1: resolved values + help + labels render.
-	for _, want := range []string{"8123", "debug", "acme", ".claude/", "Web port", "read-only view"} {
+	for _, want := range []string{"8123", "debug", ".claude/", "Web port", "read-only view"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("read-only settings page missing %q", want)
 		}
@@ -131,11 +131,8 @@ func TestSettingsGetReadOnly(t *testing.T) {
 	if !strings.Contains(body, ".satelle/satelle.toml") {
 		t.Error("read-only settings page must tell the user to edit .satelle/satelle.toml directly")
 	}
-	// AC4: hosted.server absent (now global), hosted.project present.
+	// AC4: hosted.server absent (now global).
 	if strings.Contains(body, "Hosted server") || strings.Contains(body, "should-not-show") {
 		t.Error("hosted.server must not appear on the per-project settings surface")
-	}
-	if !strings.Contains(body, "Hosted project") {
-		t.Error("hosted.project should still render read-only")
 	}
 }

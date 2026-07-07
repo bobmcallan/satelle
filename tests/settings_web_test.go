@@ -24,7 +24,7 @@ func TestWebSettingsReadOnly(t *testing.T) {
 	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
 	// Replace the seeded config with known content (incl. a sentinel comment and a
 	// hosted.server we assert is NOT shown) so the assertions are deterministic.
-	known := "# sentinel-comment\nweb_port = 8798\nlog_level = \"debug\"\n\n[hosted]\nproject = \"acme\"\nserver = \"https://should-not-show.example\"\n"
+	known := "# sentinel-comment\nweb_port = 8798\nlog_level = \"debug\"\n\n[hosted]\nserver = \"https://should-not-show.example\"\n"
 	if err := os.WriteFile(cfgPath, []byte(known), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestWebSettingsReadOnly(t *testing.T) {
 	// GET renders the read-only table: resolved values + help, the global-settings link,
 	// and NONE of the old write UI.
 	page := httpGet(t, base+"/settings")
-	for _, want := range []string{"settings", "read-only view", "debug", "acme", `href="settings/global"`, ".satelle/satelle.toml"} {
+	for _, want := range []string{"settings", "read-only view", "debug", `href="settings/global"`, ".satelle/satelle.toml"} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("read-only settings page missing %q", want)
 		}

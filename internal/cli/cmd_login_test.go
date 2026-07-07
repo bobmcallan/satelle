@@ -19,8 +19,7 @@ import (
 
 // TestRecordLoginBindingWritesGlobalNotRepo proves the sty_53ccf845 binding split:
 // login writes the server to the GLOBAL config, never a [hosted] server into the
-// committed repo satelle.toml; only the optional --project slug lands in the repo
-// file; no token is written to either config.
+// committed repo satelle.toml; no token is written to either config.
 func TestRecordLoginBindingWritesGlobalNotRepo(t *testing.T) {
 	t.Setenv("SATELLE_HOME", t.TempDir())
 	repo := t.TempDir()
@@ -32,14 +31,14 @@ func TestRecordLoginBindingWritesGlobalNotRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// No --project → the repo file is byte-identical; the server lands in global.
+	// The repo file is byte-identical; the server lands in global.
 	before, _ := os.ReadFile(cfgPath)
-	if err := recordLoginBinding(cfgPath, "https://h/", ""); err != nil {
+	if err := recordLoginBinding("https://h/"); err != nil {
 		t.Fatal(err)
 	}
 	after, _ := os.ReadFile(cfgPath)
 	if string(before) != string(after) {
-		t.Fatalf("repo satelle.toml changed with no --project:\n%s", after)
+		t.Fatalf("repo satelle.toml changed by login:\n%s", after)
 	}
 	gc, err := config.LoadGlobal()
 	if err != nil {
@@ -47,25 +46,6 @@ func TestRecordLoginBindingWritesGlobalNotRepo(t *testing.T) {
 	}
 	if gc.Hosted.ResolveServer() != "https://h" {
 		t.Fatalf("global server = %q, want https://h", gc.Hosted.Server)
-	}
-
-	// With --project → only the project key is added to the repo file; still NO server.
-	if err := recordLoginBinding(cfgPath, "https://h", "acme"); err != nil {
-		t.Fatal(err)
-	}
-	final, _ := os.ReadFile(cfgPath)
-	s := string(final)
-	if !strings.Contains(s, `project = "acme"`) {
-		t.Fatalf("project slug not written to repo file:\n%s", s)
-	}
-	if strings.Contains(s, "server =") {
-		t.Fatalf("repo satelle.toml must NEVER gain a hosted server:\n%s", s)
-	}
-	if !strings.Contains(s, "gate_create = true") {
-		t.Fatalf("unrelated repo section lost:\n%s", s)
-	}
-	if strings.Contains(s, "token") {
-		t.Fatalf("no token may be written to the repo config:\n%s", s)
 	}
 }
 
