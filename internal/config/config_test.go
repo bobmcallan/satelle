@@ -130,3 +130,34 @@ func TestLoadVarsOverlay(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadSyncOverlay pins the same per-key merge for [sync]: a committed table
+// sets area scopes for the team, and the gitignored local overlay overrides a
+// single area WITHOUT dropping the committed-only areas (sty_a2d2e057, plan
+// addendum #1).
+func TestLoadSyncOverlay(t *testing.T) {
+	repo := t.TempDir()
+	satelleDir := filepath.Join(repo, ".satelle")
+	if err := os.MkdirAll(satelleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	committed := "[sync]\nskills = \"shared\"\ndocuments = \"personal\"\n"
+	if err := os.WriteFile(filepath.Join(satelleDir, ConfigName), []byte(committed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Overlay overrides documents; skills (committed only) must survive.
+	local := "[sync]\ndocuments = \"local\"\n"
+	if err := os.WriteFile(filepath.Join(satelleDir, LocalConfigName), []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(filepath.Join(satelleDir, ConfigName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"skills": "shared", "documents": "local"}
+	for k, v := range want {
+		if cfg.Sync[k] != v {
+			t.Errorf("sync[%q] = %q, want %q (full: %v)", k, cfg.Sync[k], v, cfg.Sync)
+		}
+	}
+}
