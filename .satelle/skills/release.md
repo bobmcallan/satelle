@@ -3,12 +3,12 @@ name: release
 scope: project
 type: skill
 tags: [type:skill]
-description: In-loop executor skill for the merged `release` step (sty_d9a0b573). The driving session — NOT an isolated sub-process — stages the story's slice, bumps .version + stamps the build date, makes a conventional commit ending in the story id with NO AI attribution, pushes to main, refreshes the local service during the CI window, then RECORDS the `test` + version-gated `release` run URLs with their real conclusions and the published tag as evidence — via one consolidated check, NOT in-loop `gh run watch` babysitting of both runs (sty_bfb2b392) — and records a PR-style summary as a story attachment. Merges the former commit + push + record-release steps into one in-loop step so no isolated agent is spawned and no context is lost. The `satelle-story-release-review` gate is the authority on CI-green, judging the recorded conclusions.
+description: Dispatched glm executor skill for the merged `release` step. The isolated glm performer — reconstructing context from the story + ledger via the read-only CLI — stages the story's slice, bumps .version + stamps the build date, makes a conventional commit ending in the story id with NO AI attribution, pushes to main, refreshes the local service during the CI window, then RECORDS the `test` + version-gated `release` run URLs with their real conclusions and the published tag as evidence — via one consolidated check, NOT `gh run watch` babysitting of both runs (sty_bfb2b392) — and records a PR-style summary as a story attachment. Merges the former commit + push + record-release steps into one dispatched step. The `satelle-story-release-review` gate is the authority on CI-green, judging the recorded conclusions.
 ---
 
-# Release (in-loop executor step)
+# Release (dispatched glm executor step)
 
-You are the **executor** in the merged `release` step, running **in-loop as the driving session** — not an isolated sub-process. Prior gates accepted the slice (acceptance criteria met, tests exercise the change, `make integration` green). **Commit the slice with a version bump, push it, prove the release, and record the evidence** — all in one step. You DO the work (see [[satelle-agent-model]]: executor mutates, reviewer only judges). You never enact your own status advance — the `release → done` gate does that.
+You are the **glm performer** dispatched for the merged `release` step — an **isolated sub-process**, not the driving session. Reconstruct your context first: the story (title, body, acceptance criteria) arrives on stdin as JSON; pull anything else you need (the plan, the ledger, prior attachments) via the read-only satelle CLI. Prior gates accepted the slice (acceptance criteria met, tests exercise the change, `make integration` green). **Commit the slice with a version bump, push it, prove the release, and record the evidence** — all in one step. You DO the work (see [[satelle-agent-model]]: executor mutates, reviewer only judges). You never enact your own status advance — the `release → done` gate does that.
 
 ## 1. Stage and commit (bump is mandatory)
 

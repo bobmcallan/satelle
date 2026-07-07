@@ -126,3 +126,29 @@ model   = "sonnet"
 # with its work complete, and the transition was refused. 45m gives a real
 # implementation room to finish and return before the kill (sty_446c38b7).
 timeout = "45m"
+
+# glm — this repo's ACTIVE integration + release performer. The project workflow
+# allocates BOTH the integration node (agent=glm, prompt="@skill:integrate") and the
+# release node (agent=glm, prompt="@skill:release") to it, moving those two
+# tree-touching stages OFF the in-loop driving session and onto the cheap GLM line
+# (operator decision: integration = run the suites + repair trivial fallout; release
+# = version bump + conventional commit + push + record CI evidence — both mechanical
+# enough for GLM, and the sonnet reviewer gates remain the quality authority). Reached
+# from a PERFORMING state each time (integration from in_progress, release from
+# integration — which is itself performing once it carries this agent), so the dispatch
+# lock-guard legitimately allows its edits.
+#
+# COMPLETE grant, deliberately (the isolated-commit lesson): the past isolated
+# commit-agent returned OK WITHOUT committing when it hit a non-interactive approval
+# wall on an ungranted `gofmt -s -w`, stranding the story at commit. This binding
+# grants EVERYTHING the two rubrics run — go/gofmt/make for the suites and format,
+# git+gh for the commit/push/CI-evidence, satelle for context-pull + attach, Edit/Write
+# for trivial repair + the .version bump — so no step hits a wall and returns a false OK.
+[glm]
+harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
+tools   = "Read,Grep,Glob,Edit,Write,Bash(satelle:*),Bash(go:*),Bash(gofmt:*),Bash(make:*),Bash(git:*),Bash(gh:*)"
+model   = "glm-4.6"
+env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
+# Release watches a CI window (push -> test -> release publish) and integration runs
+# the full suite; 45m matches the worker's bound so a real run finishes before the kill.
+timeout = "45m"
