@@ -20,8 +20,7 @@ func TestRunInitScaffolds(t *testing.T) {
 	}
 
 	// Core files exist: the tomls, the db, a README per authored dir (incl.
-	// stories), and the materialised reviewer skills the baseline references. The
-	// baseline WORKFLOW itself is embedded-only — never a repo file (sty_3f9a6124).
+	// stories), and the materialised reviewer skills the baseline references.
 	for _, rel := range []string{
 		".satelle/satelle.toml",
 		".satelle/agents.toml",
@@ -47,9 +46,11 @@ func TestRunInitScaffolds(t *testing.T) {
 		t.Error("init must not seed an example task (tsk_example1.md)")
 	}
 
-	// The baseline workflow must NOT be scaffolded as a repo file (embedded-only).
-	if _, err := os.Stat(filepath.Join(repo, ".satelle/workflows/satelle-baseline-workflow.md")); err == nil {
-		t.Error("init must not write the baseline workflow as a repo file — it is embedded-only")
+	// sty_bf153cbf reverses sty_3f9a6124: the baseline is now the seeded default
+	// lifecycle on a fresh repo (no authored workflow claims "*" yet), so init
+	// DOES write it as an editable repo file.
+	if _, err := os.Stat(filepath.Join(repo, ".satelle/workflows/satelle-baseline-workflow.md")); err != nil {
+		t.Errorf("init did not seed the baseline workflow as a repo file: %v", err)
 	}
 	// The removed .satelle/stories mirror must NOT be recreated (sty_746a0c98).
 	if _, err := os.Stat(filepath.Join(repo, ".satelle/stories")); err == nil {
@@ -177,9 +178,9 @@ func TestRunInitIdempotent(t *testing.T) {
 
 // defaultSolutionSkills is every gate/executor skill the seeded default solution
 // references — the set a fresh repo must hold on disk so nothing dangles. (The
-// story reviewers seed via the parent workflow and the embedded baseline
-// fallback; the seeded PROJECT default itself is gateless apart from the coded
-// estimate check and the step summary, sty_f804caaa.)
+// story reviewers seed via the baseline lifecycle's declared gates — its intent,
+// done, and cancel reviews plus the coded estimate check and the step summary —
+// and the parent workflow's own close gate.)
 var defaultSolutionSkills = []string{
 	"satelle-estimate-actual-review",
 	"satelle-step-summary",
@@ -191,10 +192,11 @@ var defaultSolutionSkills = []string{
 }
 
 // TestRunInitSeedsDefaultSolution asserts a fresh init deploys the COMPLETE
-// default solution (sty_a7cbd6dd): the generic project/parent/task-execution
-// workflows plus every gate skill they reference — and that the seeded set is
-// structure-conformant and consistent (what `satelle workflow validate` checks:
-// no dangling refs, no ambiguous applies_to).
+// default solution (sty_a7cbd6dd, reversed to seed the base by sty_bf153cbf):
+// the generic base/parent/task-execution workflows plus every gate skill they
+// reference — and that the seeded set is structure-conformant and consistent
+// (what `satelle workflow validate` checks: no dangling refs, no ambiguous
+// applies_to).
 func TestRunInitSeedsDefaultSolution(t *testing.T) {
 	repo := t.TempDir()
 	if err := runInit(io.Discard, repo); err != nil {
@@ -250,22 +252,23 @@ func TestRunInitSeedsDefaultSolution(t *testing.T) {
 		t.Errorf("execution does not resolve to satelle-task-workflow: %+v", ordered)
 	}
 
-	// The generic project default is the MOST BASIC lifecycle (sty_f804caaa): no
-	// release mechanics, no reviewer gates — no reviewer_skill on any edge and no
-	// gate prompt beyond the coded estimate check and the step summary.
-	projBody, _ := os.ReadFile(filepath.Join(dataDir, "workflows", "satelle-project-workflow.md"))
+	// The generic base default is the MINIMAL order-zero lifecycle (sty_bf153cbf):
+	// no release mechanics beyond backlog/in_progress/done/cancelled, and its
+	// declared gates are exactly the story intent/done/cancel reviews plus the
+	// coded estimate check and the step summary.
+	baseBody, _ := os.ReadFile(filepath.Join(dataDir, "workflows", "satelle-baseline-workflow.md"))
 	for _, state := range []string{"commit", "push", "committed", "integration"} {
-		if strings.Contains(string(projBody), state+" [") || strings.Contains(string(projBody), state+"  [") {
-			t.Errorf("generic project workflow declares extra state %q", state)
+		if strings.Contains(string(baseBody), state+" [") || strings.Contains(string(baseBody), state+"  [") {
+			t.Errorf("generic base workflow declares extra state %q", state)
 		}
 	}
-	if strings.Contains(string(projBody), "reviewer_skill") {
-		t.Error("generic project workflow must carry no edge reviewers")
-	}
-	for _, gate := range []string{"satelle-story-intent-review", "satelle-code-ac-review", "satelle-story-done-review", "satelle-story-cancel-review"} {
-		if strings.Contains(string(projBody), gate) {
-			t.Errorf("generic project workflow must not reference reviewer %q", gate)
+	for _, gate := range []string{"satelle-story-intent-review", "satelle-story-done-review", "satelle-story-cancel-review", "satelle-estimate-actual-review"} {
+		if !strings.Contains(string(baseBody), gate) {
+			t.Errorf("generic base workflow must reference gate %q", gate)
 		}
+	}
+	if strings.Contains(string(baseBody), "satelle-code-ac-review") {
+		t.Error("generic base workflow must not reference satelle-code-ac-review")
 	}
 	// The estimate gate it declares is CODED — the seeded skill carries a
 	// self-contained check block, so no agent CLI is needed for it.
@@ -302,10 +305,10 @@ func TestRunInitSeedsAdditivelyBesideAuthoredWorkflow(t *testing.T) {
 	if err := runInit(&out, repo); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
-	// The wildcard project default is skipped (it would compete with the authored
+	// The wildcard base default is skipped (it would compete with the authored
 	// "*" workflow); the report explains why.
-	if fileExists(filepath.Join(wfDir, "satelle-project-workflow.md")) {
-		t.Error("init seeded the wildcard project default beside an authored wildcard workflow")
+	if fileExists(filepath.Join(wfDir, "satelle-baseline-workflow.md")) {
+		t.Error("init seeded the wildcard base default beside an authored wildcard workflow")
 	}
 	if !strings.Contains(out.String(), "claimed by an authored workflow") {
 		t.Errorf("report does not explain the skipped wildcard default:\n%s", out.String())
@@ -316,7 +319,7 @@ func TestRunInitSeedsAdditivelyBesideAuthoredWorkflow(t *testing.T) {
 			t.Errorf("init did not additively seed %s beside the authored workflow", wf)
 		}
 	}
-	// The gate skills the defaults reference are seeded even though the project
+	// The gate skills the defaults reference are seeded even though the base
 	// default's own file was skipped (its refs are still collected).
 	for _, sk := range defaultSolutionSkills {
 		if !fileExists(filepath.Join(repo, ".satelle", "skills", sk+".md")) {

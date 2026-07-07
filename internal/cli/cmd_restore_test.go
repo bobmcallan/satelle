@@ -49,7 +49,8 @@ func TestRunRestoreOverwritesDrift(t *testing.T) {
 	if !strings.Contains(out.String(), "re-materialised") {
 		t.Errorf("restore should report what it did:\n%s", out.String())
 	}
-	// The baseline workflow must NOT be materialised (embedded-only by design).
+	// restore never touches workflows at all (only skills/principles) — init/rebase
+	// own seeding the baseline workflow to disk.
 	if _, err := os.Stat(filepath.Join(dataDir, "workflows", "satelle-baseline-workflow.md")); err == nil {
 		t.Error("restore must not write the baseline workflow to disk")
 	}

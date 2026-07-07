@@ -23,6 +23,15 @@ func TestRestoreRecoversDriftedSubstrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected init-materialised skill: %v", err)
 	}
+
+	// init also seeds the baseline WORKFLOW itself now (sty_bf153cbf); capture it
+	// so we can prove restore leaves workflows alone (it only owns skills and
+	// principles — 'satelle rebase' is the workflow reset path).
+	baselineWF := filepath.Join(repo, ".satelle", "workflows", "satelle-baseline-workflow.md")
+	wfBefore, err := os.ReadFile(baselineWF)
+	if err != nil {
+		t.Fatalf("expected init-seeded baseline workflow: %v", err)
+	}
 	if err := os.WriteFile(skill, []byte("broken: drifted by hand"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -52,8 +61,8 @@ func TestRestoreRecoversDriftedSubstrate(t *testing.T) {
 		// init writes the same embedded bytes, so restore must reproduce them.
 		t.Error("restored skill does not match the embedded default init materialised")
 	}
-	// The baseline workflow stays embedded-only.
-	if _, err := os.Stat(filepath.Join(repo, ".satelle", "workflows", "satelle-baseline-workflow.md")); err == nil {
-		t.Error("restore must not write the baseline workflow to disk")
+	// restore never touches workflows — the seeded baseline workflow is untouched.
+	if wfAfter, _ := os.ReadFile(baselineWF); string(wfAfter) != string(wfBefore) {
+		t.Error("restore must not modify the seeded baseline workflow")
 	}
 }

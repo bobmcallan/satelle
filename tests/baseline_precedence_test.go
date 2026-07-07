@@ -25,36 +25,28 @@ func wfList(t *testing.T, repo, category string) []wfListRow {
 	return rows
 }
 
-// TestEmbeddedBaselinePrecedence proves the baseline-scaffold fix (sty_3f9a6124)
-// under the seeded default solution (sty_a7cbd6dd): a fresh repo has NO baseline
-// repo file — the baseline stays embedded-only (listed as a fallback candidate,
-// embedded=true) — while the SEEDED project workflow (a real, editable repo file)
-// is the active default, and a repo's OWN wildcard workflow takes precedence.
+// TestEmbeddedBaselinePrecedence proves the base-seeding reversal (sty_bf153cbf,
+// which reverses sty_3f9a6124's embedded-only stance): a fresh repo's seeded
+// satelle-baseline-workflow.md is a REAL, editable repo file and the active
+// default (a); with that file absent, the embedded copy still backstops the
+// order-zero Get fallback (b); and a repo's own distinctly-named wildcard
+// workflow takes precedence over the fallback (c).
 func TestEmbeddedBaselinePrecedence(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	mustRun(t, testBin, repo, "reindex")
 
-	// (a) The seeded project workflow (a repo file, not embedded) is the active
-	// default of a fresh repo; the embedded baseline is still listed as the
-	// order-zero fallback, never as a repo file.
+	// (a) The seeded baseline workflow (a repo file, not embedded) is the active
+	// default of a fresh repo.
 	var sawBaseline bool
 	for _, r := range wfList(t, repo, "feature") {
-		switch r.Name {
-		case "satelle-baseline-workflow":
+		if r.Name == "satelle-baseline-workflow" {
 			sawBaseline = true
-			if !r.Embedded {
-				t.Errorf("the baseline must be the EMBEDDED one (no repo file), got embedded=false")
-			}
-			if r.Active {
-				t.Errorf("the baseline must not be active — the seeded project workflow governs a fresh repo")
-			}
-		case "satelle-project-workflow":
 			if r.Embedded {
-				t.Errorf("the seeded project workflow must be a real repo file, got embedded=true")
+				t.Errorf("the seeded baseline must be a real repo file, got embedded=true")
 			}
 			if !r.Active {
-				t.Errorf("the seeded project workflow must be active for a fresh repo")
+				t.Errorf("the seeded baseline must be active for a fresh repo")
 			}
 		}
 	}
@@ -62,14 +54,28 @@ func TestEmbeddedBaselinePrecedence(t *testing.T) {
 		t.Fatal("baseline workflow not listed for a fresh repo")
 	}
 
-	// (b) A repo's own wildcard workflow takes precedence over the embedded baseline.
+	// (b) With the repo file removed, the embedded baseline still backstops the
+	// order-zero fallback (embedded=true) and remains active — gating must keep
+	// working even when a repo has no authored workflow on disk at all.
+	baselinePath := filepath.Join(repo, ".satelle", "workflows", "satelle-baseline-workflow.md")
+	if err := os.Remove(baselinePath); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, testBin, repo, "reindex")
+	rows := wfList(t, repo, "feature")
+	if len(rows) == 0 || rows[0].Name != "satelle-baseline-workflow" || !rows[0].Active || rows[0].Embedded != true {
+		t.Errorf("the embedded baseline must backstop the fallback once its repo file is gone, got %+v", rows)
+	}
+
+	// (c) A repo's own, distinctly-named wildcard workflow takes precedence over
+	// the embedded fallback.
 	wf, err := os.ReadFile(filepath.Join(repoRootForTest(), ".satelle", "workflows", "satelle-project-workflow.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "satelle-project-workflow.md"), string(wf))
 	mustRun(t, testBin, repo, "reindex")
-	rows := wfList(t, repo, "feature")
+	rows = wfList(t, repo, "feature")
 	if len(rows) == 0 || rows[0].Name != "satelle-project-workflow" || !rows[0].Active {
 		t.Errorf("a repo wildcard workflow must beat the embedded baseline, got %+v", rows)
 	}

@@ -16,9 +16,11 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentstep"
 )
 
-// baselineWorkflowName is the canonical order-zero default the engine falls back to
-// by name (it is embedded-only — never an editable repo file, sty_3f9a6124). Kept
-// in sync with the reviewer package's const.
+// baselineWorkflowName is the canonical order-zero default the engine falls back
+// to by name. `satelle init` also seeds it onto disk as editable substrate
+// (sty_bf153cbf reverses sty_3f9a6124's embedded-only stance) when no authored
+// workflow already claims its category; the embedded copy still backstops the
+// fallback either way. Kept in sync with the reviewer package's const.
 const baselineWorkflowName = "satelle-baseline-workflow"
 
 func init() {

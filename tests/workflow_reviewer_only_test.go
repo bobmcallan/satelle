@@ -10,15 +10,17 @@ import (
 )
 
 // TestProjectWorkflowReviewerFirst asserts this repo's project workflow has the
-// reviewer-first, split-execution shape: a reviewer gates every transition, and
-// execution is split by stage (sty_5d9648f2, which reversed the reviewer-only
-// sty_d9a0b573 for in_progress ONLY). in_progress is DISPATCHED to the isolated
-// sonnet worker (agent=worker, @skill:code); integration and release stay in-loop
-// (agent=executor). Two steps dispatch: the fable planner and the sonnet worker.
-// backlog -> plan is gated by the intake reviewer satelle-story-intent-review
-// (sty_3437b803). The former commit/push/committed states are merged into one
-// `release` state, and there is a recovery edge back to in_progress (no dead-end).
-// `integration` is an explicit, visible testing step (sty_15dbc0dd).
+// reviewer-first, fully-dispatched shape (sty_fd9d210f, which extended
+// sty_5d9648f2's in_progress-only dispatch to integration + release too): a
+// reviewer gates every transition, and EVERY performing stage is dispatched to
+// an isolated named agent tiered by cost — plan (fable planner), in_progress
+// (sonnet worker), integration and release (both the glm performer). The
+// driving session orchestrates transitions and lets the gates judge; it performs
+// no step itself. backlog -> plan is gated by the intake reviewer
+// satelle-story-intent-review (sty_3437b803). The former commit/push/committed
+// states are merged into one `release` state, and there are recovery edges back
+// to in_progress (no dead-end). `integration` is an explicit, visible testing
+// step (sty_15dbc0dd).
 func TestProjectWorkflowReviewerFirst(t *testing.T) {
 	body, err := os.ReadFile("../.satelle/workflows/satelle-project-workflow.md")
 	if err != nil {
@@ -34,19 +36,20 @@ func TestProjectWorkflowReviewerFirst(t *testing.T) {
 		states[s.Name] = s
 	}
 
-	// integration and release run in-loop (agent=executor), never a named dispatch.
-	for _, name := range []string{"integration", "release"} {
+	// integration and release are DISPATCHED to the glm performer, never in-loop.
+	for name, wantSkill := range map[string]string{"integration": "integrate", "release": "release"} {
 		s, present := states[name]
 		if !present {
 			t.Errorf("missing execution state %q", name)
 			continue
 		}
-		if s.Agent != "executor" {
-			t.Errorf("state %q must be in-loop (agent=executor), got agent=%q", name, s.Agent)
+		if s.Agent != "glm" || s.Skill != wantSkill {
+			t.Errorf("state %q must dispatch agent=glm @skill:%s, got agent=%q skill=%q", name, wantSkill, s.Agent, s.Skill)
 		}
 	}
 
-	// Two steps dispatch: the fable planner and the sonnet worker (in_progress).
+	// Four steps dispatch: the fable planner, the sonnet worker (in_progress),
+	// and the glm performer (integration + release, checked above).
 	if p, present := states["plan"]; !present {
 		t.Error("missing plan state")
 	} else if p.Agent != "planner" || p.Skill != "plan" {

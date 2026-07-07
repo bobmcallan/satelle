@@ -35,7 +35,7 @@ func init() {
      under .satelle/backups/ — mandatory: if the backup cannot be written the
      rebase aborts with nothing changed,
   2. WIPES those three dirs (the backup is the undo),
-  3. REDEPLOYS the complete default solution: the generic project, parent, and
+  3. REDEPLOYS the complete default solution: the generic base, parent, and
      task-execution workflows plus every gate skill they reference, and the
      embedded operating principles.
 
