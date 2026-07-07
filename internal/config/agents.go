@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -51,8 +53,33 @@ type AgentBinding struct {
 	// points at an alternate model backend, e.g. env = { ANTHROPIC_BASE_URL =
 	// "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }.
 	// The in-loop executor never execs a child, so its Env is inert (sty_001558ce).
-	Env              map[string]string `toml:"env"`
-	InjectPrinciples *bool             `toml:"inject_principles"`
+	Env map[string]string `toml:"env"`
+	// Timeout bounds ONE dispatch of this binding — a Go duration string (e.g.
+	// "45m"). Empty inherits the engine's default dispatch bound. A from-scratch
+	// code-writing worker needs a longer window than the 20m default (a real
+	// feature was SIGKILLed at exactly 20m — sty_b73c3236), so the bound is authored
+	// config, not a compiled constant (sty_446c38b7). Applies to a DISPATCHED named
+	// executor; reviewer/summariser gate invocations keep the engine's agent bound.
+	Timeout          string `toml:"timeout"`
+	InjectPrinciples *bool  `toml:"inject_principles"`
+}
+
+// TimeoutDuration resolves this binding's dispatch bound: the parsed Timeout when
+// set, else def. A malformed or non-positive Timeout is an error — LoadAgents
+// validates it at load (validateTimeouts) so a dispatch never silently falls back
+// on a typo (sty_446c38b7).
+func (b AgentBinding) TimeoutDuration(def time.Duration) (time.Duration, error) {
+	if b.Timeout == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(b.Timeout)
+	if err != nil {
+		return 0, err
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("timeout %q must be positive", b.Timeout)
+	}
+	return d, nil
 }
 
 // InjectsPrinciples reports whether this binding injects the resident principles
@@ -168,5 +195,33 @@ func LoadAgents(dataDir string) (AgentsConfig, error) {
 			ac.Agents[key] = bnd
 		}
 	}
+	if err := ac.validateTimeouts(); err != nil {
+		return AgentsConfig{}, err
+	}
 	return ac, nil
+}
+
+// validateTimeouts fails fast on a malformed or non-positive [<section>] timeout
+// so a typo is caught at load — consistent with the rest of agents.toml's
+// fail-fast bootstrap — rather than surfacing only when that binding dispatches
+// (sty_446c38b7).
+func (a AgentsConfig) validateTimeouts() error {
+	check := func(section string, b AgentBinding) error {
+		if _, err := b.TimeoutDuration(0); err != nil {
+			return fmt.Errorf("agents.toml [%s] timeout: %w", section, err)
+		}
+		return nil
+	}
+	if err := check("executor", a.Executor); err != nil {
+		return err
+	}
+	if err := check("reviewer", a.Reviewer); err != nil {
+		return err
+	}
+	for name, b := range a.Agents {
+		if err := check(name, b); err != nil {
+			return err
+		}
+	}
+	return nil
 }

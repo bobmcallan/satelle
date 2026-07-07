@@ -645,8 +645,16 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		return verb.DispatchResult{}, err
 	}
 	res := verb.DispatchResult{Dispatched: true, Agent: target.Agent, Command: runner.Command(), Model: binding.Model, Skill: target.Skill}
+	// A dispatched executor's bound is the binding's own timeout when set, else the
+	// engine default — so a from-scratch worker gets a window sized to real work
+	// rather than the 20m default that SIGKILLed one mid-implementation (sty_446c38b7,
+	// sty_b73c3236). LoadAgents already validated the value; handle the error defensively.
+	timeout, terr := binding.TimeoutDuration(g.checkTimeout)
+	if terr != nil {
+		return verb.DispatchResult{}, fmt.Errorf("named agent %q: invalid timeout in .satelle/agents.toml [%s]: %w", target.Agent, target.Agent, terr)
+	}
 	g.emitProgress("dispatching step %s to named agent %s (may take several minutes)…", toStatus, target.Agent)
-	out, usage, runErr := g.runOnce(ctx, runner, req, g.checkTimeout)
+	out, usage, runErr := g.runOnce(ctx, runner, req, timeout)
 	res.TokensIn, res.TokensOut, res.TokensTotal = usage.InputTokens, usage.OutputTokens, usage.TotalTokens
 	res.DurationMs = usage.Duration.Milliseconds()
 	g.logExecutorRun(target.Agent, item.ID, toStatus, out, runErr)
