@@ -438,12 +438,15 @@ func buildLights(entries []ledger.Entry, status string, stepOf func(state string
 		return idx[edge]
 	}
 	// The story is actively IN its current state, so the entry transition into that
-	// state is rendered as the pulsing current light (below), NOT as a completed
-	// step. Suppress that one transition — the LAST one landing in the current state
-	// (an earlier visit in a recovery loop stays a completed prior step) — but only
-	// for a non-terminal story sitting on the spine (curStep > 0). Terminal stories
-	// render every transition (the entry into done IS the final completed light), and
-	// an off-spine current state keeps today's maxStep+1 fallback.
+	// state is rendered as the pulsing current light, in place at its starting
+	// edge (not a completed step, and not appended at the tail — see below), so a
+	// later higher-numbered reject of a rejected outgoing edge still trails it and
+	// the strip reads in step order. Suppress that one transition — the LAST one
+	// landing in the current state (an earlier visit in a recovery loop stays a
+	// completed prior step) — but only for a non-terminal story sitting on the
+	// spine (curStep > 0). Terminal stories render every transition (the entry
+	// into done IS the final completed light), and an off-spine current state
+	// keeps today's maxStep+1 fallback.
 	curStep := stepOf(status)
 	terminal := status == "done" || status == "cancelled"
 	suppress := -1
@@ -456,6 +459,7 @@ func buildLights(entries []ledger.Entry, status string, stepOf func(state string
 	}
 	var lights []reviewLight
 	entered := false
+	currentEmitted := false
 	maxStep := 0
 	minStep := 0
 	note := func(i int) {
@@ -482,6 +486,14 @@ func buildLights(entries []ledger.Entry, status string, stepOf func(state string
 			// minStep/maxStep — the leading-gap fillers depend on it.
 			note(i)
 			if pos == suppress {
+				// The entry transition INTO the current state is the step's STARTING
+				// edge — starting a step closes the prior one — so render the pulsing
+				// current light HERE, in ledger position, not appended at the tail.
+				// Prior steps close to its left; a higher-numbered reject of a rejected
+				// OUTGOING edge (release→done at step 5 while sitting at release, step
+				// 4) then trails it, so the strip reads in step order (fixes 1 2 3 5 4).
+				lights = append(lights, reviewLight{i, "current", "current stage"})
+				currentEmitted = true
 				continue
 			}
 			state := "fired"
@@ -506,9 +518,10 @@ func buildLights(entries []ledger.Entry, status string, stepOf func(state string
 	// Trail a pulsing "current" light AT the current step, once the item has
 	// actually entered the workflow (≥1 recorded transition/reject). A
 	// freshly-created item still at its initial state has started no step — no
-	// phantom current ①. The suppressed entry transition above leaves this light as
-	// the sole render of the current state (no duplicate done light one step back).
-	if entered && !terminal {
+	// phantom current ①. Usually the suppressed entry transition above already
+	// emitted this light in place, at its starting edge; this tail fallback only
+	// fires when no such slot was found (curStep == 0, off-spine).
+	if entered && !terminal && !currentEmitted {
 		cur := maxStep + 1
 		if curStep > 0 {
 			cur = curStep

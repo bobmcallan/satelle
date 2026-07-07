@@ -356,3 +356,43 @@ func TestBuildLightsRecoveryRepeatSharesSteps(t *testing.T) {
 		t.Errorf("step 4 (first done attempt) should be a fail, got %q", lights[3].State)
 	}
 }
+
+// TestBuildLightsRejectPastCurrentOrdered reproduces the reported bug
+// (sty_909b4de7): a story AT step 4 (release) that attempted the step-4→step-5
+// edge (release→done) and was rejected must render the current light (step 4)
+// BEFORE the step-5 fail — 1,2,3,4(current),5(fail) — never 1,2,3,5,4. The
+// current light sits at its STARTING edge (the transition INTO release), so the
+// higher-numbered reject that followed renders after it.
+func TestBuildLightsRejectPastCurrentOrdered(t *testing.T) {
+	step := func(s string) int { return map[string]int{"b": 1, "c": 2, "d": 3, "release": 4, "done": 5}[s] }
+	chrono := []ledger.Entry{
+		ev(ledger.KindStatusTransition, "a", "b"),       // 1
+		ev(ledger.KindStatusTransition, "b", "c"),       // 2
+		ev(ledger.KindStatusTransition, "c", "d"),       // 3
+		ev(ledger.KindStatusTransition, "d", "release"), // 4 -> current (starting edge)
+		ev(ledger.KindReviewReject, "release", "done"),  // 5 fail (rejected outgoing edge)
+	}
+	lights := buildLights(chrono, "release", step)
+	var idx []int
+	for _, l := range lights {
+		idx = append(idx, l.Index)
+	}
+	want := []int{1, 2, 3, 4, 5}
+	if len(idx) != len(want) {
+		t.Fatalf("indices = %v, want %v", idx, want)
+	}
+	for i := range want {
+		if idx[i] != want[i] {
+			t.Fatalf("indices = %v, want %v (bug renders 1 2 3 5 4)", idx, want)
+		}
+		if i > 0 && idx[i] < idx[i-1] {
+			t.Errorf("light[%d] index %d < previous %d — strip not ascending", i, idx[i], idx[i-1])
+		}
+	}
+	if lights[3].State != "current" || lights[3].Index != 4 {
+		t.Errorf("light[3] = %v, want current at step 4", lights[3])
+	}
+	if lights[4].State != "fail" || lights[4].Index != 5 {
+		t.Errorf("light[4] = %v, want fail at step 5", lights[4])
+	}
+}
