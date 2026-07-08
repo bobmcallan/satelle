@@ -103,6 +103,10 @@ type State struct {
 	// replacement for the old reviewer:always tag layer: the DOT, not a skill tag,
 	// is the sole authority for which always-on gates run. Populated from the grammar.
 	On []string
+	// Shape is the node's DOT shape attribute — the visual classification the
+	// authored DOT uses to mark start/terminal states (Mdiamond=start,
+	// Msquare=terminal). Populated from the DOT grammar.
+	Shape string
 }
 
 // StepSummary reports whether the workflow declares a step-summary node (a node
@@ -177,9 +181,13 @@ func (s Spec) doneReachable() map[string]bool {
 // non-reviewer agent (the in-loop `executor` OR a named isolated agent a node
 // allocates a step to, e.g. planner/coder/commit-push). A reviewer node judges,
 // it does not perform; an agent-less node (a terminal marker) performs nothing.
-// This is the single definition of "a performing/engaged state" the whole binary
-// shares — the edit gate's engaged-state scan (cmd_hook.executorStates) and the
-// dispatch lock-guard both read it, so they never diverge.
+// This is the dispatch lock-guard's predicate (internal/agentstep uses
+// IsPerformingState to verify a named agent's FROM state is genuinely engaged) —
+// NOT the edit-gate's engaged check, which has its own independent shape-derived
+// predicate (NonTerminalEngagingStates, sty_f3d5d4b8). The two are deliberately
+// separate: PerformingStates answers "which nodes dispatch work";
+// NonTerminalEngagingStates answers "which statuses count as in-flight for the
+// edit gate" (non-start, non-terminal).
 func (st State) IsPerforming() bool {
 	return st.Agent != "" && st.Agent != "reviewer"
 }
@@ -194,6 +202,44 @@ func (s Spec) PerformingStates() []string {
 		}
 	}
 	return out
+}
+
+// NonTerminalEngagingStates returns all states that are neither the start state
+// (shape=Mdiamond) nor a terminal state (shape=Msquare), nor a cancel/exception
+// sink (agent=reviewer with no outgoing edges). This reads the DOT shape markers
+// directly — no hardcoded state names — so the hook's engagement check is
+// configuration-over-code (sty_f3d5d4b8).
+func (s Spec) NonTerminalEngagingStates() []string {
+	var out []string
+	for _, st := range s.States {
+		if !s.isEngaging(st) {
+			continue
+		}
+		out = append(out, st.Name)
+	}
+	return out
+}
+
+// isEngaging reports whether a state is a non-terminal engaging state: it is
+// neither the start state (shape=Mdiamond), nor a terminal state (shape=Msquare),
+// nor a cancel/exception sink (agent=reviewer with no outgoing edges).
+func (s Spec) isEngaging(st State) bool {
+	// Start marker: shape=Mdiamond
+	if st.Shape == "Mdiamond" {
+		return false
+	}
+	// Terminal marker: shape=Msquare
+	if st.Shape == "Msquare" {
+		return false
+	}
+	// Cancel/exception sink: a reviewer node with no OUTGOING edges. st.Terminal is
+	// !hasOutgoing, so this is the no-outgoing-edges signal (sty_f3d5d4b8). It mirrors
+	// the authored cancelled node: no shape marker, agent=reviewer, incoming edges only.
+	// A no-INCOMING-edges check would be wrong — cancelled has 5 incoming, 0 outgoing.
+	if st.Agent == "reviewer" && st.Terminal {
+		return false
+	}
+	return true
 }
 
 // IsPerformingState reports whether the named state exists and performs work.
@@ -265,6 +311,7 @@ func Parse(body string) (Spec, bool) {
 		skill     string   // resolved from prompt="@skill:NAME"
 		mandatory bool     // mandatory=true attribute
 		on        []string // on="s1,s2" / on="*" scope (declared always-on gate)
+		shape     string   // DOT shape attribute (Mdiamond=start, Msquare=terminal)
 	}
 	nodes := map[string]node{}
 	var order []string
@@ -330,6 +377,9 @@ func Parse(body string) (Spec, bool) {
 		if on := splitCSV(attrs["on"]); len(on) > 0 {
 			n.on = on
 		}
+		if s := attrs["shape"]; s != "" {
+			n.shape = s
+		}
 		nodes[id] = n
 	}
 	if len(order) == 0 {
@@ -337,7 +387,7 @@ func Parse(body string) (Spec, bool) {
 	}
 
 	for _, name := range order {
-		spec.States = append(spec.States, State{Name: name, Agent: nodes[name].agent, Skill: nodes[name].skill, Mandatory: nodes[name].mandatory, On: nodes[name].on})
+		spec.States = append(spec.States, State{Name: name, Agent: nodes[name].agent, Skill: nodes[name].skill, Mandatory: nodes[name].mandatory, On: nodes[name].on, Shape: nodes[name].shape})
 	}
 	// A transition into a reviewer node is gated by that node's skill — unless the
 	// edge already carries an explicit reviewer_skill attribute, which wins.
