@@ -10,17 +10,18 @@ import (
 )
 
 // TestProjectWorkflowReviewerFirst asserts this repo's project workflow has the
-// reviewer-first, fully-dispatched shape (sty_fd9d210f, which extended
-// sty_5d9648f2's in_progress-only dispatch to integration + release too): a
-// reviewer gates every transition, and EVERY performing stage is dispatched to
-// an isolated named agent tiered by cost — plan (fable planner), in_progress
-// (sonnet worker), integration and release (both the glm performer). The
-// driving session orchestrates transitions and lets the gates judge; it performs
-// no step itself. backlog -> plan is gated by the intake reviewer
-// satelle-story-intent-review (sty_3437b803). The former commit/push/committed
-// states are merged into one `release` state, and there are recovery edges back
-// to in_progress (no dead-end). `integration` is an explicit, visible testing
-// step (sty_15dbc0dd).
+// reviewer-first, fully-dispatched shape (sty_fd9d210f, extended by the
+// all-sonnet consolidation sty_8fa35ca1): a reviewer gates every transition, and
+// EVERY performing stage is dispatched to an isolated named agent on sonnet —
+// plan (the read-only planner), and in_progress + integration + release (all the
+// code-writer worker). The driving session orchestrates transitions and lets the
+// gates judge; it performs no step itself. backlog -> plan is gated by the intake
+// reviewer satelle-story-intent-review (sty_3437b803). The former
+// commit/push/committed states are merged into one `release` state, and there are
+// recovery edges back to in_progress (no dead-end). `integration` is an explicit,
+// visible testing step (sty_15dbc0dd). plan stays on its own read-only binding
+// because it is entered from the non-performing backlog state and the dispatch
+// lock-guard refuses a code-writer there (sty_8fa35ca1).
 func TestProjectWorkflowReviewerFirst(t *testing.T) {
 	body, err := os.ReadFile("../.satelle/workflows/satelle-project-workflow.md")
 	if err != nil {
@@ -36,20 +37,21 @@ func TestProjectWorkflowReviewerFirst(t *testing.T) {
 		states[s.Name] = s
 	}
 
-	// integration and release are DISPATCHED to the glm performer, never in-loop.
+	// integration and release are DISPATCHED to the sonnet worker, never in-loop
+	// (consolidated off the retired glm performer — sty_8fa35ca1).
 	for name, wantSkill := range map[string]string{"integration": "integrate", "release": "release"} {
 		s, present := states[name]
 		if !present {
 			t.Errorf("missing execution state %q", name)
 			continue
 		}
-		if s.Agent != "glm" || s.Skill != wantSkill {
-			t.Errorf("state %q must dispatch agent=glm @skill:%s, got agent=%q skill=%q", name, wantSkill, s.Agent, s.Skill)
+		if s.Agent != "worker" || s.Skill != wantSkill {
+			t.Errorf("state %q must dispatch agent=worker @skill:%s, got agent=%q skill=%q", name, wantSkill, s.Agent, s.Skill)
 		}
 	}
 
-	// Four steps dispatch: the fable planner, the sonnet worker (in_progress),
-	// and the glm performer (integration + release, checked above).
+	// Four steps dispatch: the read-only sonnet planner (plan), the sonnet worker
+	// (in_progress), and the same sonnet worker (integration + release, checked above).
 	if p, present := states["plan"]; !present {
 		t.Error("missing plan state")
 	} else if p.Agent != "planner" || p.Skill != "plan" {
