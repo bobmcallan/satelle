@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"bytes"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -178,6 +180,95 @@ func TestRunInitIdempotent(t *testing.T) {
 	if got, _ := os.ReadFile(taskPath); string(got) != authored {
 		t.Errorf("re-init clobbered the authored task:\n%s", got)
 	}
+}
+
+// TestRunInitSeedsAuditTask asserts the ONE embedded default task — the
+// re-runnable substrate-audit — lands in a fresh repo READY TO RUN (AC4,
+// sty_d4360e90): structurally clean (CheckTask), sitting at `done`, resolving to
+// the task workflow by its kind category, and a new execution targeting it as
+// parent passes the CODED begin-run gate. That gate judges STRUCTURE only (never
+// the parent's status), so a done header accepts a fresh run each time —
+// "re-runnable from done".
+func TestRunInitSeedsAuditTask(t *testing.T) {
+	repo := t.TempDir()
+	if err := runInit(io.Discard, repo); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+	dataDir := filepath.Join(repo, ".satelle")
+
+	body, err := os.ReadFile(filepath.Join(dataDir, "tasks", "tsk_substrate-audit.md"))
+	if err != nil {
+		t.Fatalf("init did not seed tasks/tsk_substrate-audit.md: %v", err)
+	}
+	if problems := structure.CheckTask(string(body)); len(problems) > 0 {
+		t.Errorf("seeded audit task fails CheckTask: %v", problems)
+	}
+	if !bytes.Contains(body, []byte("\nstatus: done\n")) {
+		t.Errorf("seeded audit task must sit at status: done (re-runnable from done), got:\n%s", body)
+	}
+
+	// Resolves to the task workflow by its kind category (applies_to ["execution","task"]).
+	var docs []docindex.Doc
+	for _, wf := range defaultSolutionWorkflows {
+		b, err := os.ReadFile(filepath.Join(dataDir, "workflows", wf+".md"))
+		if err != nil {
+			t.Fatalf("read seeded %s: %v", wf, err)
+		}
+		docs = append(docs, docindex.Doc{Name: wf, Body: string(b)})
+	}
+	ordered := agentstep.OrderedWorkflows(docs, "task")
+	if len(ordered) == 0 || ordered[0].Name != "satelle-task-workflow" {
+		t.Errorf("audit task does not resolve to satelle-task-workflow: %+v", ordered)
+	}
+
+	// Re-runnable from done: run the REAL coded begin-run gate (extracted from the
+	// seeded skill) over a new execution whose parent is the done audit task. The
+	// gate never reads the parent's status, so done does not block a new run.
+	skillBody, err := os.ReadFile(filepath.Join(dataDir, "skills", "satelle-task-validate-before-review.md"))
+	if err != nil {
+		t.Fatalf("seeded task-validate-before skill missing: %v", err)
+	}
+	payload := `{"story":{"id":"exe_test0001","kind":"execution","title":"audit run","status":"backlog","parent_id":"tsk_substrate-audit","tags":[],"created_at":"2026-07-08T00:00:00Z","updated_at":"2026-07-08T00:00:00Z"},"from":"backlog","to":"in_progress","review_skill":"satelle-task-validate-before-review"}`
+	cmd := exec.Command("sh", "-c", checkScript(t, string(skillBody)))
+	cmd.Dir = repo
+	cmd.Stdin = strings.NewReader(payload)
+	var gate bytes.Buffer
+	cmd.Stdout = &gate
+	cmd.Stderr = &gate
+	if err := cmd.Run(); err != nil {
+		t.Errorf("begin-run gate rejected a new run under the done audit task: %v\n%s", err, gate.String())
+	}
+}
+
+// checkScript extracts the self-contained ```check block a functional-check
+// skill carries — the command an Engine runs as the gate. Test-local mirror of
+// agentstep.bodyCheckBlock (unexported) so this test exercises the REAL shipped
+// gate script instead of re-deriving its logic.
+func checkScript(t *testing.T, skillBody string) string {
+	t.Helper()
+	lines := strings.Split(skillBody, "\n")
+	in := false
+	var out []string
+	for _, ln := range lines {
+		trim := strings.TrimSpace(ln)
+		if !in {
+			if strings.HasPrefix(trim, "```") {
+				if info := strings.TrimPrefix(trim, "```"); info == "check" || strings.HasPrefix(info, "check ") {
+					in = true
+				}
+			}
+			continue
+		}
+		if strings.HasPrefix(trim, "```") {
+			break
+		}
+		out = append(out, ln)
+	}
+	s := strings.TrimSpace(strings.Join(out, "\n"))
+	if s == "" {
+		t.Fatal("task-validate-before skill carries no ```check block")
+	}
+	return s
 }
 
 // defaultSolutionSkills is every gate/executor skill the seeded default solution

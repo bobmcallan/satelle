@@ -90,6 +90,48 @@ func TestExecutionLifecycleE2E(t *testing.T) {
 	}
 }
 
+// TestInitSeedsSubstrateAuditTask proves AC4 of sty_d4360e90 end-to-end via the
+// real binary: a FRESHLY-init'd repo (no manual substrate copy) seeds the
+// repo-agnostic substrate-audit task (tsk_substrate-audit) at `done`, and a NEW
+// execution created under that done header resolves via the task workflow and
+// runs through its gates — the coded begin-run gate judges STRUCTURE only (never
+// the parent's status), so a done header accepts a fresh run. A second execution
+// under the same done header confirms it is re-runnable from done.
+func TestInitSeedsSubstrateAuditTask(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init") // fresh init seeds the task workflow + gates + the audit task
+	stubReviewerAccept(t, repo)       // the close gate is an LLM reviewer — keep hermetic
+	mustRun(t, testBin, repo, "reindex")
+
+	// The seeded audit task is present and sits at done.
+	header := filepath.Join(repo, ".satelle", "tasks", "tsk_substrate-audit.md")
+	body, err := os.ReadFile(header)
+	if err != nil {
+		t.Fatalf("init did not seed the substrate-audit task: %v", err)
+	}
+	if !strings.Contains(string(body), "status: done") {
+		t.Errorf("seeded audit task must sit at done (re-runnable from done):\n%s", body)
+	}
+
+	// A new execution under the done header resolves via the task workflow and
+	// drives through both gates to terminal done.
+	eid := extractID(mustRun(t, testBin, repo, "execution", "create", "--parent", "tsk_substrate-audit",
+		"--title", "Audit run", "--body", "ACTION: audit skills+principles. VERIFICATION: findings reported."), "exe_")
+	if eid == "" {
+		t.Fatal("no execution id")
+	}
+	mustRun(t, testBin, repo, "execution", "set", eid, "--status", "in_progress")
+	mustRun(t, testBin, repo, "execution", "set", eid, "--status", "done")
+
+	// Re-runnable from done: a SECOND execution under the same done header runs too.
+	eid2 := extractID(mustRun(t, testBin, repo, "execution", "create", "--parent", "tsk_substrate-audit",
+		"--title", "Audit re-run", "--body", "ACTION: audit again. VERIFICATION: findings reported."), "exe_")
+	if eid2 == "" || eid2 == eid {
+		t.Fatalf("re-run should be a distinct new execution; got %q (first %q)", eid2, eid)
+	}
+	mustRun(t, testBin, repo, "execution", "set", eid2, "--status", "in_progress")
+}
+
 // TestExecutionCodedEntryGateRejects proves the coded begin-run gate
 // (sty_3c1a2a9d): backlog -> in_progress is a deterministic structural check —
 // no LLM verdict — that REFUSES a run whose parent task header is missing or
@@ -194,9 +236,9 @@ func TestInstallAliasesInit(t *testing.T) {
 }
 
 // TestInitScaffoldsTasksDir proves `satelle init` scaffolds .satelle/tasks/ with
-// a README keep-file but seeds NO example task (sty_04ec1fe6): a fresh repo
-// starts with an empty tasks dir, and a second init reports the dir as already
-// present ("=", not "+").
+// a README keep-file and the ONE embedded default task (the re-runnable
+// substrate-audit), but seeds NO GENERIC example task (sty_04ec1fe6,
+// sty_d4360e90): a second init reports the dir as already present ("=", not "+").
 func TestInitScaffoldsTasksDir(t *testing.T) {
 	repo := t.TempDir()
 	out := mustRun(t, testBin, repo, "init")
