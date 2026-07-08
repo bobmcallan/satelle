@@ -65,3 +65,29 @@ func TestEmbeddedSubstrateStructure(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestEmbeddedSubstrateAuditTask asserts the embedded default tasks kind carries the
+// repo-agnostic substrate-audit task (sty_d4360e90): EmbeddedDefaults surfaces it, it
+// passes structure.CheckTask, and its body references only the repo's own .satelle/
+// paths (no internal/config/substrate — dev-repo-only — and no foreign ids).
+func TestEmbeddedSubstrateAuditTask(t *testing.T) {
+	var got *EmbeddedDefault
+	for _, d := range EmbeddedDefaults() {
+		if d.Kind == "tasks" && d.Name == "tsk_substrate-audit" {
+			dd := d
+			got = &dd
+			break
+		}
+	}
+	if got == nil {
+		t.Fatal("EmbeddedDefaults does not surface tasks/tsk_substrate-audit")
+	}
+	if problems := structure.CheckTask(got.Body); len(problems) > 0 {
+		t.Errorf("embedded audit task fails CheckTask: %v", problems)
+	}
+	for _, bad := range []string{"internal/config/substrate"} {
+		if strings.Contains(got.Body, bad) {
+			t.Errorf("embedded audit task is not repo-agnostic (references %q)", bad)
+		}
+	}
+}

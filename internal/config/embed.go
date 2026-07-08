@@ -37,7 +37,7 @@ const OperatingPrinciple = "satelle-agent-goals"
 
 // EmbeddedDefault is one canonical default artifact carried in the binary.
 type EmbeddedDefault struct {
-	Kind string // workflows | principles | skills (the substrate subdir)
+	Kind string // workflows | principles | skills | tasks (the substrate subdir)
 	Name string // filename without the .md extension
 	Body string // raw markdown
 }

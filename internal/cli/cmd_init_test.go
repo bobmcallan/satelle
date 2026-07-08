@@ -37,13 +37,17 @@ func TestRunInitScaffolds(t *testing.T) {
 			t.Errorf("missing %s: %v", rel, err)
 		}
 	}
-	// Tasks: the dir + README keep-file are scaffolded, but NO example task is
-	// seeded (sty_04ec1fe6) — a fresh repo starts with an empty tasks dir.
+	// Tasks: the dir + README keep-file are scaffolded, and the ONE embedded default
+	// task — the re-runnable substrate-audit — is seeded (sty_d4360e90). No GENERIC
+	// example task is seeded (sty_04ec1fe6): one named default, not example noise.
 	if _, err := os.Stat(filepath.Join(repo, ".satelle/tasks/README.md")); err != nil {
 		t.Errorf("init did not scaffold .satelle/tasks/README.md: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(repo, ".satelle/tasks/tsk_substrate-audit.md")); err != nil {
+		t.Errorf("init did not seed the substrate-audit task: %v", err)
+	}
 	if _, err := os.Stat(filepath.Join(repo, ".satelle/tasks/tsk_example1.md")); err == nil {
-		t.Error("init must not seed an example task (tsk_example1.md)")
+		t.Error("init must not seed a generic example task (tsk_example1.md)")
 	}
 
 	// sty_bf153cbf reverses sty_3f9a6124: the baseline is now the seeded default
