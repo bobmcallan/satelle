@@ -88,6 +88,12 @@ func embeddedDefaultDocs() []docindex.Doc {
 	defs := config.EmbeddedDefaults()
 	out := make([]docindex.Doc, 0, len(defs))
 	for _, d := range defs {
+		if d.Kind == "tasks" {
+			// TASKS are workitem-store items ingested by SyncTasks, not OKF docs —
+			// keep this Get-fallback overlay to OKF kinds or `doc get` would surface
+			// a task as a doc (sty_d4360e90).
+			continue
+		}
 		out = append(out, docindex.Doc{Kind: d.Kind, Name: d.Name, Body: d.Body})
 	}
 	return out

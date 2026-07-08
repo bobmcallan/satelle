@@ -186,8 +186,15 @@ func runInit(out io.Writer, repoRoot string) error {
 	// 3d. Tasks are AUTHORED substrate but ingested into the workitem store (not the
 	//     OKF doc index), so .satelle/tasks is scaffolded here — NOT via AuthoredKinds
 	//     (that would route it through the OKF normalizer). Create the dir + README
-	//     keep-file and seed one starter task HEADER, idempotently (sty_c1b3b4e3).
+	//     keep-file (sty_c1b3b4e3), then seed the embedded substrate-audit task — the
+	//     one repo-agnostic default task that ships with the binary so a fresh repo
+	//     has a re-runnable quality audit resolving via the task workflow immediately
+	//     (sty_d4360e90). No generic example task (sty_04ec1fe6): one named default,
+	//     not example noise.
 	for _, line := range seedTasks(dataDir) {
+		fmt.Fprintln(out, line)
+	}
+	for _, line := range materializeTasks(dataDir) {
 		fmt.Fprintln(out, line)
 	}
 
@@ -631,6 +638,33 @@ func materializePrinciples(dataDir string) []string {
 		}
 		if err := os.WriteFile(p, []byte(d.Body), 0o644); err == nil {
 			lines = append(lines, initLine(true, config.DefaultDataDir+"/principles/"+d.Name+".md"))
+		}
+	}
+	return lines
+}
+
+// materializeTasks writes every embedded default TASK into .satelle/tasks when
+// absent (sty_d4360e90). Tasks are authored substrate ingested by SyncTasks (not the
+// OKF doc index), so this lands the tsk_*.md header the task reconciler picks up — a
+// fresh repo gets the re-runnable substrate-audit task resolving via the task
+// workflow immediately. An existing on-disk file (authored or a prior seed) is never
+// clobbered; rebase re-runs this to heal a removed default.
+func materializeTasks(dataDir string) []string {
+	var lines []string
+	dir := filepath.Join(dataDir, "tasks")
+	if _, err := ensureDir(dir); err != nil {
+		return lines
+	}
+	for _, d := range config.EmbeddedDefaults() {
+		if d.Kind != "tasks" {
+			continue
+		}
+		p := filepath.Join(dir, d.Name+".md")
+		if fileExists(p) {
+			continue
+		}
+		if err := os.WriteFile(p, []byte(d.Body), 0o644); err == nil {
+			lines = append(lines, initLine(true, config.DefaultDataDir+"/tasks/"+d.Name+".md"))
 		}
 	}
 	return lines

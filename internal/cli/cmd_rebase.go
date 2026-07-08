@@ -125,6 +125,13 @@ func runRebase(out io.Writer, in io.Reader, dataDir string, yes bool, now time.T
 		fmt.Fprintln(out, line)
 		deployed++
 	}
+	// The embedded default TASK (substrate-audit) re-seeds here too, exactly as init
+	// seeds it — additive, never clobbering an authored same-id task. "tasks" is NOT
+	// a rebaseKind: authored tasks are repo content and are never wiped (sty_d4360e90).
+	for _, line := range materializeTasks(dataDir) {
+		fmt.Fprintln(out, line)
+		deployed++
+	}
 
 	fmt.Fprintf(out, "rebase: backed up %d dir(s) to %s; deployed %d default file(s) (run `satelle reindex` to sync the index)\n",
 		backedUp, backupDir, deployed)

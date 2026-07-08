@@ -71,6 +71,12 @@ func TestRunRebaseBacksUpWipesRedeploys(t *testing.T) {
 	if !fileExists(filepath.Join(dataDir, "principles", "satelle-agent-goals.md")) {
 		t.Error("rebase did not redeploy the embedded principles")
 	}
+	// The embedded default substrate-audit TASK is re-seeded too (additive — tasks is
+	// NOT a rebaseKind, so authored tasks are never wiped; only the absent default
+	// lands) (sty_d4360e90).
+	if !fileExists(filepath.Join(dataDir, "tasks", "tsk_substrate-audit.md")) {
+		t.Error("rebase did not re-seed the embedded substrate-audit task")
+	}
 	for _, kind := range rebaseKinds {
 		if !fileExists(filepath.Join(dataDir, kind, "README.md")) {
 			t.Errorf("rebase did not recreate %s/README.md", kind)
