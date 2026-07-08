@@ -561,3 +561,127 @@ digraph w {
 		t.Errorf("Skill back-compat = %q, want rev-a", tr.Skill)
 	}
 }
+
+// TestNonTerminalEngagingStates verifies that the hook's engagement check reads
+// shape markers from the DOT (Mdiamond=start, Msquare=terminal) rather than
+// hardcoding state names. This is configuration over code (sty_f3d5d4b8).
+func TestNonTerminalEngagingStates(t *testing.T) {
+	const dot = `---
+name: x
+---
+` + "```dot" + `
+digraph w {
+  backlog     [shape=Mdiamond]
+  plan        [agent=planner, prompt="@skill:plan"]
+  in_progress [agent=worker, prompt="@skill:code"]
+  done        [shape=Msquare]
+  cancelled   [shape=Msquare, agent=reviewer, prompt="@skill:cancel"]
+  backlog -> plan -> in_progress -> done
+  plan -> cancelled
+}
+` + "```" + `
+`
+	spec, ok := Parse(dot)
+	if !ok {
+		t.Fatal("parse failed")
+	}
+
+	engaging := spec.NonTerminalEngagingStates()
+	engagingSet := map[string]bool{}
+	for _, s := range engaging {
+		engagingSet[s] = true
+	}
+
+	// Mdiamond (backlog) is the start state — NOT engaging
+	if engagingSet["backlog"] {
+		t.Errorf("backlog (shape=Mdiamond) should not be engaging, got %v", engaging)
+	}
+
+	// Msquare (done, cancelled) are terminal states — NOT engaging
+	if engagingSet["done"] {
+		t.Errorf("done (shape=Msquare) should not be engaging, got %v", engaging)
+	}
+	if engagingSet["cancelled"] {
+		t.Errorf("cancelled (shape=Msquare) should not be engaging, got %v", engaging)
+	}
+
+	// plan and in_progress are neither start nor terminal — engaging
+	if !engagingSet["plan"] {
+		t.Errorf("plan should be engaging (no shape marker), got %v", engaging)
+	}
+	if !engagingSet["in_progress"] {
+		t.Errorf("in_progress should be engaging (no shape marker), got %v", engaging)
+	}
+
+	// Verify shape field is parsed correctly
+	byName := map[string]State{}
+	for _, s := range spec.States {
+		byName[s.Name] = s
+	}
+	if byName["backlog"].Shape != "Mdiamond" {
+		t.Errorf("backlog.Shape = %q, want Mdiamond", byName["backlog"].Shape)
+	}
+	if byName["done"].Shape != "Msquare" {
+		t.Errorf("done.Shape = %q, want Msquare", byName["done"].Shape)
+	}
+}
+
+// TestNonTerminalEngagingStatesCancelSink closes the gap TestNonTerminalEngagingStates
+// masks: that test's cancelled node carries shape=Msquare, so the Msquare branch
+// catches it and the reviewer-sink branch (the REAL authored cancel shape — no shape
+// marker, agent=reviewer, incoming edges only, no outgoing) is never exercised. This
+// mirrors satelle-project-workflow's cancelled node EXACTLY (sty_f3d5d4b8): the old
+// inDegree==0 (no INCOMING edges) check counted it engaging because cancelled has
+// several incoming edges; the corrected st.Terminal (no OUTGOING edges) check must NOT.
+func TestNonTerminalEngagingStatesCancelSink(t *testing.T) {
+	const dot = `---
+name: x
+---
+` + "```dot" + `
+digraph w {
+  backlog     [shape=Mdiamond]
+  plan        [agent=planner, prompt="@skill:plan"]
+  in_progress [agent=worker, prompt="@skill:code"]
+  done        [shape=Msquare]
+  cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
+  backlog -> plan -> in_progress -> done
+  backlog -> cancelled
+  plan -> cancelled
+  in_progress -> cancelled
+}
+` + "```" + `
+`
+	spec, ok := Parse(dot)
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	byName := map[string]State{}
+	for _, s := range spec.States {
+		byName[s.Name] = s
+	}
+	// The real authored cancel shape: no shape marker, agent=reviewer, incoming edges, no outgoing.
+	if byName["cancelled"].Shape != "" {
+		t.Fatalf("cancelled must carry no shape marker for this test, got %q", byName["cancelled"].Shape)
+	}
+	if byName["cancelled"].Agent != "reviewer" {
+		t.Fatalf("cancelled agent = %q, want reviewer", byName["cancelled"].Agent)
+	}
+	if !byName["cancelled"].Terminal {
+		t.Fatal("cancelled must be terminal (no outgoing edges) for the sink check")
+	}
+
+	engagingSet := map[string]bool{}
+	for _, s := range spec.NonTerminalEngagingStates() {
+		engagingSet[s] = true
+	}
+	// A cancelled story must NOT count as engaged — it is a terminal exit (no outgoing
+	// edges), even though it has incoming edges and carries no shape marker.
+	if engagingSet["cancelled"] {
+		t.Errorf("cancelled (agent=reviewer, no shape, no outgoing edges) must NOT be engaging — got %v",
+			spec.NonTerminalEngagingStates())
+	}
+	// The in-flight performing states still engage.
+	if !engagingSet["plan"] || !engagingSet["in_progress"] {
+		t.Errorf("plan and in_progress should be engaging, got %v", spec.NonTerminalEngagingStates())
+	}
+}

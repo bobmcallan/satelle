@@ -104,29 +104,9 @@ func TestRenderAlwaysContent_ceilingTruncates(t *testing.T) {
 	}
 }
 
-func TestExecutorStates(t *testing.T) {
-	body := "x\nstates:\n  - open\n  - {name: in_progress, agent: executor}\n  - blocked\n  - {name: deployed, agent: executor}\n  - done\ntransitions:\n  - {from: open, to: in_progress}\n"
-	got := executorStates(body)
-	if len(got) != 2 || got[0] != "in_progress" || got[1] != "deployed" {
-		t.Fatalf("executorStates = %v, want [in_progress deployed]", got)
-	}
-}
-
-// TestExecutorStatesAgentKey proves the inline-YAML executor-state parser reads the
-// canonical `agent:` key and that the retired `actor:` key is NOT parsed
-// (sty_7db2ed7d): a node authored with actor: executor is not treated as engaged.
-func TestExecutorStatesAgentKey(t *testing.T) {
-	body := "x\nstates:\n  - open\n  - {name: in_progress, agent: executor}\n  - {name: gate, agent: reviewer}\n  - done\ntransitions:\n  - {from: open, to: in_progress}\n"
-	got := executorStates(body)
-	if len(got) != 1 || got[0] != "in_progress" {
-		t.Fatalf("executorStates(agent:) = %v, want [in_progress]", got)
-	}
-	// The retired actor: key must NOT register an executor state.
-	legacy := "x\nstates:\n  - open\n  - {name: in_progress, actor: executor}\n  - done\ntransitions:\n  - {from: open, to: in_progress}\n"
-	if got := executorStates(legacy); len(got) != 0 {
-		t.Fatalf("retired actor: key must not register an executor state, got %v", got)
-	}
-}
+// Note: executorStates has been removed. The hook now uses wfdot.Spec.NonTerminalEngagingStates()
+// which reads shape markers (Mdiamond=start, Msquare=terminal) from the DOT rather than
+// hardcoding state names. See TestNonTerminalEngagingStates in wfdot package.
 
 func TestIsGitCommitOrPush(t *testing.T) {
 	yes := []string{"git commit -m x", "cd /r && git push origin main"}
@@ -261,87 +241,9 @@ func TestShouldWarnSubstrate(t *testing.T) {
 	}
 }
 
-func TestExecutorStatesDOT(t *testing.T) {
-	body := `---
-name: x
----
-` + "```dot" + `
-digraph w {
-  in_progress [agent=executor]
-  committed   [agent=reviewer, prompt="@skill:r"]
-  in_progress -> committed -> done
-}
-` + "```" + `
-`
-	got := executorStates(body)
-	if len(got) != 1 || got[0] != "in_progress" {
-		t.Fatalf("executorStates = %v, want [in_progress]", got)
-	}
-}
-
-// TestExecutorStatesNamedAgent proves a node allocated to a NAMED agent (not
-// executor/reviewer) counts as an engaged performing state (sty_b2222b8a), so a
-// commit at that step is tracked, while reviewer nodes do not count.
-func TestExecutorStatesNamedAgent(t *testing.T) {
-	body := `---
-name: x
----
-` + "```dot" + `
-digraph w {
-  in_progress [agent=executor]
-  commit_push [agent=commit-agent, prompt="@skill:commit-push"]
-  committed   [agent=reviewer, prompt="@skill:r"]
-  in_progress -> commit_push -> committed -> done
-}
-` + "```" + `
-`
-	got := executorStates(body)
-	has := func(n string) bool {
-		for _, s := range got {
-			if s == n {
-				return true
-			}
-		}
-		return false
-	}
-	if !has("in_progress") || !has("commit_push") {
-		t.Fatalf("named-agent commit_push should be engaged: %v", got)
-	}
-	if has("committed") {
-		t.Errorf("a reviewer node must not count as engaged: %v", got)
-	}
-}
-
-// TestExecutorStatesCoderNodeEngaged: a repo that opts in_progress into a
-// dispatched coder (agent=coder) still has in_progress as an ENGAGED performing
-// state (sty_f5bd176f) — so the edit gate allows the coder's edits while the story
-// is in_progress, and would NOT treat the non-performing backlog as engaged.
-func TestExecutorStatesCoderNodeEngaged(t *testing.T) {
-	body := `---
-name: x
----
-` + "```dot" + `
-digraph w {
-  backlog     [shape=Mdiamond]
-  plan        [agent=planner, prompt="@skill:plan"]
-  in_progress [agent=coder, prompt="@skill:code"]
-  done        [shape=Msquare]
-  backlog -> plan -> in_progress -> done
-}
-` + "```" + `
-`
-	got := executorStates(body)
-	engaged := map[string]bool{}
-	for _, s := range got {
-		engaged[s] = true
-	}
-	if !engaged["plan"] || !engaged["in_progress"] {
-		t.Fatalf("plan and coder in_progress should be engaged: %v", got)
-	}
-	if engaged["backlog"] || engaged["done"] {
-		t.Errorf("terminal markers must not be engaged: %v", got)
-	}
-}
+// Note: TestExecutorStatesDOT, TestExecutorStatesNamedAgent, and TestExecutorStatesCoderNodeEngaged
+// have been removed. The hook now uses wfdot.Spec.NonTerminalEngagingStates() which reads
+// shape markers from the DOT. See tests in the wfdot package for shape-based engagement logic.
 
 // wfDoc builds a workflow Doc with the given name, applies_to frontmatter value
 // (e.g. `["*"]`), and DOT node/edge lines.
@@ -361,17 +263,25 @@ func TestAnyEngagedCountsTasks(t *testing.T) {
   done        [shape=Msquare]
   backlog -> in_progress -> commit_push -> done`)}
 	// A task in a performing state counts as engaged, exactly like a story.
-	if !anyEngaged([]workitem.Item{
+	engaged, err := anyEngaged([]workitem.Item{
 		{Kind: workitem.KindTask, Status: "commit_push"},
 		{Kind: workitem.KindStory, Status: "backlog"},
-	}, wfs) {
+	}, wfs)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !engaged {
 		t.Error("a task in a performing state should count as engaged")
 	}
 	// Nothing engaged when no item is in a performing state.
-	if anyEngaged([]workitem.Item{
+	engaged, err = anyEngaged([]workitem.Item{
 		{Kind: workitem.KindTask, Status: "backlog"},
 		{Kind: workitem.KindStory, Status: "done"},
-	}, wfs) {
+	}, wfs)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if engaged {
 		t.Error("no item in a performing state should not count as engaged")
 	}
 }
@@ -396,12 +306,55 @@ func TestAnyEngagedPerStoryWorkflow(t *testing.T) {
   backlog -> plan -> in_progress -> done`),
 	}
 	// A feature story in plan is engaged via the feature workflow (plan performs).
-	if !anyEngaged([]workitem.Item{{Kind: workitem.KindStory, Category: "feature", Status: "plan"}}, wfs) {
+	engaged, err := anyEngaged([]workitem.Item{{Kind: workitem.KindStory, Category: "feature", Status: "plan"}}, wfs)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !engaged {
 		t.Error("a feature story in its workflow's performing plan state should be engaged")
 	}
 	// The same status under the wildcard workflow (no plan node) is NOT engaged —
 	// engagement follows the governing workflow, not a global state list.
-	if anyEngaged([]workitem.Item{{Kind: workitem.KindStory, Category: "chore", Status: "plan"}}, wfs) {
+	engaged, err = anyEngaged([]workitem.Item{{Kind: workitem.KindStory, Category: "chore", Status: "plan"}}, wfs)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if engaged {
 		t.Error("a chore story in plan is governed by the wildcard workflow (no plan state) — not engaged")
+	}
+}
+
+// TestAnyEngagedFailClosedNoWorkflow: anyEngaged returns (false, error) — NOT
+// (false, nil) — when an item has NO resolving workflow (AC3 fail-closed). A chore
+// item with only a feature-applies workflow and no wildcard has no governing
+// workflow, so the hook blocks the edit rather than silently allowing it.
+func TestAnyEngagedFailClosedNoWorkflow(t *testing.T) {
+	wfs := []docindex.Doc{wfDoc("feat", `["feature"]`, `
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor]
+  done        [shape=Msquare]
+  backlog -> in_progress -> done`)}
+	engaged, err := anyEngaged([]workitem.Item{{Kind: workitem.KindStory, Category: "chore", Status: "in_progress"}}, wfs)
+	if engaged {
+		t.Error("a chore item with no resolving workflow must not be engaged")
+	}
+	if err == nil {
+		t.Fatal("anyEngaged must return an error when an item has no resolving workflow (fail-closed)")
+	}
+}
+
+// TestAnyEngagedFailClosedNoDOT: anyEngaged returns (false, error) when the
+// governing workflow body carries no DOT block (AC3 fail-closed) — a non-DOT
+// workflow cannot be parsed for shape markers, so the hook blocks rather than guess.
+func TestAnyEngagedFailClosedNoDOT(t *testing.T) {
+	// A wildcard workflow (governs any item) whose body has no ```dot block.
+	noDotBody := "---\nname: wild\napplies_to: [\"*\"]\n---\n# wild\n\nno dot block here\n"
+	wfs := []docindex.Doc{{Kind: "workflows", Name: "wild", Body: noDotBody}}
+	engaged, err := anyEngaged([]workitem.Item{{Kind: workitem.KindStory, Status: "in_progress"}}, wfs)
+	if engaged {
+		t.Error("an item governed by a non-DOT workflow must not be engaged")
+	}
+	if err == nil {
+		t.Fatal("anyEngaged must return an error when the governing workflow has no DOT (fail-closed)")
 	}
 }

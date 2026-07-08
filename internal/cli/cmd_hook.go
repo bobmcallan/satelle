@@ -83,27 +83,37 @@ byte ceiling (overflow noted on stderr); fails open so it never blocks a session
 		Short: "PreToolUse edit gate — block code edits unless a story is engaged",
 		Long: `gate is the PreToolUse handler for Edit|Write|MultiEdit|NotebookEdit. It
 exits non-zero (the wiring turns that into a block with '|| exit 2') unless a
-story is ENGAGED — in one of the active workflow's executor states (e.g.
-in_progress) — so the agent works under a tracked story. Edits are NEVER gated
-when: the target is OUTSIDE the repo (session scratch); it is authored SUBSTRATE
-under the data dir (.satelle/ by default — workflows, skills, principles,
-documents, tasks, and config); or it falls under a configured [gate]
-edit_exempt_paths prefix. Authored substrate is the source of truth, edited
-freely without a binary release (the constitution and satelle-generated-readonly);
-generated views under it stay protected by their 0o444 file mode. A repo may add
-its own authored dirs to [gate] edit_exempt_paths (repo-root-relative prefixes,
-default empty) — e.g. a harness authoring dir like .claude/ that holds authored
-skills, not product code. Only in-repo CODE requires an engaged story. A data-dir
-substrate edit with NO engaged story is still ALLOWED but emits a fail-open nudge
-toward the substrate workflow (sty_f5f351d1): the only model-visible channel on an
-allowed edit is the PreToolUse additionalContext, so the nudge rides that (a bare
-stderr line is transcript-only on exit 0); edit_exempt_paths opt-in dirs stay silent.
-Fails open: an unconfigured repo or any internal error allows the edit. The
-"engaged" policy is authored substrate — it reads the workflow's executor states,
-not a Go rule.`,
+story is ENGAGED — in one of the active workflow's non-terminal engaging states
+(e.g. plan, in_progress, integration, release) — so the agent works under a
+tracked story. The "engaged" policy is authored substrate — it reads the
+workflow's DOT shape markers (Mdiamond=start, Msquare=terminal) rather than
+hardcoding state names, so configuration drives the decision (sty_f3d5d4b8).
+
+Edits are NEVER gated when: the target is OUTSIDE the repo (session scratch); it
+is authored SUBSTRATE under the data dir (.satelle/ by default — workflows,
+skills, principles, documents, tasks, and config); or it falls under a configured
+[gate] edit_exempt_paths prefix. Authored substrate is the source of truth,
+edited freely without a binary release (the constitution and
+satelle-generated-readonly); generated views under it stay protected by their
+0o444 file mode. A repo may add its own authored dirs to [gate] edit_exempt_paths
+(repo-root-relative prefixes, default empty) — e.g. a harness authoring dir like
+.claude/ that holds authored skills, not product code. Only in-repo CODE requires
+an engaged story. A data-dir substrate edit with NO engaged story is still
+ALLOWED but emits a nudge toward the substrate workflow (sty_f5f351d1): the only
+model-visible channel on an allowed edit is the PreToolUse additionalContext, so
+the nudge rides that (a bare stderr line is transcript-only on exit 0);
+edit_exempt_paths opt-in dirs stay silent.
+
+Fails closed: a store open error, listing error, unresolvable workflow, or
+non-DOT workflow body blocks the edit with a clear error message rather than
+silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
+			// storyEngaged is resolved once and reused for the substrate-nudge decision
+			// (so only one store open + list runs per invocation). Its error surfaces
+			// as a gate rejection (sty_f3d5d4b8).
+			engaged, engErr := storyEngaged()
 			if p := filePathFromEvent(raw); p != "" {
 				// An edit whose target is OUTSIDE the repo (e.g. the session
 				// scratchpad under /tmp) is untracked scratch, not project code —
@@ -120,22 +130,28 @@ not a Go rule.`,
 				// exempt additional authored dirs via [gate] edit_exempt_paths — a
 				// harness authoring dir like .claude/ holds authored skills, not
 				// product code (sty_103af456, sty_41416b76). Only in-repo CODE requires
-				// an engaged story. Substrate stays fail-open ALLOWED, but a data-dir
-				// edit with no engaged story earns a model-visible nudge toward the
-				// substrate workflow (sty_f5f351d1) — edit_exempt_paths opt-in dirs
-				// (.claude/) stay silent, a deliberate repo choice.
+				// an engaged story. Substrate stays ALLOWED, but a data-dir edit with
+				// no engaged story earns a model-visible nudge toward the substrate
+				// workflow (sty_f5f351d1) — edit_exempt_paths opt-in dirs (.claude/)
+				// stay silent, a deliberate repo choice. A storyEngaged error suppresses
+				// the nudge (no false advisory when the store is broken).
 				if exemptTarget(p) {
-					if shouldWarnSubstrate(dataDirTarget(p), storyEngaged()) {
+					if engErr == nil && shouldWarnSubstrate(dataDirTarget(p), engaged) {
 						emitSubstrateNoStoryNudge(cmd.OutOrStdout(), cmd.ErrOrStderr())
 					}
 					return nil
 				}
 			}
-			if storyEngaged() {
+			// Engagement-error surface: a broken deployment blocks the edit with a
+			// clear message rather than silently allowing it (sty_f3d5d4b8).
+			if engErr != nil {
+				return fmt.Errorf("satelle: %w", engErr)
+			}
+			if engaged {
 				return nil
 			}
 			return fmt.Errorf("satelle: no engaged story — create or engage one before editing code " +
-				"(satelle story create …, then satelle story set <id> --status in_progress). " +
+				"(satelle story create …, then satelle story set <id> --status plan). " +
 				"The workflow requires work to proceed under a tracked story.")
 		},
 	}
@@ -146,18 +162,23 @@ not a Go rule.`,
 		Long: `commitgate is the PreToolUse handler for Bash. It allows any command that is
 not a git commit/push; for a commit/push it exits non-zero (blocked via
 '|| exit 2') unless a story is engaged, so changes are committed under a tracked
-story. Fails open on any internal error.`,
+story. Fails closed: a store/listing/workflow-resolution error blocks the commit
+with a clear message rather than silently allowing it (sty_f3d5d4b8).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
 			if !isGitCommitOrPush(bashCommandFromEvent(raw)) {
 				return nil // not a commit/push — allow
 			}
-			if storyEngaged() {
+			engaged, err := storyEngaged()
+			if err != nil {
+				return fmt.Errorf("satelle: %w", err)
+			}
+			if engaged {
 				return nil
 			}
 			return fmt.Errorf("satelle: refusing to commit/push with no engaged story — " +
-				"engage a story (satelle story set <id> --status in_progress) so the change is tracked through the workflow.")
+				"engage a story (satelle story set <id> --status plan) so the change is tracked through the workflow.")
 		},
 	}
 
@@ -166,111 +187,70 @@ story. Fails open on any internal error.`,
 }
 
 // storyEngaged reports whether any work item — story OR task — sits in a
-// performing state of ITS OWN governing workflow (the authored definition of
-// "engaged work"). Resolving per story, not against one arbitrary "primary"
+// non-terminal engaging state of ITS OWN governing workflow (the authored definition
+// of "engaged work"). Resolving per story, not against one arbitrary "primary"
 // workflow, is what makes engagement correct rather than accidental: a repo that
 // runs a category-specific workflow (or opts a step into a dispatched coder) is
 // judged by the workflow that actually governs the item (sty_f5bd176f). Fails
-// OPEN: an unopenable store or list error returns true (allow), so the hooks never
-// wedge a session on an internal fault.
-func storyEngaged() bool {
+// CLOSED: a store open error, listing error, unresolvable workflow, or non-DOT
+// workflow body returns (false, error) so the hook blocks rather than silently
+// allowing edits on a broken deployment (sty_f3d5d4b8).
+func storyEngaged() (bool, error) {
 	a, err := app.Open()
 	if err != nil {
-		return true
+		return false, fmt.Errorf("cannot determine engagement (store open failed: %w) — fix config and retry", err)
 	}
 	defer func() { _ = a.Close() }()
 	ctx := context.Background()
 
-	// The full workflow set (nil on error → each item falls back to {in_progress}).
-	wfs, _ := a.Store.DocIndex.List(ctx, "workflows")
+	// The full workflow set — fail closed on error (not a silent fallback).
+	wfs, err := a.Store.DocIndex.List(ctx, "workflows")
+	if err != nil {
+		return false, fmt.Errorf("cannot determine engagement (workflow list failed: %w) — fix config and retry", err)
+	}
 	// All kinds — a task engaged in a performing state counts exactly like a story,
 	// so the commit/edit gates treat engaged tasks the same (sty_3ed91a58).
-	items, e := a.Store.Stories.List(ctx, workitem.ListFilter{})
-	if e != nil {
-		return true // fail open
+	items, err := a.Store.Stories.List(ctx, workitem.ListFilter{})
+	if err != nil {
+		return false, fmt.Errorf("cannot determine engagement (story list failed: %w) — fix config and retry", err)
 	}
 	return anyEngaged(items, wfs)
 }
 
-// anyEngaged reports whether any work item sits in a performing state of the
-// workflow that governs IT — the stamped workflow, else its category-selected one
-// (agentstep.GoverningWorkflow). When no workflow resolves (or a non-DOT body
-// yields no states), it falls back to {in_progress}. Pure core, split for testing.
-func anyEngaged(items []workitem.Item, wfs []docindex.Doc) bool {
-	perfCache := map[string]map[string]bool{} // workflow name → performing-state set
+// anyEngaged reports whether any work item sits in a non-terminal engaging state
+// of the workflow that governs IT — the stamped workflow, else its category-selected
+// one (agentstep.GoverningWorkflow). A "non-terminal engaging state" is one that
+// is neither start (shape=Mdiamond) nor terminal (shape=Msquare) nor cancel/exception
+// (agent=reviewer with no outgoing edges) — read from the authored DOT's shape
+// markers, not hardcoded (sty_f3d5d4b8).
+//
+// Returns (engaged, err): err is non-nil when an item has NO resolving workflow
+// or the workflow does not yield a DOT spec — fail-closed, not a silent allow. Pure
+// core, split for testing.
+func anyEngaged(items []workitem.Item, wfs []docindex.Doc) (bool, error) {
+	engagingCache := map[string]map[string]bool{} // workflow name → engaging-state set
 	for _, it := range items {
-		perf := map[string]bool{"in_progress": true} // fallback
-		if wf, ok := agentstep.GoverningWorkflow(wfs, it); ok {
-			if cached, seen := perfCache[wf.Name]; seen {
-				perf = cached
-			} else if es := executorStates(wf.Body); len(es) > 0 {
-				perf = map[string]bool{}
-				for _, s := range es {
-					perf[s] = true
-				}
-				perfCache[wf.Name] = perf
+		wf, ok := agentstep.GoverningWorkflow(wfs, it)
+		if !ok {
+			return false, fmt.Errorf("item %s has no resolving workflow — cannot determine engagement", it.ID)
+		}
+		engaging, cached := engagingCache[wf.Name]
+		if !cached {
+			spec, dotOK := wfdot.Parse(wf.Body)
+			if !dotOK {
+				return false, fmt.Errorf("workflow %s has no DOT spec — cannot determine engagement", wf.Name)
 			}
-		}
-		if perf[it.Status] {
-			return true
-		}
-	}
-	return false
-}
-
-// executorStates parses the active workflow body for states marked
-// `agent: executor` — the states that represent engaged work. The "engaged" policy
-// is thus authored in the workflow, not hardcoded. The retired `actor:` keyword is
-// no longer parsed (sty_7db2ed7d).
-func executorStates(body string) []string {
-	// DOT workflow: the engaged states are the PERFORMING nodes — any non-reviewer
-	// agent (the in-loop executor OR a named isolated agent a step is allocated to,
-	// e.g. commit-push) in the shared wfdot spec. PerformingStates is the single
-	// source of that predicate, shared with the dispatch lock-guard so they agree.
-	if spec, ok := wfdot.Parse(body); ok {
-		return spec.PerformingStates()
-	}
-	lines := strings.Split(body, "\n")
-	in := false
-	var out []string
-	for _, ln := range lines {
-		t := strings.TrimSpace(ln)
-		if t == "states:" {
-			in = true
-			continue
-		}
-		if !in {
-			continue
-		}
-		if !strings.HasPrefix(t, "- ") {
-			break // end of the states block
-		}
-		item := strings.TrimSpace(t[2:])
-		// A performing node is any non-reviewer agent (in-loop executor or a named
-		// isolated agent); the retired actor: key is not parsed.
-		if strings.HasPrefix(item, "{") {
-			if ag := hookInlineField(item, "agent"); ag != "" && ag != "reviewer" {
-				if name := hookInlineField(item, "name"); name != "" {
-					out = append(out, name)
-				}
+			engaging = map[string]bool{}
+			for _, s := range spec.NonTerminalEngagingStates() {
+				engaging[s] = true
 			}
+			engagingCache[wf.Name] = engaging
+		}
+		if engaging[it.Status] {
+			return true, nil
 		}
 	}
-	return out
-}
-
-// hookInlineField extracts key's value from a YAML inline-map line, to the next
-// comma or brace, quotes trimmed.
-func hookInlineField(line, key string) string {
-	i := strings.Index(line, key+":")
-	if i < 0 {
-		return ""
-	}
-	rest := strings.TrimLeft(line[i+len(key)+1:], " ")
-	if end := strings.IndexAny(rest, ",}"); end >= 0 {
-		rest = rest[:end]
-	}
-	return strings.Trim(strings.TrimSpace(rest), `"'`)
+	return false, nil
 }
 
 // isGitCommitOrPush reports whether a Bash command is a git commit or push.
