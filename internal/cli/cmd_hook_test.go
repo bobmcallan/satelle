@@ -239,6 +239,28 @@ func TestEditExemptClassification(t *testing.T) {
 	}
 }
 
+// TestShouldWarnSubstrate pins the fail-open substrate nudge decision (sty_f5f351d1
+// AC4): nudge ONLY for a data-dir edit with no engaged story. An engaged story, or
+// an edit_exempt_paths opt-in dir (dataDirOnly=false), stays silent.
+func TestShouldWarnSubstrate(t *testing.T) {
+	cases := []struct {
+		name        string
+		dataDirOnly bool
+		engaged     bool
+		want        bool
+	}{
+		{"data dir, no story -> nudge", true, false, true},
+		{"data dir, engaged -> silent", true, true, false},
+		{"exempt-path dir, no story -> silent", false, false, false},
+		{"exempt-path dir, engaged -> silent", false, true, false},
+	}
+	for _, c := range cases {
+		if got := shouldWarnSubstrate(c.dataDirOnly, c.engaged); got != c.want {
+			t.Errorf("%s: shouldWarnSubstrate(%v, %v) = %v, want %v", c.name, c.dataDirOnly, c.engaged, got, c.want)
+		}
+	}
+}
+
 func TestExecutorStatesDOT(t *testing.T) {
 	body := `---
 name: x
