@@ -1023,6 +1023,30 @@ func TestDispatchExecutorAppliesBindingEnv(t *testing.T) {
 	}
 }
 
+// TestDispatchExecutorAppliesBindingSettings pins AC2/AC3: a binding's Settings
+// table threads through to the built Request as pre-marshalled JSON — the
+// {settings} materialisation the retrospective GLM fix depends on.
+func TestDispatchExecutorAppliesBindingSettings(t *testing.T) {
+	docs := fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	r := &fakeRunner{out: "ok"}
+	settings := map[string]any{
+		"env": map[string]any{"ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic"},
+	}
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Harness: "fake -p {system} --settings {settings}", Tools: "Read,Bash(satelle:*)", Settings: settings}, true
+	})
+	g.newRunner = func(string) (agentcli.Runner, error) { return r, nil }
+	if _, err := g.DispatchExecutor(context.Background(),
+		workitem.Item{ID: "sty_1", Title: "T", Status: "backlog"}, "plan"); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"env":{"ANTHROPIC_BASE_URL":"https://api.z.ai/api/anthropic"}}`
+	if r.got.Settings != want {
+		t.Errorf("binding settings not threaded to the Request: got %q, want %q", r.got.Settings, want)
+	}
+}
+
 // TestDispatchExecutorMissingBindingRefuses: agent=<name> with no [<name>]
 // binding in agents.toml is a broken definition — the dispatch errors (the
 // transition is refused), never silently falling back in-loop.

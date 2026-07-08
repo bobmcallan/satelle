@@ -26,6 +26,7 @@ type invocation struct {
 	payload          any               // marshalled to JSON and delivered on stdin
 	tools            string            // the tool grant ({tools})
 	model            string            // optional model override ({model})
+	settings         map[string]any    // optional, ${VAR}-resolved settings table ({settings}); nil drops the placeholder
 	env              map[string]string // resolved env layered onto the subprocess (binding.Env / reviewerEnv)
 	runner           agentcli.Runner   // the agent CLI to invoke (g.runner, or a binding's own runner)
 	timeout          time.Duration     // per-invocation deadline; ≤0 disables the bound
@@ -66,11 +67,23 @@ func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Req
 	if err != nil {
 		return agentcli.Request{}, err
 	}
+	// A binding with no Settings emits no {settings} value at all — the placeholder
+	// is dropped along with its flag (buildArgs), exactly like an empty {model} —
+	// rather than marshalling to the literal string "null".
+	var settings string
+	if len(inv.settings) > 0 {
+		sb, serr := json.Marshal(inv.settings)
+		if serr != nil {
+			return agentcli.Request{}, serr
+		}
+		settings = string(sb)
+	}
 	return agentcli.Request{
 		SystemPrompt: b.String(),
 		Payload:      string(payload),
 		AllowedTools: inv.tools,
 		Model:        inv.model,
+		Settings:     settings,
 		Env:          inv.env,
 		Dir:          g.repoRoot,
 	}, nil

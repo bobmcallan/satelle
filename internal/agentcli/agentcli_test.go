@@ -146,6 +146,33 @@ func TestBuildArgsKeepsSetModel(t *testing.T) {
 	}
 }
 
+// An empty settings drops both the {settings} placeholder and its preceding flag
+// — mirroring the empty-{model} behaviour — so a binding that authors no
+// `settings` table emits no --settings arg at all.
+func TestBuildArgsDropsEmptySettingsFlag(t *testing.T) {
+	tmpl := strings.Fields("--allowedTools {tools} --settings {settings}")
+	args := buildArgs(tmpl, Request{AllowedTools: "Read", Settings: ""})
+	for _, a := range args {
+		if a == "{settings}" || a == "--settings" || a == "" {
+			t.Errorf("empty settings should drop --settings {settings}, got %#v", args)
+		}
+	}
+	if !contains(args, "Read") {
+		t.Errorf("non-settings args should remain: %#v", args)
+	}
+}
+
+// A set settings JSON string substitutes in place as a SINGLE argv token, keeping
+// its flag.
+func TestBuildArgsKeepsSetSettings(t *testing.T) {
+	tmpl := strings.Fields("--settings {settings}")
+	json := `{"env":{"ANTHROPIC_BASE_URL":"https://api.z.ai/api/anthropic"}}`
+	args := buildArgs(tmpl, Request{Settings: json})
+	if len(args) != 2 || args[0] != "--settings" || args[1] != json {
+		t.Errorf("set settings should yield [--settings %s], got %#v", json, args)
+	}
+}
+
 // An unrecognised placeholder is passed through verbatim, not dropped or expanded.
 func TestBuildArgsLeavesUnknownTokens(t *testing.T) {
 	args := buildArgs(strings.Fields("--flag {unknown} value"), Request{})
@@ -220,52 +247,36 @@ func TestComposeEnv(t *testing.T) {
 	}
 }
 
-// TestStripInheritedProviderEnv pins the fix for the stale-inherited-ANTHROPIC bug:
-// a dispatched `claude -p` must NOT inherit the launching shell's ANTHROPIC_* (which
-// would override what claude resolves from .claude/settings.local.json), but a
-// binding's explicit agents.toml `env` overlay must still be able to set them.
-func TestStripInheritedProviderEnv(t *testing.T) {
-	parent := []string{
-		"PATH=/bin",
-		"HOME=/root",
-		"ANTHROPIC_AUTH_TOKEN=stale-token-from-shell",
-		"ANTHROPIC_BASE_URL=https://stale.example",
-		"ANTHROPIC_DEFAULT_SONNET_MODEL=stale-sonnet",
+// TestRunInheritsParentEnvNoFilter pins the NO-FILTERING contract: the dispatched
+// subprocess inherits the launching shell's env UNCHANGED (no denylist, no
+// allowlist), with only the binding's agents.toml `env` overlay added. A sentinel
+// set in the parent (the test process) passes straight through to the child, and
+// the overlay var is injected on top. Auth separation does not need a filter —
+// claude runs in the repo dir and reads .claude/settings.local.json, whose env
+// block overrides any inherited ANTHROPIC_* (verified out-of-band). This test is
+// the regression guard against re-adding a secret env filter: the "found and fixed
+// twice" recurrence (ANTHROPIC_* denylist, then a PATH/HOME allowlist) was the
+// filter itself being the bug.
+func TestRunInheritsParentEnvNoFilter(t *testing.T) {
+	if _, err := exec.LookPath("printenv"); err != nil {
+		t.Skip("printenv not on PATH")
 	}
-
-	// All ANTHROPIC_* gone; everything else survives.
-	stripped := stripInheritedProviderEnv(parent)
-	for _, kv := range stripped {
-		key := kv
-		if i := strings.IndexByte(kv, '='); i >= 0 {
-			key = kv[:i]
-		}
-		if strings.HasPrefix(key, "ANTHROPIC_") {
-			t.Errorf("ANTHROPIC_* leaked through the strip: %s", kv)
-		}
+	// A sentinel in the PARENT env (the launching shell). No filter drops it.
+	t.Setenv("SATELLE_TEST_SENTINEL", "inherited-from-parent")
+	// The binding's agents.toml `env` overlay — the ONLY env satelle adds.
+	r := templateRunner{binary: "printenv", argTemplate: []string{"SATELLE_TEST_SENTINEL", "SATELLE_TEST_OVERLAY"}}
+	out, err := r.Run(context.Background(), Request{Env: map[string]string{"SATELLE_TEST_OVERLAY": "injected-overlay"}})
+	if err != nil {
+		t.Fatalf("run: %v", err)
 	}
-	if !contains(stripped, "PATH=/bin") || !contains(stripped, "HOME=/root") {
-		t.Errorf("non-provider base keys lost: %v", stripped)
+	got := strings.TrimSpace(string(out))
+	// printenv prints one value per line for set vars; both must be present — the
+	// sentinel (inherited, no filter) and the overlay (injected).
+	if !strings.Contains(got, "inherited-from-parent") {
+		t.Errorf("parent sentinel dropped — a secret env filter was re-introduced: %q", got)
 	}
-
-	// A binding WITHOUT an override (the sonnet reviewer/worker) gets a clean env —
-	// no ANTHROPIC_* at all, so claude resolves its own from settings.local.json.
-	clean := composeEnv(stripped, nil)
-	for _, kv := range clean {
-		if strings.HasPrefix(kv, "ANTHROPIC_") {
-			t.Errorf("no-override binding inherited ANTHROPIC_*: %s", kv)
-		}
-	}
-
-	// A binding WITH an explicit override (e.g. [retrospective] on the GLM endpoint)
-	// still sets ANTHROPIC_* — the overlay is applied AFTER the strip, so it wins.
-	glm := composeEnv(stripped, map[string]string{
-		"ANTHROPIC_BASE_URL":   "https://api.z.ai/api/anthropic",
-		"ANTHROPIC_AUTH_TOKEN": "sk-glm",
-	})
-	if !contains(glm, "ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic") ||
-		!contains(glm, "ANTHROPIC_AUTH_TOKEN=sk-glm") {
-		t.Errorf("explicit per-binding ANTHROPIC_* override lost: %v", glm)
+	if !strings.Contains(got, "injected-overlay") {
+		t.Errorf("binding overlay not injected: %q", got)
 	}
 }
 

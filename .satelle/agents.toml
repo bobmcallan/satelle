@@ -51,15 +51,25 @@
 # PER-BINDING ENV (sty_001558ce) — point a step at an alternate model backend
 # WITHOUT a wrapper binary. A binding may set `env = { KEY = "value" }`; each value
 # may reference the [vars] KV via ${NAME} (resolved at load, fail-fast on an unknown
-# var). The resolved env layers onto the dispatched agent's process (binding keys
-# win). SECRETS (API keys) go under [vars] in the gitignored satelle.local.toml —
-# NEVER here (committed). Example — GLM via its Anthropic-compatible endpoint, the
-# same claude CLI, model reads naturally (this is exactly how [retrospective] below
-# runs):
+# var). The resolved env layers onto the dispatched agent's process (composeEnv,
+# binding keys win over the inherited shell) — but a REPO's own
+# .claude/settings.local.json env block, read by claude itself from its cwd, wins
+# over that process env, silently clobbering a provider override (sty_964be0ea).
+#
+# TRANSPARENT SETTINGS (sty_964be0ea) — the structural fix. A binding may ALSO set
+# `settings = { ... }`, a table that MIRRORS claude's settings.local.json schema
+# (env, model, permissions) verbatim: what you author is exactly what claude
+# receives, no derivation. satelle resolves its ${VAR} refs the same fail-fast way
+# as env, JSON-marshals it, and passes it INLINE as `--settings {settings}` (no
+# temp-file). Because --settings is CLI-tier it OVERRIDES settings.local.json, so a
+# binding's settings become authoritative for that dispatch. A binding with no
+# `settings` table emits no --settings flag at all (like an unset {model}). Example
+# — GLM via its Anthropic-compatible endpoint, the same claude CLI (this is exactly
+# how [retrospective] below runs):
 #   [retrospective]
-#   harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
+#   harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model} --settings {settings}"
 #   model   = "glm-4.6"
-#   env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
+#   settings = { env = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" } }
 # and in satelle.local.toml:  [vars] / GLM_API_KEY = "sk-…"
 
 # FULLY DEFINED (sty_892517e7, user feedback): every binding below writes out
@@ -145,8 +155,15 @@ timeout = "45m"
 # so it sits OUTSIDE the sonnet consolidation and stays on glm-4.6 (cheap, reliable
 # GLM-4 line) — the ONLY remaining GLM consumer. Its cost is visible via
 # `satelle story cost`, so keep-vs-trim is a measured decision.
+#
+# Its provider override lives under `settings.env` (not a bare top-level `env`,
+# sty_964be0ea): a top-level env is only a process-env overlay, which this repo's
+# .claude/settings.local.json env block (read from cwd by claude itself) silently
+# overwrites — so this binding likely never actually reached z.ai. `--settings
+# {settings}` is CLI-tier and beats settings.local.json, making the GLM endpoint
+# authoritative for this dispatch.
 [retrospective]
-harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
+harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model} --settings {settings}"
 tools   = "Read,Grep,Glob,Bash(satelle:*)"
 model   = "glm-4.6"
-env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
+settings = { env = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" } }

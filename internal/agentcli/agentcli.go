@@ -58,7 +58,17 @@ type Request struct {
 	Payload      string // delivered on stdin (the review/summary input)
 	AllowedTools string // {tools}: comma-separated tool grant
 	Model        string // {model}: optional model override; "" drops the placeholder
-	Dir          string // working directory for the subprocess
+	// Settings is {settings}: a pre-marshalled JSON object mirroring claude's
+	// settings.local.json schema (env/model/permissions), already ${VAR}-resolved
+	// by the caller (config.ResolveAgentEnvs / agentstep.buildRequest) — agentcli
+	// never sees the raw map, only this JSON string, like Payload. "" drops the
+	// placeholder AND a directly preceding flag, exactly like an empty Model, so a
+	// binding with no settings emits no --settings arg. Passed INLINE (no
+	// temp-file), so a secret it carries never touches disk. Values MAY be
+	// secrets, so like Env it is never included in Command() evidence, logs, or
+	// error strings.
+	Settings string
+	Dir      string // working directory for the subprocess
 	// Env sets environment variables on the subprocess, layered onto the parent
 	// env with these keys winning (composeEnv). Already ${VAR}-resolved by the
 	// caller (config.ResolveAgentEnvs). Values MAY be secrets (an API token), so
@@ -212,10 +222,12 @@ func (t templateRunner) Run(ctx context.Context, req Request) ([]byte, error) {
 }
 
 // buildArgs substitutes the placeholders in an argv template against req. Each of
-// {system}/{tools}/{model} must be its own token, so a multi-word value (a
-// multi-line system prompt) becomes exactly one argument. An empty {model} drops
-// the placeholder AND a directly preceding flag token (e.g. "--model {model}"), so
-// the default template carries the model flag without emitting an empty value.
+// {system}/{tools}/{model}/{settings} must be its own token, so a multi-word value
+// (a multi-line system prompt, or a JSON settings object) becomes exactly one
+// argument. An empty {model} or {settings} drops the placeholder AND a directly
+// preceding flag token (e.g. "--model {model}"), so the default template carries
+// the flag without emitting an empty value — a binding that authors no `settings`
+// table emits no --settings arg at all.
 func buildArgs(argTemplate []string, req Request) []string {
 	args := make([]string, 0, len(argTemplate))
 	for _, tok := range argTemplate {
@@ -232,6 +244,14 @@ func buildArgs(argTemplate []string, req Request) []string {
 				continue
 			}
 			args = append(args, req.Model)
+		case "{settings}":
+			if strings.TrimSpace(req.Settings) == "" {
+				if n := len(args); n > 0 && strings.HasPrefix(args[n-1], "-") {
+					args = args[:n-1] // drop the now-valueless flag
+				}
+				continue
+			}
+			args = append(args, req.Settings)
 		default:
 			args = append(args, tok)
 		}
@@ -285,37 +305,20 @@ func composeEnv(base []string, overlay map[string]string) []string {
 	return out
 }
 
-// providerEnvPrefix is the env-var prefix a dispatched `claude` resolves its own
-// auth/endpoint/model from (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN,
-// ANTHROPIC_BASE_URL, ANTHROPIC_DEFAULT_*_MODEL, …). A dispatched agent CLI must
-// NOT inherit these from the launching shell.
-const providerEnvPrefix = "ANTHROPIC_"
-
-// stripInheritedProviderEnv drops every ANTHROPIC_* entry from the parent
-// environment before a dispatched agent CLI (claude) runs. A dispatched `claude -p`
-// must NOT inherit the launching shell's ANTHROPIC_* — those override what `claude`
-// resolves itself from .claude/settings(.local).json, and when stale (a leftover
-// token/base-url from the shell profile, different from the session's
-// settings.local.json) they silently break the subprocess with an auth/endpoint
-// mismatch (the reviewer "no verdict after 3 attempts" failure). Only the
-// ANTHROPIC_ prefix is dropped — PATH, HOME, etc. pass through. A binding that
-// WANTS a specific provider config sets it explicitly in its agents.toml `env`
-// (e.g. [retrospective] on the GLM endpoint); composeEnv applies that overlay AFTER
-// this strip, so explicit per-binding overrides still win.
-func stripInheritedProviderEnv(env []string) []string {
-	out := make([]string, 0, len(env))
-	for _, kv := range env {
-		key := kv
-		if i := strings.IndexByte(kv, '='); i >= 0 {
-			key = kv[:i]
-		}
-		if strings.HasPrefix(key, providerEnvPrefix) {
-			continue
-		}
-		out = append(out, kv)
-	}
-	return out
-}
+// The dispatched subprocess inherits the launching shell's environment UNCHANGED,
+// with only the binding's agents.toml `env` overlay added (composeEnv, overlay
+// wins). There is NO secret filtering here — no denylist, no allowlist — on
+// purpose. The env-leak bug was "found and fixed" twice (an ANTHROPIC_* denylist,
+// then a PATH/HOME allowlist); each fix was satelle secretly deciding which parent
+// vars reach the child, so the next new var re-triggered another fix. The filter
+// was the bug. The separation auth needs does not require a filter: the subprocess
+// runs with cwd = the repo root (agentstep sets Request.Dir = repoRoot), so
+// `claude -p` reads .claude/settings(.local).json, whose `env` block OVERRIDES any
+// inherited ANTHROPIC_* — verified: a bogus ANTHROPIC_* in the launching env is
+// ignored when claude runs in the repo dir (and CLAUDE_CODE_*/AI_AGENT markers do
+// not affect claude's auth). A binding that wants a different provider (e.g.
+// [retrospective] on the GLM endpoint) sets it explicitly in its agents.toml `env`;
+// that overlay is the ONLY env satelle contributes beyond the inherited shell.
 
 // runProcess runs binary with args, feeding req.Payload on stdin in req.Dir, and
 // returns the accumulated stdout. It streams via StdoutPipe/StderrPipe rather than
@@ -331,7 +334,7 @@ func runProcess(ctx context.Context, binary string, args []string, req Request) 
 	if req.Dir != "" {
 		cmd.Dir = req.Dir
 	}
-	cmd.Env = composeEnv(stripInheritedProviderEnv(os.Environ()), req.Env)
+	cmd.Env = composeEnv(os.Environ(), req.Env)
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
