@@ -54,8 +54,9 @@
 # var). The resolved env layers onto the dispatched agent's process (binding keys
 # win). SECRETS (API keys) go under [vars] in the gitignored satelle.local.toml —
 # NEVER here (committed). Example — GLM via its Anthropic-compatible endpoint, the
-# same claude CLI, model reads naturally:
-#   [planner]
+# same claude CLI, model reads naturally (this is exactly how [retrospective] below
+# runs):
+#   [retrospective]
 #   harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
 #   model   = "glm-4.6"
 #   env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
@@ -64,6 +65,16 @@
 # FULLY DEFINED (sty_892517e7, user feedback): every binding below writes out
 # its ACTIVE values — nothing hidden in code defaults — so what runs is exactly
 # what this file shows.
+#
+# CONSOLIDATED to sonnet for the whole work loop (operator decision): every gate
+# runs on [reviewer] (sonnet); every performing stage runs on sonnet — [planner]
+# (read-only) for plan, [worker] (code-writer) for in_progress + integration +
+# release. The earlier fable/GLM tiering is retired: integration + release moved
+# off the deleted [glm] performer onto [worker]. GLM survives only in
+# [retrospective] (a separate `satelle story retrospect` command, not a workflow
+# node) — move it to sonnet too if you want GLM gone entirely. plan cannot share
+# [worker]: it is entered from the non-performing backlog state, and the dispatch
+# lock-guard refuses a code-writer (Edit/Write) from a non-performing state.
 
 [executor]
 harness = "in-loop"            # the orchestrator/driving session itself
@@ -76,79 +87,66 @@ harness = "in-loop"            # the orchestrator/driving session itself
 # {system}/{tools}/{model} (payload on stdin); point it at ANY agent CLI.
 harness = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob"     # read-only grant
-model   = "sonnet"             # TIERED (operator decision): gates run on the rigorous "parent" model — sonnet caught release-evidence gaps GLM waved through, and avoids GLM's 529/5h-quota flakiness. Workers (planner/retrospective) stay on GLM for cost.
-# No GLM env here: the reviewer uses the Anthropic default endpoint (the tiering split).
+model   = "sonnet"             # the rigorous "parent" model — every gate runs here. Sonnet caught release-evidence gaps GLM waved through and avoids GLM's 529/5h-quota flakiness.
+# No GLM env: the reviewer uses the Anthropic default endpoint.
 
 # planner — the `plan` step's named agent (sty_d9a0b573). It reads the story,
 # writes an implementation plan covering every acceptance criterion, and attaches
 # it to the story (Bash(satelle:*) for `satelle story attach`) — read-only on the
-# source (no Edit/Write); it plans, it does not build.
+# source (no Edit/Write); it plans, it does not build. READ-ONLY BY NECESSITY:
+# `plan` is entered from the non-performing `backlog` state, and the dispatch
+# lock-guard refuses a code-writer (Edit/Write grant) dispatched from a
+# non-performing state — so plan cannot share the [worker] binding; it stays its
+# own read-only agent.
+#
+# On SONNET via the Anthropic default endpoint (was glm-4.6; consolidated to sonnet
+# with the rest of the work loop).
 [planner]
 harness = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Bash(satelle:*)"
-model   = "glm-4.6"            # GLM-4.6 — the reliable-enough worker line. glm-5.2 tried 2026-07-06 but is DEAD (the planner dispatch was `signal: killed` mid-run, not a timeout); glm-5-turbo 529-loops. glm-4.6 it is.
-env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
+model   = "sonnet"
+
+# worker — this repo's sonnet code-writer for the performing stages that ARE
+# reached from a performing state. The project workflow allocates in_progress
+# (@skill:code), integration (@skill:integrate), AND release (@skill:release) to
+# it — integration + release were moved off the retired [glm] performer onto the
+# worker (consolidation: one code-writer on sonnet for every tree-touching stage).
+# A fresh isolated worker reconstructs context from the story + plan via the
+# read-only CLI (pull-context contract), then runs that step's rubric — code
+# implements the slice with tests, integration runs the suites + repairs trivial
+# fallout, release bumps .version + commits + pushes + records CI evidence — and
+# stops for the next gate.
+#
+# On SONNET via the Anthropic default endpoint (no GLM env) — the rigorous model
+# the code-ac gate judges on. in_progress is reached from the PERFORMING plan
+# state, integration from in_progress, release from integration (performing once it
+# carries agent=worker), so the engaged-story edit gate legitimately allows each
+# dispatch — the lock-guard (agentstep.DispatchExecutor) REFUSES a code-writer from
+# a non-performing state rather than let it ride the serve fail-open (which is why
+# plan cannot run here).
+#
+# COMPLETE grant (the isolated-commit lesson): the two former-[glm] rubrics run
+# here too, so it carries go/gofmt/make (suites + format), git+gh (commit/push/CI
+# evidence), satelle (context-pull + attach), and Edit/Write (product code, trivial
+# repair, the .version bump) — no step hits a permission wall and returns a false OK.
+[worker]
+harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
+tools   = "Read,Grep,Glob,Edit,Write,Bash(satelle:*),Bash(go:*),Bash(gofmt:*),Bash(make:*),Bash(git:*),Bash(gh:*)"
+model   = "sonnet"
+# release watches a CI window (push -> test -> release publish) and integration
+# runs the full suite; 45m gives a real run room before the kill.
+timeout = "45m"
 
 # retrospective — the post-story improvement agent (sty_b53730e2): `satelle story
 # retrospect <id>` dispatches it over a FINISHED story to file 1–3 improvement
 # proposals (rubric gaps, DRY debt, CI/test gaps) as backlog stories. It needs
 # Bash(satelle:*) to pull the story and file proposals — read-only otherwise (it
-# proposes, never edits code). On glm-4.6 (cheap, reliable GLM-4 line); its cost is
-# visible via `satelle story cost`, so keep-vs-trim is a measured decision.
+# proposes, never edits code). NOT a project-workflow node (a standalone command),
+# so it sits OUTSIDE the sonnet consolidation and stays on glm-4.6 (cheap, reliable
+# GLM-4 line) — the ONLY remaining GLM consumer. Its cost is visible via
+# `satelle story cost`, so keep-vs-trim is a measured decision.
 [retrospective]
 harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Bash(satelle:*)"
 model   = "glm-4.6"
 env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
-
-# worker — this repo's ACTIVE in_progress code-writer (sty_5d9648f2, was the
-# dormant `coder` of sty_f5bd176f). The project workflow allocates in_progress to
-# it (agent=worker, prompt="@skill:code"): a fresh isolated worker reconstructs
-# context from the story + plan via the read-only CLI (pull-context contract),
-# implements exactly the plan's slice with unit + integration tests, then stops for
-# code-ac-review. Its grant adds Write/Edit (it writes product code) plus gofmt/go
-# for a self-check, on top of the mandatory Bash(satelle:*) every dispatched agent
-# needs to pull its context.
-#
-# On SONNET via the Anthropic default endpoint (no GLM env) — the tiering decision
-# (sty_5d9648f2): the worker writes product code judged by the code-ac gate, so it
-# runs on the same rigorous model as the reviewer rather than the cheaper GLM
-# worker line. in_progress is reached from the PERFORMING plan state, so the
-# engaged-story edit gate legitimately allows its edits — the dispatch lock-guard
-# (agentstep.DispatchExecutor) REFUSES a code-writer dispatched from a
-# non-performing state rather than let it ride the serve fail-open.
-[worker]
-harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
-tools   = "Read,Grep,Glob,Edit,Write,Bash(satelle:*),Bash(gofmt:*),Bash(go:*)"
-model   = "sonnet"
-# A from-scratch worker implementing a real feature needs more than the engine's
-# 20m default dispatch bound — sty_b73c3236's worker was SIGKILLed at exactly 20m
-# with its work complete, and the transition was refused. 45m gives a real
-# implementation room to finish and return before the kill (sty_446c38b7).
-timeout = "45m"
-
-# glm — this repo's ACTIVE integration + release performer. The project workflow
-# allocates BOTH the integration node (agent=glm, prompt="@skill:integrate") and the
-# release node (agent=glm, prompt="@skill:release") to it, moving those two
-# tree-touching stages OFF the in-loop driving session and onto the cheap GLM line
-# (operator decision: integration = run the suites + repair trivial fallout; release
-# = version bump + conventional commit + push + record CI evidence — both mechanical
-# enough for GLM, and the sonnet reviewer gates remain the quality authority). Reached
-# from a PERFORMING state each time (integration from in_progress, release from
-# integration — which is itself performing once it carries this agent), so the dispatch
-# lock-guard legitimately allows its edits.
-#
-# COMPLETE grant, deliberately (the isolated-commit lesson): the past isolated
-# commit-agent returned OK WITHOUT committing when it hit a non-interactive approval
-# wall on an ungranted `gofmt -s -w`, stranding the story at commit. This binding
-# grants EVERYTHING the two rubrics run — go/gofmt/make for the suites and format,
-# git+gh for the commit/push/CI-evidence, satelle for context-pull + attach, Edit/Write
-# for trivial repair + the .version bump — so no step hits a wall and returns a false OK.
-[glm]
-harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
-tools   = "Read,Grep,Glob,Edit,Write,Bash(satelle:*),Bash(go:*),Bash(gofmt:*),Bash(make:*),Bash(git:*),Bash(gh:*)"
-model   = "glm-4.6"
-env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
-# Release watches a CI window (push -> test -> release publish) and integration runs
-# the full suite; 45m matches the worker's bound so a real run finishes before the kill.
-timeout = "45m"
