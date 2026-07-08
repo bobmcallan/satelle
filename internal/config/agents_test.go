@@ -178,6 +178,60 @@ func TestLoadAgentsOverride(t *testing.T) {
 	}
 }
 
+// TestLoadAgentsSettingsTable pins AC1/AC2: a binding's `settings` table decodes
+// as a generic map[string]any (env, model, and a nested permissions.allow array)
+// with no dedicated schema struct — LoadAgents's existing PrimitiveDecode-into-map
+// path already handles a nested table for free. A binding with no settings table
+// yields a nil map (not an empty-but-present one), so it materialises to no
+// {settings} value at all.
+func TestLoadAgentsSettingsTable(t *testing.T) {
+	dir := t.TempDir()
+	body := "[worker]\n" +
+		"harness = \"claude {system} --settings {settings}\"\n" +
+		"[worker.settings]\n" +
+		"model = \"glm-4.6\"\n" +
+		"[worker.settings.env]\n" +
+		"ANTHROPIC_BASE_URL = \"https://api.z.ai/api/anthropic\"\n" +
+		"ANTHROPIC_AUTH_TOKEN = \"${GLM_API_KEY}\"\n" +
+		"[worker.settings.permissions]\n" +
+		"allow = [\"Read\", \"Bash(git:*)\"]\n" +
+		"[reviewer]\n" +
+		"model = \"sonnet\"\n"
+	if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ac, err := LoadAgents(dir)
+	if err != nil {
+		t.Fatalf("LoadAgents: %v", err)
+	}
+	b, ok := ac.NamedBinding("worker")
+	if !ok {
+		t.Fatal("worker binding not found")
+	}
+	if got := b.Settings["model"]; got != "glm-4.6" {
+		t.Errorf("settings.model = %v, want glm-4.6", got)
+	}
+	env, ok := b.Settings["env"].(map[string]any)
+	if !ok {
+		t.Fatalf("settings.env = %T, want map[string]any", b.Settings["env"])
+	}
+	if env["ANTHROPIC_BASE_URL"] != "https://api.z.ai/api/anthropic" {
+		t.Errorf("settings.env.ANTHROPIC_BASE_URL = %v", env["ANTHROPIC_BASE_URL"])
+	}
+	perms, ok := b.Settings["permissions"].(map[string]any)
+	if !ok {
+		t.Fatalf("settings.permissions = %T, want map[string]any", b.Settings["permissions"])
+	}
+	allow, ok := perms["allow"].([]any)
+	if !ok || len(allow) != 2 || allow[0] != "Read" || allow[1] != "Bash(git:*)" {
+		t.Errorf("settings.permissions.allow = %v", perms["allow"])
+	}
+	// A binding with no settings table has a nil map.
+	if ac.Reviewer.Settings != nil {
+		t.Errorf("reviewer settings = %v, want nil (no settings table declared)", ac.Reviewer.Settings)
+	}
+}
+
 func TestInjectPrinciplesDefaultsOnAndToggles(t *testing.T) {
 	// Absent from agents.toml → default ON.
 	if !(AgentBinding{}).InjectsPrinciples() {

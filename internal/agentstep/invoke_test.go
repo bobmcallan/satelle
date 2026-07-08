@@ -116,6 +116,34 @@ func TestPullContextCallToActionInEveryRole(t *testing.T) {
 	}
 }
 
+// TestBuildRequestMarshalsSettings pins AC2: a non-empty invocation.settings is
+// JSON-marshalled onto req.Settings (deterministic key order, via encoding/json's
+// sorted map keys), and an unset/empty settings yields "" — so buildArgs drops the
+// {settings} placeholder and its flag exactly as it does for an empty model.
+func TestBuildRequestMarshalsSettings(t *testing.T) {
+	g := New(&fakeRunner{}, fakeDocs{workflow: testWorkflow}, "/repo", "")
+
+	req, err := g.buildRequest(context.Background(), invocation{
+		rubric:   "r",
+		settings: map[string]any{"env": map[string]any{"ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"env":{"ANTHROPIC_BASE_URL":"https://api.z.ai/api/anthropic"}}`
+	if req.Settings != want {
+		t.Errorf("req.Settings = %q, want %q", req.Settings, want)
+	}
+
+	req2, err := g.buildRequest(context.Background(), invocation{rubric: "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req2.Settings != "" {
+		t.Errorf("unset settings should marshal to empty string, got %q", req2.Settings)
+	}
+}
+
 // TestRunOnceUsesSuppliedRunnerAndTimeout: runOnce runs the runner it is GIVEN
 // (the executor's binding runner, not the engine's g.runner) and honours the
 // per-invocation deadline — the two ways executor dispatch differs from a gate run.

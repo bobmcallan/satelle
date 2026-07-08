@@ -99,3 +99,69 @@ func TestResolveAgentEnvsUnknownVar(t *testing.T) {
 		}
 	}
 }
+
+// TestExpandVarsInSettings pins AC2: ${VAR} refs resolve at any depth (nested
+// map, and inside a slice element), non-string leaves pass through unchanged, and
+// an unknown var fails the same way ExpandVars does.
+func TestExpandVarsInSettings(t *testing.T) {
+	vars := map[string]string{"GLM_API_KEY": "sk-secret"}
+	settings := map[string]any{
+		"model": "glm-4.6",
+		"env": map[string]any{
+			"ANTHROPIC_BASE_URL":   "https://api.z.ai/api/anthropic",
+			"ANTHROPIC_AUTH_TOKEN": "${GLM_API_KEY}",
+		},
+		"permissions": map[string]any{
+			"allow": []any{"Read", "Bash(${GLM_API_KEY}:*)"},
+		},
+		"strict": true,
+	}
+	got, err := ExpandVarsInSettings(settings, vars)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := got["env"].(map[string]any)
+	if env["ANTHROPIC_AUTH_TOKEN"] != "sk-secret" {
+		t.Errorf("nested env ref not resolved: %v", env["ANTHROPIC_AUTH_TOKEN"])
+	}
+	allow := got["permissions"].(map[string]any)["allow"].([]any)
+	if allow[1] != "Bash(sk-secret:*)" {
+		t.Errorf("slice-element ref not resolved: %v", allow[1])
+	}
+	if got["strict"] != true {
+		t.Errorf("non-string leaf mangled: %v", got["strict"])
+	}
+	// The source map is not mutated (a copy is returned), mirroring ResolveAgentEnvs.
+	if settings["env"].(map[string]any)["ANTHROPIC_AUTH_TOKEN"] != "${GLM_API_KEY}" {
+		t.Errorf("source settings mutated: %v", settings["env"])
+	}
+
+	if _, err := ExpandVarsInSettings(map[string]any{"env": map[string]any{"K": "${MISSING}"}}, vars); err == nil ||
+		!strings.Contains(err.Error(), "MISSING") {
+		t.Fatalf("unknown var error = %v, want it to name MISSING", err)
+	}
+}
+
+// TestResolveAgentEnvsSettings pins AC2: ResolveAgentEnvs resolves a binding's
+// Settings alongside its Env, and a binding with no Settings stays a no-op.
+func TestResolveAgentEnvsSettings(t *testing.T) {
+	vars := map[string]string{"GLM_API_KEY": "sk-secret"}
+	ac := AgentsConfig{
+		Agents: map[string]AgentBinding{
+			"retrospective": {Settings: map[string]any{
+				"env": map[string]any{"ANTHROPIC_AUTH_TOKEN": "${GLM_API_KEY}"},
+			}},
+		},
+	}
+	res, err := ResolveAgentEnvs(ac, vars)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := res.Agents["retrospective"].Settings["env"].(map[string]any)
+	if env["ANTHROPIC_AUTH_TOKEN"] != "sk-secret" {
+		t.Errorf("resolved settings token = %v, want sk-secret", env["ANTHROPIC_AUTH_TOKEN"])
+	}
+	if res.Reviewer.Settings != nil {
+		t.Errorf("empty settings should stay nil, got %v", res.Reviewer.Settings)
+	}
+}

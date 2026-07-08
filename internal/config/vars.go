@@ -38,21 +38,21 @@ func ExpandVars(s string, vars map[string]string) (string, error) {
 }
 
 // ResolveAgentEnvs returns a copy of the agents layer with every binding's Env
-// values ${NAME}-expanded against vars (executor, reviewer, and each named
-// agent). Resolution happens ONCE, at CLI wiring time (fail-fast, the repo's
-// established style): a broken ${VAR} in any binding refuses the command with an
-// actionable message rather than sitting undetected until a dispatch. A binding
-// with no Env is a no-op, so a zero-config repo stays zero-config. The error
-// names the binding section and env key but NEVER the value (values may be
-// secrets — env is kept out of all evidence, logs, and errors).
+// AND Settings values ${NAME}-expanded against vars (executor, reviewer, and
+// each named agent). Resolution happens ONCE, at CLI wiring time (fail-fast,
+// the repo's established style): a broken ${VAR} in any binding refuses the
+// command with an actionable message rather than sitting undetected until a
+// dispatch. A binding with no Env/Settings is a no-op, so a zero-config repo
+// stays zero-config. The error names the binding section and key but NEVER the
+// value (values may be secrets — kept out of all evidence, logs, and errors).
 func ResolveAgentEnvs(a AgentsConfig, vars map[string]string) (AgentsConfig, error) {
 	res := a
-	rex, err := resolveBindingEnv("executor", a.Executor, vars)
+	rex, err := resolveBinding("executor", a.Executor, vars)
 	if err != nil {
 		return AgentsConfig{}, err
 	}
 	res.Executor = rex
-	rrv, err := resolveBindingEnv("reviewer", a.Reviewer, vars)
+	rrv, err := resolveBinding("reviewer", a.Reviewer, vars)
 	if err != nil {
 		return AgentsConfig{}, err
 	}
@@ -60,7 +60,7 @@ func ResolveAgentEnvs(a AgentsConfig, vars map[string]string) (AgentsConfig, err
 	if len(a.Agents) > 0 {
 		res.Agents = make(map[string]AgentBinding, len(a.Agents))
 		for _, name := range sortedKeys(a.Agents) {
-			rb, err := resolveBindingEnv(name, a.Agents[name], vars)
+			rb, err := resolveBinding(name, a.Agents[name], vars)
 			if err != nil {
 				return AgentsConfig{}, err
 			}
@@ -68,6 +68,17 @@ func ResolveAgentEnvs(a AgentsConfig, vars map[string]string) (AgentsConfig, err
 		}
 	}
 	return res, nil
+}
+
+// resolveBinding returns b with its Env and Settings values expanded. section
+// is the agents.toml section name ([executor]/[reviewer]/[<name>]) used only
+// in the error.
+func resolveBinding(section string, b AgentBinding, vars map[string]string) (AgentBinding, error) {
+	b, err := resolveBindingEnv(section, b, vars)
+	if err != nil {
+		return AgentBinding{}, err
+	}
+	return resolveBindingSettings(section, b, vars)
 }
 
 // resolveBindingEnv returns b with its Env values expanded. section is the
@@ -86,6 +97,62 @@ func resolveBindingEnv(section string, b AgentBinding, vars map[string]string) (
 	}
 	b.Env = resolved
 	return b, nil
+}
+
+// resolveBindingSettings returns b with its Settings values ${VAR}-expanded.
+// section is the agents.toml section name, used only in the error.
+func resolveBindingSettings(section string, b AgentBinding, vars map[string]string) (AgentBinding, error) {
+	if len(b.Settings) == 0 {
+		return b, nil
+	}
+	resolved, err := ExpandVarsInSettings(b.Settings, vars)
+	if err != nil {
+		return AgentBinding{}, fmt.Errorf("agents.toml [%s] settings: %w", section, err)
+	}
+	b.Settings = resolved
+	return b, nil
+}
+
+// ExpandVarsInSettings walks settings (map/slice/string leaves, as decoded from
+// TOML) and ${NAME}-expands every string leaf against vars via ExpandVars — the
+// same fail-fast unknown-var error, so a binding's settings table (mirroring
+// claude's settings.local.json shape verbatim) resolves its secrets identically
+// to Env. Non-string leaves (bool, int64, float64) pass through unchanged.
+func ExpandVarsInSettings(settings map[string]any, vars map[string]string) (map[string]any, error) {
+	out, err := expandVarsInValue(settings, vars)
+	if err != nil {
+		return nil, err
+	}
+	return out.(map[string]any), nil
+}
+
+func expandVarsInValue(v any, vars map[string]string) (any, error) {
+	switch val := v.(type) {
+	case string:
+		return ExpandVars(val, vars)
+	case map[string]any:
+		out := make(map[string]any, len(val))
+		for k, elem := range val {
+			rv, err := expandVarsInValue(elem, vars)
+			if err != nil {
+				return nil, err
+			}
+			out[k] = rv
+		}
+		return out, nil
+	case []any:
+		out := make([]any, len(val))
+		for i, elem := range val {
+			rv, err := expandVarsInValue(elem, vars)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = rv
+		}
+		return out, nil
+	default:
+		return v, nil
+	}
 }
 
 func dedupeSorted(in []string) []string {

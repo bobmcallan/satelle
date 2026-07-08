@@ -641,7 +641,8 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		payload:          transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: target.Skill},
 		tools:            binding.Tools,
 		model:            binding.Model,
-		env:              binding.Env, // already ${VAR}-resolved at wiring (config.ResolveAgentEnvs)
+		settings:         binding.Settings, // already ${VAR}-resolved at wiring (config.ResolveAgentEnvs)
+		env:              binding.Env,      // already ${VAR}-resolved at wiring (config.ResolveAgentEnvs)
 	})
 	if err != nil {
 		return verb.DispatchResult{}, err
@@ -733,6 +734,7 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.Dispa
 		payload:          transitionPayload{Story: item, From: item.Status, To: item.Status, ReviewSkill: retrospectSkill},
 		tools:            binding.Tools,
 		model:            binding.Model,
+		settings:         binding.Settings,
 		env:              binding.Env,
 	})
 	if err != nil {

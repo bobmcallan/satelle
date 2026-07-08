@@ -62,6 +62,18 @@ type AgentBinding struct {
 	// executor; reviewer/summariser gate invocations keep the engine's agent bound.
 	Timeout          string `toml:"timeout"`
 	InjectPrinciples *bool  `toml:"inject_principles"`
+	// Settings MIRRORS claude's settings.local.json schema (env, model, permissions)
+	// verbatim — no derivation, no satelle-specific shape. It is materialised into
+	// the {settings} placeholder: ${VAR}-resolved (ResolveAgentEnvs, fail-fast on an
+	// unknown var, same as Env), JSON-marshalled, and passed INLINE as
+	// `--settings <json>`. Because --settings is CLI-tier it OVERRIDES
+	// .claude/settings.local.json, so a binding that authors Settings becomes the
+	// authoritative provider/auth/permissions layer for that dispatch — e.g. moving
+	// [retrospective]'s GLM env under settings.env fixes its silent clobber by the
+	// repo's openrouter settings.local.json (that env block wins over a bare
+	// process-env overlay, but never over --settings). A binding with no Settings
+	// emits no --settings flag, exactly as an empty Model drops {model}.
+	Settings map[string]any `toml:"settings"`
 }
 
 // TimeoutDuration resolves this binding's dispatch bound: the parsed Timeout when
