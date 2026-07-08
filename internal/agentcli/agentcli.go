@@ -285,6 +285,38 @@ func composeEnv(base []string, overlay map[string]string) []string {
 	return out
 }
 
+// providerEnvPrefix is the env-var prefix a dispatched `claude` resolves its own
+// auth/endpoint/model from (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN,
+// ANTHROPIC_BASE_URL, ANTHROPIC_DEFAULT_*_MODEL, …). A dispatched agent CLI must
+// NOT inherit these from the launching shell.
+const providerEnvPrefix = "ANTHROPIC_"
+
+// stripInheritedProviderEnv drops every ANTHROPIC_* entry from the parent
+// environment before a dispatched agent CLI (claude) runs. A dispatched `claude -p`
+// must NOT inherit the launching shell's ANTHROPIC_* — those override what `claude`
+// resolves itself from .claude/settings(.local).json, and when stale (a leftover
+// token/base-url from the shell profile, different from the session's
+// settings.local.json) they silently break the subprocess with an auth/endpoint
+// mismatch (the reviewer "no verdict after 3 attempts" failure). Only the
+// ANTHROPIC_ prefix is dropped — PATH, HOME, etc. pass through. A binding that
+// WANTS a specific provider config sets it explicitly in its agents.toml `env`
+// (e.g. [retrospective] on the GLM endpoint); composeEnv applies that overlay AFTER
+// this strip, so explicit per-binding overrides still win.
+func stripInheritedProviderEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		key := kv
+		if i := strings.IndexByte(kv, '='); i >= 0 {
+			key = kv[:i]
+		}
+		if strings.HasPrefix(key, providerEnvPrefix) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
 // runProcess runs binary with args, feeding req.Payload on stdin in req.Dir, and
 // returns the accumulated stdout. It streams via StdoutPipe/StderrPipe rather than
 // buffering with cmd.Output(), so a non-nil req.Sink observes both streams
@@ -299,7 +331,7 @@ func runProcess(ctx context.Context, binary string, args []string, req Request) 
 	if req.Dir != "" {
 		cmd.Dir = req.Dir
 	}
-	cmd.Env = composeEnv(os.Environ(), req.Env)
+	cmd.Env = composeEnv(stripInheritedProviderEnv(os.Environ()), req.Env)
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {

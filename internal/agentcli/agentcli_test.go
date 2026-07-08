@@ -220,6 +220,55 @@ func TestComposeEnv(t *testing.T) {
 	}
 }
 
+// TestStripInheritedProviderEnv pins the fix for the stale-inherited-ANTHROPIC bug:
+// a dispatched `claude -p` must NOT inherit the launching shell's ANTHROPIC_* (which
+// would override what claude resolves from .claude/settings.local.json), but a
+// binding's explicit agents.toml `env` overlay must still be able to set them.
+func TestStripInheritedProviderEnv(t *testing.T) {
+	parent := []string{
+		"PATH=/bin",
+		"HOME=/root",
+		"ANTHROPIC_AUTH_TOKEN=stale-token-from-shell",
+		"ANTHROPIC_BASE_URL=https://stale.example",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL=stale-sonnet",
+	}
+
+	// All ANTHROPIC_* gone; everything else survives.
+	stripped := stripInheritedProviderEnv(parent)
+	for _, kv := range stripped {
+		key := kv
+		if i := strings.IndexByte(kv, '='); i >= 0 {
+			key = kv[:i]
+		}
+		if strings.HasPrefix(key, "ANTHROPIC_") {
+			t.Errorf("ANTHROPIC_* leaked through the strip: %s", kv)
+		}
+	}
+	if !contains(stripped, "PATH=/bin") || !contains(stripped, "HOME=/root") {
+		t.Errorf("non-provider base keys lost: %v", stripped)
+	}
+
+	// A binding WITHOUT an override (the sonnet reviewer/worker) gets a clean env —
+	// no ANTHROPIC_* at all, so claude resolves its own from settings.local.json.
+	clean := composeEnv(stripped, nil)
+	for _, kv := range clean {
+		if strings.HasPrefix(kv, "ANTHROPIC_") {
+			t.Errorf("no-override binding inherited ANTHROPIC_*: %s", kv)
+		}
+	}
+
+	// A binding WITH an explicit override (e.g. [retrospective] on the GLM endpoint)
+	// still sets ANTHROPIC_* — the overlay is applied AFTER the strip, so it wins.
+	glm := composeEnv(stripped, map[string]string{
+		"ANTHROPIC_BASE_URL":   "https://api.z.ai/api/anthropic",
+		"ANTHROPIC_AUTH_TOKEN": "sk-glm",
+	})
+	if !contains(glm, "ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic") ||
+		!contains(glm, "ANTHROPIC_AUTH_TOKEN=sk-glm") {
+		t.Errorf("explicit per-binding ANTHROPIC_* override lost: %v", glm)
+	}
+}
+
 func TestUnwrapUsage(t *testing.T) {
 	// A claude --output-format json envelope: result text extracted, usage captured.
 	env := `{"type":"result","result":"the verdict text","usage":{"input_tokens":54,"output_tokens":59}}`
