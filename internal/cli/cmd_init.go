@@ -666,8 +666,9 @@ func materializeAdvisorySkills(dataDir string) []string {
 
 // defaultSolutionWorkflows are the embedded workflows init (and rebase) deploy
 // into a repo as EDITABLE substrate — the complete default solution: the minimal
-// repo-agnostic BASE lifecycle, the parent/epic container close, and the
-// task-execution run. sty_bf153cbf REVERSES sty_3f9a6124's embedded-only stance:
+// repo-agnostic BASE lifecycle, the parent/epic container close, the
+// task-execution run, and the substrate-only lane for markdown-only changes.
+// sty_bf153cbf REVERSES sty_3f9a6124's embedded-only stance:
 // the base workflow is now seeded too, so a repo edits its lifecycle FROM it
 // rather than authoring one from scratch. This is collision-safe — the
 // overlappingCategory guard below skips seeding a default (base included) whose
@@ -678,6 +679,7 @@ var defaultSolutionWorkflows = []string{
 	"satelle-baseline-workflow",
 	"satelle-parent-workflow",
 	"satelle-task-workflow",
+	"satelle-substrate-workflow",
 }
 
 // materializeDefaultSolution seeds a repo's .satelle with the embedded default
