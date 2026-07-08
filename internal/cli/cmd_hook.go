@@ -93,9 +93,14 @@ freely without a binary release (the constitution and satelle-generated-readonly
 generated views under it stay protected by their 0o444 file mode. A repo may add
 its own authored dirs to [gate] edit_exempt_paths (repo-root-relative prefixes,
 default empty) — e.g. a harness authoring dir like .claude/ that holds authored
-skills, not product code. Only in-repo CODE requires an engaged story. Fails open:
-an unconfigured repo or any internal error allows the edit. The "engaged" policy
-is authored substrate — it reads the workflow's executor states, not a Go rule.`,
+skills, not product code. Only in-repo CODE requires an engaged story. A data-dir
+substrate edit with NO engaged story is still ALLOWED but emits a fail-open nudge
+toward the substrate workflow (sty_f5f351d1): the only model-visible channel on an
+allowed edit is the PreToolUse additionalContext, so the nudge rides that (a bare
+stderr line is transcript-only on exit 0); edit_exempt_paths opt-in dirs stay silent.
+Fails open: an unconfigured repo or any internal error allows the edit. The
+"engaged" policy is authored substrate — it reads the workflow's executor states,
+not a Go rule.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
@@ -115,8 +120,14 @@ is authored substrate — it reads the workflow's executor states, not a Go rule
 				// exempt additional authored dirs via [gate] edit_exempt_paths — a
 				// harness authoring dir like .claude/ holds authored skills, not
 				// product code (sty_103af456, sty_41416b76). Only in-repo CODE requires
-				// an engaged story.
+				// an engaged story. Substrate stays fail-open ALLOWED, but a data-dir
+				// edit with no engaged story earns a model-visible nudge toward the
+				// substrate workflow (sty_f5f351d1) — edit_exempt_paths opt-in dirs
+				// (.claude/) stay silent, a deliberate repo choice.
 				if exemptTarget(p) {
+					if shouldWarnSubstrate(dataDirTarget(p), storyEngaged()) {
+						emitSubstrateNoStoryNudge(cmd.OutOrStdout(), cmd.ErrOrStderr())
+					}
 					return nil
 				}
 			}
@@ -342,6 +353,35 @@ func editExempt(dataDir string, exemptRoots []string, target string) bool {
 	return false
 }
 
+// substrateNoStoryWarn is the advisory injected when a data-dir substrate edit
+// happens with no engaged story (sty_f5f351d1). Fail-open: the edit is ALLOWED;
+// this only nudges toward engaging a substrate story so the change is tracked
+// through satelle-substrate-workflow. Emitted on the PreToolUse additionalContext
+// channel (model-visible) and to stderr (human transcript).
+const substrateNoStoryWarn = "satelle: editing .satelle/ substrate with no engaged story — engage a substrate story (category: substrate) to track it through satelle-substrate-workflow. (edit allowed)"
+
+// dataDirTarget reports the narrower half of exemptTarget: whether target resolves
+// under the authored-substrate data dir (.satelle/ by default) specifically — NOT a
+// configured [gate] edit_exempt_paths prefix. The no-engaged-story nudge fires only
+// on this leg (a repo's exempt opt-in dirs like .claude/ are a deliberate choice and
+// stay silent). Reuses editExempt with no exempt roots so the path classification
+// stays single-sourced. Returns false on any resolution failure (fail-safe: no nudge).
+func dataDirTarget(target string) bool {
+	cfg, cfgPath, err := config.Load("")
+	if err != nil {
+		return false
+	}
+	root := config.RepoRootFromConfigPath(cfgPath)
+	return editExempt(cfg.ResolveDataDir(root), nil, target)
+}
+
+// shouldWarnSubstrate is the pure substrate-nudge decision: nudge when the edit is
+// under the data dir AND no story is engaged. Pure over its inputs so the decision
+// is unit-tested directly (sty_f5f351d1 AC4).
+func shouldWarnSubstrate(dataDirOnly, engaged bool) bool {
+	return dataDirOnly && !engaged
+}
+
 // withinRoot reports whether target resolves to a path inside root. A relative
 // target is taken relative to root (the hook runs in the repo cwd). Pure, so the
 // path classification is unit-tested without touching the filesystem; any
@@ -390,7 +430,7 @@ func runHookContext(out, stderr io.Writer) error {
 	if strings.TrimSpace(content) == "" {
 		return nil
 	}
-	return emitAdditionalContext(out, "SessionStart", content)
+	return emitAdditionalContext(out, "SessionStart", "", content)
 }
 
 // selectAlwaysDocs returns the SESSION set — every principle carrying the
@@ -558,19 +598,30 @@ func stripFrontmatter(body string) string {
 	return body
 }
 
-// hookContextOut is the Claude Code hook output that injects advisory context
-// without a permission decision, so the session proceeds normally.
+// hookContextOut is the Claude Code hook output that injects advisory context.
+// PermissionDecision is optional (omitempty): the SessionStart context injector
+// omits it (no decision); a PreToolUse allow-with-nudge sets "allow" plus the
+// additionalContext the model reads on its next turn.
 type hookContextOut struct {
 	HookSpecificOutput struct {
-		HookEventName     string `json:"hookEventName"`
-		AdditionalContext string `json:"additionalContext"`
+		HookEventName      string `json:"hookEventName"`
+		PermissionDecision string `json:"permissionDecision,omitempty"`
+		AdditionalContext  string `json:"additionalContext"`
 	} `json:"hookSpecificOutput"`
 }
 
-// emitAdditionalContext writes the hook JSON that adds context to the session.
-func emitAdditionalContext(out io.Writer, event, context string) error {
+// emitAdditionalContext writes the hook JSON that adds advisory context. event is
+// the hook event name; context is the body the model reads (a system reminder for
+// SessionStart; beside the tool result for PreToolUse). permissionDecision is
+// optional — "" omits it (SessionStart, which makes no permission decision); a
+// PreToolUse allow-with-nudge sets "allow" so the edit proceeds while the
+// additionalContext advisory rides alongside (the only model-visible channel on an
+// ALLOWED edit — bare stderr is transcript-only on exit 0). One emitter for both
+// callers (sty_f5f351d1).
+func emitAdditionalContext(out io.Writer, event, permissionDecision, context string) error {
 	var doc hookContextOut
 	doc.HookSpecificOutput.HookEventName = event
+	doc.HookSpecificOutput.PermissionDecision = permissionDecision
 	doc.HookSpecificOutput.AdditionalContext = context
 	b, err := json.Marshal(doc)
 	if err != nil {
@@ -578,4 +629,14 @@ func emitAdditionalContext(out io.Writer, event, context string) error {
 	}
 	fmt.Fprintln(out, string(b))
 	return nil
+}
+
+// emitSubstrateNoStoryNudge writes the fail-open substrate nudge on both channels:
+// the PreToolUse additionalContext JSON (permissionDecision "allow") to out — the
+// only model-visible path on an allowed edit — and the same line to stderr for the
+// human watching the session. The edit stays allowed (the caller returns nil); this
+// only advises.
+func emitSubstrateNoStoryNudge(out, stderr io.Writer) {
+	_ = emitAdditionalContext(out, "PreToolUse", "allow", substrateNoStoryWarn)
+	fmt.Fprintln(stderr, substrateNoStoryWarn)
 }
