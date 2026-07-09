@@ -315,6 +315,7 @@ func checkScript(t *testing.T, skillBody string) string {
 var defaultSolutionSkills = []string{
 	"satelle-estimate-actual-review",
 	"satelle-step-summary",
+	"satelle-story-blocked-review",
 	"satelle-story-cancel-review",
 	"satelle-story-done-review",
 	"satelle-story-intent-review",

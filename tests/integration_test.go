@@ -306,6 +306,7 @@ func TestInitDeploysDefaultSolution(t *testing.T) {
 		".satelle/skills/satelle-story-intent-review.md",
 		".satelle/skills/satelle-story-done-review.md",
 		".satelle/skills/satelle-story-cancel-review.md",
+		".satelle/skills/satelle-story-blocked-review.md",
 		".satelle/skills/satelle-step-summary.md",
 	} {
 		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {

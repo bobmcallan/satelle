@@ -22,6 +22,7 @@ func TestInitMaterializesBaselineGateSkills(t *testing.T) {
 		"satelle-story-intent-review",
 		"satelle-story-done-review",
 		"satelle-story-cancel-review",
+		"satelle-story-blocked-review",
 		"satelle-step-summary",
 	} {
 		p := filepath.Join(repo, ".satelle", "skills", name+".md")

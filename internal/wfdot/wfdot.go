@@ -222,7 +222,10 @@ func (s Spec) NonTerminalEngagingStates() []string {
 
 // isEngaging reports whether a state is a non-terminal engaging state: it is
 // neither the start state (shape=Mdiamond), nor a terminal state (shape=Msquare),
-// nor a cancel/exception sink (agent=reviewer with no outgoing edges).
+// nor any agent=reviewer role state. Reviewer-role states are never engaged work
+// (edit/commit gates): that covers cancel sinks AND park states that keep an
+// outgoing resume edge (authored as agent=reviewer so a parked story is not
+// engaged — config-over-code, no state-name literals).
 func (s Spec) isEngaging(st State) bool {
 	// Start marker: shape=Mdiamond
 	if st.Shape == "Mdiamond" {
@@ -232,11 +235,8 @@ func (s Spec) isEngaging(st State) bool {
 	if st.Shape == "Msquare" {
 		return false
 	}
-	// Cancel/exception sink: a reviewer node with no OUTGOING edges. st.Terminal is
-	// !hasOutgoing, so this is the no-outgoing-edges signal (sty_f3d5d4b8). It mirrors
-	// the authored cancelled node: no shape marker, agent=reviewer, incoming edges only.
-	// A no-INCOMING-edges check would be wrong — cancelled has 5 incoming, 0 outgoing.
-	if st.Agent == "reviewer" && st.Terminal {
+	// Reviewer role: not engaged (cancel sinks, park/resume nodes, edge-less gates).
+	if st.Agent == "reviewer" {
 		return false
 	}
 	return true
