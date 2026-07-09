@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "satelle reindex" },
+          { "type": "command", "command": "satelle hook context" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|search_replace|write",
+        "hooks": [
+          { "type": "command", "command": "satelle hook gate || exit 2" }
+        ]
+      },
+      {
+        "matcher": "Bash|run_terminal_command",
+        "hooks": [
+          { "type": "command", "command": "satelle hook commitgate || exit 2" }
+        ]
+      }
+    ]
+  }
+}

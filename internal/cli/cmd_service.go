@@ -14,6 +14,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -42,9 +43,14 @@ defaults), saves them to the global config, and installs a systemd user service
 that runs 'satelle serve' for the chosen repo — so the project page stays up
 across terminals and WSL restarts, reachable from a Windows browser.
 
+Re-running after 'make install' restarts the unit so the live process loads the
+new binary (release dogfood). Install exits non-zero when the service cannot be
+enabled/restarted (e.g. user systemd unavailable) — that is a failed install,
+not a soft success. On native Windows, install prints Task Scheduler guidance
+and exits non-zero until the service is managed by a real install path.
+
 Change the port later by editing ~/.satelle/config.toml (or passing --port) and
-re-running 'satelle service install'. On native Windows (no systemd) install
-prints Task Scheduler guidance instead.`,
+re-running 'satelle service install'.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
@@ -84,14 +90,16 @@ prints Task Scheduler guidance instead.`,
 
 			unit := systemdUnit(bin, resolvedRepo, rAddr, rPort)
 
-			// Platform branch.
+			// Platform branch. Install must actually start (or restart) the service
+			// for dogfood — soft success with printed guidance is a failed install
+			// (release treats local install failure as release failure).
 			if runtime.GOOS == "windows" {
 				printWindowsGuidance(out, bin, resolvedRepo, rAddr, rPort)
-				return nil
+				return fmt.Errorf("service: native Windows has no systemd install path — configure Task Scheduler as printed, then re-run when the service is managed")
 			}
 			if _, lerr := exec.LookPath("systemctl"); lerr != nil {
 				printNoSystemdGuidance(out, unit)
-				return nil
+				return fmt.Errorf("service: systemctl not found — enable systemd or install systemctl, then re-run satelle service install")
 			}
 			return installUserUnit(out, unit, rPort, rAddr)
 		},
@@ -182,7 +190,8 @@ WantedBy=default.target
 
 // installUserUnit writes the unit under the user systemd dir and enables it,
 // enabling linger so it survives logout and starts on (WSL) boot. systemctl
-// failures are reported with the manual equivalent rather than aborting.
+// failures return an error (non-zero exit) — a soft "printed guidance" success
+// left a stale serve process after make install (footer version drift).
 func installUserUnit(out io.Writer, unit string, port int, addr string) error {
 	unitPath := userUnitPath()
 	if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
@@ -205,23 +214,24 @@ func installUserUnit(out io.Writer, unit string, port int, addr string) error {
 		// Linger lets the user service run without an active login + start on boot.
 		steps = append(steps, []string{"loginctl", "enable-linger", u.Username})
 	}
-	failed := false
+	var failed []string
 	for _, s := range steps {
 		if err := runQuiet(s[0], s[1:]...); err != nil {
-			failed = true
+			failed = append(failed, joinArgs(s)+": "+err.Error())
 			fmt.Fprintf(out, "  ! %s failed: %v\n", joinArgs(s), err)
 		}
 	}
-	if failed {
+	if len(failed) > 0 {
 		fmt.Fprintln(out, "\nAutomatic enable hit an error (common if the user systemd manager")
-		fmt.Fprintln(out, "isn't running). Finish manually:")
+		fmt.Fprintln(out, "isn't running). Finish manually, then re-run service install:")
 		for _, s := range steps {
 			fmt.Fprintf(out, "  %s\n", joinArgs(s))
 		}
 		fmt.Fprintln(out, "Or install a system unit (always-on while WSL runs):")
 		fmt.Fprintf(out, "  sudo cp %s /etc/systemd/system/%s\n", unitPath, serviceUnitName)
 		fmt.Fprintf(out, "  sudo systemctl enable --now %s\n", serviceUnitName)
-		return nil
+		return fmt.Errorf("service: systemctl --user could not enable/restart %s: %s",
+			serviceUnitName, strings.Join(failed, "; "))
 	}
 	fmt.Fprintf(out, "\nservice running → http://localhost:%d\n", port)
 	if addr == "0.0.0.0" {

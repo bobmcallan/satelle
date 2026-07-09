@@ -3,12 +3,14 @@ name: release
 scope: project
 type: skill
 tags: [type:skill]
-description: Dispatched glm executor skill for the merged `release` step. The isolated glm performer — reconstructing context from the story + ledger via the read-only CLI — stages the story's slice, bumps .version + stamps the build date, makes a conventional commit ending in the story id with NO AI attribution, pushes to main, refreshes the local service during the CI window, then RECORDS the `test` + version-gated `release` run URLs with their real conclusions and the published tag as evidence — via one consolidated check, NOT `gh run watch` babysitting of both runs (sty_bfb2b392) — and records a PR-style summary as a story attachment. Merges the former commit + push + record-release steps into one dispatched step. The `satelle-story-release-review` gate is the authority on CI-green, judging the recorded conclusions.
+description: In-loop executor skill for the merged `release` step. Stages the story's slice, bumps .version + stamps the build date, commits (no AI attribution), pushes to main, LOCALLY INSTALLS the new binary and restarts the web service (true dogfood — install failure FAILS the release), records the `test` + version-gated `release` run URLs with real conclusions and the published tag — one consolidated check, NOT `gh run watch` (sty_bfb2b392) — and attaches a PR-style summary. The `satelle-story-release-review` gate is the authority on CI-green and recorded local-install evidence.
 ---
 
-# Release (dispatched glm executor step)
+# Release (in-loop executor step)
 
-You are the **glm performer** dispatched for the merged `release` step — an **isolated sub-process**, not the driving session. Reconstruct your context first: the story (title, body, acceptance criteria) arrives on stdin as JSON; pull anything else you need (the plan, the ledger, prior attachments) via the read-only satelle CLI. Prior gates accepted the slice (acceptance criteria met, tests exercise the change, `make integration` green). **Commit the slice with a version bump, push it, prove the release, and record the evidence** — all in one step. You DO the work (see [[satelle-agent-model]]: executor mutates, reviewer only judges). You never enact your own status advance — the `release → done` gate does that.
+You are the **executor** for the merged `release` step (in-loop on the driving session when the workflow assigns `agent=executor`). Prior gates accepted the slice. **Commit with a version bump, push, install locally, prove the release, and record evidence.** You never self-enact `release → done` — the gate does that.
+
+**Local install is part of the release, not optional cleanup.** Dogfood means the machine you released from runs the new binary as the live web service. If `make install` or `satelle service install` fails, or the running service still reports the old version, **the release has failed** — fix the install path (service/systemd/binary placement) under this story and re-run release. Do not attach a success summary or proceed to done.
 
 ## 1. Stage and commit (bump is mandatory)
 
@@ -22,11 +24,9 @@ You are the **glm performer** dispatched for the merged `release` step — an **
    - Set `satelle.build` to `date -u +"%Y-%m-%d-%H-%M-%S"`. `git add .version`.
 3. **Commit.** A conventional-commit subject ending with the story id in parens, e.g. `feat(web): add the X view (sty_1234abcd)`. **No AI attribution** — no `Co-Authored-By`, no "generated with" trailer (this repo's convention). Verify the commit captured the intended files (`git show --stat HEAD`).
 
-## 2. Push, then capture the release evidence (no watch loops)
+## 2. Push, then install locally (dogfood), then capture CI evidence
 
-Pushing to `main` triggers **`test`** (build, vet, gofmt, unit tests). On success, the version-gated **`release`** workflow cuts tag `v<satelle.version>` and publishes assets. No deploy workflow — push to main IS the release. **Do not `gh run watch` either run** — that idle babysitting (~5-8 min) is what this step removes (sty_bfb2b392). You RECORD the run conclusions; `satelle-story-release-review` is the authority on "CI is green" and judges exactly the evidence recorded here.
-
-Push and confirm the `test` run exists (appears within seconds):
+Pushing to `main` triggers **`test`**. On success, the version-gated **`release`** workflow cuts tag `v<satelle.version>` and publishes assets. Push to main IS the publish path. **Do not `gh run watch`** — RECORD conclusions (sty_bfb2b392).
 
 ```bash
 git push origin main
@@ -34,9 +34,32 @@ SHA=$(git rev-parse HEAD)
 for i in $(seq 1 10); do TID=$(gh run list --commit "$SHA" --workflow test --limit 1 --json databaseId -q '.[0].databaseId'); [ -n "$TID" ] && break; sleep 3; done
 ```
 
-Do the wrap-up that doesn't depend on CI **during the CI window** — this is where the old watch time goes. **Refresh the local service** from the pushed code (local HEAD already equals the pushed SHA): `make install && satelle service install`; confirm `satelle version` reports the pushed commit + new version. Draft the PR-style summary body (§3) while the runs proceed.
+### 2a. Local install — mandatory (during the CI window)
 
-Then make **ONE consolidated evidence check** — both workflows and the tag in a single look, with a SHORT bounded poll only if a run hasn't concluded yet (the `release` run and its tag only exist AFTER `test` succeeds via the `workflow_run` trigger, so the tag is recorded once SEEN, never as an expectation):
+While CI runs, install and restart the **local** dogfood service from the pushed HEAD:
+
+```bash
+make install
+satelle service install
+```
+
+Both must exit **zero**. Then **verify** the live stack matches the release (CLI alone is not enough — a replaced binary can leave a stale serve process):
+
+```bash
+VER=$(awk '$1=="satelle.version:"{print $2}' .version)
+# CLI binary on PATH
+satelle version   # must report $VER and the pushed commit SHA prefix
+# Live web service (footer is baked into the running process)
+curl -fsS "http://127.0.0.1:${PORT:-8787}/" | grep -F "satelle $VER"
+```
+
+- If `make install` or `satelle service install` is non-zero → **release failed**. Fix service install (systemd user bus, unit, PATH) under this story; re-run from install.
+- If CLI version or the footer still shows the **previous** version → **release failed** (stale process). Fix so `service install` actually restarts serve; re-verify.
+- Do **not** treat "printed guidance" or a manual note as success — install is done only when both checks pass.
+
+Draft the summary body (§3) while CI proceeds only after local install verification passes.
+
+### 2b. CI + published tag (one consolidated look)
 
 ```bash
 for i in $(seq 1 8); do
@@ -46,15 +69,17 @@ for i in $(seq 1 8); do
 done
 ```
 
-Record what you actually SEE — the `test` and `release` run URLs with their **real conclusions** and the published tag. **Do not auto-retry, amend, or force-push, and never record success over a red or unconcluded run.** If `test` failed, the slice isn't landed — read `gh run view "$TID" --log-failed`, fix under this same story, re-run the release step. If `release` failed, the publish didn't happen — surface it and stop. If a run is still in progress when the bounded check ends, record the true state and surface it; the release gate rejects unconcluded evidence by design.
+Record what you actually SEE — `test` and `release` run URLs with **real conclusions** and the published tag. **Do not auto-retry, amend, or force-push, and never record success over a red or unconcluded run.** If `test` failed, fix under this story and re-run release. If `release` failed or the tag is missing, surface it and stop.
 
 ## 3. Record the summary WITH the story
 
-Write a short PR-style summary (what shipped, why, the SHA, the `test` + `release` run URLs/conclusions, the published tag) and attach it to the story — the evidence the release gate judges:
+Write a short PR-style summary and attach it — evidence the release gate judges. **Must include local install** (CLI version line + footer/service check that matched `$VER`):
 
 ```bash
 satelle story attach <sty_id> --name "release-summary-<sty_id>" \
   --type story-implementation-summary --body "…"
 ```
 
-The `satelle-story-release-review` gate then judges this recorded evidence and the story's acceptance criteria. See [[satelle-agent-model]], [[satelle-done-is-last]].
+Summary must cover: what shipped, SHA, version/tag, test + release URLs/conclusions, **local install verified** (`satelle version` + live footer/service at the new version).
+
+The `satelle-story-release-review` gate judges this recorded evidence and the ACs. See [[satelle-agent-model]], [[satelle-done-is-last]].
