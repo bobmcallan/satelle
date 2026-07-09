@@ -39,6 +39,22 @@ func TestJSONKeyIdentity(t *testing.T) {
 		r := api.ConfigPushResult{Path: "skills/x.md", Version: 3, BlobSHA256: "h", Size: 4, Created: true}
 		assertByteIdenticalJSON(t, h, r)
 	})
+	t.Run("DocumentChanges", func(t *testing.T) {
+		h := hosted.DocumentChanges{
+			Items:  []hosted.ConfigItem{{Path: "documents/a.md", Version: 1, BlobSHA256: "h", Size: 1, CreatedAt: "t"}},
+			Cursor: "c2",
+		}
+		r := api.DocumentChanges{
+			Items:  []api.ConfigItem{{Path: "documents/a.md", Version: 1, BlobSHA256: "h", Size: 1, CreatedAt: "t"}},
+			Cursor: "c2",
+		}
+		assertByteIdenticalJSON(t, h, r)
+	})
+	t.Run("WorkstateIngestResult", func(t *testing.T) {
+		h := hosted.WorkstateIngestResult{Items: 2, Ledger: 1}
+		r := api.WorkstateIngestResult{Items: 2, Ledger: 1}
+		assertByteIdenticalJSON(t, h, r)
+	})
 	t.Run("TokenResponse", func(t *testing.T) {
 		// hosted.tokenResponse is unexported, so marshal a hosted token flow
 		// result indirectly: compare field names via api.TokenResponse.
@@ -125,6 +141,9 @@ func TestOpenAPISchemaCoverage(t *testing.T) {
 		"ConfigItem",
 		"ConfigPushResult",
 		"ConfigRollbackRequest",
+		"DocumentChanges",
+		"WorkstateIngest",
+		"WorkstateIngestResult",
 		"TokenResponse",
 		"OAuthError",
 		"ErrorEnvelope",
@@ -201,6 +220,48 @@ func TestConfigEndpointsInSpec(t *testing.T) {
 	} {
 		if !strings.Contains(yaml, route) {
 			t.Errorf("openapi.yaml missing config endpoint %q", route)
+		}
+	}
+}
+
+// TestDocumentEndpointsInSpec verifies the workspace document-store endpoints
+// are published (order:6 AC3): list-with-since, per-file push, per-file get.
+func TestDocumentEndpointsInSpec(t *testing.T) {
+	yamlBytes, err := os.ReadFile("openapi.yaml")
+	if err != nil {
+		t.Fatalf("read openapi.yaml: %v", err)
+	}
+	yaml := string(yamlBytes)
+	for _, route := range []string{
+		"/api/v1/workspaces/{workspaceId}/documents",
+		"/api/v1/workspaces/{workspaceId}/documents/{path}",
+		"listDocumentChanges",
+		"pushDocumentFile",
+		"getDocumentFile",
+		"DocumentChanges",
+	} {
+		if !strings.Contains(yaml, route) {
+			t.Errorf("openapi.yaml missing document endpoint %q", route)
+		}
+	}
+}
+
+// TestWorkstateEndpointsInSpec verifies the one-way work-state ingest endpoint
+// is published (order:7 AC4).
+func TestWorkstateEndpointsInSpec(t *testing.T) {
+	yamlBytes, err := os.ReadFile("openapi.yaml")
+	if err != nil {
+		t.Fatalf("read openapi.yaml: %v", err)
+	}
+	yaml := string(yamlBytes)
+	for _, route := range []string{
+		"/api/v1/workspaces/{workspaceId}/workstate",
+		"ingestWorkstate",
+		"WorkstateIngest",
+		"WorkstateIngestResult",
+	} {
+		if !strings.Contains(yaml, route) {
+			t.Errorf("openapi.yaml missing workstate endpoint %q", route)
 		}
 	}
 }

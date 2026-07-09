@@ -152,59 +152,90 @@ type ConfigFile struct {
 func ConfigFiles(cfg Config, repoRoot string) ([]ConfigFile, error) {
 	var out []ConfigFile
 	for _, area := range ConfigAreas {
-		scope, err := ScopeFor(cfg, area)
+		files, _, err := filesForArea(cfg, repoRoot, area)
 		if err != nil {
-			return nil, fmt.Errorf("sync config area %q: %w", area, err)
+			return nil, err
 		}
-		if scope == LocalScope {
-			continue
-		}
-		location, isDir := ConfigAreaLocation(cfg, repoRoot, area)
-		if location == "" {
-			continue
-		}
-		if !isDir {
-			serverPath := filepath.Base(location)
-			if cf, ok, err := readConfigFile(area, location, serverPath, scope); err != nil {
-				return nil, err
-			} else if ok {
-				out = append(out, cf)
-			}
-			continue
-		}
-		walkErr := filepath.WalkDir(location, func(p string, d os.DirEntry, err error) error {
-			if err != nil {
-				if os.IsNotExist(err) && p == location {
-					return nil
-				}
-				return err
-			}
-			if d.IsDir() {
-				return nil
-			}
-			if isReservedView(filepath.Base(p)) {
-				return nil
-			}
-			rel, rerr := filepath.Rel(location, p)
-			if rerr != nil {
-				return rerr
-			}
-			serverPath := area + "/" + filepath.ToSlash(rel)
-			cf, ok, rerr := readConfigFile(area, p, serverPath, scope)
-			if rerr != nil {
-				return rerr
-			}
-			if ok {
-				out = append(out, cf)
-			}
-			return nil
-		})
-		if walkErr != nil {
-			return nil, fmt.Errorf("sync config area %q: %w", area, walkErr)
-		}
+		out = append(out, files...)
 	}
 	sortConfigFiles(out)
 	return out, nil
+}
+
+// DocumentFiles walks the documents area under repoRoot with the same scope/
+// tier rules as ConfigFiles (local skip, personal + per-file shared promotion,
+// shared wholesale). The returned Scope is the area's resolved scope so the
+// CLI can print a clear "scope=local, skipping" message instead of an ambiguous
+// empty list. Documents is its own sync kind (order:6) — not part of ConfigAreas.
+func DocumentFiles(cfg Config, repoRoot string) ([]ConfigFile, Scope, error) {
+	files, scope, err := filesForArea(cfg, repoRoot, "documents")
+	if err != nil {
+		return nil, scope, err
+	}
+	sortConfigFiles(files)
+	return files, scope, nil
+}
+
+// filesForArea walks one named area under repoRoot, applying ScopeFor + tier
+// resolution. A local-scope area returns (nil, LocalScope, nil). The returned
+// Scope is always the resolved value so callers can distinguish "local, skip"
+// from "personal/shared with no files on disk yet".
+func filesForArea(cfg Config, repoRoot, area string) ([]ConfigFile, Scope, error) {
+	scope, err := ScopeFor(cfg, area)
+	if err != nil {
+		return nil, LocalScope, fmt.Errorf("sync area %q: %w", area, err)
+	}
+	if scope == LocalScope {
+		return nil, scope, nil
+	}
+	location, isDir := ConfigAreaLocation(cfg, repoRoot, area)
+	if location == "" {
+		// documents (and other authored dirs) resolve via ResolveAuthoredDirs;
+		// constitution/agents use dedicated paths. An area with no location is
+		// not a config/document candidate on disk.
+		return nil, scope, nil
+	}
+	var out []ConfigFile
+	if !isDir {
+		serverPath := filepath.Base(location)
+		if cf, ok, err := readConfigFile(area, location, serverPath, scope); err != nil {
+			return nil, scope, err
+		} else if ok {
+			out = append(out, cf)
+		}
+		return out, scope, nil
+	}
+	walkErr := filepath.WalkDir(location, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) && p == location {
+				return nil
+			}
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if isReservedView(filepath.Base(p)) {
+			return nil
+		}
+		rel, rerr := filepath.Rel(location, p)
+		if rerr != nil {
+			return rerr
+		}
+		serverPath := area + "/" + filepath.ToSlash(rel)
+		cf, ok, rerr := readConfigFile(area, p, serverPath, scope)
+		if rerr != nil {
+			return rerr
+		}
+		if ok {
+			out = append(out, cf)
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return nil, scope, fmt.Errorf("sync area %q: %w", area, walkErr)
+	}
+	return out, scope, nil
 }
 
 // readConfigFile reads one file's bytes and resolves its tier. serverPath is the
@@ -244,10 +275,11 @@ func isReservedView(name string) bool {
 	return base == "index" || base == "log" || strings.EqualFold(base, "README")
 }
 
-// ConfigAreaLocation resolves a ConfigArea's on-disk location. isDir reports
-// whether location is a directory to walk (vs. a single file to read directly).
-// It mirrors the cli syncAreaPath resolution but lives in config so the walk is
-// unit-testable without the local store.
+// ConfigAreaLocation resolves a config or documents area's on-disk location.
+// isDir reports whether location is a directory to walk (vs. a single file to
+// read directly). It mirrors the cli syncAreaPath resolution but lives in
+// config so the walk is unit-testable without the local store. documents is
+// resolved here too so DocumentFiles can reuse the same path helper.
 func ConfigAreaLocation(cfg Config, repoRoot, area string) (location string, isDir bool) {
 	dataDir := cfg.ResolveDataDir(repoRoot)
 	switch area {
@@ -258,6 +290,8 @@ func ConfigAreaLocation(cfg Config, repoRoot, area string) (location string, isD
 	case "tasks":
 		return filepath.Join(dataDir, "tasks"), true
 	default:
+		// AuthoredKinds (documents/workflows/principles/skills) + any other
+		// directory-shaped area under dataDir.
 		if dir := cfg.ResolveAuthoredDirs(repoRoot)[area]; dir != "" {
 			return dir, true
 		}

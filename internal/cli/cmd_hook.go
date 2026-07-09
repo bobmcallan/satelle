@@ -259,32 +259,68 @@ func isGitCommitOrPush(command string) bool {
 	return strings.Contains(c, "git commit") || strings.Contains(c, "git push")
 }
 
-// bashCommandFromEvent pulls tool_input.command out of a PreToolUse Bash event.
+// bashCommandFromEvent pulls the bash command out of a PreToolUse event.
+// Accepts Claude Code's snake_case envelope (tool_input.command) AND Grok's
+// camelCase envelope (toolInput.command) — both harnesses fire the same hook
+// (epic:scoped-sync order:9 / sty_0d3665ee). Prefer the first non-empty value.
 func bashCommandFromEvent(raw []byte) string {
 	var ev struct {
-		ToolInput struct {
+		// Claude Code
+		ToolInputSnake struct {
 			Command string `json:"command"`
 		} `json:"tool_input"`
+		// Grok
+		ToolInputCamel struct {
+			Command string `json:"command"`
+		} `json:"toolInput"`
 	}
 	_ = json.Unmarshal(raw, &ev)
-	return ev.ToolInput.Command
+	if c := ev.ToolInputSnake.Command; c != "" {
+		return c
+	}
+	return ev.ToolInputCamel.Command
 }
 
 // filePathFromEvent pulls the edit target out of a PreToolUse edit event.
-// Write/Edit/MultiEdit carry tool_input.file_path; NotebookEdit carries
-// notebook_path. Returns "" when neither is present.
+// Claude Code: tool_input.file_path / tool_input.notebook_path.
+// Grok: toolInput.file_path | filePath | path | notebook_path | notebookPath.
+// Returns "" when none is present. Prefer Claude snake_case, then Grok aliases.
 func filePathFromEvent(raw []byte) string {
 	var ev struct {
-		ToolInput struct {
+		ToolInputSnake struct {
 			FilePath     string `json:"file_path"`
 			NotebookPath string `json:"notebook_path"`
+			// Grok may nest camelCase aliases under tool_input too; accept them.
+			FilePathCamel     string `json:"filePath"`
+			Path              string `json:"path"`
+			NotebookPathCamel string `json:"notebookPath"`
 		} `json:"tool_input"`
+		ToolInputCamel struct {
+			FilePath          string `json:"file_path"`
+			FilePathCamel     string `json:"filePath"`
+			Path              string `json:"path"`
+			NotebookPath      string `json:"notebook_path"`
+			NotebookPathCamel string `json:"notebookPath"`
+		} `json:"toolInput"`
 	}
 	_ = json.Unmarshal(raw, &ev)
-	if ev.ToolInput.FilePath != "" {
-		return ev.ToolInput.FilePath
+	for _, p := range []string{
+		ev.ToolInputSnake.FilePath,
+		ev.ToolInputSnake.NotebookPath,
+		ev.ToolInputSnake.FilePathCamel,
+		ev.ToolInputSnake.Path,
+		ev.ToolInputSnake.NotebookPathCamel,
+		ev.ToolInputCamel.FilePath,
+		ev.ToolInputCamel.FilePathCamel,
+		ev.ToolInputCamel.Path,
+		ev.ToolInputCamel.NotebookPath,
+		ev.ToolInputCamel.NotebookPathCamel,
+	} {
+		if p != "" {
+			return p
+		}
 	}
-	return ev.ToolInput.NotebookPath
+	return ""
 }
 
 // withinRepoTarget reports whether target resolves to a path inside this repo.

@@ -27,6 +27,49 @@ func findConfigFile(files []ConfigFile, path string) (ConfigFile, bool) {
 	return ConfigFile{}, false
 }
 
+// TestDocumentFilesScopeLocalSkipped: a local-scope documents area contributes
+// nothing and reports LocalScope so the CLI can print a clear skip message.
+func TestDocumentFilesScopeLocalSkipped(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, ".satelle/documents/note.md", "body")
+	files, scope, err := DocumentFiles(Config{}, repo)
+	if err != nil {
+		t.Fatalf("DocumentFiles: %v", err)
+	}
+	if scope != LocalScope {
+		t.Errorf("scope = %v, want LocalScope", scope)
+	}
+	if len(files) != 0 {
+		t.Errorf("local documents walk returned %d files, want 0", len(files))
+	}
+}
+
+// TestDocumentFilesSharedFlagPromotes: inside a personal-scope documents area,
+// shared:true promotes a file to SharedTier; others stay PersonalTier.
+func TestDocumentFilesSharedFlagPromotes(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, ".satelle/documents/private.md", "---\ntype: document\n---\npriv\n")
+	writeFile(t, repo, ".satelle/documents/shared.md", "---\ntype: document\nshared: true\n---\nteam\n")
+	cfg := Config{Sync: map[string]string{"documents": "personal"}}
+	files, scope, err := DocumentFiles(cfg, repo)
+	if err != nil {
+		t.Fatalf("DocumentFiles: %v", err)
+	}
+	if scope != PersonalScope {
+		t.Errorf("scope = %v, want PersonalScope", scope)
+	}
+	if f, ok := findConfigFile(files, "documents/private.md"); !ok {
+		t.Error("missing documents/private.md")
+	} else if f.Tier != PersonalTier {
+		t.Errorf("private tier = %v, want PersonalTier", f.Tier)
+	}
+	if f, ok := findConfigFile(files, "documents/shared.md"); !ok {
+		t.Error("missing documents/shared.md")
+	} else if f.Tier != SharedTier {
+		t.Errorf("shared tier = %v, want SharedTier", f.Tier)
+	}
+}
+
 // TestConfigAreasExcludesDocumentsAndWorkState: the candidate set is the five
 // authored areas + tasks, never documents (its own kind) or the work-state areas.
 func TestConfigAreasExcludesDocumentsAndWorkState(t *testing.T) {

@@ -16,14 +16,11 @@ import (
 	"github.com/bobmcallan/satelle/internal/subsync"
 )
 
-// `satelle sync` is the read-only foundation for epic:scoped-sync
-// (sty_2ff2232d): a config-only [sync] scope resolver (internal/config/sync.go)
-// with no network and no git side-effects. `sync scopes` is the resolver's
-// production caller — it prints each area's resolved local|personal|shared
-// scope and, for a personal area, which files are frontmatter-flagged shared —
-// so an operator can verify resolution before any sync engine lands.
+// `satelle sync` is the scoped-sync command group (epic:scoped-sync): scopes
+// inspection, config push/deploy, and documents push/pull. v1 has per-kind
+// commands only — no single unified `satelle sync` that routes every area.
 func init() {
-	syncCmd := &cobra.Command{Use: "sync", Short: "Inspect the [sync] scope config (foundation only — no network, no git side-effects)"}
+	syncCmd := &cobra.Command{Use: "sync", Short: "Scope inspection and per-kind sync (config, documents, workstate)"}
 	syncCmd.AddCommand(&cobra.Command{
 		Use:         "scopes",
 		Short:       "Print each .satelle area's resolved scope, and shared files within a personal area",
@@ -31,6 +28,8 @@ func init() {
 		RunE:        runSyncScopes,
 	})
 	syncCmd.AddCommand(newSyncConfigCmd())
+	syncCmd.AddCommand(newSyncDocumentsCmd())
+	syncCmd.AddCommand(newSyncWorkstateCmd())
 	register(syncCmd)
 }
 

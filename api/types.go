@@ -6,6 +6,8 @@
 // internal client types are structurally identical but independently owned.
 package api
 
+import "encoding/json"
+
 // Principal is the identity returned by GET /api/v1/me.
 type Principal struct {
 	ID          string `json:"id"`
@@ -89,4 +91,28 @@ type ConfigPushResult struct {
 type ConfigRollbackRequest struct {
 	Path    string `json:"path"`
 	Version int    `json:"version"`
+}
+
+// DocumentChanges is the response to GET /api/v1/workspaces/{id}/documents
+// (optionally ?since=<cursor>): the items that changed after the caller's
+// cursor, plus the new cursor for the next incremental pull. Item shape reuses
+// ConfigItem (path/version/blob_sha256/size/created_at) — same per-file head
+// metadata as the config store.
+type DocumentChanges struct {
+	Items  []ConfigItem `json:"items"`
+	Cursor string       `json:"cursor"`
+}
+
+// WorkstateIngest is the POST body for /api/v1/workspaces/{id}/workstate —
+// a one-way local→server batch of stories/executions (items) and ledger entries.
+// The server stamps origin=cli-sync; the client never supplies origin.
+type WorkstateIngest struct {
+	Items  []json.RawMessage `json:"items"`
+	Ledger []json.RawMessage `json:"ledger"`
+}
+
+// WorkstateIngestResult is the POST response: counts of upserted rows.
+type WorkstateIngestResult struct {
+	Items  int `json:"items"`
+	Ledger int `json:"ledger"`
 }
