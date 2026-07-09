@@ -1,24 +1,29 @@
+# agents.toml — Grok-native bindings (dual payload: {payload} on -p + stdin).
+# Reviewer/planner use plain output so gate verdicts parse; max-turns high enough
+# for tool-using gates. Bash(satelle:*) stays in tools for satelle's pull-context
+# grant check (DispatchExecutor); Grok native tool ids drive the CLI.
+# model stays non-empty (TestRepoReviewerModelIsActive).
+
 [executor]
 harness = "in-loop"
 
 [reviewer]
-harness = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model}"
-tools   = "Read,Grep,Glob"
-model   = "sonnet"
+harness = "grok -p {payload} --system-prompt-override {system} --tools {tools} -m {model} --deny Write --deny Edit --deny search_replace --deny write --always-approve --output-format plain --max-turns 12 --no-subagents"
+tools   = "read_file,grep,list_dir"
+model   = "grok-4.5"
 
 [planner]
-harness = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
-tools   = "Read,Grep,Glob,Bash(satelle:*)"
-model   = "sonnet"
+harness = "grok -p {payload} --system-prompt-override {system} --tools {tools} -m {model} --always-approve --output-format plain --max-turns 16 --no-subagents"
+tools   = "read_file,grep,list_dir,run_terminal_command,Bash(satelle:*)"
+model   = "grok-4.5"
 
 [worker]
-harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
-tools   = "Read,Grep,Glob,Edit,Write,Bash(satelle:*),Bash(go:*),Bash(gofmt:*),Bash(make:*),Bash(git:*),Bash(gh:*)"
-model   = "sonnet"
+harness = "grok -p {payload} --system-prompt-override {system} --tools {tools} -m {model} --always-approve --output-format plain --max-turns 24 --no-subagents"
+tools   = "read_file,grep,list_dir,search_replace,write,run_terminal_command,Bash(satelle:*)"
+model   = "grok-4.5"
 timeout = "45m"
 
 [retrospective]
-harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model} --settings {settings}"
-tools   = "Read,Grep,Glob,Bash(satelle:*)"
-model   = "glm-4.6"
-settings = { env = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" } }
+harness = "grok -p {payload} --system-prompt-override {system} --tools {tools} -m {model} --always-approve --output-format plain --max-turns 16 --no-subagents"
+tools   = "read_file,grep,list_dir,run_terminal_command,Bash(satelle:*)"
+model   = "grok-4.5"
