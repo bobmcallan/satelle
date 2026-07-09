@@ -86,6 +86,42 @@ func TestRunInitScaffolds(t *testing.T) {
 	}
 }
 
+// TestInstallAliasSharesInitPath: satelle install is a cobra alias of init —
+// one RunE, two names (sty_0e268c9a). Resolves the registered command tree.
+func TestInstallAliasSharesInitPath(t *testing.T) {
+	root := NewRootCmd()
+	initCmd, _, err := root.Find([]string{"init"})
+	if err != nil {
+		t.Fatalf("find init: %v", err)
+	}
+	installCmd, _, err := root.Find([]string{"install"})
+	if err != nil {
+		t.Fatalf("find install: %v", err)
+	}
+	if initCmd != installCmd {
+		t.Fatalf("install must resolve to the same command as init (one code path)")
+	}
+	found := false
+	for _, a := range initCmd.Aliases {
+		if a == "install" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("init Aliases missing install: %v", initCmd.Aliases)
+	}
+	// Functional: install-named path still scaffolds (same RunE).
+	repo := t.TempDir()
+	var out strings.Builder
+	if err := runInit(&out, repo); err != nil {
+		t.Fatalf("runInit via install path: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".satelle", "agents.toml")); err != nil {
+		t.Errorf("install/init did not scaffold agents.toml: %v", err)
+	}
+}
+
 // TestRunInitSeedsAdvisorySkillsBesideAuthoredWorkflows: advisory skills are
 // workflow-independent guidance, so they seed even when the default solution is
 // withheld because the repo authored its own workflow set (sty_f4c1bd90).

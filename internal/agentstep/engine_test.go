@@ -998,6 +998,61 @@ func TestDispatchExecutorRunsNamedBinding(t *testing.T) {
 	}
 }
 
+// TestDispatchExecutorDualPayloadArgvAndStdin proves dual delivery through the
+// real agentstep dispatch path: a harness template with {payload} receives the
+// same work-item JSON on argv and on stdin (sty_5cf4a1fb / sty_cc35cd0b).
+func TestDispatchExecutorDualPayloadArgvAndStdin(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "harness.sh")
+	// $1 is {payload}; stdin is the dual channel. Echo both for the test to compare.
+	body := "#!/bin/sh\nprintf 'ARGV:%s\\nSTDIN:' \"$1\"\ncat\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	docs := fakeDocs{workflow: dispatchWF, skillBody: "dual-payload rubric", skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	g.repoRoot = dir // real cwd for the subprocess (newEngine defaults to /repo)
+	harness := script + " {payload}"
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		if name != "architect" {
+			return config.AgentBinding{}, false
+		}
+		return config.AgentBinding{Harness: harness, Tools: "Read,Bash(satelle:*)"}, true
+	})
+	// Real agentcli.RunnerFromHarness (default) — not a fakeRunner.
+	g.newRunner = agentcli.RunnerFromHarness
+	res, err := g.DispatchExecutor(context.Background(),
+		workitem.Item{ID: "sty_dual", Title: "Dual payload item", Status: "backlog", Body: "body-here"}, "plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Dispatched {
+		t.Fatal("expected dispatch")
+	}
+	out := res.Output
+	if !strings.HasPrefix(out, "ARGV:") {
+		t.Fatalf("argv channel missing: %q", out)
+	}
+	argvPart, stdinPart, ok := strings.Cut(out, "\nSTDIN:")
+	if !ok {
+		t.Fatalf("stdin channel missing: %q", out)
+	}
+	argvPayload := strings.TrimPrefix(argvPart, "ARGV:")
+	if argvPayload == "" || argvPayload != stdinPart {
+		t.Errorf("dual payload mismatch:\n argv=%q\nstdin=%q", argvPayload, stdinPart)
+	}
+	if !strings.Contains(argvPayload, "sty_dual") || !strings.Contains(argvPayload, "Dual payload item") {
+		t.Errorf("payload missing work item fields: %q", argvPayload)
+	}
+	// Evidence keeps the placeholder unexpanded.
+	if !strings.Contains(res.Command, "{payload}") {
+		t.Errorf("Command evidence must keep {payload} literal: %q", res.Command)
+	}
+	if strings.Contains(res.Command, "sty_dual") {
+		t.Errorf("Command evidence must not expand payload body: %q", res.Command)
+	}
+}
+
 // TestDispatchExecutorAppliesBindingEnv pins AC2: a named binding's (already
 // ${VAR}-resolved) Env reaches the dispatched agent's Request, so runProcess can
 // layer it onto the child env — how a step points at an alternate backend

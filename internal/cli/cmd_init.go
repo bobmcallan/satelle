@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -27,17 +28,20 @@ import (
 	"github.com/bobmcallan/satelle/internal/wfdot"
 )
 
+// lookPath is exec.LookPath, swappable in tests so harness detection is pure.
+var lookPath = exec.LookPath
+
 func init() {
 	var configArg string
 	cmd := &cobra.Command{
 		Use: "init",
 		// `satelle install` reads naturally at first contact — an alias, same
-		// implementation and flags (sty_77367228). (No `verify` alias: the generic
-		// `satelle validate` it would have aliased was removed for per-noun
-		// validators.)
+		// implementation and flags (sty_77367228, sty_0e268c9a). (No `verify` alias:
+		// the generic `satelle validate` it would have aliased was removed for
+		// per-noun validators.)
 		Aliases: []string{"install"},
 		Short:   "Scaffold this repo for satelle (.satelle/, config, database, authored dirs)",
-		Long: `init makes a repo ready for satelle, idempotently. It ensures:
+		Long: `init (alias: install) makes a repo ready for satelle, idempotently. It ensures:
 
   - the .satelle/ directory,
   - a satelle.toml (created if missing, left intact if present) — every setting
@@ -46,14 +50,16 @@ func init() {
     directory monitor watches and indexes,
   - the per-repo SQLite database at .satelle/satelle.db (created and migrated),
   - a managed .gitignore block keeping the local database out of git while
-    committing the config and the authored markdown.
+    committing the config and the authored markdown,
+  - process hooks for the detected coding harness(es): Claude
+    (.claude/settings.json) and/or Grok (.grok/hooks/satelle.json).
 
-init ends by VALIDATING the deployed system — the agents layer must load and
-every substrate artifact must pass its deterministic structure check — and
-exits non-zero when it does not validate (broken configuration refuses to run).
+init/install end by VALIDATING the deployed system — the agents layer must load
+and every substrate artifact must pass its deterministic structure check — and
+exit non-zero when validation fails (broken configuration refuses to run).
 
 Re-running is safe: existing files are preserved and the report shows what was
-added versus already present.`,
+added versus already present. Both names share one implementation.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInit(cmd.OutOrStdout(), initRepoRoot(configArg))
@@ -216,14 +222,12 @@ func runInit(out io.Writer, repoRoot string) error {
 		fmt.Fprintln(out, initLine(added, ".gitignore (satelle local-state block)"))
 	}
 
-	// 6. .claude/settings.json — the blocking process hooks that enforce the
-	//    workflow on the coding agent (created only if absent; never overwritten).
-	if added, updated, herr := ensureClaudeHooks(repoRoot); herr != nil {
-		return herr
-	} else if len(updated) > 0 {
-		fmt.Fprintf(out, "  ~ .claude/settings.json (hook updated: %s)\n", strings.Join(updated, "; "))
-	} else {
-		fmt.Fprintln(out, initLine(added, ".claude/settings.json (process hooks)"))
+	// 6. Process hooks for the coding harness(es) on this machine/repo — Claude
+	//    (.claude/settings.json) and/or Grok (.grok/hooks/satelle.json). Detection
+	//    prefers PATH + existing harness dirs; both scaffolds apply when both are
+	//    present. Same satelle hook gate/commitgate/context/reindex policy either way.
+	if err := ensureProcessHooks(out, repoRoot); err != nil {
+		return err
 	}
 
 	// 7. Agent guidance — init is usually run BY a coding agent, and this report is
@@ -319,11 +323,42 @@ const claudeHookSettings = `{
 }
 `
 
-// ensureClaudeHooks writes .claude/settings.json with the process hooks when it
-// does not already exist. Returns whether it created the file. It never
-// overwrites an existing settings.json (the repo/user owns it).
+// grokHookSettings is the satelle-owned Grok project hook file
+// (.grok/hooks/satelle.json). Same policy commands as Claude; matchers cover
+// Grok-native tool ids and Claude aliases Grok maps (sty_2fad11b0).
+const grokHookSettings = `{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "satelle reindex" },
+          { "type": "command", "command": "satelle hook context" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|search_replace|write",
+        "hooks": [
+          { "type": "command", "command": "satelle hook gate || exit 2" }
+        ]
+      },
+      {
+        "matcher": "Bash|run_terminal_command",
+        "hooks": [
+          { "type": "command", "command": "satelle hook commitgate || exit 2" }
+        ]
+      }
+    ]
+  }
+}
+`
+
+// grokHooksRel is the repo-relative path of the satelle-owned Grok hooks file.
+const grokHooksRel = ".grok/hooks/satelle.json"
+
 // retiredHookCommands maps RETIRED satelle CLI commands to their replacements —
-// the reconciliation seam for hook commands in an existing .claude/settings.json
+// the reconciliation seam for hook commands in an existing harness hook file
 // (sty_6a919dff): a repo initialised before a rename otherwise invokes a removed
 // command forever (observed: a SessionStart hook still running `satelle index`).
 // Extend this map on every future rename/removal.
@@ -331,11 +366,64 @@ var retiredHookCommands = map[string]string{
 	"satelle index": "satelle reindex",
 }
 
-// reconcileClaudeHooks surgically rewrites known-retired satelle commands inside
-// an existing settings.json — an exact-command string swap (word-boundary
-// guarded), so every other byte of the user-owned file is preserved. Returns the
-// applied renames ("old -> new"), empty when nothing was stale. Idempotent.
-func reconcileClaudeHooks(path string) ([]string, error) {
+// detectProcessHarnesses decides which process-hook scaffolds to apply.
+// Signals: CLI on PATH (hasCLI), and/or an existing harness dir in the repo.
+// When neither is detected, Claude is the default (preserves prior init behaviour).
+// When both are present, both scaffolds apply — no silent single-vendor pick.
+func detectProcessHarnesses(repoRoot string, hasCLI func(string) bool) (claude, grok bool) {
+	if hasCLI == nil {
+		hasCLI = func(name string) bool {
+			_, err := lookPath(name)
+			return err == nil
+		}
+	}
+	claude = hasCLI("claude") || dirExists(filepath.Join(repoRoot, ".claude"))
+	grok = hasCLI("grok") || dirExists(filepath.Join(repoRoot, ".grok"))
+	if !claude && !grok {
+		claude = true
+	}
+	return claude, grok
+}
+
+func dirExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.IsDir()
+}
+
+// ensureProcessHooks scaffolds Claude and/or Grok process hooks per detection
+// and reports each outcome on out (same initLine / "~ updated" style as before).
+func ensureProcessHooks(out io.Writer, repoRoot string) error {
+	wantClaude, wantGrok := detectProcessHarnesses(repoRoot, nil)
+	if wantClaude {
+		added, updated, err := ensureClaudeHooks(repoRoot)
+		if err != nil {
+			return err
+		}
+		if len(updated) > 0 {
+			fmt.Fprintf(out, "  ~ .claude/settings.json (hook updated: %s)\n", strings.Join(updated, "; "))
+		} else {
+			fmt.Fprintln(out, initLine(added, ".claude/settings.json (process hooks)"))
+		}
+	}
+	if wantGrok {
+		added, updated, err := ensureGrokHooks(repoRoot)
+		if err != nil {
+			return err
+		}
+		if len(updated) > 0 {
+			fmt.Fprintf(out, "  ~ %s (hook updated: %s)\n", grokHooksRel, strings.Join(updated, "; "))
+		} else {
+			fmt.Fprintln(out, initLine(added, grokHooksRel+" (process hooks)"))
+		}
+	}
+	return nil
+}
+
+// reconcileHookFile surgically rewrites known-retired satelle commands inside
+// an existing hook JSON — exact-command string swap (word-boundary guarded), so
+// every other byte of the user-owned file is preserved. Returns the applied
+// renames ("old -> new"), empty when nothing was stale. Idempotent.
+func reconcileHookFile(path string) ([]string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -359,6 +447,10 @@ func reconcileClaudeHooks(path string) ([]string, error) {
 	return changed, nil
 }
 
+// reconcileClaudeHooks is the Claude settings path of reconcileHookFile
+// (kept for existing tests and call sites).
+func reconcileClaudeHooks(path string) ([]string, error) { return reconcileHookFile(path) }
+
 // ensureClaudeHooks writes .claude/settings.json with the process hooks when
 // absent, and RECONCILES known-retired satelle hook commands in an existing one
 // (sty_6a919dff) — the user-owned file is otherwise preserved byte-for-byte.
@@ -370,7 +462,7 @@ func ensureClaudeHooks(repoRoot string) (bool, []string, error) {
 	}
 	path := filepath.Join(dir, "settings.json")
 	if _, err := os.Stat(path); err == nil {
-		updated, rerr := reconcileClaudeHooks(path)
+		updated, rerr := reconcileHookFile(path)
 		if rerr != nil {
 			return false, nil, fmt.Errorf("init: reconcile %s: %w", path, rerr)
 		}
@@ -379,6 +471,30 @@ func ensureClaudeHooks(repoRoot string) (bool, []string, error) {
 		return false, nil, fmt.Errorf("init: stat %s: %w", path, err)
 	}
 	if err := os.WriteFile(path, []byte(claudeHookSettings), 0o644); err != nil {
+		return false, nil, fmt.Errorf("init: write %s: %w", path, err)
+	}
+	return true, nil, nil
+}
+
+// ensureGrokHooks writes .grok/hooks/satelle.json when absent, and reconciles
+// known-retired satelle commands in an existing satelle-owned file. Other files
+// under .grok/hooks/ are never touched. Returns created + applied renames.
+func ensureGrokHooks(repoRoot string) (bool, []string, error) {
+	dir := filepath.Join(repoRoot, ".grok", "hooks")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return false, nil, fmt.Errorf("init: mkdir %s: %w", dir, err)
+	}
+	path := filepath.Join(repoRoot, filepath.FromSlash(grokHooksRel))
+	if _, err := os.Stat(path); err == nil {
+		updated, rerr := reconcileHookFile(path)
+		if rerr != nil {
+			return false, nil, fmt.Errorf("init: reconcile %s: %w", path, rerr)
+		}
+		return false, updated, nil
+	} else if !os.IsNotExist(err) {
+		return false, nil, fmt.Errorf("init: stat %s: %w", path, err)
+	}
+	if err := os.WriteFile(path, []byte(grokHookSettings), 0o644); err != nil {
 		return false, nil, fmt.Errorf("init: write %s: %w", path, err)
 	}
 	return true, nil, nil
@@ -461,8 +577,12 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer:
 # and they silently pin the repo to one CLI vendor. See "satelle help agent-dispatch".
 #
 # THE HARNESS TEMPLATE: a SINGLE token (e.g. "claude") is a built-in preset; a
-# MULTI-token value is a full command taken verbatim ({system}/{tools}/{model}
-# substituted, payload on stdin).
+# MULTI-token value is a full command taken verbatim. Placeholders — each one
+# argv token: {system} {tools} {model} {settings} {payload}. The work-item body
+# is ALWAYS also written on stdin (dual delivery). Empty {model}/{settings}
+# drop that flag; empty {payload} does not. Claude's default uses stdin only
+# (no -p {payload}) so the prompt is not double-fed; argv-first CLIs opt in, e.g.
+#   harness = "grok -p {payload} --system-prompt-override {system} --tools {tools} -m {model} --output-format json --always-approve"
 #
 # PER-BINDING ENV — point a step at an alternate model backend WITHOUT a wrapper
 # binary. A binding may set env = { KEY = "value" }; each value may reference the
@@ -483,10 +603,9 @@ harness = "in-loop"            # the orchestrator/driving session itself
 
 [reviewer]
 # The FULL command template — transparent and swappable (sty_892517e7, user
-# feedback): satelle substitutes {system} (the rubric), {tools} (the grant
-# below), and {model}, each into its own argument, and pipes the payload on
-# stdin; an empty model drops the --model pair. Point this at ANY agent CLI by
-# rewriting the command.
+# feedback): satelle substitutes {system}/{tools}/{model}/{settings}/{payload}
+# (each one argv token); payload is always also on stdin. An empty model drops
+# the --model pair. Point this at ANY agent CLI by rewriting the command.
 harness = "REVIEWER_HARNESS_TEMPLATE"
 tools   = "Read,Grep,Glob"     # read-only grant — widen at your own risk
 model   = ""                   # empty inherits the CLI's default; each binding may pin its own (e.g. "sonnet"), so steps allocated to different bindings run on different models

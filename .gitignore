@@ -26,6 +26,9 @@
 .satelle/satelle.db-shm
 .satelle/satelle.local.toml
 
+# agents (local)
+.satelle/agents.*.bak
+
 # the repo-local pinned binary (satelle update --local) is local state, never committed
 .satelle/satelle
 
