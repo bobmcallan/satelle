@@ -293,3 +293,46 @@ func TestClientListProjects(t *testing.T) {
 		t.Fatalf("projects = %+v", ps)
 	}
 }
+
+// TestClientWorkspaces covers GET /api/v1/workspaces: the server returns
+// {id, kind, name} (no slug), personal|team kinds only.
+func TestClientWorkspaces(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer good" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]Workspace{
+			{ID: "w1", Kind: "personal", Name: "Dev Personal"},
+			{ID: "w2", Kind: "team", Name: "Acme Team"},
+		})
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	store := &memStore{}
+	_ = store.Save(Credential{ServerURL: ts.URL, AccessToken: "good", RefreshToken: "r"})
+
+	ws, err := NewClient(ts.URL, store, ts.Client()).Workspaces(context.Background())
+	if err != nil {
+		t.Fatalf("Workspaces: %v", err)
+	}
+	if len(ws) != 2 {
+		t.Fatalf("workspaces = %+v", ws)
+	}
+	if ws[0].ID != "w1" || ws[0].Kind != "personal" || ws[0].Name != "Dev Personal" {
+		t.Fatalf("ws[0] = %+v", ws[0])
+	}
+	if ws[1].ID != "w2" || ws[1].Kind != "team" || ws[1].Name != "Acme Team" {
+		t.Fatalf("ws[1] = %+v", ws[1])
+	}
+}
+
+// A missing credential must surface ErrLoginRequired, never a raw 401 body.
+func TestClientWorkspacesNoCredential(t *testing.T) {
+	_, err := NewClient("https://example", &memStore{}, nil).Workspaces(context.Background())
+	if !errors.Is(err, ErrLoginRequired) {
+		t.Fatalf("expected ErrLoginRequired, got %v", err)
+	}
+}

@@ -39,6 +39,15 @@ type Project struct {
 	Role string `json:"role,omitempty"`
 }
 
+// Workspace is a hosted workspace as returned by the workspaces API. Kind is
+// "personal" (the caller's own workspace) or "team" (a shared/team workspace).
+// The server returns no slug; clients identify a workspace by name or id.
+type Workspace struct {
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+}
+
 // Client is an authenticated HTTP client for a hosted server's /api/v1/*
 // surface. It attaches the stored bearer access token and, on a 401,
 // transparently refreshes (persisting the ROTATED refresh token before it
@@ -71,6 +80,17 @@ func (c *Client) Me(ctx context.Context) (Principal, error) {
 func (c *Client) ListProjects(ctx context.Context) ([]Project, error) {
 	var out []Project
 	if err := c.getJSON(ctx, "/api/v1/projects", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Workspaces returns the caller's workspaces via GET /api/v1/workspaces. A
+// missing/expired credential yields ErrLoginRequired (transparent refresh aside);
+// any other non-200 yields a clean serverError, never a raw body.
+func (c *Client) Workspaces(ctx context.Context) ([]Workspace, error) {
+	var out []Workspace
+	if err := c.getJSON(ctx, "/api/v1/workspaces", &out); err != nil {
 		return nil, err
 	}
 	return out, nil

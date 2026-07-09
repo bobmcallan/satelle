@@ -23,6 +23,15 @@ type Project struct {
 	Role string `json:"role,omitempty"`
 }
 
+// Workspace is a hosted workspace as returned by the workspaces API. Kind is
+// "personal" (the caller's own workspace) or "team" (a shared/team workspace).
+// The server returns no slug; clients identify a workspace by name or id.
+type Workspace struct {
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+}
+
 // CreateProjectRequest is the JSON body for POST /api/v1/projects.
 type CreateProjectRequest struct {
 	Slug string `json:"slug"`
