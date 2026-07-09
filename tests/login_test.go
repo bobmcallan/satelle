@@ -102,6 +102,18 @@ func stubOAuthServer(t *testing.T) *httptest.Server {
 			"id": "u1", "email": "dev@satelle.dev", "display_name": "Dev", "role": "owner",
 		})
 	})
+	// GET /api/v1/workspaces (epic:scoped-sync, order:4) — the caller's personal
+	// workspace plus a team workspace `satelle login --workspace` can select.
+	mux.HandleFunc("/api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer acc" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]string{
+			{"id": "w1", "kind": "personal", "name": "Dev Personal"},
+			{"id": "w2", "kind": "team", "name": "Acme Team"},
+		})
+	})
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 	return ts
@@ -121,46 +133,9 @@ func TestLoginFlowEndToEnd(t *testing.T) {
 
 	// `login --no-browser` prints the authorize URL and waits on the loopback;
 	// the test itself GETs that URL to drive the callback (no real browser).
-	cmd := exec.Command(bin, "login", "--no-browser", "--server", ts.URL, "--timeout", "20s")
-	cmd.Dir = repo
-	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+xdg, "SATELLE_HOME="+ghome)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-
-	var signedIn bool
-	go func() {
-		sc := bufio.NewScanner(stdout)
-		for sc.Scan() {
-			line := strings.TrimSpace(sc.Text())
-			if strings.HasPrefix(line, "http") && strings.Contains(line, "/oauth/authorize") {
-				resp, gerr := http.Get(line) // 302 → loopback callback delivers the code
-				if gerr == nil {
-					resp.Body.Close()
-				}
-			}
-			if strings.Contains(line, "Signed in") {
-				signedIn = true
-			}
-		}
-	}()
-
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("login exited with error: %v", err)
-		}
-	case <-time.After(25 * time.Second):
-		_ = cmd.Process.Kill()
-		t.Fatal("login did not complete in time")
-	}
-	if !signedIn {
+	env := append(os.Environ(), "XDG_CONFIG_HOME="+xdg, "SATELLE_HOME="+ghome)
+	loginOut := driveLoginNoBrowser(t, bin, repo, ts.URL, env)
+	if !strings.Contains(loginOut, "Signed in") {
 		t.Error("login did not print the signed-in identity")
 	}
 
@@ -228,5 +203,153 @@ func TestLoginFlowEndToEnd(t *testing.T) {
 	after, _ := os.ReadFile(credPath)
 	if strings.Contains(string(after), "ref") {
 		t.Fatalf("logout did not clear the credential:\n%s", after)
+	}
+}
+
+// driveLoginNoBrowser runs `satelle login --no-browser` in repo against server,
+// GETs the authorize URL the binary prints to drive the loopback callback (no
+// real browser), and returns the captured stdout once login exits. extraArgs are
+// appended after the standard flags (e.g. "--workspace"). Shared by the login
+// end-to-end tests so the callback-driving plumbing lives once.
+func driveLoginNoBrowser(t *testing.T, bin, repo, server string, env []string, extraArgs ...string) string {
+	t.Helper()
+	args := append([]string{"login", "--no-browser", "--server", server, "--timeout", "20s"}, extraArgs...)
+	cmd := exec.Command(bin, args...)
+	cmd.Dir = repo
+	cmd.Env = env
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	var buf strings.Builder
+	scanDone := make(chan struct{})
+	go func() {
+		defer close(scanDone)
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			line := sc.Text()
+			buf.WriteString(line)
+			buf.WriteByte('\n')
+			tl := strings.TrimSpace(line)
+			if strings.HasPrefix(tl, "http") && strings.Contains(tl, "/oauth/authorize") {
+				if resp, gerr := http.Get(tl); gerr == nil { // 302 → loopback callback delivers the code
+					resp.Body.Close()
+				}
+			}
+		}
+	}()
+	waitDone := make(chan error, 1)
+	go func() { waitDone <- cmd.Wait() }()
+	select {
+	case err := <-waitDone:
+		if err != nil {
+			t.Fatalf("login exited with error: %v", err)
+		}
+	case <-time.After(25 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatal("login did not complete in time")
+	}
+	<-scanDone // let the scanner flush the tail before the caller reads buf
+	return buf.String()
+}
+
+// TestLoginWorkspaceSelectionEndToEnd proves the AC1/AC4 binding semantics through
+// the real binary: `login --workspace <name>` resolves the selection against the
+// fetched workspaces and records it in the gitignored per-user satelle.local.toml
+// OVERLAY — never the team-committed satelle.toml — while tokens stay in the
+// per-user store. A default login (no flag) writes nothing (TestLoginFlowEndToEnd).
+func TestLoginWorkspaceSelectionEndToEnd(t *testing.T) {
+	bin := testBin
+	repo := t.TempDir()
+	xdg := t.TempDir()
+	ghome := t.TempDir()
+	mustRun(t, bin, repo, "init")
+
+	ts := stubOAuthServer(t)
+
+	env := append(os.Environ(), "XDG_CONFIG_HOME="+xdg, "SATELLE_HOME="+ghome)
+	out := driveLoginNoBrowser(t, bin, repo, ts.URL, env, "--workspace", "Acme Team")
+	if !strings.Contains(out, "Active workspace set to Acme Team") {
+		t.Fatalf("login did not report the workspace selection:\n%s", out)
+	}
+
+	// The selection lands in the per-user overlay, not the team satelle.toml.
+	local, err := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.local.toml"))
+	if err != nil {
+		t.Fatalf("per-user overlay not written: %v", err)
+	}
+	if !strings.Contains(string(local), `workspace = "Acme Team"`) {
+		t.Fatalf("overlay missing the workspace selection:\n%s", local)
+	}
+
+	// The committed satelle.toml stays byte-untouched: no workspace, no server,
+	// no tokens (the per-user choice never mutates the team file).
+	cfg, err := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, banned := range []string{`workspace =`, `server =`, "access_token", "refresh_token", `"acc"`, `"ref"`} {
+		if strings.Contains(string(cfg), banned) {
+			t.Fatalf("committed satelle.toml must not gain %q:\n%s", banned, cfg)
+		}
+	}
+
+	// No credential leaked into the repo either.
+	if fileExists(filepath.Join(repo, ".satelle", "credentials.toml")) {
+		t.Error("credentials must NOT be written inside the repo")
+	}
+}
+
+// TestLoginWorkspaceNotFoundEndToEnd proves an unresolvable --workspace surfaces a
+// clear human error AFTER auth completed (tokens + server are saved) — never a raw
+// server body — and records nothing (AC4).
+func TestLoginWorkspaceNotFoundEndToEnd(t *testing.T) {
+	bin := testBin
+	repo := t.TempDir()
+	xdg := t.TempDir()
+	ghome := t.TempDir()
+	mustRun(t, bin, repo, "init")
+
+	ts := stubOAuthServer(t)
+
+	env := append(os.Environ(), "XDG_CONFIG_HOME="+xdg, "SATELLE_HOME="+ghome)
+	cmd := exec.Command(bin, "login", "--no-browser", "--server", ts.URL, "--timeout", "20s", "--workspace", "Nope WS")
+	cmd.Dir = repo
+	cmd.Env = env
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			tl := strings.TrimSpace(sc.Text())
+			if strings.HasPrefix(tl, "http") && strings.Contains(tl, "/oauth/authorize") {
+				if resp, gerr := http.Get(tl); gerr == nil {
+					resp.Body.Close()
+				}
+			}
+		}
+	}()
+	exitErr := cmd.Wait() // expected non-zero: the workspace choice is unresolvable
+	if exitErr == nil {
+		t.Fatal("login with an unknown --workspace should exit non-zero")
+	}
+
+	// Auth already completed: the credential + global server landed, so the user
+	// can retry with a valid name without re-authenticating.
+	credPath := filepath.Join(xdg, "satelle", "credentials.toml")
+	if cred, rerr := os.ReadFile(credPath); rerr != nil || !strings.Contains(string(cred), "ref") {
+		t.Fatalf("auth should have completed before the workspace error: %v", rerr)
+	}
+	// No overlay is recorded for a failed selection, and the team file is clean.
+	if _, lerr := os.Stat(filepath.Join(repo, ".satelle", "satelle.local.toml")); lerr == nil {
+		t.Error("no per-user overlay should be written for an unresolvable --workspace")
 	}
 }

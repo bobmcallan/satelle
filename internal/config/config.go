@@ -117,6 +117,15 @@ type Config struct {
 type HostedConfig struct {
 	// Server is the hosted-server base URL (e.g. https://hosted.satelle.dev).
 	Server string `toml:"server"`
+	// Workspace is the ACTIVE hosted workspace scoped sync routes personal+shared
+	// areas through (epic:scoped-sync) — the handle the future sync engine
+	// prefixes. Unset (or the personal sentinel) means the developer's OWN
+	// workspace, the zero-config default; any other value is a team-workspace
+	// NAME the developer elected. This is PER-DEVELOPER: `satelle login
+	// --workspace <name>` records the choice in the gitignored satelle.local.toml
+	// overlay, and a value committed HERE is a hand-authored TEAM DEFAULT the
+	// overlay overrides per-key. Resolve via ResolveActiveWorkspace.
+	Workspace string `toml:"workspace"`
 }
 
 // ReviewConfig toggles the quality-management gates for a repo.

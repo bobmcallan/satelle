@@ -18,6 +18,8 @@ tags:
     description: OAuth 2.1 + PKCE S256 authentication
   - name: projects
     description: Project management
+  - name: workspaces
+    description: Workspace identity and selection
 
 servers:
   - url: https://satelle.dev
@@ -84,6 +86,27 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "409":
           description: Slug already exists.
+
+  /api/v1/workspaces:
+    get:
+      operationId: listWorkspaces
+      summary: List caller's workspaces
+      description: >-
+        Returns the workspaces the authenticated principal belongs to — their own
+        personal workspace plus any shared/team workspaces. Used by the CLI to
+        resolve the active workspace for scoped sync.
+      tags: [workspaces]
+      responses:
+        "200":
+          description: Array of workspaces.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Workspace"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /oauth/authorize:
     get:
@@ -248,6 +271,24 @@ components:
           description: URL-safe slug for the new project (must be unique).
         name:
           type: string
+
+    Workspace:
+      type: object
+      required: [id, kind, name]
+      properties:
+        id:
+          type: string
+          description: Unique workspace identifier.
+        kind:
+          type: string
+          enum: [personal, team]
+          description: >-
+            "personal" is the caller's own workspace; "team" is a shared/team
+            workspace multiple members sync to. (A scoped-sync "shared" SCOPE is
+            a sync tier, not a workspace kind.)
+        name:
+          type: string
+          description: Human-readable workspace name; the handle clients select on.
 
     TokenResponse:
       type: object

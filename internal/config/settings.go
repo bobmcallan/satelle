@@ -56,6 +56,7 @@ var Settings = []Setting{
 	{Key: "stories_keep_days", Label: "Keep closed stories (days)", Help: "0 = no age pruning.", Kind: kindInt},
 	{Section: "review", Key: "gate_create", Label: "Gate create", Help: "Structure-review story/task on creation.", Kind: kindBool},
 	{Section: "gate", Key: "edit_exempt_paths", Label: "Edit-gate exempt paths", Help: "Path prefixes exempt from the engaged-story edit gate.", Kind: kindList},
+	{Section: "hosted", Key: "workspace", Label: "Active workspace", Help: "Scoped-sync destination — personal default; a team-workspace name elects it.", Kind: kindString},
 }
 
 // FieldID is the dotted key path ("section.key", or the bare key for a root key).
@@ -115,6 +116,11 @@ func SettingDisplay(cfg Config, s Setting) string {
 		return boolStr(cfg.Review.GateCreate)
 	case "gate.edit_exempt_paths":
 		return strings.Join(cfg.Gate.EditExemptPaths, "\n")
+	case "hosted.workspace":
+		// The resolved active workspace — "personal" by default (zero-config),
+		// else the elected team-workspace name. The overlay is already merged by
+		// Load, so this reflects the effective per-developer choice.
+		return cfg.ResolveActiveWorkspace().Name
 	}
 	return ""
 }

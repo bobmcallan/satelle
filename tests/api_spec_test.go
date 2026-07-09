@@ -33,7 +33,7 @@ func TestOpenAPISpecCoversClientEndpoints(t *testing.T) {
 
 	// Every ENDURING endpoint the real CLI client (internal/hosted) speaks must be
 	// published as a path in the spec (AC1/AC4 — spec in sync with the client).
-	for _, path := range []string{"/api/v1/me", "/api/v1/projects", "/oauth/authorize", "/oauth/token"} {
+	for _, path := range []string{"/api/v1/me", "/api/v1/projects", "/api/v1/workspaces", "/oauth/authorize", "/oauth/token"} {
 		if !strings.Contains(spec, path+":") {
 			t.Errorf("openapi.yaml does not publish enduring endpoint %q that the CLI client calls", path)
 		}

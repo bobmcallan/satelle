@@ -24,6 +24,11 @@ func TestJSONKeyIdentity(t *testing.T) {
 		r := api.Project{ID: "a", Slug: "b", Name: "c", Role: "d"}
 		assertByteIdenticalJSON(t, h, r)
 	})
+	t.Run("Workspace", func(t *testing.T) {
+		h := hosted.Workspace{ID: "a", Kind: "team", Name: "Acme Team"}
+		r := api.Workspace{ID: "a", Kind: "team", Name: "Acme Team"}
+		assertByteIdenticalJSON(t, h, r)
+	})
 	t.Run("TokenResponse", func(t *testing.T) {
 		// hosted.tokenResponse is unexported, so marshal a hosted token flow
 		// result indirectly: compare field names via api.TokenResponse.
@@ -105,6 +110,7 @@ func TestOpenAPISchemaCoverage(t *testing.T) {
 	exportedSchemas := []string{
 		"Principal",
 		"Project",
+		"Workspace",
 		"CreateProjectRequest",
 		"TokenResponse",
 		"OAuthError",
