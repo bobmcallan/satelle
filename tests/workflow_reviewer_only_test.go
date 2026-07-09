@@ -9,19 +9,16 @@ import (
 	"github.com/bobmcallan/satelle/internal/wfdot"
 )
 
-// TestProjectWorkflowReviewerFirst asserts this repo's project workflow has the
-// reviewer-first, fully-dispatched shape (sty_fd9d210f, extended by the
-// all-sonnet consolidation sty_8fa35ca1): a reviewer gates every transition, and
-// EVERY performing stage is dispatched to an isolated named agent on sonnet —
-// plan (the read-only planner), and in_progress + integration + release (all the
-// code-writer worker). The driving session orchestrates transitions and lets the
-// gates judge; it performs no step itself. backlog -> plan is gated by the intake
-// reviewer satelle-story-intent-review (sty_3437b803). The former
+// TestProjectWorkflowReviewerFirst asserts this repo's project workflow is
+// reviewer-first: a reviewer gates every transition on the spine. Plan
+// dispatches to an isolated read-only planner; in_progress, integration, and
+// release run IN-LOOP on the driving session (agent=executor) so the session
+// performs work with full context — no isolated worker for code/integrate/release.
+// backlog -> plan is gated by satelle-story-intent-review (sty_3437b803). The former
 // commit/push/committed states are merged into one `release` state, and there are
 // recovery edges back to in_progress (no dead-end). `integration` is an explicit,
-// visible testing step (sty_15dbc0dd). plan stays on its own read-only binding
-// because it is entered from the non-performing backlog state and the dispatch
-// lock-guard refuses a code-writer there (sty_8fa35ca1).
+// visible testing step (sty_15dbc0dd). plan stays dispatched because it is entered
+// from the non-performing backlog state.
 func TestProjectWorkflowReviewerFirst(t *testing.T) {
 	body, err := os.ReadFile("../.satelle/workflows/satelle-project-workflow.md")
 	if err != nil {
@@ -37,21 +34,19 @@ func TestProjectWorkflowReviewerFirst(t *testing.T) {
 		states[s.Name] = s
 	}
 
-	// integration and release are DISPATCHED to the sonnet worker, never in-loop
-	// (consolidated off the retired glm performer — sty_8fa35ca1).
+	// integration and release are IN-LOOP (agent=executor), not dispatched workers.
 	for name, wantSkill := range map[string]string{"integration": "integrate", "release": "release"} {
 		s, present := states[name]
 		if !present {
 			t.Errorf("missing execution state %q", name)
 			continue
 		}
-		if s.Agent != "worker" || s.Skill != wantSkill {
-			t.Errorf("state %q must dispatch agent=worker @skill:%s, got agent=%q skill=%q", name, wantSkill, s.Agent, s.Skill)
+		if s.Agent != "executor" || s.Skill != wantSkill {
+			t.Errorf("state %q must run in-loop agent=executor @skill:%s, got agent=%q skill=%q", name, wantSkill, s.Agent, s.Skill)
 		}
 	}
 
-	// Four steps dispatch: the read-only sonnet planner (plan), the sonnet worker
-	// (in_progress), and the same sonnet worker (integration + release, checked above).
+	// plan dispatches to the isolated planner; in_progress is in-loop executor.
 	if p, present := states["plan"]; !present {
 		t.Error("missing plan state")
 	} else if p.Agent != "planner" || p.Skill != "plan" {
@@ -59,8 +54,8 @@ func TestProjectWorkflowReviewerFirst(t *testing.T) {
 	}
 	if w, present := states["in_progress"]; !present {
 		t.Error("missing in_progress state")
-	} else if w.Agent != "worker" || w.Skill != "code" {
-		t.Errorf("in_progress must dispatch agent=worker @skill:code, got agent=%q skill=%q", w.Agent, w.Skill)
+	} else if w.Agent != "executor" || w.Skill != "code" {
+		t.Errorf("in_progress must run in-loop agent=executor @skill:code, got agent=%q skill=%q", w.Agent, w.Skill)
 	}
 
 	// The dispatched executor experiment states are gone (merged into release).

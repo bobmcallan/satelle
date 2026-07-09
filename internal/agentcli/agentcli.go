@@ -6,9 +6,12 @@
 // names a binary or a flag directly.
 //
 // A harness string is a command template: the first token is the binary, the rest
-// are argv tokens that may carry the placeholders {system}, {tools}, and {model}.
-// At call time satelle substitutes each placeholder into its own argv token (so a
-// multi-line system prompt stays a single argument) and pipes the payload on stdin.
+// are argv tokens that may carry the placeholders {system}, {tools}, {model},
+// {settings}, and {payload}. At call time satelle substitutes each placeholder into
+// its own argv token (so a multi-line system prompt or a JSON payload stays a
+// single argument). The work-item payload is ALWAYS also written to the child
+// stdin (dual delivery): stdin-first CLIs (claude -p) keep using stdin alone;
+// argv-first CLIs (e.g. grok -p {payload}) include {payload} in the template.
 // A bare CLI name (a single token, e.g. "claude") expands to that CLI's built-in
 // PRESET template — claude's preset carries a read-only --disallowedTools denylist
 // so the grant is a ceiling over the repo's settings, not just an allowlist floor.
@@ -40,7 +43,10 @@ const (
 // so the reviewer's grant is a CEILING (deny wins over allow) over any
 // permissions the repo's .claude/settings.json would otherwise inherit. {system}
 // is the gate/skill body, {tools} the allow-grant, {model} the optional model
-// (dropped, with its flag, when unset).
+// (dropped, with its flag, when unset). The work-item body rides on stdin only —
+// this template does NOT place {payload} on -p, so Claude is not double-fed; the
+// {payload} placeholder is still available for other harness templates
+// (sty_5cf4a1fb dual delivery).
 //
 // The denylist keeps the work-tree MUTATORS off (Write, Edit, NotebookEdit, and
 // Bash — a shell redirect writes files whatever the user's ~/.claude permission
@@ -55,7 +61,12 @@ const DefaultClaudeHarness = "claude -p --output-format json --disallowedTools W
 // Request is one headless agent invocation.
 type Request struct {
 	SystemPrompt string // {system}: appended as the system prompt (the gate/skill body)
-	Payload      string // delivered on stdin (the review/summary input)
+	// Payload is the work-item / transition JSON. Dual delivery (sty_5cf4a1fb):
+	// always written to the subprocess stdin, and substituted into {payload} when
+	// that token appears in the harness template (one argv token). Empty Payload
+	// is still delivered (empty stdin + empty argv token if {payload} is present)
+	// — unlike {model}/{settings}, empty does not drop a preceding flag.
+	Payload      string
 	AllowedTools string // {tools}: comma-separated tool grant
 	Model        string // {model}: optional model override; "" drops the placeholder
 	// Settings is {settings}: a pre-marshalled JSON object mirroring claude's
@@ -136,9 +147,10 @@ type Runner interface {
 	// Name reports the agent CLI identifier (the template's binary).
 	Name() string
 	// Command reports the resolved command/harness template (binary + argv with the
-	// {system}/{tools}/{model} placeholders intact) — a concise, payload-free
-	// description of HOW the agent is invoked, recorded as invocation evidence
-	// (sty_fb3e0873). It never includes the rubric body or the stdin payload.
+	// {system}/{tools}/{model}/{settings}/{payload} placeholders intact) — a
+	// concise, body-free description of HOW the agent is invoked, recorded as
+	// invocation evidence (sty_fb3e0873). It never expands the rubric body or the
+	// payload bytes (the literal {payload} token stays in the string when present).
 	Command() string
 	// Run executes the agent over req and returns its raw stdout.
 	Run(ctx context.Context, req Request) ([]byte, error)
@@ -196,8 +208,9 @@ func Available(name string) bool {
 }
 
 // templateRunner executes a command template: a binary plus an argv template whose
-// tokens may carry {system}/{tools}/{model} placeholders. It is the single code
-// path for every agent CLI — claude, codex, or any operator-supplied binary.
+// tokens may carry {system}/{tools}/{model}/{settings}/{payload} placeholders. It
+// is the single code path for every agent CLI — claude, codex, or any
+// operator-supplied binary.
 type templateRunner struct {
 	binary      string
 	argTemplate []string
@@ -222,12 +235,15 @@ func (t templateRunner) Run(ctx context.Context, req Request) ([]byte, error) {
 }
 
 // buildArgs substitutes the placeholders in an argv template against req. Each of
-// {system}/{tools}/{model}/{settings} must be its own token, so a multi-word value
-// (a multi-line system prompt, or a JSON settings object) becomes exactly one
-// argument. An empty {model} or {settings} drops the placeholder AND a directly
-// preceding flag token (e.g. "--model {model}"), so the default template carries
-// the flag without emitting an empty value — a binding that authors no `settings`
-// table emits no --settings arg at all.
+// {system}/{tools}/{model}/{settings}/{payload} must be its own token, so a
+// multi-word value (a multi-line system prompt, a JSON settings object, or the
+// work-item payload) becomes exactly one argument. An empty {model} or {settings}
+// drops the placeholder AND a directly preceding flag token (e.g. "--model
+// {model}"), so the default template carries the flag without emitting an empty
+// value — a binding that authors no `settings` table emits no --settings arg at
+// all. {payload} never drops a preceding flag when empty: an empty payload is a
+// deliberate empty user message (sty_5cf4a1fb). Payload is also always written to
+// stdin by runProcess — dual delivery — whether or not {payload} appears here.
 func buildArgs(argTemplate []string, req Request) []string {
 	args := make([]string, 0, len(argTemplate))
 	for _, tok := range argTemplate {
@@ -236,6 +252,9 @@ func buildArgs(argTemplate []string, req Request) []string {
 			args = append(args, req.SystemPrompt)
 		case "{tools}":
 			args = append(args, req.AllowedTools)
+		case "{payload}":
+			// Always one token, even when empty — do not drop a preceding flag.
+			args = append(args, req.Payload)
 		case "{model}":
 			if strings.TrimSpace(req.Model) == "" {
 				if n := len(args); n > 0 && strings.HasPrefix(args[n-1], "-") {
