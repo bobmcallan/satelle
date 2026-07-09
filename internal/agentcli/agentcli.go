@@ -119,27 +119,43 @@ type claudeJSONEnvelope struct {
 	} `json:"usage"`
 }
 
+// grokJSONEnvelope is the shape of `grok -p … --output-format json` headless
+// output: the model's reply is in `text` (often a string that itself contains a
+// satelle decision JSON). Without unwrapping, parseDecision cannot see a
+// decision nested inside the escaped text field (sty_5cf4a1fb dogfood). Token
+// usage is not consistently present on this envelope; when absent, Usage is zero.
+type grokJSONEnvelope struct {
+	Text string `json:"text"`
+}
+
 // UnwrapUsage splits an agent's raw stdout into the INNER result text (what verdict
-// parsing consumes, unchanged) and its token UsageResult. If stdout is a claude
-// `--output-format json` envelope, the model's `result` text is returned with the
-// usage; otherwise stdout is returned verbatim with a zero UsageResult — so a
-// plain-text or non-claude harness keeps working and simply reports no cost. The
-// Duration is set by the caller (UnwrapUsage measures only tokens).
+// parsing consumes, unchanged) and its token UsageResult. Recognized envelopes:
+//
+//   - Claude `--output-format json`: unwraps `.result` and captures `.usage`
+//   - Grok `--output-format json`: unwraps `.text` (usage zero when absent)
+//
+// Otherwise stdout is returned verbatim with a zero UsageResult — plain-text
+// harnesses keep working and simply report no cost. Duration is set by the
+// caller (UnwrapUsage measures only tokens).
 func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 	trimmed := bytes.TrimSpace(stdout)
 	if len(trimmed) == 0 || trimmed[0] != '{' {
 		return stdout, UsageResult{}
 	}
-	var env claudeJSONEnvelope
-	if err := json.Unmarshal(trimmed, &env); err != nil || env.Result == "" {
-		return stdout, UsageResult{}
+	var claude claudeJSONEnvelope
+	if err := json.Unmarshal(trimmed, &claude); err == nil && claude.Result != "" {
+		u := UsageResult{
+			InputTokens:  claude.Usage.InputTokens,
+			OutputTokens: claude.Usage.OutputTokens,
+			TotalTokens:  claude.Usage.InputTokens + claude.Usage.OutputTokens,
+		}
+		return []byte(claude.Result), u
 	}
-	u := UsageResult{
-		InputTokens:  env.Usage.InputTokens,
-		OutputTokens: env.Usage.OutputTokens,
-		TotalTokens:  env.Usage.InputTokens + env.Usage.OutputTokens,
+	var grok grokJSONEnvelope
+	if err := json.Unmarshal(trimmed, &grok); err == nil && strings.TrimSpace(grok.Text) != "" {
+		return []byte(grok.Text), UsageResult{}
 	}
-	return []byte(env.Result), u
+	return stdout, UsageResult{}
 }
 
 // Runner invokes an agent CLI headlessly and returns its stdout.

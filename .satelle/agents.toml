@@ -1,29 +1,31 @@
-# agents.toml — Grok-native bindings (dual payload: {payload} on -p + stdin).
-# Reviewer/planner use plain output so gate verdicts parse; max-turns high enough
-# for tool-using gates. Bash(satelle:*) stays in tools for satelle's pull-context
-# grant check (DispatchExecutor); Grok native tool ids drive the CLI.
+# agents.toml — hybrid dogfood for dual payload (epic:harness-payload).
+# Reviewer: Grok with {payload} on -p + stdin (argv-first dual delivery).
+# Planner/worker/retrospective: Claude stdin-first (no {payload} — not double-fed)
+# so Bash(satelle:*) and code tools work. Grok Build currently cannot enable
+# run_terminal_command (agent-build constraint), so Grok is not used for
+# shell-needing dispatch steps.
 # model stays non-empty (TestRepoReviewerModelIsActive).
 
 [executor]
 harness = "in-loop"
 
 [reviewer]
-harness = "grok -p {payload} --system-prompt-override {system} --tools {tools} -m {model} --deny Write --deny Edit --deny search_replace --deny write --always-approve --output-format plain --max-turns 12 --no-subagents"
+harness = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir -m {model} --deny Write --deny Edit --deny search_replace --deny write --always-approve --output-format plain --max-turns 16 --no-subagents"
 tools   = "read_file,grep,list_dir"
 model   = "grok-4.5"
 
 [planner]
-harness = "grok -p {payload} --system-prompt-override {system} --tools {tools} -m {model} --always-approve --output-format plain --max-turns 16 --no-subagents"
-tools   = "read_file,grep,list_dir,run_terminal_command,Bash(satelle:*)"
-model   = "grok-4.5"
+harness = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
+tools   = "Read,Grep,Glob,Bash(satelle:*)"
+model   = "sonnet"
 
 [worker]
-harness = "grok -p {payload} --system-prompt-override {system} --tools {tools} -m {model} --always-approve --output-format plain --max-turns 24 --no-subagents"
-tools   = "read_file,grep,list_dir,search_replace,write,run_terminal_command,Bash(satelle:*)"
-model   = "grok-4.5"
+harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
+tools   = "Read,Grep,Glob,Edit,Write,Bash(satelle:*),Bash(go:*),Bash(gofmt:*),Bash(make:*),Bash(git:*),Bash(gh:*)"
+model   = "sonnet"
 timeout = "45m"
 
 [retrospective]
-harness = "grok -p {payload} --system-prompt-override {system} --tools {tools} -m {model} --always-approve --output-format plain --max-turns 16 --no-subagents"
-tools   = "read_file,grep,list_dir,run_terminal_command,Bash(satelle:*)"
-model   = "grok-4.5"
+harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
+tools   = "Read,Grep,Glob,Bash(satelle:*)"
+model   = "sonnet"
