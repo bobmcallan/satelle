@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -96,6 +98,165 @@ func (c *Client) Workspaces(ctx context.Context) ([]Workspace, error) {
 	return out, nil
 }
 
+// personalWorkspaceName is the scoped-sync personal sentinel: the active-
+// workspace name that resolves to the caller's own (kind=personal) workspace.
+// It mirrors config.PersonalWorkspace without importing config.
+const personalWorkspaceName = "personal"
+
+// ErrConfigFileMissing is returned when a config path (or a pinned version of
+// it) does not exist in the workspace. Deploy treats it as "skip this file" when
+// pinning a version that predates a file's first appearance.
+var ErrConfigFileMissing = errors.New("config file not found in workspace")
+
+// ConfigItem is one entry in a workspace's config manifest — the deploy set for
+// "set up project X like Y". Mirrors api.ConfigItem (the published shape); the
+// internal client owns its type independently (no api import).
+type ConfigItem struct {
+	Path       string `json:"path"`
+	Version    int    `json:"version"`
+	BlobSHA256 string `json:"blob_sha256"`
+	Size       int64  `json:"size"`
+	CreatedAt  string `json:"created_at"`
+}
+
+// ConfigPushResult is the per-file response to PUT .../config/{path}. Created is
+// true when this push appended a new head (HTTP 201) and false when it was an
+// idempotent re-push of the current head (HTTP 200).
+type ConfigPushResult struct {
+	Path       string `json:"path"`
+	Version    int    `json:"version"`
+	BlobSHA256 string `json:"blob_sha256"`
+	Size       int64  `json:"size"`
+	Created    bool   `json:"created"`
+}
+
+// ActiveWorkspaceID resolves the active workspace NAME to its server ID via
+// GET /api/v1/workspaces — the order:5 name→id bridge every workspace-scoped
+// config route keys on (the config carries the handle by NAME; routes need the
+// id). The personal sentinel (or an empty name) resolves to the caller's own
+// workspace (kind=personal); any other name to its exact-name match. A name with
+// no match yields a clear error listing the available workspaces, never a body.
+func (c *Client) ActiveWorkspaceID(ctx context.Context, name string) (string, error) {
+	workspaces, err := c.Workspaces(ctx)
+	if err != nil {
+		return "", err
+	}
+	target := strings.TrimSpace(name)
+	if target == "" || target == personalWorkspaceName {
+		for _, ws := range workspaces {
+			if ws.Kind == personalWorkspaceName {
+				return ws.ID, nil
+			}
+		}
+		return "", fmt.Errorf("no personal workspace found for %s", c.server)
+	}
+	for _, ws := range workspaces {
+		if ws.Name == target {
+			return ws.ID, nil
+		}
+	}
+	return "", workspaceIDNotFound(target, workspaces)
+}
+
+// workspaceIDNotFound builds the clear error for an unresolvable workspace name,
+// listing the available workspaces as "name (kind)" — built from the parsed
+// list, never the raw body, so a response detail cannot leak.
+func workspaceIDNotFound(name string, workspaces []Workspace) error {
+	if len(workspaces) == 0 {
+		return fmt.Errorf("workspace %q not found — the account has no workspaces", name)
+	}
+	parts := make([]string, len(workspaces))
+	for i, ws := range workspaces {
+		parts[i] = fmt.Sprintf("%s (%s)", ws.Name, ws.Kind)
+	}
+	return fmt.Errorf("workspace %q not found — available: %s", name, strings.Join(parts, ", "))
+}
+
+// configManifestRoute is the workspace config root (the manifest / deploy set).
+func configManifestRoute(wsID string) string {
+	return "/api/v1/workspaces/" + url.PathEscape(wsID) + "/config"
+}
+
+// configFileRoute is the per-file route, escaping each path segment so a path
+// with odd characters round-trips while the slashes that structure it survive.
+func configFileRoute(wsID, path string) string {
+	segs := strings.Split(path, "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
+	}
+	return configManifestRoute(wsID) + "/" + strings.Join(segs, "/")
+}
+
+// ConfigManifest returns a workspace's deploy set (the latest version of every
+// config path) via GET .../config. Any workspace member may read it.
+func (c *Client) ConfigManifest(ctx context.Context, wsID string) ([]ConfigItem, error) {
+	var out []ConfigItem
+	if err := c.getJSON(ctx, configManifestRoute(wsID), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// PushConfigFile PUTs one file's verbatim bytes to .../config/{path}, appending
+// a new version (head) when the content differs from the current head. The
+// returned Created flag distinguishes a new head (HTTP 201) from an idempotent
+// re-push of the current head (HTTP 200). A missing credential yields
+// ErrLoginRequired; a body-bearing retry survives the 401→refresh path.
+func (c *Client) PushConfigFile(ctx context.Context, wsID, path string, content []byte) (ConfigPushResult, error) {
+	if content == nil {
+		content = []byte{}
+	}
+	resp, err := c.doAuthed(ctx, http.MethodPut, configFileRoute(wsID, path), content, "text/plain; charset=utf-8")
+	if err != nil {
+		return ConfigPushResult{}, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusCreated:
+		var res ConfigPushResult
+		if len(body) > 0 {
+			if err := json.Unmarshal(body, &res); err != nil {
+				return ConfigPushResult{}, fmt.Errorf("hosted: decode config push: %w", err)
+			}
+		}
+		res.Path = path
+		res.Created = resp.StatusCode == http.StatusCreated
+		return res, nil
+	case http.StatusUnauthorized:
+		return ConfigPushResult{}, ErrLoginRequired
+	default:
+		return ConfigPushResult{}, fmt.Errorf("hosted: PUT config %s: %s", path, serverError(resp.StatusCode, body))
+	}
+}
+
+// ConfigFileContent GETs one path's content — the latest head, or ?version=N for
+// a pinned per-file version (0/omitted means latest). The returned etag is the
+// blob sha256 the server sends in the ETag header. A 404 (no such path, or the
+// pinned version predates the file's first appearance) yields ErrConfigFileMissing.
+func (c *Client) ConfigFileContent(ctx context.Context, wsID, path string, version int) ([]byte, string, error) {
+	route := configFileRoute(wsID, path)
+	if version > 0 {
+		route += "?version=" + strconv.Itoa(version)
+	}
+	resp, err := c.doAuthed(ctx, http.MethodGet, route, nil, "")
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return body, resp.Header.Get("ETag"), nil
+	case http.StatusNotFound:
+		return nil, "", ErrConfigFileMissing
+	case http.StatusUnauthorized:
+		return nil, "", ErrLoginRequired
+	default:
+		return nil, "", fmt.Errorf("hosted: GET config %s: %s", path, serverError(resp.StatusCode, body))
+	}
+}
+
 // CreateProject creates a project on the hosted server (POST /api/v1/projects),
 // making the authenticated principal its owner. A slug already in use yields
 // ErrSlugConflict (never the raw 409 body); a missing/expired credential yields
@@ -105,7 +266,7 @@ func (c *Client) CreateProject(ctx context.Context, slug, name string) (Project,
 	if err != nil {
 		return Project{}, fmt.Errorf("hosted: encode project: %w", err)
 	}
-	resp, err := c.doAuthed(ctx, http.MethodPost, "/api/v1/projects", payload)
+	resp, err := c.doAuthed(ctx, http.MethodPost, "/api/v1/projects", payload, contentJSON)
 	if err != nil {
 		return Project{}, err
 	}
@@ -130,7 +291,7 @@ func (c *Client) CreateProject(ctx context.Context, slug, name string) (Project,
 
 // getJSON performs an authenticated GET of an /api/v1 path and decodes JSON.
 func (c *Client) getJSON(ctx context.Context, path string, out any) error {
-	resp, err := c.doAuthed(ctx, http.MethodGet, path, nil)
+	resp, err := c.doAuthed(ctx, http.MethodGet, path, nil, "")
 	if err != nil {
 		return err
 	}
@@ -166,8 +327,10 @@ func serverError(code int, body []byte) string {
 
 // doAuthed sends the request (payload nil for a body-less GET) with the bearer
 // token; on 401 it refreshes once (persisting the rotated pair before retrying)
-// and resends. A missing credential or a failed refresh yields ErrLoginRequired.
-func (c *Client) doAuthed(ctx context.Context, method, path string, payload []byte) (*http.Response, error) {
+// and resends. contentType is set on body-bearing requests ("" leaves it unset,
+// for GETs); contentJSON is the common JSON case. A missing credential or a
+// failed refresh yields ErrLoginRequired.
+func (c *Client) doAuthed(ctx context.Context, method, path string, payload []byte, contentType string) (*http.Response, error) {
 	cred, err := c.store.Load(c.server)
 	if err != nil {
 		if errors.Is(err, ErrNoCredential) {
@@ -176,7 +339,7 @@ func (c *Client) doAuthed(ctx context.Context, method, path string, payload []by
 		return nil, err
 	}
 
-	resp, err := c.send(ctx, method, path, cred.AccessToken, payload)
+	resp, err := c.send(ctx, method, path, cred.AccessToken, payload, contentType)
 	if err != nil {
 		return nil, err
 	}
@@ -200,13 +363,18 @@ func (c *Client) doAuthed(ctx context.Context, method, path string, payload []by
 	if sErr := c.store.Save(rotated); sErr != nil {
 		return nil, fmt.Errorf("hosted: persist refreshed credential: %w", sErr)
 	}
-	return c.send(ctx, method, path, rotated.AccessToken, payload)
+	return c.send(ctx, method, path, rotated.AccessToken, payload, contentType)
 }
+
+// contentJSON is the Content-Type for JSON request bodies.
+const contentJSON = "application/json"
 
 // send builds and sends one authenticated request. payload (nil for none) is
 // rebuilt into a fresh reader on EVERY call so the 401→refresh retry resends the
 // full body — a one-shot io.Reader would be drained by the first attempt.
-func (c *Client) send(ctx context.Context, method, path, accessToken string, payload []byte) (*http.Response, error) {
+// contentType is set only when both payload and contentType are non-empty (a raw
+// config-file PUT carries bytes, not JSON).
+func (c *Client) send(ctx context.Context, method, path, accessToken string, payload []byte, contentType string) (*http.Response, error) {
 	var body io.Reader
 	if payload != nil {
 		body = bytes.NewReader(payload)
@@ -216,8 +384,8 @@ func (c *Client) send(ctx context.Context, method, path, accessToken string, pay
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
+	if payload != nil && contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

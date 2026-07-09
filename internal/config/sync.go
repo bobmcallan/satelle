@@ -10,6 +10,8 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -95,6 +97,172 @@ func FileShared(scope Scope, frontmatter string) bool {
 		return false
 	}
 	return fmBoolScalar(frontmatter, sharedFrontmatterKey)
+}
+
+// ConfigAreas are the .satelle areas eligible for the versioned config store
+// (epic:scoped-sync, order:5): the authored kinds MINUS documents (which is its
+// own sync kind), plus the project constitution, the agents layer, and task
+// DEFINITIONS. The work-state areas (stories/ledger/executions) are order:7;
+// documents is its own kind. Local-scope areas are skipped at push time — this
+// list is the candidate set the walk resolves a tier for.
+var ConfigAreas = []string{"workflows", "principles", "skills", "constitution", "agents", "tasks"}
+
+// ConfigTier is a config file's resolved sync DESTINATION: the caller's own
+// workspace (PersonalTier) or the team workspace (SharedTier). A LocalScope area
+// never reaches tier resolution — it is skipped wholesale before any file is
+// read, so there is no LocalTier.
+type ConfigTier int
+
+const (
+	// PersonalTier routes to the caller's own workspace (per-user isolated).
+	PersonalTier ConfigTier = iota
+	// SharedTier routes to the team workspace (the shared home — "set up X like Y").
+	SharedTier
+)
+
+// String renders the tier as its push/deploy label.
+func (t ConfigTier) String() string {
+	if t == SharedTier {
+		return "shared"
+	}
+	return "personal"
+}
+
+// ConfigFile is one resolved authored-config file destined for the versioned
+// store. Path is server-relative (forward slashes, no leading ".satelle/", e.g.
+// "skills/my-skill.md", "agents.toml", "constitution.md", "tasks/tsk_x.md") —
+// the key the server stores the file under, stable regardless of where a kind
+// lives on disk via [substrate_roots].
+type ConfigFile struct {
+	Area    string     // the config-area name (skills, constitution, agents, tasks, ...)
+	Path    string     // server-relative path under the workspace-config root
+	Tier    ConfigTier // resolved destination (PersonalTier | SharedTier)
+	Content []byte     // verbatim file bytes
+}
+
+// ConfigFiles walks the ConfigAreas under repoRoot, resolving each file's scope
+// via ScopeFor and partitioning the non-local files into personal/shared tiers.
+// A shared-scope area is SharedTier wholesale; a personal-scope area is
+// PersonalTier per file, PROMOTED to SharedTier when the file is markdown whose
+// frontmatter marks it shared (FileShared — the per-file shared flag). A
+// local-scope area contributes nothing (AC1: skip scope=local). Reserved
+// generated views (index.md/log.md/README) are excluded — they are not authored.
+// Files are returned sorted by Path. A non-existent area on disk is benign
+// (nothing to push yet). An explicitly invalid scope is a hard error.
+func ConfigFiles(cfg Config, repoRoot string) ([]ConfigFile, error) {
+	var out []ConfigFile
+	for _, area := range ConfigAreas {
+		scope, err := ScopeFor(cfg, area)
+		if err != nil {
+			return nil, fmt.Errorf("sync config area %q: %w", area, err)
+		}
+		if scope == LocalScope {
+			continue
+		}
+		location, isDir := ConfigAreaLocation(cfg, repoRoot, area)
+		if location == "" {
+			continue
+		}
+		if !isDir {
+			serverPath := filepath.Base(location)
+			if cf, ok, err := readConfigFile(area, location, serverPath, scope); err != nil {
+				return nil, err
+			} else if ok {
+				out = append(out, cf)
+			}
+			continue
+		}
+		walkErr := filepath.WalkDir(location, func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				if os.IsNotExist(err) && p == location {
+					return nil
+				}
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			if isReservedView(filepath.Base(p)) {
+				return nil
+			}
+			rel, rerr := filepath.Rel(location, p)
+			if rerr != nil {
+				return rerr
+			}
+			serverPath := area + "/" + filepath.ToSlash(rel)
+			cf, ok, rerr := readConfigFile(area, p, serverPath, scope)
+			if rerr != nil {
+				return rerr
+			}
+			if ok {
+				out = append(out, cf)
+			}
+			return nil
+		})
+		if walkErr != nil {
+			return nil, fmt.Errorf("sync config area %q: %w", area, walkErr)
+		}
+	}
+	sortConfigFiles(out)
+	return out, nil
+}
+
+// readConfigFile reads one file's bytes and resolves its tier. serverPath is the
+// already-computed server-relative key; absPath is the on-disk source. A missing
+// single-file area (constitution/agents not yet seeded) is benign — ok=false.
+func readConfigFile(area, absPath, serverPath string, scope Scope) (ConfigFile, bool, error) {
+	body, err := os.ReadFile(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ConfigFile{}, false, nil
+		}
+		return ConfigFile{}, false, fmt.Errorf("read %s: %w", absPath, err)
+	}
+	tier := PersonalTier
+	if scope == SharedScope {
+		tier = SharedTier
+	} else if scope == PersonalScope && FileShared(PersonalScope, string(body)) {
+		tier = SharedTier
+	}
+	return ConfigFile{Area: area, Path: serverPath, Tier: tier, Content: body}, true, nil
+}
+
+// sortConfigFiles orders files by server Path for a deterministic push.
+func sortConfigFiles(files []ConfigFile) {
+	for i := 1; i < len(files); i++ {
+		for j := i; j > 0 && files[j-1].Path > files[j].Path; j-- {
+			files[j-1], files[j] = files[j], files[j-1]
+		}
+	}
+}
+
+// isReservedView reports whether a file basename is a generated read-only view
+// (index.md, log.md) or a non-substrate README — never authored, so never part
+// of a config push. Shared with the `sync scopes` shared-file scan.
+func isReservedView(name string) bool {
+	base := strings.TrimSuffix(name, filepath.Ext(name))
+	return base == "index" || base == "log" || strings.EqualFold(base, "README")
+}
+
+// ConfigAreaLocation resolves a ConfigArea's on-disk location. isDir reports
+// whether location is a directory to walk (vs. a single file to read directly).
+// It mirrors the cli syncAreaPath resolution but lives in config so the walk is
+// unit-testable without the local store.
+func ConfigAreaLocation(cfg Config, repoRoot, area string) (location string, isDir bool) {
+	dataDir := cfg.ResolveDataDir(repoRoot)
+	switch area {
+	case "constitution":
+		return cfg.ResolveConstitution(repoRoot), false
+	case "agents":
+		return filepath.Join(dataDir, AgentsConfigName), false
+	case "tasks":
+		return filepath.Join(dataDir, "tasks"), true
+	default:
+		if dir := cfg.ResolveAuthoredDirs(repoRoot)[area]; dir != "" {
+			return dir, true
+		}
+		return "", false
+	}
 }
 
 // fmBoolScalar extracts a top-level YAML boolean scalar named key from a

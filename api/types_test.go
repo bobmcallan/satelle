@@ -29,6 +29,16 @@ func TestJSONKeyIdentity(t *testing.T) {
 		r := api.Workspace{ID: "a", Kind: "team", Name: "Acme Team"}
 		assertByteIdenticalJSON(t, h, r)
 	})
+	t.Run("ConfigItem", func(t *testing.T) {
+		h := hosted.ConfigItem{Path: "skills/x.md", Version: 2, BlobSHA256: "h", Size: 4, CreatedAt: "t"}
+		r := api.ConfigItem{Path: "skills/x.md", Version: 2, BlobSHA256: "h", Size: 4, CreatedAt: "t"}
+		assertByteIdenticalJSON(t, h, r)
+	})
+	t.Run("ConfigPushResult", func(t *testing.T) {
+		h := hosted.ConfigPushResult{Path: "skills/x.md", Version: 3, BlobSHA256: "h", Size: 4, Created: true}
+		r := api.ConfigPushResult{Path: "skills/x.md", Version: 3, BlobSHA256: "h", Size: 4, Created: true}
+		assertByteIdenticalJSON(t, h, r)
+	})
 	t.Run("TokenResponse", func(t *testing.T) {
 		// hosted.tokenResponse is unexported, so marshal a hosted token flow
 		// result indirectly: compare field names via api.TokenResponse.
@@ -112,6 +122,9 @@ func TestOpenAPISchemaCoverage(t *testing.T) {
 		"Project",
 		"Workspace",
 		"CreateProjectRequest",
+		"ConfigItem",
+		"ConfigPushResult",
+		"ConfigRollbackRequest",
 		"TokenResponse",
 		"OAuthError",
 		"ErrorEnvelope",
@@ -165,5 +178,29 @@ func TestNoSubstrateInSpec(t *testing.T) {
 
 	if strings.Contains(yaml, "substrate") {
 		t.Error("openapi.yaml contains 'substrate' — retired interface must not be published")
+	}
+}
+
+// TestConfigEndpointsInSpec verifies the versioned config-store endpoints are
+// published (AC4): the manifest, per-file push/fetch, and rollback routes, all
+// workspace-scoped — and that the word "substrate" is not used anywhere in them.
+func TestConfigEndpointsInSpec(t *testing.T) {
+	yamlBytes, err := os.ReadFile("openapi.yaml")
+	if err != nil {
+		t.Fatalf("read openapi.yaml: %v", err)
+	}
+	yaml := string(yamlBytes)
+	for _, route := range []string{
+		"/api/v1/workspaces/{workspaceId}/config",
+		"/api/v1/workspaces/{workspaceId}/config/{path}",
+		"/api/v1/workspaces/{workspaceId}/config-rollback",
+		"pushConfigFile",
+		"listConfig",
+		"getConfigFile",
+		"rollbackConfigFile",
+	} {
+		if !strings.Contains(yaml, route) {
+			t.Errorf("openapi.yaml missing config endpoint %q", route)
+		}
 	}
 }

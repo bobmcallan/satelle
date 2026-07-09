@@ -59,3 +59,34 @@ type ErrorEnvelope struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
 }
+
+// ConfigItem is one entry in a workspace's config manifest — the deploy set for
+// "set up project X like project Y". It is the latest head of a config path in a
+// workspace, returned by GET /api/v1/workspaces/{id}/config.
+type ConfigItem struct {
+	Path       string `json:"path"`
+	Version    int    `json:"version"`
+	BlobSHA256 string `json:"blob_sha256"`
+	Size       int64  `json:"size"`
+	CreatedAt  string `json:"created_at"`
+}
+
+// ConfigPushResult is the per-file response to PUT
+// /api/v1/workspaces/{id}/config/{path}. Created is true when the push appended a
+// new head (HTTP 201) and false when it was an idempotent re-push of the current
+// head (HTTP 200) — the per-file idempotency signal.
+type ConfigPushResult struct {
+	Path       string `json:"path"`
+	Version    int    `json:"version"`
+	BlobSHA256 string `json:"blob_sha256"`
+	Size       int64  `json:"size"`
+	Created    bool   `json:"created"`
+}
+
+// ConfigRollbackRequest is the body for POST
+// /api/v1/workspaces/{id}/config-rollback: append a new head copying an earlier
+// version of a path (recovery of a prior version).
+type ConfigRollbackRequest struct {
+	Path    string `json:"path"`
+	Version int    `json:"version"`
+}
