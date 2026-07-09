@@ -47,6 +47,7 @@ digraph satelle_substrate_workflow {
   in_progress [agent=executor]                                          // in-loop: author + commit + push the substrate slice
   done        [shape=Msquare]                                           // terminal (the close gate verifies substrate-only)
   cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
+  blocked     [agent=reviewer, prompt="@skill:satelle-story-blocked-review"]
 
   // step opts into per-transition step summaries (sty_9a139c78): edge-less, mandatory.
   step        [agent=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
@@ -60,8 +61,12 @@ digraph satelle_substrate_workflow {
   // A close reject leaves the story at in_progress (the transition does not enact),
   // so the agent just fixes the slice and re-requests done — no recovery edge needed.
 
+  in_progress -> blocked      [agent=reviewer, prompt="@skill:satelle-story-blocked-review"]
+  blocked     -> in_progress
+
   backlog     -> cancelled
   in_progress -> cancelled
+  blocked     -> cancelled
 }
 ```
 

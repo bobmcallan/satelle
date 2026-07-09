@@ -29,4 +29,22 @@ the workflow, not a normal step on its path.
 **One story at a time.** Drive a single engaged story to its terminal state
 before engaging another.
 
+## When an engaged story cannot satisfy its ACs
+
+Do **not** weaken the ACs (definition freeze). Diagnose:
+
+1. **World not ready** (ACs correct; dependency or external gap):
+   - File a **dependency story** that removes the blocker.
+   - If the active workflow offers a **blocked** state, select it (reason required
+     by the blocked-review gate), tag this story `blocked-by:<dependency sty id>`,
+     and later resume `blocked → in_progress` with the **same** ACs.
+   - If the workflow has no blocked state, stop and surface — do not invent status.
+2. **AC wrong** (definition itself is misconceived):
+   - `cancel` with a reason, then create a corrected story tagged
+     `supersedes:<cancelled sty id>`. Pull the prior story on demand as input;
+     continuity is by reference, not by mutating the cancelled record.
+
+Relations are **tags** only (`supersedes:<id>`, `blocked-by:<id>`) — no typed
+relation table. Select blocked **only** when the workflow graph offers it.
+
 See [[satelle-agent-model]], [[satelle-done-is-last]], [[satelle-constitution]].

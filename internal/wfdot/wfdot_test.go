@@ -626,6 +626,36 @@ digraph w {
 	}
 }
 
+// TestNonTerminalEngagingStatesReviewerPark: a park state modeled as
+// agent=reviewer with an outgoing resume edge is NOT engaging (so edit/commit
+// gates refuse while parked) — without hardcoding any state name.
+func TestNonTerminalEngagingStatesReviewerPark(t *testing.T) {
+	body := "```dot\n" + `digraph w {
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor]
+  park        [agent=reviewer, prompt="@skill:satelle-story-blocked-review"]
+  done        [shape=Msquare]
+  backlog -> in_progress -> done
+  in_progress -> park
+  park -> in_progress
+}
+` + "```\n"
+	spec, ok := Parse(body)
+	if !ok {
+		t.Fatal("parse")
+	}
+	engaging := map[string]bool{}
+	for _, s := range spec.NonTerminalEngagingStates() {
+		engaging[s] = true
+	}
+	if engaging["park"] {
+		t.Errorf("agent=reviewer park state must not be engaging, got %v", spec.NonTerminalEngagingStates())
+	}
+	if !engaging["in_progress"] {
+		t.Errorf("in_progress should remain engaging, got %v", spec.NonTerminalEngagingStates())
+	}
+}
+
 // TestNonTerminalEngagingStatesCancelSink closes the gap TestNonTerminalEngagingStates
 // masks: that test's cancelled node carries shape=Msquare, so the Msquare branch
 // catches it and the reviewer-sink branch (the REAL authored cancel shape — no shape

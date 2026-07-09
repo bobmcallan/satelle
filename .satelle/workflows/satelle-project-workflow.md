@@ -57,6 +57,9 @@ digraph satelle_workflow {
   release     [agent=executor, prompt="@skill:release"] // IN-LOOP: driving session releases
   done        [shape=Msquare]                           // terminal (release-review gates the edge in)
   cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
+  // blocked is a park state (not engaged): world-not-ready, same ACs on resume.
+  // agent=reviewer so the edit/commit gates do not treat it as engaged work.
+  blocked     [agent=reviewer, prompt="@skill:satelle-story-blocked-review"]
 
   // step opts this workflow into per-transition step summaries (sty_9a139c78):
   // an edge-less declaration, mandatory so a summary failure is surfaced.
@@ -78,9 +81,14 @@ digraph satelle_workflow {
   integration -> in_progress  // recovery: a test/review reject returns to work
   release     -> in_progress  // recovery: a release/done reject returns to work
 
+  // Park / resume: world-not-ready (reason gated on entry). Resume is agent-directed.
+  in_progress -> blocked      [agent=reviewer, prompt="@skill:satelle-story-blocked-review"]
+  blocked     -> in_progress
+
   backlog     -> cancelled
   plan        -> cancelled
   in_progress -> cancelled
+  blocked     -> cancelled
   integration -> cancelled
   release     -> cancelled
 }
