@@ -25,11 +25,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/wfdot"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -219,7 +219,7 @@ func storyEngaged() (bool, error) {
 
 // anyEngaged reports whether any work item sits in a non-terminal engaging state
 // of the workflow that governs IT — the stamped workflow, else its category-selected
-// one (agentstep.GoverningWorkflow). A "non-terminal engaging state" is one that
+// one (wfgovern.GoverningWorkflow). A "non-terminal engaging state" is one that
 // is neither start (shape=Mdiamond) nor terminal (shape=Msquare) nor cancel/exception
 // (agent=reviewer with no outgoing edges) — read from the authored DOT's shape
 // markers, not hardcoded (sty_f3d5d4b8).
@@ -230,7 +230,7 @@ func storyEngaged() (bool, error) {
 func anyEngaged(items []workitem.Item, wfs []docindex.Doc) (bool, error) {
 	engagingCache := map[string]map[string]bool{} // workflow name → engaging-state set
 	for _, it := range items {
-		wf, ok := agentstep.GoverningWorkflow(wfs, it)
+		wf, ok := wfgovern.GoverningWorkflow(wfs, it)
 		if !ok {
 			return false, fmt.Errorf("item %s has no resolving workflow — cannot determine engagement", it.ID)
 		}

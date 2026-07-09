@@ -46,7 +46,9 @@ func dispatchErr(t *testing.T, name string, req any) error {
 }
 
 func TestStoryRestampResolvesByCategory(t *testing.T) {
-	wire(t)
+	// Seed a wildcard workflow so definition freeze can resolve entry state
+	// when this test re-categorizes the story in backlog (sty_b572537f).
+	wireWithWorkflows(t, map[string]string{"freeze-wf": freezeWF})
 	wireResolver(t, &fakeWorkflowResolver{
 		byCategory: map[string]string{"feature": "wf-feature", "governance": "wf-gov"},
 		states: map[string][]string{
