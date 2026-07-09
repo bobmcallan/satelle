@@ -7,12 +7,13 @@
 openapi: "3.0.3"
 info:
   title: satelle hosted API
-  version: 0.0.131
+  version: 0.0.133
   description: >-
     Public interface for the satelle hosted server. Covers authentication,
-    principal identity, project management, and the versioned, per-user config
-    store. The CLI publishes this spec; servers implement it conformance-based
-    (no shared module).
+    principal identity, project management, the versioned config store, the
+    workspace-scoped document store, and one-way work-state replication. The
+    CLI publishes this spec; servers implement it conformance-based (no shared
+    module).
 
 tags:
   - name: auth
@@ -25,6 +26,14 @@ tags:
     description: >-
       Versioned, per-user authored-config store (the "set up project X like Y"
       surface). Per-file and workspace-scoped.
+  - name: documents
+    description: >-
+      Workspace-scoped authored-document store (byte-exact markdown, no
+      conversion). Per-file push/pull with an incremental changed-since list.
+  - name: workstate
+    description: >-
+      One-way local→server work-state mirror (stories, executions, ledger).
+      Always personal-workspace destination; origin stamped cli-sync server-side.
 
 servers:
   - url: https://satelle.dev
@@ -258,6 +267,139 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           description: No such path or version.
+
+  /api/v1/workspaces/{workspaceId}/documents:
+    get:
+      operationId: listDocumentChanges
+      summary: List document changes (incremental pull)
+      description: >-
+        Returns documents that changed after the optional `since` cursor, plus
+        a new cursor for the next pull. Without `since`, returns the full set
+        with a cursor. Metadata only — content is fetched per-path. Any member.
+      tags: [documents]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Opaque cursor from a previous listDocumentChanges response.
+      responses:
+        "200":
+          description: Changed items plus the next cursor.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentChanges"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/workspaces/{workspaceId}/documents/{path}:
+    put:
+      operationId: pushDocumentFile
+      summary: Push one document file (append a new version)
+      description: >-
+        Uploads one file's verbatim bytes (raw body), appending a new version
+        when the content differs from the current head. Identical content is
+        idempotent (created=false, HTTP 200). A conflict the client must resolve
+        is HTTP 409. Editor/owner role required.
+      tags: [documents]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+          description: >-
+            Server-relative document path (e.g. "documents/notes.md").
+            Multi-segment paths are accepted.
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Idempotent re-push of the current head (no new version).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigPushResult"
+        "201":
+          description: New version appended (new head).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigPushResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Conflict — client must resolve before retrying.
+    get:
+      operationId: getDocumentFile
+      summary: Fetch one document file's content
+      description: >-
+        Returns one path's content as text/plain; the ETag header is the blob
+        sha256. Any member.
+      tags: [documents]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The server-relative document path.
+      responses:
+        "200":
+          description: The file content.
+          headers:
+            ETag:
+              schema:
+                type: string
+              description: The blob sha256.
+          content:
+            text/plain:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such path.
+
+  /api/v1/workspaces/{workspaceId}/workstate:
+    post:
+      operationId: ingestWorkstate
+      summary: Ingest a work-state batch (one-way local→server)
+      description: >-
+        Upserts stories/executions (items) and ledger entries into the workspace
+        mirror. The server stamps origin=cli-sync on every row — the client must
+        not supply origin. Idempotent on re-push (upsert by id). Editor/owner
+        required. Work-state is per-user by design; the CLI always targets the
+        personal workspace even when a team workspace is active for config/docs.
+      tags: [workstate]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkstateIngest"
+      responses:
+        "200":
+          description: Upsert counts for this batch.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkstateIngestResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /oauth/authorize:
     get:
@@ -513,6 +655,50 @@ components:
           type: integer
           minimum: 1
           description: The earlier version to copy as the new head.
+
+    DocumentChanges:
+      type: object
+      required: [items, cursor]
+      description: >-
+        Incremental document list response: items that changed after the
+        caller's since cursor, plus the cursor for the next pull. Item shape
+        reuses ConfigItem (path/version/blob_sha256/size/created_at).
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConfigItem"
+        cursor:
+          type: string
+          description: Opaque cursor to pass as `since` on the next list call.
+
+    WorkstateIngest:
+      type: object
+      required: [items, ledger]
+      description: >-
+        One-way work-state batch. Each item needs id + kind; each ledger entry
+        needs id. Extra fields are preserved as opaque payload server-side.
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        ledger:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    WorkstateIngestResult:
+      type: object
+      required: [items, ledger]
+      description: Counts of upserted rows from a work-state ingest.
+      properties:
+        items:
+          type: integer
+        ledger:
+          type: integer
 
     TokenResponse:
       type: object

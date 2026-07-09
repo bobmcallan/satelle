@@ -129,8 +129,13 @@ func TestIsGitCommitOrPush(t *testing.T) {
 }
 
 func TestBashCommandFromEvent(t *testing.T) {
+	// Claude Code snake_case (tool_input.command).
 	if got := bashCommandFromEvent([]byte(`{"tool_input":{"command":"git push"}}`)); got != "git push" {
-		t.Errorf("bashCommandFromEvent = %q, want 'git push'", got)
+		t.Errorf("claude bashCommandFromEvent = %q, want 'git push'", got)
+	}
+	// Grok camelCase (toolInput.command) — sty_0d3665ee.
+	if got := bashCommandFromEvent([]byte(`{"hookEventName":"pre_tool_use","toolName":"run_terminal_command","toolInput":{"command":"git commit -m x"}}`)); got != "git commit -m x" {
+		t.Errorf("grok bashCommandFromEvent = %q, want 'git commit -m x'", got)
 	}
 	if got := bashCommandFromEvent([]byte(`not json`)); got != "" {
 		t.Errorf("bad event should yield empty command, got %q", got)
@@ -138,11 +143,22 @@ func TestBashCommandFromEvent(t *testing.T) {
 }
 
 func TestFilePathFromEvent(t *testing.T) {
+	// Claude Code snake_case.
 	if got := filePathFromEvent([]byte(`{"tool_input":{"file_path":"/a/b.go"}}`)); got != "/a/b.go" {
-		t.Errorf("file_path = %q, want /a/b.go", got)
+		t.Errorf("claude file_path = %q, want /a/b.go", got)
 	}
 	if got := filePathFromEvent([]byte(`{"tool_input":{"notebook_path":"/a/n.ipynb"}}`)); got != "/a/n.ipynb" {
-		t.Errorf("notebook_path = %q, want /a/n.ipynb", got)
+		t.Errorf("claude notebook_path = %q, want /a/n.ipynb", got)
+	}
+	// Grok camelCase toolInput + nested filePath / path aliases (sty_0d3665ee).
+	if got := filePathFromEvent([]byte(`{"toolInput":{"filePath":"/repo/.satelle/skills/x.md"}}`)); got != "/repo/.satelle/skills/x.md" {
+		t.Errorf("grok filePath = %q", got)
+	}
+	if got := filePathFromEvent([]byte(`{"toolInput":{"path":"/tmp/scratch.go"}}`)); got != "/tmp/scratch.go" {
+		t.Errorf("grok path = %q", got)
+	}
+	if got := filePathFromEvent([]byte(`{"toolInput":{"file_path":"/a/via-snake-under-camel.md"}}`)); got != "/a/via-snake-under-camel.md" {
+		t.Errorf("grok toolInput.file_path = %q", got)
 	}
 	if got := filePathFromEvent([]byte(`{}`)); got != "" {
 		t.Errorf("absent path should yield empty, got %q", got)
