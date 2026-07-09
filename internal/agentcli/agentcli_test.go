@@ -197,6 +197,92 @@ func TestRunDeliversPayloadOnStdin(t *testing.T) {
 	}
 }
 
+// {payload} substitutes as exactly one argv token (multi-line / JSON stays one
+// arg), including when empty — empty does not drop a preceding flag (unlike
+// {model}/{settings}). sty_5cf4a1fb.
+func TestBuildArgsSubstitutesPayload(t *testing.T) {
+	tmpl := strings.Fields("-p {payload} --flag x")
+	payload := "{\n  \"story\": \"id with spaces\"\n}"
+	args := buildArgs(tmpl, Request{Payload: payload})
+	if len(args) != 4 || args[0] != "-p" || args[1] != payload || args[2] != "--flag" || args[3] != "x" {
+		t.Errorf("multi-line {payload} should be one token after -p: %#v", args)
+	}
+
+	// Empty payload still emits the token and keeps the preceding flag.
+	argsEmpty := buildArgs(tmpl, Request{Payload: ""})
+	if len(argsEmpty) != 4 || argsEmpty[0] != "-p" || argsEmpty[1] != "" {
+		t.Errorf("empty {payload} must not drop -p: %#v", argsEmpty)
+	}
+}
+
+// Command() keeps the literal {payload} token — never the expanded body
+// (invocation evidence must stay payload-free). sty_5cf4a1fb AC3.
+func TestCommandKeepsPayloadPlaceholder(t *testing.T) {
+	r := templateFromHarness("fake-cli -p {payload} --append-system-prompt {system}")
+	cmd := r.Command()
+	if !strings.Contains(cmd, "{payload}") {
+		t.Errorf("Command() must keep literal {payload}: %q", cmd)
+	}
+	if strings.Contains(cmd, `"story"`) || strings.Contains(cmd, "secret-body") {
+		t.Errorf("Command() must not expand payload body: %q", cmd)
+	}
+	// And Run still expands for the real argv (sanity).
+	args := buildArgs(r.argTemplate, Request{Payload: "secret-body", SystemPrompt: "sys"})
+	if !contains(args, "secret-body") || !contains(args, "sys") {
+		t.Errorf("buildArgs should expand for Run: %#v", args)
+	}
+}
+
+// Dual delivery: when the harness includes {payload}, the child receives the
+// same bytes on argv AND on stdin. Uses a tiny sh script so we need no fixture
+// binary. sty_5cf4a1fb AC1/AC2.
+func TestRunDualDeliversPayloadArgvAndStdin(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH")
+	}
+	// argv[1] is the {payload} token; stdin is the dual channel. Print both so
+	// the test can assert equality without a custom binary.
+	r := templateRunner{
+		binary:      "sh",
+		argTemplate: []string{"-c", `printf 'ARGV:%s\nSTDIN:' "$1"; cat`, "_", "{payload}"},
+	}
+	payload := `{"id":"sty_test","from":"a","to":"b"}`
+	out, err := r.Run(context.Background(), Request{Payload: payload})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := string(out)
+	wantArgv := "ARGV:" + payload + "\n"
+	wantStdin := "STDIN:" + payload
+	if !strings.HasPrefix(got, wantArgv) {
+		t.Errorf("argv channel missing/wrong:\n got %q\nwant prefix %q", got, wantArgv)
+	}
+	if !strings.Contains(got, wantStdin) {
+		t.Errorf("stdin channel missing/wrong:\n got %q\nwant contain %q", got, wantStdin)
+	}
+}
+
+// Stdin-only harness (no {payload} token) still receives the body on stdin and
+// does not invent an argv payload — Claude-style templates stay unchanged.
+func TestRunStdinOnlyHarnessUnchanged(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH")
+	}
+	// No {payload} in template: only echo marker + cat stdin.
+	r := templateRunner{
+		binary:      "sh",
+		argTemplate: []string{"-c", `printf 'NOARG\n'; cat`},
+	}
+	payload := "stdin-only-body\n"
+	out, err := r.Run(context.Background(), Request{Payload: payload})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if string(out) != "NOARG\n"+payload {
+		t.Errorf("stdin-only harness: got %q", out)
+	}
+}
+
 // TestRunInjectsEnv drives the whole runProcess env seam against a real
 // subprocess: req.Env must reach the child's environment (sty_001558ce).
 func TestRunInjectsEnv(t *testing.T) {
