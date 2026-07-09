@@ -42,6 +42,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/structure"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -1315,45 +1316,31 @@ func (g *Engine) reviewerSkills(ctx context.Context, item workitem.Item, from, t
 // the baseline so gating never silently disappears.
 func (g *Engine) activeWorkflow(ctx context.Context, category string) (docindex.Doc, error) {
 	if workflows, err := g.docs.List(ctx, "workflows"); err == nil {
-		if ordered := OrderedWorkflows(workflows, category); len(ordered) > 0 {
+		if ordered := wfgovern.OrderedWorkflows(workflows, category); len(ordered) > 0 {
 			return ordered[0], nil // the highest-priority applicable workflow
 		}
 	}
 	return g.docs.Get(ctx, "workflows", baselineWorkflow)
 }
 
-// WorkflowStampPrefix is the tag prefix that STAMPS the governing workflow on a
-// story at create (sty_3800ac23): `workflow:<name>`. Recorded once, so gating
-// reads the chosen workflow rather than re-deriving it by category every time.
-const WorkflowStampPrefix = "workflow:"
+// WorkflowStampPrefix re-exports the stamp tag prefix (owned by wfgovern).
+const WorkflowStampPrefix = wfgovern.WorkflowStampPrefix
 
-// workflowCategory returns the key used to resolve an item's governing workflow.
-// A story resolves by its authored category; an EXECUTION resolves by its KIND
-// ("execution"), so a task-execution workflow (applies_to:["execution"]) governs
-// runs without depending on a per-item category, and an execution never falls
-// through to the wildcard STORY workflow (sty_ef08ce2a). A TASK header resolves
-// by its kind too (sty_3c1a2a9d): a header carries an authored category
-// ("substrate", "docs", …) no workflow declares, so category resolution would
-// fall through to the wildcard story workflow — the misrouting this closes. A
-// header driven directly lands on the task workflow, whose coded entry gate
-// refuses with the remedy (create an execution), instead of story gates.
-func workflowCategory(item workitem.Item) string {
-	switch item.Kind {
-	case workitem.KindExecution, workitem.KindTask:
-		return string(item.Kind)
-	}
-	return item.Category
+// workflowCategory / stampedWorkflowName thin-wrap wfgovern for in-package call sites.
+func workflowCategory(item workitem.Item) string { return wfgovern.WorkflowCategory(item) }
+func stampedWorkflowName(item workitem.Item) string {
+	return wfgovern.StampedWorkflowName(item)
 }
 
-// stampedWorkflowName returns the workflow stamped on the item (its
-// `workflow:<name>` tag), or "" when un-stamped (legacy/category-resolved).
-func stampedWorkflowName(item workitem.Item) string {
-	for _, t := range item.Tags {
-		if strings.HasPrefix(t, WorkflowStampPrefix) {
-			return strings.TrimSpace(strings.TrimPrefix(t, WorkflowStampPrefix))
-		}
-	}
-	return ""
+// OrderedWorkflows re-exports wfgovern.OrderedWorkflows for callers that still
+// import agentstep (web, CLI). Prefer wfgovern directly for new code.
+func OrderedWorkflows(workflows []docindex.Doc, category string) []docindex.Doc {
+	return wfgovern.OrderedWorkflows(workflows, category)
+}
+
+// GoverningWorkflow re-exports wfgovern.GoverningWorkflow.
+func GoverningWorkflow(workflows []docindex.Doc, item workitem.Item) (docindex.Doc, bool) {
+	return wfgovern.GoverningWorkflow(workflows, item)
 }
 
 // activeWorkflowPreferring resolves the governing workflow, preferring the item's
@@ -1423,14 +1410,14 @@ func WorkflowConsistency(workflows []docindex.Doc, resolve func(skill string) bo
 	// single canonical source, so a tie there is not the user's misconfiguration).
 	cats := map[string]bool{}
 	for _, w := range workflows {
-		for _, c := range frontmatterList(w.Body, "applies_to") {
+		for _, c := range wfgovern.FrontmatterList(w.Body, "applies_to") {
 			cats[c] = true
 		}
 	}
 	for c := range cats {
 		var repo []string
 		for _, w := range workflows {
-			if !w.Embedded && containsStr(frontmatterList(w.Body, "applies_to"), c) {
+			if !w.Embedded && containsStr(wfgovern.FrontmatterList(w.Body, "applies_to"), c) {
 				repo = append(repo, w.Name)
 			}
 		}
@@ -1491,67 +1478,6 @@ func referencedWorkflowSkills(spec wfdot.Spec) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// OrderedWorkflows returns the workflows that APPLY to a story of the given
-// category, ordered by selection priority (highest first) — the list satelle
-// offers an agent starting a story, where the head is the active/default choice
-// and the engine enforces. A workflow applies when its `applies_to` lists the
-// category or the wildcard "*". Priority tiers, in order:
-//
-//  1. category-specific match on a PROJECT (repo) workflow,
-//  2. category-specific match on a SYSTEM (embedded) workflow,
-//  3. wildcard ("*") PROJECT workflow,
-//  4. wildcard SYSTEM workflow.
-//
-// So a repo's project workflow overrides the embedded system default, and a
-// category-specific workflow overrides a wildcard one. Within a tier, input
-// order (name-sorted, as the doc index yields) is preserved.
-func OrderedWorkflows(workflows []docindex.Doc, category string) []docindex.Doc {
-	var specRepo, specSys, wildRepo, wildSys []docindex.Doc
-	for _, w := range workflows {
-		at := frontmatterList(w.Body, "applies_to")
-		switch {
-		case category != "" && containsStr(at, category):
-			if w.Embedded {
-				specSys = append(specSys, w)
-			} else {
-				specRepo = append(specRepo, w)
-			}
-		case containsStr(at, "*"):
-			if w.Embedded {
-				wildSys = append(wildSys, w)
-			} else {
-				wildRepo = append(wildRepo, w)
-			}
-		}
-	}
-	out := make([]docindex.Doc, 0, len(workflows))
-	out = append(out, specRepo...)
-	out = append(out, specSys...)
-	out = append(out, wildRepo...)
-	out = append(out, wildSys...)
-	return out
-}
-
-// GoverningWorkflow resolves the workflow that governs item from an already-listed
-// set: the stamped `workflow:<name>` if present and still in the set, else the
-// highest-priority workflow applicable to the item's category (OrderedWorkflows).
-// This is the single, list-based mirror of activeWorkflowPreferring — used where
-// the caller already holds the full workflow list (e.g. the edit gate deciding
-// engagement per story). Returns false when no workflow applies.
-func GoverningWorkflow(workflows []docindex.Doc, item workitem.Item) (docindex.Doc, bool) {
-	if name := stampedWorkflowName(item); name != "" {
-		for _, w := range workflows {
-			if w.Name == name {
-				return w, true
-			}
-		}
-	}
-	if ordered := OrderedWorkflows(workflows, workflowCategory(item)); len(ordered) > 0 {
-		return ordered[0], true
-	}
-	return docindex.Doc{}, false
 }
 
 // runCheck runs a skill's functional-check command and returns a deterministic

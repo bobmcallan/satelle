@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/wfdot"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -250,6 +252,29 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	if err != nil {
 		return nil, err
 	}
+
+	// Definition freeze (sty_b572537f): once a STORY leaves its workflow's entry
+	// state (Mdiamond / Spec.Start — not a hardcoded "backlog"), title/body/
+	// acceptance_criteria/category are immutable. Status, tags, priority,
+	// estimate/actual, and attachments still flow. Fail-closed when the entry
+	// state cannot be resolved so a broken deployment cannot silently permit
+	// an anti-gaming definition edit.
+	if current.Kind == workitem.KindStory {
+		if frozen := definitionFieldsChanged(current, req); len(frozen) > 0 {
+			entry, ok := storyEntryState(ctx, current)
+			if !ok {
+				return nil, fmt.Errorf(
+					"satelle: refusing to change definition fields [%s] on %s — cannot resolve the story's workflow entry state (fix config and retry)",
+					strings.Join(frozen, ", "), current.ID)
+			}
+			if current.Status != entry {
+				return nil, fmt.Errorf(
+					"satelle: refusing to change frozen definition field(s) [%s] on engaged story %s (status %q; entry state is %q) — title/body/acceptance_criteria/category are immutable once a story leaves its workflow entry state; status/estimate/actual/tags/priority/attachments are unaffected",
+					strings.Join(frozen, ", "), current.ID, current.Status, entry)
+			}
+		}
+	}
+
 	transitioning := req.Status != nil && *req.Status != current.Status
 
 	// Gate the transition through the isolated reviewer, if one is wired and the
@@ -792,6 +817,56 @@ func appendLedgerEntry(ctx context.Context, storyID, kind, actor, body string, p
 // records METADATA only (op, ids, before/after of changed fields) — never bodies.
 func appendOpLog(op, storyID, detail string, now time.Time) {
 	opLog.Append(now, "executor", op, storyID, detail)
+}
+
+// definitionFieldsChanged lists which of the four definition fields the request
+// actually changes (non-nil pointer whose value differs from current). Order is
+// fixed: title, body, acceptance_criteria, category. A resubmitted-identical
+// value does not count as a change.
+func definitionFieldsChanged(current workitem.Item, req setReq) []string {
+	var out []string
+	if req.Title != nil && *req.Title != current.Title {
+		out = append(out, "title")
+	}
+	if req.Body != nil && *req.Body != current.Body {
+		out = append(out, "body")
+	}
+	if req.AcceptanceCriteria != nil && *req.AcceptanceCriteria != current.AcceptanceCriteria {
+		out = append(out, "acceptance_criteria")
+	}
+	if req.Category != nil && *req.Category != current.Category {
+		out = append(out, "category")
+	}
+	return out
+}
+
+// storyEntryState returns the governing workflow's entry state (Spec.Start —
+// conventionally the Mdiamond node) for item. ok is false when the doc index is
+// unwired, the workflow list fails, no workflow governs the item, the body is
+// not DOT, or Start is empty. Pure governance path via wfgovern + wfdot so the
+// freeze holds even with no agent CLI configured.
+func storyEntryState(ctx context.Context, item workitem.Item) (string, bool) {
+	idx, err := requireDocIndex()
+	if err != nil {
+		return "", false
+	}
+	wfs, err := idx.List(ctx, "workflows")
+	if err != nil {
+		return "", false
+	}
+	wf, ok := wfgovern.GoverningWorkflow(wfs, item)
+	if !ok {
+		return "", false
+	}
+	spec, ok := wfdot.Parse(wf.Body)
+	if !ok {
+		return "", false
+	}
+	start := spec.Start()
+	if start == "" {
+		return "", false
+	}
+	return start, true
 }
 
 // tagsChanged reports the before/after tag sets as a one-line detail when they
