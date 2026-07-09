@@ -1,167 +1,22 @@
-# agents.toml — the agents layer: how each agent runs (backend + tool grant).
-#
-# The agent operating model (see the satelle-agent-model principle):
-#   - ORCHESTRATOR — the default driving session (the agent you run). It IS the
-#     in-loop executor below.
-#   - executor  — by default runs IN-LOOP as that full session: normal context,
-#     principles, and skills via the substrate (the satelle CLI); it reads a
-#     step's rubric from .satelle/skills. Not an isolated process.
-#   - reviewer  — an ISOLATED, read-only sub-process (rubric as system prompt).
-#   - any OTHER top-level section [<name>] is an OPTIONAL named agent, ALWAYS an
-#     isolated sub-process; a workflow node allocates a step to it via agent=<name>.
-#     (Every top-level section is an agent: executor/reviewer are the built-in roles,
-#      anything else is a named agent. The legacy nested [agents.<name>] still loads.)
-#
-# Define process/step agents HERE (a [<name>] binding + an agent=<name> node),
-# NEVER in a harness-specific agent dir (e.g. .claude/agents): those are invisible
-# to satelle — it cannot see, validate, dispatch, or carry them repo-agnostically —
-# and silently pin the repo to one CLI vendor. See "satelle help agent-dispatch".
-#
-# ALLOCATING A STEP TO AN AGENT (in the workflow DOT)
-# ---------------------------------------------------
-# A node's `agent=` value chooses HOW that step runs:
-#   in_progress [agent=executor, prompt="@skill:code"]  # IN-LOOP (default)
-#   in_progress [agent=worker,   prompt="@skill:code"]  # ISOLATED sub-process
-# Both perform the SAME rubric (@skill:code); only WHERE it runs differs.
-#   - agent=executor  → the current/driving session performs the step in-loop.
-#   - agent=reviewer  → an isolated, read-only gate.
-#   - agent=<name>    → the isolated named agent defined as a top-level [<name>] below.
-# NO SILENT FALLBACK (sty_fd427546): entering a named-agent state DISPATCHES the
-# step to that binding's harness (item on stdin, the node's rubric as the system
-# prompt). If a node names an agent NOT defined here, the transition is REFUSED
-# naming the missing binding — define the binding, or set its harness = "in-loop"
-# to keep that step with the orchestrator.
-#
-# THE HARNESS COMMAND TEMPLATE (the "command" that runs an agent CLI)
-# -------------------------------------------------------------------
-# Each binding's `harness` is how/where the agent runs. Two forms:
-#   - SINGLE token (e.g. harness = "claude") — a built-in PRESET; the reviewer
-#     preset carries a read-only --disallowedTools denylist.
-#   - MULTI token (e.g. harness = "claude -p --output-format json --append-system-prompt {system} ...")
-#     — a full COMMAND TEMPLATE taken verbatim, so a repo can point at ANY agent
-#     CLI by writing its argv. satelle substitutes these placeholders, each into
-#     its own argument (so a multi-line value stays one arg) and pipes the payload
-#     on stdin:
-#         {system}  the step's skill/rubric body (the system prompt)
-#         {tools}   the `tools` grant below (the agent CLI's --allowedTools)
-#         {model}   the `model` below (omit the placeholder to inherit the default)
-# `tools` is the capability grant; the grant travels with the binding, so a
-# reviewer's read-only ceiling holds whatever the backend.
-#
-# PER-BINDING ENV (sty_001558ce) — point a step at an alternate model backend
-# WITHOUT a wrapper binary. A binding may set `env = { KEY = "value" }`; each value
-# may reference the [vars] KV via ${NAME} (resolved at load, fail-fast on an unknown
-# var). The resolved env layers onto the dispatched agent's process (composeEnv,
-# binding keys win over the inherited shell) — but a REPO's own
-# .claude/settings.local.json env block, read by claude itself from its cwd, wins
-# over that process env, silently clobbering a provider override (sty_964be0ea).
-#
-# TRANSPARENT SETTINGS (sty_964be0ea) — the structural fix. A binding may ALSO set
-# `settings = { ... }`, a table that MIRRORS claude's settings.local.json schema
-# (env, model, permissions) verbatim: what you author is exactly what claude
-# receives, no derivation. satelle resolves its ${VAR} refs the same fail-fast way
-# as env, JSON-marshals it, and passes it INLINE as `--settings {settings}` (no
-# temp-file). Because --settings is CLI-tier it OVERRIDES settings.local.json, so a
-# binding's settings become authoritative for that dispatch. A binding with no
-# `settings` table emits no --settings flag at all (like an unset {model}). Example
-# — GLM via its Anthropic-compatible endpoint, the same claude CLI (this is exactly
-# how [retrospective] below runs):
-#   [retrospective]
-#   harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model} --settings {settings}"
-#   model   = "glm-4.6"
-#   settings = { env = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" } }
-# and in satelle.local.toml:  [vars] / GLM_API_KEY = "sk-…"
-
-# FULLY DEFINED (sty_892517e7, user feedback): every binding below writes out
-# its ACTIVE values — nothing hidden in code defaults — so what runs is exactly
-# what this file shows.
-#
-# CONSOLIDATED to sonnet for the whole work loop (operator decision): every gate
-# runs on [reviewer] (sonnet); every performing stage runs on sonnet — [planner]
-# (read-only) for plan, [worker] (code-writer) for in_progress + integration +
-# release. The earlier fable/GLM tiering is retired: integration + release moved
-# off the deleted [glm] performer onto [worker]. GLM survives only in
-# [retrospective] (a separate `satelle story retrospect` command, not a workflow
-# node) — move it to sonnet too if you want GLM gone entirely. plan cannot share
-# [worker]: it is entered from the non-performing backlog state, and the dispatch
-# lock-guard refuses a code-writer (Edit/Write) from a non-performing state.
-
 [executor]
-harness = "in-loop"            # the orchestrator/driving session itself
+harness = "in-loop"
 
-# The reviewer is an isolated, READ-ONLY judge: the claude preset denylists
-# Write/Edit/NotebookEdit/Bash on top of the read-only grant, so a rubric that
-# says "you cannot run commands" is enforced, not aspirational.
 [reviewer]
-# The FULL command template — transparent and swappable: satelle substitutes
-# {system}/{tools}/{model} (payload on stdin); point it at ANY agent CLI.
 harness = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model}"
-tools   = "Read,Grep,Glob"     # read-only grant
-model   = "sonnet"             # the rigorous "parent" model — every gate runs here. Sonnet caught release-evidence gaps GLM waved through and avoids GLM's 529/5h-quota flakiness.
-# No GLM env: the reviewer uses the Anthropic default endpoint.
+tools   = "Read,Grep,Glob"
+model   = "sonnet"
 
-# planner — the `plan` step's named agent (sty_d9a0b573). It reads the story,
-# writes an implementation plan covering every acceptance criterion, and attaches
-# it to the story (Bash(satelle:*) for `satelle story attach`) — read-only on the
-# source (no Edit/Write); it plans, it does not build. READ-ONLY BY NECESSITY:
-# `plan` is entered from the non-performing `backlog` state, and the dispatch
-# lock-guard refuses a code-writer (Edit/Write grant) dispatched from a
-# non-performing state — so plan cannot share the [worker] binding; it stays its
-# own read-only agent.
-#
-# On SONNET via the Anthropic default endpoint (was glm-4.6; consolidated to sonnet
-# with the rest of the work loop).
 [planner]
 harness = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Bash(satelle:*)"
 model   = "sonnet"
 
-# worker — this repo's sonnet code-writer for the performing stages that ARE
-# reached from a performing state. The project workflow allocates in_progress
-# (@skill:code), integration (@skill:integrate), AND release (@skill:release) to
-# it — integration + release were moved off the retired [glm] performer onto the
-# worker (consolidation: one code-writer on sonnet for every tree-touching stage).
-# A fresh isolated worker reconstructs context from the story + plan via the
-# read-only CLI (pull-context contract), then runs that step's rubric — code
-# implements the slice with tests, integration runs the suites + repairs trivial
-# fallout, release bumps .version + commits + pushes + records CI evidence — and
-# stops for the next gate.
-#
-# On SONNET via the Anthropic default endpoint (no GLM env) — the rigorous model
-# the code-ac gate judges on. in_progress is reached from the PERFORMING plan
-# state, integration from in_progress, release from integration (performing once it
-# carries agent=worker), so the engaged-story edit gate legitimately allows each
-# dispatch — the lock-guard (agentstep.DispatchExecutor) REFUSES a code-writer from
-# a non-performing state rather than let it ride the serve fail-open (which is why
-# plan cannot run here).
-#
-# COMPLETE grant (the isolated-commit lesson): the two former-[glm] rubrics run
-# here too, so it carries go/gofmt/make (suites + format), git+gh (commit/push/CI
-# evidence), satelle (context-pull + attach), and Edit/Write (product code, trivial
-# repair, the .version bump) — no step hits a permission wall and returns a false OK.
 [worker]
 harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Edit,Write,Bash(satelle:*),Bash(go:*),Bash(gofmt:*),Bash(make:*),Bash(git:*),Bash(gh:*)"
 model   = "sonnet"
-# release watches a CI window (push -> test -> release publish) and integration
-# runs the full suite; 45m gives a real run room before the kill.
 timeout = "45m"
 
-# retrospective — the post-story improvement agent (sty_b53730e2): `satelle story
-# retrospect <id>` dispatches it over a FINISHED story to file 1–3 improvement
-# proposals (rubric gaps, DRY debt, CI/test gaps) as backlog stories. It needs
-# Bash(satelle:*) to pull the story and file proposals — read-only otherwise (it
-# proposes, never edits code). NOT a project-workflow node (a standalone command),
-# so it sits OUTSIDE the sonnet consolidation and stays on glm-4.6 (cheap, reliable
-# GLM-4 line) — the ONLY remaining GLM consumer. Its cost is visible via
-# `satelle story cost`, so keep-vs-trim is a measured decision.
-#
-# Its provider override lives under `settings.env` (not a bare top-level `env`,
-# sty_964be0ea): a top-level env is only a process-env overlay, which this repo's
-# .claude/settings.local.json env block (read from cwd by claude itself) silently
-# overwrites — so this binding likely never actually reached z.ai. `--settings
-# {settings}` is CLI-tier and beats settings.local.json, making the GLM endpoint
-# authoritative for this dispatch.
 [retrospective]
 harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model} --settings {settings}"
 tools   = "Read,Grep,Glob,Bash(satelle:*)"

@@ -21,9 +21,14 @@ The agent receives:
      gates govern every advance),
   3. the **pull-context call-to-action** (see below),
   4. the node's `@skill:<name>` **rubric** — the instructions for the step.
-- **stdin**: the work item as JSON — `{story, from, to, review_skill}`. `story`
-  carries the id, title, body, and acceptance criteria; `from`/`to` are the
-  transition being performed.
+- **Payload (dual delivery):** the work item as JSON —
+  `{story, from, to, review_skill}`. `story` carries the id, title, body, and
+  acceptance criteria; `from`/`to` are the transition being performed. Delivery
+  is **always on stdin**, and the same bytes substitute into the harness
+  placeholder **`{payload}`** when the template includes it (one argv token).
+  Stdin-first CLIs (e.g. Claude) leave `{payload}` out of the template so the
+  prompt is not double-fed; argv-first CLIs (e.g. `grok -p {payload} …`) opt in.
+  Empty `{model}`/`{settings}` drop their flag; empty `{payload}` does not.
 - **Capabilities**: exactly the binding's `tools` and `model` grant, nothing
   more.
 
@@ -90,6 +95,16 @@ substrate, never in a harness's agent directory.
    harness = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
    tools   = "Read,Grep,Glob,Bash(satelle:*)"   # read-only + the pull-context CLI
    model   = "opus"                              # per-step model selection is the model key
+   ```
+
+   Argv-first CLI example (payload on `-p` **and** still on stdin):
+
+   ```toml
+   [architect]
+   harness = "grok -p {payload} --system-prompt-override {system} --tools {tools} -m {model} --output-format json --always-approve"
+   tools   = "read_file,grep,list_dir,run_terminal_command"  # Grok tool ids in the CLI list;
+   # note: satelle's Bash(satelle:*) grant check still expects Claude-shaped tools for dispatch
+   model   = "grok-build"
    ```
 
 2. **Allocate a workflow node** to it in the DOT:
