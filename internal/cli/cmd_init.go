@@ -582,7 +582,7 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer:
 # is ALWAYS also written on stdin (dual delivery). Empty {model}/{settings}
 # drop that flag; empty {payload} does not. Claude's default uses stdin only
 # (no -p {payload}) so the prompt is not double-fed; argv-first CLIs opt in, e.g.
-#   harness = "grok -p {payload} --system-prompt-override {system} --tools {tools} -m {model} --output-format json --always-approve"
+#   harness = "grok -p {payload} --system-prompt-override {system} --tools {tools} --always-approve --output-format plain --max-turns 8 --no-subagents"
 #
 # PER-BINDING ENV — point a step at an alternate model backend WITHOUT a wrapper
 # binary. A binding may set env = { KEY = "value" }; each value may reference the

@@ -95,7 +95,9 @@ func newChrome(t *testing.T) context.Context {
 }
 
 func TestBrowserProjectPageInteractions(t *testing.T) {
-	base, repo := serveRepo(t, "8801")
+	// Port 8801 is unusable on some hosts (EADDRINUSE with no LISTEN socket);
+	// keep browser e2e ports in a free high range.
+	base, repo := serveRepo(t, "8830")
 
 	// Seed: one open story, one done story (so the default status:open filter is
 	// observable), one task, and an authored doc.

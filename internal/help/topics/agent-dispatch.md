@@ -97,14 +97,19 @@ substrate, never in a harness's agent directory.
    model   = "opus"                              # per-step model selection is the model key
    ```
 
-   Argv-first CLI example (payload on `-p` **and** still on stdin):
+   Argv-first CLI example (payload on `-p` **and** still on stdin). Grok's
+   single-turn flag is `-p`/`--single` — put **`{payload}`** there (not only on
+   stdin). Prefer `--output-format plain` so the model's decision JSON is on
+   stdout for gate parsing; `--output-format json` also works because satelle
+   unwraps Grok's `{ "text": "…" }` envelope the same way it unwraps Claude's
+   `{ "result": "…" }`. Use enough `--max-turns` for tool-using gates (1 is
+   often too low).
 
    ```toml
    [architect]
-   harness = "grok -p {payload} --system-prompt-override {system} --tools {tools} -m {model} --output-format json --always-approve"
-   tools   = "read_file,grep,list_dir,run_terminal_command"  # Grok tool ids in the CLI list;
+   harness = "grok -p {payload} --system-prompt-override {system} --tools {tools} --always-approve --output-format plain --max-turns 8 --no-subagents"
+   tools   = "read_file,grep,list_dir,run_terminal_command"  # Grok-native tool ids
    # note: satelle's Bash(satelle:*) grant check still expects Claude-shaped tools for dispatch
-   model   = "grok-build"
    ```
 
 2. **Allocate a workflow node** to it in the DOT:

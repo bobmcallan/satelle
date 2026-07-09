@@ -382,12 +382,23 @@ func TestUnwrapUsage(t *testing.T) {
 	if string(text) != raw || u.TotalTokens != 0 {
 		t.Errorf("plain text should pass through with zero usage: %q %+v", text, u)
 	}
-	// A JSON object that is NOT the envelope (no result) passes through untouched,
-	// so verdict parsing still sees the original bytes (never a silent empty).
+	// A JSON object that is NOT the envelope (no result, no text) passes through
+	// untouched, so verdict parsing still sees the original bytes (never a silent empty).
 	other := `{"decision":"accept"}`
 	text, u = UnwrapUsage([]byte(other))
 	if string(text) != other || u.TotalTokens != 0 {
 		t.Errorf("non-envelope json should pass through: %q %+v", text, u)
+	}
+	// Grok --output-format json envelope: model reply is in .text (often nested
+	// decision JSON). Without unwrap, parseDecision cannot see a decision inside
+	// the escaped string (dogfood sty_5cf4a1fb).
+	grokEnv := `{"text":"{\"decision\":\"accept\",\"notes\":\"dogfood\"}","stopReason":"EndTurn","sessionId":"x"}`
+	text, u = UnwrapUsage([]byte(grokEnv))
+	if string(text) != `{"decision":"accept","notes":"dogfood"}` {
+		t.Errorf("grok text not extracted: %q", text)
+	}
+	if u.TotalTokens != 0 {
+		t.Errorf("grok envelope has no usage fields in this shape: %+v", u)
 	}
 }
 
