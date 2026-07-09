@@ -7,11 +7,12 @@
 openapi: "3.0.3"
 info:
   title: satelle hosted API
-  version: 0.0.130
+  version: 0.0.131
   description: >-
     Public interface for the satelle hosted server. Covers authentication,
-    principal identity, and project management. The CLI publishes this spec;
-    servers implement it conformance-based (no shared module).
+    principal identity, project management, and the versioned, per-user config
+    store. The CLI publishes this spec; servers implement it conformance-based
+    (no shared module).
 
 tags:
   - name: auth
@@ -20,6 +21,10 @@ tags:
     description: Project management
   - name: workspaces
     description: Workspace identity and selection
+  - name: config
+    description: >-
+      Versioned, per-user authored-config store (the "set up project X like Y"
+      surface). Per-file and workspace-scoped.
 
 servers:
   - url: https://satelle.dev
@@ -107,6 +112,152 @@ paths:
                   $ref: "#/components/schemas/Workspace"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/workspaces/{workspaceId}/config:
+    get:
+      operationId: listConfig
+      summary: List a workspace's config manifest (the deploy set)
+      description: >-
+        Returns the latest version of every config path in the workspace — the
+        deploy set "satelle sync config deploy" materializes ("set up project X
+        like Y"). Any workspace member may read it.
+      tags: [config]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Array of config manifest items.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ConfigItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/workspaces/{workspaceId}/config/{path}:
+    put:
+      operationId: pushConfigFile
+      summary: Push one config file (append a new version)
+      description: >-
+        Uploads one file's verbatim bytes (raw body, <=1 MiB), appending a new
+        version (head) when the content differs from the current head. Identical
+        content is idempotent: the response carries created=false (HTTP 200)
+        rather than a new head (HTTP 201). Editor/owner role required.
+      tags: [config]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+          description: >-
+            The server-relative config path (e.g. "skills/review.md",
+            "agents.toml", "constitution.md"). Multi-segment paths are accepted.
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Idempotent re-push of the current head (no new version).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigPushResult"
+        "201":
+          description: New version appended (new head).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigPushResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    get:
+      operationId: getConfigFile
+      summary: Fetch one config file's content
+      description: >-
+        Returns one path's content as text/plain; the ETag header is the blob
+        sha256. ?version=N pins a per-file version (default: latest head);
+        ?history=1 returns that path's version list as JSON instead. Any member.
+      tags: [config]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The server-relative config path.
+        - name: version
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+          description: Pin a per-file version (default: latest head).
+        - name: history
+          in: query
+          required: false
+          schema:
+            type: integer
+            enum: [1]
+          description: Return the path's version list as JSON instead of content.
+      responses:
+        "200":
+          description: The file content (or the version list when history=1).
+          headers:
+            ETag:
+              schema:
+                type: string
+              description: The blob sha256 (content fetch only).
+          content:
+            text/plain:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ConfigItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such path (or the pinned version predates its first appearance).
+
+  /api/v1/workspaces/{workspaceId}/config-rollback:
+    post:
+      operationId: rollbackConfigFile
+      summary: Roll back a config file to an earlier version
+      description: >-
+        Appends a new head copying an earlier version of a path, recovering a
+        prior version. Editor/owner role required.
+      tags: [config]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigRollbackRequest"
+      responses:
+        "201":
+          description: New head appended from the earlier version.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigPushResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such path or version.
 
   /oauth/authorize:
     get:
@@ -227,6 +378,15 @@ components:
         OAuth 2.0 bearer token obtained via /oauth/token. On 401, clients
         should attempt a refresh_token grant and retry once.
 
+  parameters:
+    WorkspaceId:
+      name: workspaceId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: The workspace identifier the config store is scoped to.
+
   schemas:
     Principal:
       type: object
@@ -289,6 +449,70 @@ components:
         name:
           type: string
           description: Human-readable workspace name; the handle clients select on.
+
+    ConfigItem:
+      type: object
+      required: [path, version, blob_sha256, size, created_at]
+      description: >-
+        One entry in a workspace's config manifest — the latest head of a config
+        path. The deploy set for "set up project X like Y".
+      properties:
+        path:
+          type: string
+          description: >-
+            Server-relative config path (e.g. "skills/review.md", "agents.toml",
+            "constitution.md"). Multi-segment paths are accepted.
+        version:
+          type: integer
+          minimum: 1
+          description: The version number of this entry (1 = first, monotonically increasing).
+        blob_sha256:
+          type: string
+          description: SHA-256 of the content bytes (hex); also served as the GET ETag.
+        size:
+          type: integer
+          format: int64
+          description: Content size in bytes.
+        created_at:
+          type: string
+          format: date-time
+          description: When this version was created.
+
+    ConfigPushResult:
+      type: object
+      required: [path, version, blob_sha256, size, created]
+      description: >-
+        Per-file response to a config push. Created distinguishes a new head
+        (true, HTTP 201) from an idempotent re-push of the current head (false,
+        HTTP 200).
+      properties:
+        path:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        blob_sha256:
+          type: string
+        size:
+          type: integer
+          format: int64
+        created:
+          type: boolean
+          description: True iff this push appended a new head.
+
+    ConfigRollbackRequest:
+      type: object
+      required: [path, version]
+      description: >-
+        Body for a config rollback: append a new head copying an earlier version
+        of a path (recovery of a prior version).
+      properties:
+        path:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+          description: The earlier version to copy as the new head.
 
     TokenResponse:
       type: object
