@@ -177,6 +177,9 @@ func TestEnsureProcessHooksBoth(t *testing.T) {
 	if !strings.Contains(out, "[compat.claude] hooks=false") {
 		t.Errorf("report missing Grok compat.claude line:\n%s", out)
 	}
+	if !strings.Contains(out, "trusted_folders.toml") || !strings.Contains(out, "Grok project hooks trusted") {
+		t.Errorf("report missing Grok folder trust line:\n%s", out)
+	}
 	if _, err := os.Stat(filepath.Join(repo, ".claude", "settings.json")); err != nil {
 		t.Errorf("claude hooks missing: %v", err)
 	}
@@ -190,6 +193,23 @@ func TestEnsureProcessHooksBoth(t *testing.T) {
 	}
 	if !strings.Contains(string(gcfg), "[compat.claude]") || !strings.Contains(string(gcfg), "hooks = false") {
 		t.Errorf("compat.claude hooks=false missing:\n%s", gcfg)
+	}
+	// Folder trust for this repo root only (sty_edb01f49).
+	trust, err := os.ReadFile(filepath.Join(home, ".grok", "trusted_folders.toml"))
+	if err != nil {
+		t.Fatalf("trusted_folders not written: %v", err)
+	}
+	abs, _ := filepath.Abs(repo)
+	if !strings.Contains(string(trust), abs) || !strings.Contains(string(trust), "trusted = true") {
+		t.Errorf("repo not trusted:\n%s", trust)
+	}
+	// Re-run: trust line silent (already trusted), hooks still present.
+	var buf2 bytes.Buffer
+	if err := ensureProcessHooks(&buf2, repo); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf2.String(), "Grok project hooks trusted") {
+		t.Errorf("idempotent re-init should not re-report trust:\n%s", buf2.String())
 	}
 }
 
@@ -325,8 +345,14 @@ func TestGrokNotDetectedSkipsCompatConfig(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, ".grok", "config.toml")); err == nil {
 		t.Errorf("compat config written without Grok detection:\n%s", buf.String())
 	}
+	if _, err := os.Stat(filepath.Join(home, ".grok", "trusted_folders.toml")); err == nil {
+		t.Errorf("folder trust written without Grok detection:\n%s", buf.String())
+	}
 	if strings.Contains(buf.String(), "compat.claude") {
 		t.Errorf("report mentions compat.claude without Grok:\n%s", buf.String())
+	}
+	if strings.Contains(buf.String(), "trusted_folders") {
+		t.Errorf("report mentions trusted_folders without Grok:\n%s", buf.String())
 	}
 }
 

@@ -419,12 +419,33 @@ func ensureProcessHooks(out io.Writer, repoRoot string) error {
 		} else {
 			fmt.Fprintln(out, initLine(added, grokHooksRel+" (process hooks)"))
 		}
+		// Project hooks load only when Grok trusts the folder; grant trust for
+		// this repo root so .grok/hooks/satelle.json is not silently skipped
+		// (sty_edb01f49 — same effect as /hooks-trust, automatic on init).
+		if err := ensureGrokFolderTrust(out, repoRoot); err != nil {
+			return err
+		}
 		// Grok-native .grok/hooks/satelle.json is the sole process-hook path under
 		// Grok; leave skills/rules/agents/mcps alone.
 		if err := ensureGrokCompatConfig(out); err != nil {
 			return err
 		}
 	}
+	return nil
+}
+
+// ensureGrokFolderTrust records repoRoot in ~/.grok/trusted_folders.toml so
+// Grok loads project process hooks. Reports a line only when the store changes
+// (first trust or promote from trusted=false).
+func ensureGrokFolderTrust(out io.Writer, repoRoot string) error {
+	changed, abs, err := config.EnsureGrokFolderTrusted(repoRoot)
+	if err != nil {
+		return fmt.Errorf("init: grok folder trust: %w", err)
+	}
+	if !changed {
+		return nil
+	}
+	fmt.Fprintf(out, "  + ~/.grok/trusted_folders.toml (Grok project hooks trusted for %s)\n", abs)
 	return nil
 }
 
