@@ -53,9 +53,10 @@ func newSyncConfigCmd() *cobra.Command {
 		Short: "Upload authored config to the versioned store (a new version per file)",
 		Long: `push walks the authored-config areas (workflows/principles/skills/constitution/
 agents/tasks) per their resolved [sync] scope — skipping local areas — and uploads
-each file as a new version into the caller's PERSONAL workspace only (epic:sync-publish).
-Identical content is idempotent (no new version). Team is not a sync destination;
-use satelle publish to expose artifacts to a team catalog.`,
+each file as a new version into this repo's bound hosted PROJECT's personal
+collection only (epic:sync-publish). Identical content is idempotent (no new
+version). Team is not a sync destination; use satelle publish to expose artifacts
+to a team catalog. Requires "satelle project bind <slug>".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncConfigPush(cmd, pushServer, pushWorkspace, dryRun)
 		},
@@ -148,11 +149,16 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 		fmt.Fprintln(out, note)
 	}
 	if dryRun {
-		fmt.Fprintf(out, "Would push %d config file(s) to personal workspace on %s:\n", len(files), server)
+		fmt.Fprintf(out, "Would push %d config file(s) to bound project personal collection on %s:\n", len(files), server)
 		for _, f := range files {
 			fmt.Fprintf(out, "  %-40s -> personal\n", f.Path)
 		}
 		return nil
+	}
+	// Bound project before any network (AC5).
+	project, err := resolveBoundProject(cfg)
+	if err != nil {
+		return err
 	}
 	client := hosted.NewClient(server, hosted.FileStore{}, nil)
 	personalID, err := client.ActiveWorkspaceID(cmd.Context(), config.PersonalWorkspace)
@@ -161,7 +167,7 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 	}
 	var created, skipped int
 	for _, f := range files {
-		res, perr := client.PushConfigFile(cmd.Context(), personalID, f.Path, f.Content)
+		res, perr := client.PushConfigFile(cmd.Context(), personalID, project, f.Path, f.Content)
 		if perr != nil {
 			if errors.Is(perr, hosted.ErrLoginRequired) {
 				return perr
@@ -174,7 +180,7 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 			skipped++
 		}
 	}
-	fmt.Fprintf(out, "Pushed %d config file(s) to personal workspace on %s: %d new, %d unchanged.\n", len(files), server, created, skipped)
+	fmt.Fprintf(out, "Pushed %d config file(s) to project %q personal collection on %s: %d new, %d unchanged.\n", len(files), project, server, created, skipped)
 	return nil
 }
 
@@ -187,13 +193,20 @@ func runSyncConfigDeploy(cmd *cobra.Command, serverArg, workspaceArg string, ver
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}
+	// Config store routes require ?project= (server sty_0e56fe79). Personal
+	// deploy uses the bound project; explicit --workspace still needs a project
+	// binding to select which partition to read.
+	project, err := resolveBoundProject(cfg)
+	if err != nil {
+		return err
+	}
 	sourceName := resolveDeploySourceName(cfg, workspaceArg)
 	client := hosted.NewClient(server, hosted.FileStore{}, nil)
 	wsID, err := client.ActiveWorkspaceID(cmd.Context(), sourceName)
 	if err != nil {
 		return fmt.Errorf("resolve workspace: %w", err)
 	}
-	manifest, err := client.ConfigManifest(cmd.Context(), wsID)
+	manifest, err := client.ConfigManifest(cmd.Context(), wsID, project)
 	if err != nil {
 		if errors.Is(err, hosted.ErrLoginRequired) {
 			return err
@@ -201,13 +214,13 @@ func runSyncConfigDeploy(cmd *cobra.Command, serverArg, workspaceArg string, ver
 		return fmt.Errorf("fetch manifest: %w", err)
 	}
 	if len(manifest) == 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "No config in workspace %q on %s.\n", sourceName, server)
+		fmt.Fprintf(cmd.OutOrStdout(), "No config in workspace %q project %q on %s.\n", sourceName, project, server)
 		return nil
 	}
 	var files []subsync.File
 	var missing int
 	for _, item := range manifest {
-		content, _, ferr := client.ConfigFileContent(cmd.Context(), wsID, item.Path, version)
+		content, _, ferr := client.ConfigFileContent(cmd.Context(), wsID, project, item.Path, version)
 		if ferr != nil {
 			if errors.Is(ferr, hosted.ErrConfigFileMissing) && version > 0 {
 				missing++ // a file this version predates — skip it

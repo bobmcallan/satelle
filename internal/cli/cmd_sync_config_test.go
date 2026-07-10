@@ -108,6 +108,10 @@ func newFakeConfigServer(t *testing.T) *httptest.Server {
 			return
 		}
 		wsID := segs[0]
+		// Project partitions the store (server sty_0e56fe79).
+		if proj := r.URL.Query().Get("project"); proj != "" {
+			wsID = wsID + "|" + proj
+		}
 		path := ""
 		if len(segs) == 3 {
 			path = segs[2]
@@ -171,6 +175,9 @@ func pointAt(t *testing.T, repo string) {
 	t.Setenv("SATELLE_CONFIG", filepath.Join(repo, ".satelle", "satelle.toml"))
 }
 
+// boundProjectToml is the [hosted] project binding every personal-sync test needs.
+const boundProjectToml = "[hosted]\nproject = \"probe\"\n"
+
 func writeRepoFile(t *testing.T, repo, rel, body string) {
 	t.Helper()
 	dest := filepath.Join(repo, filepath.FromSlash(rel))
@@ -190,7 +197,7 @@ func TestSyncConfigPushDeploysByteExact(t *testing.T) {
 	seedCred(t, ts.URL)
 
 	// Source repo: personal-scope skills + constitution (sync is personal-only).
-	src := syncConfigRepo(t, "[sync]\nskills = \"personal\"\nconstitution = \"personal\"\n")
+	src := syncConfigRepo(t, "[sync]\nskills = \"personal\"\nconstitution = \"personal\"\n"+boundProjectToml)
 	skillBody := "---\ntype: skill\n---\npersonal skill\n"
 	constBody := "# project constitution\n"
 	writeRepoFile(t, src, ".satelle/skills/team-skill.md", skillBody)
@@ -205,8 +212,8 @@ func TestSyncConfigPushDeploysByteExact(t *testing.T) {
 		t.Fatalf("push output: %q", buf.String())
 	}
 
-	// Fresh destination repo: deploy from personal workspace.
-	dst := syncConfigRepo(t, "")
+	// Fresh destination repo: deploy from personal workspace (bound project partition).
+	dst := syncConfigRepo(t, boundProjectToml)
 	pointAt(t, dst)
 
 	cmd2, buf2 := testCmd()
@@ -254,7 +261,7 @@ func TestSyncConfigPushSharedFlagGoesPersonal(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\n[hosted]\nworkspace = \"Acme\"\n")
+	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
 	writeRepoFile(t, repo, ".satelle/skills/shared-one.md", "---\ntype: skill\nshared: true\n---\nshared body\n")
 	writeRepoFile(t, repo, ".satelle/skills/private-one.md", "---\ntype: skill\n---\nprivate body\n")
 	pointAt(t, repo)
@@ -269,7 +276,7 @@ func TestSyncConfigPushSharedFlagGoesPersonal(t *testing.T) {
 	}
 
 	// Both files in personal; team workspace empty of these paths.
-	dst := syncConfigRepo(t, "")
+	dst := syncConfigRepo(t, boundProjectToml)
 	pointAt(t, dst)
 	cmd2, _ := testCmd()
 	if err := runSyncConfigDeploy(cmd2, ts.URL, "personal", 0); err != nil {
@@ -280,7 +287,7 @@ func TestSyncConfigPushSharedFlagGoesPersonal(t *testing.T) {
 			t.Errorf("personal missing %s: %v", name, err)
 		}
 	}
-	dstTeam := syncConfigRepo(t, "")
+	dstTeam := syncConfigRepo(t, boundProjectToml)
 	pointAt(t, dstTeam)
 	cmd3, buf3 := testCmd()
 	_ = runSyncConfigDeploy(cmd3, ts.URL, "Acme", 0)
@@ -296,7 +303,7 @@ func TestSyncConfigPushIdempotent(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\nprinciples = \"personal\"\n")
+	repo := syncConfigRepo(t, "[sync]\nprinciples = \"personal\"\n"+boundProjectToml)
 	writeRepoFile(t, repo, ".satelle/principles/rule.md", "one rule\n")
 	pointAt(t, repo)
 
@@ -322,7 +329,7 @@ func TestSyncConfigDeployVersionPin(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\nprinciples = \"personal\"\n")
+	repo := syncConfigRepo(t, "[sync]\nprinciples = \"personal\"\n"+boundProjectToml)
 	writeRepoFile(t, repo, ".satelle/principles/rule.md", "version one\n")
 	pointAt(t, repo)
 	cmd, _ := testCmd()
@@ -337,7 +344,7 @@ func TestSyncConfigDeployVersionPin(t *testing.T) {
 	}
 
 	// Deploy version 1 into a fresh repo from personal -> the ORIGINAL bytes.
-	dst := syncConfigRepo(t, "")
+	dst := syncConfigRepo(t, boundProjectToml)
 	pointAt(t, dst)
 	cmd3, buf3 := testCmd()
 	if err := runSyncConfigDeploy(cmd3, ts.URL, "personal", 1); err != nil {
@@ -354,7 +361,7 @@ func TestSyncConfigPushDryRun(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\n")
+	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\n"+boundProjectToml)
 	writeRepoFile(t, repo, ".satelle/skills/shared-one.md", "---\nshared: true\n---\nx\n")
 	writeRepoFile(t, repo, ".satelle/skills/private-one.md", "---\n---\nx\n")
 	pointAt(t, repo)
@@ -382,7 +389,7 @@ func TestSyncConfigPushAreaSharedGoesPersonal(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\nskills = \"shared\"\n[hosted]\nworkspace = \"Acme\"\n")
+	repo := syncConfigRepo(t, "[sync]\nskills = \"shared\"\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
 	writeRepoFile(t, repo, ".satelle/skills/team-skill.md", "---\ntype: skill\n---\nteam area skill\n")
 	pointAt(t, repo)
 
@@ -395,7 +402,7 @@ func TestSyncConfigPushAreaSharedGoesPersonal(t *testing.T) {
 		t.Fatalf("expected shared-area note, got: %q", out)
 	}
 
-	dst := syncConfigRepo(t, "")
+	dst := syncConfigRepo(t, boundProjectToml)
 	pointAt(t, dst)
 	cmd2, _ := testCmd()
 	if err := runSyncConfigDeploy(cmd2, ts.URL, "personal", 0); err != nil {
@@ -404,11 +411,67 @@ func TestSyncConfigPushAreaSharedGoesPersonal(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dst, ".satelle", "skills", "team-skill.md")); err != nil {
 		t.Errorf("area-shared file missing from personal: %v", err)
 	}
-	dstTeam := syncConfigRepo(t, "")
+	dstTeam := syncConfigRepo(t, boundProjectToml)
 	pointAt(t, dstTeam)
 	cmd3, _ := testCmd()
 	_ = runSyncConfigDeploy(cmd3, ts.URL, "Acme", 0)
 	if _, err := os.Stat(filepath.Join(dstTeam, ".satelle", "skills", "team-skill.md")); err == nil {
 		t.Error("area-shared file must not land in team via sync")
+	}
+}
+
+// TestSyncConfigPushRequiresBoundProject (AC5): personal sync without a bound
+// project fails client-side with zero network calls.
+func TestSyncConfigPushRequiresBoundProject(t *testing.T) {
+	var hits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		t.Errorf("unexpected network call to %s %s", r.Method, r.URL.String())
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	seedCred(t, ts.URL)
+
+	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\n") // no [hosted] project
+	writeRepoFile(t, repo, ".satelle/skills/x.md", "---\ntype: skill\n---\nx\n")
+	pointAt(t, repo)
+
+	cmd, _ := testCmd()
+	err := runSyncConfigPush(cmd, ts.URL, "", false)
+	if err == nil || !strings.Contains(err.Error(), "no hosted project bound") {
+		t.Fatalf("expected unbound-project error, got %v", err)
+	}
+	if hits != 0 {
+		t.Fatalf("unbound project contacted server %d time(s)", hits)
+	}
+}
+
+// TestSyncConfigDeployRequiresBoundProject (AC5): deploy without a bound project
+// fails client-side with zero network calls.
+func TestSyncConfigDeployRequiresBoundProject(t *testing.T) {
+	var hits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		t.Errorf("unexpected network call to %s %s", r.Method, r.URL.String())
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	seedCred(t, ts.URL)
+
+	repo := syncConfigRepo(t, "") // no project
+	pointAt(t, repo)
+	cmd, _ := testCmd()
+	err := runSyncConfigDeploy(cmd, ts.URL, "personal", 0)
+	if err == nil || !strings.Contains(err.Error(), "no hosted project bound") {
+		t.Fatalf("expected unbound-project error, got %v", err)
+	}
+	if hits != 0 {
+		t.Fatalf("unbound project contacted server %d time(s)", hits)
 	}
 }

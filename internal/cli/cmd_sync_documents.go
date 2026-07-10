@@ -2,8 +2,8 @@ package cli
 
 // `satelle sync documents` — the CLI counterpart to the hosted workspace
 // path-document store. push/pull are PERSONAL ONLY (epic:sync-publish): local
-// .satelle/documents ↔ the caller's personal workspace. Team is not a sync
-// destination — use satelle publish for the team catalog.
+// .satelle/documents ↔ this repo's bound hosted project's personal collection.
+// Team is not a sync destination — use satelle publish for the team catalog.
 
 import (
 	"errors"
@@ -30,9 +30,10 @@ func newSyncDocumentsCmd() *cobra.Command {
 		Use:   "push",
 		Short: "Upload authored documents to the workspace store (a new version per file)",
 		Long: `push walks the documents area per its resolved [sync] scope — skipping local —
-and uploads each file as a new version into the caller's PERSONAL workspace only
-(epic:sync-publish). Identical content is idempotent. Team is not a sync destination;
-use satelle publish to expose documents to a team catalog.`,
+and uploads each file as a new version into this repo's bound hosted PROJECT's
+personal collection only (epic:sync-publish). Identical content is idempotent.
+Team is not a sync destination; use satelle publish to expose documents to a team
+catalog. Requires "satelle project bind <slug>".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncDocumentsPush(cmd, pushServer, pushWorkspace, dryRun)
 		},
@@ -46,9 +47,10 @@ use satelle publish to expose documents to a team catalog.`,
 	pull := &cobra.Command{
 		Use:   "pull",
 		Short: "Pull document changes into this repo (incremental, byte-exact)",
-		Long: `pull fetches documents that changed since the last cursor from the PERSONAL
-workspace only (epic:sync-publish) and writes them byte-for-byte into this repo's
-documents area. Up-to-date trees report "up to date".`,
+		Long: `pull fetches documents that changed since the last cursor from this repo's
+bound hosted PROJECT's personal collection only (epic:sync-publish) and writes
+them byte-for-byte into this repo's documents area. Up-to-date trees report
+"up to date". Requires "satelle project bind <slug>".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncDocumentsPull(cmd, pullServer, pullWorkspace)
 		},
@@ -87,11 +89,16 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 		fmt.Fprintln(out, note)
 	}
 	if dryRun {
-		fmt.Fprintf(out, "Would push %d document(s) to personal workspace on %s:\n", len(files), server)
+		fmt.Fprintf(out, "Would push %d document(s) to bound project personal collection on %s:\n", len(files), server)
 		for _, f := range files {
 			fmt.Fprintf(out, "  %-40s -> personal\n", f.Path)
 		}
 		return nil
+	}
+	// Bound project before any network (AC5).
+	project, err := resolveBoundProject(cfg)
+	if err != nil {
+		return err
 	}
 	client := hosted.NewClient(server, hosted.FileStore{}, nil)
 	personalID, err := client.ActiveWorkspaceID(cmd.Context(), config.PersonalWorkspace)
@@ -100,7 +107,7 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 	}
 	var created, skipped int
 	for _, f := range files {
-		res, perr := client.PushDocumentFile(cmd.Context(), personalID, f.Path, f.Content)
+		res, perr := client.PushDocumentFile(cmd.Context(), personalID, project, f.Path, f.Content)
 		if perr != nil {
 			if errors.Is(perr, hosted.ErrLoginRequired) {
 				return perr
@@ -116,7 +123,7 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 			skipped++
 		}
 	}
-	fmt.Fprintf(out, "Pushed %d document(s) to personal workspace on %s: %d new, %d unchanged.\n", len(files), server, created, skipped)
+	fmt.Fprintf(out, "Pushed %d document(s) to project %q personal collection on %s: %d new, %d unchanged.\n", len(files), project, server, created, skipped)
 	return nil
 }
 
@@ -143,6 +150,11 @@ func runSyncDocumentsPull(cmd *cobra.Command, serverArg, workspaceArg string) er
 	if err != nil {
 		absRoot = repoRoot
 	}
+	// Bound project before any network (AC5).
+	project, err := resolveBoundProject(cfg)
+	if err != nil {
+		return err
+	}
 	client := hosted.NewClient(server, hosted.FileStore{}, nil)
 
 	// Personal only (epic:sync-publish). Team catalog is via publish/adopt.
@@ -150,7 +162,7 @@ func runSyncDocumentsPull(cmd *cobra.Command, serverArg, workspaceArg string) er
 	if err != nil {
 		return fmt.Errorf("resolve personal workspace: %w", err)
 	}
-	n, perr := pullDocumentsFromWorkspace(cmd, client, server, absRoot, dataDir, personalID, "personal")
+	n, perr := pullDocumentsFromWorkspace(cmd, client, server, absRoot, dataDir, personalID, project, "personal")
 	if perr != nil {
 		return perr
 	}
@@ -158,19 +170,19 @@ func runSyncDocumentsPull(cmd *cobra.Command, serverArg, workspaceArg string) er
 		fmt.Fprintf(out, "Documents up to date on %s.\n", server)
 		return nil
 	}
-	fmt.Fprintf(out, "Pulled %d document(s) from personal workspace on %s into %s.\n", n, server, dataDir)
+	fmt.Fprintf(out, "Pulled %d document(s) from project %q personal collection on %s into %s.\n", n, project, server, dataDir)
 	return nil
 }
 
-// pullDocumentsFromWorkspace runs one workspace's incremental pull: load cursor,
-// list changes, fetch content, Restore, THEN save cursor (only after a successful
-// restore so a crash re-fetches rather than silently drops files).
-func pullDocumentsFromWorkspace(cmd *cobra.Command, client *hosted.Client, server, absRoot, dataDir, wsID, label string) (int, error) {
-	cursor, err := hosted.LoadDocumentCursor(server, wsID, absRoot)
+// pullDocumentsFromWorkspace runs one workspace+project incremental pull: load
+// cursor, list changes, fetch content, Restore, THEN save cursor (only after a
+// successful restore so a crash re-fetches rather than silently drops files).
+func pullDocumentsFromWorkspace(cmd *cobra.Command, client *hosted.Client, server, absRoot, dataDir, wsID, project, label string) (int, error) {
+	cursor, err := hosted.LoadDocumentCursor(server, wsID, project, absRoot)
 	if err != nil {
 		return 0, fmt.Errorf("load document cursor (%s): %w", label, err)
 	}
-	changes, err := client.ListDocumentChanges(cmd.Context(), wsID, cursor)
+	changes, err := client.ListDocumentChanges(cmd.Context(), wsID, project, cursor)
 	if err != nil {
 		if errors.Is(err, hosted.ErrLoginRequired) {
 			return 0, err
@@ -180,7 +192,7 @@ func pullDocumentsFromWorkspace(cmd *cobra.Command, client *hosted.Client, serve
 	if len(changes.Items) == 0 {
 		// Still advance the cursor when the server issues a new one with an empty batch.
 		if changes.Cursor != "" && changes.Cursor != cursor {
-			if err := hosted.SaveDocumentCursor(server, wsID, absRoot, changes.Cursor); err != nil {
+			if err := hosted.SaveDocumentCursor(server, wsID, project, absRoot, changes.Cursor); err != nil {
 				return 0, fmt.Errorf("save document cursor (%s): %w", label, err)
 			}
 		}
@@ -188,7 +200,7 @@ func pullDocumentsFromWorkspace(cmd *cobra.Command, client *hosted.Client, serve
 	}
 	var files []subsync.File
 	for _, item := range changes.Items {
-		content, _, ferr := client.DocumentFileContent(cmd.Context(), wsID, item.Path)
+		content, _, ferr := client.DocumentFileContent(cmd.Context(), wsID, project, item.Path)
 		if ferr != nil {
 			if errors.Is(ferr, hosted.ErrLoginRequired) {
 				return 0, ferr
@@ -206,7 +218,7 @@ func pullDocumentsFromWorkspace(cmd *cobra.Command, client *hosted.Client, serve
 		}
 	}
 	if changes.Cursor != "" {
-		if err := hosted.SaveDocumentCursor(server, wsID, absRoot, changes.Cursor); err != nil {
+		if err := hosted.SaveDocumentCursor(server, wsID, project, absRoot, changes.Cursor); err != nil {
 			return 0, fmt.Errorf("save document cursor (%s): %w", label, err)
 		}
 	}

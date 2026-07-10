@@ -117,6 +117,11 @@ type Config struct {
 type HostedConfig struct {
 	// Server is the hosted-server base URL (e.g. https://hosted.satelle.dev).
 	Server string `toml:"server"`
+	// Project is the hosted project slug this repo maps to. Personal sync
+	// (config/documents/workstate) targets this project's collection on the
+	// server — not a shared dump across every project under the personal
+	// workspace (sty_0aa3df89). Written by `satelle project bind <slug>`.
+	Project string `toml:"project"`
 	// Workspace is the ACTIVE hosted workspace scoped sync routes personal+shared
 	// areas through (epic:scoped-sync) — the handle the future sync engine
 	// prefixes. Unset (or the personal sentinel) means the developer's OWN

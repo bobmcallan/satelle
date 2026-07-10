@@ -62,6 +62,9 @@ func TestClientPushConfigFile(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
+		if r.URL.Query().Get("project") != "probe" {
+			t.Errorf("project query = %q, want probe", r.URL.Query().Get("project"))
+		}
 		calls++
 		b, _ := io.ReadAll(r.Body)
 		gotBody = string(b)
@@ -76,7 +79,7 @@ func TestClientPushConfigFile(t *testing.T) {
 	})
 	_ = ts
 
-	res, err := c.PushConfigFile(context.Background(), "w1", "skills/x.md", []byte("body"))
+	res, err := c.PushConfigFile(context.Background(), "w1", "probe", "skills/x.md", []byte("body"))
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -90,7 +93,7 @@ func TestClientPushConfigFile(t *testing.T) {
 		t.Errorf("first push result = %+v, want Created=true v1", res)
 	}
 	// Second identical push -> idempotent (200, Created=false).
-	res2, err := c.PushConfigFile(context.Background(), "w1", "skills/x.md", []byte("body"))
+	res2, err := c.PushConfigFile(context.Background(), "w1", "probe", "skills/x.md", []byte("body"))
 	if err != nil {
 		t.Fatalf("second push: %v", err)
 	}
@@ -106,10 +109,13 @@ func TestClientConfigManifest(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
+		if r.URL.Query().Get("project") != "probe" {
+			t.Errorf("project query = %q, want probe", r.URL.Query().Get("project"))
+		}
 		_, _ = w.Write([]byte(`[{"path":"skills/x.md","version":2,"blob_sha256":"h","size":4,"created_at":"t"},{"path":"agents.toml","version":1,"blob_sha256":"g","size":9,"created_at":"t"}]`))
 	})
 	_ = ts
-	items, err := c.ConfigManifest(context.Background(), "w1")
+	items, err := c.ConfigManifest(context.Background(), "w1", "probe")
 	if err != nil {
 		t.Fatalf("manifest: %v", err)
 	}
@@ -138,25 +144,25 @@ func TestClientConfigFileContent(t *testing.T) {
 	})
 	_ = ts
 
-	body, etag, err := c.ConfigFileContent(context.Background(), "w1", "skills/x.md", 0)
+	body, etag, err := c.ConfigFileContent(context.Background(), "w1", "probe", "skills/x.md", 0)
 	if err != nil {
 		t.Fatalf("content: %v", err)
 	}
 	if string(body) != "file body" || etag != `"sha-abc"` {
 		t.Errorf("content = %q, etag = %q", body, etag)
 	}
-	if gotQuery != "" {
-		t.Errorf("latest fetch sent query %q, want none", gotQuery)
+	if !strings.Contains(gotQuery, "project=probe") {
+		t.Errorf("latest fetch query %q, want project=probe", gotQuery)
 	}
 	// Pinned version that 404s -> ErrConfigFileMissing (deploy skips it).
-	if _, _, err := c.ConfigFileContent(context.Background(), "w1", "skills/x.md", 1); !errors.Is(err, ErrConfigFileMissing) {
+	if _, _, err := c.ConfigFileContent(context.Background(), "w1", "probe", "skills/x.md", 1); !errors.Is(err, ErrConfigFileMissing) {
 		t.Errorf("pinned-missing = %v, want ErrConfigFileMissing", err)
 	}
 }
 
 // TestClientPushConfigFileNoCredential: no credential -> ErrLoginRequired.
 func TestClientPushConfigFileNoCredential(t *testing.T) {
-	_, err := NewClient("https://example", &memStore{}, nil).PushConfigFile(context.Background(), "w1", "x", []byte("b"))
+	_, err := NewClient("https://example", &memStore{}, nil).PushConfigFile(context.Background(), "w1", "probe", "x", []byte("b"))
 	if !errors.Is(err, ErrLoginRequired) {
 		t.Fatalf("expected ErrLoginRequired, got %v", err)
 	}

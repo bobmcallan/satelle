@@ -2,8 +2,9 @@ package hosted
 
 // Document-sync pull cursor store (epic:scoped-sync, order:6). Persists the
 // incremental changed-since cursor OUTSIDE any repo — beside the credentials
-// file under $XDG_CONFIG_HOME/satelle/ — keyed by (server, workspaceID, repoRoot)
-// so one login's multi-repo pulls don't clobber each other's cursors.
+// file under $XDG_CONFIG_HOME/satelle/ — keyed by
+// (server, workspaceID, project, repoRoot) so one login's multi-repo / multi-
+// project pulls don't clobber each other's cursors.
 
 import (
 	"encoding/json"
@@ -42,28 +43,29 @@ func DocumentSyncStatePath() (string, error) {
 // (tests only). Empty in production.
 var DocumentSyncStatePathOverride string
 
-// documentCursorKey builds the map key for a (server, workspace, repo) triple.
-// server is normalized the same way credentials are; repoRoot should be absolute.
-func documentCursorKey(server, workspaceID, repoRoot string) string {
-	return normalizeServerURL(server) + "|" + workspaceID + "|" + filepath.Clean(repoRoot)
+// documentCursorKey builds the map key for a (server, workspace, project, repo)
+// quadruple. server is normalized the same way credentials are; repoRoot should
+// be absolute; project is the bound hosted project slug.
+func documentCursorKey(server, workspaceID, project, repoRoot string) string {
+	return normalizeServerURL(server) + "|" + workspaceID + "|" + project + "|" + filepath.Clean(repoRoot)
 }
 
-// LoadDocumentCursor returns the last-persisted pull cursor for the triple, or
+// LoadDocumentCursor returns the last-persisted pull cursor for the key, or
 // "" when none is stored (first pull / unknown key). A missing file is not an
 // error — it yields the empty cursor.
-func LoadDocumentCursor(server, workspaceID, repoRoot string) (string, error) {
+func LoadDocumentCursor(server, workspaceID, project, repoRoot string) (string, error) {
 	docSyncMu.Lock()
 	defer docSyncMu.Unlock()
 	state, err := loadDocumentSyncState()
 	if err != nil {
 		return "", err
 	}
-	return state.Cursors[documentCursorKey(server, workspaceID, repoRoot)], nil
+	return state.Cursors[documentCursorKey(server, workspaceID, project, repoRoot)], nil
 }
 
-// SaveDocumentCursor persists the pull cursor for the triple. Write is atomic
+// SaveDocumentCursor persists the pull cursor for the key. Write is atomic
 // (tmp + rename) so a crash mid-write cannot corrupt the file.
-func SaveDocumentCursor(server, workspaceID, repoRoot, cursor string) error {
+func SaveDocumentCursor(server, workspaceID, project, repoRoot, cursor string) error {
 	docSyncMu.Lock()
 	defer docSyncMu.Unlock()
 	state, err := loadDocumentSyncState()
@@ -73,7 +75,7 @@ func SaveDocumentCursor(server, workspaceID, repoRoot, cursor string) error {
 	if state.Cursors == nil {
 		state.Cursors = map[string]string{}
 	}
-	state.Cursors[documentCursorKey(server, workspaceID, repoRoot)] = cursor
+	state.Cursors[documentCursorKey(server, workspaceID, project, repoRoot)] = cursor
 	return writeDocumentSyncState(state)
 }
 

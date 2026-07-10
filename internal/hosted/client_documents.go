@@ -49,12 +49,13 @@ func documentFileRoute(wsID, path string) string {
 }
 
 // ListDocumentChanges returns documents that changed after since (empty since =
-// full set). The returned cursor is what the next pull should pass as since.
-// A missing credential yields ErrLoginRequired; other non-200s a clean serverError.
-func (c *Client) ListDocumentChanges(ctx context.Context, wsID, since string) (DocumentChanges, error) {
-	route := documentsManifestRoute(wsID)
+// full set) within the project's partition. The returned cursor is what the next
+// pull should pass as since. A missing credential yields ErrLoginRequired;
+// other non-200s a clean serverError.
+func (c *Client) ListDocumentChanges(ctx context.Context, wsID, project, since string) (DocumentChanges, error) {
+	route := withProjectQuery(documentsManifestRoute(wsID), project)
 	if strings.TrimSpace(since) != "" {
-		route += "?since=" + url.QueryEscape(since)
+		route += "&since=" + url.QueryEscape(since)
 	}
 	resp, err := c.doAuthed(ctx, http.MethodGet, route, nil, "")
 	if err != nil {
@@ -81,15 +82,15 @@ func (c *Client) ListDocumentChanges(ctx context.Context, wsID, since string) (D
 	}
 }
 
-// PushDocumentFile PUTs one file's verbatim bytes to .../documents/{path}.
-// Created distinguishes a new head (HTTP 201) from an idempotent re-push of the
-// current head (HTTP 200). A 409 yields ErrDocumentConflict; a missing
-// credential yields ErrLoginRequired.
-func (c *Client) PushDocumentFile(ctx context.Context, wsID, path string, content []byte) (ConfigPushResult, error) {
+// PushDocumentFile PUTs one file's verbatim bytes to
+// .../documents/{path}?project=. Created distinguishes a new head (HTTP 201)
+// from an idempotent re-push of the current head (HTTP 200). A 409 yields
+// ErrDocumentConflict; a missing credential yields ErrLoginRequired.
+func (c *Client) PushDocumentFile(ctx context.Context, wsID, project, path string, content []byte) (ConfigPushResult, error) {
 	if content == nil {
 		content = []byte{}
 	}
-	resp, err := c.doAuthed(ctx, http.MethodPut, documentFileRoute(wsID, path), content, "text/plain; charset=utf-8")
+	resp, err := c.doAuthed(ctx, http.MethodPut, withProjectQuery(documentFileRoute(wsID, path), project), content, "text/plain; charset=utf-8")
 	if err != nil {
 		return ConfigPushResult{}, err
 	}
@@ -115,10 +116,11 @@ func (c *Client) PushDocumentFile(ctx context.Context, wsID, path string, conten
 	}
 }
 
-// DocumentFileContent GETs one path's content as text/plain. The returned etag
-// is the blob sha256 from the ETag header. A 404 yields ErrDocumentFileMissing.
-func (c *Client) DocumentFileContent(ctx context.Context, wsID, path string) ([]byte, string, error) {
-	resp, err := c.doAuthed(ctx, http.MethodGet, documentFileRoute(wsID, path), nil, "")
+// DocumentFileContent GETs one path's content as text/plain from the project's
+// partition. The returned etag is the blob sha256 from the ETag header. A 404
+// yields ErrDocumentFileMissing.
+func (c *Client) DocumentFileContent(ctx context.Context, wsID, project, path string) ([]byte, string, error) {
+	resp, err := c.doAuthed(ctx, http.MethodGet, withProjectQuery(documentFileRoute(wsID, path), project), nil, "")
 	if err != nil {
 		return nil, "", err
 	}

@@ -17,12 +17,15 @@ func TestClientPushWorkstate(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
+		if r.URL.Query().Get("project") != "probe" {
+			t.Errorf("project query = %q, want probe", r.URL.Query().Get("project"))
+		}
 		gotBody, _ = io.ReadAll(r.Body)
 		_, _ = w.Write([]byte(`{"items":2,"ledger":1}`))
 	})
 	_ = ts
 
-	res, err := c.PushWorkstate(context.Background(), "w1", WorkstateIngest{
+	res, err := c.PushWorkstate(context.Background(), "w1", "probe", WorkstateIngest{
 		Items: []json.RawMessage{
 			json.RawMessage(`{"id":"sty_1","kind":"story","status":"done","title":"T"}`),
 			json.RawMessage(`{"id":"exe_1","kind":"execution","status":"done","title":"R"}`),
@@ -42,7 +45,7 @@ func TestClientPushWorkstate(t *testing.T) {
 		t.Errorf("body missing item: %s", gotBody)
 	}
 	// Nil slices encode as empty arrays, not null.
-	res2, err := c.PushWorkstate(context.Background(), "w1", WorkstateIngest{})
+	res2, err := c.PushWorkstate(context.Background(), "w1", "probe", WorkstateIngest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +62,7 @@ func TestClientPushWorkstateAuth(t *testing.T) {
 	// Replace store with one that has tokens but server always 401s (refresh also fails).
 	// configTestServer's 401 path tries refresh; simplest: drop credentials.
 	c = NewClient(ts.URL, &memStore{}, ts.Client())
-	_, err := c.PushWorkstate(context.Background(), "w1", WorkstateIngest{})
+	_, err := c.PushWorkstate(context.Background(), "w1", "probe", WorkstateIngest{})
 	if !errors.Is(err, ErrLoginRequired) {
 		t.Fatalf("want ErrLoginRequired, got %v", err)
 	}

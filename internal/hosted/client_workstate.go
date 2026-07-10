@@ -31,11 +31,12 @@ func workstateRoute(wsID string) string {
 	return "/api/v1/workspaces/" + url.PathEscape(wsID) + "/workstate"
 }
 
-// PushWorkstate POSTs a one-way work-state batch into the workspace mirror.
-// Always targets the workspace the caller passes — the CLI always passes the
-// personal workspace (work-state never team-shares). A missing credential
-// yields ErrLoginRequired; other non-200s a clean serverError.
-func (c *Client) PushWorkstate(ctx context.Context, wsID string, batch WorkstateIngest) (WorkstateIngestResult, error) {
+// PushWorkstate POSTs a one-way work-state batch into the project's partition of
+// the workspace mirror (.../workstate?project=). Always targets the workspace
+// the caller passes — the CLI always passes the personal workspace (work-state
+// never team-shares). A missing credential yields ErrLoginRequired; other
+// non-200s a clean serverError.
+func (c *Client) PushWorkstate(ctx context.Context, wsID, project string, batch WorkstateIngest) (WorkstateIngestResult, error) {
 	if batch.Items == nil {
 		batch.Items = []json.RawMessage{}
 	}
@@ -46,7 +47,7 @@ func (c *Client) PushWorkstate(ctx context.Context, wsID string, batch Workstate
 	if err != nil {
 		return WorkstateIngestResult{}, fmt.Errorf("hosted: encode workstate: %w", err)
 	}
-	resp, err := c.doAuthed(ctx, http.MethodPost, workstateRoute(wsID), payload, contentJSON)
+	resp, err := c.doAuthed(ctx, http.MethodPost, withProjectQuery(workstateRoute(wsID), project), payload, contentJSON)
 	if err != nil {
 		return WorkstateIngestResult{}, err
 	}

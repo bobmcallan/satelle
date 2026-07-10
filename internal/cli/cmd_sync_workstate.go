@@ -1,10 +1,11 @@
 package cli
 
 // `satelle sync workstate` — one-way local→server work-state replication
-// (epic:scoped-sync, order:7). Always targets the caller's PERSONAL workspace;
-// a team active-workspace binding never redirects work-state. The [sync] scope
-// still gates whether each work-state area (stories, ledger, executions) is
-// pushed at all (local → skip; personal|shared → push to personal).
+// (epic:scoped-sync, order:7). Always targets this repo's bound hosted
+// PROJECT's personal collection; a team active-workspace binding never
+// redirects work-state. The [sync] scope still gates whether each work-state
+// area (stories, ledger, executions) is pushed at all (local → skip;
+// personal|shared → push to personal+project).
 
 import (
 	"context"
@@ -42,9 +43,11 @@ func newSyncWorkstateCmd() *cobra.Command {
 		Annotations: needsStore(),
 		Long: `push collects local stories, task-executions, and ledger entries for work-state
 areas whose resolved [sync] scope is personal or shared, and upserts them into
-the caller's personal workspace on the hosted server (origin=cli-sync). Local-
-scoped areas are skipped. A team active-workspace binding does NOT redirect
-work-state — destination is always personal. There is no pull (one-way by design).`,
+this repo's bound hosted PROJECT's personal collection on the hosted server
+(origin=cli-sync). Local-scoped areas are skipped. A team active-workspace
+binding does NOT redirect work-state — destination is always the bound project's
+personal partition. Requires "satelle project bind <slug>". There is no pull
+(one-way by design).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncWorkstatePush(cmd, pushServer, dryRun)
 		},
@@ -83,13 +86,19 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun bool) err
 		return nil
 	}
 	if dryRun {
-		fmt.Fprintf(out, "Would push work-state areas to personal workspace on %s:\n", server)
+		fmt.Fprintf(out, "Would push work-state areas to bound project personal collection on %s:\n", server)
 		for _, area := range WorkstateAreas {
 			if optIn[area] {
 				fmt.Fprintf(out, "  %s -> personal\n", area)
 			}
 		}
 		return nil
+	}
+
+	// Bound project before any network (AC5).
+	project, err := resolveBoundProject(a.Config)
+	if err != nil {
+		return err
 	}
 
 	batch, err := collectWorkstate(cmd.Context(), a, optIn)
@@ -107,15 +116,15 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun bool) err
 	if err != nil {
 		return fmt.Errorf("resolve personal workspace: %w", err)
 	}
-	res, err := client.PushWorkstate(cmd.Context(), personalID, batch)
+	res, err := client.PushWorkstate(cmd.Context(), personalID, project, batch)
 	if err != nil {
 		if errors.Is(err, hosted.ErrLoginRequired) {
 			return err
 		}
 		return fmt.Errorf("push workstate: %w", err)
 	}
-	fmt.Fprintf(out, "Pushed work-state to personal workspace on %s: %d item(s), %d ledger entr(y/ies).\n",
-		server, res.Items, res.Ledger)
+	fmt.Fprintf(out, "Pushed work-state to project %q personal collection on %s: %d item(s), %d ledger entr(y/ies).\n",
+		project, server, res.Items, res.Ledger)
 	return nil
 }
 
