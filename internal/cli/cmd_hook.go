@@ -89,9 +89,14 @@ tracked story. The "engaged" policy is authored substrate — it reads the
 workflow's DOT shape markers (Mdiamond=start, Msquare=terminal) rather than
 hardcoding state names, so configuration drives the decision (sty_f3d5d4b8).
 
-Edits are NEVER gated when: the target is OUTSIDE the repo (session scratch); it
-is authored SUBSTRATE under the data dir (.satelle/ by default — workflows,
-skills, principles, documents, tasks, and config); or it falls under a configured
+Edits OUTSIDE the repo root are REFUSED (sty_3026d890): a session in
+satelle-server must not rewrite files under a sibling tree such as ../satelle.
+If the change belongs in another satelle-enabled project, create and engage the
+story in THAT repo. Session scratch under /tmp is no longer a free pass.
+
+Edits are exempt from the engaged-story check when: the target is authored
+SUBSTRATE under the data dir (.satelle/ by default — workflows, skills,
+principles, documents, tasks, and config); or it falls under a configured
 [gate] edit_exempt_paths prefix. Authored substrate is the source of truth,
 edited freely without a binary release (the constitution and
 satelle-generated-readonly); generated views under it stay protected by their
@@ -115,11 +120,11 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 			// as a gate rejection (sty_f3d5d4b8).
 			engaged, engErr := storyEngaged()
 			if p := filePathFromEvent(raw); p != "" {
-				// An edit whose target is OUTSIDE the repo (e.g. the session
-				// scratchpad under /tmp) is untracked scratch, not project code —
-				// never gated.
+				// Cross-repo lock (sty_3026d890): refuse any edit outside this repo.
+				// Observed failure: agent in satelle-server wrote CLI code under
+				// ../satelle with no story in the correct repo — process break.
 				if !withinRepoTarget(p) {
-					return nil
+					return outsideRepoEditErr(p)
 				}
 				// Authored SUBSTRATE under the data dir (.satelle/ by default) is the
 				// source of truth, "edited without a binary release" — the
@@ -325,13 +330,23 @@ func filePathFromEvent(raw []byte) string {
 
 // withinRepoTarget reports whether target resolves to a path inside this repo.
 // The repo root is derived from the committed config path; if it cannot be
-// resolved, it returns true (stay conservative — the edit gate still applies).
+// resolved, it returns true (stay conservative — treat as in-repo so other gate
+// rules still apply rather than free-passing an unresolvable path).
 func withinRepoTarget(target string) bool {
 	_, cfgPath, err := config.Load("")
 	if err != nil {
 		return true
 	}
 	return withinRoot(config.RepoRootFromConfigPath(cfgPath), target)
+}
+
+// outsideRepoEditErr is the agent-facing refusal when a PreToolUse edit targets
+// a path outside the current repo root (sty_3026d890). Kept as a constructor so
+// the guidance string is unit-tested and stays stable for harnesses.
+func outsideRepoEditErr(path string) error {
+	return fmt.Errorf(
+		"satelle: refusing edit outside this repo (%s) — only paths under the repo root may be modified here. If this change belongs in another project (e.g. CLI work for an epic tracked on satelle-server), open a session in THAT repo and create/engage the story there: satelle story create … then satelle story set <id> --status plan",
+		path)
 }
 
 // exemptTarget reports whether an edit to target is exempt from the engaged-story

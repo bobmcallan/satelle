@@ -48,9 +48,14 @@ func TestHookGateExemptsSubstrate(t *testing.T) {
 	if gateEvent(t, repo, filepath.Join(repo, "internal", "cli", "cmd_hook.go")) {
 		t.Error("edit gate allowed an in-repo code edit with no engaged story")
 	}
-	// … and an out-of-repo scratch path stays exempt.
-	if !gateEvent(t, repo, "/tmp/claude/scratch/foo.sh") {
-		t.Error("edit gate blocked an out-of-repo scratch edit (should be exempt)")
+	// … and an out-of-repo path is REFUSED (cross-repo lock, sty_3026d890) —
+	// including former "session scratch" under /tmp and sibling trees.
+	if gateEvent(t, repo, "/tmp/claude/scratch/foo.sh") {
+		t.Error("edit gate allowed an out-of-repo path (must refuse cross-repo edits)")
+	}
+	sibling := filepath.Join(filepath.Dir(repo), "other-project", "main.go")
+	if gateEvent(t, repo, sibling) {
+		t.Error("edit gate allowed a sibling-tree path (must refuse cross-repo edits)")
 	}
 }
 
