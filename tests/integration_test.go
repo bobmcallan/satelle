@@ -87,12 +87,21 @@ func stubReviewerAccept(t *testing.T, repo string) {
 func enableParallelStories(t *testing.T, repo string) {
 	t.Helper()
 	p := filepath.Join(repo, ".satelle", "satelle.toml")
-	f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0o644)
+	orig, err := os.ReadFile(p)
 	if err != nil {
-		t.Fatalf("open satelle.toml: %v", err)
+		t.Fatalf("read satelle.toml: %v", err)
 	}
-	defer f.Close()
-	if _, err := f.WriteString("\n[gate]\nallow_parallel = true\n"); err != nil {
+	// init seeds an ACTIVE [gate] table (sty_8c3d345c), so a second [gate] header
+	// would be a duplicate-key parse error. Insert the key INTO the existing table
+	// (right after its header); only append a fresh table if none is present.
+	var out string
+	if idx := strings.Index(string(orig), "[gate]\n"); idx >= 0 {
+		at := idx + len("[gate]\n")
+		out = string(orig[:at]) + "allow_parallel = true\n" + string(orig[at:])
+	} else {
+		out = string(orig) + "\n[gate]\nallow_parallel = true\n"
+	}
+	if err := os.WriteFile(p, []byte(out), 0o644); err != nil {
 		t.Fatalf("write allow_parallel: %v", err)
 	}
 }

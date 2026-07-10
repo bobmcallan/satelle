@@ -141,12 +141,14 @@ type ReviewConfig struct {
 }
 
 // GateConfig tunes the PreToolUse edit gate and the single-story process rule.
-// EditExemptPaths lists repo-relative (or absolute) path prefixes whose edits
-// are exempt from the engaged-story gate, IN ADDITION to the always-exempt data
-// dir. Empty by default so the binary stays CLI-vendor-neutral — a repo opts a
-// harness authoring dir (e.g. ".claude/", which holds authored skills, not
-// product code) in as configuration, never a Go rule (satelle-repo-agnostic /
-// the constitution).
+// EditExemptPaths lists repo-relative (or absolute) path prefixes whose edits are
+// exempt from the engaged-story gate. It is the SOLE exemption source: the binary
+// does NOT special-case the data dir (configuration over code, the constitution).
+// `satelle init` seeds ".satelle/" here so authored substrate stays editable
+// without a release OOTB, but the operator owns the list — add a harness authoring
+// dir (e.g. ".claude/", which holds authored skills, not product code) or drop
+// ".satelle/" to gate substrate edits too. Empty means everything in-repo requires
+// an engaged story (sty_8c3d345c).
 //
 // AllowParallel opts OUT of the default one-performing-story rule. Unset/false
 // (default): a status advance that would leave two stories in non-terminal
@@ -187,8 +189,8 @@ func (c Config) ResolveDataDir(repoRoot string) string {
 // absolute prefixes under repoRoot. Blank entries are DROPPED (a blank prefix
 // would classify every edit as exempt and silently disable the gate — see
 // withinRoot's fail-open-toward-inside default), and an absolute entry passes
-// through unchanged. Returns nil when nothing is configured, so the default
-// binary exempts only the data dir.
+// through unchanged. Returns nil when nothing is configured, so the gate exempts
+// nothing and every in-repo edit requires an engaged story (sty_8c3d345c).
 func (c Config) ResolveEditExemptPaths(repoRoot string) []string {
 	if len(c.Gate.EditExemptPaths) == 0 {
 		return nil

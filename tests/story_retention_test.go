@@ -17,9 +17,12 @@ func TestStoryRetentionEndToEnd(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 
 	// Configure a count policy of 1 (keep the single most-recent closed dir).
+	// PREPEND the top-level key: the scaffold now ends with an active [gate] table
+	// (sty_8c3d345c), so appending at EOF would scope this under [gate]. A top-level
+	// key must precede every table in TOML.
 	tomlPath := filepath.Join(repo, ".satelle", "satelle.toml")
 	orig, _ := os.ReadFile(tomlPath)
-	if err := os.WriteFile(tomlPath, append(orig, []byte("\nstories_keep_closed = 1\n")...), 0o644); err != nil {
+	if err := os.WriteFile(tomlPath, append([]byte("stories_keep_closed = 1\n"), orig...), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
