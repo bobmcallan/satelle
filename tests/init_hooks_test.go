@@ -54,6 +54,9 @@ func TestInitScaffoldsMultiHarnessHooks(t *testing.T) {
 	if !strings.Contains(out, "[compat.claude] hooks=false") {
 		t.Errorf("init report missing Grok compat.claude line:\n%s", out)
 	}
+	if !strings.Contains(out, "trusted_folders.toml") || !strings.Contains(out, "Grok project hooks trusted") {
+		t.Errorf("init report missing Grok folder trust line:\n%s", out)
+	}
 
 	claudePath := filepath.Join(repo, ".claude", "settings.json")
 	grokPath := filepath.Join(repo, ".grok", "hooks", "satelle.json")
@@ -92,6 +95,19 @@ func TestInitScaffoldsMultiHarnessHooks(t *testing.T) {
 	if !strings.Contains(string(gcfg), "[compat.claude]") || !strings.Contains(string(gcfg), "hooks = false") {
 		t.Errorf("compat.claude hooks=false missing:\n%s", gcfg)
 	}
+	// sty_edb01f49: Grok folder trust for this repo so project hooks load.
+	trustPath := filepath.Join(home, ".grok", "trusted_folders.toml")
+	trust, err := os.ReadFile(trustPath)
+	if err != nil {
+		t.Fatalf("trusted_folders not written under isolated HOME: %v", err)
+	}
+	abs, _ := filepath.Abs(repo)
+	if !strings.Contains(string(trust), abs) || !strings.Contains(string(trust), "trusted = true") {
+		t.Errorf("repo not trusted in Grok store:\n%s", trust)
+	}
+	if !strings.Contains(string(trust), `[folders."`+abs+`"]`) {
+		t.Errorf("trust section must use folders.\"abs\" shape:\n%s", trust)
+	}
 
 	// Sibling user hook is never opened/rewritten.
 	userHook := filepath.Join(repo, ".grok", "hooks", "user-extra.json")
@@ -114,6 +130,9 @@ func TestInitScaffoldsMultiHarnessHooks(t *testing.T) {
 	// already-false is silent (no + / ~ report for compat.claude).
 	if strings.Contains(out2, "[compat.claude] hooks=false") {
 		t.Errorf("re-init re-reported already-false compat.claude:\n%s", out2)
+	}
+	if strings.Contains(out2, "Grok project hooks trusted") {
+		t.Errorf("re-init re-reported already-trusted folder:\n%s", out2)
 	}
 	afterGrok, _ := os.ReadFile(grokPath)
 	if string(beforeGrok) != string(afterGrok) {
@@ -152,11 +171,17 @@ func TestInitDefaultHooksClaudeOnlyWhenNoHarnessSignal(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repo, ".grok", "hooks", "satelle.json")); err == nil {
 		t.Errorf("Grok hooks scaffolded with no signal:\n%s", out)
 	}
-	// No Grok → no compat.claude write.
+	// No Grok → no compat.claude write / no folder trust.
 	if _, err := os.Stat(filepath.Join(home, ".grok", "config.toml")); err == nil {
 		t.Errorf("~/.grok/config.toml written without Grok detection:\n%s", out)
 	}
+	if _, err := os.Stat(filepath.Join(home, ".grok", "trusted_folders.toml")); err == nil {
+		t.Errorf("~/.grok/trusted_folders.toml written without Grok detection:\n%s", out)
+	}
 	if strings.Contains(string(out), "compat.claude") {
 		t.Errorf("report mentions compat.claude without Grok:\n%s", out)
+	}
+	if strings.Contains(string(out), "trusted_folders") {
+		t.Errorf("report mentions trusted_folders without Grok:\n%s", out)
 	}
 }
