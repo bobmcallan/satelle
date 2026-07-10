@@ -378,7 +378,8 @@ func systemInstallSteps(srcUnit, destUnit string) [][]string {
 	return [][]string{
 		{"sudo", "install", "-m", "0644", srcUnit, destUnit},
 		{"sudo", "systemctl", "daemon-reload"},
-		{"sudo", "systemctl", "enable", "--now", serviceUnitName},
+		{"sudo", "systemctl", "enable", serviceUnitName},  // persist across boot
+		{"sudo", "systemctl", "restart", serviceUnitName}, // load the new binary NOW (enable --now would no-op a running unit)
 	}
 }
 
