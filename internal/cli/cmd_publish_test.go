@@ -281,6 +281,10 @@ func TestPublishPushListAdoptCheck(t *testing.T) {
 	if string(still) != "version two\n" {
 		t.Errorf("without --update local must stay v2, got %q", still)
 	}
+	recsDecline, _ := loadAdoptions(filepath.Join(dst, ".satelle"))
+	if len(recsDecline) != 1 || recsDecline[0].Version != 2 {
+		t.Errorf("adoption record must stay v2 on decline, got %+v", recsDecline)
+	}
 
 	// Opt-in update
 	cmdU, bufU := testCmd()
