@@ -198,9 +198,9 @@ func TestSyncDocumentsPushSkipsLocalArea(t *testing.T) {
 	}
 }
 
-// TestSyncDocumentsPushSharedFlagRoutesToTeam: shared:true inside personal
-// documents routes to the team workspace (AC1, AC5).
-func TestSyncDocumentsPushSharedFlagRoutesToTeam(t *testing.T) {
+// TestSyncDocumentsPushSharedFlagGoesPersonal: epic:sync-publish — shared:true
+// no longer dual-routes to team; both docs land in personal with a note.
+func TestSyncDocumentsPushSharedFlagGoesPersonal(t *testing.T) {
 	ts := newFakeDocServer(t)
 	seedCred(t, ts.URL)
 
@@ -213,34 +213,50 @@ func TestSyncDocumentsPushSharedFlagRoutesToTeam(t *testing.T) {
 	if err := runSyncDocumentsPush(cmd, ts.URL, "", false); err != nil {
 		t.Fatalf("push: %v\n%s", err, buf.String())
 	}
+	if !strings.Contains(buf.String(), "satelle publish") {
+		t.Fatalf("expected publish note, got: %q", buf.String())
+	}
 
-	// Pull into a clean repo with team binding: both personal + team sources
-	// reconstruct the tree.
-	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n[hosted]\nworkspace = \"Acme\"\n")
+	// Personal pull gets both (sync destination is personal only).
+	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n")
 	pointAt(t, dst)
 	cmd2, buf2 := testCmd()
 	if err := runSyncDocumentsPull(cmd2, ts.URL, ""); err != nil {
 		t.Fatalf("pull: %v\n%s", err, buf2.String())
 	}
-	if _, err := os.Stat(filepath.Join(dst, ".satelle", "documents", "shared.md")); err != nil {
-		t.Errorf("shared doc missing after dual-source pull: %v", err)
+	for _, name := range []string{"shared.md", "private.md"} {
+		if _, err := os.Stat(filepath.Join(dst, ".satelle", "documents", name)); err != nil {
+			t.Errorf("%s missing after personal pull: %v", name, err)
+		}
 	}
-	if _, err := os.Stat(filepath.Join(dst, ".satelle", "documents", "private.md")); err != nil {
-		t.Errorf("private doc missing after dual-source pull: %v", err)
+}
+
+// TestSyncDocumentsPushAreaSharedGoesPersonal: [sync] documents = "shared"
+// is not a team destination — lands personal with the deprecation note (AC1, AC3).
+func TestSyncDocumentsPushAreaSharedGoesPersonal(t *testing.T) {
+	ts := newFakeDocServer(t)
+	seedCred(t, ts.URL)
+
+	repo := syncConfigRepo(t, "[sync]\ndocuments = \"shared\"\n[hosted]\nworkspace = \"Acme\"\n")
+	writeRepoFile(t, repo, ".satelle/documents/area.md", "---\ntype: document\n---\nshared-area doc\n")
+	pointAt(t, repo)
+
+	cmd, buf := testCmd()
+	if err := runSyncDocumentsPush(cmd, ts.URL, "", false); err != nil {
+		t.Fatalf("push: %v\n%s", err, buf.String())
+	}
+	if !strings.Contains(buf.String(), "satelle publish") {
+		t.Fatalf("expected publish note for area shared, got: %q", buf.String())
 	}
 
-	// Personal-only pull (no team) must NOT get the shared-flagged file.
-	dst2 := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n")
-	pointAt(t, dst2)
-	cmd3, _ := testCmd()
-	if err := runSyncDocumentsPull(cmd3, ts.URL, ""); err != nil {
-		t.Fatalf("personal-only pull: %v", err)
+	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n")
+	pointAt(t, dst)
+	cmd2, buf2 := testCmd()
+	if err := runSyncDocumentsPull(cmd2, ts.URL, ""); err != nil {
+		t.Fatalf("pull: %v\n%s", err, buf2.String())
 	}
-	if _, err := os.Stat(filepath.Join(dst2, ".satelle", "documents", "private.md")); err != nil {
-		t.Errorf("private missing from personal-only: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dst2, ".satelle", "documents", "shared.md")); err == nil {
-		t.Error("shared doc leaked into personal-only pull (should be team-only)")
+	if _, err := os.Stat(filepath.Join(dst, ".satelle", "documents", "area.md")); err != nil {
+		t.Errorf("area-shared doc missing from personal pull: %v", err)
 	}
 }
 
