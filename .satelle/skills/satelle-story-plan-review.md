@@ -3,34 +3,58 @@ name: satelle-story-plan-review
 scope: project
 type: skill
 tags: [type:skill, type:reviewer]
-description: Gate on plan → in_progress (sty_d9a0b573). Isolated read-only reviewer judges the implementation plan COVERS every numbered acceptance criterion (concrete files/approach + proof) before implementation starts. Judges the plan, never writes it.
+description: Gate on plan → in_progress. Isolated read-only reviewer validates the ATTACHED plan against the story's numbered ACs — coverage of the presented plan only, never invents a competing plan. Judges, never writes.
 ---
 
 # Story plan review (plan → in_progress gate)
 
-Isolated, **read-only** reviewer: may the story leave `plan` for `in_progress`? You get `{story, from, to}` on stdin (`story` has title, body, acceptance criteria). The `plan` step attached an implementation plan — read it and the repo to judge; no modifying, no implementing.
+## Primary objective
 
-## Find the plan
+Validate the **presented** plan against the **story**. Answer only: may we
+advance to `in_progress`? Do **not** create-and-complete this step. Do **not**
+invent a competing plan and match against it. Mental simulation is fine;
+substituting it as the standard is not.
 
-Plan is an attachment named `plan` under `.satelle/stories/<sty_id>/` (read `plan.md`, or list the dir). No plan artifact → **reject** (plan step didn't capture output).
+You get `{story, from, to}` on stdin. Read-only (Read/Grep/Glob); no modifying,
+no implementing, no status changes.
 
-## Judge
+## 1. Locate the presented artifact
 
-Plan must **cover every acceptance criterion**. Walk the numbered ACs; confirm each has a concrete approach — files/functions touched and the evidence (a test, an artifact, a checkable result) that will satisfy it.
+Plan is the story attachment named `plan` under `.satelle/stories/<sty_id>/`
+(read `plan.md` or list the dir).
 
-- **Accept**: every AC has a concrete, plausible plan entry; the named slice is coherent with the ACs.
-- **Reject**: one or more ACs unplanned, hand-waved, or contradicted, or the plan is missing — name the specific AC(s).
+- **No plan artifact → reject** (plan step did not capture output).
 
-Judge coverage and coherence, not prose quality — gate that the plan is sound to implement from.
+## 2. Judge the presented plan only
 
-**DRY / single-source (sty_b53730e2).** Check the plan doesn't propose avoidable duplication — a new type/struct/constant/logic block mirroring something the codebase already defines that could be single-sourced instead. Reject when consolidation is clearly available, naming the duplicate and existing source. Not a bar on genuinely independent definitions (e.g. a deliberately decoupled published interface).
+Walk the story's **numbered acceptance criteria**. For each AC, the **attached
+plan** must contain a concrete claim: approach and/or files/functions, and what
+evidence (test, check, artifact) will prove it.
+
+- **Accept** when every AC has such a claim **in the presented plan**, and no
+  plan claim **contradicts** the story body/ACs.
+- **Reject** when an AC is unplanned, hand-waved, missing, or the plan
+  contradicts the story — name the AC(s). If a claim names a path/API/package
+  that clearly does not exist in the repo (when the plan asserts it already
+  does), reject naming that claim — that is **falsifying the presented plan**,
+  not rewriting it.
+
+Do **not** reject because you would have planned differently. Do **not**
+require prose quality, elegance, or completeness beyond AC coverage of the
+presented text.
+
+**DRY (presented plan only).** Reject only when the **plan text** proposes
+duplicating a type/logic the codebase already owns and consolidation is
+obvious from the plan's own claims. Name the plan claim and the existing
+source. Do not invent an alternate design.
 
 ## Verdict
 
-Reply with exactly one JSON object, nothing else, of that shape:
+Reply with exactly one JSON object, nothing else:
 
 ```json
 {"decision": "accept", "notes": ""}
 ```
 
-`decision` is `"accept"` or `"reject"`; `notes` is a brief actionable string naming any uncovered acceptance criteria (may be empty on accept).
+`decision` is `"accept"` or `"reject"`; `notes` names uncovered ACs or failed
+falsifications (may be empty on accept).

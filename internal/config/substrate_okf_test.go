@@ -91,3 +91,44 @@ func TestEmbeddedSubstrateAuditTask(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbeddedReviewerObjectiveAuditTask asserts the embedded default tasks kind
+// carries the repo-agnostic reviewer-objective-audit task: EmbeddedDefaults surfaces
+// it, it passes structure.CheckTask, body stays repo-agnostic, and the paired skill
+// is embedded under skills/.
+func TestEmbeddedReviewerObjectiveAuditTask(t *testing.T) {
+	var got *EmbeddedDefault
+	for _, d := range EmbeddedDefaults() {
+		if d.Kind == "tasks" && d.Name == "tsk_reviewer-objective-audit" {
+			dd := d
+			got = &dd
+			break
+		}
+	}
+	if got == nil {
+		t.Fatal("EmbeddedDefaults does not surface tasks/tsk_reviewer-objective-audit")
+	}
+	if problems := structure.CheckTask(got.Body); len(problems) > 0 {
+		t.Errorf("embedded reviewer-objective-audit task fails CheckTask: %v", problems)
+	}
+	for _, bad := range []string{"internal/config/substrate"} {
+		if strings.Contains(got.Body, bad) {
+			t.Errorf("embedded reviewer-objective-audit task is not repo-agnostic (references %q)", bad)
+		}
+	}
+	var skill *EmbeddedDefault
+	for _, d := range EmbeddedDefaults() {
+		if d.Kind == "skills" && d.Name == "satelle-reviewer-objective-audit" {
+			dd := d
+			skill = &dd
+			break
+		}
+	}
+	if skill == nil {
+		t.Fatal("EmbeddedDefaults does not surface skills/satelle-reviewer-objective-audit")
+	}
+	if !strings.Contains(skill.Body, "Given what was presented") {
+		t.Error("embedded skill missing primary-objective phrasing")
+	}
+}
+

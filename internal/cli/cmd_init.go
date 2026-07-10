@@ -842,9 +842,9 @@ func materializePrinciples(dataDir string) []string {
 // materializeTasks writes every embedded default TASK into .satelle/tasks when
 // absent (sty_d4360e90). Tasks are authored substrate ingested by SyncTasks (not the
 // OKF doc index), so this lands the tsk_*.md header the task reconciler picks up — a
-// fresh repo gets the re-runnable substrate-audit task resolving via the task
-// workflow immediately. An existing on-disk file (authored or a prior seed) is never
-// clobbered; rebase re-runs this to heal a removed default.
+// fresh repo gets the re-runnable substrate-audit and reviewer-objective-audit tasks
+// resolving via the task workflow immediately. An existing on-disk file (authored
+// or a prior seed) is never clobbered; rebase re-runs this to heal a removed default.
 func materializeTasks(dataDir string) []string {
 	var lines []string
 	dir := filepath.Join(dataDir, "tasks")
@@ -866,12 +866,15 @@ func materializeTasks(dataDir string) []string {
 	return lines
 }
 
-// advisorySkills are embedded executor rubrics that guide the IN-LOOP agent and
-// are referenced by no workflow — so the default-solution seeding (which walks
-// workflow references) never carries them. init seeds each when absent,
-// regardless of whether the repo authored its own workflows (sty_f4c1bd90).
+// advisorySkills are embedded rubrics that guide the IN-LOOP agent (or re-runnable
+// audits) and are referenced by no workflow — so the default-solution seeding
+// (which walks workflow references) never carries them. init seeds each when
+// absent, regardless of whether the repo authored its own workflows
+// (sty_f4c1bd90). Includes satelle-reviewer-objective-audit (reviewer primary-
+// objective audit skill, paired with tsk_reviewer-objective-audit).
 var advisorySkills = []string{
 	"satelle-workflow-advisor",
+	"satelle-reviewer-objective-audit",
 }
 
 // materializeAdvisorySkills writes each embedded advisory skill into

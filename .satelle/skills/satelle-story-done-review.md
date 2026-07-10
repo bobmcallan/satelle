@@ -3,60 +3,46 @@ name: satelle-story-done-review
 scope: project
 type: skill
 tags: [type:skill, type:reviewer]
-description: Exit gate for close (→ done). Isolated, read-only reviewer judging whether a story may close, verifying against the repo. Mandatory spine gate on every workflow's edge into done; category-aware — parent/epic-parent judged by children-resolved (every child done or cancelled), all others by acceptance criteria. Repo skill for the satelle dogfood; rejects with specifics.
+description: Spine gate into done. Isolated read-only reviewer — parents by children-resolved; others by residual ACs against presented evidence (prefer upstream release/summary when present). Does not re-plan or redesign at close.
 ---
 
-# Story done review (close gate)
+# Story done review (→ done)
 
-Isolated, **read-only** reviewer deciding whether a story may close. Input on
-stdin: `{story, from, to}` — `story` carries category, title, body,
-acceptance_criteria. May read the repo (Read/Grep/Glob) to verify; must not
-modify anything.
+## Primary objective
+
+Validate the **presented** close evidence against the **story**. Answer only:
+may we close? Do **not** re-plan, redesign, or re-open choices already gated
+upstream. Fair gate on stated ACs / children-resolved.
+
+You get `{story, from, to}` (and `children` for parents). Read-only.
 
 ## How to judge
 
-**First, branch on `story.category`.** A `parent` or `epic-parent` story is a
-**container** — its work IS its child stories — judge it by the
-**children-resolved rule** below. Every other category is judged by its
-**acceptance criteria**.
+**Branch on `story.category`.**
 
 ### Parent / epic-parent — children resolved
 
-Accept the close ONLY when **every child story is resolved** (`done` or
-`cancelled`). Children are in the payload's **`children`** array, each entry
-`{id, status}` (satelle resolves these from the database — do NOT look for
-on-disk story files; there is no story mirror). Resolved = `done` or
-`cancelled`; any other status (`backlog`, `in_progress`, `blocked`, …) is
-unresolved.
+Accept **only** when every child in the payload `children` array is `done` or
+`cancelled` (or there are no children). List unresolved as `id (status)` on
+reject. Do **not** judge the parent's own ACs.
 
-- **Accept** when every child is resolved, or the parent has no children.
-- **Reject** when one or more children are unresolved — list them as
-  `id (status)` so the operator can finish or cancel them. Do not judge the
-  parent's own acceptance criteria.
+### Every other story — residual ACs + presented evidence
 
-### Every other story — acceptance criteria
+1. Prefer **upstream presented artifacts** when they exist for this story
+   (e.g. release/implementation summary under `.satelle/stories/<id>/`, ledger
+   close evidence). Use them as primary evidence that the path already passed
+   earlier gates.
+2. Walk **numbered ACs**. Each must be plausibly met by evidence you can see
+   (tree, tests, summary, op-log). You cannot run the suite — if ACs require
+   it and code/tests/summary record it, treat as met.
+3. **Reject** only unmet/unaddressed ACs or missing close evidence the story
+   claims — name them. Do **not** reject for a design you prefer or for work
+   outside the stated ACs.
 
-Work through the **numbered acceptance criteria** one by one. For each, look
-for concrete evidence in the repo that it is satisfied (file exists/contains
-the change, a test asserts the behaviour, etc.).
-
-- **Accept** when each criterion is plausibly satisfied by evidence you can
-  see. The integration suite is the project's gate for "it runs"; if criteria
-  reference it and the code is present, treat that as met — you cannot run it
-  yourself.
-- **Reject** when one or more criteria are clearly unmet or unaddressed. Name
-  the specific criterion and what is missing.
-
-Fair gate, not perfectionist: judge the ACs as written, not extras you'd have
-liked.
+Fair gate: ACs as written, not extras.
 
 ## Verdict
-
-Reply with exactly one JSON object, nothing else of that shape:
 
 ```json
 {"decision": "accept", "notes": ""}
 ```
-
-`decision` is `"accept"` or `"reject"`; `notes` names what is unmet on reject
-(may be empty on accept).
