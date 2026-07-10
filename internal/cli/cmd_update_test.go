@@ -24,6 +24,27 @@ func TestParseLatestTag(t *testing.T) {
 	}
 }
 
+// TestParseMainPID: the MainPID parser accepts both `--value` (bare "1234") and
+// raw `MainPID=1234` output, and rejects inactive (0) / never-ours (1) / garbage
+// so the sudo-free signal restart never SIGTERMs the wrong process (sty_1ac9f095).
+func TestParseMainPID(t *testing.T) {
+	cases := map[string]int{
+		"894365":         894365, // --value form
+		"MainPID=894365": 894365, // property form
+		" 894365\n":      894365, // whitespace tolerated
+		"0":              0,      // inactive → no pid
+		"MainPID=0":      0,
+		"1":              0, // PID 1 is never our serve
+		"":               0,
+		"nope":           0,
+	}
+	for in, want := range cases {
+		if got := parseMainPID(in); got != want {
+			t.Errorf("parseMainPID(%q) = %d, want %d", in, got, want)
+		}
+	}
+}
+
 func TestAssetName(t *testing.T) {
 	got := assetName("v0.0.9")
 	want := fmt.Sprintf("satelle-v0.0.9-%s-%s", runtime.GOOS, runtime.GOARCH)
