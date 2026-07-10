@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,9 +10,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/hosted"
 )
 
 // fakePublishStore is an in-memory team publish catalog for CLI tests.
@@ -290,5 +294,165 @@ func TestPublishPushListAdoptCheck(t *testing.T) {
 	recs2, _ := loadAdoptions(filepath.Join(dst, ".satelle"))
 	if len(recs2) != 1 || recs2[0].Version != 3 {
 		t.Fatalf("adoption version after update: %+v", recs2)
+	}
+}
+
+// newFakePublishAndConfigServer serves team /published plus personal /config
+// so adopt + personal-sync non-clobber can be asserted on one wire surface.
+func newFakePublishAndConfigServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	pub := newFakePublishStore()
+	cfg := &fakeConfigStore{data: map[string]map[string][][]byte{}}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]string{
+			{"id": "ws-personal", "kind": "personal", "name": "personal"},
+			{"id": "ws-team", "kind": "team", "name": "Acme"},
+		})
+	})
+	mux.HandleFunc("/api/v1/workspaces/", func(w http.ResponseWriter, r *http.Request) {
+		rest := strings.TrimPrefix(r.URL.Path, "/api/v1/workspaces/")
+		segs := strings.SplitN(rest, "/", 3)
+		if len(segs) < 2 {
+			http.NotFound(w, r)
+			return
+		}
+		wsID, kind := segs[0], segs[1]
+		path := ""
+		if len(segs) == 3 {
+			path = segs[2]
+		}
+		switch kind {
+		case "published":
+			switch {
+			case r.Method == http.MethodGet && path == "":
+				_ = json.NewEncoder(w).Encode(map[string]any{"items": pub.list(wsID)})
+			case r.Method == http.MethodPut && path != "":
+				body, _ := io.ReadAll(r.Body)
+				ver, created := pub.put(wsID, path, r.URL.Query().Get("kind"), r.URL.Query().Get("title"), "user-1", body)
+				status := http.StatusOK
+				if created {
+					status = http.StatusCreated
+				}
+				w.WriteHeader(status)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"path": path, "kind": r.URL.Query().Get("kind"), "version": ver, "created": created,
+					"publisher_id": "user-1", "title": r.URL.Query().Get("title"),
+				})
+			case r.Method == http.MethodGet && path != "":
+				ver := 0
+				if v := r.URL.Query().Get("version"); v != "" {
+					ver, _ = strconv.Atoi(v)
+				}
+				pv, n, ok := pub.get(wsID, path, ver)
+				if !ok {
+					http.NotFound(w, r)
+					return
+				}
+				sum := sha256.Sum256(pv.content)
+				w.Header().Set("ETag", `"`+hex.EncodeToString(sum[:])+`"`)
+				w.Header().Set("X-Satelle-Publish-Version", itoa(n))
+				w.Header().Set("X-Satelle-Publish-Kind", pv.kind)
+				w.Header().Set("X-Satelle-Publisher-Id", pv.pub)
+				_, _ = w.Write(pv.content)
+			default:
+				http.NotFound(w, r)
+			}
+		case "config":
+			storeID := wsID
+			if proj := r.URL.Query().Get("project"); proj != "" {
+				storeID = wsID + "|" + proj
+			}
+			switch {
+			case r.Method == http.MethodPut:
+				body, _ := io.ReadAll(r.Body)
+				sha, ver, created := cfg.put(storeID, path, body)
+				status := http.StatusOK
+				if created {
+					status = http.StatusCreated
+				}
+				w.WriteHeader(status)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"path": path, "version": ver, "blob_sha256": sha, "size": len(body), "created": created,
+				})
+			case r.Method == http.MethodGet && path == "":
+				_ = json.NewEncoder(w).Encode(cfg.manifest(storeID))
+			case r.Method == http.MethodGet:
+				ver := 0
+				if v := r.URL.Query().Get("version"); v != "" {
+					ver, _ = strconv.Atoi(v)
+				}
+				content, sha, ok := cfg.get(storeID, path, ver)
+				if !ok {
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("ETag", `"`+sha+`"`)
+				_, _ = w.Write(content)
+			default:
+				http.NotFound(w, r)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// TestAdoptedCopyMutationDoesNotClobberCanonical (sty_acc114b3 AC3): mutating
+// an adopted personal copy and pushing personal sync does not alter the team
+// published canonical entry.
+func TestAdoptedCopyMutationDoesNotClobberCanonical(t *testing.T) {
+	ts := newFakePublishAndConfigServer(t)
+	seedCred(t, ts.URL)
+
+	src := syncConfigRepo(t, "[hosted]\nworkspace = \"Acme\"\n")
+	writeRepoFile(t, src, ".satelle/skills/team-skill.md", "canonical v1\n")
+	pointAt(t, src)
+	cmd, _ := testCmd()
+	if err := runPublishPush(cmd, ts.URL, "Acme", "", "", false, []string{"skills/team-skill.md"}); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	dst := syncConfigRepo(t, `[hosted]
+project = "probe"
+workspace = "Acme"
+[sync]
+skills = "personal"
+`)
+	pointAt(t, dst)
+	cmdA, _ := testCmd()
+	if err := runPublishAdopt(cmdA, ts.URL, "Acme", 0, "skills/team-skill.md"); err != nil {
+		t.Fatalf("adopt: %v", err)
+	}
+	writeRepoFile(t, dst, ".satelle/skills/team-skill.md", "consumer local edit\n")
+
+	cmdS, bufS := testCmd()
+	if err := runSyncConfigPush(cmdS, ts.URL, "", false); err != nil {
+		t.Fatalf("personal config push: %v\n%s", err, bufS.String())
+	}
+
+	client := hosted.NewClient(ts.URL, hosted.FileStore{}, nil)
+	content, meta, err := client.PublishedContent(context.Background(), "ws-team", "skills/team-skill.md", 0)
+	if err != nil {
+		t.Fatalf("fetch published: %v", err)
+	}
+	if string(content) != "canonical v1\n" {
+		t.Errorf("team canonical clobbered: got %q", content)
+	}
+	if meta.Version != 1 {
+		t.Errorf("published version = %d, want 1 (sync must not append)", meta.Version)
+	}
+
+	local, _ := os.ReadFile(filepath.Join(dst, ".satelle", "skills", "team-skill.md"))
+	if string(local) != "consumer local edit\n" {
+		t.Errorf("local copy lost edit: %q", local)
+	}
+	recs, err := loadAdoptions(filepath.Join(dst, ".satelle"))
+	if err != nil || len(recs) != 1 || recs[0].Version != 1 {
+		t.Fatalf("adoptions after sync: %+v err=%v", recs, err)
 	}
 }
