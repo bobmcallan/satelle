@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -199,6 +201,48 @@ func TestOutsideRepoRefusalMessage(t *testing.T) {
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("message missing %q:\n%s", want, msg)
+		}
+	}
+}
+
+// TestEmitPreToolUseDenyDualFormat (sty_e4902c51): one stdout JSON line carries
+// both Grok (decision/reason) and Claude (hookSpecificOutput.permissionDecision*)
+// deny fields so either harness can surface the reason to the agent.
+func TestEmitPreToolUseDenyDualFormat(t *testing.T) {
+	var buf bytes.Buffer
+	reason := noEngagedStoryEditReason
+	if err := emitPreToolUseDeny(&buf, reason); err != nil {
+		t.Fatal(err)
+	}
+	line := strings.TrimSpace(buf.String())
+	var doc preToolUseDenyOut
+	if err := json.Unmarshal([]byte(line), &doc); err != nil {
+		t.Fatalf("deny JSON: %v\n%s", err, line)
+	}
+	if doc.Decision != "deny" {
+		t.Errorf("Grok decision = %q, want deny", doc.Decision)
+	}
+	if doc.Reason != reason {
+		t.Errorf("Grok reason mismatch:\n got %q\nwant %q", doc.Reason, reason)
+	}
+	if doc.HookSpecificOutput.PermissionDecision != "deny" {
+		t.Errorf("Claude permissionDecision = %q, want deny", doc.HookSpecificOutput.PermissionDecision)
+	}
+	if doc.HookSpecificOutput.PermissionDecisionReason != reason {
+		t.Errorf("Claude permissionDecisionReason mismatch")
+	}
+	if doc.HookSpecificOutput.HookEventName != "PreToolUse" {
+		t.Errorf("hookEventName = %q", doc.HookSpecificOutput.HookEventName)
+	}
+	// Canonical no-story edit copy: both clauses the operator asked for.
+	for _, want := range []string{
+		"mutating the tree without a performing story",
+		"wrong tool for reading",
+		"read_file",
+		"search_replace",
+	} {
+		if !strings.Contains(reason, want) {
+			t.Errorf("canonical reason missing %q:\n%s", want, reason)
 		}
 	}
 }

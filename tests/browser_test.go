@@ -1588,7 +1588,8 @@ func hasChip(t *testing.T, ctx context.Context, panel, label string) bool {
 // visual (getBoundingClientRect) order, so a CSS regression that reorders the flex
 // row is caught, not just markup presence (sty_cd2fe2f3).
 func TestBrowserSharedTopbar(t *testing.T) {
-	base, repo := serveRepo(t, "8806")
+	// High free range: 8806 is unusable on some hosts (same class as 8801).
+	base, repo := serveRepo(t, "8840")
 	id := createStory(t, repo, "Topbar story", "")
 	ctx := newChrome(t)
 
