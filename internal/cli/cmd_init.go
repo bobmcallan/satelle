@@ -295,6 +295,8 @@ func agentGuidance(repoRoot string) []string {
 // SessionStart context injector plus the BLOCKING PreToolUse gates that enforce
 // the authored workflow — edits require an engaged story, and so do commits/
 // pushes. The agent must create stories and drive them through the gates.
+// gate/commitgate commands prepend $HOME/.local/bin to PATH so a missing
+// satelle-on-PATH cannot `|| exit 2` brick every Edit/Bash tool (sty_24b32127).
 const claudeHookSettings = `{
   "hooks": {
     "SessionStart": [
@@ -309,13 +311,13 @@ const claudeHookSettings = `{
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [
-          { "type": "command", "command": "satelle hook gate || exit 2" }
+          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook gate || exit 2" }
         ]
       },
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "satelle hook commitgate || exit 2" }
+          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook commitgate || exit 2" }
         ]
       }
     ]
@@ -340,13 +342,13 @@ const grokHookSettings = `{
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit|search_replace|write",
         "hooks": [
-          { "type": "command", "command": "satelle hook gate || exit 2" }
+          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook gate || exit 2" }
         ]
       },
       {
         "matcher": "Bash|run_terminal_command",
         "hooks": [
-          { "type": "command", "command": "satelle hook commitgate || exit 2" }
+          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook commitgate || exit 2" }
         ]
       }
     ]
@@ -392,6 +394,8 @@ func dirExists(path string) bool {
 
 // ensureProcessHooks scaffolds Claude and/or Grok process hooks per detection
 // and reports each outcome on out (same initLine / "~ updated" style as before).
+// When Grok is detected it also disables Claude-compat hooks in ~/.grok/config.toml
+// so Grok does not double-fire the same satelle gate/commitgate (sty_24b32127).
 func ensureProcessHooks(out io.Writer, repoRoot string) error {
 	wantClaude, wantGrok := detectProcessHarnesses(repoRoot, nil)
 	if wantClaude {
@@ -415,6 +419,50 @@ func ensureProcessHooks(out io.Writer, repoRoot string) error {
 		} else {
 			fmt.Fprintln(out, initLine(added, grokHooksRel+" (process hooks)"))
 		}
+		// Grok-native .grok/hooks/satelle.json is the sole process-hook path under
+		// Grok; leave skills/rules/agents/mcps alone.
+		if err := ensureGrokCompatConfig(out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureGrokCompatConfig surgically upserts [compat.claude] hooks = false into
+// ~/.grok/config.toml so Grok does not also load .claude/settings.json hooks
+// (double-fire with .grok/hooks/satelle.json). Creates the file when absent;
+// preserves every other key/table. Idempotent: already-false is a silent no-op
+// (no write, no report line).
+func ensureGrokCompatConfig(out io.Writer) error {
+	path, err := config.GrokConfigPath()
+	if err != nil {
+		return fmt.Errorf("init: grok config path: %w", err)
+	}
+	var before string
+	raw, rerr := os.ReadFile(path)
+	switch {
+	case rerr == nil:
+		before = string(raw)
+	case os.IsNotExist(rerr):
+		// empty before
+	default:
+		return fmt.Errorf("init: read %s: %w", path, rerr)
+	}
+	after := config.UpsertKey(before, "compat.claude", "hooks", "false")
+	if after == before {
+		return nil // already hooks = false (or surgically identical)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("init: mkdir %s: %w", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(after), 0o644); err != nil {
+		return fmt.Errorf("init: write %s: %w", path, err)
+	}
+	label := "~/.grok/config.toml ([compat.claude] hooks=false)"
+	if before == "" {
+		fmt.Fprintln(out, initLine(true, label))
+	} else {
+		fmt.Fprintf(out, "  ~ %s\n", label)
 	}
 	return nil
 }
