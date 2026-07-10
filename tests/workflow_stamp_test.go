@@ -104,6 +104,9 @@ func TestStampedWorkflowGovernsGating(t *testing.T) {
 	if out, err := run(t, testBin, repo, "story", "set", idX, "--status", "in_progress"); err != nil {
 		t.Fatalf("a story stamped wf-x must engage (its workflow declares backlog->in_progress): %v\n%s", err, out)
 	}
+	// Free the single-story seat so the next engage is judged by workflow stamp,
+	// not the one-performing-story process rule (sty_c7149f8a).
+	mustRun(t, testBin, repo, "story", "set", idX, "--status", "done")
 
 	// Stamped wf-y (created under chore): wf-y does not declare the engage edge.
 	idY := create("chore")

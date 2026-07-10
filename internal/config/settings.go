@@ -56,6 +56,7 @@ var Settings = []Setting{
 	{Key: "stories_keep_days", Label: "Keep closed stories (days)", Help: "0 = no age pruning.", Kind: kindInt},
 	{Section: "review", Key: "gate_create", Label: "Gate create", Help: "Structure-review story/task on creation.", Kind: kindBool},
 	{Section: "gate", Key: "edit_exempt_paths", Label: "Edit-gate exempt paths", Help: "Path prefixes exempt from the engaged-story edit gate.", Kind: kindList},
+	{Section: "gate", Key: "allow_parallel", Label: "Allow parallel stories", Help: "Opt out of one-performing-story enforcement. Does not implement worktrees/merge — only disables the blocker.", Kind: kindBool},
 	{Section: "hosted", Key: "workspace", Label: "Active workspace", Help: "Scoped-sync destination — personal default; a team-workspace name elects it.", Kind: kindString},
 }
 
@@ -116,6 +117,8 @@ func SettingDisplay(cfg Config, s Setting) string {
 		return boolStr(cfg.Review.GateCreate)
 	case "gate.edit_exempt_paths":
 		return strings.Join(cfg.Gate.EditExemptPaths, "\n")
+	case "gate.allow_parallel":
+		return boolStr(cfg.Gate.AllowParallel)
 	case "hosted.workspace":
 		// The resolved active workspace — "personal" by default (zero-config),
 		// else the elected team-workspace name. The overlay is already merged by

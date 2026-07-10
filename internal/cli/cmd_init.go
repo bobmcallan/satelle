@@ -576,12 +576,20 @@ const scaffoldToml = `# satelle.toml — per-repo config (committed, secret-free
 # [review]
 # gate_create = true
 
-# [gate] — extra edit-gate exemptions. edit_exempt_paths lists repo-root-relative
-# path prefixes whose edits are exempt from the engaged-story edit gate, alongside
-# the always-exempt data dir (.satelle/). Point it at a harness authoring dir that
-# holds authored markdown (skills, prompts) rather than product code. Default empty.
+# [gate] — edit-gate exemptions and the single-story process rule.
+# edit_exempt_paths lists repo-root-relative path prefixes whose edits are exempt
+# from the engaged-story edit gate, alongside the always-exempt data dir (.satelle/).
+# Point it at a harness authoring dir that holds authored markdown (skills, prompts)
+# rather than product code. Default empty.
+# allow_parallel (default false) opts OUT of one-performing-story enforcement: by
+# default satelle refuses engaging a second story while another is already in a
+# non-terminal engaging state (plan/in_progress/…). Parked (blocked) and terminal
+# do not count. Setting allow_parallel = true only turns that blocker OFF — it
+# does NOT implement parallel worktrees/merge; a repo that wants true parallel
+# must design that into its workflow and then flip this switch.
 # [gate]
 # edit_exempt_paths = [".claude/"]
+# allow_parallel = false
 
 # substrate_roots — per-kind parent dir for authored markdown. Unset means
 # <data_dir>/<kind> (e.g. .satelle/documents). Point a kind elsewhere — even

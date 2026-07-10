@@ -57,6 +57,8 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// Archive-retention policy for the closed-story attachment dirs — a no-op
 	// unless satelle.toml sets a count/age policy (sty_aba7200c).
 	verb.SetStoryRetention(a.Config.StoriesKeepClosed, a.Config.StoriesKeepDays)
+	// Single-story process rule (default enforce; [gate] allow_parallel opts out).
+	verb.SetAllowParallelStories(a.Config.Gate.AllowParallel)
 	// A task, unlike a story, IS authored substrate: its <data_dir>/tasks/tsk_*.md
 	// work-definition file is the source of truth and the store is its index
 	// (sty_c1f9e74c). Wire the dir so create/set materialise the file and `reindex`
