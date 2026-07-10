@@ -62,8 +62,16 @@ func ParseScope(s string) (Scope, error) {
 // [sync] table may configure: the AuthoredKinds (documents/workflows/
 // principles/skills) plus the remaining epic-named areas — the project
 // constitution, the agents layer, tasks, and the work-state areas (stories,
-// ledger, executions).
+// ledger, executions). The reserved key syncAllKey ("all") is NOT a member —
+// it only defaults areas that fall through unset (see ScopeFor).
 var SyncAreas = buildSyncAreas()
+
+// syncAllKey is the reserved [sync] key that blanket-defaults every area not
+// explicitly set: one line — [sync] all = "personal" — opts the whole .satelle
+// tree into personal sync instead of listing each area (epic:sync-publish). It
+// is not itself a walk area (absent from SyncAreas); it only supplies the
+// fallthrough scope in ScopeFor.
+const syncAllKey = "all"
 
 func buildSyncAreas() []string {
 	out := make([]string, 0, len(AuthoredKinds)+6)
@@ -71,15 +79,24 @@ func buildSyncAreas() []string {
 	return append(out, "constitution", "agents", "tasks", "stories", "ledger", "executions")
 }
 
-// ScopeFor resolves a configured area's scope. An area absent from [sync] (or
-// present but blank) resolves to LocalScope. An area explicitly set to a value
-// outside local|personal|shared is a config error, never a silent local.
+// ScopeFor resolves a configured area's scope. Precedence: an explicit
+// [sync] <area> value wins; else the blanket [sync] all fallthrough; else
+// LocalScope. A value outside local|personal|shared is a config error, never a
+// silent local — for the per-area key when it is set, and for all only when an
+// area actually falls through to it (a bad all beside a valid override does not
+// error the overridden area).
 func ScopeFor(cfg Config, area string) (Scope, error) {
-	raw, ok := cfg.Sync[area]
-	if !ok || strings.TrimSpace(raw) == "" {
-		return LocalScope, nil
+	if raw, ok := cfg.Sync[area]; ok && strings.TrimSpace(raw) != "" {
+		return ParseScope(raw)
 	}
-	return ParseScope(raw)
+	if raw, ok := cfg.Sync[syncAllKey]; ok && strings.TrimSpace(raw) != "" {
+		scope, err := ParseScope(strings.TrimSpace(raw))
+		if err != nil {
+			return LocalScope, fmt.Errorf("sync: [sync] all = %q is not local|personal|shared", strings.TrimSpace(raw))
+		}
+		return scope, nil
+	}
+	return LocalScope, nil
 }
 
 // sharedFrontmatterKey is the OKF frontmatter key marking an individual file,

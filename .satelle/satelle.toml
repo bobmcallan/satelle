@@ -46,7 +46,10 @@ project = "satelle"
 #   satelle sync workstate push
 # Areas: documents, workflows, principles, skills, constitution, agents, tasks,
 # stories, ledger, executions.
+# The reserved key `all` blanket-defaults every area not set explicitly, so one
+# line opts the whole tree in; a per-area key still overrides it.
 # [sync]
+# all = "personal"               # every area personal unless overridden below
 # skills = "shared"
 # documents = "personal"
 # stories = "personal"

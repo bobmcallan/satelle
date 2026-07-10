@@ -26,10 +26,12 @@ func init() {
 		Long: `sync inspects [sync] scopes and pushes/pulls opted-in areas to the hosted server.
 
 Every area defaults to local — nothing leaves the machine until you set
-[sync] <area> = personal. Personal opt-in targets this repo's bound hosted
-project only (never a shared dump across all personal projects under your
-account). Bind with "satelle project bind <slug>" (or set [hosted] project in
-.satelle/satelle.toml). Team catalogs are a separate verb: satelle publish.`,
+[sync] <area> = personal. To opt the whole .satelle tree in with one key,
+set [sync] all = personal (a per-area <area> = ... still overrides it).
+Personal opt-in targets this repo's bound hosted project only (never a shared
+dump across all personal projects under your account). Bind with "satelle
+project bind <slug>" (or set [hosted] project in .satelle/satelle.toml). Team
+catalogs are a separate verb: satelle publish.`,
 	}
 	syncCmd.AddCommand(&cobra.Command{
 		Use:         "scopes",
