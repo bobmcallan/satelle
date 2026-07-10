@@ -169,17 +169,36 @@ func TestWithinRoot(t *testing.T) {
 	const root = "/home/u/repo"
 	cases := []struct {
 		target string
-		want   bool // true = inside repo (gate applies); false = outside (allowed)
+		want   bool // true = inside repo; false = outside (gate REFUSES, sty_3026d890)
 	}{
 		{"/home/u/repo/internal/x.go", true},  // absolute, in-repo
 		{"internal/x.go", true},               // relative, resolved under the repo cwd
-		{"/tmp/claude/scratch/foo.sh", false}, // session scratchpad — outside
-		{"/home/u/other/x.go", false},         // sibling dir — outside
-		{"", true},                            // empty target — stay conservative
+		{"/tmp/claude/scratch/foo.sh", false}, // session scratchpad — outside → refuse
+		{"/home/u/other/x.go", false},         // sibling dir (e.g. ../satelle) — refuse
+		{"", true},                            // empty target — stay conservative (no path → other rules)
 	}
 	for _, c := range cases {
 		if got := withinRoot(root, c.target); got != c.want {
 			t.Errorf("withinRoot(%q, %q) = %v, want %v", root, c.target, got, c.want)
+		}
+	}
+}
+
+// TestOutsideRepoRefusalMessage pins the cross-repo lock copy (sty_3026d890):
+// sibling paths and /tmp are refused with guidance to create the story in the
+// correct repo. Pure check of the error-shaping helper so the harness can rely
+// on a stable agent-facing string.
+func TestOutsideRepoRefusalMessage(t *testing.T) {
+	msg := outsideRepoEditErr("/home/u/satelle/internal/cli/cmd_publish.go").Error()
+	for _, want := range []string{
+		"refusing edit outside this repo",
+		"/home/u/satelle/internal/cli/cmd_publish.go",
+		"another project",
+		"create/engage the story there",
+		"satelle story create",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message missing %q:\n%s", want, msg)
 		}
 	}
 }
