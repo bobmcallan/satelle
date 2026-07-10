@@ -225,6 +225,10 @@ func TestPublishPushListAdoptCheck(t *testing.T) {
 	if !strings.Contains(bufL.String(), "skills/shared.md") {
 		t.Fatalf("list missing path: %q", bufL.String())
 	}
+	// Publisher is the authenticated user (server-stamped); list surfaces it.
+	if !strings.Contains(bufL.String(), "user-1") {
+		t.Fatalf("list missing publisher id: %q", bufL.String())
+	}
 
 	// Adopt into a fresh personal repo
 	dst := syncConfigRepo(t, "[hosted]\nworkspace = \"Acme\"\n")

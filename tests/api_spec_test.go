@@ -33,7 +33,14 @@ func TestOpenAPISpecCoversClientEndpoints(t *testing.T) {
 
 	// Every ENDURING endpoint the real CLI client (internal/hosted) speaks must be
 	// published as a path in the spec (AC1/AC4 — spec in sync with the client).
-	for _, path := range []string{"/api/v1/me", "/api/v1/projects", "/api/v1/workspaces", "/oauth/authorize", "/oauth/token"} {
+	for _, path := range []string{
+		"/api/v1/me",
+		"/api/v1/projects",
+		"/api/v1/workspaces",
+		"/api/v1/workspaces/{workspaceId}/published",
+		"/oauth/authorize",
+		"/oauth/token",
+	} {
 		if !strings.Contains(spec, path+":") {
 			t.Errorf("openapi.yaml does not publish enduring endpoint %q that the CLI client calls", path)
 		}
@@ -42,5 +49,28 @@ func TestOpenAPISpecCoversClientEndpoints(t *testing.T) {
 	// The retired project-substrate-backup interface must NOT be published (AC3).
 	if strings.Contains(spec, "substrate") {
 		t.Errorf("openapi.yaml publishes the retired substrate interface — it must be excluded (AC3)")
+	}
+}
+
+// TestPublishEndpointsInSpec verifies the team publish catalog surface is
+// published in the OpenAPI spec (epic:sync-publish / sty_aad09578 AC5).
+func TestPublishEndpointsInSpec(t *testing.T) {
+	root := repoRootForTest()
+	specBytes, err := os.ReadFile(filepath.Join(root, "api", "openapi.yaml"))
+	if err != nil {
+		t.Fatalf("read api/openapi.yaml: %v", err)
+	}
+	spec := string(specBytes)
+	for _, want := range []string{
+		"/api/v1/workspaces/{workspaceId}/published",
+		"/api/v1/workspaces/{workspaceId}/published/{path}",
+		"listPublishedArtifacts",
+		"publishArtifact",
+		"getPublishedArtifact",
+		"PublishedItem",
+	} {
+		if !strings.Contains(spec, want) {
+			t.Errorf("openapi.yaml missing publish endpoint %q", want)
+		}
 	}
 }

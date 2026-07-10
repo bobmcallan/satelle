@@ -7,13 +7,13 @@
 openapi: "3.0.3"
 info:
   title: satelle hosted API
-  version: 0.0.133
+  version: 0.0.134
   description: >-
     Public interface for the satelle hosted server. Covers authentication,
     principal identity, project management, the versioned config store, the
-    workspace-scoped document store, and one-way work-state replication. The
-    CLI publishes this spec; servers implement it conformance-based (no shared
-    module).
+    workspace-scoped document store, one-way work-state replication, and the
+    team publish catalog. The CLI publishes this spec; servers implement it
+    conformance-based (no shared module).
 
 tags:
   - name: auth
@@ -34,6 +34,11 @@ tags:
     description: >-
       One-way local→server work-state mirror (stories, executions, ledger).
       Always personal-workspace destination; origin stamped cli-sync server-side.
+  - name: published
+    description: >-
+      Team-workspace publisher-owned catalog (satelle publish). Not a sync
+      destination — consumers adopt personal copies; personal sync remains
+      project-scoped on the personal workspace.
 
 servers:
   - url: https://satelle.dev
@@ -409,6 +414,143 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/workspaces/{workspaceId}/published:
+    get:
+      operationId: listPublishedArtifacts
+      summary: List published team-catalog heads
+      description: >-
+        Returns the latest head of every path in the workspace's publisher-owned
+        team catalog. Full list (no cursor). Team workspaces only in practice;
+        personal sync never targets this route. Any member may list.
+      tags: [published]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Catalog heads.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PublishedItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/workspaces/{workspaceId}/published/{path}:
+    put:
+      operationId: publishArtifact
+      summary: Publish one path (append a new version when content changes)
+      description: >-
+        Uploads one file's verbatim bytes (raw body) into the team catalog under
+        the authenticated principal as publisher. Identical content is
+        idempotent (created=false, HTTP 200). A new version returns HTTP 201.
+        Only the existing publisher may append a later version (403 otherwise).
+        Not a sync destination — use personal path stores for dual-home sync.
+      tags: [published]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+          description: >-
+            Server-relative artifact path (e.g. "skills/shared.md",
+            "documents/note.md"). Multi-segment paths are accepted.
+        - name: kind
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Artifact kind (document|workflow|skill|principle|…).
+        - name: title
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Optional display title.
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Idempotent re-publish of the current head (no new version).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishedItem"
+        "201":
+          description: New version appended (new head).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishedItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Caller is not the publisher of this path.
+    get:
+      operationId: getPublishedArtifact
+      summary: Fetch one published path's content
+      description: >-
+        Returns one path's content as text/plain. Headers carry publish metadata
+        (version, kind, publisher id); ETag is the blob sha256. ?version=N pins
+        a version (default: latest head). Any member may read.
+      tags: [published]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Server-relative artifact path.
+        - name: version
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+          description: Pin a published version (default: latest head).
+      responses:
+        "200":
+          description: The published content.
+          headers:
+            ETag:
+              schema:
+                type: string
+              description: The blob sha256.
+            X-Satelle-Publish-Version:
+              schema:
+                type: string
+              description: Version number of the returned content.
+            X-Satelle-Publish-Kind:
+              schema:
+                type: string
+              description: Artifact kind.
+            X-Satelle-Publisher-Id:
+              schema:
+                type: string
+              description: Publisher principal id.
+          content:
+            text/plain:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such path (or version).
+
   /oauth/authorize:
     get:
       operationId: oauthAuthorize
@@ -717,6 +859,48 @@ components:
           type: integer
         ledger:
           type: integer
+
+    PublishedItem:
+      type: object
+      required: [path, kind, version, blob_sha256, size, publisher_id, title, created_at]
+      description: >-
+        One head (or history entry) in a team workspace's publisher-owned
+        catalog. Returned by listPublishedArtifacts and publishArtifact;
+        getPublishedArtifact carries the same fields as response headers for
+        the raw-byte body.
+      properties:
+        path:
+          type: string
+          description: Server-relative artifact path.
+        kind:
+          type: string
+          description: Artifact kind (document|workflow|skill|principle|…).
+        version:
+          type: integer
+          minimum: 1
+          description: Version number (1 = first; monotonically increasing).
+        blob_sha256:
+          type: string
+          description: SHA-256 of the content bytes (hex); also the GET ETag.
+        size:
+          type: integer
+          format: int64
+          description: Content size in bytes.
+        publisher_id:
+          type: string
+          description: Principal id of the publisher (server-stamped from auth).
+        title:
+          type: string
+          description: Optional display title (may be empty).
+        created_at:
+          type: string
+          format: date-time
+          description: When this version was created.
+        created:
+          type: boolean
+          description: >-
+            True iff this push appended a new head (HTTP 201). Omitted or false
+            on list responses and idempotent re-publishes (HTTP 200).
 
     TokenResponse:
       type: object
