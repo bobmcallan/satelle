@@ -266,7 +266,7 @@ func restartServiceIfRunning(out io.Writer) {
 			fmt.Fprintf(out, "system unit %s is not Restart=always — a signal would stop it, not respawn. Upgrade it with `satelle service install --system`, or restart manually: sudo systemctl restart %s\n", serviceUnitName, serviceUnitName)
 			return
 		}
-		if err := syscall.Kill(pid, syscall.SIGTERM); err == nil {
+		if err := signalTerm(pid); err == nil {
 			if systemUnitRespawned(pid) {
 				fmt.Fprintf(out, "restarted %s (system unit, was pid %d) onto the new binary\n", serviceUnitName, pid)
 			} else {
@@ -277,6 +277,17 @@ func restartServiceIfRunning(out io.Writer) {
 	}
 	// 3) No reachable supervisor — tell the operator how to reload the new binary.
 	fmt.Fprintf(out, "binary updated, but no restartable service was found — reload it with `sudo systemctl restart %s` (system) or `systemctl --user restart %s` (user)\n", serviceUnitName, serviceUnitName)
+}
+
+// signalTerm sends SIGTERM to pid via os.Process.Signal (not syscall.Kill, which is
+// Unix-only and breaks the Windows cross-build). The systemd restart path only runs
+// on Linux; this just has to COMPILE on Windows, where Signal returns unsupported.
+func signalTerm(pid int) error {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return proc.Signal(syscall.SIGTERM)
 }
 
 // userUnitActive reports whether the systemd USER unit is active, defaulting the
