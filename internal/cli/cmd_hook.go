@@ -81,13 +81,17 @@ byte ceiling (overflow noted on stderr); fails open so it never blocks a session
 	gate := &cobra.Command{
 		Use:   "gate",
 		Short: "PreToolUse edit gate — block code edits unless a story is engaged",
-		Long: `gate is the PreToolUse handler for Edit|Write|MultiEdit|NotebookEdit. It
-exits non-zero (the wiring turns that into a block with '|| exit 2') unless a
-story is ENGAGED — in one of the active workflow's non-terminal engaging states
-(e.g. plan, in_progress, integration, release) — so the agent works under a
-tracked story. The "engaged" policy is authored substrate — it reads the
-workflow's DOT shape markers (Mdiamond=start, Msquare=terminal) rather than
-hardcoding state names, so configuration drives the decision (sty_f3d5d4b8).
+		Long: `gate is the PreToolUse handler for Edit|Write|MultiEdit|NotebookEdit|
+search_replace|write. It exits non-zero (the wiring turns that into a block
+with '|| exit 2') unless a story is ENGAGED — in one of the active workflow's
+non-terminal engaging states (e.g. plan, in_progress, integration, release) —
+so the agent works under a tracked story. On deny it emits dual-format JSON on
+stdout so BOTH Claude Code and Grok Build surface the reason to the agent
+(Claude: hookSpecificOutput.permissionDecision=deny + permissionDecisionReason;
+Grok: decision=deny + reason), not a bare "hook denied (exit 2)". The "engaged"
+policy is authored substrate — it reads the workflow's DOT shape markers
+(Mdiamond=start, Msquare=terminal) rather than hardcoding state names, so
+configuration drives the decision (sty_f3d5d4b8, sty_e4902c51).
 
 Edits OUTSIDE the repo root are REFUSED (sty_3026d890): a session in
 satelle-server must not rewrite files under a sibling tree such as ../satelle.
@@ -124,7 +128,7 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 				// Observed failure: agent in satelle-server wrote CLI code under
 				// ../satelle with no story in the correct repo — process break.
 				if !withinRepoTarget(p) {
-					return outsideRepoEditErr(p)
+					return denyPreToolUse(cmd, outsideRepoEditReason(p))
 				}
 				// Authored SUBSTRATE under the data dir (.satelle/ by default) is the
 				// source of truth, "edited without a binary release" — the
@@ -150,14 +154,12 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 			// Engagement-error surface: a broken deployment blocks the edit with a
 			// clear message rather than silently allowing it (sty_f3d5d4b8).
 			if engErr != nil {
-				return fmt.Errorf("satelle: %w", engErr)
+				return denyPreToolUse(cmd, "satelle: "+engErr.Error())
 			}
 			if engaged {
 				return nil
 			}
-			return fmt.Errorf("satelle: no engaged story — create or engage one before editing code " +
-				"(satelle story create …, then satelle story set <id> --status plan). " +
-				"The workflow requires work to proceed under a tracked story.")
+			return denyPreToolUse(cmd, noEngagedStoryEditReason)
 		},
 	}
 
@@ -177,13 +179,12 @@ with a clear message rather than silently allowing it (sty_f3d5d4b8).`,
 			}
 			engaged, err := storyEngaged()
 			if err != nil {
-				return fmt.Errorf("satelle: %w", err)
+				return denyPreToolUse(cmd, "satelle: "+err.Error())
 			}
 			if engaged {
 				return nil
 			}
-			return fmt.Errorf("satelle: refusing to commit/push with no engaged story — " +
-				"engage a story (satelle story set <id> --status plan) so the change is tracked through the workflow.")
+			return denyPreToolUse(cmd, noEngagedStoryCommitReason)
 		},
 	}
 
@@ -340,13 +341,76 @@ func withinRepoTarget(target string) bool {
 	return withinRoot(config.RepoRootFromConfigPath(cfgPath), target)
 }
 
-// outsideRepoEditErr is the agent-facing refusal when a PreToolUse edit targets
-// a path outside the current repo root (sty_3026d890). Kept as a constructor so
-// the guidance string is unit-tested and stays stable for harnesses.
-func outsideRepoEditErr(path string) error {
-	return fmt.Errorf(
+// noEngagedStoryEditReason is the canonical agent-facing deny for product-code
+// edits without a performing story (sty_e4902c51). Both Claude and Grok must
+// surface this text — not a bare "hook denied (exit 2)".
+const noEngagedStoryEditReason = "satelle: you're mutating the tree without a performing story, or you have used the wrong tool for reading. " +
+	"Create or engage a story before editing code (satelle story create …, then satelle story set <id> --status plan). " +
+	"For research, use read tools (Read/read_file/grep/Glob) — not Edit/Write/search_replace."
+
+// noEngagedStoryCommitReason is the agent-facing deny for git commit/push without
+// an engaged story. Same dual-format emission as the edit gate.
+const noEngagedStoryCommitReason = "satelle: refusing to commit/push with no engaged story — " +
+	"engage a story (satelle story set <id> --status plan) so the change is tracked through the workflow."
+
+// outsideRepoEditReason is the agent-facing refusal when a PreToolUse edit targets
+// a path outside the current repo root (sty_3026d890). Kept as a pure string so
+// dual-format deny emission and unit tests share one stable message.
+func outsideRepoEditReason(path string) string {
+	return fmt.Sprintf(
 		"satelle: refusing edit outside this repo (%s) — only paths under the repo root may be modified here. If this change belongs in another project (e.g. CLI work for an epic tracked on satelle-server), open a session in THAT repo and create/engage the story there: satelle story create … then satelle story set <id> --status plan",
 		path)
+}
+
+// outsideRepoEditErr wraps outsideRepoEditReason as an error for tests that
+// still assert .Error() on the refusal helper.
+func outsideRepoEditErr(path string) error {
+	return fmt.Errorf("%s", outsideRepoEditReason(path))
+}
+
+// denyPreToolUse emits a dual-harness deny payload on stdout (Claude + Grok) and
+// returns an error so the process exits non-zero (hook wiring: `|| exit 2`).
+// The reason is also on the error (cobra → stderr) for humans/transcripts.
+func denyPreToolUse(cmd *cobra.Command, reason string) error {
+	_ = emitPreToolUseDeny(cmd.OutOrStdout(), reason)
+	return fmt.Errorf("%s", reason)
+}
+
+// preToolUseDenyOut is the common PreToolUse deny payload for Claude Code and
+// Grok Build (sty_e4902c51):
+//
+//   - Grok: top-level {"decision":"deny","reason":"…"} (docs: decision + reason)
+//   - Claude: hookSpecificOutput.permissionDecision=deny +
+//     permissionDecisionReason (shown to the model on deny)
+//
+// One JSON object carries both shapes so harness-specific hook scripts stay
+// identical: `satelle hook gate || exit 2`.
+type preToolUseDenyOut struct {
+	Decision           string `json:"decision"`
+	Reason             string `json:"reason"`
+	HookSpecificOutput struct {
+		HookEventName            string `json:"hookEventName"`
+		PermissionDecision       string `json:"permissionDecision"`
+		PermissionDecisionReason string `json:"permissionDecisionReason"`
+		AdditionalContext        string `json:"additionalContext,omitempty"`
+	} `json:"hookSpecificOutput"`
+}
+
+// emitPreToolUseDeny writes the dual-format deny JSON to out (one line).
+func emitPreToolUseDeny(out io.Writer, reason string) error {
+	var doc preToolUseDenyOut
+	doc.Decision = "deny"
+	doc.Reason = reason
+	doc.HookSpecificOutput.HookEventName = "PreToolUse"
+	doc.HookSpecificOutput.PermissionDecision = "deny"
+	doc.HookSpecificOutput.PermissionDecisionReason = reason
+	doc.HookSpecificOutput.AdditionalContext = reason
+	b, err := json.Marshal(doc)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(out, string(b))
+	return nil
 }
 
 // exemptTarget reports whether an edit to target is exempt from the engaged-story
