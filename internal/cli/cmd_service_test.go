@@ -63,15 +63,22 @@ func TestSystemSystemdUnit(t *testing.T) {
 		"User=bobmc",
 		"Group=bobmc",
 		"WantedBy=multi-user.target",
+		"Restart=always", // sudo-free restart: a clean SIGTERM must respawn, not stop (sty_1ac9f095)
 	} {
 		if !strings.Contains(unit, want) {
 			t.Errorf("system unit missing %q:\n%s", want, unit)
 		}
 	}
-	// The per-user unit must NOT carry User=/multi-user.target (regression guard).
+	if strings.Contains(unit, "Restart=on-failure") {
+		t.Errorf("system unit must be Restart=always (a clean signal respawns), not on-failure:\n%s", unit)
+	}
+	// The per-user unit must NOT carry User=/multi-user.target, and keeps on-failure.
 	userUnit := systemdUnit("/usr/local/bin/satelle", "/home/u/repo", "0.0.0.0", 8787)
 	if strings.Contains(userUnit, "User=") || strings.Contains(userUnit, "multi-user.target") {
 		t.Errorf("per-user unit should stay default.target with no User=:\n%s", userUnit)
+	}
+	if !strings.Contains(userUnit, "Restart=on-failure") {
+		t.Errorf("per-user unit should keep Restart=on-failure:\n%s", userUnit)
 	}
 }
 

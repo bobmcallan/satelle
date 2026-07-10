@@ -18,7 +18,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -234,19 +237,100 @@ func replaceExecutable(target string, data []byte) error {
 	return os.Rename(tmpName, target)
 }
 
-// restartServiceIfRunning restarts the systemd user service if it is active so
-// it runs the new binary; otherwise it is a no-op.
+// restartServiceIfRunning restarts the background service onto the new binary,
+// SUDO-FREE, whatever supervises it. It tries the systemd USER unit first (with the
+// user-session env defaulted, so a headless/non-login shell can reach the bus);
+// then, if the user unit is not usable but the SYSTEM unit is active, it restarts
+// without sudo by SIGTERM-ing the unit's MainPID — the process runs as the operator
+// (User=), and the system unit's Restart=always makes systemd respawn it onto the
+// new binary (sty_1ac9f095). Previously this only tried `systemctl --user`, which is
+// a SILENT no-op when the user manager is down (a WSL quirk), leaving the live
+// service on the old binary. A genuine sudo restart stays the operator's fallback.
 func restartServiceIfRunning(out io.Writer) {
 	if _, err := exec.LookPath("systemctl"); err != nil {
 		return
 	}
-	active, _ := exec.Command("systemctl", "--user", "is-active", serviceUnitName).Output()
-	if strings.TrimSpace(string(active)) != "active" {
-		return
+	// 1) systemd USER unit — sudo-free when the user manager is alive.
+	if userUnitActive() {
+		if err := runCaptureEnv(userEnv(), "systemctl", "--user", "restart", serviceUnitName); err == nil {
+			fmt.Fprintf(out, "restarted %s (user unit) onto the new binary\n", serviceUnitName)
+			return
+		}
 	}
-	if err := exec.Command("systemctl", "--user", "restart", serviceUnitName).Run(); err != nil {
-		fmt.Fprintf(out, "restart the service to use the new binary: systemctl --user restart %s\n", serviceUnitName)
-		return
+	// 2) SYSTEM unit — sudo-free restart by signalling MainPID; Restart=always respawns.
+	if pid := systemUnitMainPID(); pid > 0 {
+		// Only signal a unit that will RESPAWN — a clean SIGTERM to a Restart=on-failure
+		// unit would STOP the service, not reload it. Never leave a good release with a
+		// dead service; guide the operator to a persistent supervisor instead.
+		if !systemUnitRestartAlways() {
+			fmt.Fprintf(out, "system unit %s is not Restart=always — a signal would stop it, not respawn. Upgrade it with `satelle service install --system`, or restart manually: sudo systemctl restart %s\n", serviceUnitName, serviceUnitName)
+			return
+		}
+		if err := syscall.Kill(pid, syscall.SIGTERM); err == nil {
+			if systemUnitRespawned(pid) {
+				fmt.Fprintf(out, "restarted %s (system unit, was pid %d) onto the new binary\n", serviceUnitName, pid)
+			} else {
+				fmt.Fprintf(out, "signalled %s (pid %d) but it did not respawn — restart manually: sudo systemctl restart %s\n", serviceUnitName, pid, serviceUnitName)
+			}
+			return
+		}
 	}
-	fmt.Fprintf(out, "restarted %s onto the new binary\n", serviceUnitName)
+	// 3) No reachable supervisor — tell the operator how to reload the new binary.
+	fmt.Fprintf(out, "binary updated, but no restartable service was found — reload it with `sudo systemctl restart %s` (system) or `systemctl --user restart %s` (user)\n", serviceUnitName, serviceUnitName)
+}
+
+// userUnitActive reports whether the systemd USER unit is active, defaulting the
+// user-session env so a headless shell can reach the user bus.
+func userUnitActive() bool {
+	c := exec.Command("systemctl", "--user", "is-active", serviceUnitName)
+	c.Env = userEnv()
+	out, _ := c.Output()
+	return strings.TrimSpace(string(out)) == "active"
+}
+
+// systemUnitMainPID returns the MainPID of the ACTIVE system unit, or 0 when the
+// unit is not active. Read-only (`systemctl show` needs no sudo).
+func systemUnitMainPID() int {
+	act, _ := exec.Command("systemctl", "is-active", serviceUnitName).Output()
+	if strings.TrimSpace(string(act)) != "active" {
+		return 0
+	}
+	out, _ := exec.Command("systemctl", "show", "--property=MainPID", "--value", serviceUnitName).Output()
+	return parseMainPID(string(out))
+}
+
+// parseMainPID extracts a PID from `systemctl show --property=MainPID` output —
+// either "1234" (with --value) or "MainPID=1234". Pure/unit-tested. Returns 0 for
+// none/PID 0 (inactive) or PID 1 (never our serve).
+func parseMainPID(s string) int {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '='); i >= 0 {
+		s = strings.TrimSpace(s[i+1:])
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 1 {
+		return 0
+	}
+	return n
+}
+
+// systemUnitRestartAlways reports whether the system unit's Restart policy is
+// "always" — the precondition for a sudo-free SIGTERM restart to RESPAWN rather
+// than stop the service. Read-only (no sudo).
+func systemUnitRestartAlways() bool {
+	out, _ := exec.Command("systemctl", "show", "--property=Restart", "--value", serviceUnitName).Output()
+	return strings.TrimSpace(string(out)) == "always"
+}
+
+// systemUnitRespawned confirms the system unit came back on a DIFFERENT MainPID
+// after the SIGTERM — proof the supervisor respawned it (Restart=always) rather
+// than it being a Restart=on-failure unit that stopped on the clean signal.
+func systemUnitRespawned(oldPID int) bool {
+	for i := 0; i < 15; i++ {
+		time.Sleep(300 * time.Millisecond)
+		if np := systemUnitMainPID(); np > 0 && np != oldPID {
+			return true
+		}
+	}
+	return false
 }

@@ -192,7 +192,7 @@ func serviceStatusCmd() *cobra.Command {
 // wantedBy selects the install target: default.target for a per-user unit,
 // multi-user.target for a system unit that runs with no login. A system unit adds
 // User=/Group= so it runs as the operator (reaching ~/.satelle and the repo), not root.
-func renderUnit(binPath, repo, addr string, port int, wantedBy, runAsUser string) string {
+func renderUnit(binPath, repo, addr string, port int, wantedBy, runAsUser, restartPolicy string) string {
 	userLines := ""
 	if runAsUser != "" {
 		userLines = fmt.Sprintf("User=%s\nGroup=%s\n", runAsUser, runAsUser)
@@ -204,25 +204,29 @@ After=network.target
 [Service]
 ExecStart=%s serve --addr %s --port %d
 WorkingDirectory=%s
-%sRestart=on-failure
+%sRestart=%s
 RestartSec=2
 
 [Install]
 WantedBy=%s
-`, binPath, addr, port, repo, userLines, wantedBy)
+`, binPath, addr, port, repo, userLines, restartPolicy, wantedBy)
 }
 
 // systemdUnit renders the per-user unit (WantedBy=default.target, runs as the
-// logged-in user via the user manager).
+// logged-in user via the user manager). Restart=on-failure: the user manager
+// handles reloads via `systemctl --user restart`.
 func systemdUnit(binPath, repo, addr string, port int) string {
-	return renderUnit(binPath, repo, addr, port, "default.target", "")
+	return renderUnit(binPath, repo, addr, port, "default.target", "", "on-failure")
 }
 
 // systemSystemdUnit renders the persistent SYSTEM unit (WantedBy=multi-user.target)
 // that survives session loss, running as runAsUser so it still reaches the user's
-// config and repo. This is the fleet supervisor when the user bus is unreachable.
+// config and repo. Restart=always so a SUDO-FREE restart works: the operator (who
+// owns the process via User=) can SIGTERM it and systemd respawns it onto the new
+// binary — `satelle update` relies on this (sty_1ac9f095). This is the fleet
+// supervisor when the user bus is unreachable.
 func systemSystemdUnit(binPath, repo, addr string, port int, runAsUser string) string {
-	return renderUnit(binPath, repo, addr, port, "multi-user.target", runAsUser)
+	return renderUnit(binPath, repo, addr, port, "multi-user.target", runAsUser, "always")
 }
 
 // installUserUnit writes the unit under the user systemd dir and enables it,

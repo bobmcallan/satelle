@@ -10,7 +10,7 @@ description: In-loop executor skill for the merged `release` step. Stages the st
 
 You are the **executor** for the merged `release` step (in-loop on the driving session when the workflow assigns `agent=executor`). Prior gates accepted the slice. **Commit with a version bump, push, install locally, prove the release, and record evidence.** You never self-enact `release → done` — the gate does that.
 
-**Local install is part of the release, not optional cleanup.** Dogfood means the machine you released from runs the new binary as the live web service. The pass criterion is mechanism-AGNOSTIC: `make install` succeeds AND the **running** web service reports the new version — reached through a **persistent supervisor** (a system unit, or a linger-backed user manager that survives session loss), never an ephemeral `nohup`/`setsid` relaunch that dies with your shell. `satelle service install` is the preferred path, but it is a *means*, not the test: if its systemd `--user` bus is unreachable (a headless / non-login WSL agent session — no `/run/user/<uid>/systemd`) yet `make install` succeeded and the live version matches under a persistent supervisor, that is **not** a failed release — do not fail a good binary over the restart mechanism. The release HAS failed only when the binary did not install, or the running service still reports the OLD version (or runs under no persistent supervisor). Fix the persistence under this story and re-verify; do not attach a success summary or proceed to done until the live version matches persistently.
+**Dogfood is part of the release, not optional cleanup.** It means the machine you released from runs the new binary as the live web service — installed via `satelle update` (the **published** asset a user gets, sudo-free), which also restarts the service. The pass criterion is mechanism-AGNOSTIC: the **running** web service reports the new version, reached through a **persistent supervisor** (a system unit, or a linger-backed user manager that survives session loss), never an ephemeral `nohup`/`setsid` relaunch that dies with your shell. The *restart mechanism* is not the test: if the systemd `--user` bus is unreachable (a headless / non-login WSL session — no `/run/user/<uid>/systemd`) yet `satelle update` installed the binary and the live version matches under a persistent supervisor, that is **not** a failed release. The release HAS failed only when the binary did not install, or the running service still reports the OLD version (or runs under no persistent supervisor). Fix the persistence under this story and re-verify; do not attach a success summary or proceed to done until the live version matches persistently.
 
 ## 1. Stage and commit (bump is mandatory)
 
@@ -34,36 +34,47 @@ SHA=$(git rev-parse HEAD)
 for i in $(seq 1 10); do TID=$(gh run list --commit "$SHA" --workflow test --limit 1 --json databaseId -q '.[0].databaseId'); [ -n "$TID" ] && break; sleep 3; done
 ```
 
-### 2a. Local install — mandatory (during the CI window)
+### 2a. Dogfood the PUBLISHED release with `satelle update`
 
-While CI runs, install the new binary and restart the **local** dogfood service from the pushed HEAD so a **persistent** supervisor runs it:
+Dogfood installs the **published release asset** — the exact artifact a user gets —
+not a local build. So it runs **after the `release` workflow publishes the tag**
+(see §2b); `satelle update` resolves the latest release, so the tag must exist first.
 
-```bash
-make install            # MANDATORY — must exit zero (this is the binary)
-satelle service install # preferred restart path (systemd --user)
-```
+**One-time setup (skip if already done):** a **persistent supervisor** must run the
+web service, so a restart survives session loss and needs no sudo per release. Install
+it once with `satelle service install` (systemd **user** unit — sudo-free, when the
+user manager is alive) or, on a box whose user manager is down (headless / non-login
+WSL — no `/run/user/<uid>/systemd`), `satelle service install --system` (a persistent
+**system** unit, `Restart=always`, running as you; one sudo at install time only).
 
-Then **verify** the live stack matches the release (CLI alone is not enough — a replaced binary can leave a stale serve process):
+Once the release tag is published, dogfood:
 
 ```bash
 VER=$(awk '$1=="satelle.version:"{print $2}' .version)
-# CLI binary on PATH
-satelle version   # must report $VER and the pushed commit SHA prefix
-# Live web service (footer is baked into the running process)
-curl -fsS "http://127.0.0.1:${PORT:-8787}/" | grep -F "satelle $VER"
+satelle update                                   # pulls the published asset (sudo-free),
+                                                 # restarts the supervisor onto the new binary
+satelle version                                  # must report $VER + the pushed commit SHA prefix
+curl -fsS "http://127.0.0.1:${PORT:-8787}/" | grep -F "satelle $VER"  # live footer = $VER
 ```
 
-The **running service reporting `$VER`** is the pass criterion — not any particular restart command:
+`satelle update` is sudo-free: it rewrites your `~/.local/bin` binary and restarts the
+service — the user unit via `systemctl --user`, or a system unit by signalling its
+process so `Restart=always` respawns it onto the new binary. The **running service
+reporting `$VER`** is the pass criterion — not any particular restart command:
 
-- `make install` non-zero → **release failed** (the binary itself). Fix and re-run.
-- `satelle service install` non-zero because the systemd `--user` bus is unreachable (headless / non-login WSL — no `/run/user/<uid>/systemd`): this alone is **not** a failed release. Restart via a **persistent** fallback instead, then re-verify the live version:
-  - a linger-backed user manager — `loginctl enable-linger $USER` then start the user unit once a user bus exists; or
-  - a **system** unit that runs regardless of login — `sudo cp ~/.config/systemd/user/satelle.service /etc/systemd/system/ && sudo systemctl enable --now satelle.service`.
-  - An ephemeral `nohup`/`setsid satelle serve …` relaunch is **NOT** an acceptable final state — it dies with the session and the fleet silently reverts. Use it only as a throwaway probe, never as the released supervisor.
-- CLI version or the footer still shows the **previous** version → **release failed** (stale process, or a non-persistent relaunch). Make a persistent supervisor run the new binary; re-verify.
-- Do **not** treat "printed guidance" or a manual note as success — the dogfood is done only when the live version matches AND is served by a persistent supervisor.
+- `satelle update` reports "already up to date" but the footer shows the OLD version →
+  the restart no-op'd (dead user manager, or a non-`Restart=always` supervisor). Fix the
+  supervisor (`satelle service install --system` for a persistent one), re-run.
+- Footer still shows the **previous** version → **release failed** (stale process). Make
+  the persistent supervisor run the new binary; re-verify. An ephemeral `nohup`/`setsid
+  satelle serve …` relaunch is **NOT** an acceptable final state — it dies with the
+  session and the fleet silently reverts; use it only as a throwaway probe.
+- `make install` is fine for an immediate local CLI build, but the DOGFOOD is `satelle
+  update` (the real published artifact + the path a user hits) — do not substitute it.
+- Do **not** treat "printed guidance" or a manual note as success — the dogfood is done
+  only when the live version matches AND is served by a persistent supervisor.
 
-Draft the summary body (§3) while CI proceeds only after local install verification passes.
+Draft the summary body (§3) once the live footer matches `$VER`.
 
 ### 2b. CI + published tag (one consolidated look)
 
