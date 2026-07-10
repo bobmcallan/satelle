@@ -91,13 +91,13 @@ func TestCodexStubErrorsClearly(t *testing.T) {
 // cannot run commands"; the denylist now makes that true. An agent that MUST
 // mutate is a named agent with an explicit full-command harness (no preset
 // denylist), e.g. commit-agent.
-func TestDefaultClaudeHarnessHasDenylistCeiling(t *testing.T) {
+func TestDefaultClaudeCommandHasDenylistCeiling(t *testing.T) {
 	for _, deny := range []string{"--disallowedTools", "Write", "Edit", "NotebookEdit", "Bash"} {
-		if !strings.Contains(DefaultClaudeHarness, deny) {
-			t.Errorf("DefaultClaudeHarness must include %q (mutator ceiling): %q", deny, DefaultClaudeHarness)
+		if !strings.Contains(DefaultClaudeCommand, deny) {
+			t.Errorf("DefaultClaudeCommand must include %q (mutator ceiling): %q", deny, DefaultClaudeCommand)
 		}
 	}
-	rest := DefaultClaudeHarness[strings.Index(DefaultClaudeHarness, "--disallowedTools ")+len("--disallowedTools "):]
+	rest := DefaultClaudeCommand[strings.Index(DefaultClaudeCommand, "--disallowedTools ")+len("--disallowedTools "):]
 	if end := strings.Index(rest, " "); end >= 0 {
 		rest = rest[:end]
 	}
@@ -218,7 +218,7 @@ func TestBuildArgsSubstitutesPayload(t *testing.T) {
 // Command() keeps the literal {payload} token — never the expanded body
 // (invocation evidence must stay payload-free). sty_5cf4a1fb AC3.
 func TestCommandKeepsPayloadPlaceholder(t *testing.T) {
-	r := templateFromHarness("fake-cli -p {payload} --append-system-prompt {system}")
+	r := templateFromCommand("fake-cli -p {payload} --append-system-prompt {system}")
 	cmd := r.Command()
 	if !strings.Contains(cmd, "{payload}") {
 		t.Errorf("Command() must keep literal {payload}: %q", cmd)

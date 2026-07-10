@@ -5,16 +5,18 @@
 // their agent and its exact argv in `.satelle/agents.toml` and no reviewer code
 // names a binary or a flag directly.
 //
-// A harness string is a command template: the first token is the binary, the rest
+// A command string is a command template: the first token is the binary, the rest
 // are argv tokens that may carry the placeholders {system}, {tools}, {model},
 // {settings}, and {payload}. At call time satelle substitutes each placeholder into
 // its own argv token (so a multi-line system prompt or a JSON payload stays a
 // single argument). The work-item payload is ALWAYS also written to the child
 // stdin (dual delivery): stdin-first CLIs (claude -p) keep using stdin alone;
 // argv-first CLIs (e.g. grok -p {payload}) include {payload} in the template.
-// A bare CLI name (a single token, e.g. "claude") expands to that CLI's built-in
-// PRESET template — claude's preset carries a read-only --disallowedTools denylist
-// so the grant is a ceiling over the repo's settings, not just an allowlist floor.
+// A bare CLI name (a single token — "claude", "grok", or "codex") expands to that
+// CLI's built-in PRESET template; the claude and grok presets carry a read-only
+// tool ceiling (claude via --disallowedTools, grok via --deny + a read-only
+// --tools grant) so the grant is a ceiling over the repo's settings, not just an
+// allowlist floor. "codex" is a not-yet-mapped stub (write a full command instead).
 package agentcli
 
 import (
@@ -36,9 +38,10 @@ import (
 const (
 	CLIClaude = "claude"
 	CLICodex  = "codex"
+	CLIGrok   = "grok"
 )
 
-// DefaultClaudeHarness is the claude preset template — the satellites gate argv
+// DefaultClaudeCommand is the claude preset template — the satellites gate argv
 // reproduced behind the template seam, hardened with a --disallowedTools denylist
 // so the reviewer's grant is a CEILING (deny wins over allow) over any
 // permissions the repo's .claude/settings.json would otherwise inherit. {system}
@@ -56,7 +59,19 @@ const (
 // needs no shell: the substrate it reasons about is materialised as markdown
 // under .satelle, so it reads it directly. A repo MAY widen the grant in
 // .satelle/agents.toml (transparently), but the default is read-only.
-const DefaultClaudeHarness = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model}"
+const DefaultClaudeCommand = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model}"
+
+// DefaultGrokCommand is the grok preset template — the proven dogfood reviewer
+// command (this repo's own [reviewer]) behind the single-token "grok" preset.
+// Grok is argv-first, so the work-item rides on -p {payload} (and also stdin, dual
+// delivery). Unlike claude, the read-only grant is BAKED IN (--tools with grok's
+// own tool names read_file,grep,list_dir, plus --deny on every mutator) rather
+// than drawn from {tools}: the reviewer's default {tools} is Claude tool names
+// (Read,Grep,Glob), which grok does not understand — feeding them to grok was the
+// exact failure this preset removes. To widen grok's grant, author a full command
+// template instead of the bare preset. {model} is dropped (with -m) when unset, so
+// grok falls back to its own default unless the binding pins one (e.g. grok-4.5).
+const DefaultGrokCommand = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir -m {model} --deny Write --deny Edit --deny search_replace --deny write --always-approve --output-format plain --max-turns 16 --no-subagents"
 
 // Request is one headless agent invocation.
 type Request struct {
@@ -173,26 +188,30 @@ type Runner interface {
 }
 
 // NewRunner returns the Runner for a bare CLI NAME — the preset. An empty name
-// defaults to claude; "codex" is the not-yet-mapped stub; an unknown name errors.
-// Callers with a full harness template use RunnerFromHarness instead.
+// defaults to claude; "grok" expands to the grok preset; "codex" is the
+// not-yet-mapped stub; an unknown name errors. Callers with a full command
+// template use RunnerFromCommand instead.
 func NewRunner(name string) (Runner, error) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "", CLIClaude:
-		return templateFromHarness(DefaultClaudeHarness), nil
+		return templateFromCommand(DefaultClaudeCommand), nil
+	case CLIGrok:
+		return templateFromCommand(DefaultGrokCommand), nil
 	case CLICodex:
 		return codexRunner{binary: CLICodex}, nil
 	default:
-		return nil, fmt.Errorf("agentcli: unknown agent cli %q (want %q or %q, or a full harness template)", name, CLIClaude, CLICodex)
+		return nil, fmt.Errorf("agentcli: unknown agent cli %q (want %q, %q, or %q, or a full command template)", name, CLIClaude, CLIGrok, CLICodex)
 	}
 }
 
-// RunnerFromHarness resolves an agents-layer harness binding to a Runner. An empty
-// or "in-loop" harness returns (nil, nil): no agent-CLI runner, so the caller keeps
-// its configured default. A SINGLE-token harness is a preset CLI name, resolved via
-// NewRunner (so "codex" still errors as a stub). A MULTI-token harness is a literal
-// command template: the first token is the binary, the rest the argv template.
-func RunnerFromHarness(harness string) (Runner, error) {
-	fields := strings.Fields(harness)
+// RunnerFromCommand resolves an agents-layer command binding to a Runner. An empty
+// or "in-loop" command returns (nil, nil): no agent-CLI runner, so the caller keeps
+// its configured default. A SINGLE-token command is a preset CLI name, resolved via
+// NewRunner (claude/grok expand to their presets; "codex" still errors as a stub).
+// A MULTI-token command is a literal command template: the first token is the
+// binary, the rest the argv template.
+func RunnerFromCommand(command string) (Runner, error) {
+	fields := strings.Fields(command)
 	if len(fields) == 0 || strings.ToLower(fields[0]) == "in-loop" {
 		return nil, nil
 	}
@@ -205,7 +224,7 @@ func RunnerFromHarness(harness string) (Runner, error) {
 // Detect returns the first supported agent CLI found on PATH (claude preferred),
 // or "" when none is installed. Used by the install-time selection.
 func Detect() string {
-	for _, c := range []string{CLIClaude, CLICodex} {
+	for _, c := range []string{CLIClaude, CLIGrok, CLICodex} {
 		if _, err := exec.LookPath(c); err == nil {
 			return c
 		}
@@ -225,16 +244,16 @@ func Available(name string) bool {
 
 // templateRunner executes a command template: a binary plus an argv template whose
 // tokens may carry {system}/{tools}/{model}/{settings}/{payload} placeholders. It
-// is the single code path for every agent CLI — claude, codex, or any
+// is the single code path for every agent CLI — claude, grok, codex, or any
 // operator-supplied binary.
 type templateRunner struct {
 	binary      string
 	argTemplate []string
 }
 
-// templateFromHarness parses a full harness string into a templateRunner.
-func templateFromHarness(harness string) templateRunner {
-	fields := strings.Fields(harness)
+// templateFromCommand parses a full command string into a templateRunner.
+func templateFromCommand(command string) templateRunner {
+	fields := strings.Fields(command)
 	return templateRunner{binary: fields[0], argTemplate: fields[1:]}
 }
 
@@ -306,7 +325,7 @@ func (c codexRunner) Name() string { return CLICodex }
 func (c codexRunner) Command() string { return c.binary }
 
 func (c codexRunner) Run(ctx context.Context, req Request) ([]byte, error) {
-	return nil, fmt.Errorf("agentcli: the codex preset is not yet mapped — install claude, or set [reviewer] harness to a full codex command template in .satelle/agents.toml")
+	return nil, fmt.Errorf("agentcli: the codex preset is not yet mapped — install claude, use the grok preset, or set [reviewer] command to a full codex command template in .satelle/agents.toml")
 }
 
 // composeEnv layers overlay onto base ("KEY=VALUE" entries, as from os.Environ),

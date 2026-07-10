@@ -28,7 +28,7 @@ func validateDeployment(out io.Writer, dataDir string) error {
 	fmt.Fprintln(out, "\nValidating the deployed system:")
 	failed := 0
 
-	// The agents layer: present, parseable, and a resolvable reviewer harness.
+	// The agents layer: present, parseable, and a resolvable reviewer command.
 	// The runtime refuses to run without it (requireAgents), so init must not
 	// report success while leaving the repo unrunnable.
 	agentsRel := config.DefaultDataDir + "/" + config.AgentsConfigName
@@ -43,9 +43,9 @@ func validateDeployment(out io.Writer, dataDir string) error {
 	} else if agents, lerr := config.LoadAgents(dataDir); lerr != nil {
 		failed++
 		fmt.Fprintf(out, "FAIL  %s — %v\n", agentsRel, lerr)
-	} else if _, herr := agentcli.RunnerFromHarness(agents.ReviewerBinding().Harness); herr != nil {
+	} else if _, herr := agentcli.RunnerFromCommand(agents.ReviewerBinding().CommandTemplate()); herr != nil {
 		failed++
-		fmt.Fprintf(out, "FAIL  %s — reviewer harness: %v\n", agentsRel, herr)
+		fmt.Fprintf(out, "FAIL  %s — reviewer command: %v\n", agentsRel, herr)
 	} else if _, verr := config.ResolveAgentEnvs(agents, deployedVars(dataDir)); verr != nil {
 		// Every binding's env ${VAR} must resolve against the [vars] KV, or the
 		// runtime (requireAgents) would refuse to run — fail fast here (sty_001558ce).

@@ -14,12 +14,14 @@ func embeddedPrinciples() map[string]string {
 }
 
 // TestEmbeddedOperatingPrinciples: the binary embeds exactly the principles an
-// agent needs to OPERATE satelle — the operating discipline (agent-goals) and the
-// execution model (agent-model). Everything else is authoring/development
-// substrate that lives in a repo's .satelle/principles (sty_807ae744).
+// agent needs to OPERATE satelle — the operating discipline (agent-goals), the
+// execution model (agent-model), and the edit-gate rule that every tree edit
+// runs under an engaged story (edits-require-a-story). Everything else is
+// authoring/development substrate that lives in a repo's .satelle/principles
+// (sty_807ae744, sty_949e8739).
 func TestEmbeddedOperatingPrinciples(t *testing.T) {
 	embedded := embeddedPrinciples()
-	for _, name := range []string{"satelle-agent-goals", "satelle-agent-model"} {
+	for _, name := range []string{"satelle-agent-goals", "satelle-agent-model", "satelle-edits-require-a-story"} {
 		if body, ok := embedded[name]; !ok {
 			t.Errorf("operating principle %q must be embedded, but is missing from EmbeddedDefaults()", name)
 		} else if len(body) == 0 {

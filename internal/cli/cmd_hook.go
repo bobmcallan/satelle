@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -181,7 +182,43 @@ with a clear message rather than silently allowing it (sty_f3d5d4b8).`,
 		},
 	}
 
-	hook.AddCommand(context, gate, commitgate)
+	prompt := &cobra.Command{
+		Use:   "prompt",
+		Short: "UserPromptSubmit reinforcement — re-inject the edits-require-a-story rule + a gate-liveness self-check",
+		Long: `prompt is the UserPromptSubmit handler. Every prompt it re-injects a CONCISE
+reminder that tree edits require an engaged story (the full principle rides at
+SessionStart; this is the standing nudge in front of the agent each turn). It
+ALSO runs a gate-liveness SELF-CHECK: it reads the repo's committed hook settings
+(.claude/settings.json / .grok/hooks/satelle.json) and, when it can confidently
+see that NO PreToolUse Edit-matcher hook invokes 'satelle hook gate', it PREPENDS
+a LOUD warning that enforcement is not wired — the countermeasure to a silently
+inert gate letting ungated edits through (sty_949e8739). Fails OPEN: any read/
+resolve error injects only the reminder and never blocks the prompt.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, _ = io.ReadAll(cmd.InOrStdin())
+			return runHookPrompt(cmd.OutOrStdout())
+		},
+	}
+	stopcheck := &cobra.Command{
+		Use:   "stopcheck",
+		Short: "Stop post-hoc detector — block finishing when the tree was edited ungated (no engaged story)",
+		Long: `stopcheck is the Stop handler. It catches the incident the PreToolUse gate is
+meant to prevent even if that gate never fired this session: on Stop, if the tree
+has uncommitted, NON-EXEMPT in-repo changes while NO story is engaged, it emits a
+dual-format block ({"decision":"block", …}) naming the ungated files so the agent
+cannot silently finish an ungated edit (sty_949e8739). It honours the event's
+stop_hook_active flag so it never re-blocks a stop it already blocked, and fails
+OPEN when git is absent, the tree is clean, only exempt paths changed, or a story
+is engaged.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			raw, _ := io.ReadAll(cmd.InOrStdin())
+			return runHookStopcheck(raw, cmd.OutOrStdout())
+		},
+	}
+
+	hook.AddCommand(context, gate, commitgate, prompt, stopcheck)
 	register(hook)
 }
 
@@ -705,6 +742,203 @@ func emitAdditionalContext(out io.Writer, event, permissionDecision, context str
 	doc.HookSpecificOutput.PermissionDecision = permissionDecision
 	doc.HookSpecificOutput.AdditionalContext = context
 	b, err := json.Marshal(doc)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(out, string(b))
+	return nil
+}
+
+// hookPromptReminder is the CONCISE standing nudge the UserPromptSubmit hook
+// re-injects every turn (the full rule is the satelle-edits-require-a-story
+// principle injected at SessionStart). It keeps the engaged-story discipline in
+// front of the agent between session starts — a single PreToolUse gate is not the
+// only line of defence (sty_949e8739).
+const hookPromptReminder = "satelle: edits require an ENGAGED story. Before any Edit/Write/create/delete, engage a story in a performing state — `satelle story create …` then `satelle story set <id> --status plan` — and drive it through its workflow. Research uses read tools (Read/grep/Glob), never Edit/Write. The edit gate enforces this; never route around it."
+
+// gateNotWiredWarning is the LOUD banner the UserPromptSubmit self-check prepends
+// when it can confidently see the PreToolUse edit gate is NOT wired into the
+// repo's committed hook settings — the countermeasure to a silently inert gate
+// (the incident this story fixes): without a wired gate, code edits are ungated
+// with no signal.
+const gateNotWiredWarning = "⚠️ satelle: the edit gate is NOT wired into this repo's hooks — code edits are currently UNGATED. Do NOT edit code until enforcement is live: run `satelle init` to (re)install the PreToolUse gate, then restart the session so the harness loads it."
+
+// runHookPrompt is the UserPromptSubmit handler: it re-injects the concise
+// edits-require-a-story reminder and, when a gate-liveness self-check confidently
+// finds no wired edit gate, prepends the LOUD not-wired warning. Fails open — a
+// resolve/read failure injects only the reminder.
+func runHookPrompt(out io.Writer) error {
+	msg := hookPromptReminder
+	if root, ok := repoRootForHook(); ok {
+		if wired, checked := gateWiredInSettings(root); checked && !wired {
+			msg = gateNotWiredWarning + "\n\n" + msg
+		}
+	}
+	return emitAdditionalContext(out, "UserPromptSubmit", "", msg)
+}
+
+// runHookStopcheck is the Stop handler: a post-hoc detector for the exact
+// incident the PreToolUse gate prevents. It blocks finishing when the tree has
+// uncommitted non-exempt in-repo changes while no story is engaged — so an
+// ungated edit cannot be silently finished even if the PreToolUse hook never
+// fired. Honours stop_hook_active (never re-blocks its own block) and fails open
+// (git absent, clean tree, only exempt changes, or a story engaged → allow).
+func runHookStopcheck(raw []byte, out io.Writer) error {
+	if stopHookActive(raw) {
+		return nil // anti-loop: never re-block a stop we already blocked
+	}
+	root, ok := repoRootForHook()
+	if !ok {
+		return nil // fail open — unresolvable repo blocks nothing
+	}
+	engaged, err := storyEngaged()
+	if err != nil || engaged {
+		// A story is engaged (edits are legitimate) OR engagement is unknowable —
+		// stopcheck is a secondary detector, so it fails OPEN rather than blocking a
+		// finish on a broken deployment (the PreToolUse gate is the fail-closed one).
+		return nil
+	}
+	gated, derr := dirtyGatedPaths(root)
+	if derr != nil || len(gated) == 0 {
+		return nil // git absent / clean / only exempt (.satelle) changes — nothing to flag
+	}
+	return emitStopBlock(out, stopcheckReason(gated))
+}
+
+// repoRootForHook resolves this repo's root from the committed config, or
+// (false) when it cannot be resolved — hooks that call it fail open on false.
+func repoRootForHook() (string, bool) {
+	_, cfgPath, err := config.Load("")
+	if err != nil {
+		return "", false
+	}
+	root := config.RepoRootFromConfigPath(cfgPath)
+	if strings.TrimSpace(root) == "" {
+		return "", false
+	}
+	return root, true
+}
+
+// gateWiredInSettings reports whether the repo's committed hook settings wire the
+// PreToolUse edit gate, and whether the check could be made at all. checked=false
+// means no settings file was present/readable (the caller fails OPEN — no
+// warning); checked=true with wired=false means a settings file exists but no
+// PreToolUse Edit-matcher hook invokes `satelle hook gate` — a confident missing
+// wire the caller surfaces LOUDLY.
+func gateWiredInSettings(repoRoot string) (wired bool, checked bool) {
+	for _, path := range []string{
+		filepath.Join(repoRoot, ".claude", "settings.json"),
+		filepath.Join(repoRoot, filepath.FromSlash(grokHooksRel)),
+	} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue // absent/unreadable — skip (fail open on this candidate)
+		}
+		checked = true
+		if settingsWiresGate(raw) {
+			return true, true
+		}
+	}
+	return false, checked
+}
+
+// settingsWiresGate reports whether a hook-settings JSON wires a PreToolUse
+// Edit-matcher hook that invokes `satelle hook gate`. Pure over the bytes so it
+// is unit-tested directly; a parse failure returns false (no confident wire).
+func settingsWiresGate(raw []byte) bool {
+	var s struct {
+		Hooks struct {
+			PreToolUse []struct {
+				Matcher string `json:"matcher"`
+				Hooks   []struct {
+					Command string `json:"command"`
+				} `json:"hooks"`
+			} `json:"PreToolUse"`
+		} `json:"hooks"`
+	}
+	if json.Unmarshal(raw, &s) != nil {
+		return false
+	}
+	for _, e := range s.Hooks.PreToolUse {
+		if !strings.Contains(e.Matcher, "Edit") {
+			continue
+		}
+		for _, h := range e.Hooks {
+			if strings.Contains(h.Command, "satelle hook gate") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// dirtyGatedPaths returns the repo-relative paths git reports as modified/added
+// that are NOT edit-gate-exempt — the ungated-edit surface the stopcheck flags.
+// Returns an error when git is unavailable or root is not a repo, so the caller
+// fails open. Exempt paths (e.g. .satelle/ authored substrate) are filtered out.
+func dirtyGatedPaths(root string) ([]string, error) {
+	out, err := exec.Command("git", "-C", root, "status", "--porcelain").Output()
+	if err != nil {
+		return nil, err
+	}
+	var gated []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if len(line) < 4 {
+			continue // "XY p" is the minimum porcelain line
+		}
+		path := strings.TrimSpace(line[3:])
+		if i := strings.Index(path, " -> "); i >= 0 {
+			path = path[i+4:] // a rename reports "old -> new"; the new path is what exists
+		}
+		path = strings.Trim(path, `"`)
+		if path == "" || exemptTarget(path) {
+			continue
+		}
+		gated = append(gated, path)
+	}
+	return gated, nil
+}
+
+// stopHookActive reports whether the Stop event marks that a stop hook is already
+// active — honoured so stopcheck never re-blocks a stop it already blocked
+// (anti-loop). Accepts snake_case (Claude) and camelCase (Grok) shapes.
+func stopHookActive(raw []byte) bool {
+	var ev struct {
+		Snake bool `json:"stop_hook_active"`
+		Camel bool `json:"stopHookActive"`
+	}
+	_ = json.Unmarshal(raw, &ev)
+	return ev.Snake || ev.Camel
+}
+
+// stopcheckReason is the agent-facing block message naming the ungated files
+// (capped so a large dirty tree does not flood the reason).
+func stopcheckReason(paths []string) string {
+	shown := paths
+	const max = 10
+	suffix := ""
+	if len(shown) > max {
+		suffix = fmt.Sprintf(" (+%d more)", len(shown)-max)
+		shown = shown[:max]
+	}
+	return "satelle: STOP BLOCKED — the tree has uncommitted, non-exempt changes but NO story is engaged, so these edits were made UNGATED: " +
+		strings.Join(shown, ", ") + suffix + ". This is exactly what the edit gate exists to prevent. " +
+		"Engage a story now (satelle story create … then satelle story set <id> --status plan) so the change is tracked through its workflow, or revert the ungated edits."
+}
+
+// stopBlockOut is the Stop-hook block payload: Claude reads top-level
+// {"decision":"block","reason":…}; the same top-level shape best-effort covers
+// Grok. (Stop is not the PreToolUse hookSpecificOutput shape.)
+type stopBlockOut struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason"`
+}
+
+// emitStopBlock writes the Stop block JSON (one line) and returns nil — the Stop
+// hook blocks via the stdout decision, not an exit code (its wiring carries no
+// '|| exit 2').
+func emitStopBlock(out io.Writer, reason string) error {
+	b, err := json.Marshal(stopBlockOut{Decision: "block", Reason: reason})
 	if err != nil {
 		return err
 	}

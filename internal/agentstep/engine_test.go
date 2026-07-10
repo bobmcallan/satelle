@@ -1019,8 +1019,8 @@ func TestDispatchExecutorDualPayloadArgvAndStdin(t *testing.T) {
 		}
 		return config.AgentBinding{Harness: harness, Tools: "Read,Bash(satelle:*)"}, true
 	})
-	// Real agentcli.RunnerFromHarness (default) — not a fakeRunner.
-	g.newRunner = agentcli.RunnerFromHarness
+	// Real agentcli.RunnerFromCommand (default) — not a fakeRunner.
+	g.newRunner = agentcli.RunnerFromCommand
 	res, err := g.DispatchExecutor(context.Background(),
 		workitem.Item{ID: "sty_dual", Title: "Dual payload item", Status: "backlog", Body: "body-here"}, "plan")
 	if err != nil {

@@ -109,6 +109,10 @@ func TestEnsureGrokHooksCreateReconcileIdempotent(t *testing.T) {
 	for _, want := range []string{
 		"PATH=$HOME/.local/bin:$PATH satelle hook gate || exit 2",
 		"PATH=$HOME/.local/bin:$PATH satelle hook commitgate || exit 2",
+		"PATH=$HOME/.local/bin:$PATH satelle hook prompt",
+		"PATH=$HOME/.local/bin:$PATH satelle hook stopcheck",
+		"UserPromptSubmit",
+		"Stop",
 		"search_replace",
 		"run_terminal_command",
 		"satelle reindex",
@@ -139,16 +143,20 @@ func TestEnsureGrokHooksCreateReconcileIdempotent(t *testing.T) {
 	if err := os.WriteFile(userHook, []byte(`{"mine":true}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// The stale file is BOTH reconciled (satelle index -> reindex) AND healed with
+	// the reinforcement hooks it lacks (sty_949e8739): 1 rename + 2 added hooks.
 	added, updated, err = ensureGrokHooks(repo)
-	if err != nil || added || len(updated) != 1 {
-		t.Fatalf("reconcile: added=%v updated=%v err=%v", added, updated, err)
+	if err != nil || added || len(updated) != 3 {
+		t.Fatalf("reconcile+heal: added=%v updated=%v err=%v", added, updated, err)
 	}
 	got, _ := os.ReadFile(path)
 	if strings.Contains(string(got), `"satelle index"`) || !strings.Contains(string(got), `"satelle reindex"`) {
 		t.Errorf("stale not fixed:\n%s", got)
 	}
-	if !strings.Contains(string(got), `"keep-me"`) {
-		t.Errorf("user content lost:\n%s", got)
+	for _, want := range []string{`"keep-me"`, "satelle hook prompt", "satelle hook stopcheck"} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("reconcile+heal lost/omitted %q:\n%s", want, got)
+		}
 	}
 	userBody, _ := os.ReadFile(userHook)
 	if string(userBody) != `{"mine":true}` {

@@ -2,7 +2,7 @@ package agentcli
 
 import "testing"
 
-func TestRunnerFromHarness(t *testing.T) {
+func TestRunnerFromCommand(t *testing.T) {
 	cases := []struct {
 		harness   string
 		want      string // expected runner name (the template binary)
@@ -18,7 +18,7 @@ func TestRunnerFromHarness(t *testing.T) {
 		{"bogus", "", true, true},                                             // unknown single-token preset → error
 	}
 	for _, c := range cases {
-		r, err := RunnerFromHarness(c.harness)
+		r, err := RunnerFromCommand(c.harness)
 		switch {
 		case c.wantErr:
 			if err == nil {
@@ -38,8 +38,8 @@ func TestRunnerFromHarness(t *testing.T) {
 
 // A multi-token literal harness must carry its FULL argv template, not just the
 // binary — the whole point of the template seam.
-func TestRunnerFromHarnessLiteralKeepsArgs(t *testing.T) {
-	r, err := RunnerFromHarness("claude -p --allowedTools {tools}")
+func TestRunnerFromCommandLiteralKeepsArgs(t *testing.T) {
+	r, err := RunnerFromCommand("claude -p --allowedTools {tools}")
 	if err != nil {
 		t.Fatal(err)
 	}
