@@ -116,3 +116,20 @@ type WorkstateIngestResult struct {
 	Items  int `json:"items"`
 	Ledger int `json:"ledger"`
 }
+
+// PublishedItem is one head (or history entry) in a team workspace's
+// publisher-owned catalog — GET /api/v1/workspaces/{id}/published (list),
+// PUT /api/v1/workspaces/{id}/published/{path} (publish), and the metadata
+// headers on GET …/published/{path} (content). Team catalog only; not a
+// personal-sync destination (epic:sync-publish).
+type PublishedItem struct {
+	Path        string `json:"path"`
+	Kind        string `json:"kind"`
+	Version     int    `json:"version"`
+	BlobSHA256  string `json:"blob_sha256"`
+	Size        int64  `json:"size"`
+	PublisherID string `json:"publisher_id"`
+	Title       string `json:"title"`
+	CreatedAt   string `json:"created_at"`
+	Created     bool   `json:"created,omitempty"`
+}

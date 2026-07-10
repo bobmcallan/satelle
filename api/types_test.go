@@ -55,6 +55,17 @@ func TestJSONKeyIdentity(t *testing.T) {
 		r := api.WorkstateIngestResult{Items: 2, Ledger: 1}
 		assertByteIdenticalJSON(t, h, r)
 	})
+	t.Run("PublishedItem", func(t *testing.T) {
+		h := hosted.PublishedItem{
+			Path: "skills/x.md", Kind: "skill", Version: 2, BlobSHA256: "h",
+			Size: 4, PublisherID: "user-1", Title: "X", CreatedAt: "t", Created: true,
+		}
+		r := api.PublishedItem{
+			Path: "skills/x.md", Kind: "skill", Version: 2, BlobSHA256: "h",
+			Size: 4, PublisherID: "user-1", Title: "X", CreatedAt: "t", Created: true,
+		}
+		assertByteIdenticalJSON(t, h, r)
+	})
 	t.Run("TokenResponse", func(t *testing.T) {
 		// hosted.tokenResponse is unexported, so marshal a hosted token flow
 		// result indirectly: compare field names via api.TokenResponse.
@@ -144,6 +155,7 @@ func TestOpenAPISchemaCoverage(t *testing.T) {
 		"DocumentChanges",
 		"WorkstateIngest",
 		"WorkstateIngestResult",
+		"PublishedItem",
 		"TokenResponse",
 		"OAuthError",
 		"ErrorEnvelope",
@@ -262,6 +274,28 @@ func TestWorkstateEndpointsInSpec(t *testing.T) {
 	} {
 		if !strings.Contains(yaml, route) {
 			t.Errorf("openapi.yaml missing workstate endpoint %q", route)
+		}
+	}
+}
+
+// TestPublishEndpointsInSpec verifies the team publish catalog endpoints are
+// published (epic:sync-publish / sty_aad09578 AC5).
+func TestPublishEndpointsInSpec(t *testing.T) {
+	yamlBytes, err := os.ReadFile("openapi.yaml")
+	if err != nil {
+		t.Fatalf("read openapi.yaml: %v", err)
+	}
+	yaml := string(yamlBytes)
+	for _, route := range []string{
+		"/api/v1/workspaces/{workspaceId}/published",
+		"/api/v1/workspaces/{workspaceId}/published/{path}",
+		"listPublishedArtifacts",
+		"publishArtifact",
+		"getPublishedArtifact",
+		"PublishedItem",
+	} {
+		if !strings.Contains(yaml, route) {
+			t.Errorf("openapi.yaml missing publish endpoint %q", route)
 		}
 	}
 }
