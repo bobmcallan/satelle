@@ -135,14 +135,22 @@ type ReviewConfig struct {
 	GateCreate bool `toml:"gate_create"`
 }
 
-// GateConfig tunes the PreToolUse edit gate. EditExemptPaths lists repo-relative
-// (or absolute) path prefixes whose edits are exempt from the engaged-story gate,
-// IN ADDITION to the always-exempt data dir. Empty by default so the binary stays
-// CLI-vendor-neutral — a repo opts a harness authoring dir (e.g. ".claude/", which
-// holds authored skills, not product code) in as configuration, never a Go rule
-// (satelle-repo-agnostic / the constitution).
+// GateConfig tunes the PreToolUse edit gate and the single-story process rule.
+// EditExemptPaths lists repo-relative (or absolute) path prefixes whose edits
+// are exempt from the engaged-story gate, IN ADDITION to the always-exempt data
+// dir. Empty by default so the binary stays CLI-vendor-neutral — a repo opts a
+// harness authoring dir (e.g. ".claude/", which holds authored skills, not
+// product code) in as configuration, never a Go rule (satelle-repo-agnostic /
+// the constitution).
+//
+// AllowParallel opts OUT of the default one-performing-story rule. Unset/false
+// (default): a status advance that would leave two stories in non-terminal
+// engaging states of their workflows is refused. true: the blocker is off —
+// the setting does NOT implement parallel work (worktrees/merge); that remains
+// a workflow/process choice the operator must design (sty_c7149f8a).
 type GateConfig struct {
 	EditExemptPaths []string `toml:"edit_exempt_paths"`
+	AllowParallel   bool     `toml:"allow_parallel"`
 }
 
 // ErrNotFound signals no satelle.toml was found walking up from CWD. Callers

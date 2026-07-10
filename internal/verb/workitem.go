@@ -124,6 +124,23 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 			}
 		}
 
+		// Single-story process rule (sty_c7149f8a): refuse creating a story already
+		// in an engaging status when another story occupies that seat. Default
+		// create status is backlog (not engaging) — no-op unless create opts a
+		// non-default status. [gate] allow_parallel opts out.
+		if kind == workitem.KindStory {
+			status := req.Status
+			if status == "" {
+				status = workitem.StatusBacklog
+			}
+			provisional := workitem.Item{
+				Kind: workitem.KindStory, Status: status, Category: req.Category, Tags: tags, Title: req.Title,
+			}
+			if err := refuseSecondEngagingStory(ctx, "", status, provisional); err != nil {
+				return nil, err
+			}
+		}
+
 		it, err := store.Create(ctx, workitem.CreateInput{
 			Kind:               kind,
 			Title:              req.Title,
@@ -276,6 +293,16 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	}
 
 	transitioning := req.Status != nil && *req.Status != current.Status
+
+	// Single-story process rule (sty_c7149f8a): before review/dispatch, refuse a
+	// transition that would leave two stories in non-terminal engaging states.
+	// Same-story plan→in_progress→… is fine (self excluded); blocked/terminal free
+	// the seat. [gate] allow_parallel opts out.
+	if transitioning && current.Kind == workitem.KindStory {
+		if err := refuseSecondEngagingStory(ctx, current.ID, *req.Status, current); err != nil {
+			return nil, err
+		}
+	}
 
 	// Gate the transition through the isolated reviewer, if one is wired and the
 	// edge is governed by a reviewer skill. A reject blocks the whole set and

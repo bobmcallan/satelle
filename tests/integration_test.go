@@ -81,6 +81,22 @@ func stubReviewerAccept(t *testing.T, repo string) {
 	}
 }
 
+// enableParallelStories opts a test repo out of the default one-performing-story
+// rule ([gate] allow_parallel). Use only when the test is about multi-story UI
+// fixtures or similar — not when testing serial process itself (sty_c7149f8a).
+func enableParallelStories(t *testing.T, repo string) {
+	t.Helper()
+	p := filepath.Join(repo, ".satelle", "satelle.toml")
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open satelle.toml: %v", err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString("\n[gate]\nallow_parallel = true\n"); err != nil {
+		t.Fatalf("write allow_parallel: %v", err)
+	}
+}
+
 // run executes the binary in dir with args and returns combined output.
 func run(t *testing.T, bin, dir string, args ...string) (string, error) {
 	t.Helper()
