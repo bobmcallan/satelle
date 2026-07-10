@@ -77,7 +77,9 @@ repo it governs.
 | `ledger` | `append`, `list` |
 | `doc` | `list`, `get` |
 | `hosted` | `login`, `logout`, `whoami` — authenticate to a hosted satelle-server (OAuth 2.1 + PKCE); optional, the local service runs standalone without it |
-| `project` | `create`, `list`, `show` — manage projects on the hosted satelle-server. Requires `login` |
+| `project` | `create`, `list`, `bind`, `show` — manage projects on the hosted satelle-server; `bind` records which hosted project this repo's personal sync targets. Requires `login` for create/list |
+| `sync` | `scopes`, `config` (push/deploy), `documents` (push/pull), `workstate` (push) — personal opt-in targets **this repo's bound hosted project only** (never a shared dump across personal projects); local is the default and writes nothing hosted |
+| `publish` | `push`, `list`, `adopt`, `check` — team catalog (select local artifacts to share; not a second home for the repo). Distinct from personal `sync` |
 | `settings` | Read/write config in two scopes: repo `<key> [value]` (committed `.satelle/satelle.toml`; no args lists all) is the default; `--global server <url>` sets the machine-wide hosted server in `~/.satelle/config.toml` (no login; sign in after via the UI or `login`) |
 | | `init`, `reindex`, `status`, `serve`, `version` |
 

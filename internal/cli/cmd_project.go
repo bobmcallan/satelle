@@ -92,7 +92,7 @@ in the per-user credential store. "satelle project show" prints the binding.`,
 func resolveBoundProject(cfg config.Config) (string, error) {
 	slug := strings.TrimSpace(cfg.Hosted.Project)
 	if slug == "" {
-		return "", fmt.Errorf("no hosted project bound — run \"satelle project bind <slug>\" (personal sync targets this repo's bound project)")
+		return "", fmt.Errorf("no hosted project bound — run \"satelle login\", then \"satelle project create --slug <slug> --name <name>\" (or \"satelle project bind <slug>\" if the project already exists), or set [hosted] project in .satelle/satelle.toml (personal sync targets this repo's bound project only)")
 	}
 	return slug, nil
 }

@@ -21,7 +21,7 @@ import (
 func newSyncDocumentsCmd() *cobra.Command {
 	group := &cobra.Command{
 		Use:   "documents",
-		Short: "Push authored documents to / pull them from the hosted workspace document store",
+		Short: "Push/pull documents for this repo's bound hosted project (local default: no hosted write)",
 	}
 
 	var pushServer, pushWorkspace string
