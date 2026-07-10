@@ -17,15 +17,14 @@ func TestOperationsLogRotates(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	// Tiny caps to force rotation within a short run.
-	f, err := os.OpenFile(filepath.Join(repo, ".satelle", "satelle.toml"), os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
+	// Tiny caps to force rotation within a short run. PREPEND these top-level keys:
+	// the scaffold now ends with an active [gate] table (sty_8c3d345c), so appending
+	// at EOF would scope them under [gate]. A top-level key must precede every table.
+	tomlPath := filepath.Join(repo, ".satelle", "satelle.toml")
+	orig, _ := os.ReadFile(tomlPath)
+	if err := os.WriteFile(tomlPath, append([]byte("logs_max_size_kb = 1\nlogs_max_files = 2\n"), orig...), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.WriteString("\nlogs_max_size_kb = 1\nlogs_max_files = 2\n"); err != nil {
-		t.Fatal(err)
-	}
-	_ = f.Close()
 
 	// Enough mutations to grow operations.log well past the 1 KiB cap several times.
 	for i := 0; i < 40; i++ {

@@ -234,12 +234,17 @@ func TestEmitPreToolUseDenyDualFormat(t *testing.T) {
 	if doc.HookSpecificOutput.HookEventName != "PreToolUse" {
 		t.Errorf("hookEventName = %q", doc.HookSpecificOutput.HookEventName)
 	}
-	// Canonical no-story edit copy: both clauses the operator asked for.
+	// Canonical no-story edit copy: both clauses the operator asked for, plus the
+	// session-contract language (sty_8c3d345c) — a story session opens on engage and
+	// stays open until a terminal/parked state (done, cancelled, or blocked).
 	for _, want := range []string{
 		"mutating the tree without a performing story",
 		"wrong tool for reading",
 		"read_file",
 		"search_replace",
+		"Open a story session",
+		"stays open",
+		"done, cancelled, or blocked",
 	} {
 		if !strings.Contains(reason, want) {
 			t.Errorf("canonical reason missing %q:\n%s", want, reason)
@@ -247,75 +252,61 @@ func TestEmitPreToolUseDenyDualFormat(t *testing.T) {
 	}
 }
 
-// TestDataDirExemptionClassification proves the classification the edit gate's
-// substrate exemption relies on (sty_103af456): a path under the data dir
-// (.satelle/) resolves inside it (→ exempt from the story gate), while in-repo
-// CODE outside it does not.
-func TestDataDirExemptionClassification(t *testing.T) {
-	const dataDir = "/home/u/repo/.satelle"
+// TestResolveAbsTarget pins the relative-target fix (sty_8c3d345c): a repo-relative
+// edit path (as Grok sends) resolves against the REPO ROOT, not against whatever
+// narrower root a later containment test uses. This is what stops a relative
+// "internal/x.go" from nesting under a tested ".satelle" root and looking exempt.
+func TestResolveAbsTarget(t *testing.T) {
+	const repo = "/home/u/repo"
 	cases := []struct {
 		target string
-		inData bool // true = under the data dir (edit exempt); false = code (gated)
+		want   string
 	}{
-		{"/home/u/repo/.satelle/skills/plan.md", true},
-		{"/home/u/repo/.satelle/workflows/satelle-project-workflow.md", true},
-		{"/home/u/repo/.satelle/agents.toml", true},
-		{"/home/u/repo/internal/cli/cmd_hook.go", false}, // code — still gated
-		{"/home/u/repo/README.md", false},                // repo-root non-substrate
+		{"internal/config/sync.go", "/home/u/repo/internal/config/sync.go"}, // relative → under repo root
+		{"/home/u/repo/internal/x.go", "/home/u/repo/internal/x.go"},        // absolute → unchanged (cleaned)
+		{"/home/u/other/x.go", "/home/u/other/x.go"},                        // absolute outside → unchanged
+		{"", ""}, // blank passes through
 	}
 	for _, c := range cases {
-		if got := withinRoot(dataDir, c.target); got != c.inData {
-			t.Errorf("withinRoot(dataDir, %q) = %v, want %v", c.target, got, c.inData)
+		if got := resolveAbsTarget(repo, c.target); got != c.want {
+			t.Errorf("resolveAbsTarget(%q, %q) = %q, want %q", repo, c.target, got, c.want)
 		}
+	}
+	// The crux: a relative code path, once resolved against the repo root, is NOT
+	// classed as inside the data dir — the exact mis-classification that let Grok
+	// (relative-path) edits bypass the gate before the fix.
+	dataDir := "/home/u/repo/.satelle"
+	if editExempt([]string{dataDir}, resolveAbsTarget(repo, "internal/config/sync.go")) {
+		t.Error("a relative product-code path resolved to inside the data dir (the pre-fix bypass)")
+	}
+	if !editExempt([]string{dataDir}, resolveAbsTarget(repo, ".satelle/skills/plan.md")) {
+		t.Error("a relative substrate path under an exempt prefix should classify exempt")
 	}
 }
 
-// TestEditExemptClassification proves the config-driven exempt list generalizes
-// the data-dir exemption (sty_41416b76): a configured harness authoring dir
-// (.claude/) is exempt while in-repo code stays gated, the data-dir leg still
-// works, and a blank prefix must NOT silently exempt everything.
+// TestEditExemptClassification proves exemption is CONFIG-only (sty_8c3d345c):
+// a path under a configured exempt prefix is exempt, code outside every prefix is
+// gated, no prefixes means nothing is exempt (no hardcoded data-dir leg), and a
+// blank prefix must NOT silently exempt everything. Targets are absolute, as
+// callers pass them (resolveAbsTarget runs first).
 func TestEditExemptClassification(t *testing.T) {
-	const dataDir = "/home/u/repo/.satelle"
-	exemptRoots := []string{"/home/u/repo/.claude"}
+	exemptRoots := []string{"/home/u/repo/.satelle", "/home/u/repo/.claude"}
 	cases := []struct {
 		name        string
-		dataDir     string
 		exemptRoots []string
 		target      string
 		want        bool
 	}{
-		{"configured harness dir exempt", dataDir, exemptRoots, "/home/u/repo/.claude/skills/foo/SKILL.md", true},
-		{"data dir still exempt", dataDir, exemptRoots, "/home/u/repo/.satelle/skills/x.md", true},
-		{"in-repo code stays gated", dataDir, exemptRoots, "/home/u/repo/internal/cli/app.go", false},
-		{"unconfigured: code not exempt", dataDir, nil, "/home/u/repo/internal/cli/app.go", false},
-		{"unconfigured: harness dir not exempt", dataDir, nil, "/home/u/repo/.claude/skills/x.md", false},
-		{"blank prefix does not exempt everything", dataDir, []string{"  "}, "/home/u/repo/internal/cli/app.go", false},
+		{"configured data dir exempt", exemptRoots, "/home/u/repo/.satelle/skills/x.md", true},
+		{"configured harness dir exempt", exemptRoots, "/home/u/repo/.claude/skills/foo/SKILL.md", true},
+		{"in-repo code stays gated", exemptRoots, "/home/u/repo/internal/cli/app.go", false},
+		{"no prefixes: data dir NOT exempt", nil, "/home/u/repo/.satelle/skills/x.md", false},
+		{"no prefixes: code not exempt", nil, "/home/u/repo/internal/cli/app.go", false},
+		{"blank prefix does not exempt everything", []string{"  "}, "/home/u/repo/internal/cli/app.go", false},
 	}
 	for _, c := range cases {
-		if got := editExempt(c.dataDir, c.exemptRoots, c.target); got != c.want {
+		if got := editExempt(c.exemptRoots, c.target); got != c.want {
 			t.Errorf("%s: editExempt(%q) = %v, want %v", c.name, c.target, got, c.want)
-		}
-	}
-}
-
-// TestShouldWarnSubstrate pins the fail-open substrate nudge decision (sty_f5f351d1
-// AC4): nudge ONLY for a data-dir edit with no engaged story. An engaged story, or
-// an edit_exempt_paths opt-in dir (dataDirOnly=false), stays silent.
-func TestShouldWarnSubstrate(t *testing.T) {
-	cases := []struct {
-		name        string
-		dataDirOnly bool
-		engaged     bool
-		want        bool
-	}{
-		{"data dir, no story -> nudge", true, false, true},
-		{"data dir, engaged -> silent", true, true, false},
-		{"exempt-path dir, no story -> silent", false, false, false},
-		{"exempt-path dir, engaged -> silent", false, true, false},
-	}
-	for _, c := range cases {
-		if got := shouldWarnSubstrate(c.dataDirOnly, c.engaged); got != c.want {
-			t.Errorf("%s: shouldWarnSubstrate(%v, %v) = %v, want %v", c.name, c.dataDirOnly, c.engaged, got, c.want)
 		}
 	}
 }

@@ -21,11 +21,12 @@ gate_create = false
 
 [gate]
 # Repo-root-relative path prefixes whose edits are EXEMPT from the engaged-story
-# edit gate, in addition to the always-exempt data dir (.satelle/). A harness
-# authoring dir holds authored markdown (skills, prompts), not product code, so it
-# is edited freely like substrate. This repo authors Claude Code skills under
-# .claude/. Default is empty — the binary stays CLI-vendor-neutral.
-edit_exempt_paths = []
+# edit gate. This is the SOLE exemption source — exemption is configuration, not a
+# Go rule (the constitution: configuration over code); the binary does NOT
+# special-case the data dir (sty_8c3d345c). ".satelle/" keeps this repo's authored
+# substrate (workflows/skills/principles/documents/tasks/config) editable without a
+# release. Add ".claude/" here to author Claude Code skills without an engaged story.
+edit_exempt_paths = [".satelle/"]
 
 [hosted]
 server = "https://satelle.dev"

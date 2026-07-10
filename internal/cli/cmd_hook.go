@@ -93,25 +93,27 @@ policy is authored substrate — it reads the workflow's DOT shape markers
 (Mdiamond=start, Msquare=terminal) rather than hardcoding state names, so
 configuration drives the decision (sty_f3d5d4b8, sty_e4902c51).
 
+The edit target is resolved to an ABSOLUTE path against the repo root before any
+containment test (sty_8c3d345c). Harnesses differ: Claude Code sends an absolute
+file_path, Grok sends a repo-relative one — resolving up front means a relative
+target is never nested under a narrower tested root (e.g. the data dir) and
+wrongly classed as inside it, which previously let Grok edits bypass the gate.
+
 Edits OUTSIDE the repo root are REFUSED (sty_3026d890): a session in
 satelle-server must not rewrite files under a sibling tree such as ../satelle.
 If the change belongs in another satelle-enabled project, create and engage the
 story in THAT repo. Session scratch under /tmp is no longer a free pass.
 
-Edits are exempt from the engaged-story check when: the target is authored
-SUBSTRATE under the data dir (.satelle/ by default — workflows, skills,
-principles, documents, tasks, and config); or it falls under a configured
-[gate] edit_exempt_paths prefix. Authored substrate is the source of truth,
-edited freely without a binary release (the constitution and
-satelle-generated-readonly); generated views under it stay protected by their
-0o444 file mode. A repo may add its own authored dirs to [gate] edit_exempt_paths
-(repo-root-relative prefixes, default empty) — e.g. a harness authoring dir like
-.claude/ that holds authored skills, not product code. Only in-repo CODE requires
-an engaged story. A data-dir substrate edit with NO engaged story is still
-ALLOWED but emits a nudge toward the substrate workflow (sty_f5f351d1): the only
-model-visible channel on an allowed edit is the PreToolUse additionalContext, so
-the nudge rides that (a bare stderr line is transcript-only on exit 0);
-edit_exempt_paths opt-in dirs stay silent.
+Exemption is CONFIGURATION, not code (the constitution: configuration over
+code). An edit is exempt from the engaged-story check ONLY when its target falls
+under a [gate] edit_exempt_paths prefix (repo-root-relative or absolute). The
+binary does NOT special-case the data dir: 'satelle init' SEEDS .satelle/ into
+edit_exempt_paths so authored substrate (workflows, skills, principles,
+documents, tasks, config) stays editable without a release OOTB — but the
+operator sees and owns that list and may add a harness authoring dir like
+.claude/ or remove .satelle/ entirely. With an empty edit_exempt_paths, even a
+.satelle/ edit needs an engaged story: config decides, never a Go rule. Generated
+views under the data dir stay protected by their 0o444 file mode regardless.
 
 Fails closed: a store open error, listing error, unresolvable workflow, or
 non-DOT workflow body blocks the edit with a clear error message rather than
@@ -130,24 +132,15 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 				if !withinRepoTarget(p) {
 					return denyPreToolUse(cmd, outsideRepoEditReason(p))
 				}
-				// Authored SUBSTRATE under the data dir (.satelle/ by default) is the
-				// source of truth, "edited without a binary release" — the
-				// constitution and satelle-generated-readonly say to edit it freely.
-				// So workflows, skills, principles, documents, tasks, and config
-				// (agents.toml/satelle.toml/constitution.md) are NOT gated; generated
-				// views under it stay protected by their 0o444 file mode. A repo may
-				// exempt additional authored dirs via [gate] edit_exempt_paths — a
-				// harness authoring dir like .claude/ holds authored skills, not
-				// product code (sty_103af456, sty_41416b76). Only in-repo CODE requires
-				// an engaged story. Substrate stays ALLOWED, but a data-dir edit with
-				// no engaged story earns a model-visible nudge toward the substrate
-				// workflow (sty_f5f351d1) — edit_exempt_paths opt-in dirs (.claude/)
-				// stay silent, a deliberate repo choice. A storyEngaged error suppresses
-				// the nudge (no false advisory when the store is broken).
+				// Exemption is CONFIGURATION, not code (the constitution:
+				// configuration over code). Only a path under a [gate]
+				// edit_exempt_paths prefix is exempt from the engaged-story gate.
+				// The data dir is NOT special-cased in the binary — `satelle init`
+				// seeds .satelle/ into edit_exempt_paths so authored substrate stays
+				// editable without a release OOTB, but the operator owns that list
+				// (sty_8c3d345c). With an empty list, even a .satelle/ edit needs an
+				// engaged story: config decides, never a Go rule.
 				if exemptTarget(p) {
-					if engErr == nil && shouldWarnSubstrate(dataDirTarget(p), engaged) {
-						emitSubstrateNoStoryNudge(cmd.OutOrStdout(), cmd.ErrOrStderr())
-					}
 					return nil
 				}
 			}
@@ -338,14 +331,16 @@ func withinRepoTarget(target string) bool {
 	if err != nil {
 		return true
 	}
-	return withinRoot(config.RepoRootFromConfigPath(cfgPath), target)
+	root := config.RepoRootFromConfigPath(cfgPath)
+	return withinRoot(root, resolveAbsTarget(root, target))
 }
 
 // noEngagedStoryEditReason is the canonical agent-facing deny for product-code
 // edits without a performing story (sty_e4902c51). Both Claude and Grok must
 // surface this text — not a bare "hook denied (exit 2)".
 const noEngagedStoryEditReason = "satelle: you're mutating the tree without a performing story, or you have used the wrong tool for reading. " +
-	"Create or engage a story before editing code (satelle story create …, then satelle story set <id> --status plan). " +
+	"Open a story session before editing code: satelle story create …, then satelle story set <id> --status plan. " +
+	"That session stays open through your edits until the story reaches a terminal or parked state (done, cancelled, or blocked) — finishing an edit does NOT close it. " +
 	"For research, use read tools (Read/read_file/grep/Glob) — not Edit/Write/search_replace."
 
 // noEngagedStoryCommitReason is the agent-facing deny for git commit/push without
@@ -414,32 +409,30 @@ func emitPreToolUseDeny(out io.Writer, reason string) error {
 }
 
 // exemptTarget reports whether an edit to target is exempt from the engaged-story
-// gate: it resolves under the authored-substrate data dir (.satelle/ by default,
-// honoring a relocated data_dir), OR under a configured [gate] edit_exempt_paths
-// prefix — a harness authoring dir a repo opts in (e.g. .claude/), keeping the
-// binary CLI-vendor-neutral (sty_103af456, sty_41416b76). Returns false if the
-// config/root cannot be resolved, so the gate stays conservative (still applies)
-// on any resolution failure.
+// gate: it resolves under a configured [gate] edit_exempt_paths prefix. Exemption
+// is CONFIGURATION, not code (the constitution: configuration over code) — the
+// binary no longer special-cases the data dir; `satelle init` seeds .satelle/ into
+// edit_exempt_paths so authored substrate stays editable OOTB, but the operator
+// owns that list (sty_8c3d345c). The target is resolved to absolute against the
+// repo root FIRST, so a repo-relative path (as Grok sends) is classified correctly.
+// Returns false if the config/root cannot be resolved, so the gate stays
+// conservative (still applies) on any resolution failure.
 func exemptTarget(target string) bool {
 	cfg, cfgPath, err := config.Load("")
 	if err != nil {
 		return false
 	}
 	root := config.RepoRootFromConfigPath(cfgPath)
-	return editExempt(cfg.ResolveDataDir(root), cfg.ResolveEditExemptPaths(root), target)
+	return editExempt(cfg.ResolveEditExemptPaths(root), resolveAbsTarget(root, target))
 }
 
 // editExempt is the pure classification the edit-gate exemption rests on: target
-// is exempt when it resolves under the data dir or any configured exempt prefix.
-// Kept pure (no config/filesystem) so the path classification is unit-tested
-// directly. Blank roots are skipped — withinRoot fails open TOWARD inside on a
-// blank root (returns true), which is the conservative default for the gate but
-// would exempt everything here; ResolveEditExemptPaths already drops blanks, and
-// this is the second guard.
-func editExempt(dataDir string, exemptRoots []string, target string) bool {
-	if strings.TrimSpace(dataDir) != "" && withinRoot(dataDir, target) {
-		return true
-	}
+// is exempt when it resolves under any configured exempt prefix. Kept pure (no
+// config/filesystem) so the path classification is unit-tested directly. Callers
+// pass an already-absolute target (see resolveAbsTarget) and absolute prefixes
+// (ResolveEditExemptPaths); blank prefixes are skipped — a blank prefix would make
+// withinRoot fail open TOWARD inside and exempt everything, so this is the guard.
+func editExempt(exemptRoots []string, target string) bool {
 	for _, r := range exemptRoots {
 		if strings.TrimSpace(r) != "" && withinRoot(r, target) {
 			return true
@@ -448,33 +441,26 @@ func editExempt(dataDir string, exemptRoots []string, target string) bool {
 	return false
 }
 
-// substrateNoStoryWarn is the advisory injected when a data-dir substrate edit
-// happens with no engaged story (sty_f5f351d1). Fail-open: the edit is ALLOWED;
-// this only nudges toward engaging a substrate story so the change is tracked
-// through satelle-substrate-workflow. Emitted on the PreToolUse additionalContext
-// channel (model-visible) and to stderr (human transcript).
-const substrateNoStoryWarn = "satelle: editing .satelle/ substrate with no engaged story — engage a substrate story (category: substrate) to track it through satelle-substrate-workflow. (edit allowed)"
-
-// dataDirTarget reports the narrower half of exemptTarget: whether target resolves
-// under the authored-substrate data dir (.satelle/ by default) specifically — NOT a
-// configured [gate] edit_exempt_paths prefix. The no-engaged-story nudge fires only
-// on this leg (a repo's exempt opt-in dirs like .claude/ are a deliberate choice and
-// stay silent). Reuses editExempt with no exempt roots so the path classification
-// stays single-sourced. Returns false on any resolution failure (fail-safe: no nudge).
-func dataDirTarget(target string) bool {
-	cfg, cfgPath, err := config.Load("")
-	if err != nil {
-		return false
+// resolveAbsTarget makes target absolute against root (the repo root the hook runs
+// in). A blank target passes through; an already-absolute target is cleaned and
+// returned; a relative target is joined under root. This is the single point that
+// pins a repo-relative edit path (as Grok sends) to the repo root BEFORE any
+// containment test, so a relative target is never nested under a narrower tested
+// root (e.g. the data dir) and mis-classed as inside it (sty_8c3d345c). On a
+// resolution error the raw target is returned unchanged (withinRoot stays
+// conservative from there).
+func resolveAbsTarget(root, target string) string {
+	if strings.TrimSpace(target) == "" {
+		return target
 	}
-	root := config.RepoRootFromConfigPath(cfgPath)
-	return editExempt(cfg.ResolveDataDir(root), nil, target)
-}
-
-// shouldWarnSubstrate is the pure substrate-nudge decision: nudge when the edit is
-// under the data dir AND no story is engaged. Pure over its inputs so the decision
-// is unit-tested directly (sty_f5f351d1 AC4).
-func shouldWarnSubstrate(dataDirOnly, engaged bool) bool {
-	return dataDirOnly && !engaged
+	if filepath.IsAbs(target) {
+		return filepath.Clean(target)
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return target
+	}
+	return filepath.Clean(filepath.Join(absRoot, target))
 }
 
 // withinRoot reports whether target resolves to a path inside root. A relative
@@ -724,14 +710,4 @@ func emitAdditionalContext(out io.Writer, event, permissionDecision, context str
 	}
 	fmt.Fprintln(out, string(b))
 	return nil
-}
-
-// emitSubstrateNoStoryNudge writes the fail-open substrate nudge on both channels:
-// the PreToolUse additionalContext JSON (permissionDecision "allow") to out — the
-// only model-visible path on an allowed edit — and the same line to stderr for the
-// human watching the session. The edit stays allowed (the caller returns nil); this
-// only advises.
-func emitSubstrateNoStoryNudge(out, stderr io.Writer) {
-	_ = emitAdditionalContext(out, "PreToolUse", "allow", substrateNoStoryWarn)
-	fmt.Fprintln(stderr, substrateNoStoryWarn)
 }

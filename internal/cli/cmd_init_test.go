@@ -9,7 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/BurntSushi/toml"
+
 	"github.com/bobmcallan/satelle/internal/agentstep"
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/structure"
 )
@@ -103,6 +106,36 @@ func TestRunInitScaffolds(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("report missing %q:\n%s", want, out.String())
 		}
+	}
+}
+
+// TestRunInitSeedsActiveEditExemptPaths proves the scaffold satelle.toml ships an
+// ACTIVE (uncommented) [gate] edit_exempt_paths seeded with .satelle/ (sty_8c3d345c).
+// Exemption is config, not code — a fresh repo keeps authored substrate editable via
+// this seeded config rather than a hardcoded data-dir case in the binary.
+func TestRunInitSeedsActiveEditExemptPaths(t *testing.T) {
+	repo := t.TempDir()
+	if err := runInitTest(t, io.Discard, repo); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.toml"))
+	if err != nil {
+		t.Fatalf("read scaffold satelle.toml: %v", err)
+	}
+	tomlSrc := string(body)
+	// The [gate] table and edit_exempt_paths must be ACTIVE (no leading '#') and seed .satelle/.
+	for _, want := range []string{"\n[gate]\n", "edit_exempt_paths = [\".satelle/\"]"} {
+		if !strings.Contains(tomlSrc, want) {
+			t.Errorf("scaffold satelle.toml missing active %q:\n%s", want, tomlSrc)
+		}
+	}
+	// Parse it to confirm the seeded value actually resolves as an exempt prefix.
+	var cfg config.Config
+	if _, err := toml.Decode(tomlSrc, &cfg); err != nil {
+		t.Fatalf("scaffold satelle.toml does not parse: %v", err)
+	}
+	if got := cfg.ResolveEditExemptPaths(repo); len(got) != 1 || !strings.HasSuffix(got[0], ".satelle") {
+		t.Errorf("ResolveEditExemptPaths = %v, want one entry ending .satelle", got)
 	}
 }
 

@@ -597,19 +597,26 @@ const scaffoldToml = `# satelle.toml — per-repo config (committed, secret-free
 # [review]
 # gate_create = true
 
-# [gate] — edit-gate exemptions and the single-story process rule.
-# edit_exempt_paths lists repo-root-relative path prefixes whose edits are exempt
-# from the engaged-story edit gate, alongside the always-exempt data dir (.satelle/).
-# Point it at a harness authoring dir that holds authored markdown (skills, prompts)
-# rather than product code. Default empty.
+# [gate] — edit-gate exemptions and the single-story process rule. This is the
+# ONE table seeded ACTIVE (not commented) below, because it is the source of
+# truth for which paths escape the engaged-story edit gate — configuration, not
+# a Go rule (the constitution: configuration over code).
+# edit_exempt_paths lists repo-root-relative (or absolute) path prefixes whose
+# edits are exempt from the engaged-story edit gate. It is the SOLE exemption
+# source — the binary does NOT special-case the data dir. ".satelle/" is seeded
+# so this repo's authored substrate (workflows/skills/principles/documents/tasks
+# /config) stays editable without a release; add a harness authoring dir that
+# holds authored markdown rather than product code (e.g. ".claude/"), or drop
+# ".satelle/" to require an engaged story even for substrate edits.
 # allow_parallel (default false) opts OUT of one-performing-story enforcement: by
 # default satelle refuses engaging a second story while another is already in a
 # non-terminal engaging state (plan/in_progress/…). Parked (blocked) and terminal
 # do not count. Setting allow_parallel = true only turns that blocker OFF — it
 # does NOT implement parallel worktrees/merge; a repo that wants true parallel
 # must design that into its workflow and then flip this switch.
-# [gate]
-# edit_exempt_paths = [".claude/"]
+[gate]
+edit_exempt_paths = [".satelle/"]
+# edit_exempt_paths = [".satelle/", ".claude/"]
 # allow_parallel = false
 
 # substrate_roots — per-kind parent dir for authored markdown. Unset means
