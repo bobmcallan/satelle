@@ -52,17 +52,17 @@ func newSyncConfigCmd() *cobra.Command {
 		Use:   "push",
 		Short: "Upload authored config to the versioned store (a new version per file)",
 		Long: `push walks the authored-config areas (workflows/principles/skills/constitution/
-agents/tasks) per their resolved [sync] scope — skipping local areas and honoring the
-per-file shared flag — and uploads each file as a new version into the destination
-workspace on the hosted server. Identical content is idempotent (no new version).
-Shared-tier files route to the team workspace; the rest to your personal workspace.`,
+agents/tasks) per their resolved [sync] scope — skipping local areas — and uploads
+each file as a new version into the caller's PERSONAL workspace only (epic:sync-publish).
+Identical content is idempotent (no new version). Team is not a sync destination;
+use satelle publish to expose artifacts to a team catalog.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncConfigPush(cmd, pushServer, pushWorkspace, dryRun)
 		},
 	}
 	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
-	push.Flags().StringVar(&pushWorkspace, "workspace", "", "Team-workspace name shared-tier files route to (overrides the active workspace).")
-	push.Flags().BoolVar(&dryRun, "dry-run", false, "List what would be pushed and the destination tier, without contacting the server.")
+	push.Flags().StringVar(&pushWorkspace, "workspace", "", "Ignored for push (sync is personal-only; kept for flag compatibility).")
+	push.Flags().BoolVar(&dryRun, "dry-run", false, "List what would be pushed without contacting the server.")
 	group.AddCommand(push)
 
 	var deployServer, deployWorkspace string
@@ -104,18 +104,15 @@ func loadRepoConfig() (config.Config, string, string, error) {
 	return cfg, repoRoot, cfg.ResolveDataDir(repoRoot), nil
 }
 
-// resolveTeamWorkspaceName is the shared-tier destination for a push: the
-// --workspace flag wins, else the configured active workspace when it is a team
-// workspace, else "" (no team destination — shared files then error out).
-func resolveTeamWorkspaceName(cfg config.Config, workspaceArg string) string {
-	if ws := strings.TrimSpace(workspaceArg); ws != "" {
-		return ws
+// sharedSyncNote warns when files would have used the old shared-tier team
+// destination. Sync is personal-only (epic:sync-publish); publish is the team path.
+func sharedSyncNote(files []config.ConfigFile) string {
+	for _, f := range files {
+		if f.Tier == config.SharedTier {
+			return "note: [sync] shared / shared:true no longer routes sync to a team workspace — pushing to personal only. Use satelle publish to expose artifacts to a team catalog."
+		}
 	}
-	active := cfg.ResolveActiveWorkspace()
-	if active.IsPersonal() {
-		return ""
-	}
-	return active.Name
+	return ""
 }
 
 // resolveDeploySourceName is the workspace a deploy reads from: the --workspace
@@ -133,6 +130,7 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 	if err != nil {
 		return err
 	}
+	_ = workspaceArg // sync is personal-only (epic:sync-publish)
 	server := resolveServer(serverArg)
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
@@ -143,22 +141,16 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 	}
 	out := cmd.OutOrStdout()
 	if len(files) == 0 {
-		fmt.Fprintln(out, "No config to push — every config area is local. Set [sync] <area> = personal|shared to opt in.")
+		fmt.Fprintln(out, "No config to push — every config area is local. Set [sync] <area> = personal to opt in.")
 		return nil
 	}
-	teamName := resolveTeamWorkspaceName(cfg, workspaceArg)
+	if note := sharedSyncNote(files); note != "" {
+		fmt.Fprintln(out, note)
+	}
 	if dryRun {
-		fmt.Fprintf(out, "Would push %d config file(s) to %s:\n", len(files), server)
+		fmt.Fprintf(out, "Would push %d config file(s) to personal workspace on %s:\n", len(files), server)
 		for _, f := range files {
-			dest := "your personal workspace"
-			if f.Tier == config.SharedTier {
-				if teamName == "" {
-					dest = "(no team workspace selected)"
-				} else {
-					dest = fmt.Sprintf("team workspace %q", teamName)
-				}
-			}
-			fmt.Fprintf(out, "  [%s] %-40s -> %s\n", f.Tier, f.Path, dest)
+			fmt.Fprintf(out, "  %-40s -> personal\n", f.Path)
 		}
 		return nil
 	}
@@ -167,22 +159,9 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 	if err != nil {
 		return fmt.Errorf("resolve personal workspace: %w", err)
 	}
-	var teamID string
-	if teamName != "" {
-		if teamID, err = client.ActiveWorkspaceID(cmd.Context(), teamName); err != nil {
-			return fmt.Errorf("resolve team workspace: %w", err)
-		}
-	}
 	var created, skipped int
 	for _, f := range files {
-		wsID := personalID
-		if f.Tier == config.SharedTier {
-			if teamID == "" {
-				return fmt.Errorf("shared config %q has no team workspace — run \"satelle login --workspace <team>\" or pass --workspace to select one", f.Path)
-			}
-			wsID = teamID
-		}
-		res, perr := client.PushConfigFile(cmd.Context(), wsID, f.Path, f.Content)
+		res, perr := client.PushConfigFile(cmd.Context(), personalID, f.Path, f.Content)
 		if perr != nil {
 			if errors.Is(perr, hosted.ErrLoginRequired) {
 				return perr
@@ -195,7 +174,7 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 			skipped++
 		}
 	}
-	fmt.Fprintf(out, "Pushed %d config file(s) to %s: %d new, %d unchanged.\n", len(files), server, created, skipped)
+	fmt.Fprintf(out, "Pushed %d config file(s) to personal workspace on %s: %d new, %d unchanged.\n", len(files), server, created, skipped)
 	return nil
 }
 

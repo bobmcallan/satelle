@@ -107,16 +107,20 @@ func FileShared(scope Scope, frontmatter string) bool {
 // list is the candidate set the walk resolves a tier for.
 var ConfigAreas = []string{"workflows", "principles", "skills", "constitution", "agents", "tasks"}
 
-// ConfigTier is a config file's resolved sync DESTINATION: the caller's own
-// workspace (PersonalTier) or the team workspace (SharedTier). A LocalScope area
-// never reaches tier resolution — it is skipped wholesale before any file is
-// read, so there is no LocalTier.
+// ConfigTier flags whether a file is eligible to be exposed via satelle publish
+// (SharedTier) or stays purely personal (PersonalTier). It is NOT a sync push
+// destination — satelle sync always writes to the personal workspace; Tier ==
+// SharedTier only triggers an operator note (epic:sync-publish). A LocalScope
+// area never reaches tier resolution — it is skipped wholesale before any file
+// is read, so there is no LocalTier.
 type ConfigTier int
 
 const (
-	// PersonalTier routes to the caller's own workspace (per-user isolated).
+	// PersonalTier is ordinary personal-scope content (sync destination: personal).
 	PersonalTier ConfigTier = iota
-	// SharedTier routes to the team workspace (the shared home — "set up X like Y").
+	// SharedTier marks [sync] area = shared or frontmatter shared:true. Sync still
+	// pushes personal-only; the CLI emits a note pointing operators at satelle
+	// publish for team catalog exposure (not dual-destination).
 	SharedTier
 )
 
@@ -136,16 +140,16 @@ func (t ConfigTier) String() string {
 type ConfigFile struct {
 	Area    string     // the config-area name (skills, constitution, agents, tasks, ...)
 	Path    string     // server-relative path under the workspace-config root
-	Tier    ConfigTier // resolved destination (PersonalTier | SharedTier)
+	Tier    ConfigTier // PersonalTier | SharedTier (label only; sync dest is personal)
 	Content []byte     // verbatim file bytes
 }
 
 // ConfigFiles walks the ConfigAreas under repoRoot, resolving each file's scope
-// via ScopeFor and partitioning the non-local files into personal/shared tiers.
-// A shared-scope area is SharedTier wholesale; a personal-scope area is
-// PersonalTier per file, PROMOTED to SharedTier when the file is markdown whose
-// frontmatter marks it shared (FileShared — the per-file shared flag). A
-// local-scope area contributes nothing (AC1: skip scope=local). Reserved
+// via ScopeFor. Local-scope areas contribute nothing. Non-local files are labeled
+// PersonalTier or SharedTier for operator messaging / publish eligibility — both
+// still sync to the personal workspace only (epic:sync-publish). A shared-scope
+// area is SharedTier wholesale; a personal-scope area is PersonalTier per file,
+// promoted to SharedTier when FileShared (frontmatter shared:true). Reserved
 // generated views (index.md/log.md/README) are excluded — they are not authored.
 // Files are returned sorted by Path. A non-existent area on disk is benign
 // (nothing to push yet). An explicitly invalid scope is a hard error.
@@ -163,10 +167,11 @@ func ConfigFiles(cfg Config, repoRoot string) ([]ConfigFile, error) {
 }
 
 // DocumentFiles walks the documents area under repoRoot with the same scope/
-// tier rules as ConfigFiles (local skip, personal + per-file shared promotion,
-// shared wholesale). The returned Scope is the area's resolved scope so the
-// CLI can print a clear "scope=local, skipping" message instead of an ambiguous
-// empty list. Documents is its own sync kind (order:6) — not part of ConfigAreas.
+// tier labeling as ConfigFiles (local skip; SharedTier marks publish eligibility
+// only — sync destination remains personal). The returned Scope is the area's
+// resolved scope so the CLI can print a clear "scope=local, skipping" message
+// instead of an ambiguous empty list. Documents is its own sync kind (order:6)
+// — not part of ConfigAreas.
 func DocumentFiles(cfg Config, repoRoot string) ([]ConfigFile, Scope, error) {
 	files, scope, err := filesForArea(cfg, repoRoot, "documents")
 	if err != nil {

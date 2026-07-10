@@ -189,9 +189,9 @@ func TestSyncConfigPushDeploysByteExact(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
 
-	// Source repo: shared-scope skills + constitution, active workspace = team.
-	src := syncConfigRepo(t, "[sync]\nskills = \"shared\"\nconstitution = \"shared\"\n[hosted]\nworkspace = \"Acme\"\n")
-	skillBody := "---\ntype: skill\n---\nshared team skill\n"
+	// Source repo: personal-scope skills + constitution (sync is personal-only).
+	src := syncConfigRepo(t, "[sync]\nskills = \"personal\"\nconstitution = \"personal\"\n")
+	skillBody := "---\ntype: skill\n---\npersonal skill\n"
 	constBody := "# project constitution\n"
 	writeRepoFile(t, src, ".satelle/skills/team-skill.md", skillBody)
 	writeRepoFile(t, src, ".satelle/constitution.md", constBody)
@@ -205,12 +205,12 @@ func TestSyncConfigPushDeploysByteExact(t *testing.T) {
 		t.Fatalf("push output: %q", buf.String())
 	}
 
-	// Fresh destination repo: no config files yet, no [sync] needed for deploy.
+	// Fresh destination repo: deploy from personal workspace.
 	dst := syncConfigRepo(t, "")
 	pointAt(t, dst)
 
 	cmd2, buf2 := testCmd()
-	if err := runSyncConfigDeploy(cmd2, ts.URL, "Acme", 0); err != nil {
+	if err := runSyncConfigDeploy(cmd2, ts.URL, "personal", 0); err != nil {
 		t.Fatalf("deploy: %v\n%s", err, buf2.String())
 	}
 	if !strings.Contains(buf2.String(), "Deployed 2 file") {
@@ -248,10 +248,9 @@ func TestSyncConfigPushSkipsLocalArea(t *testing.T) {
 	}
 }
 
-// TestSyncConfigPushSharedFlagRoutesToTeam: inside a personal-scope area, a file
-// frontmarked shared routes to the TEAM workspace, while a non-shared file routes
-// to the PERSONAL workspace (AC1, AC5 honors the per-file shared flag).
-func TestSyncConfigPushSharedFlagRoutesToTeam(t *testing.T) {
+// TestSyncConfigPushSharedFlagGoesPersonal: epic:sync-publish — shared:true no
+// longer dual-routes to team; both files land in personal, with a warning note.
+func TestSyncConfigPushSharedFlagGoesPersonal(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
 
@@ -264,34 +263,31 @@ func TestSyncConfigPushSharedFlagRoutesToTeam(t *testing.T) {
 	if err := runSyncConfigPush(cmd, ts.URL, "", false); err != nil {
 		t.Fatalf("push: %v\n%s", err, buf.String())
 	}
-	// Inspect the fake server's per-workspace state via deploy probes: the
-	// shared-flagged file lives in the team workspace, the private one personal.
+	out := buf.String()
+	if !strings.Contains(out, "personal only") && !strings.Contains(out, "satelle publish") {
+		t.Fatalf("expected shared-tier deprecation note, got: %q", out)
+	}
 
-	// Deploy from the TEAM workspace -> only the shared-flagged file is present.
+	// Both files in personal; team workspace empty of these paths.
 	dst := syncConfigRepo(t, "")
 	pointAt(t, dst)
-	cmd2, buf2 := testCmd()
-	if err := runSyncConfigDeploy(cmd2, ts.URL, "Acme", 0); err != nil {
-		t.Fatalf("team deploy: %v\n%s", err, buf2.String())
+	cmd2, _ := testCmd()
+	if err := runSyncConfigDeploy(cmd2, ts.URL, "personal", 0); err != nil {
+		t.Fatalf("personal deploy: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dst, ".satelle", "skills", "shared-one.md")); err != nil {
-		t.Errorf("shared-flagged file missing from team workspace: %v", err)
+	for _, name := range []string{"shared-one.md", "private-one.md"} {
+		if _, err := os.Stat(filepath.Join(dst, ".satelle", "skills", name)); err != nil {
+			t.Errorf("personal missing %s: %v", name, err)
+		}
 	}
-	if _, err := os.Stat(filepath.Join(dst, ".satelle", "skills", "private-one.md")); err == nil {
-		t.Error("private file leaked into the team workspace (should be personal-only)")
-	}
-
-	// Deploy from the PERSONAL workspace -> only the private file is present.
-	dst2 := syncConfigRepo(t, "")
-	pointAt(t, dst2)
+	dstTeam := syncConfigRepo(t, "")
+	pointAt(t, dstTeam)
 	cmd3, buf3 := testCmd()
-	if err := runSyncConfigDeploy(cmd3, ts.URL, "personal", 0); err != nil {
-		t.Fatalf("personal deploy: %v\n%s", err, buf3.String())
+	_ = runSyncConfigDeploy(cmd3, ts.URL, "Acme", 0)
+	if _, err := os.Stat(filepath.Join(dstTeam, ".satelle", "skills", "shared-one.md")); err == nil {
+		t.Error("shared-flagged file must not land in team via sync")
 	}
-	got, _ := os.ReadFile(filepath.Join(dst2, ".satelle", "skills", "private-one.md"))
-	if !strings.Contains(string(got), "private body") {
-		t.Errorf("personal workspace missing private file: %q", got)
-	}
+	_ = buf3
 }
 
 // TestSyncConfigPushIdempotent: a second identical push reports unchanged
@@ -300,7 +296,7 @@ func TestSyncConfigPushIdempotent(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\nprinciples = \"shared\"\n[hosted]\nworkspace = \"Acme\"\n")
+	repo := syncConfigRepo(t, "[sync]\nprinciples = \"personal\"\n")
 	writeRepoFile(t, repo, ".satelle/principles/rule.md", "one rule\n")
 	pointAt(t, repo)
 
@@ -326,7 +322,7 @@ func TestSyncConfigDeployVersionPin(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\nprinciples = \"shared\"\n[hosted]\nworkspace = \"Acme\"\n")
+	repo := syncConfigRepo(t, "[sync]\nprinciples = \"personal\"\n")
 	writeRepoFile(t, repo, ".satelle/principles/rule.md", "version one\n")
 	pointAt(t, repo)
 	cmd, _ := testCmd()
@@ -340,11 +336,11 @@ func TestSyncConfigDeployVersionPin(t *testing.T) {
 		t.Fatalf("push v2: %v", err)
 	}
 
-	// Deploy version 1 into a fresh repo -> the ORIGINAL bytes.
+	// Deploy version 1 into a fresh repo from personal -> the ORIGINAL bytes.
 	dst := syncConfigRepo(t, "")
 	pointAt(t, dst)
 	cmd3, buf3 := testCmd()
-	if err := runSyncConfigDeploy(cmd3, ts.URL, "Acme", 1); err != nil {
+	if err := runSyncConfigDeploy(cmd3, ts.URL, "personal", 1); err != nil {
 		t.Fatalf("deploy v1: %v\n%s", err, buf3.String())
 	}
 	got, _ := os.ReadFile(filepath.Join(dst, ".satelle", "principles", "rule.md"))
@@ -358,7 +354,7 @@ func TestSyncConfigPushDryRun(t *testing.T) {
 	ts := newFakeConfigServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\n[hosted]\nworkspace = \"Acme\"\n")
+	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\n")
 	writeRepoFile(t, repo, ".satelle/skills/shared-one.md", "---\nshared: true\n---\nx\n")
 	writeRepoFile(t, repo, ".satelle/skills/private-one.md", "---\n---\nx\n")
 	pointAt(t, repo)
@@ -371,8 +367,48 @@ func TestSyncConfigPushDryRun(t *testing.T) {
 	if !strings.Contains(out, "Would push") {
 		t.Errorf("dry-run output: %q", out)
 	}
-	// The shared-flagged file routes to the team workspace in the plan.
-	if !strings.Contains(out, "shared-one.md") || !strings.Contains(out, "Acme") {
-		t.Errorf("dry-run should name the shared file and team workspace: %q", out)
+	// epic:sync-publish — all files go to personal; shared:true emits a note.
+	if !strings.Contains(out, "shared-one.md") || !strings.Contains(out, "personal") {
+		t.Errorf("dry-run should name the file and personal destination: %q", out)
+	}
+	if !strings.Contains(out, "satelle publish") {
+		t.Errorf("dry-run should note publish for shared-tier: %q", out)
+	}
+}
+
+// TestSyncConfigPushAreaSharedGoesPersonal: [sync] area = "shared" (wholesale)
+// is not a team destination — lands personal with the deprecation note (AC1, AC3).
+func TestSyncConfigPushAreaSharedGoesPersonal(t *testing.T) {
+	ts := newFakeConfigServer(t)
+	seedCred(t, ts.URL)
+
+	repo := syncConfigRepo(t, "[sync]\nskills = \"shared\"\n[hosted]\nworkspace = \"Acme\"\n")
+	writeRepoFile(t, repo, ".satelle/skills/team-skill.md", "---\ntype: skill\n---\nteam area skill\n")
+	pointAt(t, repo)
+
+	cmd, buf := testCmd()
+	if err := runSyncConfigPush(cmd, ts.URL, "", false); err != nil {
+		t.Fatalf("push: %v\n%s", err, buf.String())
+	}
+	out := buf.String()
+	if !strings.Contains(out, "personal only") && !strings.Contains(out, "satelle publish") {
+		t.Fatalf("expected shared-area note, got: %q", out)
+	}
+
+	dst := syncConfigRepo(t, "")
+	pointAt(t, dst)
+	cmd2, _ := testCmd()
+	if err := runSyncConfigDeploy(cmd2, ts.URL, "personal", 0); err != nil {
+		t.Fatalf("personal deploy: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, ".satelle", "skills", "team-skill.md")); err != nil {
+		t.Errorf("area-shared file missing from personal: %v", err)
+	}
+	dstTeam := syncConfigRepo(t, "")
+	pointAt(t, dstTeam)
+	cmd3, _ := testCmd()
+	_ = runSyncConfigDeploy(cmd3, ts.URL, "Acme", 0)
+	if _, err := os.Stat(filepath.Join(dstTeam, ".satelle", "skills", "team-skill.md")); err == nil {
+		t.Error("area-shared file must not land in team via sync")
 	}
 }
