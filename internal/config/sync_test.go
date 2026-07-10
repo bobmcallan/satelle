@@ -41,6 +41,44 @@ func TestScopeFor(t *testing.T) {
 	}
 }
 
+func TestScopeForAllFallthrough(t *testing.T) {
+	// Blanket all = personal: every SyncAreas name resolves to personal, but
+	// `all` itself is not a walk area.
+	blanket := Config{Sync: map[string]string{"all": "personal"}}
+	for _, area := range SyncAreas {
+		if got, err := ScopeFor(blanket, area); err != nil || got != PersonalScope {
+			t.Errorf("ScopeFor(%q) under all=personal = %v, %v; want PersonalScope, nil", area, got, err)
+		}
+	}
+
+	// A per-area key overrides all; a blank per-area value falls through to all.
+	override := Config{Sync: map[string]string{"all": "personal", "skills": "shared", "documents": ""}}
+	if got, err := ScopeFor(override, "skills"); err != nil || got != SharedScope {
+		t.Errorf("ScopeFor(skills) with override = %v, %v; want SharedScope, nil", got, err)
+	}
+	if got, err := ScopeFor(override, "documents"); err != nil || got != PersonalScope {
+		t.Errorf("ScopeFor(blank documents) = %v, %v; want PersonalScope (falls through to all), nil", got, err)
+	}
+	if got, err := ScopeFor(override, "tasks"); err != nil || got != PersonalScope {
+		t.Errorf("ScopeFor(unset tasks) = %v, %v; want PersonalScope (falls through to all), nil", got, err)
+	}
+
+	// Unset all still defaults areas to local.
+	if got, err := ScopeFor(Config{Sync: map[string]string{"all": ""}}, "skills"); err != nil || got != LocalScope {
+		t.Errorf("ScopeFor(skills) under blank all = %v, %v; want LocalScope, nil", got, err)
+	}
+
+	// Invalid all errors ONLY for areas that fall through to it; a valid
+	// per-area override beside a bad all resolves without error.
+	badAll := Config{Sync: map[string]string{"all": "typo", "skills": "personal"}}
+	if _, err := ScopeFor(badAll, "tasks"); err == nil {
+		t.Error("ScopeFor(tasks) under all=typo did not error on fallthrough")
+	}
+	if got, err := ScopeFor(badAll, "skills"); err != nil || got != PersonalScope {
+		t.Errorf("ScopeFor(skills override) beside bad all = %v, %v; want PersonalScope, nil (override wins)", got, err)
+	}
+}
+
 func TestFileShared(t *testing.T) {
 	sharedFM := "---\ntype: skill\nshared: true\n---\nbody"
 	unsetFM := "---\ntype: skill\n---\nbody"
