@@ -371,6 +371,34 @@ func TestSyncDocumentsPushRequiresBoundProject(t *testing.T) {
 	}
 }
 
+// TestSyncDocumentsPullRequiresBoundProject: personal documents pull without a
+// bound project fails client-side; the fake server is never contacted.
+func TestSyncDocumentsPullRequiresBoundProject(t *testing.T) {
+	var hits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		t.Errorf("unexpected network call to %s %s", r.Method, r.URL.String())
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	seedCred(t, ts.URL)
+
+	repo := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n") // no project
+	pointAt(t, repo)
+
+	cmd, _ := testCmd()
+	err := runSyncDocumentsPull(cmd, ts.URL, "")
+	if err == nil || !strings.Contains(err.Error(), "no hosted project bound") {
+		t.Fatalf("expected unbound-project error, got %v", err)
+	}
+	if hits != 0 {
+		t.Fatalf("unbound project contacted server %d time(s)", hits)
+	}
+}
+
 // TestSyncPersonalIsolatedAcrossProjects (AC2/AC4): two repos bound to different
 // projects push to the same fake server; each project's partition is exclusive.
 func TestSyncPersonalIsolatedAcrossProjects(t *testing.T) {

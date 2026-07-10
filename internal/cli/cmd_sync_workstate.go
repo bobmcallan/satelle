@@ -32,7 +32,7 @@ var WorkstateAreas = []string{"stories", "executions", "ledger"}
 func newSyncWorkstateCmd() *cobra.Command {
 	group := &cobra.Command{
 		Use:   "workstate",
-		Short: "Push local work state (stories, executions, ledger) to the personal workspace (one-way)",
+		Short: "Push work state to this repo's bound hosted project personal collection (one-way; local default skips)",
 	}
 
 	var pushServer string

@@ -34,9 +34,13 @@ project = "satelle"
 # --workspace); unset means the personal workspace default.
 
 # [sync] — each .satelle area on the local|personal|shared ladder
-# (epic:scoped-sync). Unset = local. satelle.local.toml overrides per area.
-# Inside a personal area, frontmatter `shared: true` promotes a file to the
-# team workspace. Inspect with `satelle sync scopes`. Per-kind commands:
+# (epic:scoped-sync / epic:sync-publish). Unset = local (writes nothing hosted).
+# personal = this repo's bound hosted project only — not a shared dump across
+# every project under your personal workspace. Bind with:
+#   satelle project bind <slug>
+# (or set [hosted] project above). shared:true / shared scope no longer routes
+# sync to a team workspace; use `satelle publish` for the team catalog.
+# Inspect with `satelle sync scopes`. Per-kind commands:
 #   satelle sync config push|deploy
 #   satelle sync documents push|pull
 #   satelle sync workstate push

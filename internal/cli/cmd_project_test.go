@@ -233,6 +233,12 @@ func TestResolveBoundProjectEmpty(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "no hosted project bound") {
 		t.Fatalf("expected unbound error, got %v", err)
 	}
+	// Actionable guidance names the full operator path (login / create / bind / toml).
+	for _, want := range []string{"satelle login", "project create", "project bind", "[hosted] project"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("unbound error missing %q: %v", want, err)
+		}
+	}
 	slug, err := resolveBoundProject(config.Config{Hosted: config.HostedConfig{Project: "  acme  "}})
 	if err != nil || slug != "acme" {
 		t.Fatalf("trim/bound = %q, %v", slug, err)

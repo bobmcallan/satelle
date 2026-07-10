@@ -20,7 +20,17 @@ import (
 // inspection, config push/deploy, and documents push/pull. v1 has per-kind
 // commands only — no single unified `satelle sync` that routes every area.
 func init() {
-	syncCmd := &cobra.Command{Use: "sync", Short: "Scope inspection and per-kind sync (config, documents, workstate)"}
+	syncCmd := &cobra.Command{
+		Use:   "sync",
+		Short: "Scope inspection and per-kind sync (config, documents, workstate)",
+		Long: `sync inspects [sync] scopes and pushes/pulls opted-in areas to the hosted server.
+
+Every area defaults to local — nothing leaves the machine until you set
+[sync] <area> = personal. Personal opt-in targets this repo's bound hosted
+project only (never a shared dump across all personal projects under your
+account). Bind with "satelle project bind <slug>" (or set [hosted] project in
+.satelle/satelle.toml). Team catalogs are a separate verb: satelle publish.`,
+	}
 	syncCmd.AddCommand(&cobra.Command{
 		Use:         "scopes",
 		Short:       "Print each .satelle area's resolved scope, and shared files within a personal area",
@@ -43,7 +53,7 @@ func init() {
 func newSyncConfigCmd() *cobra.Command {
 	group := &cobra.Command{
 		Use:   "config",
-		Short: "Push authored config to / deploy it from the hosted server's versioned config store",
+		Short: "Push/deploy authored config for this repo's bound hosted project (local default: no hosted write)",
 	}
 
 	var pushServer, pushWorkspace string
@@ -72,10 +82,13 @@ to a team catalog. Requires "satelle project bind <slug>".`,
 		Use:     "deploy",
 		Aliases: []string{"pull"},
 		Short:   "Materialize config from the store into this repo (set up X like Y)",
-		Long: `deploy fetches the active (or --workspace) workspace's config manifest and writes
-every file byte-for-byte into this repo's data dir. --version N pins a per-file version
-(default: latest). This is the "set up project X like project Y" operation: point a fresh
-repo at a team workspace and deploy to inherit its authored config.`,
+		Long: `deploy fetches this repo's bound hosted PROJECT's personal config collection
+(or an explicit --workspace when reading another developer's personal set) and
+writes every file byte-for-byte into this repo's data dir. --version N pins a
+per-file version (default: latest). This is the "set up project X like project Y"
+operation. Requires "satelle project bind <slug>". Local [sync] areas still
+default to writing nothing hosted on push; deploy always materializes from the
+bound project partition.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncConfigDeploy(cmd, deployServer, deployWorkspace, version)
 		},
