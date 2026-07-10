@@ -76,11 +76,11 @@ func TestLoadAgentsDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadAgents: %v", err)
 	}
-	if got := ac.ReviewerBinding(); got.Tools != DefaultReviewerTools || got.Harness != DefaultReviewerHarness {
-		t.Errorf("reviewer default = %+v, want tools=%q harness=%q", got, DefaultReviewerTools, DefaultReviewerHarness)
+	if got := ac.ReviewerBinding(); got.Tools != DefaultReviewerTools || got.Command != DefaultReviewerCommand {
+		t.Errorf("reviewer default = %+v, want tools=%q harness=%q", got, DefaultReviewerTools, DefaultReviewerCommand)
 	}
-	if got := ac.ExecutorBinding(); got.Harness != DefaultExecutorHarness {
-		t.Errorf("executor default harness = %q, want %q", got.Harness, DefaultExecutorHarness)
+	if got := ac.ExecutorBinding(); got.Command != DefaultExecutorCommand {
+		t.Errorf("executor default harness = %q, want %q", got.Command, DefaultExecutorCommand)
 	}
 }
 

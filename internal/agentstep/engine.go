@@ -130,9 +130,9 @@ type Engine struct {
 	// (.satelle/agents.toml [<name>] sections) for executor dispatch
 	// (sty_fd427546). Nil keeps every step in-loop.
 	namedAgents func(name string) (config.AgentBinding, bool)
-	// newRunner builds the runner for a named binding's harness — swappable in
-	// tests; defaults to agentcli.RunnerFromHarness.
-	newRunner func(harness string) (agentcli.Runner, error)
+	// newRunner builds the runner for a named binding's command — swappable in
+	// tests; defaults to agentcli.RunnerFromCommand.
+	newRunner func(command string) (agentcli.Runner, error)
 	// telemetry records a structured, queryable dispatch outcome (a reviewer/
 	// executor retry, failure, or timeout) that only the binary observes — the
 	// verb layer sees just the final result, not each attempt (sty_b73c3236). Nil
@@ -185,7 +185,7 @@ func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Engine
 		runner: runner, docs: docs, repoRoot: repoRoot, model: model, tools: defaultTools,
 		checkTimeout: defaultCheckTimeout, check: execCheck, injectPrinciples: true,
 		attempts: defaultReviewerAttempts, backoff: defaultReviewerBackoff,
-		agentTimeout: defaultAgentTimeout, newRunner: agentcli.RunnerFromHarness,
+		agentTimeout: defaultAgentTimeout, newRunner: agentcli.RunnerFromCommand,
 	}
 }
 
@@ -604,12 +604,12 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 			"workflow %q dispatches state %q to code-writing agent %q from non-performing state %q: the agent would edit code while the story is not in an engaged state, so the edit gate could allow it only via the serve fail-open — route the step from a performing state (or make %q performing)",
 			doc.Name, toStatus, target.Agent, item.Status, item.Status)
 	}
-	runner, err := g.newRunner(binding.Harness)
+	runner, err := g.newRunner(binding.CommandTemplate())
 	if err != nil {
-		return verb.DispatchResult{}, fmt.Errorf("named agent %q: broken harness in .satelle/agents.toml: %w", target.Agent, err)
+		return verb.DispatchResult{}, fmt.Errorf("named agent %q: broken command in .satelle/agents.toml: %w", target.Agent, err)
 	}
 	if runner == nil {
-		return verb.DispatchResult{}, nil // harness "in-loop": the orchestrator performs the step
+		return verb.DispatchResult{}, nil // command "in-loop": the orchestrator performs the step
 	}
 	// A dispatched executor starts fresh and reconstructs its context by PULLING the
 	// story, its documents, and the ledger via the read-only satelle CLI (the
@@ -711,9 +711,9 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.Dispa
 		return verb.DispatchResult{}, fmt.Errorf(
 			"no [%s] binding in .satelle/agents.toml — define it (with Bash(satelle:*) so it can file proposals) to run the retrospective", retrospectAgent)
 	}
-	runner, err := g.newRunner(binding.Harness)
+	runner, err := g.newRunner(binding.CommandTemplate())
 	if err != nil {
-		return verb.DispatchResult{}, fmt.Errorf("%s agent: broken harness: %w", retrospectAgent, err)
+		return verb.DispatchResult{}, fmt.Errorf("%s agent: broken command: %w", retrospectAgent, err)
 	}
 	if runner == nil {
 		return verb.DispatchResult{}, fmt.Errorf("%s agent harness is in-loop; set a real harness to dispatch it", retrospectAgent)

@@ -21,6 +21,20 @@
           { "type": "command", "command": "satelle hook commitgate || exit 2" }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook prompt" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook stopcheck" }
+        ]
+      }
     ]
   }
 }

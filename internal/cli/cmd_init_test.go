@@ -602,6 +602,10 @@ func TestEnsureClaudeHooksIdempotent(t *testing.T) {
 	for _, want := range []string{
 		"PATH=$HOME/.local/bin:$PATH satelle hook gate || exit 2",
 		"PATH=$HOME/.local/bin:$PATH satelle hook commitgate || exit 2",
+		"PATH=$HOME/.local/bin:$PATH satelle hook prompt",
+		"PATH=$HOME/.local/bin:$PATH satelle hook stopcheck",
+		"UserPromptSubmit",
+		"Stop",
 		"satelle hook context",
 		"Edit|Write",
 	} {
@@ -609,17 +613,33 @@ func TestEnsureClaudeHooksIdempotent(t *testing.T) {
 			t.Errorf("settings.json missing %q", want)
 		}
 	}
-	// Second call must NOT overwrite (idempotent).
+	// An existing file that LACKS the reinforcement hooks is HEALED, not left
+	// ungated (sty_949e8739): prompt/stopcheck are appended and other keys are
+	// preserved — otherwise a repo initialized before the reinforcement hooks
+	// shipped would never gain them, re-opening the bypass.
 	if err := os.WriteFile(path, []byte("{\"custom\":true}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	created2, _, err := ensureClaudeHooks(repo)
+	created2, updated2, err := ensureClaudeHooks(repo)
 	if err != nil || created2 {
 		t.Fatalf("second call: created=%v err=%v, want not created", created2, err)
 	}
+	if len(updated2) == 0 {
+		t.Errorf("heal: expected reinforcement hooks to be reported as added")
+	}
 	b2, _ := os.ReadFile(path)
-	if string(b2) != "{\"custom\":true}" {
-		t.Errorf("ensureClaudeHooks overwrote an existing settings.json")
+	for _, want := range []string{`"custom": true`, "satelle hook prompt", "satelle hook stopcheck"} {
+		if !strings.Contains(string(b2), want) {
+			t.Errorf("heal: settings.json missing %q after heal:\n%s", want, b2)
+		}
+	}
+	// Idempotent: a THIRD call adds nothing and rewrites nothing (already healed).
+	before, _ := os.ReadFile(path)
+	created3, updated3, err := ensureClaudeHooks(repo)
+	after, _ := os.ReadFile(path)
+	if err != nil || created3 || len(updated3) != 0 || string(before) != string(after) {
+		t.Fatalf("third call not idempotent: created=%v updated=%v err=%v changed=%v",
+			created3, updated3, err, string(before) != string(after))
 	}
 }
 

@@ -26,12 +26,12 @@ const (
 // initialized repo without a loadable agents.toml refuses to run (the CLI
 // bootstrap's requireAgents, sty_d0d6bb67).
 const (
-	DefaultExecutorHarness = "in-loop"
-	// DefaultReviewerHarness is the bare claude PRESET name — a single token, so
-	// agentcli.RunnerFromHarness expands it to the built-in claude template
+	DefaultExecutorCommand = "in-loop"
+	// DefaultReviewerCommand is the bare claude PRESET name — a single token, so
+	// agentcli.RunnerFromCommand expands it to the built-in claude template
 	// (which carries the read-only --disallowedTools denylist). A repo overrides
 	// it with a full command template (multi-token) in agents.toml.
-	DefaultReviewerHarness = "claude"
+	DefaultReviewerCommand = "claude"
 	DefaultReviewerTools   = "Read,Grep,Glob"
 )
 
@@ -44,6 +44,16 @@ const (
 // a nil pointer (the field absent from agents.toml) means inject. Set
 // inject_principles = false to omit them for that agent.
 type AgentBinding struct {
+	// Command is the agent's command template: a SINGLE token names a built-in
+	// preset (claude | grok | codex | in-loop); a MULTI-token value is a full
+	// command taken verbatim, with {system}/{tools}/{model}/{settings}/{payload}
+	// substituted (each its own argv token). It replaces the deprecated `harness`
+	// key (Harness, below), still parsed for back-compat — resolve via
+	// CommandTemplate(), which prefers Command and falls back to Harness.
+	Command string `toml:"command"`
+	// Harness is the DEPRECATED alias for Command: a repo authored before the
+	// rename still parses. Command wins when both are set. Never read this field
+	// directly — go through CommandTemplate().
 	Harness string `toml:"harness"`
 	Tools   string `toml:"tools"`
 	Model   string `toml:"model"`
@@ -94,6 +104,18 @@ func (b AgentBinding) TimeoutDuration(def time.Duration) (time.Duration, error) 
 	return d, nil
 }
 
+// CommandTemplate resolves the effective command template for this binding,
+// honoring the deprecated `harness` alias when `command` is unset (Command wins
+// when both are set). Every reader of the command MUST go through this rather
+// than the raw fields so a pre-rename agents.toml keeps resolving (sty rename
+// harness→command back-compat).
+func (b AgentBinding) CommandTemplate() string {
+	if b.Command != "" {
+		return b.Command
+	}
+	return b.Harness
+}
+
 // InjectsPrinciples reports whether this binding injects the resident principles
 // into the isolated agent's context — true (the default) unless explicitly
 // disabled with inject_principles = false.
@@ -120,14 +142,15 @@ type AgentsConfig struct {
 // [<name>] section (or the legacy nested [agents.<name>]). ok is false when none is
 // declared, so a workflow node that allocates a step to an absent agent degrades
 // gracefully to the in-loop executor. A named agent is always isolated; an unset
-// harness defaults to the isolated claude preset.
+// command defaults to the isolated claude preset.
 func (a AgentsConfig) NamedBinding(name string) (AgentBinding, bool) {
 	b, ok := a.Agents[name]
 	if !ok {
 		return AgentBinding{}, false
 	}
-	if b.Harness == "" {
-		b.Harness = DefaultReviewerHarness
+	b.Command = b.CommandTemplate()
+	if b.Command == "" {
+		b.Command = DefaultReviewerCommand
 	}
 	return b, true
 }
@@ -137,8 +160,9 @@ func (a AgentsConfig) NamedBinding(name string) (AgentBinding, bool) {
 // binding, so the reviewer's read-only limit holds whatever the backend.
 func (a AgentsConfig) ReviewerBinding() AgentBinding {
 	b := a.Reviewer
-	if b.Harness == "" {
-		b.Harness = DefaultReviewerHarness
+	b.Command = b.CommandTemplate()
+	if b.Command == "" {
+		b.Command = DefaultReviewerCommand
 	}
 	if b.Tools == "" {
 		b.Tools = DefaultReviewerTools
@@ -150,8 +174,9 @@ func (a AgentsConfig) ReviewerBinding() AgentBinding {
 // (the driving agent itself).
 func (a AgentsConfig) ExecutorBinding() AgentBinding {
 	b := a.Executor
-	if b.Harness == "" {
-		b.Harness = DefaultExecutorHarness
+	b.Command = b.CommandTemplate()
+	if b.Command == "" {
+		b.Command = DefaultExecutorCommand
 	}
 	return b
 }

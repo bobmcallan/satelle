@@ -16,8 +16,8 @@ import (
 // configuration — and the parsed bindings equal the absent-file defaults.
 func TestScaffoldAgentsTomlFullyDefined(t *testing.T) {
 	for _, want := range []string{
-		"[executor]", `harness = "in-loop"`,
-		"[reviewer]", agentcli.DefaultClaudeHarness, `tools   = "Read,Grep,Glob"`,
+		"[executor]", `command = "in-loop"`,
+		"[reviewer]", agentcli.DefaultClaudeCommand, `tools   = "Read,Grep,Glob"`,
 	} {
 		if !strings.Contains(scaffoldAgentsToml, want) {
 			t.Errorf("scaffold missing active entry %q", want)
@@ -36,8 +36,8 @@ func TestScaffoldAgentsTomlFullyDefined(t *testing.T) {
 	rev := ag.ReviewerBinding()
 	// The written harness is the FULL command template (transparent, swappable) —
 	// exactly what the bare "claude" preset expands to, so behaviour is unchanged.
-	if rev.Harness != agentcli.DefaultClaudeHarness || rev.Tools != config.DefaultReviewerTools {
+	if rev.Command != agentcli.DefaultClaudeCommand || rev.Tools != config.DefaultReviewerTools {
 		t.Errorf("scaffold reviewer = (%q, %q), want (%q, %q)",
-			rev.Harness, rev.Tools, agentcli.DefaultClaudeHarness, config.DefaultReviewerTools)
+			rev.Command, rev.Tools, agentcli.DefaultClaudeCommand, config.DefaultReviewerTools)
 	}
 }

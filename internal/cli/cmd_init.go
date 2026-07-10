@@ -11,6 +11,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -287,7 +288,7 @@ func agentGuidance(repoRoot string) []string {
 		"Agent note: this repo carries " + strings.Join(files, " and ") + " — add a \"## satelle\" section there (or update the existing one) with the basics:",
 		"  - satelle runs this repo's workflow: create a story (`satelle story create`), drive it through its gates (`satelle story set <id> --status …`); status is the sole proof of done.",
 		"  - keep the section a short pointer: agents should consult `satelle help` (and `satelle help <topic>`) for the process — prefer that over duplicating satelle docs into " + strings.Join(files, "/") + ".",
-		"  - define process agents and workflow steps in `.satelle/agents.toml` (a `[<name>]` binding: harness/tools/model) and allocate a workflow node `agent=<name>` — NOT in a harness-specific agent dir (e.g. `.claude/agents`), which satelle cannot see, validate, dispatch, or carry repo-agnostically. See `satelle help agent-dispatch`.",
+		"  - define process agents and workflow steps in `.satelle/agents.toml` (a `[<name>]` binding: command/tools/model) and allocate a workflow node `agent=<name>` — NOT in a harness-specific agent dir (e.g. `.claude/agents`), which satelle cannot see, validate, dispatch, or carry repo-agnostically. See `satelle help agent-dispatch`.",
 	}
 }
 
@@ -320,6 +321,20 @@ const claudeHookSettings = `{
           { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook commitgate || exit 2" }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook prompt" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook stopcheck" }
+        ]
+      }
     ]
   }
 }
@@ -349,6 +364,20 @@ const grokHookSettings = `{
         "matcher": "Bash|run_terminal_command",
         "hooks": [
           { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook commitgate || exit 2" }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook prompt" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook stopcheck" }
         ]
       }
     ]
@@ -520,6 +549,104 @@ func reconcileHookFile(path string) ([]string, error) {
 // (kept for existing tests and call sites).
 func reconcileClaudeHooks(path string) ([]string, error) { return reconcileHookFile(path) }
 
+// The reinforcement hook commands (the PATH-prefixed form the scaffolds embed).
+// Kept as named constants so the HEAL that adds them to an already-initialized
+// repo appends exactly what a fresh init writes; the scaffold constants embed the
+// same literals and a test asserts both files carry them (drift-caught).
+const (
+	promptHookCommand    = "PATH=$HOME/.local/bin:$PATH satelle hook prompt"
+	stopcheckHookCommand = "PATH=$HOME/.local/bin:$PATH satelle hook stopcheck"
+)
+
+// reinforcementHooks are the event→command entries the heal ensures exist. Marker
+// is the stable substring used to detect an already-present entry regardless of a
+// repo's PATH prefix.
+var reinforcementHooks = []struct{ event, marker, command string }{
+	{"UserPromptSubmit", "satelle hook prompt", promptHookCommand},
+	{"Stop", "satelle hook stopcheck", stopcheckHookCommand},
+}
+
+// ensureReinforcementHooks HEALS an already-initialized repo's hook file: when the
+// UserPromptSubmit ('satelle hook prompt') or Stop ('satelle hook stopcheck')
+// reinforcement hook is absent, it APPENDS it, preserving every other key. This is
+// load-bearing, not polish: without it a repo initialized before the reinforcement
+// hooks shipped would NEVER gain them, leaving the single PreToolUse gate as the
+// only line of defence — the exact bypass this closes (sty_949e8739). Idempotent:
+// when nothing is missing it writes nothing (preserving the file byte-for-byte);
+// an unparseable file is left untouched rather than clobbered. Returns the events
+// it added.
+func ensureReinforcementHooks(path string) ([]string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var root map[string]any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return nil, nil // not JSON we can safely mutate — leave it untouched
+	}
+	hooks, ok := root["hooks"].(map[string]any)
+	if !ok {
+		hooks = map[string]any{}
+		root["hooks"] = hooks
+	}
+	var added []string
+	for _, rh := range reinforcementHooks {
+		if hookEventHasMarker(hooks[rh.event], rh.marker) {
+			continue
+		}
+		group := map[string]any{
+			"hooks": []any{
+				map[string]any{"type": "command", "command": rh.command},
+			},
+		}
+		arr, _ := hooks[rh.event].([]any)
+		hooks[rh.event] = append(arr, group)
+		added = append(added, rh.event)
+	}
+	if len(added) == 0 {
+		return nil, nil
+	}
+	b, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
+		return nil, err
+	}
+	sort.Strings(added)
+	return added, nil
+}
+
+// hookEventHasMarker reports whether an event's hook groups already contain a
+// command carrying the marker substring. Tolerant of the arbitrary nested shape a
+// user-owned hook file may hold — any non-conforming node is simply skipped.
+func hookEventHasMarker(event any, marker string) bool {
+	groups, ok := event.([]any)
+	if !ok {
+		return false
+	}
+	for _, g := range groups {
+		gm, ok := g.(map[string]any)
+		if !ok {
+			continue
+		}
+		hs, ok := gm["hooks"].([]any)
+		if !ok {
+			continue
+		}
+		for _, h := range hs {
+			hm, ok := h.(map[string]any)
+			if !ok {
+				continue
+			}
+			if cmd, _ := hm["command"].(string); strings.Contains(cmd, marker) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ensureClaudeHooks writes .claude/settings.json with the process hooks when
 // absent, and RECONCILES known-retired satelle hook commands in an existing one
 // (sty_6a919dff) — the user-owned file is otherwise preserved byte-for-byte.
@@ -534,6 +661,13 @@ func ensureClaudeHooks(repoRoot string) (bool, []string, error) {
 		updated, rerr := reconcileHookFile(path)
 		if rerr != nil {
 			return false, nil, fmt.Errorf("init: reconcile %s: %w", path, rerr)
+		}
+		healed, herr := ensureReinforcementHooks(path)
+		if herr != nil {
+			return false, nil, fmt.Errorf("init: reinforce %s: %w", path, herr)
+		}
+		for _, e := range healed {
+			updated = append(updated, "added "+e+" hook")
 		}
 		return false, updated, nil
 	} else if !os.IsNotExist(err) {
@@ -558,6 +692,13 @@ func ensureGrokHooks(repoRoot string) (bool, []string, error) {
 		updated, rerr := reconcileHookFile(path)
 		if rerr != nil {
 			return false, nil, fmt.Errorf("init: reconcile %s: %w", path, rerr)
+		}
+		healed, herr := ensureReinforcementHooks(path)
+		if herr != nil {
+			return false, nil, fmt.Errorf("init: reinforce %s: %w", path, herr)
+		}
+		for _, e := range healed {
+			updated = append(updated, "added "+e+" hook")
 		}
 		return false, updated, nil
 	} else if !os.IsNotExist(err) {
@@ -648,10 +789,10 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer:
 #     Write/Edit/NotebookEdit/Bash on top of the read-only grant).
 #   - any OTHER top-level [<name>] is an optional named agent, always isolated;
 #     a workflow node allocates a step to it via agent=<name>, and entering that
-#     state DISPATCHES the step to this binding's harness (item on stdin, the
+#     state DISPATCHES the step to this binding's command (item on stdin, the
 #     node's @skill rubric as the system prompt, tools/model from the binding).
 #     A node naming an agent with NO binding here REFUSES the transition. A
-#     named agent that MUTATES declares its own full-command harness + wide
+#     named agent that MUTATES declares its own full command template + wide
 #     grant; its model key pins the step's model ({model} in the template), so
 #     per-step model selection is pure configuration.
 #
@@ -660,13 +801,18 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer:
 # to satelle — it cannot see, validate, dispatch, or carry them repo-agnostically —
 # and they silently pin the repo to one CLI vendor. See "satelle help agent-dispatch".
 #
-# THE HARNESS TEMPLATE: a SINGLE token (e.g. "claude") is a built-in preset; a
-# MULTI-token value is a full command taken verbatim. Placeholders — each one
-# argv token: {system} {tools} {model} {settings} {payload}. The work-item body
-# is ALWAYS also written on stdin (dual delivery). Empty {model}/{settings}
-# drop that flag; empty {payload} does not. Claude's default uses stdin only
-# (no -p {payload}) so the prompt is not double-fed; argv-first CLIs opt in, e.g.
-#   harness = "grok -p {payload} --system-prompt-override {system} --tools {tools} --always-approve --output-format plain --max-turns 8 --no-subagents"
+# THE COMMAND TEMPLATE: a SINGLE token is a built-in PRESET — claude | grok |
+# codex | in-loop. "claude" and "grok" expand to a correct, read-only reviewer
+# command for that CLI (no need to hand-author its argv); "codex" is not yet
+# mapped (write a full command instead); "in-loop" means the driving session
+# performs the step (no subprocess). A MULTI-token value is a full command taken
+# verbatim. Placeholders — each one argv token: {system} {tools} {model}
+# {settings} {payload}. The work-item body is ALWAYS also written on stdin (dual
+# delivery). Empty {model}/{settings} drop that flag; empty {payload} does not.
+# Claude's default uses stdin only (no -p {payload}) so the prompt is not
+# double-fed; argv-first CLIs (grok) opt in with -p {payload}. Prefer a preset;
+# write a full command only to customize flags/tools, e.g.
+#   command = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir --always-approve --output-format plain --max-turns 8 --no-subagents"
 #
 # PER-BINDING ENV — point a step at an alternate model backend WITHOUT a wrapper
 # binary. A binding may set env = { KEY = "value" }; each value may reference the
@@ -675,7 +821,7 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer:
 # satelle.local.toml — NEVER here (this file is committed). Example — GLM via its
 # Anthropic-compatible endpoint, same claude CLI, model reads naturally:
 #   [planner]
-#   harness = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
+#   command = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
 #   model   = "glm-4.6"
 #   env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }
 # and in satelle.local.toml (gitignored):
@@ -683,23 +829,25 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer:
 #   GLM_API_KEY = "sk-…"
 
 [executor]
-harness = "in-loop"            # the orchestrator/driving session itself
+command = "in-loop"            # the orchestrator/driving session itself
 
 [reviewer]
 # The FULL command template — transparent and swappable (sty_892517e7, user
 # feedback): satelle substitutes {system}/{tools}/{model}/{settings}/{payload}
 # (each one argv token); payload is always also on stdin. An empty model drops
-# the --model pair. Point this at ANY agent CLI by rewriting the command.
-harness = "REVIEWER_HARNESS_TEMPLATE"
-tools   = "Read,Grep,Glob"     # read-only grant — widen at your own risk
+# the --model pair. Point this at ANY agent CLI by rewriting the command — or
+# replace this whole line with a single-token preset: command = "claude" (or
+# "grok"), which expands to a correct read-only reviewer command for that CLI.
+command = "REVIEWER_COMMAND_TEMPLATE"
+tools   = "Read,Grep,Glob"     # read-only grant — widen at your own risk (claude preset only; the grok preset bakes its own grok-named read-only grant)
 model   = ""                   # empty inherits the CLI's default; each binding may pin its own (e.g. "sonnet"), so steps allocated to different bindings run on different models
 
 # A named EXECUTOR agent for isolated mutating steps (e.g. a commit/push step),
-# with an explicit full-command harness and a wide grant:
+# with an explicit full command template and a wide grant:
 # [commit-agent]
-# harness = "claude -p --append-system-prompt {system} --allowedTools {tools}"
+# command = "claude -p --append-system-prompt {system} --allowedTools {tools}"
 # tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*)"
-`, "REVIEWER_HARNESS_TEMPLATE", agentcli.DefaultClaudeHarness)
+`, "REVIEWER_COMMAND_TEMPLATE", agentcli.DefaultClaudeCommand)
 
 // scaffoldConstitution is the project-constitution template a fresh init writes to
 // .satelle/constitution.md — the order-zero doc injected into every session

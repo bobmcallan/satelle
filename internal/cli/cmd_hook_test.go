@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -426,5 +428,130 @@ func TestAnyEngagedFailClosedNoDOT(t *testing.T) {
 	}
 	if err == nil {
 		t.Fatal("anyEngaged must return an error when the governing workflow has no DOT (fail-closed)")
+	}
+}
+
+// --- Reinforcement hooks: gate-liveness self-check + Stop post-hoc detector
+// (sty_949e8739) -------------------------------------------------------------
+
+// TestSettingsWiresGate: a settings JSON counts as wiring the edit gate only when
+// a PreToolUse Edit-matcher hook invokes `satelle hook gate`.
+func TestSettingsWiresGate(t *testing.T) {
+	wired := `{"hooks":{"PreToolUse":[{"matcher":"Edit|Write","hooks":[{"type":"command","command":"PATH=x satelle hook gate || exit 2"}]}]}}`
+	if !settingsWiresGate([]byte(wired)) {
+		t.Errorf("wired settings should report gate wired")
+	}
+	// Bash-only gate (commitgate) but no Edit-matcher gate → not wired.
+	noEdit := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"satelle hook commitgate || exit 2"}]}]}}`
+	if settingsWiresGate([]byte(noEdit)) {
+		t.Errorf("a Bash-only commitgate must NOT count as the edit gate")
+	}
+	// Edit matcher but a different command → not wired.
+	wrongCmd := `{"hooks":{"PreToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"echo hi"}]}]}}`
+	if settingsWiresGate([]byte(wrongCmd)) {
+		t.Errorf("an Edit matcher without `satelle hook gate` must NOT count")
+	}
+	if settingsWiresGate([]byte("{ not json")) {
+		t.Errorf("malformed settings must not report a confident wire")
+	}
+}
+
+// TestGateWiredInSettings: checked=false when no settings file exists (fail open);
+// checked=true+wired reflects the committed files.
+func TestGateWiredInSettings(t *testing.T) {
+	empty := t.TempDir()
+	if wired, checked := gateWiredInSettings(empty); wired || checked {
+		t.Errorf("no settings file → want (false,false), got (%v,%v)", wired, checked)
+	}
+
+	wiredRepo := t.TempDir()
+	mkfile(t, filepath.Join(wiredRepo, ".claude", "settings.json"),
+		`{"hooks":{"PreToolUse":[{"matcher":"Edit|Write|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"satelle hook gate || exit 2"}]}]}}`)
+	if wired, checked := gateWiredInSettings(wiredRepo); !wired || !checked {
+		t.Errorf("wired .claude → want (true,true), got (%v,%v)", wired, checked)
+	}
+
+	// A settings file present but WITHOUT the edit gate → confident missing wire.
+	unwired := t.TempDir()
+	mkfile(t, filepath.Join(unwired, ".claude", "settings.json"),
+		`{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"satelle reindex"}]}]}}`)
+	if wired, checked := gateWiredInSettings(unwired); wired || !checked {
+		t.Errorf("present-but-unwired → want (false,true), got (%v,%v)", wired, checked)
+	}
+}
+
+// TestStopHookActive honours both snake_case (Claude) and camelCase (Grok) forms.
+func TestStopHookActive(t *testing.T) {
+	if !stopHookActive([]byte(`{"stop_hook_active":true}`)) {
+		t.Errorf("snake_case stop_hook_active=true not detected")
+	}
+	if !stopHookActive([]byte(`{"stopHookActive":true}`)) {
+		t.Errorf("camelCase stopHookActive=true not detected")
+	}
+	if stopHookActive([]byte(`{"stop_hook_active":false}`)) {
+		t.Errorf("false must not report active")
+	}
+	if stopHookActive([]byte(`{}`)) {
+		t.Errorf("absent flag must not report active")
+	}
+}
+
+// TestEmitStopBlock: the Stop block payload carries decision=block + the reason.
+func TestEmitStopBlock(t *testing.T) {
+	var buf bytes.Buffer
+	if err := emitStopBlock(&buf, "ungated edits: a.go"); err != nil {
+		t.Fatalf("emitStopBlock: %v", err)
+	}
+	var got stopBlockOut
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("stop block not valid JSON: %v (%s)", err, buf.String())
+	}
+	if got.Decision != "block" || !strings.Contains(got.Reason, "a.go") {
+		t.Errorf("stop block = %+v, want decision=block + reason naming the file", got)
+	}
+}
+
+// TestStopcheckReasonCaps: a large dirty set is capped with a "+N more" suffix so
+// the reason cannot flood the model.
+func TestStopcheckReasonCaps(t *testing.T) {
+	var many []string
+	for i := 0; i < 25; i++ {
+		many = append(many, "f")
+	}
+	r := stopcheckReason(many)
+	if !strings.Contains(r, "+15 more") {
+		t.Errorf("expected a +15 more cap suffix, got: %s", r)
+	}
+	if !strings.Contains(r, "NO story is engaged") {
+		t.Errorf("stopcheck reason should state no story is engaged: %s", r)
+	}
+}
+
+// TestRunHookPromptEmitsReminder: every prompt re-injects the concise rule via a
+// UserPromptSubmit additionalContext payload.
+func TestRunHookPromptEmitsReminder(t *testing.T) {
+	var buf bytes.Buffer
+	if err := runHookPrompt(&buf); err != nil {
+		t.Fatalf("runHookPrompt: %v", err)
+	}
+	var got hookContextOut
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("prompt output not valid JSON: %v (%s)", err, buf.String())
+	}
+	if got.HookSpecificOutput.HookEventName != "UserPromptSubmit" {
+		t.Errorf("event = %q, want UserPromptSubmit", got.HookSpecificOutput.HookEventName)
+	}
+	if !strings.Contains(got.HookSpecificOutput.AdditionalContext, "edits require an ENGAGED story") {
+		t.Errorf("prompt reminder missing the engaged-story rule: %s", got.HookSpecificOutput.AdditionalContext)
+	}
+}
+
+func mkfile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

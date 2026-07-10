@@ -246,12 +246,12 @@ func applyAgentGrants(rev *agentstep.Engine, agents config.AgentsConfig) error {
 	// Resident-principle injection is an agents-layer option, default ON
 	// (sty_46a40208): inject_principles = false in the reviewer binding omits it.
 	rev.SetInjectPrinciples(rb.InjectsPrinciples())
-	// Select the reviewer's agent CLI from the agents-layer harness binding
-	// (default claude). An unset/in-loop harness keeps the global [agent] cli
+	// Select the reviewer's agent CLI from the agents-layer command binding
+	// (default claude). An unset/in-loop command keeps the global [agent] cli
 	// configured at construction; an unresolvable one refuses.
-	r, err := agentcli.RunnerFromHarness(rb.Harness)
+	r, err := agentcli.RunnerFromCommand(rb.CommandTemplate())
 	if err != nil {
-		return fmt.Errorf("broken %s/%s: reviewer harness: %w",
+		return fmt.Errorf("broken %s/%s: reviewer command: %w",
 			config.DefaultDataDir, config.AgentsConfigName, err)
 	}
 	if r != nil {
