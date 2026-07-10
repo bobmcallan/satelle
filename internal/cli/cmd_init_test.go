@@ -14,10 +14,30 @@ import (
 	"github.com/bobmcallan/satelle/internal/structure"
 )
 
+// isolateUserHome pins HOME to a disposable dir for this test so init's
+// Grok-compat write (~/.grok/config.toml) cannot touch the developer's real
+// config when grok is on PATH (sty_24b32127). Idempotent within a test.
+func isolateUserHome(t *testing.T) {
+	t.Helper()
+	if os.Getenv("SATELLE_INIT_TEST_HOME") != "" {
+		return
+	}
+	h := t.TempDir()
+	t.Setenv("HOME", h)
+	t.Setenv("SATELLE_INIT_TEST_HOME", h)
+}
+
+// runInitTest is runInit with HOME isolated (see isolateUserHome).
+func runInitTest(t *testing.T, out io.Writer, repo string) error {
+	t.Helper()
+	isolateUserHome(t)
+	return runInit(out, repo)
+}
+
 func TestRunInitScaffolds(t *testing.T) {
 	repo := t.TempDir()
 	var out strings.Builder
-	if err := runInit(&out, repo); err != nil {
+	if err := runInitTest(t, &out, repo); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
 
@@ -114,7 +134,7 @@ func TestInstallAliasSharesInitPath(t *testing.T) {
 	// Functional: install-named path still scaffolds (same RunE).
 	repo := t.TempDir()
 	var out strings.Builder
-	if err := runInit(&out, repo); err != nil {
+	if err := runInitTest(t, &out, repo); err != nil {
 		t.Fatalf("runInit via install path: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(repo, ".satelle", "agents.toml")); err != nil {
@@ -135,7 +155,7 @@ func TestRunInitSeedsAdvisorySkillsBesideAuthoredWorkflows(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wfDir, "my-workflow.md"), []byte(own), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := runInit(io.Discard, repo); err != nil {
+	if err := runInitTest(t, io.Discard, repo); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
 	p := filepath.Join(repo, ".satelle", "skills", "satelle-workflow-advisor.md")
@@ -164,7 +184,7 @@ func TestRunInitFailsValidationOnBrokenSubstrate(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out strings.Builder
-	err := runInit(&out, repo)
+	err := runInitTest(t, &out, repo)
 	if err == nil {
 		t.Fatal("init must exit non-zero when the deployed system fails validation")
 	}
@@ -178,7 +198,7 @@ func TestRunInitFailsValidationOnBrokenSubstrate(t *testing.T) {
 
 func TestRunInitIdempotent(t *testing.T) {
 	repo := t.TempDir()
-	if err := runInit(io.Discard, repo); err != nil {
+	if err := runInitTest(t, io.Discard, repo); err != nil {
 		t.Fatal(err)
 	}
 	// Capture a user edit to the toml; a second init must not clobber it.
@@ -190,7 +210,7 @@ func TestRunInitIdempotent(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := runInit(&out, repo); err != nil {
+	if err := runInitTest(t, &out, repo); err != nil {
 		t.Fatalf("second runInit: %v", err)
 	}
 	// Everything reported as already present.
@@ -210,7 +230,7 @@ func TestRunInitIdempotent(t *testing.T) {
 	if err := os.WriteFile(taskPath, []byte(authored), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := runInit(io.Discard, repo); err != nil {
+	if err := runInitTest(t, io.Discard, repo); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(taskPath); string(got) != authored {
@@ -227,7 +247,7 @@ func TestRunInitIdempotent(t *testing.T) {
 // "re-runnable from done".
 func TestRunInitSeedsAuditTask(t *testing.T) {
 	repo := t.TempDir()
-	if err := runInit(io.Discard, repo); err != nil {
+	if err := runInitTest(t, io.Discard, repo); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
 	dataDir := filepath.Join(repo, ".satelle")
@@ -331,7 +351,7 @@ var defaultSolutionSkills = []string{
 // applies_to).
 func TestRunInitSeedsDefaultSolution(t *testing.T) {
 	repo := t.TempDir()
-	if err := runInit(io.Discard, repo); err != nil {
+	if err := runInitTest(t, io.Discard, repo); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
 	dataDir := filepath.Join(repo, ".satelle")
@@ -434,7 +454,7 @@ func TestRunInitSeedsAdditivelyBesideAuthoredWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out strings.Builder
-	if err := runInit(&out, repo); err != nil {
+	if err := runInitTest(t, &out, repo); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
 	// The wildcard base default is skipped (it would compete with the authored
@@ -492,7 +512,7 @@ func TestRunInitHealsMissingGateSkillDeadlock(t *testing.T) {
 		t.Fatal("precondition: the gate skill must start absent")
 	}
 
-	if err := runInit(io.Discard, repo); err != nil {
+	if err := runInitTest(t, io.Discard, repo); err != nil {
 		t.Fatalf("init must HEAL the missing default and validate green, got: %v", err)
 	}
 	if !fileExists(filepath.Join(skDir, "satelle-estimate-actual-review.md")) {
@@ -504,7 +524,7 @@ func TestRunInitHealsMissingGateSkillDeadlock(t *testing.T) {
 	}
 	// Idempotent: a second init creates nothing new.
 	var out strings.Builder
-	if err := runInit(&out, repo); err != nil {
+	if err := runInitTest(t, &out, repo); err != nil {
 		t.Fatalf("second init: %v", err)
 	}
 	if strings.Contains(out.String(), "  + ") {
@@ -546,7 +566,12 @@ func TestEnsureClaudeHooksIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("settings not written: %v", err)
 	}
-	for _, want := range []string{"satelle hook gate || exit 2", "satelle hook commitgate || exit 2", "satelle hook context", "Edit|Write"} {
+	for _, want := range []string{
+		"PATH=$HOME/.local/bin:$PATH satelle hook gate || exit 2",
+		"PATH=$HOME/.local/bin:$PATH satelle hook commitgate || exit 2",
+		"satelle hook context",
+		"Edit|Write",
+	} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("settings.json missing %q", want)
 		}
@@ -589,7 +614,7 @@ func TestRunInitAgentGuidance(t *testing.T) {
 				}
 			}
 			var out strings.Builder
-			if err := runInit(&out, repo); err != nil {
+			if err := runInitTest(t, &out, repo); err != nil {
 				t.Fatalf("runInit: %v", err)
 			}
 			for _, f := range c.files {
@@ -628,7 +653,7 @@ func TestRunInitAgentGuidance(t *testing.T) {
 	t.Run("neither present", func(t *testing.T) {
 		repo := t.TempDir()
 		var out strings.Builder
-		if err := runInit(&out, repo); err != nil {
+		if err := runInitTest(t, &out, repo); err != nil {
 			t.Fatal(err)
 		}
 		if strings.Contains(out.String(), "Agent note:") {
