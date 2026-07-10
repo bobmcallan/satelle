@@ -85,17 +85,19 @@ func TestSystemSystemdUnit(t *testing.T) {
 // TestSystemInstallSteps pins the exact sudo command plan for a system-unit install.
 func TestSystemInstallSteps(t *testing.T) {
 	steps := systemInstallSteps("/tmp/x.service", "/etc/systemd/system/satelle.service")
-	if len(steps) != 3 {
-		t.Fatalf("want 3 steps, got %d: %v", len(steps), steps)
+	if len(steps) != 4 {
+		t.Fatalf("want 4 steps, got %d: %v", len(steps), steps)
 	}
-	if got := joinArgs(steps[0]); got != "sudo install -m 0644 /tmp/x.service /etc/systemd/system/satelle.service" {
-		t.Errorf("step 0 = %q", got)
+	want := []string{
+		"sudo install -m 0644 /tmp/x.service /etc/systemd/system/satelle.service",
+		"sudo systemctl daemon-reload",
+		"sudo systemctl enable satelle.service",  // persist across boot
+		"sudo systemctl restart satelle.service", // load the new binary NOW (not enable --now, which no-ops a running unit)
 	}
-	if got := joinArgs(steps[1]); got != "sudo systemctl daemon-reload" {
-		t.Errorf("step 1 = %q", got)
-	}
-	if got := joinArgs(steps[2]); got != "sudo systemctl enable --now satelle.service" {
-		t.Errorf("step 2 = %q", got)
+	for i, w := range want {
+		if got := joinArgs(steps[i]); got != w {
+			t.Errorf("step %d = %q, want %q", i, got, w)
+		}
 	}
 }
 
