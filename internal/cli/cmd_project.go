@@ -1,16 +1,19 @@
 package cli
 
-// `satelle project create` / `list` — the CLI counterpart to the hosted-server
-// projects API (sty_2da92fd5). create POSTs to /api/v1/projects (the caller
-// becomes owner); list GETs the caller's projects so they can confirm a create
-// and pick one for later document operations. Both reuse the login flow's
-// resolveServer (--server → global [hosted] server → repo satelle.toml) and the per-user
+// `satelle project create` / `list` / `bind` / `show` — the CLI counterpart to
+// the hosted-server projects API (sty_2da92fd5) plus the per-repo project
+// binding personal sync needs (sty_0aa3df89). create POSTs to /api/v1/projects
+// (the caller becomes owner); list GETs the caller's projects; bind records
+// which hosted project this repo's personal sync targets; show prints server,
+// binding, and sign-in state. All reuse the login flow's resolveServer
+// (--server → global [hosted] server → repo satelle.toml) and the per-user
 // credential store. Like login/whoami these commands never touch the local DB,
 // so they carry no store annotation and work in a fresh clone.
 
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/config"
@@ -55,10 +58,25 @@ and name. Requires a prior "satelle login".`,
 	list.Flags().StringVar(&listServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
 	project.AddCommand(list)
 
+	// bind — record which hosted project this repo's personal sync targets.
+	bind := &cobra.Command{
+		Use:   "bind <slug>",
+		Short: "Bind this repo to a hosted project slug (personal sync target)",
+		Long: `bind records which hosted project this repo's personal sync
+(config / documents / workstate) targets. The slug is written to the committed
+.satelle/satelle.toml [hosted] project key — secret-free, since tokens live only
+in the per-user credential store. "satelle project show" prints the binding.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runProjectBind(cmd, args[0])
+		},
+	}
+	project.AddCommand(bind)
+
 	var showServer string
 	show := &cobra.Command{
 		Use:   "show",
-		Short: "Show this repo's hosted server and sign-in state",
+		Short: "Show this repo's hosted server, bound project, and sign-in state",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runProjectShow(cmd, showServer)
 		},
@@ -67,6 +85,36 @@ and name. Requires a prior "satelle login".`,
 	project.AddCommand(show)
 
 	register(project)
+}
+
+// resolveBoundProject returns the repo's [hosted] project slug, or a clear
+// operator error when personal sync is requested without a binding (AC5).
+func resolveBoundProject(cfg config.Config) (string, error) {
+	slug := strings.TrimSpace(cfg.Hosted.Project)
+	if slug == "" {
+		return "", fmt.Errorf("no hosted project bound — run \"satelle project bind <slug>\" (personal sync targets this repo's bound project)")
+	}
+	return slug, nil
+}
+
+func runProjectBind(cmd *cobra.Command, slug string) error {
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		return fmt.Errorf("a project slug is required")
+	}
+	_, cfgPath, err := config.Load("")
+	if err != nil && !errors.Is(err, config.ErrNotFound) {
+		return fmt.Errorf("load config: %w", err)
+	}
+	if cfgPath == "" {
+		return fmt.Errorf("not in a satelle repo — run \"satelle init\" first")
+	}
+	edit := config.KeyEdit{Section: "hosted", Key: "project", Value: strconv.Quote(slug)}
+	if err := config.SaveConfigValues(cfgPath, []config.KeyEdit{edit}); err != nil {
+		return fmt.Errorf("record hosted project in satelle.toml: %w", err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Bound this repo to project %q (recorded in %s).\n", slug, cfgPath)
+	return nil
 }
 
 func runProjectShow(cmd *cobra.Command, serverArg string) error {
@@ -83,6 +131,11 @@ func runProjectShow(cmd *cobra.Command, serverArg string) error {
 		fmt.Fprintln(out, "hosted server: (none configured)")
 	} else {
 		fmt.Fprintf(out, "hosted server: %s\n", server)
+	}
+	if slug := strings.TrimSpace(cfg.Hosted.Project); slug == "" {
+		fmt.Fprintln(out, "bound project: (none — run \"satelle project bind <slug>\")")
+	} else {
+		fmt.Fprintf(out, "bound project: %s\n", slug)
 	}
 	signed := "signed out"
 	if server != "" {

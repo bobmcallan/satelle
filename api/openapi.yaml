@@ -133,6 +133,7 @@ paths:
       tags: [config]
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/ProjectSlug"
       responses:
         "200":
           description: Array of config manifest items.
@@ -157,6 +158,7 @@ paths:
       tags: [config]
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/ProjectSlug"
         - name: path
           in: path
           required: true
@@ -197,6 +199,7 @@ paths:
       tags: [config]
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/ProjectSlug"
         - name: path
           in: path
           required: true
@@ -250,6 +253,7 @@ paths:
       tags: [config]
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/ProjectSlug"
       requestBody:
         required: true
         content:
@@ -279,6 +283,7 @@ paths:
       tags: [documents]
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/ProjectSlug"
         - name: since
           in: query
           required: false
@@ -307,6 +312,7 @@ paths:
       tags: [documents]
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/ProjectSlug"
         - name: path
           in: path
           required: true
@@ -348,6 +354,7 @@ paths:
       tags: [documents]
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/ProjectSlug"
         - name: path
           in: path
           required: true
@@ -385,6 +392,7 @@ paths:
       tags: [workstate]
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/ProjectSlug"
       requestBody:
         required: true
         content:
@@ -528,6 +536,16 @@ components:
       schema:
         type: string
       description: The workspace identifier the config store is scoped to.
+    ProjectSlug:
+      name: project
+      in: query
+      required: true
+      schema:
+        type: string
+      description: >-
+        Hosted project id or slug this collection is partitioned by (must
+        belong to the workspace). Personal sync routes require it; missing
+        project → 400.
 
   schemas:
     Principal:

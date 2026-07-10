@@ -40,15 +40,15 @@ func TestClientPushDocumentFile(t *testing.T) {
 	})
 	_ = ts
 
-	res, err := c.PushDocumentFile(context.Background(), "w1", "documents/a.md", []byte("doc body"))
+	res, err := c.PushDocumentFile(context.Background(), "w1", "probe", "documents/a.md", []byte("doc body"))
 	if err != nil || !res.Created {
 		t.Fatalf("first push = %+v, %v", res, err)
 	}
-	res, err = c.PushDocumentFile(context.Background(), "w1", "documents/a.md", []byte("doc body"))
+	res, err = c.PushDocumentFile(context.Background(), "w1", "probe", "documents/a.md", []byte("doc body"))
 	if err != nil || res.Created {
 		t.Fatalf("idempotent push = %+v, %v", res, err)
 	}
-	_, err = c.PushDocumentFile(context.Background(), "w1", "documents/a.md", []byte("doc body"))
+	_, err = c.PushDocumentFile(context.Background(), "w1", "probe", "documents/a.md", []byte("doc body"))
 	if !errorsIs(err, ErrDocumentConflict) {
 		t.Fatalf("conflict = %v, want ErrDocumentConflict", err)
 	}
@@ -68,12 +68,12 @@ func TestClientListDocumentChanges(t *testing.T) {
 	})
 	_ = ts
 
-	ch, err := c.ListDocumentChanges(context.Background(), "w1", "c1")
+	ch, err := c.ListDocumentChanges(context.Background(), "w1", "probe", "c1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotQuery != "since=c1" {
-		t.Errorf("query = %q, want since=c1", gotQuery)
+	if !strings.Contains(gotQuery, "since=c1") || !strings.Contains(gotQuery, "project=probe") {
+		t.Errorf("query = %q, want project=probe and since=c1", gotQuery)
 	}
 	if ch.Cursor != "c2" || len(ch.Items) != 1 || ch.Items[0].Path != "documents/a.md" {
 		t.Fatalf("changes = %+v", ch)
@@ -92,11 +92,11 @@ func TestClientDocumentFileContent(t *testing.T) {
 	})
 	_ = ts
 
-	body, etag, err := c.DocumentFileContent(context.Background(), "w1", "documents/a.md")
+	body, etag, err := c.DocumentFileContent(context.Background(), "w1", "probe", "documents/a.md")
 	if err != nil || string(body) != "hello" || etag != `"abc"` {
 		t.Fatalf("content = %q %q %v", body, etag, err)
 	}
-	_, _, err = c.DocumentFileContent(context.Background(), "w1", "documents/missing.md")
+	_, _, err = c.DocumentFileContent(context.Background(), "w1", "probe", "documents/missing.md")
 	if !errorsIs(err, ErrDocumentFileMissing) {
 		t.Fatalf("missing = %v", err)
 	}

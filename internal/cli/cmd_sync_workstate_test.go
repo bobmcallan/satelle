@@ -36,6 +36,9 @@ func newFakeWorkstateServer(t *testing.T) (*httptest.Server, *fakeWorkstateServe
 	})
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/workstate", func(w http.ResponseWriter, r *http.Request) {
 		wsID := r.PathValue("id")
+		if proj := r.URL.Query().Get("project"); proj != "" {
+			wsID = wsID + "|" + proj
+		}
 		body, _ := io.ReadAll(r.Body)
 		var batch map[string]any
 		_ = json.Unmarshal(body, &batch)
@@ -95,7 +98,7 @@ func TestSyncWorkstatePushSkipsLocal(t *testing.T) {
 	if !strings.Contains(out, "every work-state area is local") {
 		t.Fatalf("expected local-skip message, got: %q", out)
 	}
-	if f.postCount("ws-personal") != 0 {
+	if f.postCount("ws-personal|probe") != 0 {
 		t.Error("local-scope push contacted the server")
 	}
 }
@@ -105,7 +108,7 @@ func TestSyncWorkstatePushSkipsLocal(t *testing.T) {
 func TestSyncWorkstatePushPersonalAndIdempotent(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n")
+	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
 
 	// Create a story so there is something to push.
 	out, err := runRoot(t, "story", "create",
@@ -121,16 +124,16 @@ func TestSyncWorkstatePushPersonalAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("push: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "personal workspace") {
+	if !strings.Contains(out, "personal collection") && !strings.Contains(out, "personal workspace") {
 		t.Fatalf("push output should name personal workspace: %q", out)
 	}
-	if f.postCount("ws-personal") != 1 {
-		t.Fatalf("personal posts = %d, want 1", f.postCount("ws-personal"))
+	if f.postCount("ws-personal|probe") != 1 {
+		t.Fatalf("personal posts = %d, want 1", f.postCount("ws-personal|probe"))
 	}
 	if f.postCount("ws-team") != 0 {
 		t.Error("workstate must never post to the team workspace")
 	}
-	items := f.lastItems("ws-personal")
+	items := f.lastItems("ws-personal|probe")
 	if len(items) == 0 {
 		t.Fatal("expected at least one item in the push")
 	}
@@ -140,8 +143,8 @@ func TestSyncWorkstatePushPersonalAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-push: %v\n%s", err, out2)
 	}
-	if f.postCount("ws-personal") != 2 {
-		t.Fatalf("re-push posts = %d, want 2", f.postCount("ws-personal"))
+	if f.postCount("ws-personal|probe") != 2 {
+		t.Fatalf("re-push posts = %d, want 2", f.postCount("ws-personal|probe"))
 	}
 }
 
@@ -150,7 +153,7 @@ func TestSyncWorkstatePushPersonalAndIdempotent(t *testing.T) {
 func TestSyncWorkstatePushIgnoresTeamBinding(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"shared\"\n\n[hosted]\nworkspace = \"Acme\"\n")
+	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"shared\"\n\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
 
 	out, err := runRoot(t, "story", "create",
 		"--title", "Team binding probe",
@@ -164,13 +167,38 @@ func TestSyncWorkstatePushIgnoresTeamBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("push: %v\n%s", err, out)
 	}
-	if f.postCount("ws-personal") != 1 {
-		t.Fatalf("personal posts = %d, want 1 (shared scope still personal dest)", f.postCount("ws-personal"))
+	if f.postCount("ws-personal|probe") != 1 {
+		t.Fatalf("personal posts = %d, want 1 (shared scope still personal dest)", f.postCount("ws-personal|probe"))
 	}
 	if f.postCount("ws-team") != 0 {
 		t.Error("shared-scope workstate must NOT route to team workspace")
 	}
-	if !strings.Contains(out, "personal workspace") {
+	if !strings.Contains(out, "personal collection") && !strings.Contains(out, "personal workspace") {
 		t.Fatalf("output should confirm personal dest: %q", out)
+	}
+}
+
+// TestSyncWorkstatePushRequiresBoundProject (AC5): opted-in workstate without a
+// bound project fails client-side with zero network calls.
+func TestSyncWorkstatePushRequiresBoundProject(t *testing.T) {
+	var hits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		t.Errorf("unexpected network call to %s %s", r.Method, r.URL.String())
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	seedCred(t, ts.URL)
+	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n") // no project
+
+	out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL)
+	if err == nil || !strings.Contains(err.Error(), "no hosted project bound") {
+		t.Fatalf("expected unbound-project error, got %v\n%s", err, out)
+	}
+	if hits != 0 {
+		t.Fatalf("unbound project contacted server %d time(s)", hits)
 	}
 }

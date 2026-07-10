@@ -110,6 +110,10 @@ func newFakeDocServer(t *testing.T) *httptest.Server {
 			return
 		}
 		wsID := segs[0]
+		// Project partitions the store (server sty_0e56fe79).
+		if proj := r.URL.Query().Get("project"); proj != "" {
+			wsID = wsID + "|" + proj
+		}
 		path := ""
 		if len(segs) == 3 {
 			path = segs[2]
@@ -152,7 +156,7 @@ func TestSyncDocumentsPushPullByteExact(t *testing.T) {
 	ts := newFakeDocServer(t)
 	seedCred(t, ts.URL)
 
-	src := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n")
+	src := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	body := "---\ntype: document\n---\nhello docs\n"
 	writeRepoFile(t, src, ".satelle/documents/note.md", body)
 	pointAt(t, src)
@@ -165,7 +169,7 @@ func TestSyncDocumentsPushPullByteExact(t *testing.T) {
 		t.Fatalf("push output: %q", buf.String())
 	}
 
-	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n")
+	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	pointAt(t, dst)
 	cmd2, buf2 := testCmd()
 	if err := runSyncDocumentsPull(cmd2, ts.URL, ""); err != nil {
@@ -204,7 +208,7 @@ func TestSyncDocumentsPushSharedFlagGoesPersonal(t *testing.T) {
 	ts := newFakeDocServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n[hosted]\nworkspace = \"Acme\"\n")
+	repo := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
 	writeRepoFile(t, repo, ".satelle/documents/shared.md", "---\ntype: document\nshared: true\n---\nteam doc\n")
 	writeRepoFile(t, repo, ".satelle/documents/private.md", "---\ntype: document\n---\nprivate doc\n")
 	pointAt(t, repo)
@@ -218,7 +222,7 @@ func TestSyncDocumentsPushSharedFlagGoesPersonal(t *testing.T) {
 	}
 
 	// Personal pull gets both (sync destination is personal only).
-	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n")
+	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	pointAt(t, dst)
 	cmd2, buf2 := testCmd()
 	if err := runSyncDocumentsPull(cmd2, ts.URL, ""); err != nil {
@@ -237,7 +241,7 @@ func TestSyncDocumentsPushAreaSharedGoesPersonal(t *testing.T) {
 	ts := newFakeDocServer(t)
 	seedCred(t, ts.URL)
 
-	repo := syncConfigRepo(t, "[sync]\ndocuments = \"shared\"\n[hosted]\nworkspace = \"Acme\"\n")
+	repo := syncConfigRepo(t, "[sync]\ndocuments = \"shared\"\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
 	writeRepoFile(t, repo, ".satelle/documents/area.md", "---\ntype: document\n---\nshared-area doc\n")
 	pointAt(t, repo)
 
@@ -249,7 +253,7 @@ func TestSyncDocumentsPushAreaSharedGoesPersonal(t *testing.T) {
 		t.Fatalf("expected publish note for area shared, got: %q", buf.String())
 	}
 
-	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n")
+	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	pointAt(t, dst)
 	cmd2, buf2 := testCmd()
 	if err := runSyncDocumentsPull(cmd2, ts.URL, ""); err != nil {
@@ -266,7 +270,7 @@ func TestSyncDocumentsPullIncremental(t *testing.T) {
 	ts := newFakeDocServer(t)
 	seedCred(t, ts.URL)
 
-	src := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n")
+	src := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	writeRepoFile(t, src, ".satelle/documents/one.md", "first\n")
 	pointAt(t, src)
 	cmd, _ := testCmd()
@@ -274,7 +278,7 @@ func TestSyncDocumentsPullIncremental(t *testing.T) {
 		t.Fatalf("push one: %v", err)
 	}
 
-	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n")
+	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	pointAt(t, dst)
 	cmd2, buf2 := testCmd()
 	if err := runSyncDocumentsPull(cmd2, ts.URL, ""); err != nil {
@@ -320,7 +324,7 @@ func TestSyncDocumentsPushAuthFailure(t *testing.T) {
 	ts := newFakeDocServer(t)
 	// Deliberately do NOT seedCred — no stored tokens.
 
-	repo := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n")
+	repo := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
 	writeRepoFile(t, repo, ".satelle/documents/a.md", "body")
 	pointAt(t, repo)
 
@@ -335,5 +339,118 @@ func TestSyncDocumentsPushAuthFailure(t *testing.T) {
 	// Must not dump a raw HTTP body.
 	if strings.Contains(err.Error(), "{") || strings.Contains(err.Error(), "HTTP 401") {
 		t.Errorf("auth error leaked raw body/code: %v", err)
+	}
+}
+
+// TestSyncDocumentsPushRequiresBoundProject (AC5): personal documents push without
+// a bound project fails client-side; the fake server is never contacted.
+func TestSyncDocumentsPushRequiresBoundProject(t *testing.T) {
+	var hits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		t.Errorf("unexpected network call to %s %s", r.Method, r.URL.String())
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	seedCred(t, ts.URL)
+
+	repo := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n") // no project
+	writeRepoFile(t, repo, ".satelle/documents/a.md", "body")
+	pointAt(t, repo)
+
+	cmd, _ := testCmd()
+	err := runSyncDocumentsPush(cmd, ts.URL, "", false)
+	if err == nil || !strings.Contains(err.Error(), "no hosted project bound") {
+		t.Fatalf("expected unbound-project error, got %v", err)
+	}
+	if hits != 0 {
+		t.Fatalf("unbound project contacted server %d time(s)", hits)
+	}
+}
+
+// TestSyncPersonalIsolatedAcrossProjects (AC2/AC4): two repos bound to different
+// projects push to the same fake server; each project's partition is exclusive.
+func TestSyncPersonalIsolatedAcrossProjects(t *testing.T) {
+	ts := newFakeDocServer(t)
+	seedCred(t, ts.URL)
+
+	repoA := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n[hosted]\nproject = \"proj-a\"\n")
+	writeRepoFile(t, repoA, ".satelle/documents/note.md", "from-a\n")
+	pointAt(t, repoA)
+	cmd, buf := testCmd()
+	if err := runSyncDocumentsPush(cmd, ts.URL, "", false); err != nil {
+		t.Fatalf("push A: %v\n%s", err, buf.String())
+	}
+
+	repoB := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n[hosted]\nproject = \"proj-b\"\n")
+	writeRepoFile(t, repoB, ".satelle/documents/note.md", "from-b\n")
+	pointAt(t, repoB)
+	cmd2, buf2 := testCmd()
+	if err := runSyncDocumentsPush(cmd2, ts.URL, "", false); err != nil {
+		t.Fatalf("push B: %v\n%s", err, buf2.String())
+	}
+
+	// Pull as proj-a into a fresh tree — only A's content.
+	dstA := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n[hosted]\nproject = \"proj-a\"\n")
+	pointAt(t, dstA)
+	cmd3, buf3 := testCmd()
+	if err := runSyncDocumentsPull(cmd3, ts.URL, ""); err != nil {
+		t.Fatalf("pull A: %v\n%s", err, buf3.String())
+	}
+	gotA, err := os.ReadFile(filepath.Join(dstA, ".satelle", "documents", "note.md"))
+	if err != nil {
+		t.Fatalf("read A: %v", err)
+	}
+	if string(gotA) != "from-a\n" {
+		t.Errorf("proj-a pulled %q, want from-a", gotA)
+	}
+
+	// Pull as proj-b — only B's content (AC3/AC4).
+	dstB := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n[hosted]\nproject = \"proj-b\"\n")
+	pointAt(t, dstB)
+	cmd4, buf4 := testCmd()
+	if err := runSyncDocumentsPull(cmd4, ts.URL, ""); err != nil {
+		t.Fatalf("pull B: %v\n%s", err, buf4.String())
+	}
+	gotB, err := os.ReadFile(filepath.Join(dstB, ".satelle", "documents", "note.md"))
+	if err != nil {
+		t.Fatalf("read B: %v", err)
+	}
+	if string(gotB) != "from-b\n" {
+		t.Errorf("proj-b pulled %q, want from-b", gotB)
+	}
+}
+
+// TestSyncDocumentsPullReadsOnlyBoundProject (AC3): seed only under proj-a; a
+// repo bound to proj-b pulls nothing.
+func TestSyncDocumentsPullReadsOnlyBoundProject(t *testing.T) {
+	ts := newFakeDocServer(t)
+	seedCred(t, ts.URL)
+
+	src := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n[hosted]\nproject = \"proj-a\"\n")
+	writeRepoFile(t, src, ".satelle/documents/only-a.md", "secret-a\n")
+	pointAt(t, src)
+	cmd, _ := testCmd()
+	if err := runSyncDocumentsPush(cmd, ts.URL, "", false); err != nil {
+		t.Fatalf("seed push: %v", err)
+	}
+
+	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n[hosted]\nproject = \"proj-b\"\n")
+	pointAt(t, dst)
+	cmd2, buf2 := testCmd()
+	if err := runSyncDocumentsPull(cmd2, ts.URL, ""); err != nil {
+		t.Fatalf("pull B: %v\n%s", err, buf2.String())
+	}
+	if _, err := os.Stat(filepath.Join(dst, ".satelle", "documents", "only-a.md")); err == nil {
+		t.Error("proj-b must not receive proj-a's documents")
+	}
+	if !strings.Contains(buf2.String(), "up to date") && !strings.Contains(buf2.String(), "Pulled 0") {
+		// empty pull reports up to date
+		if !strings.Contains(buf2.String(), "up to date") {
+			t.Fatalf("expected empty/up-to-date pull for proj-b, got: %q", buf2.String())
+		}
 	}
 }
