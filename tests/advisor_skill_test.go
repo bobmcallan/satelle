@@ -39,6 +39,34 @@ func TestAdvisorSkillSeedsValidatesAndSurvivesRebase(t *testing.T) {
 	}
 }
 
+// TestReviewerObjectiveAuditSeedsOnInit: advisory skill + paired task are not
+// referenced by any workflow, so they land via advisorySkills / materializeTasks.
+func TestReviewerObjectiveAuditSeedsOnInit(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+
+	skill := filepath.Join(repo, ".satelle", "skills", "satelle-reviewer-objective-audit.md")
+	task := filepath.Join(repo, ".satelle", "tasks", "tsk_reviewer-objective-audit.md")
+	if !fileExists(skill) {
+		t.Fatal("init did not seed satelle-reviewer-objective-audit skill")
+	}
+	if !fileExists(task) {
+		t.Fatal("init did not seed tsk_reviewer-objective-audit task")
+	}
+	mustRun(t, testBin, repo, "reindex")
+	out := mustRun(t, testBin, repo, "skill", "validate", "satelle-reviewer-objective-audit")
+	if !strings.Contains(out, "PASS  skills/satelle-reviewer-objective-audit") {
+		t.Errorf("reviewer-objective-audit skill should validate:\n%s", out)
+	}
+	mustRun(t, testBin, repo, "rebase", "--yes")
+	if !fileExists(skill) {
+		t.Fatal("rebase did not redeploy satelle-reviewer-objective-audit")
+	}
+	if !fileExists(task) {
+		t.Fatal("rebase did not redeploy tsk_reviewer-objective-audit")
+	}
+}
+
 // TestAgentDispatchContractDiscoverableFromInit (sty_75ab9246, AC4): an agent in a
 // binary-only repo can answer "how does a named agent receive its instructions and
 // what makes a flip sufficient" from the deployed substrate + help alone — the
