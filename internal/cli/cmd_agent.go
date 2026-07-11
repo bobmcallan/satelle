@@ -3,24 +3,38 @@
 // The selection persists in the global config (~/.satelle/config.toml [agent] cli)
 // so every repo's reviewer resolves the same agent; the reviewer/summariser never
 // name a binary directly.
+//
+// `satelle agent validate` (sty_93eec36d) is the store-backed check of this repo's
+// .satelle/agents.toml + workflow agent= bindings — the same authority init and
+// story engagement use. It is deliberate that there is no top-level
+// `satelle validate`: each noun validates its own.
 package cli
 
 import (
+	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/agentstep"
+	"github.com/bobmcallan/satelle/internal/agentvalidate"
 	"github.com/bobmcallan/satelle/internal/config"
 )
 
 func init() {
 	agent := &cobra.Command{
 		Use:   "agent",
-		Short: "Select the agent CLI the reviewer/summariser use (claude | codex)",
+		Short: "Select the agent CLI the reviewer/summariser use (claude | codex); validate agents.toml",
 		Long: `agent manages which headless agent CLI satelle's quality-management spine
 shells out to for isolated reviews and summaries. The choice persists in the
-global config (~/.satelle/config.toml) so it is set once per machine.`,
+global config (~/.satelle/config.toml) so it is set once per machine.
+
+agent validate checks this repo's .satelle/agents.toml (every binding's command,
+timeout, env) and each workflow's agent= node bindings, and surfaces each agent's
+resolved grant. Structural workflow checks (rubrics, unresolved gate skills) stay
+on satelle workflow validate — this command reuses them alongside the agent layer.`,
 	}
 
 	show := &cobra.Command{
@@ -73,8 +87,80 @@ global config (~/.satelle/config.toml) so it is set once per machine.`,
 		},
 	}
 
-	agent.AddCommand(show, set, detect)
+	agent.AddCommand(show, set, detect, agentValidateCmd())
 	register(agent)
+}
+
+// agentValidateCmd is `satelle agent validate` — the standalone, deterministic
+// check of agents.toml + workflow agent= bindings (sty_93eec36d). It also runs
+// the structural workflow check and WorkflowConsistency so one call covers the
+// mechanical agent↔workflow surface without duplicating those checks.
+func agentValidateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:         "validate",
+		Short:       "Validate .satelle/agents.toml and workflow agent= bindings; show resolved grants",
+		Args:        cobra.NoArgs,
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := appFrom(cmd)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			dataDir := filepath.Dir(a.DBPath)
+
+			agents, lerr := config.LoadAgents(dataDir)
+			if lerr != nil {
+				return fmt.Errorf("agents.toml: %w", lerr)
+			}
+			wfs, werr := a.Store.DocIndex.List(context.Background(), "workflows")
+			if werr != nil {
+				return werr
+			}
+
+			// Agent layer + node→binding (shared with init + engage).
+			report := agentvalidate.Validate(agents, a.Config.Vars, wfs)
+			fmt.Fprintln(out, "Agent grants (resolved):")
+			for _, g := range report.Grants {
+				ro := "read-write"
+				if g.ReadOnly {
+					ro = "read-only"
+				}
+				fmt.Fprintf(out, "  GRANT [%s] backend=%s %s tools=%q model=%q timeout=%q inject_principles=%v\n",
+					g.Name, g.Backend, ro, g.Tools, g.Model, g.Timeout, g.InjectsPrinciples)
+				if g.Notes != "" {
+					fmt.Fprintf(out, "         notes: %s\n", g.Notes)
+				}
+			}
+			failed := 0
+			for _, w := range report.Warnings {
+				fmt.Fprintf(out, "WARN  %s\n", w)
+			}
+			for _, p := range report.Problems {
+				failed++
+				fmt.Fprintf(out, "FAIL  %s\n", p)
+			}
+			if report.OK() {
+				fmt.Fprintln(out, "PASS  agents.toml + workflow agent= bindings")
+			}
+
+			// Structural workflow checks + consistency (owned elsewhere; re-run so
+			// one verb covers the mechanical agent↔workflow surface).
+			resolve := skillResolver(a)
+			_, f, _ := validateAuthoredDir(out, "workflows", filepath.Join(dataDir, "workflows"), "", resolve)
+			failed += f
+			for _, p := range agentstep.WorkflowConsistency(wfs, resolve) {
+				failed++
+				fmt.Fprintf(out, "FAIL  workflows (consistency) — %s\n", p)
+			}
+
+			if failed > 0 {
+				return fmt.Errorf("agent validate: %d problem(s)", failed)
+			}
+			fmt.Fprintln(out, "PASS  agent validate green")
+			return nil
+		},
+	}
 }
 
 // persistAgentCLI saves cli into the global config, preserving other settings.

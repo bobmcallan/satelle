@@ -16,8 +16,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/agentstep"
+	"github.com/bobmcallan/satelle/internal/agentvalidate"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 )
@@ -28,10 +28,13 @@ func validateDeployment(out io.Writer, dataDir string) error {
 	fmt.Fprintln(out, "\nValidating the deployed system:")
 	failed := 0
 
-	// The agents layer: present, parseable, and a resolvable reviewer command.
-	// The runtime refuses to run without it (requireAgents), so init must not
-	// report success while leaving the repo unrunnable.
+	// The agents layer: present, parseable, and every binding + workflow agent=
+	// allocation validates green (shared with `satelle agent validate` and the
+	// engage precondition — sty_93eec36d). The runtime refuses to run without a
+	// loadable agents.toml (requireAgents), so init must not report success while
+	// leaving the repo unrunnable.
 	agentsRel := config.DefaultDataDir + "/" + config.AgentsConfigName
+	wfDocs := deployedWorkflowDocs(dataDir)
 	if _, statErr := os.Stat(filepath.Join(dataDir, config.AgentsConfigName)); os.IsNotExist(statErr) {
 		failed++
 		if _, lerr := os.Stat(filepath.Join(dataDir, config.ActorsConfigName)); lerr == nil {
@@ -43,16 +46,18 @@ func validateDeployment(out io.Writer, dataDir string) error {
 	} else if agents, lerr := config.LoadAgents(dataDir); lerr != nil {
 		failed++
 		fmt.Fprintf(out, "FAIL  %s — %v\n", agentsRel, lerr)
-	} else if _, herr := agentcli.RunnerFromCommand(agents.ReviewerBinding().CommandTemplate()); herr != nil {
-		failed++
-		fmt.Fprintf(out, "FAIL  %s — reviewer command: %v\n", agentsRel, herr)
-	} else if _, verr := config.ResolveAgentEnvs(agents, deployedVars(dataDir)); verr != nil {
-		// Every binding's env ${VAR} must resolve against the [vars] KV, or the
-		// runtime (requireAgents) would refuse to run — fail fast here (sty_001558ce).
-		failed++
-		fmt.Fprintf(out, "FAIL  %s — %v\n", agentsRel, verr)
 	} else {
-		fmt.Fprintf(out, "PASS  %s\n", agentsRel)
+		report := agentvalidate.Validate(agents, deployedVars(dataDir), wfDocs)
+		for _, w := range report.Warnings {
+			fmt.Fprintf(out, "WARN  %s — %s\n", agentsRel, w)
+		}
+		for _, p := range report.Problems {
+			failed++
+			fmt.Fprintf(out, "FAIL  %s — %s\n", agentsRel, p)
+		}
+		if report.OK() {
+			fmt.Fprintf(out, "PASS  %s\n", agentsRel)
+		}
 	}
 
 	// Structure checks per deployed kind, resolving skills against the deployed
@@ -68,7 +73,7 @@ func validateDeployment(out io.Writer, dataDir string) error {
 	// Cross-workflow consistency over the deployed set (ambiguous applies_to,
 	// unresolved referenced skills) — the whole-set check `satelle workflow
 	// validate` runs.
-	for _, p := range agentstep.WorkflowConsistency(deployedWorkflowDocs(dataDir), resolve) {
+	for _, p := range agentstep.WorkflowConsistency(wfDocs, resolve) {
 		failed++
 		fmt.Fprintf(out, "FAIL  workflows (consistency) — %s\n", p)
 	}
