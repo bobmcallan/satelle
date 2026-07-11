@@ -24,7 +24,7 @@ The agent receives:
 - **Payload (dual delivery):** the work item as JSON —
   `{story, from, to, review_skill}`. `story` carries the id, title, body, and
   acceptance criteria; `from`/`to` are the transition being performed. Delivery
-  is **always on stdin**, and the same bytes substitute into the harness
+  is **always on stdin**, and the same bytes substitute into the command
   placeholder **`{payload}`** when the template includes it (one argv token).
   Stdin-first CLIs (e.g. Claude) leave `{payload}` out of the template so the
   prompt is not double-fed; argv-first CLIs (e.g. `grok -p {payload} …`) opt in.
@@ -39,8 +39,33 @@ The agent receives:
 - A binding's `tools` grant does not include the read-only satelle CLI
   (`Bash(satelle:*)`, or a broad `Bash` / `*`) → the dispatch is **refused**,
   because the agent could not pull its context (below).
-- A binding whose harness is `in-loop` keeps the step with the orchestrating
+- A binding whose `command` is `in-loop` keeps the step with the orchestrating
   session — not dispatched.
+
+## The command template — presets and placeholders
+
+Each binding's **`command`** says *how* the agent runs. A **single token** names a
+built-in **preset**; a **multi-token** value is a full command taken verbatim.
+
+- `command = "claude"` — the read-only claude reviewer preset (denies
+  Write/Edit/NotebookEdit/Bash on top of the `tools` grant).
+- `command = "grok"` — the read-only grok reviewer preset (grok's real flags:
+  payload on `-p`, `--system-prompt-override`, a grok-native `read_file,grep,list_dir`
+  grant, mutator `--deny`s). No hand-authored argv needed.
+- `command = "codex"` — **not yet mapped**: it fails with a message pointing you to
+  the full-command form below (never a silent wrong run).
+- `command = "in-loop"` — no subprocess; the driving session performs the step.
+
+Prefer a preset. Write a **full command** only to customize flags/tools — the first
+token is the binary, the rest are argv tokens carrying the placeholders (each one
+argv token): **`{system}`** (the rubric), **`{tools}`** (the grant), **`{model}`**,
+**`{settings}`**, **`{payload}`**. Empty `{model}`/`{settings}` drop that flag;
+empty `{payload}` does not. The work item is **always also on stdin** (dual
+delivery), so stdin-first CLIs (claude) omit `{payload}` and argv-first CLIs (grok)
+include it.
+
+> The field is **`command`**; the older key **`harness`** is a **deprecated alias**
+> — a pre-rename `agents.toml` still parses (`command` wins when both are set).
 
 The agent's output is captured to the executor log (and, for a task execution, a
 run-output document), so an isolated step's work stays reviewable.
@@ -92,7 +117,7 @@ substrate, never in a harness's agent directory.
 
    ```toml
    [architect]
-   harness = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
+   command = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
    tools   = "Read,Grep,Glob,Bash(satelle:*)"   # read-only + the pull-context CLI
    model   = "opus"                              # per-step model selection is the model key
    ```
@@ -107,7 +132,7 @@ substrate, never in a harness's agent directory.
 
    ```toml
    [architect]
-   harness = "grok -p {payload} --system-prompt-override {system} --tools {tools} --always-approve --output-format plain --max-turns 8 --no-subagents"
+   command = "grok -p {payload} --system-prompt-override {system} --tools {tools} --always-approve --output-format plain --max-turns 8 --no-subagents"
    tools   = "read_file,grep,list_dir,run_terminal_command"  # Grok-native tool ids
    # note: satelle's Bash(satelle:*) grant check still expects Claude-shaped tools for dispatch
    ```
@@ -151,7 +176,7 @@ stays on its own model:
 ```toml
 # .satelle/agents.toml
 [planner]
-harness = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
+command = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Bash(satelle:*)"
 model   = "glm-4.6"   # the model id the endpoint expects (glm-5.2 is the newest)
 env     = { ANTHROPIC_BASE_URL = "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN = "${GLM_API_KEY}" }

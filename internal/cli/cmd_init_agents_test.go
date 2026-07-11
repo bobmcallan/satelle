@@ -23,6 +23,17 @@ func TestScaffoldAgentsTomlFullyDefined(t *testing.T) {
 			t.Errorf("scaffold missing active entry %q", want)
 		}
 	}
+	// The scaffold header must DOCUMENT the preset menu + placeholder grammar
+	// (AC4, sty_17cae74b) so an operator editing the file sees the choices without
+	// reading the source: the four presets and the argv placeholders.
+	for _, want := range []string{
+		"claude", "grok", "codex", "in-loop", // the preset menu
+		"{system}", "{tools}", "{model}", "{payload}", // the placeholder grammar
+	} {
+		if !strings.Contains(scaffoldAgentsToml, want) {
+			t.Errorf("scaffold header missing preset/placeholder doc %q", want)
+		}
+	}
 	// Parity: loading the scaffold yields the same effective reviewer binding as
 	// the coded defaults for an absent file.
 	dir := t.TempDir()

@@ -83,6 +83,56 @@ func TestCodexStubErrorsClearly(t *testing.T) {
 	}
 }
 
+// The bare single-token "grok" command must expand to a WORKING grok reviewer
+// template — grok's REAL flag surface and a read-only grant — with NO
+// hand-authored argv (AC1, sty_17cae74b). Before the preset existed, an operator
+// wiring grok had to hand-write its full argv from memory and got it wrong
+// (invented flags, Claude tool names grok does not understand). NewRunner and
+// RunnerFromCommand must both resolve the single token to DefaultGrokCommand.
+func TestGrokPresetResolvesFromBareToken(t *testing.T) {
+	for _, r := range []Runner{mustRunner(t, "grok"), mustRunnerFromCommand(t, "grok")} {
+		if r.Name() != CLIGrok {
+			t.Errorf("grok token should resolve to the grok CLI, got %q", r.Name())
+		}
+		if r.Command() != DefaultGrokCommand {
+			t.Errorf("grok preset should equal DefaultGrokCommand\n got: %q\nwant: %q", r.Command(), DefaultGrokCommand)
+		}
+	}
+	// The preset must carry grok's TRUE interface (not Claude's): payload on -p,
+	// the system prompt on --system-prompt-override, grok-native read-only tool
+	// ids, and a mutator deny-ceiling — the exact things a hand-authored argv got
+	// wrong.
+	for _, want := range []string{
+		"-p {payload}",                      // argv-first payload delivery
+		"--system-prompt-override {system}", // grok's system-prompt flag (not --append-system-prompt)
+		"--tools read_file,grep,list_dir",   // grok-native read-only tool ids (not Read,Grep,Glob)
+		"--deny Write",                      // mutator ceiling
+		"--deny Edit",
+	} {
+		if !strings.Contains(DefaultGrokCommand, want) {
+			t.Errorf("grok preset must include %q (grok's real interface): %q", want, DefaultGrokCommand)
+		}
+	}
+}
+
+func mustRunner(t *testing.T, name string) Runner {
+	t.Helper()
+	r, err := NewRunner(name)
+	if err != nil {
+		t.Fatalf("NewRunner(%q): %v", name, err)
+	}
+	return r
+}
+
+func mustRunnerFromCommand(t *testing.T, command string) Runner {
+	t.Helper()
+	r, err := RunnerFromCommand(command)
+	if err != nil {
+		t.Fatalf("RunnerFromCommand(%q): %v", command, err)
+	}
+	return r
+}
+
 // The claude preset must deny every work-tree MUTATOR so the grant is a CEILING
 // (deny wins over allow) — INCLUDING Bash (sty_892517e7): a headless reviewer
 // inherits the user's ~/.claude permission allows, so without Bash on the deny
