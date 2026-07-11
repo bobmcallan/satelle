@@ -633,9 +633,10 @@ func containsStr(ss []string, v string) bool {
 // runs at ingest (create/upload). A body that already carries a fenced ```dot
 // block is returned unchanged (changed=false). A body in the inline-YAML grammar
 // is parsed and re-emitted: its `states:`/`transitions:` block is replaced by an
-// equivalent ```dot graph (edge-centric — each gated transition keeps its gate as
-// a reviewer_skill attribute), and the frontmatter, prose, and any other YAML
-// block (e.g. guardrails) are preserved. ToDOT is idempotent.
+// equivalent ```dot graph in the CANONICAL node-consistent form (gated edges as
+// [agent=reviewer, prompt="@skill:NAME"]; nodes with a Skill emit prompt="@skill:…"),
+// and the frontmatter, prose, and any other YAML block (e.g. guardrails) are
+// preserved. ToDOT is idempotent. See the satelle-dot-standard principle.
 func ToDOT(body string) (string, bool) {
 	if dotBlock(body) != "" {
 		return body, false // already DOT
@@ -716,9 +717,12 @@ func parseYAML(body string) (Spec, bool) {
 	return spec, true
 }
 
-// emitDOT renders a Spec as a DOT digraph body (edge-centric: a gated transition
-// keeps its gate as a reviewer_skill attribute). Initial states (no incoming) get
-// shape=Mdiamond and terminals shape=Msquare, matching the authored convention.
+// emitDOT renders a Spec as a DOT digraph body in the CANONICAL node-consistent
+// form: a gated edge is [agent=reviewer, prompt="@skill:NAME"] (CSV skills join
+// as prompt="@skill:a,b"); a node with State.Skill emits prompt="@skill:…".
+// Initial states (no incoming) get shape=Mdiamond and terminals shape=Msquare.
+// The legacy reviewer_skill= edge attribute is never written — it remains a
+// parse-only back-compat input. See the satelle-dot-standard principle.
 func emitDOT(spec Spec, name string) string {
 	indeg := map[string]int{}
 	for _, tr := range spec.Transitions {
@@ -736,6 +740,9 @@ func emitDOT(spec Spec, name string) string {
 		if s.Agent != "" {
 			attrs = append(attrs, "agent="+s.Agent)
 		}
+		if s.Skill != "" {
+			attrs = append(attrs, fmt.Sprintf("prompt=\"@skill:%s\"", s.Skill))
+		}
 		if len(attrs) > 0 {
 			fmt.Fprintf(&b, "  %s [%s]\n", s.Name, strings.Join(attrs, ", "))
 		} else {
@@ -744,10 +751,12 @@ func emitDOT(spec Spec, name string) string {
 	}
 	b.WriteString("\n")
 	for _, tr := range spec.Transitions {
-		if skills := tr.Skills; len(skills) > 0 {
-			fmt.Fprintf(&b, "  %s -> %s [reviewer_skill=%q]\n", tr.From, tr.To, strings.Join(skills, ","))
-		} else if tr.Skill != "" {
-			fmt.Fprintf(&b, "  %s -> %s [reviewer_skill=%q]\n", tr.From, tr.To, tr.Skill)
+		skills := tr.Skills
+		if len(skills) == 0 && tr.Skill != "" {
+			skills = []string{tr.Skill}
+		}
+		if len(skills) > 0 {
+			fmt.Fprintf(&b, "  %s -> %s [agent=reviewer, prompt=\"@skill:%s\"]\n", tr.From, tr.To, strings.Join(skills, ","))
 		} else {
 			fmt.Fprintf(&b, "  %s -> %s\n", tr.From, tr.To)
 		}

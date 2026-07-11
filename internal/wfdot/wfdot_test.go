@@ -461,6 +461,72 @@ guardrails:
 	if _, changed2 := ToDOT(out); changed2 {
 		t.Error("ToDOT must be idempotent on a DOT body")
 	}
+	// Emitter writes the canonical node-consistent edge form, not legacy reviewer_skill=.
+	if strings.Contains(out, "reviewer_skill=") {
+		t.Errorf("ToDOT must emit node-consistent edge gates, not reviewer_skill=:\n%s", out)
+	}
+	if !strings.Contains(out, `agent=reviewer, prompt="@skill:satelle-story-intent-review"`) {
+		t.Errorf("ToDOT must emit node-consistent intent gate:\n%s", out)
+	}
+}
+
+// TestEmitCanonicalRoundTrip locks the CANONICAL latest format the emitter
+// writes (sty_ccf41efa / satelle-dot-standard): node-consistent edge gates,
+// performing-node prompts, never reviewer_skill= — and proves the output
+// round-trips through the parser (including multi-skill CSV prompts).
+func TestEmitCanonicalRoundTrip(t *testing.T) {
+	spec := Spec{
+		States: []State{
+			{Name: "backlog"},
+			{Name: "in_progress", Agent: "executor", Skill: "code"},
+			{Name: "done", Terminal: true},
+		},
+		Transitions: []Transition{
+			{From: "backlog", To: "in_progress", Skill: "intent", Skills: []string{"intent"}},
+			{From: "in_progress", To: "done", Skill: "a", Skills: []string{"a", "b"}},
+		},
+	}
+	out := emitDOT(spec, "w")
+	if strings.Contains(out, "reviewer_skill=") {
+		t.Errorf("canonical emit must not write reviewer_skill=:\n%s", out)
+	}
+	if !strings.Contains(out, `prompt="@skill:code"`) {
+		t.Errorf("canonical emit must write performing-node prompt:\n%s", out)
+	}
+	if !strings.Contains(out, `[agent=reviewer, prompt="@skill:intent"]`) {
+		t.Errorf("canonical emit must write single-skill node-consistent gate:\n%s", out)
+	}
+	if !strings.Contains(out, `[agent=reviewer, prompt="@skill:a,b"]`) {
+		t.Errorf("canonical emit must write multi-skill node-consistent gate:\n%s", out)
+	}
+
+	// Round-trip through Parse (wrap in a fenced body).
+	body := "---\nname: w\n---\n\n```dot\n" + out + "\n```\n"
+	got, ok := Parse(body)
+	if !ok {
+		t.Fatal("canonical emit must parse as DOT")
+	}
+	skill := map[string][]string{}
+	for _, tr := range got.Transitions {
+		skills := tr.Skills
+		if len(skills) == 0 && tr.Skill != "" {
+			skills = []string{tr.Skill}
+		}
+		skill[tr.From+"->"+tr.To] = skills
+	}
+	if got := strings.Join(skill["backlog->in_progress"], ","); got != "intent" {
+		t.Errorf("single-skill round-trip = %q, want intent", got)
+	}
+	if got := strings.Join(skill["in_progress->done"], ","); got != "a,b" {
+		t.Errorf("multi-skill round-trip = %q, want a,b", got)
+	}
+	byName := map[string]State{}
+	for _, s := range got.States {
+		byName[s.Name] = s
+	}
+	if byName["in_progress"].Skill != "code" {
+		t.Errorf("performing-node skill round-trip = %q, want code", byName["in_progress"].Skill)
+	}
 }
 
 // TestStepSummaryNode covers the transparent step-summary declaration
