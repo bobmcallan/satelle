@@ -168,7 +168,8 @@ with a clear message rather than silently allowing it (sty_f3d5d4b8).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
-			if !isGitCommitOrPush(bashCommandFromEvent(raw)) {
+			command := bashCommandFromEvent(raw)
+			if !isGitCommitOrPush(command) {
 				return nil // not a commit/push — allow
 			}
 			engaged, err := storyEngaged()
@@ -178,7 +179,10 @@ with a clear message rather than silently allowing it (sty_f3d5d4b8).`,
 			if engaged {
 				return nil
 			}
-			return denyPreToolUse(cmd, noEngagedStoryCommitReason)
+			// Deny only — never allow a fused engage+commit form. PreToolUse cannot
+			// know the engage line would succeed; pick the message that teaches the
+			// recovery path (sty_577d292f).
+			return denyPreToolUse(cmd, commitDenyReason(command))
 		},
 	}
 
@@ -381,9 +385,40 @@ const noEngagedStoryEditReason = "satelle: you're mutating the tree without a pe
 	"For research, use read tools (Read/read_file/grep/Glob) — not Edit/Write/search_replace."
 
 // noEngagedStoryCommitReason is the agent-facing deny for git commit/push without
-// an engaged story. Same dual-format emission as the edit gate.
-const noEngagedStoryCommitReason = "satelle: refusing to commit/push with no engaged story — " +
-	"engage a story (satelle story set <id> --status plan) so the change is tracked through the workflow."
+// an engaged story. Same dual-format emission as the edit gate. States PreToolUse
+// pre-execution semantics so agents do not retry a fused engage+commit in one
+// tool call (sty_577d292f / session-trace-workflow-review-followups).
+const noEngagedStoryCommitReason = "satelle: refusing to commit/push with no engaged story. " +
+	"This gate runs BEFORE the command executes — an engage line inside the same tool call cannot pass it. " +
+	"Engage in a SEPARATE, PRIOR tool call (satelle story set <id> --status plan or --status in_progress, per the governing workflow), then run git commit/push in a later call."
+
+// fusedEngageAndCommitReason is the deny when the payload both tries to engage
+// a story and run git commit/push. Still a deny (behavior unchanged); the text
+// explicitly says to split into two tool calls (sty_577d292f optional variant).
+const fusedEngageAndCommitReason = "satelle: refusing fused engage+commit/push in one tool call. " +
+	"commitgate evaluates BEFORE any line runs, so a same-command 'satelle story set … --status …' cannot engage for this commit/push. " +
+	"Split into TWO tool calls: (1) engage alone (status plan or in_progress per the governing workflow); (2) git commit/push only after engagement succeeds."
+
+// commitDenyReason picks the agent-facing deny text for a blocked commit/push.
+// Pure string selection — gate behavior is always deny when nothing is engaged.
+func commitDenyReason(command string) string {
+	if isFusedEngageAndCommit(command) {
+		return fusedEngageAndCommitReason
+	}
+	return noEngagedStoryCommitReason
+}
+
+// isFusedEngageAndCommit reports whether a Bash payload both engages a story
+// (story set … --status) and runs git commit/push — the PreToolUse trap where
+// the engage line cannot satisfy the gate because it never runs.
+// v1 is a deliberate substring check (same simplicity as isGitCommitOrPush).
+func isFusedEngageAndCommit(command string) bool {
+	if !isGitCommitOrPush(command) {
+		return false
+	}
+	c := strings.ToLower(command)
+	return strings.Contains(c, "story set") && strings.Contains(c, "--status")
+}
 
 // outsideRepoEditReason is the agent-facing refusal when a PreToolUse edit targets
 // a path outside the current repo root (sty_3026d890). Kept as a pure string so
