@@ -287,3 +287,51 @@ func TestInjectPrinciplesDefaultsOnAndToggles(t *testing.T) {
 		t.Errorf("named agent with inject_principles = true must inject: ok=%v binding=%+v", ok, nb)
 	}
 }
+
+func TestResolvedRole(t *testing.T) {
+	tests := []struct {
+		section string
+		role    string
+		want    string
+	}{
+		{"reviewer", "", "reviewer"},
+		{"reviewer", "agent", "agent"},
+		{"planner", "", "agent"},
+		{"planner", "reviewer", "reviewer"},
+		{"planner", "AGENT", "agent"},
+	}
+	for _, tc := range tests {
+		got := ResolvedRole(tc.section, AgentBinding{Role: tc.role})
+		if got != tc.want {
+			t.Errorf("ResolvedRole(%q, role=%q) = %q, want %q", tc.section, tc.role, got, tc.want)
+		}
+	}
+}
+
+func TestResolvedPrinciples(t *testing.T) {
+	on, off := true, false
+	tests := []struct {
+		name string
+		b    AgentBinding
+		want string
+	}{
+		{"default", AgentBinding{}, PrinciplesSession},
+		{"explicit session", AgentBinding{Principles: "session"}, PrinciplesSession},
+		{"none", AgentBinding{Principles: "none"}, PrinciplesNone},
+		{"all", AgentBinding{Principles: "all"}, PrinciplesAll},
+		{"alias true", AgentBinding{InjectPrinciples: &on}, PrinciplesSession},
+		{"alias false", AgentBinding{InjectPrinciples: &off}, PrinciplesNone},
+		{"principles wins over alias", AgentBinding{Principles: "none", InjectPrinciples: &on}, PrinciplesNone},
+		{"comma list", AgentBinding{Principles: "system, project"}, "system,project"},
+	}
+	for _, tc := range tests {
+		got := tc.b.ResolvedPrinciples()
+		if got != tc.want {
+			t.Errorf("%s: ResolvedPrinciples() = %q, want %q", tc.name, got, tc.want)
+		}
+		injects := tc.want != PrinciplesNone
+		if tc.b.InjectsPrinciples() != injects {
+			t.Errorf("%s: InjectsPrinciples() = %v, want %v", tc.name, tc.b.InjectsPrinciples(), injects)
+		}
+	}
+}

@@ -9,8 +9,10 @@
 // Reviewer path: the active workflow names a reviewer_skill per edge; the skill's
 // markdown body rides as the agent's appended system prompt; the work item +
 // requested transition go in on stdin; the agent prints one JSON object
-// {decision, notes}, parsed strictly into an accept/reject. Accept lets the
-// caller enact; reject blocks and pushes the notes back to the executor.
+// {decision, notes, reasoning}, parsed strictly into an accept/reject. Accept lets
+// the caller enact; reject blocks and pushes the notes back to the executor.
+// LLM gate and named-dispatch runs share Invoke (invoke.go) — one path that
+// calls agentcli.Runner.Run (sty_ba860c8a).
 //
 // The edge is gated only when the workflow names a reviewer_skill AND that
 // skill's rubric is installed in the substrate. A named-but-absent rubric (e.g.
@@ -20,7 +22,6 @@
 package agentstep
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -96,11 +97,18 @@ type Engine struct {
 	// children resolves a parent's child stories (id + status) for a container
 	// close gate's payload. Nil when unwired (no children injected).
 	children func(ctx context.Context, parentID string) []ChildState
-	// injectPrinciples toggles whether the session (principles:session) principles
-	// ride in an isolated reviewer's system prompt — the agents-layer option
-	// (sty_46a40208). Defaults ON (New sets it true); the reviewer binding's
-	// inject_principles = false turns it off.
+	// injectPrinciples is a cache of the reviewer binding's principle injection
+	// (sty_46a40208). Order:2 feeds Invoke from reviewerBinding; this flag remains
+	// so SetInjectPrinciples / tests keep working until order:3 retires the scalar.
 	injectPrinciples bool
+	// reviewerBinding is the agents.toml [reviewer] binding — the SINGLE resolution
+	// shape for gate tools/model/env/principles/role (sty_ba860c8a AC3). Scalar
+	// SetReviewer* mutators update this binding so existing tests keep working.
+	reviewerBinding config.AgentBinding
+	// constitution is the project constitution body (frontmatter stripped), injected
+	// order-zero whenever principles ≠ none (design §5.3). Wired by the CLI via
+	// SetConstitution — the engine must not import cli.
+	constitution string
 	// attempts bounds how many times an LLM reviewer is retried when it produces NO
 	// verdict — a TRANSIENT failure (a rate-limited/killed/empty subprocess under
 	// concurrent sessions, sty_d71b0791), distinct from a genuine accept/reject which
@@ -276,12 +284,33 @@ func (g *Engine) logProseFallback(skill string, accept bool) {
 // resolved `reviewer` binding). It governs every isolated LLM reviewer this Engine
 // runs. The default remains the read-only grant; a repo may widen or narrow it in
 // .satelle/agents.toml without touching the workflow. An empty value is ignored
-// so callers can pass through an unset binding safely.
+// so callers can pass through an unset binding safely. Also mutates reviewerBinding.
 func (g *Engine) SetReviewerTools(tools string) {
 	if strings.TrimSpace(tools) != "" {
 		g.tools = tools
+		g.reviewerBinding.Tools = tools
 	}
 }
+
+// SetReviewerBinding stores the full resolved [reviewer] binding as the single
+// resolution source for Invoke (sty_ba860c8a). Scalar caches are synced from it.
+func (g *Engine) SetReviewerBinding(b config.AgentBinding) {
+	g.reviewerBinding = b
+	if strings.TrimSpace(b.Tools) != "" {
+		g.tools = b.Tools
+	}
+	if strings.TrimSpace(b.Model) != "" {
+		g.model = b.Model
+	}
+	if len(b.Env) > 0 {
+		g.reviewerEnv = b.Env
+	}
+	g.injectPrinciples = b.InjectsPrinciples()
+}
+
+// SetConstitution sets the project constitution body injected order-zero into
+// isolated agent briefings whenever principles ≠ none (design §5.3).
+func (g *Engine) SetConstitution(body string) { g.constitution = strings.TrimSpace(body) }
 
 // SetChildrenResolver wires the resolver that lists a parent's child stories
 // (id + status) so a container close gate judges the children-resolved rule from
@@ -295,10 +324,11 @@ func (g *Engine) SetChildrenResolver(fn func(ctx context.Context, parentID strin
 // `reviewer` binding's `model`). It rides as `--model` to every isolated reviewer
 // this Engine runs, so a repo can review on a different model (e.g. sonnet) without
 // touching the executor. An empty value is ignored, keeping the agent CLI's
-// default model (no `--model` flag emitted).
+// default model (no `--model` flag emitted). Also mutates reviewerBinding.
 func (g *Engine) SetReviewerModel(model string) {
 	if strings.TrimSpace(model) != "" {
 		g.model = model
+		g.reviewerBinding.Model = model
 	}
 }
 
@@ -306,13 +336,26 @@ func (g *Engine) SetReviewerModel(model string) {
 // applied to every isolated reviewer AND step-summariser subprocess this Engine
 // runs — so a repo can point its reviews at an alternate model backend the same
 // way a named executor does (sty_001558ce). Absent/empty leaves the child env at
-// the inherited process env.
-func (g *Engine) SetReviewerEnv(env map[string]string) { g.reviewerEnv = env }
+// the inherited process env. Also mutates reviewerBinding.
+func (g *Engine) SetReviewerEnv(env map[string]string) {
+	g.reviewerEnv = env
+	g.reviewerBinding.Env = env
+}
 
 // SetInjectPrinciples sets whether the resident principles ride in an isolated
 // reviewer's system prompt, from the agents layer's resolved `reviewer` binding
 // (sty_46a40208). Defaults ON; a repo disables it with inject_principles = false.
-func (g *Engine) SetInjectPrinciples(on bool) { g.injectPrinciples = on }
+// Also mutates reviewerBinding (deprecated alias + principles selector).
+func (g *Engine) SetInjectPrinciples(on bool) {
+	g.injectPrinciples = on
+	v := on
+	g.reviewerBinding.InjectPrinciples = &v
+	if on {
+		g.reviewerBinding.Principles = config.PrinciplesSession
+	} else {
+		g.reviewerBinding.Principles = config.PrinciplesNone
+	}
+}
 
 // SetRunner overrides the reviewer's agent-CLI runner — the agents layer's
 // `reviewer` harness binding, resolved to a Runner. A nil runner is ignored,
@@ -497,10 +540,11 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 		result.Skill = dec.Skill
 		result.Accept = dec.Accept
 		result.Notes = dec.Notes
+		result.Reasoning = dec.Reasoning
 		result.Command = dec.Command
 		result.Context = dec.Context
 		result.Reviewers = append(result.Reviewers, verb.ReviewerVerdict{
-			Skill: skill, Order: i, Accept: dec.Accept, Notes: dec.Notes, System: i >= sysStart,
+			Skill: skill, Order: i, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, System: i >= sysStart,
 			Command: dec.Command, Context: dec.Context, Model: dec.Model,
 			TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 		})
@@ -623,10 +667,8 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 			target.Agent, toStatus, target.Agent)
 	}
 	// The step's own @skill rubric when the node declares one (absent stays
-	// advisory — the engagement guard already vets executor-path skills). The
-	// executor charter, the rubric, the per-binding principle injection, and the
-	// payload all flow through the shared buildRequest seam (invoke.go), so the
-	// executor is briefed the same way a reviewer is.
+	// advisory — the engagement guard already vets executor-path skills). LLM run
+	// goes through shared Invoke (sty_ba860c8a).
 	rubric := ""
 	if target.Skill != "" {
 		if body, rerr := g.skillBody(ctx, target.Skill); rerr == nil {
@@ -635,24 +677,6 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 			return verb.DispatchResult{}, rerr
 		}
 	}
-	req, err := g.buildRequest(ctx, invocation{
-		charter:          executorCharter(target.Agent, toStatus, doc.Name),
-		rubric:           rubric,
-		injectPrinciples: binding.InjectsPrinciples(),
-		payload:          transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: target.Skill},
-		tools:            binding.Tools,
-		model:            binding.Model,
-		settings:         binding.Settings, // already ${VAR}-resolved at wiring (config.ResolveAgentEnvs)
-		env:              binding.Env,      // already ${VAR}-resolved at wiring (config.ResolveAgentEnvs)
-	})
-	if err != nil {
-		return verb.DispatchResult{}, err
-	}
-	res := verb.DispatchResult{Dispatched: true, Agent: target.Agent, Command: runner.Command(), Model: binding.Model, Skill: target.Skill}
-	// A dispatched executor's bound is the binding's own timeout when set, else the
-	// engine default — so a from-scratch worker gets a window sized to real work
-	// rather than the 20m default that SIGKILLed one mid-implementation (sty_446c38b7,
-	// sty_b73c3236). LoadAgents already validated the value; handle the error defensively.
 	timeout, terr := binding.TimeoutDuration(g.checkTimeout)
 	if terr != nil {
 		return verb.DispatchResult{}, fmt.Errorf("named agent %q: invalid timeout in .satelle/agents.toml [%s]: %w", target.Agent, target.Agent, terr)
@@ -661,26 +685,39 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	if closeSink != nil {
 		defer closeSink()
 	}
-	req.Sink = sink
 	if sinkPath != "" {
 		g.emitProgress("dispatching step %s to named agent %s (may take several minutes)… live output: %s", toStatus, target.Agent, sinkPath)
 	} else {
 		g.emitProgress("dispatching step %s to named agent %s (may take several minutes)…", toStatus, target.Agent)
 	}
-	out, usage, runErr := g.runOnce(ctx, runner, req, timeout)
-	res.TokensIn, res.TokensOut, res.TokensTotal = usage.InputTokens, usage.OutputTokens, usage.TotalTokens
-	res.DurationMs = usage.Duration.Milliseconds()
-	g.logExecutorRun(target.Agent, item.ID, toStatus, out, runErr)
-	// Carry the captured stdout back so the verb layer can write it through as an
-	// OKF run-output doc for a task execution (sty_890b86cb). The central
-	// executor.log above is unchanged — the per-task doc is the reviewable record.
-	res.Output = string(out)
-	if runErr != nil {
+	invRes := g.Invoke(ctx, InvokeRequest{
+		Binding: binding,
+		Section: target.Agent,
+		Rubric:  rubric,
+		Payload: transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: target.Skill},
+		Charter: executorCharter(target.Agent, toStatus, doc.Name),
+		Expect:  ExpectPerform,
+		Timeout: timeout,
+		Runner:  runner,
+		Sink:    sink,
+		StoryID: item.ID,
+		Step:    toStatus,
+		Skill:   target.Skill,
+		Actor:   "executor",
+	})
+	res := verb.DispatchResult{
+		Dispatched: true, Agent: target.Agent, Command: invRes.Command, Model: binding.Model, Skill: target.Skill,
+		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
+		DurationMs: invRes.Usage.Duration.Milliseconds(),
+		Output:     string(invRes.Stdout),
+	}
+	g.logExecutorRun(target.Agent, item.ID, toStatus, invRes.Stdout, invRes.Err)
+	if invRes.Err != nil {
 		g.telemetryEvent(ctx, item.ID, "executor", "agent-failure", map[string]any{
-			"agent": target.Agent, "step": toStatus, "outcome": classifyOutcome(runErr),
+			"agent": target.Agent, "step": toStatus, "outcome": classifyOutcome(invRes.Err),
 			"tokens_total": res.TokensTotal, "duration_ms": res.DurationMs,
 		})
-		return res, fmt.Errorf("named agent %q failed performing step %q: %w", target.Agent, toStatus, runErr)
+		return res, fmt.Errorf("named agent %q failed performing step %q: %w", target.Agent, toStatus, invRes.Err)
 	}
 	return res, nil
 }
@@ -728,28 +765,30 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.Dispa
 	} else if !errors.Is(rerr, docindex.ErrNotFound) {
 		return verb.DispatchResult{}, rerr
 	}
-	req, err := g.buildRequest(ctx, invocation{
-		charter:          executorCharter(retrospectAgent, "retrospect", "post-story retrospective"),
-		rubric:           rubric,
-		injectPrinciples: binding.InjectsPrinciples(),
-		payload:          transitionPayload{Story: item, From: item.Status, To: item.Status, ReviewSkill: retrospectSkill},
-		tools:            binding.Tools,
-		model:            binding.Model,
-		settings:         binding.Settings,
-		env:              binding.Env,
-	})
-	if err != nil {
-		return verb.DispatchResult{}, err
-	}
-	res := verb.DispatchResult{Dispatched: true, Agent: retrospectAgent, Command: runner.Command(), Model: binding.Model, Skill: retrospectSkill}
 	g.emitProgress("running retrospective on %s (may take a few minutes)…", item.ID)
-	out, usage, runErr := g.runOnce(ctx, runner, req, g.checkTimeout)
-	res.TokensIn, res.TokensOut, res.TokensTotal = usage.InputTokens, usage.OutputTokens, usage.TotalTokens
-	res.DurationMs = usage.Duration.Milliseconds()
-	g.logExecutorRun(retrospectAgent, item.ID, "retrospect", out, runErr)
-	res.Output = string(out)
-	if runErr != nil {
-		return res, fmt.Errorf("%s agent failed on %s: %w", retrospectAgent, item.ID, runErr)
+	invRes := g.Invoke(ctx, InvokeRequest{
+		Binding: binding,
+		Section: retrospectAgent,
+		Rubric:  rubric,
+		Payload: transitionPayload{Story: item, From: item.Status, To: item.Status, ReviewSkill: retrospectSkill},
+		Charter: executorCharter(retrospectAgent, "retrospect", "post-story retrospective"),
+		Expect:  ExpectPerform,
+		Timeout: g.checkTimeout,
+		Runner:  runner,
+		StoryID: item.ID,
+		Step:    "retrospect",
+		Skill:   retrospectSkill,
+		Actor:   "executor",
+	})
+	res := verb.DispatchResult{
+		Dispatched: true, Agent: retrospectAgent, Command: invRes.Command, Model: binding.Model, Skill: retrospectSkill,
+		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
+		DurationMs: invRes.Usage.Duration.Milliseconds(),
+		Output:     string(invRes.Stdout),
+	}
+	g.logExecutorRun(retrospectAgent, item.ID, "retrospect", invRes.Stdout, invRes.Err)
+	if invRes.Err != nil {
+		return res, fmt.Errorf("%s agent failed on %s: %w", retrospectAgent, item.ID, invRes.Err)
 	}
 	return res, nil
 }
@@ -938,7 +977,7 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 	// references an external script); satelle runs it in the repo root with the
 	// transition payload on stdin, exit 0 accepts, non-zero rejects with the
 	// output tail as notes. No LLM (the command IS the decision). This is the
-	// constitution's "skill + functional check" gate.
+	// constitution's "skill + functional check" gate. Stays OUTSIDE Invoke (design §4.2).
 	if command := skillCheck(body); command != "" {
 		return g.runCheck(ctx, skill, command, string(payload)), nil
 	}
@@ -946,110 +985,50 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
 			"reviewer: transition %s→%s is gated by %q but no agent runner is configured", item.Status, toStatus, skill)
 	}
-	// Build the request ONCE (build-once, run-many): every retry re-runs the SAME
-	// assembled prompt+payload, so a transient no-verdict is retried without
-	// re-composing. The reviewer charter, principle injection, and payload marshal
-	// all flow through the shared buildRequest seam (invoke.go).
-	req, err := g.buildRequest(ctx, invocation{
-		charter:          reviewerCharter(),
-		rubric:           body,
-		injectPrinciples: g.injectPrinciples,
-		payload:          tp,
-		tools:            g.tools,
-		model:            g.model,
-		env:              g.reviewerEnv,
+	// LLM path: shared Invoke (sty_ba860c8a) — binding resolution, buildRequest,
+	// runOnce, verdict retry/parse all live there. Pre-flight (skill, structure,
+	// functional-check, missing-rubric advisory) stays here.
+	binding := g.reviewerBinding
+	if binding.Tools == "" {
+		binding.Tools = g.tools
+	}
+	if binding.Model == "" {
+		binding.Model = g.model
+	}
+	if len(binding.Env) == 0 {
+		binding.Env = g.reviewerEnv
+	}
+	if binding.Principles == "" && binding.InjectPrinciples == nil {
+		// Mirror engine injectPrinciples cache when binding never set principles.
+		if g.injectPrinciples {
+			binding.Principles = config.PrinciplesSession
+		} else {
+			binding.Principles = config.PrinciplesNone
+		}
+	}
+	res := g.Invoke(ctx, InvokeRequest{
+		Binding:  binding,
+		Section:  "reviewer",
+		Rubric:   body,
+		Payload:  tp,
+		Charter:  reviewerCharter(),
+		Expect:   ExpectVerdict,
+		Timeout:  g.agentTimeout,
+		Runner:   g.runner,
+		Attempts: g.attempts,
+		StoryID:  item.ID,
+		Step:     toStatus,
+		Skill:    skill,
+		Actor:    "reviewer",
 	})
-	if err != nil {
-		return verb.GateDecision{}, err
+	if res.Err != nil {
+		return verb.GateDecision{Gated: true, Skill: skill}, res.Err
 	}
-	// A gated transition must be DETERMINISTIC: the reviewer either returns a
-	// verdict (accept/reject) or the transition fails with a CLEAR error — never a
-	// silent one-shot non-advance. A nested reviewer subprocess can TRANSIENTLY
-	// produce no verdict (a rate-limited/killed/empty run under concurrent sessions
-	// across repos — sty_d71b0791), so retry that transient failure with bounded
-	// backoff. A genuine accept/reject parses on the first try and returns at once;
-	// only an agent error or no-verdict output is retried.
-	attempts := g.attempts
-	if attempts < 1 {
-		attempts = 1
+	if res.Decision == nil {
+		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
+			"reviewer: %s produced no decision", skill)
 	}
-	var lastErr error
-	var lastOut []byte
-	for attempt := 1; attempt <= attempts; attempt++ {
-		if werr := g.retryWait(ctx, attempt); werr != nil {
-			return verb.GateDecision{Gated: true, Skill: skill}, werr
-		}
-		g.emitProgress("running reviewer %s (attempt %d/%d, may take several minutes)…", skill, attempt, attempts)
-		out, usage, rerr := g.runOnce(ctx, g.runner, req, g.agentTimeout)
-		if rerr != nil {
-			// A DEADLINE expiry is a bound, not contention — retrying would just
-			// re-block for another full window. Fail fast with a legible timeout so
-			// wrapping tooling gets a bounded, non-enacting error (sty_6c88ca10).
-			if errors.Is(rerr, context.DeadlineExceeded) && ctx.Err() == nil {
-				g.logReviewerFailure(skill, attempt, attempts, rerr, nil)
-				g.telemetryEvent(ctx, item.ID, "reviewer", "agent-timeout", map[string]any{
-					"skill": skill, "step": toStatus, "attempt": attempt, "attempts": attempts,
-				})
-				return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
-					"reviewer: %s timed out after %s — the gate did not complete and the transition was NOT enacted; retry when the agent backend is responsive", skill, g.agentTimeout)
-			}
-			lastErr, lastOut = rerr, nil
-			g.logReviewerFailure(skill, attempt, attempts, rerr, nil) // surface the contention
-			g.telemetryEvent(ctx, item.ID, "reviewer", "agent-retry", map[string]any{
-				"skill": skill, "step": toStatus, "attempt": attempt, "attempts": attempts, "outcome": classifyOutcome(rerr),
-			})
-			continue // transient agent failure — retry
-		}
-		dec, perr := parseDecision(out)
-		if perr != nil {
-			// The strict JSON contract failed — but a reviewer that reasoned to an
-			// unambiguous PROSE verdict ("Verdict: reject. <reasons>") still decided
-			// (sty_9485d47e). Treating that as a transient no-verdict discarded the
-			// decision AND its reasons, retried pointlessly, and surfaced a misleading
-			// "transient agent failure" to the executor. Extract the prose verdict and
-			// return it as a normal decision; only genuinely ambiguous/empty output
-			// remains a no-verdict retry.
-			if pd, ok := parseProseDecision(out); ok {
-				g.logProseFallback(skill, pd.Accept)
-				pd.Gated = true
-				pd.Skill = skill
-				pd.Command = g.runner.Command()
-				pd.Context = skill
-				g.setDecisionUsage(&pd, usage)
-				return pd, nil
-			}
-			lastErr, lastOut = perr, out
-			g.logReviewerFailure(skill, attempt, attempts, perr, out) // capture the subprocess output
-			g.telemetryEvent(ctx, item.ID, "reviewer", "agent-retry", map[string]any{
-				"skill": skill, "step": toStatus, "attempt": attempt, "attempts": attempts, "outcome": "no-verdict",
-			})
-			continue // no verdict in the output — transient, retry
-		}
-		dec.Gated = true
-		dec.Skill = skill
-		// Record HOW this isolated agent was invoked (sty_fb3e0873): the resolved
-		// harness command and the injected-context source (the rubric/skill file).
-		// Only the LLM path sets these — a functional check above invokes no agent.
-		dec.Command = g.runner.Command()
-		dec.Context = skill
-		g.setDecisionUsage(&dec, usage)
-		return dec, nil
-	}
-	// Every attempt failed to produce a verdict — surface a CLEAR, actionable error
-	// (a no-verdict failure, NOT a rejection), naming the retry count, a tail of
-	// the last output, and — when output existed — where its FULL text was logged,
-	// so the executor can read the reviewer's actual words instead of guessing
-	// (sty_9485d47e). An empty/errored run keeps the transient-contention hint.
-	where := ""
-	if len(bytes.TrimSpace(lastOut)) > 0 && g.logDir != "" {
-		where = " — full reviewer output logged to " + filepath.Join(g.logDir, "reviewer.log")
-	}
-	g.telemetryEvent(ctx, item.ID, "reviewer", "agent-failure", map[string]any{
-		"skill": skill, "step": toStatus, "attempts": attempts, "outcome": classifyOutcome(lastErr),
-	})
-	return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
-		"reviewer: %s produced no verdict after %d attempts (empty/ambiguous reviewer output or a transient agent failure — e.g. a rate-limited or killed subprocess under concurrent sessions; retry, or reduce concurrent satelle sessions): %w%s%s",
-		skill, attempts, lastErr, outputTail(lastOut), where)
+	return *res.Decision, nil
 }
 
 // outputTail returns a short, trimmed tail of a reviewer's last output for an
@@ -1122,6 +1101,10 @@ type summaryPayload struct {
 // Summarise runs the read-only summariser over an enacted transition and returns
 // its prose recap (empty when no summariser rubric is installed). The reviewer's
 // read-only tool grant means it observes but cannot mutate the work tree.
+//
+// TODO(sty_ba860c8a): fold onto Invoke once a soft-fail/empty-retry expect mode
+// exists without ballooning ExpectVerdict/ExpectPerform. Today it still uses
+// buildRequest+runOnce directly (AC1 carve-out).
 func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to string) (verb.SummaryResult, error) {
 	// The summariser runs ONLY when the active workflow DECLARES a step-summary
 	// node (transparent opt-in via the DOT) — there is no hidden always-on
@@ -1148,15 +1131,15 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 	if g.runner == nil {
 		return soft("step summary is mandatory but no agent runner is configured")
 	}
-	// The summariser prompt is rubric-only (no charter, no principle injection) so
-	// it stays a plain narrator — buildRequest omits the empty charter section, so
-	// the assembled prompt is the skill body verbatim. Grant is read-only.
+	// The summariser prompt is rubric-only (no charter, principles=none) so it
+	// stays a plain narrator — buildRequest omits empty sections. Grant is read-only.
 	req, err := g.buildRequest(ctx, invocation{
-		rubric:  body,
-		payload: summaryPayload{Story: item, From: from, To: to},
-		tools:   g.tools, // read-only (Read,Grep,Glob) — narrate, never mutate
-		model:   g.model,
-		env:     g.reviewerEnv,
+		rubric:     body,
+		principles: config.PrinciplesNone,
+		payload:    summaryPayload{Story: item, From: from, To: to},
+		tools:      g.tools, // read-only (Read,Grep,Glob) — narrate, never mutate
+		model:      g.model,
+		env:        g.reviewerEnv,
 	})
 	if err != nil {
 		return verb.SummaryResult{}, err
@@ -1727,10 +1710,12 @@ func inlineListField(line, key string) []string {
 	return splitTrimList(rest[open+1 : open+closeAt])
 }
 
-// rawDecision is the reviewer's JSON contract: {decision: accept|reject, notes}.
+// rawDecision is the reviewer's JSON contract: {decision, notes, reasoning}.
+// reasoning is optional for back-compat with notes-only output (design §6.1).
 type rawDecision struct {
-	Decision string `json:"decision"`
-	Notes    string `json:"notes"`
+	Decision  string `json:"decision"`
+	Notes     string `json:"notes"`
+	Reasoning string `json:"reasoning"`
 }
 
 // parseDecision finds the reviewer's verdict in the agent's stdout — lenient on
@@ -1747,10 +1732,10 @@ func parseDecision(out []byte) (verb.GateDecision, error) {
 		}
 		switch strings.ToLower(strings.TrimSpace(rd.Decision)) {
 		case "accept":
-			d := verb.GateDecision{Accept: true, Notes: rd.Notes}
+			d := verb.GateDecision{Accept: true, Notes: rd.Notes, Reasoning: rd.Reasoning}
 			found = &d
 		case "reject":
-			d := verb.GateDecision{Accept: false, Notes: rd.Notes}
+			d := verb.GateDecision{Accept: false, Notes: rd.Notes, Reasoning: rd.Reasoning}
 			found = &d
 		}
 	}
