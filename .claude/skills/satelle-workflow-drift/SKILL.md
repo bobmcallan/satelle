@@ -21,15 +21,21 @@ a node names a **missing** binding, never when a binding goes **unused** or its
 comment lies. So drift sits there silently, and the stale comments mislead the next
 reader — including future-you — into believing steps run a way they no longer do.
 
-This skill finds that drift and **files an optimise story** with the fixes. It
-**judges and files**; it never edits `agents.toml`/the workflow itself, and it does
-not decide the judgment calls — those go into the story as questions for the operator.
+This skill finds **two kinds of drift** and resolves them differently:
+
+| Kind | What | Resolution |
+| --- | --- | --- |
+| **Format** | DOT lags satelle-dot-standard (legacy edges, prompt-less performing nodes, missing graph attrs) | Prefer `satelle workflow refresh <name>` (dry-run → confirm → `--apply`); file a story only if refresh is refused or the operator wants a tracked change |
+| **Binding** | workflow ↔ agents.toml disagree (orphans, stale comments, unstated producers, labor) | **File an optimise story** with mechanical ACs; judgment calls stay questions |
+
+It **judges and advises**; it never edits `agents.toml`/the workflow itself (refresh
+is a separate consultative CLI path), and it does not decide the judgment calls.
 
 The embedded `satelle-workflow-advisor` skill advises on a *single* workflow's
 per-step config quality (allocation, reviewer coverage, grant scoping). This skill
-is the complement: **cross-file consistency** between the workflow and `agents.toml`,
-plus the narrative drift in comments — and it produces a tracked story, not inline
-advice. Defer per-step allocation *quality* to the advisor; own *agreement* here.
+is the complement: **cross-file consistency** and **format lag** — producing a
+tracked story for binding fixes and a refresh path for format. Defer per-step
+allocation *quality* to the advisor.
 
 ## How to run
 
@@ -52,8 +58,8 @@ advice. Defer per-step allocation *quality* to the advisor; own *agreement* here
      and their `on=` targets.
 5. Run the five **binding-drift** checks below. Collect findings.
 6. Report (structure at the end). For **format** drift prefer the assisted refresh
-   path (`satelle workflow refresh <name>` when available) over only filing a story;
-   for **binding** drift, **file the optimise story** as before.
+   path (`satelle workflow refresh <name>` — dry-run, then `--apply` after confirm)
+   over only filing a story; for **binding** drift, **file the optimise story** as before.
 
 ## Format drift (deterministic — not binding drift)
 
@@ -70,9 +76,10 @@ They are **not** binding-drift and must appear in their own report section.
 reviewers, guardrails prose — those are repo topology.
 
 **Resolution for format drift:** prefer the consultative assisted update —
-`satelle workflow refresh <name>` (shows a diff; requires confirmation; never a
-silent rewrite). Filing a story remains fine when refresh is unavailable or the
-operator wants a tracked change. Cite **satelle-dot-standard** as the target form.
+`satelle workflow refresh <name>` (dry-run shows a diff; `--apply` writes after
+confirmation; never a silent rewrite; use `--prompt node=skill` for performing
+rubrics). Filing a story remains fine when the operator wants a tracked change
+or refuses the proposed diff. Cite **satelle-dot-standard** as the target form.
 
 ## The binding-drift checks
 
@@ -176,8 +183,8 @@ sections, then the filed story / refresh path.
 - **[legacy_edge_gate] <from->to>** — <detail>. Fix: node-consistent form.
 - **[promptless_performing] <node>** — <detail>. Fix: add prompt="@skill:…".
 - **[missing_graph_attr] graph** — <detail>.
-Resolution: `satelle workflow refresh <name>` (consultative) when available;
-otherwise file a story. Not only "file a story".
+Resolution: `satelle workflow refresh <name>` (dry-run → confirm → `--apply`);
+not only "file a story".
 
 ### Binding-drift (mechanical — go into the story's ACs)
 - **[orphaned] <binding>** — <claim vs topology>. Fix: <delete / rewrite comment>.
