@@ -1,6 +1,6 @@
 ---
 name: satelle-workflow-drift
-description: Audit a satelle repo's active workflow DOT against its agents.toml for DRIFT — the two authored files disagreeing — then FILE an optimise story with the fixes. Catches orphaned bindings (a [name] agent no workflow node allocates), stale binding comments that describe a superseded topology (a step/edge that no longer exists), gate preconditions with no documented producer, model-allocation smells (capability inversion, a high-stakes gate stuck on the shared reviewer model), and node-vs-exit-edge labor that double-runs or does nothing. Use when asked to review/lint the workflow and agents files together, check agents.toml is in sync with the workflow, hunt for stale or dead bindings/comments, pressure-test per-step model choices, or after editing a workflow's topology (moving steps in-loop, renaming/removing nodes). Files a category:substrate story of the mechanical fixes and surfaces the judgment calls as questions; it does not edit or decide them itself.
+description: Audit a satelle repo's active workflow DOT against its agents.toml for BINDING drift (the two authored files disagreeing) AND against the canonical latest DOT format for FORMAT drift (legacy reviewer_skill= edges, prompt-less performing nodes, missing graph fields). Then FILE an optimise story with the fixes — or, for format drift only, point at `satelle workflow refresh` (assisted update) rather than only filing. Catches orphaned bindings, stale binding comments, gate preconditions with no producer, model-allocation smells, node-vs-exit-edge labor, and format lag vs satelle-dot-standard. Use when asked to review/lint the workflow and agents files together, check agents.toml is in sync with the workflow, check whether a workflow is on the latest format, update/refresh a workflow to the latest format, hunt for stale or dead bindings/comments, pressure-test per-step model choices, or after editing a workflow's topology. Files a category:substrate story of the mechanical fixes and surfaces judgment calls as questions; it does not edit or decide them itself (refresh is a separate consultative path).
 ---
 
 # satelle workflow ↔ agents drift audit
@@ -36,18 +36,45 @@ advice. Defer per-step allocation *quality* to the advisor; own *agreement* here
 1. Read the **active** workflow (the `scope: project` one that applies; if unsure,
    `satelle workflow list` — the active project workflow wins over the embedded
    baseline). Extract its DOT block.
-2. Read `.satelle/agents.toml`.
-3. Build two sets from the DOT:
+2. **Format drift first (deterministic):** run
+   `satelle workflow format-drift <name>` (or without a name for every on-disk
+   workflow). This is backed by `wfdot.FormatDrift` — not prose guesswork. The
+   canonical target is the **satelle-dot-standard** principle (node-consistent
+   edge gates, performing-node prompts, graph goal/vars/rankdir). Capture the
+   findings for the Format-drift report section.
+3. Read `.satelle/agents.toml`.
+4. Build two sets from the DOT:
    - **allocated agents** — every distinct `agent=<value>` across nodes (plus the
      built-ins the graph relies on: `executor`, `reviewer`).
    - **topology facts** — the node names, each node's `agent=`, the edges
      (`a -> b`), and each edge's gate (`prompt="@skill:NAME"` or the legacy
      `reviewer_skill=`); the edge-less scoped reviewers
      and their `on=` targets.
-4. Run the five drift checks below. Collect findings.
-5. Report (structure at the end), then **file the optimise story**.
+5. Run the five **binding-drift** checks below. Collect findings.
+6. Report (structure at the end). For **format** drift prefer the assisted refresh
+   path (`satelle workflow refresh <name>` when available) over only filing a story;
+   for **binding** drift, **file the optimise story** as before.
 
-## The drift checks
+## Format drift (deterministic — not binding drift)
+
+These findings come from `satelle workflow format-drift` / `wfdot.FormatDrift`.
+They are **not** binding-drift and must appear in their own report section.
+
+| Kind | Meaning | Canonical fix |
+| --- | --- | --- |
+| `legacy_edge_gate` | Edge still uses `reviewer_skill="NAME"` | Rewrite to `[agent=reviewer, prompt="@skill:NAME"]` |
+| `promptless_performing` | Performing node has `agent=` but no `@skill` prompt | Add `prompt="@skill:…"` for that step's rubric |
+| `missing_graph_attr` | Missing `goal` / `vars` / `rankdir` on the digraph | Add `graph [goal="…", vars="…"]` and `rankdir=LR` |
+
+**Not format drift:** extra states (e.g. deploy), recovery edges, scoped `on=`
+reviewers, guardrails prose — those are repo topology.
+
+**Resolution for format drift:** prefer the consultative assisted update —
+`satelle workflow refresh <name>` (shows a diff; requires confirmation; never a
+silent rewrite). Filing a story remains fine when refresh is unavailable or the
+operator wants a tracked change. Cite **satelle-dot-standard** as the target form.
+
+## The binding-drift checks
 
 Each finding names the binding/node, what drifted, *why it misleads*, and the fix.
 
@@ -137,15 +164,22 @@ Rules for the story:
 
 ## Report structure
 
-Lead with the verdict, then findings, then the filed story.
+Lead with the verdict, then **Format-drift** and **Binding-drift** as separate
+sections, then the filed story / refresh path.
 
 ```
-## Workflow ↔ agents drift — <workflow name>
+## Workflow review — <workflow name>
 
-**Verdict:** <graph health + the headline drift, e.g. "graph is clean; agents.toml
-carries 2 orphaned bindings from a superseded topology">
+**Verdict:** <graph health + headline format lag and/or binding drift>
 
-### Drift (mechanical — go into the story's ACs)
+### Format-drift (vs satelle-dot-standard — deterministic)
+- **[legacy_edge_gate] <from->to>** — <detail>. Fix: node-consistent form.
+- **[promptless_performing] <node>** — <detail>. Fix: add prompt="@skill:…".
+- **[missing_graph_attr] graph** — <detail>.
+Resolution: `satelle workflow refresh <name>` (consultative) when available;
+otherwise file a story. Not only "file a story".
+
+### Binding-drift (mechanical — go into the story's ACs)
 - **[orphaned] <binding>** — <claim vs topology>. Fix: <delete / rewrite comment>.
 - **[stale-comment] <binding>** — <the wrong claim>. Fix: <current topology>.
 - **[unstated-producer] <gate>** — <precondition, no owner>. Fix: <state producer>.
@@ -155,6 +189,7 @@ carries 2 orphaned bindings from a superseded topology">
 - **model inversion** — <the question>.
 - **uniform gate model** — <the structural gap + the decision>.
 
-### Filed
-- `sty_…` — category:substrate, <N> ACs, judgment calls in the body.
+### Filed / next step
+- format: refresh path and/or `sty_…`
+- binding: `sty_…` — category:substrate, <N> ACs, judgment calls in the body.
 ```
