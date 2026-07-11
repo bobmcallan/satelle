@@ -4,8 +4,9 @@
 # (each one argv token; payload also on stdin — dual delivery). `harness` is the
 # deprecated alias, still parsed. See `satelle help agent-dispatch`.
 #
-# Reviewer: the `grok` preset — argv-first ({payload} on -p + stdin), grok's real
-# flags and a baked-in read-only grant (read_file,grep,list_dir + mutator denies).
+# Reviewer: Grok, argv-first ({payload} on -p + stdin) — the FULL command so the
+# read-only grant (--tools read_file,grep,list_dir) and mutator ceiling (--deny …)
+# are visible rather than hidden behind the `grok` preset token.
 # Planner/retrospective: Claude stdin-first (no {payload} — not double-fed) so
 # Bash(satelle:*) and code tools work. Grok Build currently cannot enable
 # run_terminal_command (agent-build constraint), so Grok is not used for
@@ -15,8 +16,14 @@
 [executor]
 command = "in-loop"
 
+# Full command template, not the bare "grok" preset — the reviewer's grant must be
+# VISIBLE (transparency, sty_892517e7): the read-only --tools grant and the --deny
+# mutator ceiling are spelled out here, so it is clear what the reviewer can and
+# cannot do without knowing what a preset expands to. (command = "grok" resolves to
+# this exact argv; the preset is for a from-scratch wiring, not the committed default.)
 [reviewer]
-command = "grok"       # single-token preset — expands to grok's read-only reviewer template
+command = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir -m {model} --deny Write --deny Edit --deny search_replace --deny write --always-approve --output-format plain --max-turns 16 --no-subagents"
+tools   = "read_file,grep,list_dir"   # grok-native read-only grant (the preset bakes this; shown here so the ceiling is explicit)
 model   = "grok-4.5"
 
 [planner]
