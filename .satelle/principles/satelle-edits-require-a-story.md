@@ -24,6 +24,13 @@ around it, disable it, or proceed when it does not fire: a silently inert gate i
 a defect to surface and fix, not permission to edit ungated. Commits and pushes
 are gated the same way — commit under the engaged story.
 
+**Engage before commit/push — separate tool call.** Before any Bash command that
+contains `git commit` or `git push`, engage the story in its **own, prior** tool
+call (`satelle story set <id> --status plan` or `--status in_progress`, per the
+governing workflow). The commitgate is PreToolUse: it evaluates the whole
+payload **before any line runs**, so an engage line fused into the same command
+cannot pass it. Full mechanism: [[session-trace-workflow-review-followups]].
+
 **Follow the workflow.** Drive the engaged story through every transition its
 workflow declares; a step the workflow prescribes is authorised by it, never a
 reason to pause.
