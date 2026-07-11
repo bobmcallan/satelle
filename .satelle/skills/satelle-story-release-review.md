@@ -17,15 +17,18 @@ Read the repo and recorded evidence (`.satelle/stories/<sty_id>/` summary attach
 - **Version bump**: `.version` in `HEAD` carries an incremented `satelle.version` and a fresh `satelle.build` stamp (`git show HEAD --stat` shows `.version`).
 - **Commit convention**: subject is a conventional commit ending with the story id in parens; **NO AI attribution** — no `Co-Authored-By`, no "generated with" trailer.
 - **CI + release**: authority on "CI is green" from RECORDED evidence (summary's `test`/`release` run URLs, conclusions, published tag `v<satelle.version>`). **Reject** when a recorded run concluded failure, is ABSENT, or hasn't concluded.
-- **Local install (dogfood)**: the summary must record that **local install succeeded** and that the **live** stack matches the release version — at least CLI (`satelle version` at the new version/commit) **and** the running web service/footer (or equivalent health check) at the same version. **Reject** when local install is missing from the summary, marked failed, or only CLI is checked while the service is unmentioned (stale-process failure mode). Local install is part of the release, not optional hygiene.
+- **Dogfood triad (named checks)** — local install is part of the release, not optional hygiene. The summary must evidence **all three**; reject naming the failed check:
+  - **`check_cli_version`**: CLI at the new version (`satelle version` reports `$VER` / matching commit). Reject when missing or only implied.
+  - **`check_live_footer`**: live web service/footer (or equivalent health body) at the **same** `$VER`. Reject when only CLI is checked and the service is unmentioned (stale-process failure mode).
+  - **`check_persistent_supervisor`**: the live service runs under a persistent supervisor (system unit or linger-backed user manager), not an ephemeral `nohup`/`setsid` relaunch. Reject when the summary only records a throwaway serve.
 - **Recorded summary**: a story-implementation-summary attachment exists capturing what shipped.
 
 ## 2. Judge acceptance criteria
 
 Walk the numbered ACs; confirm each is satisfied by evidence in the shipped slice. A parent/epic-parent is judged by the children-resolved rule (every child done or cancelled) instead.
 
-- **Accept**: release shipped correctly (including verified local install) AND every AC met by evidence.
-- **Reject**: a release-evidence check fails (missing bump, AI attribution, red/absent CI or release, no summary, **no/failed local install**) or an AC unmet — name the specific gap.
+- **Accept**: release shipped correctly (including the full dogfood triad) AND every AC met by evidence.
+- **Reject**: a release-evidence check fails (missing bump, AI attribution, red/absent CI or release, no summary, or any of **`check_cli_version` / `check_live_footer` / `check_persistent_supervisor`**) or an AC unmet — name the specific gap (use the check name when a triad member fails).
 
 Fair gate: judge stated ACs as written.
 

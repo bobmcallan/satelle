@@ -10,6 +10,8 @@ description: In-loop executor skill for the merged `release` step. Stages the st
 
 You are the **executor** for the merged `release` step (in-loop on the driving session when the workflow assigns `agent=executor`). Prior gates accepted the slice. **Commit with a version bump, push, install locally, prove the release, and record evidence.** You never self-enact `release → done` — the gate does that.
 
+**Engage before any `git commit` / `git push`.** Engagement must already be true in a **prior** tool call (`plan` or `in_progress` per the governing workflow). commitgate is PreToolUse — it evaluates the whole Bash payload before any line runs — so fusing `satelle story set … --status …` with `git commit`/`git push` in one command cannot pass. See [[satelle-edits-require-a-story]] and [[session-trace-workflow-review-followups]].
+
 **Dogfood is part of the release, not optional cleanup.** It means the machine you released from runs the new binary as the live web service — installed via `satelle update` (the **published** asset a user gets, sudo-free), which also restarts the service. The pass criterion is mechanism-AGNOSTIC: the **running** web service reports the new version, reached through a **persistent supervisor** (a system unit, or a linger-backed user manager that survives session loss), never an ephemeral `nohup`/`setsid` relaunch that dies with your shell. The *restart mechanism* is not the test: if the systemd `--user` bus is unreachable (a headless / non-login WSL session — no `/run/user/<uid>/systemd`) yet `satelle update` installed the binary and the live version matches under a persistent supervisor, that is **not** a failed release. The release HAS failed only when the binary did not install, or the running service still reports the OLD version (or runs under no persistent supervisor). Fix the persistence under this story and re-verify; do not attach a success summary or proceed to done until the live version matches persistently.
 
 ## 1. Stage and commit (bump is mandatory)
@@ -47,14 +49,23 @@ user manager is alive) or, on a box whose user manager is down (headless / non-l
 WSL — no `/run/user/<uid>/systemd`), `satelle service install --system` (a persistent
 **system** unit, `Restart=always`, running as you; one sudo at install time only).
 
-Once the release tag is published, dogfood:
+Once the release tag is published, dogfood. The **dogfood triad** is three **named
+checks** the release summary must satisfy (the release-review gate rejects by these
+names when a gap is present):
+
+| Named check | What must be true |
+| --- | --- |
+| **`check_cli_version`** | `satelle version` reports `$VER` (and the pushed commit SHA prefix) |
+| **`check_live_footer`** | Live web footer/service body contains `satelle $VER` (not only CLI) |
+| **`check_persistent_supervisor`** | The live service is under a **persistent** supervisor (system unit or linger-backed user manager), never an ephemeral `nohup`/`setsid` relaunch |
 
 ```bash
 VER=$(awk '$1=="satelle.version:"{print $2}' .version)
 satelle update                                   # pulls the published asset (sudo-free),
                                                  # restarts the supervisor onto the new binary
-satelle version                                  # must report $VER + the pushed commit SHA prefix
-curl -fsS "http://127.0.0.1:${PORT:-8787}/" | grep -F "satelle $VER"  # live footer = $VER
+satelle version                                  # check_cli_version: must report $VER + SHA prefix
+curl -fsS "http://127.0.0.1:${PORT:-8787}/" | grep -F "satelle $VER"  # check_live_footer
+# check_persistent_supervisor: confirm service is the installed unit, not a throwaway serve
 ```
 
 `satelle update` is sudo-free: it rewrites your `~/.local/bin` binary and restarts the
@@ -65,16 +76,17 @@ reporting `$VER`** is the pass criterion — not any particular restart command:
 - `satelle update` reports "already up to date" but the footer shows the OLD version →
   the restart no-op'd (dead user manager, or a non-`Restart=always` supervisor). Fix the
   supervisor (`satelle service install --system` for a persistent one), re-run.
-- Footer still shows the **previous** version → **release failed** (stale process). Make
+- Footer still shows the **previous** version → **`check_live_footer` failed** (stale process). Make
   the persistent supervisor run the new binary; re-verify. An ephemeral `nohup`/`setsid
   satelle serve …` relaunch is **NOT** an acceptable final state — it dies with the
-  session and the fleet silently reverts; use it only as a throwaway probe.
+  session and the fleet silently reverts; use it only as a throwaway probe
+  (`check_persistent_supervisor` fails).
 - `make install` is fine for an immediate local CLI build, but the DOGFOOD is `satelle
   update` (the real published artifact + the path a user hits) — do not substitute it.
 - Do **not** treat "printed guidance" or a manual note as success — the dogfood is done
-  only when the live version matches AND is served by a persistent supervisor.
+  only when **all three named checks** pass.
 
-Draft the summary body (§3) once the live footer matches `$VER`.
+Draft the summary body (§3) once every triad check passes.
 
 ### 2b. CI + published tag (one consolidated look)
 
@@ -90,13 +102,13 @@ Record what you actually SEE — `test` and `release` run URLs with **real concl
 
 ## 3. Record the summary WITH the story
 
-Write a short PR-style summary and attach it — evidence the release gate judges. **Must include local install** (CLI version line + footer/service check that matched `$VER`):
+Write a short PR-style summary and attach it — evidence the release gate judges. **Must include the dogfood triad by name** (`check_cli_version`, `check_live_footer`, `check_persistent_supervisor`):
 
 ```bash
 satelle story attach <sty_id> --name "release-summary-<sty_id>" \
   --type story-implementation-summary --body "…"
 ```
 
-Summary must cover: what shipped, SHA, version/tag, test + release URLs/conclusions, **local install verified** (`satelle version` + live footer/service at the new version).
+Summary must cover: what shipped, SHA, version/tag, test + release URLs/conclusions, and **each named dogfood check** with its observed result (CLI version line, live footer/service at `$VER`, persistent supervisor — not ephemeral).
 
 The `satelle-story-release-review` gate judges this recorded evidence and the ACs. See [[satelle-agent-model]], [[satelle-done-is-last]].
