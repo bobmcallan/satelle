@@ -330,7 +330,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		// top-level verdict so both paths record identically.
 		reviewers := dec.Reviewers
 		if len(reviewers) == 0 && dec.Gated {
-			reviewers = []ReviewerVerdict{{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes, Command: dec.Command, Context: dec.Context, Model: dec.Model,
+			reviewers = []ReviewerVerdict{{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, Command: dec.Command, Context: dec.Context, Model: dec.Model,
 				TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs}}
 		}
 		for _, rv := range reviewers {

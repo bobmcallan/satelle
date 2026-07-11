@@ -49,12 +49,12 @@ func TestBuildRequestCanonicalOrderAndOmitsEmpty(t *testing.T) {
 	g := New(&fakeRunner{}, docs, "/repo", "")
 
 	req, err := g.buildRequest(context.Background(), invocation{
-		charter:          reviewerCharter(),
-		rubric:           "RUBRIC-BODY",
-		injectPrinciples: true,
-		payload:          map[string]string{"k": "v"},
-		tools:            "Read,Grep",
-		model:            "sonnet",
+		charter:    reviewerCharter(),
+		rubric:     "RUBRIC-BODY",
+		principles: config.PrinciplesSession,
+		payload:    map[string]string{"k": "v"},
+		tools:      "Read,Grep",
+		model:      "sonnet",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -164,5 +164,122 @@ func TestRunOnceUsesSuppliedRunnerAndTimeout(t *testing.T) {
 
 	if _, _, err := g.runOnce(context.Background(), &blockingRunner{}, agentcli.Request{}, time.Millisecond); !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("runOnce must honour the per-invocation timeout, got %v", err)
+	}
+}
+
+func TestExpectFromRole(t *testing.T) {
+	if ExpectFromRole(config.RoleReviewer) != ExpectVerdict {
+		t.Error("reviewer role must map to ExpectVerdict")
+	}
+	if ExpectFromRole(config.RoleAgent) != ExpectPerform {
+		t.Error("agent role must map to ExpectPerform")
+	}
+	if ExpectFromRole("") != ExpectPerform {
+		t.Error("empty role must map to ExpectPerform")
+	}
+}
+
+func TestBuildRequestConstitutionOrderZero(t *testing.T) {
+	docs := fakeDocs{
+		workflow: testWorkflow,
+		extraPrinciples: []docindex.Doc{
+			{Kind: "principles", Name: config.OperatingPrinciple, Body: alwaysPrincipleDoc},
+		},
+	}
+	g := New(&fakeRunner{}, docs, "/repo", "")
+	g.SetConstitution("CONSTITUTION-BODY")
+	req, err := g.buildRequest(context.Background(), invocation{
+		charter:    reviewerCharter(),
+		rubric:     "R",
+		principles: config.PrinciplesSession,
+		payload:    map[string]string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp := req.SystemPrompt
+	iC := strings.Index(sp, "CONSTITUTION-BODY")
+	iP := strings.Index(sp, "This resident belief MUST be visible")
+	iChar := strings.Index(sp, "isolated satelle reviewer")
+	if iC < 0 || iP < 0 || !(iC < iP && iP < iChar) {
+		t.Errorf("constitution must precede principles which precede charter (%d,%d,%d):\n%s", iC, iP, iChar, sp)
+	}
+	if !strings.Contains(sp, "# Project constitution") {
+		t.Error("missing Project constitution heading")
+	}
+
+	// principles=none: neither constitution nor principles
+	req2, err := g.buildRequest(context.Background(), invocation{
+		rubric: "R", principles: config.PrinciplesNone, payload: map[string]string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(req2.SystemPrompt, "CONSTITUTION-BODY") || strings.Contains(req2.SystemPrompt, "Always-resident principles") {
+		t.Errorf("principles=none must inject nothing:\n%s", req2.SystemPrompt)
+	}
+}
+
+func TestInvokeExpectVerdictParsesDecision(t *testing.T) {
+	r := &fakeRunner{out: `{"decision":"accept","notes":"ok","reasoning":"because"}`}
+	g := New(r, fakeDocs{workflow: testWorkflow}, "/repo", "")
+	g.SetReviewerBinding(config.AgentBinding{
+		Command: "claude", Tools: "Read", Model: "sonnet", Principles: config.PrinciplesNone,
+	})
+	res := g.Invoke(context.Background(), InvokeRequest{
+		Binding: g.reviewerBinding,
+		Section: "reviewer",
+		Rubric:  "judge",
+		Payload: map[string]string{"x": "1"},
+		Expect:  ExpectVerdict,
+		Runner:  r,
+		Timeout: 0,
+		Skill:   "test-skill",
+	})
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	if res.Decision == nil || !res.Decision.Accept || res.Decision.Notes != "ok" || res.Decision.Reasoning != "because" {
+		t.Errorf("unexpected decision: %+v", res.Decision)
+	}
+}
+
+func TestInvokeExpectPerformReturnsStdout(t *testing.T) {
+	r := &fakeRunner{out: "did the work"}
+	g := New(r, fakeDocs{workflow: testWorkflow}, "/repo", "")
+	res := g.Invoke(context.Background(), InvokeRequest{
+		Binding: config.AgentBinding{Command: "claude", Tools: "Read", Principles: config.PrinciplesNone},
+		Section: "planner",
+		Rubric:  "do it",
+		Payload: map[string]string{},
+		Charter: executorCharter("planner", "plan", "wf"),
+		Expect:  ExpectPerform,
+		Runner:  r,
+	})
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	if string(res.Stdout) != "did the work" {
+		t.Errorf("stdout = %q", res.Stdout)
+	}
+	if res.Decision != nil {
+		t.Error("perform must not set Decision")
+	}
+}
+
+func TestParseDecisionReasoningOptional(t *testing.T) {
+	dec, err := parseDecision([]byte(`{"decision":"reject","notes":"n"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec.Accept || dec.Notes != "n" || dec.Reasoning != "" {
+		t.Errorf("notes-only: %+v", dec)
+	}
+	dec2, err := parseDecision([]byte(`{"decision":"accept","notes":"n","reasoning":"r"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec2.Accept || dec2.Reasoning != "r" {
+		t.Errorf("with reasoning: %+v", dec2)
 	}
 }

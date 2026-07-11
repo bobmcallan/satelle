@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -35,14 +36,31 @@ const (
 	DefaultReviewerTools   = "Read,Grep,Glob"
 )
 
+// Role values for AgentBinding.Role — the declared identity of a binding
+// (sty_fc670c9b / epic:agent-invoke-unify). Role is orthogonal to the section
+// name: judge-vs-perform is derived from role, not from the literal "reviewer".
+const (
+	RoleReviewer = "reviewer"
+	RoleAgent    = "agent"
+)
+
+// Principles selector tokens for AgentBinding.Principles — which principles ride
+// in an isolated agent's briefing (design sty_69fd4e20 §5).
+const (
+	PrinciplesSession = "session"
+	PrinciplesAll     = "all"
+	PrinciplesSystem  = "system"
+	PrinciplesProject = "project"
+	PrinciplesNone    = "none"
+)
+
 // AgentBinding binds one agent to a backend (how/where it runs) and its grant
 // (the tool allowance, and an optional model). Empty fields take the defaults.
 //
-// InjectPrinciples toggles whether an ISOLATED agent receives the session
-// (principles:session) principles in its system prompt — the same guardrails the
-// SessionStart injector gives the in-loop session (sty_46a40208). It DEFAULTS ON:
-// a nil pointer (the field absent from agents.toml) means inject. Set
-// inject_principles = false to omit them for that agent.
+// Role declares whether the binding is a reviewer (verdict contract) or an agent
+// (performer). Principles declares which principles inject into the isolated
+// briefing. InjectPrinciples is the DEPRECATED boolean alias for Principles
+// (true→session, false→none); Principles wins when both are set.
 type AgentBinding struct {
 	// Command is the agent's command template: a SINGLE token names a built-in
 	// preset (claude | grok | codex | in-loop); a MULTI-token value is a full
@@ -57,6 +75,14 @@ type AgentBinding struct {
 	Harness string `toml:"harness"`
 	Tools   string `toml:"tools"`
 	Model   string `toml:"model"`
+	// Role is "reviewer" | "agent". Empty means inferred from the section name
+	// (see ResolvedRole). The binary's only hard determination for a reviewer is
+	// the verdict contract; tool grant/model/command are user configuration.
+	Role string `toml:"role"`
+	// Principles selects which principles inject into the isolated briefing:
+	// "session" (default) | "all" | "system" | "project" | "none" | comma-list.
+	// Empty falls through to inject_principles alias, then session.
+	Principles string `toml:"principles"`
 	// Env sets environment variables on the dispatched agent's process (layered
 	// onto os.Environ, binding keys winning). Each value may reference the [vars]
 	// KV via ${NAME}, resolved at CLI wiring time (ResolveAgentEnvs) — how a step
@@ -70,8 +96,10 @@ type AgentBinding struct {
 	// feature was SIGKILLed at exactly 20m — sty_b73c3236), so the bound is authored
 	// config, not a compiled constant (sty_446c38b7). Applies to a DISPATCHED named
 	// executor; reviewer/summariser gate invocations keep the engine's agent bound.
-	Timeout          string `toml:"timeout"`
-	InjectPrinciples *bool  `toml:"inject_principles"`
+	Timeout string `toml:"timeout"`
+	// InjectPrinciples is the DEPRECATED alias for Principles (true→session,
+	// false→none). Prefer Principles. Principles wins when both are set.
+	InjectPrinciples *bool `toml:"inject_principles"`
 	// Settings MIRRORS claude's settings.local.json schema (env, model, permissions)
 	// verbatim — no derivation, no satelle-specific shape. It is materialised into
 	// the {settings} placeholder: ${VAR}-resolved (ResolveAgentEnvs, fail-fast on an
@@ -116,11 +144,72 @@ func (b AgentBinding) CommandTemplate() string {
 	return b.Harness
 }
 
-// InjectsPrinciples reports whether this binding injects the resident principles
-// into the isolated agent's context — true (the default) unless explicitly
-// disabled with inject_principles = false.
+// ResolvedRole returns the binding's effective role: the declared Role when set
+// to reviewer|agent (case-insensitive), else inferred from the section name
+// (section "reviewer" → reviewer, otherwise agent). section is the agents.toml
+// table name ([reviewer], [planner], …).
+func ResolvedRole(section string, b AgentBinding) string {
+	switch strings.ToLower(strings.TrimSpace(b.Role)) {
+	case RoleReviewer:
+		return RoleReviewer
+	case RoleAgent:
+		return RoleAgent
+	}
+	if strings.EqualFold(strings.TrimSpace(section), RoleReviewer) {
+		return RoleReviewer
+	}
+	return RoleAgent
+}
+
+// RoleInferred reports whether role was not declared and will be inferred from
+// the section name — used by agent validate/show to warn the operator to declare it.
+func RoleInferred(b AgentBinding) bool {
+	r := strings.ToLower(strings.TrimSpace(b.Role))
+	return r != RoleReviewer && r != RoleAgent
+}
+
+// ResolvedPrinciples returns the principles selector after alias expansion:
+// Principles when set; else inject_principles true→session / false→none; else session.
+// The returned string is a normalised selector (session|all|system|project|none or a
+// comma-joined subset); unknown tokens are kept so the engine can ignore them.
+func (b AgentBinding) ResolvedPrinciples() string {
+	if p := strings.TrimSpace(b.Principles); p != "" {
+		return normalizePrinciplesSelector(p)
+	}
+	if b.InjectPrinciples != nil {
+		if *b.InjectPrinciples {
+			return PrinciplesSession
+		}
+		return PrinciplesNone
+	}
+	return PrinciplesSession
+}
+
+// InjectsPrinciples reports whether this binding injects any principles (and the
+// constitution order-zero block) into the isolated agent's context — true unless
+// the resolved selector is none.
 func (b AgentBinding) InjectsPrinciples() bool {
-	return b.InjectPrinciples == nil || *b.InjectPrinciples
+	return b.ResolvedPrinciples() != PrinciplesNone
+}
+
+// normalizePrinciplesSelector lowercases, trims, and re-joins comma-list tokens.
+func normalizePrinciplesSelector(s string) string {
+	parts := strings.Split(s, ",")
+	var out []string
+	for _, p := range parts {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p == "" {
+			continue
+		}
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return PrinciplesSession
+	}
+	if len(out) == 1 {
+		return out[0]
+	}
+	return strings.Join(out, ",")
 }
 
 // AgentsConfig is the on-disk shape at .satelle/agents.toml — the agents layer.

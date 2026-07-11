@@ -82,7 +82,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// reviewer runs — emit progress to stderr so it is visibly distinct from
 			// a hang (sty_6c88ca10). stderr keeps stdout's JSON payload clean.
 			rev.SetProgress(func(msg string) { fmt.Fprintln(os.Stderr, msg) })
-			if aerr := applyAgentGrants(rev, agents); aerr != nil {
+			if aerr := applyAgentGrants(rev, a, agents); aerr != nil {
 				_ = a.Close()
 				return aerr
 			}
@@ -157,7 +157,7 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := applyAgentGrants(rev, agents); err != nil {
+	if err := applyAgentGrants(rev, a, agents); err != nil {
 		return nil, nil, err
 	}
 	return rev, a, nil
@@ -237,18 +237,19 @@ func requireAgents(a *app.App) (config.AgentsConfig, error) {
 }
 
 // applyAgentGrants binds the loaded agents layer onto the engine: the reviewer's
-// tool grant, model, principle injection, and harness. A broken harness value is
-// an error — the configuration executes as defined or refuses (sty_d0d6bb67).
-func applyAgentGrants(rev *agentstep.Engine, agents config.AgentsConfig) error {
+// binding (tools/model/env/principles/role), constitution order-zero, and harness.
+// A broken harness value is an error — the configuration executes as defined or
+// refuses (sty_d0d6bb67).
+func applyAgentGrants(rev *agentstep.Engine, a *app.App, agents config.AgentsConfig) error {
 	rb := agents.ReviewerBinding()
-	rev.SetReviewerTools(rb.Tools)
-	rev.SetReviewerModel(rb.Model)
-	// The reviewer binding's env (already ${VAR}-resolved by requireAgents) rides
-	// every isolated reviewer + summariser subprocess (sty_001558ce).
-	rev.SetReviewerEnv(rb.Env)
-	// Resident-principle injection is an agents-layer option, default ON
-	// (sty_46a40208): inject_principles = false in the reviewer binding omits it.
-	rev.SetInjectPrinciples(rb.InjectsPrinciples())
+	// Store the whole binding as the single resolution shape for Invoke
+	// (sty_ba860c8a); scalar caches are synced from it.
+	rev.SetReviewerBinding(rb)
+	// Project constitution rides order-zero in isolated briefings whenever
+	// principles ≠ none (design §5.3) — SessionStart parity with cmd_hook.
+	if a != nil {
+		rev.SetConstitution(readConstitution(a.Config.ResolveConstitution(a.RepoRoot)))
+	}
 	// Select the reviewer's agent CLI from the agents-layer command binding
 	// (default claude). An unset/in-loop command keeps the global [agent] cli
 	// configured at construction; an unresolvable one refuses.
