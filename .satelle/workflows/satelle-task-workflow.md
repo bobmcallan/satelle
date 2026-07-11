@@ -44,7 +44,7 @@ digraph satelle_task_workflow {
   rankdir=LR
 
   backlog     [shape=Mdiamond]
-  in_progress [agent=executor]
+  in_progress [agent=executor, prompt="@skill:task-run"]
   done        [shape=Msquare]
   cancelled   [shape=Msquare]
 

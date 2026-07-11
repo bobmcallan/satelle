@@ -45,7 +45,7 @@ digraph satelle_substrate_workflow {
   rankdir=LR
 
   backlog     [shape=Mdiamond]
-  in_progress [agent=executor]                                          // in-loop: author + commit + push the substrate slice
+  in_progress [agent=executor, prompt="@skill:substrate"]                                          // in-loop: author + commit + push the substrate slice
   done        [shape=Msquare]                                           // terminal (the close gate verifies substrate-only)
   cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
   blocked     [agent=reviewer, prompt="@skill:satelle-story-blocked-review"]
