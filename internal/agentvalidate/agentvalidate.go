@@ -36,6 +36,9 @@ type Grant struct {
 	Timeout           string
 	ReadOnly          bool
 	InjectsPrinciples bool
+	Role              string // resolved role: reviewer | agent (sty_e21cbc08)
+	Principles        string // resolved principles selector
+	RoleInferred      bool   // true when role was not declared in agents.toml
 	Notes             string // non-secret notes (e.g. env key names, command ceiling hints)
 }
 
@@ -78,9 +81,10 @@ func Validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 	}
 
 	for _, sec := range sections {
-		g, problems := checkBinding(sec.name, sec.b)
+		g, problems, warnings := checkBinding(sec.name, sec.b)
 		r.Grants = append(r.Grants, g)
 		r.Problems = append(r.Problems, problems...)
+		r.Warnings = append(r.Warnings, warnings...)
 	}
 
 	// Workflow node → binding + orphan named bindings.
@@ -117,8 +121,9 @@ func Validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 }
 
 // checkBinding validates one binding and builds its Grant.
-func checkBinding(section string, b config.AgentBinding) (Grant, []string) {
-	var problems []string
+// Returns hard problems and advisory warnings (role inference, role/path mismatch).
+func checkBinding(section string, b config.AgentBinding) (Grant, []string, []string) {
+	var problems, warnings []string
 	cmd := b.CommandTemplate()
 	if cmd == "" {
 		// Should not happen after *Binding resolvers, but be defensive.
@@ -129,12 +134,41 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string) {
 		}
 	}
 
+	role := config.ResolvedRole(section, b)
 	g := Grant{
 		Name:              section,
 		Tools:             b.Tools,
 		Model:             b.Model,
 		Timeout:           b.Timeout,
 		InjectsPrinciples: b.InjectsPrinciples(),
+		Role:              role,
+		Principles:        b.ResolvedPrinciples(),
+		RoleInferred:      config.RoleInferred(b),
+	}
+	if g.RoleInferred {
+		warnings = append(warnings, fmt.Sprintf(
+			"agents.toml [%s] has no role= declared — inferred role=%s; set role = %q to make the contract explicit",
+			section, role, role))
+	}
+	// Role/path mismatch warnings (not hard fails — user may reassign intentionally).
+	if section == "reviewer" && role != config.RoleReviewer {
+		warnings = append(warnings, fmt.Sprintf(
+			"agents.toml [reviewer] resolves role=%s (want role=reviewer for gate verdicts)", role))
+	}
+	if section != "reviewer" && section != "executor" && role == config.RoleReviewer {
+		warnings = append(warnings, fmt.Sprintf(
+			"agents.toml [%s] declares role=reviewer but is a named perform binding — gates use [reviewer] by default",
+			section))
+	}
+	// In-loop reviewer cannot produce an isolated verdict — warn at validate;
+	// gate refuses loud at transition time (design §6.4).
+	if role == config.RoleReviewer {
+		fields0 := strings.Fields(cmd)
+		if len(fields0) == 1 && strings.EqualFold(fields0[0], "in-loop") {
+			warnings = append(warnings, fmt.Sprintf(
+				"agents.toml [%s] is role=reviewer with command=in-loop — cannot produce an isolated verdict; gates will refuse",
+				section))
+		}
 	}
 	if len(b.Env) > 0 {
 		keys := make([]string, 0, len(b.Env))
@@ -210,7 +244,7 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string) {
 	if _, err := b.TimeoutDuration(0); err != nil {
 		problems = append(problems, fmt.Sprintf("agents.toml [%s] timeout: %v", section, err))
 	}
-	return g, problems
+	return g, problems, warnings
 }
 
 func sortedNames(m map[string]config.AgentBinding) []string {

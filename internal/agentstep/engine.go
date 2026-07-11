@@ -619,6 +619,8 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 			break
 		}
 	}
+	// Skip non-performers: empty agent, in-loop executor token, or the DOT
+	// reviewer token (design §9 (b) — DOT vocabulary).
 	if target == nil || target.Agent == "" || target.Agent == "executor" || target.Agent == "reviewer" {
 		return verb.DispatchResult{}, nil
 	}
@@ -631,6 +633,11 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		return verb.DispatchResult{}, fmt.Errorf(
 			"workflow %q allocates state %q to agent %q but .satelle/agents.toml defines no [%s] binding — define it, or reassign the step",
 			doc.Name, toStatus, target.Agent, target.Agent)
+	}
+	// Design §9 (a): when the resolved binding is role=reviewer, it is a judge
+	// not a performer — do not dispatch as ExpectPerform (isNamedPerformer).
+	if !isNamedPerformer(target.Agent, binding) {
+		return verb.DispatchResult{}, nil
 	}
 	// Edit-gate timing lock (sty_f5bd176f): a named CODE-WRITING agent (e.g. a
 	// `coder`) edits product files while the status is STILL the FROM state — the
@@ -817,6 +824,26 @@ func grantsSatelleCLI(tools string) bool {
 	return false
 }
 
+// isInLoopCommand reports whether a binding command is the in-loop preset
+// (single-token "in-loop", case-insensitive) — cannot produce an isolated verdict.
+// Empty command is NOT in-loop: tests and bootstrap leave command blank and wire
+// g.runner directly.
+func isInLoopCommand(cmd string) bool {
+	fields := strings.Fields(strings.TrimSpace(cmd))
+	return len(fields) == 1 && strings.EqualFold(fields[0], "in-loop")
+}
+
+// isNamedPerformer reports whether a workflow node agent=<name> should run as a
+// performing dispatch (ExpectPerform). The built-in DSL tokens are filtered
+// before this is called. A named binding whose resolved role is reviewer is a
+// judge, not a performer (design §9 (a) / sty_e21cbc08).
+func isNamedPerformer(section string, b config.AgentBinding) bool {
+	if section == "" || section == "executor" || section == "reviewer" {
+		return false
+	}
+	return config.ResolvedRole(section, b) != config.RoleReviewer
+}
+
 // grantsCodeEdit reports whether a binding's tools grant lets the agent WRITE
 // product files — Write/Edit/MultiEdit/NotebookEdit or the `*` wildcard. Only a
 // code-writing agent is subject to the edit-gate timing lock in DispatchExecutor;
@@ -963,6 +990,13 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 			"gate refused: reviewer skill %q fails structure validation: %s — fix the substrate (`satelle skill validate %s`)",
 			skill, strings.Join(problems, "; "), skill)
 	}
+	// Reviewer skill contract check (design §6.3): the body must specify the
+	// verdict contract (at least decision + notes). reasoning is recommended.
+	if problems := structure.ReviewerSkillContract(body); len(problems) > 0 {
+		return verb.GateDecision{}, fmt.Errorf(
+			"gate refused: reviewer skill %q does not specify the verdict contract: %s — the skill must document returning JSON {decision, notes} (reasoning recommended)",
+			skill, strings.Join(problems, "; "))
+	}
 	tp := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: skill}
 	if g.children != nil {
 		tp.Children = g.children(ctx, item.ID)
@@ -981,13 +1015,8 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 	if command := skillCheck(body); command != "" {
 		return g.runCheck(ctx, skill, command, string(payload)), nil
 	}
-	if g.runner == nil {
-		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
-			"reviewer: transition %s→%s is gated by %q but no agent runner is configured", item.Status, toStatus, skill)
-	}
-	// LLM path: shared Invoke (sty_ba860c8a) — binding resolution, buildRequest,
-	// runOnce, verdict retry/parse all live there. Pre-flight (skill, structure,
-	// functional-check, missing-rubric advisory) stays here.
+	// LLM path: shared Invoke (sty_ba860c8a / sty_e21cbc08). Pre-flight (skill,
+	// structure, functional-check, missing-rubric advisory) stays here.
 	binding := g.reviewerBinding
 	if binding.Tools == "" {
 		binding.Tools = g.tools
@@ -1005,6 +1034,22 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 		} else {
 			binding.Principles = config.PrinciplesNone
 		}
+	}
+	// Mechanism: a gate needs an isolated verdict. command=in-loop cannot produce
+	// one — fail loud at gate time (design §6.4), not by policing tools/model.
+	if isInLoopCommand(binding.CommandTemplate()) {
+		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
+			"gate refused: reviewer binding %q is command=in-loop and cannot produce an isolated verdict — set [reviewer] command to an isolated agent CLI (claude|grok|codex or a full template)", "reviewer")
+	}
+	// Role must resolve to reviewer for the gate binding (design §4.4 / §8).
+	if config.ResolvedRole("reviewer", binding) != config.RoleReviewer {
+		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
+			"gate refused: [reviewer] binding has role=%q (want role=reviewer) — declare role = \"reviewer\" in agents.toml",
+			config.ResolvedRole("reviewer", binding))
+	}
+	if g.runner == nil {
+		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
+			"reviewer: transition %s→%s is gated by %q but no agent runner is configured", item.Status, toStatus, skill)
 	}
 	res := g.Invoke(ctx, InvokeRequest{
 		Binding:  binding,

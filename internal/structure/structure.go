@@ -129,7 +129,32 @@ func checkSkill(name, body string) []string {
 	if !hasProse(rest) && !hasCheckBlock(rest) && !fmHas(fm, "check") {
 		p = append(p, "no usable definition — provide a rubric body or a self-contained check")
 	}
+	// Reviewer skill contract (design §6.3 / sty_e21cbc08): when the skill looks
+	// like a gate reviewer (name ends in -review, or tags include reviewer-ish
+	// markers), require the verdict contract. Functional-check skills exempt.
+	// satelle skill validate shares this path with the gate pre-flight.
+	if isReviewerSkillName(name, fm) {
+		p = append(p, ReviewerSkillContract(body)...)
+	}
 	return p
+}
+
+// isReviewerSkillName reports whether a skill is a gate-reviewer rubric that must
+// specify the verdict contract. Heuristic: name ends with "-review" (e.g.
+// satelle-story-done-review, satelle-code-ac-review). type:audit skills and
+// names that merely contain "reviewer" (e.g. satelle-reviewer-objective-audit)
+// are NOT gate rubrics. Tags carrying type:reviewer also qualify.
+// Functional-check skills are exempted inside ReviewerSkillContract.
+func isReviewerSkillName(name string, fm []string) bool {
+	if strings.EqualFold(fmScalar(fm, "type"), "audit") {
+		return false
+	}
+	n := strings.ToLower(name)
+	if strings.HasSuffix(n, "-review") {
+		return true
+	}
+	tags := strings.ToLower(fmScalar(fm, "tags"))
+	return strings.Contains(tags, "type:reviewer") || strings.Contains(tags, "reviewer:gate")
 }
 
 // CheckTask validates a task work-definition FILE (.satelle/tasks/tsk_*.md).
@@ -340,4 +365,29 @@ func hasCheckBlock(body string) bool {
 		}
 	}
 	return false
+}
+
+// ReviewerSkillContract checks that a reviewer skill body specifies the gate
+// verdict contract — at least decision + notes in a JSON/return instruction
+// (design §6.3, sty_e21cbc08). reasoning is recommended but not required.
+// Functional-check skills (```check / check: frontmatter) are exempt: they do
+// not produce LLM JSON verdicts.
+func ReviewerSkillContract(body string) []string {
+	fm, rest, ok := splitFM(body)
+	if !ok {
+		// Bare body (test stubs without frontmatter): still check the text.
+		rest = body
+	}
+	if hasCheckBlock(rest) || (ok && fmHas(fm, "check")) {
+		return nil // functional check — no LLM verdict contract
+	}
+	lower := strings.ToLower(rest)
+	var p []string
+	if !strings.Contains(lower, "decision") {
+		p = append(p, "skill must document the JSON decision field (accept|reject)")
+	}
+	if !strings.Contains(lower, "notes") && !strings.Contains(lower, "reasoning") {
+		p = append(p, "skill must document notes (or reasoning) in the verdict contract")
+	}
+	return p
 }

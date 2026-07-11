@@ -304,3 +304,54 @@ func TestUngatedTransitionSkipsSummariser(t *testing.T) {
 		t.Errorf("summariser ran on an ungated transition (%d calls)", sum.calls)
 	}
 }
+
+// TestStorySetSurfacesDecisionNotesReasoning pins AC8 (sty_e21cbc08): reject
+// errors carry decision=, notes=, and reasoning=; accept enacts with the same
+// fields on the review_accept ledger body (stderr is the live session notice).
+func TestStorySetSurfacesDecisionNotesReasoning(t *testing.T) {
+	wire(t)
+
+	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{
+		Gated: true, Accept: false, Skill: "satelle-story-done-review",
+		Notes: "missing AC", Reasoning: "body lacks numbered criteria",
+	}})
+	t.Cleanup(func() { verb.SetTransitionGater(nil) })
+
+	var it workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it)
+	_, err := dispatchRaw(t, "story-set", map[string]any{"id": it.ID, "status": "done"})
+	if err == nil {
+		t.Fatal("expected reject")
+	}
+	msg := err.Error()
+	for _, want := range []string{"decision=reject", "notes=missing AC", "reasoning=body lacks numbered criteria"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("reject error missing %q: %s", want, msg)
+		}
+	}
+
+	// Accept path: status enacts; acceptBody format is covered by the reject shape
+	// and the pure formatReasoningSuffix internal test in workitem_internal_test.
+	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{
+		Gated: true, Accept: true, Skill: "satelle-story-done-review",
+		Notes: "all good", Reasoning: "ACs met in tree",
+	}})
+	var it2 workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "y", "status": "in_progress"}), &it2)
+	var after workitem.Item
+	json.Unmarshal(call(t, "story-set", map[string]any{"id": it2.ID, "status": "done"}), &after)
+	if after.Status != "done" {
+		t.Fatalf("accept should enact, status=%q", after.Status)
+	}
+	var accepts []ledger.Entry
+	json.Unmarshal(call(t, "ledger-list", map[string]any{"story_id": it2.ID, "kind": ledger.KindReviewAccept}), &accepts)
+	if len(accepts) == 0 {
+		t.Fatal("expected a review_accept ledger row")
+	}
+	body := accepts[0].Body
+	for _, want := range []string{"decision=accept", "notes=all good", "reasoning=ACs met in tree"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("accept ledger body missing %q: %s", want, body)
+		}
+	}
+}

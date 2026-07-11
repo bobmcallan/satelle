@@ -137,3 +137,19 @@ func hasProb(ps []string, sub string) bool {
 	}
 	return false
 }
+
+func TestReviewerSkillContract(t *testing.T) {
+	ok := "---\nname: r\ntype: skill\ndescription: d\n---\n\nReturn {\"decision\": \"accept\", \"notes\": \"…\"}.\n"
+	if p := ReviewerSkillContract(ok); len(p) != 0 {
+		t.Errorf("ok skill problems: %v", p)
+	}
+	bad := "---\nname: r\ntype: skill\ndescription: d\n---\n\nJust judge the story.\n"
+	if p := ReviewerSkillContract(bad); len(p) == 0 {
+		t.Error("expected problems for skill without decision/notes")
+	}
+	// Functional check exempt
+	check := "---\nname: c\ntype: skill\ndescription: d\ncheck: true\n---\n\n```check\nexit 0\n```\n"
+	if p := ReviewerSkillContract(check); len(p) != 0 {
+		t.Errorf("check skill should be exempt: %v", p)
+	}
+}

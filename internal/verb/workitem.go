@@ -348,13 +348,17 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 					fmt.Sprintf("rejected %s→%s by %s: %s", current.Status, *req.Status, rv.Skill, rv.Notes),
 					reviewerPayload(current.Status, *req.Status, rv), now)
 				notifyChange(panelTopic(current.Kind))
-				return nil, fmt.Errorf("transition %s→%s rejected by %s: %s",
-					current.Status, *req.Status, rv.Skill, rv.Notes)
+				return nil, fmt.Errorf("transition %s→%s rejected by %s: decision=reject notes=%s%s",
+					current.Status, *req.Status, rv.Skill, rv.Notes, formatReasoningSuffix(rv.Reasoning))
 			}
 			gatedAccepted = true
+			acceptBody := fmt.Sprintf("accepted %s→%s by %s: decision=accept notes=%s%s",
+				current.Status, *req.Status, rv.Skill, rv.Notes, formatReasoningSuffix(rv.Reasoning))
 			appendLedgerEntry(ctx, current.ID, ledger.KindReviewAccept, "reviewer",
-				fmt.Sprintf("accepted %s→%s by %s", current.Status, *req.Status, rv.Skill),
-				reviewerPayload(current.Status, *req.Status, rv), now)
+				acceptBody, reviewerPayload(current.Status, *req.Status, rv), now)
+			// Transparency (design §6.2 / epic AC): surface accept verdicts too —
+			// decision, notes, reasoning on stderr (reject already returns as error).
+			fmt.Fprintln(os.Stderr, acceptBody)
 		}
 	}
 
@@ -957,12 +961,16 @@ func transitionPayload(from, to, skill string) json.RawMessage {
 // system layer.
 func reviewerPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 	p := struct {
-		From   string `json:"from"`
-		To     string `json:"to"`
-		Skill  string `json:"skill,omitempty"`
-		Order  int    `json:"order"`
-		System bool   `json:"system,omitempty"`
-	}{From: from, To: to, Skill: rv.Skill, Order: rv.Order, System: rv.System}
+		From      string `json:"from"`
+		To        string `json:"to"`
+		Skill     string `json:"skill,omitempty"`
+		Order     int    `json:"order"`
+		System    bool   `json:"system,omitempty"`
+		Notes     string `json:"notes,omitempty"`
+		Reasoning string `json:"reasoning,omitempty"`
+		Accept    bool   `json:"accept"`
+	}{From: from, To: to, Skill: rv.Skill, Order: rv.Order, System: rv.System,
+		Notes: rv.Notes, Reasoning: rv.Reasoning, Accept: rv.Accept}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil
@@ -992,6 +1000,15 @@ func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
 		return nil
 	}
 	return b
+}
+
+// formatReasoningSuffix appends " reasoning=<text>" when non-empty so accept and
+// reject session output share one shape (design §6.2).
+func formatReasoningSuffix(reasoning string) string {
+	if strings.TrimSpace(reasoning) == "" {
+		return ""
+	}
+	return " reasoning=" + reasoning
 }
 
 // invocationPayload stamps an agent_invocation row with the resolved command and

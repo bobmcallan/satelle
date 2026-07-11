@@ -4,6 +4,11 @@
 # (each one argv token; payload also on stdin — dual delivery). `harness` is the
 # deprecated alias, still parsed. See `satelle help agent-dispatch`.
 #
+# role = "reviewer" | "agent" declares the binding's contract (epic:agent-invoke-unify):
+#   reviewer → isolated verdict {decision, notes, reasoning}
+#   agent    → performer (in-loop or sub-process)
+# principles = session|all|system|project|none (or comma-list) declares injected context.
+#
 # Reviewer: Grok, argv-first ({payload} on -p + stdin) — the FULL command so the
 # read-only grant (--tools read_file,grep,list_dir) and mutator ceiling (--deny …)
 # are visible rather than hidden behind the `grok` preset token.
@@ -14,7 +19,9 @@
 # model stays non-empty (TestRepoReviewerModelIsActive).
 
 [executor]
+role    = "agent"
 command = "in-loop"
+principles = "session"
 
 # Full command template, not the bare "grok" preset — the reviewer's grant must be
 # VISIBLE (transparency, sty_892517e7): the read-only --tools grant and the --deny
@@ -22,16 +29,22 @@ command = "in-loop"
 # cannot do without knowing what a preset expands to. (command = "grok" resolves to
 # this exact argv; the preset is for a from-scratch wiring, not the committed default.)
 [reviewer]
+role    = "reviewer"
 command = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir -m {model} --deny Write --deny Edit --deny search_replace --deny write --always-approve --output-format plain --max-turns 16 --no-subagents"
 tools   = "read_file,grep,list_dir"   # grok-native read-only grant (the preset bakes this; shown here so the ceiling is explicit)
 model   = "grok-4.5"
+principles = "session"
 
 [planner]
+role    = "agent"
 command = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Bash(satelle:*)"
 model   = "opus"
+principles = "session"
 
 [retrospective]
+role    = "agent"
 command = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Bash(satelle:*)"
 model   = "sonnet"
+principles = "session"

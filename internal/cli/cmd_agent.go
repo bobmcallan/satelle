@@ -126,8 +126,19 @@ func agentValidateCmd() *cobra.Command {
 				if g.ReadOnly {
 					ro = "read-only"
 				}
-				fmt.Fprintf(out, "  GRANT [%s] backend=%s %s tools=%q model=%q timeout=%q inject_principles=%v\n",
-					g.Name, g.Backend, ro, g.Tools, g.Model, g.Timeout, g.InjectsPrinciples)
+				consti := "no"
+				if g.InjectsPrinciples {
+					consti = "yes" // constitution rides order-zero when principles ≠ none
+				}
+				if g.Backend == "in-loop" {
+					consti = "n/a (in-loop; session injects)"
+				}
+				roleNote := g.Role
+				if g.RoleInferred {
+					roleNote += " (inferred)"
+				}
+				fmt.Fprintf(out, "  GRANT [%s] role=%s principles=%s constitution=%s backend=%s %s tools=%q model=%q timeout=%q inject_principles=%v\n",
+					g.Name, roleNote, g.Principles, consti, g.Backend, ro, g.Tools, g.Model, g.Timeout, g.InjectsPrinciples)
 				if g.Notes != "" {
 					fmt.Fprintf(out, "         notes: %s\n", g.Notes)
 				}
