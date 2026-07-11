@@ -31,12 +31,15 @@ func wfDoc(name, appliesTo, graph string) string {
 // conformantSkill wraps a bare rubric in the conformant skill-doc envelope for
 // the same reason (the gate refuses an invalid PRESENT reviewer skill); a body
 // already carrying frontmatter is returned as-is so fixtures with authored
-// frontmatter (e.g. a check: skill) stay verbatim.
+// frontmatter (e.g. a check: skill) stay verbatim. The envelope includes a
+// minimal verdict-contract phrase so the reviewer skill contract check (design
+// §6.3 / sty_e21cbc08) passes for test stubs that only supply a short rubric.
 func conformantSkill(name, rubric string) string {
 	if strings.HasPrefix(rubric, "---\n") {
 		return rubric
 	}
-	return "---\nname: " + name + "\ntype: skill\ndescription: test rubric\n---\n\n" + rubric + "\n"
+	return "---\nname: " + name + "\ntype: skill\ndescription: test rubric\n---\n\n" +
+		rubric + "\n\nReturn JSON {\"decision\": \"accept\"|\"reject\", \"notes\": \"…\"}.\n"
 }
 
 var testWorkflow = wfDoc(baselineWorkflow, `"*"`, `digraph w {
@@ -2367,5 +2370,32 @@ func TestDispatchExecutor_recordsFailureTelemetry(t *testing.T) {
 	}
 	if o, _ := rec.data["outcome"].(string); o != "signal:killed" {
 		t.Errorf("telemetry outcome = %q, want signal:killed", o)
+	}
+}
+
+func TestGate_inLoopReviewerFailsLoud(t *testing.T) {
+	g, _ := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: testWorkflow, skillBody: "rubric body", skillFound: true})
+	g.SetReviewerBinding(config.AgentBinding{Command: "in-loop", Role: config.RoleReviewer, Principles: config.PrinciplesNone})
+	g.SetRunner(nil) // force re-check; Invoke also needs runner, but we fail earlier
+	// Put a dummy runner so we hit the in-loop check before nil-runner.
+	g.SetRunner(&fakeRunner{out: `{"decision":"accept"}`})
+	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_x", Status: "backlog"}, "in_progress")
+	if err == nil {
+		t.Fatalf("expected in-loop reviewer to fail, got accept=%v", dec.Accept)
+	}
+	if !strings.Contains(err.Error(), "in-loop") || !strings.Contains(err.Error(), "isolated verdict") {
+		t.Errorf("error should name in-loop mechanism failure: %v", err)
+	}
+}
+
+func TestIsNamedPerformer(t *testing.T) {
+	if isNamedPerformer("planner", config.AgentBinding{Role: config.RoleAgent}) != true {
+		t.Error("planner role=agent should perform")
+	}
+	if isNamedPerformer("strict", config.AgentBinding{Role: config.RoleReviewer}) != false {
+		t.Error("named role=reviewer must not perform")
+	}
+	if isNamedPerformer("reviewer", config.AgentBinding{}) != false {
+		t.Error("DSL reviewer token must not perform")
 	}
 }
