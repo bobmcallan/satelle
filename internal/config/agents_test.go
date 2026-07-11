@@ -178,6 +178,40 @@ func TestLoadAgentsOverride(t *testing.T) {
 	}
 }
 
+// TestCommandHarnessAlias pins the harness→command rename with back-compat
+// (sty_17cae74b): the field is now `command`; a pre-rename file authored with the
+// deprecated `harness` key still resolves via CommandTemplate(), and `command`
+// wins when a (transitional) file sets both. Drives the on-disk→resolved path
+// through LoadAgents + ReviewerBinding so it proves the whole seam, not just the
+// struct method — this is what keeps existing satelle/satelle-server agents.toml
+// resolving their reviewer across the upgrade.
+func TestCommandHarnessAlias(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"command only", "[reviewer]\ncommand = \"claude -p {system}\"\n", "claude -p {system}"},
+		{"harness alias still parses", "[reviewer]\nharness = \"grok -p {payload}\"\n", "grok -p {payload}"},
+		{"command wins over harness", "[reviewer]\ncommand = \"claude win\"\nharness = \"grok lose\"\n", "claude win"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(c.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ac, err := LoadAgents(dir)
+			if err != nil {
+				t.Fatalf("LoadAgents: %v", err)
+			}
+			if got := ac.ReviewerBinding().CommandTemplate(); got != c.want {
+				t.Errorf("CommandTemplate() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 // TestLoadAgentsSettingsTable pins AC1/AC2: a binding's `settings` table decodes
 // as a generic map[string]any (env, model, and a nested permissions.allow array)
 // with no dedicated schema struct — LoadAgents's existing PrimitiveDecode-into-map

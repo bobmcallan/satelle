@@ -1,31 +1,30 @@
-# agents.toml — hybrid dogfood for dual payload (epic:harness-payload).
-# Reviewer: Grok with {payload} on -p + stdin (argv-first dual delivery).
-# Planner/worker/retrospective: Claude stdin-first (no {payload} — not double-fed)
-# so Bash(satelle:*) and code tools work. Grok Build currently cannot enable
+# agents.toml — the agents layer: how each agent runs (backend + tool grant).
+# The `command` field is a SINGLE-token PRESET (claude | grok | codex | in-loop)
+# or a full command template with {system}/{tools}/{model}/{payload} placeholders
+# (each one argv token; payload also on stdin — dual delivery). `harness` is the
+# deprecated alias, still parsed. See `satelle help agent-dispatch`.
+#
+# Reviewer: the `grok` preset — argv-first ({payload} on -p + stdin), grok's real
+# flags and a baked-in read-only grant (read_file,grep,list_dir + mutator denies).
+# Planner/retrospective: Claude stdin-first (no {payload} — not double-fed) so
+# Bash(satelle:*) and code tools work. Grok Build currently cannot enable
 # run_terminal_command (agent-build constraint), so Grok is not used for
 # shell-needing dispatch steps.
 # model stays non-empty (TestRepoReviewerModelIsActive).
 
 [executor]
-harness = "in-loop"
+command = "in-loop"
 
 [reviewer]
-harness = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir -m {model} --deny Write --deny Edit --deny search_replace --deny write --always-approve --output-format plain --max-turns 16 --no-subagents"
-tools   = "read_file,grep,list_dir"
+command = "grok"       # single-token preset — expands to grok's read-only reviewer template
 model   = "grok-4.5"
 
 [planner]
-harness = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
+command = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Bash(satelle:*)"
-model   = "sonnet"
-
-[worker]
-harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
-tools   = "Read,Grep,Glob,Edit,Write,Bash(satelle:*),Bash(go:*),Bash(gofmt:*),Bash(make:*),Bash(git:*),Bash(gh:*)"
-model   = "sonnet"
-timeout = "45m"
+model   = "opus"
 
 [retrospective]
-harness = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
+command = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Bash(satelle:*)"
 model   = "sonnet"
