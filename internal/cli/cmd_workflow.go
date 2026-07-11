@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/agentstep"
+	"github.com/bobmcallan/satelle/internal/wfdot"
 )
 
 // baselineWorkflowName is the canonical order-zero default the engine falls back
@@ -81,8 +82,81 @@ default. The head of the list is the active workflow the reviewer enforces.`,
 	}
 	list.Flags().StringVar(&category, "category", "", "story category to match (empty = wildcard workflows only)")
 
-	wf.AddCommand(list, authoredCreateCmd("workflows"), authoredValidateCmd("workflows"))
+	// format-drift is advisory (exit 0 when the workflow parses) — format lag
+	// still runs; detection is for the operator / satelle-workflow-drift skill
+	// (sty_2c0c8599), not a hard engage gate.
+	formatDrift := &cobra.Command{
+		Use:   "format-drift [name]",
+		Short: "Report format drift vs the canonical latest workflow DOT form (advisory)",
+		Long: `format-drift runs the deterministic format lint (wfdot.FormatDrift) against
+one or every on-disk workflow. Findings are FORMAT lag only (legacy reviewer_skill=
+edge gates, prompt-less performing nodes, missing graph goal/vars/rankdir) —
+distinct from binding-drift (workflow ↔ agents.toml). Repo-specific topology is
+never reported. Exit 0 when the body parses; non-zero only if a named workflow
+is missing. See the satelle-dot-standard principle and the satelle-workflow-drift skill.`,
+		Args:        cobra.MaximumNArgs(1),
+		Annotations: needsStore(),
+		RunE:        runWorkflowFormatDrift,
+	}
+
+	wf.AddCommand(list, authoredCreateCmd("workflows"), authoredValidateCmd("workflows"), formatDrift)
 	register(wf)
+}
+
+// runWorkflowFormatDrift implements `satelle workflow format-drift [name]`.
+func runWorkflowFormatDrift(cmd *cobra.Command, args []string) error {
+	a, err := appFrom(cmd)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	out := cmd.OutOrStdout()
+	nameFilter := ""
+	if len(args) > 0 {
+		nameFilter = args[0]
+	}
+
+	var docs []struct {
+		Name, Body string
+	}
+	if nameFilter != "" {
+		d, gerr := a.Store.DocIndex.Get(ctx, "workflows", nameFilter)
+		if gerr != nil {
+			return fmt.Errorf("workflow %q: %w", nameFilter, gerr)
+		}
+		docs = append(docs, struct{ Name, Body string }{d.Name, d.Body})
+	} else {
+		listed, lerr := a.Store.DocIndex.List(ctx, "workflows")
+		if lerr != nil {
+			return lerr
+		}
+		for _, d := range listed {
+			if d.Name == "README" {
+				continue
+			}
+			docs = append(docs, struct{ Name, Body string }{d.Name, d.Body})
+		}
+	}
+
+	totalFindings := 0
+	for _, d := range docs {
+		fs, ok := wfdot.FormatDrift(d.Body)
+		if !ok {
+			fmt.Fprintf(out, "SKIP  workflows/%s — no parseable ```dot block\n", d.Name)
+			continue
+		}
+		if len(fs) == 0 {
+			fmt.Fprintf(out, "CLEAN workflows/%s — no format drift\n", d.Name)
+			continue
+		}
+		fmt.Fprintf(out, "DRIFT workflows/%s — %d finding(s)\n", d.Name, len(fs))
+		for _, f := range fs {
+			fmt.Fprintf(out, "  [%s] %s — %s\n", f.Kind, f.Where, f.Detail)
+		}
+		totalFindings += len(fs)
+	}
+	fmt.Fprintf(out, "\nformat-drift: %d workflow(s), %d finding(s) (advisory)\n", len(docs), totalFindings)
+	return nil
 }
 
 // workflowChoice is one entry in the ordered list satelle offers the agent.
