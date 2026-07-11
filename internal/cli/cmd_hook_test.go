@@ -132,6 +132,60 @@ func TestIsGitCommitOrPush(t *testing.T) {
 	}
 }
 
+// TestCommitDenyReason (sty_577d292f): deny text teaches pre-execution semantics
+// and plan/in_progress; fused engage+commit gets the split-into-two-calls text.
+// Gate behavior is unchanged — both paths are still deny strings only.
+func TestCommitDenyReason(t *testing.T) {
+	// Base deny: pre-execution + both engaging statuses.
+	base := commitDenyReason("git commit -m x")
+	if base != noEngagedStoryCommitReason {
+		t.Fatalf("plain commit deny: got %q", base)
+	}
+	for _, want := range []string{
+		"BEFORE the command executes",
+		"SEPARATE, PRIOR",
+		"--status plan",
+		"--status in_progress",
+	} {
+		if !strings.Contains(base, want) {
+			t.Errorf("noEngagedStoryCommitReason missing %q:\n%s", want, base)
+		}
+	}
+
+	// Fused pattern: engage + commit in one payload → explicit split message.
+	fusedCmd := `./satelle story set sty_abc --status in_progress
+git add .
+git commit -m "docs (sty_abc)"`
+	fused := commitDenyReason(fusedCmd)
+	if fused != fusedEngageAndCommitReason {
+		t.Fatalf("fused deny: got %q", fused)
+	}
+	for _, want := range []string{
+		"fused engage+commit",
+		"BEFORE any line runs",
+		"TWO tool calls",
+		"plan or in_progress",
+	} {
+		if !strings.Contains(fused, want) {
+			t.Errorf("fusedEngageAndCommitReason missing %q:\n%s", want, fused)
+		}
+	}
+
+	// story set without --status is not the engage pattern; base deny.
+	if got := commitDenyReason("satelle story set sty_x\ngit push"); got != noEngagedStoryCommitReason {
+		t.Errorf("story set without --status should use base deny, got %q", got)
+	}
+	if !isFusedEngageAndCommit(fusedCmd) {
+		t.Error("isFusedEngageAndCommit(fused) = false, want true")
+	}
+	if isFusedEngageAndCommit("git commit -m only") {
+		t.Error("isFusedEngageAndCommit(commit only) = true, want false")
+	}
+	if isFusedEngageAndCommit("satelle story set x --status plan") {
+		t.Error("isFusedEngageAndCommit(engage only) = true, want false")
+	}
+}
+
 func TestBashCommandFromEvent(t *testing.T) {
 	// Claude Code snake_case (tool_input.command).
 	if got := bashCommandFromEvent([]byte(`{"tool_input":{"command":"git push"}}`)); got != "git push" {
