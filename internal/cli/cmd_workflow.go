@@ -9,7 +9,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -99,7 +103,32 @@ is missing. See the satelle-dot-standard principle and the satelle-workflow-drif
 		RunE:        runWorkflowFormatDrift,
 	}
 
-	wf.AddCommand(list, authoredCreateCmd("workflows"), authoredValidateCmd("workflows"), formatDrift)
+	// refresh rewrites a named workflow toward the canonical format (sty_084f4879).
+	// Default is dry-run (show diff); --apply writes after the operator confirms.
+	var refreshApply bool
+	var refreshPrompts []string
+	refresh := &cobra.Command{
+		Use:   "refresh <name>",
+		Short: "Update a workflow DOT to the canonical latest format (consultative)",
+		Long: `refresh rewrites a named workflow's fenced DOT toward the canonical latest
+form (node-consistent edge gates, optional performing-node prompts via --prompt,
+missing rankdir/graph attrs). Topology, on= reviewers, comments, and guardrails
+prose are preserved — only format lag is patched.
+
+Default is a DRY RUN: print a line diff and the applied/gap report; write nothing.
+Pass --apply to write the file after you review the diff. Re-running on an
+already-canonical workflow is a no-op. Performing-node rubrics are NEVER invented
+— supply them with --prompt <node>=<skill> (repeatable).`,
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runWorkflowRefresh(cmd, args[0], refreshApply, refreshPrompts)
+		},
+	}
+	refresh.Flags().BoolVar(&refreshApply, "apply", false, "write the refreshed workflow after showing the diff (default: dry-run)")
+	refresh.Flags().StringArrayVar(&refreshPrompts, "prompt", nil, "performing-node rubric mapping node=skill (repeatable)")
+
+	wf.AddCommand(list, authoredCreateCmd("workflows"), authoredValidateCmd("workflows"), formatDrift, refresh)
 	register(wf)
 }
 
@@ -157,6 +186,104 @@ func runWorkflowFormatDrift(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(out, "\nformat-drift: %d workflow(s), %d finding(s) (advisory)\n", len(docs), totalFindings)
 	return nil
+}
+
+// runWorkflowRefresh implements `satelle workflow refresh <name> [--apply] [--prompt node=skill]`.
+func runWorkflowRefresh(cmd *cobra.Command, name string, apply bool, promptFlags []string) error {
+	a, err := appFrom(cmd)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	out := cmd.OutOrStdout()
+
+	d, err := a.Store.DocIndex.Get(ctx, "workflows", name)
+	if err != nil {
+		return fmt.Errorf("workflow %q: %w", name, err)
+	}
+	prompts := map[string]string{}
+	for _, p := range promptFlags {
+		k, v, ok := strings.Cut(p, "=")
+		if !ok || k == "" || v == "" {
+			return fmt.Errorf("--prompt wants node=skill, got %q", p)
+		}
+		prompts[k] = v
+	}
+
+	newBody, changed, report := wfdot.Refresh(d.Body, prompts)
+	if !changed {
+		fmt.Fprintf(out, "workflows/%s — already canonical, no changes\n", name)
+		for _, g := range report.Gaps {
+			fmt.Fprintf(out, "  GAP  [%s] %s — %s\n", g.Kind, g.Where, g.Detail)
+		}
+		return nil
+	}
+
+	fmt.Fprintf(out, "=== proposed refresh: workflows/%s ===\n", name)
+	printLineDiff(out, d.Body, newBody)
+	fmt.Fprintln(out, "\nApplied:")
+	for _, f := range report.Applied {
+		fmt.Fprintf(out, "  + [%s] %s — %s\n", f.Kind, f.Where, f.Detail)
+	}
+	if len(report.Gaps) > 0 {
+		fmt.Fprintln(out, "Remaining gaps (pass --prompt node=skill):")
+		for _, g := range report.Gaps {
+			fmt.Fprintf(out, "  ? [%s] %s — %s\n", g.Kind, g.Where, g.Detail)
+		}
+	}
+
+	if !apply {
+		fmt.Fprintln(out, "\nDry-run only — re-run with --apply to write after you confirm the diff.")
+		return nil
+	}
+
+	// Write in place (path from the indexed doc).
+	path := d.Path
+	if path == "" {
+		path = filepath.Join(filepath.Dir(a.DBPath), "workflows", name+".md")
+	}
+	if err := os.WriteFile(path, []byte(newBody), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	// Reindex so the store sees the new body.
+	if _, err := a.Store.DocIndex.Sync(ctx, map[string]string{
+		"workflows": filepath.Dir(path),
+	}, time.Now()); err != nil {
+		fmt.Fprintf(out, "wrote %s (reindex warning: %v — run satelle reindex)\n", path, err)
+		return nil
+	}
+	fmt.Fprintf(out, "\nwrote %s\n", path)
+	return nil
+}
+
+// printLineDiff writes a minimal line-oriented diff (no LCS): lines only in old
+// as '-', only in new as '+', shared context omitted for brevity when long.
+func printLineDiff(w io.Writer, oldS, newS string) {
+	oldLines := strings.Split(oldS, "\n")
+	newLines := strings.Split(newS, "\n")
+	// Index multiset of new lines for a cheap presence check.
+	newCount := map[string]int{}
+	for _, ln := range newLines {
+		newCount[ln]++
+	}
+	oldCount := map[string]int{}
+	for _, ln := range oldLines {
+		oldCount[ln]++
+	}
+	for _, ln := range oldLines {
+		if newCount[ln] > 0 {
+			newCount[ln]--
+			continue
+		}
+		fmt.Fprintf(w, "- %s\n", ln)
+	}
+	for _, ln := range newLines {
+		if oldCount[ln] > 0 {
+			oldCount[ln]--
+			continue
+		}
+		fmt.Fprintf(w, "+ %s\n", ln)
+	}
 }
 
 // workflowChoice is one entry in the ordered list satelle offers the agent.
