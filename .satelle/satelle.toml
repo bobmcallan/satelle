@@ -26,7 +26,7 @@ gate_create = false
 # special-case the data dir (sty_8c3d345c). ".satelle/" keeps this repo's authored
 # substrate (workflows/skills/principles/documents/tasks/config) editable without a
 # release. Add ".claude/" here to author Claude Code skills without an engaged story.
-edit_exempt_paths = [".satelle/"]
+edit_exempt_paths = [".satelle/", ".claude/"]
 
 [hosted]
 server = "https://satelle.dev"
