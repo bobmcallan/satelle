@@ -59,6 +59,9 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetStoryRetention(a.Config.StoriesKeepClosed, a.Config.StoriesKeepDays)
 	// Single-story process rule (default enforce; [gate] allow_parallel opts out).
 	verb.SetAllowParallelStories(a.Config.Gate.AllowParallel)
+	// Engage precondition (sty_93eec36d): agents.toml + workflow agent= validation
+	// before a story leaves its entry state. agents already loaded by requireAgents.
+	verb.SetAgentsConfig(agents, a.Config.Vars)
 	// A task, unlike a story, IS authored substrate: its <data_dir>/tasks/tsk_*.md
 	// work-definition file is the source of truth and the store is its index
 	// (sty_c1f9e74c). Wire the dir so create/set materialise the file and `reindex`

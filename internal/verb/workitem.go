@@ -294,6 +294,16 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 
 	transitioning := req.Status != nil && *req.Status != current.Status
 
+	// Engage precondition (sty_93eec36d): when a story leaves its workflow entry
+	// state for a non-cancel target, refuse if agents.toml / workflow agent=
+	// bindings fail agentvalidate — catch a broken deployment before the first
+	// dispatched step, not mid-transition. Cancel stays open.
+	if transitioning && current.Kind == workitem.KindStory {
+		if err := refuseBrokenAgentsOnEngage(ctx, current, *req.Status); err != nil {
+			return nil, err
+		}
+	}
+
 	// Single-story process rule (sty_c7149f8a): before review/dispatch, refuse a
 	// transition that would leave two stories in non-terminal engaging states.
 	// Same-story plan→in_progress→… is fine (self excluded); blocked/terminal free
