@@ -27,11 +27,20 @@ no running the suite (that is a later gate).
 3. **DB-state ACs.** If an AC asserts store/DB state, use
    `.satelle/logs/operations.log` (or equivalent evidence) — do not reject
    solely because state is invisible in the tree.
+4. **Plan fidelity (when a plan attachment exists).** If `satelle story doc
+   <id> plan` (or an attached plan) is present, the presented tree must
+   implement the plan's **named slice** (files/approach it commits to), or the
+   executor must have **noted a plan defect** instead of silently building a
+   competing design. **Hard-reject** only when the tree clearly ignores the
+   plan's named slice **and** no plan-defect note is visible (commit message,
+   step output, or attached note). Do **not** invent a better design and reject
+   against it. No plan attachment → skip this check (ACs alone).
 
-- **Accept** when every AC is met by presented evidence and test requirements
-  hold (or exempt).
-- **Reject** when an AC is unmet/stubbed, or required tests are missing —
-  name the gap for the **executor**.
+- **Accept** when every AC is met by presented evidence, test requirements
+  hold (or exempt), and plan fidelity holds when a plan exists.
+- **Reject** when an AC is unmet/stubbed, required tests are missing, or plan
+  fidelity fails — name the gap for the **executor** (use "plan fidelity" when
+  that is the reason).
 
 Fair gate: judge ACs **as written**. Do not add requirements the story never
 stated. Do not redesign.
@@ -39,6 +48,15 @@ stated. Do not redesign.
 **DRY (presented only).** Reject only when the change **as written** clearly
 duplicates an existing type/logic that the presented code could call instead —
 name both. Not a bar on deliberate independent definitions.
+
+### Worked example — plan fidelity
+
+- **Accept:** plan names `internal/wfdot/refresh.go` + tests; tree changes those
+  paths (and needed call sites) covering the ACs.
+- **Accept:** plan is wrong about a path; executor notes "plan defect: X" and
+  implements the AC-correct approach instead.
+- **Reject (plan fidelity):** plan names a concrete slice; tree implements an
+  unrelated redesign with no plan-defect note — even if ACs look greppable.
 
 ## Verdict
 
