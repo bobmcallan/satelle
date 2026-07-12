@@ -88,6 +88,18 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 		}
 	}
 
+	// Placement invariants (order:6): embedded_sha, residency markers,
+	// no principle scope:, resident set under SessionStart ceiling. Whole-set
+	// only — same anchor pattern as workflow consistency.
+	if kind == "principles" && nameFilter == "" {
+		dataDir := filepath.Dir(a.DBPath)
+		constitution := readConstitution(a.Config.ResolveConstitution(a.RepoRoot))
+		for _, p := range auditPlacement(dataDir, config.EmbeddedDefaults(), constitution) {
+			failed++
+			fmt.Fprintf(out, "FAIL  principles (placement) — %s\n", p)
+		}
+	}
+
 	fmt.Fprintf(out, "\nvalidated %d, failed %d, exempt %d\n", validated, failed, exempt)
 	if failed > 0 {
 		return fmt.Errorf("%d %s failed validation", failed, kind)
