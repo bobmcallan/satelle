@@ -59,6 +59,13 @@ digraph satelle_workflow {
   cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
   // blocked is a park state (not engaged): world-not-ready, same ACs on resume.
   // agent=reviewer so the edit/commit gates do not treat it as engaged work.
+  // PLACEMENT (epic:blocked-reasoning-agent / sty_c77a1672): triage is NOT agent=
+  // on this node. A named performer would make blocked engaging (isEngaging treats
+  // non-reviewer agents as in-flight). Entry-edge dispatch is reviewer-only today.
+  // [blocked-triage] + @skill:satelle-story-blocked-triage are ready; auto-dispatch
+  // waits on a mechanism story (one-shot entry dispatch without engaging the park).
+  // Interim: after park, the driving session runs the triage skill in-loop
+  // (satelle-recognise-blockage). Park gate stays satelle-story-blocked-review.
   blocked     [agent=reviewer, prompt="@skill:satelle-story-blocked-review"]
 
   // step opts this workflow into per-transition step summaries (sty_9a139c78):
