@@ -92,6 +92,48 @@ func TestEmbeddedSubstrateAuditTask(t *testing.T) {
 	}
 }
 
+// TestEmbeddedContextAuditTask asserts the embedded context-audit task + skill
+// ship as repo-agnostic defaults (epic order:8): EmbeddedDefaults surfaces both,
+// CheckTask passes, no this-repo sty_ / substrate-dev paths in the task body.
+func TestEmbeddedContextAuditTask(t *testing.T) {
+	var got *EmbeddedDefault
+	for _, d := range EmbeddedDefaults() {
+		if d.Kind == "tasks" && d.Name == "tsk_context-audit" {
+			dd := d
+			got = &dd
+			break
+		}
+	}
+	if got == nil {
+		t.Fatal("EmbeddedDefaults does not surface tasks/tsk_context-audit")
+	}
+	if problems := structure.CheckTask(got.Body); len(problems) > 0 {
+		t.Errorf("embedded context-audit task fails CheckTask: %v", problems)
+	}
+	for _, bad := range []string{"internal/config/substrate", "sty_"} {
+		if strings.Contains(got.Body, bad) {
+			t.Errorf("embedded context-audit task is not repo-agnostic (references %q)", bad)
+		}
+	}
+	var skill *EmbeddedDefault
+	for _, d := range EmbeddedDefaults() {
+		if d.Kind == "skills" && d.Name == "satelle-context-audit" {
+			dd := d
+			skill = &dd
+			break
+		}
+	}
+	if skill == nil {
+		t.Fatal("EmbeddedDefaults does not surface skills/satelle-context-audit")
+	}
+	if !strings.Contains(skill.Body, "satelle hook context") || !strings.Contains(skill.Body, "principle validate") {
+		t.Error("context-audit skill must reference hook context + principle validate")
+	}
+	if strings.Contains(skill.Body, "sty_") {
+		t.Error("context-audit skill must not embed this-repo story ids")
+	}
+}
+
 // TestEmbeddedReviewerObjectiveAuditTask asserts the embedded default tasks kind
 // carries the repo-agnostic reviewer-objective-audit task: EmbeddedDefaults surfaces
 // it, it passes structure.CheckTask, body stays repo-agnostic, and the paired skill
