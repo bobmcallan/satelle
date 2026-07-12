@@ -286,7 +286,7 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 				pd.Skill = skill
 				pd.Command = cmdStr
 				pd.Context = skill
-				g.setDecisionUsage(&pd, usage)
+				g.setDecisionUsage(&pd, usage, agentReq.Model)
 				return InvokeResult{Stdout: out, Usage: usage, Command: cmdStr, Decision: &pd}
 			}
 			lastErr, lastOut = perr, out
@@ -300,7 +300,7 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 		dec.Skill = skill
 		dec.Command = cmdStr
 		dec.Context = skill
-		g.setDecisionUsage(&dec, usage)
+		g.setDecisionUsage(&dec, usage, agentReq.Model)
 		return InvokeResult{Stdout: out, Usage: usage, Command: cmdStr, Decision: &dec}
 	}
 	where := ""

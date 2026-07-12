@@ -42,6 +42,58 @@ func TestValidate_Healthy(t *testing.T) {
 	}
 }
 
+// TestValidate_GateEffectiveModel (sty_19456622): DOT model= surfaces as
+// EffectiveModel with override marker data; absent model uses binding model.
+func TestValidate_GateEffectiveModel(t *testing.T) {
+	agents := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop"},
+		Reviewer: config.AgentBinding{Command: "grok", Tools: "read_file,grep,list_dir", Model: "grok-4.5"},
+		Agents: map[string]config.AgentBinding{
+			"planner": {Command: "claude", Tools: "Read,Grep,Glob", Model: "sonnet"},
+		},
+	}
+	wfs := []docindex.Doc{{
+		Kind: "workflows", Name: "w",
+		Body: "---\nname: w\n---\n```dot\ndigraph w {\n" +
+			"  backlog [shape=Mdiamond]\n" +
+			"  plan [agent=planner, prompt=\"@skill:plan\", model=\"opus\"]\n" +
+			"  done [shape=Msquare]\n" +
+			"  estimate [agent=reviewer, prompt=\"@skill:est\", on=\"done\"]\n" +
+			"  backlog -> plan [agent=reviewer, prompt=\"@skill:intent\", model=\"haiku\"]\n" +
+			"  plan -> done [agent=reviewer, prompt=\"@skill:close\"]\n" +
+			"}\n```\n",
+	}}
+	r := Validate(agents, nil, wfs)
+	if !r.OK() {
+		t.Fatalf("problems: %v", r.Problems)
+	}
+	by := map[string]GateAllocation{}
+	for _, g := range r.Gates {
+		key := g.Node + "|" + g.Skill
+		by[key] = g
+	}
+	// Edge override.
+	edge := by["edge:backlog→plan|intent"]
+	if edge.EffectiveModel != "haiku" || edge.NodeModel != "haiku" || edge.BindingModel != "grok-4.5" {
+		t.Errorf("edge gate = %+v, want effective haiku override over grok-4.5", edge)
+	}
+	// Edge without model= → binding.
+	closeG := by["edge:plan→done|close"]
+	if closeG.EffectiveModel != "grok-4.5" || closeG.NodeModel != "" {
+		t.Errorf("close edge = %+v, want binding grok-4.5", closeG)
+	}
+	// Named performer node override.
+	plan := by["plan|plan"]
+	if plan.EffectiveModel != "opus" || plan.BindingModel != "sonnet" {
+		t.Errorf("plan node = %+v, want effective opus over sonnet", plan)
+	}
+	// Scoped reviewer inherits binding.
+	est := by["estimate|est"]
+	if est.EffectiveModel != "grok-4.5" {
+		t.Errorf("estimate scoped = %+v, want grok-4.5", est)
+	}
+}
+
 func TestValidate_BrokenBinding(t *testing.T) {
 	agents := config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},

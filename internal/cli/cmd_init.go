@@ -839,6 +839,12 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer:
 #     named agent that MUTATES declares its own full command template + wide
 #     grant; its model key pins the step's model ({model} in the template), so
 #     per-step model selection is pure configuration.
+#   - Per-GATE model without a second binding (sty_19456622): a workflow edge or
+#     node may set model="…" (e.g. release->done [agent=reviewer, prompt="@skill:…",
+#     model="opus"]). That overrides ONLY the model for that gate/step; the
+#     allocated binding stays the source of command template + tools. Absent
+#     model= inherits the binding's model. See satelle help agent-dispatch and
+#     the satelle-dot-standard principle.
 # role= is the binding's declared contract (reviewer | agent); inference from
 # the section name is a fallback, not the norm — declare it.
 #
@@ -888,7 +894,7 @@ command = "in-loop"            # the orchestrator/driving session itself
 role    = "reviewer"           # declared contract; inference is a fallback, not the norm
 command = "REVIEWER_COMMAND_TEMPLATE"
 tools   = "Read,Grep,Glob"     # read-only grant — widen at your own risk (claude preset only; the grok preset bakes its own grok-named read-only grant)
-model   = ""                   # empty inherits the CLI's default; each binding may pin its own (e.g. "sonnet"), so steps allocated to different bindings run on different models
+model   = ""                   # empty inherits the CLI's default; each binding may pin its own (e.g. "sonnet"). A workflow gate/node model="…" overrides this for that gate only without a second binding (sty_19456622).
 
 # A named EXECUTOR agent for isolated mutating steps (e.g. a commit/push step),
 # with an explicit full command template and a wide grant:

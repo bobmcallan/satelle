@@ -17,7 +17,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/agentstep"
+	"github.com/bobmcallan/satelle/internal/agentvalidate"
 	"github.com/bobmcallan/satelle/internal/app"
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/structure"
 )
@@ -67,6 +69,22 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 		for _, p := range agentstep.WorkflowConsistency(wfs, resolve) {
 			failed++
 			fmt.Fprintf(out, "FAIL  workflows (consistency) — %s\n", p)
+		}
+		// Per-gate effective model surface (sty_19456622) — same allocation view as
+		// `satelle agent validate`, informational (not a hard fail).
+		if agents, aerr := config.LoadAgents(filepath.Dir(a.DBPath)); aerr == nil {
+			report := agentvalidate.Validate(agents, a.Config.Vars, wfs)
+			if len(report.Gates) > 0 {
+				fmt.Fprintln(out, "Gate/node effective models:")
+				for _, ga := range report.Gates {
+					mark := ""
+					if ga.NodeModel != "" {
+						mark = " (override)"
+					}
+					fmt.Fprintf(out, "  NODE [%s] %s gate=%s agent=%s effective_model=%q%s\n",
+						ga.Workflow, ga.Node, ga.Skill, ga.Agent, ga.EffectiveModel, mark)
+				}
+			}
 		}
 	}
 

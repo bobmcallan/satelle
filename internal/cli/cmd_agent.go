@@ -143,6 +143,17 @@ func agentValidateCmd() *cobra.Command {
 					fmt.Fprintf(out, "         notes: %s\n", g.Notes)
 				}
 			}
+			if len(report.Gates) > 0 {
+				fmt.Fprintln(out, "Gate/node effective models (binding model unless model= override):")
+				for _, ga := range report.Gates {
+					mark := ""
+					if ga.NodeModel != "" {
+						mark = " (override)"
+					}
+					fmt.Fprintf(out, "  NODE [%s] %s gate=%s agent=%s effective_model=%q%s\n",
+						ga.Workflow, ga.Node, ga.Skill, ga.Agent, ga.EffectiveModel, mark)
+				}
+			}
 			failed := 0
 			for _, w := range report.Warnings {
 				fmt.Fprintf(out, "WARN  %s\n", w)

@@ -723,18 +723,18 @@ func TestBadDecisionErrors(t *testing.T) {
 }
 
 func TestReviewerSkillsFor(t *testing.T) {
-	if got, declared := reviewerSkillsFor(testWorkflow, "in_progress", "done"); len(got) != 1 || got[0] != "satelle-story-done-review" || !declared {
+	if got, _, declared := reviewerSkillsFor(testWorkflow, "in_progress", "done"); len(got) != 1 || got[0] != "satelle-story-done-review" || !declared {
 		t.Errorf("in_progress→done = (%v, %v), want ([done-review], true)", got, declared)
 	}
-	if got, declared := reviewerSkillsFor(testWorkflow, "backlog", "cancelled"); len(got) != 0 || !declared {
+	if got, _, declared := reviewerSkillsFor(testWorkflow, "backlog", "cancelled"); len(got) != 0 || !declared {
 		t.Errorf("declared ungated edge = (%v, %v), want (nil, true)", got, declared)
 	}
-	if got, declared := reviewerSkillsFor(testWorkflow, "backlog", "nowhere"); len(got) != 0 || declared {
+	if got, _, declared := reviewerSkillsFor(testWorkflow, "backlog", "nowhere"); len(got) != 0 || declared {
 		t.Errorf("undeclared edge = (%v, %v), want (nil, false)", got, declared)
 	}
 	// An ordered list: reviewer_skills takes precedence and preserves order.
 	multi := "transitions:\n  - {from: deployed, to: done, reviewer_skills: [first-review, second-review]}\n"
-	if got, declared := reviewerSkillsFor(multi, "deployed", "done"); len(got) != 2 || got[0] != "first-review" || got[1] != "second-review" || !declared {
+	if got, _, declared := reviewerSkillsFor(multi, "deployed", "done"); len(got) != 2 || got[0] != "first-review" || got[1] != "second-review" || !declared {
 		t.Errorf("reviewer_skills list = (%v, %v), want ([first-review second-review], true)", got, declared)
 	}
 }
@@ -1953,14 +1953,14 @@ digraph w {
 `
 
 func TestReviewerSkillsForDOT(t *testing.T) {
-	skills, declared := reviewerSkillsFor(dotWF, "in_progress", "committed")
-	if !declared || len(skills) != 1 || skills[0] != "satelle-commit-push-reviewer" {
-		t.Fatalf("in_progress->committed: skills=%v declared=%v", skills, declared)
+	skills, model, declared := reviewerSkillsFor(dotWF, "in_progress", "committed")
+	if !declared || len(skills) != 1 || skills[0] != "satelle-commit-push-reviewer" || model != "" {
+		t.Fatalf("in_progress->committed: skills=%v model=%q declared=%v", skills, model, declared)
 	}
-	if _, declared := reviewerSkillsFor(dotWF, "in_progress", "nope"); declared {
+	if _, _, declared := reviewerSkillsFor(dotWF, "in_progress", "nope"); declared {
 		t.Errorf("an undeclared edge should report declared=false")
 	}
-	if skills, declared := reviewerSkillsFor(dotWF, "committed", "done"); !declared || len(skills) != 0 {
+	if skills, _, declared := reviewerSkillsFor(dotWF, "committed", "done"); !declared || len(skills) != 0 {
 		t.Errorf("committed->done should be declared and ungated: skills=%v declared=%v", skills, declared)
 	}
 }
@@ -2008,6 +2008,62 @@ func TestReviewerModelReachesRunner(t *testing.T) {
 	}
 	if r.got.Model != "sonnet" {
 		t.Errorf("runner Request model = %q, want sonnet", r.got.Model)
+	}
+}
+
+// TestGateEdgeModelOverride (sty_19456622): DOT edge model= overrides the
+// [reviewer] binding model for that gate only; absent model= keeps binding model.
+func TestGateEdgeModelOverride(t *testing.T) {
+	wf := wfDoc(baselineWorkflow, `"*"`, `digraph w {
+  backlog [shape=Mdiamond]
+  done [shape=Msquare]
+  backlog -> done [agent=reviewer, prompt="@skill:rev-a", model="opus"]
+}`)
+	g, r := newEngine(t, `{"decision":"accept","notes":"ok"}`, fakeDocs{
+		workflow: wf, skillBody: "rubric", skillFound: true,
+	})
+	g.SetReviewerModel("grok-4.5")
+	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_x", Status: "backlog"}, "done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec.Gated || !dec.Accept {
+		t.Fatalf("gate = %+v", dec)
+	}
+	if r.got.Model != "opus" {
+		t.Errorf("runner Request.Model = %q, want opus (edge override)", r.got.Model)
+	}
+	if dec.Model != "opus" {
+		t.Errorf("GateDecision.Model = %q, want opus", dec.Model)
+	}
+
+	// Absent model= → binding model.
+	wf2 := wfDoc(baselineWorkflow, `"*"`, `digraph w {
+  backlog [shape=Mdiamond]
+  done [shape=Msquare]
+  backlog -> done [agent=reviewer, prompt="@skill:rev-a"]
+}`)
+	g2, r2 := newEngine(t, `{"decision":"accept","notes":"ok"}`, fakeDocs{
+		workflow: wf2, skillBody: "rubric", skillFound: true,
+	})
+	g2.SetReviewerModel("grok-4.5")
+	if _, err := g2.Gate(context.Background(), workitem.Item{ID: "sty_x", Status: "backlog"}, "done"); err != nil {
+		t.Fatal(err)
+	}
+	if r2.got.Model != "grok-4.5" {
+		t.Errorf("without override runner model = %q, want grok-4.5", r2.got.Model)
+	}
+}
+
+// TestReviewerSkillsForDOTModel: edge model= is returned alongside skills.
+func TestReviewerSkillsForDOTModel(t *testing.T) {
+	const body = "---\nname: w\n---\n```dot\n" + `digraph w {
+  a -> b [agent=reviewer, prompt="@skill:rev", model="opus"]
+}
+` + "```\n"
+	skills, model, declared := reviewerSkillsFor(body, "a", "b")
+	if !declared || len(skills) != 1 || skills[0] != "rev" || model != "opus" {
+		t.Fatalf("skills=%v model=%q declared=%v", skills, model, declared)
 	}
 }
 
@@ -2153,7 +2209,7 @@ func TestCodedEstimateGate(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			dec, err := g.runReviewer(context.Background(),
 				workitem.Item{ID: "sty_x", Kind: workitem.KindStory, Status: "backlog", Tags: c.tags},
-				c.to, "satelle-estimate-actual-review")
+				c.to, "satelle-estimate-actual-review", "")
 			if err != nil {
 				t.Fatal(err)
 			}

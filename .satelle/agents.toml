@@ -17,6 +17,9 @@
 # run_terminal_command (agent-build constraint), so Grok is not used for
 # shell-needing dispatch steps.
 # model stays non-empty (TestRepoReviewerModelIsActive).
+# Per-gate model without a second binding: a workflow edge/node may set model="…"
+# to override only that gate's model; the binding stays source of command+tools
+# (sty_19456622). See satelle help agent-dispatch and satelle-dot-standard.
 
 [executor]
 role    = "agent"
