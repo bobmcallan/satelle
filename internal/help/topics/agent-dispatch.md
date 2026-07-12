@@ -11,6 +11,14 @@ the rest of the story.
 ## The dispatch contract
 
 Dispatch fires **on entry** to the state, after that state's entry gate accepts.
+
+A node may also carry **`on_enter_agent=<name>`** with optional
+`on_enter_prompt="@skill:…"` — a one-shot performer dispatched on entry while
+the node's **`agent=`** remains the engagement role (typically `agent=reviewer`
+for a park state). That keeps the parked status non-engaging for edit/commit
+gates while still running triage once on entry. When both a named `agent=`
+performer and `on_enter_agent` are set, the named `agent=` performer wins.
+
 The agent receives:
 
 - **System prompt**, assembled in this order:

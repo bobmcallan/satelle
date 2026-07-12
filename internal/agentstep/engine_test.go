@@ -1262,6 +1262,87 @@ func TestDispatchExecutorCodeWriterFromPerformingProceeds(t *testing.T) {
 	}
 }
 
+// onEnterParkWF: reviewer park with on_enter_agent triage — node name is
+// "parked" (not "blocked") so the mechanism has no state-name dependence.
+var onEnterParkWF = wfDoc("on-enter-park", `"*"`, `digraph w {
+  backlog [shape=Mdiamond]
+  in_progress [agent=executor]
+  parked [agent=reviewer, prompt="@skill:park-gate", on_enter_agent=triage, on_enter_prompt="@skill:triage-skill"]
+  done [shape=Msquare]
+  backlog -> in_progress -> done
+  in_progress -> parked [agent=reviewer, prompt="@skill:park-gate"]
+  parked -> in_progress
+}`)
+
+// TestDispatchOnEnterAgentFromPerforming: AC1 (sty_5cabe26f) — a park node with
+// agent=reviewer still dispatches on_enter_agent once on entry when FROM is
+// performing. Tools/model come from the named binding.
+func TestDispatchOnEnterAgentFromPerforming(t *testing.T) {
+	docs := fakeDocs{workflow: onEnterParkWF, skillBody: "triage rubric", skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	fr := &fakeRunner{out: "triaged"}
+	g.newRunner = func(string) (agentcli.Runner, error) { return fr, nil }
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		if name != "triage" {
+			return config.AgentBinding{}, false
+		}
+		return config.AgentBinding{
+			Role: "agent", Harness: "fake -p {system}", Model: "opus",
+			Tools: "Read,Write,Edit,Bash(satelle:*)",
+		}, true
+	})
+	res, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "parked")
+	if err != nil {
+		t.Fatalf("on_enter from performing state should dispatch: %v", err)
+	}
+	if !res.Dispatched || res.Agent != "triage" || res.Skill != "triage-skill" {
+		t.Fatalf("result = %+v, want dispatched by triage with triage-skill", res)
+	}
+	if res.Model != "opus" {
+		t.Errorf("model = %q, want opus from binding", res.Model)
+	}
+	if fr.got.SystemPrompt == "" {
+		t.Error("triage agent must reach the run")
+	}
+	if !strings.Contains(fr.got.SystemPrompt, "triage rubric") {
+		t.Errorf("system prompt should carry on_enter skill rubric, got %q", fr.got.SystemPrompt)
+	}
+}
+
+// TestDispatchOnEnterAgentCodeWriterFromNonPerformingRefused: the code-writer
+// lock still applies to on_enter_agent — Write/Edit grant from a non-performing
+// FROM is refused (mirrors TestDispatchExecutorCodeWriterFromNonPerformingRefused).
+func TestDispatchOnEnterAgentCodeWriterFromNonPerformingRefused(t *testing.T) {
+	// Enter parked from backlog (non-performing) — invent a direct edge by using
+	// a workflow whose only path into parked is from backlog.
+	wf := wfDoc("on-enter-from-backlog", `"*"`, `digraph w {
+  backlog [shape=Mdiamond]
+  parked [agent=reviewer, prompt="@skill:park-gate", on_enter_agent=triage, on_enter_prompt="@skill:triage-skill"]
+  done [shape=Msquare]
+  backlog -> parked
+  parked -> done
+}`)
+	docs := fakeDocs{workflow: wf, skillBody: "triage rubric", skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	fr := &fakeRunner{out: "should-not-run"}
+	g.newRunner = func(string) (agentcli.Runner, error) { return fr, nil }
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Role: "agent", Harness: "fake -p {system}", Tools: "Read,Edit,Write,Bash(satelle:*)"}, true
+	})
+	_, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "parked")
+	if err == nil {
+		t.Fatal("want refusal: code-writing on_enter from non-performing backlog")
+	}
+	for _, want := range []string{"non-performing", "backlog"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should carry %q: %v", want, err)
+		}
+	}
+	if fr.got.SystemPrompt != "" {
+		t.Error("must refuse BEFORE running the agent")
+	}
+}
+
 // TestDispatchPayloadCarriesIdNotDocuments: AC2 (sty_47d31300) — the dispatch
 // payload is the fetch HANDLE (the item record with its id), not a PUSH of
 // documents or the ledger. The agent pulls those by id; they are never marshalled

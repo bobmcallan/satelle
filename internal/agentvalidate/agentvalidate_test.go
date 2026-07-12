@@ -142,6 +142,45 @@ func TestValidate_OrphanBinding(t *testing.T) {
 	}
 }
 
+// TestValidate_OnEnterAgentBinding: on_enter_agent counts as a use of the named
+// binding (not orphaned) and hard-fails when the binding is missing (sty_5cabe26f).
+func TestValidate_OnEnterAgentBinding(t *testing.T) {
+	wfs := []docindex.Doc{{
+		Kind: "workflows", Name: "w",
+		Body: "---\nname: w\n---\n```dot\ndigraph w {\n  backlog [shape=Mdiamond]\n  parked [agent=reviewer, prompt=\"@skill:park\", on_enter_agent=triage, on_enter_prompt=\"@skill:triage\"]\n  done [shape=Msquare]\n  backlog -> parked -> done\n}\n```\n",
+	}}
+	// Matching binding → OK, not orphaned.
+	okAgents := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop"},
+		Reviewer: config.AgentBinding{Command: "claude"},
+		Agents: map[string]config.AgentBinding{
+			"triage": {Command: "claude", Tools: "Read,Bash(satelle:*)"},
+		},
+	}
+	r := Validate(okAgents, nil, wfs)
+	if !r.OK() {
+		t.Fatalf("on_enter with matching binding must be OK: %v", r.Problems)
+	}
+	for _, w := range r.Warnings {
+		if strings.Contains(w, "triage") && strings.Contains(w, "orphan") {
+			t.Errorf("on_enter_agent must mark the binding used, got orphan warning: %s", w)
+		}
+	}
+	// Missing binding → hard problem.
+	missing := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop"},
+		Reviewer: config.AgentBinding{Command: "claude"},
+	}
+	r2 := Validate(missing, nil, wfs)
+	if r2.OK() {
+		t.Fatal("on_enter_agent without binding must produce a problem")
+	}
+	joined := strings.Join(r2.Problems, "\n")
+	if !strings.Contains(joined, "on_enter_agent=triage") || !strings.Contains(joined, "parked") {
+		t.Errorf("problem should name on_enter_agent and node:\n%s", joined)
+	}
+}
+
 func TestValidate_BadTimeout(t *testing.T) {
 	// LoadAgents would refuse this at load; Validate still checks TimeoutDuration
 	// on the in-memory binding for callers that construct AgentsConfig directly.

@@ -722,6 +722,57 @@ func TestNonTerminalEngagingStatesReviewerPark(t *testing.T) {
 	}
 }
 
+// TestOnEnterAgentParkStaysNonEngaging: on_enter_agent is orthogonal to Agent —
+// a reviewer park with a one-shot entry performer remains non-engaging and
+// non-performing (sty_5cabe26f). Uses a non-"blocked" node name so no name
+// dependence is implied.
+func TestOnEnterAgentParkStaysNonEngaging(t *testing.T) {
+	body := "```dot\n" + `digraph w {
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor]
+  parked      [agent=reviewer, prompt="@skill:park-gate", on_enter_agent=triage, on_enter_prompt="@skill:triage-skill"]
+  done        [shape=Msquare]
+  backlog -> in_progress -> done
+  in_progress -> parked [agent=reviewer, prompt="@skill:park-gate"]
+  parked -> in_progress
+}
+` + "```\n"
+	spec, ok := Parse(body)
+	if !ok {
+		t.Fatal("parse")
+	}
+	var park *State
+	for i := range spec.States {
+		if spec.States[i].Name == "parked" {
+			park = &spec.States[i]
+			break
+		}
+	}
+	if park == nil {
+		t.Fatal("parked state missing")
+	}
+	if park.Agent != "reviewer" || park.Skill != "park-gate" {
+		t.Errorf("park role/gate: agent=%q skill=%q", park.Agent, park.Skill)
+	}
+	if park.OnEnterAgent != "triage" || park.OnEnterSkill != "triage-skill" {
+		t.Errorf("on_enter: agent=%q skill=%q", park.OnEnterAgent, park.OnEnterSkill)
+	}
+	if park.IsPerforming() {
+		t.Error("on_enter_agent must not make the node performing")
+	}
+	for _, s := range spec.NonTerminalEngagingStates() {
+		if s == "parked" {
+			t.Errorf("park with on_enter_agent must not be engaging, got %v", spec.NonTerminalEngagingStates())
+		}
+	}
+	// Edge gate into park still resolves (AC4).
+	for _, tr := range spec.Transitions {
+		if tr.To == "parked" && tr.Skill != "park-gate" {
+			t.Errorf("entry edge gate = %q, want park-gate", tr.Skill)
+		}
+	}
+}
+
 // TestNonTerminalEngagingStatesCancelSink closes the gap TestNonTerminalEngagingStates
 // masks: that test's cancelled node carries shape=Msquare, so the Msquare branch
 // catches it and the reviewer-sink branch (the REAL authored cancel shape — no shape

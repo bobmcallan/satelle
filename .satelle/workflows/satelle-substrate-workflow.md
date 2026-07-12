@@ -48,11 +48,9 @@ digraph satelle_substrate_workflow {
   in_progress [agent=executor, prompt="@skill:substrate"]                                          // in-loop: author + commit + push the substrate slice
   done        [shape=Msquare]                                           // terminal (the close gate verifies substrate-only)
   cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
-  // Park: agent=reviewer keeps blocked non-engaging. Triage skill/binding ready
-  // but not auto-dispatched here — see project workflow blocked comment +
-  // epic:blocked-reasoning-agent mechanism gap (one-shot entry dispatch).
-  // Interim: in-loop @skill:satelle-story-blocked-triage after park.
-  blocked     [agent=reviewer, prompt="@skill:satelle-story-blocked-review"]
+  // Park: agent=reviewer keeps blocked non-engaging; on_enter_agent runs triage
+  // once on entry (sty_5cabe26f) without opening edit/commit gates while parked.
+  blocked     [agent=reviewer, prompt="@skill:satelle-story-blocked-review", on_enter_agent=blocked-triage, on_enter_prompt="@skill:satelle-story-blocked-triage"]
 
   // step opts into per-transition step summaries (sty_9a139c78): edge-less, mandatory.
   step        [agent=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]

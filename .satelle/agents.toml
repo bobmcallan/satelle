@@ -49,18 +49,11 @@ tools   = "Read,Grep,Glob,Bash(satelle:*)"
 model   = "sonnet"
 principles = "session"
 
-# blocked-triage — performing diagnosis/unblock on a parked story (epic:blocked-reasoning-agent).
-# NOT wired as agent= on the blocked node yet: agent=reviewer keeps blocked non-engaging
-# (park semantics); a named performer on that node would make blocked engaging and open the
-# edit/commit gates while work is parked. Binding is ready for the mechanism story
-# (one-shot entry dispatch without engaging the park target). Until then: in-loop session
-# runs @skill:satelle-story-blocked-triage after park (satelle-recognise-blockage).
-# Reuse check: [executor] is in-loop only — cannot express isolated full-tool dispatch or a
-# pinned high-capability model; [planner]/[reviewer] are read-only. New role required.
-# Model: most capable available in this harness (opus); swap to the strongest alias the
-# chosen CLI maps (e.g. claude-fable-5) when preferred. Full tools — gates bound authority,
-# not --deny. Harness-agnostic: claude template below; grok form is the same grant with
-# grok's argv style if the operator switches the binary.
+# blocked-triage — performing diagnosis/unblock on park entry (epic:blocked-reasoning-agent).
+# Wired via on_enter_agent=blocked-triage on the blocked node (agent=reviewer stays the
+# engagement role so the park remains non-engaging — sty_5cabe26f). Reuse check: [executor]
+# is in-loop only; [planner]/[reviewer] are read-only. Full tools — gates bound authority,
+# not --deny. Model: most capable available (opus).
 [blocked-triage]
 role    = "agent"
 command = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"

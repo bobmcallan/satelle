@@ -592,14 +592,16 @@ func (g *Engine) SetNamedAgents(fn func(name string) (config.AgentBinding, bool)
 
 // DispatchExecutor implements verb.ExecutorDispatcher: when the TARGET state of
 // an accepted transition is allocated to a NAMED agent (agent=<name>, neither
-// "executor" nor "reviewer"), the binding's harness performs the step
-// synchronously — prompt assembled from the item (title, body, acceptance
-// criteria on stdin) plus the node's @skill rubric, tools/model/principles from
-// the binding, nothing hardcoded (sty_fd427546). A missing binding or a failed
-// run is an ERROR — the caller refuses the transition (broken definition never
-// silently falls back in-loop, consistent with sty_d0d6bb67). agent=executor,
-// agent-less, and reviewer states dispatch nothing; a named binding whose
-// harness is explicitly "in-loop" also stays with the orchestrator.
+// "executor" nor "reviewer"), OR carries on_enter_agent=<name> while its role
+// agent is empty/executor/reviewer (one-shot entry perform — sty_5cabe26f), the
+// binding's harness performs the step synchronously — prompt assembled from the
+// item (title, body, acceptance criteria on stdin) plus the node's @skill rubric,
+// tools/model/principles from the binding, nothing hardcoded (sty_fd427546). A
+// missing binding or a failed run is an ERROR — the caller refuses the transition
+// (broken definition never silently falls back in-loop, consistent with
+// sty_d0d6bb67). agent=executor, agent-less, and reviewer states with no
+// on_enter_agent dispatch nothing; a named binding whose harness is explicitly
+// "in-loop" also stays with the orchestrator.
 func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toStatus string) (verb.DispatchResult, error) {
 	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
 	if err != nil {
@@ -619,24 +621,32 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 			break
 		}
 	}
-	// Skip non-performers: empty agent, in-loop executor token, or the DOT
-	// reviewer token (design §9 (b) — DOT vocabulary).
-	if target == nil || target.Agent == "" || target.Agent == "executor" || target.Agent == "reviewer" {
+	if target == nil {
 		return verb.DispatchResult{}, nil
+	}
+	// Resolve WHO performs: a named agent= performer takes priority; otherwise
+	// on_enter_agent is the one-shot entry dispatch (park nodes stay
+	// agent=reviewer for engagement while still running triage once on entry).
+	dispatchAgent, dispatchSkill := target.Agent, target.Skill
+	if target.Agent == "" || target.Agent == "executor" || target.Agent == "reviewer" {
+		if target.OnEnterAgent == "" {
+			return verb.DispatchResult{}, nil
+		}
+		dispatchAgent, dispatchSkill = target.OnEnterAgent, target.OnEnterSkill
 	}
 	if g.namedAgents == nil {
 		return verb.DispatchResult{}, fmt.Errorf(
-			"workflow %q allocates state %q to named agent %q but no agents layer is wired", doc.Name, toStatus, target.Agent)
+			"workflow %q allocates state %q to named agent %q but no agents layer is wired", doc.Name, toStatus, dispatchAgent)
 	}
-	binding, found := g.namedAgents(target.Agent)
+	binding, found := g.namedAgents(dispatchAgent)
 	if !found {
 		return verb.DispatchResult{}, fmt.Errorf(
 			"workflow %q allocates state %q to agent %q but .satelle/agents.toml defines no [%s] binding — define it, or reassign the step",
-			doc.Name, toStatus, target.Agent, target.Agent)
+			doc.Name, toStatus, dispatchAgent, dispatchAgent)
 	}
 	// Design §9 (a): when the resolved binding is role=reviewer, it is a judge
 	// not a performer — do not dispatch as ExpectPerform (isNamedPerformer).
-	if !isNamedPerformer(target.Agent, binding) {
+	if !isNamedPerformer(dispatchAgent, binding) {
 		return verb.DispatchResult{}, nil
 	}
 	// Edit-gate timing lock (sty_f5bd176f): a named CODE-WRITING agent (e.g. a
@@ -650,14 +660,16 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	// in_progress[agent=coder] is only ever wired where engagement is REAL. A
 	// read-only agent (e.g. the planner, no Write/Edit grant) edits nothing, so the
 	// gate never applies to it and this lock does not constrain it.
+	// on_enter_agent uses the same lock: park entry from a performing FROM is
+	// allowed; from a non-performing FROM with Write/Edit is refused.
 	if grantsCodeEdit(binding.Tools) && !spec.IsPerformingState(item.Status) {
 		return verb.DispatchResult{}, fmt.Errorf(
 			"workflow %q dispatches state %q to code-writing agent %q from non-performing state %q: the agent would edit code while the story is not in an engaged state, so the edit gate could allow it only via the serve fail-open — route the step from a performing state (or make %q performing)",
-			doc.Name, toStatus, target.Agent, item.Status, item.Status)
+			doc.Name, toStatus, dispatchAgent, item.Status, item.Status)
 	}
 	runner, err := g.newRunner(binding.CommandTemplate())
 	if err != nil {
-		return verb.DispatchResult{}, fmt.Errorf("named agent %q: broken command in .satelle/agents.toml: %w", target.Agent, err)
+		return verb.DispatchResult{}, fmt.Errorf("named agent %q: broken command in .satelle/agents.toml: %w", dispatchAgent, err)
 	}
 	if runner == nil {
 		return verb.DispatchResult{}, nil // command "in-loop": the orchestrator performs the step
@@ -671,14 +683,14 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	if !grantsSatelleCLI(binding.Tools) {
 		return verb.DispatchResult{}, fmt.Errorf(
 			"named agent %q cannot perform step %q: its .satelle/agents.toml [%s] tools grant does not include the read-only satelle CLI (add `Bash(satelle:*)`), so it cannot pull the story/documents/ledger an isolated dispatch needs",
-			target.Agent, toStatus, target.Agent)
+			dispatchAgent, toStatus, dispatchAgent)
 	}
 	// The step's own @skill rubric when the node declares one (absent stays
 	// advisory — the engagement guard already vets executor-path skills). LLM run
 	// goes through shared Invoke (sty_ba860c8a).
 	rubric := ""
-	if target.Skill != "" {
-		if body, rerr := g.skillBody(ctx, target.Skill); rerr == nil {
+	if dispatchSkill != "" {
+		if body, rerr := g.skillBody(ctx, dispatchSkill); rerr == nil {
 			rubric = body
 		} else if !errors.Is(rerr, docindex.ErrNotFound) {
 			return verb.DispatchResult{}, rerr
@@ -686,45 +698,45 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	}
 	timeout, terr := binding.TimeoutDuration(g.checkTimeout)
 	if terr != nil {
-		return verb.DispatchResult{}, fmt.Errorf("named agent %q: invalid timeout in .satelle/agents.toml [%s]: %w", target.Agent, target.Agent, terr)
+		return verb.DispatchResult{}, fmt.Errorf("named agent %q: invalid timeout in .satelle/agents.toml [%s]: %w", dispatchAgent, dispatchAgent, terr)
 	}
-	sink, sinkPath, closeSink := g.dispatchSink(target.Agent, item.ID)
+	sink, sinkPath, closeSink := g.dispatchSink(dispatchAgent, item.ID)
 	if closeSink != nil {
 		defer closeSink()
 	}
 	if sinkPath != "" {
-		g.emitProgress("dispatching step %s to named agent %s (may take several minutes)… live output: %s", toStatus, target.Agent, sinkPath)
+		g.emitProgress("dispatching step %s to named agent %s (may take several minutes)… live output: %s", toStatus, dispatchAgent, sinkPath)
 	} else {
-		g.emitProgress("dispatching step %s to named agent %s (may take several minutes)…", toStatus, target.Agent)
+		g.emitProgress("dispatching step %s to named agent %s (may take several minutes)…", toStatus, dispatchAgent)
 	}
 	invRes := g.Invoke(ctx, InvokeRequest{
 		Binding: binding,
-		Section: target.Agent,
+		Section: dispatchAgent,
 		Rubric:  rubric,
-		Payload: transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: target.Skill},
-		Charter: executorCharter(target.Agent, toStatus, doc.Name),
+		Payload: transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: dispatchSkill},
+		Charter: executorCharter(dispatchAgent, toStatus, doc.Name),
 		Expect:  ExpectPerform,
 		Timeout: timeout,
 		Runner:  runner,
 		Sink:    sink,
 		StoryID: item.ID,
 		Step:    toStatus,
-		Skill:   target.Skill,
+		Skill:   dispatchSkill,
 		Actor:   "executor",
 	})
 	res := verb.DispatchResult{
-		Dispatched: true, Agent: target.Agent, Command: invRes.Command, Model: binding.Model, Skill: target.Skill,
+		Dispatched: true, Agent: dispatchAgent, Command: invRes.Command, Model: binding.Model, Skill: dispatchSkill,
 		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
 		DurationMs: invRes.Usage.Duration.Milliseconds(),
 		Output:     string(invRes.Stdout),
 	}
-	g.logExecutorRun(target.Agent, item.ID, toStatus, invRes.Stdout, invRes.Err)
+	g.logExecutorRun(dispatchAgent, item.ID, toStatus, invRes.Stdout, invRes.Err)
 	if invRes.Err != nil {
 		g.telemetryEvent(ctx, item.ID, "executor", "agent-failure", map[string]any{
-			"agent": target.Agent, "step": toStatus, "outcome": classifyOutcome(invRes.Err),
+			"agent": dispatchAgent, "step": toStatus, "outcome": classifyOutcome(invRes.Err),
 			"tokens_total": res.TokensTotal, "duration_ms": res.DurationMs,
 		})
-		return res, fmt.Errorf("named agent %q failed performing step %q: %w", target.Agent, toStatus, invRes.Err)
+		return res, fmt.Errorf("named agent %q failed performing step %q: %w", dispatchAgent, toStatus, invRes.Err)
 	}
 	return res, nil
 }
