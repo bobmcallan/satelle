@@ -1,6 +1,5 @@
 ---
 name: satelle-edits-require-a-story
-scope: system
 type: principle
 tags: [type:principle, principles:session]
 applies_to: ["*"]

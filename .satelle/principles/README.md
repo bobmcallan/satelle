@@ -1,4 +1,11 @@
 # principles
 
-Authored principles (markdown, `type: principle`). They are resolvable on demand;
-the single always-resident operating principle is injected at session start.
+Authored principles (markdown, `type: principle`).
+
+**Residency** (the only injection axis):
+
+- **system** — carries the `principles:session` tag; injected at every SessionStart
+- **ondemand** — no marker; pull with `satelle doc get principles <name>` when referenced
+
+There is no `scope:` field on principles. Ownership (`embedded_sha`) is orthogonal
+to residency. See [[satelle-residency]].

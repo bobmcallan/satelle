@@ -1,6 +1,5 @@
 ---
 name: satelle-broken-windows
-scope: project
 type: principle
 tags: [type:principle]
 applies_to: ["*"]

@@ -34,26 +34,40 @@ func TestFrontmatterTags_inlineAndBlock(t *testing.T) {
 	}
 }
 
-// selectAlwaysDocs is tag-driven: a principle carrying principles:session is the
-// SESSION set (injected); one without the marker is on-demand (not injected).
-// Residency is authored substrate, not a hardcoded name (epic:session-context).
+// selectAlwaysDocs is tag-driven: a principle carrying principles:session is
+// system-resident (injected); one without the marker is ondemand (not injected).
+// Residency is authored substrate, not a hardcoded name (epic:session-context;
+// taxonomy sty_1278fdd9).
 func TestSelectAlwaysDocs_byResidencyTag(t *testing.T) {
 	got := selectAlwaysDocs([]docindex.Doc{
-		doc("satelle-agent-goals", sessionFM),    // tagged → session
-		doc("satelle-agile-increments", plainFM), // untagged → on-demand
-		doc("satelle-constitution", sessionFM),   // tagged → session
+		doc("satelle-agent-goals", sessionFM),    // tagged → system
+		doc("satelle-agile-increments", plainFM), // untagged → ondemand
+		doc("satelle-constitution", sessionFM),   // tagged → system
 	})
 	if len(got) != 2 {
-		t.Fatalf("want the 2 session-tagged docs, got %d: %v", len(got), got)
+		t.Fatalf("want the 2 system-tagged docs, got %d: %v", len(got), got)
 	}
 	for _, d := range got {
 		if d.Name == "satelle-agile-increments" {
-			t.Fatalf("on-demand (untagged) principle must not be injected: %v", got)
+			t.Fatalf("ondemand (untagged) principle must not be injected: %v", got)
 		}
 	}
 	// No session-tagged docs → nothing injected.
 	if n := len(selectAlwaysDocs([]docindex.Doc{doc("p", plainFM)})); n != 0 {
 		t.Fatalf("want 0 when no doc carries the session tag, got %d", n)
+	}
+}
+
+// AC4 (sty_1278fdd9): scope is NOT an injection classifier. A principle with
+// scope: system but no principles:session tag must not be injected.
+func TestSelectAlwaysDocs_scopeIsNotClassifier(t *testing.T) {
+	scopeOnly := "---\nname: x\nscope: system\ntype: principle\ntags: [type:principle]\n---\n# X\nscope-only body\n"
+	got := selectAlwaysDocs([]docindex.Doc{
+		doc("scope-only", scopeOnly),
+		doc("tagged", sessionFM),
+	})
+	if len(got) != 1 || got[0].Name != "tagged" {
+		t.Fatalf("want only the session-tagged doc, got %v", got)
 	}
 }
 

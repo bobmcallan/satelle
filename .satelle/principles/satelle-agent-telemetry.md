@@ -1,6 +1,5 @@
 ---
 name: satelle-agent-telemetry
-scope: project
 type: principle
 tags: [type:principle, principles:session]
 applies_to: ["*"]

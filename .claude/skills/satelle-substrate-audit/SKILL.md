@@ -112,8 +112,9 @@ on each file and flag leakage:
   richer than the generic canonical solution, or bakes an opinion the constitution
   says lives in substrate, is a blocker — name what to move to `.satelle/`.
 - **Dead or wrong tags.** `principles:global` is a no-op (only `principles:session`
-  is live) — flag it as stale. Check `scope: system`, `type:`, and `applies_to`
-  are present and correct for the artifact's kind.
+  is the system-residency marker) — flag it as stale. Principles must not carry
+  inert `scope:` (residency is the tag alone; `scope:` remains a workflow field).
+  Check `type:` and `applies_to` are present and correct for the artifact's kind.
 - **Naming.** Conform to the constitution's substrate-naming: a stage gate is
   `satelle-<object>-<stage>-review`, a structure reviewer `satelle-<object>-review`,
   a principle is bare kebab-case. Flag a name that misencodes the artifact's kind.

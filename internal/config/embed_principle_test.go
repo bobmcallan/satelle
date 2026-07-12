@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // embeddedPrinciples returns the names of the principles carried in the binary.
 func embeddedPrinciples() map[string]string {
@@ -15,9 +18,10 @@ func embeddedPrinciples() map[string]string {
 
 // TestEmbeddedOperatingPrinciples: the binary embeds the principles an agent
 // needs to OPERATE satelle — operating discipline (agent-goals), execution model
-// (agent-model), edit-gate rule (edits-require-a-story), and blockage recognition
-// (recognise-blockage; sty_0334d12b). Everything else is authoring/development
-// substrate that lives in a repo's .satelle/principles (sty_807ae744, sty_949e8739).
+// (agent-model), edit-gate rule (edits-require-a-story), blockage recognition
+// (recognise-blockage; sty_0334d12b), and the residency taxonomy (residency;
+// sty_1278fdd9). Everything else is authoring/development substrate that lives
+// in a repo's .satelle/principles (sty_807ae744, sty_949e8739).
 func TestEmbeddedOperatingPrinciples(t *testing.T) {
 	embedded := embeddedPrinciples()
 	for _, name := range []string{
@@ -25,11 +29,23 @@ func TestEmbeddedOperatingPrinciples(t *testing.T) {
 		"satelle-agent-model",
 		"satelle-edits-require-a-story",
 		"satelle-recognise-blockage",
+		"satelle-residency",
 	} {
 		if body, ok := embedded[name]; !ok {
 			t.Errorf("operating principle %q must be embedded, but is missing from EmbeddedDefaults()", name)
 		} else if len(body) == 0 {
 			t.Errorf("embedded principle %q has empty body", name)
+		}
+	}
+	// Taxonomy principle must be system-resident (session-tagged) and must not
+	// reintroduce the inert scope axis.
+	body := embedded["satelle-residency"]
+	if !strings.Contains(body, "principles:session") {
+		t.Error("satelle-residency must carry the system-residency marker principles:session")
+	}
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "scope:") {
+			t.Error("satelle-residency must not carry scope: (residency is the tag alone)")
 		}
 	}
 }

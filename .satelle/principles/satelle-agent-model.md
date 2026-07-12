@@ -1,6 +1,5 @@
 ---
 name: satelle-agent-model
-scope: system
 type: principle
 tags: [type:principle]
 applies_to: ["*"]

@@ -4,14 +4,19 @@
 //
 // At session start it fetches every `principles:session`-flagged authored doc
 // and injects their bodies as session context, followed by the standing "pull
-// the rest on demand" instruction. This keeps the minimal SESSION set (the
-// operating principle) in front of the agent without auto-injecting an unbounded
-// list — the bodies are bounded by a byte ceiling, and an overflow is reported on
-// stderr (never silently dropped). It FAILS OPEN: an unconfigured repo or any read
-// error injects nothing and never blocks the session. This is the mechanism that
-// makes the `principles:session` residency marker live: residency is TWO tiers —
-// session (carries the marker → injected every session) and on-demand (the
-// default, no marker → pulled only when a skill or workflow references it).
+// the rest on demand" instruction. This keeps the minimal SYSTEM residency set
+// in front of the agent without auto-injecting an unbounded list — the bodies
+// are bounded by a byte ceiling, and an overflow is reported on stderr (never
+// silently dropped). It FAILS OPEN: an unconfigured repo or any read error
+// injects nothing and never blocks the session.
+//
+// Residency taxonomy (sty_1278fdd9 / satelle-residency): ONE classifier —
+//
+//	system   = carries the principles:session tag → injected every session
+//	ondemand = no marker (default) → pulled only when a skill/workflow references it
+//
+// Frontmatter scope: on principles is NOT an injection axis (removed; inert if reintroduced).
+// Ownership (embedded_sha) is orthogonal to residency.
 package cli
 
 import (
@@ -34,10 +39,11 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-// sessionTag is the residency marker: a doc carrying it in its frontmatter tags
-// is part of the SESSION set injected every session start. A doc WITHOUT it is
-// on-demand (the default) — resolvable substrate pulled only when a skill or
-// workflow references it, never auto-injected.
+// sessionTag is the sole system-residency marker (taxonomy: system|ondemand).
+// A principle carrying it is system-resident — injected every SessionStart.
+// A principle WITHOUT it is ondemand — resolvable substrate pulled only when a
+// skill or workflow references it, never auto-injected. No other frontmatter
+// field (including legacy scope:) participates in injection.
 const sessionTag = "principles:session"
 
 // alwaysContextCeiling bounds the total injected always-content. The resident

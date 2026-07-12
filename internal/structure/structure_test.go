@@ -79,6 +79,8 @@ func TestPrinciple(t *testing.T) {
 		{"stub body", "x", "---\nname: x\ntype: principle\ndescription: d\ntags: [a]\n---\n\n# x\n"},
 		{"no tags", "x", "---\nname: x\ntype: principle\ndescription: d\n---\n\nprose here"},
 		{"wrong kind", "x", "---\nname: x\ntype: skill\ndescription: d\ntags: [a]\n---\n\nprose"},
+		// sty_1278fdd9: scope is a workflow field; principles use principles:session only.
+		{"scope on principle", "x", "---\nname: x\ntype: principle\nscope: system\ndescription: d\ntags: [a]\n---\n\nprose here"},
 	}
 	for _, c := range bad {
 		if p := Doc("principles", c.slug, c.body, nil); len(p) == 0 {

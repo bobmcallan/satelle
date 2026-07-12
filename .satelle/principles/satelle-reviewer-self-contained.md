@@ -1,6 +1,5 @@
 ---
 name: satelle-reviewer-self-contained
-scope: project
 type: principle
 tags: [type:principle]
 applies_to: ["*"]

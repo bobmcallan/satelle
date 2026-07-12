@@ -1,6 +1,5 @@
 ---
 name: satelle-skill-naming
-scope: system
 type: principle
 tags: [type:principle]
 applies_to: ["*"]

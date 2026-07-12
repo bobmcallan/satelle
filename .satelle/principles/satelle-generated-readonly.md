@@ -1,6 +1,5 @@
 ---
 name: satelle-generated-readonly
-scope: system
 type: principle
 tags: [type:principle, principles:session]
 applies_to: ["*"]

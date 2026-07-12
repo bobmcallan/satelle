@@ -1,6 +1,5 @@
 ---
 name: satelle-enable-then-operate
-scope: system
 type: principle
 tags: [type:principle]
 applies_to: ["*"]
