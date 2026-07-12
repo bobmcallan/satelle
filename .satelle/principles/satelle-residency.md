@@ -1,10 +1,10 @@
 ---
 name: satelle-residency
 type: principle
-tags: [type:principle, principles:session]
+tags: [type:principle]
 applies_to: ["*"]
 description: Residency is the single injection axis — system (principles:session marker, always injected) vs ondemand (no marker, pull on reference). Ownership (embedded_sha) is orthogonal.
-embedded_sha: c946d8dc1a30222a0fe8b52e66777e35c0d116b33fd231e151daa739ab9b8931
+embedded_sha: 1a3d00b6e5a5e03139e1113fd346ba5b0774969b31dbbec6ac0bc070bf654040
 ---
 
 # Principle residency
@@ -38,8 +38,8 @@ not residency:
 | **no stamp** | operator-authored always-injected | operator-authored on-demand |
 
 A repo may author its own always-injected principle with no stamp. An embedded
-default may be on-demand (e.g. `satelle-agent-model`). Do not conflate the two
-axes.
+default may be on-demand (e.g. `satelle-agent-model`, this taxonomy principle).
+Do not conflate the two axes.
 
 See [[satelle-agent-goals]], [[satelle-edits-require-a-story]],
 [[satelle-constitution]].

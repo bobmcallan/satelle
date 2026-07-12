@@ -1,7 +1,7 @@
 ---
 name: satelle-agent-telemetry
 type: principle
-tags: [type:principle, principles:session]
+tags: [type:principle]
 applies_to: ["*"]
 description: The PROMPTED telemetry channel — how an agent self-reports work quality. An agent holding the satelle CLI grant records what only it can judge (a try/fail/timeout of its OWN work, and per-step quality signals) as a typed event via `satelle story log <id> --kind <kind> --data k=v`. Complements the binary's CODED channel (which already captures dispatch-level agent-retry/failure/timeout), so log the subjective/decision signal — never a secret, never a duplicate of what the binary already sees.
 ---

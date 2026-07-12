@@ -1,7 +1,7 @@
 ---
 name: satelle-generated-readonly
 type: principle
-tags: [type:principle, principles:session]
+tags: [type:principle]
 applies_to: ["*"]
 description: The generated OKF reference files under .satelle/ — the stories backlog, the story-implementation-summary sub-bundle, and every reserved index.md/log.md a bundle regenerates — are READ-ONLY views of the store, not authored substrate. Never hand-edit them; they carry a generated marker, are written read-only (0o444), are overwritten on the next reindex, and nothing reads them for a decision. Mutate the underlying record via the verbs; reindex re-derives the view.
 ---

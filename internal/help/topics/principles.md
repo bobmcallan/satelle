@@ -26,8 +26,8 @@ List them with `satelle doc list --kind principles`; read one with
 
 ## Residency: two tiers — system and ondemand
 
-Residency is the **single injection axis** for principles (see the always-injected
-`satelle-residency` principle). One classifier — the frontmatter tag
+Residency is the **single injection axis** for principles (see the ondemand
+reference principle `satelle-residency`). One classifier — the frontmatter tag
 `principles:session`. There is no `scope:` axis on principles.
 
 | Tier | Marker | Behaviour |
@@ -35,9 +35,13 @@ Residency is the **single injection axis** for principles (see the always-inject
 | **system** | carries `principles:session` | injected at every SessionStart |
 | **ondemand** | no marker (default) | pull with `satelle doc get principles <name>` when referenced |
 
-Keep the system set **minimal** to protect the context budget. Ownership
+Keep the system set **minimal** under the single SessionStart ceiling
+(`alwaysContextCeiling` = 16384 bytes — constitution + resident bodies + pointer).
+The operating triad that ships session-tagged is `satelle-agent-goals`,
+`satelle-edits-require-a-story`, and `satelle-recognise-blockage`. Ownership
 (`embedded_sha` from init) is **orthogonal** to residency: a repo may author its
-own system principle without a stamp; an embedded default may be ondemand.
+own system principle without a stamp; an embedded default may be ondemand
+(e.g. `satelle-agent-model`, `satelle-residency`).
 
 ## How the system set reaches the agent (injection)
 

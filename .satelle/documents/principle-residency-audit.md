@@ -1,67 +1,98 @@
 ---
 name: principle-residency-audit
 type: document
-tags: [type:document, context, principles, epic:session-context]
-description: Dogfood audit (tsk_fa292e14) of every .satelle/principles/*.md — token length, session/on-demand residency tier, and relevance. Confirms the injected session set is minimal (operating principle only, alongside the order-zero constitution) and within the 16384-byte SessionStart ceiling.
+tags: [type:document, context, principles, epic:substrate-convergence, order:4]
+description: Living audit of principle residency — system vs ondemand under the single SessionStart ceiling (alwaysContextCeiling = 16384 bytes). Updated by sty_cd5e341c (context diet).
 ---
 
-# Principle residency audit (tsk_fa292e14)
+# Principle residency audit
 
-Reviews every principle for relevance and token length and classifies each into
-the two residency tiers the code actually honours (`internal/cli/cmd_hook.go`):
+Residency is the **only** injection axis for principles. One marker:
+`principles:session` in frontmatter tags.
 
-- **session** — carries the `principles:session` marker in `tags:`; injected at
-  every SessionStart by `selectAlwaysDocs`, alongside the order-zero constitution.
-- **on-demand** — the default (no marker); pulled with `satelle doc get principles
-  <name>` when a skill, workflow, or the constitution references it.
+| Tier | Marker | Behaviour |
+| --- | --- | --- |
+| **system** | carries `principles:session` | injected at every SessionStart by `satelle hook context` |
+| **ondemand** | no marker (default) | pull with `satelle doc get principles <name>` when referenced |
 
-`principles:global` was a **stale, no-op tag** — no code path reads it (only
-`principles:session` is live). It was removed from the three docs that carried it
-so the taxonomy is exactly two tiers: session-marked, or nothing.
+There is no `scope:` field on principles. Ownership (`embedded_sha`) is
+**orthogonal** to residency. See [[satelle-residency]].
 
-Token counts are estimated at ~4 chars/token from the on-disk file size.
+## The SessionStart ceiling
 
-## Per-principle table
+**`alwaysContextCeiling = 16384` bytes** (`internal/cli/cmd_hook.go`) **IS the
+single SessionStart budget**. It bounds constitution + system-resident principle
+bodies + the on-demand pointer. There is no second budget. Overflow truncates
+with a stderr note; the hook still fails open.
 
-| Principle | ~tokens | Tier | Relevance / why this tier |
-|---|--:|---|---|
-| satelle-agent-goals | 427 | **session** | The operating principle. Every session needs drive-to-terminal, status-is-proof, one-story-at-a-time, and surface-don't-work-around. The only principle that belongs in every context. |
-| satelle-agent-model | 2137 | on-demand | The full executor/reviewer execution model. Deep and detailed — pulled when authoring or driving a workflow. Longest principle, but the length is substantive, not bloat; not session because it is reference, not per-session guidance. |
-| satelle-agile-increments | 482 | on-demand | Delivery paradigm (small stories, one commit each). Pulled when decomposing a request. |
-| satelle-broken-windows | 387 | on-demand | Working discipline (a failure you meet is yours; never add a new red). Pulled at commit / debt decisions. |
-| satelle-configuration-over-code | 663 | on-demand | Harness design (process is substrate, not code). **Redundant with the constitution's "Configuration over code" section** (near-verbatim); its own description says it "explains how satelle is built, not a rule an agent needs to drive a story." Kept on-demand; flagged for dedup below. |
-| satelle-done-is-last | 417 | on-demand | Workflow invariant (done is terminal; gates precede it). The gist already rides in the session set via agent-goals; the full statement is pulled when reasoning about workflow shape. |
-| satelle-dot-standard | 227 | on-demand | Pointer to the DOT grammar for workflow authoring. Situational. |
-| satelle-enable-then-operate | 728 | on-demand | Two-phase structure (init scaffolds `.satelle/`; every command operates from it). Pulled when touching init / root resolution. |
-| satelle-repo-agnostic | 734 | on-demand | The order-zero guard on every code change (product vs dogfood repo). The constitution names it, so a code change pulls it on demand — it does not need to ride every session pre-emptively. |
-| satelle-reviewer-self-contained | 547 | on-demand | Reviewer-authoring rule (rubric + check live in the skill). Pulled when writing a gate. |
-| satelle-story-classification | 674 | on-demand | Epic / sprint / order taxonomy. Pulled when classifying stories. |
-| satelle-yagni | 502 | on-demand | Coding paradigm (build for a real need, not a foreseen one). Pulled when designing a change. |
+Measure: `satelle hook context 2>/dev/null | wc -c`
 
-Session tier total: **~427 tokens / 1710 bytes** — one principle. Well under the
-16384-byte SessionStart ceiling (`alwaysContextCeiling`), even added to the
-constitution which rides first.
+## Context diet (sty_cd5e341c, order:4 of epic:substrate-convergence)
 
-## Findings
+| | Bytes (`hook context`) | Headroom under 16384 |
+| --- | ---: | ---: |
+| **BEFORE** | 16061 | 323 (near overflow; stderr truncation risk) |
+| **AFTER** | 13060 | 3324 |
 
-1. **Session set is already minimal and correct.** Only `satelle-agent-goals`
-   carries `principles:session`; combined with the order-zero constitution that is
-   exactly the "operating principle + constitution" target. No principle needed
-   promoting to session, and none needed demoting out of it.
-2. **No principle is over-long for its tier.** The only budget-constrained tier is
-   session (the 16384-byte ceiling); it holds one 1710-byte doc, so nothing
-   over-long is injected. On-demand principles are each tight and single-purpose;
-   the largest (agent-model, ~2137 tok) is substantive reference pulled
-   deliberately, not session bloat. No content trim was required.
-3. **Stale `principles:global` removed** from `satelle-agent-model`,
-   `satelle-dot-standard`, and `satelle-story-classification` — a no-op tag no code
-   reads, which misleadingly implied a third residency tier. Now two tiers only.
+**BEFORE resident set (6):** `satelle-agent-goals`, `satelle-edits-require-a-story`,
+`satelle-recognise-blockage`, `satelle-residency`, `satelle-agent-telemetry`,
+`satelle-generated-readonly` (+ order-zero constitution).
 
-## Follow-up (not actioned here)
+**AFTER resident set (3) — the operating triad:**
 
-`satelle-configuration-over-code` substantially duplicates the constitution's
-"Configuration over code" section. Deduping it (fold the unique bits into the
-constitution or repo-agnostic, then retire the standalone principle and fix the
-inbound `[[satelle-configuration-over-code]]` links in agent-model,
-enable-then-operate, and repo-agnostic) is a structural substrate change with link
-fan-out — it belongs in its own reviewed story, not this residency audit.
+| Principle | Tier | Ownership | Why |
+| --- | --- | --- | --- |
+| `satelle-agent-goals` | **system** | embedded | drive-to-terminal / status-is-proof / one-story |
+| `satelle-edits-require-a-story` | **system** | embedded | engage-before-edit/commit gate discipline |
+| `satelle-recognise-blockage` | **system** | embedded | park-reason-resume (consistent with edits-require after order:2) |
+
+**Demoted to ondemand (remove `principles:session`):**
+
+| Principle | Ownership | Why demote |
+| --- | --- | --- |
+| `satelle-residency` | embedded | taxonomy *definition* is authoring reference, not per-session operating guidance; lands in embedded source + converges via `satelle init` / `embedded_sha` |
+| `satelle-agent-telemetry` | repo-authored | prompted self-report channel; supplementary quality logging |
+| `satelle-generated-readonly` | repo-authored | `0o444` mode self-enforces; discoverable on reference |
+
+**Already ondemand (no action):** `satelle-repo-agnostic`, `satelle-skill-naming`,
+`satelle-agent-model`, and every other principle under `.satelle/principles/`.
+
+## Per-principle table (current)
+
+| Principle | Tier | Notes |
+| --- | --- | --- |
+| satelle-agent-goals | **system** | Operating discipline |
+| satelle-edits-require-a-story | **system** | Edit/commit gate rule |
+| satelle-recognise-blockage | **system** | Blockage park (not missing engagement) |
+| satelle-residency | ondemand | Defines system\|ondemand; embedded reference |
+| satelle-agent-model | ondemand | Execution model; embedded; length reserved for order:5 rewrite |
+| satelle-agent-telemetry | ondemand | Prompted telemetry channel |
+| satelle-generated-readonly | ondemand | Generated OKF views are 0o444 |
+| satelle-repo-agnostic | ondemand | Product vs dogfood guard |
+| satelle-skill-naming | ondemand | Skill naming convention |
+| satelle-agile-increments | ondemand | Delivery paradigm |
+| satelle-broken-windows | ondemand | Working discipline |
+| satelle-configuration-over-code | ondemand | Harness design (overlaps constitution) |
+| satelle-done-is-last | ondemand | Workflow invariant |
+| satelle-dot-standard | ondemand | DOT grammar pointer |
+| satelle-enable-then-operate | ondemand | Init vs operate phases |
+| satelle-reviewer-self-contained | ondemand | Reviewer authoring rule |
+| satelle-story-classification | ondemand | Epic / sprint / order |
+| satelle-yagni | ondemand | Coding paradigm |
+
+Constitution (`.satelle/constitution.md`, ~5.3 KB) is injected first every
+session and is **not** a principle — not trimmed by this diet.
+
+## Consistency
+
+The three system principles form a consistent operating triad: engage a story,
+drive it through gates, park on real blockage — never treat missing engagement
+as blockage (order:2). Demotion removes reference docs; it does not reintroduce
+conflicts.
+
+## Flagged out of scope (not fixed here)
+
+Disk copies of `satelle-agent-goals` and `satelle-edits-require-a-story` may be
+body-ahead of embedded sources without an `embedded_sha` stamp (order:2
+convergence tail). A future rebase could drop those enrichments — track as a
+follow-up convergence story, not this diet.

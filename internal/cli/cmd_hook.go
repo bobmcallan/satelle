@@ -46,11 +46,12 @@ import (
 // field (including legacy scope:) participates in injection.
 const sessionTag = "principles:session"
 
-// alwaysContextCeiling bounds the total injected always-content. The resident
-// set is meant to be small (a handful of principle-sized docs); this is the
-// backstop that stops a mis-tagged large doc from blowing the context budget the
-// whole model is meant to protect. Sized to hold satelle's order-zero principles
-// (constitution, repo-agnostic, agent-goals, done-is-last) with headroom.
+// alwaysContextCeiling is THE SessionStart budget (bytes) for constitution +
+// system-resident principle bodies + the on-demand pointer. There is no second
+// budget — this constant IS the ceiling (epic:substrate-convergence order:4 /
+// sty_cd5e341c). Keep the resident set to the operating triad (agent-goals,
+// edits-require-a-story, recognise-blockage) plus the order-zero constitution.
+// Overflow truncates with a stderr note; the hook still fails open.
 const alwaysContextCeiling = 16384
 
 // alwaysIndexInstruction is the standing "pull, don't preload" directive
