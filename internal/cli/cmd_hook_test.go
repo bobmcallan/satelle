@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -261,34 +262,49 @@ func TestOutsideRepoRefusalMessage(t *testing.T) {
 	}
 }
 
-// TestEmitPreToolUseDenyDualFormat (sty_e4902c51): one stdout JSON line carries
-// both Grok (decision/reason) and Claude (hookSpecificOutput.permissionDecision*)
-// deny fields so either harness can surface the reason to the agent.
-func TestEmitPreToolUseDenyDualFormat(t *testing.T) {
+// TestEmitPreToolUseDenyClaudeSchema (sty_5e4bc568 AC1/AC5): Claude-branch deny
+// JSON must validate against Claude Code's PreToolUse output shape — root keys
+// exactly {hookSpecificOutput}, nested object has the three required fields, and
+// NO top-level decision/reason (those fail schema validation and inert the gate).
+// Map-key assertion encodes additionalProperties=false without a JSON-schema lib.
+func TestEmitPreToolUseDenyClaudeSchema(t *testing.T) {
 	var buf bytes.Buffer
 	reason := noEngagedStoryEditReason
-	if err := emitPreToolUseDeny(&buf, reason); err != nil {
+	if err := emitPreToolUseDeny(&buf, "claude", reason); err != nil {
 		t.Fatal(err)
 	}
 	line := strings.TrimSpace(buf.String())
-	var doc preToolUseDenyOut
-	if err := json.Unmarshal([]byte(line), &doc); err != nil {
+	var root map[string]any
+	if err := json.Unmarshal([]byte(line), &root); err != nil {
 		t.Fatalf("deny JSON: %v\n%s", err, line)
 	}
-	if doc.Decision != "deny" {
-		t.Errorf("Grok decision = %q, want deny", doc.Decision)
+	if len(root) != 1 {
+		t.Errorf("Claude deny root keys = %v, want exactly {hookSpecificOutput}", keysOf(root))
 	}
-	if doc.Reason != reason {
-		t.Errorf("Grok reason mismatch:\n got %q\nwant %q", doc.Reason, reason)
+	if _, ok := root["hookSpecificOutput"]; !ok {
+		t.Fatalf("Claude deny missing hookSpecificOutput:\n%s", line)
 	}
-	if doc.HookSpecificOutput.PermissionDecision != "deny" {
-		t.Errorf("Claude permissionDecision = %q, want deny", doc.HookSpecificOutput.PermissionDecision)
+	if _, ok := root["decision"]; ok {
+		t.Errorf("Claude deny must NOT have top-level decision (schema reject):\n%s", line)
 	}
-	if doc.HookSpecificOutput.PermissionDecisionReason != reason {
-		t.Errorf("Claude permissionDecisionReason mismatch")
+	if _, ok := root["reason"]; ok {
+		t.Errorf("Claude deny must NOT have top-level reason (schema reject):\n%s", line)
 	}
-	if doc.HookSpecificOutput.HookEventName != "PreToolUse" {
-		t.Errorf("hookEventName = %q", doc.HookSpecificOutput.HookEventName)
+	hso, ok := root["hookSpecificOutput"].(map[string]any)
+	if !ok {
+		t.Fatalf("hookSpecificOutput not an object: %T", root["hookSpecificOutput"])
+	}
+	if len(hso) != 3 {
+		t.Errorf("hookSpecificOutput keys = %v, want exactly 3", keysOf(hso))
+	}
+	if hso["hookEventName"] != "PreToolUse" {
+		t.Errorf("hookEventName = %v", hso["hookEventName"])
+	}
+	if hso["permissionDecision"] != "deny" {
+		t.Errorf("permissionDecision = %v", hso["permissionDecision"])
+	}
+	if hso["permissionDecisionReason"] != reason {
+		t.Errorf("permissionDecisionReason mismatch")
 	}
 	// Canonical no-story edit copy: both clauses the operator asked for, plus the
 	// session-contract language (sty_8c3d345c) — a story session opens on engage and
@@ -306,6 +322,66 @@ func TestEmitPreToolUseDenyDualFormat(t *testing.T) {
 			t.Errorf("canonical reason missing %q:\n%s", want, reason)
 		}
 	}
+}
+
+// TestEmitPreToolUseDenyGrok (sty_5e4bc568 AC2): Grok-branch deny is top-level
+// decision=deny + reason with NO hookSpecificOutput.
+func TestEmitPreToolUseDenyGrok(t *testing.T) {
+	var buf bytes.Buffer
+	reason := noEngagedStoryEditReason
+	if err := emitPreToolUseDeny(&buf, "grok", reason); err != nil {
+		t.Fatal(err)
+	}
+	line := strings.TrimSpace(buf.String())
+	var root map[string]any
+	if err := json.Unmarshal([]byte(line), &root); err != nil {
+		t.Fatalf("deny JSON: %v\n%s", err, line)
+	}
+	if root["decision"] != "deny" {
+		t.Errorf("Grok decision = %v, want deny", root["decision"])
+	}
+	if root["reason"] != reason {
+		t.Errorf("Grok reason mismatch")
+	}
+	if _, ok := root["hookSpecificOutput"]; ok {
+		t.Errorf("Grok deny must NOT carry hookSpecificOutput:\n%s", line)
+	}
+	if len(root) != 2 {
+		t.Errorf("Grok deny root keys = %v, want {decision,reason}", keysOf(root))
+	}
+}
+
+// TestHarnessFromEvent (sty_5e4bc568 AC2): snake_case tool_input → claude;
+// camelCase-only toolInput → grok; ambiguous/empty → claude (strict default).
+func TestHarnessFromEvent(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"claude snake_case", `{"tool_input":{"file_path":"/x.go"}}`, "claude"},
+		{"claude bash", `{"tool_input":{"command":"git commit -m x"}}`, "claude"},
+		{"grok camelCase", `{"toolInput":{"path":"internal/x.go"}}`, "grok"},
+		{"grok bash", `{"toolInput":{"command":"git push"}}`, "grok"},
+		{"both present → claude", `{"tool_input":{},"toolInput":{}}`, "claude"},
+		{"empty", `{}`, "claude"},
+		{"null tool_input", `{"tool_input":null}`, "claude"},
+	}
+	for _, c := range cases {
+		if got := harnessFromEvent([]byte(c.raw)); got != c.want {
+			t.Errorf("%s: harnessFromEvent = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// keysOf returns sorted map keys for stable test diagnostics.
+func keysOf(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // TestResolveAbsTarget pins the relative-target fix (sty_8c3d345c): a repo-relative
@@ -562,6 +638,31 @@ func TestEmitStopBlock(t *testing.T) {
 	}
 	if got.Decision != "block" || !strings.Contains(got.Reason, "a.go") {
 		t.Errorf("stop block = %+v, want decision=block + reason naming the file", got)
+	}
+}
+
+// TestStopBlockShape (sty_5e4bc568 AC6): Stop schema honors top-level
+// decision=block + reason (NOT PreToolUse hookSpecificOutput). Closed-key check.
+func TestStopBlockShape(t *testing.T) {
+	var buf bytes.Buffer
+	if err := emitStopBlock(&buf, "ungated edits: a.go"); err != nil {
+		t.Fatalf("emitStopBlock: %v", err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &root); err != nil {
+		t.Fatalf("stop block not valid JSON: %v (%s)", err, buf.String())
+	}
+	if len(root) != 2 {
+		t.Errorf("stop block root keys = %v, want {decision,reason}", keysOf(root))
+	}
+	if root["decision"] != "block" {
+		t.Errorf("decision = %v, want block", root["decision"])
+	}
+	if reason, _ := root["reason"].(string); !strings.Contains(reason, "a.go") {
+		t.Errorf("reason should name the file: %v", root["reason"])
+	}
+	if _, ok := root["hookSpecificOutput"]; ok {
+		t.Errorf("Stop block must not use PreToolUse hookSpecificOutput shape")
 	}
 }
 
