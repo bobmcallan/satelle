@@ -34,6 +34,7 @@ var lookPath = exec.LookPath
 
 func init() {
 	var configArg string
+	var noWorkspace bool
 	cmd := &cobra.Command{
 		Use: "init",
 		// `satelle install` reads naturally at first contact — an alias, same
@@ -53,7 +54,9 @@ func init() {
   - a managed .gitignore block keeping the local database out of git while
     committing the config and the authored markdown,
   - process hooks for the detected coding harness(es): Claude
-    (.claude/settings.json) and/or Grok (.grok/hooks/satelle.json).
+    (.claude/settings.json) and/or Grok (.grok/hooks/satelle.json),
+  - registration of this repo in the local workspace registry (opt out with
+    --no-workspace) so 'satelle serve' and the /workspace view see it.
 
 init/install end by VALIDATING the deployed system — the agents layer must load
 and every substrate artifact must pass its deterministic structure check — and
@@ -63,10 +66,11 @@ Re-running is safe: existing files are preserved and the report shows what was
 added versus already present. Both names share one implementation.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInit(cmd.OutOrStdout(), initRepoRoot(configArg))
+			return runInit(cmd.OutOrStdout(), initRepoRoot(configArg), noWorkspace)
 		},
 	}
 	cmd.Flags().StringVar(&configArg, "config", "", "path to satelle.toml (resolves the repo root; default: walk up from CWD)")
+	cmd.Flags().BoolVar(&noWorkspace, "no-workspace", false, "skip registering this repo in the local workspace registry")
 	register(cmd)
 }
 
@@ -83,7 +87,9 @@ func initRepoRoot(configArg string) string {
 }
 
 // runInit performs the idempotent scaffold for repoRoot.
-func runInit(out io.Writer, repoRoot string) error {
+// noWorkspace skips registration in the machine-local workspace registry
+// (sty_3bdbdc38); default is false (register).
+func runInit(out io.Writer, repoRoot string, noWorkspace bool) error {
 	// 1. .satelle/ directory.
 	dataDir := filepath.Join(repoRoot, config.DefaultDataDir)
 	created, err := ensureDir(dataDir)
@@ -230,6 +236,12 @@ func runInit(out io.Writer, repoRoot string) error {
 	if err := ensureProcessHooks(out, repoRoot); err != nil {
 		return err
 	}
+
+	// 6b. Local workspace registry (sty_3bdbdc38) — register this repo so the
+	//     aggregate /workspace view and a running 'satelle serve' see it without
+	//     a separate 'satelle workspace add'. LOCAL gc.Workspace only (no hosted
+	//     network). Non-fatal on global-config errors; --no-workspace opts out.
+	ensureWorkspaceRegistration(out, repoRoot, noWorkspace)
 
 	// 7. Agent guidance — init is usually run BY a coding agent, and this report is
 	//    its cue: when the repo carries an agent instruction file (CLAUDE.md /
@@ -934,6 +946,36 @@ const gitignoreBlock = gitignoreMarker + `
 .satelle/backups/
 # <<< satelle (managed) <<<
 `
+
+// ensureWorkspaceRegistration registers repoRoot in the machine-local workspace
+// registry (gc.Workspace — the connected-repo list for /workspace and multi-serve).
+// Non-fatal on every failure path: a machine whose global config is unreadable or
+// unwritable still gets a fully initialized repo (sty_3bdbdc38). noWorkspace opts out.
+func ensureWorkspaceRegistration(out io.Writer, repoRoot string, noWorkspace bool) {
+	if noWorkspace {
+		fmt.Fprintln(out, "  = workspace registry (skipped: --no-workspace)")
+		return
+	}
+	abs, err := filepath.Abs(repoRoot)
+	if err != nil {
+		fmt.Fprintf(out, "  ! workspace registry (skipped: resolve path: %v)\n", err)
+		return
+	}
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		fmt.Fprintf(out, "  ! workspace registry (skipped: %v)\n", err)
+		return
+	}
+	if !gc.Workspace.AddRepo(abs) {
+		fmt.Fprintln(out, "  = workspace registry (already registered)")
+		return
+	}
+	if err := config.SaveGlobal(gc); err != nil {
+		fmt.Fprintf(out, "  ! workspace registry (registration skipped: %v)\n", err)
+		return
+	}
+	fmt.Fprintf(out, "  + workspace registry (registered %s)\n", abs)
+}
 
 // ensureGitignore writes the managed block to the repo's .gitignore,
 // idempotently and non-destructively: it creates the file with the block when

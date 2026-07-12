@@ -32,10 +32,11 @@ func isolateUserHome(t *testing.T) {
 }
 
 // runInitTest is runInit with HOME isolated (see isolateUserHome).
+// Registers the repo in the local workspace registry by default (sty_3bdbdc38).
 func runInitTest(t *testing.T, out io.Writer, repo string) error {
 	t.Helper()
 	isolateUserHome(t)
-	return runInit(out, repo)
+	return runInit(out, repo, false)
 }
 
 func TestRunInitScaffolds(t *testing.T) {
@@ -758,5 +759,114 @@ func TestInitAgentsLayerValidatesZeroWarnings(t *testing.T) {
 	}
 	if string(before) != string(after) {
 		t.Error("re-init clobbered existing agents.toml")
+	}
+}
+
+// TestRunInitRegistersWorkspace (sty_3bdbdc38 AC1): a fresh init leaves the repo
+// in the local workspace registry that `satelle workspace list` reads.
+func TestRunInitRegistersWorkspace(t *testing.T) {
+	repo := t.TempDir()
+	var out strings.Builder
+	if err := runInitTest(t, &out, repo); err != nil {
+		t.Fatalf("runInit: %v\n%s", err, out.String())
+	}
+	abs, err := filepath.Abs(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range gc.Workspace.Repos {
+		if r == abs {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("workspace registry missing %s: %v", abs, gc.Workspace.Repos)
+	}
+	if !strings.Contains(out.String(), "registered") {
+		t.Errorf("init output missing registered line:\n%s", out.String())
+	}
+}
+
+// TestRunInitWorkspaceIdempotent (AC2): re-init does not duplicate and does not fail.
+func TestRunInitWorkspaceIdempotent(t *testing.T) {
+	repo := t.TempDir()
+	if err := runInitTest(t, io.Discard, repo); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := runInitTest(t, &out, repo); err != nil {
+		t.Fatalf("re-init: %v\n%s", err, out.String())
+	}
+	abs, _ := filepath.Abs(repo)
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, r := range gc.Workspace.Repos {
+		if r == abs {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("want exactly 1 registry entry for %s, got %d in %v", abs, n, gc.Workspace.Repos)
+	}
+	if !strings.Contains(out.String(), "already registered") {
+		t.Errorf("re-init output missing already-registered line:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "  + workspace registry") {
+		t.Errorf("re-init must not re-add (no + line):\n%s", out.String())
+	}
+}
+
+// TestRunInitNoWorkspaceOptOut (AC3): --no-workspace skips registration.
+func TestRunInitNoWorkspaceOptOut(t *testing.T) {
+	isolateUserHome(t)
+	repo := t.TempDir()
+	var out strings.Builder
+	if err := runInit(&out, repo, true); err != nil {
+		t.Fatalf("runInit: %v\n%s", err, out.String())
+	}
+	abs, _ := filepath.Abs(repo)
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range gc.Workspace.Repos {
+		if r == abs {
+			t.Fatalf("opt-out still registered %s in %v", abs, gc.Workspace.Repos)
+		}
+	}
+	if !strings.Contains(out.String(), "skipped: --no-workspace") {
+		t.Errorf("output missing skip line:\n%s", out.String())
+	}
+}
+
+// TestRunInitWorkspaceWriteFailureNonFatal (AC4): unwritable global config warns
+// but does not fail init.
+func TestRunInitWorkspaceWriteFailureNonFatal(t *testing.T) {
+	isolateUserHome(t)
+	// Point SATELLE_HOME at a path under a regular file so MkdirAll fails.
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SATELLE_HOME", filepath.Join(blocker, "sub"))
+	repo := t.TempDir()
+	var out strings.Builder
+	if err := runInit(&out, repo, false); err != nil {
+		t.Fatalf("init must succeed despite unwritable global config: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "workspace registry") || !strings.Contains(out.String(), "!") {
+		// Accept either "!" warn prefix or "skipped" wording.
+		if !strings.Contains(out.String(), "registration skipped") && !strings.Contains(out.String(), "workspace registry (skipped") {
+			t.Errorf("expected non-fatal workspace warning:\n%s", out.String())
+		}
 	}
 }
