@@ -4,6 +4,7 @@ scope: system
 type: skill
 tags: [type:skill, type:audit]
 description: Diff the ACTUAL SessionStart context (satelle hook context) against the .satelle substrate for contradictions, bloat, and misplacement. Judge and report only; carries satelle principle validate as the deterministic half.
+embedded_sha: 941638fb53959fa8dabbc2086ff1294dae9dece82fe62208eab650e768d9acef
 ---
 
 # Context audit — actual injection vs substrate intent

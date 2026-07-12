@@ -55,7 +55,10 @@ digraph satelle_workflow {
   in_progress [agent=executor, prompt="@skill:code"]    // IN-LOOP: driving session implements
   integration [agent=executor, prompt="@skill:integrate"] // IN-LOOP: driving session tests
   release     [agent=executor, prompt="@skill:release"] // IN-LOOP: driving session releases
-  done        [shape=Msquare]                           // terminal (release-review gates the edge in)
+  // Terminal success. on_enter_agent dispatches [retrospective] once with
+  // @skill:satelle-lessons to attach a typed friction corpus (order:9) without
+  // making done engaging — same pattern as blocked's on_enter triage.
+  done        [shape=Msquare, on_enter_agent=retrospective, on_enter_prompt="@skill:satelle-lessons"]
   cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
   // blocked is a park state (not engaged): world-not-ready, same ACs on resume.
   // agent=reviewer so the edit/commit gates do not treat it as engaged work.
@@ -105,10 +108,12 @@ dispatched `plan` (`@skill:plan`), and the in-loop `in_progress` (`@skill:code`)
 the reviewer gates (`satelle-story-intent-review`, `satelle-story-plan-review`,
 `satelle-code-ac-review`, `satelle-integration-review`, `satelle-integration-check`,
 `satelle-story-release-review`, `satelle-estimate-actual-review`,
-`satelle-story-cancel-review`, `satelle-step-summary`) are authored in this repo's
-`.satelle/skills` — so there is no dangling `@skill:` reference
-and a story drives to a terminal state without a missing-skill block. Reviewer
-gates degrade to advisory only if their rubric is genuinely absent.
+`satelle-story-cancel-review`, `satelle-step-summary`), and the post-release
+lessons capture (`satelle-lessons`, dispatched on enter-done via the
+`[retrospective]` binding) are authored in this repo's `.satelle/skills` — so
+there is no dangling `@skill:` reference and a story drives to a terminal state
+without a missing-skill block. Reviewer gates degrade to advisory only if their
+rubric is genuinely absent. Lessons are offline corpus (not session-injected).
 
 ## Environment
 

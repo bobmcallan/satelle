@@ -2,6 +2,7 @@ package verb_test
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -69,5 +70,79 @@ func TestStoryDocAttachListGet(t *testing.T) {
 	}
 	if !sawAttach {
 		t.Errorf("per-story ledger missing the doc-attached entry; got %d entries", len(entries))
+	}
+}
+
+func TestStoryLessonsListAcrossStories(t *testing.T) {
+	dir := t.TempDir()
+	db, err := store.Open(filepath.Join(dir, "satelle.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	verb.SetWorkItemStore(db.Stories)
+	verb.SetLedgerStore(db.Ledger)
+	verb.SetDocIndexStore(db.DocIndex)
+	verb.SetStoryDir(filepath.Join(dir, "stories"))
+	t.Cleanup(func() {
+		db.Close()
+		verb.SetWorkItemStore(nil)
+		verb.SetLedgerStore(nil)
+		verb.SetDocIndexStore(nil)
+		verb.SetStoryDir("")
+	})
+
+	var a, b workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{
+		"title": "A", "acceptance_criteria": "1. a",
+	}), &a)
+	json.Unmarshal(call(t, "story-create", map[string]any{
+		"title": "B", "acceptance_criteria": "1. b",
+	}), &b)
+
+	call(t, "story-doc-attach", map[string]any{
+		"story_id": a.ID, "name": "lessons", "type": "lessons",
+		"body": "Friction: gate confusion.",
+	})
+	call(t, "story-doc-attach", map[string]any{
+		"story_id": b.ID, "name": "lessons", "type": "lesson",
+		"body": "Friction: context contradiction.",
+	})
+	// non-lessons noise
+	call(t, "story-doc-attach", map[string]any{
+		"story_id": a.ID, "name": "plan", "type": "plan",
+		"body": "not a lesson",
+	})
+
+	rawList := call(t, "story-lessons-list", map[string]any{})
+	var list []struct {
+		StoryID string `json:"story_id"`
+		Name    string `json:"name"`
+		Type    string `json:"type"`
+	}
+	if err := json.Unmarshal(rawList, &list); err != nil {
+		t.Fatalf("unmarshal %s: %v", rawList, err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("want 2 lessons across stories, got %s", rawList)
+	}
+	seen := map[string]bool{}
+	for _, d := range list {
+		if d.Type != "lessons" && d.Type != "lesson" {
+			t.Errorf("unexpected type %q in %s", d.Type, rawList)
+		}
+		if d.StoryID == "" || d.Name == "" {
+			t.Fatalf("empty story_id or name in %s", rawList)
+		}
+		seen[d.StoryID] = true
+		raw, err := os.ReadFile(filepath.Join(dir, "stories", d.StoryID, d.Name+".md"))
+		if err != nil {
+			t.Fatalf("read lessons file for %+v: %v\nlist=%s", d, err, rawList)
+		}
+		if strings.Contains(string(raw), "principles:session") {
+			t.Error("lessons must not carry principles:session")
+		}
+	}
+	if !seen[a.ID] || !seen[b.ID] {
+		t.Errorf("expected both stories in list: %s (a=%s b=%s)", rawList, a.ID, b.ID)
 	}
 }
