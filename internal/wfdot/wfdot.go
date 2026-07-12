@@ -93,6 +93,15 @@ type State struct {
 	// executor step performs, or the gate a reviewer node judges by (empty when
 	// the node carries no prompt). Populated from the DOT grammar.
 	Skill string
+	// OnEnterAgent is an optional one-shot named performer dispatched on ENTRY
+	// to this state (on_enter_agent=<name>), orthogonal to Agent. Lets a park
+	// node stay agent=reviewer (non-engaging for edit/commit gates) while still
+	// running a performing agent once on entry (sty_5cabe26f). Empty means no
+	// entry dispatch. Does not affect IsPerforming / isEngaging.
+	OnEnterAgent string
+	// OnEnterSkill is the @skill rubric for OnEnterAgent
+	// (on_enter_prompt="@skill:NAME"). Empty when no on_enter_prompt is set.
+	OnEnterSkill string
 	// Mandatory is the node's `mandatory=true` attribute. For a step-summary node
 	// it means the step summary is required (a failure is surfaced, not swallowed);
 	// for other nodes it is advisory metadata. Populated from the DOT grammar.
@@ -307,11 +316,13 @@ func Parse(body string) (Spec, bool) {
 		return Spec{}, false
 	}
 	type node struct {
-		agent     string
-		skill     string   // resolved from prompt="@skill:NAME"
-		mandatory bool     // mandatory=true attribute
-		on        []string // on="s1,s2" / on="*" scope (declared always-on gate)
-		shape     string   // DOT shape attribute (Mdiamond=start, Msquare=terminal)
+		agent        string
+		skill        string   // resolved from prompt="@skill:NAME"
+		onEnterAgent string   // on_enter_agent=<name> one-shot performer on entry
+		onEnterSkill string   // on_enter_prompt="@skill:NAME"
+		mandatory    bool     // mandatory=true attribute
+		on           []string // on="s1,s2" / on="*" scope (declared always-on gate)
+		shape        string   // DOT shape attribute (Mdiamond=start, Msquare=terminal)
 	}
 	nodes := map[string]node{}
 	var order []string
@@ -371,6 +382,12 @@ func Parse(body string) (Spec, bool) {
 		if p := attrs["prompt"]; strings.HasPrefix(p, "@skill:") {
 			n.skill = strings.TrimPrefix(p, "@skill:")
 		}
+		if ea := attrs["on_enter_agent"]; ea != "" {
+			n.onEnterAgent = ea
+		}
+		if ep := attrs["on_enter_prompt"]; strings.HasPrefix(ep, "@skill:") {
+			n.onEnterSkill = strings.TrimPrefix(ep, "@skill:")
+		}
 		if strings.EqualFold(attrs["mandatory"], "true") {
 			n.mandatory = true
 		}
@@ -387,7 +404,12 @@ func Parse(body string) (Spec, bool) {
 	}
 
 	for _, name := range order {
-		spec.States = append(spec.States, State{Name: name, Agent: nodes[name].agent, Skill: nodes[name].skill, Mandatory: nodes[name].mandatory, On: nodes[name].on, Shape: nodes[name].shape})
+		n := nodes[name]
+		spec.States = append(spec.States, State{
+			Name: name, Agent: n.agent, Skill: n.skill,
+			OnEnterAgent: n.onEnterAgent, OnEnterSkill: n.onEnterSkill,
+			Mandatory: n.mandatory, On: n.on, Shape: n.shape,
+		})
 	}
 	// A transition into a reviewer node is gated by that node's skill — unless the
 	// edge already carries an explicit reviewer_skill attribute, which wins.
@@ -742,6 +764,12 @@ func emitDOT(spec Spec, name string) string {
 		}
 		if s.Skill != "" {
 			attrs = append(attrs, fmt.Sprintf("prompt=\"@skill:%s\"", s.Skill))
+		}
+		if s.OnEnterAgent != "" {
+			attrs = append(attrs, "on_enter_agent="+s.OnEnterAgent)
+		}
+		if s.OnEnterSkill != "" {
+			attrs = append(attrs, fmt.Sprintf("on_enter_prompt=\"@skill:%s\"", s.OnEnterSkill))
 		}
 		if len(attrs) > 0 {
 			fmt.Fprintf(&b, "  %s [%s]\n", s.Name, strings.Join(attrs, ", "))

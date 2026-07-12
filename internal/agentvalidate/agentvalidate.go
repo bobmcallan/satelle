@@ -95,14 +95,25 @@ func Validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 			continue // structure.Doc / workflow validate owns unparseable bodies
 		}
 		for _, st := range spec.States {
-			if st.Agent == "" || st.Agent == "executor" || st.Agent == "reviewer" {
-				continue
+			// agent=<name> named performer (skip built-in role tokens).
+			if st.Agent != "" && st.Agent != "executor" && st.Agent != "reviewer" {
+				usedNamed[st.Agent] = true
+				if _, ok := agents.NamedBinding(st.Agent); !ok {
+					r.Problems = append(r.Problems, fmt.Sprintf(
+						"workflow %q node %q allocates agent=%s with no [%s] binding in agents.toml",
+						doc.Name, st.Name, st.Agent, st.Agent))
+				}
 			}
-			usedNamed[st.Agent] = true
-			if _, ok := agents.NamedBinding(st.Agent); !ok {
-				r.Problems = append(r.Problems, fmt.Sprintf(
-					"workflow %q node %q allocates agent=%s with no [%s] binding in agents.toml",
-					doc.Name, st.Name, st.Agent, st.Agent))
+			// on_enter_agent=<name> one-shot entry performer (sty_5cabe26f) —
+			// orthogonal to agent=; must also resolve to a binding and counts
+			// as a use so the binding is not flagged orphaned.
+			if st.OnEnterAgent != "" {
+				usedNamed[st.OnEnterAgent] = true
+				if _, ok := agents.NamedBinding(st.OnEnterAgent); !ok {
+					r.Problems = append(r.Problems, fmt.Sprintf(
+						"workflow %q node %q sets on_enter_agent=%s with no [%s] binding in agents.toml",
+						doc.Name, st.Name, st.OnEnterAgent, st.OnEnterAgent))
+				}
 			}
 		}
 	}
