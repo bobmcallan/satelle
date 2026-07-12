@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/bobmcallan/satelle/internal/agentcli"
 )
 
 // AgentsConfigName is the per-repo agents-binding file, beside satelle.toml under
@@ -28,11 +29,12 @@ const (
 // bootstrap's requireAgents, sty_d0d6bb67).
 const (
 	DefaultExecutorCommand = "in-loop"
-	// DefaultReviewerCommand is the bare claude PRESET name — a single token, so
-	// agentcli.RunnerFromCommand expands it to the built-in claude template
-	// (which carries the read-only --disallowedTools denylist). A repo overrides
-	// it with a full command template (multi-token) in agents.toml.
-	DefaultReviewerCommand = "claude"
+	// DefaultReviewerCommand is the full claude command template (the canonical
+	// seed for a [reviewer] that omits command). It carries the read-only
+	// --disallowedTools denylist so the grant is a ceiling. A repo overrides it
+	// with its own multi-token command template in agents.toml. Bare single-token
+	// presets are no longer accepted on the agents.toml path.
+	DefaultReviewerCommand = agentcli.DefaultClaudeCommand
 	DefaultReviewerTools   = "Read,Grep,Glob"
 )
 
@@ -62,12 +64,14 @@ const (
 // briefing. InjectPrinciples is the DEPRECATED boolean alias for Principles
 // (true→session, false→none); Principles wins when both are set.
 type AgentBinding struct {
-	// Command is the agent's command template: a SINGLE token names a built-in
-	// preset (claude | grok | codex | in-loop); a MULTI-token value is a full
-	// command taken verbatim, with {system}/{tools}/{model}/{settings}/{payload}
-	// substituted (each its own argv token). It replaces the deprecated `harness`
-	// key (Harness, below), still parsed for back-compat — resolve via
-	// CommandTemplate(), which prefers Command and falls back to Harness.
+	// Command is the agent's command template. An isolated binding requires a
+	// multi-token full command (binary + argv) with {system}/{tools}/{model}/
+	// {settings}/{payload} substituted (each its own argv token). The only bare
+	// single-token value is "in-loop" (driving session, no subprocess); bare
+	// claude/grok/codex tokens are rejected by agentvalidate and RunnerFromCommand.
+	// Replaces the deprecated `harness` key (Harness, below), still parsed for
+	// back-compat — resolve via CommandTemplate(), which prefers Command and
+	// falls back to Harness.
 	Command string `toml:"command"`
 	// Harness is the DEPRECATED alias for Command: a repo authored before the
 	// rename still parses. Command wins when both are set. Never read this field

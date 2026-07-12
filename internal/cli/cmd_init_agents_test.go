@@ -30,18 +30,23 @@ func TestScaffoldAgentsTomlFullyDefined(t *testing.T) {
 	if !strings.Contains(scaffoldAgentsToml, `# role    = "agent"`) {
 		t.Error(`scaffold commented [commit-agent] missing # role    = "agent"`)
 	}
-	// The scaffold header must DOCUMENT the preset menu + placeholder grammar
-	// (AC4, sty_17cae74b) so an operator editing the file sees the choices without
-	// reading the source: the four presets and the argv placeholders.
+	// The scaffold header must DOCUMENT full-template requirement + placeholders
+	// (AC4, sty_6752e35b) so an operator editing the file sees that bare presets
+	// are rejected and only in-loop is a valid single token.
 	for _, want := range []string{
-		"claude", "grok", "codex", "in-loop", // the preset menu
+		"in-loop",                                     // the only bare single-token value
+		"FULL multi-token command",                    // full template required
 		"{system}", "{tools}", "{model}", "{payload}", // the placeholder grammar
 		// role= declared contract note (sty_5f1d7b2e)
 		`role= is the binding's declared contract`,
 	} {
 		if !strings.Contains(scaffoldAgentsToml, want) {
-			t.Errorf("scaffold header missing preset/placeholder doc %q", want)
+			t.Errorf("scaffold header missing template/placeholder doc %q", want)
 		}
+	}
+	// Must NOT advertise bare presets as valid bindings.
+	if strings.Contains(scaffoldAgentsToml, "SINGLE token is a built-in PRESET") {
+		t.Error("scaffold must not advertise bare CLI presets")
 	}
 	// Parity: loading the scaffold yields the same effective reviewer binding as
 	// the coded defaults for an absent file.

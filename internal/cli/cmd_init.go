@@ -843,8 +843,8 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer:
 #   - executor  — runs IN-LOOP as the driving session (context, principles,
 #     skills via the substrate). Not an isolated process.
 #   - reviewer  — an ISOLATED, READ-ONLY sub-process: the rubric rides as its
-#     system prompt; it judges, never mutates (the claude preset denylists
-#     Write/Edit/NotebookEdit/Bash on top of the read-only grant).
+#     system prompt; it judges, never mutates (the default claude template
+#     denylists Write/Edit/NotebookEdit/Bash on top of the read-only grant).
 #   - any OTHER top-level [<name>] is an optional named agent, always isolated;
 #     a workflow node allocates a step to it via agent=<name>, and entering that
 #     state DISPATCHES the step to this binding's command (item on stdin, the
@@ -867,17 +867,17 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer:
 # to satelle — it cannot see, validate, dispatch, or carry them repo-agnostically —
 # and they silently pin the repo to one CLI vendor. See "satelle help agent-dispatch".
 #
-# THE COMMAND TEMPLATE: a SINGLE token is a built-in PRESET — claude | grok |
-# codex | in-loop. "claude" and "grok" expand to a correct, read-only reviewer
-# command for that CLI (no need to hand-author its argv); "codex" is not yet
-# mapped (write a full command instead); "in-loop" means the driving session
-# performs the step (no subprocess). A MULTI-token value is a full command taken
-# verbatim. Placeholders — each one argv token: {system} {tools} {model}
-# {settings} {payload}. The work-item body is ALWAYS also written on stdin (dual
-# delivery). Empty {model}/{settings} drop that flag; empty {payload} does not.
-# Claude's default uses stdin only (no -p {payload}) so the prompt is not
-# double-fed; argv-first CLIs (grok) opt in with -p {payload}. Prefer a preset;
-# write a full command only to customize flags/tools, e.g.
+# THE COMMAND TEMPLATE: an isolated binding requires a FULL multi-token command
+# template (binary + argv). The only bare single-token value is "in-loop" (the
+# driving session performs the step — no subprocess). An empty/omitted command on
+# [reviewer] inherits the full default claude template. Bare tokens like
+# "claude" / "grok" / "codex" are rejected by satelle agent validate — run
+# satelle init to expand a legacy bare preset, or write the full argv yourself.
+# Placeholders — each one argv token: {system} {tools} {model} {settings}
+# {payload}. The work-item body is ALWAYS also written on stdin (dual delivery).
+# Empty {model}/{settings} drop that flag; empty {payload} does not. Claude's
+# default uses stdin only (no -p {payload}) so the prompt is not double-fed;
+# argv-first CLIs (grok) opt in with -p {payload}. Example full template:
 #   command = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir --always-approve --output-format plain --max-turns 8 --no-subagents"
 #
 # PER-BINDING ENV — point a step at an alternate model backend WITHOUT a wrapper
@@ -899,15 +899,14 @@ role    = "agent"              # declared contract (agent | reviewer); do not le
 command = "in-loop"            # the orchestrator/driving session itself
 
 [reviewer]
-# The FULL command template — transparent and swappable (sty_892517e7, user
-# feedback): satelle substitutes {system}/{tools}/{model}/{settings}/{payload}
-# (each one argv token); payload is always also on stdin. An empty model drops
-# the --model pair. Point this at ANY agent CLI by rewriting the command — or
-# replace this whole line with a single-token preset: command = "claude" (or
-# "grok"), which expands to a correct read-only reviewer command for that CLI.
+# The FULL command template — transparent and swappable (sty_892517e7): satelle
+# substitutes {system}/{tools}/{model}/{settings}/{payload} (each one argv token);
+# payload is always also on stdin. An empty model drops the --model pair. Point
+# this at ANY agent CLI by rewriting the multi-token command. Bare single-token
+# presets (claude/grok/codex) are not accepted — the real argv must be literal.
 role    = "reviewer"           # declared contract; inference is a fallback, not the norm
 command = "REVIEWER_COMMAND_TEMPLATE"
-tools   = "Read,Grep,Glob"     # read-only grant — widen at your own risk (claude preset only; the grok preset bakes its own grok-named read-only grant)
+tools   = "Read,Grep,Glob"     # read-only grant — widen at your own risk (claude template default; a grok full template bakes its own grok-named read-only grant)
 model   = ""                   # empty inherits the CLI's default; each binding may pin its own (e.g. "sonnet"). A workflow gate/node model="…" overrides this for that gate only without a second binding (sty_19456622).
 
 # A named EXECUTOR agent for isolated mutating steps (e.g. a commit/push step),

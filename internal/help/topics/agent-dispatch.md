@@ -65,27 +65,31 @@ satelle-dot-standard principle.
 - A binding whose `command` is `in-loop` keeps the step with the orchestrating
   session — not dispatched.
 
-## The command template — presets and placeholders
+## The command template — full templates and placeholders
 
-Each binding's **`command`** says *how* the agent runs. A **single token** names a
-built-in **preset**; a **multi-token** value is a full command taken verbatim.
+Each binding's **`command`** says *how* the agent runs. An **isolated** binding
+requires a **full multi-token command template** — the real argv is literal in
+the file so the operator can read exactly what will run. Bare single-token CLI
+names (`claude` / `grok` / `codex`) are **rejected** by `satelle agent validate`
+(and refuse engage); run `satelle init` to expand a legacy bare preset, or write
+the full template yourself. The only bare single-token value that remains valid
+is:
 
-- `command = "claude"` — the read-only claude reviewer preset (denies
-  Write/Edit/NotebookEdit/Bash on top of the `tools` grant).
-- `command = "grok"` — the read-only grok reviewer preset (grok's real flags:
-  payload on `-p`, `--system-prompt-override`, a grok-native `read_file,grep,list_dir`
-  grant, mutator `--deny`s). No hand-authored argv needed.
-- `command = "codex"` — **not yet mapped**: it fails with a message pointing you to
-  the full-command form below (never a silent wrong run).
 - `command = "in-loop"` — no subprocess; the driving session performs the step.
 
-Prefer a preset. Write a **full command** only to customize flags/tools — the first
-token is the binary, the rest are argv tokens carrying the placeholders (each one
-argv token): **`{system}`** (the rubric), **`{tools}`** (the grant), **`{model}`**,
-**`{settings}`**, **`{payload}`**. Empty `{model}`/`{settings}` drop that flag;
-empty `{payload}` does not. The work item is **always also on stdin** (dual
-delivery), so stdin-first CLIs (claude) omit `{payload}` and argv-first CLIs (grok)
-include it.
+An omitted `[reviewer] command` resolves to the default full claude template
+(read-only denylist on Write/Edit/NotebookEdit/Bash). Example full templates
+seeded by init and the canonical consts:
+
+- Claude (stdin-first): `claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model}`
+- Grok (argv-first): `grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir -m {model} --deny Write --deny Edit …`
+
+The first token is the binary; the rest are argv tokens carrying the placeholders
+(each one argv token): **`{system}`** (the rubric), **`{tools}`** (the grant),
+**`{model}`**, **`{settings}`**, **`{payload}`**. Empty `{model}`/`{settings}` drop
+that flag; empty `{payload}` does not. The work item is **always also on stdin**
+(dual delivery), so stdin-first CLIs (claude) omit `{payload}` and argv-first
+CLIs (grok) include it.
 
 > The field is **`command`**; the older key **`harness`** is a **deprecated alias**
 > — a pre-rename `agents.toml` still parses (`command` wins when both are set).

@@ -12,11 +12,12 @@
 // single argument). The work-item payload is ALWAYS also written to the child
 // stdin (dual delivery): stdin-first CLIs (claude -p) keep using stdin alone;
 // argv-first CLIs (e.g. grok -p {payload}) include {payload} in the template.
-// A bare CLI name (a single token — "claude", "grok", or "codex") expands to that
-// CLI's built-in PRESET template; the claude and grok presets carry a read-only
-// tool ceiling (claude via --disallowedTools, grok via --deny + a read-only
-// --tools grant) so the grant is a ceiling over the repo's settings, not just an
-// allowlist floor. "codex" is a not-yet-mapped stub (write a full command instead).
+//
+// agents.toml bindings carry a FULL command template (or "in-loop"/empty). Bare
+// single-token CLI names are NOT accepted on the agents.toml path — the operator
+// must see the real argv. DefaultClaudeCommand / DefaultGrokCommand are the
+// canonical templates init seeds and migrate expands into; NewRunner still
+// generates those templates for init/migrate/detection only.
 package agentcli
 
 import (
@@ -206,9 +207,9 @@ func NewRunner(name string) (Runner, error) {
 
 // RunnerFromCommand resolves an agents-layer command binding to a Runner. An empty
 // or "in-loop" command returns (nil, nil): no agent-CLI runner, so the caller keeps
-// its configured default. A SINGLE-token command is a preset CLI name, resolved via
-// NewRunner (claude/grok expand to their presets; "codex" still errors as a stub).
-// A MULTI-token command is a literal command template: the first token is the
+// its configured default. A SINGLE non-in-loop token is rejected (bare CLI presets
+// removed — write a full command template, or run satelle init to migrate). A
+// MULTI-token command is a literal command template: the first token is the
 // binary, the rest the argv template.
 func RunnerFromCommand(command string) (Runner, error) {
 	fields := strings.Fields(command)
@@ -216,7 +217,7 @@ func RunnerFromCommand(command string) (Runner, error) {
 		return nil, nil
 	}
 	if len(fields) == 1 {
-		return NewRunner(fields[0])
+		return nil, fmt.Errorf("agentcli: bare CLI preset %q removed — write a full command template (see agentcli.DefaultClaudeCommand) or run satelle init to migrate", fields[0])
 	}
 	return templateRunner{binary: fields[0], argTemplate: fields[1:]}, nil
 }
@@ -232,14 +233,18 @@ func Detect() string {
 	return ""
 }
 
-// Available reports whether the named CLI's binary is on PATH.
+// Available reports whether the named CLI's binary is on PATH. Known CLI names
+// (claude/grok/codex) are looked up directly — availability does not route
+// through the agents.toml preset resolver (which no longer accepts bare tokens).
 func Available(name string) bool {
-	r, err := NewRunner(name)
-	if err != nil {
+	n := strings.ToLower(strings.TrimSpace(name))
+	switch n {
+	case CLIClaude, CLIGrok, CLICodex:
+		_, err := exec.LookPath(n)
+		return err == nil
+	default:
 		return false
 	}
-	_, lerr := exec.LookPath(r.Name())
-	return lerr == nil
 }
 
 // templateRunner executes a command template: a binary plus an argv template whose

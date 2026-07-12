@@ -46,13 +46,12 @@ func TestAgentDispatchTopic(t *testing.T) {
 		"[architect]",                     // the custom-agent worked example (binding)
 		"agent=architect",                 // the allocation
 		".claude/agents",                  // the harness-agent-dir anti-pattern
-		// The preset menu + placeholder grammar (AC4, sty_17cae74b): the four
-		// single-token presets and the argv placeholders must be documented here so
-		// `satelle help agent-dispatch` teaches them without reading the source.
-		`command = "claude"`,
-		`command = "grok"`,
-		`command = "codex"`,
+		// Full-template requirement + placeholders (AC4, sty_6752e35b): bare
+		// single-token presets are rejected; only in-loop remains as a bare token.
+		// `satelle help agent-dispatch` teaches this without reading the source.
 		`command = "in-loop"`,
+		"full multi-token command template",
+		"rejected",
 		"{system}", "{tools}", "{model}", "{payload}",
 		"deprecated alias", // harness→command rename is documented as back-compat
 	} {
