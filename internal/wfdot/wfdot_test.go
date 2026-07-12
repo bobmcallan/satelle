@@ -470,6 +470,45 @@ guardrails:
 	}
 }
 
+// TestParseModelOverride (sty_19456622): node and edge model= parse; absent → "".
+func TestParseModelOverride(t *testing.T) {
+	dot := "---\nname: x\n---\n```dot\n" + `digraph w {
+  backlog [shape=Mdiamond]
+  plan [agent=planner, prompt="@skill:plan", model="opus"]
+  done [shape=Msquare]
+  estimate [agent=reviewer, prompt="@skill:est", on="done", model="sonnet"]
+  backlog -> plan [agent=reviewer, prompt="@skill:intent", model="haiku"]
+  plan -> done
+}
+` + "```\n"
+	spec, ok := Parse(dot)
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	byName := map[string]State{}
+	for _, s := range spec.States {
+		byName[s.Name] = s
+	}
+	if byName["plan"].Model != "opus" {
+		t.Errorf("plan node model = %q, want opus", byName["plan"].Model)
+	}
+	if byName["estimate"].Model != "sonnet" {
+		t.Errorf("estimate node model = %q, want sonnet", byName["estimate"].Model)
+	}
+	if byName["done"].Model != "" {
+		t.Errorf("done model = %q, want empty", byName["done"].Model)
+	}
+	var edgeModel string
+	for _, tr := range spec.Transitions {
+		if tr.From == "backlog" && tr.To == "plan" {
+			edgeModel = tr.Model
+		}
+	}
+	if edgeModel != "haiku" {
+		t.Errorf("edge model = %q, want haiku", edgeModel)
+	}
+}
+
 // TestEmitCanonicalRoundTrip locks the CANONICAL latest format the emitter
 // writes (sty_ccf41efa / satelle-dot-standard): node-consistent edge gates,
 // performing-node prompts, never reviewer_skill= — and proves the output
@@ -480,10 +519,11 @@ func TestEmitCanonicalRoundTrip(t *testing.T) {
 			{Name: "backlog"},
 			{Name: "in_progress", Agent: "executor", Skill: "code"},
 			{Name: "done", Terminal: true},
+			{Name: "close", Agent: "reviewer", Skill: "done-rev", Model: "opus"},
 		},
 		Transitions: []Transition{
 			{From: "backlog", To: "in_progress", Skill: "intent", Skills: []string{"intent"}},
-			{From: "in_progress", To: "done", Skill: "a", Skills: []string{"a", "b"}},
+			{From: "in_progress", To: "done", Skill: "a", Skills: []string{"a", "b"}, Model: "sonnet"},
 		},
 	}
 	out := emitDOT(spec, "w")
@@ -496,8 +536,11 @@ func TestEmitCanonicalRoundTrip(t *testing.T) {
 	if !strings.Contains(out, `[agent=reviewer, prompt="@skill:intent"]`) {
 		t.Errorf("canonical emit must write single-skill node-consistent gate:\n%s", out)
 	}
-	if !strings.Contains(out, `[agent=reviewer, prompt="@skill:a,b"]`) {
-		t.Errorf("canonical emit must write multi-skill node-consistent gate:\n%s", out)
+	if !strings.Contains(out, `prompt="@skill:a,b", model="sonnet"`) {
+		t.Errorf("canonical emit must write multi-skill gate with model=:\n%s", out)
+	}
+	if !strings.Contains(out, `model="opus"`) {
+		t.Errorf("canonical emit must write node model=:\n%s", out)
 	}
 
 	// Round-trip through Parse (wrap in a fenced body).
@@ -507,18 +550,28 @@ func TestEmitCanonicalRoundTrip(t *testing.T) {
 		t.Fatal("canonical emit must parse as DOT")
 	}
 	skill := map[string][]string{}
+	models := map[string]string{}
 	for _, tr := range got.Transitions {
 		skills := tr.Skills
 		if len(skills) == 0 && tr.Skill != "" {
 			skills = []string{tr.Skill}
 		}
 		skill[tr.From+"->"+tr.To] = skills
+		models[tr.From+"->"+tr.To] = tr.Model
 	}
 	if got := strings.Join(skill["backlog->in_progress"], ","); got != "intent" {
 		t.Errorf("single-skill round-trip = %q, want intent", got)
 	}
 	if got := strings.Join(skill["in_progress->done"], ","); got != "a,b" {
 		t.Errorf("multi-skill round-trip = %q, want a,b", got)
+	}
+	if models["in_progress->done"] != "sonnet" {
+		t.Errorf("edge model round-trip = %q, want sonnet", models["in_progress->done"])
+	}
+	for _, s := range got.States {
+		if s.Name == "close" && s.Model != "opus" {
+			t.Errorf("node model round-trip = %q, want opus", s.Model)
+		}
 	}
 	byName := map[string]State{}
 	for _, s := range got.States {
@@ -565,9 +618,9 @@ digraph x {
 	}
 }
 
-func has(ss []string, v string) bool {
+func hasScoped(ss []ScopedReviewer, v string) bool {
 	for _, s := range ss {
-		if s == v {
+		if s.Skill == v {
 			return true
 		}
 	}
@@ -580,7 +633,7 @@ digraph w {
   backlog [shape=Mdiamond]
   in_progress [agent=executor]
   done [shape=Msquare]
-  estimate [agent=reviewer, prompt="@skill:satelle-estimate-actual-review", on="in_progress,done"]
+  estimate [agent=reviewer, prompt="@skill:satelle-estimate-actual-review", on="in_progress,done", model="opus"]
   always   [agent=reviewer, prompt="@skill:rev-all", on="*"]
   step     [agent=reviewer, prompt="@skill:satelle-step-summary", on="*"]
   backlog -> in_progress -> done
@@ -593,11 +646,19 @@ digraph w {
 	// estimate is scoped to in_progress + done; the wildcard joins every edge; the
 	// step summariser is NEVER returned as a blocking scoped gate (it runs via Summarise).
 	ip := spec.ScopedReviewers("in_progress")
-	if !has(ip, "satelle-estimate-actual-review") || !has(ip, "rev-all") || has(ip, "satelle-step-summary") {
+	if !hasScoped(ip, "satelle-estimate-actual-review") || !hasScoped(ip, "rev-all") || hasScoped(ip, "satelle-step-summary") {
 		t.Errorf("in_progress scoped = %v", ip)
 	}
+	for _, s := range ip {
+		if s.Skill == "satelle-estimate-actual-review" && s.Model != "opus" {
+			t.Errorf("estimate model = %q, want opus", s.Model)
+		}
+		if s.Skill == "rev-all" && s.Model != "" {
+			t.Errorf("rev-all model = %q, want empty", s.Model)
+		}
+	}
 	integ := spec.ScopedReviewers("integration")
-	if has(integ, "satelle-estimate-actual-review") || !has(integ, "rev-all") || has(integ, "satelle-step-summary") {
+	if hasScoped(integ, "satelle-estimate-actual-review") || !hasScoped(integ, "rev-all") || hasScoped(integ, "satelle-step-summary") {
 		t.Errorf("integration scoped should be wildcard-only (no estimate, no step), got %v", integ)
 	}
 }

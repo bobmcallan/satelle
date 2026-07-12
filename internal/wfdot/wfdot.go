@@ -116,6 +116,11 @@ type State struct {
 	// authored DOT uses to mark start/terminal states (Mdiamond=start,
 	// Msquare=terminal). Populated from the DOT grammar.
 	Shape string
+	// Model is an optional per-node model override (model="…") for the
+	// allocated agents.toml binding at dispatch/gate time (sty_19456622).
+	// Empty means inherit the binding's model. The binding remains the source
+	// of command template and tools; only {model} varies.
+	Model string
 }
 
 // StepSummary reports whether the workflow declares a step-summary node (a node
@@ -131,14 +136,21 @@ func (s Spec) StepSummary() (declared, mandatory bool) {
 	return false, false
 }
 
-// ScopedReviewers returns the skills of DECLARED, edge-less reviewer nodes that
-// gate the transition into toStatus — a reviewer node whose `on=` list includes
-// toStatus or the wildcard "*". These are the workflow-declared always-on gates,
-// replacing the old reviewer:always skill-tag scan so the DOT is the sole gating
-// authority. The step-summary node is excluded: it is a post-transition summariser
-// (run via Summarise), not a blocking gate. Sorted for a deterministic order.
-func (s Spec) ScopedReviewers(toStatus string) []string {
-	var out []string
+// ScopedReviewer is one edge-less always-on gate: its skill and optional per-node
+// model override (sty_19456622). Model empty means inherit the [reviewer] binding.
+type ScopedReviewer struct {
+	Skill string
+	Model string
+}
+
+// ScopedReviewers returns the DECLARED, edge-less reviewer nodes that gate the
+// transition into toStatus — a reviewer node whose `on=` list includes toStatus
+// or the wildcard "*". These are the workflow-declared always-on gates, replacing
+// the old reviewer:always skill-tag scan so the DOT is the sole gating authority.
+// The step-summary node is excluded: it is a post-transition summariser (run via
+// Summarise), not a blocking gate. Sorted by skill for a deterministic order.
+func (s Spec) ScopedReviewers(toStatus string) []ScopedReviewer {
+	var out []ScopedReviewer
 	for _, st := range s.States {
 		if st.Agent != "reviewer" || st.Skill == "" || len(st.On) == 0 {
 			continue
@@ -147,10 +159,10 @@ func (s Spec) ScopedReviewers(toStatus string) []string {
 			continue
 		}
 		if containsStr(st.On, "*") || containsStr(st.On, toStatus) {
-			out = append(out, st.Skill)
+			out = append(out, ScopedReviewer{Skill: st.Skill, Model: st.Model})
 		}
 	}
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool { return out[i].Skill < out[j].Skill })
 	return out
 }
 
@@ -299,6 +311,10 @@ type Transition struct {
 	To     string
 	Skill  string
 	Skills []string
+	// Model is an optional per-edge model override (model="…") applied to every
+	// reviewer skill on this edge at gate time (sty_19456622). Empty inherits
+	// the [reviewer] binding model. One model per edge (CSV skills share it).
+	Model string
 }
 
 // Spec is the parsed lifecycle: states and gated transitions.
@@ -323,6 +339,7 @@ func Parse(body string) (Spec, bool) {
 		mandatory    bool     // mandatory=true attribute
 		on           []string // on="s1,s2" / on="*" scope (declared always-on gate)
 		shape        string   // DOT shape attribute (Mdiamond=start, Msquare=terminal)
+		model        string   // model="…" per-node override (sty_19456622)
 	}
 	nodes := map[string]node{}
 	var order []string
@@ -351,6 +368,7 @@ func Parse(body string) (Spec, bool) {
 			// reviewer node uses — so every step reads the same way. reviewer_skill
 			// wins when both are present.
 			var edgeSkills []string
+			var edgeModel string
 			if open := strings.Index(t, "["); open >= 0 {
 				closeAt := strings.LastIndex(t, "]")
 				if closeAt < open {
@@ -361,12 +379,15 @@ func Parse(body string) (Spec, bool) {
 				if len(edgeSkills) == 0 && attrs["agent"] == "reviewer" && strings.HasPrefix(attrs["prompt"], "@skill:") {
 					edgeSkills = splitCSVSkills(attrs["prompt"])
 				}
+				edgeModel = attrs["model"]
 			}
 			for _, id := range ids {
 				add(id)
 			}
 			for i := 0; i+1 < len(ids); i++ {
-				spec.Transitions = append(spec.Transitions, Transition{From: ids[i], To: ids[i+1], Skill: first(edgeSkills), Skills: edgeSkills})
+				spec.Transitions = append(spec.Transitions, Transition{
+					From: ids[i], To: ids[i+1], Skill: first(edgeSkills), Skills: edgeSkills, Model: edgeModel,
+				})
 			}
 			continue
 		}
@@ -397,6 +418,9 @@ func Parse(body string) (Spec, bool) {
 		if s := attrs["shape"]; s != "" {
 			n.shape = s
 		}
+		if m := attrs["model"]; m != "" {
+			n.model = m
+		}
 		nodes[id] = n
 	}
 	if len(order) == 0 {
@@ -408,7 +432,7 @@ func Parse(body string) (Spec, bool) {
 		spec.States = append(spec.States, State{
 			Name: name, Agent: n.agent, Skill: n.skill,
 			OnEnterAgent: n.onEnterAgent, OnEnterSkill: n.onEnterSkill,
-			Mandatory: n.mandatory, On: n.on, Shape: n.shape,
+			Mandatory: n.mandatory, On: n.on, Shape: n.shape, Model: n.model,
 		})
 	}
 	// A transition into a reviewer node is gated by that node's skill — unless the
@@ -771,6 +795,9 @@ func emitDOT(spec Spec, name string) string {
 		if s.OnEnterSkill != "" {
 			attrs = append(attrs, fmt.Sprintf("on_enter_prompt=\"@skill:%s\"", s.OnEnterSkill))
 		}
+		if s.Model != "" {
+			attrs = append(attrs, fmt.Sprintf("model=%q", s.Model))
+		}
 		if len(attrs) > 0 {
 			fmt.Fprintf(&b, "  %s [%s]\n", s.Name, strings.Join(attrs, ", "))
 		} else {
@@ -784,7 +811,12 @@ func emitDOT(spec Spec, name string) string {
 			skills = []string{tr.Skill}
 		}
 		if len(skills) > 0 {
-			fmt.Fprintf(&b, "  %s -> %s [agent=reviewer, prompt=\"@skill:%s\"]\n", tr.From, tr.To, strings.Join(skills, ","))
+			if tr.Model != "" {
+				fmt.Fprintf(&b, "  %s -> %s [agent=reviewer, prompt=\"@skill:%s\", model=%q]\n",
+					tr.From, tr.To, strings.Join(skills, ","), tr.Model)
+			} else {
+				fmt.Fprintf(&b, "  %s -> %s [agent=reviewer, prompt=\"@skill:%s\"]\n", tr.From, tr.To, strings.Join(skills, ","))
+			}
 		} else {
 			fmt.Fprintf(&b, "  %s -> %s\n", tr.From, tr.To)
 		}

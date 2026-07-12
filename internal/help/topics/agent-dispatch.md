@@ -37,8 +37,23 @@ The agent receives:
   Stdin-first CLIs (e.g. Claude) leave `{payload}` out of the template so the
   prompt is not double-fed; argv-first CLIs (e.g. `grok -p {payload} …`) opt in.
   Empty `{model}`/`{settings}` drop their flag; empty `{payload}` does not.
-- **Capabilities**: exactly the binding's `tools` and `model` grant, nothing
-  more.
+- **Capabilities**: the binding's `tools` grant, and its `model` unless the
+  workflow node sets `model="…"` (per-node override — see below).
+
+### Per-gate / per-node model override
+
+Every reviewer gate normally uses the single `[reviewer]` binding's model. To run
+**one** high-stakes gate on a stronger model without a second binding, set
+`model=` on the edge or scoped reviewer node (or on a named performer node):
+
+```dot
+release -> done [agent=reviewer, prompt="@skill:satelle-story-release-review", model="opus"]
+```
+
+The binding still supplies command + tools; only `{model}` changes for that
+dispatch. Absent `model=`, behaviour is unchanged. Drift audits: `satelle agent
+validate` prints `NODE … effective_model=…` (with `(override)` when set). See the
+satelle-dot-standard principle.
 
 **Refusals (fail loud, never silent):**
 

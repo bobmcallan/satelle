@@ -487,7 +487,7 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 	if err := g.guardWorkflowStructure(ctx, item); err != nil {
 		return verb.GateDecision{}, err
 	}
-	skills, declared, err := g.reviewerSkills(ctx, item, item.Status, toStatus)
+	skills, edgeModel, declared, err := g.reviewerSkills(ctx, item, item.Status, toStatus)
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
@@ -521,15 +521,22 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
-	sysStart := len(skills)
-	ordered := append(append([]string{}, skills...), sys...)
+	// Build ordered gate list with optional per-skill model overrides from the
+	// edge (all edge skills share edgeModel) or scoped node model= (sty_19456622).
+	var ordered []reviewerRef
+	for _, sk := range skills {
+		ordered = append(ordered, reviewerRef{skill: sk, model: edgeModel})
+	}
+	sysStart := len(ordered)
+	ordered = append(ordered, sys...)
 
 	var result verb.GateDecision
-	for i, skill := range ordered {
+	for i, ref := range ordered {
+		skill := ref.skill
 		if skill == "" {
 			continue
 		}
-		dec, rerr := g.runReviewer(ctx, item, toStatus, skill)
+		dec, rerr := g.runReviewer(ctx, item, toStatus, skill, ref.model)
 		if rerr != nil {
 			return dec, rerr
 		}
@@ -543,6 +550,9 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 		result.Reasoning = dec.Reasoning
 		result.Command = dec.Command
 		result.Context = dec.Context
+		result.Model = dec.Model
+		result.TokensIn, result.TokensOut, result.TokensTotal = dec.TokensIn, dec.TokensOut, dec.TokensTotal
+		result.DurationMs = dec.DurationMs
 		result.Reviewers = append(result.Reviewers, verb.ReviewerVerdict{
 			Skill: skill, Order: i, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, System: i >= sysStart,
 			Command: dec.Command, Context: dec.Context, Model: dec.Model,
@@ -643,6 +653,11 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		return verb.DispatchResult{}, fmt.Errorf(
 			"workflow %q allocates state %q to agent %q but .satelle/agents.toml defines no [%s] binding — define it, or reassign the step",
 			doc.Name, toStatus, dispatchAgent, dispatchAgent)
+	}
+	// Per-node model= override on the target state (sty_19456622) — same mechanism
+	// as gate edges: binding stays source of command/tools; only model varies.
+	if target.Model != "" {
+		binding.Model = target.Model
 	}
 	// Design §9 (a): when the resolved binding is role=reviewer, it is a judge
 	// not a performer — do not dispatch as ExpectPerform (isNamedPerformer).
@@ -814,11 +829,16 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.Dispa
 
 // setDecisionUsage copies an invocation's token/wall-time cost onto a gate
 // decision so the verb layer can record it on the agent_invocation entry — the
-// per-gate cost the observability view rolls up (sty_a699ad14).
-func (g *Engine) setDecisionUsage(d *verb.GateDecision, u agentcli.UsageResult) {
+// per-gate cost the observability view rolls up (sty_a699ad14). model is the
+// effective model used for this run (binding/override), not only the engine cache.
+func (g *Engine) setDecisionUsage(d *verb.GateDecision, u agentcli.UsageResult, model string) {
 	d.TokensIn, d.TokensOut, d.TokensTotal = u.InputTokens, u.OutputTokens, u.TotalTokens
 	d.DurationMs = u.Duration.Milliseconds()
-	d.Model = g.model
+	if model != "" {
+		d.Model = model
+	} else {
+		d.Model = g.model
+	}
 }
 
 // grantsSatelleCLI reports whether a binding's tool grant lets a dispatched agent
@@ -985,7 +1005,9 @@ func (g *Engine) retryWait(ctx context.Context, attempt int) error {
 // verdict. A skill carrying a functional check runs deterministically; otherwise
 // the skill body rides as an isolated LLM reviewer's system prompt. Gated=false
 // when the skill's rubric is not installed (advisory — keeps fresh repos working).
-func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, skill string) (verb.GateDecision, error) {
+// modelOverride is a DOT model= value for this gate (edge or scoped node); empty
+// inherits the [reviewer] binding model (sty_19456622).
+func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, skill, modelOverride string) (verb.GateDecision, error) {
 	body, err := g.skillBody(ctx, skill)
 	if err != nil {
 		if errors.Is(err, docindex.ErrNotFound) {
@@ -1035,6 +1057,12 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 	}
 	if binding.Model == "" {
 		binding.Model = g.model
+	}
+	// Per-gate model override (sty_19456622): DOT model= wins over binding/g.model
+	// without mutating the engine-wide reviewer binding (other gates in the same
+	// transition must not inherit a sibling gate's override).
+	if modelOverride != "" {
+		binding.Model = modelOverride
 	}
 	if len(binding.Env) == 0 {
 		binding.Env = g.reviewerEnv
@@ -1105,14 +1133,15 @@ func outputTail(out []byte) string {
 
 // scopedReviewers returns the active workflow's DECLARED scoped reviewers for the
 // transition into toStatus — edge-less reviewer nodes whose `on=` attribute lists
-// toStatus (or "*"), excluding any already named on the edge. This replaces the
+// toStatus (or "*"), excluding any already named on the edge. Each entry carries
+// the skill and optional node model= override (sty_19456622). This replaces the
 // old reviewer:always skill-tag scan: the scope is declared in the workflow DOT,
 // not inferred from a skill's frontmatter tag, so the workflow is the SOLE gating
 // authority (sty_ca9f675f). A workflow that is not parseable DOT (the inline-YAML
 // grammar) has no scoped-node concept and contributes none. A resolution failure
 // degrades to none — scoped reviewers are additive and must never break the
 // workflow's own edge gating.
-func (g *Engine) scopedReviewers(ctx context.Context, item workitem.Item, toStatus string, exclude []string) ([]string, error) {
+func (g *Engine) scopedReviewers(ctx context.Context, item workitem.Item, toStatus string, exclude []string) ([]reviewerRef, error) {
 	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
 	if err != nil {
 		if errors.Is(err, docindex.ErrNotFound) {
@@ -1124,13 +1153,18 @@ func (g *Engine) scopedReviewers(ctx context.Context, item workitem.Item, toStat
 	if !ok {
 		return nil, nil
 	}
-	var out []string
+	var out []reviewerRef
 	for _, s := range spec.ScopedReviewers(toStatus) {
-		if !containsStr(exclude, s) {
-			out = append(out, s)
+		if !containsStr(exclude, s.Skill) {
+			out = append(out, reviewerRef{skill: s.Skill, model: s.Model})
 		}
 	}
 	return out, nil
+}
+
+// reviewerRef is one gate to run: skill name + optional DOT model= override.
+type reviewerRef struct {
+	skill, model string
 }
 
 // structureSkill is the required-structure reviewer that judges a draft work
@@ -1305,7 +1339,7 @@ func (g *Engine) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb
 		Tags:               draft.Tags,
 		Status:             "backlog",
 	}
-	dec, err := g.runReviewer(ctx, draftItem, "backlog", skill)
+	dec, err := g.runReviewer(ctx, draftItem, "backlog", skill, "")
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
@@ -1330,20 +1364,21 @@ func (g *Engine) createReviewSkillFor(ctx context.Context, category string) stri
 }
 
 // reviewerSkills resolves the ordered reviewer skills governing the (from→to)
-// edge from the workflow active for the item's category, and reports whether the
-// edge is a DECLARED transition of that workflow. An absent workflow means no
-// governance at all — every edge is allowed and ungated (declared=true, no
-// skills), so fresh repos and the baseline keep working.
-func (g *Engine) reviewerSkills(ctx context.Context, item workitem.Item, from, to string) (skills []string, declared bool, err error) {
+// edge from the workflow active for the item's category, the edge's model=
+// override (empty = inherit binding), and whether the edge is a DECLARED
+// transition of that workflow. An absent workflow means no governance at all —
+// every edge is allowed and ungated (declared=true, no skills), so fresh repos
+// and the baseline keep working.
+func (g *Engine) reviewerSkills(ctx context.Context, item workitem.Item, from, to string) (skills []string, model string, declared bool, err error) {
 	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
 	if errors.Is(err, docindex.ErrNotFound) {
-		return nil, true, nil
+		return nil, "", true, nil
 	}
 	if err != nil {
-		return nil, false, err
+		return nil, "", false, err
 	}
-	skills, declared = reviewerSkillsFor(doc.Body, from, to)
-	return skills, declared, nil
+	skills, model, declared = reviewerSkillsFor(doc.Body, from, to)
+	return skills, model, declared, nil
 }
 
 // activeWorkflow returns the workflow doc governing an item of the given
@@ -1689,30 +1724,32 @@ func (g *Engine) skillBody(ctx context.Context, name string) (string, error) {
 
 // reviewerSkillsFor scans a workflow body's transition lines for the (from→to)
 // edge. It returns the edge's ordered reviewer skills (nil when the edge is
-// declared but ungated) and whether the edge is DECLARED at all. The two cases
-// are distinct: a declared ungated edge is advisory (enact directly), while an
-// UNDECLARED edge is not a legal move in this workflow and must be refused —
-// otherwise a story could skip a gate that rejected it by jumping to a later
-// state across an edge the workflow never declared. The transition format is the
-// inline-map shape the substrate uses, with either a single reviewer or a list:
+// declared but ungated), the edge model= override (empty when absent / YAML
+// grammar), and whether the edge is DECLARED at all. The two cases are distinct:
+// a declared ungated edge is advisory (enact directly), while an UNDECLARED edge
+// is not a legal move in this workflow and must be refused — otherwise a story
+// could skip a gate that rejected it by jumping to a later state across an edge
+// the workflow never declared. The transition format is the inline-map shape the
+// substrate uses, with either a single reviewer or a list:
 //
 //   - {from: backlog, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
 //   - {from: deployed, to: done, reviewer_skills: [satelle-story-done-review, satelle-estimate-actual]}
 //
 // reviewer_skills (the ordered list) takes precedence over reviewer_skill.
-func reviewerSkillsFor(body, from, to string) (skills []string, declared bool) {
+// DOT edges may carry model="…" (sty_19456622); YAML edges have no model field.
+func reviewerSkillsFor(body, from, to string) (skills []string, model string, declared bool) {
 	// DOT workflow: resolve the edge from the shared wfdot spec — entry to a
 	// reviewer node is the gated transition, carrying that node's skill.
 	if spec, ok := wfdot.Parse(body); ok {
 		for _, tr := range spec.Transitions {
 			if tr.From == from && tr.To == to {
 				if len(tr.Skills) > 0 {
-					return tr.Skills, true
+					return tr.Skills, tr.Model, true
 				}
-				return nil, true
+				return nil, tr.Model, true
 			}
 		}
-		return nil, false
+		return nil, "", false
 	}
 	for _, line := range strings.Split(body, "\n") {
 		l := strings.TrimSpace(line)
@@ -1721,15 +1758,15 @@ func reviewerSkillsFor(body, from, to string) (skills []string, declared bool) {
 		}
 		if inlineField(l, "from") == from && inlineField(l, "to") == to {
 			if list := inlineListField(l, "reviewer_skills"); len(list) > 0 {
-				return list, true
+				return list, "", true
 			}
 			if s := inlineField(l, "reviewer_skill"); s != "" {
-				return []string{s}, true
+				return []string{s}, "", true
 			}
-			return nil, true
+			return nil, "", true
 		}
 	}
-	return nil, false
+	return nil, "", false
 }
 
 // inlineField extracts key's value from an inline-map line, trimming quotes. The

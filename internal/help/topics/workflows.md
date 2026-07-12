@@ -52,7 +52,14 @@ inconsistencies the operator should fix, and the agent should advise on them:
   node or edge, or the legacy `reviewer_skill=` attribute) that does not resolve
   in the substrate.
 
-Run `satelle workflow validate` to surface these before they bite.
+Run `satelle workflow validate` to surface these before they bite. That command
+also prints each gate/node's **effective model** (binding model, or a DOT
+`model=` override) so allocation is inspectable without opening agents.toml.
+`satelle agent validate` prints the same surface under its grant listing.
+
+A workflow edge or node may set `model="…"` to override only the model for that
+gate/step while keeping the shared `[reviewer]` (or named) harness — see
+`satelle help agent-dispatch` and the satelle-dot-standard principle.
 
 ## Beyond validate: the semantic review
 
