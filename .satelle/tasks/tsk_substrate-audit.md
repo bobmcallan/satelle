@@ -7,6 +7,7 @@ category: substrate
 tags: substrate-audit, quality
 created: 2026-07-08T00:00:00Z
 updated: 2026-07-08T00:00:00Z
+embedded_sha: fd091e6a95bd700e619929d0c624368b3d893583e1355eb44ef59e87adec066b
 ---
 
 # Audit this repo's skills and principles for focus, token economy, and fitness

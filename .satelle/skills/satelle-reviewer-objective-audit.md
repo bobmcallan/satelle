@@ -4,6 +4,7 @@ scope: system
 type: skill
 tags: [type:skill, type:audit]
 description: Audit ALL reviewer skills (name *review* or tag type:reviewer) for primary-objective alignment (validate presented outcome — never create-and-complete) and DO/ACTIONS to remove. Writes a recommendation report under the running task's folder. Seeded by init.
+embedded_sha: d4152f09961d3286e21608f6e3ee09c832538c1b54e2fa25c69b49905a5ef4ca
 ---
 
 # Reviewer primary-objective audit

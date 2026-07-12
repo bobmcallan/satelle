@@ -119,6 +119,23 @@ on each file and flag leakage:
   `satelle-<object>-<stage>-review`, a structure reviewer `satelle-<object>-review`,
   a principle is bare kebab-case. Flag a name that misencodes the artifact's kind.
 
+## Deterministic placement (always-available)
+
+Before the LLM axes, run the **code** placement guard (epic order:6):
+
+```bash
+satelle principle validate
+```
+
+That whole-set check flags (deterministically):
+- embedded-owned on-disk copies missing `embedded_sha` (identical to the binary default)
+- illegal `principles:*` tags other than `principles:session`
+- inert `scope:` on principles
+- resident set + constitution over the SessionStart byte ceiling
+
+Green placement is a precondition for a clean substrate audit. Semantic axes
+below remain this skill's job.
+
 ## How to run the audit
 
 1. Read the two reference files (§Scope) and glob the corpus.

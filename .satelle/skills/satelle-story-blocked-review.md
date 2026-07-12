@@ -4,6 +4,7 @@ scope: system
 type: skill
 tags: [type:skill, type:reviewer]
 description: Gate for parking an engaged story (in_progress → blocked). Isolated reviewer allowing the move when a reason is recorded — world-not-ready, waiting on a dependency — refusing a bare block with no reason on record. Mirrors satelle-story-cancel-review.
+embedded_sha: 2673ce35af68159723be3b87a141adc38825c86479fef94f45d9115afb22cc4d
 ---
 
 # Story blocked review (park gate)

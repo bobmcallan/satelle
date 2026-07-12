@@ -7,6 +7,7 @@ category: substrate
 tags: reviewer-audit, quality, substrate
 created: 2026-07-10T00:00:00Z
 updated: 2026-07-10T00:00:00Z
+embedded_sha: 6306d6e9c8881ab6cd14c1223a4cec8654b92d6ab01dbe8a4d7409ba84b205f3
 ---
 
 # Audit all reviewer skills: primary objective + strip DO/ACTIONS
