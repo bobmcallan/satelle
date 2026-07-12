@@ -120,9 +120,23 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool) error {
 	agentsPath := filepath.Join(dataDir, config.AgentsConfigName)
 	legacyPath := filepath.Join(dataDir, config.ActorsConfigName)
 	_, legacyErr := os.Stat(legacyPath)
+	agentsRel := config.DefaultDataDir + "/" + config.AgentsConfigName
 	switch _, statErr := os.Stat(agentsPath); {
 	case statErr == nil:
-		fmt.Fprintln(out, initLine(false, config.DefaultDataDir+"/"+config.AgentsConfigName))
+		// Format-migrate an existing agents.toml (harness→command, add role=)
+		// instead of reporting "= already present" — mirrors hook heal.
+		if raw, rerr := os.ReadFile(agentsPath); rerr != nil {
+			fmt.Fprintln(out, initLine(false, agentsRel))
+		} else if migrated, notes, merr := config.MigrateAgents(string(raw)); merr != nil {
+			fmt.Fprintf(out, "= %s (left intact: %v)\n", agentsRel, merr)
+		} else if len(notes) > 0 {
+			if werr := os.WriteFile(agentsPath, []byte(migrated), 0o644); werr != nil {
+				return fmt.Errorf("init: write migrated %s: %w", agentsPath, werr)
+			}
+			fmt.Fprintf(out, "~ %s (migrated: %s)\n", agentsRel, strings.Join(notes, "; "))
+		} else {
+			fmt.Fprintln(out, initLine(false, agentsRel))
+		}
 	case os.IsNotExist(statErr) && legacyErr == nil:
 		// Legacy actors.toml present: leave it; report it rather than scaffolding.
 		fmt.Fprintln(out, initLine(false, config.DefaultDataDir+"/"+config.ActorsConfigName))
