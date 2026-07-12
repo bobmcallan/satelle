@@ -24,6 +24,9 @@ func copyTaskExecSubstrate(t *testing.T, repo string) {
 		filepath.Join(root, ".satelle", "workflows", "satelle-task-workflow.md"):            filepath.Join(repo, ".satelle", "workflows", "satelle-task-workflow.md"),
 		filepath.Join(root, ".satelle", "skills", "satelle-task-validate-before-review.md"): filepath.Join(repo, ".satelle", "skills", "satelle-task-validate-before-review.md"),
 		filepath.Join(root, ".satelle", "skills", "satelle-task-validate-after-review.md"):  filepath.Join(repo, ".satelle", "skills", "satelle-task-validate-after-review.md"),
+		// in_progress carries prompt="@skill:task-run" (format-lag fix); engage
+		// refuses if the performer skill is absent from the substrate.
+		filepath.Join(root, ".satelle", "skills", "task-run.md"): filepath.Join(repo, ".satelle", "skills", "task-run.md"),
 	}
 	for src, dst := range files {
 		data, err := os.ReadFile(src)
