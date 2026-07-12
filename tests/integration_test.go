@@ -215,6 +215,9 @@ func TestServeServesProjectPage(t *testing.T) {
 	const port = "8791"
 	cmd := exec.Command(bin, "serve", "--port", port)
 	cmd.Dir = repo
+	// Isolate the machine-wide workspace registry so this serve cannot spawn
+	// children for every leftover /tmp path registered by other tests.
+	cmd.Env = append(os.Environ(), "SATELLE_HOME="+t.TempDir())
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start serve: %v", err)
 	}

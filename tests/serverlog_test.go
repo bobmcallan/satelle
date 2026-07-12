@@ -23,6 +23,7 @@ func TestServeWritesServerLog(t *testing.T) {
 	const port = "8795"
 	cmd := exec.Command(testBin, "serve", "--port", port)
 	cmd.Dir = repo
+	cmd.Env = append(os.Environ(), "SATELLE_HOME="+t.TempDir())
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start serve: %v", err)
 	}
