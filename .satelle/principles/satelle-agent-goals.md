@@ -47,4 +47,9 @@ Do **not** weaken the ACs (definition freeze). Diagnose:
 Relations are **tags** only (`supersedes:<id>`, `blocked-by:<id>`) — no typed
 relation table. Select blocked **only** when the workflow graph offers it.
 
-See [[satelle-agent-model]], [[satelle-done-is-last]], [[satelle-constitution]].
+Process blockage (gate thrash, unmeetable preconditions, end-of-session ordering)
+is [[satelle-recognise-blockage]] — park with a structured reason and consult
+triage; never route around enforcement.
+
+See [[satelle-agent-model]], [[satelle-done-is-last]], [[satelle-constitution]],
+[[satelle-recognise-blockage]].
