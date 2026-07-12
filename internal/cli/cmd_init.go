@@ -1071,12 +1071,13 @@ func materializePrinciples(dataDir string) []string {
 		if d.Kind != "principles" {
 			continue
 		}
-		p := filepath.Join(dataDir, "principles", d.Name+".md")
-		if fileExists(p) {
+		rel := "principles/" + d.Name + ".md"
+		verb, _, err := reconcileEmbeddedFile(dataDir, rel, d.Body)
+		if err != nil {
 			continue
 		}
-		if err := os.WriteFile(p, []byte(d.Body), 0o644); err == nil {
-			lines = append(lines, initLine(true, config.DefaultDataDir+"/principles/"+d.Name+".md"))
+		if verb != reconcileUnchanged {
+			lines = append(lines, reconcileReportLine(verb, rel))
 		}
 	}
 	return lines
@@ -1098,12 +1099,13 @@ func materializeTasks(dataDir string) []string {
 		if d.Kind != "tasks" {
 			continue
 		}
-		p := filepath.Join(dir, d.Name+".md")
-		if fileExists(p) {
+		rel := "tasks/" + d.Name + ".md"
+		verb, _, err := reconcileEmbeddedFile(dataDir, rel, d.Body)
+		if err != nil {
 			continue
 		}
-		if err := os.WriteFile(p, []byte(d.Body), 0o644); err == nil {
-			lines = append(lines, initLine(true, config.DefaultDataDir+"/tasks/"+d.Name+".md"))
+		if verb != reconcileUnchanged {
+			lines = append(lines, reconcileReportLine(verb, rel))
 		}
 	}
 	return lines
@@ -1129,12 +1131,13 @@ func materializeAdvisorySkills(dataDir string) []string {
 		if !ok {
 			continue
 		}
-		p := filepath.Join(dataDir, "skills", name+".md")
-		if fileExists(p) {
+		rel := "skills/" + name + ".md"
+		verb, _, err := reconcileEmbeddedFile(dataDir, rel, body)
+		if err != nil {
 			continue
 		}
-		if err := os.WriteFile(p, []byte(body), 0o644); err == nil {
-			lines = append(lines, initLine(true, config.DefaultDataDir+"/skills/"+name+".md"))
+		if verb != reconcileUnchanged {
+			lines = append(lines, reconcileReportLine(verb, rel))
 		}
 	}
 	return lines
@@ -1197,18 +1200,21 @@ func materializeDefaultSolution(dataDir string) []string {
 			continue
 		}
 		collectSkills(body) // collect refs even if the workflow file is skipped
+		rel := "workflows/" + name + ".md"
 		p := filepath.Join(wfDir, name+".md")
-		if fileExists(p) {
-			lines = append(lines, initLine(false, config.DefaultDataDir+"/workflows/"+name+".md"))
+		// The overlappingCategory guard gates SEEDING an absent default only; an
+		// on-disk file is reconciled (converge/diverge) below, never routed here.
+		if !fileExists(p) {
+			if conflict := overlappingCategory(body, claimed); conflict != "" {
+				lines = append(lines, "  = "+config.DefaultDataDir+"/workflows/"+name+".md (applies_to "+conflict+" claimed by an authored workflow — not seeded)")
+				continue
+			}
+		}
+		verb, _, err := reconcileEmbeddedFile(dataDir, rel, body)
+		if err != nil {
 			continue
 		}
-		if conflict := overlappingCategory(body, claimed); conflict != "" {
-			lines = append(lines, "  = "+config.DefaultDataDir+"/workflows/"+name+".md (applies_to "+conflict+" claimed by an authored workflow — not seeded)")
-			continue
-		}
-		if err := os.WriteFile(p, []byte(body), 0o644); err == nil {
-			lines = append(lines, initLine(true, config.DefaultDataDir+"/workflows/"+name+".md"))
-		}
+		lines = append(lines, reconcileReportLine(verb, rel))
 	}
 	names := make([]string, 0, len(skills))
 	for s := range skills {
@@ -1220,12 +1226,13 @@ func materializeDefaultSolution(dataDir string) []string {
 		if !has {
 			continue // a referenced skill without an embedded rubric stays advisory by design
 		}
-		sPath := filepath.Join(dataDir, "skills", name+".md")
-		if fileExists(sPath) {
+		rel := "skills/" + name + ".md"
+		verb, _, err := reconcileEmbeddedFile(dataDir, rel, sBody)
+		if err != nil {
 			continue
 		}
-		if err := os.WriteFile(sPath, []byte(sBody), 0o644); err == nil {
-			lines = append(lines, initLine(true, config.DefaultDataDir+"/skills/"+name+".md"))
+		if verb != reconcileUnchanged {
+			lines = append(lines, reconcileReportLine(verb, rel))
 		}
 	}
 	return lines

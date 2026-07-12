@@ -64,15 +64,19 @@ func runRestore(out io.Writer, in io.Reader, dataDir string, yes bool) error {
 		}
 		rel := filepath.Join(d.Kind, d.Name+".md")
 		p := filepath.Join(dataDir, rel)
+		// Embedded substrate is written in its STAMPED form (embedded_sha
+		// provenance, sty_304ee454) — the same bytes init/rebase materialise — so
+		// restore reproduces exactly what init wrote and the three writers agree.
+		stamped := applyEmbeddedStamp(d.Body, embeddedSHA(d.Body))
 		action := "create"
 		if cur, err := os.ReadFile(p); err == nil {
-			if string(cur) == d.Body {
+			if string(cur) == stamped {
 				action = "unchanged"
 			} else {
 				action = "overwrite"
 			}
 		}
-		plan = append(plan, restorePlanEntry{rel: rel, path: p, body: d.Body, action: action})
+		plan = append(plan, restorePlanEntry{rel: rel, path: p, body: stamped, action: action})
 	}
 
 	changes := 0

@@ -43,8 +43,10 @@ func TestRunRestoreOverwritesDrift(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != d.Body {
-		t.Errorf("drifted file was not restored to the embedded default")
+	// restore writes the STAMPED canonical form (embedded_sha provenance,
+	// sty_304ee454) — the same bytes init/rebase materialise.
+	if string(got) != applyEmbeddedStamp(d.Body, embeddedSHA(d.Body)) {
+		t.Errorf("drifted file was not restored to the stamped embedded default")
 	}
 	if !strings.Contains(out.String(), "re-materialised") {
 		t.Errorf("restore should report what it did:\n%s", out.String())
@@ -95,7 +97,9 @@ func TestRunRestoreNoopWhenClean(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(p, []byte(d.Body), 0o644); err != nil {
+		// Seed the STAMPED canonical form so restore sees "unchanged" (embedded_sha
+		// provenance, sty_304ee454).
+		if err := os.WriteFile(p, []byte(applyEmbeddedStamp(d.Body, embeddedSHA(d.Body))), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
