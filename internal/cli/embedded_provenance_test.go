@@ -226,3 +226,52 @@ func TestInitStampsAndValidates(t *testing.T) {
 		t.Errorf("seeded principle stamp = %q stamped=%v, want %q", stamp, stamped, embeddedSHA(body))
 	}
 }
+
+// TestReconcileRecogniseBlockageUpgrade pins AC5 for sty_0334d12b: an UNEDITED
+// stamped on-disk copy of satelle-recognise-blockage whose stamp predates a
+// fixed embedded body is overwritten and re-stamped (order:1 converge).
+func TestReconcileRecogniseBlockageUpgrade(t *testing.T) {
+	newBody, ok := embeddedDefault("principles", "satelle-recognise-blockage")
+	if !ok {
+		t.Fatal("satelle-recognise-blockage must be embedded")
+	}
+	// Simulate a prior seed: same frontmatter shell, older body that still
+	// carried the pre-fix "nothing engaged" signal.
+	oldBody := "---\nname: satelle-recognise-blockage\nscope: system\ntype: principle\ntags: [type:principle, principles:session]\napplies_to: [\"*\"]\ndescription: old\n---\n\n# Recognise blockage\n\nnothing engaged was blockage (pre-fix seed)\n"
+	if !strings.Contains(oldBody, "nothing engaged") {
+		t.Fatal("fixture must contain pre-fix phrase")
+	}
+	if strings.Contains(newBody, "nothing engaged") {
+		t.Fatal("current embedded body still contains pre-fix phrase")
+	}
+
+	dataDir := t.TempDir()
+	rel := "principles/satelle-recognise-blockage.md"
+	dest := filepath.Join(dataDir, rel)
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dest, []byte(applyEmbeddedStamp(oldBody, embeddedSHA(oldBody))), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	verb, backup, err := reconcileEmbeddedFile(dataDir, rel, newBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verb != reconcileUpdated || backup != "" {
+		t.Fatalf("verb=%q backup=%q, want updated/no-backup", verb, backup)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := applyEmbeddedStamp(newBody, embeddedSHA(newBody))
+	if string(got) != want {
+		t.Errorf("on-disk body did not converge to current embedded+stamp")
+	}
+	stripped, stamp, stamped := stripEmbeddedStamp(string(got))
+	if !stamped || stamp != embeddedSHA(newBody) || stripped != newBody {
+		t.Errorf("stamp/body mismatch after upgrade: stamped=%v stamp=%q", stamped, stamp)
+	}
+}
