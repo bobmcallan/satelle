@@ -762,6 +762,61 @@ func TestInitAgentsLayerValidatesZeroWarnings(t *testing.T) {
 	}
 }
 
+// TestRunInitMigratesDriftedAgentsToml: re-init format-migrates harness= → command=
+// and adds missing role= (order:7), printing a ~ migrated line; post-migrate
+// agentvalidate has zero WARN.
+func TestRunInitMigratesDriftedAgentsToml(t *testing.T) {
+	repo := t.TempDir()
+	if err := runInitTest(t, io.Discard, repo); err != nil {
+		t.Fatalf("seed init: %v", err)
+	}
+	path := filepath.Join(repo, config.DefaultDataDir, config.AgentsConfigName)
+	drifted := `[executor]
+harness = "in-loop"
+
+[reviewer]
+harness = "claude"
+tools   = "Read,Grep,Glob"
+`
+	if err := os.WriteFile(path, []byte(drifted), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := runInitTest(t, &out, repo); err != nil {
+		t.Fatalf("re-init: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "migrated:") || !strings.Contains(out.String(), "agents.toml") {
+		t.Fatalf("want ~ migrated line for agents.toml, got:\n%s", out.String())
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(got)
+	if strings.Contains(body, "harness") {
+		t.Fatalf("harness not rewritten:\n%s", body)
+	}
+	if !strings.Contains(body, `command = "in-loop"`) || !strings.Contains(body, `role = "agent"`) {
+		t.Fatalf("migration incomplete:\n%s", body)
+	}
+	if !strings.Contains(body, `role = "reviewer"`) {
+		t.Fatalf("reviewer role missing:\n%s", body)
+	}
+	agents, err := config.LoadAgents(filepath.Join(repo, config.DefaultDataDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := agentvalidate.Validate(agents, deployedVars(filepath.Join(repo, config.DefaultDataDir)), deployedWorkflowDocs(filepath.Join(repo, config.DefaultDataDir)))
+	for _, w := range report.Warnings {
+		if strings.Contains(w, "role") || strings.Contains(w, "inferred") {
+			t.Fatalf("role-inferred WARN after migrate: %v", report.Warnings)
+		}
+	}
+	if !report.OK() {
+		t.Fatalf("problems after migrate: %v", report.Problems)
+	}
+}
+
 // TestRunInitRegistersWorkspace (sty_3bdbdc38 AC1): a fresh init leaves the repo
 // in the local workspace registry that `satelle workspace list` reads.
 func TestRunInitRegistersWorkspace(t *testing.T) {
