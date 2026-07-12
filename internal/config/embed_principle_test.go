@@ -19,9 +19,10 @@ func embeddedPrinciples() map[string]string {
 // TestEmbeddedOperatingPrinciples: the binary embeds the principles an agent
 // needs to OPERATE satelle — operating discipline (agent-goals), execution model
 // (agent-model), edit-gate rule (edits-require-a-story), blockage recognition
-// (recognise-blockage; sty_0334d12b), and the residency taxonomy (residency;
-// sty_1278fdd9). Everything else is authoring/development substrate that lives
-// in a repo's .satelle/principles (sty_807ae744, sty_949e8739).
+// (recognise-blockage; sty_0334d12b), and the residency taxonomy DEFINITION
+// (residency; sty_1278fdd9, demoted to ondemand by the context diet sty_cd5e341c).
+// Everything else is authoring/development substrate that lives in a repo's
+// .satelle/principles (sty_807ae744, sty_949e8739).
 func TestEmbeddedOperatingPrinciples(t *testing.T) {
 	embedded := embeddedPrinciples()
 	for _, name := range []string{
@@ -37,16 +38,29 @@ func TestEmbeddedOperatingPrinciples(t *testing.T) {
 			t.Errorf("embedded principle %q has empty body", name)
 		}
 	}
-	// Taxonomy principle must be system-resident (session-tagged) and must not
-	// reintroduce the inert scope axis.
+	// Taxonomy principle is embedded + ondemand (sty_cd5e341c): it DEFINES the
+	// system|ondemand axis and names principles:session as the marker, but does
+	// not itself carry the session tag. Must not reintroduce inert scope.
 	body := embedded["satelle-residency"]
 	if !strings.Contains(body, "principles:session") {
-		t.Error("satelle-residency must carry the system-residency marker principles:session")
+		t.Error("satelle-residency body must name the principles:session marker")
 	}
+	// tags: line must NOT include the session marker (ondemand after diet).
+	// description may still mention the marker by name — only the tag list counts.
+	tagsLine := ""
 	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "tags:") {
+			tagsLine = line
+			break
+		}
 		if strings.HasPrefix(line, "scope:") {
 			t.Error("satelle-residency must not carry scope: (residency is the tag alone)")
 		}
+	}
+	if tagsLine == "" {
+		t.Error("satelle-residency missing tags: frontmatter line")
+	} else if strings.Contains(tagsLine, "principles:session") {
+		t.Error("satelle-residency must be ondemand after context diet (no principles:session in tags:)")
 	}
 }
 
