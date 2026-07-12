@@ -16,6 +16,23 @@ import (
 	"time"
 )
 
+// hasActiveTomlAssign reports whether body has an uncommented assignment of key
+// (e.g. `server =` at the start of a line). Comment documentation of the key —
+// as the init scaffold does for [hosted]/[sync] — must not count.
+func hasActiveTomlAssign(body, key string) bool {
+	prefix := key + " ="
+	for _, line := range strings.Split(body, "\n") {
+		s := strings.TrimSpace(line)
+		if s == "" || strings.HasPrefix(s, "#") {
+			continue
+		}
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // TestSettingsServerCLIEndToEnd drives the real binary: `satelle settings server`
 // configures the machine-wide hosted server WITHOUT a login, writing only the
 // global config (never the repo satelle.toml, never a token) — the decoupled
@@ -47,8 +64,8 @@ func TestSettingsServerCLIEndToEnd(t *testing.T) {
 	if strings.Contains(string(gcfg), "token") {
 		t.Fatalf("global config must not contain a token:\n%s", gcfg)
 	}
-	// The repo satelle.toml never gains a hosted server.
-	if rcfg, _ := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.toml")); strings.Contains(string(rcfg), "server =") {
+	// The repo satelle.toml never gains an ACTIVE hosted server (comment docs OK).
+	if rcfg, _ := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.toml")); hasActiveTomlAssign(string(rcfg), "server") {
 		t.Fatalf("repo satelle.toml must NOT gain a hosted server:\n%s", rcfg)
 	}
 	// Print shows it.
@@ -145,7 +162,7 @@ func TestLoginFlowEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(cfg), "server =") {
+	if hasActiveTomlAssign(string(cfg), "server") {
 		t.Fatalf("committed satelle.toml must NOT gain a hosted server (it is global now):\n%s", cfg)
 	}
 	if strings.Contains(string(cfg), "access_token") || strings.Contains(string(cfg), "refresh_token") || strings.Contains(string(cfg), `"acc"`) || strings.Contains(string(cfg), `"ref"`) {
@@ -285,13 +302,19 @@ func TestLoginWorkspaceSelectionEndToEnd(t *testing.T) {
 		t.Fatalf("overlay missing the workspace selection:\n%s", local)
 	}
 
-	// The committed satelle.toml stays byte-untouched: no workspace, no server,
-	// no tokens (the per-user choice never mutates the team file).
+	// The committed satelle.toml stays free of ACTIVE workspace/server/tokens
+	// (comment docs of the keys are fine; the per-user choice never mutates
+	// the team file into live assignments).
 	cfg, err := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, banned := range []string{`workspace =`, `server =`, "access_token", "refresh_token", `"acc"`, `"ref"`} {
+	for _, key := range []string{"workspace", "server"} {
+		if hasActiveTomlAssign(string(cfg), key) {
+			t.Fatalf("committed satelle.toml must not gain active %q:\n%s", key, cfg)
+		}
+	}
+	for _, banned := range []string{"access_token", "refresh_token", `"acc"`, `"ref"`} {
 		if strings.Contains(string(cfg), banned) {
 			t.Fatalf("committed satelle.toml must not gain %q:\n%s", banned, cfg)
 		}
