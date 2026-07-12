@@ -7,6 +7,7 @@
 package tests
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -64,6 +65,51 @@ func TestReviewerObjectiveAuditSeedsOnInit(t *testing.T) {
 	}
 	if !fileExists(task) {
 		t.Fatal("rebase did not redeploy tsk_reviewer-objective-audit")
+	}
+}
+
+// TestContextAuditSeedsOnInit: context-audit skill + task land via advisorySkills
+// / materializeTasks (epic order:8), validate, and survive rebase.
+func TestContextAuditSeedsOnInit(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+
+	skill := filepath.Join(repo, ".satelle", "skills", "satelle-context-audit.md")
+	task := filepath.Join(repo, ".satelle", "tasks", "tsk_context-audit.md")
+	if !fileExists(skill) {
+		t.Fatal("init did not seed satelle-context-audit skill")
+	}
+	if !fileExists(task) {
+		t.Fatal("init did not seed tsk_context-audit task")
+	}
+	body, err := os.ReadFile(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "status: done") {
+		t.Errorf("context-audit task must ship at done for re-run from done:\n%s", body)
+	}
+	mustRun(t, testBin, repo, "reindex")
+	out := mustRun(t, testBin, repo, "skill", "validate", "satelle-context-audit")
+	if !strings.Contains(out, "PASS  skills/satelle-context-audit") {
+		t.Errorf("context-audit skill should validate:\n%s", out)
+	}
+	// Fresh execution under the done header resolves via the task workflow.
+	stubReviewerAccept(t, repo)
+	eid := extractID(mustRun(t, testBin, repo, "execution", "create", "--parent", "tsk_context-audit",
+		"--title", "Context audit run", "--body", "ACTION: audit session context. VERIFICATION: report written."), "exe_")
+	if eid == "" {
+		t.Fatal("no execution id under tsk_context-audit")
+	}
+	mustRun(t, testBin, repo, "execution", "set", eid, "--status", "in_progress")
+	mustRun(t, testBin, repo, "execution", "set", eid, "--status", "done")
+
+	mustRun(t, testBin, repo, "rebase", "--yes")
+	if !fileExists(skill) {
+		t.Fatal("rebase did not redeploy satelle-context-audit")
+	}
+	if !fileExists(task) {
+		t.Fatal("rebase did not redeploy tsk_context-audit")
 	}
 }
 

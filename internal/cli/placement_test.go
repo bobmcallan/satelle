@@ -156,3 +156,28 @@ func TestPlacementSourceHasNoRepoIDs(t *testing.T) {
 		t.Error("placement.go package body must not embed this-repo story/task ids")
 	}
 }
+
+// TestContextAuditFixturesPresent pins the order:8 contradiction fixture pair
+// under testdata (not under substrate — would pollute EmbeddedDefaults).
+func TestContextAuditFixturesPresent(t *testing.T) {
+	base := filepath.Join("testdata", "context-audit", "contradiction")
+	for _, name := range []string{"pre-fix-recognise.md", "pre-fix-edits.md", "fixed-recognise.md"} {
+		p := filepath.Join(base, name)
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("missing fixture %s: %v", p, err)
+		}
+		if !strings.Contains(string(b), "principles:session") {
+			t.Errorf("%s must be session-tagged for contradiction fixtures", name)
+		}
+	}
+	// pre-fix pair must contain the classic contradiction signal
+	rec, _ := os.ReadFile(filepath.Join(base, "pre-fix-recognise.md"))
+	ed, _ := os.ReadFile(filepath.Join(base, "pre-fix-edits.md"))
+	if !strings.Contains(string(rec), "nothing engaged") {
+		t.Error("pre-fix recognise fixture must cite nothing engaged")
+	}
+	if !strings.Contains(string(ed), "engage and proceed") {
+		t.Error("pre-fix edits fixture must prescribe engage and proceed")
+	}
+}

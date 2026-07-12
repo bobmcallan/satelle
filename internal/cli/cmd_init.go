@@ -1130,10 +1130,12 @@ func materializeTasks(dataDir string) []string {
 // (which walks workflow references) never carries them. init seeds each when
 // absent, regardless of whether the repo authored its own workflows
 // (sty_f4c1bd90). Includes satelle-reviewer-objective-audit (reviewer primary-
-// objective audit skill, paired with tsk_reviewer-objective-audit).
+// objective audit skill, paired with tsk_reviewer-objective-audit) and
+// satelle-context-audit (paired with tsk_context-audit).
 var advisorySkills = []string{
 	"satelle-workflow-advisor",
 	"satelle-reviewer-objective-audit",
+	"satelle-context-audit",
 }
 
 // materializeAdvisorySkills writes each embedded advisory skill into
