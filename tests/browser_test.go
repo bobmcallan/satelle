@@ -388,7 +388,8 @@ func TestBrowserTagChipFiltering(t *testing.T) {
 // chips stay. A telemetry_event supplies the outcome + tokens chips without
 // depending on reviewer internals.
 func TestBrowserTimelineFieldToggle(t *testing.T) {
-	base, repo := serveRepo(t, "8815")
+	// 8815 is reserved on some WSL hosts (bind EADDRINUSE with no LISTEN socket).
+	base, repo := serveRepo(t, "8846")
 	id := createStory(t, repo, "Telemetry Story", "")
 	mustRun(t, testBin, repo, "story", "log", id, "--kind", "step-quality",
 		"--data", "outcome=smooth", "--data", "tokens_total=2000", "--data", "duration_ms=2400")
@@ -830,7 +831,8 @@ func TestBrowserBacklogBadgeLiveOnRefetch(t *testing.T) {
 // tracks the LIVE SSE connection — the mark is accent-green (no 'sse-down' class)
 // once the /events stream is open, and the retired uptime pill is gone.
 func TestBrowserMarkTracksConnection(t *testing.T) {
-	base, _ := serveRepo(t, "8815")
+	// 8815 is reserved on some WSL hosts (bind EADDRINUSE with no LISTEN socket).
+	base, _ := serveRepo(t, "8847")
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(base+"/"),

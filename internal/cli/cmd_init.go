@@ -795,6 +795,8 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer:
 #     named agent that MUTATES declares its own full command template + wide
 #     grant; its model key pins the step's model ({model} in the template), so
 #     per-step model selection is pure configuration.
+# role= is the binding's declared contract (reviewer | agent); inference from
+# the section name is a fallback, not the norm — declare it.
 #
 # Define process/step agents HERE (a [<name>] binding + an agent=<name> node),
 # NEVER in a harness-specific agent dir (e.g. .claude/agents): those are invisible
@@ -829,6 +831,7 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer:
 #   GLM_API_KEY = "sk-…"
 
 [executor]
+role    = "agent"              # declared contract (agent | reviewer); do not leave inferred
 command = "in-loop"            # the orchestrator/driving session itself
 
 [reviewer]
@@ -838,6 +841,7 @@ command = "in-loop"            # the orchestrator/driving session itself
 # the --model pair. Point this at ANY agent CLI by rewriting the command — or
 # replace this whole line with a single-token preset: command = "claude" (or
 # "grok"), which expands to a correct read-only reviewer command for that CLI.
+role    = "reviewer"           # declared contract; inference is a fallback, not the norm
 command = "REVIEWER_COMMAND_TEMPLATE"
 tools   = "Read,Grep,Glob"     # read-only grant — widen at your own risk (claude preset only; the grok preset bakes its own grok-named read-only grant)
 model   = ""                   # empty inherits the CLI's default; each binding may pin its own (e.g. "sonnet"), so steps allocated to different bindings run on different models
@@ -845,6 +849,7 @@ model   = ""                   # empty inherits the CLI's default; each binding 
 # A named EXECUTOR agent for isolated mutating steps (e.g. a commit/push step),
 # with an explicit full command template and a wide grant:
 # [commit-agent]
+# role    = "agent"
 # command = "claude -p --append-system-prompt {system} --allowedTools {tools}"
 # tools   = "Read,Edit,Bash(git:*),Bash(gh:*),Bash(make:*),Bash(satelle:*)"
 `, "REVIEWER_COMMAND_TEMPLATE", agentcli.DefaultClaudeCommand)
