@@ -7,6 +7,7 @@
 package tests
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -52,6 +53,7 @@ func TestWorkflowPageInteractiveDiagram(t *testing.T) {
 	const port = 8794
 	cmd := exec.Command(bin, "serve", "--port", strconv.Itoa(port))
 	cmd.Dir = repo
+	cmd.Env = append(os.Environ(), "SATELLE_HOME="+t.TempDir())
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start serve: %v", err)
 	}
