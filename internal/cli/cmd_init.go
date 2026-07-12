@@ -766,6 +766,36 @@ edit_exempt_paths = [".satelle/"]
 # [substrate_roots]
 # documents = "."                # → ./documents
 # skills = "."                   # → ./skills
+
+# [sync] — each .satelle area on the local|personal|shared ladder (scoped-sync).
+# Unset = local: nothing leaves the machine until an area is opted in.
+# personal = this repo's BOUND hosted project (not a dump across every project).
+# shared = team catalog eligibility; use 'satelle publish' for the team catalog
+# (sync itself does not write to a team workspace). Inspect with 'satelle sync scopes'.
+# Areas: documents, workflows, principles, skills, constitution, agents, tasks,
+# stories, ledger, executions. Reserved key 'all' blanket-defaults every area
+# not set explicitly; a per-area key still overrides it.
+# >>> satelle-example: enable sync/hosted (uncomment to opt in)
+# [sync]
+# all = "personal"               # every area personal unless overridden below
+# documents = "personal"         # per-area override wins over 'all'
+# [hosted]
+# server = "https://hosted.satelle.dev"
+# project = "my-project-slug"    # set via: satelle project bind <slug>
+# workspace = "team-name"        # per-developer; usually satelle.local.toml
+# [vars]
+# MODEL_BASE_URL = "https://example.invalid"  # non-secret; secrets → satelle.local.toml
+# <<< satelle-example
+#
+# [hosted] — secret-free hosted-server binding (committed). Tokens live in the
+# user credential store, never here. 'satelle login' sets the server URL;
+# 'satelle project bind <slug>' writes project. workspace is a per-developer
+# choice (prefer satelle.local.toml / 'satelle login --workspace'); a value
+# committed here is only a team default the overlay can override.
+#
+# [vars] — operator KV substituted into agents.toml binding env values via
+# ${NAME}. NON-secret vars may live here; SECRETS go in gitignored
+# satelle.local.toml (per-key overlay wins). Never pushed with substrate sync.
 `
 
 // scaffoldAgentsToml is the documented agents layer a fresh init writes. The
