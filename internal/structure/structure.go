@@ -204,6 +204,12 @@ func checkPrinciple(name, body string) []string {
 	if !fmHas(fm, "tags") {
 		p = append(p, "frontmatter missing tags")
 	}
+	// Residency taxonomy (sty_1278fdd9): principles use principles:session as the
+	// sole injection classifier. scope: is a workflow field — inert/misleading on
+	// principles (it never gated injection).
+	if fmScalar(fm, "scope") != "" {
+		p = append(p, `frontmatter must not set "scope" on principles (residency is the principles:session tag; scope is for workflows)`)
+	}
 	if !hasProse(rest) {
 		p = append(p, "body is a stub — state the guidance and its rationale, not just a heading")
 	}
