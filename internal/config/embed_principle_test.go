@@ -64,6 +64,42 @@ func TestEmbeddedOperatingPrinciples(t *testing.T) {
 	}
 }
 
+// TestAgentModelMatchesDispatch pins the sty_704bfb8b rewrite: short, accurate
+// against the real dispatch model (in-loop executor; isolated reviewer/named
+// agents; accept-only advance; no stale commit-agent claim).
+func TestAgentModelMatchesDispatch(t *testing.T) {
+	body, ok := embeddedPrinciples()["satelle-agent-model"]
+	if !ok || body == "" {
+		t.Fatal("satelle-agent-model must be embedded")
+	}
+	lines := strings.Count(body, "\n") + 1
+	if lines >= 100 {
+		t.Errorf("satelle-agent-model must be materially shorter than ~139 lines; got %d", lines)
+	}
+	for _, want := range []string{
+		"in-loop",
+		"agents.toml",
+		"accept",
+		"agent=executor",
+		"agent=reviewer",
+		"isolated",
+	} {
+		if !strings.Contains(strings.ToLower(body), strings.ToLower(want)) {
+			t.Errorf("satelle-agent-model missing dispatch-model marker %q", want)
+		}
+	}
+	// Stale / inaccurate claims the rewrite must not reintroduce.
+	for _, ban := range []string{"commit-agent", "sty_"} {
+		if strings.Contains(body, ban) {
+			t.Errorf("satelle-agent-model must not contain %q (stale this-repo or wrong binding example)", ban)
+		}
+	}
+	// Named agent is a performer, not a general "worker" substitute for planner.
+	if !strings.Contains(body, "planner") && !strings.Contains(body, "named agent") {
+		t.Error("satelle-agent-model must mention named agents (e.g. planner) as isolated performers")
+	}
+}
+
 // TestDevelopmentPrinciplesNotEmbedded: principles that are about AUTHORING
 // substrate or DEVELOPING satelle (not required to operate) are NOT embedded —
 // they were relocated to .satelle/principles as project substrate (sty_807ae744).
