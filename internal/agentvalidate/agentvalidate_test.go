@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 )
@@ -11,9 +12,9 @@ import (
 func TestValidate_Healthy(t *testing.T) {
 	agents := config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},
-		Reviewer: config.AgentBinding{Command: "grok", Tools: "read_file,grep,list_dir", Model: "grok-4.5"},
+		Reviewer: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: "read_file,grep,list_dir", Model: "grok-4.5"},
 		Agents: map[string]config.AgentBinding{
-			"planner": {Command: "claude", Tools: "Read,Grep,Glob", Model: "opus"},
+			"planner": {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob", Model: "opus"},
 		},
 	}
 	wfs := []docindex.Doc{{
@@ -47,9 +48,9 @@ func TestValidate_Healthy(t *testing.T) {
 func TestValidate_GateEffectiveModel(t *testing.T) {
 	agents := config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},
-		Reviewer: config.AgentBinding{Command: "grok", Tools: "read_file,grep,list_dir", Model: "grok-4.5"},
+		Reviewer: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: "read_file,grep,list_dir", Model: "grok-4.5"},
 		Agents: map[string]config.AgentBinding{
-			"planner": {Command: "claude", Tools: "Read,Grep,Glob", Model: "sonnet"},
+			"planner": {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob", Model: "sonnet"},
 		},
 	}
 	wfs := []docindex.Doc{{
@@ -109,23 +110,49 @@ func TestValidate_BrokenBinding(t *testing.T) {
 	}
 }
 
-func TestValidate_CodexUnmapped(t *testing.T) {
-	agents := config.AgentsConfig{
-		Executor: config.AgentBinding{Command: "in-loop"},
-		Reviewer: config.AgentBinding{Command: "codex"},
-	}
-	r := Validate(agents, nil, nil)
-	if r.OK() {
-		t.Fatal("bare codex preset must be flagged")
-	}
-	joined := strings.Join(r.Problems, "\n")
-	if !strings.Contains(joined, "codex") || !strings.Contains(joined, "not yet mapped") {
-		t.Errorf("expected codex unmapped problem:\n%s", joined)
-	}
-	for _, g := range r.Grants {
-		if g.Name == "reviewer" && g.Backend != "codex (unmapped)" {
-			t.Errorf("reviewer backend = %q, want codex (unmapped)", g.Backend)
+func TestValidate_BarePresetRejected(t *testing.T) {
+	for _, bare := range []string{"claude", "grok", "codex"} {
+		agents := config.AgentsConfig{
+			Executor: config.AgentBinding{Command: "in-loop"},
+			Reviewer: config.AgentBinding{Command: bare},
 		}
+		r := Validate(agents, nil, nil)
+		if r.OK() {
+			t.Fatalf("bare %q must be flagged", bare)
+		}
+		joined := strings.Join(r.Problems, "\n")
+		if !strings.Contains(joined, "bare CLI presets removed") {
+			t.Errorf("bare %q: expected bare-preset problem:\n%s", bare, joined)
+		}
+		for _, g := range r.Grants {
+			if g.Name == "reviewer" && g.Backend != "invalid" {
+				t.Errorf("bare %q: reviewer backend = %q, want invalid", bare, g.Backend)
+			}
+		}
+	}
+	// in-loop and empty stay valid (executor path).
+	ok := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop"},
+		Reviewer: config.AgentBinding{Command: agentcli.DefaultClaudeCommand},
+	}
+	if r := Validate(ok, nil, nil); !r.OK() {
+		t.Fatalf("full template + in-loop must pass: %v", r.Problems)
+	}
+	// Omitted [reviewer] command resolves to full DefaultClaudeCommand (AC2).
+	omit := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop"},
+		// Reviewer empty — ReviewerBinding fills DefaultReviewerCommand
+	}
+	// Validate receives raw config; empty command is treated as in-loop path
+	// unless we resolve via ReviewerBinding. Mirror how the runtime resolves:
+	resolved := omit
+	rb := omit.ReviewerBinding()
+	resolved.Reviewer = rb
+	if rb.Command != agentcli.DefaultClaudeCommand {
+		t.Fatalf("omitted reviewer command resolved to %q, want DefaultClaudeCommand", rb.Command)
+	}
+	if r := Validate(resolved, nil, nil); !r.OK() {
+		t.Fatalf("resolved omitted reviewer must pass: %v", r.Problems)
 	}
 }
 
@@ -133,7 +160,7 @@ func TestValidate_UnresolvedEnv(t *testing.T) {
 	agents := config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},
 		Reviewer: config.AgentBinding{
-			Command: "claude",
+			Command: agentcli.DefaultClaudeCommand,
 			Env:     map[string]string{"TOKEN": "${MISSING_VAR}"},
 		},
 	}
@@ -154,7 +181,7 @@ func TestValidate_UnresolvedEnv(t *testing.T) {
 func TestValidate_MissingNodeBinding(t *testing.T) {
 	agents := config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},
-		Reviewer: config.AgentBinding{Command: "claude"},
+		Reviewer: config.AgentBinding{Command: agentcli.DefaultClaudeCommand},
 	}
 	wfs := []docindex.Doc{{
 		Kind: "workflows", Name: "w",
@@ -173,9 +200,9 @@ func TestValidate_MissingNodeBinding(t *testing.T) {
 func TestValidate_OrphanBinding(t *testing.T) {
 	agents := config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},
-		Reviewer: config.AgentBinding{Command: "claude"},
+		Reviewer: config.AgentBinding{Command: agentcli.DefaultClaudeCommand},
 		Agents: map[string]config.AgentBinding{
-			"unused-agent": {Command: "claude"},
+			"unused-agent": {Command: agentcli.DefaultClaudeCommand},
 		},
 	}
 	wfs := []docindex.Doc{{
@@ -204,9 +231,9 @@ func TestValidate_OnEnterAgentBinding(t *testing.T) {
 	// Matching binding → OK, not orphaned.
 	okAgents := config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},
-		Reviewer: config.AgentBinding{Command: "claude"},
+		Reviewer: config.AgentBinding{Command: agentcli.DefaultClaudeCommand},
 		Agents: map[string]config.AgentBinding{
-			"triage": {Command: "claude", Tools: "Read,Bash(satelle:*)"},
+			"triage": {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Bash(satelle:*)"},
 		},
 	}
 	r := Validate(okAgents, nil, wfs)
@@ -221,7 +248,7 @@ func TestValidate_OnEnterAgentBinding(t *testing.T) {
 	// Missing binding → hard problem.
 	missing := config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},
-		Reviewer: config.AgentBinding{Command: "claude"},
+		Reviewer: config.AgentBinding{Command: agentcli.DefaultClaudeCommand},
 	}
 	r2 := Validate(missing, nil, wfs)
 	if r2.OK() {
@@ -238,7 +265,7 @@ func TestValidate_BadTimeout(t *testing.T) {
 	// on the in-memory binding for callers that construct AgentsConfig directly.
 	agents := config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},
-		Reviewer: config.AgentBinding{Command: "claude", Timeout: "not-a-duration"},
+		Reviewer: config.AgentBinding{Command: agentcli.DefaultClaudeCommand, Timeout: "not-a-duration"},
 	}
 	r := Validate(agents, nil, nil)
 	if r.OK() {

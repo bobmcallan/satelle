@@ -65,7 +65,7 @@ func TestEngageAllowsHealthyAgents(t *testing.T) {
 	wireWithWorkflows(t, map[string]string{"engage-wf": engageWF})
 	verb.SetAgentsConfig(config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},
-		Reviewer: config.AgentBinding{Command: "claude"},
+		Reviewer: config.AgentBinding{Command: config.DefaultReviewerCommand},
 	}, nil)
 	t.Cleanup(verb.ClearAgentsConfig)
 

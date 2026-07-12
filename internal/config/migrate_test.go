@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/agentcli"
 )
 
 const solidsafeStyle = `# agents.toml — Grok-native bindings (dual payload: {payload} on -p + stdin).
@@ -47,9 +49,9 @@ func TestMigrateAgentsHarnessToCommand(t *testing.T) {
 	if strings.Contains(out, "harness") {
 		t.Fatalf("harness still present:\n%s", out)
 	}
-	// command= on reviewer untouched
-	if !strings.Contains(out, `command = "claude"`) {
-		t.Fatalf("existing command= lost:\n%s", out)
+	// bare command=claude expands to the full template
+	if !strings.Contains(out, `command = "`+agentcli.DefaultClaudeCommand+`"`) {
+		t.Fatalf("bare claude not expanded:\n%s", out)
 	}
 	if len(changes) == 0 {
 		t.Fatal("expected change notes")
@@ -108,14 +110,14 @@ func TestMigrateAgentsUnparseable(t *testing.T) {
 }
 
 func TestMigrateAgentsIdempotentCanonical(t *testing.T) {
-	// scaffold-like: already command= + role=
+	// scaffold-like: already full command= + role= (no bare presets)
 	canonical := `[executor]
 role    = "agent"
 command = "in-loop"
 
 [reviewer]
 role    = "reviewer"
-command = "claude"
+command = "` + agentcli.DefaultClaudeCommand + `"
 tools   = "Read,Grep,Glob"
 `
 	out, ch, err := MigrateAgents(canonical)
@@ -139,6 +141,44 @@ tools   = "Read,Grep,Glob"
 	}
 	if len(ch2) != 0 || twice != once {
 		t.Fatalf("second pass not idempotent: ch=%v", ch2)
+	}
+}
+
+// Bare command="claude" / harness="grok" expand to full templates; a second
+// MigrateAgents pass is a byte-for-byte no-op (AC3, sty_6752e35b).
+func TestMigrateAgentsExpandBarePreset(t *testing.T) {
+	in := `[executor]
+harness = "in-loop"
+
+[reviewer]
+command = "claude"
+
+[planner]
+harness = "grok"
+`
+	once, changes, err := MigrateAgents(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(changes, ",")
+	if !strings.Contains(joined, "expand bare preset") {
+		t.Fatalf("expected expand note, got %v", changes)
+	}
+	if !strings.Contains(once, agentcli.DefaultClaudeCommand) {
+		t.Fatalf("claude not expanded:\n%s", once)
+	}
+	if !strings.Contains(once, agentcli.DefaultGrokCommand) {
+		t.Fatalf("grok not expanded:\n%s", once)
+	}
+	if strings.Contains(once, `command = "claude"`) || strings.Contains(once, `command = "grok"`) {
+		t.Fatalf("bare tokens remain:\n%s", once)
+	}
+	twice, ch2, err := MigrateAgents(once)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ch2) != 0 || twice != once {
+		t.Fatalf("second pass not idempotent: ch=%v\nonce==twice=%v", ch2, twice == once)
 	}
 }
 

@@ -1,5 +1,6 @@
 // migrate.go — surgical format-migration for operator-owned agents.toml
-// (epic:substrate-convergence order:7). harness= → command=; add missing role=.
+// (epic:substrate-convergence order:7). harness= → command=; expand bare
+// claude|grok presets to full templates; add missing role=.
 // Comment-preserving line edits only — never a TOML marshal round-trip.
 package config
 
@@ -9,10 +10,12 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/bobmcallan/satelle/internal/agentcli"
 )
 
 // MigrateAgents rewrites format drift in an agents.toml body:
 //   - harness = X  →  command = X  (skipped when command= already present)
+//   - bare command = "claude"|"grok" → full multi-token template
 //   - missing role= → role = "reviewer"|"agent" via ResolvedRole
 //
 // Returns the migrated content and a list of change notes. When nothing is
@@ -50,7 +53,7 @@ func MigrateAgents(content string) (out string, changes []string, err error) {
 
 	changed := false
 	var notes []string
-	harnessN, roleN := 0, 0
+	harnessN, expandN, roleN := 0, 0, 0
 
 	for _, s := range sections {
 		// harness → command
@@ -59,6 +62,11 @@ func MigrateAgents(content string) (out string, changes []string, err error) {
 				changed = true
 				harnessN++
 			}
+		}
+		// expand bare claude|grok command values to full templates
+		if expandBareCommandInSection(lines, s.header) {
+			changed = true
+			expandN++
 		}
 		// add role=
 		if !hasKeyInSection(lines, s.header, "role") {
@@ -77,6 +85,9 @@ func MigrateAgents(content string) (out string, changes []string, err error) {
 	}
 	if harnessN > 0 {
 		notes = append(notes, "harness->command")
+	}
+	if expandN > 0 {
+		notes = append(notes, "expand bare preset")
 	}
 	if roleN > 0 {
 		notes = append(notes, "added role=")
@@ -175,6 +186,79 @@ func renameKeyInSection(lines []string, section, oldKey, newKey string) bool {
 		// rest starts with oldKey
 		after := rest[len(oldKey):]
 		lines[i] = indent + newKey + after
+		return true
+	}
+	return false
+}
+
+// expandBareCommandInSection rewrites a bare command = "claude"|"grok" value to
+// the full multi-token preset template (agentcli.NewRunner). Bare codex is NOT
+// expanded — no full template exists; validate rejects it. Preserves indent and
+// any trailing comment; rewrites only the quoted RHS. Idempotent: a multi-token
+// value is left untouched. Returns true if a line was rewritten.
+func expandBareCommandInSection(lines []string, section string) bool {
+	start, end := sectionRange(lines, section)
+	if start < 0 {
+		return false
+	}
+	for i := start; i < end; i++ {
+		if !isKeyLine(lines[i], "command") {
+			continue
+		}
+		ln := lines[i]
+		indent := ln[:len(ln)-len(strings.TrimLeft(ln, " \t"))]
+		rest := strings.TrimSpace(ln)
+		// rest starts with "command"
+		afterKey := rest[len("command"):]
+		eqIdx := strings.Index(afterKey, "=")
+		if eqIdx < 0 {
+			return false
+		}
+		// beforeVal includes the '=' and any spaces after it that we re-emit
+		// by reconstructing: key + afterKey[:eqIdx+1] + space + quoted + trailing
+		prefix := indent + "command" + afterKey[:eqIdx+1]
+		valAndTrail := afterKey[eqIdx+1:]
+		// preserve leading spaces after '='
+		sp := 0
+		for sp < len(valAndTrail) && (valAndTrail[sp] == ' ' || valAndTrail[sp] == '\t') {
+			sp++
+		}
+		spaces := valAndTrail[:sp]
+		valPart := valAndTrail[sp:]
+		if !strings.HasPrefix(valPart, `"`) {
+			return false
+		}
+		// Find closing unescaped quote.
+		endq := 1
+		for endq < len(valPart) {
+			if valPart[endq] == '"' && valPart[endq-1] != '\\' {
+				break
+			}
+			endq++
+		}
+		if endq >= len(valPart) {
+			return false
+		}
+		unq, err := strconv.Unquote(valPart[:endq+1])
+		if err != nil {
+			return false
+		}
+		fields := strings.Fields(unq)
+		if len(fields) != 1 {
+			return false // already multi-token (or empty)
+		}
+		tok := strings.ToLower(fields[0])
+		// Expand only claude|grok; bare codex stays for validate to reject.
+		if tok != agentcli.CLIClaude && tok != agentcli.CLIGrok {
+			return false
+		}
+		r, err := agentcli.NewRunner(tok)
+		if err != nil {
+			return false
+		}
+		full := r.Command()
+		trailing := valPart[endq+1:] // space + comment, if any
+		lines[i] = prefix + spaces + strconv.Quote(full) + trailing
 		return true
 	}
 	return false

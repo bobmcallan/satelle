@@ -254,13 +254,13 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 		} else {
 			g.Notes += "; full session grant (driving agent)"
 		}
-	case len(fields) == 1 && lower0 == agentcli.CLICodex:
-		// Bare codex preset is selectable but Run is a stub — flag it.
-		g.Backend = "codex (unmapped)"
+	case len(fields) == 1 && (lower0 == agentcli.CLIClaude || lower0 == agentcli.CLIGrok || lower0 == agentcli.CLICodex):
+		// Bare CLI presets removed from the agents.toml path — full template required.
+		g.Backend = "invalid"
 		g.ReadOnly = false
 		problems = append(problems, fmt.Sprintf(
-			"agents.toml [%s] command: the codex preset is not yet mapped — use a full command template, or the claude/grok preset",
-			section))
+			"agents.toml [%s] command %q: bare CLI presets removed — use a full command template or run satelle init to migrate",
+			section, fields[0]))
 	default:
 		runner, err := agentcli.RunnerFromCommand(cmd)
 		if err != nil {
@@ -268,11 +268,8 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 			g.Backend = "invalid"
 			break
 		}
-		if runner == nil {
-			g.Backend = "in-loop"
-			break
-		}
-		// Isolated runner — classify backend + read-only ceiling.
+		// Isolated multi-token runner — classify backend + read-only ceiling.
+		// (Single-token non-in-loop never returns a nil runner without error.)
 		name := runner.Name()
 		g.Backend = "isolated:" + name
 		resolved := runner.Command()
@@ -283,7 +280,7 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 				g.Tools = config.DefaultReviewerTools
 			}
 		case agentcli.CLIGrok:
-			// Grok preset bakes read-only tools + --deny mutators.
+			// Grok full template typically bakes read-only tools + --deny mutators.
 			g.ReadOnly = strings.Contains(resolved, "--deny") || strings.Contains(resolved, "read_file")
 			if b.Tools == "" && strings.Contains(resolved, "read_file") {
 				g.Tools = "read_file,grep,list_dir"

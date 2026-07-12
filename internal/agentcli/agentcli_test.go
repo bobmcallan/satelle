@@ -83,25 +83,21 @@ func TestCodexStubErrorsClearly(t *testing.T) {
 	}
 }
 
-// The bare single-token "grok" command must expand to a WORKING grok reviewer
-// template — grok's REAL flag surface and a read-only grant — with NO
-// hand-authored argv (AC1, sty_17cae74b). Before the preset existed, an operator
-// wiring grok had to hand-write its full argv from memory and got it wrong
-// (invented flags, Claude tool names grok does not understand). NewRunner and
-// RunnerFromCommand must both resolve the single token to DefaultGrokCommand.
-func TestGrokPresetResolvesFromBareToken(t *testing.T) {
-	for _, r := range []Runner{mustRunner(t, "grok"), mustRunnerFromCommand(t, "grok")} {
-		if r.Name() != CLIGrok {
-			t.Errorf("grok token should resolve to the grok CLI, got %q", r.Name())
-		}
-		if r.Command() != DefaultGrokCommand {
-			t.Errorf("grok preset should equal DefaultGrokCommand\n got: %q\nwant: %q", r.Command(), DefaultGrokCommand)
-		}
+// NewRunner still generates the full grok template (init/migrate/detection);
+// RunnerFromCommand no longer accepts the bare "grok" token (agents.toml path).
+func TestGrokPresetExpansion(t *testing.T) {
+	r := mustRunner(t, "grok")
+	if r.Name() != CLIGrok {
+		t.Errorf("NewRunner(grok) name = %q, want %q", r.Name(), CLIGrok)
 	}
-	// The preset must carry grok's TRUE interface (not Claude's): payload on -p,
-	// the system prompt on --system-prompt-override, grok-native read-only tool
-	// ids, and a mutator deny-ceiling — the exact things a hand-authored argv got
-	// wrong.
+	if r.Command() != DefaultGrokCommand {
+		t.Errorf("NewRunner(grok) should equal DefaultGrokCommand\n got: %q\nwant: %q", r.Command(), DefaultGrokCommand)
+	}
+	// Bare token rejected on the agents.toml path.
+	if _, err := RunnerFromCommand("grok"); err == nil {
+		t.Fatal("RunnerFromCommand(grok) must error (bare presets removed)")
+	}
+	// The generator template must carry grok's TRUE interface (not Claude's).
 	for _, want := range []string{
 		"-p {payload}",                      // argv-first payload delivery
 		"--system-prompt-override {system}", // grok's system-prompt flag (not --append-system-prompt)
@@ -110,7 +106,7 @@ func TestGrokPresetResolvesFromBareToken(t *testing.T) {
 		"--deny Edit",
 	} {
 		if !strings.Contains(DefaultGrokCommand, want) {
-			t.Errorf("grok preset must include %q (grok's real interface): %q", want, DefaultGrokCommand)
+			t.Errorf("grok template must include %q (grok's real interface): %q", want, DefaultGrokCommand)
 		}
 	}
 }

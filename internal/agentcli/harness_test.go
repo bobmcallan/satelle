@@ -9,13 +9,13 @@ func TestRunnerFromCommand(t *testing.T) {
 		nilRunner bool
 		wantErr   bool
 	}{
-		{"claude", "claude", false, false},                                    // single-token preset
-		{"codex", "codex", false, false},                                      // single-token preset (stub)
+		{"claude", "", false, true}, // bare preset removed
+		{"codex", "", false, true},  // bare preset removed
 		{"claude -p --append-system-prompt {system}", "claude", false, false}, // literal template
 		{"myagent review {system} {tools}", "myagent", false, false},          // arbitrary literal template
-		{"", "", true, false},                                                 // unset → nil (keep default)
-		{"in-loop", "", true, false},                                          // in-loop → nil
-		{"bogus", "", true, true},                                             // unknown single-token preset → error
+		{"", "", true, false},        // unset → nil (keep default)
+		{"in-loop", "", true, false}, // in-loop → nil
+		{"bogus", "", false, true},   // single-token non-in-loop → error
 	}
 	for _, c := range cases {
 		r, err := RunnerFromCommand(c.harness)
