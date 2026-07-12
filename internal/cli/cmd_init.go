@@ -772,6 +772,8 @@ edit_exempt_paths = [".satelle/"]
 # personal = this repo's BOUND hosted project (not a dump across every project).
 # shared = team catalog eligibility; use 'satelle publish' for the team catalog
 # (sync itself does not write to a team workspace). Inspect with 'satelle sync scopes'.
+# git remains the source of truth; an area opted in here is MIRRORED to hosted,
+# not moved off git — keep authored markdown and satelle.toml committed.
 # Areas: documents, workflows, principles, skills, constitution, agents, tasks,
 # stories, ledger, executions. Reserved key 'all' blanket-defaults every area
 # not set explicitly; a per-area key still overrides it.
@@ -916,7 +918,10 @@ const gitignoreMarker = "# >>> satelle (managed) >>>"
 const gitignoreBlock = gitignoreMarker + `
 # satelle's per-repo database is local state — ignore it and its sidecars, plus
 # the per-user config overlay. The committed satelle.toml and the authored
-# markdown under .satelle/ stay tracked.
+# markdown under .satelle/ stay tracked. Scoped sync is a MIRROR of that tracked
+# content, not a second home: deploy/pull land files back in the same tracked
+# paths, so git stays the source of truth even when an area is [sync] personal.
+# Sync credentials and cursors live under ~/.config/satelle (outside the repo).
 .satelle/satelle.db
 .satelle/satelle.db-wal
 .satelle/satelle.db-shm
