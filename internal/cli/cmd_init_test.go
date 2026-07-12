@@ -12,6 +12,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/bobmcallan/satelle/internal/agentstep"
+	"github.com/bobmcallan/satelle/internal/agentvalidate"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/structure"
@@ -713,4 +714,49 @@ func TestRunInitAgentGuidance(t *testing.T) {
 			t.Errorf("agent note emitted with no instruction file present:\n%s", out.String())
 		}
 	})
+}
+
+// TestInitAgentsLayerValidatesZeroWarnings is the sty_5f1d7b2e regression guard:
+// a fresh init deploys an agents.toml that agentvalidate accepts with ZERO
+// warnings and ZERO problems. Any future scaffold-vs-validator drift (missing
+// role=, role/path mismatch, in-loop reviewer, …) fails this test instead of
+// shipping WARN lines to first-run users.
+func TestInitAgentsLayerValidatesZeroWarnings(t *testing.T) {
+	repo := t.TempDir()
+	var out strings.Builder
+	if err := runInitTest(t, &out, repo); err != nil {
+		t.Fatalf("runInit: %v\n%s", err, out.String())
+	}
+	// Init output itself must not emit agents-layer WARN lines (AC1 surface).
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.Contains(line, "WARN") && strings.Contains(line, "agents.toml") {
+			t.Errorf("fresh init emitted agents-layer WARN:\n%s", line)
+		}
+	}
+	dataDir := filepath.Join(repo, config.DefaultDataDir)
+	agents, err := config.LoadAgents(dataDir)
+	if err != nil {
+		t.Fatalf("LoadAgents after init: %v", err)
+	}
+	report := agentvalidate.Validate(agents, deployedVars(dataDir), deployedWorkflowDocs(dataDir))
+	if len(report.Warnings) > 0 || len(report.Problems) > 0 {
+		t.Fatalf("init-deployed agents layer must validate with zero warnings/problems:\n  warnings=%v\n  problems=%v",
+			report.Warnings, report.Problems)
+	}
+	// AC4: re-init leaves an existing agents.toml untouched.
+	path := filepath.Join(dataDir, config.AgentsConfigName)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runInitTest(t, io.Discard, repo); err != nil {
+		t.Fatalf("re-init: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("re-init clobbered existing agents.toml")
+	}
 }
