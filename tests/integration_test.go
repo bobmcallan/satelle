@@ -268,10 +268,14 @@ func extractID(out, prefix string) string {
 
 func waitHealthy(t *testing.T, url string, timeout time.Duration) bool {
 	t.Helper()
+	// Per-request timeout so a blackholed/half-open port fails the poll quickly
+	// instead of hanging DefaultClient until TCP timeout (~minutes) and blowing
+	// past the overall deadline (browser tests on contended local ports).
+	client := &http.Client{Timeout: 200 * time.Millisecond}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
-		if resp, err := http.DefaultClient.Do(req); err == nil {
+		if resp, err := client.Do(req); err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == 200 {
 				return true

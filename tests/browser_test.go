@@ -723,7 +723,8 @@ func translucent(s string) bool {
 // Checked on the standalone detail page (one of the two surfaces the shared
 // template feeds), in both light and dark themes.
 func TestBrowserTimelineDotsByOutcome(t *testing.T) {
-	base, repo := serveRepo(t, "8813")
+	// Avoid 8813 — blackholed / stuck on some hosts after prior bind races.
+	base, repo := serveRepo(t, "8853")
 	id := createStory(t, repo, "Timeline Story", "")
 	// Seed outcome-bearing + neutral ledger events on this story.
 	mustRun(t, testBin, repo, "ledger", "append", "--kind", "review_reject", "--actor", "reviewer", "--story", id, "--body", "rejected a->b")
@@ -1366,7 +1367,8 @@ func evalInt(t *testing.T, ctx context.Context, js string) int {
 // with a status badge, and a live execution-status change refreshes the open
 // expansion without a reload.
 func TestBrowserTaskPanelNativeRuns(t *testing.T) {
-	base, repo := serveRepo(t, "8803")
+	// Unique port — 8803 is used by TestBrowserUserPath.
+	base, repo := serveRepo(t, "8852")
 
 	taskID := extractID(mustRun(t, testBin, repo, "task", "create",
 		"--title", "Runnable task", "--body", "ACTION: do it. VERIFICATION: done."), "tsk_")
@@ -1665,7 +1667,9 @@ func setInput(sel, val string) chromedp.Action {
 // or refresh (sty_a4fc4d00). It also asserts a single EventSource per page
 // (previously a detail page opened two).
 func TestBrowserSSEVisibilityGating(t *testing.T) {
-	base, repo := serveRepo(t, "8813")
+	// Unique port — 8813 is used by TestBrowserTimelineDotsByOutcome (sequential
+	// cleanup can still leave bind races / blackholed sockets on this host).
+	base, repo := serveRepo(t, "8851")
 	storyID := createStory(t, repo, "VisibilityGateStory", "")
 	ctx := newChrome(t)
 
