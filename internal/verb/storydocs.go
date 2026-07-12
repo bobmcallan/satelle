@@ -17,6 +17,7 @@ func init() {
 	Register(&Verb{Name: "story-doc-attach", Description: "Attach a typed markdown document to a story", Invoke: storyDocAttach})
 	Register(&Verb{Name: "story-doc-list", Description: "List a story's attached documents", Invoke: storyDocList})
 	Register(&Verb{Name: "story-doc-get", Description: "Read one of a story's attached documents", Invoke: storyDocGet})
+	Register(&Verb{Name: "story-lessons-list", Description: "List typed lessons attachments across all stories", Invoke: storyLessonsList})
 }
 
 // KindStoryDocAttached records a document attachment on the story's ledger.
@@ -139,6 +140,59 @@ func writeAttachedDoc(ctx context.Context, item workitem.Item, name, typ, body s
 	appendLedger(ctx, item.ID, KindStoryDocAttached,
 		fmt.Sprintf("attached %s document %q", typ, bare), now)
 	return bare, typ, nil
+}
+
+// storyLessonsList walks every story attachment dir and returns docs whose
+// frontmatter type is lesson or lessons — the offline friction corpus
+// (epic:substrate-convergence order:9). Repo-agnostic listing mechanism.
+func storyLessonsList(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	if storyDir == "" {
+		return nil, fmt.Errorf("verb: story dir not configured")
+	}
+	entries, err := os.ReadDir(storyDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return json.Marshal([]docRef{})
+		}
+		return nil, fmt.Errorf("verb: lessons list: %w", err)
+	}
+	out := []docRef{}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		storyID := e.Name()
+		if !strings.HasPrefix(storyID, "sty_") {
+			continue
+		}
+		sub := filepath.Join(storyDir, storyID)
+		files, _ := os.ReadDir(sub)
+		for _, f := range files {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
+				continue
+			}
+			data, rerr := os.ReadFile(filepath.Join(sub, f.Name()))
+			if rerr != nil {
+				continue
+			}
+			typ, name := docMeta(string(data))
+			lt := strings.ToLower(strings.TrimSpace(typ))
+			if lt != "lesson" && lt != "lessons" {
+				continue
+			}
+			if name == "" {
+				name = strings.TrimSuffix(f.Name(), ".md")
+			}
+			out = append(out, docRef{StoryID: storyID, Name: name, Type: typ})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].StoryID != out[j].StoryID {
+			return out[i].StoryID < out[j].StoryID
+		}
+		return out[i].Name < out[j].Name
+	})
+	return json.Marshal(out)
 }
 
 func storyDocList(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {

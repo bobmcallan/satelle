@@ -542,5 +542,17 @@ func storyDocCommands() []*cobra.Command {
 			return dispatch(cmd, "story-doc-get", map[string]any{"story_id": args[0], "name": args[1]})
 		},
 	}
-	return []*cobra.Command{attach, docs, doc}
+
+	// lessons — cross-story enumeration of typed lessons/lesson attachments
+	// (offline friction corpus; never session-injected).
+	lessons := &cobra.Command{
+		Use:         "lessons",
+		Short:       "List typed lessons artifacts across all stories",
+		Args:        cobra.NoArgs,
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return dispatch(cmd, "story-lessons-list", map[string]any{})
+		},
+	}
+	return []*cobra.Command{attach, docs, doc, lessons}
 }

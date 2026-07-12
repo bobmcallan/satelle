@@ -68,9 +68,13 @@ Ground judgments in [[satelle-residency]] and [[satelle-constitution]].
 
 ## 4. Optional lessons corpus
 
-If a lessons corpus exists (typed `lessons` / `lesson` documents from
-`satelle doc list` or story attachments), fold it in as **extra contradiction
-signal**. **Absence is not a failure** — green without lessons is valid.
+If a lessons corpus exists, fold it in as **extra contradiction signal**:
+
+```bash
+satelle story lessons          # cross-story typed lessons/lesson attachments
+```
+
+**Absence is not a failure** — green without lessons is valid.
 
 ## 5. Report
 
