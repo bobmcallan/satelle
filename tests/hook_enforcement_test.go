@@ -126,19 +126,55 @@ func TestHookGateAllowsUnderEngagedStory(t *testing.T) {
 	}
 }
 
-// TestHookGateDualHarnessDenyShape: a denied edit carries BOTH the Claude
-// (hookSpecificOutput.permissionDecision=deny) and Grok (top-level decision=deny)
-// fields, so either harness surfaces the reason (AC6 cross-harness).
-func TestHookGateDualHarnessDenyShape(t *testing.T) {
+// TestHookGateHarnessSpecificDenyShape (sty_5e4bc568): a denied edit emits ONLY
+// the Claude shape for tool_input envelopes and ONLY the Grok shape for toolInput.
+// Dual-format was the inert-gate bug (Claude schema rejects top-level decision).
+func TestHookGateHarnessSpecificDenyShape(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	out := hookStdout(t, repo, "gate",
-		`{"tool_input":{"file_path":"`+filepath.Join(repo, "internal", "x.go")+`"}}`)
-	if !strings.Contains(out, `"permissionDecision":"deny"`) {
-		t.Errorf("deny missing Claude permissionDecision field:\n%s", out)
+	code := filepath.Join(repo, "internal", "x.go")
+
+	claudeOut := hookStdout(t, repo, "gate",
+		`{"tool_input":{"file_path":"`+code+`"}}`)
+	if !strings.Contains(claudeOut, `"permissionDecision":"deny"`) {
+		t.Errorf("Claude deny missing permissionDecision:\n%s", claudeOut)
 	}
-	if !strings.Contains(out, `"decision":"deny"`) {
-		t.Errorf("deny missing Grok top-level decision field:\n%s", out)
+	if strings.Contains(claudeOut, `"decision":"deny"`) {
+		t.Errorf("Claude deny must not carry top-level decision:\n%s", claudeOut)
+	}
+
+	grokOut := hookStdout(t, repo, "gate",
+		`{"toolInput":{"path":"`+code+`"}}`)
+	if !strings.Contains(grokOut, `"decision":"deny"`) {
+		t.Errorf("Grok deny missing top-level decision:\n%s", grokOut)
+	}
+	if strings.Contains(grokOut, `"hookSpecificOutput"`) {
+		t.Errorf("Grok deny must not carry hookSpecificOutput:\n%s", grokOut)
+	}
+}
+
+// TestHookCommitgateHarnessDenyShape: commitgate shares denyPreToolUse — snake
+// Bash events get Claude shape, camelCase get Grok (sty_5e4bc568 AC3).
+func TestHookCommitgateHarnessDenyShape(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+
+	claudeOut := hookStdout(t, repo, "commitgate",
+		`{"tool_input":{"command":"git commit -m x"}}`)
+	if !strings.Contains(claudeOut, `"permissionDecision":"deny"`) {
+		t.Errorf("Claude commitgate deny missing permissionDecision:\n%s", claudeOut)
+	}
+	if strings.Contains(claudeOut, `"decision":"deny"`) {
+		t.Errorf("Claude commitgate deny must not carry top-level decision:\n%s", claudeOut)
+	}
+
+	grokOut := hookStdout(t, repo, "commitgate",
+		`{"toolInput":{"command":"git commit -m x"}}`)
+	if !strings.Contains(grokOut, `"decision":"deny"`) {
+		t.Errorf("Grok commitgate deny missing top-level decision:\n%s", grokOut)
+	}
+	if strings.Contains(grokOut, `"hookSpecificOutput"`) {
+		t.Errorf("Grok commitgate deny must not carry hookSpecificOutput:\n%s", grokOut)
 	}
 }
 

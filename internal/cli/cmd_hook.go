@@ -86,13 +86,16 @@ byte ceiling (overflow noted on stderr); fails open so it never blocks a session
 search_replace|write. It exits non-zero (the wiring turns that into a block
 with '|| exit 2') unless a story is ENGAGED — in one of the active workflow's
 non-terminal engaging states (e.g. plan, in_progress, integration, release) —
-so the agent works under a tracked story. On deny it emits dual-format JSON on
-stdout so BOTH Claude Code and Grok Build surface the reason to the agent
+so the agent works under a tracked story. On deny it emits a single harness-
+correct JSON shape on stdout (detected from the event envelope: tool_input =
+Claude, toolInput = Grok) so the harness surfaces the reason to the agent
 (Claude: hookSpecificOutput.permissionDecision=deny + permissionDecisionReason;
-Grok: decision=deny + reason), not a bare "hook denied (exit 2)". The "engaged"
-policy is authored substrate — it reads the workflow's DOT shape markers
-(Mdiamond=start, Msquare=terminal) rather than hardcoding state names, so
-configuration drives the decision (sty_f3d5d4b8, sty_e4902c51).
+Grok: decision=deny + reason), not a bare "hook denied (exit 2)". Emitting both
+shapes in one blob fails Claude's PreToolUse schema and silently unblocks the
+tool (sty_5e4bc568). The "engaged" policy is authored substrate — it reads the
+workflow's DOT shape markers (Mdiamond=start, Msquare=terminal) rather than
+hardcoding state names, so configuration drives the decision (sty_f3d5d4b8,
+sty_e4902c51).
 
 The edit target is resolved to an ABSOLUTE path against the repo root before any
 containment test (sty_8c3d345c). Harnesses differ: Claude Code sends an absolute
@@ -131,7 +134,7 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 				// Observed failure: agent in satelle-server wrote CLI code under
 				// ../satelle with no story in the correct repo — process break.
 				if !withinRepoTarget(p) {
-					return denyPreToolUse(cmd, outsideRepoEditReason(p))
+					return denyPreToolUse(cmd, raw, outsideRepoEditReason(p))
 				}
 				// Exemption is CONFIGURATION, not code (the constitution:
 				// configuration over code). Only a path under a [gate]
@@ -148,12 +151,12 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 			// Engagement-error surface: a broken deployment blocks the edit with a
 			// clear message rather than silently allowing it (sty_f3d5d4b8).
 			if engErr != nil {
-				return denyPreToolUse(cmd, "satelle: "+engErr.Error())
+				return denyPreToolUse(cmd, raw, "satelle: "+engErr.Error())
 			}
 			if engaged {
 				return nil
 			}
-			return denyPreToolUse(cmd, noEngagedStoryEditReason)
+			return denyPreToolUse(cmd, raw, noEngagedStoryEditReason)
 		},
 	}
 
@@ -163,8 +166,9 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 		Long: `commitgate is the PreToolUse handler for Bash. It allows any command that is
 not a git commit/push; for a commit/push it exits non-zero (blocked via
 '|| exit 2') unless a story is engaged, so changes are committed under a tracked
-story. Fails closed: a store/listing/workflow-resolution error blocks the commit
-with a clear message rather than silently allowing it (sty_f3d5d4b8).`,
+story. On deny it emits the same harness-specific PreToolUse deny shape as gate
+(sty_5e4bc568). Fails closed: a store/listing/workflow-resolution error blocks
+the commit with a clear message rather than silently allowing it (sty_f3d5d4b8).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
@@ -174,7 +178,7 @@ with a clear message rather than silently allowing it (sty_f3d5d4b8).`,
 			}
 			engaged, err := storyEngaged()
 			if err != nil {
-				return denyPreToolUse(cmd, "satelle: "+err.Error())
+				return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
 			}
 			if engaged {
 				return nil
@@ -182,7 +186,7 @@ with a clear message rather than silently allowing it (sty_f3d5d4b8).`,
 			// Deny only — never allow a fused engage+commit form. PreToolUse cannot
 			// know the engage line would succeed; pick the message that teaches the
 			// recovery path (sty_577d292f).
-			return denyPreToolUse(cmd, commitDenyReason(command))
+			return denyPreToolUse(cmd, raw, commitDenyReason(command))
 		},
 	}
 
@@ -210,11 +214,12 @@ resolve error injects only the reminder and never blocks the prompt.`,
 		Long: `stopcheck is the Stop handler. It catches the incident the PreToolUse gate is
 meant to prevent even if that gate never fired this session: on Stop, if the tree
 has uncommitted, NON-EXEMPT in-repo changes while NO story is engaged, it emits a
-dual-format block ({"decision":"block", …}) naming the ungated files so the agent
-cannot silently finish an ungated edit (sty_949e8739). It honours the event's
-stop_hook_active flag so it never re-blocks a stop it already blocked, and fails
-OPEN when git is absent, the tree is clean, only exempt paths changed, or a story
-is engaged.`,
+Stop block ({"decision":"block","reason":…}) naming the ungated files so the agent
+cannot silently finish an ungated edit (sty_949e8739). Stop uses top-level
+decision/reason (not PreToolUse hookSpecificOutput; sty_5e4bc568 AC6). It
+honours the event's stop_hook_active flag so it never re-blocks a stop it already
+blocked, and fails OPEN when git is absent, the tree is clean, only exempt paths
+changed, or a story is engaged.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
@@ -385,9 +390,9 @@ const noEngagedStoryEditReason = "satelle: you're mutating the tree without a pe
 	"For research, use read tools (Read/read_file/grep/Glob) — not Edit/Write/search_replace."
 
 // noEngagedStoryCommitReason is the agent-facing deny for git commit/push without
-// an engaged story. Same dual-format emission as the edit gate. States PreToolUse
-// pre-execution semantics so agents do not retry a fused engage+commit in one
-// tool call (sty_577d292f / session-trace-workflow-review-followups).
+// an engaged story. Same harness-specific emission as the edit gate. States
+// PreToolUse pre-execution semantics so agents do not retry a fused engage+commit
+// in one tool call (sty_577d292f / session-trace-workflow-review-followups).
 const noEngagedStoryCommitReason = "satelle: refusing to commit/push with no engaged story. " +
 	"This gate runs BEFORE the command executes — an engage line inside the same tool call cannot pass it. " +
 	"Engage in a SEPARATE, PRIOR tool call (satelle story set <id> --status plan or --status in_progress, per the governing workflow), then run git commit/push in a later call."
@@ -422,7 +427,7 @@ func isFusedEngageAndCommit(command string) bool {
 
 // outsideRepoEditReason is the agent-facing refusal when a PreToolUse edit targets
 // a path outside the current repo root (sty_3026d890). Kept as a pure string so
-// dual-format deny emission and unit tests share one stable message.
+// harness-specific deny emission and unit tests share one stable message.
 func outsideRepoEditReason(path string) string {
 	return fmt.Sprintf(
 		"satelle: refusing edit outside this repo (%s) — only paths under the repo root may be modified here. If this change belongs in another project (e.g. CLI work for an epic tracked on satelle-server), open a session in THAT repo and create/engage the story there: satelle story create … then satelle story set <id> --status plan",
@@ -435,44 +440,68 @@ func outsideRepoEditErr(path string) error {
 	return fmt.Errorf("%s", outsideRepoEditReason(path))
 }
 
-// denyPreToolUse emits a dual-harness deny payload on stdout (Claude + Grok) and
-// returns an error so the process exits non-zero (hook wiring: `|| exit 2`).
-// The reason is also on the error (cobra → stderr) for humans/transcripts.
-func denyPreToolUse(cmd *cobra.Command, reason string) error {
-	_ = emitPreToolUseDeny(cmd.OutOrStdout(), reason)
+// denyPreToolUse emits a harness-specific deny payload on stdout and returns an
+// error so the process exits non-zero (hook wiring: `|| exit 2`). The harness is
+// detected from the PreToolUse event envelope (raw). The reason is also on the
+// error (cobra → stderr) for humans/transcripts.
+func denyPreToolUse(cmd *cobra.Command, raw []byte, reason string) error {
+	_ = emitPreToolUseDeny(cmd.OutOrStdout(), harnessFromEvent(raw), reason)
 	return fmt.Errorf("%s", reason)
 }
 
-// preToolUseDenyOut is the common PreToolUse deny payload for Claude Code and
-// Grok Build (sty_e4902c51):
+// harnessFromEvent returns "grok" or "claude" from a PreToolUse event envelope
+// (sty_5e4bc568). Claude Code uses snake_case tool_input; Grok Build uses
+// camelCase toolInput. Presence is tested with json.RawMessage so a Bash
+// commitgate event (tool_input.command only) classifies correctly.
 //
-//   - Grok: top-level {"decision":"deny","reason":"…"} (docs: decision + reason)
-//   - Claude: hookSpecificOutput.permissionDecision=deny +
-//     permissionDecisionReason (shown to the model on deny)
-//
-// One JSON object carries both shapes so harness-specific hook scripts stay
-// identical: `satelle hook gate || exit 2`.
-type preToolUseDenyOut struct {
-	Decision           string `json:"decision"`
-	Reason             string `json:"reason"`
+// "grok" only when toolInput is present AND tool_input is absent. Default is
+// "claude" (the strict validator): mis-detecting Grok as Claude is safe (Grok
+// is lenient and exit 2 still blocks); mis-detecting Claude as Grok reintroduces
+// the inert-gate bug. Bias to the strict shape on ambiguity/empty input.
+func harnessFromEvent(raw []byte) string {
+	var top struct {
+		ToolInputSnake json.RawMessage `json:"tool_input"`
+		ToolInputCamel json.RawMessage `json:"toolInput"`
+	}
+	_ = json.Unmarshal(raw, &top)
+	if len(top.ToolInputCamel) > 0 && len(top.ToolInputSnake) == 0 {
+		return "grok"
+	}
+	return "claude"
+}
+
+// claudePreToolUseDenyOut is Claude Code's PreToolUse deny shape (sty_5e4bc568).
+// Claude's schema rejects top-level decision/reason; only hookSpecificOutput is
+// valid. permissionDecisionReason is the model-visible deny channel.
+type claudePreToolUseDenyOut struct {
 	HookSpecificOutput struct {
 		HookEventName            string `json:"hookEventName"`
 		PermissionDecision       string `json:"permissionDecision"`
 		PermissionDecisionReason string `json:"permissionDecisionReason"`
-		AdditionalContext        string `json:"additionalContext,omitempty"`
 	} `json:"hookSpecificOutput"`
 }
 
-// emitPreToolUseDeny writes the dual-format deny JSON to out (one line).
-func emitPreToolUseDeny(out io.Writer, reason string) error {
-	var doc preToolUseDenyOut
-	doc.Decision = "deny"
-	doc.Reason = reason
-	doc.HookSpecificOutput.HookEventName = "PreToolUse"
-	doc.HookSpecificOutput.PermissionDecision = "deny"
-	doc.HookSpecificOutput.PermissionDecisionReason = reason
-	doc.HookSpecificOutput.AdditionalContext = reason
-	b, err := json.Marshal(doc)
+// grokPreToolUseDenyOut is Grok Build's PreToolUse deny shape: top-level
+// decision + reason (sty_e4902c51 / sty_5e4bc568).
+type grokPreToolUseDenyOut struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason"`
+}
+
+// emitPreToolUseDeny writes one harness-correct deny JSON line to out.
+// harness is "grok" or anything else → Claude (see harnessFromEvent).
+func emitPreToolUseDeny(out io.Writer, harness, reason string) error {
+	var b []byte
+	var err error
+	if harness == "grok" {
+		b, err = json.Marshal(grokPreToolUseDenyOut{Decision: "deny", Reason: reason})
+	} else {
+		var doc claudePreToolUseDenyOut
+		doc.HookSpecificOutput.HookEventName = "PreToolUse"
+		doc.HookSpecificOutput.PermissionDecision = "deny"
+		doc.HookSpecificOutput.PermissionDecisionReason = reason
+		b, err = json.Marshal(doc)
+	}
 	if err != nil {
 		return err
 	}
@@ -961,9 +990,10 @@ func stopcheckReason(paths []string) string {
 		"Engage a story now (satelle story create … then satelle story set <id> --status plan) so the change is tracked through its workflow, or revert the ungated edits."
 }
 
-// stopBlockOut is the Stop-hook block payload: Claude reads top-level
-// {"decision":"block","reason":…}; the same top-level shape best-effort covers
-// Grok. (Stop is not the PreToolUse hookSpecificOutput shape.)
+// stopBlockOut is the Stop-hook block payload (AC6 / sty_5e4bc568 audit): Claude
+// Code's Stop control channel IS top-level {"decision":"block","reason":…} —
+// distinct from PreToolUse's hookSpecificOutput shape. The same top-level shape
+// best-effort covers Grok. No harness split needed; confirmed still honored.
 type stopBlockOut struct {
 	Decision string `json:"decision"`
 	Reason   string `json:"reason"`
