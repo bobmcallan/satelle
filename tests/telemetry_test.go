@@ -152,7 +152,7 @@ func TestDispatchTelemetryOnReviewerFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
-		"[reviewer]\nharness = \""+stub+" {system}\"\ntools = \"Read\"\n")
+		"[reviewer]\ncommand = \""+stub+" {system}\"\ntools = \"Read\"\n")
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-gate-telemetry.md"), gateTelemetryWorkflow)
 	mustRun(t, testBin, repo, "reindex")
 

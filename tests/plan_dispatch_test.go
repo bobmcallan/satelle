@@ -65,7 +65,7 @@ func TestPlanStepDispatchesFableAndCapturesArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.WriteString(fmt.Sprintf("\n[planner]\nharness = \"%s {system}\"\ntools = \"Read,Bash(satelle:*)\"\nmodel = \"fable\"\n", script)); err != nil {
+	if _, err := f.WriteString(fmt.Sprintf("\n[planner]\ncommand = \"%s {system}\"\ntools = \"Read,Bash(satelle:*)\"\nmodel = \"fable\"\n", script)); err != nil {
 		t.Fatal(err)
 	}
 	_ = f.Close()

@@ -68,7 +68,7 @@ func setupStreamingRepo(t *testing.T, script string, extraAgentsToml string) (re
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.WriteString("\n[architect]\nharness = \"" + scriptPath + " {system}\"\ntools = \"Read,Bash(satelle:*)\"\n" + extraAgentsToml); err != nil {
+	if _, err := f.WriteString("\n[architect]\ncommand = \"" + scriptPath + " {system}\"\ntools = \"Read,Bash(satelle:*)\"\n" + extraAgentsToml); err != nil {
 		t.Fatal(err)
 	}
 	_ = f.Close()

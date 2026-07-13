@@ -21,7 +21,7 @@ func TestUnknownEnvVarRefusesEndToEnd(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 	// Append a named binding that references a var defined nowhere.
 	appendToFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
-		"\n[planner]\nharness = \"claude -p {system}\"\ntools = \"Read,Bash(satelle:*)\"\nenv = { ANTHROPIC_AUTH_TOKEN = \"${GLM_API_KEY}\" }\n")
+		"\n[planner]\ncommand = \"claude -p {system}\"\ntools = \"Read,Bash(satelle:*)\"\nenv = { ANTHROPIC_AUTH_TOKEN = \"${GLM_API_KEY}\" }\n")
 	out, err := run(t, testBin, repo, "status")
 	if err == nil {
 		t.Fatalf("status must refuse when a binding env references an unknown var:\n%s", out)
@@ -51,7 +51,7 @@ func TestEnvOverlayWinsEndToEnd(t *testing.T) {
 	// Named run binding: env TOKEN resolves from ${TOKEN} in the [vars] KV. The
 	// pinned model is recorded on the dispatch (audit signal for model mixing).
 	appendToFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
-		"\n[runner]\nharness = \""+script+" {system}\"\ntools = \"Read,Bash(satelle:*)\"\nmodel = \"glm-4.6\"\nenv = { TOKEN = \"${TOKEN}\" }\n")
+		"\n[runner]\ncommand = \""+script+" {system}\"\ntools = \"Read,Bash(satelle:*)\"\nmodel = \"glm-4.6\"\nenv = { TOKEN = \"${TOKEN}\" }\n")
 	// Committed vars: a decoy the overlay must beat.
 	appendToFile(t, filepath.Join(repo, ".satelle", "satelle.toml"), "\n[vars]\nTOKEN = \"COMMITTED\"\n")
 	// Gitignored overlay: the winning value.
