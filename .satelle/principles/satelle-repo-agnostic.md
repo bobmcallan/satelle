@@ -1,7 +1,7 @@
 ---
 name: satelle-repo-agnostic
 type: principle
-tags: [type:principle]
+tags: [type:principle, principles:session]
 applies_to: ["*"]
 description: satelle is a repo-agnostic product; THIS repo is only the dogfood/worked example. The operator's process lives as authored substrate (workflows, skills, reviewer rubrics) that satelle enables and enforces — never hardcoded into the binary. Only the required structure is opinionated; everything else is configuration.
 ---

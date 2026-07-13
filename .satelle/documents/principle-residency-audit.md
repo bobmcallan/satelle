@@ -1,8 +1,8 @@
 ---
 name: principle-residency-audit
 type: document
-tags: [type:document, context, principles, epic:substrate-convergence, order:4]
-description: Living audit of principle residency — system vs ondemand under the single SessionStart ceiling (alwaysContextCeiling = 16384 bytes). Updated by sty_cd5e341c (context diet).
+tags: [type:document, context, principles, epic:channel-alignment, order:1]
+description: Living audit of principle residency — system vs ondemand under the single SessionStart ceiling (alwaysContextCeiling = 16384 bytes). Updated by sty_da2abd5c (channel-alignment order:1 — promote satelle-repo-agnostic to resident).
 ---
 
 # Principle residency audit
@@ -27,48 +27,47 @@ with a stderr note; the hook still fails open.
 
 Measure: `satelle hook context 2>/dev/null | wc -c`
 
-## Context diet (sty_cd5e341c, order:4 of epic:substrate-convergence)
+## Channel-alignment order:1 (sty_da2abd5c)
+
+Promote **`satelle-repo-agnostic`** to system residency so the constitution's
+declared order-zero guard rides the **push** channel. It is **repo-local by
+nature** (governs developing satelle itself; not product-canon for other repos)
+and therefore stays unstamped (no `embedded_sha`).
 
 | | Bytes (`hook context`) | Headroom under 16384 |
 | --- | ---: | ---: |
-| **BEFORE** | 16061 | 323 (near overflow; stderr truncation risk) |
-| **AFTER** | 13060 | 3324 |
+| **BEFORE (triad only)** | ~13060 | ~3324 |
+| **AFTER (+repo-agnostic)** | 15531 | 853 |
 
-**BEFORE resident set (6):** `satelle-agent-goals`, `satelle-edits-require-a-story`,
-`satelle-recognise-blockage`, `satelle-residency`, `satelle-agent-telemetry`,
-`satelle-generated-readonly` (+ order-zero constitution).
+**Trade:** none demoted. Headroom after the context diet (sty_cd5e341c) absorbed
+the ~2.5 KB body without cutting the operating triad. Preference when a future
+promotion would overflow: favour identity/altitude rules
+(`satelle-repo-agnostic`) over restating what gates already enforce.
 
-**AFTER resident set (3) — the operating triad:**
+**AFTER resident set (4):**
 
 | Principle | Tier | Ownership | Why |
 | --- | --- | --- | --- |
+| `satelle-repo-agnostic` | **system** | repo-local (no stamp) | order-zero product-vs-dogfood guard on every code change |
 | `satelle-agent-goals` | **system** | embedded | drive-to-terminal / status-is-proof / one-story |
 | `satelle-edits-require-a-story` | **system** | embedded | engage-before-edit/commit gate discipline |
-| `satelle-recognise-blockage` | **system** | embedded | park-reason-resume (consistent with edits-require after order:2) |
+| `satelle-recognise-blockage` | **system** | embedded | park-reason-resume |
 
-**Demoted to ondemand (remove `principles:session`):**
-
-| Principle | Ownership | Why demote |
-| --- | --- | --- |
-| `satelle-residency` | embedded | taxonomy *definition* is authoring reference, not per-session operating guidance; lands in embedded source + converges via `satelle init` / `embedded_sha` |
-| `satelle-agent-telemetry` | repo-authored | prompted self-report channel; supplementary quality logging |
-| `satelle-generated-readonly` | repo-authored | `0o444` mode self-enforces; discoverable on reference |
-
-**Already ondemand (no action):** `satelle-repo-agnostic`, `satelle-skill-naming`,
-`satelle-agent-model`, and every other principle under `.satelle/principles/`.
+Prior diet demotions remain ondemand: `satelle-residency`,
+`satelle-agent-telemetry`, `satelle-generated-readonly`.
 
 ## Per-principle table (current)
 
 | Principle | Tier | Notes |
 | --- | --- | --- |
+| satelle-repo-agnostic | **system** | Product vs dogfood; repo-local identity rule |
 | satelle-agent-goals | **system** | Operating discipline |
 | satelle-edits-require-a-story | **system** | Edit/commit gate rule |
 | satelle-recognise-blockage | **system** | Blockage park (not missing engagement) |
 | satelle-residency | ondemand | Defines system\|ondemand; embedded reference |
-| satelle-agent-model | ondemand | Execution model; embedded; length reserved for order:5 rewrite |
+| satelle-agent-model | ondemand | Execution model; embedded |
 | satelle-agent-telemetry | ondemand | Prompted telemetry channel |
 | satelle-generated-readonly | ondemand | Generated OKF views are 0o444 |
-| satelle-repo-agnostic | ondemand | Product vs dogfood guard |
 | satelle-skill-naming | ondemand | Skill naming convention |
 | satelle-agile-increments | ondemand | Delivery paradigm |
 | satelle-broken-windows | ondemand | Working discipline |
@@ -80,19 +79,15 @@ Measure: `satelle hook context 2>/dev/null | wc -c`
 | satelle-story-classification | ondemand | Epic / sprint / order |
 | satelle-yagni | ondemand | Coding paradigm |
 
-Constitution (`.satelle/constitution.md`, ~5.3 KB) is injected first every
-session and is **not** a principle — not trimmed by this diet.
+Constitution (`.satelle/constitution.md`) is injected first every session and is
+**not** a principle.
 
 ## Consistency
 
-The three system principles form a consistent operating triad: engage a story,
-drive it through gates, park on real blockage — never treat missing engagement
-as blockage (order:2). Demotion removes reference docs; it does not reintroduce
-conflicts.
+The resident set is now identity + operating triad: know what product you are
+building, engage a story, drive it through gates, park on real blockage.
 
-## Flagged out of scope (not fixed here)
+## History
 
-Disk copies of `satelle-agent-goals` and `satelle-edits-require-a-story` may be
-body-ahead of embedded sources without an `embedded_sha` stamp (order:2
-convergence tail). A future rebase could drop those enrichments — track as a
-follow-up convergence story, not this diet.
+- **sty_cd5e341c** (context diet): resident set reduced 6 → 3; ceiling headroom restored.
+- **sty_da2abd5c** (this story): `satelle-repo-agnostic` promoted system; no demotion.
