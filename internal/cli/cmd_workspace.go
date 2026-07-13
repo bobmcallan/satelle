@@ -45,9 +45,9 @@ func init() {
 	}
 
 	remove := &cobra.Command{
-		Use: "remove [path]",
-		Short:   "Unregister a repo (defaults to the current directory)",
-		Args:    cobra.MaximumNArgs(1),
+		Use:   "remove [path]",
+		Short: "Unregister a repo (defaults to the current directory)",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path, err := resolveRepoArg(args)
 			if err != nil {
