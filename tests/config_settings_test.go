@@ -23,7 +23,7 @@ func TestUnknownSettingsVarRefusesEndToEnd(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 	// Append a named binding whose settings.env references a var defined nowhere.
 	appendToFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
-		"\n[planner]\nharness = \"claude -p {system} --settings {settings}\"\ntools = \"Read,Bash(satelle:*)\"\nsettings = { env = { ANTHROPIC_AUTH_TOKEN = \"${GLM_API_KEY}\" } }\n")
+		"\n[planner]\ncommand = \"claude -p {system} --settings {settings}\"\ntools = \"Read,Bash(satelle:*)\"\nsettings = { env = { ANTHROPIC_AUTH_TOKEN = \"${GLM_API_KEY}\" } }\n")
 	out, err := run(t, testBin, repo, "status")
 	if err == nil {
 		t.Fatalf("status must refuse when a binding settings references an unknown var:\n%s", out)
@@ -53,7 +53,7 @@ func TestSettingsMaterializedEndToEnd(t *testing.T) {
 	// Named run binding: settings.env.TOKEN resolves from ${TOKEN} in [vars]; the
 	// harness template carries the {settings} placeholder as its own token.
 	appendToFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
-		"\n[runner]\nharness = \""+script+" {system} --settings {settings}\"\ntools = \"Read,Bash(satelle:*)\"\nsettings = { env = { TOKEN = \"${TOKEN}\" } }\n")
+		"\n[runner]\ncommand = \""+script+" {system} --settings {settings}\"\ntools = \"Read,Bash(satelle:*)\"\nsettings = { env = { TOKEN = \"${TOKEN}\" } }\n")
 	// Gitignored overlay supplies the winning value the ${VAR} must resolve to.
 	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"), "[vars]\nTOKEN = \"LOCAL\"\n")
 
@@ -101,7 +101,7 @@ func TestNoSettingsDropsFlagEndToEnd(t *testing.T) {
 	// The {settings} placeholder is present in the template but the binding sets no
 	// settings — the flag and its placeholder must both drop.
 	appendToFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
-		"\n[runner]\nharness = \""+script+" {system} --settings {settings}\"\ntools = \"Read,Bash(satelle:*)\"\n")
+		"\n[runner]\ncommand = \""+script+" {system} --settings {settings}\"\ntools = \"Read,Bash(satelle:*)\"\n")
 
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "satelle-task-workflow.md"), dispatchTaskWorkflow)
 	writeAuthoredTask(t, repo, "tsk_nos01")

@@ -76,7 +76,7 @@ func stubReviewerAccept(t *testing.T, repo string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "agents.toml"),
-		[]byte(fmt.Sprintf("[reviewer]\nharness = \"%s {system} {tools} {model}\"\n", verdict)), 0o644); err != nil {
+		[]byte(fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\n", verdict)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

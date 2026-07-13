@@ -68,7 +68,7 @@ func appendCoderBinding(t *testing.T, repo, script string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.WriteString("\n[coder]\nharness = \"" + script + " {system}\"\ntools = \"Read,Edit,Write,Bash(satelle:*)\"\n"); err != nil {
+	if _, err := f.WriteString("\n[coder]\ncommand = \"" + script + " {system}\"\ntools = \"Read,Edit,Write,Bash(satelle:*)\"\n"); err != nil {
 		t.Fatal(err)
 	}
 	_ = f.Close()

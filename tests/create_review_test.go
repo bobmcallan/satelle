@@ -56,7 +56,7 @@ func TestCreateContentReviewGate(t *testing.T) {
 		_ = os.Chmod(verdict, 0o755)
 	}
 	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
-		fmt.Sprintf("[reviewer]\nharness = \"%s {system} {tools} {model}\"\n", verdict))
+		fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\n", verdict))
 
 	setVerdict("reject", "stub: the ACs do not verify the goal")
 	mustRun(t, testBin, repo, "reindex")
@@ -210,7 +210,7 @@ echo '{"decision":"accept","notes":""}'
 `)
 	_ = os.Chmod(verdict, 0o755)
 	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
-		fmt.Sprintf("[reviewer]\nharness = \"%s {system} {tools} {model}\"\n", verdict))
+		fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\n", verdict))
 	mustRun(t, testBin, repo, "reindex")
 
 	// Draft epic with category feature — must be rejected.

@@ -19,7 +19,7 @@ func TestDispatchTimeoutFailFast(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 	agents := filepath.Join(repo, ".satelle", "agents.toml")
 
-	if err := os.WriteFile(agents, []byte("[worker]\nharness = \"claude {system}\"\ntimeout = \"notaduration\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(agents, []byte("[worker]\ncommand = \"claude {system}\"\ntimeout = \"notaduration\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	out, err := run(t, testBin, repo, "reindex")
@@ -31,7 +31,7 @@ func TestDispatchTimeoutFailFast(t *testing.T) {
 	}
 
 	// A well-formed timeout loads cleanly.
-	if err := os.WriteFile(agents, []byte("[worker]\nharness = \"claude {system}\"\ntimeout = \"45m\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(agents, []byte("[worker]\ncommand = \"claude {system}\"\ntimeout = \"45m\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := run(t, testBin, repo, "reindex"); err != nil {

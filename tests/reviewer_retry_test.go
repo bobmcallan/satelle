@@ -57,7 +57,7 @@ func TestGateRetriesTransientReviewerFailure(t *testing.T) {
 	writeFile(t, verdict, script)
 	_ = os.Chmod(verdict, 0o755)
 	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
-		fmt.Sprintf("[reviewer]\nharness = \"%s {system} {tools} {model}\"\n", verdict))
+		fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\n", verdict))
 
 	mustRun(t, testBin, repo, "reindex")
 

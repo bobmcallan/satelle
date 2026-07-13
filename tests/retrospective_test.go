@@ -35,7 +35,7 @@ func TestStoryRetrospectDispatchesAndRecordsCost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.WriteString("\n[retrospective]\nharness = \"" + script + " {system}\"\ntools = \"Read,Bash(satelle:*)\"\n"); err != nil {
+	if _, err := f.WriteString("\n[retrospective]\ncommand = \"" + script + " {system}\"\ntools = \"Read,Bash(satelle:*)\"\n"); err != nil {
 		t.Fatal(err)
 	}
 	_ = f.Close()
