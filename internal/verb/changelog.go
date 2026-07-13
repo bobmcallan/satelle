@@ -2,6 +2,7 @@ package verb
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,6 +11,13 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/buildinfo"
 )
+
+// embeddedChangelog is the binary-shipped CHANGELOG so a downstream repo
+// without its own file still has breaking-marker text for the require-init
+// drift gate (repo-agnostic).
+//
+//go:embed embedded/CHANGELOG.md
+var embeddedChangelog string
 
 // changelogPath is the well-known file at the repo root (overrideable in tests).
 var changelogPath = func() string {
@@ -30,6 +38,20 @@ var changelogPath = func() string {
 		}
 		dir = parent
 	}
+}
+
+// readChangelogBody returns on-disk CHANGELOG.md bytes, or the embedded
+// fallback when the file is absent (downstream repos).
+func readChangelogBody() ([]byte, error) {
+	path := changelogPath()
+	b, err := os.ReadFile(path)
+	if err == nil {
+		return b, nil
+	}
+	if embeddedChangelog != "" {
+		return []byte(embeddedChangelog), nil
+	}
+	return nil, err
 }
 
 func init() {
@@ -71,9 +93,9 @@ func changelogInvoke(_ context.Context, raw json.RawMessage) (json.RawMessage, e
 	}
 	from := strings.TrimSpace(req.From)
 
-	body, err := os.ReadFile(changelogPath())
+	body, err := readChangelogBody()
 	if err != nil {
-		// Absent file: empty result, not an error (repo-agnostic).
+		// No disk file and no embed: empty result, not an error.
 		return json.Marshal(ChangelogResult{From: from, To: to, Entries: []ChangelogEntry{}})
 	}
 	all := parseChangelog(string(body))
@@ -162,6 +184,25 @@ func inRange(version, from, to string) bool {
 		return false
 	}
 	return true
+}
+
+// CmpSemverExported is the package-external semver compare for drift gates.
+func CmpSemverExported(a, b string) int { return cmpSemver(a, b) }
+
+// ChangelogRange returns entries with from < version <= to from CHANGELOG.md
+// (on-disk preferred; embedded fallback). Used by the CLI drift gate.
+func ChangelogRange(from, to string) ([]ChangelogEntry, error) {
+	body, err := readChangelogBody()
+	if err != nil {
+		return nil, err
+	}
+	var out []ChangelogEntry
+	for _, e := range parseChangelog(string(body)) {
+		if inRange(e.Version, from, to) {
+			out = append(out, e)
+		}
+	}
+	return out, nil
 }
 
 // cmpSemver compares X.Y.Z numeric triples. Returns -1, 0, 1.

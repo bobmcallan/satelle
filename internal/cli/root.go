@@ -56,18 +56,48 @@ dependency. See https://github.com/bobmcallan/satelle for docs.`,
 	return root
 }
 
+// retiredNames maps a removed full CLI path (space-separated) to the
+// replacement to name when the removed spelling is invoked. Keys match
+// os.Args[1:] joined — so `service install` is never confused with top-level
+// `install`.
+var retiredNames = map[string]string{
+	"install":          "satelle init",
+	"workspace rm":     "satelle workspace remove",
+	"sync config pull": "satelle sync config deploy",
+}
+
+// retiredNameMessage returns a fail-closed error for a removed spelling, or "".
+func retiredNameMessage(args []string) string {
+	// Try longest path first (3 tokens, then 2, then 1).
+	for n := 3; n >= 1; n-- {
+		if len(args) < n {
+			continue
+		}
+		key := strings.Join(args[:n], " ")
+		if repl, ok := retiredNames[key]; ok {
+			return fmt.Sprintf("satelle: %q was removed — use %s instead (breaking CLI surface; see CHANGELOG.md ### Breaking)", key, repl)
+		}
+	}
+	return ""
+}
+
 // Execute runs the root command and, on an unknown subcommand, follows the
 // bare cobra error with the command's usage so a mistyped command guides the
-// user instead of dead-ending. Cobra already embeds a "Did you mean this?"
-// nearest-match in the error for close typos; this adds the usage block on
-// top. Normal RunE errors keep their quiet, usage-free output (root has
-// SilenceUsage/SilenceErrors set). Returns the command's error so the caller
-// sets a non-zero exit.
+// user instead of dead-ending. Removed spellings fail closed naming their
+// replacement. Returns the command's error so the caller sets a non-zero exit.
 func Execute() error {
 	// Repo-local binary precedence (sty_fe3ee313): if this repo pins its own
 	// satelle under .satelle/satelle, run THAT binary instead of the global one.
 	if code, handled := reexecLocalIfPresent(); handled {
 		os.Exit(code)
+	}
+	// Fail closed on removed spellings before cobra's generic unknown-command
+	// path, so the replacement is named explicitly.
+	if len(os.Args) > 1 {
+		if msg := retiredNameMessage(os.Args[1:]); msg != "" {
+			fmt.Fprintln(os.Stderr, msg)
+			return fmt.Errorf("%s", msg)
+		}
 	}
 	root := NewRootCmd()
 	err := root.Execute()

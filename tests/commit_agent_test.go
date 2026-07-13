@@ -25,36 +25,22 @@ func namedAgentWF(name string) string {
 
 // TestCommitAgentBindingInspectable proves the declarative commit-agent binding
 // end-to-end (sty_b2222b8a): a node allocated to a named agent (agent=commit-agent),
-// with the agent defined in .satelle/agents.toml, passes validate and is visible in
-// workflow inspection. It runs over BOTH binding forms — the FLAT top-level
-// [commit-agent] (the new canonical form, sty_6e0ba71c) and the legacy nested
-// [agents.commit-agent] (still loaded for back-compat) — so the binary's loader
-// classifies each correctly. No new execution mechanism — the allocation is declared.
+// with the agent defined in .satelle/agents.toml (flat [commit-agent] form),
+// passes validate and is visible in workflow inspection. Nested [agents.name]
+// is no longer a live dual-read (breaking surface — MigrateAgents flattens on init).
 func TestCommitAgentBindingInspectable(t *testing.T) {
-	for _, tc := range []struct {
-		name, agents string
-	}{
-		{"flat", "[commit-agent]\nharness = \"claude -p --allowedTools {tools}\"\ntools = \"Read,Bash(git:*)\"\n"},
-		{"legacy-nested", "[agents.commit-agent]\nharness = \"claude -p --allowedTools {tools}\"\ntools = \"Read,Bash(git:*)\"\n"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			repo := t.TempDir()
-			mustRun(t, testBin, repo, "init")
-			writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"), tc.agents)
-			writeFile(t, filepath.Join(repo, ".satelle", "workflows", "named.md"), namedAgentWF("named"))
-			mustRun(t, testBin, repo, "reindex")
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
+		"[commit-agent]\ncommand = \"claude -p --allowedTools {tools}\"\ntools = \"Read,Bash(git:*)\"\n")
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "named.md"), namedAgentWF("named"))
+	mustRun(t, testBin, repo, "reindex")
 
-			// validate stays green — a named-agent node is valid, and the binary
-			// loads the agents.toml (flat or nested) without error.
-			if out, err := run(t, testBin, repo, "workflow", "validate", "named"); err != nil {
-				t.Fatalf("validate should pass for a named-agent workflow:\n%s\n%v", out, err)
-			}
-
-			// Inspection shows commit_push allocated to the agent.
-			out := mustRun(t, testBin, repo, "doc", "get", "workflows", "named")
-			if !strings.Contains(out, "agent=commit-agent") {
-				t.Errorf("workflow inspection should show commit_push bound to commit-agent:\n%s", out)
-			}
-		})
+	if out, err := run(t, testBin, repo, "workflow", "validate", "named"); err != nil {
+		t.Fatalf("validate should pass for a named-agent workflow:\n%s\n%v", out, err)
+	}
+	out := mustRun(t, testBin, repo, "doc", "get", "workflows", "named")
+	if !strings.Contains(out, "agent=commit-agent") {
+		t.Errorf("workflow inspection should show commit_push bound to commit-agent:\n%s", out)
 	}
 }

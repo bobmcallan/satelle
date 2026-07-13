@@ -36,6 +36,12 @@ func openAppForCmd(cmd *cobra.Command) error {
 	if err != nil {
 		return fmt.Errorf("bootstrap: %w", err)
 	}
+	// Drift / breaking-surface gate: a deployed repo behind a breaking binary
+	// release fails closed and names `satelle init` as the heal path.
+	if derr := refuseBreakingDrift(a.RepoRoot); derr != nil {
+		_ = a.Close()
+		return derr
+	}
 	// Broken configuration refuses to run (sty_d0d6bb67): an initialized repo
 	// (this command reached the store, so .satelle exists) must carry a loadable
 	// agents layer — no silent fallback to compiled defaults. `satelle init` is

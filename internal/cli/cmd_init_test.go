@@ -141,39 +141,25 @@ func TestRunInitSeedsActiveEditExemptPaths(t *testing.T) {
 	}
 }
 
-// TestInstallAliasSharesInitPath: satelle install is a cobra alias of init —
-// one RunE, two names (sty_0e268c9a). Resolves the registered command tree.
-func TestInstallAliasSharesInitPath(t *testing.T) {
+// TestInstallAliasRemoved: satelle install is no longer an alias of init
+// (breaking surface). The retiredNames guard names satelle init.
+func TestInstallAliasRemoved(t *testing.T) {
 	root := NewRootCmd()
 	initCmd, _, err := root.Find([]string{"init"})
 	if err != nil {
 		t.Fatalf("find init: %v", err)
 	}
-	installCmd, _, err := root.Find([]string{"install"})
-	if err != nil {
-		t.Fatalf("find install: %v", err)
-	}
-	if initCmd != installCmd {
-		t.Fatalf("install must resolve to the same command as init (one code path)")
-	}
-	found := false
 	for _, a := range initCmd.Aliases {
 		if a == "install" {
-			found = true
-			break
+			t.Fatalf("install alias must be removed, still on init: %v", initCmd.Aliases)
 		}
 	}
-	if !found {
-		t.Errorf("init Aliases missing install: %v", initCmd.Aliases)
+	if _, _, err := root.Find([]string{"install"}); err == nil {
+		t.Fatal("install must not resolve as a command")
 	}
-	// Functional: install-named path still scaffolds (same RunE).
-	repo := t.TempDir()
-	var out strings.Builder
-	if err := runInitTest(t, &out, repo); err != nil {
-		t.Fatalf("runInit via install path: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(repo, ".satelle", "agents.toml")); err != nil {
-		t.Errorf("install/init did not scaffold agents.toml: %v", err)
+	msg := retiredNameMessage([]string{"install"})
+	if !strings.Contains(msg, "satelle init") {
+		t.Fatalf("retired message: %q", msg)
 	}
 }
 
