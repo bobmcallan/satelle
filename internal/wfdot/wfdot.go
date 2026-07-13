@@ -275,6 +275,29 @@ func (s Spec) IsPerformingState(name string) bool {
 	return false
 }
 
+// IsTerminalState reports whether name is a terminal success marker (shape=Msquare).
+// Shape-derived — no hardcoded "done" (sty_8426b9c0 release keying).
+func (s Spec) IsTerminalState(name string) bool {
+	for _, st := range s.States {
+		if st.Name == name {
+			return st.Shape == "Msquare"
+		}
+	}
+	return false
+}
+
+// IsParkState reports whether name is a reviewer-role non-start state (cancel
+// sinks, blocked/park nodes). Shape/role-derived so lease release keys to the
+// DOT rather than status string literals (sty_8426b9c0).
+func (s Spec) IsParkState(name string) bool {
+	for _, st := range s.States {
+		if st.Name == name {
+			return st.Agent == "reviewer" && st.Shape != "Mdiamond"
+		}
+	}
+	return false
+}
+
 // ExecutorPathToDoneSkills returns the `@skill:` prompts of PERFORMING nodes that
 // lie on a path which can still reach "done", deduped and sorted. These are the
 // rubrics that perform a step. Unlike reviewer gates — which degrade to advisory

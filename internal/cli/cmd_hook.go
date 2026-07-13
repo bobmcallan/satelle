@@ -238,15 +238,10 @@ changed, or a story is engaged.`,
 	register(hook)
 }
 
-// storyEngaged reports whether any work item — story OR task — sits in a
-// non-terminal engaging state of ITS OWN governing workflow (the authored definition
-// of "engaged work"). Resolving per story, not against one arbitrary "primary"
-// workflow, is what makes engagement correct rather than accidental: a repo that
-// runs a category-specific workflow (or opts a step into a dispatched coder) is
-// judged by the workflow that actually governs the item (sty_f5bd176f). Fails
-// CLOSED: a store open error, listing error, unresolvable workflow, or non-DOT
-// workflow body returns (false, error) so the hook blocks rather than silently
-// allowing edits on a broken deployment (sty_f3d5d4b8).
+// storyEngaged reports whether any engagement lease is active (sty_8426b9c0).
+// The lease is claimed at the START of an engaging transition (before
+// gate+dispatch), so the edit/commit gates see the seat during the whole window
+// — not only after committed status. Fails CLOSED on store open/query errors.
 func storyEngaged() (bool, error) {
 	a, err := app.Open()
 	if err != nil {
@@ -254,19 +249,23 @@ func storyEngaged() (bool, error) {
 	}
 	defer func() { _ = a.Close() }()
 	ctx := context.Background()
-
-	// The full workflow set — fail closed on error (not a silent fallback).
-	wfs, err := a.Store.DocIndex.List(ctx, "workflows")
-	if err != nil {
-		return false, fmt.Errorf("cannot determine engagement (workflow list failed: %w) — fix config and retry", err)
+	if a.Store.Leases == nil {
+		// Pre-migration or incomplete bootstrap: fall back to derived status scan.
+		wfs, err := a.Store.DocIndex.List(ctx, "workflows")
+		if err != nil {
+			return false, fmt.Errorf("cannot determine engagement (workflow list failed: %w) — fix config and retry", err)
+		}
+		items, err := a.Store.Stories.List(ctx, workitem.ListFilter{})
+		if err != nil {
+			return false, fmt.Errorf("cannot determine engagement (story list failed: %w) — fix config and retry", err)
+		}
+		return anyEngaged(items, wfs)
 	}
-	// All kinds — a task engaged in a performing state counts exactly like a story,
-	// so the commit/edit gates treat engaged tasks the same (sty_3ed91a58).
-	items, err := a.Store.Stories.List(ctx, workitem.ListFilter{})
+	active, err := a.Store.Leases.AnyActive(ctx)
 	if err != nil {
-		return false, fmt.Errorf("cannot determine engagement (story list failed: %w) — fix config and retry", err)
+		return false, fmt.Errorf("cannot determine engagement (lease query failed: %w) — fix config and retry", err)
 	}
-	return anyEngaged(items, wfs)
+	return active, nil
 }
 
 // anyEngaged reports whether any work item sits in a non-terminal engaging state

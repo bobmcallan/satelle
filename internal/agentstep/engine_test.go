@@ -1207,13 +1207,12 @@ var coderWF = wfDoc(baselineWorkflow, `"*"`, `digraph w {
   backlog -> plan -> in_progress -> done
 }`)
 
-// TestDispatchExecutorCodeWriterFromNonPerformingRefused: the edit-gate timing
-// lock (sty_f5bd176f) refuses dispatching a CODE-WRITING named agent (Write/Edit
-// grant) from a non-performing FROM state — its edits would be blocked by the
-// engaged-story edit gate unless a running serve fails storyEngaged() open, an
-// accident. Here dispatchWF sends `plan` from `backlog` (a non-performing
-// Mdiamond); a code-editing grant there is refused before the agent runs.
-func TestDispatchExecutorCodeWriterFromNonPerformingRefused(t *testing.T) {
+// TestDispatchExecutorCodeWriterFromNonPerformingProceeds: with the engagement
+// lease (sty_8426b9c0) acquired at-start for the TARGET engaging state, edit
+// gates no longer depend on the FROM state being performing — so a code-writing
+// named agent may dispatch from backlog into plan. The prior FROM-performing
+// band-aid (sty_f5bd176f) is removed.
+func TestDispatchExecutorCodeWriterFromNonPerformingProceeds(t *testing.T) {
 	docs := fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true}
 	g, _ := newEngine(t, "", docs)
 	fr := &fakeRunner{out: "ok"}
@@ -1221,17 +1220,15 @@ func TestDispatchExecutorCodeWriterFromNonPerformingRefused(t *testing.T) {
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
 		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Edit,Write,Bash(satelle:*)"}, true
 	})
-	_, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan")
-	if err == nil {
-		t.Fatal("want refusal: a code-writer dispatched from the non-performing backlog state")
+	res, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan")
+	if err != nil {
+		t.Fatalf("code-writer from non-performing FROM should proceed under lease model: %v", err)
 	}
-	for _, want := range []string{"non-performing", "backlog", "fail-open"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error should carry %q: %v", want, err)
-		}
+	if !res.Dispatched {
+		t.Fatalf("expected dispatched, got %+v", res)
 	}
-	if fr.got.SystemPrompt != "" {
-		t.Error("must refuse BEFORE running the agent")
+	if fr.got.SystemPrompt == "" {
+		t.Error("the agent must reach the run")
 	}
 }
 
@@ -1309,12 +1306,11 @@ func TestDispatchOnEnterAgentFromPerforming(t *testing.T) {
 	}
 }
 
-// TestDispatchOnEnterAgentCodeWriterFromNonPerformingRefused: the code-writer
-// lock still applies to on_enter_agent — Write/Edit grant from a non-performing
-// FROM is refused (mirrors TestDispatchExecutorCodeWriterFromNonPerformingRefused).
-func TestDispatchOnEnterAgentCodeWriterFromNonPerformingRefused(t *testing.T) {
-	// Enter parked from backlog (non-performing) — invent a direct edge by using
-	// a workflow whose only path into parked is from backlog.
+// TestDispatchOnEnterAgentCodeWriterFromNonPerformingProceeds: lease model
+// (sty_8426b9c0) removes the FROM-performing code-writer lock for on_enter_agent
+// as well — Write/Edit grant from backlog into park is allowed (the lease, not
+// FROM status, authorises engagement for the edit gate).
+func TestDispatchOnEnterAgentCodeWriterFromNonPerformingProceeds(t *testing.T) {
 	wf := wfDoc("on-enter-from-backlog", `"*"`, `digraph w {
   backlog [shape=Mdiamond]
   parked [agent=reviewer, prompt="@skill:park-gate", on_enter_agent=triage, on_enter_prompt="@skill:triage-skill"]
@@ -1324,22 +1320,17 @@ func TestDispatchOnEnterAgentCodeWriterFromNonPerformingRefused(t *testing.T) {
 }`)
 	docs := fakeDocs{workflow: wf, skillBody: "triage rubric", skillFound: true}
 	g, _ := newEngine(t, "", docs)
-	fr := &fakeRunner{out: "should-not-run"}
+	fr := &fakeRunner{out: "triaged"}
 	g.newRunner = func(string) (agentcli.Runner, error) { return fr, nil }
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
 		return config.AgentBinding{Role: "agent", Harness: "fake -p {system}", Tools: "Read,Edit,Write,Bash(satelle:*)"}, true
 	})
-	_, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "parked")
-	if err == nil {
-		t.Fatal("want refusal: code-writing on_enter from non-performing backlog")
+	res, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "parked")
+	if err != nil {
+		t.Fatalf("on_enter code-writer from non-performing FROM should proceed: %v", err)
 	}
-	for _, want := range []string{"non-performing", "backlog"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error should carry %q: %v", want, err)
-		}
-	}
-	if fr.got.SystemPrompt != "" {
-		t.Error("must refuse BEFORE running the agent")
+	if !res.Dispatched || res.Agent != "triage" {
+		t.Fatalf("result = %+v, want dispatched by triage", res)
 	}
 }
 

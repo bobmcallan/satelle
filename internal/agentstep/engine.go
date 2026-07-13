@@ -664,24 +664,11 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	if !isNamedPerformer(dispatchAgent, binding) {
 		return verb.DispatchResult{}, nil
 	}
-	// Edit-gate timing lock (sty_f5bd176f): a named CODE-WRITING agent (e.g. a
-	// `coder`) edits product files while the status is STILL the FROM state — the
-	// enact happens only after this dispatch returns (verb/workitem.go). Those edits
-	// pass the engaged-story edit gate ONLY when that FROM state is itself a
-	// PERFORMING node (storyEngaged reads exactly this predicate via
-	// wfdot.PerformingStates). If the FROM state does not perform, the agent's edits
-	// would be blocked — unless a running serve happens to fail storyEngaged() open,
-	// an accident, not a guarantee. Refuse such a dispatch so an opt-in like
-	// in_progress[agent=coder] is only ever wired where engagement is REAL. A
-	// read-only agent (e.g. the planner, no Write/Edit grant) edits nothing, so the
-	// gate never applies to it and this lock does not constrain it.
-	// on_enter_agent uses the same lock: park entry from a performing FROM is
-	// allowed; from a non-performing FROM with Write/Edit is refused.
-	if grantsCodeEdit(binding.Tools) && !spec.IsPerformingState(item.Status) {
-		return verb.DispatchResult{}, fmt.Errorf(
-			"workflow %q dispatches state %q to code-writing agent %q from non-performing state %q: the agent would edit code while the story is not in an engaged state, so the edit gate could allow it only via the serve fail-open — route the step from a performing state (or make %q performing)",
-			doc.Name, toStatus, dispatchAgent, item.Status, item.Status)
-	}
+	// Engagement lease (sty_8426b9c0) is acquired for the TARGET engaging state
+	// BEFORE this dispatch runs (verb/workitem.go acquire-at-start). Edit/commit
+	// gates read the lease, not committed FROM status — so a code-writing named
+	// agent may edit during dispatch without the FROM state itself being
+	// performing. The prior FROM-performing band-aid (sty_f5bd176f) is removed.
 	runner, err := g.newRunner(binding.CommandTemplate())
 	if err != nil {
 		return verb.DispatchResult{}, fmt.Errorf("named agent %q: broken command in .satelle/agents.toml: %w", dispatchAgent, err)
@@ -874,20 +861,6 @@ func isNamedPerformer(section string, b config.AgentBinding) bool {
 		return false
 	}
 	return config.ResolvedRole(section, b) != config.RoleReviewer
-}
-
-// grantsCodeEdit reports whether a binding's tools grant lets the agent WRITE
-// product files — Write/Edit/MultiEdit/NotebookEdit or the `*` wildcard. Only a
-// code-writing agent is subject to the edit-gate timing lock in DispatchExecutor;
-// a read-only agent (Read/Grep/Glob only, e.g. the planner) edits nothing.
-func grantsCodeEdit(tools string) bool {
-	for _, t := range splitTrimList(tools) {
-		switch t {
-		case "*", "Write", "Edit", "MultiEdit", "NotebookEdit":
-			return true
-		}
-	}
-	return false
 }
 
 // dispatchSink opens a per-dispatch live log file under <data_dir>/logs/dispatch/

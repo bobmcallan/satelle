@@ -22,11 +22,13 @@ func wire(t *testing.T) {
 	verb.SetWorkItemStore(db.Stories)
 	verb.SetLedgerStore(db.Ledger)
 	verb.SetDocIndexStore(db.DocIndex)
+	verb.SetLeaseStore(db.Leases)
 	t.Cleanup(func() {
 		db.Close()
 		verb.SetWorkItemStore(nil)
 		verb.SetLedgerStore(nil)
 		verb.SetDocIndexStore(nil)
+		verb.SetLeaseStore(nil)
 	})
 }
 
