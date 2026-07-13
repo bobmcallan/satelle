@@ -1185,10 +1185,12 @@ func gateWiredInSettings(repoRoot string) (wired bool, checked bool) {
 }
 
 // settingsWiresGate reports whether a hook-settings JSON wires a PreToolUse
-// Edit-matcher hook that invokes the edit gate. Marker is "hook gate" so both
-// the legacy one-liner and the fail-visible wrapper (`b hook gate`,
-// sty_c75c73ed) count as wired. Pure over the bytes so it is unit-tested
-// directly; a parse failure returns false (no confident wire).
+// Edit-matcher hook that invokes the edit gate. Recognises:
+//   - legacy one-liner / inline wrapper containing "hook gate" (sty_c75c73ed)
+//   - script-file form containing "pretooluse-gate-" (sty_adfb9862)
+//
+// Pure over the bytes so it is unit-tested directly; a parse failure returns
+// false (no confident wire).
 func settingsWiresGate(raw []byte) bool {
 	var s struct {
 		Hooks struct {
@@ -1208,7 +1210,8 @@ func settingsWiresGate(raw []byte) bool {
 			continue
 		}
 		for _, h := range e.Hooks {
-			if strings.Contains(h.Command, "hook gate") {
+			if strings.Contains(h.Command, "hook gate") ||
+				strings.Contains(h.Command, "pretooluse-gate-") {
 				return true
 			}
 		}

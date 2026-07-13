@@ -587,6 +587,11 @@ func TestSettingsWiresGate(t *testing.T) {
 	if !settingsWiresGate([]byte(wired)) {
 		t.Errorf("wired settings should report gate wired")
 	}
+	// sty_adfb9862 script-file form (no "hook gate" substring in the command).
+	script := `{"hooks":{"PreToolUse":[{"matcher":"Edit|Write","hooks":[{"type":"command","command":"sh .satelle/hooks/pretooluse-gate-claude.sh"}]}]}}`
+	if !settingsWiresGate([]byte(script)) {
+		t.Errorf("script-file PreToolUse gate must count as wired")
+	}
 	// Bash-only gate (commitgate) but no Edit-matcher gate → not wired.
 	noEdit := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"satelle hook commitgate || exit 2"}]}]}}`
 	if settingsWiresGate([]byte(noEdit)) {
