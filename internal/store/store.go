@@ -20,6 +20,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -31,6 +32,7 @@ type DB struct {
 	Ledger   *ledger.Store
 	Stories  *workitem.Store // stories and tasks share one store; filter by Kind
 	DocIndex *docindex.Store
+	Leases   *lease.Store // engagement seats (sty_8426b9c0)
 }
 
 // Open opens (creating if absent) the sqlite database at path, migrates every
@@ -63,6 +65,7 @@ func Open(path string) (*DB, error) {
 		ledger.Migrate,
 		workitem.Migrate,
 		docindex.Migrate,
+		lease.Migrate,
 	} {
 		if err := migrate(sqldb); err != nil {
 			sqldb.Close()
@@ -78,6 +81,7 @@ func Open(path string) (*DB, error) {
 		Ledger:   ledger.New(sqldb),
 		Stories:  workitem.New(sqldb),
 		DocIndex: di,
+		Leases:   lease.New(sqldb),
 	}, nil
 }
 

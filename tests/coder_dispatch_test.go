@@ -7,8 +7,9 @@
 //   - dispatched from a PERFORMING state (plan), the coder's edit to a product .go
 //     file is ALLOWED by the edit gate during dispatch — the story sits in `plan`,
 //     a performing/engaged state, so `satelle hook gate` exits 0 legitimately;
-//   - dispatched from a NON-performing state (backlog), the transition is REFUSED
-//     by the dispatch lock-guard rather than let the coder's edits ride fail-open.
+//   - dispatched from backlog under the engagement lease (sty_8426b9c0): the
+//     lease is claimed at-start so the edit gate allows during dispatch without
+//     the old FROM-performing band-aid.
 package tests
 
 import (
@@ -136,16 +137,21 @@ func TestCoderDispatchEditGateAllowsFromPerformingState(t *testing.T) {
 	}
 }
 
-// TestCoderDispatchRefusedFromNonPerformingState: wiring the coder directly from
-// backlog (a non-performing state) is refused by the lock-guard — the coder would
-// edit while the story is not engaged, so its edits could pass only via the serve
-// fail-open. The transition errors (status unchanged) and the coder never runs.
-func TestCoderDispatchRefusedFromNonPerformingState(t *testing.T) {
+// TestCoderDispatchFromBacklogUnderLease: with the engagement lease
+// (sty_8426b9c0) acquired at-start for the TARGET engaging state, a code-writer
+// may dispatch from backlog. The prior FROM-performing band-aid is removed; the
+// lease (not FROM status) authorises the edit gate during dispatch.
+func TestCoderDispatchFromBacklogUnderLease(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
 	script := filepath.Join(repo, "stub-coder.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat > .satelle/coder-ran.json\necho done\n"), 0o755); err != nil {
+	body := "#!/bin/sh\n" +
+		"cat > .satelle/coder-ran.json\n" +
+		"printf '{\"tool_input\":{\"file_path\":\"%s/internal/coder_edit.go\"}}' \"$PWD\" | " + testBin + " hook gate\n" +
+		"echo \"gate_exit=$?\" > .satelle/coder-gate-exit.txt\n" +
+		"echo done\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	appendCoderBinding(t, repo, script)
@@ -154,27 +160,24 @@ func TestCoderDispatchRefusedFromNonPerformingState(t *testing.T) {
 	mustRun(t, testBin, repo, "reindex")
 
 	out := mustRun(t, testBin, repo, "story", "create", "--category", "chore",
-		"--title", "Bad coder wiring", "--body", "coder from backlog must be refused", "--acceptance", "1. refused")
+		"--title", "Coder from backlog under lease", "--body", "lease authorises edit gate", "--acceptance", "1. coded")
 	id := extractID(out, "sty_")
 	if id == "" {
 		t.Fatalf("no story id in:\n%s", out)
 	}
 
 	got, err := run(t, testBin, repo, "story", "set", id, "--status", "in_progress")
-	if err == nil {
-		t.Fatalf("a code-writer dispatched from non-performing backlog must be refused:\n%s", got)
+	if err != nil {
+		t.Fatalf("coder from backlog must proceed under lease model:\n%s\nerr=%v", got, err)
 	}
-	for _, want := range []string{"non-performing", "backlog", "fail-open"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("refusal should carry %q:\n%s", want, got)
-		}
+	if _, err := os.Stat(filepath.Join(repo, ".satelle", "coder-ran.json")); err != nil {
+		t.Fatalf("coder must run: %v", err)
 	}
-	// Status unchanged and the coder never ran.
-	after := mustRun(t, testBin, repo, "story", "get", id)
-	if !strings.Contains(after, `"status": "backlog"`) {
-		t.Errorf("status must stay backlog after the refusal:\n%s", after)
+	gate, err := os.ReadFile(filepath.Join(repo, ".satelle", "coder-gate-exit.txt"))
+	if err != nil {
+		t.Fatalf("gate exit not recorded: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(repo, ".satelle", "coder-ran.json")); err == nil {
-		t.Error("the coder must NOT run when the dispatch is refused")
+	if !strings.Contains(string(gate), "gate_exit=0") {
+		t.Errorf("edit gate must ALLOW during dispatch via lease (status still backlog): %s", gate)
 	}
 }

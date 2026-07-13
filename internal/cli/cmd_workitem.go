@@ -133,6 +133,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storyCostCommands()...)
 		parent.AddCommand(storySyncCommand())
 		parent.AddCommand(storyRestampCommand())
+		parent.AddCommand(storyStopRequestCommand())
 	}
 	if group == "task" {
 		// tasks are authored substrate → `satelle task validate` runs the
@@ -555,4 +556,21 @@ func storyDocCommands() []*cobra.Command {
 		},
 	}
 	return []*cobra.Command{attach, docs, doc, lessons}
+}
+
+// storyStopRequestCommand builds `satelle story stop-request <id> --reason …`
+// (sty_8426b9c0 AC5). Annotates the engagement lease; never kills a process.
+func storyStopRequestCommand() *cobra.Command {
+	var reason string
+	cmd := &cobra.Command{
+		Use:         "stop-request <id>",
+		Short:       "Request stop of another agent's engaged story (arbitrated at next step edge)",
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return dispatch(cmd, "story-stop-request", map[string]any{"id": args[0], "reason": reason})
+		},
+	}
+	cmd.Flags().StringVar(&reason, "reason", "", "why the stop is requested")
+	return cmd
 }

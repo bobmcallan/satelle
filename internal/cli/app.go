@@ -51,6 +51,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetWorkItemStore(a.Store.Stories)
 	verb.SetLedgerStore(a.Store.Ledger)
 	verb.SetDocIndexStore(a.Store.DocIndex)
+	verb.SetLeaseStore(a.Store.Leases)
 	// The stories dir (<data_dir>/stories) holds per-story ATTACHMENTS only — the
 	// database is the sole story store (the markdown mirror was removed, sty_fa1e02e1).
 	verb.SetStoryDir(filepath.Join(filepath.Dir(a.DBPath), "stories"))
