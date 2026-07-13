@@ -24,7 +24,15 @@ You are the **executor** for the merged `release` step (in-loop on the driving s
 2. **Bump `.version`** — MANDATORY. Single source of truth for the release tag (`v<satelle.version>`) and the baked build identity; `release` cuts a tag ONLY when `.version` changed, so a missed bump strands the released binary.
    - Increment the **patch** of `satelle.version` (`0.0.11` → `0.0.12`).
    - Set `satelle.build` to `date -u +"%Y-%m-%d-%H-%M-%S"`. `git add .version`.
-3. **Commit.** A conventional-commit subject ending with the story id in parens, e.g. `feat(web): add the X view (sty_1234abcd)`. **No AI attribution** — no `Co-Authored-By`, no "generated with" trailer (this repo's convention). Verify the commit captured the intended files (`git show --stat HEAD`).
+3. **Update `CHANGELOG.md`** — MANDATORY (sty_f52ba0c3). The `release → done` gate
+   `satelle-changelog-entry-check` fails closed when the version on HEAD has no entry.
+   - Add a level-2 header `## [<new ver>] - <YYYY-MM-DD>` at the **top** of the file
+     (newest first).
+   - Put any breaking change under a `### Breaking` subsection — that is the marker
+     require-init and post-upgrade heal key on.
+   - Summarise Added / Changed / Fixed bullets ending with the story id in parens.
+   - `git add CHANGELOG.md` with the slice.
+4. **Commit.** A conventional-commit subject ending with the story id in parens, e.g. `feat(web): add the X view (sty_1234abcd)`. **No AI attribution** — no `Co-Authored-By`, no "generated with" trailer (this repo's convention). Verify the commit captured the intended files (`git show --stat HEAD`).
 
 ## 2. Push, then install locally (dogfood), then capture CI evidence
 

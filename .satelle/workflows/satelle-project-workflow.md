@@ -5,7 +5,7 @@ type: workflow
 tags: [type:workflow]
 applies_to: ["*"]
 create_review: satelle-story-create-review
-description: This repo's project-scope workflow, authored in DOT (the agent model). A story moves backlog → plan → in_progress → integration → release → done, with a cancelled exit. It is REVIEWER-FIRST (a reviewer gates every transition). The plan step DISPATCHES to an isolated read-only planner (agent=planner); in_progress, integration, and release run IN-LOOP on the driving session (agent=executor) so the orchestrator performs the work with full session context — no isolated worker subprocess for code/integrate/release. Every stage is reviewed: backlog → plan by satelle-story-intent-review; plan → in_progress by satelle-story-plan-review; in_progress → integration by satelle-code-ac-review; integration → release by satelle-integration-review plus scoped satelle-integration-check (make integration); release → done by satelle-story-release-review. Always-on estimate gates begin-work and close.
+description: This repo's project-scope workflow, authored in DOT (the agent model). A story moves backlog → plan → in_progress → integration → release → done, with a cancelled exit. It is REVIEWER-FIRST (a reviewer gates every transition). The plan step DISPATCHES to an isolated read-only planner (agent=planner); in_progress, integration, and release run IN-LOOP on the driving session (agent=executor) so the orchestrator performs the work with full session context — no isolated worker subprocess for code/integrate/release. Every stage is reviewed: backlog → plan by satelle-story-intent-review; plan → in_progress by satelle-story-plan-review; in_progress → integration by satelle-code-ac-review; integration → release by satelle-integration-review plus scoped satelle-integration-check (make integration); release → done by satelle-story-release-review plus scoped satelle-changelog-entry-check (CHANGELOG.md must carry the released version). Always-on estimate gates begin-work and close.
 ---
 
 # satelle workflow (project) — the agent model, authored in DOT
@@ -76,6 +76,9 @@ digraph satelle_workflow {
   // alongside that edge's satelle-integration-review — so integration is a VISIBLE step.
   estimate    [agent=reviewer, prompt="@skill:satelle-estimate-actual-review", on="in_progress,done"]
   intcheck    [agent=reviewer, prompt="@skill:satelle-integration-check", on="release"]
+  // changelogcheck fails closed on release→done when CHANGELOG.md has no entry
+  // for the version on HEAD (sty_f52ba0c3).
+  changelogcheck [agent=reviewer, prompt="@skill:satelle-changelog-entry-check", on="done"]
 
   backlog     -> plan         [agent=reviewer, prompt="@skill:satelle-story-intent-review"] // intake gate: a story must pass intent-review to enter plan
   plan        -> in_progress  [agent=reviewer, prompt="@skill:satelle-story-plan-review"]
