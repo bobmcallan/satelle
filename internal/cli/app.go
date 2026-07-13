@@ -42,6 +42,15 @@ func openAppForCmd(cmd *cobra.Command) error {
 		_ = a.Close()
 		return derr
 	}
+	// Scaffold drift (sty_ac25b787): deployed harness wrappers behind the binary
+	// fail closed for store-backed verbs — hash mechanism, not ### Breaking.
+	// `status` is exempt so it can REPORT the drift (AC3); heal is still init.
+	if cmd.Name() != "status" {
+		if derr := refuseScaffoldDrift(a.RepoRoot); derr != nil {
+			_ = a.Close()
+			return derr
+		}
+	}
 	// Broken configuration refuses to run (sty_d0d6bb67): an initialized repo
 	// (this command reached the store, so .satelle exists) must carry a loadable
 	// agents layer — no silent fallback to compiled defaults. `satelle init` is

@@ -52,6 +52,17 @@ func init() {
 				}
 				fmt.Fprintf(w, "indexed %s\t%d  (%s)\n", kind, n, dirs[kind])
 			}
+			// Scaffold drift (sty_ac25b787): status is exempt from fail-closed refuse
+			// so it can report here. Clean when no harness scaffolding is deployed
+			// or all wrappers match this binary's canonical bodies.
+			if findings := DetectScaffoldDrift(a.RepoRoot); len(findings) == 0 {
+				fmt.Fprintf(w, "scaffold\tclean\n")
+			} else {
+				fmt.Fprintf(w, "scaffold\tDRIFT (%d) — run satelle init\n", len(findings))
+				for _, f := range findings {
+					fmt.Fprintf(w, "  scaffold.%s\t[%s] %s\n", f.Path, f.Kind, f.Detail)
+				}
+			}
 			return w.Flush()
 		},
 	})

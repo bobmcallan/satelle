@@ -848,6 +848,15 @@ func runHookContext(out, stderr io.Writer) error {
 			"satelle hook context: always-content exceeded %d bytes and was truncated — trim an always-tagged doc or drop its %s tag\n",
 			alwaysContextCeiling, sessionTag)
 	}
+	// Scaffold drift (sty_ac25b787): fail-open warning — never blocks SessionStart.
+	// Names `satelle init` as the heal. DetectScaffoldDrift is pure comparison.
+	if warn := formatScaffoldDriftWarning(DetectScaffoldDrift(a.RepoRoot)); warn != "" {
+		if content == "" {
+			content = warn
+		} else {
+			content = warn + "\n\n" + content
+		}
+	}
 	// Seat inject: prefer a live seat; else name any non-live residue so the agent
 	// can release a stuck holder. Fail open — a seat-read error injects nothing.
 	content = appendSeatToContext(content, sessionSeatBlock(a), alwaysContextCeiling)
