@@ -7,6 +7,11 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
+## [0.0.221] - 2026-07-13
+### Fixed
+- `satelle changelog` and require-init prefer the CHANGELOG **embedded in the binary** — disk is build input only, so downstream repos never get empty false negatives (sty_b5fa838a)
+- Integration tests use free listen ports for multi-serve and browser hermetic servers (sty_b5fa838a)
+
 ## [0.0.220] - 2026-07-13
 ### Fixed
 - Browser integration tests allocate a free port in `serveRepo` so a leftover satelle process cannot answer healthz for the wrong repo (sty_23aae116)
