@@ -730,6 +730,22 @@ func emitPreToolUseDeny(out io.Writer, harness, reason string) error {
 	return nil
 }
 
+// hookInfraUnavailableReason is the model-visible text when the scaffolded
+// PreToolUse wrapper cannot run satelle at all (sty_c75c73ed). It must never
+// look like a policy denial — the agent needs to diagnose PATH/binary and run
+// `satelle init` to heal, which requires Bash not to be bricked.
+const hookInfraUnavailableReason = "satelle unavailable in this hook shell env — INFRASTRUCTURE failure, NOT a policy denial. " +
+	"The satelle binary could not be resolved or did not produce a decision. " +
+	"Try: which satelle; satelle version; satelle init. Non-mutating bash stays allowed so you can diagnose."
+
+// infraDenyJSON returns the harness-correct PreToolUse deny JSON for an
+// infrastructure failure (same shape as a real satelle deny — sty_5e4bc568).
+func infraDenyJSON(harness string) string {
+	var buf strings.Builder
+	_ = emitPreToolUseDeny(&buf, harness, hookInfraUnavailableReason)
+	return strings.TrimSpace(buf.String())
+}
+
 // exemptTarget reports whether an edit to target is exempt from the engaged-story
 // gate: it resolves under a configured [gate] edit_exempt_paths prefix. Exemption
 // is CONFIGURATION, not code (the constitution: configuration over code) — the
@@ -1169,8 +1185,10 @@ func gateWiredInSettings(repoRoot string) (wired bool, checked bool) {
 }
 
 // settingsWiresGate reports whether a hook-settings JSON wires a PreToolUse
-// Edit-matcher hook that invokes `satelle hook gate`. Pure over the bytes so it
-// is unit-tested directly; a parse failure returns false (no confident wire).
+// Edit-matcher hook that invokes the edit gate. Marker is "hook gate" so both
+// the legacy one-liner and the fail-visible wrapper (`b hook gate`,
+// sty_c75c73ed) count as wired. Pure over the bytes so it is unit-tested
+// directly; a parse failure returns false (no confident wire).
 func settingsWiresGate(raw []byte) bool {
 	var s struct {
 		Hooks struct {
@@ -1190,7 +1208,7 @@ func settingsWiresGate(raw []byte) bool {
 			continue
 		}
 		for _, h := range e.Hooks {
-			if strings.Contains(h.Command, "satelle hook gate") {
+			if strings.Contains(h.Command, "hook gate") {
 				return true
 			}
 		}

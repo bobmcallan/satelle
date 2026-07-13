@@ -583,7 +583,7 @@ func TestAnyEngagedFailClosedNoDOT(t *testing.T) {
 // TestSettingsWiresGate: a settings JSON counts as wiring the edit gate only when
 // a PreToolUse Edit-matcher hook invokes `satelle hook gate`.
 func TestSettingsWiresGate(t *testing.T) {
-	wired := `{"hooks":{"PreToolUse":[{"matcher":"Edit|Write","hooks":[{"type":"command","command":"PATH=x satelle hook gate || exit 2"}]}]}}`
+	wired := `{"hooks":{"PreToolUse":[{"matcher":"Edit|Write","hooks":[{"type":"command","command":"sh -c '#satelle-failvisible\nb hook gate'"}]}]}}`
 	if !settingsWiresGate([]byte(wired)) {
 		t.Errorf("wired settings should report gate wired")
 	}
@@ -612,7 +612,7 @@ func TestGateWiredInSettings(t *testing.T) {
 
 	wiredRepo := t.TempDir()
 	mkfile(t, filepath.Join(wiredRepo, ".claude", "settings.json"),
-		`{"hooks":{"PreToolUse":[{"matcher":"Edit|Write|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"satelle hook gate || exit 2"}]}]}}`)
+		`{"hooks":{"PreToolUse":[{"matcher":"Edit|Write|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"sh -c '#satelle-failvisible b hook gate'"}]}]}}`)
 	if wired, checked := gateWiredInSettings(wiredRepo); !wired || !checked {
 		t.Errorf("wired .claude → want (true,true), got (%v,%v)", wired, checked)
 	}
