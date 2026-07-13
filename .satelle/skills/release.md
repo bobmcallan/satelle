@@ -31,7 +31,10 @@ You are the **executor** for the merged `release` step (in-loop on the driving s
    - Put any breaking change under a `### Breaking` subsection — that is the marker
      require-init and post-upgrade heal key on.
    - Summarise Added / Changed / Fixed bullets ending with the story id in parens.
-   - `git add CHANGELOG.md` with the slice.
+   - **Sync the embed** (sty_b5fa838a): `cp CHANGELOG.md internal/verb/embedded/CHANGELOG.md`
+     so the consumer channel ships with the binary. Root file is build input; the embed
+     is what `satelle changelog` and require-init read.
+   - `git add CHANGELOG.md internal/verb/embedded/CHANGELOG.md` with the slice.
 4. **Commit.** A conventional-commit subject ending with the story id in parens, e.g. `feat(web): add the X view (sty_1234abcd)`. **No AI attribution** — no `Co-Authored-By`, no "generated with" trailer (this repo's convention). Verify the commit captured the intended files (`git show --stat HEAD`).
 
 ## 2. Push, then install locally (dogfood), then capture CI evidence

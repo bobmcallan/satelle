@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,14 +13,18 @@ import (
 	"github.com/bobmcallan/satelle/internal/buildinfo"
 )
 
-// embeddedChangelog is the binary-shipped CHANGELOG so a downstream repo
-// without its own file still has breaking-marker text for the require-init
-// drift gate (repo-agnostic).
+// embeddedChangelog is the binary-shipped CHANGELOG — the only consumer channel
+// for `satelle changelog` and the require-init drift gate (sty_b5fa838a).
+// Downstream repos never have satelle's source tree; the installed binary is the
+// sole satelle artifact. Repo-root CHANGELOG.md is build input (copied into
+// this embed at release), not a runtime source for consumers.
 //
 //go:embed embedded/CHANGELOG.md
 var embeddedChangelog string
 
 // changelogPath is the well-known file at the repo root (overrideable in tests).
+// Used only as a DEV build-input fallback when the embed is empty (broken build
+// tree); product paths always prefer embeddedChangelog.
 var changelogPath = func() string {
 	// Prefer walking up from CWD for a CHANGELOG.md (repo root).
 	wd, err := os.Getwd()
@@ -40,18 +45,23 @@ var changelogPath = func() string {
 	}
 }
 
-// readChangelogBody returns on-disk CHANGELOG.md bytes, or the embedded
-// fallback when the file is absent (downstream repos).
+// readChangelogBody returns the shipped changelog. Prefer the embedded bytes
+// always (consumer channel). Fall back to on-disk only when embed is empty so
+// a local `go run` against an incomplete tree can still develop; absence of
+// both is an error (never silent empty success — sty_b5fa838a AC3).
 func readChangelogBody() ([]byte, error) {
-	path := changelogPath()
-	b, err := os.ReadFile(path)
-	if err == nil {
-		return b, nil
-	}
-	if embeddedChangelog != "" {
+	if strings.TrimSpace(embeddedChangelog) != "" {
 		return []byte(embeddedChangelog), nil
 	}
-	return nil, err
+	path := changelogPath()
+	b, err := os.ReadFile(path)
+	if err == nil && strings.TrimSpace(string(b)) != "" {
+		return b, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("changelog unavailable: embedded empty and %s: %w", path, err)
+	}
+	return nil, fmt.Errorf("changelog unavailable: embedded and %s are both empty", path)
 }
 
 func init() {
@@ -95,8 +105,8 @@ func changelogInvoke(_ context.Context, raw json.RawMessage) (json.RawMessage, e
 
 	body, err := readChangelogBody()
 	if err != nil {
-		// No disk file and no embed: empty result, not an error.
-		return json.Marshal(ChangelogResult{From: from, To: to, Entries: []ChangelogEntry{}})
+		// AC3: absence is an error, never empty success (sty_b5fa838a).
+		return nil, err
 	}
 	all := parseChangelog(string(body))
 	var out []ChangelogEntry
