@@ -957,11 +957,11 @@ func TestDispatchExecutorRunsNamedBinding(t *testing.T) {
 		// a code-editing grant here would trip the edit-gate timing lock (a
 		// code-writer dispatched from a non-performing state), covered by
 		// TestDispatchExecutorCodeWriterFromNonPerformingRefused.
-		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Grep,Glob,Bash(satelle:*)", Model: "fable"}, true
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Grep,Glob,Bash(satelle:*)", Model: "fable"}, true
 	})
-	g.newRunner = func(harness string) (agentcli.Runner, error) {
-		if harness != "fake -p {system}" {
-			t.Errorf("runner built from %q, want the binding's harness", harness)
+	g.newRunner = func(cmd string) (agentcli.Runner, error) {
+		if cmd != "fake -p {system}" {
+			t.Errorf("runner built from %q, want the binding's command", cmd)
 		}
 		return r, nil
 	}
@@ -1020,7 +1020,7 @@ func TestDispatchExecutorDualPayloadArgvAndStdin(t *testing.T) {
 		if name != "architect" {
 			return config.AgentBinding{}, false
 		}
-		return config.AgentBinding{Harness: harness, Tools: "Read,Bash(satelle:*)"}, true
+		return config.AgentBinding{Command: harness, Tools: "Read,Bash(satelle:*)"}, true
 	})
 	// Real agentcli.RunnerFromCommand (default) — not a fakeRunner.
 	g.newRunner = agentcli.RunnerFromCommand
@@ -1069,7 +1069,7 @@ func TestDispatchExecutorAppliesBindingEnv(t *testing.T) {
 		"ANTHROPIC_AUTH_TOKEN": "sk-resolved",
 	}
 	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
-		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Bash(satelle:*)", Env: env}, true
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Bash(satelle:*)", Env: env}, true
 	})
 	g.newRunner = func(string) (agentcli.Runner, error) { return r, nil }
 	if _, err := g.DispatchExecutor(context.Background(),
@@ -1092,7 +1092,7 @@ func TestDispatchExecutorAppliesBindingSettings(t *testing.T) {
 		"env": map[string]any{"ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic"},
 	}
 	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
-		return config.AgentBinding{Harness: "fake -p {system} --settings {settings}", Tools: "Read,Bash(satelle:*)", Settings: settings}, true
+		return config.AgentBinding{Command: "fake -p {system} --settings {settings}", Tools: "Read,Bash(satelle:*)", Settings: settings}, true
 	})
 	g.newRunner = func(string) (agentcli.Runner, error) { return r, nil }
 	if _, err := g.DispatchExecutor(context.Background(),
@@ -1150,7 +1150,7 @@ func TestDispatchExecutorRunFailureSurfaces(t *testing.T) {
 	docs := fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true}
 	g, _ := newEngine(t, "", docs)
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
-		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Bash(satelle:*)"}, true
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Bash(satelle:*)"}, true
 	})
 	g.newRunner = func(string) (agentcli.Runner, error) { return &fakeRunner{err: errFakeAgent}, nil }
 	res, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan")
@@ -1174,7 +1174,7 @@ func TestDispatchExecutorRefusesWithoutSatelleCLI(t *testing.T) {
 
 	// No Bash(satelle:*) → refused, and the agent is NOT run (got stays zero).
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
-		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Grep,Glob"}, true
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Grep,Glob"}, true
 	})
 	_, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan")
 	if err == nil || !strings.Contains(err.Error(), "Bash(satelle:*)") {
@@ -1186,7 +1186,7 @@ func TestDispatchExecutorRefusesWithoutSatelleCLI(t *testing.T) {
 
 	// With the grant → the agent runs.
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
-		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Bash(satelle:*)"}, true
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Bash(satelle:*)"}, true
 	})
 	if _, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan"); err != nil {
 		t.Fatalf("a granted binding should dispatch: %v", err)
@@ -1218,7 +1218,7 @@ func TestDispatchExecutorCodeWriterFromNonPerformingProceeds(t *testing.T) {
 	fr := &fakeRunner{out: "ok"}
 	g.newRunner = func(string) (agentcli.Runner, error) { return fr, nil }
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
-		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Edit,Write,Bash(satelle:*)"}, true
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Edit,Write,Bash(satelle:*)"}, true
 	})
 	res, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan")
 	if err != nil {
@@ -1245,7 +1245,7 @@ func TestDispatchExecutorCodeWriterFromPerformingProceeds(t *testing.T) {
 		if name != "coder" {
 			return config.AgentBinding{}, false
 		}
-		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Edit,Write,Bash(satelle:*)"}, true
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Edit,Write,Bash(satelle:*)"}, true
 	})
 	res, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "plan"}, "in_progress")
 	if err != nil {
@@ -1284,7 +1284,7 @@ func TestDispatchOnEnterAgentFromPerforming(t *testing.T) {
 			return config.AgentBinding{}, false
 		}
 		return config.AgentBinding{
-			Role: "agent", Harness: "fake -p {system}", Model: "opus",
+			Role: "agent", Command: "fake -p {system}", Model: "opus",
 			Tools: "Read,Write,Edit,Bash(satelle:*)",
 		}, true
 	})
@@ -1323,7 +1323,7 @@ func TestDispatchOnEnterAgentCodeWriterFromNonPerformingProceeds(t *testing.T) {
 	fr := &fakeRunner{out: "triaged"}
 	g.newRunner = func(string) (agentcli.Runner, error) { return fr, nil }
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
-		return config.AgentBinding{Role: "agent", Harness: "fake -p {system}", Tools: "Read,Edit,Write,Bash(satelle:*)"}, true
+		return config.AgentBinding{Role: "agent", Command: "fake -p {system}", Tools: "Read,Edit,Write,Bash(satelle:*)"}, true
 	})
 	res, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "parked")
 	if err != nil {
@@ -1344,7 +1344,7 @@ func TestDispatchPayloadCarriesIdNotDocuments(t *testing.T) {
 	fr := &fakeRunner{out: "ok"}
 	g.newRunner = func(string) (agentcli.Runner, error) { return fr, nil }
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
-		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Bash(satelle:*)"}, true
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Bash(satelle:*)"}, true
 	})
 	if _, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_pull1", Status: "backlog", Title: "T"}, "plan"); err != nil {
 		t.Fatal(err)
@@ -1393,7 +1393,7 @@ func TestDispatchExecutorWiresLiveSink(t *testing.T) {
 	g.SetLogDir(dir, logfile.Config{})
 	r := &streamingFakeRunner{lines: []string{"first line\n", "second line\n"}}
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
-		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Bash(satelle:*)"}, true
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Bash(satelle:*)"}, true
 	})
 	g.newRunner = func(string) (agentcli.Runner, error) { return r, nil }
 
@@ -1426,7 +1426,7 @@ func TestDispatchExecutorNoSinkWithoutLogDir(t *testing.T) {
 	g, _ := newEngine(t, "", docs)
 	r := &fakeRunner{out: "ok"}
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
-		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Bash(satelle:*)"}, true
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Bash(satelle:*)"}, true
 	})
 	g.newRunner = func(string) (agentcli.Runner, error) { return r, nil }
 	if _, err := g.DispatchExecutor(context.Background(),
@@ -2227,7 +2227,7 @@ func TestRetrospectDispatchesNamedAgent(t *testing.T) {
 		if name != "retrospective" {
 			return config.AgentBinding{}, false
 		}
-		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Bash(satelle:*)", Model: "glm-4.6"}, true
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Bash(satelle:*)", Model: "glm-4.6"}, true
 	})
 	g.newRunner = func(string) (agentcli.Runner, error) { return r, nil }
 	res, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1", Title: "T", Status: "done"})
@@ -2260,7 +2260,7 @@ func TestRetrospectMissingBindingErrors(t *testing.T) {
 func TestRetrospectRequiresSatelleCLI(t *testing.T) {
 	g, _ := newEngine(t, "", fakeDocs{skillBody: "x", skillFound: true})
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
-		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Grep,Glob"}, true
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Grep,Glob"}, true
 	})
 	g.newRunner = func(string) (agentcli.Runner, error) { return &fakeRunner{}, nil }
 	if _, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1"}); err == nil {
@@ -2444,7 +2444,7 @@ func TestDispatchExecutor_honorsBindingTimeout(t *testing.T) {
 		if name != "architect" {
 			return config.AgentBinding{}, false
 		}
-		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Grep,Glob,Bash(satelle:*)", Model: "fable", Timeout: "1ms"}, true
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Grep,Glob,Bash(satelle:*)", Model: "fable", Timeout: "1ms"}, true
 	})
 	g.newRunner = func(string) (agentcli.Runner, error) { return &blockingRunner{}, nil }
 
@@ -2473,7 +2473,7 @@ func TestDispatchExecutor_recordsFailureTelemetry(t *testing.T) {
 		if name != "architect" {
 			return config.AgentBinding{}, false
 		}
-		return config.AgentBinding{Harness: "fake -p {system}", Tools: "Read,Grep,Glob,Bash(satelle:*)", Model: "fable"}, true
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Grep,Glob,Bash(satelle:*)", Model: "fable"}, true
 	})
 	g.newRunner = func(string) (agentcli.Runner, error) {
 		return &fakeRunner{err: errors.New("agentcli: claude: signal: killed")}, nil
