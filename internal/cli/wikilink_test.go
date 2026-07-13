@@ -80,3 +80,16 @@ func TestAuditWikilinksRepoAgnostic(t *testing.T) {
 		t.Error("wikilink.go must not embed this-repo story ids")
 	}
 }
+
+func TestEmbeddedWikilinksResolve(t *testing.T) {
+	// Every [[ref]] in embedded defaults must resolve against the embedded
+	// catalog alone (fresh-repo path with no on-disk substrate).
+	embedded := config.EmbeddedDefaults()
+	// Virtual dataDir with only constitution empty — catalog is embedded-only
+	// plus constitution aliases.
+	dir := t.TempDir()
+	probs := auditWikilinks(dir, embedded)
+	if len(probs) > 0 {
+		t.Fatalf("embedded substrate has dangling wikilinks:\n%s", strings.Join(probs, "\n"))
+	}
+}
