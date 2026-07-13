@@ -7,7 +7,7 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
-## [Unreleased]
+## [0.0.219] - 2026-07-13
 
 ### Breaking
 - `satelle install` removed — use `satelle init` (collided with `service install`)
