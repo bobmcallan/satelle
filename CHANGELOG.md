@@ -7,6 +7,11 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
+## [0.0.218] - 2026-07-13
+
+### Added
+- CHANGELOG.md + `satelle changelog` verb; release fails closed without an entry (sty_f52ba0c3)
+
 ## [0.0.217] - 2026-07-13
 
 ### Added
