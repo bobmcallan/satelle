@@ -322,36 +322,45 @@ func agentGuidance(repoRoot string) []string {
 	}
 }
 
-// failVisibleMarker is the stable substring that identifies a PreToolUse
-// command upgraded to the fail-visible wrapper (sty_c75c73ed). Used by heal
-// paths and tests so the upgrade is idempotent.
+// failVisibleMarker is the stable substring that identifies a fail-visible
+// PreToolUse wrapper (sty_c75c73ed). Lives in the script body under
+// .satelle/hooks/ (sty_adfb9862); heal paths also match legacy inline forms.
 const failVisibleMarker = "#satelle-failvisible"
 
-// renderHookCommand builds the fail-visible PreToolUse wrapper for harness
-// ("claude"|"grok") and sub ("gate"|"commitgate") — sty_c75c73ed.
+// hookScriptRel is the repo-relative path of a fail-visible PreToolUse wrapper
+// script (sty_adfb9862). Harness settings command strings point here with no
+// shell $ tokens — Grok pre-validates $VAR in the command string as required
+// env vars and refuses to run the hook when they are unset.
+func hookScriptRel(harness, sub string) string {
+	return ".satelle/hooks/pretooluse-" + sub + "-" + harness + ".sh"
+}
+
+// renderHookCommand returns a $-free harness command that runs the scaffolded
+// wrapper script. Semantics of the wrapper itself are in failVisibleScriptBody.
+func renderHookCommand(harness, sub string) string {
+	return "sh " + hookScriptRel(harness, sub)
+}
+
+// failVisibleScriptBody is the POSIX shell body written to hookScriptRel.
 //
 // The wrapper:
 //  1. Resolves satelle from $HOME/.local/bin/satelle → .satelle/satelle → PATH
 //  2. Runs `satelle hook <sub>`, captures stdout
-//  3. Re-emits satelle's deny JSON when present (AC2)
+//  3. Re-emits satelle's deny JSON when present
 //  4. On infra failure (no binary / empty stdout + non-zero): emits a static
-//     harness-correct deny JSON (AC3) — never a bare exit-2
-//  5. For commitgate only: non-mutating bash fails OPEN on infra failure so the
-//     agent can diagnose and run satelle init (AC4); commit/push fails closed
-//     with the infra reason
+//     harness-correct deny JSON — never a bare exit-2
+//  5. For commitgate only: non-mutating bash fails OPEN on infra failure;
+//     commit/push fails closed with the infra reason
 //
-// Exit 2 always pairs with JSON on a block path. No absolute machine path is
-// baked in — multi-candidate resolution keeps settings portable (AC1).
-func renderHookCommand(harness, sub string) string {
+// $ variables are fine HERE (script file). They must NOT appear in the harness
+// settings command string (sty_adfb9862). No absolute machine paths.
+func failVisibleScriptBody(harness, sub string) string {
 	infra := infraDenyJSON(harness)
-	// Escape for single-quoted shell string: ' → '\''
 	escJSON := strings.ReplaceAll(infra, `'`, `'\''`)
-	// commitgate classifies commit/push in the shell fallback; gate always denies
-	// closed-with-reason on infra failure (edits have no fail-open path — Bash is
-	// the escape hatch).
-	var script string
+	var body string
 	if sub == "commitgate" {
-		script = fmt.Sprintf(`%s
+		body = fmt.Sprintf(`#!/bin/sh
+%s
 b=""; for c in "$HOME/.local/bin/satelle" ".satelle/satelle" satelle; do
   if [ -x "$c" ]; then b="$c"; break; fi
   if command -v "$c" >/dev/null 2>&1; then b=$(command -v "$c"); break; fi
@@ -367,7 +376,8 @@ if [ -z "$o" ]; then docase; fi
 exit 2
 `, failVisibleMarker, escJSON)
 	} else {
-		script = fmt.Sprintf(`%s
+		body = fmt.Sprintf(`#!/bin/sh
+%s
 b=""; for c in "$HOME/.local/bin/satelle" ".satelle/satelle" satelle; do
   if [ -x "$c" ]; then b="$c"; break; fi
   if command -v "$c" >/dev/null 2>&1; then b=$(command -v "$c"); break; fi
@@ -382,13 +392,38 @@ if [ -z "$o" ]; then printf '%%s\n' "$infra"; fi
 exit 2
 `, failVisibleMarker, escJSON)
 	}
-	return "sh -c " + shellSingleQuote(script)
+	return body
 }
 
-// shellSingleQuote wraps s in single quotes for POSIX sh -c, escaping any
-// embedded single quotes.
-func shellSingleQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, `'`, `'\''`) + "'"
+// writeHookScripts materialises fail-visible PreToolUse wrappers under
+// .satelle/hooks/ for both harnesses (repo-relative paths, no absolute machine
+// paths). Always refreshes bodies so re-init heals stale script content.
+func writeHookScripts(repoRoot string) error {
+	dir := filepath.Join(repoRoot, ".satelle", "hooks")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("init: mkdir %s: %w", dir, err)
+	}
+	for _, harness := range []string{"claude", "grok"} {
+		for _, sub := range []string{"gate", "commitgate"} {
+			rel := hookScriptRel(harness, sub)
+			path := filepath.Join(repoRoot, filepath.FromSlash(rel))
+			body := failVisibleScriptBody(harness, sub)
+			if prev, err := os.ReadFile(path); err == nil && string(prev) == body {
+				continue
+			}
+			if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+				return fmt.Errorf("init: write %s: %w", path, err)
+			}
+		}
+	}
+	return nil
+}
+
+// isScriptFormHookCommand reports whether cmd is already the $-free script form
+// for this harness/sub (sty_adfb9862).
+func isScriptFormHookCommand(cmd, harness, sub string) bool {
+	want := renderHookCommand(harness, sub)
+	return strings.TrimSpace(cmd) == want
 }
 
 // buildClaudeHookSettings returns the .claude/settings.json scaffold bytes.
@@ -731,16 +766,20 @@ func hookEventHasMarker(event any, marker string) bool {
 // ensureClaudeHooks writes .claude/settings.json with the process hooks when
 // absent, and RECONCILES known-retired satelle hook commands in an existing one
 // (sty_6a919dff) — the user-owned file is otherwise preserved byte-for-byte.
-// Also upgrades legacy bare `|| exit 2` gate wrappers to the fail-visible form
-// (sty_c75c73ed). Returns whether it created the file and any applied updates.
+// Also upgrades legacy inline / bare-exit-2 PreToolUse wrappers to the $-free
+// script-file form (sty_c75c73ed, sty_adfb9862). Returns whether it created the
+// file and any applied updates.
 func ensureClaudeHooks(repoRoot string) (bool, []string, error) {
+	if err := writeHookScripts(repoRoot); err != nil {
+		return false, nil, err
+	}
 	dir := filepath.Join(repoRoot, ".claude")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return false, nil, fmt.Errorf("init: mkdir %s: %w", dir, err)
 	}
 	path := filepath.Join(dir, "settings.json")
 	if _, err := os.Stat(path); err == nil {
-		updated, herr := healExistingHookFile(path, "claude")
+		updated, herr := healExistingHookFile(path, "claude", repoRoot)
 		if herr != nil {
 			return false, nil, herr
 		}
@@ -758,13 +797,16 @@ func ensureClaudeHooks(repoRoot string) (bool, []string, error) {
 // known-retired satelle commands in an existing satelle-owned file. Other files
 // under .grok/hooks/ are never touched. Returns created + applied updates.
 func ensureGrokHooks(repoRoot string) (bool, []string, error) {
+	if err := writeHookScripts(repoRoot); err != nil {
+		return false, nil, err
+	}
 	dir := filepath.Join(repoRoot, ".grok", "hooks")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return false, nil, fmt.Errorf("init: mkdir %s: %w", dir, err)
 	}
 	path := filepath.Join(repoRoot, filepath.FromSlash(grokHooksRel))
 	if _, err := os.Stat(path); err == nil {
-		updated, herr := healExistingHookFile(path, "grok")
+		updated, herr := healExistingHookFile(path, "grok", repoRoot)
 		if herr != nil {
 			return false, nil, herr
 		}
@@ -781,7 +823,10 @@ func ensureGrokHooks(repoRoot string) (bool, []string, error) {
 // healExistingHookFile applies reconcile + reinforcement + fail-visible upgrade
 // to an existing hook settings file. Returns the list of human-readable updates
 // (empty when nothing changed).
-func healExistingHookFile(path, harness string) ([]string, error) {
+func healExistingHookFile(path, harness, repoRoot string) ([]string, error) {
+	if err := writeHookScripts(repoRoot); err != nil {
+		return nil, err
+	}
 	var updated []string
 	renames, err := reconcileHookFile(path)
 	if err != nil {
@@ -800,25 +845,21 @@ func healExistingHookFile(path, harness string) ([]string, error) {
 		return nil, fmt.Errorf("init: fail-visible upgrade %s: %w", path, err)
 	}
 	if n > 0 {
-		updated = append(updated, fmt.Sprintf("upgraded %d PreToolUse hook(s) to fail-visible", n))
+		updated = append(updated, fmt.Sprintf("upgraded %d PreToolUse hook(s) to script-file form", n))
 	}
 	return updated, nil
 }
 
-// upgradeFailVisibleHooks rewrites legacy bare `… hook gate||commitgate || exit 2`
-// PreToolUse commands to the fail-visible wrapper (sty_c75c73ed). Idempotent:
-// commands already carrying failVisibleMarker are left alone. Returns the number
-// of commands upgraded.
+// upgradeFailVisibleHooks rewrites legacy PreToolUse gate/commitgate commands
+// to the $-free script-file form (sty_adfb9862). Upgrades:
+//   - bare `… hook gate||commitgate || exit 2`
+//   - inline `sh -c '…#satelle-failvisible…$c…'` wrappers
+//
+// Idempotent when already `sh .satelle/hooks/pretooluse-<sub>-<harness>.sh`.
 func upgradeFailVisibleHooks(path, harness string) (int, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
-	}
-	if strings.Contains(string(raw), failVisibleMarker) &&
-		!strings.Contains(string(raw), "|| exit 2") {
-		// Fully upgraded; nothing to do. (A file may mix markers after partial
-		// edits — still scan below when || exit 2 remains.)
-		return 0, nil
 	}
 	var root map[string]any
 	if err := json.Unmarshal(raw, &root); err != nil {
@@ -848,17 +889,11 @@ func upgradeFailVisibleHooks(path, harness string) (int, error) {
 				continue
 			}
 			cmd, _ := hm["command"].(string)
-			if strings.Contains(cmd, failVisibleMarker) {
+			sub := legacyHookSub(cmd)
+			if sub == "" {
 				continue
 			}
-			// Legacy forms: bare `|| exit 2` with hook gate or commitgate.
-			var sub string
-			switch {
-			case strings.Contains(cmd, "hook gate") && strings.Contains(cmd, "|| exit 2"):
-				sub = "gate"
-			case strings.Contains(cmd, "hook commitgate") && strings.Contains(cmd, "|| exit 2"):
-				sub = "commitgate"
-			default:
+			if isScriptFormHookCommand(cmd, harness, sub) {
 				continue
 			}
 			hm["command"] = renderHookCommand(harness, sub)
@@ -878,6 +913,19 @@ func upgradeFailVisibleHooks(path, harness string) (int, error) {
 		return 0, err
 	}
 	return n, nil
+}
+
+// legacyHookSub returns "gate" or "commitgate" when cmd is a satelle PreToolUse
+// gate command that is not yet (or not only) an unrelated shell snippet.
+func legacyHookSub(cmd string) string {
+	switch {
+	case strings.Contains(cmd, "hook commitgate") || strings.Contains(cmd, "pretooluse-commitgate-"):
+		return "commitgate"
+	case strings.Contains(cmd, "hook gate") || strings.Contains(cmd, "pretooluse-gate-"):
+		return "gate"
+	default:
+		return ""
+	}
 }
 
 // scaffoldToml is the documented config a fresh init writes. Every key is

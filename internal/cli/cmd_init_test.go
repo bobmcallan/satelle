@@ -588,17 +588,14 @@ func TestEnsureClaudeHooksIdempotent(t *testing.T) {
 		t.Fatalf("settings not written: %v", err)
 	}
 	for _, want := range []string{
-		failVisibleMarker,
-		"$HOME/.local/bin/satelle",
-		"hook gate",
-		"hook commitgate",
+		".satelle/hooks/pretooluse-gate-claude.sh",
+		".satelle/hooks/pretooluse-commitgate-claude.sh",
 		"PATH=$HOME/.local/bin:$PATH satelle hook prompt",
 		"PATH=$HOME/.local/bin:$PATH satelle hook stopcheck",
 		"UserPromptSubmit",
 		"Stop",
 		"satelle hook context",
 		"Edit|Write",
-		"policy denial",
 	} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("settings.json missing %q", want)
@@ -606,6 +603,12 @@ func TestEnsureClaudeHooksIdempotent(t *testing.T) {
 	}
 	if strings.Contains(string(b), "|| exit 2") {
 		t.Errorf("settings must not use bare '|| exit 2'")
+	}
+	if strings.Contains(string(b), "sh -c ") {
+		t.Errorf("settings must not use inline sh -c PreToolUse")
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".satelle", "hooks", "pretooluse-gate-claude.sh")); err != nil {
+		t.Errorf("gate script not written: %v", err)
 	}
 	// An existing file that LACKS the reinforcement hooks is HEALED, not left
 	// ungated (sty_949e8739): prompt/stopcheck are appended and other keys are

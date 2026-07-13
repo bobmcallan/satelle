@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,11 +110,8 @@ func TestEnsureGrokHooksCreateReconcileIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		failVisibleMarker,
-		"$HOME/.local/bin/satelle",
-		".satelle/satelle",
-		"hook gate",
-		"hook commitgate",
+		".satelle/hooks/pretooluse-gate-grok.sh",
+		".satelle/hooks/pretooluse-commitgate-grok.sh",
 		"PATH=$HOME/.local/bin:$PATH satelle hook prompt",
 		"PATH=$HOME/.local/bin:$PATH satelle hook stopcheck",
 		"UserPromptSubmit",
@@ -120,14 +119,26 @@ func TestEnsureGrokHooksCreateReconcileIdempotent(t *testing.T) {
 		"search_replace",
 		"run_terminal_command",
 		"satelle reindex",
-		"policy denial",
 	} {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("scaffold missing %q:\n%s", want, body)
 		}
 	}
+	if strings.Contains(preToolUseCommands(string(body)), "$") {
+		t.Errorf("PreToolUse must be $-free (sty_adfb9862):\n%s", body)
+	}
 	if strings.Contains(string(body), "|| exit 2") {
 		t.Errorf("scaffold must not use bare '|| exit 2' (sty_c75c73ed):\n%s", body)
+	}
+	// Script bodies hold the multi-candidate fail-visible wrapper.
+	script, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(hookScriptRel("grok", "gate"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{failVisibleMarker, "$HOME/.local/bin/satelle", "policy denial"} {
+		if !strings.Contains(string(script), want) {
+			t.Errorf("script missing %q:\n%s", want, script)
+		}
 	}
 	// Second pass: no create, no reconcile.
 	added, updated, err = ensureGrokHooks(repo)
@@ -373,24 +384,47 @@ func TestGrokNotDetectedSkipsCompatConfig(t *testing.T) {
 }
 
 // TestHookScaffoldFailVisible asserts PreToolUse gate/commitgate use the
-// fail-visible multi-candidate wrapper (sty_c75c73ed AC1/AC3) — not bare
-// `|| exit 2`. SessionStart stays simple.
+// $-free script-file command (sty_adfb9862) and that script bodies carry the
+// multi-candidate fail-visible wrapper (sty_c75c73ed). SessionStart stays simple.
 func TestHookScaffoldFailVisible(t *testing.T) {
+	repo := t.TempDir()
+	if err := writeHookScripts(repo); err != nil {
+		t.Fatal(err)
+	}
 	for name, body := range map[string]string{
 		"claude": string(buildClaudeHookSettings()),
 		"grok":   string(buildGrokHookSettings()),
 	} {
-		if !strings.Contains(body, failVisibleMarker) {
-			t.Errorf("%s scaffold missing fail-visible marker", name)
+		// AC1: harness command strings contain NO $ variable references.
+		if strings.Contains(body, "$") {
+			// SessionStart/prompt may still use $HOME in PATH=… for prompt/stopcheck
+			// — only PreToolUse gate/commitgate must be $-free. Extract PreToolUse.
+			if strings.Contains(preToolUseCommands(body), "$") {
+				t.Errorf("%s PreToolUse command still has $ tokens:\n%s", name, body)
+			}
 		}
-		if !strings.Contains(body, "$HOME/.local/bin/satelle") || !strings.Contains(body, ".satelle/satelle") {
-			t.Errorf("%s scaffold missing multi-candidate probe:\n%s", name, body)
+		if !strings.Contains(body, ".satelle/hooks/pretooluse-gate-"+name+".sh") {
+			t.Errorf("%s missing gate script command:\n%s", name, body)
+		}
+		if !strings.Contains(body, ".satelle/hooks/pretooluse-commitgate-"+name+".sh") {
+			t.Errorf("%s missing commitgate script command:\n%s", name, body)
 		}
 		if strings.Contains(body, "|| exit 2") {
 			t.Errorf("%s must not use bare '|| exit 2':\n%s", name, body)
 		}
-		if !strings.Contains(body, "policy denial") {
-			t.Errorf("%s missing infra deny reason:\n%s", name, body)
+		if strings.Contains(body, "sh -c ") {
+			t.Errorf("%s must not use inline sh -c wrapper:\n%s", name, body)
+		}
+		// Script body holds marker + multi-candidate probe (not settings.json).
+		script := filepath.Join(repo, filepath.FromSlash(hookScriptRel(name, "gate")))
+		sb, err := os.ReadFile(script)
+		if err != nil {
+			t.Fatalf("%s script: %v", name, err)
+		}
+		for _, want := range []string{failVisibleMarker, "$HOME/.local/bin/satelle", ".satelle/satelle", "policy denial"} {
+			if !strings.Contains(string(sb), want) {
+				t.Errorf("%s script missing %q:\n%s", name, want, sb)
+			}
 		}
 		// SessionStart stays bare.
 		if strings.Contains(body, "PATH=$HOME/.local/bin:$PATH satelle reindex") {
@@ -399,18 +433,52 @@ func TestHookScaffoldFailVisible(t *testing.T) {
 	}
 }
 
-// TestFailVisibleWrapperShell: drive the real wrapper via sh -c for both
-// harness shapes (sty_c75c73ed AC3/AC4/AC5).
+// preToolUseCommands returns a best-effort concat of PreToolUse command strings
+// from a settings JSON body (test helper).
+func preToolUseCommands(body string) string {
+	var root map[string]any
+	if err := json.Unmarshal([]byte(body), &root); err != nil {
+		return body
+	}
+	hooks, _ := root["hooks"].(map[string]any)
+	if hooks == nil {
+		return ""
+	}
+	pre, _ := hooks["PreToolUse"].([]any)
+	var b strings.Builder
+	for _, g := range pre {
+		gm, ok := g.(map[string]any)
+		if !ok {
+			continue
+		}
+		hs, _ := gm["hooks"].([]any)
+		for _, h := range hs {
+			hm, ok := h.(map[string]any)
+			if !ok {
+				continue
+			}
+			fmt.Fprintln(&b, hm["command"])
+		}
+	}
+	return b.String()
+}
+
+// TestFailVisibleWrapperShell: drive the real script-file wrapper for both
+// harness shapes (sty_c75c73ed AC3/AC4/AC5, sty_adfb9862).
 func TestFailVisibleWrapperShell(t *testing.T) {
+	repo := t.TempDir()
+	if err := writeHookScripts(repo); err != nil {
+		t.Fatal(err)
+	}
 	// AC3: no binary → edit-gate emits infra deny JSON + exit 2.
 	for _, harness := range []string{"claude", "grok"} {
 		full := renderHookCommand(harness, "gate")
-		if !strings.HasPrefix(full, "sh -c ") {
-			t.Fatalf("expected sh -c prefix: %s", full)
+		if strings.Contains(full, "$") || strings.HasPrefix(full, "sh -c ") {
+			t.Fatalf("command must be $-free script form: %s", full)
 		}
-		// Run the whole "sh -c '…'" command string via the outer shell so quoting
-		// matches how the harness invokes it.
+		// Harness runs the command string from the repo root.
 		c := exec.Command("sh", "-c", full)
+		c.Dir = repo
 		c.Env = []string{"HOME=" + t.TempDir(), "PATH=/usr/bin:/bin"}
 		c.Stdin = strings.NewReader(`{"tool_input":{"file_path":"x.go"}}`)
 		var stdout, stderr bytes.Buffer
@@ -435,6 +503,7 @@ func TestFailVisibleWrapperShell(t *testing.T) {
 	for _, harness := range []string{"claude", "grok"} {
 		full := renderHookCommand(harness, "commitgate")
 		c := exec.Command("sh", "-c", full)
+		c.Dir = repo
 		c.Env = []string{"HOME=" + t.TempDir(), "PATH=/usr/bin:/bin"}
 		c.Stdin = strings.NewReader(`{"tool_input":{"command":"echo hello"}}`)
 		var stdout bytes.Buffer
@@ -443,6 +512,7 @@ func TestFailVisibleWrapperShell(t *testing.T) {
 			t.Errorf("%s commitgate echo hello must allow: %v out=%q", harness, err, stdout.String())
 		}
 		c = exec.Command("sh", "-c", full)
+		c.Dir = repo
 		c.Env = []string{"HOME=" + t.TempDir(), "PATH=/usr/bin:/bin"}
 		c.Stdin = strings.NewReader(`{"tool_input":{"command":"git commit -m x"}}`)
 		stdout.Reset()
@@ -493,11 +563,18 @@ func TestUpgradeFailVisibleHooks(t *testing.T) {
 		t.Fatalf("expected fail-visible upgrade notes, got %v", updated)
 	}
 	body, _ := os.ReadFile(path)
-	if !strings.Contains(string(body), failVisibleMarker) {
-		t.Fatalf("upgrade missing marker:\n%s", body)
+	if !strings.Contains(string(body), ".satelle/hooks/pretooluse-gate-claude.sh") {
+		t.Fatalf("upgrade missing script-form command:\n%s", body)
 	}
 	if strings.Contains(string(body), "|| exit 2") {
 		t.Fatalf("legacy || exit 2 still present:\n%s", body)
+	}
+	if strings.Contains(preToolUseCommands(string(body)), "$") {
+		t.Fatalf("PreToolUse still has $ after upgrade:\n%s", body)
+	}
+	// Script files materialised.
+	if _, err := os.Stat(filepath.Join(repo, filepath.FromSlash(hookScriptRel("claude", "gate")))); err != nil {
+		t.Fatalf("gate script not written: %v", err)
 	}
 	// Idempotent second pass.
 	_, updated2, err := ensureClaudeHooks(repo)
@@ -505,8 +582,61 @@ func TestUpgradeFailVisibleHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, u := range updated2 {
-		if strings.Contains(u, "fail-visible") {
+		if strings.Contains(u, "script-file") || strings.Contains(u, "fail-visible") {
 			t.Fatalf("second pass should not re-upgrade: %v", updated2)
+		}
+	}
+}
+
+// TestUpgradeInlineFailVisibleToScript heals the sty_c75c73ed inline sh -c
+// wrapper (with $ tokens) to the sty_adfb9862 script-file form.
+func TestUpgradeInlineFailVisibleToScript(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Minimal inline form (marker + $ + hook gate) as deployed pre-sty_adfb9862.
+	inline := `{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "sh -c '#satelle-failvisible\nb=\"\"; for c in \"$HOME/.local/bin/satelle\"; do :; done; satelle hook gate'" }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "sh -c '#satelle-failvisible\nsatelle hook commitgate'" }
+        ]
+      }
+    ]
+  }
+}
+`
+	if err := os.WriteFile(path, []byte(inline), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, updated, err := ensureClaudeHooks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated) == 0 {
+		t.Fatalf("expected script-file upgrade notes, got %v", updated)
+	}
+	body, _ := os.ReadFile(path)
+	if strings.Contains(string(body), "sh -c ") {
+		t.Fatalf("inline sh -c still present:\n%s", body)
+	}
+	if strings.Contains(preToolUseCommands(string(body)), "$") {
+		t.Fatalf("PreToolUse still has $:\n%s", body)
+	}
+	for _, sub := range []string{"gate", "commitgate"} {
+		want := renderHookCommand("claude", sub)
+		if !strings.Contains(string(body), want) {
+			t.Errorf("missing %q in:\n%s", want, body)
 		}
 	}
 }

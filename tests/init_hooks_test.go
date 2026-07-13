@@ -68,14 +68,11 @@ func TestInitScaffoldsMultiHarnessHooks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("grok hooks: %v", err)
 	}
-	// sty_c75c73ed: PreToolUse uses fail-visible multi-candidate wrapper, not bare || exit 2.
+	// sty_adfb9862: PreToolUse commands are $-free script paths; script bodies
+	// hold the fail-visible multi-candidate wrapper (sty_c75c73ed).
 	for _, want := range []string{
-		"#satelle-failvisible",
-		"$HOME/.local/bin/satelle",
-		".satelle/satelle",
-		"hook gate",
-		"hook commitgate",
-		"policy denial",
+		".satelle/hooks/pretooluse-gate-",
+		".satelle/hooks/pretooluse-commitgate-",
 		"satelle reindex",
 		"satelle hook context",
 	} {
@@ -89,6 +86,21 @@ func TestInitScaffoldsMultiHarnessHooks(t *testing.T) {
 	for _, body := range [][]byte{claudeBody, grokBody} {
 		if strings.Contains(string(body), "|| exit 2") {
 			t.Errorf("scaffold must not use bare '|| exit 2':\n%s", body)
+		}
+		if strings.Contains(string(body), "sh -c ") {
+			t.Errorf("scaffold must not use inline sh -c PreToolUse:\n%s", body)
+		}
+	}
+	for _, harness := range []string{"claude", "grok"} {
+		scriptPath := filepath.Join(repo, ".satelle", "hooks", "pretooluse-gate-"+harness+".sh")
+		sb, err := os.ReadFile(scriptPath)
+		if err != nil {
+			t.Fatalf("%s gate script: %v", harness, err)
+		}
+		for _, want := range []string{"#satelle-failvisible", "$HOME/.local/bin/satelle", "policy denial"} {
+			if !strings.Contains(string(sb), want) {
+				t.Errorf("%s script missing %q:\n%s", harness, want, sb)
+			}
 		}
 	}
 	for _, want := range []string{"search_replace", "run_terminal_command"} {

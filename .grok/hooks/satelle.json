@@ -4,7 +4,7 @@
       {
         "hooks": [
           {
-            "command": "sh -c '#satelle-failvisible\nb=\"\"; for c in \"$HOME/.local/bin/satelle\" \".satelle/satelle\" satelle; do\n  if [ -x \"$c\" ]; then b=\"$c\"; break; fi\n  if command -v \"$c\" \u003e/dev/null 2\u003e\u00261; then b=$(command -v \"$c\"); break; fi\ndone\np=$(cat)\ninfra='\\''{\"decision\":\"deny\",\"reason\":\"satelle unavailable in this hook shell env — INFRASTRUCTURE failure, NOT a policy denial. The satelle binary could not be resolved or did not produce a decision. Try: which satelle; satelle version; satelle init. Non-mutating bash stays allowed so you can diagnose.\"}'\\''\nif [ -z \"$b\" ]; then printf '\\''%s\\n'\\'' \"$infra\"; exit 2; fi\no=$(printf '\\''%s'\\'' \"$p\" | \"$b\" hook gate 2\u003e/dev/null); code=$?\nif [ -n \"$o\" ]; then printf '\\''%s\\n'\\'' \"$o\"; fi\nif [ \"$code\" -eq 0 ]; then exit 0; fi\nif [ -z \"$o\" ]; then printf '\\''%s\\n'\\'' \"$infra\"; fi\nexit 2\n'",
+            "command": "sh .satelle/hooks/pretooluse-gate-grok.sh",
             "type": "command"
           }
         ],
@@ -13,7 +13,7 @@
       {
         "hooks": [
           {
-            "command": "sh -c '#satelle-failvisible\nb=\"\"; for c in \"$HOME/.local/bin/satelle\" \".satelle/satelle\" satelle; do\n  if [ -x \"$c\" ]; then b=\"$c\"; break; fi\n  if command -v \"$c\" \u003e/dev/null 2\u003e\u00261; then b=$(command -v \"$c\"); break; fi\ndone\np=$(cat)\ninfra='\\''{\"decision\":\"deny\",\"reason\":\"satelle unavailable in this hook shell env — INFRASTRUCTURE failure, NOT a policy denial. The satelle binary could not be resolved or did not produce a decision. Try: which satelle; satelle version; satelle init. Non-mutating bash stays allowed so you can diagnose.\"}'\\''\ndocase(){ case \"$p\" in *git\\ commit*|*git\\ push*) printf '\\''%s\\n'\\'' \"$infra\"; exit 2;; *) exit 0;; esac; }\nif [ -z \"$b\" ]; then docase; fi\no=$(printf '\\''%s'\\'' \"$p\" | \"$b\" hook commitgate 2\u003e/dev/null); code=$?\nif [ -n \"$o\" ]; then printf '\\''%s\\n'\\'' \"$o\"; fi\nif [ \"$code\" -eq 0 ]; then exit 0; fi\nif [ -z \"$o\" ]; then docase; fi\nexit 2\n'",
+            "command": "sh .satelle/hooks/pretooluse-commitgate-grok.sh",
             "type": "command"
           }
         ],
