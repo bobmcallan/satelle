@@ -24,16 +24,52 @@ import (
 	"github.com/bobmcallan/satelle/internal/docindex"
 )
 
-// auditPlacement runs the four placement checks over dataDir (.satelle).
+// auditPlacement runs the placement checks over dataDir (.satelle).
 // embedded is typically config.EmbeddedDefaults(); constitution is the
 // already-read constitution body (may be empty). Returns problem strings;
-// empty means clean.
+// empty means clean. Includes unknown tag axes on principles.
 func auditPlacement(dataDir string, embedded []config.EmbeddedDefault, constitution string) []string {
 	var out []string
 	out = append(out, checkEmbeddedStamps(dataDir, embedded)...)
 	out = append(out, checkResidencyMarkers(dataDir)...)
 	out = append(out, checkPrincipleScope(dataDir)...)
+	out = append(out, checkUnknownTagAxes(dataDir)...)
 	out = append(out, checkResidentCeiling(dataDir, constitution)...)
+	return out
+}
+
+// legalPrincipleTagAxes is the whitelist of tag axes allowed on principles.
+// Residency uses principles:session; type:principle (or type:workflow etc.) is
+// the kind marker. Any other colon-axis (kind:, principles:global, …) is inert
+// or invented and must be flagged (init substrate analysis AC2).
+var legalPrincipleTagAxes = map[string]bool{
+	"type":       true,
+	"principles": true, // only principles:session is legal; value checked separately
+}
+
+// checkUnknownTagAxes flags principle tags whose axis (prefix before first `:`)
+// is outside the legalPrincipleTagAxes whitelist. PRINCIPLES-scoped only —
+// story/task tags freely use epic:/sprint:/order:.
+func checkUnknownTagAxes(dataDir string) []string {
+	var out []string
+	for _, path := range principleFiles(dataDir) {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		name := strings.TrimSuffix(filepath.Base(path), ".md")
+		for _, tag := range frontmatterTags(string(body)) {
+			axis, _, ok := strings.Cut(tag, ":")
+			if !ok {
+				continue // bare tag without axis — leave alone
+			}
+			if !legalPrincipleTagAxes[axis] {
+				out = append(out, fmt.Sprintf(
+					"principles/%s: unknown tag axis %q on tag %q (legal axes on principles: type, principles)",
+					name, axis, tag))
+			}
+		}
+	}
 	return out
 }
 

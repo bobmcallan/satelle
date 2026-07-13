@@ -78,6 +78,17 @@ func validateDeployment(out io.Writer, dataDir string) error {
 		fmt.Fprintf(out, "FAIL  workflows (consistency) — %s\n", p)
 	}
 
+	// Substrate analysis: placement/residency/tag-axis (fatal), unedited
+	// constitution + config drift (advisory). Print advisory WARN lines even when
+	// fatals will fail the init, so they stay visible.
+	repoRoot := filepath.Dir(dataDir)
+	if filepath.Base(dataDir) != config.DefaultDataDir {
+		// dataDir may be absolute ".../.satelle"; parent is the repo root.
+		repoRoot = filepath.Dir(dataDir)
+	}
+	defects := analyzeSubstrate(dataDir, repoRoot)
+	failed += reportSubstrateAnalysis(out, defects)
+
 	if failed > 0 {
 		return fmt.Errorf("init: the deployed system failed validation (%d problem(s)) — fix the reported files and re-run `satelle init`", failed)
 	}
