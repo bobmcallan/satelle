@@ -13,11 +13,9 @@ package tests
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -38,20 +36,6 @@ func findBrowser() string {
 	return ""
 }
 
-// freePort binds 127.0.0.1:0 and returns the OS-assigned free port. Callers must
-// not race another listener onto the same port between close and serve bind —
-// acceptable for hermetic local tests (same pattern as web.AllocPort).
-func freePort(t *testing.T) string {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("freePort: %v", err)
-	}
-	port := l.Addr().(*net.TCPAddr).Port
-	_ = l.Close()
-	return strconv.Itoa(port)
-}
-
 // serveRepo inits a temp repo, seeds it, starts `satelle serve` on a free port,
 // waits until healthy, and returns the project-page base URL + repo path.
 // Cleanup stops the server.
@@ -70,7 +54,7 @@ func serveRepo(t *testing.T, _ string) (string, string) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	stubReviewerAccept(t, repo) // baseline gates are active (sty_5b8bd8b2) — keep hermetic
-	port := freePort(t)
+	port := freeListenPort(t)
 	cmd := exec.Command(testBin, "serve", "--port", port)
 	cmd.Dir = repo
 	// Isolate the machine-wide registry so `serve` doesn't pick up unrelated repos
