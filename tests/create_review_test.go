@@ -166,9 +166,11 @@ Judge the draft; reply with one JSON object:
 // epics blocks creation — nothing persists.
 func TestCreateGateRejectsEpicAsFeature(t *testing.T) {
 	repo := t.TempDir()
-	mustRun(t, testBin, repo, "init")
-	// mustRun opts hermetic create-gate OFF; re-enable for this product check.
-	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"), "[review]\ngate_create = true\n")
+	// Use run (not mustRun) so hermetic create-gate opt-out does not flip the
+	// scaffold before we assert the product default.
+	if out, err := run(t, testBin, repo, "init"); err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
 
 	// Confirm init seeded gate_create = true in the committed scaffold.
 	cfg, err := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.toml"))
