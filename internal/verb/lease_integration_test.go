@@ -107,7 +107,8 @@ func TestLeaseAcquireBeforeStatusCommit(t *testing.T) {
 
 	// Slow gater blocks A on backlog→plan long enough for B to race.
 	done := make(chan struct{})
-	verb.SetTransitionGater(slowGater{to: "plan", delay: 200 * time.Millisecond, done: done})
+	gater := &slowGater{to: "plan", delay: 200 * time.Millisecond, done: done}
+	verb.SetTransitionGater(gater)
 	t.Cleanup(func() {
 		verb.SetTransitionGater(nil)
 		select {
@@ -156,7 +157,7 @@ type slowGater struct {
 	once  sync.Once
 }
 
-func (s slowGater) Gate(ctx context.Context, item workitem.Item, toStatus string) (verb.GateDecision, error) {
+func (s *slowGater) Gate(ctx context.Context, item workitem.Item, toStatus string) (verb.GateDecision, error) {
 	if toStatus == s.to {
 		s.once.Do(func() {
 			time.Sleep(s.delay)
