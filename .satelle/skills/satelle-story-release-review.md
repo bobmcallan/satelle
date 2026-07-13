@@ -3,7 +3,7 @@ name: satelle-story-release-review
 scope: project
 type: skill
 tags: [type:skill, type:reviewer]
-description: Single gate on release → done. Isolated read-only reviewer judges the release shipped correctly (version bump, conventional commit, green CI + published tag from recorded evidence, recorded summary) AND that local dogfood install was verified (CLI + live service at the new version) AND acceptance criteria are met. Judges recorded evidence; never commits, pushes, or installs.
+description: Single gate on release → done. Isolated read-only reviewer judges the release shipped correctly (version bump, conventional commit, green CI + published tag from recorded evidence, recorded summary) AND that local dogfood install was verified (CLI + live service at the new version) AND acceptance criteria are met, AND reports a plan-adherence metric in notes; when a dispatched coder implemented the story, check_plan_consumed judges plan-consumption evidence. Judges recorded evidence; never commits, pushes, or installs. Plan divergence alone never rejects.
 ---
 
 # Story release review (release → done gate)
@@ -27,17 +27,57 @@ Read the repo and recorded evidence (`.satelle/stories/<sty_id>/` summary attach
 
 Walk the numbered ACs; confirm each is satisfied by evidence in the shipped slice. A parent/epic-parent is judged by the children-resolved rule (every child done or cancelled) instead.
 
-- **Accept**: release shipped correctly (including the full dogfood triad) AND every AC met by evidence.
-- **Reject**: a release-evidence check fails (missing bump, AI attribution, red/absent CI or release, no summary, or any of **`check_cli_version` / `check_live_footer` / `check_persistent_supervisor`**) or an AC unmet — name the specific gap (use the check name when a triad member fails).
+## 3. Plan adherence (metric, not gate)
 
-Fair gate: judge stated ACs as written.
+Read the story's **plan** attachment when present (on disk under
+`.satelle/stories/<sty_id>/` — e.g. `plan.md` — your grant is read-only with no
+shell). Compare it against what shipped (step summaries, the release summary,
+`git show HEAD` when useful).
+
+Always put a structured plan-adherence line in **notes** on both accept and
+reject so the metric lands in the ledger on every close:
+
+- With a plan: `plan-adherence: <met>/<total> — deviations: <named plan steps that changed and why per the summaries, or "none">`
+- Without a plan: `plan-adherence: n/a — no plan attached`
+
+**Divergence from the plan is NEVER a sole reject reason.** The ACs are the
+contract; the plan is the route (same advisory posture as
+`satelle-estimate-actual-review` for estimate-vs-actual). Rejects still come only
+from release-evidence checks or unmet ACs.
+
+## 4. check_plan_consumed (named check)
+
+When the story was implemented by a **dispatched coder** (ledger / dispatch
+evidence / executor.log shows a `coder` dispatch for `in_progress`), the recorded
+evidence must show the coder consumed the plan before implementing:
+
+- a typed `plan-consumed` event in the ledger/op-log (`satelle story log … --kind plan-consumed`), **or**
+- a `PLAN-CONSUMED:` (or plan-consumed) statement in the recorded run output
+  (dispatch sink under `.satelle/logs/dispatch/`, or `executor.log`) naming the
+  plan attachment and the plan steps followed.
+
+**Reject naming `check_plan_consumed`** only when the evidence channel exists for
+the story (a dispatched-coder run is recorded) **and** consumption evidence is
+absent. An **in-loop-implemented** story (no coder dispatch on the path) is
+**exempt** — do not reject for missing plan-consumed on those.
 
 ## Verdict
+
+- **Accept**: release shipped correctly (including the full dogfood triad) AND
+  every AC met by evidence, AND (when applicable) check_plan_consumed passes.
+  Notes carry the plan-adherence metric.
+- **Reject**: a release-evidence check fails (missing bump, AI attribution,
+  red/absent CI or release, no summary, or any of **`check_cli_version` /
+  `check_live_footer` / `check_persistent_supervisor`**), an AC is unmet, or
+  **`check_plan_consumed`** fails for a dispatched-coder story — name the
+  specific gap (use the check name when a named check fails). Notes still carry
+  the plan-adherence metric.
 
 Reply with exactly one JSON object, nothing else, of that shape:
 
 ```json
-{"decision": "accept", "notes": ""}
+{"decision": "accept", "notes": "plan-adherence: n/a — no plan attached"}
 ```
 
-`decision` is `"accept"` or `"reject"`; `notes` is a brief actionable string (may be empty on accept). See [[satelle-done-is-last]], [[satelle-agent-model]].
+`decision` is `"accept"` or `"reject"`; `notes` carries the plan-adherence metric
+and any reject gap. See [[satelle-done-is-last]], [[satelle-agent-model]].
