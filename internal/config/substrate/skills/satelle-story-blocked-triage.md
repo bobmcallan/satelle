@@ -4,7 +4,6 @@ scope: system
 type: skill
 tags: [type:skill, type:executor]
 description: Performing triage on a blocked story — diagnose root cause, attach reasoning + unblock plan on the story, then action an in-process recovery within satelle's gates (never disable or route around enforcement). Not a reviewer; recovery stays gated by satelle-story-blocked-review / the workflow's declared resume edge. Dispatched when the agents layer allocates a blocked-triage step, or run in-loop after park per satelle-recognise-blockage.
-embedded_sha: d13e40bbd6f7d9307e2677acbb9cc64e951aefe66d6d7bcbd896ac8524f43eb2
 ---
 
 # Story blocked triage (performing)

@@ -187,7 +187,7 @@ by filtering.
 
 ## Related
 
-- [[sty_d4360e90]] — seeded the `tsk_substrate-audit` task; unrelated substrate
+- sty_d4360e90 — seeded the `tsk_substrate-audit` task; unrelated substrate
   change, but this investigation was triggered while driving it.
 - The `glm-env-breaks-sonnet-dispatch` memory (deleted 2026-07-08) carried a stale
   "nested claude -p hangs (lock detection)" claim that steered this work wrong; the
