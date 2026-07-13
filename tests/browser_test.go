@@ -13,9 +13,11 @@ package tests
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -36,20 +38,39 @@ func findBrowser() string {
 	return ""
 }
 
-// serveRepo inits a temp repo, seeds it, starts `satelle serve` on a free-ish
-// port, waits until healthy, and returns the project-page base URL + repo path.
+// freePort binds 127.0.0.1:0 and returns the OS-assigned free port. Callers must
+// not race another listener onto the same port between close and serve bind —
+// acceptable for hermetic local tests (same pattern as web.AllocPort).
+func freePort(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("freePort: %v", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+	return strconv.Itoa(port)
+}
+
+// serveRepo inits a temp repo, seeds it, starts `satelle serve` on a free port,
+// waits until healthy, and returns the project-page base URL + repo path.
 // Cleanup stops the server.
+//
+// The port argument is ignored: hardcoded ports collide with leftover satelle
+// processes (healthz succeeds against the WRONG server, rows "never appear").
+// Free-port allocation is the isolation mechanism.
 //
 // serve is always adaptive: the root (/) is the connected-projects landing and
 // EVERY repo — including a lone one — is served under its own /<slug>/. So the
 // returned base is host+/<slug> (slug == the tempdir basename), making every
 // base+"/…" path target this repo's child consistently (project page, detail
 // pages, fragments, SSE), with the prefixed <base href> the page itself uses.
-func serveRepo(t *testing.T, port string) (string, string) {
+func serveRepo(t *testing.T, _ string) (string, string) {
 	t.Helper()
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	stubReviewerAccept(t, repo) // baseline gates are active (sty_5b8bd8b2) — keep hermetic
+	port := freePort(t)
 	cmd := exec.Command(testBin, "serve", "--port", port)
 	cmd.Dir = repo
 	// Isolate the machine-wide registry so `serve` doesn't pick up unrelated repos
@@ -65,6 +86,11 @@ func serveRepo(t *testing.T, port string) (string, string) {
 	host := "http://127.0.0.1:" + port
 	if !waitHealthy(t, host+"/healthz", 5*time.Second) {
 		t.Fatal("server did not become healthy")
+	}
+	// Bind failure exits the child while healthz can still answer from a stale
+	// process on a reused port — refuse that false green.
+	if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
+		t.Fatal("serve exited before becoming healthy (port bind failed?)")
 	}
 	return host + "/" + filepath.Base(repo), repo
 }
@@ -1395,6 +1421,10 @@ func TestBrowserTaskPanelNativeRuns(t *testing.T) {
 		t.Fatal("tasks panel did not show")
 	}
 	rowSel := fmt.Sprintf(`#panel-tasks tr.row[data-expand-url$="%s"]`, taskID)
+	// Wait for the task row to appear (panel list is async after tab switch).
+	if !waitCond(t, ctx, fmt.Sprintf(`!!document.querySelector(%q)`, rowSel), 8*time.Second) {
+		t.Fatalf("task row not shown for %s", taskID)
+	}
 	clickJS(t, ctx, rowSel)
 
 	// The expansion is task-native: a Runs section listing the in-progress run.
