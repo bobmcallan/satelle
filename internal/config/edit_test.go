@@ -87,3 +87,25 @@ func TestSaveConfigValuesRoundTripPreservesUnmodeled(t *testing.T) {
 		t.Fatalf("list edit not applied: %+v", cfg.Gate.EditExemptPaths)
 	}
 }
+
+func TestHasKeyDetectsPresentAndAbsent(t *testing.T) {
+	in := `[gate]
+allow_parallel = false
+edit_exempt_paths = [".satelle/"]
+
+[review]
+gate_create = true
+`
+	if !HasKey(in, "gate", "edit_exempt_paths") {
+		t.Error("present key should be found")
+	}
+	if HasKey(in, "gate", "missing_key") {
+		t.Error("absent key must not be found")
+	}
+	if HasKey(in, "hosted", "server") {
+		t.Error("absent section must not report key")
+	}
+	if !HasKey(in, "review", "gate_create") {
+		t.Error("review.gate_create present")
+	}
+}

@@ -87,6 +87,24 @@ func UpsertKey(content, section, key, value string) string {
 	return strings.Join(out, "\n")
 }
 
+// HasKey reports whether content already assigns `key` inside `section`
+// (empty section = root block before the first table header). Distinguishes
+// "key absent from the file" from "key present with empty value" — Load cannot
+// (sty_c73f8905 AC6 config reconciliation).
+func HasKey(content, section, key string) bool {
+	lines := strings.Split(content, "\n")
+	start, end := sectionRange(lines, section)
+	if start == -1 {
+		return false
+	}
+	for i := start; i < end; i++ {
+		if isKeyLine(lines[i], key) {
+			return true
+		}
+	}
+	return false
+}
+
 // sectionRange returns [start,end) line indices for section's body. For the root
 // section ("") start is 0 and end is the first table header (or len). For a named
 // section start is the line AFTER its header and end is the next header (or len).

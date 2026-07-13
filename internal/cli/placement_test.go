@@ -181,3 +181,31 @@ func TestContextAuditFixturesPresent(t *testing.T) {
 		t.Error("pre-fix edits fixture must prescribe engage and proceed")
 	}
 }
+
+func TestAuditPlacementFlagsUnknownTagAxis(t *testing.T) {
+	dataDir := t.TempDir()
+	princ := filepath.Join(dataDir, "principles")
+	if err := os.MkdirAll(princ, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\nname: bad\ntags: [type:principle, kind:epic, principles:global]\n---\n# Bad\n"
+	if err := os.WriteFile(filepath.Join(princ, "bad.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	probs := auditPlacement(dataDir, nil, "")
+	var sawAxis, sawResidency bool
+	for _, p := range probs {
+		if strings.Contains(p, "unknown tag axis") && strings.Contains(p, "kind") {
+			sawAxis = true
+		}
+		if strings.Contains(p, "principles:global") {
+			sawResidency = true
+		}
+	}
+	if !sawAxis {
+		t.Fatalf("want unknown tag axis for kind:epic, got %v", probs)
+	}
+	if !sawResidency {
+		t.Fatalf("want illegal residency for principles:global, got %v", probs)
+	}
+}
