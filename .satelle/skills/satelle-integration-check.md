@@ -20,7 +20,7 @@ Mechanism, not judgment — the deterministic gate path leaves the read-only
 LLM-reviewer invariant untouched. See [[satelle-agent-model]].
 
 The suite is the project's **local** "runs end-to-end" gate
-([[integration-tests-local-only]] in spirit), run here before the commit,
+(integration tests stay local-only in spirit), run here before the commit,
 deliberately excluded from GitHub CI.
 
 ```check

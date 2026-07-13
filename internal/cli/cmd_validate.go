@@ -98,6 +98,13 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 			failed++
 			fmt.Fprintf(out, "FAIL  principles (placement) — %s\n", p)
 		}
+		// Wikilink resolution: every [[target]] in substrate must resolve.
+		// Anchored here so `satelle principle validate` and the top-level
+		// `satelle validate` both surface danglers.
+		for _, p := range auditWikilinks(dataDir, config.EmbeddedDefaults()) {
+			failed++
+			fmt.Fprintf(out, "FAIL  principles (wikilinks) — %s\n", p)
+		}
 	}
 
 	fmt.Fprintf(out, "\nvalidated %d, failed %d, exempt %d\n", validated, failed, exempt)

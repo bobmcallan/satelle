@@ -18,7 +18,7 @@ timestamp: '2026-07-09T00:00:00Z'
 *Working notes from a repo review of `solidsafe-engine` (package dir `solidsafe_engine/`,
 legacy product name rainbow_wizard), against the goal of moving to componentised docker
 images that run locally first and then deliver on fly.io. Related:
-[[solidsafe-component-breakdown]], [[solidsafe-straw-man]].*
+component breakdown notes; [[solidsafe-hybrid-strawman]].*
 
 ---
 
