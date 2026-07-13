@@ -8,6 +8,8 @@ description: Agile increments — deliver work as the smallest independent stori
 
 # Agile increments — small stories, one commit each
 
+> **Repo-local:** governs developing satelle / this dogfood repo's discipline — not product-canon for other repos. Pull on demand; not an embedded default.
+
 Deliver work the agile way: when a request arrives as a batch of feedback or a
 broad goal, decompose it into the **smallest independent stories** that each
 produce one observable change. Drive a single story to its terminal state, commit

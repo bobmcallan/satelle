@@ -8,6 +8,8 @@ description: satelle has two phases — ENABLE (install + `satelle init` scaffol
 
 # Enable, then operate from .satelle
 
+> **Repo-local:** governs developing satelle / this dogfood repo's discipline — not product-canon for other repos. Pull on demand; not an embedded default.
+
 satelle works in two phases, and the boundary between them is the whole structure:
 a repo is **enabled** once, and every command **operates** from the single root
 that enabling laid down.
@@ -46,5 +48,4 @@ silently depends on, no out-of-tree scratch the operating model relies on.
   an enabled repo and surfaces a missing one; only `init` creates the root, so a
   command never silently scaffolds or writes state outside it.
 
-See [[satelle-repo-agnostic]], [[satelle-configuration-over-code]],
-[[satelle-constitution]].
+See [[satelle-repo-agnostic]], [[satelle-constitution]].

@@ -74,4 +74,4 @@ Status decides which step applies now; the terminal state is reached only with
 every gate on the path accepted.
 
 See [[satelle-agent-goals]], [[satelle-done-is-last]],
-[[satelle-configuration-over-code]], [[satelle-constitution]].
+[[satelle-constitution]].

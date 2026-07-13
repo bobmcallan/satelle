@@ -8,6 +8,8 @@ description: The generated OKF reference files under .satelle/ — the stories b
 
 # Generated OKF views are read-only
 
+> **Repo-local:** governs developing satelle / this dogfood repo's discipline — not product-canon for other repos. Pull on demand; not an embedded default.
+
 Some files under `.satelle/` are **generated read-only views**, not authored
 substrate: the stories backlog (`.satelle/stories/*`), the
 `story-implementation-summary/` sub-bundle, and every reserved `index.md` /

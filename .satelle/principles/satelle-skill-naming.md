@@ -8,6 +8,8 @@ description: The naming convention for satelle skills — satelle-<object>-<name
 
 # satelle skill naming — `satelle-<object>-<name>-<function>`
 
+> **Repo-local:** governs developing satelle / this dogfood repo's discipline — not product-canon for other repos. Pull on demand; not an embedded default.
+
 A satelle skill's **filename encodes what it is**, so owner, subject, and kind are
 legible without opening it. The canonical form is:
 

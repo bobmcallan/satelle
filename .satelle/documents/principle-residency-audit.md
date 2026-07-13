@@ -1,11 +1,11 @@
 ---
 name: principle-residency-audit
 type: document
-tags: [type:document, context, principles, epic:channel-alignment, order:1]
-description: Living audit of principle residency — system vs ondemand under the single SessionStart ceiling (alwaysContextCeiling = 16384 bytes). Updated by sty_da2abd5c (channel-alignment order:1 — promote satelle-repo-agnostic to resident).
+tags: [type:document, context, principles, epic:channel-alignment, order:2]
+description: Living audit of principle classification (canon/repo-local/dead), residency, and carrying channel. Decision-of-record for sty_ceb1a3ef (channel-alignment order:2).
 ---
 
-# Principle residency audit
+# Principle channel audit (decision of record)
 
 Residency is the **only** injection axis for principles. One marker:
 `principles:session` in frontmatter tags.
@@ -15,79 +15,86 @@ Residency is the **only** injection axis for principles. One marker:
 | **system** | carries `principles:session` | injected at every SessionStart by `satelle hook context` |
 | **ondemand** | no marker (default) | pull with `satelle doc get principles <name>` when referenced |
 
-There is no `scope:` field on principles. Ownership (`embedded_sha`) is
-**orthogonal** to residency. See [[satelle-residency]].
+Ownership (`embedded_sha`) is **orthogonal** to residency. See [[satelle-residency]].
 
 ## The SessionStart ceiling
 
-**`alwaysContextCeiling = 16384` bytes** (`internal/cli/cmd_hook.go`) **IS the
-single SessionStart budget**. It bounds constitution + system-resident principle
-bodies + the on-demand pointer. There is no second budget. Overflow truncates
-with a stderr note; the hook still fails open.
-
+**`alwaysContextCeiling = 16384` bytes** (`internal/cli/cmd_hook.go`).
 Measure: `satelle hook context 2>/dev/null | wc -c`
 
-## Channel-alignment order:1 (sty_da2abd5c)
-
-Promote **`satelle-repo-agnostic`** to system residency so the constitution's
-declared order-zero guard rides the **push** channel. It is **repo-local by
-nature** (governs developing satelle itself; not product-canon for other repos)
-and therefore stays unstamped (no `embedded_sha`).
-
-| | Bytes (`hook context`) | Headroom under 16384 |
+| | Bytes | Headroom under 16384 |
 | --- | ---: | ---: |
-| **BEFORE (triad only)** | ~13060 | ~3324 |
-| **AFTER (+repo-agnostic)** | 15531 | 853 |
+| After order:1 (+repo-agnostic) | 15531 | 853 |
 
-**Trade:** none demoted. Headroom after the context diet (sty_cd5e341c) absorbed
-the ~2.5 KB body without cutting the operating triad. Preference when a future
-promotion would overflow: favour identity/altitude rules
-(`satelle-repo-agnostic`) over restating what gates already enforce.
+Resident set is unchanged by order:2 (embed promotions do not add session tags).
 
-**AFTER resident set (4):**
+## Classification framework (sty_ceb1a3ef)
 
-| Principle | Tier | Ownership | Why |
-| --- | --- | --- | --- |
-| `satelle-repo-agnostic` | **system** | repo-local (no stamp) | order-zero product-vs-dogfood guard on every code change |
-| `satelle-agent-goals` | **system** | embedded | drive-to-terminal / status-is-proof / one-story |
-| `satelle-edits-require-a-story` | **system** | embedded | engage-before-edit/commit gate discipline |
-| `satelle-recognise-blockage` | **system** | embedded | park-reason-resume |
-
-Prior diet demotions remain ondemand: `satelle-residency`,
-`satelle-agent-telemetry`, `satelle-generated-readonly`.
-
-## Per-principle table (current)
-
-| Principle | Tier | Notes |
+| Verdict | Meaning | Action |
 | --- | --- | --- |
-| satelle-repo-agnostic | **system** | Product vs dogfood; repo-local identity rule |
-| satelle-agent-goals | **system** | Operating discipline |
-| satelle-edits-require-a-story | **system** | Edit/commit gate rule |
-| satelle-recognise-blockage | **system** | Blockage park (not missing engagement) |
-| satelle-residency | ondemand | Defines system\|ondemand; embedded reference |
-| satelle-agent-model | ondemand | Execution model; embedded |
-| satelle-agent-telemetry | ondemand | Prompted telemetry channel |
-| satelle-generated-readonly | ondemand | Generated OKF views are 0o444 |
-| satelle-skill-naming | ondemand | Skill naming convention |
-| satelle-agile-increments | ondemand | Delivery paradigm |
-| satelle-broken-windows | ondemand | Working discipline |
-| satelle-configuration-over-code | ondemand | Harness design (overlaps constitution) |
-| satelle-done-is-last | ondemand | Workflow invariant |
-| satelle-dot-standard | ondemand | DOT grammar pointer |
-| satelle-enable-then-operate | ondemand | Init vs operate phases |
-| satelle-reviewer-self-contained | ondemand | Reviewer authoring rule |
-| satelle-story-classification | ondemand | Epic / sprint / order |
-| satelle-yagni | ondemand | Coding paradigm |
+| **canon** | Any repo needs it to operate or author in the harness | Body under `internal/config/substrate/principles/`; stamped materialization |
+| **repo-local** | Governs developing satelle / this dogfood repo | Unstamped under `.satelle/principles/`; self-declares "Repo-local" |
+| **dead** | Redundant or channel-less orphan | Merge load-bearing sentence into surviving home, then delete |
 
-Constitution (`.satelle/constitution.md`) is injected first every session and is
-**not** a principle.
+## Count arithmetic (AC4)
 
-## Consistency
+| | Count |
+| --- | ---: |
+| Start (README excluded) | 18 |
+| Deleted (`satelle-configuration-over-code`) | −1 |
+| Added | 0 |
+| **End** | **17** (≤18 ✓) |
 
-The resident set is now identity + operating triad: know what product you are
-building, engage a story, drive it through gates, park on real blockage.
+## Per-principle table (AC1 + AC3)
+
+| Principle | Classification | Tier | Channel | Verify |
+| --- | --- | --- | --- | --- |
+| satelle-agent-goals | **canon** (embedded) | system | resident tag | `hook context` contains it |
+| satelle-edits-require-a-story | **canon** (embedded) | system | resident tag | `hook context` contains it |
+| satelle-recognise-blockage | **canon** (embedded) | system | resident tag | `hook context` contains it |
+| satelle-repo-agnostic | **repo-local** | system | resident tag | `hook context` contains it; unstamped |
+| satelle-agent-model | **canon** (embedded) | ondemand | referencing skills/workflows | `grep -rl satelle-agent-model` substrate |
+| satelle-residency | **canon** (embedded) | ondemand | defining reference | embedded body names `principles:session` |
+| satelle-done-is-last | **canon** (**promoted**) | ondemand | referencing workflows/skills | parent/substrate/task workflows cite it |
+| satelle-reviewer-self-contained | **canon** (**promoted**) | ondemand | referencing skills | integration-check, substrate-only-check cite it |
+| satelle-dot-standard | **canon** (**promoted**) | ondemand | referencing skill | `satelle-workflow-advisor` cites it |
+| satelle-story-classification | **canon** (**promoted**) | ondemand | referencing workflow | parent workflow + create-review (order:3) |
+| satelle-agent-telemetry | **repo-local** | ondemand | referencing skill | `satelle-step-summary` cites it |
+| satelle-generated-readonly | **repo-local** | ondemand | referencing skill | `build.md` cites it |
+| satelle-yagni | **repo-local** | ondemand | referencing skill | `build.md` cites it |
+| satelle-broken-windows | **repo-local** | ondemand | referencing skill | `build.md` cites it |
+| satelle-agile-increments | **repo-local** | ondemand | referencing principle | story-classification historically; self-decl |
+| satelle-skill-naming | **repo-local** | ondemand | referencing skill | `build.md` cites it |
+| satelle-enable-then-operate | **repo-local** | ondemand | referencing skill | `build.md` cites it |
+| satelle-configuration-over-code | **dead** (deleted) | — | merged into constitution "Configuration over code" | file gone; agent-model See-links repointed |
+
+## Embedded set after order:2 (AC2)
+
+`internal/config/substrate/principles/`:
+
+1. satelle-agent-goals
+2. satelle-agent-model
+3. satelle-edits-require-a-story
+4. satelle-recognise-blockage
+5. satelle-residency
+6. satelle-done-is-last *(new)*
+7. satelle-reviewer-self-contained *(new)*
+8. satelle-dot-standard *(new)*
+9. satelle-story-classification *(new)*
+
+Materialization: `materializePrinciples` on init/rebase seeds every embedded
+principle into `.satelle/principles/<name>.md` with `embedded_sha`. Asserted by
+`TestEmbeddedOperatingPrinciples` in `internal/config/embed_principle_test.go`.
+
+## Workflow-embedded rules surfaced (AC5)
+
+| Source | Rule that lived only there | Disposition |
+| --- | --- | --- |
+| `satelle-parent-workflow` description | File containers as `category: epic-parent` / `parent`; category-specific `applies_to` beats wildcard | Folded into **satelle-story-classification** (Category section); parent workflow now wikilinks that principle |
+| (scan) other workflows | Lifecycle/guardrails prose only — no orphan normative class rules | No additional principle created |
 
 ## History
 
-- **sty_cd5e341c** (context diet): resident set reduced 6 → 3; ceiling headroom restored.
-- **sty_da2abd5c** (this story): `satelle-repo-agnostic` promoted system; no demotion.
+- **sty_cd5e341c** — context diet: resident 6 → 3.
+- **sty_da2abd5c** (order:1) — promote `satelle-repo-agnostic` to resident (4).
+- **sty_ceb1a3ef** (order:2) — channel audit: 4 promotions, 1 deletion, 8 repo-local self-declarations; count 18 → 17.

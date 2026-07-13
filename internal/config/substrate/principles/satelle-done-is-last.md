@@ -4,7 +4,6 @@ type: principle
 tags: [type:principle]
 applies_to: ["*"]
 description: done is ALWAYS the terminal state of a workflow. Quality gates (intent, commit-push, acceptance review) come BEFORE done, never after — reaching done means every gate on the path has already passed. The binary enforces this (the mandatory done gate on the workflow spine); a repo's workflow may add states and gates, but done stays last.
-embedded_sha: 7d43362084c6dc7280d48c4bf5e9e9b937f15aa3777ac535d4533a577584c814
 ---
 
 # done is always last

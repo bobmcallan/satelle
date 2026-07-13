@@ -14,7 +14,7 @@ You are the **executor** in the `in_progress` (implementation) step: **implement
 
 1. **Read the brief.** Parse stdin JSON: `title`, `body`, `acceptance_criteria` (numbered, each a testable obligation), and the plan if present. ACs are the definition of done — implement all of them, nothing beyond.
 2. **Orient before writing.** Read the files the story names and their neighbours; match existing structure, naming, idiom. Process/opinions belong in substrate (`.satelle/`), mechanism in Go — baking a repo-specific decision into a Go branch is a defect even if it "works" (see [[satelle-constitution]], [[satelle-repo-agnostic]]).
-3. **Implement the slice.** Smallest change satisfying every AC. No scope widening, no opportunistic refactors, no dead code — a library function with zero production callers is rejected (see [[satelle-yagni]]).
+3. **Implement the slice.** Smallest change satisfying every AC. No scope widening, no opportunistic refactors, no dead code — a library function with zero production callers is rejected (see [[satelle-yagni]], [[satelle-broken-windows]]).
 4. **Create the tests the gate expects.** `in_progress → integration` is gated by `satelle-code-ac-review`: ACs met AND **unit and integration tests created** for changed behaviour. Add/extend `_test.go` beside the change plus integration coverage under `tests/`; a docs/substrate-only story satisfies this via its doc-based ACs instead.
 5. **Prove it locally.**
    ```bash
@@ -34,3 +34,6 @@ You are the **executor** in the `in_progress` (implementation) step: **implement
 ## Hand-off
 
 Output the implementation evidence: per AC, what changed and how it's tested; what you ran and what passed; anything incomplete and exactly why. `in_progress → integration` is gated by `satelle-code-ac-review` — it decides whether the slice proceeds.
+
+Skill and reviewer filenames follow [[satelle-skill-naming]].
+Operate only under an enabled `.satelle/` root ([[satelle-enable-then-operate]]).

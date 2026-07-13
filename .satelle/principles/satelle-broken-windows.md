@@ -8,6 +8,8 @@ description: Broken windows — a failure you encounter is yours: fix it if chea
 
 # Broken windows
 
+> **Repo-local:** governs developing satelle / this dogfood repo's discipline — not product-canon for other repos. Pull on demand; not an embedded default.
+
 A failure you encounter is **yours**. Fix it if it is cheap or in your change's
 path; otherwise file a tracked story that names it and surface it to the
 operator. **Never silently pass a failure by** — an unowned failure is the broken

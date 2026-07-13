@@ -8,6 +8,8 @@ description: YAGNI — build a capability when a real need calls for it, not whe
 
 # YAGNI — you aren't gonna need it
 
+> **Repo-local:** governs developing satelle / this dogfood repo's discipline — not product-canon for other repos. Pull on demand; not an embedded default.
+
 Build a capability when a real need calls for it, not when you merely foresee
 one. Do the simplest thing that could work for the objective in front of you, and
 let the next confirmed need — not a guess about it — drive the next change.

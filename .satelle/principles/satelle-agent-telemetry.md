@@ -8,6 +8,8 @@ description: The PROMPTED telemetry channel — how an agent self-reports work q
 
 # Agent telemetry — self-report what only you can judge
 
+> **Repo-local:** governs developing satelle / this dogfood repo's discipline — not product-canon for other repos. Pull on demand; not an embedded default.
+
 satelle measures agent quality on **two channels**. The **coded** channel is the
 binary's own capture: a dispatched sub-process that is killed, times out, or
 returns no verdict is already recorded as a structured `telemetry_event`

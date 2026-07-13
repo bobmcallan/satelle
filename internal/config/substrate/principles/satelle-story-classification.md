@@ -4,7 +4,6 @@ type: principle
 tags: [type:principle]
 applies_to: ["*"]
 description: How stories are classified — category (including epic-parent/parent containers), theme tags (epic:<theme>), sprints (sprint:<N>), and order:<N>. Category selects the governing workflow; invented kind:* tags are not a taxonomy axis.
-embedded_sha: 0b24b7d86ff2a7b31ae447fece8cf1583feafabd5c72b115c984d7a716835763
 ---
 
 # Story classification — category, epics, sprints, and order

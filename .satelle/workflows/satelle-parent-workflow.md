@@ -23,7 +23,7 @@ parent's own acceptance criteria — a container's work is its children — but
 instead accepts the close ONLY when **every child story is resolved** (`done` or
 `cancelled`), judging the children from the close-gate payload (satelle resolves
 them from the database). So a parent cannot close while a child is still open; the operator
-finishes or cancels the children first. See [[satelle-done-is-last]] and
+finishes or cancels the children first. See [[satelle-done-is-last]], [[satelle-story-classification]], and
 [[satelle-agent-model]].
 
 ```dot

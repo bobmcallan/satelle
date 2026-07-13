@@ -4,7 +4,6 @@ type: principle
 tags: [type:principle]
 applies_to: ["*"]
 description: Canonical latest workflow DOT format — node-consistent edge gates ([agent=reviewer, prompt="@skill:NAME"]), performing-node prompt convention, required graph/shape/frontmatter fields. THE single reference other workflow-review tools cite. Pointer to Graphviz for raw grammar; satelle-specific conventions only.
-embedded_sha: 5073c7c2b970a8f0360b5dd1069d92d6efb25317d6c9451476f1b9589d602cce
 ---
 
 # Workflows use the DOT standard (canonical form)

@@ -8,6 +8,8 @@ description: satelle is a repo-agnostic product; THIS repo is only the dogfood/w
 
 # satelle is repo-agnostic (configuration over code)
 
+> **Repo-local:** governs developing satelle / this dogfood repo's discipline — not product-canon for other repos. Pull on demand; not an embedded default.
+
 Adapted from `satellites/docs/agent-process-compliance.md`. This is the order-zero
 guard on every satelle code change: it keeps the product separable from the one
 repo that happens to dogfood it.
