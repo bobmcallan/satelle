@@ -116,13 +116,45 @@ func run(t *testing.T, bin, dir string, args ...string) (string, error) {
 }
 
 // mustRun fails the test if the command errors.
+// After a successful `init`, hermetic tests opt OUT of create-gating via
+// satelle.local.toml (gate_create=false): product init seeds gate_create=true
+// (sty_83782ffb), but most suite tests create incomplete drafts to exercise
+// other seams. Tests that need the create gate ON write local.toml themselves
+// (see create_review_test.go).
 func mustRun(t *testing.T, bin, dir string, args ...string) string {
 	t.Helper()
 	out, err := run(t, bin, dir, args...)
 	if err != nil {
 		t.Fatalf("satelle %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
+	if len(args) > 0 && args[0] == "init" {
+		hermeticCreateGateOff(t, dir)
+	}
 	return out
+}
+
+// hermeticCreateGateOff writes [review] gate_create=false into the local overlay
+// so black-box tests are not forced through create-review unless they opt in.
+func hermeticCreateGateOff(t *testing.T, repo string) {
+	t.Helper()
+	p := filepath.Join(repo, ".satelle", "satelle.local.toml")
+	// Preserve any existing local overlay keys if a test wrote them first.
+	prev, _ := os.ReadFile(p)
+	body := string(prev)
+	if strings.Contains(body, "gate_create") {
+		return // test already set an explicit choice
+	}
+	if strings.Contains(body, "[review]") {
+		body = strings.Replace(body, "[review]", "[review]\ngate_create = false", 1)
+	} else {
+		if body != "" && !strings.HasSuffix(body, "\n") {
+			body += "\n"
+		}
+		body += "[review]\ngate_create = false\n"
+	}
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatalf("hermetic create-gate off: %v", err)
+	}
 }
 
 func TestDogfoodFlow(t *testing.T) {

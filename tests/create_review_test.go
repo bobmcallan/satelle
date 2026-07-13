@@ -167,8 +167,10 @@ Judge the draft; reply with one JSON object:
 func TestCreateGateRejectsEpicAsFeature(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
+	// mustRun opts hermetic create-gate OFF; re-enable for this product check.
+	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"), "[review]\ngate_create = true\n")
 
-	// Confirm init seeded gate_create = true and the create-review skill.
+	// Confirm init seeded gate_create = true in the committed scaffold.
 	cfg, err := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.toml"))
 	if err != nil {
 		t.Fatal(err)
