@@ -10,6 +10,7 @@
 package tests
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -19,12 +20,19 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 // testBin is the satelle binary under test, resolved once by TestMain.
 var testBin string
+
+// testHomes maps t.Name() → isolated SATELLE_HOME for that test. Each test gets
+// one empty global registry reused across its run() calls so multi-step flows
+// (init then reindex, second init idempotency, etc.) stay coherent, while never
+// touching the host ~/.satelle (sty_ee7f40c6).
+var testHomes sync.Map
 
 // TestMain resolves the binary the suite drives. If SATELLE_BIN points at an
 // existing binary it is used as-is — so the suite can run against a prebuilt or
@@ -33,33 +41,92 @@ var testBin string
 //	cd tests && SATELLE_BIN=$(command -v satelle) go test -tags integration .
 //
 // Otherwise satelle is built once into a temp dir shared across all tests.
+//
+// Before any test runs, SATELLE_HOME is forced to an isolated temp dir so nothing
+// in this package can resolve to the host ~/.satelle (sty_ee7f40c6). After the
+// suite, host global config is re-read and the process exits non-zero if it
+// changed.
 func TestMain(m *testing.M) {
+	// Snapshot host global config BEFORE isolating SATELLE_HOME — otherwise the
+	// guard would measure the sandbox, not the machine-wide registry.
+	hostCfg := hostGlobalConfigPath()
+	beforeHost := readFileOptional(hostCfg)
+
+	backstop, err := os.MkdirTemp("", "satelle-itest-home-*")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mkdtemp home:", err)
+		os.Exit(1)
+	}
+	if err := os.Setenv("SATELLE_HOME", backstop); err != nil {
+		fmt.Fprintln(os.Stderr, "setenv SATELLE_HOME:", err)
+		_ = os.RemoveAll(backstop)
+		os.Exit(1)
+	}
+
+	// os.Exit skips defers; clean up and enforce the host-config guard explicitly.
+	exit := func(code int) {
+		afterHost := readFileOptional(hostCfg)
+		if !bytes.Equal(beforeHost, afterHost) {
+			fmt.Fprintf(os.Stderr, "FATAL: host global config changed during the integration suite (SATELLE_HOME isolation failed):\n  path: %s\n  before: %d bytes, after: %d bytes\n",
+				hostCfg, len(beforeHost), len(afterHost))
+			code = 1
+		}
+		_ = os.RemoveAll(backstop)
+		os.Exit(code)
+	}
+
 	if env := os.Getenv("SATELLE_BIN"); env != "" {
 		abs, err := filepath.Abs(env)
 		if err != nil || !fileExists(abs) {
 			fmt.Fprintf(os.Stderr, "SATELLE_BIN=%q not usable: %v\n", env, err)
-			os.Exit(1)
+			exit(1)
 		}
 		testBin = abs
-		os.Exit(m.Run())
+		exit(m.Run())
 	}
 	dir, err := os.MkdirTemp("", "satelle-itest")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "mkdtemp:", err)
-		os.Exit(1)
+		exit(1)
 	}
-	defer os.RemoveAll(dir)
 	testBin = filepath.Join(dir, "satelle")
 	// The test runs from tests/, so the module root is one level up.
 	build := exec.Command("go", "build", "-o", testBin, "./cmd/satelle")
 	build.Dir = ".."
 	if out, berr := build.CombinedOutput(); berr != nil {
 		fmt.Fprintf(os.Stderr, "build satelle: %v\n%s", berr, out)
-		os.Exit(1)
+		_ = os.RemoveAll(dir)
+		exit(1)
 	}
 	code := m.Run()
-	os.RemoveAll(dir)
-	os.Exit(code)
+	_ = os.RemoveAll(dir)
+	exit(code)
+}
+
+// hostGlobalConfigPath is the machine-wide config path the suite must not touch.
+// Captured before TestMain overrides SATELLE_HOME. If the environment already
+// set SATELLE_HOME (caller sandboxed), that path is the one we protect; otherwise
+// ~/.satelle/config.toml.
+func hostGlobalConfigPath() string {
+	if v := strings.TrimSpace(os.Getenv("SATELLE_HOME")); v != "" {
+		return filepath.Join(v, "config.toml")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".satelle", "config.toml")
+}
+
+func readFileOptional(path string) []byte {
+	if path == "" {
+		return nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 func fileExists(p string) bool {
@@ -108,11 +175,34 @@ func enableParallelStories(t *testing.T, repo string) {
 	}
 }
 
+// isolatedHome returns the per-test SATELLE_HOME (created once via t.TempDir).
+// Shared across run() calls in the same test so multi-step flows keep one
+// empty-at-start global registry; never the host ~/.satelle.
+func isolatedHome(t *testing.T) string {
+	t.Helper()
+	name := t.Name()
+	if v, ok := testHomes.Load(name); ok {
+		return v.(string)
+	}
+	home := t.TempDir()
+	if actual, loaded := testHomes.LoadOrStore(name, home); loaded {
+		return actual.(string)
+	}
+	t.Cleanup(func() { testHomes.Delete(name) })
+	return home
+}
+
 // run executes the binary in dir with args and returns combined output.
+// The subprocess gets the test's isolated SATELLE_HOME so it never reads or
+// writes the host machine-wide workspace registry (sty_ee7f40c6). Per-repo
+// state under dir/.satelle is unaffected — that is keyed off cmd.Dir.
 func run(t *testing.T, bin, dir string, args ...string) (string, error) {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = dir
+	// Append after os.Environ() so this SATELLE_HOME overrides TestMain's backstop
+	// (exec last-wins for a duplicate key).
+	cmd.Env = append(os.Environ(), "SATELLE_HOME="+isolatedHome(t))
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -154,6 +244,51 @@ func hermeticCreateGateOff(t *testing.T, repo string) {
 	body = strings.Replace(body, "gate_create = true", "gate_create = false", 1)
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatalf("hermetic create-gate off: %v", err)
+	}
+}
+
+// TestSubprocessHomeIsolated proves init via run() never writes the host global
+// config, and that an explicit sandbox SATELLE_HOME receives the registry write
+// instead (sty_ee7f40c6). Host path is always ~/.satelle under UserHomeDir —
+// independent of TestMain's process-wide backstop.
+func TestSubprocessHomeIsolated(t *testing.T) {
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("UserHomeDir: %v", err)
+	}
+	hostCfg := filepath.Join(userHome, ".satelle", "config.toml")
+	before := readFileOptional(hostCfg)
+
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+
+	after := readFileOptional(hostCfg)
+	if !bytes.Equal(before, after) {
+		t.Fatalf("host %s changed after run()-spawned init (isolation failed)\nbefore %d bytes, after %d bytes",
+			hostCfg, len(before), len(after))
+	}
+	if bytes.Contains(after, []byte(repo)) {
+		t.Fatalf("host config contains test repo path %q", repo)
+	}
+
+	// Positive side: init with an explicit sandbox home must write config.toml
+	// there (workspace registration), so we know isolation is not "init wrote nowhere".
+	sandbox := t.TempDir()
+	sandboxRepo := t.TempDir()
+	cmd := exec.Command(testBin, "init")
+	cmd.Dir = sandboxRepo
+	cmd.Env = append(os.Environ(), "SATELLE_HOME="+sandbox)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("sandbox init: %v\n%s", err, out)
+	}
+	if !fileExists(filepath.Join(sandbox, "config.toml")) {
+		t.Fatalf("sandbox SATELLE_HOME has no config.toml after init; init did not register:\n%s", out)
+	}
+	// Host still untouched.
+	after2 := readFileOptional(hostCfg)
+	if !bytes.Equal(before, after2) {
+		t.Fatalf("host %s changed after sandbox init", hostCfg)
 	}
 }
 

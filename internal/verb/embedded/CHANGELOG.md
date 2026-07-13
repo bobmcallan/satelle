@@ -7,6 +7,10 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
+## [0.0.222] - 2026-07-13
+### Fixed
+- Integration suite hard-isolates `SATELLE_HOME` (TestMain backstop + per-test `run()` env) so tests never write the host workspace registry (sty_ee7f40c6)
+
 ## [0.0.221] - 2026-07-13
 ### Fixed
 - `satelle changelog` and require-init prefer the CHANGELOG **embedded in the binary** — disk is build input only, so downstream repos never get empty false negatives (sty_b5fa838a)
