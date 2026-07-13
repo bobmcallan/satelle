@@ -159,3 +159,78 @@ Judge the draft; reply with one JSON object:
 		t.Errorf("workflow validate should pass once the create_review skill resolves:\n%s", out)
 	}
 }
+
+// TestCreateGateRejectsEpicAsFeature (sty_83782ffb AC4): a fresh init seeds
+// gate_create=true, embeds satelle-story-create-review (via create_review on
+// the baseline workflow), and a stubbed reviewer that rejects misclassified
+// epics blocks creation — nothing persists.
+func TestCreateGateRejectsEpicAsFeature(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+
+	// Confirm init seeded gate_create = true and the create-review skill.
+	cfg, err := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(cfg), "gate_create = true") {
+		t.Fatalf("init must seed gate_create = true:\n%s", cfg)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".satelle", "skills", "satelle-story-create-review.md")); err != nil {
+		t.Fatalf("init must seed satelle-story-create-review skill: %v", err)
+	}
+	// Baseline must declare create_review so the skill is selected for feature.
+	wf, err := os.ReadFile(filepath.Join(repo, ".satelle", "workflows", "satelle-baseline-workflow.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(wf), "create_review: satelle-story-create-review") {
+		t.Fatalf("baseline must declare create_review:\n%s", wf)
+	}
+
+	// Stub the reviewer harness: reject when the draft looks like an epic
+	// misfiled as feature (mirrors the classification rule in the rubric).
+	verdict := filepath.Join(repo, "verdict.sh")
+	writeFile(t, verdict, `#!/bin/sh
+# Read stdin draft JSON; reject epic-as-feature, else accept.
+IN=$(cat)
+case "$IN" in
+  *'"category":"feature"'*)
+    case "$IN" in
+      *epic:*|*'epic-parent'*|*'Umbrella'*|*'children'*)
+        echo '{"decision":"reject","notes":"epic container must use category epic-parent, not feature"}'
+        exit 0;;
+    esac;;
+esac
+echo '{"decision":"accept","notes":""}'
+`)
+	_ = os.Chmod(verdict, 0o755)
+	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
+		fmt.Sprintf("[reviewer]\nharness = \"%s {system} {tools} {model}\"\n", verdict))
+	mustRun(t, testBin, repo, "reindex")
+
+	// Draft epic with category feature — must be rejected.
+	out, err := run(t, testBin, repo, "story", "create",
+		"--category", "feature",
+		"--title", "epic: channel alignment",
+		"--body", "Umbrella for process-channel work; children close this epic.",
+		"--acceptance", "1. every child is done or cancelled")
+	if err == nil {
+		t.Fatalf("epic-as-feature must be rejected; output:\n%s", out)
+	}
+	if !strings.Contains(out, "epic-parent") && !strings.Contains(out, "epic") {
+		t.Errorf("reject notes should name classification fix:\n%s", out)
+	}
+	if list := mustRun(t, testBin, repo, "story", "list"); strings.Contains(list, "channel alignment") {
+		t.Errorf("rejected draft must not persist:\n%s", list)
+	}
+
+	// Correct classification persists.
+	if _, err := run(t, testBin, repo, "story", "create",
+		"--category", "epic-parent",
+		"--title", "epic: channel alignment",
+		"--body", "Umbrella for process-channel work; children close this epic.",
+		"--acceptance", "1. every child is done or cancelled"); err != nil {
+		t.Fatalf("epic-parent create should accept: %v", err)
+	}
+}

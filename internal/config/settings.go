@@ -54,7 +54,7 @@ var Settings = []Setting{
 	{Key: "logs_max_files", Label: "Log files kept", Help: "Rotations retained.", Kind: kindInt},
 	{Key: "stories_keep_closed", Label: "Keep closed stories (count)", Help: "0 = no count pruning.", Kind: kindInt},
 	{Key: "stories_keep_days", Label: "Keep closed stories (days)", Help: "0 = no age pruning.", Kind: kindInt},
-	{Section: "review", Key: "gate_create", Label: "Gate create", Help: "Structure-review story/task on creation.", Kind: kindBool},
+	{Section: "review", Key: "gate_create", Label: "Gate create", Help: "Run structure + create_review on story/task create (default on at init).", Kind: kindBool},
 	{Section: "gate", Key: "edit_exempt_paths", Label: "Edit-gate exempt paths", Help: "Path prefixes exempt from the engaged-story edit gate.", Kind: kindList},
 	{Section: "gate", Key: "allow_parallel", Label: "Allow parallel stories", Help: "Opt out of one-performing-story enforcement. Does not implement worktrees/merge — only disables the blocker.", Kind: kindBool},
 	{Section: "hosted", Key: "project", Label: "Hosted project", Help: "Project slug this repo maps to (personal sync target).", Kind: kindString},

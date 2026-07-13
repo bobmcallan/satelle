@@ -4,6 +4,7 @@ scope: project
 type: workflow
 tags: [type:workflow]
 applies_to: ["execution", "task"]
+create_review: satelle-story-create-review
 description: This repo's lifecycle for a task EXECUTION — one isolated run of a task — authored in DOT (the agent model). An execution moves backlog → in_progress → done, with a cancelled exit. It is DELIBERATELY NOT the story workflow: the begin-run edge is gated by satelle-task-validate-before-review (the run is a well-formed execution of a valid task) and the close edge by satelle-task-validate-after-review (the ACTION was done and its VERIFICATION is satisfied), and it carries NOTHING else — no integration/commit/push/committed states, no code-ac/estimate/commit/push/done-review gates, no version bump, no CI, no release. done is TERMINAL (satelle-done-is-last): a completed run is never moved backward — re-running a task means creating a NEW execution, not reopening this one. Resolved kind-awarely (applies_to ["execution", "task"]) so neither an execution nor a directly-driven task header falls through to the wildcard story workflow.
 ---
 

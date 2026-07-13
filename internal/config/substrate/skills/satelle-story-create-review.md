@@ -4,7 +4,6 @@ scope: system
 type: skill
 tags: [type:skill, type:reviewer]
 description: Content/alignment create gate after the deterministic structural check. Judges ACs vs goal, coherence, scope, AND category/tag classification against satelle-story-classification. Read-only; rejects with specifics for the agent to fix and retry.
-embedded_sha: 6688bfb4a788d0d6e4dbd61837390232f2356e0ba7ae864af83ff48561af6dd3
 ---
 
 # Story create — content, alignment, and classification review

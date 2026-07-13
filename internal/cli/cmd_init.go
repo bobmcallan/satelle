@@ -757,12 +757,13 @@ const scaffoldToml = `# satelle.toml — per-repo config (committed, secret-free
 # stories_keep_closed = 50       # keep the N most-recently-updated closed-story dirs
 # stories_keep_days = 90         # drop a closed story's dir older than N days
 
-# [review] — opt into reviewer-gated work (off by default). The reviewer rubrics
-# ship embedded; enabling enforcement is your choice (needs an agent CLI — see
-# 'satelle agent'). gate_create runs the required-structure reviewer on
-# 'story/task create', pushing non-conforming drafts back instead of persisting.
-# [review]
-# gate_create = true
+# [review] — create gate. Default ON (sty_83782ffb): creation is where
+# misclassification is cheapest to catch. gate_create runs the deterministic
+# structure check plus the workflow's create_review skill (embedded default:
+# satelle-story-create-review — content, alignment, and classification). Needs
+# an agent CLI for the LLM half (see 'satelle agent'). Set false to opt out.
+[review]
+gate_create = true
 
 # [gate] — edit-gate exemptions and the single-story process rule. This is the
 # ONE table seeded ACTIVE (not commented) below, because it is the source of
@@ -1204,6 +1205,11 @@ func materializeDefaultSolution(dataDir string) []string {
 				skills[s] = true
 			}
 		}
+		// create_review is workflow frontmatter (not a DOT edge); seed it too
+		// so the create gate travels with the default solution (sty_83782ffb).
+		if cr := workflowFrontmatterScalar(body, "create_review"); cr != "" {
+			skills[cr] = true
+		}
 	}
 	// Categories already claimed by an authored (on-disk) workflow. A default
 	// whose applies_to overlaps one of these is skipped to avoid a
@@ -1251,6 +1257,27 @@ func materializeDefaultSolution(dataDir string) []string {
 		}
 	}
 	return lines
+}
+
+// workflowFrontmatterScalar returns a single-line YAML scalar for key from the
+// leading markdown frontmatter of body, or "" when absent/unparseable. Used for
+// create_review (and similar) keys that are not DOT edge attributes.
+func workflowFrontmatterScalar(body, key string) string {
+	lines := strings.Split(body, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return ""
+	}
+	prefix := key + ":"
+	for i := 1; i < len(lines); i++ {
+		t := strings.TrimSpace(lines[i])
+		if t == "---" {
+			return ""
+		}
+		if t == prefix || strings.HasPrefix(t, prefix+" ") {
+			return strings.TrimSpace(strings.TrimPrefix(t, prefix))
+		}
+	}
+	return ""
 }
 
 // referencedSkills returns every skill a workflow names — node prompts and edge

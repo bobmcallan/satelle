@@ -15,9 +15,10 @@
 # skills = "."                   # → ./skills
 
 [review]
-# Run the required-structure reviewer on every story/task creation, so a work
-# item's structure is ALWAYS validated by an isolated reviewer before it persists.
-gate_create = false
+# Create gate ON (channel-alignment sty_83782ffb): structure + content/alignment
+# + classification (satelle-story-create-review) on every story/task create.
+# Misclassification is cheapest to catch at create. Set false to opt out.
+gate_create = true
 
 [gate]
 # Repo-root-relative path prefixes whose edits are EXEMPT from the engaged-story

@@ -21,11 +21,16 @@ A well-formed draft needs three things (the required structure):
 2. a **body** stating the goal / what done looks like, and
 3. numbered, **testable acceptance criteria**.
 
-If the repo enables create-gating (`[review] gate_create = true` in
-`.satelle/satelle.toml`), the `satelle-story-review` reviewer judges
-the draft against that structure before it is persisted. A reject pushes back
-with notes; nothing is created until the structure is sound. With gating off,
-the same structure is still the standard — the gate is advisory.
+`satelle init` seeds **`[review] gate_create = true`** (opt out with
+`false`). Creation always runs the **deterministic** structure check (title,
+goal body, numbered ACs, non-empty category). When the active workflow declares
+`create_review` (the embedded default is `satelle-story-create-review`), an
+isolated reviewer also judges **content/alignment** and **classification**
+against [[satelle-story-classification]] — e.g. reject an epic draft filed as
+`category: feature` (use `epic-parent`). A reject pushes back with notes;
+nothing is persisted until the draft is sound. With `gate_create = false`, only
+the structure of an unguarded create path remains — the standard is the same,
+the enforcement is not.
 
 ## 2. Begin work (backlog → in_progress)
 

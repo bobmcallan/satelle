@@ -4,6 +4,7 @@ scope: system
 type: workflow
 tags: [type:workflow]
 applies_to: ["*"]
+create_review: satelle-story-create-review
 description: The canonical order-zero lifecycle every satelle repo inherits from the binary — backlog → in_progress → done, with a cancelled exit — authored in the DOT standard (the agent model). The begin-work edge is gated by satelle-story-intent-review and the close by satelle-story-done-review (a reviewer node), so a story is judged well-formed before work and quality-checked before it closes. This is the EMBEDDED canonical default (config/substrate/workflows); a repo MAY override it by placing a same-named file under .satelle/workflows, but never edits this source.
 ---
 

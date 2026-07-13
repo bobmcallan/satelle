@@ -11,8 +11,9 @@ import (
 
 // TestScaffoldTomlDocumentsConfigSurface is the sty_8966f18a guard: the init
 // scaffold documents every top-level config.Config table/key, stays fully
-// commented except the seeded [gate] table, and the sentinel-wrapped
-// [sync]/[hosted]/[vars] examples uncomment-and-load via config.Load.
+// commented except the seeded [gate] and [review] tables, and the
+// sentinel-wrapped [sync]/[hosted]/[vars] examples uncomment-and-load via
+// config.Load. [review] gate_create = true is seeded ON (sty_83782ffb).
 func TestScaffoldTomlDocumentsConfigSurface(t *testing.T) {
 	// AC3: every top-level Config toml key/table appears in the scaffold.
 	for _, want := range []string{
@@ -28,17 +29,18 @@ func TestScaffoldTomlDocumentsConfigSurface(t *testing.T) {
 		}
 	}
 
-	// AC4: only [gate] + edit_exempt_paths are active (uncommented).
+	// AC4: only [gate] + edit_exempt_paths and [review] + gate_create are active.
 	for i, line := range strings.Split(scaffoldToml, "\n") {
 		s := strings.TrimSpace(line)
 		if s == "" || strings.HasPrefix(s, "#") {
 			continue
 		}
 		switch s {
-		case "[gate]", `edit_exempt_paths = [".satelle/"]`:
+		case "[gate]", `edit_exempt_paths = [".satelle/"]`,
+			"[review]", "gate_create = true":
 			// expected seeded active lines
 		default:
-			t.Errorf("scaffold line %d is active (want fully-commented except [gate]): %q", i+1, s)
+			t.Errorf("scaffold line %d is active (want fully-commented except [gate]/[review]): %q", i+1, s)
 		}
 	}
 
