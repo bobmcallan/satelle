@@ -28,12 +28,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -132,10 +134,9 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
-			// storyEngaged is resolved once and reused for the substrate-nudge decision
-			// (so only one store open + list runs per invocation). Its error surfaces
-			// as a gate rejection (sty_f3d5d4b8).
-			engaged, engErr := storyEngaged()
+			// currentSeat is resolved once so deny reasons can name a non-live
+			// holder without a second store open (sty_1738f973 AC6).
+			info, engaged, engErr := currentSeat()
 			if p := filePathFromEvent(raw); p != "" {
 				// Cross-repo lock (sty_3026d890): refuse any edit outside this repo.
 				// Observed failure: agent in satelle-server wrote CLI code under
@@ -163,7 +164,7 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 			if engaged {
 				return nil
 			}
-			return denyPreToolUse(cmd, raw, noEngagedStoryEditReason)
+			return denyPreToolUse(cmd, raw, noEngagedStoryEditReason+seatSuffix(info, time.Now().UTC()))
 		},
 	}
 
@@ -183,7 +184,7 @@ the commit with a clear message rather than silently allowing it (sty_f3d5d4b8).
 			if !isGitCommitOrPush(command) {
 				return nil // not a commit/push — allow
 			}
-			engaged, err := storyEngaged()
+			info, engaged, err := currentSeat()
 			if err != nil {
 				return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
 			}
@@ -192,8 +193,9 @@ the commit with a clear message rather than silently allowing it (sty_f3d5d4b8).
 			}
 			// Deny only — never allow a fused engage+commit form. PreToolUse cannot
 			// know the engage line would succeed; pick the message that teaches the
-			// recovery path (sty_577d292f).
-			return denyPreToolUse(cmd, raw, commitDenyReason(command))
+			// recovery path (sty_577d292f). Name a non-live seat when present so
+			// the agent can inspect/release without digging (sty_1738f973 AC6).
+			return denyPreToolUse(cmd, raw, commitDenyReason(command)+seatSuffix(info, time.Now().UTC()))
 		},
 	}
 
@@ -238,34 +240,247 @@ changed, or a story is engaged.`,
 	register(hook)
 }
 
-// storyEngaged reports whether any engagement lease is active (sty_8426b9c0).
-// The lease is claimed at the START of an engaging transition (before
-// gate+dispatch), so the edit/commit gates see the seat during the whole window
-// — not only after committed status. Fails CLOSED on store open/query errors.
+// seatInfo is a single engagement-lease view for gate denials and session inject
+// (sty_1738f973). Empty ItemID means no lease row was relevant.
+type seatInfo struct {
+	ItemID      string
+	State       string
+	Owner       string
+	AcquiredAt  time.Time
+	HeartbeatAt time.Time
+	Stale       bool
+	InFlight    bool
+	// Engaged is true when this row qualifies as live engagement (performing
+	// committed status, or fresh in-flight mid-transition).
+	Engaged bool
+}
+
+// storyEngaged reports whether a LIVE engagement seat is active (sty_8426b9c0 /
+// sty_1738f973). A bare engagement_lease row is not enough: stale heartbeats and
+// leases whose committed story is not in a performing state do NOT open the gate.
+// Fails CLOSED on store open/query errors.
 func storyEngaged() (bool, error) {
-	a, err := app.Open()
-	if err != nil {
-		return false, fmt.Errorf("cannot determine engagement (store open failed: %w) — fix config and retry", err)
+	_, engaged, err := currentSeat()
+	return engaged, err
+}
+
+// currentSeat resolves the engagement seat for gate/session surfaces. When
+// engaged is true, info describes the live holder. When engaged is false but a
+// non-qualifying lease exists (stale orphan, settled on non-performing status),
+// info still names that row so deny reasons can tell the agent who holds the
+// seat and how to inspect/release it. Fails CLOSED on store errors.
+func currentSeat() (info seatInfo, engaged bool, err error) {
+	a, openErr := app.Open()
+	if openErr != nil {
+		return seatInfo{}, false, fmt.Errorf("cannot determine engagement (store open failed: %w) — fix config and retry", openErr)
 	}
 	defer func() { _ = a.Close() }()
 	ctx := context.Background()
+	wfs, werr := a.Store.DocIndex.List(ctx, "workflows")
+	if werr != nil {
+		return seatInfo{}, false, fmt.Errorf("cannot determine engagement (workflow list failed: %w) — fix config and retry", werr)
+	}
+	items, lerr := a.Store.Stories.List(ctx, workitem.ListFilter{})
+	if lerr != nil {
+		return seatInfo{}, false, fmt.Errorf("cannot determine engagement (story list failed: %w) — fix config and retry", lerr)
+	}
 	if a.Store.Leases == nil {
 		// Pre-migration or incomplete bootstrap: fall back to derived status scan.
-		wfs, err := a.Store.DocIndex.List(ctx, "workflows")
-		if err != nil {
-			return false, fmt.Errorf("cannot determine engagement (workflow list failed: %w) — fix config and retry", err)
-		}
-		items, err := a.Store.Stories.List(ctx, workitem.ListFilter{})
-		if err != nil {
-			return false, fmt.Errorf("cannot determine engagement (story list failed: %w) — fix config and retry", err)
-		}
-		return anyEngaged(items, wfs)
+		ok, aerr := anyEngaged(items, wfs)
+		return seatInfo{}, ok, aerr
 	}
-	active, err := a.Store.Leases.AnyActive(ctx)
-	if err != nil {
-		return false, fmt.Errorf("cannot determine engagement (lease query failed: %w) — fix config and retry", err)
+	leases, qerr := a.Store.Leases.List(ctx)
+	if qerr != nil {
+		return seatInfo{}, false, fmt.Errorf("cannot determine engagement (lease query failed: %w) — fix config and retry", qerr)
 	}
-	return active, nil
+	live, other, eerr := evaluateSeat(leases, items, wfs, time.Now().UTC())
+	if eerr != nil {
+		return seatInfo{}, false, eerr
+	}
+	if live.ItemID != "" {
+		return live, true, nil
+	}
+	return other, false, nil
+}
+
+// evaluateSeat is the pure engagement predicate (sty_1738f973 AC2). A lease L is
+// a live seat iff NOT IsStale(L) AND (committed status is a NonTerminalEngaging
+// state of the item's governing workflow OR (L.InFlight AND non-stale)). The
+// InFlight+fresh disjunct preserves the acquire-at-start window for a legit
+// first-transition dispatch; the residual sub-TTL orphan gap is the documented
+// cost (Acquire steals after HeartbeatTTL).
+//
+// Returns (live, other, err): live is the first qualifying seat (Engaged=true);
+// other is the most relevant non-qualifying lease for messaging (stale first,
+// else any row), with Engaged=false. err is non-nil when a leased item has no
+// resolving workflow (fail-closed, same as anyEngaged).
+func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Doc, now time.Time) (live, other seatInfo, err error) {
+	byID := make(map[string]workitem.Item, len(items))
+	for _, it := range items {
+		byID[it.ID] = it
+	}
+	engagingCache := map[string]map[string]bool{}
+	var otherPick seatInfo
+	for _, l := range leases {
+		stale := lease.IsStale(l, now)
+		info := seatInfo{
+			ItemID:      l.ItemID,
+			State:       l.State,
+			Owner:       l.Owner,
+			AcquiredAt:  l.AcquiredAt,
+			HeartbeatAt: l.HeartbeatAt,
+			Stale:       stale,
+			InFlight:    l.InFlight,
+		}
+		if stale {
+			// Prefer naming a stale holder in deny/session text.
+			if otherPick.ItemID == "" || (!otherPick.Stale && stale) {
+				otherPick = info
+			}
+			continue
+		}
+		it, ok := byID[l.ItemID]
+		if !ok {
+			// Leased id not in stories/tasks list — treat as non-performing residue.
+			if otherPick.ItemID == "" {
+				otherPick = info
+			}
+			continue
+		}
+		// Prefer the committed item status for the performing check; fall back to
+		// the lease's last-committed state when the item row is somehow missing a
+		// status (should not happen for real rows).
+		status := it.Status
+		if status == "" {
+			status = l.State
+		}
+		// Surface lease.State (last committed engaging target / in-flight target)
+		// in the seat descriptor when more informative than committed backlog.
+		if l.State != "" {
+			info.State = l.State
+		}
+		// Also expose the committed status when it differs (e.g. lease state=plan
+		// while story is still backlog mid-transition) by preferring lease state
+		// for messaging, but judging on committed status.
+		wf, found := wfgovern.GoverningWorkflow(wfs, it)
+		if !found {
+			return seatInfo{}, seatInfo{}, fmt.Errorf("item %s has no resolving workflow — cannot determine engagement", it.ID)
+		}
+		engaging, cached := engagingCache[wf.Name]
+		if !cached {
+			spec, dotOK := wfdot.Parse(wf.Body)
+			if !dotOK {
+				return seatInfo{}, seatInfo{}, fmt.Errorf("workflow %s has no DOT spec — cannot determine engagement", wf.Name)
+			}
+			engaging = map[string]bool{}
+			for _, s := range spec.NonTerminalEngagingStates() {
+				engaging[s] = true
+			}
+			engagingCache[wf.Name] = engaging
+		}
+		// Live seat: committed status is performing, OR fresh in-flight mid-transition.
+		// InFlight+fresh covers the acquire-at-start window when status is still the
+		// start state (backlog) — without this, mid-dispatch edits would be denied.
+		if engaging[status] || l.InFlight {
+			info.Engaged = true
+			// Prefer the committed status in the descriptor when it is performing;
+			// otherwise keep lease.State (target of the in-flight transition).
+			if engaging[status] {
+				info.State = status
+			}
+			if live.ItemID == "" {
+				live = info
+			}
+			continue
+		}
+		if otherPick.ItemID == "" {
+			otherPick = info
+		}
+	}
+	return live, otherPick, nil
+}
+
+// seatSuffix appends a discoverable seat descriptor to a gate deny reason when
+// a non-live lease row exists (sty_1738f973 AC6). Empty when no row to name.
+func seatSuffix(info seatInfo, now time.Time) string {
+	if info.ItemID == "" {
+		return ""
+	}
+	return " — " + formatSeat(info, now) + "; inspect with `satelle story seat`, release with `satelle story seat release " + info.ItemID + "`"
+}
+
+// formatSeat renders a one-line seat descriptor for deny reasons and session inject.
+func formatSeat(info seatInfo, now time.Time) string {
+	if info.ItemID == "" {
+		return ""
+	}
+	state := info.State
+	if state == "" {
+		state = "?"
+	}
+	age := formatSeatAge(now.Sub(info.HeartbeatAt))
+	if info.Stale {
+		return fmt.Sprintf("seat held by %s (%s, stale %s)", info.ItemID, state, age)
+	}
+	acq := formatSeatAge(now.Sub(info.AcquiredAt))
+	return fmt.Sprintf("seat held by %s (%s, owner %s, acquired %s, heartbeat %s)",
+		info.ItemID, state, info.Owner, acq, age)
+}
+
+// formatSeatAge rounds a duration to a short human age for seat messaging.
+func formatSeatAge(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		h := int(d.Hours())
+		m := int(d.Minutes()) % 60
+		if m == 0 {
+			return fmt.Sprintf("%dh", h)
+		}
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
+	return fmt.Sprintf("%dd", int(d.Hours())/24)
+}
+
+// formatSeatBlock is the SessionStart / prompt multi-line seat inject body.
+func formatSeatBlock(info seatInfo, now time.Time) string {
+	if info.ItemID == "" {
+		return ""
+	}
+	return "## Engagement seat\n" + formatSeat(info, now) +
+		"\nInspect: `satelle story seat` · Release: `satelle story seat release " + info.ItemID + "`"
+}
+
+// appendSeatToContext merges a seat block into SessionStart content when room
+// remains under ceiling (sty_1738f973 AC6). Pure — unit-tested so removing the
+// inject path fails a test rather than leaving the suite green.
+func appendSeatToContext(content, seatBlock string, ceiling int) string {
+	if strings.TrimSpace(seatBlock) == "" {
+		return content
+	}
+	if content == "" {
+		return seatBlock
+	}
+	if ceiling > 0 && len(content)+2+len(seatBlock) > ceiling {
+		return content // prefer principles over a truncated seat line
+	}
+	return content + "\n\n" + seatBlock
+}
+
+// appendSeatToPrompt appends a one-line seat descriptor to the UserPromptSubmit
+// reminder when a lease exists (sty_1738f973 AC6). Pure for unit tests.
+func appendSeatToPrompt(msg string, info seatInfo, now time.Time) string {
+	if info.ItemID == "" {
+		return msg
+	}
+	return msg + "\n" + formatSeat(info, now) + " — inspect: `satelle story seat`"
 }
 
 // anyEngaged reports whether any work item sits in a non-terminal engaging state
@@ -596,6 +811,8 @@ func withinRoot(root, target string) bool {
 
 // runHookContext assembles and emits the SessionStart injection. It fails open:
 // any error opening the store or listing docs injects nothing and returns nil.
+// When any engagement lease exists, appends a seat block so the agent sees the
+// holder without digging (sty_1738f973 AC6) — also fail-open on lease read errors.
 func runHookContext(out, stderr io.Writer) error {
 	a, err := app.Open()
 	if err != nil {
@@ -615,10 +832,44 @@ func runHookContext(out, stderr io.Writer) error {
 			"satelle hook context: always-content exceeded %d bytes and was truncated — trim an always-tagged doc or drop its %s tag\n",
 			alwaysContextCeiling, sessionTag)
 	}
+	// Seat inject: prefer a live seat; else name any non-live residue so the agent
+	// can release a stuck holder. Fail open — a seat-read error injects nothing.
+	content = appendSeatToContext(content, sessionSeatBlock(a), alwaysContextCeiling)
 	if strings.TrimSpace(content) == "" {
 		return nil
 	}
 	return emitAdditionalContext(out, "SessionStart", "", content)
+}
+
+// sessionSeatBlock returns the SessionStart seat inject for a, or "" when no
+// lease exists / store is incomplete. Fail-open helper for runHookContext.
+func sessionSeatBlock(a *app.App) string {
+	if a == nil || a.Store == nil || a.Store.Leases == nil {
+		return ""
+	}
+	ctx := context.Background()
+	leases, err := a.Store.Leases.List(ctx)
+	if err != nil || len(leases) == 0 {
+		return ""
+	}
+	wfs, _ := a.Store.DocIndex.List(ctx, "workflows")
+	items, _ := a.Store.Stories.List(ctx, workitem.ListFilter{})
+	now := time.Now().UTC()
+	live, other, _ := evaluateSeat(leases, items, wfs, now)
+	info := live
+	if info.ItemID == "" {
+		info = other
+	}
+	// No evaluateSeat pick (e.g. empty items+wfs): still name the first raw row.
+	if info.ItemID == "" {
+		l := leases[0]
+		info = seatInfo{
+			ItemID: l.ItemID, State: l.State, Owner: l.Owner,
+			AcquiredAt: l.AcquiredAt, HeartbeatAt: l.HeartbeatAt,
+			Stale: lease.IsStale(l, now), InFlight: l.InFlight,
+		}
+	}
+	return formatSeatBlock(info, now)
 }
 
 // selectAlwaysDocs returns the SESSION set — every principle carrying the
@@ -835,14 +1086,19 @@ const gateNotWiredWarning = "⚠️ satelle: the edit gate is NOT wired into thi
 
 // runHookPrompt is the UserPromptSubmit handler: it re-injects the concise
 // edits-require-a-story reminder and, when a gate-liveness self-check confidently
-// finds no wired edit gate, prepends the LOUD not-wired warning. Fails open — a
-// resolve/read failure injects only the reminder.
+// finds no wired edit gate, prepends the LOUD not-wired warning. When a seat
+// lease exists, appends a one-line seat descriptor (sty_1738f973 AC6). Fails open
+// — a resolve/read failure injects only the reminder.
 func runHookPrompt(out io.Writer) error {
 	msg := hookPromptReminder
 	if root, ok := repoRootForHook(); ok {
 		if wired, checked := gateWiredInSettings(root); checked && !wired {
 			msg = gateNotWiredWarning + "\n\n" + msg
 		}
+	}
+	// Seat line: fail-open (currentSeat error injects nothing).
+	if info, _, err := currentSeat(); err == nil {
+		msg = appendSeatToPrompt(msg, info, time.Now().UTC())
 	}
 	return emitAdditionalContext(out, "UserPromptSubmit", "", msg)
 }

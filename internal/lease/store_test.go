@@ -173,3 +173,35 @@ func TestAllowParallelNoStorySeat(t *testing.T) {
 		t.Fatalf("b: %v %v", out2, err)
 	}
 }
+
+// TestListIsStaleReap: List returns rows; IsStale flags aged heartbeats; Reap
+// deletes them so a subsequent seat-occupying acquire succeeds (sty_1738f973 AC3).
+func TestListIsStaleReap(t *testing.T) {
+	s := openTestDB(t)
+	ctx := context.Background()
+	_, _, _, _ = s.Acquire(ctx, "sty_a", "story", "dead", "plan", true)
+	old := time.Now().UTC().Add(-HeartbeatTTL - time.Minute).Format(time.RFC3339Nano)
+	if _, err := s.db.Exec(`UPDATE engagement_lease SET heartbeat_at = ? WHERE item_id = ?`, old, "sty_a"); err != nil {
+		t.Fatal(err)
+	}
+	all, err := s.List(ctx)
+	if err != nil || len(all) != 1 {
+		t.Fatalf("list: %v len=%d", err, len(all))
+	}
+	now := time.Now().UTC()
+	if !IsStale(all[0], now) {
+		t.Fatal("aged lease must be IsStale")
+	}
+	reaped, err := s.Reap(ctx)
+	if err != nil || len(reaped) != 1 || reaped[0].ItemID != "sty_a" {
+		t.Fatalf("reap: %v reaped=%+v", err, reaped)
+	}
+	all, err = s.List(ctx)
+	if err != nil || len(all) != 0 {
+		t.Fatalf("after reap list: %v len=%d", err, len(all))
+	}
+	_, out, _, err := s.Acquire(ctx, "sty_b", "story", "alice", "plan", true)
+	if err != nil || out != OutcomeAcquired {
+		t.Fatalf("acquire after reap: out=%v err=%v", out, err)
+	}
+}

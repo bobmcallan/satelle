@@ -8,8 +8,10 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -722,5 +724,155 @@ func mkfile(t *testing.T, path, body string) {
 	}
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestEvaluateSeatPerformingAndStale: the pure engagement predicate
+// (sty_1738f973 AC2/AC5/AC6).
+func TestEvaluateSeatPerformingAndStale(t *testing.T) {
+	wfs := []docindex.Doc{wfDoc("wf", `["*"]`, `
+  backlog     [shape=Mdiamond]
+  plan        [agent=executor]
+  in_progress [agent=executor]
+  done        [shape=Msquare]
+  backlog -> plan -> in_progress -> done`)}
+	now := time.Now().UTC()
+	items := []workitem.Item{
+		{ID: "sty_live", Kind: workitem.KindStory, Status: "in_progress", Category: "feature"},
+		{ID: "sty_backlog", Kind: workitem.KindStory, Status: "backlog", Category: "feature"},
+		{ID: "sty_done", Kind: workitem.KindStory, Status: "done", Category: "feature"},
+	}
+
+	// Settled live lease on in_progress → engaged.
+	live, other, err := evaluateSeat([]lease.Lease{{
+		ItemID: "sty_live", State: "in_progress", Owner: "alice",
+		AcquiredAt: now.Add(-time.Hour), HeartbeatAt: now.Add(-time.Minute),
+	}}, items, wfs, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live.ItemID != "sty_live" || !live.Engaged {
+		t.Fatalf("live seat: %+v", live)
+	}
+	if other.ItemID != "" {
+		t.Fatalf("unexpected other: %+v", other)
+	}
+
+	// Settled lease on done → not engaged.
+	live, other, err = evaluateSeat([]lease.Lease{{
+		ItemID: "sty_done", State: "done", Owner: "alice",
+		AcquiredAt: now.Add(-time.Hour), HeartbeatAt: now.Add(-time.Minute),
+	}}, items, wfs, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live.ItemID != "" {
+		t.Fatalf("done lease must not be live: %+v", live)
+	}
+	if other.ItemID != "sty_done" {
+		t.Fatalf("other should name residue: %+v", other)
+	}
+
+	// Stale orphan (in_flight, committed backlog, heartbeat past TTL) → not engaged.
+	staleHB := now.Add(-lease.HeartbeatTTL - time.Minute)
+	live, other, err = evaluateSeat([]lease.Lease{{
+		ItemID: "sty_backlog", State: "plan", Owner: "dead", InFlight: true,
+		AcquiredAt: staleHB, HeartbeatAt: staleHB,
+	}}, items, wfs, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live.ItemID != "" {
+		t.Fatalf("stale orphan must not be live: %+v", live)
+	}
+	if other.ItemID != "sty_backlog" || !other.Stale {
+		t.Fatalf("other must name stale orphan: %+v", other)
+	}
+	// formatSeat / seatSuffix name the holder + inspect path.
+	desc := formatSeat(other, now)
+	if !strings.Contains(desc, "sty_backlog") || !strings.Contains(desc, "stale") {
+		t.Fatalf("formatSeat = %q", desc)
+	}
+	suf := seatSuffix(other, now)
+	if !strings.Contains(suf, "satelle story seat") || !strings.Contains(suf, "seat release sty_backlog") {
+		t.Fatalf("seatSuffix = %q", suf)
+	}
+
+	// Fresh in-flight at start state (backlog) → engaged (acquire-at-start window).
+	live, _, err = evaluateSeat([]lease.Lease{{
+		ItemID: "sty_backlog", State: "plan", Owner: "alice", InFlight: true,
+		AcquiredAt: now.Add(-time.Minute), HeartbeatAt: now.Add(-time.Second),
+	}}, items, wfs, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live.ItemID != "sty_backlog" || !live.Engaged {
+		t.Fatalf("fresh in-flight at start state must be live: %+v", live)
+	}
+}
+
+// TestSeatInjectHelpers: SessionStart / prompt seat inject pure paths
+// (sty_1738f973 AC6). Removing appendSeatToContext / appendSeatToPrompt /
+// formatSeatBlock would fail these — the discoverability path the AC names.
+func TestSeatInjectHelpers(t *testing.T) {
+	now := time.Now().UTC()
+	stale := seatInfo{
+		ItemID: "sty_2db78343", State: "plan", Owner: "dead",
+		AcquiredAt: now.Add(-40 * time.Minute), HeartbeatAt: now.Add(-40 * time.Minute),
+		Stale: true,
+	}
+	block := formatSeatBlock(stale, now)
+	if !strings.Contains(block, "## Engagement seat") {
+		t.Fatalf("block missing heading: %q", block)
+	}
+	if !strings.Contains(block, "sty_2db78343") || !strings.Contains(block, "stale") {
+		t.Fatalf("block missing seat id/stale: %q", block)
+	}
+	if !strings.Contains(block, "satelle story seat release sty_2db78343") {
+		t.Fatalf("block missing release path: %q", block)
+	}
+
+	merged := appendSeatToContext("principles here", block, alwaysContextCeiling)
+	if !strings.Contains(merged, "## Engagement seat") || !strings.HasPrefix(merged, "principles here") {
+		t.Fatalf("appendSeatToContext = %q", merged)
+	}
+	// Ceiling too tight: keep content, drop seat.
+	tight := appendSeatToContext("already long content that fills budget", block, 40)
+	if strings.Contains(tight, "## Engagement seat") {
+		t.Fatalf("ceiling should drop seat: %q", tight)
+	}
+	// Empty content still injects seat.
+	only := appendSeatToContext("", block, alwaysContextCeiling)
+	if only != block {
+		t.Fatalf("empty content: %q", only)
+	}
+
+	prompt := appendSeatToPrompt("edits require an ENGAGED story", stale, now)
+	if !strings.Contains(prompt, "sty_2db78343") || !strings.Contains(prompt, "stale") {
+		t.Fatalf("prompt seat line: %q", prompt)
+	}
+	if !strings.Contains(prompt, "satelle story seat") {
+		t.Fatalf("prompt missing inspect: %q", prompt)
+	}
+	// Empty seatInfo is a no-op.
+	if got := appendSeatToPrompt("base", seatInfo{}, now); got != "base" {
+		t.Fatalf("empty info: %q", got)
+	}
+
+	// Live seat (no STALE) still injects owner+ages.
+	live := seatInfo{
+		ItemID: "sty_live", State: "in_progress", Owner: "alice",
+		AcquiredAt: now.Add(-10 * time.Minute), HeartbeatAt: now.Add(-time.Minute),
+		Engaged: true,
+	}
+	liveBlock := formatSeatBlock(live, now)
+	if strings.Contains(liveBlock, "STALE") || strings.Contains(strings.ToLower(liveBlock), "stale ") {
+		// formatSeat uses "stale Nm" only when Stale=true; live must not.
+		if strings.Contains(liveBlock, ", stale ") {
+			t.Fatalf("live seat must not say stale: %q", liveBlock)
+		}
+	}
+	if !strings.Contains(liveBlock, "alice") || !strings.Contains(liveBlock, "sty_live") {
+		t.Fatalf("live block: %q", liveBlock)
 	}
 }

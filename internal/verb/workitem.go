@@ -310,13 +310,16 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		}
 	}
 
-	// Engagement lease (sty_8426b9c0): acquire the seat BEFORE gate+dispatch so
-	// concurrent engages and edit/commit gates see the holder during the whole
-	// window. Shape still decides engaging; the lease is WHO holds it. On
-	// gate-reject / dispatch-abort / Update error after a NEW acquire, release
-	// so the seat is never stuck. Continuation (same-owner already held) does not
-	// release on abort.
+	// Engagement lease (sty_8426b9c0 / sty_1738f973): acquire the seat BEFORE
+	// gate+dispatch so concurrent engages and edit/commit gates see the holder
+	// during the whole window. Shape still decides engaging; the lease is WHO
+	// holds it. A deferred abort guard releases a NEWLY acquired seat (or clears
+	// in_flight on sequential continuation) on ANY return path that does not
+	// settle — gate reject, dispatch abort, panic-recoverable exit, Update error.
+	// SIGKILL still cannot run defers; HeartbeatTTL + IsStale covers that residual.
+	// settled is set only after force-release (exit) or Confirm (engaging commit).
 	acquiredThisCall := false
+	settled := true // non-transitioning / non-lease paths never need abort release
 	if transitioning && (current.Kind == workitem.KindStory || current.Kind == workitem.KindTask) {
 		// Step-edge stop arbitration (AC5): a pending stop request refuses forward
 		// engaging moves; park/terminal remain open.
@@ -333,9 +336,11 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 			return json.Marshal(current)
 		}
 		acquiredThisCall = acq
+		settled = false
 	}
 	// releaseOnAbort: newly acquired seats are deleted; sequential continuations
 	// only clear in_flight so a retry can re-enter (state stays last-committed).
+	// Idempotent with Release/ClearInFlight no-ops on a missing row.
 	releaseOnAbort := func() {
 		if acquiredThisCall {
 			releaseEngagementLease(ctx, current.ID)
@@ -343,6 +348,11 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 			clearEngagementInFlight(ctx, current.ID)
 		}
 	}
+	defer func() {
+		if !settled {
+			releaseOnAbort()
+		}
+	}()
 
 	// Gate the transition through the isolated reviewer, if one is wired and the
 	// edge is governed by a reviewer skill. A reject blocks the whole set and
@@ -351,7 +361,6 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	if transitioning && transitionGater != nil {
 		dec, gerr := transitionGater.Gate(ctx, current, *req.Status)
 		if gerr != nil {
-			releaseOnAbort()
 			return nil, gerr
 		}
 		// An edge may carry several reviewers (a transition's reviewer list plus
@@ -379,7 +388,6 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 					fmt.Sprintf("rejected %s→%s by %s: %s", current.Status, *req.Status, rv.Skill, rv.Notes),
 					reviewerPayload(current.Status, *req.Status, rv), now)
 				notifyChange(panelTopic(current.Kind))
-				releaseOnAbort()
 				return nil, fmt.Errorf("transition %s→%s rejected by %s: decision=reject notes=%s%s",
 					current.Status, *req.Status, rv.Skill, rv.Notes, formatReasoningSuffix(rv.Reasoning))
 			}
@@ -408,7 +416,6 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 				fmt.Sprintf("named-agent dispatch failed for %s→%s: %v", current.Status, *req.Status, derr),
 				transitionPayload(current.Status, *req.Status, res.Skill), now)
 			notifyChange(panelTopic(current.Kind))
-			releaseOnAbort()
 			return nil, fmt.Errorf("transition %s→%s refused: %v", current.Status, *req.Status, derr)
 		}
 		if res.Dispatched {
@@ -448,7 +455,6 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		Tags:               req.Tags,
 	}, now)
 	if err != nil {
-		releaseOnAbort()
 		return nil, err
 	}
 	// Release the seat on transition into terminal (Msquare) or park (agent=reviewer).
@@ -457,12 +463,21 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	// per host, but ForceRelease covers any residual owner mismatch).
 	if transitioning && targetIsExitState(ctx, it, *req.Status) {
 		forceReleaseEngagementLease(ctx, it.ID)
+		settled = true
 	} else if transitioning {
 		// Engaging (or other non-exit) commit: settle lease state + clear in_flight.
 		engaging, ok := storyStatusIsEngaging(ctx, it, *req.Status)
 		if ok && engaging {
 			confirmEngagementLease(ctx, it.ID, *req.Status)
+			settled = true
+		} else {
+			// Non-engaging, non-exit target after a lease was claimed for an
+			// engaging path should not happen; treat as settled so we do not
+			// roll back a committed status.
+			settled = true
 		}
+	} else {
+		settled = true
 	}
 	if transitioning {
 		// An enacted status change records a transition row (feeds the progress

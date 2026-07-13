@@ -3,11 +3,15 @@ package verb_test
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/lease"
+	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -214,4 +218,157 @@ func (r rejectToGater) Gate(ctx context.Context, item workitem.Item, toStatus st
 		}, nil
 	}
 	return verb.GateDecision{Gated: false}, nil
+}
+
+// TestLeaseAbortLeavesNoSeatRow: gate reject on NEW acquire leaves no seat row
+// (sty_1738f973 AC1 deferred release-on-abort).
+func TestLeaseAbortLeavesNoSeatRow(t *testing.T) {
+	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
+	verb.SetAllowParallelStories(false)
+	t.Cleanup(func() { verb.SetAllowParallelStories(false) })
+
+	verb.SetTransitionGater(rejectToGater{to: "plan", skill: "intent"})
+	t.Cleanup(func() { verb.SetTransitionGater(nil) })
+
+	var a workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)
+	_, err := dispatchRaw(t, "story-set", map[string]any{"id": a.ID, "status": "plan"})
+	if err == nil {
+		t.Fatal("expected gate reject")
+	}
+	// Seat list must be empty after abort.
+	raw := call(t, "story-seat-list", map[string]any{})
+	var seats []map[string]any
+	if err := json.Unmarshal(raw, &seats); err != nil {
+		t.Fatal(err)
+	}
+	if len(seats) != 0 {
+		t.Fatalf("seat list after abort = %+v, want empty", seats)
+	}
+}
+
+// TestStorySeatListAndRelease: list reflects a live lease; release frees the seat
+// so another story can engage (sty_1738f973 AC4).
+func TestStorySeatListAndRelease(t *testing.T) {
+	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
+	verb.SetAllowParallelStories(false)
+	t.Cleanup(func() { verb.SetAllowParallelStories(false) })
+
+	var a, b workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "B", "category": "feature"}), &b)
+	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "plan"}), &a)
+
+	raw := call(t, "story-seat-list", map[string]any{})
+	var seats []map[string]any
+	if err := json.Unmarshal(raw, &seats); err != nil {
+		t.Fatal(err)
+	}
+	if len(seats) != 1 || seats[0]["id"] != a.ID {
+		t.Fatalf("seat list = %+v, want one row for %s", seats, a.ID)
+	}
+
+	// B cannot engage while A holds the seat.
+	_, berr := dispatchRaw(t, "story-set", map[string]any{"id": b.ID, "status": "plan"})
+	if berr == nil || !strings.Contains(berr.Error(), "satelle story seat") {
+		t.Fatalf("B refuse must name inspect path: %v", berr)
+	}
+
+	// Operator release frees the seat.
+	call(t, "story-seat-release", map[string]any{"id": a.ID})
+	raw = call(t, "story-seat-list", map[string]any{})
+	if err := json.Unmarshal(raw, &seats); err != nil {
+		t.Fatal(err)
+	}
+	if len(seats) != 0 {
+		t.Fatalf("after release seats = %+v", seats)
+	}
+	json.Unmarshal(call(t, "story-set", map[string]any{"id": b.ID, "status": "plan"}), &b)
+	if b.Status != "plan" {
+		t.Fatalf("B should engage after release: %q", b.Status)
+	}
+}
+
+// TestOrphanStaleLeaseDoesNotBlockEngage: kill-simulate an orphan (in_flight=1,
+// committed backlog, heartbeat past TTL) then assert (a) seat list flags stale
+// and (b) a new story engages by stealing the seat (sty_1738f973 AC5).
+func TestOrphanStaleLeaseDoesNotBlockEngage(t *testing.T) {
+	dir := t.TempDir()
+	db, err := store.Open(filepath.Join(dir, "satelle.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	wfDir := filepath.Join(dir, "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wfDir, "single-story-wf.md"), []byte(singleStoryWF), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DocIndex.Sync(context.Background(), map[string]string{"workflows": wfDir}, time.Now()); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	verb.SetWorkItemStore(db.Stories)
+	verb.SetLedgerStore(db.Ledger)
+	verb.SetDocIndexStore(db.DocIndex)
+	verb.SetLeaseStore(db.Leases)
+	verb.SetAllowParallelStories(false)
+	t.Cleanup(func() {
+		db.Close()
+		verb.SetWorkItemStore(nil)
+		verb.SetLedgerStore(nil)
+		verb.SetDocIndexStore(nil)
+		verb.SetLeaseStore(nil)
+		verb.SetAllowParallelStories(false)
+	})
+
+	var a, b workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Orphan", "category": "feature"}), &a)
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Next", "category": "feature"}), &b)
+
+	// Kill-simulate: acquire seat for A without committing status (stays backlog),
+	// freeze heartbeat past HeartbeatTTL while in_flight remains 1.
+	ctx := context.Background()
+	_, out, _, aerr := db.Leases.Acquire(ctx, a.ID, "story", "dead-owner", "plan", true)
+	if aerr != nil || out != lease.OutcomeAcquired {
+		t.Fatalf("plant orphan lease: out=%v err=%v", out, aerr)
+	}
+	staleAt := time.Now().UTC().Add(-lease.HeartbeatTTL - time.Minute)
+	if err := db.Leases.SetHeartbeat(ctx, a.ID, staleAt); err != nil {
+		t.Fatalf("freeze heartbeat: %v", err)
+	}
+	// A committed status is still backlog — the field-defect shape.
+	var still workitem.Item
+	json.Unmarshal(call(t, "story-get", map[string]any{"id": a.ID}), &still)
+	if still.Status != workitem.StatusBacklog {
+		t.Fatalf("orphan story status = %q, want backlog", still.Status)
+	}
+	// Seat row present and stale before any re-engage (list without reap first —
+	// Reap runs inside story-seat-list, so call List on the store).
+	rows, err := db.Leases.List(ctx)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("orphan row: err=%v len=%d", err, len(rows))
+	}
+	if !lease.IsStale(rows[0], time.Now().UTC()) || !rows[0].InFlight {
+		t.Fatalf("orphan must be stale+in_flight: %+v", rows[0])
+	}
+	// New story B engages: Acquire steals the stale seat holder.
+	json.Unmarshal(call(t, "story-set", map[string]any{"id": b.ID, "status": "plan"}), &b)
+	if b.Status != "plan" {
+		t.Fatalf("B should engage after orphan went stale: %q", b.Status)
+	}
+	// Live seat is B; orphan A row is gone.
+	raw := call(t, "story-seat-list", map[string]any{})
+	var seats []map[string]any
+	if err := json.Unmarshal(raw, &seats); err != nil {
+		t.Fatal(err)
+	}
+	if len(seats) != 1 || seats[0]["id"] != b.ID {
+		t.Fatalf("after B engage seats = %+v, want only %s", seats, b.ID)
+	}
+	// A remains backlog (never transitioned).
+	json.Unmarshal(call(t, "story-get", map[string]any{"id": a.ID}), &still)
+	if still.Status != workitem.StatusBacklog {
+		t.Fatalf("A after steal = %q", still.Status)
+	}
 }
