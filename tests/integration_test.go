@@ -12,12 +12,16 @@ package tests
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,13 +48,16 @@ var testHomes sync.Map
 //
 // Before any test runs, SATELLE_HOME is forced to an isolated temp dir so nothing
 // in this package can resolve to the host ~/.satelle (sty_ee7f40c6). After the
-// suite, host global config is re-read and the process exits non-zero if it
-// changed.
+// suite, the FULL host production surface is re-snapshotted and the process exits
+// non-zero if anything changed (sty_6d824d6a): host SATELLE_HOME tree,
+// ~/.config/satelle credentials, and ~/.local/bin/satelle. Production listen
+// port 8787 is off-limits for test serves (see never-bind-8787 assertions).
 func TestMain(m *testing.M) {
-	// Snapshot host global config BEFORE isolating SATELLE_HOME — otherwise the
-	// guard would measure the sandbox, not the machine-wide registry.
-	hostCfg := hostGlobalConfigPath()
-	beforeHost := readFileOptional(hostCfg)
+	// Resolve host roots BEFORE isolating SATELLE_HOME, then snapshot those fixed
+	// paths before and after the suite. Re-resolving via getenv after Setenv would
+	// measure the sandbox and false-trip (or hide real host pollution).
+	hostRoots := resolveHostRoots()
+	beforeSurface := captureHostSurfaceAt(hostRoots)
 
 	backstop, err := os.MkdirTemp("", "satelle-itest-home-*")
 	if err != nil {
@@ -63,12 +70,15 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	// os.Exit skips defers; clean up and enforce the host-config guard explicitly.
+	// os.Exit skips defers; clean up and enforce the host-surface guard explicitly.
 	exit := func(code int) {
-		afterHost := readFileOptional(hostCfg)
-		if !bytes.Equal(beforeHost, afterHost) {
-			fmt.Fprintf(os.Stderr, "FATAL: host global config changed during the integration suite (SATELLE_HOME isolation failed):\n  path: %s\n  before: %d bytes, after: %d bytes\n",
-				hostCfg, len(beforeHost), len(afterHost))
+		afterSurface := captureHostSurfaceAt(hostRoots)
+		if diffs := diffHostSurface(beforeSurface, afterSurface); len(diffs) > 0 {
+			fmt.Fprintf(os.Stderr, "FATAL: host production surface changed during the integration suite (isolation failed).\n")
+			fmt.Fprintf(os.Stderr, "  Production port 8787 is off-limits; host ~/.satelle, ~/.config/satelle, and ~/.local/bin/satelle must be untouched.\n")
+			for _, d := range diffs {
+				fmt.Fprintf(os.Stderr, "  - %s\n", d)
+			}
 			code = 1
 		}
 		_ = os.RemoveAll(backstop)
@@ -103,19 +113,170 @@ func TestMain(m *testing.M) {
 	exit(code)
 }
 
-// hostGlobalConfigPath is the machine-wide config path the suite must not touch.
-// Captured before TestMain overrides SATELLE_HOME. If the environment already
-// set SATELLE_HOME (caller sandboxed), that path is the one we protect; otherwise
-// ~/.satelle/config.toml.
-func hostGlobalConfigPath() string {
+// hostSurface is a content-addressed snapshot of production host state the
+// integration suite must not mutate (sty_6d824d6a). Missing roots yield empty
+// maps / empty binary fingerprint — skip-safe on fresh CI with no install.
+type hostSurface struct {
+	// relpath → "dir" or "file:<sha256>:<size>:<mtime_ns>"
+	satelleHome map[string]string
+	xdgConfig   map[string]string // credentials under ~/.config/satelle
+	// installed binary fingerprint; "" when ~/.local/bin/satelle is absent
+	installedBin string
+	// resolved roots (for diagnostics only)
+	satelleHomeRoot  string
+	xdgConfigRoot    string
+	installedBinPath string
+}
+
+// hostRoots are fixed host paths resolved once before SATELLE_HOME isolation.
+type hostRoots struct {
+	satelleHome  string
+	xdgConfig    string
+	installedBin string
+}
+
+// resolveHostRoots picks the real machine paths to guard. Honors a pre-existing
+// SATELLE_HOME / XDG_CONFIG_HOME when already set (caller sandboxed).
+func resolveHostRoots() hostRoots {
+	homeDir, _ := os.UserHomeDir()
+	r := hostRoots{}
 	if v := strings.TrimSpace(os.Getenv("SATELLE_HOME")); v != "" {
-		return filepath.Join(v, "config.toml")
+		r.satelleHome = v
+	} else if homeDir != "" {
+		r.satelleHome = filepath.Join(homeDir, ".satelle")
 	}
-	home, err := os.UserHomeDir()
+	if v := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); v != "" {
+		r.xdgConfig = filepath.Join(v, "satelle")
+	} else if homeDir != "" {
+		r.xdgConfig = filepath.Join(homeDir, ".config", "satelle")
+	}
+	if homeDir != "" {
+		r.installedBin = filepath.Join(homeDir, ".local", "bin", "satelle")
+	}
+	return r
+}
+
+// captureHostSurfaceAt hashes the given fixed host roots (not re-resolved from env).
+func captureHostSurfaceAt(r hostRoots) hostSurface {
+	return hostSurface{
+		satelleHome:      hashTree(r.satelleHome),
+		xdgConfig:        hashTree(r.xdgConfig),
+		installedBin:     fingerprintFile(r.installedBin),
+		satelleHomeRoot:  r.satelleHome,
+		xdgConfigRoot:    r.xdgConfig,
+		installedBinPath: r.installedBin,
+	}
+}
+
+// diffHostSurface returns human-readable change lines; empty when identical.
+func diffHostSurface(before, after hostSurface) []string {
+	var diffs []string
+	diffs = append(diffs, diffTreeMaps("host SATELLE_HOME ("+before.satelleHomeRoot+")", before.satelleHome, after.satelleHome)...)
+	diffs = append(diffs, diffTreeMaps("host ~/.config/satelle ("+before.xdgConfigRoot+")", before.xdgConfig, after.xdgConfig)...)
+	if before.installedBin != after.installedBin {
+		label := before.installedBinPath
+		if label == "" {
+			label = "installed binary"
+		}
+		switch {
+		case before.installedBin == "" && after.installedBin != "":
+			diffs = append(diffs, label+": appeared during suite")
+		case before.installedBin != "" && after.installedBin == "":
+			diffs = append(diffs, label+": removed during suite")
+		default:
+			diffs = append(diffs, label+": content/mtime changed during suite")
+		}
+	}
+	return diffs
+}
+
+// hashTree walks root and returns a map of relpath → fingerprint. Missing or
+// unreadable roots return an empty map (skip-safe).
+func hashTree(root string) map[string]string {
+	out := map[string]string{}
+	if root == "" {
+		return out
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return out
+	}
+	if !info.IsDir() {
+		out["."] = fingerprintFile(root)
+		return out
+	}
+	_ = filepath.Walk(root, func(path string, fi os.FileInfo, err error) error {
+		if err != nil || fi == nil {
+			return nil // skip unreadable leaves
+		}
+		rel, rerr := filepath.Rel(root, path)
+		if rerr != nil {
+			return nil
+		}
+		if rel == "." {
+			out["./"] = "dir"
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if fi.IsDir() {
+			out[rel+"/"] = "dir"
+			return nil
+		}
+		out[rel] = fingerprintFile(path)
+		return nil
+	})
+	return out
+}
+
+// fingerprintFile returns "file:<sha256>:<size>:<mtime_ns>" or "" if missing.
+func fingerprintFile(path string) string {
+	if path == "" {
+		return ""
+	}
+	fi, err := os.Stat(path)
+	if err != nil || fi.IsDir() {
+		return ""
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".satelle", "config.toml")
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	sum := hex.EncodeToString(h.Sum(nil))
+	return fmt.Sprintf("file:%s:%d:%d", sum, fi.Size(), fi.ModTime().UnixNano())
+}
+
+func diffTreeMaps(label string, before, after map[string]string) []string {
+	var diffs []string
+	keys := map[string]struct{}{}
+	for k := range before {
+		keys[k] = struct{}{}
+	}
+	for k := range after {
+		keys[k] = struct{}{}
+	}
+	sorted := make([]string, 0, len(keys))
+	for k := range keys {
+		sorted = append(sorted, k)
+	}
+	sort.Strings(sorted)
+	for _, k := range sorted {
+		b, bok := before[k]
+		a, aok := after[k]
+		switch {
+		case bok && !aok:
+			diffs = append(diffs, fmt.Sprintf("%s: removed %s", label, k))
+		case !bok && aok:
+			diffs = append(diffs, fmt.Sprintf("%s: added %s", label, k))
+		case b != a:
+			diffs = append(diffs, fmt.Sprintf("%s: changed %s", label, k))
+		}
+	}
+	return diffs
 }
 
 func readFileOptional(path string) []byte {
@@ -289,6 +450,59 @@ func TestSubprocessHomeIsolated(t *testing.T) {
 	after2 := readFileOptional(hostCfg)
 	if !bytes.Equal(before, after2) {
 		t.Fatalf("host %s changed after sandbox init", hostCfg)
+	}
+}
+
+// TestHostSurfaceGuardTrips proves the sty_6d824d6a snapshot/diff helpers detect
+// a deliberate write into a protected tree, and stay quiet on missing roots
+// (skip-safe for fresh CI with no host install).
+func TestHostSurfaceGuardTrips(t *testing.T) {
+	root := t.TempDir()
+	before := hashTree(root)
+	if diffs := diffTreeMaps("t", before, hashTree(root)); len(diffs) != 0 {
+		t.Fatalf("equal trees must not trip: %v", diffs)
+	}
+	// Missing roots → empty map, no panic.
+	if len(hashTree(filepath.Join(root, "does-not-exist"))) != 0 {
+		t.Fatal("missing root must hash to empty map")
+	}
+	if fingerprintFile(filepath.Join(root, "does-not-exist")) != "" {
+		t.Fatal("missing file fingerprint must be empty")
+	}
+	if err := os.WriteFile(filepath.Join(root, "pollute"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after := hashTree(root)
+	if diffs := diffTreeMaps("t", before, after); len(diffs) == 0 {
+		t.Fatal("expected guard to trip after deliberate write into protected tree")
+	}
+	// Full surface diff names the change.
+	beforeS := hostSurface{satelleHome: before, xdgConfig: map[string]string{}, installedBin: ""}
+	afterS := hostSurface{satelleHome: after, xdgConfig: map[string]string{}, installedBin: ""}
+	if diffs := diffHostSurface(beforeS, afterS); len(diffs) == 0 {
+		t.Fatal("diffHostSurface should report the deliberate write")
+	}
+	// Installed-binary fingerprint changes on rewrite.
+	bin := filepath.Join(root, "satelle")
+	if err := os.WriteFile(bin, []byte("v1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fp1 := fingerprintFile(bin)
+	// Ensure mtime can move on coarse filesystems.
+	time.Sleep(5 * time.Millisecond)
+	if err := os.WriteFile(bin, []byte("v2"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fp2 := fingerprintFile(bin)
+	if fp1 == "" || fp2 == "" || fp1 == fp2 {
+		t.Fatalf("binary fingerprint must change on rewrite: %q → %q", fp1, fp2)
+	}
+	beforeS.installedBin = fp1
+	afterS.installedBin = fp2
+	afterS.installedBinPath = bin
+	beforeS.installedBinPath = bin
+	if diffs := diffHostSurface(beforeS, afterS); len(diffs) == 0 {
+		t.Fatal("expected installed-binary change to trip the guard")
 	}
 }
 
