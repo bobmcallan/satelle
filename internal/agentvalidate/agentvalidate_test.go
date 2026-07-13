@@ -156,6 +156,91 @@ func TestValidate_BarePresetRejected(t *testing.T) {
 	}
 }
 
+// TestValidate_MissingSystemPlaceholder (sty_21db3670 AC1): a multi-token
+// isolated command that omits {system} as its own argv token is a hard problem.
+func TestValidate_MissingSystemPlaceholder(t *testing.T) {
+	// Full-looking claude template with no {system} token — rubric never appended.
+	noSystem := "claude -p --output-format json --allowedTools {tools} --model {model}"
+	agents := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop"},
+		Reviewer: config.AgentBinding{Command: noSystem, Tools: "Read,Grep,Glob"},
+	}
+	r := Validate(agents, nil, nil)
+	if r.OK() {
+		t.Fatal("command missing {system} must produce a problem")
+	}
+	joined := strings.Join(r.Problems, "\n")
+	if !strings.Contains(joined, "{system}") || !strings.Contains(joined, "reviewer") {
+		t.Errorf("problem should name {system} and the section:\n%s", joined)
+	}
+	// Fused form (placeholder not its own token) also fails — mirrors buildArgs.
+	fused := "claude -p --append-system-prompt={system} --allowedTools {tools}"
+	agents.Reviewer.Command = fused
+	r2 := Validate(agents, nil, nil)
+	if r2.OK() {
+		t.Fatal("fused {system} (not own argv token) must produce a problem")
+	}
+	// Present {system} as own token passes (no system-placeholder problem).
+	ok := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop"},
+		Reviewer: config.AgentBinding{Command: agentcli.DefaultClaudeCommand},
+	}
+	r3 := Validate(ok, nil, nil)
+	if !r3.OK() {
+		t.Fatalf("DefaultClaudeCommand must pass: %v", r3.Problems)
+	}
+	for _, p := range r3.Problems {
+		if strings.Contains(p, "{system}") {
+			t.Errorf("DefaultClaudeCommand must not flag {system}: %s", p)
+		}
+	}
+}
+
+// TestValidate_ReviewerNoCeiling (sty_21db3670 AC2): role=reviewer isolated
+// command with no read-only ceiling is a WARNING (not a hard problem).
+func TestValidate_ReviewerNoCeiling(t *testing.T) {
+	// Has {system}, grants Write/Edit, no --disallowedTools / --deny.
+	writable := "claude -p --append-system-prompt {system} --allowedTools Read,Write,Edit --model {model}"
+	agents := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop"},
+		Reviewer: config.AgentBinding{Command: writable, Tools: "Read,Write,Edit", Role: "reviewer"},
+	}
+	r := Validate(agents, nil, nil)
+	if !r.OK() {
+		t.Fatalf("missing ceiling is a warning, not a problem: %v", r.Problems)
+	}
+	joined := strings.Join(r.Warnings, "\n")
+	if !strings.Contains(joined, "reviewer") || !strings.Contains(joined, "read-only ceiling") {
+		t.Errorf("expected ceiling warning naming reviewer:\n%s", joined)
+	}
+}
+
+// TestValidate_PlaceholderHealthyUnchanged (sty_21db3670 AC3): in-loop + canonical
+// full templates produce neither a {system} problem nor a ceiling warning.
+func TestValidate_PlaceholderHealthyUnchanged(t *testing.T) {
+	agents := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop"},
+		Reviewer: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: "read_file,grep,list_dir", Model: "grok-4.5"},
+		Agents: map[string]config.AgentBinding{
+			"planner": {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob", Model: "opus"},
+		},
+	}
+	r := Validate(agents, nil, nil)
+	if !r.OK() {
+		t.Fatalf("canonical templates must pass: %v", r.Problems)
+	}
+	for _, p := range r.Problems {
+		if strings.Contains(p, "{system}") {
+			t.Errorf("unexpected {system} problem: %s", p)
+		}
+	}
+	for _, w := range r.Warnings {
+		if strings.Contains(w, "read-only ceiling") {
+			t.Errorf("canonical reviewer must not warn about ceiling: %s", w)
+		}
+	}
+}
+
 func TestValidate_UnresolvedEnv(t *testing.T) {
 	agents := config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},
