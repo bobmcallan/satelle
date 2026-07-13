@@ -677,14 +677,15 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		return verb.DispatchResult{}, nil // command "in-loop": the orchestrator performs the step
 	}
 	// A dispatched executor starts fresh and reconstructs its context by PULLING the
-	// story, its documents, and the ledger via the read-only satelle CLI (the
-	// pull-context call-to-action every prompt carries, sty_47d31300). That requires
-	// the binding to grant satelle CLI access; without it the agent is silently
+	// story, its documents, and the ledger — either via the read-only satelle CLI
+	// (the pull-context call-to-action, sty_47d31300) or via disk reads under
+	// .satelle/stories/<id>/ when the binding has a file-read tool but no shell
+	// (sty_565a0202 grok coder). Without a context channel the agent is silently
 	// context-starved. Refuse the dispatch with an actionable fix rather than run a
 	// blind agent — the no-silent-fallback style the engine uses for a missing binding.
 	if !grantsSatelleCLI(binding.Tools) {
 		return verb.DispatchResult{}, fmt.Errorf(
-			"named agent %q cannot perform step %q: its .satelle/agents.toml [%s] tools grant does not include the read-only satelle CLI (add `Bash(satelle:*)`), so it cannot pull the story/documents/ledger an isolated dispatch needs",
+			"named agent %q cannot perform step %q: its .satelle/agents.toml [%s] tools grant has no context channel (add `Bash(satelle:*)` for the satelle CLI, or `read_file` for disk reads under .satelle/stories/<id>/)",
 			dispatchAgent, toStatus, dispatchAgent)
 	}
 	// The step's own @skill rubric when the node declares one (absent stays
@@ -778,7 +779,7 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.Dispa
 	}
 	if !grantsSatelleCLI(binding.Tools) {
 		return verb.DispatchResult{}, fmt.Errorf(
-			"[%s] tools grant lacks the satelle CLI (add `Bash(satelle:*)`) — it needs it to pull the story and file proposal stories", retrospectAgent)
+			"[%s] tools grant has no context channel (add `Bash(satelle:*)` for the satelle CLI, or `read_file` for disk reads) — it needs a channel to pull the story and file proposal stories", retrospectAgent)
 	}
 	rubric := ""
 	if body, rerr := g.skillBody(ctx, retrospectSkill); rerr == nil {
@@ -828,15 +829,25 @@ func (g *Engine) setDecisionUsage(d *verb.GateDecision, u agentcli.UsageResult, 
 	}
 }
 
-// grantsSatelleCLI reports whether a binding's tool grant lets a dispatched agent
-// run the read-only satelle CLI — the pull-context contract (sty_47d31300) needs
-// `satelle story get/docs/doc` and `satelle ledger list` to reconstruct context. A
-// `Bash(satelle…)` grant, a broad `Bash`/`Bash(*)`, or a `*` wildcard all satisfy
-// it; a Bash-less or narrowly-scoped grant does not. (Reviewer bindings are
-// Bash-less by design and never reach here — they run via runReviewer, not dispatch.)
+// grantsSatelleCLI reports whether a binding's tool grant gives a dispatched
+// agent a context channel — the pull-context contract (sty_47d31300). Two
+// channels satisfy it (sty_565a0202):
+//
+//  1. satelle CLI via shell: `Bash(satelle…)`, broad `Bash`/`Bash(*)`, or `*`.
+//  2. Disk reads of story documents under .satelle/stories/<id>/ via the
+//     grok-native `read_file` tool (used when headless Grok cannot enable
+//     run_terminal_command).
+//
+// A grant with neither channel is refused loudly. Reviewer bindings are
+// Bash-less by design and never reach here — they run via runReviewer, not
+// dispatch. Claude-only `Read` (without Bash) is intentionally not accepted:
+// the Claude pull path is the satelle CLI, not a disk-first rubric.
 func grantsSatelleCLI(tools string) bool {
 	for _, t := range splitTrimList(tools) {
 		if t == "*" || t == "Bash" || t == "Bash(*)" || strings.HasPrefix(t, "Bash(satelle") {
+			return true
+		}
+		if t == "read_file" {
 			return true
 		}
 	}

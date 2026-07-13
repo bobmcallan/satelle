@@ -1172,19 +1172,19 @@ func TestDispatchExecutorRefusesWithoutSatelleCLI(t *testing.T) {
 	fr := &fakeRunner{out: "ok"}
 	g.newRunner = func(string) (agentcli.Runner, error) { return fr, nil }
 
-	// No Bash(satelle:*) → refused, and the agent is NOT run (got stays zero).
+	// No context channel (Claude Read alone is not enough) → refused, agent not run.
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
 		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Grep,Glob"}, true
 	})
 	_, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan")
-	if err == nil || !strings.Contains(err.Error(), "Bash(satelle:*)") {
-		t.Fatalf("want refusal naming the grant fix, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "context channel") {
+		t.Fatalf("want refusal naming the context-channel fix, got %v", err)
 	}
 	if fr.got.SystemPrompt != "" {
 		t.Error("must refuse BEFORE running the agent")
 	}
 
-	// With the grant → the agent runs.
+	// With Bash(satelle:*) CLI channel → the agent runs.
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
 		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Bash(satelle:*)"}, true
 	})
@@ -1193,6 +1193,71 @@ func TestDispatchExecutorRefusesWithoutSatelleCLI(t *testing.T) {
 	}
 	if fr.got.SystemPrompt == "" {
 		t.Error("a granted binding must reach the run")
+	}
+}
+
+// TestDispatchExecutorAcceptsGrokReadFileChannel: a write-capable grok-shaped
+// grant with read_file (disk context channel, sty_565a0202) dispatches; a
+// write-only / channel-less grant still refuses loudly.
+func TestDispatchExecutorAcceptsGrokReadFileChannel(t *testing.T) {
+	docs := fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	fr := &fakeRunner{out: "ok"}
+	g.newRunner = func(string) (agentcli.Runner, error) { return fr, nil }
+
+	// Grok write grant WITH read_file → context channel present → dispatch.
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{
+			Command: "fake -p {system}",
+			Tools:   "read_file,grep,list_dir,write,search_replace",
+		}, true
+	})
+	if _, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan"); err != nil {
+		t.Fatalf("read_file context channel should dispatch: %v", err)
+	}
+	if fr.got.SystemPrompt == "" {
+		t.Error("read_file grant must reach the run")
+	}
+
+	// Channel-less write grant → still refuses before run.
+	fr.got = agentcli.Request{}
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{
+			Command: "fake -p {system}",
+			Tools:   "write,search_replace,grep,list_dir",
+		}, true
+	})
+	_, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "plan")
+	if err == nil || !strings.Contains(err.Error(), "context channel") {
+		t.Fatalf("want channel-less refusal, got %v", err)
+	}
+	if fr.got.SystemPrompt != "" {
+		t.Error("channel-less grant must refuse BEFORE running the agent")
+	}
+}
+
+// TestGrantsSatelleCLIChannels covers the pure grant predicate (CLI + disk).
+func TestGrantsSatelleCLIChannels(t *testing.T) {
+	cases := []struct {
+		tools string
+		want  bool
+	}{
+		{"", false},
+		{"Read,Grep,Glob", false},
+		{"write,search_replace", false},
+		{"Bash(satelle:*)", true},
+		{"Read,Bash(satelle:*)", true},
+		{"Bash", true},
+		{"Bash(*)", true},
+		{"*", true},
+		{"read_file", true},
+		{"read_file,write,search_replace", true},
+		{"grep,list_dir,write", false},
+	}
+	for _, tc := range cases {
+		if got := grantsSatelleCLI(tc.tools); got != tc.want {
+			t.Errorf("grantsSatelleCLI(%q) = %v, want %v", tc.tools, got, tc.want)
+		}
 	}
 }
 
@@ -2264,7 +2329,7 @@ func TestRetrospectRequiresSatelleCLI(t *testing.T) {
 	})
 	g.newRunner = func(string) (agentcli.Runner, error) { return &fakeRunner{}, nil }
 	if _, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1"}); err == nil {
-		t.Fatal("want an error when the grant lacks Bash(satelle:*)")
+		t.Fatal("want an error when the grant has no context channel")
 	}
 }
 
