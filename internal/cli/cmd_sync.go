@@ -81,8 +81,8 @@ to a team catalog. Requires "satelle project bind <slug>".`,
 	var deployServer, deployWorkspace string
 	var version int
 	deploy := &cobra.Command{
-		Use: "deploy",
-		Short:   "Materialize config from the store into this repo (set up X like Y)",
+		Use:   "deploy",
+		Short: "Materialize config from the store into this repo (set up X like Y)",
 		Long: `deploy fetches this repo's bound hosted PROJECT's personal config collection
 (or an explicit --workspace when reading another developer's personal set) and
 writes every file byte-for-byte into this repo's data dir. --version N pins a
