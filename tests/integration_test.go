@@ -133,25 +133,23 @@ func mustRun(t *testing.T, bin, dir string, args ...string) string {
 	return out
 }
 
-// hermeticCreateGateOff writes [review] gate_create=false into the local overlay
-// so black-box tests are not forced through create-review unless they opt in.
+// hermeticCreateGateOff flips the init-seeded scaffold's gate_create to false
+// in the committed satelle.toml so black-box tests are not forced through
+// create-review unless they opt in via satelle.local.toml. Edits the scaffold
+// file (not the local overlay) so tests that assert "no local.toml" still pass
+// and tests that rewrite local.toml for [vars] do not wipe the opt-out.
 func hermeticCreateGateOff(t *testing.T, repo string) {
 	t.Helper()
-	p := filepath.Join(repo, ".satelle", "satelle.local.toml")
-	// Preserve any existing local overlay keys if a test wrote them first.
-	prev, _ := os.ReadFile(p)
-	body := string(prev)
-	if strings.Contains(body, "gate_create") {
-		return // test already set an explicit choice
+	p := filepath.Join(repo, ".satelle", "satelle.toml")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return // init may not have written config in exotic cases
 	}
-	if strings.Contains(body, "[review]") {
-		body = strings.Replace(body, "[review]", "[review]\ngate_create = false", 1)
-	} else {
-		if body != "" && !strings.HasSuffix(body, "\n") {
-			body += "\n"
-		}
-		body += "[review]\ngate_create = false\n"
+	body := string(b)
+	if !strings.Contains(body, "gate_create = true") {
+		return
 	}
+	body = strings.Replace(body, "gate_create = true", "gate_create = false", 1)
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatalf("hermetic create-gate off: %v", err)
 	}
