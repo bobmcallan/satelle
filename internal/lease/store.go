@@ -345,7 +345,10 @@ func (s *Store) Get(ctx context.Context, itemID string) (Lease, error) {
 		 FROM engagement_lease WHERE item_id = ?`, itemID))
 }
 
-// AnyActive reports whether any engagement lease exists (edit/commit gates).
+// AnyActive reports whether any engagement lease row exists. Callers that gate
+// edit/commit must prefer List + a performing-state predicate (see evaluateSeat
+// in the hook package): a bare row is not necessarily live engagement
+// (sty_1738f973 — orphaned / stale / non-performing rows must not open the gate).
 func (s *Store) AnyActive(ctx context.Context) (bool, error) {
 	if s == nil || s.db == nil {
 		return false, errors.New("lease: store not configured")
@@ -355,6 +358,76 @@ func (s *Store) AnyActive(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("lease: any: %w", err)
 	}
 	return n > 0, nil
+}
+
+// List returns every engagement lease row (including stale / in-flight). The
+// lease package is pure mechanism — callers decide which rows count as live
+// engagement (staleness via IsStale; performing-state via workflow shape).
+func (s *Store) List(ctx context.Context) ([]Lease, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("lease: store not configured")
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT item_id, kind, story_seat, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight
+		 FROM engagement_lease ORDER BY acquired_at`)
+	if err != nil {
+		return nil, fmt.Errorf("lease: list: %w", err)
+	}
+	defer rows.Close()
+	var out []Lease
+	for rows.Next() {
+		var l Lease
+		var seat, inflight int
+		var acq, beat string
+		if err := rows.Scan(&l.ItemID, &l.Kind, &seat, &l.Owner, &l.State, &acq, &beat, &l.StopRequestedBy, &l.StopReason, &inflight); err != nil {
+			return nil, fmt.Errorf("lease: list scan: %w", err)
+		}
+		l.StorySeat = seat != 0
+		l.InFlight = inflight != 0
+		l.AcquiredAt, _ = time.Parse(time.RFC3339Nano, acq)
+		if l.AcquiredAt.IsZero() {
+			l.AcquiredAt, _ = time.Parse(time.RFC3339, acq)
+		}
+		l.HeartbeatAt, _ = time.Parse(time.RFC3339Nano, beat)
+		if l.HeartbeatAt.IsZero() {
+			l.HeartbeatAt, _ = time.Parse(time.RFC3339, beat)
+		}
+		out = append(out, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lease: list: %w", err)
+	}
+	return out, nil
+}
+
+// IsStale reports whether a lease may be stolen or ignored for engagement: the
+// heartbeat is older than HeartbeatTTL, or the owner embeds a dead local pid.
+// Exported so gate/seat surfaces share one definition with Acquire steal paths.
+func IsStale(l Lease, now time.Time) bool { return isStale(l, now) }
+
+// Reap deletes rows whose heartbeat/pid marks them stale. Returns the reaped
+// leases. Opportunistic housekeeping for seat-list honesty; gate correctness
+// does not depend on Reap — IsStale already excludes those rows from engagement.
+func (s *Store) Reap(ctx context.Context) ([]Lease, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("lease: store not configured")
+	}
+	all, err := s.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	var reaped []Lease
+	for _, l := range all {
+		if !IsStale(l, now) {
+			continue
+		}
+		if err := s.ForceRelease(ctx, l.ItemID); err != nil {
+			return reaped, err
+		}
+		reaped = append(reaped, l)
+	}
+	return reaped, nil
 }
 
 // Heartbeat refreshes heartbeat_at for the owner's lease (optional long-dispatch).
@@ -368,6 +441,26 @@ func (s *Store) Heartbeat(ctx context.Context, itemID, owner string) error {
 		nowS, itemID, owner)
 	if err != nil {
 		return fmt.Errorf("lease: heartbeat: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetHeartbeat overwrites heartbeat_at for itemID. Used by regression tests and
+// seat diagnostics to simulate a frozen heartbeat after process death
+// (sty_1738f973 AC5 kill-simulation). Not an operator happy-path verb.
+func (s *Store) SetHeartbeat(ctx context.Context, itemID string, at time.Time) error {
+	if s == nil || s.db == nil {
+		return errors.New("lease: store not configured")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE engagement_lease SET heartbeat_at = ? WHERE item_id = ?`,
+		at.UTC().Format(time.RFC3339Nano), itemID)
+	if err != nil {
+		return fmt.Errorf("lease: set heartbeat: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {

@@ -81,7 +81,7 @@ func acquireEngagementLease(ctx context.Context, item workitem.Item, targetStatu
 			self = "new story"
 		}
 		return false, false, fmt.Errorf(
-			"satelle: refusing to engage %s (→ %s) while %s already holds the engagement seat — one performing story at a time; finish or park the other (blocked), or set [gate] allow_parallel = true to opt out (opt-out only disables this blocker — parallel still needs workflow/worktree design)",
+			"satelle: refusing to engage %s (→ %s) while %s already holds the engagement seat — one performing story at a time; finish or park the other (blocked), or set [gate] allow_parallel = true to opt out (opt-out only disables this blocker — parallel still needs workflow/worktree design); inspect with `satelle story seat`, release a stale seat with `satelle story seat release <id>`",
 			self, targetStatus, who)
 	default:
 		return false, false, nil
@@ -279,7 +279,7 @@ func refuseSecondEngagingStory(ctx context.Context, excludeID, targetStatus stri
 				who = fmt.Sprintf("%s (owner %q, state %q)", holder.ItemID, holder.Owner, holder.State)
 			}
 			return fmt.Errorf(
-				"satelle: refusing to engage new story (→ %s) while %s already holds the engagement seat — one performing story at a time; finish or park the other (blocked), or set [gate] allow_parallel = true to opt out (opt-out only disables this blocker — parallel still needs workflow/worktree design)",
+				"satelle: refusing to engage new story (→ %s) while %s already holds the engagement seat — one performing story at a time; finish or park the other (blocked), or set [gate] allow_parallel = true to opt out (opt-out only disables this blocker — parallel still needs workflow/worktree design); inspect with `satelle story seat`, release a stale seat with `satelle story seat release <id>`",
 				targetStatus, who)
 		case lease.OutcomeAlreadyHeld:
 			_ = ls.Release(ctx, probeID, owner)

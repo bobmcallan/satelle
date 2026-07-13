@@ -134,6 +134,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storySyncCommand())
 		parent.AddCommand(storyRestampCommand())
 		parent.AddCommand(storyStopRequestCommand())
+		parent.AddCommand(storySeatCommands()...)
 	}
 	if group == "task" {
 		// tasks are authored substrate → `satelle task validate` runs the
@@ -573,4 +574,30 @@ func storyStopRequestCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&reason, "reason", "", "why the stop is requested")
 	return cmd
+}
+
+// storySeatCommands builds `satelle story seat` (list) and
+// `satelle story seat release <id>` — the agent/operator surface for the
+// engagement seat (sty_1738f973 AC4).
+func storySeatCommands() []*cobra.Command {
+	seat := &cobra.Command{
+		Use:         "seat",
+		Short:       "List engagement seat leases (reaps stale rows first)",
+		Args:        cobra.NoArgs,
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return dispatch(cmd, "story-seat-list", map[string]any{})
+		},
+	}
+	release := &cobra.Command{
+		Use:         "release <id>",
+		Short:       "Force-release an engagement seat by story/task id",
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return dispatch(cmd, "story-seat-release", map[string]any{"id": args[0]})
+		},
+	}
+	seat.AddCommand(release)
+	return []*cobra.Command{seat}
 }
