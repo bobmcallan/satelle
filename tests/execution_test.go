@@ -220,21 +220,17 @@ func TestTaskHeaderRoutesToTaskWorkflow(t *testing.T) {
 	}
 }
 
-// TestInstallAliasesInit proves `satelle install` is a full alias of init
-// (sty_77367228): it scaffolds a fresh repo identically, and help names it.
-func TestInstallAliasesInit(t *testing.T) {
+// TestInstallRetiredFailsClosed proves `satelle install` was removed and fails
+// closed naming `satelle init` (breaking CLI surface).
+func TestInstallRetiredFailsClosed(t *testing.T) {
 	repo := t.TempDir()
-	out := mustRun(t, testBin, repo, "install")
-	for _, rel := range []string{".satelle/satelle.toml", ".satelle/satelle.db", ".satelle/tasks/README.md"} {
-		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
-			t.Errorf("install did not scaffold %s: %v", rel, err)
-		}
+	out, err := run(t, testBin, repo, "install")
+	if err == nil {
+		t.Fatalf("install must fail closed, got:\n%s", out)
 	}
-	if !strings.Contains(out, "Ready.") {
-		t.Errorf("install should report like init:\n%s", out)
-	}
-	if help := mustRun(t, testBin, repo, "init", "--help"); !strings.Contains(help, "install") {
-		t.Errorf("init help should list the install alias:\n%s", help)
+	combined := out + err.Error()
+	if !strings.Contains(combined, "satelle init") {
+		t.Errorf("must name satelle init:\n%s", combined)
 	}
 }
 

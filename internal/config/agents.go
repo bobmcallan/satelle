@@ -69,13 +69,9 @@ type AgentBinding struct {
 	// {settings}/{payload} substituted (each its own argv token). The only bare
 	// single-token value is "in-loop" (driving session, no subprocess); bare
 	// claude/grok/codex tokens are rejected by agentvalidate and RunnerFromCommand.
-	// Replaces the deprecated `harness` key (Harness, below), still parsed for
-	// back-compat — resolve via CommandTemplate(), which prefers Command and
-	// falls back to Harness.
+	// Prefer over retired harness= (no runtime fallback; MigrateAgents rewrites).
 	Command string `toml:"command"`
-	// Harness is the DEPRECATED alias for Command: a repo authored before the
-	// rename still parses. Command wins when both are set. Never read this field
-	// directly — go through CommandTemplate().
+	// Harness is retired: still decoded for MigrateAgents; CommandTemplate ignores it.
 	Harness string `toml:"harness"`
 	Tools   string `toml:"tools"`
 	Model   string `toml:"model"`
@@ -85,7 +81,7 @@ type AgentBinding struct {
 	Role string `toml:"role"`
 	// Principles selects which principles inject into the isolated briefing:
 	// "session" (default) | "all" | "system" | "project" | "none" | comma-list.
-	// Empty falls through to inject_principles alias, then session.
+	// Empty defaults to session. inject_principles is retired (MigrateAgents).
 	Principles string `toml:"principles"`
 	// Env sets environment variables on the dispatched agent's process (layered
 	// onto os.Environ, binding keys winning). Each value may reference the [vars]
@@ -101,8 +97,7 @@ type AgentBinding struct {
 	// config, not a compiled constant (sty_446c38b7). Applies to a DISPATCHED named
 	// executor; reviewer/summariser gate invocations keep the engine's agent bound.
 	Timeout string `toml:"timeout"`
-	// InjectPrinciples is the DEPRECATED alias for Principles (true→session,
-	// false→none). Prefer Principles. Principles wins when both are set.
+	// InjectPrinciples is retired (MigrateAgents → principles=). Not used at runtime.
 	InjectPrinciples *bool `toml:"inject_principles"`
 	// Settings MIRRORS claude's settings.local.json schema (env, model, permissions)
 	// verbatim — no derivation, no satelle-specific shape. It is materialised into
@@ -136,16 +131,11 @@ func (b AgentBinding) TimeoutDuration(def time.Duration) (time.Duration, error) 
 	return d, nil
 }
 
-// CommandTemplate resolves the effective command template for this binding,
-// honoring the deprecated `harness` alias when `command` is unset (Command wins
-// when both are set). Every reader of the command MUST go through this rather
-// than the raw fields so a pre-rename agents.toml keeps resolving (sty rename
-// harness→command back-compat).
+// CommandTemplate resolves the effective command template for this binding.
+// Only `command` is read — the deprecated `harness` field is no longer a
+// runtime fallback (breaking surface: run `satelle init` to MigrateAgents).
 func (b AgentBinding) CommandTemplate() string {
-	if b.Command != "" {
-		return b.Command
-	}
-	return b.Harness
+	return b.Command
 }
 
 // ResolvedRole returns the binding's effective role: the declared Role when set
@@ -172,19 +162,12 @@ func RoleInferred(b AgentBinding) bool {
 	return r != RoleReviewer && r != RoleAgent
 }
 
-// ResolvedPrinciples returns the principles selector after alias expansion:
-// Principles when set; else inject_principles true→session / false→none; else session.
-// The returned string is a normalised selector (session|all|system|project|none or a
-// comma-joined subset); unknown tokens are kept so the engine can ignore them.
+// ResolvedPrinciples returns the principles selector: Principles when set,
+// else session. The deprecated inject_principles field is no longer a runtime
+// fallback (breaking surface: run `satelle init` to MigrateAgents).
 func (b AgentBinding) ResolvedPrinciples() string {
 	if p := strings.TrimSpace(b.Principles); p != "" {
 		return normalizePrinciplesSelector(p)
-	}
-	if b.InjectPrinciples != nil {
-		if *b.InjectPrinciples {
-			return PrinciplesSession
-		}
-		return PrinciplesNone
 	}
 	return PrinciplesSession
 }
@@ -309,14 +292,11 @@ func LoadAgents(dataDir string) (AgentsConfig, error) {
 			if err := md.PrimitiveDecode(prim, &ac.Reviewer); err != nil {
 				return AgentsConfig{}, err
 			}
-		case "agents": // legacy nested [agents.<name>] container (back-compat)
-			nested := map[string]AgentBinding{}
-			if err := md.PrimitiveDecode(prim, &nested); err != nil {
-				return AgentsConfig{}, err
-			}
-			for n, bnd := range nested {
-				ac.Agents[n] = bnd
-			}
+		case "agents":
+			// Nested [agents.<name>] is no longer a live dual-read. Ignore the
+			// table so an un-migrated file does not silently load nested agents;
+			// MigrateAgents flattens it on init.
+			continue
 		default: // flat [<name>] — a named isolated agent
 			var bnd AgentBinding
 			if err := md.PrimitiveDecode(prim, &bnd); err != nil {

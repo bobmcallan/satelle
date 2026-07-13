@@ -135,5 +135,8 @@ func runRebase(out io.Writer, in io.Reader, dataDir string, yes bool, now time.T
 
 	fmt.Fprintf(out, "rebase: backed up %d dir(s) to %s; deployed %d default file(s) (run `satelle reindex` to sync the index)\n",
 		backedUp, backupDir, deployed)
+	if _, err := writeDeployedVersion(dataDir); err != nil {
+		return fmt.Errorf("rebase: write deployed.version: %w", err)
+	}
 	return nil
 }

@@ -121,5 +121,8 @@ func runRestore(out io.Writer, in io.Reader, dataDir string, yes bool) error {
 		restored++
 	}
 	fmt.Fprintf(out, "restore: %d file(s) re-materialised to the embedded defaults (run `satelle reindex` to sync the index)\n", restored)
+	if _, err := writeDeployedVersion(dataDir); err != nil {
+		return fmt.Errorf("restore: write deployed.version: %w", err)
+	}
 	return nil
 }

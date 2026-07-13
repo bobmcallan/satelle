@@ -37,13 +37,10 @@ func init() {
 	var noWorkspace bool
 	cmd := &cobra.Command{
 		Use: "init",
-		// `satelle install` reads naturally at first contact — an alias, same
-		// implementation and flags (sty_77367228, sty_0e268c9a). (No `verify` alias:
-		// the generic `satelle validate` it would have aliased was removed for
-		// per-noun validators.)
-		Aliases: []string{"install"},
-		Short:   "Scaffold this repo for satelle (.satelle/, config, database, authored dirs)",
-		Long: `init (alias: install) makes a repo ready for satelle, idempotently. It ensures:
+		// No `install` alias — it collided with `satelle service install`.
+		// Invoking the removed spelling fails closed naming this command.
+		Short: "Scaffold this repo for satelle (.satelle/, config, database, authored dirs)",
+		Long: `init makes a repo ready for satelle, idempotently. It ensures:
 
   - the .satelle/ directory,
   - a satelle.toml (created if missing, left intact if present) — every setting
@@ -274,6 +271,13 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool) error {
 	if verr := validateDeployment(out, dataDir); verr != nil {
 		return verr
 	}
+
+	// Stamp the binary version this repo is aligned to (breaking-surface baseline).
+	stamped, err := writeDeployedVersion(dataDir)
+	if err != nil {
+		return fmt.Errorf("init: write deployed.version: %w", err)
+	}
+	fmt.Fprintln(out, initLine(stamped, config.DefaultDataDir+"/"+deployedVersionName))
 
 	fmt.Fprintln(out, "\nReady. Try: satelle status · satelle story create --title \"…\" · satelle serve")
 	return nil

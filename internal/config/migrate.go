@@ -78,6 +78,35 @@ func MigrateAgents(content string) (out string, changes []string, err error) {
 			changed = true
 			roleN++
 		}
+		// inject_principles → principles (when principles= absent)
+		if !hasKeyInSection(lines, s.header, "principles") {
+			if inj, ok := injectPrinciplesValue(lines, s.header); ok {
+				joined := strings.Join(lines, "\n")
+				val := `"session"`
+				if !inj {
+					val = `"none"`
+				}
+				joined = UpsertKey(joined, s.header, "principles", val)
+				lines = strings.Split(joined, "\n")
+				// Drop inject_principles line
+				removeKeyInSection(lines, s.header, "inject_principles")
+				changed = true
+				notes = append(notes, "inject_principles->principles")
+			}
+		}
+	}
+
+	// Flatten [agents.NAME] headers → [NAME] (nested dual-read removed).
+	flatN := 0
+	for i, ln := range lines {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, "[agents.") && strings.HasSuffix(t, "]") && !strings.HasPrefix(t, "[[") {
+			name := strings.TrimSuffix(strings.TrimPrefix(t, "[agents."), "]")
+			indent := ln[:len(ln)-len(strings.TrimLeft(ln, " \t"))]
+			lines[i] = indent + "[" + name + "]"
+			changed = true
+			flatN++
+		}
 	}
 
 	if !changed {
@@ -92,7 +121,45 @@ func MigrateAgents(content string) (out string, changes []string, err error) {
 	if roleN > 0 {
 		notes = append(notes, "added role=")
 	}
+	if flatN > 0 {
+		notes = append(notes, "flatten [agents.NAME]")
+	}
 	return strings.Join(lines, "\n"), notes, nil
+}
+
+// injectPrinciplesValue reads inject_principles from a section if present.
+func injectPrinciplesValue(lines []string, header string) (bool, bool) {
+	start, end := sectionRange(lines, header)
+	if start < 0 {
+		return false, false
+	}
+	for i := start; i < end; i++ {
+		ln := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(ln, "inject_principles") {
+			if strings.Contains(ln, "false") {
+				return false, true
+			}
+			if strings.Contains(ln, "true") {
+				return true, true
+			}
+		}
+	}
+	return false, false
+}
+
+// removeKeyInSection blanks the first assignment of key in section (keeps line
+// count stable for subsequent ranges; empty lines are fine).
+func removeKeyInSection(lines []string, header, key string) {
+	start, end := sectionRange(lines, header)
+	if start < 0 {
+		return
+	}
+	for i := start; i < end; i++ {
+		if isKeyLine(lines[i], key) {
+			lines[i] = ""
+			return
+		}
+	}
 }
 
 // decodeAgentsContent parses agents.toml body the same way LoadAgents classifies

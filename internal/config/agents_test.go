@@ -107,12 +107,13 @@ func TestLoadAgentsOnlyAgentsToml(t *testing.T) {
 	}
 }
 
-// TestNamedBinding proves a named agent declared under [agents.<name>] resolves as
+// TestNamedBinding proves a named agent declared under flat [name] resolves as
 // an isolated binding, and that an undeclared name reports ok=false so the caller
-// falls back to the in-loop executor (sty_b2222b8a).
+// falls back to the in-loop executor (sty_b2222b8a). Nested [agents.name] is no
+// longer a live dual-read (breaking surface).
 func TestNamedBinding(t *testing.T) {
 	dir := t.TempDir()
-	body := "[agents.commit-agent]\nharness = \"claude -p --allowedTools {tools}\"\ntools = \"Read,Bash(git:*)\"\n"
+	body := "[commit-agent]\ncommand = \"claude -p --allowedTools {tools}\"\ntools = \"Read,Bash(git:*)\"\n"
 	if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -121,11 +122,24 @@ func TestNamedBinding(t *testing.T) {
 		t.Fatalf("LoadAgents: %v", err)
 	}
 	b, ok := ac.NamedBinding("commit-agent")
-	if !ok || b.Tools != "Read,Bash(git:*)" || b.Harness != "claude -p --allowedTools {tools}" {
-		t.Errorf("commit-agent binding = %+v ok=%v, want the declared harness+tools", b, ok)
+	if !ok || b.Tools != "Read,Bash(git:*)" || b.CommandTemplate() != "claude -p --allowedTools {tools}" {
+		t.Errorf("commit-agent binding = %+v ok=%v, want the declared command+tools", b, ok)
 	}
 	if _, ok := ac.NamedBinding("nope"); ok {
 		t.Error("an undeclared named agent must report ok=false (fall back to in-loop)")
+	}
+	// Nested form is ignored (not dual-read).
+	nestedDir := t.TempDir()
+	nested := "[agents.commit-agent]\ncommand = \"claude -p\"\ntools = \"Read\"\n"
+	if err := os.WriteFile(filepath.Join(nestedDir, AgentsConfigName), []byte(nested), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nac, err := LoadAgents(nestedDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := nac.NamedBinding("commit-agent"); ok {
+		t.Error("nested [agents.name] must not resolve without migrate")
 	}
 }
 
@@ -135,7 +149,7 @@ func TestNamedBinding(t *testing.T) {
 func TestFlatNamedAgent(t *testing.T) {
 	dir := t.TempDir()
 	body := "[reviewer]\nmodel = \"sonnet\"\n" +
-		"[commit-agent]\nharness = \"claude -p --allowedTools {tools}\"\ntools = \"Read,Bash(git:*)\"\n"
+		"[commit-agent]\ncommand = \"claude -p --allowedTools {tools}\"\ntools = \"Read,Bash(git:*)\"\n"
 	if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -145,8 +159,8 @@ func TestFlatNamedAgent(t *testing.T) {
 	}
 	// Flat [commit-agent] resolves as a named agent.
 	b, ok := ac.NamedBinding("commit-agent")
-	if !ok || b.Tools != "Read,Bash(git:*)" || b.Harness != "claude -p --allowedTools {tools}" {
-		t.Errorf("flat [commit-agent] = %+v ok=%v, want the declared harness+tools", b, ok)
+	if !ok || b.Tools != "Read,Bash(git:*)" || b.CommandTemplate() != "claude -p --allowedTools {tools}" {
+		t.Errorf("flat [commit-agent] = %+v ok=%v, want the declared command+tools", b, ok)
 	}
 	// [reviewer] stays a built-in ROLE, not a named agent.
 	if ac.Reviewer.Model != "sonnet" {
@@ -192,8 +206,9 @@ func TestCommandHarnessAlias(t *testing.T) {
 		want string
 	}{
 		{"command only", "[reviewer]\ncommand = \"claude -p {system}\"\n", "claude -p {system}"},
-		{"harness alias still parses", "[reviewer]\nharness = \"grok -p {payload}\"\n", "grok -p {payload}"},
-		{"command wins over harness", "[reviewer]\ncommand = \"claude win\"\nharness = \"grok lose\"\n", "claude win"},
+		// harness= is no longer a runtime fallback (breaking); raw Command stays empty.
+		{"harness alone leaves Command empty", "[reviewer]\nharness = \"grok -p {payload}\"\n", ""},
+		{"command wins over harness field", "[reviewer]\ncommand = \"claude win\"\nharness = \"grok lose\"\n", "claude win"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -205,7 +220,9 @@ func TestCommandHarnessAlias(t *testing.T) {
 			if err != nil {
 				t.Fatalf("LoadAgents: %v", err)
 			}
-			if got := ac.ReviewerBinding().CommandTemplate(); got != c.want {
+			// Read raw binding (not ReviewerBinding, which fills defaults).
+			got := ac.Reviewer.CommandTemplate()
+			if got != c.want {
 				t.Errorf("CommandTemplate() = %q, want %q", got, c.want)
 			}
 		})
@@ -271,8 +288,9 @@ func TestInjectPrinciplesDefaultsOnAndToggles(t *testing.T) {
 	if !(AgentBinding{}).InjectsPrinciples() {
 		t.Error("an unset binding must inject principles by default")
 	}
+	// inject_principles is no longer a runtime fallback — use principles=.
 	dir := t.TempDir()
-	body := "[reviewer]\ninject_principles = false\n[commit-agent]\ninject_principles = true\n"
+	body := "[reviewer]\nprinciples = \"none\"\n[commit-agent]\nprinciples = \"session\"\n"
 	if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -281,10 +299,10 @@ func TestInjectPrinciplesDefaultsOnAndToggles(t *testing.T) {
 		t.Fatalf("LoadAgents: %v", err)
 	}
 	if ac.ReviewerBinding().InjectsPrinciples() {
-		t.Error("inject_principles = false must disable injection for the reviewer")
+		t.Error("principles = none must disable injection for the reviewer")
 	}
 	if nb, ok := ac.NamedBinding("commit-agent"); !ok || !nb.InjectsPrinciples() {
-		t.Errorf("named agent with inject_principles = true must inject: ok=%v binding=%+v", ok, nb)
+		t.Errorf("named agent with principles = session must inject: ok=%v binding=%+v", ok, nb)
 	}
 }
 
@@ -319,9 +337,8 @@ func TestResolvedPrinciples(t *testing.T) {
 		{"explicit session", AgentBinding{Principles: "session"}, PrinciplesSession},
 		{"none", AgentBinding{Principles: "none"}, PrinciplesNone},
 		{"all", AgentBinding{Principles: "all"}, PrinciplesAll},
-		{"alias true", AgentBinding{InjectPrinciples: &on}, PrinciplesSession},
-		{"alias false", AgentBinding{InjectPrinciples: &off}, PrinciplesNone},
-		{"principles wins over alias", AgentBinding{Principles: "none", InjectPrinciples: &on}, PrinciplesNone},
+		// inject_principles alias is no longer a runtime fallback (defaults to session).
+		{"legacy inject field ignored", AgentBinding{InjectPrinciples: &off}, PrinciplesSession},
 		{"comma list", AgentBinding{Principles: "system, project"}, "system,project"},
 	}
 	for _, tc := range tests {
@@ -334,4 +351,5 @@ func TestResolvedPrinciples(t *testing.T) {
 			t.Errorf("%s: InjectsPrinciples() = %v, want %v", tc.name, tc.b.InjectsPrinciples(), injects)
 		}
 	}
+	_ = on
 }

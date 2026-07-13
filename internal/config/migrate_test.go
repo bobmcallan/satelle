@@ -216,3 +216,23 @@ func TestMigrateAgentsSolidsafeZeroRoleInferred(t *testing.T) {
 		t.Fatalf("harness remnants after migrate:\n%s", out)
 	}
 }
+
+func TestMigrateAgentsFlattenNestedAndInject(t *testing.T) {
+	in := `[agents.planner]
+harness = "claude -p"
+inject_principles = false
+`
+	out, notes, err := MigrateAgents(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "[planner]") || strings.Contains(out, "[agents.planner]") {
+		t.Fatalf("flatten: %s notes=%v", out, notes)
+	}
+	if !strings.Contains(out, "command") {
+		t.Fatalf("harness->command missing: %s", out)
+	}
+	if !strings.Contains(out, `principles = "none"`) && !strings.Contains(out, "principles") {
+		t.Fatalf("inject->principles: %s notes=%v", out, notes)
+	}
+}
