@@ -1,38 +1,56 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "sh -c '#satelle-failvisible\nb=\"\"; for c in \"$HOME/.local/bin/satelle\" \".satelle/satelle\" satelle; do\n  if [ -x \"$c\" ]; then b=\"$c\"; break; fi\n  if command -v \"$c\" \u003e/dev/null 2\u003e\u00261; then b=$(command -v \"$c\"); break; fi\ndone\np=$(cat)\ninfra='\\''{\"decision\":\"deny\",\"reason\":\"satelle unavailable in this hook shell env — INFRASTRUCTURE failure, NOT a policy denial. The satelle binary could not be resolved or did not produce a decision. Try: which satelle; satelle version; satelle init. Non-mutating bash stays allowed so you can diagnose.\"}'\\''\nif [ -z \"$b\" ]; then printf '\\''%s\\n'\\'' \"$infra\"; exit 2; fi\no=$(printf '\\''%s'\\'' \"$p\" | \"$b\" hook gate 2\u003e/dev/null); code=$?\nif [ -n \"$o\" ]; then printf '\\''%s\\n'\\'' \"$o\"; fi\nif [ \"$code\" -eq 0 ]; then exit 0; fi\nif [ -z \"$o\" ]; then printf '\\''%s\\n'\\'' \"$infra\"; fi\nexit 2\n'",
+            "type": "command"
+          }
+        ],
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|search_replace|write"
+      },
+      {
+        "hooks": [
+          {
+            "command": "sh -c '#satelle-failvisible\nb=\"\"; for c in \"$HOME/.local/bin/satelle\" \".satelle/satelle\" satelle; do\n  if [ -x \"$c\" ]; then b=\"$c\"; break; fi\n  if command -v \"$c\" \u003e/dev/null 2\u003e\u00261; then b=$(command -v \"$c\"); break; fi\ndone\np=$(cat)\ninfra='\\''{\"decision\":\"deny\",\"reason\":\"satelle unavailable in this hook shell env — INFRASTRUCTURE failure, NOT a policy denial. The satelle binary could not be resolved or did not produce a decision. Try: which satelle; satelle version; satelle init. Non-mutating bash stays allowed so you can diagnose.\"}'\\''\ndocase(){ case \"$p\" in *git\\ commit*|*git\\ push*) printf '\\''%s\\n'\\'' \"$infra\"; exit 2;; *) exit 0;; esac; }\nif [ -z \"$b\" ]; then docase; fi\no=$(printf '\\''%s'\\'' \"$p\" | \"$b\" hook commitgate 2\u003e/dev/null); code=$?\nif [ -n \"$o\" ]; then printf '\\''%s\\n'\\'' \"$o\"; fi\nif [ \"$code\" -eq 0 ]; then exit 0; fi\nif [ -z \"$o\" ]; then docase; fi\nexit 2\n'",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash|run_terminal_command"
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "satelle reindex" },
-          { "type": "command", "command": "satelle hook context" }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit|search_replace|write",
-        "hooks": [
-          { "type": "command", "command": "satelle hook gate || exit 2" }
-        ]
-      },
-      {
-        "matcher": "Bash|run_terminal_command",
-        "hooks": [
-          { "type": "command", "command": "satelle hook commitgate || exit 2" }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook prompt" }
+          {
+            "command": "satelle reindex",
+            "type": "command"
+          },
+          {
+            "command": "satelle hook context",
+            "type": "command"
+          }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook stopcheck" }
+          {
+            "command": "PATH=$HOME/.local/bin:$PATH satelle hook stopcheck",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "PATH=$HOME/.local/bin:$PATH satelle hook prompt",
+            "type": "command"
+          }
         ]
       }
     ]

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -107,8 +108,11 @@ func TestEnsureGrokHooksCreateReconcileIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"PATH=$HOME/.local/bin:$PATH satelle hook gate || exit 2",
-		"PATH=$HOME/.local/bin:$PATH satelle hook commitgate || exit 2",
+		failVisibleMarker,
+		"$HOME/.local/bin/satelle",
+		".satelle/satelle",
+		"hook gate",
+		"hook commitgate",
 		"PATH=$HOME/.local/bin:$PATH satelle hook prompt",
 		"PATH=$HOME/.local/bin:$PATH satelle hook stopcheck",
 		"UserPromptSubmit",
@@ -116,10 +120,14 @@ func TestEnsureGrokHooksCreateReconcileIdempotent(t *testing.T) {
 		"search_replace",
 		"run_terminal_command",
 		"satelle reindex",
+		"policy denial",
 	} {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("scaffold missing %q:\n%s", want, body)
 		}
+	}
+	if strings.Contains(string(body), "|| exit 2") {
+		t.Errorf("scaffold must not use bare '|| exit 2' (sty_c75c73ed):\n%s", body)
 	}
 	// Second pass: no create, no reconcile.
 	added, updated, err = ensureGrokHooks(repo)
@@ -364,24 +372,141 @@ func TestGrokNotDetectedSkipsCompatConfig(t *testing.T) {
 	}
 }
 
-// TestHookScaffoldPATHHardening asserts gate/commitgate command strings include
-// $HOME/.local/bin on PATH (AC5). Unquoted env prefix keeps the JSON scaffold
-// free of escaped quotes while still expanding under a POSIX shell.
-func TestHookScaffoldPATHHardening(t *testing.T) {
-	want := "PATH=$HOME/.local/bin:$PATH satelle hook"
+// TestHookScaffoldFailVisible asserts PreToolUse gate/commitgate use the
+// fail-visible multi-candidate wrapper (sty_c75c73ed AC1/AC3) — not bare
+// `|| exit 2`. SessionStart stays simple.
+func TestHookScaffoldFailVisible(t *testing.T) {
 	for name, body := range map[string]string{
-		"claude": claudeHookSettings,
-		"grok":   grokHookSettings,
+		"claude": string(buildClaudeHookSettings()),
+		"grok":   string(buildGrokHookSettings()),
 	} {
-		if !strings.Contains(body, want+" gate || exit 2") {
-			t.Errorf("%s scaffold missing PATH-hardened gate:\n%s", name, body)
+		if !strings.Contains(body, failVisibleMarker) {
+			t.Errorf("%s scaffold missing fail-visible marker", name)
 		}
-		if !strings.Contains(body, want+" commitgate || exit 2") {
-			t.Errorf("%s scaffold missing PATH-hardened commitgate:\n%s", name, body)
+		if !strings.Contains(body, "$HOME/.local/bin/satelle") || !strings.Contains(body, ".satelle/satelle") {
+			t.Errorf("%s scaffold missing multi-candidate probe:\n%s", name, body)
 		}
-		// SessionStart stays bare (AC5 scopes gate/commitgate only).
+		if strings.Contains(body, "|| exit 2") {
+			t.Errorf("%s must not use bare '|| exit 2':\n%s", name, body)
+		}
+		if !strings.Contains(body, "policy denial") {
+			t.Errorf("%s missing infra deny reason:\n%s", name, body)
+		}
+		// SessionStart stays bare.
 		if strings.Contains(body, "PATH=$HOME/.local/bin:$PATH satelle reindex") {
 			t.Errorf("%s SessionStart reindex should not be PATH-prefixed", name)
+		}
+	}
+}
+
+// TestFailVisibleWrapperShell: drive the real wrapper via sh -c for both
+// harness shapes (sty_c75c73ed AC3/AC4/AC5).
+func TestFailVisibleWrapperShell(t *testing.T) {
+	// AC3: no binary → edit-gate emits infra deny JSON + exit 2.
+	for _, harness := range []string{"claude", "grok"} {
+		full := renderHookCommand(harness, "gate")
+		if !strings.HasPrefix(full, "sh -c ") {
+			t.Fatalf("expected sh -c prefix: %s", full)
+		}
+		// Run the whole "sh -c '…'" command string via the outer shell so quoting
+		// matches how the harness invokes it.
+		c := exec.Command("sh", "-c", full)
+		c.Env = []string{"HOME=" + t.TempDir(), "PATH=/usr/bin:/bin"}
+		c.Stdin = strings.NewReader(`{"tool_input":{"file_path":"x.go"}}`)
+		var stdout, stderr bytes.Buffer
+		c.Stdout = &stdout
+		c.Stderr = &stderr
+		if err := c.Run(); err == nil {
+			t.Fatalf("%s gate with no binary: want non-zero exit", harness)
+		}
+		got := stdout.String()
+		if !strings.Contains(got, "policy denial") {
+			t.Errorf("%s gate infra deny missing reason: stdout=%q stderr=%q", harness, got, stderr.String())
+		}
+		if harness == "claude" && !strings.Contains(got, "hookSpecificOutput") {
+			t.Errorf("%s want Claude shape: %q", harness, got)
+		}
+		if harness == "grok" && !strings.Contains(got, `"decision":"deny"`) {
+			t.Errorf("%s want Grok shape: %q", harness, got)
+		}
+	}
+
+	// AC4: commitgate with no binary — echo hello allows; git commit denies.
+	for _, harness := range []string{"claude", "grok"} {
+		full := renderHookCommand(harness, "commitgate")
+		c := exec.Command("sh", "-c", full)
+		c.Env = []string{"HOME=" + t.TempDir(), "PATH=/usr/bin:/bin"}
+		c.Stdin = strings.NewReader(`{"tool_input":{"command":"echo hello"}}`)
+		var stdout bytes.Buffer
+		c.Stdout = &stdout
+		if err := c.Run(); err != nil {
+			t.Errorf("%s commitgate echo hello must allow: %v out=%q", harness, err, stdout.String())
+		}
+		c = exec.Command("sh", "-c", full)
+		c.Env = []string{"HOME=" + t.TempDir(), "PATH=/usr/bin:/bin"}
+		c.Stdin = strings.NewReader(`{"tool_input":{"command":"git commit -m x"}}`)
+		stdout.Reset()
+		c.Stdout = &stdout
+		if err := c.Run(); err == nil {
+			t.Errorf("%s commitgate git commit must deny", harness)
+		}
+		if !strings.Contains(stdout.String(), "policy denial") {
+			t.Errorf("%s commit deny missing reason: %q", harness, stdout.String())
+		}
+	}
+}
+
+// TestUpgradeFailVisibleHooks heals a legacy bare-exit-2 scaffold on re-init.
+func TestUpgradeFailVisibleHooks(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook gate || exit 2" }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook commitgate || exit 2" }
+        ]
+      }
+    ]
+  }
+}
+`
+	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	added, updated, err := ensureClaudeHooks(repo)
+	if err != nil || added {
+		t.Fatalf("heal: added=%v err=%v", added, err)
+	}
+	if len(updated) == 0 {
+		t.Fatalf("expected fail-visible upgrade notes, got %v", updated)
+	}
+	body, _ := os.ReadFile(path)
+	if !strings.Contains(string(body), failVisibleMarker) {
+		t.Fatalf("upgrade missing marker:\n%s", body)
+	}
+	if strings.Contains(string(body), "|| exit 2") {
+		t.Fatalf("legacy || exit 2 still present:\n%s", body)
+	}
+	// Idempotent second pass.
+	_, updated2, err := ensureClaudeHooks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range updated2 {
+		if strings.Contains(u, "fail-visible") {
+			t.Fatalf("second pass should not re-upgrade: %v", updated2)
 		}
 	}
 }

@@ -68,9 +68,14 @@ func TestInitScaffoldsMultiHarnessHooks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("grok hooks: %v", err)
 	}
+	// sty_c75c73ed: PreToolUse uses fail-visible multi-candidate wrapper, not bare || exit 2.
 	for _, want := range []string{
-		"PATH=$HOME/.local/bin:$PATH satelle hook gate || exit 2",
-		"PATH=$HOME/.local/bin:$PATH satelle hook commitgate || exit 2",
+		"#satelle-failvisible",
+		"$HOME/.local/bin/satelle",
+		".satelle/satelle",
+		"hook gate",
+		"hook commitgate",
+		"policy denial",
 		"satelle reindex",
 		"satelle hook context",
 	} {
@@ -79,6 +84,11 @@ func TestInitScaffoldsMultiHarnessHooks(t *testing.T) {
 		}
 		if !strings.Contains(string(grokBody), want) {
 			t.Errorf("grok scaffold missing %q:\n%s", want, grokBody)
+		}
+	}
+	for _, body := range [][]byte{claudeBody, grokBody} {
+		if strings.Contains(string(body), "|| exit 2") {
+			t.Errorf("scaffold must not use bare '|| exit 2':\n%s", body)
 		}
 	}
 	for _, want := range []string{"search_replace", "run_terminal_command"} {

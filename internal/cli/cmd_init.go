@@ -318,98 +318,149 @@ func agentGuidance(repoRoot string) []string {
 	}
 }
 
-// claudeHookSettings is the .claude/settings.json satelle init scaffolds: the
-// SessionStart context injector plus the BLOCKING PreToolUse gates that enforce
-// the authored workflow — edits require an engaged story, and so do commits/
-// pushes. The agent must create stories and drive them through the gates.
-// gate/commitgate commands prepend $HOME/.local/bin to PATH so a missing
-// satelle-on-PATH cannot `|| exit 2` brick every Edit/Bash tool (sty_24b32127).
-const claudeHookSettings = `{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          { "type": "command", "command": "satelle reindex" },
-          { "type": "command", "command": "satelle hook context" }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
-        "hooks": [
-          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook gate || exit 2" }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook commitgate || exit 2" }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook prompt" }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook stopcheck" }
-        ]
-      }
-    ]
-  }
-}
-`
+// failVisibleMarker is the stable substring that identifies a PreToolUse
+// command upgraded to the fail-visible wrapper (sty_c75c73ed). Used by heal
+// paths and tests so the upgrade is idempotent.
+const failVisibleMarker = "#satelle-failvisible"
 
-// grokHookSettings is the satelle-owned Grok project hook file
-// (.grok/hooks/satelle.json). Same policy commands as Claude; matchers cover
-// Grok-native tool ids and Claude aliases Grok maps (sty_2fad11b0).
-const grokHookSettings = `{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          { "type": "command", "command": "satelle reindex" },
-          { "type": "command", "command": "satelle hook context" }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit|search_replace|write",
-        "hooks": [
-          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook gate || exit 2" }
-        ]
-      },
-      {
-        "matcher": "Bash|run_terminal_command",
-        "hooks": [
-          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook commitgate || exit 2" }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook prompt" }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook stopcheck" }
-        ]
-      }
-    ]
-  }
+// renderHookCommand builds the fail-visible PreToolUse wrapper for harness
+// ("claude"|"grok") and sub ("gate"|"commitgate") — sty_c75c73ed.
+//
+// The wrapper:
+//  1. Resolves satelle from $HOME/.local/bin/satelle → .satelle/satelle → PATH
+//  2. Runs `satelle hook <sub>`, captures stdout
+//  3. Re-emits satelle's deny JSON when present (AC2)
+//  4. On infra failure (no binary / empty stdout + non-zero): emits a static
+//     harness-correct deny JSON (AC3) — never a bare exit-2
+//  5. For commitgate only: non-mutating bash fails OPEN on infra failure so the
+//     agent can diagnose and run satelle init (AC4); commit/push fails closed
+//     with the infra reason
+//
+// Exit 2 always pairs with JSON on a block path. No absolute machine path is
+// baked in — multi-candidate resolution keeps settings portable (AC1).
+func renderHookCommand(harness, sub string) string {
+	infra := infraDenyJSON(harness)
+	// Escape for single-quoted shell string: ' → '\''
+	escJSON := strings.ReplaceAll(infra, `'`, `'\''`)
+	// commitgate classifies commit/push in the shell fallback; gate always denies
+	// closed-with-reason on infra failure (edits have no fail-open path — Bash is
+	// the escape hatch).
+	var script string
+	if sub == "commitgate" {
+		script = fmt.Sprintf(`%s
+b=""; for c in "$HOME/.local/bin/satelle" ".satelle/satelle" satelle; do
+  if [ -x "$c" ]; then b="$c"; break; fi
+  if command -v "$c" >/dev/null 2>&1; then b=$(command -v "$c"); break; fi
+done
+p=$(cat)
+infra='%s'
+docase(){ case "$p" in *git\ commit*|*git\ push*) printf '%%s\n' "$infra"; exit 2;; *) exit 0;; esac; }
+if [ -z "$b" ]; then docase; fi
+o=$(printf '%%s' "$p" | "$b" hook commitgate 2>/dev/null); code=$?
+if [ -n "$o" ]; then printf '%%s\n' "$o"; fi
+if [ "$code" -eq 0 ]; then exit 0; fi
+if [ -z "$o" ]; then docase; fi
+exit 2
+`, failVisibleMarker, escJSON)
+	} else {
+		script = fmt.Sprintf(`%s
+b=""; for c in "$HOME/.local/bin/satelle" ".satelle/satelle" satelle; do
+  if [ -x "$c" ]; then b="$c"; break; fi
+  if command -v "$c" >/dev/null 2>&1; then b=$(command -v "$c"); break; fi
+done
+p=$(cat)
+infra='%s'
+if [ -z "$b" ]; then printf '%%s\n' "$infra"; exit 2; fi
+o=$(printf '%%s' "$p" | "$b" hook gate 2>/dev/null); code=$?
+if [ -n "$o" ]; then printf '%%s\n' "$o"; fi
+if [ "$code" -eq 0 ]; then exit 0; fi
+if [ -z "$o" ]; then printf '%%s\n' "$infra"; fi
+exit 2
+`, failVisibleMarker, escJSON)
+	}
+	return "sh -c " + shellSingleQuote(script)
 }
-`
+
+// shellSingleQuote wraps s in single quotes for POSIX sh -c, escaping any
+// embedded single quotes.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, `'`, `'\''`) + "'"
+}
+
+// buildClaudeHookSettings returns the .claude/settings.json scaffold bytes.
+// PreToolUse gates use the fail-visible wrapper (sty_c75c73ed); SessionStart /
+// prompt / stopcheck stay simple (fail open by design).
+func buildClaudeHookSettings() []byte {
+	doc := map[string]any{
+		"hooks": map[string]any{
+			"SessionStart": []any{
+				map[string]any{"hooks": []any{
+					map[string]any{"type": "command", "command": "satelle reindex"},
+					map[string]any{"type": "command", "command": "satelle hook context"},
+				}},
+			},
+			"PreToolUse": []any{
+				map[string]any{
+					"matcher": "Edit|Write|MultiEdit|NotebookEdit",
+					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand("claude", "gate")}},
+				},
+				map[string]any{
+					"matcher": "Bash",
+					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand("claude", "commitgate")}},
+				},
+			},
+			"UserPromptSubmit": []any{
+				map[string]any{"hooks": []any{
+					map[string]any{"type": "command", "command": promptHookCommand},
+				}},
+			},
+			"Stop": []any{
+				map[string]any{"hooks": []any{
+					map[string]any{"type": "command", "command": stopcheckHookCommand},
+				}},
+			},
+		},
+	}
+	b, _ := json.MarshalIndent(doc, "", "  ")
+	return append(b, '\n')
+}
+
+// buildGrokHookSettings returns the .grok/hooks/satelle.json scaffold bytes.
+// Matchers cover Grok-native tool ids and Claude aliases Grok maps (sty_2fad11b0).
+func buildGrokHookSettings() []byte {
+	doc := map[string]any{
+		"hooks": map[string]any{
+			"SessionStart": []any{
+				map[string]any{"hooks": []any{
+					map[string]any{"type": "command", "command": "satelle reindex"},
+					map[string]any{"type": "command", "command": "satelle hook context"},
+				}},
+			},
+			"PreToolUse": []any{
+				map[string]any{
+					"matcher": "Edit|Write|MultiEdit|NotebookEdit|search_replace|write",
+					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand("grok", "gate")}},
+				},
+				map[string]any{
+					"matcher": "Bash|run_terminal_command",
+					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand("grok", "commitgate")}},
+				},
+			},
+			"UserPromptSubmit": []any{
+				map[string]any{"hooks": []any{
+					map[string]any{"type": "command", "command": promptHookCommand},
+				}},
+			},
+			"Stop": []any{
+				map[string]any{"hooks": []any{
+					map[string]any{"type": "command", "command": stopcheckHookCommand},
+				}},
+			},
+		},
+	}
+	b, _ := json.MarshalIndent(doc, "", "  ")
+	return append(b, '\n')
+}
 
 // grokHooksRel is the repo-relative path of the satelle-owned Grok hooks file.
 const grokHooksRel = ".grok/hooks/satelle.json"
@@ -676,7 +727,8 @@ func hookEventHasMarker(event any, marker string) bool {
 // ensureClaudeHooks writes .claude/settings.json with the process hooks when
 // absent, and RECONCILES known-retired satelle hook commands in an existing one
 // (sty_6a919dff) — the user-owned file is otherwise preserved byte-for-byte.
-// Returns whether it created the file and any applied hook renames.
+// Also upgrades legacy bare `|| exit 2` gate wrappers to the fail-visible form
+// (sty_c75c73ed). Returns whether it created the file and any applied updates.
 func ensureClaudeHooks(repoRoot string) (bool, []string, error) {
 	dir := filepath.Join(repoRoot, ".claude")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -684,22 +736,15 @@ func ensureClaudeHooks(repoRoot string) (bool, []string, error) {
 	}
 	path := filepath.Join(dir, "settings.json")
 	if _, err := os.Stat(path); err == nil {
-		updated, rerr := reconcileHookFile(path)
-		if rerr != nil {
-			return false, nil, fmt.Errorf("init: reconcile %s: %w", path, rerr)
-		}
-		healed, herr := ensureReinforcementHooks(path)
+		updated, herr := healExistingHookFile(path, "claude")
 		if herr != nil {
-			return false, nil, fmt.Errorf("init: reinforce %s: %w", path, herr)
-		}
-		for _, e := range healed {
-			updated = append(updated, "added "+e+" hook")
+			return false, nil, herr
 		}
 		return false, updated, nil
 	} else if !os.IsNotExist(err) {
 		return false, nil, fmt.Errorf("init: stat %s: %w", path, err)
 	}
-	if err := os.WriteFile(path, []byte(claudeHookSettings), 0o644); err != nil {
+	if err := os.WriteFile(path, buildClaudeHookSettings(), 0o644); err != nil {
 		return false, nil, fmt.Errorf("init: write %s: %w", path, err)
 	}
 	return true, nil, nil
@@ -707,7 +752,7 @@ func ensureClaudeHooks(repoRoot string) (bool, []string, error) {
 
 // ensureGrokHooks writes .grok/hooks/satelle.json when absent, and reconciles
 // known-retired satelle commands in an existing satelle-owned file. Other files
-// under .grok/hooks/ are never touched. Returns created + applied renames.
+// under .grok/hooks/ are never touched. Returns created + applied updates.
 func ensureGrokHooks(repoRoot string) (bool, []string, error) {
 	dir := filepath.Join(repoRoot, ".grok", "hooks")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -715,25 +760,120 @@ func ensureGrokHooks(repoRoot string) (bool, []string, error) {
 	}
 	path := filepath.Join(repoRoot, filepath.FromSlash(grokHooksRel))
 	if _, err := os.Stat(path); err == nil {
-		updated, rerr := reconcileHookFile(path)
-		if rerr != nil {
-			return false, nil, fmt.Errorf("init: reconcile %s: %w", path, rerr)
-		}
-		healed, herr := ensureReinforcementHooks(path)
+		updated, herr := healExistingHookFile(path, "grok")
 		if herr != nil {
-			return false, nil, fmt.Errorf("init: reinforce %s: %w", path, herr)
-		}
-		for _, e := range healed {
-			updated = append(updated, "added "+e+" hook")
+			return false, nil, herr
 		}
 		return false, updated, nil
 	} else if !os.IsNotExist(err) {
 		return false, nil, fmt.Errorf("init: stat %s: %w", path, err)
 	}
-	if err := os.WriteFile(path, []byte(grokHookSettings), 0o644); err != nil {
+	if err := os.WriteFile(path, buildGrokHookSettings(), 0o644); err != nil {
 		return false, nil, fmt.Errorf("init: write %s: %w", path, err)
 	}
 	return true, nil, nil
+}
+
+// healExistingHookFile applies reconcile + reinforcement + fail-visible upgrade
+// to an existing hook settings file. Returns the list of human-readable updates
+// (empty when nothing changed).
+func healExistingHookFile(path, harness string) ([]string, error) {
+	var updated []string
+	renames, err := reconcileHookFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("init: reconcile %s: %w", path, err)
+	}
+	updated = append(updated, renames...)
+	healed, err := ensureReinforcementHooks(path)
+	if err != nil {
+		return nil, fmt.Errorf("init: reinforce %s: %w", path, err)
+	}
+	for _, e := range healed {
+		updated = append(updated, "added "+e+" hook")
+	}
+	n, err := upgradeFailVisibleHooks(path, harness)
+	if err != nil {
+		return nil, fmt.Errorf("init: fail-visible upgrade %s: %w", path, err)
+	}
+	if n > 0 {
+		updated = append(updated, fmt.Sprintf("upgraded %d PreToolUse hook(s) to fail-visible", n))
+	}
+	return updated, nil
+}
+
+// upgradeFailVisibleHooks rewrites legacy bare `… hook gate||commitgate || exit 2`
+// PreToolUse commands to the fail-visible wrapper (sty_c75c73ed). Idempotent:
+// commands already carrying failVisibleMarker are left alone. Returns the number
+// of commands upgraded.
+func upgradeFailVisibleHooks(path, harness string) (int, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	if strings.Contains(string(raw), failVisibleMarker) &&
+		!strings.Contains(string(raw), "|| exit 2") {
+		// Fully upgraded; nothing to do. (A file may mix markers after partial
+		// edits — still scan below when || exit 2 remains.)
+		return 0, nil
+	}
+	var root map[string]any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return 0, nil // unparseable — leave untouched
+	}
+	hooks, ok := root["hooks"].(map[string]any)
+	if !ok {
+		return 0, nil
+	}
+	pre, ok := hooks["PreToolUse"].([]any)
+	if !ok {
+		return 0, nil
+	}
+	n := 0
+	for _, g := range pre {
+		gm, ok := g.(map[string]any)
+		if !ok {
+			continue
+		}
+		hs, ok := gm["hooks"].([]any)
+		if !ok {
+			continue
+		}
+		for i, h := range hs {
+			hm, ok := h.(map[string]any)
+			if !ok {
+				continue
+			}
+			cmd, _ := hm["command"].(string)
+			if strings.Contains(cmd, failVisibleMarker) {
+				continue
+			}
+			// Legacy forms: bare `|| exit 2` with hook gate or commitgate.
+			var sub string
+			switch {
+			case strings.Contains(cmd, "hook gate") && strings.Contains(cmd, "|| exit 2"):
+				sub = "gate"
+			case strings.Contains(cmd, "hook commitgate") && strings.Contains(cmd, "|| exit 2"):
+				sub = "commitgate"
+			default:
+				continue
+			}
+			hm["command"] = renderHookCommand(harness, sub)
+			hs[i] = hm
+			n++
+		}
+		gm["hooks"] = hs
+	}
+	if n == 0 {
+		return 0, nil
+	}
+	b, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return 0, err
+	}
+	if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // scaffoldToml is the documented config a fresh init writes. Every key is
