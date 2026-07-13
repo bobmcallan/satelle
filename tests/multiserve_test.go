@@ -33,7 +33,7 @@ func TestMultiProjectServe(t *testing.T) {
 	createStory(t, repoB, "BetaOnlyStory", "")
 	workspaceAdd(t, home, repoA, repoB)
 
-	const port = "8821"
+	port := freeListenPort(t)
 	cmd := exec.Command(testBin, "serve", "--port", port, "--no-watch")
 	cmd.Dir = repoA
 	cmd.Env = append(os.Environ(), "SATELLE_HOME="+home)

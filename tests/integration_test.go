@@ -12,10 +12,12 @@ package tests
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -317,6 +319,20 @@ func waitHealthy(t *testing.T, url string, timeout time.Duration) bool {
 		time.Sleep(50 * time.Millisecond)
 	}
 	return false
+}
+
+// freeListenPort binds 127.0.0.1:0 and returns the OS-assigned free port string.
+// Prefer this over hardcoded ports: leftover satelle processes and blackholed
+// high ports make fixed-port healthz checks false-green or false-fail.
+func freeListenPort(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("freeListenPort: %v", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+	return strconv.Itoa(port)
 }
 
 func httpGet(t *testing.T, url string) string {
