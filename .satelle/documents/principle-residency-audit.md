@@ -63,7 +63,7 @@ Resident set is unchanged by order:2 (embed promotions do not add session tags).
 | satelle-generated-readonly | **repo-local** | ondemand | referencing skill | `build.md` cites it |
 | satelle-yagni | **repo-local** | ondemand | referencing skill | `build.md` cites it |
 | satelle-broken-windows | **repo-local** | ondemand | referencing skill | `build.md` cites it |
-| satelle-agile-increments | **repo-local** | ondemand | referencing principle | story-classification historically; self-decl |
+| satelle-agile-increments | **repo-local** | ondemand | referencing skill | `build.md` cites it |
 | satelle-skill-naming | **repo-local** | ondemand | referencing skill | `build.md` cites it |
 | satelle-enable-then-operate | **repo-local** | ondemand | referencing skill | `build.md` cites it |
 | satelle-configuration-over-code | **dead** (deleted) | — | merged into constitution "Configuration over code" | file gone; agent-model See-links repointed |
