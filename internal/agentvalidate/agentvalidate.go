@@ -291,6 +291,23 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 				strings.Contains(resolved, "--deny") ||
 				(strings.Contains(resolved, "Read") && !strings.Contains(resolved, "Write"))
 		}
+		// Placeholder completeness (sty_21db3670): buildArgs substitutes only
+		// tokens that equal {system} verbatim, so a multi-token isolated command
+		// without that token runs with no gate/skill rubric. Hard-fail.
+		if !hasToken(fields, "{system}") {
+			problems = append(problems, fmt.Sprintf(
+				"agents.toml [%s] command omits {system} as its own argv token — the gate/skill rubric is never appended and the agent runs without its rubric",
+				section))
+		}
+		// Reviewer read-only ceiling: advisory when role=reviewer but no ceiling
+		// is expressed (no --disallowedTools/--deny / read-only heuristic miss).
+		// Warn not fail — g.ReadOnly is a heuristic and a legitimate ceiling form
+		// it misses must not hard-block engage (AC2).
+		if role == config.RoleReviewer && !g.ReadOnly {
+			warnings = append(warnings, fmt.Sprintf(
+				"agents.toml [%s] is role=reviewer with an isolated command that expresses no read-only ceiling (no --disallowedTools/--deny of mutators) — the reviewer could silently gain write; deny the mutators or use the default claude/grok template",
+				section))
+		}
 		if g.Notes == "" {
 			g.Notes = "command: " + resolved
 		} else {
@@ -302,6 +319,18 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 		problems = append(problems, fmt.Sprintf("agents.toml [%s] timeout: %v", section, err))
 	}
 	return g, problems, warnings
+}
+
+// hasToken reports whether tok appears as its own element of fields (exact match).
+// Mirrors agentcli.buildArgs placeholder substitution, which only substitutes a
+// token that equals the placeholder verbatim — not a fused substring.
+func hasToken(fields []string, tok string) bool {
+	for _, f := range fields {
+		if f == tok {
+			return true
+		}
+	}
+	return false
 }
 
 func sortedNames(m map[string]config.AgentBinding) []string {
