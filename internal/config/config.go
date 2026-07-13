@@ -84,9 +84,10 @@ type Config struct {
 	// .satelle/backups/stories/ (never deletes in place). (sty_aba7200c)
 	StoriesKeepClosed int `toml:"stories_keep_closed"`
 	StoriesKeepDays   int `toml:"stories_keep_days"`
-	// Review opts this repo into reviewer-gated work. Off by default — the
-	// rubrics ship embedded, but ENFORCEMENT is the operator's choice (the
-	// process is configured, not hardcoded-on).
+	// Review opts this repo into reviewer-gated create. satelle init seeds
+	// gate_create = true (misclassification is cheapest to catch at create —
+	// sty_83782ffb); set false to opt out. Absent key stays false so older
+	// configs without [review] do not silently change until re-init/edit.
 	Review ReviewConfig `toml:"review"`
 	// Gate tunes the PreToolUse edit gate (the `satelle hook gate` handler).
 	Gate GateConfig `toml:"gate"`

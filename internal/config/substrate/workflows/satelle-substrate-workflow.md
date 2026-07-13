@@ -4,6 +4,7 @@ scope: project
 type: workflow
 tags: [type:workflow]
 applies_to: ["substrate"]
+create_review: satelle-story-create-review
 description: Lifecycle for SUBSTRATE-only changes — edits to authored markdown under .satelle/ (workflows, skills, principles, documents, tasks) and docs/, which leave the binary unchanged. Resolved by category the same way the parent workflow is: a story with category "substrate" gets this workflow (a category-specific applies_to beats the wildcard project workflow). A minimal path authored in the DOT standard (the agent model): backlog → in_progress → done, with a cancelled exit. There is deliberately NO plan/code-ac/integration step and NO version bump or release — a markdown edit has no code to plan, no acceptance-criteria implementation to code-review, no integration behaviour to test, and does not change the binary (so no v-tag/CI release is cut). in_progress engages the story so the agent authors + commits + pushes the substrate slice IN-LOOP (the commit gate requires an engaged story). The one gate is the close (in_progress → done): the DETERMINISTIC functional check satelle-substrate-only-check, which rejects if the committed slice touches any non-substrate path — the guardrail that keeps the category choice honest, so a code change cannot ride this lighter workflow to dodge the project workflow's gates. done stays terminal (satelle-done-is-last).
 ---
 
