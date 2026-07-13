@@ -85,3 +85,5 @@ One line per finding, naming the node/edge, the concern, and the concrete fix
 (the binding to add, the gate to declare, the grant to narrow). End with what
 is well configured, so the operator sees the review was complete, not just
 critical.
+
+See [[satelle-dot-standard]], [[satelle-agent-model]] for the authored form and the agent model.

@@ -16,13 +16,12 @@ func embeddedPrinciples() map[string]string {
 	return out
 }
 
-// TestEmbeddedOperatingPrinciples: the binary embeds the principles an agent
-// needs to OPERATE satelle — operating discipline (agent-goals), execution model
-// (agent-model), edit-gate rule (edits-require-a-story), blockage recognition
-// (recognise-blockage; sty_0334d12b), and the residency taxonomy DEFINITION
-// (residency; sty_1278fdd9, demoted to ondemand by the context diet sty_cd5e341c).
-// Everything else is authoring/development substrate that lives in a repo's
-// .satelle/principles (sty_807ae744, sty_949e8739).
+// TestEmbeddedOperatingPrinciples: the binary embeds product-canon principles
+// an agent needs to OPERATE satelle or AUTHOR within the harness (channel-
+// alignment sty_ceb1a3ef). Operating triad + residency taxonomy + authoring
+// canon (done-is-last, reviewer-self-contained, dot-standard, story-
+// classification). Repo-local dogfood discipline stays unstamped under
+// .satelle/principles only.
 func TestEmbeddedOperatingPrinciples(t *testing.T) {
 	embedded := embeddedPrinciples()
 	for _, name := range []string{
@@ -31,6 +30,10 @@ func TestEmbeddedOperatingPrinciples(t *testing.T) {
 		"satelle-edits-require-a-story",
 		"satelle-recognise-blockage",
 		"satelle-residency",
+		"satelle-done-is-last",
+		"satelle-reviewer-self-contained",
+		"satelle-dot-standard",
+		"satelle-story-classification",
 	} {
 		if body, ok := embedded[name]; !ok {
 			t.Errorf("operating principle %q must be embedded, but is missing from EmbeddedDefaults()", name)
@@ -100,19 +103,24 @@ func TestAgentModelMatchesDispatch(t *testing.T) {
 	}
 }
 
-// TestDevelopmentPrinciplesNotEmbedded: principles that are about AUTHORING
-// substrate or DEVELOPING satelle (not required to operate) are NOT embedded —
-// they were relocated to .satelle/principles as project substrate (sty_807ae744).
+// TestDevelopmentPrinciplesNotEmbedded: dogfood-only / dead principles must
+// NOT ship embedded. configuration-over-code was deleted (merged into the
+// constitution). Remaining names are repo-local discipline, not product-canon.
 func TestDevelopmentPrinciplesNotEmbedded(t *testing.T) {
 	embedded := embeddedPrinciples()
 	for _, name := range []string{
-		"satelle-done-is-last",
-		"satelle-configuration-over-code",
-		"satelle-dot-standard",
-		"satelle-reviewer-self-contained",
+		"satelle-configuration-over-code", // deleted; residue lives in constitution
+		"satelle-repo-agnostic",           // repo-local identity (resident, unstamped)
+		"satelle-agile-increments",
+		"satelle-broken-windows",
+		"satelle-yagni",
+		"satelle-skill-naming",
+		"satelle-enable-then-operate",
+		"satelle-agent-telemetry",
+		"satelle-generated-readonly",
 	} {
 		if _, ok := embedded[name]; ok {
-			t.Errorf("principle %q should NOT be embedded — it belongs in .satelle/principles (project)", name)
+			t.Errorf("principle %q should NOT be embedded — repo-local or dead (sty_ceb1a3ef)", name)
 		}
 	}
 }

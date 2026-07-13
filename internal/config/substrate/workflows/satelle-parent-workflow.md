@@ -12,7 +12,7 @@ description: Lifecycle for container stories — a parent or epic-parent whose w
 A **container** story — a `parent` or `epic-parent` — has no slice of its own to
 implement; its work IS the child stories under it. So its lifecycle is minimal,
 authored in the **DOT standard** (node-centric — see the `satelle-agent-model`
-principle): it moves **backlog → done**, and may exit early to **cancelled**.
+principle; categories per [[satelle-story-classification]]): it moves **backlog → done**, and may exit early to **cancelled**.
 There is deliberately no in-between working step — nothing is built on the
 parent itself.
 
