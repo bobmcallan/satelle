@@ -16,7 +16,8 @@ timestamp: '2026-07-12T00:00:00Z'
 
 | Step class | Allocation | Why |
 | --- | --- | --- |
-| **Perform** (`in_progress`, `integration`, `release`) | **In-loop** `agent=executor` on the driving session | Full session context, principles, and tools; cheaper orchestration; no pull-context reconstruction |
+| **Perform** (`in_progress`) | **Dispatched** `agent=coder` (Grok; sty_565a0202) | Isolated implementer; plan-consumption evidence; disk context channel when shell unavailable |
+| **Perform** (`integration`, `release`) | **In-loop** `agent=executor` on the driving session | Full session context, principles, and tools; cheaper orchestration; no pull-context reconstruction |
 | **Plan** | **Dispatched** named agent (`agent=planner`) | Fresh context, skill forced as system prompt, read-only grant; entered from non-performing `backlog` |
 | **Review gates** | **Dispatched** `agent=reviewer` (or named reviewer binding) | Clean-room judge; verdict contract; never mutates |
 
@@ -32,12 +33,12 @@ No rewiring story is filed. A repo that wants every performing step as a subproc
 | Isolation | Weaker (session can drift from rubric) | Stronger; gates still enforce outcome |
 | Orchestration | Simple status transitions from the same session | Heavier dispatch for every stage |
 
-Choice (A) keeps isolation where it pays (plan + reviewers) and keeps perform steps continuous so implement → integrate → release share context without re-deriving the slice each time.
+Choice (A) kept isolation where it paid (plan + reviewers) and perform steps continuous. **Amendment 2026-07-13 (sty_565a0202):** `in_progress` is now a dispatched Grok `coder` so plan-consumption is measurable; integration and release remain in-loop.
 
 ## Sources of truth (do not duplicate)
 
 1. **Workflow allocation** — `.satelle/workflows/satelle-project-workflow.md`  
-   Prose and DOT: `plan [agent=planner, …]`; `in_progress` / `integration` / `release` are `[agent=executor, prompt="@skill:…"]` with explicit “in-loop / no isolated worker” wording.
+   Prose and DOT: `plan [agent=planner, …]`; `in_progress [agent=coder, …]` (dispatched Grok coder, sty_565a0202); `integration` / `release` are `[agent=executor, prompt="@skill:…"]` in-loop.
 
 2. **Run modes** — principle `satelle-agent-model`  
    Defines both modes (in-loop executor vs isolated invocation), role grants, and `@skill:` as a declaration — not a claim that this repo dispatches every perform step.

@@ -40,12 +40,13 @@ digraph w {
 }
 ` + "```\n"
 
-// coderFromBacklogWorkflow reaches the coder directly from backlog, a
-// NON-performing terminal marker — the lock-guard must refuse it.
+// coderFromBacklogWorkflow reaches the coder directly from backlog. Under the
+// engagement lease (sty_8426b9c0) this proceeds — the prior FROM-performing
+// refusal is gone (sty_f5bd176f band-aid removed).
 const coderFromBacklogWorkflow = `---
 name: wf-coder-bad
 type: workflow
-description: coder wired from the non-performing backlog state (must be refused)
+description: coder wired from backlog; lease authorises edit gate during dispatch
 applies_to: ["chore"]
 scope: project
 ---
@@ -63,12 +64,18 @@ digraph w {
 // with a CODE-WRITING grant (Write/Edit) plus the mandatory read-only satelle CLI.
 func appendCoderBinding(t *testing.T, repo, script string) {
 	t.Helper()
+	appendCoderBindingTools(t, repo, script, "Read,Edit,Write,Bash(satelle:*)")
+}
+
+// appendCoderBindingTools is the same as appendCoderBinding with an explicit tools grant.
+func appendCoderBindingTools(t *testing.T, repo, script, tools string) {
+	t.Helper()
 	agents := filepath.Join(repo, ".satelle", "agents.toml")
 	f, err := os.OpenFile(agents, os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.WriteString("\n[coder]\ncommand = \"" + script + " {system}\"\ntools = \"Read,Edit,Write,Bash(satelle:*)\"\n"); err != nil {
+	if _, err := f.WriteString("\n[coder]\ncommand = \"" + script + " {system}\"\ntools = \"" + tools + "\"\n"); err != nil {
 		t.Fatal(err)
 	}
 	_ = f.Close()
@@ -179,5 +186,71 @@ func TestCoderDispatchFromBacklogUnderLease(t *testing.T) {
 	}
 	if !strings.Contains(string(gate), "gate_exit=0") {
 		t.Errorf("edit gate must ALLOW during dispatch via lease (status still backlog): %s", gate)
+	}
+}
+
+// TestCoderDispatchAcceptsGrokReadFileChannel: a write-capable grok-shaped tools
+// grant with read_file (disk context channel, sty_565a0202) dispatches; a
+// channel-less write grant is refused with an actionable error naming the fix.
+func TestCoderDispatchAcceptsGrokReadFileChannel(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+
+	script := filepath.Join(repo, "stub-coder.sh")
+	body := "#!/bin/sh\n" +
+		"cat > .satelle/coder-readfile-payload.json\n" +
+		"echo PLAN-CONSUMED: plan — steps: wire binding, flip workflow\n" +
+		"echo done\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Grok-shaped tools: disk channel via read_file, no Bash(satelle:*).
+	appendCoderBindingTools(t, repo, script, "read_file,grep,list_dir,write,search_replace")
+
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-coder-ok.md"), coderPerformingWorkflow)
+	mustRun(t, testBin, repo, "reindex")
+
+	out := mustRun(t, testBin, repo, "story", "create", "--category", "feature",
+		"--title", "Coder disk channel", "--body", "read_file is a context channel", "--acceptance", "1. dispatched")
+	id := extractID(out, "sty_")
+	if id == "" {
+		t.Fatalf("no story id in:\n%s", out)
+	}
+	mustRun(t, testBin, repo, "story", "set", id, "--status", "plan")
+	mustRun(t, testBin, repo, "story", "set", id, "--status", "in_progress")
+
+	if _, err := os.ReadFile(filepath.Join(repo, ".satelle", "coder-readfile-payload.json")); err != nil {
+		t.Fatalf("coder with read_file grant must run: %v", err)
+	}
+	// executor.log captures the PLAN-CONSUMED evidence line.
+	logPath := filepath.Join(repo, ".satelle", "logs", "executor.log")
+	logBody, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("executor.log missing after dispatch: %v", err)
+	}
+	if !strings.Contains(string(logBody), "PLAN-CONSUMED:") {
+		t.Errorf("executor.log should capture plan-consumed stdout:\n%s", logBody)
+	}
+
+	// Channel-less write grant refuses before run.
+	repo2 := t.TempDir()
+	mustRun(t, testBin, repo2, "init")
+	script2 := filepath.Join(repo2, "stub-coder.sh")
+	if err := os.WriteFile(script2, []byte("#!/bin/sh\necho should-not-run\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	appendCoderBindingTools(t, repo2, script2, "write,search_replace,grep,list_dir")
+	writeFile(t, filepath.Join(repo2, ".satelle", "workflows", "wf-coder-ok.md"), coderPerformingWorkflow)
+	mustRun(t, testBin, repo2, "reindex")
+	out2 := mustRun(t, testBin, repo2, "story", "create", "--category", "feature",
+		"--title", "Channel-less coder", "--body", "must refuse", "--acceptance", "1. refused")
+	id2 := extractID(out2, "sty_")
+	mustRun(t, testBin, repo2, "story", "set", id2, "--status", "plan")
+	got, err := run(t, testBin, repo2, "story", "set", id2, "--status", "in_progress")
+	if err == nil {
+		t.Fatalf("channel-less grant must refuse, got ok:\n%s", got)
+	}
+	if !strings.Contains(got, "context channel") {
+		t.Errorf("refusal should name context channel, got:\n%s", got)
 	}
 }

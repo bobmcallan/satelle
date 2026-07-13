@@ -27,8 +27,8 @@ the agent CLI backend a step may run on.)
 
 **In-loop executor.** The driving session *is* the executor. Full session context,
 principles, and skills via `.satelle/` and the `satelle` CLI. Default for steps
-allocated `agent=executor` (including this repo's `in_progress` / `integration` /
-`release`).
+allocated `agent=executor` (including this repo's `integration` / `release`;
+`in_progress` dispatches to the isolated `[coder]` binding — sty_565a0202).
 
 **Isolated invocation.** satelle spawns a fresh-context sub-process over a
 **payload it builds** (work item + transition), with the step's skill as the

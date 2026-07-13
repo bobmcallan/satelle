@@ -5,7 +5,7 @@ type: workflow
 tags: [type:workflow]
 applies_to: ["*"]
 create_review: satelle-story-create-review
-description: This repo's project-scope workflow, authored in DOT (the agent model). A story moves backlog → plan → in_progress → integration → release → done, with a cancelled exit. It is REVIEWER-FIRST (a reviewer gates every transition). The plan step DISPATCHES to an isolated read-only planner (agent=planner); in_progress, integration, and release run IN-LOOP on the driving session (agent=executor) so the orchestrator performs the work with full session context — no isolated worker subprocess for code/integrate/release. Every stage is reviewed: backlog → plan by satelle-story-intent-review; plan → in_progress by satelle-story-plan-review; in_progress → integration by satelle-code-ac-review; integration → release by satelle-integration-review plus scoped satelle-integration-check (make integration); release → done by satelle-story-release-review plus scoped satelle-changelog-entry-check (CHANGELOG.md must carry the released version). Always-on estimate gates begin-work and close.
+description: This repo's project-scope workflow, authored in DOT (the agent model). A story moves backlog → plan → in_progress → integration → release → done, with a cancelled exit. It is REVIEWER-FIRST (a reviewer gates every transition). The plan step DISPATCHES to an isolated read-only planner (agent=planner); in_progress DISPATCHES to an isolated write-capable coder (agent=coder, Grok); integration and release run IN-LOOP on the driving session (agent=executor). Every stage is reviewed: backlog → plan by satelle-story-intent-review; plan → in_progress by satelle-story-plan-review; in_progress → integration by satelle-code-ac-review; integration → release by satelle-integration-review plus scoped satelle-integration-check (make integration); release → done by satelle-story-release-review plus scoped satelle-changelog-entry-check (CHANGELOG.md must carry the released version). Always-on estimate gates begin-work and close.
 ---
 
 # satelle workflow (project) — the agent model, authored in DOT
@@ -18,15 +18,18 @@ description: This repo's project-scope workflow, authored in DOT (the agent mode
 The lifecycle is the **DOT graph** below — read it as the authority; this prose
 only orients and must not restate it. Each node is a step carrying an `agent`.
 This workflow is **reviewer-first** (a reviewer gates every transition). **Plan**
-dispatches to an isolated read-only `planner`; **in_progress**, **integration**,
-and **release** run **in-loop** on the driving session (`agent=executor`) so the
-session performs the work with its normal context, principles, and tools — not a
-fresh isolated worker subprocess. The driving session orchestrates transitions,
-performs the executor stages, and lets the gates judge.
+dispatches to an isolated read-only `planner`; **in_progress** dispatches to an
+isolated write-capable `coder` (Grok) so implementation runs with a fresh
+context and a measured plan-consumption trail; **integration** and **release**
+run **in-loop** on the driving session (`agent=executor`) so the session performs
+those stages with its normal context, principles, and tools. The driving session
+orchestrates transitions, performs the in-loop stages, and lets the gates judge.
 
-`plan` stays on its own read-only binding because it is entered from the
-non-performing `backlog` state, and the dispatch lock-guard refuses a code-writer
-dispatched from a non-performing state. A **reviewer** node only gates *entry*
+`plan` stays on its own read-only binding because a planner plans — it is not a
+code-writer. The engagement lease (`sty_8426b9c0`) is acquired for the **TARGET**
+engaging state before any dispatch runs, so a code-writing named agent may edit
+during `in_progress` regardless of the FROM state (the prior FROM-performing
+refusal was removed in `sty_f5bd176f`). A **reviewer** node only gates *entry*
 via its `prompt="@skill:NAME"` (read-only — it judges, never mutates). Status
 advances only through a reviewer's accept. The gating begins at intake:
 `backlog -> plan` is gated by `satelle-story-intent-review`. A reject leaves the
@@ -47,12 +50,12 @@ to fix and re-traverse, never bypass.
 
 ```dot
 digraph satelle_workflow {
-  graph [goal="Drive a story to done — plan reviewed against the ACs, implemented in-loop, released and verified by CI, every gate accepted", vars="story, repo_root"]
+  graph [goal="Drive a story to done — plan reviewed against the ACs, implemented by the dispatched coder, released and verified by CI, every gate accepted", vars="story, repo_root"]
   rankdir=LR
 
   backlog     [shape=Mdiamond]
   plan        [agent=planner, prompt="@skill:plan"]     // DISPATCHED: isolated read-only planner
-  in_progress [agent=executor, prompt="@skill:code"]    // IN-LOOP: driving session implements
+  in_progress [agent=coder, prompt="@skill:code"]       // DISPATCHED: isolated grok coder implements
   integration [agent=executor, prompt="@skill:integrate"] // IN-LOOP: driving session tests
   release     [agent=executor, prompt="@skill:release"] // IN-LOOP: driving session releases
   // Terminal success. on_enter_agent dispatches [retrospective] once with
@@ -106,7 +109,7 @@ digraph satelle_workflow {
 
 Every gate/skill this workflow names resolves through the doc-index, **project
 scope (`.satelle/skills`) layered over the embedded system defaults**. The
-dispatched `plan` (`@skill:plan`), and the in-loop `in_progress` (`@skill:code`),
+dispatched `plan` (`@skill:plan`) and `in_progress` (`@skill:code`), the in-loop
 `integration` (`@skill:integrate`) and `release` (`@skill:release`) rubrics, and
 the reviewer gates (`satelle-story-intent-review`, `satelle-story-plan-review`,
 `satelle-code-ac-review`, `satelle-integration-review`, `satelle-integration-check`,
@@ -125,12 +128,12 @@ guardrails:
   always:
     - Drive an engaged item to a terminal state (done or cancelled) — don't leave work open indefinitely.
     - Give a story numbered acceptance criteria before starting, and satisfy them before moving to done.
-    - Dispatch only the plan stage to the isolated planner; perform in_progress, integration, and release in-loop as the driving session (agent=executor); let reviewer gates judge every transition.
+    - Dispatch plan to the isolated planner and in_progress to the isolated grok coder; perform integration and release in-loop as the driving session (agent=executor); let reviewer gates judge every transition.
     - Bump the version + commit + push + record the release in the in-loop release step; the release gate verifies the bump, CI, the published release, and the acceptance criteria before close.
   ask_first: []
   never:
     - Place any state after done — done is always the terminal success state.
     - Self-enact a gated edge the reviewer has not accepted.
     - Mark an item done with unmet acceptance criteria, or release with a failing CI run.
-    - Re-dispatch in_progress / integration / release to an isolated worker when this workflow assigns them to the executor — those stages stay in-session.
+    - Re-dispatch integration / release to an isolated worker when this workflow assigns them to the executor — those stages stay in-session.
 ```

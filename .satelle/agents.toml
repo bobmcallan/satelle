@@ -12,10 +12,15 @@
 # Reviewer: Grok, argv-first ({payload} on -p + stdin) — the FULL command so the
 # read-only grant (--tools read_file,grep,list_dir) and mutator ceiling (--deny …)
 # are visible rather than hidden behind the `grok` preset token.
-# Planner/retrospective: Claude stdin-first (no {payload} — not double-fed) so
-# Bash(satelle:*) and code tools work. Grok Build currently cannot enable
-# run_terminal_command (agent-build constraint), so Grok is not used for
-# shell-needing dispatch steps.
+# Planner/retrospective/blocked-triage: Claude stdin-first (no {payload} — not
+# double-fed) so Bash(satelle:*) and code tools work.
+# Coder (in_progress): Grok edit-capable via search_replace, no shell and no
+# write tool — headless Grok agent-build fails when run_terminal_command OR the
+# write tool is enabled (auto_background_on_timeout / enabled_background
+# constraint; re-verified sty_565a0202). search_replace can create and edit
+# files. Context channel is disk reads under .satelle/stories/<id>/ via
+# read_file (grantsSatelleCLI accepts that channel). Hooks under .grok/hooks
+# remain the real mutator ceiling.
 # model stays non-empty (TestRepoReviewerModelIsActive).
 # Per-gate model without a second binding: a workflow edge/node may set model="…"
 # to override only that gate's model; the binding stays source of command+tools
@@ -62,4 +67,18 @@ role    = "agent"
 command = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Write,Edit,Grep,Glob,Bash"
 model   = "opus"
+principles = "session"
+
+# coder — performing in_progress dispatch (sty_565a0202 / epic:dispatched-coder).
+# Grok argv-first; edit-capable via search_replace (can create files). NO
+# run_terminal_command and NO write: headless Grok agent-build refuses both
+# (see header). Context via read_file on .satelle/stories/<id>/; plan-consumed
+# evidence is a stdout statement (captured to dispatch sink + executor.log).
+# --always-approve: .grok PreToolUse gates are the real ceiling. Committed
+# default works on a clone (satelle-repo-agnostic).
+[coder]
+role    = "agent"
+command = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir,search_replace -m {model} --always-approve --output-format plain --max-turns 40 --no-subagents"
+tools   = "read_file,grep,list_dir,search_replace"
+model   = "grok-4.5"
 principles = "session"
