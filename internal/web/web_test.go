@@ -41,6 +41,7 @@ func newServer(t *testing.T) (*httptest.Server, *store.DB) {
 	verb.SetWorkItemStore(db.Stories)
 	verb.SetLedgerStore(db.Ledger)
 	verb.SetDocIndexStore(db.DocIndex)
+	verb.SetLeaseStore(db.Leases)
 	a := &app.App{RepoRoot: "/repo", DBPath: "/repo/.satelle/satelle.db", Store: db}
 	srv := httptest.NewServer(web.Build(a))
 	t.Cleanup(func() {
@@ -49,6 +50,7 @@ func newServer(t *testing.T) (*httptest.Server, *store.DB) {
 		verb.SetWorkItemStore(nil)
 		verb.SetLedgerStore(nil)
 		verb.SetDocIndexStore(nil)
+		verb.SetLeaseStore(nil)
 	})
 	return srv, db
 }

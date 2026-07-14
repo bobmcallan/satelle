@@ -406,7 +406,18 @@ type lightPayload struct {
 // state is not ALSO rendered as a completed light (that would double the step),
 // while prior steps stay done and rejects stay red. Off-spine targets (e.g.
 // blocked) fall back to ledger-appearance order and a maxStep+1 current.
-func buildLights(entries []ledger.Entry, status string, stepOf func(state string) int) []reviewLight {
+//
+// seatHeld is true when a live pre-transition engagement lease is held for the
+// item (in_flight && !stale — sty_e1314fe3). When seatHeld && entered==false
+// (zero transition/reject rows), a temporary pulsing "current" light at the
+// start state's spine depth is emitted, titled "starting". The number is
+// stepOf(status): while entered==false the status is still the start state
+// (structure.go enforces start==backlog), and spineDepths omits depth 0 so
+// stepOf(backlog)==0 by map-miss — derived, not a hardcoded literal. Once the
+// first transition lands, entered==true and this light is mutually exclusive
+// with the real step-1 current light (no double, no lingering 0). A backlog
+// item with no live seat stays blank (no phantom 0).
+func buildLights(entries []ledger.Entry, status string, seatHeld bool, stepOf func(state string) int) []reviewLight {
 	// ledger-list yields entries oldest-first (the store orders created_at ASC),
 	// which is the order the lights render left-to-right — consume it as-is so
 	// the steps read 1 → N rather than reversed.
@@ -527,6 +538,14 @@ func buildLights(entries []ledger.Entry, status string, stepOf func(state string
 			cur = curStep
 		}
 		lights = append(lights, reviewLight{cur, "current", "current stage"})
+	}
+	// Pre-transition seat (sty_e1314fe3): live lease held, no transition yet.
+	// Number is the START state spine depth via stepOf(status) — status is still
+	// the start state while entered==false, and spineDepths omits depth 0
+	// (structure.go enforces start==backlog); entered==true is mutually exclusive
+	// so the real step-1 current takes over the instant the first transition lands.
+	if seatHeld && !entered {
+		lights = append(lights, reviewLight{stepOf(status), "current", "starting"})
 	}
 	return lights
 }
@@ -666,13 +685,15 @@ func categoryStepOf(docs []docindex.Doc) func(category, state string) int {
 }
 
 // attachLights wraps items with their progress lights, numbering each item
-// against the workflow active for ITS category (catStepOf).
-func attachLights(ctx context.Context, items []workitem.Item, catStepOf func(category, state string) int) []rowVM {
+// against the workflow active for ITS category (catStepOf). liveSeat is the
+// per-id pre-transition seat join (in_flight && !stale); a missing entry is
+// false so unengaged backlog rows stay blank (sty_e1314fe3).
+func attachLights(ctx context.Context, items []workitem.Item, liveSeat map[string]bool, catStepOf func(category, state string) int) []rowVM {
 	out := make([]rowVM, len(items))
 	for i, it := range items {
 		entries, _ := fetchList[ledger.Entry](ctx, "ledger-list", map[string]any{"story_id": it.ID, "limit": 500})
 		stepOf := func(s string) int { return catStepOf(it.Category, s) }
-		out[i] = rowVM{Item: it, Lights: buildLights(entries, it.Status, stepOf)}
+		out[i] = rowVM{Item: it, Lights: buildLights(entries, it.Status, liveSeat[it.ID], stepOf)}
 	}
 	return out
 }
@@ -738,16 +759,37 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 		}
 	}
 	catStepOf := categoryStepOf(byKind["workflows"])
+	// Live pre-transition seats (sty_e1314fe3): best-effort join from
+	// story-seat-list. Restrict to in_flight && !stale — a strict subset of the
+	// gate live-seat predicate that covers the whole acquire-before-transition
+	// window without the web layer parsing workflows for engaging states. On
+	// error, leave the map empty so strips degrade to ledger-only (no 0 lights).
+	liveSeat := map[string]bool{}
+	if seats, serr := fetchList[seatRowVM](ctx, "story-seat-list", nil); serr == nil {
+		for _, s := range seats {
+			if s.InFlight && !s.Stale {
+				liveSeat[s.ID] = true
+			}
+		}
+	}
 	return pageData{
 		RepoRoot: a.RepoRoot, ProjectName: filepath.Base(a.RepoRoot), DBPath: a.DBPath,
-		Stories: attachLights(ctx, stories, catStepOf), BacklogCount: backlog,
-		Tasks:    attachLights(ctx, tasks, catStepOf),
+		Stories: attachLights(ctx, stories, liveSeat, catStepOf), BacklogCount: backlog,
+		Tasks:    attachLights(ctx, tasks, liveSeat, catStepOf),
 		DocKinds: kinds, DocCount: len(allDocs),
 		Workflows: workflowRows(byKind["workflows"]),
 		Uptime:    formatUptime(time.Since(serverStart)),
 		Theme:     globalTheme(),
 		TopBar:    newTopBar("home"),
 	}, nil
+}
+
+// seatRowVM is the story-seat-list subset needed for the pre-transition seat
+// join on progress rows (sty_e1314fe3).
+type seatRowVM struct {
+	ID       string `json:"id"`
+	InFlight bool   `json:"in_flight"`
+	Stale    bool   `json:"stale"`
 }
 
 func projectPage(a *app.App) http.HandlerFunc {
