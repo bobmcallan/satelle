@@ -115,6 +115,32 @@ func TestRegisteredRootsSkipsDeadPaths(t *testing.T) {
 			}
 		}
 	}
+
+	// AC3: childRoots is the sole multi-serve input — same filter as registeredRoots
+	// (identity wrapper), so dead roots yield zero child + zero /<slug>/ route.
+	cr := childRoots(bound)
+	if len(cr) != 2 {
+		t.Fatalf("childRoots = %v, want bound+live only (zero child for dead paths)", cr)
+	}
+	for _, r := range cr {
+		if !want[r] {
+			t.Errorf("childRoots unexpected %q", r)
+		}
+	}
+	// assignSlug only for live set: dead paths never mint a route slug.
+	s := newSupervisor(context.Background(), io.Discard, io.Discard, "self")
+	gotSlugs := map[string]string{}
+	for _, r := range cr {
+		gotSlugs[r] = s.assignSlug(r)
+	}
+	if len(gotSlugs) != 2 {
+		t.Fatalf("assignSlug over live set size = %d, want 2", len(gotSlugs))
+	}
+	for _, dead := range []string{deadMissing, deadNoSatelle} {
+		if _, ok := gotSlugs[dead]; ok {
+			t.Errorf("dead path %q received a slug (would emit /<slug>/ route)", dead)
+		}
+	}
 }
 
 func TestTopHandlerRouting(t *testing.T) {
