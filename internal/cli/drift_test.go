@@ -140,4 +140,3 @@ func TestMigrateAgentsFlattenAndInject(t *testing.T) {
 		}
 	}
 }
-
