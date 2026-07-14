@@ -85,7 +85,7 @@ func TestBuildLights(t *testing.T) {
 		ev(ledger.KindReviewAccept, "in_progress", "done"),
 		ev(ledger.KindStatusTransition, "in_progress", "done"),
 	}
-	lights := buildLights(chrono, "done", testStep)
+	lights := buildLights(chrono, "done", false, testStep)
 	// stage 1 passes; stage 2 fails then passes (shared index); no current (done).
 	got := states(lights)
 	want := []string{"pass", "fail", "pass"}
@@ -109,7 +109,7 @@ func TestBuildLightsCurrentStepPulses(t *testing.T) {
 		ev(ledger.KindReviewAccept, "open", "in_progress"),
 		ev(ledger.KindStatusTransition, "open", "in_progress"),
 	}
-	lights := buildLights(chrono, "in_progress", testStep)
+	lights := buildLights(chrono, "in_progress", false, testStep)
 	if len(lights) != 1 || lights[0].State != "current" || lights[0].Index != 1 {
 		t.Fatalf("want [current(1)], got %v", lights)
 	}
@@ -126,7 +126,7 @@ func TestBuildLightsPriorStepDoneCurrentPulses(t *testing.T) {
 		ev(ledger.KindReviewAccept, "in_progress", "release"),
 		ev(ledger.KindStatusTransition, "in_progress", "release"),
 	}
-	lights := buildLights(chrono, "release", step)
+	lights := buildLights(chrono, "release", false, step)
 	if len(lights) != 2 {
 		t.Fatalf("want 2 lights, got %v", lights)
 	}
@@ -141,7 +141,7 @@ func TestBuildLightsPriorStepDoneCurrentPulses(t *testing.T) {
 func TestBuildLightsUngatedIsFired(t *testing.T) {
 	// A status_transition with no matching review_accept is an ungated checkpoint.
 	chrono := []ledger.Entry{ev(ledger.KindStatusTransition, "open", "in_progress")}
-	lights := buildLights(chrono, "done", testStep)
+	lights := buildLights(chrono, "done", false, testStep)
 	if len(lights) != 1 || lights[0].State != "fired" {
 		t.Fatalf("want [fired], got %v", lights)
 	}
@@ -150,11 +150,52 @@ func TestBuildLightsUngatedIsFired(t *testing.T) {
 func TestBuildLightsUnstartedHasNoCurrent(t *testing.T) {
 	// A freshly-created item at its initial state (no transitions) shows NO lights
 	// — the initial backlog/open state is not step 1, so no phantom current ①.
-	if got := buildLights(nil, "open", testStep); len(got) != 0 {
+	if got := buildLights(nil, "open", false, testStep); len(got) != 0 {
 		t.Fatalf("unstarted open item should have no lights, got %v", got)
 	}
-	if got := buildLights([]ledger.Entry{ev(ledger.KindStoryCreated, "", "")}, "open", testStep); len(got) != 0 {
+	if got := buildLights([]ledger.Entry{ev(ledger.KindStoryCreated, "", "")}, "open", false, testStep); len(got) != 0 {
 		t.Fatalf("created-only item should have no lights, got %v", got)
+	}
+}
+
+// TestBuildLightsStartingLight: pre-transition seat (seatHeld && entered==false)
+// emits a single pulsing "starting" light at the start state's spine depth 0;
+// without a seat the strip stays blank; once a transition lands the 0 light is
+// gone and the real step-1 current takes over (sty_e1314fe3 ACs 1–4).
+func TestBuildLightsStartingLight(t *testing.T) {
+	// projStep omits backlog (mirrors spineDepths) so stepOf("backlog")==0 by map-miss —
+	// the start-state spine depth, not a hardcoded literal (AC2).
+	// AC1/AC2: seat held, zero transitions → single current light numbered 0 titled starting.
+	lights := buildLights(nil, "backlog", true, projStep)
+	if len(lights) != 1 {
+		t.Fatalf("seat-held unentered: want 1 light, got %v", lights)
+	}
+	if lights[0].Index != 0 || lights[0].State != "current" || lights[0].Title != "starting" {
+		t.Errorf("seat-held unentered light = %+v, want Index=0 State=current Title=starting", lights[0])
+	}
+
+	// AC4: no live seat → blank strip (no phantom 0).
+	if got := buildLights(nil, "backlog", false, projStep); len(got) != 0 {
+		t.Fatalf("no-seat backlog: want 0 lights, got %v", got)
+	}
+
+	// AC3: first transition lands (entered==true) even with seat still held →
+	// real step-1 current only; no lingering 0, no double light.
+	chrono := []ledger.Entry{
+		ev(ledger.KindReviewAccept, "backlog", "in_progress"),
+		ev(ledger.KindStatusTransition, "backlog", "in_progress"),
+	}
+	lights = buildLights(chrono, "in_progress", true, projStep)
+	if len(lights) != 1 {
+		t.Fatalf("entered with seat: want 1 light, got %v", lights)
+	}
+	if lights[0].Index != 1 || lights[0].State != "current" {
+		t.Errorf("entered with seat light = %+v, want Index=1 State=current (no lingering 0)", lights[0])
+	}
+	for _, l := range lights {
+		if l.Index == 0 || l.Title == "starting" {
+			t.Errorf("0/starting light must not linger once entered: %+v", l)
+		}
 	}
 }
 
@@ -166,7 +207,7 @@ func TestBuildLightsNumbersByStepNotAppearance(t *testing.T) {
 		ev(ledger.KindStatusTransition, "in_progress", "done"), // step 2
 		ev(ledger.KindStatusTransition, "open", "in_progress"), // step 1
 	}
-	lights := buildLights(chrono, "done", testStep)
+	lights := buildLights(chrono, "done", false, testStep)
 	if len(lights) != 2 || lights[0].Index != 2 || lights[1].Index != 1 {
 		t.Fatalf("want indices [2,1] by step, got %v", lights)
 	}
@@ -181,7 +222,7 @@ func TestBuildLightsRetriedStepSharesNumber(t *testing.T) {
 		ev(ledger.KindReviewAccept, "open", "in_progress"),
 		ev(ledger.KindStatusTransition, "open", "in_progress"),
 	}
-	lights := buildLights(chrono, "in_progress", testStep)
+	lights := buildLights(chrono, "in_progress", false, testStep)
 	if len(lights) != 2 {
 		t.Fatalf("want 2 lights, got %v", lights)
 	}
@@ -206,7 +247,7 @@ func TestBuildLightsChronologicalAscending(t *testing.T) {
 		ev(ledger.KindStatusTransition, "d", "e"), // 4
 		ev(ledger.KindStatusTransition, "e", "f"), // 5
 	}
-	lights := buildLights(chrono, "f", step) // non-terminal → step 5 (its current state) pulses
+	lights := buildLights(chrono, "f", false, step) // non-terminal → step 5 (its current state) pulses
 	var idx []int
 	for _, l := range lights {
 		idx = append(idx, l.Index)
@@ -305,7 +346,7 @@ func TestBuildLightsFullSpineSequential(t *testing.T) {
 		ev(ledger.KindReviewAccept, "committed", "done"),
 		ev(ledger.KindStatusTransition, "committed", "done"), // step 4
 	}
-	lights := buildLights(chrono, "done", projStep)
+	lights := buildLights(chrono, "done", false, projStep)
 	var idx []int
 	for _, l := range lights {
 		idx = append(idx, l.Index)
@@ -338,7 +379,7 @@ func TestBuildLightsRecoveryRepeatSharesSteps(t *testing.T) {
 		ev(ledger.KindReviewAccept, "committed", "done"),
 		ev(ledger.KindStatusTransition, "committed", "done"),
 	}
-	lights := buildLights(chrono, "done", projStep)
+	lights := buildLights(chrono, "done", false, projStep)
 	var idx []int
 	for _, l := range lights {
 		idx = append(idx, l.Index)
@@ -372,7 +413,7 @@ func TestBuildLightsRejectPastCurrentOrdered(t *testing.T) {
 		ev(ledger.KindStatusTransition, "d", "release"), // 4 -> current (starting edge)
 		ev(ledger.KindReviewReject, "release", "done"),  // 5 fail (rejected outgoing edge)
 	}
-	lights := buildLights(chrono, "release", step)
+	lights := buildLights(chrono, "release", false, step)
 	var idx []int
 	for _, l := range lights {
 		idx = append(idx, l.Index)

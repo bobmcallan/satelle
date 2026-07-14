@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -110,5 +111,79 @@ func TestProgressLightsPerCategoryWorkflow(t *testing.T) {
 	// Regression guard: the epic must NOT be numbered against the project spine.
 	if strings.Contains(body, `title="4. backlog → done`) {
 		t.Errorf("epic-parent was numbered against the wrong (project) workflow")
+	}
+}
+
+// TestProgressLightsStartingWhileSeatHeld: a backlog story with a live
+// pre-transition engagement lease (in_flight, no ledger transitions) renders a
+// single pulsing step-0 "starting" light; a sibling backlog with no lease stays
+// blank; after the first transition lands the 0 light is gone (sty_e1314fe3).
+func TestProgressLightsStartingWhileSeatHeld(t *testing.T) {
+	srv, db := newServer(t)
+	ctx := context.Background()
+
+	indexDocs(t, db, "workflows", map[string]string{"satelle-project-workflow": projectWFDoc})
+
+	held, err := db.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "Seat held pre-transition", Category: "feature", Status: workitem.StatusBacklog,
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	idle, err := db.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "Never engaged", Category: "feature", Status: workitem.StatusBacklog,
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Plant a live in-flight seat (the acquire-before-gate window) without any
+	// status_transition ledger row — status stays backlog, entered==false.
+	if _, out, _, aerr := db.Leases.Acquire(ctx, held.ID, "story", "test-owner", "in_progress", true); aerr != nil || out != lease.OutcomeAcquired {
+		t.Fatalf("acquire seat: out=%v err=%v", out, aerr)
+	}
+
+	_, body := get(t, srv.URL+"/")
+	// AC1: seat-held backlog shows the pulsing starting light numbered 0.
+	if !strings.Contains(body, `review-light-current" title="starting">0</span>`) {
+		t.Errorf("expected step-0 starting light for seat-held story; body snippet missing")
+	}
+	// AC4: idle backlog has no progress lights at all (blank strip — no phantom 0).
+	// Scope the idle row: its title must not be followed by a review-light span
+	// before the next row ends — assert the idle story's row has an empty col-reviews.
+	idleMarker := `data-title="never engaged"`
+	idx := strings.Index(strings.ToLower(body), idleMarker)
+	if idx < 0 {
+		t.Fatalf("idle story row not found")
+	}
+	// Find the col-reviews cell within this row.
+	rowSlice := body[idx:]
+	if end := strings.Index(rowSlice, "</tr>"); end >= 0 {
+		rowSlice = rowSlice[:end]
+	}
+	if strings.Contains(rowSlice, "review-light") {
+		t.Errorf("idle backlog row must have a blank progress strip, got lights in: %s", rowSlice)
+	}
+	_ = idle
+
+	// AC3: once a status_transition lands, the 0 light is gone and step-1 current renders.
+	// Confirm settles in_flight (post-commit) and we record the entry transition.
+	if err := db.Leases.Confirm(ctx, held.ID, "in_progress"); err != nil {
+		t.Fatal(err)
+	}
+	st := workitem.StatusInProgress
+	if _, err := db.Stories.Update(ctx, held.ID, workitem.UpdateInput{Status: &st}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	mustAppend(t, db, ledger.AppendInput{
+		StoryID: held.ID, Kind: ledger.KindStatusTransition,
+		Payload: transitionPayloadJSON("backlog", "in_progress"),
+	})
+
+	_, body = get(t, srv.URL+"/")
+	if strings.Contains(body, `title="starting">0</span>`) {
+		t.Errorf("starting light must disappear once the first transition lands")
+	}
+	if !strings.Contains(body, `review-light-current" title="current stage">1</span>`) {
+		t.Errorf("expected step-1 current light after first transition")
 	}
 }
