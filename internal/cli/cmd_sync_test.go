@@ -1,10 +1,17 @@
 package cli
 
 import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/hosted"
 )
 
 // areaScopes parses `sync scopes` tabwriter output into area -> scope,
@@ -64,6 +71,230 @@ func TestSyncScopesConfiguredAndOverlay(t *testing.T) {
 	}
 	if scopes["documents"] != "local" {
 		t.Errorf("documents scope = %q, want local (overlay override of committed personal)", scopes["documents"])
+	}
+}
+
+// TestSyncDefaultAllLocalNothingToSync: bare `satelle sync` with no [sync] table
+// prints one "nothing to sync" line and contacts no server (default-action AC2).
+func TestSyncDefaultAllLocalNothingToSync(t *testing.T) {
+	tempRepo(t)
+	out, err := runRoot(t, "sync")
+	if err != nil {
+		t.Fatalf("sync: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Nothing to sync") {
+		t.Fatalf("expected all-local nothing-to-sync message, got: %q", out)
+	}
+	// No per-verb skip noise leaks through the aggregate path.
+	if strings.Contains(out, "scope is local — skipping") || strings.Contains(out, "every work-state area is local") {
+		t.Errorf("all-local sync leaked a per-verb skip message:\n%s", out)
+	}
+}
+
+// TestSyncDefaultDryRunRunsOptedInAreasInOrder: bare `satelle sync --dry-run`
+// composes the opted-in verbs — config push, documents push, then work-state
+// push — previewing each without a network call, and reports documents pull as
+// not previewable (default-action AC1, AC4). --dry-run keeps every handler
+// short of contacting the server, so no fake server is needed.
+func TestSyncDefaultDryRunRunsOptedInAreasInOrder(t *testing.T) {
+	repo := tempRepo(t)
+	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
+	cfg := "web_port = 8181\n\n[sync]\nskills = \"personal\"\ndocuments = \"personal\"\nstories = \"personal\"\n"
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skillsDir := filepath.Join(repo, ".satelle", "skills")
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillsDir, "my-skill.md"), []byte("---\ntype: skill\n---\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	docsDir := filepath.Join(repo, ".satelle", "documents")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(docsDir, "doc.md"), []byte("# Doc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runRoot(t, "sync", "--dry-run", "--server", "http://sync.example.invalid")
+	if err != nil {
+		t.Fatalf("sync --dry-run: %v\n%s", err, out)
+	}
+	// Every opted-in kind is previewed, and pull is reported as not previewable.
+	needles := []string{"skills/my-skill.md", "documents/doc.md", "documents pull: skipped under --dry-run", "work-state areas"}
+	for _, n := range needles {
+		if !strings.Contains(out, n) {
+			t.Errorf("sync --dry-run output missing %q:\n%s", n, out)
+		}
+	}
+	// Fixed composition order: config push → documents push → pull note → workstate push.
+	iConfig := strings.Index(out, "skills/my-skill.md")
+	iDoc := strings.Index(out, "documents/doc.md")
+	iPull := strings.Index(out, "documents pull: skipped")
+	iWork := strings.Index(out, "work-state areas")
+	if !(iConfig < iDoc && iDoc < iPull && iPull < iWork) {
+		t.Errorf("sync verbs ran out of order (config=%d doc=%d pull=%d work=%d):\n%s", iConfig, iDoc, iPull, iWork, out)
+	}
+}
+
+// fakeSyncServer is a combined hosted server exposing the config, documents, and
+// workstate surfaces at once, so bare `satelle sync` can drive all four verbs
+// against a single endpoint. It reuses the per-kind fake stores.
+type fakeSyncServer struct {
+	docs      *fakeDocStore
+	cfg       *fakeConfigStore
+	mu        sync.Mutex
+	workstate int
+}
+
+func newFakeSyncServer(t *testing.T) (*httptest.Server, *fakeSyncServer) {
+	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	hosted.DocumentSyncStatePathOverride = "" // isolate the pull cursor to this XDG dir
+	f := &fakeSyncServer{docs: newFakeDocStore(), cfg: &fakeConfigStore{data: map[string]map[string][][]byte{}}}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]string{
+			{"id": "ws-personal", "kind": "personal", "name": "personal"},
+			{"id": "ws-team", "kind": "team", "name": "Acme"},
+		})
+	})
+	mux.HandleFunc("/api/v1/workspaces/", func(w http.ResponseWriter, r *http.Request) {
+		segs := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/api/v1/workspaces/"), "/", 3) // [wsID, kind, path?]
+		if len(segs) < 2 {
+			http.NotFound(w, r)
+			return
+		}
+		wsID := segs[0]
+		if proj := r.URL.Query().Get("project"); proj != "" {
+			wsID = wsID + "|" + proj // project partitions the store (server sty_0e56fe79)
+		}
+		path := ""
+		if len(segs) == 3 {
+			path = segs[2]
+		}
+		writePut := func(store interface {
+			put(string, string, []byte) (string, int, bool)
+		}) {
+			body, _ := io.ReadAll(r.Body)
+			sha, ver, created := store.put(wsID, path, body)
+			status := http.StatusOK
+			if created {
+				status = http.StatusCreated
+			}
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(map[string]any{"path": path, "version": ver, "blob_sha256": sha, "size": len(body), "created": created})
+		}
+		switch segs[1] {
+		case "config":
+			switch {
+			case r.Method == http.MethodPut:
+				writePut(f.cfg)
+			case r.Method == http.MethodGet && path == "":
+				_ = json.NewEncoder(w).Encode(f.cfg.manifest(wsID))
+			case r.Method == http.MethodGet:
+				content, sha, ok := f.cfg.get(wsID, path, 0)
+				if !ok {
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("ETag", `"`+sha+`"`)
+				_, _ = w.Write(content)
+			default:
+				http.NotFound(w, r)
+			}
+		case "documents":
+			switch {
+			case r.Method == http.MethodPut:
+				writePut(f.docs)
+			case r.Method == http.MethodGet && path == "":
+				items, cursor := f.docs.changes(wsID, r.URL.Query().Get("since"))
+				_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "cursor": cursor})
+			case r.Method == http.MethodGet:
+				content, sha, ok := f.docs.get(wsID, path)
+				if !ok {
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("ETag", `"`+sha+`"`)
+				_, _ = w.Write(content)
+			default:
+				http.NotFound(w, r)
+			}
+		case "workstate":
+			if r.Method != http.MethodPost {
+				http.NotFound(w, r)
+				return
+			}
+			body, _ := io.ReadAll(r.Body)
+			var batch map[string]any
+			_ = json.Unmarshal(body, &batch)
+			f.mu.Lock()
+			f.workstate++
+			f.mu.Unlock()
+			items, _ := batch["items"].([]any)
+			ledger, _ := batch["ledger"].([]any)
+			_ = json.NewEncoder(w).Encode(map[string]int{"items": len(items), "ledger": len(ledger)})
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	return ts, f
+}
+
+// TestSyncDefaultRunsFullBundleLive drives bare `satelle sync` (non-dry-run)
+// through every opted-in verb against one combined server and asserts each
+// actually executed: config push, documents push, documents PULL (a server-only
+// file must land locally — the branch a preview test can't pin), and work-state
+// push (default-action AC1).
+func TestSyncDefaultRunsFullBundleLive(t *testing.T) {
+	ts, f := newFakeSyncServer(t)
+	seedCred(t, ts.URL)
+
+	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\ndocuments = \"personal\"\nstories = \"personal\"\n"+boundProjectToml)
+	writeRepoFile(t, repo, ".satelle/skills/my-skill.md", "---\ntype: skill\n---\nbody\n")
+	writeRepoFile(t, repo, ".satelle/documents/local-doc.md", "# local\n")
+	pointAt(t, repo)
+
+	// Pre-seed a document ONLY on the server so documents pull must run to land it.
+	f.docs.put("ws-personal|probe", "documents/remote-only.md", []byte("# remote\n"))
+
+	// A story so work-state push has a row to send.
+	if out, err := runRoot(t, "story", "create", "--title", "Bundle probe", "--body", "x", "--acceptance", "1. ok"); err != nil {
+		t.Fatalf("story create: %v\n%s", err, out)
+	}
+
+	// --dry-run=false is explicit: runRoot reuses the process-global sync command
+	// instance, so a prior test's --dry-run would otherwise persist (a real one-shot
+	// CLI process never sees this).
+	out, err := runRoot(t, "sync", "--server", ts.URL, "--dry-run=false")
+	if err != nil {
+		t.Fatalf("sync: %v\n%s", err, out)
+	}
+
+	// Documents PULL ran — the server-only file is now on disk (the gap a
+	// dry-run/preview test cannot cover).
+	if _, err := os.Stat(filepath.Join(repo, ".satelle", "documents", "remote-only.md")); err != nil {
+		t.Fatalf("bare sync did not run documents pull — remote-only.md absent locally: %v\noutput:\n%s", err, out)
+	}
+	// Config push reached the server.
+	if _, _, ok := f.cfg.get("ws-personal|probe", "skills/my-skill.md", 0); !ok {
+		t.Errorf("config push did not reach the server\noutput:\n%s", out)
+	}
+	// Documents push reached the server.
+	if _, _, ok := f.docs.get("ws-personal|probe", "documents/local-doc.md"); !ok {
+		t.Errorf("documents push did not reach the server\noutput:\n%s", out)
+	}
+	// Work-state push reached the server.
+	f.mu.Lock()
+	wsPosts := f.workstate
+	f.mu.Unlock()
+	if wsPosts == 0 {
+		t.Errorf("work-state push did not reach the server\noutput:\n%s", out)
 	}
 }
 
