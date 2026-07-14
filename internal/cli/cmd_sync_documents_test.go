@@ -18,10 +18,11 @@ import (
 // fakeDocStore is an in-memory workspace document store with a monotonic
 // sequence counter so ?since=N returns only seq>N items plus cursor=maxSeq.
 type fakeDocStore struct {
-	mu   sync.Mutex
-	data map[string]map[string][][]byte // wsID -> path -> versions
-	seq  map[string]map[string]int      // wsID -> path -> sequence of head
-	next int                            // global sequence counter
+	mu      sync.Mutex
+	data    map[string]map[string][][]byte // wsID -> path -> versions
+	seq     map[string]map[string]int      // wsID -> path -> sequence of head
+	next    int                            // global sequence counter
+	fetched []string                       // paths that hit get() (content fetch), sty_0fd04503
 }
 
 func newFakeDocStore() *fakeDocStore {
@@ -53,6 +54,9 @@ func (s *fakeDocStore) put(wsID, path string, content []byte) (sha string, versi
 func (s *fakeDocStore) get(wsID, path string) (content []byte, sha string, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Record content fetches only — changes() reads s.data directly and must
+	// not pollute this list (sty_0fd04503 AC1 evidence).
+	s.fetched = append(s.fetched, path)
 	versions := s.data[wsID][path]
 	if len(versions) == 0 {
 		return nil, "", false
@@ -89,7 +93,15 @@ func (s *fakeDocStore) changes(wsID, since string) (items []map[string]any, curs
 }
 
 // newFakeDocServer stands up workspaces + document PUT/GET/list surface.
+// Wrapper over newFakeDocServerWithStore so existing call sites stay unchanged.
 func newFakeDocServer(t *testing.T) *httptest.Server {
+	ts, _ := newFakeDocServerWithStore(t)
+	return ts
+}
+
+// newFakeDocServerWithStore is the same surface plus the store so tests can
+// inspect fetch recording (sty_0fd04503 AC1).
+func newFakeDocServerWithStore(t *testing.T) (*httptest.Server, *fakeDocStore) {
 	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	// Isolate document-sync cursor store to this test's XDG dir.
@@ -147,7 +159,7 @@ func newFakeDocServer(t *testing.T) *httptest.Server {
 	})
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
-	return ts
+	return ts, store
 }
 
 // TestSyncDocumentsPushPullByteExact: push documents, pull into a fresh repo —
@@ -503,6 +515,80 @@ func TestSyncDocumentsPullSkipsExcludedAndAdvancesCursor(t *testing.T) {
 	}
 	if !strings.Contains(buf2.String(), "up to date") {
 		t.Fatalf("second pull should be up to date after cursor advance, got: %q", buf2.String())
+	}
+}
+
+// TestSyncDocumentsPullDoesNotFetchExcludedPaths (sty_0fd04503 AC1): a change
+// list mixing backups/ with a legitimate document must complete without ever
+// content-fetching the excluded path; legit is fetched and written; skip is
+// visible; cursor advances.
+func TestSyncDocumentsPullDoesNotFetchExcludedPaths(t *testing.T) {
+	ts, store := newFakeDocServerWithStore(t)
+	seedCred(t, ts.URL)
+
+	client := hosted.NewClient(ts.URL, hosted.FileStore{}, nil)
+	if _, err := client.PushDocumentFile(t.Context(), "ws-personal", "probe", "backups/pre-mutation/skills/x.md", []byte("poison")); err != nil {
+		t.Fatalf("seed poison: %v", err)
+	}
+	legit := "---\ntype: document\n---\nlegit\n"
+	if _, err := client.PushDocumentFile(t.Context(), "ws-personal", "probe", "documents/ok.md", []byte(legit)); err != nil {
+		t.Fatalf("seed legit: %v", err)
+	}
+
+	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
+	pointAt(t, dst)
+	// Reset fetch log after seeding (seed PushDocumentFile is PUT, not get —
+	// but clear anyway so the assertion only covers the pull).
+	store.mu.Lock()
+	store.fetched = nil
+	store.mu.Unlock()
+
+	cmd, buf := testCmd()
+	if err := runSyncDocumentsPull(cmd, ts.URL, ""); err != nil {
+		t.Fatalf("pull: %v\n%s", err, buf.String())
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Pulled 1") {
+		t.Fatalf("want Pulled 1, got: %q", out)
+	}
+	if !strings.Contains(out, "skipped") || !strings.Contains(out, "local-only") {
+		t.Fatalf("skip must be visible: %q", out)
+	}
+
+	store.mu.Lock()
+	fetched := append([]string(nil), store.fetched...)
+	store.mu.Unlock()
+	var sawLegit bool
+	for _, p := range fetched {
+		if strings.HasPrefix(p, "backups/") {
+			t.Errorf("excluded path was content-fetched: %q (all fetches: %v)", p, fetched)
+		}
+		if p == "documents/ok.md" {
+			sawLegit = true
+		}
+	}
+	if !sawLegit {
+		t.Fatalf("legitimate path was not fetched; fetches: %v", fetched)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dst, ".satelle", "documents", "ok.md"))
+	if err != nil {
+		t.Fatalf("legit not written: %v", err)
+	}
+	if string(got) != legit {
+		t.Errorf("documents/ok.md = %q, want %q", got, legit)
+	}
+	if _, err := os.Stat(filepath.Join(dst, ".satelle", "backups", "pre-mutation", "skills", "x.md")); err == nil {
+		t.Error("excluded backups/ path was written locally")
+	}
+
+	// Cursor advanced: second pull is up to date.
+	cmd2, buf2 := testCmd()
+	if err := runSyncDocumentsPull(cmd2, ts.URL, ""); err != nil {
+		t.Fatalf("second pull: %v\n%s", err, buf2.String())
+	}
+	if !strings.Contains(buf2.String(), "up to date") {
+		t.Fatalf("second pull should be up to date, got: %q", buf2.String())
 	}
 }
 

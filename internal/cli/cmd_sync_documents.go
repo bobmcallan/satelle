@@ -186,9 +186,9 @@ func runSyncDocumentsPull(cmd *cobra.Command, serverArg, workspaceArg string) er
 // pullDocumentsFromWorkspace runs one workspace+project incremental pull: load
 // cursor, list changes, fetch content, Restore, THEN save cursor (only after a
 // successful restore so a crash re-fetches rather than silently drops files).
-// Excluded (local-only) paths are skipped by Restore rather than failing the
-// whole batch so a partition already poisoned with backups/ can unwedge
-// (sty_84f14ace).
+// Excluded (local-only) paths are filtered before fetch (sty_0fd04503) and still
+// skipped by Restore as defence in depth, so a partition already poisoned with
+// backups/ can unwedge without hard-erroring (sty_84f14ace).
 func pullDocumentsFromWorkspace(cmd *cobra.Command, client *hosted.Client, server, absRoot, dataDir, wsID, project, label string) (written, skipped int, err error) {
 	cursor, err := hosted.LoadDocumentCursor(server, wsID, project, absRoot)
 	if err != nil {
@@ -211,7 +211,15 @@ func pullDocumentsFromWorkspace(cmd *cobra.Command, client *hosted.Client, serve
 		return 0, 0, nil
 	}
 	var files []subsync.File
+	preSkipped := 0
 	for _, item := range changes.Items {
+		// Skip before fetch so a poisoned partition does not pay bandwidth for
+		// bodies Restore would refuse (sty_0fd04503 AC1). Restore remains the
+		// enforcement point for any path that still reaches it.
+		if subsync.ExcludedLocal(item.Path) {
+			preSkipped++
+			continue
+		}
 		content, _, ferr := client.DocumentFileContent(cmd.Context(), wsID, project, item.Path)
 		if ferr != nil {
 			if errors.Is(ferr, hosted.ErrLoginRequired) {
@@ -224,12 +232,17 @@ func pullDocumentsFromWorkspace(cmd *cobra.Command, client *hosted.Client, serve
 		}
 		files = append(files, subsync.File{Path: item.Path, Content: content})
 	}
+	// Totalling sits outside if len(files)>0: an all-excluded batch has files==nil
+	// and preSkipped>0; leaving skipped only inside the if would print "up to date"
+	// and regress sty_84f14ace AC4.
+	skipped = preSkipped
 	if len(files) > 0 {
 		res, rerr := subsync.Restore(dataDir, files)
 		if rerr != nil {
 			return 0, 0, fmt.Errorf("restore documents (%s): %w", label, rerr)
 		}
-		written, skipped = res.Written, len(res.Skipped)
+		written = res.Written
+		skipped += len(res.Skipped)
 	}
 	// Cursor advances after a successful restore — including skip-only batches —
 	// so already-poisoned partitions unwedge on the next pull (sty_84f14ace AC2).

@@ -323,12 +323,11 @@ func TestSyncPoisonedPartitionDoesNotWedgeWorkstate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync must exit 0 on poisoned partition: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "skipped") && !strings.Contains(out, "local-only") {
-		// Pull may fold the skip into the Pulled line; either form is fine so
-		// long as sync completed. Prefer visibility when present.
-		if strings.Contains(out, "refusing to write a local-only path") {
-			t.Fatalf("sync still hard-errors on excluded path:\n%s", out)
-		}
+	// AC3 (sty_0fd04503): hard-assert skip visibility — a silent-swallow
+	// regression must fail. Mixed poison+legit lands in the "…, N skipped
+	// (local-only path)" arm so both substrings are present.
+	if !strings.Contains(out, "skipped") || !strings.Contains(out, "local-only") {
+		t.Fatalf("poisoned pull must report the skip in output:\n%s", out)
 	}
 	if _, err := os.Stat(filepath.Join(repo, ".satelle", "documents", "remote-only.md")); err != nil {
 		t.Fatalf("legitimate document not pulled: %v\noutput:\n%s", err, out)
