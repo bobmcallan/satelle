@@ -11,9 +11,9 @@ import (
 
 // TestProjectWorkflowReviewerFirst asserts this repo's project workflow is
 // reviewer-first: a reviewer gates every transition on the spine. Plan
-// dispatches to an isolated read-only planner; in_progress dispatches to an
-// isolated write-capable coder (sty_565a0202); integration and release run
-// IN-LOOP on the driving session (agent=executor). backlog -> plan is gated by
+// dispatches to an isolated read-only planner; in_progress, integration, and
+// release run IN-LOOP on the driving session (agent=executor) — sty_db003275
+// reverted the brief agent=coder experiment. backlog -> plan is gated by
 // satelle-story-intent-review (sty_3437b803). The former commit/push/committed
 // states are merged into one `release` state, and there are recovery edges back
 // to in_progress (no dead-end). `integration` is an explicit, visible testing
@@ -33,8 +33,12 @@ func TestProjectWorkflowReviewerFirst(t *testing.T) {
 		states[s.Name] = s
 	}
 
-	// integration and release are IN-LOOP (agent=executor), not dispatched workers.
-	for name, wantSkill := range map[string]string{"integration": "integrate", "release": "release"} {
+	// in_progress, integration, and release are IN-LOOP (agent=executor).
+	for name, wantSkill := range map[string]string{
+		"in_progress": "code",
+		"integration": "integrate",
+		"release":     "release",
+	} {
 		s, present := states[name]
 		if !present {
 			t.Errorf("missing execution state %q", name)
@@ -45,16 +49,11 @@ func TestProjectWorkflowReviewerFirst(t *testing.T) {
 		}
 	}
 
-	// plan dispatches to the isolated planner; in_progress dispatches to the coder.
+	// plan alone dispatches to the isolated planner.
 	if p, present := states["plan"]; !present {
 		t.Error("missing plan state")
 	} else if p.Agent != "planner" || p.Skill != "plan" {
 		t.Errorf("plan step must dispatch agent=planner @skill:plan, got agent=%q skill=%q", p.Agent, p.Skill)
-	}
-	if w, present := states["in_progress"]; !present {
-		t.Error("missing in_progress state")
-	} else if w.Agent != "coder" || w.Skill != "code" {
-		t.Errorf("in_progress must dispatch agent=coder @skill:code, got agent=%q skill=%q", w.Agent, w.Skill)
 	}
 
 	// The dispatched executor experiment states are gone (merged into release).
