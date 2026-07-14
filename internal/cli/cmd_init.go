@@ -180,13 +180,17 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool) error {
 		fmt.Fprintln(out, initLine(dirCreated || readmeCreated, config.DefaultDataDir+"/"+kind+"/"))
 	}
 
+	// Backup policy for pre-mutation copies during converge/diverge (sty_873a5380).
+	cfg, _, _ := config.Load(filepath.Join(repoRoot, config.DefaultDataDir, config.ConfigName))
+	bopts := ResolveBackupOpts(cfg)
+
 	// 3b. Seed the COMPLETE default solution into a FRESH repo: materialise the
 	//     embedded generic project/parent/task-execution workflows and every gate
 	//     skill they (or the baseline fallback) reference into .satelle, so a fresh
 	//     repo works end-to-end and validates green immediately after init. Only
 	//     when the workflows dir has no authored workflow yet — never clobbering or
 	//     competing with an existing set (sty_a7cbd6dd).
-	for _, line := range materializeDefaultSolution(dataDir) {
+	for _, line := range materializeDefaultSolution(dataDir, bopts) {
 		fmt.Fprintln(out, line)
 	}
 
@@ -195,7 +199,7 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool) error {
 	//     so the principles:session session set + the on-demand principles must
 	//     live on disk to be LISTED (SessionStart injection) and discoverable. The
 	//     baseline WORKFLOW stays embedded-only (Get fallback); only principles seed here.
-	for _, line := range materializePrinciples(dataDir) {
+	for _, line := range materializePrinciples(dataDir, bopts) {
 		fmt.Fprintln(out, line)
 	}
 
@@ -203,7 +207,7 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool) error {
 	//     workflow (so the default-solution seeding never carries them), seeded
 	//     unconditionally when absent, even beside an authored workflow set
 	//     (sty_f4c1bd90): they guide the in-loop agent, they don't gate anything.
-	for _, line := range materializeAdvisorySkills(dataDir) {
+	for _, line := range materializeAdvisorySkills(dataDir, bopts) {
 		fmt.Fprintln(out, line)
 	}
 
@@ -218,7 +222,7 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool) error {
 	for _, line := range seedTasks(dataDir) {
 		fmt.Fprintln(out, line)
 	}
-	for _, line := range materializeTasks(dataDir) {
+	for _, line := range materializeTasks(dataDir, bopts) {
 		fmt.Fprintln(out, line)
 	}
 
@@ -1008,6 +1012,13 @@ edit_exempt_paths = [".satelle/"]
 # MODEL_BASE_URL = "https://example.invalid"  # non-secret; secrets → satelle.local.toml
 # <<< satelle-example
 #
+# [backup] — pre-mutation substrate backup policy (sty_873a5380).
+# Local copies under .satelle/backups/ always run before init/restore/rebase
+# overwrite an existing file. local_only suppresses the advisory about enabling
+# online/personal backup when no hosted channel is configured.
+# [backup]
+# local_only = true
+
 # [hosted] — secret-free hosted-server binding (committed). Tokens live in the
 # user credential store, never here. 'satelle login' sets the server URL;
 # 'satelle project bind <slug>' writes project. workspace is a per-developer
@@ -1271,19 +1282,30 @@ func ensureReadme(dir, kind string) (bool, error) {
 // injection + doc-list discovery (the runtime index no longer overlays embedded
 // docs, sty_94da9ac9). Embedded principles remain the canonical seed; an existing
 // on-disk file is never clobbered.
-func materializePrinciples(dataDir string) []string {
+func materializePrinciples(dataDir string, backupOpts ...BackupOpts) []string {
+	var bopts BackupOpts
+	if len(backupOpts) > 0 {
+		bopts = backupOpts[0]
+	}
+	var backupAdvisoryOnce bool
 	var lines []string
 	for _, d := range config.EmbeddedDefaults() {
 		if d.Kind != "principles" {
 			continue
 		}
 		rel := "principles/" + d.Name + ".md"
-		verb, _, err := reconcileEmbeddedFile(dataDir, rel, d.Body)
+		verb, bres, err := reconcileEmbeddedFile(dataDir, rel, d.Body, bopts)
 		if err != nil {
 			continue
 		}
 		if verb != reconcileUnchanged {
 			lines = append(lines, reconcileReportLine(verb, rel))
+		}
+		if bres.Notice != "" && (!backupAdvisoryOnce || !strings.Contains(bres.Notice, "online/personal")) {
+			lines = append(lines, "  i "+bres.Notice)
+			if strings.Contains(bres.Notice, "online/personal") {
+				backupAdvisoryOnce = true
+			}
 		}
 	}
 	return lines
@@ -1295,7 +1317,12 @@ func materializePrinciples(dataDir string) []string {
 // fresh repo gets the re-runnable substrate-audit and reviewer-objective-audit tasks
 // resolving via the task workflow immediately. An existing on-disk file (authored
 // or a prior seed) is never clobbered; rebase re-runs this to heal a removed default.
-func materializeTasks(dataDir string) []string {
+func materializeTasks(dataDir string, backupOpts ...BackupOpts) []string {
+	var bopts BackupOpts
+	if len(backupOpts) > 0 {
+		bopts = backupOpts[0]
+	}
+	var backupAdvisoryOnce bool
 	var lines []string
 	dir := filepath.Join(dataDir, "tasks")
 	if _, err := ensureDir(dir); err != nil {
@@ -1306,12 +1333,18 @@ func materializeTasks(dataDir string) []string {
 			continue
 		}
 		rel := "tasks/" + d.Name + ".md"
-		verb, _, err := reconcileEmbeddedFile(dataDir, rel, d.Body)
+		verb, bres, err := reconcileEmbeddedFile(dataDir, rel, d.Body, bopts)
 		if err != nil {
 			continue
 		}
 		if verb != reconcileUnchanged {
 			lines = append(lines, reconcileReportLine(verb, rel))
+		}
+		if bres.Notice != "" && (!backupAdvisoryOnce || !strings.Contains(bres.Notice, "online/personal")) {
+			lines = append(lines, "  i "+bres.Notice)
+			if strings.Contains(bres.Notice, "online/personal") {
+				backupAdvisoryOnce = true
+			}
 		}
 	}
 	return lines
@@ -1332,7 +1365,12 @@ var advisorySkills = []string{
 
 // materializeAdvisorySkills writes each embedded advisory skill into
 // .satelle/skills when absent — never clobbering an authored copy. Report lines.
-func materializeAdvisorySkills(dataDir string) []string {
+func materializeAdvisorySkills(dataDir string, backupOpts ...BackupOpts) []string {
+	var bopts BackupOpts
+	if len(backupOpts) > 0 {
+		bopts = backupOpts[0]
+	}
+	var backupAdvisoryOnce bool
 	var lines []string
 	for _, name := range advisorySkills {
 		body, ok := embeddedDefault("skills", name)
@@ -1340,12 +1378,18 @@ func materializeAdvisorySkills(dataDir string) []string {
 			continue
 		}
 		rel := "skills/" + name + ".md"
-		verb, _, err := reconcileEmbeddedFile(dataDir, rel, body)
+		verb, bres, err := reconcileEmbeddedFile(dataDir, rel, body, bopts)
 		if err != nil {
 			continue
 		}
 		if verb != reconcileUnchanged {
 			lines = append(lines, reconcileReportLine(verb, rel))
+		}
+		if bres.Notice != "" && (!backupAdvisoryOnce || !strings.Contains(bres.Notice, "online/personal")) {
+			lines = append(lines, "  i "+bres.Notice)
+			if strings.Contains(bres.Notice, "online/personal") {
+				backupAdvisoryOnce = true
+			}
 		}
 	}
 	return lines
@@ -1387,7 +1431,12 @@ var defaultSolutionWorkflows = []string{
 // reindex consistency check rejects) — its gate skills are still collected and
 // seeded. rebase remains the reset path (backup+wipe+redeploy); init is the heal
 // path. Returns report lines.
-func materializeDefaultSolution(dataDir string) []string {
+func materializeDefaultSolution(dataDir string, backupOpts ...BackupOpts) []string {
+	var bopts BackupOpts
+	if len(backupOpts) > 0 {
+		bopts = backupOpts[0]
+	}
+	var backupAdvisoryOnce bool
 	wfDir := filepath.Join(dataDir, "workflows")
 	var lines []string
 	skills := map[string]bool{}
@@ -1423,11 +1472,17 @@ func materializeDefaultSolution(dataDir string) []string {
 				continue
 			}
 		}
-		verb, _, err := reconcileEmbeddedFile(dataDir, rel, body)
+		verb, bres, err := reconcileEmbeddedFile(dataDir, rel, body, bopts)
 		if err != nil {
 			continue
 		}
 		lines = append(lines, reconcileReportLine(verb, rel))
+		if bres.Notice != "" && (!backupAdvisoryOnce || !strings.Contains(bres.Notice, "online/personal")) {
+			lines = append(lines, "  i "+bres.Notice)
+			if strings.Contains(bres.Notice, "online/personal") {
+				backupAdvisoryOnce = true
+			}
+		}
 	}
 	names := make([]string, 0, len(skills))
 	for s := range skills {
@@ -1440,12 +1495,18 @@ func materializeDefaultSolution(dataDir string) []string {
 			continue // a referenced skill without an embedded rubric stays advisory by design
 		}
 		rel := "skills/" + name + ".md"
-		verb, _, err := reconcileEmbeddedFile(dataDir, rel, sBody)
+		verb, bres, err := reconcileEmbeddedFile(dataDir, rel, sBody, bopts)
 		if err != nil {
 			continue
 		}
 		if verb != reconcileUnchanged {
 			lines = append(lines, reconcileReportLine(verb, rel))
+		}
+		if bres.Notice != "" && (!backupAdvisoryOnce || !strings.Contains(bres.Notice, "online/personal")) {
+			lines = append(lines, "  i "+bres.Notice)
+			if strings.Contains(bres.Notice, "online/personal") {
+				backupAdvisoryOnce = true
+			}
 		}
 	}
 	return lines

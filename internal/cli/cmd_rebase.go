@@ -123,25 +123,25 @@ func runRebase(out io.Writer, in io.Reader, dataDir string, yes bool, now time.T
 		}
 	}
 	deployed := 0
-	for _, line := range materializeDefaultSolution(dataDir) {
+	for _, line := range materializeDefaultSolution(dataDir, opts) {
 		fmt.Fprintln(out, line)
 		deployed++
 	}
-	for _, line := range materializePrinciples(dataDir) {
+	for _, line := range materializePrinciples(dataDir, opts) {
 		fmt.Fprintln(out, line)
 		deployed++
 	}
 	// Advisory skills are referenced by no workflow, so the default-solution
 	// deploy above never carries them — redeploy them explicitly, exactly as
 	// init seeds them (sty_f4c1bd90).
-	for _, line := range materializeAdvisorySkills(dataDir) {
+	for _, line := range materializeAdvisorySkills(dataDir, opts) {
 		fmt.Fprintln(out, line)
 		deployed++
 	}
 	// The embedded default TASK (substrate-audit) re-seeds here too, exactly as init
 	// seeds it — additive, never clobbering an authored same-id task. "tasks" is NOT
 	// a rebaseKind: authored tasks are repo content and are never wiped (sty_d4360e90).
-	for _, line := range materializeTasks(dataDir) {
+	for _, line := range materializeTasks(dataDir, opts) {
 		fmt.Fprintln(out, line)
 		deployed++
 	}

@@ -52,11 +52,13 @@ type BackupOpts struct {
 }
 
 // ResolveBackupOpts reads the backup policy from cfg (and defaults). Safe with
-// a zero config.
+// a zero config. Hosted server uses the global→repo precedence
+// (config.ResolveHostedServer) so satelle login enables online backup without
+// a committed [hosted] server (sty_873a5380).
 func ResolveBackupOpts(cfg config.Config) BackupOpts {
 	return BackupOpts{
 		LocalOnly:     cfg.Backup.LocalOnly,
-		HostedServer:  strings.TrimSpace(cfg.Hosted.Server),
+		HostedServer:  config.ResolveHostedServer(cfg),
 		HostedProject: strings.TrimSpace(cfg.Hosted.Project),
 	}
 }

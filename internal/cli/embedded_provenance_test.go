@@ -34,11 +34,11 @@ func TestEmbeddedStampRoundTrip(t *testing.T) {
 func reconcileAt(t *testing.T, relPath, embeddedBody string) (reconcileVerb, string, string) {
 	t.Helper()
 	dataDir := t.TempDir()
-	verb, backup, err := reconcileEmbeddedFile(dataDir, relPath, embeddedBody)
+	verb, bres, err := reconcileEmbeddedFile(dataDir, relPath, embeddedBody)
 	if err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	return verb, backup, dataDir
+	return verb, bres.LocalPath, dataDir
 }
 
 // TestReconcileFreshCreate (AC1): an absent file is created carrying a stamp equal
@@ -79,7 +79,7 @@ func TestReconcileUneditedUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	pre := applyEmbeddedStamp(oldBody, embeddedSHA(oldBody))
-	verb, backup, err := reconcileEmbeddedFile(dataDir, "principles/sample.md", newBody)
+	verb, bres, err := reconcileEmbeddedFile(dataDir, "principles/sample.md", newBody)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,11 +87,11 @@ func TestReconcileUneditedUpgrade(t *testing.T) {
 		t.Fatalf("verb=%q, want updated", verb)
 	}
 	// sty_873a5380: converge-overwrite backs up the pre-image first.
-	if backup == "" || !strings.Contains(filepath.ToSlash(backup), "backups/pre-mutation/principles/sample.md") {
-		t.Fatalf("backup=%q, want under backups/pre-mutation/", backup)
+	if bres.LocalPath == "" || !strings.Contains(filepath.ToSlash(bres.LocalPath), "backups/pre-mutation/principles/sample.md") {
+		t.Fatalf("bres.LocalPath=%q, want under backups/pre-mutation/", bres.LocalPath)
 	}
-	if b, err := os.ReadFile(backup); err != nil || string(b) != pre {
-		t.Errorf("pre-mutation backup missing or wrong content: err=%v", err)
+	if b, err := os.ReadFile(bres.LocalPath); err != nil || string(b) != pre {
+		t.Errorf("pre-mutation bres.LocalPath missing or wrong content: err=%v", err)
 	}
 	got, _ := os.ReadFile(dest)
 	if string(got) != applyEmbeddedStamp(newBody, embeddedSHA(newBody)) {
@@ -100,7 +100,7 @@ func TestReconcileUneditedUpgrade(t *testing.T) {
 }
 
 // TestReconcileNoOp (AC3): a copy byte-identical to the current stamped embedded
-// is a no-op — verb unchanged, bytes untouched, no backup.
+// is a no-op — verb unchanged, bytes untouched, no bres.LocalPath.
 func TestReconcileNoOp(t *testing.T) {
 	dataDir := t.TempDir()
 	dest := filepath.Join(dataDir, "principles", "sample.md")
@@ -112,13 +112,13 @@ func TestReconcileNoOp(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := os.ReadFile(dest)
-	verb, backup, err := reconcileEmbeddedFile(dataDir, "principles/sample.md", sampleFM)
+	verb, bres, err := reconcileEmbeddedFile(dataDir, "principles/sample.md", sampleFM)
 	if err != nil {
 		t.Fatal(err)
 	}
 	after, _ := os.ReadFile(dest)
-	if verb != reconcileUnchanged || backup != "" || string(before) != string(after) {
-		t.Fatalf("verb=%q backup=%q changed=%v, want unchanged no-op", verb, backup, string(before) != string(after))
+	if verb != reconcileUnchanged || bres.LocalPath != "" || string(before) != string(after) {
+		t.Fatalf("verb=%q bres.LocalPath=%q changed=%v, want unchanged no-op", verb, bres.LocalPath, string(before) != string(after))
 	}
 }
 
@@ -135,7 +135,7 @@ func TestReconcileEditedDiverge(t *testing.T) {
 	if err := os.WriteFile(dest, []byte(edited), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	verb, backup, err := reconcileEmbeddedFile(dataDir, "principles/sample.md", sampleFM)
+	verb, bres, err := reconcileEmbeddedFile(dataDir, "principles/sample.md", sampleFM)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,11 +145,11 @@ func TestReconcileEditedDiverge(t *testing.T) {
 	if got, _ := os.ReadFile(dest); string(got) != edited {
 		t.Error("diverged: original was modified (must be left intact)")
 	}
-	if b, err := os.ReadFile(backup); err != nil || string(b) != edited {
-		t.Errorf("backup missing or wrong content at %s: err=%v", backup, err)
+	if b, err := os.ReadFile(bres.LocalPath); err != nil || string(b) != edited {
+		t.Errorf("bres.LocalPath missing or wrong content at %s: err=%v", bres.LocalPath, err)
 	}
-	if !strings.Contains(filepath.ToSlash(backup), "backups/diverged/principles/sample.md") {
-		t.Errorf("backup path = %s, want under backups/diverged/principles/", backup)
+	if !strings.Contains(filepath.ToSlash(bres.LocalPath), "backups/diverged/principles/sample.md") {
+		t.Errorf("bres.LocalPath path = %s, want under backups/diverged/principles/", bres.LocalPath)
 	}
 }
 
@@ -165,12 +165,12 @@ func TestReconcileUnstampedUntouched(t *testing.T) {
 	if err := os.WriteFile(dest, []byte(authored), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	verb, backup, err := reconcileEmbeddedFile(dataDir, "principles/sample.md", sampleFM)
+	verb, bres, err := reconcileEmbeddedFile(dataDir, "principles/sample.md", sampleFM)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if verb != reconcileUnchanged || backup != "" {
-		t.Fatalf("verb=%q backup=%q, want unchanged/no-backup", verb, backup)
+	if verb != reconcileUnchanged || bres.LocalPath != "" {
+		t.Fatalf("verb=%q bres.LocalPath=%q, want unchanged/no-bres.LocalPath", verb, bres.LocalPath)
 	}
 	if got, _ := os.ReadFile(dest); string(got) != authored {
 		t.Error("unstamped operator file was modified")
@@ -263,15 +263,15 @@ func TestReconcileRecogniseBlockageUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	verb, backup, err := reconcileEmbeddedFile(dataDir, rel, newBody)
+	verb, bres, err := reconcileEmbeddedFile(dataDir, rel, newBody)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if verb != reconcileUpdated {
 		t.Fatalf("verb=%q, want updated", verb)
 	}
-	if backup == "" || !strings.Contains(filepath.ToSlash(backup), "backups/pre-mutation/") {
-		t.Fatalf("backup=%q, want pre-mutation path", backup)
+	if bres.LocalPath == "" || !strings.Contains(filepath.ToSlash(bres.LocalPath), "backups/pre-mutation/") {
+		t.Fatalf("bres.LocalPath=%q, want pre-mutation path", bres.LocalPath)
 	}
 	got, err := os.ReadFile(dest)
 	if err != nil {
