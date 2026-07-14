@@ -191,6 +191,7 @@ func panelTopic(kind workitem.Kind) string {
 type listReq struct {
 	Status   string `json:"status,omitempty"`
 	ParentID string `json:"parent_id,omitempty"`
+	Tag      string `json:"tag,omitempty"` // exact tag; multi-value ANY-match (sty_f7115cd2)
 	Limit    int    `json:"limit,omitempty"`
 }
 
@@ -208,6 +209,7 @@ func workItemList(kind workitem.Kind) func(context.Context, json.RawMessage) (js
 			Kind:     kind,
 			Status:   req.Status,
 			ParentID: req.ParentID,
+			Tag:      req.Tag,
 			Limit:    req.Limit,
 		})
 		if err != nil {
