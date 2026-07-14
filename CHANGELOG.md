@@ -7,6 +7,10 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
+## [0.0.227] - 2026-07-14
+### Fixed
+- `satelle-substrate-only-check` accepts the binary's managed footprint outside `.satelle/` — the root `.gitignore` and the init-deployed harness hook scaffolds under `.claude/` and `.grok/` — so an init-footprint story closes on the substrate lane instead of being forced onto the full project/code workflow; `[gate] edit_exempt_paths` stays the repo-side extension knob and product code (`.go`, `cmd/`, Makefile, CI) is still rejected naming offenders (sty_40973fb6)
+
 ## [0.0.226] - 2026-07-14
 ### Added
 - Project workflow dispatches `in_progress` to an isolated Grok `[coder]` binding with plan-consumption evidence (sty_565a0202)
