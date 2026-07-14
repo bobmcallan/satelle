@@ -452,6 +452,101 @@ func TestSyncPersonalIsolatedAcrossProjects(t *testing.T) {
 	}
 }
 
+// TestSyncDocumentsPullSkipsExcludedAndAdvancesCursor (sty_84f14ace AC1/2/4):
+// a change list mixing backups/ (excluded) with a legitimate document must
+// complete successfully, write the legitimate file byte-exact, report the skip,
+// and advance the cursor so a second pull is up-to-date (not re-fail).
+func TestSyncDocumentsPullSkipsExcludedAndAdvancesCursor(t *testing.T) {
+	ts := newFakeDocServer(t)
+	seedCred(t, ts.URL)
+
+	// Seed poison + legitimate content directly on the server (simulates a
+	// partition already poisoned by a prior init hosted-backup push).
+	client := hosted.NewClient(ts.URL, hosted.FileStore{}, nil)
+	if _, err := client.PushDocumentFile(t.Context(), "ws-personal", "probe", "backups/pre-mutation/skills/x.md", []byte("poison")); err != nil {
+		t.Fatalf("seed poison: %v", err)
+	}
+	legit := "---\ntype: document\n---\nlegit\n"
+	if _, err := client.PushDocumentFile(t.Context(), "ws-personal", "probe", "documents/ok.md", []byte(legit)); err != nil {
+		t.Fatalf("seed legit: %v", err)
+	}
+
+	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
+	pointAt(t, dst)
+	cmd, buf := testCmd()
+	if err := runSyncDocumentsPull(cmd, ts.URL, ""); err != nil {
+		t.Fatalf("first pull (mixed batch): %v\n%s", err, buf.String())
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Pulled 1") {
+		t.Fatalf("want Pulled 1 legitimate file, got: %q", out)
+	}
+	if !strings.Contains(out, "skipped") || !strings.Contains(out, "local-only") {
+		t.Fatalf("AC4: skip must be visible in pull output, got: %q", out)
+	}
+	got, err := os.ReadFile(filepath.Join(dst, ".satelle", "documents", "ok.md"))
+	if err != nil {
+		t.Fatalf("legitimate path not written: %v", err)
+	}
+	if string(got) != legit {
+		t.Errorf("documents/ok.md = %q, want %q", got, legit)
+	}
+	// Excluded path must never land under dataDir.
+	if _, err := os.Stat(filepath.Join(dst, ".satelle", "backups", "pre-mutation", "skills", "x.md")); err == nil {
+		t.Error("backups/ path was written locally — security property broken")
+	}
+
+	// AC2: second pull advances past the batch — up to date, no re-fail.
+	cmd2, buf2 := testCmd()
+	if err := runSyncDocumentsPull(cmd2, ts.URL, ""); err != nil {
+		t.Fatalf("second pull: %v\n%s", err, buf2.String())
+	}
+	if !strings.Contains(buf2.String(), "up to date") {
+		t.Fatalf("second pull should be up to date after cursor advance, got: %q", buf2.String())
+	}
+}
+
+// TestSyncDocumentsPullAllSkippedReportsSkip (sty_84f14ace AC4): an all-excluded
+// batch must not print "Documents up to date".
+func TestSyncDocumentsPullAllSkippedReportsSkip(t *testing.T) {
+	ts := newFakeDocServer(t)
+	seedCred(t, ts.URL)
+
+	client := hosted.NewClient(ts.URL, hosted.FileStore{}, nil)
+	if _, err := client.PushDocumentFile(t.Context(), "ws-personal", "probe", "backups/pre-mutation/y.md", []byte("poison")); err != nil {
+		t.Fatalf("seed poison: %v", err)
+	}
+	if _, err := client.PushDocumentFile(t.Context(), "ws-personal", "probe", "satelle.db", []byte("hostile")); err != nil {
+		t.Fatalf("seed db poison: %v", err)
+	}
+
+	dst := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
+	// Pre-seed a live db that must not be clobbered (AC3).
+	dbPath := filepath.Join(dst, ".satelle", "satelle.db")
+	if err := os.WriteFile(dbPath, []byte("LIVE"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pointAt(t, dst)
+	cmd, buf := testCmd()
+	if err := runSyncDocumentsPull(cmd, ts.URL, ""); err != nil {
+		t.Fatalf("pull all-skipped: %v\n%s", err, buf.String())
+	}
+	out := buf.String()
+	if strings.Contains(out, "up to date") {
+		t.Fatalf("all-skipped batch must not look like up-to-date: %q", out)
+	}
+	if !strings.Contains(out, "skipped") {
+		t.Fatalf("all-skipped batch must report skips: %q", out)
+	}
+	db, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(db) != "LIVE" {
+		t.Errorf("satelle.db was clobbered: %q", db)
+	}
+}
+
 // TestSyncDocumentsPullReadsOnlyBoundProject (AC3): seed only under proj-a; a
 // repo bound to proj-b pulls nothing.
 func TestSyncDocumentsPullReadsOnlyBoundProject(t *testing.T) {

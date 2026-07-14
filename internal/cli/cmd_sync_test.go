@@ -298,6 +298,52 @@ func TestSyncDefaultRunsFullBundleLive(t *testing.T) {
 	}
 }
 
+// TestSyncPoisonedPartitionDoesNotWedgeWorkstate (sty_84f14ace AC7): a documents
+// partition that already contains backups/ entries must not abort bare sync —
+// the pull skips them, the cursor advances, and the workstate leg still runs.
+func TestSyncPoisonedPartitionDoesNotWedgeWorkstate(t *testing.T) {
+	ts, f := newFakeSyncServer(t)
+	seedCred(t, ts.URL)
+
+	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\ndocuments = \"personal\"\nstories = \"personal\"\n"+boundProjectToml)
+	writeRepoFile(t, repo, ".satelle/skills/my-skill.md", "---\ntype: skill\n---\nbody\n")
+	writeRepoFile(t, repo, ".satelle/documents/local-doc.md", "# local\n")
+	pointAt(t, repo)
+
+	// Poison the documents partition the way a pre-fix init hosted backup would.
+	f.docs.put("ws-personal|probe", "backups/pre-mutation/skills/old.md", []byte("poison"))
+	// Plus a remote-only legitimate document so the pull has real work.
+	f.docs.put("ws-personal|probe", "documents/remote-only.md", []byte("# remote\n"))
+
+	if out, err := runRoot(t, "story", "create", "--title", "Poison probe", "--body", "x", "--acceptance", "1. ok"); err != nil {
+		t.Fatalf("story create: %v\n%s", err, out)
+	}
+
+	out, err := runRoot(t, "sync", "--server", ts.URL, "--dry-run=false")
+	if err != nil {
+		t.Fatalf("sync must exit 0 on poisoned partition: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "skipped") && !strings.Contains(out, "local-only") {
+		// Pull may fold the skip into the Pulled line; either form is fine so
+		// long as sync completed. Prefer visibility when present.
+		if strings.Contains(out, "refusing to write a local-only path") {
+			t.Fatalf("sync still hard-errors on excluded path:\n%s", out)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".satelle", "documents", "remote-only.md")); err != nil {
+		t.Fatalf("legitimate document not pulled: %v\noutput:\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".satelle", "backups", "pre-mutation", "skills", "old.md")); err == nil {
+		t.Error("poison backups/ path must not be written locally")
+	}
+	f.mu.Lock()
+	wsPosts := f.workstate
+	f.mu.Unlock()
+	if wsPosts == 0 {
+		t.Errorf("work-state leg did not run (still wedged by documents pull)\noutput:\n%s", out)
+	}
+}
+
 // TestSyncScopesInvalidScopeRefuses: an area explicitly set to a value outside
 // local|personal|shared refuses the command rather than silently coercing to
 // local (plan addendum #2).

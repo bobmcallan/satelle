@@ -273,8 +273,11 @@ func runPublishAdopt(cmd *cobra.Command, serverArg, workspaceArg string, version
 		}
 		return fmt.Errorf("fetch published %s: %w", path, err)
 	}
-	if _, err := subsync.Restore(dataDir, []subsync.File{{Path: path, Content: content}}); err != nil {
+	if res, err := subsync.Restore(dataDir, []subsync.File{{Path: path, Content: content}}); err != nil {
 		return fmt.Errorf("write local copy: %w", err)
+	} else if res.Written == 0 && len(res.Skipped) > 0 {
+		// Single-file adopt: an excluded path is a caller error, not a batch to skip past (sty_84f14ace).
+		return fmt.Errorf("write local copy: %q is a local-only path — refusing to adopt", path)
 	}
 	if err := saveAdoption(dataDir, adoptionRecord{
 		Workspace: teamName, Path: path, Version: meta.Version, Kind: meta.Kind, PublisherID: meta.PublisherID,
@@ -330,8 +333,11 @@ func runPublishCheck(cmd *cobra.Command, serverArg, workspaceArg string, doUpdat
 		if !doUpdate {
 			continue
 		}
-		if _, err := subsync.Restore(dataDir, []subsync.File{{Path: rec.Path, Content: content}}); err != nil {
+		if res, err := subsync.Restore(dataDir, []subsync.File{{Path: rec.Path, Content: content}}); err != nil {
 			return fmt.Errorf("update %s: %w", rec.Path, err)
+		} else if res.Written == 0 && len(res.Skipped) > 0 {
+			// Single-file update: excluded path is a caller error (sty_84f14ace).
+			return fmt.Errorf("update %s: local-only path — refusing to write", rec.Path)
 		}
 		rec.Version = meta.Version
 		rec.PublisherID = meta.PublisherID

@@ -24,6 +24,15 @@ type File struct {
 	Content []byte
 }
 
+// Result is Restore's outcome: how many files were written and which excluded
+// (local-only) paths were skipped rather than applied (sty_84f14ace).
+type Result struct {
+	Written int
+	// Skipped holds the server-relative paths that excludedLocal refused.
+	// Empty when nothing was skipped. Paths are never written to disk.
+	Skipped []string
+}
+
 // excludedLocal reports paths (relative to the data dir) that are NEVER written
 // on a deploy even if a manifest somehow carries them — the local-only /
 // generated state a restore must not clobber. This is the structural guard that
@@ -50,29 +59,35 @@ func excludedLocal(rel string) bool {
 // Restore writes files under <dataDir>, each byte-for-byte (0o644, parent dirs
 // created), overwriting any existing file at the same path. dataDir is the
 // repo's resolved .satelle data dir (the workspace-config root the server paths
-// are relative to). It refuses any path that is unsafe (escapes dataDir) or
-// excluded (so a hostile or corrupt manifest can never drop a satelle.db over a
-// live one), and returns the number of files written.
-func Restore(dataDir string, files []File) (int, error) {
-	written := 0
+// are relative to).
+//
+// Unsafe paths (escape dataDir via cleanRel) still hard-error. Excluded
+// (local-only) paths are SKIPPED and listed in Result.Skipped — never written —
+// so a hostile or corrupt manifest cannot drop a satelle.db over a live one,
+// while a batch that also carries legitimate files (or a partition already
+// poisoned with backups/) can still complete and advance a pull cursor
+// (sty_84f14ace).
+func Restore(dataDir string, files []File) (Result, error) {
+	var res Result
 	for _, f := range files {
 		rel, err := cleanRel(f.Path)
 		if err != nil {
-			return written, fmt.Errorf("subsync: restore %q: %w", f.Path, err)
+			return res, fmt.Errorf("subsync: restore %q: %w", f.Path, err)
 		}
 		if excludedLocal(rel) {
-			return written, fmt.Errorf("subsync: restore %q: refusing to write a local-only path", f.Path)
+			res.Skipped = append(res.Skipped, rel)
+			continue
 		}
 		dest := filepath.Join(dataDir, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-			return written, fmt.Errorf("subsync: mkdir for %s: %w", rel, err)
+			return res, fmt.Errorf("subsync: mkdir for %s: %w", rel, err)
 		}
 		if err := os.WriteFile(dest, f.Content, 0o644); err != nil {
-			return written, fmt.Errorf("subsync: write %s: %w", rel, err)
+			return res, fmt.Errorf("subsync: write %s: %w", rel, err)
 		}
-		written++
+		res.Written++
 	}
-	return written, nil
+	return res, nil
 }
 
 // cleanRel validates a manifest path and returns its canonical relative form:

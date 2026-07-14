@@ -15,12 +15,12 @@ func TestRestoreByteExact(t *testing.T) {
 		{Path: "agents.toml", Content: []byte("[executor]\nharness = \"in-loop\"\n")},
 		{Path: "tasks/tsk_abc.md", Content: []byte("nested parent dir")},
 	}
-	n, err := Restore(dataDir, files)
+	res, err := Restore(dataDir, files)
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
-	if n != len(files) {
-		t.Fatalf("wrote %d, want %d", n, len(files))
+	if res.Written != len(files) || len(res.Skipped) != 0 {
+		t.Fatalf("wrote %d skipped %v, want written %d skipped empty", res.Written, res.Skipped, len(files))
 	}
 	for _, f := range files {
 		got, err := os.ReadFile(filepath.Join(dataDir, filepath.FromSlash(f.Path)))
@@ -51,22 +51,111 @@ func TestRestoreOverwritesExisting(t *testing.T) {
 }
 
 // TestRestoreRefusesUnsafePath: a hostile manifest segment ("..") must not
-// escape the data dir, and a local-only path must be refused outright.
+// escape the data dir (cleanRel stays a hard error — sty_84f14ace plan).
 func TestRestoreRefusesUnsafePath(t *testing.T) {
 	dataDir := t.TempDir()
-	bad := []File{
-		{Path: "../escape.md", Content: []byte("x")},
-		{Path: "satelle.db", Content: []byte("x")},
-		{Path: "stories/x.md", Content: []byte("x")},
+	if _, err := Restore(dataDir, []File{{Path: "../escape.md", Content: []byte("x")}}); err == nil {
+		t.Error("Restore(../escape.md) unexpectedly succeeded")
 	}
-	for _, f := range bad {
-		if _, err := Restore(dataDir, []File{f}); err == nil {
-			t.Errorf("Restore(%q) unexpectedly succeeded", f.Path)
-		}
-	}
-	// Nothing was written outside the data dir.
 	if _, err := os.Stat(filepath.Join(filepath.Dir(dataDir), "escape.md")); err == nil {
 		t.Error("an unsafe path escaped the data dir")
+	}
+}
+
+// TestRestoreSkipsExcludedPaths: excludedLocal paths are skipped (not hard-errored)
+// so a mixed batch still completes and legitimate files land byte-exact
+// (sty_84f14ace AC1). Excluded paths are never written (AC3) and appear in
+// Result.Skipped (AC4).
+func TestRestoreSkipsExcludedPaths(t *testing.T) {
+	dataDir := t.TempDir()
+	// Pre-seed a live database that must not be clobbered.
+	dbPath := filepath.Join(dataDir, "satelle.db")
+	if err := os.WriteFile(dbPath, []byte("LIVE-DB"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	walPath := filepath.Join(dataDir, "satelle.db-wal")
+	if err := os.WriteFile(walPath, []byte("LIVE-WAL"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skillBody := []byte("---\ntype: skill\n---\nbody\n")
+	agentsBody := []byte("[executor]\nharness = \"in-loop\"\n")
+	files := []File{
+		{Path: "backups/pre-mutation/skills/x.md", Content: []byte("poison")},
+		{Path: "skills/a.md", Content: skillBody},
+		{Path: "agents.toml", Content: agentsBody},
+		{Path: "satelle.db", Content: []byte("HOSTILE")},
+		{Path: "satelle.db-wal", Content: []byte("HOSTILE-WAL")},
+		{Path: "stories/sty_x.md", Content: []byte("nope")},
+		{Path: "logs/server.log", Content: []byte("nope")},
+	}
+	res, err := Restore(dataDir, files)
+	if err != nil {
+		t.Fatalf("Restore mixed batch: %v", err)
+	}
+	if res.Written != 2 {
+		t.Errorf("Written = %d, want 2", res.Written)
+	}
+	if len(res.Skipped) != 5 {
+		t.Errorf("Skipped = %v, want 5 paths", res.Skipped)
+	}
+	// AC4: Skipped names the skipped paths.
+	wantSkip := map[string]bool{
+		"backups/pre-mutation/skills/x.md": true,
+		"satelle.db":                       true,
+		"satelle.db-wal":                   true,
+		"stories/sty_x.md":                 true,
+		"logs/server.log":                  true,
+	}
+	for _, p := range res.Skipped {
+		if !wantSkip[p] {
+			t.Errorf("unexpected skipped path %q", p)
+		}
+		delete(wantSkip, p)
+	}
+	for p := range wantSkip {
+		t.Errorf("missing skipped path %q", p)
+	}
+
+	// AC1: legitimate files byte-exact.
+	gotSkill, err := os.ReadFile(filepath.Join(dataDir, "skills", "a.md"))
+	if err != nil {
+		t.Fatalf("skills/a.md not written: %v", err)
+	}
+	if string(gotSkill) != string(skillBody) {
+		t.Errorf("skills/a.md = %q, want %q", gotSkill, skillBody)
+	}
+	gotAgents, err := os.ReadFile(filepath.Join(dataDir, "agents.toml"))
+	if err != nil {
+		t.Fatalf("agents.toml not written: %v", err)
+	}
+	if string(gotAgents) != string(agentsBody) {
+		t.Errorf("agents.toml = %q, want %q", gotAgents, agentsBody)
+	}
+
+	// AC3: live db/wal untouched.
+	db, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(db) != "LIVE-DB" {
+		t.Errorf("satelle.db was clobbered: %q", db)
+	}
+	wal, err := os.ReadFile(walPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(wal) != "LIVE-WAL" {
+		t.Errorf("satelle.db-wal was clobbered: %q", wal)
+	}
+	// Excluded trees must not appear.
+	for _, rel := range []string{
+		"backups/pre-mutation/skills/x.md",
+		"stories/sty_x.md",
+		"logs/server.log",
+	} {
+		if _, err := os.Stat(filepath.Join(dataDir, filepath.FromSlash(rel))); err == nil {
+			t.Errorf("excluded path %s was written", rel)
+		}
 	}
 }
 

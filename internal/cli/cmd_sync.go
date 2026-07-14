@@ -311,7 +311,7 @@ func runSyncConfigDeploy(cmd *cobra.Command, serverArg, workspaceArg string, ver
 		fmt.Fprintf(cmd.OutOrStdout(), "Nothing to deploy — version %d matched no files in workspace %q.\n", version, sourceName)
 		return nil
 	}
-	n, err := subsync.Restore(dataDir, files)
+	res, err := subsync.Restore(dataDir, files)
 	if err != nil {
 		return fmt.Errorf("deploy: %w", err)
 	}
@@ -323,7 +323,10 @@ func runSyncConfigDeploy(cmd *cobra.Command, serverArg, workspaceArg string, ver
 	if missing > 0 {
 		tail = fmt.Sprintf(", %d skipped (not present at that version)", missing)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Deployed %d file(s) (%s%s) from %s workspace %q into %s.\n", n, pinned, tail, server, sourceName, dataDir)
+	if n := len(res.Skipped); n > 0 {
+		tail += fmt.Sprintf(", %d skipped (local-only path)", n)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Deployed %d file(s) (%s%s) from %s workspace %q into %s.\n", res.Written, pinned, tail, server, sourceName, dataDir)
 	return nil
 }
 

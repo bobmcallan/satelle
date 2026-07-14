@@ -162,65 +162,81 @@ func runSyncDocumentsPull(cmd *cobra.Command, serverArg, workspaceArg string) er
 	if err != nil {
 		return fmt.Errorf("resolve personal workspace: %w", err)
 	}
-	n, perr := pullDocumentsFromWorkspace(cmd, client, server, absRoot, dataDir, personalID, project, "personal")
+	written, skipped, perr := pullDocumentsFromWorkspace(cmd, client, server, absRoot, dataDir, personalID, project, "personal")
 	if perr != nil {
 		return perr
 	}
-	if n == 0 {
+	if written == 0 && skipped == 0 {
 		fmt.Fprintf(out, "Documents up to date on %s.\n", server)
 		return nil
 	}
-	fmt.Fprintf(out, "Pulled %d document(s) from project %q personal collection on %s into %s.\n", n, project, server, dataDir)
+	// AC4 (sty_84f14ace): skipped local-only paths must be visible — a skip-only
+	// batch must not look identical to "nothing to pull" / "up to date".
+	switch {
+	case written > 0 && skipped > 0:
+		fmt.Fprintf(out, "Pulled %d document(s) from project %q personal collection on %s into %s, %d skipped (local-only path).\n", written, project, server, dataDir, skipped)
+	case written > 0:
+		fmt.Fprintf(out, "Pulled %d document(s) from project %q personal collection on %s into %s.\n", written, project, server, dataDir)
+	default:
+		fmt.Fprintf(out, "Documents pull on %s: %d skipped (local-only path); cursor advanced.\n", server, skipped)
+	}
 	return nil
 }
 
 // pullDocumentsFromWorkspace runs one workspace+project incremental pull: load
 // cursor, list changes, fetch content, Restore, THEN save cursor (only after a
 // successful restore so a crash re-fetches rather than silently drops files).
-func pullDocumentsFromWorkspace(cmd *cobra.Command, client *hosted.Client, server, absRoot, dataDir, wsID, project, label string) (int, error) {
+// Excluded (local-only) paths are skipped by Restore rather than failing the
+// whole batch so a partition already poisoned with backups/ can unwedge
+// (sty_84f14ace).
+func pullDocumentsFromWorkspace(cmd *cobra.Command, client *hosted.Client, server, absRoot, dataDir, wsID, project, label string) (written, skipped int, err error) {
 	cursor, err := hosted.LoadDocumentCursor(server, wsID, project, absRoot)
 	if err != nil {
-		return 0, fmt.Errorf("load document cursor (%s): %w", label, err)
+		return 0, 0, fmt.Errorf("load document cursor (%s): %w", label, err)
 	}
 	changes, err := client.ListDocumentChanges(cmd.Context(), wsID, project, cursor)
 	if err != nil {
 		if errors.Is(err, hosted.ErrLoginRequired) {
-			return 0, err
+			return 0, 0, err
 		}
-		return 0, fmt.Errorf("list document changes (%s): %w", label, err)
+		return 0, 0, fmt.Errorf("list document changes (%s): %w", label, err)
 	}
 	if len(changes.Items) == 0 {
 		// Still advance the cursor when the server issues a new one with an empty batch.
 		if changes.Cursor != "" && changes.Cursor != cursor {
 			if err := hosted.SaveDocumentCursor(server, wsID, project, absRoot, changes.Cursor); err != nil {
-				return 0, fmt.Errorf("save document cursor (%s): %w", label, err)
+				return 0, 0, fmt.Errorf("save document cursor (%s): %w", label, err)
 			}
 		}
-		return 0, nil
+		return 0, 0, nil
 	}
 	var files []subsync.File
 	for _, item := range changes.Items {
 		content, _, ferr := client.DocumentFileContent(cmd.Context(), wsID, project, item.Path)
 		if ferr != nil {
 			if errors.Is(ferr, hosted.ErrLoginRequired) {
-				return 0, ferr
+				return 0, 0, ferr
 			}
 			if errors.Is(ferr, hosted.ErrDocumentFileMissing) {
 				continue // listed then deleted — skip
 			}
-			return 0, fmt.Errorf("fetch document %s (%s): %w", item.Path, label, ferr)
+			return 0, 0, fmt.Errorf("fetch document %s (%s): %w", item.Path, label, ferr)
 		}
 		files = append(files, subsync.File{Path: item.Path, Content: content})
 	}
 	if len(files) > 0 {
-		if _, err := subsync.Restore(dataDir, files); err != nil {
-			return 0, fmt.Errorf("restore documents (%s): %w", label, err)
+		res, rerr := subsync.Restore(dataDir, files)
+		if rerr != nil {
+			return 0, 0, fmt.Errorf("restore documents (%s): %w", label, rerr)
 		}
+		written, skipped = res.Written, len(res.Skipped)
 	}
+	// Cursor advances after a successful restore — including skip-only batches —
+	// so already-poisoned partitions unwedge on the next pull (sty_84f14ace AC2).
 	if changes.Cursor != "" {
 		if err := hosted.SaveDocumentCursor(server, wsID, project, absRoot, changes.Cursor); err != nil {
-			return 0, fmt.Errorf("save document cursor (%s): %w", label, err)
+			return written, skipped, fmt.Errorf("save document cursor (%s): %w", label, err)
 		}
 	}
-	return len(files), nil
+	return written, skipped, nil
 }
