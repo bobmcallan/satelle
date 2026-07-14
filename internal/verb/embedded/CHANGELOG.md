@@ -7,6 +7,10 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
+## [0.0.244] - 2026-07-14
+### Fixed
+- Close-out release for additive story/task tag mutation already shipped in 0.0.241 (sty_033d4611)
+
 ## [0.0.243] - 2026-07-14
 ### Fixed
 - init incomplete-hook WARN path tested for unparseable settings; document harness exit-2 enforcement for reinforcement hooks (sty_0699637c)
