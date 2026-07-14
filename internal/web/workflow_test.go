@@ -323,6 +323,37 @@ func TestWorkflowDiagramAltAndAnnotations(t *testing.T) {
 	}
 }
 
+// TestWorkflowDiagramExecutorAugmentationAnnotation (sty_8225d8a5 AC6): an
+// edge-less executor with on= is an annotation on the target spine state, never
+// a free-floating lifecycle node (the phantom that agent==reviewer-only split
+// would reintroduce).
+func TestWorkflowDiagramExecutorAugmentationAnnotation(t *testing.T) {
+	dot := `---
+name: w
+applies_to: ["*"]
+---
+` + "```dot" + `
+digraph w {
+  backlog [shape=Mdiamond]
+  in_progress [agent=executor, prompt="@skill:code"]
+  done [shape=Msquare]
+  codeui [agent=executor, prompt="@skill:code-ui", on="in_progress", applies_to="surface:ui"]
+  backlog -> in_progress -> done
+}
+` + "```" + "\n"
+	html := string(workflowDiagram(parseWorkflow(dot)))
+	if strings.Contains(html, `<g class="wf-dnode" data-state="codeui"`) {
+		t.Errorf("augmentation must not be a main-flow node:\n%s", html)
+	}
+	if !strings.Contains(html, `class="wf-annot" data-state="in_progress"`) {
+		t.Errorf("augmentation should annotate in_progress:\n%s", html)
+	}
+	// Spine nodes still present.
+	if !strings.Contains(html, `data-state="in_progress"`) {
+		t.Error("spine in_progress missing")
+	}
+}
+
 // TestWorkflowDiagramLabelsDoNotOverprint covers sty_19b2107a AC4: when several
 // edges target the same node (here all the cancel edges, plus the gated forward
 // edges), their labels must not collapse onto the same coordinate. The anti-collision

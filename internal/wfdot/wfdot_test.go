@@ -1049,3 +1049,118 @@ digraph w {
 		t.Errorf("plan and in_progress should be engaging, got %v", spec.NonTerminalEngagingStates())
 	}
 }
+
+// TestExecutorAugmentation (sty_8225d8a5): edge-less executor with on= + applies_to
+// composes onto the spine skill; dual surface gets both; engagement skill set is
+// surface-aware; augmentation is not engaging / not a performing spine state.
+func TestExecutorAugmentation(t *testing.T) {
+	dot := "---\nname: x\n---\n" + "```dot" + `
+digraph w {
+  backlog [shape=Mdiamond]
+  in_progress [agent=executor, prompt="@skill:code"]
+  done [shape=Msquare]
+  codeui [agent=executor, prompt="@skill:code-ui", on="in_progress", applies_to="surface:ui"]
+  codecli [agent=executor, prompt="@skill:code-cli", on="in_progress", applies_to="surface:cli"]
+  backlog -> in_progress -> done
+}
+` + "```" + "\n"
+	spec, ok := Parse(dot)
+	if !ok {
+		t.Fatal("parse")
+	}
+	if probs := Validate(spec); len(probs) > 0 {
+		t.Fatalf("validate: %v", probs)
+	}
+	// Spine graph: augmentation names must not appear in PerformingStates.
+	for _, n := range spec.PerformingStates() {
+		if n == "codeui" || n == "codecli" {
+			t.Errorf("PerformingStates includes augmentation %q", n)
+		}
+	}
+	for _, n := range spec.NonTerminalEngagingStates() {
+		if n == "codeui" || n == "codecli" {
+			t.Errorf("engaging includes augmentation %q", n)
+		}
+	}
+	// Skills composition
+	none := spec.ExecutorSkillsFor("in_progress", nil)
+	if len(none) != 1 || none[0] != "code" {
+		t.Errorf("no tags: got %v", none)
+	}
+	ui := spec.ExecutorSkillsFor("in_progress", []string{"surface:ui"})
+	if len(ui) != 2 || ui[0] != "code" || ui[1] != "code-ui" {
+		t.Errorf("ui: got %v", ui)
+	}
+	both := spec.ExecutorSkillsFor("in_progress", []string{"surface:ui", "surface:cli"})
+	if len(both) != 3 || both[0] != "code" || both[1] != "code-ui" || both[2] != "code-cli" {
+		t.Errorf("both (declaration order): got %v, want [code code-ui code-cli]", both)
+	}
+	// Tag order does not change composition order.
+	bothRev := spec.ExecutorSkillsFor("in_progress", []string{"surface:cli", "surface:ui"})
+	if len(bothRev) != 3 || bothRev[1] != "code-ui" || bothRev[2] != "code-cli" {
+		t.Errorf("tag order must not reorder augs: got %v", bothRev)
+	}
+	// Unknown / non-spine target → nil
+	if got := spec.ExecutorSkillsFor("codeui", []string{"surface:ui"}); got != nil {
+		t.Errorf("augmentation name is not a spine target: %v", got)
+	}
+	if got := spec.ExecutorSkillsFor("nope", nil); got != nil {
+		t.Errorf("unknown state: %v", got)
+	}
+	// Path skills: structure gets all augs; filtered engagement does not.
+	all := spec.ExecutorPathToDoneSkills()
+	if !containsStr(all, "code-ui") || !containsStr(all, "code-cli") {
+		t.Errorf("all path skills: %v", all)
+	}
+	cliOnly := spec.ExecutorPathToDoneSkillsFor([]string{"surface:cli"})
+	if containsStr(cliOnly, "code-ui") || !containsStr(cliOnly, "code-cli") || !containsStr(cliOnly, "code") {
+		t.Errorf("cli path skills: %v", cliOnly)
+	}
+	// Graph equality: transitions identical regardless of surface (spine unchanged).
+	if len(spec.Transitions) != 2 {
+		t.Errorf("spine edges: %d", len(spec.Transitions))
+	}
+	// emitDOT round-trip
+	em := emitDOT(spec, "w")
+	if !strings.Contains(em, `on="in_progress"`) || !strings.Contains(em, `applies_to="surface:ui"`) {
+		t.Errorf("emit missing aug attrs:\n%s", em)
+	}
+}
+
+func TestAugmentationAppliesToAllowed(t *testing.T) {
+	dot := "---\nname: x\n---\n" + "```dot" + `
+digraph w {
+  backlog [shape=Mdiamond]
+  in_progress [agent=executor, prompt="@skill:code"]
+  done [shape=Msquare]
+  codeui [agent=executor, prompt="@skill:code-ui", on="in_progress", applies_to="surface:ui"]
+  backlog -> in_progress -> done
+}
+` + "```" + "\n"
+	spec, ok := Parse(dot)
+	if !ok {
+		t.Fatal("parse")
+	}
+	if probs := Validate(spec); len(probs) > 0 {
+		t.Fatalf("augmentation with applies_to should validate: %v", probs)
+	}
+}
+
+func TestSpineWithOnRejected(t *testing.T) {
+	dot := "---\nname: x\n---\n" + "```dot" + `
+digraph w {
+  backlog [shape=Mdiamond]
+  in_progress [agent=executor, prompt="@skill:code", on="in_progress"]
+  done [shape=Msquare]
+  backlog -> in_progress -> done
+}
+` + "```" + "\n"
+	spec, ok := Parse(dot)
+	if !ok {
+		t.Fatal("parse")
+	}
+	probs := Validate(spec)
+	if !hasProblem(probs, "participates in edges") {
+		t.Errorf("want spine+on= reject, got %v", probs)
+	}
+}

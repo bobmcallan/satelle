@@ -4,7 +4,7 @@ type: principle
 tags: [type:principle]
 applies_to: ["*"]
 description: Canonical latest workflow DOT format — node-consistent edge gates ([agent=reviewer, prompt="@skill:NAME"]), performing-node prompt convention, required graph/shape/frontmatter fields. THE single reference other workflow-review tools cite. Pointer to Graphviz for raw grammar; satelle-specific conventions only.
-embedded_sha: 5e1834370197387d9f9557713fde0961c8989154da5336644391352c3667d7a7
+embedded_sha: ed99ba55a42d15dfdd11ffcbc4faae84549caf8ad1d9eba2c0dbedff24ced536
 ---
 
 # Workflows use the DOT standard (canonical form)
@@ -92,6 +92,38 @@ design [agent=reviewer, prompt="@skill:satelle-design-review", on="integration",
 Workflow-frontmatter `applies_to` (which workflow governs a category) is a different
 altitude and is unchanged. Step-level `applies_to` only filters **whether a scoped
 gate is enqueued**, not which workflow is stamped.
+
+## Executor augmentation (`on=` overload, sty_8225d8a5)
+
+An **edge-less performing node** with `on="<state>"` **augments** that spine state's
+executor rubrics additively — design knowledge at CODE time, not only at review:
+
+```dot
+in_progress [agent=executor, prompt="@skill:code"]
+codeui [agent=executor, prompt="@skill:code-ui", on="in_progress", applies_to="surface:ui"]
+```
+
+| Story tags | Rubrics for `in_progress` |
+| --- | --- |
+| (none) | `code` |
+| `surface:ui` | `code` + `code-ui` |
+| `surface:ui` + `surface:cli` | `code` + `code-ui` (+ `code-cli` if declared) |
+
+**Why reuse `on=` rather than `augments=`.** For a reviewer, `on=X` means “attach to
+transitions into X”. For an executor, the same attribute means “attach to the
+performing of X”. Both read as attach-to-state; the meaning is keyed by `agent=`.
+One concept, documented here — a second name would double the surface without
+removing the agent-keyed branch.
+
+Rules:
+
+- Additive, declaration order after the spine skill — no override, no tie-break.
+- Augmentation nodes are **annotations**, not lifecycle states (web diagram and
+  engagement predicates exclude them).
+- Matching uses the same `applies_to` / `tagsMatchAppliesTo` path as scoped
+  reviewers (one implementation).
+- A missing augmentation skill hard-blocks engagement only for stories whose tags
+  match it (the surface-aware wasted-work trap).
 
 ## Required graph / shape / frontmatter shape
 
