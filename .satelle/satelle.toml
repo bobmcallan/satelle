@@ -20,6 +20,13 @@
 # Misclassification is cheapest to catch at create. Set false to opt out.
 gate_create = true
 
+# [tags.vocabulary] — controlled tag namespaces (sty_034d843c / epic:surface-scoped-steps).
+# A tag in a listed namespace must use a declared value (matched case-insensitively;
+# stored in the casing declared here). Namespaces absent from the table stay free-form
+# (area:, epic:, order:, …). Repo-specific: another repo declares its own surfaces.
+[tags.vocabulary]
+surface = ["ui", "cli"]
+
 [gate]
 # Repo-root-relative path prefixes whose edits are EXEMPT from the engaged-story
 # edit gate. This is the SOLE exemption source — exemption is configuration, not a
@@ -50,8 +57,8 @@ project = "satelle"
 # stories, ledger, executions.
 # The reserved key `all` blanket-defaults every area not set explicitly, so one
 # line opts the whole tree in; a per-area key still overrides it.
-# [sync]
-# all = "personal"               # every area personal unless overridden below
+[sync]
+all = "personal"               # every area personal unless overridden below
 # skills = "shared"
 # documents = "personal"
 # stories = "personal"

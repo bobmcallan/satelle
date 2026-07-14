@@ -1075,6 +1075,14 @@ const scaffoldToml = `# satelle.toml — per-repo config (committed, secret-free
 [review]
 gate_create = true
 
+# [tags.vocabulary] — controlled tag namespaces (optional). A tag in a listed
+# namespace must use a declared value (case-insensitive match; stored in the
+# casing declared here). Namespaces absent from the table stay free-form.
+# Unset = every tag free-form (zero-config). Declare per-repo; never compiled
+# into the binary (sty_034d843c).
+# [tags.vocabulary]
+# surface = ["ui", "cli"]
+
 # [gate] — edit-gate exemptions and the single-story process rule. This is the
 # ONE table seeded ACTIVE (not commented) below, because it is the source of
 # truth for which paths escape the engaged-story edit gate — configuration, not

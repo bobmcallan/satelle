@@ -79,6 +79,10 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetStoryRetention(a.Config.StoriesKeepClosed, a.Config.StoriesKeepDays)
 	// Single-story process rule (default enforce; [gate] allow_parallel opts out).
 	verb.SetAllowParallelStories(a.Config.Gate.AllowParallel)
+	// Controlled tag vocabulary (sty_034d843c): validate namespaces declared in
+	// satelle.toml [tags.vocabulary] at story/task create and set. Independent of
+	// the agent CLI — must work with no harness installed.
+	verb.SetTagVocabulary(a.Config)
 	// Engage precondition (sty_93eec36d): agents.toml + workflow agent= validation
 	// before a story leaves its entry state. agents already loaded by requireAgents.
 	verb.SetAgentsConfig(agents, a.Config.Vars)

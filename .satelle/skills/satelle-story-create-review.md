@@ -4,7 +4,7 @@ scope: system
 type: skill
 tags: [type:skill, type:reviewer]
 description: Content/alignment create gate after the deterministic structural check. Judges ACs vs goal, coherence, scope, AND category/tag classification against satelle-story-classification. Read-only; rejects with specifics for the agent to fix and retry.
-embedded_sha: 6688bfb4a788d0d6e4dbd61837390232f2356e0ba7ae864af83ff48561af6dd3
+embedded_sha: 82308e588617360c58983894dba0928e8d6ffae12d6946475063c5ba53d6c44a
 ---
 
 # Story create — content, alignment, and classification review
@@ -52,6 +52,14 @@ alignment, and **classification**:
   `order:<N>` should be well-formed (kebab theme, plain integer N). Malformed
   tags alone are not enough to reject if category is otherwise correct;
   inventing a parallel class axis is.
+- **Controlled namespaces** — when the draft carries tags in a namespace the
+  repo has listed under satelle.toml `[tags.vocabulary]`, the value must be one
+  the repo declared (the deterministic create/set check already rejects unknown
+  values; still classify intent: a story that clearly touches an interface the
+  vocabulary names should carry the matching tag rather than omit it). Read the
+  vocabulary from the repo's satelle.toml when available — do not invent values.
+  Multi-surface uses repeated keys (`namespace:a` + `namespace:b`), never a
+  comma-joined value.
 
 Fair gate, not perfectionist: a clear leaf story with a fitting category and
 ACs that plausibly verify the goal accepts. An epic misfiled as `feature` is
