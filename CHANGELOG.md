@@ -7,6 +7,10 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
+## [0.0.247] - 2026-07-14
+### Fixed
+- Actually ship matching embedded CHANGELOG for 0.0.246 tag-filter release (sty_f7115cd2)
+
 ## [0.0.246] - 2026-07-14
 ### Fixed
 - Sync embedded CHANGELOG with root for tag-filter release (sty_f7115cd2)
