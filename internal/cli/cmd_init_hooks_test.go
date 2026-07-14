@@ -699,3 +699,45 @@ func TestReinforceSessionStartAndPreToolUse(t *testing.T) {
 		}
 	}
 }
+
+// TestReinforceWarnsOnUnparseableSettings (sty_0699637c AC5 negative path): a
+// non-object JSON root cannot be reinforced; incomplete reports unparseable and
+// ensureProcessHooks emits a WARN naming it.
+func TestReinforceWarnsOnUnparseableSettings(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Array root: Unmarshal into map[string]any fails → left untouched.
+	if err := os.WriteFile(path, []byte("[]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	created, updated, incomplete, err := ensureClaudeHooks(repo)
+	if err != nil || created {
+		t.Fatalf("created=%v err=%v", created, err)
+	}
+	if len(updated) != 0 {
+		t.Fatalf("unparseable file must not be rewritten: updated=%v", updated)
+	}
+	if len(incomplete) == 0 {
+		t.Fatal("expected incomplete non-empty for unparseable settings")
+	}
+	joined := strings.Join(incomplete, ",")
+	if !strings.Contains(joined, "unparseable") && !strings.Contains(joined, "SessionStart") {
+		t.Fatalf("incomplete = %v, want unparseable or missing events", incomplete)
+	}
+	// Operator-visible WARN via ensureProcessHooks.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// Force Claude-only detection.
+	_ = os.MkdirAll(filepath.Join(repo, ".claude"), 0o755)
+	var buf bytes.Buffer
+	if err := ensureProcessHooks(&buf, repo); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "WARN") || !strings.Contains(out, "incomplete satelle hooks") {
+		t.Fatalf("want incomplete WARN, got:\n%s", out)
+	}
+}
