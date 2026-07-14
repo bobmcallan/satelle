@@ -69,6 +69,29 @@ plan [agent=planner, prompt="@skill:plan", model="opus"]
 - `satelle agent validate` and `satelle workflow validate` print each gate's
   effective model (with an `(override)` marker when DOT `model=` is set).
 
+## Step-level `applies_to` on scoped reviewer nodes
+
+An **edge-less scoped reviewer** (a node with `on=…`) may also carry
+`applies_to="surface:ui"` (CSV list) so the gate is enqueued only for stories that
+hold a matching tag (sty_c6d093c8 / epic:surface-scoped-steps):
+
+```dot
+design [agent=reviewer, prompt="@skill:satelle-design-review", on="integration", applies_to="surface:ui"]
+```
+
+| Rule | Behaviour |
+| --- | --- |
+| Absent `applies_to` | Matches every story (equivalent to `["*"]`) — today's behaviour |
+| Matching | EqualFold ANY-match against the story's **tags** only — not category, not kind |
+| Multi-surface | A story with both `surface:ui` and `surface:cli` picks up **both** matching nodes (plain filter, no override, no tie-break) |
+| On an **edge** | Rejected (the edge IS the transition — skipping it is ambiguous) |
+| On a **performing** node | Rejected here; surface-scoped executor rubrics are sty_8225d8a5 |
+| Unknown attribute | Rejected with a named error (fail closed — no silent drop) |
+
+Workflow-frontmatter `applies_to` (which workflow governs a category) is a different
+altitude and is unchanged. Step-level `applies_to` only filters **whether a scoped
+gate is enqueued**, not which workflow is stamped.
+
 ## Required graph / shape / frontmatter shape
 
 Documented as the canonical shape (enforcement of lag is format-drift detection,

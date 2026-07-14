@@ -645,7 +645,7 @@ digraph w {
 	}
 	// estimate is scoped to in_progress + done; the wildcard joins every edge; the
 	// step summariser is NEVER returned as a blocking scoped gate (it runs via Summarise).
-	ip := spec.ScopedReviewers("in_progress")
+	ip := spec.ScopedReviewers("in_progress", nil)
 	if !hasScoped(ip, "satelle-estimate-actual-review") || !hasScoped(ip, "rev-all") || hasScoped(ip, "satelle-step-summary") {
 		t.Errorf("in_progress scoped = %v", ip)
 	}
@@ -657,9 +657,165 @@ digraph w {
 			t.Errorf("rev-all model = %q, want empty", s.Model)
 		}
 	}
-	integ := spec.ScopedReviewers("integration")
+	integ := spec.ScopedReviewers("integration", nil)
 	if hasScoped(integ, "satelle-estimate-actual-review") || !hasScoped(integ, "rev-all") || hasScoped(integ, "satelle-step-summary") {
 		t.Errorf("integration scoped should be wildcard-only (no estimate, no step), got %v", integ)
+	}
+}
+
+// TestScopedReviewersAppliesTo (sty_c6d093c8): edge-less reviewer with applies_to
+// is enqueued only when tags match; multi-surface both fire; absent applies_to
+// matches every story; EqualFold both directions.
+func TestScopedReviewersAppliesTo(t *testing.T) {
+	dot := "---\nname: x\n---\n" + "```dot" + `
+digraph w {
+  backlog [shape=Mdiamond]
+  in_progress [agent=executor]
+  done [shape=Msquare]
+  design  [agent=reviewer, prompt="@skill:design-review", on="in_progress", applies_to="surface:ui"]
+  cliprobe [agent=reviewer, prompt="@skill:cli-review", on="in_progress", applies_to="surface:cli"]
+  always  [agent=reviewer, prompt="@skill:always-gate", on="in_progress"]
+  backlog -> in_progress -> done
+}
+` + "```" + "\n"
+	spec, ok := Parse(dot)
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	// No tags: always-gate only (applies_to-absent); design/cli filtered out.
+	none := spec.ScopedReviewers("in_progress", nil)
+	if !hasScoped(none, "always-gate") || hasScoped(none, "design-review") || hasScoped(none, "cli-review") {
+		t.Errorf("no tags: want always only, got %v", none)
+	}
+	// surface:ui only
+	ui := spec.ScopedReviewers("in_progress", []string{"surface:ui"})
+	if !hasScoped(ui, "design-review") || !hasScoped(ui, "always-gate") || hasScoped(ui, "cli-review") {
+		t.Errorf("surface:ui: got %v", ui)
+	}
+	// dual surface — BOTH design and cli (plain filter, no tie-break)
+	both := spec.ScopedReviewers("in_progress", []string{"surface:ui", "surface:cli"})
+	if !hasScoped(both, "design-review") || !hasScoped(both, "cli-review") || !hasScoped(both, "always-gate") {
+		t.Errorf("dual surface: got %v", both)
+	}
+	// EqualFold: applies_to casing vs tag casing
+	fold := spec.ScopedReviewers("in_progress", []string{"Surface:UI"})
+	if !hasScoped(fold, "design-review") {
+		t.Errorf("EqualFold Surface:UI should match applies_to surface:ui: %v", fold)
+	}
+	// category / free tag "web" must NOT match surface applies_to
+	web := spec.ScopedReviewers("in_progress", []string{"web", "area:web"})
+	if hasScoped(web, "design-review") || hasScoped(web, "cli-review") {
+		t.Errorf("web tags must not match surface applies_to: %v", web)
+	}
+}
+
+func TestAppliesToParseAndEmit(t *testing.T) {
+	dot := "---\nname: x\n---\n" + "```dot" + `
+digraph w {
+  backlog [shape=Mdiamond]
+  done [shape=Msquare]
+  design [agent=reviewer, prompt="@skill:design", on="done", applies_to="surface:ui,surface:cli"]
+  backlog -> done
+}
+` + "```" + "\n"
+	spec, ok := Parse(dot)
+	if !ok {
+		t.Fatal("parse")
+	}
+	var st State
+	for _, s := range spec.States {
+		if s.Name == "design" {
+			st = s
+		}
+	}
+	if len(st.AppliesTo) != 2 || st.AppliesTo[0] != "surface:ui" || st.AppliesTo[1] != "surface:cli" {
+		t.Fatalf("AppliesTo = %v", st.AppliesTo)
+	}
+	emitted := emitDOT(spec, "w")
+	if !strings.Contains(emitted, `applies_to="surface:ui,surface:cli"`) {
+		t.Errorf("emitDOT missing applies_to:\n%s", emitted)
+	}
+	// Round-trip
+	spec2, ok := Parse("---\nname: x\n---\n```dot\n" + emitted + "\n```\n")
+	if !ok {
+		t.Fatal("reparse")
+	}
+	for _, s := range spec2.States {
+		if s.Name == "design" {
+			if len(s.AppliesTo) != 2 {
+				t.Errorf("round-trip AppliesTo = %v", s.AppliesTo)
+			}
+		}
+	}
+}
+
+func TestAppliesToOnEdgeRejected(t *testing.T) {
+	dot := "---\nname: x\n---\n" + "```dot" + `
+digraph w {
+  backlog [shape=Mdiamond]
+  done [shape=Msquare]
+  backlog -> done [agent=reviewer, prompt="@skill:rev", applies_to="surface:ui"]
+}
+` + "```" + "\n"
+	spec, ok := Parse(dot)
+	if !ok {
+		t.Fatal("parse")
+	}
+	probs := Validate(spec)
+	if !hasProblem(probs, "applies_to is not honoured on an edge") {
+		t.Errorf("want edge applies_to reject, got %v", probs)
+	}
+}
+
+func TestAppliesToOnPerformingRejected(t *testing.T) {
+	dot := "---\nname: x\n---\n" + "```dot" + `
+digraph w {
+  backlog [shape=Mdiamond]
+  in_progress [agent=executor, prompt="@skill:code", applies_to="surface:ui"]
+  done [shape=Msquare]
+  backlog -> in_progress -> done
+}
+` + "```" + "\n"
+	spec, ok := Parse(dot)
+	if !ok {
+		t.Fatal("parse")
+	}
+	probs := Validate(spec)
+	if !hasProblem(probs, "applies_to on performing node") {
+		t.Errorf("want performing reject, got %v", probs)
+	}
+}
+
+func TestUnknownAttrRejected(t *testing.T) {
+	dot := "---\nname: x\n---\n" + "```dot" + `
+digraph w {
+  backlog [shape=Mdiamond]
+  done [shape=Msquare, when="never"]
+  backlog -> done
+}
+` + "```" + "\n"
+	spec, ok := Parse(dot)
+	if !ok {
+		t.Fatal("parse")
+	}
+	probs := Validate(spec)
+	if !hasProblem(probs, `unknown node attribute "when"`) {
+		t.Errorf("want unknown attr reject, got %v", probs)
+	}
+}
+
+func TestTagsMatchAppliesTo(t *testing.T) {
+	if !tagsMatchAppliesTo(nil, []string{"surface:ui"}) {
+		t.Error("empty applies_to should match")
+	}
+	if !tagsMatchAppliesTo([]string{"*"}, nil) {
+		t.Error("* should match")
+	}
+	if !tagsMatchAppliesTo([]string{"surface:ui"}, []string{"SURFACE:UI"}) {
+		t.Error("EqualFold should match")
+	}
+	if tagsMatchAppliesTo([]string{"surface:ui"}, []string{"surface:cli"}) {
+		t.Error("mismatch should not match")
 	}
 }
 
