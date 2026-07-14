@@ -223,27 +223,33 @@ func childRoots(boundRepo string) []string {
 
 // childProc is one supervised project: its child `serve`, the loopback port it
 // listens on, and the prefix-stripping reverse-proxy handler in front of it.
+// pid + exited support post-boot supervision (sty_5faf46f1).
 type childProc struct {
 	project web.Project
 	cmd     *exec.Cmd
 	handler http.Handler
+	pid     int
+	port    int
+	exited  <-chan error
 }
 
-// supervisor manages one child `serve` per non-bound registered project,
-// reconciling the live set against the workspace registry so workspace
-// add/remove takes effect on a running service with no restart.
+// supervisor manages one child `serve` per registered project, reconciling the
+// live set against the workspace registry and supervising each child for life:
+// crash → log + teardown + respawn (or park after consecutive fast failures).
+// sty_5faf46f1.
 type supervisor struct {
 	self      string
 	ctx       context.Context
 	out, errw io.Writer
 
 	mu       sync.Mutex
-	children map[string]*childProc // by repo path
-	bySlug   map[string]*childProc // by url slug (request routing)
-	order    []string              // child repo paths in display order
-	slugs    map[string]string     // path -> stable slug
-	taken    map[string]bool       // assigned slugs (de-dup, seeded with reserved routes)
-	failed   map[string]string     // path -> spawn error (errored landing rows, sty_4ea4d4df)
+	children map[string]*childProc         // by repo path (live healthy only)
+	bySlug   map[string]*childProc         // by url slug (request routing)
+	order    []string                      // child repo paths in display order
+	slugs    map[string]string             // path -> stable slug
+	taken    map[string]bool               // assigned slugs (de-dup, seeded with reserved routes)
+	failed   map[string]string             // path -> error (errored landing rows)
+	managing map[string]context.CancelFunc // path -> supervise-loop cancel (authoritative set)
 	// notify doorbells the bound server's /events hub when the served set
 	// changes, so an OPEN landing tab refreshes without a manual reload.
 	notify func(topic string)
@@ -256,6 +262,15 @@ var reservedSlugs = []string{
 	"events", "theme", "healthz", "projects",
 }
 
+// Supervisor lifecycle constants (no config knobs — smallest honest surface).
+const (
+	childHealthWindow  = 10 * time.Second
+	fastFailWindow     = 5 * time.Second
+	maxFastFailures    = 5
+	respawnBackoffBase = 250 * time.Millisecond
+	respawnBackoffCap  = 30 * time.Second
+)
+
 func newSupervisor(ctx context.Context, out, errw io.Writer, self string) *supervisor {
 	taken := map[string]bool{}
 	for _, r := range reservedSlugs {
@@ -265,11 +280,12 @@ func newSupervisor(ctx context.Context, out, errw io.Writer, self string) *super
 		self: self, ctx: ctx, out: out, errw: errw,
 		children: map[string]*childProc{}, bySlug: map[string]*childProc{},
 		slugs: map[string]string{}, taken: taken, failed: map[string]string{},
+		managing: map[string]context.CancelFunc{},
 	}
 }
 
-// snapshot returns every served project in display order (the launch repo
-// first), each reachable at /<slug>/ — what the / landing renders.
+// snapshot returns every healthy served project in display order — only live
+// children; dead/parked projects appear via snapshotFailed, never here.
 func (s *supervisor) snapshot() []web.Project {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -316,6 +332,7 @@ func firstSegment(path string) string {
 }
 
 // assignSlug returns a stable, de-duplicated slug for a repo path.
+// Caller must hold s.mu.
 func (s *supervisor) assignSlug(path string) string {
 	if slug, ok := s.slugs[path]; ok {
 		return slug
@@ -330,76 +347,130 @@ func (s *supervisor) assignSlug(path string) string {
 	return slug
 }
 
-// reconcile brings live children in line with roots: spawn for newly-registered
-// repos, kill de-registered ones. Spawning runs outside the lock.
+// reconcile brings supervised projects in line with roots: start a supervise
+// loop for newly registered repos, cancel loops for de-registered ones.
 func (s *supervisor) reconcile(roots []string) {
-	changed := false
 	want := map[string]bool{}
 	for _, p := range roots {
 		want[p] = true
 	}
-	s.mu.Lock()
-	have := make([]string, 0, len(s.children))
-	for p := range s.children {
-		have = append(have, p)
-	}
-	s.mu.Unlock()
 
-	for _, p := range have {
-		if want[p] {
-			continue
-		}
-		s.mu.Lock()
-		c := s.children[p]
-		slug := s.slugs[p]
-		delete(s.children, p)
-		delete(s.bySlug, slug)
-		delete(s.slugs, p)
-		delete(s.taken, slug)
-		s.mu.Unlock()
-		if c != nil && c.cmd.Process != nil {
-			_ = c.cmd.Process.Kill()
-		}
-		changed = true
-		fmt.Fprintf(s.out, "project removed: /%s/ (%s)\n", slug, p)
-	}
-	// A failed entry no longer registered is dropped too.
+	// Stop supervisors for roots no longer wanted.
 	s.mu.Lock()
+	var remove []string
+	for p := range s.managing {
+		if !want[p] {
+			remove = append(remove, p)
+		}
+	}
+	// Also clear orphan failed rows (parked after supervise exited) not wanted.
 	for p := range s.failed {
 		if !want[p] {
-			delete(s.failed, p)
-			changed = true
+			if _, managed := s.managing[p]; !managed {
+				delete(s.failed, p)
+			}
 		}
 	}
 	s.mu.Unlock()
 
-	for _, p := range roots {
-		s.mu.Lock()
-		_, exists := s.children[p]
-		slug := s.assignSlug(p)
-		s.mu.Unlock()
-		if exists {
-			continue
-		}
-		c, err := s.spawn(p, slug)
-		if err != nil {
-			// Not silently omitted: the landing shows the failure (sty_4ea4d4df).
-			s.mu.Lock()
-			s.failed[p] = err.Error()
-			s.mu.Unlock()
-			changed = true
-			fmt.Fprintf(s.errw, "spawn child for %s: %v\n", p, err)
-			continue
-		}
-		s.mu.Lock()
-		s.children[p] = c
-		s.bySlug[slug] = c
-		delete(s.failed, p)
-		s.mu.Unlock()
-		changed = true
-		fmt.Fprintf(s.out, "project added: /%s/ (%s)\n", slug, p)
+	for _, p := range remove {
+		slug := s.slugOf(p)
+		s.stopManaging(p)
+		fmt.Fprintf(s.out, "project removed: /%s/ (%s)\n", slug, p)
 	}
 
+	// Start a supervise loop for each wanted root not already managed.
+	started := make([]string, 0)
+	for _, p := range roots {
+		s.mu.Lock()
+		_, managed := s.managing[p]
+		slug := s.assignSlug(p)
+		s.mu.Unlock()
+		if managed {
+			continue
+		}
+		// childCtx is cancelled by stopManaging / shutdown; intentional teardown
+		// must not trigger respawn (sty_5faf46f1).
+		childCtx, cancel := context.WithCancel(s.ctx)
+		s.mu.Lock()
+		s.managing[p] = cancel
+		s.mu.Unlock()
+		go s.supervise(childCtx, p, slug)
+		started = append(started, p)
+	}
+
+	// Block until each newly-started path has a first outcome (healthy or failed)
+	// so the landing/banner and callers see a settled set — same UX as the
+	// pre-async spawn path. Respawn loops continue in the background after.
+	if len(started) > 0 {
+		s.waitSettled(started, childHealthWindow+2*time.Second)
+	}
+	s.rebuildOrder(roots)
+}
+
+// waitSettled blocks until every path is in children or failed, or timeout.
+func (s *supervisor) waitSettled(paths []string, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		s.mu.Lock()
+		pending := 0
+		for _, p := range paths {
+			_, live := s.children[p]
+			_, fail := s.failed[p]
+			if !live && !fail {
+				pending++
+			}
+		}
+		s.mu.Unlock()
+		if pending == 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// slugOf returns the assigned slug for path (empty if never assigned).
+func (s *supervisor) slugOf(path string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.slugs[path]
+}
+
+// stopManaging cancels the supervise loop for path (no respawn) and clears
+// registry entries. Safe if path is not managed.
+func (s *supervisor) stopManaging(path string) {
+	s.mu.Lock()
+	cancel := s.managing[path]
+	delete(s.managing, path)
+	c := s.children[path]
+	slug := s.slugs[path]
+	delete(s.children, path)
+	delete(s.bySlug, slug)
+	delete(s.slugs, path)
+	delete(s.taken, slug)
+	delete(s.failed, path)
+	// drop from order
+	order := s.order[:0]
+	for _, p := range s.order {
+		if p != path {
+			order = append(order, p)
+		}
+	}
+	s.order = order
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if c != nil && c.cmd != nil && c.cmd.Process != nil {
+		_ = c.cmd.Process.Kill()
+	}
+	if s.notify != nil {
+		s.notify("projects")
+	}
+}
+
+// rebuildOrder sets display order from roots that currently have a live child.
+func (s *supervisor) rebuildOrder(roots []string) {
 	s.mu.Lock()
 	s.order = s.order[:0]
 	for _, p := range roots {
@@ -408,12 +479,185 @@ func (s *supervisor) reconcile(roots []string) {
 		}
 	}
 	s.mu.Unlock()
-	if changed && s.notify != nil {
-		s.notify("projects") // doorbell open landing tabs (sty_4ea4d4df)
+}
+
+// supervise owns one project's lifecycle: spawn → watch → respawn or park.
+// Cancel of ctx is intentional teardown (reconcile/shutdown) — no respawn.
+func (s *supervisor) supervise(ctx context.Context, path, slug string) {
+	defer func() {
+		// Drop managing entry when the loop ends (park or intentional cancel).
+		s.mu.Lock()
+		// Only clear if we still own this cancel (stopManaging may have raced).
+		if cancel, ok := s.managing[path]; ok {
+			// If ctx is done because WE were cancelled via stopManaging, cancel is
+			// already invoked; still delete the entry.
+			_ = cancel
+			delete(s.managing, path)
+		}
+		// Ensure no live route remains after the loop ends.
+		if c := s.children[path]; c != nil {
+			delete(s.children, path)
+			delete(s.bySlug, slug)
+		}
+		s.mu.Unlock()
+	}()
+
+	var consecutiveFast int
+	backoff := respawnBackoffBase
+
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		c, err := s.spawn(ctx, path, slug)
+		if err != nil {
+			reason := err.Error()
+			fmt.Fprintf(s.errw, "spawn child for /%s/ (%s): %v\n", slug, path, err)
+			s.markFailed(path, reason)
+			consecutiveFast++
+			if consecutiveFast >= maxFastFailures {
+				park := fmt.Sprintf("parked after %d consecutive spawn failures: %s", consecutiveFast, reason)
+				fmt.Fprintf(s.errw, "child parked: /%s/ %s\n", slug, park)
+				s.markFailed(path, park)
+				return
+			}
+			if !s.sleepBackoff(ctx, backoff) {
+				return
+			}
+			backoff = nextBackoff(backoff)
+			continue
+		}
+
+		// Healthy: register route, clear failed, reset counters.
+		s.mu.Lock()
+		s.children[path] = c
+		s.bySlug[slug] = c
+		delete(s.failed, path)
+		// Keep order consistent with registration order when possible.
+		found := false
+		for _, p := range s.order {
+			if p == path {
+				found = true
+				break
+			}
+		}
+		if !found {
+			s.order = append(s.order, path)
+		}
+		s.mu.Unlock()
+		// stderr so the journal (and tests) see pid alongside exit lines.
+		fmt.Fprintf(s.errw, "child healthy: /%s/ pid=%d (:%d)\n", slug, c.pid, c.port)
+		if s.notify != nil {
+			s.notify("projects")
+		}
+		healthyAt := time.Now()
+		backoff = respawnBackoffBase // reset after a healthy boot
+
+		// Watch until exit or intentional cancel.
+		select {
+		case <-ctx.Done():
+			// Intentional teardown — kill is best-effort; stopManaging may have done it.
+			if c.cmd != nil && c.cmd.Process != nil {
+				_ = c.cmd.Process.Kill()
+			}
+			return
+		case exitErr := <-c.exited:
+			status := "ok"
+			if exitErr != nil {
+				status = exitErr.Error()
+			}
+			// Intentional teardown (reconcile/shutdown) also kills the process —
+			// do not treat that as a crash/respawn signal.
+			if ctx.Err() != nil {
+				fmt.Fprintf(s.errw, "child stopped: /%s/ pid=%d status=%s\n", slug, c.pid, status)
+				return
+			}
+			fmt.Fprintf(s.errw, "child exited: /%s/ pid=%d status=%s\n", slug, c.pid, status)
+
+			// Tear down the route; land in failed until respawn succeeds (AC4).
+			s.mu.Lock()
+			delete(s.children, path)
+			delete(s.bySlug, slug)
+			// trim order
+			order := s.order[:0]
+			for _, p := range s.order {
+				if p != path {
+					order = append(order, p)
+				}
+			}
+			s.order = order
+			s.failed[path] = fmt.Sprintf("exited: %s", status)
+			s.mu.Unlock()
+			if s.notify != nil {
+				s.notify("projects")
+			}
+
+			// Fast-failure = healthy lifetime under the window.
+			if time.Since(healthyAt) < fastFailWindow {
+				consecutiveFast++
+			} else {
+				consecutiveFast = 0
+			}
+			if consecutiveFast >= maxFastFailures {
+				park := fmt.Sprintf("parked after %d consecutive fast failures: %s", consecutiveFast, status)
+				fmt.Fprintf(s.errw, "child parked: /%s/ %s\n", slug, park)
+				s.markFailed(path, park)
+				return
+			}
+			if !s.sleepBackoff(ctx, backoff) {
+				return
+			}
+			backoff = nextBackoff(backoff)
+		}
 	}
 }
 
-// snapshotFailed lists registered projects whose child failed to serve.
+func nextBackoff(cur time.Duration) time.Duration {
+	next := cur * 2
+	if next > respawnBackoffCap {
+		return respawnBackoffCap
+	}
+	if next < respawnBackoffBase {
+		return respawnBackoffBase
+	}
+	return next
+}
+
+func (s *supervisor) sleepBackoff(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+func (s *supervisor) markFailed(path, reason string) {
+	s.mu.Lock()
+	// Ensure no live route for a failed path.
+	if c := s.children[path]; c != nil {
+		slug := c.project.Slug
+		delete(s.children, path)
+		delete(s.bySlug, slug)
+		order := s.order[:0]
+		for _, p := range s.order {
+			if p != path {
+				order = append(order, p)
+			}
+		}
+		s.order = order
+	}
+	s.failed[path] = reason
+	s.mu.Unlock()
+	if s.notify != nil {
+		s.notify("projects")
+	}
+}
+
+// snapshotFailed lists registered projects whose child failed, died, or parked.
 func (s *supervisor) snapshotFailed() []web.FailedProject {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -427,12 +671,14 @@ func (s *supervisor) snapshotFailed() []web.FailedProject {
 
 // spawn starts a child `serve --base-path /<slug>` for one repo on a fresh
 // loopback port, waits for health, and builds its prefix-stripping proxy.
-func (s *supervisor) spawn(path, slug string) (*childProc, error) {
+// Returns an error when the child never becomes healthy (no dead proxy).
+// childCtx scopes the process so intentional cancel kills only this instance.
+func (s *supervisor) spawn(childCtx context.Context, path, slug string) (*childProc, error) {
 	port, err := web.AllocPort()
 	if err != nil {
 		return nil, fmt.Errorf("allocate port: %w", err)
 	}
-	child := exec.CommandContext(s.ctx, s.self, "serve",
+	child := exec.CommandContext(childCtx, s.self, "serve",
 		"--addr", "127.0.0.1", "--port", strconv.Itoa(port), "--base-path", "/"+slug)
 	child.Dir = path
 	child.Stdout, child.Stderr = s.errw, s.errw
@@ -440,21 +686,33 @@ func (s *supervisor) spawn(path, slug string) (*childProc, error) {
 	if err := child.Start(); err != nil {
 		return nil, err
 	}
-	// Reap the child and expose its exit, so the health wait can abort EARLY: a
-	// child that refuses to boot (e.g. broken .satelle configuration —
-	// sty_d0d6bb67 refuses to run over a broken agents layer) fails in
-	// milliseconds, and waiting the full health window for it would stall
-	// workspace startup by that window per broken project.
+	pid := 0
+	if child.Process != nil {
+		pid = child.Process.Pid
+	}
+	// Reap the child and expose its exit for the health wait and post-boot watch.
 	exited := make(chan error, 1)
 	go func() { exited <- child.Wait() }()
-	if !waitHealthyOrExit(s.ctx, port, 10*time.Second, exited) {
-		fmt.Fprintf(s.errw, "warning: %s (:%d) did not become healthy\n", slug, port)
+	if !waitHealthyOrExit(childCtx, port, childHealthWindow, exited) {
+		// Kill a still-running unhealthy child so we don't leak it.
+		if child.Process != nil {
+			_ = child.Process.Kill()
+		}
+		// Drain exit so we don't leave a zombie wait.
+		select {
+		case <-exited:
+		case <-time.After(2 * time.Second):
+		}
+		return nil, fmt.Errorf("child /%s/ (:%d) did not become healthy in %s", slug, port, childHealthWindow)
 	}
 	target := &url.URL{Scheme: "http", Host: fmt.Sprintf("127.0.0.1:%d", port)}
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.FlushInterval = -1 // stream SSE through immediately
 	return &childProc{
 		cmd:     child,
+		pid:     pid,
+		port:    port,
+		exited:  exited,
 		project: web.Project{Slug: slug, Name: filepath.Base(path), Path: path},
 		handler: http.StripPrefix("/"+slug, s.withProjects(proxy)),
 	}, nil
@@ -488,16 +746,30 @@ func waitHealthyOrExit(ctx context.Context, port int, timeout time.Duration, exi
 		return ok
 	case <-exited:
 		return false
+	case <-ctx.Done():
+		return false
 	}
 }
 
-// shutdown kills every child.
+// shutdown cancels every supervise loop (no respawn) and kills lingering processes.
 func (s *supervisor) shutdown() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	cancels := make([]context.CancelFunc, 0, len(s.managing))
+	for p, cancel := range s.managing {
+		cancels = append(cancels, cancel)
+		delete(s.managing, p)
+	}
 	for _, c := range s.children {
-		if c.cmd.Process != nil {
+		if c.cmd != nil && c.cmd.Process != nil {
 			_ = c.cmd.Process.Kill()
+		}
+	}
+	s.children = map[string]*childProc{}
+	s.bySlug = map[string]*childProc{}
+	s.mu.Unlock()
+	for _, cancel := range cancels {
+		if cancel != nil {
+			cancel()
 		}
 	}
 }
