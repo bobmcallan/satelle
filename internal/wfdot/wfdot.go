@@ -197,7 +197,15 @@ type ScopedReviewer struct {
 // json_each exact filter for already-canonical tags; case-insensitive so we do
 // not repeat the plain-== trap). category and kind are NOT consulted.
 func (s Spec) ScopedReviewers(toStatus string, tags []string) []ScopedReviewer {
-	var out []ScopedReviewer
+	out, _ := s.ScopedReviewersSplit(toStatus, tags)
+	return out
+}
+
+// ScopedReviewersSplit is ScopedReviewers plus the surface-scoped candidates that
+// were FILTERED OUT by applies_to (sty_dcce86d5). Skipped only includes nodes
+// with a non-empty applies_to that matched on= but not tags — so a skip is
+// distinguishable from "no such surface gate in the workflow".
+func (s Spec) ScopedReviewersSplit(toStatus string, tags []string) (enqueued, skipped []ScopedReviewer) {
 	for _, st := range s.States {
 		if st.Agent != "reviewer" || st.Skill == "" || len(st.On) == 0 {
 			continue
@@ -208,13 +216,19 @@ func (s Spec) ScopedReviewers(toStatus string, tags []string) []ScopedReviewer {
 		if !(containsStr(st.On, "*") || containsStr(st.On, toStatus)) {
 			continue
 		}
+		ref := ScopedReviewer{Skill: st.Skill, Model: st.Model}
 		if !tagsMatchAppliesTo(st.AppliesTo, tags) {
+			// Only applies_to-filtered nodes are "skipped"; absent applies_to never skips.
+			if len(st.AppliesTo) > 0 {
+				skipped = append(skipped, ref)
+			}
 			continue
 		}
-		out = append(out, ScopedReviewer{Skill: st.Skill, Model: st.Model})
+		enqueued = append(enqueued, ref)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Skill < out[j].Skill })
-	return out
+	sort.Slice(enqueued, func(i, j int) bool { return enqueued[i].Skill < enqueued[j].Skill })
+	sort.Slice(skipped, func(i, j int) bool { return skipped[i].Skill < skipped[j].Skill })
+	return enqueued, skipped
 }
 
 // tagsMatchAppliesTo is the in-memory ANY-match for step-level applies_to

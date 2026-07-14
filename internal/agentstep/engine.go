@@ -1149,10 +1149,19 @@ func (g *Engine) scopedReviewers(ctx context.Context, item workitem.Item, toStat
 	}
 	var out []reviewerRef
 	// item.Tags decide whether a surface-scoped node is ENQUEUED (sty_c6d093c8).
-	for _, s := range spec.ScopedReviewers(toStatus, item.Tags) {
+	// Skipped applies_to filters leave a telemetry artifact so a silent skip is
+	// not identical to "no such surface gate" (sty_dcce86d5).
+	enqueued, skipped := spec.ScopedReviewersSplit(toStatus, item.Tags)
+	for _, s := range enqueued {
 		if !containsStr(exclude, s.Skill) {
 			out = append(out, reviewerRef{skill: s.Skill, model: s.Model})
 		}
+	}
+	for _, s := range skipped {
+		g.telemetryEvent(ctx, item.ID, "reviewer", "scoped-gate-skipped", map[string]any{
+			"skill": s.Skill, "to": toStatus, "reason": "applies_to",
+			"tags": item.Tags,
+		})
 	}
 	return out, nil
 }

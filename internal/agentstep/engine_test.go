@@ -297,6 +297,62 @@ func TestEngagementGuardSkippedOffEngagementEdge(t *testing.T) {
 	}
 }
 
+// Surface-scoped design gate for skip-telemetry tests (sty_dcce86d5 AC4).
+var scopedAppliesDOT = wfDoc(baselineWorkflow, `"*"`, `digraph w {
+  backlog [shape=Mdiamond]
+  in_progress [agent=executor, prompt="@skill:code"]
+  done [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
+  design [agent=reviewer, prompt="@skill:design-review", on="in_progress", applies_to="surface:ui"]
+  estimate [agent=reviewer, prompt="@skill:satelle-estimate-actual-review", on="in_progress"]
+  backlog -> in_progress [reviewer_skill="satelle-story-intent-review"]
+  in_progress -> done
+}`)
+
+// TestScopedGateSkippedTelemetry: applies_to filter emits scoped-gate-skipped
+// when tags miss, and does not when tags match (sty_dcce86d5 AC4).
+func TestScopedGateSkippedTelemetry(t *testing.T) {
+	docs := fakeDocs{workflow: scopedAppliesDOT, skillBody: "rubric", skillFound: true}
+	g, _ := newEngine(t, `{"decision":"accept"}`, docs)
+	recs := captureTelemetry(g)
+
+	// Miss: surface:cli should skip design-review
+	_, err := g.Gate(context.Background(), workitem.Item{
+		ID: "sty_cli", Status: "backlog", Tags: []string{"surface:cli"},
+	}, "in_progress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range *recs {
+		if r.kind == "scoped-gate-skipped" {
+			found = true
+			if r.data["skill"] != "design-review" {
+				t.Errorf("skip skill = %v", r.data["skill"])
+			}
+			if r.data["reason"] != "applies_to" {
+				t.Errorf("reason = %v", r.data["reason"])
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected scoped-gate-skipped telemetry, got %#v", *recs)
+	}
+
+	// Hit: surface:ui should not skip design
+	*recs = nil
+	_, err = g.Gate(context.Background(), workitem.Item{
+		ID: "sty_ui", Status: "backlog", Tags: []string{"surface:ui"},
+	}, "in_progress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range *recs {
+		if r.kind == "scoped-gate-skipped" {
+			t.Errorf("must not skip when tags match: %#v", r)
+		}
+	}
+}
+
 // Augmentation DOT: code-ui is only required for surface:ui (sty_8225d8a5 AC5).
 var engageAugDOT = wfDoc(baselineWorkflow, `"*"`, `digraph w {
   backlog     [shape=Mdiamond]
