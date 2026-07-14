@@ -7,6 +7,10 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
+## [0.0.236] - 2026-07-14
+### Fixed
+- Harden init restamp heal integration assertions (restamped report + deployed.version required on release binaries) (sty_a9ec33e7)
+
 ## [0.0.235] - 2026-07-14
 ### Fixed
 - Complete sty_a9ec33e7 heal path release with restore-exemption integration coverage
