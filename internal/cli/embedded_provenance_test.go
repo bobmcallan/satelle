@@ -286,3 +286,55 @@ func TestReconcileRecogniseBlockageUpgrade(t *testing.T) {
 		t.Errorf("stamp/body mismatch after upgrade: stamped=%v stamp=%q", stamped, stamp)
 	}
 }
+
+// TestReconcileRestampIdentical (sty_a9ec33e7): stampless body byte-identical
+// to the embedded default is re-stamped in place (verb restamped).
+func TestReconcileRestampIdentical(t *testing.T) {
+	dataDir := t.TempDir()
+	dest := filepath.Join(dataDir, "principles", "sample.md")
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// stampless identical body
+	if err := os.WriteFile(dest, []byte(sampleFM), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	verb, bres, err := reconcileEmbeddedFile(dataDir, "principles/sample.md", sampleFM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verb != reconcileRestamped {
+		t.Fatalf("verb=%q, want restamped", verb)
+	}
+	got, _ := os.ReadFile(dest)
+	want := applyEmbeddedStamp(sampleFM, embeddedSHA(sampleFM))
+	if string(got) != want {
+		t.Errorf("restamp did not write stamped body")
+	}
+	if bres.LocalPath == "" {
+		t.Error("restamp must back up pre-image first")
+	}
+}
+
+// TestReconcileStamplessEditedUntouched: stampless different body stays put.
+func TestReconcileStamplessEditedUntouched(t *testing.T) {
+	dataDir := t.TempDir()
+	dest := filepath.Join(dataDir, "principles", "sample.md")
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	authored := "---\nname: sample\ntype: principle\n---\n\n# Different\n"
+	if err := os.WriteFile(dest, []byte(authored), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	verb, bres, err := reconcileEmbeddedFile(dataDir, "principles/sample.md", sampleFM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verb != reconcileUnchanged || bres.LocalPath != "" {
+		t.Fatalf("verb=%q backup=%q, want unchanged", verb, bres.LocalPath)
+	}
+	if got, _ := os.ReadFile(dest); string(got) != authored {
+		t.Error("edited stampless file was modified")
+	}
+}

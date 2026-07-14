@@ -92,6 +92,9 @@ const (
 	reconcileUpdated   reconcileVerb = "updated"
 	reconcileUnchanged reconcileVerb = "unchanged"
 	reconcileDiverged  reconcileVerb = "diverged"
+	// reconcileRestamped: stampless file whose body is byte-identical to the
+	// current embedded default — add the stamp only (sty_a9ec33e7). Not an edit.
+	reconcileRestamped reconcileVerb = "restamped"
 )
 
 // reconcileEmbeddedFile materialises/converges one embedded-owned file at
@@ -127,6 +130,20 @@ func reconcileEmbeddedFile(dataDir, relPath, embeddedBody string, backupOpts ...
 
 	stripped, stamp, stamped := stripEmbeddedStamp(string(cur))
 	if !stamped {
+		// sty_a9ec33e7: stampless but byte-identical to the current embedded
+		// default is PROVABLY safe to re-stamp in place (no substrate meaning
+		// change). A different body stays operator-authored and untouched.
+		if string(cur) == embeddedBody || stripped == embeddedBody {
+			// Pre-mutation backup then stamp.
+			bres, berr := backupExistingFile(dataDir, BackupKindPreMutation, relPath, cur, opts)
+			if berr != nil {
+				return "", BackupResult{}, fmt.Errorf("reconcile: backup %s: %w", dest, berr)
+			}
+			if werr := writeEmbedded(dest, stampedCurrent); werr != nil {
+				return "", BackupResult{}, werr
+			}
+			return reconcileRestamped, bres, nil
+		}
 		return reconcileUnchanged, BackupResult{}, nil // operator-authored (no stamp) — untouched
 	}
 	if embeddedSHA(stripped) != stamp {
@@ -172,6 +189,8 @@ func reconcileReportLine(verb reconcileVerb, relPath string) string {
 		return initLine(true, disp)
 	case reconcileUpdated:
 		return "  ~ " + disp + " (updated from embedded)"
+	case reconcileRestamped:
+		return "  ~ " + disp + " (restamped — identical body, missing embedded_sha)"
 	case reconcileDiverged:
 		return "  ! " + disp + " (diverged; backed up to " + config.DefaultDataDir + "/backups/diverged/" + relPath + "; needs merge)"
 	default: // unchanged
