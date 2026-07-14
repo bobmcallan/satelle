@@ -100,7 +100,7 @@ func TestDetectProcessHarnesses(t *testing.T) {
 
 func TestEnsureGrokHooksCreateReconcileIdempotent(t *testing.T) {
 	repo := t.TempDir()
-	added, updated, err := ensureGrokHooks(repo)
+	added, updated, _, err := ensureGrokHooks(repo)
 	if err != nil || !added || len(updated) != 0 {
 		t.Fatalf("create: added=%v updated=%v err=%v", added, updated, err)
 	}
@@ -141,7 +141,7 @@ func TestEnsureGrokHooksCreateReconcileIdempotent(t *testing.T) {
 		}
 	}
 	// Second pass: no create, no reconcile.
-	added, updated, err = ensureGrokHooks(repo)
+	added, updated, _, err = ensureGrokHooks(repo)
 	if err != nil || added || len(updated) != 0 {
 		t.Fatalf("idempotent: added=%v updated=%v err=%v", added, updated, err)
 	}
@@ -163,16 +163,27 @@ func TestEnsureGrokHooksCreateReconcileIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The stale file is BOTH reconciled (satelle index -> reindex) AND healed with
-	// the reinforcement hooks it lacks (sty_949e8739): 1 rename + 2 added hooks.
-	added, updated, err = ensureGrokHooks(repo)
-	if err != nil || added || len(updated) != 3 {
+	// the reinforcement hooks it lacks: rename + SessionStart/PreToolUse/
+	// UserPromptSubmit/Stop (sty_949e8739 + sty_0699637c).
+	added, updated, incomplete, err := ensureGrokHooks(repo)
+	if err != nil || added || len(updated) == 0 {
 		t.Fatalf("reconcile+heal: added=%v updated=%v err=%v", added, updated, err)
+	}
+	if len(incomplete) > 0 {
+		t.Errorf("hooks still incomplete after heal: %v", incomplete)
 	}
 	got, _ := os.ReadFile(path)
 	if strings.Contains(string(got), `"satelle index"`) || !strings.Contains(string(got), `"satelle reindex"`) {
 		t.Errorf("stale not fixed:\n%s", got)
 	}
-	for _, want := range []string{`"keep-me"`, "satelle hook prompt", "satelle hook stopcheck"} {
+	for _, want := range []string{
+		`"keep-me"`,
+		"satelle hook prompt",
+		"satelle hook stopcheck",
+		"satelle hook context",
+		"pretooluse-gate-grok.sh",
+		"pretooluse-commitgate-grok.sh",
+	} {
 		if !strings.Contains(string(got), want) {
 			t.Errorf("reconcile+heal lost/omitted %q:\n%s", want, got)
 		}
@@ -555,7 +566,7 @@ func TestUpgradeFailVisibleHooks(t *testing.T) {
 	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	added, updated, err := ensureClaudeHooks(repo)
+	added, updated, _, err := ensureClaudeHooks(repo)
 	if err != nil || added {
 		t.Fatalf("heal: added=%v err=%v", added, err)
 	}
@@ -577,7 +588,7 @@ func TestUpgradeFailVisibleHooks(t *testing.T) {
 		t.Fatalf("gate script not written: %v", err)
 	}
 	// Idempotent second pass.
-	_, updated2, err := ensureClaudeHooks(repo)
+	_, updated2, _, err := ensureClaudeHooks(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -619,7 +630,7 @@ func TestUpgradeInlineFailVisibleToScript(t *testing.T) {
 	if err := os.WriteFile(path, []byte(inline), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, updated, err := ensureClaudeHooks(repo)
+	_, updated, _, err := ensureClaudeHooks(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -637,6 +648,54 @@ func TestUpgradeInlineFailVisibleToScript(t *testing.T) {
 		want := renderHookCommand("claude", sub)
 		if !strings.Contains(string(body), want) {
 			t.Errorf("missing %q in:\n%s", want, body)
+		}
+	}
+}
+
+// TestReinforceSessionStartAndPreToolUse (sty_0699637c): partial settings
+// missing SessionStart+PreToolUse gains both on re-heal without clobbering
+// existing entries.
+func TestReinforceSessionStartAndPreToolUse(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Partial: only UserPromptSubmit (the pre-sty_0699637c reinforcement set).
+	partial := `{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "PATH=$HOME/.local/bin:$PATH satelle hook prompt" } ] }
+    ]
+  },
+  "custom": true
+}
+`
+	if err := os.WriteFile(path, []byte(partial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	created, updated, incomplete, err := ensureClaudeHooks(repo)
+	if err != nil || created {
+		t.Fatalf("created=%v err=%v", created, err)
+	}
+	if len(updated) == 0 {
+		t.Fatalf("expected SessionStart/PreToolUse/Stop adds, got %v", updated)
+	}
+	if len(incomplete) > 0 {
+		t.Errorf("still incomplete: %v", incomplete)
+	}
+	body, _ := os.ReadFile(path)
+	s := string(body)
+	for _, want := range []string{
+		`"custom": true`,
+		"satelle hook prompt",
+		"satelle hook stopcheck",
+		"satelle hook context",
+		"pretooluse-gate-claude.sh",
+		"pretooluse-commitgate-claude.sh",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q:\n%s", want, s)
 		}
 	}
 }

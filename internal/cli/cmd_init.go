@@ -194,6 +194,16 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool) error {
 		fmt.Fprintln(out, line)
 	}
 
+	// 3b-bis. Deterministic principle frontmatter heals BEFORE materialize/
+	//     restamp: remove inert scope: and rewrite principles:always →
+	//     principles:session so a stampless embedded principle whose only drift
+	//     was those keys becomes body-identical to the default and reconcile can
+	//     re-stamp it (otherwise heal-after-reconcile leaves identical-but-
+	//     unstamped and checkEmbeddedStamps fails).
+	for _, line := range healPrincipleFrontmatter(dataDir, bopts) {
+		fmt.Fprintln(out, line)
+	}
+
 	// 3c. Materialise the embedded operating PRINCIPLES into .satelle/principles when
 	//     absent. The runtime index no longer overlays embedded docs (sty_94da9ac9),
 	//     so the principles:session session set + the on-demand principles must
@@ -548,7 +558,7 @@ func dirExists(path string) bool {
 func ensureProcessHooks(out io.Writer, repoRoot string) error {
 	wantClaude, wantGrok := detectProcessHarnesses(repoRoot, nil)
 	if wantClaude {
-		added, updated, err := ensureClaudeHooks(repoRoot)
+		added, updated, incomplete, err := ensureClaudeHooks(repoRoot)
 		if err != nil {
 			return err
 		}
@@ -557,9 +567,13 @@ func ensureProcessHooks(out io.Writer, repoRoot string) error {
 		} else {
 			fmt.Fprintln(out, initLine(added, ".claude/settings.json (process hooks)"))
 		}
+		if len(incomplete) > 0 {
+			fmt.Fprintf(out, "WARN  .claude/settings.json — incomplete satelle hooks after heal: missing %s\n",
+				strings.Join(incomplete, ", "))
+		}
 	}
 	if wantGrok {
-		added, updated, err := ensureGrokHooks(repoRoot)
+		added, updated, incomplete, err := ensureGrokHooks(repoRoot)
 		if err != nil {
 			return err
 		}
@@ -567,6 +581,10 @@ func ensureProcessHooks(out io.Writer, repoRoot string) error {
 			fmt.Fprintf(out, "  ~ %s (hook updated: %s)\n", grokHooksRel, strings.Join(updated, "; "))
 		} else {
 			fmt.Fprintln(out, initLine(added, grokHooksRel+" (process hooks)"))
+		}
+		if len(incomplete) > 0 {
+			fmt.Fprintf(out, "WARN  %s — incomplete satelle hooks after heal: missing %s\n",
+				grokHooksRel, strings.Join(incomplete, ", "))
 		}
 		// Project hooks load only when Grok trusts the folder; grant trust for
 		// this repo root so .grok/hooks/satelle.json is not silently skipped
@@ -678,24 +696,22 @@ const (
 	stopcheckHookCommand = "PATH=$HOME/.local/bin:$PATH satelle hook stopcheck"
 )
 
-// reinforcementHooks are the event→command entries the heal ensures exist. Marker
-// is the stable substring used to detect an already-present entry regardless of a
-// repo's PATH prefix.
-var reinforcementHooks = []struct{ event, marker, command string }{
+// reinforcementSimpleHooks are event→command entries with a single command and
+// no matcher (UserPromptSubmit, Stop). SessionStart and PreToolUse are handled
+// separately because they need multi-command groups / harness matchers
+// (sty_0699637c).
+var reinforcementSimpleHooks = []struct{ event, marker, command string }{
 	{"UserPromptSubmit", "satelle hook prompt", promptHookCommand},
 	{"Stop", "satelle hook stopcheck", stopcheckHookCommand},
 }
 
-// ensureReinforcementHooks HEALS an already-initialized repo's hook file: when the
-// UserPromptSubmit ('satelle hook prompt') or Stop ('satelle hook stopcheck')
-// reinforcement hook is absent, it APPENDS it, preserving every other key. This is
-// load-bearing, not polish: without it a repo initialized before the reinforcement
-// hooks shipped would NEVER gain them, leaving the single PreToolUse gate as the
-// only line of defence — the exact bypass this closes (sty_949e8739). Idempotent:
-// when nothing is missing it writes nothing (preserving the file byte-for-byte);
-// an unparseable file is left untouched rather than clobbered. Returns the events
-// it added.
-func ensureReinforcementHooks(path string) ([]string, error) {
+// ensureReinforcementHooks HEALS an already-initialized repo's hook file: when a
+// satelle hook event is absent, it APPENDS it, preserving every other key.
+// Covers UserPromptSubmit + Stop (sty_949e8739) and SessionStart + PreToolUse
+// (sty_0699637c). harness is "claude" or "grok" so PreToolUse matchers/scripts
+// match the scaffold for that harness. Idempotent; unparseable files are left
+// untouched. Returns the events it added.
+func ensureReinforcementHooks(path, harness string) ([]string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -710,7 +726,68 @@ func ensureReinforcementHooks(path string) ([]string, error) {
 		root["hooks"] = hooks
 	}
 	var added []string
-	for _, rh := range reinforcementHooks {
+
+	// SessionStart: need context (and reindex alongside on a full scaffold add).
+	if !hookEventHasMarker(hooks["SessionStart"], "satelle hook context") &&
+		!hookEventHasMarker(hooks["SessionStart"], "satelle reindex") {
+		group := map[string]any{
+			"hooks": []any{
+				map[string]any{"type": "command", "command": "satelle reindex"},
+				map[string]any{"type": "command", "command": "satelle hook context"},
+			},
+		}
+		arr, _ := hooks["SessionStart"].([]any)
+		hooks["SessionStart"] = append(arr, group)
+		added = append(added, "SessionStart")
+	} else if !hookEventHasMarker(hooks["SessionStart"], "satelle hook context") {
+		// reindex present but context missing — append context only.
+		group := map[string]any{
+			"hooks": []any{
+				map[string]any{"type": "command", "command": "satelle hook context"},
+			},
+		}
+		arr, _ := hooks["SessionStart"].([]any)
+		hooks["SessionStart"] = append(arr, group)
+		added = append(added, "SessionStart")
+	}
+
+	// PreToolUse: gate + commitgate with harness matchers / script-file commands.
+	if harness == "" {
+		harness = "claude"
+	}
+	gateCmd := renderHookCommand(harness, "gate")
+	commitCmd := renderHookCommand(harness, "commitgate")
+	gateMatcher := "Edit|Write|MultiEdit|NotebookEdit"
+	commitMatcher := "Bash"
+	if harness == "grok" {
+		gateMatcher = "Edit|Write|MultiEdit|NotebookEdit|search_replace|write"
+		commitMatcher = "Bash|run_terminal_command"
+	}
+	if !hookEventHasMarker(hooks["PreToolUse"], "satelle hook gate") &&
+		!hookEventHasMarker(hooks["PreToolUse"], "pretooluse-gate-") {
+		group := map[string]any{
+			"matcher": gateMatcher,
+			"hooks":   []any{map[string]any{"type": "command", "command": gateCmd}},
+		}
+		arr, _ := hooks["PreToolUse"].([]any)
+		hooks["PreToolUse"] = append(arr, group)
+		added = append(added, "PreToolUse")
+	}
+	if !hookEventHasMarker(hooks["PreToolUse"], "satelle hook commitgate") &&
+		!hookEventHasMarker(hooks["PreToolUse"], "pretooluse-commitgate-") {
+		group := map[string]any{
+			"matcher": commitMatcher,
+			"hooks":   []any{map[string]any{"type": "command", "command": commitCmd}},
+		}
+		arr, _ := hooks["PreToolUse"].([]any)
+		hooks["PreToolUse"] = append(arr, group)
+		// Only report PreToolUse once if both gate+commit were added.
+		if len(added) == 0 || added[len(added)-1] != "PreToolUse" {
+			added = append(added, "PreToolUse")
+		}
+	}
+
+	for _, rh := range reinforcementSimpleHooks {
 		if hookEventHasMarker(hooks[rh.event], rh.marker) {
 			continue
 		}
@@ -735,6 +812,42 @@ func ensureReinforcementHooks(path string) ([]string, error) {
 	}
 	sort.Strings(added)
 	return added, nil
+}
+
+// incompleteHookEvents returns event names still missing a satelle marker after
+// heal. Empty when the full set is present or the file is unparseable (caller
+// may still WARN on unparseable separately).
+func incompleteHookEvents(path string) []string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return []string{"(unreadable)"}
+	}
+	var root map[string]any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return []string{"(unparseable)"}
+	}
+	hooks, _ := root["hooks"].(map[string]any)
+	need := map[string][]string{
+		"SessionStart":     {"satelle hook context", "satelle reindex"},
+		"PreToolUse":       {"satelle hook gate", "pretooluse-gate-"},
+		"UserPromptSubmit": {"satelle hook prompt"},
+		"Stop":             {"satelle hook stopcheck"},
+	}
+	var missing []string
+	for _, event := range []string{"SessionStart", "PreToolUse", "UserPromptSubmit", "Stop"} {
+		markers := need[event]
+		ok := false
+		for _, m := range markers {
+			if hookEventHasMarker(hooks[event], m) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			missing = append(missing, event)
+		}
+	}
+	return missing
 }
 
 // hookEventHasMarker reports whether an event's hook groups already contain a
@@ -773,85 +886,86 @@ func hookEventHasMarker(event any, marker string) bool {
 // Also upgrades legacy inline / bare-exit-2 PreToolUse wrappers to the $-free
 // script-file form (sty_c75c73ed, sty_adfb9862). Returns whether it created the
 // file and any applied updates.
-func ensureClaudeHooks(repoRoot string) (bool, []string, error) {
+func ensureClaudeHooks(repoRoot string) (created bool, updated []string, incomplete []string, err error) {
 	if err := writeHookScripts(repoRoot); err != nil {
-		return false, nil, err
+		return false, nil, nil, err
 	}
 	dir := filepath.Join(repoRoot, ".claude")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return false, nil, fmt.Errorf("init: mkdir %s: %w", dir, err)
+		return false, nil, nil, fmt.Errorf("init: mkdir %s: %w", dir, err)
 	}
 	path := filepath.Join(dir, "settings.json")
 	if _, err := os.Stat(path); err == nil {
-		updated, herr := healExistingHookFile(path, "claude", repoRoot)
+		updated, incomplete, herr := healExistingHookFile(path, "claude", repoRoot)
 		if herr != nil {
-			return false, nil, herr
+			return false, nil, nil, herr
 		}
-		return false, updated, nil
+		return false, updated, incomplete, nil
 	} else if !os.IsNotExist(err) {
-		return false, nil, fmt.Errorf("init: stat %s: %w", path, err)
+		return false, nil, nil, fmt.Errorf("init: stat %s: %w", path, err)
 	}
 	if err := os.WriteFile(path, buildClaudeHookSettings(), 0o644); err != nil {
-		return false, nil, fmt.Errorf("init: write %s: %w", path, err)
+		return false, nil, nil, fmt.Errorf("init: write %s: %w", path, err)
 	}
-	return true, nil, nil
+	return true, nil, nil, nil
 }
 
 // ensureGrokHooks writes .grok/hooks/satelle.json when absent, and reconciles
 // known-retired satelle commands in an existing satelle-owned file. Other files
 // under .grok/hooks/ are never touched. Returns created + applied updates.
-func ensureGrokHooks(repoRoot string) (bool, []string, error) {
+func ensureGrokHooks(repoRoot string) (created bool, updated []string, incomplete []string, err error) {
 	if err := writeHookScripts(repoRoot); err != nil {
-		return false, nil, err
+		return false, nil, nil, err
 	}
 	dir := filepath.Join(repoRoot, ".grok", "hooks")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return false, nil, fmt.Errorf("init: mkdir %s: %w", dir, err)
+		return false, nil, nil, fmt.Errorf("init: mkdir %s: %w", dir, err)
 	}
 	path := filepath.Join(repoRoot, filepath.FromSlash(grokHooksRel))
 	if _, err := os.Stat(path); err == nil {
-		updated, herr := healExistingHookFile(path, "grok", repoRoot)
+		updated, incomplete, herr := healExistingHookFile(path, "grok", repoRoot)
 		if herr != nil {
-			return false, nil, herr
+			return false, nil, nil, herr
 		}
-		return false, updated, nil
+		return false, updated, incomplete, nil
 	} else if !os.IsNotExist(err) {
-		return false, nil, fmt.Errorf("init: stat %s: %w", path, err)
+		return false, nil, nil, fmt.Errorf("init: stat %s: %w", path, err)
 	}
 	if err := os.WriteFile(path, buildGrokHookSettings(), 0o644); err != nil {
-		return false, nil, fmt.Errorf("init: write %s: %w", path, err)
+		return false, nil, nil, fmt.Errorf("init: write %s: %w", path, err)
 	}
-	return true, nil, nil
+	return true, nil, nil, nil
 }
 
 // healExistingHookFile applies reconcile + reinforcement + fail-visible upgrade
 // to an existing hook settings file. Returns the list of human-readable updates
-// (empty when nothing changed).
-func healExistingHookFile(path, harness, repoRoot string) ([]string, error) {
+// (empty when nothing changed). incomplete is a WARN note when satelle hooks
+// remain incomplete after heal (sty_0699637c).
+func healExistingHookFile(path, harness, repoRoot string) (updated []string, incomplete []string, err error) {
 	if err := writeHookScripts(repoRoot); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var updated []string
 	renames, err := reconcileHookFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("init: reconcile %s: %w", path, err)
+		return nil, nil, fmt.Errorf("init: reconcile %s: %w", path, err)
 	}
 	updated = append(updated, renames...)
-	healed, err := ensureReinforcementHooks(path)
+	healed, err := ensureReinforcementHooks(path, harness)
 	if err != nil {
-		return nil, fmt.Errorf("init: reinforce %s: %w", path, err)
+		return nil, nil, fmt.Errorf("init: reinforce %s: %w", path, err)
 	}
 	for _, e := range healed {
 		updated = append(updated, "added "+e+" hook")
 	}
 	n, err := upgradeFailVisibleHooks(path, harness)
 	if err != nil {
-		return nil, fmt.Errorf("init: fail-visible upgrade %s: %w", path, err)
+		return nil, nil, fmt.Errorf("init: fail-visible upgrade %s: %w", path, err)
 	}
 	if n > 0 {
 		updated = append(updated, fmt.Sprintf("upgraded %d PreToolUse hook(s) to script-file form", n))
 	}
-	return updated, nil
+	incomplete = incompleteHookEvents(path)
+	return updated, incomplete, nil
 }
 
 // upgradeFailVisibleHooks rewrites legacy PreToolUse gate/commitgate commands

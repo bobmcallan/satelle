@@ -5,6 +5,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/web"
@@ -49,6 +52,10 @@ func TestAssignSlugDedupAndReserved(t *testing.T) {
 func TestChildRootsEmptyRegistry(t *testing.T) {
 	t.Setenv("SATELLE_HOME", t.TempDir()) // isolated, empty registry
 	bound := t.TempDir()
+	// bound must be a live satelle root (sty_7a8d5d44 filter).
+	if err := os.MkdirAll(filepath.Join(bound, ".satelle"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	roots := registeredRoots(bound)
 	if len(roots) != 1 || roots[0] != bound {
 		t.Errorf("registeredRoots = %v, want [%s]", roots, bound)
@@ -57,6 +64,56 @@ func TestChildRootsEmptyRegistry(t *testing.T) {
 	// empty registry still yields the launch repo as the sole child.
 	if cr := childRoots(bound); len(cr) != 1 || cr[0] != bound {
 		t.Errorf("childRoots with no registry = %v, want [%s]", cr, bound)
+	}
+}
+
+// TestRegisteredRootsSkipsDeadPaths (sty_7a8d5d44 AC3): missing paths and dirs
+// without .satelle are dropped — no child spawn surface for them.
+func TestRegisteredRootsSkipsDeadPaths(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SATELLE_HOME", home)
+
+	bound := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(bound, ".satelle"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	live := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(live, ".satelle"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	deadMissing := filepath.Join(t.TempDir(), "gone") // never created
+	deadNoSatelle := t.TempDir()                      // exists but no .satelle
+
+	// Write global registry with live + dead entries.
+	cfg := "\n[workspace]\nrepos = [\n"
+	for _, p := range []string{live, deadMissing, deadNoSatelle} {
+		cfg += "  " + strconv.Quote(p) + ",\n"
+	}
+	cfg += "]\n"
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	roots := registeredRoots(bound)
+	want := map[string]bool{bound: true, live: true}
+	if len(roots) != 2 {
+		t.Fatalf("registeredRoots = %v, want bound+live only", roots)
+	}
+	for _, r := range roots {
+		if !want[r] {
+			t.Errorf("unexpected root %q", r)
+		}
+	}
+	// Explicit: dead paths never appear.
+	for _, dead := range []string{deadMissing, deadNoSatelle} {
+		for _, r := range roots {
+			if r == dead {
+				t.Errorf("dead root %q not filtered", dead)
+			}
+		}
 	}
 }
 

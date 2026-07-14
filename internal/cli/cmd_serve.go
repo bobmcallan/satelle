@@ -188,7 +188,9 @@ func listenServe(cmd *cobra.Command, ctx context.Context, addr string, handler h
 }
 
 // registeredRoots returns the de-duplicated, absolute repo roots: the bound repo
-// first, then every registered workspace repo.
+// first, then every registered workspace repo. Roots whose path is missing or
+// does not contain a .satelle directory are skipped so serve never spawns a
+// child or emits a /<slug>/ route for dead registry entries (sty_7a8d5d44).
 func registeredRoots(boundRepo string) []string {
 	seen := map[string]bool{}
 	var roots []string
@@ -202,6 +204,9 @@ func registeredRoots(boundRepo string) []string {
 		if seen[p] {
 			return
 		}
+		if !isLiveSatelleRoot(p) {
+			return
+		}
 		seen[p] = true
 		roots = append(roots, p)
 	}
@@ -212,6 +217,17 @@ func registeredRoots(boundRepo string) []string {
 		}
 	}
 	return roots
+}
+
+// isLiveSatelleRoot reports whether path is an existing directory that holds a
+// .satelle data dir — the filter for multi-serve registry roots (sty_7a8d5d44).
+func isLiveSatelleRoot(path string) bool {
+	st, err := os.Stat(path)
+	if err != nil || !st.IsDir() {
+		return false
+	}
+	sat, err := os.Stat(filepath.Join(path, config.DefaultDataDir))
+	return err == nil && sat.IsDir()
 }
 
 // childRoots returns every repo served as a child — the launch repo first, then

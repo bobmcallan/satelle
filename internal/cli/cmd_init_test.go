@@ -578,7 +578,7 @@ func TestEnsureGitignoreAppendsOnce(t *testing.T) {
 
 func TestEnsureClaudeHooksIdempotent(t *testing.T) {
 	repo := t.TempDir()
-	created, _, err := ensureClaudeHooks(repo)
+	created, _, _, err := ensureClaudeHooks(repo)
 	if err != nil || !created {
 		t.Fatalf("first call: created=%v err=%v, want created", created, err)
 	}
@@ -617,7 +617,7 @@ func TestEnsureClaudeHooksIdempotent(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{\"custom\":true}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	created2, updated2, err := ensureClaudeHooks(repo)
+	created2, updated2, _, err := ensureClaudeHooks(repo)
 	if err != nil || created2 {
 		t.Fatalf("second call: created=%v err=%v, want not created", created2, err)
 	}
@@ -632,7 +632,7 @@ func TestEnsureClaudeHooksIdempotent(t *testing.T) {
 	}
 	// Idempotent: a THIRD call adds nothing and rewrites nothing (already healed).
 	before, _ := os.ReadFile(path)
-	created3, updated3, err := ensureClaudeHooks(repo)
+	created3, updated3, _, err := ensureClaudeHooks(repo)
 	after, _ := os.ReadFile(path)
 	if err != nil || created3 || len(updated3) != 0 || string(before) != string(after) {
 		t.Fatalf("third call not idempotent: created=%v updated=%v err=%v changed=%v",

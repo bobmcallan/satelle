@@ -124,7 +124,7 @@ func TestDetectScaffoldDrift_HealClears(t *testing.T) {
 	if len(DetectScaffoldDrift(repo)) == 0 {
 		t.Fatal("pre-heal must drift")
 	}
-	if _, _, err := ensureClaudeHooks(repo); err != nil {
+	if _, _, _, err := ensureClaudeHooks(repo); err != nil {
 		t.Fatal(err)
 	}
 	if fs := DetectScaffoldDrift(repo); len(fs) != 0 {
