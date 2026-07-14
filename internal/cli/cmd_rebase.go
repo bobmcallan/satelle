@@ -110,6 +110,11 @@ func runRebase(out io.Writer, in io.Reader, dataDir string, yes bool, now time.T
 		backedUp++
 		fmt.Fprintf(out, "  ^ %s/ → %s\n", kind, dst)
 	}
+	// Best-effort hosted push of the pre-wipe tree (sty_873a5380 AC2).
+	if n, msg := pushBackupTreeHosted(backupDir, opts); msg != "" {
+		fmt.Fprintln(out, msg)
+		_ = n
+	}
 
 	// 2+3. Recreate each dir (with its README keep-file) and redeploy the complete
 	//      default solution — the same materialisers init uses on a fresh repo.

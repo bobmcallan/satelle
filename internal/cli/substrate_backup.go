@@ -156,13 +156,57 @@ func backupExistingPath(dataDir string, kind BackupKind, relPath, absPath string
 // Empty when local_only and no hosted channel.
 func backupPolicyNotice(opts BackupOpts, localRoot string) string {
 	if opts.HostedServer != "" && opts.HostedProject != "" {
-		// Directory-level hosted push is out of scope for a single wipe; surface
-		// local root and that hosted is configured for file-level backups.
-		return "backup: local " + localRoot + " (hosted channel configured — file-level pre-mutation backups also go online)"
+		return "backup: local " + localRoot + " (hosted channel configured — pushing pre-images next)"
 	}
 	if opts.LocalOnly {
 		return ""
 	}
 	return "backup: local only at " + localRoot +
 		" — online/personal backup is available via `satelle login` + [hosted] server/project; set [backup] local_only = true to suppress this advisory"
+}
+
+// pushBackupTreeHosted walks a local backup tree (e.g. rebase's timestamped
+// dir) and best-effort pushes each regular file to the personal hosted
+// documents partition under backups/<rel-from-tree-root>. Returns count pushed
+// and a summary notice (empty when no hosted channel or nothing to push).
+func pushBackupTreeHosted(localRoot string, opts BackupOpts) (int, string) {
+	if opts.HostedServer == "" || opts.HostedProject == "" {
+		return 0, ""
+	}
+	var n int
+	var firstErr error
+	_ = filepath.Walk(localRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		rel, rerr := filepath.Rel(localRoot, path)
+		if rerr != nil {
+			return nil
+		}
+		body, rerr := os.ReadFile(path)
+		if rerr != nil {
+			if firstErr == nil {
+				firstErr = rerr
+			}
+			return nil
+		}
+		// Reuse the same hosted path scheme as file-level backups.
+		dest, perr := pushHostedBackup(opts, filepath.ToSlash(rel), body)
+		if perr != nil {
+			if firstErr == nil {
+				firstErr = perr
+			}
+			return nil
+		}
+		_ = dest
+		n++
+		return nil
+	})
+	if n == 0 && firstErr != nil {
+		return 0, fmt.Sprintf("backup: hosted unavailable (%v) — kept local tree at %s", firstErr, localRoot)
+	}
+	if n == 0 {
+		return 0, ""
+	}
+	return n, fmt.Sprintf("backup: pushed %d file(s) to hosted project %s (local %s)", n, opts.HostedProject, localRoot)
 }

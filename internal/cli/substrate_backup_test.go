@@ -88,3 +88,32 @@ func TestBackupExistingPathAbsentIsNoop(t *testing.T) {
 		t.Errorf("absent file should not create backup, got %s", res.LocalPath)
 	}
 }
+
+func TestPushBackupTreeHosted(t *testing.T) {
+	root := t.TempDir()
+	// two files under kinds
+	for _, rel := range []string{"skills/a.md", "principles/b.md"} {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(rel), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var got []string
+	n, msg := pushBackupTreeHosted(root, BackupOpts{
+		HostedServer:  "https://example.test",
+		HostedProject: "proj",
+		HostedPush: func(_ context.Context, rel string, body []byte) (string, error) {
+			got = append(got, rel)
+			return "h://" + rel, nil
+		},
+	})
+	if n != 2 {
+		t.Fatalf("pushed %d, want 2; msg=%q got=%v", n, msg, got)
+	}
+	if !strings.Contains(msg, "pushed 2") {
+		t.Errorf("msg = %q", msg)
+	}
+}
