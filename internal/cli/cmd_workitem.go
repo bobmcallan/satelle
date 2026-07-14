@@ -115,6 +115,16 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 				tags, _ := f.GetStringSlice("tags")
 				req["tags"] = tags
 			}
+			// Additive tag mutation (sty_033d4611): never clobbers the rest.
+			// Combined with --tags (full replace) is rejected by the verb.
+			if f.Changed("add-tags") {
+				add, _ := f.GetStringSlice("add-tags")
+				req["add_tags"] = add
+			}
+			if f.Changed("remove-tags") {
+				rm, _ := f.GetStringSlice("remove-tags")
+				req["remove_tags"] = rm
+			}
 			return dispatch(cmd, group+"-set", req)
 		},
 	}
@@ -125,7 +135,9 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 	set.Flags().String("category", "", "new category")
 	set.Flags().String("parent", "", "new parent id")
 	set.Flags().String("acceptance", "", "new acceptance criteria")
-	set.Flags().StringSlice("tags", nil, "replace tags (comma-separated)")
+	set.Flags().StringSlice("tags", nil, "replace entire tag set (comma-separated); exclusive of --add-tags/--remove-tags")
+	set.Flags().StringSlice("add-tags", nil, "add tags without dropping existing ones (comma-separated)")
+	set.Flags().StringSlice("remove-tags", nil, "remove tags: exact match, or namespace group (sprint: / sprint:*)")
 
 	parent.AddCommand(create, get, list, set)
 	if group == "story" {

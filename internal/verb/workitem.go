@@ -243,6 +243,8 @@ func workItemGet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 
 // setReq is the request body for story-set / task-set. Pointer fields give
 // partial-update semantics: a field absent from the JSON stays unchanged.
+// Tags is full-replace. AddTags/RemoveTags are additive (sty_033d4611) and must
+// not be combined with Tags in one call.
 type setReq struct {
 	ID                 string    `json:"id"`
 	Title              *string   `json:"title,omitempty"`
@@ -253,6 +255,8 @@ type setReq struct {
 	ParentID           *string   `json:"parent_id,omitempty"`
 	AcceptanceCriteria *string   `json:"acceptance_criteria,omitempty"`
 	Tags               *[]string `json:"tags,omitempty"`
+	AddTags            []string  `json:"add_tags,omitempty"`
+	RemoveTags         []string  `json:"remove_tags,omitempty"`
 }
 
 func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
@@ -274,6 +278,16 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	current, err := store.Get(ctx, req.ID)
 	if err != nil {
 		return nil, err
+	}
+
+	// Tag mutation algebra (sty_033d4611): full-replace (--tags) is exclusive of
+	// additive add/remove. Combined add+remove applies removes first, then adds.
+	if req.Tags != nil && (len(req.AddTags) > 0 || len(req.RemoveTags) > 0) {
+		return nil, fmt.Errorf("verb: tags (full replace) cannot be combined with add_tags/remove_tags — use one mode")
+	}
+	if len(req.AddTags) > 0 || len(req.RemoveTags) > 0 {
+		merged := applyTagMutation(current.Tags, req.AddTags, req.RemoveTags)
+		req.Tags = &merged
 	}
 
 	// Definition freeze (sty_b572537f): once a STORY leaves its workflow's entry
@@ -853,6 +867,67 @@ func recordCost(ctx context.Context, raw json.RawMessage, prefix, kind string) (
 	appendOpLog("story-"+prefix, it.ID, body, now)
 	notifyChange(panelTopic(it.Kind))
 	return json.Marshal(it)
+}
+
+// applyTagMutation applies remove then add against existing tags (sty_033d4611).
+// Remove entries may be exact tags or a namespace group: "sprint:" or "sprint:*"
+// drops every tag with that axis. Adds that already exist are no-ops (set
+// semantics). Order: survivors keep relative order; new adds append in the
+// order given. Result is duplicate-free.
+func applyTagMutation(existing, add, remove []string) []string {
+	// Build remove predicates.
+	exact := map[string]bool{}
+	var axes []string // namespace axes to strip entirely
+	for _, r := range remove {
+		r = strings.TrimSpace(r)
+		if r == "" {
+			continue
+		}
+		if strings.HasSuffix(r, ":*") {
+			axes = append(axes, strings.TrimSuffix(r, ":*"))
+			continue
+		}
+		if strings.HasSuffix(r, ":") && !strings.Contains(r[:len(r)-1], ":") {
+			// "sprint:" with empty value → group remove
+			axes = append(axes, strings.TrimSuffix(r, ":"))
+			continue
+		}
+		exact[r] = true
+	}
+	dropAxis := func(tag string) bool {
+		axis, _, ok := strings.Cut(tag, ":")
+		if !ok {
+			return false
+		}
+		for _, a := range axes {
+			if a == axis {
+				return true
+			}
+		}
+		return false
+	}
+
+	out := make([]string, 0, len(existing)+len(add))
+	seen := map[string]bool{}
+	for _, t := range existing {
+		if exact[t] || dropAxis(t) {
+			continue
+		}
+		if seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	for _, t := range add {
+		t = strings.TrimSpace(t)
+		if t == "" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	return out
 }
 
 // upsertKeyedTags returns existing with any tag whose `key:` matches a key in kv

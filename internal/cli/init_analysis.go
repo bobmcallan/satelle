@@ -156,9 +156,14 @@ func placementFixChannel(defect string) string {
 	case strings.Contains(defect, "unknown tag axis"):
 		return "edit the principle: remove invented tag axes (kind:*, epic:*, …); on principles only type: and principles: are legal"
 	case strings.Contains(defect, "illegal residency") || strings.Contains(defect, "residency-ish"):
+		// principles:always is auto-healed by init; other illegal residency tags
+		// still need a hand edit.
+		if strings.Contains(defect, "principles:always") {
+			return "re-run `satelle init` — it migrates principles:always → principles:session"
+		}
 		return "edit the principle: use only principles:session for system residency, or drop the principles:* tag for on-demand"
 	case strings.Contains(defect, "scope:"):
-		return "edit the principle: remove the inert scope: key — residency is the principles:session tag alone"
+		return "re-run `satelle init` — it removes the inert scope: key on principles"
 	case strings.Contains(defect, "ceiling"):
 		return "trim a principles:session principle or the constitution so SessionStart stays under the byte ceiling"
 	default:
