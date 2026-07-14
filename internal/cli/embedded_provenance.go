@@ -96,12 +96,19 @@ const (
 
 // reconcileEmbeddedFile materialises/converges one embedded-owned file at
 // dataDir/relPath from embeddedBody, per the decision table at the top of this
-// file. On divergence it backs the on-disk file up to
-// dataDir/backups/diverged/<relPath> (deterministic, clock-free -> idempotent)
-// and leaves the original in place. Files are written 0o644 (editable substrate,
-// not a generated 0o444 view). relPath is the kind-relative slash path (e.g.
-// "principles/x.md"). Returns the verb and the backup path (divergence only).
-func reconcileEmbeddedFile(dataDir, relPath, embeddedBody string) (reconcileVerb, string, error) {
+// file. On divergence or converge-overwrite it backs the on-disk file up first
+// via the shared helper (sty_873a5380) under dataDir/backups/<kind>/<relPath>
+// and leaves the original in place on diverge. Files are written 0o644
+// (editable substrate, not a generated 0o444 view). relPath is the kind-relative
+// slash path (e.g. "principles/x.md"). Returns the verb and the backup path
+// (diverge / update only).
+//
+// backupOpts is optional (zero value → local floor + advisory when no hosted).
+func reconcileEmbeddedFile(dataDir, relPath, embeddedBody string, backupOpts ...BackupOpts) (reconcileVerb, string, error) {
+	var opts BackupOpts
+	if len(backupOpts) > 0 {
+		opts = backupOpts[0]
+	}
 	dest := filepath.Join(dataDir, filepath.FromSlash(relPath))
 	stampedCurrent := applyEmbeddedStamp(embeddedBody, embeddedSHA(embeddedBody))
 
@@ -122,20 +129,25 @@ func reconcileEmbeddedFile(dataDir, relPath, embeddedBody string) (reconcileVerb
 	}
 	if embeddedSHA(stripped) != stamp {
 		// Operator edited the body since it was stamped — never clobber.
-		backup := filepath.Join(dataDir, "backups", "diverged", filepath.FromSlash(relPath))
-		if berr := writeEmbedded(backup, string(cur)); berr != nil {
+		bres, berr := backupExistingFile(dataDir, BackupKindDiverged, relPath, cur, opts)
+		if berr != nil {
 			return "", "", fmt.Errorf("reconcile: backup %s: %w", dest, berr)
 		}
-		return reconcileDiverged, backup, nil
+		return reconcileDiverged, bres.LocalPath, nil
 	}
 	// Unedited seed. Converge to the current embedded body only if it moved on.
 	if stamp == embeddedSHA(embeddedBody) {
 		return reconcileUnchanged, "", nil
 	}
+	// Pre-mutation backup before overwrite (sty_873a5380).
+	bres, berr := backupExistingFile(dataDir, BackupKindPreMutation, relPath, cur, opts)
+	if berr != nil {
+		return "", "", fmt.Errorf("reconcile: backup %s: %w", dest, berr)
+	}
 	if werr := writeEmbedded(dest, stampedCurrent); werr != nil {
 		return "", "", werr
 	}
-	return reconcileUpdated, "", nil
+	return reconcileUpdated, bres.LocalPath, nil
 }
 
 // writeEmbedded writes editable substrate (0o644), creating parent dirs.

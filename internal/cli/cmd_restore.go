@@ -23,6 +23,11 @@ executor skills and the operating principles — OVERWRITING the on-disk copies
 under .satelle. It is the recovery path when a repo's substrate is broken or has
 drifted: the inverse of init's never-clobber seeding.
 
+Before any overwrite of an EXISTING file, the pre-image is backed up under
+.satelle/backups/restore/ (and to the personal hosted service when configured —
+see [backup] local_only and [hosted]). Local floor always; online is best-effort
+and never blocks a heal. (sty_873a5380)
+
 Because it overwrites files it asks for confirmation first (pass --yes to
 confirm non-interactively). Embedded WORKFLOWS are deliberately NOT restored —
 a repo's workflow set is its own (the same-named embedded defaults would clobber
@@ -35,7 +40,7 @@ workflows, documents, tasks, configs, constitution — are never touched.`,
 			if err != nil {
 				return err
 			}
-			return runRestore(cmd.OutOrStdout(), cmd.InOrStdin(), filepath.Dir(a.DBPath), yes)
+			return runRestore(cmd.OutOrStdout(), cmd.InOrStdin(), filepath.Dir(a.DBPath), yes, ResolveBackupOpts(a.Config))
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the overwrite non-interactively")
@@ -56,7 +61,11 @@ type restorePlanEntry struct {
 // own, and the same-named embedded defaults would clobber a customized
 // lifecycle (`satelle rebase` owns the workflow reset, with a backup) — or any
 // file without an embedded counterpart.
-func runRestore(out io.Writer, in io.Reader, dataDir string, yes bool) error {
+func runRestore(out io.Writer, in io.Reader, dataDir string, yes bool, backupOpts ...BackupOpts) error {
+	var opts BackupOpts
+	if len(backupOpts) > 0 {
+		opts = backupOpts[0]
+	}
 	var plan []restorePlanEntry
 	for _, d := range config.EmbeddedDefaults() {
 		if d.Kind == "workflows" {
@@ -108,9 +117,26 @@ func runRestore(out io.Writer, in io.Reader, dataDir string, yes bool) error {
 	}
 
 	restored := 0
+	var advisoryPrinted bool
 	for _, e := range plan {
 		if e.action == "unchanged" {
 			continue
+		}
+		// Pre-mutation backup for EXISTING files only (sty_873a5380).
+		if e.action == "overwrite" {
+			bres, berr := backupExistingPath(dataDir, BackupKindRestore, filepath.ToSlash(e.rel), e.path, opts)
+			if berr != nil {
+				return fmt.Errorf("restore: backup %s: %w", e.rel, berr)
+			}
+			if bres.Notice != "" && !advisoryPrinted {
+				fmt.Fprintln(out, bres.Notice)
+				// Print the advisory once; per-file hosted destinations still land.
+				if strings.Contains(bres.Notice, "online/personal backup") {
+					advisoryPrinted = true
+				}
+			} else if bres.Notice != "" && !strings.Contains(bres.Notice, "online/personal backup") {
+				fmt.Fprintln(out, bres.Notice)
+			}
 		}
 		if err := os.MkdirAll(filepath.Dir(e.path), 0o755); err != nil {
 			return fmt.Errorf("restore: %s: %w", e.rel, err)

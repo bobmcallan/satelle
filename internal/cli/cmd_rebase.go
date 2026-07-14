@@ -33,7 +33,9 @@ func init() {
 
   1. BACKS UP .satelle/{workflows,skills,principles} to a timestamped directory
      under .satelle/backups/ — mandatory: if the backup cannot be written the
-     rebase aborts with nothing changed,
+     rebase aborts with nothing changed. Same backups/ root as init/restore
+     pre-mutation backups (sty_873a5380); online/personal channel is best-effort
+     (see [backup] local_only and [hosted]).
   2. WIPES those three dirs (the backup is the undo),
   3. REDEPLOYS the complete default solution: the generic base, parent, and
      task-execution workflows plus every gate skill they reference, and the
@@ -52,7 +54,7 @@ confirm non-interactively).`,
 			if err != nil {
 				return err
 			}
-			return runRebase(cmd.OutOrStdout(), cmd.InOrStdin(), filepath.Dir(a.DBPath), yes, time.Now())
+			return runRebase(cmd.OutOrStdout(), cmd.InOrStdin(), filepath.Dir(a.DBPath), yes, time.Now(), ResolveBackupOpts(a.Config))
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the wipe non-interactively")
@@ -63,7 +65,11 @@ confirm non-interactively).`,
 // backup is the wipe: each kind dir is RENAMED into the timestamped backup dir,
 // so no bytes are lost before the defaults land — and a rename failure aborts
 // before anything else moves (the backup is mandatory).
-func runRebase(out io.Writer, in io.Reader, dataDir string, yes bool, now time.Time) error {
+func runRebase(out io.Writer, in io.Reader, dataDir string, yes bool, now time.Time, backupOpts ...BackupOpts) error {
+	var opts BackupOpts
+	if len(backupOpts) > 0 {
+		opts = backupOpts[0]
+	}
 	backupDir := filepath.Join(dataDir, "backups", now.Format("20060102-150405"))
 
 	// Show the plan, then require an explicit yes — rebase wipes authored files.
@@ -81,8 +87,15 @@ func runRebase(out io.Writer, in io.Reader, dataDir string, yes bool, now time.T
 
 	// 1. Backup (mandatory): move each existing kind dir under the backup dir. A
 	//    failure here aborts — a wipe must never proceed without its backup.
+	//    Directory-level rename is the pre-mutation copy for wipe (same backups/
+	//    root as the file-level helper; sty_873a5380).
 	if err := os.MkdirAll(backupDir, 0o755); err != nil {
 		return fmt.Errorf("rebase: create backup dir %s: %w (aborted — nothing changed)", backupDir, err)
+	}
+	// Advisory / online policy via the shared helper surface (empty body path
+	// records the policy notice without a file copy — dirs are moved below).
+	if note := backupPolicyNotice(opts, backupDir); note != "" {
+		fmt.Fprintln(out, note)
 	}
 	backedUp := 0
 	for _, kind := range rebaseKinds {

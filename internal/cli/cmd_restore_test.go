@@ -31,12 +31,13 @@ func TestRunRestoreOverwritesDrift(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(p, []byte("drifted content"), 0o644); err != nil {
+	pre := []byte("drifted content")
+	if err := os.WriteFile(p, pre, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	var out strings.Builder
-	if err := runRestore(&out, strings.NewReader(""), dataDir, true); err != nil {
+	if err := runRestore(&out, strings.NewReader(""), dataDir, true, BackupOpts{LocalOnly: true}); err != nil {
 		t.Fatalf("restore --yes: %v", err)
 	}
 	got, err := os.ReadFile(p)
@@ -50,6 +51,11 @@ func TestRunRestoreOverwritesDrift(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "re-materialised") {
 		t.Errorf("restore should report what it did:\n%s", out.String())
+	}
+	// sty_873a5380: pre-image under backups/restore/
+	bpath := filepath.Join(dataDir, "backups", "restore", "skills", d.Name+".md")
+	if b, err := os.ReadFile(bpath); err != nil || string(b) != string(pre) {
+		t.Errorf("restore pre-mutation backup missing/wrong at %s: err=%v", bpath, err)
 	}
 	// restore never touches workflows at all (only skills/principles) — init/rebase
 	// own seeding the baseline workflow to disk.
