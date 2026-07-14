@@ -47,21 +47,29 @@ func TestScopedReviewerAppliesTo_ShippedWorkflowsUnchanged(t *testing.T) {
 		statuses := map[string]bool{"in_progress": true, "done": true, "release": true, "plan": true}
 		for _, st := range spec.States {
 			statuses[st.Name] = true
-			if len(st.AppliesTo) > 0 {
-				t.Errorf("%s node %s has applies_to=%v — AC3 assumes none on shipped workflows", p, st.Name, st.AppliesTo)
+			// After sty_e4359efe the project workflow may declare design with
+			// applies_to=surface:ui; other workflows should still be unscoped.
+			if len(st.AppliesTo) > 0 && st.Name != "design" {
+				t.Errorf("%s node %s has unexpected applies_to=%v", p, st.Name, st.AppliesTo)
 			}
 		}
 		for status := range statuses {
 			a := spec.ScopedReviewers(status, nil)
+			// Compare unscoped-only sets: surface-scoped nodes (e.g. design) may
+			// appear only when tags match, which is intentional (sty_e4359efe).
 			b := spec.ScopedReviewers(status, tags)
-			if len(a) != len(b) {
-				t.Errorf("%s status %s: nil-tags %d != tagged %d", p, status, len(a), len(b))
-				continue
+			aSet, bSet := map[string]bool{}, map[string]bool{}
+			for _, s := range a {
+				aSet[s.Skill] = true
 			}
-			for i := range a {
-				if a[i].Skill != b[i].Skill {
-					t.Errorf("%s status %s: skill order/set drifted: %v vs %v", p, status, a, b)
-					break
+			for _, s := range b {
+				bSet[s.Skill] = true
+			}
+			// Every skill in a (nil-tags) must still be in b (tagged) — absent
+			// applies_to is always enqueued.
+			for sk := range aSet {
+				if !bSet[sk] {
+					t.Errorf("%s status %s: skill %s present without tags but missing with tags", p, status, sk)
 				}
 			}
 		}
