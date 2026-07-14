@@ -1138,7 +1138,8 @@ func (g *Engine) scopedReviewers(ctx context.Context, item workitem.Item, toStat
 		return nil, nil
 	}
 	var out []reviewerRef
-	for _, s := range spec.ScopedReviewers(toStatus) {
+	// item.Tags decide whether a surface-scoped node is ENQUEUED (sty_c6d093c8).
+	for _, s := range spec.ScopedReviewers(toStatus, item.Tags) {
 		if !containsStr(exclude, s.Skill) {
 			out = append(out, reviewerRef{skill: s.Skill, model: s.Model})
 		}

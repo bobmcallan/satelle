@@ -31,7 +31,8 @@ const StepSummarySkill = "satelle-step-summary"
 //   - at least one state;
 //   - every transition endpoint is a declared state (no dangling edge);
 //   - at least one terminal state (a state with no outgoing edge);
-//   - a state named "done", if present, is terminal.
+//   - a state named "done", if present, is terminal;
+//   - unknown node/edge attributes and mis-placed applies_to (sty_c6d093c8).
 //
 // The done gate is NOT mandated: it is whatever the workflow declares (sty_9a139c78).
 func Validate(spec Spec) []string {
@@ -64,6 +65,27 @@ func Validate(spec Spec) []string {
 	}
 	if known["done"] && hasOut["done"] {
 		problems = append(problems, `state "done" must be terminal (it has an outgoing edge)`)
+	}
+	// Parse-time attr / placement problems (unknown keys, applies_to misuse).
+	// Parse returns only ok/not-ok, so it CARRIES them here (sty_c6d093c8).
+	problems = append(problems, spec.AttrProblems...)
+	for _, st := range spec.States {
+		if len(st.AppliesTo) == 0 {
+			continue
+		}
+		// Performing nodes: surface-scoped executor composition is sty_8225d8a5.
+		if st.IsPerforming() {
+			problems = append(problems, fmt.Sprintf(
+				"applies_to on performing node %q is not supported (step-level applies_to gates edge-less reviewer nodes only; surface-scoping an executor rubric is sty_8225d8a5)",
+				st.Name))
+			continue
+		}
+		// Reviewer without on=: would parse and do nothing — same fail-open this story kills.
+		if st.Agent == "reviewer" && len(st.On) == 0 {
+			problems = append(problems, fmt.Sprintf(
+				"applies_to on node %q is ignored without on= (step-level applies_to only filters edge-less scoped reviewers)",
+				st.Name))
+		}
 	}
 	return problems
 }
@@ -121,6 +143,15 @@ type State struct {
 	// Empty means inherit the binding's model. The binding remains the source
 	// of command template and tools; only {model} varies.
 	Model string
+	// AppliesTo is the node's optional applies_to="surface:ui,…" list
+	// (sty_c6d093c8 / epic:surface-scoped-steps). For an edge-less scoped
+	// reviewer (on= set), the gate is enqueued only when the story holds a
+	// matching tag (EqualFold ANY-match). Empty means applies to every story
+	// (equivalent to ["*"]). Step-level applies_to is for scoped reviewers only;
+	// performing-node use is rejected by Validate (executor composition is
+	// sty_8225d8a5). Parsed once here so that story can reuse State.AppliesTo
+	// rather than adding a second path.
+	AppliesTo []string
 }
 
 // StepSummary reports whether the workflow declares a step-summary node (a node
@@ -149,7 +180,13 @@ type ScopedReviewer struct {
 // the old reviewer:always skill-tag scan so the DOT is the sole gating authority.
 // The step-summary node is excluded: it is a post-transition summariser (run via
 // Summarise), not a blocking gate. Sorted by skill for a deterministic order.
-func (s Spec) ScopedReviewers(toStatus string) []ScopedReviewer {
+//
+// tags is the story's tag set (item.Tags). A node with applies_to is enqueued only
+// when tagsMatchesAppliesTo holds (sty_c6d093c8). Absent applies_to matches every
+// story. Matching is in-memory EqualFold ANY-match (same semantics as the store's
+// json_each exact filter for already-canonical tags; case-insensitive so we do
+// not repeat the plain-== trap). category and kind are NOT consulted.
+func (s Spec) ScopedReviewers(toStatus string, tags []string) []ScopedReviewer {
 	var out []ScopedReviewer
 	for _, st := range s.States {
 		if st.Agent != "reviewer" || st.Skill == "" || len(st.On) == 0 {
@@ -158,12 +195,44 @@ func (s Spec) ScopedReviewers(toStatus string) []ScopedReviewer {
 		if st.Skill == StepSummarySkill {
 			continue
 		}
-		if containsStr(st.On, "*") || containsStr(st.On, toStatus) {
-			out = append(out, ScopedReviewer{Skill: st.Skill, Model: st.Model})
+		if !(containsStr(st.On, "*") || containsStr(st.On, toStatus)) {
+			continue
 		}
+		if !tagsMatchAppliesTo(st.AppliesTo, tags) {
+			continue
+		}
+		out = append(out, ScopedReviewer{Skill: st.Skill, Model: st.Model})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Skill < out[j].Skill })
 	return out
+}
+
+// tagsMatchAppliesTo is the in-memory ANY-match for step-level applies_to
+// (sty_c6d093c8). Reuses the SEMANTICS of workitem/store.json_each equality
+// (not the SQL) so wfdot stays free of a DB dependency:
+//   - empty appliesTo  → true (absent ≡ ["*"])
+//   - any entry is "*" → true
+//   - any entry EqualFold-matches a story tag → true
+//
+// Plain filter, no override, no tie-break. Case-insensitive so applies_to
+// "Surface:UI" still matches tag surface:ui (CanonicaliseTags already stores
+// declared casing for controlled namespaces). sty_8225d8a5 should call this
+// same helper for executor augmentation rather than inventing a second matcher.
+func tagsMatchAppliesTo(appliesTo, tags []string) bool {
+	if len(appliesTo) == 0 {
+		return true
+	}
+	for _, a := range appliesTo {
+		if a == "*" {
+			return true
+		}
+		for _, t := range tags {
+			if strings.EqualFold(a, t) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // doneReachable returns the set of states from which "done" is reachable
@@ -344,6 +413,11 @@ type Transition struct {
 type Spec struct {
 	States      []State
 	Transitions []Transition
+	// AttrProblems are named parse-time attribute issues (unknown keys,
+	// applies_to on an edge) carried to Validate. Parse returns only ok/not-ok
+	// for the fence, so it cannot reject itself — Validate appends these
+	// (sty_c6d093c8). Empty on a clean graph.
+	AttrProblems []string
 }
 
 // Parse extracts the Spec from a workflow body's fenced ```dot block. ok is false
@@ -363,6 +437,7 @@ func Parse(body string) (Spec, bool) {
 		on           []string // on="s1,s2" / on="*" scope (declared always-on gate)
 		shape        string   // DOT shape attribute (Mdiamond=start, Msquare=terminal)
 		model        string   // model="…" per-node override (sty_19456622)
+		appliesTo    []string // applies_to="surface:ui,…" (sty_c6d093c8)
 	}
 	nodes := map[string]node{}
 	var order []string
@@ -398,6 +473,11 @@ func Parse(body string) (Spec, bool) {
 					closeAt = len(t)
 				}
 				attrs := parseDotAttrs(t[open+1 : closeAt])
+				edgeFrom, edgeTo := "", ""
+				if len(ids) >= 2 {
+					edgeFrom, edgeTo = ids[0], ids[len(ids)-1]
+				}
+				spec.AttrProblems = append(spec.AttrProblems, checkEdgeAttrs(edgeFrom, edgeTo, attrs)...)
 				edgeSkills = splitCSVSkills(attrs["reviewer_skill"])
 				if len(edgeSkills) == 0 && attrs["agent"] == "reviewer" && strings.HasPrefix(attrs["prompt"], "@skill:") {
 					edgeSkills = splitCSVSkills(attrs["prompt"])
@@ -419,6 +499,7 @@ func Parse(body string) (Spec, bool) {
 			continue
 		}
 		add(id)
+		spec.AttrProblems = append(spec.AttrProblems, checkNodeAttrs(id, attrs)...)
 		n := nodes[id]
 		if a := attrs["agent"]; a != "" {
 			n.agent = a
@@ -444,6 +525,9 @@ func Parse(body string) (Spec, bool) {
 		if m := attrs["model"]; m != "" {
 			n.model = m
 		}
+		if at := splitAppliesTo(attrs["applies_to"]); len(at) > 0 {
+			n.appliesTo = at
+		}
 		nodes[id] = n
 	}
 	if len(order) == 0 {
@@ -456,6 +540,7 @@ func Parse(body string) (Spec, bool) {
 			Name: name, Agent: n.agent, Skill: n.skill,
 			OnEnterAgent: n.onEnterAgent, OnEnterSkill: n.onEnterSkill,
 			Mandatory: n.mandatory, On: n.on, Shape: n.shape, Model: n.model,
+			AppliesTo: n.appliesTo,
 		})
 	}
 	// A transition into a reviewer node is gated by that node's skill — unless the
@@ -698,6 +783,67 @@ func containsStr(ss []string, v string) bool {
 	return false
 }
 
+// Known DOT node attribute keys (sty_c6d093c8). Graph-level attrs (goal, vars)
+// never reach here — graph […] is short-circuited by dotReserved before attr parse.
+var knownNodeAttrs = map[string]bool{
+	"agent": true, "prompt": true, "on_enter_agent": true, "on_enter_prompt": true,
+	"mandatory": true, "on": true, "shape": true, "model": true, "applies_to": true,
+}
+
+// Known DOT edge attribute keys. reviewer_skill is parse-only legacy; agent+prompt
+// is the canonical node-consistent form.
+var knownEdgeAttrs = map[string]bool{
+	"reviewer_skill": true, "agent": true, "prompt": true, "model": true,
+}
+
+// checkNodeAttrs returns named problems for unknown keys on a node.
+func checkNodeAttrs(id string, attrs map[string]string) []string {
+	var out []string
+	for k := range attrs {
+		if !knownNodeAttrs[k] {
+			out = append(out, fmt.Sprintf("unknown node attribute %q on %q", k, id))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// checkEdgeAttrs returns named problems for unknown keys and for applies_to on
+// an edge (rejected specifically: the edge IS the transition).
+func checkEdgeAttrs(from, to string, attrs map[string]string) []string {
+	edgeID := from + "->" + to
+	var out []string
+	if _, has := attrs["applies_to"]; has {
+		out = append(out, fmt.Sprintf(
+			"applies_to is not honoured on an edge (the edge IS the transition) — put it on an edge-less reviewer node (%s)",
+			edgeID))
+	}
+	for k := range attrs {
+		if k == "applies_to" {
+			continue // already named specifically
+		}
+		if !knownEdgeAttrs[k] {
+			out = append(out, fmt.Sprintf("unknown edge attribute %q on %s", k, edgeID))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// splitAppliesTo parses applies_to="surface:ui,surface:cli" (CSV, same convention
+// as on=). Also accepts a single bracket-wrapped list form applies_to="[surface:ui]"
+// by stripping outer [ ] before CSV split — authoring convenience only.
+func splitAppliesTo(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
+		s = strings.TrimSpace(s[1 : len(s)-1])
+	}
+	return splitCSV(s)
+}
+
 // ToDOT normalizes a workflow body to the DOT standard — the conversion satelle
 // runs at ingest (create/upload). A body that already carries a fenced ```dot
 // block is returned unchanged (changed=false). A body in the inline-YAML grammar
@@ -820,6 +966,15 @@ func emitDOT(spec Spec, name string) string {
 		}
 		if s.Model != "" {
 			attrs = append(attrs, fmt.Sprintf("model=%q", s.Model))
+		}
+		if len(s.On) > 0 {
+			attrs = append(attrs, fmt.Sprintf("on=%q", strings.Join(s.On, ",")))
+		}
+		if s.Mandatory {
+			attrs = append(attrs, "mandatory=true")
+		}
+		if len(s.AppliesTo) > 0 {
+			attrs = append(attrs, fmt.Sprintf("applies_to=%q", strings.Join(s.AppliesTo, ",")))
 		}
 		if len(attrs) > 0 {
 			fmt.Fprintf(&b, "  %s [%s]\n", s.Name, strings.Join(attrs, ", "))
