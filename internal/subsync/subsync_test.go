@@ -62,6 +62,40 @@ func TestRestoreRefusesUnsafePath(t *testing.T) {
 	}
 }
 
+// TestExcludedLocalMatchesRestore (sty_0fd04503 AC2): the exported early-out
+// agrees with Restore's skip set; unsafe paths return false so Restore still
+// hard-errors (not silently skipped pre-fetch).
+func TestExcludedLocalMatchesRestore(t *testing.T) {
+	for _, p := range []string{
+		"backups/pre-mutation/x.md",
+		"logs/server.log",
+		"stories/sty_x.md",
+		"satelle.db",
+		"satelle.db-wal",
+		"satelle.local.toml",
+	} {
+		if !ExcludedLocal(p) {
+			t.Errorf("ExcludedLocal(%q) = false, want true", p)
+		}
+	}
+	for _, p := range []string{
+		"documents/ok.md",
+		"skills/a.md",
+		"agents.toml",
+		"constitution.md",
+	} {
+		if ExcludedLocal(p) {
+			t.Errorf("ExcludedLocal(%q) = true, want false", p)
+		}
+	}
+	// Unsafe paths: not a skip — Restore hard-errors.
+	for _, p := range []string{"../escape.md", "/abs.md", ""} {
+		if ExcludedLocal(p) {
+			t.Errorf("ExcludedLocal(%q) = true, want false (defer to Restore hard-error)", p)
+		}
+	}
+}
+
 // TestRestoreSkipsExcludedPaths: excludedLocal paths are skipped (not hard-errored)
 // so a mixed batch still completes and legitimate files land byte-exact
 // (sty_84f14ace AC1). Excluded paths are never written (AC3) and appear in

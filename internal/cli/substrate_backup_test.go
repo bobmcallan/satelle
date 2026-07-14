@@ -62,18 +62,26 @@ func TestResolveBackupOptsHostedOptIn(t *testing.T) {
 		t.Fatalf("Backup.Hosted=true should resolve channel, got server=%q project=%q", opts.HostedServer, opts.HostedProject)
 	}
 
-	// AC5: through ResolveBackupOpts (default), no HostedPush is attempted.
+	// AC5 / sty_0fd04503 AC4: inject HostedPush and assert it is never reached
+	// when ResolveBackupOpts leaves HostedServer/Project empty (Backup.Hosted
+	// false). Proves zero hosted pushes, not merely "no push-looking notice".
 	dataDir := t.TempDir()
-	var pushed int
-	res, err := backupExistingFile(dataDir, BackupKindPreMutation, "skills/x.md", []byte("pre"), ResolveBackupOpts(config.Config{
+	opts = ResolveBackupOpts(config.Config{
 		Hosted: config.HostedConfig{Server: "https://example.test", Project: "proj"},
 		// Backup.Hosted false
-	}))
+	})
+	pushes := 0
+	opts.HostedPush = func(ctx context.Context, relPath string, body []byte) (string, error) {
+		pushes++
+		return "should-not-run", nil
+	}
+	res, err := backupExistingFile(dataDir, BackupKindPreMutation, "skills/x.md", []byte("pre"), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Inject would only run if HostedServer+Project set; they are empty, so no push.
-	_ = pushed
+	if pushes != 0 {
+		t.Fatalf("default ResolveBackupOpts must not call HostedPush, got %d pushes", pushes)
+	}
 	if res.LocalPath == "" {
 		t.Fatal("local floor must still be written (AC6)")
 	}

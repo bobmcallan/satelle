@@ -56,6 +56,21 @@ func excludedLocal(rel string) bool {
 	return false
 }
 
+// ExcludedLocal reports whether a server-relative path is one Restore will
+// never write, so a caller can skip it before spending a fetch (sty_0fd04503).
+// Restore remains the enforcement point; this is only an early-out.
+//
+// Returns false when the path fails cleanRel (absolute, "..", empty, …): those
+// are Restore hard-errors, not skips — pre-filtering them would swallow the
+// escape guard.
+func ExcludedLocal(p string) bool {
+	rel, err := cleanRel(p)
+	if err != nil {
+		return false
+	}
+	return excludedLocal(rel)
+}
+
 // Restore writes files under <dataDir>, each byte-for-byte (0o644, parent dirs
 // created), overwriting any existing file at the same path. dataDir is the
 // repo's resolved .satelle data dir (the workspace-config root the server paths
