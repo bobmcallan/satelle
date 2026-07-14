@@ -7,6 +7,10 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
+## [0.0.254] - 2026-07-14
+### Added
+- First surface-scoped consumer: `satelle-design-review` gate on project workflow (`on=integration`, `applies_to=surface:ui`) using this repo's app.css as design authority (sty_e4359efe)
+
 ## [0.0.253] - 2026-07-14
 ### Added
 - Decision: v1 trusts surface: tags (accepted risk) with scoped-gate-skipped telemetry when applies_to filters a gate (sty_dcce86d5)

@@ -23,7 +23,7 @@
 # remain the real mutator ceiling.
 # model stays non-empty (TestRepoReviewerModelIsActive).
 # Per-gate model without a second binding: a workflow edge/node may set model="…"
-# to override only that gate's model; the binding stays source of command+tools
+# to override only the model for that gate/step while keeping the shared harness
 # (sty_19456622). See satelle help agent-dispatch and satelle-dot-standard.
 
 [executor]

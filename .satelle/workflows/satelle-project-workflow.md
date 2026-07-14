@@ -79,6 +79,9 @@ digraph satelle_workflow {
   // changelogcheck fails closed on release→done when CHANGELOG.md has no entry
   // for the version on HEAD (sty_f52ba0c3).
   changelogcheck [agent=reviewer, prompt="@skill:satelle-changelog-entry-check", on="done"]
+  // design: surface-scoped UI design-system gate (sty_e4359efe / epic:surface-scoped-steps).
+  // Enqueued only for surface:ui stories on entry to integration — same spine for all.
+  design [agent=reviewer, prompt="@skill:satelle-design-review", on="integration", applies_to="surface:ui"]
 
   backlog     -> plan         [agent=reviewer, prompt="@skill:satelle-story-intent-review"] // intake gate: a story must pass intent-review to enter plan
   plan        -> in_progress  [agent=reviewer, prompt="@skill:satelle-story-plan-review"]
