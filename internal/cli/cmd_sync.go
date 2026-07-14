@@ -17,13 +17,21 @@ import (
 )
 
 // `satelle sync` is the scoped-sync command group (epic:scoped-sync): scopes
-// inspection, config push/deploy, and documents push/pull. v1 has per-kind
-// commands only — no single unified `satelle sync` that routes every area.
+// inspection, config push/deploy, and documents push/pull. Bare `satelle sync`
+// is the default execute verb — it runs the configured sync across every
+// opted-in area (config push, documents push+pull, work-state push) by composing
+// the per-kind handlers; each self-gates on its [sync] scope. The per-kind
+// subcommands remain for driving one area (or a one-way direction) on its own.
 func init() {
+	var syncServer string
+	var syncDryRun bool
 	syncCmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Scope inspection and per-kind sync (config, documents, workstate)",
-		Long: `sync inspects [sync] scopes and pushes/pulls opted-in areas to the hosted server.
+		Short: "Run the configured sync for every opted-in area (config, documents, workstate)",
+		Long: `sync pushes/pulls the .satelle areas whose [sync] scope opts in to the hosted
+server. Run bare, it executes the whole configured sync: authored config push,
+documents push then pull, and work-state push — skipping any area still local.
+The per-kind subcommands (config, documents, workstate) drive one area on its own.
 
 Every area defaults to local — nothing leaves the machine until you set
 [sync] <area> = personal. To opt the whole .satelle tree in with one key,
@@ -32,7 +40,14 @@ Personal opt-in targets this repo's bound hosted project only (never a shared
 dump across all personal projects under your account). Bind with "satelle
 project bind <slug>" (or set [hosted] project in .satelle/satelle.toml). Team
 catalogs are a separate verb: satelle publish.`,
+		Args:        cobra.NoArgs,
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runSync(cmd, syncServer, syncDryRun)
+		},
 	}
+	syncCmd.Flags().StringVar(&syncServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	syncCmd.Flags().BoolVar(&syncDryRun, "dry-run", false, "Preview what each opted-in area would push without contacting the server (documents pull is not previewed).")
 	syncCmd.AddCommand(&cobra.Command{
 		Use:         "scopes",
 		Short:       "Print each .satelle area's resolved scope, and shared files within a personal area",
@@ -43,6 +58,51 @@ catalogs are a separate verb: satelle publish.`,
 	syncCmd.AddCommand(newSyncDocumentsCmd())
 	syncCmd.AddCommand(newSyncWorkstateCmd())
 	register(syncCmd)
+}
+
+// runSync is the bare `satelle sync` default action: run the configured sync
+// across every opted-in area by composing the per-kind handlers, in a fixed
+// order — authored config up, documents both ways, work-state up. Each handler
+// self-gates on its own [sync] scope and prints its own result; a local area is
+// a no-op. `sync config deploy` is intentionally NOT part of the bundle — it
+// materialises a whole partition over local files ("set up X like Y"), which is
+// a deliberate operation, not a routine sync. Any handler error stops the run
+// (fail-fast) so a partial sync surfaces rather than hides.
+func runSync(cmd *cobra.Command, serverArg string, dryRun bool) error {
+	a, err := appFrom(cmd)
+	if err != nil {
+		return err
+	}
+	// Pre-flight: with nothing opted in, emit one clean line instead of four
+	// per-verb skip messages (and touch no network). An explicitly invalid scope
+	// still fails here, matching `sync scopes`.
+	optedIn := false
+	for _, area := range config.SyncAreas {
+		scope, serr := config.ScopeFor(a.Config, area)
+		if serr != nil {
+			return fmt.Errorf("sync area %q: %w", area, serr)
+		}
+		if scope != config.LocalScope {
+			optedIn = true
+		}
+	}
+	out := cmd.OutOrStdout()
+	if !optedIn {
+		fmt.Fprintln(out, "Nothing to sync — every .satelle area is local. Set [sync] <area> = personal (or [sync] all = personal) to opt in.")
+		return nil
+	}
+	if err := runSyncConfigPush(cmd, serverArg, "", dryRun); err != nil {
+		return err
+	}
+	if err := runSyncDocumentsPush(cmd, serverArg, "", dryRun); err != nil {
+		return err
+	}
+	if dryRun {
+		fmt.Fprintln(out, "documents pull: skipped under --dry-run (pull has no preview).")
+	} else if err := runSyncDocumentsPull(cmd, serverArg, ""); err != nil {
+		return err
+	}
+	return runSyncWorkstatePush(cmd, serverArg, dryRun)
 }
 
 // newSyncConfigCmd builds the `satelle sync config` group — the CLI counterpart
