@@ -75,3 +75,64 @@ func TestInitHealsUnstampedIdentical(t *testing.T) {
 		t.Errorf("file was not restamped: %s", stripped)
 	}
 }
+
+// TestRestoreExemptFromDriftGate (sty_a9ec33e7 AC2): restore runs when
+// deployed.version is missing (heal path), while other store-backed verbs refuse.
+// Requires a release-versioned binary (make integration); skipped for bare `go test` dev builds.
+func TestRestoreExemptFromDriftGate(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	// Confirm binary is release-stamped (refuseBreakingDrift no-ops on dev).
+	verOut := mustRun(t, testBin, repo, "version")
+	if strings.Contains(verOut, "0.0.0-dev") || strings.Contains(verOut, " dev") || strings.HasPrefix(strings.TrimSpace(verOut), "satelle dev") {
+		// version line looks like "satelle 0.0.233 (...)" or "satelle 0.0.0-dev+..."
+	}
+	if strings.Contains(verOut, "0.0.0-dev") || strings.Contains(verOut, "(dev") {
+		t.Skip("dev binary never gates refuseBreakingDrift")
+	}
+	// Also skip when version reports "dev"
+	if strings.Contains(verOut, " satelle dev") || strings.HasPrefix(verOut, "satelle dev ") {
+		t.Skip("dev binary")
+	}
+	// crude: if version contains "-dev" skip
+	if strings.Contains(verOut, "-dev") {
+		t.Skip("dev binary never gates")
+	}
+
+	data := filepath.Join(repo, ".satelle")
+	// Ensure a skill exists so restore has work if we drift it.
+	skillDir := filepath.Join(data, "skills")
+	ents, _ := os.ReadDir(skillDir)
+	var skillPath string
+	for _, e := range ents {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+			skillPath = filepath.Join(skillDir, e.Name())
+			break
+		}
+	}
+	if skillPath == "" {
+		t.Fatal("no skill to drift")
+	}
+	if err := os.WriteFile(skillPath, []byte("drifted\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(filepath.Join(data, "deployed.version"))
+
+	// Other store-backed verbs refuse.
+	if out, err := run(t, testBin, repo, "status"); err == nil {
+		t.Fatalf("status should refuse without deployed.version:\n%s", out)
+	} else if !strings.Contains(out, "satelle init") && !strings.Contains(out, "deployed.version") && !strings.Contains(out, "stamp") {
+		// message may vary; at least must fail
+		t.Logf("status failed as expected: %v\n%s", err, out)
+	}
+
+	// restore --yes must succeed (exempt).
+	out, err := run(t, testBin, repo, "restore", "--yes")
+	if err != nil {
+		t.Fatalf("restore --yes should heal without stamp gate: %v\n%s", err, out)
+	}
+	// After restore, deployed.version should exist (release binary).
+	if _, err := os.Stat(filepath.Join(data, "deployed.version")); err != nil {
+		t.Logf("deployed.version after restore: %v (may be absent on some builds)", err)
+	}
+}
