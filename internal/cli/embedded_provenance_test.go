@@ -78,12 +78,20 @@ func TestReconcileUneditedUpgrade(t *testing.T) {
 	if err := os.WriteFile(dest, []byte(applyEmbeddedStamp(oldBody, embeddedSHA(oldBody))), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	pre := applyEmbeddedStamp(oldBody, embeddedSHA(oldBody))
 	verb, backup, err := reconcileEmbeddedFile(dataDir, "principles/sample.md", newBody)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if verb != reconcileUpdated || backup != "" {
-		t.Fatalf("verb=%q backup=%q, want updated/no-backup", verb, backup)
+	if verb != reconcileUpdated {
+		t.Fatalf("verb=%q, want updated", verb)
+	}
+	// sty_873a5380: converge-overwrite backs up the pre-image first.
+	if backup == "" || !strings.Contains(filepath.ToSlash(backup), "backups/pre-mutation/principles/sample.md") {
+		t.Fatalf("backup=%q, want under backups/pre-mutation/", backup)
+	}
+	if b, err := os.ReadFile(backup); err != nil || string(b) != pre {
+		t.Errorf("pre-mutation backup missing or wrong content: err=%v", err)
 	}
 	got, _ := os.ReadFile(dest)
 	if string(got) != applyEmbeddedStamp(newBody, embeddedSHA(newBody)) {
@@ -259,8 +267,11 @@ func TestReconcileRecogniseBlockageUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if verb != reconcileUpdated || backup != "" {
-		t.Fatalf("verb=%q backup=%q, want updated/no-backup", verb, backup)
+	if verb != reconcileUpdated {
+		t.Fatalf("verb=%q, want updated", verb)
+	}
+	if backup == "" || !strings.Contains(filepath.ToSlash(backup), "backups/pre-mutation/") {
+		t.Fatalf("backup=%q, want pre-mutation path", backup)
 	}
 	got, err := os.ReadFile(dest)
 	if err != nil {

@@ -96,6 +96,11 @@ type Config struct {
 	// access/refresh TOKENS are NEVER stored here — they live in the user-level
 	// credential store outside the repo (see internal/hosted). (sty_2fc93374)
 	Hosted HostedConfig `toml:"hosted"`
+	// Backup tunes pre-mutation substrate backups (sty_873a5380). Local copies
+	// under .satelle/backups/ are always written; LocalOnly suppresses the
+	// advisory about enabling online/personal backup when no hosted channel is
+	// configured.
+	Backup BackupConfig `toml:"backup"`
 	// Vars is the operator KV an agents.toml binding's env values substitute via
 	// ${NAME} (sty_001558ce) — how a dispatched step points at an alternate model
 	// backend (e.g. GLM's Anthropic-compatible endpoint) without a wrapper binary.
@@ -110,6 +115,16 @@ type Config struct {
 	// defaults; satelle.local.toml overrides per-area for a single developer, the
 	// same per-key overlay merge as Vars (sty_a2d2e057).
 	Sync map[string]string `toml:"sync"`
+}
+
+// BackupConfig is the operator policy for pre-mutation substrate backups
+// (sty_873a5380). Local floor is always on; this only tunes the advisory and
+// online-first attempt.
+type BackupConfig struct {
+	// LocalOnly means keep backups under .satelle/backups/ only and do not emit
+	// the "enable online backup" advisory. Prefer satelle.local.toml for a
+	// per-developer choice.
+	LocalOnly bool `toml:"local_only"`
 }
 
 // HostedConfig binds a repo to a hosted satelle-server. Secret-free and
