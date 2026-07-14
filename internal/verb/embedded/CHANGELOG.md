@@ -1,15 +1,19 @@
 # Changelog
 
 All notable changes to satelle are documented here. Format: Keep a Changelog–style,
-newest release first. Each release is a level-2 `## [0.0.249] - 2026-07-14
-### Added
-- Controlled tag vocabulary via `[tags.vocabulary]` in satelle.toml: namespaces like `surface` reject unknown values at create/set (case-insensitive match, stored in declared casing); multi-surface via repeated keys (`surface:ui` + `surface:cli`) (sty_034d843c)
-
-## [X.Y.Z] - DATE` header.
+newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 
 **Breaking marker:** a non-empty `### Breaking` subsection under a version means that
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
+
+## [0.0.250] - 2026-07-14
+### Fixed
+- Repair CHANGELOG structure after 0.0.249 entry was inserted into intro prose (sty_034d843c)
+
+## [0.0.249] - 2026-07-14
+### Added
+- Controlled tag vocabulary via `[tags.vocabulary]` in satelle.toml: namespaces like `surface` reject unknown values at create/set (case-insensitive match, stored in declared casing); multi-surface via repeated keys (`surface:ui` + `surface:cli`) (sty_034d843c)
 
 ## [0.0.248] - 2026-07-14
 ### Added
