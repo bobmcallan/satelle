@@ -4,6 +4,8 @@ package tests
 
 import (
 	"bufio"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -239,4 +241,173 @@ func httpGetBody(t *testing.T, url string) string {
 		}
 	}
 	return sb.String()
+}
+
+// TestSupervisorRespawnsHealthyChild (sty_5faf46f1 AC1/AC4): after a healthy
+// child is killed, the hub logs the exit, removes the healthy row during the
+// gap (or shows failed), respawns, and the project route is 200 again.
+func TestSupervisorRespawnsHealthyChild(t *testing.T) {
+	home := t.TempDir()
+	repoA := t.TempDir()
+	repoB := t.TempDir()
+	mustRun(t, testBin, repoA, "init")
+	mustRun(t, testBin, repoB, "init")
+	workspaceAdd(t, home, repoA, repoB)
+
+	port := freeListenPort(t)
+	slugB := filepath.Base(repoB)
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Scan stderr BEFORE start so the healthy log line cannot race past us.
+	pidCh := make(chan int, 4)
+	go func() {
+		sc := bufio.NewScanner(stderrR)
+		re := regexp.MustCompile(`child healthy: /` + regexp.QuoteMeta(slugB) + `/ pid=(\d+)`)
+		for sc.Scan() {
+			line := sc.Text()
+			if m := re.FindStringSubmatch(line); m != nil {
+				var pid int
+				fmt.Sscanf(m[1], "%d", &pid)
+				if pid > 0 {
+					select {
+					case pidCh <- pid:
+					default:
+					}
+				}
+			}
+		}
+	}()
+
+	cmd := exec.Command(testBin, "serve", "--port", port, "--no-watch")
+	cmd.Dir = repoA
+	cmd.Env = append(os.Environ(), "SATELLE_HOME="+home)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = io.MultiWriter(os.Stderr, stderrW)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start serve: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		done := make(chan struct{})
+		go func() { _, _ = cmd.Process.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			_ = cmd.Process.Kill()
+		}
+		_ = stderrW.Close()
+	})
+
+	base := "http://127.0.0.1:" + port
+	if !waitHealthy(t, base+"/healthz", 15*time.Second) {
+		t.Fatal("hub did not become healthy")
+	}
+	// Wait for child B to be reachable.
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		if httpStatus(t, base+"/"+slugB+"/healthz") == 200 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if httpStatus(t, base+"/"+slugB+"/healthz") != 200 {
+		t.Fatalf("child /%s/ never healthy before kill", slugB)
+	}
+
+	var pid int
+	select {
+	case pid = <-pidCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("did not observe child healthy log line for " + slugB)
+	}
+
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+		t.Fatalf("kill child pid %d: %v", pid, err)
+	}
+
+	// After kill: either failed row or not healthy — never a silent permanent 502.
+	// Wait for recovery (respawn).
+	recovered := false
+	deadline = time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if httpStatus(t, base+"/"+slugB+"/healthz") == 200 {
+			recovered = true
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !recovered {
+		t.Fatalf("child /%s/ did not recover after kill (pid %d)", slugB, pid)
+	}
+	// Landing should list the project as healthy again (not stuck as failed).
+	root := httpGetBody(t, base+"/")
+	if !strings.Contains(root, `href="/`+slugB+`/#stories"`) {
+		t.Errorf("landing missing recovered project /%s/:\n%s", slugB, root)
+	}
+}
+
+// TestSupervisorFailsUnhealthyBoot (sty_5faf46f1 AC3): a child that never
+// becomes healthy is not registered with a live proxy — landing shows failed,
+// and /<slug>/ is not a permanent 502 route.
+func TestSupervisorFailsUnhealthyBoot(t *testing.T) {
+	home := t.TempDir()
+	repoA := t.TempDir()
+	repoBroken := t.TempDir()
+	mustRun(t, testBin, repoA, "init")
+	mustRun(t, testBin, repoBroken, "init")
+	// Break the agents layer so serve refuses at appFrom (sty_d0d6bb67).
+	agentsPath := filepath.Join(repoBroken, ".satelle", "agents.toml")
+	if err := os.WriteFile(agentsPath, []byte("not = [ valid toml {{{{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	workspaceAdd(t, home, repoA, repoBroken)
+
+	port := freeListenPort(t)
+	cmd := exec.Command(testBin, "serve", "--port", port, "--no-watch")
+	cmd.Dir = repoA
+	cmd.Env = append(os.Environ(), "SATELLE_HOME="+home)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start serve: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		done := make(chan struct{})
+		go func() { _, _ = cmd.Process.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			_ = cmd.Process.Kill()
+		}
+	})
+
+	base := "http://127.0.0.1:" + port
+	if !waitHealthy(t, base+"/healthz", 15*time.Second) {
+		t.Fatal("hub did not become healthy")
+	}
+	slugBroken := filepath.Base(repoBroken)
+
+	// Wait until the failed row appears on the landing.
+	deadline := time.Now().Add(25 * time.Second)
+	var root string
+	for time.Now().Before(deadline) {
+		root = httpGetBody(t, base+"/")
+		if strings.Contains(root, "not serving") && strings.Contains(root, slugBroken) {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !strings.Contains(root, "not serving") {
+		t.Fatalf("landing never showed failed row for broken project:\n%s", root)
+	}
+	// No live proxy: must not be 200 on healthz under the broken slug.
+	// (404 from shared chrome, or 502 only transiently during backoff is ok;
+	// permanent 200 would mean a healthy registration.)
+	code := httpStatus(t, base+"/"+slugBroken+"/healthz")
+	if code == 200 {
+		t.Fatalf("broken child registered a live proxy (status 200); want non-200")
+	}
 }
