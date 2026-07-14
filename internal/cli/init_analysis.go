@@ -150,8 +150,8 @@ func splitPlacementProblem(p string) (file, defect string) {
 func placementFixChannel(defect string) string {
 	switch {
 	case strings.Contains(defect, "embedded_sha"):
-		// sty_a9ec33e7: init re-stamps identical stampless bodies; restore is
-		// exempt from the deployed.version gate so it can heal too.
+		// init re-stamps identical stampless bodies; restore is exempt from the
+		// deployed.version gate so heal commands can run.
 		return "re-run `satelle init` — it re-stamps embedded-owned files whose body matches the default (or `satelle restore --yes` to re-materialise)"
 	case strings.Contains(defect, "unknown tag axis"):
 		return "edit the principle: remove invented tag axes (kind:*, epic:*, …); on principles only type: and principles: are legal"

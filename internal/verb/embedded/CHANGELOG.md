@@ -7,6 +7,10 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
+## [0.0.238] - 2026-07-14
+### Fixed
+- Remove story-id from init_analysis advice path so repo-agnostic unit check stays green (heal-path release)
+
 ## [0.0.237] - 2026-07-14
 ### Fixed
 - gofmt drift_test.go so CI gofmt job passes (sty_a9ec33e7)
