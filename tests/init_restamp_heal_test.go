@@ -9,16 +9,30 @@ import (
 	"testing"
 )
 
+// isReleaseTestBin reports whether testBin carries a non-dev version so
+// refuseBreakingDrift / writeDeployedVersion are live.
+func isReleaseTestBin(t *testing.T) bool {
+	t.Helper()
+	verOut := mustRun(t, testBin, t.TempDir(), "version")
+	// satelle 0.0.235 (...) — skip 0.0.0-dev+… and bare "dev"
+	if strings.Contains(verOut, "0.0.0-dev") || strings.Contains(verOut, "-dev+") {
+		return false
+	}
+	if strings.Contains(verOut, "satelle dev ") || strings.HasPrefix(strings.TrimSpace(verOut), "satelle dev") {
+		return false
+	}
+	return true
+}
+
 // TestInitHealsUnstampedIdentical (sty_a9ec33e7 AC4): a pre-stamp-shaped repo
 // (embedded files without embedded_sha, no deployed.version) is healed by one
 // satelle init — validation passes and a store-backed verb works afterward.
 func TestInitHealsUnstampedIdentical(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	// Strip deployed.version and strip embedded_sha from one skill.
 	data := filepath.Join(repo, ".satelle")
 	_ = os.Remove(filepath.Join(data, "deployed.version"))
-	// Find a stamped skill file and strip its stamp line
+
 	skillDir := filepath.Join(data, "skills")
 	ents, err := os.ReadDir(skillDir)
 	if err != nil {
@@ -54,25 +68,28 @@ func TestInitHealsUnstampedIdentical(t *testing.T) {
 	if stripped == "" {
 		t.Fatal("no stamped skill found to strip")
 	}
-	// One init must heal
+
 	out := mustRun(t, testBin, repo, "init")
-	if !strings.Contains(out, "restamped") && !strings.Contains(out, "restamp") {
-		// report line uses "restamped" in message
-		t.Logf("init output:\n%s", out)
+	if !strings.Contains(out, "restamped") {
+		t.Fatalf("init output must report restamped for identical stampless body:\n%s", out)
 	}
-	// deployed.version present
-	if _, err := os.Stat(filepath.Join(data, "deployed.version")); err != nil {
-		// may not write on dev binary — skip soft
-		t.Logf("deployed.version: %v (dev builds skip stamp)", err)
+	// stamp restored on stripped file
+	b, err := os.ReadFile(stripped)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// store-backed verb works
+	if !strings.Contains(string(b), "embedded_sha:") {
+		t.Fatalf("file was not restamped: %s", stripped)
+	}
+	// store-backed verb works after heal
 	if _, err := run(t, testBin, repo, "status"); err != nil {
 		t.Fatalf("status after heal: %v", err)
 	}
-	// stamp restored on stripped file
-	b, _ := os.ReadFile(stripped)
-	if !strings.Contains(string(b), "embedded_sha:") {
-		t.Errorf("file was not restamped: %s", stripped)
+	// On a release binary, deployed.version must be written by successful init.
+	if isReleaseTestBin(t) {
+		if _, err := os.Stat(filepath.Join(data, "deployed.version")); err != nil {
+			t.Fatalf("deployed.version missing after heal init: %v", err)
+		}
 	}
 }
 
@@ -80,27 +97,13 @@ func TestInitHealsUnstampedIdentical(t *testing.T) {
 // deployed.version is missing (heal path), while other store-backed verbs refuse.
 // Requires a release-versioned binary (make integration); skipped for bare `go test` dev builds.
 func TestRestoreExemptFromDriftGate(t *testing.T) {
-	repo := t.TempDir()
-	mustRun(t, testBin, repo, "init")
-	// Confirm binary is release-stamped (refuseBreakingDrift no-ops on dev).
-	verOut := mustRun(t, testBin, repo, "version")
-	if strings.Contains(verOut, "0.0.0-dev") || strings.Contains(verOut, " dev") || strings.HasPrefix(strings.TrimSpace(verOut), "satelle dev") {
-		// version line looks like "satelle 0.0.233 (...)" or "satelle 0.0.0-dev+..."
-	}
-	if strings.Contains(verOut, "0.0.0-dev") || strings.Contains(verOut, "(dev") {
+	if !isReleaseTestBin(t) {
 		t.Skip("dev binary never gates refuseBreakingDrift")
 	}
-	// Also skip when version reports "dev"
-	if strings.Contains(verOut, " satelle dev") || strings.HasPrefix(verOut, "satelle dev ") {
-		t.Skip("dev binary")
-	}
-	// crude: if version contains "-dev" skip
-	if strings.Contains(verOut, "-dev") {
-		t.Skip("dev binary never gates")
-	}
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
 
 	data := filepath.Join(repo, ".satelle")
-	// Ensure a skill exists so restore has work if we drift it.
 	skillDir := filepath.Join(data, "skills")
 	ents, _ := os.ReadDir(skillDir)
 	var skillPath string
@@ -121,9 +124,6 @@ func TestRestoreExemptFromDriftGate(t *testing.T) {
 	// Other store-backed verbs refuse.
 	if out, err := run(t, testBin, repo, "status"); err == nil {
 		t.Fatalf("status should refuse without deployed.version:\n%s", out)
-	} else if !strings.Contains(out, "satelle init") && !strings.Contains(out, "deployed.version") && !strings.Contains(out, "stamp") {
-		// message may vary; at least must fail
-		t.Logf("status failed as expected: %v\n%s", err, out)
 	}
 
 	// restore --yes must succeed (exempt).
@@ -131,8 +131,8 @@ func TestRestoreExemptFromDriftGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("restore --yes should heal without stamp gate: %v\n%s", err, out)
 	}
-	// After restore, deployed.version should exist (release binary).
+	// After restore, deployed.version must exist on a release binary.
 	if _, err := os.Stat(filepath.Join(data, "deployed.version")); err != nil {
-		t.Logf("deployed.version after restore: %v (may be absent on some builds)", err)
+		t.Fatalf("deployed.version missing after restore: %v", err)
 	}
 }

@@ -133,3 +133,10 @@ func TestPlacementFixChannelUnknownAxis(t *testing.T) {
 		t.Fatalf("residency fix: %q", res)
 	}
 }
+
+func TestPlacementFixChannelEmbeddedSHA(t *testing.T) {
+	got := placementFixChannel("file missing embedded_sha stamp")
+	if !strings.Contains(got, "satelle init") || !strings.Contains(got, "restore") {
+		t.Fatalf("advice must name working heal paths, got %q", got)
+	}
+}
