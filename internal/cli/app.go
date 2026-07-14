@@ -38,9 +38,13 @@ func openAppForCmd(cmd *cobra.Command) error {
 	}
 	// Drift / breaking-surface gate: a deployed repo behind a breaking binary
 	// release fails closed and names `satelle init` as the heal path.
-	if derr := refuseBreakingDrift(a.RepoRoot); derr != nil {
-		_ = a.Close()
-		return derr
+	// `restore` is a heal command and must not sit behind the stamp gate it
+	// heals (sty_a9ec33e7) — keep confirmation; keep other store verbs gated.
+	if cmd.Name() != "restore" {
+		if derr := refuseBreakingDrift(a.RepoRoot); derr != nil {
+			_ = a.Close()
+			return derr
+		}
 	}
 	// Scaffold drift (sty_ac25b787): deployed harness wrappers behind the binary
 	// fail closed for store-backed verbs — hash mechanism, not ### Breaking.
