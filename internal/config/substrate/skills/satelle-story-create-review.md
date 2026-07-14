@@ -51,6 +51,14 @@ alignment, and **classification**:
   `order:<N>` should be well-formed (kebab theme, plain integer N). Malformed
   tags alone are not enough to reject if category is otherwise correct;
   inventing a parallel class axis is.
+- **Controlled namespaces** — when the draft carries tags in a namespace the
+  repo has listed under satelle.toml `[tags.vocabulary]`, the value must be one
+  the repo declared (the deterministic create/set check already rejects unknown
+  values; still classify intent: a story that clearly touches an interface the
+  vocabulary names should carry the matching tag rather than omit it). Read the
+  vocabulary from the repo's satelle.toml when available — do not invent values.
+  Multi-surface uses repeated keys (`namespace:a` + `namespace:b`), never a
+  comma-joined value.
 
 Fair gate, not perfectionist: a clear leaf story with a fitting category and
 ACs that plausibly verify the goal accepts. An epic misfiled as `feature` is

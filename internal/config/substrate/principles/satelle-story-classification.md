@@ -80,4 +80,35 @@ both `epic:this` and `epic:that` matches `--tag epic:this`). The tag filter
 composes with `--status` and `--parent`. Prefer plain integer sprints
 (`sprint:1`, not date-shaped values) so consecutive increments stay enumerable.
 
+## Controlled tag namespaces — `tags.vocabulary` in satelle.toml
+
+A repo MAY declare that certain tag namespaces only accept a fixed set of values.
+That declaration lives in satelle.toml as `[tags.vocabulary]` — **repo config, not
+compiled into the binary** (the constitution: no surface rule compiled into the
+binary; another repo declares its own namespaces and values).
+
+```toml
+[tags.vocabulary]
+surface = ["ui", "cli"]   # this repo's surfaces; another repo might use api/worker
+```
+
+- A tag whose namespace is listed must use a **declared** value. Unknown values
+  are rejected at story/task create and set with a named error listing the allowed
+  set. Matching is case-insensitive; the stored form uses the casing declared in
+  config so exact-equality list filters stay correct.
+- Namespaces **absent** from the table stay free-form (`epic:`, `sprint:`,
+  `order:`, and any organically-grown topic tags).
+- A story with **no** controlled-namespace tag is always valid — the vocabulary
+  only constrains values when the namespace is used.
+- Multi-value still uses **repeated keys**: `surface:ui` + `surface:cli` (two
+  tags), never `surface:ui,cli` — same rule as the `epic:` example above.
+
+### Category is TYPE, not a surface
+
+`category` selects the governing **workflow** (feature / fix / substrate /
+epic-parent / …). It is single-valued and is **not** a surface discriminator. A
+story may touch two interfaces (`surface:ui` + `surface:cli`) while still having
+exactly one category. Do not invent a category per interface — that would fork
+the lifecycle.
+
 See [[satelle-done-is-last]], [[satelle-constitution]].

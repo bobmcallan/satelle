@@ -83,6 +83,15 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 		}
 		now := time.Now()
 
+		// Controlled tag vocabulary (sty_034d843c): validate + canonicalise BEFORE
+		// the create reviewer so a typo fails fast (no subprocess) and the
+		// reviewer sees the stored form. Unwired / empty vocab = no-op.
+		if canon, cerr := canonicaliseTags(req.Tags); cerr != nil {
+			return nil, cerr
+		} else {
+			req.Tags = canon
+		}
+
 		// Required-structure gate: when a repo opts in, an isolated reviewer
 		// judges the draft before it is persisted (the deterministic
 		// structure.Story check — including the category rule, sty_af239840 —
@@ -290,6 +299,16 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	if len(req.AddTags) > 0 || len(req.RemoveTags) > 0 {
 		merged := applyTagMutation(current.Tags, req.AddTags, req.RemoveTags)
 		req.Tags = &merged
+	}
+	// Controlled tag vocabulary (sty_034d843c): validate the FINAL effective set
+	// after add/remove merge or full-replace. Canonicalise so stored casing matches
+	// config (exact-equality list --tag keeps working). Unwired / empty = no-op.
+	if req.Tags != nil {
+		canon, cerr := canonicaliseTags(*req.Tags)
+		if cerr != nil {
+			return nil, cerr
+		}
+		req.Tags = &canon
 	}
 
 	// Definition freeze (sty_b572537f): once a STORY leaves its workflow's entry

@@ -115,6 +115,12 @@ type Config struct {
 	// defaults; satelle.local.toml overrides per-area for a single developer, the
 	// same per-key overlay merge as Vars (sty_a2d2e057).
 	Sync map[string]string `toml:"sync"`
+	// Tags holds the optional controlled-vocabulary table for work-item tags
+	// (sty_034d843c / epic:surface-scoped-steps). Declared namespaces reject
+	// unknown values at story/task create and set; absent/empty means every tag
+	// is free-form. The vocabulary is REPO CONFIG — the binary never hardcodes
+	// which namespaces or values exist.
+	Tags TagsConfig `toml:"tags"`
 }
 
 // BackupConfig is the operator policy for pre-mutation substrate backups
