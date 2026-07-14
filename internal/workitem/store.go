@@ -177,12 +177,15 @@ func (s *Store) Get(ctx context.Context, id string) (Item, error) {
 }
 
 // ListFilter parameterises List. Kind narrows to stories or tasks (empty =
-// both); Status and ParentID further constrain. All fields are optional.
+// both); Status and ParentID further constrain. Tag matches items that hold
+// that exact tag among their multi-value set (ANY-match: a story with
+// epic:this AND epic:that matches Tag "epic:this"). All fields are optional.
 type ListFilter struct {
 	Kind     Kind
 	Status   string
 	ParentID string
-	Limit    int // <=0 ⇒ default 500, capped at 2000
+	Tag      string // exact tag match against the JSON tags array (sty_f7115cd2)
+	Limit    int    // <=0 ⇒ default 500, capped at 2000
 	// IncludeArchived returns archived (disposed) items too. The default (false)
 	// excludes them — archive is a terminal disposition kept out of the working
 	// list (sty_cd209b8a).
@@ -213,6 +216,14 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]Item, error) {
 	add("parent_id", f.ParentID)
 	if !f.IncludeArchived {
 		conds = append(conds, "archived = 0")
+	}
+	// Tag filter (sty_f7115cd2): tags are a JSON array of strings. json_each
+	// expands elements so an exact value match implements ANY-match within a
+	// multi-value namespace (repeated-key model). Applied in SQL so Limit is
+	// correct after filtering.
+	if tag := strings.TrimSpace(f.Tag); tag != "" {
+		conds = append(conds, `EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)`)
+		args = append(args, tag)
 	}
 
 	q := selectCols

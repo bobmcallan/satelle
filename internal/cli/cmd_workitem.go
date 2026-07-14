@@ -75,7 +75,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 	}
 
 	// list
-	var lStatus, lParent string
+	var lStatus, lParent, lTag string
 	var lLimit int
 	list := &cobra.Command{
 		Use:         "list",
@@ -85,6 +85,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 			req := map[string]any{}
 			putIf(req, "status", lStatus)
 			putIf(req, "parent_id", lParent)
+			putIf(req, "tag", lTag)
 			if lLimit > 0 {
 				req["limit"] = lLimit
 			}
@@ -93,6 +94,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 	}
 	list.Flags().StringVar(&lStatus, "status", "", "filter by status")
 	list.Flags().StringVar(&lParent, "parent", "", "filter by parent id")
+	list.Flags().StringVar(&lTag, "tag", "", "filter by exact tag (ANY-match in multi-value namespaces)")
 	list.Flags().IntVar(&lLimit, "limit", 0, "max rows (default 500)")
 
 	// set (partial update — only flags the user changed are sent)

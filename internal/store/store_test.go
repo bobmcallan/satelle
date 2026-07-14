@@ -146,6 +146,88 @@ func TestKindPartitioning(t *testing.T) {
 	}
 }
 
+// Tag filter (sty_f7115cd2): exact match against multi-value tags (repeated keys);
+// composes with status/parent; ANY-match within a namespace.
+func TestListFilterByTag(t *testing.T) {
+	db := openTemp(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	multi, err := db.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "multi-epic", Status: "backlog",
+		ParentID: "sty_parent01",
+		Tags:     []string{"epic:this", "epic:that", "sprint:5", "area:cli"},
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "other-sprint", Status: "backlog",
+		Tags: []string{"sprint:4", "area:cli"},
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "done-sprint5", Status: "done",
+		Tags: []string{"sprint:5"},
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindTask, Title: "task-sprint5",
+		Tags: []string{"sprint:5"},
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+
+	// ANY-match: multi holds both epic:this and epic:that → matches epic:this
+	got, err := db.Stories.List(ctx, workitem.ListFilter{Tag: "epic:this"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != multi.ID {
+		t.Errorf("tag epic:this = %+v, want only multi", got)
+	}
+
+	// Classification axis still filters
+	got, err = db.Stories.List(ctx, workitem.ListFilter{Kind: workitem.KindStory, Tag: "sprint:5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Errorf("story sprint:5 len = %d, want 2", len(got))
+	}
+
+	// Composes with status (+ kind so default-status tasks don't match)
+	got, err = db.Stories.List(ctx, workitem.ListFilter{
+		Kind: workitem.KindStory, Tag: "sprint:5", Status: "backlog",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != multi.ID {
+		t.Errorf("sprint:5+backlog = %+v, want multi only", got)
+	}
+
+	// Composes with parent
+	got, err = db.Stories.List(ctx, workitem.ListFilter{Tag: "area:cli", ParentID: "sty_parent01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != multi.ID {
+		t.Errorf("area:cli+parent = %+v, want multi only", got)
+	}
+
+	// Unknown tag → empty
+	got, err = db.Stories.List(ctx, workitem.ListFilter{Tag: "sprint:99"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("unknown tag returned %d items", len(got))
+	}
+}
+
 func TestLedgerAppendAndList(t *testing.T) {
 	db := openTemp(t)
 	ctx := context.Background()

@@ -3,8 +3,8 @@ name: satelle-story-classification
 type: principle
 tags: [type:principle]
 applies_to: ["*"]
-description: How stories are classified — category (including epic-parent/parent containers), theme tags (epic:<theme>), sprints (sprint:<N>), and order:<N>. Category selects the governing workflow; invented kind:* tags are not a taxonomy axis.
-embedded_sha: 0b24b7d86ff2a7b31ae447fece8cf1583feafabd5c72b115c984d7a716835763
+description: How stories are classified — category (including epic-parent/parent containers), theme tags (epic:<theme>), sprints (sprint:<N>), and order:<N>; multi-value tags use repeated keys. Category selects the governing workflow; invented kind:* tags are not a taxonomy axis.
+embedded_sha: 3972137d1c9f64462690d3818fae9daaa160dbc1cb4cf20fe3e202bf71cfb18c
 ---
 
 # Story classification — category, epics, sprints, and order
@@ -63,5 +63,22 @@ story drops its `order` so the live sequence stays contiguous, but keeps its
 A single story may carry all three at once: it sits under an epic
 (`epic:<theme>` + `parent`), ships in a sprint (`sprint:<N>`), and holds a position
 in that sprint (`order:<N>`).
+
+## Tags — multi-value namespaces (repeated keys)
+
+Tags are a set of strings, often `namespace:value`. **Multiple values in one
+namespace use repeated keys** — separate entries, not a comma-joined value:
+
+- Canonical: `epic:this`, `epic:that` (two tags).
+- Not canonical: `epic:this,that` (one tag) — it fights CLI `StringSlice` parsing
+  and loses round-trip fidelity through create/set/get.
+
+This matches the store (`[]string`), additive mutation (`--add-tags` /
+`--remove-tags`, including group remove like `sprint:*`), and display. Filter
+with `satelle story list --tag <tag>` (and the same flag on `task list`): an item
+matches when it **holds that exact tag** among its set (ANY-match — a story with
+both `epic:this` and `epic:that` matches `--tag epic:this`). The tag filter
+composes with `--status` and `--parent`. Prefer plain integer sprints
+(`sprint:1`, not date-shaped values) so consecutive increments stay enumerable.
 
 See [[satelle-done-is-last]], [[satelle-constitution]].
