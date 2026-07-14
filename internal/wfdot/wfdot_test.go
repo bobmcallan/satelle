@@ -1164,3 +1164,32 @@ digraph w {
 		t.Errorf("want spine+on= reject, got %v", probs)
 	}
 }
+
+func TestScopedReviewersSplitSkipped(t *testing.T) {
+	dot := "---\nname: x\n---\n" + "```dot" + `
+digraph w {
+  backlog [shape=Mdiamond]
+  in_progress [agent=executor]
+  done [shape=Msquare]
+  design [agent=reviewer, prompt="@skill:design", on="in_progress", applies_to="surface:ui"]
+  always [agent=reviewer, prompt="@skill:always", on="in_progress"]
+  backlog -> in_progress -> done
+}
+` + "```" + "\n"
+	spec, ok := Parse(dot)
+	if !ok {
+		t.Fatal("parse")
+	}
+	en, sk := spec.ScopedReviewersSplit("in_progress", []string{"surface:cli"})
+	if !hasScoped(en, "always") || hasScoped(en, "design") {
+		t.Errorf("enqueued=%v", en)
+	}
+	if !hasScoped(sk, "design") {
+		t.Errorf("skipped should include design: %v", sk)
+	}
+	// Matching tags → nothing skipped
+	_, sk2 := spec.ScopedReviewersSplit("in_progress", []string{"surface:ui"})
+	if len(sk2) != 0 {
+		t.Errorf("no skip when match: %v", sk2)
+	}
+}
