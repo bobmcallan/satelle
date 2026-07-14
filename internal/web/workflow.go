@@ -80,10 +80,12 @@ func shortSkill(s string) string {
 // toggle) is progressive enhancement in app.js over the same data-state /
 // data-from/data-to identifiers as before (sty_19b2107a).
 func workflowDiagram(spec wfSpec) template.HTML {
-	// Split ANNOTATION nodes out of the flow: an edge-less reviewer node is a
-	// declaration (a scoped gate or the step-summary opt-in), not a lifecycle
-	// state. Scoped (on=…) reviewers annotate their targets; the rest become a
-	// footnote line.
+	// Split ANNOTATION nodes out of the flow: an edge-less node with on= is a
+	// declaration (scoped reviewer gate, step-summary opt-in, OR executor
+	// augmentation — sty_8225d8a5), not a lifecycle state. Without this, an
+	// edge-less executor augmentation would render as a phantom main-flow node.
+	// Scoped (on=…) nodes annotate their targets; other edge-less reviewers
+	// become a footnote line.
 	incident := map[string]bool{}
 	for _, tr := range spec.Transitions {
 		incident[tr.From], incident[tr.To] = true, true
@@ -92,14 +94,15 @@ func workflowDiagram(spec wfSpec) template.HTML {
 	var footers []wfState
 	flow := wfSpec{Transitions: spec.Transitions}
 	for _, s := range spec.States {
-		if s.Agent == "reviewer" && !incident[s.Name] {
-			if len(s.On) > 0 {
-				for _, target := range s.On {
-					annByTarget[target] = append(annByTarget[target], s)
-				}
-			} else {
-				footers = append(footers, s)
+		if !incident[s.Name] && len(s.On) > 0 {
+			// Annotation: scoped reviewer OR executor augmentation (any agent).
+			for _, target := range s.On {
+				annByTarget[target] = append(annByTarget[target], s)
 			}
+			continue
+		}
+		if s.Agent == "reviewer" && !incident[s.Name] {
+			footers = append(footers, s)
 			continue
 		}
 		flow.States = append(flow.States, s)

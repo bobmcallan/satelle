@@ -637,12 +637,23 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	// Resolve WHO performs: a named agent= performer takes priority; otherwise
 	// on_enter_agent is the one-shot entry dispatch (park nodes stay
 	// agent=reviewer for engagement while still running triage once on entry).
-	dispatchAgent, dispatchSkill := target.Agent, target.Skill
+	// Spine skill + surface-matched augmentations compose additively
+	// (sty_8225d8a5); dispatchSkill is the first (primary) name for telemetry.
+	dispatchAgent := target.Agent
+	composed := spec.ExecutorSkillsFor(toStatus, item.Tags)
+	dispatchSkill := firstStr(composed)
+	if dispatchSkill == "" {
+		dispatchSkill = target.Skill
+	}
 	if target.Agent == "" || target.Agent == "executor" || target.Agent == "reviewer" {
 		if target.OnEnterAgent == "" {
 			return verb.DispatchResult{}, nil
 		}
 		dispatchAgent, dispatchSkill = target.OnEnterAgent, target.OnEnterSkill
+		composed = nil
+		if dispatchSkill != "" {
+			composed = []string{dispatchSkill}
+		}
 	}
 	if g.namedAgents == nil {
 		return verb.DispatchResult{}, fmt.Errorf(
@@ -688,16 +699,13 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 			"named agent %q cannot perform step %q: its .satelle/agents.toml [%s] tools grant has no context channel (add `Bash(satelle:*)` for the satelle CLI, or `read_file` for disk reads under .satelle/stories/<id>/)",
 			dispatchAgent, toStatus, dispatchAgent)
 	}
-	// The step's own @skill rubric when the node declares one (absent stays
-	// advisory — the engagement guard already vets executor-path skills). LLM run
-	// goes through shared Invoke (sty_ba860c8a).
-	rubric := ""
-	if dispatchSkill != "" {
-		if body, rerr := g.skillBody(ctx, dispatchSkill); rerr == nil {
-			rubric = body
-		} else if !errors.Is(rerr, docindex.ErrNotFound) {
-			return verb.DispatchResult{}, rerr
-		}
+	// Composed rubrics: spine skill first, then matching augmentations in order
+	// (sty_8225d8a5). Absent skills stay advisory here — the engagement guard
+	// already hard-blocks missing executor-path skills. LLM run goes through
+	// shared Invoke (sty_ba860c8a).
+	rubric, rerr := g.composeSkillBodies(ctx, composed)
+	if rerr != nil {
+		return verb.DispatchResult{}, rerr
 	}
 	timeout, terr := binding.TimeoutDuration(g.checkTimeout)
 	if terr != nil {
@@ -941,8 +949,10 @@ func (g *Engine) guardEngagementExecutorSkills(ctx context.Context, item workite
 	if !ok || item.Status != spec.Start() || toStatus == "cancelled" {
 		return verb.GateDecision{}, false, nil // not the engagement edge (or no DOT)
 	}
+	// Tag-filtered: a missing surface-scoped augmentation blocks only stories
+	// whose tags match it (sty_8225d8a5); structure validate still requires all.
 	var missing []string
-	for _, name := range spec.ExecutorPathToDoneSkills() {
+	for _, name := range spec.ExecutorPathToDoneSkillsFor(item.Tags) {
 		if _, gerr := g.docs.Get(ctx, "skills", name); gerr != nil {
 			if errors.Is(gerr, docindex.ErrNotFound) {
 				missing = append(missing, name)
@@ -1705,6 +1715,41 @@ func (g *Engine) skillBody(ctx context.Context, name string) (string, error) {
 		return "", err
 	}
 	return doc.Body, nil
+}
+
+// firstStr returns the first non-empty string in ss, or "".
+func firstStr(ss []string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// composeSkillBodies loads and concatenates skill rubrics in order (spine first,
+// then augmentations — sty_8225d8a5). Missing skills are skipped (engagement
+// guard already hard-blocks them); other lookup errors surface.
+func (g *Engine) composeSkillBodies(ctx context.Context, names []string) (string, error) {
+	var parts []string
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		body, err := g.skillBody(ctx, name)
+		if err != nil {
+			if errors.Is(err, docindex.ErrNotFound) {
+				continue
+			}
+			return "", err
+		}
+		if len(names) > 1 {
+			parts = append(parts, "# Skill: "+name+"\n\n"+body)
+		} else {
+			parts = append(parts, body)
+		}
+	}
+	return strings.Join(parts, "\n\n---\n\n"), nil
 }
 
 // reviewerSkillsFor scans a workflow body's transition lines for the (from→to)

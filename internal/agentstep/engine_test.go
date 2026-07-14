@@ -297,6 +297,51 @@ func TestEngagementGuardSkippedOffEngagementEdge(t *testing.T) {
 	}
 }
 
+// Augmentation DOT: code-ui is only required for surface:ui (sty_8225d8a5 AC5).
+var engageAugDOT = wfDoc(baselineWorkflow, `"*"`, `digraph w {
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor, prompt="@skill:code"]
+  done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
+  codeui      [agent=executor, prompt="@skill:code-ui", on="in_progress", applies_to="surface:ui"]
+  backlog -> in_progress [reviewer_skill="satelle-story-intent-review"]
+  in_progress -> done
+}`)
+
+// TestEngagementAugmentationSurfaceAware: missing code-ui blocks surface:ui
+// engagement and does NOT block surface:cli (sty_8225d8a5).
+func TestEngagementAugmentationSurfaceAware(t *testing.T) {
+	docs := fakeDocs{workflow: engageAugDOT, extraSkills: []docindex.Doc{
+		skillDoc("satelle-story-intent-review"),
+		skillDoc("satelle-story-done-review"),
+		skillDoc("code"),
+		// code-ui deliberately missing
+	}}
+	g, _ := newEngine(t, `{"decision":"accept"}`, docs)
+
+	ui, err := g.Gate(context.Background(), workitem.Item{
+		ID: "sty_ui", Status: "backlog", Tags: []string{"surface:ui"},
+	}, "in_progress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ui.Accept {
+		t.Fatal("surface:ui must block when code-ui missing")
+	}
+	if !strings.Contains(ui.Notes, "code-ui") {
+		t.Errorf("notes should name code-ui: %q", ui.Notes)
+	}
+
+	cli, err := g.Gate(context.Background(), workitem.Item{
+		ID: "sty_cli", Status: "backlog", Tags: []string{"surface:cli"},
+	}, "in_progress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cli.Accept {
+		t.Fatalf("surface:cli must NOT require code-ui, got %+v", cli)
+	}
+}
+
 func newEngine(t *testing.T, out string, docs fakeDocs) (*Engine, *fakeRunner) {
 	t.Helper()
 	r := &fakeRunner{out: out}

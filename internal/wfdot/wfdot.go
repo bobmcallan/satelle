@@ -69,18 +69,29 @@ func Validate(spec Spec) []string {
 	// Parse-time attr / placement problems (unknown keys, applies_to misuse).
 	// Parse returns only ok/not-ok, so it CARRIES them here (sty_c6d093c8).
 	problems = append(problems, spec.AttrProblems...)
+	// Nodes that appear on an edge are lifecycle states; augmentation must be edge-less.
+	incident := map[string]bool{}
+	for _, tr := range spec.Transitions {
+		incident[tr.From], incident[tr.To] = true, true
+	}
 	for _, st := range spec.States {
+		// Performing + on= + incident edges: fail closed (would vanish from spine).
+		if st.IsPerforming() && len(st.On) > 0 && incident[st.Name] {
+			problems = append(problems, fmt.Sprintf(
+				"performing node %q has on= but also participates in edges — augmentation nodes must be edge-less (sty_8225d8a5)",
+				st.Name))
+		}
 		if len(st.AppliesTo) == 0 {
 			continue
 		}
-		// Performing nodes: surface-scoped executor composition is sty_8225d8a5.
-		if st.IsPerforming() {
+		// Performing spine nodes (no on=): applies_to is not a node-override.
+		// Edge-less performing+on= (IsAugmentation) may carry it (sty_8225d8a5).
+		if st.IsPerforming() && !st.IsAugmentation() {
 			problems = append(problems, fmt.Sprintf(
-				"applies_to on performing node %q is not supported (step-level applies_to gates edge-less reviewer nodes only; surface-scoping an executor rubric is sty_8225d8a5)",
+				"applies_to on performing node %q is not supported without on= (use an edge-less executor augmentation node: agent=executor, on=\"<state>\", applies_to=… — sty_8225d8a5)",
 				st.Name))
 			continue
 		}
-		// Reviewer without on=: would parse and do nothing — same fail-open this story kills.
 		if st.Agent == "reviewer" && len(st.On) == 0 {
 			problems = append(problems, fmt.Sprintf(
 				"applies_to on node %q is ignored without on= (step-level applies_to only filters edge-less scoped reviewers)",
@@ -144,13 +155,12 @@ type State struct {
 	// of command template and tools; only {model} varies.
 	Model string
 	// AppliesTo is the node's optional applies_to="surface:ui,…" list
-	// (sty_c6d093c8 / epic:surface-scoped-steps). For an edge-less scoped
-	// reviewer (on= set), the gate is enqueued only when the story holds a
-	// matching tag (EqualFold ANY-match). Empty means applies to every story
-	// (equivalent to ["*"]). Step-level applies_to is for scoped reviewers only;
-	// performing-node use is rejected by Validate (executor composition is
-	// sty_8225d8a5). Parsed once here so that story can reuse State.AppliesTo
-	// rather than adding a second path.
+	// (sty_c6d093c8 / sty_8225d8a5). For an edge-less scoped reviewer or
+	// executor augmentation (on= set), the node applies only when the story
+	// holds a matching tag (EqualFold ANY-match). Empty means every story
+	// (equivalent to ["*"]). Spine performing nodes without on= may not carry
+	// applies_to (Validate rejects). One parse path serves both reviewer and
+	// executor attachments.
 	AppliesTo []string
 }
 
@@ -278,16 +288,28 @@ func (s Spec) doneReachable() map[string]bool {
 // separate: PerformingStates answers "which nodes dispatch work";
 // NonTerminalEngagingStates answers "which statuses count as in-flight for the
 // edit gate" (non-start, non-terminal).
+//
+// An augmentation node (IsAugmentation) is IsPerforming for skill-resolution
+// purposes but is NOT a lifecycle status — see PerformingStates / isEngaging.
 func (st State) IsPerforming() bool {
 	return st.Agent != "" && st.Agent != "reviewer"
 }
 
-// PerformingStates returns the names of every performing node (see IsPerforming),
-// in declaration order — the workflow's engaged states.
+// IsAugmentation reports whether this is an edge-less executor augmentation node
+// (sty_8225d8a5): agent is a performer and on= names the spine state(s) it
+// augments. Same shape as a scoped reviewer (on= attach) but agent=executor.
+// Reuses on= rather than inventing augments= — attach-to-state, keyed by agent=.
+func (st State) IsAugmentation() bool {
+	return st.IsPerforming() && len(st.On) > 0
+}
+
+// PerformingStates returns the names of every SPINE performing node (see
+// IsPerforming), in declaration order — excluding augmentation annotations
+// (sty_8225d8a5), which are not statuses a story can hold.
 func (s Spec) PerformingStates() []string {
 	var out []string
 	for _, st := range s.States {
-		if st.IsPerforming() {
+		if st.IsPerforming() && !st.IsAugmentation() {
 			out = append(out, st.Name)
 		}
 	}
@@ -312,10 +334,11 @@ func (s Spec) NonTerminalEngagingStates() []string {
 
 // isEngaging reports whether a state is a non-terminal engaging state: it is
 // neither the start state (shape=Mdiamond), nor a terminal state (shape=Msquare),
-// nor any agent=reviewer role state. Reviewer-role states are never engaged work
-// (edit/commit gates): that covers cancel sinks AND park states that keep an
-// outgoing resume edge (authored as agent=reviewer so a parked story is not
-// engaged — config-over-code, no state-name literals).
+// nor any agent=reviewer role state, nor an augmentation annotation
+// (sty_8225d8a5). Reviewer-role states are never engaged work (edit/commit
+// gates): that covers cancel sinks AND park states that keep an outgoing resume
+// edge (authored as agent=reviewer so a parked story is not engaged —
+// config-over-code, no state-name literals).
 func (s Spec) isEngaging(st State) bool {
 	// Start marker: shape=Mdiamond
 	if st.Shape == "Mdiamond" {
@@ -327,6 +350,10 @@ func (s Spec) isEngaging(st State) bool {
 	}
 	// Reviewer role: not engaged (cancel sinks, park/resume nodes, edge-less gates).
 	if st.Agent == "reviewer" {
+		return false
+	}
+	// Augmentation annotations are not lifecycle statuses (sty_8225d8a5).
+	if st.IsAugmentation() {
 		return false
 	}
 	return true
@@ -367,19 +394,54 @@ func (s Spec) IsParkState(name string) bool {
 	return false
 }
 
-// ExecutorPathToDoneSkills returns the `@skill:` prompts of PERFORMING nodes that
-// lie on a path which can still reach "done", deduped and sorted. These are the
-// rubrics that perform a step. Unlike reviewer gates — which degrade to advisory
-// when their rubric is absent — a missing performer skill leaves the step
-// unperformable, so its absence is the genuine wasted-work trap to catch at
-// engagement. Empty when no "done".
+// ExecutorPathToDoneSkills returns every executor skill on a path to done,
+// including ALL augmentation skills regardless of applies_to — used by structure
+// validate so a declared code-ui must exist even when no story is in scope.
+// Empty when no "done". See ExecutorPathToDoneSkillsFor for the tag-filtered
+// engagement form (sty_8225d8a5).
 func (s Spec) ExecutorPathToDoneSkills() []string {
+	return s.executorPathSkills(nil, true)
+}
+
+// ExecutorPathToDoneSkillsFor returns executor skills on a path to done for a
+// story with the given tags: spine performing skills plus only those
+// augmentations whose applies_to matches (sty_8225d8a5). A missing code-ui
+// therefore hard-blocks engagement of a surface:ui story and does NOT block a
+// surface:cli story — the wasted-work trap stays surface-aware.
+func (s Spec) ExecutorPathToDoneSkillsFor(tags []string) []string {
+	return s.executorPathSkills(tags, false)
+}
+
+// executorPathSkills is the shared implementation. allAugmentations includes
+// every augmentation skill (structure validate); otherwise applies_to is filtered
+// by tagsMatchAppliesTo (shared with scoped reviewers — sty_c6d093c8).
+func (s Spec) executorPathSkills(tags []string, allAugmentations bool) []string {
 	reach := s.doneReachable()
 	if len(reach) == 0 {
 		return nil
 	}
 	set := map[string]bool{}
 	for _, st := range s.States {
+		if st.IsAugmentation() {
+			if st.Skill == "" {
+				continue
+			}
+			// Augment only if the target spine state can still reach done.
+			targetsDone := false
+			for _, target := range st.On {
+				if reach[target] || target == "*" {
+					targetsDone = true
+					break
+				}
+			}
+			if !targetsDone {
+				continue
+			}
+			if allAugmentations || tagsMatchAppliesTo(st.AppliesTo, tags) {
+				set[st.Skill] = true
+			}
+			continue
+		}
 		if st.IsPerforming() && st.Skill != "" && reach[st.Name] {
 			set[st.Skill] = true
 		}
@@ -390,6 +452,44 @@ func (s Spec) ExecutorPathToDoneSkills() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// ExecutorSkillsFor returns the ordered rubrics for performing state `name` for
+// a story with tags: the spine node's skill first (if any), then matching
+// augmentation skills in declaration order (deterministic, additive —
+// sty_8225d8a5). Empty when the state is unknown, not a performing spine node,
+// or has no skills.
+func (s Spec) ExecutorSkillsFor(name string, tags []string) []string {
+	var base string
+	foundSpine := false
+	for _, st := range s.States {
+		if st.Name == name && st.IsPerforming() && !st.IsAugmentation() {
+			base = st.Skill
+			foundSpine = true
+			break
+		}
+	}
+	if !foundSpine {
+		return nil
+	}
+	var augs []string
+	for _, st := range s.States {
+		if !st.IsAugmentation() || st.Skill == "" {
+			continue
+		}
+		if !(containsStr(st.On, "*") || containsStr(st.On, name)) {
+			continue
+		}
+		if !tagsMatchAppliesTo(st.AppliesTo, tags) {
+			continue
+		}
+		augs = append(augs, st.Skill)
+	}
+	var out []string
+	if base != "" {
+		out = append(out, base)
+	}
+	return append(out, augs...)
 }
 
 // Transition is a directed edge. Skills are the reviewer gates admitting entry to
