@@ -124,13 +124,20 @@ type Config struct {
 }
 
 // BackupConfig is the operator policy for pre-mutation substrate backups
-// (sty_873a5380). Local floor is always on; this only tunes the advisory and
-// online-first attempt.
+// (sty_873a5380, sty_84f14ace). Local floor is always on; this tunes the
+// advisory and the opt-in hosted documents push.
 type BackupConfig struct {
 	// LocalOnly means keep backups under .satelle/backups/ only and do not emit
 	// the "enable online backup" advisory. Prefer satelle.local.toml for a
 	// per-developer choice.
 	LocalOnly bool `toml:"local_only"`
+	// Hosted opts into pushing pre-images to the bound project's personal
+	// documents partition (path backups/<rel>). Default false: that partition
+	// is also listed by documents pull, and backups/ is a restore exclusion —
+	// auto-push used to permanently wedge sync (sty_84f14ace). Operators who
+	// set hosted = true re-introduce poison into the partition but, post-
+	// unwedge, pull only skips those paths rather than failing the whole sync.
+	Hosted bool `toml:"hosted"`
 }
 
 // HostedConfig binds a repo to a hosted satelle-server. Secret-free and

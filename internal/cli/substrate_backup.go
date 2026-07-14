@@ -52,15 +52,17 @@ type BackupOpts struct {
 }
 
 // ResolveBackupOpts reads the backup policy from cfg (and defaults). Safe with
-// a zero config. Hosted server uses the global→repo precedence
-// (config.ResolveHostedServer) so satelle login enables online backup without
-// a committed [hosted] server (sty_873a5380).
+// a zero config. Hosted documents push is OPT-IN via [backup] hosted = true
+// (sty_84f14ace); when false, HostedServer/HostedProject stay empty so the
+// existing server+project gate on the push path stays quiet. Hosted server URL
+// uses global→repo precedence (config.ResolveHostedServer) when opted in.
 func ResolveBackupOpts(cfg config.Config) BackupOpts {
-	return BackupOpts{
-		LocalOnly:     cfg.Backup.LocalOnly,
-		HostedServer:  config.ResolveHostedServer(cfg),
-		HostedProject: strings.TrimSpace(cfg.Hosted.Project),
+	opts := BackupOpts{LocalOnly: cfg.Backup.LocalOnly}
+	if cfg.Backup.Hosted {
+		opts.HostedServer = config.ResolveHostedServer(cfg)
+		opts.HostedProject = strings.TrimSpace(cfg.Hosted.Project)
 	}
+	return opts
 }
 
 // backupExistingFile writes a local copy of body at
@@ -91,7 +93,7 @@ func backupExistingFile(dataDir string, kind BackupKind, relPath string, body []
 	// No hosted channel: advisory unless operator opted local-only.
 	if !opts.LocalOnly {
 		res.Notice = "backup: local only at " + local +
-			" — online/personal backup is available via `satelle login` + [hosted] server/project; set [backup] local_only = true to suppress this advisory"
+			" — online/personal backup is opt-in via [backup] hosted = true (requires satelle login + [hosted] project); set [backup] local_only = true to suppress this advisory"
 	}
 	return res, nil
 }
@@ -153,7 +155,7 @@ func backupExistingPath(dataDir string, kind BackupKind, relPath, absPath string
 
 // backupPolicyNotice returns the advisory / online-status line for a command
 // that already performed a local backup at localRoot (e.g. rebase's dir move).
-// Empty when local_only and no hosted channel.
+// Empty when local_only, or when a hosted push channel is already active.
 func backupPolicyNotice(opts BackupOpts, localRoot string) string {
 	if opts.HostedServer != "" && opts.HostedProject != "" {
 		return "backup: local " + localRoot + " (hosted channel configured — pushing pre-images next)"
@@ -162,7 +164,7 @@ func backupPolicyNotice(opts BackupOpts, localRoot string) string {
 		return ""
 	}
 	return "backup: local only at " + localRoot +
-		" — online/personal backup is available via `satelle login` + [hosted] server/project; set [backup] local_only = true to suppress this advisory"
+		" — online/personal backup is opt-in via [backup] hosted = true (requires satelle login + [hosted] project); set [backup] local_only = true to suppress this advisory"
 }
 
 // pushBackupTreeHosted walks a local backup tree (e.g. rebase's timestamped

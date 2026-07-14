@@ -1134,12 +1134,16 @@ edit_exempt_paths = [".satelle/"]
 # MODEL_BASE_URL = "https://example.invalid"  # non-secret; secrets → satelle.local.toml
 # <<< satelle-example
 #
-# [backup] — pre-mutation substrate backup policy (sty_873a5380).
+# [backup] — pre-mutation substrate backup policy (sty_873a5380, sty_84f14ace).
 # Local copies under .satelle/backups/ always run before init/restore/rebase
-# overwrite an existing file. local_only suppresses the advisory about enabling
-# online/personal backup when no hosted channel is configured.
+# overwrite an existing file. local_only suppresses the advisory about the
+# online option. hosted = true opts into pushing pre-images into the bound
+# project's personal documents partition (path backups/<rel>) — default off,
+# because that partition is listed by documents pull and backups/ is a restore
+# exclusion (auto-push permanently wedged sync; sty_84f14ace).
 # [backup]
 # local_only = true
+# hosted = true
 
 # [hosted] — secret-free hosted-server binding (committed). Tokens live in the
 # user credential store, never here. 'satelle login' sets the server URL;

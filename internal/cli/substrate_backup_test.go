@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/config"
 )
 
 func TestBackupExistingFileLocalFloorAndAdvisory(t *testing.T) {
@@ -22,8 +24,9 @@ func TestBackupExistingFileLocalFloorAndAdvisory(t *testing.T) {
 	if err != nil || string(got) != string(body) {
 		t.Fatalf("backup content wrong: %v %q", err, got)
 	}
-	if !strings.Contains(res.Notice, "online/personal backup") {
-		t.Errorf("expected advisory notice, got %q", res.Notice)
+	// AC6 + advisory: names the opt-in and local_only suppress (sty_84f14ace).
+	if !strings.Contains(res.Notice, "hosted = true") || !strings.Contains(res.Notice, "local_only") {
+		t.Errorf("expected advisory naming hosted opt-in + local_only, got %q", res.Notice)
 	}
 
 	// local_only suppresses advisory
@@ -33,6 +36,67 @@ func TestBackupExistingFileLocalFloorAndAdvisory(t *testing.T) {
 	}
 	if res2.Notice != "" {
 		t.Errorf("local_only should suppress advisory, got %q", res2.Notice)
+	}
+}
+
+// TestResolveBackupOptsHostedOptIn: [backup] hosted defaults off so a hosted-
+// configured repo does not auto-push pre-images into the documents partition
+// (sty_84f14ace AC5). Direct BackupOpts with server+project still pushes (tests
+// and explicit call sites).
+func TestResolveBackupOptsHostedOptIn(t *testing.T) {
+	// Isolate global hosted config so ResolveHostedServer only sees repo config.
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	cfg := config.Config{
+		Hosted: config.HostedConfig{Server: "https://example.test", Project: "proj"},
+	}
+	opts := ResolveBackupOpts(cfg)
+	if opts.HostedServer != "" || opts.HostedProject != "" {
+		t.Fatalf("default Backup.Hosted=false must leave channel empty, got server=%q project=%q", opts.HostedServer, opts.HostedProject)
+	}
+
+	cfg.Backup.Hosted = true
+	opts = ResolveBackupOpts(cfg)
+	if opts.HostedServer != "https://example.test" || opts.HostedProject != "proj" {
+		t.Fatalf("Backup.Hosted=true should resolve channel, got server=%q project=%q", opts.HostedServer, opts.HostedProject)
+	}
+
+	// AC5: through ResolveBackupOpts (default), no HostedPush is attempted.
+	dataDir := t.TempDir()
+	var pushed int
+	res, err := backupExistingFile(dataDir, BackupKindPreMutation, "skills/x.md", []byte("pre"), ResolveBackupOpts(config.Config{
+		Hosted: config.HostedConfig{Server: "https://example.test", Project: "proj"},
+		// Backup.Hosted false
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Inject would only run if HostedServer+Project set; they are empty, so no push.
+	_ = pushed
+	if res.LocalPath == "" {
+		t.Fatal("local floor must still be written (AC6)")
+	}
+	if _, err := os.Stat(res.LocalPath); err != nil {
+		t.Fatalf("local backup missing: %v", err)
+	}
+	// No hosted notice (no channel).
+	if strings.Contains(res.Notice, "hosted https") || strings.Contains(res.Notice, "hosted unavailable") {
+		t.Errorf("default opts must not claim hosted push: %q", res.Notice)
+	}
+}
+
+// TestBackupExistingFileLocalWriteFailureIsFatal (AC6): a local backup that
+// cannot be written still errors — mandatory floor.
+func TestBackupExistingFileLocalWriteFailureIsFatal(t *testing.T) {
+	// Point dataDir at a file path so MkdirAll/write under it fails.
+	fileAsDir := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(fileAsDir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := backupExistingFile(fileAsDir, BackupKindPreMutation, "skills/x.md", []byte("pre"), BackupOpts{})
+	if err == nil {
+		t.Fatal("local write failure must be fatal")
 	}
 }
 

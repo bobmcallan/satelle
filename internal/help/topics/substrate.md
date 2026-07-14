@@ -34,11 +34,13 @@ solution (the "start clean" recovery).
 Before init/restore/rebase **overwrites** an existing file under `.satelle/`,
 satelle writes a local copy under `.satelle/backups/` (kinds: `pre-mutation/`,
 `diverged/`, `restore/`, or a timestamped dir for rebase). Local floor always —
-heal paths never block for backup. When a personal hosted channel is configured
-(`satelle login` + project bind), the pre-image is also pushed best-effort;
-offline/auth failure degrades to local with a notice. Set
+heal paths never block for backup. Online/personal push of pre-images into the
+bound project's documents partition is **opt-in** (`[backup] hosted = true`) and
+requires `satelle login` + project bind; offline/auth failure degrades to local
+with a notice. Default is local-only so init never poisons the documents
+partition that `satelle sync` pulls (backups/ is a restore exclusion). Set
 `[backup] local_only = true` (prefer `satelle.local.toml`) to suppress the
-advisory that points at the online option when no hosted channel is set.
+advisory that points at the online option.
 
 ## Format: Open Knowledge Format (OKF)
 
