@@ -29,6 +29,17 @@ further — it backs up `workflows/ skills/ principles/` to a timestamped
 `.satelle/backups/` dir, wipes them, and redeploys the complete default
 solution (the "start clean" recovery).
 
+## Pre-mutation backup
+
+Before init/restore/rebase **overwrites** an existing file under `.satelle/`,
+satelle writes a local copy under `.satelle/backups/` (kinds: `pre-mutation/`,
+`diverged/`, `restore/`, or a timestamped dir for rebase). Local floor always —
+heal paths never block for backup. When a personal hosted channel is configured
+(`satelle login` + project bind), the pre-image is also pushed best-effort;
+offline/auth failure degrades to local with a notice. Set
+`[backup] local_only = true` (prefer `satelle.local.toml`) to suppress the
+advisory that points at the online option when no hosted channel is set.
+
 ## Format: Open Knowledge Format (OKF)
 
 Every authored doc carries YAML frontmatter with a required **`type`** key (OKF):

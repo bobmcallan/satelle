@@ -104,7 +104,9 @@ const (
 // (diverge / update only).
 //
 // backupOpts is optional (zero value → local floor + advisory when no hosted).
-func reconcileEmbeddedFile(dataDir, relPath, embeddedBody string, backupOpts ...BackupOpts) (reconcileVerb, string, error) {
+// The BackupResult carries LocalPath (when a pre-image was written) and Notice
+// (hosted destination / advisory) for the caller to surface.
+func reconcileEmbeddedFile(dataDir, relPath, embeddedBody string, backupOpts ...BackupOpts) (reconcileVerb, BackupResult, error) {
 	var opts BackupOpts
 	if len(backupOpts) > 0 {
 		opts = backupOpts[0]
@@ -115,39 +117,39 @@ func reconcileEmbeddedFile(dataDir, relPath, embeddedBody string, backupOpts ...
 	cur, err := os.ReadFile(dest)
 	if os.IsNotExist(err) {
 		if werr := writeEmbedded(dest, stampedCurrent); werr != nil {
-			return "", "", werr
+			return "", BackupResult{}, werr
 		}
-		return reconcileCreated, "", nil
+		return reconcileCreated, BackupResult{}, nil
 	}
 	if err != nil {
-		return "", "", fmt.Errorf("reconcile: read %s: %w", dest, err)
+		return "", BackupResult{}, fmt.Errorf("reconcile: read %s: %w", dest, err)
 	}
 
 	stripped, stamp, stamped := stripEmbeddedStamp(string(cur))
 	if !stamped {
-		return reconcileUnchanged, "", nil // operator-authored (no stamp) — untouched
+		return reconcileUnchanged, BackupResult{}, nil // operator-authored (no stamp) — untouched
 	}
 	if embeddedSHA(stripped) != stamp {
 		// Operator edited the body since it was stamped — never clobber.
 		bres, berr := backupExistingFile(dataDir, BackupKindDiverged, relPath, cur, opts)
 		if berr != nil {
-			return "", "", fmt.Errorf("reconcile: backup %s: %w", dest, berr)
+			return "", BackupResult{}, fmt.Errorf("reconcile: backup %s: %w", dest, berr)
 		}
-		return reconcileDiverged, bres.LocalPath, nil
+		return reconcileDiverged, bres, nil
 	}
 	// Unedited seed. Converge to the current embedded body only if it moved on.
 	if stamp == embeddedSHA(embeddedBody) {
-		return reconcileUnchanged, "", nil
+		return reconcileUnchanged, BackupResult{}, nil
 	}
 	// Pre-mutation backup before overwrite (sty_873a5380).
 	bres, berr := backupExistingFile(dataDir, BackupKindPreMutation, relPath, cur, opts)
 	if berr != nil {
-		return "", "", fmt.Errorf("reconcile: backup %s: %w", dest, berr)
+		return "", BackupResult{}, fmt.Errorf("reconcile: backup %s: %w", dest, berr)
 	}
 	if werr := writeEmbedded(dest, stampedCurrent); werr != nil {
-		return "", "", werr
+		return "", BackupResult{}, werr
 	}
-	return reconcileUpdated, bres.LocalPath, nil
+	return reconcileUpdated, bres, nil
 }
 
 // writeEmbedded writes editable substrate (0o644), creating parent dirs.
