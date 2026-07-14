@@ -89,6 +89,67 @@ func TestSubstrateWorkflowSeededAndDrivable(t *testing.T) {
 	}
 }
 
+// TestManagedFootprintClosesSubstrateLane proves an init-footprint commit
+// (root .gitignore + init-deployed harness hook scaffold under .claude/ and/or
+// .grok/) closes through the substrate lane without routing to the project/code
+// workflow (sty_40973fb6). Modeled on TestSubstrateWorkflowSeededAndDrivable:
+// init writes the managed footprint, a category:substrate story engages, a
+// footprint edit is committed with the story id, and in_progress → done
+// succeeds on the deterministic check.
+func TestManagedFootprintClosesSubstrateLane(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	stubReviewerAccept(t, repo) // step-summary node is an LLM reviewer; stub it
+	mustRun(t, testBin, repo, "reindex")
+
+	// Commit the full init scaffold first (without a story id) so git log
+	// --grep only matches the later managed-footprint edit.
+	gitInit(t, repo)
+	gitCommitAll(t, repo, "initial scaffold")
+
+	sid := extractID(mustRun(t, testBin, repo, "story", "create", "--title", "Land init footprint",
+		"--category", "substrate", "--body", "Heal managed .gitignore and harness hooks."), "sty_")
+	if sid == "" {
+		t.Fatalf("no story id")
+	}
+	mustRun(t, testBin, repo, "story", "set", sid, "--status", "in_progress")
+
+	// Managed-footprint edit: append to the root .gitignore init always writes,
+	// plus any init-deployed harness scaffold (.claude/ and/or .grok/ — which
+	// ones land depends on detectProcessHarnesses). All ride the substrate allow-list.
+	giPath := filepath.Join(repo, ".gitignore")
+	gi, err := os.ReadFile(giPath)
+	if err != nil {
+		t.Fatalf("init should have written root .gitignore: %v", err)
+	}
+	if err := os.WriteFile(giPath, append(gi, []byte("\n# footprint heal\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	harnessTouched := false
+	for _, rel := range []string{
+		".claude/settings.json",
+		".grok/hooks/satelle.json",
+	} {
+		p := filepath.Join(repo, filepath.FromSlash(rel))
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			continue
+		}
+		if err := os.WriteFile(p, append(b, []byte("\n")...), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		harnessTouched = true
+	}
+	if !harnessTouched {
+		t.Fatal("init wrote no harness hook scaffold (.claude/settings.json or .grok/hooks/satelle.json)")
+	}
+	gitCommitAll(t, repo, "chore: heal init footprint ("+sid+")")
+
+	if out, err := run(t, testBin, repo, "story", "set", sid, "--status", "done"); err != nil {
+		t.Fatalf("init-footprint commit should close on the substrate lane for %s: %v\n%s", sid, err, out)
+	}
+}
+
 func gitInit(t *testing.T, repo string) {
 	t.Helper()
 	for _, args := range [][]string{

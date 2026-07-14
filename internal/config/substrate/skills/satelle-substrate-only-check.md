@@ -3,19 +3,30 @@ name: satelle-substrate-only-check
 scope: system
 type: skill
 tags: [type:skill, type:reviewer, type:functional-check]
-description: Functional-check gate for substrate workflow close (in_progress → done) — rejects if the story's committed slice touches any path outside .satelle/, docs/, or [gate] edit_exempt_paths, catching code mis-filed under category substrate that would otherwise skip the project workflow's plan/code-ac/integration gates. Deterministic, no LLM; self-contained per satelle-reviewer-self-contained.
+description: Functional-check gate for substrate workflow close (in_progress → done) — rejects if the story's committed slice touches any path outside .satelle/, docs/, the binary managed footprint (root .gitignore; harness hook scaffolds under .claude/ and .grok/), or [gate] edit_exempt_paths, catching code mis-filed under category substrate that would otherwise skip the project workflow's plan/code-ac/integration gates. Deterministic, no LLM; self-contained per satelle-reviewer-self-contained.
 ---
 
 # Substrate-only check (substrate workflow close gate)
 
 **Functional-check** gate on the substrate workflow's close. The workflow
 DECLARES it as a scoped reviewer node (`on="done"`); on `in_progress → done` it
-verifies the story's committed slice touched **only** authored substrate —
+verifies the story's committed slice touched **only** substrate-lane paths:
 markdown under `.satelle/` (workflows, skills, principles, documents, tasks),
-`docs/`, or any prefix in `[gate] edit_exempt_paths` in `satelle.toml` (a
-harness authoring dir like `.claude/` — the same knob the edit gate uses). Any
-other path (a `.go` file, `cmd/`, build/CI config) means the change is **not**
-substrate-only and belongs on the project workflow — the close is **rejected**.
+`docs/`, the binary's own **managed footprint** outside `.satelle/` (the root
+`.gitignore` managed block and harness hook scaffolds under `.claude/` and
+`.grok/` that `satelle init` deploys), or any prefix in `[gate]
+edit_exempt_paths` in `satelle.toml` (repo-side extension of the same lane —
+unchanged semantics, a different axis from the edit gate's "editable without
+an engaged story"). Any other path (a `.go` file, `cmd/`, build/CI config)
+means the change is **not** substrate-only and belongs on the project
+workflow — the close is **rejected**.
+
+Why the managed footprint rides this lane: those files are binary-emitted,
+binary-managed **process configuration**, not product code. No build/test lane
+can meaningfully vet a `.gitignore` block or a harness hook scaffold, and
+routing them through the project/code workflow adds cost without judgment.
+They belong here by default so an init-heal or footprint story is not forced
+onto a heavy lane.
 
 The check is the embedded ```check script below — **self-contained**, no
 external file (see [[satelle-reviewer-self-contained]]). satelle runs it in the
@@ -45,12 +56,12 @@ if [ -z "$commits" ]; then
   exit 1
 fi
 changed=$(for c in $commits; do git show --name-only --format= "$c"; done | grep -v '^$' | sort -u)
-# Allowed prefixes: authored substrate (.satelle/, docs/) plus any [gate]
-# edit_exempt_paths configured in satelle.toml — a harness authoring dir (e.g.
-# .claude/) holds authored markdown, not product code, so it rides the substrate
-# lane too. Reuses v0.0.104's edit_exempt_paths knob (config-over-code, no new
-# knob); unset → .satelle/ + docs/ exactly as before.
-allow='\.satelle/|docs/'
+# Allowed prefixes: authored substrate (.satelle/, docs/), the binary managed
+# footprint init writes outside .satelle/ (root .gitignore; harness hook
+# scaffolds under .claude/ and .grok/ — process config, not product code), plus
+# any [gate] edit_exempt_paths in satelle.toml (repo-side extension knob,
+# unchanged semantics). Product code (.go, cmd/, Makefile, CI) still fails.
+allow='\.satelle/|docs/|\.gitignore$|\.claude/|\.grok/'
 extra=$(grep -E '^[[:space:]]*edit_exempt_paths' .satelle/satelle.toml 2>/dev/null | grep -oE '"[^"]+"' | tr -d '"')
 for p in $extra; do
   esc=$(printf '%s' "$p" | sed 's#[^A-Za-z0-9/]#\\&#g')
