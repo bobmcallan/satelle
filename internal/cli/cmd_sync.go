@@ -34,10 +34,11 @@ documents push then pull, and work-state push — skipping any area still local.
 The per-kind subcommands (config, documents, workstate) drive one area on its own.
 
 Continuity posture: local areas stay on disk only. For personal areas, push is a
-BACKUP to the bound hosted project; documents pull (and config deploy) is SYNC
-DOWN / rehydrate. .satelle content does not need to be git-tracked for either.
-Today work-state is push-only (full workstate rehydrate is a later story); bare
-sync does not run config deploy — use "satelle sync config deploy" deliberately.
+BACKUP to the bound hosted project; documents pull, config deploy, and workstate
+pull are SYNC DOWN / rehydrate. .satelle content does not need to be git-tracked
+for either. Bare sync does not run config deploy or workstate pull — use
+"satelle sync config deploy", "satelle sync workstate pull", or "satelle sync
+rehydrate" deliberately for recover.
 
 Every area defaults to local — nothing leaves the machine until you set
 [sync] <area> = personal. To opt the whole .satelle tree in with one key,
@@ -63,7 +64,63 @@ catalogs are a separate verb: satelle publish.`,
 	syncCmd.AddCommand(newSyncConfigCmd())
 	syncCmd.AddCommand(newSyncDocumentsCmd())
 	syncCmd.AddCommand(newSyncWorkstateCmd())
+	syncCmd.AddCommand(newSyncRehydrateCmd())
 	register(syncCmd)
+}
+
+// newSyncRehydrateCmd is the recover path (epic:workspace-rehydrate order:4):
+// config deploy → documents pull → workstate pull. Does not push.
+// Not store-annotated: config deploy must run before agents.toml exists on an
+// empty tree; the store is opened after deploy for workstate pull only.
+func newSyncRehydrateCmd() *cobra.Command {
+	var server string
+	var force bool
+	cmd := &cobra.Command{
+		Use:     "rehydrate",
+		Aliases: []string{"pull"},
+		Short:   "Sync-down recover: config deploy + documents pull + workstate pull (no push)",
+		Long: `rehydrate is the empty-tree / wiped-.satelle recover path for personal opt-in.
+
+Pinned sequence (scopes live in satelle.toml — deploy restores them first):
+  1. config deploy   — materialize authored config from the bound project
+  2. documents pull  — restore documents
+  3. workstate pull  — restore stories/executions/ledger into the local store
+
+Requires login + "satelle project bind <slug>". Local-only areas no-op with the
+usual per-kind skip messages. Does not push. Bare "satelle sync" remains the
+backup-oriented path on a healthy machine.
+
+Optional --force is passed to workstate pull only (conflict override).`,
+		RunE: func(c *cobra.Command, args []string) error {
+			return runSyncRehydrate(c, server, force)
+		},
+	}
+	cmd.Flags().StringVar(&server, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	cmd.Flags().BoolVar(&force, "force", false, "Pass --force to workstate pull (upsert on conflict).")
+	return cmd
+}
+
+func runSyncRehydrate(cmd *cobra.Command, serverArg string, force bool) error {
+	out := cmd.OutOrStdout()
+	fmt.Fprintln(out, "rehydrate: config deploy…")
+	if err := runSyncConfigDeploy(cmd, serverArg, "", 0); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, "rehydrate: documents pull…")
+	if err := runSyncDocumentsPull(cmd, serverArg, ""); err != nil {
+		return err
+	}
+	// Open store after config deploy so agents.toml (and scopes) may exist.
+	if err := openAppForCmd(cmd); err != nil {
+		return fmt.Errorf("rehydrate: open store after config deploy: %w — ensure personal config was pushed (or run satelle init), then retry", err)
+	}
+	defer closeAppForCmd(cmd)
+	fmt.Fprintln(out, "rehydrate: workstate pull…")
+	if err := runSyncWorkstatePull(cmd, serverArg, false, force); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, "rehydrate: done.")
+	return nil
 }
 
 // runSync is the bare `satelle sync` default action: run the configured sync

@@ -81,6 +81,41 @@ func (s *Store) Append(ctx context.Context, in AppendInput, now time.Time) (Entr
 	return e, nil
 }
 
+// Upsert inserts an evidence row with a known id (workstate rehydrate). Uses
+// INSERT OR IGNORE so re-run is idempotent and existing rows are never
+// rewritten (append-only in spirit). Kind and ID are required; missing
+// timestamps default to now; payload/refs default to {}/[] as Append does.
+func (s *Store) Upsert(ctx context.Context, e Entry, now time.Time) (Entry, error) {
+	if strings.TrimSpace(e.ID) == "" {
+		return Entry{}, fmt.Errorf("ledger: upsert needs an id")
+	}
+	if strings.TrimSpace(e.Kind) == "" {
+		return Entry{}, fmt.Errorf("ledger: kind required")
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	now = now.UTC()
+	if e.CreatedAt.IsZero() {
+		e.CreatedAt = now
+	}
+	if len(e.Payload) == 0 {
+		e.Payload = json.RawMessage("{}")
+	}
+	if len(e.Refs) == 0 {
+		e.Refs = json.RawMessage("[]")
+	}
+	_, err := s.db.ExecContext(ctx, `
+        INSERT OR IGNORE INTO evidence (id, story_id, project_id, kind, actor, body, payload, refs, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.StoryID, e.ProjectID, e.Kind, e.Actor, e.Body,
+		string(e.Payload), string(e.Refs), e.CreatedAt.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return Entry{}, fmt.Errorf("ledger: upsert: %w", err)
+	}
+	return e, nil
+}
+
 // ListByStory returns every entry for a story, oldest-first, optionally
 // filtered to one kind.
 func (s *Store) ListByStory(ctx context.Context, storyID, kind string) ([]Entry, error) {

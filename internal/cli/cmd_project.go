@@ -13,6 +13,8 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -106,12 +108,24 @@ func runProjectBind(cmd *cobra.Command, slug string) error {
 	if err != nil && !errors.Is(err, config.ErrNotFound) {
 		return fmt.Errorf("load config: %w", err)
 	}
+	// Empty-tree rehydrate: create .satelle/satelle.toml when absent so bind
+	// works before init/config deploy (epic:workspace-rehydrate order:4).
 	if cfgPath == "" {
-		return fmt.Errorf("not in a satelle repo — run \"satelle init\" first")
+		cwd, cerr := os.Getwd()
+		if cerr != nil {
+			return fmt.Errorf("resolve cwd: %w", cerr)
+		}
+		cfgPath = filepath.Join(cwd, config.DefaultDataDir, config.ConfigName)
 	}
 	edit := config.KeyEdit{Section: "hosted", Key: "project", Value: strconv.Quote(slug)}
 	if err := config.SaveConfigValues(cfgPath, []config.KeyEdit{edit}); err != nil {
 		return fmt.Errorf("record hosted project in satelle.toml: %w", err)
+	}
+	// Stamp deployed.version when missing so store-backed rehydrate is not
+	// blocked by the breaking-surface gate on a brand-new .satelle tree.
+	dataDir := filepath.Dir(cfgPath)
+	if _, err := writeDeployedVersion(dataDir); err != nil {
+		return fmt.Errorf("stamp deployed.version: %w", err)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Bound this repo to project %q (recorded in %s).\n", slug, cfgPath)
 	return nil

@@ -244,3 +244,29 @@ func TestResolveBoundProjectEmpty(t *testing.T) {
 		t.Fatalf("trim/bound = %q, %v", slug, err)
 	}
 }
+
+// TestProjectBindCreatesTomlWhenAbsent: empty-tree bind writes .satelle/satelle.toml
+// without requiring a prior satelle init (workspace-rehydrate order:4).
+func TestProjectBindCreatesTomlWhenAbsent(t *testing.T) {
+	repo := t.TempDir()
+	t.Chdir(repo)
+	t.Setenv("SATELLE_CONFIG", "") // ensure Load walks CWD
+	// Clear any SATELLE_CONFIG from other tests.
+	_ = os.Unsetenv("SATELLE_CONFIG")
+
+	cmd, buf := testCmd()
+	if err := runProjectBind(cmd, "fresh-slug"); err != nil {
+		t.Fatalf("bind: %v\n%s", err, buf.String())
+	}
+	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
+	b, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("expected satelle.toml after bind: %v", err)
+	}
+	if !strings.Contains(string(b), "fresh-slug") {
+		t.Fatalf("toml missing project slug: %s", b)
+	}
+	if !strings.Contains(buf.String(), "fresh-slug") {
+		t.Fatalf("output: %s", buf.String())
+	}
+}

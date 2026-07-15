@@ -104,8 +104,9 @@ type DocumentChanges struct {
 }
 
 // WorkstateIngest is the POST body for /api/v1/workspaces/{id}/workstate —
-// a one-way local→server batch of stories/executions (items) and ledger entries.
+// a local→server batch of stories/executions (items) and ledger entries.
 // The server stamps origin=cli-sync; the client never supplies origin.
+// Pull uses GET …/workstate/items and GET …/workstate/ledger (rehydrate).
 type WorkstateIngest struct {
 	Items  []json.RawMessage `json:"items"`
 	Ledger []json.RawMessage `json:"ledger"`
@@ -115,6 +116,27 @@ type WorkstateIngest struct {
 type WorkstateIngestResult struct {
 	Items  int `json:"items"`
 	Ledger int `json:"ledger"`
+}
+
+// WorkstateItem is one row from GET …/workstate/items (mirror list for pull).
+type WorkstateItem struct {
+	ID     string          `json:"id"`
+	Kind   string          `json:"kind"`
+	Type   string          `json:"type"`
+	Status string          `json:"status"`
+	Title  string          `json:"title"`
+	Origin string          `json:"origin"`
+	Record json.RawMessage `json:"record"`
+}
+
+// WorkstateLedgerRow is one row from GET …/workstate/ledger.
+type WorkstateLedgerRow struct {
+	ID      string          `json:"id"`
+	StoryID string          `json:"story_id"`
+	Kind    string          `json:"kind"`
+	Type    string          `json:"type"`
+	Origin  string          `json:"origin"`
+	Record  json.RawMessage `json:"record"`
 }
 
 // PublishedItem is one head (or history entry) in a team workspace's
