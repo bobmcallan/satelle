@@ -1053,8 +1053,9 @@ const scaffoldToml = `# satelle.toml — per-repo config (committed, secret-free
 # default, so this file may stay fully commented; uncomment a key to override.
 # Per-user overrides go in satelle.local.toml beside this file (gitignored).
 
-# data_dir = ".satelle"          # home for the per-repo database (default)
-# db = ".satelle/satelle.db"     # database path (default: <data_dir>/satelle.db)
+# data_dir = ".satelle"          # per-repo store home (default under the repo root)
+# db = ".satelle/satelle.db"     # per-repo local DB (default: <data_dir>/satelle.db);
+#                                # never commit; cache when personal workstate is opted in
 # web_port = 8787                # 'satelle serve' listen port (default)
 # log_level = "info"             # debug | info | warn | error (default info)
 # logs_max_size_kb = 5120        # roll a .satelle/logs file past this size (default 5 MiB)
