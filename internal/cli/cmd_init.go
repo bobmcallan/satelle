@@ -48,8 +48,8 @@ func init() {
   - the authored-markdown dirs (documents, workflows, principles, skills) the
     directory monitor watches and indexes,
   - the per-repo SQLite database at .satelle/satelle.db (created and migrated),
-  - a managed .gitignore block keeping the local database out of git while
-    committing the config and the authored markdown,
+  - a managed .gitignore block of RECOMMENDED local-state ignores (DB, overlay,
+    logs, backups); the operator owns .gitignore and whether process is tracked,
   - process hooks for the detected coding harness(es): Claude
     (.claude/settings.json) and/or Grok (.grok/hooks/satelle.json),
   - registration of this repo in the local workspace registry (opt out with
@@ -1117,8 +1117,9 @@ edit_exempt_paths = [".satelle/"]
 # personal = this repo's BOUND hosted project (not a dump across every project).
 # shared = team catalog eligibility; use 'satelle publish' for the team catalog
 # (sync itself does not write to a team workspace). Inspect with 'satelle sync scopes'.
-# git remains the source of truth; an area opted in here is MIRRORED to hosted,
-# not moved off git — keep authored markdown and satelle.toml committed.
+# Continuity: local = your disk; personal = push backup + sync-down rehydrate for
+# the bound project. Whether .satelle process is git-tracked is the operator's
+# choice — satelle does not require it. Git is for the application repo.
 # Areas: documents, workflows, principles, skills, constitution, agents, tasks,
 # stories, ledger, executions. Reserved key 'all' blanket-defaults every area
 # not set explicitly; a per-area key still overrides it.
@@ -1273,15 +1274,15 @@ placeholder. -->
 // presence anywhere in the file makes a re-run a no-op.
 const gitignoreMarker = "# >>> satelle (managed) >>>"
 
-// gitignoreBlock keeps the local database (+ WAL/SHM sidecars) and the
-// per-user overlay out of git, while leaving the committed toml and the
-// authored markdown tracked.
+// gitignoreBlock is the RECOMMENDED ignore set satelle init writes. The
+// operator owns .gitignore; satelle does not require process substrate or the
+// local DB to be git-tracked. Entries below are local-state defaults only.
 const gitignoreBlock = gitignoreMarker + `
-# satelle's per-repo database is local state — ignore it and its sidecars, plus
-# the per-user config overlay. The committed satelle.toml and the authored
-# markdown under .satelle/ stay tracked. Scoped sync is a MIRROR of that tracked
-# content, not a second home: deploy/pull land files back in the same tracked
-# paths, so git stays the source of truth even when an area is [sync] personal.
+# RECOMMENDED defaults — the operator owns .gitignore. satelle does not require
+# satelle.toml or authored markdown under .satelle/ to be committed.
+# Continuity is local disk by default; with [sync] <area> = personal the bound
+# hosted project backs that area up and can rehydrate it (push = backup;
+# documents pull / config deploy = sync down). Git is not the recovery path.
 # Sync credentials and cursors live under ~/.config/satelle (outside the repo).
 .satelle/satelle.db
 .satelle/satelle.db-wal

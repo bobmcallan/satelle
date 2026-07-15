@@ -7,6 +7,10 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
+## [0.0.257] - 2026-07-15
+### Changed
+- Workspace continuity posture: local disk + init gitignore defaults; personal sync is backup/rehydrate — supersedes git-as-SoT guidance (sty_c5c54f02)
+
 ## [0.0.256] - 2026-07-14
 ### Changed
 - Documents pull skips excludedLocal paths before content fetch (no wasted download for backups/ poison); skip visibility hard-asserted on poisoned-partition sync (sty_0fd04503)
