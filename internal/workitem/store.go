@@ -150,13 +150,19 @@ func (s *Store) Upsert(ctx context.Context, it Item, now time.Time) (Item, error
 	}
 	it.Tags = nonNilTags(it.Tags)
 	tagsJSON, _ := json.Marshal(it.Tags)
+	archived := 0
+	if it.Archived {
+		archived = 1
+	}
+	// archived must be listed: INSERT OR REPLACE deletes+reinserts, so omitting
+	// the column would reset disposition to DEFAULT 0 (workstate rehydrate).
 	_, err := s.db.ExecContext(ctx, `
         INSERT OR REPLACE INTO work_items
-            (id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, archived)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		it.ID, string(it.Kind), it.Title, it.Body, it.Status, it.Priority, it.Category,
 		it.ParentID, it.AcceptanceCriteria, string(tagsJSON),
-		it.CreatedAt.UTC().Format(time.RFC3339Nano), it.UpdatedAt.UTC().Format(time.RFC3339Nano))
+		it.CreatedAt.UTC().Format(time.RFC3339Nano), it.UpdatedAt.UTC().Format(time.RFC3339Nano), archived)
 	if err != nil {
 		return Item{}, fmt.Errorf("workitem: upsert: %w", err)
 	}

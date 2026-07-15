@@ -155,6 +155,8 @@ func TestOpenAPISchemaCoverage(t *testing.T) {
 		"DocumentChanges",
 		"WorkstateIngest",
 		"WorkstateIngestResult",
+		"WorkstateItem",
+		"WorkstateLedgerRow",
 		"PublishedItem",
 		"TokenResponse",
 		"OAuthError",
@@ -258,8 +260,8 @@ func TestDocumentEndpointsInSpec(t *testing.T) {
 	}
 }
 
-// TestWorkstateEndpointsInSpec verifies the one-way work-state ingest endpoint
-// is published (order:7 AC4).
+// TestWorkstateEndpointsInSpec verifies work-state push + pull endpoints are
+// published (order:7 AC4; epic:workspace-rehydrate order:3).
 func TestWorkstateEndpointsInSpec(t *testing.T) {
 	yamlBytes, err := os.ReadFile("openapi.yaml")
 	if err != nil {
@@ -268,9 +270,15 @@ func TestWorkstateEndpointsInSpec(t *testing.T) {
 	yaml := string(yamlBytes)
 	for _, route := range []string{
 		"/api/v1/workspaces/{workspaceId}/workstate",
+		"/api/v1/workspaces/{workspaceId}/workstate/items",
+		"/api/v1/workspaces/{workspaceId}/workstate/ledger",
 		"ingestWorkstate",
+		"listWorkstateItems",
+		"listWorkstateLedger",
 		"WorkstateIngest",
 		"WorkstateIngestResult",
+		"WorkstateItem",
+		"WorkstateLedgerRow",
 	} {
 		if !strings.Contains(yaml, route) {
 			t.Errorf("openapi.yaml missing workstate endpoint %q", route)

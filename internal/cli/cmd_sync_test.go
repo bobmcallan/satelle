@@ -390,3 +390,37 @@ func TestSyncScopesListsSharedFiles(t *testing.T) {
 		t.Errorf("sync scopes should NOT list private-one.md:\n%s", out)
 	}
 }
+
+// TestSyncRehydrateLocalOnly: with no personal opt-in, rehydrate runs each step
+// as a local skip / empty deploy and exits 0 (order:4 AC4).
+func TestSyncRehydrateLocalOnly(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	repo := tempRepo(t)
+	// Bound project so deploy can resolve; fake server returns empty manifest.
+	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
+	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n\n[hosted]\nproject = \"probe\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]string{
+			{"id": "ws-personal", "kind": "personal", "name": "personal"},
+		})
+	})
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/config", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]any{})
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	seedCred(t, ts.URL)
+
+	out, err := runRoot(t, "sync", "rehydrate", "--server", ts.URL)
+	if err != nil {
+		t.Fatalf("rehydrate: %v\n%s", err, out)
+	}
+	for _, want := range []string{"rehydrate: config deploy", "rehydrate: documents pull", "rehydrate: workstate pull", "rehydrate: done"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}

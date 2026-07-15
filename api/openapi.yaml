@@ -11,9 +11,9 @@ info:
   description: >-
     Public interface for the satelle hosted server. Covers authentication,
     principal identity, project management, the versioned config store, the
-    workspace-scoped document store, one-way work-state replication, and the
-    team publish catalog. The CLI publishes this spec; servers implement it
-    conformance-based (no shared module).
+    workspace-scoped document store, work-state replication (push backup + pull
+    rehydrate), and the team publish catalog. The CLI publishes this spec;
+    servers implement it conformance-based (no shared module).
 
 tags:
   - name: auth
@@ -387,13 +387,14 @@ paths:
   /api/v1/workspaces/{workspaceId}/workstate:
     post:
       operationId: ingestWorkstate
-      summary: Ingest a work-state batch (one-way local→server)
+      summary: Ingest a work-state batch (local→server backup)
       description: >-
         Upserts stories/executions (items) and ledger entries into the workspace
         mirror. The server stamps origin=cli-sync on every row — the client must
         not supply origin. Idempotent on re-push (upsert by id). Editor/owner
         required. Work-state is per-user by design; the CLI always targets the
         personal workspace even when a team workspace is active for config/docs.
+        Pull (rehydrate) uses GET …/workstate/items and GET …/workstate/ledger.
       tags: [workstate]
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
@@ -411,6 +412,62 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/WorkstateIngestResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/workspaces/{workspaceId}/workstate/items:
+    get:
+      operationId: listWorkstateItems
+      summary: List mirrored work-state items (pull/rehydrate)
+      description: >-
+        Returns the project partition's mirrored stories/executions. Any member
+        may read. The CLI uses this for satelle sync workstate pull.
+      tags: [workstate]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/ProjectSlug"
+        - name: kind
+          in: query
+          schema:
+            type: string
+          description: Optional exact kind filter (story|execution).
+      responses:
+        "200":
+          description: Mirrored items with promoted fields and CLI record payload.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkstateItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/workspaces/{workspaceId}/workstate/ledger:
+    get:
+      operationId: listWorkstateLedger
+      summary: List mirrored work-state ledger (pull/rehydrate)
+      description: >-
+        Returns the project partition's mirrored ledger entries. Optional
+        ?story= narrows to one story; omit for the whole project ledger.
+      tags: [workstate]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/ProjectSlug"
+        - name: story
+          in: query
+          schema:
+            type: string
+          description: Optional story id filter.
+      responses:
+        "200":
+          description: Mirrored ledger rows with CLI record payload.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkstateLedgerRow"
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -836,7 +893,7 @@ components:
       type: object
       required: [items, ledger]
       description: >-
-        One-way work-state batch. Each item needs id + kind; each ledger entry
+        Work-state push batch. Each item needs id + kind; each ledger entry
         needs id. Extra fields are preserved as opaque payload server-side.
       properties:
         items:
@@ -859,6 +916,50 @@ components:
           type: integer
         ledger:
           type: integer
+
+    WorkstateItem:
+      type: object
+      required: [id, kind, type, status, title, origin, record]
+      description: One mirrored work-state item from listWorkstateItems (pull).
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          description: CLI kind (story|execution).
+        type:
+          type: string
+          description: Cross-collection type derived from kind.
+        status:
+          type: string
+        title:
+          type: string
+        origin:
+          type: string
+        record:
+          type: object
+          additionalProperties: true
+          description: Verbatim CLI record payload.
+
+    WorkstateLedgerRow:
+      type: object
+      required: [id, story_id, kind, type, origin, record]
+      description: One mirrored ledger row from listWorkstateLedger (pull).
+      properties:
+        id:
+          type: string
+        story_id:
+          type: string
+        kind:
+          type: string
+        type:
+          type: string
+        origin:
+          type: string
+        record:
+          type: object
+          additionalProperties: true
+          description: Verbatim CLI ledger record payload.
 
     PublishedItem:
       type: object
