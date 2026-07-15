@@ -81,16 +81,22 @@ func newSyncRehydrateCmd() *cobra.Command {
 		Short:   "Sync-down recover: config deploy + documents pull + workstate pull (no push)",
 		Long: `rehydrate is the empty-tree / wiped-.satelle recover path for personal opt-in.
 
-Pinned sequence (scopes live in satelle.toml — deploy restores them first):
-  1. config deploy   — materialize authored config from the bound project
-  2. documents pull  — restore documents
-  3. workstate pull  — restore stories/executions/ledger into the local store
+Full operator path (pinned so scopes return before scope-gated pulls):
+  1. install satelle          — binary on PATH
+  2. satelle login            — global credentials
+  3. satelle project bind <slug>
+       creates .satelle/satelle.toml with [hosted] project when absent
+  4. satelle sync rehydrate   — this command, which runs:
+       a. config deploy       — restores satelle.toml / substrate including [sync]
+       b. documents pull
+       c. workstate pull      — stories/executions/ledger into the local store
 
-Requires login + "satelle project bind <slug>". Local-only areas no-op with the
-usual per-kind skip messages. Does not push. Bare "satelle sync" remains the
-backup-oriented path on a healthy machine.
+Scopes live in satelle.toml: without config deploy first, personal areas stay
+local and pull no-ops. If every area is still local after deploy, rehydrate
+prints an explicit note that scopes were not restored from hosted.
 
-Optional --force is passed to workstate pull only (conflict override).`,
+Does not push. Bare "satelle sync" remains the backup-oriented path on a healthy
+machine. Optional --force is passed to workstate pull only (conflict override).`,
 		RunE: func(c *cobra.Command, args []string) error {
 			return runSyncRehydrate(c, server, force)
 		},
@@ -105,6 +111,11 @@ func runSyncRehydrate(cmd *cobra.Command, serverArg string, force bool) error {
 	fmt.Fprintln(out, "rehydrate: config deploy…")
 	if err := runSyncConfigDeploy(cmd, serverArg, "", 0); err != nil {
 		return err
+	}
+	// After deploy, if every sync area is still local, scopes were not restored
+	// from hosted (empty deploy, or never pushed with personal opt-in).
+	if note := rehydrateAllLocalNote(); note != "" {
+		fmt.Fprintln(out, note)
 	}
 	fmt.Fprintln(out, "rehydrate: documents pull…")
 	if err := runSyncDocumentsPull(cmd, serverArg, ""); err != nil {
@@ -121,6 +132,26 @@ func runSyncRehydrate(cmd *cobra.Command, serverArg string, force bool) error {
 	}
 	fmt.Fprintln(out, "rehydrate: done.")
 	return nil
+}
+
+// rehydrateAllLocalNote returns an operator-facing explanation when every
+// [sync] area is still local after config deploy (scopes never came back from
+// hosted). Empty string when at least one area is personal|shared.
+func rehydrateAllLocalNote() string {
+	cfg, _, _, err := loadRepoConfig()
+	if err != nil {
+		return ""
+	}
+	for _, area := range config.SyncAreas {
+		scope, serr := config.ScopeFor(cfg, area)
+		if serr != nil {
+			return ""
+		}
+		if scope != config.LocalScope {
+			return ""
+		}
+	}
+	return "rehydrate: note — every .satelle area is still local after config deploy (no personal [sync] scopes restored from hosted). Documents and workstate pulls will no-op until you set [sync] <area> = personal on a machine that has content and push, or deploy config that already opts in."
 }
 
 // runSync is the bare `satelle sync` default action: run the configured sync
