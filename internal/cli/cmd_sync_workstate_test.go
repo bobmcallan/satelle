@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
 )
 
 // fakeWorkstateServer records POST /workstate bodies per workspace and
