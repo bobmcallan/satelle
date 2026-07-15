@@ -33,6 +33,12 @@ server. Run bare, it executes the whole configured sync: authored config push,
 documents push then pull, and work-state push — skipping any area still local.
 The per-kind subcommands (config, documents, workstate) drive one area on its own.
 
+Continuity posture: local areas stay on disk only. For personal areas, push is a
+BACKUP to the bound hosted project; documents pull (and config deploy) is SYNC
+DOWN / rehydrate. .satelle content does not need to be git-tracked for either.
+Today work-state is push-only (full workstate rehydrate is a later story); bare
+sync does not run config deploy — use "satelle sync config deploy" deliberately.
+
 Every area defaults to local — nothing leaves the machine until you set
 [sync] <area> = personal. To opt the whole .satelle tree in with one key,
 set [sync] all = personal (a per-area <area> = ... still overrides it).
