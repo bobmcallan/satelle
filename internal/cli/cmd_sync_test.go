@@ -423,4 +423,100 @@ func TestSyncRehydrateLocalOnly(t *testing.T) {
 			t.Errorf("output missing %q:\n%s", want, out)
 		}
 	}
+	if !strings.Contains(out, "every .satelle area is still local after config deploy") {
+		t.Errorf("expected post-deploy all-local explain note:\n%s", out)
+	}
+}
+
+// TestSyncRehydrateEmptyTreeHappyPath: bind-created toml + deploy restores
+// [sync] personal + documents path + workstate items (order:4 AC5 hermetic).
+func TestSyncRehydrateEmptyTreeHappyPath(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// Bare tree: no satelle.toml until bind.
+	repo := t.TempDir()
+	t.Chdir(repo)
+	_ = os.Unsetenv("SATELLE_CONFIG")
+
+	// Seed agents so store open after deploy succeeds if deploy writes agents.
+	// Fake server serves config (satelle.toml with personal scopes + agents),
+	// empty docs changes, and workstate items/ledger from a prior push shape.
+	const project = "probe"
+	hostedToml := "web_port = 8181\n\n[sync]\nall = \"personal\"\n\n[hosted]\nproject = \"probe\"\n"
+	agentsToml := "[executor]\nharness = \"in-loop\"\n"
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]string{
+			{"id": "ws-personal", "kind": "personal", "name": "personal"},
+		})
+	})
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/config", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"path": "satelle.toml", "version": 1},
+			{"path": "agents.toml", "version": 1},
+		})
+	})
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/config/{path...}", func(w http.ResponseWriter, r *http.Request) {
+		p := r.PathValue("path")
+		switch p {
+		case "satelle.toml":
+			w.Header().Set("ETag", "sha-toml")
+			_, _ = w.Write([]byte(hostedToml))
+		case "agents.toml":
+			w.Header().Set("ETag", "sha-agents")
+			_, _ = w.Write([]byte(agentsToml))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/documents", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}, "cursor": ""})
+	})
+	// workstate items after deploy opt-in
+	itemRec := map[string]any{
+		"id": "sty_rehy1", "kind": "story", "status": "backlog", "title": "Rehydrated",
+		"body": "from hosted", "acceptance_criteria": "1. ok",
+	}
+	recBytes, _ := json.Marshal(itemRec)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/workstate/items", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"id": "sty_rehy1", "kind": "story", "type": "stories", "status": "backlog",
+			"title": "Rehydrated", "origin": "cli-sync", "record": json.RawMessage(recBytes),
+		}})
+	})
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/workstate/ledger", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]any{})
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	seedCred(t, ts.URL)
+
+	// Bind creates minimal toml.
+	cmd, buf := testCmd()
+	if err := runProjectBind(cmd, project); err != nil {
+		t.Fatalf("bind: %v\n%s", err, buf.String())
+	}
+	// Point config at the bound file for subsequent CLI.
+	t.Setenv("SATELLE_CONFIG", filepath.Join(repo, ".satelle", "satelle.toml"))
+
+	out, err := runRoot(t, "sync", "rehydrate", "--server", ts.URL)
+	if err != nil {
+		t.Fatalf("rehydrate: %v\n%s", err, out)
+	}
+	for _, want := range []string{"rehydrate: config deploy", "rehydrate: documents pull", "rehydrate: workstate pull", "rehydrate: done"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	// Deployed scopes should opt in — no all-local note.
+	if strings.Contains(out, "every .satelle area is still local after config deploy") {
+		t.Errorf("unexpected all-local note after deploy with personal scopes:\n%s", out)
+	}
+	// Story materialised.
+	got, gerr := runRoot(t, "story", "get", "sty_rehy1")
+	if gerr != nil {
+		t.Fatalf("story get after rehydrate: %v\n%s\nrehydrate out:\n%s", gerr, got, out)
+	}
+	if !strings.Contains(got, "Rehydrated") {
+		t.Errorf("story not restored: %s", got)
+	}
 }
