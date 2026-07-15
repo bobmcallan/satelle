@@ -47,8 +47,8 @@ type Setting struct {
 var Settings = []Setting{
 	{Key: "web_port", Label: "Web port", Help: "Applies on the next serve start.", Kind: kindInt},
 	{Key: "log_level", Label: "Log level", Help: "debug | info | warn | error", Kind: kindEnum, Enum: []string{"debug", "info", "warn", "error"}},
-	{Key: "data_dir", Label: "Data dir", Help: "Applies on the next serve start.", Kind: kindString},
-	{Key: "db", Label: "Database path", Help: "Applies on the next serve start.", Kind: kindString},
+	{Key: "data_dir", Label: "Data dir", Help: "Per-repo store home (default .satelle under the repo). Applies on the next serve start.", Kind: kindString},
+	{Key: "db", Label: "Database path", Help: "Per-repo local ledger path (default <data_dir>/satelle.db); not a multi-repo store. Applies on the next serve start.", Kind: kindString},
 	{Key: "substrate_roots", Label: "Substrate roots", Help: "Authored-kind → parent dir overrides.", Kind: kindMap},
 	{Key: "logs_max_size_kb", Label: "Log rotation size (KB)", Help: "Per evidence log before it rolls.", Kind: kindInt},
 	{Key: "logs_max_files", Label: "Log files kept", Help: "Rotations retained.", Kind: kindInt},
