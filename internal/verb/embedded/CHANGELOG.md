@@ -7,6 +7,14 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
+## [0.0.270] - 2026-07-17
+
+### Fixed
+- `satelle init` re-run converges the managed `.gitignore` block (stale pre-relocation ignores replaced; content outside markers kept); init help names the home-keyed runtime plane (sty_87c8a69c)
+
+### Tests
+- Init-path regression for stale managed-block convergence and home-keyed help text (sty_87c8a69c)
+
 ## [0.0.269] - 2026-07-17
 
 ### Added
