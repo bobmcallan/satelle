@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/BurntSushi/toml"
+	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/agentvalidate"
@@ -524,6 +525,78 @@ func TestEnsureGitignoreAppendsOnce(t *testing.T) {
 	// Fresh append must use the home-keyed form (no runtime db ignore entries).
 	if strings.Contains(string(gi), ".satelle/satelle.db") {
 		t.Error("gitignore must not ignore .satelle/satelle.db (home-keyed)")
+	}
+}
+
+// TestRunInitConvergesStaleGitignore (sty_87c8a69c AC1/AC4): re-running init on a
+// repo with a pre-relocation managed block rewrites between the markers and
+// leaves operator content outside them.
+func TestRunInitConvergesStaleGitignore(t *testing.T) {
+	repo := t.TempDir()
+	// Pre-seed a minimal satelle tree so init is a re-run, not a first scaffold
+	// that also creates agents/db. Stale managed block is the subject under test.
+	if err := os.MkdirAll(filepath.Join(repo, ".satelle"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.toml"), []byte("web_port = 8181\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "agents.toml"), []byte("[executor]\nharness = \"in-loop\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stale := "node_modules/\n# >>> satelle (managed) >>>\n.satelle/satelle.db\n.satelle/logs/\n.satelle/backups/\n.satelle/stories/\n# <<< satelle (managed) <<<\n# keep-me\n"
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := runInitTest(t, &out, repo); err != nil {
+		t.Fatalf("runInit: %v\n%s", err, out.String())
+	}
+	gi, err := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(gi)
+	if !strings.Contains(s, "node_modules/") {
+		t.Error("content before markers must survive")
+	}
+	if !strings.Contains(s, "# keep-me") {
+		t.Error("content after markers must survive")
+	}
+	for _, staleEntry := range []string{".satelle/satelle.db", ".satelle/logs/", ".satelle/backups/", ".satelle/stories/"} {
+		if strings.Contains(s, staleEntry) {
+			t.Errorf("stale ignore %q must be gone after init re-run:\n%s", staleEntry, s)
+		}
+	}
+	if !strings.Contains(s, ".satelle/satelle.local.toml") {
+		t.Errorf("current block must list local.toml:\n%s", s)
+	}
+	if strings.Count(s, gitignoreMarker) != 1 {
+		t.Error("exactly one managed block expected")
+	}
+}
+
+// TestInitLongHelpNamesHomeKeyedRuntime (sty_87c8a69c AC3).
+func TestInitLongHelpNamesHomeKeyedRuntime(t *testing.T) {
+	// The cobra Long is in package init; assert via the command surface.
+	root := NewRootCmd()
+	var initCmd *cobra.Command
+	for _, c := range root.Commands() {
+		if c.Name() == "init" {
+			initCmd = c
+			break
+		}
+	}
+	if initCmd == nil {
+		t.Fatal("init command missing")
+	}
+	long := initCmd.Long
+	if !strings.Contains(long, "~/.satelle/<repo-key>") && !strings.Contains(long, "home-keyed") {
+		t.Errorf("init help must name home-keyed runtime, got:\n%s", long)
+	}
+	// Must not claim the DB lives at .satelle/satelle.db as the default layout.
+	if strings.Contains(long, "database at .satelle/satelle.db") {
+		t.Errorf("init help still claims in-repo satelle.db:\n%s", long)
 	}
 }
 

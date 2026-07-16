@@ -1,12 +1,12 @@
 // `satelle init` — scaffold a repo for satelle, idempotently. It ensures the
 // .satelle/ directory, a documented satelle.toml (created if missing, never
 // clobbered), the authored-markdown dirs the directory monitor watches, the
-// per-repo SQLite database (created + migrated), and a managed .gitignore block
-// that keeps the local database out of git while committing the toml and the
-// authored markdown. Re-running is safe: it reports what it added versus what
-// was already present and never overwrites existing files. It ends by
-// VALIDATING the deployed system (sty_d0d6bb67) and exits non-zero when the
-// deployment does not validate green.
+// home-keyed runtime database (~/.satelle/<repo-key>/satelle.db), and a managed
+// .gitignore block for in-repo local-state only (local.toml, pinned binary).
+// Re-running is safe: authored files are preserved; the managed .gitignore
+// block is CONVERGED to the current form (sty_87c8a69c). It ends by VALIDATING
+// the deployed system (sty_d0d6bb67) and exits non-zero when the deployment
+// does not validate green.
 
 package cli
 
@@ -62,8 +62,9 @@ init/install end by VALIDATING the deployed system — the agents layer must loa
 and every substrate artifact must pass its deterministic structure check — and
 exit non-zero when validation fails (broken configuration refuses to run).
 
-Re-running is safe: existing files are preserved and the report shows what was
-added versus already present. Both names share one implementation.`,
+Re-running is safe: authored files are preserved; the managed .gitignore block
+is rewritten between its markers to the current form (sty_87c8a69c). The report
+shows what was added versus already present.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInit(cmd.OutOrStdout(), initRepoRoot(configArg), noWorkspace)
