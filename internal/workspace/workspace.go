@@ -52,7 +52,9 @@ func Load(ctx context.Context, repoRoots []string) Aggregate {
 
 func loadRepo(ctx context.Context, root string) RepoView {
 	rv := RepoView{Path: root, Name: filepath.Base(root)}
-	dbPath := filepath.Join(root, config.DefaultDataDir, config.DefaultDBName)
+	// Home-keyed runtime plane (sty_4660bbe1): resolve DB the same way app.Open does.
+	cfg, _, _ := config.Load(filepath.Join(root, config.DefaultDataDir, config.ConfigName))
+	dbPath := cfg.ResolveDB(root)
 	db, err := store.Open(dbPath)
 	if err != nil {
 		rv.Err = err.Error()
