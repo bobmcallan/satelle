@@ -10,15 +10,18 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 )
 
-// appAt builds the minimal *app.App requireAgents reads (only DBPath), rooted
-// at a temp .satelle dir.
+// appAt builds the minimal *app.App requireAgents reads (DataDir + DBPath),
+// rooted at a temp .satelle dir (authored plane).
 func appAt(t *testing.T) (*app.App, string) {
 	t.Helper()
 	dataDir := filepath.Join(t.TempDir(), ".satelle")
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return &app.App{DBPath: filepath.Join(dataDir, "satelle.db")}, dataDir
+	return &app.App{
+		DataDir: dataDir,
+		DBPath:  filepath.Join(dataDir, "satelle.db"),
+	}, dataDir
 }
 
 // A missing agents.toml in an initialized repo is a BROKEN deployment — the

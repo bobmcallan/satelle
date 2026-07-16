@@ -89,9 +89,9 @@ func setupStreamingRepo(t *testing.T, script string, extraAgentsToml string) (re
 // .satelle/logs/dispatch/ — the sink DispatchExecutor wires into the runner.
 func dispatchLogFile(t *testing.T, repo string) string {
 	t.Helper()
-	matches, err := filepath.Glob(filepath.Join(repo, ".satelle", "logs", "dispatch", "dispatch-*.log"))
+	matches, err := filepath.Glob(filepath.Join(runtimeRoot(t, repo), "logs", "dispatch", "dispatch-*.log"))
 	if err != nil || len(matches) != 1 {
-		t.Fatalf("expected exactly one dispatch log file under .satelle/logs/dispatch, got %v (err %v)", matches, err)
+		t.Fatalf("expected exactly one dispatch log file under runtime logs/dispatch, got %v (err %v)", matches, err)
 	}
 	return matches[0]
 }
@@ -106,13 +106,14 @@ func TestDispatchStreamsLiveOutputBeforeExit(t *testing.T) {
 
 	cmd := exec.Command(testBin, "story", "set", id, "--status", "plan")
 	cmd.Dir = repo
+	cmd.Env = isolatedEnv(t)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 
 	var sawPartial bool
 	deadline := time.Now().Add(5 * time.Second)
-	logDir := filepath.Join(repo, ".satelle", "logs", "dispatch")
+	logDir := filepath.Join(runtimeRoot(t, repo), "logs", "dispatch")
 	for time.Now().Before(deadline) {
 		matches, _ := filepath.Glob(filepath.Join(logDir, "dispatch-*.log"))
 		if len(matches) == 1 {

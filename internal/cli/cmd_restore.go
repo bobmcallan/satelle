@@ -40,7 +40,7 @@ workflows, documents, tasks, configs, constitution — are never touched.`,
 			if err != nil {
 				return err
 			}
-			return runRestore(cmd.OutOrStdout(), cmd.InOrStdin(), filepath.Dir(a.DBPath), yes, ResolveBackupOpts(a.Config))
+			return runRestore(cmd.OutOrStdout(), cmd.InOrStdin(), a.DataDir, yes, ResolveBackupOpts(a.Config))
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the overwrite non-interactively")

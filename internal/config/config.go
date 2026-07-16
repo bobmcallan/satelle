@@ -241,12 +241,14 @@ func (c Config) ResolveConstitution(repoRoot string) string {
 }
 
 // ResolveDB returns the absolute sqlite database path. An explicit db wins;
-// otherwise <data_dir>/satelle.db.
+// otherwise the home-keyed runtime plane (~/.satelle/<repo-key>/satelle.db),
+// falling back to a still-unmigrated legacy <data_dir>/satelle.db when present
+// (sty_4660bbe1 / epic:substrate-planes). See ResolveRuntimeDir.
 func (c Config) ResolveDB(repoRoot string) string {
 	if p := strings.TrimSpace(c.DB); p != "" {
 		return resolveUnder(repoRoot, p)
 	}
-	return filepath.Join(c.ResolveDataDir(repoRoot), DefaultDBName)
+	return c.ResolveRuntimeDB(repoRoot)
 }
 
 // ResolveWebPort returns the web port, defaulting when unset.

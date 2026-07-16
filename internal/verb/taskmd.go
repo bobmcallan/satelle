@@ -77,7 +77,8 @@ func archiveTaskFiles(id string, now time.Time) (string, error) {
 		return "", nil
 	}
 	ts := now.UTC().Format("20060102-150405")
-	dst := filepath.Join(filepath.Dir(taskDir), "backups", "tasks", ts, id)
+	root := resolveBackupsDir(taskDir)
+	dst := filepath.Join(root, "tasks", ts, id)
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return "", fmt.Errorf("archive backup dir: %w", err)
 	}

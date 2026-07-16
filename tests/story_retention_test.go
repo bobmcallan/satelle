@@ -27,8 +27,8 @@ func TestStoryRetentionEndToEnd(t *testing.T) {
 	}
 
 	// Three closed stories (created oldest→newest) and one open story, each with an
-	// attachment dir carrying evidence.
-	storyDir := filepath.Join(repo, ".satelle", "stories")
+	// attachment dir carrying evidence (runtime plane — sty_4660bbe1).
+	storyDir := filepath.Join(runtimeRoot(t, repo), "stories")
 	closed1 := createStory(t, repo, "S", "done")
 	closed2 := createStory(t, repo, "S", "done")
 	closed3 := createStory(t, repo, "S", "done")
@@ -56,12 +56,12 @@ func TestStoryRetentionEndToEnd(t *testing.T) {
 	if !exists(open) {
 		t.Error("a non-terminal story's dir must always be kept")
 	}
-	// The two older closed dirs are pruned from .satelle/stories …
+	// The two older closed dirs are pruned from runtime stories/ …
 	if exists(closed1) || exists(closed2) {
 		t.Error("closed dirs beyond the retention count must be pruned")
 	}
 	// … and MOVED to the mandatory backup (not deleted).
-	backups := filepath.Join(repo, ".satelle", "backups", "stories")
+	backups := filepath.Join(runtimeRoot(t, repo), "backups", "stories")
 	if _, err := os.Stat(backups); err != nil {
 		t.Errorf("retention did not write a backup under %s: %v", backups, err)
 	}

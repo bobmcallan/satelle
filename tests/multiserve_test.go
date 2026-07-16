@@ -24,7 +24,8 @@ import (
 // each project is reachable and isolated under its own slug, /projects redirects
 // to the landing, and a workspace add lands live.
 func TestMultiProjectServe(t *testing.T) {
-	home := t.TempDir()
+	// One isolated home for CLI + serve so home-keyed DBs match (sty_4660bbe1).
+	home := isolatedHome(t)
 
 	repoA := t.TempDir() // launch repo — now served under its own /<slug>/ too
 	repoB := t.TempDir() // another registered project

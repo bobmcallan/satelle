@@ -107,7 +107,10 @@ func agentValidateCmd() *cobra.Command {
 				return err
 			}
 			out := cmd.OutOrStdout()
-			dataDir := filepath.Dir(a.DBPath)
+			dataDir := a.DataDir
+			if dataDir == "" {
+				dataDir = a.Config.ResolveDataDir(a.RepoRoot)
+			}
 
 			agents, lerr := config.LoadAgents(dataDir)
 			if lerr != nil {

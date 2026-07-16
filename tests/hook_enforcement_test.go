@@ -54,6 +54,7 @@ func hookStdout(t *testing.T, repo, sub, event string) string {
 	t.Helper()
 	c := exec.Command(testBin, "hook", sub)
 	c.Dir = repo
+	c.Env = isolatedEnv(t)
 	c.Stdin = strings.NewReader(event)
 	out, _ := c.Output()
 	return string(out)
@@ -185,6 +186,7 @@ func TestHookCommitgateDeniesWithoutStory(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 	c := exec.Command(testBin, "hook", "commitgate")
 	c.Dir = repo
+	c.Env = isolatedEnv(t)
 	c.Stdin = strings.NewReader(`{"tool_input":{"command":"git commit -m x"}}`)
 	if err := c.Run(); err == nil {
 		t.Error("commitgate ALLOWED a git commit with no engaged story")

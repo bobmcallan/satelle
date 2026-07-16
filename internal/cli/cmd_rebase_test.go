@@ -40,7 +40,7 @@ func TestRunRebaseBacksUpWipesRedeploys(t *testing.T) {
 	custom := seedCustomSubstrate(t, dataDir)
 
 	var out strings.Builder
-	if err := runRebase(&out, strings.NewReader(""), dataDir, true, rebaseTestTime); err != nil {
+	if err := runRebase(&out, strings.NewReader(""), dataDir, dataDir, true, rebaseTestTime); err != nil {
 		t.Fatalf("runRebase: %v", err)
 	}
 
@@ -97,7 +97,7 @@ func TestRunRebaseAbortsWithoutConfirmation(t *testing.T) {
 	custom := seedCustomSubstrate(t, dataDir)
 
 	var out strings.Builder
-	if err := runRebase(&out, strings.NewReader("no\n"), dataDir, false, rebaseTestTime); err != nil {
+	if err := runRebase(&out, strings.NewReader("no\n"), dataDir, dataDir, false, rebaseTestTime); err != nil {
 		t.Fatalf("runRebase: %v", err)
 	}
 	if !strings.Contains(out.String(), "aborted") {
@@ -121,7 +121,7 @@ func TestRunRebaseAbortsWhenBackupCannotBeWritten(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := runRebase(&strings.Builder{}, strings.NewReader(""), dataDir, true, rebaseTestTime)
+	err := runRebase(&strings.Builder{}, strings.NewReader(""), dataDir, dataDir, true, rebaseTestTime)
 	if err == nil {
 		t.Fatal("expected an error when the backup cannot be written")
 	}

@@ -54,7 +54,8 @@ confirm non-interactively).`,
 			if err != nil {
 				return err
 			}
-			return runRebase(cmd.OutOrStdout(), cmd.InOrStdin(), filepath.Dir(a.DBPath), yes, time.Now(), ResolveBackupOpts(a.Config))
+			// Authored kinds live under DataDir; the mandatory backup lands under RuntimeDir.
+			return runRebase(cmd.OutOrStdout(), cmd.InOrStdin(), a.DataDir, a.RuntimeDir, yes, time.Now(), ResolveBackupOpts(a.Config))
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the wipe non-interactively")
@@ -62,15 +63,18 @@ confirm non-interactively).`,
 }
 
 // runRebase performs the backup → wipe → redeploy sequence for dataDir. The
-// backup is the wipe: each kind dir is RENAMED into the timestamped backup dir,
-// so no bytes are lost before the defaults land — and a rename failure aborts
-// before anything else moves (the backup is mandatory).
-func runRebase(out io.Writer, in io.Reader, dataDir string, yes bool, now time.Time, backupOpts ...BackupOpts) error {
+// backup is the wipe: each kind dir is RENAMED into the timestamped backup dir
+// under runtimeDir (sty_4660bbe1), so no bytes are lost before the defaults land
+// — and a rename failure aborts before anything else moves (the backup is mandatory).
+func runRebase(out io.Writer, in io.Reader, dataDir, runtimeDir string, yes bool, now time.Time, backupOpts ...BackupOpts) error {
 	var opts BackupOpts
 	if len(backupOpts) > 0 {
 		opts = backupOpts[0]
 	}
-	backupDir := filepath.Join(dataDir, "backups", now.Format("20060102-150405"))
+	if runtimeDir == "" {
+		runtimeDir = dataDir // tests / legacy callers
+	}
+	backupDir := filepath.Join(runtimeDir, "backups", now.Format("20060102-150405"))
 
 	// Show the plan, then require an explicit yes — rebase wipes authored files.
 	fmt.Fprintf(out, "rebase will back up %s to %s, then reset each to the embedded default solution.\n",

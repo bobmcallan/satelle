@@ -36,9 +36,10 @@ func TestSummariesLiveWithTheStory(t *testing.T) {
 
 	mustRun(t, testBin, repo, "reindex")
 
-	// Each summary migrated into its story's attachment folder.
+	// Each summary migrated into its story's attachment folder (runtime plane).
+	storiesRoot := filepath.Join(runtimeRoot(t, repo), "stories")
 	for id, n := range map[string]string{idA: "commit-summary-" + idA + ".md", idB: "commit-summary-" + idB + ".md"} {
-		if _, err := os.Stat(filepath.Join(repo, ".satelle", "stories", id, n)); err != nil {
+		if _, err := os.Stat(filepath.Join(storiesRoot, id, n)); err != nil {
 			t.Errorf("summary %s not migrated to story %s: %v", n, id, err)
 		}
 	}
@@ -70,7 +71,8 @@ func TestAttachFileAndDropAllocation(t *testing.T) {
 	src := filepath.Join(repo, "summary.md")
 	writeFile(t, src, "# Implementation summary\n\n- shipped the thing\n")
 	mustRun(t, testBin, repo, "story", "attach", id, "--name", "implementation-summary", "--type", "story-implementation-summary", "--file", src)
-	if _, err := os.Stat(filepath.Join(repo, ".satelle", "stories", id, "implementation-summary.md")); err != nil {
+	storiesRoot := filepath.Join(runtimeRoot(t, repo), "stories")
+	if _, err := os.Stat(filepath.Join(storiesRoot, id, "implementation-summary.md")); err != nil {
 		t.Fatalf("attach --file did not write the artifact: %v", err)
 	}
 	got := mustRun(t, testBin, repo, "story", "doc", id, "implementation-summary")
@@ -80,7 +82,7 @@ func TestAttachFileAndDropAllocation(t *testing.T) {
 
 	// hand-dropped artifact with correct frontmatter → allocated (listed).
 	drop := "---\nstory: " + id + "\ntype: evidence\nname: hand-dropped\n---\n\n# Dropped\n"
-	writeFile(t, filepath.Join(repo, ".satelle", "stories", id, "hand-dropped.md"), drop)
+	writeFile(t, filepath.Join(storiesRoot, id, "hand-dropped.md"), drop)
 	if out := mustRun(t, testBin, repo, "story", "docs", id); !strings.Contains(out, "hand-dropped") {
 		t.Errorf("hand-dropped artifact not allocated to the story:\n%s", out)
 	}
@@ -101,29 +103,30 @@ func TestStorySyncVerb(t *testing.T) {
 	id := extractID(mustRun(t, testBin, repo, "story", "create", "--title", "Open", "--body", "goal", "--acceptance", "1. a", "--category", "feature"), "sty_")
 	// An engaged story leaves the view; its artifact dir persists.
 	idEng := extractID(mustRun(t, testBin, repo, "story", "create", "--title", "Engaged", "--body", "goal", "--acceptance", "1. b", "--category", "feature", "--status", "in_progress"), "sty_")
-	if err := os.MkdirAll(filepath.Join(repo, ".satelle", "stories", idEng), 0o755); err != nil {
+	storiesRoot := filepath.Join(runtimeRoot(t, repo), "stories")
+	if err := os.MkdirAll(filepath.Join(storiesRoot, idEng), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(repo, ".satelle", "stories", idEng, "evidence.md"), "---\nstory: "+idEng+"\ntype: evidence\n---\n\n# e\n")
+	writeFile(t, filepath.Join(storiesRoot, idEng, "evidence.md"), "---\nstory: "+idEng+"\ntype: evidence\n---\n\n# e\n")
 	// An orphaned artifact dir (no such story).
-	if err := os.MkdirAll(filepath.Join(repo, ".satelle", "stories", "sty_00000000"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(storiesRoot, "sty_00000000"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(repo, ".satelle", "stories", "sty_00000000", "old.md"), "# orphan\n")
+	writeFile(t, filepath.Join(storiesRoot, "sty_00000000", "old.md"), "# orphan\n")
 
 	out := mustRun(t, testBin, repo, "story", "sync")
 	if !strings.Contains(out, "ORPHANED sty_00000000") {
 		t.Errorf("orphaned artifact dir not reported:\n%s", out)
 	}
 	// Backlog-only invariant: the open story's view exists; the engaged one's doesn't.
-	if _, err := os.Stat(filepath.Join(repo, ".satelle", "stories", id+".md")); err != nil {
+	if _, err := os.Stat(filepath.Join(storiesRoot, id+".md")); err != nil {
 		t.Errorf("backlog story view missing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(repo, ".satelle", "stories", idEng+".md")); err == nil {
+	if _, err := os.Stat(filepath.Join(storiesRoot, idEng+".md")); err == nil {
 		t.Error("engaged story must not have a view file")
 	}
 	// Artifacts preserved.
-	for _, p := range []string{filepath.Join(repo, ".satelle", "stories", idEng, "evidence.md"), filepath.Join(repo, ".satelle", "stories", "sty_00000000", "old.md")} {
+	for _, p := range []string{filepath.Join(storiesRoot, idEng, "evidence.md"), filepath.Join(storiesRoot, "sty_00000000", "old.md")} {
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("artifact deleted by sync: %s (%v)", p, err)
 		}

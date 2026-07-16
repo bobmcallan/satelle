@@ -71,12 +71,18 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetLedgerStore(a.Store.Ledger)
 	verb.SetDocIndexStore(a.Store.DocIndex)
 	verb.SetLeaseStore(a.Store.Leases)
-	// The stories dir (<data_dir>/stories) holds per-story ATTACHMENTS only — the
-	// database is the sole story store (the markdown mirror was removed, sty_fa1e02e1).
-	verb.SetStoryDir(filepath.Join(filepath.Dir(a.DBPath), "stories"))
+	// Stories attachments are RUNTIME state (home-keyed under RuntimeDir —
+	// sty_4660bbe1). The database is the sole story store (markdown mirror
+	// removed, sty_fa1e02e1); this dir holds plan/step-summary attachments only.
+	verb.SetStoryDir(filepath.Join(a.RuntimeDir, "stories"))
+	// Authored root (documents/, workflows/, …) — needed when a verb spans both
+	// planes (e.g. migrateLegacySummaries moves docs → runtime stories/).
+	verb.SetDataDir(a.DataDir)
 	// Archive-retention policy for the closed-story attachment dirs — a no-op
 	// unless satelle.toml sets a count/age policy (sty_aba7200c).
 	verb.SetStoryRetention(a.Config.StoriesKeepClosed, a.Config.StoriesKeepDays)
+	// Backups root is also runtime (sibling of stories/, not of tasks/).
+	verb.SetBackupsDir(filepath.Join(a.RuntimeDir, "backups"))
 	// Single-story process rule (default enforce; [gate] allow_parallel opts out).
 	verb.SetAllowParallelStories(a.Config.Gate.AllowParallel)
 	// Controlled tag vocabulary (sty_034d843c): validate namespaces declared in
@@ -89,19 +95,19 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// A task, unlike a story, IS authored substrate: its <data_dir>/tasks/tsk_*.md
 	// work-definition file is the source of truth and the store is its index
 	// (sty_c1f9e74c). Wire the dir so create/set materialise the file and `reindex`
-	// ingests it.
-	verb.SetTaskDir(filepath.Join(filepath.Dir(a.DBPath), "tasks"))
-	// Wire the flat-file operation log (<data_dir>/logs/operations.log): a plain-text
+	// ingests it. MUST stay on DataDir — never derive from DBPath (runtime plane).
+	verb.SetTaskDir(filepath.Join(a.DataDir, "tasks"))
+	// Wire the flat-file operation log (runtime logs/operations.log): a plain-text
 	// mirror of state-mutating verbs that a read-only reviewer can scan to verify a
 	// DB change the SQLite store hides from it (sty_be257fef).
-	verb.SetOpLog(oplog.New(filepath.Dir(a.DBPath), logRotation(a)))
+	verb.SetOpLog(oplog.New(a.RuntimeDir, logRotation(a)))
 	// Wire the isolated reviewer that gates status transitions. The agent CLI is
 	// the install-time choice (global config); the gate is inert until a
 	// workflow names a reviewer skill whose rubric is installed.
 	if gc, gerr := config.LoadGlobal(); gerr == nil {
 		if runner, rerr := agentcli.NewRunner(gc.Agent.ResolveCLI()); rerr == nil {
 			rev := agentstep.New(runner, a.Store.DocIndex, a.RepoRoot, "")
-			rev.SetLogDir(filepath.Join(filepath.Dir(a.DBPath), "logs"), logRotation(a))
+			rev.SetLogDir(filepath.Join(a.RuntimeDir, "logs"), logRotation(a))
 			// A gated transition legitimately blocks for minutes while the nested
 			// reviewer runs — emit progress to stderr so it is visibly distinct from
 			// a hang (sty_6c88ca10). stderr keeps stdout's JSON payload clean.
@@ -176,7 +182,7 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 		return nil, nil, fmt.Errorf("an agent CLI is required: %w", err)
 	}
 	rev := agentstep.New(runner, a.Store.DocIndex, a.RepoRoot, "")
-	rev.SetLogDir(filepath.Join(filepath.Dir(a.DBPath), "logs"), logRotation(a))
+	rev.SetLogDir(filepath.Join(a.RuntimeDir, "logs"), logRotation(a))
 	agents, err := requireAgents(a)
 	if err != nil {
 		return nil, nil, err
@@ -234,7 +240,12 @@ func skillResolver(a *app.App) func(skill string) bool {
 // the compiled defaults remain only the pre-init bootstrap (a repo with no
 // .satelle at all never reaches this — init is not store-backed).
 func requireAgents(a *app.App) (config.AgentsConfig, error) {
-	dataDir := filepath.Dir(a.DBPath)
+	// agents.toml is authored substrate — always under DataDir, never RuntimeDir
+	// (sty_4660bbe1: the DB leaving the repo must not take the agents layer with it).
+	dataDir := a.DataDir
+	if dataDir == "" {
+		dataDir = a.Config.ResolveDataDir(a.RepoRoot)
+	}
 	rel := config.DefaultDataDir + "/" + config.AgentsConfigName
 	if _, err := os.Stat(filepath.Join(dataDir, config.AgentsConfigName)); os.IsNotExist(err) {
 		if _, lerr := os.Stat(filepath.Join(dataDir, config.ActorsConfigName)); lerr == nil {

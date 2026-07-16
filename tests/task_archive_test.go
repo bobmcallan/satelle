@@ -50,8 +50,8 @@ func TestTaskArchiveEndToEnd(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tasksDir, "tsk_arch01.md")); !os.IsNotExist(err) {
 		t.Error("archived header still present in .satelle/tasks/")
 	}
-	if _, err := os.Stat(filepath.Join(repo, ".satelle", "backups", "tasks")); err != nil {
-		t.Errorf("archive did not write a backup under .satelle/backups/tasks/: %v", err)
+	if _, err := os.Stat(filepath.Join(runtimeRoot(t, repo), "backups", "tasks")); err != nil {
+		t.Errorf("archive did not write a backup under runtime backups/tasks/: %v", err)
 	}
 
 	// Reindex must not resurrect the archived record to a file, and stays green.

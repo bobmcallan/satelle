@@ -236,18 +236,25 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool) error {
 		fmt.Fprintln(out, line)
 	}
 
-	// 4. The per-repo database — open (creating + migrating) then close, so a
-	//    fresh repo lands a ready satelle.db with no first-command surprise.
-	dbPath := filepath.Join(dataDir, config.DefaultDBName)
+	// 4. The per-repo database on the home-keyed runtime plane (sty_4660bbe1) —
+	//    open (creating + migrating) then close, so a fresh repo lands a ready
+	//    satelle.db with no first-command surprise. Authored substrate stays under
+	//    dataDir; runtime (db/logs/backups/stories) never lands in the repo.
+	rt := cfg.ResolveRuntimeDir(repoRoot)
+	if err := os.MkdirAll(rt.Dir, 0o755); err != nil {
+		return fmt.Errorf("init: mkdir runtime dir %s: %w", rt.Dir, err)
+	}
+	dbPath := filepath.Join(rt.Dir, config.DefaultDBName)
 	dbExisted := fileExists(dbPath)
 	db, derr := store.Open(dbPath)
 	if derr != nil {
 		return fmt.Errorf("init: open database: %w", derr)
 	}
 	_ = db.Close()
-	fmt.Fprintln(out, initLine(!dbExisted, config.DefaultDataDir+"/"+config.DefaultDBName))
+	fmt.Fprintln(out, initLine(!dbExisted, dbPath))
 
-	// 5. .gitignore managed block — keep the local DB out of git, commit the rest.
+	// 5. .gitignore managed block — ignore in-repo local-state only (local.toml,
+	//    pinned binary). Runtime files no longer live under the repo.
 	if added, gerr := ensureGitignore(repoRoot); gerr != nil {
 		return gerr
 	} else {
@@ -1053,18 +1060,23 @@ const scaffoldToml = `# satelle.toml — per-repo config (committed, secret-free
 # default, so this file may stay fully commented; uncomment a key to override.
 # Per-user overrides go in satelle.local.toml beside this file (gitignored).
 
-# data_dir = ".satelle"          # per-repo store home (default under the repo root)
-# db = ".satelle/satelle.db"     # per-repo local DB (default: <data_dir>/satelle.db);
-#                                # never commit; cache when personal workstate is opted in
+# data_dir = ".satelle"          # authored substrate home under the repo (default)
+# db = ""                        # override DB path; default is home-keyed
+#                                # ~/.satelle/<repo-key>/satelle.db (sty_4660bbe1).
+#                                # An explicit path wins; otherwise runtime state
+#                                # (db, logs, backups, stories cache) lives outside
+#                                # the repo. Migrate a legacy in-repo DB with
+#                                # 'satelle runtime migrate'.
 # web_port = 8787                # 'satelle serve' listen port (default)
 # log_level = "info"             # debug | info | warn | error (default info)
-# logs_max_size_kb = 5120        # roll a .satelle/logs file past this size (default 5 MiB)
+# logs_max_size_kb = 5120        # roll a runtime logs/ file past this size (default 5 MiB)
 # logs_max_files = 7             # keep at most this many rotated log files (default 7)
 
-# Archive retention for CLOSED-story attachment dirs under .satelle/stories.
-# Unset (default) = keep everything. The two compose — either triggers pruning.
-# A NON-terminal (open/engaged) story's dir is ALWAYS kept regardless. Pruned
-# dirs are MOVED to .satelle/backups/stories/ (never deleted in place).
+# Archive retention for CLOSED-story attachment dirs under the runtime stories/
+# cache (~/.satelle/<repo-key>/stories). Unset (default) = keep everything.
+# The two compose — either triggers pruning. A NON-terminal (open/engaged)
+# story's dir is ALWAYS kept. Pruned dirs are MOVED to runtime backups/stories/
+# (never deleted in place).
 # stories_keep_closed = 50       # keep the N most-recently-updated closed-story dirs
 # stories_keep_days = 90         # drop a closed story's dir older than N days
 
@@ -1284,17 +1296,12 @@ const gitignoreBlock = gitignoreMarker + `
 # Continuity is local disk by default; with [sync] <area> = personal the bound
 # hosted project backs that area up and can rehydrate it (push = backup;
 # documents pull / config deploy = sync down). Git is not the recovery path.
-# Sync credentials and cursors live under ~/.config/satelle (outside the repo).
-.satelle/satelle.db
-.satelle/satelle.db-wal
-.satelle/satelle.db-shm
+# Runtime state (satelle.db, logs, backups, stories cache) lives under
+# ~/.satelle/<repo-key>/ — outside the repo — so it is not listed here.
+# Sync credentials and cursors live under ~/.config/satelle.
 .satelle/satelle.local.toml
 # the repo-local pinned binary (satelle update --local) is local state, never committed
 .satelle/satelle
-# the flat operation log (a read-only reviewer's read surface) is local evidence
-.satelle/logs/
-# mandatory backups from rebase and task archive are local disposal evidence
-.satelle/backups/
 # <<< satelle (managed) <<<
 `
 

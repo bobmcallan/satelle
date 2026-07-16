@@ -460,7 +460,16 @@ func runSyncScopes(cmd *cobra.Command, args []string) error {
 // directory — neither has an area-level location of its own, so both resolve
 // to "" (no file scan, scope still printed).
 func syncAreaPath(a *app.App, area string) (path string, isDir bool) {
-	dataDir := filepath.Dir(a.DBPath)
+	// Authored areas resolve under DataDir; stories (attachment cache) under RuntimeDir
+	// (sty_4660bbe1). Never derive either from DBPath — the planes diverge after migrate.
+	dataDir := a.DataDir
+	if dataDir == "" {
+		dataDir = a.Config.ResolveDataDir(a.RepoRoot)
+	}
+	runtimeDir := a.RuntimeDir
+	if runtimeDir == "" {
+		runtimeDir = a.Config.ResolveRuntimeDir(a.RepoRoot).Dir
+	}
 	switch area {
 	case "constitution":
 		return a.Config.ResolveConstitution(a.RepoRoot), false
@@ -469,7 +478,7 @@ func syncAreaPath(a *app.App, area string) (path string, isDir bool) {
 	case "tasks":
 		return filepath.Join(dataDir, "tasks"), true
 	case "stories":
-		return filepath.Join(dataDir, "stories"), true
+		return filepath.Join(runtimeDir, "stories"), true
 	case "ledger", "executions":
 		return "", false
 	default:

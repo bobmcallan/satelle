@@ -16,9 +16,12 @@ import (
 // retroScript is a stub retrospective agent: it consumes the payload and files one
 // proposal story via the satelle CLI (proving the agent can create backlog items),
 // then reports. It echoes a distinctive marker captured as the dispatch output.
+// Uses the absolute test binary via SATELLE_BIN (set by the suite) so the child
+// does not pick up a host install that writes a different home-keyed runtime plane.
 const retroScript = `#!/bin/sh
 cat > /dev/null
-satelle story create --title "proposal from retro" --category refactor --tags "retrospective:test" --body "b" --acceptance "1. done" >/dev/null 2>&1
+BIN="${SATELLE_BIN:-satelle}"
+"$BIN" story create --title "proposal from retro" --category refactor --tags "retrospective:test" --body "b" --acceptance "1. done" >/dev/null 2>&1
 echo "RETRO-RAN"
 `
 
@@ -27,7 +30,10 @@ func TestStoryRetrospectDispatchesAndRecordsCost(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 
 	script := filepath.Join(repo, "retro.sh")
-	if err := os.WriteFile(script, []byte(retroScript), 0o755); err != nil {
+	// Pin the absolute suite binary into the script so the child cannot miss
+	// SATELLE_BIN and fall back to a host install with a different runtime plane.
+	body := "#!/bin/sh\nexport SATELLE_BIN=" + testBin + "\n" + strings.TrimPrefix(retroScript, "#!/bin/sh\n")
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// A [retrospective] binding pointed at the stub, with the satelle CLI grant.

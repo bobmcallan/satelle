@@ -27,6 +27,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/config"
 )
 
 // testBin is the satelle binary under test, resolved once by TestMain.
@@ -353,17 +355,41 @@ func isolatedHome(t *testing.T) string {
 	return home
 }
 
+// runtimeRoot returns the home-keyed runtime dir for repo under this test's
+// isolated SATELLE_HOME (~/.satelle/<repo-key>/ — sty_4660bbe1). Holds
+// satelle.db, logs/, backups/, stories/. Uses Config.ResolveRuntimeDir so a
+// tree that gained .git after init still resolves the original path-key dir.
+func runtimeRoot(t *testing.T, repo string) string {
+	t.Helper()
+	// Isolate GlobalDir for this process (ResolveRuntimeDir reads SATELLE_HOME).
+	prev, had := os.LookupEnv("SATELLE_HOME")
+	_ = os.Setenv("SATELLE_HOME", isolatedHome(t))
+	defer func() {
+		if had {
+			_ = os.Setenv("SATELLE_HOME", prev)
+		} else {
+			_ = os.Unsetenv("SATELLE_HOME")
+		}
+	}()
+	return config.Config{}.ResolveRuntimeDir(repo).Dir
+}
+
+// isolatedEnv returns os.Environ with SATELLE_HOME pinned to this test's
+// isolated home (overrides TestMain's suite backstop; last-wins for a key).
+func isolatedEnv(t *testing.T) []string {
+	t.Helper()
+	return append(os.Environ(), "SATELLE_HOME="+isolatedHome(t))
+}
+
 // run executes the binary in dir with args and returns combined output.
 // The subprocess gets the test's isolated SATELLE_HOME so it never reads or
-// writes the host machine-wide workspace registry (sty_ee7f40c6). Per-repo
-// state under dir/.satelle is unaffected — that is keyed off cmd.Dir.
+// writes the host machine-wide workspace registry (sty_ee7f40c6). Runtime
+// state (DB/logs) is home-keyed under that home (sty_4660bbe1).
 func run(t *testing.T, bin, dir string, args ...string) (string, error) {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = dir
-	// Append after os.Environ() so this SATELLE_HOME overrides TestMain's backstop
-	// (exec last-wins for a duplicate key).
-	cmd.Env = append(os.Environ(), "SATELLE_HOME="+isolatedHome(t))
+	cmd.Env = isolatedEnv(t)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -510,17 +536,27 @@ func TestDogfoodFlow(t *testing.T) {
 	bin := testBin
 	repo := t.TempDir()
 
-	// init scaffolds the repo.
+	// init scaffolds the repo. DB is home-keyed (sty_4660bbe1), not under .satelle/.
 	out := mustRun(t, bin, repo, "init")
-	for _, want := range []string{".satelle/satelle.toml", ".satelle/satelle.db", "+ .gitignore"} {
+	for _, want := range []string{".satelle/satelle.toml", "+ .gitignore"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("init output missing %q:\n%s", want, out)
 		}
 	}
-	for _, rel := range []string{".satelle/satelle.toml", ".satelle/satelle.db", ".satelle/workflows/README.md"} {
+	homeDB := filepath.Join(runtimeRoot(t, repo), config.DefaultDBName)
+	if !strings.Contains(out, homeDB) && !strings.Contains(out, runtimeRoot(t, repo)) {
+		t.Errorf("init output missing home-keyed runtime path %s:\n%s", homeDB, out)
+	}
+	for _, rel := range []string{".satelle/satelle.toml", ".satelle/workflows/README.md"} {
 		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
 			t.Errorf("init did not create %s", rel)
 		}
+	}
+	if _, err := os.Stat(homeDB); err != nil {
+		t.Errorf("init did not create home-keyed db %s: %v", homeDB, err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".satelle", config.DefaultDBName)); err == nil {
+		t.Error("init must not write satelle.db under the repo")
 	}
 
 	// init is idempotent.
@@ -596,9 +632,8 @@ func TestServeServesProjectPage(t *testing.T) {
 	const port = "8791"
 	cmd := exec.Command(bin, "serve", "--port", port)
 	cmd.Dir = repo
-	// Isolate the machine-wide workspace registry so this serve cannot spawn
-	// children for every leftover /tmp path registered by other tests.
-	cmd.Env = append(os.Environ(), "SATELLE_HOME="+t.TempDir())
+	// Same home as mustRun so the home-keyed DB has the created story.
+	cmd.Env = isolatedEnv(t)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start serve: %v", err)
 	}
@@ -814,7 +849,7 @@ func TestRebaseResetsSubstrate(t *testing.T) {
 	}
 
 	// The backup holds the pre-rebase files.
-	backups := filepath.Join(repo, ".satelle", "backups")
+	backups := filepath.Join(runtimeRoot(t, repo), "backups")
 	entries, rerr := os.ReadDir(backups)
 	if rerr != nil || len(entries) != 1 {
 		t.Fatalf("expected one timestamped backup dir: %v %v", entries, rerr)

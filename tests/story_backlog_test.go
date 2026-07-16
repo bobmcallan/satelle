@@ -31,7 +31,7 @@ func TestStoryBacklogOKFReference(t *testing.T) {
 		t.Fatalf("could not create an in_progress story: status=%q err=%v", eng.Status, err)
 	}
 
-	storiesDir := filepath.Join(repo, ".satelle", "stories")
+	storiesDir := filepath.Join(runtimeRoot(t, repo), "stories")
 	if err := os.MkdirAll(storiesDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

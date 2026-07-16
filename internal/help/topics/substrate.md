@@ -4,13 +4,26 @@ satelle's process is **configuration, not code**: workflows, skills, and
 principles are authored markdown. This topic explains where that substrate lives,
 the format it follows, and how it is validated.
 
-## One source of truth: `.satelle/`
+## Three planes (authored / defaults / runtime)
 
-`satelle init` lays a complete, self-documenting skeleton under `.satelle/`:
+| Plane | Where | Holds |
+|---|---|---|
+| **Authored** | `<repo>/.satelle/` (git-optional) | satelle.toml, agents.toml, constitution, edited workflows/skills/principles, documents, tasks |
+| **Defaults** | embedded in the binary | sparse repo-agnostic workflows/skills/principles (resolved virtually; see virtual-defaults work) |
+| **Runtime** | `~/.satelle/<repo-key>/` | satelle.db (+wal/shm), logs/, backups/, stories attachment cache |
+
+`satelle runtime path` prints the resolved runtime dir and whether this repo is
+still on the legacy in-repo layout. `satelle runtime migrate` copies a legacy
+DB + runtime dirs to the home key (explicit; never silent). One repo-key maps to
+one isolated DB — never a flat multi-repo bag.
+
+## Authored substrate under `.satelle/`
+
+`satelle init` lays a self-documenting skeleton under `.satelle/`:
 
 - `satelle.toml` and `agents.toml` (both documented, both optional to edit);
-- a dir per kind — `documents/ workflows/ principles/ skills/ stories/` — each
-  with a `README.md` describing what it should contain (READMEs are dir
+- a dir per authored kind — `documents/ workflows/ principles/ skills/ tasks/` —
+  each with a `README.md` describing what it should contain (READMEs are dir
   descriptors; the indexer and OKF normaliser skip them);
 - the complete **default solution**, materialised on disk so the default
   substrate is visible and editable: the order-zero **baseline workflow** (the
@@ -25,22 +38,22 @@ The binary still ships embedded canonical defaults; a repo file with the same
 have to reason about invisible substrate — and never clobbers an authored file
 (an existing workflow set is respected wholesale). `satelle restore` re-installs
 the embedded skills/principles over drifted copies; `satelle rebase` goes
-further — it backs up `workflows/ skills/ principles/` to a timestamped
-`.satelle/backups/` dir, wipes them, and redeploys the complete default
-solution (the "start clean" recovery).
+further — it backs up `workflows/ skills/ principles/` to a timestamped dir under
+the runtime `backups/`, wipes them, and redeploys the complete default solution
+(the "start clean" recovery).
 
 ## Pre-mutation backup
 
 Before init/restore/rebase **overwrites** an existing file under `.satelle/`,
-satelle writes a local copy under `.satelle/backups/` (kinds: `pre-mutation/`,
-`diverged/`, `restore/`, or a timestamped dir for rebase). Local floor always —
-heal paths never block for backup. Online/personal push of pre-images into the
-bound project's documents partition is **opt-in** (`[backup] hosted = true`) and
-requires `satelle login` + project bind; offline/auth failure degrades to local
-with a notice. Default is local-only so init never poisons the documents
-partition that `satelle sync` pulls (backups/ is a restore exclusion). Set
-`[backup] local_only = true` (prefer `satelle.local.toml`) to suppress the
-advisory that points at the online option.
+satelle writes a local copy under the runtime `backups/` tree (kinds:
+`pre-mutation/`, `diverged/`, `restore/`, or a timestamped dir for rebase). Local
+floor always — heal paths never block for backup. Online/personal push of
+pre-images into the bound project's documents partition is **opt-in**
+(`[backup] hosted = true`) and requires `satelle login` + project bind;
+offline/auth failure degrades to local with a notice. Default is local-only so
+init never poisons the documents partition that `satelle sync` pulls (backups/
+is a restore exclusion). Set `[backup] local_only = true` (prefer
+`satelle.local.toml`) to suppress the advisory that points at the online option.
 
 ## Format: Open Knowledge Format (OKF)
 

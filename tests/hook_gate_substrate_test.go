@@ -16,6 +16,7 @@ func gateEvent(t *testing.T, repo, filePath string) bool {
 	t.Helper()
 	cmd := exec.Command(testBin, "hook", "gate")
 	cmd.Dir = repo
+	cmd.Env = isolatedEnv(t)
 	cmd.Stdin = strings.NewReader(`{"tool_input":{"file_path":"` + filePath + `"}}`)
 	err := cmd.Run()
 	return err == nil
@@ -28,6 +29,7 @@ func gateEventRaw(t *testing.T, repo, eventJSON string) bool {
 	t.Helper()
 	cmd := exec.Command(testBin, "hook", "gate")
 	cmd.Dir = repo
+	cmd.Env = isolatedEnv(t)
 	cmd.Stdin = strings.NewReader(eventJSON)
 	err := cmd.Run()
 	return err == nil
