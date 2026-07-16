@@ -383,9 +383,9 @@ func TestSyncWorkstatePullRoundTrip(t *testing.T) {
 	}
 
 	// Wipe local work items by opening store via a second push path isn't available;
-	// delete via story is not archive-all. Use SQL-free approach: recreate empty
-	// repo DB by removing satelle.db and re-seeding agents/config.
-	dbPath := filepath.Join(filepath.Dir(os.Getenv("SATELLE_CONFIG")), "satelle.db")
+	// delete via story is not archive-all. Use SQL-free approach: remove the
+	// home-keyed runtime DB (sty_4660bbe1) and re-open empty.
+	dbPath := runtimeDBPath(t)
 	_ = os.Remove(dbPath)
 	_ = os.Remove(dbPath + "-wal")
 	_ = os.Remove(dbPath + "-shm")
@@ -514,8 +514,8 @@ func TestSyncWorkstatePullIgnoresTeamBinding(t *testing.T) {
 	if _, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL); err != nil {
 		t.Fatalf("push: %v", err)
 	}
-	// Empty local DB then pull.
-	dbPath := filepath.Join(filepath.Dir(os.Getenv("SATELLE_CONFIG")), "satelle.db")
+	// Empty local DB then pull (home-keyed runtime plane).
+	dbPath := runtimeDBPath(t)
 	_ = os.Remove(dbPath)
 	_ = os.Remove(dbPath + "-wal")
 	_ = os.Remove(dbPath + "-shm")

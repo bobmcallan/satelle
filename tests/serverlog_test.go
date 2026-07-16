@@ -12,7 +12,7 @@ import (
 )
 
 // TestServeWritesServerLog drives a real `satelle serve` and confirms the request
-// logging middleware (sty_07cec95f) writes .satelle/logs/server.log through the
+// logging middleware (sty_07cec95f) writes runtime logs/server.log through the
 // cmd_serve.go wiring — the leg the internal/web unit tests cannot reach. It asserts
 // the log exists and carries the tab-separated INFO line for a served request plus a
 // 404 for an unknown path.
@@ -23,7 +23,8 @@ func TestServeWritesServerLog(t *testing.T) {
 	const port = "8795"
 	cmd := exec.Command(testBin, "serve", "--port", port)
 	cmd.Dir = repo
-	cmd.Env = append(os.Environ(), "SATELLE_HOME="+t.TempDir())
+	// Same SATELLE_HOME as init/run so the home-keyed runtime plane matches.
+	cmd.Env = append(os.Environ(), "SATELLE_HOME="+isolatedHome(t))
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start serve: %v", err)
 	}
@@ -42,7 +43,7 @@ func TestServeWritesServerLog(t *testing.T) {
 	}
 
 	// The middleware appends best-effort after the response, so poll briefly.
-	logPath := filepath.Join(repo, ".satelle", "logs", "server.log")
+	logPath := filepath.Join(runtimeRoot(t, repo), "logs", "server.log")
 	var log string
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {

@@ -37,7 +37,14 @@ func init() {
 
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			fmt.Fprintf(w, "repo root\t%s\n", a.RepoRoot)
+			fmt.Fprintf(w, "data dir\t%s\n", a.DataDir)
+			fmt.Fprintf(w, "runtime dir\t%s\n", a.RuntimeDir)
 			fmt.Fprintf(w, "database\t%s\n", a.DBPath)
+			if note := a.Config.LegacyRuntimeNote(a.RepoRoot); note != "" {
+				fmt.Fprintf(w, "runtime layout\tlegacy — run satelle runtime migrate\n")
+			} else {
+				fmt.Fprintf(w, "runtime layout\thome-keyed\n")
+			}
 			fmt.Fprintf(w, "web port\t%d\n", a.Config.ResolveWebPort())
 			fmt.Fprintf(w, "log level\t%s\n", a.Config.ResolveLogLevel())
 			fmt.Fprintf(w, "stories\t%d\n", stories)

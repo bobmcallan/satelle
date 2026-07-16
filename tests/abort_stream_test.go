@@ -22,7 +22,7 @@ import (
 // so no bogus "panic: net/http: abort Handler" ERROR line is logged, and a
 // subsequent / on the same client still responds promptly (pre-fix it hung).
 func TestProxiedSSEAbortDoesNotPoisonConnection(t *testing.T) {
-	home := t.TempDir()
+	home := isolatedHome(t)
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	workspaceAdd(t, home, repo, repo)
@@ -77,7 +77,7 @@ func TestProxiedSSEAbortDoesNotPoisonConnection(t *testing.T) {
 	}
 
 	// The aborted stream must NOT have logged a panic ERROR line.
-	logPath := filepath.Join(repo, ".satelle", "logs", "server.log")
+	logPath := filepath.Join(runtimeRoot(t, repo), "logs", "server.log")
 	if b, err := os.ReadFile(logPath); err == nil {
 		if strings.Contains(string(b), "abort Handler") {
 			t.Fatalf("aborted proxied SSE logged a panic ERROR line (ErrAbortHandler not re-panicked):\n%s", b)

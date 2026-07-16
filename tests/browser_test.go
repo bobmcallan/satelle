@@ -57,9 +57,9 @@ func serveRepo(t *testing.T, _ string) (string, string) {
 	port := freeListenPort(t)
 	cmd := exec.Command(testBin, "serve", "--port", port)
 	cmd.Dir = repo
-	// Isolate the machine-wide registry so `serve` doesn't pick up unrelated repos
-	// and spawn extra child servers during these single-repo tests.
-	cmd.Env = append(os.Environ(), "SATELLE_HOME="+t.TempDir())
+	// Same isolated SATELLE_HOME as mustRun/init so the home-keyed runtime plane
+	// (DB under ~/.satelle/<repo-key>/) matches the CLI (sty_4660bbe1).
+	cmd.Env = append(os.Environ(), "SATELLE_HOME="+isolatedHome(t))
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start serve: %v", err)
 	}

@@ -223,7 +223,7 @@ func TestCoderDispatchAcceptsGrokReadFileChannel(t *testing.T) {
 		t.Fatalf("coder with read_file grant must run: %v", err)
 	}
 	// executor.log captures the PLAN-CONSUMED evidence line.
-	logPath := filepath.Join(repo, ".satelle", "logs", "executor.log")
+	logPath := filepath.Join(runtimeRoot(t, repo), "logs", "executor.log")
 	logBody, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("executor.log missing after dispatch: %v", err)

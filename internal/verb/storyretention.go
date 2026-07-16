@@ -104,7 +104,8 @@ func pruneClosedStoryDirs(ctx context.Context, store *workitem.Store, now time.T
 // deleted (sty_aba7200c).
 func moveStoryDirToBackup(id string, now time.Time) error {
 	ts := now.UTC().Format("20060102-150405")
-	dst := filepath.Join(filepath.Dir(storyDir), "backups", "stories", ts, id)
+	root := resolveBackupsDir(storyDir)
+	dst := filepath.Join(root, "stories", ts, id)
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return fmt.Errorf("story archive backup dir: %w", err)
 	}

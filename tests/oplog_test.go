@@ -29,7 +29,7 @@ func TestOpLogWrittenByBinary(t *testing.T) {
 	mustRun(t, testBin, repo, "story", "set", id, "--tags", "sprint:9,order:1")
 	mustRun(t, testBin, repo, "story", "estimate", id, "--tokens", "1000")
 
-	logPath := filepath.Join(repo, ".satelle", "logs", "operations.log")
+	logPath := filepath.Join(runtimeRoot(t, repo), "logs", "operations.log")
 	b, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("operation log not written by the binary at %s: %v", logPath, err)

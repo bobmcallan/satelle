@@ -78,7 +78,7 @@ func TestGateRetriesTransientReviewerFailure(t *testing.T) {
 	// .satelle/logs/reviewer.log so cross-session API contention is reviewable.
 	// (Label reworded from "transient reviewer failure" by sty_9485d47e — output-
 	// bearing failures now read "no verdict in reviewer output" with full text.)
-	logb, _ := os.ReadFile(filepath.Join(repo, ".satelle", "logs", "reviewer.log"))
+	logb, _ := os.ReadFile(filepath.Join(runtimeRoot(t, repo), "logs", "reviewer.log"))
 	if !strings.Contains(string(logb), "no verdict in reviewer output") || !strings.Contains(string(logb), "rate limited") {
 		t.Errorf("no-verdict failure + its output not captured to reviewer.log:\n%s", string(logb))
 	}

@@ -53,9 +53,14 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 	out := cmd.OutOrStdout()
 	resolve := skillResolver(a)
 
+	dataDir := a.DataDir
+	if dataDir == "" {
+		dataDir = a.Config.ResolveDataDir(a.RepoRoot)
+	}
 	dir := a.AuthoredDirs()[kind]
 	if kind == "tasks" {
-		dir = filepath.Join(filepath.Dir(a.DBPath), "tasks")
+		// Tasks are authored substrate under DataDir — never RuntimeDir (sty_4660bbe1).
+		dir = filepath.Join(dataDir, "tasks")
 	}
 	validated, failed, exempt := validateAuthoredDir(out, kind, dir, nameFilter, resolve)
 
@@ -72,7 +77,7 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 		}
 		// Per-gate effective model surface (sty_19456622) — same allocation view as
 		// `satelle agent validate`, informational (not a hard fail).
-		if agents, aerr := config.LoadAgents(filepath.Dir(a.DBPath)); aerr == nil {
+		if agents, aerr := config.LoadAgents(dataDir); aerr == nil {
 			report := agentvalidate.Validate(agents, a.Config.Vars, wfs)
 			if len(report.Gates) > 0 {
 				fmt.Fprintln(out, "Gate/node effective models:")
@@ -92,7 +97,6 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 	// no principle scope:, resident set under SessionStart ceiling. Whole-set
 	// only — same anchor pattern as workflow consistency.
 	if kind == "principles" && nameFilter == "" {
-		dataDir := filepath.Dir(a.DBPath)
 		constitution := readConstitution(a.Config.ResolveConstitution(a.RepoRoot))
 		for _, p := range auditPlacement(dataDir, config.EmbeddedDefaults(), constitution) {
 			failed++

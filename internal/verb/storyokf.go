@@ -149,7 +149,13 @@ var summaryStoryID = regexp.MustCompile(`(sty_[0-9a-f]{8})\.md$`)
 // sub-bundle (its regenerated index.md/log.md included) is removed. Files whose
 // name carries no story id are left in place. Best-effort and idempotent.
 func migrateLegacySummaries(storyDir string) {
-	docsDir := filepath.Join(filepath.Dir(storyDir), "documents")
+	// Documents are authored substrate; stories are runtime. Do not derive
+	// documents as a sibling of storyDir once the planes diverge (sty_4660bbe1).
+	docsRoot := dataDir
+	if docsRoot == "" {
+		docsRoot = filepath.Dir(storyDir) // unit-test fallback when only storyDir is set
+	}
+	docsDir := filepath.Join(docsRoot, "documents")
 	sub := filepath.Join(docsDir, "story-implementation-summary")
 	for _, dir := range []string{sub, docsDir} {
 		ents, err := os.ReadDir(dir)

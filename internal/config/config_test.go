@@ -7,13 +7,17 @@ import (
 )
 
 func TestZeroConfigDefaults(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SATELLE_HOME", home)
 	var c Config
 	repo := "/repo"
 	if got := c.ResolveDataDir(repo); got != "/repo/.satelle" {
 		t.Errorf("ResolveDataDir = %q", got)
 	}
-	if got := c.ResolveDB(repo); got != "/repo/.satelle/satelle.db" {
-		t.Errorf("ResolveDB = %q", got)
+	// Default DB is home-keyed under ~/.satelle/<repo-key>/ (sty_4660bbe1).
+	wantDB := filepath.Join(home, RepoKey(repo), DefaultDBName)
+	if got := c.ResolveDB(repo); got != wantDB {
+		t.Errorf("ResolveDB = %q, want %q", got, wantDB)
 	}
 	if got := c.ResolveWebPort(); got != DefaultWebPort {
 		t.Errorf("ResolveWebPort = %d", got)

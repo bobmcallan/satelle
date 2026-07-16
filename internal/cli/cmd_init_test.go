@@ -46,12 +46,11 @@ func TestRunInitScaffolds(t *testing.T) {
 		t.Fatalf("runInit: %v", err)
 	}
 
-	// Core files exist: the tomls, the db, a README per authored dir (incl.
-	// stories), and the materialised reviewer skills the baseline references.
+	// Core authored files exist under the repo; the DB lives on the home-keyed
+	// runtime plane (sty_4660bbe1), not under .satelle/.
 	for _, rel := range []string{
 		".satelle/satelle.toml",
 		".satelle/agents.toml",
-		".satelle/satelle.db",
 		".satelle/documents/README.md",
 		".satelle/workflows/README.md",
 		".satelle/principles/README.md",
@@ -63,6 +62,14 @@ func TestRunInitScaffolds(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
 			t.Errorf("missing %s: %v", rel, err)
 		}
+	}
+	// Runtime DB is under ~/.satelle/<repo-key>/ (HOME isolated by runInitTest).
+	homeDB := filepath.Join(config.GlobalDir(), config.RepoKey(repo), config.DefaultDBName)
+	if _, err := os.Stat(homeDB); err != nil {
+		t.Errorf("missing home-keyed db %s: %v", homeDB, err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".satelle", config.DefaultDBName)); err == nil {
+		t.Error("init must not write satelle.db under the repo")
 	}
 	// Tasks: the dir + README keep-file are scaffolded, and the ONE embedded default
 	// task — the re-runnable substrate-audit — is seeded (sty_d4360e90). No GENERIC
@@ -88,18 +95,24 @@ func TestRunInitScaffolds(t *testing.T) {
 		t.Error("init must not scaffold .satelle/stories — the markdown mirror was removed")
 	}
 
-	// gitignore ignores the db but not the toml.
+	// gitignore keeps local.toml + pinned binary; runtime paths left the repo (AC4).
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
-	if !strings.Contains(string(gi), ".satelle/satelle.db") {
-		t.Error("gitignore missing db entry")
+	if strings.Contains(string(gi), ".satelle/satelle.db") {
+		t.Error("gitignore must not list satelle.db — runtime is home-keyed")
+	}
+	if strings.Contains(string(gi), ".satelle/logs/") {
+		t.Error("gitignore must not list .satelle/logs/ — runtime is home-keyed")
+	}
+	if !strings.Contains(string(gi), ".satelle/satelle.local.toml") {
+		t.Error("gitignore missing satelle.local.toml entry")
 	}
 	if strings.Contains(string(gi), "\n.satelle/satelle.toml\n") {
 		t.Error("gitignore should not ignore the committed toml")
 	}
 
-	// Report shows creations.
-	if !strings.Contains(out.String(), "+ .satelle/satelle.db") {
-		t.Errorf("report missing db creation:\n%s", out.String())
+	// Report shows the home-keyed db creation.
+	if !strings.Contains(out.String(), homeDB) {
+		t.Errorf("report missing home-keyed db path %s:\n%s", homeDB, out.String())
 	}
 
 	// init ends by PROVING the deployment green (sty_d0d6bb67): the validation
@@ -899,15 +912,17 @@ func TestRunInitNoWorkspaceOptOut(t *testing.T) {
 }
 
 // TestRunInitWorkspaceWriteFailureNonFatal (AC4): unwritable global config warns
-// but does not fail init.
+// but does not fail init. Runtime dir must still be creatable (home-keyed DB);
+// only SaveGlobal's config.toml write is blocked (sty_4660bbe1).
 func TestRunInitWorkspaceWriteFailureNonFatal(t *testing.T) {
 	isolateUserHome(t)
-	// Point SATELLE_HOME at a path under a regular file so MkdirAll fails.
-	blocker := filepath.Join(t.TempDir(), "not-a-dir")
-	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+	home := t.TempDir()
+	t.Setenv("SATELLE_HOME", home)
+	// Make config.toml a directory so SaveGlobal's WriteFile fails while
+	// MkdirAll(home/<repo-key>) for the runtime plane still succeeds.
+	if err := os.MkdirAll(filepath.Join(home, config.GlobalConfigName), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("SATELLE_HOME", filepath.Join(blocker, "sub"))
 	repo := t.TempDir()
 	var out strings.Builder
 	if err := runInit(&out, repo, false); err != nil {

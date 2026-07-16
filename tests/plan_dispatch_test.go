@@ -82,7 +82,7 @@ func TestPlanStepDispatchesFableAndCapturesArtifact(t *testing.T) {
 
 	// Enter plan → the planner is dispatched and captures the plan artifact.
 	mustRun(t, testBin, repo, "story", "set", id, "--status", "plan")
-	planDoc := filepath.Join(repo, ".satelle", "stories", id, "plan.md")
+	planDoc := filepath.Join(runtimeRoot(t, repo), "stories", id, "plan.md")
 	if _, err := os.Stat(planDoc); err != nil {
 		t.Fatalf("plan step did not capture a plan artifact under the story: %v", err)
 	}

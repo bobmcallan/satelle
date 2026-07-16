@@ -240,7 +240,7 @@ func runWorkflowRefresh(cmd *cobra.Command, name string, apply bool, promptFlags
 	// Write in place (path from the indexed doc).
 	path := d.Path
 	if path == "" {
-		path = filepath.Join(filepath.Dir(a.DBPath), "workflows", name+".md")
+		path = filepath.Join(a.DataDir, "workflows", name+".md")
 	}
 	if err := os.WriteFile(path, []byte(newBody), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)

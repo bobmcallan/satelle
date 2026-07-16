@@ -63,7 +63,7 @@ the same sync continuously (without validation, to keep the poll loop cheap).`,
 			// Repo-health warning (sty_7db2ed7d): the legacy actors.toml filename is no
 			// longer loaded, so a repo still carrying it is silently on defaults. Warn
 			// on reindex (a pass-through — it does not fail).
-			if _, statErr := os.Stat(filepath.Join(filepath.Dir(a.DBPath), config.ActorsConfigName)); statErr == nil {
+			if _, statErr := os.Stat(filepath.Join(a.DataDir, config.ActorsConfigName)); statErr == nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "reindex: WARN deprecated %s/%s — rename it to %s (the legacy filename is no longer loaded)\n",
 					config.DefaultDataDir, config.ActorsConfigName, config.AgentsConfigName)
 			}

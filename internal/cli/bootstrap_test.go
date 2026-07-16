@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/config"
 )
 
 // runRoot executes a fresh root command with args, returning combined output.
@@ -22,8 +24,11 @@ func runRoot(t *testing.T, args ...string) (string, error) {
 
 // tempRepo creates a repo with .satelle/satelle.toml and points SATELLE_CONFIG
 // at it, so config resolution lands there without a process-global chdir.
+// Isolates SATELLE_HOME so the home-keyed runtime plane (sty_4660bbe1) does not
+// write into the developer's real ~/.satelle during tests.
 func tempRepo(t *testing.T) string {
 	t.Helper()
+	t.Setenv("SATELLE_HOME", t.TempDir())
 	repo := t.TempDir()
 	satelleDir := filepath.Join(repo, ".satelle")
 	if err := os.MkdirAll(satelleDir, 0o755); err != nil {
@@ -41,6 +46,21 @@ func tempRepo(t *testing.T) string {
 	}
 	t.Setenv("SATELLE_CONFIG", cfgPath)
 	return repo
+}
+
+// runtimeDBPath returns the resolved satelle.db path for the current SATELLE_CONFIG
+// / SATELLE_HOME env (home-keyed by default).
+func runtimeDBPath(t *testing.T) string {
+	t.Helper()
+	cfg, cfgPath, err := config.Load("")
+	if err != nil && err != config.ErrNotFound {
+		t.Fatal(err)
+	}
+	repoRoot := "."
+	if cfgPath != "" {
+		repoRoot = config.RepoRootFromConfigPath(cfgPath)
+	}
+	return cfg.ResolveDB(repoRoot)
 }
 
 func TestVersionDoesNotCreateDB(t *testing.T) {

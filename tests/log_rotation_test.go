@@ -33,7 +33,7 @@ func TestOperationsLogRotates(t *testing.T) {
 			"--body", "b", "--acceptance", "1. x")
 	}
 
-	logsDir := filepath.Join(repo, ".satelle", "logs")
+	logsDir := filepath.Join(runtimeRoot(t, repo), "logs")
 	if _, err := os.Stat(filepath.Join(logsDir, "operations.log")); err != nil {
 		t.Fatalf("active operations.log missing after rotation: %v", err)
 	}

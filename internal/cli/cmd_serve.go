@@ -111,7 +111,7 @@ to keep the binary current. Press Ctrl-C to stop.`,
 			// config as operations/reviewer/executor. Wrapped at the listener so each
 			// serve process logs to ITS OWN repo's log and httptest servers stay
 			// log-free (sty_07cec95f).
-			serverLog := filepath.Join(filepath.Dir(a.DBPath), "logs", "server.log")
+			serverLog := filepath.Join(a.RuntimeDir, "logs", "server.log")
 			logCfg := logRotation(a)
 
 			if basePath != "" {

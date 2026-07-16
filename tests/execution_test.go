@@ -75,7 +75,7 @@ func TestExecutionLifecycleE2E(t *testing.T) {
 		t.Errorf("execution frontmatter not updated to done:\n%s", data)
 	}
 	// The op-log records the transitions.
-	oplog, _ := os.ReadFile(filepath.Join(repo, ".satelle", "logs", "operations.log"))
+	oplog, _ := os.ReadFile(filepath.Join(runtimeRoot(t, repo), "logs", "operations.log"))
 	if !strings.Contains(string(oplog), eid) || !strings.Contains(string(oplog), "in_progress -> done") {
 		t.Errorf("op-log missing the execution transition:\n%s", oplog)
 	}
