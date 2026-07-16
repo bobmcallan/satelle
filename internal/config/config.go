@@ -186,10 +186,12 @@ type ReviewConfig struct {
 // a workflow/process choice the operator must design (sty_c7149f8a).
 //
 // AllowOutsideTreeEdits opts INTO Bash/Edit mutations whose targets resolve
-// outside the session-home repo anchor (sty_aadd4d6c). Default false = deny
-// (create stories in other repos stays allowed; progressing/mutating them from
-// this session does not). true only for a deliberately multi-repo install —
-// it relaxes containment only; the engaged-story rule is untouched.
+// inside another git working tree (root differs from the session-home anchor;
+// sty_a8454d10 / sty_aadd4d6c). Non-repo paths (temp, scratchpads) are never
+// fenced. Default false = deny foreign-tree mutations (create stories in other
+// repos stays allowed; progressing/mutating them from this session does not).
+// true only for a deliberately multi-repo install — it relaxes containment
+// only; the engaged-story rule is untouched.
 type GateConfig struct {
 	EditExemptPaths       []string `toml:"edit_exempt_paths"`
 	AllowParallel         bool     `toml:"allow_parallel"`

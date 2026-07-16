@@ -37,14 +37,17 @@ func TestIsGitCommitOrPush(t *testing.T) {
 	}
 }
 
-func TestOutsideAnchorTargets(t *testing.T) {
+func TestMutationTargets(t *testing.T) {
+	// Pure candidate extractor: paths outside anchor surface even when they
+	// are non-repo (foreignTreeTarget decides). /dev/null is a candidate here;
+	// the FS filter allows it because it has no .git ancestor.
 	anchor := "/home/u/home-repo"
 	other := "/home/u/other-repo"
 
 	cases := []struct {
 		name    string
 		cmd     string
-		wantAny string // substring that must appear in some escaped path; empty = want none
+		wantAny string // substring that must appear in some candidate; empty = want none
 	}{
 		{
 			name:    "cd elsewhere then rm",
@@ -67,22 +70,22 @@ func TestOutsideAnchorTargets(t *testing.T) {
 			wantAny: filepath.Join(other, "f"),
 		},
 		{
-			name:    "in-home rm allowed (no escape)",
+			name:    "in-home rm no candidate",
 			cmd:     "rm internal/x.go",
 			wantAny: "",
 		},
 		{
-			name:    "story create after cd other allowed",
+			name:    "story create after cd other no candidate",
 			cmd:     "cd " + other + " && satelle story create --title t --body b --acceptance '1. a'",
 			wantAny: "",
 		},
 		{
-			name:    "story create plain allowed",
+			name:    "story create plain no candidate",
 			cmd:     "satelle story create --title t --body b --acceptance '1. a'",
 			wantAny: "",
 		},
 		{
-			name:    "git commit in home no escape",
+			name:    "git commit in home no candidate",
 			cmd:     "git commit -m x",
 			wantAny: "",
 		},
@@ -92,19 +95,34 @@ func TestOutsideAnchorTargets(t *testing.T) {
 			wantAny: filepath.Join(other, "log"),
 		},
 		{
-			name:    "redirect to /dev/null is benign",
+			name:    "redirect to /dev/null is still a candidate (filter allows)",
 			cmd:     "ls 2>/dev/null; echo hi >/dev/null",
+			wantAny: "/dev/null",
+		},
+		{
+			name:    "cp source outside dest home — only dest (in-home → no candidate)",
+			cmd:     "cp " + other + "/src.go ./dst.go",
 			wantAny: "",
 		},
 		{
-			name:    "spaced redirect to /dev/null",
-			cmd:     "cmd > /dev/null 2>&1",
+			name:    "mv dest outside — only dest",
+			cmd:     "mv a/f " + other + "/g",
+			wantAny: filepath.Join(other, "g"),
+		},
+		{
+			name:    "rsync dest home — sources ignored",
+			cmd:     "rsync -a " + other + "/ ./here/",
 			wantAny: "",
+		},
+		{
+			name:    "cp -t outside dir",
+			cmd:     "cp -t " + other + "/dir a b",
+			wantAny: filepath.Join(other, "dir"),
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := outsideAnchorTargets(tc.cmd, anchor)
+			got := mutationTargets(tc.cmd, anchor)
 			if tc.wantAny == "" {
 				if len(got) != 0 {
 					t.Fatalf("want no targets, got %v", got)

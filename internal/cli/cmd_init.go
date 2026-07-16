@@ -1091,10 +1091,10 @@ gate_create = true
 # does NOT implement parallel worktrees/merge; a repo that wants true parallel
 # must design that into its workflow and then flip this switch.
 # allow_outside_tree_edits (default false) opts INTO Bash/Edit mutations whose
-# targets resolve outside this session's home repo (sty_aadd4d6c). Leave false
-# unless this install deliberately spans multiple repos from one session —
-# create stories cross-repo stays allowed either way; progressing/mutating
-# another tree does not.
+# targets land in another git working tree (sty_a8454d10 / sty_aadd4d6c).
+# Non-repo paths (temp, scratchpads) are never fenced. Leave false unless this
+# install deliberately spans multiple repos from one session — create stories
+# cross-repo stays allowed either way; progressing/mutating another tree does not.
 [gate]
 edit_exempt_paths = [".satelle/"]
 # edit_exempt_paths = [".satelle/", ".claude/"]

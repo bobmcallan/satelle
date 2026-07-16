@@ -77,15 +77,25 @@ func TestInitSeedsAndInjectsEditsPrinciple(t *testing.T) {
 	}
 }
 
-// TestHookCommitgateContainment (sty_aadd4d6c): CLAUDE_PROJECT_DIR pins the
-// anchor; a cd-elsewhere mutation is denied; the same form inside home only
-// reaches the engaged-story rule (not containment); create cross-repo allows.
+// TestHookCommitgateContainment (sty_aadd4d6c / sty_a8454d10): CLAUDE_PROJECT_DIR
+// pins the anchor; a mutation into another git working tree is denied; a
+// .git-less temp path is allowed; create cross-repo allows.
 func TestHookCommitgateContainment(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
+	// Anchor must be a git tree so anchor-vs-foreign is meaningful.
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Sibling repo (has .git) — foreign fence applies.
 	other := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(other, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Non-repo temp — not fenced (pins the live defect).
+	nonRepo := t.TempDir()
 
-	// Outside-tree mutation denied, reason names the path.
+	// Foreign-tree mutation denied, reason names the path.
 	ev := `{"tool_input":{"command":"rm ` + other + `/f.go"}}`
 	c := exec.Command(testBin, "hook", "commitgate")
 	c.Dir = repo
@@ -93,10 +103,20 @@ func TestHookCommitgateContainment(t *testing.T) {
 	c.Stdin = strings.NewReader(ev)
 	out, err := c.CombinedOutput()
 	if err == nil {
-		t.Fatalf("commitgate allowed outside-tree rm; out=%s", out)
+		t.Fatalf("commitgate allowed foreign-tree rm; out=%s", out)
 	}
 	if !strings.Contains(string(out), other) {
-		t.Errorf("deny must name the outside path %q; out=%s", other, out)
+		t.Errorf("deny must name the foreign path %q; out=%s", other, out)
+	}
+
+	// .git-less temp mutation is ALLOWED (sty_a8454d10 AC4).
+	nonRepoEv := `{"tool_input":{"command":"rm ` + nonRepo + `/f.go"}}`
+	c = exec.Command(testBin, "hook", "commitgate")
+	c.Dir = repo
+	c.Env = append(isolatedEnv(t), "CLAUDE_PROJECT_DIR="+repo)
+	c.Stdin = strings.NewReader(nonRepoEv)
+	if err := c.Run(); err != nil {
+		t.Errorf("non-repo temp rm must be allowed by containment: %v", err)
 	}
 
 	// story create (no outside mutation path) allows through containment.
@@ -127,7 +147,7 @@ func TestHookCommitgateContainment(t *testing.T) {
 		t.Error("in-home git commit with no engaged story must deny")
 	}
 
-	// Opt-in allows outside-tree mutation.
+	// Opt-in allows foreign-tree mutation.
 	tomlPath := filepath.Join(repo, ".satelle", "satelle.toml")
 	raw, rerr := os.ReadFile(tomlPath)
 	if rerr != nil {
@@ -153,7 +173,7 @@ func TestHookCommitgateContainment(t *testing.T) {
 	c.Env = append(isolatedEnv(t), "CLAUDE_PROJECT_DIR="+repo)
 	c.Stdin = strings.NewReader(ev)
 	if err := c.Run(); err != nil {
-		t.Errorf("allow_outside_tree_edits=true must permit outside rm: %v", err)
+		t.Errorf("allow_outside_tree_edits=true must permit foreign rm: %v", err)
 	}
 }
 

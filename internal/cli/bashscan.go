@@ -373,15 +373,17 @@ var mutationVerbs = map[string]bool{
 	"chmod": true, "chown": true, "ln": true, "rsync": true,
 }
 
-// outsideAnchorTargets returns absolute paths that a Bash command would mutate
-// outside anchor. Empty when nothing escapes (or classification is ambiguous).
+// mutationTargets returns absolute paths a Bash command would mutate that fall
+// outside anchor (pure candidate extraction — no FS stats). Empty when nothing
+// escapes or classification is ambiguous. The foreign-tree decision lives in
+// containment.go (foreignTreeTarget); this function only extracts candidates.
 //
 // Each segment carries a working dir seeded from anchor and updated by cd.
-// Targets come from: cd DIR (the DIR itself when outside); named -C dir flags;
-// redirect/tee destinations; path args of mutation verbs; and foreign satelle
-// progress verbs (story/task set --status). Read verbs and story/task create
-// contribute no target.
-func outsideAnchorTargets(command, anchor string) []string {
+// Targets come from: named -C dir flags; redirect/tee destinations; DEST path
+// args of mutation verbs; and foreign satelle progress verbs (story/task set
+// --status). Read verbs and story/task create contribute no target. In-home
+// paths are filtered here so the FS layer never stats them.
+func mutationTargets(command, anchor string) []string {
 	anchor = filepath.Clean(anchor)
 	if anchor == "" || anchor == "." {
 		return nil
@@ -394,12 +396,6 @@ func outsideAnchorTargets(command, anchor string) []string {
 			return
 		}
 		if withinRoot(anchor, abs) {
-			return
-		}
-		// Device/FD sinks are not "another repo's tree" — agents redirect to
-		// /dev/null constantly; denying them is a false positive that blocks
-		// ordinary shell (sty_aadd4d6c: false positives are the hazard).
-		if isBenignOutsidePath(abs) {
 			return
 		}
 		seen[abs] = true
@@ -564,20 +560,6 @@ func foreignSatelleVerb(words []string, cwd string) (string, bool) {
 	return "", false
 }
 
-// isBenignOutsidePath reports paths that resolve outside the anchor but are not
-// cross-repo mutation targets (null sinks, stdio devices, process FDs).
-func isBenignOutsidePath(p string) bool {
-	switch filepath.Clean(p) {
-	case "/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "/dev/zero", "/dev/full":
-		return true
-	}
-	// /dev/fd/N and /proc/self/fd/N
-	if strings.HasPrefix(p, "/dev/fd/") || strings.HasPrefix(p, "/proc/self/fd/") {
-		return true
-	}
-	return false
-}
-
 // looksLikePath is a conservative heuristic: absolute, ./, ../, or contains /.
 func looksLikePath(s string) bool {
 	if s == "" {
@@ -589,7 +571,16 @@ func looksLikePath(s string) bool {
 	return strings.Contains(s, "/")
 }
 
-// mutationPathArgs extracts path arguments from a mutation verb segment.
+// destLastVerbs treat only the last non-option positional as a mutation target;
+// earlier positionals are SOURCES (reads) and must not trip containment
+// (sty_a8454d10 AC3). With -t/--target-directory DIR, DIR is the sole target.
+var destLastVerbs = map[string]bool{
+	"cp": true, "mv": true, "rsync": true, "ln": true, "install": true,
+}
+
+// mutationPathArgs extracts DEST path arguments from a mutation verb segment.
+// For dest-last verbs (cp/mv/rsync/ln/install), only the destination contributes;
+// sources are legitimate cross-repo reads the fence must not deny.
 func mutationPathArgs(words []string, cwd string) []string {
 	if len(words) < 2 {
 		return nil
@@ -605,8 +596,55 @@ func mutationPathArgs(words []string, cwd string) []string {
 		}
 		return out
 	}
-	// sed -i: path is typically the last non-option arg after the script.
-	// Conservative: every non-option arg that looks like a path.
+
+	// dest-last family: collect -t DIR first; else only the last positional.
+	if destLastVerbs[cmd] {
+		var positionals []string
+		skipNext := false
+		for i := 1; i < len(words); i++ {
+			w := words[i]
+			if skipNext {
+				skipNext = false
+				continue
+			}
+			if strings.HasPrefix(w, "-") {
+				if w == "-t" || w == "--target-directory" {
+					if i+1 < len(words) {
+						out = append(out, resolvePath(cwd, words[i+1]))
+						skipNext = true
+					}
+					continue
+				}
+				// Options that take a value (best-effort skip).
+				if w == "--backup" || w == "-S" || w == "--suffix" ||
+					w == "-t" || strings.HasPrefix(w, "--target-directory=") {
+					if !strings.Contains(w, "=") {
+						skipNext = true
+					}
+				}
+				continue
+			}
+			positionals = append(positionals, w)
+		}
+		// -t already populated out; do not also emit positionals as targets.
+		if len(out) > 0 {
+			return out
+		}
+		// ln with a single positional links into cwd — no outside target.
+		if len(positionals) == 0 {
+			return nil
+		}
+		if len(positionals) == 1 {
+			// Destination is cwd-relative implied link name, or a single dest —
+			// treat as dest under cwd (in-home filter drops it if so).
+			return []string{resolvePath(cwd, positionals[0])}
+		}
+		// Last positional is the destination; sources are ignored.
+		return []string{resolvePath(cwd, positionals[len(positionals)-1])}
+	}
+
+	// All-args family: rm/touch/mkdir/chmod/chown/truncate/sed/tee — every
+	// non-option arg is a mutation target.
 	skipNext := false
 	for i := 1; i < len(words); i++ {
 		w := words[i]
@@ -615,34 +653,15 @@ func mutationPathArgs(words []string, cwd string) []string {
 			continue
 		}
 		if strings.HasPrefix(w, "-") {
-			// Options that take an argument for common verbs.
-			if cmd == "sed" && (w == "-e" || w == "-f" || w == "-i") {
-				// -i may take optional suffix: -i.bak or -i ''
-				if w == "-i" && i+1 < len(words) && !looksLikePath(words[i+1]) && !strings.HasPrefix(words[i+1], "-") {
-					// optional backup suffix
-					if words[i+1] == "" || !strings.Contains(words[i+1], "/") {
-						// might be suffix; skip if next doesn't look like path
-					}
-				}
-				if w == "-e" || w == "-f" {
-					skipNext = true
-				}
+			if cmd == "sed" && (w == "-e" || w == "-f") {
+				skipNext = true
 			}
 			if (cmd == "rm" || cmd == "mkdir" || cmd == "chmod" || cmd == "chown") &&
 				(w == "-t" || w == "--target-directory") {
 				skipNext = true
 			}
-			if (cmd == "cp" || cmd == "mv" || cmd == "install" || cmd == "rsync" || cmd == "ln") &&
-				(w == "-t" || w == "--target-directory") {
-				skipNext = true
-				if i+1 < len(words) {
-					out = append(out, resolvePath(cwd, words[i+1]))
-				}
-			}
 			continue
 		}
-		// Non-option: treat as path candidate when it looks path-like or is a bare name
-		// (relative path under cwd).
 		out = append(out, resolvePath(cwd, w))
 	}
 	return out

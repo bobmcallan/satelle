@@ -112,10 +112,12 @@ file_path, Grok sends a repo-relative one — resolving up front means a relativ
 target is never nested under a narrower tested root (e.g. the data dir) and
 wrongly classed as inside it, which previously let Grok edits bypass the gate.
 
-Edits OUTSIDE the repo root are REFUSED (sty_3026d890): a session in
-satelle-server must not rewrite files under a sibling tree such as ../satelle.
-If the change belongs in another satelle-enabled project, create and engage the
-story in THAT repo. Session scratch under /tmp is no longer a free pass.
+Edits that land in ANOTHER git working tree (root differs from the session
+anchor) are REFUSED (sty_a8454d10; supersedes the sty_3026d890 stance that
+closed /tmp and every non-repo path). A session in satelle-server must not
+rewrite files under a sibling repo such as ../satelle — open a session in THAT
+repo. Temp dirs, scratchpads, and non-repo paths are outside the fence's
+concern and are allowed.
 
 Exemption is CONFIGURATION, not code (the constitution: configuration over
 code). An edit is exempt from the engaged-story check ONLY when its target falls
@@ -138,12 +140,15 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 			// holder without a second store open (sty_1738f973 AC6).
 			info, engaged, engErr := currentSeat()
 			if p := filePathFromEvent(raw); p != "" {
-				// Cross-repo lock (sty_3026d890 / sty_aadd4d6c): refuse any edit
-				// outside the session-home anchor unless the operator opts in.
+				// Foreign-tree fence (sty_a8454d10 / sty_aadd4d6c): refuse edits
+				// that land in ANOTHER git working tree unless the operator opts
+				// in. Non-repo paths (temp, scratchpads) are not fenced.
 				// Observed failure: agent in satelle-server wrote CLI code under
 				// ../satelle with no story in the correct repo — process break.
-				if !allowOutsideTreeEdits() && !withinRepoTarget(p) {
-					return denyPreToolUse(cmd, raw, outsideRepoEditReason(p))
+				if !allowOutsideTreeEdits() {
+					if foreignRoot, foreign := editTargetForeign(p); foreign {
+						return denyPreToolUse(cmd, raw, outsideRepoEditReason(p, foreignRoot))
+					}
 				}
 				// Exemption is CONFIGURATION, not code (the constitution:
 				// configuration over code). Only a path under a [gate]
@@ -171,23 +176,26 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 
 	commitgate := &cobra.Command{
 		Use:   "commitgate",
-		Short: "PreToolUse Bash gate — cross-repo containment + engaged-story commit/push",
+		Short: "PreToolUse Bash gate — foreign-tree containment + engaged-story commit/push",
 		Long: `commitgate is the PreToolUse handler for Bash. It first applies best-effort
-cross-repo containment (sty_aadd4d6c): a command whose mutation target resolves
-outside the session-home anchor is denied unless [gate] allow_outside_tree_edits
-is true. Containment is a reminder and boundary, not a sandbox. Then, for git
-commit/push only, it exits non-zero unless a story is engaged. On deny it emits
-the same harness-specific PreToolUse deny shape as gate (sty_5e4bc568). Fails
-closed on store/listing/workflow-resolution errors (sty_f3d5d4b8).`,
+foreign-tree containment (sty_a8454d10 / sty_aadd4d6c): a command whose mutation
+target resolves inside a git working tree whose root differs from the session
+anchor is denied unless [gate] allow_outside_tree_edits is true. Temp/scratchpad/
+non-repo paths are not fenced (the sty_3026d890 stance that closed /tmp is
+superseded). Containment is a reminder and boundary, not a sandbox. Then, for
+git commit/push only, it exits non-zero unless a story is engaged. On deny it
+emits the same harness-specific PreToolUse deny shape as gate (sty_5e4bc568).
+Fails closed on store/listing/workflow-resolution errors (sty_f3d5d4b8).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
 			command := bashCommandFromEvent(raw)
-			// Containment BEFORE the engaged-story branch: an outside-tree mutation
-			// is wrong even with a story engaged (sty_aadd4d6c).
+			// Containment BEFORE the engaged-story branch: a foreign-tree mutation
+			// is wrong even with a story engaged (sty_aadd4d6c / sty_a8454d10).
 			if !allowOutsideTreeEdits() {
-				if targets := outsideAnchorTargets(command, sessionAnchor()); len(targets) > 0 {
-					return denyPreToolUse(cmd, raw, outsideAnchorBashReason(targets[0]))
+				cands := mutationTargets(command, sessionAnchor())
+				if path, foreignRoot, ok := foreignTreeTarget(sessionAnchor(), cands); ok {
+					return denyPreToolUse(cmd, raw, outsideAnchorBashReason(path, foreignRoot))
 				}
 			}
 			if !isGitCommitOrPush(command) {
@@ -592,18 +600,6 @@ func filePathFromEvent(raw []byte) string {
 	return ""
 }
 
-// withinRepoTarget reports whether target resolves to a path inside the session
-// home repo (the pinned anchor — not live shell CWD). If the anchor cannot be
-// resolved, it returns true (stay conservative — treat as in-repo so other gate
-// rules still apply rather than free-passing an unresolvable path).
-func withinRepoTarget(target string) bool {
-	root := sessionAnchor()
-	if strings.TrimSpace(root) == "" {
-		return true
-	}
-	return withinRoot(root, resolveAbsTarget(root, target))
-}
-
 // sessionAnchor returns the pinned session-home repo root for containment and
 // edit-gate path checks (sty_aadd4d6c). Precedence: SATELLE_PROJECT_DIR, then
 // CLAUDE_PROJECT_DIR (harness pin), then RepoRootFromConfigPath of config.Load.
@@ -638,8 +634,9 @@ func anchorFrom(getenv func(string) string, cfgRoot string) string {
 }
 
 // allowOutsideTreeEdits reports whether [gate] allow_outside_tree_edits is true.
-// Default false (zero value) = deny outside-tree mutations. On config load
-// failure, returns false (containment stays on).
+// Default false = deny mutations in another repo's working tree (sty_a8454d10).
+// Non-repo paths are never fenced. On config load failure, returns false
+// (containment stays on).
 func allowOutsideTreeEdits() bool {
 	cfg, _, err := config.Load("")
 	if err != nil {
@@ -649,12 +646,12 @@ func allowOutsideTreeEdits() bool {
 }
 
 // outsideAnchorBashReason is the agent-facing deny when a Bash mutation target
-// resolves outside the session-home anchor (sty_aadd4d6c). Names the resolved
-// absolute path and prescribes opening a session in THAT repo.
-func outsideAnchorBashReason(path string) string {
+// lands in another repo's working tree (sty_a8454d10 / sty_aadd4d6c). Names the
+// path and the foreign root; prescribes opening a session in THAT repo.
+func outsideAnchorBashReason(path, foreignRoot string) string {
 	return fmt.Sprintf(
-		"satelle: refusing Bash mutation outside this session's repo (%s) — open a session in THAT repo to action it there (create stories cross-repo is fine; progressing/mutating is not). Opt-in only for a deliberate multi-repo install: [gate] allow_outside_tree_edits = true",
-		path)
+		"satelle: refusing Bash mutation in another repo's tree (%s, root %s) — open a session in THAT repo to action it there (create stories cross-repo is fine; progressing/mutating is not). Temp/non-repo paths are not fenced. Opt-in only for a deliberate multi-repo install: [gate] allow_outside_tree_edits = true",
+		path, foreignRoot)
 }
 
 // noEngagedStoryEditReason is the canonical agent-facing deny for product-code
@@ -689,19 +686,20 @@ func commitDenyReason(command string) string {
 	return noEngagedStoryCommitReason
 }
 
-// outsideRepoEditReason is the agent-facing refusal when a PreToolUse edit targets
-// a path outside the current repo root (sty_3026d890). Kept as a pure string so
-// harness-specific deny emission and unit tests share one stable message.
-func outsideRepoEditReason(path string) string {
+// outsideRepoEditReason is the agent-facing refusal when a PreToolUse edit
+// targets a path inside another repo's working tree (sty_a8454d10). Kept as a
+// pure string so harness-specific deny emission and unit tests share one stable
+// message. foreignRoot is the git root of the denied tree.
+func outsideRepoEditReason(path, foreignRoot string) string {
 	return fmt.Sprintf(
-		"satelle: refusing edit outside this repo (%s) — only paths under the repo root may be modified here. If this change belongs in another project (e.g. CLI work for an epic tracked on satelle-server), open a session in THAT repo and create/engage the story there: satelle story create … then satelle story set <id> --status plan",
-		path)
+		"satelle: refusing edit in another repo's tree (%s, root %s) — open a session in THAT repo and create/engage the story there: satelle story create … then satelle story set <id> --status plan. Temp/non-repo paths are not fenced; opt-in multi-repo: [gate] allow_outside_tree_edits = true",
+		path, foreignRoot)
 }
 
 // outsideRepoEditErr wraps outsideRepoEditReason as an error for tests that
 // still assert .Error() on the refusal helper.
-func outsideRepoEditErr(path string) error {
-	return fmt.Errorf("%s", outsideRepoEditReason(path))
+func outsideRepoEditErr(path, foreignRoot string) error {
+	return fmt.Errorf("%s", outsideRepoEditReason(path, foreignRoot))
 }
 
 // denyPreToolUse emits a harness-specific deny payload on stdout and returns an
