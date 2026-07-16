@@ -7,6 +7,17 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
+## [0.0.263] - 2026-07-16
+
+### Added
+- Cross-repo containment: Bash PreToolUse denies mutations outside the session-home anchor (sty_aadd4d6c)
+- `[gate] allow_outside_tree_edits` opt-in (default deny) for deliberate multi-repo installs
+- Session principle `satelle-cross-repo-containment` (create anywhere, action only at home)
+- Quote-aware Bash tokenizer: `git -C` commit/push forms match; quoted prose does not
+
+### Changed
+- Session anchor prefers `SATELLE_PROJECT_DIR` / `CLAUDE_PROJECT_DIR` over CWD-derived config root
+
 ## [0.0.262] - 2026-07-16
 
 ### Added
