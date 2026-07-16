@@ -534,6 +534,37 @@ type Spec struct {
 	AttrProblems []string
 }
 
+// Declares reports whether the DOT declares a directed transition from→to
+// (sty_ebd3d666). Recovery, park, and cancel edges count when declared.
+// Alias of HasEdge for call-site readability.
+func (s Spec) Declares(from, to string) bool { return s.HasEdge(from, to) }
+
+// HasEdge reports whether the DOT declares a directed transition from→to.
+func (s Spec) HasEdge(from, to string) bool {
+	for _, tr := range s.Transitions {
+		if tr.From == from && tr.To == to {
+			return true
+		}
+	}
+	return false
+}
+
+// Successors returns the distinct target states of edges leaving from, sorted
+// for stable agent-facing refuse messages (sty_ebd3d666).
+func (s Spec) Successors(from string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, tr := range s.Transitions {
+		if tr.From != from || seen[tr.To] {
+			continue
+		}
+		seen[tr.To] = true
+		out = append(out, tr.To)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // Parse extracts the Spec from a workflow body's fenced ```dot block. ok is false
 // when the body carries no dot block, so callers fall back to the inline-YAML
 // grammar.

@@ -494,9 +494,15 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 	if !declared {
 		// The active workflow does not declare this edge — it is not a legal move.
 		// Refuse it (the caller blocks the transition), so a story cannot skip a
-		// gate by jumping across an edge the workflow never declared.
-		return verb.GateDecision{}, fmt.Errorf(
-			"transition %s→%s is not a declared edge in the active workflow", item.Status, toStatus)
+		// gate by jumping across an edge the workflow never declared (sty_ebd3d666).
+		// Prefer Successors so the expected next step is named when the DOT is known.
+		msg := fmt.Sprintf("transition %s→%s is not a declared edge in the active workflow", item.Status, toStatus)
+		if next := g.successorsOf(ctx, item, item.Status); len(next) > 0 {
+			msg = fmt.Sprintf(
+				"satelle: refusing transition %s→%s — not a declared edge; expected next step(s): %s",
+				item.Status, toStatus, strings.Join(next, ", "))
+		}
+		return verb.GateDecision{}, fmt.Errorf("%s", msg)
 	}
 	// Before a story is IMPLEMENTED, guard against engaging it into a workflow that
 	// cannot complete. On the ENGAGEMENT edge, deterministically (no agent) resolve
@@ -1383,6 +1389,20 @@ func (g *Engine) reviewerSkills(ctx context.Context, item workitem.Item, from, t
 	}
 	skills, model, declared = reviewerSkillsFor(doc.Body, from, to)
 	return skills, model, declared, nil
+}
+
+// successorsOf returns declared DOT successors of from for agent-facing refuse
+// messages (sty_ebd3d666). Empty when no workflow/DOT resolves.
+func (g *Engine) successorsOf(ctx context.Context, item workitem.Item, from string) []string {
+	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
+	if err != nil {
+		return nil
+	}
+	spec, ok := wfdot.Parse(doc.Body)
+	if !ok {
+		return nil
+	}
+	return spec.Successors(from)
 }
 
 // activeWorkflow returns the workflow doc governing an item of the given

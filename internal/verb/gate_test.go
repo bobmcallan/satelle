@@ -122,10 +122,12 @@ func TestStoryCreateGatedAcceptPersists(t *testing.T) {
 func TestStorySetUngatedTransitionEnacts(t *testing.T) {
 	wire(t)
 	// No gater wired — the gateless baseline: transitions enact directly.
+	// Use DOT-legal statuses (sty_ebd3d666): backlog→in_progress→done.
 	var it workitem.Item
-	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "open"}), &it)
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x"}), &it)
 
 	var after workitem.Item
+	json.Unmarshal(call(t, "story-set", map[string]any{"id": it.ID, "status": "in_progress"}), &after)
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": it.ID, "status": "done"}), &after)
 	if after.Status != "done" {
 		t.Errorf("ungated transition should enact: status = %q", after.Status)
@@ -297,7 +299,9 @@ func TestUngatedTransitionSkipsSummariser(t *testing.T) {
 	t.Cleanup(func() { verb.SetStepSummariser(nil) })
 
 	var it workitem.Item
-	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "open"}), &it)
+	// DOT-legal statuses (sty_ebd3d666).
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x"}), &it)
+	call(t, "story-set", map[string]any{"id": it.ID, "status": "in_progress"})
 	call(t, "story-set", map[string]any{"id": it.ID, "status": "done"})
 
 	if sum.calls != 0 {

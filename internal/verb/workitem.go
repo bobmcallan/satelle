@@ -335,6 +335,16 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 
 	transitioning := req.Status != nil && *req.Status != current.Status
 
+	// Edge fence (sty_ebd3d666): refuse status jumps that skip a required DOT
+	// step (e.g. backlog→in_progress when only backlog→plan exists). Runs before
+	// engage/lease so a skip is never partially acquired. Declared recovery,
+	// park, and cancel edges still pass.
+	if transitioning {
+		if err := refuseSkippedStep(ctx, current, *req.Status); err != nil {
+			return nil, err
+		}
+	}
+
 	// Engage precondition (sty_93eec36d): when a story leaves its workflow entry
 	// state for a non-cancel target, refuse if agents.toml / workflow agent=
 	// bindings fail agentvalidate — catch a broken deployment before the first

@@ -84,7 +84,9 @@ func TestStoryCreateGetSetThroughVerbs(t *testing.T) {
 		t.Errorf("get title = %q", got.Title)
 	}
 
+	// Legal edges on the baseline DOT (sty_ebd3d666): backlog→in_progress→done.
 	var updated workitem.Item
+	json.Unmarshal(call(t, "story-set", map[string]any{"id": created.ID, "status": "in_progress"}), &updated)
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": created.ID, "status": "done"}), &updated)
 	if updated.Status != "done" {
 		t.Errorf("set status = %q", updated.Status)

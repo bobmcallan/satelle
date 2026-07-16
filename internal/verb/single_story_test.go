@@ -25,7 +25,9 @@ digraph w {
   blocked     [agent=reviewer]
   done        [shape=Msquare]
   backlog -> plan -> in_progress -> done
+  plan -> blocked
   in_progress -> blocked
+  blocked -> plan
   blocked -> in_progress
 }
 ` + "```" + `
@@ -88,6 +90,8 @@ func TestSingleStoryBlockedFreesSeat(t *testing.T) {
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Parked", "category": "feature"}), &a)
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Next", "category": "feature"}), &b)
 
+	// Engage via legal edges (sty_ebd3d666), then park.
+	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "plan"}), &a)
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "in_progress"}), &a)
 	// Park A (agent=reviewer → not engaging).
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "blocked"}), &a)
