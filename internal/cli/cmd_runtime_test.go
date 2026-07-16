@@ -120,4 +120,3 @@ func TestRuntimeMigrateDryRun(t *testing.T) {
 		t.Fatal("dry-run must not create target db")
 	}
 }
-
