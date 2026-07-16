@@ -53,16 +53,21 @@ path and prints a deprecation note. See decision-substrate-planes-local-first.`,
 		},
 	}
 
-	var force, dryRun bool
+	var force, yes, dryRun bool
 	migrateCmd := &cobra.Command{
 		Use:   "migrate",
-		Short: "Copy legacy in-repo runtime state to ~/.satelle/<repo-key>/",
+		Short: "Copy legacy in-repo runtime state to ~/.satelle/<repo-key>/ (dry-run default)",
 		Long: `Copy satelle.db (via VACUUM INTO), logs/, backups/, and stories/ from the
 legacy <repo>/.satelle/ layout into the home-keyed runtime dir. Leaves the
 legacy tree in place and prints an rm suggestion — satelle never deletes the
 operator's only ledger copy. Refuses if the target already has a database
 unless --force is set.
 
+Dry-run by default (sty_a3915840 — same convention as 'satelle migrate' and
+'substrate prune'). Pass --yes to apply. --dry-run is accepted as an explicit
+no-op flag for scripts.
+
+Prefer the compose verb 'satelle migrate' for full structure convergence.
 Does not open the store — so the source DB is free for VACUUM INTO.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -83,11 +88,14 @@ Does not open the store — so the source DB is free for VACUUM INTO.`,
 				RuntimeDir: cfg.ResolveRuntimeDir(repoRoot).Dir,
 				DBPath:     cfg.ResolveDB(repoRoot),
 			}
-			return runRuntimeMigrate(cmd.OutOrStdout(), a, force, dryRun)
+			// Dry-run unless --yes. Explicit --dry-run forces dry-run even with --yes.
+			applyDry := !yes || dryRun
+			return runRuntimeMigrate(cmd.OutOrStdout(), a, force, applyDry)
 		},
 	}
 	migrateCmd.Flags().BoolVar(&force, "force", false, "overwrite an existing home-keyed database")
-	migrateCmd.Flags().BoolVar(&dryRun, "dry-run", false, "print what would be copied without writing")
+	migrateCmd.Flags().BoolVar(&yes, "yes", false, "apply the relocation (default is dry-run)")
+	migrateCmd.Flags().BoolVar(&dryRun, "dry-run", false, "print plan only (default; kept for scripts)")
 
 	var orphansOnly bool
 	listCmd := &cobra.Command{
