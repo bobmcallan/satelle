@@ -341,9 +341,17 @@ func enableParallelStories(t *testing.T, repo string) {
 // isolatedHome returns the per-test SATELLE_HOME (created once via t.TempDir).
 // Shared across run() calls in the same test so multi-step flows keep one
 // empty-at-start global registry; never the host ~/.satelle.
+//
+// Keyed by the TOP-LEVEL test name (strip t.Run subtest suffixes) so a parent
+// that started serve and a subtest that runs mustRun share one home-keyed DB
+// (sty_4660bbe1). Without that, subtests opened empty ledgers and stories
+// vanished mid-browser flow.
 func isolatedHome(t *testing.T) string {
 	t.Helper()
 	name := t.Name()
+	if i := strings.Index(name, "/"); i >= 0 {
+		name = name[:i]
+	}
 	if v, ok := testHomes.Load(name); ok {
 		return v.(string)
 	}
