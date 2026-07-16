@@ -7,6 +7,16 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
+## [0.0.262] - 2026-07-16
+
+### Added
+- Virtual sparse defaults: workflows/skills/principles resolve from the binary without seeding unedited copies (sty_29e5a9a5)
+- `satelle substrate list|edit|prune` for effective provenance, materialize-on-edit, and seed cleanup
+
+### Changed
+- Fresh `satelle init` no longer materialises unedited default markdown (tasks still seeded — coded gates need headers)
+- DocIndex List/Count overlay embedded defaults at read time
+
 ## [0.0.261] - 2026-07-16
 
 ### Added
