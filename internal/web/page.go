@@ -268,14 +268,15 @@ const templatesSrc = `
   <td class="updated">{{ftime .UpdatedAt}}</td>
 </tr>{{else}}<tr><td colspan="6" class="empty">none yet</td></tr>{{end}}{{end}}
 
-{{define "docsRows"}}{{range .}}{{$k := .Kind}}<div class="kind-h">{{.Kind}}</div>{{if .Docs}}<div class="docgrid">{{range .Docs}}<a class="doc" href="doc/{{$k}}/{{.Name}}" data-search="{{printf "%s %s" .Name .Headline | lower}}">
+{{define "docsRows"}}{{range .}}{{$k := .Kind}}<div class="kind-h">{{.Kind}}</div>{{if .Docs}}<div class="docgrid">{{range .Docs}}<a class="doc" href="doc/{{$k}}/{{.Name}}" data-search="{{printf "%s %s %s" .Name .Headline .Provenance | lower}}">
   <div class="name">{{.Name}}</div>
+  {{if .Provenance}}<div class="wi-tags">{{tagchip (printf "provenance:%s" .Provenance)}}</div>{{end}}
   {{if .Headline}}<div class="head">{{.Headline}}</div>{{end}}
   {{if not .ModTime.IsZero}}<div class="updated">updated {{ftime .ModTime}}</div>{{end}}
 </a>{{end}}</div>{{else}}<div class="empty">none indexed — run <code>satelle reindex</code></div>{{end}}{{end}}{{end}}
 
-{{define "workflowRows"}}{{range .}}<tr class="row" tabindex="0" role="button" aria-expanded="false" data-search="{{printf "%s %s %s %s" .Name .Headline .Scope (join .AppliesTo " ") | lower}}" data-expand-url="fragment/workflow/{{.Name}}">
-  <td><div class="wi-title">{{.Name}}</div><div class="wi-tags">{{if .Scope}}{{tagchip (printf "scope:%s" .Scope)}}{{end}}{{range .AppliesTo}}{{tagchip (printf "applies_to:%s" .)}}{{end}}</div></td>
+{{define "workflowRows"}}{{range .}}<tr class="row" tabindex="0" role="button" aria-expanded="false" data-search="{{printf "%s %s %s %s %s" .Name .Headline .Scope .Provenance (join .AppliesTo " ") | lower}}" data-expand-url="fragment/workflow/{{.Name}}">
+  <td><div class="wi-title">{{.Name}}</div><div class="wi-tags">{{if .Provenance}}{{tagchip (printf "provenance:%s" .Provenance)}}{{end}}{{if .Scope}}{{tagchip (printf "scope:%s" .Scope)}}{{end}}{{range .AppliesTo}}{{tagchip (printf "applies_to:%s" .)}}{{end}}</div></td>
   <td>{{.Headline}}</td>
   <td class="updated">{{ftime .Updated}}</td>
 </tr>{{else}}<tr><td colspan="3" class="empty">none indexed — run <code>satelle reindex</code></td></tr>{{end}}{{end}}
@@ -283,7 +284,8 @@ const templatesSrc = `
 {{define "workflowDetail"}}<div class="expbody">
   <h4>{{.Name}}</h4>
   {{if .Headline}}<div class="meta">{{.Headline}}</div>{{end}}
-  <div class="wi-tags">{{if .Scope}}{{tagchip (printf "scope:%s" .Scope)}}{{end}}{{range .AppliesTo}}{{tagchip (printf "applies_to:%s" .)}}{{end}}</div>
+  <div class="wi-tags">{{if .Provenance}}{{tagchip (printf "provenance:%s" .Provenance)}}{{end}}{{if .Scope}}{{tagchip (printf "scope:%s" .Scope)}}{{end}}{{range .AppliesTo}}{{tagchip (printf "applies_to:%s" .)}}{{end}}</div>
+  {{if .Source}}<div class="meta mono">source: {{.Source}}</div>{{end}}
 
   {{if .Diagram}}<h4>Flow</h4>
   <div class="wf-controls">
@@ -545,6 +547,8 @@ fetch('settings/global',{method:'POST',headers:{'X-Satelle-Settings':'1'},body:n
     <div class="kind-h">{{.Kind}}</div>
     <h1>{{.Name}}</h1>
     {{if .Headline}}<div class="meta">{{.Headline}}</div>{{end}}
+    {{if or .Provenance .Source}}<div class="wi-tags">{{if .Provenance}}{{tagchip (printf "provenance:%s" .Provenance)}}{{end}}</div>{{end}}
+    {{if .Source}}<div class="meta mono">source: {{.Source}}</div>{{end}}
   </header>
   <article class="doc-article">{{.HTML}}</article>
   {{template "footer"}}

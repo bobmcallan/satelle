@@ -169,7 +169,7 @@ digraph nc {
 	if got := skillByTarget["in_progress"]; got != "satelle-story-intent-review" {
 		t.Errorf("node-consistent edge gate = %q, want satelle-story-intent-review", got)
 	}
-	html := string(workflowDiagram(spec))
+	html := string(workflowDiagram(spec, nil))
 	if !strings.Contains(html, "satelle-story-intent-review") {
 		t.Errorf("diagram did not label the node-consistent edge gate:\n%s", html)
 	}
@@ -177,7 +177,7 @@ digraph nc {
 
 func TestWorkflowDiagramFromDOT(t *testing.T) {
 	spec := parseWorkflow(sampleWorkflowDOT)
-	html := string(workflowDiagram(spec))
+	html := string(workflowDiagram(spec, nil))
 	for _, want := range []string{"<svg", "commit_push", "commit_review", "<path", "satelle-commit-push-reviewer"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("diagram HTML missing %q", want)
@@ -190,7 +190,7 @@ func TestWorkflowDiagramFromDOT(t *testing.T) {
 // data-from/data-to so JS can correlate a node with its incident edges.
 func TestWorkflowDiagramCarriesIdentifiers(t *testing.T) {
 	spec := parseWorkflow(sampleWorkflowDOT)
-	html := string(workflowDiagram(spec))
+	html := string(workflowDiagram(spec, nil))
 
 	// Nodes: a stable data-state and focusability (tabindex) for keyboard a11y.
 	for _, want := range []string{
@@ -257,7 +257,7 @@ func nodePos(t *testing.T, html string) map[string][2]int {
 // left-to-right on ONE row (strictly increasing x, equal y), instead of the old
 // vertical stack with every edge arcing through the same right-hand field.
 func TestWorkflowDiagramLayeredSpine(t *testing.T) {
-	html := string(workflowDiagram(parseWorkflow(layeredDOT)))
+	html := string(workflowDiagram(parseWorkflow(layeredDOT), nil))
 	pos := nodePos(t, html)
 	spine := []string{"backlog", "in_progress", "integration", "commit", "done"}
 	for i := 1; i < len(spine); i++ {
@@ -292,7 +292,7 @@ func TestWorkflowDiagramLayeredSpine(t *testing.T) {
 // as a free-floating node — while an edge-less unscoped declaration becomes a
 // footnote.
 func TestWorkflowDiagramAltAndAnnotations(t *testing.T) {
-	html := string(workflowDiagram(parseWorkflow(layeredDOT)))
+	html := string(workflowDiagram(parseWorkflow(layeredDOT), nil))
 	// Recovery commit→in_progress is a BACK edge: muted + toggleable.
 	if !regexp.MustCompile(`<path class="wf-edge-path[^"]*back wf-edge-alt" data-from="commit" data-to="in_progress"`).MatchString(html) {
 		t.Errorf("recovery edge should carry back + wf-edge-alt:\n%s", html)
@@ -341,7 +341,7 @@ digraph w {
   backlog -> in_progress -> done
 }
 ` + "```" + "\n"
-	html := string(workflowDiagram(parseWorkflow(dot)))
+	html := string(workflowDiagram(parseWorkflow(dot), nil))
 	if strings.Contains(html, `<g class="wf-dnode" data-state="codeui"`) {
 		t.Errorf("augmentation must not be a main-flow node:\n%s", html)
 	}
@@ -383,7 +383,7 @@ digraph w {
 ` + "```" + `
 `
 	spec := parseWorkflow(dot)
-	html := string(workflowDiagram(spec))
+	html := string(workflowDiagram(spec, nil))
 
 	// Pull each <text class="wf-edge-label" … x=".." y=".."> and assert no two labels
 	// occupy the same (x,y) — the overprint the story reports.
