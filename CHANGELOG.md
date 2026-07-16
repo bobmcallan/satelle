@@ -7,6 +7,16 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
+## [0.0.261] - 2026-07-16
+
+### Added
+- Home-keyed runtime plane: satelle.db, logs, backups, and stories cache under `~/.satelle/<repo-key>/` (sty_4660bbe1)
+- `satelle runtime path` and `satelle runtime migrate` for inspect + explicit legacy migration
+
+### Changed
+- Fresh `satelle init` no longer writes runtime files or gitignore entries under the repo for the DB/logs/backups
+- Authored substrate stays under `.satelle/`; effective process uses DataDir vs RuntimeDir throughout
+
 ## [0.0.260] - 2026-07-15
 ### Changed
 - Rehydrate operator path fully documented (install → login → bind → rehydrate); post-deploy all-local scope note; empty-tree bind+rehydrate happy-path test (sty_2f1538a4)
