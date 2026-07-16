@@ -144,6 +144,7 @@ func TestRegisteredRootsSkipsDeadPaths(t *testing.T) {
 }
 
 func TestTopHandlerRouting(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir()) // landing → ProjectsPage → GlobalDir (sty_c36c211f)
 	s := newSupervisor(context.Background(), io.Discard, io.Discard, "self")
 	// Inject a child by hand (no real process).
 	child := &childProc{

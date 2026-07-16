@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"testing"
 
 	"github.com/BurntSushi/toml"
 )
@@ -137,9 +138,19 @@ func (s ServiceConfig) ResolveAddr() string {
 // GlobalDir returns the machine-wide satelle home (~/.satelle), honoring the
 // SATELLE_HOME override (used by tests). Falls back to ".satelle-global" in CWD
 // only if the home directory cannot be resolved.
+//
+// Under `go test` (testing.Testing()), resolving without SATELLE_HOME panics
+// instead of writing the developer's real ~/.satelle (sty_c36c211f). That is
+// the enforcement seam for every package: tests must call testutil.IsolateHome
+// (or set SATELLE_HOME themselves). We import testing for testing.Testing() —
+// available since go 1.22; this module is go 1.26 — rather than an Args[0]
+// heuristic, so the signal is accurate for both `go test` and `go test -c`.
 func GlobalDir() string {
 	if v := strings.TrimSpace(os.Getenv("SATELLE_HOME")); v != "" {
 		return v
+	}
+	if testing.Testing() {
+		panic("satelle: test resolved GlobalDir() with no SATELLE_HOME set — use testutil.IsolateHome(t); refusing to touch the real ~/.satelle")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

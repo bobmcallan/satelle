@@ -432,6 +432,7 @@ func TestSyncRehydrateLocalOnly(t *testing.T) {
 // [sync] personal + documents path + workstate items (order:4 AC5 hermetic).
 func TestSyncRehydrateEmptyTreeHappyPath(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("SATELLE_HOME", t.TempDir()) // home-keyed runtime (sty_c36c211f)
 	// Bare tree: no satelle.toml until bind.
 	repo := t.TempDir()
 	t.Chdir(repo)

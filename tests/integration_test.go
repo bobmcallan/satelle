@@ -136,6 +136,10 @@ type hostRoots struct {
 	satelleHome  string
 	xdgConfig    string
 	installedBin string
+	// preExistingKeys: key-dir names already under satelleHome before the suite
+	// (sty_c36c211f). Live service may mutate those trees; NEW key dirs are
+	// pollution and must fail the host-surface guard.
+	preExistingKeys map[string]struct{}
 }
 
 // resolveHostRoots picks the real machine paths to guard. Honors a pre-existing
@@ -156,14 +160,35 @@ func resolveHostRoots() hostRoots {
 	if homeDir != "" {
 		r.installedBin = filepath.Join(homeDir, ".local", "bin", "satelle")
 	}
+	r.preExistingKeys = listRuntimeKeyNames(r.satelleHome)
 	return r
+}
+
+// listRuntimeKeyNames returns the set of home-keyed runtime dir basenames under home.
+func listRuntimeKeyNames(home string) map[string]struct{} {
+	out := map[string]struct{}{}
+	if home == "" {
+		return out
+	}
+	ents, err := os.ReadDir(home)
+	if err != nil {
+		return out
+	}
+	// Match RepoKey shape without importing config (tests package is standalone).
+	runtimeKey := regexp.MustCompile(`^[^/]+-[0-9a-f]{8}$`)
+	for _, e := range ents {
+		if e.IsDir() && runtimeKey.MatchString(e.Name()) {
+			out[e.Name()] = struct{}{}
+		}
+	}
+	return out
 }
 
 // captureHostSurfaceAt hashes the given fixed host roots (not re-resolved from env).
 func captureHostSurfaceAt(r hostRoots) hostSurface {
 	return hostSurface{
-		satelleHome:      hashTree(r.satelleHome),
-		xdgConfig:        hashTree(r.xdgConfig),
+		satelleHome:      hashTree(r.satelleHome, r.preExistingKeys),
+		xdgConfig:        hashTree(r.xdgConfig, nil),
 		installedBin:     fingerprintFile(r.installedBin),
 		satelleHomeRoot:  r.satelleHome,
 		xdgConfigRoot:    r.xdgConfig,
@@ -196,11 +221,12 @@ func diffHostSurface(before, after hostSurface) []string {
 // hashTree walks root and returns a map of relpath → fingerprint. Missing or
 // unreadable roots return an empty map (skip-safe).
 //
-// Under ~/.satelle, project runtime dirs (<basename>-<8hex>/ from RepoKey) are
-// SKIPPED: they hold home-keyed DBs/logs (sty_4660bbe1) and a live satelle
-// service legitimately mutates them during the suite. Isolation still guards
-// config.toml and other non-runtime host state.
-func hashTree(root string) map[string]string {
+// Under ~/.satelle, project runtime dirs (<basename>-<8hex>/ from RepoKey) that
+// were already present before the suite (preExistingKeys) are SKIPPED: a live
+// satelle service legitimately mutates them. A NEW key dir is recorded as a
+// leaf so diffHostSurface fails the suite (sty_c36c211f — pollution guard).
+// Isolation still guards config.toml and other non-runtime host state.
+func hashTree(root string, preExistingKeys map[string]struct{}) map[string]string {
 	out := map[string]string{}
 	if root == "" {
 		return out
@@ -228,10 +254,18 @@ func hashTree(root string) map[string]string {
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
-		// Skip entire project runtime trees under the home root.
 		top := strings.SplitN(rel, "/", 2)[0]
 		if runtimeKey.MatchString(top) {
+			// Pre-existing: skip contents (live service may rewrite DB/logs).
+			if _, ok := preExistingKeys[top]; ok {
+				if fi.IsDir() && rel == top {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			// New during suite: record the key dir itself as pollution evidence.
 			if fi.IsDir() && rel == top {
+				out[rel+"/"] = "dir"
 				return filepath.SkipDir
 			}
 			return nil
@@ -544,12 +578,12 @@ func TestSubprocessHomeIsolated(t *testing.T) {
 // (skip-safe for fresh CI with no host install).
 func TestHostSurfaceGuardTrips(t *testing.T) {
 	root := t.TempDir()
-	before := hashTree(root)
-	if diffs := diffTreeMaps("t", before, hashTree(root)); len(diffs) != 0 {
+	before := hashTree(root, nil)
+	if diffs := diffTreeMaps("t", before, hashTree(root, nil)); len(diffs) != 0 {
 		t.Fatalf("equal trees must not trip: %v", diffs)
 	}
 	// Missing roots → empty map, no panic.
-	if len(hashTree(filepath.Join(root, "does-not-exist"))) != 0 {
+	if len(hashTree(filepath.Join(root, "does-not-exist"), nil)) != 0 {
 		t.Fatal("missing root must hash to empty map")
 	}
 	if fingerprintFile(filepath.Join(root, "does-not-exist")) != "" {
@@ -558,7 +592,7 @@ func TestHostSurfaceGuardTrips(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "pollute"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	after := hashTree(root)
+	after := hashTree(root, nil)
 	if diffs := diffTreeMaps("t", before, after); len(diffs) == 0 {
 		t.Fatal("expected guard to trip after deliberate write into protected tree")
 	}

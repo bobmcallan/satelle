@@ -120,3 +120,74 @@ func TestRuntimeMigrateDryRun(t *testing.T) {
 		t.Fatal("dry-run must not create target db")
 	}
 }
+
+// TestRuntimeListClassifies (sty_c36c211f AC2): marker → linked, registry → linked,
+// bare key dir → unknown; --orphans hides linked.
+func TestRuntimeListClassifies(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SATELLE_HOME", home)
+
+	// Linked via marker.
+	repoMarked := t.TempDir()
+	keyMarked := config.RepoKey(repoMarked)
+	dirMarked := filepath.Join(home, keyMarked)
+	if err := os.MkdirAll(dirMarked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.WriteRepoPathMarker(dirMarked, repoMarked); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dirMarked, config.DefaultDBName), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Linked via workspace registry (no marker).
+	repoReg := t.TempDir()
+	keyReg := config.RepoKey(repoReg)
+	dirReg := filepath.Join(home, keyReg)
+	if err := os.MkdirAll(dirReg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveGlobal(config.GlobalConfig{
+		Workspace: config.WorkspaceConfig{Repos: []string{repoReg}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Orphan unknown (no marker, no registry).
+	orphanKey := "002-deadbeef"
+	dirOrphan := filepath.Join(home, orphanKey)
+	if err := os.MkdirAll(dirOrphan, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var out strings.Builder
+	if err := runRuntimeList(&out, false); err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	if !strings.Contains(s, keyMarked) || !strings.Contains(s, "linked") {
+		t.Errorf("marked dir should be linked:\n%s", s)
+	}
+	if !strings.Contains(s, keyReg) {
+		t.Errorf("registry dir missing:\n%s", s)
+	}
+	if !strings.Contains(s, orphanKey) || !strings.Contains(s, "unknown") {
+		t.Errorf("orphan should be unknown:\n%s", s)
+	}
+	if !strings.Contains(s, "rm -rf "+dirOrphan) {
+		t.Errorf("orphan should get rm suggestion:\n%s", s)
+	}
+
+	var orphans strings.Builder
+	if err := runRuntimeList(&orphans, true); err != nil {
+		t.Fatal(err)
+	}
+	o := orphans.String()
+	if strings.Contains(o, keyMarked) {
+		t.Errorf("--orphans must hide linked marked:\n%s", o)
+	}
+	if !strings.Contains(o, orphanKey) {
+		t.Errorf("--orphans must show unknown:\n%s", o)
+	}
+}

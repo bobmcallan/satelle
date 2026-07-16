@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -207,4 +208,54 @@ func (c Config) LegacyRuntimeNote(repoRoot string) string {
 func fileExists(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && !st.IsDir()
+}
+
+// RuntimeKeyDirPattern matches a home-keyed runtime directory name
+// (`<sanitised-basename>-<sha256[:8]>`). Shared by CLI list and the
+// integration host-surface guard (sty_c36c211f).
+var RuntimeKeyDirPattern = regexp.MustCompile(`^[^/]+-[0-9a-f]{8}$`)
+
+// IsRuntimeKeyDir reports whether name is a home-keyed runtime key segment.
+func IsRuntimeKeyDir(name string) bool {
+	return RuntimeKeyDirPattern.MatchString(name)
+}
+
+// RepoPathMarkerName is the file written into a runtime dir recording the
+// absolute repo root that owns it (sty_c36c211f AC2 — forward resolution).
+const RepoPathMarkerName = "repo.path"
+
+// WriteRepoPathMarker records repoRoot into runtimeDir/repo.path so
+// `satelle runtime list` can reverse-map keys. Best-effort: no-op when
+// runtimeDir is empty or equals the repo's data dir (legacy layout).
+func WriteRepoPathMarker(runtimeDir, repoRoot string) error {
+	runtimeDir = strings.TrimSpace(runtimeDir)
+	repoRoot = strings.TrimSpace(repoRoot)
+	if runtimeDir == "" || repoRoot == "" {
+		return nil
+	}
+	// Only mark home-keyed dirs (parent is GlobalDir, basename is a key).
+	base := filepath.Base(runtimeDir)
+	if !IsRuntimeKeyDir(base) {
+		return nil
+	}
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		return err
+	}
+	abs, err := filepath.Abs(repoRoot)
+	if err != nil {
+		abs = repoRoot
+	}
+	if resolved, rerr := filepath.EvalSymlinks(abs); rerr == nil {
+		abs = resolved
+	}
+	return os.WriteFile(filepath.Join(runtimeDir, RepoPathMarkerName), []byte(abs+"\n"), 0o644)
+}
+
+// ReadRepoPathMarker returns the recorded repo root for a runtime dir, or "" if absent.
+func ReadRepoPathMarker(runtimeDir string) string {
+	b, err := os.ReadFile(filepath.Join(runtimeDir, RepoPathMarkerName))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }

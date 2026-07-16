@@ -11,10 +11,12 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 func settingsRepo(t *testing.T, tomlBody string) *app.App {
 	t.Helper()
+	testutil.IsolateHome(t)
 	repo := t.TempDir()
 	dir := filepath.Join(repo, config.DefaultDataDir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

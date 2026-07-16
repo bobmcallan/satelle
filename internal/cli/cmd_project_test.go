@@ -193,6 +193,7 @@ func TestRunProjectShow(t *testing.T) {
 // TestRunProjectBindAndShow: bind writes the slug into committed satelle.toml
 // and show reads it back (sty_0aa3df89).
 func TestRunProjectBindAndShow(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir()) // bind may touch GlobalDir paths (sty_c36c211f)
 	dir := filepath.Join(t.TempDir(), ".satelle")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)

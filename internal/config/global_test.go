@@ -1,7 +1,9 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -12,6 +14,33 @@ func TestServiceDefaults(t *testing.T) {
 	}
 	if s.ResolveAddr() != DefaultServiceAddr {
 		t.Errorf("addr default = %q, want %q", s.ResolveAddr(), DefaultServiceAddr)
+	}
+}
+
+// TestGlobalDirPanicsWithoutHomeUnderTest (sty_c36c211f): the seam refuses to
+// resolve the real ~/.satelle when SATELLE_HOME is unset during go test.
+func TestGlobalDirPanicsWithoutHomeUnderTest(t *testing.T) {
+	t.Setenv("SATELLE_HOME", "")
+	// Clear may not unset; force empty via Setenv to empty then check Lookup.
+	_ = os.Unsetenv("SATELLE_HOME")
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("GlobalDir() must panic under test with no SATELLE_HOME")
+		}
+		msg, _ := r.(string)
+		if !strings.Contains(msg, "SATELLE_HOME") || !strings.Contains(msg, "testutil.IsolateHome") {
+			t.Errorf("panic message missing guidance: %v", r)
+		}
+	}()
+	_ = GlobalDir()
+}
+
+func TestGlobalDirHonorsSATELLE_HOME(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SATELLE_HOME", home)
+	if got := GlobalDir(); got != home {
+		t.Fatalf("GlobalDir = %q, want %q", got, home)
 	}
 }
 
