@@ -74,14 +74,20 @@ func TestHookGateExemptsSubstrate(t *testing.T) {
 	if gateEvent(t, repo, filepath.Join(repo, "internal", "cli", "cmd_hook.go")) {
 		t.Error("edit gate allowed an in-repo code edit with no engaged story")
 	}
-	// … and an out-of-repo path is REFUSED (cross-repo lock, sty_3026d890) —
-	// including former "session scratch" under /tmp and sibling trees.
-	if gateEvent(t, repo, "/tmp/claude/scratch/foo.sh") {
-		t.Error("edit gate allowed an out-of-repo path (must refuse cross-repo edits)")
+	// Sibling REPO path is REFUSED (foreign-tree fence, sty_a8454d10).
+	// Non-repo temp is not fenced by containment; with no engaged story the
+	// engaged-story rule may still deny — that is a separate gate. Pin foreign
+	// via a real sibling git tree.
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	sibling := filepath.Join(filepath.Dir(repo), "other-project", "main.go")
+	siblingRepo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(siblingRepo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sibling := filepath.Join(siblingRepo, "main.go")
 	if gateEvent(t, repo, sibling) {
-		t.Error("edit gate allowed a sibling-tree path (must refuse cross-repo edits)")
+		t.Error("edit gate allowed a sibling-repo path (must refuse foreign-tree edits)")
 	}
 }
 

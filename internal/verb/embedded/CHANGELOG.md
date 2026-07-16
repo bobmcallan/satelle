@@ -7,6 +7,15 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
+## [0.0.267] - 2026-07-17
+
+### Fixed
+- Containment fence denies only another repo's git working tree; temp/scratchpad/non-repo paths are allowed (sty_a8454d10)
+- cp/mv/rsync/ln treat only destinations as mutation targets so cross-repo reads are not denied (sty_a8454d10)
+
+### Changed
+- Shared foreign-tree predicate (`gitRootOf` / `foreignTreeTarget`) for Bash and Edit gates; removed `isBenignOutsidePath` allowlist (sty_a8454d10)
+
 ## [0.0.266] - 2026-07-16
 
 ### Fixed

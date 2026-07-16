@@ -228,8 +228,8 @@ func TestWithinRoot(t *testing.T) {
 	}{
 		{"/home/u/repo/internal/x.go", true},  // absolute, in-repo
 		{"internal/x.go", true},               // relative, resolved under the repo cwd
-		{"/tmp/claude/scratch/foo.sh", false}, // session scratchpad — outside → refuse
-		{"/home/u/other/x.go", false},         // sibling dir (e.g. ../satelle) — refuse
+		{"/tmp/claude/scratch/foo.sh", false}, // outside root (withinRoot helper only; fence uses gitRootOf)
+		{"/home/u/other/x.go", false},         // outside root (foreign only if that path has a .git tree)
 		{"", true},                            // empty target — stay conservative (no path → other rules)
 	}
 	for _, c := range cases {
@@ -239,18 +239,17 @@ func TestWithinRoot(t *testing.T) {
 	}
 }
 
-// TestOutsideRepoRefusalMessage pins the cross-repo lock copy (sty_3026d890):
-// sibling paths and /tmp are refused with guidance to create the story in the
-// correct repo. Pure check of the error-shaping helper so the harness can rely
-// on a stable agent-facing string.
+// TestOutsideRepoRefusalMessage pins the foreign-tree lock copy (sty_a8454d10):
+// names the path and foreign root; points at create/engage in THAT repo.
 func TestOutsideRepoRefusalMessage(t *testing.T) {
-	msg := outsideRepoEditErr("/home/u/satelle/internal/cli/cmd_publish.go").Error()
+	msg := outsideRepoEditErr("/home/u/satelle/internal/cli/cmd_publish.go", "/home/u/satelle").Error()
 	for _, want := range []string{
-		"refusing edit outside this repo",
+		"another repo's tree",
 		"/home/u/satelle/internal/cli/cmd_publish.go",
-		"another project",
+		"/home/u/satelle",
 		"create/engage the story there",
 		"satelle story create",
+		"Temp/non-repo",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("message missing %q:\n%s", want, msg)
@@ -312,14 +311,16 @@ func TestAnchorFrom(t *testing.T) {
 	}
 }
 
-// TestOutsideAnchorBashReason names the path and points at the opt-in (sty_aadd4d6c).
+// TestOutsideAnchorBashReason names the path, foreign root, and opt-in (sty_a8454d10).
 func TestOutsideAnchorBashReason(t *testing.T) {
-	msg := outsideAnchorBashReason("/home/u/other/file.go")
+	msg := outsideAnchorBashReason("/home/u/other/file.go", "/home/u/other")
 	for _, want := range []string{
 		"/home/u/other/file.go",
-		"outside this session",
+		"/home/u/other",
+		"another repo's tree",
 		"allow_outside_tree_edits",
 		"open a session",
+		"Temp/non-repo",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("outsideAnchorBashReason missing %q:\n%s", want, msg)
