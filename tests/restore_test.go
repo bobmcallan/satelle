@@ -39,6 +39,7 @@ func TestRestoreRecoversDriftedSubstrate(t *testing.T) {
 	// Refusal writes nothing.
 	cmd := exec.Command(testBin, "restore")
 	cmd.Dir = repo
+	cmd.Env = isolatedEnv(t)
 	cmd.Stdin = strings.NewReader("no\n")
 	out, _ := cmd.CombinedOutput()
 	if !strings.Contains(string(out), "aborted") {

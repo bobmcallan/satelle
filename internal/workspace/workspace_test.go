@@ -2,19 +2,37 @@ package workspace_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/workitem"
 	"github.com/bobmcallan/satelle/internal/workspace"
 )
 
-// seedRepo creates a repo at dir with the given story titles.
+// seedRepo creates a repo at dir with the given story titles under the
+// home-keyed runtime plane (sty_4660bbe1). Isolates SATELLE_HOME for this test.
 func seedRepo(t *testing.T, dir string, titles ...string) {
 	t.Helper()
-	db, err := store.Open(filepath.Join(dir, ".satelle", "satelle.db"))
+	// Ensure config exists so ResolveDB can load when needed.
+	dataDir := filepath.Join(dir, config.DefaultDataDir)
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dataDir, config.ConfigName)
+	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+		if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dbPath := config.Config{}.ResolveDB(dir)
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,6 +46,8 @@ func seedRepo(t *testing.T, dir string, titles ...string) {
 }
 
 func TestLoadAggregatesAcrossRepos(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SATELLE_HOME", home)
 	a, b := t.TempDir(), t.TempDir()
 	seedRepo(t, a, "a-one", "a-two")
 	seedRepo(t, b, "b-one")
@@ -49,6 +69,7 @@ func TestLoadAggregatesAcrossRepos(t *testing.T) {
 }
 
 func TestLoadEmptyRepoIsBenign(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
 	// A path with no prior db yields an empty (created) repo view, not an error.
 	agg := workspace.Load(context.Background(), []string{t.TempDir()})
 	if len(agg.Repos) != 1 || agg.Repos[0].Err != "" {
