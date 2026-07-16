@@ -172,15 +172,16 @@ func TestDefinitionFreezeNonBacklogEntry(t *testing.T) {
 }
 
 func TestDefinitionFreezeFailClosedNoWorkflow(t *testing.T) {
-	// Wire stores but NO workflow docs → entry state unresolvable.
+	// Wire stores with NO on-disk workflow docs. Virtual sparse defaults
+	// (sty_29e5a9a5) still resolve the embedded baseline, so entry (backlog) is
+	// resolvable and a title edit at backlog succeeds — fail-closed no longer
+	// triggers when the binary ships a default lifecycle.
 	wire(t)
 	var created workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Orphan"}), &created)
-	// Even in backlog: without a resolvable entry state, any definition change
-	// fail-closes (cannot prove we are still at entry).
-	err := dispatchErr(t, "story-set", map[string]any{"id": created.ID, "title": "x"})
-	if !strings.Contains(err.Error(), created.ID) {
-		t.Fatalf("fail-closed error should name story id, got: %v", err)
+	json.Unmarshal(call(t, "story-set", map[string]any{"id": created.ID, "title": "x"}), &created)
+	if created.Title != "x" {
+		t.Fatalf("virtual baseline should allow backlog edit, title=%q", created.Title)
 	}
 }
 

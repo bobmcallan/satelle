@@ -60,11 +60,9 @@ func validateDeployment(out io.Writer, dataDir string) error {
 		}
 	}
 
-	// Structure checks per deployed kind, resolving skills against the deployed
-	// files — the same disk set the doc index holds after `satelle reindex`.
-	resolve := func(skill string) bool {
-		return fileExists(filepath.Join(dataDir, "skills", skill+".md"))
-	}
+	// Structure checks per deployed kind. Skills resolve from disk OR embedded
+	// defaults (virtual sparse defaults — sty_29e5a9a5).
+	resolve := skillResolves(dataDir)
 	for _, kind := range []string{"workflows", "skills", "principles", "tasks"} {
 		_, f, _ := validateAuthoredDir(out, kind, filepath.Join(dataDir, kind), "", resolve)
 		failed += f
@@ -94,6 +92,23 @@ func validateDeployment(out io.Writer, dataDir string) error {
 	}
 	fmt.Fprintln(out, "PASS  deployed system validates green")
 	return nil
+}
+
+// skillResolves reports whether a skill name is available as an on-disk file or
+// as an embedded default (sty_29e5a9a5 virtual sparse defaults).
+func skillResolves(dataDir string) func(skill string) bool {
+	emb := map[string]bool{}
+	for _, d := range config.EmbeddedDefaults() {
+		if d.Kind == "skills" {
+			emb[d.Name] = true
+		}
+	}
+	return func(skill string) bool {
+		if fileExists(filepath.Join(dataDir, "skills", skill+".md")) {
+			return true
+		}
+		return emb[skill]
+	}
 }
 
 // deployedVars loads the [vars] KV from the deployed satelle.toml (overlaid by the

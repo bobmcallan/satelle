@@ -180,8 +180,10 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool) error {
 		fmt.Fprintln(out, initLine(dirCreated || readmeCreated, config.DefaultDataDir+"/"+kind+"/"))
 	}
 
-	// Backup policy for pre-mutation copies during converge/diverge (sty_873a5380).
-	// Backups land on the runtime plane (sty_4660bbe1), not under dataDir.
+	// Virtual sparse defaults (sty_29e5a9a5): do NOT materialise unedited embedded
+	// workflows/skills/principles/tasks onto disk. List/Count overlay defaults at
+	// read time; day-one edit uses `satelle substrate edit`. Authored dirs stay
+	// empty scaffolds so an operator has somewhere to put an override.
 	cfg, _, _ := config.Load(filepath.Join(repoRoot, config.DefaultDataDir, config.ConfigName))
 	bopts := ResolveBackupOpts(cfg)
 	rtEarly := cfg.ResolveRuntimeDir(repoRoot)
@@ -190,51 +192,23 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool) error {
 	}
 	bopts.BackupsDir = rtEarly.Dir
 
-	// 3b. Seed the COMPLETE default solution into a FRESH repo: materialise the
-	//     embedded generic project/parent/task-execution workflows and every gate
-	//     skill they (or the baseline fallback) reference into .satelle, so a fresh
-	//     repo works end-to-end and validates green immediately after init. Only
-	//     when the workflows dir has no authored workflow yet — never clobbering or
-	//     competing with an existing set (sty_a7cbd6dd).
-	for _, line := range materializeDefaultSolution(dataDir, bopts) {
-		fmt.Fprintln(out, line)
-	}
-
-	// 3b-bis. Deterministic principle frontmatter heals BEFORE materialize/
-	//     restamp: remove inert scope: and rewrite principles:always →
-	//     principles:session so a stampless embedded principle whose only drift
-	//     was those keys becomes body-identical to the default and reconcile can
-	//     re-stamp it (otherwise heal-after-reconcile leaves identical-but-
-	//     unstamped and checkEmbeddedStamps fails).
+	// Heal operator-authored principle frontmatter already on disk (inert scope:,
+	// principles:always → session). Does NOT seed missing defaults.
 	for _, line := range healPrincipleFrontmatter(dataDir, bopts) {
 		fmt.Fprintln(out, line)
 	}
 
-	// 3c. Materialise the embedded operating PRINCIPLES into .satelle/principles when
-	//     absent. The runtime index no longer overlays embedded docs (sty_94da9ac9),
-	//     so the principles:session session set + the on-demand principles must
-	//     live on disk to be LISTED (SessionStart injection) and discoverable. The
-	//     baseline WORKFLOW stays embedded-only (Get fallback); only principles seed here.
-	for _, line := range materializePrinciples(dataDir, bopts) {
+	// Converge ON-DISK embedded-owned copies only (restamp/update). Never create
+	// a missing default file — virtual defaults cover absence (sty_29e5a9a5).
+	for _, line := range convergeOnDiskDefaults(dataDir, bopts) {
 		fmt.Fprintln(out, line)
 	}
 
-	// 3c-bis. Advisory skills — embedded executor rubrics NOT referenced by any
-	//     workflow (so the default-solution seeding never carries them), seeded
-	//     unconditionally when absent, even beside an authored workflow set
-	//     (sty_f4c1bd90): they guide the in-loop agent, they don't gate anything.
-	for _, line := range materializeAdvisorySkills(dataDir, bopts) {
-		fmt.Fprintln(out, line)
-	}
-
-	// 3d. Tasks are AUTHORED substrate but ingested into the workitem store (not the
-	//     OKF doc index), so .satelle/tasks is scaffolded here — NOT via AuthoredKinds
-	//     (that would route it through the OKF normalizer). Create the dir + README
-	//     keep-file (sty_c1b3b4e3), then seed the embedded substrate-audit task — the
-	//     one repo-agnostic default task that ships with the binary so a fresh repo
-	//     has a re-runnable quality audit resolving via the task workflow immediately
-	//     (sty_d4360e90). No generic example task (sty_04ec1fe6): one named default,
-	//     not example noise.
+	// 3d. Tasks: dir + README, then seed embedded default task HEADERS onto disk.
+	// Unlike workflows/skills/principles (virtual List/Get overlay), tasks are
+	// workitem substrate whose coded gates check for an on-disk header file — so
+	// the default tasks stay seeded (scoped AC1 carve-out for the tasks plane;
+	// sty_29e5a9a5 plan Step 5 fallback). No generic example task.
 	for _, line := range seedTasks(dataDir) {
 		fmt.Fprintln(out, line)
 	}
@@ -246,7 +220,6 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool) error {
 	//    open (creating + migrating) then close, so a fresh repo lands a ready
 	//    satelle.db with no first-command surprise. Authored substrate stays under
 	//    dataDir; runtime (db/logs/backups/stories) never lands in the repo.
-	// Runtime dir was ensured above for backups; reuse it for the DB.
 	rt := rtEarly
 	dbPath := filepath.Join(rt.Dir, config.DefaultDBName)
 	dbExisted := fileExists(dbPath)
@@ -1415,12 +1388,53 @@ func ensureReadme(dir, kind string) (bool, error) {
 	return true, nil
 }
 
+// convergeOnDiskDefaults restamps/updates embedded-owned files that ALREADY
+// exist under dataDir. It never creates a missing default (virtual defaults
+// cover absence — sty_29e5a9a5). Used by init so a re-run heals drifted stamps
+// without re-seeding 30+ markdown copies.
+func convergeOnDiskDefaults(dataDir string, backupOpts ...BackupOpts) []string {
+	var bopts BackupOpts
+	if len(backupOpts) > 0 {
+		bopts = backupOpts[0]
+	}
+	var backupAdvisoryOnce bool
+	var lines []string
+	for _, d := range config.EmbeddedDefaults() {
+		if d.Kind == "tasks" {
+			continue // SyncTasks owns virtual task ingest
+		}
+		rel := d.Kind + "/" + d.Name + ".md"
+		if !fileExists(filepath.Join(dataDir, filepath.FromSlash(rel))) {
+			continue
+		}
+		verb, bres, err := reconcileEmbeddedFile(dataDir, rel, d.Body, bopts)
+		if err != nil {
+			continue
+		}
+		switch verb {
+		case reconcileUnchanged, reconcileCreated:
+			// silence
+		default:
+			lines = append(lines, reconcileReportLine(verb, rel))
+		}
+		if bres.Notice != "" && (!backupAdvisoryOnce || !strings.Contains(bres.Notice, "online/personal")) {
+			lines = append(lines, "  i "+bres.Notice)
+			if strings.Contains(bres.Notice, "online/personal") {
+				backupAdvisoryOnce = true
+			}
+		}
+	}
+	return lines
+}
+
 // materializePrinciples writes every embedded default PRINCIPLE into
 // .satelle/principles when absent, so the operating principles — including the
 // principles:session session set — live on disk and are LISTED for SessionStart
 // injection + doc-list discovery (the runtime index no longer overlays embedded
 // docs, sty_94da9ac9). Embedded principles remain the canonical seed; an existing
 // on-disk file is never clobbered.
+//
+// Deprecated for init after sty_29e5a9a5 (virtual defaults); retained for rebase.
 func materializePrinciples(dataDir string, backupOpts ...BackupOpts) []string {
 	var bopts BackupOpts
 	if len(backupOpts) > 0 {

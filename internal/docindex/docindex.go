@@ -218,8 +218,10 @@ func (s *Store) Watch(ctx context.Context, dirs map[string]string, interval time
 	}
 }
 
-// List returns the indexed docs for a kind, name-sorted. Empty kind returns
-// every indexed doc across all kinds.
+// List returns the effective docs for a kind, name-sorted: on-disk rows plus
+// embedded defaults whose (kind,name) is not present on disk (sty_29e5a9a5 /
+// epic:substrate-planes — virtual sparse defaults). Disk always wins. Empty kind
+// returns every kind. Sync stays file-driven; the overlay is READ-TIME only.
 func (s *Store) List(ctx context.Context, kind string) ([]Doc, error) {
 	q := `SELECT kind, name, path, headline, body, hash, size, mod_time, indexed_at FROM authored_docs`
 	var args []any
@@ -234,6 +236,7 @@ func (s *Store) List(ctx context.Context, kind string) ([]Doc, error) {
 	}
 	defer rows.Close()
 	out := []Doc{}
+	seen := map[string]struct{}{}
 	for rows.Next() {
 		var (
 			d              Doc
@@ -246,34 +249,40 @@ func (s *Store) List(ctx context.Context, kind string) ([]Doc, error) {
 		d.ModTime = parseTime(modS)
 		d.IndexedAt = parseTime(indexedS)
 		out = append(out, d)
+		seen[d.Kind+"\x00"+d.Name] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// Embedded defaults are NOT overlaid into List (sty_94da9ac9): the runtime list
-	// enumerates ONLY on-disk .satelle docs, so a canonical default is never shown as
-	// a project doc. Defaults remain resolvable by name via Get's fallback (the
-	// gating baseline + on-demand principles), and are materialised onto disk by init.
-	// The query's ORDER BY already sorts the result.
+	// Overlay defaults that have no disk row. Kind filter applies; re-sort so
+	// SessionStart injection order matches pure-disk ordering (AC5).
+	kindFilter := strings.TrimSpace(kind)
+	for _, def := range s.defaults {
+		if kindFilter != "" && def.Kind != kindFilter {
+			continue
+		}
+		if _, ok := seen[def.Kind+"\x00"+def.Name]; ok {
+			continue
+		}
+		out = append(out, def)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind < out[j].Kind
+		}
+		return out[i].Name < out[j].Name
+	})
 	return out, nil
 }
 
-// Count returns the number of indexed docs for a kind (empty kind = all kinds).
-// Cheaper than List+len since it loads no bodies.
+// Count returns the effective doc count for a kind (empty kind = all kinds),
+// matching List's disk+virtual overlay (sty_29e5a9a5).
 func (s *Store) Count(ctx context.Context, kind string) (int, error) {
-	q := `SELECT COUNT(*) FROM authored_docs`
-	var args []any
-	if strings.TrimSpace(kind) != "" {
-		q += ` WHERE kind = ?`
-		args = append(args, kind)
+	list, err := s.List(ctx, kind)
+	if err != nil {
+		return 0, err
 	}
-	var n int
-	if err := s.db.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
-		return 0, fmt.Errorf("docindex: count: %w", err)
-	}
-	// Count mirrors List: only on-disk docs (embedded defaults are not overlaid —
-	// sty_94da9ac9).
-	return n, nil
+	return len(list), nil
 }
 
 // Fingerprint returns a cheap change-signal for the index — count plus the
