@@ -7,6 +7,15 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
+## [0.0.265] - 2026-07-16
+
+### Added
+- Web effective-process view: provenance chips (default|edited|authored) on docs/workflows and node agent/model bindings on the workflow diagram (sty_ba0eb5c6)
+- `process-view` verb: substrate list + agentvalidate allocations for CLI/web
+
+### Changed
+- Provenance classification extracted to `internal/substrate` (shared by CLI list and web)
+
 ## [0.0.264] - 2026-07-16
 
 ### Fixed
