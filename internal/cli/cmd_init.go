@@ -181,8 +181,14 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool) error {
 	}
 
 	// Backup policy for pre-mutation copies during converge/diverge (sty_873a5380).
+	// Backups land on the runtime plane (sty_4660bbe1), not under dataDir.
 	cfg, _, _ := config.Load(filepath.Join(repoRoot, config.DefaultDataDir, config.ConfigName))
 	bopts := ResolveBackupOpts(cfg)
+	rtEarly := cfg.ResolveRuntimeDir(repoRoot)
+	if err := os.MkdirAll(rtEarly.Dir, 0o755); err != nil {
+		return fmt.Errorf("init: mkdir runtime dir %s: %w", rtEarly.Dir, err)
+	}
+	bopts.BackupsDir = rtEarly.Dir
 
 	// 3b. Seed the COMPLETE default solution into a FRESH repo: materialise the
 	//     embedded generic project/parent/task-execution workflows and every gate
@@ -240,10 +246,8 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool) error {
 	//    open (creating + migrating) then close, so a fresh repo lands a ready
 	//    satelle.db with no first-command surprise. Authored substrate stays under
 	//    dataDir; runtime (db/logs/backups/stories) never lands in the repo.
-	rt := cfg.ResolveRuntimeDir(repoRoot)
-	if err := os.MkdirAll(rt.Dir, 0o755); err != nil {
-		return fmt.Errorf("init: mkdir runtime dir %s: %w", rt.Dir, err)
-	}
+	// Runtime dir was ensured above for backups; reuse it for the DB.
+	rt := rtEarly
 	dbPath := filepath.Join(rt.Dir, config.DefaultDBName)
 	dbExisted := fileExists(dbPath)
 	db, derr := store.Open(dbPath)
