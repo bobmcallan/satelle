@@ -396,6 +396,12 @@ func outsideAnchorTargets(command, anchor string) []string {
 		if withinRoot(anchor, abs) {
 			return
 		}
+		// Device/FD sinks are not "another repo's tree" — agents redirect to
+		// /dev/null constantly; denying them is a false positive that blocks
+		// ordinary shell (sty_aadd4d6c: false positives are the hazard).
+		if isBenignOutsidePath(abs) {
+			return
+		}
 		seen[abs] = true
 		escaped = append(escaped, abs)
 	}
@@ -556,6 +562,20 @@ func foreignSatelleVerb(words []string, cwd string) (string, bool) {
 		return "", false
 	}
 	return "", false
+}
+
+// isBenignOutsidePath reports paths that resolve outside the anchor but are not
+// cross-repo mutation targets (null sinks, stdio devices, process FDs).
+func isBenignOutsidePath(p string) bool {
+	switch filepath.Clean(p) {
+	case "/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "/dev/zero", "/dev/full":
+		return true
+	}
+	// /dev/fd/N and /proc/self/fd/N
+	if strings.HasPrefix(p, "/dev/fd/") || strings.HasPrefix(p, "/proc/self/fd/") {
+		return true
+	}
+	return false
 }
 
 // looksLikePath is a conservative heuristic: absolute, ./, ../, or contains /.

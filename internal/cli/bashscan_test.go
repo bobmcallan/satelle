@@ -91,6 +91,16 @@ func TestOutsideAnchorTargets(t *testing.T) {
 			cmd:     "echo x | tee " + other + "/log",
 			wantAny: filepath.Join(other, "log"),
 		},
+		{
+			name:    "redirect to /dev/null is benign",
+			cmd:     "ls 2>/dev/null; echo hi >/dev/null",
+			wantAny: "",
+		},
+		{
+			name:    "spaced redirect to /dev/null",
+			cmd:     "cmd > /dev/null 2>&1",
+			wantAny: "",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
