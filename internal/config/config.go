@@ -184,9 +184,16 @@ type ReviewConfig struct {
 // engaging states of their workflows is refused. true: the blocker is off —
 // the setting does NOT implement parallel work (worktrees/merge); that remains
 // a workflow/process choice the operator must design (sty_c7149f8a).
+//
+// AllowOutsideTreeEdits opts INTO Bash/Edit mutations whose targets resolve
+// outside the session-home repo anchor (sty_aadd4d6c). Default false = deny
+// (create stories in other repos stays allowed; progressing/mutating them from
+// this session does not). true only for a deliberately multi-repo install —
+// it relaxes containment only; the engaged-story rule is untouched.
 type GateConfig struct {
-	EditExemptPaths []string `toml:"edit_exempt_paths"`
-	AllowParallel   bool     `toml:"allow_parallel"`
+	EditExemptPaths       []string `toml:"edit_exempt_paths"`
+	AllowParallel         bool     `toml:"allow_parallel"`
+	AllowOutsideTreeEdits bool     `toml:"allow_outside_tree_edits"`
 }
 
 // ErrNotFound signals no satelle.toml was found walking up from CWD. Callers

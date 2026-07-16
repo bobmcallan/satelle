@@ -138,10 +138,11 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 			// holder without a second store open (sty_1738f973 AC6).
 			info, engaged, engErr := currentSeat()
 			if p := filePathFromEvent(raw); p != "" {
-				// Cross-repo lock (sty_3026d890): refuse any edit outside this repo.
+				// Cross-repo lock (sty_3026d890 / sty_aadd4d6c): refuse any edit
+				// outside the session-home anchor unless the operator opts in.
 				// Observed failure: agent in satelle-server wrote CLI code under
 				// ../satelle with no story in the correct repo — process break.
-				if !withinRepoTarget(p) {
+				if !allowOutsideTreeEdits() && !withinRepoTarget(p) {
 					return denyPreToolUse(cmd, raw, outsideRepoEditReason(p))
 				}
 				// Exemption is CONFIGURATION, not code (the constitution:
@@ -170,17 +171,25 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 
 	commitgate := &cobra.Command{
 		Use:   "commitgate",
-		Short: "PreToolUse Bash gate — block git commit/push unless a story is engaged",
-		Long: `commitgate is the PreToolUse handler for Bash. It allows any command that is
-not a git commit/push; for a commit/push it exits non-zero (blocked via
-'|| exit 2') unless a story is engaged, so changes are committed under a tracked
-story. On deny it emits the same harness-specific PreToolUse deny shape as gate
-(sty_5e4bc568). Fails closed: a store/listing/workflow-resolution error blocks
-the commit with a clear message rather than silently allowing it (sty_f3d5d4b8).`,
+		Short: "PreToolUse Bash gate — cross-repo containment + engaged-story commit/push",
+		Long: `commitgate is the PreToolUse handler for Bash. It first applies best-effort
+cross-repo containment (sty_aadd4d6c): a command whose mutation target resolves
+outside the session-home anchor is denied unless [gate] allow_outside_tree_edits
+is true. Containment is a reminder and boundary, not a sandbox. Then, for git
+commit/push only, it exits non-zero unless a story is engaged. On deny it emits
+the same harness-specific PreToolUse deny shape as gate (sty_5e4bc568). Fails
+closed on store/listing/workflow-resolution errors (sty_f3d5d4b8).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
 			command := bashCommandFromEvent(raw)
+			// Containment BEFORE the engaged-story branch: an outside-tree mutation
+			// is wrong even with a story engaged (sty_aadd4d6c).
+			if !allowOutsideTreeEdits() {
+				if targets := outsideAnchorTargets(command, sessionAnchor()); len(targets) > 0 {
+					return denyPreToolUse(cmd, raw, outsideAnchorBashReason(targets[0]))
+				}
+			}
 			if !isGitCommitOrPush(command) {
 				return nil // not a commit/push — allow
 			}
@@ -519,12 +528,6 @@ func anyEngaged(items []workitem.Item, wfs []docindex.Doc) (bool, error) {
 	return false, nil
 }
 
-// isGitCommitOrPush reports whether a Bash command is a git commit or push.
-func isGitCommitOrPush(command string) bool {
-	c := strings.ToLower(command)
-	return strings.Contains(c, "git commit") || strings.Contains(c, "git push")
-}
-
 // bashCommandFromEvent pulls the bash command out of a PreToolUse event.
 // Accepts Claude Code's snake_case envelope (tool_input.command) AND Grok's
 // camelCase envelope (toolInput.command) — both harnesses fire the same hook
@@ -589,17 +592,69 @@ func filePathFromEvent(raw []byte) string {
 	return ""
 }
 
-// withinRepoTarget reports whether target resolves to a path inside this repo.
-// The repo root is derived from the committed config path; if it cannot be
+// withinRepoTarget reports whether target resolves to a path inside the session
+// home repo (the pinned anchor — not live shell CWD). If the anchor cannot be
 // resolved, it returns true (stay conservative — treat as in-repo so other gate
 // rules still apply rather than free-passing an unresolvable path).
 func withinRepoTarget(target string) bool {
-	_, cfgPath, err := config.Load("")
-	if err != nil {
+	root := sessionAnchor()
+	if strings.TrimSpace(root) == "" {
 		return true
 	}
-	root := config.RepoRootFromConfigPath(cfgPath)
 	return withinRoot(root, resolveAbsTarget(root, target))
+}
+
+// sessionAnchor returns the pinned session-home repo root for containment and
+// edit-gate path checks (sty_aadd4d6c). Precedence: SATELLE_PROJECT_DIR, then
+// CLAUDE_PROJECT_DIR (harness pin), then RepoRootFromConfigPath of config.Load.
+// Never uses live shell CWD alone — CWD moves with the shell.
+func sessionAnchor() string {
+	cfgRoot := ""
+	if _, cfgPath, err := config.Load(""); err == nil {
+		cfgRoot = config.RepoRootFromConfigPath(cfgPath)
+	}
+	return anchorFrom(os.Getenv, cfgRoot)
+}
+
+// anchorFrom is the pure resolver for sessionAnchor. getenv is injected for tests.
+// An env pin wins over cfgRoot because config.Load walks up from CWD and is not
+// trustworthy alone once a persistent shell has cd'd.
+func anchorFrom(getenv func(string) string, cfgRoot string) string {
+	for _, key := range []string{"SATELLE_PROJECT_DIR", "CLAUDE_PROJECT_DIR"} {
+		if p := strings.TrimSpace(getenv(key)); p != "" {
+			if abs, err := filepath.Abs(p); err == nil {
+				return filepath.Clean(abs)
+			}
+			return filepath.Clean(p)
+		}
+	}
+	if strings.TrimSpace(cfgRoot) == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(cfgRoot); err == nil {
+		return filepath.Clean(abs)
+	}
+	return filepath.Clean(cfgRoot)
+}
+
+// allowOutsideTreeEdits reports whether [gate] allow_outside_tree_edits is true.
+// Default false (zero value) = deny outside-tree mutations. On config load
+// failure, returns false (containment stays on).
+func allowOutsideTreeEdits() bool {
+	cfg, _, err := config.Load("")
+	if err != nil {
+		return false
+	}
+	return cfg.Gate.AllowOutsideTreeEdits
+}
+
+// outsideAnchorBashReason is the agent-facing deny when a Bash mutation target
+// resolves outside the session-home anchor (sty_aadd4d6c). Names the resolved
+// absolute path and prescribes opening a session in THAT repo.
+func outsideAnchorBashReason(path string) string {
+	return fmt.Sprintf(
+		"satelle: refusing Bash mutation outside this session's repo (%s) — open a session in THAT repo to action it there (create stories cross-repo is fine; progressing/mutating is not). Opt-in only for a deliberate multi-repo install: [gate] allow_outside_tree_edits = true",
+		path)
 }
 
 // noEngagedStoryEditReason is the canonical agent-facing deny for product-code
@@ -632,18 +687,6 @@ func commitDenyReason(command string) string {
 		return fusedEngageAndCommitReason
 	}
 	return noEngagedStoryCommitReason
-}
-
-// isFusedEngageAndCommit reports whether a Bash payload both engages a story
-// (story set … --status) and runs git commit/push — the PreToolUse trap where
-// the engage line cannot satisfy the gate because it never runs.
-// v1 is a deliberate substring check (same simplicity as isGitCommitOrPush).
-func isFusedEngageAndCommit(command string) bool {
-	if !isGitCommitOrPush(command) {
-		return false
-	}
-	c := strings.ToLower(command)
-	return strings.Contains(c, "story set") && strings.Contains(c, "--status")
 }
 
 // outsideRepoEditReason is the agent-facing refusal when a PreToolUse edit targets

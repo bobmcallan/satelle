@@ -1090,10 +1090,16 @@ gate_create = true
 # do not count. Setting allow_parallel = true only turns that blocker OFF — it
 # does NOT implement parallel worktrees/merge; a repo that wants true parallel
 # must design that into its workflow and then flip this switch.
+# allow_outside_tree_edits (default false) opts INTO Bash/Edit mutations whose
+# targets resolve outside this session's home repo (sty_aadd4d6c). Leave false
+# unless this install deliberately spans multiple repos from one session —
+# create stories cross-repo stays allowed either way; progressing/mutating
+# another tree does not.
 [gate]
 edit_exempt_paths = [".satelle/"]
 # edit_exempt_paths = [".satelle/", ".claude/"]
 # allow_parallel = false
+# allow_outside_tree_edits = false
 
 # substrate_roots — per-kind parent dir for authored markdown. Unset means
 # <data_dir>/<kind> (e.g. .satelle/documents). Point a kind elsewhere — even

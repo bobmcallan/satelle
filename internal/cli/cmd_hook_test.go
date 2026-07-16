@@ -129,26 +129,6 @@ func TestRenderAlwaysContent_ceilingTruncates(t *testing.T) {
 // which reads shape markers (Mdiamond=start, Msquare=terminal) from the DOT rather than
 // hardcoding state names. See TestNonTerminalEngagingStates in wfdot package.
 
-func TestIsGitCommitOrPush(t *testing.T) {
-	yes := []string{"git commit -m x", "cd /r && git push origin main"}
-	no := []string{"ls", "git status", "git diff"}
-	for _, c := range yes {
-		if !isGitCommitOrPush(c) {
-			t.Errorf("isGitCommitOrPush(%q) = false, want true", c)
-		}
-	}
-	for _, c := range no {
-		// "echo git commit..." DOES contain 'git commit' — accept that v1 is a
-		// substring check; only assert the clearly-non-commit cases.
-		if c == "echo git commit is a phrase" {
-			continue
-		}
-		if isGitCommitOrPush(c) {
-			t.Errorf("isGitCommitOrPush(%q) = true, want false", c)
-		}
-	}
-}
-
 // TestCommitDenyReason (sty_577d292f): deny text teaches pre-execution semantics
 // and plan/in_progress; fused engage+commit gets the split-into-two-calls text.
 // Gate behavior is unchanged — both paths are still deny strings only.
@@ -274,6 +254,75 @@ func TestOutsideRepoRefusalMessage(t *testing.T) {
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("message missing %q:\n%s", want, msg)
+		}
+	}
+}
+
+// TestAnchorFrom (sty_aadd4d6c AC5): env pin beats cfgRoot; falls through when unset.
+func TestAnchorFrom(t *testing.T) {
+	pin := "/pinned/home"
+	cfg := "/cfg/root"
+	got := anchorFrom(func(k string) string {
+		if k == "SATELLE_PROJECT_DIR" {
+			return pin
+		}
+		return ""
+	}, cfg)
+	if got != pin {
+		// Abs may expand; compare cleaned suffix.
+		if !strings.HasSuffix(got, pin) && got != pin {
+			// On Linux Abs of absolute is identity.
+			if got != pin {
+				// filepath.Abs on absolute path returns cleaned absolute.
+				want, _ := filepath.Abs(pin)
+				if got != want {
+					t.Errorf("SATELLE_PROJECT_DIR pin: got %q want %q", got, want)
+				}
+			}
+		}
+	}
+	got = anchorFrom(func(k string) string {
+		if k == "CLAUDE_PROJECT_DIR" {
+			return pin
+		}
+		return ""
+	}, cfg)
+	want, _ := filepath.Abs(pin)
+	if got != want && got != pin {
+		t.Errorf("CLAUDE_PROJECT_DIR pin: got %q want %q", got, want)
+	}
+	// Pin beats divergent cfgRoot.
+	got = anchorFrom(func(k string) string {
+		if k == "CLAUDE_PROJECT_DIR" {
+			return pin
+		}
+		return ""
+	}, "/other/cfg")
+	if got != want && got != pin {
+		t.Errorf("pin must beat cfgRoot: got %q", got)
+	}
+	// Fall through to cfgRoot when unset.
+	got = anchorFrom(func(string) string { return "" }, cfg)
+	wantCfg, _ := filepath.Abs(cfg)
+	if got != wantCfg && got != cfg {
+		t.Errorf("fallback cfgRoot: got %q want %q", got, wantCfg)
+	}
+	if got := anchorFrom(func(string) string { return "" }, ""); got != "" {
+		t.Errorf("empty getenv+cfg: got %q", got)
+	}
+}
+
+// TestOutsideAnchorBashReason names the path and points at the opt-in (sty_aadd4d6c).
+func TestOutsideAnchorBashReason(t *testing.T) {
+	msg := outsideAnchorBashReason("/home/u/other/file.go")
+	for _, want := range []string{
+		"/home/u/other/file.go",
+		"outside this session",
+		"allow_outside_tree_edits",
+		"open a session",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("outsideAnchorBashReason missing %q:\n%s", want, msg)
 		}
 	}
 }

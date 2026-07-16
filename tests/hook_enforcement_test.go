@@ -71,6 +71,90 @@ func TestInitSeedsAndInjectsEditsPrinciple(t *testing.T) {
 	if !strings.Contains(ctx, "Edits require a story") {
 		t.Errorf("SessionStart did not inject the edits-require-a-story principle:\n%s", ctx)
 	}
+	// sty_aadd4d6c AC6: cross-repo containment principle is session-injected.
+	if !strings.Contains(ctx, "Cross-repo containment") && !strings.Contains(ctx, "Create anywhere") {
+		t.Errorf("SessionStart did not inject cross-repo containment:\n%s", ctx)
+	}
+}
+
+// TestHookCommitgateContainment (sty_aadd4d6c): CLAUDE_PROJECT_DIR pins the
+// anchor; a cd-elsewhere mutation is denied; the same form inside home only
+// reaches the engaged-story rule (not containment); create cross-repo allows.
+func TestHookCommitgateContainment(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	other := t.TempDir()
+
+	// Outside-tree mutation denied, reason names the path.
+	ev := `{"tool_input":{"command":"rm ` + other + `/f.go"}}`
+	c := exec.Command(testBin, "hook", "commitgate")
+	c.Dir = repo
+	c.Env = append(isolatedEnv(t), "CLAUDE_PROJECT_DIR="+repo)
+	c.Stdin = strings.NewReader(ev)
+	out, err := c.CombinedOutput()
+	if err == nil {
+		t.Fatalf("commitgate allowed outside-tree rm; out=%s", out)
+	}
+	if !strings.Contains(string(out), other) {
+		t.Errorf("deny must name the outside path %q; out=%s", other, out)
+	}
+
+	// story create (no outside mutation path) allows through containment.
+	createEv := `{"tool_input":{"command":"satelle story create --title t --body b --acceptance '1. a'"}}`
+	c = exec.Command(testBin, "hook", "commitgate")
+	c.Dir = repo
+	c.Env = append(isolatedEnv(t), "CLAUDE_PROJECT_DIR="+repo)
+	c.Stdin = strings.NewReader(createEv)
+	if err := c.Run(); err != nil {
+		t.Errorf("story create must be allowed by containment: %v", err)
+	}
+
+	// In-home non-commit command allows (no engaged-story check for non-commit).
+	c = exec.Command(testBin, "hook", "commitgate")
+	c.Dir = repo
+	c.Env = append(isolatedEnv(t), "CLAUDE_PROJECT_DIR="+repo)
+	c.Stdin = strings.NewReader(`{"tool_input":{"command":"ls internal"}}`)
+	if err := c.Run(); err != nil {
+		t.Errorf("in-home ls must allow: %v", err)
+	}
+
+	// In-home git commit still hits engaged-story rule (no story → deny).
+	c = exec.Command(testBin, "hook", "commitgate")
+	c.Dir = repo
+	c.Env = append(isolatedEnv(t), "CLAUDE_PROJECT_DIR="+repo)
+	c.Stdin = strings.NewReader(`{"tool_input":{"command":"git commit -m x"}}`)
+	if err := c.Run(); err == nil {
+		t.Error("in-home git commit with no engaged story must deny")
+	}
+
+	// Opt-in allows outside-tree mutation.
+	tomlPath := filepath.Join(repo, ".satelle", "satelle.toml")
+	raw, rerr := os.ReadFile(tomlPath)
+	if rerr != nil {
+		// Fall back to repo-root satelle.toml if present.
+		tomlPath = filepath.Join(repo, "satelle.toml")
+		raw, rerr = os.ReadFile(tomlPath)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+	}
+	var patched string
+	if idx := strings.Index(string(raw), "[gate]\n"); idx >= 0 {
+		at := idx + len("[gate]\n")
+		patched = string(raw[:at]) + "allow_outside_tree_edits = true\n" + string(raw[at:])
+	} else {
+		patched = string(raw) + "\n[gate]\nallow_outside_tree_edits = true\n"
+	}
+	if err := os.WriteFile(tomlPath, []byte(patched), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c = exec.Command(testBin, "hook", "commitgate")
+	c.Dir = repo
+	c.Env = append(isolatedEnv(t), "CLAUDE_PROJECT_DIR="+repo)
+	c.Stdin = strings.NewReader(ev)
+	if err := c.Run(); err != nil {
+		t.Errorf("allow_outside_tree_edits=true must permit outside rm: %v", err)
+	}
 }
 
 // TestHookPromptReminderAndLivenessWarning: UserPromptSubmit always re-injects the

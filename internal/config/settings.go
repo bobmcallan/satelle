@@ -57,6 +57,7 @@ var Settings = []Setting{
 	{Section: "review", Key: "gate_create", Label: "Gate create", Help: "Run structure + create_review on story/task create (default on at init).", Kind: kindBool},
 	{Section: "gate", Key: "edit_exempt_paths", Label: "Edit-gate exempt paths", Help: "Path prefixes exempt from the engaged-story edit gate.", Kind: kindList},
 	{Section: "gate", Key: "allow_parallel", Label: "Allow parallel stories", Help: "Opt out of one-performing-story enforcement. Does not implement worktrees/merge — only disables the blocker.", Kind: kindBool},
+	{Section: "gate", Key: "allow_outside_tree_edits", Label: "Allow outside-tree edits", Help: "Opt in to Bash/Edit mutations outside the session-home repo. Default deny; only for a deliberate multi-repo install.", Kind: kindBool},
 	{Section: "hosted", Key: "project", Label: "Hosted project", Help: "Project slug this repo maps to (personal sync target).", Kind: kindString},
 	{Section: "hosted", Key: "workspace", Label: "Active workspace", Help: "Scoped-sync destination — personal default; a team-workspace name elects it.", Kind: kindString},
 }
@@ -120,6 +121,8 @@ func SettingDisplay(cfg Config, s Setting) string {
 		return strings.Join(cfg.Gate.EditExemptPaths, "\n")
 	case "gate.allow_parallel":
 		return boolStr(cfg.Gate.AllowParallel)
+	case "gate.allow_outside_tree_edits":
+		return boolStr(cfg.Gate.AllowOutsideTreeEdits)
 	case "hosted.project":
 		return cfg.Hosted.Project
 	case "hosted.workspace":

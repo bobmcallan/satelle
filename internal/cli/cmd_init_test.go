@@ -135,7 +135,7 @@ func TestRunInitSeedsActiveEditExemptPaths(t *testing.T) {
 	}
 	tomlSrc := string(body)
 	// The [gate] table and edit_exempt_paths must be ACTIVE (no leading '#') and seed .satelle/.
-	for _, want := range []string{"\n[gate]\n", "edit_exempt_paths = [\".satelle/\"]"} {
+	for _, want := range []string{"\n[gate]\n", "edit_exempt_paths = [\".satelle/\"]", "allow_outside_tree_edits"} {
 		if !strings.Contains(tomlSrc, want) {
 			t.Errorf("scaffold satelle.toml missing active %q:\n%s", want, tomlSrc)
 		}
