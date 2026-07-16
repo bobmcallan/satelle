@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -194,6 +195,11 @@ func diffHostSurface(before, after hostSurface) []string {
 
 // hashTree walks root and returns a map of relpath → fingerprint. Missing or
 // unreadable roots return an empty map (skip-safe).
+//
+// Under ~/.satelle, project runtime dirs (<basename>-<8hex>/ from RepoKey) are
+// SKIPPED: they hold home-keyed DBs/logs (sty_4660bbe1) and a live satelle
+// service legitimately mutates them during the suite. Isolation still guards
+// config.toml and other non-runtime host state.
 func hashTree(root string) map[string]string {
 	out := map[string]string{}
 	if root == "" {
@@ -207,6 +213,8 @@ func hashTree(root string) map[string]string {
 		out["."] = fingerprintFile(root)
 		return out
 	}
+	// name-hex8 — RepoKey shape (e.g. satelle-16882c39, 001-a1b2c3d4).
+	runtimeKey := regexp.MustCompile(`^[^/]+-[0-9a-f]{8}$`)
 	_ = filepath.Walk(root, func(path string, fi os.FileInfo, err error) error {
 		if err != nil || fi == nil {
 			return nil // skip unreadable leaves
@@ -220,6 +228,14 @@ func hashTree(root string) map[string]string {
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
+		// Skip entire project runtime trees under the home root.
+		top := strings.SplitN(rel, "/", 2)[0]
+		if runtimeKey.MatchString(top) {
+			if fi.IsDir() && rel == top {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if fi.IsDir() {
 			out[rel+"/"] = "dir"
 			return nil
@@ -387,6 +403,42 @@ func runtimeRoot(t *testing.T, repo string) string {
 func isolatedEnv(t *testing.T) []string {
 	t.Helper()
 	return append(os.Environ(), "SATELLE_HOME="+isolatedHome(t))
+}
+
+// materializeDefault materializes one embedded default onto disk via
+// `satelle substrate edit` for tests that need an on-disk file (sty_29e5a9a5).
+func materializeDefault(t *testing.T, repo, kind, name string) {
+	t.Helper()
+	mustRun(t, testBin, repo, "substrate", "edit", kind, name)
+}
+
+// materializeDefaultSolution lands the baseline workflows + gate skills used by
+// many integration tests that predate virtual sparse defaults.
+func materializeDefaultSolution(t *testing.T, repo string) {
+	t.Helper()
+	for _, wf := range []string{
+		"satelle-baseline-workflow", "satelle-parent-workflow",
+		"satelle-task-workflow", "satelle-substrate-workflow",
+	} {
+		materializeDefault(t, repo, "workflows", wf)
+	}
+	for _, sk := range []string{
+		"satelle-estimate-actual-review", "satelle-step-summary",
+		"satelle-story-blocked-review", "satelle-story-cancel-review",
+		"satelle-story-create-review", "satelle-story-done-review",
+		"satelle-story-intent-review", "satelle-task-validate-before-review",
+		"satelle-task-validate-after-review", "satelle-workflow-advisor",
+		"satelle-reviewer-objective-audit", "satelle-context-audit",
+		"satelle-substrate-only-check",
+	} {
+		materializeDefault(t, repo, "skills", sk)
+	}
+	for _, pr := range []string{
+		"satelle-agent-goals", "satelle-agent-model", "satelle-edits-require-a-story",
+		"satelle-done-is-last", "satelle-story-classification",
+	} {
+		materializeDefault(t, repo, "principles", pr)
+	}
 }
 
 // run executes the binary in dir with args and returns combined output.
@@ -757,42 +809,35 @@ func httpStatus(t *testing.T, url string) int {
 }
 
 // TestInitDeploysDefaultSolution asserts a fresh init lands the COMPLETE default
-// solution (sty_a7cbd6dd, reversed to seed the base by sty_bf153cbf): the generic
-// base/parent/task-execution workflows plus every referenced gate skill,
-// validating green with no dangling refs, and an execution resolving to the
-// task-execution workflow out of the box.
+// solution virtually (sty_29e5a9a5): no unedited markdown on disk, validators
+// green, execution category resolves to the task-execution workflow.
 func TestInitDeploysDefaultSolution(t *testing.T) {
 	bin := testBin
 	repo := t.TempDir()
 	mustRun(t, bin, repo, "init")
 
+	// Virtual sparse defaults: no seed files for workflows/skills.
 	for _, rel := range []string{
 		".satelle/workflows/satelle-baseline-workflow.md",
-		".satelle/workflows/satelle-parent-workflow.md",
-		".satelle/workflows/satelle-task-workflow.md",
-		".satelle/skills/satelle-estimate-actual-review.md",
-		".satelle/skills/satelle-task-validate-before-review.md",
-		".satelle/skills/satelle-task-validate-after-review.md",
-		".satelle/skills/satelle-story-intent-review.md",
-		".satelle/skills/satelle-story-done-review.md",
-		".satelle/skills/satelle-story-cancel-review.md",
-		".satelle/skills/satelle-story-blocked-review.md",
 		".satelle/skills/satelle-step-summary.md",
 	} {
-		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
-			t.Errorf("init did not seed %s", rel)
+		if _, err := os.Stat(filepath.Join(repo, rel)); err == nil {
+			t.Errorf("init must not seed %s", rel)
 		}
 	}
 
-	// Index the seeded substrate (as a session does at SessionStart), then the
-	// per-noun validators must pass out of the box.
+	// Effective process is listed and validators pass against the virtual set.
 	mustRun(t, bin, repo, "reindex")
+	out := mustRun(t, bin, repo, "substrate", "list", "--json")
+	if !strings.Contains(out, "satelle-baseline-workflow") || !strings.Contains(out, `"provenance": "default"`) {
+		t.Errorf("substrate list missing virtual baseline:\n%s", out)
+	}
 	mustRun(t, bin, repo, "workflow", "validate")
 	mustRun(t, bin, repo, "skill", "validate")
 
 	// An execution resolves to the task-execution workflow, not the wildcard: the
 	// head (active) entry of the ordered list for the execution kind-category.
-	out := mustRun(t, bin, repo, "workflow", "list", "--category", "execution")
+	out = mustRun(t, bin, repo, "workflow", "list", "--category", "execution")
 	firstObj := out
 	if i := strings.Index(out, "}"); i >= 0 {
 		firstObj = out[:i]

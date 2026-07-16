@@ -20,6 +20,8 @@ import (
 func TestCreateContentReviewGate(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
+	materializeDefault(t, repo, "skills", "satelle-story-create-review")
+	materializeDefault(t, repo, "workflows", "satelle-baseline-workflow")
 
 	// Opt into create-gating via the local overlay (leaves the scaffold intact).
 	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"), "[review]\ngate_create = true\n")
@@ -100,11 +102,7 @@ func writeFile(t *testing.T, path, content string) {
 func TestWorkflowValidateFlagsUnresolvedCreateReview(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	// This test authors its own wildcard workflow; drop the seeded wildcard so the
-	// consistency check judges the binding under test, not an applies_to tie.
-	if err := os.Remove(filepath.Join(repo, ".satelle", "workflows", "satelle-baseline-workflow.md")); err != nil {
-		t.Fatal(err)
-	}
+	// Virtual baseline is not on disk; author our own wildcard only.
 
 	wf := `---
 name: my-project-workflow
@@ -180,10 +178,9 @@ func TestCreateGateRejectsEpicAsFeature(t *testing.T) {
 	if !strings.Contains(string(cfg), "gate_create = true") {
 		t.Fatalf("init must seed gate_create = true:\n%s", cfg)
 	}
-	if _, err := os.Stat(filepath.Join(repo, ".satelle", "skills", "satelle-story-create-review.md")); err != nil {
-		t.Fatalf("init must seed satelle-story-create-review skill: %v", err)
-	}
-	// Baseline must declare create_review so the skill is selected for feature.
+	// Virtual create_review skill + baseline: materialize for the stubbed gate path.
+	materializeDefault(t, repo, "skills", "satelle-story-create-review")
+	materializeDefault(t, repo, "workflows", "satelle-baseline-workflow")
 	wf, err := os.ReadFile(filepath.Join(repo, ".satelle", "workflows", "satelle-baseline-workflow.md"))
 	if err != nil {
 		t.Fatal(err)

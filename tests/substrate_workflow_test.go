@@ -22,6 +22,9 @@ import (
 func TestSubstrateWorkflowSeededAndDrivable(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
+	// Virtual defaults: materialize the substrate workflow + gate for on-disk path checks.
+	materializeDefault(t, repo, "workflows", "satelle-substrate-workflow")
+	materializeDefault(t, repo, "skills", "satelle-substrate-only-check")
 	stubReviewerAccept(t, repo) // the step-summary node is an LLM reviewer; stub it
 	mustRun(t, testBin, repo, "reindex")
 
@@ -30,7 +33,7 @@ func TestSubstrateWorkflowSeededAndDrivable(t *testing.T) {
 		".satelle/skills/satelle-substrate-only-check.md",
 	} {
 		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
-			t.Fatalf("init did not seed %s: %v", rel, err)
+			t.Fatalf("materialize did not land %s: %v", rel, err)
 		}
 	}
 
@@ -99,6 +102,8 @@ func TestSubstrateWorkflowSeededAndDrivable(t *testing.T) {
 func TestManagedFootprintClosesSubstrateLane(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
+	materializeDefault(t, repo, "workflows", "satelle-substrate-workflow")
+	materializeDefault(t, repo, "skills", "satelle-substrate-only-check")
 	stubReviewerAccept(t, repo) // step-summary node is an LLM reviewer; stub it
 	mustRun(t, testBin, repo, "reindex")
 

@@ -15,10 +15,12 @@ import (
 func TestInitSeedsBlockedLifecycle(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
+	materializeDefault(t, repo, "skills", "satelle-story-blocked-review")
+	materializeDefault(t, repo, "workflows", "satelle-baseline-workflow")
 
 	skill := filepath.Join(repo, ".satelle", "skills", "satelle-story-blocked-review.md")
 	if _, err := os.Stat(skill); err != nil {
-		t.Fatalf("init did not seed blocked-review skill: %v", err)
+		t.Fatalf("materialize did not land blocked-review skill: %v", err)
 	}
 	body, err := os.ReadFile(skill)
 	if err != nil {
@@ -56,6 +58,7 @@ func TestInitSeedsBlockedLifecycle(t *testing.T) {
 func TestBlockedReviewSkillRejectsWithoutReason(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
+	materializeDefault(t, repo, "skills", "satelle-story-blocked-review")
 	body, err := os.ReadFile(filepath.Join(repo, ".satelle", "skills", "satelle-story-blocked-review.md"))
 	if err != nil {
 		t.Fatal(err)
