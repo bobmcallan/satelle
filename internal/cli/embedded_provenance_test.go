@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -212,26 +213,34 @@ func TestEveryEmbeddedDefaultStampable(t *testing.T) {
 	}
 }
 
-// TestInitStampsAndValidates (AC1 at init level): a fresh init stamps materialised
-// embedded files and still validates green.
+// TestInitStampsAndValidates (sty_29e5a9a5): a fresh init validates green without
+// seeding defaults; substrate edit materializes a stamped principle for day-one edit.
 func TestInitStampsAndValidates(t *testing.T) {
 	repo := t.TempDir()
 	var out strings.Builder
 	if err := runInitTest(t, &out, repo); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
-	// A materialised embedded principle carries a stamp matching its embedded body.
 	body, ok := embeddedDefault("principles", "satelle-agent-goals")
 	if !ok {
 		t.Skip("satelle-agent-goals embedded default not present")
 	}
-	raw, err := os.ReadFile(filepath.Join(repo, ".satelle", "principles", "satelle-agent-goals.md"))
+	// No seed on disk after init.
+	seedPath := filepath.Join(repo, ".satelle", "principles", "satelle-agent-goals.md")
+	if _, err := os.Stat(seedPath); err == nil {
+		t.Fatal("init must not seed principles (virtual defaults)")
+	}
+	// Materialize-on-edit produces a stamped copy.
+	if err := runSubstrateEdit(io.Discard, filepath.Join(repo, ".satelle"), nil, "principles", "satelle-agent-goals"); err != nil {
+		t.Fatalf("substrate edit: %v", err)
+	}
+	raw, err := os.ReadFile(seedPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, stamp, stamped := stripEmbeddedStamp(string(raw))
 	if !stamped || stamp != embeddedSHA(body) {
-		t.Errorf("seeded principle stamp = %q stamped=%v, want %q", stamp, stamped, embeddedSHA(body))
+		t.Errorf("edited principle stamp = %q stamped=%v, want %q", stamp, stamped, embeddedSHA(body))
 	}
 }
 

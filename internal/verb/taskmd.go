@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -112,8 +113,10 @@ func fileStat(path string) bool {
 // task lacking a file is first ADOPTED by writing its file (migrating legacy
 // DB-only tasks, e.g. tasks created before tasks became substrate), then every
 // tsk_*.md is parsed and upserted so the FILE wins — it is the source of truth.
-// Archived tasks are excluded from the store List that drives adoption, so an
-// archived record is never resurrected to a file (sty_cd209b8a).
+// Embedded default tasks (config.EmbeddedDefaults kind=tasks) with no on-disk
+// file are ingested into the store WITHOUT writing a seed file (sty_29e5a9a5
+// virtual sparse defaults). Archived tasks are excluded from the store List that
+// drives adoption, so an archived record is never resurrected (sty_cd209b8a).
 // Returns (indexed, migrated). A no-op when taskDir is unset or the store is nil.
 func SyncTasks(ctx context.Context, store *workitem.Store, now time.Time) (indexed, migrated int, err error) {
 	if taskDir == "" || store == nil {
@@ -122,8 +125,16 @@ func SyncTasks(ctx context.Context, store *workitem.Store, now time.Time) (index
 	if err = os.MkdirAll(taskDir, 0o755); err != nil {
 		return 0, 0, fmt.Errorf("task file dir: %w", err)
 	}
+	// Embedded task names that must not be re-written to disk by adopt when they
+	// exist only as virtual defaults.
+	virtualTaskIDs := map[string]struct{}{}
+	for _, d := range config.EmbeddedDefaults() {
+		if d.Kind == "tasks" {
+			virtualTaskIDs[d.Name] = struct{}{}
+		}
+	}
 	// 1. Adopt store tasks/executions that have no file yet (legacy DB-only tasks;
-	// executions created before their file was written).
+	// executions created before their file was written). Skip pure virtual defaults.
 	for _, kind := range []workitem.Kind{workitem.KindTask, workitem.KindExecution} {
 		dbItems, lerr := store.List(ctx, workitem.ListFilter{Kind: kind})
 		if lerr != nil {
@@ -134,6 +145,9 @@ func SyncTasks(ctx context.Context, store *workitem.Store, now time.Time) (index
 			switch kind {
 			case workitem.KindTask:
 				path = taskFilePath(it.ID)
+				if _, virt := virtualTaskIDs[it.ID]; virt {
+					continue // virtual default — never re-seed onto disk
+				}
 			case workitem.KindExecution:
 				path = execFilePath(it)
 			}
@@ -151,6 +165,7 @@ func SyncTasks(ctx context.Context, store *workitem.Store, now time.Time) (index
 	// 2. Ingest every task header (flat tsk_*.md) AND every execution run
 	// (tsk_*/exe_*.md, one per-task subfolder) into the store — the file is the
 	// source of truth. A subdir named like a task id is walked for its runs.
+	onDiskTasks := map[string]struct{}{}
 	entries, derr := os.ReadDir(taskDir)
 	if derr != nil {
 		return indexed, migrated, derr
@@ -165,6 +180,7 @@ func SyncTasks(ctx context.Context, store *workitem.Store, now time.Time) (index
 			}
 			indexed += n
 		case !ent.IsDir() && strings.HasPrefix(name, "tsk_") && strings.HasSuffix(name, ".md"):
+			onDiskTasks[strings.TrimSuffix(name, ".md")] = struct{}{}
 			did, ierr := ingestItemFile(ctx, store, filepath.Join(taskDir, name), workitem.KindTask, now)
 			if ierr != nil {
 				return indexed, migrated, ierr
@@ -172,6 +188,22 @@ func SyncTasks(ctx context.Context, store *workitem.Store, now time.Time) (index
 			if did {
 				indexed++
 			}
+		}
+	}
+	// 3. Virtual default tasks with no on-disk override: ingest body into the store
+	// without writing a seed file (disk would win if present).
+	for _, d := range config.EmbeddedDefaults() {
+		if d.Kind != "tasks" {
+			continue
+		}
+		if _, onDisk := onDiskTasks[d.Name]; onDisk {
+			continue
+		}
+		// Write to a temp path? ingestItemFile needs a path. Parse body directly.
+		if did, ierr := ingestItemBody(ctx, store, d.Name, d.Body, workitem.KindTask, now); ierr != nil {
+			return indexed, migrated, ierr
+		} else if did {
+			indexed++
 		}
 	}
 	return indexed, migrated, nil
@@ -234,6 +266,23 @@ func ingestItemFile(ctx context.Context, store *workitem.Store, path string, kin
 	it, ok := parseItemFile(path, kind, now)
 	if !ok {
 		return false, nil
+	}
+	return upsertIfChanged(ctx, store, it, now)
+}
+
+// ingestItemBody parses an in-memory task body (virtual embedded default) and
+// upserts it without writing a seed file to disk (sty_29e5a9a5).
+func ingestItemBody(ctx context.Context, store *workitem.Store, name, body string, kind workitem.Kind, now time.Time) (bool, error) {
+	it, perr := workitem.Parse([]byte(body))
+	if perr != nil {
+		return false, nil
+	}
+	it.Kind = kind
+	if it.ID == "" {
+		it.ID = name
+	}
+	if it.CreatedAt.IsZero() {
+		it.CreatedAt = now
 	}
 	return upsertIfChanged(ctx, store, it, now)
 }

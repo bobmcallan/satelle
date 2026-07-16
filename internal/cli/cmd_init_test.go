@@ -46,8 +46,9 @@ func TestRunInitScaffolds(t *testing.T) {
 		t.Fatalf("runInit: %v", err)
 	}
 
-	// Core authored files exist under the repo; the DB lives on the home-keyed
-	// runtime plane (sty_4660bbe1), not under .satelle/.
+	// Config + empty authored dirs under the repo; DB on the home-keyed runtime
+	// plane (sty_4660bbe1). Virtual sparse defaults (sty_29e5a9a5): no unedited
+	// default markdown is seeded.
 	for _, rel := range []string{
 		".satelle/satelle.toml",
 		".satelle/agents.toml",
@@ -55,13 +56,27 @@ func TestRunInitScaffolds(t *testing.T) {
 		".satelle/workflows/README.md",
 		".satelle/principles/README.md",
 		".satelle/skills/README.md",
-		".satelle/skills/satelle-step-summary.md",
-		".satelle/skills/satelle-workflow-advisor.md",
+		".satelle/tasks/README.md",
 		".gitignore",
 	} {
 		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
 			t.Errorf("missing %s: %v", rel, err)
 		}
+	}
+	// No unedited default seeds.
+	for _, rel := range []string{
+		".satelle/skills/satelle-step-summary.md",
+		".satelle/workflows/satelle-baseline-workflow.md",
+		".satelle/principles/satelle-agent-goals.md",
+		".satelle/tasks/tsk_example1.md",
+	} {
+		if _, err := os.Stat(filepath.Join(repo, rel)); err == nil {
+			t.Errorf("init must not seed unedited default %s (sty_29e5a9a5)", rel)
+		}
+	}
+	// Tasks plane carve-out: default task headers are still seeded (gates need files).
+	if _, err := os.Stat(filepath.Join(repo, ".satelle/tasks/tsk_substrate-audit.md")); err != nil {
+		t.Errorf("init must still seed tasks/tsk_substrate-audit.md: %v", err)
 	}
 	// Runtime DB is under ~/.satelle/<repo-key>/ (HOME isolated by runInitTest).
 	homeDB := filepath.Join(config.GlobalDir(), config.RepoKey(repo), config.DefaultDBName)
@@ -70,25 +85,6 @@ func TestRunInitScaffolds(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo, ".satelle", config.DefaultDBName)); err == nil {
 		t.Error("init must not write satelle.db under the repo")
-	}
-	// Tasks: the dir + README keep-file are scaffolded, and the ONE embedded default
-	// task — the re-runnable substrate-audit — is seeded (sty_d4360e90). No GENERIC
-	// example task is seeded (sty_04ec1fe6): one named default, not example noise.
-	if _, err := os.Stat(filepath.Join(repo, ".satelle/tasks/README.md")); err != nil {
-		t.Errorf("init did not scaffold .satelle/tasks/README.md: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(repo, ".satelle/tasks/tsk_substrate-audit.md")); err != nil {
-		t.Errorf("init did not seed the substrate-audit task: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(repo, ".satelle/tasks/tsk_example1.md")); err == nil {
-		t.Error("init must not seed a generic example task (tsk_example1.md)")
-	}
-
-	// sty_bf153cbf reverses sty_3f9a6124: the baseline is now the seeded default
-	// lifecycle on a fresh repo (no authored workflow claims "*" yet), so init
-	// DOES write it as an editable repo file.
-	if _, err := os.Stat(filepath.Join(repo, ".satelle/workflows/satelle-baseline-workflow.md")); err != nil {
-		t.Errorf("init did not seed the baseline workflow as a repo file: %v", err)
 	}
 	// The removed .satelle/stories mirror must NOT be recreated (sty_746a0c98).
 	if _, err := os.Stat(filepath.Join(repo, ".satelle/stories")); err == nil {
@@ -176,10 +172,9 @@ func TestInstallAliasRemoved(t *testing.T) {
 	}
 }
 
-// TestRunInitSeedsAdvisorySkillsBesideAuthoredWorkflows: advisory skills are
-// workflow-independent guidance, so they seed even when the default solution is
-// withheld because the repo authored its own workflow set (sty_f4c1bd90).
-func TestRunInitSeedsAdvisorySkillsBesideAuthoredWorkflows(t *testing.T) {
+// TestRunInitAdvisorySkillsAreVirtual: advisory skills resolve from the binary
+// without seeding (sty_29e5a9a5), even beside an authored workflow set.
+func TestRunInitAdvisorySkillsAreVirtual(t *testing.T) {
 	repo := t.TempDir()
 	wfDir := filepath.Join(repo, ".satelle", "workflows")
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {
@@ -193,13 +188,15 @@ func TestRunInitSeedsAdvisorySkillsBesideAuthoredWorkflows(t *testing.T) {
 		t.Fatalf("runInit: %v", err)
 	}
 	p := filepath.Join(repo, ".satelle", "skills", "satelle-workflow-advisor.md")
-	body, err := os.ReadFile(p)
-	if err != nil {
-		t.Fatalf("advisor skill not seeded beside an authored workflow set: %v", err)
+	if _, err := os.Stat(p); err == nil {
+		t.Fatal("advisor skill must not be seeded onto disk")
 	}
-	// And it is valid substrate.
-	if problems := structure.Doc("skills", "satelle-workflow-advisor", string(body), nil); len(problems) > 0 {
-		t.Errorf("seeded advisor skill fails its structure check: %v", problems)
+	body, ok := embeddedDefault("skills", "satelle-workflow-advisor")
+	if !ok {
+		t.Fatal("advisor skill missing from EmbeddedDefaults")
+	}
+	if problems := structure.Doc("skills", "satelle-workflow-advisor", body, nil); len(problems) > 0 {
+		t.Errorf("embedded advisor skill fails its structure check: %v", problems)
 	}
 }
 
@@ -272,20 +269,15 @@ func TestRunInitIdempotent(t *testing.T) {
 	}
 }
 
-// TestRunInitSeedsAuditTask asserts the ONE embedded default task — the
-// re-runnable substrate-audit — lands in a fresh repo READY TO RUN (AC4,
-// sty_d4360e90): structurally clean (CheckTask), sitting at `done`, resolving to
-// the task workflow by its kind category, and a new execution targeting it as
-// parent passes the CODED begin-run gate. That gate judges STRUCTURE only (never
-// the parent's status), so a done header accepts a fresh run each time —
-// "re-runnable from done".
+// TestRunInitSeedsAuditTask asserts the embedded substrate-audit task is still
+// seeded (tasks plane carve-out — coded gates require an on-disk header) and is
+// re-runnable from done (sty_d4360e90). Workflows/skills stay virtual.
 func TestRunInitSeedsAuditTask(t *testing.T) {
 	repo := t.TempDir()
 	if err := runInitTest(t, io.Discard, repo); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
 	dataDir := filepath.Join(repo, ".satelle")
-
 	body, err := os.ReadFile(filepath.Join(dataDir, "tasks", "tsk_substrate-audit.md"))
 	if err != nil {
 		t.Fatalf("init did not seed tasks/tsk_substrate-audit.md: %v", err)
@@ -294,32 +286,32 @@ func TestRunInitSeedsAuditTask(t *testing.T) {
 		t.Errorf("seeded audit task fails CheckTask: %v", problems)
 	}
 	if !bytes.Contains(body, []byte("\nstatus: done\n")) {
-		t.Errorf("seeded audit task must sit at status: done (re-runnable from done), got:\n%s", body)
+		t.Errorf("seeded audit task must sit at status: done, got:\n%s", body)
+	}
+	// Workflows/skills still virtual.
+	if fileExists(filepath.Join(dataDir, "workflows", "satelle-baseline-workflow.md")) {
+		t.Error("workflows must not be seeded")
 	}
 
-	// Resolves to the task workflow by its kind category (applies_to ["execution","task"]).
 	var docs []docindex.Doc
 	for _, wf := range defaultSolutionWorkflows {
-		b, err := os.ReadFile(filepath.Join(dataDir, "workflows", wf+".md"))
-		if err != nil {
-			t.Fatalf("read seeded %s: %v", wf, err)
+		b, ok := embeddedDefault("workflows", wf)
+		if !ok {
+			t.Fatalf("embedded workflow %s missing", wf)
 		}
-		docs = append(docs, docindex.Doc{Name: wf, Body: string(b)})
+		docs = append(docs, docindex.Doc{Name: wf, Body: b})
 	}
 	ordered := agentstep.OrderedWorkflows(docs, "task")
 	if len(ordered) == 0 || ordered[0].Name != "satelle-task-workflow" {
 		t.Errorf("audit task does not resolve to satelle-task-workflow: %+v", ordered)
 	}
 
-	// Re-runnable from done: run the REAL coded begin-run gate (extracted from the
-	// seeded skill) over a new execution whose parent is the done audit task. The
-	// gate never reads the parent's status, so done does not block a new run.
-	skillBody, err := os.ReadFile(filepath.Join(dataDir, "skills", "satelle-task-validate-before-review.md"))
-	if err != nil {
-		t.Fatalf("seeded task-validate-before skill missing: %v", err)
+	skillBody, ok := embeddedDefault("skills", "satelle-task-validate-before-review")
+	if !ok {
+		t.Fatal("embedded task-validate-before skill missing")
 	}
 	payload := `{"story":{"id":"exe_test0001","kind":"execution","title":"audit run","status":"backlog","parent_id":"tsk_substrate-audit","tags":[],"created_at":"2026-07-08T00:00:00Z","updated_at":"2026-07-08T00:00:00Z"},"from":"backlog","to":"in_progress","review_skill":"satelle-task-validate-before-review"}`
-	cmd := exec.Command("sh", "-c", checkScript(t, string(skillBody)))
+	cmd := exec.Command("sh", "-c", checkScript(t, skillBody))
 	cmd.Dir = repo
 	cmd.Stdin = strings.NewReader(payload)
 	var gate bytes.Buffer
@@ -377,13 +369,10 @@ var defaultSolutionSkills = []string{
 	"satelle-task-validate-after-review",
 }
 
-// TestRunInitSeedsDefaultSolution asserts a fresh init deploys the COMPLETE
-// default solution (sty_a7cbd6dd, reversed to seed the base by sty_bf153cbf):
-// the generic base/parent/task-execution workflows plus every gate skill they
-// reference — and that the seeded set is structure-conformant and consistent
-// (what `satelle workflow validate` checks: no dangling refs, no ambiguous
-// applies_to).
-func TestRunInitSeedsDefaultSolution(t *testing.T) {
+// TestRunInitVirtualDefaultSolution asserts a fresh init does NOT seed the
+// default solution onto disk (sty_29e5a9a5) yet validates green — defaults resolve
+// virtually and skill refs resolve against the embedded set.
+func TestRunInitVirtualDefaultSolution(t *testing.T) {
 	repo := t.TempDir()
 	if err := runInitTest(t, io.Discard, repo); err != nil {
 		t.Fatalf("runInit: %v", err)
@@ -391,125 +380,93 @@ func TestRunInitSeedsDefaultSolution(t *testing.T) {
 	dataDir := filepath.Join(repo, ".satelle")
 
 	for _, wf := range defaultSolutionWorkflows {
-		if !fileExists(filepath.Join(dataDir, "workflows", wf+".md")) {
-			t.Errorf("init did not seed workflows/%s.md", wf)
+		if fileExists(filepath.Join(dataDir, "workflows", wf+".md")) {
+			t.Errorf("init must not seed workflows/%s.md (virtual defaults)", wf)
 		}
 	}
 	for _, sk := range defaultSolutionSkills {
-		if !fileExists(filepath.Join(dataDir, "skills", sk+".md")) {
-			t.Errorf("init did not seed skills/%s.md", sk)
+		if fileExists(filepath.Join(dataDir, "skills", sk+".md")) {
+			t.Errorf("init must not seed skills/%s.md (virtual defaults)", sk)
 		}
 	}
 
-	// The seeded set validates: every file passes the deterministic structure
-	// check, and the workflow set is consistent with every referenced skill
-	// resolving on disk.
-	resolve := func(skill string) bool {
-		return fileExists(filepath.Join(dataDir, "skills", skill+".md"))
-	}
+	// Embedded defaults are structure-conformant and skills resolve virtually.
+	resolve := skillResolves(dataDir)
 	var docs []docindex.Doc
 	for _, wf := range defaultSolutionWorkflows {
-		body, err := os.ReadFile(filepath.Join(dataDir, "workflows", wf+".md"))
-		if err != nil {
-			t.Fatalf("read seeded %s: %v", wf, err)
+		body, ok := embeddedDefault("workflows", wf)
+		if !ok {
+			t.Fatalf("embedded workflow %s missing", wf)
 		}
-		for _, p := range structure.Doc("workflows", wf, string(body), resolve) {
-			t.Errorf("seeded workflows/%s: %s", wf, p)
+		for _, p := range structure.Doc("workflows", wf, body, resolve) {
+			t.Errorf("embedded workflows/%s: %s", wf, p)
 		}
-		docs = append(docs, docindex.Doc{Name: wf, Body: string(body)})
+		docs = append(docs, docindex.Doc{Name: wf, Body: body})
 	}
 	for _, p := range agentstep.WorkflowConsistency(docs, resolve) {
-		t.Errorf("seeded workflow set inconsistent: %s", p)
+		t.Errorf("embedded workflow set inconsistent: %s", p)
 	}
 	for _, sk := range defaultSolutionSkills {
-		body, err := os.ReadFile(filepath.Join(dataDir, "skills", sk+".md"))
-		if err != nil {
-			t.Fatalf("read seeded %s: %v", sk, err)
+		body, ok := embeddedDefault("skills", sk)
+		if !ok {
+			t.Fatalf("embedded skill %s missing", sk)
 		}
-		for _, p := range structure.Doc("skills", sk, string(body), nil) {
-			t.Errorf("seeded skills/%s: %s", sk, p)
+		for _, p := range structure.Doc("skills", sk, body, nil) {
+			t.Errorf("embedded skills/%s: %s", sk, p)
 		}
 	}
 
-	// An execution resolves to the task-execution workflow out of the box: the
-	// kind-aware category ("execution") selects it ahead of the wildcard.
+	// An execution resolves to the task-execution workflow out of the box.
 	ordered := agentstep.OrderedWorkflows(docs, "execution")
 	if len(ordered) == 0 || ordered[0].Name != "satelle-task-workflow" {
 		t.Errorf("execution does not resolve to satelle-task-workflow: %+v", ordered)
 	}
 
-	// The generic base default is the MINIMAL order-zero lifecycle (sty_bf153cbf):
-	// no release mechanics beyond backlog/in_progress/done/cancelled, and its
-	// declared gates are exactly the story intent/done/cancel reviews plus the
-	// coded estimate check and the step summary.
-	baseBody, _ := os.ReadFile(filepath.Join(dataDir, "workflows", "satelle-baseline-workflow.md"))
+	baseBody, _ := embeddedDefault("workflows", "satelle-baseline-workflow")
 	for _, state := range []string{"commit", "push", "committed", "integration"} {
-		if strings.Contains(string(baseBody), state+" [") || strings.Contains(string(baseBody), state+"  [") {
+		if strings.Contains(baseBody, state+" [") || strings.Contains(baseBody, state+"  [") {
 			t.Errorf("generic base workflow declares extra state %q", state)
 		}
 	}
 	for _, gate := range []string{"satelle-story-intent-review", "satelle-story-done-review", "satelle-story-cancel-review", "satelle-estimate-actual-review"} {
-		if !strings.Contains(string(baseBody), gate) {
+		if !strings.Contains(baseBody, gate) {
 			t.Errorf("generic base workflow must reference gate %q", gate)
 		}
 	}
-	if strings.Contains(string(baseBody), "satelle-code-ac-review") {
+	if strings.Contains(baseBody, "satelle-code-ac-review") {
 		t.Error("generic base workflow must not reference satelle-code-ac-review")
 	}
-	// The estimate gate it declares is CODED — the seeded skill carries a
-	// self-contained check block, so no agent CLI is needed for it.
-	estBody, _ := os.ReadFile(filepath.Join(dataDir, "skills", "satelle-estimate-actual-review.md"))
-	if !strings.Contains(string(estBody), "```check") {
-		t.Error("seeded estimate skill must carry a self-contained ```check block")
-	}
-	// The embedded code-ac reviewer was removed with the gates (sty_f804caaa).
-	if fileExists(filepath.Join(dataDir, "skills", "satelle-code-ac-review.md")) {
-		t.Error("init must not seed satelle-code-ac-review — no seeded workflow references it")
+	estBody, _ := embeddedDefault("skills", "satelle-estimate-actual-review")
+	if !strings.Contains(estBody, "```check") {
+		t.Error("estimate skill must carry a self-contained ```check block")
 	}
 }
 
-// TestRunInitSeedsAdditivelyBesideAuthoredWorkflow asserts init seeds the
-// default solution ADDITIVELY, per file (sty_f6bd6f84): beside an authored
-// wildcard project workflow, the wildcard default is SKIPPED (routing safety —
-// it would duplicate the "*" precedence), but the non-overlapping parent and
-// task-execution defaults DO seed, the authored file is untouched, and the
-// deployed system still validates.
-func TestRunInitSeedsAdditivelyBesideAuthoredWorkflow(t *testing.T) {
+// TestRunInitBesideAuthoredWorkflowNoSeeds (sty_29e5a9a5): with virtual defaults,
+// init does not seed sibling workflow/skill files beside an authored workflow.
+// Gate skills resolve virtually; validation is green; the authored file is untouched.
+func TestRunInitBesideAuthoredWorkflowNoSeeds(t *testing.T) {
 	repo := t.TempDir()
 	wfDir := filepath.Join(repo, ".satelle", "workflows")
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// A CONFORMANT authored wildcard project workflow — init validates the
-	// deployed system, so the healed set must still validate green.
 	own := filepath.Join(wfDir, "my-workflow.md")
-	ownBody := "---\nname: my-workflow\ntype: workflow\ndescription: my own lifecycle\napplies_to: [\"*\"]\nscope: project\n---\n\n# mine\n\n```dot\ndigraph w {\n  backlog -> in_progress -> done\n}\n```\n"
+	ownBody := "---\nname: my-workflow\ntype: workflow\ndescription: my own lifecycle\napplies_to: [\"*\"]\nscope: project\n---\n\n# mine\n\n```dot\ndigraph w {\n  backlog -> in_progress -> done\n  estimate [agent=reviewer, prompt=\"@skill:satelle-estimate-actual-review\", on=\"in_progress,done\"]\n}\n```\n"
 	if err := os.WriteFile(own, []byte(ownBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	var out strings.Builder
-	if err := runInitTest(t, &out, repo); err != nil {
+	if err := runInitTest(t, io.Discard, repo); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
-	// The wildcard base default is skipped (it would compete with the authored
-	// "*" workflow); the report explains why.
-	if fileExists(filepath.Join(wfDir, "satelle-baseline-workflow.md")) {
-		t.Error("init seeded the wildcard base default beside an authored wildcard workflow")
-	}
-	if !strings.Contains(out.String(), "claimed by an authored workflow") {
-		t.Errorf("report does not explain the skipped wildcard default:\n%s", out.String())
-	}
-	// The non-overlapping defaults DO seed — this is the additive heal.
-	for _, wf := range []string{"satelle-parent-workflow", "satelle-task-workflow"} {
-		if !fileExists(filepath.Join(wfDir, wf+".md")) {
-			t.Errorf("init did not additively seed %s beside the authored workflow", wf)
-		}
-	}
-	// The gate skills the defaults reference are seeded even though the base
-	// default's own file was skipped (its refs are still collected).
-	for _, sk := range defaultSolutionSkills {
-		if !fileExists(filepath.Join(repo, ".satelle", "skills", sk+".md")) {
-			t.Errorf("init did not seed referenced gate skill %s", sk)
+	// No default seeds.
+	for _, rel := range []string{
+		"workflows/satelle-baseline-workflow.md",
+		"workflows/satelle-parent-workflow.md",
+		"skills/satelle-estimate-actual-review.md",
+	} {
+		if fileExists(filepath.Join(repo, ".satelle", rel)) {
+			t.Errorf("init seeded %s — virtual defaults must not write unedited copies", rel)
 		}
 	}
 	if got, _ := os.ReadFile(own); !strings.Contains(string(got), "# mine") {
@@ -517,52 +474,23 @@ func TestRunInitSeedsAdditivelyBesideAuthoredWorkflow(t *testing.T) {
 	}
 }
 
-// TestRunInitHealsMissingGateSkillDeadlock reproduces the satelle-server field
-// failure (sty_f6bd6f84): a repo authored its own wildcard project workflow and,
-// under an older binary, had some gate skills seeded but not
-// satelle-estimate-actual-review — so the current binary's fail-fast validation
-// would refuse over the dangling reference while holding the file embedded.
-// Per-file additive seeding must HEAL it: re-running init seeds the missing gate
-// skill (the default solution references it), leaves the present files untouched,
-// and validates green. A second init is idempotent.
-func TestRunInitHealsMissingGateSkillDeadlock(t *testing.T) {
+// TestRunInitVirtualGateSkillResolves (sty_29e5a9a5): a workflow that references
+// an embedded gate skill validates green without the skill file on disk.
+func TestRunInitVirtualGateSkillResolves(t *testing.T) {
 	repo := t.TempDir()
-	dataDir := filepath.Join(repo, ".satelle")
-	wfDir := filepath.Join(dataDir, "workflows")
-	skDir := filepath.Join(dataDir, "skills")
-	for _, d := range []string{wfDir, skDir} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
+	wfDir := filepath.Join(repo, ".satelle", "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	// Authored wildcard project workflow whose estimate gate references the gate
-	// skill that is MISSING on disk — the dangling reference the old init deadlocked on.
 	own := "---\nname: my-workflow\ntype: workflow\ndescription: my own lifecycle\napplies_to: [\"*\"]\nscope: project\n---\n\n# mine\n\n```dot\ndigraph w {\n  backlog -> in_progress -> done\n  estimate [agent=reviewer, prompt=\"@skill:satelle-estimate-actual-review\", on=\"in_progress,done\"]\n}\n```\n"
 	if err := os.WriteFile(filepath.Join(wfDir, "my-workflow.md"), []byte(own), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// satelle-estimate-actual-review is intentionally absent; init must seed it.
-	if fileExists(filepath.Join(skDir, "satelle-estimate-actual-review.md")) {
-		t.Fatal("precondition: the gate skill must start absent")
-	}
-
 	if err := runInitTest(t, io.Discard, repo); err != nil {
-		t.Fatalf("init must HEAL the missing default and validate green, got: %v", err)
+		t.Fatalf("init must validate green with virtual gate skill: %v", err)
 	}
-	if !fileExists(filepath.Join(skDir, "satelle-estimate-actual-review.md")) {
-		t.Error("init did not seed the missing gate skill — deadlock not healed")
-	}
-	// The authored workflow is untouched.
-	if got, _ := os.ReadFile(filepath.Join(wfDir, "my-workflow.md")); string(got) != own {
-		t.Error("init modified the authored workflow while healing")
-	}
-	// Idempotent: a second init creates nothing new.
-	var out strings.Builder
-	if err := runInitTest(t, &out, repo); err != nil {
-		t.Fatalf("second init: %v", err)
-	}
-	if strings.Contains(out.String(), "  + ") {
-		t.Errorf("second init created something (not idempotent):\n%s", out.String())
+	if fileExists(filepath.Join(repo, ".satelle", "skills", "satelle-estimate-actual-review.md")) {
+		t.Error("init must not seed the virtual gate skill onto disk")
 	}
 }
 
