@@ -521,6 +521,10 @@ func TestEnsureGitignoreAppendsOnce(t *testing.T) {
 	if strings.Count(string(gi), gitignoreMarker) != 1 {
 		t.Error("managed block appended more than once")
 	}
+	// Fresh append must use the home-keyed form (no runtime db ignore entries).
+	if strings.Contains(string(gi), ".satelle/satelle.db") {
+		t.Error("gitignore must not ignore .satelle/satelle.db (home-keyed)")
+	}
 }
 
 func TestEnsureClaudeHooksIdempotent(t *testing.T) {

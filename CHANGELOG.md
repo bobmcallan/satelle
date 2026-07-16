@@ -7,6 +7,18 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
+## [0.0.269] - 2026-07-17
+
+### Added
+- `satelle migrate [--yes]`: dry-run-by-default compose verb that converges a repo to the current structure — runtime relocate, legacy residue removal, unedited-seed prune, gitignore managed-block converge, then deployment validation (sty_a3915840)
+
+### Fixed
+- `ensureGitignore` rewrites the content between managed markers to the current form (upgrade path for pre-relocation ignore blocks) (sty_87c8a69c / sty_a3915840)
+- `satelle runtime migrate` is dry-run by default; pass `--yes` to apply (aligned with migrate/prune)
+
+### Changed
+- `satelle init` help describes the home-keyed runtime plane and steers half-upgraded repos to `satelle migrate`
+
 ## [0.0.268] - 2026-07-17
 
 ### Fixed
