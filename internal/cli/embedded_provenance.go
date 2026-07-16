@@ -16,72 +16,24 @@
 package cli
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/substrate"
 )
 
-// embeddedStampKey is the frontmatter key carrying the seed provenance hash.
-const embeddedStampKey = "embedded_sha"
+// Stamp helpers live in internal/substrate (sty_ba0eb5c6 extraction). Thin
+// aliases keep the rest of the CLI package stable.
+const embeddedStampKey = substrate.StampKey
 
-// embeddedSHA is the hex sha256 of an embedded body — the same hashing docindex
-// uses for its content hash. Computed over the body EXACTLY as shipped (an
-// embedded default never itself carries an embedded_sha line).
-func embeddedSHA(body string) string {
-	sum := sha256.Sum256([]byte(body))
-	return hex.EncodeToString(sum[:])
-}
+func embeddedSHA(body string) string { return substrate.SHA(body) }
 
-// applyEmbeddedStamp inserts `embedded_sha: <sha>` as the LAST frontmatter line
-// of body (immediately before the closing `---`). A body with no terminated
-// frontmatter is returned unchanged (defensive; every embedded default has
-// frontmatter — a test guards that).
-func applyEmbeddedStamp(body, sha string) string {
-	lines := strings.Split(body, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		return body
-	}
-	for j := 1; j < len(lines); j++ {
-		if strings.TrimSpace(lines[j]) == "---" {
-			out := make([]string, 0, len(lines)+1)
-			out = append(out, lines[:j]...)
-			out = append(out, embeddedStampKey+": "+sha)
-			out = append(out, lines[j:]...)
-			return strings.Join(out, "\n")
-		}
-	}
-	return body // unterminated frontmatter — leave untouched
-}
+func applyEmbeddedStamp(body, sha string) string { return substrate.ApplyStamp(body, sha) }
 
-// stripEmbeddedStamp removes the single embedded_sha line from body's frontmatter,
-// returning the stripped body, the stamp value, and whether a stamp was present.
-// Exact inverse of applyEmbeddedStamp — load-bearing for AC6: uses line split/join
-// (not a lossy frontmatter rest-join) so
-// stripEmbeddedStamp(applyEmbeddedStamp(b, s)) reproduces b byte-for-byte.
 func stripEmbeddedStamp(body string) (stripped, stamp string, stamped bool) {
-	lines := strings.Split(body, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		return body, "", false
-	}
-	pre := embeddedStampKey + ":"
-	for j := 1; j < len(lines); j++ {
-		if strings.TrimSpace(lines[j]) == "---" {
-			return body, "", false // end of frontmatter, no stamp
-		}
-		if t := strings.TrimSpace(lines[j]); t == pre || strings.HasPrefix(t, pre+" ") {
-			stamp = strings.TrimSpace(strings.TrimPrefix(t, pre))
-			out := make([]string, 0, len(lines)-1)
-			out = append(out, lines[:j]...)
-			out = append(out, lines[j+1:]...)
-			return strings.Join(out, "\n"), stamp, true
-		}
-	}
-	return body, "", false
+	return substrate.StripStamp(body)
 }
 
 // reconcileVerb is the outcome of reconcileEmbeddedFile for one file.

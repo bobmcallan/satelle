@@ -18,6 +18,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/substrate"
 )
 
 func init() {
@@ -86,46 +87,11 @@ See decision-substrate-planes-local-first.`,
 	register(root)
 }
 
-// substrateRow is one effective item for list --effective.
-type substrateRow struct {
-	Kind       string `json:"kind"`
-	Name       string `json:"name"`
-	Source     string `json:"source"`
-	Provenance string `json:"provenance"` // default | edited | authored
-	Embedded   bool   `json:"embedded"`
-}
-
 func runSubstrateList(out io.Writer, idx *docindex.Store, asJSON bool) error {
-	ctx := context.Background()
-	docs, err := idx.List(ctx, "")
+	rows, err := substrate.List(context.Background(), idx)
 	if err != nil {
 		return err
 	}
-	// Build embedded map for classification.
-	emb := map[string]string{} // kind\x00name → body
-	for _, d := range config.EmbeddedDefaults() {
-		if d.Kind == "tasks" {
-			continue // workitem plane
-		}
-		emb[d.Kind+"\x00"+d.Name] = d.Body
-	}
-	var rows []substrateRow
-	for _, d := range docs {
-		if d.Kind == "documents" {
-			continue // free-form docs are not process substrate
-		}
-		prov := classifyProvenance(d, emb)
-		rows = append(rows, substrateRow{
-			Kind: d.Kind, Name: d.Name, Source: d.Path,
-			Provenance: prov, Embedded: d.Embedded,
-		})
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].Kind != rows[j].Kind {
-			return rows[i].Kind < rows[j].Kind
-		}
-		return rows[i].Name < rows[j].Name
-	})
 	if asJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
@@ -139,40 +105,9 @@ func runSubstrateList(out io.Writer, idx *docindex.Store, asJSON bool) error {
 	return nil
 }
 
-// classifyProvenance returns default|edited|authored for one List row.
-func classifyProvenance(d docindex.Doc, emb map[string]string) string {
-	key := d.Kind + "\x00" + d.Name
-	body, hasEmb := emb[key]
-	if d.Embedded || !fileExists(d.Path) {
-		if hasEmb {
-			return "default"
-		}
-		return "authored"
-	}
-	if !hasEmb {
-		return "authored"
-	}
-	if isUneditedSeed(string(mustRead(d.Path)), body) {
-		return "default" // on disk but identical → still "default" provenance
-	}
-	return "edited"
-}
-
-func mustRead(path string) []byte {
-	b, _ := os.ReadFile(path)
-	return b
-}
-
-// isUneditedSeed reports whether on-disk body is an unedited copy of embedded
-// (stamped or stampless identical). Shared with prune.
+// isUneditedSeed delegates to substrate (shared with prune and provenance).
 func isUneditedSeed(diskBody, embeddedBody string) bool {
-	stripped, stamp, stamped := stripEmbeddedStamp(diskBody)
-	if stamped {
-		// Unedited seed of current OR older default (stamp matches stripped body).
-		return embeddedSHA(stripped) == stamp
-	}
-	// Stampless but byte-identical to embedded (sty_a9ec33e7 case).
-	return diskBody == embeddedBody || stripped == embeddedBody
+	return substrate.IsUneditedSeed(diskBody, embeddedBody)
 }
 
 func runSubstrateEdit(out io.Writer, dataDir string, idx *docindex.Store, kind, name string) error {
@@ -204,7 +139,7 @@ func runSubstrateEdit(out io.Writer, dataDir string, idx *docindex.Store, kind, 
 	if body == "" {
 		return fmt.Errorf("substrate edit: no embedded default %s/%s", kind, name)
 	}
-	stamped := applyEmbeddedStamp(body, embeddedSHA(body))
+	stamped := applyEmbeddedStamp(body, substrate.SHA(body))
 	if err := writeEmbedded(path, stamped); err != nil {
 		return err
 	}

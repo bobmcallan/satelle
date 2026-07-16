@@ -227,11 +227,13 @@ type helpTopic struct {
 // docPageData backs the standalone authored-document viewer: the rendered
 // markdown plus the shared chrome.
 type docPageData struct {
-	TopBar   topBar
-	Kind     string
-	Name     string
-	Headline string
-	HTML     template.HTML
+	TopBar     topBar
+	Kind       string
+	Name       string
+	Headline   string
+	HTML       template.HTML
+	Provenance string
+	Source     string
 }
 
 // docPage renders one authored document with its markdown formatted to HTML
@@ -244,12 +246,20 @@ func docPage() http.HandlerFunc {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		var prov, src string
+		if pv, perr := loadProcessView(r.Context(), ""); perr == nil {
+			p, s, _ := indexProcessView(pv)
+			key := kind + "\x00" + name
+			prov, src = p[key], s[key]
+		}
 		render(w, "docPage", docPageData{
-			TopBar:   newTopBar(""),
-			Kind:     kind,
-			Name:     doc.Name,
-			Headline: doc.Headline,
-			HTML:     renderMarkdown(doc.Body),
+			TopBar:     newTopBar(""),
+			Kind:       kind,
+			Name:       doc.Name,
+			Headline:   doc.Headline,
+			HTML:       renderMarkdown(doc.Body),
+			Provenance: prov,
+			Source:     src,
 		})
 	}
 }
@@ -723,9 +733,18 @@ func gitConfig(dir, key string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// docRowVM is one docs-panel card with optional provenance (sty_ba0eb5c6).
+type docRowVM struct {
+	Name       string
+	Headline   string
+	ModTime    time.Time
+	Provenance string // default | edited | authored; empty for free-form documents
+	Source     string
+}
+
 type kindGroup struct {
 	Kind string
-	Docs []docindex.Doc
+	Docs []docRowVM
 }
 
 // loadPanels fetches the three panels' data through the verbs.
@@ -748,9 +767,23 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 	for _, d := range allDocs {
 		byKind[d.Kind] = append(byKind[d.Kind], d)
 	}
+	// Provenance from process-view (sty_ba0eb5c6); fail-open to unlabeled rows.
+	prov, src := map[string]string{}, map[string]string{}
+	if pv, perr := loadProcessView(ctx, ""); perr == nil {
+		prov, src, _ = indexProcessView(pv)
+	}
 	kinds := make([]kindGroup, 0, len(config.AuthoredKinds))
 	for _, k := range config.AuthoredKinds {
-		kinds = append(kinds, kindGroup{Kind: k, Docs: byKind[k]})
+		docs := byKind[k]
+		rows := make([]docRowVM, 0, len(docs))
+		for _, d := range docs {
+			key := d.Kind + "\x00" + d.Name
+			rows = append(rows, docRowVM{
+				Name: d.Name, Headline: d.Headline, ModTime: d.ModTime,
+				Provenance: prov[key], Source: src[key],
+			})
+		}
+		kinds = append(kinds, kindGroup{Kind: k, Docs: rows})
 	}
 	backlog := 0
 	for _, s := range stories {
@@ -777,7 +810,7 @@ func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
 		Stories: attachLights(ctx, stories, liveSeat, catStepOf), BacklogCount: backlog,
 		Tasks:    attachLights(ctx, tasks, liveSeat, catStepOf),
 		DocKinds: kinds, DocCount: len(allDocs),
-		Workflows: workflowRows(byKind["workflows"]),
+		Workflows: workflowRows(byKind["workflows"], prov, src),
 		Uptime:    formatUptime(time.Since(serverStart)),
 		Theme:     globalTheme(),
 		TopBar:    newTopBar("home"),

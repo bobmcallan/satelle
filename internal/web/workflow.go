@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -16,11 +17,21 @@ import (
 // filters and clicks to expand. Mirrors the stories/tasks row shape so the same
 // filter + expand/collapse interactions apply (the tab is read-only).
 type workflowRowVM struct {
-	Name      string
-	Headline  string
-	Scope     string
-	AppliesTo []string
-	Updated   time.Time
+	Name       string
+	Headline   string
+	Scope      string
+	AppliesTo  []string
+	Updated    time.Time
+	Provenance string // default | edited | authored (sty_ba0eb5c6)
+	Source     string
+}
+
+// bindingVM is one node's (or edge's) resolved agent/skill/model for the diagram.
+type bindingVM struct {
+	Agent      string
+	Skill      string
+	Model      string
+	Overridden bool // true when DOT model= overrides the binding model
 }
 
 // wfState is a workflow state node. Terminal is true when no transition leaves it.
@@ -52,13 +63,16 @@ type wfSpec struct {
 // workflowDetailVM backs the inline expand: the parsed diagram + the applies_to
 // binding + the raw definition (frontmatter stripped) for the read-only view.
 type workflowDetailVM struct {
-	Name      string
-	Headline  string
-	Scope     string
-	AppliesTo []string
-	Spec      wfSpec
-	Diagram   template.HTML
-	Body      string
+	Name       string
+	Headline   string
+	Scope      string
+	AppliesTo  []string
+	Spec       wfSpec
+	Diagram    template.HTML
+	Body       string
+	Provenance string
+	Source     string
+	Bindings   map[string]bindingVM // state name or edge:from->to
 }
 
 // shortSkill abbreviates a reviewer skill for an edge label (the full name rides
@@ -79,7 +93,10 @@ func shortSkill(s string) string {
 // free-floating node. Interactivity (pan/zoom, hover highlight, the alt-edge
 // toggle) is progressive enhancement in app.js over the same data-state /
 // data-from/data-to identifiers as before (sty_19b2107a).
-func workflowDiagram(spec wfSpec) template.HTML {
+func workflowDiagram(spec wfSpec, bindings map[string]bindingVM) template.HTML {
+	if bindings == nil {
+		bindings = map[string]bindingVM{}
+	}
 	// Split ANNOTATION nodes out of the flow: an edge-less node with on= is a
 	// declaration (scoped reviewer gate, step-summary opt-in, OR executor
 	// augmentation — sty_8225d8a5), not a lifecycle state. Without this, an
@@ -250,8 +267,8 @@ func workflowDiagram(spec wfSpec) template.HTML {
 	}
 
 	const (
-		nodeW, nodeH = 148, 40
-		gapX, gapY   = 84, 64
+		nodeW, nodeH = 148, 48 // taller for agent/model sub-label (sty_ba0eb5c6)
+		gapX, gapY   = 84, 72
 		pad          = 16
 	)
 	topGutter := pad
@@ -359,14 +376,39 @@ func workflowDiagram(spec wfSpec) template.HTML {
 		if terminal[n] {
 			cls += " terminal"
 		}
+		// Binding sub-label: agent + short model (sty_ba0eb5c6 AC1). Prefer
+		// process-view allocation; fall back to DOT agent= alone.
+		bind := bindings[n]
+		ag := bind.Agent
+		if ag == "" {
+			ag = agentOf[n]
+		}
 		nameY := y + nodeH/2 + 4
 		agentBadge := ""
-		if ag := agentOf[n]; ag != "" && ag != "executor" && ag != "reviewer" {
-			nameY = y + nodeH/2 - 2
-			agentBadge = fmt.Sprintf(`<text class="wf-agent-badge" x="%d" y="%d">@%s</text>`, x+nodeW/2, y+nodeH-7, esc(ag))
+		titleParts := []string{n}
+		if ag != "" {
+			nameY = y + nodeH/2 - 4
+			badge := "@" + ag
+			if bind.Model != "" {
+				badge += " · " + shortModel(bind.Model)
+				if bind.Overridden {
+					badge += " *"
+				}
+			}
+			agentBadge = fmt.Sprintf(`<text class="wf-agent-badge" x="%d" y="%d">%s</text>`, x+nodeW/2, y+nodeH-8, esc(badge))
+			titleParts = append(titleParts, "agent="+ag)
+			if bind.Skill != "" {
+				titleParts = append(titleParts, "skill="+bind.Skill)
+			}
+			if bind.Model != "" {
+				titleParts = append(titleParts, "model="+bind.Model)
+			}
 		}
-		fmt.Fprintf(&b, `<g class="%s" data-state="%s" tabindex="0" role="button" aria-label="state %s — highlight its transitions"><rect x="%d" y="%d" width="%d" height="%d" rx="7"/><text x="%d" y="%d">%s</text>%s</g>`,
-			cls, esc(n), esc(n), x, y, nodeW, nodeH, x+nodeW/2, nameY, esc(n), agentBadge)
+		tip := esc(strings.Join(titleParts, " · "))
+		// Keep <rect> immediately after <g …> so nodePos tests (and any CSS
+		// :first-child selectors) still match; title follows the rect.
+		fmt.Fprintf(&b, `<g class="%s" data-state="%s" tabindex="0" role="button" aria-label="state %s — highlight its transitions"><rect x="%d" y="%d" width="%d" height="%d" rx="7"/><title>%s</title><text x="%d" y="%d">%s</text>%s</g>`,
+			cls, esc(n), esc(n), x, y, nodeW, nodeH, tip, x+nodeW/2, nameY, esc(n), agentBadge)
 		// Scoped (on=…) reviewers annotate the states they gate.
 		for k, ann := range annByTarget[n] {
 			ay := y + nodeH + 13 + k*13
@@ -398,19 +440,88 @@ func workflowDiagram(spec wfSpec) template.HTML {
 	return template.HTML(svg.String())
 }
 
+// shortModel trims a model id for the diagram badge (last path segment / short tail).
+func shortModel(m string) string {
+	m = strings.TrimSpace(m)
+	if m == "" {
+		return ""
+	}
+	if i := strings.LastIndex(m, "/"); i >= 0 && i+1 < len(m) {
+		m = m[i+1:]
+	}
+	if len(m) > 18 {
+		return m[:18]
+	}
+	return m
+}
+
 // workflowRows builds the Workflow panel rows from the indexed workflow docs.
-func workflowRows(docs []docindex.Doc) []workflowRowVM {
+// prov maps "workflows\x00name" → provenance; src maps the same key → source.
+func workflowRows(docs []docindex.Doc, prov, src map[string]string) []workflowRowVM {
 	out := make([]workflowRowVM, 0, len(docs))
 	for _, d := range docs {
+		key := "workflows\x00" + d.Name
 		out = append(out, workflowRowVM{
-			Name:      d.Name,
-			Headline:  d.Headline,
-			Scope:     workflowScope(d),
-			AppliesTo: frontmatterList(d.Body, "applies_to"),
-			Updated:   d.ModTime,
+			Name:       d.Name,
+			Headline:   d.Headline,
+			Scope:      workflowScope(d),
+			AppliesTo:  frontmatterList(d.Body, "applies_to"),
+			Updated:    d.ModTime,
+			Provenance: prov[key],
+			Source:     src[key],
 		})
 	}
 	return out
+}
+
+// processViewPayload is the verb.ProcessView shape (sty_ba0eb5c6).
+type processViewPayload struct {
+	Items []struct {
+		Kind       string `json:"kind"`
+		Name       string `json:"name"`
+		Source     string `json:"source"`
+		Provenance string `json:"provenance"`
+		Embedded   bool   `json:"embedded"`
+	} `json:"items"`
+	Allocations []struct {
+		Workflow       string `json:"Workflow"`
+		Node           string `json:"Node"`
+		Skill          string `json:"Skill"`
+		Agent          string `json:"Agent"`
+		BindingModel   string `json:"BindingModel"`
+		NodeModel      string `json:"NodeModel"`
+		EffectiveModel string `json:"EffectiveModel"`
+	} `json:"allocations"`
+	AgentsError string `json:"agents_error,omitempty"`
+}
+
+// loadProcessView dispatches process-view (optional workflow scope).
+func loadProcessView(ctx context.Context, workflow string) (processViewPayload, error) {
+	req := map[string]any{}
+	if workflow != "" {
+		req["workflow"] = workflow
+	}
+	return fetchOne[processViewPayload](ctx, "process-view", req)
+}
+
+// indexProcessView returns provenance and source maps keyed by kind\x00name,
+// plus node bindings for the (scoped) allocations.
+func indexProcessView(pv processViewPayload) (prov, src map[string]string, bindings map[string]bindingVM) {
+	prov = map[string]string{}
+	src = map[string]string{}
+	bindings = map[string]bindingVM{}
+	for _, it := range pv.Items {
+		key := it.Kind + "\x00" + it.Name
+		prov[key] = it.Provenance
+		src[key] = it.Source
+	}
+	for _, a := range pv.Allocations {
+		bindings[a.Node] = bindingVM{
+			Agent: a.Agent, Skill: a.Skill, Model: a.EffectiveModel,
+			Overridden: a.NodeModel != "",
+		}
+	}
+	return prov, src, bindings
 }
 
 // workflowFragment renders one workflow's diagram inline (the expand target).
@@ -423,14 +534,30 @@ func workflowFragment() http.HandlerFunc {
 			return
 		}
 		spec := parseWorkflow(doc.Body)
+		var prov, src string
+		var bindings map[string]bindingVM
+		if pv, perr := loadProcessView(r.Context(), name); perr == nil {
+			p, s, b := indexProcessView(pv)
+			key := "workflows\x00" + name
+			prov, src = p[key], s[key]
+			bindings = b
+			// Fill state agents from DOT when allocation is absent.
+			for _, st := range spec.States {
+				if _, ok := bindings[st.Name]; !ok && st.Agent != "" {
+					bindings[st.Name] = bindingVM{Agent: st.Agent, Skill: st.Skill}
+				}
+			}
+		}
 		render(w, "workflowDetail", workflowDetailVM{
-			Name:      doc.Name,
-			Headline:  doc.Headline,
-			Scope:     workflowScope(doc),
-			AppliesTo: frontmatterList(doc.Body, "applies_to"),
-			Spec:      spec,
-			Diagram:   workflowDiagram(spec),
-			Body:      strings.TrimSpace(stripDocFrontmatter(doc.Body)),
+			Name:       doc.Name,
+			Headline:   doc.Headline,
+			Scope:      workflowScope(doc),
+			AppliesTo:  frontmatterList(doc.Body, "applies_to"),
+			Spec:       spec,
+			Diagram:    workflowDiagram(spec, bindings),
+			Body:       strings.TrimSpace(stripDocFrontmatter(doc.Body)),
+			Provenance: prov,
+			Source:     src,
 		})
 	}
 }
