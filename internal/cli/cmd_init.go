@@ -228,6 +228,7 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool) error {
 		return fmt.Errorf("init: open database: %w", derr)
 	}
 	_ = db.Close()
+	_ = config.WriteRepoPathMarker(rt.Dir, repoRoot)
 	fmt.Fprintln(out, initLine(!dbExisted, dbPath))
 
 	// 5. .gitignore managed block — ignore in-repo local-state only (local.toml,

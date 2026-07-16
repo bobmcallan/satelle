@@ -89,7 +89,33 @@ Does not open the store — so the source DB is free for VACUUM INTO.`,
 	migrateCmd.Flags().BoolVar(&force, "force", false, "overwrite an existing home-keyed database")
 	migrateCmd.Flags().BoolVar(&dryRun, "dry-run", false, "print what would be copied without writing")
 
-	root.AddCommand(pathCmd, migrateCmd)
+	var orphansOnly bool
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List home-keyed runtime dirs under ~/.satelle (or SATELLE_HOME)",
+		Long: `List each home-keyed runtime key dir under the machine home:
+
+  key        directory basename (<name>-<hex8>)
+  status     linked | stale | unknown
+  repo       resolved repo root (from repo.path marker or workspace registry)
+  size       approximate on-disk size
+  db_mtime   mtime of satelle.db when present
+
+Status:
+  linked   marker or registry match and the repo root still exists
+  stale    resolved root no longer exists
+  unknown  no marker and no registry match (typical of leaked test key dirs)
+
+Does not delete anything. For unknown/stale dirs, prints an rm suggestion.
+Use --orphans to list only unknown and stale entries (sty_c36c211f).`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRuntimeList(cmd.OutOrStdout(), orphansOnly)
+		},
+	}
+	listCmd.Flags().BoolVar(&orphansOnly, "orphans", false, "list only unknown/stale key dirs")
+
+	root.AddCommand(pathCmd, migrateCmd, listCmd)
 	register(root)
 }
 
@@ -107,6 +133,161 @@ func runRuntimePath(out io.Writer, cfg config.Config, repoRoot string) error {
 		fmt.Fprintf(out, "layout       home-keyed\n")
 	}
 	return nil
+}
+
+// runtimeListEntry is one home-keyed runtime dir for `satelle runtime list`.
+type runtimeListEntry struct {
+	Key     string
+	Dir     string
+	Status  string // linked | stale | unknown
+	Repo    string
+	Size    int64
+	DBMtime string
+	HasDB   bool
+}
+
+func runRuntimeList(out io.Writer, orphansOnly bool) error {
+	home := config.GlobalDir()
+	entries, err := listRuntimeKeyDirs(home)
+	if err != nil {
+		return err
+	}
+	// Registry fallback: key → abs repo path for dirs without a marker.
+	reg := registryKeyMap()
+	var shown []runtimeListEntry
+	for _, e := range entries {
+		if e.Repo == "" {
+			if p, ok := reg[e.Key]; ok {
+				e.Repo = p
+			}
+		}
+		e.Status = classifyRuntimeEntry(e.Repo)
+		if orphansOnly && e.Status == "linked" {
+			continue
+		}
+		shown = append(shown, e)
+	}
+	if len(shown) == 0 {
+		if orphansOnly {
+			fmt.Fprintln(out, "no orphan/stale runtime key dirs")
+		} else {
+			fmt.Fprintln(out, "no runtime key dirs under", home)
+		}
+		return nil
+	}
+	fmt.Fprintf(out, "home  %s\n\n", home)
+	fmt.Fprintf(out, "%-28s  %-8s  %10s  %-20s  %s\n", "KEY", "STATUS", "SIZE", "DB_MTIME", "REPO")
+	for _, e := range shown {
+		size := formatSize(e.Size)
+		mtime := e.DBMtime
+		if mtime == "" {
+			mtime = "-"
+		}
+		repo := e.Repo
+		if repo == "" {
+			repo = "-"
+		}
+		fmt.Fprintf(out, "%-28s  %-8s  %10s  %-20s  %s\n", e.Key, e.Status, size, mtime, repo)
+	}
+	// Suggest rm for unknown/stale — never delete.
+	var rm []string
+	for _, e := range shown {
+		if e.Status == "unknown" || e.Status == "stale" {
+			rm = append(rm, e.Dir)
+		}
+	}
+	if len(rm) > 0 {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "To remove orphan/stale key dirs (review first — satelle never deletes):")
+		for _, d := range rm {
+			fmt.Fprintf(out, "  rm -rf %s\n", d)
+		}
+	}
+	return nil
+}
+
+func listRuntimeKeyDirs(home string) ([]runtimeListEntry, error) {
+	ents, err := os.ReadDir(home)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("runtime list: read %s: %w", home, err)
+	}
+	var out []runtimeListEntry
+	for _, ent := range ents {
+		if !ent.IsDir() || !config.IsRuntimeKeyDir(ent.Name()) {
+			continue
+		}
+		dir := filepath.Join(home, ent.Name())
+		e := runtimeListEntry{
+			Key:  ent.Name(),
+			Dir:  dir,
+			Repo: config.ReadRepoPathMarker(dir),
+			Size: dirSize(dir),
+		}
+		dbPath := filepath.Join(dir, config.DefaultDBName)
+		if st, err := os.Stat(dbPath); err == nil && !st.IsDir() {
+			e.HasDB = true
+			e.DBMtime = st.ModTime().UTC().Format("2006-01-02T15:04:05Z")
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+// registryKeyMap builds RepoKey(path) → path for every workspace registry entry.
+func registryKeyMap() map[string]string {
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		return nil
+	}
+	m := map[string]string{}
+	for _, p := range gc.Workspace.Repos {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		m[config.RepoKey(p)] = p
+	}
+	return m
+}
+
+func classifyRuntimeEntry(repo string) string {
+	if repo == "" {
+		return "unknown"
+	}
+	if st, err := os.Stat(repo); err != nil || !st.IsDir() {
+		return "stale"
+	}
+	return "linked"
+}
+
+func dirSize(root string) int64 {
+	var n int64
+	_ = filepath.Walk(root, func(_ string, fi os.FileInfo, err error) error {
+		if err != nil || fi == nil || fi.IsDir() {
+			return nil
+		}
+		n += fi.Size()
+		return nil
+	})
+	return n
+}
+
+func formatSize(n int64) string {
+	const (
+		kb = 1024
+		mb = 1024 * kb
+	)
+	switch {
+	case n >= mb:
+		return fmt.Sprintf("%.1fM", float64(n)/float64(mb))
+	case n >= kb:
+		return fmt.Sprintf("%.1fK", float64(n)/float64(kb))
+	default:
+		return fmt.Sprintf("%dB", n)
+	}
 }
 
 func runRuntimeMigrate(out io.Writer, a *app.App, force, dryRun bool) error {

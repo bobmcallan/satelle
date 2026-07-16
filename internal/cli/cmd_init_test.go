@@ -18,20 +18,26 @@ import (
 	"github.com/bobmcallan/satelle/internal/structure"
 )
 
-// isolateUserHome pins HOME to a disposable dir for this test so init's
-// Grok-compat write (~/.grok/config.toml) cannot touch the developer's real
-// config when grok is on PATH (sty_24b32127). Idempotent within a test.
+// isolateUserHome pins HOME and SATELLE_HOME to a disposable dir for this test
+// so init's Grok-compat write (~/.grok/config.toml) and the home-keyed runtime
+// plane cannot touch the developer's real config/home (sty_24b32127,
+// sty_c36c211f). Idempotent within a test.
 func isolateUserHome(t *testing.T) {
 	t.Helper()
 	if os.Getenv("SATELLE_INIT_TEST_HOME") != "" {
+		// Still enforce SATELLE_HOME — GlobalDir panics under test without it.
+		if strings.TrimSpace(os.Getenv("SATELLE_HOME")) == "" {
+			t.Setenv("SATELLE_HOME", t.TempDir())
+		}
 		return
 	}
 	h := t.TempDir()
 	t.Setenv("HOME", h)
+	t.Setenv("SATELLE_HOME", h)
 	t.Setenv("SATELLE_INIT_TEST_HOME", h)
 }
 
-// runInitTest is runInit with HOME isolated (see isolateUserHome).
+// runInitTest is runInit with HOME/SATELLE_HOME isolated (see isolateUserHome).
 // Registers the repo in the local workspace registry by default (sty_3bdbdc38).
 func runInitTest(t *testing.T, out io.Writer, repo string) error {
 	t.Helper()

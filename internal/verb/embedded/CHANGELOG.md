@@ -7,6 +7,18 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
+## [0.0.268] - 2026-07-17
+
+### Fixed
+- Tests that resolve the home-keyed runtime plane without SATELLE_HOME now panic instead of minting orphan dirs under the real ~/.satelle (sty_c36c211f)
+
+### Added
+- `satelle runtime list [--orphans]`: list home-keyed key dirs with linked/stale/unknown status, repo reverse-map (repo.path marker + registry), and rm suggestions (sty_c36c211f)
+- `testutil.IsolateHome` helper and `repo.path` marker written on open/init for reverse resolution (sty_c36c211f)
+
+### Changed
+- Integration host-surface guard records new runtime key dirs as pollution while still allowing pre-existing live-service key trees (sty_c36c211f)
+
 ## [0.0.267] - 2026-07-17
 
 ### Fixed

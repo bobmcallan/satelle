@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 func TestSlugify(t *testing.T) {
@@ -24,6 +26,8 @@ func TestSlugify(t *testing.T) {
 }
 
 func TestProjectsPageListsBoundAndChildren(t *testing.T) {
+	// ProjectsPage → workspace.Load may ResolveDB via GlobalDir (sty_c36c211f).
+	testutil.IsolateHome(t)
 	projects := []Project{
 		{Slug: "satelle", Name: "satelle", Path: "/repos/satelle"},
 		{Slug: "satelle-homepage", Name: "satelle-homepage", Path: "/repos/satelle-homepage"},

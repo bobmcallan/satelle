@@ -664,6 +664,7 @@ func TestFragmentEndpoints(t *testing.T) {
 }
 
 func TestRealtimeTriggerOnDBChange(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir()) // web.New → ResolveHostedServer → GlobalDir (sty_c36c211f)
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
 		t.Fatal(err)

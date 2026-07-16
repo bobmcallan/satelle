@@ -153,9 +153,14 @@ func newFakeConfigServer(t *testing.T) *httptest.Server {
 
 // syncConfigRepo scaffolds a temp repo with the given satelle.toml body (plus the
 // agents layer a store-backed command would need) and returns its dir. Does NOT
-// touch SATELLE_CONFIG — call pointAt to switch the active repo.
+// touch SATELLE_CONFIG — call pointAt to switch the active repo. Isolates
+// SATELLE_HOME so store-backed verbs cannot mint real ~/.satelle keys
+// (sty_c36c211f).
 func syncConfigRepo(t *testing.T, satelleToml string) string {
 	t.Helper()
+	if strings.TrimSpace(os.Getenv("SATELLE_HOME")) == "" {
+		t.Setenv("SATELLE_HOME", t.TempDir())
+	}
 	repo := t.TempDir()
 	dir := filepath.Join(repo, ".satelle")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -172,6 +177,9 @@ func syncConfigRepo(t *testing.T, satelleToml string) string {
 
 func pointAt(t *testing.T, repo string) {
 	t.Helper()
+	if strings.TrimSpace(os.Getenv("SATELLE_HOME")) == "" {
+		t.Setenv("SATELLE_HOME", t.TempDir())
+	}
 	t.Setenv("SATELLE_CONFIG", filepath.Join(repo, ".satelle", "satelle.toml"))
 }
 

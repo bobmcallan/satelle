@@ -756,6 +756,8 @@ func TestStopcheckReasonCaps(t *testing.T) {
 // TestRunHookPromptEmitsReminder: every prompt re-injects the concise rule via a
 // UserPromptSubmit additionalContext payload.
 func TestRunHookPromptEmitsReminder(t *testing.T) {
+	// Prompt self-check may load global/config paths via GlobalDir (sty_c36c211f).
+	t.Setenv("SATELLE_HOME", t.TempDir())
 	var buf bytes.Buffer
 	if err := runHookPrompt(&buf); err != nil {
 		t.Fatalf("runHookPrompt: %v", err)
