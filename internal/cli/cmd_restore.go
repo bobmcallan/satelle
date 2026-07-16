@@ -40,7 +40,9 @@ workflows, documents, tasks, configs, constitution — are never touched.`,
 			if err != nil {
 				return err
 			}
-			return runRestore(cmd.OutOrStdout(), cmd.InOrStdin(), a.DataDir, yes, ResolveBackupOpts(a.Config))
+			opts := ResolveBackupOpts(a.Config)
+			opts.BackupsDir = a.RuntimeDir
+			return runRestore(cmd.OutOrStdout(), cmd.InOrStdin(), a.DataDir, yes, opts)
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the overwrite non-interactively")
@@ -60,7 +62,8 @@ type restorePlanEntry struct {
 // (sty_9e2426b3). It never touches WORKFLOWS — the repo's workflow set is its
 // own, and the same-named embedded defaults would clobber a customized
 // lifecycle (`satelle rebase` owns the workflow reset, with a backup) — or any
-// file without an embedded counterpart.
+// file without an embedded counterpart. Pre-mutation backups land under
+// opts.BackupsDir when set (runtime plane).
 func runRestore(out io.Writer, in io.Reader, dataDir string, yes bool, backupOpts ...BackupOpts) error {
 	var opts BackupOpts
 	if len(backupOpts) > 0 {

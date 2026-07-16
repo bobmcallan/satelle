@@ -1,7 +1,8 @@
 // substrate_backup.go — shared pre-mutation backup for authored substrate
-// (sty_873a5380). Local floor always under .satelle/backups/; optional personal
-// hosted push when configured+authenticated; advisory (never a gate) when no
-// hosted channel and the operator has not opted local-only.
+// (sty_873a5380). Local floor always under the runtime plane's backups/ tree
+// (~/.satelle/<repo-key>/backups/ when home-keyed — sty_4660bbe1); optional
+// personal hosted push when configured+authenticated; advisory (never a gate)
+// when no hosted channel and the operator has not opted local-only.
 package cli
 
 import (
@@ -17,7 +18,7 @@ import (
 )
 
 // BackupKind names the backup sub-tree (diverged / pre-mutation / restore / …).
-// Layout: dataDir/backups/<kind>/<relPath> — deterministic, clock-free for
+// Layout: <runtimeDir>/backups/<kind>/<relPath> — deterministic, clock-free for
 // single-file kinds so re-runs overwrite the same slot (idempotent).
 type BackupKind string
 
@@ -49,6 +50,10 @@ type BackupOpts struct {
 	Now time.Time
 	// HostedPush is an optional override for tests (nil → real hosted client).
 	HostedPush func(ctx context.Context, relPath string, body []byte) (dest string, err error)
+	// BackupsDir is the parent of the backups/ tree (the runtime plane —
+	// sty_4660bbe1). When empty, backupExistingFile uses its dataDir argument
+	// as that parent (tests / single-tree fixtures).
+	BackupsDir string
 }
 
 // ResolveBackupOpts reads the backup policy from cfg (and defaults). Safe with
@@ -65,15 +70,24 @@ func ResolveBackupOpts(cfg config.Config) BackupOpts {
 	return opts
 }
 
+// backupRoot is the parent of backups/<kind>/… — RuntimeDir when set on opts
+// (sty_4660bbe1), else the dataDir argument (tests that share one tree).
+func backupRoot(dataDir string, opts BackupOpts) string {
+	if d := strings.TrimSpace(opts.BackupsDir); d != "" {
+		return d
+	}
+	return dataDir
+}
+
 // backupExistingFile writes a local copy of body at
-// dataDir/backups/<kind>/<relPath>, then optionally pushes to the personal
-// hosted service. Never blocks a heal path: hosted/auth failures degrade to
-// local-only with a notice. relPath is the kind-relative slash path.
+// <runtime|dataDir>/backups/<kind>/<relPath>, then optionally pushes to the
+// personal hosted service. Never blocks a heal path: hosted/auth failures
+// degrade to local-only with a notice. relPath is the kind-relative slash path.
 func backupExistingFile(dataDir string, kind BackupKind, relPath string, body []byte, opts BackupOpts) (BackupResult, error) {
 	if body == nil {
 		body = []byte{}
 	}
-	local := filepath.Join(dataDir, "backups", string(kind), filepath.FromSlash(relPath))
+	local := filepath.Join(backupRoot(dataDir, opts), "backups", string(kind), filepath.FromSlash(relPath))
 	if err := writeEmbedded(local, string(body)); err != nil {
 		return BackupResult{}, fmt.Errorf("backup %s: %w", relPath, err)
 	}
