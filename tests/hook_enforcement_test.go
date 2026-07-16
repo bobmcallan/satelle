@@ -65,9 +65,7 @@ func hookStdout(t *testing.T, repo, sub, event string) string {
 func TestInitSeedsAndInjectsEditsPrinciple(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	if _, err := os.Stat(filepath.Join(repo, ".satelle", "principles", "satelle-edits-require-a-story.md")); err != nil {
-		t.Fatalf("init did not seed the edits-require-a-story principle: %v", err)
-	}
+	// Virtual principle: resolve via List overlay; inject without on-disk seed.
 	mustRun(t, testBin, repo, "reindex", "--validate=false")
 	ctx := mustRun(t, testBin, repo, "hook", "context")
 	if !strings.Contains(ctx, "Edits require a story") {

@@ -34,6 +34,7 @@ func wfList(t *testing.T, repo, category string) []wfListRow {
 func TestEmbeddedBaselinePrecedence(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
+	materializeDefaultSolution(t, repo)
 	mustRun(t, testBin, repo, "reindex")
 
 	// (a) The seeded baseline workflow (a repo file, not embedded) is the active

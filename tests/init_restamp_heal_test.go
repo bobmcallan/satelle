@@ -30,43 +30,26 @@ func isReleaseTestBin(t *testing.T) bool {
 func TestInitHealsUnstampedIdentical(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
+	materializeDefault(t, repo, "skills", "satelle-step-summary")
 	data := filepath.Join(repo, ".satelle")
 	_ = os.Remove(filepath.Join(data, "deployed.version"))
 
-	skillDir := filepath.Join(data, "skills")
-	ents, err := os.ReadDir(skillDir)
+	// Strip embedded_sha from the materialised skill.
+	stripped := filepath.Join(data, "skills", "satelle-step-summary.md")
+	b0, err := os.ReadFile(stripped)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var stripped string
-	for _, e := range ents {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+	lines := strings.Split(string(b0), "\n")
+	var outLines []string
+	for _, ln := range lines {
+		if strings.HasPrefix(strings.TrimSpace(ln), "embedded_sha:") {
 			continue
 		}
-		p := filepath.Join(skillDir, e.Name())
-		b, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		if !strings.Contains(string(b), "embedded_sha:") {
-			continue
-		}
-		lines := strings.Split(string(b), "\n")
-		var out []string
-		for _, ln := range lines {
-			if strings.HasPrefix(strings.TrimSpace(ln), "embedded_sha:") {
-				continue
-			}
-			out = append(out, ln)
-		}
-		if err := os.WriteFile(p, []byte(strings.Join(out, "\n")), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		stripped = p
-		break
+		outLines = append(outLines, ln)
 	}
-	if stripped == "" {
-		t.Fatal("no stamped skill found to strip")
+	if err := os.WriteFile(stripped, []byte(strings.Join(outLines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
 	out := mustRun(t, testBin, repo, "init")

@@ -26,17 +26,20 @@ func TestInitSkeleton(t *testing.T) {
 		".satelle/workflows/README.md",
 		".satelle/principles/README.md",
 		".satelle/skills/README.md",
-		".satelle/skills/satelle-step-summary.md",
-		// Embedded operating principles are materialised so List-based SessionStart
-		// injection + doc-list discovery find them on disk (sty_94da9ac9).
-		".satelle/principles/satelle-agent-goals.md",
-		".satelle/principles/satelle-agent-model.md",
-		// sty_bf153cbf reverses sty_3f9a6124: the baseline is now the single seeded
-		// lifecycle workflow — a real, editable repo file a fresh repo builds from.
-		".satelle/workflows/satelle-baseline-workflow.md",
+		".satelle/tasks/README.md",
 	} {
 		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
 			t.Errorf("init did not create %s: %v", rel, err)
+		}
+	}
+	// Virtual sparse defaults (sty_29e5a9a5): no unedited default markdown.
+	for _, rel := range []string{
+		".satelle/skills/satelle-step-summary.md",
+		".satelle/principles/satelle-agent-goals.md",
+		".satelle/workflows/satelle-baseline-workflow.md",
+	} {
+		if _, err := os.Stat(filepath.Join(repo, rel)); err == nil {
+			t.Errorf("init must not seed %s", rel)
 		}
 	}
 	// The removed .satelle/stories mirror must NOT be recreated (sty_746a0c98).

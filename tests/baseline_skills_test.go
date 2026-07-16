@@ -17,6 +17,7 @@ import (
 func TestInitMaterializesBaselineGateSkills(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
+	materializeDefaultSolution(t, repo)
 
 	for _, name := range []string{
 		"satelle-story-intent-review",

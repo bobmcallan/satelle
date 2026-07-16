@@ -17,20 +17,20 @@ func TestRestoreRecoversDriftedSubstrate(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	// init materialises the baseline's gate skills — drift one.
+	// Materialize a skill for restore to act on (virtual defaults: not seeded).
+	materializeDefault(t, repo, "skills", "satelle-step-summary")
 	skill := filepath.Join(repo, ".satelle", "skills", "satelle-step-summary.md")
 	orig, err := os.ReadFile(skill)
 	if err != nil {
-		t.Fatalf("expected init-materialised skill: %v", err)
+		t.Fatalf("expected materialised skill: %v", err)
 	}
 
-	// init also seeds the baseline WORKFLOW itself now (sty_bf153cbf); capture it
-	// so we can prove restore leaves workflows alone (it only owns skills and
-	// principles — 'satelle rebase' is the workflow reset path).
+	// Materialize baseline workflow only to prove restore leaves workflows alone.
+	materializeDefault(t, repo, "workflows", "satelle-baseline-workflow")
 	baselineWF := filepath.Join(repo, ".satelle", "workflows", "satelle-baseline-workflow.md")
 	wfBefore, err := os.ReadFile(baselineWF)
 	if err != nil {
-		t.Fatalf("expected init-seeded baseline workflow: %v", err)
+		t.Fatalf("expected materialised baseline workflow: %v", err)
 	}
 	if err := os.WriteFile(skill, []byte("broken: drifted by hand"), 0o644); err != nil {
 		t.Fatal(err)

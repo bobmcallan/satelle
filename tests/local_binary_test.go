@@ -68,7 +68,7 @@ func TestLocalBinaryReexec(t *testing.T) {
 // local mode does not aggregate. Global mode (covered by TestMultiProjectServe)
 // would list both.
 func TestLocalModeServeSingleProjectOwnPort(t *testing.T) {
-	home := t.TempDir()
+	home := isolatedHome(t)
 	repo := t.TempDir()
 	other := t.TempDir()
 	mustRun(t, testBin, repo, "init")
