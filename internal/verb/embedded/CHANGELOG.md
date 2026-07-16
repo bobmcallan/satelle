@@ -7,6 +7,11 @@ newest release first. Each release is a level-2 `## [X.Y.Z] - DATE` header.
 version is breaking — the single marker require-init and post-upgrade heal key on.
 Agents retrieve deltas with `satelle changelog [--from X] [--to Y]` (no git history).
 
+## [0.0.266] - 2026-07-16
+
+### Fixed
+- Status transitions that skip a required workflow DOT step are refused with the expected next step named, even when the transition gater is unwired (sty_ebd3d666)
+
 ## [0.0.265] - 2026-07-16
 
 ### Added
