@@ -28,6 +28,7 @@ func TestEmbeddedOperatingPrinciples(t *testing.T) {
 		"satelle-agent-goals",
 		"satelle-agent-model",
 		"satelle-edits-require-a-story",
+		"satelle-cross-repo-containment",
 		"satelle-recognise-blockage",
 		"satelle-residency",
 		"satelle-done-is-last",
@@ -39,6 +40,27 @@ func TestEmbeddedOperatingPrinciples(t *testing.T) {
 			t.Errorf("operating principle %q must be embedded, but is missing from EmbeddedDefaults()", name)
 		} else if len(body) == 0 {
 			t.Errorf("embedded principle %q has empty body", name)
+		}
+	}
+	// Cross-repo containment (sty_aadd4d6c): session-resident, create-not-progress.
+	if body := embedded["satelle-cross-repo-containment"]; body != "" {
+		tagsLine := ""
+		for _, line := range strings.Split(body, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "tags:") {
+				tagsLine = line
+				break
+			}
+		}
+		if !strings.Contains(tagsLine, "principles:session") {
+			t.Error("satelle-cross-repo-containment must carry principles:session")
+		}
+		for _, want := range []string{"Create", "session", "allow_outside_tree_edits"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("satelle-cross-repo-containment missing %q", want)
+			}
+		}
+		if len(body) > 900 {
+			t.Errorf("satelle-cross-repo-containment must stay terse (under ~900 bytes); got %d", len(body))
 		}
 	}
 	// Taxonomy principle is embedded + ondemand (sty_cd5e341c): it DEFINES the
