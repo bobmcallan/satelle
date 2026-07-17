@@ -14,6 +14,7 @@ import (
 // TestMigrateConvergesLegacyFixture (sty_a3915840 AC5): a full legacy layout
 // dry-runs a complete plan, --yes converges, and a second run is a no-op.
 func TestMigrateConvergesLegacyFixture(t *testing.T) {
+	disableServeProbe(t)
 	home := t.TempDir()
 	t.Setenv("SATELLE_HOME", home)
 
@@ -90,7 +91,7 @@ func TestMigrateConvergesLegacyFixture(t *testing.T) {
 
 	// Dry-run: nothing applied.
 	var dry strings.Builder
-	if err := runMigrate(&dry, a, false); err != nil {
+	if err := runMigrate(&dry, a, false, false); err != nil {
 		t.Fatalf("dry-run: %v\n%s", err, dry.String())
 	}
 	s := dry.String()
@@ -117,7 +118,7 @@ func TestMigrateConvergesLegacyFixture(t *testing.T) {
 
 	// Apply.
 	var apply strings.Builder
-	if err := runMigrate(&apply, a, true); err != nil {
+	if err := runMigrate(&apply, a, true, false); err != nil {
 		t.Fatalf("apply: %v\n%s", err, apply.String())
 	}
 	if !fileExists(homeDB) {
@@ -151,7 +152,7 @@ func TestMigrateConvergesLegacyFixture(t *testing.T) {
 
 	// Idempotent second run.
 	var again strings.Builder
-	if err := runMigrate(&again, a, true); err != nil {
+	if err := runMigrate(&again, a, true, false); err != nil {
 		t.Fatalf("second run: %v\n%s", err, again.String())
 	}
 	if !strings.Contains(again.String(), "already on current structure") {
@@ -215,6 +216,7 @@ func TestEnsureGitignoreConvergesStaleBlock(t *testing.T) {
 // to without clobbering operator additions; empty list is left alone; second
 // run is a no-op.
 func TestMigrateAppendsEditExemptGitignore(t *testing.T) {
+	disableServeProbe(t)
 	home := t.TempDir()
 	t.Setenv("SATELLE_HOME", home)
 
@@ -254,7 +256,7 @@ edit_exempt_paths = [".satelle/", ".claude/"]
 
 	// Dry-run names the config step.
 	var dry strings.Builder
-	if err := runMigrate(&dry, a, false); err != nil {
+	if err := runMigrate(&dry, a, false, false); err != nil {
 		t.Fatalf("dry-run: %v\n%s", err, dry.String())
 	}
 	if !strings.Contains(dry.String(), "edit_exempt_paths") && !strings.Contains(dry.String(), ".gitignore") {
@@ -268,7 +270,7 @@ edit_exempt_paths = [".satelle/", ".claude/"]
 
 	// Apply: append .gitignore, keep .claude/.
 	var apply strings.Builder
-	if err := runMigrate(&apply, a, true); err != nil {
+	if err := runMigrate(&apply, a, true, false); err != nil {
 		t.Fatalf("apply: %v\n%s", err, apply.String())
 	}
 	got, err := os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
@@ -285,7 +287,7 @@ edit_exempt_paths = [".satelle/", ".claude/"]
 
 	// Idempotent second run.
 	var again strings.Builder
-	if err := runMigrate(&again, a, true); err != nil {
+	if err := runMigrate(&again, a, true, false); err != nil {
 		t.Fatalf("second run: %v\n%s", err, again.String())
 	}
 	if !strings.Contains(again.String(), "already on current structure") {

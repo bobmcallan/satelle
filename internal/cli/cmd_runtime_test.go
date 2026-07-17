@@ -41,6 +41,7 @@ func TestRuntimePathReportsLegacy(t *testing.T) {
 }
 
 func TestRuntimeMigrateCopiesAndLeavesLegacy(t *testing.T) {
+	disableServeProbe(t)
 	home := t.TempDir()
 	t.Setenv("SATELLE_HOME", home)
 	repo := t.TempDir()
@@ -64,7 +65,7 @@ func TestRuntimeMigrateCopiesAndLeavesLegacy(t *testing.T) {
 		DataDir:  dataDir,
 	}
 	var out strings.Builder
-	if err := runRuntimeMigrate(&out, a, false, false); err != nil {
+	if err := runRuntimeMigrate(&out, a, false, false, false); err != nil {
 		t.Fatalf("migrate: %v\n%s", err, out.String())
 	}
 	target := filepath.Join(home, config.RepoKey(repo), config.DefaultDBName)
@@ -80,7 +81,7 @@ func TestRuntimeMigrateCopiesAndLeavesLegacy(t *testing.T) {
 		t.Fatal("logs/ not copied")
 	}
 	// Second migrate without --force refuses.
-	if err := runRuntimeMigrate(&strings.Builder{}, a, false, false); err == nil {
+	if err := runRuntimeMigrate(&strings.Builder{}, a, false, false, false); err == nil {
 		t.Fatal("expected refuse when target exists")
 	}
 	// After migrate, ResolveRuntimeDir prefers home.
@@ -94,6 +95,7 @@ func TestRuntimeMigrateCopiesAndLeavesLegacy(t *testing.T) {
 }
 
 func TestRuntimeMigrateDryRun(t *testing.T) {
+	disableServeProbe(t)
 	home := t.TempDir()
 	t.Setenv("SATELLE_HOME", home)
 	repo := t.TempDir()
@@ -109,7 +111,7 @@ func TestRuntimeMigrateDryRun(t *testing.T) {
 
 	a := &app.App{Config: config.Config{}, RepoRoot: repo, DataDir: dataDir}
 	var out strings.Builder
-	if err := runRuntimeMigrate(&out, a, false, true); err != nil {
+	if err := runRuntimeMigrate(&out, a, false, false, true); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "dry-run") {

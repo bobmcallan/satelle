@@ -53,7 +53,7 @@ path and prints a deprecation note. See decision-substrate-planes-local-first.`,
 		},
 	}
 
-	var force, yes, dryRun bool
+	var force, yes, dryRun, allowLive bool
 	migrateCmd := &cobra.Command{
 		Use:   "migrate",
 		Short: "Copy legacy in-repo runtime state to ~/.satelle/<repo-key>/ (dry-run default)",
@@ -63,12 +63,18 @@ legacy tree in place and prints an rm suggestion — satelle never deletes the
 operator's only ledger copy. Refuses if the target already has a database
 unless --force is set.
 
+LIVE RUNTIME (sty_5308eb60): refuses when the legacy DB holds a fresh
+engagement lease or a satelle serve is responding — relocating under a live
+session strands post-snapshot writes. Pass --allow-live to override (UNSAFE).
+--force only means "overwrite an existing home-keyed DB"; it does NOT bypass
+the liveness check.
+
 Dry-run by default (sty_a3915840 — same convention as 'satelle migrate' and
 'substrate prune'). Pass --yes to apply. --dry-run is accepted as an explicit
 no-op flag for scripts.
 
 Prefer the compose verb 'satelle migrate' for full structure convergence.
-Does not open the store — so the source DB is free for VACUUM INTO.`,
+Does not open the store for writes — the source DB is free for VACUUM INTO.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, cfgPath, err := config.Load("")
@@ -90,12 +96,13 @@ Does not open the store — so the source DB is free for VACUUM INTO.`,
 			}
 			// Dry-run unless --yes. Explicit --dry-run forces dry-run even with --yes.
 			applyDry := !yes || dryRun
-			return runRuntimeMigrate(cmd.OutOrStdout(), a, force, applyDry)
+			return runRuntimeMigrate(cmd.OutOrStdout(), a, force, allowLive, applyDry)
 		},
 	}
 	migrateCmd.Flags().BoolVar(&force, "force", false, "overwrite an existing home-keyed database")
 	migrateCmd.Flags().BoolVar(&yes, "yes", false, "apply the relocation (default is dry-run)")
 	migrateCmd.Flags().BoolVar(&dryRun, "dry-run", false, "print plan only (default; kept for scripts)")
+	migrateCmd.Flags().BoolVar(&allowLive, "allow-live", false, "UNSAFE: relocate even when a live engagement lease or satelle serve is detected")
 
 	var orphansOnly bool
 	listCmd := &cobra.Command{
@@ -298,7 +305,7 @@ func formatSize(n int64) string {
 	}
 }
 
-func runRuntimeMigrate(out io.Writer, a *app.App, force, dryRun bool) error {
+func runRuntimeMigrate(out io.Writer, a *app.App, force, allowLive, dryRun bool) error {
 	cfg := a.Config
 	repoRoot := a.RepoRoot
 	dataDir := a.DataDir
@@ -322,6 +329,13 @@ func runRuntimeMigrate(out io.Writer, a *app.App, force, dryRun bool) error {
 		return fmt.Errorf("runtime migrate: target already has %s (pass --force to overwrite)", targetDB)
 	}
 
+	// Liveness check before any copy (sty_5308eb60). Independent of runMigrate's
+	// check so the public entrypoint is safe on its own.
+	holders, liveErr := ensureLiveOK(out, cfg, repoRoot, legacyDB, allowLive, !dryRun)
+	if liveErr != nil {
+		return liveErr
+	}
+
 	if dryRun {
 		fmt.Fprintf(out, "dry-run: would copy\n")
 		fmt.Fprintf(out, "  database: %s → %s (VACUUM INTO)\n", legacyDB, targetDB)
@@ -332,6 +346,10 @@ func runRuntimeMigrate(out io.Writer, a *app.App, force, dryRun bool) error {
 			}
 		}
 		fmt.Fprintf(out, "  leave legacy tree in place at %s\n", dataDir)
+		if len(holders) > 0 {
+			printLivePlanLine(out, holders)
+			fmt.Fprintln(out, "  (would refuse apply: live runtime — wait, or pass --allow-live)")
+		}
 		return nil
 	}
 
