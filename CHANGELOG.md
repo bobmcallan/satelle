@@ -1,3 +1,8 @@
+## [0.0.274] - 2026-07-17
+
+### Fixed
+- Isolated agents receive story attachments in the transition payload `docs` array; skills/CTA stop directing attachment I/O at in-repo `.satelle/stories/`; status warns on leftover residue (sty_58fa970e)
+
 ## [0.0.273] - 2026-07-17
 
 ### Fixed
