@@ -1,7 +1,9 @@
-## [0.0.271] - 2026-07-17
+## [0.0.272] - 2026-07-17
 
 ### Fixed
 - Default `[gate] edit_exempt_paths` seeds `.gitignore` alongside `.satelle/` so init/migrate's managed `.gitignore` rewrite no longer trips the engaged-story stop hook; `satelle migrate` appends the entry to pre-existing non-empty lists without clobbering operator additions (empty list remains deliberate opt-out) (sty_f115e6bf)
+
+## [0.0.271] - 2026-07-17
 
 ### Changed
 - Hosted client adopts project-addressed sync routes (`/api/v1/projects/{project}/{config,documents,workstate}`); drops workspace id + `?project=` query; `published` stays workspace-level (sty_ca64d0cb)
