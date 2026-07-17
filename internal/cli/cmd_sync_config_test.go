@@ -87,31 +87,20 @@ func sha256hex(b []byte) string {
 
 // newFakeConfigServer stands up a hosted server whose workspaces are a personal
 // "personal" (id ws-personal) and a team "Acme" (id ws-team), with the full
-// per-file config PUT/GET surface. The personal sentinel resolves to ws-personal
-// (kind=personal); the team name to ws-team.
+// per-file config PUT/GET surface, project-addressed (sty_ca64d0cb).
 func newFakeConfigServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	store := &fakeConfigStore{data: map[string]map[string][][]byte{}}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode([]map[string]string{
-			{"id": "ws-personal", "kind": "personal", "name": "personal"},
-			{"id": "ws-team", "kind": "team", "name": "Acme"},
-		})
-	})
-	mux.HandleFunc("/api/v1/workspaces/", func(w http.ResponseWriter, r *http.Request) {
-		rest := strings.TrimPrefix(r.URL.Path, "/api/v1/workspaces/")
-		segs := strings.SplitN(rest, "/", 3) // [wsID, "config", path?]
+	mux.HandleFunc("/api/v1/projects/", func(w http.ResponseWriter, r *http.Request) {
+		rest := strings.TrimPrefix(r.URL.Path, "/api/v1/projects/")
+		segs := strings.SplitN(rest, "/", 3) // [project, "config", path?]
 		if len(segs) < 2 || segs[1] != "config" {
 			http.NotFound(w, r)
 			return
 		}
-		wsID := segs[0]
-		// Project partitions the store (server sty_0e56fe79).
-		if proj := r.URL.Query().Get("project"); proj != "" {
-			wsID = wsID + "|" + proj
-		}
+		project := segs[0]
 		path := ""
 		if len(segs) == 3 {
 			path = segs[2]
@@ -119,7 +108,7 @@ func newFakeConfigServer(t *testing.T) *httptest.Server {
 		switch {
 		case r.Method == http.MethodPut:
 			body, _ := io.ReadAll(r.Body)
-			sha, ver, created := store.put(wsID, path, body)
+			sha, ver, created := store.put(project, path, body)
 			status := http.StatusOK
 			if created {
 				status = http.StatusCreated
@@ -129,13 +118,13 @@ func newFakeConfigServer(t *testing.T) *httptest.Server {
 				"path": path, "version": ver, "blob_sha256": sha, "size": len(body), "created": created,
 			})
 		case r.Method == http.MethodGet && path == "":
-			_ = json.NewEncoder(w).Encode(store.manifest(wsID))
+			_ = json.NewEncoder(w).Encode(store.manifest(project))
 		case r.Method == http.MethodGet:
 			ver := 0
 			if v := r.URL.Query().Get("version"); v != "" {
 				ver, _ = strconv.Atoi(v)
 			}
-			content, sha, ok := store.get(wsID, path, ver)
+			content, sha, ok := store.get(project, path, ver)
 			if !ok {
 				http.NotFound(w, r)
 				return
@@ -283,7 +272,8 @@ func TestSyncConfigPushSharedFlagGoesPersonal(t *testing.T) {
 		t.Fatalf("expected shared-tier deprecation note, got: %q", out)
 	}
 
-	// Both files in personal; team workspace empty of these paths.
+	// Both files land in the project partition (shared no longer dual-routes).
+	// --workspace is inert for routing under project-addressed config (sty_ca64d0cb).
 	dst := syncConfigRepo(t, boundProjectToml)
 	pointAt(t, dst)
 	cmd2, _ := testCmd()
@@ -295,14 +285,6 @@ func TestSyncConfigPushSharedFlagGoesPersonal(t *testing.T) {
 			t.Errorf("personal missing %s: %v", name, err)
 		}
 	}
-	dstTeam := syncConfigRepo(t, boundProjectToml)
-	pointAt(t, dstTeam)
-	cmd3, buf3 := testCmd()
-	_ = runSyncConfigDeploy(cmd3, ts.URL, "Acme", 0)
-	if _, err := os.Stat(filepath.Join(dstTeam, ".satelle", "skills", "shared-one.md")); err == nil {
-		t.Error("shared-flagged file must not land in team via sync")
-	}
-	_ = buf3
 }
 
 // TestSyncConfigPushIdempotent: a second identical push reports unchanged
@@ -410,6 +392,8 @@ func TestSyncConfigPushAreaSharedGoesPersonal(t *testing.T) {
 		t.Fatalf("expected shared-area note, got: %q", out)
 	}
 
+	// Area=shared lands in the project partition (personal dest), not a team
+	// dual-write — publish is the team surface (epic:sync-publish).
 	dst := syncConfigRepo(t, boundProjectToml)
 	pointAt(t, dst)
 	cmd2, _ := testCmd()
@@ -418,13 +402,6 @@ func TestSyncConfigPushAreaSharedGoesPersonal(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dst, ".satelle", "skills", "team-skill.md")); err != nil {
 		t.Errorf("area-shared file missing from personal: %v", err)
-	}
-	dstTeam := syncConfigRepo(t, boundProjectToml)
-	pointAt(t, dstTeam)
-	cmd3, _ := testCmd()
-	_ = runSyncConfigDeploy(cmd3, ts.URL, "Acme", 0)
-	if _, err := os.Stat(filepath.Join(dstTeam, ".satelle", "skills", "team-skill.md")); err == nil {
-		t.Error("area-shared file must not land in team via sync")
 	}
 }
 

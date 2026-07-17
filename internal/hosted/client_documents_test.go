@@ -14,7 +14,7 @@ import (
 func TestClientPushDocumentFile(t *testing.T) {
 	calls := 0
 	ts, c := configTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut || !strings.HasPrefix(r.URL.Path, "/api/v1/workspaces/w1/documents/") {
+		if r.Method != http.MethodPut || !strings.HasPrefix(r.URL.Path, "/api/v1/projects/probe/documents/") {
 			http.NotFound(w, r)
 			return
 		}
@@ -40,15 +40,15 @@ func TestClientPushDocumentFile(t *testing.T) {
 	})
 	_ = ts
 
-	res, err := c.PushDocumentFile(context.Background(), "w1", "probe", "documents/a.md", []byte("doc body"))
+	res, err := c.PushDocumentFile(context.Background(), "probe", "documents/a.md", []byte("doc body"))
 	if err != nil || !res.Created {
 		t.Fatalf("first push = %+v, %v", res, err)
 	}
-	res, err = c.PushDocumentFile(context.Background(), "w1", "probe", "documents/a.md", []byte("doc body"))
+	res, err = c.PushDocumentFile(context.Background(), "probe", "documents/a.md", []byte("doc body"))
 	if err != nil || res.Created {
 		t.Fatalf("idempotent push = %+v, %v", res, err)
 	}
-	_, err = c.PushDocumentFile(context.Background(), "w1", "probe", "documents/a.md", []byte("doc body"))
+	_, err = c.PushDocumentFile(context.Background(), "probe", "documents/a.md", []byte("doc body"))
 	if !errorsIs(err, ErrDocumentConflict) {
 		t.Fatalf("conflict = %v, want ErrDocumentConflict", err)
 	}
@@ -59,7 +59,7 @@ func TestClientPushDocumentFile(t *testing.T) {
 func TestClientListDocumentChanges(t *testing.T) {
 	var gotQuery string
 	ts, c := configTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/workspaces/w1/documents" {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/projects/probe/documents" {
 			http.NotFound(w, r)
 			return
 		}
@@ -68,12 +68,15 @@ func TestClientListDocumentChanges(t *testing.T) {
 	})
 	_ = ts
 
-	ch, err := c.ListDocumentChanges(context.Background(), "w1", "probe", "c1")
+	ch, err := c.ListDocumentChanges(context.Background(), "probe", "c1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(gotQuery, "since=c1") || !strings.Contains(gotQuery, "project=probe") {
-		t.Errorf("query = %q, want project=probe and since=c1", gotQuery)
+	if !strings.Contains(gotQuery, "since=c1") {
+		t.Errorf("query = %q, want since=c1", gotQuery)
+	}
+	if strings.Contains(gotQuery, "project=") {
+		t.Errorf("query = %q must not carry legacy project= (project is in the path)", gotQuery)
 	}
 	if ch.Cursor != "c2" || len(ch.Items) != 1 || ch.Items[0].Path != "documents/a.md" {
 		t.Fatalf("changes = %+v", ch)
@@ -83,7 +86,7 @@ func TestClientListDocumentChanges(t *testing.T) {
 // TestClientDocumentFileContent: 200 returns body + ETag; 404 → missing.
 func TestClientDocumentFileContent(t *testing.T) {
 	ts, c := configTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/workspaces/w1/documents/documents/a.md" {
+		if r.URL.Path == "/api/v1/projects/probe/documents/documents/a.md" {
 			w.Header().Set("ETag", `"abc"`)
 			_, _ = w.Write([]byte("hello"))
 			return
@@ -92,11 +95,11 @@ func TestClientDocumentFileContent(t *testing.T) {
 	})
 	_ = ts
 
-	body, etag, err := c.DocumentFileContent(context.Background(), "w1", "probe", "documents/a.md")
+	body, etag, err := c.DocumentFileContent(context.Background(), "probe", "documents/a.md")
 	if err != nil || string(body) != "hello" || etag != `"abc"` {
 		t.Fatalf("content = %q %q %v", body, etag, err)
 	}
-	_, _, err = c.DocumentFileContent(context.Background(), "w1", "probe", "documents/missing.md")
+	_, _, err = c.DocumentFileContent(context.Background(), "probe", "documents/missing.md")
 	if !errorsIs(err, ErrDocumentFileMissing) {
 		t.Fatalf("missing = %v", err)
 	}

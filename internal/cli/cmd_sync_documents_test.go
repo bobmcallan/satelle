@@ -108,24 +108,16 @@ func newFakeDocServerWithStore(t *testing.T) (*httptest.Server, *fakeDocStore) {
 	hosted.DocumentSyncStatePathOverride = ""
 	store := newFakeDocStore()
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode([]map[string]string{
-			{"id": "ws-personal", "kind": "personal", "name": "personal"},
-			{"id": "ws-team", "kind": "team", "name": "Acme"},
-		})
-	})
-	mux.HandleFunc("/api/v1/workspaces/", func(w http.ResponseWriter, r *http.Request) {
-		rest := strings.TrimPrefix(r.URL.Path, "/api/v1/workspaces/")
-		segs := strings.SplitN(rest, "/", 3) // [wsID, "documents", path?]
+	// Project-addressed documents surface (sty_ca64d0cb). Store key is the
+	// project id/slug alone.
+	mux.HandleFunc("/api/v1/projects/", func(w http.ResponseWriter, r *http.Request) {
+		rest := strings.TrimPrefix(r.URL.Path, "/api/v1/projects/")
+		segs := strings.SplitN(rest, "/", 3) // [project, "documents", path?]
 		if len(segs) < 2 || segs[1] != "documents" {
 			http.NotFound(w, r)
 			return
 		}
-		wsID := segs[0]
-		// Project partitions the store (server sty_0e56fe79).
-		if proj := r.URL.Query().Get("project"); proj != "" {
-			wsID = wsID + "|" + proj
-		}
+		project := segs[0]
 		path := ""
 		if len(segs) == 3 {
 			path = segs[2]
@@ -133,7 +125,7 @@ func newFakeDocServerWithStore(t *testing.T) (*httptest.Server, *fakeDocStore) {
 		switch {
 		case r.Method == http.MethodPut:
 			body, _ := io.ReadAll(r.Body)
-			sha, ver, created := store.put(wsID, path, body)
+			sha, ver, created := store.put(project, path, body)
 			status := http.StatusOK
 			if created {
 				status = http.StatusCreated
@@ -143,10 +135,10 @@ func newFakeDocServerWithStore(t *testing.T) (*httptest.Server, *fakeDocStore) {
 				"path": path, "version": ver, "blob_sha256": sha, "size": len(body), "created": created,
 			})
 		case r.Method == http.MethodGet && path == "":
-			items, cursor := store.changes(wsID, r.URL.Query().Get("since"))
+			items, cursor := store.changes(project, r.URL.Query().Get("since"))
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "cursor": cursor})
 		case r.Method == http.MethodGet:
-			content, sha, ok := store.get(wsID, path)
+			content, sha, ok := store.get(project, path)
 			if !ok {
 				http.NotFound(w, r)
 				return
@@ -475,11 +467,11 @@ func TestSyncDocumentsPullSkipsExcludedAndAdvancesCursor(t *testing.T) {
 	// Seed poison + legitimate content directly on the server (simulates a
 	// partition already poisoned by a prior init hosted-backup push).
 	client := hosted.NewClient(ts.URL, hosted.FileStore{}, nil)
-	if _, err := client.PushDocumentFile(t.Context(), "ws-personal", "probe", "backups/pre-mutation/skills/x.md", []byte("poison")); err != nil {
+	if _, err := client.PushDocumentFile(t.Context(), "probe", "backups/pre-mutation/skills/x.md", []byte("poison")); err != nil {
 		t.Fatalf("seed poison: %v", err)
 	}
 	legit := "---\ntype: document\n---\nlegit\n"
-	if _, err := client.PushDocumentFile(t.Context(), "ws-personal", "probe", "documents/ok.md", []byte(legit)); err != nil {
+	if _, err := client.PushDocumentFile(t.Context(), "probe", "documents/ok.md", []byte(legit)); err != nil {
 		t.Fatalf("seed legit: %v", err)
 	}
 
@@ -527,11 +519,11 @@ func TestSyncDocumentsPullDoesNotFetchExcludedPaths(t *testing.T) {
 	seedCred(t, ts.URL)
 
 	client := hosted.NewClient(ts.URL, hosted.FileStore{}, nil)
-	if _, err := client.PushDocumentFile(t.Context(), "ws-personal", "probe", "backups/pre-mutation/skills/x.md", []byte("poison")); err != nil {
+	if _, err := client.PushDocumentFile(t.Context(), "probe", "backups/pre-mutation/skills/x.md", []byte("poison")); err != nil {
 		t.Fatalf("seed poison: %v", err)
 	}
 	legit := "---\ntype: document\n---\nlegit\n"
-	if _, err := client.PushDocumentFile(t.Context(), "ws-personal", "probe", "documents/ok.md", []byte(legit)); err != nil {
+	if _, err := client.PushDocumentFile(t.Context(), "probe", "documents/ok.md", []byte(legit)); err != nil {
 		t.Fatalf("seed legit: %v", err)
 	}
 
@@ -599,10 +591,10 @@ func TestSyncDocumentsPullAllSkippedReportsSkip(t *testing.T) {
 	seedCred(t, ts.URL)
 
 	client := hosted.NewClient(ts.URL, hosted.FileStore{}, nil)
-	if _, err := client.PushDocumentFile(t.Context(), "ws-personal", "probe", "backups/pre-mutation/y.md", []byte("poison")); err != nil {
+	if _, err := client.PushDocumentFile(t.Context(), "probe", "backups/pre-mutation/y.md", []byte("poison")); err != nil {
 		t.Fatalf("seed poison: %v", err)
 	}
-	if _, err := client.PushDocumentFile(t.Context(), "ws-personal", "probe", "satelle.db", []byte("hostile")); err != nil {
+	if _, err := client.PushDocumentFile(t.Context(), "probe", "satelle.db", []byte("hostile")); err != nil {
 		t.Fatalf("seed db poison: %v", err)
 	}
 

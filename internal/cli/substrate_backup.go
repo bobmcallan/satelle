@@ -127,27 +127,8 @@ func pushHostedBackup(opts BackupOpts, relPath string, body []byte) (string, err
 	_ = cred
 	client := hosted.NewClient(server, store, nil)
 	// Prefer the personal workspace; fall back to ActiveWorkspaceID("").
-	wsID, err := client.ActiveWorkspaceID(context.Background(), "")
-	if err != nil {
-		wss, werr := client.Workspaces(context.Background())
-		if werr != nil {
-			return "", err
-		}
-		for _, w := range wss {
-			if w.Kind == "personal" {
-				wsID = w.ID
-				break
-			}
-		}
-		if wsID == "" && len(wss) > 0 {
-			wsID = wss[0].ID
-		}
-	}
-	if wsID == "" {
-		return "", fmt.Errorf("no hosted workspace")
-	}
 	path := "backups/" + strings.TrimPrefix(filepath.ToSlash(relPath), "/")
-	if _, err := client.PushDocumentFile(context.Background(), wsID, opts.HostedProject, path, body); err != nil {
+	if _, err := client.PushDocumentFile(context.Background(), opts.HostedProject, path, body); err != nil {
 		return "", err
 	}
 	return server + " documents/" + path + " (project " + opts.HostedProject + ")", nil

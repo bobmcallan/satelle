@@ -101,13 +101,9 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 		return err
 	}
 	client := hosted.NewClient(server, hosted.FileStore{}, nil)
-	personalID, err := client.ActiveWorkspaceID(cmd.Context(), config.PersonalWorkspace)
-	if err != nil {
-		return fmt.Errorf("resolve personal workspace: %w", err)
-	}
 	var created, skipped int
 	for _, f := range files {
-		res, perr := client.PushDocumentFile(cmd.Context(), personalID, project, f.Path, f.Content)
+		res, perr := client.PushDocumentFile(cmd.Context(), project, f.Path, f.Content)
 		if perr != nil {
 			if errors.Is(perr, hosted.ErrLoginRequired) {
 				return perr
@@ -158,11 +154,8 @@ func runSyncDocumentsPull(cmd *cobra.Command, serverArg, workspaceArg string) er
 	client := hosted.NewClient(server, hosted.FileStore{}, nil)
 
 	// Personal only (epic:sync-publish). Team catalog is via publish/adopt.
-	personalID, err := client.ActiveWorkspaceID(cmd.Context(), config.PersonalWorkspace)
-	if err != nil {
-		return fmt.Errorf("resolve personal workspace: %w", err)
-	}
-	written, skipped, perr := pullDocumentsFromWorkspace(cmd, client, server, absRoot, dataDir, personalID, project, "personal")
+	// Project-addressed routes (sty_ca64d0cb) need no workspace id.
+	written, skipped, perr := pullDocumentsFromProject(cmd, client, server, absRoot, dataDir, project, "personal")
 	if perr != nil {
 		return perr
 	}
@@ -183,18 +176,19 @@ func runSyncDocumentsPull(cmd *cobra.Command, serverArg, workspaceArg string) er
 	return nil
 }
 
-// pullDocumentsFromWorkspace runs one workspace+project incremental pull: load
-// cursor, list changes, fetch content, Restore, THEN save cursor (only after a
-// successful restore so a crash re-fetches rather than silently drops files).
-// Excluded (local-only) paths are filtered before fetch (sty_0fd04503) and still
-// skipped by Restore as defence in depth, so a partition already poisoned with
-// backups/ can unwedge without hard-erroring (sty_84f14ace).
-func pullDocumentsFromWorkspace(cmd *cobra.Command, client *hosted.Client, server, absRoot, dataDir, wsID, project, label string) (written, skipped int, err error) {
-	cursor, err := hosted.LoadDocumentCursor(server, wsID, project, absRoot)
+// pullDocumentsFromProject runs one project incremental pull: load cursor, list
+// changes, fetch content, Restore, THEN save cursor (only after a successful
+// restore so a crash re-fetches rather than silently drops files). Excluded
+// (local-only) paths are filtered before fetch (sty_0fd04503) and still skipped
+// by Restore as defence in depth, so a partition already poisoned with backups/
+// can unwedge without hard-erroring (sty_84f14ace). Project-addressed routes
+// (sty_ca64d0cb) key the cursor on (server, project, repo) only.
+func pullDocumentsFromProject(cmd *cobra.Command, client *hosted.Client, server, absRoot, dataDir, project, label string) (written, skipped int, err error) {
+	cursor, err := hosted.LoadDocumentCursor(server, project, absRoot)
 	if err != nil {
 		return 0, 0, fmt.Errorf("load document cursor (%s): %w", label, err)
 	}
-	changes, err := client.ListDocumentChanges(cmd.Context(), wsID, project, cursor)
+	changes, err := client.ListDocumentChanges(cmd.Context(), project, cursor)
 	if err != nil {
 		if errors.Is(err, hosted.ErrLoginRequired) {
 			return 0, 0, err
@@ -204,7 +198,7 @@ func pullDocumentsFromWorkspace(cmd *cobra.Command, client *hosted.Client, serve
 	if len(changes.Items) == 0 {
 		// Still advance the cursor when the server issues a new one with an empty batch.
 		if changes.Cursor != "" && changes.Cursor != cursor {
-			if err := hosted.SaveDocumentCursor(server, wsID, project, absRoot, changes.Cursor); err != nil {
+			if err := hosted.SaveDocumentCursor(server, project, absRoot, changes.Cursor); err != nil {
 				return 0, 0, fmt.Errorf("save document cursor (%s): %w", label, err)
 			}
 		}
@@ -220,7 +214,7 @@ func pullDocumentsFromWorkspace(cmd *cobra.Command, client *hosted.Client, serve
 			preSkipped++
 			continue
 		}
-		content, _, ferr := client.DocumentFileContent(cmd.Context(), wsID, project, item.Path)
+		content, _, ferr := client.DocumentFileContent(cmd.Context(), project, item.Path)
 		if ferr != nil {
 			if errors.Is(ferr, hosted.ErrLoginRequired) {
 				return 0, 0, ferr
@@ -247,7 +241,7 @@ func pullDocumentsFromWorkspace(cmd *cobra.Command, client *hosted.Client, serve
 	// Cursor advances after a successful restore — including skip-only batches —
 	// so already-poisoned partitions unwedge on the next pull (sty_84f14ace AC2).
 	if changes.Cursor != "" {
-		if err := hosted.SaveDocumentCursor(server, wsID, project, absRoot, changes.Cursor); err != nil {
+		if err := hosted.SaveDocumentCursor(server, project, absRoot, changes.Cursor); err != nil {
 			return written, skipped, fmt.Errorf("save document cursor (%s): %w", label, err)
 		}
 	}

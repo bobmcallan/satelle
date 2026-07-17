@@ -50,17 +50,16 @@ type WorkstateLedgerRow struct {
 	Record  json.RawMessage `json:"record"`
 }
 
-// workstateRoute is the workspace work-state ingest endpoint.
-func workstateRoute(wsID string) string {
-	return "/api/v1/workspaces/" + url.PathEscape(wsID) + "/workstate"
+// workstateRoute is the project-addressed work-state ingest endpoint
+// (sty_ca64d0cb — team-workspaces Order 2).
+func workstateRoute(project string) string {
+	return "/api/v1/projects/" + url.PathEscape(project) + "/workstate"
 }
 
-// PushWorkstate POSTs a one-way work-state batch into the project's partition of
-// the workspace mirror (.../workstate?project=). Always targets the workspace
-// the caller passes — the CLI always passes the personal workspace (work-state
-// never team-shares). A missing credential yields ErrLoginRequired; other
-// non-200s a clean serverError.
-func (c *Client) PushWorkstate(ctx context.Context, wsID, project string, batch WorkstateIngest) (WorkstateIngestResult, error) {
+// PushWorkstate POSTs a one-way work-state batch into the project's mirror
+// (/api/v1/projects/{project}/workstate). A missing credential yields
+// ErrLoginRequired; other non-200s a clean serverError.
+func (c *Client) PushWorkstate(ctx context.Context, project string, batch WorkstateIngest) (WorkstateIngestResult, error) {
 	if batch.Items == nil {
 		batch.Items = []json.RawMessage{}
 	}
@@ -71,7 +70,7 @@ func (c *Client) PushWorkstate(ctx context.Context, wsID, project string, batch 
 	if err != nil {
 		return WorkstateIngestResult{}, fmt.Errorf("hosted: encode workstate: %w", err)
 	}
-	resp, err := c.doAuthed(ctx, http.MethodPost, withProjectQuery(workstateRoute(wsID), project), payload, contentJSON)
+	resp, err := c.doAuthed(ctx, http.MethodPost, workstateRoute(project), payload, contentJSON)
 	if err != nil {
 		return WorkstateIngestResult{}, err
 	}
@@ -94,11 +93,11 @@ func (c *Client) PushWorkstate(ctx context.Context, wsID, project string, batch 
 }
 
 // ListWorkstateItems GETs the project's mirrored work-state items
-// (.../workstate/items?project=). kind filters when non-empty (story|execution).
-func (c *Client) ListWorkstateItems(ctx context.Context, wsID, project, kind string) ([]WorkstateItem, error) {
-	route := withProjectQuery(workstateRoute(wsID)+"/items", project)
+// (.../workstate/items). kind filters when non-empty (story|execution).
+func (c *Client) ListWorkstateItems(ctx context.Context, project, kind string) ([]WorkstateItem, error) {
+	route := workstateRoute(project) + "/items"
 	if k := strings.TrimSpace(kind); k != "" {
-		route += "&kind=" + url.QueryEscape(k)
+		route += "?kind=" + url.QueryEscape(k)
 	}
 	resp, err := c.doAuthed(ctx, http.MethodGet, route, nil, "")
 	if err != nil {
@@ -125,13 +124,12 @@ func (c *Client) ListWorkstateItems(ctx context.Context, wsID, project, kind str
 	}
 }
 
-// ListWorkstateLedger GETs the project's mirrored ledger
-// (.../workstate/ledger?project=). The whole project ledger is returned when
-// storyID is empty.
-func (c *Client) ListWorkstateLedger(ctx context.Context, wsID, project, storyID string) ([]WorkstateLedgerRow, error) {
-	route := withProjectQuery(workstateRoute(wsID)+"/ledger", project)
+// ListWorkstateLedger GETs the project's mirrored ledger (.../workstate/ledger).
+// The whole project ledger is returned when storyID is empty.
+func (c *Client) ListWorkstateLedger(ctx context.Context, project, storyID string) ([]WorkstateLedgerRow, error) {
+	route := workstateRoute(project) + "/ledger"
 	if s := strings.TrimSpace(storyID); s != "" {
-		route += "&story=" + url.QueryEscape(s)
+		route += "?story=" + url.QueryEscape(s)
 	}
 	resp, err := c.doAuthed(ctx, http.MethodGet, route, nil, "")
 	if err != nil {

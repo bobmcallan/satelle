@@ -54,6 +54,12 @@ func Migrate(db *sql.DB) error {
 		!strings.Contains(err.Error(), "duplicate column") {
 		return fmt.Errorf("workitem: migrate archived column: %w", err)
 	}
+	// park_origin is authoritative resume-to-origin state (sty_f75286dc) — not
+	// ledger-derived. Empty when not parked.
+	if _, err := db.Exec(`ALTER TABLE work_items ADD COLUMN park_origin TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("workitem: migrate park_origin column: %w", err)
+	}
 	return nil
 }
 
@@ -154,15 +160,15 @@ func (s *Store) Upsert(ctx context.Context, it Item, now time.Time) (Item, error
 	if it.Archived {
 		archived = 1
 	}
-	// archived must be listed: INSERT OR REPLACE deletes+reinserts, so omitting
-	// the column would reset disposition to DEFAULT 0 (workstate rehydrate).
+	// archived and park_origin must be listed: INSERT OR REPLACE deletes+reinserts,
+	// so omitting a column would reset it to DEFAULT (workstate rehydrate).
 	_, err := s.db.ExecContext(ctx, `
         INSERT OR REPLACE INTO work_items
-            (id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, archived)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, archived, park_origin)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		it.ID, string(it.Kind), it.Title, it.Body, it.Status, it.Priority, it.Category,
 		it.ParentID, it.AcceptanceCriteria, string(tagsJSON),
-		it.CreatedAt.UTC().Format(time.RFC3339Nano), it.UpdatedAt.UTC().Format(time.RFC3339Nano), archived)
+		it.CreatedAt.UTC().Format(time.RFC3339Nano), it.UpdatedAt.UTC().Format(time.RFC3339Nano), archived, it.ParkOrigin)
 	if err != nil {
 		return Item{}, fmt.Errorf("workitem: upsert: %w", err)
 	}
@@ -265,6 +271,7 @@ type UpdateInput struct {
 	ParentID           *string
 	AcceptanceCriteria *string
 	Tags               *[]string
+	ParkOrigin         *string
 }
 
 // Update applies the set fields to the item and returns the updated row.
@@ -291,6 +298,7 @@ func (s *Store) Update(ctx context.Context, id string, in UpdateInput, now time.
 	addStr("category", in.Category)
 	addStr("parent_id", in.ParentID)
 	addStr("acceptance_criteria", in.AcceptanceCriteria)
+	addStr("park_origin", in.ParkOrigin)
 	if in.Tags != nil {
 		tagsJSON, _ := json.Marshal(nonNilTags(*in.Tags))
 		sets = append(sets, "tags = ?")
@@ -372,7 +380,7 @@ func (s *Store) Fingerprint(ctx context.Context, kind Kind) (string, error) {
 
 // selectCols is the shared SELECT prefix for Get/List, fixing column order so
 // one scan() serves both.
-const selectCols = `SELECT id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, archived FROM work_items`
+const selectCols = `SELECT id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, archived, park_origin FROM work_items`
 
 // scanner is satisfied by both *sql.Row and *sql.Rows.
 type scanner interface{ Scan(dest ...any) error }
@@ -386,7 +394,7 @@ func scan(sc scanner) (Item, error) {
 	)
 	if err := sc.Scan(&it.ID, &kind, &it.Title, &it.Body, &it.Status,
 		&it.Priority, &it.Category, &it.ParentID, &it.AcceptanceCriteria,
-		&tags, &created, &updated, &archived); err != nil {
+		&tags, &created, &updated, &archived, &it.ParkOrigin); err != nil {
 		return Item{}, err
 	}
 	it.Kind = Kind(kind)

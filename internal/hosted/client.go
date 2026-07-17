@@ -172,54 +172,43 @@ func workspaceIDNotFound(name string, workspaces []Workspace) error {
 	return fmt.Errorf("workspace %q not found — available: %s", name, strings.Join(parts, ", "))
 }
 
-// withProjectQuery appends ?project=<slug> (or &project= when the route already
-// has a query). Personal path stores are project-partitioned on the server
-// (sty_0e56fe79); missing project → 400.
-func withProjectQuery(route, project string) string {
-	sep := "?"
-	if strings.Contains(route, "?") {
-		sep = "&"
-	}
-	return route + sep + "project=" + url.QueryEscape(project)
-}
-
-// configManifestRoute is the workspace config root (the manifest / deploy set).
-func configManifestRoute(wsID string) string {
-	return "/api/v1/workspaces/" + url.PathEscape(wsID) + "/config"
+// configManifestRoute is the project-addressed config root (manifest / deploy
+// set). project is an id or slug (sty_ca64d0cb — team-workspaces Order 2).
+func configManifestRoute(project string) string {
+	return "/api/v1/projects/" + url.PathEscape(project) + "/config"
 }
 
 // configFileRoute is the per-file route, escaping each path segment so a path
 // with odd characters round-trips while the slashes that structure it survive.
-func configFileRoute(wsID, path string) string {
+func configFileRoute(project, path string) string {
 	segs := strings.Split(path, "/")
 	for i, s := range segs {
 		segs[i] = url.PathEscape(s)
 	}
-	return configManifestRoute(wsID) + "/" + strings.Join(segs, "/")
+	return configManifestRoute(project) + "/" + strings.Join(segs, "/")
 }
 
-// ConfigManifest returns a workspace+project deploy set (the latest version of
-// every config path) via GET .../config?project=. Any workspace member may read
-// it within the bound project's partition.
-func (c *Client) ConfigManifest(ctx context.Context, wsID, project string) ([]ConfigItem, error) {
+// ConfigManifest returns a project's deploy set (the latest version of every
+// config path) via GET /api/v1/projects/{project}/config.
+func (c *Client) ConfigManifest(ctx context.Context, project string) ([]ConfigItem, error) {
 	var out []ConfigItem
-	if err := c.getJSON(ctx, withProjectQuery(configManifestRoute(wsID), project), &out); err != nil {
+	if err := c.getJSON(ctx, configManifestRoute(project), &out); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// PushConfigFile PUTs one file's verbatim bytes to .../config/{path}?project=,
-// appending a new version (head) when the content differs from the current head
-// in that project's partition. The returned Created flag distinguishes a new
-// head (HTTP 201) from an idempotent re-push of the current head (HTTP 200). A
-// missing credential yields ErrLoginRequired; a body-bearing retry survives the
-// 401→refresh path.
-func (c *Client) PushConfigFile(ctx context.Context, wsID, project, path string, content []byte) (ConfigPushResult, error) {
+// PushConfigFile PUTs one file's verbatim bytes to
+// /api/v1/projects/{project}/config/{path}, appending a new version (head) when
+// the content differs from the current head. The returned Created flag
+// distinguishes a new head (HTTP 201) from an idempotent re-push of the current
+// head (HTTP 200). A missing credential yields ErrLoginRequired; a body-bearing
+// retry survives the 401→refresh path.
+func (c *Client) PushConfigFile(ctx context.Context, project, path string, content []byte) (ConfigPushResult, error) {
 	if content == nil {
 		content = []byte{}
 	}
-	resp, err := c.doAuthed(ctx, http.MethodPut, withProjectQuery(configFileRoute(wsID, path), project), content, "text/plain; charset=utf-8")
+	resp, err := c.doAuthed(ctx, http.MethodPut, configFileRoute(project, path), content, "text/plain; charset=utf-8")
 	if err != nil {
 		return ConfigPushResult{}, err
 	}
@@ -243,15 +232,15 @@ func (c *Client) PushConfigFile(ctx context.Context, wsID, project, path string,
 	}
 }
 
-// ConfigFileContent GETs one path's content from the project's partition — the
-// latest head, or ?version=N for a pinned per-file version (0/omitted means
-// latest). The returned etag is the blob sha256 the server sends in the ETag
-// header. A 404 (no such path, or the pinned version predates the file's first
-// appearance) yields ErrConfigFileMissing.
-func (c *Client) ConfigFileContent(ctx context.Context, wsID, project, path string, version int) ([]byte, string, error) {
-	route := withProjectQuery(configFileRoute(wsID, path), project)
+// ConfigFileContent GETs one path's content from the project — the latest head,
+// or ?version=N for a pinned per-file version (0/omitted means latest). The
+// returned etag is the blob sha256 the server sends in the ETag header. A 404
+// (no such path, or the pinned version predates the file's first appearance)
+// yields ErrConfigFileMissing.
+func (c *Client) ConfigFileContent(ctx context.Context, project, path string, version int) ([]byte, string, error) {
+	route := configFileRoute(project, path)
 	if version > 0 {
-		route += "&version=" + strconv.Itoa(version)
+		route += "?version=" + strconv.Itoa(version)
 	}
 	resp, err := c.doAuthed(ctx, http.MethodGet, route, nil, "")
 	if err != nil {

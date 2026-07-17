@@ -155,22 +155,15 @@ func newFakeSyncServer(t *testing.T) (*httptest.Server, *fakeSyncServer) {
 	hosted.DocumentSyncStatePathOverride = "" // isolate the pull cursor to this XDG dir
 	f := &fakeSyncServer{docs: newFakeDocStore(), cfg: &fakeConfigStore{data: map[string]map[string][][]byte{}}}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode([]map[string]string{
-			{"id": "ws-personal", "kind": "personal", "name": "personal"},
-			{"id": "ws-team", "kind": "team", "name": "Acme"},
-		})
-	})
-	mux.HandleFunc("/api/v1/workspaces/", func(w http.ResponseWriter, r *http.Request) {
-		segs := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/api/v1/workspaces/"), "/", 3) // [wsID, kind, path?]
+	// Project-addressed config/documents/workstate (sty_ca64d0cb). Store key is
+	// the project id/slug alone.
+	mux.HandleFunc("/api/v1/projects/", func(w http.ResponseWriter, r *http.Request) {
+		segs := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/api/v1/projects/"), "/", 3) // [project, kind, path?]
 		if len(segs) < 2 {
 			http.NotFound(w, r)
 			return
 		}
-		wsID := segs[0]
-		if proj := r.URL.Query().Get("project"); proj != "" {
-			wsID = wsID + "|" + proj // project partitions the store (server sty_0e56fe79)
-		}
+		project := segs[0]
 		path := ""
 		if len(segs) == 3 {
 			path = segs[2]
@@ -179,7 +172,7 @@ func newFakeSyncServer(t *testing.T) (*httptest.Server, *fakeSyncServer) {
 			put(string, string, []byte) (string, int, bool)
 		}) {
 			body, _ := io.ReadAll(r.Body)
-			sha, ver, created := store.put(wsID, path, body)
+			sha, ver, created := store.put(project, path, body)
 			status := http.StatusOK
 			if created {
 				status = http.StatusCreated
@@ -193,9 +186,9 @@ func newFakeSyncServer(t *testing.T) (*httptest.Server, *fakeSyncServer) {
 			case r.Method == http.MethodPut:
 				writePut(f.cfg)
 			case r.Method == http.MethodGet && path == "":
-				_ = json.NewEncoder(w).Encode(f.cfg.manifest(wsID))
+				_ = json.NewEncoder(w).Encode(f.cfg.manifest(project))
 			case r.Method == http.MethodGet:
-				content, sha, ok := f.cfg.get(wsID, path, 0)
+				content, sha, ok := f.cfg.get(project, path, 0)
 				if !ok {
 					http.NotFound(w, r)
 					return
@@ -210,10 +203,10 @@ func newFakeSyncServer(t *testing.T) (*httptest.Server, *fakeSyncServer) {
 			case r.Method == http.MethodPut:
 				writePut(f.docs)
 			case r.Method == http.MethodGet && path == "":
-				items, cursor := f.docs.changes(wsID, r.URL.Query().Get("since"))
+				items, cursor := f.docs.changes(project, r.URL.Query().Get("since"))
 				_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "cursor": cursor})
 			case r.Method == http.MethodGet:
-				content, sha, ok := f.docs.get(wsID, path)
+				content, sha, ok := f.docs.get(project, path)
 				if !ok {
 					http.NotFound(w, r)
 					return
@@ -261,7 +254,7 @@ func TestSyncDefaultRunsFullBundleLive(t *testing.T) {
 	pointAt(t, repo)
 
 	// Pre-seed a document ONLY on the server so documents pull must run to land it.
-	f.docs.put("ws-personal|probe", "documents/remote-only.md", []byte("# remote\n"))
+	f.docs.put("probe", "documents/remote-only.md", []byte("# remote\n"))
 
 	// A story so work-state push has a row to send.
 	if out, err := runRoot(t, "story", "create", "--title", "Bundle probe", "--body", "x", "--acceptance", "1. ok"); err != nil {
@@ -282,11 +275,11 @@ func TestSyncDefaultRunsFullBundleLive(t *testing.T) {
 		t.Fatalf("bare sync did not run documents pull — remote-only.md absent locally: %v\noutput:\n%s", err, out)
 	}
 	// Config push reached the server.
-	if _, _, ok := f.cfg.get("ws-personal|probe", "skills/my-skill.md", 0); !ok {
+	if _, _, ok := f.cfg.get("probe", "skills/my-skill.md", 0); !ok {
 		t.Errorf("config push did not reach the server\noutput:\n%s", out)
 	}
 	// Documents push reached the server.
-	if _, _, ok := f.docs.get("ws-personal|probe", "documents/local-doc.md"); !ok {
+	if _, _, ok := f.docs.get("probe", "documents/local-doc.md"); !ok {
 		t.Errorf("documents push did not reach the server\noutput:\n%s", out)
 	}
 	// Work-state push reached the server.
@@ -311,9 +304,9 @@ func TestSyncPoisonedPartitionDoesNotWedgeWorkstate(t *testing.T) {
 	pointAt(t, repo)
 
 	// Poison the documents partition the way a pre-fix init hosted backup would.
-	f.docs.put("ws-personal|probe", "backups/pre-mutation/skills/old.md", []byte("poison"))
+	f.docs.put("probe", "backups/pre-mutation/skills/old.md", []byte("poison"))
 	// Plus a remote-only legitimate document so the pull has real work.
-	f.docs.put("ws-personal|probe", "documents/remote-only.md", []byte("# remote\n"))
+	f.docs.put("probe", "documents/remote-only.md", []byte("# remote\n"))
 
 	if out, err := runRoot(t, "story", "create", "--title", "Poison probe", "--body", "x", "--acceptance", "1. ok"); err != nil {
 		t.Fatalf("story create: %v\n%s", err, out)
@@ -407,7 +400,7 @@ func TestSyncRehydrateLocalOnly(t *testing.T) {
 			{"id": "ws-personal", "kind": "personal", "name": "personal"},
 		})
 	})
-	mux.HandleFunc("GET /api/v1/workspaces/{id}/config", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v1/projects/{project}/config", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode([]any{})
 	})
 	ts := httptest.NewServer(mux)
@@ -450,13 +443,13 @@ func TestSyncRehydrateEmptyTreeHappyPath(t *testing.T) {
 			{"id": "ws-personal", "kind": "personal", "name": "personal"},
 		})
 	})
-	mux.HandleFunc("GET /api/v1/workspaces/{id}/config", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v1/projects/{project}/config", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode([]map[string]any{
 			{"path": "satelle.toml", "version": 1},
 			{"path": "agents.toml", "version": 1},
 		})
 	})
-	mux.HandleFunc("GET /api/v1/workspaces/{id}/config/{path...}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v1/projects/{project}/config/{path...}", func(w http.ResponseWriter, r *http.Request) {
 		p := r.PathValue("path")
 		switch p {
 		case "satelle.toml":
@@ -469,7 +462,7 @@ func TestSyncRehydrateEmptyTreeHappyPath(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	})
-	mux.HandleFunc("GET /api/v1/workspaces/{id}/documents", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v1/projects/{project}/documents", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}, "cursor": ""})
 	})
 	// workstate items after deploy opt-in
@@ -478,13 +471,13 @@ func TestSyncRehydrateEmptyTreeHappyPath(t *testing.T) {
 		"body": "from hosted", "acceptance_criteria": "1. ok",
 	}
 	recBytes, _ := json.Marshal(itemRec)
-	mux.HandleFunc("GET /api/v1/workspaces/{id}/workstate/items", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v1/projects/{project}/workstate/items", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode([]map[string]any{{
 			"id": "sty_rehy1", "kind": "story", "type": "stories", "status": "backlog",
 			"title": "Rehydrated", "origin": "cli-sync", "record": json.RawMessage(recBytes),
 		}})
 	})
-	mux.HandleFunc("GET /api/v1/workspaces/{id}/workstate/ledger", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v1/projects/{project}/workstate/ledger", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode([]any{})
 	})
 	ts := httptest.NewServer(mux)

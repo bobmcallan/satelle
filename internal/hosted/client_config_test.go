@@ -25,7 +25,7 @@ func configTestServer(t *testing.T, h http.HandlerFunc) (*httptest.Server, *Clie
 
 // TestClientActiveWorkspaceID: the personal sentinel resolves to the kind=personal
 // workspace; a team name resolves to its exact match; a miss lists the available
-// workspaces (order:5 name→id bridge).
+// workspaces (order:5 name→id bridge). Still used by publish catalog routes.
 func TestClientActiveWorkspaceID(t *testing.T) {
 	ts, c := configTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/workspaces" {
@@ -58,12 +58,9 @@ func TestClientPushConfigFile(t *testing.T) {
 	var gotCT string
 	calls := 0
 	ts, c := configTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut || !strings.HasPrefix(r.URL.Path, "/api/v1/workspaces/w1/config/") {
+		if r.Method != http.MethodPut || !strings.HasPrefix(r.URL.Path, "/api/v1/projects/probe/config/") {
 			http.NotFound(w, r)
 			return
-		}
-		if r.URL.Query().Get("project") != "probe" {
-			t.Errorf("project query = %q, want probe", r.URL.Query().Get("project"))
 		}
 		calls++
 		b, _ := io.ReadAll(r.Body)
@@ -79,7 +76,7 @@ func TestClientPushConfigFile(t *testing.T) {
 	})
 	_ = ts
 
-	res, err := c.PushConfigFile(context.Background(), "w1", "probe", "skills/x.md", []byte("body"))
+	res, err := c.PushConfigFile(context.Background(), "probe", "skills/x.md", []byte("body"))
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -93,7 +90,7 @@ func TestClientPushConfigFile(t *testing.T) {
 		t.Errorf("first push result = %+v, want Created=true v1", res)
 	}
 	// Second identical push -> idempotent (200, Created=false).
-	res2, err := c.PushConfigFile(context.Background(), "w1", "probe", "skills/x.md", []byte("body"))
+	res2, err := c.PushConfigFile(context.Background(), "probe", "skills/x.md", []byte("body"))
 	if err != nil {
 		t.Fatalf("second push: %v", err)
 	}
@@ -105,17 +102,14 @@ func TestClientPushConfigFile(t *testing.T) {
 // TestClientConfigManifest: GET .../config returns the deploy set list.
 func TestClientConfigManifest(t *testing.T) {
 	ts, c := configTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/workspaces/w1/config" || r.Method != http.MethodGet {
+		if r.URL.Path != "/api/v1/projects/probe/config" || r.Method != http.MethodGet {
 			http.NotFound(w, r)
 			return
-		}
-		if r.URL.Query().Get("project") != "probe" {
-			t.Errorf("project query = %q, want probe", r.URL.Query().Get("project"))
 		}
 		_, _ = w.Write([]byte(`[{"path":"skills/x.md","version":2,"blob_sha256":"h","size":4,"created_at":"t"},{"path":"agents.toml","version":1,"blob_sha256":"g","size":9,"created_at":"t"}]`))
 	})
 	_ = ts
-	items, err := c.ConfigManifest(context.Background(), "w1", "probe")
+	items, err := c.ConfigManifest(context.Background(), "probe")
 	if err != nil {
 		t.Fatalf("manifest: %v", err)
 	}
@@ -125,15 +119,16 @@ func TestClientConfigManifest(t *testing.T) {
 }
 
 // TestClientConfigFileContent: GET returns the content + the ETag blob sha; a
-// pinned ?version=N is requested; a 404 yields ErrConfigFileMissing.
+// pinned ?version=N is requested as a proper query (not &version=); a 404
+// yields ErrConfigFileMissing.
 func TestClientConfigFileContent(t *testing.T) {
-	var gotQuery string
+	var gotURI string
 	ts, c := configTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, "/api/v1/workspaces/w1/config/skills/x.md") {
+		if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, "/api/v1/projects/probe/config/skills/x.md") {
 			http.NotFound(w, r)
 			return
 		}
-		gotQuery = r.URL.RawQuery
+		gotURI = r.URL.RequestURI()
 		if r.URL.Query().Get("version") == "1" {
 			// version 1 does not exist for this file -> 404
 			http.NotFound(w, r)
@@ -144,25 +139,32 @@ func TestClientConfigFileContent(t *testing.T) {
 	})
 	_ = ts
 
-	body, etag, err := c.ConfigFileContent(context.Background(), "w1", "probe", "skills/x.md", 0)
+	body, etag, err := c.ConfigFileContent(context.Background(), "probe", "skills/x.md", 0)
 	if err != nil {
 		t.Fatalf("content: %v", err)
 	}
 	if string(body) != "file body" || etag != `"sha-abc"` {
 		t.Errorf("content = %q, etag = %q", body, etag)
 	}
-	if !strings.Contains(gotQuery, "project=probe") {
-		t.Errorf("latest fetch query %q, want project=probe", gotQuery)
+	if strings.Contains(gotURI, "version=") {
+		t.Errorf("latest fetch URI %q must not pin version", gotURI)
 	}
 	// Pinned version that 404s -> ErrConfigFileMissing (deploy skips it).
-	if _, _, err := c.ConfigFileContent(context.Background(), "w1", "probe", "skills/x.md", 1); !errors.Is(err, ErrConfigFileMissing) {
+	// Assert full URI uses ?version= (not &version=) now that routes have no query.
+	if _, _, err := c.ConfigFileContent(context.Background(), "probe", "skills/x.md", 1); !errors.Is(err, ErrConfigFileMissing) {
 		t.Errorf("pinned-missing = %v, want ErrConfigFileMissing", err)
+	}
+	if !strings.Contains(gotURI, "?version=1") {
+		t.Errorf("pinned URI %q, want ?version=1", gotURI)
+	}
+	if strings.Contains(gotURI, "&version=") {
+		t.Errorf("pinned URI %q must not use &version= without a prior query", gotURI)
 	}
 }
 
 // TestClientPushConfigFileNoCredential: no credential -> ErrLoginRequired.
 func TestClientPushConfigFileNoCredential(t *testing.T) {
-	_, err := NewClient("https://example", &memStore{}, nil).PushConfigFile(context.Background(), "w1", "probe", "x", []byte("b"))
+	_, err := NewClient("https://example", &memStore{}, nil).PushConfigFile(context.Background(), "probe", "x", []byte("b"))
 	if !errors.Is(err, ErrLoginRequired) {
 		t.Fatalf("expected ErrLoginRequired, got %v", err)
 	}

@@ -315,88 +315,92 @@ func newFakePublishAndConfigServer(t *testing.T) *httptest.Server {
 			{"id": "ws-team", "kind": "team", "name": "Acme"},
 		})
 	})
+	// published stays workspace-level; config is project-addressed (sty_ca64d0cb).
 	mux.HandleFunc("/api/v1/workspaces/", func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/api/v1/workspaces/")
 		segs := strings.SplitN(rest, "/", 3)
-		if len(segs) < 2 {
+		if len(segs) < 2 || segs[1] != "published" {
 			http.NotFound(w, r)
 			return
 		}
-		wsID, kind := segs[0], segs[1]
+		wsID := segs[0]
 		path := ""
 		if len(segs) == 3 {
 			path = segs[2]
 		}
-		switch kind {
-		case "published":
-			switch {
-			case r.Method == http.MethodGet && path == "":
-				_ = json.NewEncoder(w).Encode(map[string]any{"items": pub.list(wsID)})
-			case r.Method == http.MethodPut && path != "":
-				body, _ := io.ReadAll(r.Body)
-				ver, created := pub.put(wsID, path, r.URL.Query().Get("kind"), r.URL.Query().Get("title"), "user-1", body)
-				status := http.StatusOK
-				if created {
-					status = http.StatusCreated
-				}
-				w.WriteHeader(status)
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"path": path, "kind": r.URL.Query().Get("kind"), "version": ver, "created": created,
-					"publisher_id": "user-1", "title": r.URL.Query().Get("title"),
-				})
-			case r.Method == http.MethodGet && path != "":
-				ver := 0
-				if v := r.URL.Query().Get("version"); v != "" {
-					ver, _ = strconv.Atoi(v)
-				}
-				pv, n, ok := pub.get(wsID, path, ver)
-				if !ok {
-					http.NotFound(w, r)
-					return
-				}
-				sum := sha256.Sum256(pv.content)
-				w.Header().Set("ETag", `"`+hex.EncodeToString(sum[:])+`"`)
-				w.Header().Set("X-Satelle-Publish-Version", itoa(n))
-				w.Header().Set("X-Satelle-Publish-Kind", pv.kind)
-				w.Header().Set("X-Satelle-Publisher-Id", pv.pub)
-				_, _ = w.Write(pv.content)
-			default:
+		switch {
+		case r.Method == http.MethodGet && path == "":
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": pub.list(wsID)})
+		case r.Method == http.MethodPut && path != "":
+			body, _ := io.ReadAll(r.Body)
+			ver, created := pub.put(wsID, path, r.URL.Query().Get("kind"), r.URL.Query().Get("title"), "user-1", body)
+			status := http.StatusOK
+			if created {
+				status = http.StatusCreated
+			}
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"path": path, "kind": r.URL.Query().Get("kind"), "version": ver, "created": created,
+				"publisher_id": "user-1", "title": r.URL.Query().Get("title"),
+			})
+		case r.Method == http.MethodGet && path != "":
+			ver := 0
+			if v := r.URL.Query().Get("version"); v != "" {
+				ver, _ = strconv.Atoi(v)
+			}
+			pv, n, ok := pub.get(wsID, path, ver)
+			if !ok {
 				http.NotFound(w, r)
+				return
 			}
-		case "config":
-			storeID := wsID
-			if proj := r.URL.Query().Get("project"); proj != "" {
-				storeID = wsID + "|" + proj
+			sum := sha256.Sum256(pv.content)
+			w.Header().Set("ETag", `"`+hex.EncodeToString(sum[:])+`"`)
+			w.Header().Set("X-Satelle-Publish-Version", itoa(n))
+			w.Header().Set("X-Satelle-Publish-Kind", pv.kind)
+			w.Header().Set("X-Satelle-Publisher-Id", pv.pub)
+			_, _ = w.Write(pv.content)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	mux.HandleFunc("/api/v1/projects/", func(w http.ResponseWriter, r *http.Request) {
+		rest := strings.TrimPrefix(r.URL.Path, "/api/v1/projects/")
+		segs := strings.SplitN(rest, "/", 3)
+		if len(segs) < 2 || segs[1] != "config" {
+			http.NotFound(w, r)
+			return
+		}
+		project := segs[0]
+		path := ""
+		if len(segs) == 3 {
+			path = segs[2]
+		}
+		switch {
+		case r.Method == http.MethodPut:
+			body, _ := io.ReadAll(r.Body)
+			sha, ver, created := cfg.put(project, path, body)
+			status := http.StatusOK
+			if created {
+				status = http.StatusCreated
 			}
-			switch {
-			case r.Method == http.MethodPut:
-				body, _ := io.ReadAll(r.Body)
-				sha, ver, created := cfg.put(storeID, path, body)
-				status := http.StatusOK
-				if created {
-					status = http.StatusCreated
-				}
-				w.WriteHeader(status)
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"path": path, "version": ver, "blob_sha256": sha, "size": len(body), "created": created,
-				})
-			case r.Method == http.MethodGet && path == "":
-				_ = json.NewEncoder(w).Encode(cfg.manifest(storeID))
-			case r.Method == http.MethodGet:
-				ver := 0
-				if v := r.URL.Query().Get("version"); v != "" {
-					ver, _ = strconv.Atoi(v)
-				}
-				content, sha, ok := cfg.get(storeID, path, ver)
-				if !ok {
-					http.NotFound(w, r)
-					return
-				}
-				w.Header().Set("ETag", `"`+sha+`"`)
-				_, _ = w.Write(content)
-			default:
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"path": path, "version": ver, "blob_sha256": sha, "size": len(body), "created": created,
+			})
+		case r.Method == http.MethodGet && path == "":
+			_ = json.NewEncoder(w).Encode(cfg.manifest(project))
+		case r.Method == http.MethodGet:
+			ver := 0
+			if v := r.URL.Query().Get("version"); v != "" {
+				ver, _ = strconv.Atoi(v)
+			}
+			content, sha, ok := cfg.get(project, path, ver)
+			if !ok {
 				http.NotFound(w, r)
+				return
 			}
+			w.Header().Set("ETag", `"`+sha+`"`)
+			_, _ = w.Write(content)
 		default:
 			http.NotFound(w, r)
 		}

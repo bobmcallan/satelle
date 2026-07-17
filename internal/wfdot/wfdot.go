@@ -162,6 +162,12 @@ type State struct {
 	// applies_to (Validate rejects). One parse path serves both reviewer and
 	// executor attachments.
 	AppliesTo []string
+	// From is the park node's optional from="*" or from="s1,s2" list
+	// (sty_f75286dc): source states that may park into this node without an
+	// explicit X→park edge. "*" expands to every spine performing state.
+	// Empty means inbound park edges must be drawn explicitly (legacy form).
+	// Resume is NOT declared here — the engine enforces resume-to-origin.
+	From []string
 }
 
 // StepSummary reports whether the workflow declares a step-summary node (a node
@@ -580,6 +586,7 @@ func Parse(body string) (Spec, bool) {
 		onEnterSkill string   // on_enter_prompt="@skill:NAME"
 		mandatory    bool     // mandatory=true attribute
 		on           []string // on="s1,s2" / on="*" scope (declared always-on gate)
+		from         []string // from="s1,s2" / from="*" park inbound sources (sty_f75286dc)
 		shape        string   // DOT shape attribute (Mdiamond=start, Msquare=terminal)
 		model        string   // model="…" per-node override (sty_19456622)
 		appliesTo    []string // applies_to="surface:ui,…" (sty_c6d093c8)
@@ -603,6 +610,19 @@ func Parse(body string) (Spec, bool) {
 		}
 		if strings.Contains(t, "->") {
 			ids := dotEdgeNodes(t)
+			// Wildcards live in attribute values (on=, from=), never as edge
+			// endpoints (sty_f75286dc). Reject before registering a phantom node.
+			for _, id := range ids {
+				if id == "*" {
+					spec.AttrProblems = append(spec.AttrProblems,
+						`wildcard "*" is not a legal edge endpoint — use from="*" (or from="s1,s2") as a park node attribute`)
+					ids = nil
+					break
+				}
+			}
+			if len(ids) == 0 {
+				continue
+			}
 			// An edge may carry its gate directly (e.g. an intent gate on
 			// backlog->in_progress where the target is an executor node). Two
 			// equivalent forms are accepted (sty_be67919a): the edge-centric
@@ -664,6 +684,9 @@ func Parse(body string) (Spec, bool) {
 		if on := splitCSV(attrs["on"]); len(on) > 0 {
 			n.on = on
 		}
+		if from := splitCSV(attrs["from"]); len(from) > 0 {
+			n.from = from
+		}
 		if s := attrs["shape"]; s != "" {
 			n.shape = s
 		}
@@ -684,10 +707,14 @@ func Parse(body string) (Spec, bool) {
 		spec.States = append(spec.States, State{
 			Name: name, Agent: n.agent, Skill: n.skill,
 			OnEnterAgent: n.onEnterAgent, OnEnterSkill: n.onEnterSkill,
-			Mandatory: n.mandatory, On: n.on, Shape: n.shape, Model: n.model,
+			Mandatory: n.mandatory, On: n.on, From: n.from, Shape: n.shape, Model: n.model,
 			AppliesTo: n.appliesTo,
 		})
 	}
+	// Expand park from= into inbound edges so HasEdge/Successors/diagram see them
+	// without an N×2 edge explosion in the authored DOT (sty_f75286dc). Resume is
+	// NOT expanded — the engine enforces resume-to-origin against ParkOrigin.
+	spec.materializeParkFrom()
 	// A transition into a reviewer node is gated by that node's skill — unless the
 	// edge already carries an explicit reviewer_skill attribute, which wins.
 	for i := range spec.Transitions {
@@ -707,6 +734,49 @@ func Parse(body string) (Spec, bool) {
 		spec.States[i].Terminal = !froms[spec.States[i].Name]
 	}
 	return spec, true
+}
+
+// materializeParkFrom appends synthetic source→park edges for each park node
+// that declares from= (sty_f75286dc). Existing explicit edges win (no duplicate).
+// from="*" expands to every spine performing state. Gate skill comes from the
+// park node's prompt when the synthetic edge carries none.
+func (s *Spec) materializeParkFrom() {
+	existing := map[string]bool{}
+	for _, tr := range s.Transitions {
+		existing[tr.From+"\x00"+tr.To] = true
+	}
+	for _, st := range s.States {
+		if len(st.From) == 0 {
+			continue
+		}
+		// from= is a park-node declaration (agent=reviewer non-start).
+		if st.Agent != "reviewer" || st.Shape == "Mdiamond" {
+			s.AttrProblems = append(s.AttrProblems, fmt.Sprintf(
+				`from= on node %q is only valid on a park node (agent=reviewer, not start)`, st.Name))
+			continue
+		}
+		sources := st.From
+		if containsStr(st.From, "*") {
+			sources = s.PerformingStates()
+		}
+		for _, src := range sources {
+			if src == "" || src == st.Name || src == "*" {
+				continue
+			}
+			key := src + "\x00" + st.Name
+			if existing[key] {
+				continue
+			}
+			existing[key] = true
+			var skills []string
+			if st.Skill != "" {
+				skills = []string{st.Skill}
+			}
+			s.Transitions = append(s.Transitions, Transition{
+				From: src, To: st.Name, Skill: first(skills), Skills: skills,
+			})
+		}
+	}
 }
 
 // dotBlock returns the contents of the first fenced ```dot code block in body.
@@ -932,7 +1002,7 @@ func containsStr(ss []string, v string) bool {
 // never reach here — graph […] is short-circuited by dotReserved before attr parse.
 var knownNodeAttrs = map[string]bool{
 	"agent": true, "prompt": true, "on_enter_agent": true, "on_enter_prompt": true,
-	"mandatory": true, "on": true, "shape": true, "model": true, "applies_to": true,
+	"mandatory": true, "on": true, "from": true, "shape": true, "model": true, "applies_to": true,
 }
 
 // Known DOT edge attribute keys. reviewer_skill is parse-only legacy; agent+prompt
@@ -1114,6 +1184,9 @@ func emitDOT(spec Spec, name string) string {
 		}
 		if len(s.On) > 0 {
 			attrs = append(attrs, fmt.Sprintf("on=%q", strings.Join(s.On, ",")))
+		}
+		if len(s.From) > 0 {
+			attrs = append(attrs, fmt.Sprintf("from=%q", strings.Join(s.From, ",")))
 		}
 		if s.Mandatory {
 			attrs = append(attrs, "mandatory=true")

@@ -33,29 +33,30 @@ type DocumentChanges struct {
 	Cursor string       `json:"cursor"`
 }
 
-// documentsManifestRoute is the workspace documents list/root.
-func documentsManifestRoute(wsID string) string {
-	return "/api/v1/workspaces/" + url.PathEscape(wsID) + "/documents"
+// documentsManifestRoute is the project-addressed documents list/root
+// (sty_ca64d0cb — team-workspaces Order 2).
+func documentsManifestRoute(project string) string {
+	return "/api/v1/projects/" + url.PathEscape(project) + "/documents"
 }
 
 // documentFileRoute is the per-path route, escaping each path segment so a path
 // with odd characters round-trips while the slashes that structure it survive.
-func documentFileRoute(wsID, path string) string {
+func documentFileRoute(project, path string) string {
 	segs := strings.Split(path, "/")
 	for i, s := range segs {
 		segs[i] = url.PathEscape(s)
 	}
-	return documentsManifestRoute(wsID) + "/" + strings.Join(segs, "/")
+	return documentsManifestRoute(project) + "/" + strings.Join(segs, "/")
 }
 
 // ListDocumentChanges returns documents that changed after since (empty since =
-// full set) within the project's partition. The returned cursor is what the next
-// pull should pass as since. A missing credential yields ErrLoginRequired;
-// other non-200s a clean serverError.
-func (c *Client) ListDocumentChanges(ctx context.Context, wsID, project, since string) (DocumentChanges, error) {
-	route := withProjectQuery(documentsManifestRoute(wsID), project)
+// full set) for the project. The returned cursor is what the next pull should
+// pass as since. A missing credential yields ErrLoginRequired; other non-200s a
+// clean serverError.
+func (c *Client) ListDocumentChanges(ctx context.Context, project, since string) (DocumentChanges, error) {
+	route := documentsManifestRoute(project)
 	if strings.TrimSpace(since) != "" {
-		route += "&since=" + url.QueryEscape(since)
+		route += "?since=" + url.QueryEscape(since)
 	}
 	resp, err := c.doAuthed(ctx, http.MethodGet, route, nil, "")
 	if err != nil {
@@ -83,14 +84,14 @@ func (c *Client) ListDocumentChanges(ctx context.Context, wsID, project, since s
 }
 
 // PushDocumentFile PUTs one file's verbatim bytes to
-// .../documents/{path}?project=. Created distinguishes a new head (HTTP 201)
-// from an idempotent re-push of the current head (HTTP 200). A 409 yields
-// ErrDocumentConflict; a missing credential yields ErrLoginRequired.
-func (c *Client) PushDocumentFile(ctx context.Context, wsID, project, path string, content []byte) (ConfigPushResult, error) {
+// /api/v1/projects/{project}/documents/{path}. Created distinguishes a new head
+// (HTTP 201) from an idempotent re-push of the current head (HTTP 200). A 409
+// yields ErrDocumentConflict; a missing credential yields ErrLoginRequired.
+func (c *Client) PushDocumentFile(ctx context.Context, project, path string, content []byte) (ConfigPushResult, error) {
 	if content == nil {
 		content = []byte{}
 	}
-	resp, err := c.doAuthed(ctx, http.MethodPut, withProjectQuery(documentFileRoute(wsID, path), project), content, "text/plain; charset=utf-8")
+	resp, err := c.doAuthed(ctx, http.MethodPut, documentFileRoute(project, path), content, "text/plain; charset=utf-8")
 	if err != nil {
 		return ConfigPushResult{}, err
 	}
@@ -116,11 +117,11 @@ func (c *Client) PushDocumentFile(ctx context.Context, wsID, project, path strin
 	}
 }
 
-// DocumentFileContent GETs one path's content as text/plain from the project's
-// partition. The returned etag is the blob sha256 from the ETag header. A 404
-// yields ErrDocumentFileMissing.
-func (c *Client) DocumentFileContent(ctx context.Context, wsID, project, path string) ([]byte, string, error) {
-	resp, err := c.doAuthed(ctx, http.MethodGet, withProjectQuery(documentFileRoute(wsID, path), project), nil, "")
+// DocumentFileContent GETs one path's content as text/plain from the project.
+// The returned etag is the blob sha256 from the ETag header. A 404 yields
+// ErrDocumentFileMissing.
+func (c *Client) DocumentFileContent(ctx context.Context, project, path string) ([]byte, string, error) {
+	resp, err := c.doAuthed(ctx, http.MethodGet, documentFileRoute(project, path), nil, "")
 	if err != nil {
 		return nil, "", err
 	}

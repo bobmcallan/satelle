@@ -59,6 +59,10 @@ type Item struct {
 	// with its full lineage. It is set by the Archive verb, never by an authored
 	// file — so it is not marshalled into the item's markdown.
 	Archived bool `json:"archived,omitempty"`
+	// ParkOrigin is the status a story held when it entered a park node
+	// (sty_f75286dc). Authoritative for resume-to-origin enforcement — not
+	// derived from the ledger. Empty when not parked (or after resume).
+	ParkOrigin string `json:"park_origin,omitempty"`
 }
 
 // idPrefix returns the id prefix for a kind: sty_ for stories, tsk_ for tasks,

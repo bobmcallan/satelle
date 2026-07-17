@@ -92,6 +92,37 @@ Workflow-frontmatter `applies_to` (which workflow governs a category) is a diffe
 altitude and is unchanged. Step-level `applies_to` only filters **whether a scoped
 gate is enqueued**, not which workflow is stamped.
 
+
+
+## Park node `from=` (sty_f75286dc)
+
+A **park node** (agent=reviewer, non-start) may declare inbound sources without
+drawing an N×2 edge explosion:
+
+```dot
+blocked [agent=reviewer, prompt="@skill:satelle-story-blocked-review", from="*"]
+// optional explicit exits:
+blocked -> cancelled
+```
+
+| Form | Meaning |
+| --- | --- |
+| `from="*"` | Every spine **performing** state may park into this node |
+| `from="plan,integration"` | Only the named sources may park |
+
+**Resume is not an edge.** The engine stores the origin status on the work item
+when entering the park node and enforces resume **only to that origin** — so
+parking from `integration` resumes to `integration` without re-running gates
+already passed, and cannot wormhole to `release`.
+
+**Wildcards live in attribute values, never as edge endpoints.** `* -> blocked`
+is rejected by Validate with a named error (it would register a phantom node,
+corrupt Start(), and pollute the diagram). Use `from="*"` on the park node.
+
+Existing explicit `X -> blocked` / `blocked -> X` edges still parse (migration).
+When `park_origin` is set, resume to any performing state other than the origin
+is refused even if a legacy resume edge is drawn.
+
 ## Executor augmentation (`on=` overload, sty_8225d8a5)
 
 An **edge-less performing node** with `on="<state>"` **augments** that spine state's

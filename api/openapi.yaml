@@ -25,15 +25,15 @@ tags:
   - name: config
     description: >-
       Versioned, per-user authored-config store (the "set up project X like Y"
-      surface). Per-file and workspace-scoped.
+      surface). Project-addressed under /api/v1/projects/{project}/config.
   - name: documents
     description: >-
-      Workspace-scoped authored-document store (byte-exact markdown, no
+      Project-addressed authored-document store (byte-exact markdown, no
       conversion). Per-file push/pull with an incremental changed-since list.
   - name: workstate
     description: >-
       One-way local→server work-state mirror (stories, executions, ledger).
-      Always personal-workspace destination; origin stamped cli-sync server-side.
+      Project-addressed; origin stamped cli-sync server-side.
   - name: published
     description: >-
       Team-workspace publisher-owned catalog (satelle publish). Not a sync
@@ -127,18 +127,17 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /api/v1/workspaces/{workspaceId}/config:
+  /api/v1/projects/{project}/config:
     get:
       operationId: listConfig
-      summary: List a workspace's config manifest (the deploy set)
+      summary: List a project's config manifest (the deploy set)
       description: >-
-        Returns the latest version of every config path in the workspace — the
+        Returns the latest version of every config path in the project — the
         deploy set "satelle sync config deploy" materializes ("set up project X
-        like Y"). Any workspace member may read it.
+        like Y"). Any project member may read it.
       tags: [config]
       parameters:
-        - $ref: "#/components/parameters/WorkspaceId"
-        - $ref: "#/components/parameters/ProjectSlug"
+        - $ref: "#/components/parameters/Project"
       responses:
         "200":
           description: Array of config manifest items.
@@ -151,7 +150,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /api/v1/workspaces/{workspaceId}/config/{path}:
+  /api/v1/projects/{project}/config/{path}:
     put:
       operationId: pushConfigFile
       summary: Push one config file (append a new version)
@@ -159,11 +158,10 @@ paths:
         Uploads one file's verbatim bytes (raw body, <=1 MiB), appending a new
         version (head) when the content differs from the current head. Identical
         content is idempotent: the response carries created=false (HTTP 200)
-        rather than a new head (HTTP 201). Editor/owner role required.
+        rather than a new head (HTTP 201). Contributor/admin role required.
       tags: [config]
       parameters:
-        - $ref: "#/components/parameters/WorkspaceId"
-        - $ref: "#/components/parameters/ProjectSlug"
+        - $ref: "#/components/parameters/Project"
         - name: path
           in: path
           required: true
@@ -203,8 +201,7 @@ paths:
         ?history=1 returns that path's version list as JSON instead. Any member.
       tags: [config]
       parameters:
-        - $ref: "#/components/parameters/WorkspaceId"
-        - $ref: "#/components/parameters/ProjectSlug"
+        - $ref: "#/components/parameters/Project"
         - name: path
           in: path
           required: true
@@ -248,17 +245,16 @@ paths:
         "404":
           description: No such path (or the pinned version predates its first appearance).
 
-  /api/v1/workspaces/{workspaceId}/config-rollback:
+  /api/v1/projects/{project}/config-rollback:
     post:
       operationId: rollbackConfigFile
       summary: Roll back a config file to an earlier version
       description: >-
         Appends a new head copying an earlier version of a path, recovering a
-        prior version. Editor/owner role required.
+        prior version. Contributor/admin role required.
       tags: [config]
       parameters:
-        - $ref: "#/components/parameters/WorkspaceId"
-        - $ref: "#/components/parameters/ProjectSlug"
+        - $ref: "#/components/parameters/Project"
       requestBody:
         required: true
         content:
@@ -277,7 +273,7 @@ paths:
         "404":
           description: No such path or version.
 
-  /api/v1/workspaces/{workspaceId}/documents:
+  /api/v1/projects/{project}/documents:
     get:
       operationId: listDocumentChanges
       summary: List document changes (incremental pull)
@@ -287,8 +283,7 @@ paths:
         with a cursor. Metadata only — content is fetched per-path. Any member.
       tags: [documents]
       parameters:
-        - $ref: "#/components/parameters/WorkspaceId"
-        - $ref: "#/components/parameters/ProjectSlug"
+        - $ref: "#/components/parameters/Project"
         - name: since
           in: query
           required: false
@@ -305,7 +300,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /api/v1/workspaces/{workspaceId}/documents/{path}:
+  /api/v1/projects/{project}/documents/{path}:
     put:
       operationId: pushDocumentFile
       summary: Push one document file (append a new version)
@@ -313,11 +308,10 @@ paths:
         Uploads one file's verbatim bytes (raw body), appending a new version
         when the content differs from the current head. Identical content is
         idempotent (created=false, HTTP 200). A conflict the client must resolve
-        is HTTP 409. Editor/owner role required.
+        is HTTP 409. Contributor/admin role required.
       tags: [documents]
       parameters:
-        - $ref: "#/components/parameters/WorkspaceId"
-        - $ref: "#/components/parameters/ProjectSlug"
+        - $ref: "#/components/parameters/Project"
         - name: path
           in: path
           required: true
@@ -358,8 +352,7 @@ paths:
         sha256. Any member.
       tags: [documents]
       parameters:
-        - $ref: "#/components/parameters/WorkspaceId"
-        - $ref: "#/components/parameters/ProjectSlug"
+        - $ref: "#/components/parameters/Project"
         - name: path
           in: path
           required: true
@@ -384,7 +377,7 @@ paths:
         "404":
           description: No such path.
 
-  /api/v1/workspaces/{workspaceId}/workstate:
+  /api/v1/projects/{project}/workstate:
     post:
       operationId: ingestWorkstate
       summary: Ingest a work-state batch (local→server backup)
@@ -397,8 +390,7 @@ paths:
         Pull (rehydrate) uses GET …/workstate/items and GET …/workstate/ledger.
       tags: [workstate]
       parameters:
-        - $ref: "#/components/parameters/WorkspaceId"
-        - $ref: "#/components/parameters/ProjectSlug"
+        - $ref: "#/components/parameters/Project"
       requestBody:
         required: true
         content:
@@ -415,7 +407,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /api/v1/workspaces/{workspaceId}/workstate/items:
+  /api/v1/projects/{project}/workstate/items:
     get:
       operationId: listWorkstateItems
       summary: List mirrored work-state items (pull/rehydrate)
@@ -424,8 +416,7 @@ paths:
         may read. The CLI uses this for satelle sync workstate pull.
       tags: [workstate]
       parameters:
-        - $ref: "#/components/parameters/WorkspaceId"
-        - $ref: "#/components/parameters/ProjectSlug"
+        - $ref: "#/components/parameters/Project"
         - name: kind
           in: query
           schema:
@@ -443,7 +434,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /api/v1/workspaces/{workspaceId}/workstate/ledger:
+  /api/v1/projects/{project}/workstate/ledger:
     get:
       operationId: listWorkstateLedger
       summary: List mirrored work-state ledger (pull/rehydrate)
@@ -452,8 +443,7 @@ paths:
         ?story= narrows to one story; omit for the whole project ledger.
       tags: [workstate]
       parameters:
-        - $ref: "#/components/parameters/WorkspaceId"
-        - $ref: "#/components/parameters/ProjectSlug"
+        - $ref: "#/components/parameters/Project"
         - name: story
           in: query
           schema:
@@ -778,8 +768,9 @@ components:
         role:
           type: string
           description: >-
-            Caller's role on this project (e.g. "owner", "editor", "viewer").
-            Omitted when the response does not carry membership info.
+            Caller's role when the response carries membership (legacy field;
+            live projects list may omit it). Workspace roles are
+            admin/contributor/viewer.
 
     CreateProjectRequest:
       type: object
