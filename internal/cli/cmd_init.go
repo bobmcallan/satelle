@@ -1091,11 +1091,17 @@ gate_create = true
 # a Go rule (the constitution: configuration over code).
 # edit_exempt_paths lists repo-root-relative (or absolute) path prefixes whose
 # edits are exempt from the engaged-story edit gate. It is the SOLE exemption
-# source — the binary does NOT special-case the data dir. ".satelle/" is seeded
-# so this repo's authored substrate (workflows/skills/principles/documents/tasks
-# /config) stays editable without a release; add a harness authoring dir that
-# holds authored markdown rather than product code (e.g. ".claude/"), or drop
-# ".satelle/" to require an engaged story even for substrate edits.
+# source — the binary does NOT special-case the data dir or any managed path.
+# ".satelle/" is seeded so this repo's authored substrate (workflows/skills/
+# principles/documents/tasks/config) stays editable without a release.
+# ".gitignore" is seeded because init/migrate write its managed block — satelle-
+# managed output the operator did not author (sty_f115e6bf). Without that
+# exemption, the binary's own convergence trips the stop hook and there is no
+# clean lane to commit it. Add a harness authoring dir that holds authored
+# markdown rather than product code (e.g. ".claude/"), or drop either default
+# to require an engaged story for those paths. An explicitly empty list is a
+# deliberate opt-out (everything gated). Repos that predate .gitignore: run
+# satelle migrate --yes to append it without clobbering operator additions.
 # allow_parallel (default false) opts OUT of one-performing-story enforcement: by
 # default satelle refuses engaging a second story while another is already in a
 # non-terminal engaging state (plan/in_progress/…). Parked (blocked) and terminal
@@ -1108,8 +1114,8 @@ gate_create = true
 # install deliberately spans multiple repos from one session — create stories
 # cross-repo stays allowed either way; progressing/mutating another tree does not.
 [gate]
-edit_exempt_paths = [".satelle/"]
-# edit_exempt_paths = [".satelle/", ".claude/"]
+edit_exempt_paths = [".satelle/", ".gitignore"]
+# edit_exempt_paths = [".satelle/", ".gitignore", ".claude/"]
 # allow_parallel = false
 # allow_outside_tree_edits = false
 

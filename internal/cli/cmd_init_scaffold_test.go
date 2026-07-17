@@ -36,7 +36,7 @@ func TestScaffoldTomlDocumentsConfigSurface(t *testing.T) {
 			continue
 		}
 		switch s {
-		case "[gate]", `edit_exempt_paths = [".satelle/"]`,
+		case "[gate]", `edit_exempt_paths = [".satelle/", ".gitignore"]`,
 			"[review]", "gate_create = true":
 			// expected seeded active lines
 		default:
@@ -54,7 +54,7 @@ func TestScaffoldTomlDocumentsConfigSurface(t *testing.T) {
 	path := filepath.Join(dataDir, config.ConfigName)
 	// Seed the active [gate] table so Load sees a complete zero-config shape,
 	// then append the uncommented example block (sync/hosted/vars only).
-	body := "[gate]\nedit_exempt_paths = [\".satelle/\"]\n\n" + example
+	body := "[gate]\nedit_exempt_paths = [\".satelle/\", \".gitignore\"]\n\n" + example
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

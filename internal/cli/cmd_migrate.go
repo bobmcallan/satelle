@@ -32,14 +32,17 @@ func init() {
                             (satelle.db*, logs/, backups/, stories/, agents.*.bak)
   3. substrate prune      — remove unedited embedded-default seed copies
   4. gitignore converge   — rewrite the managed .gitignore block to the current form
-  5. validate             — deployed-system check (same as end of satelle init)
+  5. config converge      — append ".gitignore" to [gate] edit_exempt_paths when a
+                            non-empty list predates the managed-output exemption
+                            (operator additions kept; empty list left alone)
+  6. validate             — deployed-system check (same as end of satelle init)
 
 Dry-run by default: prints the full plan and applies nothing. Pass --yes to apply.
 Idempotent: a converged repo reports "already on current structure".
 
 Edited/authored substrate is never touched. Runtime migrate leaves the legacy
 DB in place until residue removal (only after a successful home-keyed copy).
-See decision-substrate-planes-local-first and sty_a3915840.`,
+See decision-substrate-planes-local-first and sty_a3915840 / sty_f115e6bf.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, cfgPath, err := config.Load("")
@@ -73,6 +76,7 @@ type migratePlan struct {
 	Residue         []string // dataDir-relative paths/globs to remove
 	PruneSeeds      []string // dataDir-relative unedited seed paths
 	Gitignore       bool     // managed block needs converge
+	ExemptGitignore bool     // [gate] edit_exempt_paths needs .gitignore (sty_f115e6bf)
 }
 
 func planMigrate(cfg config.Config, repoRoot, dataDir string) migratePlan {
@@ -89,11 +93,12 @@ func planMigrate(cfg config.Config, repoRoot, dataDir string) migratePlan {
 	}
 	p.PruneSeeds = listUneditedSeeds(dataDir)
 	p.Gitignore = gitignoreNeedsConverge(repoRoot)
+	p.ExemptGitignore = editExemptGitignoreNeedsConverge(dataDir)
 	return p
 }
 
 func (p migratePlan) empty() bool {
-	return !p.RuntimeRelocate && len(p.Residue) == 0 && len(p.PruneSeeds) == 0 && !p.Gitignore
+	return !p.RuntimeRelocate && len(p.Residue) == 0 && len(p.PruneSeeds) == 0 && !p.Gitignore && !p.ExemptGitignore
 }
 
 func runMigrate(out io.Writer, a *app.App, yes bool) error {
@@ -139,6 +144,11 @@ func runMigrate(out io.Writer, a *app.App, yes bool) error {
 		fmt.Fprintln(out, "  gitignore:        converge managed block")
 	} else {
 		fmt.Fprintln(out, "  gitignore:        (already current)")
+	}
+	if plan.ExemptGitignore {
+		fmt.Fprintln(out, "  config:           append .gitignore to [gate] edit_exempt_paths")
+	} else {
+		fmt.Fprintln(out, "  config:           (edit_exempt_paths current)")
 	}
 	fmt.Fprintln(out, "  validate:         deployed system check")
 
@@ -202,6 +212,19 @@ func runMigrate(out io.Writer, a *app.App, yes bool) error {
 			fmt.Fprintln(out, "  updated .gitignore managed block")
 		} else {
 			fmt.Fprintln(out, "  .gitignore already current")
+		}
+	}
+
+	if plan.ExemptGitignore {
+		fmt.Fprintln(out, "\n→ config converge")
+		changed, err := ensureEditExemptGitignore(dataDir)
+		if err != nil {
+			return fmt.Errorf("migrate: edit_exempt_paths: %w", err)
+		}
+		if changed {
+			fmt.Fprintln(out, "  updated .satelle/satelle.toml [gate] edit_exempt_paths")
+		} else {
+			fmt.Fprintln(out, "  edit_exempt_paths already current")
 		}
 	}
 
@@ -287,4 +310,49 @@ func removePath(path string) error {
 		return os.RemoveAll(path)
 	}
 	return os.Remove(path)
+}
+
+// editExemptGitignoreNeedsConverge reports whether satelle.toml's non-empty
+// [gate] edit_exempt_paths lacks the managed ".gitignore" entry (sty_f115e6bf).
+func editExemptGitignoreNeedsConverge(dataDir string) bool {
+	raw, err := os.ReadFile(filepath.Join(dataDir, config.ConfigName))
+	if err != nil {
+		return false
+	}
+	return editExemptNeedsGitignore(string(raw))
+}
+
+// ensureEditExemptGitignore appends ".gitignore" to a non-empty
+// [gate] edit_exempt_paths list when missing. Operator entries and order are
+// preserved. Returns true when the file was rewritten. An absent key or an
+// explicitly empty list is left alone (init WARNs on absence; empty is opt-out).
+func ensureEditExemptGitignore(dataDir string) (bool, error) {
+	path := filepath.Join(dataDir, config.ConfigName)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	content := string(raw)
+	if !editExemptNeedsGitignore(content) {
+		return false, nil
+	}
+	items := config.ListStringValues(content, "gate", "edit_exempt_paths")
+	// Append-only merge.
+	merged := append(append([]string{}, items...), managedEditExemptEntry)
+	quoted := make([]string, 0, len(merged))
+	for _, p := range merged {
+		quoted = append(quoted, `"`+p+`"`)
+	}
+	value := "[" + strings.Join(quoted, ", ") + "]"
+	next := config.UpsertKey(content, "gate", "edit_exempt_paths", value)
+	if next == content {
+		return false, nil
+	}
+	if err := os.WriteFile(path, []byte(next), 0o644); err != nil {
+		return false, err
+	}
+	return true, nil
 }

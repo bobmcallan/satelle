@@ -128,9 +128,10 @@ func TestRunInitScaffolds(t *testing.T) {
 }
 
 // TestRunInitSeedsActiveEditExemptPaths proves the scaffold satelle.toml ships an
-// ACTIVE (uncommented) [gate] edit_exempt_paths seeded with .satelle/ (sty_8c3d345c).
-// Exemption is config, not code — a fresh repo keeps authored substrate editable via
-// this seeded config rather than a hardcoded data-dir case in the binary.
+// ACTIVE (uncommented) [gate] edit_exempt_paths seeded with .satelle/ and
+// .gitignore (sty_8c3d345c / sty_f115e6bf). Exemption is config, not code — a
+// fresh repo keeps authored substrate and satelle-managed .gitignore editable
+// via this seeded config rather than a hardcoded case in the binary.
 func TestRunInitSeedsActiveEditExemptPaths(t *testing.T) {
 	repo := t.TempDir()
 	if err := runInitTest(t, io.Discard, repo); err != nil {
@@ -141,19 +142,27 @@ func TestRunInitSeedsActiveEditExemptPaths(t *testing.T) {
 		t.Fatalf("read scaffold satelle.toml: %v", err)
 	}
 	tomlSrc := string(body)
-	// The [gate] table and edit_exempt_paths must be ACTIVE (no leading '#') and seed .satelle/.
-	for _, want := range []string{"\n[gate]\n", "edit_exempt_paths = [\".satelle/\"]", "allow_outside_tree_edits"} {
+	// The [gate] table and edit_exempt_paths must be ACTIVE (no leading '#') and
+	// seed .satelle/ + .gitignore.
+	for _, want := range []string{"\n[gate]\n", "edit_exempt_paths = [\".satelle/\", \".gitignore\"]", "allow_outside_tree_edits"} {
 		if !strings.Contains(tomlSrc, want) {
 			t.Errorf("scaffold satelle.toml missing active %q:\n%s", want, tomlSrc)
 		}
 	}
-	// Parse it to confirm the seeded value actually resolves as an exempt prefix.
+	// Parse it to confirm the seeded values actually resolve as exempt prefixes.
 	var cfg config.Config
 	if _, err := toml.Decode(tomlSrc, &cfg); err != nil {
 		t.Fatalf("scaffold satelle.toml does not parse: %v", err)
 	}
-	if got := cfg.ResolveEditExemptPaths(repo); len(got) != 1 || !strings.HasSuffix(got[0], ".satelle") {
-		t.Errorf("ResolveEditExemptPaths = %v, want one entry ending .satelle", got)
+	got := cfg.ResolveEditExemptPaths(repo)
+	if len(got) != 2 {
+		t.Fatalf("ResolveEditExemptPaths = %v, want 2 entries", got)
+	}
+	if !strings.HasSuffix(got[0], ".satelle") {
+		t.Errorf("ResolveEditExemptPaths[0] = %q, want ending .satelle", got[0])
+	}
+	if !strings.HasSuffix(got[1], ".gitignore") {
+		t.Errorf("ResolveEditExemptPaths[1] = %q, want ending .gitignore", got[1])
 	}
 }
 

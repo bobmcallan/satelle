@@ -54,8 +54,9 @@ func setExemptPaths(t *testing.T, repo string, prefixes ...string) {
 // TestHookGateExemptsSubstrate drives the real binary to prove the edit gate
 // exempts authored substrate under .satelle/ while still gating in-repo code, with
 // NO story engaged. Exemption is now config, not code (sty_8c3d345c): init SEEDS
-// edit_exempt_paths = [".satelle/"], so a fresh repo keeps substrate editable via
-// that seeded config — the binary no longer special-cases the data dir.
+// edit_exempt_paths = [".satelle/", ".gitignore"], so a fresh repo keeps substrate
+// and satelle-managed .gitignore editable via that seeded config — the binary no
+// longer special-cases the data dir (sty_f115e6bf).
 func TestHookGateExemptsSubstrate(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
@@ -69,6 +70,10 @@ func TestHookGateExemptsSubstrate(t *testing.T) {
 		if !gateEvent(t, repo, sub) {
 			t.Errorf("edit gate blocked authored substrate %s (should be exempt)", sub)
 		}
+	}
+	// … satelle-managed .gitignore is ALLOWED (seeded exempt, sty_f115e6bf) …
+	if !gateEvent(t, repo, filepath.Join(repo, ".gitignore")) {
+		t.Error("edit gate blocked .gitignore with no engaged story (seeded exempt)")
 	}
 	// … in-repo CODE is still BLOCKED (needs an engaged story) …
 	if gateEvent(t, repo, filepath.Join(repo, "internal", "cli", "cmd_hook.go")) {
@@ -102,8 +107,9 @@ func TestHookGateExemptsConfiguredPaths(t *testing.T) {
 	claudeSkill := filepath.Join(repo, ".claude", "skills", "audit", "SKILL.md")
 	code := filepath.Join(repo, "internal", "cli", "cmd_hook.go")
 
-	// BEFORE: init seeds only .satelle/, so a .claude/ edit is in-repo code — blocked
-	// (no story engaged), the binary staying CLI-vendor-neutral by default.
+	// BEFORE: init seeds .satelle/ + .gitignore, not .claude/, so a .claude/ edit
+	// is in-repo code — blocked (no story engaged), the binary staying
+	// CLI-vendor-neutral by default.
 	if gateEvent(t, repo, claudeSkill) {
 		t.Error("edit gate allowed a .claude/ edit before it was configured exempt (should be blocked as code)")
 	}

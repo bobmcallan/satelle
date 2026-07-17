@@ -89,6 +89,29 @@ func TestSubstrateOnlyCheckScript(t *testing.T) {
 			t.Errorf("want confirm line, got:\n%s", out)
 		}
 	})
+
+	// Fresh-init default list includes .gitignore (sty_f115e6bf AC2): a slice
+	// that is only the managed .gitignore path passes substrate-only close.
+	t.Run("fresh-init default exempts gitignore slice", func(t *testing.T) {
+		repo := t.TempDir()
+		gitInit(t, repo)
+		mustWrite(t, filepath.Join(repo, "README.md"), "baseline\n")
+		mustWrite(t, filepath.Join(repo, ".satelle", "satelle.toml"),
+			"[gate]\nedit_exempt_paths = [\".satelle/\", \".gitignore\"]\n")
+		gitCommitAll(t, repo, "baseline with fresh-init exempt")
+
+		sid := "sty_ddd44444"
+		mustWrite(t, filepath.Join(repo, ".gitignore"), "# managed\n.satelle/local.toml\n")
+		gitCommitAll(t, repo, "gitignore converge ("+sid+")")
+
+		out, err := runCheckScript(t, scriptPath, repo, sid)
+		if err != nil {
+			t.Fatalf("fresh-init .gitignore slice should exit 0: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "substrate-only slice confirmed") {
+			t.Errorf("want confirm line, got:\n%s", out)
+		}
+	})
 }
 
 // extractShippedSubstrateOnlyCheck reads the embedded skill source from the

@@ -209,3 +209,107 @@ func TestEnsureGitignoreConvergesStaleBlock(t *testing.T) {
 		t.Error("second ensure should be no-op")
 	}
 }
+
+// TestMigrateAppendsEditExemptGitignore (sty_f115e6bf AC3): a non-empty
+// edit_exempt_paths that predates the managed .gitignore default is appended
+// to without clobbering operator additions; empty list is left alone; second
+// run is a no-op.
+func TestMigrateAppendsEditExemptGitignore(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SATELLE_HOME", home)
+
+	repo := t.TempDir()
+	dataDir := filepath.Join(repo, config.DefaultDataDir)
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "agents.toml"), []byte("[executor]\nharness = \"in-loop\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Predating list: operator added .claude/; missing .gitignore.
+	tomlBody := `[gate]
+edit_exempt_paths = [".satelle/", ".claude/"]
+`
+	if err := os.WriteFile(filepath.Join(dataDir, "satelle.toml"), []byte(tomlBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Home-keyed DB so migrate has something to validate against without relocate.
+	homeDB := filepath.Join(home, config.RepoKey(repo), config.DefaultDBName)
+	if err := os.MkdirAll(filepath.Dir(homeDB), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(homeDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	a := &app.App{
+		Config:     config.Config{},
+		RepoRoot:   repo,
+		DataDir:    dataDir,
+		RuntimeDir: filepath.Dir(homeDB),
+		DBPath:     homeDB,
+	}
+
+	// Dry-run names the config step.
+	var dry strings.Builder
+	if err := runMigrate(&dry, a, false); err != nil {
+		t.Fatalf("dry-run: %v\n%s", err, dry.String())
+	}
+	if !strings.Contains(dry.String(), "edit_exempt_paths") && !strings.Contains(dry.String(), ".gitignore") {
+		t.Errorf("dry-run plan should name config/.gitignore converge:\n%s", dry.String())
+	}
+	// File unchanged after dry-run.
+	raw, _ := os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
+	if string(raw) != tomlBody {
+		t.Fatalf("dry-run rewrote toml:\n%s", raw)
+	}
+
+	// Apply: append .gitignore, keep .claude/.
+	var apply strings.Builder
+	if err := runMigrate(&apply, a, true); err != nil {
+		t.Fatalf("apply: %v\n%s", err, apply.String())
+	}
+	got, err := os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	if !strings.Contains(s, `edit_exempt_paths = [".satelle/", ".claude/", ".gitignore"]`) {
+		t.Errorf("want append-only merge, got:\n%s", s)
+	}
+	if !strings.Contains(apply.String(), "edit_exempt_paths") {
+		t.Errorf("apply report should name the update:\n%s", apply.String())
+	}
+
+	// Idempotent second run.
+	var again strings.Builder
+	if err := runMigrate(&again, a, true); err != nil {
+		t.Fatalf("second run: %v\n%s", err, again.String())
+	}
+	if !strings.Contains(again.String(), "already on current structure") {
+		t.Errorf("second run should be no-op:\n%s", again.String())
+	}
+	// Empty list is deliberate opt-out — not converged.
+	emptyRepo := t.TempDir()
+	emptyData := filepath.Join(emptyRepo, config.DefaultDataDir)
+	if err := os.MkdirAll(emptyData, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	emptyToml := "[gate]\nedit_exempt_paths = []\n"
+	if err := os.WriteFile(filepath.Join(emptyData, "satelle.toml"), []byte(emptyToml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := ensureEditExemptGitignore(emptyData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Error("empty edit_exempt_paths must not be rewritten")
+	}
+	rawEmpty, _ := os.ReadFile(filepath.Join(emptyData, "satelle.toml"))
+	if string(rawEmpty) != emptyToml {
+		t.Errorf("empty list clobbered:\n%s", rawEmpty)
+	}
+}

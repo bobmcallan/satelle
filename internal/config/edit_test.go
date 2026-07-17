@@ -109,3 +109,34 @@ gate_create = true
 		t.Error("review.gate_create present")
 	}
 }
+
+func TestListValueContainsAndListStringValues(t *testing.T) {
+	in := `[gate]
+edit_exempt_paths = [".satelle/", ".claude/"]
+allow_parallel = false
+
+[review]
+gate_create = true
+`
+	got := ListStringValues(in, "gate", "edit_exempt_paths")
+	if len(got) != 2 || got[0] != ".satelle/" || got[1] != ".claude/" {
+		t.Fatalf("ListStringValues = %v", got)
+	}
+	if !ListValueContains(in, "gate", "edit_exempt_paths", ".satelle/") {
+		t.Error("should contain .satelle/")
+	}
+	if ListValueContains(in, "gate", "edit_exempt_paths", ".gitignore") {
+		t.Error("must not claim missing value is present")
+	}
+	if ListValueContains(in, "gate", "missing", ".satelle/") {
+		t.Error("absent key must be false")
+	}
+	// Empty list: present key, zero values, non-nil slice.
+	empty := "[gate]\nedit_exempt_paths = []\n"
+	if items := ListStringValues(empty, "gate", "edit_exempt_paths"); items == nil || len(items) != 0 {
+		t.Fatalf("empty list: got %#v", items)
+	}
+	if ListStringValues(in, "hosted", "project") != nil {
+		t.Error("absent section must return nil")
+	}
+}
