@@ -93,4 +93,9 @@ func TestPlanStepDispatchesFableAndCapturesArtifact(t *testing.T) {
 	if !strings.Contains(got, `"status": "in_progress"`) {
 		t.Errorf("plan-review did not admit the story to in_progress:\n%s", got)
 	}
+	// sty_58fa970e AC3: end-to-end plan→in_progress must not recreate the
+	// obsolete in-repo attachment dir.
+	if _, err := os.Stat(filepath.Join(repo, ".satelle", "stories")); err == nil {
+		t.Error("in-repo .satelle/stories/ recreated after plan dispatch — attachment channel regressed")
+	}
 }
