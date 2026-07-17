@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -45,10 +46,8 @@ func init() {
 				fmt.Fprintf(w, "runtime layout\tlegacy — run satelle runtime migrate\n")
 			} else {
 				fmt.Fprintf(w, "runtime layout\thome-keyed\n")
-				// sty_58fa970e AC4: in-repo .satelle/stories recreated by drifted
-				// agent text is residue once the runtime plane is home-keyed.
-				if residue := filepath.Join(a.DataDir, "stories"); dirExists(residue) {
-					fmt.Fprintf(w, "runtime residue\t%s — pre-relocation attachment dir; rm -rf %s after verifying home-keyed copy\n", residue, residue)
+				if line := runtimeResidueLine(a); line != "" {
+					fmt.Fprint(w, line)
 				}
 			}
 			fmt.Fprintf(w, "web port\t%d\n", a.Config.ResolveWebPort())
@@ -79,4 +78,17 @@ func init() {
 			return w.Flush()
 		},
 	})
+}
+
+// runtimeResidueLine reports in-repo .satelle/stories when the runtime plane is
+// already home-keyed (sty_58fa970e AC4). Empty when legacy layout or no residue.
+func runtimeResidueLine(a *app.App) string {
+	if a == nil || a.Config.LegacyRuntimeNote(a.RepoRoot) != "" {
+		return ""
+	}
+	residue := filepath.Join(a.DataDir, "stories")
+	if !dirExists(residue) {
+		return ""
+	}
+	return "runtime residue\t" + residue + " — pre-relocation attachment dir; rm -rf " + residue + " after verifying home-keyed copy\n"
 }

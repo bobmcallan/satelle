@@ -3,7 +3,7 @@ name: code
 scope: project
 type: skill
 tags: [type:skill]
-description: Dispatched coder skill for the project workflow's in_progress step (agent=coder, prompt="@skill:code"). An isolated write-capable Grok worker reconstructs context from the story + plan (CLI when shell is granted, else home-keyed runtime stories dir), records plan-consumption evidence first, implements exactly the plan's slice with unit and integration tests, then stops for the code-ac-review gate. Does not advance status. Integration and release stay in-loop on the driving session.
+description: Dispatched coder skill for the project workflow's in_progress step (agent=coder, prompt="@skill:code"). An isolated write-capable Grok worker reconstructs context from the story + plan (payload docs first; CLI when shell is granted), records plan-consumption evidence first, implements exactly the plan's slice with unit and integration tests, then stops for the code-ac-review gate. Does not advance status. Integration and release stay in-loop on the driving session.
 ---
 
 # Code (dispatched coder step)
@@ -37,9 +37,9 @@ satelle story log <sty_id> --kind plan-consumed --data plan=plan --data steps="<
 ```
 
 **When you do not have shell** (this repo's coder default — Grok headless cannot
-enable `run_terminal_command`): read the attachments on disk and print a single
-explicit evidence line to **stdout** (captured to the dispatch sink log and
-`executor.log`):
+enable `run_terminal_command`): use the payload **`docs`** array for the plan body
+and print a single explicit evidence line to **stdout** (captured to the dispatch
+sink log and `executor.log`):
 
 ```
 PLAN-CONSUMED: plan — steps: <short list of plan steps you will follow>
