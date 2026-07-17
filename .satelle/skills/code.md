@@ -3,7 +3,7 @@ name: code
 scope: project
 type: skill
 tags: [type:skill]
-description: Dispatched coder skill for the project workflow's in_progress step (agent=coder, prompt="@skill:code"). An isolated write-capable Grok worker reconstructs context from the story + plan (CLI when shell is granted, else disk under .satelle/stories/<id>/), records plan-consumption evidence first, implements exactly the plan's slice with unit and integration tests, then stops for the code-ac-review gate. Does not advance status. Integration and release stay in-loop on the driving session.
+description: Dispatched coder skill for the project workflow's in_progress step (agent=coder, prompt="@skill:code"). An isolated write-capable Grok worker reconstructs context from the story + plan (CLI when shell is granted, else home-keyed runtime stories dir), records plan-consumption evidence first, implements exactly the plan's slice with unit and integration tests, then stops for the code-ac-review gate. Does not advance status. Integration and release stay in-loop on the driving session.
 ---
 
 # Code (dispatched coder step)
@@ -45,12 +45,15 @@ explicit evidence line to **stdout** (captured to the dispatch sink log and
 PLAN-CONSUMED: plan — steps: <short list of plan steps you will follow>
 ```
 
-Read these paths (and any siblings under the story dir):
+Read these paths (and any siblings under the story attachment dir) — home-keyed
+runtime plane, NOT the obsolete in-repo `.satelle/stories/` path (sty_58fa970e):
 
 ```
-.satelle/stories/<sty_id>/plan.md
-.satelle/stories/<sty_id>/
+~/.satelle/<repo-key>/stories/<sty_id>/plan.md
+~/.satelle/<repo-key>/stories/<sty_id>/
 ```
+
+Resolve the exact dir with `satelle runtime path` when shell is available.
 
 If the plan attachment is missing, say so plainly in your output and stop without
 inventing a plan — the gate and a later plan fix need to see the gap.

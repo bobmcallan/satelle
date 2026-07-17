@@ -29,9 +29,10 @@ reject. Do **not** judge the parent's own ACs.
 ### Every other story — residual ACs + presented evidence
 
 1. Prefer **upstream presented artifacts** when they exist for this story
-   (e.g. release/implementation summary under `.satelle/stories/<id>/`, ledger
-   close evidence). Use them as primary evidence that the path already passed
-   earlier gates.
+   (e.g. release/implementation summary via `satelle story docs <id>`, or
+   home-keyed runtime stories dir — never in-repo `.satelle/stories/`,
+   sty_58fa970e — plus ledger close evidence). Use them as primary evidence
+   that the path already passed earlier gates.
 2. Walk **numbered ACs**. Each must be plausibly met by evidence you can see
    (tree, tests, summary, op-log). You cannot run the suite — if ACs require
    it and code/tests/summary record it, treat as met.

@@ -29,7 +29,7 @@ You are the **executor** in the `in_progress` (implementation) step: **implement
 
 - Do **not** commit, push, or touch `.version` — `commit`/`push` steps own those.
 - Do **not** change status, scope, title, or acceptance criteria — gates govern advances.
-- Do **not** edit generated read-only views (`.satelle/stories/`, generated `index.md`/`log.md`) — mutate via `satelle`, never the view (see [[satelle-generated-readonly]]).
+- Do **not** edit generated read-only views (home-keyed story attachments, generated `index.md`/`log.md`) — mutate via `satelle`, never the view (see [[satelle-generated-readonly]]).
 
 ## Hand-off
 

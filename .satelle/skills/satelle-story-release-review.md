@@ -12,7 +12,7 @@ Isolated, **read-only** reviewer: may the story close (`release → done`)? The 
 
 ## 1. Judge release evidence
 
-Read the repo and recorded evidence (`.satelle/stories/<sty_id>/` summary attachment, `git show HEAD`, ledger/op-log):
+Read the repo and recorded evidence (`satelle story docs <sty_id>` / `satelle story doc <sty_id> <name>` for the summary attachment, or home-keyed `~/.satelle/<repo-key>/stories/<sty_id>/` when Bash-less; never `.satelle/stories/`, sty_58fa970e — also `git show HEAD`, ledger/op-log):
 
 - **Version bump**: `.version` in `HEAD` carries an incremented `satelle.version` and a fresh `satelle.build` stamp (`git show HEAD --stat` shows `.version`).
 - **Commit convention**: subject is a conventional commit ending with the story id in parens; **NO AI attribution** — no `Co-Authored-By`, no "generated with" trailer.
@@ -29,10 +29,10 @@ Walk the numbered ACs; confirm each is satisfied by evidence in the shipped slic
 
 ## 3. Plan adherence (metric, not gate)
 
-Read the story's **plan** attachment when present (on disk under
-`.satelle/stories/<sty_id>/` — e.g. `plan.md` — your grant is read-only with no
-shell). Compare it against what shipped (step summaries, the release summary,
-`git show HEAD` when useful).
+Read the story's **plan** attachment when present (`satelle story doc <sty_id> plan`
+if shell is granted; else home-keyed `~/.satelle/<repo-key>/stories/<sty_id>/plan.md`
+— never in-repo `.satelle/stories/`, sty_58fa970e). Compare it against what
+shipped (step summaries, the release summary, `git show HEAD` when useful).
 
 Always put a structured plan-adherence line in **notes** on both accept and
 reject so the metric lands in the ledger on every close:

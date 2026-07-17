@@ -20,8 +20,16 @@ no implementing, no status changes.
 
 ## 1. Locate the presented artifact
 
-Plan is the story attachment named `plan` under `.satelle/stories/<sty_id>/`
-(read `plan.md` or list the dir).
+Plan is the story attachment named `plan`. Prefer the CLI:
+
+```
+satelle story doc <sty_id> plan
+```
+
+Disk fallback (Bash-less grant): home-keyed runtime plane
+`~/.satelle/<repo-key>/stories/<sty_id>/plan.md` (`satelle runtime path` names
+the exact dir). Do **not** use `.satelle/stories/` (obsolete post-relocation,
+sty_58fa970e).
 
 - **No plan artifact → reject** (plan step did not capture output).
 

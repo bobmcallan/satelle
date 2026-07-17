@@ -3,7 +3,7 @@ name: record-release
 scope: project
 type: skill
 tags: [type:skill, type:executor]
-description: Executor skill for the `committed` step. Verifies the pushed slice's release evidence — the .version bump + build stamp, the conventional commit ending in the story id with NO AI attribution, the green `test` run for the SHA, and the published version-gated release — then records a PR-style implementation summary WITH the story as an attachment (`satelle story attach <id> --type story-implementation-summary --file …` → .satelle/stories/<id>/). Replaces the old satelle-push-review reviewer, which wrote files from a read-only role (misaligned; sty_97c53d72): verification-plus-recording is executor work — the done gate judges the recorded evidence.
+description: Executor skill for the `committed` step. Verifies the pushed slice's release evidence — the .version bump + build stamp, the conventional commit ending in the story id with NO AI attribution, the green `test` run for the SHA, and the published version-gated release — then records a PR-style implementation summary WITH the story as an attachment (`satelle story attach <id> --type story-implementation-summary --file …`, stored on the home-keyed runtime plane). Replaces the old satelle-push-review reviewer, which wrote files from a read-only role (misaligned; sty_97c53d72): verification-plus-recording is executor work — the done gate judges the recorded evidence.
 ---
 
 # Record release (executor step)
@@ -20,7 +20,7 @@ Confirm, and stop (don't advance) if any fails:
 
 ## 2. Record the summary WITH the story
 
-Write a short PR-style summary (what shipped, why, the SHA, run URLs/conclusions, the published tag) to a temp file, then attach it to the story — it lives in `.satelle/stories/<sty_id>/` and persists across the story's lifecycle:
+Write a short PR-style summary (what shipped, why, the SHA, run URLs/conclusions, the published tag) to a temp file, then attach it via the CLI — the binary stores it on the home-keyed runtime plane (`~/.satelle/<repo-key>/stories/<sty_id>/`), not under in-repo `.satelle/stories/` (sty_58fa970e):
 
 ```bash
 satelle story attach <sty_id> \

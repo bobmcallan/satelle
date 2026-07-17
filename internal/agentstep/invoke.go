@@ -429,6 +429,11 @@ const isolatedAgentBriefing = "The work item arrives on stdin as JSON. The " +
 	"but does not inline (including embedded defaults that are not files on disk)."
 
 // pullContextCallToAction rides in EVERY isolated-agent prompt (via buildRequest).
+// Attachment READ CHANNEL (sty_58fa970e / sty_4660bbe1): prefer the satelle CLI
+// (`satelle story doc`). Disk fallback is the home-keyed runtime plane
+// (~/.satelle/<repo-key>/stories/<id>/), NEVER the in-repo .satelle/stories/
+// path — writing/reading there recreates the pre-relocation residue the
+// three-plane design removed.
 const pullContextCallToAction = "## Reconstruct your context (you start fresh)\n\n" +
 	"You are dispatched with NO conversation history — the stdin payload carries the " +
 	"work item (its `id`, title, body, acceptance criteria) and the transition. Pull " +
@@ -439,10 +444,13 @@ const pullContextCallToAction = "## Reconstruct your context (you start fresh)\n
 	"transition deposits one), which together narrate the work so far.\n" +
 	"- `satelle ledger list --story <id>` — the evidence ledger (transitions, review " +
 	"verdicts, summaries).\n\n" +
-	"If your grant excludes Bash (a read-only reviewer), the same attachments are on " +
-	"disk under `.satelle/stories/<id>/` (tasks: `.satelle/tasks/<id>/`) — read them " +
-	"with Read/Glob. Do not assume absence: fetch before concluding a document or a " +
-	"prior step is missing."
+	"If your grant excludes Bash (a read-only reviewer), the same attachments live on " +
+	"the home-keyed runtime plane under `~/.satelle/<repo-key>/stories/<id>/` " +
+	"(resolve the exact dir with `satelle runtime path` when you have shell; tasks " +
+	"stay under `.satelle/tasks/<id>/` as authored substrate). Do **not** look under " +
+	"`.satelle/stories/` — that in-repo path is obsolete post-relocation and must " +
+	"not be recreated. Read the home-keyed files with Read/Glob. Do not assume " +
+	"absence: fetch before concluding a document or a prior step is missing."
 
 // reviewerCharter is the charter for an isolated gate reviewer.
 func reviewerCharter() string {

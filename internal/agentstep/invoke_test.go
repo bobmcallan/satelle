@@ -113,6 +113,13 @@ func TestPullContextCallToActionInEveryRole(t *testing.T) {
 				t.Errorf("%s prompt missing pull command %q:\n%s", name, cmd, req.SystemPrompt)
 			}
 		}
+		// sty_58fa970e: disk fallback is home-keyed; CLI remains primary.
+		if !strings.Contains(req.SystemPrompt, "~/.satelle/") {
+			t.Errorf("%s prompt missing home-keyed runtime attachment path:\n%s", name, req.SystemPrompt)
+		}
+		if !strings.Contains(req.SystemPrompt, "obsolete") && !strings.Contains(req.SystemPrompt, "Do **not** look under") {
+			t.Errorf("%s prompt must forbid the in-repo .satelle/stories/ path:\n%s", name, req.SystemPrompt)
+		}
 	}
 }
 
