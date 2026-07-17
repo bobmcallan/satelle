@@ -1,3 +1,8 @@
+## [0.0.273] - 2026-07-17
+
+### Fixed
+- `satelle migrate` / `runtime migrate` refuse relocating a live runtime (fresh engagement lease or responding serve); `--allow-live` overrides with an explicit stranded-writes warning; split-brain recovery documented in migrate help (sty_5308eb60)
+
 ## [0.0.272] - 2026-07-17
 
 ### Fixed
