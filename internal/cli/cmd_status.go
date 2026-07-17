@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"path/filepath"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -44,6 +45,11 @@ func init() {
 				fmt.Fprintf(w, "runtime layout\tlegacy — run satelle runtime migrate\n")
 			} else {
 				fmt.Fprintf(w, "runtime layout\thome-keyed\n")
+				// sty_58fa970e AC4: in-repo .satelle/stories recreated by drifted
+				// agent text is residue once the runtime plane is home-keyed.
+				if residue := filepath.Join(a.DataDir, "stories"); dirExists(residue) {
+					fmt.Fprintf(w, "runtime residue\t%s — pre-relocation attachment dir; rm -rf %s after verifying home-keyed copy\n", residue, residue)
+				}
 			}
 			fmt.Fprintf(w, "web port\t%d\n", a.Config.ResolveWebPort())
 			fmt.Fprintf(w, "log level\t%s\n", a.Config.ResolveLogLevel())

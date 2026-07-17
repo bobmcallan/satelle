@@ -18,17 +18,12 @@ You get `{story, from, to}` on stdin. Read-only; no modifying, no implementing.
 
 ## 1. Locate the presented artifact
 
-Plan is the story attachment named `plan`. Read it via the CLI when your grant
-includes shell:
+Plan is the story attachment named `plan` in the stdin payload's **`docs`**
+array (`name`/`type`/`body`). Prefer that — it is how a Bash-less reviewer
+reads what it judges (sty_58fa970e). When `truncated: true`, or for a fuller
+pull when shell is granted: `satelle story doc <sty_id> plan`.
 
-```
-satelle story doc <sty_id> plan
-```
-
-Disk fallback (Bash-less grant): home-keyed runtime plane
-`~/.satelle/<repo-key>/stories/<sty_id>/plan.md` — resolve the exact dir with
-`satelle runtime path`. Do **not** use `.satelle/stories/` (obsolete
-post-relocation; recreating it is residue, sty_58fa970e).
+Do **not** look under in-repo `.satelle/stories/` (obsolete post-relocation).
 
 - **No plan artifact → reject**.
 

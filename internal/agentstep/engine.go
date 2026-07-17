@@ -97,6 +97,11 @@ type Engine struct {
 	// children resolves a parent's child stories (id + status) for a container
 	// close gate's payload. Nil when unwired (no children injected).
 	children func(ctx context.Context, parentID string) []ChildState
+	// itemDocs resolves an item's attached documents (name/type/body) so isolated
+	// agents judge attachments from the PAYLOAD — no disk path required
+	// (sty_58fa970e). Nil-safe: an unwired resolver injects no docs.
+	// Named itemDocs to avoid clashing with the docs DocGetter substrate field.
+	itemDocs func(ctx context.Context, itemID string) []DocState
 	// injectPrinciples is a cache of the reviewer binding's principle injection
 	// (sty_46a40208). Order:2 feeds Invoke from reviewerBinding; this flag remains
 	// so SetInjectPrinciples / tests keep working until order:3 retires the scalar.
@@ -320,6 +325,18 @@ func (g *Engine) SetChildrenResolver(fn func(ctx context.Context, parentID strin
 	g.children = fn
 }
 
+// SetDocsResolver wires the resolver that lists an item's attachments so every
+// isolated agent (reviewer, named executor, retrospective) receives plan/step
+// summaries in the transition payload — the Bash-less read channel (sty_58fa970e).
+// Nil-safe: an unwired resolver injects no docs.
+func (g *Engine) SetDocsResolver(fn func(ctx context.Context, itemID string) []DocState) {
+	g.itemDocs = fn
+}
+
+// docsPayloadCeiling bounds how many attachment body bytes ride in one payload
+// so a long-lived story with many step summaries does not blow the prompt.
+const docsPayloadCeiling = 128 << 10
+
 // SetReviewerModel sets the reviewer's model from the agents layer (the resolved
 // `reviewer` binding's `model`). It rides as `--model` to every isolated reviewer
 // this Engine runs, so a repo can review on a different model (e.g. sonnet) without
@@ -388,6 +405,10 @@ type transitionPayload struct {
 	// the context selection — rather than reading any on-disk story mirror. Empty
 	// for a non-container or when no resolver is wired.
 	Children []ChildState `json:"children,omitempty"`
+	// Docs carries the item's attachments (plan, step summaries, …) so a
+	// Bash-less reviewer can judge without reading any disk path (sty_58fa970e).
+	// Bodies may be Truncated when the cumulative budget is spent.
+	Docs []DocState `json:"docs,omitempty"`
 }
 
 // ChildState is one child story's id and status, injected into a parent/epic
@@ -395,6 +416,44 @@ type transitionPayload struct {
 type ChildState struct {
 	ID     string `json:"id"`
 	Status string `json:"status"`
+}
+
+// DocState is one story attachment injected into the transition payload.
+type DocState struct {
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Body      string `json:"body,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
+}
+
+// fillPayloadDocs attaches resolved docs under the cumulative body budget.
+func (g *Engine) fillPayloadDocs(ctx context.Context, itemID string, tp *transitionPayload) {
+	if g.itemDocs == nil || itemID == "" {
+		return
+	}
+	all := g.itemDocs(ctx, itemID)
+	if len(all) == 0 {
+		return
+	}
+	var used int
+	out := make([]DocState, 0, len(all))
+	for _, d := range all {
+		if used >= docsPayloadCeiling {
+			out = append(out, DocState{Name: d.Name, Type: d.Type, Truncated: true})
+			continue
+		}
+		body := d.Body
+		if used+len(body) > docsPayloadCeiling {
+			// Prefer shipping a truncated marker over a partial body that could
+			// mislead a judge into thinking the document is complete.
+			out = append(out, DocState{Name: d.Name, Type: d.Type, Truncated: true})
+			used = docsPayloadCeiling
+			continue
+		}
+		out = append(out, d)
+		used += len(body)
+	}
+	tp.Docs = out
 }
 
 // alwaysPrinciples returns the bodies of the SESSION-resident (principles:session)
@@ -736,11 +795,13 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	} else {
 		g.emitProgress("dispatching step %s to named agent %s (may take several minutes)…", toStatus, dispatchAgent)
 	}
+	execPayload := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: dispatchSkill}
+	g.fillPayloadDocs(ctx, item.ID, &execPayload)
 	invRes := g.Invoke(ctx, InvokeRequest{
 		Binding: binding,
 		Section: dispatchAgent,
 		Rubric:  rubric,
-		Payload: transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: dispatchSkill},
+		Payload: execPayload,
 		Charter: executorCharter(dispatchAgent, toStatus, doc.Name),
 		Expect:  ExpectPerform,
 		Timeout: timeout,
@@ -812,11 +873,13 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.Dispa
 		return verb.DispatchResult{}, rerr
 	}
 	g.emitProgress("running retrospective on %s (may take a few minutes)…", item.ID)
+	retroPayload := transitionPayload{Story: item, From: item.Status, To: item.Status, ReviewSkill: retrospectSkill}
+	g.fillPayloadDocs(ctx, item.ID, &retroPayload)
 	invRes := g.Invoke(ctx, InvokeRequest{
 		Binding: binding,
 		Section: retrospectAgent,
 		Rubric:  rubric,
-		Payload: transitionPayload{Story: item, From: item.Status, To: item.Status, ReviewSkill: retrospectSkill},
+		Payload: retroPayload,
 		Charter: executorCharter(retrospectAgent, "retrospect", "post-story retrospective"),
 		Expect:  ExpectPerform,
 		Timeout: g.checkTimeout,
@@ -1046,6 +1109,7 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 	if g.children != nil {
 		tp.Children = g.children(ctx, item.ID)
 	}
+	g.fillPayloadDocs(ctx, item.ID, &tp)
 	payload, err := json.Marshal(tp)
 	if err != nil {
 		return verb.GateDecision{}, err
