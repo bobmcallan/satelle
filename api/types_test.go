@@ -224,9 +224,9 @@ func TestConfigEndpointsInSpec(t *testing.T) {
 	}
 	yaml := string(yamlBytes)
 	for _, route := range []string{
-		"/api/v1/workspaces/{workspaceId}/config",
-		"/api/v1/workspaces/{workspaceId}/config/{path}",
-		"/api/v1/workspaces/{workspaceId}/config-rollback",
+		"/api/v1/projects/{project}/config",
+		"/api/v1/projects/{project}/config/{path}",
+		"/api/v1/projects/{project}/config-rollback",
 		"pushConfigFile",
 		"listConfig",
 		"getConfigFile",
@@ -247,8 +247,8 @@ func TestDocumentEndpointsInSpec(t *testing.T) {
 	}
 	yaml := string(yamlBytes)
 	for _, route := range []string{
-		"/api/v1/workspaces/{workspaceId}/documents",
-		"/api/v1/workspaces/{workspaceId}/documents/{path}",
+		"/api/v1/projects/{project}/documents",
+		"/api/v1/projects/{project}/documents/{path}",
 		"listDocumentChanges",
 		"pushDocumentFile",
 		"getDocumentFile",
@@ -269,9 +269,9 @@ func TestWorkstateEndpointsInSpec(t *testing.T) {
 	}
 	yaml := string(yamlBytes)
 	for _, route := range []string{
-		"/api/v1/workspaces/{workspaceId}/workstate",
-		"/api/v1/workspaces/{workspaceId}/workstate/items",
-		"/api/v1/workspaces/{workspaceId}/workstate/ledger",
+		"/api/v1/projects/{project}/workstate",
+		"/api/v1/projects/{project}/workstate/items",
+		"/api/v1/projects/{project}/workstate/ledger",
 		"ingestWorkstate",
 		"listWorkstateItems",
 		"listWorkstateLedger",

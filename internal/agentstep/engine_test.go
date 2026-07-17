@@ -2693,3 +2693,62 @@ func TestIsNamedPerformer(t *testing.T) {
 		t.Error("DSL reviewer token must not perform")
 	}
 }
+
+// parkWF declares from="*" on blocked so parking works from every performing
+// state; no resume edges — resume is origin-enforced (sty_f75286dc).
+var parkWF = wfDoc(baselineWorkflow, `"*"`, `digraph w {
+  backlog [shape=Mdiamond]
+  in_progress [agent=executor, prompt="@skill:code"]
+  integration [agent=executor, prompt="@skill:integrate"]
+  release [agent=executor, prompt="@skill:release"]
+  done [shape=Msquare]
+  cancelled [agent=reviewer, prompt="@skill:cancel"]
+  blocked [agent=reviewer, prompt="@skill:park-gate", from="*"]
+  backlog -> in_progress -> integration -> release -> done
+  blocked -> cancelled
+}`)
+
+// TestGateParkResumeToOrigin (sty_f75286dc): parked from integration resumes
+// only to integration (ungated); release is refused — no gate wormhole.
+func TestGateParkResumeToOrigin(t *testing.T) {
+	g := New(&fakeRunner{}, fakeDocs{workflow: parkWF, skillFound: false}, "/repo", "")
+	item := workitem.Item{
+		ID: "sty_park", Status: "blocked", ParkOrigin: "integration",
+		Kind: workitem.KindStory, Tags: []string{},
+	}
+	// Resume to origin: ungated accept.
+	dec, err := g.Gate(context.Background(), item, "integration")
+	if err != nil {
+		t.Fatalf("resume to origin: %v", err)
+	}
+	if dec.Gated {
+		t.Error("resume must be ungated (no re-run of gates)")
+	}
+	// Wormhole to release: refused.
+	_, err = g.Gate(context.Background(), item, "release")
+	if err == nil {
+		t.Fatal("expected refuse park→release")
+	}
+	if !strings.Contains(err.Error(), "origin") {
+		t.Errorf("error should name origin, got: %v", err)
+	}
+	// Cancel still allowed (declared non-performing exit).
+	_, err = g.Gate(context.Background(), item, "cancelled")
+	if err != nil {
+		t.Fatalf("park→cancelled should be allowed: %v", err)
+	}
+}
+
+// TestGateParkFromIntegration (sty_f75286dc): parking from integration is a
+// declared edge (materialized from from=*) — not "not a declared edge".
+func TestGateParkFromIntegration(t *testing.T) {
+	g := New(&fakeRunner{}, fakeDocs{workflow: parkWF, skillFound: false}, "/repo", "")
+	item := workitem.Item{
+		ID: "sty_park2", Status: "integration",
+		Kind: workitem.KindStory, Tags: []string{},
+	}
+	_, err := g.Gate(context.Background(), item, "blocked")
+	if err != nil {
+		t.Fatalf("integration→blocked should be declared: %v", err)
+	}
+}

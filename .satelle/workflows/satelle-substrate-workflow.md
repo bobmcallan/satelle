@@ -50,7 +50,7 @@ digraph satelle_substrate_workflow {
   cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
   // Park: agent=reviewer keeps blocked non-engaging; on_enter_agent runs triage
   // once on entry (sty_5cabe26f) without opening edit/commit gates while parked.
-  blocked     [agent=reviewer, prompt="@skill:satelle-story-blocked-review", on_enter_agent=blocked-triage, on_enter_prompt="@skill:satelle-story-blocked-triage"]
+  blocked     [agent=reviewer, prompt="@skill:satelle-story-blocked-review", on_enter_agent=blocked-triage, on_enter_prompt="@skill:satelle-story-blocked-triage", from="*"]
 
   // step opts into per-transition step summaries (sty_9a139c78): edge-less, mandatory.
   step        [agent=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
@@ -63,10 +63,6 @@ digraph satelle_substrate_workflow {
   in_progress -> done         // gated by subcheck (on="done"): substrate-only slice
   // A close reject leaves the story at in_progress (the transition does not enact),
   // so the agent just fixes the slice and re-requests done — no recovery edge needed.
-
-  in_progress -> blocked      [agent=reviewer, prompt="@skill:satelle-story-blocked-review"]
-  blocked     -> in_progress
-
   backlog     -> cancelled
   in_progress -> cancelled
   blocked     -> cancelled

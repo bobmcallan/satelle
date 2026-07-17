@@ -487,6 +487,15 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 	if err := g.guardWorkflowStructure(ctx, item); err != nil {
 		return verb.GateDecision{}, err
 	}
+	// Park resume-to-origin (sty_f75286dc): when ParkOrigin is set and the target
+	// is that origin, the edge is declared and ungated — resume must not re-run
+	// gates already passed to reach the origin. Wrong resume targets are refused
+	// here (and by refuseSkippedStep) so park cannot wormhole around gates.
+	if resume, refuse := g.parkResume(ctx, item, toStatus); refuse != nil {
+		return verb.GateDecision{}, refuse
+	} else if resume {
+		return verb.GateDecision{Gated: false}, nil
+	}
 	skills, edgeModel, declared, err := g.reviewerSkills(ctx, item, item.Status, toStatus)
 	if err != nil {
 		return verb.GateDecision{}, err
@@ -1403,6 +1412,40 @@ func (g *Engine) successorsOf(ctx context.Context, item workitem.Item, from stri
 		return nil
 	}
 	return spec.Successors(from)
+}
+
+// parkResume reports whether item→toStatus is a park resume-to-origin (resume
+// true, ungated) or an illegal resume (refuse non-nil). When ParkOrigin is empty
+// both are zero and the caller falls through to ordinary edge handling
+// (sty_f75286dc).
+func (g *Engine) parkResume(ctx context.Context, item workitem.Item, toStatus string) (resume bool, refuse error) {
+	origin := strings.TrimSpace(item.ParkOrigin)
+	if origin == "" {
+		return false, nil
+	}
+	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
+	if err != nil {
+		return false, nil
+	}
+	spec, ok := wfdot.Parse(doc.Body)
+	if !ok || !spec.IsParkState(item.Status) {
+		return false, nil
+	}
+	if toStatus == origin {
+		return true, nil
+	}
+	// Explicit non-performing exits (cancelled) stay on ordinary gate path.
+	if spec.HasEdge(item.Status, toStatus) && !spec.IsPerformingState(toStatus) {
+		return false, nil
+	}
+	// Performing targets other than origin, or undeclared exits: refuse so park
+	// cannot wormhole around gates (e.g. park from in_progress → release).
+	if spec.IsPerformingState(toStatus) || !spec.HasEdge(item.Status, toStatus) {
+		return false, fmt.Errorf(
+			"satelle: refusing transition %s→%s — park resume must return to origin %q",
+			item.Status, toStatus, origin)
+	}
+	return false, nil
 }
 
 // activeWorkflow returns the workflow doc governing an item of the given

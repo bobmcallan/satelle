@@ -27,7 +27,7 @@ digraph satelle_baseline {
   done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
   cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
   // Park state: world-not-ready. agent=reviewer so it is not engaged (edit/commit gates).
-  blocked     [agent=reviewer, prompt="@skill:satelle-story-blocked-review"]
+  blocked     [agent=reviewer, prompt="@skill:satelle-story-blocked-review", from="*"]
   // step is a transparent, edge-less declaration (sty_9a139c78): it opts this
   // workflow into per-transition step summaries (satelle-step-summary), marked
   // mandatory so a summary failure is surfaced. It is not a lifecycle state.
@@ -40,10 +40,6 @@ digraph satelle_baseline {
 
   backlog -> in_progress [agent=reviewer, prompt="@skill:satelle-story-intent-review"]
   in_progress -> done
-
-  in_progress -> blocked [agent=reviewer, prompt="@skill:satelle-story-blocked-review"]
-  blocked     -> in_progress
-
   backlog     -> cancelled
   in_progress -> cancelled
   blocked     -> cancelled

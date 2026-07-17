@@ -13,19 +13,19 @@ import (
 func TestClientPushWorkstate(t *testing.T) {
 	var gotBody []byte
 	ts, c := configTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/workspaces/w1/workstate" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/projects/probe/workstate" {
 			http.NotFound(w, r)
 			return
 		}
-		if r.URL.Query().Get("project") != "probe" {
-			t.Errorf("project query = %q, want probe", r.URL.Query().Get("project"))
+		if r.URL.RawQuery != "" {
+			t.Errorf("workstate POST must not carry a query, got %q", r.URL.RawQuery)
 		}
 		gotBody, _ = io.ReadAll(r.Body)
 		_, _ = w.Write([]byte(`{"items":2,"ledger":1}`))
 	})
 	_ = ts
 
-	res, err := c.PushWorkstate(context.Background(), "w1", "probe", WorkstateIngest{
+	res, err := c.PushWorkstate(context.Background(), "probe", WorkstateIngest{
 		Items: []json.RawMessage{
 			json.RawMessage(`{"id":"sty_1","kind":"story","status":"done","title":"T"}`),
 			json.RawMessage(`{"id":"exe_1","kind":"execution","status":"done","title":"R"}`),
@@ -45,7 +45,7 @@ func TestClientPushWorkstate(t *testing.T) {
 		t.Errorf("body missing item: %s", gotBody)
 	}
 	// Nil slices encode as empty arrays, not null.
-	res2, err := c.PushWorkstate(context.Background(), "w1", "probe", WorkstateIngest{})
+	res2, err := c.PushWorkstate(context.Background(), "probe", WorkstateIngest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestClientPushWorkstateAuth(t *testing.T) {
 	// Replace store with one that has tokens but server always 401s (refresh also fails).
 	// configTestServer's 401 path tries refresh; simplest: drop credentials.
 	c = NewClient(ts.URL, &memStore{}, ts.Client())
-	_, err := c.PushWorkstate(context.Background(), "w1", "probe", WorkstateIngest{})
+	_, err := c.PushWorkstate(context.Background(), "probe", WorkstateIngest{})
 	if !errors.Is(err, ErrLoginRequired) {
 		t.Fatalf("want ErrLoginRequired, got %v", err)
 	}
@@ -70,20 +70,20 @@ func TestClientPushWorkstateAuth(t *testing.T) {
 
 func TestClientListWorkstateItems(t *testing.T) {
 	ts, c := configTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/workspaces/w1/workstate/items" {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/projects/probe/workstate/items" {
 			http.NotFound(w, r)
 			return
-		}
-		if r.URL.Query().Get("project") != "probe" {
-			t.Errorf("project query = %q, want probe", r.URL.Query().Get("project"))
 		}
 		if r.URL.Query().Get("kind") != "story" {
 			t.Errorf("kind = %q, want story", r.URL.Query().Get("kind"))
 		}
+		if r.URL.Query().Get("project") != "" {
+			t.Errorf("legacy project= query must be absent, got %q", r.URL.Query().Get("project"))
+		}
 		_, _ = w.Write([]byte(`[{"id":"sty_1","kind":"story","type":"stories","status":"done","title":"T","origin":"cli-sync","record":{"id":"sty_1","kind":"story","title":"T"}}]`))
 	})
 	_ = ts
-	items, err := c.ListWorkstateItems(context.Background(), "w1", "probe", "story")
+	items, err := c.ListWorkstateItems(context.Background(), "probe", "story")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,17 +94,14 @@ func TestClientListWorkstateItems(t *testing.T) {
 
 func TestClientListWorkstateLedger(t *testing.T) {
 	ts, c := configTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/workspaces/w1/workstate/ledger" {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/projects/probe/workstate/ledger" {
 			http.NotFound(w, r)
 			return
-		}
-		if r.URL.Query().Get("project") != "probe" {
-			t.Errorf("project query = %q", r.URL.Query().Get("project"))
 		}
 		_, _ = w.Write([]byte(`[{"id":"evt_1","story_id":"sty_1","kind":"note","type":"ledger","origin":"cli-sync","record":{"id":"evt_1","kind":"note"}}]`))
 	})
 	_ = ts
-	rows, err := c.ListWorkstateLedger(context.Background(), "w1", "probe", "")
+	rows, err := c.ListWorkstateLedger(context.Background(), "probe", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +115,7 @@ func TestClientListWorkstateItemsAuth(t *testing.T) {
 		w.WriteHeader(http.StatusUnauthorized)
 	})
 	c := NewClient(ts.URL, &memStore{}, ts.Client())
-	_, err := c.ListWorkstateItems(context.Background(), "w1", "probe", "")
+	_, err := c.ListWorkstateItems(context.Background(), "probe", "")
 	if !errors.Is(err, ErrLoginRequired) {
 		t.Fatalf("want ErrLoginRequired, got %v", err)
 	}

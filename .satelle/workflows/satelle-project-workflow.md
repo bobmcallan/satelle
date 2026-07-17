@@ -64,7 +64,7 @@ digraph satelle_workflow {
   // agent=reviewer so the edit/commit gates do not treat it as engaged work.
   // on_enter_agent dispatches [blocked-triage] once on entry (sty_5cabe26f) without
   // making blocked engaging — orthogonal to agent=; park gate stays blocked-review.
-  blocked     [agent=reviewer, prompt="@skill:satelle-story-blocked-review", on_enter_agent=blocked-triage, on_enter_prompt="@skill:satelle-story-blocked-triage"]
+  blocked     [agent=reviewer, prompt="@skill:satelle-story-blocked-review", on_enter_agent=blocked-triage, on_enter_prompt="@skill:satelle-story-blocked-triage", from="*"]
 
   // step opts this workflow into per-transition step summaries (sty_9a139c78):
   // an edge-less declaration, mandatory so a summary failure is surfaced.
@@ -93,9 +93,6 @@ digraph satelle_workflow {
   release     -> in_progress  // recovery: a release/done reject returns to work
 
   // Park / resume: world-not-ready (reason gated on entry). Resume is agent-directed.
-  in_progress -> blocked      [agent=reviewer, prompt="@skill:satelle-story-blocked-review"]
-  blocked     -> in_progress
-
   backlog     -> cancelled
   plan        -> cancelled
   in_progress -> cancelled

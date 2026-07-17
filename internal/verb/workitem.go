@@ -489,6 +489,12 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		}
 	}
 
+	// Park origin (sty_f75286dc): stamp authoritative resume-to origin when
+	// entering a park node; clear on leave. Not ledger-derived.
+	var parkOrigin *string
+	if transitioning {
+		parkOrigin = parkOriginForTransition(ctx, current, *req.Status)
+	}
 	it, err := store.Update(ctx, req.ID, workitem.UpdateInput{
 		Title:              req.Title,
 		Body:               req.Body,
@@ -498,6 +504,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		ParentID:           req.ParentID,
 		AcceptanceCriteria: req.AcceptanceCriteria,
 		Tags:               req.Tags,
+		ParkOrigin:         parkOrigin,
 	}, now)
 	if err != nil {
 		return nil, err

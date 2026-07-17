@@ -16,6 +16,11 @@ import (
 // required step (e.g. backlog→in_progress when only backlog→plan exists) is a
 // hard refuse naming the expected successor(s).
 //
+// Park resume (sty_f75286dc): when ParkOrigin is set, leaving a park node is
+// allowed only to that origin (resume) or via an explicit non-performing exit
+// edge (e.g. cancelled). Resume-to-origin is not an N×2 edge explosion — it is
+// enforced from the work_items.park_origin column.
+//
 // Fail-open when the governing workflow cannot be resolved or has no DOT: those
 // deployments are owned by structure/engage checks, not this fence. Stories and
 // tasks with a resolvable DOT are fenced; executions follow their own paths.
@@ -43,6 +48,22 @@ func refuseSkippedStep(ctx context.Context, current workitem.Item, toStatus stri
 	if !ok {
 		return nil
 	}
+
+	// Park resume-to-origin (sty_f75286dc): origin is authoritative state.
+	if spec.IsParkState(from) && strings.TrimSpace(current.ParkOrigin) != "" {
+		origin := current.ParkOrigin
+		if toStatus == origin {
+			return nil // resume — always legal
+		}
+		// Explicit non-performing exits (cancelled, etc.) still use declared edges.
+		if spec.HasEdge(from, toStatus) && !spec.IsPerformingState(toStatus) {
+			return nil
+		}
+		return fmt.Errorf(
+			"satelle: refusing transition %s→%s on %s — park resume must return to origin %q (not %q); cancelled and other non-performing exits remain open when declared",
+			from, toStatus, current.ID, origin, toStatus)
+	}
+
 	if spec.HasEdge(from, toStatus) {
 		return nil
 	}
@@ -57,4 +78,37 @@ func refuseSkippedStep(ctx context.Context, current workitem.Item, toStatus stri
 	return fmt.Errorf(
 		"satelle: refusing transition %s→%s on %s — not an edge in workflow %s; expected next step(s): %s",
 		from, toStatus, current.ID, wf.Name, strings.Join(next, ", "))
+}
+
+// parkOriginForTransition returns the park_origin value to stamp on a status
+// transition (sty_f75286dc). Entering a park node stores the prior status;
+// leaving a park node clears it. Nil means leave the column unchanged.
+func parkOriginForTransition(ctx context.Context, current workitem.Item, toStatus string) *string {
+	idx, err := requireDocIndex()
+	if err != nil {
+		return nil
+	}
+	wfs, err := idx.List(ctx, "workflows")
+	if err != nil {
+		return nil
+	}
+	wf, ok := wfgovern.GoverningWorkflow(wfs, current)
+	if !ok {
+		return nil
+	}
+	spec, ok := wfdot.Parse(wf.Body)
+	if !ok {
+		return nil
+	}
+	empty := ""
+	if spec.IsParkState(toStatus) && !spec.IsParkState(current.Status) {
+		// Enter park: origin is the prior performing (or other) status.
+		o := current.Status
+		return &o
+	}
+	if spec.IsParkState(current.Status) && !spec.IsParkState(toStatus) {
+		// Leave park (resume or cancel): clear origin.
+		return &empty
+	}
+	return nil
 }

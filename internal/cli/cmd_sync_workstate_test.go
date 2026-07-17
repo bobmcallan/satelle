@@ -37,30 +37,24 @@ func newFakeWorkstateServer(t *testing.T) (*httptest.Server, *fakeWorkstateServe
 			{"id": "ws-team", "kind": "team", "name": "Acme"},
 		})
 	})
-	mux.HandleFunc("POST /api/v1/workspaces/{id}/workstate", func(w http.ResponseWriter, r *http.Request) {
-		wsID := r.PathValue("id")
-		if proj := r.URL.Query().Get("project"); proj != "" {
-			wsID = wsID + "|" + proj
-		}
+	mux.HandleFunc("POST /api/v1/projects/{project}/workstate", func(w http.ResponseWriter, r *http.Request) {
+		key := r.PathValue("project")
 		body, _ := io.ReadAll(r.Body)
 		var batch map[string]any
 		_ = json.Unmarshal(body, &batch)
 		f.mu.Lock()
-		f.posts[wsID] = append(f.posts[wsID], batch)
-		f.lastRaw[wsID] = body
+		f.posts[key] = append(f.posts[key], batch)
+		f.lastRaw[key] = body
 		f.mu.Unlock()
 		items, _ := batch["items"].([]any)
 		ledger, _ := batch["ledger"].([]any)
 		_ = json.NewEncoder(w).Encode(map[string]int{"items": len(items), "ledger": len(ledger)})
 	})
 	// Mirror GET shape: promote fields from stored record for list responses.
-	mux.HandleFunc("GET /api/v1/workspaces/{id}/workstate/items", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v1/projects/{project}/workstate/items", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.gets++
-		key := r.PathValue("id")
-		if proj := r.URL.Query().Get("project"); proj != "" {
-			key = key + "|" + proj
-		}
+		key := r.PathValue("project")
 		raw := f.lastRaw[key]
 		f.mu.Unlock()
 		var batch map[string]any
@@ -88,13 +82,10 @@ func newFakeWorkstateServer(t *testing.T) (*httptest.Server, *fakeWorkstateServe
 		}
 		_ = json.NewEncoder(w).Encode(out)
 	})
-	mux.HandleFunc("GET /api/v1/workspaces/{id}/workstate/ledger", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v1/projects/{project}/workstate/ledger", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.gets++
-		key := r.PathValue("id")
-		if proj := r.URL.Query().Get("project"); proj != "" {
-			key = key + "|" + proj
-		}
+		key := r.PathValue("project")
 		raw := f.lastRaw[key]
 		f.mu.Unlock()
 		var batch map[string]any
@@ -175,7 +166,7 @@ func TestSyncWorkstatePushSkipsLocal(t *testing.T) {
 	if !strings.Contains(out, "every work-state area is local") {
 		t.Fatalf("expected local-skip message, got: %q", out)
 	}
-	if f.postCount("ws-personal|probe") != 0 {
+	if f.postCount("probe") != 0 {
 		t.Error("local-scope push contacted the server")
 	}
 }
@@ -204,13 +195,13 @@ func TestSyncWorkstatePushPersonalAndIdempotent(t *testing.T) {
 	if !strings.Contains(out, "personal collection") && !strings.Contains(out, "personal workspace") {
 		t.Fatalf("push output should name personal workspace: %q", out)
 	}
-	if f.postCount("ws-personal|probe") != 1 {
-		t.Fatalf("personal posts = %d, want 1", f.postCount("ws-personal|probe"))
+	if f.postCount("probe") != 1 {
+		t.Fatalf("personal posts = %d, want 1", f.postCount("probe"))
 	}
 	if f.postCount("ws-team") != 0 {
 		t.Error("workstate must never post to the team workspace")
 	}
-	items := f.lastItems("ws-personal|probe")
+	items := f.lastItems("probe")
 	if len(items) == 0 {
 		t.Fatal("expected at least one item in the push")
 	}
@@ -220,8 +211,8 @@ func TestSyncWorkstatePushPersonalAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-push: %v\n%s", err, out2)
 	}
-	if f.postCount("ws-personal|probe") != 2 {
-		t.Fatalf("re-push posts = %d, want 2", f.postCount("ws-personal|probe"))
+	if f.postCount("probe") != 2 {
+		t.Fatalf("re-push posts = %d, want 2", f.postCount("probe"))
 	}
 }
 
@@ -244,8 +235,8 @@ func TestSyncWorkstatePushIgnoresTeamBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("push: %v\n%s", err, out)
 	}
-	if f.postCount("ws-personal|probe") != 1 {
-		t.Fatalf("personal posts = %d, want 1 (shared scope still personal dest)", f.postCount("ws-personal|probe"))
+	if f.postCount("probe") != 1 {
+		t.Fatalf("personal posts = %d, want 1 (shared scope still personal dest)", f.postCount("probe"))
 	}
 	if f.postCount("ws-team") != 0 {
 		t.Error("shared-scope workstate must NOT route to team workspace")
@@ -378,8 +369,8 @@ func TestSyncWorkstatePullRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("push: %v\n%s", err, out)
 	}
-	if f.postCount("ws-personal|probe") != 1 {
-		t.Fatalf("posts = %d", f.postCount("ws-personal|probe"))
+	if f.postCount("probe") != 1 {
+		t.Fatalf("posts = %d", f.postCount("probe"))
 	}
 
 	// Wipe local work items by opening store via a second push path isn't available;

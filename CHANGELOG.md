@@ -1,3 +1,11 @@
+## [0.0.271] - 2026-07-17
+
+### Changed
+- Hosted client adopts project-addressed sync routes (`/api/v1/projects/{project}/{config,documents,workstate}`); drops workspace id + `?project=` query; `published` stays workspace-level (sty_ca64d0cb)
+- OpenAPI + contract tests pin the project-addressed surface; document sync cursor keys on (server, project, repo)
+- Declared park nodes: `from="*"` / `from="s1,s2"` materialize inbound park edges; resume enforced to `park_origin` on work_items; wildcard edge endpoints rejected (sty_f75286dc)
+- Workflows (project, substrate, baseline) collapse park idiom to `from="*"` on blocked; `satelle-dot-standard` documents the rule
+
 # Changelog
 
 All notable changes to satelle are documented here. Format: Keep a Changelog–style,

@@ -139,11 +139,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun bool) err
 	}
 
 	client := hosted.NewClient(server, hosted.FileStore{}, nil)
-	personalID, err := client.ActiveWorkspaceID(cmd.Context(), config.PersonalWorkspace)
-	if err != nil {
-		return fmt.Errorf("resolve personal workspace: %w", err)
-	}
-	res, err := client.PushWorkstate(cmd.Context(), personalID, project, batch)
+	res, err := client.PushWorkstate(cmd.Context(), project, batch)
 	if err != nil {
 		if errors.Is(err, hosted.ErrLoginRequired) {
 			return err
@@ -191,14 +187,10 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force bo
 	}
 
 	client := hosted.NewClient(server, hosted.FileStore{}, nil)
-	personalID, err := client.ActiveWorkspaceID(ctx, config.PersonalWorkspace)
-	if err != nil {
-		return fmt.Errorf("resolve personal workspace: %w", err)
-	}
 
 	var items []hosted.WorkstateItem
 	if optIn["stories"] || optIn["executions"] {
-		items, err = client.ListWorkstateItems(ctx, personalID, project, "")
+		items, err = client.ListWorkstateItems(ctx, project, "")
 		if err != nil {
 			if errors.Is(err, hosted.ErrLoginRequired) {
 				return err
@@ -208,7 +200,7 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force bo
 	}
 	var ledgerRows []hosted.WorkstateLedgerRow
 	if optIn["ledger"] {
-		ledgerRows, err = client.ListWorkstateLedger(ctx, personalID, project, "")
+		ledgerRows, err = client.ListWorkstateLedger(ctx, project, "")
 		if err != nil {
 			if errors.Is(err, hosted.ErrLoginRequired) {
 				return err
