@@ -20,7 +20,7 @@ import (
 )
 
 func init() {
-	var yes bool
+	var yes, allowLive bool
 	cmd := &cobra.Command{
 		Use:   "migrate",
 		Short: "Converge this repo to the current satelle structure (dry-run default)",
@@ -40,9 +40,16 @@ func init() {
 Dry-run by default: prints the full plan and applies nothing. Pass --yes to apply.
 Idempotent: a converged repo reports "already on current structure".
 
+LIVE RUNTIME (sty_5308eb60): if the legacy DB holds a fresh engagement lease
+or a satelle serve is responding on this repo's web port, migrate REFUSES to
+relocate/remove unless --allow-live is set. Relocating under a live session
+strands every write made after the VACUUM INTO snapshot. Prefer waiting for
+the session to park/finish (satelle story seat) and stopping serve.
+
 Edited/authored substrate is never touched. Runtime migrate leaves the legacy
 DB in place until residue removal (only after a successful home-keyed copy).
-See decision-substrate-planes-local-first and sty_a3915840 / sty_f115e6bf.`,
+See decision-substrate-planes-local-first and sty_a3915840 / sty_f115e6bf.
+` + migrateSplitBrainHelp,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, cfgPath, err := config.Load("")
@@ -63,10 +70,11 @@ See decision-substrate-planes-local-first and sty_a3915840 / sty_f115e6bf.`,
 				RuntimeDir: cfg.ResolveRuntimeDir(repoRoot).Dir,
 				DBPath:     cfg.ResolveDB(repoRoot),
 			}
-			return runMigrate(cmd.OutOrStdout(), a, yes)
+			return runMigrate(cmd.OutOrStdout(), a, yes, allowLive)
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "apply the migration (default is dry-run)")
+	cmd.Flags().BoolVar(&allowLive, "allow-live", false, "UNSAFE: relocate even when a live engagement lease or satelle serve is detected (strands post-snapshot writes)")
 	register(cmd)
 }
 
@@ -101,7 +109,7 @@ func (p migratePlan) empty() bool {
 	return !p.RuntimeRelocate && len(p.Residue) == 0 && len(p.PruneSeeds) == 0 && !p.Gitignore && !p.ExemptGitignore
 }
 
-func runMigrate(out io.Writer, a *app.App, yes bool) error {
+func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 	cfg := a.Config
 	repoRoot := a.RepoRoot
 	dataDir := a.DataDir
@@ -115,6 +123,20 @@ func runMigrate(out io.Writer, a *app.App, yes bool) error {
 		return nil
 	}
 
+	// Live-runtime check before any plan print that implies apply is safe
+	// (sty_5308eb60). Covers relocate AND residue: a live session writing the
+	// legacy DB must not race residue removal even when home already exists.
+	legacyDB := filepath.Join(dataDir, config.DefaultDBName)
+	needLiveCheck := plan.RuntimeRelocate || len(plan.Residue) > 0
+	var liveHolders []liveHolder
+	if needLiveCheck {
+		holders, err := ensureLiveOK(out, cfg, repoRoot, legacyDB, allowLive, false)
+		if err != nil {
+			return err
+		}
+		liveHolders = holders
+	}
+
 	// Report plan.
 	fmt.Fprintln(out, "migrate plan:")
 	if plan.RuntimeRelocate {
@@ -123,6 +145,9 @@ func runMigrate(out io.Writer, a *app.App, yes bool) error {
 			filepath.Join(dataDir, config.DefaultDBName), home)
 	} else {
 		fmt.Fprintln(out, "  runtime relocate: (none)")
+	}
+	if needLiveCheck {
+		printLivePlanLine(out, liveHolders)
 	}
 	if len(plan.Residue) == 0 {
 		fmt.Fprintln(out, "  legacy residue:   (none)")
@@ -153,14 +178,25 @@ func runMigrate(out io.Writer, a *app.App, yes bool) error {
 	fmt.Fprintln(out, "  validate:         deployed system check")
 
 	if !yes {
-		fmt.Fprintln(out, "\ndry-run only — re-run with --yes to apply")
+		if len(liveHolders) > 0 {
+			fmt.Fprintln(out, "\ndry-run only — would REFUSE apply (live runtime); re-run with --yes after idle, or --yes --allow-live (UNSAFE)")
+		} else {
+			fmt.Fprintln(out, "\ndry-run only — re-run with --yes to apply")
+		}
 		return nil
+	}
+
+	// Refuse live runtime on apply (unless --allow-live).
+	if needLiveCheck {
+		if _, err := ensureLiveOK(out, cfg, repoRoot, legacyDB, allowLive, true); err != nil {
+			return err
+		}
 	}
 
 	// Apply.
 	if plan.RuntimeRelocate {
 		fmt.Fprintln(out, "\n→ runtime relocate")
-		if err := runRuntimeMigrate(out, a, false, false); err != nil {
+		if err := runRuntimeMigrate(out, a, false, allowLive, false); err != nil {
 			return fmt.Errorf("migrate: runtime: %w", err)
 		}
 		// Home-keyed path is now authoritative — re-resolve so later steps
