@@ -704,14 +704,15 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	}
 	// A dispatched executor starts fresh and reconstructs its context by PULLING the
 	// story, its documents, and the ledger — either via the read-only satelle CLI
-	// (the pull-context call-to-action, sty_47d31300) or via disk reads under
-	// .satelle/stories/<id>/ when the binding has a file-read tool but no shell
-	// (sty_565a0202 grok coder). Without a context channel the agent is silently
-	// context-starved. Refuse the dispatch with an actionable fix rather than run a
-	// blind agent — the no-silent-fallback style the engine uses for a missing binding.
+	// (the pull-context call-to-action, sty_47d31300) or via disk reads under the
+	// home-keyed runtime stories dir when the binding has a file-read tool but no
+	// shell (sty_565a0202 grok coder; path: sty_58fa970e / sty_4660bbe1). Without a
+	// context channel the agent is silently context-starved. Refuse the dispatch
+	// with an actionable fix rather than run a blind agent — the no-silent-fallback
+	// style the engine uses for a missing binding.
 	if !grantsSatelleCLI(binding.Tools) {
 		return verb.DispatchResult{}, fmt.Errorf(
-			"named agent %q cannot perform step %q: its .satelle/agents.toml [%s] tools grant has no context channel (add `Bash(satelle:*)` for the satelle CLI, or `read_file` for disk reads under .satelle/stories/<id>/)",
+			"named agent %q cannot perform step %q: its .satelle/agents.toml [%s] tools grant has no context channel (add `Bash(satelle:*)` for the satelle CLI, or `read_file` for disk reads under ~/.satelle/<repo-key>/stories/<id>/)",
 			dispatchAgent, toStatus, dispatchAgent)
 	}
 	// Composed rubrics: spine skill first, then matching augmentations in order
@@ -857,9 +858,10 @@ func (g *Engine) setDecisionUsage(d *verb.GateDecision, u agentcli.UsageResult, 
 // channels satisfy it (sty_565a0202):
 //
 //  1. satelle CLI via shell: `Bash(satelle…)`, broad `Bash`/`Bash(*)`, or `*`.
-//  2. Disk reads of story documents under .satelle/stories/<id>/ via the
-//     grok-native `read_file` tool (used when headless Grok cannot enable
-//     run_terminal_command).
+//  2. Disk reads of story documents under the home-keyed runtime plane
+//     (~/.satelle/<repo-key>/stories/<id>/) via the grok-native `read_file`
+//     tool (used when headless Grok cannot enable run_terminal_command).
+//     The in-repo `.satelle/stories/` path is obsolete (sty_58fa970e).
 //
 // A grant with neither channel is refused loudly. Reviewer bindings are
 // Bash-less by design and never reach here — they run via runReviewer, not

@@ -111,9 +111,12 @@ the agent **pulls** everything else itself, by id, with the read-only satelle CL
   verdicts, summaries).
 
 A read-only reviewer whose grant excludes Bash reads the same attachments on disk
-under `.satelle/stories/<id>/` (tasks under `.satelle/tasks/<id>/`). Either way:
-**fetch before concluding a document or a prior step is missing.** This is why a
-dispatched binding must grant the satelle CLI — it is the agent's context channel.
+under the home-keyed runtime plane `~/.satelle/<repo-key>/stories/<id>/`
+(`satelle runtime path` names the exact dir; tasks stay under
+`.satelle/tasks/<id>/`). Do **not** use in-repo `.satelle/stories/` — that path
+is obsolete post-relocation (sty_58fa970e). Either way: **fetch before concluding
+a document or a prior step is missing.** This is why a dispatched binding must
+grant the satelle CLI — it is the agent's preferred context channel.
 
 ## What makes a step safe to dispatch (sufficiency)
 

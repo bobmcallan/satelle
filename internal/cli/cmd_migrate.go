@@ -29,7 +29,9 @@ func init() {
   1. runtime relocation   — copy legacy .satelle/satelle.db (+ logs/backups/stories)
                             into ~/.satelle/<repo-key>/ (non-destructive)
   2. legacy residue       — remove in-repo runtime leftovers once home-keyed
-                            (satelle.db*, logs/, backups/, stories/, agents.*.bak)
+                            (satelle.db*, logs/, backups/, stories/ — including
+                            attachment residue recreated under .satelle/stories/,
+                            agents.*.bak)
   3. substrate prune      — remove unedited embedded-default seed copies
   4. gitignore converge   — rewrite the managed .gitignore block to the current form
   5. config converge      — append ".gitignore" to [gate] edit_exempt_paths when a

@@ -18,7 +18,17 @@ You get `{story, from, to}` on stdin. Read-only; no modifying, no implementing.
 
 ## 1. Locate the presented artifact
 
-Plan attachment named `plan` under `.satelle/stories/<sty_id>/`.
+Plan is the story attachment named `plan`. Read it via the CLI when your grant
+includes shell:
+
+```
+satelle story doc <sty_id> plan
+```
+
+Disk fallback (Bash-less grant): home-keyed runtime plane
+`~/.satelle/<repo-key>/stories/<sty_id>/plan.md` — resolve the exact dir with
+`satelle runtime path`. Do **not** use `.satelle/stories/` (obsolete
+post-relocation; recreating it is residue, sty_58fa970e).
 
 - **No plan artifact → reject**.
 

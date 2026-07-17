@@ -24,11 +24,12 @@ func init() {
 const KindStoryDocAttached = "story_doc_attached"
 
 // attachmentDir resolves an item's attachment/bundle directory by KIND
-// (sty_890b86cb). A story's docs live under .satelle/stories/<id>/, but a TASK or
-// EXECUTION is NOT a story: its artifacts belong in the task's own bundle under
-// .satelle/tasks/<tsk_id>/ (an execution roots at its PARENT task's folder). This
-// closes the kind-blind root where `attach` on a task materialised under
-// .satelle/stories/tsk_*/. Empty when the dir wiring for that kind is unset.
+// (sty_890b86cb). A story's docs live under the home-keyed runtime stories dir
+// (wired via SetStoryDir → ~/.satelle/<repo-key>/stories/<id>/, sty_4660bbe1);
+// a TASK or EXECUTION is NOT a story: its artifacts belong in the task's own
+// bundle under .satelle/tasks/<tsk_id>/ (an execution roots at its PARENT task's
+// folder). This closes the kind-blind root where `attach` on a task materialised
+// under a story-shaped path. Empty when the dir wiring for that kind is unset.
 func attachmentDir(it workitem.Item) string {
 	switch it.Kind {
 	case workitem.KindTask:
@@ -108,7 +109,7 @@ func storyDocAttach(ctx context.Context, raw json.RawMessage) (json.RawMessage, 
 }
 
 // writeAttachedDoc materialises a typed markdown document into an item's
-// kind-resolved attachment dir (.satelle/stories/<id>/ or .satelle/tasks/<id>/)
+// kind-resolved attachment dir (runtime stories/<id>/ or .satelle/tasks/<id>/)
 // with the standard frontmatter, and records a KindStoryDocAttached ledger row. It
 // is the shared core of the story-doc-attach verb and the step-summary deposit
 // (sty_47d31300), so a dispatched agent can PULL prior step summaries via

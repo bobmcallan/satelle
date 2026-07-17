@@ -86,9 +86,9 @@ commit ending in the story id (no AI attribution), and pushes to `main`
 success, the version-gated `release` run that publishes `v<version>`. Rather than
 block watching both runs, the step refreshes the local service during the CI
 window and then **records** the `test` + `release` run URLs, their conclusions, and
-the published tag as a PR-style summary **with the story** — an attachment under
-`.satelle/stories/<id>/` (`satelle story attach … --file`), readable via
-`satelle story docs <id>`. The `satelle-story-release-review` gate is the authority
+the published tag as a PR-style summary **with the story** — an attachment via
+`satelle story attach … --file` (stored on the home-keyed runtime plane, readable
+via `satelle story docs <id>`). The `satelle-story-release-review` gate is the authority
 on "CI is green": it judges that recorded evidence and rejects a failing, absent,
 or unconcluded run.
 

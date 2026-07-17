@@ -72,8 +72,8 @@ path: "satelle sync workstate pull".`,
 whose resolved [sync] scope is personal or shared from this repo's bound hosted
 PROJECT's personal collection, and materializes them into the local DB (store
 upsert + derived backlog view regeneration). On-disk story markdown is never the
-primary restore target; story attachment files under .satelle/stories/<id>/ are
-not part of the workstate mirror and are not restored.
+primary restore target; story attachment files under the home-keyed runtime
+stories dir are not part of the workstate mirror and are not restored.
 
 Conflict policy (per opted-in area):
   - local empty + hosted non-empty → materialize (prefer hosted)
