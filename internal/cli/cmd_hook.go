@@ -122,13 +122,14 @@ concern and are allowed.
 Exemption is CONFIGURATION, not code (the constitution: configuration over
 code). An edit is exempt from the engaged-story check ONLY when its target falls
 under a [gate] edit_exempt_paths prefix (repo-root-relative or absolute). The
-binary does NOT special-case the data dir: 'satelle init' SEEDS .satelle/ into
-edit_exempt_paths so authored substrate (workflows, skills, principles,
-documents, tasks, config) stays editable without a release OOTB — but the
-operator sees and owns that list and may add a harness authoring dir like
-.claude/ or remove .satelle/ entirely. With an empty edit_exempt_paths, even a
-.satelle/ edit needs an engaged story: config decides, never a Go rule. Generated
-views under the data dir stay protected by their 0o444 file mode regardless.
+binary does NOT special-case the data dir or any managed path: 'satelle init'
+SEEDS .satelle/ and .gitignore into edit_exempt_paths so authored substrate
+(workflows, skills, principles, documents, tasks, config) and satelle-managed
+.gitignore output stay editable without a release OOTB — but the operator sees
+and owns that list and may add a harness authoring dir like .claude/ or remove
+either default. With an empty edit_exempt_paths, even a .satelle/ edit needs an
+engaged story: config decides, never a Go rule. Generated views under the data
+dir stay protected by their 0o444 file mode regardless.
 
 Fails closed: a store open error, listing error, unresolvable workflow, or
 non-DOT workflow body blocks the edit with a clear error message rather than
@@ -153,11 +154,13 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 				// Exemption is CONFIGURATION, not code (the constitution:
 				// configuration over code). Only a path under a [gate]
 				// edit_exempt_paths prefix is exempt from the engaged-story gate.
-				// The data dir is NOT special-cased in the binary — `satelle init`
-				// seeds .satelle/ into edit_exempt_paths so authored substrate stays
-				// editable without a release OOTB, but the operator owns that list
-				// (sty_8c3d345c). With an empty list, even a .satelle/ edit needs an
-				// engaged story: config decides, never a Go rule.
+				// The data dir / managed paths are NOT special-cased in the binary —
+				// `satelle init` seeds .satelle/ and .gitignore into
+				// edit_exempt_paths so authored substrate and satelle-managed
+				// .gitignore output stay editable without a release OOTB, but the
+				// operator owns that list (sty_8c3d345c / sty_f115e6bf). With an
+				// empty list, even a .satelle/ edit needs an engaged story: config
+				// decides, never a Go rule.
 				if exemptTarget(p) {
 					return nil
 				}
@@ -790,12 +793,13 @@ func infraDenyJSON(harness string) string {
 // exemptTarget reports whether an edit to target is exempt from the engaged-story
 // gate: it resolves under a configured [gate] edit_exempt_paths prefix. Exemption
 // is CONFIGURATION, not code (the constitution: configuration over code) — the
-// binary no longer special-cases the data dir; `satelle init` seeds .satelle/ into
-// edit_exempt_paths so authored substrate stays editable OOTB, but the operator
-// owns that list (sty_8c3d345c). The target is resolved to absolute against the
-// repo root FIRST, so a repo-relative path (as Grok sends) is classified correctly.
-// Returns false if the config/root cannot be resolved, so the gate stays
-// conservative (still applies) on any resolution failure.
+// binary no longer special-cases the data dir or managed paths; `satelle init`
+// seeds .satelle/ and .gitignore into edit_exempt_paths so authored substrate
+// and satelle-managed .gitignore output stay editable OOTB, but the operator
+// owns that list (sty_8c3d345c / sty_f115e6bf). The target is resolved to
+// absolute against the repo root FIRST, so a repo-relative path (as Grok sends)
+// is classified correctly. Returns false if the config/root cannot be resolved,
+// so the gate stays conservative (still applies) on any resolution failure.
 func exemptTarget(target string) bool {
 	cfg, cfgPath, err := config.Load("")
 	if err != nil {

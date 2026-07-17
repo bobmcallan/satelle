@@ -23,9 +23,9 @@ func TestAnalyzeSubstrateUneditedConstitution(t *testing.T) {
 	}
 	// Empty principles dir so placement is quiet.
 	_ = os.MkdirAll(filepath.Join(dataDir, "principles"), 0o755)
-	// Minimal toml with edit_exempt so config check is quiet.
+	// Minimal toml with full seeded edit_exempt so config check is quiet.
 	toml := `[gate]
-edit_exempt_paths = [".satelle/"]
+edit_exempt_paths = [".satelle/", ".gitignore"]
 `
 	if err := os.WriteFile(filepath.Join(dataDir, config.ConfigName), []byte(toml), 0o644); err != nil {
 		t.Fatal(err)
@@ -74,13 +74,68 @@ allow_parallel = false
 			if d.Fatal {
 				t.Error("config drift must be advisory")
 			}
-			if !strings.Contains(d.Fix, `edit_exempt_paths = [".satelle/"]`) {
+			if !strings.Contains(d.Fix, `edit_exempt_paths = [".satelle/", ".gitignore"]`) {
 				t.Errorf("fix must include exact block, got %q", d.Fix)
 			}
 		}
 	}
 	if !saw {
 		t.Fatalf("want config missing edit_exempt_paths, got %+v", defs)
+	}
+}
+
+// TestAnalyzeSubstrateEditExemptMissingGitignore: a non-empty list that predates
+// the .gitignore default yields an advisory WARN pointing at migrate; a list
+// that already carries it is quiet; an empty list is a deliberate opt-out.
+func TestAnalyzeSubstrateEditExemptMissingGitignore(t *testing.T) {
+	cases := []struct {
+		name    string
+		toml    string
+		wantDef bool
+	}{
+		{
+			name:    "predates default",
+			toml:    "[gate]\nedit_exempt_paths = [\".satelle/\", \".claude/\"]\n",
+			wantDef: true,
+		},
+		{
+			name:    "already current",
+			toml:    "[gate]\nedit_exempt_paths = [\".satelle/\", \".gitignore\"]\n",
+			wantDef: false,
+		},
+		{
+			name:    "empty opt-out",
+			toml:    "[gate]\nedit_exempt_paths = []\n",
+			wantDef: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			_ = os.MkdirAll(filepath.Join(dataDir, "principles"), 0o755)
+			if err := os.WriteFile(filepath.Join(dataDir, "constitution.md"), []byte("# Real\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dataDir, config.ConfigName), []byte(tc.toml), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			defs := analyzeSubstrate(dataDir, filepath.Dir(dataDir))
+			var saw bool
+			for _, d := range defs {
+				if strings.Contains(d.Defect, `.gitignore`) && strings.Contains(d.Defect, "edit_exempt") {
+					saw = true
+					if d.Fatal {
+						t.Error("missing-.gitignore defect must be advisory")
+					}
+					if !strings.Contains(d.Fix, "migrate") {
+						t.Errorf("fix should name migrate, got %q", d.Fix)
+					}
+				}
+			}
+			if saw != tc.wantDef {
+				t.Fatalf("wantDef=%v saw=%v defects=%+v", tc.wantDef, saw, defs)
+			}
+		})
 	}
 }
 

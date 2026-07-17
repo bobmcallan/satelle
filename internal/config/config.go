@@ -172,12 +172,14 @@ type ReviewConfig struct {
 // GateConfig tunes the PreToolUse edit gate and the single-story process rule.
 // EditExemptPaths lists repo-relative (or absolute) path prefixes whose edits are
 // exempt from the engaged-story gate. It is the SOLE exemption source: the binary
-// does NOT special-case the data dir (configuration over code, the constitution).
-// `satelle init` seeds ".satelle/" here so authored substrate stays editable
-// without a release OOTB, but the operator owns the list — add a harness authoring
-// dir (e.g. ".claude/", which holds authored skills, not product code) or drop
-// ".satelle/" to gate substrate edits too. Empty means everything in-repo requires
-// an engaged story (sty_8c3d345c).
+// does NOT special-case the data dir or any managed path (configuration over code,
+// the constitution). `satelle init` seeds ".satelle/" and ".gitignore" here so
+// authored substrate and satelle-managed .gitignore output (init/migrate write
+// its managed block) stay editable without a release OOTB, but the operator owns
+// the list — add a harness authoring dir (e.g. ".claude/", which holds authored
+// skills, not product code) or drop either default to gate those paths too.
+// Empty means everything in-repo requires an engaged story (sty_8c3d345c /
+// sty_f115e6bf).
 //
 // AllowParallel opts OUT of the default one-performing-story rule. Unset/false
 // (default): a status advance that would leave two stories in non-terminal

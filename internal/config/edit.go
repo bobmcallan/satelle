@@ -105,6 +105,69 @@ func HasKey(content, section, key string) bool {
 	return false
 }
 
+// ListValueContains reports whether content's assignment of key inside section
+// is a TOML string array that includes val (exact match after unquoting). False
+// when the key/section is absent, the value is not a list of strings, or val
+// is not among the quoted entries. Used by init analysis / migrate to detect
+// a missing managed default entry without re-encoding the whole file.
+func ListValueContains(content, section, key, val string) bool {
+	for _, item := range ListStringValues(content, section, key) {
+		if item == val {
+			return true
+		}
+	}
+	return false
+}
+
+// ListStringValues returns the quoted string entries of a TOML array assignment
+// for key inside section, in order. Returns nil when the key is absent or the
+// RHS is not a bracketed list. Only double-quoted string elements are collected
+// (the shape init seeds for edit_exempt_paths).
+func ListStringValues(content, section, key string) []string {
+	lines := strings.Split(content, "\n")
+	start, end := sectionRange(lines, section)
+	if start == -1 {
+		return nil
+	}
+	for i := start; i < end; i++ {
+		if !isKeyLine(lines[i], key) {
+			continue
+		}
+		return parseQuotedListRHS(lines[i])
+	}
+	return nil
+}
+
+// parseQuotedListRHS extracts double-quoted strings from a key = [...] line.
+func parseQuotedListRHS(line string) []string {
+	eq := strings.Index(line, "=")
+	if eq < 0 {
+		return nil
+	}
+	rhs := strings.TrimSpace(line[eq+1:])
+	if !strings.HasPrefix(rhs, "[") {
+		return nil
+	}
+	// Collect "..." segments; empty list yields a non-nil empty slice so callers
+	// can distinguish "key present as []" from "key absent" (nil).
+	out := []string{}
+	rest := rhs
+	for {
+		i := strings.Index(rest, `"`)
+		if i < 0 {
+			break
+		}
+		rest = rest[i+1:]
+		j := strings.Index(rest, `"`)
+		if j < 0 {
+			break
+		}
+		out = append(out, rest[:j])
+		rest = rest[j+1:]
+	}
+	return out
+}
+
 // sectionRange returns [start,end) line indices for section's body. For the root
 // section ("") start is 0 and end is the first table header (or len). For a named
 // section start is the line AFTER its header and end is the next header (or len).

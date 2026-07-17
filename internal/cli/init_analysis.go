@@ -43,15 +43,21 @@ type scaffoldConfigDefault struct {
 // scaffoldConfigDefaults is the curated list of scaffold-seeded keys that a
 // pre-existing toml may lack after a binary upgrade. Keep this list the
 // unambiguous OOTB intents (currently [gate] edit_exempt_paths).
+// ".satelle/" keeps authored substrate editable; ".gitignore" is satelle-managed
+// output (init/migrate write its managed block).
 var scaffoldConfigDefaults = []scaffoldConfigDefault{
 	{
 		Section: "gate",
 		Key:     "edit_exempt_paths",
 		Block: `[gate]
-edit_exempt_paths = [".satelle/"]`,
-		Why: "OOTB scaffold exempts .satelle/ from the engaged-story edit gate so authored substrate stays editable without a release",
+edit_exempt_paths = [".satelle/", ".gitignore"]`,
+		Why: "OOTB scaffold exempts .satelle/ (authored substrate) and .gitignore (satelle-managed init/migrate output) from the engaged-story edit gate",
 	},
 }
+
+// managedEditExemptEntry is the path migrate appends into a non-empty
+// edit_exempt_paths list that predates the default managed-output exemption.
+const managedEditExemptEntry = ".gitignore"
 
 // analyzeSubstrate gathers placement + constitution-author + config-reconciliation
 // defects for dataDir/repoRoot. Pure over the filesystem; store-free.
@@ -83,25 +89,53 @@ func analyzeSubstrate(dataDir, repoRoot string) []substrateDefect {
 		}
 	}
 
-	// Config (advisory): missing scaffold-seeded defaults.
+	// Config (advisory): missing scaffold-seeded defaults, or a present
+	// edit_exempt_paths that lacks the managed .gitignore entry. Init reports;
+	// migrate converges the value. An empty list is deliberate opt-out and is
+	// not flagged.
 	tomlPath := filepath.Join(dataDir, config.ConfigName)
 	if raw, err := os.ReadFile(tomlPath); err == nil {
 		content := string(raw)
 		for _, d := range scaffoldConfigDefaults {
-			if config.HasKey(content, d.Section, d.Key) {
+			if !config.HasKey(content, d.Section, d.Key) {
+				out = append(out, substrateDefect{
+					File:   config.DefaultDataDir + "/" + config.ConfigName,
+					Defect: fmt.Sprintf("missing scaffold-seeded [%s] %s — %s", d.Section, d.Key, d.Why),
+					Fix:    "add this block to " + config.DefaultDataDir + "/" + config.ConfigName + ":\n" + d.Block,
+					Fatal:  false,
+				})
 				continue
 			}
-			out = append(out, substrateDefect{
-				File:   config.DefaultDataDir + "/" + config.ConfigName,
-				Defect: fmt.Sprintf("missing scaffold-seeded [%s] %s — %s", d.Section, d.Key, d.Why),
-				Fix:    "add this block to " + config.DefaultDataDir + "/" + config.ConfigName + ":\n" + d.Block,
-				Fatal:  false,
-			})
+			if d.Section == "gate" && d.Key == "edit_exempt_paths" {
+				if editExemptNeedsGitignore(content) {
+					out = append(out, substrateDefect{
+						File:   config.DefaultDataDir + "/" + config.ConfigName,
+						Defect: "edit_exempt_paths lacks \".gitignore\" — satelle-managed init/migrate output trips the engaged-story gate without it",
+						Fix:    "run `satelle migrate --yes` to append \".gitignore\" without clobbering operator additions (or add it by hand)",
+						Fatal:  false,
+					})
+				}
+			}
 		}
 	}
 
 	_ = repoRoot // reserved for future absolute-path reports; keep signature stable
 	return out
+}
+
+// editExemptNeedsGitignore reports whether content has a non-empty
+// [gate] edit_exempt_paths that lacks the managed ".gitignore" entry.
+// An absent key or an explicitly empty list returns false (missing-key is
+// handled separately; empty is a deliberate opt-out).
+func editExemptNeedsGitignore(content string) bool {
+	if !config.HasKey(content, "gate", "edit_exempt_paths") {
+		return false
+	}
+	items := config.ListStringValues(content, "gate", "edit_exempt_paths")
+	if len(items) == 0 {
+		return false
+	}
+	return !config.ListValueContains(content, "gate", "edit_exempt_paths", managedEditExemptEntry)
 }
 
 // reportSubstrateAnalysis prints defects in AC4 form and returns the fatal count.
