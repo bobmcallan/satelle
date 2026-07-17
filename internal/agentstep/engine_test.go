@@ -2140,6 +2140,29 @@ func TestGatePayloadIncludesChildren(t *testing.T) {
 	}
 }
 
+// TestGatePayloadIncludesDocs (sty_58fa970e): attachments ride in the payload
+// so a Bash-less reviewer can judge without any disk path.
+func TestGatePayloadIncludesDocs(t *testing.T) {
+	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
+	g.SetDocsResolver(func(_ context.Context, itemID string) []DocState {
+		if itemID != "sty_docs" {
+			t.Errorf("docs resolver itemID = %q", itemID)
+		}
+		return []DocState{
+			{Name: "plan", Type: "plan", Body: "# plan body for AC1"},
+			{Name: "step-summary-x", Type: "step-summary", Body: "did the thing"},
+		}
+	})
+	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_docs", Status: "in_progress"}, "done"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"docs"`, `"name":"plan"`, "plan body for AC1", "step-summary"} {
+		if !strings.Contains(r.got.Payload, want) {
+			t.Errorf("payload missing %q:\n%s", want, r.got.Payload)
+		}
+	}
+}
+
 func TestSetReviewerModel(t *testing.T) {
 	g := New(nil, nil, "", "")
 	if g.model != "" {

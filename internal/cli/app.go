@@ -117,6 +117,9 @@ func openAppForCmd(cmd *cobra.Command) error {
 				return aerr
 			}
 			rev.SetChildrenResolver(childrenResolver(a))
+			// Attachment payload injection (sty_58fa970e): Bash-less reviewers
+			// receive plan/step-summary bodies in the transition payload.
+			rev.SetDocsResolver(docsResolver(a))
 			// Structured retry/failure/timeout telemetry (sty_b73c3236): the engine
 			// sees each dispatch ATTEMPT (a killed/timed-out subprocess) the verb
 			// layer never does, so it writes those events itself via this sink.
@@ -218,6 +221,27 @@ func childrenResolver(a *app.App) func(ctx context.Context, parentID string) []a
 		out := make([]agentstep.ChildState, 0, len(kids))
 		for _, k := range kids {
 			out = append(out, agentstep.ChildState{ID: k.ID, Status: k.Status})
+		}
+		return out
+	}
+}
+
+// docsResolver lists an item's attachments for transition-payload injection
+// (sty_58fa970e) — plan/step summaries ride in the payload so Bash-less
+// reviewers need no disk path. verb.ItemDocs uses the package-global storyDir
+// wired by SetStoryDir above.
+func docsResolver(a *app.App) func(ctx context.Context, itemID string) []agentstep.DocState {
+	return func(ctx context.Context, itemID string) []agentstep.DocState {
+		if itemID == "" {
+			return nil
+		}
+		docs, err := verb.ItemDocs(ctx, itemID)
+		if err != nil {
+			return nil
+		}
+		out := make([]agentstep.DocState, 0, len(docs))
+		for _, d := range docs {
+			out = append(out, agentstep.DocState{Name: d.Name, Type: d.Type, Body: d.Body})
 		}
 		return out
 	}

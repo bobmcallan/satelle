@@ -429,28 +429,26 @@ const isolatedAgentBriefing = "The work item arrives on stdin as JSON. The " +
 	"but does not inline (including embedded defaults that are not files on disk)."
 
 // pullContextCallToAction rides in EVERY isolated-agent prompt (via buildRequest).
-// Attachment READ CHANNEL (sty_58fa970e / sty_4660bbe1): prefer the satelle CLI
-// (`satelle story doc`). Disk fallback is the home-keyed runtime plane
-// (~/.satelle/<repo-key>/stories/<id>/), NEVER the in-repo .satelle/stories/
-// path — writing/reading there recreates the pre-relocation residue the
-// three-plane design removed.
+// Attachment READ CHANNEL (sty_58fa970e / sty_4660bbe1): the transition payload's
+// `docs` array carries every attachment (name, type, body) so Bash-less reviewers
+// can judge without any disk path. Prefer that. Shell-granted agents may also
+// pull more via the satelle CLI. NEVER name the obsolete in-repo .satelle/stories/
+// path — writing/reading there recreates pre-relocation residue.
 const pullContextCallToAction = "## Reconstruct your context (you start fresh)\n\n" +
 	"You are dispatched with NO conversation history — the stdin payload carries the " +
-	"work item (its `id`, title, body, acceptance criteria) and the transition. Pull " +
-	"everything else yourself, by id, with the read-only satelle CLI:\n\n" +
+	"work item (its `id`, title, body, acceptance criteria), the transition, and a " +
+	"`docs` array of every attached document (`name`, `type`, `body`). Prefer the " +
+	"payload `docs` for the plan and step summaries — that is how a Bash-less " +
+	"reviewer reads what it judges. When `truncated: true` on a doc, the body is " +
+	"omitted; pull the full text with the CLI when your grant includes shell:\n\n" +
 	"- `satelle story get <id>` — the full current record.\n" +
-	"- `satelle story docs <id>`, then `satelle story doc <id> <name>` — the attached " +
-	"documents: the implementation `plan` and every prior step summary (each gated " +
-	"transition deposits one), which together narrate the work so far.\n" +
+	"- `satelle story docs <id>`, then `satelle story doc <id> <name>` — attachments " +
+	"beyond (or fuller than) the payload.\n" +
 	"- `satelle ledger list --story <id>` — the evidence ledger (transitions, review " +
 	"verdicts, summaries).\n\n" +
-	"If your grant excludes Bash (a read-only reviewer), the same attachments live on " +
-	"the home-keyed runtime plane under `~/.satelle/<repo-key>/stories/<id>/` " +
-	"(resolve the exact dir with `satelle runtime path` when you have shell; tasks " +
-	"stay under `.satelle/tasks/<id>/` as authored substrate). Do **not** look under " +
-	"`.satelle/stories/` — that in-repo path is obsolete post-relocation and must " +
-	"not be recreated. Read the home-keyed files with Read/Glob. Do not assume " +
-	"absence: fetch before concluding a document or a prior step is missing."
+	"Do **not** look under in-repo `.satelle/stories/` — that path is obsolete " +
+	"post-relocation and must not be recreated. Do not assume absence: check the " +
+	"payload `docs` (and CLI when available) before concluding a document is missing."
 
 // reviewerCharter is the charter for an isolated gate reviewer.
 func reviewerCharter() string {

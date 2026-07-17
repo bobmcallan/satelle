@@ -257,6 +257,52 @@ func storyDocGet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	return json.Marshal(docRef{StoryID: req.StoryID, Name: name, Type: typ, Body: string(data)})
 }
 
+// DocBody is one attachment's name/type/body for payload injection (sty_58fa970e).
+// Exported so agentstep can resolve docs without reaching into unexported storyDir.
+type DocBody struct {
+	Name string
+	Type string
+	Body string
+}
+
+// ItemDocs returns every attachment for the item, name-sorted, with full bodies.
+// Used by the isolated-agent payload docs injector so Bash-less reviewers can
+// judge without any disk path. Empty slice (not error) when the dir is missing.
+func ItemDocs(ctx context.Context, id string) ([]DocBody, error) {
+	store, err := requireWorkItem()
+	if err != nil {
+		return nil, err
+	}
+	dir, err := resolveAttachmentDir(ctx, store, id)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("verb: item docs: %w", err)
+	}
+	var out []DocBody
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		data, rerr := os.ReadFile(filepath.Join(dir, e.Name()))
+		if rerr != nil {
+			continue
+		}
+		typ, name := docMeta(string(data))
+		if name == "" {
+			name = strings.TrimSuffix(e.Name(), ".md")
+		}
+		out = append(out, DocBody{Name: name, Type: typ, Body: string(data)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
 // docMeta pulls the type/name from a doc file's frontmatter (best-effort). The
 // returned values feed the doc list/get views.
 func docMeta(s string) (typ, name string) {

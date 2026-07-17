@@ -45,15 +45,9 @@ explicit evidence line to **stdout** (captured to the dispatch sink log and
 PLAN-CONSUMED: plan — steps: <short list of plan steps you will follow>
 ```
 
-Read these paths (and any siblings under the story attachment dir) — home-keyed
-runtime plane, NOT the obsolete in-repo `.satelle/stories/` path (sty_58fa970e):
-
-```
-~/.satelle/<repo-key>/stories/<sty_id>/plan.md
-~/.satelle/<repo-key>/stories/<sty_id>/
-```
-
-Resolve the exact dir with `satelle runtime path` when shell is available.
+Prefer the stdin payload's **`docs`** array for the plan body (injected by the
+engine, sty_58fa970e). With shell, also pull via `satelle story doc`. Do **not**
+read or recreate in-repo `.satelle/stories/`.
 
 If the plan attachment is missing, say so plainly in your output and stop without
 inventing a plan — the gate and a later plan fix need to see the gap.

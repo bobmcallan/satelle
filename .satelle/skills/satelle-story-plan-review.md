@@ -20,16 +20,16 @@ no implementing, no status changes.
 
 ## 1. Locate the presented artifact
 
-Plan is the story attachment named `plan`. Prefer the CLI:
+Plan is the story attachment named `plan` in the stdin payload's **`docs`**
+array (`name`/`type`/`body`). Prefer that — it is how a Bash-less reviewer
+reads what it judges (sty_58fa970e). When `truncated: true`, or for a fuller
+pull when shell is granted:
 
 ```
 satelle story doc <sty_id> plan
 ```
 
-Disk fallback (Bash-less grant): home-keyed runtime plane
-`~/.satelle/<repo-key>/stories/<sty_id>/plan.md` (`satelle runtime path` names
-the exact dir). Do **not** use `.satelle/stories/` (obsolete post-relocation,
-sty_58fa970e).
+Do **not** look under in-repo `.satelle/stories/` (obsolete post-relocation).
 
 - **No plan artifact → reject** (plan step did not capture output).
 
