@@ -1,3 +1,16 @@
+## [0.0.280] - 2026-07-19
+
+### Added
+- Push-fed read-only serve mirror (`~/.satelle/serve/mirror.db` per repo-key) with `/ingest/change` and `/ingest/snapshot` (sty_dbdadfa0)
+- `satelle ui push` full-state reconcile to the local UI server; auto-snapshot on CLI mutations when `[server]` is set (sty_1dde0d47)
+
+### Changed
+- `satelle serve` is a single process with no supervisor children, no repo DB open, no fingerprint poller or maintenance loops
+- Service unit WorkingDirectory is `$HOME` (not a single repo) for the push-fed server (sty_455f0d6e)
+
+### Fixed
+- Integration suite covers mirror render, SSE, restart restore, and non-ingest POST rejection
+
 ## [0.0.279] - 2026-07-18
 
 ### Added
