@@ -619,6 +619,141 @@ func TestFailVisibleWrapperShell(t *testing.T) {
 	}
 }
 
+// TestFailVisibleWrapperShellBinaryPresent: AC4 — when a satelle binary is
+// resolvable, the wrapper re-emits its stdout and preserves its exit code
+// (not the static infra JSON). Stub lives at .satelle/satelle (wrapper search order).
+func TestFailVisibleWrapperShellBinaryPresent(t *testing.T) {
+	repo := t.TempDir()
+	if err := writeHookScripts(repo); err != nil {
+		t.Fatal(err)
+	}
+	// Stub: print a unique marker on stdout and exit 2 (deny).
+	stubDir := filepath.Join(repo, ".satelle")
+	if err := os.MkdirAll(stubDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stub := filepath.Join(stubDir, "satelle")
+	// #!/bin/sh so the wrapper's -x check succeeds after WriteFile 0o755.
+	body := "#!/bin/sh\nprintf '%s\\n' 'STUB-DENY-JSON'\nexit 2\n"
+	if err := os.WriteFile(stub, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	env := []string{"HOME=" + home, "PATH=/usr/bin:/bin"}
+
+	for _, harness := range []string{"claude", "grok"} {
+		full := renderHookCommand(harness, "gate")
+		c := exec.Command("sh", "-c", full)
+		c.Dir = repo
+		c.Env = env
+		c.Stdin = strings.NewReader(`{"tool_input":{"file_path":"x.go"}}`)
+		var stdout bytes.Buffer
+		c.Stdout = &stdout
+		if err := c.Run(); err == nil {
+			t.Fatalf("%s gate with stub: want non-zero (stub exit 2)", harness)
+		}
+		if !strings.Contains(stdout.String(), "STUB-DENY-JSON") {
+			t.Errorf("%s gate must re-emit stub stdout, got %q", harness, stdout.String())
+		}
+		if strings.Contains(stdout.String(), "policy denial") {
+			t.Errorf("%s gate with live stub must not fall back to infra JSON: %q", harness, stdout.String())
+		}
+	}
+
+	// commitgate: stub exit 2 + stdout → re-emit and deny (even for non-mutating).
+	// The wrapper only fail-opens on empty stdout + missing binary; stub has output.
+	for _, harness := range []string{"claude", "grok"} {
+		full := renderHookCommand(harness, "commitgate")
+		c := exec.Command("sh", "-c", full)
+		c.Dir = repo
+		c.Env = env
+		c.Stdin = strings.NewReader(`{"tool_input":{"command":"echo hello"}}`)
+		var stdout bytes.Buffer
+		c.Stdout = &stdout
+		if err := c.Run(); err == nil {
+			t.Fatalf("%s commitgate with denying stub: want non-zero", harness)
+		}
+		if !strings.Contains(stdout.String(), "STUB-DENY-JSON") {
+			t.Errorf("%s commitgate must re-emit stub stdout, got %q", harness, stdout.String())
+		}
+	}
+
+	// Allow path: stub that exits 0 with empty stdout.
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, harness := range []string{"claude", "grok"} {
+		full := renderHookCommand(harness, "gate")
+		c := exec.Command("sh", "-c", full)
+		c.Dir = repo
+		c.Env = env
+		c.Stdin = strings.NewReader(`{"tool_input":{"file_path":"x.go"}}`)
+		if err := c.Run(); err != nil {
+			t.Errorf("%s gate with allowing stub must exit 0: %v", harness, err)
+		}
+	}
+}
+
+// TestWriteHookScriptsRetiresLegacyAndKimi: AC5 file-retirement half —
+// writeHookScripts removes per-harness and kimi residue; second call is a no-op.
+func TestWriteHookScriptsRetiresLegacyAndKimi(t *testing.T) {
+	repo := t.TempDir()
+	// Plant legacy pretooluse scripts + kimi residue.
+	legacy := []string{
+		".satelle/hooks/pretooluse-gate-claude.sh",
+		".satelle/hooks/pretooluse-commitgate-claude.sh",
+		".satelle/hooks/pretooluse-gate-grok.sh",
+		".satelle/hooks/pretooluse-commitgate-grok.sh",
+		".satelle/hooks/pretooluse-gate-kimi.sh",
+		".satelle/hooks/pretooluse-commitgate-kimi.sh",
+		".satelle/hooks/stop-kimi.sh",
+		".satelle/bin/kimi-argv.sh",
+		".satelle/kimi/config.toml",
+	}
+	for _, rel := range legacy {
+		path := filepath.Join(repo, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("legacy\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writeHookScripts(repo); err != nil {
+		t.Fatal(err)
+	}
+	// Canonical single script present.
+	if _, err := os.Stat(filepath.Join(repo, filepath.FromSlash(satelleHookScriptRel))); err != nil {
+		t.Fatalf("parameterized script missing: %v", err)
+	}
+	for _, rel := range legacy {
+		if _, err := os.Stat(filepath.Join(repo, filepath.FromSlash(rel))); err == nil {
+			t.Errorf("legacy path still present after writeHookScripts: %s", rel)
+		}
+	}
+	// Idempotent second pass: script body unchanged, still no legacy.
+	path := filepath.Join(repo, filepath.FromSlash(satelleHookScriptRel))
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeHookScripts(repo); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("second writeHookScripts must not rewrite clean script body")
+	}
+	for _, rel := range legacy {
+		if _, err := os.Stat(filepath.Join(repo, filepath.FromSlash(rel))); err == nil {
+			t.Errorf("legacy reappeared after second pass: %s", rel)
+		}
+	}
+}
+
 // TestUpgradeFailVisibleHooks heals a legacy bare-exit-2 scaffold on re-init.
 func TestUpgradeFailVisibleHooks(t *testing.T) {
 	repo := t.TempDir()
