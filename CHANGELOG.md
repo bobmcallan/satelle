@@ -1,3 +1,8 @@
+## [0.0.279] - 2026-07-18
+
+### Added
+- CLI change publisher: optional `[server] endpoint` fire-and-forget POSTs on the ChangeNotifier seam; init scaffolds the commented block; unreachable servers never fail verbs (sty_126228b2 / epic:serve-split order:2)
+
 ## [0.0.278] - 2026-07-18
 
 ### Added
