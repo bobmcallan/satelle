@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -86,6 +87,22 @@ func openAppForCmd(cmd *cobra.Command) error {
 	if ep := strings.TrimSpace(a.Config.Server.Endpoint); ep != "" {
 		pub := &push.Publisher{Endpoint: ep, RepoKey: config.RepoKey(a.RepoRoot)}
 		verb.AddChangeNotifier(pub.Notify)
+		// Auto first-contact full snapshot (sty_1dde0d47 AC3): once per CLI
+		// process, after the first mutation notify, push a full snapshot so an
+		// empty mirror is populated without a manual `satelle ui push`.
+		var autoSnap sync.Once
+		appRef := a
+		verb.AddChangeNotifier(func(string) {
+			autoSnap.Do(func() {
+				go func() {
+					snap, err := buildUISnapshot(context.Background(), appRef)
+					if err != nil || snap == nil {
+						return
+					}
+					_ = postUISnapshot(ep, snap)
+				}()
+			})
+		})
 	}
 	// Stories attachments are RUNTIME state (home-keyed under RuntimeDir —
 	// sty_4660bbe1). The database is the sole story store (markdown mirror

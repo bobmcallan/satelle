@@ -44,6 +44,16 @@ trackable detail URL — `http://127.0.0.1:8787/story/<id>` (or `/task/<id>`) �
 showing status, acceptance criteria, and the full ledger timeline. The server is
 local-only (there is no hosted URL).
 
+### Push-fed UI server (CLI → serve)
+
+The web UI is a **read-only mirror** fed by the CLI (epic:serve-split):
+
+1. Configure `[server] endpoint = "http://127.0.0.1:8787"` in `.satelle/satelle.toml` (or local).
+2. Run `satelle serve` (or `satelle service install` for a systemd unit).
+3. `satelle ui push` posts a full snapshot; mutating verbs also fire-and-forget change events and auto-snapshot once per process.
+
+Serve never opens per-repo runtime DBs — only `~/.satelle/serve/mirror.db`, partitioned by repo-key.
+
 ### Substrate freshness without serve
 
 The CLI keeps the doc index, task store, and story-backlog view current **without

@@ -22,8 +22,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/docindex"
-	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/logfile"
+	"github.com/bobmcallan/satelle/internal/mirror"
 	"github.com/bobmcallan/satelle/internal/web"
 )
 
@@ -35,136 +35,54 @@ func init() {
 
 	serve := &cobra.Command{
 		Use:   "serve",
-		Short: "Run the local web server — a connected-projects landing for this machine",
-		Long: `serve runs the local web server. The root (/) is a connected-projects
-landing: a launcher listing every registered project. Each project — including
-the repo you launched from — is served by a child process under /<slug>/.
-Register more with 'satelle workspace add'; the landing also links help and how
-to keep the binary current. Press Ctrl-C to stop.`,
-		Annotations: needsStore(),
+		Short: "Run the local read-only web server (push-fed mirror UI)",
+		Long: `serve runs a single-process read-only web UI fed by CLI push (epic:serve-split).
+
+It never opens per-repo runtime databases (~/.satelle/<repo-key>/satelle.db).
+State arrives via POST /ingest/change (order:2 publisher) and POST /ingest/snapshot
+(order:4 reconcile). Partitions are keyed by repo_key (decision-local-db-placement).
+
+The CLI is the sole writer; this process is view-only plus ingest. Configure
+[server] endpoint in satelle.toml so the CLI can reach this server. Press Ctrl-C
+to stop.`,
+		// No needsStore: must not open a repo runtime DB (sty_dbdadfa0 AC1).
 		RunE: func(cmd *cobra.Command, args []string) error {
-			a, err := appFrom(cmd)
-			if err != nil {
-				return err
+			if port == 0 {
+				// Prefer machine-wide service port, then default.
+				if gc, err := config.LoadGlobal(); err == nil && gc.Service.Port > 0 {
+					port = gc.Service.Port
+				} else {
+					port = config.DefaultWebPort
+				}
 			}
-			// Local mode (running as the repo-local pin) serves on a deterministic
-			// per-repo port and a single project; global mode keeps the default port
-			// and the workspace aggregation (sty_6b07cfb1).
-			localRoot, isLocal := localPinRepoRoot()
-			port = resolveServePort(port, a.Config.WebPort, localRoot, isLocal)
 			listenAddr := fmt.Sprintf("%s:%d", addr, port)
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 
-			// Directory monitor: keep the index fresh while serving.
-			if !noWatch {
-				go func() {
-					_ = a.Store.DocIndex.Watch(ctx, a.AuthoredDirs(), 2*time.Second,
-						func(res docindex.SyncResult, err error) {
-							if err != nil {
-								fmt.Fprintf(cmd.ErrOrStderr(), "index: %v\n", err)
-							} else if res.Indexed > 0 || res.Pruned > 0 {
-								fmt.Fprintf(cmd.ErrOrStderr(), "index: +%d -%d\n", res.Indexed, res.Pruned)
-							}
-						})
-				}()
-				// Tasks are authored substrate but ingested into the workitem store
-				// (not the doc index), so the doc watcher above doesn't cover them —
-				// poll .satelle/tasks/ on the same cadence so a hand-edited or newly
-				// created task file goes live during serve, like the other authored
-				// kinds (sty_c1f9e74c). SyncTasks skips unchanged files, so this is
-				// cheap and does not churn the store.
-				go func() {
-					t := time.NewTicker(2 * time.Second)
-					defer t.Stop()
-					for {
-						select {
-						case <-ctx.Done():
-							return
-						case <-t.C:
-							if idx, _, err := verb.SyncTasks(ctx, a.Store.Stories, time.Now()); err != nil {
-								fmt.Fprintf(cmd.ErrOrStderr(), "index: task sync: %v\n", err)
-							} else if idx > 0 {
-								fmt.Fprintf(cmd.ErrOrStderr(), "index: tasks +%d\n", idx)
-							}
-							// Keep the read-only OKF backlog reference (.satelle/stories/)
-							// fresh while serving — regenerated from the store, nothing
-							// reads it for decisions. Best-effort.
-							if _, _, err := verb.SyncStoryBacklog(ctx, a.Store.Stories, time.Now()); err != nil {
-								fmt.Fprintf(cmd.ErrOrStderr(), "index: story backlog: %v\n", err)
-							}
-						}
-					}
-				}()
-			}
-
-			// --base-path means "I'm a supervised child": render <base href> under
-			// the slug (the parent proxies /<slug>/ to me) and serve ONLY this repo.
-			if basePath != "" {
-				web.SetBasePath(basePath)
-			}
-			webSrv := web.New(a)
-			webSrv.StartRealtime(ctx, 0) // cross-process DB poller for CLI edits
-
-			// Request logging → <data_dir>/logs/server.log, same rotating writer and
-			// config as operations/reviewer/executor. Wrapped at the listener so each
-			// serve process logs to ITS OWN repo's log and httptest servers stay
-			// log-free (sty_07cec95f).
-			serverLog := filepath.Join(a.RuntimeDir, "logs", "server.log")
-			logCfg := logRotation(a)
-
-			if basePath != "" {
-				return listenServe(cmd, ctx, listenAddr, web.RequestLog(webSrv.Handler, serverLog, logCfg),
-					fmt.Sprintf("satelle serving http://%s under %s/  (Ctrl-C to stop)", listenAddr, strings.Trim(basePath, "/")))
-			}
-
-			// Supervisor: a connected-projects landing at / plus one child per
-			// registered project (the launch repo included) proxied under /<slug>/.
-			// Always adaptive — workspace add/remove reconciles live, no restart.
-			self, err := os.Executable()
+			mirrorPath := mirror.DefaultPath(config.GlobalDir())
+			ms, err := mirror.Open(mirrorPath)
 			if err != nil {
-				return fmt.Errorf("resolve own binary: %w", err)
+				return fmt.Errorf("open mirror store: %w", err)
 			}
-			sup := newSupervisor(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), self)
-			sup.notify = webSrv.Publish // landing live-refresh doorbell (sty_4ea4d4df)
-			defer sup.shutdown()
+			defer ms.Close()
 
-			// Local mode is a SINGLE project: serve only this repo and ignore the
-			// workspace registry (no aggregation, no registry watcher). Global mode
-			// aggregates registered repos and reconciles add/remove live.
-			if isLocal {
-				sup.reconcile([]string{a.RepoRoot})
-			} else {
-				sup.reconcile(childRoots(a.RepoRoot))
-				// Watch the registry so workspace add/remove takes effect, no restart.
-				go func() {
-					t := time.NewTicker(3 * time.Second)
-					defer t.Stop()
-					prev := strings.Join(childRoots(a.RepoRoot), "\n")
-					for {
-						select {
-						case <-ctx.Done():
-							return
-						case <-t.C:
-							next := childRoots(a.RepoRoot)
-							if key := strings.Join(next, "\n"); key != prev {
-								prev = key
-								sup.reconcile(next)
-							}
-						}
-					}
-				}()
-			}
+			webSrv := web.NewMirror(ms)
+			// noWatch / basePath are legacy flags: no supervisor children, no watch loops.
+			_ = noWatch
+			_ = basePath
 
-			sup.banner(cmd.OutOrStdout(), listenAddr)
-			return listenServe(cmd, ctx, listenAddr, web.RequestLog(sup.topHandler(webSrv.Handler), serverLog, logCfg), "")
+			serverLog := filepath.Join(config.GlobalDir(), mirror.DefaultDirName, "server.log")
+			logCfg := logfile.Config{MaxSizeBytes: config.DefaultLogsMaxSizeKB * 1024, MaxFiles: config.DefaultLogsMaxFiles}
+			banner := fmt.Sprintf("satelle serve (push-fed mirror) http://%s  mirror=%s  (Ctrl-C to stop)", listenAddr, mirrorPath)
+			fmt.Fprintln(cmd.OutOrStdout(), banner)
+			return listenServe(cmd, ctx, listenAddr, web.RequestLog(webSrv.Handler, serverLog, logCfg), "")
 		},
 	}
 	serve.Flags().StringVar(&addr, "addr", "127.0.0.1", "bind address")
-	serve.Flags().IntVar(&port, "port", 0, "listen port (default from config)")
-	serve.Flags().BoolVar(&noWatch, "no-watch", false, "disable the directory monitor while serving")
-	serve.Flags().StringVar(&basePath, "base-path", "", "mount prefix for a supervised child (internal)")
+	serve.Flags().IntVar(&port, "port", 0, "listen port (default from global service config or 8787)")
+	serve.Flags().BoolVar(&noWatch, "no-watch", false, "ignored (no maintenance loops remain; sty_dbdadfa0)")
+	serve.Flags().StringVar(&basePath, "base-path", "", "ignored (no supervised children; sty_dbdadfa0)")
 	_ = serve.Flags().MarkHidden("base-path")
 	register(serve)
 }

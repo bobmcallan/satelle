@@ -186,19 +186,24 @@ func serviceStatusCmd() *cobra.Command {
 }
 
 // renderUnit renders the unit file content for the service. Pure (testable): the
-// ExecStart bakes in the resolved addr/port and WorkingDirectory selects the launch
-// repo. `serve` is always adaptive — it shows the connected-projects landing at /
-// and serves every registered project under /<slug>/ — so no extra flag is needed.
+// ExecStart bakes in the resolved addr/port. WorkingDirectory is the operator home
+// (not a single repo) — push-fed serve (sty_dbdadfa0) opens only the machine-wide
+// mirror under ~/.satelle/serve/ and needs no per-repo cwd.
 // wantedBy selects the install target: default.target for a per-user unit,
 // multi-user.target for a system unit that runs with no login. A system unit adds
-// User=/Group= so it runs as the operator (reaching ~/.satelle and the repo), not root.
+// User=/Group= so it runs as the operator (reaching ~/.satelle), not root.
 func renderUnit(binPath, repo, addr string, port int, wantedBy, runAsUser, restartPolicy string) string {
 	userLines := ""
 	if runAsUser != "" {
 		userLines = fmt.Sprintf("User=%s\nGroup=%s\n", runAsUser, runAsUser)
 	}
+	// Prefer home as WorkingDirectory; fall back to repo only if home is unknown.
+	wd := os.Getenv("HOME")
+	if wd == "" {
+		wd = repo
+	}
 	return fmt.Sprintf(`[Unit]
-Description=satelle web server (project page)
+Description=satelle web server (push-fed mirror UI)
 After=network.target
 
 [Service]
@@ -209,7 +214,7 @@ RestartSec=2
 
 [Install]
 WantedBy=%s
-`, binPath, addr, port, repo, userLines, restartPolicy, wantedBy)
+`, binPath, addr, port, wd, userLines, restartPolicy, wantedBy)
 }
 
 // systemdUnit renders the per-user unit (WantedBy=default.target, runs as the
