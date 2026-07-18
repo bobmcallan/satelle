@@ -30,7 +30,8 @@ import (
 // Env VALUES are never included (secrets); key names may appear in Notes.
 type Grant struct {
 	Name              string
-	Backend           string // in-loop | isolated:claude | isolated:grok | isolated:<binary> | codex (unmapped)
+	Backend           string // in-loop | isolated:claude | isolated:grok | isolated:<binary> | acp:<binary> | codex (unmapped)
+	Interface         string // command | acp (epic:agent-dispatch-transport)
 	Tools             string
 	Model             string
 	Timeout           string
@@ -195,8 +196,10 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 	}
 
 	role := config.ResolvedRole(section, b)
+	iface := b.ResolvedInterface()
 	g := Grant{
 		Name:              section,
+		Interface:         iface,
 		Tools:             b.Tools,
 		Model:             b.Model,
 		Timeout:           b.Timeout,
@@ -239,10 +242,56 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 		g.Notes = "env keys: " + strings.Join(keys, ",")
 	}
 
+	// Unknown interface (LoadAgents also rejects; keep validate defensive).
+	if iface != config.InterfaceCommand && iface != config.InterfaceACP {
+		problems = append(problems, fmt.Sprintf(
+			"agents.toml [%s] interface %q: want %q or %q",
+			section, b.Interface, config.InterfaceCommand, config.InterfaceACP))
+		g.Backend = "invalid"
+		return g, problems, warnings
+	}
+
 	fields := strings.Fields(cmd)
 	lower0 := ""
 	if len(fields) > 0 {
 		lower0 = strings.ToLower(fields[0])
+	}
+
+	// ACP transport (epic:agent-dispatch-transport): spawn line only; no argv placeholders.
+	if iface == config.InterfaceACP {
+		runner, err := agentcli.RunnerFromBinding(iface, cmd)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("agents.toml [%s] acp: %v", section, err))
+			g.Backend = "invalid"
+		} else {
+			g.Backend = "acp:" + runner.Name()
+			if g.Notes == "" {
+				g.Notes = "acp spawn: " + runner.Command()
+			} else {
+				g.Notes += "; acp spawn: " + runner.Command()
+			}
+			// Ceiling: tools grant + client permission policy (not argv --deny).
+			g.ReadOnly = b.Tools != "" && !toolsGrantMutators(b.Tools)
+			if role == config.RoleReviewer {
+				if b.Tools == "" {
+					problems = append(problems, fmt.Sprintf(
+						"agents.toml [%s] interface=acp role=reviewer requires tools= (grant evidence; ACP ceiling is tools + client permission policy, not argv --deny)",
+						section))
+				} else if !g.ReadOnly {
+					warnings = append(warnings, fmt.Sprintf(
+						"agents.toml [%s] is role=reviewer with interface=acp and tools that appear to allow mutators (%s) — prefer a read-only tools list; satelle denies mutator ACP tool kinds only when tools look read-only",
+						section, b.Tools))
+				} else if g.Notes == "" {
+					g.Notes = "ceiling: acp permission policy + tools"
+				} else {
+					g.Notes += "; ceiling: acp permission policy + tools"
+				}
+			}
+		}
+		if _, err := b.TimeoutDuration(0); err != nil {
+			problems = append(problems, fmt.Sprintf("agents.toml [%s] timeout: %v", section, err))
+		}
+		return g, problems, warnings
 	}
 
 	switch {
@@ -329,6 +378,21 @@ func hasToken(fields []string, tok string) bool {
 		if f == tok {
 			return true
 		}
+	}
+	return false
+}
+
+// toolsGrantMutators mirrors agentcli.toolsAllowMutators for validate-time
+// ceiling evidence (keep logic aligned: write/edit/shell without satelle-only).
+func toolsGrantMutators(tools string) bool {
+	t := strings.ToLower(tools)
+	for _, needle := range []string{"write", "edit", "search_replace", "multiedit", "notebookedit", "run_terminal"} {
+		if strings.Contains(t, needle) {
+			return true
+		}
+	}
+	if strings.Contains(t, "bash") && !strings.Contains(t, "satelle") {
+		return true
 	}
 	return false
 }

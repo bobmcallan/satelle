@@ -207,7 +207,7 @@ func (g *Engine) Invoke(ctx context.Context, req InvokeRequest) InvokeResult {
 
 	runner := req.Runner
 	if runner == nil {
-		r, rerr := g.newRunner(binding.CommandTemplate())
+		r, rerr := g.newRunner(binding.ResolvedInterface(), binding.CommandTemplate())
 		if rerr != nil {
 			return InvokeResult{Err: fmt.Errorf("broken command for binding %q: %w", section, rerr)}
 		}

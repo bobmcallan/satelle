@@ -54,6 +54,15 @@ func TestAgentDispatchTopic(t *testing.T) {
 		"rejected",
 		"{system}", "{tools}", "{model}", "{payload}",
 		"deprecated alias", // harness→command rename is documented as back-compat
+		// Dual transport (epic:agent-dispatch-transport): CLI control plane in;
+		// command default + optional ACP out; Claude command-only; no MCP process API.
+		`interface`,
+		"command",
+		"acp",
+		"CLI verbs",
+		"Claude",
+		"MCP",
+		"story status",
 	} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("agent-dispatch topic missing %q", want)

@@ -143,9 +143,10 @@ type Engine struct {
 	// (.satelle/agents.toml [<name>] sections) for executor dispatch
 	// (sty_fd427546). Nil keeps every step in-loop.
 	namedAgents func(name string) (config.AgentBinding, bool)
-	// newRunner builds the runner for a named binding's command — swappable in
-	// tests; defaults to agentcli.RunnerFromCommand.
-	newRunner func(command string) (agentcli.Runner, error)
+	// newRunner builds the runner for a named binding's interface+command —
+	// swappable in tests; defaults to agentcli.RunnerFromBinding
+	// (epic:agent-dispatch-transport). iface is "command" (default) or "acp".
+	newRunner func(iface, command string) (agentcli.Runner, error)
 	// telemetry records a structured, queryable dispatch outcome (a reviewer/
 	// executor retry, failure, or timeout) that only the binary observes — the
 	// verb layer sees just the final result, not each attempt (sty_b73c3236). Nil
@@ -198,7 +199,7 @@ func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Engine
 		runner: runner, docs: docs, repoRoot: repoRoot, model: model, tools: defaultTools,
 		checkTimeout: defaultCheckTimeout, check: execCheck, injectPrinciples: true,
 		attempts: defaultReviewerAttempts, backoff: defaultReviewerBackoff,
-		agentTimeout: defaultAgentTimeout, newRunner: agentcli.RunnerFromCommand,
+		agentTimeout: defaultAgentTimeout, newRunner: agentcli.RunnerFromBinding,
 	}
 }
 
@@ -754,7 +755,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	// gates read the lease, not committed FROM status — so a code-writing named
 	// agent may edit during dispatch without the FROM state itself being
 	// performing. The prior FROM-performing band-aid (sty_f5bd176f) is removed.
-	runner, err := g.newRunner(binding.CommandTemplate())
+	runner, err := g.newRunner(binding.ResolvedInterface(), binding.CommandTemplate())
 	if err != nil {
 		return verb.DispatchResult{}, fmt.Errorf("named agent %q: broken command in .satelle/agents.toml: %w", dispatchAgent, err)
 	}
@@ -855,7 +856,7 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.Dispa
 		return verb.DispatchResult{}, fmt.Errorf(
 			"no [%s] binding in .satelle/agents.toml — define it (with Bash(satelle:*) so it can file proposals) to run the retrospective", retrospectAgent)
 	}
-	runner, err := g.newRunner(binding.CommandTemplate())
+	runner, err := g.newRunner(binding.ResolvedInterface(), binding.CommandTemplate())
 	if err != nil {
 		return verb.DispatchResult{}, fmt.Errorf("%s agent: broken command: %w", retrospectAgent, err)
 	}
