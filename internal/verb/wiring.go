@@ -51,20 +51,36 @@ const (
 	TopicDocs    = "docs"
 )
 
-// changeNotifier, when set, is invoked after a mutating verb commits, with a
-// topic constant above. The web server binds it to its SSE hub so connected
-// pages refetch; nil on the plain CLI path makes notifyChange a no-op. Keeping
-// it a package global (set once at bootstrap) mirrors the store wiring and lets
-// verb stay free of any web/transport import.
-var changeNotifier func(topic string)
+// changeNotifiers are invoked after a mutating verb commits, with a topic
+// constant above. Multiple sinks share the seam (sty_126228b2): the web SSE
+// hub and the CLI→server change publisher both register here. Empty on the
+// plain CLI path with no [server] endpoint makes notifyChange a no-op.
+// Package globals mirror the store wiring and keep verb free of transport imports.
+var changeNotifiers []func(topic string)
 
-// SetChangeNotifier wires a realtime change sink. Pass nil to reset (tests).
-func SetChangeNotifier(fn func(topic string)) { changeNotifier = fn }
+// SetChangeNotifier replaces the notifier list with a single sink (or clears
+// it when fn is nil). Prefer AddChangeNotifier when composing sinks.
+func SetChangeNotifier(fn func(topic string)) {
+	if fn == nil {
+		changeNotifiers = nil
+		return
+	}
+	changeNotifiers = []func(topic string){fn}
+}
 
-// notifyChange fires the registered notifier, if any.
+// AddChangeNotifier appends a sink on the shared change seam (e.g. the push
+// publisher beside an existing SSE hub). Nil is ignored.
+func AddChangeNotifier(fn func(topic string)) {
+	if fn == nil {
+		return
+	}
+	changeNotifiers = append(changeNotifiers, fn)
+}
+
+// notifyChange fires every registered notifier.
 func notifyChange(topic string) {
-	if changeNotifier != nil {
-		changeNotifier(topic)
+	for _, fn := range changeNotifiers {
+		fn(topic)
 	}
 }
 

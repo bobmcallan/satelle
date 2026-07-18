@@ -1284,6 +1284,13 @@ edit_exempt_paths = [".satelle/", ".gitignore"]
 # choice (prefer satelle.local.toml / 'satelle login --workspace'); a value
 # committed here is only a team default the overlay can override.
 #
+# [server] — LOCAL push-fed UI server the CLI publishes mutation events to
+# (epic:serve-split). Distinct from [hosted] (remote satelle-server tier).
+# Unset = change publisher inert (no network). Fail-silent: a dead endpoint
+# never blocks or fails a verb.
+# [server]
+# endpoint = "http://127.0.0.1:8787"
+#
 # [vars] — operator KV substituted into agents.toml binding env values via
 # ${NAME}. NON-secret vars may live here; SECRETS go in gitignored
 # satelle.local.toml (per-key overlay wins). Never pushed with substrate sync.

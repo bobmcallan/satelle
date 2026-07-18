@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/oplog"
+	"github.com/bobmcallan/satelle/internal/push"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -76,6 +78,15 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetLedgerStore(a.Store.Ledger)
 	verb.SetDocIndexStore(a.Store.DocIndex)
 	verb.SetLeaseStore(a.Store.Leases)
+	// Change publisher (sty_126228b2): when [server] endpoint is set, mutating
+	// verbs POST fire-and-forget events on the shared ChangeNotifier seam.
+	// Unset = inert (no network). Clear first so a prior test/process state
+	// cannot leak sinks into this one-shot CLI invocation.
+	verb.SetChangeNotifier(nil)
+	if ep := strings.TrimSpace(a.Config.Server.Endpoint); ep != "" {
+		pub := &push.Publisher{Endpoint: ep, RepoKey: config.RepoKey(a.RepoRoot)}
+		verb.AddChangeNotifier(pub.Notify)
+	}
 	// Stories attachments are RUNTIME state (home-keyed under RuntimeDir —
 	// sty_4660bbe1). The database is the sole story store (markdown mirror
 	// removed, sty_fa1e02e1); this dir holds plan/step-summary attachments only.
