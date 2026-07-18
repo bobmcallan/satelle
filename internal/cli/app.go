@@ -46,6 +46,11 @@ func openAppForCmd(cmd *cobra.Command) error {
 			return derr
 		}
 	}
+	// Lazy harness install (epic:minimal-harness-footprint): if this process is
+	// inside a Claude/Grok session and the repo lacks that harness scaffold,
+	// install it now (idempotent). First session of a new harness may still
+	// have run without hooks; next session picks them up.
+	ensureLazySessionHarness(a.RepoRoot)
 	// Scaffold drift (sty_ac25b787): deployed harness wrappers behind the binary
 	// fail closed for store-backed verbs — hash mechanism, not ### Breaking.
 	// `status` is exempt so it can REPORT the drift (AC3); heal is still init.

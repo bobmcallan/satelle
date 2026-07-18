@@ -33,21 +33,28 @@ func DetectScaffoldDrift(repoRoot string) []ScaffoldFinding {
 	// Settings-driven checks (only when the harness file exists).
 	findings = append(findings, driftHarnessSettings(repoRoot, filepath.Join(repoRoot, ".claude", "settings.json"), "claude", ".claude/settings.json")...)
 	findings = append(findings, driftHarnessSettings(repoRoot, filepath.Join(repoRoot, filepath.FromSlash(grokHooksRel)), "grok", grokHooksRel)...)
-	// Scripts that exist on disk must match canonical even if settings were removed.
-	for _, harness := range []string{"claude", "grok"} {
+	// Single parameterized script must match canonical when present.
+	rel := satelleHookScriptRel
+	path := filepath.Join(repoRoot, filepath.FromSlash(rel))
+	if b, err := os.ReadFile(path); err == nil {
+		want := parameterizedHookScriptBody()
+		if string(b) != want {
+			findings = append(findings, ScaffoldFinding{
+				Path:   rel,
+				Kind:   "content",
+				Detail: fmt.Sprintf("differs from binary canonical wrapper (sha %s vs want %s)", shortSHA(b), shortSHA([]byte(want))),
+			})
+		}
+	}
+	// Legacy per-harness scripts on disk are drift (should have been retired).
+	for _, harness := range []string{"claude", "grok", "kimi"} {
 		for _, sub := range []string{"gate", "commitgate"} {
-			rel := hookScriptRel(harness, sub)
-			path := filepath.Join(repoRoot, filepath.FromSlash(rel))
-			b, err := os.ReadFile(path)
-			if err != nil {
-				continue // absence is only a finding when settings demand the script
-			}
-			want := failVisibleScriptBody(harness, sub)
-			if string(b) != want {
+			lrel := legacyHookScriptRel(harness, sub)
+			if _, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(lrel))); err == nil {
 				findings = append(findings, ScaffoldFinding{
-					Path:   rel,
+					Path:   lrel,
 					Kind:   "content",
-					Detail: fmt.Sprintf("differs from binary canonical wrapper (sha %s vs want %s)", shortSHA(b), shortSHA([]byte(want))),
+					Detail: "legacy per-harness wrapper present — run satelle init to retire (use " + satelleHookScriptRel + ")",
 				})
 			}
 		}
@@ -80,8 +87,8 @@ func driftHarnessSettings(repoRoot, absPath, harness, relPath string) []Scaffold
 				Detail: fmt.Sprintf("PreToolUse %s command is not the canonical script form (want %q)", sub, wantCmd),
 			})
 		}
-		// Script file must exist and match when this harness is deployed.
-		rel := hookScriptRel(harness, sub)
+		// Parameterized script must exist and match when this harness is deployed.
+		rel := satelleHookScriptRel
 		path := filepath.Join(repoRoot, filepath.FromSlash(rel))
 		b, err := os.ReadFile(path)
 		if err != nil {
@@ -92,7 +99,7 @@ func driftHarnessSettings(repoRoot, absPath, harness, relPath string) []Scaffold
 			})
 			continue
 		}
-		want := failVisibleScriptBody(harness, sub)
+		want := parameterizedHookScriptBody()
 		if string(b) != want {
 			findings = append(findings, ScaffoldFinding{
 				Path:   rel,

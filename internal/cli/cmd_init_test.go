@@ -43,7 +43,7 @@ func isolateUserHome(t *testing.T) {
 func runInitTest(t *testing.T, out io.Writer, repo string) error {
 	t.Helper()
 	isolateUserHome(t)
-	return runInit(out, repo, false)
+	return runInit(out, repo, false, nil)
 }
 
 func TestRunInitScaffolds(t *testing.T) {
@@ -621,8 +621,8 @@ func TestEnsureClaudeHooksIdempotent(t *testing.T) {
 		t.Fatalf("settings not written: %v", err)
 	}
 	for _, want := range []string{
-		".satelle/hooks/pretooluse-gate-claude.sh",
-		".satelle/hooks/pretooluse-commitgate-claude.sh",
+		"sh .satelle/hooks/satelle-hook.sh gate claude",
+		"sh .satelle/hooks/satelle-hook.sh commitgate claude",
 		"PATH=$HOME/.local/bin:$PATH satelle hook prompt",
 		"PATH=$HOME/.local/bin:$PATH satelle hook stopcheck",
 		"UserPromptSubmit",
@@ -640,7 +640,7 @@ func TestEnsureClaudeHooksIdempotent(t *testing.T) {
 	if strings.Contains(string(b), "sh -c ") {
 		t.Errorf("settings must not use inline sh -c PreToolUse")
 	}
-	if _, err := os.Stat(filepath.Join(repo, ".satelle", "hooks", "pretooluse-gate-claude.sh")); err != nil {
+	if _, err := os.Stat(filepath.Join(repo, ".satelle", "hooks", "satelle-hook.sh")); err != nil {
 		t.Errorf("gate script not written: %v", err)
 	}
 	// An existing file that LACKS the reinforcement hooks is HEALED, not left
@@ -913,7 +913,7 @@ func TestRunInitNoWorkspaceOptOut(t *testing.T) {
 	isolateUserHome(t)
 	repo := t.TempDir()
 	var out strings.Builder
-	if err := runInit(&out, repo, true); err != nil {
+	if err := runInit(&out, repo, true, nil); err != nil {
 		t.Fatalf("runInit: %v\n%s", err, out.String())
 	}
 	abs, _ := filepath.Abs(repo)
@@ -945,7 +945,7 @@ func TestRunInitWorkspaceWriteFailureNonFatal(t *testing.T) {
 	}
 	repo := t.TempDir()
 	var out strings.Builder
-	if err := runInit(&out, repo, false); err != nil {
+	if err := runInit(&out, repo, false, nil); err != nil {
 		t.Fatalf("init must succeed despite unwritable global config: %v\n%s", err, out.String())
 	}
 	if !strings.Contains(out.String(), "workspace registry") || !strings.Contains(out.String(), "!") {

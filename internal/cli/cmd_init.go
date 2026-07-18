@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -29,12 +28,10 @@ import (
 	"github.com/bobmcallan/satelle/internal/wfdot"
 )
 
-// lookPath is exec.LookPath, swappable in tests so harness detection is pure.
-var lookPath = exec.LookPath
-
 func init() {
 	var configArg string
 	var noWorkspace bool
+	var harnessFlag string
 	cmd := &cobra.Command{
 		Use: "init",
 		// No `install` alias — it collided with `satelle service install`.
@@ -53,8 +50,13 @@ func init() {
     pinned binary); the operator owns .gitignore and whether process is tracked,
     Runtime state is home-keyed and not listed in .gitignore.
     Repos still on the pre-relocation layout: run 'satelle migrate'.
-  - process hooks for the detected coding harness(es): Claude
-    (.claude/settings.json) and/or Grok (.grok/hooks/satelle.json),
+  - process hooks ON DEMAND for coding harnesses in use (epic:minimal-harness-footprint):
+    scaffolds only when the repo already has .claude/ or .grok/, or when
+    --harness names them (claude,grok). Never from PATH and never a silent
+    claude default. An empty repo with no flag gets zero harness scaffolds.
+    Use-time lazy install: store-backed verbs detect CLAUDE_CODE_* / GROK_AGENT
+    session markers and install the matching scaffold if missing (first session
+    of a new harness may run without hooks; they take effect next session).
   - registration of this repo in the local workspace registry (opt out with
     --no-workspace) so 'satelle serve' and the /workspace view see it.
 
@@ -67,12 +69,43 @@ is rewritten between its markers to the current form (sty_87c8a69c). The report
 shows what was added versus already present.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInit(cmd.OutOrStdout(), initRepoRoot(configArg), noWorkspace)
+			forced, err := parseHarnessFlag(harnessFlag)
+			if err != nil {
+				return err
+			}
+			return runInit(cmd.OutOrStdout(), initRepoRoot(configArg), noWorkspace, forced)
 		},
 	}
 	cmd.Flags().StringVar(&configArg, "config", "", "path to satelle.toml (resolves the repo root; default: walk up from CWD)")
 	cmd.Flags().BoolVar(&noWorkspace, "no-workspace", false, "skip registering this repo in the local workspace registry")
+	cmd.Flags().StringVar(&harnessFlag, "harness", "", "comma-separated harness scaffolds to install (claude,grok); when empty, only existing .claude/.grok dirs are scaffolded — never PATH")
 	register(cmd)
+}
+
+// parseHarnessFlag parses --harness claude,grok into a unique ordered list.
+func parseHarnessFlag(s string) ([]string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, p := range strings.Split(s, ",") {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p == "" {
+			continue
+		}
+		switch p {
+		case "claude", "grok":
+			if !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+		default:
+			return nil, fmt.Errorf("init: unknown --harness %q (want claude and/or grok)", p)
+		}
+	}
+	return out, nil
 }
 
 // initRepoRoot resolves the repo to scaffold: the directory holding an existing
@@ -90,7 +123,8 @@ func initRepoRoot(configArg string) string {
 // runInit performs the idempotent scaffold for repoRoot.
 // noWorkspace skips registration in the machine-local workspace registry
 // (sty_3bdbdc38); default is false (register).
-func runInit(out io.Writer, repoRoot string, noWorkspace bool) error {
+// forcedHarness is from --harness (nil/empty = dirs only, no PATH default).
+func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []string) error {
 	// 1. .satelle/ directory.
 	dataDir := filepath.Join(repoRoot, config.DefaultDataDir)
 	created, err := ensureDir(dataDir)
@@ -243,11 +277,10 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool) error {
 		fmt.Fprintln(out, initLine(added, ".gitignore (satelle local-state block)"))
 	}
 
-	// 6. Process hooks for the coding harness(es) on this machine/repo — Claude
-	//    (.claude/settings.json) and/or Grok (.grok/hooks/satelle.json). Detection
-	//    prefers PATH + existing harness dirs; both scaffolds apply when both are
-	//    present. Same satelle hook gate/commitgate/context/reindex policy either way.
-	if err := ensureProcessHooks(out, repoRoot); err != nil {
+	// 6. Process hooks ON DEMAND — Claude (.claude/settings.json) and/or Grok
+	//    (.grok/hooks/satelle.json) when forced via --harness or when those dirs
+	//    already exist. Never PATH, never a silent claude default.
+	if err := ensureProcessHooks(out, repoRoot, forcedHarness); err != nil {
 		return err
 	}
 
@@ -337,95 +370,111 @@ func agentGuidance(repoRoot string) []string {
 // .satelle/hooks/ (sty_adfb9862); heal paths also match legacy inline forms.
 const failVisibleMarker = "#satelle-failvisible"
 
-// hookScriptRel is the repo-relative path of a fail-visible PreToolUse wrapper
-// script (sty_adfb9862). Harness settings command strings point here with no
-// shell $ tokens — Grok pre-validates $VAR in the command string as required
-// env vars and refuses to run the hook when they are unset.
-func hookScriptRel(harness, sub string) string {
+// satelleHookScriptRel is the single parameterized fail-visible PreToolUse
+// wrapper (epic:minimal-harness-footprint): gate|commitgate × claude|grok.
+const satelleHookScriptRel = ".satelle/hooks/satelle-hook.sh"
+
+// legacyHookScriptRel is the pre-consolidation per-harness path (retired).
+func legacyHookScriptRel(harness, sub string) string {
 	return ".satelle/hooks/pretooluse-" + sub + "-" + harness + ".sh"
 }
 
-// renderHookCommand returns a $-free harness command that runs the scaffolded
-// wrapper script. Semantics of the wrapper itself are in failVisibleScriptBody.
-func renderHookCommand(harness, sub string) string {
-	return "sh " + hookScriptRel(harness, sub)
+// hookScriptRel is kept as an alias for callers/tests that still pass harness+sub
+// for path expectations of the *parameterized* form (settings commands embed sub+harness).
+func hookScriptRel(harness, sub string) string {
+	_ = harness
+	_ = sub
+	return satelleHookScriptRel
 }
 
-// failVisibleScriptBody is the POSIX shell body written to hookScriptRel.
+// renderHookCommand returns a $-free harness command that runs the parameterized
+// wrapper with static sub and harness tokens (sty_adfb9862).
+func renderHookCommand(harness, sub string) string {
+	return "sh " + satelleHookScriptRel + " " + sub + " " + harness
+}
+
+// parameterizedHookScriptBody is the single script body for satelle-hook.sh.
+// Usage: sh .satelle/hooks/satelle-hook.sh <gate|commitgate> <claude|grok>
 //
 // The wrapper:
 //  1. Resolves satelle from $HOME/.local/bin/satelle → .satelle/satelle → PATH
 //  2. Runs `satelle hook <sub>`, captures stdout
 //  3. Re-emits satelle's deny JSON when present
-//  4. On infra failure (no binary / empty stdout + non-zero): emits a static
-//     harness-correct deny JSON — never a bare exit-2
-//  5. For commitgate only: non-mutating bash fails OPEN on infra failure;
-//     commit/push fails closed with the infra reason
-//
-// $ variables are fine HERE (script file). They must NOT appear in the harness
-// settings command string (sty_adfb9862). No absolute machine paths.
-func failVisibleScriptBody(harness, sub string) string {
-	infra := infraDenyJSON(harness)
-	escJSON := strings.ReplaceAll(infra, `'`, `'\''`)
-	var body string
-	if sub == "commitgate" {
-		body = fmt.Sprintf(`#!/bin/sh
+//  4. On infra failure: harness-correct static deny JSON (never bare exit-2)
+//  5. commitgate: non-mutating bash fails OPEN on infra failure; commit/push closed
+func parameterizedHookScriptBody() string {
+	claudeInfra := strings.ReplaceAll(infraDenyJSON("claude"), `'`, `'\''`)
+	grokInfra := strings.ReplaceAll(infraDenyJSON("grok"), `'`, `'\''`)
+	return fmt.Sprintf(`#!/bin/sh
 %s
+# args: $1=gate|commitgate  $2=claude|grok
+sub="$1"
+harness="$2"
+case "$harness" in
+  grok) infra='%s' ;;
+  *)    infra='%s' ;;
+esac
 b=""; for c in "$HOME/.local/bin/satelle" ".satelle/satelle" satelle; do
   if [ -x "$c" ]; then b="$c"; break; fi
   if command -v "$c" >/dev/null 2>&1; then b=$(command -v "$c"); break; fi
 done
 p=$(cat)
-infra='%s'
-docase(){ case "$p" in *git\ commit*|*git\ push*) printf '%%s\n' "$infra"; exit 2;; *) exit 0;; esac; }
-if [ -z "$b" ]; then docase; fi
-o=$(printf '%%s' "$p" | "$b" hook commitgate 2>/dev/null); code=$?
-if [ -n "$o" ]; then printf '%%s\n' "$o"; fi
-if [ "$code" -eq 0 ]; then exit 0; fi
-if [ -z "$o" ]; then docase; fi
-exit 2
-`, failVisibleMarker, escJSON)
-	} else {
-		body = fmt.Sprintf(`#!/bin/sh
-%s
-b=""; for c in "$HOME/.local/bin/satelle" ".satelle/satelle" satelle; do
-  if [ -x "$c" ]; then b="$c"; break; fi
-  if command -v "$c" >/dev/null 2>&1; then b=$(command -v "$c"); break; fi
-done
-p=$(cat)
-infra='%s'
+if [ "$sub" = "commitgate" ]; then
+  docase(){ case "$p" in *git\ commit*|*git\ push*) printf '%%s\n' "$infra"; exit 2;; *) exit 0;; esac; }
+  if [ -z "$b" ]; then docase; fi
+  o=$(printf '%%s' "$p" | "$b" hook commitgate 2>/dev/null); code=$?
+  if [ -n "$o" ]; then printf '%%s\n' "$o"; fi
+  if [ "$code" -eq 0 ]; then exit 0; fi
+  if [ -z "$o" ]; then docase; fi
+  exit 2
+fi
 if [ -z "$b" ]; then printf '%%s\n' "$infra"; exit 2; fi
 o=$(printf '%%s' "$p" | "$b" hook gate 2>/dev/null); code=$?
 if [ -n "$o" ]; then printf '%%s\n' "$o"; fi
 if [ "$code" -eq 0 ]; then exit 0; fi
 if [ -z "$o" ]; then printf '%%s\n' "$infra"; fi
 exit 2
-`, failVisibleMarker, escJSON)
-	}
-	return body
+`, failVisibleMarker, grokInfra, claudeInfra)
 }
 
-// writeHookScripts materialises fail-visible PreToolUse wrappers under
-// .satelle/hooks/ for both harnesses (repo-relative paths, no absolute machine
-// paths). Always refreshes bodies so re-init heals stale script content.
+// failVisibleScriptBody returns the canonical wrapper body. The single script
+// is harness/sub parameterized; harness+sub args are accepted for call-site
+// compatibility (body is identical for all pairs).
+func failVisibleScriptBody(harness, sub string) string {
+	_ = harness
+	_ = sub
+	return parameterizedHookScriptBody()
+}
+
+// writeHookScripts materialises the single parameterized fail-visible PreToolUse
+// wrapper and retires legacy per-harness / kimi scripts (epic:minimal-harness-footprint).
 func writeHookScripts(repoRoot string) error {
 	dir := filepath.Join(repoRoot, ".satelle", "hooks")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("init: mkdir %s: %w", dir, err)
 	}
-	for _, harness := range []string{"claude", "grok"} {
-		for _, sub := range []string{"gate", "commitgate"} {
-			rel := hookScriptRel(harness, sub)
-			path := filepath.Join(repoRoot, filepath.FromSlash(rel))
-			body := failVisibleScriptBody(harness, sub)
-			if prev, err := os.ReadFile(path); err == nil && string(prev) == body {
-				continue
-			}
-			if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
-				return fmt.Errorf("init: write %s: %w", path, err)
-			}
+	path := filepath.Join(repoRoot, filepath.FromSlash(satelleHookScriptRel))
+	body := parameterizedHookScriptBody()
+	if prev, err := os.ReadFile(path); err != nil || string(prev) != body {
+		if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+			return fmt.Errorf("init: write %s: %w", path, err)
 		}
 	}
+	// Retire per-harness and kimi residue (no replacement for kimi).
+	for _, harness := range []string{"claude", "grok", "kimi"} {
+		for _, sub := range []string{"gate", "commitgate"} {
+			_ = os.Remove(filepath.Join(repoRoot, filepath.FromSlash(legacyHookScriptRel(harness, sub))))
+		}
+	}
+	for _, rel := range []string{
+		".satelle/hooks/stop-kimi.sh",
+		".satelle/bin/kimi-argv.sh",
+		".satelle/kimi/config.toml",
+	} {
+		_ = os.Remove(filepath.Join(repoRoot, filepath.FromSlash(rel)))
+	}
+	// Drop empty kimi dir if empty.
+	_ = os.Remove(filepath.Join(repoRoot, ".satelle", "kimi"))
 	return nil
 }
 
@@ -523,21 +572,49 @@ var retiredHookCommands = map[string]string{
 	"satelle index": "satelle reindex",
 }
 
-// detectProcessHarnesses decides which process-hook scaffolds to apply.
-// Signals: CLI on PATH (hasCLI), and/or an existing harness dir in the repo.
-// When neither is detected, Claude is the default (preserves prior init behaviour).
-// When both are present, both scaffolds apply — no silent single-vendor pick.
-func detectProcessHarnesses(repoRoot string, hasCLI func(string) bool) (claude, grok bool) {
-	if hasCLI == nil {
-		hasCLI = func(name string) bool {
-			_, err := lookPath(name)
-			return err == nil
+// detectProcessHarnesses decides which process-hook scaffolds to apply
+// (epic:minimal-harness-footprint). Signals:
+//   - forced: explicit --harness list (wins when non-empty)
+//   - existing harness dirs in the repo (.claude / .grok)
+//
+// Never PATH. Never a silent claude default (empty → install nothing).
+func detectProcessHarnesses(repoRoot string, forced []string) (claude, grok bool) {
+	if len(forced) > 0 {
+		for _, h := range forced {
+			switch strings.ToLower(strings.TrimSpace(h)) {
+			case "claude":
+				claude = true
+			case "grok":
+				grok = true
+			}
 		}
+		return claude, grok
 	}
-	claude = hasCLI("claude") || dirExists(filepath.Join(repoRoot, ".claude"))
-	grok = hasCLI("grok") || dirExists(filepath.Join(repoRoot, ".grok"))
-	if !claude && !grok {
-		claude = true
+	claude = dirExists(filepath.Join(repoRoot, ".claude"))
+	grok = dirExists(filepath.Join(repoRoot, ".grok"))
+	return claude, grok
+}
+
+// detectSessionHarnesses probes the process environment for harness session
+// markers (never PATH). Claude: any CLAUDE_CODE_* env key. Grok: GROK_AGENT
+// non-empty (Grok Build sets GROK_AGENT=1 in agent sessions).
+func detectSessionHarnesses() (claude, grok bool) {
+	return detectSessionHarnessesFrom(os.Environ())
+}
+
+// detectSessionHarnessesFrom is the testable core (environ as KEY=VALUE entries).
+func detectSessionHarnessesFrom(environ []string) (claude, grok bool) {
+	for _, e := range environ {
+		key, val, _ := strings.Cut(e, "=")
+		if strings.HasPrefix(key, "CLAUDE_CODE_") {
+			claude = true
+		}
+		if key == "GROK_AGENT" {
+			v := strings.TrimSpace(val)
+			if v != "" && v != "0" {
+				grok = true
+			}
+		}
 	}
 	return claude, grok
 }
@@ -547,12 +624,48 @@ func dirExists(path string) bool {
 	return err == nil && st.IsDir()
 }
 
+// ensureLazySessionHarness installs missing harness scaffolds when a store-backed
+// verb runs inside a harness session (session env markers). No-op outside an
+// initialized satelle repo, when markers are absent, or when scaffolds exist.
+// Best-effort: errors are ignored so a store verb still proceeds (hooks appear next session).
+func ensureLazySessionHarness(repoRoot string) {
+	dataDir := filepath.Join(repoRoot, config.DefaultDataDir)
+	if st, err := os.Stat(dataDir); err != nil || !st.IsDir() {
+		return
+	}
+	wantClaude, wantGrok := detectSessionHarnesses()
+	if wantClaude {
+		settings := filepath.Join(repoRoot, ".claude", "settings.json")
+		if _, err := os.Stat(settings); os.IsNotExist(err) {
+			_, _, _, _ = ensureClaudeHooks(repoRoot)
+		}
+	}
+	if wantGrok {
+		path := filepath.Join(repoRoot, filepath.FromSlash(grokHooksRel))
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			_, _, _, _ = ensureGrokHooks(repoRoot)
+			_ = ensureGrokFolderTrust(io.Discard, repoRoot)
+			_ = ensureGrokCompatConfig(io.Discard)
+		}
+	}
+}
+
 // ensureProcessHooks scaffolds Claude and/or Grok process hooks per detection
 // and reports each outcome on out (same initLine / "~ updated" style as before).
 // When Grok is detected it also disables Claude-compat hooks in ~/.grok/config.toml
 // so Grok does not double-fire the same satelle gate/commitgate (sty_24b32127).
-func ensureProcessHooks(out io.Writer, repoRoot string) error {
-	wantClaude, wantGrok := detectProcessHarnesses(repoRoot, nil)
+// forced is from init --harness (nil = dirs only).
+func ensureProcessHooks(out io.Writer, repoRoot string, forced []string) error {
+	// Always materialise/retire the shared hook script surface (even when no
+	// harness settings are installed) so migrate heals legacy scripts.
+	if err := writeHookScripts(repoRoot); err != nil {
+		return err
+	}
+	wantClaude, wantGrok := detectProcessHarnesses(repoRoot, forced)
+	if !wantClaude && !wantGrok {
+		fmt.Fprintln(out, "  · process hooks: none (no .claude/.grok dirs and no --harness; use --harness claude,grok or open a harness session for lazy install)")
+		return nil
+	}
 	if wantClaude {
 		added, updated, incomplete, err := ensureClaudeHooks(repoRoot)
 		if err != nil {
@@ -760,7 +873,8 @@ func ensureReinforcementHooks(path, harness string) ([]string, error) {
 		commitMatcher = "Bash|run_terminal_command"
 	}
 	if !hookEventHasMarker(hooks["PreToolUse"], "satelle hook gate") &&
-		!hookEventHasMarker(hooks["PreToolUse"], "pretooluse-gate-") {
+		!hookEventHasMarker(hooks["PreToolUse"], "pretooluse-gate-") &&
+		!hookEventHasMarker(hooks["PreToolUse"], "satelle-hook.sh") {
 		group := map[string]any{
 			"matcher": gateMatcher,
 			"hooks":   []any{map[string]any{"type": "command", "command": gateCmd}},
@@ -770,7 +884,9 @@ func ensureReinforcementHooks(path, harness string) ([]string, error) {
 		added = append(added, "PreToolUse")
 	}
 	if !hookEventHasMarker(hooks["PreToolUse"], "satelle hook commitgate") &&
-		!hookEventHasMarker(hooks["PreToolUse"], "pretooluse-commitgate-") {
+		!hookEventHasMarker(hooks["PreToolUse"], "pretooluse-commitgate-") &&
+		!hookEventHasMarker(hooks["PreToolUse"], "satelle-hook.sh commitgate") &&
+		!hookEventHasMarker(hooks["PreToolUse"], "commitgate "+harness) {
 		group := map[string]any{
 			"matcher": commitMatcher,
 			"hooks":   []any{map[string]any{"type": "command", "command": commitCmd}},
@@ -825,7 +941,7 @@ func incompleteHookEvents(path string) []string {
 	hooks, _ := root["hooks"].(map[string]any)
 	need := map[string][]string{
 		"SessionStart":     {"satelle hook context", "satelle reindex"},
-		"PreToolUse":       {"satelle hook gate", "pretooluse-gate-"},
+		"PreToolUse":       {"satelle hook gate", "pretooluse-gate-", "satelle-hook.sh"},
 		"UserPromptSubmit": {"satelle hook prompt"},
 		"Stop":             {"satelle hook stopcheck"},
 	}
@@ -1033,9 +1149,11 @@ func upgradeFailVisibleHooks(path, harness string) (int, error) {
 // gate command that is not yet (or not only) an unrelated shell snippet.
 func legacyHookSub(cmd string) string {
 	switch {
-	case strings.Contains(cmd, "hook commitgate") || strings.Contains(cmd, "pretooluse-commitgate-"):
+	case strings.Contains(cmd, "hook commitgate") || strings.Contains(cmd, "pretooluse-commitgate-") ||
+		(strings.Contains(cmd, "satelle-hook.sh") && strings.Contains(cmd, "commitgate")):
 		return "commitgate"
-	case strings.Contains(cmd, "hook gate") || strings.Contains(cmd, "pretooluse-gate-"):
+	case strings.Contains(cmd, "hook gate") || strings.Contains(cmd, "pretooluse-gate-") ||
+		(strings.Contains(cmd, "satelle-hook.sh") && strings.Contains(cmd, " gate ")):
 		return "gate"
 	default:
 		return ""

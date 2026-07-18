@@ -1242,6 +1242,7 @@ func gateWiredInSettings(repoRoot string) (wired bool, checked bool) {
 // Edit-matcher hook that invokes the edit gate. Recognises:
 //   - legacy one-liner / inline wrapper containing "hook gate" (sty_c75c73ed)
 //   - script-file form containing "pretooluse-gate-" (sty_adfb9862)
+//   - parameterized form containing "satelle-hook.sh" (epic:minimal-harness-footprint)
 //
 // Pure over the bytes so it is unit-tested directly; a parse failure returns
 // false (no confident wire).
@@ -1265,7 +1266,8 @@ func settingsWiresGate(raw []byte) bool {
 		}
 		for _, h := range e.Hooks {
 			if strings.Contains(h.Command, "hook gate") ||
-				strings.Contains(h.Command, "pretooluse-gate-") {
+				strings.Contains(h.Command, "pretooluse-gate-") ||
+				strings.Contains(h.Command, "satelle-hook.sh") {
 				return true
 			}
 		}

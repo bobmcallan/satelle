@@ -69,7 +69,8 @@ func TestInitSkeleton(t *testing.T) {
 // idempotent.
 func TestInitReconcilesStaleHooks(t *testing.T) {
 	repo := t.TempDir()
-	mustRun(t, testBin, repo, "init")
+	// Install claude scaffold explicitly — bare init no longer PATH/default-scaffolds.
+	mustRun(t, testBin, repo, "init", "--harness", "claude")
 	p := filepath.Join(repo, ".claude", "settings.json")
 	stale := `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"satelle index"},{"type":"command","command":"my-hook"}]}]}}`
 	writeFile(t, p, stale)

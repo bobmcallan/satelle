@@ -101,7 +101,9 @@ func TestSubstrateWorkflowSeededAndDrivable(t *testing.T) {
 // succeeds on the deterministic check.
 func TestManagedFootprintClosesSubstrateLane(t *testing.T) {
 	repo := t.TempDir()
-	mustRun(t, testBin, repo, "init")
+	// Explicit harness so the managed footprint includes a hook settings file
+	// (bare init no longer scaffolds harnesses by default).
+	mustRun(t, testBin, repo, "init", "--harness", "claude")
 	materializeDefault(t, repo, "workflows", "satelle-substrate-workflow")
 	materializeDefault(t, repo, "skills", "satelle-substrate-only-check")
 	stubReviewerAccept(t, repo) // step-summary node is an LLM reviewer; stub it
@@ -120,8 +122,7 @@ func TestManagedFootprintClosesSubstrateLane(t *testing.T) {
 	mustRun(t, testBin, repo, "story", "set", sid, "--status", "in_progress")
 
 	// Managed-footprint edit: append to the root .gitignore init always writes,
-	// plus any init-deployed harness scaffold (.claude/ and/or .grok/ — which
-	// ones land depends on detectProcessHarnesses). All ride the substrate allow-list.
+	// plus the harness scaffold (--harness claude). All ride the substrate allow-list.
 	giPath := filepath.Join(repo, ".gitignore")
 	gi, err := os.ReadFile(giPath)
 	if err != nil {
