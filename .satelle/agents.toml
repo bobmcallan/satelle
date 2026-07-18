@@ -14,13 +14,9 @@
 # are visible rather than hidden behind the `grok` preset token.
 # Planner/retrospective/blocked-triage: Claude stdin-first (no {payload} — not
 # double-fed) so Bash(satelle:*) and code tools work.
-# Coder (in_progress): Grok edit-capable via search_replace, no shell and no
-# write tool — headless Grok agent-build fails when run_terminal_command OR the
-# write tool is enabled (auto_background_on_timeout / enabled_background
-# constraint; re-verified sty_565a0202). search_replace can create and edit
-# files. Context channel is the transition payload `docs` array (injected by
-# the engine, sty_58fa970e) — not an in-repo path. Hooks under .grok/hooks
-# remain the real mutator ceiling.
+# in_progress (and integration/release): IN-LOOP via [executor] — the driving
+# session implements. Dispatched-coder (sty_565a0202 / epic:dispatched-coder) was
+# superseded when in_progress moved in-loop (sty_db003275); [coder] is dormant only.
 # model stays non-empty (TestRepoReviewerModelIsActive).
 # Per-gate model without a second binding: a workflow edge/node may set model="…"
 # to override only the model for that gate/step while keeping the shared harness
@@ -69,13 +65,13 @@ tools   = "Read,Write,Edit,Grep,Glob,Bash"
 model   = "opus"
 principles = "session"
 
-# coder — performing in_progress dispatch (sty_565a0202 / epic:dispatched-coder).
-# Grok argv-first; edit-capable via search_replace (can create files). NO
-# run_terminal_command and NO write: headless Grok agent-build refuses both
-# (see header). Context via payload `docs` (plan/summaries injected, sty_58fa970e);
-# plan-consumed evidence is a stdout statement (dispatch sink + executor.log).
-# --always-approve: .grok PreToolUse gates are the real ceiling. Committed
-# default works on a clone (satelle-repo-agnostic).
+# not wired in any current workflow — dispatched-coder (epic:dispatched-coder)
+# superseded by in-loop executor. Kept dormant for tests/re-opt-in (sty_db003275);
+# no workflow node allocates agent=coder. When re-wired: Grok argv-first,
+# edit-capable via search_replace only (no run_terminal_command / write —
+# headless Grok agent-build refuses both). Context via payload `docs`
+# (sty_58fa970e); plan-consumed evidence is a stdout statement.
+# --always-approve: .grok PreToolUse gates are the real ceiling.
 [coder]
 role    = "agent"
 command = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir,search_replace -m {model} --always-approve --output-format plain --max-turns 40 --no-subagents"
