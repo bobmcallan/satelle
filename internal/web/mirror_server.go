@@ -89,6 +89,10 @@ func (s *MirrorServer) landing(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Fprintf(w, `</ul></div>
 <footer class="site-footer"><span class="footer-version">satelle %s</span></footer>
+<script>
+// SSE: any ingest/publish reloads so the push-fed view stays current (sty_dbdadfa0 AC3).
+(function(){try{var es=new EventSource("/events");es.addEventListener("trigger",function(){location.reload()});}catch(e){}})();
+</script>
 </body></html>`, buildinfo.Version)
 }
 
@@ -124,6 +128,9 @@ func (s *MirrorServer) projectHome(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Fprintf(w, `</ul></div>
 <footer class="site-footer"><span class="footer-version">satelle %s</span></footer>
+<script>
+(function(){try{var es=new EventSource("/events");es.addEventListener("trigger",function(){location.reload()});}catch(e){}})();
+</script>
 </body></html>`, buildinfo.Version)
 }
 

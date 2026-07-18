@@ -10,13 +10,16 @@ func TestSystemdUnitContent(t *testing.T) {
 	for _, want := range []string{
 		"Description=satelle web server",
 		"ExecStart=/usr/local/bin/satelle serve --addr 0.0.0.0 --port 8787",
-		"WorkingDirectory=/home/u/repo",
+		"WorkingDirectory=", // $HOME preferred; not a single repo (sty_dbdadfa0)
 		"Restart=on-failure",
 		"WantedBy=default.target",
 	} {
 		if !strings.Contains(unit, want) {
 			t.Errorf("unit missing %q:\n%s", want, unit)
 		}
+	}
+	if strings.Contains(unit, "WorkingDirectory=/home/u/repo") {
+		t.Errorf("unit must not pin per-repo WorkingDirectory:\n%s", unit)
 	}
 }
 
@@ -54,12 +57,13 @@ func TestUserSystemctlEnv(t *testing.T) {
 }
 
 // TestSystemSystemdUnit: the persistent system unit targets multi-user.target and
-// runs as the given user, with the correct ExecStart/WorkingDirectory (sty_00dadc91).
+// runs as the given user, with the correct ExecStart (sty_00dadc91). WorkingDirectory
+// is $HOME (push-fed serve needs no per-repo cwd; sty_dbdadfa0 / sty_455f0d6e).
 func TestSystemSystemdUnit(t *testing.T) {
 	unit := systemSystemdUnit("/usr/local/bin/satelle", "/home/u/repo", "0.0.0.0", 8787, "bobmc")
 	for _, want := range []string{
 		"ExecStart=/usr/local/bin/satelle serve --addr 0.0.0.0 --port 8787",
-		"WorkingDirectory=/home/u/repo",
+		"WorkingDirectory=", // non-empty home or repo fallback
 		"User=bobmc",
 		"Group=bobmc",
 		"WantedBy=multi-user.target",
@@ -68,6 +72,9 @@ func TestSystemSystemdUnit(t *testing.T) {
 		if !strings.Contains(unit, want) {
 			t.Errorf("system unit missing %q:\n%s", want, unit)
 		}
+	}
+	if strings.Contains(unit, "WorkingDirectory=/home/u/repo") {
+		t.Errorf("system unit must not pin a single repo WorkingDirectory (push-fed serve):\n%s", unit)
 	}
 	if strings.Contains(unit, "Restart=on-failure") {
 		t.Errorf("system unit must be Restart=always (a clean signal respawns), not on-failure:\n%s", unit)
