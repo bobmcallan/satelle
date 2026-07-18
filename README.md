@@ -44,6 +44,18 @@ trackable detail URL — `http://127.0.0.1:8787/story/<id>` (or `/task/<id>`) �
 showing status, acceptance criteria, and the full ledger timeline. The server is
 local-only (there is no hosted URL).
 
+### Substrate freshness without serve
+
+The CLI keeps the doc index, task store, and story-backlog view current **without
+a running serve process**:
+
+1. **SessionStart hook** — `satelle init` scaffolds `satelle reindex` on every agent session.
+2. **Explicit `satelle reindex`** — full on-demand pass (docs + tasks + backlog view).
+3. **Post-story-verb** — `story create` / `story set` best-effort regenerate the disposable backlog view.
+
+Hand-edited tasks or authored markdown still need a reindex (or the next session
+start) to land in the store/index. See `satelle reindex --help`.
+
 ### Always-on service
 
 `satelle serve` runs in the foreground. To keep the project page up across

@@ -50,7 +50,15 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 			if len(cTags) > 0 {
 				req["tags"] = cTags
 			}
-			return dispatch(cmd, group+"-create", req)
+			if err := dispatch(cmd, group+"-create", req); err != nil {
+				return err
+			}
+			// Story-only: regenerate the disposable backlog view after a successful
+			// create so CLI freshness does not depend on serve (sty_d0950127).
+			if group == "story" {
+				refreshStoryBacklog(cmd)
+			}
+			return nil
 		},
 	}
 	create.Flags().StringVar(&cTitle, "title", "", "title (required)")
@@ -127,7 +135,14 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 				rm, _ := f.GetStringSlice("remove-tags")
 				req["remove_tags"] = rm
 			}
-			return dispatch(cmd, group+"-set", req)
+			if err := dispatch(cmd, group+"-set", req); err != nil {
+				return err
+			}
+			// Story-only: keep the backlog view current after set (sty_d0950127).
+			if group == "story" {
+				refreshStoryBacklog(cmd)
+			}
+			return nil
 		},
 	}
 	set.Flags().String("title", "", "new title")
@@ -160,6 +175,21 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(executionRecordCommand())
 	}
 	return parent
+}
+
+// refreshStoryBacklog best-effort regenerates the disposable story-backlog
+// view after a story create/set. Synchronous — no goroutine or ticker — so the
+// CLI stays self-sufficient without serve (sty_d0950127). A failure never
+// fails the mutation command (the DB write already committed); warn on stderr.
+func refreshStoryBacklog(cmd *cobra.Command) {
+	a, err := appFrom(cmd)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "story: backlog refresh: %v\n", err)
+		return
+	}
+	if _, _, err := verb.SyncStoryBacklog(cmd.Context(), a.Store.Stories, time.Now()); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "story: backlog refresh: %v\n", err)
+	}
 }
 
 // executionRecordCommand builds `satelle execution record <exe_id>` — the in-loop
