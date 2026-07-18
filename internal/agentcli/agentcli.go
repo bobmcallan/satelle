@@ -205,6 +205,30 @@ func NewRunner(name string) (Runner, error) {
 	}
 }
 
+// Interface names for RunnerFromBinding (mirror config.Interface* without importing
+// config — agentcli must not depend on the config package).
+const (
+	InterfaceCommand = "command"
+	InterfaceACP     = "acp"
+)
+
+// RunnerFromBinding resolves an agents.toml transport + command to a Runner
+// (epic:agent-dispatch-transport). iface is "command" (default when empty) or "acp".
+//
+//   - command / empty: same as RunnerFromCommand (full argv template; in-loop → nil).
+//   - acp: spawn line only (no {system}/{payload} substitution on argv); ACP session
+//     protocol carries system/payload. Does not silently fall back to command.
+func RunnerFromBinding(iface, command string) (Runner, error) {
+	switch strings.ToLower(strings.TrimSpace(iface)) {
+	case "", InterfaceCommand:
+		return RunnerFromCommand(command)
+	case InterfaceACP:
+		return newACPRunner(command)
+	default:
+		return nil, fmt.Errorf("agentcli: unknown interface %q (want %q or %q)", iface, InterfaceCommand, InterfaceACP)
+	}
+}
+
 // RunnerFromCommand resolves an agents-layer command binding to a Runner. An empty
 // or "in-loop" command returns (nil, nil): no agent-CLI runner, so the caller keeps
 // its configured default. A SINGLE non-in-loop token is rejected (bare CLI presets

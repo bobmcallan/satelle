@@ -1212,18 +1212,28 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer:
 # to satelle — it cannot see, validate, dispatch, or carry them repo-agnostically —
 # and they silently pin the repo to one CLI vendor. See "satelle help agent-dispatch".
 #
-# THE COMMAND TEMPLATE: an isolated binding requires a FULL multi-token command
-# template (binary + argv). The only bare single-token value is "in-loop" (the
-# driving session performs the step — no subprocess). An empty/omitted command on
-# [reviewer] inherits the full default claude template. Bare tokens like
-# "claude" / "grok" / "codex" are rejected by satelle agent validate — run
-# satelle init to expand a legacy bare preset, or write the full argv yourself.
-# Placeholders — each one argv token: {system} {tools} {model} {settings}
-# {payload}. The work-item body is ALWAYS also written on stdin (dual delivery).
-# Empty {model}/{settings} drop that flag; empty {payload} does not. Claude's
-# default uses stdin only (no -p {payload}) so the prompt is not double-fed;
-# argv-first CLIs (grok) opt in with -p {payload}. Example full template:
+# TRANSPORT (epic:agent-dispatch-transport): interface = "command" | "acp".
+# Omit interface (or set "command") for a FULL multi-token command template — any
+# CLI (Claude Code, grok -p, wrappers). Optional interface = "acp" for an
+# ACP-capable spawn only (e.g. command = "grok agent stdio"); system/payload ride
+# the protocol, not {placeholders}. Claude has no ACP — keep it on command.
+# Defaults in this scaffold stay command; do not flip [reviewer] to acp here.
+#
+# THE COMMAND TEMPLATE (interface=command): an isolated binding requires a FULL
+# multi-token command (binary + argv). The only bare single-token value is
+# "in-loop" (the driving session performs the step — no subprocess). An
+# empty/omitted command on [reviewer] inherits the full default claude template.
+# Bare tokens like "claude" / "grok" / "codex" are rejected by satelle agent
+# validate — run satelle init to expand a legacy bare preset, or write the full
+# argv yourself. Placeholders — each one argv token: {system} {tools} {model}
+# {settings} {payload}. The work-item body is ALWAYS also written on stdin (dual
+# delivery). Empty {model}/{settings} drop that flag; empty {payload} does not.
+# Claude's default uses stdin only (no -p {payload}) so the prompt is not
+# double-fed; argv-first CLIs (grok) opt in with -p {payload}. Example:
 #   command = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir --always-approve --output-format plain --max-turns 8 --no-subagents"
+# Optional ACP example (not enabled by default):
+#   # interface = "acp"
+#   # command   = "grok agent stdio"
 #
 # PER-BINDING ENV — point a step at an alternate model backend WITHOUT a wrapper
 # binary. A binding may set env = { KEY = "value" }; each value may reference the

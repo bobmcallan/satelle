@@ -312,7 +312,7 @@ func applyAgentGrants(rev *agentstep.Engine, a *app.App, agents config.AgentsCon
 	// Select the reviewer's agent CLI from the agents-layer command binding
 	// (default claude). An unset/in-loop command keeps the global [agent] cli
 	// configured at construction; an unresolvable one refuses.
-	r, err := agentcli.RunnerFromCommand(rb.CommandTemplate())
+	r, err := agentcli.RunnerFromBinding(rb.ResolvedInterface(), rb.CommandTemplate())
 	if err != nil {
 		return fmt.Errorf("broken %s/%s: reviewer command: %w",
 			config.DefaultDataDir, config.AgentsConfigName, err)

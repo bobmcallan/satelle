@@ -353,3 +353,42 @@ func TestResolvedPrinciples(t *testing.T) {
 	}
 	_ = on
 }
+
+// TestResolvedInterfaceAndLoad pins epic:agent-dispatch-transport interface field.
+func TestResolvedInterfaceAndLoad(t *testing.T) {
+	if got := (AgentBinding{}).ResolvedInterface(); got != InterfaceCommand {
+		t.Errorf("empty interface = %q, want command", got)
+	}
+	if got := (AgentBinding{Interface: "acp"}).ResolvedInterface(); got != InterfaceACP {
+		t.Errorf("acp = %q", got)
+	}
+	if !(AgentBinding{Interface: "acp"}).IsACP() {
+		t.Error("IsACP should be true")
+	}
+
+	dir := t.TempDir()
+	// Unknown interface fails at load.
+	bad := "[reviewer]\ninterface = \"rpc\"\ncommand = \"claude -p {system}\"\n"
+	if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadAgents(dir); err == nil || !strings.Contains(err.Error(), "interface") {
+		t.Fatalf("want interface load error, got %v", err)
+	}
+
+	// Valid acp + omit interface still load.
+	ok := "[reviewer]\ninterface = \"acp\"\ncommand = \"grok agent stdio\"\ntools = \"read_file\"\n[planner]\ncommand = \"claude -p {system}\"\n"
+	if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(ok), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ac, err := LoadAgents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ac.Reviewer.ResolvedInterface() != InterfaceACP {
+		t.Errorf("reviewer interface = %q", ac.Reviewer.ResolvedInterface())
+	}
+	if ac.Agents["planner"].ResolvedInterface() != InterfaceCommand {
+		t.Errorf("planner should default command")
+	}
+}

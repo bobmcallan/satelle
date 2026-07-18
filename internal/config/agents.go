@@ -46,6 +46,15 @@ const (
 	RoleAgent    = "agent"
 )
 
+// Interface values for AgentBinding.Interface — how satelle runs the isolated
+// worker subprocess (epic:agent-dispatch-transport). Orthogonal to role:
+// command = full argv template (default; any CLI including Claude);
+// acp = Agent Client Protocol over stdio (spawn line only; satelle is client).
+const (
+	InterfaceCommand = "command"
+	InterfaceACP     = "acp"
+)
+
 // Principles selector tokens for AgentBinding.Principles — which principles ride
 // in an isolated agent's briefing (design sty_69fd4e20 §5).
 const (
@@ -63,12 +72,18 @@ const (
 // (performer). Principles declares which principles inject into the isolated
 // briefing. InjectPrinciples is the DEPRECATED boolean alias for Principles
 // (true→session, false→none); Principles wins when both are set.
+//
+// Interface selects the dispatch transport (epic:agent-dispatch-transport):
+// "command" (default) or "acp". Shared grant fields apply to both; spawn shape differs.
 type AgentBinding struct {
-	// Command is the agent's command template. An isolated binding requires a
-	// multi-token full command (binary + argv) with {system}/{tools}/{model}/
-	// {settings}/{payload} substituted (each its own argv token). The only bare
-	// single-token value is "in-loop" (driving session, no subprocess); bare
-	// claude/grok/codex tokens are rejected by agentvalidate and RunnerFromCommand.
+	// Interface is "command" | "acp". Empty means command. Unknown values fail at load.
+	Interface string `toml:"interface"`
+	// Command is the agent's spawn/template string.
+	//   command transport: multi-token full argv template with {system}/{tools}/
+	//     {model}/{settings}/{payload} (each its own argv token). Bare single-token
+	//     only "in-loop"; bare claude/grok/codex rejected by agentvalidate.
+	//   acp transport: ACP stdio spawn only (e.g. "grok agent stdio") — no
+	//     {system}/{payload} placeholders (those ride the protocol).
 	// Prefer over retired harness= (no runtime fallback; MigrateAgents rewrites).
 	Command string `toml:"command"`
 	// Harness is retired: still decoded for MigrateAgents; CommandTemplate ignores it.
@@ -136,6 +151,25 @@ func (b AgentBinding) TimeoutDuration(def time.Duration) (time.Duration, error) 
 // runtime fallback (breaking surface: run `satelle init` to MigrateAgents).
 func (b AgentBinding) CommandTemplate() string {
 	return b.Command
+}
+
+// ResolvedInterface returns the effective dispatch transport: command (default)
+// or acp. Unknown non-empty values are returned lowercased so LoadAgents /
+// agentvalidate can reject them (epic:agent-dispatch-transport).
+func (b AgentBinding) ResolvedInterface() string {
+	switch strings.ToLower(strings.TrimSpace(b.Interface)) {
+	case "", InterfaceCommand:
+		return InterfaceCommand
+	case InterfaceACP:
+		return InterfaceACP
+	default:
+		return strings.ToLower(strings.TrimSpace(b.Interface))
+	}
+}
+
+// IsACP reports whether this binding uses the ACP transport.
+func (b AgentBinding) IsACP() bool {
+	return b.ResolvedInterface() == InterfaceACP
 }
 
 // ResolvedRole returns the binding's effective role: the declared Role when set
@@ -308,6 +342,9 @@ func LoadAgents(dataDir string) (AgentsConfig, error) {
 	if err := ac.validateTimeouts(); err != nil {
 		return AgentsConfig{}, err
 	}
+	if err := ac.validateInterfaces(); err != nil {
+		return AgentsConfig{}, err
+	}
 	return ac, nil
 }
 
@@ -321,6 +358,36 @@ func (a AgentsConfig) validateTimeouts() error {
 			return fmt.Errorf("agents.toml [%s] timeout: %w", section, err)
 		}
 		return nil
+	}
+	if err := check("executor", a.Executor); err != nil {
+		return err
+	}
+	if err := check("reviewer", a.Reviewer); err != nil {
+		return err
+	}
+	for name, b := range a.Agents {
+		if err := check(name, b); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateInterfaces fails fast on an unknown interface= value
+// (epic:agent-dispatch-transport). Empty is fine (defaults to command).
+func (a AgentsConfig) validateInterfaces() error {
+	check := func(section string, b AgentBinding) error {
+		raw := strings.TrimSpace(b.Interface)
+		if raw == "" {
+			return nil
+		}
+		switch strings.ToLower(raw) {
+		case InterfaceCommand, InterfaceACP:
+			return nil
+		default:
+			return fmt.Errorf("agents.toml [%s] interface %q: want %q or %q",
+				section, raw, InterfaceCommand, InterfaceACP)
+		}
 	}
 	if err := check("executor", a.Executor); err != nil {
 		return err

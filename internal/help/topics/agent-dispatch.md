@@ -65,15 +65,46 @@ satelle-dot-standard principle.
 - A binding whose `command` is `in-loop` keeps the step with the orchestrating
   session — not dispatched.
 
+## Control plane in vs agent I/O out
+
+- **In** (orchestrator / any agent → satelle): **satelle CLI verbs** only
+  (`satelle story set`, `story get`, …). Small local surface — not an MCP tool
+  dump of every verb. Status and engagement change only through satelle.
+- **Out** (satelle → isolated worker): subprocess configured in
+  `.satelle/agents.toml`. Two **transports**, one binding shape
+  (epic:agent-dispatch-transport):
+
+| `interface` | Meaning |
+|-------------|---------|
+| **`command`** (default; omit = command) | Full multi-token argv template; any CLI (Claude Code, `grok -p`, wrappers, custom). |
+| **`acp`** | Agent Client Protocol over stdio; `command` is the **spawn line only** (e.g. `grok agent stdio`). System/payload ride the session, not `{placeholders}`. |
+
+Shared fields on both: `role`, `tools`, `model`, `principles`, `env`, `timeout`,
+`settings`. Claude Code does **not** support ACP — keep Claude on `interface =
+command`. An ACP-capable CLI is usable when it implements ACP agent stdio **and**
+the binding sets `interface = "acp"`. Workers never advance story status; they
+return text/verdicts that satelle enacts after gates.
+
+Example ACP binding (optional; defaults stay command):
+
+```toml
+[reviewer-acp]
+role      = "reviewer"
+interface = "acp"
+command   = "grok agent stdio"
+tools     = "read_file,grep,list_dir"
+model     = "grok-4.5"
+principles = "session"
+```
+
 ## The command template — full templates and placeholders
 
-Each binding's **`command`** says *how* the agent runs. An **isolated** binding
-requires a **full multi-token command template** — the real argv is literal in
-the file so the operator can read exactly what will run. Bare single-token CLI
-names (`claude` / `grok` / `codex`) are **rejected** by `satelle agent validate`
-(and refuse engage); run `satelle init` to expand a legacy bare preset, or write
-the full template yourself. The only bare single-token value that remains valid
-is:
+Each binding's **`command`** says *how* the agent runs. With **`interface =
+"command"`** (the default), an **isolated** binding requires a **full multi-token command template** — the real argv is literal in the file so the operator can
+read exactly what will run. Bare single-token CLI names (`claude` / `grok` /
+`codex`) are **rejected** by `satelle agent validate` (and refuse engage); run
+`satelle init` to expand a legacy bare preset, or write the full template
+yourself. The only bare single-token value that remains valid is:
 
 - `command = "in-loop"` — no subprocess; the driving session performs the step.
 
@@ -90,6 +121,9 @@ The first token is the binary; the rest are argv tokens carrying the placeholder
 that flag; empty `{payload}` does not. The work item is **always also on stdin**
 (dual delivery), so stdin-first CLIs (claude) omit `{payload}` and argv-first
 CLIs (grok) include it.
+
+With **`interface = "acp"`**, `command` must **not** contain those placeholders —
+satelle sends system/payload over the ACP session instead.
 
 > The field is **`command`**; the older key **`harness`** is a **deprecated alias**
 > — a pre-rename `agents.toml` still parses (`command` wins when both are set).

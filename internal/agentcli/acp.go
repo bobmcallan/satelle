@@ -1,0 +1,451 @@
+package agentcli
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"strings"
+	"sync"
+	"sync/atomic"
+)
+
+// acpRunner runs an Agent Client Protocol agent over stdio (epic:agent-dispatch-transport).
+// command is the spawn line only (e.g. "grok agent stdio") — no template placeholders.
+// System prompt and payload are delivered via session/prompt content blocks.
+// One session per Run; no cross-dispatch reuse. Does not set story status.
+type acpRunner struct {
+	binary string
+	args   []string
+	how    string // body-free spawn string for Command() evidence
+}
+
+// newACPRunner builds an acpRunner from a multi-token spawn command.
+// Rejects empty/in-loop, bare single tokens, and argv that still carry template placeholders.
+func newACPRunner(command string) (Runner, error) {
+	fields := strings.Fields(command)
+	if len(fields) == 0 || strings.EqualFold(fields[0], "in-loop") {
+		return nil, fmt.Errorf("agentcli: interface=acp requires a multi-token ACP spawn command (e.g. \"grok agent stdio\"), not in-loop/empty")
+	}
+	if len(fields) == 1 {
+		return nil, fmt.Errorf("agentcli: interface=acp command %q: bare single token rejected — use a full ACP spawn line (e.g. \"grok agent stdio\")", fields[0])
+	}
+	for _, tok := range fields {
+		switch tok {
+		case "{system}", "{payload}", "{tools}", "{model}", "{settings}":
+			return nil, fmt.Errorf("agentcli: interface=acp command must not contain placeholder %s — system/payload/tools ride the ACP session, not argv", tok)
+		}
+	}
+	return acpRunner{
+		binary: fields[0],
+		args:   fields[1:],
+		how:    strings.Join(fields, " "),
+	}, nil
+}
+
+func (a acpRunner) Name() string    { return a.binary }
+func (a acpRunner) Command() string { return a.how }
+
+func (a acpRunner) Run(ctx context.Context, req Request) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, a.binary, a.args...)
+	if req.Dir != "" {
+		cmd.Dir = req.Dir
+	}
+	cmd.Env = composeEnv(os.Environ(), req.Env)
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("agentcli: acp: stdin: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("agentcli: acp: stdout: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("agentcli: acp: stderr: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("agentcli: acp: start %s: %w", a.binary, err)
+	}
+
+	var stderrBuf bytes.Buffer
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		teeLines(stderr, &stderrBuf, req.Sink, "[stderr] ")
+	}()
+
+	client := newACPClient(stdin, stdout, req.Sink)
+	client.setMutatorsOK(toolsAllowMutators(req.AllowedTools))
+	text, runErr := client.runSession(ctx, req)
+
+	_ = client.tryCancel()
+	_ = stdin.Close()
+	waitErr := cmd.Wait()
+	wg.Wait()
+
+	if runErr != nil {
+		if msg := strings.TrimSpace(stderrBuf.String()); msg != "" {
+			return text, fmt.Errorf("agentcli: acp: %w: %s", runErr, msg)
+		}
+		return text, fmt.Errorf("agentcli: acp: %w", runErr)
+	}
+	if waitErr != nil && ctx.Err() != nil {
+		return text, fmt.Errorf("agentcli: acp: %w", ctx.Err())
+	}
+	if waitErr != nil && len(bytes.TrimSpace(text)) == 0 {
+		if msg := strings.TrimSpace(stderrBuf.String()); msg != "" {
+			return text, fmt.Errorf("agentcli: acp: process: %w: %s", waitErr, msg)
+		}
+		return text, fmt.Errorf("agentcli: acp: process: %w", waitErr)
+	}
+	return text, nil
+}
+
+// toolsAllowMutators is true when the binding's tools grant includes a write/edit
+// or unrestricted shell capability (performer). Read-only grants (reviewer:
+// read_file/Read, Bash(satelle:*) only) keep mutators denied.
+func toolsAllowMutators(tools string) bool {
+	t := strings.ToLower(tools)
+	for _, needle := range []string{"write", "edit", "search_replace", "multiedit", "notebookedit", "run_terminal"} {
+		if strings.Contains(t, needle) {
+			return true
+		}
+	}
+	// Unrestricted Bash / shell — not the satelle-only pull grant.
+	if strings.Contains(t, "bash") && !strings.Contains(t, "satelle") {
+		return true
+	}
+	return false
+}
+
+// isMutatorToolKind maps ACP ToolKind values that change the tree or run arbitrary code.
+func isMutatorToolKind(kind string) bool {
+	switch strings.ToLower(kind) {
+	case "edit", "delete", "move", "execute":
+		return true
+	default:
+		return false
+	}
+}
+
+// --- JSON-RPC ACP client ---
+
+type acpClient struct {
+	w   io.WriteCloser
+	wmu sync.Mutex
+
+	nextID atomic.Int64
+
+	mu         sync.Mutex
+	pending    map[int64]chan acpRPC
+	text       strings.Builder
+	session    string
+	mutatorsOK bool
+	sink       io.Writer
+	readerDone chan struct{}
+}
+
+type acpRPC struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      *int64          `json:"id,omitempty"`
+	Method  string          `json:"method,omitempty"`
+	Params  json.RawMessage `json:"params,omitempty"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+}
+
+func newACPClient(w io.WriteCloser, r io.Reader, sink io.Writer) *acpClient {
+	c := &acpClient{
+		w:          w,
+		pending:    map[int64]chan acpRPC{},
+		sink:       sink,
+		readerDone: make(chan struct{}),
+	}
+	go c.readLoop(r)
+	return c
+}
+
+func (c *acpClient) setMutatorsOK(v bool) {
+	c.mu.Lock()
+	c.mutatorsOK = v
+	c.mu.Unlock()
+}
+
+func (c *acpClient) allowMutators() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.mutatorsOK
+}
+
+func (c *acpClient) readLoop(r io.Reader) {
+	defer close(c.readerDone)
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	for sc.Scan() {
+		line := sc.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		if c.sink != nil {
+			_, _ = c.sink.Write(append(append([]byte{}, line...), '\n'))
+		}
+		var msg acpRPC
+		if err := json.Unmarshal(line, &msg); err != nil {
+			continue
+		}
+		if msg.Method == "session/update" {
+			c.handleUpdate(msg.Params)
+			continue
+		}
+		if msg.Method == "session/request_permission" && msg.ID != nil {
+			c.handlePermission(*msg.ID, msg.Params)
+			continue
+		}
+		if msg.ID != nil {
+			c.mu.Lock()
+			ch := c.pending[*msg.ID]
+			c.mu.Unlock()
+			if ch != nil {
+				select {
+				case ch <- msg:
+				default:
+				}
+			}
+		}
+	}
+}
+
+func (c *acpClient) handleUpdate(params json.RawMessage) {
+	var p struct {
+		Update struct {
+			SessionUpdate string `json:"sessionUpdate"`
+			Content       struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"update"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return
+	}
+	if p.Update.SessionUpdate == "agent_message_chunk" && p.Update.Content.Text != "" {
+		c.mu.Lock()
+		c.text.WriteString(p.Update.Content.Text)
+		c.mu.Unlock()
+	}
+}
+
+func (c *acpClient) handlePermission(id int64, params json.RawMessage) {
+	var p struct {
+		ToolCall struct {
+			Kind string `json:"kind"`
+		} `json:"toolCall"`
+		Options []struct {
+			OptionID string `json:"optionId"`
+			Kind     string `json:"kind"`
+		} `json:"options"`
+	}
+	_ = json.Unmarshal(params, &p)
+
+	deny := isMutatorToolKind(p.ToolCall.Kind) && !c.allowMutators()
+	optionID := ""
+	for _, o := range p.Options {
+		if deny && (o.Kind == "reject_once" || o.Kind == "reject_always") {
+			optionID = o.OptionID
+			break
+		}
+		if !deny && (o.Kind == "allow_once" || o.Kind == "allow_always") {
+			optionID = o.OptionID
+			break
+		}
+	}
+	if optionID == "" && len(p.Options) > 0 {
+		optionID = p.Options[0].OptionID
+	}
+	var result any
+	if deny && optionID == "" {
+		result = map[string]any{"outcome": map[string]any{"outcome": "cancelled"}}
+	} else {
+		result = map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": optionID}}
+	}
+	_ = c.respond(id, result)
+}
+
+func (c *acpClient) writeMsg(v any) error {
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = c.w.Write(append(b, '\n'))
+	return err
+}
+
+func (c *acpClient) respond(id int64, result any) error {
+	return c.writeMsg(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"result":  result,
+	})
+}
+
+func (c *acpClient) request(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	id := c.nextID.Add(1)
+	ch := make(chan acpRPC, 1)
+	c.mu.Lock()
+	c.pending[id] = ch
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+	}()
+
+	msg := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  method,
+	}
+	if params != nil {
+		msg["params"] = params
+	}
+	if err := c.writeMsg(msg); err != nil {
+		return nil, err
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-c.readerDone:
+		return nil, fmt.Errorf("agent closed stdout during %s", method)
+	case resp := <-ch:
+		if resp.Error != nil {
+			return nil, fmt.Errorf("%s: %s", method, resp.Error.Message)
+		}
+		return resp.Result, nil
+	}
+}
+
+func (c *acpClient) tryCancel() error {
+	c.mu.Lock()
+	sid := c.session
+	c.mu.Unlock()
+	if sid == "" {
+		return nil
+	}
+	return c.writeMsg(map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "session/cancel",
+		"params":  map[string]any{"sessionId": sid},
+	})
+}
+
+func (c *acpClient) runSession(ctx context.Context, req Request) ([]byte, error) {
+	cwd := req.Dir
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+
+	initRes, err := c.request(ctx, "initialize", map[string]any{
+		"protocolVersion": 1,
+		"clientInfo":      map[string]any{"name": "satelle", "version": "0"},
+		"clientCapabilities": map[string]any{
+			"fs":       map[string]any{"readTextFile": true, "writeTextFile": false},
+			"terminal": false,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize: %w", err)
+	}
+
+	// Authenticate when the agent advertises methods (Grok: cached_token / api key).
+	var initObj struct {
+		AuthMethods []struct {
+			ID string `json:"id"`
+		} `json:"authMethods"`
+	}
+	_ = json.Unmarshal(initRes, &initObj)
+	methodID := ""
+	for _, m := range initObj.AuthMethods {
+		if m.ID == "cached_token" || m.ID == "xai.api_key" {
+			methodID = m.ID
+			break
+		}
+	}
+	if methodID == "" && len(initObj.AuthMethods) > 0 {
+		methodID = initObj.AuthMethods[0].ID
+	}
+	if methodID != "" {
+		if _, err := c.request(ctx, "authenticate", map[string]any{
+			"methodId": methodID,
+			"_meta":    map[string]any{"headless": true},
+		}); err != nil {
+			// Some fake peers skip auth; only fail if agent listed methods.
+			return nil, fmt.Errorf("authenticate: %w", err)
+		}
+	}
+
+	sessRes, err := c.request(ctx, "session/new", map[string]any{
+		"cwd":        cwd,
+		"mcpServers": []any{},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("session/new: %w", err)
+	}
+	var sessObj struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(sessRes, &sessObj); err != nil || sessObj.SessionID == "" {
+		return nil, fmt.Errorf("session/new: missing sessionId")
+	}
+	c.mu.Lock()
+	c.session = sessObj.SessionID
+	c.mu.Unlock()
+
+	// Optional model config — ignore failures (peer may not support set_config_option).
+	if m := strings.TrimSpace(req.Model); m != "" {
+		_, _ = c.request(ctx, "session/set_config_option", map[string]any{
+			"sessionId": sessObj.SessionID,
+			"configId":  "model",
+			"value":     m,
+		})
+	}
+
+	// Pack system + payload as text content blocks (no argv placeholders).
+	var blocks []map[string]any
+	if sp := strings.TrimSpace(req.SystemPrompt); sp != "" {
+		blocks = append(blocks, map[string]any{"type": "text", "text": sp})
+	}
+	if pay := strings.TrimSpace(req.Payload); pay != "" {
+		blocks = append(blocks, map[string]any{"type": "text", "text": pay})
+	}
+	if len(blocks) == 0 {
+		blocks = append(blocks, map[string]any{"type": "text", "text": "{}"})
+	}
+
+	if _, err := c.request(ctx, "session/prompt", map[string]any{
+		"sessionId": sessObj.SessionID,
+		"prompt":    blocks,
+	}); err != nil {
+		c.mu.Lock()
+		partial := c.text.String()
+		c.mu.Unlock()
+		return []byte(partial), fmt.Errorf("session/prompt: %w", err)
+	}
+
+	c.mu.Lock()
+	out := c.text.String()
+	c.mu.Unlock()
+	return []byte(out), nil
+}

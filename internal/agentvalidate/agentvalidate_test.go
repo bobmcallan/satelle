@@ -360,3 +360,61 @@ func TestValidate_BadTimeout(t *testing.T) {
 		t.Errorf("problem should mention timeout: %v", r.Problems)
 	}
 }
+
+func TestValidate_ACPInterface(t *testing.T) {
+	// Placeholders in acp command → FAIL.
+	agents := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop"},
+		Reviewer: config.AgentBinding{
+			Interface: "acp",
+			Command:   "grok agent stdio {system}",
+			Tools:     "read_file,grep,list_dir",
+			Role:      "reviewer",
+			Model:     "grok-4.5",
+		},
+	}
+	r := Validate(agents, nil, nil)
+	if r.OK() {
+		t.Fatal("acp with {system} must fail validate")
+	}
+	joined := strings.Join(r.Problems, "\n")
+	if !strings.Contains(joined, "placeholder") && !strings.Contains(joined, "{system}") {
+		t.Errorf("problems should mention placeholder, got: %s", joined)
+	}
+
+	// Valid acp reviewer.
+	agents.Reviewer = config.AgentBinding{
+		Interface: "acp",
+		Command:   "grok agent stdio",
+		Tools:     "read_file,grep,list_dir",
+		Role:      "reviewer",
+		Model:     "grok-4.5",
+	}
+	r = Validate(agents, nil, nil)
+	if !r.OK() {
+		t.Fatalf("valid acp reviewer problems: %v", r.Problems)
+	}
+	var g Grant
+	for _, x := range r.Grants {
+		if x.Name == "reviewer" {
+			g = x
+		}
+	}
+	if g.Interface != "acp" || !strings.HasPrefix(g.Backend, "acp:") {
+		t.Errorf("grant = %+v, want interface=acp backend acp:*", g)
+	}
+	if !g.ReadOnly {
+		t.Error("acp reviewer with read-only tools should be ReadOnly")
+	}
+
+	// Existing command path still healthy with no interface key.
+	agents.Reviewer = config.AgentBinding{
+		Command: agentcli.DefaultGrokCommand,
+		Tools:   "read_file,grep,list_dir",
+		Model:   "grok-4.5",
+	}
+	r = Validate(agents, nil, nil)
+	if !r.OK() {
+		t.Fatalf("command default must still validate: %v", r.Problems)
+	}
+}
