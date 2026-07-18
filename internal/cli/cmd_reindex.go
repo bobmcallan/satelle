@@ -29,8 +29,19 @@ dirs, (re)indexes changed markdown files, prunes entries whose files were
 removed, ingests tasks, and regenerates the read-only OKF views (the stories
 backlog, the summary sub-bundle). It is a PASS-THROUGH — it never blocks
 indexing; instead, each changed authored doc that fails its structure reviewer is
-filed as a type:system story for implementation (deduped). The web server runs
-the same sync continuously (without validation, to keep the poll loop cheap).`,
+filed as a type:system story for implementation (deduped).
+
+Substrate freshness does NOT require serve. Three CLI-triggered paths keep
+the doc index, task store, and story-backlog view current:
+
+  1. SessionStart hook — satelle init scaffolds "satelle reindex" on every
+     agent session start (full doc + task + backlog refresh).
+  2. Explicit "satelle reindex" — this command; the on-demand full pass.
+  3. Post-story-verb — story create/set best-effort regenerate the disposable
+     backlog view so .satelle-adjacent browsing stays current without reindex.
+
+serve may still run continuous loops for the live UI, but a machine that never
+starts serve loses nothing if these three paths fire.`,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := appFrom(cmd)

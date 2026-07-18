@@ -1,3 +1,8 @@
+## [0.0.278] - 2026-07-18
+
+### Added
+- CLI substrate freshness without serve: post-story-verb backlog refresh, documented SessionStart + reindex + post-verb triggers, self-sufficiency integration test (sty_d0950127 / epic:serve-split order:1)
+
 ## [0.0.277] - 2026-07-18
 
 ### Fixed
