@@ -1,3 +1,13 @@
+## [0.0.275] - 2026-07-18
+
+### Added
+- agents.toml `interface = "command" | "acp"` dual transport for isolated dispatch; default remains full command templates (any CLI including Claude)
+- ACP client runner for `interface=acp` (e.g. `grok agent stdio`): session protocol, permission auto-policy, decision fold, timeout kill (epic:agent-dispatch-transport / sty_669f060a, sty_2a8c5d6f, sty_d70c2f5a)
+- `satelle help agent-dispatch` documents CLI control-plane in vs command/ACP agent I/O out; validate reports interface= on grants
+
+### Changed
+- `RunnerFromBinding` is the dispatch factory; agentstep and applyAgentGrants resolve interface+command together
+
 ## [0.0.274] - 2026-07-17
 
 ### Fixed
