@@ -1,3 +1,8 @@
+## [0.0.277] - 2026-07-18
+
+### Fixed
+- Fail-visible wrapper tests: binary-present re-emit/exit-code matrix and writeHookScripts retirement of legacy/kimi scripts (closes sty_616c5454 order:2 formal verification)
+
 ## [0.0.276] - 2026-07-18
 
 ### Changed
