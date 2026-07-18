@@ -35,8 +35,11 @@ func TestLocalBinaryReexec(t *testing.T) {
 	}
 
 	// From inside the repo, the global binary must re-exec the pin.
+	// Strip SATELLE_LOCAL_EXEC so a parent/CI process that set the loop guard
+	// cannot suppress re-exec and flake this case.
 	cmd := exec.Command(testBin, "version")
 	cmd.Dir = sub
+	cmd.Env = envWithoutLocalExecMarker()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("version (should re-exec pin): %v\n%s", err, out)
@@ -48,7 +51,7 @@ func TestLocalBinaryReexec(t *testing.T) {
 	// With the loop-guard marker set, the in-process binary runs (no re-exec).
 	cmd = exec.Command(testBin, "version")
 	cmd.Dir = sub
-	cmd.Env = append(os.Environ(), "SATELLE_LOCAL_EXEC=1")
+	cmd.Env = append(envWithoutLocalExecMarker(), "SATELLE_LOCAL_EXEC=1")
 	out, err = cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("version (guard set): %v\n%s", err, out)
@@ -157,6 +160,21 @@ func scanServePort(t *testing.T, r interface{ Read([]byte) (int, error) }, timeo
 		t.Fatal("did not find the serve port in the banner output")
 		return 0
 	}
+}
+
+// envWithoutLocalExecMarker is os.Environ without SATELLE_LOCAL_EXEC so a
+// parent process that set the re-exec loop guard cannot suppress pin dispatch.
+func envWithoutLocalExecMarker() []string {
+	const key = "SATELLE_LOCAL_EXEC="
+	env := os.Environ()
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		if strings.HasPrefix(e, key) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // TestVersionReportsBinaryScope checks the version line names which install is

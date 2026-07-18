@@ -182,7 +182,9 @@ func TestHookCommitgateContainment(t *testing.T) {
 // only when the edit gate is confidently NOT wired (the inert-gate countermeasure).
 func TestHookPromptReminderAndLivenessWarning(t *testing.T) {
 	repo := t.TempDir()
-	mustRun(t, testBin, repo, "init") // seeds .claude/settings.json with the gate wired
+	// Explicit harness: bare init no longer scaffolds claude by default
+	// (epic:minimal-harness-footprint).
+	mustRun(t, testBin, repo, "init", "--harness", "claude")
 
 	out := mustRun(t, testBin, repo, "hook", "prompt")
 	if !strings.Contains(out, "edits require an ENGAGED story") {
@@ -192,8 +194,7 @@ func TestHookPromptReminderAndLivenessWarning(t *testing.T) {
 		t.Errorf("false liveness warning while the gate IS wired:\n%s", out)
 	}
 
-	// Strip the edit gate from EVERY candidate settings file (init may have
-	// scaffolded both .claude and .grok) → the self-check must warn LOUDLY.
+	// Strip the edit gate → the self-check must warn LOUDLY.
 	writeFile(t, filepath.Join(repo, ".claude", "settings.json"),
 		`{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"satelle reindex"}]}]}}`)
 	_ = os.RemoveAll(filepath.Join(repo, ".grok"))

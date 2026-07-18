@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/config"
 )
 
 // TestReconcileClaudeHooks covers the stale-hook reconciliation (sty_6a919dff):
@@ -65,36 +67,122 @@ func TestReconcileClaudeHooks(t *testing.T) {
 
 func TestDetectProcessHarnesses(t *testing.T) {
 	repo := t.TempDir()
-	// Neither CLI nor dirs → default Claude only.
-	c, g := detectProcessHarnesses(repo, func(string) bool { return false })
-	if !c || g {
-		t.Errorf("neither: claude=%v grok=%v, want claude-only default", c, g)
+	// Neither forced nor dirs → nothing (no PATH, no claude default).
+	c, g := detectProcessHarnesses(repo, nil)
+	if c || g {
+		t.Errorf("empty: claude=%v grok=%v, want neither", c, g)
 	}
-	// PATH signals.
-	c, g = detectProcessHarnesses(repo, func(name string) bool { return name == "grok" })
+	// Forced flag only.
+	c, g = detectProcessHarnesses(repo, []string{"grok"})
 	if c || !g {
-		t.Errorf("grok on PATH: claude=%v grok=%v, want grok-only", c, g)
+		t.Errorf("forced grok: claude=%v grok=%v, want grok-only", c, g)
 	}
-	c, g = detectProcessHarnesses(repo, func(name string) bool {
-		return name == "claude" || name == "grok"
-	})
+	c, g = detectProcessHarnesses(repo, []string{"claude", "grok"})
 	if !c || !g {
-		t.Errorf("both on PATH: claude=%v grok=%v, want both", c, g)
+		t.Errorf("forced both: claude=%v grok=%v, want both", c, g)
 	}
-	// Existing harness dirs without PATH.
+	// Existing harness dirs (PATH must not matter — forced nil).
 	if err := os.MkdirAll(filepath.Join(repo, ".grok"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	c, g = detectProcessHarnesses(repo, func(string) bool { return false })
+	c, g = detectProcessHarnesses(repo, nil)
 	if c || !g {
 		t.Errorf(".grok dir only: claude=%v grok=%v, want grok-only", c, g)
 	}
 	if err := os.MkdirAll(filepath.Join(repo, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	c, g = detectProcessHarnesses(repo, func(string) bool { return false })
+	c, g = detectProcessHarnesses(repo, nil)
 	if !c || !g {
 		t.Errorf("both dirs: claude=%v grok=%v, want both", c, g)
+	}
+}
+
+func TestDetectSessionHarnesses(t *testing.T) {
+	c, g := detectSessionHarnessesFrom([]string{"CLAUDE_CODE_ENTRYPOINT=cli", "PATH=/bin"})
+	if !c || g {
+		t.Errorf("CLAUDE_CODE_ only: claude=%v grok=%v", c, g)
+	}
+	c, g = detectSessionHarnessesFrom([]string{"GROK_AGENT=1", "PATH=/bin"})
+	if c || !g {
+		t.Errorf("GROK_AGENT only: claude=%v grok=%v", c, g)
+	}
+	c, g = detectSessionHarnessesFrom([]string{"PATH=/bin", "HOME=/tmp"})
+	if c || g {
+		t.Errorf("no markers: claude=%v grok=%v", c, g)
+	}
+	c, g = detectSessionHarnessesFrom([]string{"GROK_AGENT=0"})
+	if g {
+		t.Error("GROK_AGENT=0 must not count as grok session")
+	}
+}
+
+// TestEnsureLazySessionHarness: marker-driven install only inside an initialised
+// satelle repo; uninitialised repo → no-op; second call idempotent.
+// Marker absence is covered by TestDetectSessionHarnesses (matrix); this test
+// exercises the install guards on ensureLazySessionHarness itself.
+func TestEnsureLazySessionHarness(t *testing.T) {
+	// Uninitialised repo: no .satelle → no-op even with markers.
+	bare := t.TempDir()
+	t.Setenv("GROK_AGENT", "1")
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+	ensureLazySessionHarness(bare)
+	if _, err := os.Stat(filepath.Join(bare, ".grok", "hooks", "satelle.json")); err == nil {
+		t.Error("lazy install must not run outside initialised satelle repo")
+	}
+	if _, err := os.Stat(filepath.Join(bare, ".claude", "settings.json")); err == nil {
+		t.Error("lazy install must not run outside initialised satelle repo (claude)")
+	}
+
+	// Initialised + GROK_AGENT → install grok scaffold when missing.
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, config.DefaultDataDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GROK_AGENT", "1")
+	ensureLazySessionHarness(repo)
+	path := filepath.Join(repo, filepath.FromSlash(grokHooksRel))
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("GROK_AGENT session should install grok hooks: %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ensureLazySessionHarness(repo)
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("second lazy install must be idempotent (no rewrite)")
+	}
+
+	// Claude marker installs settings when missing.
+	repo2 := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo2, config.DefaultDataDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Isolate from host GROK_AGENT so this path only asserts claude settings.
+	t.Setenv("GROK_AGENT", "0")
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+	ensureLazySessionHarness(repo2)
+	if _, err := os.Stat(filepath.Join(repo2, ".claude", "settings.json")); err != nil {
+		t.Fatalf("CLAUDE_CODE_* session should install claude settings: %v", err)
+	}
+}
+
+func TestParseHarnessFlag(t *testing.T) {
+	got, err := parseHarnessFlag("")
+	if err != nil || got != nil {
+		t.Fatalf("empty: got %v err %v", got, err)
+	}
+	got, err = parseHarnessFlag("grok,claude,grok")
+	if err != nil || len(got) != 2 || got[0] != "grok" || got[1] != "claude" {
+		t.Fatalf("dedupe order: got %v err %v", got, err)
+	}
+	if _, err := parseHarnessFlag("kimi"); err == nil {
+		t.Fatal("unknown harness must error")
 	}
 }
 
@@ -110,8 +198,8 @@ func TestEnsureGrokHooksCreateReconcileIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		".satelle/hooks/pretooluse-gate-grok.sh",
-		".satelle/hooks/pretooluse-commitgate-grok.sh",
+		"sh .satelle/hooks/satelle-hook.sh gate grok",
+		"sh .satelle/hooks/satelle-hook.sh commitgate grok",
 		"PATH=$HOME/.local/bin:$PATH satelle hook prompt",
 		"PATH=$HOME/.local/bin:$PATH satelle hook stopcheck",
 		"UserPromptSubmit",
@@ -181,8 +269,8 @@ func TestEnsureGrokHooksCreateReconcileIdempotent(t *testing.T) {
 		"satelle hook prompt",
 		"satelle hook stopcheck",
 		"satelle hook context",
-		"pretooluse-gate-grok.sh",
-		"pretooluse-commitgate-grok.sh",
+		"satelle-hook.sh",
+		"satelle-hook.sh",
 	} {
 		if !strings.Contains(string(got), want) {
 			t.Errorf("reconcile+heal lost/omitted %q:\n%s", want, got)
@@ -205,7 +293,7 @@ func TestEnsureProcessHooksBoth(t *testing.T) {
 		}
 	}
 	var buf bytes.Buffer
-	if err := ensureProcessHooks(&buf, repo); err != nil {
+	if err := ensureProcessHooks(&buf, repo, nil); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
@@ -243,7 +331,7 @@ func TestEnsureProcessHooksBoth(t *testing.T) {
 	}
 	// Re-run: trust line silent (already trusted), hooks still present.
 	var buf2 bytes.Buffer
-	if err := ensureProcessHooks(&buf2, repo); err != nil {
+	if err := ensureProcessHooks(&buf2, repo, nil); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(buf2.String(), "Grok project hooks trusted") {
@@ -365,19 +453,13 @@ func TestGrokNotDetectedSkipsCompatConfig(t *testing.T) {
 	repo := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	// Claude-only signal via .claude dir; no .grok, and hasCLI is forced off for
-	// both by empty harness detection — but detectProcessHarnesses uses real
-	// lookPath. Create .claude only so Claude is detected; Grok needs .grok or
-	// grok on PATH. Host may have grok on PATH — stub lookPath to none.
+	// Claude-only via existing .claude dir; no .grok → PATH is ignored entirely.
 	if err := os.MkdirAll(filepath.Join(repo, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	old := lookPath
-	lookPath = func(string) (string, error) { return "", os.ErrNotExist }
-	t.Cleanup(func() { lookPath = old })
 
 	var buf bytes.Buffer
-	if err := ensureProcessHooks(&buf, repo); err != nil {
+	if err := ensureProcessHooks(&buf, repo, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".grok", "config.toml")); err == nil {
@@ -414,10 +496,10 @@ func TestHookScaffoldFailVisible(t *testing.T) {
 				t.Errorf("%s PreToolUse command still has $ tokens:\n%s", name, body)
 			}
 		}
-		if !strings.Contains(body, ".satelle/hooks/pretooluse-gate-"+name+".sh") {
+		if !strings.Contains(body, "satelle-hook.sh gate "+name) {
 			t.Errorf("%s missing gate script command:\n%s", name, body)
 		}
-		if !strings.Contains(body, ".satelle/hooks/pretooluse-commitgate-"+name+".sh") {
+		if !strings.Contains(body, "satelle-hook.sh commitgate "+name) {
 			t.Errorf("%s missing commitgate script command:\n%s", name, body)
 		}
 		if strings.Contains(body, "|| exit 2") {
@@ -574,7 +656,7 @@ func TestUpgradeFailVisibleHooks(t *testing.T) {
 		t.Fatalf("expected fail-visible upgrade notes, got %v", updated)
 	}
 	body, _ := os.ReadFile(path)
-	if !strings.Contains(string(body), ".satelle/hooks/pretooluse-gate-claude.sh") {
+	if !strings.Contains(string(body), "sh .satelle/hooks/satelle-hook.sh gate claude") {
 		t.Fatalf("upgrade missing script-form command:\n%s", body)
 	}
 	if strings.Contains(string(body), "|| exit 2") {
@@ -691,8 +773,8 @@ func TestReinforceSessionStartAndPreToolUse(t *testing.T) {
 		"satelle hook prompt",
 		"satelle hook stopcheck",
 		"satelle hook context",
-		"pretooluse-gate-claude.sh",
-		"pretooluse-commitgate-claude.sh",
+		"satelle-hook.sh",
+		"satelle-hook.sh",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing %q:\n%s", want, s)
@@ -733,7 +815,7 @@ func TestReinforceWarnsOnUnparseableSettings(t *testing.T) {
 	// Force Claude-only detection.
 	_ = os.MkdirAll(filepath.Join(repo, ".claude"), 0o755)
 	var buf bytes.Buffer
-	if err := ensureProcessHooks(&buf, repo); err != nil {
+	if err := ensureProcessHooks(&buf, repo, nil); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()

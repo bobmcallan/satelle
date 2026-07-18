@@ -1,3 +1,13 @@
+## [0.0.276] - 2026-07-18
+
+### Changed
+- On-demand harness scaffolds: `satelle init` no longer PATH-guesses or defaults to Claude; scaffolds only existing `.claude`/`.grok` dirs or `--harness claude,grok` (sty_92b5ad23)
+- Store-backed verbs lazy-install the matching harness scaffold from session markers (`CLAUDE_CODE_*`, `GROK_AGENT`); first session of a new harness may lack hooks (documented trade-off)
+- Single parameterized `.satelle/hooks/satelle-hook.sh gate|commitgate <harness>` replaces per-harness pretooluse scripts; re-init retires legacy scripts (epic:minimal-harness-footprint order:2)
+
+### Fixed
+- Integration tests that assumed default Claude scaffolds now pass `--harness` / existing dirs; local-binary re-exec and version-stamp tests isolate env/cwd from a repo pin (sty_92b5ad23)
+
 ## [0.0.275] - 2026-07-18
 
 ### Added

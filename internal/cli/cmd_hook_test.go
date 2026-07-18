@@ -638,7 +638,7 @@ func TestSettingsWiresGate(t *testing.T) {
 		t.Errorf("wired settings should report gate wired")
 	}
 	// sty_adfb9862 script-file form (no "hook gate" substring in the command).
-	script := `{"hooks":{"PreToolUse":[{"matcher":"Edit|Write","hooks":[{"type":"command","command":"sh .satelle/hooks/pretooluse-gate-claude.sh"}]}]}}`
+	script := `{"hooks":{"PreToolUse":[{"matcher":"Edit|Write","hooks":[{"type":"command","command":"sh .satelle/hooks/satelle-hook.sh gate claude"}]}]}}`
 	if !settingsWiresGate([]byte(script)) {
 		t.Errorf("script-file PreToolUse gate must count as wired")
 	}

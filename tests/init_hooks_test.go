@@ -71,8 +71,8 @@ func TestInitScaffoldsMultiHarnessHooks(t *testing.T) {
 	// sty_adfb9862: PreToolUse commands are $-free script paths; script bodies
 	// hold the fail-visible multi-candidate wrapper (sty_c75c73ed).
 	for _, want := range []string{
-		".satelle/hooks/pretooluse-gate-",
-		".satelle/hooks/pretooluse-commitgate-",
+		"satelle-hook.sh",
+		"satelle-hook.sh",
 		"satelle reindex",
 		"satelle hook context",
 	} {
@@ -91,16 +91,14 @@ func TestInitScaffoldsMultiHarnessHooks(t *testing.T) {
 			t.Errorf("scaffold must not use inline sh -c PreToolUse:\n%s", body)
 		}
 	}
-	for _, harness := range []string{"claude", "grok"} {
-		scriptPath := filepath.Join(repo, ".satelle", "hooks", "pretooluse-gate-"+harness+".sh")
-		sb, err := os.ReadFile(scriptPath)
-		if err != nil {
-			t.Fatalf("%s gate script: %v", harness, err)
-		}
-		for _, want := range []string{"#satelle-failvisible", "$HOME/.local/bin/satelle", "policy denial"} {
-			if !strings.Contains(string(sb), want) {
-				t.Errorf("%s script missing %q:\n%s", harness, want, sb)
-			}
+	scriptPath := filepath.Join(repo, ".satelle", "hooks", "satelle-hook.sh")
+	sb, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("parameterized gate script: %v", err)
+	}
+	for _, want := range []string{"#satelle-failvisible", "$HOME/.local/bin/satelle", "policy denial", "gate", "claude", "grok"} {
+		if !strings.Contains(string(sb), want) {
+			t.Errorf("script missing %q:\n%s", want, sb)
 		}
 	}
 	for _, want := range []string{"search_replace", "run_terminal_command"} {
@@ -166,14 +164,12 @@ func TestInitScaffoldsMultiHarnessHooks(t *testing.T) {
 	}
 }
 
-// TestInitDefaultHooksClaudeOnlyWhenNoHarnessSignal: with PATH stripped of
-// claude/grok and no harness dirs, init defaults to Claude hooks only (backward
-// compatible) — not a silent no-op, and not a surprise Grok scaffold. Also does
-// not write ~/.grok/config.toml for compat.claude (AC2).
-func TestInitDefaultHooksClaudeOnlyWhenNoHarnessSignal(t *testing.T) {
+// TestInitNoHarnessWhenNoSignal: with no harness dirs and no --harness, init
+// installs zero process-hook scaffolds (epic:minimal-harness-footprint) — not
+// PATH-based and not a silent claude default.
+func TestInitNoHarnessWhenNoSignal(t *testing.T) {
 	repo := t.TempDir()
 	home := t.TempDir()
-	// PATH empty enough that lookPath cannot find claude/grok on the host.
 	cmd := exec.Command(testBin, "init")
 	cmd.Dir = repo
 	cmd.Env = []string{
@@ -185,25 +181,37 @@ func TestInitDefaultHooksClaudeOnlyWhenNoHarnessSignal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init: %v\n%s", err, out)
 	}
-	// Claude default must land.
-	if _, err := os.Stat(filepath.Join(repo, ".claude", "settings.json")); err != nil {
-		t.Errorf("default Claude hooks missing: %v\n%s", err, out)
+	if _, err := os.Stat(filepath.Join(repo, ".claude", "settings.json")); err == nil {
+		t.Errorf("Claude hooks must not scaffold without signal:\n%s", out)
 	}
-	// Grok must not be scaffolded without a signal.
 	if _, err := os.Stat(filepath.Join(repo, ".grok", "hooks", "satelle.json")); err == nil {
 		t.Errorf("Grok hooks scaffolded with no signal:\n%s", out)
 	}
-	// No Grok → no compat.claude write / no folder trust.
-	if _, err := os.Stat(filepath.Join(home, ".grok", "config.toml")); err == nil {
-		t.Errorf("~/.grok/config.toml written without Grok detection:\n%s", out)
-	}
-	if _, err := os.Stat(filepath.Join(home, ".grok", "trusted_folders.toml")); err == nil {
-		t.Errorf("~/.grok/trusted_folders.toml written without Grok detection:\n%s", out)
-	}
+	// Shared wrapper may still be written (migrate surface) — settings must not.
 	if strings.Contains(string(out), "compat.claude") {
 		t.Errorf("report mentions compat.claude without Grok:\n%s", out)
 	}
-	if strings.Contains(string(out), "trusted_folders") {
-		t.Errorf("report mentions trusted_folders without Grok:\n%s", out)
+}
+
+// TestInitHarnessFlagInstallsExact: --harness installs only named scaffolds.
+func TestInitHarnessFlagInstallsExact(t *testing.T) {
+	repo := t.TempDir()
+	home := t.TempDir()
+	cmd := exec.Command(testBin, "init", "--harness", "grok")
+	cmd.Dir = repo
+	cmd.Env = []string{
+		"PATH=/usr/bin:/bin",
+		"HOME=" + home,
+		"TMPDIR=" + t.TempDir(),
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".claude", "settings.json")); err == nil {
+		t.Errorf("claude must not install when --harness grok only:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".grok", "hooks", "satelle.json")); err != nil {
+		t.Errorf("grok hooks missing with --harness grok: %v\n%s", err, out)
 	}
 }

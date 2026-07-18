@@ -14,7 +14,8 @@ import (
 // status + hook context, fails closed on store-backed verbs, and is clean after init.
 func TestScaffoldDriftSurfacesAndHeal(t *testing.T) {
 	repo := t.TempDir()
-	mustRun(t, testBin, repo, "init")
+	// Need a harness settings file to plant drift against; bare init scaffolds none.
+	mustRun(t, testBin, repo, "init", "--harness", "claude")
 
 	// Plant legacy inline gate (pre-script-file form) — the observed Grok skip shape.
 	legacy := `{

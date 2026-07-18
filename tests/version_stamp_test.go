@@ -80,7 +80,11 @@ func TestBuildDateBakedFromVersionFile(t *testing.T) {
 	if out, err := b.CombinedOutput(); err != nil {
 		t.Fatalf("ldflags build: %v\n%s", err, out)
 	}
-	out, err := exec.Command(bin, "version").CombinedOutput()
+	// Run outside the source tree so a repo-local .satelle/satelle pin is not
+	// re-exec'd in place of the stamped binary under test.
+	cmd := exec.Command(bin, "version")
+	cmd.Dir = t.TempDir()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("satelle version: %v\n%s", err, out)
 	}
@@ -111,8 +115,12 @@ func TestVersionBakedFromLdflags(t *testing.T) {
 		t.Fatalf("ldflags build: %v\n%s", err, out)
 	}
 
+	// Isolated cwd: avoid re-exec into this repo's .satelle/satelle pin.
+	runDir := t.TempDir()
 	for _, args := range [][]string{{"version"}, {"--version"}} {
-		out, err := exec.Command(bin, args...).CombinedOutput()
+		cmd := exec.Command(bin, args...)
+		cmd.Dir = runDir
+		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("satelle %v: %v\n%s", args, err, out)
 		}
