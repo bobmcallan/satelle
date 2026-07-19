@@ -168,4 +168,3 @@ func TestServeMirrorPushFed(t *testing.T) {
 		t.Fatalf("expected mirror db: %v", err)
 	}
 }
-
