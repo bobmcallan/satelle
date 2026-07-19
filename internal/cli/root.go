@@ -64,6 +64,9 @@ var retiredNames = map[string]string{
 	"install":          "satelle init",
 	"workspace rm":     "satelle workspace remove",
 	"sync config pull": "satelle sync config deploy",
+	// sty_805bee9c: ui push folded into workspace add (register + seed).
+	"ui push": "satelle workspace add",
+	"ui":      "satelle workspace add",
 }
 
 // retiredNameMessage returns a fail-closed error for a removed spelling, or "".

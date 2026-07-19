@@ -20,7 +20,7 @@ func TestBrowserUrlAddressableView(t *testing.T) {
 		"--title", "Alpha", "--body", "b", "--acceptance", "1. x", "--tags", "urltest")
 	mustRun(t, testBin, repo, "story", "create",
 		"--title", "Beta", "--body", "b", "--acceptance", "1. x")
-	mustRun(t, testBin, repo, "ui", "push")
+	mustRun(t, testBin, repo, "workspace", "add")
 
 	// 1. Tabs are real links (open-in-new-tab works) with a panel-encoding href.
 	var tag, href string

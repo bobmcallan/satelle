@@ -38,7 +38,7 @@ func TestBrowserOrderTagSort(t *testing.T) {
 	idN := mk("NoOrder", "ordtest")
 	tie := []string{id3a, id3b}
 	sort.Strings(tie) // expand-url shares a constant prefix, so id order == url order
-	mustRun(t, testBin, repo, "ui", "push")
+	mustRun(t, testBin, repo, "workspace", "add")
 
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(base),

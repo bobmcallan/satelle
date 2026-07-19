@@ -77,10 +77,10 @@ func TestServeMirrorPushFed(t *testing.T) {
 		}
 	})
 
-	// --- full snapshot via ui push; story visible on project page ---
-	out := mustRun(t, testBin, repo, "ui", "push")
-	if !strings.Contains(out, "ui push: ok") {
-		t.Fatalf("ui push: %s", out)
+	// --- full snapshot via workspace add; story visible on project page ---
+	out := mustRun(t, testBin, repo, "workspace", "add")
+	if !strings.Contains(out, "workspace add: ok") {
+		t.Fatalf("workspace add: %s", out)
 	}
 	landing := httpGet(t, host+"/")
 	if !strings.Contains(landing, "/r/") || !strings.Contains(landing, "push-fed") {
@@ -90,7 +90,7 @@ func TestServeMirrorPushFed(t *testing.T) {
 	slug := filepath.Base(repo)
 	proj := httpGet(t, host+"/r/"+slug+"/")
 	if !strings.Contains(proj, "Mirror Probe Story") {
-		t.Fatalf("project page missing story after ui push:\n%s", proj)
+		t.Fatalf("project page missing story after workspace add:\n%s", proj)
 	}
 
 	// --- AC4: non-ingest POSTs rejected ---
@@ -157,7 +157,7 @@ func TestServeMirrorPushFed(t *testing.T) {
 	proj2 := httpGet(t, host+"/r/"+slug+"/")
 	if !strings.Contains(proj2, "Mirror Probe Story") {
 		// if port reuse race emptied, re-push
-		mustRun(t, testBin, repo, "ui", "push")
+		mustRun(t, testBin, repo, "workspace", "add")
 		proj2 = httpGet(t, host+"/r/"+slug+"/")
 	}
 	if !strings.Contains(proj2, "Mirror Probe Story") {

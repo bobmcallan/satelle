@@ -64,8 +64,8 @@ func TestMultiPartitionMirrorServe(t *testing.T) {
 		t.Fatal("serve did not become healthy")
 	}
 
-	mustRun(t, testBin, repoA, "ui", "push")
-	mustRun(t, testBin, repoB, "ui", "push")
+	mustRun(t, testBin, repoA, "workspace", "add")
+	mustRun(t, testBin, repoB, "workspace", "add")
 
 	slugA := filepath.Base(repoA)
 	slugB := filepath.Base(repoB)

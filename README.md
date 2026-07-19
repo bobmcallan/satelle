@@ -50,7 +50,7 @@ The web UI is a **read-only mirror** fed by the CLI (epic:serve-split):
 
 1. Configure `[server] endpoint = "http://127.0.0.1:8787"` in `.satelle/satelle.toml` (or local).
 2. Run `satelle serve` (or `satelle service install` for a systemd unit).
-3. `satelle ui push` posts a full snapshot; mutating verbs also fire-and-forget change events and auto-snapshot once per process.
+3. `satelle workspace add` registers the repo and posts a full snapshot; mutating verbs drain change events and one auto-snapshot before process exit.
 
 Serve never opens per-repo runtime DBs — only `~/.satelle/serve/mirror.db`, partitioned by repo-key.
 

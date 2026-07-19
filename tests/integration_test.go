@@ -730,7 +730,7 @@ func TestServeServesProjectPage(t *testing.T) {
 
 	const port = "8791"
 	base := "http://127.0.0.1:" + port
-	// Point ui push at this serve instance.
+	// Point workspace add at this serve instance.
 	localBody := fmt.Sprintf("[review]\ngate_create = false\n\n[server]\nendpoint = %q\n", base)
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.local.toml"), []byte(localBody), 0o644); err != nil {
 		t.Fatal(err)
@@ -751,11 +751,11 @@ func TestServeServesProjectPage(t *testing.T) {
 	if !waitHealthy(t, base+"/healthz", 5*time.Second) {
 		t.Fatal("server did not become healthy")
 	}
-	mustRun(t, bin, repo, "ui", "push")
+	mustRun(t, bin, repo, "workspace", "add")
 
 	slug := filepath.Base(repo)
 
-	// / is the push-fed workspace landing — lists partitions after ui push.
+	// / is the push-fed workspace landing — lists partitions after workspace add.
 	landing := httpGet(t, base+"/")
 	for _, want := range []string{"workspace", `href="/r/` + slug + `/"`, "satelle"} {
 		if !strings.Contains(landing, want) {

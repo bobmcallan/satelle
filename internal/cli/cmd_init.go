@@ -1449,30 +1449,61 @@ const gitignoreBlock = gitignoreMarker + `
 // registry (gc.Workspace — the connected-repo list for /workspace and multi-serve).
 // Non-fatal on every failure path: a machine whose global config is unreadable or
 // unwritable still gets a fully initialized repo (sty_3bdbdc38). noWorkspace opts out.
+// Always ends with a greppable membership line (sty_805bee9c AC3):
+//
+//	workspace: member (N repos registered)
+//	workspace: not-member — join with `satelle workspace add`
 func ensureWorkspaceRegistration(out io.Writer, repoRoot string, noWorkspace bool) {
+	abs, absErr := filepath.Abs(repoRoot)
 	if noWorkspace {
 		fmt.Fprintln(out, "  = workspace registry (skipped: --no-workspace)")
+		printWorkspaceMembership(out, abs, absErr)
 		return
 	}
-	abs, err := filepath.Abs(repoRoot)
-	if err != nil {
-		fmt.Fprintf(out, "  ! workspace registry (skipped: resolve path: %v)\n", err)
+	if absErr != nil {
+		fmt.Fprintf(out, "  ! workspace registry (skipped: resolve path: %v)\n", absErr)
+		printWorkspaceMembership(out, "", absErr)
 		return
 	}
 	gc, err := config.LoadGlobal()
 	if err != nil {
 		fmt.Fprintf(out, "  ! workspace registry (skipped: %v)\n", err)
+		printWorkspaceMembership(out, abs, err)
 		return
 	}
 	if !gc.Workspace.AddRepo(abs) {
 		fmt.Fprintln(out, "  = workspace registry (already registered)")
+		printWorkspaceMembership(out, abs, nil)
 		return
 	}
 	if err := config.SaveGlobal(gc); err != nil {
 		fmt.Fprintf(out, "  ! workspace registry (registration skipped: %v)\n", err)
+		printWorkspaceMembership(out, abs, err)
 		return
 	}
 	fmt.Fprintf(out, "  + workspace registry (registered %s)\n", abs)
+	printWorkspaceMembership(out, abs, nil)
+}
+
+// printWorkspaceMembership re-reads the registry and prints the stable
+// member / not-member line (agent-readable; sty_805bee9c).
+func printWorkspaceMembership(out io.Writer, abs string, priorErr error) {
+	if priorErr != nil || abs == "" {
+		fmt.Fprintln(out, "workspace: not-member — join with `satelle workspace add`")
+		return
+	}
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		fmt.Fprintln(out, "workspace: not-member — join with `satelle workspace add`")
+		return
+	}
+	for _, r := range gc.Workspace.Repos {
+		if r == abs {
+			fmt.Fprintf(out, "workspace: member (%d repos registered)\n", len(gc.Workspace.Repos))
+			return
+		}
+	}
+	fmt.Fprintln(out, "workspace: not-member — join with `satelle workspace add`")
 }
 
 // ensureGitignore writes or converges the managed block in the repo's

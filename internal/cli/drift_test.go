@@ -17,6 +17,8 @@ func TestRetiredNameMessage(t *testing.T) {
 		{[]string{"install"}, "satelle init"},
 		{[]string{"workspace", "rm", "x"}, "workspace remove"},
 		{[]string{"sync", "config", "pull"}, "sync config deploy"},
+		{[]string{"ui", "push"}, "satelle workspace add"},
+		{[]string{"ui"}, "satelle workspace add"},
 		{[]string{"service", "install"}, ""}, // not retired
 		{[]string{"story", "list"}, ""},
 	}
@@ -30,6 +32,13 @@ func TestRetiredNameMessage(t *testing.T) {
 		}
 		if !strings.Contains(got, c.want) {
 			t.Errorf("args %v: got %q, want contains %q", c.args, got, c.want)
+		}
+	}
+	// ui parent must not be registered as a live subcommand.
+	root := NewRootCmd()
+	for _, c := range root.Commands() {
+		if c.Name() == "ui" {
+			t.Fatal("ui command still registered — retired in favour of workspace add")
 		}
 	}
 }

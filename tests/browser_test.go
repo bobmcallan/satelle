@@ -77,7 +77,7 @@ func serveRepo(t *testing.T, _ string) (string, string) {
 	// Push-fed mirror: seed [server] endpoint + full snapshot so /r/<slug>/ has data.
 	ep := fmt.Sprintf("[server]\nendpoint = %q\n", host)
 	_ = os.WriteFile(filepath.Join(repo, ".satelle", "satelle.local.toml"), []byte(ep), 0o644)
-	mustRun(t, testBin, repo, "ui", "push")
+	mustRun(t, testBin, repo, "workspace", "add")
 	return host + "/r/" + filepath.Base(repo), repo
 }
 
@@ -127,7 +127,7 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustRun(t, testBin, repo, "reindex")
-	uiPushIfConfigured(t, repo)
+	workspaceAddIfConfigured(t, repo)
 	_ = doneID
 
 	ctx := newChrome(t)
@@ -213,7 +213,7 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		// the realtime bus. (The coded estimate gate enforces OOTB — record one.)
 		mustRun(t, testBin, repo, "story", "estimate", openID, "--time", "10m")
 		mustRun(t, testBin, repo, "story", "set", openID, "--status", "in_progress")
-		uiPushIfConfigured(t, repo)
+		workspaceAddIfConfigured(t, repo)
 		if !waitCond(t, ctx, "!!"+light, 8*time.Second) {
 			t.Error("a transitioned story should show a progress light, pushed live")
 		}
@@ -357,7 +357,7 @@ func TestBrowserTagChipFiltering(t *testing.T) {
 	base, repo := serveRepo(t, "8809")
 	mustRun(t, testBin, repo, "story", "create", "--title", "Tagged Story", "--tags", "demo")
 	mustRun(t, testBin, repo, "story", "create", "--title", "Untagged Story")
-	uiPushIfConfigured(t, repo)
+	workspaceAddIfConfigured(t, repo)
 
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
@@ -408,7 +408,7 @@ func TestBrowserTimelineFieldToggle(t *testing.T) {
 	id := createStory(t, repo, "Telemetry Story", "")
 	mustRun(t, testBin, repo, "story", "log", id, "--kind", "step-quality",
 		"--data", "outcome=smooth", "--data", "tokens_total=2000", "--data", "duration_ms=2400")
-	uiPushIfConfigured(t, repo)
+	workspaceAddIfConfigured(t, repo)
 
 	ctx := newChrome(t)
 
@@ -530,7 +530,7 @@ func TestBrowserSubtleTagChips(t *testing.T) {
 	base, repo := serveRepo(t, "8818")
 	// A category (→ category:feature kv chip) plus an epic kv tag.
 	mustRun(t, testBin, repo, "story", "create", "--title", "Subtle", "--category", "feature", "--tags", "epic:issue-intake")
-	uiPushIfConfigured(t, repo)
+	workspaceAddIfConfigured(t, repo)
 
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
@@ -641,7 +641,7 @@ func TestBrowserSquaredEdges(t *testing.T) {
 	// A tagged backlog story renders a tag chip AND a backlog badge AND the
 	// stories-tab backlog count pill, all on the default view.
 	mustRun(t, testBin, repo, "story", "create", "--title", "Tagged Backlog", "--tags", "demo")
-	uiPushIfConfigured(t, repo)
+	workspaceAddIfConfigured(t, repo)
 
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
@@ -747,7 +747,7 @@ func TestBrowserTimelineDotsByOutcome(t *testing.T) {
 	// Seed outcome-bearing + neutral ledger events on this story.
 	mustRun(t, testBin, repo, "ledger", "append", "--kind", "review_reject", "--actor", "reviewer", "--story", id, "--body", "rejected a->b")
 	mustRun(t, testBin, repo, "ledger", "append", "--kind", "review_accept", "--actor", "reviewer", "--story", id, "--body", "accepted a->b")
-	uiPushIfConfigured(t, repo)
+	workspaceAddIfConfigured(t, repo)
 
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
@@ -831,9 +831,9 @@ func TestBrowserBacklogBadgeLiveOnRefetch(t *testing.T) {
 	mustRun(t, testBin, repo, "story", "estimate", id1, "--time", "10m")
 	mustRun(t, testBin, repo, "story", "estimate", id2, "--time", "10m")
 	mustRun(t, testBin, repo, "story", "set", id1, "--status", "in_progress")
-	uiPushIfConfigured(t, repo)
+	workspaceAddIfConfigured(t, repo)
 	mustRun(t, testBin, repo, "story", "set", id2, "--status", "in_progress")
-	uiPushIfConfigured(t, repo)
+	workspaceAddIfConfigured(t, repo)
 	if !waitCond(t, ctx, noBadge, 6*time.Second) {
 		t.Error("badge should be removed when the live backlog count reaches 0")
 	}
@@ -999,7 +999,7 @@ func TestBrowserWorkflowDiagramInteractive(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustRun(t, testBin, repo, "reindex")
-	uiPushIfConfigured(t, repo)
+	workspaceAddIfConfigured(t, repo)
 
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
@@ -1110,7 +1110,7 @@ func TestBrowserWorkflowDiagramPanZoomToggle(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustRun(t, testBin, repo, "reindex")
-	uiPushIfConfigured(t, repo)
+	workspaceAddIfConfigured(t, repo)
 
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
@@ -1276,7 +1276,7 @@ func TestBrowserUserPath(t *testing.T) {
 		// estimate gate enforces OOTB — record one first.)
 		mustRun(t, testBin, repo, "story", "estimate", betaID, "--time", "10m")
 		mustRun(t, testBin, repo, "story", "set", betaID, "--status", "in_progress")
-		uiPushIfConfigured(t, repo)
+		workspaceAddIfConfigured(t, repo)
 
 		// The OPEN expansion must gain the transition event live, without collapsing.
 		grew := waitCond(t, ctx, fmt.Sprintf(
@@ -1362,7 +1362,7 @@ func TestBrowserUserPath(t *testing.T) {
 		// row without depending on a particular workflow's edges — and the open
 		// detail page must gain it live.
 		mustRun(t, testBin, repo, "story", "set", betaID, "--priority", "high")
-		uiPushIfConfigured(t, repo)
+		workspaceAddIfConfigured(t, repo)
 		if !waitCond(t, ctx, fmt.Sprintf(`document.querySelectorAll('#detail-live .timeline li').length > %d`, beforeLi), 8*time.Second) {
 			t.Error("detail page timeline did not live-update")
 		}
@@ -1405,7 +1405,7 @@ func TestBrowserTaskPanelNativeRuns(t *testing.T) {
 	if exeID == "" {
 		t.Fatal("no execution id")
 	}
-	uiPushIfConfigured(t, repo)
+	workspaceAddIfConfigured(t, repo)
 
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
@@ -1439,7 +1439,7 @@ func TestBrowserTaskPanelNativeRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustRun(t, testBin, repo, "execution", "set", exeID, "--status", "done")
-	uiPushIfConfigured(t, repo)
+	workspaceAddIfConfigured(t, repo)
 	doneShown := `(function(){var e=document.querySelector('#panel-tasks tr.expansion .expbody');return !!e && !!e.querySelector('.badge.s-done');})()`
 	if !waitCond(t, ctx, doneShown, 10*time.Second) {
 		t.Error("open task expansion did not refresh to show the run done on a live status change")
@@ -1485,8 +1485,8 @@ func jsRowVisible(id string) string {
 }
 
 // createStory creates a story via the CLI and returns its id. When the repo is
-// wired for push-fed serve ([server] endpoint in satelle.local.toml), re-pushes
-// so the mirror reflects the new item without a manual ui push in every test.
+// wired for push-fed serve ([server] endpoint in satelle.local.toml), re-seeds
+// so the mirror reflects the new item without a manual workspace add in every test.
 func createStory(t *testing.T, repo, title, status string) string {
 	t.Helper()
 	args := []string{"story", "create", "--title", title, "--body", "the goal", "--acceptance", "1. it works"}
@@ -1495,18 +1495,18 @@ func createStory(t *testing.T, repo, title, status string) string {
 	}
 	out := mustRun(t, testBin, repo, args...)
 	id := extractID(out, "sty_")
-	uiPushIfConfigured(t, repo)
+	workspaceAddIfConfigured(t, repo)
 	return id
 }
 
-// uiPushIfConfigured runs `satelle ui push` when [server] endpoint is set.
-func uiPushIfConfigured(t *testing.T, repo string) {
+// workspaceAddIfConfigured runs `satelle workspace add` when [server] endpoint is set.
+func workspaceAddIfConfigured(t *testing.T, repo string) {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.local.toml"))
 	if err != nil || !strings.Contains(string(b), "endpoint") {
 		return
 	}
-	mustRun(t, testBin, repo, "ui", "push")
+	mustRun(t, testBin, repo, "workspace", "add")
 }
 
 // visibleRow reports whether the story/task row for id is visible (not
@@ -1570,7 +1570,7 @@ func TestBrowserStoryDocList(t *testing.T) {
 	id := createStory(t, repo, "Doc list story", "")
 	mustRun(t, testBin, repo, "story", "attach", id, "--name", "plan", "--type", "plan",
 		"--body", "# Plan\n\n- step one\n- step two")
-	uiPushIfConfigured(t, repo)
+	workspaceAddIfConfigured(t, repo)
 
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
