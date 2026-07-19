@@ -21,7 +21,7 @@ import (
 // created by a separate CLI process (cross-process DB visibility).
 func TestCrossProcessFragmentReflectsCLI(t *testing.T) {
 	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
-		base, repo := serveRepo(t, "8911")
+	base, repo := serveRepo(t, "8911")
 
 	out := mustRun(t, testBin, repo, "story", "create",
 		"--title", "Cross-process realtime story", "--body", "made via CLI",
@@ -47,7 +47,7 @@ func TestCrossProcessFragmentReflectsCLI(t *testing.T) {
 // keepalive-capable connection comment.
 func TestCrossProcessSSETrigger(t *testing.T) {
 	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
-		base, repo := serveRepo(t, "8912")
+	base, repo := serveRepo(t, "8912")
 
 	// Seed a story to mutate (ungated priority change → no agent needed).
 	out := mustRun(t, testBin, repo, "story", "create",

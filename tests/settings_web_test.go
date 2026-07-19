@@ -20,7 +20,7 @@ import (
 // not appear (it is machine-wide now).
 func TestWebSettingsReadOnly(t *testing.T) {
 	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
-		repo := t.TempDir()
+	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
 	// Replace the seeded config with known content (incl. a sentinel comment and a
