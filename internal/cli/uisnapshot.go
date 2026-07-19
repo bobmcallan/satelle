@@ -1,3 +1,7 @@
+// Snapshot build + POST helpers for the push-fed local UI mirror
+// (sty_1dde0d47 / sty_805bee9c). The operator verb is `satelle workspace add`
+// (register + seed); mutating verbs drain via uiDrain. The retired `ui push`
+// spelling points at workspace add (retiredNames).
 package cli
 
 import (
@@ -12,8 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/lease"
@@ -22,51 +24,8 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-func init() {
-	// ui push — local push-fed UI mirror reconcile (sty_1dde0d47). Distinct from
-	// hosted sync (satelle sync / push / pull / login).
-	ui := &cobra.Command{
-		Use:   "ui",
-		Short: "Local push-fed UI server helpers (not the hosted tier)",
-	}
-	push := &cobra.Command{
-		Use:   "push",
-		Short: "Push full active-repo state to the configured local UI server mirror",
-		Long: `ui push posts a full snapshot of the active repo to [server] endpoint
-(/ingest/snapshot) so the push-fed serve mirror converges to CLI truth.
-
-This is the LOCAL UI path (epic:serve-split), not hosted satelle-server sync.
-Requires [server] endpoint in satelle.toml. Fail-visible on error.`,
-		Annotations: needsStore(),
-		RunE:        runUIPush,
-	}
-	ui.AddCommand(push)
-	register(ui)
-}
-
-func runUIPush(cmd *cobra.Command, args []string) error {
-	a, err := appFrom(cmd)
-	if err != nil {
-		return err
-	}
-	ep := strings.TrimSpace(a.Config.Server.Endpoint)
-	if ep == "" {
-		return fmt.Errorf("ui push: [server] endpoint is not set in satelle.toml — configure the local UI server first")
-	}
-	snap, err := buildUISnapshot(cmd.Context(), a)
-	if err != nil {
-		return err
-	}
-	if err := postUISnapshot(ep, snap); err != nil {
-		return err
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "ui push: ok repo_key=%s stories=%d tasks=%d → %s/ingest/snapshot\n",
-		snap.RepoKey, len(snap.Stories), len(snap.Tasks), strings.TrimRight(ep, "/"))
-	return nil
-}
-
 // postUISnapshot POSTs snap to endpoint/ingest/snapshot with a 30s budget.
-// Used by the manual `satelle ui push` verb (fail-visible; large snapshots OK).
+// Used by workspace add (fail-visible; large snapshots OK).
 func postUISnapshot(endpoint string, snap *mirror.Snapshot) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

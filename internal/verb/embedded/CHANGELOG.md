@@ -1,3 +1,15 @@
+## [0.0.283] - 2026-07-20
+
+### Breaking
+- `satelle ui` / `satelle ui push` removed — use `satelle workspace add` (register + seed mirror). Invoking the old spelling prints the replacement (sty_805bee9c / epic:serve-adoption)
+
+### Added
+- `satelle workspace add` seeds the push-fed serve mirror when `[server] endpoint` is set; register-only notice when unset (sty_805bee9c)
+- `satelle init` prints agent-readable `workspace: member` / `workspace: not-member` lines (sty_805bee9c)
+
+### Changed
+- README, projects help, and empty-mirror landing copy point at `workspace add` instead of `ui push`
+
 ## [0.0.282] - 2026-07-20
 
 ### Fixed

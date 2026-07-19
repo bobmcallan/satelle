@@ -874,6 +874,43 @@ func TestRunInitRegistersWorkspace(t *testing.T) {
 	if !strings.Contains(out.String(), "registered") {
 		t.Errorf("init output missing registered line:\n%s", out.String())
 	}
+	if !strings.Contains(out.String(), "workspace: member") {
+		t.Errorf("init output missing membership line:\n%s", out.String())
+	}
+}
+
+// TestRunInitWorkspaceMembershipLines (sty_805bee9c AC3): member on init/re-init;
+// not-member when --no-workspace, naming the join verb.
+func TestRunInitWorkspaceMembershipLines(t *testing.T) {
+	isolateUserHome(t)
+	repo := t.TempDir()
+	var out1 strings.Builder
+	if err := runInitTest(t, &out1, repo); err != nil {
+		t.Fatalf("init: %v\n%s", err, out1.String())
+	}
+	if !strings.Contains(out1.String(), "workspace: member") {
+		t.Fatalf("fresh init missing member line:\n%s", out1.String())
+	}
+	var out2 strings.Builder
+	if err := runInitTest(t, &out2, repo); err != nil {
+		t.Fatalf("re-init: %v\n%s", err, out2.String())
+	}
+	if !strings.Contains(out2.String(), "workspace: member") {
+		t.Fatalf("re-init missing member line:\n%s", out2.String())
+	}
+
+	isolateUserHome(t)
+	repo2 := t.TempDir()
+	var out3 strings.Builder
+	if err := runInit(&out3, repo2, true, nil); err != nil {
+		t.Fatalf("no-workspace init: %v\n%s", err, out3.String())
+	}
+	if !strings.Contains(out3.String(), "workspace: not-member") {
+		t.Fatalf("opt-out missing not-member:\n%s", out3.String())
+	}
+	if !strings.Contains(out3.String(), "satelle workspace add") {
+		t.Fatalf("opt-out must name join verb:\n%s", out3.String())
+	}
 }
 
 // TestRunInitWorkspaceIdempotent (AC2): re-init does not duplicate and does not fail.

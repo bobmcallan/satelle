@@ -36,8 +36,11 @@ shows the registry.
 
 ## When to use `service install` vs `workspace add`
 
-- **`satelle workspace add <repo>`** — register another project. It appears on
-  the landing and is served at `/<slug>/`. This is the usual way to grow a setup.
+- **`satelle workspace add <repo>`** — register a project in the workspace registry
+  and seed the push-fed serve mirror (when `[server] endpoint` is set). One verb
+  for join + first snapshot; later mutations push automatically. The project
+  appears on the landing and is served at `/r/<slug>/`. This is the usual way
+  to grow a setup.
 - **`satelle service install`** — install or reconfigure the service itself
   (port, bind address, and which repo is the launch/working-directory repo).
   Re-running it with no `--repo` preserves the saved repo; passing `--repo <repo>`

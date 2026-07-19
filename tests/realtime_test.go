@@ -1,6 +1,6 @@
 //go:build integration
 
-// Cross-process realtime: CLI ui push → mirror ingest → fragment + SSE.
+// Cross-process realtime: CLI workspace add → mirror ingest → fragment + SSE.
 package tests
 
 import (
@@ -14,7 +14,7 @@ import (
 )
 
 // TestCrossProcessFragmentReflectsCLI asserts the mirror reflects a story after
-// a separate CLI process creates it and ui-pushes the snapshot.
+// a separate CLI process creates it and workspace-addes the snapshot.
 func TestCrossProcessFragmentReflectsCLI(t *testing.T) {
 	base, repo := serveRepo(t, "8911")
 
@@ -27,7 +27,7 @@ func TestCrossProcessFragmentReflectsCLI(t *testing.T) {
 	if created.ID == "" {
 		t.Fatalf("no story id in create output:\n%s", out)
 	}
-	mustRun(t, testBin, repo, "ui", "push")
+	mustRun(t, testBin, repo, "workspace", "add")
 
 	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
@@ -36,10 +36,10 @@ func TestCrossProcessFragmentReflectsCLI(t *testing.T) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	t.Fatal("web /fragment/stories never reflected the CLI-created story after ui push")
+	t.Fatal("web /fragment/stories never reflected the CLI-created story after workspace add")
 }
 
-// TestCrossProcessSSETrigger asserts SSE fires when a CLI ui push ingests state.
+// TestCrossProcessSSETrigger asserts SSE fires when a CLI workspace add ingests state.
 func TestCrossProcessSSETrigger(t *testing.T) {
 	base, repo := serveRepo(t, "8912")
 	host := strings.TrimSuffix(base, "/r/"+filepath.Base(repo))
@@ -72,7 +72,7 @@ func TestCrossProcessSSETrigger(t *testing.T) {
 		}
 	}()
 	time.Sleep(100 * time.Millisecond)
-	mustRun(t, testBin, repo, "ui", "push")
+	mustRun(t, testBin, repo, "workspace", "add")
 
 	select {
 	case topic := <-done:
@@ -80,6 +80,6 @@ func TestCrossProcessSSETrigger(t *testing.T) {
 			t.Error("empty SSE topic")
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("no SSE trigger after ui push")
+		t.Fatal("no SSE trigger after workspace add")
 	}
 }

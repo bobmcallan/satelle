@@ -427,7 +427,7 @@ const mirrorWorkspaceSrc = `{{define "mirrorWorkspace"}}<!doctype html>
     <div class="meta">{{len .Partitions}} partition{{if ne (len .Partitions) 1}}s{{end}} · push-fed mirror</div>
   </header>
   {{if .Empty}}
-  <div class="empty">No partitions yet — run <code>satelle ui push</code> from a repo with <code>[server] endpoint</code> configured to reconcile the mirror.</div>
+  <div class="empty">No partitions yet — run <code>satelle workspace add</code> from a repo with <code>[server] endpoint</code> configured to seed the mirror.</div>
   {{else}}
   <table class="panel-table">
     <thead><tr><th>Project</th><th>Path</th><th>Stories</th><th>Tasks</th><th>Docs</th></tr></thead>
