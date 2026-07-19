@@ -718,13 +718,24 @@ func TestDogfoodFlow(t *testing.T) {
 }
 
 func TestServeServesProjectPage(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	bin := testBin
 	repo := t.TempDir()
 	mustRun(t, bin, repo, "init")
-	mustRun(t, bin, repo, "story", "create", "--title", "Render me")
+	mustRun(t, bin, repo, "story", "create",
+		"--title", "Render me",
+		"--body", "visible in push-fed UI",
+		"--acceptance", "1. listed",
+		"--category", "chore",
+	)
 
 	const port = "8791"
+	base := "http://127.0.0.1:" + port
+	// Point ui push at this serve instance.
+	localBody := fmt.Sprintf("[review]\ngate_create = false\n\n[server]\nendpoint = %q\n", base)
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.local.toml"), []byte(localBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	cmd := exec.Command(bin, "serve", "--port", port)
 	cmd.Dir = repo
 	// Same home as mustRun so the home-keyed DB has the created story.
@@ -737,24 +748,23 @@ func TestServeServesProjectPage(t *testing.T) {
 		_, _ = cmd.Process.Wait()
 	}()
 
-	base := "http://127.0.0.1:" + port
 	if !waitHealthy(t, base+"/healthz", 5*time.Second) {
 		t.Fatal("server did not become healthy")
 	}
+	mustRun(t, bin, repo, "ui", "push")
 
 	slug := filepath.Base(repo)
 
-	// / is the connected-projects landing — it lists this lone repo at its slug,
-	// not the repo's project page directly.
+	// / is the push-fed workspace landing — lists partitions after ui push.
 	landing := httpGet(t, base+"/")
-	for _, want := range []string{"in the workspace", `href="/` + slug + `/#stories"`, "satelle"} {
+	for _, want := range []string{"workspace", `href="/r/` + slug + `/"`, "satelle"} {
 		if !strings.Contains(landing, want) {
 			t.Errorf("landing missing %q:\n%s", want, landing)
 		}
 	}
 
-	// The project page itself is served under the repo's slug.
-	body := httpGet(t, base+"/"+slug+"/")
+	// The project page is under /r/{slug}/.
+	body := httpGet(t, base+"/r/"+slug+"/")
 	for _, want := range []string{"Render me", "Stories", "Tasks", "satelle"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("project page missing %q", want)

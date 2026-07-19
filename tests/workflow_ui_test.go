@@ -7,6 +7,7 @@
 package tests
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,7 +45,6 @@ digraph w {
 ` + "```\n"
 
 func TestWorkflowPageInteractiveDiagram(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	bin := testBin
 	repo := t.TempDir()
 	mustRun(t, bin, repo, "init")
@@ -52,6 +52,12 @@ func TestWorkflowPageInteractiveDiagram(t *testing.T) {
 	mustRun(t, bin, repo, "reindex")
 
 	const port = 8794
+	base := "http://127.0.0.1:" + strconv.Itoa(port)
+	localBody := fmt.Sprintf("[review]\ngate_create = false\n\n[server]\nendpoint = %q\n", base)
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.local.toml"), []byte(localBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	cmd := exec.Command(bin, "serve", "--port", strconv.Itoa(port))
 	cmd.Dir = repo
 	cmd.Env = append(os.Environ(), "SATELLE_HOME="+t.TempDir())
@@ -62,14 +68,14 @@ func TestWorkflowPageInteractiveDiagram(t *testing.T) {
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
 	}()
-	base := "http://127.0.0.1:" + strconv.Itoa(port)
 	if !waitHealthy(t, base+"/healthz", 8*time.Second) {
 		t.Fatal("server did not become healthy")
 	}
+	mustRun(t, bin, repo, "ui", "push")
 
 	slug := filepath.Base(repo)
 	// The authored rich workflow's expand fragment carries the new diagram.
-	body := httpGet(t, base+"/"+slug+"/fragment/workflow/wf-rich")
+	body := httpGet(t, base+"/r/"+slug+"/fragment/workflow/wf-rich")
 	for _, want := range []string{
 		`class="wf-diagram"`,    // the SSR SVG
 		`data-vb="0 0 `,         // pan/zoom reset box
@@ -79,7 +85,7 @@ func TestWorkflowPageInteractiveDiagram(t *testing.T) {
 		`data-state="backlog"`,  // stable identifiers for hover-highlight
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("workflow fragment missing %q", want)
+			t.Errorf("workflow fragment missing %q\nbody snippet: %s", want, body[:min(400, len(body))])
 		}
 	}
 	// Read-only: no editing affordances on the workflow surface.

@@ -107,7 +107,6 @@ func newChrome(t *testing.T) context.Context {
 }
 
 func TestBrowserProjectPageInteractions(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	// Port 8801 is unusable on some hosts (EADDRINUSE with no LISTEN socket);
 	// keep browser e2e ports in a free high range.
 	base, repo := serveRepo(t, "8830")
@@ -128,6 +127,7 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustRun(t, testBin, repo, "reindex")
+	uiPushIfConfigured(t, repo)
 	_ = doneID
 
 	ctx := newChrome(t)
@@ -213,6 +213,7 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		// the realtime bus. (The coded estimate gate enforces OOTB — record one.)
 		mustRun(t, testBin, repo, "story", "estimate", openID, "--time", "10m")
 		mustRun(t, testBin, repo, "story", "set", openID, "--status", "in_progress")
+		uiPushIfConfigured(t, repo)
 		if !waitCond(t, ctx, "!!"+light, 8*time.Second) {
 			t.Error("a transitioned story should show a progress light, pushed live")
 		}
@@ -353,10 +354,10 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 // chip on a row adds its token to the panel filter (not expand the row), and
 // clicking the same chip again is a deduped no-op.
 func TestBrowserTagChipFiltering(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	base, repo := serveRepo(t, "8809")
 	mustRun(t, testBin, repo, "story", "create", "--title", "Tagged Story", "--tags", "demo")
 	mustRun(t, testBin, repo, "story", "create", "--title", "Untagged Story")
+	uiPushIfConfigured(t, repo)
 
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
@@ -402,12 +403,12 @@ func TestBrowserTagChipFiltering(t *testing.T) {
 // chips stay. A telemetry_event supplies the outcome + tokens chips without
 // depending on reviewer internals.
 func TestBrowserTimelineFieldToggle(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	// 8815 is reserved on some WSL hosts (bind EADDRINUSE with no LISTEN socket).
 	base, repo := serveRepo(t, "8846")
 	id := createStory(t, repo, "Telemetry Story", "")
 	mustRun(t, testBin, repo, "story", "log", id, "--kind", "step-quality",
 		"--data", "outcome=smooth", "--data", "tokens_total=2000", "--data", "duration_ms=2400")
+	uiPushIfConfigured(t, repo)
 
 	ctx := newChrome(t)
 
@@ -452,7 +453,6 @@ func TestBrowserTimelineFieldToggle(t *testing.T) {
 // backlog and done badges carry DISTINCT hues, and the backlog text stays legible in
 // dark mode (the per-status hue subsuming the earlier sty_173e49a7 dark-only fix).
 func TestBrowserStatusBadgesOutlined(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	base, repo := serveRepo(t, "8812")
 	createStory(t, repo, "Backlog Item", "") // defaults to backlog
 	createStory(t, repo, "Finished Item", "done")
@@ -527,10 +527,10 @@ func TestBrowserStatusBadgesOutlined(t *testing.T) {
 // ':' separator is preserved — while filter chips stay legible in dark theme (the old
 // hardcoded light-only colours were invisible there).
 func TestBrowserSubtleTagChips(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	base, repo := serveRepo(t, "8818")
 	// A category (→ category:feature kv chip) plus an epic kv tag.
 	mustRun(t, testBin, repo, "story", "create", "--title", "Subtle", "--category", "feature", "--tags", "epic:issue-intake")
+	uiPushIfConfigured(t, repo)
 
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
@@ -594,7 +594,6 @@ func TestBrowserSubtleTagChips(t *testing.T) {
 // takes ~80% of the viewport (≈10% side margins) but is capped at a reasonable
 // max-width so a super-wide viewport never goes full-bleed.
 func TestBrowserPageWidth(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	base, repo := serveRepo(t, "8819")
 	createStory(t, repo, "Width", "")
 
@@ -638,11 +637,11 @@ func TestBrowserPageWidth(t *testing.T) {
 // while a non-label control (.theme-toggle) keeps its rounded corner (the scope
 // guard: only chips/badges/pills square off, not buttons/panels/cards/inputs).
 func TestBrowserSquaredEdges(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	base, repo := serveRepo(t, "8817")
 	// A tagged backlog story renders a tag chip AND a backlog badge AND the
 	// stories-tab backlog count pill, all on the default view.
 	mustRun(t, testBin, repo, "story", "create", "--title", "Tagged Backlog", "--tags", "demo")
+	uiPushIfConfigured(t, repo)
 
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
@@ -742,13 +741,13 @@ func translucent(s string) bool {
 // Checked on the standalone detail page (one of the two surfaces the shared
 // template feeds), in both light and dark themes.
 func TestBrowserTimelineDotsByOutcome(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	// Avoid 8813 — blackholed / stuck on some hosts after prior bind races.
 	base, repo := serveRepo(t, "8853")
 	id := createStory(t, repo, "Timeline Story", "")
 	// Seed outcome-bearing + neutral ledger events on this story.
 	mustRun(t, testBin, repo, "ledger", "append", "--kind", "review_reject", "--actor", "reviewer", "--story", id, "--body", "rejected a->b")
 	mustRun(t, testBin, repo, "ledger", "append", "--kind", "review_accept", "--actor", "reviewer", "--story", id, "--body", "accepted a->b")
+	uiPushIfConfigured(t, repo)
 
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
@@ -796,7 +795,6 @@ func TestBrowserTimelineDotsByOutcome(t *testing.T) {
 // backlog story from a SEPARATE CLI process bumps the badge without a reload, and
 // the badge is removed when the live backlog count reaches zero.
 func TestBrowserBacklogBadgeLiveOnRefetch(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	base, repo := serveRepo(t, "8814")
 	id1 := createStory(t, repo, "First Backlog", "") // defaults to backlog
 
@@ -833,7 +831,9 @@ func TestBrowserBacklogBadgeLiveOnRefetch(t *testing.T) {
 	mustRun(t, testBin, repo, "story", "estimate", id1, "--time", "10m")
 	mustRun(t, testBin, repo, "story", "estimate", id2, "--time", "10m")
 	mustRun(t, testBin, repo, "story", "set", id1, "--status", "in_progress")
+	uiPushIfConfigured(t, repo)
 	mustRun(t, testBin, repo, "story", "set", id2, "--status", "in_progress")
+	uiPushIfConfigured(t, repo)
 	if !waitCond(t, ctx, noBadge, 6*time.Second) {
 		t.Error("badge should be removed when the live backlog count reaches 0")
 	}
@@ -853,7 +853,6 @@ func TestBrowserBacklogBadgeLiveOnRefetch(t *testing.T) {
 // tracks the LIVE SSE connection — the mark is accent-green (no 'sse-down' class)
 // once the /events stream is open, and the retired uptime pill is gone.
 func TestBrowserMarkTracksConnection(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	// 8815 is reserved on some WSL hosts (bind EADDRINUSE with no LISTEN socket).
 	base, _ := serveRepo(t, "8847")
 	ctx := newChrome(t)
@@ -892,7 +891,6 @@ func TestBrowserMarkTracksConnection(t *testing.T) {
 // (a visibilitychange to hidden closes the EventSource and adds .sse-down); restoring
 // visibility reopens it and clears the class.
 func TestBrowserMarkSoftRedOnDisconnect(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	base, _ := serveRepo(t, "8822")
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
@@ -984,7 +982,6 @@ func TestBrowserMarkSoftRedOnDisconnect(t *testing.T) {
 // highlights it and its incident edges (and dims the rest), and activating a node
 // correlates the transition rows below. No graph library is loaded.
 func TestBrowserWorkflowDiagramInteractive(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	base, repo := serveRepo(t, "8816")
 	// A workflow with a node (in_progress) carrying both an inbound and an outbound
 	// edge, plus an off-node edge (commit->done) that must DIM when in_progress is
@@ -1002,6 +999,7 @@ func TestBrowserWorkflowDiagramInteractive(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustRun(t, testBin, repo, "reindex")
+	uiPushIfConfigured(t, repo)
 
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
@@ -1095,7 +1093,6 @@ func TestBrowserWorkflowDiagramInteractive(t *testing.T) {
 // FULL reviewer skill name and back; and the cancel/recovery toggle applies
 // wf-hide-alt, actually hiding the de-emphasised edges.
 func TestBrowserWorkflowDiagramPanZoomToggle(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	base, repo := serveRepo(t, "8821")
 	wf := "---\nname: wf-ia\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: interactive layout fixture\n---\n" +
 		"```dot\n" + `digraph w {
@@ -1113,6 +1110,7 @@ func TestBrowserWorkflowDiagramPanZoomToggle(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustRun(t, testBin, repo, "reindex")
+	uiPushIfConfigured(t, repo)
 
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
@@ -1250,9 +1248,8 @@ func countExpansions(t *testing.T, ctx context.Context) int {
 // back, and sorts with order:. This is the "live, navigable" requirement under
 // automation.
 func TestBrowserUserPath(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	base, repo := serveRepo(t, "8803")
-	slugPath := "/" + filepath.Base(repo) + "/" // the project page's own path/<base href>
+	slugPath := "/r/" + filepath.Base(repo) + "/" // the project page's own path/<base href>
 	// Two open stories so order: is observable; the first gets progressed live.
 	betaID := createStory(t, repo, "Beta story", "")
 	alphaID := createStory(t, repo, "Alpha story", "")
@@ -1279,6 +1276,7 @@ func TestBrowserUserPath(t *testing.T) {
 		// estimate gate enforces OOTB — record one first.)
 		mustRun(t, testBin, repo, "story", "estimate", betaID, "--time", "10m")
 		mustRun(t, testBin, repo, "story", "set", betaID, "--status", "in_progress")
+		uiPushIfConfigured(t, repo)
 
 		// The OPEN expansion must gain the transition event live, without collapsing.
 		grew := waitCond(t, ctx, fmt.Sprintf(
@@ -1364,6 +1362,7 @@ func TestBrowserUserPath(t *testing.T) {
 		// row without depending on a particular workflow's edges — and the open
 		// detail page must gain it live.
 		mustRun(t, testBin, repo, "story", "set", betaID, "--priority", "high")
+		uiPushIfConfigured(t, repo)
 		if !waitCond(t, ctx, fmt.Sprintf(`document.querySelectorAll('#detail-live .timeline li').length > %d`, beforeLi), 8*time.Second) {
 			t.Error("detail page timeline did not live-update")
 		}
@@ -1393,7 +1392,6 @@ func evalInt(t *testing.T, ctx context.Context, js string) int {
 // with a status badge, and a live execution-status change refreshes the open
 // expansion without a reload.
 func TestBrowserTaskPanelNativeRuns(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	// Unique port — 8803 is used by TestBrowserUserPath.
 	base, repo := serveRepo(t, "8852")
 
@@ -1407,6 +1405,7 @@ func TestBrowserTaskPanelNativeRuns(t *testing.T) {
 	if exeID == "" {
 		t.Fatal("no execution id")
 	}
+	uiPushIfConfigured(t, repo)
 
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
@@ -1440,6 +1439,7 @@ func TestBrowserTaskPanelNativeRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustRun(t, testBin, repo, "execution", "set", exeID, "--status", "done")
+	uiPushIfConfigured(t, repo)
 	doneShown := `(function(){var e=document.querySelector('#panel-tasks tr.expansion .expbody');return !!e && !!e.querySelector('.badge.s-done');})()`
 	if !waitCond(t, ctx, doneShown, 10*time.Second) {
 		t.Error("open task expansion did not refresh to show the run done on a live status change")
@@ -1484,15 +1484,29 @@ func jsRowVisible(id string) string {
 	return fmt.Sprintf(`(function(){var r=document.querySelector('tr.row[data-expand-url$="%s"]');return !!r && getComputedStyle(r).display!=='none';})()`, id)
 }
 
-// createStory creates a story via the CLI and returns its id.
+// createStory creates a story via the CLI and returns its id. When the repo is
+// wired for push-fed serve ([server] endpoint in satelle.local.toml), re-pushes
+// so the mirror reflects the new item without a manual ui push in every test.
 func createStory(t *testing.T, repo, title, status string) string {
 	t.Helper()
-	args := []string{"story", "create", "--title", title}
+	args := []string{"story", "create", "--title", title, "--body", "the goal", "--acceptance", "1. it works"}
 	if status != "" {
 		args = append(args, "--status", status)
 	}
 	out := mustRun(t, testBin, repo, args...)
-	return extractID(out, "sty_")
+	id := extractID(out, "sty_")
+	uiPushIfConfigured(t, repo)
+	return id
+}
+
+// uiPushIfConfigured runs `satelle ui push` when [server] endpoint is set.
+func uiPushIfConfigured(t *testing.T, repo string) {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.local.toml"))
+	if err != nil || !strings.Contains(string(b), "endpoint") {
+		return
+	}
+	mustRun(t, testBin, repo, "ui", "push")
 }
 
 // visibleRow reports whether the story/task row for id is visible (not
@@ -1515,7 +1529,6 @@ func visibleRow(t *testing.T, ctx context.Context, id string) bool {
 // asserts its markdown was rendered to HTML server-side (a heading element
 // exists), not shown as raw text.
 func TestBrowserDocRendersMarkdown(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	base, _ := serveRepo(t, "8807")
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
@@ -1553,11 +1566,11 @@ func TestBrowserDocRendersMarkdown(t *testing.T) {
 // default (a list, not a wall of text), expanding on click to reveal the rendered
 // markdown, with no legacy tabstrip.
 func TestBrowserStoryDocList(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	base, repo := serveRepo(t, "8808")
 	id := createStory(t, repo, "Doc list story", "")
 	mustRun(t, testBin, repo, "story", "attach", id, "--name", "plan", "--type", "plan",
 		"--body", "# Plan\n\n- step one\n- step two")
+	uiPushIfConfigured(t, repo)
 
 	ctx := newChrome(t)
 	if err := chromedp.Run(ctx,
@@ -1625,7 +1638,6 @@ func hasChip(t *testing.T, ctx context.Context, panel, label string) bool {
 // visual (getBoundingClientRect) order, so a CSS regression that reorders the flex
 // row is caught, not just markup presence (sty_cd2fe2f3).
 func TestBrowserSharedTopbar(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	// High free range: 8806 is unusable on some hosts (same class as 8801).
 	base, repo := serveRepo(t, "8840")
 	id := createStory(t, repo, "Topbar story", "")
@@ -1650,15 +1662,17 @@ func TestBrowserSharedTopbar(t *testing.T) {
 		OK, SrcOrder, VisOrder, Uptime bool
 		Glyph                          string
 	}
+	// Surfaces under the project base (/r/slug/) plus host-level workspace.
+	host := strings.TrimSuffix(base, "/r/"+filepath.Base(repo))
 	for _, s := range []struct{ name, path string }{
-		{"project", "/"},
-		{"detail", "/story/" + id},
-		{"workspace", "/workspace"},
-		{"settings", "/settings"},
+		{"project", base + "/"},
+		{"detail", base + "/story/" + id},
+		{"workspace", host + "/"},
+		{"settings", base + "/settings"},
 	} {
 		var st navState
 		if err := chromedp.Run(ctx,
-			chromedp.Navigate(base+s.path),
+			chromedp.Navigate(s.path),
 			chromedp.WaitVisible(`header.topbar .brand-mark`, chromedp.ByQuery),
 			chromedp.WaitVisible(`header.topbar #theme-toggle`, chromedp.ByQuery),
 			chromedp.Evaluate(probe, &st),
@@ -1701,7 +1715,6 @@ func setInput(sel, val string) chromedp.Action {
 // or refresh (sty_a4fc4d00). It also asserts a single EventSource per page
 // (previously a detail page opened two).
 func TestBrowserSSEVisibilityGating(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	// Unique port — 8813 is used by TestBrowserTimelineDotsByOutcome (sequential
 	// cleanup can still leave bind races / blackholed sockets on this host).
 	base, repo := serveRepo(t, "8851")

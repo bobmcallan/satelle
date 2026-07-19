@@ -12,20 +12,17 @@ import (
 )
 
 // TestServeWritesServerLog drives a real `satelle serve` and confirms the request
-// logging middleware (sty_07cec95f) writes runtime logs/server.log through the
-// cmd_serve.go wiring — the leg the internal/web unit tests cannot reach. It asserts
-// the log exists and carries the tab-separated INFO line for a served request plus a
-// 404 for an unknown path.
+// logging middleware writes the serve-wide server.log under the home-keyed mirror
+// plane (~/…/serve/server.log).
 func TestServeWritesServerLog(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
+	home := isolatedHome(t)
 	const port = "8795"
 	cmd := exec.Command(testBin, "serve", "--port", port)
 	cmd.Dir = repo
-	// Same SATELLE_HOME as init/run so the home-keyed runtime plane matches.
-	cmd.Env = append(os.Environ(), "SATELLE_HOME="+isolatedHome(t))
+	cmd.Env = append(os.Environ(), "SATELLE_HOME="+home)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start serve: %v", err)
 	}
@@ -43,8 +40,7 @@ func TestServeWritesServerLog(t *testing.T) {
 		t.Fatalf("/nope = %d, want 404", code)
 	}
 
-	// The middleware appends best-effort after the response, so poll briefly.
-	logPath := filepath.Join(runtimeRoot(t, repo), "logs", "server.log")
+	logPath := filepath.Join(home, "serve", "server.log")
 	var log string
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {

@@ -551,7 +551,9 @@
 
     function connectLive() {
       if (src || document.visibilityState !== "visible") return;
-      src = new EventSource("events");
+      // Mirror multi-partition pages use <base href="/r/slug/">; SSE is always at /events.
+      var esURL = (location.pathname.indexOf("/r/") === 0) ? "/events" : "events";
+      src = new EventSource(esURL);
       window.__satelleLive.open = true;
       window.__satelleLive.opens++;
       src.addEventListener("open", function () {
@@ -605,8 +607,9 @@
     if (btn) btn.textContent = theme === "dark" ? "☀" : "☾"; // ☾ in light (→dark), ☀ in dark (→light); ◐ is the brand mark only
     // Persist the choice to the machine-wide config so it follows the operator
     // into every repo (best-effort; localStorage remains the fast-path cache).
+    // Best-effort server persist; push-fed mirror rejects POST (localStorage is source of truth there).
     if (persist) {
-      try { fetch("theme", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "theme=" + theme }); } catch (e) {}
+      try { fetch("theme", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "theme=" + theme }).catch(function () {}); } catch (e) {}
     }
   }
   function initTheme() {

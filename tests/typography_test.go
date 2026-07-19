@@ -3,21 +3,18 @@
 package tests
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// TestWebTypographySelfHostedEndToEnd drives the real binary's served static
-// surface to prove the Space Grotesk typography is fully self-hosted
-// (sty_92163102): the served stylesheet declares the embedded @font-face and a
-// Space Grotesk-first body stack with no external font host, and the woff2
-// itself is served under the repo's own /<slug>/static/fonts/ (the CSS-relative
-// url() resolution the unit tests can't exercise through a real prefix).
+// TestWebTypographySelfHostedEndToEnd proves Space Grotesk is fully self-hosted
+// on the push-fed serve static surface (sty_92163102).
 func TestWebTypographySelfHostedEndToEnd(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
-	base, _ := serveRepo(t, "8824")
+	base, repo := serveRepo(t, "8824")
+	host := strings.TrimSuffix(base, "/r/"+filepath.Base(repo))
 
-	css := httpGet(t, base+"/static/app.css")
+	css := httpGet(t, host+"/static/app.css")
 	for _, want := range []string{
 		`font-family: "Space Grotesk"`,
 		"font-weight: 300 700",
@@ -35,8 +32,7 @@ func TestWebTypographySelfHostedEndToEnd(t *testing.T) {
 		t.Error("served stylesheet still references Montserrat")
 	}
 
-	// The face resolves CSS-relative under the slug prefix and is real woff2.
-	woff := httpGet(t, base+"/static/fonts/space-grotesk-latin.woff2")
+	woff := httpGet(t, host+"/static/fonts/space-grotesk-latin.woff2")
 	if !strings.HasPrefix(woff, "wOF2") {
 		t.Errorf("/static/fonts/space-grotesk-latin.woff2 is not woff2 (magic %q)", woff[:min(4, len(woff))])
 	}

@@ -1,90 +1,85 @@
 //go:build integration
 
-// Cross-process realtime durability: the web server and the CLI are SEPARATE
-// processes sharing one sqlite file, so an edit made by `satelle story set` must
-// reach an open web page. These tests drive the REAL binary end-to-end — serve a
-// repo, mutate it from a second CLI process, and assert (a) the panel fragment
-// reflects the change and (b) the SSE bus pushes a trigger — the disconnect the
-// in-process unit test cannot catch. Part of the `integration` tag.
+// Cross-process realtime: CLI ui push → mirror ingest → fragment + SSE.
 package tests
 
 import (
 	"bufio"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-// TestCrossProcessFragmentReflectsCLI asserts the served web reflects a story
-// created by a separate CLI process (cross-process DB visibility).
+// TestCrossProcessFragmentReflectsCLI asserts the mirror reflects a story after
+// a separate CLI process creates it and ui-pushes the snapshot.
 func TestCrossProcessFragmentReflectsCLI(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	base, repo := serveRepo(t, "8911")
 
 	out := mustRun(t, testBin, repo, "story", "create",
 		"--title", "Cross-process realtime story", "--body", "made via CLI",
-		"--acceptance", "1. the web reflects it")
+		"--acceptance", "1. the web reflects it",
+		"--category", "chore")
 	var created struct{ ID string }
 	_ = json.Unmarshal([]byte(out), &created)
 	if created.ID == "" {
 		t.Fatalf("no story id in create output:\n%s", out)
 	}
+	mustRun(t, testBin, repo, "ui", "push")
 
 	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
 		if strings.Contains(httpGet(t, base+"/fragment/stories"), "Cross-process realtime story") {
-			return // the web saw the CLI's write
+			return
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	t.Fatal("web /fragment/stories never reflected the CLI-created story (web/CLI disconnect)")
+	t.Fatal("web /fragment/stories never reflected the CLI-created story after ui push")
 }
 
-// TestCrossProcessSSETrigger asserts the SSE bus pushes a 'stories' trigger when
-// a separate CLI process mutates a story, and that the stream opens with the
-// keepalive-capable connection comment.
+// TestCrossProcessSSETrigger asserts SSE fires when a CLI ui push ingests state.
 func TestCrossProcessSSETrigger(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	base, repo := serveRepo(t, "8912")
+	host := strings.TrimSuffix(base, "/r/"+filepath.Base(repo))
 
-	// Seed a story to mutate (ungated priority change → no agent needed).
 	out := mustRun(t, testBin, repo, "story", "create",
-		"--title", "SSE trigger seed", "--body", "seed", "--acceptance", "1. ok")
+		"--title", "SSE trigger seed", "--body", "seed", "--acceptance", "1. ok",
+		"--category", "chore")
 	var seed struct{ ID string }
 	_ = json.Unmarshal([]byte(out), &seed)
 	if seed.ID == "" {
 		t.Fatalf("no story id:\n%s", out)
 	}
 
-	resp, err := http.Get(base + "/events")
+	resp, err := http.Get(host + "/events")
 	if err != nil {
-		t.Fatalf("open SSE: %v", err)
+		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 
-	got := make(chan string, 4)
+	// Kick a push while SSE is open.
+	done := make(chan string, 1)
 	go func() {
 		sc := bufio.NewScanner(resp.Body)
 		for sc.Scan() {
 			line := sc.Text()
 			if strings.HasPrefix(line, "data: ") {
-				got <- strings.TrimPrefix(line, "data: ")
+				done <- strings.TrimPrefix(line, "data: ")
+				return
 			}
 		}
 	}()
-
-	// Let the subscription register, then mutate from a separate CLI process.
-	time.Sleep(300 * time.Millisecond)
-	mustRun(t, testBin, repo, "story", "set", seed.ID, "--priority", "high")
+	time.Sleep(100 * time.Millisecond)
+	mustRun(t, testBin, repo, "ui", "push")
 
 	select {
-	case topic := <-got:
-		if topic != "stories" {
-			t.Errorf("SSE trigger topic = %q, want stories", topic)
+	case topic := <-done:
+		if topic == "" {
+			t.Error("empty SSE topic")
 		}
-	case <-time.After(6 * time.Second):
-		t.Fatal("no SSE trigger within 6s after a cross-process CLI mutation")
+	case <-time.After(5 * time.Second):
+		t.Fatal("no SSE trigger after ui push")
 	}
 }

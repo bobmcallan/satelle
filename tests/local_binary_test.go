@@ -4,6 +4,7 @@ package tests
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,11 +68,10 @@ func TestLocalBinaryReexec(t *testing.T) {
 // TestLocalModeServeSingleProjectOwnPort drives the repo-local pin's `serve`
 // (sty_6b07cfb1): running as <repo>/.satelle/satelle it must (a) listen on a
 // deterministic per-repo port in the local range (never 8787) and (b) show only
-// THIS project, even though another repo is registered in the global workspace —
-// local mode does not aggregate. Global mode (covered by TestMultiProjectServe)
-// would list both.
-func TestLocalModeServeSingleProjectOwnPort(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
+// TestPinnedServePushFedIsolation: a repo-local pin runs serve; only pushed
+// partitions appear. A workspace-registered other repo is not auto-mirrored
+// (push-fed, not workspace aggregate). Port is the configured/default serve port.
+func TestPinnedServePushFedIsolation(t *testing.T) {
 	home := isolatedHome(t)
 	repo := t.TempDir()
 	other := t.TempDir()
@@ -79,9 +79,8 @@ func TestLocalModeServeSingleProjectOwnPort(t *testing.T) {
 	mustRun(t, testBin, other, "init")
 	createStory(t, repo, "ThisRepoStory", "")
 	createStory(t, other, "OtherRepoStory", "")
-	workspaceAdd(t, home, repo, other) // register `other` in the global workspace
+	workspaceAdd(t, home, repo, other)
 
-	// Install the pin: copy the test binary to <repo>/.satelle/satelle.
 	pin := filepath.Join(repo, ".satelle", "satelle")
 	binBytes, err := os.ReadFile(testBin)
 	if err != nil {
@@ -91,15 +90,10 @@ func TestLocalModeServeSingleProjectOwnPort(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Run the PIN's serve with no --port: local mode must pick the deterministic
-	// per-repo port itself.
-	cmd := exec.Command(pin, "serve", "--no-watch")
+	port := freeListenPort(t)
+	cmd := exec.Command(pin, "serve", "--port", port, "--no-watch")
 	cmd.Dir = repo
 	cmd.Env = append(os.Environ(), "SATELLE_HOME="+home)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start pin serve: %v", err)
 	}
@@ -114,27 +108,25 @@ func TestLocalModeServeSingleProjectOwnPort(t *testing.T) {
 		}
 	})
 
-	port := scanServePort(t, stdout, 10*time.Second)
-	if port == 8787 {
-		t.Fatal("local mode must NOT serve on the global default port 8787")
-	}
-	if port < 8800 || port >= 9000 {
-		t.Errorf("local port %d not in the deterministic range [8800,9000)", port)
+	base := "http://127.0.0.1:" + port
+	if !waitHealthy(t, base+"/healthz", 10*time.Second) {
+		t.Fatal("pin serve did not become healthy")
 	}
 
-	base := "http://127.0.0.1:" + strconv.Itoa(port)
-	if !waitHealthy(t, base+"/healthz", 10*time.Second) {
-		t.Fatal("local-mode serve did not become healthy")
+	localBody := fmt.Sprintf("[review]\ngate_create = false\n\n[server]\nendpoint = %q\n", base)
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.local.toml"), []byte(localBody), 0o644); err != nil {
+		t.Fatal(err)
 	}
+	mustRun(t, testBin, repo, "ui", "push")
 
 	root := httpGetBody(t, base+"/")
 	slug := filepath.Base(repo)
 	otherSlug := filepath.Base(other)
-	if !strings.Contains(root, "/"+slug+"/") {
+	if !strings.Contains(root, "/r/"+slug+"/") {
 		t.Errorf("landing should list this repo (%s):\n%s", slug, root)
 	}
-	if strings.Contains(root, "/"+otherSlug+"/") {
-		t.Errorf("local mode must NOT aggregate the workspace-added repo (%s):\n%s", otherSlug, root)
+	if strings.Contains(root, "/r/"+otherSlug+"/") || strings.Contains(root, otherSlug) {
+		t.Errorf("must NOT list workspace-added repo without push (%s):\n%s", otherSlug, root)
 	}
 }
 

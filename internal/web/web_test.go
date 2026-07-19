@@ -254,7 +254,8 @@ func TestNavbarConsistentAcrossSurfaces(t *testing.T) {
 			t.Errorf("%s: retired uptime pill still present", path)
 		}
 		// Every surface loads app.js so the theme toggle + live wiring work uniformly.
-		if !strings.Contains(body, `src="static/app.js"`) {
+		// Absolute /static/ is required under <base href="/r/…/"> on the mirror.
+		if !strings.Contains(body, `src="/static/app.js"`) && !strings.Contains(body, `src="static/app.js"`) {
 			t.Errorf("%s: does not load app.js (theme toggle would be dead)", path)
 		}
 	}

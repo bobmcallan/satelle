@@ -194,6 +194,41 @@ func (s *Store) Count(ctx context.Context) (int, error) {
 	return n, nil
 }
 
+// ListAll returns up to limit evidence rows oldest-first (no story/kind filter).
+// Used by ui push / mirror snapshot export — List refuses unfiltered scans.
+// limit<=0 defaults to 10000; hard-capped at 50000.
+func (s *Store) ListAll(ctx context.Context, limit int) ([]Entry, error) {
+	if limit <= 0 {
+		limit = 10000
+	}
+	if limit > 50000 {
+		limit = 50000
+	}
+	q := fmt.Sprintf(`SELECT id, story_id, project_id, kind, actor, body, payload, refs, created_at FROM evidence ORDER BY created_at ASC, id ASC LIMIT %d`, limit)
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("ledger: list all: %w", err)
+	}
+	defer rows.Close()
+	out := []Entry{}
+	for rows.Next() {
+		var (
+			e             Entry
+			payload, refs string
+			created       string
+		)
+		if err := rows.Scan(&e.ID, &e.StoryID, &e.ProjectID, &e.Kind,
+			&e.Actor, &e.Body, &payload, &refs, &created); err != nil {
+			return nil, fmt.Errorf("ledger: scan: %w", err)
+		}
+		e.Payload = json.RawMessage(payload)
+		e.Refs = json.RawMessage(refs)
+		e.CreatedAt = parseTime(created)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // parseTime decodes an RFC3339Nano timestamp, returning the zero time on a
 // malformed value (a stored row is always well-formed; this is defensive).
 func parseTime(s string) time.Time {
