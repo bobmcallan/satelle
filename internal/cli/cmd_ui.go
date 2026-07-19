@@ -65,16 +65,23 @@ func runUIPush(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// postUISnapshot POSTs snap to endpoint/ingest/snapshot. Used by the manual
-// verb and the auto first-contact path (sty_1dde0d47).
+// postUISnapshot POSTs snap to endpoint/ingest/snapshot with a 30s budget.
+// Used by the manual `satelle ui push` verb (fail-visible; large snapshots OK).
 func postUISnapshot(endpoint string, snap *mirror.Snapshot) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return postUISnapshotContext(ctx, endpoint, snap)
+}
+
+// postUISnapshotContext POSTs snap under the caller's deadline. The end-of-
+// invocation drain (sty_9ba3d709) passes a short shared budget so a black-holed
+// endpoint cannot hang the verb.
+func postUISnapshotContext(ctx context.Context, endpoint string, snap *mirror.Snapshot) error {
 	body, err := json.Marshal(snap)
 	if err != nil {
 		return err
 	}
 	url := strings.TrimRight(endpoint, "/") + "/ingest/snapshot"
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err

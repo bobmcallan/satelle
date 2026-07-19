@@ -11,6 +11,8 @@ import (
 )
 
 // runRoot executes a fresh root command with args, returning combined output.
+// Always drains UI push and closes the store (mirrors Execute's error-path
+// cleanup — Cobra skips PersistentPostRunE when RunE fails).
 func runRoot(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	root := NewRootCmd()
@@ -18,7 +20,10 @@ func runRoot(t *testing.T, args ...string) (string, error) {
 	root.SetOut(&buf)
 	root.SetErr(&buf)
 	root.SetArgs(args)
-	err := root.Execute()
+	c, err := root.ExecuteC()
+	if c != nil {
+		closeAppForCmd(c)
+	}
 	return buf.String(), err
 }
 

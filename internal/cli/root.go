@@ -100,7 +100,12 @@ func Execute() error {
 		}
 	}
 	root := NewRootCmd()
-	err := root.Execute()
+	// ExecuteC returns the leaf command so we can drain/close even when RunE
+	// failed — Cobra skips PersistentPostRunE on error (sty_9ba3d709).
+	c, err := root.ExecuteC()
+	if c != nil {
+		closeAppForCmd(c)
+	}
 	if err != nil {
 		fmt.Fprintln(root.ErrOrStderr(), err)
 		if isUnknownCommandErr(err) {

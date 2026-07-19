@@ -15,7 +15,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/oplog"
-	"github.com/bobmcallan/satelle/internal/push"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -27,6 +26,9 @@ const storeAnnotation = "needs-store"
 
 // appCtxKey carries the opened *app.App on the command context.
 type appCtxKey struct{}
+
+// uiDrainCtxKey carries the per-invocation UI push drain (sty_9ba3d709).
+type uiDrainCtxKey struct{}
 
 // needsStore returns a cobra annotations map flagging a store-backed command.
 func needsStore() map[string]string { return map[string]string{storeAnnotation: "1"} }
@@ -78,27 +80,20 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetLedgerStore(a.Store.Ledger)
 	verb.SetDocIndexStore(a.Store.DocIndex)
 	verb.SetLeaseStore(a.Store.Leases)
-	// Change publisher (sty_126228b2): when [server] endpoint is set, mutating
-	// verbs POST fire-and-forget events on the shared ChangeNotifier seam.
-	// Unset = inert (no network). Clear first so a prior test/process state
-	// cannot leak sinks into this one-shot CLI invocation.
+	// UI push drain (sty_9ba3d709 / sty_126228b2): when [server] endpoint is set,
+	// mutating verbs mark topics on the ChangeNotifier seam; a bounded drain
+	// posts change events + one snapshot BEFORE store close (not fire-and-forget
+	// — those races process exit). Unset = inert (no network). Clear first so a
+	// prior test/process state cannot leak sinks into this one-shot invocation.
 	verb.SetChangeNotifier(nil)
+	var drain *uiDrain
 	if ep := strings.TrimSpace(a.Config.Server.Endpoint); ep != "" {
-		pub := &push.Publisher{Endpoint: ep, RepoKey: config.RepoKey(a.RepoRoot)}
-		verb.AddChangeNotifier(pub.Notify)
-		// Full snapshot after every mutation (sty_1dde0d47 + sty_dbdadfa0 AC3):
-		// change events alone only bump seq; the mirror needs bodies for the UI.
-		// Fire-and-forget; fail-silent like the change publisher.
-		appRef := a
-		verb.AddChangeNotifier(func(string) {
-			go func() {
-				snap, err := buildUISnapshot(context.Background(), appRef)
-				if err != nil || snap == nil {
-					return
-				}
-				_ = postUISnapshot(ep, snap)
-			}()
-		})
+		drain = &uiDrain{
+			endpoint: ep,
+			repoKey:  config.RepoKey(a.RepoRoot),
+			app:      a,
+		}
+		verb.AddChangeNotifier(drain.mark)
 	}
 	// Stories attachments are RUNTIME state (home-keyed under RuntimeDir —
 	// sty_4660bbe1). The database is the sole story store (markdown mirror
@@ -176,14 +171,29 @@ func openAppForCmd(cmd *cobra.Command) error {
 			}
 		}
 	}
-	cmd.SetContext(context.WithValue(cmd.Context(), appCtxKey{}, a))
+	ctx := context.WithValue(cmd.Context(), appCtxKey{}, a)
+	if drain != nil {
+		ctx = context.WithValue(ctx, uiDrainCtxKey{}, drain)
+	}
+	cmd.SetContext(ctx)
 	return nil
 }
 
-// closeAppForCmd closes the bootstrap stashed on the command context, if any.
+// closeAppForCmd drains pending UI pushes (if any), then closes the bootstrap
+// stashed on the command context. Safe to call twice (error path + PostRun):
+// drain is once-guarded; close clears the app from context.
 func closeAppForCmd(cmd *cobra.Command) {
+	if cmd == nil {
+		return
+	}
+	// Drain BEFORE close so snapshot build still reads open stores (AC2).
+	if d, ok := cmd.Context().Value(uiDrainCtxKey{}).(*uiDrain); ok && d != nil {
+		d.flush()
+	}
 	if a, ok := cmd.Context().Value(appCtxKey{}).(*app.App); ok && a != nil {
 		_ = a.Close()
+		// Clear so a second closeAppForCmd (ExecuteC cleanup after PostRun) is a no-op.
+		cmd.SetContext(context.WithValue(cmd.Context(), appCtxKey{}, (*app.App)(nil)))
 	}
 }
 

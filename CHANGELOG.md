@@ -1,3 +1,8 @@
+## [0.0.282] - 2026-07-20
+
+### Fixed
+- CLI UI push drain: mutating verbs deliver change + snapshot before process exit (no fire-and-forget race against store close); coalesced one snapshot per invocation; black-holed endpoint bounded to 1.5s and fail-silent (sty_9ba3d709 / epic:serve-adoption)
+
 ## [0.0.281] - 2026-07-19
 
 ### Added

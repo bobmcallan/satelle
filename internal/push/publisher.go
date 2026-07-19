@@ -48,15 +48,34 @@ func (p *Publisher) Active() bool {
 
 // Notify is the ChangeNotifier sink: fire-and-forget POST. Never blocks the
 // caller beyond the cost of scheduling a goroutine. Never panics.
+// The CLI drain path uses PostContext instead so delivery completes before exit.
 func (p *Publisher) Notify(topic string) {
 	if !p.Active() {
 		return
 	}
-	go p.post(topic)
+	go func() { _ = p.PostContext(context.Background(), topic) }()
 }
 
-func (p *Publisher) post(topic string) {
-	defer func() { _ = recover() }()
+// PostContext POSTs a change event, honouring ctx's deadline. When ctx has no
+// deadline, DefaultTimeout is applied. Errors are returned for callers that
+// care; the CLI drain swallows them (fail-silent). Never panics.
+func (p *Publisher) PostContext(ctx context.Context, topic string) (err error) {
+	if !p.Active() {
+		return nil
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = nil
+		}
+	}()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, DefaultTimeout)
+		defer cancel()
+	}
 	endpoint := strings.TrimRight(strings.TrimSpace(p.Endpoint), "/")
 	path := p.Path
 	if path == "" {
@@ -74,13 +93,11 @@ func (p *Publisher) post(topic string) {
 	}
 	body, err := json.Marshal(ev)
 	if err != nil {
-		return
+		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
-	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+path, bytes.NewReader(body))
 	if err != nil {
-		return
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if p.OnPost != nil {
@@ -88,13 +105,16 @@ func (p *Publisher) post(topic string) {
 	}
 	client := p.Client
 	if client == nil {
+		// Bound the transport to DefaultTimeout when the caller did not inject
+		// a client; the request context still governs cancellation.
 		client = &http.Client{Timeout: DefaultTimeout}
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return
+		return err
 	}
 	_ = resp.Body.Close()
+	return nil
 }
 
 func entityForTopic(topic string) string {
