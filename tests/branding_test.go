@@ -9,15 +9,13 @@ import (
 )
 
 // TestWebHeaderBrandingEndToEnd drives the real binary's served project page to
-// prove the satelle.dev-aligned branding lands end-to-end (sty_fa2eb142): the
-// header leads with the repo's project name (not the old hardcoded
-// "satelle. project" wordmark), a ◐ halfmoon brand mark links the home page in a
-// new tab, and the favicon is the halfmoon monogram.
+// prove the satelle.dev-aligned branding lands end-to-end (sty_fa2eb142 +
+// epic:mirror-ui-parity): project H1, brand mark, favicon, and shared navbar.
 func TestWebHeaderBrandingEndToEnd(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
-	// 8815 is reserved on some WSL hosts (bind EADDRINUSE with no LISTEN socket).
 	base, repo := serveRepo(t, "8845")
-	name := filepath.Base(repo) // the project is served under /<basename>; H1 mirrors it
+	name := filepath.Base(repo)
+	// serveRepo returns the project origin (http://host/r/<slug>); host root is for static.
+	host := strings.TrimSuffix(base, "/r/"+name)
 
 	body := httpGet(t, base+"/")
 
@@ -28,7 +26,6 @@ func TestWebHeaderBrandingEndToEnd(t *testing.T) {
 		t.Errorf("project header still shows the old 'satelle. project' wordmark")
 	}
 
-	// The leading ◐ satelle brand mark: a link to the home page, opening a new tab.
 	for _, want := range []string{
 		`class="brand-mark"`,
 		`href="https://satelle.dev/"`,
@@ -40,17 +37,11 @@ func TestWebHeaderBrandingEndToEnd(t *testing.T) {
 		}
 	}
 
-	// The favicon is the halfmoon monogram (outline circle + left-half <path>),
-	// in the brand accent green — not the old solid dot.
-	fav := httpGet(t, base+"/static/favicon.svg")
+	fav := httpGet(t, host+"/static/favicon.svg")
 	if !strings.Contains(fav, "<circle") || !strings.Contains(fav, "<path") || !strings.Contains(fav, "#2f6f4f") {
 		t.Errorf("favicon is not the halfmoon monogram:\n%s", fav)
 	}
 
-	// The shared navbar carries the satelle.dev nav row (sty_523f93b3, sty_2faa7dd4):
-	// Install · Docs · Projects text links then a GitHub OUTLINED ICON button, in
-	// order between the brand and the theme-toggle-last, with NO Home/Help top-nav
-	// items. (Folded into this test so it reuses the one serve — no extra subprocess.)
 	order := []string{
 		`class="brand-mark"`, `>Install</a>`, `>Docs</a>`,
 		`>Projects</a>`, `class="github-btn"`, `class="theme-toggle"`,
@@ -67,13 +58,11 @@ func TestWebHeaderBrandingEndToEnd(t *testing.T) {
 		}
 		prev = at
 	}
-	// The dropped Home/Help text items and the GitHub text link must be gone.
 	for _, gone := range []string{`>Home</a>`, `>Help</a>`, `>GitHub</a>`} {
 		if strings.Contains(body, gone) {
-			t.Errorf("navbar should no longer carry %q (Home/Help dropped; GitHub is an icon button)", gone)
+			t.Errorf("navbar should no longer carry %q", gone)
 		}
 	}
-	// External nav links open in a new tab.
 	for _, ext := range []string{"https://satelle.dev/install", "https://satelle.dev/docs", "https://github.com/bobmcallan/satelle"} {
 		i := strings.Index(body, ext)
 		if i < 0 {
@@ -86,14 +75,16 @@ func TestWebHeaderBrandingEndToEnd(t *testing.T) {
 			t.Errorf("external link %q is not new-tab: %s", ext, anchor)
 		}
 	}
-	// The workspace landing marks the Projects nav link active (per-page active marking).
-	if w := httpGet(t, base+"/workspace"); !strings.Contains(w, `class="active" aria-current="page">Projects</a>`) {
-		t.Errorf("workspace landing did not mark the Projects nav link active")
+	// Workspace landing at / marks Projects active.
+	if w := httpGet(t, host+"/"); !strings.Contains(w, `class="active" aria-current="page">Projects</a>`) {
+		t.Errorf("workspace landing did not mark the Projects nav link active:\n%s", w)
 	}
 
-	// The global settings page (sty_432bdeb7) renders with the shared navbar and the
-	// hosted-server field. (Folded in to reuse the one serve — no extra subprocess.)
-	if g := httpGet(t, base+"/settings/global"); !strings.Contains(g, `name="server"`) || !strings.Contains(g, "global settings") {
-		t.Errorf("/settings/global did not render the global settings form")
+	// Project settings (RO mirror) — no global settings write surface.
+	if g := httpGet(t, base+"/settings"); !strings.Contains(g, "settings") || !strings.Contains(g, "read-only") {
+		t.Errorf("project settings did not render as read-only:\n%s", g)
+	}
+	if g := httpGet(t, host+"/settings/global"); strings.Contains(g, `name="server"`) {
+		t.Errorf("mirror must not expose global settings write form")
 	}
 }

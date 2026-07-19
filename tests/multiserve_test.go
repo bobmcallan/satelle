@@ -3,42 +3,48 @@
 package tests
 
 import (
-	"bufio"
 	"fmt"
-	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
 
-// TestMultiProjectServe drives the always-adaptive `serve`: the root (/) is a
-// connected-projects landing and EVERY registered repo — including the repo
-// serve was launched from — is served under /<slug>/ (reverse-proxied to a
-// child). Asserts the landing lists every project (counts, not story titles),
-// each project is reachable and isolated under its own slug, /projects redirects
-// to the landing, and a workspace add lands live.
-func TestMultiProjectServe(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
-	// One isolated home for CLI + serve so home-keyed DBs match (sty_4660bbe1).
+// TestMultiPartitionMirrorServe proves the push-fed mirror holds multiple
+// partitions (decision-local-db-placement): workspace landing lists each
+// partition with counts; each /r/{slug}/ is isolated; no reverse-proxy children.
+func TestMultiPartitionMirrorServe(t *testing.T) {
 	home := isolatedHome(t)
 
-	repoA := t.TempDir() // launch repo — now served under its own /<slug>/ too
-	repoB := t.TempDir() // another registered project
+	repoA := t.TempDir()
+	repoB := t.TempDir()
 	mustRun(t, testBin, repoA, "init")
 	mustRun(t, testBin, repoB, "init")
-	// Distinct data per repo so we can prove no cross-project bleed.
 	createStory(t, repoA, "AlphaOnlyStory", "")
 	createStory(t, repoB, "BetaOnlyStory", "")
-	workspaceAdd(t, home, repoA, repoB)
 
-	port := freeListenPort(t)
-	cmd := exec.Command(testBin, "serve", "--port", port, "--no-watch")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	host := fmt.Sprintf("http://127.0.0.1:%d", port)
+
+	// Point both repos at the same serve endpoint.
+	for _, repo := range []string{repoA, repoB} {
+		localBody := fmt.Sprintf("[review]\ngate_create = false\n\n[server]\nendpoint = %q\n", host)
+		if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.local.toml"), []byte(localBody), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cmd := exec.Command(testBin, "serve", "--addr", "127.0.0.1", "--port", fmt.Sprint(port))
 	cmd.Dir = repoA
 	cmd.Env = append(os.Environ(), "SATELLE_HOME="+home)
 	if err := cmd.Start(); err != nil {
@@ -54,156 +60,71 @@ func TestMultiProjectServe(t *testing.T) {
 			_ = cmd.Process.Kill()
 		}
 	})
-
-	base := "http://127.0.0.1:" + port
-	if !waitHealthy(t, base+"/healthz", 10*time.Second) {
+	if !waitHealthy(t, host+"/healthz", 10*time.Second) {
 		t.Fatal("serve did not become healthy")
 	}
 
-	// Tempdir basenames are numeric (001, 002, …), so each slug is its basename.
+	mustRun(t, testBin, repoA, "ui", "push")
+	mustRun(t, testBin, repoB, "ui", "push")
+
 	slugA := filepath.Base(repoA)
 	slugB := filepath.Base(repoB)
 
-	// / is the connected-projects landing — a launcher, not any single repo's
-	// project page. It lists every project (uniform, no "launched here" badge)
-	// with counts (not story titles), plus the add-a-project help.
-	root := httpGetBody(t, base+"/")
+	root := httpGetBody(t, host+"/")
 	for _, want := range []string{
-		"in the workspace",
-		"satelle workspace add",
-		"satelle update",
-		`href="/` + slugA + `/#stories"`,
-		`href="/` + slugB + `/#stories"`,
+		"workspace",
+		"push-fed",
+		`href="/r/` + slugA + `/"`,
+		`href="/r/` + slugB + `/"`,
 	} {
 		if !strings.Contains(root, want) {
 			t.Errorf("landing missing %q:\n%s", want, root)
 		}
 	}
-	if strings.Contains(root, "launched here") {
-		t.Errorf("landing still renders the retired 'launched here' badge:\n%s", root)
-	}
-	if strings.Contains(root, "AlphaOnlyStory") || strings.Contains(root, "BetaOnlyStory") {
-		t.Errorf("landing leaked a project's story titles (it should show counts only):\n%s", root)
+
+	// /workspace aliases the landing.
+	ws := httpGetBody(t, host+"/workspace")
+	if !strings.Contains(ws, "workspace") {
+		t.Errorf("/workspace should render landing:\n%s", ws)
 	}
 
-	// /projects redirects to the landing at / (back-compat for older links).
-	if loc, code := httpRedirect(t, base+"/projects"); code != http.StatusFound || loc != "/" {
-		t.Errorf("/projects = %d -> %q, want 302 -> /", code, loc)
-	}
-
-	// The launch repo is now served under its OWN slug — prefixed base href so its
-	// assets/SSE resolve under the prefix — and shows ONLY its own data.
-	aBody := httpGetBody(t, base+"/"+slugA+"/")
-	if !strings.Contains(aBody, `<base href="/`+slugA+`/">`) || !strings.Contains(aBody, "AlphaOnlyStory") {
-		t.Errorf("launch repo not served at /%s/ with its own data:\n%s", slugA, aBody)
+	aBody := httpGetBody(t, host+"/r/"+slugA+"/")
+	if !strings.Contains(aBody, "AlphaOnlyStory") {
+		t.Errorf("repo A project page missing its story:\n%s", aBody)
 	}
 	if strings.Contains(aBody, "BetaOnlyStory") {
-		t.Error("launch repo page leaked the other repo's story (data bleed)")
+		t.Error("repo A page leaked B's story")
+	}
+	if !strings.Contains(aBody, `<base href="/r/`+slugA+`/">`) {
+		t.Errorf("expected project base href under /r/%s/:\n%s", slugA, aBody)
 	}
 
-	// The breadcrumb is a project switcher listing every project and linking the
-	// sibling — proof the supervisor injects its live slug table into the proxied
-	// child so the child never recomputes slugs (sty_2bc00a9d).
-	if !strings.Contains(aBody, `class="proj-switch"`) {
-		t.Errorf("project page missing the breadcrumb project switcher:\n%s", aBody)
-	}
-	if !strings.Contains(aBody, `href="/`+slugB+`/"`) {
-		t.Errorf("switcher on /%s/ does not link the sibling /%s/", slugA, slugB)
-	}
-
-	// The other project under its slug, with its own base href and ONLY its data.
-	bBody := httpGetBody(t, base+"/"+slugB+"/")
-	if !strings.Contains(bBody, `<base href="/`+slugB+`/">`) || !strings.Contains(bBody, "BetaOnlyStory") {
-		t.Errorf("project not served at /%s/ with its own data:\n%s", slugB, bBody)
+	bBody := httpGetBody(t, host+"/r/"+slugB+"/")
+	if !strings.Contains(bBody, "BetaOnlyStory") {
+		t.Errorf("repo B project page missing its story:\n%s", bBody)
 	}
 	if strings.Contains(bBody, "AlphaOnlyStory") {
-		t.Error("project page leaked the launch repo's story (data bleed)")
+		t.Error("repo B page leaked A's story")
 	}
 
-	// An unknown /<prefix>/ is not a registered project → 404 via shared chrome.
-	if code := httpStatus(t, base+"/bogus/fragment/stories"); code != http.StatusNotFound {
-		t.Errorf("unknown project prefix = %d, want 404", code)
-	}
-
-	// Branded shared header + live-refresh marker (sty_4ea4d4df), over real HTTP.
-	for _, want := range []string{"<h1>workspace</h1>", `data-page="projects"`, "brand-mark"} {
-		if !strings.Contains(root, want) {
-			t.Errorf("landing missing shared-header element %q", want)
-		}
-	}
-
-	// Hot-add: register a THIRD repo while running; it must appear on the landing
-	// AND doorbell the "projects" SSE topic so an OPEN tab refreshes without a
-	// manual reload (sty_4ea4d4df). Subscribe BEFORE the add.
-	evResp, err := http.Get(base + "/events")
+	// Non-ingest POST still rejected.
+	req, _ := http.NewRequest(http.MethodPost, host+"/theme", strings.NewReader("theme=dark"))
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("open /events: %v", err)
+		t.Fatal(err)
 	}
-	defer evResp.Body.Close()
-	evTimer := time.AfterFunc(20*time.Second, func() { evResp.Body.Close() })
-	defer evTimer.Stop()
-	gotProjects := make(chan struct{}, 1)
-	go func() {
-		sc := bufio.NewScanner(evResp.Body)
-		for sc.Scan() {
-			if strings.TrimSpace(sc.Text()) == "data: projects" {
-				gotProjects <- struct{}{}
-				return
-			}
-		}
-	}()
-
-	repoC := t.TempDir()
-	mustRun(t, testBin, repoC, "init")
-	workspaceAdd(t, home, repoA, repoC)
-	deadline := time.Now().Add(15 * time.Second)
-	got := 0
-	for time.Now().Before(deadline) {
-		if got = strings.Count(httpGetBody(t, base+"/"), `/#stories"`); got >= 3 {
-			break
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	if got < 3 {
-		t.Errorf("hot-add: landing shows %d projects after workspace add (want 3)", got)
-	}
-	select {
-	case <-gotProjects:
-	case <-time.After(15 * time.Second):
-		t.Error("workspace add did not doorbell the 'projects' SSE topic (open landing tabs stay stale)")
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent {
+		t.Errorf("POST /theme must not succeed on mirror, got %d", resp.StatusCode)
 	}
 }
 
-// TestFooterConsistentAcrossPages asserts the one shared footer (satelle
-// <version>) renders identically on the landing, a project page, /help and
-// /workspace — the footer is one template, not a per-page copy.
-func TestFooterConsistentAcrossPages(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
-	base, repo := serveRepo(t, "8823") // base is host+/<slug> (the project page)
-	host := strings.TrimSuffix(base, "/"+filepath.Base(repo))
-
-	footer := func(url string) string {
-		m := footerRe.FindStringSubmatch(httpGetBody(t, url))
-		if m == nil {
-			t.Fatalf("no site-footer on %s", url)
-		}
-		return m[1]
-	}
-
-	want := footer(base + "/") // the project page footer
-	if !strings.HasPrefix(want, "satelle ") {
-		t.Errorf("footer is not 'satelle <version>': %q", want)
-	}
-	for _, url := range []string{host + "/", host + "/help", host + "/workspace"} {
-		if got := footer(url); got != want {
-			t.Errorf("footer on %s = %q, want %q (footers must match)", url, got, want)
-		}
-	}
+func httpGetBody(t *testing.T, url string) string {
+	t.Helper()
+	return httpGet(t, url)
 }
 
-var footerRe = regexp.MustCompile(`<span class="footer-version">([^<]*)</span>`)
-
-// workspaceAdd runs `workspace add` in dir with an isolated SATELLE_HOME.
+// workspaceAdd registers repo under home's workspace from dir as cwd.
 func workspaceAdd(t *testing.T, home, dir, repo string) {
 	t.Helper()
 	cmd := exec.Command(testBin, "workspace", "add", repo)
@@ -211,208 +132,5 @@ func workspaceAdd(t *testing.T, home, dir, repo string) {
 	cmd.Env = append(os.Environ(), "SATELLE_HOME="+home)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("workspace add: %v\n%s", err, out)
-	}
-}
-
-// httpRedirect issues a GET that does NOT follow redirects, returning the
-// Location header and status code.
-func httpRedirect(t *testing.T, url string) (string, int) {
-	t.Helper()
-	c := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, err := c.Get(url)
-	if err != nil {
-		t.Fatalf("GET %s: %v", url, err)
-	}
-	defer resp.Body.Close()
-	return resp.Header.Get("Location"), resp.StatusCode
-}
-
-func httpGetBody(t *testing.T, url string) string {
-	t.Helper()
-	resp, err := http.Get(url)
-	if err != nil {
-		t.Fatalf("GET %s: %v", url, err)
-	}
-	defer resp.Body.Close()
-	var sb strings.Builder
-	buf := make([]byte, 8192)
-	for {
-		n, err := resp.Body.Read(buf)
-		sb.Write(buf[:n])
-		if err != nil {
-			break
-		}
-	}
-	return sb.String()
-}
-
-// TestSupervisorRespawnsHealthyChild (sty_5faf46f1 AC1/AC4): after a healthy
-// child is killed, the hub logs the exit, removes the healthy row during the
-// gap (or shows failed), respawns, and the project route is 200 again.
-func TestSupervisorRespawnsHealthyChild(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
-	home := t.TempDir()
-	repoA := t.TempDir()
-	repoB := t.TempDir()
-	mustRun(t, testBin, repoA, "init")
-	mustRun(t, testBin, repoB, "init")
-	workspaceAdd(t, home, repoA, repoB)
-
-	port := freeListenPort(t)
-	slugB := filepath.Base(repoB)
-	stderrR, stderrW, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Scan stderr BEFORE start so the healthy log line cannot race past us.
-	pidCh := make(chan int, 4)
-	go func() {
-		sc := bufio.NewScanner(stderrR)
-		re := regexp.MustCompile(`child healthy: /` + regexp.QuoteMeta(slugB) + `/ pid=(\d+)`)
-		for sc.Scan() {
-			line := sc.Text()
-			if m := re.FindStringSubmatch(line); m != nil {
-				var pid int
-				fmt.Sscanf(m[1], "%d", &pid)
-				if pid > 0 {
-					select {
-					case pidCh <- pid:
-					default:
-					}
-				}
-			}
-		}
-	}()
-
-	cmd := exec.Command(testBin, "serve", "--port", port, "--no-watch")
-	cmd.Dir = repoA
-	cmd.Env = append(os.Environ(), "SATELLE_HOME="+home)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = io.MultiWriter(os.Stderr, stderrW)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start serve: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
-		done := make(chan struct{})
-		go func() { _, _ = cmd.Process.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			_ = cmd.Process.Kill()
-		}
-		_ = stderrW.Close()
-	})
-
-	base := "http://127.0.0.1:" + port
-	if !waitHealthy(t, base+"/healthz", 15*time.Second) {
-		t.Fatal("hub did not become healthy")
-	}
-	// Wait for child B to be reachable.
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		if httpStatus(t, base+"/"+slugB+"/healthz") == 200 {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if httpStatus(t, base+"/"+slugB+"/healthz") != 200 {
-		t.Fatalf("child /%s/ never healthy before kill", slugB)
-	}
-
-	var pid int
-	select {
-	case pid = <-pidCh:
-	case <-time.After(10 * time.Second):
-		t.Fatal("did not observe child healthy log line for " + slugB)
-	}
-
-	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
-		t.Fatalf("kill child pid %d: %v", pid, err)
-	}
-
-	// After kill: either failed row or not healthy — never a silent permanent 502.
-	// Wait for recovery (respawn).
-	recovered := false
-	deadline = time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		if httpStatus(t, base+"/"+slugB+"/healthz") == 200 {
-			recovered = true
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	if !recovered {
-		t.Fatalf("child /%s/ did not recover after kill (pid %d)", slugB, pid)
-	}
-	// Landing should list the project as healthy again (not stuck as failed).
-	root := httpGetBody(t, base+"/")
-	if !strings.Contains(root, `href="/`+slugB+`/#stories"`) {
-		t.Errorf("landing missing recovered project /%s/:\n%s", slugB, root)
-	}
-}
-
-// TestSupervisorFailsUnhealthyBoot (sty_5faf46f1 AC3): a child that never
-// becomes healthy is not registered with a live proxy — landing shows failed,
-// and /<slug>/ is not a permanent 502 route.
-func TestSupervisorFailsUnhealthyBoot(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
-	home := t.TempDir()
-	repoA := t.TempDir()
-	repoBroken := t.TempDir()
-	mustRun(t, testBin, repoA, "init")
-	mustRun(t, testBin, repoBroken, "init")
-	// Break the agents layer so serve refuses at appFrom (sty_d0d6bb67).
-	agentsPath := filepath.Join(repoBroken, ".satelle", "agents.toml")
-	if err := os.WriteFile(agentsPath, []byte("not = [ valid toml {{{{"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	workspaceAdd(t, home, repoA, repoBroken)
-
-	port := freeListenPort(t)
-	cmd := exec.Command(testBin, "serve", "--port", port, "--no-watch")
-	cmd.Dir = repoA
-	cmd.Env = append(os.Environ(), "SATELLE_HOME="+home)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start serve: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
-		done := make(chan struct{})
-		go func() { _, _ = cmd.Process.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			_ = cmd.Process.Kill()
-		}
-	})
-
-	base := "http://127.0.0.1:" + port
-	if !waitHealthy(t, base+"/healthz", 15*time.Second) {
-		t.Fatal("hub did not become healthy")
-	}
-	slugBroken := filepath.Base(repoBroken)
-
-	// Wait until the failed row appears on the landing.
-	deadline := time.Now().Add(25 * time.Second)
-	var root string
-	for time.Now().Before(deadline) {
-		root = httpGetBody(t, base+"/")
-		if strings.Contains(root, "not serving") && strings.Contains(root, slugBroken) {
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	if !strings.Contains(root, "not serving") {
-		t.Fatalf("landing never showed failed row for broken project:\n%s", root)
-	}
-	// No live proxy: must not be 200 on healthz under the broken slug.
-	// (404 from shared chrome, or 502 only transiently during backoff is ok;
-	// permanent 200 would mean a healthy registration.)
-	code := httpStatus(t, base+"/"+slugBroken+"/healthz")
-	if code == 200 {
-		t.Fatalf("broken child registered a live proxy (status 200); want non-200")
 	}
 }

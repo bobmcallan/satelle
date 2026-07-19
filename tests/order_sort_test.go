@@ -17,7 +17,6 @@ import (
 // silently fell back to updated-desc because `order` was not a known sort field
 // (sty_283f9f1e).
 func TestBrowserOrderTagSort(t *testing.T) {
-	t.Skip("pending full push-fed mirror UI template parity (sty_dbdadfa0); covered by TestServeMirrorPushFed")
 	ctx := newChrome(t)
 	base, repo := serveRepo(t, "8811")
 
@@ -28,6 +27,7 @@ func TestBrowserOrderTagSort(t *testing.T) {
 			"--title", title, "--body", "the goal", "--acceptance", "1. it does X", "--tags", tags)
 		return extractID(out, "sty_")
 	}
+	// Push after all creates is done below; each mk only creates.
 	id2 := mk("Second", "ordtest,order:2")
 	id10 := mk("Tenth", "ordtest,order:10")
 	id1 := mk("First", "ordtest,order:1")
@@ -38,6 +38,7 @@ func TestBrowserOrderTagSort(t *testing.T) {
 	idN := mk("NoOrder", "ordtest")
 	tie := []string{id3a, id3b}
 	sort.Strings(tie) // expand-url shares a constant prefix, so id order == url order
+	mustRun(t, testBin, repo, "ui", "push")
 
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(base),

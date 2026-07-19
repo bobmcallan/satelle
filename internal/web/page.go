@@ -134,7 +134,7 @@ const templatesSrc = `
      connected, muted --fail-soft on the ◐ only (.sse-down, added by app.js) when the
      stream drops. The theme toggle glyph is ☾/☀ (app.js), never ◐. Mobile-collapsible
      nav is out of scope — the row stays inline. */}}
-{{define "topbar"}}<header class="topbar"><div class="topbar-inner"><a class="brand-mark" href="https://satelle.dev/" target="_blank" rel="noopener" title="satelle — home{{if .Uptime}} · {{.Uptime}} at page load · mark colour = live-update connection{{end}}" aria-label="satelle home (opens in a new tab)">{{template "brandmark-svg"}}<span class="brand-word">satelle</span></a><div class="topbar-controls"><nav class="topnav"><a href="https://satelle.dev/install" target="_blank" rel="noopener">Install</a><a href="https://satelle.dev/docs" target="_blank" rel="noopener">Docs</a><a href="workspace"{{if eq .Active "projects"}} class="active" aria-current="page"{{end}}>Projects</a><a class="github-btn" href="https://github.com/bobmcallan/satelle" target="_blank" rel="noopener" aria-label="GitHub" title="GitHub">{{template "github-svg"}}</a></nav>{{template "account" .User}}<button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">☾</button></div></div></header>{{end}}
+{{define "topbar"}}<header class="topbar"><div class="topbar-inner"><a class="brand-mark" href="https://satelle.dev/" target="_blank" rel="noopener" title="satelle — home{{if .Uptime}} · {{.Uptime}} at page load · mark colour = live-update connection{{end}}" aria-label="satelle home (opens in a new tab)">{{template "brandmark-svg"}}<span class="brand-word">satelle</span></a><div class="topbar-controls"><nav class="topnav"><a href="https://satelle.dev/install" target="_blank" rel="noopener">Install</a><a href="https://satelle.dev/docs" target="_blank" rel="noopener">Docs</a><a href="/"{{if eq .Active "projects"}} class="active" aria-current="page"{{end}}>Projects</a><a class="github-btn" href="https://github.com/bobmcallan/satelle" target="_blank" rel="noopener" aria-label="GitHub" title="GitHub">{{template "github-svg"}}</a></nav>{{if .MirrorRO}}<span class="signin" title="push-fed identity">{{if .IdentityEmail}}{{.IdentityEmail}}{{else}}mirror{{end}}</span>{{else}}{{template "account" .User}}{{end}}<button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">☾</button></div></div></header>{{end}}
 
 {{/* account: the hosted-server sign-in control (sty_9ae98484, sty_2faa7dd4).
      Signed out → a "Sign in" link (relative href, so the <base> resolves the /slug/
@@ -180,7 +180,7 @@ const templatesSrc = `
 
 {{/* favicon: the green-dot logo (the wordmark's .dot), one shared partial so every
      page <head> links the same icon — no per-page drift. */}}
-{{define "favicon"}}<link rel="icon" type="image/svg+xml" href="static/favicon.svg"><link rel="apple-touch-icon" href="static/favicon.svg">{{end}}
+{{define "favicon"}}<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"><link rel="apple-touch-icon" href="/static/favicon.svg">{{end}}
 
 {{define "page"}}<!doctype html>
 <html lang="en"{{if .Theme}} data-theme="{{.Theme}}"{{end}}>
@@ -191,7 +191,7 @@ const templatesSrc = `
 <script>(function(){try{if(!document.documentElement.getAttribute('data-theme')){var t=localStorage.getItem('satelle-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
 <base href="{{basehref}}">
 {{template "favicon"}}
-<link rel="stylesheet" href="static/app.css">
+<link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 {{template "topbar" .TopBar}}
@@ -255,7 +255,7 @@ const templatesSrc = `
 
   {{template "footer"}}
 </div>
-<script src="static/app.js"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>{{end}}
 
@@ -348,7 +348,7 @@ const templatesSrc = `
 <script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <base href="{{basehref}}">
 {{template "favicon"}}
-<link rel="stylesheet" href="static/app.css">
+<link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 {{template "topbar" .TopBar}}
@@ -365,7 +365,7 @@ const templatesSrc = `
   </table>{{end}}
   {{template "footer"}}
 </div>
-<script src="static/app.js"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>{{end}}
 
@@ -378,7 +378,7 @@ const templatesSrc = `
 <script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <base href="{{basehref}}">
 {{template "favicon"}}
-<link rel="stylesheet" href="static/app.css">
+<link rel="stylesheet" href="/static/app.css">
 </head>
 <body data-page="projects">
 {{template "topbar" .TopBar}}
@@ -408,7 +408,7 @@ const templatesSrc = `
   </article>
   {{template "footer"}}
 </div>
-<script src="static/app.js"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>{{end}}
 
@@ -421,7 +421,7 @@ const templatesSrc = `
 <script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <base href="{{basehref}}">
 {{template "favicon"}}
-<link rel="stylesheet" href="static/app.css">
+<link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 {{template "topbar" .TopBar}}
@@ -437,7 +437,7 @@ const templatesSrc = `
   </section>{{else}}<div class="empty">no help topics</div>{{end}}
   {{template "footer"}}
 </div>
-<script src="static/app.js"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>{{end}}
 
@@ -450,7 +450,7 @@ const templatesSrc = `
 <script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <base href="{{basehref}}">
 {{template "favicon"}}
-<link rel="stylesheet" href="static/app.css">
+<link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 {{template "topbar" .TopBar}}
@@ -460,7 +460,7 @@ const templatesSrc = `
     <h1>satelle<span class="dot">.</span> settings</h1>
     <div class="meta">{{.RepoRoot}} · read-only view of <code>.satelle/satelle.toml</code></div>
   </header>
-  <div class="settings-note settings-readonly-note">Repo settings are read-only here — edit <code>.satelle/satelle.toml</code> directly (and commit it under the workflow) to change them. Account and machine-wide settings live on the <a href="settings/global">global settings</a> page. Overlay (<code>satelle.local.toml</code>) values are not shown here.</div>
+  <div class="settings-note settings-readonly-note">Repo settings are read-only here — edit <code>.satelle/satelle.toml</code> directly (and commit it under the workflow) to change them.{{if not .MirrorRO}} Account and machine-wide settings live on the <a href="settings/global">global settings</a> page.{{end}} Overlay (<code>satelle.local.toml</code>) values are not shown here.</div>
   <div class="settings">
     {{range .Rows}}{{if .SectHead}}<h2 class="kind-h settings-sect">{{.SectHead}}</h2>{{end}}<div class="setting-row">
       <div class="setting-label"><span class="setting-key">{{.FieldID}}</span><span class="setting-label-name">{{.Label}}</span>{{if .Help}}<span class="setting-help">{{.Help}}</span>{{end}}</div>
@@ -479,7 +479,7 @@ const templatesSrc = `
   </div>
   {{template "footer"}}
 </div>
-<script src="static/app.js"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>{{end}}
 
@@ -492,7 +492,7 @@ const templatesSrc = `
 <script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <base href="{{basehref}}">
 {{template "favicon"}}
-<link rel="stylesheet" href="static/app.css">
+<link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 {{template "topbar" .TopBar}}
@@ -517,7 +517,7 @@ const templatesSrc = `
   </form>
   {{template "footer"}}
 </div>
-<script src="static/app.js"></script>
+<script src="/static/app.js"></script>
 <script>
 (function(){var f=document.getElementById('gsettings-form');if(!f)return;
 f.addEventListener('submit',function(e){e.preventDefault();var err=document.getElementById('gsettings-error');err.hidden=true;
@@ -537,7 +537,7 @@ fetch('settings/global',{method:'POST',headers:{'X-Satelle-Settings':'1'},body:n
 <script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <base href="{{basehref}}">
 {{template "favicon"}}
-<link rel="stylesheet" href="static/app.css">
+<link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 {{template "topbar" .TopBar}}
@@ -553,7 +553,7 @@ fetch('settings/global',{method:'POST',headers:{'X-Satelle-Settings':'1'},body:n
   <article class="doc-article">{{.HTML}}</article>
   {{template "footer"}}
 </div>
-<script src="static/app.js"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>{{end}}
 
@@ -566,7 +566,7 @@ fetch('settings/global',{method:'POST',headers:{'X-Satelle-Settings':'1'},body:n
 <script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <base href="{{basehref}}">
 {{template "favicon"}}
-<link rel="stylesheet" href="static/app.css">
+<link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 {{template "topbar" .TopBar}}
@@ -580,7 +580,7 @@ fetch('settings/global',{method:'POST',headers:{'X-Satelle-Settings':'1'},body:n
   <div id="detail-live" data-kind="{{.Item.Kind}}" data-id="{{.Item.ID}}">{{template "itemDetail" .}}</div>
   {{template "footer"}}
 </div>
-<script src="static/app.js"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>{{end}}
 `

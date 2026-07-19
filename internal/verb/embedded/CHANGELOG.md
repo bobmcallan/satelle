@@ -1,3 +1,12 @@
+## [0.0.281] - 2026-07-19
+
+### Added
+- Push-fed mirror UI parity: full snapshot kinds (docs with mod_time/provenance/source, ledger, seats, identity, settings, story docs) and template-rendered project/workspace pages on the mirror serve (sty_400c022b / epic:mirror-ui-parity)
+
+### Changed
+- Serve templates use absolute `/static/` assets so CSS/JS resolve under `/r/{slug}/` base href
+- Browser and integration e2e re-enabled against the push-fed mirror (seed via ui push)
+
 ## [0.0.280] - 2026-07-19
 
 ### Added

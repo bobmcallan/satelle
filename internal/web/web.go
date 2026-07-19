@@ -380,6 +380,12 @@ type topBar struct {
 	// Active names the current nav item so its link renders accent (DS SiteHeader):
 	// "home", "projects", "help", or "" for a page no nav item represents.
 	Active string
+	// MirrorRO is true on the push-fed serve: no sign-in/settings forms; identity
+	// (if any) comes from the pushed meta blob (epic:mirror-ui-parity order:4).
+	MirrorRO bool
+	// IdentityEmail is the operator email from the pushed identity meta; shown as
+	// a static strip when MirrorRO is set (no auth menu).
+	IdentityEmail string
 }
 
 // rowVM is a work item plus its progress lights for the table row. Embedding the

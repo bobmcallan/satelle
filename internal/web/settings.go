@@ -31,6 +31,8 @@ type settingsData struct {
 	Rows     []settingsRowVM
 	TopBar   topBar
 	RepoRoot string
+	// MirrorRO hides the global-settings link (no write surface on push-fed serve).
+	MirrorRO bool
 }
 
 func configPathFor(a *app.App) string {

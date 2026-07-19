@@ -28,6 +28,17 @@ type Snapshot struct {
 	StoryDocs    []json.RawMessage `json:"story_docs,omitempty"` // id = story_id/name
 	Seats        []json.RawMessage `json:"seats,omitempty"`
 	Settings     json.RawMessage   `json:"settings,omitempty"` // single settings blob
+	// Identity is the per-partition meta blob (project name, repo path, footer email).
+	// Ingested as kind "identity" id "meta" (sty_400c022b / epic:mirror-ui-parity).
+	Identity json.RawMessage `json:"identity,omitempty"`
+}
+
+// IdentityMeta is the JSON shape of Snapshot.Identity — what the mirror footer
+// and account strip render without opening a repo DB or calling git.
+type IdentityMeta struct {
+	ProjectName string `json:"project_name"`
+	RepoRoot    string `json:"repo_root"`
+	FooterEmail string `json:"footer_email"`
 }
 
 // IngestHandler serves POST /ingest/change and POST /ingest/snapshot.
@@ -110,6 +121,12 @@ func (h *IngestHandler) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(snap.Settings) > 0 {
 		if err := h.Store.ReplaceKind(ctx, snap.RepoKey, "settings", []ItemRow{{ID: "config", Payload: string(snap.Settings)}}, now); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	if len(snap.Identity) > 0 {
+		if err := h.Store.ReplaceKind(ctx, snap.RepoKey, "identity", []ItemRow{{ID: "meta", Payload: string(snap.Identity)}}, now); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
