@@ -30,23 +30,32 @@ role    = "agent"
 command = "in-loop"
 principles = "session"
 
-# Full command template, not the bare "grok" preset — the reviewer's grant must be
-# VISIBLE (transparency, sty_892517e7): the read-only --tools grant and the --deny
-# mutator ceiling are spelled out here, so it is clear what the reviewer can and
-# cannot do without knowing what a preset expands to. (command = "grok" resolves to
-# this exact argv; the preset is for a from-scratch wiring, not the committed default.)
+# [reviewer] — Grok over ACP (sty_ce84ea63 / epic:agent-dispatch-transport).
+# Spawn is "grok agent stdio" only: system + payload ride protocol content blocks;
+# model is set via session set_config_option (failure-tolerant). Placeholders are
+# REJECTED on interface=acp commands.
+#
+# Read-only ceiling: formerly sty_892517e7 made the argv-template grant visible
+# (--tools read_file,grep,list_dir plus --deny Write/Edit/…). Under ACP that
+# rationale is superseded — the ceiling is enforced BY SATELLE at the protocol
+# seam (session/request_permission auto-denies mutators when the grant has no
+# write-capable tool; toolsAllowMutators). Protocol enforcement is stronger than
+# trusting CLI --deny flags. tools= still names the grant satelle advertises.
 [reviewer]
-role    = "reviewer"
-command = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir -m {model} --deny Write --deny Edit --deny search_replace --deny write --always-approve --output-format plain --max-turns 16 --no-subagents"
-tools   = "read_file,grep,list_dir"   # grok-native read-only grant (the preset bakes this; shown here so the ceiling is explicit)
-model   = "grok-4.5"
+role      = "reviewer"
+interface = "acp"
+command   = "grok agent stdio"
+tools     = "read_file,grep,list_dir"
+model     = "grok-4.5"
 principles = "session"
 
+# Planner — cheap fable model; plans only (no implement). Claude stays
+# interface=command (no native ACP).
 [planner]
 role    = "agent"
 command = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Bash(satelle:*)"
-model   = "opus"
+model   = "fable"
 principles = "session"
 
 [retrospective]
@@ -60,7 +69,7 @@ principles = "session"
 # Wired via on_enter_agent=blocked-triage on the blocked node (agent=reviewer stays the
 # engagement role so the park remains non-engaging — sty_5cabe26f). Reuse check: [executor]
 # is in-loop only; [planner]/[reviewer] are read-only. Full tools — gates bound authority,
-# not --deny. Model: most capable available (opus).
+# not --deny. Model: most capable available (opus). Claude: interface=command.
 [blocked-triage]
 role    = "agent"
 command = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
@@ -70,14 +79,13 @@ principles = "session"
 
 # not wired in any current workflow — dispatched-coder (epic:dispatched-coder)
 # superseded by in-loop executor. Kept dormant for tests/re-opt-in (sty_db003275);
-# no workflow node allocates agent=coder. When re-wired: Grok argv-first,
-# edit-capable via search_replace only (no run_terminal_command / write —
-# headless Grok agent-build refuses both). Context via payload `docs`
-# (sty_58fa970e); plan-consumed evidence is a stdout statement.
-# --always-approve: .grok PreToolUse gates are the real ceiling.
+# no workflow node allocates agent=coder. When re-wired: Grok ACP (sty_ce84ea63)
+# with search_replace in the grant (mutators allowed via toolsAllowMutators).
+# Context via payload `docs` (sty_58fa970e); plan-consumed evidence is a stdout statement.
 [coder]
-role    = "agent"
-command = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir,search_replace -m {model} --always-approve --output-format plain --max-turns 40 --no-subagents"
-tools   = "read_file,grep,list_dir,search_replace"
-model   = "grok-4.5"
+role      = "agent"
+interface = "acp"
+command   = "grok agent stdio"
+tools     = "read_file,grep,list_dir,search_replace"
+model     = "grok-4.5"
 principles = "session"
