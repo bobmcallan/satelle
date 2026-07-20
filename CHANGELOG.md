@@ -1,3 +1,8 @@
+## [0.0.287] - 2026-07-20
+
+### Changed
+- README documents serve-adoption surface: workspace add, satelle-serve, independent versions, CI vs local tests; retired ui push named as removed (sty_1fef9026)
+
 ## [0.0.286] - 2026-07-20
 
 ### Fixed

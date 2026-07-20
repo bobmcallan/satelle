@@ -4,8 +4,8 @@ Local-first substrate for agent-driven work. Satelle governs the
 authored process — stories, tasks, an evidence ledger, and authored markdown
 (documents, workflows, principles, skills) — backed by a per-repo SQLite
 database. Work moves through a **gated workflow**: the agent executes; isolated
-reviewers gate every status change. satelle runs **100% locally**: a single
-static binary, no server, no cgo.
+reviewers gate every status change. satelle runs **100% locally**: pure-Go
+static binaries (CLI + optional `satelle-serve` UI), no external server, no cgo.
 
 > V6 rebrand of `satellites`. See [`docs/`](./docs) for the product spec, port
 > architecture, and the operating model.
@@ -16,43 +16,64 @@ static binary, no server, no cgo.
 curl -fsSL https://github.com/bobmcallan/satelle/releases/latest/download/install.sh | sh
 ```
 
-Downloads the latest release binary for your platform, sha256-verifies it, and
+Downloads the latest **CLI** release for your platform (and the latest
+**satelle-serve** when a `serve-v*` release exists), sha256-verifies each, and
 installs to `~/.local/bin` (override with `SATELLE_INSTALL_DIR`). Or build from
-source: `make install`.
+source: `make install` (builds both `satelle` and `satelle-serve`).
 
-Already installed? `satelle update` self-updates in place — it resolves the
-latest release, sha256-verifies it, replaces the binary, and restarts the
-background service. `satelle update --check` reports availability without
-installing.
+CLI and serve carry **independent versions** in `.version`
+(`satelle.version` / `satelle-serve.version`). GitHub tags are `vX` for the CLI
+(always `releases/latest`) and `serve-vY` for the UI binary (not latest).
+
+Already installed? `satelle update` self-updates the CLI and refreshes
+`satelle-serve` from its own channel, then restarts the background service.
+`satelle update --check` reports availability without installing.
 
 ## Quickstart
 
 ```sh
-go build -o satelle ./cmd/satelle   # or: make install
+make install           # build + install satelle and satelle-serve to ~/.local/bin
 
 cd your-repo
-satelle init           # scaffold .satelle/ (config, database, default workflows + skills) + validate the deployment
+satelle init           # scaffold .satelle/ + validate; reports workspace: member|not-member
 satelle story create --title "Ship the thing" --priority high
 satelle task create  --title "write release notes"
-satelle reindex          # index authored markdown under .satelle/
+satelle reindex        # index authored markdown under .satelle/
 satelle status         # config, database, and store counts
-satelle serve          # local web project page (http://127.0.0.1:8787)
+satelle service install   # always-on UI (prefers satelle-serve); or: satelle-serve --port 8787
 ```
 
-While `serve` runs, the project page lists every story/task, and each links to a
-trackable detail URL — `http://127.0.0.1:8787/story/<id>` (or `/task/<id>`) —
-showing status, acceptance criteria, and the full ledger timeline. The server is
-local-only (there is no hosted URL).
+The UI is a **push-fed read-only mirror** (not a live DB browser). Project pages
+live under `/r/<slug>/` on the workspace landing (`http://127.0.0.1:8787/`).
 
-### Push-fed UI server (CLI → serve)
+### Push-fed UI (CLI → satelle-serve)
 
-The web UI is a **read-only mirror** fed by the CLI (epic:serve-split):
+The web UI is a **read-only mirror** fed by the CLI (serve-split architecture;
+serve-adoption onboarding):
 
-1. Configure `[server] endpoint = "http://127.0.0.1:8787"` in `.satelle/satelle.toml` (or local).
-2. Run `satelle serve` (or `satelle service install` for a systemd unit).
-3. `satelle workspace add` registers the repo and posts a full snapshot; mutating verbs drain change events and one auto-snapshot before process exit.
+1. Run the UI: `satelle-serve` (or `satelle service install`, which prefers the
+   dedicated binary). `satelle serve` remains a **deprecated alias** that prints
+   a migration notice and runs the same mirror server.
+2. Point the CLI at it with `[server] endpoint` — usually in
+   **gitignored** `.satelle/satelle.local.toml` (per machine):
+   ```toml
+   [server]
+   endpoint = "http://127.0.0.1:8787"
+   ```
+3. Join the workspace and seed the mirror in one verb:
+   ```sh
+   satelle workspace add    # register repo + POST /ingest/snapshot when endpoint is set
+   ```
+   Without an endpoint, the verb still registers the path and prints a notice that
+   the mirror was **not** seeded (the landing will not show a card until you set
+   the endpoint and re-run). Mutating verbs drain change + one snapshot before
+   process exit (no manual reconcile step).
 
-Serve never opens per-repo runtime DBs — only `~/.satelle/serve/mirror.db`, partitioned by repo-key.
+`satelle ui` / `satelle ui push` were **removed** — they print a pointer to
+`satelle workspace add`.
+
+Serve never opens per-repo runtime DBs — only `~/.satelle/serve/mirror.db`,
+partitioned by repo-key.
 
 ### Substrate freshness without serve
 
@@ -68,15 +89,19 @@ start) to land in the store/index. See `satelle reindex --help`.
 
 ### Always-on service
 
-`satelle serve` runs in the foreground. To keep the project page up across
-terminals and reboots, install it as a background service:
+Prefer the dedicated **`satelle-serve`** binary for the UI process. Install both
+artifacts, then install the service (it picks `satelle-serve` next to the CLI when
+present; falls back to `satelle serve` with a notice):
 
 ```sh
-make install                 # build + place satelle on PATH (~/.local/bin)
+make install                 # build + place satelle and satelle-serve on PATH
 cd your-repo
-satelle service install      # systemd user service (Linux/WSL)
+satelle service install      # systemd user unit (Linux/WSL); --system for persistent system unit
 satelle service status       # show state + URL
 ```
+
+Foreground: `satelle-serve --addr 0.0.0.0 --port 8787`. The old `satelle serve`
+subcommand still works as a deprecated alias.
 
 Settings live in the machine-wide `~/.satelle/config.toml` (`[service]` port /
 addr / repo). Change the port there (or pass `--port`) and re-run
@@ -103,10 +128,12 @@ repo it governs.
 | `sync` | `scopes`, `config` (push/deploy), `documents` (push/pull), `workstate` (push/pull), `rehydrate`/`pull` (no push) — personal opt-in targets **this repo's bound hosted project only**; local is the default. **Recover after clone/wipe:** install → `login` → `project bind <slug>` → `sync rehydrate` (config deploy first, then documents + workstate pull) |
 | `publish` | `push`, `list`, `adopt`, `check` — team catalog (select local artifacts to share; not a second home for the repo). Distinct from personal `sync` |
 | `settings` | Read/write config in two scopes: repo `<key> [value]` (committed `.satelle/satelle.toml`; no args lists all) is the default; `--global server <url>` sets the machine-wide hosted server in `~/.satelle/config.toml` (no login; sign in after via the UI or `login`) |
-| | `init`, `reindex`, `status`, `serve`, `version` |
+| | `init`, `reindex`, `status`, `version` |
+| `workspace` | `add` (register + seed mirror), `remove`, `list` |
+| UI process | `satelle-serve` (dedicated binary); `satelle serve` is a deprecated alias |
 
-Both the CLI and the web server reach data the same way — through one verb
-registry (`CLI / web → verb.Dispatch → store`), so the two surfaces never drift.
+The CLI is the sole writer into repo stores. The UI process only serves the
+push-fed mirror (plus ingest).
 
 ## Workflows & gates — the agent model
 
@@ -147,8 +174,8 @@ with no binary release. See `satelle help reviewer-checks` and the
 - **Config:** per-repo `.satelle/satelle.toml` with defaults for every setting
   and a gitignored `satelle.local.toml` overlay. Optional `stories_keep_closed`
   (count) and `stories_keep_days` (age) prune closed stories' attachment dirs
-  under `.satelle/stories` — moving them to `.satelle/backups/stories/`; a
-  non-terminal story's dir is always kept.
+  under the home-keyed runtime plane (`~/.satelle/<repo-key>/stories/`), moving
+  them to the runtime backups tree; a non-terminal story's dir is always kept.
 
 See [`docs/spec.md`](./docs/spec.md), [`docs/architecture.md`](./docs/architecture.md),
 and [`docs/agent-model.md`](./docs/agent-model.md) (the operating
@@ -168,11 +195,22 @@ are all asserted in a real browser, not eyeballed. It needs a Chrome/Chromium
 binary (`SATELLE_CHROME` overrides the path); it **runs locally only**, not in
 GitHub CI, because it needs a browser and the running binary. `make integration`
 builds satelle once and passes it via `SATELLE_BIN` (point that at any binary to
-test it directly). Releases are cut by `.github/workflows/release.yml` when
-`.version` is bumped; CI (`test.yml`) runs unit tests + build/vet/gofmt only.
+test it directly). Releases are cut by `.github/workflows/release.yml` when a
+CLI or serve version in `.version` has no matching tag yet (`vX` / `serve-vY`);
+each artifact is published independently. CI (`test.yml`) is unit + compile only.
 
 satelle dogfoods itself — this repo is set up with `satelle init`, and its
 remaining build phases are tracked as stories in the local database.
+
+## Testing
+
+| Where | What |
+|-------|------|
+| **GitHub CI** (`test` workflow) | `go build`, `go vet`, `gofmt`, `go test ./...`, and a no-cgo static build of every main under `cmd/` |
+| **Local** | `make integration` — integration + browser e2e under `tests/` (`-tags integration`); needs a real Chrome and drives the built binary |
+
+Integration/e2e are intentionally **not** in GitHub CI (they need browser/binary
+fixtures). Run them before a release step when the workflow requires it.
 
 ## License
 
