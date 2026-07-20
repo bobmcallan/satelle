@@ -54,12 +54,14 @@ model     = "grok-4.5"
 principles = "session"
 
 # Planner — plans only (no implement). Grok ACP; context via read_file channel.
+# effort=high: expensive planning judgment (sty_657f77b9).
 [planner]
 role      = "agent"
 interface = "acp"
 command   = "grok agent stdio"
 tools     = "read_file,grep,list_dir"
 model     = "grok-4.5"
+effort    = "high"
 principles = "session"
 
 # Retrospective — lessons on enter-done. Read-only grant; satelle via CLI when

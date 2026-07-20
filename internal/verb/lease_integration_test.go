@@ -65,6 +65,33 @@ func TestLeaseSameTargetInFlightNoOp(t *testing.T) {
 	}
 }
 
+// TestSameStatusReengageAfterDroppedSeat (sty_4f74d01f): force-release the lease
+// while status stays performing; story set --status <same> re-grants a seat.
+func TestSameStatusReengageAfterDroppedSeat(t *testing.T) {
+	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
+	var a workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)
+	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "plan"}), &a)
+	// Drop seat while leaving status performing.
+	if _, err := verb.Dispatch(context.Background(), "story-seat-release", mustJSONLease(map[string]any{
+		"id": a.ID,
+	})); err != nil {
+		t.Fatalf("story-seat-release: %v", err)
+	}
+	// Same-status set must re-acquire without error.
+	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "plan"}), &a)
+	if a.Status != "plan" {
+		t.Fatalf("status = %q", a.Status)
+	}
+	seats, serr := verb.Dispatch(context.Background(), "story-seat-list", nil)
+	if serr != nil {
+		t.Fatalf("story-seat-list after reengage: %v", serr)
+	}
+	if !strings.Contains(string(seats), a.ID) {
+		t.Fatalf("expected seat for %s after re-engage, got %s", a.ID, seats)
+	}
+}
+
 // TestLeaseNewAcquireAbortFreesSeat: when a NEW engage (backlog→plan) is
 // rejected by the gate, the just-claimed seat is released so another story can
 // engage (AC4 release-on-abort).
@@ -358,5 +385,25 @@ func TestOrphanStaleLeaseDoesNotBlockEngage(t *testing.T) {
 	json.Unmarshal(call(t, "story-get", map[string]any{"id": a.ID}), &still)
 	if still.Status != workitem.StatusBacklog {
 		t.Fatalf("A after steal = %q", still.Status)
+	}
+}
+
+// TestSameStatusReengageConflictWhenOtherHoldsSeat (sty_4f74d01f AC1 refuse path).
+func TestSameStatusReengageConflictWhenOtherHoldsSeat(t *testing.T) {
+	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
+	var a, b workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "B", "category": "feature"}), &b)
+	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "plan"}), &a)
+	// Drop B never engaged; A holds seat. B stuck in backlog cannot same-status reengage.
+	// Instead: engage B fails while A holds; drop A's seat, leave A at plan, engage B.
+	// Then try reengage A while B holds → conflict.
+	if _, err := verb.Dispatch(context.Background(), "story-seat-release", mustJSONLease(map[string]any{"id": a.ID})); err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal(call(t, "story-set", map[string]any{"id": b.ID, "status": "plan"}), &b)
+	_, err := dispatchRaw(t, "story-set", map[string]any{"id": a.ID, "status": "plan"})
+	if err == nil || !strings.Contains(err.Error(), "already holds") {
+		t.Fatalf("want seat conflict for A reengage while B holds, got %v", err)
 	}
 }

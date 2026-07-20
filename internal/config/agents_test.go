@@ -392,3 +392,53 @@ func TestResolvedInterfaceAndLoad(t *testing.T) {
 		t.Errorf("planner should default command")
 	}
 }
+
+func TestResolveSecondary(t *testing.T) {
+	dir := t.TempDir()
+	body := `
+[defaults]
+secondary = "fallback"
+
+[reviewer]
+command = "claude -p {system}"
+
+[fallback]
+command = "grok -p {payload}"
+model = "grok-4.5"
+`
+	if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ac, err := LoadAgents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ac.Defaults.Secondary != "fallback" {
+		t.Fatalf("defaults.secondary = %q", ac.Defaults.Secondary)
+	}
+	sec, name, ok := ac.ResolveSecondary("reviewer", ac.Reviewer)
+	if !ok || name != "fallback" {
+		t.Fatalf("resolve secondary for reviewer: ok=%v name=%q", ok, name)
+	}
+	if sec.Model != "grok-4.5" && !strings.Contains(sec.Command, "grok") {
+		t.Fatalf("secondary binding = %+v", sec)
+	}
+}
+
+func TestLoadAgentsEffortAndSecondaryFields(t *testing.T) {
+	dir := t.TempDir()
+	body := "[reviewer]\ncommand = \"claude -p {system}\"\neffort = \"medium\"\nsecondary = \"x\"\n"
+	if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ac, err := LoadAgents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ac.Reviewer.Effort != "medium" {
+		t.Fatalf("effort = %q", ac.Reviewer.Effort)
+	}
+	if ac.Reviewer.Secondary != "x" {
+		t.Fatalf("secondary = %q", ac.Reviewer.Secondary)
+	}
+}

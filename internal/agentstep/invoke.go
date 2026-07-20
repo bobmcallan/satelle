@@ -88,6 +88,7 @@ type invocation struct {
 	payload    any
 	tools      string
 	model      string
+	effort     string // optional reasoning effort (sty_657f77b9)
 	settings   map[string]any
 	env        map[string]string
 }
@@ -140,6 +141,7 @@ func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Req
 		Payload:      string(payload),
 		AllowedTools: inv.tools,
 		Model:        inv.model,
+		Effort:       inv.effort,
 		Settings:     settings,
 		Env:          inv.env,
 		Dir:          g.repoRoot,
@@ -149,7 +151,42 @@ func (g *Engine) buildRequest(ctx context.Context, inv invocation) (agentcli.Req
 // Invoke is the ONLY path that calls agentcli.Runner.Run for LLM gate/dispatch
 // steps (sty_ba860c8a). It resolves prompt assembly from the binding, runs the
 // agent, and for ExpectVerdict applies the retry + verdict parse loop.
+// On a classified rate-limit/unavailable failure, retries once on the binding's
+// secondary (per-binding secondary= or [defaults] secondary) when configured
+// (sty_5bf61f89).
 func (g *Engine) Invoke(ctx context.Context, req InvokeRequest) InvokeResult {
+	res := g.invokePrimary(ctx, req)
+	if res.Err == nil {
+		return res
+	}
+	if !IsRateLimitOrUnavailable(res.Err, res.Stdout) {
+		return res
+	}
+	if g.resolveSecondary == nil {
+		return res
+	}
+	section := req.Section
+	if section == "" {
+		section = "agent"
+	}
+	sec, secName, ok := g.resolveSecondary(section, req.Binding)
+	if !ok {
+		return res
+	}
+	g.telemetryEvent(ctx, req.StoryID, req.Actor, "agent-secondary-failover", map[string]any{
+		"primary": section, "secondary": secName, "outcome": "rate-limit",
+		"primary_err": res.Err.Error(),
+	})
+	g.emitProgress("primary binding %q rate-limited/unavailable — retrying once on secondary %q…", section, secName)
+	secReq := req
+	secReq.Binding = sec
+	secReq.Section = secName
+	secReq.Runner = nil // rebuild runner from secondary binding
+	return g.invokePrimary(ctx, secReq)
+}
+
+// invokePrimary runs one binding without secondary failover.
+func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeResult {
 	binding := req.Binding
 	section := req.Section
 	if section == "" {
@@ -181,6 +218,7 @@ func (g *Engine) Invoke(ctx context.Context, req InvokeRequest) InvokeResult {
 		payload:    req.Payload,
 		tools:      binding.Tools,
 		model:      binding.Model,
+		effort:     binding.Effort,
 		settings:   binding.Settings,
 		env:        binding.Env,
 	}
@@ -231,6 +269,30 @@ func (g *Engine) Invoke(ctx context.Context, req InvokeRequest) InvokeResult {
 	default: // ExpectVerdict
 		return g.invokeVerdict(ctx, req, runner, agentReq, cmdStr, timeout)
 	}
+}
+
+// IsRateLimitOrUnavailable reports whether an isolated-agent failure should
+// trigger secondary failover (sty_5bf61f89): rate limits, capacity, quota, and
+// hard unavailability. Other errors stay fail-loud without fallback.
+func IsRateLimitOrUnavailable(err error, stdout []byte) bool {
+	var b strings.Builder
+	if err != nil {
+		b.WriteString(err.Error())
+		b.WriteByte(' ')
+	}
+	b.Write(stdout)
+	s := strings.ToLower(b.String())
+	for _, needle := range []string{
+		"rate limit", "rate-limit", "ratelimit", "too many requests", " 429", "status 429",
+		"overloaded", "capacity", "resource_exhausted", "quota exceeded", "quota_exceeded",
+		"temporarily unavailable", "service unavailable", " 503", "status 503",
+		"usage limit", "tokens per min", "request limit",
+	} {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // invokeVerdict runs the ExpectVerdict retry loop: parse JSON/prose decision,

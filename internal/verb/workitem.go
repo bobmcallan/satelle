@@ -334,6 +334,15 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	}
 
 	transitioning := req.Status != nil && *req.Status != current.Status
+	// Same-status re-engage (sty_4f74d01f): when the story is already performing
+	// but its seat lease was dropped, `story set --status <same>` must claim a
+	// lease (or refuse loudly) — never report plain success with no seat.
+	sameStatusReengage := false
+	if !transitioning && req.Status != nil && (current.Kind == workitem.KindStory || current.Kind == workitem.KindTask) {
+		if eng, ok := storyStatusIsEngaging(ctx, current, *req.Status); ok && eng {
+			sameStatusReengage = true
+		}
+	}
 
 	// Edge fence (sty_ebd3d666): refuse status jumps that skip a required DOT
 	// step (e.g. backlog→in_progress when only backlog→plan exists). Runs before
@@ -363,25 +372,47 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	// settle — gate reject, dispatch abort, panic-recoverable exit, Update error.
 	// SIGKILL still cannot run defers; HeartbeatTTL + IsStale covers that residual.
 	// settled is set only after force-release (exit) or Confirm (engaging commit).
+	// sameStatusReengage also acquires (sty_4f74d01f) without running gate/dispatch.
 	acquiredThisCall := false
 	settled := true // non-transitioning / non-lease paths never need abort release
-	if transitioning && (current.Kind == workitem.KindStory || current.Kind == workitem.KindTask) {
+	if (transitioning || sameStatusReengage) && (current.Kind == workitem.KindStory || current.Kind == workitem.KindTask) {
 		// Step-edge stop arbitration (AC5): a pending stop request refuses forward
 		// engaging moves; park/terminal remain open.
-		if err := stopRequestBlocksForward(ctx, current, *req.Status); err != nil {
-			return nil, err
+		if transitioning {
+			if err := stopRequestBlocksForward(ctx, current, *req.Status); err != nil {
+				return nil, err
+			}
 		}
 		acq, inFlight, aerr := acquireEngagementLease(ctx, current, *req.Status)
 		if aerr != nil {
 			return nil, aerr
 		}
-		if inFlight {
+		if sameStatusReengage {
+			// Re-seat path: grant lease (or keep existing) and settle immediately —
+			// no gate, no dispatch. Other field updates may still apply below.
+			if acq {
+				confirmEngagementLease(ctx, current.ID, *req.Status)
+			}
+			// inFlight / AlreadyHeld: seat already held — good enough for AC2.
+			// Fall through so title/tags/etc. updates still apply when combined.
+			if !transitioning && req.Title == nil && req.Body == nil && req.Priority == nil &&
+				req.Category == nil && req.ParentID == nil && req.AcceptanceCriteria == nil &&
+				req.Tags == nil {
+				// Pure re-engage: return updated record after optional no-op Update.
+				it, uerr := store.Update(ctx, req.ID, workitem.UpdateInput{Status: req.Status}, now)
+				if uerr != nil {
+					return nil, uerr
+				}
+				return json.Marshal(it)
+			}
+		} else if inFlight {
 			// Same-owner already leased at this target (AC3): return current
 			// record without re-running gate+dispatch.
 			return json.Marshal(current)
+		} else {
+			acquiredThisCall = acq
+			settled = false
 		}
-		acquiredThisCall = acq
-		settled = false
 	}
 	// releaseOnAbort: newly acquired seats are deleted; sequential continuations
 	// only clear in_flight so a retry can re-enter (state stays last-committed).

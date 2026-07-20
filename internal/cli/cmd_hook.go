@@ -173,7 +173,7 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 			if engaged {
 				return nil
 			}
-			return denyPreToolUse(cmd, raw, noEngagedStoryEditReason+seatSuffix(info, time.Now().UTC()))
+			return denyPreToolUse(cmd, raw, editGateDenyReason(info, time.Now().UTC()))
 		},
 	}
 
@@ -767,6 +767,80 @@ const noEngagedStoryEditReason = "satelle: you're mutating the tree without a pe
 	"Open a story session before editing code: satelle story create …, then satelle story set <id> --status plan. " +
 	"That session stays open through your edits until the story reaches a terminal or parked state (done, cancelled, or blocked) — finishing an edit does NOT close it. " +
 	"For research, use read tools (Read/read_file/grep/Glob) — not Edit/Write/search_replace."
+
+// droppedSeatEditReason is the deny when a story is still in a performing
+// status but its engagement lease is missing (sty_4f74d01f). Distinct from
+// noEngagedStoryEditReason so agents re-acquire instead of creating a new story.
+func droppedSeatEditReason(id, status string) string {
+	return fmt.Sprintf(
+		"satelle: story %s is performing (status %q) but its engagement seat was dropped — re-acquire with `satelle story set %s --status %s` (same status is intentional; it grants a seat without inventing a new step), then retry the edit. Inspect with `satelle story seat`.",
+		id, status, id, status)
+}
+
+// editGateDenyReason picks the agent-facing text when no live seat is engaged
+// (sty_4f74d01f): prefer naming a performing story with a dropped seat over the
+// generic "open a story" message.
+func editGateDenyReason(info seatInfo, now time.Time) string {
+	if drop := firstDroppedPerformingSeat(); drop.ItemID != "" {
+		return droppedSeatEditReason(drop.ItemID, drop.StoryStatus)
+	}
+	return noEngagedStoryEditReason + seatSuffix(info, now)
+}
+
+// firstDroppedPerformingSeat finds a story/task whose committed status is
+// performing but that has no live (non-stale) engagement lease (sty_4f74d01f).
+func firstDroppedPerformingSeat() seatInfo {
+	a, err := app.Open()
+	if err != nil {
+		return seatInfo{}
+	}
+	defer func() { _ = a.Close() }()
+	ctx := context.Background()
+	wfs, err := a.Store.DocIndex.List(ctx, "workflows")
+	if err != nil {
+		return seatInfo{}
+	}
+	items, err := a.Store.Stories.List(ctx, workitem.ListFilter{})
+	if err != nil {
+		return seatInfo{}
+	}
+	leased := map[string]bool{}
+	if a.Store.Leases != nil {
+		leases, lerr := a.Store.Leases.List(ctx)
+		if lerr == nil {
+			now := time.Now().UTC()
+			for _, l := range leases {
+				if !lease.IsStale(l, now) {
+					leased[l.ItemID] = true
+				}
+			}
+		}
+	}
+	for _, it := range items {
+		if leased[it.ID] {
+			continue
+		}
+		wf, found := wfgovern.GoverningWorkflow(wfs, it)
+		if !found {
+			continue
+		}
+		spec, ok := wfdot.Parse(wf.Body)
+		if !ok {
+			continue
+		}
+		engaging := false
+		for _, s := range spec.NonTerminalEngagingStates() {
+			if s == it.Status {
+				engaging = true
+				break
+			}
+		}
+		if engaging {
+			return seatInfo{ItemID: it.ID, StoryStatus: it.Status, State: it.Status}
+		}
+	}
+	return seatInfo{}
+}
 
 // noEngagedStoryCommitReason is the agent-facing deny for git commit/push without
 // an engaged story. Same harness-specific emission as the edit gate. States

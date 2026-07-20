@@ -63,6 +63,8 @@ func TestAgentDispatchTopic(t *testing.T) {
 		"Claude",
 		"MCP",
 		"story status",
+		"effort",    // sty_657f77b9
+		"secondary", // sty_5bf61f89
 	} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("agent-dispatch topic missing %q", want)

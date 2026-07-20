@@ -36,8 +36,8 @@ func newACPRunner(command string) (Runner, error) {
 	}
 	for _, tok := range fields {
 		switch tok {
-		case "{system}", "{payload}", "{tools}", "{model}", "{settings}":
-			return nil, fmt.Errorf("agentcli: interface=acp command must not contain placeholder %s — system/payload/tools ride the ACP session, not argv", tok)
+		case "{system}", "{payload}", "{tools}", "{model}", "{effort}", "{settings}":
+			return nil, fmt.Errorf("agentcli: interface=acp command must not contain placeholder %s — system/payload/tools/effort ride the ACP session, not argv", tok)
 		}
 	}
 	return acpRunner{
@@ -51,7 +51,23 @@ func (a acpRunner) Name() string    { return a.binary }
 func (a acpRunner) Command() string { return a.how }
 
 func (a acpRunner) Run(ctx context.Context, req Request) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, a.binary, a.args...)
+	args := append([]string(nil), a.args...)
+	// Inject reasoning effort into spawn when set (sty_657f77b9) — prefer
+	// before trailing "stdio" so `grok agent --reasoning-effort high stdio`.
+	if e := strings.TrimSpace(req.Effort); e != "" {
+		injected := false
+		for i, t := range args {
+			if t == "stdio" {
+				args = append(args[:i], append([]string{"--reasoning-effort", e}, args[i:]...)...)
+				injected = true
+				break
+			}
+		}
+		if !injected {
+			args = append(args, "--reasoning-effort", e)
+		}
+	}
+	cmd := exec.CommandContext(ctx, a.binary, args...)
 	if req.Dir != "" {
 		cmd.Dir = req.Dir
 	}
@@ -413,12 +429,25 @@ func (c *acpClient) runSession(ctx context.Context, req Request) ([]byte, error)
 	c.session = sessObj.SessionID
 	c.mu.Unlock()
 
-	// Optional model config — ignore failures (peer may not support set_config_option).
+	// Optional model / effort config — ignore failures (peer may not support set_config_option).
 	if m := strings.TrimSpace(req.Model); m != "" {
 		_, _ = c.request(ctx, "session/set_config_option", map[string]any{
 			"sessionId": sessObj.SessionID,
 			"configId":  "model",
 			"value":     m,
+		})
+	}
+	if e := strings.TrimSpace(req.Effort); e != "" {
+		// Prefer reasoning_effort; also try effort for peers that use that id.
+		_, _ = c.request(ctx, "session/set_config_option", map[string]any{
+			"sessionId": sessObj.SessionID,
+			"configId":  "reasoning_effort",
+			"value":     e,
+		})
+		_, _ = c.request(ctx, "session/set_config_option", map[string]any{
+			"sessionId": sessObj.SessionID,
+			"configId":  "effort",
+			"value":     e,
 		})
 	}
 
