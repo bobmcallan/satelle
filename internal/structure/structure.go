@@ -70,6 +70,21 @@ func Doc(kind, name, body string, resolveSkill func(skill string) bool) []string
 	}
 }
 
+// DocWarnings returns advisory (non-fatal) messages for an authored doc.
+// Currently only workflows emit warnings (scoped-reviewer over-fire lint);
+// other kinds return nil. Warnings never become failures — validate prints
+// them as WARN lines without incrementing the failed count.
+func DocWarnings(kind, name, body string) []string {
+	if kind != "workflows" {
+		return nil
+	}
+	spec, ok := wfdot.Parse(body)
+	if !ok {
+		return nil
+	}
+	return wfdot.OverFireWarnings(spec)
+}
+
 // Checked reports whether a doc kind has a deterministic structure check (the
 // authored substrate kinds; free-form documents are covered by OKF instead).
 func Checked(kind string) bool {

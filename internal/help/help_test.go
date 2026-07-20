@@ -94,6 +94,46 @@ func TestCreateReviewTopic(t *testing.T) {
 	}
 }
 
+// TestReviewerChecksTopic pins the restructured DOT-bullet content after the
+// paste-defect repair (sty_46c584b1): validate sentence and done-gate note sit
+// outside the fenced-DOT bullet, not jammed mid-bullet.
+func TestReviewerChecksTopic(t *testing.T) {
+	top, ok := Get("reviewer-checks")
+	if !ok {
+		t.Fatal("reviewer-checks topic not found")
+	}
+	for _, want := range []string{
+		"satelle <noun> validate",
+		"DETERMINISTIC",
+		"The done gate is **not** mandated",
+		"@skill:",
+		"gated transition",
+	} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("reviewer-checks topic missing %q", want)
+		}
+	}
+}
+
+// TestWorkflowsTopic pins the binding-form section (sty_9882b8c6).
+func TestWorkflowsTopic(t *testing.T) {
+	top, ok := Get("workflows")
+	if !ok {
+		t.Fatal("workflows topic not found")
+	}
+	for _, want := range []string{
+		"Binding a reviewer: edge CSV vs scoped on=",
+		"on= over-fire",
+		"first-reject short-circuit",
+		"list order = execution order",
+		"Edge wins",
+	} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("workflows topic missing %q", want)
+		}
+	}
+}
+
 func TestProjectsTopic(t *testing.T) {
 	top, ok := Get("projects")
 	if !ok {

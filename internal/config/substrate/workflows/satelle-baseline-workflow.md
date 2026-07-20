@@ -5,7 +5,7 @@ type: workflow
 tags: [type:workflow]
 applies_to: ["*"]
 create_review: satelle-story-create-review
-description: The canonical order-zero lifecycle every satelle repo inherits from the binary — backlog → in_progress → done, with a cancelled exit — authored in the DOT standard (the agent model). The begin-work edge is gated by satelle-story-intent-review and the close by satelle-story-done-review (a reviewer node), so a story is judged well-formed before work and quality-checked before it closes. This is the EMBEDDED canonical default (config/substrate/workflows); a repo MAY override it by placing a same-named file under .satelle/workflows, but never edits this source.
+description: The canonical order-zero lifecycle every satelle repo inherits from the binary — backlog → in_progress → done, with a cancelled exit — authored in the DOT standard (the agent model). The begin-work edge is gated by satelle-story-intent-review; the close is gated by satelle-workflow-change-review then satelle-story-done-review (CSV edge reviewers — edge-wins requires both skills on the edge). A story is judged well-formed before work and quality-checked before it closes. This is the EMBEDDED canonical default (config/substrate/workflows); a repo MAY override it by placing a same-named file under .satelle/workflows, but never edits this source.
 ---
 
 # Baseline workflow (order-zero, gated, DOT)
@@ -39,7 +39,10 @@ digraph satelle_baseline {
   estimate    [agent=reviewer, prompt="@skill:satelle-estimate-actual-review", on="in_progress,done"]
 
   backlog -> in_progress [agent=reviewer, prompt="@skill:satelle-story-intent-review"]
-  in_progress -> done
+  // Implementation exit: CSV edge reviewers (edge-wins — node's done prompt is
+  // ignored for this edge, so done-review MUST stay in the CSV). workflow-change
+  // n/a-fast-accepts when the slice touches no workflow file (sty_9882b8c6).
+  in_progress -> done [agent=reviewer, prompt="@skill:satelle-workflow-change-review,satelle-story-done-review"]
   backlog     -> cancelled
   in_progress -> cancelled
   blocked     -> cancelled

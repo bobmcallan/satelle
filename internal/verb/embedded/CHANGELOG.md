@@ -1,3 +1,16 @@
+## [0.0.300] - 2026-07-20
+
+### Added
+- Workflow binding-form knowledge: edge CSV vs scoped on=, over-fire trap, list-order short-circuit in `satelle help workflows`; advisor check 7; init/workflows README pointers (sty_9882b8c6)
+- `satelle workflow validate` WARN for single-state scoped reviewers that re-fire on rework inbound edges (non-fatal; sty_9882b8c6)
+- Embedded `satelle-workflow-change-review` gate (n/a fast-accept when slice touches no workflow file), bound as CSV edge reviewer on baseline close and project in_progress→integration (sty_9882b8c6)
+
+### Changed
+- Planner binding: Claude/fable via command transport (plans only; Bash(satelle:*) for attach)
+
+### Fixed
+- Help topic reviewer-checks: paste defect jammed validate/done-gate prose mid DOT bullet (sty_46c584b1 dogfood)
+
 ## [0.0.299] - 2026-07-20
 
 ### Fixed
