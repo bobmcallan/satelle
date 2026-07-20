@@ -188,7 +188,12 @@ non-repo paths are not fenced (the sty_3026d890 stance that closed /tmp is
 superseded). Containment is a reminder and boundary, not a sandbox. Then, for
 git commit/push only, it exits non-zero unless a story is engaged. On deny it
 emits the same harness-specific PreToolUse deny shape as gate (sty_5e4bc568).
-Fails closed on store/listing/workflow-resolution errors (sty_f3d5d4b8).`,
+Fails closed on store/listing/workflow-resolution errors (sty_f3d5d4b8).
+
+Optional step policy (sty_c21490cc): when [gate.command_allow] is authored in
+satelle.toml (e.g. push = ["release"]), an engaged story must also be at one of
+the listed statuses for that git subcommand. Absent/empty command_allow leaves
+behaviour exactly as above — opt-in, not a satelle default.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
