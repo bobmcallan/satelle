@@ -143,6 +143,9 @@ type Engine struct {
 	// (.satelle/agents.toml [<name>] sections) for executor dispatch
 	// (sty_fd427546). Nil keeps every step in-loop.
 	namedAgents func(name string) (config.AgentBinding, bool)
+	// resolveSecondary returns a fallback binding for rate-limit failover
+	// (sty_5bf61f89). Nil disables secondary retry.
+	resolveSecondary func(section string, b config.AgentBinding) (config.AgentBinding, string, bool)
 	// newRunner builds the runner for a named binding's interface+command —
 	// swappable in tests; defaults to agentcli.RunnerFromBinding
 	// (epic:agent-dispatch-transport). iface is "command" (default) or "acp".
@@ -674,6 +677,12 @@ func (g *Engine) guardWorkflowStructure(ctx context.Context, item workitem.Item)
 // layer (.satelle/agents.toml [<name>] sections) — the WHO of a workflow node's
 // agent=<name> allocation (sty_fd427546). Nil keeps every step in-loop.
 func (g *Engine) SetNamedAgents(fn func(name string) (config.AgentBinding, bool)) { g.namedAgents = fn }
+
+// SetSecondaryResolver wires rate-limit failover (sty_5bf61f89). The resolver
+// returns (binding, name, ok) for a primary section + binding.
+func (g *Engine) SetSecondaryResolver(fn func(section string, b config.AgentBinding) (config.AgentBinding, string, bool)) {
+	g.resolveSecondary = fn
+}
 
 // DispatchExecutor implements verb.ExecutorDispatcher: when the TARGET state of
 // an accepted transition is allocated to a NAMED agent (agent=<name>, neither

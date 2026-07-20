@@ -3,6 +3,13 @@
 ### Removed
 - Parallel epic path and `[gate] allow_parallel` opt-out — single performing story always enforced; deleted parallel workflows/skills/launcher (sty_a614a0ea)
 
+## [0.0.294] - 2026-07-20
+
+### Added
+- Engagement seat recovery: `story set --status <same>` re-acquires a dropped seat on a performing story; edit-gate deny distinguishes dropped-seat vs no story (sty_4f74d01f / sprint:7)
+- Agents.toml `effort=` (reasoning/thinking) with `{effort}` placeholder + ACP injection (sty_657f77b9)
+- Agents.toml `secondary=` / `[defaults] secondary` — one retry on rate-limit/unavailable (sty_5bf61f89)
+
 ## [0.0.293] - 2026-07-20
 
 ### Verified

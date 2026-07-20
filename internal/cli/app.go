@@ -158,6 +158,12 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// agent=<name> allocation runs that binding's harness at the transition.
 			// agents.toml defines WHO, the DOT defines WHERE, the binary only runs it.
 			rev.SetNamedAgents(agents.NamedBinding)
+			// Rate-limit secondary failover (sty_5bf61f89): per-binding secondary=
+			// or [defaults] secondary names a fallback binding for one retry.
+			agentsCfg := agents
+			rev.SetSecondaryResolver(func(section string, b config.AgentBinding) (config.AgentBinding, string, bool) {
+				return agentsCfg.ResolveSecondary(section, b)
+			})
 			verb.SetExecutorDispatcher(rev)
 			// The retrospective dispatcher (sty_b53730e2): `satelle story retrospect`
 			// runs the [retrospective] agent over a finished story to file proposals.

@@ -1351,8 +1351,11 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer:
 # Bare tokens like "claude" / "grok" / "codex" are rejected by satelle agent
 # validate — run satelle init to expand a legacy bare preset, or write the full
 # argv yourself. Placeholders — each one argv token: {system} {tools} {model}
-# {settings} {payload}. The work-item body is ALWAYS also written on stdin (dual
-# delivery). Empty {model}/{settings} drop that flag; empty {payload} does not.
+# {effort} {settings} {payload}. The work-item body is ALWAYS also written on stdin
+# (dual delivery). Empty {model}/{effort}/{settings} drop that flag; empty {payload}
+# does not. effort= pins reasoning/thinking level (e.g. high). secondary= names a
+# fallback binding for one retry on rate-limit/unavailable (or set [defaults]
+# secondary = "…"). See satelle help agent-dispatch.
 # Claude's default uses stdin only (no -p {payload}) so the prompt is not
 # double-fed; argv-first CLIs (grok) opt in with -p {payload}. Example:
 #   command = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir --always-approve --output-format plain --max-turns 8 --no-subagents"

@@ -933,3 +933,38 @@ func TestSeatInjectHelpers(t *testing.T) {
 		t.Fatalf("live block: %q", liveBlock)
 	}
 }
+
+func TestDroppedSeatEditReason(t *testing.T) {
+	got := droppedSeatEditReason("sty_abc", "plan")
+	for _, want := range []string{"sty_abc", "plan", "engagement seat was dropped", "story set sty_abc --status plan"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+	if strings.Contains(got, "Open a story session") {
+		t.Error("dropped-seat reason must not use generic create-story message")
+	}
+}
+
+func TestEditGateDenyReasonPrefersDroppedSeat(t *testing.T) {
+	// Pure string path when firstDroppedPerformingSeat finds nothing uses generic.
+	// We cannot open real store without isolation; unit-test droppedSeatEditReason
+	// content was covered. Here: editGateDenyReason with empty info and no store
+	// home falls through to noEngagedStoryEditReason.
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	got := editGateDenyReason(seatInfo{}, time.Now().UTC())
+	if !strings.Contains(got, "without a performing story") {
+		t.Fatalf("empty store should use generic no-story reason: %q", got)
+	}
+	// droppedSeatEditReason must differ from generic.
+	drop := droppedSeatEditReason("sty_x", "in_progress")
+	if strings.Contains(drop, "without a performing story") {
+		t.Fatal("dropped reason must not use generic phrase")
+	}
+	if !strings.Contains(drop, "seat was dropped") {
+		t.Fatalf("want dropped: %q", drop)
+	}
+	if drop == noEngagedStoryEditReason {
+		t.Fatal("dropped and generic must differ")
+	}
+}

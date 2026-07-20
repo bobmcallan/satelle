@@ -126,6 +126,22 @@ type AgentBinding struct {
 	// process-env overlay, but never over --settings). A binding with no Settings
 	// emits no --settings flag, exactly as an empty Model drops {model}.
 	Settings map[string]any `toml:"settings"`
+	// Effort is optional reasoning/thinking effort for the binding (sty_657f77b9):
+	// e.g. "low" | "medium" | "high". Empty means peer default. Substituted into
+	// {effort} on command templates (flag dropped when empty, like {model}) and
+	// applied on ACP via session/set_config_option (failure-tolerant).
+	Effort string `toml:"effort"`
+	// Secondary names another agents.toml binding to retry once when this
+	// binding's dispatch fails with a classified rate-limit/unavailable error
+	// (sty_5bf61f89). Empty inherits [defaults] secondary. Empty both = no failover.
+	Secondary string `toml:"secondary"`
+}
+
+// AgentsDefaults is the optional [defaults] table in agents.toml (sty_5bf61f89).
+type AgentsDefaults struct {
+	// Secondary is the default fallback binding name for isolated agents when
+	// a binding omits secondary= and the primary hits rate-limit/unavailable.
+	Secondary string `toml:"secondary"`
 }
 
 // TimeoutDuration resolves this binding's dispatch bound: the parsed Timeout when
@@ -243,9 +259,41 @@ func normalizePrinciplesSelector(s string) string {
 // satelle-agent-model). LoadAgents does the classification; the toml tag here is
 // retained only for the legacy nested form.
 type AgentsConfig struct {
+	Defaults AgentsDefaults          `toml:"defaults"`
 	Executor AgentBinding            `toml:"executor"`
 	Reviewer AgentBinding            `toml:"reviewer"`
 	Agents   map[string]AgentBinding `toml:"agents"`
+}
+
+// ResolveSecondary returns the fallback binding for section/b when secondary is
+// configured (per-binding wins over [defaults] secondary). ok is false when
+// unconfigured or the named binding is missing (sty_5bf61f89).
+func (a AgentsConfig) ResolveSecondary(section string, b AgentBinding) (sec AgentBinding, name string, ok bool) {
+	name = strings.TrimSpace(b.Secondary)
+	if name == "" {
+		name = strings.TrimSpace(a.Defaults.Secondary)
+	}
+	if name == "" {
+		return AgentBinding{}, "", false
+	}
+	if strings.EqualFold(name, strings.TrimSpace(section)) {
+		return AgentBinding{}, "", false // refuse self-loop
+	}
+	switch strings.ToLower(name) {
+	case "reviewer":
+		rb := a.Reviewer
+		if rb.CommandTemplate() == "" {
+			rb.Command = DefaultReviewerCommand
+		}
+		return rb, "reviewer", true
+	case "executor":
+		return a.Executor, "executor", true
+	}
+	nb, found := a.NamedBinding(name)
+	if !found {
+		return AgentBinding{}, name, false
+	}
+	return nb, name, true
 }
 
 // NamedBinding resolves an optional named agent declared as a flat top-level
@@ -318,6 +366,10 @@ func LoadAgents(dataDir string) (AgentsConfig, error) {
 	ac := AgentsConfig{Agents: map[string]AgentBinding{}}
 	for key, prim := range raw {
 		switch key {
+		case "defaults":
+			if err := md.PrimitiveDecode(prim, &ac.Defaults); err != nil {
+				return AgentsConfig{}, err
+			}
 		case "executor":
 			if err := md.PrimitiveDecode(prim, &ac.Executor); err != nil {
 				return AgentsConfig{}, err

@@ -79,11 +79,47 @@ satelle-dot-standard principle.
 | **`command`** (default; omit = command) | Full multi-token argv template; any CLI (Claude Code, `grok -p`, wrappers, custom). |
 | **`acp`** | Agent Client Protocol over stdio; `command` is the **spawn line only** (e.g. `grok agent stdio`). System/payload ride the session, not `{placeholders}`. |
 
-Shared fields on both: `role`, `tools`, `model`, `principles`, `env`, `timeout`,
-`settings`. Claude Code does **not** support ACP — keep Claude on `interface =
-command`. An ACP-capable CLI is usable when it implements ACP agent stdio **and**
-the binding sets `interface = "acp"`. Workers never advance story status; they
-return text/verdicts that satelle enacts after gates.
+Shared fields on both: `role`, `tools`, `model`, `effort`, `secondary`,
+`principles`, `env`, `timeout`, `settings`. Claude Code does **not** support ACP
+— keep Claude on `interface = command`. An ACP-capable CLI is usable when it
+implements ACP agent stdio **and** the binding sets `interface = "acp"`. Workers
+never advance story status; they return text/verdicts that satelle enacts after
+gates.
+
+### Reasoning effort (`effort=`)
+
+Optional per-binding thinking/reasoning level (e.g. `low` | `medium` | `high`).
+Empty means the peer default. On **command** transport it substitutes into the
+`{effort}` placeholder (flag dropped when empty, like `{model}`). Default Claude
+and Grok templates include the flag when set. On **ACP**, satelle injects
+`--reasoning-effort` into the spawn line when possible and calls
+`session/set_config_option` for `reasoning_effort` / `effort` (failure-tolerant
+when the peer lacks the option).
+
+### Rate-limit secondary (`secondary=` / `[defaults]`)
+
+When an isolated dispatch fails with a **classified rate-limit or unavailability**
+error (429, overloaded, quota, 503, …), satelle retries **once** on a secondary
+binding — without rewriting agents.toml mid-incident:
+
+```toml
+[defaults]
+secondary = "fallback-grok"   # used when a binding omits secondary=
+
+[planner]
+# secondary = "fallback-grok"  # per-binding override of [defaults]
+effort = "high"
+
+[fallback-grok]
+interface = "acp"
+command   = "grok agent stdio"
+tools     = "read_file,grep,list_dir"
+model     = "grok-4.5"
+```
+
+Non-rate-limit failures still refuse the transition (no silent swallow). Unconfigured
+secondary preserves single-binding behaviour. Failover is per-dispatch only (not a
+sticky rewrite of the primary binding).
 
 Example ACP binding (optional; defaults stay command):
 

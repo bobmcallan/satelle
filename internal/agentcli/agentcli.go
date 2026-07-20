@@ -60,7 +60,7 @@ const (
 // needs no shell: the substrate it reasons about is materialised as markdown
 // under .satelle, so it reads it directly. A repo MAY widen the grant in
 // .satelle/agents.toml (transparently), but the default is read-only.
-const DefaultClaudeCommand = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model}"
+const DefaultClaudeCommand = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model} --effort {effort}"
 
 // DefaultGrokCommand is the grok preset template — the proven dogfood reviewer
 // command (this repo's own [reviewer]) behind the single-token "grok" preset.
@@ -72,7 +72,7 @@ const DefaultClaudeCommand = "claude -p --output-format json --disallowedTools W
 // exact failure this preset removes. To widen grok's grant, author a full command
 // template instead of the bare preset. {model} is dropped (with -m) when unset, so
 // grok falls back to its own default unless the binding pins one (e.g. grok-4.5).
-const DefaultGrokCommand = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir -m {model} --deny Write --deny Edit --deny search_replace --deny write --always-approve --output-format plain --max-turns 16 --no-subagents"
+const DefaultGrokCommand = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir -m {model} --reasoning-effort {effort} --deny Write --deny Edit --deny search_replace --deny write --always-approve --output-format plain --max-turns 16 --no-subagents"
 
 // Request is one headless agent invocation.
 type Request struct {
@@ -85,6 +85,9 @@ type Request struct {
 	Payload      string
 	AllowedTools string // {tools}: comma-separated tool grant
 	Model        string // {model}: optional model override; "" drops the placeholder
+	// Effort is {effort}: optional reasoning/thinking level (sty_657f77b9);
+	// "" drops the placeholder AND a directly preceding flag (like Model).
+	Effort string
 	// Settings is {settings}: a pre-marshalled JSON object mirroring claude's
 	// settings.local.json schema (env/model/permissions), already ${VAR}-resolved
 	// by the caller (config.ResolveAgentEnvs / agentstep.buildRequest) — agentcli
@@ -299,10 +302,10 @@ func (t templateRunner) Run(ctx context.Context, req Request) ([]byte, error) {
 }
 
 // buildArgs substitutes the placeholders in an argv template against req. Each of
-// {system}/{tools}/{model}/{settings}/{payload} must be its own token, so a
+// {system}/{tools}/{model}/{effort}/{settings}/{payload} must be its own token, so a
 // multi-word value (a multi-line system prompt, a JSON settings object, or the
-// work-item payload) becomes exactly one argument. An empty {model} or {settings}
-// drops the placeholder AND a directly preceding flag token (e.g. "--model
+// work-item payload) becomes exactly one argument. An empty {model}, {effort}, or
+// {settings} drops the placeholder AND a directly preceding flag token (e.g. "--model
 // {model}"), so the default template carries the flag without emitting an empty
 // value — a binding that authors no `settings` table emits no --settings arg at
 // all. {payload} never drops a preceding flag when empty: an empty payload is a
@@ -327,6 +330,14 @@ func buildArgs(argTemplate []string, req Request) []string {
 				continue
 			}
 			args = append(args, req.Model)
+		case "{effort}":
+			if strings.TrimSpace(req.Effort) == "" {
+				if n := len(args); n > 0 && strings.HasPrefix(args[n-1], "-") {
+					args = args[:n-1]
+				}
+				continue
+			}
+			args = append(args, req.Effort)
 		case "{settings}":
 			if strings.TrimSpace(req.Settings) == "" {
 				if n := len(args); n > 0 && strings.HasPrefix(args[n-1], "-") {
