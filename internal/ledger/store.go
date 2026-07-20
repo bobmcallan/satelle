@@ -206,7 +206,12 @@ func (s *Store) ListAll(ctx context.Context, limit int) ([]Entry, error) {
 	if limit > 50000 {
 		limit = 50000
 	}
-	q := fmt.Sprintf(`SELECT id, story_id, project_id, kind, actor, body, payload, refs, created_at FROM evidence ORDER BY created_at DESC, id DESC LIMIT %d`, limit)
+	// Newest window under the budget, returned oldest-first for callers that
+	// expect chronological order (mirror still re-sorts per story).
+	q := fmt.Sprintf(`SELECT id, story_id, project_id, kind, actor, body, payload, refs, created_at FROM (
+		SELECT id, story_id, project_id, kind, actor, body, payload, refs, created_at FROM evidence
+		ORDER BY created_at DESC, id DESC LIMIT %d
+	) ORDER BY created_at ASC, id ASC`, limit)
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("ledger: list all: %w", err)

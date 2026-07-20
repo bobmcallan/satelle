@@ -40,8 +40,8 @@ func TestListAllNewestFirstUnderCap(t *testing.T) {
 	if len(got) != 10 {
 		t.Fatalf("len=%d want 10", len(got))
 	}
-	if got[0].StoryID != "sty_recent" {
-		t.Fatalf("first entry story=%q want sty_recent (newest-first)", got[0].StoryID)
+	if got[len(got)-1].StoryID != "sty_recent" {
+		t.Fatalf("last entry story=%q want sty_recent (newest window, chronological return)", got[len(got)-1].StoryID)
 	}
 	var sawRecent bool
 	for _, e := range got {

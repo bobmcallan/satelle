@@ -437,3 +437,20 @@ func TestBuildLightsRejectPastCurrentOrdered(t *testing.T) {
 		t.Errorf("light[4] = %v, want fail at step 5", lights[4])
 	}
 }
+
+// TestBuildLightsStatusAloneCurrentStage: empty ledger + on-spine status yields a
+// non-empty current light independent of seat (sty_c5065d05 AC4/AC5).
+func TestBuildLightsStatusAloneCurrentStage(t *testing.T) {
+	noSeat := buildLights(nil, "in_progress", false, projStep)
+	withSeat := buildLights(nil, "in_progress", true, projStep)
+	if len(noSeat) != 1 || noSeat[0].State != "current" {
+		t.Fatalf("status alone: want one current light, got %v", noSeat)
+	}
+	if noSeat[0].Index != 1 {
+		t.Errorf("in_progress step index = %d, want 1", noSeat[0].Index)
+	}
+	// Seat must not flicker: same strip with or without seat.
+	if len(withSeat) != len(noSeat) || withSeat[0].Index != noSeat[0].Index || withSeat[0].State != noSeat[0].State {
+		t.Fatalf("seat flicker: noSeat=%v withSeat=%v", noSeat, withSeat)
+	}
+}
