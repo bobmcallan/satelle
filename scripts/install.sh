@@ -56,6 +56,28 @@ mkdir -p "$INSTALL_DIR"
 mv "$tmp/satelle" "$INSTALL_DIR/satelle"
 echo "satelle install: installed $INSTALL_DIR/satelle ($tag)"
 
+# Dedicated serve binary (sty_80233c10) — soft: older releases may omit it.
+serve_name="satelle-serve-$tag-$os-$arch"
+serve_url="https://github.com/$REPO/releases/download/$tag/$serve_name"
+if curl -fsSL "$serve_url" -o "$tmp/satelle-serve" 2>/dev/null \
+	&& curl -fsSL "$serve_url.sha256" -o "$tmp/satelle-serve.sha256" 2>/dev/null; then
+	swant=$(cut -d' ' -f1 "$tmp/satelle-serve.sha256")
+	if command -v sha256sum >/dev/null 2>&1; then
+		sgot=$(sha256sum "$tmp/satelle-serve" | cut -d' ' -f1)
+	else
+		sgot=$(shasum -a 256 "$tmp/satelle-serve" | cut -d' ' -f1)
+	fi
+	if [ "$swant" = "$sgot" ]; then
+		chmod +x "$tmp/satelle-serve"
+		mv "$tmp/satelle-serve" "$INSTALL_DIR/satelle-serve"
+		echo "satelle install: installed $INSTALL_DIR/satelle-serve ($tag)"
+	else
+		echo "satelle install: satelle-serve sha256 mismatch — skipped (use satelle serve fallback)" >&2
+	fi
+else
+	echo "satelle install: satelle-serve asset not on this release — service install will fall back to satelle serve"
+fi
+
 case ":$PATH:" in
 	*":$INSTALL_DIR:"*) ;;
 	*) echo "satelle install: add $INSTALL_DIR to your PATH (e.g. export PATH=\"$INSTALL_DIR:\$PATH\")" ;;
@@ -65,4 +87,4 @@ echo
 echo "Next:"
 echo "  cd <your-repo>"
 echo "  satelle init             # scaffold .satelle/ (config, db, authored dirs)"
-echo "  satelle service install  # always-on web project page"
+echo "  satelle service install  # always-on web project page (uses satelle-serve when present)"

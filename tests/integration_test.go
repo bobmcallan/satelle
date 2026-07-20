@@ -225,7 +225,9 @@ func diffHostSurface(before, after hostSurface) []string {
 // were already present before the suite (preExistingKeys) are SKIPPED: a live
 // satelle service legitimately mutates them. A NEW key dir is recorded as a
 // leaf so diffHostSurface fails the suite (sty_c36c211f — pollution guard).
-// Isolation still guards config.toml and other non-runtime host state.
+// The machine-wide push-fed plane (`serve/`) is also skipped when present —
+// a live unit rewrites server.log and mirror.db WAL (sty_80233c10). Isolation
+// still guards config.toml and other non-runtime host state.
 func hashTree(root string, preExistingKeys map[string]struct{}) map[string]string {
 	out := map[string]string{}
 	if root == "" {
@@ -255,6 +257,13 @@ func hashTree(root string, preExistingKeys map[string]struct{}) map[string]strin
 		}
 		rel = filepath.ToSlash(rel)
 		top := strings.SplitN(rel, "/", 2)[0]
+		// Live push-fed serve plane (mirror.db, server.log) — skip contents.
+		if top == "serve" {
+			if fi.IsDir() && rel == top {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if runtimeKey.MatchString(top) {
 			// Pre-existing: skip contents (live service may rewrite DB/logs).
 			if _, ok := preExistingKeys[top]; ok {

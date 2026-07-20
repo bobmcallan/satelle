@@ -13,7 +13,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/help"
 	"github.com/bobmcallan/satelle/internal/mirror"
-	"github.com/bobmcallan/satelle/internal/verb"
 )
 
 // MirrorServer is the push-fed read-only UI (sty_dbdadfa0 + epic:mirror-ui-parity).
@@ -57,9 +56,6 @@ func init() {
 func NewMirror(m *mirror.Store) *MirrorServer {
 	serverStart = time.Now()
 	h := newHub()
-	// Do not SetChangeNotifier from web — CLI publisher + ingest doorbell only.
-	verb.SetChangeNotifier(nil)
-
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
 	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {

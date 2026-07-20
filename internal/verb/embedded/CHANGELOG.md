@@ -1,3 +1,16 @@
+## [0.0.284] - 2026-07-20
+
+### Added
+- Dedicated `satelle-serve` binary (`cmd/satelle-serve`) for the push-fed mirror UI; Makefile, install.sh, release, and `satelle update` ship both artifacts (sty_80233c10 / epic:serve-adoption)
+- `satelle service install` prefers sibling `satelle-serve` (or `--serve-bin`); falls back to `satelle serve` with a notice
+
+### Changed
+- Live verb-dispatch web.Server removed from `internal/web` — package is mirror-only (link isolation for the serve binary)
+- `satelle serve` is a deprecated alias that shares `internal/serve.Run` with the dedicated binary
+
+### Fixed
+- `ledger.EventTelemetry` owns display extraction so web need not import verb
+
 ## [0.0.283] - 2026-07-20
 
 ### Breaking

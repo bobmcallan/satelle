@@ -6,10 +6,10 @@ import (
 )
 
 func TestSystemdUnitContent(t *testing.T) {
-	unit := systemdUnit("/usr/local/bin/satelle", "/home/u/repo", "0.0.0.0", 8787)
+	unit := systemdUnit("/usr/local/bin/satelle-serve", "/home/u/repo", "0.0.0.0", 8787)
 	for _, want := range []string{
 		"Description=satelle web server",
-		"ExecStart=/usr/local/bin/satelle serve --addr 0.0.0.0 --port 8787",
+		"ExecStart=/usr/local/bin/satelle-serve --addr 0.0.0.0 --port 8787",
 		"WorkingDirectory=", // $HOME preferred; not a single repo (sty_dbdadfa0)
 		"Restart=on-failure",
 		"WantedBy=default.target",
@@ -60,9 +60,9 @@ func TestUserSystemctlEnv(t *testing.T) {
 // runs as the given user, with the correct ExecStart (sty_00dadc91). WorkingDirectory
 // is $HOME (push-fed serve needs no per-repo cwd; sty_dbdadfa0 / sty_455f0d6e).
 func TestSystemSystemdUnit(t *testing.T) {
-	unit := systemSystemdUnit("/usr/local/bin/satelle", "/home/u/repo", "0.0.0.0", 8787, "bobmc")
+	unit := systemSystemdUnit("/usr/local/bin/satelle-serve", "/home/u/repo", "0.0.0.0", 8787, "bobmc")
 	for _, want := range []string{
-		"ExecStart=/usr/local/bin/satelle serve --addr 0.0.0.0 --port 8787",
+		"ExecStart=/usr/local/bin/satelle-serve --addr 0.0.0.0 --port 8787",
 		"WorkingDirectory=", // non-empty home or repo fallback
 		"User=bobmc",
 		"Group=bobmc",
@@ -135,5 +135,26 @@ func TestBusUnreachable(t *testing.T) {
 	}
 	if busUnreachable(nil) {
 		t.Error("no failures → not unreachable")
+	}
+}
+
+func TestResolveServeBinary(t *testing.T) {
+	exists := func(want string) func(string) bool {
+		return func(p string) bool { return p == want }
+	}
+	// sibling present
+	path, fb := resolveServeBinary("/opt/bin/satelle", "", exists("/opt/bin/satelle-serve"))
+	if path != "/opt/bin/satelle-serve" || fb {
+		t.Fatalf("sibling: path=%q fb=%v", path, fb)
+	}
+	// flag override
+	path, fb = resolveServeBinary("/opt/bin/satelle", "/x/serve", exists("/x/serve"))
+	if path != "/x/serve" || fb {
+		t.Fatalf("flag: path=%q fb=%v", path, fb)
+	}
+	// fallback
+	path, fb = resolveServeBinary("/opt/bin/satelle", "", func(string) bool { return false })
+	if path != "/opt/bin/satelle serve" || !fb {
+		t.Fatalf("fallback: path=%q fb=%v", path, fb)
 	}
 }

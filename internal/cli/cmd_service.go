@@ -35,7 +35,7 @@ func init() {
 
 func serviceInstallCmd() *cobra.Command {
 	var port int
-	var addr, repo string
+	var addr, repo, serveBinFlag string
 	var system bool
 	cmd := &cobra.Command{
 		Use:   "install",
@@ -63,9 +63,13 @@ re-running 'satelle service install'.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
-			bin, err := resolveSelfPath()
+			self, err := resolveSelfPath()
 			if err != nil {
 				return err
+			}
+			bin, viaFallback := resolveServeBinary(self, serveBinFlag, nil)
+			if viaFallback {
+				fmt.Fprintln(out, "service: satelle-serve not found next to this binary — unit will use `satelle serve` fallback; install satelle-serve alongside for the dedicated artifact")
 			}
 
 			// Resolve settings: flags override the saved global config; repo
@@ -96,6 +100,7 @@ re-running 'satelle service install'.`,
 			rPort, rAddr := gc.Service.ResolvePort(), gc.Service.ResolveAddr()
 			fmt.Fprintf(out, "config: %s (port %d, addr %s, repo %s)\n",
 				config.GlobalConfigPath(), rPort, rAddr, resolvedRepo)
+			fmt.Fprintf(out, "binary: %s\n", bin)
 
 			unit := systemdUnit(bin, resolvedRepo, rAddr, rPort)
 
@@ -121,6 +126,7 @@ re-running 'satelle service install'.`,
 	cmd.Flags().IntVar(&port, "port", 0, "service port (default 8787 or saved global config)")
 	cmd.Flags().StringVar(&addr, "addr", "", "bind address (default 0.0.0.0 — reachable from Windows)")
 	cmd.Flags().StringVar(&repo, "repo", "", "repo to serve (default: current directory or saved config)")
+	cmd.Flags().StringVar(&serveBinFlag, "serve-bin", "", "path to satelle-serve binary (default: sibling of this binary)")
 	cmd.Flags().BoolVar(&system, "system", false, "install a persistent system unit via sudo (survives session loss; needs sudo)")
 	return cmd
 }
@@ -207,7 +213,7 @@ Description=satelle web server (push-fed mirror UI)
 After=network.target
 
 [Service]
-ExecStart=%s serve --addr %s --port %d
+ExecStart=%s --addr %s --port %d
 WorkingDirectory=%s
 %sRestart=%s
 RestartSec=2
@@ -215,6 +221,29 @@ RestartSec=2
 [Install]
 WantedBy=%s
 `, binPath, addr, port, wd, userLines, restartPolicy, wantedBy)
+}
+
+// resolveServeBinary picks the dedicated satelle-serve binary (sibling of self
+// or --serve-bin), falling back to "<self> serve" when absent (sty_80233c10).
+// exists is injectable for tests; nil uses os.Stat.
+func resolveServeBinary(selfPath, flagOverride string, exists func(string) bool) (execPath string, viaFallback bool) {
+	if exists == nil {
+		exists = func(p string) bool {
+			st, err := os.Stat(p)
+			return err == nil && !st.IsDir()
+		}
+	}
+	if flagOverride != "" {
+		if exists(flagOverride) {
+			return flagOverride, false
+		}
+	}
+	sib := filepath.Join(filepath.Dir(selfPath), "satelle-serve")
+	if exists(sib) {
+		return sib, false
+	}
+	// Fallback: keep the CLI verb so old installs still work until re-install.
+	return selfPath + " serve", true
 }
 
 // systemdUnit renders the per-user unit (WantedBy=default.target, runs as the
@@ -314,7 +343,7 @@ func printWindowsGuidance(out io.Writer, bin, repo, addr string, port int) {
 	fmt.Fprintln(out, "\nNative Windows has no systemd. To run the service on login, create a")
 	fmt.Fprintln(out, "Task Scheduler task (Trigger: At log on; Action: Start a program):")
 	fmt.Fprintf(out, "  Program:   %s\n", bin)
-	fmt.Fprintf(out, "  Arguments: serve --addr %s --port %d\n", addr, port)
+	fmt.Fprintf(out, "  Arguments: --addr %s --port %d\n", addr, port)
 	fmt.Fprintf(out, "  Start in:  %s\n", repo)
 	fmt.Fprintf(out, "Then browse http://localhost:%d\n", port)
 }
