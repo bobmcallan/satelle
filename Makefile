@@ -3,22 +3,21 @@ SERVE_BIN   := satelle-serve
 PREFIX      ?= $(HOME)/.local
 INSTALL_DIR := $(PREFIX)/bin
 
-# Build identity baked into every binary via -ldflags. The version AND the build
-# date come from the SINGLE canonical source (.version) — satelle.build is stamped
-# by the commit workflow step (sty_3aeeab18), not generated here — plus the live git
-# SHA. So a local `make build` reports a real, non-empty version/commit/time, not the
-# bare "dev" sentinel. The release CI bakes the same three vars from .version.
+# Build identity from .version — CLI and serve carry independent version numbers
+# (sty_19ff03f4); commit SHA and build stamp are shared (one commit → both artifacts).
 PKG         := github.com/bobmcallan/satelle/internal/buildinfo
 VERSION     := $(shell awk '$$1=="satelle.version:" {print $$2}' .version)
+SERVE_VERSION := $(shell awk '$$1=="satelle-serve.version:" {print $$2}' .version)
 COMMIT      := $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo none)
 BUILD_TIME  := $(shell awk '$$1=="satelle.build:" {print $$2}' .version)
 LDFLAGS     := -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)
+SERVE_LDFLAGS := -X $(PKG).Version=$(SERVE_VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)
 
 .PHONY: build install uninstall test integration
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/satelle
-	go build -ldflags "$(LDFLAGS)" -o $(SERVE_BIN) ./cmd/satelle-serve
+	go build -ldflags "$(SERVE_LDFLAGS)" -o $(SERVE_BIN) ./cmd/satelle-serve
 
 # install places both binaries on PATH (~/.local/bin by default). Afterwards, run
 # `satelle service install` inside a repo to start the always-on web service.

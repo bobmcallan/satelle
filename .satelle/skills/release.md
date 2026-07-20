@@ -66,16 +66,17 @@ names when a gap is present):
 
 | Named check | What must be true |
 | --- | --- |
-| **`check_cli_version`** | `satelle version` reports `$VER` (and the pushed commit SHA prefix) |
-| **`check_live_footer`** | Live web footer/service body contains `satelle $VER` (not only CLI) |
+| **`check_cli_version`** | `satelle version` reports `$CLI_VER` (and the pushed commit SHA prefix) |
+| **`check_live_footer`** | Live web footer/service body contains `satelle $SERVE_VER` (serve binary's version — sty_19ff03f4) |
 | **`check_persistent_supervisor`** | The live service is under a **persistent** supervisor (system unit or linger-backed user manager), never an ephemeral `nohup`/`setsid` relaunch |
 
 ```bash
-VER=$(awk '$1=="satelle.version:"{print $2}' .version)
-satelle update                                   # pulls the published asset (sudo-free),
+CLI_VER=$(awk '$1=="satelle.version:"{print $2}' .version)
+SERVE_VER=$(awk '$1=="satelle-serve.version:"{print $2}' .version)
+satelle update                                   # pulls CLI + serve assets (sudo-free),
                                                  # restarts the supervisor onto the new binary
-satelle version                                  # check_cli_version: must report $VER + SHA prefix
-curl -fsS "http://127.0.0.1:${PORT:-8787}/" | grep -F "satelle $VER"  # check_live_footer
+satelle version                                  # check_cli_version: must report $CLI_VER + SHA prefix
+curl -fsS "http://127.0.0.1:${PORT:-8787}/" | grep -F "satelle $SERVE_VER"  # check_live_footer (serve version)
 # check_persistent_supervisor: confirm service is the installed unit, not a throwaway serve
 ```
 

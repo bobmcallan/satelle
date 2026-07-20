@@ -1,3 +1,17 @@
+## [0.0.285] - 2026-07-20
+
+### Added
+- Independent version keys in `.version`: `satelle.version` (CLI) and `satelle-serve.version` (serve); release tags `vX` (latest) and `serve-vY` (not latest) (sty_19ff03f4 / epic:serve-adoption)
+
+### Changed
+- Makefile stamps each main with its own version; release.yml / install.sh / `satelle update` resolve CLI and serve releases independently
+- Changelog gate requires both CLI and serve-v headers when serve version is set; live footer dogfood greps serve version
+
+## [serve-v0.0.1] - 2026-07-20
+
+### Added
+- First independent satelle-serve version line (sty_19ff03f4) — tag `serve-v0.0.1`, assets `satelle-serve-v0.0.1-*`
+
 ## [0.0.284] - 2026-07-20
 
 ### Added

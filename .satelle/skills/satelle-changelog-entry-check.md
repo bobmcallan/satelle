@@ -20,20 +20,25 @@ the release commit. See [[satelle-agent-model]], [[satelle-reviewer-self-contain
 ```check
 #!/usr/bin/env bash
 set -uo pipefail
-# Read version from HEAD's .version (the release commit).
-VER=$(awk '$1=="satelle.version:" {print $2}' .version 2>/dev/null)
-if [ -z "$VER" ]; then
+# Independent versions (sty_19ff03f4): CLI key satelle.version → ## [X.Y.Z];
+# serve key satelle-serve.version → ## [serve-vY]. Both required when present.
+CLI=$(awk '$1=="satelle.version:" {print $2}' .version 2>/dev/null)
+SERVE=$(awk '$1=="satelle-serve.version:" {print $2}' .version 2>/dev/null)
+if [ -z "$CLI" ]; then
   echo "could not read satelle.version from .version on HEAD"
   exit 1
 fi
 if [ ! -f CHANGELOG.md ]; then
-  echo "CHANGELOG.md missing — add an entry for $VER before closing release"
+  echo "CHANGELOG.md missing — add an entry for $CLI before closing release"
   exit 1
 fi
-# Level-2 header: ## [X.Y.Z]  (date optional)
-if ! grep -qE "^## \[${VER}\]" CHANGELOG.md; then
-  echo "CHANGELOG.md has no entry for version $VER — add '## [$VER] - <date>' (with Breaking subsection if needed) in the release step before close"
+if ! grep -qE "^## \[${CLI}\]" CHANGELOG.md; then
+  echo "CHANGELOG.md has no entry for CLI version $CLI — add '## [$CLI] - <date>' before close"
   exit 1
 fi
-echo "changelog entry present for $VER"
+if [ -n "$SERVE" ] && ! grep -qE "^## \[serve-v${SERVE}\]" CHANGELOG.md; then
+  echo "CHANGELOG.md has no entry for serve version $SERVE — add '## [serve-v$SERVE] - <date>' before close"
+  exit 1
+fi
+echo "changelog entry present for CLI $CLI${SERVE:+ and serve-v$SERVE}"
 ```

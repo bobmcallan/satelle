@@ -29,7 +29,8 @@ jobs:
       - name: unit tests
         run: go test ./...
       - name: no-cgo static build
-        run: CGO_ENABLED=0 go build -o /dev/null ./cmd/satelle
+        # Cover every main under cmd/ (CLI + satelle-serve; sty_19ff03f4).
+        run: CGO_ENABLED=0 go build -o /dev/null ./cmd/...
       # Integration + browser e2e tests (tests/, -tags integration) run LOCALLY
       # via `make integration` — they need a real Chrome and exercise the running
       # binary, so they are not part of GitHub CI by design.

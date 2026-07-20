@@ -3,15 +3,13 @@
 #
 #   curl -fsSL https://github.com/bobmcallan/satelle/releases/latest/download/install.sh | sh
 #
-# (Published as a release asset by .github/workflows/release.yml, alongside the
-# binaries, so the URL above is a stable GitHub download.)
+# (Published as a release asset on the CLI release, which remains GitHub "latest".)
 #
-# It resolves the latest release, fetches + sha256-verifies the platform binary,
-# and installs it to ~/.local/bin (override with SATELLE_INSTALL_DIR). Pure-Go,
-# no-cgo, single static binary — nothing else to install.
+# CLI and serve carry independent versions (sty_19ff03f4):
+#   - CLI: tag v<X>, asset satelle-v<X>-<os>-<arch>, always latest
+#   - serve: tag serve-v<Y>, asset satelle-serve-v<Y>-…, not latest
 #
-# Next steps it prints: `satelle init` in a repo, then `satelle service install`
-# for the always-on web project page.
+# Next: `satelle init` in a repo, then `satelle service install`.
 set -eu
 
 REPO="bobmcallan/satelle"
@@ -29,6 +27,7 @@ case "$os" in
 	*) echo "satelle install: unsupported OS '$os' (use the .exe asset on Windows)" >&2; exit 1 ;;
 esac
 
+# --- CLI (always releases/latest) ---
 tag=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
 	| grep -m1 '"tag_name"' | cut -d'"' -f4)
 [ -n "$tag" ] || { echo "satelle install: could not resolve latest release" >&2; exit 1; }
@@ -56,26 +55,53 @@ mkdir -p "$INSTALL_DIR"
 mv "$tmp/satelle" "$INSTALL_DIR/satelle"
 echo "satelle install: installed $INSTALL_DIR/satelle ($tag)"
 
-# Dedicated serve binary (sty_80233c10) — soft: older releases may omit it.
-serve_name="satelle-serve-$tag-$os-$arch"
-serve_url="https://github.com/$REPO/releases/download/$tag/$serve_name"
-if curl -fsSL "$serve_url" -o "$tmp/satelle-serve" 2>/dev/null \
-	&& curl -fsSL "$serve_url.sha256" -o "$tmp/satelle-serve.sha256" 2>/dev/null; then
-	swant=$(cut -d' ' -f1 "$tmp/satelle-serve.sha256")
-	if command -v sha256sum >/dev/null 2>&1; then
-		sgot=$(sha256sum "$tmp/satelle-serve" | cut -d' ' -f1)
+# --- serve (independent serve-v* tags; soft-fail if none) ---
+# Newest-first releases list; first serve-v* tag wins. Asset name uses v<Y>
+# (strip serve- prefix), never the full tag.
+serve_tag=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=30" \
+	| grep -oE '"tag_name": "serve-v[^"]+"' | head -1 | cut -d'"' -f4 || true)
+if [ -n "$serve_tag" ]; then
+	serve_ver=${serve_tag#serve-}
+	serve_name="satelle-serve-$serve_ver-$os-$arch"
+	serve_url="https://github.com/$REPO/releases/download/$serve_tag/$serve_name"
+	if curl -fsSL "$serve_url" -o "$tmp/satelle-serve" 2>/dev/null \
+		&& curl -fsSL "$serve_url.sha256" -o "$tmp/satelle-serve.sha256" 2>/dev/null; then
+		swant=$(cut -d' ' -f1 "$tmp/satelle-serve.sha256")
+		if command -v sha256sum >/dev/null 2>&1; then
+			sgot=$(sha256sum "$tmp/satelle-serve" | cut -d' ' -f1)
+		else
+			sgot=$(shasum -a 256 "$tmp/satelle-serve" | cut -d' ' -f1)
+		fi
+		if [ "$swant" = "$sgot" ]; then
+			chmod +x "$tmp/satelle-serve"
+			mv "$tmp/satelle-serve" "$INSTALL_DIR/satelle-serve"
+			echo "satelle install: installed $INSTALL_DIR/satelle-serve ($serve_tag)"
+		else
+			echo "satelle install: satelle-serve sha256 mismatch — skipped (use satelle serve fallback)" >&2
+		fi
 	else
-		sgot=$(shasum -a 256 "$tmp/satelle-serve" | cut -d' ' -f1)
-	fi
-	if [ "$swant" = "$sgot" ]; then
-		chmod +x "$tmp/satelle-serve"
-		mv "$tmp/satelle-serve" "$INSTALL_DIR/satelle-serve"
-		echo "satelle install: installed $INSTALL_DIR/satelle-serve ($tag)"
-	else
-		echo "satelle install: satelle-serve sha256 mismatch — skipped (use satelle serve fallback)" >&2
+		echo "satelle install: could not fetch $serve_name — service install will fall back to satelle serve"
 	fi
 else
-	echo "satelle install: satelle-serve asset not on this release — service install will fall back to satelle serve"
+	# Pre-split releases may still carry both under v*; try same tag once.
+	serve_name="satelle-serve-$tag-$os-$arch"
+	serve_url="https://github.com/$REPO/releases/download/$tag/$serve_name"
+	if curl -fsSL "$serve_url" -o "$tmp/satelle-serve" 2>/dev/null \
+		&& curl -fsSL "$serve_url.sha256" -o "$tmp/satelle-serve.sha256" 2>/dev/null; then
+		swant=$(cut -d' ' -f1 "$tmp/satelle-serve.sha256")
+		if command -v sha256sum >/dev/null 2>&1; then
+			sgot=$(sha256sum "$tmp/satelle-serve" | cut -d' ' -f1)
+		else
+			sgot=$(shasum -a 256 "$tmp/satelle-serve" | cut -d' ' -f1)
+		fi
+		if [ "$swant" = "$sgot" ]; then
+			chmod +x "$tmp/satelle-serve"
+			mv "$tmp/satelle-serve" "$INSTALL_DIR/satelle-serve"
+			echo "satelle install: installed $INSTALL_DIR/satelle-serve ($tag, combined release)"
+		fi
+	else
+		echo "satelle install: no satelle-serve release yet — service install will fall back to satelle serve"
+	fi
 fi
 
 case ":$PATH:" in
