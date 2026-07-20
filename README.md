@@ -54,20 +54,17 @@ serve-adoption onboarding):
 1. Run the UI: `satelle-serve` (or `satelle service install`, which prefers the
    dedicated binary). `satelle serve` remains a **deprecated alias** that prints
    a migration notice and runs the same mirror server.
-2. Point the CLI at it with `[server] endpoint` — usually in
-   **gitignored** `.satelle/satelle.local.toml` (per machine):
-   ```toml
-   [server]
-   endpoint = "http://127.0.0.1:8787"
-   ```
-3. Join the workspace and seed the mirror in one verb:
+2. Join the workspace and seed the mirror in one verb:
    ```sh
-   satelle workspace add    # register repo + POST /ingest/snapshot when endpoint is set
+   satelle workspace add    # register + seed; bootstraps [server] endpoint when serve is up
    ```
-   Without an endpoint, the verb still registers the path and prints a notice that
-   the mirror was **not** seeded (the landing will not show a card until you set
-   the endpoint and re-run). Mutating verbs drain change + one snapshot before
-   process exit (no manual reconcile step).
+   `[server] endpoint` usually lives in **gitignored** `.satelle/satelle.local.toml`
+   (per machine). When unset and a local serve answers at the service port
+   (default `http://127.0.0.1:8787`), `workspace add` writes that endpoint into
+   local.toml and seeds in the same command. Without a reachable serve it still
+   registers but exits non-zero with the exact file, keys, default URL, and re-run
+   command. Mutating verbs drain change + one snapshot before process exit (no
+   manual reconcile step).
 
 `satelle ui` / `satelle ui push` were **removed** — they print a pointer to
 `satelle workspace add`.
