@@ -16,6 +16,15 @@ You are the **executor** for the merged `release` step (in-loop on the driving s
 
 ## 1. Stage and commit (bump is mandatory)
 
+0. **Serve-path version discipline** (sty_4a5c6924) — if this slice touches
+   `cmd/satelle-serve/`, `internal/web/`, `internal/mirror/`, or
+   `internal/buildinfo/`, run before commit:
+   ```bash
+   make check-serve-version
+   ```
+   Exit non-zero means bump `satelle-serve.version` (and the serve-v changelog
+   entry) before releasing. The check is configuration (`scripts/check-serve-version.sh`);
+   the release step is the release-path gate that runs it.
 1. **Format, then stage the STORY'S SLICE** — only the files this story changed (read the story body/acceptance criteria and `git status --short`):
    ```bash
    gofmt -s -w internal/ cmd/ tests/ 2>/dev/null; git add <the story's files>
@@ -23,6 +32,7 @@ You are the **executor** for the merged `release` step (in-loop on the driving s
    Do NOT `git add -A`: the tree may carry another session's in-flight changes. Confirm the staged set is exactly the slice (`git diff --cached --stat`).
 2. **Bump `.version`** — MANDATORY. Single source of truth for the release tag (`v<satelle.version>`) and the baked build identity; `release` cuts a tag ONLY when `.version` changed, so a missed bump strands the released binary.
    - Increment the **patch** of `satelle.version` (`0.0.11` → `0.0.12`).
+   - When the slice is serve-path work, also advance `satelle-serve.version` as required by `make check-serve-version`.
    - Set `satelle.build` to `date -u +"%Y-%m-%d-%H-%M-%S"`. `git add .version`.
 3. **Update `CHANGELOG.md`** — MANDATORY (sty_f52ba0c3). The `release → done` gate
    `satelle-changelog-entry-check` fails closed when the version on HEAD has no entry.
