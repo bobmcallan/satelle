@@ -53,7 +53,7 @@ func TestWebSettingsReadOnly(t *testing.T) {
 	if !waitHealthy(t, host+"/healthz", 5*time.Second) {
 		t.Fatal("server did not become healthy")
 	}
-	mustRun(t, testBin, repo, "workspace", "add")
+	seedWorkspaceAdd(t, testBin, repo, host)
 
 	slug := filepath.Base(repo)
 	page := httpGet(t, host+"/r/"+slug+"/settings")

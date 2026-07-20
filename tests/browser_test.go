@@ -77,7 +77,7 @@ func serveRepo(t *testing.T, _ string) (string, string) {
 	// Push-fed mirror: seed [server] endpoint + full snapshot so /r/<slug>/ has data.
 	ep := fmt.Sprintf("[server]\nendpoint = %q\n", host)
 	_ = os.WriteFile(filepath.Join(repo, ".satelle", "satelle.local.toml"), []byte(ep), 0o644)
-	mustRun(t, testBin, repo, "workspace", "add")
+	seedWorkspaceAdd(t, testBin, repo, host)
 	return host + "/r/" + filepath.Base(repo), repo
 }
 
@@ -1501,13 +1501,30 @@ func createStory(t *testing.T, repo, title, status string) string {
 }
 
 // workspaceAddIfConfigured runs `satelle workspace add` when [server] endpoint is set.
+// Suite-wide SATELLE_SERVER_ENDPOINT=none requires the URL override (sty_5aa08259).
 func workspaceAddIfConfigured(t *testing.T, repo string) {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.local.toml"))
 	if err != nil || !strings.Contains(string(b), "endpoint") {
 		return
 	}
-	mustRun(t, testBin, repo, "workspace", "add")
+	// endpoint = "http://..."
+	ep := ""
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "endpoint") {
+			if i := strings.Index(line, "\""); i >= 0 {
+				rest := line[i+1:]
+				if j := strings.Index(rest, "\""); j >= 0 {
+					ep = rest[:j]
+				}
+			}
+		}
+	}
+	if ep == "" {
+		return
+	}
+	seedWorkspaceAdd(t, testBin, repo, ep)
 }
 
 // visibleRow reports whether the story/task row for id is visible (not

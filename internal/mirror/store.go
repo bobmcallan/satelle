@@ -225,6 +225,80 @@ type Partition struct {
 	UpdatedAt string
 }
 
+// PartitionDetail is a partition plus kind counts and best-effort repo path
+// (from identity meta) for CLI list/prune (sty_eb61be02 / epic:mirror-hygiene).
+type PartitionDetail struct {
+	Partition
+	Stories int
+	Tasks   int
+	Docs    int
+	Path    string
+}
+
+// DeletePartition removes a partition and all of its items/docs. No-op success
+// when repo_key is unknown (idempotent prune). CLI remains the sole writer via
+// POST /ingest/remove (sty_eb61be02).
+func (s *Store) DeletePartition(ctx context.Context, repoKey string) error {
+	repoKey = strings.TrimSpace(repoKey)
+	if repoKey == "" {
+		return fmt.Errorf("mirror: empty repo_key")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM items WHERE repo_key = ?`, repoKey); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM docs WHERE repo_key = ?`, repoKey); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM partitions WHERE repo_key = ?`, repoKey); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// CountItems returns how many rows of kind exist for repoKey.
+func (s *Store) CountItems(ctx context.Context, repoKey, kind string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM items WHERE repo_key = ? AND kind = ?
+`, repoKey, kind).Scan(&n)
+	return n, err
+}
+
+// ListPartitionDetails returns every partition with story/task/doc counts and
+// path from identity meta when present.
+func (s *Store) ListPartitionDetails(ctx context.Context) ([]PartitionDetail, error) {
+	parts, err := s.ListPartitions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PartitionDetail, 0, len(parts))
+	for _, p := range parts {
+		d := PartitionDetail{Partition: p}
+		if d.Stories, err = s.CountItems(ctx, p.RepoKey, "story"); err != nil {
+			return nil, err
+		}
+		if d.Tasks, err = s.CountItems(ctx, p.RepoKey, "task"); err != nil {
+			return nil, err
+		}
+		if d.Docs, err = s.CountItems(ctx, p.RepoKey, "doc"); err != nil {
+			return nil, err
+		}
+		if payload, err := s.GetItem(ctx, p.RepoKey, "identity", "meta"); err == nil {
+			var meta IdentityMeta
+			if json.Unmarshal([]byte(payload), &meta) == nil {
+				d.Path = strings.TrimSpace(meta.RepoRoot)
+			}
+		}
+		out = append(out, d)
+	}
+	return out, nil
+}
+
 // ApplyChange records a coarse change event (order:2 publisher). Bumps seq and
 // leaves item bodies unchanged — full bodies arrive via snapshot (order:4).
 func (s *Store) ApplyChange(ctx context.Context, repoKey, topic string, now time.Time) (seq int64, err error) {

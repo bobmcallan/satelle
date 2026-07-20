@@ -17,6 +17,12 @@ type ChangeEvent struct {
 	At      string `json:"at"`
 }
 
+// RemoveEvent is POSTed to /ingest/remove to purge a partition (sty_eb61be02).
+// Same trust model as snapshot ingest (localhost push-fed; CLI sole writer).
+type RemoveEvent struct {
+	RepoKey string `json:"repo_key"`
+}
+
 // Snapshot is a full-state push for one partition (order:4 reconcile).
 // Every kind the UI reads must arrive here so serve never opens a repo DB.
 type Snapshot struct {
@@ -54,6 +60,32 @@ type IngestHandler struct {
 func (h *IngestHandler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/ingest/change", h.handleChange)
 	mux.HandleFunc("/ingest/snapshot", h.handleSnapshot)
+	mux.HandleFunc("/ingest/remove", h.handleRemove)
+}
+
+func (h *IngestHandler) handleRemove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var ev RemoveEvent
+	if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(ev.RepoKey) == "" {
+		http.Error(w, "repo_key required", http.StatusBadRequest)
+		return
+	}
+	if err := h.Store.DeletePartition(r.Context(), ev.RepoKey); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if h.OnChange != nil {
+		h.OnChange("projects")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
 func (h *IngestHandler) handleChange(w http.ResponseWriter, r *http.Request) {

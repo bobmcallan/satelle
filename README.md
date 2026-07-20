@@ -56,15 +56,20 @@ serve-adoption onboarding):
    a migration notice and runs the same mirror server.
 2. Join the workspace and seed the mirror in one verb:
    ```sh
-   satelle workspace add    # register + seed; bootstraps [server] endpoint when serve is up
+   satelle workspace add         # register + seed; bootstraps endpoint when a matching serve is up
+   satelle workspace partitions  # list mirror partitions (repo_key, path, counts)
+   satelle workspace prune <repo_key> [--force]  # remove orphan/junk partitions
+   satelle workspace remove      # unregister + purge that repo's partition
    ```
    `[server] endpoint` usually lives in **gitignored** `.satelle/satelle.local.toml`
    (per machine). When unset and a local serve answers at the service port
-   (default `http://127.0.0.1:8787`), `workspace add` writes that endpoint into
-   local.toml and seeds in the same command. Without a reachable serve it still
-   registers but exits non-zero with the exact file, keys, default URL, and re-run
-   command. Mutating verbs drain change + one snapshot before process exit (no
-   manual reconcile step).
+   (default `http://127.0.0.1:8787`) **and** reports a matching `X-Satelle-Instance`
+   for this `SATELLE_HOME`, `workspace add` writes that endpoint into
+   local.toml and seeds in the same command. Without a matching serve it still
+   registers, prints seed skipped, and exits 0. Hermetic tests set
+   `SATELLE_SERVER_ENDPOINT=none` so they never auto-probe a live operator serve.
+   Mutating verbs drain change + one snapshot before process exit (no manual
+   reconcile step).
 
 `satelle ui` / `satelle ui push` were **removed** — they print a pointer to
 `satelle workspace add`.

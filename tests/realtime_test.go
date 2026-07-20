@@ -27,7 +27,8 @@ func TestCrossProcessFragmentReflectsCLI(t *testing.T) {
 	if created.ID == "" {
 		t.Fatalf("no story id in create output:\n%s", out)
 	}
-	mustRun(t, testBin, repo, "workspace", "add")
+	host := strings.TrimSuffix(base, "/r/"+filepath.Base(repo))
+	seedWorkspaceAdd(t, testBin, repo, host)
 
 	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
@@ -72,7 +73,7 @@ func TestCrossProcessSSETrigger(t *testing.T) {
 		}
 	}()
 	time.Sleep(100 * time.Millisecond)
-	mustRun(t, testBin, repo, "workspace", "add")
+	seedWorkspaceAdd(t, testBin, repo, host)
 
 	select {
 	case topic := <-done:

@@ -3,6 +3,7 @@
 package tests
 
 import (
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -38,7 +39,9 @@ func TestBrowserOrderTagSort(t *testing.T) {
 	idN := mk("NoOrder", "ordtest")
 	tie := []string{id3a, id3b}
 	sort.Strings(tie) // expand-url shares a constant prefix, so id order == url order
-	mustRun(t, testBin, repo, "workspace", "add")
+	// serveRepo already seeded once; re-seed after story creates.
+	host := strings.TrimSuffix(base, "/r/"+filepath.Base(repo))
+	seedWorkspaceAdd(t, testBin, repo, host)
 
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(base),

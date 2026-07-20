@@ -12,8 +12,10 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/mirror"
 )
 
 // TestWorkspaceAddRegistersAndSeeds (sty_805bee9c AC1): with [server] endpoint,
@@ -84,14 +86,18 @@ func TestWorkspaceAddRegistersAndSeeds(t *testing.T) {
 	}
 }
 
-// TestWorkspaceAddBootstrapsEndpointFromServicePort (sty_0122610a AC1/AC5): no
-// [server] endpoint, but a live serve on the global service port → write
-// local.toml, seed once, exit 0.
+// TestWorkspaceAddBootstrapsEndpointFromServicePort (sty_0122610a AC1/AC5 +
+// sty_5aa08259): no [server] endpoint, but a live serve on the global service
+// port with matching X-Satelle-Instance → write local.toml, seed once, exit 0.
 func TestWorkspaceAddBootstrapsEndpointFromServicePort(t *testing.T) {
 	var snapHits atomic.Int32
+	// tempRepo isolates SATELLE_HOME first so CurrentInstanceID matches healthz.
+	repo := tempRepo(t)
+	wantInst := config.CurrentInstanceID()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/healthz":
+			w.Header().Set(HeaderSatelleInstance, wantInst)
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
 		case "/ingest/snapshot":
@@ -112,7 +118,6 @@ func TestWorkspaceAddBootstrapsEndpointFromServicePort(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	repo := tempRepo(t)
 	// tempRepo already isolated SATELLE_HOME; pin service port to httptest's.
 	if err := config.SaveGlobal(config.GlobalConfig{
 		Service: config.ServiceConfig{Port: port},
@@ -150,9 +155,9 @@ func TestWorkspaceAddBootstrapsEndpointFromServicePort(t *testing.T) {
 	}
 }
 
-// TestWorkspaceAddNoServeFailsWithRemedy (sty_0122610a AC2/AC5): no endpoint and
-// no serve → non-zero, names file/keys/URL/re-run, registration kept.
-func TestWorkspaceAddNoServeFailsWithRemedy(t *testing.T) {
+// TestWorkspaceAddNoServeSkipsSeedExit0 (sty_5aa08259 AC3): no endpoint and no
+// serve → still registers, seed skipped, exit 0.
+func TestWorkspaceAddNoServeSkipsSeedExit0(t *testing.T) {
 	repo := tempRepo(t)
 	// Pin service port to something nothing is listening on.
 	if err := config.SaveGlobal(config.GlobalConfig{
@@ -162,23 +167,11 @@ func TestWorkspaceAddNoServeFailsWithRemedy(t *testing.T) {
 	}
 
 	out, err := runRoot(t, "workspace", "add")
-	if err == nil {
-		t.Fatalf("expected non-zero when no serve, got ok:\n%s", out)
+	if err != nil {
+		t.Fatalf("expected exit 0 with seed skipped, got err: %v\n%s", err, out)
 	}
-	for _, want := range []string{
-		"satelle.local.toml",
-		"[server]",
-		"endpoint",
-		"http://127.0.0.1:1",
-		"workspace add",
-	} {
-		if !strings.Contains(out, want) && !strings.Contains(err.Error(), want) {
-			// cobra surfaces RunE error; combined out may hold stderr/stdout only
-			combined := out + "\n" + err.Error()
-			if !strings.Contains(combined, want) {
-				t.Errorf("remedy missing %q:\n%s\nerr=%v", want, out, err)
-			}
-		}
+	if !strings.Contains(out, "seed skipped") {
+		t.Fatalf("expected seed skipped notice:\n%s", out)
 	}
 	abs, _ := filepath.Abs(repo)
 	gc, gerr := config.LoadGlobal()
@@ -193,7 +186,88 @@ func TestWorkspaceAddNoServeFailsWithRemedy(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("registration must survive seed failure: %v", gc.Workspace.Repos)
+		t.Fatalf("registration must survive seed skip: %v", gc.Workspace.Repos)
+	}
+}
+
+// TestWorkspaceAddForeignInstanceSkipsSeed (sty_5aa08259): live serve without
+// matching X-Satelle-Instance is not auto-adopted.
+func TestWorkspaceAddForeignInstanceSkipsSeed(t *testing.T) {
+	var snapHits atomic.Int32
+	repo := tempRepo(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz":
+			w.Header().Set(HeaderSatelleInstance, "foreign-instance-id")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		case "/ingest/snapshot":
+			snapHits.Add(1)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	u, _ := url.Parse(srv.URL)
+	port, _ := strconv.Atoi(u.Port())
+	if err := config.SaveGlobal(config.GlobalConfig{
+		Service: config.ServiceConfig{Port: port},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
+	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SATELLE_CONFIG", cfgPath)
+
+	out, err := runRoot(t, "workspace", "add")
+	if err != nil {
+		t.Fatalf("expected exit 0: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "seed skipped") {
+		t.Fatalf("expected seed skipped:\n%s", out)
+	}
+	if snapHits.Load() != 0 {
+		t.Fatalf("foreign serve must not receive snapshot, got %d", snapHits.Load())
+	}
+}
+
+// TestWorkspaceAddEnvNoneDisablesSeed (sty_5aa08259): SATELLE_SERVER_ENDPOINT=none
+// disables discovery even when a matching serve answers.
+func TestWorkspaceAddEnvNoneDisablesSeed(t *testing.T) {
+	var snapHits atomic.Int32
+	repo := tempRepo(t)
+	wantInst := config.CurrentInstanceID()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz":
+			w.Header().Set(HeaderSatelleInstance, wantInst)
+			_, _ = w.Write([]byte("ok"))
+		case "/ingest/snapshot":
+			snapHits.Add(1)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	u, _ := url.Parse(srv.URL)
+	port, _ := strconv.Atoi(u.Port())
+	_ = config.SaveGlobal(config.GlobalConfig{Service: config.ServiceConfig{Port: port}})
+	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
+	_ = os.WriteFile(cfgPath, []byte("web_port = 8181\n"), 0o644)
+	t.Setenv("SATELLE_CONFIG", cfgPath)
+	t.Setenv(EnvServerEndpoint, "none")
+
+	out, err := runRoot(t, "workspace", "add")
+	if err != nil {
+		t.Fatalf("expected exit 0: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "seed skipped") {
+		t.Fatalf("expected seed skipped:\n%s", out)
+	}
+	if snapHits.Load() != 0 {
+		t.Fatalf("none must not seed, got %d posts", snapHits.Load())
 	}
 }
 
@@ -276,4 +350,116 @@ func TestWorkspaceAddPushFailureKeepsRegistration(t *testing.T) {
 	if !found {
 		t.Fatalf("registration must survive push failure: %v", gc.Workspace.Repos)
 	}
+}
+
+// TestWorkspaceRemovePurgesPartition (sty_eb61be02): remove posts /ingest/remove.
+func TestWorkspaceRemovePurgesPartition(t *testing.T) {
+	var removeHits atomic.Int32
+	var gotKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ingest/remove" && r.Method == http.MethodPost {
+			removeHits.Add(1)
+			var ev map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&ev)
+			gotKey = ev["repo_key"]
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	repo := tempRepo(t)
+	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
+	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n\n[server]\nendpoint = \""+srv.URL+"\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SATELLE_CONFIG", cfgPath)
+
+	// Register first.
+	if out, err := runRoot(t, "workspace", "add"); err != nil {
+		// add may try snapshot and fail — still may register. Force register via add with none then set endpoint.
+		_ = out
+	}
+	// Ensure registered.
+	abs, _ := filepath.Abs(repo)
+	gc, _ := config.LoadGlobal()
+	gc.Workspace.AddRepo(abs)
+	_ = config.SaveGlobal(gc)
+
+	out, err := runRoot(t, "workspace", "remove", abs)
+	if err != nil {
+		t.Fatalf("workspace remove: %v\n%s", err, out)
+	}
+	if removeHits.Load() != 1 {
+		t.Fatalf("ingest/remove hits = %d, want 1; out:\n%s", removeHits.Load(), out)
+	}
+	wantKey := config.RepoKey(abs)
+	if gotKey != wantKey {
+		t.Fatalf("repo_key = %q, want %q", gotKey, wantKey)
+	}
+	if !strings.Contains(out, "purged mirror partition") {
+		t.Fatalf("expected purge line:\n%s", out)
+	}
+	gc, _ = config.LoadGlobal()
+	for _, r := range gc.Workspace.Repos {
+		if r == abs {
+			t.Fatalf("still registered after remove: %v", gc.Workspace.Repos)
+		}
+	}
+}
+
+// TestWorkspacePruneUnknownRepoKey (sty_eb61be02 AC5).
+func TestWorkspacePruneUnknownRepoKey(t *testing.T) {
+	_ = tempRepo(t) // isolate home + empty mirror
+	out, err := runRoot(t, "workspace", "prune", "no-such-repo-key-zzzz")
+	if err == nil {
+		t.Fatalf("expected error for unknown key, got:\n%s", out)
+	}
+	combined := out + err.Error()
+	if !strings.Contains(combined, "unknown repo_key") {
+		t.Fatalf("expected unknown repo_key message:\n%s", combined)
+	}
+}
+
+// TestWorkspacePruneRemovesOrphan (sty_eb61be02): local delete when path gone.
+func TestWorkspacePruneRemovesOrphan(t *testing.T) {
+	_ = tempRepo(t)
+	ms, err := mirrorOpenTest(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	if _, err := ms.TouchPartition(ctx, "orphan-deadbeef", "orphan", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	_ = ms.Close()
+
+	out, err := runRoot(t, "workspace", "prune", "orphan-deadbeef")
+	if err != nil {
+		t.Fatalf("prune: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "pruned") {
+		t.Fatalf("expected pruned:\n%s", out)
+	}
+	ms2, err := mirrorOpenTest(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ms2.Close()
+	parts, err := ms2.ListPartitions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range parts {
+		if p.RepoKey == "orphan-deadbeef" {
+			t.Fatal("partition still present after prune")
+		}
+	}
+}
+
+func mirrorOpenTest(t *testing.T) (*mirror.Store, error) {
+	t.Helper()
+	return mirror.Open(mirror.DefaultPath(config.GlobalDir()))
 }

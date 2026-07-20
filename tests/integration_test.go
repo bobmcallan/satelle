@@ -74,11 +74,24 @@ func TestMain(m *testing.M) {
 	}
 
 	// os.Exit skips defers; clean up and enforce the host-surface guard explicitly.
+	// Also fingerprint host mirror partition keys (sty_5aa08259 AC1): hermetic
+	// runs must not seed the operator's push-fed mirror even when a live unit
+	// answers on :8787. File-level hash of serve/ is skipped (WAL noise); keys only.
+	beforeParts := captureMirrorPartitionKeys(hostRoots.satelleHome)
 	exit := func(code int) {
 		afterSurface := captureHostSurfaceAt(hostRoots)
 		if diffs := diffHostSurface(beforeSurface, afterSurface); len(diffs) > 0 {
 			fmt.Fprintf(os.Stderr, "FATAL: host production surface changed during the integration suite (isolation failed).\n")
 			fmt.Fprintf(os.Stderr, "  Production port 8787 is off-limits; host ~/.satelle, ~/.config/satelle, and ~/.local/bin/satelle must be untouched.\n")
+			for _, d := range diffs {
+				fmt.Fprintf(os.Stderr, "  - %s\n", d)
+			}
+			code = 1
+		}
+		afterParts := captureMirrorPartitionKeys(hostRoots.satelleHome)
+		if diffs := diffMirrorPartitionKeys(beforeParts, afterParts); len(diffs) > 0 {
+			fmt.Fprintf(os.Stderr, "FATAL: host push-fed mirror partitions changed during the integration suite (sty_5aa08259 — hermetic seed isolation failed).\n")
+			fmt.Fprintf(os.Stderr, "  Live :8787 mirror must stay byte-identical in partition keys; tests must not auto-probe/seed it.\n")
 			for _, d := range diffs {
 				fmt.Fprintf(os.Stderr, "  - %s\n", d)
 			}
@@ -289,6 +302,39 @@ func hashTree(root string, preExistingKeys map[string]struct{}) map[string]strin
 	return out
 }
 
+// captureMirrorPartitionKeys returns the set of repo_key values in
+// home/serve/mirror.db (operator push-fed plane). Missing DB → empty set.
+// Used by TestMain to prove hermetic runs do not seed a live :8787 mirror
+// (sty_5aa08259 AC1). Opens read-only; does not start serve.
+func captureMirrorPartitionKeys(home string) map[string]struct{} {
+	if home == "" {
+		return map[string]struct{}{}
+	}
+	return queryMirrorPartitionKeys(filepath.Join(home, "serve", "mirror.db"))
+}
+
+// queryMirrorPartitionKeys is wired in mirror_guard.go (integration build).
+var queryMirrorPartitionKeys = func(dbPath string) map[string]struct{} {
+	return map[string]struct{}{}
+}
+
+// diffMirrorPartitionKeys reports keys added or removed on the host mirror.
+func diffMirrorPartitionKeys(before, after map[string]struct{}) []string {
+	var diffs []string
+	for k := range after {
+		if _, ok := before[k]; !ok {
+			diffs = append(diffs, "added partition "+k)
+		}
+	}
+	for k := range before {
+		if _, ok := after[k]; !ok {
+			diffs = append(diffs, "removed partition "+k)
+		}
+	}
+	sort.Strings(diffs)
+	return diffs
+}
+
 // fingerprintFile returns "file:<sha256>:<size>:<mtime_ns>" or "" if missing.
 func fingerprintFile(path string) string {
 	if path == "" {
@@ -418,9 +464,16 @@ func runtimeRoot(t *testing.T, repo string) string {
 
 // isolatedEnv returns os.Environ with SATELLE_HOME pinned to this test's
 // isolated home (overrides TestMain's suite backstop; last-wins for a key).
+// SATELLE_SERVER_ENDPOINT=none disables endpoint auto-discovery/push so
+// hermetic runs cannot seed the operator's live :8787 serve
+// (sty_5aa08259 / epic:mirror-hygiene). Tests that intentionally seed set
+// SATELLE_SERVER_ENDPOINT to their serve URL (overrides none; last wins).
 func isolatedEnv(t *testing.T) []string {
 	t.Helper()
-	return append(os.Environ(), "SATELLE_HOME="+isolatedHome(t))
+	return append(os.Environ(),
+		"SATELLE_HOME="+isolatedHome(t),
+		"SATELLE_SERVER_ENDPOINT=none",
+	)
 }
 
 // materializeDefault materializes one embedded default onto disk via
@@ -465,9 +518,15 @@ func materializeDefaultSolution(t *testing.T, repo string) {
 // state (DB/logs) is home-keyed under that home (sty_4660bbe1).
 func run(t *testing.T, bin, dir string, args ...string) (string, error) {
 	t.Helper()
+	return runEnv(t, bin, dir, nil, args...)
+}
+
+// runEnv is run with extra env vars appended after isolatedEnv (last-wins).
+func runEnv(t *testing.T, bin, dir string, extraEnv []string, args ...string) (string, error) {
+	t.Helper()
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = dir
-	cmd.Env = isolatedEnv(t)
+	cmd.Env = append(isolatedEnv(t), extraEnv...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -480,7 +539,13 @@ func run(t *testing.T, bin, dir string, args ...string) (string, error) {
 // (see create_review_test.go).
 func mustRun(t *testing.T, bin, dir string, args ...string) string {
 	t.Helper()
-	out, err := run(t, bin, dir, args...)
+	return mustRunEnv(t, bin, dir, nil, args...)
+}
+
+// mustRunEnv is mustRun with extra env (appended after isolatedEnv).
+func mustRunEnv(t *testing.T, bin, dir string, extraEnv []string, args ...string) string {
+	t.Helper()
+	out, err := runEnv(t, bin, dir, extraEnv, args...)
 	if err != nil {
 		t.Fatalf("satelle %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
@@ -488,6 +553,14 @@ func mustRun(t *testing.T, bin, dir string, args ...string) string {
 		hermeticCreateGateOff(t, dir)
 	}
 	return out
+}
+
+// seedWorkspaceAdd runs `workspace add` with SATELLE_SERVER_ENDPOINT=endpoint so
+// the suite-wide none is overridden and the snapshot hits the test serve
+// (sty_5aa08259). endpoint must be the test serve base URL (e.g. http://127.0.0.1:PORT).
+func seedWorkspaceAdd(t *testing.T, bin, repo, endpoint string) string {
+	t.Helper()
+	return mustRunEnv(t, bin, repo, []string{"SATELLE_SERVER_ENDPOINT=" + endpoint}, "workspace", "add")
 }
 
 // hermeticCreateGateOff flips the init-seeded scaffold's gate_create to false
@@ -735,7 +808,7 @@ func TestServeServesProjectPage(t *testing.T) {
 	if !waitHealthy(t, base+"/healthz", 5*time.Second) {
 		t.Fatal("server did not become healthy")
 	}
-	mustRun(t, bin, repo, "workspace", "add")
+	seedWorkspaceAdd(t, bin, repo, base)
 
 	slug := filepath.Base(repo)
 

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -85,9 +84,11 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// posts change events + one snapshot BEFORE store close (not fire-and-forget
 	// — those races process exit). Unset = inert (no network). Clear first so a
 	// prior test/process state cannot leak sinks into this one-shot invocation.
+	// SATELLE_SERVER_ENDPOINT=none disables push even when config has endpoint
+	// (sty_5aa08259 / hermetic tests).
 	verb.SetChangeNotifier(nil)
 	var drain *uiDrain
-	if ep := strings.TrimSpace(a.Config.Server.Endpoint); ep != "" {
+	if ep := effectiveServerEndpoint(a.Config.Server.Endpoint); ep != "" {
 		drain = &uiDrain{
 			endpoint: ep,
 			repoKey:  config.RepoKey(a.RepoRoot),

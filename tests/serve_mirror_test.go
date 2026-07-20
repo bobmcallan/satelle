@@ -78,7 +78,7 @@ func TestServeMirrorPushFed(t *testing.T) {
 	})
 
 	// --- full snapshot via workspace add; story visible on project page ---
-	out := mustRun(t, testBin, repo, "workspace", "add")
+	out := seedWorkspaceAdd(t, testBin, repo, host)
 	if !strings.Contains(out, "workspace add: ok") {
 		t.Fatalf("workspace add: %s", out)
 	}
@@ -157,7 +157,7 @@ func TestServeMirrorPushFed(t *testing.T) {
 	proj2 := httpGet(t, host+"/r/"+slug+"/")
 	if !strings.Contains(proj2, "Mirror Probe Story") {
 		// if port reuse race emptied, re-push
-		mustRun(t, testBin, repo, "workspace", "add")
+		seedWorkspaceAdd(t, testBin, repo, host)
 		proj2 = httpGet(t, host+"/r/"+slug+"/")
 	}
 	if !strings.Contains(proj2, "Mirror Probe Story") {
