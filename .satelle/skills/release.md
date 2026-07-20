@@ -67,7 +67,7 @@ names when a gap is present):
 | Named check | What must be true |
 | --- | --- |
 | **`check_cli_version`** | `satelle version` reports `$CLI_VER` (and the pushed commit SHA prefix) |
-| **`check_live_footer`** | Live web footer/service body contains `satelle $SERVE_VER` (serve binary's version — sty_19ff03f4) |
+| **`check_live_footer`** | Live web footer matches the **running** service binary's version (sty_19ff03f4): if ExecStart is `satelle-serve`, grep `$SERVE_VER`; if still the deprecated `satelle serve` alias, grep `$CLI_VER`. Prefer migrating the unit to satelle-serve (`satelle service install`). |
 | **`check_persistent_supervisor`** | The live service is under a **persistent** supervisor (system unit or linger-backed user manager), never an ephemeral `nohup`/`setsid` relaunch |
 
 ```bash
@@ -76,7 +76,9 @@ SERVE_VER=$(awk '$1=="satelle-serve.version:"{print $2}' .version)
 satelle update                                   # pulls CLI + serve assets (sudo-free),
                                                  # restarts the supervisor onto the new binary
 satelle version                                  # check_cli_version: must report $CLI_VER + SHA prefix
-curl -fsS "http://127.0.0.1:${PORT:-8787}/" | grep -F "satelle $SERVE_VER"  # check_live_footer (serve version)
+# check_live_footer: version of the process that holds the port
+curl -fsS "http://127.0.0.1:${PORT:-8787}/" | grep -F "satelle " 
+# expect $SERVE_VER when unit runs satelle-serve; $CLI_VER when unit still uses satelle serve alias
 # check_persistent_supervisor: confirm service is the installed unit, not a throwaway serve
 ```
 

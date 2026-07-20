@@ -1,3 +1,8 @@
+## [0.0.286] - 2026-07-20
+
+### Fixed
+- `satelle update` still refreshes satelle-serve from serve-v* when the CLI is already current (sty_19ff03f4)
+
 ## [0.0.285] - 2026-07-20
 
 ### Added

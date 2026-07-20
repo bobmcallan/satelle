@@ -57,20 +57,30 @@ global service.`,
 				return fmt.Errorf("resolve latest release: %w", err)
 			}
 			current := installedVersion(target)
+			cliUpdated := false
 			if !updateAvailable(current, latest) {
-				fmt.Fprintf(out, "already up to date (%s)\n", current)
-				return nil
+				fmt.Fprintf(out, "CLI already up to date (%s)\n", current)
+			} else if check {
+				fmt.Fprintf(out, "update available: %s → %s  (run `satelle update`)\n", current, latest)
+				// still report serve availability below when not --check-only for CLI
+			} else {
+				fmt.Fprintf(out, "updating %s: %s → %s\n", target, current, latest)
+				if err := downloadAndReplace(cmd.Context(), updateRepo, latest, target); err != nil {
+					return err
+				}
+				fmt.Fprintf(out, "installed %s (%s)\n", target, latest)
+				cliUpdated = true
 			}
 			if check {
-				fmt.Fprintf(out, "update available: %s → %s  (run `satelle update`)\n", current, latest)
+				// Surface serve channel too when independent (sty_19ff03f4).
+				if !local {
+					if st, serr := latestServeReleaseTag(cmd.Context(), updateRepo); serr == nil {
+						fmt.Fprintf(out, "latest serve release: %s\n", st)
+					}
+				}
 				return nil
 			}
-			fmt.Fprintf(out, "updating %s: %s → %s\n", target, current, latest)
-			if err := downloadAndReplace(cmd.Context(), updateRepo, latest, target); err != nil {
-				return err
-			}
-			fmt.Fprintf(out, "installed %s (%s)\n", target, latest)
-			// Refresh sibling satelle-serve from its own serve-v* release (sty_19ff03f4).
+			// Always refresh sibling satelle-serve from serve-v* even when CLI was current.
 			if !local {
 				serveTarget := filepath.Join(filepath.Dir(target), "satelle-serve")
 				if runtime.GOOS == "windows" {
@@ -83,11 +93,12 @@ global service.`,
 					fmt.Fprintf(out, "satelle-serve update skipped: %v\n", err)
 				} else {
 					fmt.Fprintf(out, "installed %s (%s)\n", serveTarget, serveTag)
+					cliUpdated = true // restart so serve process can pick up sibling if re-exec path
 				}
 			}
 			// The global service runs the global binary; a repo-local pin does not
 			// drive it, so only restart for a global update.
-			if !noRestart && !local {
+			if cliUpdated && !noRestart && !local {
 				restartServiceIfRunning(out)
 			}
 			return nil
