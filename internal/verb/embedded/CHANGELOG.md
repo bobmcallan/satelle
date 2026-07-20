@@ -1,3 +1,8 @@
+## [0.0.298] - 2026-07-20
+
+### Verified
+- Operator system unit ExecStart migrated to satelle-serve; live footer brands satelle-serve 0.0.2 (sty_2c51cc2c)
+
 ## [0.0.297] - 2026-07-20
 
 ### Verified
