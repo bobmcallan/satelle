@@ -178,8 +178,8 @@ func decodeLedgerByStory(ctx context.Context, s *mirror.Store, repoKey string) (
 		}
 		out[e.StoryID] = append(out[e.StoryID], e)
 	}
-	// Entries arrive oldest-first from ListAll; ReplaceKind order is not
-	// guaranteed — sort each story's strip by CreatedAt.
+	// ListAll is newest-first under the export budget (sty_c5065d05);
+	// ReplaceKind order is not guaranteed — sort each story's strip by CreatedAt.
 	for sid, es := range out {
 		sortLedger(es)
 		out[sid] = es

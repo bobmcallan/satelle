@@ -235,9 +235,10 @@ func sectionLabel(s string) string {
 }
 
 func buildLights(entries []ledger.Entry, status string, seatHeld bool, stepOf func(state string) int) []reviewLight {
-	// ledger-list yields entries oldest-first (the store orders created_at ASC),
-	// which is the order the lights render left-to-right — consume it as-is so
-	// the steps read 1 → N rather than reversed.
+	// Derivation order (sty_c5065d05): status → current-stage light; ledger →
+	// history enrichment; seat → decoration only (never the sole light for an
+	// on-spine performing status). Entries may arrive newest- or oldest-first;
+	// callers re-sort per story when needed.
 	es := entries
 	parse := func(p json.RawMessage) lightPayload {
 		var lp lightPayload
@@ -343,25 +344,24 @@ func buildLights(entries []ledger.Entry, status string, seatHeld bool, stepOf fu
 		}
 		lights = append(fillers, lights...)
 	}
-	// Trail a pulsing "current" light AT the current step, once the item has
-	// actually entered the workflow (≥1 recorded transition/reject). A
-	// freshly-created item still at its initial state has started no step — no
-	// phantom current ①. Usually the suppressed entry transition above already
-	// emitted this light in place, at its starting edge; this tail fallback only
-	// fires when no such slot was found (curStep == 0, off-spine).
-	if entered && !terminal && !currentEmitted {
-		cur := maxStep + 1
+	// Current-stage light from STATUS when on-spine (sty_c5065d05 AC4): an
+	// in_progress (etc.) story shows PROGRESS even with ZERO mirrored ledger
+	// rows. Ledger suppress path above usually already emitted current in place;
+	// this arm covers empty-ledger and off-spine entered fallbacks.
+	if !terminal && !currentEmitted {
 		if curStep > 0 {
-			cur = curStep
+			lights = append(lights, reviewLight{curStep, "current", "current stage"})
+			currentEmitted = true
+		} else if entered {
+			// Off-spine with ledger history: keep maxStep+1 tail fallback.
+			lights = append(lights, reviewLight{maxStep + 1, "current", "current stage"})
+			currentEmitted = true
 		}
-		lights = append(lights, reviewLight{cur, "current", "current stage"})
 	}
-	// Pre-transition seat (sty_e1314fe3): live lease held, no transition yet.
-	// Number is the START state spine depth via stepOf(status) — status is still
-	// the start state while entered==false, and spineDepths omits depth 0
-	// (structure.go enforces start==backlog); entered==true is mutually exclusive
-	// so the real step-1 current takes over the instant the first transition lands.
-	if seatHeld && !entered {
+	// Pre-transition seat (sty_e1314fe3): live lease at the START state only
+	// (curStep==0). On-spine performing statuses already have a status-derived
+	// current light — seat must not add a second light or flicker with lease churn.
+	if seatHeld && !entered && curStep == 0 {
 		lights = append(lights, reviewLight{stepOf(status), "current", "starting"})
 	}
 	return lights
