@@ -372,31 +372,6 @@ func stubReviewerAccept(t *testing.T, repo string) {
 	}
 }
 
-// enableParallelStories opts a test repo out of the default one-performing-story
-// rule ([gate] allow_parallel). Use only when the test is about multi-story UI
-// fixtures or similar — not when testing serial process itself (sty_c7149f8a).
-func enableParallelStories(t *testing.T, repo string) {
-	t.Helper()
-	p := filepath.Join(repo, ".satelle", "satelle.toml")
-	orig, err := os.ReadFile(p)
-	if err != nil {
-		t.Fatalf("read satelle.toml: %v", err)
-	}
-	// init seeds an ACTIVE [gate] table (sty_8c3d345c), so a second [gate] header
-	// would be a duplicate-key parse error. Insert the key INTO the existing table
-	// (right after its header); only append a fresh table if none is present.
-	var out string
-	if idx := strings.Index(string(orig), "[gate]\n"); idx >= 0 {
-		at := idx + len("[gate]\n")
-		out = string(orig[:at]) + "allow_parallel = true\n" + string(orig[at:])
-	} else {
-		out = string(orig) + "\n[gate]\nallow_parallel = true\n"
-	}
-	if err := os.WriteFile(p, []byte(out), 0o644); err != nil {
-		t.Fatalf("write allow_parallel: %v", err)
-	}
-}
-
 // isolatedHome returns the per-test SATELLE_HOME (created once via t.TempDir).
 // Shared across run() calls in the same test so multi-step flows keep one
 // empty-at-start global registry; never the host ~/.satelle.

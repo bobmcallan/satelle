@@ -90,7 +90,6 @@ func TestSaveConfigValuesRoundTripPreservesUnmodeled(t *testing.T) {
 
 func TestHasKeyDetectsPresentAndAbsent(t *testing.T) {
 	in := `[gate]
-allow_parallel = false
 edit_exempt_paths = [".satelle/"]
 
 [review]
@@ -113,7 +112,6 @@ gate_create = true
 func TestListValueContainsAndListStringValues(t *testing.T) {
 	in := `[gate]
 edit_exempt_paths = [".satelle/", ".claude/"]
-allow_parallel = false
 
 [review]
 gate_create = true

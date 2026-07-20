@@ -825,12 +825,13 @@ func TestBrowserBacklogBadgeLiveOnRefetch(t *testing.T) {
 	}
 
 	// And it must disappear when the live backlog count drops to zero.
-	// Two stories leave backlog at once (UI fixture) — opt out of single-story
-	// process rule for this test only (sty_c7149f8a).
-	enableParallelStories(t, repo)
+	// One performing story at a time (sty_c7149f8a / sty_a614a0ea): engage id1,
+	// park it to free the seat, then engage id2 so both leave backlog.
 	mustRun(t, testBin, repo, "story", "estimate", id1, "--time", "10m")
 	mustRun(t, testBin, repo, "story", "estimate", id2, "--time", "10m")
 	mustRun(t, testBin, repo, "story", "set", id1, "--status", "in_progress")
+	workspaceAddIfConfigured(t, repo)
+	mustRun(t, testBin, repo, "story", "set", id1, "--status", "blocked")
 	workspaceAddIfConfigured(t, repo)
 	mustRun(t, testBin, repo, "story", "set", id2, "--status", "in_progress")
 	workspaceAddIfConfigured(t, repo)

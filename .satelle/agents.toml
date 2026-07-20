@@ -24,6 +24,10 @@
 # Per-gate model without a second binding: a workflow edge/node may set model="…"
 # to override only the model for that gate/step while keeping the shared harness
 # (sty_19456622). See satelle help agent-dispatch and satelle-dot-standard.
+#
+# 2026-07-20: all isolated agents on Grok ACP (claude rate-limited on this host).
+# executor stays in-loop (driving session). Revert planner/retrospective/
+# blocked-triage to claude command templates when rate limits lift.
 
 [executor]
 role    = "agent"
@@ -49,32 +53,35 @@ tools     = "read_file,grep,list_dir"
 model     = "grok-4.5"
 principles = "session"
 
-# Planner — cheap fable model; plans only (no implement). Claude stays
-# interface=command (no native ACP).
+# Planner — plans only (no implement). Grok ACP; context via read_file channel.
 [planner]
-role    = "agent"
-command = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model}"
-tools   = "Read,Grep,Glob,Bash(satelle:*)"
-model   = "fable"
+role      = "agent"
+interface = "acp"
+command   = "grok agent stdio"
+tools     = "read_file,grep,list_dir"
+model     = "grok-4.5"
 principles = "session"
 
+# Retrospective — lessons on enter-done. Read-only grant; satelle via CLI when
+# shell available, otherwise payload/docs (sty_58fa970e).
 [retrospective]
-role    = "agent"
-command = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
-tools   = "Read,Grep,Glob,Bash(satelle:*)"
-model   = "sonnet"
+role      = "agent"
+interface = "acp"
+command   = "grok agent stdio"
+tools     = "read_file,grep,list_dir"
+model     = "grok-4.5"
 principles = "session"
 
 # blocked-triage — performing diagnosis/unblock on park entry (epic:blocked-reasoning-agent).
 # Wired via on_enter_agent=blocked-triage on the blocked node (agent=reviewer stays the
-# engagement role so the park remains non-engaging — sty_5cabe26f). Reuse check: [executor]
-# is in-loop only; [planner]/[reviewer] are read-only. Full tools — gates bound authority,
-# not --deny. Model: most capable available (opus). Claude: interface=command.
+# engagement role so the park remains non-engaging — sty_5cabe26f). Mutators allowed
+# so triage can file notes/attachments; gates still bound authority.
 [blocked-triage]
-role    = "agent"
-command = "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools} --model {model}"
-tools   = "Read,Write,Edit,Grep,Glob,Bash"
-model   = "opus"
+role      = "agent"
+interface = "acp"
+command   = "grok agent stdio"
+tools     = "read_file,grep,list_dir,search_replace"
+model     = "grok-4.5"
 principles = "session"
 
 # not wired in any current workflow — dispatched-coder (epic:dispatched-coder)

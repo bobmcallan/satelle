@@ -160,10 +160,10 @@ func TestConcurrentDifferentStoriesOneWins(t *testing.T) {
 	}
 }
 
-func TestAllowParallelNoStorySeat(t *testing.T) {
+func TestAcquireWithoutStorySeat(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
-	// occupiesStorySeat=false for both — both admitted
+	// occupiesStorySeat=false (tasks / non-story) — both admitted
 	_, out1, _, err := s.Acquire(ctx, "sty_a", "story", "alice", "plan", false)
 	if err != nil || out1 != OutcomeAcquired {
 		t.Fatalf("a: %v %v", out1, err)

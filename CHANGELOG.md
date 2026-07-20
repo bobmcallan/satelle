@@ -1,3 +1,8 @@
+## [0.0.291] - 2026-07-20
+
+### Removed
+- Parallel epic path and `[gate] allow_parallel` opt-out — single performing story always enforced; deleted parallel workflows/skills/launcher (sty_a614a0ea)
+
 ## [0.0.290] - 2026-07-20
 
 ### Added

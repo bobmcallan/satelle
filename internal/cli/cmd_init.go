@@ -1220,12 +1220,7 @@ gate_create = true
 # to require an engaged story for those paths. An explicitly empty list is a
 # deliberate opt-out (everything gated). Repos that predate .gitignore: run
 # satelle migrate --yes to append it without clobbering operator additions.
-# allow_parallel (default false) opts OUT of one-performing-story enforcement: by
-# default satelle refuses engaging a second story while another is already in a
-# non-terminal engaging state (plan/in_progress/…). Parked (blocked) and terminal
-# do not count. Setting allow_parallel = true only turns that blocker OFF — it
-# does NOT implement parallel worktrees/merge; a repo that wants true parallel
-# must design that into its workflow and then flip this switch.
+# One performing story at a time is always enforced (no opt-out).
 # allow_outside_tree_edits (default false) opts INTO Bash/Edit mutations whose
 # targets land in another git working tree (sty_a8454d10 / sty_aadd4d6c).
 # Non-repo paths (temp, scratchpads) are never fenced. Leave false unless this
@@ -1234,7 +1229,6 @@ gate_create = true
 [gate]
 edit_exempt_paths = [".satelle/", ".gitignore"]
 # edit_exempt_paths = [".satelle/", ".gitignore", ".claude/"]
-# allow_parallel = false
 # command_allow — OPT-IN step-scoped git policy (sty_c21490cc). Keys are git
 # subcommands; values are story statuses that may run them while engaged.
 # Absent/empty = no step restriction (commitgate only requires engagement).

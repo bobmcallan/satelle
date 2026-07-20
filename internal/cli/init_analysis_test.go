@@ -61,7 +61,6 @@ func TestAnalyzeSubstrateConfigMissing(t *testing.T) {
 	}
 	// gate table present but no edit_exempt_paths.
 	toml := `[gate]
-allow_parallel = false
 `
 	if err := os.WriteFile(filepath.Join(dataDir, config.ConfigName), []byte(toml), 0o644); err != nil {
 		t.Fatal(err)

@@ -194,11 +194,8 @@ type ReviewConfig struct {
 // Empty means everything in-repo requires an engaged story (sty_8c3d345c /
 // sty_f115e6bf).
 //
-// AllowParallel opts OUT of the default one-performing-story rule. Unset/false
-// (default): a status advance that would leave two stories in non-terminal
-// engaging states of their workflows is refused. true: the blocker is off —
-// the setting does NOT implement parallel work (worktrees/merge); that remains
-// a workflow/process choice the operator must design (sty_c7149f8a).
+// One performing story at a time is always enforced (sty_c7149f8a) — there is
+// no allow_parallel opt-out (removed sty_a614a0ea).
 //
 // AllowOutsideTreeEdits opts INTO Bash/Edit mutations whose targets resolve
 // inside another git working tree (root differs from the session-home anchor;
@@ -219,7 +216,6 @@ type ReviewConfig struct {
 // Not a satelle default — the operator authors the policy per repo.
 type GateConfig struct {
 	EditExemptPaths       []string            `toml:"edit_exempt_paths"`
-	AllowParallel         bool                `toml:"allow_parallel"`
 	AllowOutsideTreeEdits bool                `toml:"allow_outside_tree_edits"`
 	CommandAllow          map[string][]string `toml:"command_allow"`
 }

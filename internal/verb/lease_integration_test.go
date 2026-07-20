@@ -20,8 +20,6 @@ import (
 // move with the reason; park remains allowed (AC5).
 func TestLeaseStopRequestBlocksForward(t *testing.T) {
 	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
-	verb.SetAllowParallelStories(false)
-	t.Cleanup(func() { verb.SetAllowParallelStories(false) })
 
 	var a workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)
@@ -72,8 +70,6 @@ func TestLeaseSameTargetInFlightNoOp(t *testing.T) {
 // engage (AC4 release-on-abort).
 func TestLeaseNewAcquireAbortFreesSeat(t *testing.T) {
 	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
-	verb.SetAllowParallelStories(false)
-	t.Cleanup(func() { verb.SetAllowParallelStories(false) })
 
 	verb.SetTransitionGater(rejectToGater{to: "plan", skill: "intent"})
 	t.Cleanup(func() { verb.SetTransitionGater(nil) })
@@ -106,8 +102,6 @@ func TestLeaseNewAcquireAbortFreesSeat(t *testing.T) {
 // plan yet (AC1/AC2 acquire-at-start window).
 func TestLeaseAcquireBeforeStatusCommit(t *testing.T) {
 	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
-	verb.SetAllowParallelStories(false)
-	t.Cleanup(func() { verb.SetAllowParallelStories(false) })
 
 	// Slow gater blocks A on backlog→plan long enough for B to race.
 	done := make(chan struct{})
@@ -224,8 +218,6 @@ func (r rejectToGater) Gate(ctx context.Context, item workitem.Item, toStatus st
 // (sty_1738f973 AC1 deferred release-on-abort).
 func TestLeaseAbortLeavesNoSeatRow(t *testing.T) {
 	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
-	verb.SetAllowParallelStories(false)
-	t.Cleanup(func() { verb.SetAllowParallelStories(false) })
 
 	verb.SetTransitionGater(rejectToGater{to: "plan", skill: "intent"})
 	t.Cleanup(func() { verb.SetTransitionGater(nil) })
@@ -251,8 +243,6 @@ func TestLeaseAbortLeavesNoSeatRow(t *testing.T) {
 // so another story can engage (sty_1738f973 AC4).
 func TestStorySeatListAndRelease(t *testing.T) {
 	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
-	verb.SetAllowParallelStories(false)
-	t.Cleanup(func() { verb.SetAllowParallelStories(false) })
 
 	var a, b workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)
@@ -312,14 +302,12 @@ func TestOrphanStaleLeaseDoesNotBlockEngage(t *testing.T) {
 	verb.SetLedgerStore(db.Ledger)
 	verb.SetDocIndexStore(db.DocIndex)
 	verb.SetLeaseStore(db.Leases)
-	verb.SetAllowParallelStories(false)
 	t.Cleanup(func() {
 		db.Close()
 		verb.SetWorkItemStore(nil)
 		verb.SetLedgerStore(nil)
 		verb.SetDocIndexStore(nil)
 		verb.SetLeaseStore(nil)
-		verb.SetAllowParallelStories(false)
 	})
 
 	var a, b workitem.Item

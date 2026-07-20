@@ -10,16 +10,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-// allowParallelStories is the [gate] allow_parallel opt-out. Default false =
-// enforce one non-terminal engaging story at a time (sty_c7149f8a / sty_8426b9c0).
-// true only disables the story-seat blocker; it does not implement parallel
-// worktrees/merge. Leases are still acquired for gate engagement either way.
-var allowParallelStories bool
-
-// SetAllowParallelStories wires the opt-out from satelle.toml [gate] allow_parallel
-// at app bootstrap. Pass false (default) to enforce.
-func SetAllowParallelStories(v bool) { allowParallelStories = v }
-
 // acquireEngagementLease claims the engagement seat for item at targetStatus
 // BEFORE gate+dispatch (sty_8426b9c0). The DOT shape still decides whether the
 // target is engaging (config-over-code); the lease records who holds the seat.
@@ -48,9 +38,9 @@ func acquireEngagementLease(ctx context.Context, item workitem.Item, targetStatu
 		return false, false, refuseSecondEngagingStoryDerived(ctx, item.ID, targetStatus, item)
 	}
 	owner := lease.ResolveOwner()
-	// Stories occupy the single story seat unless allow_parallel opts out.
+	// Stories always occupy the single story seat (one performing story).
 	// Tasks get a lease for gate "any engaged" but never the story seat.
-	occupiesSeat := item.Kind == workitem.KindStory && !allowParallelStories
+	occupiesSeat := item.Kind == workitem.KindStory
 	l, outcome, holder, err := ls.Acquire(ctx, item.ID, string(item.Kind), owner, targetStatus, occupiesSeat)
 	if err != nil {
 		return false, false, err
@@ -81,7 +71,7 @@ func acquireEngagementLease(ctx context.Context, item workitem.Item, targetStatu
 			self = "new story"
 		}
 		return false, false, fmt.Errorf(
-			"satelle: refusing to engage %s (→ %s) while %s already holds the engagement seat — one performing story at a time; finish or park the other (blocked), or set [gate] allow_parallel = true to opt out (opt-out only disables this blocker — parallel still needs workflow/worktree design); inspect with `satelle story seat`, release a stale seat with `satelle story seat release <id>`",
+			"satelle: refusing to engage %s (→ %s) while %s already holds the engagement seat — one performing story at a time; finish or park the other (blocked); inspect with `satelle story seat`, release a stale seat with `satelle story seat release <id>`",
 			self, targetStatus, who)
 	default:
 		return false, false, nil
@@ -187,9 +177,6 @@ func targetIsExitState(ctx context.Context, item workitem.Item, status string) b
 // kept as a fallback when the lease store is unwired (unit tests that only exercise
 // status transitions) and for the create-path provisional check before an id exists.
 func refuseSecondEngagingStoryDerived(ctx context.Context, excludeID, targetStatus string, item workitem.Item) error {
-	if allowParallelStories {
-		return nil
-	}
 	if item.Kind != workitem.KindStory {
 		return nil
 	}
@@ -223,7 +210,7 @@ func refuseSecondEngagingStoryDerived(ctx context.Context, excludeID, targetStat
 				self = "new story"
 			}
 			return fmt.Errorf(
-				"satelle: refusing to engage %s (→ %s) while %s is already engaged (status %q) — one performing story at a time; finish or park the other (blocked), or set [gate] allow_parallel = true to opt out (opt-out only disables this blocker — parallel still needs workflow/worktree design)",
+				"satelle: refusing to engage %s (→ %s) while %s is already engaged (status %q) — one performing story at a time; finish or park the other (blocked)",
 				self, targetStatus, who, other.Status)
 		}
 	}
@@ -237,9 +224,6 @@ func refuseSecondEngagingStoryDerived(ctx context.Context, excludeID, targetStat
 // derived status scan when leases are unwired.
 func refuseSecondEngagingStory(ctx context.Context, excludeID, targetStatus string, item workitem.Item) error {
 	if item.Kind != workitem.KindStory {
-		return nil
-	}
-	if allowParallelStories {
 		return nil
 	}
 	targetEngaging, ok := storyStatusIsEngaging(ctx, item, targetStatus)
@@ -279,7 +263,7 @@ func refuseSecondEngagingStory(ctx context.Context, excludeID, targetStatus stri
 				who = fmt.Sprintf("%s (owner %q, state %q)", holder.ItemID, holder.Owner, holder.State)
 			}
 			return fmt.Errorf(
-				"satelle: refusing to engage new story (→ %s) while %s already holds the engagement seat — one performing story at a time; finish or park the other (blocked), or set [gate] allow_parallel = true to opt out (opt-out only disables this blocker — parallel still needs workflow/worktree design); inspect with `satelle story seat`, release a stale seat with `satelle story seat release <id>`",
+				"satelle: refusing to engage new story (→ %s) while %s already holds the engagement seat — one performing story at a time; finish or park the other (blocked); inspect with `satelle story seat`, release a stale seat with `satelle story seat release <id>`",
 				targetStatus, who)
 		case lease.OutcomeAlreadyHeld:
 			_ = ls.Release(ctx, probeID, owner)

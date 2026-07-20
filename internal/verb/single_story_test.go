@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -35,8 +34,6 @@ digraph w {
 
 func TestSingleStorySecondEngageRefused(t *testing.T) {
 	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
-	verb.SetAllowParallelStories(false)
-	t.Cleanup(func() { verb.SetAllowParallelStories(false) })
 
 	var a, b workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "First", "category": "feature"}), &a)
@@ -56,9 +53,6 @@ func TestSingleStorySecondEngageRefused(t *testing.T) {
 	if !strings.Contains(err.Error(), a.ID) {
 		t.Errorf("error should name occupying story: %v", err)
 	}
-	if !strings.Contains(err.Error(), "allow_parallel") {
-		t.Errorf("error should mention opt-out: %v", err)
-	}
 
 	var still workitem.Item
 	json.Unmarshal(call(t, "story-get", map[string]any{"id": b.ID}), &still)
@@ -69,8 +63,6 @@ func TestSingleStorySecondEngageRefused(t *testing.T) {
 
 func TestSingleStorySameStoryProgressAllowed(t *testing.T) {
 	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
-	verb.SetAllowParallelStories(false)
-	t.Cleanup(func() { verb.SetAllowParallelStories(false) })
 
 	var a workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Solo", "category": "feature"}), &a)
@@ -83,8 +75,6 @@ func TestSingleStorySameStoryProgressAllowed(t *testing.T) {
 
 func TestSingleStoryBlockedFreesSeat(t *testing.T) {
 	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
-	verb.SetAllowParallelStories(false)
-	t.Cleanup(func() { verb.SetAllowParallelStories(false) })
 
 	var a, b workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Parked", "category": "feature"}), &a)
@@ -105,25 +95,8 @@ func TestSingleStoryBlockedFreesSeat(t *testing.T) {
 	}
 }
 
-func TestSingleStoryAllowParallelOptsOut(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
-	verb.SetAllowParallelStories(true)
-	t.Cleanup(func() { verb.SetAllowParallelStories(false) })
-
-	var a, b workitem.Item
-	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)
-	json.Unmarshal(call(t, "story-create", map[string]any{"title": "B", "category": "feature"}), &b)
-	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "plan"}), &a)
-	json.Unmarshal(call(t, "story-set", map[string]any{"id": b.ID, "status": "plan"}), &b)
-	if b.Status != "plan" {
-		t.Fatalf("allow_parallel should permit second engage: %q", b.Status)
-	}
-}
-
 func TestSingleStoryCreateIntoEngagingRefused(t *testing.T) {
 	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
-	verb.SetAllowParallelStories(false)
-	t.Cleanup(func() { verb.SetAllowParallelStories(false) })
 
 	var a workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature", "status": "in_progress"}), &a)
@@ -137,11 +110,7 @@ func TestSingleStoryCreateIntoEngagingRefused(t *testing.T) {
 }
 
 func TestSingleStoryDefaultIsEnforce(t *testing.T) {
-	// Ensure package default (false) enforces without an explicit Set call after
-	// a prior test might have flipped it — wireWithWorkflows + explicit false.
 	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
-	verb.SetAllowParallelStories(false)
-	t.Cleanup(func() { verb.SetAllowParallelStories(false) })
 
 	var a, b workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)
