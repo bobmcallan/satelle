@@ -1,3 +1,13 @@
+## [0.0.299] - 2026-07-20
+
+### Fixed
+- Nav topbar no longer shows an unexplained **mirror** mode pill; empty-identity RO UI omits the strip, and identity email keeps a read-only/CLI-fed accessible description (sty_eea989dd)
+
+## [serve-v0.0.3] - 2026-07-20
+
+### Fixed
+- Same topbar mirror-pill UX fix as CLI 0.0.299 (sty_eea989dd)
+
 ## [0.0.298] - 2026-07-20
 
 ### Verified
