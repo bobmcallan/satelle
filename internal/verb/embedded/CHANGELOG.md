@@ -1,3 +1,8 @@
+## [0.0.290] - 2026-07-20
+
+### Added
+- Opt-in `[gate.command_allow]` step policy: restrict git subcommands (e.g. push) to permitted story statuses via satelle.toml; commitgate enforces when configured (sty_c21490cc)
+
 ## [serve-v0.0.2] - 2026-07-20
 
 ### Changed
