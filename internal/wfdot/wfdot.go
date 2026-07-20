@@ -10,6 +10,7 @@ package wfdot
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -512,6 +513,10 @@ func (s Spec) ExecutorSkillsFor(name string, tags []string) []string {
 	return append(out, augs...)
 }
 
+// DefaultParallelCap is the concurrency cap when an edge sets parallel=true
+// without a numeric limit (sty_4f0a15db). Bounded because reviewers share backends.
+const DefaultParallelCap = 4
+
 // Transition is a directed edge. Skills are the reviewer gates admitting entry to
 // the target node, in order (empty = ungated); Skill mirrors the first for
 // single-reviewer back-compat. An edge declares its gate(s) either edge-centric
@@ -527,6 +532,11 @@ type Transition struct {
 	// reviewer skill on this edge at gate time (sty_19456622). Empty inherits
 	// the [reviewer] binding model. One model per edge (CSV skills share it).
 	Model string
+	// Parallel is the opt-in concurrency cap for this edge's reviewer list
+	// (sty_4f0a15db). 0 = sequential first-reject short-circuit (today's default);
+	// parallel=true → DefaultParallelCap; parallel=N (N≥1) → cap N. Edge-only —
+	// not a node attribute (scoped nodes join many transitions).
+	Parallel int
 }
 
 // Spec is the parsed lifecycle: states and gated transitions.
@@ -632,6 +642,7 @@ func Parse(body string) (Spec, bool) {
 			// wins when both are present.
 			var edgeSkills []string
 			var edgeModel string
+			var edgeParallel int
 			if open := strings.Index(t, "["); open >= 0 {
 				closeAt := strings.LastIndex(t, "]")
 				if closeAt < open {
@@ -648,13 +659,16 @@ func Parse(body string) (Spec, bool) {
 					edgeSkills = splitCSVSkills(attrs["prompt"])
 				}
 				edgeModel = attrs["model"]
+				edgeParallel, _ = parseParallelAttr(attrs["parallel"])
+				// Malformed parallel= is ignored (cap 0) rather than hard-failing;
+				// unknown keys are already rejected by checkEdgeAttrs.
 			}
 			for _, id := range ids {
 				add(id)
 			}
 			for i := 0; i+1 < len(ids); i++ {
 				spec.Transitions = append(spec.Transitions, Transition{
-					From: ids[i], To: ids[i+1], Skill: first(edgeSkills), Skills: edgeSkills, Model: edgeModel,
+					From: ids[i], To: ids[i+1], Skill: first(edgeSkills), Skills: edgeSkills, Model: edgeModel, Parallel: edgeParallel,
 				})
 			}
 			continue
@@ -1009,6 +1023,7 @@ var knownNodeAttrs = map[string]bool{
 // is the canonical node-consistent form.
 var knownEdgeAttrs = map[string]bool{
 	"reviewer_skill": true, "agent": true, "prompt": true, "model": true,
+	"parallel": true, // sty_4f0a15db: concurrent multi-reviewer opt-in
 }
 
 // checkNodeAttrs returns named problems for unknown keys on a node.
@@ -1043,6 +1058,30 @@ func checkEdgeAttrs(from, to string, attrs map[string]string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// parseParallelAttr interprets the edge parallel= value (sty_4f0a15db).
+// Returns (cap, ok). ok=false means absent or unrecognised → treat as sequential.
+//   - "" / "false" / "0" → (0, true) sequential
+//   - "true" → (DefaultParallelCap, true)
+//   - integer N≥1 → (N, true)
+//   - garbage → (0, false)
+func parseParallelAttr(raw string) (int, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, true
+	}
+	switch strings.ToLower(raw) {
+	case "false", "0", "no", "off":
+		return 0, true
+	case "true", "yes", "on":
+		return DefaultParallelCap, true
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
 }
 
 // splitAppliesTo parses applies_to="surface:ui,surface:cli" (CSV, same convention

@@ -40,6 +40,17 @@ The agent receives:
 - **Capabilities**: the binding's `tools` grant, and its `model` unless the
   workflow node sets `model="…"` (per-node override — see below).
 
+### Parallel multi-reviewer edges (`parallel=`)
+
+An edge with multiple CSV reviewers (`prompt="@skill:a,@skill:b"`) runs them
+**sequentially** with first-reject short-circuit by default. Set `parallel=true`
+(default cap 4) or `parallel=N` on the **edge** to run that list concurrently:
+all verdicts are collected (no short-circuit), ledger order stays list order,
+and any reject still refuses the transition (the error names every rejecting
+reviewer). Trade-off: a rejected parallel round spends tokens on every reviewer
+— keep parallel opt-in only on gates that need multi-axis judgment. Absent
+`parallel=` is byte-for-byte sequential. See `satelle help workflows`.
+
 ### Per-gate / per-node model override
 
 Every reviewer gate normally uses the single `[reviewer]` binding's model. To run

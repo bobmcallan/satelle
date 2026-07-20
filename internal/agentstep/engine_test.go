@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -824,18 +826,18 @@ func TestBadDecisionErrors(t *testing.T) {
 }
 
 func TestReviewerSkillsFor(t *testing.T) {
-	if got, _, declared := reviewerSkillsFor(testWorkflow, "in_progress", "done"); len(got) != 1 || got[0] != "satelle-story-done-review" || !declared {
+	if got, _, _, declared := reviewerSkillsFor(testWorkflow, "in_progress", "done"); len(got) != 1 || got[0] != "satelle-story-done-review" || !declared {
 		t.Errorf("in_progress→done = (%v, %v), want ([done-review], true)", got, declared)
 	}
-	if got, _, declared := reviewerSkillsFor(testWorkflow, "backlog", "cancelled"); len(got) != 0 || !declared {
+	if got, _, _, declared := reviewerSkillsFor(testWorkflow, "backlog", "cancelled"); len(got) != 0 || !declared {
 		t.Errorf("declared ungated edge = (%v, %v), want (nil, true)", got, declared)
 	}
-	if got, _, declared := reviewerSkillsFor(testWorkflow, "backlog", "nowhere"); len(got) != 0 || declared {
+	if got, _, _, declared := reviewerSkillsFor(testWorkflow, "backlog", "nowhere"); len(got) != 0 || declared {
 		t.Errorf("undeclared edge = (%v, %v), want (nil, false)", got, declared)
 	}
 	// An ordered list: reviewer_skills takes precedence and preserves order.
 	multi := "transitions:\n  - {from: deployed, to: done, reviewer_skills: [first-review, second-review]}\n"
-	if got, _, declared := reviewerSkillsFor(multi, "deployed", "done"); len(got) != 2 || got[0] != "first-review" || got[1] != "second-review" || !declared {
+	if got, _, _, declared := reviewerSkillsFor(multi, "deployed", "done"); len(got) != 2 || got[0] != "first-review" || got[1] != "second-review" || !declared {
 		t.Errorf("reviewer_skills list = (%v, %v), want ([first-review second-review], true)", got, declared)
 	}
 }
@@ -2110,14 +2112,14 @@ digraph w {
 `
 
 func TestReviewerSkillsForDOT(t *testing.T) {
-	skills, model, declared := reviewerSkillsFor(dotWF, "in_progress", "committed")
+	skills, model, _, declared := reviewerSkillsFor(dotWF, "in_progress", "committed")
 	if !declared || len(skills) != 1 || skills[0] != "satelle-commit-push-reviewer" || model != "" {
 		t.Fatalf("in_progress->committed: skills=%v model=%q declared=%v", skills, model, declared)
 	}
-	if _, _, declared := reviewerSkillsFor(dotWF, "in_progress", "nope"); declared {
+	if _, _, _, declared := reviewerSkillsFor(dotWF, "in_progress", "nope"); declared {
 		t.Errorf("an undeclared edge should report declared=false")
 	}
-	if skills, _, declared := reviewerSkillsFor(dotWF, "committed", "done"); !declared || len(skills) != 0 {
+	if skills, _, _, declared := reviewerSkillsFor(dotWF, "committed", "done"); !declared || len(skills) != 0 {
 		t.Errorf("committed->done should be declared and ungated: skills=%v declared=%v", skills, declared)
 	}
 }
@@ -2241,7 +2243,7 @@ func TestReviewerSkillsForDOTModel(t *testing.T) {
   a -> b [agent=reviewer, prompt="@skill:rev", model="opus"]
 }
 ` + "```\n"
-	skills, model, declared := reviewerSkillsFor(body, "a", "b")
+	skills, model, _, declared := reviewerSkillsFor(body, "a", "b")
 	if !declared || len(skills) != 1 || skills[0] != "rev" || model != "opus" {
 		t.Fatalf("skills=%v model=%q declared=%v", skills, model, declared)
 	}
@@ -2773,5 +2775,160 @@ func TestGateParkFromIntegration(t *testing.T) {
 	_, err := g.Gate(context.Background(), item, "blocked")
 	if err != nil {
 		t.Fatalf("integration→blocked should be declared: %v", err)
+	}
+}
+
+// --- parallel multi-reviewer gates (sty_4f0a15db) ---
+
+func parallelWF(parallelAttr string) string {
+	edge := `backlog -> in_progress [agent=reviewer, prompt="@skill:rev-a,@skill:rev-b"`
+	if parallelAttr != "" {
+		edge += `, parallel=` + parallelAttr
+	}
+	edge += `]`
+	return wfDoc(baselineWorkflow, `"*"`, `
+  rankdir=LR
+  backlog [shape=Mdiamond]
+  in_progress [agent=executor]
+  done [shape=Msquare]
+  `+edge+`
+  in_progress -> done
+`)
+}
+
+func parallelSkill(name string) string {
+	return "---\nname: " + name + "\nscope: system\ntype: skill\ntags: [type:skill, type:reviewer]\ndescription: parallel test gate\n---\n\n# " + name + "\n\nReturn a verdict:\n\n```json\n{\"decision\": \"accept\", \"notes\": \"\"}\n```\n"
+}
+
+// concurrentMapRunner records max concurrency via short sleep; returns per-skill verdicts.
+type concurrentMapRunner struct {
+	mu       sync.Mutex
+	inflight int
+	maxConc  int
+	verdict  map[string]string
+	calls    map[string]int
+	delay    time.Duration
+}
+
+func newConcurrentMapRunner(verdict map[string]string) *concurrentMapRunner {
+	return &concurrentMapRunner{verdict: verdict, calls: map[string]int{}, delay: 30 * time.Millisecond}
+}
+
+func (r *concurrentMapRunner) Name() string    { return "conc" }
+func (r *concurrentMapRunner) Command() string { return "conc" }
+func (r *concurrentMapRunner) Run(_ context.Context, req agentcli.Request) ([]byte, error) {
+	sk := "unknown"
+	for _, name := range []string{"rev-a", "rev-b", "rev-c"} {
+		if strings.Contains(req.SystemPrompt, name) {
+			sk = name
+			break
+		}
+	}
+	r.mu.Lock()
+	r.calls[sk]++
+	r.inflight++
+	if r.inflight > r.maxConc {
+		r.maxConc = r.inflight
+	}
+	r.mu.Unlock()
+	time.Sleep(r.delay)
+	r.mu.Lock()
+	r.inflight--
+	dec := r.verdict[sk]
+	if dec == "" {
+		dec = "accept"
+	}
+	r.mu.Unlock()
+	return []byte(`{"decision":"` + dec + `","notes":"` + sk + `"}`), nil
+}
+
+func TestGateParallel_CollectsAllNoShortCircuit(t *testing.T) {
+	docs := fakeDocs{
+		workflow: parallelWF("true"),
+		extraSkills: []docindex.Doc{
+			{Kind: "skills", Name: "rev-a", Body: parallelSkill("rev-a")},
+			{Kind: "skills", Name: "rev-b", Body: parallelSkill("rev-b")},
+		},
+	}
+	runner := newConcurrentMapRunner(map[string]string{"rev-b": "reject"})
+	g := New(runner, docs, "/repo", "")
+	g.backoff = func(int) time.Duration { return 0 }
+
+	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_p", Status: "backlog", Category: "feature"}, "in_progress")
+	if err != nil {
+		t.Fatalf("Gate: %v", err)
+	}
+	if len(dec.Reviewers) != 2 {
+		t.Fatalf("parallel must collect all N verdicts, got %d: %+v", len(dec.Reviewers), dec.Reviewers)
+	}
+	if dec.Reviewers[0].Order != 0 || dec.Reviewers[1].Order != 1 {
+		t.Errorf("deterministic order broken: %+v", dec.Reviewers)
+	}
+	if dec.Reviewers[0].Skill != "rev-a" || dec.Reviewers[1].Skill != "rev-b" {
+		t.Errorf("skills order: %+v", dec.Reviewers)
+	}
+	if dec.Reviewers[1].Accept {
+		t.Error("rev-b should reject")
+	}
+	runner.mu.Lock()
+	maxc := runner.maxConc
+	callsA, callsB := runner.calls["rev-a"], runner.calls["rev-b"]
+	runner.mu.Unlock()
+	if callsA != 1 || callsB != 1 {
+		t.Errorf("each skill once: a=%d b=%d", callsA, callsB)
+	}
+	if maxc < 2 {
+		t.Errorf("expected concurrent in-flight ≥2, got maxConc=%d", maxc)
+	}
+}
+
+func TestGateSerial_ShortCircuitFirstReject(t *testing.T) {
+	docs := fakeDocs{
+		workflow: parallelWF(""), // no parallel attr
+		extraSkills: []docindex.Doc{
+			{Kind: "skills", Name: "rev-a", Body: parallelSkill("rev-a")},
+			{Kind: "skills", Name: "rev-b", Body: parallelSkill("rev-b")},
+		},
+	}
+	runner := newConcurrentMapRunner(map[string]string{"rev-a": "reject"})
+	g := New(runner, docs, "/repo", "")
+	g.backoff = func(int) time.Duration { return 0 }
+
+	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_s", Status: "backlog", Category: "feature"}, "in_progress")
+	if err != nil {
+		t.Fatalf("Gate: %v", err)
+	}
+	if len(dec.Reviewers) != 1 {
+		t.Fatalf("serial short-circuit should stop after first reject, got %d", len(dec.Reviewers))
+	}
+	if dec.Reviewers[0].Accept {
+		t.Error("expected reject")
+	}
+	runner.mu.Lock()
+	callsB := runner.calls["rev-b"]
+	runner.mu.Unlock()
+	if callsB != 0 {
+		t.Errorf("rev-b must not run after rev-a reject, calls=%d", callsB)
+	}
+}
+
+func TestReviewerSkillsFor_Parallel(t *testing.T) {
+	body := parallelWF("true")
+	skills, _, par, declared := reviewerSkillsFor(body, "backlog", "in_progress")
+	if !declared || len(skills) != 2 {
+		t.Fatalf("skills=%v declared=%v", skills, declared)
+	}
+	if par != wfdot.DefaultParallelCap {
+		t.Errorf("parallel=true → cap %d, want %d", par, wfdot.DefaultParallelCap)
+	}
+	body2 := parallelWF("2")
+	_, _, par2, _ := reviewerSkillsFor(body2, "backlog", "in_progress")
+	if par2 != 2 {
+		t.Errorf("parallel=2 → %d", par2)
+	}
+	body3 := parallelWF("")
+	_, _, par3, _ := reviewerSkillsFor(body3, "backlog", "in_progress")
+	if par3 != 0 {
+		t.Errorf("absent → %d", par3)
 	}
 }

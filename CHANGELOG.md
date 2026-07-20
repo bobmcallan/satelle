@@ -1,3 +1,12 @@
+## [0.0.301] - 2026-07-20
+
+### Added
+- Opt-in concurrent multi-reviewer gates: edge `parallel=true`/`parallel=N` runs CSV reviewers concurrently with no short-circuit; multi-reject errors name every rejecter; ledger records all verdicts (sty_4f0a15db)
+- Plan gate dogfood: plan→in_progress runs plan-review + architecture + integration-coverage with `parallel=true` (sty_4f0a15db)
+
+### Changed
+- Default multi-reviewer behaviour remains sequential first-reject short-circuit unless `parallel=` is set
+
 ## [0.0.300] - 2026-07-20
 
 ### Added

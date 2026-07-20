@@ -270,6 +270,47 @@ func TestGatedTransitionRecordsAgentInvocation(t *testing.T) {
 	}
 }
 
+// TestMultiRejectNamesAllAndLedgersAll (sty_4f0a15db AC2): when Gate returns
+// mixed accept/reject verdicts (parallel path), every row is ledgered and the
+// refuse error names every rejecting reviewer.
+func TestMultiRejectNamesAllAndLedgersAll(t *testing.T) {
+	wire(t)
+	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{
+		Gated:  true,
+		Accept: false,
+		Skill:  "rev-b",
+		Reviewers: []verb.ReviewerVerdict{
+			{Skill: "rev-a", Accept: true, Notes: "ok-a", Command: "fake", Context: "rev-a"},
+			{Skill: "rev-b", Accept: false, Notes: "no-b", Command: "fake", Context: "rev-b"},
+			{Skill: "rev-c", Accept: false, Notes: "no-c", Command: "fake", Context: "rev-c"},
+		},
+	}})
+	t.Cleanup(func() { verb.SetTransitionGater(nil) })
+
+	var it workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "multi-reject", "status": "in_progress"}), &it)
+	_, err := dispatchRaw(t, "story-set", map[string]any{"id": it.ID, "status": "done"})
+	if err == nil {
+		t.Fatal("want refuse on multi-reject")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "rev-b") || !strings.Contains(msg, "no-b") ||
+		!strings.Contains(msg, "rev-c") || !strings.Contains(msg, "no-c") {
+		t.Errorf("error must name both rejecters: %s", msg)
+	}
+	// All three verdicts ledgered: 1 accept + 2 reject
+	var accepts []ledger.Entry
+	json.Unmarshal(call(t, "ledger-list", map[string]any{"story_id": it.ID, "kind": ledger.KindReviewAccept}), &accepts)
+	var rejects []ledger.Entry
+	json.Unmarshal(call(t, "ledger-list", map[string]any{"story_id": it.ID, "kind": ledger.KindReviewReject}), &rejects)
+	if len(accepts) < 1 {
+		t.Errorf("want ≥1 accept ledger row, got %d", len(accepts))
+	}
+	if len(rejects) < 2 {
+		t.Errorf("want ≥2 reject ledger rows, got %d", len(rejects))
+	}
+}
+
 func TestFunctionalCheckRecordsNoInvocation(t *testing.T) {
 	wire(t)
 	// A deterministic functional-check gate invokes no agent (Command empty), so no

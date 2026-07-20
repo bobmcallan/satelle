@@ -33,6 +33,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/logfile"
@@ -559,7 +560,7 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 	} else if resume {
 		return verb.GateDecision{Gated: false}, nil
 	}
-	skills, edgeModel, declared, err := g.reviewerSkills(ctx, item, item.Status, toStatus)
+	skills, edgeModel, parallelCap, declared, err := g.reviewerSkills(ctx, item, item.Status, toStatus)
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
@@ -608,6 +609,13 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 	sysStart := len(ordered)
 	ordered = append(ordered, sys...)
 
+	// Parallel opt-in (sty_4f0a15db): edge parallel=N|true runs reviewers
+	// concurrently (no short-circuit). Absent/0 or a single reviewer keeps the
+	// sequential first-reject loop byte-for-byte.
+	if parallelCap > 0 && len(ordered) >= 2 {
+		return g.runGateParallel(ctx, item, toStatus, ordered, sysStart, parallelCap)
+	}
+
 	var result verb.GateDecision
 	for i, ref := range ordered {
 		skill := ref.skill
@@ -638,6 +646,98 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 		})
 		if !dec.Accept {
 			return result, nil // a reject blocks the edge — do not run later reviewers
+		}
+	}
+	return result, nil
+}
+
+// runGateParallel runs every reviewer in ordered concurrently with a bounded
+// semaphore of size cap (sty_4f0a15db). Collects ALL verdicts (no short-circuit);
+// order of result.Reviewers is the input index order. A reviewer ERROR (not a
+// reject) returns the lowest-index error after all have finished.
+func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStatus string, ordered []reviewerRef, sysStart, cap int) (verb.GateDecision, error) {
+	if cap < 1 {
+		cap = 1
+	}
+	if cap > len(ordered) {
+		cap = len(ordered)
+	}
+	type slot struct {
+		dec verb.GateDecision
+		err error
+	}
+	results := make([]slot, len(ordered))
+	sem := make(chan struct{}, cap)
+	var wg sync.WaitGroup
+	for i, ref := range ordered {
+		if ref.skill == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(i int, ref reviewerRef) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				results[i].err = ctx.Err()
+				return
+			}
+			dec, rerr := g.runReviewer(ctx, item, toStatus, ref.skill, ref.model)
+			results[i] = slot{dec: dec, err: rerr}
+		}(i, ref)
+	}
+	wg.Wait()
+
+	// Prefer lowest-index non-nil error (reviewer ERROR ≠ reject).
+	for i := range results {
+		if results[i].err != nil {
+			return results[i].dec, results[i].err
+		}
+	}
+
+	var result verb.GateDecision
+	var firstReject *verb.GateDecision
+	var lastGated *verb.GateDecision
+	for i, ref := range ordered {
+		if ref.skill == "" {
+			continue
+		}
+		dec := results[i].dec
+		if !dec.Gated {
+			continue
+		}
+		result.Gated = true
+		result.Reviewers = append(result.Reviewers, verb.ReviewerVerdict{
+			Skill: ref.skill, Order: i, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, System: i >= sysStart,
+			Command: dec.Command, Context: dec.Context, Model: dec.Model,
+			TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
+		})
+		d := dec
+		lastGated = &d
+		if !dec.Accept && firstReject == nil {
+			firstReject = &d
+		}
+	}
+	// Top-level fields: first reject if any, else last gated (mirrors serial path).
+	pick := lastGated
+	if firstReject != nil {
+		pick = firstReject
+		result.Accept = false
+	} else if pick != nil {
+		result.Accept = true
+	}
+	if pick != nil {
+		result.Skill = pick.Skill
+		result.Notes = pick.Notes
+		result.Reasoning = pick.Reasoning
+		result.Command = pick.Command
+		result.Context = pick.Context
+		result.Model = pick.Model
+		result.TokensIn, result.TokensOut, result.TokensTotal = pick.TokensIn, pick.TokensOut, pick.TokensTotal
+		result.DurationMs = pick.DurationMs
+		if firstReject == nil {
+			result.Accept = pick.Accept
 		}
 	}
 	return result, nil
@@ -1464,16 +1564,16 @@ func (g *Engine) createReviewSkillFor(ctx context.Context, category string) stri
 // transition of that workflow. An absent workflow means no governance at all —
 // every edge is allowed and ungated (declared=true, no skills), so fresh repos
 // and the baseline keep working.
-func (g *Engine) reviewerSkills(ctx context.Context, item workitem.Item, from, to string) (skills []string, model string, declared bool, err error) {
+func (g *Engine) reviewerSkills(ctx context.Context, item workitem.Item, from, to string) (skills []string, model string, parallel int, declared bool, err error) {
 	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
 	if errors.Is(err, docindex.ErrNotFound) {
-		return nil, "", true, nil
+		return nil, "", 0, true, nil
 	}
 	if err != nil {
-		return nil, "", false, err
+		return nil, "", 0, false, err
 	}
-	skills, model, declared = reviewerSkillsFor(doc.Body, from, to)
-	return skills, model, declared, nil
+	skills, model, parallel, declared = reviewerSkillsFor(doc.Body, from, to)
+	return skills, model, parallel, declared, nil
 }
 
 // successorsOf returns declared DOT successors of from for agent-facing refuse
@@ -1903,31 +2003,33 @@ func (g *Engine) composeSkillBodies(ctx context.Context, names []string) (string
 // reviewerSkillsFor scans a workflow body's transition lines for the (from→to)
 // edge. It returns the edge's ordered reviewer skills (nil when the edge is
 // declared but ungated), the edge model= override (empty when absent / YAML
-// grammar), and whether the edge is DECLARED at all. The two cases are distinct:
-// a declared ungated edge is advisory (enact directly), while an UNDECLARED edge
-// is not a legal move in this workflow and must be refused — otherwise a story
-// could skip a gate that rejected it by jumping to a later state across an edge
-// the workflow never declared. The transition format is the inline-map shape the
-// substrate uses, with either a single reviewer or a list:
+// grammar), the parallel concurrency cap (0 = sequential; sty_4f0a15db), and
+// whether the edge is DECLARED at all. The two cases are distinct: a declared
+// ungated edge is advisory (enact directly), while an UNDECLARED edge is not a
+// legal move in this workflow and must be refused — otherwise a story could skip
+// a gate that rejected it by jumping to a later state across an edge the workflow
+// never declared. The transition format is the inline-map shape the substrate
+// uses, with either a single reviewer or a list:
 //
 //   - {from: backlog, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
 //   - {from: deployed, to: done, reviewer_skills: [satelle-story-done-review, satelle-estimate-actual]}
 //
 // reviewer_skills (the ordered list) takes precedence over reviewer_skill.
-// DOT edges may carry model="…" (sty_19456622); YAML edges have no model field.
-func reviewerSkillsFor(body, from, to string) (skills []string, model string, declared bool) {
+// DOT edges may carry model="…" (sty_19456622) and parallel= (sty_4f0a15db);
+// YAML edges have no model/parallel field.
+func reviewerSkillsFor(body, from, to string) (skills []string, model string, parallel int, declared bool) {
 	// DOT workflow: resolve the edge from the shared wfdot spec — entry to a
 	// reviewer node is the gated transition, carrying that node's skill.
 	if spec, ok := wfdot.Parse(body); ok {
 		for _, tr := range spec.Transitions {
 			if tr.From == from && tr.To == to {
 				if len(tr.Skills) > 0 {
-					return tr.Skills, tr.Model, true
+					return tr.Skills, tr.Model, tr.Parallel, true
 				}
-				return nil, tr.Model, true
+				return nil, tr.Model, tr.Parallel, true
 			}
 		}
-		return nil, "", false
+		return nil, "", 0, false
 	}
 	for _, line := range strings.Split(body, "\n") {
 		l := strings.TrimSpace(line)
@@ -1936,15 +2038,15 @@ func reviewerSkillsFor(body, from, to string) (skills []string, model string, de
 		}
 		if inlineField(l, "from") == from && inlineField(l, "to") == to {
 			if list := inlineListField(l, "reviewer_skills"); len(list) > 0 {
-				return list, "", true
+				return list, "", 0, true
 			}
 			if s := inlineField(l, "reviewer_skill"); s != "" {
-				return []string{s}, "", true
+				return []string{s}, "", 0, true
 			}
-			return nil, "", true
+			return nil, "", 0, true
 		}
 	}
-	return nil, "", false
+	return nil, "", 0, false
 }
 
 // inlineField extracts key's value from an inline-map line, trimming quotes. The

@@ -1193,3 +1193,48 @@ digraph w {
 		t.Errorf("no skip when match: %v", sk2)
 	}
 }
+
+func TestParseParallelAttr(t *testing.T) {
+	body := "```dot\n" + `digraph g {
+  a [shape=Mdiamond]
+  b [agent=executor]
+  a -> b [agent=reviewer, prompt="@skill:x,@skill:y", parallel=true]
+}
+` + "```\n"
+	s, ok := Parse(body)
+	if !ok || len(s.Transitions) != 1 {
+		t.Fatalf("parse: ok=%v n=%d", ok, len(s.Transitions))
+	}
+	tr := s.Transitions[0]
+	if tr.Parallel != DefaultParallelCap {
+		t.Errorf("parallel=true → Parallel=%d, want %d", tr.Parallel, DefaultParallelCap)
+	}
+	if len(tr.Skills) != 2 || tr.Skills[0] != "x" || tr.Skills[1] != "y" {
+		t.Errorf("skills=%v", tr.Skills)
+	}
+	if probs := Validate(s); len(probs) != 0 {
+		t.Errorf("validate problems: %v", probs)
+	}
+
+	numBody := "```dot\n" + `digraph g {
+  a [shape=Mdiamond]
+  b [agent=executor]
+  a -> b [agent=reviewer, prompt="@skill:x", parallel=2]
+}
+` + "```\n"
+	s2, _ := Parse(numBody)
+	if s2.Transitions[0].Parallel != 2 {
+		t.Errorf("parallel=2 → %d", s2.Transitions[0].Parallel)
+	}
+
+	absBody := "```dot\n" + `digraph g {
+  a [shape=Mdiamond]
+  b [agent=executor]
+  a -> b [agent=reviewer, prompt="@skill:x"]
+}
+` + "```\n"
+	s3, _ := Parse(absBody)
+	if s3.Transitions[0].Parallel != 0 {
+		t.Errorf("absent parallel → %d, want 0", s3.Transitions[0].Parallel)
+	}
+}
