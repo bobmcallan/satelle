@@ -42,6 +42,8 @@ digraph satelle_baseline {
   // Implementation exit: CSV edge reviewers (edge-wins — node's done prompt is
   // ignored for this edge, so done-review MUST stay in the CSV). workflow-change
   // n/a-fast-accepts when the slice touches no workflow file (sty_9882b8c6).
+  // Optional: add parallel=true (or parallel=N) to run CSV reviewers concurrently
+  // with no short-circuit (sty_4f0a15db); default is sequential first-reject.
   in_progress -> done [agent=reviewer, prompt="@skill:satelle-workflow-change-review,satelle-story-done-review"]
   backlog     -> cancelled
   in_progress -> cancelled

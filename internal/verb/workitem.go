@@ -449,6 +449,11 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 			reviewers = []ReviewerVerdict{{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, Command: dec.Command, Context: dec.Context, Model: dec.Model,
 				TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs}}
 		}
+		// Ledger ALL verdicts first (accepts and rejects), then refuse if any
+		// rejected — so parallel multi-reviewer rounds record every row
+		// (sty_4f0a15db AC2). Serial short-circuit still only returns reviewers
+		// up to the first reject, so single-reject message format is unchanged.
+		var rejects []ReviewerVerdict
 		for _, rv := range reviewers {
 			// Record HOW the isolated agent was invoked before its verdict — the
 			// resolved command/harness and the injected skill/rubric file — so the
@@ -463,11 +468,9 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 				appendLedgerEntry(ctx, current.ID, ledger.KindReviewReject, "reviewer",
 					fmt.Sprintf("rejected %s→%s by %s: %s", current.Status, *req.Status, rv.Skill, rv.Notes),
 					reviewerPayload(current.Status, *req.Status, rv), now)
-				notifyChange(panelTopic(current.Kind))
-				return nil, fmt.Errorf("transition %s→%s rejected by %s: decision=reject notes=%s%s",
-					current.Status, *req.Status, rv.Skill, rv.Notes, formatReasoningSuffix(rv.Reasoning))
+				rejects = append(rejects, rv)
+				continue
 			}
-			gatedAccepted = true
 			acceptBody := fmt.Sprintf("accepted %s→%s by %s: decision=accept notes=%s%s",
 				current.Status, *req.Status, rv.Skill, rv.Notes, formatReasoningSuffix(rv.Reasoning))
 			appendLedgerEntry(ctx, current.ID, ledger.KindReviewAccept, "reviewer",
@@ -475,6 +478,13 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 			// Transparency (design §6.2 / epic AC): surface accept verdicts too —
 			// decision, notes, reasoning on stderr (reject already returns as error).
 			fmt.Fprintln(os.Stderr, acceptBody)
+		}
+		if len(rejects) > 0 {
+			notifyChange(panelTopic(current.Kind))
+			return nil, multiRejectError(current.Status, *req.Status, rejects)
+		}
+		if len(reviewers) > 0 {
+			gatedAccepted = true
 		}
 	}
 
@@ -1215,6 +1225,24 @@ func formatReasoningSuffix(reasoning string) string {
 		return ""
 	}
 	return " reasoning=" + reasoning
+}
+
+// multiRejectError builds the transition refuse message for one or more
+// rejecting reviewers (sty_4f0a15db). Single-reject keeps the historical format
+// so serial short-circuit prose and tests stay stable; multi-reject joins each
+// rejecter with notes (and optional reasoning).
+func multiRejectError(from, to string, rejects []ReviewerVerdict) error {
+	if len(rejects) == 1 {
+		rv := rejects[0]
+		return fmt.Errorf("transition %s→%s rejected by %s: decision=reject notes=%s%s",
+			from, to, rv.Skill, rv.Notes, formatReasoningSuffix(rv.Reasoning))
+	}
+	var parts []string
+	for _, rv := range rejects {
+		parts = append(parts, fmt.Sprintf("rejected by %s: notes=%s%s",
+			rv.Skill, rv.Notes, formatReasoningSuffix(rv.Reasoning)))
+	}
+	return fmt.Errorf("transition %s→%s %s", from, to, strings.Join(parts, "; "))
 }
 
 // invocationPayload stamps an agent_invocation row with the resolved command and

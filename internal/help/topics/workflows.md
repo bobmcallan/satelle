@@ -77,10 +77,15 @@ in_progress -> integration [agent=reviewer, prompt="@skill:satelle-code-ac-revie
 in_progress -> done [agent=reviewer, prompt="@skill:satelle-workflow-change-review,satelle-story-done-review"]
 ```
 
-- **List order = execution order.** Today reviewers run **sequentially**,
-  **all-must-accept**, with **first-reject short-circuit** (later reviewers are
-  not invoked once one rejects). A parallel opt-in is planned separately
-  (sty_4f0a15db); until it ships, assume sequential short-circuit.
+- **List order = execution order** (and ledger order). By default reviewers run
+  **sequentially**, **all-must-accept**, with **first-reject short-circuit**
+  (later reviewers are not invoked once one rejects).
+- **Parallel opt-in** (per edge): set `parallel=true` (cap 4) or `parallel=N`
+  (N≥1) on the edge to run that edge's reviewer list **concurrently** with no
+  short-circuit — every reviewer still runs even if one rejects, so a rejected
+  round spends tokens on every reviewer. That is why parallel is **per-gate
+  opt-in**, not the default. Aggregation stays all-must-accept in the binary;
+  multi-reject refuse messages name every rejecting reviewer.
 - **Edge wins:** when an edge carries an explicit `prompt="@skill:…"`, the
   target node's own `prompt` is **ignored for that edge**. If you add a CSV into
   a node that already had a gate (e.g. `done`), **include the prior gate skill

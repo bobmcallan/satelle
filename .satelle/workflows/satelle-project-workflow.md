@@ -5,7 +5,7 @@ type: workflow
 tags: [type:workflow]
 applies_to: ["*"]
 create_review: satelle-story-create-review
-description: This repo's project-scope workflow, authored in DOT (the agent model). A story moves backlog → plan → in_progress → integration → release → done, with a cancelled exit. It is REVIEWER-FIRST (a reviewer gates every transition). The plan step DISPATCHES to an isolated read-only planner (agent=planner); in_progress, integration, and release run IN-LOOP on the driving session (agent=executor) so the orchestrator performs the work with full session context — no isolated worker subprocess for code/integrate/release. Every stage is reviewed: backlog → plan by satelle-story-intent-review; plan → in_progress by satelle-story-plan-review; in_progress → integration by satelle-code-ac-review then satelle-workflow-change-review (CSV edge); integration → release by satelle-integration-review plus scoped satelle-integration-check (make integration); release → done by satelle-story-release-review plus scoped satelle-changelog-entry-check (CHANGELOG.md must carry the released version). Always-on estimate gates begin-work and close.
+description: This repo's project-scope workflow, authored in DOT (the agent model). A story moves backlog → plan → in_progress → integration → release → done, with a cancelled exit. It is REVIEWER-FIRST (a reviewer gates every transition). The plan step DISPATCHES to an isolated read-only planner (agent=planner); in_progress, integration, and release run IN-LOOP on the driving session (agent=executor) so the orchestrator performs the work with full session context — no isolated worker subprocess for code/integrate/release. Every stage is reviewed: backlog → plan by satelle-story-intent-review; plan → in_progress by satelle-story-plan-review + architecture + integration-coverage (CSV, parallel=true); in_progress → integration by satelle-code-ac-review then satelle-workflow-change-review (CSV edge); integration → release by satelle-integration-review plus scoped satelle-integration-check (make integration); release → done by satelle-story-release-review plus scoped satelle-changelog-entry-check (CHANGELOG.md must carry the released version). Always-on estimate gates begin-work and close.
 ---
 
 # satelle workflow (project) — the agent model, authored in DOT
@@ -87,7 +87,9 @@ digraph satelle_workflow {
   design [agent=reviewer, prompt="@skill:satelle-design-review", on="integration", applies_to="surface:ui"]
 
   backlog     -> plan         [agent=reviewer, prompt="@skill:satelle-story-intent-review"] // intake gate: a story must pass intent-review to enter plan
-  plan        -> in_progress  [agent=reviewer, prompt="@skill:satelle-story-plan-review"]
+  // Multi-reviewer plan gate: plan-review + architecture + integration-coverage,
+  // concurrent (parallel=true) — all-must-accept, no short-circuit (sty_4f0a15db).
+  plan        -> in_progress  [agent=reviewer, prompt="@skill:satelle-story-plan-review,satelle-story-architecture-review,satelle-story-integration-coverage-review", parallel=true]
   // code-ac then workflow-change (CSV; existing gate first). workflow-change
   // n/a-fast-accepts when the slice touches no workflow file (sty_9882b8c6).
   in_progress -> integration  [agent=reviewer, prompt="@skill:satelle-code-ac-review,satelle-workflow-change-review"]
