@@ -1486,7 +1486,10 @@ func ensureWorkspaceRegistration(out io.Writer, repoRoot string, noWorkspace boo
 }
 
 // printWorkspaceMembership re-reads the registry and prints the stable
-// member / not-member line (agent-readable; sty_805bee9c).
+// member / not-member line (agent-readable; sty_805bee9c). When the repo is
+// registered but has no [server] endpoint, the line still greps as
+// "workspace: member" but qualifies that registry-only is not a landing join
+// (sty_0122610a AC3) — init stays offline (config presence only, no probe).
 func printWorkspaceMembership(out io.Writer, abs string, priorErr error) {
 	if priorErr != nil || abs == "" {
 		fmt.Fprintln(out, "workspace: not-member — join with `satelle workspace add`")
@@ -1499,11 +1502,26 @@ func printWorkspaceMembership(out io.Writer, abs string, priorErr error) {
 	}
 	for _, r := range gc.Workspace.Repos {
 		if r == abs {
+			if !repoHasServerEndpoint(abs) {
+				fmt.Fprintf(out, "workspace: member (%d repos registered) — registry only; seed the mirror with `satelle workspace add`\n", len(gc.Workspace.Repos))
+				return
+			}
 			fmt.Fprintf(out, "workspace: member (%d repos registered)\n", len(gc.Workspace.Repos))
 			return
 		}
 	}
 	fmt.Fprintln(out, "workspace: not-member — join with `satelle workspace add`")
+}
+
+// repoHasServerEndpoint reports whether the committed satelle.toml or its
+// local.toml overlay sets [server] endpoint for the repo at abs (offline).
+func repoHasServerEndpoint(repoAbs string) bool {
+	cfgPath := filepath.Join(repoAbs, config.DefaultDataDir, config.ConfigName)
+	cfg, _, err := config.Load(cfgPath)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(cfg.Server.Endpoint) != ""
 }
 
 // ensureGitignore writes or converges the managed block in the repo's

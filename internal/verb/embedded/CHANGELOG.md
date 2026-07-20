@@ -1,3 +1,9 @@
+## [0.0.288] - 2026-07-20
+
+### Changed
+- `satelle workspace add` bootstraps `[server] endpoint` into `satelle.local.toml` when a local serve answers the service port, then seeds; fails non-zero with exact remedy when seed cannot proceed (sty_0122610a / epic:serve-adoption)
+- `satelle init` qualifies registry-only `workspace: member` when endpoint is unset; help/README state the local.toml endpoint prerequisite
+
 ## [0.0.287] - 2026-07-20
 
 ### Changed
