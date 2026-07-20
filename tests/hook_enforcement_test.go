@@ -296,6 +296,94 @@ func TestHookCommitgateDeniesWithoutStory(t *testing.T) {
 	}
 }
 
+// commandAllowWorkflow is gate-free with a release step so step policy can be
+// exercised without agent CLIs (sty_c21490cc).
+const commandAllowWorkflow = `---
+name: wf-cmd-allow
+type: workflow
+description: gate-free lifecycle with release for command_allow tests
+applies_to: ["feature"]
+scope: project
+---
+
+` + "```dot" + `
+digraph w {
+  backlog [shape=Mdiamond]
+  plan [agent=executor]
+  in_progress [agent=executor]
+  release [agent=executor]
+  done [shape=Msquare]
+  backlog -> plan -> in_progress -> release -> done
+}
+` + "```\n"
+
+// TestHookCommitgateCommandAllow (sty_c21490cc): opt-in [gate.command_allow]
+// blocks git push at in_progress, allows it at release; unconfigured engage-only
+// path is unchanged.
+func TestHookCommitgateCommandAllow(t *testing.T) {
+	pushEv := `{"tool_input":{"command":"git push origin main"}}`
+
+	// --- unconfigured: engaged at in_progress → push allowed (engage-only) ---
+	repoOpen := t.TempDir()
+	mustRun(t, testBin, repoOpen, "init")
+	writeFile(t, filepath.Join(repoOpen, ".satelle", "workflows", "wf-cmd-allow.md"), commandAllowWorkflow)
+	mustRun(t, testBin, repoOpen, "reindex", "--validate=false")
+	out := mustRun(t, testBin, repoOpen, "story", "create", "--category", "feature",
+		"--title", "t", "--body", "b", "--acceptance", "1. a")
+	idOpen := extractID(out, "sty_")
+	mustRun(t, testBin, repoOpen, "story", "set", idOpen, "--status", "plan")
+	mustRun(t, testBin, repoOpen, "story", "set", idOpen, "--status", "in_progress")
+	c := exec.Command(testBin, "hook", "commitgate")
+	c.Dir = repoOpen
+	c.Env = isolatedEnv(t)
+	c.Stdin = strings.NewReader(pushEv)
+	if err := c.Run(); err != nil {
+		t.Fatalf("unconfigured + engaged in_progress: push must allow (engage-only): %v", err)
+	}
+
+	// --- configured: push only at release ---
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-cmd-allow.md"), commandAllowWorkflow)
+	// Append command_allow to satelle.toml
+	tomlPath := filepath.Join(repo, ".satelle", "satelle.toml")
+	b, err := os.ReadFile(tomlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b = append(b, []byte("\n[gate.command_allow]\npush = [\"release\"]\n")...)
+	if err := os.WriteFile(tomlPath, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, testBin, repo, "reindex", "--validate=false")
+	out = mustRun(t, testBin, repo, "story", "create", "--category", "feature",
+		"--title", "t", "--body", "b", "--acceptance", "1. a")
+	id := extractID(out, "sty_")
+	mustRun(t, testBin, repo, "story", "set", id, "--status", "plan")
+	mustRun(t, testBin, repo, "story", "set", id, "--status", "in_progress")
+
+	c = exec.Command(testBin, "hook", "commitgate")
+	c.Dir = repo
+	c.Env = isolatedEnv(t)
+	c.Stdin = strings.NewReader(pushEv)
+	outB, err := c.CombinedOutput()
+	if err == nil {
+		t.Fatalf("configured + in_progress: push must deny; out=%s", outB)
+	}
+	if !strings.Contains(string(outB), "release") {
+		t.Errorf("deny reason must name allowed state release; out=%s", outB)
+	}
+
+	mustRun(t, testBin, repo, "story", "set", id, "--status", "release")
+	c = exec.Command(testBin, "hook", "commitgate")
+	c.Dir = repo
+	c.Env = isolatedEnv(t)
+	c.Stdin = strings.NewReader(pushEv)
+	if err := c.Run(); err != nil {
+		t.Fatalf("configured + release: push must allow: %v", err)
+	}
+}
+
 // TestHookStopcheck: the Stop post-hoc detector blocks a finish when the tree has
 // ungated non-exempt changes and no story is engaged, honours stop_hook_active,
 // and stays quiet for exempt-only changes or when a story is engaged.
