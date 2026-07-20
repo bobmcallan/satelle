@@ -1,10 +1,9 @@
 name: release
 
-# .version is canonical: the release tag is v<satelle.version>. The binary is
-# built with its ldflag-injected version + build timestamp. Runs after `test`
-# succeeds on main (or on manual dispatch), and is a no-op when the tag for the
-# current .version already exists — so a release is cut exactly when .version is
-# bumped.
+# .version is canonical: satelle.version (CLI) and satelle-serve.version are
+# independent (sty_19ff03f4). CLI releases use tag v<cli> and remain GitHub
+# "latest". Serve releases use tag serve-v<serve> with --latest=false so
+# installed CLI self-update keeps resolving releases/latest correctly.
 on:
   workflow_run:
     workflows: ["test"]
@@ -17,15 +16,19 @@ permissions:
 
 jobs:
   derive-tag:
-    name: derive release tag from .version
+    name: derive release tags from .version
     if: |
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.read.outputs.tag }}
-      version: ${{ steps.read.outputs.version }}
+      cli_version: ${{ steps.read.outputs.cli_version }}
+      serve_version: ${{ steps.read.outputs.serve_version }}
       build: ${{ steps.read.outputs.build }}
+      cli_tag: ${{ steps.read.outputs.cli_tag }}
+      serve_tag: ${{ steps.read.outputs.serve_tag }}
+      needs_cli: ${{ steps.check.outputs.needs_cli }}
+      needs_serve: ${{ steps.check.outputs.needs_serve }}
       needs_release: ${{ steps.check.outputs.needs_release }}
     steps:
       - uses: actions/checkout@v5
@@ -35,29 +38,46 @@ jobs:
       - id: read
         run: |
           set -euo pipefail
-          VER=$(awk '$1=="satelle.version:" {print $2}' .version)
-          [ -n "$VER" ] || { echo ".version missing or malformed" >&2; exit 1; }
-          # .version is the single source for BOTH version and build date: the commit
-          # workflow step stamps satelle.build on every commit (sty_3aeeab18), so the
-          # release bakes that exact value rather than a CI-generated one.
+          CLI=$(awk '$1=="satelle.version:" {print $2}' .version)
+          SERVE=$(awk '$1=="satelle-serve.version:" {print $2}' .version)
           BUILD=$(awk '$1=="satelle.build:" {print $2}' .version)
-          [ -n "$BUILD" ] || { echo "satelle.build missing or malformed" >&2; exit 1; }
-          echo "version=$VER"   >> "$GITHUB_OUTPUT"
-          echo "build=$BUILD"   >> "$GITHUB_OUTPUT"
-          echo "tag=v$VER"      >> "$GITHUB_OUTPUT"
+          [ -n "$CLI" ] || { echo "satelle.version missing" >&2; exit 1; }
+          [ -n "$SERVE" ] || { echo "satelle-serve.version missing" >&2; exit 1; }
+          [ -n "$BUILD" ] || { echo "satelle.build missing" >&2; exit 1; }
+          echo "cli_version=$CLI"     >> "$GITHUB_OUTPUT"
+          echo "serve_version=$SERVE" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD"         >> "$GITHUB_OUTPUT"
+          echo "cli_tag=v$CLI"        >> "$GITHUB_OUTPUT"
+          echo "serve_tag=serve-v$SERVE" >> "$GITHUB_OUTPUT"
       - id: check
         run: |
           set -euo pipefail
-          TAG="${{ steps.read.outputs.tag }}"
-          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-            echo "::notice::tag $TAG already exists — bump satelle.version in .version to cut a release"
-            echo "needs_release=false" >> "$GITHUB_OUTPUT"
+          CLI_TAG="${{ steps.read.outputs.cli_tag }}"
+          SERVE_TAG="${{ steps.read.outputs.serve_tag }}"
+          needs_cli=false
+          needs_serve=false
+          if ! git rev-parse -q --verify "refs/tags/$CLI_TAG" >/dev/null; then
+            needs_cli=true
+            echo "::notice::CLI tag $CLI_TAG missing — will release CLI"
           else
+            echo "::notice::CLI tag $CLI_TAG exists — skip CLI release"
+          fi
+          if ! git rev-parse -q --verify "refs/tags/$SERVE_TAG" >/dev/null; then
+            needs_serve=true
+            echo "::notice::serve tag $SERVE_TAG missing — will release serve"
+          else
+            echo "::notice::serve tag $SERVE_TAG exists — skip serve release"
+          fi
+          echo "needs_cli=$needs_cli" >> "$GITHUB_OUTPUT"
+          echo "needs_serve=$needs_serve" >> "$GITHUB_OUTPUT"
+          if [ "$needs_cli" = true ] || [ "$needs_serve" = true ]; then
             echo "needs_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_release=false" >> "$GITHUB_OUTPUT"
           fi
 
   build:
-    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    name: build ${{ matrix.artifact }} ${{ matrix.goos }}/${{ matrix.goarch }}
     needs: derive-tag
     if: needs.derive-tag.outputs.needs_release == 'true'
     runs-on: ubuntu-latest
@@ -65,62 +85,92 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { goos: linux,   goarch: amd64, validate: true  }
-          - { goos: linux,   goarch: arm64, validate: false }
-          - { goos: darwin,  goarch: amd64, validate: false }
-          - { goos: darwin,  goarch: arm64, validate: false }
-          - { goos: windows, goarch: amd64, validate: false }
+          - { artifact: satelle,       pkg: ./cmd/satelle,       goos: linux,   goarch: amd64, validate: true  }
+          - { artifact: satelle,       pkg: ./cmd/satelle,       goos: linux,   goarch: arm64, validate: false }
+          - { artifact: satelle,       pkg: ./cmd/satelle,       goos: darwin,  goarch: amd64, validate: false }
+          - { artifact: satelle,       pkg: ./cmd/satelle,       goos: darwin,  goarch: arm64, validate: false }
+          - { artifact: satelle,       pkg: ./cmd/satelle,       goos: windows, goarch: amd64, validate: false }
+          - { artifact: satelle-serve, pkg: ./cmd/satelle-serve, goos: linux,   goarch: amd64, validate: true  }
+          - { artifact: satelle-serve, pkg: ./cmd/satelle-serve, goos: linux,   goarch: arm64, validate: false }
+          - { artifact: satelle-serve, pkg: ./cmd/satelle-serve, goos: darwin,  goarch: amd64, validate: false }
+          - { artifact: satelle-serve, pkg: ./cmd/satelle-serve, goos: darwin,  goarch: arm64, validate: false }
+          - { artifact: satelle-serve, pkg: ./cmd/satelle-serve, goos: windows, goarch: amd64, validate: false }
     steps:
+      - name: skip if artifact not releasing
+        id: gate
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.artifact }}" = "satelle" ] && [ "${{ needs.derive-tag.outputs.needs_cli }}" != "true" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ matrix.artifact }}" = "satelle-serve" ] && [ "${{ needs.derive-tag.outputs.needs_serve }}" != "true" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v5
+        if: steps.gate.outputs.skip != 'true'
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: actions/setup-go@v6
+        if: steps.gate.outputs.skip != 'true'
         with:
           go-version: '1.26'
           check-latest: true
       - name: build
+        if: steps.gate.outputs.skip != 'true'
         env:
           GOOS:    ${{ matrix.goos }}
           GOARCH:  ${{ matrix.goarch }}
           CGO_ENABLED: '0'
-          VER:     ${{ needs.derive-tag.outputs.version }}
-          BUILD:   ${{ needs.derive-tag.outputs.build }}
+          CLI_VER:   ${{ needs.derive-tag.outputs.cli_version }}
+          SERVE_VER: ${{ needs.derive-tag.outputs.serve_version }}
+          BUILD:     ${{ needs.derive-tag.outputs.build }}
           BUILD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           set -euo pipefail
-          LDFLAGS="-s -w \
-            -X github.com/bobmcallan/satelle/internal/buildinfo.Version=${VER} \
-            -X github.com/bobmcallan/satelle/internal/buildinfo.Commit=${BUILD_SHA} \
-            -X github.com/bobmcallan/satelle/internal/buildinfo.BuildTime=${BUILD}"
-          for CMD in satelle:./cmd/satelle satelle-serve:./cmd/satelle-serve; do
-            NAME="${CMD%%:*}"
-            PKG="${CMD##*:}"
-            OUT="${NAME}-v${VER}-${GOOS}-${GOARCH}"
-            [ "$GOOS" = "windows" ] && OUT="${OUT}.exe"
-            go build -trimpath -ldflags="${LDFLAGS}" -o "${OUT}" "${PKG}"
-            sha256sum "${OUT}" > "${OUT}.sha256"
-          done
-          ART="dist-${GOOS}-${GOARCH}"
-          echo "ART=${ART}" >> "$GITHUB_ENV"
-      - name: validate (linux/amd64 only)
-        if: matrix.validate
+          if [ "${{ matrix.artifact }}" = "satelle" ]; then
+            VER="$CLI_VER"
+          else
+            VER="$SERVE_VER"
+          fi
+          OUT="${{ matrix.artifact }}-v${VER}-${GOOS}-${GOARCH}"
+          [ "$GOOS" = "windows" ] && OUT="${OUT}.exe"
+          go build -trimpath \
+            -ldflags="-s -w \
+              -X github.com/bobmcallan/satelle/internal/buildinfo.Version=${VER} \
+              -X github.com/bobmcallan/satelle/internal/buildinfo.Commit=${BUILD_SHA} \
+              -X github.com/bobmcallan/satelle/internal/buildinfo.BuildTime=${BUILD}" \
+            -o "${OUT}" "${{ matrix.pkg }}"
+          sha256sum "${OUT}" > "${OUT}.sha256"
+          echo "OUT=${OUT}" >> "$GITHUB_ENV"
+          # Namespace carefully: dist-satelle-* would also match dist-satelle-serve-*.
+          if [ "${{ matrix.artifact }}" = "satelle" ]; then
+            echo "ART=dist-cli-${GOOS}-${GOARCH}" >> "$GITHUB_ENV"
+          else
+            echo "ART=dist-serve-${GOOS}-${GOARCH}" >> "$GITHUB_ENV"
+          fi
+      - name: validate (linux/amd64)
+        if: steps.gate.outputs.skip != 'true' && matrix.validate
         run: |
           set -euo pipefail
-          VER="${{ needs.derive-tag.outputs.version }}"
-          ./satelle-v${VER}-linux-amd64 version
-          ./satelle-serve-v${VER}-linux-amd64 --version
+          if [ "${{ matrix.artifact }}" = "satelle" ]; then
+            ./"${OUT}" version
+          else
+            ./"${OUT}" --version
+          fi
       - uses: actions/upload-artifact@v7
+        if: steps.gate.outputs.skip != 'true'
         with:
           name: ${{ env.ART }}
           path: |
-            satelle-v*
-            satelle-serve-v*
+            ${{ env.OUT }}
+            ${{ env.OUT }}.sha256
           if-no-files-found: error
 
-  release:
-    name: tag + publish release
+  release-cli:
+    name: tag + publish CLI release
     needs: [derive-tag, build]
-    if: needs.derive-tag.outputs.needs_release == 'true'
+    if: needs.derive-tag.outputs.needs_cli == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -133,38 +183,71 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+          pattern: dist-cli-*
       - name: verify checksums
         run: |
           set -euo pipefail
           cd artifacts
-          for sum in *.sha256; do sha256sum -c "${sum}"; done
+          for sum in satelle-v*.sha256; do sha256sum -c "${sum}"; done
       - name: stage installer bootstrap
-        # Publish scripts/install.sh as a release asset so the curl|sh bootstrap
-        # is a stable GitHub download alongside the binaries
-        # (releases/latest/download/install.sh).
         run: cp scripts/install.sh artifacts/install.sh
-      - name: tag commit
+      - name: tag + release
         env:
-          TAG: ${{ needs.derive-tag.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.derive-tag.outputs.cli_tag }}
+          VER: ${{ needs.derive-tag.outputs.cli_version }}
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "$TAG" -m "Release $TAG"
+          git tag -a "$TAG" -m "Release CLI $TAG"
           git push origin "$TAG"
-      - name: gh release create
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG:      ${{ needs.derive-tag.outputs.tag }}
-          VER:      ${{ needs.derive-tag.outputs.version }}
-        run: |
-          set -euo pipefail
           gh release create "$TAG" \
             --title "$TAG" \
-            --notes "satelle v${VER}
+            --notes "satelle CLI v${VER}
 
           Install:
           \`\`\`
           curl -fsSL https://github.com/bobmcallan/satelle/releases/latest/download/install.sh | sh
           \`\`\`" \
+            artifacts/*
+
+  release-serve:
+    name: tag + publish serve release
+    needs: [derive-tag, build]
+    if: needs.derive-tag.outputs.needs_serve == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          merge-multiple: true
+          pattern: dist-serve-*
+      - name: verify checksums
+        run: |
+          set -euo pipefail
+          cd artifacts
+          for sum in satelle-serve-*.sha256; do sha256sum -c "${sum}"; done
+      - name: tag + release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.derive-tag.outputs.serve_tag }}
+          VER: ${{ needs.derive-tag.outputs.serve_version }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release serve $TAG"
+          git push origin "$TAG"
+          # --latest=false keeps releases/latest on the CLI (install/update contract).
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --latest=false \
+            --notes "satelle-serve v${VER} (push-fed mirror UI binary)" \
             artifacts/*

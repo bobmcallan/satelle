@@ -44,12 +44,27 @@ func repoBuildDate(t *testing.T) string {
 	return ""
 }
 
-// TestMakefileSourcesBuildDateFromVersion proves the build identity is sourced from
-// .version, NOT generated at build (sty_3aeeab18): `make build` bakes both the
-// version AND the build date read from .version via -ldflags. A dry run (`make -n`)
-// shows the exact go build command without clobbering the repo binary.
-func TestMakefileSourcesBuildDateFromVersion(t *testing.T) {
-	ver := repoVersion(t)
+// repoServeVersion reads satelle-serve.version from .version (sty_19ff03f4).
+func repoServeVersion(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", ".version"))
+	if err != nil {
+		t.Fatalf("read .version: %v", err)
+	}
+	for _, ln := range strings.Split(string(b), "\n") {
+		if f := strings.Fields(ln); len(f) == 2 && f[0] == "satelle-serve.version:" {
+			return f[1]
+		}
+	}
+	t.Fatal(".version has no satelle-serve.version: line")
+	return ""
+}
+
+// TestMakefileStampsPerArtifactVersions proves `make build` stamps each main
+// with its own version from .version (sty_19ff03f4 / sty_3aeeab18).
+func TestMakefileStampsPerArtifactVersions(t *testing.T) {
+	cliVer := repoVersion(t)
+	serveVer := repoServeVersion(t)
 	build := repoBuildDate(t)
 	cmd := exec.Command("make", "-n", "build")
 	cmd.Dir = ".."
@@ -57,10 +72,35 @@ func TestMakefileSourcesBuildDateFromVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("make -n build: %v\n%s", err, out)
 	}
-	for _, want := range []string{"Version=" + ver, "BuildTime=" + build} {
-		if !strings.Contains(string(out), want) {
-			t.Errorf("make build must bake %q from .version via ldflags:\n%s", want, out)
+	s := string(out)
+	// Split by go build lines so a shared-LDFLAGS regression fails.
+	var cliLine, serveLine string
+	for _, ln := range strings.Split(s, "\n") {
+		if strings.Contains(ln, "./cmd/satelle-serve") {
+			serveLine = ln
+		} else if strings.Contains(ln, "./cmd/satelle") {
+			cliLine = ln
 		}
+	}
+	if cliLine == "" || serveLine == "" {
+		t.Fatalf("make -n build missing mains:\n%s", s)
+	}
+	if !strings.Contains(cliLine, "Version="+cliVer) {
+		t.Errorf("CLI line must stamp Version=%s:\n%s", cliVer, cliLine)
+	}
+	if !strings.Contains(serveLine, "Version="+serveVer) {
+		t.Errorf("serve line must stamp Version=%s:\n%s", serveVer, serveLine)
+	}
+	if cliVer != serveVer {
+		if strings.Contains(cliLine, "Version="+serveVer) {
+			t.Errorf("CLI line must not use serve version %s:\n%s", serveVer, cliLine)
+		}
+		if strings.Contains(serveLine, "Version="+cliVer) {
+			t.Errorf("serve line must not use CLI version %s:\n%s", cliVer, serveLine)
+		}
+	}
+	if !strings.Contains(s, "BuildTime="+build) {
+		t.Errorf("make build must bake BuildTime=%s:\n%s", build, s)
 	}
 }
 

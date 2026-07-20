@@ -70,16 +70,19 @@ global service.`,
 				return err
 			}
 			fmt.Fprintf(out, "installed %s (%s)\n", target, latest)
-			// Also refresh sibling satelle-serve when present or installable (sty_80233c10).
+			// Refresh sibling satelle-serve from its own serve-v* release (sty_19ff03f4).
 			if !local {
 				serveTarget := filepath.Join(filepath.Dir(target), "satelle-serve")
 				if runtime.GOOS == "windows" {
 					serveTarget += ".exe"
 				}
-				if err := downloadAndReplaceNamed(cmd.Context(), updateRepo, latest, "satelle-serve", serveTarget); err != nil {
+				serveTag, serr := latestServeReleaseTag(cmd.Context(), updateRepo)
+				if serr != nil {
+					fmt.Fprintf(out, "satelle-serve update skipped: %v\n", serr)
+				} else if err := downloadAndReplaceNamed(cmd.Context(), updateRepo, serveTag, "satelle-serve", serveTarget); err != nil {
 					fmt.Fprintf(out, "satelle-serve update skipped: %v\n", err)
 				} else {
-					fmt.Fprintf(out, "installed %s (%s)\n", serveTarget, latest)
+					fmt.Fprintf(out, "installed %s (%s)\n", serveTarget, serveTag)
 				}
 			}
 			// The global service runs the global binary; a repo-local pin does not
@@ -127,8 +130,13 @@ func assetName(tag string) string {
 }
 
 // assetNameFor builds a release asset name for binary (satelle | satelle-serve).
+// Tags may be vX (CLI) or serve-vY (serve); assets always use the v-prefixed version.
 func assetNameFor(binary, tag string) string {
-	name := fmt.Sprintf("%s-%s-%s-%s", binary, tag, runtime.GOOS, runtime.GOARCH)
+	ver := tag
+	if strings.HasPrefix(tag, "serve-") {
+		ver = strings.TrimPrefix(tag, "serve-") // serve-v0.0.1 → v0.0.1
+	}
+	name := fmt.Sprintf("%s-%s-%s-%s", binary, ver, runtime.GOOS, runtime.GOARCH)
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
@@ -169,6 +177,37 @@ func parseLatestTag(body []byte) (string, error) {
 		return "", fmt.Errorf("no tag_name in release response")
 	}
 	return r.TagName, nil
+}
+
+// latestServeReleaseTag finds the newest serve-v* tag (sty_19ff03f4). Serve
+// releases are published with --latest=false so /releases/latest stays CLI.
+func latestServeReleaseTag(ctx context.Context, repo string) (string, error) {
+	url := os.Getenv("SATELLE_RELEASE_LIST_API")
+	if url == "" {
+		url = fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=30", repo)
+	}
+	body, err := httpGetBytes(ctx, url)
+	if err != nil {
+		return "", err
+	}
+	return firstPrefixedTag(body, "serve-v")
+}
+
+// firstPrefixedTag returns the first tag_name in a GitHub releases JSON array
+// that has the given prefix (newest-first list). Pure for unit tests.
+func firstPrefixedTag(body []byte, prefix string) (string, error) {
+	var releases []struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.Unmarshal(body, &releases); err != nil {
+		return "", err
+	}
+	for _, r := range releases {
+		if strings.HasPrefix(r.TagName, prefix) {
+			return r.TagName, nil
+		}
+	}
+	return "", fmt.Errorf("no release tag with prefix %q", prefix)
 }
 
 // downloadAndReplace downloads the platform asset for tag from repo's releases,
