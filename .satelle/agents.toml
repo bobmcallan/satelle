@@ -1,22 +1,25 @@
 # agents.toml — the agents layer: how each agent runs (backend + tool grant).
 # The `command` field is a SINGLE-token PRESET (claude | grok | codex | in-loop)
 # or a full command template with {system}/{tools}/{model}/{payload} placeholders
-# (each one argv token; payload also on stdin — dual delivery). `harness` is the
-# deprecated alias, still parsed. See `satelle help agent-dispatch`.
+# (each one argv token; payload also on stdin — dual delivery), OR with
+# interface = "acp" a spawn line only (no placeholders — system/payload ride the
+# protocol). `harness` is the deprecated alias, still parsed. See
+# `satelle help agent-dispatch`.
 #
 # role = "reviewer" | "agent" declares the binding's contract (epic:agent-invoke-unify):
 #   reviewer → isolated verdict {decision, notes, reasoning}
 #   agent    → performer (in-loop or sub-process)
 # principles = session|all|system|project|none (or comma-list) declares injected context.
 #
-# Reviewer: Grok, argv-first ({payload} on -p + stdin) — the FULL command so the
-# read-only grant (--tools read_file,grep,list_dir) and mutator ceiling (--deny …)
-# are visible rather than hidden behind the `grok` preset token.
-# Planner/retrospective/blocked-triage: Claude stdin-first (no {payload} — not
-# double-fed) so Bash(satelle:*) and code tools work.
-# in_progress (and integration/release): IN-LOOP via [executor] — the driving
-# session implements. Dispatched-coder (sty_565a0202 / epic:dispatched-coder) was
-# superseded when in_progress moved in-loop (sty_db003275); [coder] is dormant only.
+# Topology (must match active DOTs — sty_b9ecd5d2):
+#   [executor]  — in-loop for project in_progress / integration / release and
+#                 substrate in_progress (agent=executor on those nodes).
+#   [reviewer]  — every agent=reviewer gate edge (intent, plan-review, code-ac, …).
+#   [planner]   — project workflow plan node only (agent=planner).
+#   [retrospective] — project done on_enter_agent (lessons).
+#   [blocked-triage] — blocked on_enter_agent (non-engaging park).
+#   [coder]     — DORMANT: no workflow node allocates agent=coder (sty_db003275);
+#                 kept for tests/re-opt-in only.
 # model stays non-empty (TestRepoReviewerModelIsActive).
 # Per-gate model without a second binding: a workflow edge/node may set model="…"
 # to override only the model for that gate/step while keeping the shared harness

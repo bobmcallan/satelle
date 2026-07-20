@@ -11,6 +11,19 @@ timestamp: '2026-07-13T00:00:00Z'
 Light conventions only — no new binary commands. The estimate gate still only
 checks **presence** of tags (`satelle-estimate-actual-review`).
 
+## Who records estimates (producer ownership)
+
+The estimate gate only checks **tag presence**. Ownership is the **driving
+session**, not the isolated planner (sty_b9ecd5d2):
+
+- **Before `plan → in_progress`:** driving session runs
+  `satelle story estimate <id> --time … --tokens …`.
+- **Before `release → done`:** driving session runs
+  `satelle story actual <id> --tokens … [--time …]` (usually during release).
+
+The planner skill may size the work in prose; it must not be assumed to set tags.
+See `@skill:plan` (section "Estimate tags").
+
 ## Estimates (project-workflow stories)
 
 When recording a plan estimate (`satelle story estimate <id> --time … --tokens …`),

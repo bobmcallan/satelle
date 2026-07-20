@@ -74,6 +74,9 @@ digraph satelle_workflow {
   // workflow itself declares. estimate gates begin-work + close; intcheck runs
   // `make integration` on entry to release — i.e. on the integration -> release edge,
   // alongside that edge's satelle-integration-review — so integration is a VISIBLE step.
+  // estimate: tags only. Producer = driving session (not planner):
+  //   satelle story estimate before in_progress; satelle story actual before done.
+  // See @skill:plan and documents/estimate-and-lessons.md (sty_b9ecd5d2).
   estimate    [agent=reviewer, prompt="@skill:satelle-estimate-actual-review", on="in_progress,done"]
   intcheck    [agent=reviewer, prompt="@skill:satelle-integration-check", on="release"]
   // changelogcheck fails closed on release→done when CHANGELOG.md has no entry
