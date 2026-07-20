@@ -45,7 +45,7 @@ func TestWebLoginMirrorReadOnlyAffordance(t *testing.T) {
 	if !waitHealthy(t, host+"/healthz", 5*time.Second) {
 		t.Fatal("server did not become healthy")
 	}
-	mustRun(t, testBin, repo, "workspace", "add")
+	seedWorkspaceAdd(t, testBin, repo, host)
 
 	// Landing (workspace) — no oauth/login affordance.
 	landing := httpGet(t, host+"/")

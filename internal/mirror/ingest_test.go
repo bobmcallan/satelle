@@ -13,6 +13,66 @@ import (
 	"github.com/bobmcallan/satelle/internal/mirror"
 )
 
+func TestIngestRemove(t *testing.T) {
+	s, err := mirror.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	h := &mirror.IngestHandler{Store: s}
+	mux := http.NewServeMux()
+	h.Mount(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	// Seed via snapshot.
+	body, _ := json.Marshal(mirror.Snapshot{
+		RepoKey: "rk-rm",
+		Slug:    "rm",
+		Stories: []json.RawMessage{[]byte(`{"id":"sty_x","title":"X"}`)},
+	})
+	resp, err := http.Post(srv.URL+"/ingest/snapshot", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("snapshot %d", resp.StatusCode)
+	}
+
+	rmBody, _ := json.Marshal(mirror.RemoveEvent{RepoKey: "rk-rm"})
+	resp, err = http.Post(srv.URL+"/ingest/remove", "application/json", bytes.NewReader(rmBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("remove %d", resp.StatusCode)
+	}
+	parts, err := s.ListPartitions(t.Context())
+	if err != nil || len(parts) != 0 {
+		t.Fatalf("parts=%v err=%v", parts, err)
+	}
+	// Unknown key is still 200 (idempotent delete).
+	resp, err = http.Post(srv.URL+"/ingest/remove", "application/json", bytes.NewReader(rmBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("idempotent remove %d", resp.StatusCode)
+	}
+	// Missing repo_key → 400.
+	resp, err = http.Post(srv.URL+"/ingest/remove", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty key status %d", resp.StatusCode)
+	}
+}
+
 func TestIngestChangeAndSnapshot(t *testing.T) {
 	s, err := mirror.Open(filepath.Join(t.TempDir(), "m.db"))
 	if err != nil {

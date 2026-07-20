@@ -20,7 +20,11 @@ import (
 type MirrorServer struct {
 	Handler http.Handler
 	Store   *mirror.Store
-	hub     *hub
+	// InstanceID is exposed on GET /healthz as X-Satelle-Instance so CLI
+	// auto-bootstrap only seeds a serve that matches the caller's SATELLE_HOME
+	// (sty_5aa08259 / epic:mirror-hygiene).
+	InstanceID string
+	hub        *hub
 }
 
 // partitionVM is one workspace row on the mirror landing.
@@ -52,8 +56,15 @@ func init() {
 	template.Must(mirrorTmpl.New("mirrorWorkspace").Parse(mirrorWorkspaceSrc))
 }
 
-// NewMirror builds the RO+ingest HTTP surface over m.
+// NewMirror builds the RO+ingest HTTP surface over m. Instance identity is
+// derived from the process GlobalDir (same home as the mirror DB path).
 func NewMirror(m *mirror.Store) *MirrorServer {
+	return NewMirrorWithInstance(m, config.SafeCurrentInstanceID())
+}
+
+// NewMirrorWithInstance is like NewMirror but sets an explicit instance id
+// (tests inject a fixed id; production uses CurrentInstanceID).
+func NewMirrorWithInstance(m *mirror.Store, instanceID string) *MirrorServer {
 	serverStart = time.Now()
 	h := newHub()
 	mux := http.NewServeMux()
@@ -67,8 +78,13 @@ func NewMirror(m *mirror.Store) *MirrorServer {
 		w.Header().Set("Content-Type", "image/svg+xml")
 		_, _ = w.Write(b)
 	})
+
+	s := &MirrorServer{Store: m, InstanceID: instanceID, hub: h}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
+		if s.InstanceID != "" {
+			w.Header().Set("X-Satelle-Instance", s.InstanceID)
+		}
 		fmt.Fprintln(w, "ok")
 	})
 	mux.HandleFunc("GET /events", h.serveEvents)
@@ -77,8 +93,6 @@ func NewMirror(m *mirror.Store) *MirrorServer {
 
 	ing := &mirror.IngestHandler{Store: m, OnChange: h.publish}
 	ing.Mount(mux)
-
-	s := &MirrorServer{Store: m, hub: h}
 
 	// Workspace landing (order:3) and project surface under /r/{slug}/ (order:2).
 	mux.HandleFunc("GET /{$}", s.landing)

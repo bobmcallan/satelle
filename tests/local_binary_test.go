@@ -117,7 +117,7 @@ func TestPinnedServePushFedIsolation(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.local.toml"), []byte(localBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mustRun(t, testBin, repo, "workspace", "add")
+	seedWorkspaceAdd(t, testBin, repo, base)
 
 	root := httpGetBody(t, base+"/")
 	slug := filepath.Base(repo)

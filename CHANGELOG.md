@@ -3,6 +3,16 @@
 ### Removed
 - Parallel epic path and `[gate] allow_parallel` opt-out — single performing story always enforced; deleted parallel workflows/skills/launcher (sty_a614a0ea)
 
+## [0.0.292] - 2026-07-20
+
+### Added
+- Mirror partition lifecycle: `POST /ingest/remove`, `satelle workspace partitions` / `workspace prune`, `workspace remove` purges the partition (sty_eb61be02 / epic:mirror-hygiene)
+- Serve `X-Satelle-Instance` on `/healthz`; `SATELLE_SERVER_ENDPOINT` env (`none` disables discovery+push) (sty_5aa08259)
+
+### Fixed
+- Hermetic integration tests no longer seed the operator's live `:8787` mirror via auto-probe (sty_5aa08259)
+- `workspace add` with no matching serve registers and exits 0 with seed skipped (was non-zero)
+
 ## [0.0.290] - 2026-07-20
 
 ### Added

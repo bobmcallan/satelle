@@ -71,7 +71,7 @@ func TestWorkflowPageInteractiveDiagram(t *testing.T) {
 	if !waitHealthy(t, base+"/healthz", 8*time.Second) {
 		t.Fatal("server did not become healthy")
 	}
-	mustRun(t, bin, repo, "workspace", "add")
+	seedWorkspaceAdd(t, bin, repo, base)
 
 	slug := filepath.Base(repo)
 	// The authored rich workflow's expand fragment carries the new diagram.

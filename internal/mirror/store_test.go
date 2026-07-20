@@ -76,6 +76,41 @@ func TestFindBySlug(t *testing.T) {
 	}
 }
 
+func TestDeletePartition(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "m.db")
+	s, err := mirror.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	now := time.Now()
+	if _, err := s.TouchPartition(ctx, "rk-del", "del", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertItem(ctx, "rk-del", "story", "sty_1", map[string]any{"id": "sty_1"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeletePartition(ctx, "rk-del"); err != nil {
+		t.Fatal(err)
+	}
+	parts, err := s.ListPartitions(ctx)
+	if err != nil || len(parts) != 0 {
+		t.Fatalf("parts after delete = %v err=%v", parts, err)
+	}
+	items, err := s.ListItems(ctx, "rk-del", "story")
+	if err != nil || len(items) != 0 {
+		t.Fatalf("items after delete = %v err=%v", items, err)
+	}
+	// Idempotent.
+	if err := s.DeletePartition(ctx, "rk-del"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeletePartition(ctx, ""); err == nil {
+		t.Fatal("empty repo_key must error")
+	}
+}
+
 func TestReplaceKindIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "m.db")
 	s, err := mirror.Open(path)

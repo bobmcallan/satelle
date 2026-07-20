@@ -64,8 +64,8 @@ func TestMultiPartitionMirrorServe(t *testing.T) {
 		t.Fatal("serve did not become healthy")
 	}
 
-	mustRun(t, testBin, repoA, "workspace", "add")
-	mustRun(t, testBin, repoB, "workspace", "add")
+	seedWorkspaceAdd(t, testBin, repoA, host)
+	seedWorkspaceAdd(t, testBin, repoB, host)
 
 	slugA := filepath.Base(repoA)
 	slugB := filepath.Base(repoB)
@@ -125,11 +125,25 @@ func httpGetBody(t *testing.T, url string) string {
 }
 
 // workspaceAdd registers repo under home's workspace from dir as cwd.
+// When endpoint is non-empty it is passed as SATELLE_SERVER_ENDPOINT so seed
+// targets the test serve (overrides suite-wide none from isolatedEnv).
 func workspaceAdd(t *testing.T, home, dir, repo string) {
+	t.Helper()
+	workspaceAddEndpoint(t, home, dir, repo, "")
+}
+
+func workspaceAddEndpoint(t *testing.T, home, dir, repo, endpoint string) {
 	t.Helper()
 	cmd := exec.Command(testBin, "workspace", "add", repo)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "SATELLE_HOME="+home)
+	env := append(os.Environ(), "SATELLE_HOME="+home)
+	if endpoint != "" {
+		env = append(env, "SATELLE_SERVER_ENDPOINT="+endpoint)
+	} else {
+		// No intentional seed — keep discovery off (sty_5aa08259).
+		env = append(env, "SATELLE_SERVER_ENDPOINT=none")
+	}
+	cmd.Env = env
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("workspace add: %v\n%s", err, out)
 	}
