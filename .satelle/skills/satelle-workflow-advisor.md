@@ -79,6 +79,15 @@ nothing yourself.
    silently pins the repo to one CLI vendor. Advise moving it to a `[<name>]`
    binding (harness/tools/model) plus an `agent=<name>` node allocation.
 
+7. **Binding form (edge CSV vs scoped on=).** A **gate-specific** reviewer
+   (intended for exactly one transition) must be bound as an **edge CSV**
+   (`prompt="@skill:…"` on the edge). A gate-specific check authored as a
+   **single-state** scoped node (`on="in_progress"` only) is a finding: name the
+   node, the over-fire consequence (re-fires on every rework/recovery inbound),
+   and the concrete edge rewrite. Scoped `on=` is correct only for genuinely
+   multi-state or always-on reviewers (`estimate`, `step`, multi-state always-on).
+   See `satelle help workflows` ("Binding a reviewer: edge CSV vs scoped on=").
+
 ## How to report
 
 One line per finding, naming the node/edge, the concern, and the concrete fix

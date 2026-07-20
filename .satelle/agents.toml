@@ -25,9 +25,9 @@
 # to override only the model for that gate/step while keeping the shared harness
 # (sty_19456622). See satelle help agent-dispatch and satelle-dot-standard.
 #
-# 2026-07-20: all isolated agents on Grok ACP (claude rate-limited on this host).
-# executor stays in-loop (driving session). Revert planner/retrospective/
-# blocked-triage to claude command templates when rate limits lift.
+# 2026-07-21: planner on Claude/fable (command transport; plans only, no implement).
+# Other isolated agents stay on Grok ACP (claude rate-limited for high volume).
+# executor stays in-loop (driving session).
 
 [executor]
 role    = "agent"
@@ -53,15 +53,15 @@ tools     = "read_file,grep,list_dir"
 model     = "grok-4.5"
 principles = "session"
 
-# Planner — plans only (no implement). Grok ACP; context via read_file channel.
+# Planner — plans only (no implement). Claude/fable via command transport.
+# Bash(satelle:*) so it can attach the plan artifact; Write/Edit still denied.
 # effort=high: expensive planning judgment (sty_657f77b9).
 [planner]
-role      = "agent"
-interface = "acp"
-command   = "grok agent stdio"
-tools     = "read_file,grep,list_dir"
-model     = "grok-4.5"
-effort    = "high"
+role       = "agent"
+command    = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model} --effort {effort}"
+tools      = "Read,Grep,Glob,Bash(satelle:*)"
+model      = "fable"
+effort     = "high"
 principles = "session"
 
 # Retrospective — lessons on enter-done. Read-only grant; satelle via CLI when

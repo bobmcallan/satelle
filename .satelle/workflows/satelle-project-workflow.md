@@ -5,7 +5,7 @@ type: workflow
 tags: [type:workflow]
 applies_to: ["*"]
 create_review: satelle-story-create-review
-description: This repo's project-scope workflow, authored in DOT (the agent model). A story moves backlog → plan → in_progress → integration → release → done, with a cancelled exit. It is REVIEWER-FIRST (a reviewer gates every transition). The plan step DISPATCHES to an isolated read-only planner (agent=planner); in_progress, integration, and release run IN-LOOP on the driving session (agent=executor) so the orchestrator performs the work with full session context — no isolated worker subprocess for code/integrate/release. Every stage is reviewed: backlog → plan by satelle-story-intent-review; plan → in_progress by satelle-story-plan-review; in_progress → integration by satelle-code-ac-review; integration → release by satelle-integration-review plus scoped satelle-integration-check (make integration); release → done by satelle-story-release-review plus scoped satelle-changelog-entry-check (CHANGELOG.md must carry the released version). Always-on estimate gates begin-work and close.
+description: This repo's project-scope workflow, authored in DOT (the agent model). A story moves backlog → plan → in_progress → integration → release → done, with a cancelled exit. It is REVIEWER-FIRST (a reviewer gates every transition). The plan step DISPATCHES to an isolated read-only planner (agent=planner); in_progress, integration, and release run IN-LOOP on the driving session (agent=executor) so the orchestrator performs the work with full session context — no isolated worker subprocess for code/integrate/release. Every stage is reviewed: backlog → plan by satelle-story-intent-review; plan → in_progress by satelle-story-plan-review; in_progress → integration by satelle-code-ac-review then satelle-workflow-change-review (CSV edge); integration → release by satelle-integration-review plus scoped satelle-integration-check (make integration); release → done by satelle-story-release-review plus scoped satelle-changelog-entry-check (CHANGELOG.md must carry the released version). Always-on estimate gates begin-work and close.
 ---
 
 # satelle workflow (project) — the agent model, authored in DOT
@@ -88,7 +88,9 @@ digraph satelle_workflow {
 
   backlog     -> plan         [agent=reviewer, prompt="@skill:satelle-story-intent-review"] // intake gate: a story must pass intent-review to enter plan
   plan        -> in_progress  [agent=reviewer, prompt="@skill:satelle-story-plan-review"]
-  in_progress -> integration  [agent=reviewer, prompt="@skill:satelle-code-ac-review"]     // code matches the ACs -> enter integration
+  // code-ac then workflow-change (CSV; existing gate first). workflow-change
+  // n/a-fast-accepts when the slice touches no workflow file (sty_9882b8c6).
+  in_progress -> integration  [agent=reviewer, prompt="@skill:satelle-code-ac-review,satelle-workflow-change-review"]
   integration -> release      [agent=reviewer, prompt="@skill:satelle-integration-review"] // tests adequate (+ scoped intcheck runs make integration) -> enter release
   release     -> done         [agent=reviewer, prompt="@skill:satelle-story-release-review"]
 
@@ -118,8 +120,10 @@ the reviewer gates (`satelle-story-intent-review`, `satelle-story-plan-review`,
 lessons capture (`satelle-lessons`, dispatched on enter-done via the
 `[retrospective]` binding) are authored in this repo's `.satelle/skills` — so
 there is no dangling `@skill:` reference and a story drives to a terminal state
-without a missing-skill block. Reviewer gates degrade to advisory only if their
-rubric is genuinely absent. Lessons are offline corpus (not session-injected).
+without a missing-skill block. `satelle-workflow-change-review` (CSV sibling on
+`in_progress → integration`) resolves from the **embedded** substrate (not
+repo-authored). Reviewer gates degrade to advisory only if their rubric is
+genuinely absent. Lessons are offline corpus (not session-injected).
 
 ## Environment
 
