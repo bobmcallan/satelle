@@ -87,8 +87,8 @@ satelle update                                   # pulls CLI + serve assets (sud
                                                  # restarts the supervisor onto the new binary
 satelle version                                  # check_cli_version: must report $CLI_VER + SHA prefix
 # check_live_footer: version of the process that holds the port
-curl -fsS "http://127.0.0.1:${PORT:-8787}/" | grep -F "satelle " 
-# expect $SERVE_VER when unit runs satelle-serve; $CLI_VER when unit still uses satelle serve alias
+curl -fsS "http://127.0.0.1:${PORT:-8787}/" | grep -E "satelle-serve $SERVE_VER|satelle $CLI_VER"
+# expect satelle-serve $SERVE_VER when unit runs satelle-serve; satelle $CLI_VER for deprecated CLI alias
 # check_persistent_supervisor: confirm service is the installed unit, not a throwaway serve
 ```
 
