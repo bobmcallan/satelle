@@ -194,8 +194,10 @@ func (s *Store) Count(ctx context.Context) (int, error) {
 	return n, nil
 }
 
-// ListAll returns up to limit evidence rows oldest-first (no story/kind filter).
+// ListAll returns up to limit evidence rows newest-first (no story/kind filter).
 // Used by ui push / mirror snapshot export — List refuses unfiltered scans.
+// Newest-first keeps recent progress lights alive when the ledger exceeds the
+// export budget (sty_c5065d05): oldest-only LIMIT permanently starved new work.
 // limit<=0 defaults to 10000; hard-capped at 50000.
 func (s *Store) ListAll(ctx context.Context, limit int) ([]Entry, error) {
 	if limit <= 0 {
@@ -204,7 +206,12 @@ func (s *Store) ListAll(ctx context.Context, limit int) ([]Entry, error) {
 	if limit > 50000 {
 		limit = 50000
 	}
-	q := fmt.Sprintf(`SELECT id, story_id, project_id, kind, actor, body, payload, refs, created_at FROM evidence ORDER BY created_at ASC, id ASC LIMIT %d`, limit)
+	// Newest window under the budget, returned oldest-first for callers that
+	// expect chronological order (mirror still re-sorts per story).
+	q := fmt.Sprintf(`SELECT id, story_id, project_id, kind, actor, body, payload, refs, created_at FROM (
+		SELECT id, story_id, project_id, kind, actor, body, payload, refs, created_at FROM evidence
+		ORDER BY created_at DESC, id DESC LIMIT %d
+	) ORDER BY created_at ASC, id ASC`, limit)
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("ledger: list all: %w", err)
@@ -241,3 +248,6 @@ func parseTime(s string) time.Time {
 	}
 	return t
 }
+
+// force dogfood integration failure
+var _ = ThisSymbolDoesNotExist
