@@ -35,6 +35,10 @@ surface = ["ui", "cli"]
 # substrate (workflows/skills/principles/documents/tasks/config) editable without a
 # release. Add ".claude/" here to author Claude Code skills without an engaged story.
 edit_exempt_paths = [".satelle/", ".claude/"]
+# Parallel epic dogfood (epic:parallel-epic-execution / sty_49098c05): opt out of
+# the single performing-story seat so concurrent worktree sessions can engage
+# different stories. Long-term value decided at order:5 dry-run close.
+allow_parallel = true
 
 [hosted]
 server = "https://satelle.dev"
