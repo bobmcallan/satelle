@@ -16,6 +16,11 @@ import (
 )
 
 func main() {
+	// Bare `go build` without ldflags still brands as satelle-serve (Makefile /
+	// release.yml stamp Name=satelle-serve for release builds).
+	if buildinfo.Name == "satelle" || buildinfo.Name == "" {
+		buildinfo.Name = "satelle-serve"
+	}
 	addr := flag.String("addr", "127.0.0.1", "bind address")
 	port := flag.Int("port", 0, "listen port (default from global service config or 8787)")
 	showVersion := flag.Bool("version", false, "print version and exit")

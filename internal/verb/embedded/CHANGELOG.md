@@ -1,3 +1,9 @@
+## [serve-v0.0.2] - 2026-07-20
+
+### Changed
+- Footer brands the running artifact via `buildinfo.Name` (`satelle` vs `satelle-serve`); Makefile and release.yml stamp Name per binary (sty_4a5c6924)
+- `make check-serve-version` fails closed when serve-path sources change without advancing `satelle-serve.version`; release skill runs it on serve-path slices (sty_4a5c6924)
+
 ## [0.0.289] - 2026-07-20
 
 ### Fixed
