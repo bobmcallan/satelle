@@ -201,21 +201,42 @@ Fails closed on store/listing/workflow-resolution errors (sty_f3d5d4b8).`,
 					return denyPreToolUse(cmd, raw, outsideAnchorBashReason(path, foreignRoot))
 				}
 			}
-			if !isGitCommitOrPush(command) {
-				return nil // not a commit/push — allow
+			// Engage gate still applies only to commit/push (today's default).
+			// Opt-in [gate.command_allow] may restrict those (or other git
+			// subcommands) further by story status (sty_c21490cc).
+			subs := gitSubcommands(command)
+			needsEngage := false
+			for _, sub := range subs {
+				if sub == "commit" || sub == "push" {
+					needsEngage = true
+					break
+				}
+			}
+			if !needsEngage && !commandAllowRestricts(subs) {
+				return nil // not a gated command — allow
 			}
 			info, engaged, err := currentSeat()
 			if err != nil {
 				return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
 			}
-			if engaged {
-				return nil
+			if needsEngage && !engaged {
+				// Deny only — never allow a fused engage+commit form. PreToolUse cannot
+				// know the engage line would succeed; pick the message that teaches the
+				// recovery path (sty_577d292f). Name a non-live seat when present so
+				// the agent can inspect/release without digging (sty_1738f973 AC6).
+				return denyPreToolUse(cmd, raw, commitDenyReason(command)+seatSuffix(info, time.Now().UTC()))
 			}
-			// Deny only — never allow a fused engage+commit form. PreToolUse cannot
-			// know the engage line would succeed; pick the message that teaches the
-			// recovery path (sty_577d292f). Name a non-live seat when present so
-			// the agent can inspect/release without digging (sty_1738f973 AC6).
-			return denyPreToolUse(cmd, raw, commitDenyReason(command)+seatSuffix(info, time.Now().UTC()))
+			// Step-scoped policy (opt-in): engaged story must be at an allowed status.
+			if engaged {
+				st := info.StoryStatus
+				if st == "" {
+					st = info.State
+				}
+				if reason, deny := commandAllowDeny(subs, st); deny {
+					return denyPreToolUse(cmd, raw, reason+seatSuffix(info, time.Now().UTC()))
+				}
+			}
+			return nil
 		},
 	}
 
@@ -264,7 +285,8 @@ changed, or a story is engaged.`,
 // (sty_1738f973). Empty ItemID means no lease row was relevant.
 type seatInfo struct {
 	ItemID      string
-	State       string
+	State       string // lease target / in-flight target (messaging)
+	StoryStatus string // committed work-item status (step policy; sty_c21490cc)
 	Owner       string
 	AcquiredAt  time.Time
 	HeartbeatAt time.Time
@@ -374,6 +396,7 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 		if status == "" {
 			status = l.State
 		}
+		info.StoryStatus = status
 		// Surface lease.State (last committed engaging target / in-flight target)
 		// in the seat descriptor when more informative than committed backlog.
 		if l.State != "" {
@@ -634,6 +657,81 @@ func anchorFrom(getenv func(string) string, cfgRoot string) string {
 		return filepath.Clean(abs)
 	}
 	return filepath.Clean(cfgRoot)
+}
+
+// commandAllowRestricts reports whether any git subcommand is listed in the
+// opt-in [gate.command_allow] policy (even if not commit/push).
+func commandAllowRestricts(subs []string) bool {
+	return commandAllowRestrictsWith(loadCommandAllow(), subs)
+}
+
+func commandAllowRestrictsWith(policy map[string][]string, subs []string) bool {
+	if len(policy) == 0 {
+		return false
+	}
+	for _, sub := range subs {
+		if _, ok := policy[strings.ToLower(sub)]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// commandAllowDeny returns a deny reason when a restricted subcommand is not
+// permitted at the engaged story's current status. deny=false when allowed or
+// unconfigured.
+func commandAllowDeny(subs []string, storyStatus string) (reason string, deny bool) {
+	return commandAllowDenyWith(loadCommandAllow(), subs, storyStatus)
+}
+
+func commandAllowDenyWith(policy map[string][]string, subs []string, storyStatus string) (reason string, deny bool) {
+	if len(policy) == 0 {
+		return "", false
+	}
+	status := strings.ToLower(strings.TrimSpace(storyStatus))
+	for _, sub := range subs {
+		key := strings.ToLower(sub)
+		allowed, restricted := policy[key]
+		if !restricted {
+			continue
+		}
+		if len(allowed) == 0 {
+			// Key present with empty list = never allowed while policy is on.
+			return fmt.Sprintf(
+				"satelle: refusing git %s — [gate.command_allow] lists %q with no allowed states (remove the key or name permitted story statuses, e.g. push = [\"release\"])",
+				sub, key), true
+		}
+		ok := false
+		for _, a := range allowed {
+			if strings.ToLower(strings.TrimSpace(a)) == status {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return fmt.Sprintf(
+				"satelle: refusing git %s while engaged story is at %q — [gate.command_allow] permits it only at: %s",
+				sub, storyStatus, strings.Join(allowed, ", ")), true
+		}
+	}
+	return "", false
+}
+
+// loadCommandAllow returns the opt-in [gate.command_allow] map (nil/empty = off).
+func loadCommandAllow() map[string][]string {
+	cfg, _, err := config.Load("")
+	if err != nil {
+		return nil
+	}
+	if len(cfg.Gate.CommandAllow) == 0 {
+		return nil
+	}
+	// Normalize keys to lowercase for lookup.
+	out := make(map[string][]string, len(cfg.Gate.CommandAllow))
+	for k, v := range cfg.Gate.CommandAllow {
+		out[strings.ToLower(strings.TrimSpace(k))] = v
+	}
+	return out
 }
 
 // allowOutsideTreeEdits reports whether [gate] allow_outside_tree_edits is true.
