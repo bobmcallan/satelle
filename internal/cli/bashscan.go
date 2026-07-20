@@ -265,24 +265,38 @@ func wordsOnly(seg []bashTok) []string {
 // skipping known global options (-C DIR, -c K=V, --git-dir=, …). Quote-aware:
 // prose inside quotes does not match.
 func isGitCommitOrPush(command string) bool {
-	for _, seg := range segmentWords(tokenizeBash(command)) {
-		if segmentIsGitCommitOrPush(wordsOnly(seg)) {
+	for _, sub := range gitSubcommands(command) {
+		if sub == "commit" || sub == "push" {
 			return true
 		}
 	}
 	return false
 }
 
-// segmentIsGitCommitOrPush classifies one segment's word list.
-func segmentIsGitCommitOrPush(words []string) bool {
+// gitSubcommands returns each git subcommand token found in the bash payload
+// (e.g. "push", "commit", "status"), quote-aware and skipping global options.
+// Used by the engage commitgate and the opt-in [gate.command_allow] step policy.
+func gitSubcommands(command string) []string {
+	var out []string
+	for _, seg := range segmentWords(tokenizeBash(command)) {
+		if sub, ok := segmentGitSubcommand(wordsOnly(seg)); ok {
+			out = append(out, sub)
+		}
+	}
+	return out
+}
+
+// segmentGitSubcommand returns the first non-option word after git as the
+// subcommand (lowercased).
+func segmentGitSubcommand(words []string) (string, bool) {
 	if len(words) == 0 {
-		return false
+		return "", false
 	}
 	cmd := words[0]
 	base := filepath.Base(cmd)
 	// Strip a trailing path form: /usr/bin/git or ./git
 	if base != "git" && cmd != "git" {
-		return false
+		return "", false
 	}
 	i := 1
 	for i < len(words) {
@@ -315,11 +329,16 @@ func segmentIsGitCommitOrPush(words []string) bool {
 			continue
 		default:
 			// First non-option word is the subcommand.
-			sub := strings.ToLower(w)
-			return sub == "commit" || sub == "push"
+			return strings.ToLower(w), true
 		}
 	}
-	return false
+	return "", false
+}
+
+// segmentIsGitCommitOrPush classifies one segment's word list.
+func segmentIsGitCommitOrPush(words []string) bool {
+	sub, ok := segmentGitSubcommand(words)
+	return ok && (sub == "commit" || sub == "push")
 }
 
 // isFusedEngageAndCommit reports whether a Bash payload both engages a story

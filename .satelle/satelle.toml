@@ -40,6 +40,13 @@ edit_exempt_paths = [".satelle/", ".claude/"]
 # different stories. Long-term value decided at order:5 dry-run close.
 allow_parallel = true
 
+# [gate.command_allow] — OPT-IN step-scoped Bash policy (sty_c21490cc). Keys are
+# git subcommands; values are story statuses that may run them while engaged.
+# Empty/absent = no step restriction (commitgate only requires SOME engagement).
+# Example (push only at release):
+#   [gate.command_allow]
+#   push = ["release"]
+
 [hosted]
 server = "https://satelle.dev"
 project = "satelle"

@@ -207,10 +207,21 @@ type ReviewConfig struct {
 // repos stays allowed; progressing/mutating them from this session does not).
 // true only for a deliberately multi-repo install — it relaxes containment
 // only; the engaged-story rule is untouched.
+//
+// CommandAllow is an OPT-IN step-scoped command policy (sty_c21490cc). Keys are
+// git subcommands (e.g. "push", "commit"); values are story statuses that may
+// run them while engaged. Empty/nil = no step restriction (today's engage-only
+// commitgate). Example:
+//
+//	[gate.command_allow]
+//	push = ["release"]
+//
+// Not a satelle default — the operator authors the policy per repo.
 type GateConfig struct {
-	EditExemptPaths       []string `toml:"edit_exempt_paths"`
-	AllowParallel         bool     `toml:"allow_parallel"`
-	AllowOutsideTreeEdits bool     `toml:"allow_outside_tree_edits"`
+	EditExemptPaths       []string            `toml:"edit_exempt_paths"`
+	AllowParallel         bool                `toml:"allow_parallel"`
+	AllowOutsideTreeEdits bool                `toml:"allow_outside_tree_edits"`
+	CommandAllow          map[string][]string `toml:"command_allow"`
 }
 
 // ErrNotFound signals no satelle.toml was found walking up from CWD. Callers
