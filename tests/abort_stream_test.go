@@ -23,7 +23,12 @@ import (
 // subsequent / on the same client still responds promptly (pre-fix it hung).
 func TestProxiedSSEAbortDoesNotPoisonConnection(t *testing.T) {
 	home := isolatedHome(t)
-	repo := t.TempDir()
+	// Unique basename: t.TempDir() often ends in 001/002 and concurrent
+	// serve-partition slugs collide (409 on workspace add).
+	repo := filepath.Join(t.TempDir(), "sse-abort")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	mustRun(t, testBin, repo, "init")
 	workspaceAdd(t, home, repo, repo)
 

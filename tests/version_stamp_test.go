@@ -92,10 +92,24 @@ func TestMakefileStampsPerArtifactVersions(t *testing.T) {
 		t.Errorf("serve line must stamp Version=%s:\n%s", serveVer, serveLine)
 	}
 	if cliVer != serveVer {
-		if strings.Contains(cliLine, "Version="+serveVer) {
+		// Exact Version=V token only — "Version=0.0.2" must not match "Version=0.0.290".
+		exact := func(line, ver string) bool {
+			needle := ".Version=" + ver
+			i := strings.Index(line, needle)
+			if i < 0 {
+				return false
+			}
+			end := i + len(needle)
+			if end == len(line) {
+				return true
+			}
+			c := line[end]
+			return c == ' ' || c == '"' || c == '\''
+		}
+		if exact(cliLine, serveVer) {
 			t.Errorf("CLI line must not use serve version %s:\n%s", serveVer, cliLine)
 		}
-		if strings.Contains(serveLine, "Version="+cliVer) {
+		if exact(serveLine, cliVer) {
 			t.Errorf("serve line must not use CLI version %s:\n%s", cliVer, serveLine)
 		}
 	}
