@@ -12,12 +12,13 @@ on the landing.
 - **`/` → the landing.** The root is a launcher: one card per project with live
   story/task/doc counts, plus a panel for adding a project, opening help, and
   keeping the binary current. It is not any single repo's project page.
-- **Every project → `/<slug>/`.** Each registered repo — the launch repo
+- **Every project → `/r/<slug>/`.** Each registered repo — the launch repo
   (`[service].repo` in the global config, set by `satelle service install`) and
-  every repo added with `satelle workspace add` — is served by its own child
-  process behind a reverse proxy at `/<slug>/` (the slug is derived from the
-  repo's directory name). Each keeps its own database — no shared store, no
-  cross-project bleed.
+  every repo added with `satelle workspace add` — is listed on the landing and
+  served under `/r/<slug>/`. The slug is the repo directory's **basename**.
+  Basenames must be unique across the workspace: seeding a second repo with a
+  colliding basename is rejected. Legacy colliding partitions (if any) render
+  under their full `repo_key` so landing links stay unique.
 - **`/projects`** redirects to `/` (back-compat for older links).
 
 So adding a project is **additive**: a new card appears on the landing and the
@@ -42,7 +43,9 @@ shows the registry.
   serve is running at the service port, `workspace add` writes that endpoint into
   local.toml and seeds in one command. Without a reachable serve it still
   registers but exits non-zero with the exact remedy. Later mutations push
-  automatically. The project appears on the landing and is served at `/r/<slug>/`.
+  automatically. The project appears on the landing and is served at `/r/<slug>/`
+  (basename of the repo path). A colliding basename with an already-seeded
+  partition fails closed with a clear error — rename the directory and re-run.
 - **`satelle service install`** — install or reconfigure the service itself
   (port, bind address, and which repo is the launch/working-directory repo).
   Re-running it with no `--repo` preserves the saved repo; passing `--repo <repo>`

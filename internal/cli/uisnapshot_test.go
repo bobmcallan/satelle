@@ -3,14 +3,19 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/mirror"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -153,4 +158,32 @@ func TestBuildUISnapshotDocsCarryModTimeAndProvenance(t *testing.T) {
 			t.Errorf("doc missing %s: %v", k, doc)
 		}
 	}
+}
+
+// TestPostUISnapshotSurfacesConflictBody (sty_57d5ce25): 409 body reaches the
+// CLI error so workspace add can print the slug-collision remedy.
+func TestPostUISnapshotSurfacesConflictBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ingest/snapshot" {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, `slug "app" already used by partition app-aaaa (path /tmp/a); incoming repo_key app-bbbb collides.`, http.StatusConflict)
+	}))
+	t.Cleanup(srv.Close)
+
+	err := postUISnapshotContext(context.Background(), srv.URL, &mirror.Snapshot{
+		RepoKey: "app-bbbb",
+		Slug:    "app",
+	})
+	if err == nil {
+		t.Fatal("expected error on 409")
+	}
+	msg := err.Error()
+	for _, want := range []string{"409", "app-aaaa", "app-bbbb", `slug "app"`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error missing %q: %s", want, msg)
+		}
+	}
+	_ = io.Discard
 }

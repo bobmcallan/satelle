@@ -1,3 +1,8 @@
+## [0.0.289] - 2026-07-20
+
+### Fixed
+- Serve landing slug uniqueness: snapshot ingest returns 409 when two repo_keys share a directory basename; landing/crumbs fall back to repo_key for legacy collisions so hrefs stay unique (sty_57d5ce25)
+
 ## [0.0.288] - 2026-07-20
 
 ### Changed

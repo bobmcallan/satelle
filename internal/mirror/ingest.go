@@ -1,7 +1,9 @@
 package mirror
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -97,6 +99,18 @@ func (h *IngestHandler) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now()
 	ctx := r.Context()
+	// Fail-closed: landing /r/<slug>/ must map to one partition (sty_57d5ce25).
+	// Empty slug skips — the UI falls back to unique repo_key.
+	if slug := strings.TrimSpace(snap.Slug); slug != "" {
+		if existing, ok, err := h.Store.FindBySlug(ctx, slug); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		} else if ok && existing.RepoKey != snap.RepoKey {
+			msg := slugConflictMessage(h.Store, ctx, slug, existing.RepoKey, snap.RepoKey)
+			http.Error(w, msg, http.StatusConflict)
+			return
+		}
+	}
 	if _, err := h.Store.TouchPartition(ctx, snap.RepoKey, snap.Slug, now); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -139,6 +153,25 @@ func (h *IngestHandler) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+// slugConflictMessage builds the 409 body for a landing-slug collision: names
+// the slug, existing and incoming repo_keys, best-effort path of the existing
+// partition, and the rename / re-seed remedy (sty_57d5ce25).
+func slugConflictMessage(store *Store, ctx context.Context, slug, existingKey, incomingKey string) string {
+	pathNote := ""
+	if payload, err := store.GetItem(ctx, existingKey, "identity", "meta"); err == nil {
+		var meta IdentityMeta
+		if json.Unmarshal([]byte(payload), &meta) == nil && strings.TrimSpace(meta.RepoRoot) != "" {
+			pathNote = fmt.Sprintf(" (path %s)", meta.RepoRoot)
+		}
+	}
+	return fmt.Sprintf(
+		"slug %q already used by partition %s%s; incoming repo_key %s collides. "+
+			"Rename this repo's directory so its basename is unique, then re-run `satelle workspace add`. "+
+			"To drop the existing landing card, remove that partition from the serve mirror.",
+		slug, existingKey, pathNote, incomingKey,
+	)
 }
 
 func rawToRows(raw []json.RawMessage, idKey string) []ItemRow {

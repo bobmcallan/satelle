@@ -197,6 +197,26 @@ func (s *Store) ListPartitions(ctx context.Context) ([]Partition, error) {
 	return out, rows.Err()
 }
 
+// FindBySlug returns the first partition whose landing slug equals slug.
+// ok is false when slug is empty or no row matches. Mechanism only — callers
+// decide collision policy (sty_57d5ce25).
+func (s *Store) FindBySlug(ctx context.Context, slug string) (p Partition, ok bool, err error) {
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		return Partition{}, false, nil
+	}
+	err = s.db.QueryRowContext(ctx, `
+SELECT repo_key, slug, seq, updated_at FROM partitions WHERE slug = ? ORDER BY repo_key LIMIT 1
+`, slug).Scan(&p.RepoKey, &p.Slug, &p.Seq, &p.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return Partition{}, false, nil
+	}
+	if err != nil {
+		return Partition{}, false, err
+	}
+	return p, true, nil
+}
+
 // Partition is one repo's mirror slice metadata.
 type Partition struct {
 	RepoKey   string
