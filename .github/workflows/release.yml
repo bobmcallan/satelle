@@ -135,8 +135,11 @@ jobs:
           fi
           OUT="${{ matrix.artifact }}-v${VER}-${GOOS}-${GOARCH}"
           [ "$GOOS" = "windows" ] && OUT="${OUT}.exe"
+          # Name stamps per-artifact footer/version brand (sty_4a5c6924).
+          ART_NAME="${{ matrix.artifact }}"
           go build -trimpath \
             -ldflags="-s -w \
+              -X github.com/bobmcallan/satelle/internal/buildinfo.Name=${ART_NAME} \
               -X github.com/bobmcallan/satelle/internal/buildinfo.Version=${VER} \
               -X github.com/bobmcallan/satelle/internal/buildinfo.Commit=${BUILD_SHA} \
               -X github.com/bobmcallan/satelle/internal/buildinfo.BuildTime=${BUILD}" \
