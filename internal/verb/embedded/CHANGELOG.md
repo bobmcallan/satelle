@@ -3,6 +3,11 @@
 ### Removed
 - Parallel epic path and `[gate] allow_parallel` opt-out — single performing story always enforced; deleted parallel workflows/skills/launcher (sty_a614a0ea)
 
+## [0.0.293] - 2026-07-20
+
+### Verified
+- Mirror partition lifecycle on operator host: junk `002`/`sse-abort*` partitions pruned; landing is satelle + solidsafe-engine-v0 + solidsafe-ui-v0 only (sty_eb61be02)
+
 ## [0.0.292] - 2026-07-20
 
 ### Added
