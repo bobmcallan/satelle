@@ -1663,15 +1663,25 @@ func TestBrowserSharedTopbar(t *testing.T) {
 
 	// One evaluate per surface: element presence, source order (compareDocumentPosition),
 	// visual left-to-right order (bounding rects), the toggle glyph, and no uptime pill.
+	// sty_eea989dd: push-fed MirrorRO without identity email omits the .signin strip
+	// (no bare "mirror" mode pill). Brand-mark + theme-toggle are always required;
+	// .account/.signin is optional and, when present, sits between them.
 	const probe = `(function(){
 		var bm = document.querySelector('header.topbar .brand-mark');
 		var acct = document.querySelector('header.topbar .account, header.topbar .signin');
 		var tt = document.querySelector('header.topbar #theme-toggle');
-		if (!bm || !acct || !tt) return {OK:false};
-		var srcOrder = (bm.compareDocumentPosition(acct) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 &&
-		               (acct.compareDocumentPosition(tt) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
-		var b = bm.getBoundingClientRect(), a = acct.getBoundingClientRect(), c = tt.getBoundingClientRect();
-		var visOrder = b.left < a.left && a.left < c.left; // mark leads, toggle last
+		if (!bm || !tt) return {OK:false};
+		var srcOrder, visOrder;
+		var b = bm.getBoundingClientRect(), c = tt.getBoundingClientRect();
+		if (acct) {
+			srcOrder = (bm.compareDocumentPosition(acct) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 &&
+			           (acct.compareDocumentPosition(tt) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+			var a = acct.getBoundingClientRect();
+			visOrder = b.left < a.left && a.left < c.left;
+		} else {
+			srcOrder = (bm.compareDocumentPosition(tt) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+			visOrder = b.left < c.left;
+		}
 		return {OK:true, SrcOrder:srcOrder, VisOrder:visOrder,
 		        Glyph: tt.textContent.trim(), Uptime: !!document.querySelector('.uptime')};
 	})()`
@@ -1698,14 +1708,14 @@ func TestBrowserSharedTopbar(t *testing.T) {
 			t.Fatalf("%s (%s): %v", s.name, s.path, err)
 		}
 		if !st.OK {
-			t.Errorf("%s: navbar missing brand-mark / account / theme-toggle", s.name)
+			t.Errorf("%s: navbar missing brand-mark / theme-toggle", s.name)
 			continue
 		}
 		if !st.SrcOrder {
-			t.Errorf("%s: source order is not brand-mark → account → theme-toggle", s.name)
+			t.Errorf("%s: source order is not brand-mark → [account?] → theme-toggle", s.name)
 		}
 		if !st.VisOrder {
-			t.Errorf("%s: visual order is not mark-left → controls → toggle-rightmost", s.name)
+			t.Errorf("%s: visual order is not mark-left → [controls] → toggle-rightmost", s.name)
 		}
 		if st.Glyph != "☾" {
 			t.Errorf("%s: theme toggle glyph = %q, want the DS ☾ (never ◐)", s.name, st.Glyph)

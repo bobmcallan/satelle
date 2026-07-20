@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,6 +76,45 @@ func TestLandingUniqueHrefsOnSlugCollision(t *testing.T) {
 		pr.Body.Close()
 		if pr.StatusCode != 200 {
 			t.Errorf("GET /r/%s/ status %d", hrefSlug, pr.StatusCode)
+		}
+	}
+}
+
+// TestMirrorTopbarOmitsBareMirrorPill (sty_eea989dd): empty-identity topbar has
+// no "mirror" mode chrome; Install/Docs/Projects stay; identity email keeps RO copy.
+func TestMirrorTopbarOmitsBareMirrorPill(t *testing.T) {
+	s, err := mirror.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if _, err := s.TouchPartition(ctx, "rk-empty", "emptyid", now); err != nil {
+		t.Fatal(err)
+	}
+
+	ms := NewMirror(s)
+	srv := httptest.NewServer(ms.Handler)
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	body := string(raw)
+	if strings.Contains(body, ">mirror</span>") || strings.Contains(body, `title="push-fed identity"`) {
+		t.Errorf("empty-identity landing still has opaque mirror pill:\n%s", body)
+	}
+	for _, want := range []string{
+		">Install</a>", ">Docs</a>", ">Projects</a>",
+		"https://satelle.dev/install", "https://satelle.dev/docs",
+		`class="theme-toggle"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("landing missing %q", want)
 		}
 	}
 }

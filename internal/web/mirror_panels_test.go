@@ -146,10 +146,18 @@ func TestMirrorProjectPageRendersTemplates(t *testing.T) {
 		"HTML Story", "Stories", "Tasks", "Workflow", "Documents",
 		`class="topbar"`, `class="theme-toggle"`, "a@b.c",
 		`<base href="/r/proj/">`,
+		// sty_eea989dd: identity strip explains RO local UI (no bare "mirror" mode pill).
+		`title="Read-only local UI — project data pushed by the CLI (not live-edited here)"`,
+		`aria-label="Operator identity a@b.c; read-only local UI, project data pushed by the CLI"`,
+		">Install</a>", ">Docs</a>", ">Projects</a>",
+		"https://satelle.dev/install", "https://satelle.dev/docs",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("project page missing %q", want)
 		}
+	}
+	if strings.Contains(body, ">mirror</span>") {
+		t.Error("project page must not render bare mirror mode pill")
 	}
 
 	// Workspace landing.
@@ -162,6 +170,15 @@ func TestMirrorProjectPageRendersTemplates(t *testing.T) {
 	land := string(raw2)
 	if !strings.Contains(land, "workspace") || !strings.Contains(land, `/r/proj/`) {
 		t.Errorf("landing missing partition link:\n%s", land)
+	}
+	// Empty identity on landing: no mode pill (sty_eea989dd).
+	if strings.Contains(land, ">mirror</span>") {
+		t.Error("landing must not show bare mirror pill when identity is empty")
+	}
+	for _, want := range []string{">Install</a>", ">Docs</a>", ">Projects</a>"} {
+		if !strings.Contains(land, want) {
+			t.Errorf("landing missing nav %q", want)
+		}
 	}
 	// Non-ingest POST rejected.
 	preq, _ := http.NewRequest(http.MethodPost, srv.URL+"/theme", strings.NewReader("theme=dark"))
