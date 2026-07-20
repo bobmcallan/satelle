@@ -223,6 +223,7 @@ func listLedgerJSON(ctx context.Context, a *app.App) ([]json.RawMessage, error) 
 	if a.Store.Ledger == nil {
 		return nil, nil
 	}
+	// Newest-first under the 10k budget so recent status lights survive large ledgers (sty_c5065d05).
 	entries, err := a.Store.Ledger.ListAll(ctx, 10000)
 	if err != nil {
 		return nil, err
