@@ -249,5 +249,3 @@ func parseTime(s string) time.Time {
 	return t
 }
 
-// force dogfood integration failure
-var _ = ThisSymbolDoesNotExist
