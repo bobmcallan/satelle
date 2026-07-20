@@ -140,8 +140,8 @@ func agentValidateCmd() *cobra.Command {
 				if g.RoleInferred {
 					roleNote += " (inferred)"
 				}
-				fmt.Fprintf(out, "  GRANT [%s] role=%s principles=%s constitution=%s interface=%s backend=%s %s tools=%q model=%q timeout=%q inject_principles=%v\n",
-					g.Name, roleNote, g.Principles, consti, g.Interface, g.Backend, ro, g.Tools, g.Model, g.Timeout, g.InjectsPrinciples)
+				fmt.Fprintf(out, "  GRANT [%s] role=%s principles=%s constitution=%s interface=%s backend=%s %s tools=%q model=%q effort=%q timeout=%q inject_principles=%v\n",
+					g.Name, roleNote, g.Principles, consti, g.Interface, g.Backend, ro, g.Tools, g.Model, g.Effort, g.Timeout, g.InjectsPrinciples)
 				if g.Notes != "" {
 					fmt.Fprintf(out, "         notes: %s\n", g.Notes)
 				}

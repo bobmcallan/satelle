@@ -141,6 +141,75 @@ func TestACPRunner_FakePeerDecision(t *testing.T) {
 	}
 }
 
+// TestACPRunner_EffortInjection (sty_657f77b9): when Request.Effort is set,
+// spawn argv includes --reasoning-effort high before stdio (asserted via wrapper
+// log), and set_config_option is accepted for reasoning_effort/effort.
+func TestACPRunner_EffortInjection(t *testing.T) {
+	peer := writeFakeACPPeer(t, "")
+	// Wrapper logs argv then execs peer — so we can assert inject without
+	// changing the ACP protocol peer.
+	dir := t.TempDir()
+	argvLog := filepath.Join(dir, "argv.log")
+	wrap := filepath.Join(dir, "wrap-peer")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argvLog + "\nexec " + peer + " \"$@\"\n"
+	if err := os.WriteFile(wrap, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r, err := RunnerFromBinding(InterfaceACP, wrap+" stdio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := r.Run(context.Background(), Request{
+		SystemPrompt: "rubric",
+		Payload:      `{}`,
+		Effort:       "high",
+		Model:        "grok-4.5",
+	})
+	if err != nil {
+		t.Fatalf("Run with effort: %v", err)
+	}
+	if !strings.Contains(string(out), `"decision":"accept"`) {
+		t.Fatalf("stdout = %q", out)
+	}
+	b, err := os.ReadFile(argvLog)
+	if err != nil {
+		t.Fatalf("argv log: %v", err)
+	}
+	argv := string(b)
+	if !strings.Contains(argv, "--reasoning-effort") || !strings.Contains(argv, "high") {
+		t.Fatalf("spawn argv missing --reasoning-effort high:\n%s", argv)
+	}
+	// Before trailing stdio.
+	if !strings.Contains(argv, "--reasoning-effort\nhigh\nstdio") &&
+		!strings.Contains(argv, "--reasoning-effort high") {
+		// printf '%s\n' puts each arg on its own line
+		lines := strings.Split(strings.TrimSpace(argv), "\n")
+		found := false
+		for i := 0; i+1 < len(lines); i++ {
+			if lines[i] == "--reasoning-effort" && lines[i+1] == "high" {
+				// must appear before a stdio token later
+				for j := i + 2; j < len(lines); j++ {
+					if lines[j] == "stdio" {
+						found = true
+					}
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("expected --reasoning-effort high before stdio in argv lines: %q", lines)
+		}
+	}
+	if strings.Contains(r.Command(), "reasoning-effort") {
+		t.Error("Command() evidence should not bake runtime effort")
+	}
+}
+
+func TestACPRunner_RejectsEffortPlaceholder(t *testing.T) {
+	if _, err := RunnerFromBinding(InterfaceACP, "grok agent {effort} stdio"); err == nil {
+		t.Fatal("expected reject of {effort} placeholder on acp command")
+	}
+}
+
 func TestACPRunner_PermissionDenyMutator(t *testing.T) {
 	// Peer requests permission for edit; client must reject when tools read-only.
 	extra := `

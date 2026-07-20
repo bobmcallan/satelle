@@ -3,6 +3,11 @@
 ### Removed
 - Parallel epic path and `[gate] allow_parallel` opt-out — single performing story always enforced; deleted parallel workflows/skills/launcher (sty_a614a0ea)
 
+## [0.0.296] - 2026-07-20
+
+### Verified
+- effort= field closed for sprint:7 order:3 (sty_657f77b9; shipped 0.0.294)
+
 ## [0.0.295] - 2026-07-20
 
 ### Verified
