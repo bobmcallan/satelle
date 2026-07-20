@@ -107,8 +107,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetStoryRetention(a.Config.StoriesKeepClosed, a.Config.StoriesKeepDays)
 	// Backups root is also runtime (sibling of stories/, not of tasks/).
 	verb.SetBackupsDir(filepath.Join(a.RuntimeDir, "backups"))
-	// Single-story process rule (default enforce; [gate] allow_parallel opts out).
-	verb.SetAllowParallelStories(a.Config.Gate.AllowParallel)
+	// Single performing story always enforced (sty_c7149f8a; allow_parallel removed sty_a614a0ea).
 	// Controlled tag vocabulary (sty_034d843c): validate namespaces declared in
 	// satelle.toml [tags.vocabulary] at story/task create and set. Independent of
 	// the agent CLI — must work with no harness installed.

@@ -136,7 +136,7 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 		// Single-story process rule (sty_c7149f8a): refuse creating a story already
 		// in an engaging status when another story occupies that seat. Default
 		// create status is backlog (not engaging) — no-op unless create opts a
-		// non-default status. [gate] allow_parallel opts out.
+		// non-default status.
 		if kind == workitem.KindStory {
 			status := req.Status
 			if status == "" {

@@ -4,6 +4,7 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"

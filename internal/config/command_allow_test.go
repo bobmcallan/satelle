@@ -11,7 +11,6 @@ func TestLoadCommandAllow(t *testing.T) {
 	data := filepath.Join(dir, "satelle.toml")
 	body := `
 [gate]
-allow_parallel = false
 
 [gate.command_allow]
 push = ["release"]

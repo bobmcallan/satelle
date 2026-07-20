@@ -115,7 +115,7 @@ func ResolveOwner() string {
 }
 
 // Acquire claims the seat for itemID. occupiesStorySeat gates the single-story
-// rule (true for stories when allow_parallel=false). Returns the resulting
+// rule (true for stories — one performing story seat). Returns the resulting
 // lease, the outcome, and — on OutcomeConflict — the conflicting holder.
 // check-and-insert runs in ONE immediate transaction.
 func (s *Store) Acquire(ctx context.Context, itemID, kind, owner, state string, occupiesStorySeat bool) (Lease, Outcome, *Lease, error) {
