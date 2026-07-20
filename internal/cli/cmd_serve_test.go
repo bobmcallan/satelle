@@ -1,43 +1,25 @@
 package cli
 
 import (
-	"context"
-	"errors"
-	"net/http"
+	"strings"
 	"testing"
-	"time"
 )
 
-// TestListenServeShutdown proves the push-fed serve entry can start and stop
-// cleanly (supervisor/proxy paths were removed in sty_dbdadfa0).
-func TestListenServeShutdown(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	// Bind ephemeral port via :0 through a helper would need refactor; just
-	// cancel immediately and ensure ListenAndServe path handles closed server.
-	go func() {
-		// Use an invalid/quick path: cancel before listen by using closed context.
-		cancel()
-		// call listenServe with already-cancelled ctx — server starts then shuts down
-		// Use a free port.
-		h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
-		// race: listen then cancel
-		cctx, ccancel := context.WithCancel(context.Background())
-		go func() {
-			time.Sleep(50 * time.Millisecond)
-			ccancel()
-		}()
-		err := listenServe(nil, cctx, "127.0.0.1:0", h, "")
-		done <- err
-		_ = ctx
-	}()
-	select {
-	case err := <-done:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			// ListenAndServe on :0 may fail on some systems; accept any non-panic exit.
-			t.Logf("listenServe exited: %v", err)
+// TestServeAliasDeprecationNotice proves satelle serve remains registered and
+// documents deprecation (sty_80233c10 AC4).
+func TestServeAliasDeprecationNotice(t *testing.T) {
+	root := NewRootCmd()
+	var found bool
+	for _, c := range root.Commands() {
+		if c.Name() == "serve" {
+			found = true
+			blob := c.Long + c.Short
+			if !strings.Contains(strings.ToLower(blob), "deprecated") {
+				t.Error("serve help should mention deprecation")
+			}
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("listenServe did not exit after cancel")
+	}
+	if !found {
+		t.Fatal("serve command missing")
 	}
 }

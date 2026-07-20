@@ -1,4 +1,5 @@
 BIN         := satelle
+SERVE_BIN   := satelle-serve
 PREFIX      ?= $(HOME)/.local
 INSTALL_DIR := $(PREFIX)/bin
 
@@ -17,18 +18,20 @@ LDFLAGS     := -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG)
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/satelle
+	go build -ldflags "$(LDFLAGS)" -o $(SERVE_BIN) ./cmd/satelle-serve
 
-# install places the binary on PATH (~/.local/bin by default). Afterwards, run
+# install places both binaries on PATH (~/.local/bin by default). Afterwards, run
 # `satelle service install` inside a repo to start the always-on web service.
 install: build
 	mkdir -p $(INSTALL_DIR)
 	install -m 0755 $(BIN) $(INSTALL_DIR)/$(BIN)
-	@echo "installed $(INSTALL_DIR)/$(BIN)"
+	install -m 0755 $(SERVE_BIN) $(INSTALL_DIR)/$(SERVE_BIN)
+	@echo "installed $(INSTALL_DIR)/$(BIN) and $(INSTALL_DIR)/$(SERVE_BIN)"
 	@echo "next: cd <repo> && satelle init && satelle service install"
 
 uninstall:
-	rm -f $(INSTALL_DIR)/$(BIN)
-	@echo "removed $(INSTALL_DIR)/$(BIN) (run 'satelle service uninstall' first if the service is installed)"
+	rm -f $(INSTALL_DIR)/$(BIN) $(INSTALL_DIR)/$(SERVE_BIN)
+	@echo "removed $(INSTALL_DIR)/$(BIN) and $(INSTALL_DIR)/$(SERVE_BIN) (run 'satelle service uninstall' first if the service is installed)"
 
 test:
 	go test ./...

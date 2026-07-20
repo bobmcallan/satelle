@@ -70,6 +70,18 @@ global service.`,
 				return err
 			}
 			fmt.Fprintf(out, "installed %s (%s)\n", target, latest)
+			// Also refresh sibling satelle-serve when present or installable (sty_80233c10).
+			if !local {
+				serveTarget := filepath.Join(filepath.Dir(target), "satelle-serve")
+				if runtime.GOOS == "windows" {
+					serveTarget += ".exe"
+				}
+				if err := downloadAndReplaceNamed(cmd.Context(), updateRepo, latest, "satelle-serve", serveTarget); err != nil {
+					fmt.Fprintf(out, "satelle-serve update skipped: %v\n", err)
+				} else {
+					fmt.Fprintf(out, "installed %s (%s)\n", serveTarget, latest)
+				}
+			}
 			// The global service runs the global binary; a repo-local pin does not
 			// drive it, so only restart for a global update.
 			if !noRestart && !local {
@@ -111,7 +123,12 @@ func installedVersion(target string) string {
 // name install.sh derives (Go's GOOS/GOARCH already match the published amd64/
 // arm64 + linux/darwin asset suffixes).
 func assetName(tag string) string {
-	name := fmt.Sprintf("satelle-%s-%s-%s", tag, runtime.GOOS, runtime.GOARCH)
+	return assetNameFor("satelle", tag)
+}
+
+// assetNameFor builds a release asset name for binary (satelle | satelle-serve).
+func assetNameFor(binary, tag string) string {
+	name := fmt.Sprintf("%s-%s-%s-%s", binary, tag, runtime.GOOS, runtime.GOARCH)
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
@@ -158,11 +175,16 @@ func parseLatestTag(body []byte) (string, error) {
 // verifies its sha256, and atomically replaces target. The download base is the
 // GitHub default, overridable via SATELLE_RELEASE_BASE (mirrors, tests).
 func downloadAndReplace(ctx context.Context, repo, tag, target string) error {
+	return downloadAndReplaceNamed(ctx, repo, tag, "satelle", target)
+}
+
+// downloadAndReplaceNamed downloads a named binary asset (satelle | satelle-serve).
+func downloadAndReplaceNamed(ctx context.Context, repo, tag, binary, target string) error {
 	base := os.Getenv("SATELLE_RELEASE_BASE")
 	if base == "" {
 		base = fmt.Sprintf("https://github.com/%s/releases/download", repo)
 	}
-	return downloadAndReplaceFrom(ctx, base+"/"+tag, assetName(tag), target)
+	return downloadAndReplaceFrom(ctx, base+"/"+tag, assetNameFor(binary, tag), target)
 }
 
 // downloadAndReplaceFrom is the injectable core: baseURL/<name> is the binary,

@@ -1,60 +1,28 @@
-// Package web is satelle's local web server — a project page for one repo,
-// rendered through verb.Dispatch (the same seam the CLI uses). Viewing needs no
-// auth; the local data is served unauthenticated. It is the satellites portal
-// style brought to the local tier: tabbed panels, an SSE realtime doorbell,
-// inline expand/collapse, and filter chips. An OPTIONAL hosted-server sign-in
-// (auth.go) lets the UI authenticate to satelle-server via the same OAuth client
-// and per-user credential store the CLI uses — additive, never required for local
-// operation. Static assets and templates are embedded so the binary stays
-// self-contained.
+// Package web is satelle's push-fed read-only web UI (mirror server).
+// The live verb-dispatch Server (web.New) was removed in sty_80233c10 —
+// production uses NewMirror only. Shared view-model types and pure helpers
+// stay here with the embedded static assets and templates.
 package web
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
-	"os/exec"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/bobmcallan/satelle/internal/agentstep"
-	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
-	"github.com/bobmcallan/satelle/internal/help"
 	"github.com/bobmcallan/satelle/internal/ledger"
-	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
-	"github.com/bobmcallan/satelle/internal/workspace"
 )
 
-// Server is the local web server: an http.Handler plus the realtime hub.
-type Server struct {
-	Handler http.Handler
-	a       *app.App
-	hub     *hub
-}
-
-// serverStart marks when the web service process came up: a package-level value
-// initialised at load, i.e. at process start for `satelle serve`. The header's
-// uptime TEXT is formatUptime(time.Since(serverStart)) evaluated at render time, so
-// it is the TRUE elapsed time since the process started — but a render-time SNAPSHOT,
-// not a live ticking clock (the SSE refetch re-renders only panel rows, never the
-// header, so the number advances on a full reload). The green border is a SEPARATE
-// signal — the live SSE connection state, toggled in app.js — not the duration. The
-// header tooltip states both so the value is not misread (sty_efeb2a69).
+// serverStart marks when the web service process came up.
 var serverStart = time.Now()
 
-// formatUptime renders an elapsed duration as a compact "up Hh Mm" / "up Nm" /
-// "up Ns" string for the header (the render-time uptime snapshot described on
-// serverStart).
 func formatUptime(d time.Duration) string {
 	if d < time.Minute {
 		return fmt.Sprintf("up %ds", int(d.Seconds()))
@@ -67,11 +35,6 @@ func formatUptime(d time.Duration) string {
 	return fmt.Sprintf("up %dh %dm", h, m)
 }
 
-// globalTheme returns the operator's explicit light/dark choice from the
-// machine-wide config — shared across every repo. An EXPLICIT "light" or "dark"
-// is authoritative (the server injects it so it overrides any stale per-browser
-// localStorage); an empty value means the choice was never made, so the page
-// falls back to localStorage/the light default.
 func globalTheme() string {
 	gc, err := config.LoadGlobal()
 	if err != nil {
@@ -83,7 +46,6 @@ func globalTheme() string {
 	return ""
 }
 
-// getTheme reports the global theme as JSON so a page can reconcile after load.
 func getTheme(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	t := globalTheme()
@@ -91,254 +53,6 @@ func getTheme(w http.ResponseWriter, r *http.Request) {
 		t = "light"
 	}
 	_ = json.NewEncoder(w).Encode(map[string]string{"theme": t})
-}
-
-// setTheme persists the light/dark choice to the machine-wide config, so the
-// toggle in one repo's UI follows the operator into every other repo.
-func setTheme(w http.ResponseWriter, r *http.Request) {
-	theme := strings.TrimSpace(r.FormValue("theme"))
-	if theme != "dark" && theme != "light" {
-		http.Error(w, "theme must be dark or light", http.StatusBadRequest)
-		return
-	}
-	gc, err := config.LoadGlobal()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	gc.UI.Theme = theme // store the EXPLICIT choice ("light" or "dark") — both authoritative
-	if err := config.SaveGlobal(gc); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// New wires the server for the given bootstrap. It registers the verb-change
-// notifier so web-initiated mutations ring the doorbell instantly; cross-
-// process mutations (CLI edits) are picked up by StartRealtime's poller.
-func New(a *app.App) *Server {
-	serverStart = time.Now()
-	footerIdentity(a.RepoRoot) // resolve the footer email once so every page's shared footer has it
-	// Resolve the hosted server global-first (sty_53ccf845): every project's web UI
-	// binds to the SAME machine-wide server, so one sign-in shows the same identity
-	// on every project page — not a per-repo login. The repo [hosted] server is only
-	// the read-only fallback for a repo bound before the global model.
-	setHostedServer(config.ResolveHostedServer(a.Config))
-	h := newHub()
-	verb.SetChangeNotifier(h.publish)
-
-	mux := http.NewServeMux()
-	mux.Handle("GET /static/", http.FileServerFS(staticFS))
-	// Browsers request the bare /favicon.ico on direct-address visits, bypassing
-	// the page's <link rel=icon>. Serve the same ◐ SVG there (sty_a4633eff) so a
-	// tab opened straight at any URL still gets the mark; the supervisor's root
-	// falls this through to the launch repo's handler like the rest of /static.
-	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
-		b, err := staticFS.ReadFile("static/favicon.svg")
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "image/svg+xml")
-		_, _ = w.Write(b)
-	})
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintln(w, "ok")
-	})
-	mux.HandleFunc("GET /events", h.serveEvents)
-	mux.HandleFunc("GET /theme", getTheme)
-	mux.HandleFunc("POST /theme", setTheme)
-
-	// Optional hosted-server sign-in (sty_9ae98484): the local web server acts as
-	// an OAuth 2.1 client, sharing the CLI's per-user credential store. Purely
-	// additive — unconfigured/unreachable degrades to a "Sign in" affordance.
-	mux.HandleFunc("GET /oauth/login", oauthLogin)
-	mux.HandleFunc("GET /oauth/callback", oauthCallback)
-	mux.HandleFunc("POST /oauth/logout", oauthLogout)
-
-	// Realtime panel fragments (rows only) — what the SSE refetch swaps in.
-	mux.HandleFunc("GET /fragment/stories", fragmentRows(a, "workitemRows", verb.TopicStories))
-	mux.HandleFunc("GET /fragment/tasks", fragmentRows(a, "workitemRows", verb.TopicTasks))
-	mux.HandleFunc("GET /fragment/docs", fragmentRows(a, "docsRows", verb.TopicDocs))
-
-	// Inline expand fragments + standalone detail pages (shared template).
-	mux.HandleFunc("GET /fragment/story/{id}", itemFragment("story"))
-	mux.HandleFunc("GET /fragment/task/{id}", itemFragment("task"))
-	mux.HandleFunc("GET /fragment/workflow/{name}", workflowFragment())
-	mux.HandleFunc("GET /story/{id}", itemDetailPage("story"))
-	mux.HandleFunc("GET /task/{id}", itemDetailPage("task"))
-
-	mux.HandleFunc("GET /doc/{kind}/{name}", docPage())
-	mux.HandleFunc("GET /workspace", workspacePage(a))
-	mux.HandleFunc("GET /help", helpPage())
-	// Per-project settings is READ-ONLY (sty_e1740d82) — no POST route; repo config
-	// is edited by changing .satelle/satelle.toml directly.
-	mux.HandleFunc("GET /settings", settingsGet(a))
-	// Global (machine-wide) settings — the hosted server + theme (sty_432bdeb7).
-	mux.HandleFunc("GET /settings/global", globalSettingsGet())
-	mux.HandleFunc("POST /settings/global", globalSettingsPost(a))
-	mux.HandleFunc("GET /{$}", projectPage(a))
-	return &Server{Handler: mux, a: a, hub: h}
-}
-
-// workspacePage renders the multi-repo aggregate: the current repo plus every
-// repo registered in the global config, each read from its own database. The
-// single-repo project page (/) is untouched.
-func workspacePage(a *app.App) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		gc, _ := config.LoadGlobal()
-		roots := []string{a.RepoRoot}
-		for _, rp := range gc.Workspace.Repos {
-			if rp != a.RepoRoot {
-				roots = append(roots, rp)
-			}
-		}
-		agg := workspace.Load(r.Context(), roots)
-		total := 0
-		for _, rp := range agg.Repos {
-			total += len(rp.Stories)
-		}
-		render(w, "workspace", wsPageData{
-			Aggregate:    agg,
-			TotalStories: total,
-			TopBar:       newTopBar("projects"),
-		})
-	}
-}
-
-// wsPageData embeds the workspace aggregate (so .Repos still resolves) and adds
-// the shared top bar. TotalStories is the story count across every repo — the
-// flattened project-column table renders only when there is something to show.
-type wsPageData struct {
-	workspace.Aggregate
-	TotalStories int
-	TopBar       topBar
-}
-
-// helpTopic is one rendered help guide for the web /help page.
-type helpTopic struct {
-	Name  string
-	Title string
-	Body  string
-}
-
-// docPageData backs the standalone authored-document viewer: the rendered
-// markdown plus the shared chrome.
-type docPageData struct {
-	TopBar     topBar
-	Kind       string
-	Name       string
-	Headline   string
-	HTML       template.HTML
-	Provenance string
-	Source     string
-}
-
-// docPage renders one authored document with its markdown formatted to HTML
-// server-side (renderMarkdown is safe by construction — see markdown.go).
-func docPage() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		kind, name := r.PathValue("kind"), r.PathValue("name")
-		doc, err := fetchOne[docindex.Doc](r.Context(), "doc-get", map[string]any{"kind": kind, "name": name})
-		if err != nil || doc.Name == "" {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		var prov, src string
-		if pv, perr := loadProcessView(r.Context(), ""); perr == nil {
-			p, s, _ := indexProcessView(pv)
-			key := kind + "\x00" + name
-			prov, src = p[key], s[key]
-		}
-		render(w, "docPage", docPageData{
-			TopBar:     newTopBar(""),
-			Kind:       kind,
-			Name:       doc.Name,
-			Headline:   doc.Headline,
-			HTML:       renderMarkdown(doc.Body),
-			Provenance: prov,
-			Source:     src,
-		})
-	}
-}
-
-// helpPage renders the embedded help topics (the same internal/help source the
-// CLI `satelle help` reads) as a read-only guide page.
-func helpPage() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		topics := make([]helpTopic, 0)
-		for _, t := range help.List() {
-			topics = append(topics, helpTopic{Name: t.Name, Title: t.Title, Body: t.Body})
-		}
-		render(w, "help", helpPageData{
-			Topics: topics,
-			TopBar: newTopBar("help"),
-		})
-	}
-}
-
-// helpPageData carries the help topics plus the shared top bar.
-type helpPageData struct {
-	Topics []helpTopic
-	TopBar topBar
-}
-
-// Build is the thin handler-only constructor used by tests (no poller).
-func Build(a *app.App) http.Handler { return New(a).Handler }
-
-// StartRealtime runs the cross-process DB-change poller until ctx is cancelled.
-// The CLI and the server are separate processes sharing one sqlite file, so the
-// in-process notifier alone can't see CLI edits; the poller fingerprints each
-// panel and rings the doorbell when one changes. interval<=0 uses 1.5s.
-// Publish fans a topic to every connected /events client — the seam an OUTSIDE
-// supervisor uses to doorbell pages the poller can't see (e.g. the / landing's
-// "projects" topic when the served set changes; sty_4ea4d4df).
-func (s *Server) Publish(topic string) { s.hub.publish(topic) }
-
-func (s *Server) StartRealtime(ctx context.Context, interval time.Duration) {
-	if interval <= 0 {
-		interval = 1500 * time.Millisecond
-	}
-	go s.pollDB(ctx, interval)
-}
-
-// pollDB publishes a topic whenever its store fingerprint changes.
-func (s *Server) pollDB(ctx context.Context, interval time.Duration) {
-	prev := map[string]string{}
-	check := func(topic string, fp func(context.Context) (string, error)) {
-		cur, err := fp(ctx)
-		if err != nil {
-			return
-		}
-		if old, seen := prev[topic]; seen && old != cur {
-			s.hub.publish(topic)
-		}
-		prev[topic] = cur
-	}
-	tick := func() {
-		check(verb.TopicStories, func(c context.Context) (string, error) {
-			return s.a.Store.Stories.Fingerprint(c, workitem.KindStory)
-		})
-		check(verb.TopicTasks, func(c context.Context) (string, error) {
-			return s.a.Store.Stories.Fingerprint(c, workitem.KindTask)
-		})
-		check(verb.TopicDocs, func(c context.Context) (string, error) {
-			return s.a.Store.DocIndex.Fingerprint(c)
-		})
-	}
-	tick() // seed fingerprints without firing
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			tick()
-		}
-	}
 }
 
 type pageData struct {
@@ -357,9 +71,6 @@ type pageData struct {
 	Projects     []crumbProject // workspace project switcher for the breadcrumb
 }
 
-// crumbProject is one entry in the breadcrumb project-switcher dropdown. It shows
-// the project Name; Path is the full repo path (a hover title, and the visible
-// disambiguator when Ambiguous — i.e. another project in the list shares this Name).
 type crumbProject struct {
 	Name      string
 	Slug      string
@@ -368,10 +79,6 @@ type crumbProject struct {
 	Ambiguous bool
 }
 
-// topBar is the data the shared "topbar" template needs — the page-chrome
-// utility cluster (account control + uptime indicator + theme toggle + live dot)
-// rendered identically on every page so the nav is one component, not a per-page
-// copy.
 type topBar struct {
 	Uptime string
 	// User is the signed-in hosted-server identity, or nil when signed out /
@@ -388,51 +95,145 @@ type topBar struct {
 	IdentityEmail string
 }
 
-// rowVM is a work item plus its progress lights for the table row. Embedding the
-// item promotes its fields, so the row template reaches .Status/.Tags/etc.
 type rowVM struct {
 	workitem.Item
 	Lights []reviewLight
 }
 
-// reviewLight is one numbered stage circle in the progress column.
 type reviewLight struct {
 	Index int
 	State string // pass | fail | fired | current
 	Title string // tooltip
 }
 
-// lightPayload is the {from,to,skill} stamped on review/transition ledger rows.
 type lightPayload struct {
 	From  string `json:"from"`
 	To    string `json:"to"`
 	Skill string `json:"skill"`
 }
 
-// buildLights folds a story's ledger rows into the progress strip. A light's
-// NUMBER is the workflow STEP it represents — stepOf maps a transition's target
-// state to its 1-based position on the workflow's forward spine (every step, not
-// only the gated ones) — so a clean run reads (1) → (2) → (3) → (4) sequentially,
-// and a step attempted more than once (a reject then a later accept of the same
-// edge, or a recovery loop) renders lights that SHARE the step number (e.g. 1 red
-// then 1 green) rather than incrementing. A gated transition is a pass (green), an
-// ungated one a fired checkpoint (slate), a review_reject a fail (red). A
-// non-terminal story is actively IN its current state, so that state is the
-// pulsing current light at stepOf(status): the entry transition INTO the current
-// state is not ALSO rendered as a completed light (that would double the step),
-// while prior steps stay done and rejects stay red. Off-spine targets (e.g.
-// blocked) fall back to ledger-appearance order and a maxStep+1 current.
-//
-// seatHeld is true when a live pre-transition engagement lease is held for the
-// item (in_flight && !stale — sty_e1314fe3). When seatHeld && entered==false
-// (zero transition/reject rows), a temporary pulsing "current" light at the
-// start state's spine depth is emitted, titled "starting". The number is
-// stepOf(status): while entered==false the status is still the start state
-// (structure.go enforces start==backlog), and spineDepths omits depth 0 so
-// stepOf(backlog)==0 by map-miss — derived, not a hardcoded literal. Once the
-// first transition lands, entered==true and this light is mutually exclusive
-// with the real step-1 current light (no double, no lingering 0). A backlog
-// item with no live seat stays blank (no phantom 0).
+type docRowVM struct {
+	Name       string
+	Headline   string
+	ModTime    time.Time
+	Provenance string // default | edited | authored; empty for free-form documents
+	Source     string
+}
+
+type kindGroup struct {
+	Kind string
+	Docs []docRowVM
+}
+
+type seatRowVM struct {
+	ID       string `json:"id"`
+	InFlight bool   `json:"in_flight"`
+	Stale    bool   `json:"stale"`
+}
+
+type detailData struct {
+	Item       workitem.Item
+	Events     []eventVM
+	Docs       []storyDocVM
+	Executions []executionVM // populated only for a TASK — its runs (sty_30a917f8)
+	TopBar     topBar
+	Standalone bool
+}
+
+type executionVM struct {
+	ID        string
+	Status    string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	Output    string // recorded run output (frontmatter stripped); "" when none
+}
+
+type storyDocRef struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+	Body string `json:"body,omitempty"`
+}
+
+type storyDocVM struct {
+	Name string
+	Type string
+	HTML template.HTML
+}
+
+type chipVM struct {
+	Type  string
+	Label string
+}
+
+type eventVM struct {
+	ledger.Entry
+	Chips []chipVM
+}
+
+type helpTopic struct {
+	Name  string
+	Title string
+	Body  string
+}
+
+type docPageData struct {
+	TopBar     topBar
+	Kind       string
+	Name       string
+	Headline   string
+	HTML       template.HTML
+	Provenance string
+	Source     string
+}
+
+type helpPageData struct {
+	Topics []helpTopic
+	TopBar topBar
+}
+
+type topBarUser struct {
+	Name    string
+	Email   string
+	Initial string
+}
+
+type settingsRowVM struct {
+	FieldID  string // the config key, shown as the row's monospace id
+	Label    string
+	Help     string
+	Value    string
+	SectHead string // non-empty on the first row of a new section group
+}
+
+type settingsData struct {
+	Rows     []settingsRowVM
+	TopBar   topBar
+	RepoRoot string
+	// MirrorRO hides the global-settings link (no write surface on push-fed serve).
+	MirrorRO bool
+}
+
+func settingsRows(cfg config.Config) []settingsRowVM {
+	var rows []settingsRowVM
+	lastSect := "\x00"
+	for _, s := range config.Settings {
+		vm := settingsRowVM{FieldID: s.FieldID(), Label: s.Label, Help: s.Help, Value: config.SettingDisplay(cfg, s)}
+		if s.Section != lastSect {
+			vm.SectHead = sectionLabel(s.Section)
+			lastSect = s.Section
+		}
+		rows = append(rows, vm)
+	}
+	return rows
+}
+
+func sectionLabel(s string) string {
+	if s == "" {
+		return "General"
+	}
+	return strings.ToUpper(s[:1]) + s[1:] // "hosted" → "Hosted", "gate" → "Gate"
+}
+
 func buildLights(entries []ledger.Entry, status string, seatHeld bool, stepOf func(state string) int) []reviewLight {
 	// ledger-list yields entries oldest-first (the store orders created_at ASC),
 	// which is the order the lights render left-to-right — consume it as-is so
@@ -566,14 +367,6 @@ func buildLights(entries []ledger.Entry, status string, seatHeld bool, stepOf fu
 	return lights
 }
 
-// spineDepths maps each state on the workflow's forward SUCCESS spine to its
-// 1-based step number — the BFS distance from the start state, restricted to
-// states that can reach the success terminal ("done"). EVERY step on that path is
-// numbered (executor and reviewer alike), so a clean run reads 1→2→3→…→N rather
-// than restarting at 1 for ungated executor steps. Off-spine states (cancelled or
-// blocked detours that cannot reach done) are absent — step 0 — and a back edge
-// (the committed→in_progress recovery) never inflates a number, because BFS keeps
-// the shortest distance. The start state itself is depth 0 and omitted.
 func spineDepths(spec wfSpec) map[string]int {
 	adj := map[string][]string{}
 	radj := map[string][]string{}
@@ -640,8 +433,6 @@ func spineDepths(spec wfSpec) map[string]int {
 	return out
 }
 
-// bfsDist returns the shortest-edge distance from any of starts to every
-// reachable node over the given adjacency.
 func bfsDist(adj map[string][]string, starts []string) map[string]int {
 	dist := map[string]int{}
 	var q []string
@@ -664,296 +455,47 @@ func bfsDist(adj map[string][]string, starts []string) map[string]int {
 	return dist
 }
 
-// categoryStepOf builds a per-CATEGORY step resolver: each item is numbered
-// against the workflow ACTIVE for its category, never a single hardcoded one. The
-// selection mirrors the reviewer's precedence — a workflow whose applies_to lists
-// the category wins; a wildcard ("*") is next; the longest spine is the final
-// fallback — so e.g. an epic-parent (parent workflow, backlog→done) numbers
-// `done` as step 1 while a feature (wildcard project workflow) numbers it 5.
 func categoryStepOf(docs []docindex.Doc) func(category, state string) int {
-	// Longest spine = the final fallback, used ONLY when no workflow matches a
-	// category (neither a category-specific nor a wildcard one).
+	// Spine depths per category from workflow applies_to frontmatter. Prefer a
+	// category-specific workflow, then wildcard (*), then the longest spine.
+	// Mirrors agentstep precedence without importing agentstep (serve-binary
+	// link isolation, sty_80233c10).
 	var longest map[string]int
+	byCat := map[string]map[string]int{}
+	var wild map[string]int
 	for _, d := range docs {
-		if depths := spineDepths(parseWorkflow(d.Body)); len(depths) > len(longest) {
+		depths := spineDepths(parseWorkflow(d.Body))
+		if len(depths) > len(longest) {
 			longest = depths
 		}
-	}
-	// Select the ACTIVE workflow per category via the single source of truth —
-	// agentstep.OrderedWorkflows (category-specific repo > category-specific system >
-	// wildcard repo > wildcard system), head = active. This is the same precedence
-	// the engine enforces and `satelle workflow list` surfaces, so the lights number
-	// each item against the workflow that actually drives it — a repo/project
-	// workflow beats the embedded system baseline. Cached per category (one parse).
-	cache := map[string]map[string]int{}
-	depthsFor := func(category string) map[string]int {
-		if d, ok := cache[category]; ok {
-			return d
-		}
-		depths := longest
-		if ordered := agentstep.OrderedWorkflows(docs, category); len(ordered) > 0 {
-			depths = spineDepths(parseWorkflow(ordered[0].Body))
-		}
-		cache[category] = depths
-		return depths
-	}
-	return func(category, state string) int { return depthsFor(category)[state] }
-}
-
-// attachLights wraps items with their progress lights, numbering each item
-// against the workflow active for ITS category (catStepOf). liveSeat is the
-// per-id pre-transition seat join (in_flight && !stale); a missing entry is
-// false so unengaged backlog rows stay blank (sty_e1314fe3).
-func attachLights(ctx context.Context, items []workitem.Item, liveSeat map[string]bool, catStepOf func(category, state string) int) []rowVM {
-	out := make([]rowVM, len(items))
-	for i, it := range items {
-		entries, _ := fetchList[ledger.Entry](ctx, "ledger-list", map[string]any{"story_id": it.ID, "limit": 500})
-		stepOf := func(s string) int { return catStepOf(it.Category, s) }
-		out[i] = rowVM{Item: it, Lights: buildLights(entries, it.Status, liveSeat[it.ID], stepOf)}
-	}
-	return out
-}
-
-// footerIdentity resolves the operator's email for the footer from the repo's git
-// config (their identity, not baked into the binary). Best-effort and resolved
-// once; empty when git or the key is unavailable.
-var (
-	footerOnce  sync.Once
-	footerEmail string
-)
-
-func footerIdentity(repoRoot string) string {
-	footerOnce.Do(func() {
-		footerEmail = gitConfig(repoRoot, "user.email")
-	})
-	return footerEmail
-}
-
-func gitConfig(dir, key string) string {
-	cmd := exec.Command("git", "config", "--get", key)
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// docRowVM is one docs-panel card with optional provenance (sty_ba0eb5c6).
-type docRowVM struct {
-	Name       string
-	Headline   string
-	ModTime    time.Time
-	Provenance string // default | edited | authored; empty for free-form documents
-	Source     string
-}
-
-type kindGroup struct {
-	Kind string
-	Docs []docRowVM
-}
-
-// loadPanels fetches the three panels' data through the verbs.
-func loadPanels(ctx context.Context, a *app.App) (pageData, error) {
-	stories, err := fetchList[workitem.Item](ctx, "story-list", nil)
-	if err != nil {
-		return pageData{}, err
-	}
-	tasks, err := fetchList[workitem.Item](ctx, "task-list", nil)
-	if err != nil {
-		return pageData{}, err
-	}
-	// full=true: the web renders workflow DOT bodies, so it needs whole Doc
-	// records, not the CLI's lightweight headline-only index (sty_adab13cb).
-	allDocs, err := fetchList[docindex.Doc](ctx, "doc-list", map[string]any{"full": true})
-	if err != nil {
-		return pageData{}, err
-	}
-	byKind := map[string][]docindex.Doc{}
-	for _, d := range allDocs {
-		byKind[d.Kind] = append(byKind[d.Kind], d)
-	}
-	// Provenance from process-view (sty_ba0eb5c6); fail-open to unlabeled rows.
-	prov, src := map[string]string{}, map[string]string{}
-	if pv, perr := loadProcessView(ctx, ""); perr == nil {
-		prov, src, _ = indexProcessView(pv)
-	}
-	kinds := make([]kindGroup, 0, len(config.AuthoredKinds))
-	for _, k := range config.AuthoredKinds {
-		docs := byKind[k]
-		rows := make([]docRowVM, 0, len(docs))
-		for _, d := range docs {
-			key := d.Kind + "\x00" + d.Name
-			rows = append(rows, docRowVM{
-				Name: d.Name, Headline: d.Headline, ModTime: d.ModTime,
-				Provenance: prov[key], Source: src[key],
-			})
-		}
-		kinds = append(kinds, kindGroup{Kind: k, Docs: rows})
-	}
-	backlog := 0
-	for _, s := range stories {
-		if s.Status == workitem.StatusBacklog {
-			backlog++
-		}
-	}
-	catStepOf := categoryStepOf(byKind["workflows"])
-	// Live pre-transition seats (sty_e1314fe3): best-effort join from
-	// story-seat-list. Restrict to in_flight && !stale — a strict subset of the
-	// gate live-seat predicate that covers the whole acquire-before-transition
-	// window without the web layer parsing workflows for engaging states. On
-	// error, leave the map empty so strips degrade to ledger-only (no 0 lights).
-	liveSeat := map[string]bool{}
-	if seats, serr := fetchList[seatRowVM](ctx, "story-seat-list", nil); serr == nil {
-		for _, s := range seats {
-			if s.InFlight && !s.Stale {
-				liveSeat[s.ID] = true
+		applies := frontmatterList(d.Body, "applies_to")
+		isWild := len(applies) == 0
+		for _, a := range applies {
+			if a == "*" {
+				isWild = true
+				continue
+			}
+			if _, ok := byCat[a]; !ok {
+				byCat[a] = depths
 			}
 		}
-	}
-	return pageData{
-		RepoRoot: a.RepoRoot, ProjectName: filepath.Base(a.RepoRoot), DBPath: a.DBPath,
-		Stories: attachLights(ctx, stories, liveSeat, catStepOf), BacklogCount: backlog,
-		Tasks:    attachLights(ctx, tasks, liveSeat, catStepOf),
-		DocKinds: kinds, DocCount: len(allDocs),
-		Workflows: workflowRows(byKind["workflows"], prov, src),
-		Uptime:    formatUptime(time.Since(serverStart)),
-		Theme:     globalTheme(),
-		TopBar:    newTopBar("home"),
-	}, nil
-}
-
-// seatRowVM is the story-seat-list subset needed for the pre-transition seat
-// join on progress rows (sty_e1314fe3).
-type seatRowVM struct {
-	ID       string `json:"id"`
-	InFlight bool   `json:"in_flight"`
-	Stale    bool   `json:"stale"`
-}
-
-func projectPage(a *app.App) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		data, err := loadPanels(r.Context(), a)
-		if err != nil {
-			httpError(w, err)
-			return
-		}
-		data.Projects = crumbProjects(r.Header.Get(ProjectsHeader), data.ProjectName)
-		render(w, "page", data)
-	}
-}
-
-// crumbProjects decodes the supervisor-injected project list into the breadcrumb
-// switcher VM, marking the current project by the child's own mount slug (or, when
-// served without a mount prefix, by name). Fewer than two projects yields nil so the
-// breadcrumb renders the plain project name — graceful degradation for local/single
-// or unsupervised serving.
-func crumbProjects(header, currentName string) []crumbProject {
-	projs := DecodeProjects(header)
-	if len(projs) < 2 {
-		return nil
-	}
-	nameCount := map[string]int{}
-	for _, p := range projs {
-		nameCount[p.Name]++
-	}
-	cur := strings.TrimPrefix(basePath, "/")
-	out := make([]crumbProject, 0, len(projs))
-	for _, p := range projs {
-		current := (cur != "" && p.Slug == cur) || (cur == "" && p.Name == currentName)
-		out = append(out, crumbProject{
-			Name:      p.Name,
-			Slug:      p.Slug,
-			Path:      p.Path,
-			Current:   current,
-			Ambiguous: nameCount[p.Name] > 1,
-		})
-	}
-	return out
-}
-
-// fragmentRows renders just one panel's rows — the realtime refetch target.
-func fragmentRows(a *app.App, tmplName, topic string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		data, err := loadPanels(r.Context(), a)
-		if err != nil {
-			httpError(w, err)
-			return
-		}
-		switch topic {
-		case verb.TopicStories:
-			render(w, tmplName, data.Stories)
-		case verb.TopicTasks:
-			render(w, tmplName, data.Tasks)
-		case verb.TopicDocs:
-			render(w, tmplName, data.DocKinds)
+		if isWild && len(depths) > len(wild) {
+			wild = depths
 		}
 	}
+	return func(category, state string) int {
+		if d, ok := byCat[category]; ok {
+			return d[state]
+		}
+		if len(wild) > 0 {
+			return wild[state]
+		}
+		return longest[state]
+	}
 }
 
-// detailData backs the inline expand fragment and the standalone detail page.
-// Standalone is true only on the standalone /story/<id> page, where the
-// "Open story →" self-link is redundant and hidden; the expanded project-page
-// card (the fragment) keeps it.
-type detailData struct {
-	Item       workitem.Item
-	Events     []eventVM
-	Docs       []storyDocVM
-	Executions []executionVM // populated only for a TASK — its runs (sty_30a917f8)
-	TopBar     topBar
-	Standalone bool
-}
-
-// executionVM is one RUN of a task prepared for the task-native detail panel: its
-// status, timestamps, and recorded output (sty_30a917f8). A task is not a story —
-// its detail reads as a work-definition plus a run list, not a story clone.
-type executionVM struct {
-	ID        string
-	Status    string
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	Output    string // recorded run output (frontmatter stripped); "" when none
-}
-
-// storyDocRef is one of a story's attached documents (from story-doc-list /
-// story-doc-get).
-type storyDocRef struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
-	Body string `json:"body,omitempty"`
-}
-
-// storyDocVM is an attached document prepared for the detail-page tab strip: its
-// markdown rendered to safe HTML.
-type storyDocVM struct {
-	Name string
-	Type string
-	HTML template.HTML
-}
-
-// chipVM is one data-driven telemetry chip on a timeline event. Type is the field
-// family (walltime|tokens|model|outcome) — the class the viewer's Timeline-fields
-// toggle shows/hides — and Label is the rendered value. Chips are derived from
-// whatever structured fields a ledger entry actually holds (verb.EventTelemetry),
-// never hardcoded per agent type (sty_43d228e4; ui-agnostic-agent-data).
-type chipVM struct {
-	Type  string
-	Label string
-}
-
-// eventVM is a ledger entry plus the telemetry chips parsed from it. It embeds
-// ledger.Entry so the timeline template still reads .Kind/.Actor/.Body/.CreatedAt.
-type eventVM struct {
-	ledger.Entry
-	Chips []chipVM
-}
-
-// eventChips builds the viewer-selectable telemetry chips for a ledger entry,
-// data-driven via the shared verb.EventTelemetry reader (single-sourced with the
-// cost view). A chip appears only when the entry actually carries that field, so a
-// plain status_transition or step_summary row shows none.
 func eventChips(e ledger.Entry) []chipVM {
-	agent, model, outcome, tokens, durMs := verb.EventTelemetry(e)
+	agent, model, outcome, tokens, durMs := ledger.EventTelemetry(e)
 	var chips []chipVM
 	if outcome != "" {
 		chips = append(chips, chipVM{Type: "outcome", Label: outcome})
@@ -972,8 +514,6 @@ func eventChips(e ledger.Entry) []chipVM {
 	return chips
 }
 
-// humanMs renders a duration compactly: sub-minute as seconds (2.4s), longer as
-// whole minutes (19m) — enough to read a step's cost at a glance.
 func humanMs(ms int64) string {
 	if ms <= 0 {
 		return ""
@@ -984,7 +524,6 @@ func humanMs(ms int64) string {
 	return strconv.FormatInt(ms/60000, 10) + "m"
 }
 
-// humanTokens renders a token count with thousands separators (2000 -> "2,000").
 func humanTokens(n int) string {
 	s := strconv.Itoa(n)
 	if n < 1000 {
@@ -1000,63 +539,6 @@ func humanTokens(n int) string {
 	return string(out)
 }
 
-// loadDetail fetches one item + its (newest-first) ledger timeline via verbs.
-func loadDetail(ctx context.Context, group, id string) (detailData, error) {
-	item, err := fetchOne[workitem.Item](ctx, group+"-get", map[string]any{"id": id})
-	if err != nil {
-		return detailData{}, err
-	}
-	events, err := fetchList[ledger.Entry](ctx, "ledger-list", map[string]any{"story_id": id, "limit": 500})
-	if err != nil {
-		return detailData{}, err
-	}
-	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
-		events[i], events[j] = events[j], events[i]
-	}
-	// An item's attached documents become tabs on the detail page. Best-effort:
-	// the timeline and detail still render if a doc fails to load. For a TASK the
-	// attachment dir also holds run files (exe_*.md work-definitions and
-	// output-*.md run outputs) — those are NOT artifacts: they belong to the run
-	// list, so they are filtered out here (sty_30a917f8).
-	var docs []storyDocVM
-	if refs, derr := fetchList[storyDocRef](ctx, "story-doc-list", map[string]any{"story_id": id}); derr == nil {
-		for _, ref := range refs {
-			if group == "task" && (strings.HasPrefix(ref.Name, "exe_") || strings.HasPrefix(ref.Name, "output-")) {
-				continue
-			}
-			full, gerr := fetchOne[storyDocRef](ctx, "story-doc-get", map[string]any{"story_id": id, "name": ref.Name})
-			if gerr != nil {
-				continue
-			}
-			docs = append(docs, storyDocVM{Name: ref.Name, Type: ref.Type, HTML: renderMarkdown(full.Body)})
-		}
-	}
-	// A task's RUNS are its executions (store items parented to the task), rendered
-	// as a native run list with per-run status, timestamps, and recorded output
-	// read from the task's OKF output-<exe>.md docs (sty_30a917f8).
-	var executions []executionVM
-	if group == "task" {
-		if runs, rerr := fetchList[workitem.Item](ctx, "execution-list", map[string]any{"parent_id": id}); rerr == nil {
-			for _, run := range runs {
-				out := ""
-				if od, gerr := fetchOne[storyDocRef](ctx, "story-doc-get", map[string]any{"story_id": id, "name": "output-" + run.ID}); gerr == nil {
-					out = stripFrontmatter(od.Body)
-				}
-				executions = append(executions, executionVM{
-					ID: run.ID, Status: run.Status, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt, Output: out,
-				})
-			}
-		}
-	}
-	evs := make([]eventVM, len(events))
-	for i, e := range events {
-		evs[i] = eventVM{Entry: e, Chips: eventChips(e)}
-	}
-	return detailData{Item: item, Events: evs, Docs: docs, Executions: executions, TopBar: newTopBar("")}, nil
-}
-
-// stripFrontmatter removes a leading `---\n…\n---\n` YAML block, returning the
-// body — so a generated OKF doc's run output renders without its frontmatter.
 func stripFrontmatter(s string) string {
 	if !strings.HasPrefix(s, "---\n") {
 		return strings.TrimSpace(s)
@@ -1068,80 +550,14 @@ func stripFrontmatter(s string) string {
 	return strings.TrimSpace(s)
 }
 
-func itemFragment(group string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		d, err := loadDetail(r.Context(), group, r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		render(w, "itemDetail", d)
-	}
-}
-
-func itemDetailPage(group string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		d, err := loadDetail(r.Context(), group, r.PathValue("id"))
-		if err != nil {
-			http.Error(w, "not found: "+r.PathValue("id"), http.StatusNotFound)
-			return
-		}
-		d.Standalone = true // the standalone page hides its own "Open story →" self-link
-		render(w, "detailPage", d)
-	}
-}
-
-// render executes a named template to a buffer first so a template error
-// surfaces as a 500 instead of a half-written response.
-func render(w http.ResponseWriter, name string, data any) {
-	var buf bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {
-		httpError(w, err)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = buf.WriteTo(w)
-}
-
-// fetchList dispatches a list verb and unmarshals the JSON array into []T.
-func fetchList[T any](ctx context.Context, name string, req any) ([]T, error) {
-	body, err := marshalReq(req)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := verb.Dispatch(ctx, name, body)
-	if err != nil {
-		return nil, err
-	}
-	var out []T
-	if err := json.Unmarshal(resp, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-// fetchOne dispatches a get verb and unmarshals the JSON object into T.
-func fetchOne[T any](ctx context.Context, name string, req any) (T, error) {
-	var out T
-	body, err := marshalReq(req)
-	if err != nil {
-		return out, err
-	}
-	resp, err := verb.Dispatch(ctx, name, body)
-	if err != nil {
-		return out, err
-	}
-	err = json.Unmarshal(resp, &out)
-	return out, err
-}
-
-func marshalReq(req any) (json.RawMessage, error) {
-	if req == nil {
-		return nil, nil
-	}
-	return json.Marshal(req)
+// newTopBar builds RO topbar chrome (no hosted auth on the push-fed serve).
+func newTopBar(active string) topBar {
+	return topBar{Uptime: formatUptime(time.Since(serverStart)), Active: active}
 }
 
 func httpError(w http.ResponseWriter, err error) {
 	http.Error(w, err.Error(), http.StatusInternalServerError)
 }
+
+// footerEmail backs the shared footer template (mirror prefers identity meta).
+var footerEmail string

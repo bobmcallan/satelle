@@ -88,26 +88,33 @@ jobs:
           BUILD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           set -euo pipefail
-          OUT="satelle-v${VER}-${GOOS}-${GOARCH}"
-          [ "$GOOS" = "windows" ] && OUT="${OUT}.exe"
-          go build \
-            -trimpath \
-            -ldflags="-s -w \
-              -X github.com/bobmcallan/satelle/internal/buildinfo.Version=${VER} \
-              -X github.com/bobmcallan/satelle/internal/buildinfo.Commit=${BUILD_SHA} \
-              -X github.com/bobmcallan/satelle/internal/buildinfo.BuildTime=${BUILD}" \
-            -o "${OUT}" ./cmd/satelle
-          sha256sum "${OUT}" > "${OUT}.sha256"
-          echo "OUT=${OUT}" >> "$GITHUB_ENV"
+          LDFLAGS="-s -w \
+            -X github.com/bobmcallan/satelle/internal/buildinfo.Version=${VER} \
+            -X github.com/bobmcallan/satelle/internal/buildinfo.Commit=${BUILD_SHA} \
+            -X github.com/bobmcallan/satelle/internal/buildinfo.BuildTime=${BUILD}"
+          for CMD in satelle:./cmd/satelle satelle-serve:./cmd/satelle-serve; do
+            NAME="${CMD%%:*}"
+            PKG="${CMD##*:}"
+            OUT="${NAME}-v${VER}-${GOOS}-${GOARCH}"
+            [ "$GOOS" = "windows" ] && OUT="${OUT}.exe"
+            go build -trimpath -ldflags="${LDFLAGS}" -o "${OUT}" "${PKG}"
+            sha256sum "${OUT}" > "${OUT}.sha256"
+          done
+          ART="dist-${GOOS}-${GOARCH}"
+          echo "ART=${ART}" >> "$GITHUB_ENV"
       - name: validate (linux/amd64 only)
         if: matrix.validate
-        run: ./"${OUT}" version
+        run: |
+          set -euo pipefail
+          VER="${{ needs.derive-tag.outputs.version }}"
+          ./satelle-v${VER}-linux-amd64 version
+          ./satelle-serve-v${VER}-linux-amd64 --version
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ env.OUT }}
+          name: ${{ env.ART }}
           path: |
-            ${{ env.OUT }}
-            ${{ env.OUT }}.sha256
+            satelle-v*
+            satelle-serve-v*
           if-no-files-found: error
 
   release:

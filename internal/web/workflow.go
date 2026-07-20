@@ -1,10 +1,8 @@
 package web
 
 import (
-	"context"
 	"fmt"
 	"html/template"
-	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -472,94 +470,6 @@ func workflowRows(docs []docindex.Doc, prov, src map[string]string) []workflowRo
 		})
 	}
 	return out
-}
-
-// processViewPayload is the verb.ProcessView shape (sty_ba0eb5c6).
-type processViewPayload struct {
-	Items []struct {
-		Kind       string `json:"kind"`
-		Name       string `json:"name"`
-		Source     string `json:"source"`
-		Provenance string `json:"provenance"`
-		Embedded   bool   `json:"embedded"`
-	} `json:"items"`
-	Allocations []struct {
-		Workflow       string `json:"Workflow"`
-		Node           string `json:"Node"`
-		Skill          string `json:"Skill"`
-		Agent          string `json:"Agent"`
-		BindingModel   string `json:"BindingModel"`
-		NodeModel      string `json:"NodeModel"`
-		EffectiveModel string `json:"EffectiveModel"`
-	} `json:"allocations"`
-	AgentsError string `json:"agents_error,omitempty"`
-}
-
-// loadProcessView dispatches process-view (optional workflow scope).
-func loadProcessView(ctx context.Context, workflow string) (processViewPayload, error) {
-	req := map[string]any{}
-	if workflow != "" {
-		req["workflow"] = workflow
-	}
-	return fetchOne[processViewPayload](ctx, "process-view", req)
-}
-
-// indexProcessView returns provenance and source maps keyed by kind\x00name,
-// plus node bindings for the (scoped) allocations.
-func indexProcessView(pv processViewPayload) (prov, src map[string]string, bindings map[string]bindingVM) {
-	prov = map[string]string{}
-	src = map[string]string{}
-	bindings = map[string]bindingVM{}
-	for _, it := range pv.Items {
-		key := it.Kind + "\x00" + it.Name
-		prov[key] = it.Provenance
-		src[key] = it.Source
-	}
-	for _, a := range pv.Allocations {
-		bindings[a.Node] = bindingVM{
-			Agent: a.Agent, Skill: a.Skill, Model: a.EffectiveModel,
-			Overridden: a.NodeModel != "",
-		}
-	}
-	return prov, src, bindings
-}
-
-// workflowFragment renders one workflow's diagram inline (the expand target).
-func workflowFragment() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		name := r.PathValue("name")
-		doc, err := fetchOne[docindex.Doc](r.Context(), "doc-get", map[string]any{"kind": "workflows", "name": name})
-		if err != nil || doc.Name == "" {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		spec := parseWorkflow(doc.Body)
-		var prov, src string
-		var bindings map[string]bindingVM
-		if pv, perr := loadProcessView(r.Context(), name); perr == nil {
-			p, s, b := indexProcessView(pv)
-			key := "workflows\x00" + name
-			prov, src = p[key], s[key]
-			bindings = b
-			// Fill state agents from DOT when allocation is absent.
-			for _, st := range spec.States {
-				if _, ok := bindings[st.Name]; !ok && st.Agent != "" {
-					bindings[st.Name] = bindingVM{Agent: st.Agent, Skill: st.Skill}
-				}
-			}
-		}
-		render(w, "workflowDetail", workflowDetailVM{
-			Name:       doc.Name,
-			Headline:   doc.Headline,
-			Scope:      workflowScope(doc),
-			AppliesTo:  frontmatterList(doc.Body, "applies_to"),
-			Spec:       spec,
-			Diagram:    workflowDiagram(spec, bindings),
-			Body:       strings.TrimSpace(stripDocFrontmatter(doc.Body)),
-			Provenance: prov,
-			Source:     src,
-		})
-	}
 }
 
 // parseWorkflow extracts the states and transitions from a workflow markdown
