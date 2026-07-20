@@ -418,3 +418,25 @@ func TestValidate_ACPInterface(t *testing.T) {
 		t.Fatalf("command default must still validate: %v", r.Problems)
 	}
 }
+
+func TestValidate_GrantEffort(t *testing.T) {
+	agents := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop"},
+		Reviewer: config.AgentBinding{
+			Command: agentcli.DefaultGrokCommand,
+			Tools:   "read_file,grep,list_dir",
+			Model:   "grok-4.5",
+			Effort:  "high",
+		},
+	}
+	r := Validate(agents, nil, nil)
+	var rev Grant
+	for _, g := range r.Grants {
+		if g.Name == "reviewer" {
+			rev = g
+		}
+	}
+	if rev.Effort != "high" {
+		t.Fatalf("reviewer grant effort = %q, want high", rev.Effort)
+	}
+}

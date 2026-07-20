@@ -34,6 +34,7 @@ type Grant struct {
 	Interface         string // command | acp (epic:agent-dispatch-transport)
 	Tools             string
 	Model             string
+	Effort            string // optional reasoning effort (sty_657f77b9)
 	Timeout           string
 	ReadOnly          bool
 	InjectsPrinciples bool
@@ -202,6 +203,7 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 		Interface:         iface,
 		Tools:             b.Tools,
 		Model:             b.Model,
+		Effort:            b.Effort,
 		Timeout:           b.Timeout,
 		InjectsPrinciples: b.InjectsPrinciples(),
 		Role:              role,
