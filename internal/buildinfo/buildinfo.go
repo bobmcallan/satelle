@@ -14,6 +14,10 @@ import (
 
 // Info is the resolved build identity.
 type Info struct {
+	// Name is the artifact identity (e.g. "satelle", "satelle-serve") so
+	// footers and version lines brand the running binary, not a hard-coded
+	// product string.
+	Name      string `json:"name"`
 	Version   string `json:"version"`
 	Commit    string `json:"commit"`
 	BuildTime string `json:"build_time"`
@@ -23,7 +27,10 @@ type Info struct {
 // single source of truth for satelle's build identity. Stamp with:
 //
 //	-ldflags "-X github.com/bobmcallan/satelle/internal/buildinfo.Version=0.0.1 ..."
+//	-ldflags "-X github.com/bobmcallan/satelle/internal/buildinfo.Name=satelle-serve ..."
 var (
+	// Name defaults to the CLI product; the serve main stamps Name=satelle-serve.
+	Name      = "satelle"
 	Version   = "dev"
 	Commit    = "none"
 	BuildTime = "unknown"
@@ -45,11 +52,14 @@ func Resolve() Info {
 	if bi, ok := debug.ReadBuildInfo(); ok {
 		settings = bi.Settings
 	}
-	return resolveFrom(Info{Version: Version, Commit: Commit, BuildTime: BuildTime}, settings)
+	return resolveFrom(Info{Name: Name, Version: Version, Commit: Commit, BuildTime: BuildTime}, settings)
 }
 
 // resolveFrom is the testable core of Resolve.
 func resolveFrom(info Info, settings []debug.BuildSetting) Info {
+	if info.Name == "" {
+		info.Name = "satelle"
+	}
 	if IsReleaseVersion(info.Version) {
 		return info // ldflag-stamped release build — trust it verbatim.
 	}

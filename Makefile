@@ -10,14 +10,19 @@ VERSION     := $(shell awk '$$1=="satelle.version:" {print $$2}' .version)
 SERVE_VERSION := $(shell awk '$$1=="satelle-serve.version:" {print $$2}' .version)
 COMMIT      := $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo none)
 BUILD_TIME  := $(shell awk '$$1=="satelle.build:" {print $$2}' .version)
-LDFLAGS     := -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)
-SERVE_LDFLAGS := -X $(PKG).Version=$(SERVE_VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)
+LDFLAGS     := -X $(PKG).Name=satelle -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)
+SERVE_LDFLAGS := -X $(PKG).Name=satelle-serve -X $(PKG).Version=$(SERVE_VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)
 
-.PHONY: build install uninstall test integration
+.PHONY: build install uninstall test integration check-serve-version
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/satelle
 	go build -ldflags "$(SERVE_LDFLAGS)" -o $(SERVE_BIN) ./cmd/satelle-serve
+
+# Fail closed when serve-path sources changed since the last serve-v* tag but
+# satelle-serve.version was not advanced (sty_4a5c6924). Used by release path.
+check-serve-version:
+	@bash scripts/check-serve-version.sh
 
 # install places both binaries on PATH (~/.local/bin by default). Afterwards, run
 # `satelle service install` inside a repo to start the always-on web service.
