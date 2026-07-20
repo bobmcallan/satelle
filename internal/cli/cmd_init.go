@@ -1235,6 +1235,12 @@ gate_create = true
 edit_exempt_paths = [".satelle/", ".gitignore"]
 # edit_exempt_paths = [".satelle/", ".gitignore", ".claude/"]
 # allow_parallel = false
+# command_allow — OPT-IN step-scoped git policy (sty_c21490cc). Keys are git
+# subcommands; values are story statuses that may run them while engaged.
+# Absent/empty = no step restriction (commitgate only requires engagement).
+# Example: permit git push only at the release step:
+# [gate.command_allow]
+# push = ["release"]
 # allow_outside_tree_edits = false
 
 # substrate_roots — per-kind parent dir for authored markdown. Unset means

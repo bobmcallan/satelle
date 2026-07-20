@@ -160,6 +160,12 @@ Process is configuration — change the workflow or its skills, change the proce
 with no binary release. See `satelle help reviewer-checks` and the
 `satelle-agent-model` and `satelle-dot-standard` principles.
 
+Optional **step-scoped command policy** (`[gate.command_allow]` in
+`satelle.toml`): restrict named git subcommands (e.g. `push = ["release"]`) to
+permitted story statuses while engaged. Opt-in only — unset leaves the
+commitgate as engage-only. See `satelle hook commitgate --help` and the init
+scaffold comments.
+
 ## Architecture
 
 - **Pure-Go SQLite** (`modernc.org/sqlite`, no cgo) — one static binary.
