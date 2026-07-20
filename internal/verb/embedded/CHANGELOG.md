@@ -1,3 +1,8 @@
+## [0.0.297] - 2026-07-20
+
+### Verified
+- Large-repo mirror STATUS/PROGRESS dogfood: live mutator matches CLI within ≤1s under 0.0.296-generation serve; original stale badge classified as (a) stale binary/unit (sty_3a76a5fa)
+
 ## [0.0.291] - 2026-07-20
 
 ### Removed
