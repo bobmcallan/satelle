@@ -42,6 +42,12 @@ If no endpoint is set and no serve answers, the verb still registers the path
 but exits non-zero with the exact file, keys, default URL, and re-run command —
 the landing will not show a card until seed succeeds.
 
+The landing URL slug is the repo directory's basename (e.g. /r/my-app/ for a
+repo at …/my-app). Seeding a second repo whose basename already belongs to
+another partition is rejected (HTTP 409) with a message naming the conflict —
+rename the directory so basenames are unique and re-run. There is no
+slug-override flag today.
+
 This is the single join verb for the local UI (epic:serve-adoption). Later
 mutations are pushed automatically by the CLI change publisher — re-run
 workspace add only to re-seed the mirror manually.

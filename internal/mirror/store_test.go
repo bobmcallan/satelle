@@ -50,6 +50,32 @@ func TestMirrorPartitionedUpsertAndList(t *testing.T) {
 	}
 }
 
+func TestFindBySlug(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mirror.db")
+	s, err := mirror.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	now := time.Now()
+	if _, err := s.TouchPartition(ctx, "rk1", "alpha", now); err != nil {
+		t.Fatal(err)
+	}
+	p, ok, err := s.FindBySlug(ctx, "alpha")
+	if err != nil || !ok || p.RepoKey != "rk1" {
+		t.Fatalf("FindBySlug alpha = %+v ok=%v err=%v", p, ok, err)
+	}
+	_, ok, err = s.FindBySlug(ctx, "missing")
+	if err != nil || ok {
+		t.Fatalf("missing: ok=%v err=%v", ok, err)
+	}
+	_, ok, err = s.FindBySlug(ctx, "")
+	if err != nil || ok {
+		t.Fatalf("empty: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestReplaceKindIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "m.db")
 	s, err := mirror.Open(path)

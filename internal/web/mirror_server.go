@@ -117,6 +117,32 @@ func (s *MirrorServer) resolveSlug(ctx context.Context, slug string) (string, er
 	return "", fmt.Errorf("unknown slug %q", slug)
 }
 
+// displaySlugs maps each partition's repo_key to the URL slug used on the
+// landing and in crumbs. When multiple partitions share the same directory
+// basename slug (legacy dirty mirrors), each collision falls back to its
+// unique repo_key so hrefs never collide (sty_57d5ce25 AC2). Empty stored
+// slugs also fall back to repo_key.
+func displaySlugs(parts []mirror.Partition) map[string]string {
+	count := map[string]int{}
+	for _, p := range parts {
+		s := strings.TrimSpace(p.Slug)
+		if s == "" {
+			continue
+		}
+		count[s]++
+	}
+	out := make(map[string]string, len(parts))
+	for _, p := range parts {
+		s := strings.TrimSpace(p.Slug)
+		if s == "" || count[s] > 1 {
+			out[p.RepoKey] = p.RepoKey
+			continue
+		}
+		out[p.RepoKey] = s
+	}
+	return out
+}
+
 func (s *MirrorServer) projectBase(slug string) string {
 	return "/r/" + slug + "/"
 }
@@ -148,13 +174,11 @@ func (s *MirrorServer) landing(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	slugs := displaySlugs(parts)
 	var pvm []partitionVM
 	total := 0
 	for _, p := range parts {
-		slug := p.Slug
-		if slug == "" {
-			slug = p.RepoKey
-		}
+		slug := slugs[p.RepoKey]
 		id := mirrorIdentity(r.Context(), s.Store, p.RepoKey)
 		name := id.ProjectName
 		if name == "" {
@@ -202,14 +226,12 @@ func (s *MirrorServer) crumbProjects(ctx context.Context, currentSlug string) []
 	if err != nil || len(parts) < 2 {
 		return nil
 	}
+	slugs := displaySlugs(parts)
 	nameCount := map[string]int{}
 	type pair struct{ slug, name, path string }
 	var list []pair
 	for _, p := range parts {
-		slug := p.Slug
-		if slug == "" {
-			slug = p.RepoKey
-		}
+		slug := slugs[p.RepoKey]
 		id := mirrorIdentity(ctx, s.Store, p.RepoKey)
 		name := id.ProjectName
 		if name == "" {

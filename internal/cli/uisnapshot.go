@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -52,6 +53,12 @@ func postUISnapshotContext(ctx context.Context, endpoint string, snap *mirror.Sn
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
+		// Surface a bounded body so slug-conflict 409 (sty_57d5ce25) and other
+		// ingest rejections print a clear remedy through workspace add.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		if msg := strings.TrimSpace(string(body)); msg != "" {
+			return fmt.Errorf("ui push: server returned %s: %s", resp.Status, msg)
+		}
 		return fmt.Errorf("ui push: server returned %s", resp.Status)
 	}
 	return nil

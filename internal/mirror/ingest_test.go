@@ -3,9 +3,11 @@ package mirror_test
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/mirror"
@@ -125,5 +127,73 @@ func TestIngestRejectsNonPOST(t *testing.T) {
 	mux.ServeHTTP(rr, req)
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("got %d", rr.Code)
+	}
+}
+
+// TestIngestSnapshotSlugConflict (sty_57d5ce25): same slug + different repo_key
+// is 409; same repo_key re-push and empty slugs stay OK.
+func TestIngestSnapshotSlugConflict(t *testing.T) {
+	s, err := mirror.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	h := &mirror.IngestHandler{Store: s}
+	mux := http.NewServeMux()
+	h.Mount(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	post := func(snap mirror.Snapshot) (int, string) {
+		t.Helper()
+		body, _ := json.Marshal(snap)
+		resp, err := http.Post(srv.URL+"/ingest/snapshot", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode, string(raw)
+	}
+
+	first := mirror.Snapshot{
+		RepoKey:  "x-aaaa",
+		Slug:     "x",
+		Identity: json.RawMessage(`{"project_name":"x","repo_root":"/tmp/x-a","footer_email":""}`),
+	}
+	code, _ := post(first)
+	if code != 200 {
+		t.Fatalf("first seed status %d", code)
+	}
+
+	// Different repo_key, same slug → 409 with existing key + path in body.
+	code, body := post(mirror.Snapshot{
+		RepoKey:  "x-bbbb",
+		Slug:     "x",
+		Identity: json.RawMessage(`{"project_name":"x","repo_root":"/tmp/x-b","footer_email":""}`),
+	})
+	if code != http.StatusConflict {
+		t.Fatalf("collision status %d, want 409; body=%s", code, body)
+	}
+	for _, want := range []string{"x-aaaa", "/tmp/x-a", "x-bbbb", `slug "x"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("409 body missing %q: %s", want, body)
+		}
+	}
+
+	// Same repo_key re-push is fine.
+	code, _ = post(first)
+	if code != 200 {
+		t.Fatalf("re-push same key status %d", code)
+	}
+
+	// Empty slugs never conflict.
+	code, _ = post(mirror.Snapshot{RepoKey: "empty-1", Slug: ""})
+	if code != 200 {
+		t.Fatalf("empty slug 1 status %d", code)
+	}
+	code, _ = post(mirror.Snapshot{RepoKey: "empty-2", Slug: ""})
+	if code != 200 {
+		t.Fatalf("empty slug 2 status %d", code)
 	}
 }
