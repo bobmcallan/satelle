@@ -3,6 +3,11 @@
 ### Removed
 - Parallel epic path and `[gate] allow_parallel` opt-out — single performing story always enforced; deleted parallel workflows/skills/launcher (sty_a614a0ea)
 
+## [0.0.295] - 2026-07-20
+
+### Verified
+- Sprint 7 agent failover + effort fields closed on co-shipped 0.0.294 (sty_5bf61f89, sty_657f77b9)
+
 ## [0.0.294] - 2026-07-20
 
 ### Added
