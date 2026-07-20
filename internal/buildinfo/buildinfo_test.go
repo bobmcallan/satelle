@@ -22,11 +22,18 @@ func TestIsReleaseVersion(t *testing.T) {
 }
 
 func TestResolveFrom_ReleaseVerbatim(t *testing.T) {
-	in := Info{Version: "0.0.5", Commit: "deadbeef", BuildTime: "2026-06-26"}
+	in := Info{Name: "satelle-serve", Version: "0.0.5", Commit: "deadbeef", BuildTime: "2026-06-26"}
 	// VCS settings present but must be ignored for a stamped release.
 	got := resolveFrom(in, []debug.BuildSetting{{Key: "vcs.revision", Value: "ffffffffffffffff"}})
 	if got != in {
 		t.Errorf("release build mutated: got %+v, want %+v", got, in)
+	}
+}
+
+func TestResolveFrom_DefaultName(t *testing.T) {
+	got := resolveFrom(Info{Version: "0.0.5", Commit: "c", BuildTime: "t"}, nil)
+	if got.Name != "satelle" {
+		t.Errorf("Name = %q, want satelle default", got.Name)
 	}
 }
 
@@ -51,7 +58,8 @@ func TestResolveFrom_DevFallsBackToVCS(t *testing.T) {
 func TestResolveFrom_DevNoVCS(t *testing.T) {
 	in := Info{Version: "dev", Commit: "none", BuildTime: "unknown"}
 	got := resolveFrom(in, nil)
-	if got != in {
-		t.Errorf("no-VCS dev build mutated: got %+v, want %+v", got, in)
+	want := Info{Name: "satelle", Version: "dev", Commit: "none", BuildTime: "unknown"}
+	if got != want {
+		t.Errorf("no-VCS dev build: got %+v, want %+v", got, want)
 	}
 }
