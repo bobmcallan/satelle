@@ -259,6 +259,11 @@ header.app h1 .dot { color: var(--accent); }
 .tab .n { color: var(--muted); font-size: 12px; margin-left: 5px; }
 .tab .n-backlog,
 .n-stories .n-backlog { color: var(--accent); font-size: 11px; margin-left: 5px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 0; }
+/* Engagement count: always visible including 0 (sty_01ba9482). Mild accent when held. */
+.tab .n-engaged { color: var(--muted); font-size: 11px; margin-left: 5px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 0; white-space: nowrap; }
+.tab .n-engaged.has-engaged { color: var(--accent); }
+.tab .n-engaged .n-engaged-link { color: inherit; text-decoration: none; }
+.tab .n-engaged .n-engaged-link:hover { text-decoration: underline; }
 .panel { display: none; }
 .panel.active { display: block; }
 

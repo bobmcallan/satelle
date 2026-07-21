@@ -1,3 +1,13 @@
+## [0.0.309] - 2026-07-21
+
+### Added
+- Project Stories tab always shows live story-engagement count (including 0); soft-refreshes via `fragment/engagement` without full page reload (sty_01ba9482)
+
+## [serve-v0.0.6] - 2026-07-21
+
+### Added
+- Same always-visible engagement count chrome as CLI 0.0.309 (sty_01ba9482)
+
 ## [0.0.308] - 2026-07-21
 
 ### Changed

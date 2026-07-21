@@ -61,14 +61,19 @@ type pageData struct {
 	DBPath       string
 	Stories      []rowVM
 	BacklogCount int
-	Tasks        []rowVM
-	DocKinds     []kindGroup
-	DocCount     int
-	Workflows    []workflowRowVM
-	Uptime       string
-	Theme        string
-	TopBar       topBar
-	Projects     []crumbProject // workspace project switcher for the breadcrumb
+	// EngagementCount is the number of non-stale story seats (typically 0 or 1).
+	// Always rendered in project chrome — 0 is visible, not hidden (sty_01ba9482).
+	EngagementCount int
+	// EngagedStoryIDs lists those seat item ids (sorted); empty when count is 0.
+	EngagedStoryIDs []string
+	Tasks           []rowVM
+	DocKinds        []kindGroup
+	DocCount        int
+	Workflows       []workflowRowVM
+	Uptime          string
+	Theme           string
+	TopBar          topBar
+	Projects        []crumbProject // workspace project switcher for the breadcrumb
 }
 
 type crumbProject struct {
