@@ -1971,6 +1971,15 @@ func referencedSkills(spec wfdot.Spec) []string {
 		}
 	}
 	for _, tr := range spec.Transitions {
+		// Full CSV list (sty_814ad29a / multi-reviewer edges) — not only first.
+		if len(tr.Skills) > 0 {
+			for _, sk := range tr.Skills {
+				if sk != "" {
+					set[sk] = true
+				}
+			}
+			continue
+		}
 		if tr.Skill != "" {
 			set[tr.Skill] = true
 		}

@@ -1,3 +1,8 @@
+## [0.0.305] - 2026-07-21
+
+### Fixed
+- Init/rebase seed all CSV edge skills (scope-review + workflow-change on baseline close), not only the first skill in the list (sty_814ad29a CI)
+
 ## [0.0.304] - 2026-07-21
 
 ### Added
