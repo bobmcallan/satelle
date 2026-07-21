@@ -1,3 +1,13 @@
+## [0.0.307] - 2026-07-21
+
+### Added
+- Workspace landing shows Stories (with backlog badge), Tasks, Workflow, and Documents counts matching project tabs; `GET /fragment/projects` for soft-refresh without full-page reload (sty_f968f9db)
+
+## [serve-v0.0.5] - 2026-07-21
+
+### Added
+- Same workspace landing counts + soft-refresh as CLI 0.0.307 (sty_f968f9db)
+
 ## [0.0.306] - 2026-07-21
 
 ### Changed

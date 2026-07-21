@@ -13,6 +13,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/help"
 	"github.com/bobmcallan/satelle/internal/mirror"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // MirrorServer is the push-fed read-only UI (sty_dbdadfa0 + epic:mirror-ui-parity).
@@ -27,14 +28,17 @@ type MirrorServer struct {
 	hub        *hub
 }
 
-// partitionVM is one workspace row on the mirror landing.
+// partitionVM is one workspace row on the mirror landing. Counts mirror the
+// project page tabs: Stories (+ backlog), Tasks, Workflow, Documents.
 type partitionVM struct {
-	Slug    string
-	Name    string
-	Path    string
-	Stories int
-	Tasks   int
-	Docs    int
+	Slug      string
+	Name      string
+	Path      string
+	Stories   int
+	Backlog   int
+	Tasks     int
+	Workflows int
+	Docs      int
 }
 
 // mirrorWorkspaceData backs the mirror workspace landing template.
@@ -97,6 +101,9 @@ func NewMirrorWithInstance(m *mirror.Store, instanceID string) *MirrorServer {
 	// Workspace landing (order:3) and project surface under /r/{slug}/ (order:2).
 	mux.HandleFunc("GET /{$}", s.landing)
 	mux.HandleFunc("GET /workspace", s.landing) // alias; topbar Projects → /
+	// Live-region fragment for the landing: app.js soft-refreshes counts (and
+	// rows when the served set changes) without a full-page reload flash.
+	mux.HandleFunc("GET /fragment/projects", s.landingFragment)
 	mux.HandleFunc("GET /r/{slug}/{$}", s.projectHome)
 	mux.HandleFunc("GET /r/{slug}/fragment/stories", s.fragmentRows("workitemRows", "stories"))
 	mux.HandleFunc("GET /r/{slug}/fragment/tasks", s.fragmentRows("workitemRows", "tasks"))
@@ -181,19 +188,19 @@ func mirrorRender(w http.ResponseWriter, name, base, footerEmail string, data an
 	_, _ = buf.WriteTo(w)
 }
 
-// landing renders the workspace over mirror partitions (order:3).
-func (s *MirrorServer) landing(w http.ResponseWriter, r *http.Request) {
-	parts, err := s.Store.ListPartitions(r.Context())
+// loadPartitions builds the landing row set. Counts match project-page tabs:
+// Stories (+ backlog), Tasks, Workflow, Documents (all mirror docs).
+func (s *MirrorServer) loadPartitions(ctx context.Context) ([]partitionVM, int, error) {
+	parts, err := s.Store.ListPartitions(ctx)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, 0, err
 	}
 	slugs := displaySlugs(parts)
 	var pvm []partitionVM
 	total := 0
 	for _, p := range parts {
 		slug := slugs[p.RepoKey]
-		id := mirrorIdentity(r.Context(), s.Store, p.RepoKey)
+		id := mirrorIdentity(ctx, s.Store, p.RepoKey)
 		name := id.ProjectName
 		if name == "" {
 			name = slug
@@ -202,20 +209,55 @@ func (s *MirrorServer) landing(w http.ResponseWriter, r *http.Request) {
 		if path == "" {
 			path = p.RepoKey
 		}
-		stories, _ := s.Store.ListItems(r.Context(), p.RepoKey, "story")
-		tasks, _ := s.Store.ListItems(r.Context(), p.RepoKey, "task")
-		docs, _ := s.Store.ListItems(r.Context(), p.RepoKey, "doc")
+		stories, _ := decodeItems(ctx, s.Store, p.RepoKey, "story")
+		tasks, _ := decodeItems(ctx, s.Store, p.RepoKey, "task")
+		docs, _ := decodeDocs(ctx, s.Store, p.RepoKey)
+		backlog, workflows := 0, 0
+		for _, st := range stories {
+			if st.Status == workitem.StatusBacklog {
+				backlog++
+			}
+		}
+		for _, d := range docs {
+			if d.Kind == "workflows" {
+				workflows++
+			}
+		}
 		total += len(stories)
 		pvm = append(pvm, partitionVM{
 			Slug: slug, Name: name, Path: path,
-			Stories: len(stories), Tasks: len(tasks), Docs: len(docs),
+			Stories: len(stories), Backlog: backlog,
+			Tasks: len(tasks), Workflows: workflows, Docs: len(docs),
 		})
+	}
+	return pvm, total, nil
+}
+
+// landing renders the workspace over mirror partitions (order:3).
+func (s *MirrorServer) landing(w http.ResponseWriter, r *http.Request) {
+	pvm, total, err := s.loadPartitions(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	mirrorRender(w, "mirrorWorkspace", "/", "", mirrorWorkspaceData{
 		Partitions:   pvm,
 		TotalStories: total,
 		TopBar:       mirrorTopBar("projects", ""),
 		Empty:        len(pvm) == 0,
+	})
+}
+
+// landingFragment returns the projects live region (rows or empty) for realtime.
+func (s *MirrorServer) landingFragment(w http.ResponseWriter, r *http.Request) {
+	pvm, _, err := s.loadPartitions(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	mirrorRender(w, "mirrorProjectsLive", "/", "", mirrorWorkspaceData{
+		Partitions: pvm,
+		Empty:      len(pvm) == 0,
 	})
 }
 
@@ -439,7 +481,28 @@ func MirrorDefaultPath() string {
 // Silence unused buildinfo if footer version comes from template func only.
 var _ = buildinfo.Version
 
-const mirrorWorkspaceSrc = `{{define "mirrorWorkspace"}}<!doctype html>
+const mirrorWorkspaceSrc = `
+{{/* mirrorProjectsLive: the landing live region — full page embeds it; GET
+     /fragment/projects returns only this so app.js can soft-refresh counts. */}}
+{{define "mirrorProjectsLive"}}{{if .Empty}}
+  <div class="empty">No partitions yet — run <code>satelle workspace add</code> from a repo with <code>[server] endpoint</code> configured to seed the mirror.</div>
+  {{else}}
+  <table class="panel-table">
+    <thead><tr><th>Project</th><th>Path</th><th>Stories</th><th>Tasks</th><th>Workflow</th><th>Documents</th></tr></thead>
+    <tbody data-rows>{{range .Partitions}}
+      <tr class="row" data-slug="{{.Slug}}">
+        <td><a class="wi-title" href="/r/{{.Slug}}/">{{.Name}}</a></td>
+        <td class="meta mono">{{.Path}}</td>
+        <td class="n-stories"><span class="n">{{.Stories}}</span>{{if .Backlog}} <span class="n-backlog" title="stories in the open backlog">{{.Backlog}} backlog</span>{{end}}</td>
+        <td class="n-tasks"><span class="n">{{.Tasks}}</span></td>
+        <td class="n-workflows"><span class="n">{{.Workflows}}</span></td>
+        <td class="n-docs"><span class="n">{{.Docs}}</span></td>
+      </tr>{{end}}
+    </tbody>
+  </table>
+  {{end}}{{end}}
+
+{{define "mirrorWorkspace"}}<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -456,24 +519,9 @@ const mirrorWorkspaceSrc = `{{define "mirrorWorkspace"}}<!doctype html>
   <nav class="crumbs"><a href="/">workspace</a> <span class="sep">/</span> <span class="cur">projects</span></nav>
   <header class="app">
     <h1>workspace</h1>
-    <div class="meta">{{len .Partitions}} partition{{if ne (len .Partitions) 1}}s{{end}} · push-fed mirror</div>
+    <div class="meta"><span class="n-partitions">{{len .Partitions}}</span> partition{{if ne (len .Partitions) 1}}s{{end}} · push-fed mirror</div>
   </header>
-  {{if .Empty}}
-  <div class="empty">No partitions yet — run <code>satelle workspace add</code> from a repo with <code>[server] endpoint</code> configured to seed the mirror.</div>
-  {{else}}
-  <table class="panel-table">
-    <thead><tr><th>Project</th><th>Path</th><th>Stories</th><th>Tasks</th><th>Docs</th></tr></thead>
-    <tbody>{{range .Partitions}}
-      <tr class="row">
-        <td><a class="wi-title" href="/r/{{.Slug}}/">{{.Name}}</a></td>
-        <td class="meta mono">{{.Path}}</td>
-        <td>{{.Stories}}</td>
-        <td>{{.Tasks}}</td>
-        <td>{{.Docs}}</td>
-      </tr>{{end}}
-    </tbody>
-  </table>
-  {{end}}
+  <div id="projects-live">{{template "mirrorProjectsLive" .}}</div>
   {{template "footer"}}
 </div>
 <script src="/static/app.js"></script>

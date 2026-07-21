@@ -501,6 +501,51 @@
   // Panels with a rows fragment endpoint (the refetch targets); workflow has none.
   var LIVE_TOPICS = ["stories", "tasks", "docs"];
 
+  // ---- workspace landing soft-refresh (sty_f968f9db) -----------------------
+  // Prefer in-place count updates when the row set is unchanged so numbers
+  // tick without a full-page (or even tbody) flash. Fall back to swapping the
+  // live region when partitions are added/removed or reordered.
+  function projectRowSlugs(root) {
+    return [].slice.call(root.querySelectorAll("tr.row[data-slug]")).map(function (r) {
+      return r.dataset.slug;
+    });
+  }
+  function copyCellCounts(fromRow, toRow) {
+    ["n-stories", "n-tasks", "n-workflows", "n-docs"].forEach(function (cls) {
+      var src = fromRow.querySelector("." + cls);
+      var dst = toRow.querySelector("." + cls);
+      if (src && dst) dst.innerHTML = src.innerHTML;
+    });
+  }
+  function applyProjectsLive(html) {
+    var live = document.getElementById("projects-live");
+    if (!live) return;
+    var tmp = document.createElement("div");
+    tmp.innerHTML = html;
+    var oldSlugs = projectRowSlugs(live);
+    var newSlugs = projectRowSlugs(tmp);
+    var same = oldSlugs.length === newSlugs.length &&
+      oldSlugs.length > 0 &&
+      oldSlugs.every(function (s, i) { return s === newSlugs[i]; });
+    if (same) {
+      newSlugs.forEach(function (slug) {
+        var src = tmp.querySelector('tr.row[data-slug="' + slug + '"]');
+        var dst = live.querySelector('tr.row[data-slug="' + slug + '"]');
+        if (src && dst) copyCellCounts(src, dst);
+      });
+    } else {
+      live.innerHTML = html;
+    }
+    var nEl = document.querySelector(".n-partitions");
+    if (nEl) nEl.textContent = String(newSlugs.length);
+  }
+  function refetchProjects() {
+    fetch("fragment/projects")
+      .then(function (r) { return r.text(); })
+      .then(applyProjectsLive)
+      .catch(function () {});
+  }
+
   // initLive wires realtime through ONE visibility-gated EventSource that serves
   // both consumers — the panel refetch (list pages) and the detail-fragment
   // refresh (detail pages). It is held ONLY while the tab is visible: browsers
@@ -526,6 +571,7 @@
 
     var refetch = {}; // per-topic debounced panel refetch (built once, reused)
     LIVE_TOPICS.forEach(function (tp) { refetch[tp] = debounce(function () { refetchPanel(tp); }, 250); });
+    var refreshProjects = isProjects ? debounce(refetchProjects, 250) : null;
     var refreshDetail = detailEl ? debounce(function () {
       fetch("fragment/" + detailKind + "/" + detailId)
         .then(function (r) { return r.text(); })
@@ -536,7 +582,7 @@
     // reconcile pulls fresh state after ANY connection gap (reconnect, or a
     // reopen after hidden→visible) so nothing is missed while disconnected.
     function reconcile() {
-      if (isProjects) { location.reload(); return; }
+      if (isProjects) { if (refreshProjects) refreshProjects(); return; }
       LIVE_TOPICS.forEach(function (tp) { refetchPanel(tp); });
       if (refreshDetail) refreshDetail();
     }
@@ -564,9 +610,8 @@
       src.addEventListener("trigger", function (ev) {
         if (refetch[ev.data]) refetch[ev.data]();
         if (refreshDetail && ev.data === detailTopic) refreshDetail();
-        // The / landing has no panels — a "projects" doorbell (the served set
-        // changed: workspace add/remove, a child failed) reloads it (sty_4ea4d4df).
-        if (ev.data === "projects" && isProjects) location.reload();
+        // Landing soft-refreshes counts via /fragment/projects — no full reload.
+        if (ev.data === "projects" && refreshProjects) refreshProjects();
       });
       src.onerror = function () { if (dot) dot.classList.add("sse-down"); }; // stream dropped → mark red
     }
