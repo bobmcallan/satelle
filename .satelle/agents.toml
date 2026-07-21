@@ -31,6 +31,7 @@
 
 [executor]
 role    = "agent"
+effort  = "high"
 command = "in-loop"
 principles = "session"
 
@@ -47,6 +48,7 @@ principles = "session"
 # trusting CLI --deny flags. tools= still names the grant satelle advertises.
 [reviewer]
 role      = "reviewer"
+effort  = "high"
 interface = "acp"
 command   = "grok agent stdio"
 tools     = "read_file,grep,list_dir"
@@ -61,13 +63,14 @@ role       = "agent"
 command    = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model} --effort {effort}"
 tools      = "Read,Grep,Glob,Bash(satelle:*)"
 model      = "fable"
-effort     = "high"
+effort    = "high"
 principles = "session"
 
 # Retrospective — lessons on enter-done. Read-only grant; satelle via CLI when
 # shell available, otherwise payload/docs (sty_58fa970e).
 [retrospective]
 role      = "agent"
+effort  = "high"
 interface = "acp"
 command   = "grok agent stdio"
 tools     = "read_file,grep,list_dir"
@@ -80,6 +83,7 @@ principles = "session"
 # so triage can file notes/attachments; gates still bound authority.
 [blocked-triage]
 role      = "agent"
+effort  = "high"
 interface = "acp"
 command   = "grok agent stdio"
 tools     = "read_file,grep,list_dir,search_replace"
@@ -93,6 +97,7 @@ principles = "session"
 # Context via payload `docs` (sty_58fa970e); plan-consumed evidence is a stdout statement.
 [coder]
 role      = "agent"
+effort  = "high"
 interface = "acp"
 command   = "grok agent stdio"
 tools     = "read_file,grep,list_dir,search_replace"
