@@ -44,12 +44,52 @@ type wfState struct {
 	On       []string
 }
 
-// wfTransition is a directed edge between states; Skill is its reviewer gate
-// (empty = ungated/advisory).
+// wfTransition is a directed edge between states. Skill is the first reviewer
+// gate (empty = ungated/advisory) for back-compat; Skills is the full CSV list
+// in execution order (sty_1b7a0ca2). Parallel is the concurrency cap from
+// parallel=true|N (0 = sequential).
 type wfTransition struct {
-	From  string
-	To    string
-	Skill string
+	From     string
+	To       string
+	Skill    string   // first of Skills, or sole gate
+	Skills   []string // full ordered list when multi-reviewer
+	Parallel int      // 0 = sequential; >0 = concurrent cap
+}
+
+// gateSkills returns the ordered reviewer skills on the edge.
+func (tr wfTransition) gateSkills() []string {
+	if len(tr.Skills) > 0 {
+		return tr.Skills
+	}
+	if tr.Skill != "" {
+		return []string{tr.Skill}
+	}
+	return nil
+}
+
+// edgeGateLabel builds the diagram label and full tooltip for an edge gate
+// (sty_1b7a0ca2). Multi-reviewer edges join short names; parallel edges prefix
+// "∥". Title lists full skill names in order plus parallel=N when set.
+func edgeGateLabel(tr wfTransition) (visible, title string) {
+	skills := tr.gateSkills()
+	if len(skills) == 0 {
+		return "", ""
+	}
+	shorts := make([]string, len(skills))
+	for i, s := range skills {
+		shorts[i] = shortSkill(s)
+	}
+	visible = strings.Join(shorts, " · ")
+	// Cap very long multi-labels so the DAG stays readable (tooltip has full list).
+	if len(skills) > 3 {
+		visible = fmt.Sprintf("%s · %s · +%d", shorts[0], shorts[1], len(skills)-2)
+	}
+	title = strings.Join(skills, ", ")
+	if tr.Parallel > 0 {
+		visible = "∥ " + visible
+		title = title + fmt.Sprintf(" · parallel=%d", tr.Parallel)
+	}
+	return visible, title
 }
 
 // wfSpec is the parsed lifecycle of a workflow: its states and gated transitions.
@@ -295,7 +335,7 @@ func workflowDiagram(spec wfSpec, bindings map[string]bindingVM) template.HTML {
 	}
 	maxY := gridBottom
 	label := func(b *strings.Builder, tr wfTransition, lx, ly int, extra string) {
-		lbl := shortSkill(tr.Skill)
+		lbl, tip := edgeGateLabel(tr)
 		if lbl == "" {
 			return
 		}
@@ -309,8 +349,15 @@ func workflowDiagram(spec wfSpec, bindings map[string]bindingVM) template.HTML {
 			maxY = ly + 10
 		}
 		cls := "wf-edge-label" + extra
-		fmt.Fprintf(b, `<text class="%s" data-from="%s" data-to="%s" x="%d" y="%d"><title>%s</title>%s</text>`,
-			cls, esc(tr.From), esc(tr.To), lx, ly, esc(tr.Skill), esc(lbl))
+		if tr.Parallel > 0 {
+			cls += " parallel"
+		}
+		parAttr := ""
+		if tr.Parallel > 0 {
+			parAttr = fmt.Sprintf(` data-parallel="%d"`, tr.Parallel)
+		}
+		fmt.Fprintf(b, `<text class="%s" data-from="%s" data-to="%s"%s x="%d" y="%d"><title>%s</title>%s</text>`,
+			cls, esc(tr.From), esc(tr.To), parAttr, lx, ly, esc(tip), esc(lbl))
 	}
 
 	var edgeB strings.Builder
@@ -322,8 +369,11 @@ func workflowDiagram(spec wfSpec, bindings map[string]bindingVM) template.HTML {
 		back := backEdge[ekey(tr.From, tr.To)]
 		fan := !back && terminal[tr.To] && inCount[tr.To] >= 3
 		cls := "wf-edge-path"
-		if tr.Skill == "" {
+		if len(tr.gateSkills()) == 0 {
 			cls += " ungated"
+		}
+		if tr.Parallel > 0 {
+			cls += " parallel"
 		}
 		switch {
 		case back: // recovery — arc over the top, muted + toggleable
@@ -507,11 +557,12 @@ func parseWorkflow(body string) wfSpec {
 		if !strings.HasPrefix(t, "- {") || !strings.Contains(t, "from:") || !strings.Contains(t, "to:") {
 			continue
 		}
-		spec.Transitions = append(spec.Transitions, wfTransition{
-			From:  inlineField(t, "from"),
-			To:    inlineField(t, "to"),
-			Skill: inlineField(t, "reviewer_skill"),
-		})
+		sk := inlineField(t, "reviewer_skill")
+		tr := wfTransition{From: inlineField(t, "from"), To: inlineField(t, "to"), Skill: sk}
+		if sk != "" {
+			tr.Skills = []string{sk}
+		}
+		spec.Transitions = append(spec.Transitions, tr)
 	}
 
 	if len(spec.States) == 0 {
@@ -559,7 +610,17 @@ func parseWorkflowDOT(body string) (wfSpec, bool) {
 		spec.States = append(spec.States, wfState{Name: st.Name, Agent: st.Agent, Terminal: st.Terminal, Skill: st.Skill, On: st.On})
 	}
 	for _, tr := range s.Transitions {
-		spec.Transitions = append(spec.Transitions, wfTransition{From: tr.From, To: tr.To, Skill: tr.Skill})
+		skills := tr.Skills
+		if len(skills) == 0 && tr.Skill != "" {
+			skills = []string{tr.Skill}
+		}
+		first := tr.Skill
+		if first == "" && len(skills) > 0 {
+			first = skills[0]
+		}
+		spec.Transitions = append(spec.Transitions, wfTransition{
+			From: tr.From, To: tr.To, Skill: first, Skills: skills, Parallel: tr.Parallel,
+		})
 	}
 	return spec, true
 }

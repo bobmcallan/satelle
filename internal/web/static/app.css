@@ -486,6 +486,8 @@ ul.doc-list li { border: 1px solid var(--line); border-radius: 8px; background: 
 .wf-gate { font-family: var(--mono); font-size: 11px; color: #fff; background: var(--accent);
   border-radius: 4px; padding: 1px 7px; }
 .wf-gate.ungated { color: var(--muted); background: var(--chip); }
+.wf-gate.parallel { background: var(--chip); color: var(--accent); border: 1px solid var(--accent); }
+.wf-edge-label.parallel { font-weight: 600; }
 
 /* --- help page --- */
 .help-topic { margin: 22px 0; }

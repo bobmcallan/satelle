@@ -1,3 +1,13 @@
+## [0.0.302] - 2026-07-21
+
+### Added
+- Workflow panel diagram and Transitions list show full multi-reviewer CSV gates and parallel= concurrent marker (sty_1b7a0ca2)
+
+## [serve-v0.0.4] - 2026-07-21
+
+### Added
+- Same workflow multi-reviewer / parallel diagram UX as CLI 0.0.302 (sty_1b7a0ca2)
+
 ## [0.0.301] - 2026-07-20
 
 ### Added
