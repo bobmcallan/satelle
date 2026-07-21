@@ -58,7 +58,9 @@ satelle story diff <id> --patch   # plus full unified diff
 
 The command never decides pass/fail — it only lists. A story with no baseline
 (never engaged, or created before this feature) errors clearly. Gate authors
-invoke it from functional checks or reviewer prompts (`Bash(satelle:*)`).
+invoke it from functional checks or reviewer prompts (`Bash(satelle:*)`). The
+embedded **`satelle-story-scope-review`** gate (implementation exit / close)
+consumes this enumeration to reject bundled sibling work.
 
 ## 3. Reach done through the workflow's gates
 

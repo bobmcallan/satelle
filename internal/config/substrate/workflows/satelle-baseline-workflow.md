@@ -5,7 +5,7 @@ type: workflow
 tags: [type:workflow]
 applies_to: ["*"]
 create_review: satelle-story-create-review
-description: The canonical order-zero lifecycle every satelle repo inherits from the binary — backlog → in_progress → done, with a cancelled exit — authored in the DOT standard (the agent model). The begin-work edge is gated by satelle-story-intent-review; the close is gated by satelle-workflow-change-review then satelle-story-done-review (CSV edge reviewers — edge-wins requires both skills on the edge). A story is judged well-formed before work and quality-checked before it closes. This is the EMBEDDED canonical default (config/substrate/workflows); a repo MAY override it by placing a same-named file under .satelle/workflows, but never edits this source.
+description: The canonical order-zero lifecycle every satelle repo inherits from the binary — backlog → in_progress → done, with a cancelled exit — authored in the DOT standard (the agent model). The begin-work edge is gated by satelle-story-intent-review; the close is gated by satelle-workflow-change-review, satelle-story-scope-review, then satelle-story-done-review (CSV edge reviewers — edge-wins requires all skills on the edge). A story is judged well-formed before work and quality-checked before it closes. This is the EMBEDDED canonical default (config/substrate/workflows); a repo MAY override it by placing a same-named file under .satelle/workflows, but never edits this source.
 ---
 
 # Baseline workflow (order-zero, gated, DOT)
@@ -42,9 +42,10 @@ digraph satelle_baseline {
   // Implementation exit: CSV edge reviewers (edge-wins — node's done prompt is
   // ignored for this edge, so done-review MUST stay in the CSV). workflow-change
   // n/a-fast-accepts when the slice touches no workflow file (sty_9882b8c6).
+  // scope-review: bounded slice vs ACs using engagement baseline (sty_814ad29a).
   // Optional: add parallel=true (or parallel=N) to run CSV reviewers concurrently
   // with no short-circuit (sty_4f0a15db); default is sequential first-reject.
-  in_progress -> done [agent=reviewer, prompt="@skill:satelle-workflow-change-review,satelle-story-done-review"]
+  in_progress -> done [agent=reviewer, prompt="@skill:satelle-workflow-change-review,satelle-story-scope-review,satelle-story-done-review"]
   backlog     -> cancelled
   in_progress -> cancelled
   blocked     -> cancelled

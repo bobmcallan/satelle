@@ -1,3 +1,8 @@
+## [0.0.304] - 2026-07-21
+
+### Added
+- Embedded `satelle-story-scope-review` on implementation exit (baseline close + project in_progress→integration) using engagement baseline / story diff (sty_814ad29a / epic:scope-integrity)
+
 ## [0.0.303] - 2026-07-21
 
 ### Added

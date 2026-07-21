@@ -381,6 +381,8 @@ var defaultSolutionSkills = []string{
 	"satelle-story-cancel-review",
 	"satelle-story-done-review",
 	"satelle-story-intent-review",
+	"satelle-story-scope-review",
+	"satelle-workflow-change-review",
 	"satelle-task-validate-before-review",
 	"satelle-task-validate-after-review",
 }
@@ -444,7 +446,7 @@ func TestRunInitVirtualDefaultSolution(t *testing.T) {
 			t.Errorf("generic base workflow declares extra state %q", state)
 		}
 	}
-	for _, gate := range []string{"satelle-story-intent-review", "satelle-story-done-review", "satelle-story-cancel-review", "satelle-estimate-actual-review"} {
+	for _, gate := range []string{"satelle-story-intent-review", "satelle-story-done-review", "satelle-story-cancel-review", "satelle-estimate-actual-review", "satelle-story-scope-review", "satelle-workflow-change-review"} {
 		if !strings.Contains(baseBody, gate) {
 			t.Errorf("generic base workflow must reference gate %q", gate)
 		}
