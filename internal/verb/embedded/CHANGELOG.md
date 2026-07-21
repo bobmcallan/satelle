@@ -1,3 +1,8 @@
+## [0.0.308] - 2026-07-21
+
+### Changed
+- All agent bindings in `.satelle/agents.toml` set `effort = "high"` (reasoning/thinking) by default (sty_a82c3ed0)
+
 ## [0.0.307] - 2026-07-21
 
 ### Added
