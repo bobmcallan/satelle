@@ -1,3 +1,8 @@
+## [0.0.306] - 2026-07-21
+
+### Changed
+- Embedded `satelle-story-cancel-review`: supersede claims must name delivering story/commit and verify ACs; sibling bundling is an explicit reject with stop-and-surface (sty_9d7be832 / epic:scope-integrity)
+
 ## [0.0.305] - 2026-07-21
 
 ### Fixed
