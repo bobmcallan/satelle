@@ -34,7 +34,7 @@ surface = ["ui", "cli"]
 # special-case the data dir (sty_8c3d345c). ".satelle/" keeps this repo's authored
 # substrate (workflows/skills/principles/documents/tasks/config) editable without a
 # release. Add ".claude/" here to author Claude Code skills without an engaged story.
-edit_exempt_paths = [".satelle/", ".claude/"]
+edit_exempt_paths = [".satelle/", ".claude/", ".satelle-market/"]
 
 # [gate.command_allow] — OPT-IN step-scoped Bash policy (sty_c21490cc). Keys are
 # git subcommands; values are story statuses that may run them while engaged.
