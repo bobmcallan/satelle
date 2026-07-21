@@ -175,6 +175,8 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 			appendLedger(ctx, it.ID, ledger.KindWorkflowStamped,
 				fmt.Sprintf("governing workflow: %s", stampedWorkflow), now)
 		}
+		// Create-straight-into-engaging: record engagement baseline (sty_da169e03).
+		maybeRecordEngagementBaseline(ctx, it, "", it.Status, now)
 		appendOpLog(string(kind)+"-create", it.ID,
 			fmt.Sprintf("status: %s; tags: [%s]", it.Status, strings.Join(it.Tags, ",")), now)
 		// A task/execution is authored substrate — materialise its file (the source
@@ -578,6 +580,10 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		appendLedgerEntry(ctx, it.ID, ledger.KindStatusTransition, "executor",
 			fmt.Sprintf("%s → %s", current.Status, *req.Status),
 			transitionPayload(current.Status, *req.Status, ""), now)
+		// First entry into an engaging state: record engagement baseline once
+		// (sty_da169e03). Enumerates git HEAD for later satelle story diff;
+		// never a verdict. Idempotent across park/resume.
+		maybeRecordEngagementBaseline(ctx, it, current.Status, *req.Status, now)
 		// After a GATED transition is enacted, the read-only summariser recaps the
 		// step into a step_summary row — but ONLY where the active workflow declares
 		// a step-summary node (transparent opt-in; sty_9a139c78). The transition

@@ -61,6 +61,11 @@ const (
 	// subprocess. Payload shape: {"kind": "<event-kind>", "data": {...}} — data
 	// carries typed fields only, never env/secrets (sty_b73c3236).
 	KindTelemetryEvent = "telemetry_event"
+	// KindEngagementBaseline records the git HEAD (and dirty-worktree flag) at
+	// first entry into a performing/engaging state so gates can enumerate
+	// diff-since-engagement (sty_da169e03 / epic:scope-integrity). Enumeration
+	// only — no pass/fail in Go.
+	KindEngagementBaseline = "engagement_baseline"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional
