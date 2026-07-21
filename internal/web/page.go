@@ -300,11 +300,11 @@ const templatesSrc = `
   <div class="wf-states">{{range .Spec.States}}<span class="wf-node{{if .Terminal}} terminal{{end}}">{{.Name}}{{if .Agent}}<span class="wf-agent">{{.Agent}}</span>{{end}}</span>{{else}}<span class="empty">no states declared</span>{{end}}</div>
 
   <h4>Transitions</h4>
-  {{if .Spec.Transitions}}<ul class="wf-edges">{{range .Spec.Transitions}}<li class="wf-edge" data-from="{{.From}}" data-to="{{.To}}">
+  {{if .Spec.Transitions}}<ul class="wf-edges">{{range .Spec.Transitions}}<li class="wf-edge" data-from="{{.From}}" data-to="{{.To}}"{{if gt .Parallel 0}} data-parallel="{{.Parallel}}"{{end}}>
     <span class="wf-node sm">{{.From}}</span>
     <span class="wf-arrow">→</span>
     <span class="wf-node sm">{{.To}}</span>
-    {{if .Skill}}<span class="wf-gate" title="reviewer gate">{{.Skill}}</span>{{else}}<span class="wf-gate ungated" title="no reviewer skill — advisory">ungated</span>{{end}}
+    {{if .Skills}}{{if gt .Parallel 0}}<span class="wf-gate parallel" title="concurrent multi-reviewer (parallel={{.Parallel}})">∥{{.Parallel}}</span>{{end}}{{range .Skills}}<span class="wf-gate" title="reviewer gate">{{.}}</span>{{end}}{{else if .Skill}}{{if gt .Parallel 0}}<span class="wf-gate parallel" title="concurrent multi-reviewer (parallel={{.Parallel}})">∥{{.Parallel}}</span>{{end}}<span class="wf-gate" title="reviewer gate">{{.Skill}}</span>{{else}}<span class="wf-gate ungated" title="no reviewer skill — advisory">ungated</span>{{end}}
   </li>{{end}}</ul>{{else}}<div class="empty">no transitions declared</div>{{end}}
 
   <h4>Definition</h4>

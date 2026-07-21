@@ -401,3 +401,137 @@ digraph w {
 		seen[key] = true
 	}
 }
+
+// TestParseAndDiagramMultiReviewerParallel: multi-skill CSV + parallel=true are
+// carried into the web model and rendered on the edge label (sty_1b7a0ca2).
+func TestParseAndDiagramMultiReviewerParallel(t *testing.T) {
+	dot := "---\nname: multi\n---\n" + "```dot" + `
+digraph multi {
+  backlog [shape=Mdiamond]
+  plan [agent=planner]
+  in_progress [agent=executor]
+  done [shape=Msquare]
+  backlog -> plan [agent=reviewer, prompt="@skill:satelle-story-intent-review"]
+  plan -> in_progress [agent=reviewer, prompt="@skill:satelle-story-plan-review,satelle-story-architecture-review,satelle-story-integration-coverage-review", parallel=true]
+  in_progress -> done
+}
+` + "```\n"
+	spec := parseWorkflow(dot)
+	var planEdge *wfTransition
+	for i := range spec.Transitions {
+		tr := &spec.Transitions[i]
+		if tr.From == "plan" && tr.To == "in_progress" {
+			planEdge = tr
+			break
+		}
+	}
+	if planEdge == nil {
+		t.Fatal("missing plan→in_progress edge")
+	}
+	wantSkills := []string{
+		"satelle-story-plan-review",
+		"satelle-story-architecture-review",
+		"satelle-story-integration-coverage-review",
+	}
+	if len(planEdge.Skills) != 3 {
+		t.Fatalf("Skills = %v, want 3", planEdge.Skills)
+	}
+	for i, w := range wantSkills {
+		if planEdge.Skills[i] != w {
+			t.Errorf("Skills[%d] = %q, want %q", i, planEdge.Skills[i], w)
+		}
+	}
+	if planEdge.Skill != wantSkills[0] {
+		t.Errorf("Skill (first) = %q, want %q", planEdge.Skill, wantSkills[0])
+	}
+	if planEdge.Parallel != 4 { // DefaultParallelCap from parallel=true
+		t.Errorf("Parallel = %d, want 4", planEdge.Parallel)
+	}
+
+	html := string(workflowDiagram(spec, nil))
+	// Tooltip carries full skill names
+	for _, sk := range wantSkills {
+		if !strings.Contains(html, sk) {
+			t.Errorf("diagram missing skill %q in tooltip/content:\n%s", sk, html)
+		}
+	}
+	// Parallel marker on label + data-parallel
+	if !strings.Contains(html, "∥") {
+		t.Errorf("diagram missing parallel marker ∥:\n%s", html)
+	}
+	if !strings.Contains(html, `data-parallel="4"`) {
+		t.Errorf("diagram missing data-parallel=4:\n%s", html)
+	}
+	// Short labels present
+	for _, short := range []string{"story-plan", "story-architecture", "story-integration-coverage"} {
+		if !strings.Contains(html, short) {
+			t.Errorf("diagram missing short label %q", short)
+		}
+	}
+	// Single-skill edge still works
+	if !strings.Contains(html, "story-intent") && !strings.Contains(html, "satelle-story-intent-review") {
+		t.Error("single-skill intent edge missing from diagram")
+	}
+}
+
+func TestEdgeGateLabel(t *testing.T) {
+	vis, tip := edgeGateLabel(wfTransition{Skill: "satelle-story-plan-review", Skills: []string{"satelle-story-plan-review"}})
+	if vis != "story-plan" || !strings.Contains(tip, "satelle-story-plan-review") {
+		t.Errorf("single: vis=%q tip=%q", vis, tip)
+	}
+	vis, tip = edgeGateLabel(wfTransition{
+		Skills:   []string{"a-review", "b-review", "c-review"},
+		Parallel: 4,
+	})
+	if !strings.HasPrefix(vis, "∥ ") {
+		t.Errorf("parallel prefix missing: %q", vis)
+	}
+	if !strings.Contains(tip, "parallel=4") {
+		t.Errorf("tip missing parallel: %q", tip)
+	}
+}
+
+// TestWorkflowDetailListsAllEdgeSkills (sty_1b7a0ca2 AC3): expand Transitions
+// list renders one gate chip per CSV skill and a parallel chip when Parallel > 0.
+func TestWorkflowDetailListsAllEdgeSkills(t *testing.T) {
+	vm := workflowDetailVM{
+		Name: "test",
+		Spec: wfSpec{
+			States: []wfState{
+				{Name: "plan", Agent: "planner"},
+				{Name: "in_progress", Agent: "executor"},
+			},
+			Transitions: []wfTransition{{
+				From: "plan", To: "in_progress",
+				Skill:    "satelle-story-plan-review",
+				Skills:   []string{"satelle-story-plan-review", "satelle-story-architecture-review", "satelle-story-integration-coverage-review"},
+				Parallel: 4,
+			}},
+		},
+	}
+	var buf strings.Builder
+	if err := tmpl.ExecuteTemplate(&buf, "workflowDetail", vm); err != nil {
+		t.Fatalf("ExecuteTemplate: %v", err)
+	}
+	html := buf.String()
+	for _, sk := range []string{
+		"satelle-story-plan-review",
+		"satelle-story-architecture-review",
+		"satelle-story-integration-coverage-review",
+	} {
+		if !strings.Contains(html, sk) {
+			t.Errorf("workflowDetail missing gate chip %q:\n%s", sk, html)
+		}
+	}
+	if !strings.Contains(html, `data-parallel="4"`) {
+		t.Errorf("workflowDetail missing data-parallel=4:\n%s", html)
+	}
+	if !strings.Contains(html, `class="wf-gate parallel"`) || !strings.Contains(html, "∥4") {
+		t.Errorf("workflowDetail missing parallel chip ∥4:\n%s", html)
+	}
+	// Count wf-gate skill chips (exclude parallel chip)
+	nSkill := strings.Count(html, `class="wf-gate" title="reviewer gate"`)
+	if nSkill != 3 {
+		t.Errorf("want 3 skill gate chips, got %d", nSkill)
+	}
+}
