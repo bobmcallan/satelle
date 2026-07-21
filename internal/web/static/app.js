@@ -468,7 +468,10 @@
         });
         var tab = document.querySelector('.tab[data-panel="' + topic + '"] .n');
         if (tab) tab.textContent = panel.querySelectorAll("[data-rows] .row").length;
-        if (topic === "stories") refreshBacklogBadge(panel);
+        if (topic === "stories") {
+          refreshBacklogBadge(panel);
+          refreshEngagementBadge();
+        }
       })
       .catch(function () {});
   }
@@ -496,6 +499,24 @@
     } else if (badge) {
       badge.remove();
     }
+  }
+
+  // refreshEngagementBadge reloads the always-visible story-seat count from the
+  // server (sty_01ba9482). Engagement is not derivable from story rows alone —
+  // seats live in a separate mirror kind — so we fetch fragment/engagement and
+  // replace the .n-engaged chip (including when count is 0).
+  function refreshEngagementBadge() {
+    var cur = document.querySelector(".n-engaged");
+    if (!cur) return;
+    fetch("fragment/engagement")
+      .then(function (r) { return r.text(); })
+      .then(function (html) {
+        var tmp = document.createElement("div");
+        tmp.innerHTML = html.trim();
+        var next = tmp.querySelector(".n-engaged") || tmp.firstElementChild;
+        if (next && cur.parentNode) cur.parentNode.replaceChild(next, cur);
+      })
+      .catch(function () {});
   }
 
   // Panels with a rows fragment endpoint (the refetch targets); workflow has none.

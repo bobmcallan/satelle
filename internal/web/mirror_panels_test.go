@@ -106,6 +106,155 @@ func TestMirrorLoadPanelsFromKindsOnly(t *testing.T) {
 	if data.TopBar.MirrorRO != true || data.TopBar.IdentityEmail != "op@example.com" {
 		t.Errorf("topbar RO/identity: %+v", data.TopBar)
 	}
+	// Existing fixture seat is in_flight+!stale but does not set story_seat — engagement
+	// requires explicit story_seat (sty_01ba9482). Lights still use decodeLiveSeats.
+	if data.EngagementCount != 0 {
+		t.Errorf("EngagementCount = %d without story_seat, want 0", data.EngagementCount)
+	}
+}
+
+// TestEngagedStorySeatIDsPredicate (sty_01ba9482): engagement counts non-stale
+// story_seat only — not task seats, not stale rows, not missing story_seat.
+func TestEngagedStorySeatIDsPredicate(t *testing.T) {
+	got := engagedStorySeatIDs([]seatPayload{
+		{ID: "sty_live", StorySeat: true, Stale: false},
+		{ID: "sty_stale", StorySeat: true, Stale: true},
+		{ID: "tsk_1", StorySeat: false, Stale: false, InFlight: true},
+		{ID: "sty_nofield", StorySeat: false, Stale: false, InFlight: true},
+		{ID: "", StorySeat: true, Stale: false}, // empty id skipped
+	})
+	if len(got) != 1 || got[0] != "sty_live" {
+		t.Fatalf("engaged ids = %v, want [sty_live]", got)
+	}
+	// Settled engaged lease (story_seat, !in_flight, !stale) still counts.
+	got2 := engagedStorySeatIDs([]seatPayload{
+		{ID: "sty_settled", StorySeat: true, InFlight: false, Stale: false},
+	})
+	if len(got2) != 1 || got2[0] != "sty_settled" {
+		t.Fatalf("settled engaged = %v, want [sty_settled]", got2)
+	}
+	if n := len(engagedStorySeatIDs(nil)); n != 0 {
+		t.Fatalf("nil seats count = %d", n)
+	}
+}
+
+// TestEngagementCountAndChrome (sty_01ba9482): zero always visible; non-zero
+// identifies the story; stale/clear return to 0; fragment soft-refresh path.
+func TestEngagementCountAndChrome(t *testing.T) {
+	s, err := mirror.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	now := time.Now().UTC()
+	rk := "rk-eng"
+	if _, err := s.TouchPartition(ctx, rk, "eng", now); err != nil {
+		t.Fatal(err)
+	}
+	story := workitem.Item{
+		ID: "sty_e1", Kind: workitem.KindStory, Title: "Engaged Story",
+		Status: workitem.StatusInProgress, Category: "feature",
+		UpdatedAt: now, CreatedAt: now,
+	}
+	sb, _ := json.Marshal(story)
+	ident, _ := json.Marshal(mirror.IdentityMeta{ProjectName: "eng", RepoRoot: "/e"})
+	_ = s.ReplaceKind(ctx, rk, "story", []mirror.ItemRow{{ID: "sty_e1", Payload: string(sb)}}, now)
+	_ = s.ReplaceKind(ctx, rk, "identity", []mirror.ItemRow{{ID: "meta", Payload: string(ident)}}, now)
+
+	ms := NewMirror(s)
+	srv := httptest.NewServer(ms.Handler)
+	t.Cleanup(srv.Close)
+
+	// AC1: zero always visible on project page and fragment.
+	zeroPage := httpGetBody(t, srv.URL+"/r/eng/")
+	for _, want := range []string{
+		`class="n-engaged"`, `data-engagement-count="0"`, `engaged 0`,
+		`title="no story engaged"`,
+	} {
+		if !strings.Contains(zeroPage, want) {
+			t.Errorf("zero page missing %q", want)
+		}
+	}
+	zeroFrag := httpGetBody(t, srv.URL+"/r/eng/fragment/engagement")
+	if strings.Contains(zeroFrag, "<!doctype") {
+		t.Error("engagement fragment must not be a full document")
+	}
+	if !strings.Contains(zeroFrag, `data-engagement-count="0"`) || !strings.Contains(zeroFrag, "engaged 0") {
+		t.Errorf("zero fragment: %s", zeroFrag)
+	}
+	data0, _, err := mirrorLoadPanels(ctx, s, rk, "eng")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data0.EngagementCount != 0 || len(data0.EngagedStoryIDs) != 0 {
+		t.Errorf("empty seats: count=%d ids=%v", data0.EngagementCount, data0.EngagedStoryIDs)
+	}
+
+	// AC2: non-stale story_seat → count 1 + identity/link.
+	liveSeat, _ := json.Marshal(map[string]any{
+		"id": "sty_e1", "kind": "story", "story_seat": true,
+		"in_flight": false, "stale": false,
+	})
+	if err := s.ReplaceKind(ctx, rk, "seat", []mirror.ItemRow{{ID: "sty_e1", Payload: string(liveSeat)}}, now); err != nil {
+		t.Fatal(err)
+	}
+	data1, _, err := mirrorLoadPanels(ctx, s, rk, "eng")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data1.EngagementCount != 1 || len(data1.EngagedStoryIDs) != 1 || data1.EngagedStoryIDs[0] != "sty_e1" {
+		t.Fatalf("live seat: count=%d ids=%v", data1.EngagementCount, data1.EngagedStoryIDs)
+	}
+	// Lights predicate unchanged: settled !in_flight does not set seatHeld lights path —
+	// still no regression: load still succeeds and stories present.
+	if len(data1.Stories) != 1 {
+		t.Fatalf("stories = %d", len(data1.Stories))
+	}
+	onePage := httpGetBody(t, srv.URL+"/r/eng/")
+	for _, want := range []string{
+		`data-engagement-count="1"`, `has-engaged`, `href="story/sty_e1"`,
+		`engaged 1`, `title="engaged: sty_e1"`,
+	} {
+		if !strings.Contains(onePage, want) {
+			t.Errorf("engaged page missing %q", want)
+		}
+	}
+	oneFrag := httpGetBody(t, srv.URL+"/r/eng/fragment/engagement")
+	if !strings.Contains(oneFrag, `data-engagement-count="1"`) || !strings.Contains(oneFrag, "sty_e1") {
+		t.Errorf("engaged fragment: %s", oneFrag)
+	}
+
+	// AC3a: stale story_seat does not count.
+	staleSeat, _ := json.Marshal(map[string]any{
+		"id": "sty_e1", "story_seat": true, "in_flight": true, "stale": true,
+	})
+	_ = s.ReplaceKind(ctx, rk, "seat", []mirror.ItemRow{{ID: "sty_e1", Payload: string(staleSeat)}}, now)
+	dataStale, _, _ := mirrorLoadPanels(ctx, s, rk, "eng")
+	if dataStale.EngagementCount != 0 {
+		t.Errorf("stale seat counted: %d", dataStale.EngagementCount)
+	}
+
+	// AC3b: clear seats → 0.
+	_ = s.ReplaceKind(ctx, rk, "seat", nil, now)
+	dataClear, _, _ := mirrorLoadPanels(ctx, s, rk, "eng")
+	if dataClear.EngagementCount != 0 {
+		t.Errorf("cleared seats: %d", dataClear.EngagementCount)
+	}
+	clearPage := httpGetBody(t, srv.URL+"/r/eng/")
+	if !strings.Contains(clearPage, `data-engagement-count="0"`) {
+		t.Error("cleared page missing count 0")
+	}
+
+	// app.js soft-refresh contract.
+	js, err := staticFS.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(js)
+	if !strings.Contains(src, "refreshEngagementBadge") || !strings.Contains(src, "fragment/engagement") {
+		t.Error("app.js missing engagement soft-refresh helpers")
+	}
 }
 
 // TestMirrorProjectPageRendersTemplates seeds a partition and checks HTML chrome.
@@ -151,6 +300,8 @@ func TestMirrorProjectPageRendersTemplates(t *testing.T) {
 		`aria-label="Operator identity a@b.c; read-only local UI, project data pushed by the CLI"`,
 		">Install</a>", ">Docs</a>", ">Projects</a>",
 		"https://satelle.dev/install", "https://satelle.dev/docs",
+		// sty_01ba9482: engagement count always present at 0.
+		`class="n-engaged"`, `data-engagement-count="0"`, `engaged 0`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("project page missing %q", want)

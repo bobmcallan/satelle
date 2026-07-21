@@ -78,6 +78,7 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 
 	entriesByStory, _ := decodeLedgerByStory(ctx, s, repoKey)
 	liveSeat, _ := decodeLiveSeats(ctx, s, repoKey)
+	engagedIDs, _ := decodeEngagedStorySeats(ctx, s, repoKey)
 	catStepOf := categoryStepOf(byKind["workflows"])
 
 	projectName := id.ProjectName
@@ -90,17 +91,19 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 	}
 
 	return pageData{
-		RepoRoot:     repoRoot,
-		ProjectName:  projectName,
-		Stories:      attachLightsFrom(entriesByStory, stories, liveSeat, catStepOf),
-		BacklogCount: backlog,
-		Tasks:        attachLightsFrom(entriesByStory, tasks, liveSeat, catStepOf),
-		DocKinds:     kinds,
-		DocCount:     len(docs),
-		Workflows:    workflowRows(byKind["workflows"], prov, src),
-		Uptime:       formatUptime(time.Since(serverStart)),
-		Theme:        "", // client localStorage only on the mirror
-		TopBar:       mirrorTopBar("", id.FooterEmail),
+		RepoRoot:        repoRoot,
+		ProjectName:     projectName,
+		Stories:         attachLightsFrom(entriesByStory, stories, liveSeat, catStepOf),
+		BacklogCount:    backlog,
+		EngagementCount: len(engagedIDs),
+		EngagedStoryIDs: engagedIDs,
+		Tasks:           attachLightsFrom(entriesByStory, tasks, liveSeat, catStepOf),
+		DocKinds:        kinds,
+		DocCount:        len(docs),
+		Workflows:       workflowRows(byKind["workflows"], prov, src),
+		Uptime:          formatUptime(time.Since(serverStart)),
+		Theme:           "", // client localStorage only on the mirror
+		TopBar:          mirrorTopBar("", id.FooterEmail),
 	}, id, nil
 }
 
@@ -219,6 +222,53 @@ func decodeLiveSeats(ctx context.Context, s *mirror.Store, repoKey string) (map[
 		}
 	}
 	return out, nil
+}
+
+// seatPayload is the mirror seat row shape pushed by listSeatsJSON.
+type seatPayload struct {
+	ID        string `json:"id"`
+	StorySeat bool   `json:"story_seat"`
+	InFlight  bool   `json:"in_flight"`
+	Stale     bool   `json:"stale"`
+}
+
+// engagedStorySeatIDs returns non-stale story seats (story_seat && !stale).
+// Distinct from decodeLiveSeats (in_flight && !stale) used only for progress
+// lights — a settled engaged lease still counts as engaged (sty_01ba9482).
+func engagedStorySeatIDs(seats []seatPayload) []string {
+	var ids []string
+	for _, seat := range seats {
+		if !seat.StorySeat || seat.Stale {
+			continue
+		}
+		id := strings.TrimSpace(seat.ID)
+		if id == "" {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// decodeEngagedStorySeats lists non-stale story-seat holders for engagement chrome.
+func decodeEngagedStorySeats(ctx context.Context, s *mirror.Store, repoKey string) ([]string, error) {
+	rows, err := s.ListItems(ctx, repoKey, "seat")
+	if err != nil {
+		return nil, err
+	}
+	seats := make([]seatPayload, 0, len(rows))
+	for _, r := range rows {
+		var seat seatPayload
+		if err := json.Unmarshal([]byte(r.Payload), &seat); err != nil {
+			continue
+		}
+		if seat.ID == "" {
+			seat.ID = r.ID
+		}
+		seats = append(seats, seat)
+	}
+	return engagedStorySeatIDs(seats), nil
 }
 
 // mirrorLoadDetail builds the expand/detail VM from mirror kinds only.
