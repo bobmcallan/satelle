@@ -73,10 +73,23 @@ evidence each acceptance criterion needs.
   run shell; otherwise format carefully by hand. Confirm the package builds and
   tests when shell is available.
 
+## Before exit — scope evidence (satelle-story-scope-review)
+
+When shell is available, before you stop for the gate, enumerate the slice
+against the engagement baseline and attach it so shell-less reviewers can judge:
+
+```bash
+satelle story diff <sty_id> --patch > /tmp/scope-diff.txt
+satelle story attach <sty_id> --name scope-diff --type change --file /tmp/scope-diff.txt
+```
+
+If `story diff` reports no baseline, note that in your output (pre-feature
+degrade). Do not invent a scope pass/fail — the scope gate decides.
+
 ## Stop for the gate
 
 Implementing is your final act. Do NOT advance status — the
-`in_progress → integration` gate (`satelle-code-ac-review`) judges whether the
+`in_progress → integration` gate (`satelle-code-ac-review` + scope + …) judges whether the
 code satisfies the acceptance criteria and carries both kinds of test before the
 story proceeds. Report what you changed and which AC each change satisfies.
 
