@@ -1,3 +1,8 @@
+## [0.0.303] - 2026-07-21
+
+### Added
+- Engagement baseline ledgered on first performing-state entry; `satelle story diff` enumerates changes since baseline (incl. untracked) for scope gates — report only, no pass/fail (sty_da169e03 / epic:scope-integrity)
+
 ## [0.0.302] - 2026-07-21
 
 ### Added

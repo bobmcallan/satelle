@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -160,6 +162,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 	if group == "story" {
 		parent.AddCommand(storyDocCommands()...)
 		parent.AddCommand(storyCostCommands()...)
+		parent.AddCommand(storyDiffCommand())
 		parent.AddCommand(storySyncCommand())
 		parent.AddCommand(storyRestampCommand())
 		parent.AddCommand(storyStopRequestCommand())
@@ -281,6 +284,58 @@ func storySyncCommand() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// storyDiffCommand builds `satelle story diff [id]`: enumerate files changed
+// since the engagement baseline (sty_da169e03). Enumeration only — no verdict.
+// Id may be omitted when stdin is a transition payload `{story:{id},…}` so gate
+// functional checks can invoke without shell id plumbing.
+func storyDiffCommand() *cobra.Command {
+	var patch bool
+	cmd := &cobra.Command{
+		Use:   "diff [id]",
+		Short: "List files changed since engagement baseline (enumeration only)",
+		Long: `Report files and a diffstat from the story's engagement baseline
+(git HEAD recorded on first entry into a performing state) through the current
+worktree, including uncommitted edits and untracked files. Use --patch for the
+full unified diff of tracked changes.
+
+No pass/fail: gates (e.g. satelle-story-scope-review) consume this output and
+decide. Stories without a baseline (pre-feature or never engaged) error clearly.
+
+Gate functional checks may omit the id and pipe the transition JSON on stdin
+({story:{id}, from, to}); the verb reads story.id.`,
+		Args:        cobra.MaximumNArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				req := map[string]any{"id": args[0]}
+				if patch {
+					req["patch"] = true
+				}
+				return dispatch(cmd, "story-diff", req)
+			}
+			// No id: read transition payload (or {id}) from stdin for gate checks.
+			in, err := io.ReadAll(cmd.InOrStdin())
+			if err != nil {
+				return err
+			}
+			var body map[string]any
+			if len(bytes.TrimSpace(in)) > 0 {
+				if err := json.Unmarshal(in, &body); err != nil {
+					return fmt.Errorf("story diff: stdin JSON: %w", err)
+				}
+			} else {
+				body = map[string]any{}
+			}
+			if patch {
+				body["patch"] = true
+			}
+			return dispatch(cmd, "story-diff", body)
+		},
+	}
+	cmd.Flags().BoolVar(&patch, "patch", false, "include full unified patch since baseline (tracked)")
+	return cmd
 }
 
 // storyCostCommands builds `satelle story estimate` and `satelle story actual`:

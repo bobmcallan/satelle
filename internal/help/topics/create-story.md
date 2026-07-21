@@ -45,6 +45,21 @@ richer gates (e.g. `satelle-story-intent-review`, judging the story is
 well-formed enough to start) adds them to its workflow; a reject keeps the story
 in backlog with notes on what to clarify.
 
+On **first entry into a performing/engaging state** (e.g. `backlog → plan` or
+`backlog → in_progress`), satelle records an **engagement baseline** ledger row
+(`engagement_baseline`) with the current git HEAD (and whether the worktree was
+dirty). Re-entry after park/blocked does **not** overwrite it. Gates that judge
+slice scope consume the baseline via enumeration only:
+
+```
+satelle story diff <id>           # changed files + diffstat since baseline
+satelle story diff <id> --patch   # plus full unified diff
+```
+
+The command never decides pass/fail — it only lists. A story with no baseline
+(never engaged, or created before this feature) errors clearly. Gate authors
+invoke it from functional checks or reviewer prompts (`Bash(satelle:*)`).
+
 ## 3. Reach done through the workflow's gates
 
 The exact path to `done` is whatever the active workflow declares — `done` is

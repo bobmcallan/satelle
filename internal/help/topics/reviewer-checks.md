@@ -51,6 +51,22 @@ the reviewer runs as an isolated `agent -p` with the read-only `Read,Grep,Glob`
 grant. A repo may rebind a backend or grant without touching the workflow; the
 read-only limit travels with the binding.
 
+## Engagement baseline and `satelle story diff` (scope gates)
+
+On first entry into a performing/engaging state, satelle ledgers an
+`engagement_baseline` row (git HEAD + dirty flag). Scope judges **enumerate**
+via:
+
+```
+satelle story diff <id>
+# or from a functional check (payload on stdin, no argv id):
+satelle story diff   # reads story.id from {story, from, to} on stdin
+```
+
+Output is JSON: `files` (sorted, includes untracked), `stat`, optional `patch`.
+**Report only** — no pass/fail. The gate skill decides. Missing baseline → clear
+error (pre-feature stories degrade gracefully).
+
 ## Two gate kinds: LLM reviewers and functional checks
 
 A gate is either:
