@@ -1,12 +1,18 @@
-## [0.0.316] - 2026-07-22
+## [0.0.317] - 2026-07-22
 
 ### Fixed
 - Stories tab backlog and engaged chips share one chip style and baseline; engaged label is number-first ("N engaged") to match backlog (sty_c7ab5180)
+- TestRepoReviewerModelIsActive skips when `.satelle/agents.toml` is absent so CI is not red after operator-owned `.satelle/` (sty_c7ab5180, follow-up to sty_91a390a0)
 
 ## [serve-v0.0.10] - 2026-07-22
 
 ### Fixed
-- Same backlog/engaged chip alignment and number-first labels as CLI 0.0.316 (sty_c7ab5180)
+- Same backlog/engaged chip alignment and number-first labels as CLI 0.0.317 (sty_c7ab5180)
+
+## [0.0.316] - 2026-07-22
+
+### Fixed
+- Stories tab backlog and engaged chips share one chip style and baseline; engaged label is number-first ("N engaged") to match backlog (sty_c7ab5180) — tag not cut (CI red on pre-existing agents.toml pin)
 
 ## [0.0.315] - 2026-07-22
 
