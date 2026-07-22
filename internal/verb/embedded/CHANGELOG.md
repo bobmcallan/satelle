@@ -1,3 +1,13 @@
+## [0.0.310] - 2026-07-22
+
+### Changed
+- Local web client favicon matches satelle.dev animated ◐ monogram (SMIL terminator + reduced-motion fallback, brand green) (sty_2b1af84b)
+
+## [serve-v0.0.7] - 2026-07-22
+
+### Changed
+- Same satelle.dev-aligned favicon monogram as CLI 0.0.310 (sty_2b1af84b)
+
 ## [0.0.309] - 2026-07-21
 
 ### Added

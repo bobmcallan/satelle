@@ -180,8 +180,8 @@ const templatesSrc = `
 
 {{define "footer"}}<footer class="site-footer">{{if footeremail}}<a class="footer-email" href="mailto:{{footeremail}}">{{footeremail}}</a>{{end}}<span class="footer-version">{{product}} {{version}}</span></footer>{{end}}
 
-{{/* favicon: the green-dot logo (the wordmark's .dot), one shared partial so every
-     page <head> links the same icon — no per-page drift. */}}
+{{/* favicon: satelle.dev ◐ monogram (animated terminator + reduced-motion static),
+     one shared partial so every page <head> links the same icon — no per-page drift. */}}
 {{define "favicon"}}<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"><link rel="apple-touch-icon" href="/static/favicon.svg">{{end}}
 
 {{define "page"}}<!doctype html>
