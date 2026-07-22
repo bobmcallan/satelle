@@ -119,6 +119,68 @@ func TestMutationTargets(t *testing.T) {
 			cmd:     "cp -t " + other + "/dir a b",
 			wantAny: filepath.Join(other, "dir"),
 		},
+		// sty_74c0556f: fd-duplication must not become a mutation target under a foreign cwd.
+		{
+			name:    "story list 2>&1 after cd other — no candidate (regression)",
+			cmd:     "cd " + other + " && satelle story list 2>&1",
+			wantAny: "",
+		},
+		{
+			name:    "story create 2>&1 after cd other — no candidate",
+			cmd:     "cd " + other + " && satelle story create --title x 2>&1",
+			wantAny: "",
+		},
+		{
+			name:    "story list >&2 after cd other — no candidate",
+			cmd:     "cd " + other + " && satelle story list >&2",
+			wantAny: "",
+		},
+		{
+			name:    "story list 1>&2 after cd other — no candidate",
+			cmd:     "cd " + other + " && satelle story list 1>&2",
+			wantAny: "",
+		},
+		{
+			name:    "story list 2>&1 | head after cd other — no candidate",
+			cmd:     "cd " + other + " && satelle story list 2>&1 | head",
+			wantAny: "",
+		},
+		{
+			name:    "story list 2>&- after cd other — close-fd, no candidate",
+			cmd:     "cd " + other + " && satelle story list 2>&-",
+			wantAny: "",
+		},
+		{
+			name:    "story list 2>&1- after cd other — fd-move, no candidate",
+			cmd:     "cd " + other + " && satelle story list 2>&1-",
+			wantAny: "",
+		},
+		{
+			name:    "glued 2>err.log after cd other",
+			cmd:     "cd " + other + " && echo x 2>err.log",
+			wantAny: filepath.Join(other, "err.log"),
+		},
+		// Real file redirects into a foreign tree stay candidates.
+		{
+			name:    "echo redirect file after cd other",
+			cmd:     "cd " + other + " && echo x > f.txt",
+			wantAny: filepath.Join(other, "f.txt"),
+		},
+		{
+			name:    "2> err.log after cd other",
+			cmd:     "cd " + other + " && echo x 2> err.log",
+			wantAny: filepath.Join(other, "err.log"),
+		},
+		{
+			name:    "&> out.log after cd other",
+			cmd:     "cd " + other + " && echo x &> out.log",
+			wantAny: filepath.Join(other, "out.log"),
+		},
+		{
+			name:    "csh-style >& file after cd other",
+			cmd:     "cd " + other + " && echo x >& out.log",
+			wantAny: filepath.Join(other, "out.log"),
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -687,6 +687,8 @@ func mutationPathArgs(words []string, cwd string) []string {
 }
 
 // redirectTargets finds >file, >>file, > file, and tee destinations.
+// Fd-duplication forms (n>&m, n>&-, >&m) contribute no file target — tokenizeBash
+// splits on '&', so "2>&1" arrives as words "2>", "&", "1" (sty_74c0556f).
 func redirectTargets(seg []bashTok, cwd string) []string {
 	var out []string
 	// Reconstruct a minimal stream of word values including glued redirects.
@@ -708,36 +710,86 @@ func redirectTargets(seg []bashTok, cwd string) []string {
 				out = append(out, resolvePath(cwd, p))
 			}
 		}
-		// Spaced: > file / >> file / 1> file
+		// Spaced: > file / >> file / 1> file / 2> & 1 (fd dup) / > & file (csh)
 		if w == ">" || w == ">>" || w == "1>" || w == "2>" || w == "&>" || w == ">&" {
-			if i+1 < len(words) && !strings.HasPrefix(words[i+1], ">") {
-				out = append(out, resolvePath(cwd, words[i+1]))
-				i++
+			if i+1 >= len(words) || strings.HasPrefix(words[i+1], ">") {
+				continue
 			}
+			next := words[i+1]
+			// After a redirect op, "&" is either n>&m (fd duplication) or csh
+			// ">& file" / "> & file" (file target is the word after "&").
+			if next == "&" {
+				if i+2 < len(words) && isFdDupTarget(words[i+2]) {
+					i += 2 // skip "&" and the fd / "-"
+					continue
+				}
+				if i+2 < len(words) {
+					out = append(out, resolvePath(cwd, words[i+2]))
+					i += 2
+					continue
+				}
+				i++ // trailing bare "&" after redirect — no file
+				continue
+			}
+			// One-token ">&" / "&>" followed by fd or path (defensive; tokenizer
+			// usually splits ">&m" at '&').
+			if w == ">&" && isFdDupTarget(next) {
+				i++
+				continue
+			}
+			out = append(out, resolvePath(cwd, next))
+			i++
 		}
 	}
 	return out
 }
 
+// isFdDupTarget reports whether s is a bash fd-duplication target: all digits
+// (e.g. "1", "2"), "-" (close the fd: n>&-), or digits with a single trailing
+// "-" (fd-move: n>&m-).
+func isFdDupTarget(s string) bool {
+	if s == "-" {
+		return true
+	}
+	if s == "" {
+		return false
+	}
+	// Fd-move form: "1-", "2-"
+	if strings.HasSuffix(s, "-") && len(s) > 1 {
+		s = s[:len(s)-1]
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // gluedRedirectPath extracts the path from tokens like ">file", "2>>file", ">>/abs".
+// Bare "&" and "&"-led fd remainders (">&1") are not file paths.
 func gluedRedirectPath(w string) string {
 	// Find last redirect operator sequence and take the remainder.
 	idx := strings.LastIndex(w, ">>")
 	if idx >= 0 {
-		rest := w[idx+2:]
-		if rest != "" && rest != "&" {
-			return rest
-		}
-		return ""
+		return gluedRedirectRemainder(w[idx+2:])
 	}
 	idx = strings.LastIndex(w, ">")
 	if idx >= 0 {
-		rest := w[idx+1:]
-		if rest != "" && rest != "&" {
-			return rest
-		}
+		return gluedRedirectRemainder(w[idx+1:])
 	}
 	return ""
+}
+
+func gluedRedirectRemainder(rest string) string {
+	if rest == "" || rest == "&" {
+		return ""
+	}
+	// n>&m glued remainder after '>': "&1", "&-" — not a file.
+	if strings.HasPrefix(rest, "&") && isFdDupTarget(rest[1:]) {
+		return ""
+	}
+	return rest
 }
 
 // resolvePath makes a path absolute against cwd (no symlink resolution).
