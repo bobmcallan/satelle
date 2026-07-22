@@ -37,9 +37,20 @@ func TestWebHeaderBrandingEndToEnd(t *testing.T) {
 		}
 	}
 
+	// Site-aligned ◐ monogram (sty_2b1af84b): animated terminator + reduced-motion
+	// static fallback, brand green. Markers are structural so comment/path-data
+	// tweaks don't false-fail, but the legacy static-only half-disk is rejected.
 	fav := httpGet(t, host+"/static/favicon.svg")
-	if !strings.Contains(fav, "<circle") || !strings.Contains(fav, "<path") || !strings.Contains(fav, "#2f6f4f") {
-		t.Errorf("favicon is not the halfmoon monogram:\n%s", fav)
+	for _, want := range []string{"<circle", "#2f6f4f", "<animate", "prefers-reduced-motion", `id="static"`} {
+		if !strings.Contains(fav, want) {
+			t.Errorf("favicon missing %q (want satelle.dev monogram):\n%s", want, fav)
+		}
+	}
+	ico := httpGet(t, host+"/favicon.ico")
+	for _, want := range []string{"<animate", "#2f6f4f"} {
+		if !strings.Contains(ico, want) {
+			t.Errorf("/favicon.ico missing %q (must serve the same SVG):\n%s", want, ico)
+		}
 	}
 
 	order := []string{
