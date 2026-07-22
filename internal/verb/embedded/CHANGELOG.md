@@ -1,3 +1,14 @@
+## [0.0.315] - 2026-07-22
+
+### Changed
+- Project tab headings: no link underline in any state; slight bold on hover (weight 500) under selected bold (600) with bold-ghost width reserve so the row does not reflow (sty_e4632f45)
+- Stories tab active accent bar runs continuously under the engaged chip (cluster owns the border); chip hidden entirely when engagement count is 0, with live fragment insert/remove on 0↔n (sty_e4632f45)
+
+## [serve-v0.0.9] - 2026-07-22
+
+### Changed
+- Same tab-heading polish and hide engaged-0 chip as CLI 0.0.315 (sty_e4632f45)
+
 ## [0.0.314] - 2026-07-22
 
 ### Added

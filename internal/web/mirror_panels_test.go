@@ -138,8 +138,8 @@ func TestEngagedStorySeatIDsPredicate(t *testing.T) {
 	}
 }
 
-// TestEngagementCountAndChrome (sty_01ba9482): zero always visible; non-zero
-// identifies the story; stale/clear return to 0; fragment soft-refresh path.
+// TestEngagementCountAndChrome (sty_01ba9482 / sty_e4632f45): zero chip hidden;
+// non-zero identifies the story; stale/clear hide chip again; fragment soft-refresh.
 func TestEngagementCountAndChrome(t *testing.T) {
 	s, err := mirror.Open(filepath.Join(t.TempDir(), "m.db"))
 	if err != nil {
@@ -166,22 +166,28 @@ func TestEngagementCountAndChrome(t *testing.T) {
 	srv := httptest.NewServer(ms.Handler)
 	t.Cleanup(srv.Close)
 
-	// AC1: zero always visible on project page and fragment.
+	// Zero: chip absent on project page and fragment (sty_e4632f45).
 	zeroPage := httpGetBody(t, srv.URL+"/r/eng/")
-	for _, want := range []string{
+	for _, forbid := range []string{
 		`class="n-engaged"`, `data-engagement-count="0"`, `engaged 0`,
 		`title="no story engaged"`,
 	} {
-		if !strings.Contains(zeroPage, want) {
-			t.Errorf("zero page missing %q", want)
+		if strings.Contains(zeroPage, forbid) {
+			t.Errorf("zero page must not contain %q", forbid)
 		}
+	}
+	if !strings.Contains(zeroPage, `class="tab-cluster"`) || !strings.Contains(zeroPage, `class="tab-label"`) {
+		t.Error("zero page missing tab-cluster or tab-label chrome")
 	}
 	zeroFrag := httpGetBody(t, srv.URL+"/r/eng/fragment/engagement")
 	if strings.Contains(zeroFrag, "<!doctype") {
 		t.Error("engagement fragment must not be a full document")
 	}
-	if !strings.Contains(zeroFrag, `data-engagement-count="0"`) || !strings.Contains(zeroFrag, "engaged 0") {
-		t.Errorf("zero fragment: %s", zeroFrag)
+	if strings.TrimSpace(zeroFrag) != "" {
+		t.Errorf("zero fragment must be empty, got: %q", zeroFrag)
+	}
+	if strings.Contains(zeroFrag, "n-engaged") {
+		t.Errorf("zero fragment must not contain n-engaged: %s", zeroFrag)
 	}
 	data0, _, err := mirrorLoadPanels(ctx, s, rk, "eng")
 	if err != nil {
@@ -191,7 +197,7 @@ func TestEngagementCountAndChrome(t *testing.T) {
 		t.Errorf("empty seats: count=%d ids=%v", data0.EngagementCount, data0.EngagedStoryIDs)
 	}
 
-	// AC2: non-stale story_seat → count 1 + identity/link.
+	// Non-stale story_seat → count 1 + identity/link; chip present.
 	liveSeat, _ := json.Marshal(map[string]any{
 		"id": "sty_e1", "kind": "story", "story_seat": true,
 		"in_flight": false, "stale": false,
@@ -239,7 +245,7 @@ func TestEngagementCountAndChrome(t *testing.T) {
 		t.Errorf("engaged fragment: %s", oneFrag)
 	}
 
-	// AC3a: stale story_seat does not count.
+	// Stale story_seat does not count → chip absent again.
 	staleSeat, _ := json.Marshal(map[string]any{
 		"id": "sty_e1", "story_seat": true, "in_flight": true, "stale": true,
 	})
@@ -248,19 +254,27 @@ func TestEngagementCountAndChrome(t *testing.T) {
 	if dataStale.EngagementCount != 0 {
 		t.Errorf("stale seat counted: %d", dataStale.EngagementCount)
 	}
+	stalePage := httpGetBody(t, srv.URL+"/r/eng/")
+	if strings.Contains(stalePage, `class="n-engaged"`) || strings.Contains(stalePage, "engaged 0") {
+		t.Error("stale seat must hide engagement chip")
+	}
+	staleFrag := httpGetBody(t, srv.URL+"/r/eng/fragment/engagement")
+	if strings.TrimSpace(staleFrag) != "" {
+		t.Errorf("stale fragment must be empty, got: %q", staleFrag)
+	}
 
-	// AC3b: clear seats → 0.
+	// Clear seats → 0; chip still absent.
 	_ = s.ReplaceKind(ctx, rk, "seat", nil, now)
 	dataClear, _, _ := mirrorLoadPanels(ctx, s, rk, "eng")
 	if dataClear.EngagementCount != 0 {
 		t.Errorf("cleared seats: %d", dataClear.EngagementCount)
 	}
 	clearPage := httpGetBody(t, srv.URL+"/r/eng/")
-	if !strings.Contains(clearPage, `data-engagement-count="0"`) {
-		t.Error("cleared page missing count 0")
+	if strings.Contains(clearPage, `class="n-engaged"`) || strings.Contains(clearPage, `data-engagement-count`) {
+		t.Error("cleared page must not render engagement chip")
 	}
 
-	// app.js soft-refresh contract.
+	// app.js soft-refresh contract: function name + fragment path + insert/remove.
 	js, err := staticFS.ReadFile("static/app.js")
 	if err != nil {
 		t.Fatal(err)
@@ -268,6 +282,12 @@ func TestEngagementCountAndChrome(t *testing.T) {
 	src := string(js)
 	if !strings.Contains(src, "refreshEngagementBadge") || !strings.Contains(src, "fragment/engagement") {
 		t.Error("app.js missing engagement soft-refresh helpers")
+	}
+	if !strings.Contains(src, "appendChild") || !strings.Contains(src, "tab-cluster") {
+		t.Error("app.js refreshEngagementBadge must insert into .tab-cluster on 0→n")
+	}
+	if !strings.Contains(src, ".remove()") && !strings.Contains(src, "cur.remove()") {
+		t.Error("app.js refreshEngagementBadge must remove chip on n→0")
 	}
 }
 
@@ -314,11 +334,18 @@ func TestMirrorProjectPageRendersTemplates(t *testing.T) {
 		`aria-label="Operator identity a@b.c; read-only local UI, project data pushed by the CLI"`,
 		">Install</a>", ">Docs</a>", ">Projects</a>",
 		"https://satelle.dev/install", "https://satelle.dev/docs",
-		// sty_01ba9482: engagement count always present at 0.
-		`class="n-engaged"`, `data-engagement-count="0"`, `engaged 0`,
+		// sty_e4632f45: engagement chip hidden at 0; tab labels use bold-ghost spans.
+		`class="tab-label"`, `class="tab-cluster"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("project page missing %q", want)
+		}
+	}
+	for _, forbid := range []string{
+		`class="n-engaged"`, `data-engagement-count="0"`, `engaged 0`,
+	} {
+		if strings.Contains(body, forbid) {
+			t.Errorf("project page must not show zero engagement chip %q", forbid)
 		}
 	}
 	if strings.Contains(body, ">mirror</span>") {

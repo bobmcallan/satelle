@@ -210,12 +210,12 @@ const templatesSrc = `
          anchors are invalid HTML — browsers rewrite the DOM and the chip
          floats misaligned between Stories and Tasks (sty_01ba9482). */}}
     <span class="tab-cluster">
-      <a class="tab" role="tab" data-panel="stories" href="#stories">Stories <span class="n">{{len .Stories}}</span>{{if .BacklogCount}} <span class="n-backlog" title="stories in the open backlog">{{.BacklogCount}} backlog</span>{{end}}</a>
+      <a class="tab" role="tab" data-panel="stories" href="#stories"><span class="tab-label" data-text="Stories">Stories</span> <span class="n">{{len .Stories}}</span>{{if .BacklogCount}} <span class="n-backlog" title="stories in the open backlog">{{.BacklogCount}} backlog</span>{{end}}</a>
       {{template "engagementBadge" .}}
     </span>
-    <a class="tab" role="tab" data-panel="tasks" href="#tasks">Tasks <span class="n">{{len .Tasks}}</span></a>
-    <a class="tab" role="tab" data-panel="workflow" href="#workflow">Workflow <span class="n">{{len .Workflows}}</span></a>
-    <a class="tab" role="tab" data-panel="docs" href="#docs">Documents <span class="n">{{.DocCount}}</span></a>
+    <a class="tab" role="tab" data-panel="tasks" href="#tasks"><span class="tab-label" data-text="Tasks">Tasks</span> <span class="n">{{len .Tasks}}</span></a>
+    <a class="tab" role="tab" data-panel="workflow" href="#workflow"><span class="tab-label" data-text="Workflow">Workflow</span> <span class="n">{{len .Workflows}}</span></a>
+    <a class="tab" role="tab" data-panel="docs" href="#docs"><span class="tab-label" data-text="Documents">Documents</span> <span class="n">{{.DocCount}}</span></a>
   </div>
 
   <section class="panel" data-topic="stories" id="panel-stories">
@@ -268,9 +268,10 @@ const templatesSrc = `
 </body>
 </html>{{end}}
 
-{{/* engagementBadge: always-visible story-seat count (including 0). Live-refreshed
-     via GET fragment/engagement (sty_01ba9482). Count = non-stale story_seat rows. */}}
-{{define "engagementBadge"}}{{$n := .EngagementCount}}{{$ids := .EngagedStoryIDs}}{{$title := "no story engaged"}}{{if gt $n 0}}{{$title = printf "engaged: %s" (join $ids ", ")}}{{end}}<span class="n-engaged{{if gt $n 0}} has-engaged{{end}}" data-engagement-count="{{$n}}" title="{{$title}}" aria-label="{{if eq $n 0}}no story engaged{{else}}{{$n}} story engaged{{end}}">{{if eq $n 1}}{{with index $ids 0}}<a class="n-engaged-link" href="story/{{.}}">engaged 1</a>{{end}}{{else}}engaged {{$n}}{{end}}</span>{{end}}
+{{/* engagementBadge: story-seat count chip when EngagementCount > 0; emits nothing
+     at 0 (sty_e4632f45). Live-refreshed via GET fragment/engagement — JS insert/remove
+     handles 0↔n. Count = non-stale story_seat rows. */}}
+{{define "engagementBadge"}}{{$n := .EngagementCount}}{{$ids := .EngagedStoryIDs}}{{if gt $n 0}}{{$title := printf "engaged: %s" (join $ids ", ")}}<span class="n-engaged has-engaged" data-engagement-count="{{$n}}" title="{{$title}}" aria-label="{{$n}} story engaged">{{if eq $n 1}}{{with index $ids 0}}<a class="n-engaged-link" href="story/{{.}}">engaged 1</a>{{end}}{{else}}engaged {{$n}}{{end}}</span>{{end}}{{end}}
 
 {{define "workitemRows"}}{{range .}}<tr class="row" tabindex="0" role="button" aria-expanded="false" data-status="{{.Status}}" data-priority="{{.Priority}}" data-category="{{.Category}}" data-tags="{{join .Tags ","}}" data-title="{{lower .Title}}" data-updated="{{.UpdatedAt.Format "2006-01-02T15:04:05"}}" data-created="{{.CreatedAt.Format "2006-01-02T15:04:05"}}" data-search="{{printf "%s %s %s" .Title .ID (join .Tags " ") | lower}}" data-expand-url="fragment/{{.Kind}}/{{.ID}}">
   <td class="id"><span class="id-copy" role="button" tabindex="0" data-id="{{.ID}}" title="Copy id to clipboard">{{.ID}}</span></td>
