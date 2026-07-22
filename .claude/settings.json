@@ -4,7 +4,7 @@
       {
         "hooks": [
           {
-            "command": "sh .satelle/hooks/satelle-hook.sh gate claude",
+            "command": "sh /home/bobmc/development/satelle/.satelle/hooks/satelle-hook.sh gate claude",
             "type": "command"
           }
         ],
@@ -13,7 +13,7 @@
       {
         "hooks": [
           {
-            "command": "sh .satelle/hooks/satelle-hook.sh commitgate claude",
+            "command": "sh /home/bobmc/development/satelle/.satelle/hooks/satelle-hook.sh commitgate claude",
             "type": "command"
           }
         ],

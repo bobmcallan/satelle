@@ -16,13 +16,13 @@ func TestDetectScaffoldDrift_CleanAfterWrite(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repo, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".claude", "settings.json"), buildClaudeHookSettings(), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".claude", "settings.json"), buildClaudeHookSettings(repo), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(repo, ".grok", "hooks"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, filepath.FromSlash(grokHooksRel)), buildGrokHookSettings(), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, filepath.FromSlash(grokHooksRel)), buildGrokHookSettings(repo), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if fs := DetectScaffoldDrift(repo); len(fs) != 0 {
@@ -86,7 +86,7 @@ func TestDetectScaffoldDrift_StaleScriptContent(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repo, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".claude", "settings.json"), buildClaudeHookSettings(), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".claude", "settings.json"), buildClaudeHookSettings(repo), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	fs := DetectScaffoldDrift(repo)

@@ -79,8 +79,8 @@ func driftHarnessSettings(repoRoot, absPath, harness, relPath string) []Scaffold
 			continue
 		}
 		seenSub[sub] = true
-		wantCmd := renderHookCommand(harness, sub)
-		if !isScriptFormHookCommand(cmd, harness, sub) {
+		wantCmd := renderHookCommand(repoRoot, harness, sub)
+		if strings.TrimSpace(cmd) != wantCmd {
 			findings = append(findings, ScaffoldFinding{
 				Path:   relPath,
 				Kind:   "command",

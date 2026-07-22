@@ -7,7 +7,14 @@ case "$harness" in
   grok) infra='{"decision":"deny","reason":"satelle unavailable in this hook shell env — INFRASTRUCTURE failure, NOT a policy denial. The satelle binary could not be resolved or did not produce a decision. Try: which satelle; satelle version; satelle init. Non-mutating bash stays allowed so you can diagnose."}' ;;
   *)    infra='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"satelle unavailable in this hook shell env — INFRASTRUCTURE failure, NOT a policy denial. The satelle binary could not be resolved or did not produce a decision. Try: which satelle; satelle version; satelle init. Non-mutating bash stays allowed so you can diagnose."}}' ;;
 esac
-b=""; for c in "$HOME/.local/bin/satelle" ".satelle/satelle" satelle; do
+# Prefer harness project pin so binary probe works even if invocation cwd drifted.
+root=""
+for d in "$CLAUDE_PROJECT_DIR" "$SATELLE_PROJECT_DIR"; do
+  if [ -n "$d" ] && [ -d "$d" ]; then root="$d"; break; fi
+done
+b=""
+for c in "$HOME/.local/bin/satelle" ${root:+"$root/.satelle/satelle"} ".satelle/satelle" satelle; do
+  [ -z "$c" ] && continue
   if [ -x "$c" ]; then b="$c"; break; fi
   if command -v "$c" >/dev/null 2>&1; then b=$(command -v "$c"); break; fi
 done

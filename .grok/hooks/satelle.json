@@ -4,7 +4,7 @@
       {
         "hooks": [
           {
-            "command": "sh .satelle/hooks/satelle-hook.sh gate grok",
+            "command": "sh /home/bobmc/development/satelle/.satelle/hooks/satelle-hook.sh gate grok",
             "type": "command"
           }
         ],
@@ -13,7 +13,7 @@
       {
         "hooks": [
           {
-            "command": "sh .satelle/hooks/satelle-hook.sh commitgate grok",
+            "command": "sh /home/bobmc/development/satelle/.satelle/hooks/satelle-hook.sh commitgate grok",
             "type": "command"
           }
         ],

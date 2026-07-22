@@ -1,3 +1,8 @@
+## [0.0.312] - 2026-07-22
+
+### Fixed
+- PreToolUse hook commands use an absolute path to satelle-hook.sh so a drifted agent shell cwd can no longer brick Bash/Edit with "No such file"; init/heal upgrades relative form; wrapper probes CLAUDE_PROJECT_DIR/SATELLE_PROJECT_DIR for binary resolution (sty_57582675)
+
 ## [0.0.311] - 2026-07-22
 
 ### Fixed
