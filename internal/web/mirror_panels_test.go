@@ -169,7 +169,7 @@ func TestEngagementCountAndChrome(t *testing.T) {
 	// Zero: chip absent on project page and fragment (sty_e4632f45).
 	zeroPage := httpGetBody(t, srv.URL+"/r/eng/")
 	for _, forbid := range []string{
-		`class="n-engaged"`, `data-engagement-count="0"`, `engaged 0`,
+		`class="n-engaged"`, `data-engagement-count="0"`, `0 engaged`,
 		`title="no story engaged"`,
 	} {
 		if strings.Contains(zeroPage, forbid) {
@@ -197,6 +197,20 @@ func TestEngagementCountAndChrome(t *testing.T) {
 		t.Errorf("empty seats: count=%d ids=%v", data0.EngagementCount, data0.EngagedStoryIDs)
 	}
 
+	// Seed a backlog story so both chips render together (sty_c7ab5180 AC3).
+	backlogStory := workitem.Item{
+		ID: "sty_bl", Kind: workitem.KindStory, Title: "Backlog Story",
+		Status: workitem.StatusBacklog, Category: "feature",
+		UpdatedAt: now, CreatedAt: now,
+	}
+	blb, _ := json.Marshal(backlogStory)
+	if err := s.ReplaceKind(ctx, rk, "story", []mirror.ItemRow{
+		{ID: "sty_e1", Payload: string(sb)},
+		{ID: "sty_bl", Payload: string(blb)},
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+
 	// Non-stale story_seat → count 1 + identity/link; chip present.
 	liveSeat, _ := json.Marshal(map[string]any{
 		"id": "sty_e1", "kind": "story", "story_seat": true,
@@ -214,13 +228,15 @@ func TestEngagementCountAndChrome(t *testing.T) {
 	}
 	// Lights predicate unchanged: settled !in_flight does not set seatHeld lights path —
 	// still no regression: load still succeeds and stories present.
-	if len(data1.Stories) != 1 {
+	if len(data1.Stories) != 2 {
 		t.Fatalf("stories = %d", len(data1.Stories))
 	}
 	onePage := httpGetBody(t, srv.URL+"/r/eng/")
 	for _, want := range []string{
 		`data-engagement-count="1"`, `has-engaged`, `href="story/sty_e1"`,
-		`engaged 1`, `title="engaged: sty_e1"`,
+		`1 engaged`, `title="engaged: sty_e1"`,
+		// Both chips, number-first (sty_c7ab5180).
+		`1 backlog`,
 		// Badge is a sibling of the Stories tab <a> (tab-cluster), not nested
 		// inside it — nested anchors misalign the chip in the browser.
 		`class="tab-cluster"`,
@@ -255,7 +271,7 @@ func TestEngagementCountAndChrome(t *testing.T) {
 		t.Errorf("stale seat counted: %d", dataStale.EngagementCount)
 	}
 	stalePage := httpGetBody(t, srv.URL+"/r/eng/")
-	if strings.Contains(stalePage, `class="n-engaged"`) || strings.Contains(stalePage, "engaged 0") {
+	if strings.Contains(stalePage, `class="n-engaged"`) || strings.Contains(stalePage, "0 engaged") {
 		t.Error("stale seat must hide engagement chip")
 	}
 	staleFrag := httpGetBody(t, srv.URL+"/r/eng/fragment/engagement")
@@ -342,7 +358,7 @@ func TestMirrorProjectPageRendersTemplates(t *testing.T) {
 		}
 	}
 	for _, forbid := range []string{
-		`class="n-engaged"`, `data-engagement-count="0"`, `engaged 0`,
+		`class="n-engaged"`, `data-engagement-count="0"`, `0 engaged`,
 	} {
 		if strings.Contains(body, forbid) {
 			t.Errorf("project page must not show zero engagement chip %q", forbid)

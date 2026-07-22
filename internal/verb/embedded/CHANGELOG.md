@@ -1,3 +1,13 @@
+## [0.0.316] - 2026-07-22
+
+### Fixed
+- Stories tab backlog and engaged chips share one chip style and baseline; engaged label is number-first ("N engaged") to match backlog (sty_c7ab5180)
+
+## [serve-v0.0.10] - 2026-07-22
+
+### Fixed
+- Same backlog/engaged chip alignment and number-first labels as CLI 0.0.316 (sty_c7ab5180)
+
 ## [0.0.315] - 2026-07-22
 
 ### Changed

@@ -254,7 +254,7 @@ header.app h1 .dot { color: var(--accent); }
 /* Stories tab + engagement chip share one flex cell so the chip sits next to
    Stories without nesting the story link inside the tab <a>. When Stories is
    active the accent bar lives on the cluster so it runs under label + chip. */
-.tab-cluster { display: inline-flex; align-items: center; gap: 0; margin-bottom: -1px;
+.tab-cluster { display: inline-flex; align-items: baseline; gap: 0; margin-bottom: -1px;
   margin-right: 8px; border-bottom: 2px solid transparent; }
 .tab-cluster:has(> .tab[aria-selected="true"]) { border-bottom-color: var(--accent); }
 .tab { appearance: none; background: none; border: 0; border-bottom: 2px solid transparent;
@@ -274,14 +274,18 @@ header.app h1 .dot { color: var(--accent); }
 .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
 .tab[aria-selected="true"] .tab-label { font-weight: 600; }
 .tab .n { color: var(--muted); font-size: 12px; margin-left: 5px; }
+/* Shared chip treatment for backlog + engaged (sty_c7ab5180): same size, padding,
+   line-height, border, and baseline. Engaged is a sibling of the Stories tab <a>
+   (sty_e4632f45 / sty_01ba9482); chip only renders when count > 0. */
 .tab .n-backlog,
-.n-stories .n-backlog { color: var(--accent); font-size: 11px; margin-left: 5px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 0; }
-/* Engagement chip: only rendered when count > 0 (sty_e4632f45). Sibling of the
-   Stories tab <a> so a count-1 story link is valid HTML. */
-.tabs .n-engaged { color: var(--muted); font-size: 11px; margin-left: -6px;
-  padding: 1px 6px; border: 1px solid var(--line); border-radius: 0; white-space: nowrap;
-  align-self: center; line-height: 1.4; }
-.tabs .n-engaged.has-engaged { color: var(--accent); }
+.n-stories .n-backlog,
+.tabs .n-engaged {
+  color: var(--accent); font-size: 11px; padding: 1px 6px;
+  border: 1px solid var(--line); border-radius: 0; line-height: 1.4; white-space: nowrap;
+}
+.tab .n-backlog,
+.n-stories .n-backlog { margin-left: 5px; }
+.tabs .n-engaged { margin-left: -6px; }
 .tabs .n-engaged .n-engaged-link { color: inherit; text-decoration: none; }
 .tabs .n-engaged .n-engaged-link:hover { text-decoration: underline; }
 .panel { display: none; }
