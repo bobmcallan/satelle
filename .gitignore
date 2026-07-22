@@ -1,6 +1,10 @@
-# Claude
-.claude/settings.json.*
-.claude/settings.local.*
+# Harness / agent local dirs — never commit (operator-owned)
+.claude/
+.grok/
+
+# satelle workspace (authored substrate + local config). Continuity is local
+# disk by default (or hosted sync); Git is not the recovery path.
+.satelle/
 
 # Built binaries — leading `/` is required so only the *named path* is ignored.
 # A bare `satelle-serve` would also match cmd/satelle-serve/ and hide the source.
@@ -11,15 +15,9 @@
 
 # Legacy pre-rebrand state. The old `satellites` CLI (V5) writes a workspace
 # state dir at ./.satellites/ in whatever cwd it runs in. satelle (V6) uses
-# .satelle/ exclusively; .satellites/ is dead and must never be tracked. Ignore
-# the whole dir so a stray legacy invocation can't be staged or committed.
+# .satelle/ exclusively; .satellites/ is dead and must never be tracked.
 # See docs/legacy-satellites-dir.md.
 /.satellites
-
-# satelle's own .satelle/ local state is governed by the managed block below
-# (added by `satelle init`): the local database is ignored, while the committed
-# satelle.toml and the authored markdown under .satelle/ stay tracked — satelle
-# dogfoods itself.
 
 # >>> satelle (managed) >>>
 # RECOMMENDED defaults — the operator owns .gitignore. satelle does not require
@@ -34,12 +32,3 @@
 # the repo-local pinned binary (satelle update --local) is local state, never committed
 .satelle/satelle
 # <<< satelle (managed) <<<
-
-# OKF bundle-root index / changelog — regenerated locally, local artifacts.
-# (The per-story implementation summaries moved WITH their story —
-# .satelle/stories/<id>/, already ignored via .satelle/stories/ — sty_97c53d72.
-# The retired sub-bundle dir may linger holding id-less legacy files; it stays
-# local evidence, never tracked.)
-.satelle/documents/story-implementation-summary/
-.satelle/documents/index.md
-.satelle/documents/log.md
