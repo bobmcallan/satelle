@@ -345,7 +345,7 @@ func (s *MirrorServer) fragmentRows(tmplName, topic string) http.HandlerFunc {
 	}
 }
 
-// fragmentEngagement returns the always-visible engagement badge HTML (sty_01ba9482).
+// fragmentEngagement returns the engagement badge HTML when count > 0, else empty (sty_e4632f45).
 func (s *MirrorServer) fragmentEngagement(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	repoKey, err := s.resolveSlug(r.Context(), slug)

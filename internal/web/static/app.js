@@ -501,20 +501,26 @@
     }
   }
 
-  // refreshEngagementBadge reloads the always-visible story-seat count from the
-  // server (sty_01ba9482). Engagement is not derivable from story rows alone —
-  // seats live in a separate mirror kind — so we fetch fragment/engagement and
-  // replace the .n-engaged chip (including when count is 0).
+  // refreshEngagementBadge reloads the story-seat count chip from the server
+  // (sty_01ba9482 / sty_e4632f45). Engagement is not derivable from story rows
+  // alone — seats live in a separate mirror kind. At count 0 the fragment is
+  // empty and the chip is absent; handle swap, insert (0→n), and remove (n→0).
   function refreshEngagementBadge() {
-    var cur = document.querySelector(".n-engaged");
-    if (!cur) return;
     fetch("fragment/engagement")
       .then(function (r) { return r.text(); })
       .then(function (html) {
         var tmp = document.createElement("div");
         tmp.innerHTML = html.trim();
-        var next = tmp.querySelector(".n-engaged") || tmp.firstElementChild;
-        if (next && cur.parentNode) cur.parentNode.replaceChild(next, cur);
+        var next = tmp.querySelector(".n-engaged");
+        var cur = document.querySelector(".tabs .n-engaged");
+        if (next && cur && cur.parentNode) {
+          cur.parentNode.replaceChild(next, cur);
+        } else if (next && !cur) {
+          var cl = document.querySelector(".tabs .tab-cluster");
+          if (cl) cl.appendChild(next);
+        } else if (!next && cur) {
+          cur.remove();
+        }
       })
       .catch(function () {});
   }
