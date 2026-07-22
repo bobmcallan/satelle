@@ -1,3 +1,8 @@
+## [0.0.314] - 2026-07-22
+
+### Added
+- Root AGENTS.md: drive engaged stories/epics to a terminal status; dogfood as you progress; prefer `satelle help` for process detail (sty_c0de8674)
+
 ## [0.0.313] - 2026-07-22
 
 ### Fixed
