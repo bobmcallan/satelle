@@ -198,8 +198,8 @@ func TestEnsureGrokHooksCreateReconcileIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"sh .satelle/hooks/satelle-hook.sh gate grok",
-		"sh .satelle/hooks/satelle-hook.sh commitgate grok",
+		renderHookCommand(repo, "grok", "gate"),
+		renderHookCommand(repo, "grok", "commitgate"),
 		"PATH=$HOME/.local/bin:$PATH satelle hook prompt",
 		"PATH=$HOME/.local/bin:$PATH satelle hook stopcheck",
 		"UserPromptSubmit",
@@ -485,8 +485,8 @@ func TestHookScaffoldFailVisible(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, body := range map[string]string{
-		"claude": string(buildClaudeHookSettings()),
-		"grok":   string(buildGrokHookSettings()),
+		"claude": string(buildClaudeHookSettings(repo)),
+		"grok":   string(buildGrokHookSettings(repo)),
 	} {
 		// AC1: harness command strings contain NO $ variable references.
 		if strings.Contains(body, "$") {
@@ -565,7 +565,7 @@ func TestFailVisibleWrapperShell(t *testing.T) {
 	}
 	// AC3: no binary → edit-gate emits infra deny JSON + exit 2.
 	for _, harness := range []string{"claude", "grok"} {
-		full := renderHookCommand(harness, "gate")
+		full := renderHookCommand(repo, harness, "gate")
 		if strings.Contains(full, "$") || strings.HasPrefix(full, "sh -c ") {
 			t.Fatalf("command must be $-free script form: %s", full)
 		}
@@ -594,7 +594,7 @@ func TestFailVisibleWrapperShell(t *testing.T) {
 
 	// AC4: commitgate with no binary — echo hello allows; git commit denies.
 	for _, harness := range []string{"claude", "grok"} {
-		full := renderHookCommand(harness, "commitgate")
+		full := renderHookCommand(repo, harness, "commitgate")
 		c := exec.Command("sh", "-c", full)
 		c.Dir = repo
 		c.Env = []string{"HOME=" + t.TempDir(), "PATH=/usr/bin:/bin"}
@@ -642,7 +642,7 @@ func TestFailVisibleWrapperShellBinaryPresent(t *testing.T) {
 	env := []string{"HOME=" + home, "PATH=/usr/bin:/bin"}
 
 	for _, harness := range []string{"claude", "grok"} {
-		full := renderHookCommand(harness, "gate")
+		full := renderHookCommand(repo, harness, "gate")
 		c := exec.Command("sh", "-c", full)
 		c.Dir = repo
 		c.Env = env
@@ -663,7 +663,7 @@ func TestFailVisibleWrapperShellBinaryPresent(t *testing.T) {
 	// commitgate: stub exit 2 + stdout → re-emit and deny (even for non-mutating).
 	// The wrapper only fail-opens on empty stdout + missing binary; stub has output.
 	for _, harness := range []string{"claude", "grok"} {
-		full := renderHookCommand(harness, "commitgate")
+		full := renderHookCommand(repo, harness, "commitgate")
 		c := exec.Command("sh", "-c", full)
 		c.Dir = repo
 		c.Env = env
@@ -683,7 +683,7 @@ func TestFailVisibleWrapperShellBinaryPresent(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, harness := range []string{"claude", "grok"} {
-		full := renderHookCommand(harness, "gate")
+		full := renderHookCommand(repo, harness, "gate")
 		c := exec.Command("sh", "-c", full)
 		c.Dir = repo
 		c.Env = env
@@ -791,7 +791,7 @@ func TestUpgradeFailVisibleHooks(t *testing.T) {
 		t.Fatalf("expected fail-visible upgrade notes, got %v", updated)
 	}
 	body, _ := os.ReadFile(path)
-	if !strings.Contains(string(body), "sh .satelle/hooks/satelle-hook.sh gate claude") {
+	if !strings.Contains(string(body), renderHookCommand(repo, "claude", "gate")) {
 		t.Fatalf("upgrade missing script-form command:\n%s", body)
 	}
 	if strings.Contains(string(body), "|| exit 2") {
@@ -862,7 +862,7 @@ func TestUpgradeInlineFailVisibleToScript(t *testing.T) {
 		t.Fatalf("PreToolUse still has $:\n%s", body)
 	}
 	for _, sub := range []string{"gate", "commitgate"} {
-		want := renderHookCommand("claude", sub)
+		want := renderHookCommand(repo, "claude", sub)
 		if !strings.Contains(string(body), want) {
 			t.Errorf("missing %q in:\n%s", want, body)
 		}
@@ -956,5 +956,130 @@ func TestReinforceWarnsOnUnparseableSettings(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "WARN") || !strings.Contains(out, "incomplete satelle hooks") {
 		t.Fatalf("want incomplete WARN, got:\n%s", out)
+	}
+}
+
+// TestRenderHookCommandAbsoluteCwdSafe: PreToolUse commands use an absolute
+// script path (no "$") so a drifted shell cwd cannot fail open the script.
+func TestRenderHookCommandAbsoluteCwdSafe(t *testing.T) {
+	repo := t.TempDir()
+	cmd := renderHookCommand(repo, "claude", "commitgate")
+	if strings.Contains(cmd, "$") {
+		t.Fatalf("PreToolUse command must be $-free: %q", cmd)
+	}
+	if !strings.HasPrefix(cmd, "sh /") && !strings.HasPrefix(cmd, "sh ") {
+		t.Fatalf("want sh <path> …, got %q", cmd)
+	}
+	// Absolute: after "sh " the next token must be absolute.
+	parts := strings.Fields(cmd)
+	if len(parts) < 4 {
+		t.Fatalf("want sh <script> <sub> <harness>, got %q", cmd)
+	}
+	if !filepath.IsAbs(parts[1]) {
+		t.Fatalf("script path must be absolute, got %q", parts[1])
+	}
+	if !strings.HasSuffix(parts[1], satelleHookScriptRel) && !strings.HasSuffix(parts[1], "satelle-hook.sh") {
+		t.Fatalf("script path must end with satelle-hook.sh, got %q", parts[1])
+	}
+	// Body must probe CLAUDE_PROJECT_DIR for binary resolution.
+	body := parameterizedHookScriptBody()
+	if !strings.Contains(body, "CLAUDE_PROJECT_DIR") || !strings.Contains(body, "SATELLE_PROJECT_DIR") {
+		t.Fatalf("wrapper body must probe project-dir env pins:\n%s", body)
+	}
+}
+
+// TestAbsoluteHookCommandFromSubdirCwd (AC5): the absolute script path from
+// renderHookCommand remains openable when the process cwd is a nested subdir.
+func TestAbsoluteHookCommandFromSubdirCwd(t *testing.T) {
+	repo := t.TempDir()
+	if err := writeHookScripts(repo); err != nil {
+		t.Fatal(err)
+	}
+	cmdLine := renderHookCommand(repo, "claude", "commitgate")
+	parts := strings.Fields(cmdLine)
+	if len(parts) < 4 || !filepath.IsAbs(parts[1]) {
+		t.Fatalf("need absolute script command, got %q", cmdLine)
+	}
+	sub := filepath.Join(repo, "nested", "deep")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Relative form fails from subdir (the live defect).
+	rel := exec.Command("sh", satelleHookScriptRel, "commitgate", "claude")
+	rel.Dir = sub
+	rel.Stdin = strings.NewReader(`{"tool_input":{"command":"echo ok"}}`)
+	if out, err := rel.CombinedOutput(); err == nil {
+		t.Fatalf("relative script from subdir should fail to open; out=%s", out)
+	}
+	// Absolute form succeeds (script openable; exit 0 for non-mutating fail-open path
+	// when satelle binary may be missing — either 0 or structured infra is fine as
+	// long as the script file itself was found, i.e. not "No such file").
+	abs := exec.Command(parts[0], parts[1:]...)
+	abs.Dir = sub
+	abs.Stdin = strings.NewReader(`{"tool_input":{"command":"echo ok"}}`)
+	out, err := abs.CombinedOutput()
+	if strings.Contains(string(out), "No such file") || (err != nil && strings.Contains(err.Error(), "no such file")) {
+		t.Fatalf("absolute script must be openable from subdir: err=%v out=%s", err, out)
+	}
+}
+
+// TestUpgradeRelativeScriptFormToAbsolute (AC2): relative
+// `sh .satelle/hooks/satelle-hook.sh …` is rewritten to the absolute form for repoRoot.
+func TestUpgradeRelativeScriptFormToAbsolute(t *testing.T) {
+	repo := t.TempDir()
+	if err := writeHookScripts(repo); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(repo, ".claude")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "settings.json")
+	// Seed the LEGACY relative form (the form that bricks after cwd drift).
+	legacy := `{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [{"type": "command", "command": "sh .satelle/hooks/satelle-hook.sh gate claude"}]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "sh .satelle/hooks/satelle-hook.sh commitgate claude"}]
+      }
+    ]
+  }
+}
+`
+	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	n, err := upgradeFailVisibleHooks(path, "claude", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n < 1 {
+		t.Fatalf("expected at least one relative→absolute rewrite, got n=%d", n)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantGate := renderHookCommand(repo, "claude", "gate")
+	wantCommit := renderHookCommand(repo, "claude", "commitgate")
+	s := string(body)
+	if !strings.Contains(s, wantGate) || !strings.Contains(s, wantCommit) {
+		t.Fatalf("relative form not upgraded to absolute:\nwant %q and %q\ngot:\n%s", wantGate, wantCommit, s)
+	}
+	if strings.Contains(s, `"sh .satelle/hooks/satelle-hook.sh`) {
+		t.Fatalf("legacy relative form still present:\n%s", s)
+	}
+	// Idempotent second pass.
+	n2, err := upgradeFailVisibleHooks(path, "claude", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n2 != 0 {
+		t.Fatalf("second pass must be idempotent, n=%d", n2)
 	}
 }

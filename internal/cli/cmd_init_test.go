@@ -623,8 +623,8 @@ func TestEnsureClaudeHooksIdempotent(t *testing.T) {
 		t.Fatalf("settings not written: %v", err)
 	}
 	for _, want := range []string{
-		"sh .satelle/hooks/satelle-hook.sh gate claude",
-		"sh .satelle/hooks/satelle-hook.sh commitgate claude",
+		renderHookCommand(repo, "claude", "gate"),
+		renderHookCommand(repo, "claude", "commitgate"),
 		"PATH=$HOME/.local/bin:$PATH satelle hook prompt",
 		"PATH=$HOME/.local/bin:$PATH satelle hook stopcheck",
 		"UserPromptSubmit",

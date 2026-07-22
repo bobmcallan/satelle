@@ -389,15 +389,30 @@ func hookScriptRel(harness, sub string) string {
 
 // renderHookCommand returns a $-free harness command that runs the parameterized
 // wrapper with static sub and harness tokens (sty_adfb9862).
-func renderHookCommand(harness, sub string) string {
-	return "sh " + satelleHookScriptRel + " " + sub + " " + harness
+//
+// When repoRoot is non-empty the script path is ABSOLUTE so a drifted shell cwd
+// (agent `cd` into a subdir) cannot brick PreToolUse with "No such file" on the
+// relative ".satelle/hooks/satelle-hook.sh". Absolute paths contain no "$", so
+// Grok still accepts them. Empty repoRoot yields the portable relative form
+// (tests / callers without a root).
+func renderHookCommand(repoRoot, harness, sub string) string {
+	script := satelleHookScriptRel
+	if strings.TrimSpace(repoRoot) != "" {
+		abs := filepath.Join(repoRoot, filepath.FromSlash(satelleHookScriptRel))
+		if a, err := filepath.Abs(abs); err == nil {
+			abs = a
+		}
+		script = filepath.ToSlash(abs)
+	}
+	return "sh " + script + " " + sub + " " + harness
 }
 
 // parameterizedHookScriptBody is the single script body for satelle-hook.sh.
 // Usage: sh .satelle/hooks/satelle-hook.sh <gate|commitgate> <claude|grok>
 //
 // The wrapper:
-//  1. Resolves satelle from $HOME/.local/bin/satelle → .satelle/satelle → PATH
+//  1. Resolves satelle from $HOME/.local/bin/satelle → $CLAUDE_PROJECT_DIR/.satelle/satelle
+//     (or SATELLE_PROJECT_DIR) → relative .satelle/satelle → PATH
 //  2. Runs `satelle hook <sub>`, captures stdout
 //  3. Re-emits satelle's deny JSON when present
 //  4. On infra failure: harness-correct static deny JSON (never bare exit-2)
@@ -414,7 +429,14 @@ case "$harness" in
   grok) infra='%s' ;;
   *)    infra='%s' ;;
 esac
-b=""; for c in "$HOME/.local/bin/satelle" ".satelle/satelle" satelle; do
+# Prefer harness project pin so binary probe works even if invocation cwd drifted.
+root=""
+for d in "$CLAUDE_PROJECT_DIR" "$SATELLE_PROJECT_DIR"; do
+  if [ -n "$d" ] && [ -d "$d" ]; then root="$d"; break; fi
+done
+b=""
+for c in "$HOME/.local/bin/satelle" ${root:+"$root/.satelle/satelle"} ".satelle/satelle" satelle; do
+  [ -z "$c" ] && continue
   if [ -x "$c" ]; then b="$c"; break; fi
   if command -v "$c" >/dev/null 2>&1; then b=$(command -v "$c"); break; fi
 done
@@ -478,17 +500,31 @@ func writeHookScripts(repoRoot string) error {
 	return nil
 }
 
-// isScriptFormHookCommand reports whether cmd is already the $-free script form
-// for this harness/sub (sty_adfb9862).
-func isScriptFormHookCommand(cmd, harness, sub string) bool {
-	want := renderHookCommand(harness, sub)
-	return strings.TrimSpace(cmd) == want
+// isScriptFormHookCommand reports whether cmd is already a $-free script form
+// for this harness/sub (sty_adfb9862). Accepts the absolute form for repoRoot
+// (canonical) and the legacy relative form (heal upgrades relative → absolute).
+func isScriptFormHookCommand(cmd, harness, sub, repoRoot string) bool {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" || strings.Contains(cmd, "$") {
+		return false
+	}
+	if cmd == renderHookCommand(repoRoot, harness, sub) {
+		return true
+	}
+	// Legacy relative form.
+	if cmd == renderHookCommand("", harness, sub) {
+		return true
+	}
+	// Any absolute path to the parameterized script with the right args.
+	wantSuffix := satelleHookScriptRel + " " + sub + " " + harness
+	return strings.HasPrefix(cmd, "sh ") && strings.HasSuffix(cmd, wantSuffix) && strings.Contains(cmd, satelleHookScriptRel)
 }
 
 // buildClaudeHookSettings returns the .claude/settings.json scaffold bytes.
 // PreToolUse gates use the fail-visible wrapper (sty_c75c73ed); SessionStart /
 // prompt / stopcheck stay simple (fail open by design).
-func buildClaudeHookSettings() []byte {
+// repoRoot makes PreToolUse script paths absolute (cwd-safe).
+func buildClaudeHookSettings(repoRoot string) []byte {
 	doc := map[string]any{
 		"hooks": map[string]any{
 			"SessionStart": []any{
@@ -500,11 +536,11 @@ func buildClaudeHookSettings() []byte {
 			"PreToolUse": []any{
 				map[string]any{
 					"matcher": "Edit|Write|MultiEdit|NotebookEdit",
-					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand("claude", "gate")}},
+					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand(repoRoot, "claude", "gate")}},
 				},
 				map[string]any{
 					"matcher": "Bash",
-					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand("claude", "commitgate")}},
+					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand(repoRoot, "claude", "commitgate")}},
 				},
 			},
 			"UserPromptSubmit": []any{
@@ -525,7 +561,8 @@ func buildClaudeHookSettings() []byte {
 
 // buildGrokHookSettings returns the .grok/hooks/satelle.json scaffold bytes.
 // Matchers cover Grok-native tool ids and Claude aliases Grok maps (sty_2fad11b0).
-func buildGrokHookSettings() []byte {
+// repoRoot makes PreToolUse script paths absolute (cwd-safe).
+func buildGrokHookSettings(repoRoot string) []byte {
 	doc := map[string]any{
 		"hooks": map[string]any{
 			"SessionStart": []any{
@@ -537,11 +574,11 @@ func buildGrokHookSettings() []byte {
 			"PreToolUse": []any{
 				map[string]any{
 					"matcher": "Edit|Write|MultiEdit|NotebookEdit|search_replace|write",
-					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand("grok", "gate")}},
+					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand(repoRoot, "grok", "gate")}},
 				},
 				map[string]any{
 					"matcher": "Bash|run_terminal_command",
-					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand("grok", "commitgate")}},
+					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand(repoRoot, "grok", "commitgate")}},
 				},
 			},
 			"UserPromptSubmit": []any{
@@ -820,7 +857,7 @@ var reinforcementSimpleHooks = []struct{ event, marker, command string }{
 // (sty_0699637c). harness is "claude" or "grok" so PreToolUse matchers/scripts
 // match the scaffold for that harness. Idempotent; unparseable files are left
 // untouched. Returns the events it added.
-func ensureReinforcementHooks(path, harness string) ([]string, error) {
+func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -864,8 +901,8 @@ func ensureReinforcementHooks(path, harness string) ([]string, error) {
 	if harness == "" {
 		harness = "claude"
 	}
-	gateCmd := renderHookCommand(harness, "gate")
-	commitCmd := renderHookCommand(harness, "commitgate")
+	gateCmd := renderHookCommand(repoRoot, harness, "gate")
+	commitCmd := renderHookCommand(repoRoot, harness, "commitgate")
 	gateMatcher := "Edit|Write|MultiEdit|NotebookEdit"
 	commitMatcher := "Bash"
 	if harness == "grok" {
@@ -1016,7 +1053,7 @@ func ensureClaudeHooks(repoRoot string) (created bool, updated []string, incompl
 	} else if !os.IsNotExist(err) {
 		return false, nil, nil, fmt.Errorf("init: stat %s: %w", path, err)
 	}
-	if err := os.WriteFile(path, buildClaudeHookSettings(), 0o644); err != nil {
+	if err := os.WriteFile(path, buildClaudeHookSettings(repoRoot), 0o644); err != nil {
 		return false, nil, nil, fmt.Errorf("init: write %s: %w", path, err)
 	}
 	return true, nil, nil, nil
@@ -1043,7 +1080,7 @@ func ensureGrokHooks(repoRoot string) (created bool, updated []string, incomplet
 	} else if !os.IsNotExist(err) {
 		return false, nil, nil, fmt.Errorf("init: stat %s: %w", path, err)
 	}
-	if err := os.WriteFile(path, buildGrokHookSettings(), 0o644); err != nil {
+	if err := os.WriteFile(path, buildGrokHookSettings(repoRoot), 0o644); err != nil {
 		return false, nil, nil, fmt.Errorf("init: write %s: %w", path, err)
 	}
 	return true, nil, nil, nil
@@ -1062,14 +1099,14 @@ func healExistingHookFile(path, harness, repoRoot string) (updated []string, inc
 		return nil, nil, fmt.Errorf("init: reconcile %s: %w", path, err)
 	}
 	updated = append(updated, renames...)
-	healed, err := ensureReinforcementHooks(path, harness)
+	healed, err := ensureReinforcementHooks(path, harness, repoRoot)
 	if err != nil {
 		return nil, nil, fmt.Errorf("init: reinforce %s: %w", path, err)
 	}
 	for _, e := range healed {
 		updated = append(updated, "added "+e+" hook")
 	}
-	n, err := upgradeFailVisibleHooks(path, harness)
+	n, err := upgradeFailVisibleHooks(path, harness, repoRoot)
 	if err != nil {
 		return nil, nil, fmt.Errorf("init: fail-visible upgrade %s: %w", path, err)
 	}
@@ -1081,12 +1118,14 @@ func healExistingHookFile(path, harness, repoRoot string) (updated []string, inc
 }
 
 // upgradeFailVisibleHooks rewrites legacy PreToolUse gate/commitgate commands
-// to the $-free script-file form (sty_adfb9862). Upgrades:
+// to the $-free absolute script-file form (sty_adfb9862 + cwd-safe absolute path).
+// Upgrades:
 //   - bare `… hook gate||commitgate || exit 2`
 //   - inline `sh -c '…#satelle-failvisible…$c…'` wrappers
+//   - relative `sh .satelle/hooks/satelle-hook.sh …` → absolute under repoRoot
 //
-// Idempotent when already `sh .satelle/hooks/pretooluse-<sub>-<harness>.sh`.
-func upgradeFailVisibleHooks(path, harness string) (int, error) {
+// Idempotent when already the absolute form for this repoRoot.
+func upgradeFailVisibleHooks(path, harness, repoRoot string) (int, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
@@ -1123,10 +1162,11 @@ func upgradeFailVisibleHooks(path, harness string) (int, error) {
 			if sub == "" {
 				continue
 			}
-			if isScriptFormHookCommand(cmd, harness, sub) {
+			want := renderHookCommand(repoRoot, harness, sub)
+			if strings.TrimSpace(cmd) == want {
 				continue
 			}
-			hm["command"] = renderHookCommand(harness, sub)
+			hm["command"] = want
 			hs[i] = hm
 			n++
 		}
