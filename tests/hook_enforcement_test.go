@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -174,6 +175,64 @@ func TestHookCommitgateContainment(t *testing.T) {
 	c.Stdin = strings.NewReader(ev)
 	if err := c.Run(); err != nil {
 		t.Errorf("allow_outside_tree_edits=true must permit foreign rm: %v", err)
+	}
+}
+
+// TestHookCommitgateFdDuplication (sty_74c0556f): n>&m after a foreign cd must not
+// be misread as a file redirect to cwd/&; real file redirects stay denied.
+func TestHookCommitgateFdDuplication(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	other := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(other, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := append(isolatedEnv(t), "CLAUDE_PROJECT_DIR="+repo)
+
+	// Allowed: cross-repo story verbs with fd-duplication (the live regression).
+	allow := []string{
+		"cd " + other + " && satelle story list 2>&1",
+		"cd " + other + " && satelle story create --title x 2>&1",
+		"cd " + other + " && satelle story list >&2",
+		"cd " + other + " && satelle story list 1>&2",
+		"cd " + other + " && satelle story list 2>&1 | head",
+	}
+	for _, cmd := range allow {
+		c := exec.Command(testBin, "hook", "commitgate")
+		c.Dir = repo
+		c.Env = env
+		c.Stdin = strings.NewReader(`{"tool_input":{"command":` + strconv.Quote(cmd) + `}}`)
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Errorf("want allow for %q; err=%v out=%s", cmd, err, out)
+		}
+		if strings.Contains(string(out), filepath.Join(other, "&")) || strings.Contains(string(out), "refusing Bash mutation") {
+			t.Errorf("fd-dup must not produce fence deny for %q; out=%s", cmd, out)
+		}
+	}
+
+	// Denied: real file redirects into the foreign tree (policy unchanged).
+	deny := []string{
+		"cd " + other + " && echo x > f.txt",
+		"cd " + other + " && echo x 2> err.log",
+		"cd " + other + " && echo x &> out.log",
+		"cd " + other + " && echo x >& out.log",
+	}
+	for _, cmd := range deny {
+		c := exec.Command(testBin, "hook", "commitgate")
+		c.Dir = repo
+		c.Env = env
+		c.Stdin = strings.NewReader(`{"tool_input":{"command":` + strconv.Quote(cmd) + `}}`)
+		out, err := c.CombinedOutput()
+		if err == nil {
+			t.Errorf("want deny for file redirect %q; out=%s", cmd, out)
+		}
+		if strings.Contains(string(out), filepath.Join(other, "&")) {
+			t.Errorf("deny for %q must not name bogus path …/&; out=%s", cmd, out)
+		}
 	}
 }
 

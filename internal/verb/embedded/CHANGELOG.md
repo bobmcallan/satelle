@@ -1,3 +1,8 @@
+## [0.0.311] - 2026-07-22
+
+### Fixed
+- Bash fence no longer treats fd-duplication redirects (`2>&1`, `>&2`, `n>&-`) as file targets, so allowed cross-repo `satelle story|task` commands with stderr merge are not falsely denied (sty_74c0556f)
+
 ## [0.0.310] - 2026-07-22
 
 ### Changed
