@@ -205,7 +205,14 @@ const templatesSrc = `
   </header>
 
   <div class="tabs" role="tablist">
-    <a class="tab" role="tab" data-panel="stories" href="#stories">Stories <span class="n">{{len .Stories}}</span>{{if .BacklogCount}} <span class="n-backlog" title="stories in the open backlog">{{.BacklogCount}} backlog</span>{{end}} {{template "engagementBadge" .}}</a>
+    {{/* Engagement badge is a SIBLING of the Stories tab <a>, not a child: when
+         count is 1 the badge contains its own <a href="story/…"> and nested
+         anchors are invalid HTML — browsers rewrite the DOM and the chip
+         floats misaligned between Stories and Tasks (sty_01ba9482). */}}
+    <span class="tab-cluster">
+      <a class="tab" role="tab" data-panel="stories" href="#stories">Stories <span class="n">{{len .Stories}}</span>{{if .BacklogCount}} <span class="n-backlog" title="stories in the open backlog">{{.BacklogCount}} backlog</span>{{end}}</a>
+      {{template "engagementBadge" .}}
+    </span>
     <a class="tab" role="tab" data-panel="tasks" href="#tasks">Tasks <span class="n">{{len .Tasks}}</span></a>
     <a class="tab" role="tab" data-panel="workflow" href="#workflow">Workflow <span class="n">{{len .Workflows}}</span></a>
     <a class="tab" role="tab" data-panel="docs" href="#docs">Documents <span class="n">{{.DocCount}}</span></a>

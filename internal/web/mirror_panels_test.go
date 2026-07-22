@@ -215,9 +215,23 @@ func TestEngagementCountAndChrome(t *testing.T) {
 	for _, want := range []string{
 		`data-engagement-count="1"`, `has-engaged`, `href="story/sty_e1"`,
 		`engaged 1`, `title="engaged: sty_e1"`,
+		// Badge is a sibling of the Stories tab <a> (tab-cluster), not nested
+		// inside it — nested anchors misalign the chip in the browser.
+		`class="tab-cluster"`,
 	} {
 		if !strings.Contains(onePage, want) {
 			t.Errorf("engaged page missing %q", want)
+		}
+	}
+	// Stories tab link must not contain the story link (invalid nested <a>).
+	if i := strings.Index(onePage, `data-panel="stories"`); i >= 0 {
+		// Slice from the Stories tab open tag through its closing </a>.
+		rest := onePage[i:]
+		if end := strings.Index(rest, "</a>"); end >= 0 {
+			storiesTab := rest[:end]
+			if strings.Contains(storiesTab, "n-engaged-link") || strings.Contains(storiesTab, `href="story/`) {
+				t.Errorf("Stories tab <a> must not nest the engaged story link; got: %s", storiesTab)
+			}
 		}
 	}
 	oneFrag := httpGetBody(t, srv.URL+"/r/eng/fragment/engagement")
