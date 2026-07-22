@@ -1,3 +1,13 @@
+## [0.0.313] - 2026-07-22
+
+### Fixed
+- Project Stories tab "engaged 1" chip no longer nests a story link inside the tab anchor (invalid HTML that floated the chip between Stories and Tasks); badge is a tab-cluster sibling with CSS under `.tabs .n-engaged` (sty_dd9396d4)
+
+## [serve-v0.0.8] - 2026-07-22
+
+### Fixed
+- Same engaged-chip nested-anchor layout fix as CLI 0.0.313 (sty_dd9396d4)
+
 ## [0.0.312] - 2026-07-22
 
 ### Fixed
