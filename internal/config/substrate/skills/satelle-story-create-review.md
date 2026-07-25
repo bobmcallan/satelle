@@ -85,7 +85,7 @@ cheap to catch here — reject it.
 - **Reject** when content fails alignment/coherence/scope, premise is falsified
  with cited evidence, OR classification is wrong (epic as feature, invented
  `kind:*`) — name the specific problem and the fix (e.g. "use category
- epic-parent"; "premise false: see engine.go runReviewer payload").
+ epic-parent"; "premise false: contradicted by <path>:<symbol>").
 
 ## Verdict
 
