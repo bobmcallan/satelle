@@ -172,8 +172,12 @@ func openAppForCmd(cmd *cobra.Command) error {
 			verb.SetStepSummariser(rev)
 			// Create-gating is opt-in per repo (satelle.toml [review] gate_create):
 			// the rubric ships embedded, but enforcing it is the operator's choice.
+			// Always set (or clear) so a prior command that left the package-global
+			// wired cannot leak into an ungated repo in the same process.
 			if a.Config.Review.GateCreate {
 				verb.SetCreateReviewer(rev)
+			} else {
+				verb.SetCreateReviewer(nil)
 			}
 		}
 	}

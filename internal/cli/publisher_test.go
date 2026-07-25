@@ -42,7 +42,7 @@ func TestChangePublisherCLI(t *testing.T) {
 	// --- active publisher: both paths arrive before runRoot returns ---
 	repo := tempRepo(t)
 	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n\n[server]\nendpoint = \""+srv.URL+"\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n\n[review]\ngate_create = false\n\n[server]\nendpoint = \""+srv.URL+"\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("SATELLE_CONFIG", cfgPath)
@@ -187,7 +187,7 @@ func TestUIDrainDeliversBeforeExit(t *testing.T) {
 
 	repo := tempRepo(t)
 	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n\n[server]\nendpoint = \""+srv.URL+"\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n\n[review]\ngate_create = false\n\n[server]\nendpoint = \""+srv.URL+"\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("SATELLE_CONFIG", cfgPath)
@@ -241,7 +241,7 @@ func TestUIDrainConvergesMirror(t *testing.T) {
 
 	repo := tempRepo(t)
 	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n\n[server]\nendpoint = \""+srv.URL+"\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n\n[review]\ngate_create = false\n\n[server]\nendpoint = \""+srv.URL+"\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("SATELLE_CONFIG", cfgPath)

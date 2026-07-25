@@ -41,10 +41,24 @@ type scaffoldConfigDefault struct {
 }
 
 // scaffoldConfigDefaults is the curated list of scaffold-seeded keys that a
-// pre-existing toml may lack after a binary upgrade. Keep this list the
-// unambiguous OOTB intents (currently [gate] edit_exempt_paths).
-// ".satelle/" keeps authored substrate editable; ".gitignore" is satelle-managed
-// output (init/migrate write its managed block).
+// pre-existing toml may lack after a binary upgrade. Only keys seeded ACTIVE in
+// scaffoldToml belong here — commented-by-design keys (tags.vocabulary, web_port,
+// log_level, retention, substrate_roots, [sync], [hosted], [vars]) stay free of
+// this table: their absence means the binary default applies, as intended.
+//
+// Audit of every scaffold seed (why only two entries):
+//
+//	[gate] edit_exempt_paths  — seeded active; absence is LOUD (every edit denied)
+//	[review] gate_create      — seeded active; absence is SILENT (stories file
+//	                            unreviewed) — the reach gap this table + create
+//	                            notice close
+//	[tags.vocabulary]         — commented by design; free-form tags are the default
+//	all other keys            — commented; binary default applies
+//
+// Enabling a missing gate is never auto-migrated: appending a managed value to a
+// list the operator already opted into is convergence, but flipping a gate from
+// off to on changes behaviour mid-session and starts costing agent runs — that
+// stays an explicit operator action (create-path notice + this advisory only).
 var scaffoldConfigDefaults = []scaffoldConfigDefault{
 	{
 		Section: "gate",
@@ -52,6 +66,16 @@ var scaffoldConfigDefaults = []scaffoldConfigDefault{
 		Block: `[gate]
 edit_exempt_paths = [".satelle/", ".gitignore"]`,
 		Why: "OOTB scaffold exempts .satelle/ (authored substrate) and .gitignore (satelle-managed init/migrate output) from the engaged-story edit gate",
+	},
+	{
+		// Seeded active when create-gating shipped. Do NOT auto-enable via migrate:
+		// flipping gate_create under an operator is a behaviour change mid-session
+		// (starts costing agent runs). Report + one-line fix only; enable is explicit.
+		Section: "review",
+		Key:     "gate_create",
+		Block: `[review]
+gate_create = true`,
+		Why: "OOTB scaffold enables the create gate so misclassification is caught at create (structure + workflow create_review skill)",
 	},
 }
 
@@ -91,30 +115,39 @@ func analyzeSubstrate(dataDir, repoRoot string) []substrateDefect {
 
 	// Config (advisory): missing scaffold-seeded defaults, or a present
 	// edit_exempt_paths that lacks the managed .gitignore entry. Init reports;
-	// migrate converges the value. An empty list is deliberate opt-out and is
-	// not flagged.
+	// migrate converges the list value only. An empty list is deliberate opt-out
+	// and is not flagged. Presence uses configKeyDefined (committed + local
+	// overlay) so semantics match the create-path notice.
 	tomlPath := filepath.Join(dataDir, config.ConfigName)
+	var content string
 	if raw, err := os.ReadFile(tomlPath); err == nil {
-		content := string(raw)
-		for _, d := range scaffoldConfigDefaults {
-			if !config.HasKey(content, d.Section, d.Key) {
+		content = string(raw)
+	}
+	for _, d := range scaffoldConfigDefaults {
+		if !configKeyDefined(dataDir, d.Section, d.Key) {
+			// Only report when a satelle.toml exists (or the local overlay does):
+			// a completely uninitialised tree has no config surface to fix.
+			if content == "" {
+				if _, err := os.Stat(filepath.Join(dataDir, config.LocalConfigName)); err != nil {
+					continue
+				}
+			}
+			out = append(out, substrateDefect{
+				File:   config.DefaultDataDir + "/" + config.ConfigName,
+				Defect: fmt.Sprintf("missing scaffold-seeded [%s] %s — %s", d.Section, d.Key, d.Why),
+				Fix:    "add this block to " + config.DefaultDataDir + "/" + config.ConfigName + ":\n" + d.Block,
+				Fatal:  false,
+			})
+			continue
+		}
+		if d.Section == "gate" && d.Key == "edit_exempt_paths" && content != "" {
+			if editExemptNeedsGitignore(content) {
 				out = append(out, substrateDefect{
 					File:   config.DefaultDataDir + "/" + config.ConfigName,
-					Defect: fmt.Sprintf("missing scaffold-seeded [%s] %s — %s", d.Section, d.Key, d.Why),
-					Fix:    "add this block to " + config.DefaultDataDir + "/" + config.ConfigName + ":\n" + d.Block,
+					Defect: "edit_exempt_paths lacks \".gitignore\" — satelle-managed init/migrate output trips the engaged-story gate without it",
+					Fix:    "run `satelle migrate --yes` to append \".gitignore\" without clobbering operator additions (or add it by hand)",
 					Fatal:  false,
 				})
-				continue
-			}
-			if d.Section == "gate" && d.Key == "edit_exempt_paths" {
-				if editExemptNeedsGitignore(content) {
-					out = append(out, substrateDefect{
-						File:   config.DefaultDataDir + "/" + config.ConfigName,
-						Defect: "edit_exempt_paths lacks \".gitignore\" — satelle-managed init/migrate output trips the engaged-story gate without it",
-						Fix:    "run `satelle migrate --yes` to append \".gitignore\" without clobbering operator additions (or add it by hand)",
-						Fatal:  false,
-					})
-				}
 			}
 		}
 	}

@@ -23,9 +23,12 @@ func TestAnalyzeSubstrateUneditedConstitution(t *testing.T) {
 	}
 	// Empty principles dir so placement is quiet.
 	_ = os.MkdirAll(filepath.Join(dataDir, "principles"), 0o755)
-	// Minimal toml with full seeded edit_exempt so config check is quiet.
+	// Minimal toml with full seeded edit_exempt + gate_create so config check is quiet.
 	toml := `[gate]
 edit_exempt_paths = [".satelle/", ".gitignore"]
+
+[review]
+gate_create = true
 `
 	if err := os.WriteFile(filepath.Join(dataDir, config.ConfigName), []byte(toml), 0o644); err != nil {
 		t.Fatal(err)
@@ -59,17 +62,17 @@ func TestAnalyzeSubstrateConfigMissing(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dataDir, "constitution.md"), []byte("# Real constitution\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// gate table present but no edit_exempt_paths.
+	// gate table present but no edit_exempt_paths; review also absent.
 	toml := `[gate]
 `
 	if err := os.WriteFile(filepath.Join(dataDir, config.ConfigName), []byte(toml), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	defs := analyzeSubstrate(dataDir, filepath.Dir(dataDir))
-	var saw bool
+	var sawExempt, sawGate bool
 	for _, d := range defs {
 		if strings.Contains(d.Defect, "edit_exempt_paths") {
-			saw = true
+			sawExempt = true
 			if d.Fatal {
 				t.Error("config drift must be advisory")
 			}
@@ -77,9 +80,83 @@ func TestAnalyzeSubstrateConfigMissing(t *testing.T) {
 				t.Errorf("fix must include exact block, got %q", d.Fix)
 			}
 		}
+		if strings.Contains(d.Defect, "gate_create") {
+			sawGate = true
+			if d.Fatal {
+				t.Error("gate_create drift must be advisory")
+			}
+			if !strings.Contains(d.Fix, "gate_create = true") {
+				t.Errorf("fix must include gate_create block, got %q", d.Fix)
+			}
+		}
+	}
+	if !sawExempt {
+		t.Fatalf("want config missing edit_exempt_paths, got %+v", defs)
+	}
+	if !sawGate {
+		t.Fatalf("want config missing gate_create, got %+v", defs)
+	}
+}
+
+// TestAnalyzeSubstrateGateCreateMissing: a toml with edit_exempt present but
+// no [review] gate_create yields an advisory whose Fix carries the table Block.
+func TestAnalyzeSubstrateGateCreateMissing(t *testing.T) {
+	dataDir := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(dataDir, "principles"), 0o755)
+	if err := os.WriteFile(filepath.Join(dataDir, "constitution.md"), []byte("# Real constitution\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	toml := `[gate]
+edit_exempt_paths = [".satelle/", ".gitignore"]
+`
+	if err := os.WriteFile(filepath.Join(dataDir, config.ConfigName), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defs := analyzeSubstrate(dataDir, filepath.Dir(dataDir))
+	var saw bool
+	for _, d := range defs {
+		if strings.Contains(d.Defect, "gate_create") {
+			saw = true
+			if d.Fatal {
+				t.Error("gate_create missing must be advisory")
+			}
+			entry, ok := scaffoldDefault("review", "gate_create")
+			if !ok {
+				t.Fatal("table missing gate_create entry")
+			}
+			if !strings.Contains(d.Fix, entry.Block) {
+				t.Errorf("Fix must carry table Block %q, got %q", entry.Block, d.Fix)
+			}
+		}
 	}
 	if !saw {
-		t.Fatalf("want config missing edit_exempt_paths, got %+v", defs)
+		t.Fatalf("want gate_create advisory, got %+v", defs)
+	}
+}
+
+// TestAnalyzeSubstrateGateCreateOverlayParity: an overlay-only definition of
+// gate_create is "defined" for analyzeSubstrate — same semantics as create.
+func TestAnalyzeSubstrateGateCreateOverlayParity(t *testing.T) {
+	dataDir := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(dataDir, "principles"), 0o755)
+	if err := os.WriteFile(filepath.Join(dataDir, "constitution.md"), []byte("# Real\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Committed file lacks the key; overlay defines it.
+	if err := os.WriteFile(filepath.Join(dataDir, config.ConfigName), []byte("[gate]\nedit_exempt_paths = [\".satelle/\", \".gitignore\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, config.LocalConfigName), []byte("[review]\ngate_create = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defs := analyzeSubstrate(dataDir, filepath.Dir(dataDir))
+	for _, d := range defs {
+		if strings.Contains(d.Defect, "gate_create") {
+			t.Fatalf("overlay-defined gate_create must not warn, got %+v", defs)
+		}
+	}
+	if !configKeyDefined(dataDir, "review", "gate_create") {
+		t.Fatal("configKeyDefined must agree with analyzeSubstrate silence")
 	}
 }
 

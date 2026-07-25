@@ -60,6 +60,14 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 			if group == "story" {
 				refreshStoryBacklog(cmd)
 			}
+			// Surface the pre-seed ungated state (sty_d4d0ee59): when gate_create
+			// is neither on nor explicitly opted out, tell the operator on the
+			// create path itself. Never fail a successful create over the advisory.
+			if a, aerr := appFrom(cmd); aerr == nil {
+				if notice := createGateNotice(a.Config.Review.GateCreate, a.DataDir); notice != "" {
+					fmt.Fprint(cmd.ErrOrStderr(), notice)
+				}
+			}
 			return nil
 		},
 	}

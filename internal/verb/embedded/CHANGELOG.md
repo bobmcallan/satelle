@@ -1,3 +1,9 @@
+## [0.0.327] - 2026-07-25
+
+### Added
+- Create-path notice when `[review] gate_create` is undefined (pre-seed scaffold): stories/tasks file without create review and the one-line enable fix is named; explicit `gate_create = false` silences; never auto-rewrites config (sty_d4d0ee59)
+- `[review] gate_create` joins `scaffoldConfigDefaults` so init/validate advisories cover the same seed as the create notice (sty_d4d0ee59)
+
 ## [0.0.326] - 2026-07-25
 
 ### Fixed
