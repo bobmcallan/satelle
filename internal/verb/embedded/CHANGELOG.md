@@ -1,3 +1,11 @@
+## [0.0.322] - 2026-07-25
+
+### Added
+- Controlled `cancel-reason` tag namespace (repo config via `[tags.vocabulary]`) so cancelled stories are queryable by why they closed — shelved, duplicate, superseded, withdrawn, wrong (sty_de8e8e2c)
+
+### Changed
+- Cancel gate is category-aware: parent/epic-parent cancels accept only when every child is done or cancelled (mirrors done-review); conditional `cancel-reason` tag expectation when the repo declares the namespace; cancelled is terminal and revival is a new story tagged `supersedes:<id>` (sty_de8e8e2c)
+
 ## [0.0.321] - 2026-07-25
 
 ### Fixed
