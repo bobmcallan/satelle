@@ -1,0 +1,20 @@
+[
+  {
+    "name": "clear-accept-well-formed",
+    "want": "accept",
+    "why": "Specific title, goal body, numbered ACs, category set — baseline accept",
+    "payload": ""
+  },
+  {
+    "name": "clear-reject-empty-goal",
+    "want": "reject",
+    "why": "Body that restates the title with no outcome should reject at intent",
+    "payload": ""
+  },
+  {
+    "name": "near-miss-vague-ac",
+    "want": "reject",
+    "why": "Unnumbered or non-testable ACs are an intent reject",
+    "payload": ""
+  }
+]

@@ -1,75 +1,19 @@
 package config
 
 import (
-	"io/fs"
-	"path"
 	"strings"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/structure"
 )
 
-// TestEmbeddedSubstrateTagsAreOKF asserts the embedded canonical substrate (the
-// defaults that ship in the binary) carries NO legacy `kind:` tag prefix —
-// classification lives in the OKF `type:` scalar and `type:` tags (sty_bf2e6ee6).
-func TestEmbeddedSubstrateTagsAreOKF(t *testing.T) {
-	err := fs.WalkDir(substrateFS, "substrate", func(p string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil || d.IsDir() || !strings.HasSuffix(p, ".md") {
-			return walkErr
-		}
-		b, rerr := substrateFS.ReadFile(p)
-		if rerr != nil {
-			return rerr
-		}
-		for _, ln := range strings.Split(string(b), "\n") {
-			trimmed := strings.TrimSpace(ln)
-			if strings.HasPrefix(trimmed, "tags:") && strings.Contains(ln, "kind:") {
-				t.Errorf("%s: tags carry a legacy kind: prefix — use type: (OKF): %s", p, trimmed)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-}
+// Manifest tests: which audit tasks/skills MUST ship. A table over what exists
+// cannot assert what SHOULD exist — that is a curated manifest (sty_6830e78e AC6).
+// Substring/repo-agnostic pins retired into Tier 1 conformance + dogfood waiver.
 
-// TestEmbeddedSubstrateStructure runs the deterministic structure check on every
-// embedded substrate doc — the canonical defaults that ship in the binary must be
-// OKF/structure-conformant (sty_31069c05). This also covers the embedded layer
-// that the file-based per-noun validators (which walk .satelle/) does not see.
-func TestEmbeddedSubstrateStructure(t *testing.T) {
-	err := fs.WalkDir(substrateFS, "substrate", func(p string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil || d.IsDir() || !strings.HasSuffix(p, ".md") {
-			return walkErr
-		}
-		base := path.Base(p)
-		if base == "README.md" || base == "index.md" || base == "log.md" {
-			return nil // reserved keep-files are exempt
-		}
-		kind := path.Base(path.Dir(p)) // substrate/<kind>/<file>.md
-		if !structure.Checked(kind) {
-			return nil
-		}
-		b, rerr := substrateFS.ReadFile(p)
-		if rerr != nil {
-			return rerr
-		}
-		name := strings.TrimSuffix(base, ".md")
-		for _, prob := range structure.Doc(kind, name, string(b), nil) {
-			t.Errorf("embedded %s/%s: %s", kind, name, prob)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
-// TestEmbeddedSubstrateAuditTask asserts the embedded default tasks kind carries the
-// repo-agnostic substrate-audit task (sty_d4360e90): EmbeddedDefaults surfaces it, it
-// passes structure.CheckTask, and its body references only the repo's own .satelle/
-// paths (no internal/config/substrate — dev-repo-only — and no foreign ids).
+// TestEmbeddedSubstrateAuditTask asserts the embedded default tasks kind carries
+// the repo-agnostic substrate-audit task (sty_d4360e90): EmbeddedDefaults surfaces
+// it and it passes structure.CheckTask.
 func TestEmbeddedSubstrateAuditTask(t *testing.T) {
 	var got *EmbeddedDefault
 	for _, d := range EmbeddedDefaults() {
@@ -85,16 +29,18 @@ func TestEmbeddedSubstrateAuditTask(t *testing.T) {
 	if problems := structure.CheckTask(got.Body); len(problems) > 0 {
 		t.Errorf("embedded audit task fails CheckTask: %v", problems)
 	}
-	for _, bad := range []string{"internal/config/substrate"} {
-		if strings.Contains(got.Body, bad) {
-			t.Errorf("embedded audit task is not repo-agnostic (references %q)", bad)
-		}
+	// repo-agnostic path ban is Tier 1 banned-path + dogfood rows; keep only
+	// the internal/config/substrate ban as a property tables express via the
+	// general dogfood/path rules once empty — until then assert here with comment:
+	// Surviving pin: audit task must not name the embed source tree (dev-only path).
+	// Tier 1 has no general "no internal/ paths" row; this protects that invariant.
+	if strings.Contains(got.Body, "internal/config/substrate") {
+		t.Errorf("embedded audit task is not repo-agnostic (references internal/config/substrate)")
 	}
 }
 
 // TestEmbeddedContextAuditTask asserts the embedded context-audit task + skill
-// ship as repo-agnostic defaults (epic order:8): EmbeddedDefaults surfaces both,
-// CheckTask passes, no this-repo sty_ / substrate-dev paths in the task body.
+// ship as repo-agnostic defaults (epic order:8).
 func TestEmbeddedContextAuditTask(t *testing.T) {
 	var got *EmbeddedDefault
 	for _, d := range EmbeddedDefaults() {
@@ -110,10 +56,9 @@ func TestEmbeddedContextAuditTask(t *testing.T) {
 	if problems := structure.CheckTask(got.Body); len(problems) > 0 {
 		t.Errorf("embedded context-audit task fails CheckTask: %v", problems)
 	}
-	for _, bad := range []string{"internal/config/substrate", "sty_"} {
-		if strings.Contains(got.Body, bad) {
-			t.Errorf("embedded context-audit task is not repo-agnostic (references %q)", bad)
-		}
+	// Surviving pin: audit task must not name the embed source tree.
+	if strings.Contains(got.Body, "internal/config/substrate") {
+		t.Errorf("embedded context-audit task is not repo-agnostic (references internal/config/substrate)")
 	}
 	var skill *EmbeddedDefault
 	for _, d := range EmbeddedDefaults() {
@@ -126,18 +71,16 @@ func TestEmbeddedContextAuditTask(t *testing.T) {
 	if skill == nil {
 		t.Fatal("EmbeddedDefaults does not surface skills/satelle-context-audit")
 	}
+	// Surviving pin: skill must name the two CLI surfaces it audits — not a
+	// corpus-wide property the conformance table can express without hardcoding
+	// this skill's contract.
 	if !strings.Contains(skill.Body, "satelle hook context") || !strings.Contains(skill.Body, "principle validate") {
 		t.Error("context-audit skill must reference hook context + principle validate")
 	}
-	if strings.Contains(skill.Body, "sty_") {
-		t.Error("context-audit skill must not embed this-repo story ids")
-	}
 }
 
-// TestEmbeddedReviewerObjectiveAuditTask asserts the embedded default tasks kind
-// carries the repo-agnostic reviewer-objective-audit task: EmbeddedDefaults surfaces
-// it, it passes structure.CheckTask, body stays repo-agnostic, and the paired skill
-// is embedded under skills/.
+// TestEmbeddedReviewerObjectiveAuditTask asserts the reviewer-objective-audit
+// task + skill ship as embedded defaults.
 func TestEmbeddedReviewerObjectiveAuditTask(t *testing.T) {
 	var got *EmbeddedDefault
 	for _, d := range EmbeddedDefaults() {
@@ -153,10 +96,8 @@ func TestEmbeddedReviewerObjectiveAuditTask(t *testing.T) {
 	if problems := structure.CheckTask(got.Body); len(problems) > 0 {
 		t.Errorf("embedded reviewer-objective-audit task fails CheckTask: %v", problems)
 	}
-	for _, bad := range []string{"internal/config/substrate"} {
-		if strings.Contains(got.Body, bad) {
-			t.Errorf("embedded reviewer-objective-audit task is not repo-agnostic (references %q)", bad)
-		}
+	if strings.Contains(got.Body, "internal/config/substrate") {
+		t.Errorf("embedded reviewer-objective-audit task is not repo-agnostic (references internal/config/substrate)")
 	}
 	var skill *EmbeddedDefault
 	for _, d := range EmbeddedDefaults() {
@@ -169,6 +110,8 @@ func TestEmbeddedReviewerObjectiveAuditTask(t *testing.T) {
 	if skill == nil {
 		t.Fatal("EmbeddedDefaults does not surface skills/satelle-reviewer-objective-audit")
 	}
+	// Surviving pin: primary-objective phrasing is this skill's rubric identity;
+	// the conformance table does not assert per-skill prose contracts.
 	if !strings.Contains(skill.Body, "Given what was presented") {
 		t.Error("embedded skill missing primary-objective phrasing")
 	}

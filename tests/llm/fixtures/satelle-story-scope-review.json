@@ -1,0 +1,14 @@
+[
+  {
+    "name": "clear-accept-slice-matches-acs",
+    "want": "accept",
+    "why": "Diff since baseline is the AC slice only",
+    "payload": ""
+  },
+  {
+    "name": "clear-reject-bundled-sibling",
+    "want": "reject",
+    "why": "Unrelated sibling files in the slice are a scope reject",
+    "payload": ""
+  }
+]

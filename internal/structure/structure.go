@@ -380,12 +380,7 @@ func hasProse(body string) bool {
 
 // hasCheckBlock reports whether the body carries a fenced ```check script block.
 func hasCheckBlock(body string) bool {
-	for _, ln := range strings.Split(body, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(ln), "```check") {
-			return true
-		}
-	}
-	return false
+	return CheckFence(body) != ""
 }
 
 // ReviewerSkillContract checks that a reviewer skill body specifies the gate

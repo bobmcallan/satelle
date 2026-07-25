@@ -1833,30 +1833,10 @@ func skillCheck(body string) string {
 	return frontmatterScalar(body, "check")
 }
 
-// bodyCheckBlock extracts the contents of the first fenced code block whose info
-// string is `check` (``` ```check ``` or ``` ```check sh ```) — the self-contained
-// functional check embedded in a skill's body. Returns "" when none.
+// bodyCheckBlock extracts the first ```check fence via structure.CheckFence
+// (single extractor — sty_6830e78e).
 func bodyCheckBlock(body string) string {
-	lines := strings.Split(body, "\n")
-	in := false
-	var out []string
-	for _, ln := range lines {
-		t := strings.TrimSpace(ln)
-		if !in {
-			if strings.HasPrefix(t, "```") {
-				info := strings.TrimSpace(strings.TrimPrefix(t, "```"))
-				if info == "check" || strings.HasPrefix(info, "check ") {
-					in = true
-				}
-			}
-			continue
-		}
-		if strings.HasPrefix(t, "```") {
-			break // closing fence
-		}
-		out = append(out, ln)
-	}
-	return strings.TrimSpace(strings.Join(out, "\n"))
+	return structure.CheckFence(body)
 }
 
 // frontmatterScalar returns a single-line scalar value for key from a markdown

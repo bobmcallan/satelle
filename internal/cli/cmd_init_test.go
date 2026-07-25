@@ -338,31 +338,11 @@ func TestRunInitSeedsAuditTask(t *testing.T) {
 	}
 }
 
-// checkScript extracts the self-contained ```check block a functional-check
-// skill carries — the command an Engine runs as the gate. Test-local mirror of
-// agentstep.bodyCheckBlock (unexported) so this test exercises the REAL shipped
-// gate script instead of re-deriving its logic.
+// checkScript extracts the self-contained ```check block via structure.CheckFence
+// (single extractor — sty_6830e78e).
 func checkScript(t *testing.T, skillBody string) string {
 	t.Helper()
-	lines := strings.Split(skillBody, "\n")
-	in := false
-	var out []string
-	for _, ln := range lines {
-		trim := strings.TrimSpace(ln)
-		if !in {
-			if strings.HasPrefix(trim, "```") {
-				if info := strings.TrimPrefix(trim, "```"); info == "check" || strings.HasPrefix(info, "check ") {
-					in = true
-				}
-			}
-			continue
-		}
-		if strings.HasPrefix(trim, "```") {
-			break
-		}
-		out = append(out, ln)
-	}
-	s := strings.TrimSpace(strings.Join(out, "\n"))
+	s := structure.CheckFence(skillBody)
 	if s == "" {
 		t.Fatal("task-validate-before skill carries no ```check block")
 	}

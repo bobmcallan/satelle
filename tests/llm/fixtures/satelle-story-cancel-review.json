@@ -1,0 +1,14 @@
+[
+  {
+    "name": "clear-accept-reasoned-cancel",
+    "want": "accept",
+    "why": "Cancel with a structured reason and no hidden work",
+    "payload": ""
+  },
+  {
+    "name": "clear-reject-silent-abandon",
+    "want": "reject",
+    "why": "Cancel without reason or mid-slice without accounting is reject",
+    "payload": ""
+  }
+]

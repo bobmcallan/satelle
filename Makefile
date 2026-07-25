@@ -13,7 +13,7 @@ BUILD_TIME  := $(shell awk '$$1=="satelle.build:" {print $$2}' .version)
 LDFLAGS     := -X $(PKG).Name=satelle -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)
 SERVE_LDFLAGS := -X $(PKG).Name=satelle-serve -X $(PKG).Version=$(SERVE_VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)
 
-.PHONY: build install uninstall test integration check-serve-version
+.PHONY: build install uninstall test integration judgment check-serve-version
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/satelle
@@ -44,3 +44,8 @@ test:
 # (no per-test rebuild). Run by hand with: SATELLE_BIN=$(command -v satelle) go test -tags integration ./tests/...
 integration: build
 	SATELLE_BIN=$(CURDIR)/$(BIN) go test -tags integration ./tests/...
+
+# judgment: opt-in LLM rubric fixtures (sty_6830e78e). Costs tokens, not hermetic,
+# never in default CI. See README ## Testing.
+judgment:
+	go test -tags llm ./tests/llm/...

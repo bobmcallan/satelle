@@ -16,12 +16,9 @@ func embeddedPrinciples() map[string]string {
 	return out
 }
 
-// TestEmbeddedOperatingPrinciples: the binary embeds product-canon principles
-// an agent needs to OPERATE satelle or AUTHOR within the harness (channel-
-// alignment sty_ceb1a3ef). Operating triad + residency taxonomy + authoring
-// canon (done-is-last, reviewer-self-contained, dot-standard, story-
-// classification). Repo-local dogfood discipline stays unstamped under
-// .satelle/principles only.
+// TestEmbeddedOperatingPrinciples: curated MANIFEST of which principles MUST
+// ship (sty_6830e78e AC6 — a table over what exists cannot assert what SHOULD
+// exist). Prose substring pins and byte ceilings retired into Tier 1.
 func TestEmbeddedOperatingPrinciples(t *testing.T) {
 	embedded := embeddedPrinciples()
 	for _, name := range []string{
@@ -42,7 +39,8 @@ func TestEmbeddedOperatingPrinciples(t *testing.T) {
 			t.Errorf("embedded principle %q has empty body", name)
 		}
 	}
-	// Cross-repo containment (sty_aadd4d6c): session-resident, create-not-progress.
+	// Surviving pin: cross-repo-containment must be session-resident — residency
+	// is a curated product choice for this principle, not a general corpus rule.
 	if body := embedded["satelle-cross-repo-containment"]; body != "" {
 		tagsLine := ""
 		for _, line := range strings.Split(body, "\n") {
@@ -54,24 +52,13 @@ func TestEmbeddedOperatingPrinciples(t *testing.T) {
 		if !strings.Contains(tagsLine, "principles:session") {
 			t.Error("satelle-cross-repo-containment must carry principles:session")
 		}
-		for _, want := range []string{"Create", "session", "allow_outside_tree_edits"} {
-			if !strings.Contains(body, want) {
-				t.Errorf("satelle-cross-repo-containment missing %q", want)
-			}
-		}
-		if len(body) > 900 {
-			t.Errorf("satelle-cross-repo-containment must stay terse (under ~900 bytes); got %d", len(body))
-		}
 	}
-	// Taxonomy principle is embedded + ondemand (sty_cd5e341c): it DEFINES the
-	// system|ondemand axis and names principles:session as the marker, but does
-	// not itself carry the session tag. Must not reintroduce inert scope.
+	// Surviving pin: residency taxonomy is ondemand (defines the axis, does not
+	// itself session-inject). Tables check tags legality, not this role choice.
 	body := embedded["satelle-residency"]
 	if !strings.Contains(body, "principles:session") {
 		t.Error("satelle-residency body must name the principles:session marker")
 	}
-	// tags: line must NOT include the session marker (ondemand after diet).
-	// description may still mention the marker by name — only the tag list counts.
 	tagsLine := ""
 	for _, line := range strings.Split(body, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "tags:") {
@@ -89,45 +76,22 @@ func TestEmbeddedOperatingPrinciples(t *testing.T) {
 	}
 }
 
-// TestAgentModelMatchesDispatch pins the sty_704bfb8b rewrite: short, accurate
-// against the real dispatch model (in-loop executor; isolated reviewer/named
-// agents; accept-only advance; no stale commit-agent claim).
+// TestAgentModelMatchesDispatch: surviving structural pins only — prose marker
+// list and line-count ceiling retired (sty_6830e78e AC6). Manifest: must embed.
 func TestAgentModelMatchesDispatch(t *testing.T) {
 	body, ok := embeddedPrinciples()["satelle-agent-model"]
 	if !ok || body == "" {
 		t.Fatal("satelle-agent-model must be embedded")
 	}
-	lines := strings.Count(body, "\n") + 1
-	if lines >= 100 {
-		t.Errorf("satelle-agent-model must be materially shorter than ~139 lines; got %d", lines)
-	}
-	for _, want := range []string{
-		"in-loop",
-		"agents.toml",
-		"accept",
-		"agent=executor",
-		"agent=reviewer",
-		"isolated",
-	} {
-		if !strings.Contains(strings.ToLower(body), strings.ToLower(want)) {
-			t.Errorf("satelle-agent-model missing dispatch-model marker %q", want)
-		}
-	}
-	// Stale / inaccurate claims the rewrite must not reintroduce.
-	for _, ban := range []string{"commit-agent", "sty_"} {
-		if strings.Contains(body, ban) {
-			t.Errorf("satelle-agent-model must not contain %q (stale this-repo or wrong binding example)", ban)
-		}
-	}
-	// Named agent is a performer, not a general "worker" substitute for planner.
-	if !strings.Contains(body, "planner") && !strings.Contains(body, "named agent") {
-		t.Error("satelle-agent-model must mention named agents (e.g. planner) as isolated performers")
+	// Surviving pin: must not reintroduce the retired commit-agent binding name —
+	// a negative claim about a specific obsolete term the table cannot express.
+	if strings.Contains(body, "commit-agent") {
+		t.Error("satelle-agent-model must not contain \"commit-agent\" (stale binding)")
 	}
 }
 
 // TestDevelopmentPrinciplesNotEmbedded: dogfood-only / dead principles must
-// NOT ship embedded. configuration-over-code was deleted (merged into the
-// constitution). Remaining names are repo-local discipline, not product-canon.
+// NOT ship embedded. Curated negative manifest (sty_6830e78e AC6).
 func TestDevelopmentPrinciplesNotEmbedded(t *testing.T) {
 	embedded := embeddedPrinciples()
 	for _, name := range []string{

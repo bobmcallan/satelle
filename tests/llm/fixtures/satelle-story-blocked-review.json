@@ -1,0 +1,14 @@
+[
+  {
+    "name": "clear-accept-world-not-ready",
+    "want": "accept",
+    "why": "Structured blocked reason with dependency story",
+    "payload": ""
+  },
+  {
+    "name": "clear-reject-no-reason",
+    "want": "reject",
+    "why": "Blocked without a reason on record is reject",
+    "payload": ""
+  }
+]

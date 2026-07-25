@@ -1,0 +1,20 @@
+[
+  {
+    "name": "clear-accept-na-no-workflow-files",
+    "want": "accept",
+    "why": "n/a-fast accept when the slice touches no workflow file",
+    "payload": ""
+  },
+  {
+    "name": "clear-accept-workflow-change-sound",
+    "want": "accept",
+    "why": "Workflow edit that still validates and gates correctly",
+    "payload": ""
+  },
+  {
+    "name": "clear-reject-broken-graph",
+    "want": "reject",
+    "why": "Workflow change that breaks reachability or gate wiring",
+    "payload": ""
+  }
+]

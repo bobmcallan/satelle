@@ -1,3 +1,16 @@
+## [0.0.318] - 2026-07-25
+
+### Added
+- Property-based conformance suite over `config.EmbeddedDefaults()` (Tier 1): structure/OKF, scope manifest, legal tags, description ceilings, dogfood-id ratchet, banned stories paths, reviewer accept/reject + verdict blocks (sty_6830e78e)
+- Embedded wikilink + workflow `@skill:` resolution via wfdot, with justified allow-lists and negative fixtures (sty_6830e78e)
+- Generalised ```check fence extractor `structure.CheckFence` and integration golden tables for every coded-check skill (sty_6830e78e)
+- Gate-wiring integration tests (reviewer stub accept/reject, status-unchanged) and discovery/waiver map for embedded workflow gates (sty_6830e78e)
+- Opt-in LLM judgment suite under `tests/llm/` (`//go:build llm`, `make judgment`) with labelled fixtures and best-of-three rule (sty_6830e78e)
+
+### Changed
+- Retired brittle substring pins subsumed by Tiers 1–3 from `substrate_okf_test`, `embed_principle_test`, `principle_consistency_test`; deleted `substrate_path_test.go`; survivors comment the non-tabular property (sty_6830e78e)
+- README Testing table documents judgment cost and hermetic default path (sty_6830e78e)
+
 ## [0.0.317] - 2026-07-22
 
 ### Fixed

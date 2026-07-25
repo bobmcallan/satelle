@@ -216,9 +216,13 @@ remaining build phases are tracked as stories in the local database.
 |-------|------|
 | **GitHub CI** (`test` workflow) | `go build`, `go vet`, `gofmt`, `go test ./...`, and a no-cgo static build of every main under `cmd/` |
 | **Local** | `make integration` — integration + browser e2e under `tests/` (`-tags integration`); needs a real Chrome and drives the built binary |
+| **Judgment** (`make judgment`) | Opt-in LLM rubric fixtures under `tests/llm/` (`-tags llm`). **Costs tokens**, calls a live model, not hermetic — run at release time or on demand, never in default CI. Nondeterminism-tolerant (best of three). The human half of this tier is the re-runnable audit tasks (`tsk_substrate-audit`, `tsk_reviewer-objective-audit`, `tsk_context-audit`). |
 
 Integration/e2e are intentionally **not** in GitHub CI (they need browser/binary
-fixtures). Run them before a release step when the workflow requires it.
+fixtures). Run them before a release step when the workflow requires it. Property
+tests over the embedded substrate (`internal/config/substrate_*_test.go`) and
+coded-check golden tables (`tests/substrate_check_fence_test.go`) stay in the
+hermetic default path.
 
 ## License
 

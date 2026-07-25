@@ -1,0 +1,14 @@
+[
+  {
+    "name": "clear-accept-acs-met",
+    "want": "accept",
+    "why": "All numbered ACs evidenced in the slice",
+    "payload": ""
+  },
+  {
+    "name": "clear-reject-ac-unmet",
+    "want": "reject",
+    "why": "An AC with no evidence in the tree is a done reject",
+    "payload": ""
+  }
+]

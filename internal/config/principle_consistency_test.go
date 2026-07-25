@@ -10,8 +10,10 @@ import (
 // recognise-blockage must not treat a missing engagement as blockage while
 // edits-require-a-story prescribes engage-and-proceed.
 //
-// Loads EMBEDDED bodies only (hermetic; CI-stable). The exact substring
-// "nothing engaged" is the pre-fix failure mode and must not reappear.
+// Surviving pin (sty_6830e78e AC6): the negative "nothing engaged" phrase is a
+// cross-artifact semantic contradiction — no structural property of the
+// conformance table can express it. Positive engage markers retired into
+// ordinary product reading; only the pre-fix failure mode is pinned.
 func TestRecogniseBlockageConsistentWithEditsRequire(t *testing.T) {
 	embedded := embeddedPrinciples()
 
@@ -24,25 +26,13 @@ func TestRecogniseBlockageConsistentWithEditsRequire(t *testing.T) {
 		t.Fatal("satelle-edits-require-a-story must be embedded")
 	}
 
-	// AC1: pre-fix blockage signal must be gone.
+	// Pre-fix blockage signal must stay gone.
 	if strings.Contains(recognise, "nothing engaged") {
 		t.Error(`satelle-recognise-blockage must not contain "nothing engaged" (contradicts engage-and-proceed)`)
 	}
 
-	// AC2: explicit carve-out that engagement is workflow entry, not blockage.
-	for _, marker := range []string{"is not blockage", "even with a story engaged"} {
-		if !strings.Contains(strings.ToLower(recognise), strings.ToLower(marker)) {
-			t.Errorf("satelle-recognise-blockage missing engage-and-proceed carve-out marker %q", marker)
-		}
-	}
-
-	// edits-require still prescribes engage + proceed.
-	lowEdits := strings.ToLower(edits)
-	if !strings.Contains(lowEdits, "engage") {
+	// Minimal existence: edits-require still talks about engagement.
+	if !strings.Contains(strings.ToLower(edits), "engage") {
 		t.Error("satelle-edits-require-a-story must still prescribe engage")
-	}
-	// "proceed" appears in the rule surface (gate is not optional / follow workflow).
-	if !strings.Contains(lowEdits, "engaged story") && !strings.Contains(lowEdits, "engage") {
-		t.Error("satelle-edits-require-a-story must require an engaged story")
 	}
 }

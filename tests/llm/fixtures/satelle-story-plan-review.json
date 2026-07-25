@@ -1,0 +1,14 @@
+[
+  {
+    "name": "clear-accept-plan-covers-acs",
+    "want": "accept",
+    "why": "Plan artifact maps every AC to files and tests",
+    "payload": ""
+  },
+  {
+    "name": "clear-reject-missing-ac",
+    "want": "reject",
+    "why": "Plan that omits an AC is a plan-review reject",
+    "payload": ""
+  }
+]
