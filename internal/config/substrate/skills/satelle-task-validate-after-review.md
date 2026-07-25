@@ -25,11 +25,11 @@ The execution and its parent task declare an **ACTION** (what to do) and a
 repository that the ACTION was carried out and the VERIFICATION is satisfied:
 
 - the artifact the ACTION was to produce or change exists and contains the
-  described change (a file, a document, a config, a code change);
+ described change (a file, a document, a config, a code change);
 - the VERIFICATION the run named is met — the check it points at would pass on
-  the evidence you can see. Where it's a command or test you cannot run, treat
-  the presence of its subject (the created output, the asserting test, the
-  recorded result) as evidence.
+ the evidence you can see. Where it's a command or test you cannot run, treat
+ the presence of its subject (the created output, the asserting test, the
+ recorded result) as evidence.
 
 The op-log (`.satelle/logs/operations.log`) and the ledger record what the run
 did; consult them when the deliverable is a state change rather than a
@@ -39,10 +39,10 @@ in-loop run records this as its final act via `satelle execution record
 <exe_id>`; a dispatched run's output is written through automatically.
 
 - **Accept** when the ACTION is plausibly done and its VERIFICATION is
-  satisfied by evidence you can see.
+ satisfied by evidence you can see.
 - **Reject** when the ACTION is unaddressed or only stubbed, or the
-  VERIFICATION is unmet — name the specific gap (which part of the ACTION, or
-  which VERIFICATION) so the executor can finish and resubmit.
+ VERIFICATION is unmet — name the specific gap (which part of the ACTION, or
+ which VERIFICATION) so the executor can finish and resubmit.
 
 Be a fair gate, not a perfectionist: judge the run's stated ACTION and
 VERIFICATION as written, not extra requirements you would have liked.

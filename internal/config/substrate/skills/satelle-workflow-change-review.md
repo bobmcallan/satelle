@@ -19,17 +19,21 @@ step summaries may appear in the payload `docs` array. Read the repository
 Decide whether this slice touches **workflow substrate**:
 
 - Project/repo workflows: `.satelle/workflows/**`
-- When developing satelle itself: also `internal/config/substrate/workflows/**`
+- Binary-embedded workflow sources (when the product ships defaults in-tree): the
+  embed path under the binary's substrate `workflows/` (in this product tree:
+  `internal/config/substrate/workflows/**`). Category-`substrate` markdown under
+  `.satelle/` / `docs/` is **not** this gate — that lane is
+  [[satelle-substrate-only-check]].
 
 Infer from the payload (body, ACs, plan, step summaries) and from files that
 exist in the tree for this slice — you have **no git**. Absence of workflow
 mentions and no plan claiming workflow edits **is** the n/a signal.
 
 - **No workflow touch** → accept immediately:
-  ```json
-  {"decision": "accept", "notes": "workflow: n/a"}
-  ```
-  Never reject for missing evidence of a surface the slice never claimed.
+ ```json
+ {"decision": "accept", "notes": "workflow: n/a"}
+ ```
+ Never reject for missing evidence of a surface the slice never claimed.
 
 - **Touches workflow** → continue below.
 
@@ -38,36 +42,36 @@ mentions and no plan claiming workflow edits **is** the n/a signal.
 Read the touched workflow file(s) (and any new reviewer skills they name). Judge:
 
 1. **Binding form** — a **gate-specific** reviewer (intended for exactly one
-   transition) must be an **edge CSV** skill:
-   `prompt="@skill:a"` or `prompt="@skill:a,@skill:b"` on the edge.
-   A new **single-state** `on=` scoped node for a gate-specific check is a
-   reject — it belongs on the edge. Scoped `on=` is for genuinely multi-state
-   or always-on reviewers (`estimate`, `step`, multi-state always-on).
+ transition) must be an **edge CSV** skill:
+ `prompt="@skill:a"` or `prompt="@skill:a,@skill:b"` on the edge.
+ A new **single-state** `on=` scoped node for a gate-specific check is a
+ reject — it belongs on the edge. Scoped `on=` is for genuinely multi-state
+ or always-on reviewers (`estimate`, `step`, multi-state always-on).
 
 2. **No over-firing on=** — do not introduce a single-state `on=` node on a
-   state that also has rework/recovery inbound edges unless the author clearly
-   intends always-on re-fire. Prefer edge binding. See `satelle help workflows`.
+ state that also has rework/recovery inbound edges unless the author clearly
+ intends always-on re-fire. Prefer edge binding. See `satelle help workflows`.
 
 3. **DOT / prose agree** — description and frontmatter should not contradict
-   the DOT (states, gates named).
+ the DOT (states, gates named).
 
 4. **Skills resolve** — every `@skill:NAME` on edges/nodes must exist under
-   project skills layered over embedded defaults.
+ project skills layered over embedded defaults.
 
 5. **Recovery / park / cancel preserved** — do not silently drop recovery edges
-   (`integration → in_progress`, park/cancel) that the prior graph had without
-   a stated reason in the plan.
+ (`integration → in_progress`, park/cancel) that the prior graph had without
+ a stated reason in the plan.
 
 6. **Edge-wins hazard** — when an edge carries an explicit CSV into a node that
-   already had a gate (e.g. `done` with `prompt="@skill:…"`), the edge's skills
-   **replace** the node prompt for that edge. The CSV **must retain** the prior
-   gate skill (e.g. keep `satelle-story-done-review` when adding a sibling).
-   Dropping a close/intake gate is a reject.
+ already had a gate (e.g. `done` with `prompt="@skill:…"`), the edge's skills
+ **replace** the node prompt for that edge. The CSV **must retain** the prior
+ gate skill (e.g. keep `satelle-story-done-review` when adding a sibling).
+ Dropping a close/intake gate is a reject.
 
 Fair gate: judge the change as written, not perfectionism.
 
 - **Accept** when binding form is sound, skills resolve, recovery intact, and
-  edge-wins does not drop a prior gate.
+ edge-wins does not drop a prior gate.
 - **Reject** with a specific, fixable note (name the node/edge and the rewrite).
 
 ## Verdict

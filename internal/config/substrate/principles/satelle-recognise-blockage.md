@@ -9,7 +9,8 @@ description: Recognise process blockage and park — never thrash a denied tool 
 # Recognise blockage
 
 When work **cannot advance by the process**, treat that as **blockage** — not as
-a licence to thrash, escalate to "remove the hook", or route around enforcement.
+a licence to thrash, escalate to "remove the hook", or bypass enforcement
+(gate-routing discipline: [[satelle-agent-goals]]).
 Park, reason, resume.
 
 ## Engaging a story is not blockage
@@ -28,26 +29,26 @@ instructions with no legal transition.
 Any of these is enough:
 
 1. **Repeated deny** — the same tool call (or the same fused command) is denied
-   again by a gate or hook with no new information.
+ again by a gate or hook with no new information.
 2. **Unmeetable precondition** — a required state the agent cannot satisfy from
-   *here* while a story is already engaged (wrong story engaged; artifact
-   absent; a gate precondition that engagement alone cannot meet).
+ *here* while a story is already engaged (wrong story engaged; artifact
+ absent; a gate precondition that engagement alone cannot meet).
 3. **Missing dependency** — an edge, story, skill, or external input the step
-   needs is not available.
+ needs is not available.
 4. **Contradictory instruction** — substrate, task, and live state disagree so
-   no legal next step exists.
+ no legal next step exists.
 
 ## Prescribed move
 
 1. **Stop** retrying the denied call unchanged.
 2. **Park** the engaged story: `in_progress → blocked` with a **structured
-   reason** (what was attempted, what denied it, what was tried) — body note,
-   ledger, and/or a hold-reason attachment. The blocked-review gate requires a
-   reason on record.
+ reason** (what was attempted, what denied it, what was tried) — body note,
+ ledger, and/or a hold-reason attachment. The blocked-review gate requires a
+ reason on record.
 3. **Triage** — entering **blocked** is what engages the triage path
-   ([[satelle-story-blocked-triage]]). That skill diagnoses, records reasoning
-   on the story, and actions an in-process unblock **within** satelle's gates.
-   Resume via the workflow's declared `blocked → in_progress` edge (same ACs).
+ ([[satelle-story-blocked-triage]]). That skill diagnoses, records reasoning
+ on the story, and actions an in-process unblock **within** satelle's gates.
+ Resume via the workflow's declared `blocked → in_progress` edge (same ACs).
 
 If the workflow has no blocked state, surface and stop — do not invent status.
 

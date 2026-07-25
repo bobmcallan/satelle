@@ -26,14 +26,14 @@ satisfies; accuracy is never judged.
 IN=$(cat)
 rest=${IN##*\"to\":\"}; to=${rest%%\"*}
 case "$to" in
-  in_progress)
-    case "$IN" in *'"estimate-minutes:'*|*'"estimate-tokens:'*) exit 0;; esac
-    echo "no plan estimate recorded — run: satelle story estimate <id> --time <dur> --tokens <n> [--basis <note>], then retry the edge"
-    exit 1;;
-  done)
-    case "$IN" in *'"actual-minutes:'*|*'"actual-tokens:'*) exit 0;; esac
-    echo "no actual recorded — run: satelle story actual <id> --tokens <n> [--time <dur>], then retry the edge"
-    exit 1;;
+ in_progress)
+ case "$IN" in *'"estimate-minutes:'*|*'"estimate-tokens:'*) exit 0;; esac
+ echo "no plan estimate recorded — run: satelle story estimate <id> --time <dur> --tokens <n> [--basis <note>], then retry the edge"
+ exit 1;;
+ done)
+ case "$IN" in *'"actual-minutes:'*|*'"actual-tokens:'*) exit 0;; esac
+ echo "no actual recorded — run: satelle story actual <id> --tokens <n> [--time <dur>], then retry the edge"
+ exit 1;;
 esac
 exit 0
 ```

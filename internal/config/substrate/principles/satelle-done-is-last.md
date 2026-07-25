@@ -12,15 +12,15 @@ description: done is ALWAYS the terminal state of a workflow. Quality gates (int
 of the path, not a checkpoint along it.
 
 - **Gates precede done.** Any quality gate a workflow enforces — a structure
-  review, an intent check, a commit-push check that the CI run succeeded, an
-  acceptance review — sits on an edge *before* `done`. A state can never follow
-  `done` on the success path.
+ review, an intent check, a commit-push check that the CI run succeeded, an
+ acceptance review — sits on an edge *before* `done`. A state can never follow
+ `done` on the success path.
 - **done means everything passed.** Reaching `done` is the proof that every gate
-  on the route from `in_progress` to `done` accepted. There is no work, no
-  validation, and no release left to do once an item is `done`.
+ on the route from `in_progress` to `done` accepted. There is no work, no
+ validation, and no release left to do once an item is `done`.
 - **Only `cancelled` is a peer terminal.** A workflow's other terminal is the
-  early exit `cancelled` (abandon with a reason). Both are terminal; neither is
-  followed by further states.
+ early exit `cancelled` (abandon with a reason). Both are terminal; neither is
+ followed by further states.
 
 A repo layers its own lifecycle on top of the baseline — it MAY add intermediate
 states and gates (e.g. `in_progress → commit_push → committed → done`) — but it

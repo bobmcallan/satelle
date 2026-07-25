@@ -17,76 +17,69 @@ nothing yourself.
 ## What to check
 
 1. **Per-step agent allocation is deliberate.** For every performing node, read
-   its `agent=` value:
-   - `agent=executor` (or none) — the orchestrating session performs the step
-     in-loop, with full conversation context.
-   - `agent=<name>` — satelle DISPATCHES the step to the `[<name>]` binding in
-     `.satelle/agents.toml`: the item (title, body, acceptance criteria) rides
-     on stdin, the node's `@skill:` rubric + an executor charter + a
-     pull-context call-to-action as the system prompt, tools/model from the
-     binding. A missing binding **refuses the transition** — verify every named
-     agent resolves, flag one that doesn't. The binding's `tools` must also
-     grant the read-only satelle CLI (`Bash(satelle:*)`, or a broad `Bash`/`*`)
-     so the isolated agent can PULL its context by id; a Bash-less
-     named-executor binding **refuses the dispatch** — flag it.
-   Ask of each allocation: does this step *need* isolation (a scoped grant, a
-   different model, a clean room), or is in-loop context more valuable?
+ its `agent=` value:
+ - `agent=executor` (or none) — the orchestrating session performs the step
+ in-loop, with full conversation context.
+ - `agent=<name>` — satelle DISPATCHES the step to the `[<name>]` binding in
+ `.satelle/agents.toml`: the item (title, body, acceptance criteria) rides
+ on stdin, the node's `@skill:` rubric + an executor charter + a
+ pull-context call-to-action as the system prompt, tools/model from the
+ binding. A missing binding **refuses the transition** — verify every named
+ agent resolves, flag one that doesn't. The binding's `tools` must also
+ grant the read-only satelle CLI (`Bash(satelle:*)`, or a broad `Bash`/`*`)
+ so the isolated agent can PULL its context by id; a Bash-less
+ named-executor binding **refuses the dispatch** — flag it.
+ Ask of each allocation: does this step *need* isolation (a scoped grant, a
+ different model, a clean room), or is in-loop context more valuable?
 
 2. **Per-step model fits the step.** A binding's `model` (via the `{model}`
-   placeholder in its harness template) selects the model for that step alone.
-   Advise when the allocation is inverted — e.g. a mechanical verification step
-   on an expensive model, or an implementation step on a model too weak for the
-   repo's bar. A binding whose template omits `{model}` silently inherits the
-   CLI default — flag it when the operator clearly intended a pinned model.
+ placeholder in its harness template) selects the model for that step alone.
+ Advise when the allocation is inverted — e.g. a mechanical verification step
+ on an expensive model, or an implementation step on a model too weak for the
+ repo's bar. A binding whose template omits `{model}` silently inherits the
+ CLI default — flag it when the operator clearly intended a pinned model.
 
 3. **Reviewer coverage — judge the EXIT edge.** Prefer every performing step's
-   exit edge to carry a reviewer gate (`prompt="@skill:NAME"` on a reviewer node
-   or edge) beyond satelle's coded structural checks — an unreviewed performing
-   step advances on the executor's own say-so. This matters most for a
-   **dispatched** step: dispatch fires on ENTRY to the state, after the entry
-   gate accepts, so the agent's work is judged only by its EXIT edge. An
-   entry-gated dispatched state followed by an ungated commit/push ships the
-   agent's mutations **unjudged** — flag it. This is ADVICE, not enforcement:
-   name each ungated performing edge and let the operator decide.
-   Terminal/cancel exits follow the same preference.
+ exit edge to carry a reviewer gate (`prompt="@skill:NAME"` on a reviewer node
+ or edge) beyond satelle's coded structural checks — an unreviewed performing
+ step advances on the executor's own say-so. This matters most for a
+ **dispatched** step: dispatch fires on ENTRY to the state, after the entry
+ gate accepts, so the agent's work is judged only by its EXIT edge. An
+ entry-gated dispatched state followed by an ungated commit/push ships the
+ agent's mutations **unjudged** — flag it. This is ADVICE, not enforcement:
+ name each ungated performing edge and let the operator decide.
+ Terminal/cancel exits follow the same preference.
 
 4. **Grant scoping.** A dispatched binding's `tools` is its capability ceiling.
-   Advise when a step's grant is wider than its rubric needs (a verify-only
-   step with mutating tools) or too narrow to complete (a commit step without
-   its VCS tools). A **code-writing** dispatched step (Write/Edit in the grant,
-   e.g. a `coder` on `in_progress`) must be reached ONLY from a PERFORMING
-   state — dispatch fires while the status is still the FROM state, and the
-   engaged-story edit gate allows the agent's edits only when that FROM state
-   is itself performing. satelle REFUSES a code-writer dispatched from a
-   non-performing state (e.g. `backlog`) rather than let it ride the serve
-   fail-open; route such a step from a performing predecessor.
+ Advise when a step's grant is wider than its rubric needs (a verify-only
+ step with mutating tools) or too narrow to complete (a commit step without
+ its VCS tools). A **code-writing** dispatched step (Write/Edit in the grant,
+ e.g. a `coder` on `in_progress`) must be reached ONLY from a PERFORMING
+ state — dispatch fires while the status is still the FROM state, and the
+ engaged-story edit gate allows the agent's edits only when that FROM state
+ is itself performing. satelle REFUSES a code-writer dispatched from a
+ non-performing state (e.g. `backlog`) rather than let it ride the serve
+ fail-open; route such a step from a performing predecessor.
 
 5. **Dispatched-step self-sufficiency.** An isolated agent sees ONLY the item
-   body/acceptance criteria and the node's rubric — never the conversation.
-   For any dispatched implementation step, advise that story bodies must stand
-   alone; a rubric-less dispatched node (`agent=<name>` with no `@skill:`) gets
-   only the charter and the item, rarely enough — flag it. The **attached
-   documents** — the plan and per-transition step summaries the agent pulls by id
-   (`satelle story doc <id> <name>`, `satelle ledger list --story <id>`) — are
-   the sanctioned channel for carrying context to an isolated step; the
-   conversation is not.
+ body/acceptance criteria and the node's rubric — never the conversation.
+ For any dispatched implementation step, advise that story bodies must stand
+ alone; a rubric-less dispatched node (`agent=<name>` with no `@skill:`) gets
+ only the charter and the item, rarely enough — flag it. The **attached
+ documents** — the plan and per-transition step summaries the agent pulls by id
+ (`satelle story doc <id> <name>`, `satelle ledger list --story <id>`) — are
+ the sanctioned channel for carrying context to an isolated step; the
+ conversation is not.
 
 6. **Process agents live in the agents layer.** Flag as an anti-pattern any
-   process/step agent defined OUTSIDE `.satelle/agents.toml` — e.g. a
-   harness-specific agent dir (`.claude/agents/*.md`, or any vendor's
-   equivalent) describing what is really a workflow step. satelle cannot see,
-   validate, dispatch, or carry such an agent repo-agnostically, and it
-   silently pins the repo to one CLI vendor. Advise moving it to a `[<name>]`
-   binding (harness/tools/model) plus an `agent=<name>` node allocation.
+ process/step agent defined OUTSIDE `.satelle/agents.toml` — e.g. a
+ harness-specific agent dir (`.claude/agents/*.md`, or any vendor's
+ equivalent) describing what is really a workflow step. satelle cannot see,
+ validate, dispatch, or carry such an agent repo-agnostically, and it
+ silently pins the repo to one CLI vendor. Advise moving it to a `[<name>]`
+ binding (harness/tools/model) plus an `agent=<name>` node allocation.
 
-7. **Binding form (edge CSV vs scoped on=).** A **gate-specific** reviewer
-   (intended for exactly one transition) must be bound as an **edge CSV**
-   (`prompt="@skill:…"` on the edge). A gate-specific check authored as a
-   **single-state** scoped node (`on="in_progress"` only) is a finding: name the
-   node, the over-fire consequence (re-fires on every rework/recovery inbound),
-   and the concrete edge rewrite. Scoped `on=` is correct only for genuinely
-   multi-state or always-on reviewers (`estimate`, `step`, multi-state always-on).
-   See `satelle help workflows` ("Binding a reviewer: edge CSV vs scoped on=").
+7. **Binding form (edge CSV vs scoped on=).** Judged fully by [[satelle-workflow-change-review]] — do not restate it here. Flag a gate-specific check authored as a single-state `on=` node and point the author at that gate's rewrite guidance (and `satelle help workflows`).
 
 ## How to report
 

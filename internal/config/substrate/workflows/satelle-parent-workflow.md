@@ -1,11 +1,11 @@
 ---
 name: satelle-parent-workflow
-scope: project
+scope: system
 type: workflow
 tags: [type:workflow]
 applies_to: ["epic-parent", "parent"]
 create_review: satelle-story-create-review
-description: Lifecycle for container stories — a parent or epic-parent whose work IS its children. A minimal two-state path authored in the DOT standard (the agent model): backlog → done, with a cancelled exit. There is no in-between working state — a container has no slice of its own to build; it closes when its children close. The close (backlog → done) carries the mandatory spine gate satelle-story-done-review, which is category-aware: for a parent/epic-parent it accepts only when every child story is done or cancelled. backlog is the initial state and done is terminal (satelle-done-is-last). For categories epic-parent and parent this workflow overrides the wildcard project workflow (a category-specific applies_to beats applies_to ["*"]).
+description: Lifecycle for container stories (parent / epic-parent) whose work is their children. Minimal path to done when children are terminal, with a cancelled exit. Category-selected over the project wildcard.
 ---
 
 # satelle parent workflow — close when the children are done
@@ -29,17 +29,17 @@ the operator finishes or cancels the children first. See
 
 ```dot
 digraph satelle_parent_workflow {
-  graph [goal="Close a parent/epic only when every child story is done or cancelled", vars="story"]
-  rankdir=LR
+ graph [goal="Close a parent/epic only when every child story is done or cancelled", vars="story"]
+ rankdir=LR
 
-  backlog   [shape=Mdiamond]
-  done      [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
-  cancelled [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
-  // step opts into per-transition step summaries: edge-less, mandatory.
-  step      [agent=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
+ backlog [shape=Mdiamond]
+ done [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
+ cancelled [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
+ // step opts into per-transition step summaries: edge-less, mandatory.
+ step [agent=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
 
-  backlog -> done       // spine gate satelle-story-done-review (category-aware: children resolved)
-  backlog -> cancelled
+ backlog -> done // spine gate satelle-story-done-review (category-aware: children resolved)
+ backlog -> cancelled
 }
 ```
 
@@ -47,11 +47,11 @@ digraph satelle_parent_workflow {
 
 ```yaml
 guardrails:
-  always:
-    - A parent/epic closes only when every child story is done or cancelled — finish or cancel the children first.
-    - Drive a container to a terminal state (done or cancelled); don't leave it open once its children are resolved.
-  ask_first: []
-  never:
-    - Place any state after done — done is always the terminal success state.
-    - Self-enact the close the reviewer has not accepted, or close a parent with an unresolved child.
+ always:
+ - A parent/epic closes only when every child story is done or cancelled — finish or cancel the children first.
+ - Drive a container to a terminal state (done or cancelled); don't leave it open once its children are resolved.
+ ask_first: []
+ never:
+ - Place any state after done — done is always the terminal success state.
+ - Self-enact the close the reviewer has not accepted, or close a parent with an unresolved child.
 ```

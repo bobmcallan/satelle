@@ -24,26 +24,25 @@ without audit trail.
 If the reason claims the work was **delivered under another story or commit**:
 
 1. The claim must **name** the delivering story id and/or commit sha. Vague
-   "covered elsewhere" / "already done" without a name → **reject**.
+ "covered elsewhere" / "already done" without a name → **reject**.
 2. **Verify** against the repo and ledger (Read/Grep; `satelle story get`,
-   `satelle ledger list` when shell available): does that delivery actually
-   satisfy **this** story's numbered ACs?
+ `satelle ledger list` when shell available): does that delivery actually
+ satisfy **this** story's numbered ACs?
 3. **Unverifiable** claim → **reject** (name what is missing).
 
 ### Sibling bundling (canonical reject)
 
-If the named deliverer is a **sibling** (same parent/epic) whose **own** ACs
-did **not** scope this story's work, verified delivery is evidence of an
-**upstream scope breach** (bundling under one engage). **Reject** with notes
-that explicitly state:
+The definition of sibling bundling is [[satelle-story-scope-review]] (implementation
+exit). On cancel, apply it as follows and put all four items in **notes**:
 
-- delivering story id
-- commit if known
-- which of **this** story's ACs it carried
-- that accept is wrong here — the operator must decide the close shape (split,
-  re-scope, or explicit abandoned-without-delivery) in their session
+1. The cancelled story id and the named deliverer id
+2. That they are siblings (same parent/epic)
+3. Which cancelled ACs the deliverer does **not** cover
+4. That this is a scope breach, not a legitimate supersede
 
-Do **not** accept bundling so the cancel note "passes" after a quick rewrite.
+**Reject** when those hold. Do **not** accept bundling so the cancel note
+"passes" after a quick rewrite.
+
 
 ### Legitimate supersedes (accept with named evidence)
 

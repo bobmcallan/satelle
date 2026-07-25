@@ -1,11 +1,11 @@
 ---
 name: satelle-task-workflow
-scope: project
+scope: system
 type: workflow
 tags: [type:workflow]
 applies_to: ["execution", "task"]
 create_review: satelle-story-create-review
-description: The default lifecycle for a task EXECUTION — one isolated run of a task — authored in DOT (the agent model). An execution moves backlog → in_progress → done, with a cancelled exit. It is DELIBERATELY NOT the story workflow: the begin-run edge is gated by satelle-task-validate-before-review (the run is a well-formed execution of a valid task) and the close edge by satelle-task-validate-after-review (the ACTION was done and its VERIFICATION is satisfied), and it carries NOTHING else — no integration/commit/push states, no code-ac/estimate/commit/push/done-review gates, no version bump, no CI, no release. done is TERMINAL (satelle-done-is-last): a completed run is never moved backward — re-running a task means creating a NEW execution, not reopening this one. Resolved kind-awarely (applies_to ["execution", "task"]) so neither an execution nor a directly-driven task header falls through to the wildcard story workflow.
+description: Default lifecycle for a task execution (one isolated run of a task): backlog → in_progress → done, with validate-before and validate-after gates. Authored in DOT; executions ride this path.
 ---
 
 # satelle task-execution workflow — the agent model, authored in DOT
@@ -41,19 +41,19 @@ a NEW execution, created fresh at `backlog` — not a reopen of a done run.
 
 ```dot
 digraph satelle_task_workflow {
-  graph [goal="Drive a task execution: validate-before → run → validate-after → done; done terminal, re-run is a new execution", vars="execution"]
-  rankdir=LR
+ graph [goal="Drive a task execution: validate-before → run → validate-after → done; done terminal, re-run is a new execution", vars="execution"]
+ rankdir=LR
 
-  backlog     [shape=Mdiamond]
-  in_progress [agent=executor]
-  done        [shape=Msquare]
-  cancelled   [shape=Msquare]
+ backlog [shape=Mdiamond]
+ in_progress [agent=executor]
+ done [shape=Msquare]
+ cancelled [shape=Msquare]
 
-  backlog     -> in_progress [agent=reviewer, prompt="@skill:satelle-task-validate-before-review"]
-  in_progress -> done        [agent=reviewer, prompt="@skill:satelle-task-validate-after-review"]
+ backlog -> in_progress [agent=reviewer, prompt="@skill:satelle-task-validate-before-review"]
+ in_progress -> done [agent=reviewer, prompt="@skill:satelle-task-validate-after-review"]
 
-  backlog     -> cancelled
-  in_progress -> cancelled
+ backlog -> cancelled
+ in_progress -> cancelled
 }
 ```
 
@@ -70,12 +70,12 @@ genuinely absent.
 
 ```yaml
 guardrails:
-  always:
-    - Drive an engaged execution to a terminal state (done or cancelled) — don't leave a run open indefinitely.
-    - A run declares its ACTION and how success is VERIFIED before it begins, and satisfies both before it closes.
-  ask_first: []
-  never:
-    - Place any state after done — done is always the terminal success state; re-running a task is a NEW execution, never a backward move of a done run.
-    - Self-enact a gated edge the reviewer has not accepted.
-    - Mark a run done with its ACTION unaddressed or its VERIFICATION unmet.
+ always:
+ - Drive an engaged execution to a terminal state (done or cancelled) — don't leave a run open indefinitely.
+ - A run declares its ACTION and how success is VERIFIED before it begins, and satisfies both before it closes.
+ ask_first: []
+ never:
+ - Place any state after done — done is always the terminal success state; re-running a task is a NEW execution, never a backward move of a done run.
+ - Self-enact a gated edge the reviewer has not accepted.
+ - Mark a run done with its ACTION unaddressed or its VERIFICATION unmet.
 ```

@@ -29,27 +29,27 @@ That command is **report-only** (files + stat; optional --patch). You decide
 accept/reject.
 
 - **No engagement baseline** (error from story diff / never recorded) →
-  ```json
-  {"decision": "accept", "notes": "scope: no-baseline"}
-  ```
-  Do **not** reject solely for a missing baseline (pre-feature stories).
+ ```json
+ {"decision": "accept", "notes": "scope: no-baseline"}
+ ```
+ Do **not** reject solely for a missing baseline (pre-feature stories).
 - After this feature ships, if a baseline **exists** but the executor provided
-  **no** enumeration (no attachment and no usable diff), reject: name that
-  scope evidence is missing — the driver should run `story diff` and re-request.
+ **no** enumeration (no attachment and no usable diff), reject: name that
+ scope evidence is missing — the driver should run `story diff` and re-request.
 
 ## How to judge (when a baseline exists)
 
 1. Walk `files` (and patch/stat when useful). For each path/hunk, ask: is this
-   explained by **this story's** numbered ACs, body goal, or **mechanical
-   collateral** (version bump, CHANGELOG for this release, step docs for this
-   story, generated lockfiles for this change)?
+ explained by **this story's** numbered ACs, body goal, or **mechanical
+ collateral** (version bump, CHANGELOG for this release, step docs for this
+ story, generated lockfiles for this change)?
 2. **Accept** when every change maps to this story (plus reasonable collateral).
 3. **Reject** when the diff satisfies **another** story's work (sibling epic
-   ACs, unrelated features) or is clearly out of scope. Notes **must name**:
-   - each beyond-scope file/area
-   - the story that should own it (id/title if known, else backlog theme)
-   - instruction: **revert or split** into the owning story — do not cancel
-     siblings as "superseded" to hide bundling.
+ ACs, unrelated features) or is clearly out of scope. Notes **must name**:
+ - each beyond-scope file/area
+ - the story that should own it (id/title if known, else backlog theme)
+ - instruction: **revert or split** into the owning story — do not cancel
+ siblings as "superseded" to hide bundling.
 
 Fair gate: ACs as written, not perfectionism. Docs/tests for *this* slice are
 in-scope. Implementing five sibling stories under one engage is the canonical

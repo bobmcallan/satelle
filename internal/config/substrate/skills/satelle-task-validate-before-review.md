@@ -19,9 +19,9 @@ it runs.
 Judges structure only, mirroring `structure.CheckTask` (`satelle task validate`):
 
 - the execution names a parent task (`parent_id`), and that header file exists
-  under `.satelle/tasks/`;
+ under `.satelle/tasks/`;
 - the header is structurally valid: YAML frontmatter with `id`, `type: task`
-  (OKF), `status`, and a `# Title` heading in the body.
+ (OKF), `status`, and a `# Title` heading in the body.
 
 NOT judged: whether the task's items were completed (the close gate,
 `satelle-task-validate-after-review`), or the richness of the work-definition
@@ -35,16 +35,16 @@ IN=$(cat)
 rest=${IN##*\"to\":\"}; to=${rest%%\"*}
 [ "$to" = "in_progress" ] || exit 0
 case "$IN" in
-  *'"parent_id":"tsk_'*) ;;
-  *) echo "execution names no parent task header — create the run with: satelle execution create --parent <tsk_id> ..."; exit 1;;
+ *'"parent_id":"tsk_'*) ;;
+ *) echo "execution names no parent task header — create the run with: satelle execution create --parent <tsk_id> ..."; exit 1;;
 esac
 rest=${IN#*\"parent_id\":\"}; parent=${rest%%\"*}
 F=".satelle/tasks/$parent.md"
 [ -f "$F" ] || { echo "parent task header $F does not exist — a run executes an authored task"; exit 1; }
-head -1 "$F" | grep -q '^---$'   || { echo "$F: missing YAML frontmatter"; exit 1; }
-grep -q '^id:' "$F"              || { echo "$F: frontmatter missing id"; exit 1; }
+head -1 "$F" | grep -q '^---$' || { echo "$F: missing YAML frontmatter"; exit 1; }
+grep -q '^id:' "$F" || { echo "$F: frontmatter missing id"; exit 1; }
 grep -Eq '^type:[[:space:]]*task[[:space:]]*$' "$F" || { echo "$F: frontmatter must have 'type: task' (OKF)"; exit 1; }
-grep -q '^status:' "$F"          || { echo "$F: frontmatter missing status"; exit 1; }
-grep -q '^# ' "$F"               || { echo "$F: body missing a '# Title' heading"; exit 1; }
+grep -q '^status:' "$F" || { echo "$F: frontmatter missing status"; exit 1; }
+grep -q '^# ' "$F" || { echo "$F: body missing a '# Title' heading"; exit 1; }
 exit 0
 ```

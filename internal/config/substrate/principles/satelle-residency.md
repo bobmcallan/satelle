@@ -19,9 +19,9 @@ into session context. There is no second classifier.
 | **ondemand** | Discoverable; pulled on reference | absence of that tag (the default) |
 
 - **system** — `satelle hook context` injects the body every session (bounded by
-  the SessionStart byte ceiling). Keep this set minimal.
+ the SessionStart byte ceiling). Keep this set minimal.
 - **ondemand** — pull with `satelle doc get principles <name>` when a skill,
-  workflow, or the constitution references it. Do not preload.
+ workflow, or the constitution references it. Do not preload.
 
 The on-disk **system-residency marker is the `principles:session` tag**. One
 classifier — not a `scope:` field, not a second frontmatter key.

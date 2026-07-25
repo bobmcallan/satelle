@@ -32,6 +32,9 @@ func TestEmbeddedOperatingPrinciples(t *testing.T) {
 		"satelle-reviewer-self-contained",
 		"satelle-dot-standard",
 		"satelle-story-classification",
+		// Promoted from repo-local: workflows resolve skills by name, so the
+		// naming scheme is product-canon (sty_24365c69).
+		"satelle-skill-naming",
 	} {
 		if body, ok := embedded[name]; !ok {
 			t.Errorf("operating principle %q must be embedded, but is missing from EmbeddedDefaults()", name)
@@ -100,7 +103,7 @@ func TestDevelopmentPrinciplesNotEmbedded(t *testing.T) {
 		"satelle-agile-increments",
 		"satelle-broken-windows",
 		"satelle-yagni",
-		"satelle-skill-naming",
+		// satelle-skill-naming promoted to embedded (sty_24365c69) — not listed here
 		"satelle-enable-then-operate",
 		"satelle-agent-telemetry",
 		"satelle-generated-readonly",

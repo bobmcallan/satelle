@@ -11,22 +11,20 @@ import (
 )
 
 // Word-budget ceilings for embedded description fields (sty_6830e78e).
-// These are ceilings with headroom from measured maxima, not targets —
-// sty_24365c69 ratchets them toward the ~35–60 word audit-skill guidance.
+// Description ceilings after sty_24365c69 token diet (workflows/skills ≤ 60).
 var descWordBudget = map[string]int{
-	"principles": 80,  // max today 65
-	"skills":     100, // max today 87 (code.md)
-	"workflows":  200, // max today 187
-	"tasks":      60,  // tasks often omit description; budget still applies when present
+	"principles": 80,
+	"skills":     60,
+	"workflows":  60,
+	"tasks":      60,
 }
 
-// workflowScopeManifest: embedded workflows are not uniformly scope:system.
-// Only the baseline is system; the rest seed as project substrate at init.
+// workflowScopeManifest: embedded defaults are scope:system (constitution).
 var workflowScopeManifest = map[string]string{
 	"satelle-baseline-workflow":  "system",
-	"satelle-parent-workflow":    "project",
-	"satelle-substrate-workflow": "project",
-	"satelle-task-workflow":      "project",
+	"satelle-parent-workflow":    "system",
+	"satelle-substrate-workflow": "system",
+	"satelle-task-workflow":      "system",
 }
 
 // verdictBlockWaiver: skills whose body still carries more than one decision+notes
@@ -36,18 +34,9 @@ var verdictBlockWaiver = map[string]int{
 	"satelle-workflow-change-review": 2,
 }
 
-// dogfoodIDWaiver: concrete sty_/tsk_ ids still present in the corpus.
-// Counts ratchet both ways — must shrink as sty_24365c69 removes them; must
-// never silently regrow. Terminal state is empty. Content change is a non-goal
-// of this story, so the waiver is the mechanism (sty_6830e78e).
-var dogfoodIDWaiver = map[string]int{
-	"workflows/satelle-baseline-workflow":     5,
-	"workflows/satelle-substrate-workflow":    1,
-	"principles/satelle-dot-standard":         4,
-	"skills/satelle-reviewer-objective-audit": 2,
-	"skills/satelle-story-plan-review":        1,
-	"skills/code":                             1,
-}
+// dogfoodIDWaiver: empty after sty_24365c69 removed all concrete sty_/tsk_ ids.
+// Any new id fails until waived; terminal state is empty.
+var dogfoodIDWaiver = map[string]int{}
 
 // dogfoodIDRe matches concrete hex ids only — not placeholders like <sty_id>, sty_…, tsk_<id>.
 var dogfoodIDRe = regexp.MustCompile(`\b(sty|tsk)_[0-9a-f]{8}\b`)

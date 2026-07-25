@@ -31,7 +31,7 @@ Also list intended residency:
 ```bash
 # every principle carrying principles:session is system-resident
 grep -l 'principles:session' .satelle/principles/*.md 2>/dev/null
-satelle principle validate   # deterministic placement (embedded_sha, markers, scope, ceiling)
+satelle principle validate # deterministic placement (embedded_sha, markers, scope, ceiling)
 ```
 
 ## 2. Functional check (deterministic — order:6)
@@ -62,7 +62,7 @@ Ground judgments in [[satelle-residency]] and [[satelle-constitution]].
 ### Coverage diff
 
 - Every `.satelle/principles/*.md` with `principles:session` **must** appear in
-  the captured hook context.
+ the captured hook context.
 - Everything resident in the capture **must** exist as a substrate principle.
 - Report gaps either way.
 
@@ -71,7 +71,7 @@ Ground judgments in [[satelle-residency]] and [[satelle-constitution]].
 If a lessons corpus exists, fold it in as **extra contradiction signal**:
 
 ```bash
-satelle story lessons          # cross-story typed lessons/lesson attachments
+satelle story lessons # cross-story typed lessons/lesson attachments
 ```
 
 **Absence is not a failure** — green without lessons is valid.

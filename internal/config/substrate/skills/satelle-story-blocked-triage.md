@@ -3,7 +3,7 @@ name: satelle-story-blocked-triage
 scope: system
 type: skill
 tags: [type:skill, type:executor]
-description: Performing triage on a blocked story — diagnose root cause, attach reasoning + unblock plan on the story, then action an in-process recovery within satelle's gates (never disable or route around enforcement). Not a reviewer; recovery stays gated by satelle-story-blocked-review / the workflow's declared resume edge. Dispatched when the agents layer allocates a blocked-triage step, or run in-loop after park per satelle-recognise-blockage.
+description: On-enter triage for a blocked story: diagnose root cause, attach reasoning and an unblock plan, then action an in-process fix within satelle gates. Does not advance status past blocked.
 ---
 
 # Story blocked triage (performing)
@@ -23,7 +23,7 @@ Pull context by id (payload carries the story handle):
 
 ```bash
 satelle story get <id>
-satelle story docs <id>          # hold-reason, prior triage, plans
+satelle story docs <id> # hold-reason, prior triage, plans
 satelle ledger list --story <id>
 ```
 
@@ -48,11 +48,11 @@ satelle ledger append --story <id> --kind note --body "blocked-triage: <class> �
 
 Doc shape (tight):
 
-1. **Diagnosis** — root cause in 1–3 sentences  
-2. **Evidence** — story/ledger/gate pointers  
-3. **Class** — (a) / (b) / (c)  
-4. **Unblock plan** — ordered concrete steps  
-5. **Constraints** — within-gates only  
+1. **Diagnosis** — root cause in 1–3 sentences 
+2. **Evidence** — story/ledger/gate pointers 
+3. **Class** — (a) / (b) / (c) 
+4. **Unblock plan** — ordered concrete steps 
+5. **Constraints** — within-gates only 
 
 ## 3. ACTION (within gates)
 
@@ -60,13 +60,13 @@ Doc shape (tight):
 `--no-verify`, shell-edit around the edit gate, or invent status.
 
 - **(a)** Enact the plan: engage the correct story in its **own** tool call;
-  split fused commands; drive the declared `blocked → in_progress` edge when
-  the world is ready; file/link a dependency with `blocked-by:<id>` if that is
-  the fix. Prefer satelle CLI over ad-hoc mutation.
+ split fused commands; drive the declared `blocked → in_progress` edge when
+ the world is ready; file/link a dependency with `blocked-by:<id>` if that is
+ the fix. Prefer satelle CLI over ad-hoc mutation.
 - **(b)** Stop with a **precise operator question** in the triage doc; leave
-  status blocked.
+ status blocked.
 - **(c)** `satelle story create` the mechanism story, tag/link it, leave blocked
-  (or resume only if a temporary process path is already legal).
+ (or resume only if a temporary process path is already legal).
 
 Do **not** change status outside the workflow's declared transitions. Charter
 still applies: you perform; gates govern advances.
@@ -81,7 +81,7 @@ legal edge.
 ## Worked case (pointer)
 
 Session process-block thrash → park → second agent sees in-process fix:
-`.satelle/documents/session-trace-workflow-review-followups.md`. Normative
+the blocked-review gate notes and the story ledger. Normative
 content is this skill + [[satelle-recognise-blockage]], not the trace.
 
 See [[satelle-agent-goals]], [[satelle-agent-model]], [[satelle-edits-require-a-story]].

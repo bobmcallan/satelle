@@ -3,7 +3,7 @@ name: satelle-agent-goals
 type: principle
 tags: [type:principle, principles:session]
 applies_to: ["*"]
-description: The executor's goal and discipline. Drive a story to the terminal state of its configured workflow with every reviewer gate on the path accepted. Status is the sole proof of done — not "code written" or "tests pass locally". Never route around a gate; surface a gap and stop. One story at a time. Adapted from satellites' agent-goals.
+description: Drive a story to the terminal state of its configured workflow with every gate accepted. Status is the sole proof of done. Never route around a gate; surface a gap and stop. One story at a time.
 ---
 
 # Agent goals
@@ -33,15 +33,15 @@ before engaging another.
 Do **not** weaken the ACs (definition freeze). Diagnose:
 
 1. **World not ready** (ACs correct; dependency or external gap):
-   - File a **dependency story** that removes the blocker.
-   - If the active workflow offers a **blocked** state, select it (reason required
-     by the blocked-review gate), tag this story `blocked-by:<dependency sty id>`,
-     and later resume `blocked → in_progress` with the **same** ACs.
-   - If the workflow has no blocked state, stop and surface — do not invent status.
+ - File a **dependency story** that removes the blocker.
+ - If the active workflow offers a **blocked** state, select it (reason required
+ by the blocked-review gate), tag this story `blocked-by:<dependency sty id>`,
+ and later resume `blocked → in_progress` with the **same** ACs.
+ - If the workflow has no blocked state, stop and surface — do not invent status.
 2. **AC wrong** (definition itself is misconceived):
-   - `cancel` with a reason, then create a corrected story tagged
-     `supersedes:<cancelled sty id>`. Pull the prior story on demand as input;
-     continuity is by reference, not by mutating the cancelled record.
+ - `cancel` with a reason, then create a corrected story tagged
+ `supersedes:<cancelled sty id>`. Pull the prior story on demand as input;
+ continuity is by reference, not by mutating the cancelled record.
 
 Relations are **tags** only (`supersedes:<id>`, `blocked-by:<id>`) — no typed
 relation table. Select blocked **only** when the workflow graph offers it.

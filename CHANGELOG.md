@@ -1,3 +1,9 @@
+## [0.0.319] - 2026-07-25
+
+### Changed
+- Optimise embedded substrate for token economy, focus, and repo-agnostic fitness: promote satelle-skill-naming; strip dogfood sty_/tsk_ ids; language-agnostic code.md; description budgets ≤60 for skills/workflows; single-source binding and bundling doctrine; scope:system on embedded defaults; sprint index form is a repo choice (sty_24365c69)
+- Downstream: `satelle update` then `satelle restore` to pick up new defaults (seeded copies with a stale embedded_sha are not auto-healed) (sty_24365c69)
+
 ## [0.0.318] - 2026-07-25
 
 ### Added

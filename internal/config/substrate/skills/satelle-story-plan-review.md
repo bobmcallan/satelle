@@ -20,7 +20,7 @@ You get `{story, from, to}` on stdin. Read-only; no modifying, no implementing.
 
 Plan is the story attachment named `plan` in the stdin payload's **`docs`**
 array (`name`/`type`/`body`). Prefer that — it is how a Bash-less reviewer
-reads what it judges (sty_58fa970e). When `truncated: true`, or for a fuller
+reads what it judges. When `truncated: true`, or for a fuller
 pull when shell is granted: `satelle story doc <sty_id> plan`.
 
 Do **not** look under in-repo `.satelle/stories/` (obsolete post-relocation).
@@ -33,10 +33,10 @@ Every numbered AC must have a concrete claim **in the attached plan**
 (approach and/or files, and what evidence will prove it).
 
 - **Accept** when every AC is covered by the presented plan without
-  contradicting the story.
+ contradicting the story.
 - **Reject** when an AC is unplanned, hand-waved, or contradicted — name it.
-  Falsify checkable plan claims against the repo only when the plan asserts
-  something already exists; do not rewrite the plan.
+ Falsify checkable plan claims against the repo only when the plan asserts
+ something already exists; do not rewrite the plan.
 
 Do not reject for style or for a design you prefer.
 

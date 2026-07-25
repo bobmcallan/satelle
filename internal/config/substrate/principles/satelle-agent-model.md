@@ -17,10 +17,10 @@ the agent CLI backend a step may run on.)
 ## Two roles, bounded grants
 
 - **executor** — does the work. Mutates the tree, follows the step's rubric,
-  requests the next status. Full tool grant.
+ requests the next status. Full tool grant.
 - **reviewer** — limited to reviewing. Read-only judge of the claimed **outcome**;
-  returns a structured verdict; never mutates code, story, or status. The
-  read-only limit is enforced by the grant, not by trust.
+ returns a structured verdict; never mutates code, story, or status. The
+ read-only limit is enforced by the grant, not by trust.
 
 ## Two run modes
 
@@ -46,7 +46,7 @@ A workflow node names its performer:
 - `agent=executor` — in-loop (default)
 - `agent=reviewer` — isolated gate
 - `agent=<name>` — isolated named agent bound in `.satelle/agents.toml` (e.g.
-  `agent=planner` for the read-only plan step)
+ `agent=planner` for the read-only plan step)
 
 Every top-level `[section]` in `agents.toml` is an agent. `[executor]` /
 `[reviewer]` are built-in roles; any other name is a named agent. Unbound

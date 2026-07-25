@@ -1,9 +1,9 @@
 ---
 name: code
-scope: project
+scope: system
 type: skill
 tags: [type:skill]
-description: Executor skill for an OPTIONAL dispatched `in_progress` step (sty_f5bd176f). A repo may opt its project workflow into a named `coder` agent (in_progress [agent=coder, prompt="@skill:code"]) instead of the in-loop default — an isolated code-writing sub-process that reconstructs context from the story + plan via the read-only CLI, implements exactly the plan's slice, and creates BOTH unit and integration tests, then stops for the code-ac-review gate. The coder builds; it does not advance status. Dormant unless a workflow node allocates agent=coder (the embedded default and this repo stay in-loop).
+description: Optional dispatched coder for in_progress (agent=coder). Reconstruct context from the story and plan via the read-only CLI, implement the plan slice with unit and integration tests, stop for code-ac-review. Does not advance status. Dormant unless a workflow allocates agent=coder.
 ---
 
 # Code (optional dispatched executor step)
@@ -29,7 +29,7 @@ Use the story id from the payload. The plan is your authority: it names the file
 - **Satisfy every numbered acceptance criterion** with real, working code — no stubs or TODOs where behaviour is required.
 - **Create BOTH kinds of test.** `code-ac-review` rejects a code change missing unit tests, integration tests, or both: add unit tests for the new logic and an integration test exercising the behaviour end-to-end.
 - **Keep it DRY.** Reuse existing types/helpers; don't copy a block that already has a single source — the gate flags avoidable duplication.
-- **Leave the tree clean.** Run `gofmt -s -w` on changed Go files and confirm the package builds/tests locally with your `go` grant.
+- **Leave the tree clean.** Run the host repo's formatter on changed files and confirm the package builds and tests with the repo's usual build tools (language-agnostic — not a Go-only step).
 
 ## Stop for the gate
 

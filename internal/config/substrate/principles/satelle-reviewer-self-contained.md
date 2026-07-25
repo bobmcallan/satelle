@@ -13,8 +13,8 @@ parts a reviewer may have, and both live in the skill:
 
 - the **rubric** — the markdown body that rides as the LLM reviewer's prompt; and
 - the **functional check** — the deterministic command, embedded as a fenced
-  ```check script block in the skill body (a multi-line, self-contained script),
-  or a single-line `check:` in frontmatter.
+ ```check script block in the skill body (a multi-line, self-contained script),
+ or a single-line `check:` in frontmatter.
 
 A reviewer must **never depend on an external object** — not a script under
 `scripts/`, not a sibling file, not another artifact it reads at run time. A check

@@ -67,13 +67,13 @@ plan [agent=planner, prompt="@skill:plan", model="opus"]
 - Empty / absent `model=` inherits the binding's model (unchanged behaviour).
 - CSV multi-skill edges share one `model=` for all skills on that edge.
 - `satelle agent validate` and `satelle workflow validate` print each gate's
-  effective model (with an `(override)` marker when DOT `model=` is set).
+ effective model (with an `(override)` marker when DOT `model=` is set).
 
 ## Step-level `applies_to` on scoped reviewer nodes
 
 An **edge-less scoped reviewer** (a node with `on=…`) may also carry
 `applies_to="surface:ui"` (CSV list) so the gate is enqueued only for stories that
-hold a matching tag (sty_c6d093c8 / epic:surface-scoped-steps):
+hold a matching tag:
 
 ```dot
 design [agent=reviewer, prompt="@skill:satelle-design-review", on="integration", applies_to="surface:ui"]
@@ -85,7 +85,7 @@ design [agent=reviewer, prompt="@skill:satelle-design-review", on="integration",
 | Matching | EqualFold ANY-match against the story's **tags** only — not category, not kind |
 | Multi-surface | A story with both `surface:ui` and `surface:cli` picks up **both** matching nodes (plain filter, no override, no tie-break) |
 | On an **edge** | Rejected (the edge IS the transition — skipping it is ambiguous) |
-| On a **performing** node | Rejected here; surface-scoped executor rubrics are sty_8225d8a5 |
+| On a **performing** node | Rejected here; surface-scoped executor rubrics use the executor-augmentation form below |
 | Unknown attribute | Rejected with a named error (fail closed — no silent drop) |
 
 Workflow-frontmatter `applies_to` (which workflow governs a category) is a different
@@ -94,7 +94,7 @@ gate is enqueued**, not which workflow is stamped.
 
 
 
-## Park node `from=` (sty_f75286dc)
+## Park node `from=`
 
 A **park node** (agent=reviewer, non-start) may declare inbound sources without
 drawing an N×2 edge explosion:
@@ -123,7 +123,7 @@ Existing explicit `X -> blocked` / `blocked -> X` edges still parse (migration).
 When `park_origin` is set, resume to any performing state other than the origin
 is refused even if a legacy resume edge is drawn.
 
-## Executor augmentation (`on=` overload, sty_8225d8a5)
+## Executor augmentation (`on=` overload)
 
 An **edge-less performing node** with `on="<state>"` **augments** that spine state's
 executor rubrics additively — design knowledge at CODE time, not only at review:
@@ -149,11 +149,11 @@ Rules:
 
 - Additive, declaration order after the spine skill — no override, no tie-break.
 - Augmentation nodes are **annotations**, not lifecycle states (web diagram and
-  engagement predicates exclude them).
+ engagement predicates exclude them).
 - Matching uses the same `applies_to` / `tagsMatchAppliesTo` path as scoped
-  reviewers (one implementation).
+ reviewers (one implementation).
 - A missing augmentation skill hard-blocks engagement only for stories whose tags
-  match it (the surface-aware wasted-work trap).
+ match it (the surface-aware wasted-work trap).
 
 ## Required graph / shape / frontmatter shape
 

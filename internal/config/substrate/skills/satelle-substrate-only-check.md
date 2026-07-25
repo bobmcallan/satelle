@@ -47,13 +47,13 @@ set -uo pipefail
 payload=$(cat)
 sid=$(printf '%s' "$payload" | grep -oE '"id":"sty_[a-f0-9]+"' | head -1 | grep -oE 'sty_[a-f0-9]+')
 if [ -z "$sid" ]; then
-  echo "could not read the story id from the transition payload"
-  exit 1
+ echo "could not read the story id from the transition payload"
+ exit 1
 fi
 commits=$(git log --grep="$sid" --format=%H 2>/dev/null)
 if [ -z "$commits" ]; then
-  echo "no commit mentioning $sid found — commit + push the substrate slice IN-LOOP at in_progress (subject ending in $sid) before closing"
-  exit 1
+ echo "no commit mentioning $sid found — commit + push the substrate slice IN-LOOP at in_progress (subject ending in $sid) before closing"
+ exit 1
 fi
 changed=$(for c in $commits; do git show --name-only --format= "$c"; done | grep -v '^$' | sort -u)
 # Allowed prefixes: authored substrate (.satelle/, docs/), the binary managed
@@ -64,14 +64,14 @@ changed=$(for c in $commits; do git show --name-only --format= "$c"; done | grep
 allow='\.satelle/|docs/|\.gitignore$|\.claude/|\.grok/'
 extra=$(grep -E '^[[:space:]]*edit_exempt_paths' .satelle/satelle.toml 2>/dev/null | grep -oE '"[^"]+"' | tr -d '"')
 for p in $extra; do
-  esc=$(printf '%s' "$p" | sed 's#[^A-Za-z0-9/]#\\&#g')
-  allow="$allow|$esc"
+ esc=$(printf '%s' "$p" | sed 's#[^A-Za-z0-9/]#\\&#g')
+ allow="$allow|$esc"
 done
 offenders=$(printf '%s\n' "$changed" | grep -vE "^($allow)" || true)
 if [ -n "$offenders" ]; then
-  echo "the slice for $sid touches non-substrate paths — this is not a substrate-only change; use the project workflow (category fix/feature/chore):"
-  printf '%s\n' "$offenders"
-  exit 1
+ echo "the slice for $sid touches non-substrate paths — this is not a substrate-only change; use the project workflow (category fix/feature/chore):"
+ printf '%s\n' "$offenders"
+ exit 1
 fi
 echo "substrate-only slice confirmed for $sid:"
 printf '%s\n' "$changed"

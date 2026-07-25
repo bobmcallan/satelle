@@ -41,7 +41,7 @@ for accept is **MISALIGNED**.
 Enumerate skills under `.satelle/skills/` (default). **Include** a file if **either**:
 
 1. **Name** matches a reviewer skill — basename contains `review` (e.g. `*-review`,
-   `*_review`, `satelle-*-review`), **or**
+ `*_review`, `satelle-*-review`), **or**
 2. Frontmatter **tags** include `type:reviewer`
 
 **Exclude:**
@@ -67,7 +67,7 @@ For **each** file, record:
 
 ### 2. DO / ACTIONS — list to **remove** (or rewrite to pure judgment)
 
-Flag instructions to create/write/edit/fix/commit/push/implement/ship.  
+Flag instructions to create/write/edit/fix/commit/push/implement/ship. 
 Allowed: Read/Grep/Glob; non-mutating or declared functional ```check``` that only
 **decides**; reject notes for the **executor**.
 
@@ -89,25 +89,25 @@ Write **one** recommendation report **under the task folder of the run**:
 
 Examples:
 
-- parent `tsk_0bd1b247` → `.satelle/tasks/tsk_0bd1b247/recommendation-report.md`
+- parent `<task_id>` → `.satelle/tasks/<task_id>/recommendation-report.md`
 - default seed task → `.satelle/tasks/tsk_reviewer-objective-audit/recommendation-report.md`
 
 Do **not** put the report under `.satelle/documents/` unless a repo override says so.
 
 Report contents:
 
-1. **Summary** — counts OK / MISSING / MISALIGNED; DO/ACTION file count  
-2. **Per-file** — path, edge, objective status + why, DO/ACTIONS to remove, proposed rewrite  
-3. **Cross-cutting** — shared primary-objective invariant for all reviewers  
-4. **Recommendations** — ordered fix list (separate work; this run does not edit skills)  
-5. **Out of scope** — skipped files and why  
+1. **Summary** — counts OK / MISSING / MISALIGNED; DO/ACTION file count 
+2. **Per-file** — path, edge, objective status + why, DO/ACTIONS to remove, proposed rewrite 
+3. **Cross-cutting** — shared primary-objective invariant for all reviewers 
+4. **Recommendations** — ordered fix list (separate work; this run does not edit skills) 
+5. **Out of scope** — skipped files and why 
 
 **Judge and report only** unless a separate request asks to edit skills.
 
 ## Verification for the run
 
-- Every corpus file appears in the report  
-- Each has OK|MISSING|MISALIGNED and DO/ACTIONS (or none)  
-- Report path is under `.satelle/tasks/<task_id>/`  
+- Every corpus file appears in the report 
+- Each has OK|MISSING|MISALIGNED and DO/ACTIONS (or none) 
+- Report path is under `.satelle/tasks/<task_id>/` 
 
 See [[satelle-agent-model]] and the review-only contract for gate skills.
