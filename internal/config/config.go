@@ -125,6 +125,11 @@ type Config struct {
 	// is free-form. The vocabulary is REPO CONFIG — the binary never hardcodes
 	// which namespaces or values exist.
 	Tags TagsConfig `toml:"tags"`
+	// Categories holds the optional controlled category vocabulary (sty_b2315e17).
+	// Default list ships embedded (substrate/config/categories.toml); satelle.toml
+	// may extend (extra) or replace (vocabulary). Enforce is off|warn|reject
+	// (default warn). Values are never a Go literal.
+	Categories CategoriesConfig `toml:"categories"`
 }
 
 // BackupConfig is the operator policy for pre-mutation substrate backups

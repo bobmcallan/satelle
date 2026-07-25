@@ -91,6 +91,13 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 		} else {
 			req.Tags = canon
 		}
+		// Category vocabulary (sty_b2315e17): canonical casing always; hard-reject
+		// only when enforce=reject. Warn mode is surfaced on the CLI path.
+		if canon, cerr := canonicaliseCategory(req.Category); cerr != nil {
+			return nil, cerr
+		} else {
+			req.Category = canon
+		}
 
 		// Required-structure gate: when a repo opts in, an isolated reviewer
 		// judges the draft before it is persisted (the deterministic
@@ -311,6 +318,15 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 			return nil, cerr
 		}
 		req.Tags = &canon
+	}
+	// Category vocabulary (sty_b2315e17): canonicalise BEFORE definition freeze so
+	// a casing-only --category change is not treated as a definition mutation.
+	if req.Category != nil {
+		canon, cerr := canonicaliseCategory(*req.Category)
+		if cerr != nil {
+			return nil, cerr
+		}
+		req.Category = &canon
 	}
 
 	// Definition freeze (sty_b572537f): once a STORY leaves its workflow's entry

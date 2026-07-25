@@ -1,3 +1,23 @@
+## [0.0.328] - 2026-07-25
+
+### Added
+- Controlled story **category** vocabulary: default list ships as embedded data (`internal/config/substrate/config/categories.toml`), not a Go literal; satelle.toml `[categories]` may extend (`extra`) or replace (`vocabulary`) (sty_b2315e17)
+- Enforcement phase `off | warn | reject` (default **warn** so upgrades never hard-break); reject fails create/set in verb; warn is a CLI stderr advisory (web/MCP get casing + reject only — no warning channel in this slice) (sty_b2315e17)
+- Case-insensitive category ↔ `applies_to` matching in workflow resolution (`containsStr` uses EqualFold) so a legal-but-differently-cased value never silently resolves no workflow (sty_b2315e17)
+
+### Changed
+- Synonym collapses in the shipped default: bug/bugfix/defect → `fix`; infra → `infrastructure`; frontend/web/ui/cli are not categories (use `surface:` + a TYPE category) (sty_b2315e17)
+
+## [0.0.328] - 2026-07-25
+
+### Added
+- Controlled story **category** vocabulary: default list ships as embedded data (`internal/config/substrate/config/categories.toml`), not a Go literal; satelle.toml `[categories]` may extend (`extra`) or replace (`vocabulary`) (sty_b2315e17)
+- Enforcement phase `off | warn | reject` (default **warn** so upgrades never hard-break); reject fails create/set in verb; warn is a CLI stderr advisory (web/MCP get casing + reject only — no warning channel in this slice) (sty_b2315e17)
+- Case-insensitive category ↔ `applies_to` matching in workflow resolution (`containsStr` uses EqualFold) so a legal-but-differently-cased value never silently resolves no workflow (sty_b2315e17)
+
+### Changed
+- Synonym collapses in the shipped default: bug/bugfix/defect → `fix`; infra → `infrastructure`; frontend/web/ui/cli are not categories (use `surface:` + a TYPE category) (sty_b2315e17)
+
 ## [0.0.327] - 2026-07-25
 
 ### Added

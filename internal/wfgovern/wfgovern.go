@@ -160,9 +160,13 @@ func splitTrimList(s string) []string {
 	return out
 }
 
+// containsStr reports whether want is in ss using EqualFold so a differently-cased
+// category (or applies_to entry) still matches. Plain == silently missed
+// applies_to:["Substrate"] against category "substrate" — a controlled vocabulary
+// would make that worse if left unfixed (sty_b2315e17 AC3).
 func containsStr(ss []string, want string) bool {
 	for _, s := range ss {
-		if s == want {
+		if strings.EqualFold(s, want) {
 			return true
 		}
 	}

@@ -1243,6 +1243,16 @@ gate_create = true
 # [tags.vocabulary]
 # surface = ["ui", "cli"]
 
+# [categories] — controlled story TYPE vocabulary (optional). Default list ships
+# embedded (feature/fix/chore/…/substrate/epic-parent/parent); satelle.toml may
+# extend (extra) or replace (vocabulary). enforce: off | warn | reject
+# (default warn — upgrade never hard-breaks existing flows). Category is TYPE,
+# not a surface (use [tags.vocabulary] surface for interfaces).
+# [categories]
+# enforce = "warn"
+# extra = ["my-type"]
+# vocabulary = ["feature", "fix", "chore"]
+
 # [gate] — edit-gate exemptions and the single-story process rule. This is the
 # ONE table seeded ACTIVE (not commented) below, because it is the source of
 # truth for which paths escape the engaged-story edit gate — configuration, not

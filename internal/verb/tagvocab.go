@@ -36,3 +36,14 @@ func canonicaliseTags(tags []string) ([]string, error) {
 	}
 	return tagVocabCfg.CanonicaliseTags(tags)
 }
+
+// canonicaliseCategory validates and rewrites category against the wired
+// vocabulary (sty_b2315e17). Unwired: passthrough so existing verb tests keep
+// passing. On reject-mode unknown: named error. Casing is always canonicalised
+// when the value EqualFold-matches an allowed entry.
+func canonicaliseCategory(cat string) (string, error) {
+	if !tagVocabWired {
+		return cat, nil
+	}
+	return tagVocabCfg.CanonicaliseCategory(cat)
+}

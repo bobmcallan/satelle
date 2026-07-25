@@ -17,14 +17,32 @@ within whichever grouping drives it.
 ## Category — selects the workflow
 
 `category` is a first-class field on the story (not a free-form tag). It decides
-which workflow governs the item:
+which workflow governs the item. Values are a **controlled TYPE vocabulary**
+shipped as an embedded default (`substrate/config/categories.toml` in the
+binary) that a repo may extend or replace in satelle.toml — never a Go literal.
 
 | Category | Meaning | Typical workflow |
 | --- | --- | --- |
-| `feature` / `fix` / `chore` / … | Leaf work with a slice to build | project (or baseline) workflow |
+| `feature` / `improvement` / `fix` / `chore` / `docs` / `refactor` / `test` / `tooling` / `infrastructure` / `architecture` | Leaf work with a slice to build | project (or baseline) workflow |
 | `substrate` | Markdown-only substrate change (no binary) | substrate workflow when authored |
 | `parent` | Container whose work IS its children | parent workflow |
 | `epic-parent` | Epic container — themed umbrella over children | parent workflow |
+
+**Synonym collapses** (use the surviving value): `bug` / `bugfix` / `defect` →
+`fix`; `infra` → `infrastructure`. Surface-shaped names (`frontend` / `web` /
+`ui` / `cli`) are **not** categories — use the `surface:` tag plus a TYPE
+category. Matching is case-insensitive; stored form uses the declared casing.
+
+```toml
+[categories]
+enforce = "warn"                 # off | warn | reject (default warn)
+# extra = ["my-type"]            # ADD to the embedded default list
+# vocabulary = ["feature","fix"] # REPLACE the embedded default list
+```
+
+Default enforce is **warn**: unknown values print an advisory and still create;
+`reject` is a deliberate opt-in hard fail. Existing/terminal stories are never
+rewritten when a vocabulary is introduced.
 
 **File an epic as `category: epic-parent`** (or `parent` for a non-epic
 container). Do **not** invent a `kind:epic` / `kind:bug` tag axis — those tags

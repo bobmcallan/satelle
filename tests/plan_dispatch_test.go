@@ -40,6 +40,9 @@ digraph w {
 func TestPlanStepDispatchesFableAndCapturesArtifact(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
+	// plandemo is a fixture-only category — silence the default-warn notice.
+	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"),
+		"[review]\ngate_create = false\n\n[categories]\nenforce = \"off\"\n")
 	stubReviewerAccept(t, repo) // the plan-review gate accepts via the stub reviewer
 
 	// Copy the real plan executor + plan-review gate skills into the repo so the

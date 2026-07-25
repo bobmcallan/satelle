@@ -1,0 +1,14 @@
+# Default story-category vocabulary shipped with the binary. A repo extends
+# ([categories] extra) or replaces ([categories] vocabulary) it in satelle.toml.
+# Synonym collapses (drift census 2026-07-25) — surviving value on the right:
+#   bug | bugfix | defect        -> fix
+#   infra                        -> infrastructure
+#   frontend | web | ui | cli    -> NOT categories; the surviving axis is the
+#                                  surface: tag (surface:ui / surface:cli) plus a
+#                                  TYPE category (feature/fix/...). Category is
+#                                  TYPE, not a surface (satelle-story-classification).
+categories = [
+  "feature", "improvement", "fix", "chore", "docs", "refactor", "test",
+  "tooling", "infrastructure", "architecture", "substrate",
+  "epic-parent", "parent",
+]

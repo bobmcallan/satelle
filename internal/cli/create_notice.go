@@ -89,3 +89,10 @@ func indentBlock(s, prefix string) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// categoryNotice returns the warn-mode advisory for an unknown category, or "".
+// Reject-mode is enforced in verb (hard error); off is silent. The list and
+// wording come from config.CategoryWarning so allowed values have one owner.
+func categoryNotice(cfg config.Config, category string) string {
+	return cfg.CategoryWarning(category)
+}

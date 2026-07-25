@@ -51,7 +51,11 @@ ACs**, not only to a plan artifact.
 
 ### Classification (against [[satelle-story-classification]])
 
-- **Category fit** — does `category` match the kind of work the body describes?
+- **Category fit** — among **legal** values (the controlled vocabulary:
+  embedded default + satelle.toml `[categories]`), does `category` match the
+  kind of work the body describes? **Do not re-litigate legality** — unknown
+  values are handled deterministically by the vocabulary (warn or reject per
+  config). Judge FIT only: leaf vs container, type of work.
  - A draft that is clearly a **container** (umbrella over children, epic body
  of work with no own implementable slice) must use `category: epic-parent`
  (or `parent` for a non-epic container). **Reject** when the title/body

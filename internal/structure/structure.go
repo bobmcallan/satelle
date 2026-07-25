@@ -121,7 +121,7 @@ func Story(title, body, acceptance, category string) []string {
 	// clause (sty_af239840): the category selects the governing workflow
 	// (applies_to), so an uncategorised story silently falls to the wildcard.
 	if strings.TrimSpace(category) == "" {
-		p = append(p, "category is empty — pass --category (e.g. feature, fix, docs, process; it selects the governing workflow)")
+		p = append(p, "category is empty — pass --category (e.g. feature, fix, docs, chore; it selects the governing workflow)")
 	}
 	return p
 }

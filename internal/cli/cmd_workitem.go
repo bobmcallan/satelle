@@ -63,8 +63,12 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 			// Surface the pre-seed ungated state (sty_d4d0ee59): when gate_create
 			// is neither on nor explicitly opted out, tell the operator on the
 			// create path itself. Never fail a successful create over the advisory.
+			// Category warn-mode advisory (sty_b2315e17) rides the same channel.
 			if a, aerr := appFrom(cmd); aerr == nil {
 				if notice := createGateNotice(a.Config.Review.GateCreate, a.DataDir); notice != "" {
+					fmt.Fprint(cmd.ErrOrStderr(), notice)
+				}
+				if notice := categoryNotice(a.Config, cCategory); notice != "" {
 					fmt.Fprint(cmd.ErrOrStderr(), notice)
 				}
 			}
@@ -151,6 +155,16 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 			// Story-only: keep the backlog view current after set (sty_d0950127).
 			if group == "story" {
 				refreshStoryBacklog(cmd)
+			}
+			// Category warn-mode advisory on an explicit --category change only
+			// (sty_b2315e17): a status-only set on a legacy category never trips it.
+			if f.Changed("category") {
+				if a, aerr := appFrom(cmd); aerr == nil {
+					cat, _ := f.GetString("category")
+					if notice := categoryNotice(a.Config, cat); notice != "" {
+						fmt.Fprint(cmd.ErrOrStderr(), notice)
+					}
+				}
 			}
 			return nil
 		},

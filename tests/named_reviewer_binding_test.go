@@ -123,7 +123,8 @@ digraph leg {
 func TestNamedGateRunsNamedHarness(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"), "[review]\ngate_create = false\n")
+	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"),
+		"[review]\ngate_create = false\n\n[categories]\nenforce = \"off\"\n")
 	materializeDefault(t, repo, "skills", "satelle-story-intent-review")
 
 	logPath := filepath.Join(repo, "gate-sections.log")

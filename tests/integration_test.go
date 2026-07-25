@@ -565,9 +565,12 @@ func seedWorkspaceAdd(t *testing.T, bin, repo, endpoint string) string {
 
 // hermeticCreateGateOff flips the init-seeded scaffold's gate_create to false
 // in the committed satelle.toml so black-box tests are not forced through
-// create-review unless they opt in via satelle.local.toml. Edits the scaffold
-// file (not the local overlay) so tests that assert "no local.toml" still pass
-// and tests that rewrite local.toml for [vars] do not wipe the opt-out.
+// create-review unless they opt in via satelle.local.toml. Also sets
+// [categories] enforce = "off" so inventing a workflow-specific category for a
+// fixture does not emit the warn notice (which breaks combined-out JSON
+// parsers). Edits the scaffold file (not the local overlay) so tests that
+// assert "no local.toml" still pass and tests that rewrite local.toml for
+// [vars] do not wipe the opt-out.
 func hermeticCreateGateOff(t *testing.T, repo string) {
 	t.Helper()
 	p := filepath.Join(repo, ".satelle", "satelle.toml")
@@ -576,10 +579,12 @@ func hermeticCreateGateOff(t *testing.T, repo string) {
 		return // init may not have written config in exotic cases
 	}
 	body := string(b)
-	if !strings.Contains(body, "gate_create = true") {
-		return
+	if strings.Contains(body, "gate_create = true") {
+		body = strings.Replace(body, "gate_create = true", "gate_create = false", 1)
 	}
-	body = strings.Replace(body, "gate_create = true", "gate_create = false", 1)
+	if !strings.Contains(body, "[categories]") {
+		body += "\n[categories]\nenforce = \"off\"\n"
+	}
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatalf("hermetic create-gate off: %v", err)
 	}
@@ -1029,6 +1034,9 @@ func TestStoryRestamp(t *testing.T) {
 	mustRun(t, bin, repo, "reindex")
 
 	// A feature story stamps the seeded wildcard base workflow at create.
+	// governance is a fixture-only category later — silence default-warn notices.
+	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"),
+		"[review]\ngate_create = false\n\n[categories]\nenforce = \"off\"\n")
 	out := mustRun(t, bin, repo, "story", "create", "--title", "Assess the rollout", "--category", "feature")
 	if !strings.Contains(out, `"workflow:satelle-baseline-workflow"`) {
 		t.Fatalf("create did not stamp the seeded base workflow:\n%s", out)
