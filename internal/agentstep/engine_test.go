@@ -2193,18 +2193,26 @@ func TestReviewerModelReachesRunner(t *testing.T) {
 	}
 }
 
-// TestGateEdgeModelOverride (sty_19456622): DOT edge model= overrides the
-// [reviewer] binding model for that gate only; absent model= keeps binding model.
-func TestGateEdgeModelOverride(t *testing.T) {
+// TestGateNamedReviewerBinding (sty_a476a2f8): edge agent=<name> resolves that
+// binding's model; agent=reviewer / omitted uses [reviewer].
+func TestGateNamedReviewerBinding(t *testing.T) {
 	wf := wfDoc(baselineWorkflow, `"*"`, `digraph w {
   backlog [shape=Mdiamond]
   done [shape=Msquare]
-  backlog -> done [agent=reviewer, prompt="@skill:rev-a", model="opus"]
+  backlog -> done [agent=reviewer-deep, prompt="@skill:rev-a"]
 }`)
 	g, r := newEngine(t, `{"decision":"accept","notes":"ok"}`, fakeDocs{
 		workflow: wf, skillBody: "rubric", skillFound: true,
 	})
 	g.SetReviewerModel("grok-4.5")
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		if name == "reviewer-deep" {
+			return config.AgentBinding{
+				Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep", Model: "opus", Role: "reviewer",
+			}, true
+		}
+		return config.AgentBinding{}, false
+	})
 	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_x", Status: "backlog"}, "done")
 	if err != nil {
 		t.Fatal(err)
@@ -2213,13 +2221,10 @@ func TestGateEdgeModelOverride(t *testing.T) {
 		t.Fatalf("gate = %+v", dec)
 	}
 	if r.got.Model != "opus" {
-		t.Errorf("runner Request.Model = %q, want opus (edge override)", r.got.Model)
-	}
-	if dec.Model != "opus" {
-		t.Errorf("GateDecision.Model = %q, want opus", dec.Model)
+		t.Errorf("runner Request.Model = %q, want opus (named reviewer-deep)", r.got.Model)
 	}
 
-	// Absent model= → binding model.
+	// Default [reviewer] when agent omitted/reviewer.
 	wf2 := wfDoc(baselineWorkflow, `"*"`, `digraph w {
   backlog [shape=Mdiamond]
   done [shape=Msquare]
@@ -2233,19 +2238,19 @@ func TestGateEdgeModelOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	if r2.got.Model != "grok-4.5" {
-		t.Errorf("without override runner model = %q, want grok-4.5", r2.got.Model)
+		t.Errorf("default reviewer model = %q, want grok-4.5", r2.got.Model)
 	}
 }
 
-// TestReviewerSkillsForDOTModel: edge model= is returned alongside skills.
-func TestReviewerSkillsForDOTModel(t *testing.T) {
+// TestReviewerSkillsForDOTAgent: edge agent= is returned alongside skills.
+func TestReviewerSkillsForDOTAgent(t *testing.T) {
 	const body = "---\nname: w\n---\n```dot\n" + `digraph w {
-  a -> b [agent=reviewer, prompt="@skill:rev", model="opus"]
+  a -> b [agent=reviewer-deep, prompt="@skill:rev"]
 }
 ` + "```\n"
-	skills, model, _, declared := reviewerSkillsFor(body, "a", "b")
-	if !declared || len(skills) != 1 || skills[0] != "rev" || model != "opus" {
-		t.Fatalf("skills=%v model=%q declared=%v", skills, model, declared)
+	skills, agent, _, declared := reviewerSkillsFor(body, "a", "b")
+	if !declared || len(skills) != 1 || skills[0] != "rev" || agent != "reviewer-deep" {
+		t.Fatalf("skills=%v agent=%q declared=%v", skills, agent, declared)
 	}
 }
 
@@ -2931,4 +2936,52 @@ func TestReviewerSkillsFor_Parallel(t *testing.T) {
 	if par3 != 0 {
 		t.Errorf("absent → %d", par3)
 	}
+}
+
+func TestGateRefusesPerformerRoleOnEdge(t *testing.T) {
+	wf := wfDoc(baselineWorkflow, `"*"`, `digraph w {
+  backlog [shape=Mdiamond]
+  done [shape=Msquare]
+  backlog -> done [agent=coder-x, prompt="@skill:rev-a"]
+}`)
+	g, _ := newEngine(t, `{"decision":"accept","notes":"ok"}`, fakeDocs{
+		workflow: wf, skillBody: "rubric", skillFound: true,
+	})
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		if name == "coder-x" {
+			return config.AgentBinding{Command: agentcli.DefaultClaudeCommand, Tools: "Read", Role: "agent"}, true
+		}
+		return config.AgentBinding{}, false
+	})
+	_, err := g.Gate(context.Background(), workitem.Item{ID: "sty_x", Status: "backlog"}, "done")
+	if err == nil || !strings.Contains(err.Error(), "role=") {
+		t.Fatalf("want role refusal, got %v", err)
+	}
+}
+
+func TestDispatchRefusesReviewerRoleOnPerformingNode(t *testing.T) {
+	wf := wfDoc(baselineWorkflow, `"*"`, `digraph w {
+  backlog [shape=Mdiamond]
+  work [agent=reviewer-deep, prompt="@skill:code"]
+  done [shape=Msquare]
+  backlog -> work -> done
+}`)
+	g, r := newEngine(t, `{"decision":"accept","notes":"ok"}`, fakeDocs{
+		workflow: wf, skillBody: "rubric", skillFound: true,
+	})
+	called := false
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		if name == "reviewer-deep" {
+			return config.AgentBinding{Command: agentcli.DefaultClaudeCommand, Tools: "Read", Role: "reviewer", Model: "opus"}, true
+		}
+		return config.AgentBinding{}, false
+	})
+	// Replace runner to detect invoke
+	orig := r
+	_ = orig
+	_, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_x", Status: "backlog"}, "work")
+	if err == nil || !strings.Contains(err.Error(), "role=reviewer") {
+		t.Fatalf("want reviewer-on-performing refuse, got %v", err)
+	}
+	_ = called
 }

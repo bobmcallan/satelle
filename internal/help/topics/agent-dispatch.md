@@ -38,7 +38,6 @@ The agent receives:
   prompt is not double-fed; argv-first CLIs (e.g. `grok -p {payload} …`) opt in.
   Empty `{model}`/`{settings}` drop their flag; empty `{payload}` does not.
 - **Capabilities**: the binding's `tools` grant, and its `model` unless the
-  workflow node sets `model="…"` (per-node override — see below).
 
 ### Parallel multi-reviewer edges (`parallel=`)
 
@@ -51,20 +50,14 @@ reviewer). Trade-off: a rejected parallel round spends tokens on every reviewer
 — keep parallel opt-in only on gates that need multi-axis judgment. Absent
 `parallel=` is byte-for-byte sequential. See `satelle help workflows`.
 
-### Per-gate / per-node model override
+### Gate binding by agent name
 
-Every reviewer gate normally uses the single `[reviewer]` binding's model. To run
-**one** high-stakes gate on a stronger model without a second binding, set
-`model=` on the edge or scoped reviewer node (or on a named performer node):
+A gated edge or reviewer node may name any `role = "reviewer"` binding in
+`.satelle/agents.toml` via `agent=<name>`. Omitted or `agent=reviewer` uses
+`[reviewer]`. The agents layer owns harness, tools, and model — the workflow
+names *who*. Legacy DOT `model=` is superseded (warning + strip on refresh).
+See the satelle-dot-standard principle.
 
-```dot
-release -> done [agent=reviewer, prompt="@skill:satelle-story-release-review", model="opus"]
-```
-
-The binding still supplies command + tools; only `{model}` changes for that
-dispatch. Absent `model=`, behaviour is unchanged. Drift audits: `satelle agent
-validate` prints `NODE … effective_model=…` (with `(override)` when set). See the
-satelle-dot-standard principle.
 
 **Refusals (fail loud, never silent):**
 
@@ -304,3 +297,6 @@ backend keeps a weak alternate-model output from reaching the build.
 
 See also: `satelle help workflows` (choosing a lifecycle) and
 `satelle help reviewer-checks` (gate skills).
+
+
+A gated edge names its binding with `agent=<name>` (default `[reviewer]`). Models live in agents.toml only; DOT `model=` is superseded.

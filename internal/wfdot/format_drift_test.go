@@ -139,3 +139,37 @@ digraph w {
 		t.Errorf("want missing graph attrs, got %v", fs)
 	}
 }
+
+func TestFormatDrift_LegacyModel(t *testing.T) {
+	body := "---\nname: w\n---\n```dot\ndigraph w {\n  a -> b [agent=reviewer, prompt=\"@skill:x\", model=\"opus\"]\n}\n```\n"
+	findings, ok := FormatDrift(body)
+	if !ok {
+		t.Fatal("parse")
+	}
+	found := false
+	for _, f := range findings {
+		if f.Kind == "legacy_model_attr" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("want legacy_model_attr, got %+v", findings)
+	}
+}
+
+func TestRefresh_StripsModel(t *testing.T) {
+	body := "---\nname: w\n---\n```dot\ndigraph w {\n  rankdir=LR\n  graph [goal=\"g\", vars=\"v\"]\n  a -> b [agent=reviewer, prompt=\"@skill:x\", model=\"opus\"]\n}\n```\n"
+	out, changed, rep := Refresh(body, nil)
+	if !changed {
+		t.Fatal("expected change")
+	}
+	if strings.Contains(out, "model=") {
+		t.Fatalf("model= remains:\n%s", out)
+	}
+	// idempotent
+	out2, changed2, _ := Refresh(out, nil)
+	if changed2 {
+		t.Fatalf("second refresh should be no-op:\n%s", out2)
+	}
+	_ = rep
+}

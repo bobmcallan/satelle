@@ -62,6 +62,34 @@ func FormatDrift(body string) (findings []FormatFinding, ok bool) {
 		})
 	}
 
+	// 1b. Legacy model= attribute (sty_a476a2f8): agents.toml owns model.
+	for _, stmt := range dotStatements(block) {
+		t := strings.TrimSpace(stmt)
+		if t == "" || !strings.Contains(t, "model=") {
+			continue
+		}
+		// attribute form model="…" or model=…
+		if !strings.Contains(t, "model=\"") && !strings.Contains(t, "model='") && !strings.Contains(t, "model=") {
+			continue
+		}
+		where := "graph"
+		if strings.Contains(t, "->") {
+			ids := dotEdgeNodes(t)
+			if len(ids) >= 2 {
+				where = ids[0] + "->" + ids[len(ids)-1]
+			} else {
+				where = "edge"
+			}
+		} else if id, _ := dotNodeDecl(t); id != "" {
+			where = id
+		}
+		findings = append(findings, FormatFinding{
+			Kind:   "legacy_model_attr",
+			Where:  where,
+			Detail: "model= is superseded — define an agents.toml binding with the desired model and allocate it with agent=<name>; satelle workflow refresh strips model=",
+		})
+	}
+
 	// 2. Prompt-less performing nodes (agent set, not reviewer, no @skill prompt).
 	// Always-on gate nodes with on= are reviewers-by-role even if mis-tagged; we
 	// only flag performing roles: executor and named non-reviewer agents.

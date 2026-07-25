@@ -82,12 +82,8 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 			if len(report.Gates) > 0 {
 				fmt.Fprintln(out, "Gate/node effective models:")
 				for _, ga := range report.Gates {
-					mark := ""
-					if ga.NodeModel != "" {
-						mark = " (override)"
-					}
-					fmt.Fprintf(out, "  NODE [%s] %s gate=%s agent=%s effective_model=%q%s\n",
-						ga.Workflow, ga.Node, ga.Skill, ga.Agent, ga.EffectiveModel, mark)
+					fmt.Fprintf(out, "  NODE [%s] %s gate=%s agent=%s effective_model=%q\n",
+						ga.Workflow, ga.Node, ga.Skill, ga.Agent, ga.EffectiveModel)
 				}
 			}
 		}

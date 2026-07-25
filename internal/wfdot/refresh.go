@@ -147,11 +147,53 @@ func refreshDOTBlock(block string, prompts map[string]string) (string, []FormatF
 			}
 		}
 
+		// Strip superseded model= (sty_a476a2f8) from any statement that carries it.
+		if strings.Contains(t, "model=") {
+			stripped, ok, finding := stripModelAttr(ln)
+			if ok {
+				out = append(out, stripped)
+				applied = append(applied, finding)
+				continue
+			}
+		}
+
 		out = append(out, ln)
 	}
 	_ = stmts // reserved for future multi-line statement rewrites
 	return strings.Join(out, "\n"), applied, gaps
 }
+
+// stripModelAttr removes model="…" / model=… from a DOT statement line.
+func stripModelAttr(line string) (string, bool, FormatFinding) {
+	if !strings.Contains(line, "model=") {
+		return line, false, FormatFinding{}
+	}
+	cleaned := modelAttrRE.ReplaceAllString(line, "")
+	// tidy double commas / spaces left by removal
+	cleaned = regexp.MustCompile(`,\s*,`).ReplaceAllString(cleaned, ",")
+	cleaned = regexp.MustCompile(`\[\s*,`).ReplaceAllString(cleaned, "[")
+	cleaned = regexp.MustCompile(`,\s*\]`).ReplaceAllString(cleaned, "]")
+	cleaned = strings.ReplaceAll(cleaned, "  ", " ")
+	if cleaned == line {
+		return line, false, FormatFinding{}
+	}
+	where := "statement"
+	if strings.Contains(line, "->") {
+		ids := dotEdgeNodes(line)
+		if len(ids) >= 2 {
+			where = ids[0] + "->" + ids[len(ids)-1]
+		}
+	} else if id, _ := dotNodeDecl(line); id != "" {
+		where = id
+	}
+	return cleaned, true, FormatFinding{
+		Kind:   "legacy_model_attr",
+		Where:  where,
+		Detail: "stripped superseded model= attribute (agents.toml owns model; allocate with agent=<name>)",
+	}
+}
+
+var modelAttrRE = regexp.MustCompile(`(?i),?\s*model\s*=\s*"[^"]*"\s*,?|,?\s*model\s*=\s*'[^']*'\s*,?|,?\s*model\s*=\s*[^\s,\]]+\s*,?`)
 
 // rewriteLegacyEdge converts reviewer_skill= on an edge line to node-consistent form.
 func rewriteLegacyEdge(line string) (string, bool, FormatFinding) {

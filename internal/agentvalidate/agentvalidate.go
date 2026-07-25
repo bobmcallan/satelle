@@ -44,16 +44,15 @@ type Grant struct {
 	Notes             string // non-secret notes (e.g. env key names, command ceiling hints)
 }
 
-// GateAllocation is one workflow gate/node's effective model resolution
-// (sty_19456622): binding model vs optional DOT model= override.
+// GateAllocation is one workflow gate/node's resolved binding (sty_a476a2f8).
+// EffectiveModel is the binding's model — agents.toml owns model, not the DOT.
 type GateAllocation struct {
 	Workflow       string
 	Node           string // state name, or "edge:from→to" for edge gates
 	Skill          string
-	Agent          string // binding section: reviewer | named agent
+	Agent          string // binding section that will run the gate
 	BindingModel   string
-	NodeModel      string // DOT model= when set
-	EffectiveModel string // NodeModel if set, else BindingModel
+	EffectiveModel string // same as BindingModel (no DOT override)
 }
 
 // Report is the structured result of Validate.
@@ -113,8 +112,38 @@ func Validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 			continue // structure.Doc / workflow validate owns unparseable bodies
 		}
 		for _, st := range spec.States {
-			// agent=<name> named performer (skip built-in role tokens).
-			if st.Agent != "" && st.Agent != "executor" && st.Agent != "reviewer" {
+			// Plan D2 / sty_a476a2f8: on= marks a scoped GATE (judge); spine
+			// (no on=) with agent=<name> is a PERFORMER. Split before role checks.
+			if st.Skill != "" && len(st.On) > 0 && st.Skill != wfdot.StepSummarySkill {
+				// Scoped gate path — skip known performer augmentation tokens.
+				switch st.Agent {
+				case "executor", "planner", "coder":
+					// not a gate
+				default:
+					sec := st.Agent
+					if sec == "" {
+						sec = "reviewer"
+					}
+					bm := revModel
+					if sec != "reviewer" {
+						usedNamed[sec] = true
+						if b, ok := agents.NamedBinding(sec); ok {
+							bm = b.Model
+							if config.ResolvedRole(sec, b) != config.RoleReviewer {
+								r.Problems = append(r.Problems, fmt.Sprintf(
+									"workflow %q node %q allocates agent=%s with role=%q on a gated node (want role=reviewer)",
+									doc.Name, st.Name, sec, config.ResolvedRole(sec, b)))
+							}
+						} else {
+							r.Problems = append(r.Problems, fmt.Sprintf(
+								"workflow %q node %q allocates agent=%s with no [%s] binding in agents.toml",
+								doc.Name, st.Name, sec, sec))
+						}
+					}
+					r.Gates = append(r.Gates, gateAlloc(doc.Name, st.Name, st.Skill, sec, bm))
+				}
+			} else if st.Agent != "" && st.Agent != "executor" && st.Agent != "reviewer" && len(st.On) == 0 {
+				// Named PERFORMER on a spine node (no on=).
 				usedNamed[st.Agent] = true
 				b, ok := agents.NamedBinding(st.Agent)
 				if !ok {
@@ -122,12 +151,13 @@ func Validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 						"workflow %q node %q allocates agent=%s with no [%s] binding in agents.toml",
 						doc.Name, st.Name, st.Agent, st.Agent))
 				} else {
-					r.Gates = append(r.Gates, gateAlloc(doc.Name, st.Name, st.Skill, st.Agent, b.Model, st.Model))
+					if config.ResolvedRole(st.Agent, b) == config.RoleReviewer {
+						r.Problems = append(r.Problems, fmt.Sprintf(
+							"workflow %q node %q allocates agent=%s with role=reviewer on a performing node — use a gated edge or scoped on= node for judges",
+							doc.Name, st.Name, st.Agent))
+					}
+					r.Gates = append(r.Gates, gateAlloc(doc.Name, st.Name, st.Skill, st.Agent, b.Model))
 				}
-			}
-			// Scoped always-on reviewer nodes (on=…): effective model for audits.
-			if st.Agent == "reviewer" && st.Skill != "" && len(st.On) > 0 && st.Skill != wfdot.StepSummarySkill {
-				r.Gates = append(r.Gates, gateAlloc(doc.Name, st.Name, st.Skill, "reviewer", revModel, st.Model))
 			}
 			// on_enter_agent=<name> one-shot entry performer (sty_5cabe26f) —
 			// orthogonal to agent=; must also resolve to a binding and counts
@@ -141,7 +171,7 @@ func Validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 				}
 			}
 		}
-		// Edge gates: reviewer skills on transitions with optional model=.
+		// Edge gates: skills share the edge's agent= binding (default reviewer).
 		for _, tr := range spec.Transitions {
 			skills := tr.Skills
 			if len(skills) == 0 && tr.Skill != "" {
@@ -150,9 +180,29 @@ func Validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 			if len(skills) == 0 {
 				continue
 			}
+			sec := tr.Agent
+			if sec == "" {
+				sec = "reviewer"
+			}
+			bm := revModel
+			if sec != "reviewer" {
+				usedNamed[sec] = true
+				if b, ok := agents.NamedBinding(sec); ok {
+					bm = b.Model
+					if config.ResolvedRole(sec, b) != config.RoleReviewer {
+						r.Problems = append(r.Problems, fmt.Sprintf(
+							"workflow %q edge %s→%s allocates agent=%s with role=%q (want role=reviewer) — a named performer never advances status",
+							doc.Name, tr.From, tr.To, sec, config.ResolvedRole(sec, b)))
+					}
+				} else {
+					r.Problems = append(r.Problems, fmt.Sprintf(
+						"workflow %q edge %s→%s allocates agent=%s with no [%s] binding in agents.toml",
+						doc.Name, tr.From, tr.To, sec, sec))
+				}
+			}
 			edgeNode := "edge:" + tr.From + "→" + tr.To
 			for _, sk := range skills {
-				r.Gates = append(r.Gates, gateAlloc(doc.Name, edgeNode, sk, "reviewer", revModel, tr.Model))
+				r.Gates = append(r.Gates, gateAlloc(doc.Name, edgeNode, sk, sec, bm))
 			}
 		}
 	}
@@ -170,15 +220,11 @@ func Validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 	return r
 }
 
-// gateAlloc builds a GateAllocation with EffectiveModel = node override or binding.
-func gateAlloc(workflow, node, skill, agent, bindingModel, nodeModel string) GateAllocation {
-	eff := bindingModel
-	if nodeModel != "" {
-		eff = nodeModel
-	}
+// gateAlloc builds a GateAllocation for the binding that will run the gate.
+func gateAlloc(workflow, node, skill, agent, bindingModel string) GateAllocation {
 	return GateAllocation{
 		Workflow: workflow, Node: node, Skill: skill, Agent: agent,
-		BindingModel: bindingModel, NodeModel: nodeModel, EffectiveModel: eff,
+		BindingModel: bindingModel, EffectiveModel: bindingModel,
 	}
 }
 

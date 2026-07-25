@@ -51,23 +51,30 @@ Reviewer nodes name their gate the same way (`prompt="@skill:…"`). Nodes with 
 skill omit `prompt`. The emitter writes `prompt="@skill:…"` whenever a state's
 Skill is set.
 
-## Per-gate / per-node model override
+## A step names an AGENT
 
-A gated **edge** or a **node** may set `model="…"` to override only the model of
-the allocated agents.toml binding for that gate or step — without duplicating the
-harness into a second binding:
+A gated edge or reviewer node may name the binding that runs it:
 
 ```dot
-release -> done [agent=reviewer, prompt="@skill:satelle-story-release-review", model="opus"]
-estimate [agent=reviewer, prompt="@skill:satelle-estimate-actual-review", on="in_progress,done", model="sonnet"]
-plan [agent=planner, prompt="@skill:plan", model="opus"]
+release -> done [agent=reviewer-deep, prompt="@skill:satelle-story-release-review"]
 ```
 
-- The binding remains the source of **command template and tools**.
-- Empty / absent `model=` inherits the binding's model (unchanged behaviour).
-- CSV multi-skill edges share one `model=` for all skills on that edge.
-- `satelle agent validate` and `satelle workflow validate` print each gate's
- effective model (with an `(override)` marker when DOT `model=` is set).
+Omitted (or `agent=reviewer`), the gate uses the `[reviewer]` binding. The agents
+layer (`.satelle/agents.toml`) owns harness, tools, model, and effort — the
+workflow owns *who*, never *how*. To review a step on a different model, define a
+second `role = "reviewer"` binding and allocate it by name:
+
+```toml
+[reviewer-deep]
+role    = "reviewer"
+command = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit --append-system-prompt {system} --allowedTools {tools} --model {model} --effort {effort}"
+tools   = "Read,Grep,Glob,Bash(satelle:*)"
+model   = "opus"
+```
+
+Legacy `model=` on a node or edge is accepted with a warning for one release and
+stripped by `satelle workflow refresh`. It is not written by the emitter.
+
 
 ## Step-level `applies_to` on scoped reviewer nodes
 

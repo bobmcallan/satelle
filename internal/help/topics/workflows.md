@@ -54,10 +54,8 @@ inconsistencies the operator should fix, and the agent should advise on them:
 
 Run `satelle workflow validate` to surface these before they bite. That command
 also prints each gate/node's **effective model** (binding model, or a DOT
-`model=` override) so allocation is inspectable without opening agents.toml.
 `satelle agent validate` prints the same surface under its grant listing.
 
-A workflow edge or node may set `model="…"` to override only the model for that
 gate/step while keeping the shared `[reviewer]` (or named) harness — see
 `satelle help agent-dispatch` and the satelle-dot-standard principle.
 
@@ -144,3 +142,6 @@ For the full contract a dispatched (`agent=<name>`) step runs under — how it i
 briefed, how it pulls the story/documents/ledger by id, what makes it
 self-sufficient, and why its EXIT edge must carry the review — see
 `satelle help agent-dispatch`.
+
+
+A gated edge names its binding with `agent=<name>` (default `[reviewer]`). Models live in agents.toml only; DOT `model=` is superseded.

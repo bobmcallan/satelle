@@ -150,11 +150,6 @@ type State struct {
 	// authored DOT uses to mark start/terminal states (Mdiamond=start,
 	// Msquare=terminal). Populated from the DOT grammar.
 	Shape string
-	// Model is an optional per-node model override (model="…") for the
-	// allocated agents.toml binding at dispatch/gate time (sty_19456622).
-	// Empty means inherit the binding's model. The binding remains the source
-	// of command template and tools; only {model} varies.
-	Model string
 	// AppliesTo is the node's optional applies_to="surface:ui,…" list
 	// (sty_c6d093c8 / sty_8225d8a5). For an edge-less scoped reviewer or
 	// executor augmentation (on= set), the node applies only when the story
@@ -184,11 +179,11 @@ func (s Spec) StepSummary() (declared, mandatory bool) {
 	return false, false
 }
 
-// ScopedReviewer is one edge-less always-on gate: its skill and optional per-node
-// model override (sty_19456622). Model empty means inherit the [reviewer] binding.
+// ScopedReviewer is one edge-less always-on gate: its skill and optional gate
+// binding section name (agent=<name>). Agent empty means [reviewer] (sty_a476a2f8).
 type ScopedReviewer struct {
 	Skill string
-	Model string
+	Agent string // agents.toml section; empty → reviewer
 }
 
 // ScopedReviewers returns the DECLARED, edge-less reviewer nodes that gate the
@@ -214,8 +209,15 @@ func (s Spec) ScopedReviewers(toStatus string, tags []string) []ScopedReviewer {
 // distinguishable from "no such surface gate in the workflow".
 func (s Spec) ScopedReviewersSplit(toStatus string, tags []string) (enqueued, skipped []ScopedReviewer) {
 	for _, st := range s.States {
-		if st.Agent != "reviewer" || st.Skill == "" || len(st.On) == 0 {
+		// Scoped GATE: on= + skill. agent= names the binding (default reviewer).
+		// Skip known performing tokens used for executor augmentation (on=)
+		// (sty_8225d8a5 / sty_a476a2f8 D2). Named judges (agent=<custom>) stay.
+		if st.Skill == "" || len(st.On) == 0 {
 			continue
+		}
+		switch st.Agent {
+		case "executor", "planner", "coder":
+			continue // performer / augmentation, not a gate
 		}
 		if st.Skill == StepSummarySkill {
 			continue
@@ -223,7 +225,7 @@ func (s Spec) ScopedReviewersSplit(toStatus string, tags []string) (enqueued, sk
 		if !(containsStr(st.On, "*") || containsStr(st.On, toStatus)) {
 			continue
 		}
-		ref := ScopedReviewer{Skill: st.Skill, Model: st.Model}
+		ref := ScopedReviewer{Skill: st.Skill, Agent: st.Agent}
 		if !tagsMatchAppliesTo(st.AppliesTo, tags) {
 			// Only applies_to-filtered nodes are "skipped"; absent applies_to never skips.
 			if len(st.AppliesTo) > 0 {
@@ -528,10 +530,9 @@ type Transition struct {
 	To     string
 	Skill  string
 	Skills []string
-	// Model is an optional per-edge model override (model="…") applied to every
-	// reviewer skill on this edge at gate time (sty_19456622). Empty inherits
-	// the [reviewer] binding model. One model per edge (CSV skills share it).
-	Model string
+	// Agent is the agents.toml section that runs this edge's gate (agent=<name>).
+	// Empty means [reviewer]. Model= on edges is superseded (sty_a476a2f8).
+	Agent string
 	// Parallel is the opt-in concurrency cap for this edge's reviewer list
 	// (sty_4f0a15db). 0 = sequential first-reject short-circuit (today's default);
 	// parallel=true → DefaultParallelCap; parallel=N (N≥1) → cap N. Edge-only —
@@ -548,6 +549,9 @@ type Spec struct {
 	// for the fence, so it cannot reject itself — Validate appends these
 	// (sty_c6d093c8). Empty on a clean graph.
 	AttrProblems []string
+	// AttrWarnings are non-fatal parse-time notes (e.g. superseded model=).
+	// Surfaces via DocWarnings / workflow validate WARN lines (sty_a476a2f8).
+	AttrWarnings []string
 }
 
 // Declares reports whether the DOT declares a directed transition from→to
@@ -598,7 +602,6 @@ func Parse(body string) (Spec, bool) {
 		on           []string // on="s1,s2" / on="*" scope (declared always-on gate)
 		from         []string // from="s1,s2" / from="*" park inbound sources (sty_f75286dc)
 		shape        string   // DOT shape attribute (Mdiamond=start, Msquare=terminal)
-		model        string   // model="…" per-node override (sty_19456622)
 		appliesTo    []string // applies_to="surface:ui,…" (sty_c6d093c8)
 	}
 	nodes := map[string]node{}
@@ -641,7 +644,7 @@ func Parse(body string) (Spec, bool) {
 			// reviewer node uses — so every step reads the same way. reviewer_skill
 			// wins when both are present.
 			var edgeSkills []string
-			var edgeModel string
+			var edgeAgent string
 			var edgeParallel int
 			if open := strings.Index(t, "["); open >= 0 {
 				closeAt := strings.LastIndex(t, "]")
@@ -655,10 +658,20 @@ func Parse(body string) (Spec, bool) {
 				}
 				spec.AttrProblems = append(spec.AttrProblems, checkEdgeAttrs(edgeFrom, edgeTo, attrs)...)
 				edgeSkills = splitCSVSkills(attrs["reviewer_skill"])
-				if len(edgeSkills) == 0 && attrs["agent"] == "reviewer" && strings.HasPrefix(attrs["prompt"], "@skill:") {
+				// Any agent= with @skill: prompt is a gate edge (sty_a476a2f8).
+				if len(edgeSkills) == 0 && attrs["agent"] != "" && strings.HasPrefix(attrs["prompt"], "@skill:") {
 					edgeSkills = splitCSVSkills(attrs["prompt"])
 				}
-				edgeModel = attrs["model"]
+				edgeAgent = attrs["agent"]
+				if attrs["model"] != "" {
+					where := "edge"
+					if edgeFrom != "" {
+						where = edgeFrom + "->" + edgeTo
+					}
+					spec.AttrWarnings = append(spec.AttrWarnings, fmt.Sprintf(
+						"%s: model=%q is superseded — define an agents.toml binding with that model and allocate it with agent=<name> (sty_a476a2f8)",
+						where, attrs["model"]))
+				}
 				edgeParallel, _ = parseParallelAttr(attrs["parallel"])
 				// Malformed parallel= is ignored (cap 0) rather than hard-failing;
 				// unknown keys are already rejected by checkEdgeAttrs.
@@ -668,7 +681,7 @@ func Parse(body string) (Spec, bool) {
 			}
 			for i := 0; i+1 < len(ids); i++ {
 				spec.Transitions = append(spec.Transitions, Transition{
-					From: ids[i], To: ids[i+1], Skill: first(edgeSkills), Skills: edgeSkills, Model: edgeModel, Parallel: edgeParallel,
+					From: ids[i], To: ids[i+1], Skill: first(edgeSkills), Skills: edgeSkills, Agent: edgeAgent, Parallel: edgeParallel,
 				})
 			}
 			continue
@@ -705,7 +718,10 @@ func Parse(body string) (Spec, bool) {
 			n.shape = s
 		}
 		if m := attrs["model"]; m != "" {
-			n.model = m
+			// Superseded (sty_a476a2f8): warn and discard — agents.toml owns model.
+			spec.AttrWarnings = append(spec.AttrWarnings, fmt.Sprintf(
+				"node %s: model=%q is superseded — define an agents.toml binding with that model and allocate it with agent=<name>",
+				id, m))
 		}
 		if at := splitAppliesTo(attrs["applies_to"]); len(at) > 0 {
 			n.appliesTo = at
@@ -721,7 +737,7 @@ func Parse(body string) (Spec, bool) {
 		spec.States = append(spec.States, State{
 			Name: name, Agent: n.agent, Skill: n.skill,
 			OnEnterAgent: n.onEnterAgent, OnEnterSkill: n.onEnterSkill,
-			Mandatory: n.mandatory, On: n.on, From: n.from, Shape: n.shape, Model: n.model,
+			Mandatory: n.mandatory, On: n.on, From: n.from, Shape: n.shape,
 			AppliesTo: n.appliesTo,
 		})
 	}
@@ -1218,9 +1234,6 @@ func emitDOT(spec Spec, name string) string {
 		if s.OnEnterSkill != "" {
 			attrs = append(attrs, fmt.Sprintf("on_enter_prompt=\"@skill:%s\"", s.OnEnterSkill))
 		}
-		if s.Model != "" {
-			attrs = append(attrs, fmt.Sprintf("model=%q", s.Model))
-		}
 		if len(s.On) > 0 {
 			attrs = append(attrs, fmt.Sprintf("on=%q", strings.Join(s.On, ",")))
 		}
@@ -1246,12 +1259,12 @@ func emitDOT(spec Spec, name string) string {
 			skills = []string{tr.Skill}
 		}
 		if len(skills) > 0 {
-			if tr.Model != "" {
-				fmt.Fprintf(&b, "  %s -> %s [agent=reviewer, prompt=\"@skill:%s\", model=%q]\n",
-					tr.From, tr.To, strings.Join(skills, ","), tr.Model)
-			} else {
-				fmt.Fprintf(&b, "  %s -> %s [agent=reviewer, prompt=\"@skill:%s\"]\n", tr.From, tr.To, strings.Join(skills, ","))
+			ag := tr.Agent
+			if ag == "" {
+				ag = "reviewer"
 			}
+			fmt.Fprintf(&b, "  %s -> %s [agent=%s, prompt=\"@skill:%s\"]\n",
+				tr.From, tr.To, ag, strings.Join(skills, ","))
 		} else {
 			fmt.Fprintf(&b, "  %s -> %s\n", tr.From, tr.To)
 		}

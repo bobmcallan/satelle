@@ -470,14 +470,15 @@ guardrails:
 	}
 }
 
-// TestParseModelOverride (sty_19456622): node and edge model= parse; absent → "".
-func TestParseModelOverride(t *testing.T) {
+// TestParseModelSuperseded (sty_a476a2f8): model= is accepted with a warning
+// and discarded; agent= on edges is preserved for gate binding allocation.
+func TestParseModelSuperseded(t *testing.T) {
 	dot := "---\nname: x\n---\n```dot\n" + `digraph w {
   backlog [shape=Mdiamond]
   plan [agent=planner, prompt="@skill:plan", model="opus"]
   done [shape=Msquare]
   estimate [agent=reviewer, prompt="@skill:est", on="done", model="sonnet"]
-  backlog -> plan [agent=reviewer, prompt="@skill:intent", model="haiku"]
+  backlog -> plan [agent=reviewer-deep, prompt="@skill:intent", model="haiku"]
   plan -> done
 }
 ` + "```\n"
@@ -485,27 +486,17 @@ func TestParseModelOverride(t *testing.T) {
 	if !ok {
 		t.Fatal("parse failed")
 	}
-	byName := map[string]State{}
-	for _, s := range spec.States {
-		byName[s.Name] = s
+	if len(spec.AttrWarnings) == 0 {
+		t.Fatal("expected model= deprecation warnings")
 	}
-	if byName["plan"].Model != "opus" {
-		t.Errorf("plan node model = %q, want opus", byName["plan"].Model)
-	}
-	if byName["estimate"].Model != "sonnet" {
-		t.Errorf("estimate node model = %q, want sonnet", byName["estimate"].Model)
-	}
-	if byName["done"].Model != "" {
-		t.Errorf("done model = %q, want empty", byName["done"].Model)
-	}
-	var edgeModel string
+	var edgeAgent string
 	for _, tr := range spec.Transitions {
 		if tr.From == "backlog" && tr.To == "plan" {
-			edgeModel = tr.Model
+			edgeAgent = tr.Agent
 		}
 	}
-	if edgeModel != "haiku" {
-		t.Errorf("edge model = %q, want haiku", edgeModel)
+	if edgeAgent != "reviewer-deep" {
+		t.Errorf("edge agent = %q, want reviewer-deep", edgeAgent)
 	}
 }
 
@@ -519,11 +510,11 @@ func TestEmitCanonicalRoundTrip(t *testing.T) {
 			{Name: "backlog"},
 			{Name: "in_progress", Agent: "executor", Skill: "code"},
 			{Name: "done", Terminal: true},
-			{Name: "close", Agent: "reviewer", Skill: "done-rev", Model: "opus"},
+			{Name: "close", Agent: "reviewer", Skill: "done-rev"},
 		},
 		Transitions: []Transition{
 			{From: "backlog", To: "in_progress", Skill: "intent", Skills: []string{"intent"}},
-			{From: "in_progress", To: "done", Skill: "a", Skills: []string{"a", "b"}, Model: "sonnet"},
+			{From: "in_progress", To: "done", Skill: "a", Skills: []string{"a", "b"}, Agent: "reviewer-deep"},
 		},
 	}
 	out := emitDOT(spec, "w")
@@ -536,11 +527,11 @@ func TestEmitCanonicalRoundTrip(t *testing.T) {
 	if !strings.Contains(out, `[agent=reviewer, prompt="@skill:intent"]`) {
 		t.Errorf("canonical emit must write single-skill node-consistent gate:\n%s", out)
 	}
-	if !strings.Contains(out, `prompt="@skill:a,b", model="sonnet"`) {
-		t.Errorf("canonical emit must write multi-skill gate with model=:\n%s", out)
+	if !strings.Contains(out, `prompt="@skill:a,b"`) || strings.Contains(out, "model=") {
+		t.Errorf("canonical emit must write multi-skill gate without model=:\n%s", out)
 	}
-	if !strings.Contains(out, `model="opus"`) {
-		t.Errorf("canonical emit must write node model=:\n%s", out)
+	if strings.Contains(out, "model=") {
+		t.Errorf("canonical emit must not write model=:\n%s", out)
 	}
 
 	// Round-trip through Parse (wrap in a fenced body).
@@ -557,7 +548,7 @@ func TestEmitCanonicalRoundTrip(t *testing.T) {
 			skills = []string{tr.Skill}
 		}
 		skill[tr.From+"->"+tr.To] = skills
-		models[tr.From+"->"+tr.To] = tr.Model
+		models[tr.From+"->"+tr.To] = tr.Agent
 	}
 	if got := strings.Join(skill["backlog->in_progress"], ","); got != "intent" {
 		t.Errorf("single-skill round-trip = %q, want intent", got)
@@ -565,12 +556,12 @@ func TestEmitCanonicalRoundTrip(t *testing.T) {
 	if got := strings.Join(skill["in_progress->done"], ","); got != "a,b" {
 		t.Errorf("multi-skill round-trip = %q, want a,b", got)
 	}
-	if models["in_progress->done"] != "sonnet" {
-		t.Errorf("edge model round-trip = %q, want sonnet", models["in_progress->done"])
+	if models["in_progress->done"] != "reviewer-deep" {
+		t.Errorf("edge agent round-trip = %q, want reviewer-deep", models["in_progress->done"])
 	}
 	for _, s := range got.States {
-		if s.Name == "close" && s.Model != "opus" {
-			t.Errorf("node model round-trip = %q, want opus", s.Model)
+		if s.Name == "close" && s.Agent != "reviewer" {
+			t.Errorf("close node agent round-trip = %q, want reviewer", s.Agent)
 		}
 	}
 	byName := map[string]State{}
@@ -633,7 +624,7 @@ digraph w {
   backlog [shape=Mdiamond]
   in_progress [agent=executor]
   done [shape=Msquare]
-  estimate [agent=reviewer, prompt="@skill:satelle-estimate-actual-review", on="in_progress,done", model="opus"]
+  estimate [agent=reviewer, prompt="@skill:satelle-estimate-actual-review", on="in_progress,done"]
   always   [agent=reviewer, prompt="@skill:rev-all", on="*"]
   step     [agent=reviewer, prompt="@skill:satelle-step-summary", on="*"]
   backlog -> in_progress -> done
@@ -650,11 +641,11 @@ digraph w {
 		t.Errorf("in_progress scoped = %v", ip)
 	}
 	for _, s := range ip {
-		if s.Skill == "satelle-estimate-actual-review" && s.Model != "opus" {
-			t.Errorf("estimate model = %q, want opus", s.Model)
+		if s.Skill == "satelle-estimate-actual-review" && s.Agent != "reviewer" {
+			t.Errorf("estimate agent = %q, want reviewer", s.Agent)
 		}
-		if s.Skill == "rev-all" && s.Model != "" {
-			t.Errorf("rev-all model = %q, want empty", s.Model)
+		if s.Skill == "rev-all" && s.Agent != "reviewer" {
+			t.Errorf("rev-all agent = %q, want reviewer", s.Agent)
 		}
 	}
 	integ := spec.ScopedReviewers("integration", nil)

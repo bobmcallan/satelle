@@ -560,7 +560,7 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 	} else if resume {
 		return verb.GateDecision{Gated: false}, nil
 	}
-	skills, edgeModel, parallelCap, declared, err := g.reviewerSkills(ctx, item, item.Status, toStatus)
+	skills, edgeAgent, parallelCap, declared, err := g.reviewerSkills(ctx, item, item.Status, toStatus)
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
@@ -600,11 +600,11 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
-	// Build ordered gate list with optional per-skill model overrides from the
-	// edge (all edge skills share edgeModel) or scoped node model= (sty_19456622).
+	// Build ordered gate list; edge skills share the edge's agent= binding
+	// (sty_a476a2f8). Scoped nodes carry their own agent=.
 	var ordered []reviewerRef
 	for _, sk := range skills {
-		ordered = append(ordered, reviewerRef{skill: sk, model: edgeModel})
+		ordered = append(ordered, reviewerRef{skill: sk, agent: edgeAgent})
 	}
 	sysStart := len(ordered)
 	ordered = append(ordered, sys...)
@@ -622,7 +622,7 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 		if skill == "" {
 			continue
 		}
-		dec, rerr := g.runReviewer(ctx, item, toStatus, skill, ref.model)
+		dec, rerr := g.runReviewer(ctx, item, toStatus, skill, ref.agent)
 		if rerr != nil {
 			return dec, rerr
 		}
@@ -683,7 +683,7 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 				results[i].err = ctx.Err()
 				return
 			}
-			dec, rerr := g.runReviewer(ctx, item, toStatus, ref.skill, ref.model)
+			dec, rerr := g.runReviewer(ctx, item, toStatus, ref.skill, ref.agent)
 			results[i] = slot{dec: dec, err: rerr}
 		}(i, ref)
 	}
@@ -849,13 +849,15 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 			"workflow %q allocates state %q to agent %q but .satelle/agents.toml defines no [%s] binding — define it, or reassign the step",
 			doc.Name, toStatus, dispatchAgent, dispatchAgent)
 	}
-	// Per-node model= override on the target state (sty_19456622) — same mechanism
-	// as gate edges: binding stays source of command/tools; only model varies.
-	if target.Model != "" {
-		binding.Model = target.Model
-	}
+	// model= on nodes is superseded (sty_a476a2f8); agents.toml owns the model.
 	// Design §9 (a): when the resolved binding is role=reviewer, it is a judge
 	// not a performer — do not dispatch as ExpectPerform (isNamedPerformer).
+	// Fail loud when a role=reviewer binding is allocated on a performing node.
+	if config.ResolvedRole(dispatchAgent, binding) == config.RoleReviewer {
+		return verb.DispatchResult{}, fmt.Errorf(
+			"workflow %q allocates performing state %q to agent %q with role=reviewer — judges advance status only via gates; use a gated edge or scoped on= node",
+			doc.Name, toStatus, dispatchAgent)
+	}
 	if !isNamedPerformer(dispatchAgent, binding) {
 		return verb.DispatchResult{}, nil
 	}
@@ -1189,9 +1191,30 @@ func (g *Engine) retryWait(ctx context.Context, attempt int) error {
 // verdict. A skill carrying a functional check runs deterministically; otherwise
 // the skill body rides as an isolated LLM reviewer's system prompt. Gated=false
 // when the skill's rubric is not installed (advisory — keeps fresh repos working).
-// modelOverride is a DOT model= value for this gate (edge or scoped node); empty
-// inherits the [reviewer] binding model (sty_19456622).
-func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, skill, modelOverride string) (verb.GateDecision, error) {
+// gateAgent is the agents.toml section that runs this gate (agent=<name>); empty
+// or "reviewer" resolves [reviewer] (sty_a476a2f8).
+
+// gateBinding resolves the agents.toml section that runs a gate (sty_a476a2f8).
+// Empty or "reviewer" → g.reviewerBinding. Any other name requires namedAgents
+// and role=reviewer (enforced by the caller).
+func (g *Engine) gateBinding(section string) (config.AgentBinding, string, error) {
+	section = strings.TrimSpace(section)
+	if section == "" || section == "reviewer" {
+		return g.reviewerBinding, "reviewer", nil
+	}
+	if g.namedAgents == nil {
+		return config.AgentBinding{}, section, fmt.Errorf(
+			"gate refused: agent=%s but no named-agent resolver is configured", section)
+	}
+	b, ok := g.namedAgents(section)
+	if !ok {
+		return config.AgentBinding{}, section, fmt.Errorf(
+			"gate refused: agent=%s has no [%s] binding in agents.toml", section, section)
+	}
+	return b, section, nil
+}
+
+func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, skill, gateAgent string) (verb.GateDecision, error) {
 	body, err := g.skillBody(ctx, skill)
 	if err != nil {
 		if errors.Is(err, docindex.ErrNotFound) {
@@ -1236,41 +1259,41 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 	}
 	// LLM path: shared Invoke (sty_ba860c8a / sty_e21cbc08). Pre-flight (skill,
 	// structure, functional-check, missing-rubric advisory) stays here.
-	binding := g.reviewerBinding
-	if binding.Tools == "" {
-		binding.Tools = g.tools
+	binding, section, berr := g.gateBinding(gateAgent)
+	if berr != nil {
+		return verb.GateDecision{Gated: true, Skill: skill}, berr
 	}
-	if binding.Model == "" {
-		binding.Model = g.model
-	}
-	// Per-gate model override (sty_19456622): DOT model= wins over binding/g.model
-	// without mutating the engine-wide reviewer binding (other gates in the same
-	// transition must not inherit a sibling gate's override).
-	if modelOverride != "" {
-		binding.Model = modelOverride
-	}
-	if len(binding.Env) == 0 {
-		binding.Env = g.reviewerEnv
-	}
-	if binding.Principles == "" && binding.InjectPrinciples == nil {
-		// Mirror engine injectPrinciples cache when binding never set principles.
-		if g.injectPrinciples {
-			binding.Principles = config.PrinciplesSession
-		} else {
-			binding.Principles = config.PrinciplesNone
+	// Engine-wide caches fill only the default [reviewer] binding. Named
+	// bindings must be self-contained in agents.toml (sty_a476a2f8).
+	if section == "reviewer" {
+		if binding.Tools == "" {
+			binding.Tools = g.tools
+		}
+		if binding.Model == "" {
+			binding.Model = g.model
+		}
+		if len(binding.Env) == 0 {
+			binding.Env = g.reviewerEnv
+		}
+		if binding.Principles == "" && binding.InjectPrinciples == nil {
+			if g.injectPrinciples {
+				binding.Principles = config.PrinciplesSession
+			} else {
+				binding.Principles = config.PrinciplesNone
+			}
 		}
 	}
 	// Mechanism: a gate needs an isolated verdict. command=in-loop cannot produce
 	// one — fail loud at gate time (design §6.4), not by policing tools/model.
 	if isInLoopCommand(binding.CommandTemplate()) {
 		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
-			"gate refused: reviewer binding %q is command=in-loop and cannot produce an isolated verdict — set [reviewer] command to an isolated agent CLI (claude|grok|codex or a full template)", "reviewer")
+			"gate refused: reviewer binding %q is command=in-loop and cannot produce an isolated verdict — set [%s] command to an isolated agent CLI (claude|grok|codex or a full template)", section, section)
 	}
-	// Role must resolve to reviewer for the gate binding (design §4.4 / §8).
-	if config.ResolvedRole("reviewer", binding) != config.RoleReviewer {
+	// Role must resolve to reviewer for the gate binding (design §4.4 / §8 / sty_a476a2f8).
+	if config.ResolvedRole(section, binding) != config.RoleReviewer {
 		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
-			"gate refused: [reviewer] binding has role=%q (want role=reviewer) — declare role = \"reviewer\" in agents.toml",
-			config.ResolvedRole("reviewer", binding))
+			"gate refused: binding [%s] has role=%q (want role=reviewer) — a named performer never advances status; allocate a role=\"reviewer\" binding on gated edges",
+			section, config.ResolvedRole(section, binding))
 	}
 	if g.runner == nil {
 		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
@@ -1278,7 +1301,7 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 	}
 	res := g.Invoke(ctx, InvokeRequest{
 		Binding:  binding,
-		Section:  "reviewer",
+		Section:  section,
 		Rubric:   body,
 		Payload:  tp,
 		Charter:  reviewerCharter(),
@@ -1289,7 +1312,7 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 		StoryID:  item.ID,
 		Step:     toStatus,
 		Skill:    skill,
-		Actor:    "reviewer",
+		Actor:    section,
 	})
 	if res.Err != nil {
 		return verb.GateDecision{Gated: true, Skill: skill}, res.Err
@@ -1345,7 +1368,7 @@ func (g *Engine) scopedReviewers(ctx context.Context, item workitem.Item, toStat
 	enqueued, skipped := spec.ScopedReviewersSplit(toStatus, item.Tags)
 	for _, s := range enqueued {
 		if !containsStr(exclude, s.Skill) {
-			out = append(out, reviewerRef{skill: s.Skill, model: s.Model})
+			out = append(out, reviewerRef{skill: s.Skill, agent: s.Agent})
 		}
 	}
 	for _, s := range skipped {
@@ -1357,9 +1380,10 @@ func (g *Engine) scopedReviewers(ctx context.Context, item workitem.Item, toStat
 	return out, nil
 }
 
-// reviewerRef is one gate to run: skill name + optional DOT model= override.
+// reviewerRef is one gate to run: skill name + agents.toml binding section.
+// agent empty means [reviewer] (sty_a476a2f8).
 type reviewerRef struct {
-	skill, model string
+	skill, agent string
 }
 
 // structureSkill is the required-structure reviewer that judges a draft work
@@ -1982,31 +2006,19 @@ func (g *Engine) composeSkillBodies(ctx context.Context, names []string) (string
 
 // reviewerSkillsFor scans a workflow body's transition lines for the (from→to)
 // edge. It returns the edge's ordered reviewer skills (nil when the edge is
-// declared but ungated), the edge model= override (empty when absent / YAML
-// grammar), the parallel concurrency cap (0 = sequential; sty_4f0a15db), and
-// whether the edge is DECLARED at all. The two cases are distinct: a declared
-// ungated edge is advisory (enact directly), while an UNDECLARED edge is not a
-// legal move in this workflow and must be refused — otherwise a story could skip
-// a gate that rejected it by jumping to a later state across an edge the workflow
-// never declared. The transition format is the inline-map shape the substrate
-// uses, with either a single reviewer or a list:
-//
-//   - {from: backlog, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
-//   - {from: deployed, to: done, reviewer_skills: [satelle-story-done-review, satelle-estimate-actual]}
-//
-// reviewer_skills (the ordered list) takes precedence over reviewer_skill.
-// DOT edges may carry model="…" (sty_19456622) and parallel= (sty_4f0a15db);
-// YAML edges have no model/parallel field.
-func reviewerSkillsFor(body, from, to string) (skills []string, model string, parallel int, declared bool) {
+// declared but ungated), the edge agent= binding section (empty → reviewer),
+// the parallel concurrency cap (0 = sequential; sty_4f0a15db), and whether the
+// edge is DECLARED at all.
+func reviewerSkillsFor(body, from, to string) (skills []string, agent string, parallel int, declared bool) {
 	// DOT workflow: resolve the edge from the shared wfdot spec — entry to a
 	// reviewer node is the gated transition, carrying that node's skill.
 	if spec, ok := wfdot.Parse(body); ok {
 		for _, tr := range spec.Transitions {
 			if tr.From == from && tr.To == to {
 				if len(tr.Skills) > 0 {
-					return tr.Skills, tr.Model, tr.Parallel, true
+					return tr.Skills, tr.Agent, tr.Parallel, true
 				}
-				return nil, tr.Model, tr.Parallel, true
+				return nil, tr.Agent, tr.Parallel, true
 			}
 		}
 		return nil, "", 0, false

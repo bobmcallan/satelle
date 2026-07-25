@@ -82,7 +82,10 @@ func DocWarnings(kind, name, body string) []string {
 	if !ok {
 		return nil
 	}
-	return wfdot.OverFireWarnings(spec)
+	var out []string
+	out = append(out, spec.AttrWarnings...)
+	out = append(out, wfdot.OverFireWarnings(spec)...)
+	return out
 }
 
 // Checked reports whether a doc kind has a deterministic structure check (the

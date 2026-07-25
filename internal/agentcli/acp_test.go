@@ -277,3 +277,52 @@ while True:
 		t.Fatal("expected timeout error")
 	}
 }
+
+func TestACPRunner_ModelSetConfigRejected(t *testing.T) {
+	// Peer rejects model set_config_option.
+	script := `#!/usr/bin/env python3
+import sys, json
+def send(o):
+    sys.stdout.write(json.dumps(o)+"\n"); sys.stdout.flush()
+while True:
+    line = sys.stdin.readline()
+    if not line:
+        break
+    msg = json.loads(line)
+    mid = msg.get("id")
+    method = msg.get("method")
+    if method == "initialize":
+        send({"jsonrpc":"2.0","id":mid,"result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[{"id":"cached_token"}]}})
+    elif method == "authenticate":
+        send({"jsonrpc":"2.0","id":mid,"result":{}})
+    elif method == "session/new":
+        send({"jsonrpc":"2.0","id":mid,"result":{"sessionId":"sess_test"}})
+    elif method == "session/set_config_option":
+        params = msg.get("params") or {}
+        if params.get("configId") == "model":
+            send({"jsonrpc":"2.0","id":mid,"error":{"code":-32000,"message":"unknown model"}})
+        else:
+            send({"jsonrpc":"2.0","id":mid,"result":{}})
+    elif method == "session/prompt":
+        send({"jsonrpc":"2.0","id":mid,"result":{"stopReason":"end_turn"}})
+    elif mid is not None:
+        send({"jsonrpc":"2.0","id":mid,"result":{}})
+`
+	dir := t.TempDir()
+	path := dir + "/peer.py"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r, err := RunnerFromBinding(InterfaceACP, path+" stdio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.Run(context.Background(), Request{
+		SystemPrompt: "rubric",
+		Payload:      `{}`,
+		Model:        "opus",
+	})
+	if err == nil || !strings.Contains(err.Error(), "model") {
+		t.Fatalf("want model set_config_option error, got %v", err)
+	}
+}

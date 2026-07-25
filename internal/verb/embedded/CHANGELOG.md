@@ -1,3 +1,11 @@
+## [0.0.320] - 2026-07-25
+
+### Changed
+- Workflows name agents, never models: DOT `model=` is superseded (warn + strip on refresh); gated edges and scoped reviewers allocate any `role=reviewer` binding via `agent=<name>`; ACP surfaces peer rejection of `session/set_config_option` model (sty_a476a2f8)
+
+### Added
+- Integration coverage for named gate bindings, role-mismatch refusal, and model= strip (sty_a476a2f8)
+
 ## [0.0.319] - 2026-07-25
 
 ### Changed
