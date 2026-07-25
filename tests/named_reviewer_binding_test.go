@@ -3,6 +3,7 @@
 package tests
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -114,5 +115,75 @@ digraph leg {
 	}
 	if strings.Contains(dot, "model=") {
 		t.Fatalf("refresh --apply should strip model= from DOT:\n%s\nreport:\n%s", body, out)
+	}
+}
+
+// TestNamedGateRunsNamedHarness (sty_68dafd5f): a gated edge agent=reviewer-deep
+// invokes that binding's harness script, not the default [reviewer] script.
+func TestNamedGateRunsNamedHarness(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"), "[review]\ngate_create = false\n")
+	materializeDefault(t, repo, "skills", "satelle-story-intent-review")
+
+	logPath := filepath.Join(repo, "gate-sections.log")
+	stubR := filepath.Join(repo, "verdict-reviewer.sh")
+	stubD := filepath.Join(repo, "verdict-deep.sh")
+	if err := os.WriteFile(stubR, []byte("#!/bin/sh\necho reviewer >> '"+logPath+"'\necho '{\"decision\":\"accept\",\"notes\":\"\"}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stubD, []byte("#!/bin/sh\necho reviewer-deep >> '"+logPath+"'\necho '{\"decision\":\"accept\",\"notes\":\"\"}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".satelle", "agents.toml"), fmt.Sprintf(
+		"[reviewer]\nrole=\"reviewer\"\ncommand=%q\ntools=\"read_file\"\n\n[reviewer-deep]\nrole=\"reviewer\"\ncommand=%q\ntools=\"read_file\"\nmodel=\"opus\"\n",
+		stubR+" {system} {tools} {model}", stubD+" {system} {tools} {model}"))
+
+	mustWrite(t, filepath.Join(repo, ".satelle", "workflows", "named-gate.md"), `---
+name: named-gate
+type: workflow
+scope: project
+applies_to: ["named-gate-test"]
+description: Named harness smoke for sty_68dafd5f.
+---
+
+`+"```dot"+`
+digraph named_gate {
+  backlog [shape=Mdiamond]
+  done [shape=Msquare]
+  backlog -> done [agent=reviewer-deep, prompt="@skill:satelle-story-intent-review"]
+}
+`+"```"+`
+`)
+	mustRun(t, testBin, repo, "reindex")
+
+	created := mustRun(t, testBin, repo, "story", "create",
+		"--title", "Named harness story",
+		"--body", "Prove agent=reviewer-deep runs its own script",
+		"--acceptance", "1. done",
+		"--category", "named-gate-test")
+	var st struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(created), &st); err != nil || st.ID == "" {
+		t.Fatalf("parse create: %v\n%s", err, created)
+	}
+	mustRun(t, testBin, repo, "story", "set", st.ID, "--status", "done")
+	logBody, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := string(logBody)
+	if !strings.Contains(log, "reviewer-deep") {
+		t.Fatalf("named gate must invoke reviewer-deep harness, log=%q", log)
+	}
+	// Default [reviewer] must not have run this edge.
+	if strings.Contains(log, "reviewer\n") || strings.HasPrefix(log, "reviewer") && !strings.Contains(log, "reviewer-deep") {
+		// Allow only reviewer-deep lines.
+		for _, line := range strings.Split(strings.TrimSpace(log), "\n") {
+			if line == "reviewer" {
+				t.Fatalf("default [reviewer] harness must not run the named edge, log=%q", log)
+			}
+		}
 	}
 }

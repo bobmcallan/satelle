@@ -1,3 +1,8 @@
+## [0.0.323] - 2026-07-25
+
+### Fixed
+- Named gate bindings (`agent=<name>` on a gated edge) run that binding's harness, not the default `[reviewer]` runner (sty_68dafd5f)
+
 ## [0.0.322] - 2026-07-25
 
 ### Added
