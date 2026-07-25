@@ -1,3 +1,8 @@
+## [0.0.326] - 2026-07-25
+
+### Fixed
+- Create-review premise example is repo-agnostic (`<path>:<symbol>`) so v0.0.325's leaked satelle-internal illustration does not ship in the binary (sty_b9692e1f)
+
 ## [0.0.325] - 2026-07-25
 
 ### Changed
