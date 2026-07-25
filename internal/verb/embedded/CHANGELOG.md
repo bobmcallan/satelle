@@ -1,3 +1,8 @@
+## [0.0.324] - 2026-07-25
+
+### Fixed
+- `satelle agent validate` no longer warns that a named `role=reviewer` binding is a perform-only allocation — that contradicted live gate NODE lines after per-gate agent= (sty_6ab016dc)
+
 ## [0.0.323] - 2026-07-25
 
 ### Fixed

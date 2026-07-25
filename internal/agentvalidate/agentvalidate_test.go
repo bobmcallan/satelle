@@ -90,6 +90,13 @@ func TestValidate_GateBindingSection(t *testing.T) {
 	if est.EffectiveModel != "grok-4.5" {
 		t.Errorf("estimate scoped = %+v, want grok-4.5", est)
 	}
+	// sty_6ab016dc: named role=reviewer on a gated edge is live — no stale WARN
+	// claiming it is a "named perform binding" or that gates fall back to [reviewer].
+	for _, w := range r.Warnings {
+		if strings.Contains(w, "named perform") || strings.Contains(w, "gates use [reviewer] by default") {
+			t.Errorf("stale contradictory WARN must not fire when NODE names a named reviewer: %s", w)
+		}
+	}
 }
 
 func TestValidate_BrokenBinding(t *testing.T) {

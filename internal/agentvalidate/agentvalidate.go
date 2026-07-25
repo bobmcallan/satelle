@@ -266,11 +266,11 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 		warnings = append(warnings, fmt.Sprintf(
 			"agents.toml [reviewer] resolves role=%s (want role=reviewer for gate verdicts)", role))
 	}
-	if section != "reviewer" && section != "executor" && role == config.RoleReviewer {
-		warnings = append(warnings, fmt.Sprintf(
-			"agents.toml [%s] declares role=reviewer but is a named perform binding — gates use [reviewer] by default",
-			section))
-	}
+	// Named role=reviewer bindings ARE allocatable on gated edges (sty_a476a2f8 /
+	// sty_6ab016dc). Do not warn that they are "named perform" or that gates
+	// always fall back to [reviewer] — that contradicted the NODE allocation
+	// lines and the engine gateBinding path. Orphan detection (unusedNamed)
+	// still reports bindings no workflow allocates.
 	// In-loop reviewer cannot produce an isolated verdict — warn at validate;
 	// gate refuses loud at transition time (design §6.4).
 	if role == config.RoleReviewer {
