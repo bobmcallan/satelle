@@ -1,3 +1,8 @@
+## [0.0.321] - 2026-07-25
+
+### Fixed
+- ACP model set_config_option: hard-fail only on explicit model rejection; Method not found is a soft miss so peers without the method still run (sty_a476a2f8 follow-up)
+
 ## [0.0.320] - 2026-07-25
 
 ### Changed
