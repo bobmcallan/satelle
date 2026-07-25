@@ -429,18 +429,29 @@ func (c *acpClient) runSession(ctx context.Context, req Request) ([]byte, error)
 	c.session = sessObj.SessionID
 	c.mu.Unlock()
 
-	// Optional model config — surface peer rejection (sty_a476a2f8). A reported
-	// model must be the model that ran; silent keep-on-failure misreports.
+	// Optional model config (sty_a476a2f8). A peer that explicitly rejects the
+	// model value fails the run (so a reported model is the model that ran).
+	// Peers that do not implement set_config_option (Method not found / unsupported)
+	// are a soft miss — log and continue; the binding still spawned with its
+	// default model (same as before for those peers).
 	if m := strings.TrimSpace(req.Model); m != "" {
 		if _, err := c.request(ctx, "session/set_config_option", map[string]any{
 			"sessionId": sessObj.SessionID,
 			"configId":  "model",
 			"value":     m,
 		}); err != nil {
-			return nil, fmt.Errorf("session/set_config_option model=%q rejected by peer: %w", m, err)
+			es := err.Error()
+			if strings.Contains(strings.ToLower(es), "method not found") ||
+				strings.Contains(strings.ToLower(es), "not supported") ||
+				strings.Contains(strings.ToLower(es), "unknown method") {
+				// soft: peer lacks the method — cannot confirm model change
+				_ = es
+			} else {
+				return nil, fmt.Errorf("session/set_config_option model=%q rejected by peer: %w", m, err)
+			}
 		}
 	}
-	// Effort: try common config ids; ignore failures (peers vary; model is the hard requirement).
+	// Effort: try common config ids; ignore failures (peers vary).
 	if e := strings.TrimSpace(req.Effort); e != "" {
 		// Prefer reasoning_effort; also try effort for peers that use that id.
 		_, _ = c.request(ctx, "session/set_config_option", map[string]any{
