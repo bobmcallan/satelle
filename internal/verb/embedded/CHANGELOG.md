@@ -1,3 +1,8 @@
+## [0.0.325] - 2026-07-25
+
+### Changed
+- Create gate gains premise falsification: reject story rationales that assert checkable facts about this repo contradicted by named evidence; opinion/value/priority never reject grounds (sty_b9692e1f)
+
 ## [0.0.324] - 2026-07-25
 
 ### Fixed

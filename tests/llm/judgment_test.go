@@ -42,6 +42,7 @@ var requiredGates = []string{
 	"satelle-story-cancel-review",
 	"satelle-story-blocked-review",
 	"satelle-workflow-change-review",
+	"satelle-story-create-review", // premise falsification (sty_b9692e1f)
 }
 
 // TestJudgmentFixtureStructure validates the labelled fixture corpus without

@@ -3,7 +3,7 @@ name: satelle-story-create-review
 scope: system
 type: skill
 tags: [type:skill, type:reviewer]
-description: Content/alignment create gate after the deterministic structural check. Judges ACs vs goal, coherence, scope, AND category/tag classification against satelle-story-classification. Read-only; rejects with specifics for the agent to fix and retry.
+description: Content/alignment create gate after the deterministic structural check. Judges ACs vs goal, coherence, scope, premise falsification against the repo, AND category/tag classification. Read-only; rejects with specifics for the agent to fix and retry.
 ---
 
 # Story create — content, alignment, and classification review
@@ -16,7 +16,7 @@ restatement; ≥1 numbered AC; non-empty category). Input on stdin:
 modify anything. Pull the taxonomy on demand: [[satelle-story-classification]].
 
 Structure is already guaranteed — do not re-check it. Judge content,
-alignment, and **classification**:
+alignment, premise, and **classification**:
 
 ## How to judge
 
@@ -32,6 +32,22 @@ alignment, and **classification**:
 - **Scope** — is this one sensible slice? Push back (with a suggested split)
  a draft that is clearly several stories in one, or whose ACs describe work
  far beyond the goal.
+
+### Premise (falsification)
+
+Same discipline as [[satelle-story-plan-review]] (falsify checkable claims
+against the repo; do not rewrite the work) — applied to the **story body and
+ACs**, not only to a plan artifact.
+
+- **Reject** when the body or ACs assert something **about this repo**
+  (mechanism, structure, or behaviour) that the repo **contradicts**, and you
+  can **name the file/symbol** that shows it. Notes must cite that evidence.
+  Existence claims and behaviour claims are both in scope when checkable.
+- **Never reject** for opinion: a design you would have chosen differently, a
+  preferred tradeoff, or a judgment that the work is not worthwhile. That is
+  create-and-match — out of scope for this gate.
+- **Out of scope** (not falsifiable here): future outcomes, value, priority, and
+  whether the operator should do the work. Leave those to the operator.
 
 ### Classification (against [[satelle-story-classification]])
 
@@ -64,11 +80,12 @@ Fair gate, not perfectionist: a clear leaf story with a fitting category and
 ACs that plausibly verify the goal accepts. An epic misfiled as `feature` is
 cheap to catch here — reject it.
 
-- **Accept** when goal is coherent, ACs verify it, and category/tags fit the
- taxonomy.
-- **Reject** when content fails alignment/coherence/scope, OR classification
- is wrong (epic as feature, invented `kind:*`) — name the specific problem
- and the fix (e.g. "use category epic-parent").
+- **Accept** when goal is coherent, ACs verify it, premise is not falsified by
+ named repo evidence, and category/tags fit the taxonomy.
+- **Reject** when content fails alignment/coherence/scope, premise is falsified
+ with cited evidence, OR classification is wrong (epic as feature, invented
+ `kind:*`) — name the specific problem and the fix (e.g. "use category
+ epic-parent"; "premise false: see engine.go runReviewer payload").
 
 ## Verdict
 

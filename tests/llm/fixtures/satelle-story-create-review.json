@@ -1,0 +1,26 @@
+[
+  {
+    "name": "clear-accept-well-formed-leaf",
+    "want": "accept",
+    "why": "Coherent leaf goal, ACs that verify it, fitting category — no falsifiable repo claim",
+    "payload": ""
+  },
+  {
+    "name": "clear-accept-design-opinion-not-reject",
+    "want": "accept",
+    "why": "Reviewer may prefer a different design; opinion alone is never grounds to reject under premise falsification",
+    "payload": ""
+  },
+  {
+    "name": "clear-reject-premise-falsified-by-repo",
+    "want": "reject",
+    "why": "Story asserts a checkable fact about this repo that the tree contradicts — notes must name the file/symbol",
+    "payload": ""
+  },
+  {
+    "name": "worked-case-isolated-reviewer-not-shared-context",
+    "want": "reject",
+    "why": "Asserting that an isolated reviewer shares the authoring agent conversation is falsified by engine.go runReviewer payload construction ({story,from,to}+docs, fresh process)",
+    "payload": ""
+  }
+]
