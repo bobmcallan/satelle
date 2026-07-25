@@ -2194,8 +2194,7 @@ func TestReviewerModelReachesRunner(t *testing.T) {
 }
 
 // TestGateNamedReviewerBinding (sty_a476a2f8): edge agent=<name> resolves that
-// binding's model AND builds its harness via newRunner (not g.runner); agent=
-// reviewer / omitted uses [reviewer] + bootstrap runner.
+// binding's model; agent=reviewer / omitted uses [reviewer].
 func TestGateNamedReviewerBinding(t *testing.T) {
 	wf := wfDoc(baselineWorkflow, `"*"`, `digraph w {
   backlog [shape=Mdiamond]
@@ -2206,20 +2205,14 @@ func TestGateNamedReviewerBinding(t *testing.T) {
 		workflow: wf, skillBody: "rubric", skillFound: true,
 	})
 	g.SetReviewerModel("grok-4.5")
-	const deepCmd = "deep-reviewer-cli -p --append-system-prompt {system}"
 	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
 		if name == "reviewer-deep" {
 			return config.AgentBinding{
-				Command: deepCmd, Tools: "Read,Grep", Model: "opus", Role: "reviewer",
+				Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep", Model: "opus", Role: "reviewer",
 			}, true
 		}
 		return config.AgentBinding{}, false
 	})
-	var sawIface, sawCmd string
-	g.newRunner = func(iface, cmd string) (agentcli.Runner, error) {
-		sawIface, sawCmd = iface, cmd
-		return r, nil // hermetic: same fake runner, but must be built for the named binding
-	}
 	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_x", Status: "backlog"}, "done")
 	if err != nil {
 		t.Fatal(err)
@@ -2230,12 +2223,8 @@ func TestGateNamedReviewerBinding(t *testing.T) {
 	if r.got.Model != "opus" {
 		t.Errorf("runner Request.Model = %q, want opus (named reviewer-deep)", r.got.Model)
 	}
-	if sawCmd != deepCmd {
-		t.Errorf("newRunner command = %q, want named binding command %q", sawCmd, deepCmd)
-	}
-	_ = sawIface
 
-	// Default [reviewer] when agent omitted/reviewer — uses g.runner, not newRunner.
+	// Default [reviewer] when agent omitted/reviewer.
 	wf2 := wfDoc(baselineWorkflow, `"*"`, `digraph w {
   backlog [shape=Mdiamond]
   done [shape=Msquare]
@@ -2245,10 +2234,6 @@ func TestGateNamedReviewerBinding(t *testing.T) {
 		workflow: wf2, skillBody: "rubric", skillFound: true,
 	})
 	g2.SetReviewerModel("grok-4.5")
-	g2.newRunner = func(iface, cmd string) (agentcli.Runner, error) {
-		t.Errorf("default [reviewer] must not call newRunner (got iface=%q cmd=%q)", iface, cmd)
-		return r2, nil
-	}
 	if _, err := g2.Gate(context.Background(), workitem.Item{ID: "sty_x", Status: "backlog"}, "done"); err != nil {
 		t.Fatal(err)
 	}

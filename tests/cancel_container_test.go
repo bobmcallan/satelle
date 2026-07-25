@@ -145,9 +145,6 @@ func TestCancelReviewSkillContent(t *testing.T) {
 		}
 	}
 	// Floor: tag is not a substitute for recorded reason.
-	if !strings.Contains(s, "not a substitute") && !strings.Contains(s, "not a substitute") {
-		// already covered by "not a substitute" in skill text
-	}
 	if !strings.Contains(strings.ToLower(s), "substitute") {
 		t.Error("skill must state cancel-reason tag is not a substitute for recorded reason")
 	}

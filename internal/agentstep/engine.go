@@ -1295,16 +1295,9 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 			"gate refused: binding [%s] has role=%q (want role=reviewer) — a named performer never advances status; allocate a role=\"reviewer\" binding on gated edges",
 			section, config.ResolvedRole(section, binding))
 	}
-	// Default [reviewer] uses the bootstrap runner (g.runner). A named
-	// role=reviewer binding must run its OWN harness — leave Runner nil so
-	// Invoke builds from the binding (sty_a476a2f8; runner must follow agent=).
-	var gateRunner agentcli.Runner
-	if section == "reviewer" {
-		if g.runner == nil {
-			return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
-				"reviewer: transition %s→%s is gated by %q but no agent runner is configured", item.Status, toStatus, skill)
-		}
-		gateRunner = g.runner
+	if g.runner == nil {
+		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
+			"reviewer: transition %s→%s is gated by %q but no agent runner is configured", item.Status, toStatus, skill)
 	}
 	res := g.Invoke(ctx, InvokeRequest{
 		Binding:  binding,
@@ -1314,7 +1307,7 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 		Charter:  reviewerCharter(),
 		Expect:   ExpectVerdict,
 		Timeout:  g.agentTimeout,
-		Runner:   gateRunner,
+		Runner:   g.runner,
 		Attempts: g.attempts,
 		StoryID:  item.ID,
 		Step:     toStatus,

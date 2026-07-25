@@ -79,8 +79,8 @@ exit). On cancel, apply it as follows and put all four items in **notes**:
 
 **Cancelled is terminal.** Revival is a **new** story tagged `supersedes:<id>`,
 never a reopen of the cancelled record — same path [[satelle-agent-goals]]
-prescribes for the AC-wrong branch. A `shelved` (or any) cancel-reason does not
-make the record resumable.
+prescribes for the AC-wrong branch. A cancel-reason tag never makes the record
+resumable.
 
 ## On reject — stop and surface
 
