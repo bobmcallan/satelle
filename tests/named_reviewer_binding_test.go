@@ -3,6 +3,7 @@
 package tests
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -50,6 +51,36 @@ digraph named_gate {
 	out := mustRun(t, testBin, repo, "agent", "validate")
 	if !strings.Contains(out, "agent=reviewer-deep") || !strings.Contains(out, "effective_model=\"opus\"") {
 		t.Fatalf("agent validate should report reviewer-deep/opus:\n%s", out)
+	}
+
+	// Runtime: the named binding's harness (not [reviewer]) runs the gate.
+	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"), "[review]\ngate_create = false\n")
+	materializeDefault(t, repo, "skills", "satelle-story-intent-review")
+	_ = os.Remove(logPath)
+	created := mustRun(t, testBin, repo, "story", "create",
+		"--title", "Named gate story",
+		"--body", "Exercise agent=reviewer-deep harness",
+		"--acceptance", "1. done",
+		"--category", "named-gate-test")
+	var st struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(created), &st); err != nil || st.ID == "" {
+		if i := strings.Index(created, "sty_"); i >= 0 {
+			id := created[i:]
+			if j := strings.IndexAny(id, " \n\"}"); j > 0 {
+				id = id[:j]
+			}
+			st.ID = id
+		}
+	}
+	if st.ID == "" {
+		t.Fatalf("could not parse story id from create:\n%s", created)
+	}
+	mustRun(t, testBin, repo, "story", "set", st.ID, "--status", "done")
+	logBody, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(logBody), "reviewer-deep") {
+		t.Fatalf("named gate must invoke reviewer-deep harness, log=%q", logBody)
 	}
 
 	// Role mismatch: agent role on gated edge

@@ -3,31 +3,55 @@ name: satelle-story-cancel-review
 scope: system
 type: skill
 tags: [type:skill, type:reviewer]
-description: Exit gate for cancel (any → cancelled). Isolated reviewer — requires a recorded reason; supersede claims must name delivering story/commit and verify AC coverage in-repo; sibling bundling is an explicit reject (ledgered). Review-only.
+description: Exit gate for cancel (any → cancelled). Isolated reviewer — requires a recorded reason; parents by children-resolved; supersede claims must name delivering story/commit and verify AC coverage; sibling bundling is an explicit reject. Review-only.
 ---
 
 # Story cancel review (abandon gate)
 
 Isolated reviewer deciding whether a story may move to **cancelled**. Input on
-stdin: `{story, from, to}`. Cancelling is a normal operator-driven outcome —
-not a quality failure — but it must be **deliberate and evidence-grounded**.
-You judge; you never edit, never implement, never invent a supersede.
+stdin: `{story, from, to}` (and `children` for parents). Cancelling is a normal
+operator-driven outcome — not a quality failure — but it must be **deliberate
+and evidence-grounded**. You judge; you never edit, never implement, never invent
+a supersede, and never cancel children on the operator's behalf.
 
 ## Floor — reason required
 
 **Reject** when there is **no reason on record** (body note, cancel-reason
 attachment, or recent ledger statement of why). A bare cancel erases the item
-without audit trail.
+without audit trail. A `cancel-reason:` tag is **metadata**, not a substitute —
+a tag alone with no reason on record still rejects.
+
+## Branch on `story.category`
+
+### Parent / epic-parent — children resolved
+
+Accept the cancel **only** when every child in the payload `children` array is
+`done` or `cancelled` (or there are none). On reject, list each unresolved child
+as `id (status)`. Judge from the **payload** `children`, never from disk.
+
+The gate **refuses and names**; it never cancels children itself. Shelving a
+container is a deliberate cascade — resolve children first, then the parent.
+
+### Every other category
+
+The floor, supersede, and sibling-bundling rules below apply unchanged.
+
+## Cancel-reason tag (when the repo declares it)
+
+When the repo declares a `cancel-reason` controlled namespace in `satelle.toml`
+`[tags.vocabulary]`, expect the story to carry a `cancel-reason:<value>` tag
+consistent with the recorded reason; name a missing or mismatched tag in notes.
+**Where no such namespace is declared, do not require the tag** — judge as above.
 
 ## Supersede / delivered-elsewhere claims
 
 If the reason claims the work was **delivered under another story or commit**:
 
 1. The claim must **name** the delivering story id and/or commit sha. Vague
- "covered elsewhere" / "already done" without a name → **reject**.
+   "covered elsewhere" / "already done" without a name → **reject**.
 2. **Verify** against the repo and ledger (Read/Grep; `satelle story get`,
- `satelle ledger list` when shell available): does that delivery actually
- satisfy **this** story's numbered ACs?
+   `satelle ledger list` when shell available): does that delivery actually
+   satisfy **this** story's numbered ACs?
 3. **Unverifiable** claim → **reject** (name what is missing).
 
 ### Sibling bundling (canonical reject)
@@ -50,6 +74,13 @@ exit). On cancel, apply it as follows and put all four items in **notes**:
 - Requirement **withdrawn** by the operator (reason says so clearly)
 - Delivery by a story that **legitimately** scoped this work in its ACs
 - External/upstream delivery with named evidence (issue, PR, commit)
+
+## Terminality and revival
+
+**Cancelled is terminal.** Revival is a **new** story tagged `supersedes:<id>`,
+never a reopen of the cancelled record — same path [[satelle-agent-goals]]
+prescribes for the AC-wrong branch. A `shelved` (or any) cancel-reason does not
+make the record resumable.
 
 ## On reject — stop and surface
 
