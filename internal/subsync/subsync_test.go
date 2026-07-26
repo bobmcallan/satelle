@@ -206,3 +206,17 @@ func TestCleanRel(t *testing.T) {
 		}
 	}
 }
+
+// TestExcludedLocalWithholdsDotLocal: restore refuses any .local segment path,
+// matching the push bundler's LocalOnlyPath (sty_698e70b6).
+func TestExcludedLocalWithholdsDotLocal(t *testing.T) {
+	for _, p := range []string{
+		"skills/secret.local.md",
+		"notes.local.md",
+		"secrets.local/keys.md",
+	} {
+		if !ExcludedLocal(p) {
+			t.Errorf("ExcludedLocal(%q) = false, want true", p)
+		}
+	}
+}

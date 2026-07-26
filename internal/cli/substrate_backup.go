@@ -7,6 +7,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,11 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
 )
+
+// errLocalOnlyBackup is returned by pushHostedBackup when the path is a
+// .local file that must never leave the machine. Callers treat it as a
+// deliberate withhold (local backup still lands), not a transport failure.
+var errLocalOnlyBackup = errors.New("hosted push withheld — .local never leaves this machine")
 
 // BackupKind names the backup sub-tree (diverged / pre-mutation / restore / …).
 // Layout: <runtimeDir>/backups/<kind>/<relPath> — deterministic, clock-free for
@@ -96,7 +102,9 @@ func backupExistingFile(dataDir string, kind BackupKind, relPath string, body []
 	// Online-first when a server+project are configured.
 	if opts.HostedServer != "" && opts.HostedProject != "" {
 		dest, herr := pushHostedBackup(opts, relPath, body)
-		if herr != nil {
+		if errors.Is(herr, errLocalOnlyBackup) {
+			res.Notice = fmt.Sprintf("backup: local %s (hosted push withheld — .local never leaves this machine)", local)
+		} else if herr != nil {
 			res.Notice = fmt.Sprintf("backup: hosted unavailable (%v) — kept local copy at %s", herr, local)
 		} else {
 			res.Notice = fmt.Sprintf("backup: local %s; hosted %s", local, dest)
@@ -113,8 +121,13 @@ func backupExistingFile(dataDir string, kind BackupKind, relPath string, body []
 }
 
 // pushHostedBackup sends the pre-image to the personal hosted documents partition
-// under backups/<relPath>. Soft-fail on auth/offline.
+// under backups/<relPath>. Soft-fail on auth/offline. Paths matching
+// config.LocalOnlyPath are refused so a hosted backup never becomes an
+// exfiltration path for satelle.local.toml or other .local secrets.
 func pushHostedBackup(opts BackupOpts, relPath string, body []byte) (string, error) {
+	if config.LocalOnlyPath(relPath) {
+		return "", errLocalOnlyBackup
+	}
 	if opts.HostedPush != nil {
 		return opts.HostedPush(context.Background(), relPath, body)
 	}
@@ -166,11 +179,12 @@ func backupPolicyNotice(opts BackupOpts, localRoot string) string {
 // dir) and best-effort pushes each regular file to the personal hosted
 // documents partition under backups/<rel-from-tree-root>. Returns count pushed
 // and a summary notice (empty when no hosted channel or nothing to push).
+// .local files are withheld (counted separately) and never uploaded.
 func pushBackupTreeHosted(localRoot string, opts BackupOpts) (int, string) {
 	if opts.HostedServer == "" || opts.HostedProject == "" {
 		return 0, ""
 	}
-	var n int
+	var n, withheld int
 	var firstErr error
 	_ = filepath.Walk(localRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info == nil || info.IsDir() {
@@ -178,6 +192,11 @@ func pushBackupTreeHosted(localRoot string, opts BackupOpts) (int, string) {
 		}
 		rel, rerr := filepath.Rel(localRoot, path)
 		if rerr != nil {
+			return nil
+		}
+		relSlash := filepath.ToSlash(rel)
+		if config.LocalOnlyPath(relSlash) {
+			withheld++
 			return nil
 		}
 		body, rerr := os.ReadFile(path)
@@ -188,8 +207,12 @@ func pushBackupTreeHosted(localRoot string, opts BackupOpts) (int, string) {
 			return nil
 		}
 		// Reuse the same hosted path scheme as file-level backups.
-		dest, perr := pushHostedBackup(opts, filepath.ToSlash(rel), body)
+		dest, perr := pushHostedBackup(opts, relSlash, body)
 		if perr != nil {
+			if errors.Is(perr, errLocalOnlyBackup) {
+				withheld++
+				return nil
+			}
 			if firstErr == nil {
 				firstErr = perr
 			}
@@ -199,11 +222,14 @@ func pushBackupTreeHosted(localRoot string, opts BackupOpts) (int, string) {
 		n++
 		return nil
 	})
-	if n == 0 && firstErr != nil {
+	if n == 0 && withheld == 0 && firstErr != nil {
 		return 0, fmt.Sprintf("backup: hosted unavailable (%v) — kept local tree at %s", firstErr, localRoot)
 	}
-	if n == 0 {
+	if n == 0 && withheld == 0 {
 		return 0, ""
+	}
+	if withheld > 0 {
+		return n, fmt.Sprintf("backup: pushed %d file(s), %d withheld (.local) to hosted project %s (local %s)", n, withheld, opts.HostedProject, localRoot)
 	}
 	return n, fmt.Sprintf("backup: pushed %d file(s) to hosted project %s (local %s)", n, opts.HostedProject, localRoot)
 }

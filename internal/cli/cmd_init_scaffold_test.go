@@ -23,6 +23,8 @@ func TestScaffoldTomlDocumentsConfigSurface(t *testing.T) {
 		// AC1 pointers
 		"local|personal|shared", "satelle project bind", "satelle login",
 		`all = "personal"`,
+		// sty_698e70b6: .local exclusion is documented where the scope ladder is.
+		".local",
 	} {
 		if !strings.Contains(scaffoldToml, want) {
 			t.Errorf("scaffoldToml missing config surface token %q", want)

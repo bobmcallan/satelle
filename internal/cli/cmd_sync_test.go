@@ -514,3 +514,30 @@ func TestSyncRehydrateEmptyTreeHappyPath(t *testing.T) {
 		t.Errorf("story not restored: %s", got)
 	}
 }
+
+// TestSyncScopesReportsWithheldFiles (sty_698e70b6 AC5): scopes lists withheld
+// .local files under non-local areas.
+func TestSyncScopesReportsWithheldFiles(t *testing.T) {
+	repo := tempRepo(t)
+	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
+	if err := os.WriteFile(cfgPath, []byte("[sync]\nskills = \"personal\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skillsDir := filepath.Join(repo, ".satelle", "skills")
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillsDir, "keep.md"), []byte("---\ntype: skill\n---\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillsDir, "secret.local.md"), []byte("SECRET\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runRoot(t, "sync", "scopes")
+	if err != nil {
+		t.Fatalf("sync scopes: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "withheld:") || !strings.Contains(out, "secret.local.md") {
+		t.Errorf("scopes should list withheld secret.local.md:\n%s", out)
+	}
+}

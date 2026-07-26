@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -161,6 +162,62 @@ type ConfigFile struct {
 	Content []byte     // verbatim file bytes
 }
 
+// Bundle is an assembled set of files destined for transmission, plus the
+// server-relative paths withheld by LocalOnlyPath so a caller can REPORT them.
+// Work-state push transmits DB rows (no on-disk filename), so it is out of
+// scope for this exclusion by deliberate decision — not a gap.
+type Bundle struct {
+	Files    []ConfigFile
+	Withheld []string // sorted, server-relative
+}
+
+// LocalOnlyPath reports whether a path is one that must NEVER be transmitted:
+// any path segment carrying a `.local` dot-component (satelle.local.toml,
+// notes.local.md, secrets.local/keys.md). Unconditional — it takes no Config,
+// so no setting can disable or narrow it. The restore-side counterpart is
+// subsync.ExcludedLocal (which delegates here for the .local case).
+//
+// A bare segment named "local" (skills/local/x.md) is an ordinary name and is
+// not withheld; the match requires a multi-component segment whose non-stem
+// component equals "local" (case-insensitive).
+func LocalOnlyPath(p string) bool {
+	p = filepath.ToSlash(p)
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" {
+			continue
+		}
+		parts := strings.Split(seg, ".")
+		if len(parts) < 2 {
+			continue // no dots → ordinary name (e.g. "local")
+		}
+		// Non-stem components only: local.md stays free; notes.local.md is withheld.
+		for _, c := range parts[1:] {
+			if strings.EqualFold(c, "local") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// assemble is the single seam every push bundle passes through: it applies the
+// .local exclusion and the deterministic sort. Per-area walks never filter —
+// so a new area added to ConfigAreas inherits the guarantee automatically.
+func assemble(files []ConfigFile) Bundle {
+	var kept []ConfigFile
+	var withheld []string
+	for _, f := range files {
+		if LocalOnlyPath(f.Path) {
+			withheld = append(withheld, f.Path)
+			continue
+		}
+		kept = append(kept, f)
+	}
+	sortConfigFiles(kept)
+	sort.Strings(withheld)
+	return Bundle{Files: kept, Withheld: withheld}
+}
+
 // ConfigFiles walks the ConfigAreas under repoRoot, resolving each file's scope
 // via ScopeFor. Local-scope areas contribute nothing. Non-local files are labeled
 // PersonalTier or SharedTier for operator messaging / publish eligibility — both
@@ -168,19 +225,19 @@ type ConfigFile struct {
 // area is SharedTier wholesale; a personal-scope area is PersonalTier per file,
 // promoted to SharedTier when FileShared (frontmatter shared:true). Reserved
 // generated views (index.md/log.md/README) are excluded — they are not authored.
-// Files are returned sorted by Path. A non-existent area on disk is benign
+// Paths matching LocalOnlyPath are withheld (listed in Bundle.Withheld, never in
+// Files). Files are returned sorted by Path. A non-existent area on disk is benign
 // (nothing to push yet). An explicitly invalid scope is a hard error.
-func ConfigFiles(cfg Config, repoRoot string) ([]ConfigFile, error) {
+func ConfigFiles(cfg Config, repoRoot string) (Bundle, error) {
 	var out []ConfigFile
 	for _, area := range ConfigAreas {
 		files, _, err := filesForArea(cfg, repoRoot, area)
 		if err != nil {
-			return nil, err
+			return Bundle{}, err
 		}
 		out = append(out, files...)
 	}
-	sortConfigFiles(out)
-	return out, nil
+	return assemble(out), nil
 }
 
 // DocumentFiles walks the documents area under repoRoot with the same scope/
@@ -188,14 +245,13 @@ func ConfigFiles(cfg Config, repoRoot string) ([]ConfigFile, error) {
 // only — sync destination remains personal). The returned Scope is the area's
 // resolved scope so the CLI can print a clear "scope=local, skipping" message
 // instead of an ambiguous empty list. Documents is its own sync kind (order:6)
-// — not part of ConfigAreas.
-func DocumentFiles(cfg Config, repoRoot string) ([]ConfigFile, Scope, error) {
+// — not part of ConfigAreas. Paths matching LocalOnlyPath are withheld.
+func DocumentFiles(cfg Config, repoRoot string) (Bundle, Scope, error) {
 	files, scope, err := filesForArea(cfg, repoRoot, "documents")
 	if err != nil {
-		return nil, scope, err
+		return Bundle{}, scope, err
 	}
-	sortConfigFiles(files)
-	return files, scope, nil
+	return assemble(files), scope, nil
 }
 
 // filesForArea walks one named area under repoRoot, applying ScopeFor + tier

@@ -32,6 +32,7 @@ func newSyncDocumentsCmd() *cobra.Command {
 		Long: `push walks the documents area per its resolved [sync] scope — skipping local —
 and uploads each file as a new version into this repo's bound hosted PROJECT's
 personal collection only (epic:sync-publish). Identical content is idempotent.
+Files with a .local segment are never uploaded (reported as withheld).
 Team is not a sync destination; use satelle publish to expose documents to a team
 catalog. Requires "satelle project bind <slug>".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -72,16 +73,27 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}
-	files, scope, err := config.DocumentFiles(cfg, repoRoot)
+	bundle, scope, err := config.DocumentFiles(cfg, repoRoot)
 	if err != nil {
 		return err
 	}
+	files := bundle.Files
 	out := cmd.OutOrStdout()
+	printWithheldLocal := func() {
+		for _, p := range bundle.Withheld {
+			fmt.Fprintf(out, "  withheld (never syncs, .local): %s\n", p)
+		}
+	}
 	if scope == config.LocalScope {
 		fmt.Fprintln(out, "documents scope is local — skipping. Set [sync] documents = personal to opt in.")
 		return nil
 	}
 	if len(files) == 0 {
+		if len(bundle.Withheld) > 0 {
+			printWithheldLocal()
+			fmt.Fprintf(out, "nothing to push (%d withheld)\n", len(bundle.Withheld))
+			return nil
+		}
 		fmt.Fprintln(out, "No documents to push — documents area is empty.")
 		return nil
 	}
@@ -93,6 +105,7 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 		for _, f := range files {
 			fmt.Fprintf(out, "  %-40s -> personal\n", f.Path)
 		}
+		printWithheldLocal()
 		return nil
 	}
 	// Bound project before any network (AC5).
@@ -119,6 +132,7 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 			skipped++
 		}
 	}
+	printWithheldLocal()
 	fmt.Fprintf(out, "Pushed %d document(s) to project %q personal collection on %s: %d new, %d unchanged.\n", len(files), project, server, created, skipped)
 	return nil
 }

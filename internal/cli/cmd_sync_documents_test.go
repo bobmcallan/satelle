@@ -655,3 +655,22 @@ func TestSyncDocumentsPullReadsOnlyBoundProject(t *testing.T) {
 		}
 	}
 }
+
+// TestSyncDocumentsPushDryRunReportsWithheld (sty_698e70b6 AC5).
+func TestSyncDocumentsPushDryRunReportsWithheld(t *testing.T) {
+	repo := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
+	writeRepoFile(t, repo, ".satelle/documents/keep.md", "ok\n")
+	writeRepoFile(t, repo, ".satelle/documents/notes.local.md", "SECRET\n")
+	pointAt(t, repo)
+	cmd, buf := testCmd()
+	if err := runSyncDocumentsPush(cmd, "https://example.invalid", "", true); err != nil {
+		t.Fatalf("dry-run: %v\n%s", err, buf.String())
+	}
+	out := buf.String()
+	if !strings.Contains(out, "keep.md") {
+		t.Errorf("dry-run should list keep.md:\n%s", out)
+	}
+	if !strings.Contains(out, "withheld (never syncs, .local): documents/notes.local.md") {
+		t.Errorf("dry-run should report withheld notes.local.md:\n%s", out)
+	}
+}

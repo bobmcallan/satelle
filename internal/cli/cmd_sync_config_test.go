@@ -460,3 +460,26 @@ func TestSyncConfigDeployRequiresBoundProject(t *testing.T) {
 		t.Fatalf("unbound project contacted server %d time(s)", hits)
 	}
 }
+
+// TestSyncConfigPushDryRunReportsWithheld (sty_698e70b6 AC5): dry-run lists
+// .local files as withheld and never as push candidates.
+func TestSyncConfigPushDryRunReportsWithheld(t *testing.T) {
+	repo := syncConfigRepo(t, "[sync]\nskills = \"personal\"\n"+boundProjectToml)
+	writeRepoFile(t, repo, ".satelle/skills/keep.md", "ok\n")
+	writeRepoFile(t, repo, ".satelle/skills/secret.local.md", "SECRET\n")
+	pointAt(t, repo)
+	cmd, buf := testCmd()
+	if err := runSyncConfigPush(cmd, "https://example.invalid", "", true); err != nil {
+		t.Fatalf("dry-run: %v\n%s", err, buf.String())
+	}
+	out := buf.String()
+	if !strings.Contains(out, "keep.md") {
+		t.Errorf("dry-run should list keep.md:\n%s", out)
+	}
+	if strings.Contains(out, "secret.local.md -> personal") || strings.Contains(out, "secret.local.md\t") {
+		t.Errorf("dry-run must not list secret.local.md as a push candidate:\n%s", out)
+	}
+	if !strings.Contains(out, "withheld (never syncs, .local): skills/secret.local.md") {
+		t.Errorf("dry-run should report withheld secret.local.md:\n%s", out)
+	}
+}

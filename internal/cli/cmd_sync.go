@@ -43,6 +43,8 @@ rehydrate" deliberately for recover.
 Every area defaults to local — nothing leaves the machine until you set
 [sync] <area> = personal. To opt the whole .satelle tree in with one key,
 set [sync] all = personal (a per-area <area> = ... still overrides it).
+Files whose name carries a .local segment (satelle.local.toml, notes.local.md)
+never leave the machine at any scope — unconditional, not a setting.
 Personal opt-in targets this repo's bound hosted project only (never a shared
 dump across all personal projects under your account). Bind with "satelle
 project bind <slug>" (or set [hosted] project in .satelle/satelle.toml). Team
@@ -221,7 +223,8 @@ func newSyncConfigCmd() *cobra.Command {
 agents/tasks) per their resolved [sync] scope — skipping local areas — and uploads
 each file as a new version into this repo's bound hosted PROJECT's personal
 collection only (epic:sync-publish). Identical content is idempotent (no new
-version). Team is not a sync destination; use satelle publish to expose artifacts
+version). Files with a .local segment are never uploaded (reported as withheld).
+Team is not a sync destination; use satelle publish to expose artifacts
 to a team catalog. Requires "satelle project bind <slug>".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncConfigPush(cmd, pushServer, pushWorkspace, dryRun)
@@ -304,12 +307,23 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}
-	files, err := config.ConfigFiles(cfg, repoRoot)
+	bundle, err := config.ConfigFiles(cfg, repoRoot)
 	if err != nil {
 		return err
 	}
+	files := bundle.Files
 	out := cmd.OutOrStdout()
+	printWithheldLocal := func() {
+		for _, p := range bundle.Withheld {
+			fmt.Fprintf(out, "  withheld (never syncs, .local): %s\n", p)
+		}
+	}
 	if len(files) == 0 {
+		if len(bundle.Withheld) > 0 {
+			printWithheldLocal()
+			fmt.Fprintf(out, "nothing to push (%d withheld)\n", len(bundle.Withheld))
+			return nil
+		}
 		fmt.Fprintln(out, "No config to push — every config area is local. Set [sync] <area> = personal to opt in.")
 		return nil
 	}
@@ -321,6 +335,7 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 		for _, f := range files {
 			fmt.Fprintf(out, "  %-40s -> personal\n", f.Path)
 		}
+		printWithheldLocal()
 		return nil
 	}
 	// Bound project before any network (AC5).
@@ -344,6 +359,7 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 			skipped++
 		}
 	}
+	printWithheldLocal()
 	fmt.Fprintf(out, "Pushed %d config file(s) to project %q personal collection on %s: %d new, %d unchanged.\n", len(files), project, server, created, skipped)
 	return nil
 }
@@ -428,19 +444,24 @@ func runSyncScopes(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("sync area %q: %w", area, err)
 		}
 		fmt.Fprintf(w, "%s\t%s\n", area, scope)
-		if scope != config.PersonalScope {
+		// Local areas push nothing — nothing to report. Non-local areas can leave
+		// the machine, so report both shared: promotions and withheld .local files.
+		if scope == config.LocalScope {
 			continue
 		}
 		path, isDir := syncAreaPath(a, area)
 		if path == "" {
 			continue
 		}
-		shared, err := sharedFilesIn(path, isDir)
+		shared, withheld, err := areaFileNotes(path, isDir, scope)
 		if err != nil {
 			return fmt.Errorf("sync area %q: %w", area, err)
 		}
 		for _, f := range shared {
 			fmt.Fprintf(w, "\tshared: %s\n", f)
+		}
+		for _, f := range withheld {
+			fmt.Fprintf(w, "\twithheld: %s\n", f)
 		}
 	}
 	return w.Flush()
@@ -481,36 +502,30 @@ func syncAreaPath(a *app.App, area string) (path string, isDir bool) {
 	}
 }
 
-// sharedFilesIn returns the repo-relative paths of every markdown file under
-// path (or path itself, if it is a single file) whose frontmatter marks it
-// shared. A non-existent path is benign (empty result, not an error) — an
-// area with nothing on disk yet has nothing to report.
-func sharedFilesIn(path string, isDir bool) ([]string, error) {
-	if !isDir {
-		body, err := os.ReadFile(path)
-		if os.IsNotExist(err) {
-			return nil, nil
+// areaFileNotes walks an area's on-disk location and returns two lists:
+//   - shared: markdown files with frontmatter shared:true (personal-scope only;
+//     same filter as the historical sharedFilesIn)
+//   - withheld: any file whose basename/path carries a .local segment, every
+//     extension, so operators see what the bundler will keep back
+//
+// A non-existent path is benign (empty results, not an error).
+func areaFileNotes(path string, isDir bool, scope config.Scope) (shared, withheld []string, err error) {
+	noteOne := func(p string) error {
+		base := filepath.Base(p)
+		// Basename is enough: LocalOnlyPath matches on any segment's .local
+		// component (directory segments like secrets.local/ are covered when
+		// walking files under them, since each file path is checked fully).
+		if config.LocalOnlyPath(filepath.ToSlash(p)) || config.LocalOnlyPath(base) {
+			withheld = append(withheld, p)
+			return nil // withheld files are not also listed as shared
 		}
-		if err != nil {
-			return nil, err
-		}
-		if config.FileShared(config.PersonalScope, string(body)) {
-			return []string{path}, nil
-		}
-		return nil, nil
-	}
-	var out []string
-	err := filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
-			if os.IsNotExist(err) && p == path {
-				return nil
-			}
-			return err
-		}
-		if d.IsDir() || !strings.EqualFold(filepath.Ext(p), ".md") {
+		if scope != config.PersonalScope {
 			return nil
 		}
-		name := strings.TrimSuffix(filepath.Base(p), filepath.Ext(p))
+		if !strings.EqualFold(filepath.Ext(p), ".md") {
+			return nil
+		}
+		name := strings.TrimSuffix(base, filepath.Ext(p))
 		if name == "index" || name == "log" || strings.EqualFold(name, "README") {
 			return nil
 		}
@@ -519,12 +534,34 @@ func sharedFilesIn(path string, isDir bool) ([]string, error) {
 			return rerr
 		}
 		if config.FileShared(config.PersonalScope, string(body)) {
-			out = append(out, p)
+			shared = append(shared, p)
 		}
 		return nil
+	}
+	if !isDir {
+		if _, serr := os.Stat(path); os.IsNotExist(serr) {
+			return nil, nil, nil
+		}
+		if err := noteOne(path); err != nil {
+			return nil, nil, err
+		}
+		return shared, withheld, nil
+	}
+	err = filepath.WalkDir(path, func(p string, d os.DirEntry, werr error) error {
+		if werr != nil {
+			if os.IsNotExist(werr) && p == path {
+				return nil
+			}
+			return werr
+		}
+		if d.IsDir() {
+			// Descend into every directory; LocalOnlyPath matches each file.
+			return nil
+		}
+		return noteOne(p)
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return out, nil
+	return shared, withheld, nil
 }

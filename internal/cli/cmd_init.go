@@ -1296,6 +1296,8 @@ edit_exempt_paths = [".satelle/", ".gitignore"]
 
 # [sync] — each .satelle area on the local|personal|shared ladder (scoped-sync).
 # Unset = local: nothing leaves the machine until an area is opted in.
+# Never syncs, at any scope: files with a .local segment (satelle.local.toml,
+# notes.local.md). Unconditional — no setting enables it; secrets stay put.
 # personal = this repo's BOUND hosted project (not a dump across every project).
 # shared = team catalog eligibility; use 'satelle publish' for the team catalog
 # (sync itself does not write to a team workspace). Inspect with 'satelle sync scopes'.

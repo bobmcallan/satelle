@@ -1,3 +1,8 @@
+## [0.0.329] - 2026-07-26
+
+### Security
+- Unconditional `.local` exclusion on every outbound file bundle: config push, documents push, `satelle publish`, and hosted backup never transmit a path whose name carries a `.local` segment (satelle.local.toml, notes.local.md, …). Applied at bundle assembly so a new sync area cannot bypass it; dry-run and `sync scopes` report withheld paths (sty_698e70b6)
+
 ## [0.0.328] - 2026-07-25
 
 ### Added

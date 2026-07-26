@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/bobmcallan/satelle/internal/config"
 )
 
 // File is one byte-exact restore target: a server-relative path under the data
@@ -37,11 +39,16 @@ type Result struct {
 // on a deploy even if a manifest somehow carries them — the local-only /
 // generated state a restore must not clobber. This is the structural guard that
 // lets a deploy walk only config areas yet still refuse a hostile or corrupt
-// manifest that names a live database.
+// manifest that names a live database. The .local segment rule is shared with
+// the push bundler (config.LocalOnlyPath) so a file that reached the server from
+// an older client cannot be written back down either.
 func excludedLocal(rel string) bool {
 	rel = filepath.ToSlash(rel)
+	if config.LocalOnlyPath(rel) {
+		return true
+	}
 	switch rel {
-	case "satelle.db", "satelle.local.toml", "satelle", "satelle.exe":
+	case "satelle.db", "satelle", "satelle.exe":
 		return true
 	}
 	if strings.HasPrefix(rel, "satelle.db-") { // -wal, -shm

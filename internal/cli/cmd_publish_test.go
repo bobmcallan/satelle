@@ -464,3 +464,19 @@ skills = "personal"
 		t.Fatalf("adoptions after sync: %+v err=%v", recs, err)
 	}
 }
+
+// TestPublishPushRefusesLocalPath (sty_698e70b6): explicit publish of a .local
+// path is a hard error, including dry-run, and never reads the file.
+func TestPublishPushRefusesLocalPath(t *testing.T) {
+	repo := syncConfigRepo(t, "[hosted]\nworkspace = \"Acme\"\n")
+	writeRepoFile(t, repo, ".satelle/skills/secret.local.md", "SECRET\n")
+	pointAt(t, repo)
+	cmd, buf := testCmd()
+	err := runPublishPush(cmd, "https://example.invalid", "Acme", "", "", true, []string{"skills/secret.local.md"})
+	if err == nil {
+		t.Fatalf("expected refuse, got nil\n%s", buf.String())
+	}
+	if !strings.Contains(err.Error(), ".local") {
+		t.Errorf("error should name .local: %v", err)
+	}
+}

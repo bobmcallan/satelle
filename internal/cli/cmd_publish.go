@@ -152,9 +152,20 @@ func runPublishPush(cmd *cobra.Command, serverArg, workspaceArg, kind, title str
 		return err
 	}
 	out := cmd.OutOrStdout()
+	// Normalise and refuse .local paths before dry-run listing or any ReadFile
+	// so secrets never load and an explicit caller mistake is a hard error.
+	norm := make([]string, 0, len(paths))
+	for _, p := range paths {
+		rel := strings.TrimPrefix(filepath.ToSlash(p), "./")
+		rel = strings.TrimPrefix(rel, ".satelle/")
+		if config.LocalOnlyPath(rel) {
+			return fmt.Errorf("publish %s: refusing — .local files never leave this machine", rel)
+		}
+		norm = append(norm, rel)
+	}
 	if dryRun {
-		fmt.Fprintf(out, "Would publish %d path(s) to team workspace %q on %s:\n", len(paths), teamName, server)
-		for _, p := range paths {
+		fmt.Fprintf(out, "Would publish %d path(s) to team workspace %q on %s:\n", len(norm), teamName, server)
+		for _, p := range norm {
 			k := kind
 			if k == "" {
 				k = inferPublishKind(p)
@@ -169,9 +180,7 @@ func runPublishPush(cmd *cobra.Command, serverArg, workspaceArg, kind, title str
 		return fmt.Errorf("resolve team workspace: %w", err)
 	}
 	var created, skipped int
-	for _, rel := range paths {
-		rel = strings.TrimPrefix(filepath.ToSlash(rel), "./")
-		rel = strings.TrimPrefix(rel, ".satelle/")
+	for _, rel := range norm {
 		abs := filepath.Join(dataDir, filepath.FromSlash(rel))
 		// Also allow paths relative to repo root under .satelle/
 		if _, err := os.Stat(abs); err != nil {

@@ -189,3 +189,30 @@ func TestPushBackupTreeHosted(t *testing.T) {
 		t.Errorf("msg = %q", msg)
 	}
 }
+
+// TestHostedBackupWithholdsLocalFile (sty_698e70b6): a .local path is never
+// hosted-pushed; the local backup still lands with a clear notice.
+func TestHostedBackupWithholdsLocalFile(t *testing.T) {
+	dataDir := t.TempDir()
+	var pushes int
+	res, err := backupExistingFile(dataDir, BackupKindRestore, "satelle.local.toml", []byte("SECRET=1\n"), BackupOpts{
+		HostedServer:  "https://example.test",
+		HostedProject: "proj",
+		HostedPush: func(_ context.Context, rel string, body []byte) (string, error) {
+			pushes++
+			return "hosted://" + rel, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pushes != 0 {
+		t.Fatalf("HostedPush called %d times for .local path", pushes)
+	}
+	if !strings.Contains(res.Notice, "withheld") || !strings.Contains(res.Notice, ".local") {
+		t.Errorf("notice should report withhold: %q", res.Notice)
+	}
+	if _, err := os.Stat(res.LocalPath); err != nil {
+		t.Errorf("local backup must still exist: %v", err)
+	}
+}
