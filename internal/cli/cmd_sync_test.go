@@ -561,3 +561,184 @@ func TestSyncScopesReportsWithheldFiles(t *testing.T) {
 		t.Errorf("scopes should list withheld secret.local.md:\n%s", out)
 	}
 }
+
+// TestSyncNoopMakesNoContentUploads (sty_88e83180 AC7): after a successful
+// workstate push, a second workstate push issues no POST. Config/docs legs are
+// covered by their own skip tests; this pins the workstate half of the no-op.
+func TestSyncNoopMakesNoContentUploads(t *testing.T) {
+	ts, f := newFakeWorkstateServer(t)
+	seedCred(t, ts.URL)
+	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	out, err := runRoot(t, "story", "create",
+		"--title", "Noop", "--body", "b", "--acceptance", "1. ok", "--category", "chore")
+	if err != nil {
+		t.Fatalf("create: %v\n%s", err, out)
+	}
+	if out, err = runRoot(t, "sync", "workstate", "push", "--server", ts.URL); err != nil {
+		t.Fatalf("first: %v\n%s", err, out)
+	}
+	n1 := f.postCount("probe")
+	if n1 == 0 {
+		t.Fatal("first push posted nothing")
+	}
+	if out, err = runRoot(t, "sync", "workstate", "push", "--server", ts.URL); err != nil {
+		t.Fatalf("second: %v\n%s", err, out)
+	}
+	if f.postCount("probe") != n1 {
+		t.Fatalf("noop workstate posts = %d, want %d", f.postCount("probe"), n1)
+	}
+}
+
+// countingSyncFake is a multi-leg fake that counts config PUTs, document PUTs,
+// and workstate POSTs (sty_88e83180 AC7).
+type countingSyncFake struct {
+	mu            sync.Mutex
+	configPUTs    int
+	documentPUTs  int
+	workstatePOST int
+	cfg           *fakeConfigStore
+	docs          *fakeDocStore
+	ws            *fakeWorkstateServer
+}
+
+func newCountingSyncServer(t *testing.T) (*httptest.Server, *countingSyncFake) {
+	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	hosted.DocumentSyncStatePathOverride = filepath.Join(t.TempDir(), "document-sync-state.json")
+	t.Cleanup(func() { hosted.DocumentSyncStatePathOverride = "" })
+	f := &countingSyncFake{
+		cfg:  &fakeConfigStore{data: map[string]map[string][][]byte{}},
+		docs: newFakeDocStore(),
+		ws: &fakeWorkstateServer{
+			posts:      map[string][]map[string]any{},
+			itemsByID:  map[string]map[string]any{},
+			ledgerByID: map[string]map[string]any{},
+		},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/projects/", func(w http.ResponseWriter, r *http.Request) {
+		rest := strings.TrimPrefix(r.URL.Path, "/api/v1/projects/")
+		segs := strings.SplitN(rest, "/", 3)
+		if len(segs) < 2 {
+			http.NotFound(w, r)
+			return
+		}
+		project, kind := segs[0], segs[1]
+		path := ""
+		if len(segs) == 3 {
+			path = segs[2]
+		}
+		switch kind {
+		case "config":
+			switch {
+			case r.Method == http.MethodPut:
+				body, _ := io.ReadAll(r.Body)
+				f.mu.Lock()
+				f.configPUTs++
+				f.mu.Unlock()
+				sha, ver, created := f.cfg.put(project, path, body)
+				status := http.StatusOK
+				if created {
+					status = http.StatusCreated
+				}
+				w.WriteHeader(status)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"path": path, "version": ver, "blob_sha256": sha, "size": len(body), "created": created,
+				})
+			case r.Method == http.MethodGet && path == "":
+				_ = json.NewEncoder(w).Encode(f.cfg.manifest(project))
+			default:
+				http.NotFound(w, r)
+			}
+		case "documents":
+			switch {
+			case r.Method == http.MethodPut:
+				body, _ := io.ReadAll(r.Body)
+				f.mu.Lock()
+				f.documentPUTs++
+				f.mu.Unlock()
+				sha, ver, created := f.docs.put(project, path, body)
+				status := http.StatusOK
+				if created {
+					status = http.StatusCreated
+				}
+				w.WriteHeader(status)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"path": path, "version": ver, "blob_sha256": sha, "size": len(body), "created": created,
+				})
+			case r.Method == http.MethodGet && path == "":
+				items, cursor := f.docs.changes(project, r.URL.Query().Get("since"))
+				_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "cursor": cursor})
+			default:
+				http.NotFound(w, r)
+			}
+		case "workstate":
+			if r.Method != http.MethodPost {
+				http.NotFound(w, r)
+				return
+			}
+			body, _ := io.ReadAll(r.Body)
+			var batch map[string]any
+			_ = json.Unmarshal(body, &batch)
+			f.mu.Lock()
+			f.workstatePOST++
+			if f.ws.itemsByID[project] == nil {
+				f.ws.itemsByID[project] = map[string]any{}
+			}
+			items, _ := batch["items"].([]any)
+			ledger, _ := batch["ledger"].([]any)
+			for _, it := range items {
+				if m, ok := it.(map[string]any); ok {
+					if id, _ := m["id"].(string); id != "" {
+						f.ws.itemsByID[project][id] = m
+					}
+				}
+			}
+			f.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]int{"items": len(items), "ledger": len(ledger)})
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	return ts, f
+}
+
+// TestSyncNoopZeroContentUploads (sty_88e83180 AC7): a second full `satelle
+// sync` on a populated repo issues zero config PUTs, zero document PUTs, and
+// zero workstate POSTs.
+func TestSyncNoopZeroContentUploads(t *testing.T) {
+	ts, f := newCountingSyncServer(t)
+	seedCred(t, ts.URL)
+	repo := syncConfigRepo(t, "[sync]\nprinciples = \"personal\"\ndocuments = \"personal\"\nstories = \"personal\"\n"+boundProjectToml)
+	writeRepoFile(t, repo, ".satelle/principles/rule.md", "rule body\n")
+	writeRepoFile(t, repo, ".satelle/documents/note.md", "note body\n")
+	pointAt(t, repo)
+	// Story for workstate.
+	if out, err := runRoot(t, "story", "create",
+		"--title", "Sync noop", "--body", "b", "--acceptance", "1. ok", "--category", "chore"); err != nil {
+		t.Fatalf("create: %v\n%s", err, out)
+	}
+
+	if out, err := runRoot(t, "sync", "--server", ts.URL); err != nil {
+		t.Fatalf("first sync: %v\n%s", err, out)
+	}
+	f.mu.Lock()
+	c1, d1, w1 := f.configPUTs, f.documentPUTs, f.workstatePOST
+	f.mu.Unlock()
+	if c1 == 0 || d1 == 0 || w1 == 0 {
+		t.Fatalf("first sync expected content traffic, got config=%d docs=%d ws=%d", c1, d1, w1)
+	}
+
+	if out, err := runRoot(t, "sync", "--server", ts.URL); err != nil {
+		t.Fatalf("second sync: %v\n%s", err, out)
+	}
+	f.mu.Lock()
+	c2, d2, w2 := f.configPUTs, f.documentPUTs, f.workstatePOST
+	f.mu.Unlock()
+	if c2 != c1 || d2 != d1 || w2 != w1 {
+		t.Fatalf("noop sync must not upload: config %d→%d docs %d→%d ws %d→%d",
+			c1, c2, d1, d2, w1, w2)
+	}
+}

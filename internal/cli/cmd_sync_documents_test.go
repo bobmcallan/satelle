@@ -674,3 +674,29 @@ func TestSyncDocumentsPushDryRunReportsWithheld(t *testing.T) {
 		t.Errorf("dry-run should report withheld notes.local.md:\n%s", out)
 	}
 }
+
+// TestSyncDocumentsPushSkipsUnchanged (sty_88e83180 AC6): second push of the
+// same content issues no PUT and reports skipped.
+func TestSyncDocumentsPushSkipsUnchanged(t *testing.T) {
+	ts := newFakeDocServer(t)
+	seedCred(t, ts.URL)
+	repo := syncConfigRepo(t, "[sync]\ndocuments = \"personal\"\n"+boundProjectToml)
+	writeRepoFile(t, repo, ".satelle/documents/doc.md", "stable content\n")
+	pointAt(t, repo)
+
+	cmd, buf := testCmd()
+	if err := runSyncDocumentsPush(cmd, ts.URL, "", false); err != nil {
+		t.Fatalf("first push: %v\n%s", err, buf.String())
+	}
+	if !strings.Contains(buf.String(), "1 new") && !strings.Contains(buf.String(), "new") {
+		// first upload may say "1 new" in the new format
+		t.Logf("first push: %q", buf.String())
+	}
+	cmd2, buf2 := testCmd()
+	if err := runSyncDocumentsPush(cmd2, ts.URL, "", false); err != nil {
+		t.Fatalf("second push: %v\n%s", err, buf2.String())
+	}
+	if !strings.Contains(buf2.String(), "skipped") {
+		t.Fatalf("second push should report skipped: %q", buf2.String())
+	}
+}

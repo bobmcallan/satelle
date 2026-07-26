@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -249,7 +251,7 @@ func runSync(cmd *cobra.Command, serverArg string, dryRun bool) error {
 	} else if err := runSyncDocumentsPull(cmd, serverArg, ""); err != nil {
 		return err
 	}
-	return runSyncWorkstatePush(cmd, serverArg, dryRun)
+	return runSyncWorkstatePush(cmd, serverArg, dryRun, false)
 }
 
 // newSyncConfigCmd builds the `satelle sync config` group — the CLI counterpart
@@ -399,8 +401,23 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 		return err
 	}
 	client := hosted.NewClient(server, hosted.FileStore{}, nil)
-	var created, skipped int
+	// Prefer skipping unchanged bytes via server manifest (sty_88e83180 AC6).
+	// On manifest failure: degrade to full upload with a printed note.
+	headSHA := map[string]string{}
+	if manifest, merr := client.ConfigManifest(cmd.Context(), project); merr != nil {
+		if errors.Is(merr, hosted.ErrLoginRequired) {
+			return merr
+		}
+		fmt.Fprintf(out, "config manifest unavailable (%v) — uploading every file.\n", merr)
+	} else {
+		headSHA = headSHAByPath(manifest)
+	}
+	var created, unchanged, notUploaded int
 	for _, f := range files {
+		if contentMatchesSHA(headSHA[f.Path], f.Content) {
+			notUploaded++
+			continue
+		}
 		res, perr := client.PushConfigFile(cmd.Context(), project, f.Path, f.Content)
 		if perr != nil {
 			if errors.Is(perr, hosted.ErrLoginRequired) {
@@ -411,12 +428,45 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 		if res.Created {
 			created++
 		} else {
-			skipped++
+			unchanged++
 		}
 	}
 	printWithheldLocal()
-	fmt.Fprintf(out, "Pushed %d config file(s) to project %q personal collection on %s: %d new, %d unchanged.\n", len(files), project, server, created, skipped)
+	uploaded := created + unchanged
+	fmt.Fprintf(out, "Pushed %d of %d config file(s) to project %q personal collection on %s: %d new, %d unchanged, %d skipped (unchanged, not uploaded).\n",
+		uploaded, len(files), project, server, created, unchanged, notUploaded)
 	return nil
+}
+
+// headSHAByPath indexes ConfigItem.BlobSHA256 by path.
+func headSHAByPath(items []hosted.ConfigItem) map[string]string {
+	out := make(map[string]string, len(items))
+	for _, it := range items {
+		if it.Path != "" && it.BlobSHA256 != "" {
+			out[it.Path] = it.BlobSHA256
+		}
+	}
+	return out
+}
+
+// contentMatchesSHA reports whether content's sha256 matches the server value.
+// Normalises quotes and an optional sha256: prefix; unknown formats return
+// false so we never skip on doubt (sty_88e83180 AC6).
+func contentMatchesSHA(sha string, content []byte) bool {
+	sha = strings.TrimSpace(sha)
+	sha = strings.Trim(sha, `"'`)
+	sha = strings.TrimPrefix(sha, "sha256:")
+	sha = strings.ToLower(sha)
+	if len(sha) != 64 {
+		return false
+	}
+	for _, c := range sha {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:]) == sha
 }
 
 func runSyncConfigDeploy(cmd *cobra.Command, serverArg, workspaceArg string, version int) error {

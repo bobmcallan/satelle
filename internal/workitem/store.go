@@ -378,6 +378,60 @@ func (s *Store) Fingerprint(ctx context.Context, kind Kind) (string, error) {
 	return fmt.Sprintf("%d:%s", n, max), nil
 }
 
+// ListChangedSince returns work items of the given kind whose updated_at is at
+// or after the second-granularity bound of since, oldest-first, paged by
+// limit/offset (sty_88e83180). Archived rows are included. Zero since omits the
+// time bound (full set). limit defaults to 1000 and is hard-capped at 5000.
+//
+// The SQL bound uses whole-second RFC3339 without Z because updated_at is stored
+// as TEXT via time.RFC3339Nano (trailing zeros trimmed) — a full nano cursor
+// would not compare lexicographically. Rows inside the cursor's own second are
+// re-sent (harmless upsert); skipping would lose records.
+func (s *Store) ListChangedSince(ctx context.Context, kind Kind, since time.Time, limit, offset int) ([]Item, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	var (
+		conds []string
+		args  []any
+	)
+	if k := strings.TrimSpace(string(kind)); k != "" {
+		conds = append(conds, "kind = ?")
+		args = append(args, k)
+	}
+	if !since.IsZero() {
+		// Truncate to whole seconds; format without Z for fixed-width prefix.
+		bound := since.UTC().Truncate(time.Second).Format("2006-01-02T15:04:05")
+		conds = append(conds, "updated_at >= ?")
+		args = append(args, bound)
+	}
+	q := selectCols
+	if len(conds) > 0 {
+		q += " WHERE " + strings.Join(conds, " AND ")
+	}
+	q += fmt.Sprintf(" ORDER BY updated_at ASC, id ASC LIMIT %d OFFSET %d", limit, offset)
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("workitem: list changed since: %w", err)
+	}
+	defer rows.Close()
+	out := []Item{}
+	for rows.Next() {
+		it, err := scan(rows)
+		if err != nil {
+			return nil, fmt.Errorf("workitem: scan: %w", err)
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
 // selectCols is the shared SELECT prefix for Get/List, fixing column order so
 // one scan() serves both.
 const selectCols = `SELECT id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, archived, park_origin FROM work_items`

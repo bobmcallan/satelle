@@ -194,6 +194,55 @@ func (s *Store) Count(ctx context.Context) (int, error) {
 	return n, nil
 }
 
+// ListChangedSince returns evidence rows whose created_at is at or after the
+// second-granularity bound of since, store-wide (no story filter — story-less
+// rows included), oldest-first, paged by limit/offset (sty_88e83180). Zero since
+// omits the time bound. Deliberately bypasses List's "at least one filter"
+// guard, as ListAll does. limit defaults to 1000, hard-capped at 5000.
+//
+// See workitem.Store.ListChangedSince for the RFC3339Nano TEXT bound rationale.
+func (s *Store) ListChangedSince(ctx context.Context, since time.Time, limit, offset int) ([]Entry, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	q := `SELECT id, story_id, project_id, kind, actor, body, payload, refs, created_at FROM evidence`
+	var args []any
+	if !since.IsZero() {
+		bound := since.UTC().Truncate(time.Second).Format("2006-01-02T15:04:05")
+		q += " WHERE created_at >= ?"
+		args = append(args, bound)
+	}
+	q += fmt.Sprintf(" ORDER BY created_at ASC, id ASC LIMIT %d OFFSET %d", limit, offset)
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("ledger: list changed since: %w", err)
+	}
+	defer rows.Close()
+	out := []Entry{}
+	for rows.Next() {
+		var (
+			e             Entry
+			payload, refs string
+			created       string
+		)
+		if err := rows.Scan(&e.ID, &e.StoryID, &e.ProjectID, &e.Kind,
+			&e.Actor, &e.Body, &payload, &refs, &created); err != nil {
+			return nil, fmt.Errorf("ledger: scan: %w", err)
+		}
+		e.Payload = json.RawMessage(payload)
+		e.Refs = json.RawMessage(refs)
+		e.CreatedAt = parseTime(created)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // ListAll returns up to limit evidence rows newest-first (no story/kind filter).
 // Used by ui push / mirror snapshot export — List refuses unfiltered scans.
 // Newest-first keeps recent progress lights alive when the ledger exceeds the

@@ -1,3 +1,9 @@
+## [0.0.334] - 2026-07-26
+
+### Changed
+- Work-state push is incremental: a per-(server, project, repo) cursor outside the repo sends only records changed since the last successful push; the silent 2,000-item ceiling is gone; story-less ledger rows are included; `--full` re-sends everything (sty_88e83180)
+- Config and documents push skip unchanged content via server manifest sha comparison, reporting skipped-without-upload separately from server-side unchanged (sty_88e83180)
+
 ## [0.0.333] - 2026-07-26
 
 ### Removed

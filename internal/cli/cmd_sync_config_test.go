@@ -310,8 +310,10 @@ func TestSyncConfigPushIdempotent(t *testing.T) {
 	if err := runSyncConfigPush(cmd2, ts.URL, "", false); err != nil {
 		t.Fatalf("second push: %v", err)
 	}
-	if !strings.Contains(buf2.String(), "1 unchanged") {
-		t.Fatalf("idempotent re-push should report unchanged: %q", buf2.String())
+	// After sty_88e83180 the client skips the PUT entirely when the server
+	// manifest sha matches — reported as "skipped (unchanged, not uploaded)".
+	if !strings.Contains(buf2.String(), "1 skipped") {
+		t.Fatalf("idempotent re-push should report 1 skipped (no upload): %q", buf2.String())
 	}
 }
 

@@ -42,7 +42,7 @@ func newSyncWorkstateCmd() *cobra.Command {
 	}
 
 	var pushServer string
-	var dryRun bool
+	var dryRun, full bool
 	push := &cobra.Command{
 		Use:         "push",
 		Short:       "Replicate opted-in work-state areas to the personal workspace",
@@ -50,16 +50,19 @@ func newSyncWorkstateCmd() *cobra.Command {
 		Long: `push collects local stories, task-executions, and ledger entries for work-state
 areas whose resolved [sync] scope is personal or shared, and upserts them into
 this repo's bound hosted PROJECT's personal collection on the hosted server
-(origin=cli-sync). Local-scoped areas are skipped. A team active-workspace
-binding does NOT redirect work-state — destination is always the bound project's
-personal partition. Requires "satelle project bind <slug>". Pull is the recover
+(origin=cli-sync). Only records changed since the last successful push are sent
+(cursor outside the repo; sty_88e83180). Local-scoped areas are skipped. A team
+active-workspace binding does NOT redirect work-state — destination is always
+the bound project's personal partition. Requires "satelle project bind <slug>".
+--full ignores the stored cursor and re-sends everything. Pull is the recover
 path: "satelle sync workstate pull".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSyncWorkstatePush(cmd, pushServer, dryRun)
+			return runSyncWorkstatePush(cmd, pushServer, dryRun, full)
 		},
 	}
 	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
 	push.Flags().BoolVar(&dryRun, "dry-run", false, "List which areas would be pushed without contacting the server.")
+	push.Flags().BoolVar(&full, "full", false, "Ignore the stored cursor and push the complete set (then advance the cursor).")
 	group.AddCommand(push)
 
 	var pullServer string
@@ -95,7 +98,13 @@ binding ignored). Requires "satelle project bind <slug>".`,
 	return group
 }
 
-func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun bool) error {
+// Chunk sizes for work-state push (package vars so tests can shrink them).
+var (
+	workstateItemChunk   = 500
+	workstateLedgerChunk = 1000
+)
+
+func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full bool) error {
 	a, err := appFrom(cmd)
 	if err != nil {
 		return err
@@ -129,26 +138,152 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun bool) err
 		return err
 	}
 
-	batch, err := collectWorkstate(cmd.Context(), a, optIn)
+	repoRoot := a.RepoRoot
+	cursor, err := hosted.LoadWorkstateCursor(server, project, repoRoot)
+	if err != nil {
+		return fmt.Errorf("load workstate cursor: %w", err)
+	}
+	hadCursor := !cursor.ItemsUpdatedAt.IsZero() || !cursor.LedgerCreatedAt.IsZero()
+	if full {
+		cursor = hosted.WorkstateCursor{}
+	}
+
+	batch, maxItems, maxLedger, err := collectWorkstateSince(cmd.Context(), a, optIn, cursor)
 	if err != nil {
 		return err
 	}
+	// SQL uses a whole-second lower bound so boundary-second rows reappear;
+	// drop anything not strictly after the cursor so a true no-op sends nothing
+	// (AC2/AC7) while same-second new nanos still After() and ride (sty_88e83180).
+	if !full && !cursor.ItemsUpdatedAt.IsZero() {
+		batch.Items = filterItemsAfter(batch.Items, cursor.ItemsUpdatedAt)
+	}
+	if !full && !cursor.LedgerCreatedAt.IsZero() {
+		batch.Ledger = filterLedgerAfter(batch.Ledger, cursor.LedgerCreatedAt)
+	}
 	if len(batch.Items) == 0 && len(batch.Ledger) == 0 {
+		if hadCursor && !full {
+			fmt.Fprintf(out, "Work-state up to date on %s — no records changed since the last push.\n", server)
+			return nil
+		}
 		fmt.Fprintln(out, "No work-state rows to push (opted-in areas are empty).")
 		return nil
 	}
 
+	// Chunked push; cursor advances only after every chunk confirms (AC3).
+	// Prefer a single POST when both sides fit in one chunk (preserves the
+	// small-batch shape tests and production already rely on).
 	client := hosted.NewClient(server, hosted.FileStore{}, nil)
-	res, err := client.PushWorkstate(cmd.Context(), project, batch)
-	if err != nil {
-		if errors.Is(err, hosted.ErrLoginRequired) {
-			return err
+	var totalItems, totalLedger int
+	type partial struct {
+		items  []json.RawMessage
+		ledger []json.RawMessage
+	}
+	var parts []partial
+	if len(batch.Items) <= workstateItemChunk && len(batch.Ledger) <= workstateLedgerChunk {
+		parts = []partial{{items: batch.Items, ledger: batch.Ledger}}
+	} else {
+		for _, c := range chunkRaw(batch.Items, workstateItemChunk) {
+			parts = append(parts, partial{items: c})
 		}
-		return fmt.Errorf("push workstate: %w", err)
+		for _, c := range chunkRaw(batch.Ledger, workstateLedgerChunk) {
+			parts = append(parts, partial{ledger: c})
+		}
+	}
+	if len(parts) == 0 {
+		parts = []partial{{}}
+	}
+	for _, p := range parts {
+		chunk := hosted.WorkstateIngest{Items: p.items, Ledger: p.ledger}
+		if chunk.Items == nil {
+			chunk.Items = []json.RawMessage{}
+		}
+		if chunk.Ledger == nil {
+			chunk.Ledger = []json.RawMessage{}
+		}
+		res, perr := client.PushWorkstate(cmd.Context(), project, chunk)
+		if perr != nil {
+			if errors.Is(perr, hosted.ErrLoginRequired) {
+				return perr
+			}
+			return fmt.Errorf("push workstate: %w", perr)
+		}
+		totalItems += res.Items
+		totalLedger += res.Ledger
+	}
+	// Advance cursor only after full success.
+	next := hosted.WorkstateCursor{
+		ItemsUpdatedAt:  maxItems,
+		LedgerCreatedAt: maxLedger,
+	}
+	if err := hosted.SaveWorkstateCursor(server, project, repoRoot, next); err != nil {
+		return fmt.Errorf("save workstate cursor: %w", err)
 	}
 	fmt.Fprintf(out, "Pushed work-state to project %q personal collection on %s: %d item(s), %d ledger entr(y/ies).\n",
-		project, server, res.Items, res.Ledger)
+		project, server, totalItems, totalLedger)
 	return nil
+}
+
+func chunkRaw(in []json.RawMessage, size int) [][]json.RawMessage {
+	if size <= 0 {
+		size = 1
+	}
+	if len(in) == 0 {
+		return nil
+	}
+	var out [][]json.RawMessage
+	for i := 0; i < len(in); i += size {
+		end := i + size
+		if end > len(in) {
+			end = len(in)
+		}
+		out = append(out, in[i:end])
+	}
+	return out
+}
+
+// filterItemsAfter keeps only marshaled workstate items whose updated_at is
+// strictly after since. Records at the cursor high-water mark (re-selected by
+// the second-truncated SQL bound) drop out so a no-op push issues no request.
+func filterItemsAfter(items []json.RawMessage, since time.Time) []json.RawMessage {
+	if since.IsZero() || len(items) == 0 {
+		return items
+	}
+	var out []json.RawMessage
+	for _, raw := range items {
+		var w struct {
+			UpdatedAt time.Time `json:"updated_at"`
+		}
+		if err := json.Unmarshal(raw, &w); err != nil || !w.UpdatedAt.After(since) {
+			continue
+		}
+		out = append(out, raw)
+	}
+	if out == nil {
+		return []json.RawMessage{}
+	}
+	return out
+}
+
+// filterLedgerAfter keeps only ledger rows strictly after since (see filterItemsAfter).
+func filterLedgerAfter(entries []json.RawMessage, since time.Time) []json.RawMessage {
+	if since.IsZero() || len(entries) == 0 {
+		return entries
+	}
+	var out []json.RawMessage
+	for _, raw := range entries {
+		var w struct {
+			CreatedAt time.Time `json:"created_at"`
+		}
+		if err := json.Unmarshal(raw, &w); err != nil || !w.CreatedAt.After(since) {
+			continue
+		}
+		out = append(out, raw)
+	}
+	if out == nil {
+		return []json.RawMessage{}
+	}
+	return out
 }
 
 func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force bool) error {
@@ -445,54 +580,84 @@ func mustJSON(v any) json.RawMessage {
 	return b
 }
 
-// collectWorkstate builds the ingest batch from the local store for the
-// opted-in areas. Stories and executions become items; ledger entries are
-// collected per known story id (the ledger store refuses unfiltered scans).
+// collectWorkstate builds the full ingest batch (no cursor). Kept for pull
+// conflict checks and tests that want an unfiltered snapshot.
 func collectWorkstate(ctx context.Context, a *app.App, optIn map[string]bool) (hosted.WorkstateIngest, error) {
+	batch, _, _, err := collectWorkstateSince(ctx, a, optIn, hosted.WorkstateCursor{})
+	return batch, err
+}
+
+// collectWorkstateSince builds the ingest batch for records at or after the
+// cursor high-water marks, paging to exhaustion (sty_88e83180). Returns the
+// batch plus the max timestamps observed (seeded from the cursor so empty areas
+// never rewind it).
+func collectWorkstateSince(ctx context.Context, a *app.App, optIn map[string]bool, cursor hosted.WorkstateCursor) (hosted.WorkstateIngest, time.Time, time.Time, error) {
 	var batch hosted.WorkstateIngest
-	if optIn["stories"] {
-		items, err := a.Store.Stories.List(ctx, workitem.ListFilter{Kind: workitem.KindStory, Limit: 2000, IncludeArchived: true})
-		if err != nil {
-			return batch, fmt.Errorf("list stories: %w", err)
-		}
-		for _, it := range items {
-			raw, err := marshalWorkstateItem(it)
+	maxItems := cursor.ItemsUpdatedAt
+	maxLedger := cursor.LedgerCreatedAt
+
+	pageItems := func(kind workitem.Kind) error {
+		offset := 0
+		for {
+			items, err := a.Store.Stories.ListChangedSince(ctx, kind, cursor.ItemsUpdatedAt, workstateItemChunk, offset)
 			if err != nil {
-				return batch, err
+				return err
 			}
-			batch.Items = append(batch.Items, raw)
+			if len(items) == 0 {
+				break
+			}
+			for _, it := range items {
+				raw, merr := marshalWorkstateItem(it)
+				if merr != nil {
+					return merr
+				}
+				batch.Items = append(batch.Items, raw)
+				if it.UpdatedAt.After(maxItems) {
+					maxItems = it.UpdatedAt
+				}
+			}
+			if len(items) < workstateItemChunk {
+				break
+			}
+			offset += len(items)
+		}
+		return nil
+	}
+
+	if optIn["stories"] {
+		if err := pageItems(workitem.KindStory); err != nil {
+			return batch, maxItems, maxLedger, fmt.Errorf("list stories: %w", err)
 		}
 	}
 	if optIn["executions"] {
-		items, err := a.Store.Stories.List(ctx, workitem.ListFilter{Kind: workitem.KindExecution, Limit: 2000, IncludeArchived: true})
-		if err != nil {
-			return batch, fmt.Errorf("list executions: %w", err)
-		}
-		for _, it := range items {
-			raw, err := marshalWorkstateItem(it)
-			if err != nil {
-				return batch, err
-			}
-			batch.Items = append(batch.Items, raw)
+		if err := pageItems(workitem.KindExecution); err != nil {
+			return batch, maxItems, maxLedger, fmt.Errorf("list executions: %w", err)
 		}
 	}
 	if optIn["ledger"] {
-		stories, err := a.Store.Stories.List(ctx, workitem.ListFilter{Kind: workitem.KindStory, Limit: 2000, IncludeArchived: true})
-		if err != nil {
-			return batch, fmt.Errorf("list stories for ledger: %w", err)
-		}
-		for _, st := range stories {
-			entries, lerr := a.Store.Ledger.ListByStory(ctx, st.ID, "")
-			if lerr != nil {
-				return batch, fmt.Errorf("list ledger for %s: %w", st.ID, lerr)
+		offset := 0
+		for {
+			entries, err := a.Store.Ledger.ListChangedSince(ctx, cursor.LedgerCreatedAt, workstateLedgerChunk, offset)
+			if err != nil {
+				return batch, maxItems, maxLedger, fmt.Errorf("list ledger: %w", err)
+			}
+			if len(entries) == 0 {
+				break
 			}
 			for _, e := range entries {
 				raw, merr := marshalWorkstateLedger(e)
 				if merr != nil {
-					return batch, merr
+					return batch, maxItems, maxLedger, merr
 				}
 				batch.Ledger = append(batch.Ledger, raw)
+				if e.CreatedAt.After(maxLedger) {
+					maxLedger = e.CreatedAt
+				}
 			}
+			if len(entries) < workstateLedgerChunk {
+				break
+			}
+			offset += len(entries)
 		}
 	}
 	if batch.Items == nil {
@@ -501,7 +666,7 @@ func collectWorkstate(ctx context.Context, a *app.App, optIn map[string]bool) (h
 	if batch.Ledger == nil {
 		batch.Ledger = []json.RawMessage{}
 	}
-	return batch, nil
+	return batch, maxItems, maxLedger, nil
 }
 
 // marshalWorkstateItem encodes a work item with the promoted fields the server

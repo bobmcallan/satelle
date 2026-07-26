@@ -114,8 +114,23 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 		return err
 	}
 	client := hosted.NewClient(server, hosted.FileStore{}, nil)
-	var created, skipped int
+	// Skip unchanged bytes via server document manifest (sty_88e83180 AC6).
+	// Empty since = full set; does not touch the pull cursor.
+	headSHA := map[string]string{}
+	if changes, merr := client.ListDocumentChanges(cmd.Context(), project, ""); merr != nil {
+		if errors.Is(merr, hosted.ErrLoginRequired) {
+			return merr
+		}
+		fmt.Fprintf(out, "documents manifest unavailable (%v) — uploading every file.\n", merr)
+	} else {
+		headSHA = headSHAByPath(changes.Items)
+	}
+	var created, unchanged, notUploaded int
 	for _, f := range files {
+		if contentMatchesSHA(headSHA[f.Path], f.Content) {
+			notUploaded++
+			continue
+		}
 		res, perr := client.PushDocumentFile(cmd.Context(), project, f.Path, f.Content)
 		if perr != nil {
 			if errors.Is(perr, hosted.ErrLoginRequired) {
@@ -129,11 +144,13 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 		if res.Created {
 			created++
 		} else {
-			skipped++
+			unchanged++
 		}
 	}
 	printWithheldLocal()
-	fmt.Fprintf(out, "Pushed %d document(s) to project %q personal collection on %s: %d new, %d unchanged.\n", len(files), project, server, created, skipped)
+	uploaded := created + unchanged
+	fmt.Fprintf(out, "Pushed %d of %d document(s) to project %q personal collection on %s: %d new, %d unchanged, %d skipped (unchanged, not uploaded).\n",
+		uploaded, len(files), project, server, created, unchanged, notUploaded)
 	return nil
 }
 

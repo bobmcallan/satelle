@@ -13,12 +13,22 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
-// documentSyncStateFile is the on-disk JSON shape: a flat map of cursor keys to
-// opaque server-issued cursor strings.
+// documentSyncStateFile is the on-disk JSON shape: document-pull cursors plus
+// work-state push cursors (sty_88e83180), both keyed by (server, project, repo).
 type documentSyncStateFile struct {
-	Cursors map[string]string `json:"cursors"`
+	Cursors   map[string]string          `json:"cursors"`
+	Workstate map[string]WorkstateCursor `json:"workstate,omitempty"`
+}
+
+// WorkstateCursor tracks the high-water marks of the last successful work-state
+// push for one (server, project, repoRoot) key (sty_88e83180). Zero times mean
+// "never pushed" / full set next time.
+type WorkstateCursor struct {
+	ItemsUpdatedAt  time.Time `json:"items_updated_at"`
+	LedgerCreatedAt time.Time `json:"ledger_created_at"`
 }
 
 // docSyncMu serialises read-modify-write of the state file across concurrent
@@ -76,6 +86,38 @@ func SaveDocumentCursor(server, project, repoRoot, cursor string) error {
 		state.Cursors = map[string]string{}
 	}
 	state.Cursors[documentCursorKey(server, project, repoRoot)] = cursor
+	return writeDocumentSyncState(state)
+}
+
+// LoadWorkstateCursor returns the last successful work-state push cursor for
+// the key, or a zero cursor when none is stored (sty_88e83180). A missing file
+// is not an error.
+func LoadWorkstateCursor(server, project, repoRoot string) (WorkstateCursor, error) {
+	docSyncMu.Lock()
+	defer docSyncMu.Unlock()
+	state, err := loadDocumentSyncState()
+	if err != nil {
+		return WorkstateCursor{}, err
+	}
+	if state.Workstate == nil {
+		return WorkstateCursor{}, nil
+	}
+	return state.Workstate[documentCursorKey(server, project, repoRoot)], nil
+}
+
+// SaveWorkstateCursor persists the work-state push cursor for the key. Atomic
+// tmp+rename; advances only on a confirmed successful push (sty_88e83180 AC3).
+func SaveWorkstateCursor(server, project, repoRoot string, c WorkstateCursor) error {
+	docSyncMu.Lock()
+	defer docSyncMu.Unlock()
+	state, err := loadDocumentSyncState()
+	if err != nil {
+		return err
+	}
+	if state.Workstate == nil {
+		state.Workstate = map[string]WorkstateCursor{}
+	}
+	state.Workstate[documentCursorKey(server, project, repoRoot)] = c
 	return writeDocumentSyncState(state)
 }
 

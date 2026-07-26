@@ -2,7 +2,9 @@ package cli
 
 import (
 	"encoding/json"
+
 	"errors"
+	"github.com/bobmcallan/satelle/internal/hosted"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,21 +16,27 @@ import (
 )
 
 // fakeWorkstateServer records POST /workstate bodies per workspace and
-// serves the personal + team workspace list. GET items/ledger serve the last
-// ingested batch (hermetic rehydrate).
+// accumulates items/ledger by id across POSTs (sty_88e83180 AC8).
 type fakeWorkstateServer struct {
-	mu      sync.Mutex
-	posts   map[string][]map[string]any // wsID -> posted batches
-	lastRaw map[string][]byte
-	gets    int
+	mu         sync.Mutex
+	posts      map[string][]map[string]any // wsID -> posted batches
+	itemsByID  map[string]map[string]any   // project -> id -> record
+	ledgerByID map[string]map[string]any
+	gets       int
+	failOnPost int // 1-based: fail this POST with 500; 0 = never
+	postN      int
 }
 
 func newFakeWorkstateServer(t *testing.T) (*httptest.Server, *fakeWorkstateServer) {
 	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// Work-state cursor lives in the document-sync state file (sty_88e83180).
+	hosted.DocumentSyncStatePathOverride = filepath.Join(t.TempDir(), "document-sync-state.json")
+	t.Cleanup(func() { hosted.DocumentSyncStatePathOverride = "" })
 	f := &fakeWorkstateServer{
-		posts:   map[string][]map[string]any{},
-		lastRaw: map[string][]byte{},
+		posts:      map[string][]map[string]any{},
+		itemsByID:  map[string]map[string]any{},
+		ledgerByID: map[string]map[string]any{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
@@ -40,29 +48,60 @@ func newFakeWorkstateServer(t *testing.T) (*httptest.Server, *fakeWorkstateServe
 	mux.HandleFunc("POST /api/v1/projects/{project}/workstate", func(w http.ResponseWriter, r *http.Request) {
 		key := r.PathValue("project")
 		body, _ := io.ReadAll(r.Body)
+		f.mu.Lock()
+		f.postN++
+		n := f.postN
+		fail := f.failOnPost
+		f.mu.Unlock()
+		if fail > 0 && n == fail {
+			http.Error(w, "injected failure", http.StatusInternalServerError)
+			return
+		}
 		var batch map[string]any
 		_ = json.Unmarshal(body, &batch)
 		f.mu.Lock()
 		f.posts[key] = append(f.posts[key], batch)
-		f.lastRaw[key] = body
-		f.mu.Unlock()
+		if f.itemsByID[key] == nil {
+			f.itemsByID[key] = map[string]any{}
+		}
+		if f.ledgerByID[key] == nil {
+			f.ledgerByID[key] = map[string]any{}
+		}
 		items, _ := batch["items"].([]any)
 		ledger, _ := batch["ledger"].([]any)
+		for _, it := range items {
+			m, ok := it.(map[string]any)
+			if !ok {
+				continue
+			}
+			id, _ := m["id"].(string)
+			if id != "" {
+				f.itemsByID[key][id] = m
+			}
+		}
+		for _, it := range ledger {
+			m, ok := it.(map[string]any)
+			if !ok {
+				continue
+			}
+			id, _ := m["id"].(string)
+			if id != "" {
+				f.ledgerByID[key][id] = m
+			}
+		}
+		f.mu.Unlock()
 		_ = json.NewEncoder(w).Encode(map[string]int{"items": len(items), "ledger": len(ledger)})
 	})
-	// Mirror GET shape: promote fields from stored record for list responses.
+	// Mirror GET shape: promote fields from accumulated records.
 	mux.HandleFunc("GET /api/v1/projects/{project}/workstate/items", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.gets++
 		key := r.PathValue("project")
-		raw := f.lastRaw[key]
+		byID := f.itemsByID[key]
 		f.mu.Unlock()
-		var batch map[string]any
-		_ = json.Unmarshal(raw, &batch)
-		items, _ := batch["items"].([]any)
 		kindFilter := r.URL.Query().Get("kind")
-		out := make([]map[string]any, 0, len(items))
-		for _, it := range items {
+		out := make([]map[string]any, 0, len(byID))
+		for _, it := range byID {
 			m, ok := it.(map[string]any)
 			if !ok {
 				continue
@@ -86,14 +125,11 @@ func newFakeWorkstateServer(t *testing.T) (*httptest.Server, *fakeWorkstateServe
 		f.mu.Lock()
 		f.gets++
 		key := r.PathValue("project")
-		raw := f.lastRaw[key]
+		byID := f.ledgerByID[key]
 		f.mu.Unlock()
-		var batch map[string]any
-		_ = json.Unmarshal(raw, &batch)
-		ledger, _ := batch["ledger"].([]any)
 		storyFilter := r.URL.Query().Get("story")
-		out := make([]map[string]any, 0, len(ledger))
-		for _, it := range ledger {
+		out := make([]map[string]any, 0, len(byID))
+		for _, it := range byID {
 			m, ok := it.(map[string]any)
 			if !ok {
 				continue
@@ -206,13 +242,16 @@ func TestSyncWorkstatePushPersonalAndIdempotent(t *testing.T) {
 		t.Fatal("expected at least one item in the push")
 	}
 
-	// Idempotent re-push.
+	// No-op re-push: cursor advanced, nothing new — no POST (sty_88e83180 AC2).
 	out2, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL)
 	if err != nil {
 		t.Fatalf("re-push: %v\n%s", err, out2)
 	}
-	if f.postCount("probe") != 2 {
-		t.Fatalf("re-push posts = %d, want 2", f.postCount("probe"))
+	if f.postCount("probe") != 1 {
+		t.Fatalf("no-op re-push posts = %d, want 1 (no second POST)", f.postCount("probe"))
+	}
+	if !strings.Contains(out2, "up to date") {
+		t.Fatalf("no-op re-push should say up to date: %q", out2)
 	}
 }
 
@@ -517,5 +556,181 @@ func TestSyncWorkstatePullIgnoresTeamBinding(t *testing.T) {
 	}
 	if f.getCount() == 0 {
 		t.Error("expected GET to personal")
+	}
+}
+
+// TestSyncWorkstatePushCursorSurvivesMidRunFailure (sty_88e83180 AC3): force two
+// item chunks; the second POST fails after the first succeeded; cursor stays
+// pre-run so the next push re-sends the unconfirmed chunk.
+func TestSyncWorkstatePushCursorSurvivesMidRunFailure(t *testing.T) {
+	ts, f := newFakeWorkstateServer(t)
+	seedCred(t, ts.URL)
+	repo := workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+
+	prevItem, prevLed := workstateItemChunk, workstateLedgerChunk
+	workstateItemChunk, workstateLedgerChunk = 1, 1
+	t.Cleanup(func() {
+		workstateItemChunk, workstateLedgerChunk = prevItem, prevLed
+	})
+
+	// Two stories, no prior cursor → two POSTs (chunk size 1). Fail the second.
+	for _, title := range []string{"Chunk A", "Chunk B"} {
+		out, err := runRoot(t, "story", "create",
+			"--title", title, "--body", "body", "--acceptance", "1. ok", "--category", "chore")
+		if err != nil {
+			t.Fatalf("create %s: %v\n%s", title, err, out)
+		}
+	}
+	f.mu.Lock()
+	f.failOnPost = 2 // first chunk lands, second fails
+	f.mu.Unlock()
+
+	out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL)
+	if err == nil {
+		t.Fatalf("expected mid-run failure, got: %s", out)
+	}
+	// Cursor must not advance: first chunk confirmed, second failed.
+	cur, err := hosted.LoadWorkstateCursor(ts.URL, "probe", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cur.ItemsUpdatedAt.IsZero() {
+		t.Fatalf("cursor must stay zero after partial failure, got %v", cur.ItemsUpdatedAt)
+	}
+
+	// Recovery: clear failure, full push (still no cursor) re-sends both.
+	f.mu.Lock()
+	f.failOnPost = 0
+	f.mu.Unlock()
+	out, err = runRoot(t, "sync", "workstate", "push", "--server", ts.URL)
+	if err != nil {
+		t.Fatalf("recovery push: %v\n%s", err, out)
+	}
+	cur, err = hosted.LoadWorkstateCursor(ts.URL, "probe", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cur.ItemsUpdatedAt.IsZero() {
+		t.Fatal("cursor should advance after full success")
+	}
+	// Accumulated map has both stories.
+	f.mu.Lock()
+	n := len(f.itemsByID["probe"])
+	f.mu.Unlock()
+	if n < 2 {
+		t.Fatalf("accumulated items = %d, want ≥2", n)
+	}
+}
+
+// TestSyncWorkstateIncrementalRehydrate (sty_88e83180 AC8): full push, mutate,
+// incremental push, wipe local DB, pull — every id restores with current content.
+func TestSyncWorkstateIncrementalRehydrate(t *testing.T) {
+	ts, _ := newFakeWorkstateServer(t)
+	seedCred(t, ts.URL)
+	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\nledger = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+
+	out, err := runRoot(t, "story", "create",
+		"--title", "Keep me", "--body", "body", "--acceptance", "1. ok", "--category", "feature")
+	if err != nil {
+		t.Fatalf("create: %v\n%s", err, out)
+	}
+	listOut, _ := runRoot(t, "story", "list", "--limit", "5")
+	var stories []map[string]any
+	_ = json.Unmarshal([]byte(listOut), &stories)
+	var keepID string
+	for _, s := range stories {
+		if s["title"] == "Keep me" {
+			keepID, _ = s["id"].(string)
+		}
+	}
+	if keepID == "" {
+		t.Fatal("keep id missing")
+	}
+	if out, err = runRoot(t, "sync", "workstate", "push", "--server", ts.URL); err != nil {
+		t.Fatalf("full push: %v\n%s", err, out)
+	}
+
+	// Mutate + create.
+	if out, err = runRoot(t, "story", "set", keepID, "--body", "updated body"); err != nil {
+		t.Fatalf("mutate: %v\n%s", err, out)
+	}
+	if out, err = runRoot(t, "story", "create",
+		"--title", "New after", "--body", "new", "--acceptance", "1. ok", "--category", "feature"); err != nil {
+		t.Fatalf("create2: %v\n%s", err, out)
+	}
+	if out, err = runRoot(t, "sync", "workstate", "push", "--server", ts.URL); err != nil {
+		t.Fatalf("incremental push: %v\n%s", err, out)
+	}
+
+	// Wipe local.
+	dbPath := runtimeDBPath(t)
+	_ = os.Remove(dbPath)
+	_ = os.Remove(dbPath + "-wal")
+	_ = os.Remove(dbPath + "-shm")
+
+	if out, err = runRoot(t, "sync", "workstate", "pull", "--server", ts.URL, "--dry-run=false"); err != nil {
+		t.Fatalf("pull: %v\n%s", err, out)
+	}
+	got, err := runRoot(t, "story", "get", keepID)
+	if err != nil {
+		t.Fatalf("get keep: %v\n%s", err, got)
+	}
+	if !strings.Contains(got, "updated body") {
+		t.Errorf("mutated body missing after rehydrate: %s", got)
+	}
+	listOut, _ = runRoot(t, "story", "list", "--limit", "10")
+	if !strings.Contains(listOut, "New after") {
+		t.Errorf("new story missing after rehydrate: %s", listOut)
+	}
+}
+
+// TestSyncWorkstatePushIncrementalOnlyChanged (sty_88e83180 AC1): after a full
+// push, mutating one of two stories makes the next POST carry only that id.
+func TestSyncWorkstatePushIncrementalOnlyChanged(t *testing.T) {
+	ts, f := newFakeWorkstateServer(t)
+	seedCred(t, ts.URL)
+	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+
+	var ids []string
+	for _, title := range []string{"Alpha", "Beta"} {
+		out, err := runRoot(t, "story", "create",
+			"--title", title, "--body", "b", "--acceptance", "1. ok", "--category", "chore")
+		if err != nil {
+			t.Fatalf("create: %v\n%s", err, out)
+		}
+	}
+	listOut, _ := runRoot(t, "story", "list", "--limit", "10")
+	var stories []map[string]any
+	_ = json.Unmarshal([]byte(listOut), &stories)
+	for _, s := range stories {
+		if id, _ := s["id"].(string); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) < 2 {
+		t.Fatalf("need 2 stories, got %v", ids)
+	}
+	if out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL); err != nil {
+		t.Fatalf("full: %v\n%s", err, out)
+	}
+	n1 := f.postCount("probe")
+
+	// Touch only the first story.
+	if out, err := runRoot(t, "story", "set", ids[0], "--body", "changed"); err != nil {
+		t.Fatalf("mutate: %v\n%s", err, out)
+	}
+	if out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL); err != nil {
+		t.Fatalf("incr: %v\n%s", err, out)
+	}
+	if f.postCount("probe") != n1+1 {
+		t.Fatalf("posts = %d, want %d", f.postCount("probe"), n1+1)
+	}
+	items := f.lastItems("probe")
+	if len(items) != 1 {
+		t.Fatalf("incremental batch size = %d, want 1: %+v", len(items), items)
+	}
+	m, _ := items[0].(map[string]any)
+	if id, _ := m["id"].(string); id != ids[0] {
+		t.Fatalf("incremental id = %q, want %q", id, ids[0])
 	}
 }

@@ -53,3 +53,37 @@ func TestListAllNewestFirstUnderCap(t *testing.T) {
 		t.Fatal("recent story missing under cap — oldest-first regression")
 	}
 }
+
+func TestListChangedSinceIncludesStoryless(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:listchanged?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	st := New(db)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	e, err := st.Append(ctx, AppendInput{Kind: "orphan", Body: "no story", StoryID: ""}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.ListChangedSince(ctx, time.Time{}, 100, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, row := range got {
+		if row.ID == e.ID {
+			found = true
+			if row.StoryID != "" {
+				t.Errorf("story_id = %q, want empty", row.StoryID)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("story-less entry missing from ListChangedSince")
+	}
+}
