@@ -137,9 +137,10 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
-			// currentSeat is resolved once so deny reasons can name a non-live
-			// holder without a second store open (sty_1738f973 AC6).
-			info, engaged, engErr := currentSeat()
+			// currentSeatTouch is resolved once so deny reasons can name a non-live
+			// holder without a second store open (sty_1738f973 AC6). A live
+			// owner-held seat is also heartbeated (sty_3bb1d8be).
+			info, engaged, engErr := currentSeatTouch()
 			if p := filePathFromEvent(raw); p != "" {
 				// Foreign-tree fence (sty_a8454d10 / sty_aadd4d6c): refuse edits
 				// that land in ANOTHER git working tree unless the operator opts
@@ -220,7 +221,9 @@ behaviour exactly as above — opt-in, not a satelle default.`,
 			if !needsEngage && !commandAllowRestricts(subs) {
 				return nil // not a gated command — allow
 			}
-			info, engaged, err := currentSeat()
+			// Heartbeat only for gated commands (after the early return above) —
+			// activity on commit/push keeps the seat alive (sty_3bb1d8be).
+			info, engaged, err := currentSeatTouch()
 			if err != nil {
 				return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
 			}
@@ -305,18 +308,30 @@ type seatInfo struct {
 // storyEngaged reports whether a LIVE engagement seat is active (sty_8426b9c0 /
 // sty_1738f973). A bare engagement_lease row is not enough: stale heartbeats and
 // leases whose committed story is not in a performing state do NOT open the gate.
-// Fails CLOSED on store open/query errors.
+// Fails CLOSED on store open/query errors. Does NOT heartbeat (Stop is out of
+// scope for sty_3bb1d8be).
 func storyEngaged() (bool, error) {
 	_, engaged, err := currentSeat()
 	return engaged, err
 }
 
-// currentSeat resolves the engagement seat for gate/session surfaces. When
-// engaged is true, info describes the live holder. When engaged is false but a
-// non-qualifying lease exists (stale orphan, settled on non-performing status),
-// info still names that row so deny reasons can tell the agent who holds the
-// seat and how to inspect/release it. Fails CLOSED on store errors.
+// currentSeat resolves the engagement seat for gate/session surfaces without
+// refreshing the lease heartbeat. Prefer currentSeatTouch from hook handlers
+// that observe ongoing work (gate, commitgate, prompt).
 func currentSeat() (info seatInfo, engaged bool, err error) {
+	return resolveSeat(false)
+}
+
+// currentSeatTouch is currentSeat plus a fail-open heartbeat of a live
+// owner-held seat (sty_3bb1d8be). Activity keeps the seat alive; the write
+// never changes a verdict.
+func currentSeatTouch() (info seatInfo, engaged bool, err error) {
+	return resolveSeat(true)
+}
+
+// resolveSeat is the shared seat lookup. When touch is true and a live seat is
+// found for the current owner, heartbeat_at is refreshed (fail-open).
+func resolveSeat(touch bool) (info seatInfo, engaged bool, err error) {
 	a, openErr := app.Open()
 	if openErr != nil {
 		return seatInfo{}, false, fmt.Errorf("cannot determine engagement (store open failed: %w) — fix config and retry", openErr)
@@ -345,9 +360,34 @@ func currentSeat() (info seatInfo, engaged bool, err error) {
 		return seatInfo{}, false, eerr
 	}
 	if live.ItemID != "" {
+		if touch {
+			touchSeat(ctx, a.Store.Leases, live)
+		}
 		return live, true, nil
 	}
 	return other, false, nil
+}
+
+// touchSeat refreshes heartbeat_at for a live, owner-held seat (sty_3bb1d8be).
+// Activity keeps the seat alive; the write is a side effect of observation.
+// Never revives a stale lease (callers pass evaluateSeat's live pick, which is
+// non-stale by construction) and never touches another owner's row. Fail-open
+// by construction: every error is discarded.
+func touchSeat(ctx context.Context, ls *lease.Store, info seatInfo) {
+	if ls == nil || info.ItemID == "" || info.Stale {
+		return
+	}
+	owner := lease.ResolveOwner()
+	if info.Owner != owner {
+		return
+	}
+	_ = seatHeartbeat(ctx, ls, info.ItemID, owner)
+}
+
+// seatHeartbeat is the heartbeat write, injectable so the fail-open path is
+// testable (same idiom as lease.PidAlive / healthzOK).
+var seatHeartbeat = func(ctx context.Context, ls *lease.Store, itemID, owner string) error {
+	return ls.Heartbeat(ctx, itemID, owner)
 }
 
 // evaluateSeat is the pure engagement predicate (sty_1738f973 AC2). A lease L is
@@ -1343,8 +1383,9 @@ func runHookPrompt(out io.Writer) error {
 			msg = gateNotWiredWarning + "\n\n" + msg
 		}
 	}
-	// Seat line: fail-open (currentSeat error injects nothing).
-	if info, _, err := currentSeat(); err == nil {
+	// Seat line + heartbeat: fail-open (resolve error injects nothing;
+	// heartbeat write failures never block the prompt) (sty_3bb1d8be).
+	if info, _, err := currentSeatTouch(); err == nil {
 		msg = appendSeatToPrompt(msg, info, time.Now().UTC())
 	}
 	return emitAdditionalContext(out, "UserPromptSubmit", "", msg)

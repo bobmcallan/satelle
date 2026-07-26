@@ -1,3 +1,8 @@
+## [0.0.331] - 2026-07-26
+
+### Fixed
+- Hook handlers (`gate`, `commitgate`, `prompt`) refresh `heartbeat_at` on a live owner-held engagement seat so a long `in_progress` step no longer drops the seat after HeartbeatTTL; stale and foreign-owner leases are never revived, and heartbeat write failures are fail-open (sty_3bb1d8be)
+
 ## [0.0.330] - 2026-07-26
 
 ### Fixed
