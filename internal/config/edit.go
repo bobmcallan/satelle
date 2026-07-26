@@ -87,6 +87,26 @@ func UpsertKey(content, section, key, value string) string {
 	return strings.Join(out, "\n")
 }
 
+// RemoveKey drops a single `key = …` assignment inside section, leaving every
+// other line (including comments) verbatim. A missing section or key is a no-op.
+// Used by redactForTransmit to strip [hosted] project from a settings push
+// (sty_ea18294f) without a full TOML re-encode.
+func RemoveKey(content, section, key string) string {
+	lines := strings.Split(content, "\n")
+	start, end := sectionRange(lines, section)
+	if start == -1 {
+		return content
+	}
+	for i := start; i < end; i++ {
+		if isKeyLine(lines[i], key) {
+			out := append([]string{}, lines[:i]...)
+			out = append(out, lines[i+1:]...)
+			return strings.Join(out, "\n")
+		}
+	}
+	return content
+}
+
 // HasKey reports whether content already assigns `key` inside `section`
 // (empty section = root block before the first table header). Distinguishes
 // "key absent from the file" from "key present with empty value" — Load cannot

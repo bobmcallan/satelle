@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -70,10 +71,11 @@ func TestDocumentFilesSharedFlagPromotes(t *testing.T) {
 	}
 }
 
-// TestConfigAreasExcludesDocumentsAndWorkState: the candidate set is the five
-// authored areas + tasks, never documents (its own kind) or the work-state areas.
+// TestConfigAreasExcludesDocumentsAndWorkState: the candidate set is the authored
+// config areas + tasks + settings (satelle.toml), never documents (its own kind)
+// or the work-state areas.
 func TestConfigAreasExcludesDocumentsAndWorkState(t *testing.T) {
-	want := map[string]bool{"workflows": true, "principles": true, "skills": true, "constitution": true, "agents": true, "tasks": true}
+	want := map[string]bool{"workflows": true, "principles": true, "skills": true, "constitution": true, "agents": true, "tasks": true, "settings": true}
 	seen := map[string]bool{}
 	for _, a := range ConfigAreas {
 		seen[a] = true
@@ -342,6 +344,10 @@ func TestEveryConfigAreaWithholdsLocal(t *testing.T) {
 			writeFile(t, repo, ".satelle/agents.toml", "[x]\n")
 			continue
 		}
+		if area == "settings" {
+			writeFile(t, repo, ".satelle/satelle.toml", "[sync]\nall = \"personal\"\n")
+			continue
+		}
 		// directory areas
 		writeFile(t, repo, ".satelle/"+area+"/thing.md", "ok")
 		writeFile(t, repo, ".satelle/"+area+"/thing.local.md", "secret")
@@ -352,7 +358,7 @@ func TestEveryConfigAreaWithholdsLocal(t *testing.T) {
 		t.Fatalf("ConfigFiles: %v", err)
 	}
 	for _, area := range ConfigAreas {
-		if area == "constitution" || area == "agents" {
+		if area == "constitution" || area == "agents" || area == "settings" {
 			continue // single-file; no thing.local.md path
 		}
 		keep := area + "/thing.md"
@@ -430,5 +436,64 @@ func TestLocalExclusionIgnoresConfig(t *testing.T) {
 		if !found {
 			t.Errorf("case %d: Withheld missing secret.local.md: %v", i, b.Withheld)
 		}
+	}
+}
+
+// TestSettingsBundleExcludesLocalOverlay (sty_ea18294f AC2): satelle.toml joins
+// the bundle; satelle.local.toml never rides, even with a sentinel secret.
+func TestSettingsBundleExcludesLocalOverlay(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, ".satelle/satelle.toml", "[sync]\nall = \"personal\"\n[hosted]\nproject = \"probe\"\n")
+	const secret = "SUPER_SECRET_TOKEN_XYZ"
+	writeFile(t, repo, ".satelle/satelle.local.toml", "[vars]\nAPI_KEY = \""+secret+"\"\n")
+	cfg := Config{Sync: map[string]string{"all": "personal"}}
+	b, err := ConfigFiles(cfg, repo)
+	if err != nil {
+		t.Fatalf("ConfigFiles: %v", err)
+	}
+	if _, ok := findConfigFile(b.Files, "satelle.toml"); !ok {
+		t.Error("satelle.toml missing from Files")
+	}
+	for _, f := range b.Files {
+		if f.Path == "satelle.local.toml" {
+			t.Error("satelle.local.toml must not be in Files")
+		}
+		if strings.Contains(string(f.Content), secret) {
+			t.Errorf("secret leaked in %s content", f.Path)
+		}
+		// [hosted] project must be redacted at push
+		if f.Path == "satelle.toml" && strings.Contains(string(f.Content), `project = "probe"`) {
+			t.Error("satelle.toml content still carries [hosted] project after redact")
+		}
+	}
+	// Overlay may be listed as withheld only if walked — it is not in any area location.
+	for _, w := range b.Withheld {
+		if w == "satelle.local.toml" {
+			// fine if reported; not required
+		}
+	}
+}
+
+// TestLocalOnlyPathSettingsOverlay pins the .local rule for the overlay path.
+func TestLocalOnlyPathSettingsOverlay(t *testing.T) {
+	if !LocalOnlyPath("satelle.local.toml") {
+		t.Error("LocalOnlyPath(satelle.local.toml) = false, want true")
+	}
+}
+
+// TestRedactForTransmitStripsHostedProject: only settings area is redacted.
+func TestRedactForTransmitStripsHostedProject(t *testing.T) {
+	body := []byte("[sync]\nall = \"personal\"\n[hosted]\nproject = \"alpha\"\nserver = \"https://x\"\n")
+	got := string(redactForTransmit("settings", body))
+	if strings.Contains(got, `project = "alpha"`) {
+		t.Errorf("project not stripped: %s", got)
+	}
+	if !strings.Contains(got, `all = "personal"`) {
+		t.Errorf("sync lost: %s", got)
+	}
+	// other areas unchanged
+	other := redactForTransmit("skills", body)
+	if string(other) != string(body) {
+		t.Error("non-settings area was redacted")
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -89,13 +90,17 @@ Full operator path (pinned so scopes return before scope-gated pulls):
   3. satelle project bind <slug>
        creates .satelle/satelle.toml with [hosted] project when absent
   4. satelle sync rehydrate   — this command, which runs:
-       a. config deploy       — restores satelle.toml / substrate including [sync]
+       a. config deploy       — restores substrate AND satelle.toml (the settings
+          area, including [sync] scopes) from the bound project's personal config
+          collection; the local [hosted] project binding is preserved (never
+          taken from the deployed file)
        b. documents pull
        c. workstate pull      — stories/executions/ledger into the local store
 
-Scopes live in satelle.toml: without config deploy first, personal areas stay
-local and pull no-ops. If every area is still local after deploy, rehydrate
-prints an explicit note that scopes were not restored from hosted.
+Scopes live in satelle.toml and are restored by step 4a when a machine that had
+[sync] settings (or all) = personal previously pushed. If the hosted project has
+no satelle.toml yet (never pushed from a post-0.0.330 binary with settings
+opted in), areas stay local and rehydrate names the fix.
 
 Does not push. Bare "satelle sync" remains the backup-oriented path on a healthy
 machine. Optional --force is passed to workstate pull only (conflict override).`,
@@ -111,12 +116,13 @@ machine. Optional --force is passed to workstate pull only (conflict override).`
 func runSyncRehydrate(cmd *cobra.Command, serverArg string, force bool) error {
 	out := cmd.OutOrStdout()
 	fmt.Fprintln(out, "rehydrate: config deploy…")
-	if err := runSyncConfigDeploy(cmd, serverArg, "", 0); err != nil {
+	outcome, err := runSyncConfigDeployOutcome(cmd, serverArg, "", 0)
+	if err != nil {
 		return err
 	}
-	// After deploy, if every sync area is still local, scopes were not restored
-	// from hosted (empty deploy, or never pushed with personal opt-in).
-	if note := rehydrateAllLocalNote(); note != "" {
+	// After deploy, if every sync area is still local, explain the real cause
+	// (settings not restored vs restored-but-all-local).
+	if note := rehydrateAllLocalNote(outcome.SettingsRestored); note != "" {
 		fmt.Fprintln(out, note)
 	}
 	fmt.Fprintln(out, "rehydrate: documents pull…")
@@ -132,14 +138,47 @@ func runSyncRehydrate(cmd *cobra.Command, serverArg string, force bool) error {
 	if err := runSyncWorkstatePull(cmd, serverArg, false, force); err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "rehydrate: done.")
+	fmt.Fprintln(out, rehydrateDoneSummary(outcome))
 	return nil
 }
 
+// rehydrateDoneSummary is the truthful closing line for rehydrate: what was
+// and was not restored (AC4).
+func rehydrateDoneSummary(o deployOutcome) string {
+	settings := "settings: not restored"
+	if o.SettingsRestored {
+		settings = "settings: restored"
+		if scopes := scopeSummary(); scopes != "" {
+			settings += " (scopes now: " + scopes + ")"
+		}
+	}
+	return fmt.Sprintf("rehydrate: done — %s | config files: %d | (documents + workstate reported above)",
+		settings, o.Written)
+}
+
+// scopeSummary renders non-local areas as "area=scope, …" for the rehydrate
+// closing line. Empty when load fails or every area is local.
+func scopeSummary() string {
+	cfg, _, _, err := loadRepoConfig()
+	if err != nil {
+		return ""
+	}
+	var parts []string
+	for _, area := range config.SyncAreas {
+		scope, serr := config.ScopeFor(cfg, area)
+		if serr != nil || scope == config.LocalScope {
+			continue
+		}
+		parts = append(parts, area+"="+scope.String())
+	}
+	return strings.Join(parts, ", ")
+}
+
 // rehydrateAllLocalNote returns an operator-facing explanation when every
-// [sync] area is still local after config deploy (scopes never came back from
-// hosted). Empty string when at least one area is personal|shared.
-func rehydrateAllLocalNote() string {
+// [sync] area is still local after config deploy. Empty when at least one area
+// is personal|shared. Wording distinguishes "settings not restored from hosted"
+// from "restored and genuinely all-local" (AC5).
+func rehydrateAllLocalNote(settingsRestored bool) string {
 	cfg, _, _, err := loadRepoConfig()
 	if err != nil {
 		return ""
@@ -153,7 +192,19 @@ func rehydrateAllLocalNote() string {
 			return ""
 		}
 	}
-	return "rehydrate: note — every .satelle area is still local after config deploy (no personal [sync] scopes restored from hosted). Documents and workstate pulls will no-op until you set [sync] <area> = personal on a machine that has content and push, or deploy config that already opts in."
+	if !settingsRestored {
+		return "rehydrate: note — satelle.toml was not restored from hosted (the bound project has no settings/satelle.toml, or it was never pushed from a machine with [sync] settings or all = personal). Documents and workstate pulls will no-op until you push config from a machine that has content (`satelle sync config push`) or hand-set [sync] here once."
+	}
+	return "rehydrate: note — satelle.toml was restored and every area is still local (the hosted scopes genuinely opt nothing in). Documents and workstate pulls will no-op until [sync] opts an area into personal."
+}
+
+// deployOutcome is the structured result of a config deploy so rehydrate can
+// report facts rather than guess (sty_ea18294f AC4).
+type deployOutcome struct {
+	Written          int
+	Missing          int
+	SkippedLocal     int
+	SettingsRestored bool
 }
 
 // runSync is the bare `satelle sync` default action: run the configured sync
@@ -220,12 +271,14 @@ func newSyncConfigCmd() *cobra.Command {
 		Use:   "push",
 		Short: "Upload authored config to the versioned store (a new version per file)",
 		Long: `push walks the authored-config areas (workflows/principles/skills/constitution/
-agents/tasks) per their resolved [sync] scope — skipping local areas — and uploads
+agents/tasks/settings) per their resolved [sync] scope — skipping local areas — and uploads
 each file as a new version into this repo's bound hosted PROJECT's personal
-collection only (epic:sync-publish). Identical content is idempotent (no new
-version). Files with a .local segment are never uploaded (reported as withheld).
-Team is not a sync destination; use satelle publish to expose artifacts
-to a team catalog. Requires "satelle project bind <slug>".`,
+collection only (epic:sync-publish). The settings area is satelle.toml (including
+[sync] scopes); [hosted] project is redacted at push so a deploy cannot rebind
+another repo. Identical content is idempotent (no new version). Files with a
+.local segment are never uploaded (reported as withheld). Team is not a sync
+destination; use satelle publish to expose artifacts to a team catalog.
+Requires "satelle project bind <slug>".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncConfigPush(cmd, pushServer, pushWorkspace, dryRun)
 		},
@@ -242,11 +295,13 @@ to a team catalog. Requires "satelle project bind <slug>".`,
 		Short: "Materialize config from the store into this repo (set up X like Y)",
 		Long: `deploy fetches this repo's bound hosted PROJECT's personal config collection
 (or an explicit --workspace when reading another developer's personal set) and
-writes every file byte-for-byte into this repo's data dir. --version N pins a
-per-file version (default: latest). This is the "set up project X like project Y"
-operation. Requires "satelle project bind <slug>". Local [sync] areas still
-default to writing nothing hosted on push; deploy always materializes from the
-bound project partition.`,
+writes every file byte-for-byte into this repo's data dir — including satelle.toml
+(settings) with its [sync] scopes when present. The local [hosted] project
+binding is preserved after restore (never taken from the deployed file).
+--version N pins a per-file version (default: latest). This is the "set up
+project X like project Y" operation for process config. Requires "satelle
+project bind <slug>". Local [sync] areas still default to writing nothing hosted
+on push; deploy always materializes from the bound project partition.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncConfigDeploy(cmd, deployServer, deployWorkspace, version)
 		},
@@ -365,37 +420,47 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 }
 
 func runSyncConfigDeploy(cmd *cobra.Command, serverArg, workspaceArg string, version int) error {
+	_, err := runSyncConfigDeployOutcome(cmd, serverArg, workspaceArg, version)
+	return err
+}
+
+func runSyncConfigDeployOutcome(cmd *cobra.Command, serverArg, workspaceArg string, version int) (deployOutcome, error) {
 	cfg, _, dataDir, err := loadRepoConfig()
 	if err != nil {
-		return err
+		return deployOutcome{}, err
 	}
 	server := resolveServer(serverArg)
 	if server == "" {
-		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
+		return deployOutcome{}, fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}
 	// Project-addressed config routes (sty_ca64d0cb). --workspace is accepted
 	// but inert for routing (workspace is derived from the project server-side);
 	// keep it in user-facing messages for the deprecation window.
 	project, err := resolveBoundProject(cfg)
 	if err != nil {
-		return err
+		return deployOutcome{}, err
 	}
 	sourceName := resolveDeploySourceName(cfg, workspaceArg)
 	client := hosted.NewClient(server, hosted.FileStore{}, nil)
 	manifest, err := client.ConfigManifest(cmd.Context(), project)
 	if err != nil {
 		if errors.Is(err, hosted.ErrLoginRequired) {
-			return err
+			return deployOutcome{}, err
 		}
-		return fmt.Errorf("fetch manifest: %w", err)
+		return deployOutcome{}, fmt.Errorf("fetch manifest: %w", err)
 	}
+	out := cmd.OutOrStdout()
 	if len(manifest) == 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "No config in workspace %q project %q on %s.\n", sourceName, project, server)
-		return nil
+		fmt.Fprintf(out, "No config in workspace %q project %q on %s.\n", sourceName, project, server)
+		return deployOutcome{}, nil
 	}
 	var files []subsync.File
 	var missing int
+	var settingsInManifest bool
 	for _, item := range manifest {
+		if item.Path == config.ConfigName {
+			settingsInManifest = true
+		}
 		content, _, ferr := client.ConfigFileContent(cmd.Context(), project, item.Path, version)
 		if ferr != nil {
 			if errors.Is(ferr, hosted.ErrConfigFileMissing) && version > 0 {
@@ -403,19 +468,47 @@ func runSyncConfigDeploy(cmd *cobra.Command, serverArg, workspaceArg string, ver
 				continue
 			}
 			if errors.Is(ferr, hosted.ErrLoginRequired) {
-				return ferr
+				return deployOutcome{}, ferr
 			}
-			return fmt.Errorf("fetch %s: %w", item.Path, ferr)
+			return deployOutcome{}, fmt.Errorf("fetch %s: %w", item.Path, ferr)
 		}
 		files = append(files, subsync.File{Path: item.Path, Content: content})
 	}
 	if len(files) == 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "Nothing to deploy — version %d matched no files in workspace %q.\n", version, sourceName)
-		return nil
+		fmt.Fprintf(out, "Nothing to deploy — version %d matched no files in workspace %q.\n", version, sourceName)
+		return deployOutcome{}, nil
 	}
+	// Capture the local binding before restore; re-apply after so a hosted
+	// satelle.toml (even an older unredacted one) cannot rebind this repo.
+	boundProject := project
+	cfgPath := filepath.Join(dataDir, config.ConfigName)
 	res, err := subsync.Restore(dataDir, files)
 	if err != nil {
-		return fmt.Errorf("deploy: %w", err)
+		return deployOutcome{}, fmt.Errorf("deploy: %w", err)
+	}
+	outcome := deployOutcome{
+		Written:      res.Written,
+		Missing:      missing,
+		SkippedLocal: len(res.Skipped),
+	}
+	if settingsInManifest {
+		// Did Restore actually write satelle.toml (not skip it as local-only)?
+		settingsWritten := true
+		for _, sk := range res.Skipped {
+			if sk == config.ConfigName {
+				settingsWritten = false
+				break
+			}
+		}
+		if settingsWritten {
+			outcome.SettingsRestored = true
+			if err := config.SaveConfigValues(cfgPath, []config.KeyEdit{
+				{Section: "hosted", Key: "project", Value: strconv.Quote(boundProject)},
+			}); err != nil {
+				return outcome, fmt.Errorf("deploy: preserve [hosted] project: %w", err)
+			}
+			fmt.Fprintf(out, "settings: satelle.toml restored; [hosted] project preserved as %q (not taken from the deployed file).\n", boundProject)
+		}
 	}
 	pinned := "latest"
 	if version > 0 {
@@ -428,8 +521,8 @@ func runSyncConfigDeploy(cmd *cobra.Command, serverArg, workspaceArg string, ver
 	if n := len(res.Skipped); n > 0 {
 		tail += fmt.Sprintf(", %d skipped (local-only path)", n)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Deployed %d file(s) (%s%s) from %s workspace %q into %s.\n", res.Written, pinned, tail, server, sourceName, dataDir)
-	return nil
+	fmt.Fprintf(out, "Deployed %d file(s) (%s%s) from %s workspace %q into %s.\n", res.Written, pinned, tail, server, sourceName, dataDir)
+	return outcome, nil
 }
 
 func runSyncScopes(cmd *cobra.Command, args []string) error {
@@ -490,6 +583,8 @@ func syncAreaPath(a *app.App, area string) (path string, isDir bool) {
 		return filepath.Join(dataDir, config.AgentsConfigName), false
 	case "tasks":
 		return filepath.Join(dataDir, "tasks"), true
+	case "settings":
+		return filepath.Join(dataDir, config.ConfigName), false
 	case "stories":
 		return filepath.Join(runtimeDir, "stories"), true
 	case "ledger", "executions":

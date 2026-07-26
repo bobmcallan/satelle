@@ -75,9 +75,14 @@ var SyncAreas = buildSyncAreas()
 const syncAllKey = "all"
 
 func buildSyncAreas() []string {
-	out := make([]string, 0, len(AuthoredKinds)+6)
+	out := make([]string, 0, len(AuthoredKinds)+7)
 	out = append(out, AuthoredKinds...)
-	return append(out, "constitution", "agents", "tasks", "stories", "ledger", "executions")
+	// settings = satelle.toml (process config including [sync]); opted in via
+	// [sync] all / settings like every other area. Chicken-and-egg is one-way:
+	// the settings scope gates PUSH only; deploy materialises whatever the
+	// manifest holds and never consults scopes, so a wiped tree can always get
+	// its satelle.toml back.
+	return append(out, "constitution", "agents", "tasks", "settings", "stories", "ledger", "executions")
 }
 
 // ScopeFor resolves a configured area's scope. Precedence: an explicit
@@ -123,7 +128,7 @@ func FileShared(scope Scope, frontmatter string) bool {
 // DEFINITIONS. The work-state areas (stories/ledger/executions) are order:7;
 // documents is its own kind. Local-scope areas are skipped at push time — this
 // list is the candidate set the walk resolves a tier for.
-var ConfigAreas = []string{"workflows", "principles", "skills", "constitution", "agents", "tasks"}
+var ConfigAreas = []string{"workflows", "principles", "skills", "constitution", "agents", "tasks", "settings"}
 
 // ConfigTier flags whether a file is eligible to be exposed via satelle publish
 // (SharedTier) or stays purely personal (PersonalTier). It is NOT a sync push
@@ -318,7 +323,8 @@ func filesForArea(cfg Config, repoRoot, area string) ([]ConfigFile, Scope, error
 
 // readConfigFile reads one file's bytes and resolves its tier. serverPath is the
 // already-computed server-relative key; absPath is the on-disk source. A missing
-// single-file area (constitution/agents not yet seeded) is benign — ok=false.
+// single-file area (constitution/agents/settings not yet seeded) is benign — ok=false.
+// Content is passed through redactForTransmit so repo-identifying keys never leave.
 func readConfigFile(area, absPath, serverPath string, scope Scope) (ConfigFile, bool, error) {
 	body, err := os.ReadFile(absPath)
 	if err != nil {
@@ -327,6 +333,7 @@ func readConfigFile(area, absPath, serverPath string, scope Scope) (ConfigFile, 
 		}
 		return ConfigFile{}, false, fmt.Errorf("read %s: %w", absPath, err)
 	}
+	body = redactForTransmit(area, body)
 	tier := PersonalTier
 	if scope == SharedScope {
 		tier = SharedTier
@@ -334,6 +341,18 @@ func readConfigFile(area, absPath, serverPath string, scope Scope) (ConfigFile, 
 		tier = SharedTier
 	}
 	return ConfigFile{Area: area, Path: serverPath, Tier: tier, Content: body}, true, nil
+}
+
+// redactForTransmit strips repo-identifying keys from a file about to leave the
+// machine. For the settings area (satelle.toml) it removes [hosted] project so
+// a push cannot rebind another repo; deploy re-applies the local binding after
+// restore (the load-bearing guard against older unredacted hosted copies).
+// All other areas pass through byte-identical.
+func redactForTransmit(area string, body []byte) []byte {
+	if area != "settings" {
+		return body
+	}
+	return []byte(RemoveKey(string(body), "hosted", "project"))
 }
 
 // sortConfigFiles orders files by server Path for a deterministic push.
@@ -367,6 +386,11 @@ func ConfigAreaLocation(cfg Config, repoRoot, area string) (location string, isD
 		return filepath.Join(dataDir, AgentsConfigName), false
 	case "tasks":
 		return filepath.Join(dataDir, "tasks"), true
+	case "settings":
+		// Canonical path is dataDir/satelle.toml — where init and project bind
+		// write. An operator who relocates config via SATELLE_CONFIG is not
+		// covered at push (readConfigFile returns ok=false for a missing file).
+		return filepath.Join(dataDir, ConfigName), false
 	default:
 		// AuthoredKinds (documents/workflows/principles/skills) + any other
 		// directory-shaped area under dataDir.

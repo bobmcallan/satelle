@@ -1,3 +1,8 @@
+## [0.0.330] - 2026-07-26
+
+### Fixed
+- `satelle.toml` joins the config push bundle as the `settings` area so rehydrate can restore `[sync]` scopes; `[hosted] project` is redacted at push and re-applied from the local binding at deploy so another repo cannot be rebound; `satelle.local.toml` remains excluded by the unconditional `.local` rule (sty_ea18294f)
+
 ## [0.0.329] - 2026-07-26
 
 ### Security

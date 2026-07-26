@@ -1305,8 +1305,9 @@ edit_exempt_paths = [".satelle/", ".gitignore"]
 # the bound project. Whether .satelle process is git-tracked is the operator's
 # choice — satelle does not require it. Git is for the application repo.
 # Areas: documents, workflows, principles, skills, constitution, agents, tasks,
-# stories, ledger, executions. Reserved key 'all' blanket-defaults every area
-# not set explicitly; a per-area key still overrides it.
+# settings (satelle.toml, including [sync]), stories, ledger, executions.
+# Reserved key 'all' blanket-defaults every area not set explicitly; a per-area
+# key still overrides it.
 # >>> satelle-example: enable sync/hosted (uncomment to opt in)
 # [sync]
 # all = "personal"               # every area personal unless overridden below

@@ -138,3 +138,21 @@ gate_create = true
 		t.Error("absent section must return nil")
 	}
 }
+
+func TestRemoveKey(t *testing.T) {
+	in := "[sync]\nall = \"personal\"\n\n[hosted]\nproject = \"alpha\"\nserver = \"https://x\"\n"
+	got := RemoveKey(in, "hosted", "project")
+	if strings.Contains(got, `project = "alpha"`) {
+		t.Errorf("project not removed: %s", got)
+	}
+	if !strings.Contains(got, `all = "personal"`) {
+		t.Errorf("sync lost: %s", got)
+	}
+	if !strings.Contains(got, "server") {
+		t.Errorf("server lost: %s", got)
+	}
+	// no-op when missing
+	if RemoveKey(in, "hosted", "missing") != in {
+		t.Error("missing key should be no-op")
+	}
+}

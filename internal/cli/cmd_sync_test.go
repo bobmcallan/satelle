@@ -416,8 +416,11 @@ func TestSyncRehydrateLocalOnly(t *testing.T) {
 			t.Errorf("output missing %q:\n%s", want, out)
 		}
 	}
-	if !strings.Contains(out, "every .satelle area is still local after config deploy") {
-		t.Errorf("expected post-deploy all-local explain note:\n%s", out)
+	if !strings.Contains(out, "satelle.toml was not restored from hosted") {
+		t.Errorf("expected settings-not-restored note:\n%s", out)
+	}
+	if !strings.Contains(out, "settings: not restored") {
+		t.Errorf("expected truthful done summary:\n%s", out)
 	}
 }
 
@@ -501,9 +504,26 @@ func TestSyncRehydrateEmptyTreeHappyPath(t *testing.T) {
 			t.Errorf("missing %q:\n%s", want, out)
 		}
 	}
-	// Deployed scopes should opt in — no all-local note.
-	if strings.Contains(out, "every .satelle area is still local after config deploy") {
-		t.Errorf("unexpected all-local note after deploy with personal scopes:\n%s", out)
+	// Deployed scopes should opt in — settings restored, no all-local note.
+	if !strings.Contains(out, "settings: satelle.toml restored") {
+		t.Errorf("expected settings restored line:\n%s", out)
+	}
+	if !strings.Contains(out, "[hosted] project preserved") {
+		t.Errorf("expected binding preservation line:\n%s", out)
+	}
+	if strings.Contains(out, "satelle.toml was not restored from hosted") {
+		t.Errorf("unexpected settings-not-restored note after deploy with personal scopes:\n%s", out)
+	}
+	// On-disk satelle.toml has scopes and preserves bind project.
+	gotToml, rerr := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.toml"))
+	if rerr != nil {
+		t.Fatalf("read satelle.toml: %v", rerr)
+	}
+	if !strings.Contains(string(gotToml), `all = "personal"`) {
+		t.Errorf("scopes not restored: %s", gotToml)
+	}
+	if !strings.Contains(string(gotToml), `project = "probe"`) {
+		t.Errorf("local binding not preserved: %s", gotToml)
 	}
 	// Story materialised.
 	got, gerr := runRoot(t, "story", "get", "sty_rehy1")

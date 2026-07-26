@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/hosted"
 )
 
 // fakeConfigStore is an in-memory versioned config store matching the server's
@@ -481,5 +483,84 @@ func TestSyncConfigPushDryRunReportsWithheld(t *testing.T) {
 	}
 	if !strings.Contains(out, "withheld (never syncs, .local): skills/secret.local.md") {
 		t.Errorf("dry-run should report withheld secret.local.md:\n%s", out)
+	}
+}
+
+// TestSyncConfigDeployPreservesHostedProject (sty_ea18294f AC3): a hosted
+// satelle.toml carrying a foreign project must not rebind the local repo.
+func TestSyncConfigDeployPreservesHostedProject(t *testing.T) {
+	ts := newFakeConfigServer(t)
+	seedCred(t, ts.URL)
+
+	// Seed hosted store with satelle.toml that claims project=alpha (old-binary shape).
+	// PushConfigFile writes bytes verbatim to the fake store (no client-side redact),
+	// so this models an older binary's unredacted push.
+	foreign := "[sync]\nall = \"personal\"\n[hosted]\nproject = \"alpha\"\n"
+	client := hosted.NewClient(ts.URL, hosted.FileStore{}, nil)
+	if _, err := client.PushConfigFile(t.Context(), "beta", "satelle.toml", []byte(foreign)); err != nil {
+		t.Fatalf("seed satelle.toml: %v", err)
+	}
+	if _, err := client.PushConfigFile(t.Context(), "beta", "agents.toml", []byte("[executor]\nharness = \"in-loop\"\n")); err != nil {
+		t.Fatalf("seed agents.toml: %v", err)
+	}
+
+	// Local repo bound to beta
+	repo := syncConfigRepo(t, "[hosted]\nproject = \"beta\"\n")
+	pointAt(t, repo)
+	cmd, buf := testCmd()
+	if err := runSyncConfigDeploy(cmd, ts.URL, "", 0); err != nil {
+		t.Fatalf("deploy: %v\n%s", err, buf.String())
+	}
+	out := buf.String()
+	if !strings.Contains(out, "settings: satelle.toml restored") {
+		t.Errorf("expected restore line:\n%s", out)
+	}
+	if !strings.Contains(out, `preserved as "beta"`) {
+		t.Errorf("expected preserve beta:\n%s", out)
+	}
+	got, err := os.ReadFile(filepath.Join(repo, ".satelle", "satelle.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(got)
+	if !strings.Contains(body, `all = "personal"`) {
+		t.Errorf("sync table missing: %s", body)
+	}
+	if !strings.Contains(body, `project = "beta"`) {
+		t.Errorf("local binding not preserved: %s", body)
+	}
+	if strings.Contains(body, `project = "alpha"`) {
+		t.Errorf("foreign project leaked into local toml: %s", body)
+	}
+}
+
+// TestSyncConfigPushSettingsRedactsAndExcludesLocal (sty_ea18294f AC2 CLI).
+func TestSyncConfigPushSettingsRedactsAndExcludesLocal(t *testing.T) {
+	ts := newFakeConfigServer(t)
+	seedCred(t, ts.URL)
+	repo := syncConfigRepo(t, "[sync]\nall = \"personal\"\n"+boundProjectToml)
+	writeRepoFile(t, repo, ".satelle/satelle.toml", "[sync]\nall = \"personal\"\n[hosted]\nproject = \"probe\"\n")
+	writeRepoFile(t, repo, ".satelle/satelle.local.toml", "[vars]\nAPI_KEY = \"SECRET_NEVER\"\n")
+	writeRepoFile(t, repo, ".satelle/skills/a.md", "ok\n")
+	pointAt(t, repo)
+	cmd, buf := testCmd()
+	if err := runSyncConfigPush(cmd, ts.URL, "", false); err != nil {
+		t.Fatalf("push: %v\n%s", err, buf.String())
+	}
+	// Read back from server via client
+	client := hosted.NewClient(ts.URL, hosted.FileStore{}, nil)
+	content, _, err := client.ConfigFileContent(t.Context(), "probe", "satelle.toml", 0)
+	if err != nil {
+		t.Fatalf("get satelle.toml: %v", err)
+	}
+	if strings.Contains(string(content), `project = "probe"`) {
+		t.Errorf("hosted satelle.toml still has project: %s", content)
+	}
+	if strings.Contains(string(content), "SECRET_NEVER") {
+		t.Error("secret leaked into satelle.toml content")
+	}
+	_, _, err = client.ConfigFileContent(t.Context(), "probe", "satelle.local.toml", 0)
+	if err == nil {
+		t.Error("satelle.local.toml must not be on server")
 	}
 }
