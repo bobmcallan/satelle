@@ -2,7 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,6 +14,8 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/lease"
+	"github.com/bobmcallan/satelle/internal/store"
+	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -966,5 +970,253 @@ func TestEditGateDenyReasonPrefersDroppedSeat(t *testing.T) {
 	}
 	if drop == noEngagedStoryEditReason {
 		t.Fatal("dropped and generic must differ")
+	}
+}
+
+// --- sty_e16a2cd7: per-turn engaged prompt injection ---
+
+// TestPromptNoSeatIsUnchanged: no live seat → body is byte-identical to today's
+// static reminder (AC1). Gate-not-wired warning path also unchanged.
+func TestPromptNoSeatIsUnchanged(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	var buf bytes.Buffer
+	if err := runHookPrompt(&buf); err != nil {
+		t.Fatalf("runHookPrompt: %v", err)
+	}
+	var got hookContextOut
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("prompt output not valid JSON: %v (%s)", err, buf.String())
+	}
+	if got.HookSpecificOutput.AdditionalContext != hookPromptReminder {
+		t.Errorf("no-seat body not byte-identical to hookPromptReminder:\n got %q\nwant %q",
+			got.HookSpecificOutput.AdditionalContext, hookPromptReminder)
+	}
+}
+
+// TestFormatEngagedPromptNamesNextGate: AC2 — id, status, gates, story set; no static reminder.
+func TestFormatEngagedPromptNamesNextGate(t *testing.T) {
+	now := time.Now().UTC()
+	info := seatInfo{
+		ItemID:      "sty_live",
+		State:       "in_progress",
+		HeartbeatAt: now.Add(-6 * time.Second),
+		Engaged:     true,
+		Advance: []wfdot.Advance{
+			{To: "integration", Gates: []string{"satelle-code-ac-review", "satelle-story-scope-review"}},
+		},
+	}
+	out := formatEngagedPrompt(info, now)
+	if out == "" {
+		t.Fatal("formatEngagedPrompt returned empty")
+	}
+	for _, want := range []string{
+		"sty_live",
+		"in_progress",
+		"integration",
+		"satelle-code-ac-review",
+		"satelle story set sty_live --status integration",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("engaged form missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "edits require an ENGAGED story") {
+		t.Errorf("static create-and-engage reminder must be absent:\n%s", out)
+	}
+	if len(out) > promptEngagedCeiling {
+		t.Errorf("engaged form length %d > ceiling %d:\n%s", len(out), promptEngagedCeiling, out)
+	}
+}
+
+// TestEngagedPromptQuotesOwnWorkflow: AC3 — two invented workflows; each injection
+// quotes its own edges/gates and none of the other's. Invented names cannot be
+// hardcoded in Go.
+func TestEngagedPromptQuotesOwnWorkflow(t *testing.T) {
+	wfs := []docindex.Doc{
+		wfDoc("wf-a", `["cat-a"]`, `
+  start [shape=Mdiamond]
+  draft [agent=executor]
+  work  [agent=executor]
+  ship  [shape=Msquare]
+  start -> draft
+  draft -> work [agent=reviewer, prompt="@skill:wfa-work-gate"]
+  work -> ship`),
+		wfDoc("wf-b", `["cat-b"]`, `
+  start  [shape=Mdiamond]
+  triage [agent=executor]
+  build  [agent=executor]
+  verify [shape=Msquare]
+  start -> triage
+  triage -> build [agent=reviewer, prompt="@skill:wfb-build-gate"]
+  build -> verify`),
+	}
+	now := time.Now().UTC()
+	items := []workitem.Item{
+		{ID: "sty_a", Kind: workitem.KindStory, Status: "draft", Category: "cat-a"},
+		{ID: "sty_b", Kind: workitem.KindStory, Status: "triage", Category: "cat-b"},
+	}
+	leases := []lease.Lease{
+		{ItemID: "sty_a", State: "draft", Owner: "alice", AcquiredAt: now.Add(-time.Hour), HeartbeatAt: now.Add(-time.Minute)},
+		{ItemID: "sty_b", State: "triage", Owner: "bob", AcquiredAt: now.Add(-time.Hour), HeartbeatAt: now.Add(-time.Minute)},
+	}
+	// evaluateSeat returns the first live seat; probe each lease alone.
+	for _, c := range []struct {
+		lease    lease.Lease
+		item     workitem.Item
+		wantTo   string
+		wantGate string
+		notGate  string
+		notState string
+	}{
+		{leases[0], items[0], "work", "wfa-work-gate", "wfb-build-gate", "build"},
+		{leases[1], items[1], "build", "wfb-build-gate", "wfa-work-gate", "work"},
+	} {
+		live, _, err := evaluateSeat([]lease.Lease{c.lease}, []workitem.Item{c.item}, wfs, now)
+		if err != nil {
+			t.Fatalf("%s: evaluateSeat: %v", c.item.ID, err)
+		}
+		if !live.Engaged || live.ItemID != c.item.ID {
+			t.Fatalf("%s: live=%+v", c.item.ID, live)
+		}
+		if len(live.Advance) != 1 || live.Advance[0].To != c.wantTo {
+			t.Fatalf("%s: Advance=%+v, want [{%s …}]", c.item.ID, live.Advance, c.wantTo)
+		}
+		out := formatEngagedPrompt(live, now)
+		if !strings.Contains(out, c.wantGate) || !strings.Contains(out, c.wantTo) {
+			t.Errorf("%s: engaged form missing own edge/gate:\n%s", c.item.ID, out)
+		}
+		if strings.Contains(out, c.notGate) || strings.Contains(out, c.notState) {
+			t.Errorf("%s: engaged form leaked other workflow:\n%s", c.item.ID, out)
+		}
+		if strings.Contains(out, "edits require an ENGAGED story") {
+			t.Errorf("%s: static reminder present:\n%s", c.item.ID, out)
+		}
+	}
+}
+
+// TestEngagedPromptWithinCeiling: AC4 — pathological DOT still ≤ ceiling or "".
+func TestEngagedPromptWithinCeiling(t *testing.T) {
+	now := time.Now().UTC()
+	// Five long gate names + long id — force degradation ladder.
+	longGates := make([]string, 5)
+	for i := range longGates {
+		longGates[i] = fmt.Sprintf("very-long-gate-name-number-%02d-xxxxxxxx", i)
+	}
+	info := seatInfo{
+		ItemID:      "sty_pathologically_long_identifier_xx",
+		State:       "in_progress_with_a_very_long_state_name",
+		HeartbeatAt: now,
+		Engaged:     true,
+		Advance: []wfdot.Advance{
+			{To: "next_state_also_quite_long_name_aa", Gates: longGates},
+			{To: "next_state_also_quite_long_name_bb", Gates: longGates},
+		},
+	}
+	out := formatEngagedPrompt(info, now)
+	if out != "" && len(out) > promptEngagedCeiling {
+		t.Errorf("length %d > ceiling %d:\n%s", len(out), promptEngagedCeiling, out)
+	}
+}
+
+// TestEvaluateSeatAdvanceSkipsTerminalPark: AC5 at evaluateSeat level.
+func TestEvaluateSeatAdvanceSkipsTerminalPark(t *testing.T) {
+	wfs := []docindex.Doc{wfDoc("wf", `["*"]`, `
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor]
+  integration [agent=executor]
+  release     [agent=executor]
+  done        [shape=Msquare]
+  cancelled   [agent=reviewer, prompt="@skill:cancel"]
+  backlog -> in_progress
+  in_progress -> integration [agent=reviewer, prompt="@skill:ac-rev"]
+  integration -> release [agent=reviewer, prompt="@skill:int-rev"]
+  release -> done [agent=reviewer, prompt="@skill:rel-rev"]
+  integration -> in_progress
+  release -> in_progress
+  in_progress -> cancelled
+  release -> cancelled`)}
+	now := time.Now().UTC()
+	// release: only terminal + back-edge → Advance empty.
+	live, _, err := evaluateSeat([]lease.Lease{{
+		ItemID: "sty_rel", State: "release", Owner: "a",
+		AcquiredAt: now.Add(-time.Hour), HeartbeatAt: now.Add(-time.Minute),
+	}}, []workitem.Item{{ID: "sty_rel", Kind: workitem.KindStory, Status: "release", Category: "feature"}}, wfs, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !live.Engaged {
+		t.Fatal("release seat should be engaged")
+	}
+	if len(live.Advance) != 0 {
+		t.Fatalf("release Advance = %+v, want empty", live.Advance)
+	}
+	// in_progress → integration only.
+	live, _, err = evaluateSeat([]lease.Lease{{
+		ItemID: "sty_ip", State: "in_progress", Owner: "a",
+		AcquiredAt: now.Add(-time.Hour), HeartbeatAt: now.Add(-time.Minute),
+	}}, []workitem.Item{{ID: "sty_ip", Kind: workitem.KindStory, Status: "in_progress", Category: "feature"}}, wfs, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(live.Advance) != 1 || live.Advance[0].To != "integration" {
+		t.Fatalf("in_progress Advance = %+v", live.Advance)
+	}
+}
+
+// TestPromptFailsOpen: AC6 — when evaluateSeat cannot resolve the governing
+// workflow DOT, runHookPrompt still emits the static reminder and returns nil.
+// Empty SATELLE_HOME is the clean no-seat path (covered by TestPromptNoSeatIsUnchanged);
+// this forces a real resolve error via a DOT-less workflow doc.
+func TestPromptFailsOpen(t *testing.T) {
+	repo := tempRepo(t)
+	t.Chdir(repo)
+	wfDir := filepath.Join(repo, ".satelle", "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Workflow with applies_to but NO fenced dot block — GoverningWorkflow finds
+	// it, Parse fails, evaluateSeat returns an error.
+	wfBody := "---\nname: broken-wf\ntype: workflow\napplies_to: [\"*\"]\n---\n\nNo DOT here.\n"
+	if err := os.WriteFile(filepath.Join(wfDir, "broken-wf.md"), []byte(wfBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(runtimeDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := db.DocIndex.Sync(ctx, map[string]string{"workflows": wfDir}, time.Now().UTC()); err != nil {
+		_ = db.Close()
+		t.Fatalf("doc sync: %v", err)
+	}
+	sty, err := db.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "x", Body: "b", AcceptanceCriteria: "1. a",
+		Status: "in_progress", Category: "chore",
+	}, time.Now().UTC())
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	owner := lease.ResolveOwner()
+	if _, _, _, err := db.Leases.Acquire(ctx, sty.ID, "story", owner, "in_progress", true); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Leases.Confirm(ctx, sty.ID, "in_progress"); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	out, err := runRootIn(t, `{}`, "hook", "prompt")
+	if err != nil {
+		t.Fatalf("runHookPrompt must return nil on DOT resolve failure: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "edits require an ENGAGED story") {
+		t.Errorf("reminder missing on fail-open path:\n%s", out)
+	}
+	// Must not crash into an engaged form that invents gates from a missing DOT.
+	if strings.Contains(out, "advance:") {
+		t.Errorf("fail-open path must not emit engaged advance form:\n%s", out)
 	}
 }

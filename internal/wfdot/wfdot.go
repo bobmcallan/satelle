@@ -271,31 +271,23 @@ func tagsMatchAppliesTo(appliesTo, tags []string) bool {
 // doneReachable returns the set of states from which "done" is reachable
 // (inclusive of "done"), by reverse traversal. Empty when there is no "done".
 func (s Spec) doneReachable() map[string]bool {
-	reach := map[string]bool{}
+	// Seed on the conventional "done" name only when that state exists —
+	// empty map when absent (executor-path short-circuit). Distance walk is
+	// shared with AdvanceOptions via reverseDistFrom (sty_e16a2cd7).
 	hasDone := false
 	for _, st := range s.States {
 		if st.Name == "done" {
 			hasDone = true
+			break
 		}
 	}
 	if !hasDone {
-		return reach
+		return map[string]bool{}
 	}
-	rev := map[string][]string{}
-	for _, tr := range s.Transitions {
-		rev[tr.To] = append(rev[tr.To], tr.From)
-	}
-	reach["done"] = true
-	stack := []string{"done"}
-	for len(stack) > 0 {
-		n := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		for _, from := range rev[n] {
-			if !reach[from] {
-				reach[from] = true
-				stack = append(stack, from)
-			}
-		}
+	dist := s.reverseDistFrom([]string{"done"})
+	reach := make(map[string]bool, len(dist))
+	for n := range dist {
+		reach[n] = true
 	}
 	return reach
 }
@@ -415,6 +407,111 @@ func (s Spec) IsParkState(name string) bool {
 		}
 	}
 	return false
+}
+
+// Advance is one offered onward transition from a performing state — target
+// status and the reviewer gate skills the authored DOT declares on that edge
+// (sty_e16a2cd7). Gates is Transition.Skills as normalised by Parse.
+type Advance struct {
+	To    string
+	Gates []string
+}
+
+// advanceOptionsCap bounds how many forward targets a prompt injection names.
+// Two is enough for an unusual fork; more would blow the UserPromptSubmit budget.
+const advanceOptionsCap = 2
+
+// AdvanceOptions returns the forward, non-terminal, non-park successors of from,
+// sorted by To and capped at advanceOptionsCap. Empty when none survive
+// (sty_e16a2cd7). Pure graph semantics:
+//
+//  1. Drop IsTerminalState / IsParkState targets (shape=Msquare / agent=reviewer).
+//  2. An edge from→to is forward when there EXISTS a shape=Msquare terminal T
+//     such that dist_T[to] < dist_T[from] (per-terminal reverse shortest-path).
+//     Combining all terminals into one distance map would collapse every
+//     performing state to dist 1 via a cancel Msquare sink and silence the
+//     genuine spine; the existential check keeps the spine when any success
+//     terminal still measures progress. Recovery edges (release→in_progress)
+//     fail every terminal's distance test and are never recommended.
+//
+// When every surviving edge is terminal, park, or a back-edge, the result is
+// empty — callers fall back to their static text rather than inventing a step.
+func (s Spec) AdvanceOptions(from string) []Advance {
+	var terminals []string
+	for _, st := range s.States {
+		if st.Shape == "Msquare" {
+			terminals = append(terminals, st.Name)
+		}
+	}
+	// Per-terminal reverse distances — shared reverseDistFrom with doneReachable.
+	dists := make([]map[string]int, 0, len(terminals))
+	for _, t := range terminals {
+		dists = append(dists, s.reverseDistFrom([]string{t}))
+	}
+	isForward := func(to string) bool {
+		for _, dist := range dists {
+			fromDist, fromOK := dist[from]
+			toDist, toOK := dist[to]
+			if fromOK && toOK && toDist < fromDist {
+				return true
+			}
+		}
+		return false
+	}
+	seen := map[string]bool{}
+	var out []Advance
+	for _, tr := range s.Transitions {
+		if tr.From != from || seen[tr.To] {
+			continue
+		}
+		seen[tr.To] = true
+		if s.IsTerminalState(tr.To) || s.IsParkState(tr.To) {
+			continue
+		}
+		if !isForward(tr.To) {
+			continue
+		}
+		out = append(out, Advance{To: tr.To, Gates: tr.Skills})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].To < out[j].To })
+	if len(out) > advanceOptionsCap {
+		out = out[:advanceOptionsCap]
+	}
+	return out
+}
+
+// reverseDistFrom returns shortest-path distances walking edges in reverse from
+// the given seeds (distance 0 at each seed). States not reverse-reachable are
+// absent from the map.
+func (s Spec) reverseDistFrom(seeds []string) map[string]int {
+	rev := map[string][]string{}
+	for _, tr := range s.Transitions {
+		rev[tr.To] = append(rev[tr.To], tr.From)
+	}
+	dist := map[string]int{}
+	var queue []string
+	for _, seed := range seeds {
+		if seed == "" {
+			continue
+		}
+		if _, ok := dist[seed]; ok {
+			continue
+		}
+		dist[seed] = 0
+		queue = append(queue, seed)
+	}
+	for head := 0; head < len(queue); head++ {
+		n := queue[head]
+		d := dist[n]
+		for _, from := range rev[n] {
+			if _, ok := dist[from]; ok {
+				continue
+			}
+			dist[from] = d + 1
+			queue = append(queue, from)
+		}
+	}
+	return dist
 }
 
 // ExecutorPathToDoneSkills returns every executor skill on a path to done,

@@ -1,3 +1,8 @@
+## [0.0.332] - 2026-07-26
+
+### Changed
+- UserPromptSubmit injection replaces the static create-and-engage reminder when a live engagement seat has a forward DOT advance: the engaged form names the story id, status, next gate(s), and `satelle story set` command, all derived from the governing workflow via `wfdot.AdvanceOptions` (terminal/park/back-edge filtered; multi-Msquare cancel sinks do not silence the spine) (sty_e16a2cd7)
+
 ## [0.0.331] - 2026-07-26
 
 ### Fixed

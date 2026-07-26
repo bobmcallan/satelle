@@ -514,3 +514,122 @@ func TestInitHookScaffoldsRouteToSameHandlers(t *testing.T) {
 		t.Error("scaffold must not introduce a harness-specific heartbeat path")
 	}
 }
+
+// liveSeatRepoWithAdvance is liveSeatRepo but the workflow has an intermediate
+// forward state (in_progress → integration → done) so AdvanceOptions is non-empty
+// and runHookPrompt must emit the engaged form (sty_e16a2cd7).
+func liveSeatRepoWithAdvance(t *testing.T) (repo, storyID string) {
+	t.Helper()
+	repo = tempRepo(t)
+	t.Chdir(repo)
+
+	wfDir := filepath.Join(repo, ".satelle", "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wfBody := `---
+name: seat-wf-adv
+type: workflow
+applies_to: ["*"]
+---
+
+` + "```dot\n" + `digraph w {
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor]
+  integration [agent=executor]
+  done        [shape=Msquare]
+  backlog -> in_progress
+  in_progress -> integration [agent=reviewer, prompt="@skill:ac-rev,scope-rev"]
+  integration -> done
+}
+` + "```\n"
+	if err := os.WriteFile(filepath.Join(wfDir, "seat-wf-adv.md"), []byte(wfBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "internal"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "internal", "foo.go"), []byte("package internal\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := store.Open(runtimeDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := db.DocIndex.Sync(ctx, map[string]string{"workflows": wfDir}, time.Now().UTC()); err != nil {
+		_ = db.Close()
+		t.Fatalf("doc sync: %v", err)
+	}
+	sty, err := db.Stories.Create(ctx, workitem.CreateInput{
+		Kind:               workitem.KindStory,
+		Title:              "seat advance prompt test",
+		Body:               "goal",
+		AcceptanceCriteria: "1. ok",
+		Status:             "in_progress",
+		Category:           "chore",
+	}, time.Now().UTC())
+	if err != nil {
+		_ = db.Close()
+		t.Fatalf("create story: %v", err)
+	}
+	storyID = sty.ID
+	owner := lease.ResolveOwner()
+	if _, _, _, err := db.Leases.Acquire(ctx, storyID, "story", owner, "in_progress", true); err != nil {
+		_ = db.Close()
+		t.Fatalf("acquire: %v", err)
+	}
+	if err := db.Leases.Confirm(ctx, storyID, "in_progress"); err != nil {
+		_ = db.Close()
+		t.Fatalf("confirm: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return repo, storyID
+}
+
+// TestHookPromptLiveSeatEmitsEngagedForm (sty_e16a2cd7 AC2 end-to-end): with a
+// live seat on a workflow that has a forward intermediate state, hook prompt's
+// additionalContext carries id/status/edge gate/story set and does NOT contain
+// the static create-and-engage reminder.
+func TestHookPromptLiveSeatEmitsEngagedForm(t *testing.T) {
+	_, id := liveSeatRepoWithAdvance(t)
+	out, err := runRootIn(t, `{}`, "hook", "prompt")
+	if err != nil {
+		t.Fatalf("hook prompt: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		id,
+		"ENGAGED",
+		"in_progress",
+		"integration",
+		"ac-rev",
+		"satelle story set " + id + " --status integration",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("engaged prompt missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "edits require an ENGAGED story") {
+		t.Errorf("static reminder must be REPLACED, not present:\n%s", out)
+	}
+}
+
+// TestHookPromptLiveSeatNoAdvanceKeepsReminder (sty_e16a2cd7): baseline shape
+// backlog→in_progress→done has no forward non-terminal advance, so the static
+// reminder + seat line survives (architecture note on the plan).
+func TestHookPromptLiveSeatNoAdvanceKeepsReminder(t *testing.T) {
+	_, id := liveSeatRepo(t)
+	out, err := runRootIn(t, `{}`, "hook", "prompt")
+	if err != nil {
+		t.Fatalf("hook prompt: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "edits require an ENGAGED story") {
+		t.Errorf("reminder must remain when Advance is empty:\n%s", out)
+	}
+	if !strings.Contains(out, id) {
+		t.Errorf("seat line must still name the live seat %s:\n%s", id, out)
+	}
+}

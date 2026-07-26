@@ -1229,3 +1229,223 @@ func TestParseParallelAttr(t *testing.T) {
 		t.Errorf("absent parallel → %d, want 0", s3.Transitions[0].Parallel)
 	}
 }
+
+// TestAdvanceOptionsProjectShaped: forward non-terminal non-park successors only
+// (sty_e16a2cd7). Mirrors satelle-project-workflow's recovery edges so a release
+// seat never recommends going back to in_progress.
+func TestAdvanceOptionsProjectShaped(t *testing.T) {
+	const body = `---
+name: project-shaped
+---
+` + "```dot" + `
+digraph w {
+  backlog     [shape=Mdiamond]
+  plan        [agent=planner]
+  in_progress [agent=executor]
+  integration [agent=executor]
+  release     [agent=executor]
+  done        [shape=Msquare]
+  cancelled   [agent=reviewer, prompt="@skill:cancel"]
+  blocked     [agent=reviewer, prompt="@skill:blocked"]
+  backlog -> plan
+  plan -> in_progress [agent=reviewer, prompt="@skill:plan-gate"]
+  in_progress -> integration [agent=reviewer, prompt="@skill:code-ac,scope-rev,wf-change"]
+  integration -> release [agent=reviewer, prompt="@skill:int-rev"]
+  release -> done [agent=reviewer, prompt="@skill:release-rev"]
+  integration -> in_progress
+  release -> in_progress
+  plan -> cancelled
+  in_progress -> cancelled
+  integration -> cancelled
+  release -> cancelled
+  plan -> blocked
+  in_progress -> blocked
+  integration -> blocked
+  release -> blocked
+}
+` + "```" + `
+`
+	spec, ok := Parse(body)
+	if !ok {
+		t.Fatal("parse failed")
+	}
+
+	// in_progress → only integration (not cancelled/blocked).
+	got := spec.AdvanceOptions("in_progress")
+	if len(got) != 1 || got[0].To != "integration" {
+		t.Fatalf("in_progress AdvanceOptions = %+v, want [{integration …}]", got)
+	}
+	if len(got[0].Gates) != 3 || got[0].Gates[0] != "code-ac" {
+		t.Errorf("in_progress gates = %v, want [code-ac scope-rev wf-change]", got[0].Gates)
+	}
+
+	// integration → only release; recovery back to in_progress dropped.
+	got = spec.AdvanceOptions("integration")
+	if len(got) != 1 || got[0].To != "release" {
+		t.Fatalf("integration AdvanceOptions = %+v, want [{release …}]", got)
+	}
+
+	// release → empty: done is terminal (AC5), recovery is a back-edge.
+	got = spec.AdvanceOptions("release")
+	if len(got) != 0 {
+		t.Fatalf("release AdvanceOptions = %+v, want empty (terminal + back-edge filtered)", got)
+	}
+}
+
+// TestAdvanceOptionsSkipsTerminalAndPark: AC5 shape/role filters, no state names
+// hardcoded — invented graph. (No shortcut edge from triage→finish: equal-distance
+// shortcuts go silent by design — architecture note on sty_e16a2cd7.)
+func TestAdvanceOptionsSkipsTerminalAndPark(t *testing.T) {
+	const body = `---
+name: invented
+---
+` + "```dot" + `
+digraph w {
+  start  [shape=Mdiamond]
+  triage [agent=executor]
+  build  [agent=executor]
+  finish [shape=Msquare]
+  scrap  [agent=reviewer, prompt="@skill:scrap-gate"]
+  start -> triage
+  triage -> build [agent=reviewer, prompt="@skill:wfb-build-gate"]
+  triage -> scrap
+  build -> finish [agent=reviewer, prompt="@skill:wfb-ship-gate"]
+  build -> triage
+}
+` + "```" + `
+`
+	spec, ok := Parse(body)
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	got := spec.AdvanceOptions("triage")
+	if len(got) != 1 || got[0].To != "build" || len(got[0].Gates) != 1 || got[0].Gates[0] != "wfb-build-gate" {
+		t.Fatalf("triage AdvanceOptions = %+v, want [{build [wfb-build-gate]}]", got)
+	}
+	// build's only non-terminal successor is the recovery back-edge → empty
+	// (finish is terminal / AC5).
+	got = spec.AdvanceOptions("build")
+	if len(got) != 0 {
+		t.Fatalf("build AdvanceOptions = %+v, want empty", got)
+	}
+	// State with only terminal/park successors → empty.
+	const onlyTerm = `---
+name: only-term
+---
+` + "```dot" + `
+digraph w {
+  start [shape=Mdiamond]
+  work  [agent=executor]
+  end   [shape=Msquare]
+  park  [agent=reviewer, prompt="@skill:p"]
+  start -> work
+  work -> end
+  work -> park
+}
+` + "```" + `
+`
+	spec2, ok := Parse(onlyTerm)
+	if !ok {
+		t.Fatal("parse only-term failed")
+	}
+	if got := spec2.AdvanceOptions("work"); len(got) != 0 {
+		t.Fatalf("work-only-terminal AdvanceOptions = %+v, want empty", got)
+	}
+
+	// Discriminating park case (AC5): park node is reverse-reachable from the
+	// terminal with a strictly smaller distance than the from-state, so the
+	// !toOK / back-edge branches would KEEP it — IsParkState is the only filter
+	// that drops it. Graph: work→stage→end, work→hold→end (hold is reviewer park).
+	const parkForward = `---
+name: park-forward
+---
+` + "```dot" + `
+digraph w {
+  start [shape=Mdiamond]
+  work  [agent=executor]
+  stage [agent=executor]
+  end   [shape=Msquare]
+  hold  [agent=reviewer, prompt="@skill:hold-gate"]
+  start -> work
+  work -> stage [agent=reviewer, prompt="@skill:stage-gate"]
+  stage -> end
+  work -> hold
+  hold -> end
+}
+` + "```" + `
+`
+	spec3, ok := Parse(parkForward)
+	if !ok {
+		t.Fatal("parse park-forward failed")
+	}
+	// dist: end=0, stage=1, hold=1, work=2. work→hold has dist[hold]<dist[work]
+	// so the distance filter alone would keep hold — only IsParkState drops it.
+	got = spec3.AdvanceOptions("work")
+	if len(got) != 1 || got[0].To != "stage" {
+		t.Fatalf("work AdvanceOptions with forward-reachable park = %+v, want [{stage …}]", got)
+	}
+	for _, a := range got {
+		if a.To == "hold" {
+			t.Fatalf("park target hold must not be offered: %+v", got)
+		}
+	}
+}
+
+// TestAdvanceOptionsTwoMsquareTerminals: a cancel sink modeled as shape=Msquare
+// (task-workflow shape) must not collapse every performing state's distance and
+// silence the spine (sty_e16a2cd7 integration-review find).
+func TestAdvanceOptionsTwoMsquareTerminals(t *testing.T) {
+	const body = `---
+name: two-term
+---
+` + "```dot" + `
+digraph w {
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor]
+  integration [agent=executor]
+  done        [shape=Msquare]
+  cancelled   [shape=Msquare]
+  backlog -> in_progress
+  in_progress -> integration [agent=reviewer, prompt="@skill:ac-gate"]
+  integration -> done
+  in_progress -> cancelled
+  integration -> cancelled
+}
+` + "```" + `
+`
+	spec, ok := Parse(body)
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	got := spec.AdvanceOptions("in_progress")
+	if len(got) != 1 || got[0].To != "integration" {
+		t.Fatalf("in_progress with cancel Msquare = %+v, want [{integration …}]", got)
+	}
+	if len(got[0].Gates) != 1 || got[0].Gates[0] != "ac-gate" {
+		t.Errorf("gates = %v", got[0].Gates)
+	}
+}
+
+// TestDoneReachableNoDoneEmpty: done-less specs yield an empty reach set so
+// ExecutorPathToDoneSkills stays empty (preserves pre-refactor contract).
+func TestDoneReachableNoDoneEmpty(t *testing.T) {
+	const body = `---
+name: no-done
+---
+` + "```dot" + `
+digraph w {
+  start [shape=Mdiamond]
+  work  [agent=executor, prompt="@skill:do"]
+  end   [shape=Msquare]
+  start -> work -> end
+}
+` + "```" + `
+`
+	spec, ok := Parse(body)
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	if skills := spec.ExecutorPathToDoneSkills(); len(skills) != 0 {
+		t.Fatalf("ExecutorPathToDoneSkills on done-less spec = %v, want empty", skills)
+	}
+}

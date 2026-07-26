@@ -251,15 +251,18 @@ behaviour exactly as above — opt-in, not a satelle default.`,
 	prompt := &cobra.Command{
 		Use:   "prompt",
 		Short: "UserPromptSubmit reinforcement — re-inject the edits-require-a-story rule + a gate-liveness self-check",
-		Long: `prompt is the UserPromptSubmit handler. Every prompt it re-injects a CONCISE
-reminder that tree edits require an engaged story (the full principle rides at
-SessionStart; this is the standing nudge in front of the agent each turn). It
-ALSO runs a gate-liveness SELF-CHECK: it reads the repo's committed hook settings
-(.claude/settings.json / .grok/hooks/satelle.json) and, when it can confidently
-see that NO PreToolUse Edit-matcher hook invokes 'satelle hook gate', it PREPENDS
-a LOUD warning that enforcement is not wired — the countermeasure to a silently
-inert gate letting ungated edits through (sty_949e8739). Fails OPEN: any read/
-resolve error injects only the reminder and never blocks the prompt.`,
+		Long: `prompt is the UserPromptSubmit handler. With no live engagement seat it
+re-injects a CONCISE reminder that tree edits require an engaged story (the full
+principle rides at SessionStart). With a LIVE seat that has a forward DOT
+advance, that reminder is REPLACED by the engaged form — story id, status, next
+gate(s) and the satelle story set command — derived from the governing workflow's
+DOT (sty_e16a2cd7). It ALSO runs a gate-liveness SELF-CHECK: it reads the repo's
+committed hook settings (.claude/settings.json / .grok/hooks/satelle.json) and,
+when it can confidently see that NO PreToolUse Edit-matcher hook invokes
+'satelle hook gate', it PREPENDS a LOUD warning that enforcement is not wired
+(sty_949e8739). Fails OPEN: any read/resolve error injects only the reminder and
+never blocks the prompt. Output is the Claude-shaped hookSpecificOutput/
+additionalContext envelope for both harnesses (AC7 finding on sty_e16a2cd7).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, _ = io.ReadAll(cmd.InOrStdin())
@@ -303,6 +306,10 @@ type seatInfo struct {
 	// Engaged is true when this row qualifies as live engagement (performing
 	// committed status, or fresh in-flight mid-transition).
 	Engaged bool
+	// Advance are DOT-declared forward transitions from the seat's committed
+	// status — terminal, park, and back-edges excluded (sty_e16a2cd7). Empty when
+	// the seat is live only via InFlight, or when no forward target survives.
+	Advance []wfdot.Advance
 }
 
 // storyEngaged reports whether a LIVE engagement seat is active (sty_8426b9c0 /
@@ -406,7 +413,9 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 	for _, it := range items {
 		byID[it.ID] = it
 	}
-	engagingCache := map[string]map[string]bool{}
+	// One Parse per workflow — this path runs on every UserPromptSubmit
+	// (sty_e16a2cd7). Spec is retained so AdvanceOptions reuses it.
+	specCache := map[string]wfdot.Spec{}
 	var otherPick seatInfo
 	for _, l := range leases {
 		stale := lease.IsStale(l, now)
@@ -454,17 +463,18 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 		if !found {
 			return seatInfo{}, seatInfo{}, fmt.Errorf("item %s has no resolving workflow — cannot determine engagement", it.ID)
 		}
-		engaging, cached := engagingCache[wf.Name]
+		spec, cached := specCache[wf.Name]
 		if !cached {
-			spec, dotOK := wfdot.Parse(wf.Body)
+			parsed, dotOK := wfdot.Parse(wf.Body)
 			if !dotOK {
 				return seatInfo{}, seatInfo{}, fmt.Errorf("workflow %s has no DOT spec — cannot determine engagement", wf.Name)
 			}
-			engaging = map[string]bool{}
-			for _, s := range spec.NonTerminalEngagingStates() {
-				engaging[s] = true
-			}
-			engagingCache[wf.Name] = engaging
+			spec = parsed
+			specCache[wf.Name] = spec
+		}
+		engaging := map[string]bool{}
+		for _, s := range spec.NonTerminalEngagingStates() {
+			engaging[s] = true
 		}
 		// Live seat: committed status is performing, OR fresh in-flight mid-transition.
 		// InFlight+fresh covers the acquire-at-start window when status is still the
@@ -475,6 +485,9 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 			// otherwise keep lease.State (target of the in-flight transition).
 			if engaging[status] {
 				info.State = status
+				// Advance only when committed status is genuinely performing —
+				// in-flight-only seats sit at a not-yet-committed state (sty_e16a2cd7).
+				info.Advance = spec.AdvanceOptions(status)
 			}
 			if live.ItemID == "" {
 				live = info
@@ -1344,6 +1357,14 @@ type hookContextOut struct {
 // additionalContext advisory rides alongside (the only model-visible channel on an
 // ALLOWED edit — bare stderr is transcript-only on exit 0). One emitter for both
 // callers (sty_f5f351d1).
+//
+// UserPromptSubmit shape (sty_e16a2cd7 AC7): the same Claude-shaped
+// hookSpecificOutput/additionalContext envelope is used for both Claude and Grok
+// harnesses. Grok documents additionalContext as a working channel (Stop non-error
+// feedback; Claude-compat vocabulary) and does not define a distinct
+// UserPromptSubmit output envelope. PreToolUse deny still splits harnesses because
+// Claude rejects top-level decision/reason — a real schema conflict that context
+// injection does not share. Finding recorded on sty_e16a2cd7 as grok-prompt-contract.
 func emitAdditionalContext(out io.Writer, event, permissionDecision, context string) error {
 	var doc hookContextOut
 	doc.HookSpecificOutput.HookEventName = event
@@ -1371,24 +1392,117 @@ const hookPromptReminder = "satelle: edits require an ENGAGED story. Before any 
 // with no signal.
 const gateNotWiredWarning = "⚠️ satelle: the edit gate is NOT wired into this repo's hooks — code edits are currently UNGATED. Do NOT edit code until enforcement is live: run `satelle init` to (re)install the PreToolUse gate, then restart the session so the harness loads it."
 
-// runHookPrompt is the UserPromptSubmit handler: it re-injects the concise
-// edits-require-a-story reminder and, when a gate-liveness self-check confidently
-// finds no wired edit gate, prepends the LOUD not-wired warning. When a seat
-// lease exists, appends a one-line seat descriptor (sty_1738f973 AC6). Fails open
-// — a resolve/read failure injects only the reminder.
-func runHookPrompt(out io.Writer) error {
-	msg := hookPromptReminder
-	if root, ok := repoRootForHook(); ok {
-		if wired, checked := gateWiredInSettings(root); checked && !wired {
-			msg = gateNotWiredWarning + "\n\n" + msg
+// promptEngagedCeiling is the byte budget for the live-seat replacement text.
+// The engaged form replaces the static reminder, so it must never be longer
+// (sty_e16a2cd7 AC4).
+var promptEngagedCeiling = len(hookPromptReminder)
+
+// formatEngagedPrompt builds the live-seat UserPromptSubmit body: story id,
+// status, forward edge target(s) + gates from the DOT, and the story set
+// command (sty_e16a2cd7). Returns "" when there is nothing useful to say
+// (no id, no advance options) so the caller keeps today's reminder+seat path.
+// Never includes the static create-and-engage reminder — it REPLACES it.
+func formatEngagedPrompt(info seatInfo, now time.Time) string {
+	if info.ItemID == "" || len(info.Advance) == 0 {
+		return ""
+	}
+	state := info.State
+	if state == "" {
+		state = "?"
+	}
+	hb := formatSeatAge(now.Sub(info.HeartbeatAt))
+
+	// Build advance clauses and gate lists; degrade under the ceiling.
+	type targetView struct {
+		to    string
+		gates []string
+	}
+	views := make([]targetView, 0, len(info.Advance))
+	for _, a := range info.Advance {
+		views = append(views, targetView{to: a.To, gates: append([]string(nil), a.Gates...)})
+	}
+
+	build := func(capGates int, withGates, withSeat bool) string {
+		var advParts []string
+		var gateParts []string
+		for _, v := range views {
+			advParts = append(advParts, fmt.Sprintf("`satelle story set %s --status %s`", info.ItemID, v.to))
+			if !withGates || len(v.gates) == 0 {
+				continue
+			}
+			g := v.gates
+			suffix := ""
+			if capGates > 0 && len(g) > capGates {
+				suffix = fmt.Sprintf("+%d", len(g)-capGates)
+				g = g[:capGates]
+			}
+			gateParts = append(gateParts, strings.Join(g, ", ")+suffix)
+		}
+		msg := fmt.Sprintf("satelle: %s ENGAGED (%s, hb %s) — advance: %s",
+			info.ItemID, state, hb, strings.Join(advParts, " | "))
+		if withGates && len(gateParts) > 0 {
+			msg += "; gates: " + strings.Join(gateParts, " | ")
+		}
+		if withSeat {
+			msg += ". Seat: `satelle story seat`"
+		}
+		return msg
+	}
+
+	// Degradation ladder: full → cap gates at 3 → drop gates → drop seat → give up.
+	for _, try := range []struct {
+		capGates  int
+		withGates bool
+		withSeat  bool
+	}{
+		{0, true, true},  // full (0 = no cap)
+		{3, true, true},  // cap gates
+		{0, false, true}, // drop gates
+		{0, false, false},
+	} {
+		out := build(try.capGates, try.withGates, try.withSeat)
+		if len(out) <= promptEngagedCeiling {
+			return out
 		}
 	}
-	// Seat line + heartbeat: fail-open (resolve error injects nothing;
-	// heartbeat write failures never block the prompt) (sty_3bb1d8be).
-	if info, _, err := currentSeatTouch(); err == nil {
-		msg = appendSeatToPrompt(msg, info, time.Now().UTC())
+	return ""
+}
+
+// runHookPrompt is the UserPromptSubmit handler: it re-injects the concise
+// edits-require-a-story reminder and, when a gate-liveness self-check confidently
+// finds no wired edit gate, prepends the LOUD not-wired warning. With a LIVE
+// seat that has forward DOT advances, the reminder is REPLACED by the engaged
+// form (id, status, next gate, story set) (sty_e16a2cd7). Otherwise a seat line
+// is appended as before (sty_1738f973 AC6). Fails open — a resolve/read failure
+// injects only the reminder.
+func runHookPrompt(out io.Writer) error {
+	body := hookPromptReminder
+	now := time.Now().UTC()
+	// Seat + heartbeat: fail-open (resolve error leaves the static reminder;
+	// heartbeat write failures never block the prompt) (sty_3bb1d8be, sty_e16a2cd7 AC6).
+	if info, engaged, err := currentSeatTouch(); err == nil {
+		if engaged {
+			if eng := formatEngagedPrompt(info, now); eng != "" {
+				body = eng // REPLACE the create-and-engage reminder
+			} else {
+				// Live seat but no forward advance (e.g. release after AC5, or a
+				// baseline workflow whose only next is terminal): keep today's
+				// reminder + seat line so the turn still names the holder
+				// (architecture note on sty_e16a2cd7 plan).
+				body = appendSeatToPrompt(body, info, now)
+			}
+		} else {
+			body = appendSeatToPrompt(body, info, now)
+		}
 	}
-	return emitAdditionalContext(out, "UserPromptSubmit", "", msg)
+	if root, ok := repoRootForHook(); ok {
+		if wired, checked := gateWiredInSettings(root); checked && !wired {
+			// Warning is orthogonal to the reminder/engaged body and does not
+			// count against promptEngagedCeiling.
+			body = gateNotWiredWarning + "\n\n" + body
+		}
+	}
+	return emitAdditionalContext(out, "UserPromptSubmit", "", body)
 }
 
 // runHookStopcheck is the Stop handler: a post-hoc detector for the exact
