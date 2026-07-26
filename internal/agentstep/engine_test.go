@@ -270,6 +270,42 @@ func TestEngagementBlockedWhenExecutorSkillMissing(t *testing.T) {
 	}
 }
 
+// codeSkillDOT is a workflow whose in_progress executor names @skill:code —
+// the post-removal scenario where the repo has no disk copy either (sty_01f49dd5 AC5).
+var codeSkillDOT = wfDoc(baselineWorkflow, `"*"`, `digraph w {
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor, prompt="@skill:code"]
+  done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
+  cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
+  backlog -> in_progress [reviewer_skill="satelle-story-intent-review"]
+  in_progress -> done
+  backlog -> cancelled
+}`)
+
+// TestEngagementBlockedWhenCodeSkillMissing (sty_01f49dd5 AC5): a workflow that
+// still references @skill:code with no disk and no embed copy degrades with a
+// clear missing-skill message naming `code`, not a crash.
+func TestEngagementBlockedWhenCodeSkillMissing(t *testing.T) {
+	docs := fakeDocs{workflow: codeSkillDOT, extraSkills: []docindex.Doc{
+		skillDoc("satelle-story-intent-review"),
+		skillDoc("satelle-story-done-review"),
+	}}
+	g, _ := newEngine(t, `{"decision":"accept"}`, docs)
+	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "in_progress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec.Accept {
+		t.Fatal("expected engagement blocked (code skill missing), got accept")
+	}
+	if dec.Skill != "satelle-workflow-skill-check" {
+		t.Errorf("blocking skill = %q, want satelle-workflow-skill-check", dec.Skill)
+	}
+	if !strings.Contains(dec.Notes, "code") {
+		t.Errorf("reject notes should name the missing skill code: %q", dec.Notes)
+	}
+}
+
 // TestEngagementProceedsWhenExecutorSkillsResolve: when every executor skill on
 // the path to done resolves, the guard passes and the edge proceeds normally.
 func TestEngagementProceedsWhenExecutorSkillsResolve(t *testing.T) {

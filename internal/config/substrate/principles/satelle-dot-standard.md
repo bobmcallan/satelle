@@ -47,9 +47,10 @@ work) carries an explicit rubric:
 in_progress [agent=executor, prompt="@skill:code"]
 ```
 
-Reviewer nodes name their gate the same way (`prompt="@skill:…"`). Nodes with no
-skill omit `prompt`. The emitter writes `prompt="@skill:…"` whenever a state's
-Skill is set.
+(`code` here is a **repo-authored** rubric under `.satelle/skills`; the binary
+ships no `code` skill.) Reviewer nodes name their gate the same way
+(`prompt="@skill:…"`). Nodes with no skill omit `prompt`. The emitter writes
+`prompt="@skill:…"` whenever a state's Skill is set.
 
 ## A step names an AGENT
 
@@ -133,7 +134,9 @@ is refused even if a legacy resume edge is drawn.
 ## Executor augmentation (`on=` overload)
 
 An **edge-less performing node** with `on="<state>"` **augments** that spine state's
-executor rubrics additively — design knowledge at CODE time, not only at review:
+executor rubrics additively — design knowledge at CODE time, not only at review.
+(`code` / `code-ui` / `code-cli` below are **repo-authored** rubric names under
+`.satelle/skills`; the binary ships none of them.)
 
 ```dot
 in_progress [agent=executor, prompt="@skill:code"]

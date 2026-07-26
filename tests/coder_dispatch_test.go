@@ -60,6 +60,22 @@ digraph w {
 }
 ` + "```\n"
 
+// seedCodeSkill authors a minimal repo-local code skill. The binary no longer
+// ships an embedded code.md (sty_01f49dd5); workflows that reference @skill:code
+// must resolve the rubric from disk.
+func seedCodeSkill(t *testing.T, repo string) {
+	t.Helper()
+	dir := filepath.Join(repo, ".satelle", "skills")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\nname: code\nscope: project\ntype: skill\ntags: [type:skill]\n" +
+		"description: Test fixture executor rubric for coder dispatch.\n---\n\n# code\n\nImplement the slice.\n"
+	if err := os.WriteFile(filepath.Join(dir, "code.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // appendCoderBinding wires a [coder] binding whose harness is the stub script,
 // with a CODE-WRITING grant (Write/Edit) plus the mandatory read-only satelle CLI.
 func appendCoderBinding(t *testing.T, repo, script string) {
@@ -90,6 +106,7 @@ func appendCoderBindingTools(t *testing.T, repo, script, tools string) {
 func TestCoderDispatchEditGateAllowsFromPerformingState(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
+	seedCodeSkill(t, repo)
 
 	// The stub coder: consume the dispatch payload, then prove the edit gate allows
 	// a .go edit DURING dispatch (testBin is the binary under test — the same CLI
@@ -151,6 +168,7 @@ func TestCoderDispatchEditGateAllowsFromPerformingState(t *testing.T) {
 func TestCoderDispatchFromBacklogUnderLease(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
+	seedCodeSkill(t, repo)
 
 	script := filepath.Join(repo, "stub-coder.sh")
 	body := "#!/bin/sh\n" +
@@ -195,6 +213,7 @@ func TestCoderDispatchFromBacklogUnderLease(t *testing.T) {
 func TestCoderDispatchAcceptsGrokReadFileChannel(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
+	seedCodeSkill(t, repo)
 
 	script := filepath.Join(repo, "stub-coder.sh")
 	body := "#!/bin/sh\n" +
@@ -235,6 +254,7 @@ func TestCoderDispatchAcceptsGrokReadFileChannel(t *testing.T) {
 	// Channel-less write grant refuses before run.
 	repo2 := t.TempDir()
 	mustRun(t, testBin, repo2, "init")
+	seedCodeSkill(t, repo2)
 	script2 := filepath.Join(repo2, "stub-coder.sh")
 	if err := os.WriteFile(script2, []byte("#!/bin/sh\necho should-not-run\n"), 0o755); err != nil {
 		t.Fatal(err)

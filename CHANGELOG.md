@@ -1,3 +1,12 @@
+## [0.0.333] - 2026-07-26
+
+### Removed
+- Embedded `code.md` executor rubric no longer ships: it named lifecycle states and gates the baseline does not define, and claimed the generic word `code` in every repo's skill namespace (sty_01f49dd5)
+
+### Changed
+- Dispatched-step contract (fresh stdin payload, pull-by-id, never advance status) lives in `satelle-agent-model`; `satelle-dot-standard` examples mark `@skill:code` as repo-authored; this repo's `.satelle/skills/code.md` matches in-loop `agent=executor` (sty_01f49dd5)
+- New embed self-consistency test rejects embedded prose that names non-shipping states/gates as though they ship (sty_01f49dd5)
+
 ## [0.0.332] - 2026-07-26
 
 ### Changed

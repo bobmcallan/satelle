@@ -26,8 +26,7 @@ the agent CLI backend a step may run on.)
 
 **In-loop executor.** The driving session *is* the executor. Full session context,
 principles, and skills via `.satelle/` and the `satelle` CLI. Default for steps
-allocated `agent=executor` (including this repo's `in_progress` / `integration` /
-`release`).
+allocated `agent=executor`.
 
 **Isolated invocation.** satelle spawns a fresh-context sub-process over a
 **payload it builds** (work item + transition), with the step's skill as the
@@ -38,6 +37,27 @@ Both reviewers and named agents run isolated; they differ in **kind**:
 | --- | --- | --- | --- |
 | reviewer | judge | structured verdict | only on accept (via satelle) |
 | named agent | perform | run evidence | never (exit gate still decides) |
+
+### Dispatched-step contract
+
+When a step runs as an **isolated** named agent (not the in-loop executor), the
+performer always starts under the same contract — independent of which state or
+gate a repo's workflow names:
+
+1. **Fresh start** — no conversation history; the binding's system prompt is the
+   step's `@skill:` rubric.
+2. **Payload on stdin** — JSON `{story, from, to}` carrying id, title, body, and
+   acceptance criteria; attached `docs` may ride with the payload.
+3. **Pull the rest by id** — story record, further attachments, ledger — via the
+   read-only CLI when the binding grants shell (the pull-context contract).
+4. **Build exactly the plan's slice** — if the plan is wrong or missing, say so
+   plainly; do not invent one.
+5. **Never advance status** — the gate on the exit edge judges; the step ends by
+   reporting what it did.
+
+A repo that wants a different isolated performer authors its own rubric under
+`.satelle/skills` and allocates it with `agent=<name>`; the binary ships no
+generic executor rubric.
 
 ## `agent=` allocation
 

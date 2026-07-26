@@ -97,6 +97,44 @@ func TestDiskDocShadowsDefault(t *testing.T) {
 	}
 }
 
+// TestDiskSkillResolvesWithoutEmbeddedDefault (sty_01f49dd5 AC5): after the
+// embedded code.md is retired, a repo-authored .satelle/skills/code.md still
+// resolves; absence of both disk and embed is a not-found error, not a panic.
+func TestDiskSkillResolvesWithoutEmbeddedDefault(t *testing.T) {
+	st := New(openDB(t))
+	// Defaults deliberately omit skills/code — the post-removal embed surface.
+	st.SetDefaults([]Doc{
+		{Kind: "workflows", Name: "satelle-baseline-workflow", Body: "# Canonical\n\nembedded"},
+	})
+	ctx := context.Background()
+
+	dir := filepath.Join(t.TempDir(), "skills")
+	write(t, dir, "code.md", "# Repo code\n\nrepo-authored rubric")
+	if _, err := st.Sync(ctx, map[string]string{"skills": dir}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Get(ctx, "skills", "code")
+	if err != nil {
+		t.Fatalf("Get disk skill: %v", err)
+	}
+	if got.Embedded {
+		t.Error("disk skill must not be marked Embedded")
+	}
+	if got.Headline != "Repo code" {
+		t.Errorf("headline = %q, want Repo code", got.Headline)
+	}
+
+	// Neither disk nor embed → not-found error (no panic, no empty success).
+	st2 := New(openDB(t))
+	st2.SetDefaults([]Doc{
+		{Kind: "workflows", Name: "satelle-baseline-workflow", Body: "# Canonical\n\nembedded"},
+	})
+	_, err = st2.Get(ctx, "skills", "code")
+	if err == nil {
+		t.Fatal("Get missing skill must return an error when neither disk nor embed has it")
+	}
+}
+
 func TestListDoesNotInsertDefaultRows(t *testing.T) {
 	st := defaultsStore(t)
 	ctx := context.Background()
