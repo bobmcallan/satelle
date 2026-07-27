@@ -118,7 +118,7 @@
     if (field === "title") return row.dataset.title || "";
     if (field === "id") return row.dataset.expandUrl || "";
     if (field === "order") {
-      // The drive sequence within a sprint/epic lives in an `order:<N>` tag (see the
+      // The drive sequence within a sprint lives in an `order:<N>` tag (see the
       // satelle-story-classification principle). Extract its NUMBER and zero-pad to a
       // fixed width so the string comparator sorts numerically (1,2,…,10); a row with
       // no order tag returns a high sentinel so it sorts LAST.

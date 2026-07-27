@@ -1,3 +1,8 @@
+## [0.0.338] - 2026-07-27
+
+### Changed
+- `satelle-story-classification`: `order:<N>` is the position in the sprint only (not per-epic / per-grouping); non-durable; epic members keep consecutive sprint slots; `epic-parent` carries no order (sty_0656d3c6)
+
 ## [0.0.337] - 2026-07-27
 
 ### Added

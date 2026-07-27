@@ -12,7 +12,7 @@ A story is one leaf of work, but a backlog of hundreds is only navigable when it
 stories are grouped and sequenced. Classify each story along **category** (what
 kind of work item it is — selects the workflow), a **theme** (the epic it belongs
 to), and a **time-box** (the sprint it ships in), and give it an explicit **order**
-within whichever grouping drives it.
+within the sprint that drives it.
 
 ## Category — selects the workflow
 
@@ -67,15 +67,26 @@ counter (`sprint:1`) or a date index (`sprint:2026-07-25`). A bare `sprint` tag
 with no index is incomplete: it asserts "in a sprint" but not which one. Always
 carry an index; fix the form in the repo's own substrate, not here.
 
-## Order — the drive sequence within a grouping
+## Order — position in the sprint
 
-Within an epic or a sprint the stories have a sequence — which is engaged first,
-second, third. Tag each member `order:<N>` with a plain integer starting at 1
-(`order:1`, `order:2`, …): not zero-padded, and not duplicated within the grouping.
+Within a sprint the stories have a sequence — which is engaged first, second,
+third. Tag each member `order:<N>` with a plain integer starting at 1
+(`order:1`, `order:2`, …): not zero-padded, and not duplicated within the sprint.
 Order encodes the operator's intended drive order; combined with engaging one story
 at a time, it is how the next story to engage is chosen. A cancelled or superseded
 story drops its `order` so the live sequence stays contiguous, but keeps its
 `sprint:<N>` for the record.
+
+**The sprint owns `order:`.** It is meaningful only alongside `sprint:` — a story
+not yet pulled into a sprint has no order. And unlike membership, position is
+**not durable**: `order:` is assigned on entry to a sprint and renumbered freely
+as the sprint is re-planned, while `parent` and `sprint:<N>` persist.
+
+**An epic whose members must run in a fixed relative order** keeps them
+CONSECUTIVE within the sprint sequence and states the hard dependency in the
+story body. Do not introduce a second numbering — one story carries one
+`order:`. The `epic-parent` container itself carries no `order:` at all; it is
+driven by its children.
 
 A single story may carry all three at once: it sits under an epic
 (`epic:<theme>` + `parent`), ships in a sprint (`sprint:<N>`), and holds a position
