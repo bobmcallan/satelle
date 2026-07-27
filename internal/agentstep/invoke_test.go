@@ -251,6 +251,54 @@ func TestInvokeExpectVerdictParsesDecision(t *testing.T) {
 	}
 }
 
+// TestInvokeExpectVerdictSetsCaptureFull (sty_844b6ab1 AC6): the verdict path
+// must opt into CaptureFull so an ACP decision emitted before trailing chatter
+// is not dropped by the answer-only segment rule.
+func TestInvokeExpectVerdictSetsCaptureFull(t *testing.T) {
+	r := &fakeRunner{out: `{"decision":"accept","notes":"ok"}`}
+	g := New(r, fakeDocs{workflow: testWorkflow}, "/repo", "")
+	g.SetReviewerBinding(config.AgentBinding{
+		Command: "claude", Tools: "Read", Model: "sonnet", Principles: config.PrinciplesNone,
+	})
+	res := g.Invoke(context.Background(), InvokeRequest{
+		Binding: g.reviewerBinding,
+		Section: "reviewer",
+		Rubric:  "judge",
+		Payload: map[string]string{},
+		Expect:  ExpectVerdict,
+		Runner:  r,
+		Skill:   "test-skill",
+	})
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	if r.got.Capture != agentcli.CaptureFull {
+		t.Fatalf("ExpectVerdict Capture = %v, want CaptureFull", r.got.Capture)
+	}
+}
+
+// TestInvokeExpectPerformKeepsCaptureAnswer (sty_844b6ab1): perform path leaves
+// Capture at the zero value so ACP prose artifacts drop pre-tool narration.
+func TestInvokeExpectPerformKeepsCaptureAnswer(t *testing.T) {
+	r := &fakeRunner{out: "did the work"}
+	g := New(r, fakeDocs{workflow: testWorkflow}, "/repo", "")
+	res := g.Invoke(context.Background(), InvokeRequest{
+		Binding: config.AgentBinding{Command: "claude", Tools: "Read", Principles: config.PrinciplesNone},
+		Section: "planner",
+		Rubric:  "do it",
+		Payload: map[string]string{},
+		Charter: executorCharter("planner", "plan", "wf"),
+		Expect:  ExpectPerform,
+		Runner:  r,
+	})
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	if r.got.Capture != agentcli.CaptureAnswer {
+		t.Fatalf("ExpectPerform Capture = %v, want CaptureAnswer (zero)", r.got.Capture)
+	}
+}
+
 func TestInvokeExpectPerformReturnsStdout(t *testing.T) {
 	r := &fakeRunner{out: "did the work"}
 	g := New(r, fakeDocs{workflow: testWorkflow}, "/repo", "")

@@ -1,3 +1,8 @@
+## [0.0.339] - 2026-07-28
+
+### Fixed
+- ACP dispatch no longer persists pre-tool agent narration into step summaries and other prose artifacts: capture segments on `tool_call`/`tool_call_update` and keeps the last `agent_message` run by default; verdict path keeps full capture so parseDecision still finds a decision before trailing chatter (sty_844b6ab1)
+
 ## [0.0.338] - 2026-07-27
 
 ### Changed

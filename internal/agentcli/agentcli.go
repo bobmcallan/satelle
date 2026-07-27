@@ -113,7 +113,31 @@ type Request struct {
 	// the final JSON/usage parse; nil is a no-op (the default, unchanged behaviour).
 	// Sink.Write errors are ignored (best-effort, like the reviewer/executor logs).
 	Sink io.Writer
+	// Capture selects what an ACP runner returns from streamed session/update
+	// chunks (sty_844b6ab1). Zero value is CaptureAnswer: keep only the final
+	// agent_message run after tool_call fences, so narration before tools does
+	// not contaminate persisted artifacts. CaptureFull returns every message
+	// chunk concatenated (byte-identical to pre-fix capture) — used by the
+	// verdict path so parseDecision still sees a decision emitted before
+	// trailing chatter. Command-transport runners ignore this field entirely.
+	Capture CaptureMode
 }
+
+// CaptureMode selects which ACP agent_message_chunk text is returned as the
+// agent's output (sty_844b6ab1). Command transport ignores CaptureMode.
+type CaptureMode int
+
+const (
+	// CaptureAnswer (default / zero value): the last non-empty agent_message
+	// segment, closed when a tool_call / tool_call_update intervenes. Drops
+	// pre-tool narration that would otherwise contaminate step summaries and
+	// other prose artifacts.
+	CaptureAnswer CaptureMode = iota
+	// CaptureFull: every agent_message_chunk concatenated in order — the
+	// pre-sty_844b6ab1 behaviour. Required for ExpectVerdict so a decision
+	// JSON that appears before trailing chatter is still parseable.
+	CaptureFull
+)
 
 // UsageResult is the cost of one agent invocation — token counts and, when the
 // caller times the run, its wall-clock duration. Populated from a machine-readable

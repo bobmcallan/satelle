@@ -99,6 +99,7 @@ func (a acpRunner) Run(ctx context.Context, req Request) ([]byte, error) {
 
 	client := newACPClient(stdin, stdout, req.Sink)
 	client.setMutatorsOK(toolsAllowMutators(req.AllowedTools))
+	client.setCapture(req.Capture)
 	text, runErr := client.runSession(ctx, req)
 
 	_ = client.tryCancel()
@@ -159,13 +160,23 @@ type acpClient struct {
 
 	nextID atomic.Int64
 
-	mu         sync.Mutex
-	pending    map[int64]chan acpRPC
-	text       strings.Builder
+	mu      sync.Mutex
+	pending map[int64]chan acpRPC
+	// raw accumulates every agent_message_chunk in order — CaptureFull and
+	// diagnostic partials on session/prompt error (byte-identical to pre-
+	// sty_844b6ab1 capture; no inserted separators).
+	raw strings.Builder
+	// cur is the open agent_message run; segments holds closed runs in order.
+	// A tool_call / tool_call_update closes cur into segments (sty_844b6ab1).
+	// agent_thought_chunk is neither captured nor segmenting.
+	cur        strings.Builder
+	segments   []string
 	session    string
 	mutatorsOK bool
 	sink       io.Writer
 	readerDone chan struct{}
+	// capture is set from Request.Capture before runSession returns text.
+	capture CaptureMode
 }
 
 type acpRPC struct {
@@ -194,6 +205,12 @@ func newACPClient(w io.WriteCloser, r io.Reader, sink io.Writer) *acpClient {
 func (c *acpClient) setMutatorsOK(v bool) {
 	c.mu.Lock()
 	c.mutatorsOK = v
+	c.mu.Unlock()
+}
+
+func (c *acpClient) setCapture(m CaptureMode) {
+	c.mu.Lock()
+	c.capture = m
 	c.mu.Unlock()
 }
 
@@ -254,11 +271,55 @@ func (c *acpClient) handleUpdate(params json.RawMessage) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return
 	}
-	if p.Update.SessionUpdate == "agent_message_chunk" && p.Update.Content.Text != "" {
+	su := p.Update.SessionUpdate
+	switch su {
+	case "agent_message_chunk":
+		if p.Update.Content.Text == "" {
+			return
+		}
 		c.mu.Lock()
-		c.text.WriteString(p.Update.Content.Text)
+		c.raw.WriteString(p.Update.Content.Text)
+		c.cur.WriteString(p.Update.Content.Text)
 		c.mu.Unlock()
+	case "tool_call", "tool_call_update":
+		// Close the open message run so post-tool answer is a new segment.
+		// agent_thought_chunk deliberately does NOT close — only the tool
+		// fence the wire establishes (sty_844b6ab1 AC1).
+		c.mu.Lock()
+		c.closeSegmentLocked()
+		c.mu.Unlock()
+		// agent_thought_chunk and every other sessionUpdate: ignore (not captured,
+		// not segmenting). AC7 locks thought exclusion at the capture boundary.
 	}
+}
+
+// closeSegmentLocked pushes cur into segments when non-empty and resets cur.
+// Caller must hold c.mu.
+func (c *acpClient) closeSegmentLocked() {
+	if c.cur.Len() == 0 {
+		return
+	}
+	c.segments = append(c.segments, c.cur.String())
+	c.cur.Reset()
+}
+
+// capturedLocked returns the text for req.Capture after flushing the open run.
+// Caller must hold c.mu. answer falls back to raw when segmentation yields
+// nothing but raw is non-empty (never return empty when full is non-empty).
+func (c *acpClient) capturedLocked() string {
+	c.closeSegmentLocked()
+	full := c.raw.String()
+	if c.capture == CaptureFull {
+		return full
+	}
+	// CaptureAnswer (default): last non-empty segment.
+	for i := len(c.segments) - 1; i >= 0; i-- {
+		if s := c.segments[i]; s != "" {
+			return s
+		}
+	}
+	// Safety: never drop a non-empty stream if segmentation produced nothing.
+	return full
 }
 
 func (c *acpClient) handlePermission(id int64, params json.RawMessage) {
@@ -482,14 +543,16 @@ func (c *acpClient) runSession(ctx context.Context, req Request) ([]byte, error)
 		"sessionId": sessObj.SessionID,
 		"prompt":    blocks,
 	}); err != nil {
+		// Error path: return full raw accumulation for diagnostics — truncating
+		// to the answer segment would lose the reason the run failed.
 		c.mu.Lock()
-		partial := c.text.String()
+		partial := c.raw.String()
 		c.mu.Unlock()
 		return []byte(partial), fmt.Errorf("session/prompt: %w", err)
 	}
 
 	c.mu.Lock()
-	out := c.text.String()
+	out := c.capturedLocked()
 	c.mu.Unlock()
 	return []byte(out), nil
 }

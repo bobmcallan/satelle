@@ -242,6 +242,14 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	if req.Sink != nil {
 		agentReq.Sink = req.Sink
 	}
+	// Verdict parsing extracts decision JSON from anywhere in the blob
+	// (parseDecision). Keep the full ACP stream so a decision emitted before
+	// trailing chatter is not dropped by the answer-only segment rule
+	// (sty_844b6ab1 AC6). Prose paths (summariser, perform) keep the zero
+	// value CaptureAnswer so narration before tool fences is stripped.
+	if expect == ExpectVerdict {
+		agentReq.Capture = agentcli.CaptureFull
+	}
 
 	runner := req.Runner
 	if runner == nil {
