@@ -734,3 +734,57 @@ func TestSyncWorkstatePushIncrementalOnlyChanged(t *testing.T) {
 		t.Fatalf("incremental id = %q, want %q", id, ids[0])
 	}
 }
+
+// TestWorkstatePushCarriesNoAttachmentBodies (sty_948ad5df AC4): a planted
+// secret in a type:change story attachment never appears in a workstate POST.
+// Workstate push is items+ledger only — attachment bodies stay local.
+func TestWorkstatePushCarriesNoAttachmentBodies(t *testing.T) {
+	const secret = "planted-change-attachment-secret-xyz-948ad5df"
+	ts, f := newFakeWorkstateServer(t)
+	seedCred(t, ts.URL)
+	repo := workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+
+	out, err := runRoot(t, "story", "create",
+		"--title", "Attachment secrecy",
+		"--body", "Prove workstate push does not send change patches.",
+		"--acceptance", "1. secret stays local",
+	)
+	if err != nil {
+		t.Fatalf("story create: %v\n%s", err, out)
+	}
+	// Create may append a notice after the JSON object — decode with decoder.
+	var created map[string]any
+	dec := json.NewDecoder(strings.NewReader(out))
+	if err := dec.Decode(&created); err != nil {
+		t.Fatalf("parse create: %v\n%s", err, out)
+	}
+	id, _ := created["id"].(string)
+	if id == "" {
+		t.Fatalf("no story id in %s", out)
+	}
+	// Attach a change patch with a planted secret under the story attachment dir.
+	// story attach uses runtime stories dir; write via CLI.
+	if out, err := runRoot(t, "story", "attach", id,
+		"--name", "change-in_progress-done",
+		"--type", "change",
+		"--body", "diff --git a/secret.go\n+"+secret+"\n",
+	); err != nil {
+		t.Fatalf("attach: %v\n%s", err, out)
+	}
+	// Also ensure attachment exists on disk under repo if CLI uses different root.
+	_ = repo
+
+	if out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL); err != nil {
+		t.Fatalf("push: %v\n%s", err, out)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	posts := f.posts["probe"]
+	if len(posts) == 0 {
+		t.Fatal("expected at least one workstate POST")
+	}
+	blob, _ := json.Marshal(posts)
+	if strings.Contains(string(blob), secret) {
+		t.Error("planted change-attachment secret must not appear in any workstate POST body")
+	}
+}

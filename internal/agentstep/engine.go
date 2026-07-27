@@ -443,6 +443,12 @@ func (g *Engine) fillPayloadDocs(ctx context.Context, itemID string, tp *transit
 	var used int
 	out := make([]DocState, 0, len(all))
 	for _, d := range all {
+		// type:change patches are disk retention for on-demand review; they must
+		// not ride the cumulative payload ceiling or starve plan/step-summary
+		// (sty_948ad5df). Pull via satelle story doc / story diff --recorded.
+		if strings.EqualFold(d.Type, "change") {
+			continue
+		}
 		if used >= docsPayloadCeiling {
 			out = append(out, DocState{Name: d.Name, Type: d.Type, Truncated: true})
 			continue

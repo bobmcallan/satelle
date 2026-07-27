@@ -66,6 +66,11 @@ const (
 	// diff-since-engagement (sty_da169e03 / epic:scope-integrity). Enumeration
 	// only — no pass/fail in Go.
 	KindEngagementBaseline = "engagement_baseline"
+	// KindChangeRecord records the set of files changed during a closed step at
+	// the enacted transition (sty_948ad5df). Payload is paths and counts only —
+	// never file content (the patch rides a type:change story attachment, local
+	// only). Enumeration only — no pass/fail in Go.
+	KindChangeRecord = "change_record"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional

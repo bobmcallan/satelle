@@ -1,3 +1,11 @@
+## [0.0.335] - 2026-07-27
+
+### Added
+- Enacted status transitions record a `change_record` ledger row (paths/counts) and optional type:change patch attachment; `satelle story diff --recorded` unions the file lists; substrate-only-check prefers recorded files over git log (sty_948ad5df)
+
+### Changed
+- Gate payloads exclude type:change attachments so large patches do not starve plan/step-summary under the docs ceiling (sty_948ad5df)
+
 ## [0.0.334] - 2026-07-26
 
 ### Changed

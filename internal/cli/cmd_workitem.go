@@ -313,7 +313,7 @@ func storySyncCommand() *cobra.Command {
 // Id may be omitted when stdin is a transition payload `{story:{id},…}` so gate
 // functional checks can invoke without shell id plumbing.
 func storyDiffCommand() *cobra.Command {
-	var patch bool
+	var patch, recorded bool
 	cmd := &cobra.Command{
 		Use:   "diff [id]",
 		Short: "List files changed since engagement baseline (enumeration only)",
@@ -322,8 +322,14 @@ func storyDiffCommand() *cobra.Command {
 worktree, including uncommitted edits and untracked files. Use --patch for the
 full unified diff of tracked changes.
 
-No pass/fail: gates (e.g. satelle-story-scope-review) consume this output and
-decide. Stories without a baseline (pre-feature or never engaged) error clearly.
+--recorded unions the file lists from every change_record ledger row written at
+enacted transitions (sty_948ad5df) instead of re-deriving from git. Prefer this
+when a gate must see what satelle already recorded, including git-ignored
+substrate paths.
+
+No pass/fail: gates consume this output and decide. Stories without a baseline
+error clearly on the live path; --recorded returns an empty list with a note
+when no records exist yet.
 
 Gate functional checks may omit the id and pipe the transition JSON on stdin
 ({story:{id}, from, to}); the verb reads story.id.`,
@@ -335,9 +341,11 @@ Gate functional checks may omit the id and pipe the transition JSON on stdin
 				if patch {
 					req["patch"] = true
 				}
+				if recorded {
+					req["recorded"] = true
+				}
 				return dispatch(cmd, "story-diff", req)
 			}
-			// No id: read transition payload (or {id}) from stdin for gate checks.
 			in, err := io.ReadAll(cmd.InOrStdin())
 			if err != nil {
 				return err
@@ -353,10 +361,14 @@ Gate functional checks may omit the id and pipe the transition JSON on stdin
 			if patch {
 				body["patch"] = true
 			}
+			if recorded {
+				body["recorded"] = true
+			}
 			return dispatch(cmd, "story-diff", body)
 		},
 	}
 	cmd.Flags().BoolVar(&patch, "patch", false, "include full unified patch since baseline (tracked)")
+	cmd.Flags().BoolVar(&recorded, "recorded", false, "union change_record file lists instead of live git re-derive (sty_948ad5df)")
 	return cmd
 }
 

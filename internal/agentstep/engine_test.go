@@ -2201,6 +2201,31 @@ func TestGatePayloadIncludesDocs(t *testing.T) {
 	}
 }
 
+// TestChangeRecordExcludedFromGatePayload (sty_948ad5df AC4): type:change
+// patches are disk retention only and must not ride the gate docs payload.
+func TestChangeRecordExcludedFromGatePayload(t *testing.T) {
+	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
+	g.SetDocsResolver(func(_ context.Context, itemID string) []DocState {
+		return []DocState{
+			{Name: "plan", Type: "plan", Body: "# plan body"},
+			{Name: "change-in_progress-integration", Type: "change", Body: "diff --git a/secret.go\n+planted-secret-in-change-attachment"},
+			{Name: "step-summary-x", Type: "step-summary", Body: "did the thing"},
+		}
+	})
+	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_change", Status: "in_progress"}, "done"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.got.Payload, "plan body") {
+		t.Error("plan doc must still ride the payload")
+	}
+	if strings.Contains(r.got.Payload, "planted-secret-in-change-attachment") {
+		t.Error("type:change body must not appear in gate payload")
+	}
+	if strings.Contains(r.got.Payload, `"name":"change-in_progress-integration"`) {
+		t.Error("type:change doc must not be listed in gate payload docs")
+	}
+}
+
 func TestSetReviewerModel(t *testing.T) {
 	g := New(nil, nil, "", "")
 	if g.model != "" {

@@ -600,6 +600,9 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		// (sty_da169e03). Enumerates git HEAD for later satelle story diff;
 		// never a verdict. Idempotent across park/resume.
 		maybeRecordEngagementBaseline(ctx, it, current.Status, *req.Status, now)
+		// Record the change set for the step just closed (sty_948ad5df).
+		// Enumeration only; best-effort; never blocks the transition.
+		recordChangeSet(ctx, it, current.Status, *req.Status, now)
 		// After a GATED transition is enacted, the read-only summariser recaps the
 		// step into a step_summary row — but ONLY where the active workflow declares
 		// a step-summary node (transparent opt-in; sty_9a139c78). The transition

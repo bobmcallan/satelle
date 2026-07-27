@@ -31,15 +31,17 @@ onto a heavy lane.
 The check is the embedded ```check script below — **self-contained**, no
 external file (see [[satelle-reviewer-self-contained]]). satelle runs it in the
 repo root with `{story, from, to}` on stdin; it reads the story id, finds the
-story's own commit(s) by that id (the `(sty_…)` commit trailer), and unions the
-paths they touched. Exit 0 accepts; non-zero rejects with the offending paths
-as the notes the executor fixes. It is **mechanism, not judgment** — the
-deterministic gate path — so the read-only LLM-reviewer invariant is untouched.
-See [[satelle-agent-model]].
+story's own change set (preferring recorded `change_record` rows via
+`satelle story diff --recorded` so git-ignored substrate paths are visible),
+and falls back to commits by story id. Exit 0 accepts;
+non-zero rejects with the offending paths as the notes the executor fixes. It
+is **mechanism, not judgment** — the deterministic gate path — so the
+read-only LLM-reviewer invariant is untouched. See [[satelle-agent-model]].
 
-Because the slice is identified by the story's committed id, the executor must
-**commit + push the substrate slice IN-LOOP at `in_progress`** (a single commit
-whose subject ends in the story id) before requesting the close.
+Because the slice may be identified by the story's committed id when no
+change_record exists yet, the executor must still **commit + push the
+substrate slice IN-LOOP at `in_progress`** (a single commit whose subject ends
+in the story id) before requesting the close when relying on the git fallback.
 
 ```check
 #!/usr/bin/env bash
@@ -47,15 +49,32 @@ set -uo pipefail
 payload=$(cat)
 sid=$(printf '%s' "$payload" | grep -oE '"id":"sty_[a-f0-9]+"' | head -1 | grep -oE 'sty_[a-f0-9]+')
 if [ -z "$sid" ]; then
- echo "could not read the story id from the transition payload"
- exit 1
+  echo "could not read the story id from the transition payload"
+  exit 1
 fi
-commits=$(git log --grep="$sid" --format=%H 2>/dev/null)
-if [ -z "$commits" ]; then
- echo "no commit mentioning $sid found — commit + push the substrate slice IN-LOOP at in_progress (subject ending in $sid) before closing"
- exit 1
+# Prefer recorded change_record file lists when present — covers git-ignored
+# substrate paths that git log cannot see. Source switch only; allow-list
+# semantics unchanged (managed footprint retained).
+changed=""
+if recorded=$(satelle story diff "$sid" --recorded 2>/dev/null); then
+  changed=$(printf '%s' "$recorded" | grep -oE '"files":\[[^]]*\]' | head -1 | tr ',' '\n' | grep -oE '"[^"]+"' | tr -d '"' | grep -v '^$' || true)
+  if [ -z "$changed" ] && command -v python3 >/dev/null 2>&1; then
+    changed=$(printf '%s' "$recorded" | python3 -c "import json,sys
+try:
+ d=json.load(sys.stdin)
+ print('\n'.join(d.get('files') or []))
+except Exception:
+ pass" 2>/dev/null || true)
+  fi
 fi
-changed=$(for c in $commits; do git show --name-only --format= "$c"; done | grep -v '^$' | sort -u)
+if [ -z "$changed" ]; then
+  commits=$(git log --grep="$sid" --format=%H 2>/dev/null)
+  if [ -z "$commits" ]; then
+    echo "no change_record and no commit mentioning $sid — engage, author, transition (or commit + push with $sid in subject) before closing"
+    exit 1
+  fi
+  changed=$(for c in $commits; do git show --name-only --format= "$c"; done | grep -v '^$' | sort -u)
+fi
 # Allowed prefixes: authored substrate (.satelle/, docs/), the binary managed
 # footprint init writes outside .satelle/ (root .gitignore; harness hook
 # scaffolds under .claude/ and .grok/ — process config, not product code), plus
@@ -64,14 +83,14 @@ changed=$(for c in $commits; do git show --name-only --format= "$c"; done | grep
 allow='\.satelle/|docs/|\.gitignore$|\.claude/|\.grok/'
 extra=$(grep -E '^[[:space:]]*edit_exempt_paths' .satelle/satelle.toml 2>/dev/null | grep -oE '"[^"]+"' | tr -d '"')
 for p in $extra; do
- esc=$(printf '%s' "$p" | sed 's#[^A-Za-z0-9/]#\\&#g')
- allow="$allow|$esc"
+  esc=$(printf '%s' "$p" | sed 's#[^A-Za-z0-9/]#\\&#g')
+  allow="$allow|$esc"
 done
 offenders=$(printf '%s\n' "$changed" | grep -vE "^($allow)" || true)
 if [ -n "$offenders" ]; then
- echo "the slice for $sid touches non-substrate paths — this is not a substrate-only change; use the project workflow (category fix/feature/chore):"
- printf '%s\n' "$offenders"
- exit 1
+  echo "the slice for $sid touches non-substrate paths — this is not a substrate-only change; use the project workflow (category fix/feature/chore):"
+  printf '%s\n' "$offenders"
+  exit 1
 fi
 echo "substrate-only slice confirmed for $sid:"
 printf '%s\n' "$changed"

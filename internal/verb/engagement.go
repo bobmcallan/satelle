@@ -112,8 +112,9 @@ func gitHeadAndDirty(dir string) (sha string, dirty bool, err error) {
 
 // storyDiffReq is the request for story-diff.
 type storyDiffReq struct {
-	ID    string `json:"id"`
-	Patch bool   `json:"patch,omitempty"`
+	ID       string `json:"id"`
+	Patch    bool   `json:"patch,omitempty"`
+	Recorded bool   `json:"recorded,omitempty"` // union change_record rows (sty_948ad5df)
 }
 
 // storyDiffResult is the deterministic enumeration result (no verdict).
@@ -125,6 +126,9 @@ type storyDiffResult struct {
 	Stat     string   `json:"stat"`
 	Patch    string   `json:"patch,omitempty"`
 	Note     string   `json:"note,omitempty"`
+	// Source is "live" (git re-derive) or "recorded" (change_record union).
+	Source  string `json:"source,omitempty"`
+	Records int    `json:"records,omitempty"`
 }
 
 func storyDiff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
@@ -168,6 +172,26 @@ func storyDiff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 	if it.Kind != workitem.KindStory {
 		return nil, fmt.Errorf("story-diff: %s is not a story", req.ID)
 	}
+
+	// --recorded: union change_record file lists (sty_948ad5df). No git re-derive.
+	if req.Recorded {
+		files, n, rerr := recordedChangeSet(ctx, it.ID)
+		if rerr != nil {
+			return nil, rerr
+		}
+		res := storyDiffResult{
+			StoryID: it.ID,
+			Files:   files,
+			Records: n,
+			Source:  "recorded",
+			Note:    "enumeration only — recorded change_record union; no pass/fail",
+		}
+		if n == 0 {
+			res.Note = "no change_record rows yet — engage and transition to produce records"
+		}
+		return json.Marshal(res)
+	}
+
 	base, _, err := firstEngagementBaseline(ctx, it.ID)
 	if err != nil {
 		return nil, err
@@ -194,6 +218,7 @@ func storyDiff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 		Files:    files,
 		Stat:     stat,
 		Patch:    patch,
+		Source:   "live",
 		Note:     "enumeration only — no pass/fail; gates decide scope",
 	}
 	return json.Marshal(res)
