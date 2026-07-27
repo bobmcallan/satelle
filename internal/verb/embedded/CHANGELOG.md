@@ -1,3 +1,12 @@
+## [0.0.336] - 2026-07-27
+
+### Fixed
+- Substrate close gate no longer requires a git commit: unions recorded change set, live worktree with opt-in `--include-substrate`, and commits naming the story; rejects empty sets and uncommitted non-substrate paths (sty_6469025e)
+
+### Changed
+- `satelle story diff --include-substrate` opt-in mtime leg for authored dirs + data dir; default live path stays git-only for scope-review (sty_6469025e)
+- Substrate workflow prose no longer mandates commit+push when `.satelle/` is git-ignored (sty_6469025e)
+
 ## [0.0.335] - 2026-07-27
 
 ### Added

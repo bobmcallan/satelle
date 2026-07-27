@@ -214,3 +214,50 @@ func TestChangeRecordPayloadShapeNoContent(t *testing.T) {
 		}
 	}
 }
+
+// sty_6469025e: non-md under authored root, agents.toml under configDir, db excluded.
+func TestSubstrateChangedFilesWidened(t *testing.T) {
+	repo := t.TempDir()
+	skills := filepath.Join(repo, ".satelle", "skills")
+	cfg := filepath.Join(repo, ".satelle")
+	if err := os.MkdirAll(skills, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	since := time.Now().Add(-time.Hour)
+	if err := os.WriteFile(filepath.Join(skills, "x.dot"), []byte("digraph{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfg, "agents.toml"), []byte("[e]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfg, "satelle.db"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfg, "deployed.version"), []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for _, p := range []string{
+		filepath.Join(skills, "x.dot"),
+		filepath.Join(cfg, "agents.toml"),
+		filepath.Join(cfg, "satelle.db"),
+		filepath.Join(cfg, "deployed.version"),
+	} {
+		_ = os.Chtimes(p, now, now)
+	}
+
+	got := substrateChangedFiles(repo, map[string]string{"skills": skills}, cfg, since)
+	joined := strings.Join(got, ",")
+	if !strings.Contains(joined, "x.dot") {
+		t.Errorf("want non-md authored file: %v", got)
+	}
+	if !strings.Contains(joined, "agents.toml") {
+		t.Errorf("want agents.toml: %v", got)
+	}
+	if strings.Contains(joined, "satelle.db") || strings.Contains(joined, "deployed.version") {
+		t.Errorf("runtime files must be excluded: %v", got)
+	}
+	if n := substrateChangedFiles(repo, map[string]string{"skills": skills}, cfg, time.Time{}); len(n) != 0 {
+		t.Errorf("zero since must be empty, got %v", n)
+	}
+}

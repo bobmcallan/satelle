@@ -44,8 +44,16 @@ type changeRecordPayload struct {
 // authoredDirs is wired by SetAuthoredDirs (substrate roots for leg C).
 var authoredDirs map[string]string
 
+// substrateConfigDir is the resolved .satelle data dir (agents.toml, hooks, …).
+// Wired by SetSubstrateConfigDir; not a key in authoredDirs.
+var substrateConfigDir string
+
 // SetAuthoredDirs wires authored-markdown roots for the substrate change leg.
 func SetAuthoredDirs(dirs map[string]string) { authoredDirs = dirs }
+
+// SetSubstrateConfigDir wires the resolved data dir (typically <repo>/.satelle)
+// so non-kind config (agents.toml, constitution.md, hooks/) is enumerable.
+func SetSubstrateConfigDir(dir string) { substrateConfigDir = dir }
 
 // recordChangeSet ledgers the files changed during the step just closed.
 // Best-effort: never fails the transition.
@@ -99,8 +107,8 @@ func recordChangeSet(ctx context.Context, item workitem.Item, from, to string, n
 
 	// Substrate leg when we have a real anchor (baseline or prior record).
 	// Skip when no-baseline so files stays empty (clear absent-record).
-	if hasSinceTime && len(authoredDirs) > 0 && payload.Unavailable != "no-baseline" {
-		sub := substrateChangedMarkdown(dir, authoredDirs, sinceTime)
+	if hasSinceTime && payload.Unavailable != "no-baseline" {
+		sub := substrateChangedFiles(dir, authoredDirs, substrateConfigDir, sinceTime)
 		files = append(files, sub...)
 	}
 
@@ -150,7 +158,7 @@ func changeRecordAnchor(ctx context.Context, storyID string) (sinceSHA string, h
 			return p.HeadSHA, p.HeadSHA, ""
 		}
 	}
-	base, _, berr := firstEngagementBaseline(ctx, storyID)
+	base, _, _, berr := firstEngagementBaseline(ctx, storyID)
 	if berr != nil || base.HeadSHA == "" {
 		return "", "", "no-baseline"
 	}
@@ -175,21 +183,26 @@ func changeRecordSinceTime(ctx context.Context, storyID string) (time.Time, bool
 	return time.Time{}, false
 }
 
-// substrateChangedMarkdown lists repo-relative .md paths under dirs whose mtime
-// is strictly after since. since must be a real anchor. Paths outside repoRoot
-// are skipped (path-space: repo-relative only).
-func substrateChangedMarkdown(repoRoot string, dirs map[string]string, since time.Time) []string {
+// substrateChangedFiles lists repo-relative paths under authored dirs and the
+// substrate config dir whose mtime is strictly after since. since must be a real
+// anchor. Paths outside repoRoot are skipped (path-space: repo-relative only).
+// Runtime/state files under the config dir are excluded so mtime churn never
+// lands in a change set.
+func substrateChangedFiles(repoRoot string, dirs map[string]string, configDir string, since time.Time) []string {
 	if since.IsZero() {
 		return nil
 	}
 	var out []string
 	seen := map[string]bool{}
-	for _, root := range dirs {
+	walk := func(root string) {
+		if strings.TrimSpace(root) == "" {
+			return
+		}
 		_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info == nil || info.IsDir() {
 				return nil
 			}
-			if !strings.HasSuffix(strings.ToLower(path), ".md") {
+			if substrateRuntimeFile(info.Name()) {
 				return nil
 			}
 			if !info.ModTime().After(since) {
@@ -207,8 +220,27 @@ func substrateChangedMarkdown(repoRoot string, dirs map[string]string, since tim
 			return nil
 		})
 	}
+	for _, root := range dirs {
+		walk(root)
+	}
+	walk(configDir)
 	sort.Strings(out)
 	return out
+}
+
+// substrateRuntimeFile reports state/log files that must not enter a change set
+// from mtime churn under the data dir.
+func substrateRuntimeFile(name string) bool {
+	n := strings.ToLower(name)
+	switch n {
+	case "deployed.version", "repo.path":
+		return true
+	}
+	if strings.HasSuffix(n, ".db") || strings.HasSuffix(n, ".db-wal") ||
+		strings.HasSuffix(n, ".db-shm") || strings.HasSuffix(n, ".log") {
+		return true
+	}
+	return false
 }
 
 // recordedChangeSet unions every change_record files list for a story.

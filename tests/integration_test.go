@@ -408,7 +408,10 @@ func fileExists(p string) bool {
 // transition. Gate CONTENT is covered separately (create_review, baseline_skills).
 func stubReviewerAccept(t *testing.T, repo string) {
 	t.Helper()
-	verdict := filepath.Join(repo, "verdict-accept.sh")
+	// Outside the repo: a worktree-resident stub is an untracked non-substrate
+	// path and would fail satelle-substrate-only-check once that gate unions
+	// the live worktree (sty_6469025e).
+	verdict := filepath.Join(t.TempDir(), "verdict-accept.sh")
 	if err := os.WriteFile(verdict, []byte("#!/bin/sh\necho '{\"decision\":\"accept\",\"notes\":\"\"}'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}

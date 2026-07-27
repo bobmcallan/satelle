@@ -295,26 +295,31 @@ func TestGateWiringSubstrateOnlyFence(t *testing.T) {
 	materializeDefault(t, repo, "workflows", "satelle-substrate-workflow")
 	materializeDefault(t, repo, "skills", "satelle-substrate-only-check")
 	stubReviewerAccept(t, repo)
+	// Commit scaffold so live/worktree is clean at engage (sty_6469025e: an
+	// empty change set rejects; pre-dirty substrate from init would otherwise
+	// satisfy the close without intentional work).
+	gitCommitAll(t, repo, "init scaffold")
 
 	out := mustRun(t, testBin, repo, "story", "create",
 		"--title", "Substrate fence wiring",
 		"--body", "Substrate-only close via fence.",
-		"--acceptance", "1. close rejects without commit; accepts with substrate commit",
+		"--acceptance", "1. close rejects without change set; accepts with substrate commit",
 		"--category", "substrate")
 	id := extractID(out, "sty_")
 	mustRun(t, testBin, repo, "story", "set", id, "--status", "in_progress")
 
-	// close without commit mentioning id → fence reject
+	// close with no change set → fence reject (empty union; commit not required
+	// but neither is empty evidence).
 	rej, err := run(t, testBin, repo, "story", "set", id, "--status", "done")
 	if err == nil {
-		t.Fatalf("close without commit should reject:\n%s", rej)
+		t.Fatalf("close with empty change set should reject:\n%s", rej)
 	}
 	got := mustRun(t, testBin, repo, "story", "get", id)
 	if !strings.Contains(got, `"status": "in_progress"`) {
 		t.Errorf("status unchanged:\n%s", got)
 	}
 
-	// commit only the substrate slice (docs/) — do not re-add stub scripts
+	// commit only the substrate slice (docs/)
 	mustWrite(t, filepath.Join(repo, "docs", "x.md"), "# x\n")
 	add := exec.Command("git", "add", "docs/x.md")
 	add.Dir = repo

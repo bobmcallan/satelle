@@ -75,24 +75,26 @@ func hasEngagementBaseline(ctx context.Context, storyID string) bool {
 	return len(entries) > 0
 }
 
-func firstEngagementBaseline(ctx context.Context, storyID string) (engagementBaselinePayload, string, error) {
+// firstEngagementBaseline returns the oldest engagement baseline payload, body,
+// and CreatedAt (for mtime-anchored substrate enumeration).
+func firstEngagementBaseline(ctx context.Context, storyID string) (engagementBaselinePayload, string, time.Time, error) {
 	ls, err := requireLedger()
 	if err != nil {
-		return engagementBaselinePayload{}, "", err
+		return engagementBaselinePayload{}, "", time.Time{}, err
 	}
 	entries, err := ls.ListByStory(ctx, storyID, ledger.KindEngagementBaseline)
 	if err != nil {
-		return engagementBaselinePayload{}, "", err
+		return engagementBaselinePayload{}, "", time.Time{}, err
 	}
 	if len(entries) == 0 {
-		return engagementBaselinePayload{}, "", fmt.Errorf("no engagement baseline recorded for %s — engage the story first (or this story predates the baseline feature)", storyID)
+		return engagementBaselinePayload{}, "", time.Time{}, fmt.Errorf("no engagement baseline recorded for %s — engage the story first (or this story predates the baseline feature)", storyID)
 	}
 	e := entries[0] // oldest-first
 	var p engagementBaselinePayload
 	if len(e.Payload) > 0 {
 		_ = json.Unmarshal(e.Payload, &p)
 	}
-	return p, e.Body, nil
+	return p, e.Body, e.CreatedAt, nil
 }
 
 func gitHeadAndDirty(dir string) (sha string, dirty bool, err error) {
@@ -112,9 +114,10 @@ func gitHeadAndDirty(dir string) (sha string, dirty bool, err error) {
 
 // storyDiffReq is the request for story-diff.
 type storyDiffReq struct {
-	ID       string `json:"id"`
-	Patch    bool   `json:"patch,omitempty"`
-	Recorded bool   `json:"recorded,omitempty"` // union change_record rows (sty_948ad5df)
+	ID               string `json:"id"`
+	Patch            bool   `json:"patch,omitempty"`
+	Recorded         bool   `json:"recorded,omitempty"`          // union change_record rows (sty_948ad5df)
+	IncludeSubstrate bool   `json:"include_substrate,omitempty"` // opt-in substrate mtime leg (sty_6469025e)
 }
 
 // storyDiffResult is the deterministic enumeration result (no verdict).
@@ -192,7 +195,7 @@ func storyDiff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 		return json.Marshal(res)
 	}
 
-	base, _, err := firstEngagementBaseline(ctx, it.ID)
+	base, _, baseAt, err := firstEngagementBaseline(ctx, it.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -210,6 +213,12 @@ func storyDiff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 	files, stat, patch, derr := gitDiffSince(dir, base.HeadSHA, req.Patch)
 	if derr != nil {
 		return nil, derr
+	}
+	// Opt-in substrate leg only (--include-substrate). Default live path stays
+	// git-only so scope-review is not polluted by mtime noise (sty_6469025e).
+	if req.IncludeSubstrate && !baseAt.IsZero() {
+		sub := substrateChangedFiles(dir, authoredDirs, substrateConfigDir, baseAt)
+		files = uniqueSorted(append(files, sub...))
 	}
 	res := storyDiffResult{
 		StoryID:  it.ID,

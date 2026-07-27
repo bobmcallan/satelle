@@ -79,6 +79,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetLedgerStore(a.Store.Ledger)
 	verb.SetDocIndexStore(a.Store.DocIndex)
 	verb.SetAuthoredDirs(a.AuthoredDirs())
+	verb.SetSubstrateConfigDir(a.Config.ResolveDataDir(a.RepoRoot))
 	verb.SetLeaseStore(a.Store.Leases)
 	// UI push drain (sty_9ba3d709 / sty_126228b2): when [server] endpoint is set,
 	// mutating verbs mark topics on the ChangeNotifier seam; a bounded drain

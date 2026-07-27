@@ -313,7 +313,7 @@ func storySyncCommand() *cobra.Command {
 // Id may be omitted when stdin is a transition payload `{story:{id},…}` so gate
 // functional checks can invoke without shell id plumbing.
 func storyDiffCommand() *cobra.Command {
-	var patch, recorded bool
+	var patch, recorded, includeSubstrate bool
 	cmd := &cobra.Command{
 		Use:   "diff [id]",
 		Short: "List files changed since engagement baseline (enumeration only)",
@@ -326,6 +326,11 @@ full unified diff of tracked changes.
 enacted transitions (sty_948ad5df) instead of re-deriving from git. Prefer this
 when a gate must see what satelle already recorded, including git-ignored
 substrate paths.
+
+--include-substrate (opt-in) also unions mtime-changed files under authored
+substrate dirs and the resolved data dir since engagement. Default live
+enumeration stays git-only so project scope-review is not polluted by mtime
+noise; the substrate close gate is the intended consumer.
 
 No pass/fail: gates consume this output and decide. Stories without a baseline
 error clearly on the live path; --recorded returns an empty list with a note
@@ -343,6 +348,9 @@ Gate functional checks may omit the id and pipe the transition JSON on stdin
 				}
 				if recorded {
 					req["recorded"] = true
+				}
+				if includeSubstrate {
+					req["include_substrate"] = true
 				}
 				return dispatch(cmd, "story-diff", req)
 			}
@@ -364,11 +372,15 @@ Gate functional checks may omit the id and pipe the transition JSON on stdin
 			if recorded {
 				body["recorded"] = true
 			}
+			if includeSubstrate {
+				body["include_substrate"] = true
+			}
 			return dispatch(cmd, "story-diff", body)
 		},
 	}
 	cmd.Flags().BoolVar(&patch, "patch", false, "include full unified patch since baseline (tracked)")
 	cmd.Flags().BoolVar(&recorded, "recorded", false, "union change_record file lists instead of live git re-derive (sty_948ad5df)")
+	cmd.Flags().BoolVar(&includeSubstrate, "include-substrate", false, "opt-in: union substrate mtime leg (authored dirs + data dir); default live path stays git-only")
 	return cmd
 }
 

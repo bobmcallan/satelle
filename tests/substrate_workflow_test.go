@@ -194,3 +194,129 @@ func mustWrite(t *testing.T, path, body string) {
 		t.Fatal(err)
 	}
 }
+
+// withTestBinOnPATH puts testBin first on PATH so functional-check scripts
+// that shell out to bare `satelle` resolve the binary under test.
+func withTestBinOnPATH(t *testing.T) []string {
+	t.Helper()
+	binDir := t.TempDir()
+	link := filepath.Join(binDir, "satelle")
+	if err := os.Symlink(testBin, link); err != nil {
+		// Windows / restricted FS: copy instead.
+		in, err := os.ReadFile(testBin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(link, in, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := binDir + string(os.PathListSeparator) + os.Getenv("PATH")
+	return []string{"PATH=" + path}
+}
+
+// TestSubstrateOnlyCheckFourPostures (sty_6469025e AC7): committed substrate
+// and git-ignored uncommitted substrate accept; committed and uncommitted
+// non-substrate reject. Empty commit alone rejects (AC3).
+func TestSubstrateOnlyCheckFourPostures(t *testing.T) {
+	pathEnv := withTestBinOnPATH(t)
+
+	setup := func(t *testing.T) (repo, sid string) {
+		t.Helper()
+		repo = t.TempDir()
+		mustRunEnv(t, testBin, repo, pathEnv, "init")
+		materializeDefault(t, repo, "workflows", "satelle-substrate-workflow")
+		materializeDefault(t, repo, "skills", "satelle-substrate-only-check")
+		stubReviewerAccept(t, repo)
+		mustRunEnv(t, testBin, repo, pathEnv, "reindex")
+		gitInit(t, repo)
+		gitCommitAll(t, repo, "initial scaffold")
+		sid = extractID(mustRunEnv(t, testBin, repo, pathEnv, "story", "create",
+			"--title", "posture", "--category", "substrate",
+			"--body", "four-posture coverage"), "sty_")
+		if sid == "" {
+			t.Fatal("no story id")
+		}
+		mustRunEnv(t, testBin, repo, pathEnv, "story", "set", sid, "--status", "in_progress")
+		return repo, sid
+	}
+
+	t.Run("substrate committed accepts", func(t *testing.T) {
+		repo, sid := setup(t)
+		mustWrite(t, filepath.Join(repo, "docs", "ok.md"), "# ok\n")
+		gitCommitAll(t, repo, "docs ("+sid+")")
+		if _, err := runEnv(t, testBin, repo, pathEnv, "story", "set", sid, "--status", "done"); err != nil {
+			t.Fatalf("want accept: %v", err)
+		}
+	})
+
+	t.Run("substrate git-ignored uncommitted accepts", func(t *testing.T) {
+		repo, sid := setup(t)
+		// Ignore .satelle/ after scaffold so further edits are uncommitted-ignored.
+		gi := filepath.Join(repo, ".gitignore")
+		b, _ := os.ReadFile(gi)
+		if err := os.WriteFile(gi, append(b, []byte("\n.satelle/\n")...), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// Commit the gitignore change without the story id so it is not the slice.
+		gitCommitAll(t, repo, "ignore satelle")
+		// Author ignored skill + agents.toml after engage — live --include-substrate.
+		mustWrite(t, filepath.Join(repo, ".satelle", "skills", "posture.md"), "# skill\n")
+		mustWrite(t, filepath.Join(repo, ".satelle", "agents.toml"), "[executor]\nrole = \"agent\"\n")
+		if out, err := runEnv(t, testBin, repo, pathEnv, "story", "set", sid, "--status", "done"); err != nil {
+			t.Fatalf("git-ignored substrate should close without commit: %v\n%s", err, out)
+		}
+	})
+
+	t.Run("non-substrate committed rejects", func(t *testing.T) {
+		repo, sid := setup(t)
+		mustWrite(t, filepath.Join(repo, "pkg", "x.go"), "package pkg\n")
+		gitCommitAll(t, repo, "code ("+sid+")")
+		out, err := runEnv(t, testBin, repo, pathEnv, "story", "set", sid, "--status", "done")
+		if err == nil {
+			t.Fatalf("code commit should reject:\n%s", out)
+		}
+		if !strings.Contains(out, "x.go") && !strings.Contains(out, "pkg/") {
+			t.Fatalf("reject must name the non-substrate path, got:\n%s", out)
+		}
+		if !strings.Contains(out, "non-substrate") {
+			t.Fatalf("reject must cite non-substrate guardrail, got:\n%s", out)
+		}
+	})
+
+	t.Run("non-substrate uncommitted rejects", func(t *testing.T) {
+		repo, sid := setup(t)
+		mustWrite(t, filepath.Join(repo, "pkg", "y.go"), "package pkg\n")
+		// Also need some substrate signal or empty rejects first — add docs
+		// so the union is non-empty but contains offenders.
+		mustWrite(t, filepath.Join(repo, "docs", "note.md"), "# n\n")
+		out, err := runEnv(t, testBin, repo, pathEnv, "story", "set", sid, "--status", "done")
+		if err == nil {
+			t.Fatalf("uncommitted code should reject:\n%s", out)
+		}
+		// AC2 path: offenders named. (Gate notes may embed the check script source,
+		// which mentions the empty-set message as text — assert on the enacted notes.)
+		if !strings.Contains(out, "touches non-substrate paths") {
+			t.Fatalf("uncommitted non-substrate must reject as offender path, got:\n%s", out)
+		}
+		if !strings.Contains(out, "y.go") && !strings.Contains(out, "pkg/") {
+			t.Fatalf("reject must name the uncommitted non-substrate path, got:\n%s", out)
+		}
+	})
+
+	t.Run("empty commit alone rejects", func(t *testing.T) {
+		repo, sid := setup(t)
+		cmd := exec.Command("git", "commit", "--allow-empty", "-q", "-m", "empty ("+sid+")")
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("empty commit: %v\n%s", err, out)
+		}
+		out, err := runEnv(t, testBin, repo, pathEnv, "story", "set", sid, "--status", "done")
+		if err == nil {
+			t.Fatalf("empty commit must not close:\n%s", out)
+		}
+		if !strings.Contains(out, "no change set") {
+			t.Fatalf("empty commit must reject with no-change-set message, got:\n%s", out)
+		}
+	})
+}

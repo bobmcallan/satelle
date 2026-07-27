@@ -197,6 +197,23 @@ var fenceFixtures = map[string][]fenceCase{
 			wantExit:   0,
 			wantStdout: "substrate-only slice confirmed",
 		},
+		{
+			// AC3: empty commit alone is not evidence of a substrate change.
+			name: "rejects empty commit as sole evidence",
+			sid:  "sty_eee55555",
+			setup: func(t *testing.T, repo string) {
+				gitInit(t, repo)
+				mustWrite(t, filepath.Join(repo, "README.md"), "baseline\n")
+				gitCommitAll(t, repo, "baseline")
+				cmd := exec.Command("git", "commit", "--allow-empty", "-q", "-m", "empty (sty_eee55555)")
+				cmd.Dir = repo
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("empty commit: %v\n%s", err, out)
+				}
+			},
+			wantExit:   1,
+			wantStdout: "no change set found",
+		},
 	},
 }
 

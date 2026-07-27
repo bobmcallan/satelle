@@ -3,45 +3,50 @@ name: satelle-substrate-only-check
 scope: system
 type: skill
 tags: [type:skill, type:reviewer, type:functional-check]
-description: Functional-check gate for substrate workflow close (in_progress → done) — rejects if the story's committed slice touches any path outside .satelle/, docs/, the binary managed footprint (root .gitignore; harness hook scaffolds under .claude/ and .grok/), or [gate] edit_exempt_paths, catching code mis-filed under category substrate that would otherwise skip the project workflow's plan/code-ac/integration gates. Deterministic, no LLM; self-contained per satelle-reviewer-self-contained.
+description: Functional-check for substrate close — rejects non-lane paths in the story change set (recorded + live with substrate leg + commits naming it), including uncommitted worktree paths; rejects empty sets. Deterministic, self-contained; managed footprint and edit_exempt_paths allowed.
 ---
 
 # Substrate-only check (substrate workflow close gate)
 
 **Functional-check** gate on the substrate workflow's close. The workflow
 DECLARES it as a scoped reviewer node (`on="done"`); on `in_progress → done` it
-verifies the story's committed slice touched **only** substrate-lane paths:
-markdown under `.satelle/` (workflows, skills, principles, documents, tasks),
-`docs/`, the binary's own **managed footprint** outside `.satelle/` (the root
-`.gitignore` managed block and harness hook scaffolds under `.claude/` and
-`.grok/` that `satelle init` deploys), or any prefix in `[gate]
-edit_exempt_paths` in `satelle.toml` (repo-side extension of the same lane —
-unchanged semantics, a different axis from the edit gate's "editable without
-an engaged story"). Any other path (a `.go` file, `cmd/`, build/CI config)
-means the change is **not** substrate-only and belongs on the project
-workflow — the close is **rejected**.
+verifies the story's **change set** touched **only** substrate-lane paths:
+
+markdown and config under `.satelle/` (workflows, skills, principles,
+documents, tasks, agents.toml, hooks, …), `docs/`, the binary's own **managed
+footprint** outside `.satelle/` (the root `.gitignore` managed block and harness
+hook scaffolds under `.claude/` and `.grok/` that `satelle init` deploys), or any
+prefix in `[gate] edit_exempt_paths` in `satelle.toml`.
+
+Any other path (a `.go` file, `cmd/`, build/CI config) — whether committed or
+sitting uncommitted in the working tree — means the change is **not**
+substrate-only and belongs on the project workflow — the close is **rejected**.
+An **empty** change set (nothing recorded, nothing since engagement, no commit
+naming the story — including an empty commit alone) is also **rejected**: empty
+is not evidence of a substrate-only change.
 
 Why the managed footprint rides this lane: those files are binary-emitted,
-binary-managed **process configuration**, not product code. No build/test lane
-can meaningfully vet a `.gitignore` block or a harness hook scaffold, and
-routing them through the project/code workflow adds cost without judgment.
-They belong here by default so an init-heal or footprint story is not forced
-onto a heavy lane.
+binary-managed **process configuration**, not product code.
+
+## Evidence channels (union — no commit required)
+
+The slice is the **union** of:
+
+1. **Recorded** — `satelle story diff <id> --recorded` (change_record rows)
+2. **Live + substrate** — `satelle story diff <id> --include-substrate` (git
+   worktree since engagement plus mtime-changed substrate under authored dirs
+   and the data dir — so git-ignored `.satelle/` is visible)
+3. **Commits** — any commit whose message mentions the story id
+
+A repo whose `.satelle/` is git-ignored (hosted `[sync] personal` continuity)
+closes with **no commit at all** when the live/substrate channel shows only
+lane paths. Where the repo tracks substrate in git, commit+push remains the
+usual practice but is not a gate precondition.
 
 The check is the embedded ```check script below — **self-contained**, no
-external file (see [[satelle-reviewer-self-contained]]). satelle runs it in the
-repo root with `{story, from, to}` on stdin; it reads the story id, finds the
-story's own change set (preferring recorded `change_record` rows via
-`satelle story diff --recorded` so git-ignored substrate paths are visible),
-and falls back to commits by story id. Exit 0 accepts;
-non-zero rejects with the offending paths as the notes the executor fixes. It
-is **mechanism, not judgment** — the deterministic gate path — so the
-read-only LLM-reviewer invariant is untouched. See [[satelle-agent-model]].
-
-Because the slice may be identified by the story's committed id when no
-change_record exists yet, the executor must still **commit + push the
-substrate slice IN-LOOP at `in_progress`** (a single commit whose subject ends
-in the story id) before requesting the close when relying on the git fallback.
+external file (see [[satelle-reviewer-self-contained]]). Exit 0 accepts;
+non-zero rejects with notes. **Mechanism, not judgment.** See
+[[satelle-agent-model]].
 
 ```check
 #!/usr/bin/env bash
@@ -52,43 +57,61 @@ if [ -z "$sid" ]; then
   echo "could not read the story id from the transition payload"
   exit 1
 fi
-# Prefer recorded change_record file lists when present — covers git-ignored
-# substrate paths that git log cannot see. Source switch only; allow-list
-# semantics unchanged (managed footprint retained).
-changed=""
-if recorded=$(satelle story diff "$sid" --recorded 2>/dev/null); then
-  changed=$(printf '%s' "$recorded" | grep -oE '"files":\[[^]]*\]' | head -1 | tr ',' '\n' | grep -oE '"[^"]+"' | tr -d '"' | grep -v '^$' || true)
-  if [ -z "$changed" ] && command -v python3 >/dev/null 2>&1; then
-    changed=$(printf '%s' "$recorded" | python3 -c "import json,sys
+
+extract_files() {
+  # stdin: story-diff JSON; stdout: one path per line
+  local raw
+  raw=$(cat)
+  [ -z "$raw" ] && return 0
+  if command -v python3 >/dev/null 2>&1; then
+    printf '%s' "$raw" | python3 -c "import json,sys
 try:
  d=json.load(sys.stdin)
  print('\n'.join(d.get('files') or []))
 except Exception:
- pass" 2>/dev/null || true)
+ pass" 2>/dev/null || true
+  else
+    printf '%s' "$raw" | grep -oE '"files":\[[^]]*\]' | head -1 | tr ',' '\n' | grep -oE '"[^"]+"' | tr -d '"' | grep -v '^$' || true
   fi
+}
+
+# Channel 1: recorded change_record union
+rec=""
+if recorded=$(satelle story diff "$sid" --recorded 2>/dev/null); then
+  rec=$(printf '%s' "$recorded" | extract_files)
 fi
-if [ -z "$changed" ]; then
-  commits=$(git log --grep="$sid" --format=%H 2>/dev/null)
-  if [ -z "$commits" ]; then
-    echo "no change_record and no commit mentioning $sid — engage, author, transition (or commit + push with $sid in subject) before closing"
-    exit 1
-  fi
-  changed=$(for c in $commits; do git show --name-only --format= "$c"; done | grep -v '^$' | sort -u)
+
+# Channel 2: live git + opt-in substrate mtime (empty-tolerant: no baseline → empty)
+liv=""
+if live=$(satelle story diff "$sid" --include-substrate 2>/dev/null); then
+  liv=$(printf '%s' "$live" | extract_files)
 fi
-# Allowed prefixes: authored substrate (.satelle/, docs/), the binary managed
-# footprint init writes outside .satelle/ (root .gitignore; harness hook
-# scaffolds under .claude/ and .grok/ — process config, not product code), plus
-# any [gate] edit_exempt_paths in satelle.toml (repo-side extension knob,
-# unchanged semantics). Product code (.go, cmd/, Makefile, CI) still fails.
+
+# Channel 3: commits mentioning the story (always; not only when others empty)
+com=""
+commits=$(git log --grep="$sid" --format=%H 2>/dev/null || true)
+if [ -n "$commits" ]; then
+  com=$(for c in $commits; do git show --name-only --format= "$c" 2>/dev/null; done | grep -v '^$' || true)
+fi
+
+changed=$(printf '%s\n%s\n%s\n' "$rec" "$liv" "$com" | grep -v '^$' | sort -u)
+
+# Allowed prefixes: authored substrate, managed footprint, edit_exempt_paths.
 allow='\.satelle/|docs/|\.gitignore$|\.claude/|\.grok/'
 extra=$(grep -E '^[[:space:]]*edit_exempt_paths' .satelle/satelle.toml 2>/dev/null | grep -oE '"[^"]+"' | tr -d '"')
 for p in $extra; do
   esc=$(printf '%s' "$p" | sed 's#[^A-Za-z0-9/]#\\&#g')
   allow="$allow|$esc"
 done
+
+if [ -z "$changed" ]; then
+  echo "no change set found for $sid — nothing recorded, nothing in the working tree since engagement (incl. git-ignored substrate), and no commit mentions it. An empty commit is not evidence of a substrate change."
+  exit 1
+fi
+
 offenders=$(printf '%s\n' "$changed" | grep -vE "^($allow)" || true)
 if [ -n "$offenders" ]; then
-  echo "the slice for $sid touches non-substrate paths — this is not a substrate-only change; use the project workflow (category fix/feature/chore):"
+  echo "the slice for $sid touches non-substrate paths (committed or uncommitted in the working tree) — not a substrate-only change; use the project workflow (category fix/feature/chore), or commit them under a project story / stash-revert them:"
   printf '%s\n' "$offenders"
   exit 1
 fi
