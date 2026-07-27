@@ -99,6 +99,81 @@ func TestValidate_GateBindingSection(t *testing.T) {
 	}
 }
 
+// TestValidate_StepSummaryNamedReviewer (sty_8ee40f94): step-summary may allocate
+// a named role=reviewer (cheap summariser); not a performer, not orphaned.
+func TestValidate_StepSummaryNamedReviewer(t *testing.T) {
+	agents := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop"},
+		Reviewer: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: "read_file,grep,list_dir", Model: "opus"},
+		Agents: map[string]config.AgentBinding{
+			"reviewer-summary": {
+				Command: "grok agent stdio", Role: "reviewer", Interface: "acp",
+				Tools: "read_file,grep,list_dir", Model: "grok-4.5", Effort: "low",
+			},
+		},
+	}
+	wfNamed := "---\nname: w\n---\n```dot\ndigraph w {\n" +
+		"  backlog [shape=Mdiamond]\n" +
+		"  in_progress [agent=executor]\n" +
+		"  step [agent=reviewer-summary, prompt=\"@skill:satelle-step-summary\", mandatory=true]\n" +
+		"  done [shape=Msquare]\n" +
+		"  backlog -> in_progress -> done\n" +
+		"}\n```\n"
+	r := Validate(agents, nil, []docindex.Doc{{Kind: "workflows", Name: "w", Body: wfNamed}})
+	if !r.OK() {
+		t.Fatalf("named step-summary reviewer must pass: %v", r.Problems)
+	}
+	for _, w := range r.Warnings {
+		if strings.Contains(w, "reviewer-summary") && strings.Contains(w, "orphaned") {
+			t.Errorf("reviewer-summary must not be orphaned: %s", w)
+		}
+	}
+	found := false
+	for _, g := range r.Gates {
+		if g.Node == "step" && g.Skill == "satelle-step-summary" {
+			found = true
+			if g.Agent != "reviewer-summary" || g.EffectiveModel != "grok-4.5" {
+				t.Errorf("step gate = %+v, want reviewer-summary/grok-4.5", g)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected Gates row for step-summary node")
+	}
+
+	// role=agent on step-summary fails closed.
+	agentsBad := agents
+	agentsBad.Agents = map[string]config.AgentBinding{
+		"reviewer-summary": {Command: "fake", Role: "agent", Tools: "Read", Model: "x"},
+	}
+	rBad := Validate(agentsBad, nil, []docindex.Doc{{Kind: "workflows", Name: "w", Body: wfNamed}})
+	if rBad.OK() {
+		t.Fatal("role=agent on step-summary must fail")
+	}
+
+	// Missing binding fails closed.
+	agentsMiss := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop"},
+		Reviewer: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: "read_file", Model: "opus"},
+	}
+	rMiss := Validate(agentsMiss, nil, []docindex.Doc{{Kind: "workflows", Name: "w", Body: wfNamed}})
+	if rMiss.OK() {
+		t.Fatal("missing binding on step-summary must fail")
+	}
+
+	// Legacy agent=reviewer stays green.
+	wfLegacy := "---\nname: w\n---\n```dot\ndigraph w {\n" +
+		"  backlog [shape=Mdiamond]\n" +
+		"  step [agent=reviewer, prompt=\"@skill:satelle-step-summary\", mandatory=true]\n" +
+		"  done [shape=Msquare]\n" +
+		"  backlog -> done\n" +
+		"}\n```\n"
+	rLeg := Validate(agents, nil, []docindex.Doc{{Kind: "workflows", Name: "w", Body: wfLegacy}})
+	if !rLeg.OK() {
+		t.Fatalf("legacy agent=reviewer step must pass: %v", rLeg.Problems)
+	}
+}
+
 func TestValidate_BrokenBinding(t *testing.T) {
 	agents := config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},

@@ -1,3 +1,16 @@
+## [0.0.337] - 2026-07-27
+
+### Added
+- Step-summary and scoped judge nodes may allocate a named `role=reviewer` binding (`agent=<name>`); `Summarise` uses that binding's harness/model (default remains `[reviewer]`) so high-frequency step recaps can run on a cheap Grok agent (sty_8ee40f94)
+
+### Fixed
+- Named judge agents on the step-summary node or scoped `on=` gates no longer misclassify as performing lifecycle states, executor augmentations, or phantom `from="*"` park edges (sty_8ee40f94)
+
+## [serve-v0.0.11] - 2026-07-27
+
+### Fixed
+- Workflow diagram footnote routing treats the step-summary skill (not only literal `agent=reviewer`) so a cheap named summariser stays off the main flow (sty_8ee40f94)
+
 ## [0.0.336] - 2026-07-27
 
 ### Fixed

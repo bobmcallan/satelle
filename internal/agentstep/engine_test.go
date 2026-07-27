@@ -1824,6 +1824,77 @@ func TestSummariseReturnsTrimmedProse(t *testing.T) {
 	}
 }
 
+// TestSummariseUsesNamedBinding (sty_8ee40f94): agent= on the step node selects
+// the harness/model; default [reviewer] is unchanged when agent=reviewer.
+func TestSummariseUsesNamedBinding(t *testing.T) {
+	const namedWF = "---\nname: " + baselineWorkflow + "\ntype: workflow\n---\n" + "```dot" + `
+digraph w {
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor]
+  step        [agent=summariser-x, prompt="@skill:satelle-step-summary", mandatory=true]
+  done        [shape=Msquare]
+  backlog -> in_progress -> done
+}
+` + "```"
+	g, defaultR := newEngine(t, "default runner must not run",
+		fakeDocs{workflow: namedWF, skillBody: "summariser rubric", skillFound: true})
+	namedR := &fakeRunner{out: "  Named summariser recap.\n"}
+	var gotCmd string
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		if name != "summariser-x" {
+			return config.AgentBinding{}, false
+		}
+		return config.AgentBinding{
+			Command: "cheap-sum -p {system}", Role: "reviewer",
+			Tools: "read_file,grep", Model: "cheap-model", Effort: "low",
+		}, true
+	})
+	g.newRunner = func(_iface, cmd string) (agentcli.Runner, error) {
+		gotCmd = cmd
+		return namedR, nil
+	}
+	s, err := g.Summarise(context.Background(), workitem.Item{Status: "in_progress"}, "in_progress", "done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Text != "Named summariser recap." {
+		t.Errorf("summary = %q", s.Text)
+	}
+	if gotCmd != "cheap-sum -p {system}" {
+		t.Errorf("newRunner cmd = %q, want cheap-sum template", gotCmd)
+	}
+	if namedR.got.AllowedTools != "read_file,grep" || namedR.got.Model != "cheap-model" {
+		t.Errorf("binding grant not applied: tools=%q model=%q", namedR.got.AllowedTools, namedR.got.Model)
+	}
+	if s.Model != "cheap-model" {
+		t.Errorf("SummaryResult.Model = %q, want cheap-model", s.Model)
+	}
+	if defaultR.got.SystemPrompt != "" {
+		t.Error("default [reviewer] runner must not run for a named step binding")
+	}
+
+	// Default agent=reviewer still uses g.runner / g.model.
+	g2, r2 := newEngine(t, "legacy default path",
+		fakeDocs{workflow: stepWF, skillBody: "summariser rubric", skillFound: true})
+	s2, err := g2.Summarise(context.Background(), workitem.Item{Status: "in_progress"}, "in_progress", "done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s2.Text != "legacy default path" {
+		t.Errorf("default summary = %q", s2.Text)
+	}
+	if r2.got.SystemPrompt == "" {
+		t.Error("default path must use bootstrap runner")
+	}
+
+	// Missing named binding is soft-fail for mandatory.
+	g3, _ := newEngine(t, "", fakeDocs{workflow: namedWF, skillBody: "rubric", skillFound: true})
+	g3.SetNamedAgents(func(string) (config.AgentBinding, bool) { return config.AgentBinding{}, false })
+	if _, err := g3.Summarise(context.Background(), workitem.Item{Status: "in_progress"}, "in_progress", "done"); err == nil {
+		t.Error("mandatory summary with missing binding must error")
+	}
+}
+
 // When the active workflow declares NO step node, the summariser does not run —
 // transparent opt-in (sty_9a139c78).
 func TestSummariseSkippedWhenNotDeclared(t *testing.T) {

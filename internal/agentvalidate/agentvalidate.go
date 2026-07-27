@@ -112,9 +112,35 @@ func Validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 			continue // structure.Doc / workflow validate owns unparseable bodies
 		}
 		for _, st := range spec.States {
-			// Plan D2 / sty_a476a2f8: on= marks a scoped GATE (judge); spine
-			// (no on=) with agent=<name> is a PERFORMER. Split before role checks.
-			if st.Skill != "" && len(st.On) > 0 && st.Skill != wfdot.StepSummarySkill {
+			// Step-summary opt-in (sty_9a139c78): edge-less judge/summariser, not a
+			// spine performer. Named role=reviewer bindings (cheap Grok summariser)
+			// are allowed — agent=<named> must not trip the performer check
+			// (sty_8ee40f94).
+			if st.IsSummariser() {
+				sec := st.Agent
+				if sec == "" {
+					sec = "reviewer"
+				}
+				bm := revModel
+				if sec != "reviewer" {
+					usedNamed[sec] = true
+					if b, ok := agents.NamedBinding(sec); ok {
+						bm = b.Model
+						if config.ResolvedRole(sec, b) != config.RoleReviewer {
+							r.Problems = append(r.Problems, fmt.Sprintf(
+								"workflow %q node %q allocates agent=%s with role=%q on a step-summary node (want role=reviewer)",
+								doc.Name, st.Name, sec, config.ResolvedRole(sec, b)))
+						}
+					} else {
+						r.Problems = append(r.Problems, fmt.Sprintf(
+							"workflow %q node %q allocates agent=%s with no [%s] binding in agents.toml",
+							doc.Name, st.Name, sec, sec))
+					}
+				}
+				r.Gates = append(r.Gates, gateAlloc(doc.Name, st.Name, st.Skill, sec, bm))
+			} else if st.Skill != "" && len(st.On) > 0 {
+				// Plan D2 / sty_a476a2f8: on= marks a scoped GATE (judge); spine
+				// (no on=) with agent=<name> is a PERFORMER. Split before role checks.
 				// Scoped gate path — skip known performer augmentation tokens.
 				switch st.Agent {
 				case "executor", "planner", "coder":

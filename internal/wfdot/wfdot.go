@@ -171,12 +171,21 @@ type State struct {
 // summariser runs only when declared — there is no hidden always-on summariser
 // (sty_9a139c78).
 func (s Spec) StepSummary() (declared, mandatory bool) {
+	_, d, m := s.StepSummaryBinding()
+	return d, m
+}
+
+// StepSummaryBinding is StepSummary plus the agents.toml section named on the
+// step node (agent=<name>). Empty agent means the default [reviewer] binding.
+// Named role=reviewer bindings are supported so high-frequency step recaps can
+// use a cheap summariser without burning the deep judgment model.
+func (s Spec) StepSummaryBinding() (agent string, declared, mandatory bool) {
 	for _, st := range s.States {
 		if st.Skill == StepSummarySkill {
-			return true, st.Mandatory
+			return st.Agent, true, st.Mandatory
 		}
 	}
-	return false, false
+	return "", false, false
 }
 
 // ScopedReviewer is one edge-less always-on gate: its skill and optional gate
@@ -306,14 +315,50 @@ func (s Spec) doneReachable() map[string]bool {
 //
 // An augmentation node (IsAugmentation) is IsPerforming for skill-resolution
 // purposes but is NOT a lifecycle status — see PerformingStates / isEngaging.
+//
+// A step-summary declaration (IsSummariser) is never performing, whatever
+// agent= binding it allocates — it is a post-transition narrator, not a status
+// a story can hold (sty_8ee40f94).
+//
+// A scoped gate (on= + skill) with a non-performer agent token is a named
+// judge (e.g. agent=reviewer-summary), not a performer — without this, from="*"
+// park expansion would invent phantom edges from estimate/intcheck
+// (sty_8ee40f94). Known performer tokens match agentvalidate's scoped-gate skip
+// list: executor, planner, coder.
 func (st State) IsPerforming() bool {
-	return st.Agent != "" && st.Agent != "reviewer"
+	if st.IsSummariser() {
+		return false
+	}
+	if st.Agent == "" || st.Agent == "reviewer" {
+		return false
+	}
+	// Scoped on= + skill: only known performer tokens perform (augmentation).
+	// Any other agent= on a scoped gate is a named judge.
+	if len(st.On) > 0 && st.Skill != "" {
+		switch st.Agent {
+		case "executor", "planner", "coder":
+			return true
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// IsSummariser reports whether this is the edge-less step-summary declaration —
+// a post-transition narrator, never a lifecycle status, whatever binding its
+// agent= allocates. Keyed on skill (wfdot.StepSummarySkill), not a binding name,
+// so repo-authored cheap summarisers stay repo-agnostic (sty_8ee40f94).
+func (st State) IsSummariser() bool {
+	return st.Skill == StepSummarySkill
 }
 
 // IsAugmentation reports whether this is an edge-less executor augmentation node
 // (sty_8225d8a5): agent is a performer and on= names the spine state(s) it
 // augments. Same shape as a scoped reviewer (on= attach) but agent=executor.
 // Reuses on= rather than inventing augments= — attach-to-state, keyed by agent=.
+// Named judges with on= (agent=reviewer-summary, …) are not augmentations —
+// IsPerforming already excludes them.
 func (st State) IsAugmentation() bool {
 	return st.IsPerforming() && len(st.On) > 0
 }
@@ -365,6 +410,16 @@ func (s Spec) isEngaging(st State) bool {
 	}
 	// Reviewer role: not engaged (cancel sinks, park/resume nodes, edge-less gates).
 	if st.Agent == "reviewer" {
+		return false
+	}
+	// Step-summary declaration: narrator only, never an in-flight status
+	// (even when agent= names a non-literal reviewer binding — sty_8ee40f94).
+	if st.IsSummariser() {
+		return false
+	}
+	// Scoped named judges (on= + skill, agent not a performer token) are gates,
+	// not in-flight statuses — same class as agent=reviewer with on= (sty_8ee40f94).
+	if len(st.On) > 0 && st.Skill != "" && !st.IsPerforming() {
 		return false
 	}
 	// Augmentation annotations are not lifecycle statuses (sty_8225d8a5).

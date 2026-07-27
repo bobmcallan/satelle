@@ -1422,8 +1422,15 @@ type summaryPayload struct {
 }
 
 // Summarise runs the read-only summariser over an enacted transition and returns
-// its prose recap (empty when no summariser rubric is installed). The reviewer's
-// read-only tool grant means it observes but cannot mutate the work tree.
+// its prose recap (empty when no summariser rubric is installed). The binding
+// named on the step node (agent=<name>, default [reviewer]) supplies the harness
+// and model so a cheap summariser can narrate without burning the deep judgment
+// model. Grant stays read-only (observes, never mutates).
+//
+// principles stays PrinciplesNone regardless of the binding's principles=
+// (deliberate): the summariser is a rubric-only narrator; honouring session
+// principles on every transition would inject the constitution into every recap
+// and defeat a cheap high-frequency path (sty_8ee40f94).
 //
 // TODO(sty_ba860c8a): fold onto Invoke once a soft-fail/empty-retry expect mode
 // exists without ballooning ExpectVerdict/ExpectPerform. Today it still uses
@@ -1432,7 +1439,7 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 	// The summariser runs ONLY when the active workflow DECLARES a step-summary
 	// node (transparent opt-in via the DOT) — there is no hidden always-on
 	// summariser (sty_9a139c78). A non-declaring workflow records nothing.
-	declared, mandatory := g.stepSummaryDeclared(ctx, item)
+	agentSec, declared, mandatory := g.stepSummaryDeclared(ctx, item)
 	if !declared {
 		return verb.SummaryResult{}, nil
 	}
@@ -1451,8 +1458,38 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 		}
 		return verb.SummaryResult{}, err
 	}
-	if g.runner == nil {
-		return soft("step summary is mandatory but no agent runner is configured")
+	binding, section, berr := g.gateBinding(agentSec)
+	if berr != nil {
+		return soft("step summary binding: %v", berr)
+	}
+	if config.ResolvedRole(section, binding) != config.RoleReviewer {
+		return soft("step summary agent=%s has role=%q (want role=reviewer)",
+			section, config.ResolvedRole(section, binding))
+	}
+	// Default [reviewer] reuses the engine bootstrap runner; a named binding
+	// builds its own harness (same rule as gated edges — sty_68dafd5f).
+	var runner agentcli.Runner
+	tools, model, env := binding.Tools, binding.Model, binding.Env
+	if section == "reviewer" {
+		if g.runner == nil {
+			return soft("step summary is mandatory but no agent runner is configured")
+		}
+		runner = g.runner
+		if tools == "" {
+			tools = g.tools
+		}
+		if model == "" {
+			model = g.model
+		}
+		if len(env) == 0 {
+			env = g.reviewerEnv
+		}
+	} else {
+		r, rerr := g.newRunner(binding.ResolvedInterface(), binding.CommandTemplate())
+		if rerr != nil {
+			return soft("step summary agent=%s: %v", section, rerr)
+		}
+		runner = r
 	}
 	// The summariser prompt is rubric-only (no charter, principles=none) so it
 	// stays a plain narrator — buildRequest omits empty sections. Grant is read-only.
@@ -1460,14 +1497,16 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 		rubric:     body,
 		principles: config.PrinciplesNone,
 		payload:    summaryPayload{Story: item, From: from, To: to},
-		tools:      g.tools, // read-only (Read,Grep,Glob) — narrate, never mutate
-		model:      g.model,
-		env:        g.reviewerEnv,
+		tools:      tools,
+		model:      model,
+		effort:     binding.Effort,
+		settings:   binding.Settings,
+		env:        env,
 	})
 	if err != nil {
 		return verb.SummaryResult{}, err
 	}
-	g.emitProgress("summarising step %s→%s (may take a minute)…", from, to)
+	g.emitProgress("summarising step %s→%s via [%s] (may take a minute)…", from, to, section)
 	// Retry the SAME transient a reviewer retries (a rate-limited/killed/empty
 	// subprocess under concurrent sessions — sty_d71b0791, sty_a1151fb0): a single
 	// runOnce permanently LOST the summary on a transient kill, silently holing the
@@ -1483,17 +1522,17 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 			lastErr = werr
 			break
 		}
-		out, usage, rerr := g.runOnce(ctx, g.runner, req, g.agentTimeout)
+		out, usage, rerr := g.runOnce(ctx, runner, req, g.agentTimeout)
 		if rerr != nil {
 			if errors.Is(rerr, context.DeadlineExceeded) && ctx.Err() == nil {
-				g.telemetryEvent(ctx, item.ID, "reviewer", "agent-timeout", map[string]any{
+				g.telemetryEvent(ctx, item.ID, section, "agent-timeout", map[string]any{
 					"skill": summariserSkill, "step": to, "attempt": attempt, "attempts": attempts,
 				})
 				return soft("mandatory step summary timed out after %s", g.agentTimeout)
 			}
 			lastErr = rerr
 			g.logReviewerFailure(summariserSkill, attempt, attempts, rerr, nil)
-			g.telemetryEvent(ctx, item.ID, "reviewer", "agent-retry", map[string]any{
+			g.telemetryEvent(ctx, item.ID, section, "agent-retry", map[string]any{
 				"skill": summariserSkill, "step": to, "attempt": attempt, "attempts": attempts, "outcome": classifyOutcome(rerr),
 			})
 			continue // transient — retry
@@ -1503,18 +1542,18 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 			// gap now closed): the verb layer folds this into an agent_invocation row
 			// alongside the step_summary text, so `satelle story cost` sees it too.
 			return verb.SummaryResult{
-				Text: s, Command: g.runner.Command(), Context: summariserSkill, Model: g.model,
+				Text: s, Command: runner.Command(), Context: summariserSkill, Model: model,
 				TokensIn: usage.InputTokens, TokensOut: usage.OutputTokens, TokensTotal: usage.TotalTokens,
 				DurationMs: usage.Duration.Milliseconds(),
 			}, nil
 		}
 		lastErr = fmt.Errorf("empty summary output")
 		g.logReviewerFailure(summariserSkill, attempt, attempts, lastErr, out)
-		g.telemetryEvent(ctx, item.ID, "reviewer", "agent-retry", map[string]any{
+		g.telemetryEvent(ctx, item.ID, section, "agent-retry", map[string]any{
 			"skill": summariserSkill, "step": to, "attempt": attempt, "attempts": attempts, "outcome": "empty-output",
 		})
 	}
-	g.telemetryEvent(ctx, item.ID, "reviewer", "agent-failure", map[string]any{
+	g.telemetryEvent(ctx, item.ID, section, "agent-failure", map[string]any{
 		"skill": summariserSkill, "step": to, "attempts": attempts, "outcome": classifyOutcome(lastErr),
 	})
 	return soft("mandatory step summary failed after %d attempts: %v", attempts, lastErr)
@@ -1524,22 +1563,23 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 // step-summary node — used to gate the done-time missing-summary surfacing
 // (sty_a1151fb0). Implements verb.StepSummariser.
 func (g *Engine) MandatorySummary(ctx context.Context, item workitem.Item) bool {
-	_, mandatory := g.stepSummaryDeclared(ctx, item)
+	_, _, mandatory := g.stepSummaryDeclared(ctx, item)
 	return mandatory
 }
 
 // stepSummaryDeclared reports whether the workflow active for category declares a
-// step-summary node (wfdot StepSummary) and whether it is mandatory.
-func (g *Engine) stepSummaryDeclared(ctx context.Context, item workitem.Item) (declared, mandatory bool) {
+// step-summary node (wfdot StepSummary), its agent= section (empty → [reviewer]),
+// and whether it is mandatory.
+func (g *Engine) stepSummaryDeclared(ctx context.Context, item workitem.Item) (agent string, declared, mandatory bool) {
 	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
 	if err != nil {
-		return false, false
+		return "", false, false
 	}
 	spec, ok := wfdot.Parse(doc.Body)
 	if !ok {
-		return false, false
+		return "", false, false
 	}
-	return spec.StepSummary()
+	return spec.StepSummaryBinding()
 }
 
 // ReviewCreate judges a draft work item's required structure before it is

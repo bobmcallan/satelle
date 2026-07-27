@@ -609,6 +609,98 @@ digraph x {
 	}
 }
 
+// TestStepSummaryNamedAgentNotLifecycle (sty_8ee40f94): a named role=reviewer
+// binding on the step-summary node must not become a performing/engaging status
+// or expand into from="*" park edges.
+func TestStepSummaryNamedAgentNotLifecycle(t *testing.T) {
+	body := `---
+name: x
+---
+` + "```dot" + `
+digraph x {
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor]
+  step        [agent=reviewer-summary, prompt="@skill:satelle-step-summary", mandatory=true]
+  blocked     [agent=reviewer, prompt="@skill:park", from="*"]
+  done        [shape=Msquare]
+  backlog -> in_progress -> done
+  blocked -> in_progress
+}
+` + "```" + `
+`
+	spec, ok := Parse(body)
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	agent, declared, mandatory := spec.StepSummaryBinding()
+	if !declared || !mandatory || agent != "reviewer-summary" {
+		t.Fatalf("StepSummaryBinding = (%q,%v,%v), want (reviewer-summary,true,true)", agent, declared, mandatory)
+	}
+	for _, name := range spec.PerformingStates() {
+		if name == "step" {
+			t.Error("step summariser must not appear in PerformingStates")
+		}
+	}
+	for _, name := range spec.NonTerminalEngagingStates() {
+		if name == "step" {
+			t.Error("step summariser must not appear in NonTerminalEngagingStates")
+		}
+	}
+	// from="*" expands through PerformingStates — no phantom step->blocked edge.
+	for _, tr := range spec.Transitions {
+		if tr.From == "step" {
+			t.Errorf("phantom edge from step: %+v", tr)
+		}
+	}
+}
+
+// TestNamedScopedJudgeNotAugmentation (sty_8ee40f94): agent=reviewer-summary on
+// estimate/intcheck-style on= nodes must not read as executor augmentations or
+// performing lifecycle states.
+func TestNamedScopedJudgeNotAugmentation(t *testing.T) {
+	body := `---
+name: x
+---
+` + "```dot" + `
+digraph x {
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor]
+  estimate    [agent=reviewer-summary, prompt="@skill:est", on="in_progress,done"]
+  intcheck    [agent=reviewer-summary, prompt="@skill:int", on="release"]
+  blocked     [agent=reviewer, prompt="@skill:park", from="*"]
+  done        [shape=Msquare]
+  release     [agent=executor]
+  backlog -> in_progress -> release -> done
+  blocked -> in_progress
+}
+` + "```" + `
+`
+	spec, ok := Parse(body)
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	by := map[string]State{}
+	for _, st := range spec.States {
+		by[st.Name] = st
+	}
+	if by["estimate"].IsPerforming() || by["estimate"].IsAugmentation() {
+		t.Errorf("estimate named judge must not perform/augment: %+v", by["estimate"])
+	}
+	if by["intcheck"].IsPerforming() || by["intcheck"].IsAugmentation() {
+		t.Errorf("intcheck named judge must not perform/augment: %+v", by["intcheck"])
+	}
+	for _, name := range spec.PerformingStates() {
+		if name == "estimate" || name == "intcheck" {
+			t.Errorf("%s must not be in PerformingStates", name)
+		}
+	}
+	for _, tr := range spec.Transitions {
+		if tr.From == "estimate" || tr.From == "intcheck" {
+			t.Errorf("phantom park edge from scoped judge: %+v", tr)
+		}
+	}
+}
+
 func hasScoped(ss []ScopedReviewer, v string) bool {
 	for _, s := range ss {
 		if s.Skill == v {

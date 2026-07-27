@@ -156,7 +156,12 @@ func workflowDiagram(spec wfSpec, bindings map[string]bindingVM) template.HTML {
 			}
 			continue
 		}
-		if s.Agent == "reviewer" && !incident[s.Name] {
+		// Edge-less judges and the step-summary narrator stay on the footnote
+		// line (not the main flow). Skill == StepSummarySkill covers named
+		// role=reviewer bindings (e.g. a cheap Grok summariser) — do not key
+		// on "reviewer" alone or a renamed agent= becomes a phantom box
+		// (sty_8ee40f94).
+		if (s.Agent == "reviewer" || s.Skill == wfdot.StepSummarySkill) && !incident[s.Name] {
 			footers = append(footers, s)
 			continue
 		}
