@@ -1,3 +1,8 @@
+## [0.0.340] - 2026-07-28
+
+### Fixed
+- Coded-check gate nodes no longer advertise a live `agent=` binding: `format-drift` reports `inert_coded_check_agent` when a scoped node (or non-default edge agent) names a skill with a ```check fence, and `workflow refresh` strips/rewrites it consultatively; embedded baseline `estimate` and substrate `subcheck` omit `agent=`; `structure.CheckCommand` is the single coded-check definition (`skillCheck` delegates) (sty_4cebc624 / epic:coded-check-gate-honesty)
+
 ## [0.0.339] - 2026-07-28
 
 ### Fixed

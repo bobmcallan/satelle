@@ -95,7 +95,7 @@ An edge-less reviewer node with `on="s1,s2"` (or `on="*"`) is an **always-on**
 gate for every inbound edge into those states:
 
 ```dot
-estimate [agent=reviewer, prompt="@skill:satelle-estimate-actual-review", on="in_progress,done"]
+estimate [prompt="@skill:satelle-estimate-actual-review", on="in_progress,done"]
 step     [agent=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
 ```
 
