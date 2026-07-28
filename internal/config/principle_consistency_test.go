@@ -35,4 +35,19 @@ func TestRecogniseBlockageConsistentWithEditsRequire(t *testing.T) {
 	if !strings.Contains(strings.ToLower(edits), "engage") {
 		t.Error("satelle-edits-require-a-story must still prescribe engage")
 	}
+
+	// sty_7b69954a AC3: preemption is named separately — not by widening "blockage".
+	for _, want := range []string{
+		"Preemption is not blockage",
+		"stop-request",
+		"Never cancel a healthy story to free the seat",
+		"preempted-by:",
+	} {
+		if !strings.Contains(recognise, want) {
+			t.Errorf("satelle-recognise-blockage missing preemption guidance %q", want)
+		}
+	}
+	if !strings.Contains(recognise, "Cancelling a healthy story to free the engagement seat") {
+		t.Error("satelle-recognise-blockage anti-patterns must name cancel-to-free-seat")
+	}
 }

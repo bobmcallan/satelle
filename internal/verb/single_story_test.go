@@ -1,10 +1,12 @@
 package verb_test
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -53,6 +55,20 @@ func TestSingleStorySecondEngageRefused(t *testing.T) {
 	if !strings.Contains(err.Error(), a.ID) {
 		t.Errorf("error should name occupying story: %v", err)
 	}
+	// sty_7b69954a AC1: LIVE seat → stop-request; STALE → seat release; never cancel.
+	msg := err.Error()
+	for _, want := range []string{
+		"engagement seat",
+		"stop-request",
+		"seat release",
+		"LIVE",
+		"STALE",
+		"Never cancel",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("seat-refusal message missing %q: %s", want, msg)
+		}
+	}
 
 	var still workitem.Item
 	json.Unmarshal(call(t, "story-get", map[string]any{"id": b.ID}), &still)
@@ -88,6 +104,14 @@ func TestSingleStoryBlockedFreesSeat(t *testing.T) {
 	if a.Status != "blocked" {
 		t.Fatalf("park failed: %q", a.Status)
 	}
+	// sty_7b69954a AC6: park releases the engagement seat (not only status).
+	seats, serr := verb.Dispatch(context.Background(), "story-seat-list", nil)
+	if serr != nil {
+		t.Fatalf("story-seat-list: %v", serr)
+	}
+	if strings.Contains(string(seats), a.ID) {
+		t.Fatalf("parked story %s still holds a seat: %s", a.ID, seats)
+	}
 	// B can engage while A is parked.
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": b.ID, "status": "plan"}), &b)
 	if b.Status != "plan" {
@@ -106,6 +130,13 @@ func TestSingleStoryCreateIntoEngagingRefused(t *testing.T) {
 	_, err := dispatchRaw(t, "story-create", map[string]any{"title": "B", "category": "feature", "status": "plan"})
 	if err == nil || !strings.Contains(err.Error(), "one performing story") {
 		t.Fatalf("expected create-into-engage refused, got err=%v", err)
+	}
+	// sty_7b69954a AC1: second call site (create-path probe) must name stop-request.
+	msg := err.Error()
+	for _, want := range []string{"stop-request", "seat release", "LIVE", "STALE"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("create-path seat refusal missing %q: %s", want, msg)
+		}
 	}
 }
 

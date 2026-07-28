@@ -72,4 +72,10 @@ func TestBlockedReviewSkillRejectsWithoutReason(t *testing.T) {
 	if !strings.Contains(s, "No reason") && !strings.Contains(s, "no reason") {
 		t.Error("skill must reject when no reason is on record")
 	}
+	// sty_7b69954a AC2: preemption is a legitimate park reason (not only world-not-ready).
+	for _, want := range []string{"Preemption", "preempted-by:", "stop-request"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("blocked-review skill missing preemption guidance %q", want)
+		}
+	}
 }

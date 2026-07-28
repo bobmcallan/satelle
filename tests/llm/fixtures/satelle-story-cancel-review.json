@@ -1,9 +1,15 @@
 [
   {
-    "name": "clear-accept-reasoned-cancel",
+    "name": "accept-duplicate-with-named-deliverer",
     "want": "accept",
-    "why": "Cancel with a structured reason and no hidden work",
-    "payload": ""
+    "why": "Legitimate cancel with declared cancel-reason:duplicate and a named delivering story that scoped the same work",
+    "payload": "{\"story\":{\"id\":\"sty_cancel_legit\",\"title\":\"Duplicate of already-scoped work\",\"body\":\"Cancel reason: this is a duplicate of sty_deliverer which already scoped and delivered the same ACs under cancel-reason:duplicate.\",\"status\":\"in_progress\",\"category\":\"chore\",\"acceptance_criteria\":\"1. thing shipped\\n2. tests green\",\"tags\":[\"cancel-reason:duplicate\"]},\"from\":\"in_progress\",\"to\":\"cancelled\",\"children\":[]}"
+  },
+  {
+    "name": "reject-cancel-to-free-seat",
+    "want": "reject",
+    "why": "Seat contention is not a cancel reason — stop-request then park (blocked). cancel-reason:shelved mislabel does not rescue it (sty_7b69954a)",
+    "payload": "{\"story\":{\"id\":\"sty_paused_healthy\",\"title\":\"Healthy paused work\",\"body\":\"Cancelling to free the engagement seat so higher-priority story sty_prod_pin can engage. Need the seat for the pprod pin fix.\",\"status\":\"blocked\",\"category\":\"fix\",\"acceptance_criteria\":\"1. implement feature X\\n2. tests pass\",\"tags\":[\"cancel-reason:shelved\"]},\"from\":\"blocked\",\"to\":\"cancelled\",\"children\":[]}"
   },
   {
     "name": "clear-reject-silent-abandon",

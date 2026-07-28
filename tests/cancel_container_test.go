@@ -139,6 +139,10 @@ func TestCancelReviewSkillContent(t *testing.T) {
 		"supersedes:",
 		"terminal",
 		`{"decision"`,
+		// sty_7b69954a AC4/AC5: seat contention is a canonical reject.
+		"Seat contention",
+		"stop-request",
+		"engagement seat",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("embedded cancel-review missing %q", want)

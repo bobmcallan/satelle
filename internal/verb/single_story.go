@@ -70,12 +70,20 @@ func acquireEngagementLease(ctx context.Context, item workitem.Item, targetStatu
 		if self == "" {
 			self = "new story"
 		}
-		return false, false, fmt.Errorf(
-			"satelle: refusing to engage %s (→ %s) while %s already holds the engagement seat — one performing story at a time; finish or park the other (blocked); inspect with `satelle story seat`, release a stale seat with `satelle story seat release <id>`",
-			self, targetStatus, who)
+		return false, false, seatConflictError(self, targetStatus, who)
 	default:
 		return false, false, nil
 	}
+}
+
+// seatConflictError is the single seat-refusal text (sty_7b69954a): LIVE holder →
+// stop-request arbitration; STALE seat → operator force-release. One function so
+// the two call sites cannot drift. Load-bearing phrases for existing tests:
+// "one performing story" and "engagement seat".
+func seatConflictError(self, targetStatus, who string) error {
+	return fmt.Errorf(
+		"satelle: refusing to engage %s (→ %s) while %s already holds the engagement seat — one performing story at a time. Inspect with `satelle story seat`. If the holder is LIVE (another agent working it): request preemption with `satelle story stop-request <holder> --reason \"<why>\"` — the holder is then refused forward moves and parks itself (blocked), which frees the seat. If the holder is your own work: finish it or park it (blocked). If the seat is STALE (no live agent, see the heartbeat age): `satelle story seat release <holder>`. Never cancel a healthy story to free the seat — cancelled is terminal",
+		self, targetStatus, who)
 }
 
 // releaseEngagementLease frees the seat for itemID if held by the current owner.
@@ -262,9 +270,7 @@ func refuseSecondEngagingStory(ctx context.Context, excludeID, targetStatus stri
 			if holder != nil {
 				who = fmt.Sprintf("%s (owner %q, state %q)", holder.ItemID, holder.Owner, holder.State)
 			}
-			return fmt.Errorf(
-				"satelle: refusing to engage new story (→ %s) while %s already holds the engagement seat — one performing story at a time; finish or park the other (blocked); inspect with `satelle story seat`, release a stale seat with `satelle story seat release <id>`",
-				targetStatus, who)
+			return seatConflictError("new story", targetStatus, who)
 		case lease.OutcomeAlreadyHeld:
 			_ = ls.Release(ctx, probeID, owner)
 			return refuseSecondEngagingStoryDerived(ctx, excludeID, targetStatus, item)

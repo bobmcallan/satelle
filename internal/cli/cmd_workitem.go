@@ -705,12 +705,19 @@ func storyDocCommands() []*cobra.Command {
 }
 
 // storyStopRequestCommand builds `satelle story stop-request <id> --reason …`
-// (sty_8426b9c0 AC5). Annotates the engagement lease; never kills a process.
+// (sty_8426b9c0 AC5; sty_7b69954a names this as the LIVE-seat preemption path).
+// Annotates the engagement lease; never kills a process.
 func storyStopRequestCommand() *cobra.Command {
 	var reason string
 	cmd := &cobra.Command{
-		Use:         "stop-request <id>",
-		Short:       "Request stop of another agent's engaged story (arbitrated at next step edge)",
+		Use:   "stop-request <id>",
+		Short: "Request stop of another agent's engaged story (LIVE seat preemption; arbitrated at next step edge)",
+		Long: `Request that another agent stop advancing an engaged story so the engagement seat can free.
+
+This is the preemption path for a LIVE seat held by another agent — not for a stale seat
+(use "satelle story seat release <id>" for that). The holder is refused forward engaging
+moves at the next step edge and may park (blocked) or terminate; parking frees the seat.
+Never cancel a healthy story to free the seat — cancelled is terminal.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {

@@ -67,6 +67,20 @@ exit). On cancel, apply it as follows and put all four items in **notes**:
 **Reject** when those hold. Do **not** accept bundling so the cancel note
 "passes" after a quick rewrite.
 
+### Seat contention (canonical reject)
+
+**Reject** any cancel whose justification is that the engagement seat was needed
+— "freeing the engagement seat", "another story must be engaged", "blocking
+higher-priority work", "preempted so we can start X". No value in the repo's
+declared `cancel-reason` vocabulary (`satelle.toml` `[tags.vocabulary]`) means
+*preempted*; a `cancel-reason:` tag present anyway is metadata, not
+justification, and does not rescue it.
+
+Notes must name the correct path: `satelle story stop-request <id> --reason "…"`,
+then the holder parks (`blocked`) with the reason on record (and ideally a
+`preempted-by:<id>` tag); the ACs stay frozen and the story resumes. Cancel of a
+healthy paused story to free the seat cannot pass this gate.
+
 
 ### Legitimate supersedes (accept with named evidence)
 

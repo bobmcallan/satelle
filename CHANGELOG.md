@@ -1,3 +1,13 @@
+## [0.0.342] - 2026-07-29
+
+### Fixed
+- Seat-refusal message names `satelle story stop-request` for a LIVE seat and `satelle story seat release` only for a STALE seat, so agents no longer cancel a healthy story to free the engagement seat (sty_7b69954a)
+
+### Changed
+- Operator preemption is a named park reason on the existing `blocked` state (`preempted-by:<id>` free-form tag) — no new `hold` lifecycle state (sty_7b69954a)
+- `satelle-recognise-blockage` covers preemption as a separate case from blockage and forbids cancel-to-free-seat (sty_7b69954a)
+- `satelle-story-cancel-review` hard-rejects seat-contention justifications; `satelle-story-blocked-review` accepts preemption parks (sty_7b69954a)
+
 ## [0.0.341] - 2026-07-28
 
 ### Added
