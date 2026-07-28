@@ -3155,3 +3155,90 @@ func TestGateBindingEmptyDegradesToReviewer(t *testing.T) {
 		}
 	}
 }
+
+// TestCodedCheckScopedGateAgentNeutral pins sty_4cebc624 AC4: a coded-check
+// scoped on= node with agent= and the same node without agent= produce
+// byte-identical GateDecision JSON for both accept and reject check scripts.
+// The early return before gateBinding means agent= is never read.
+func TestCodedCheckScopedGateAgentNeutral(t *testing.T) {
+	codedSkill := `---
+name: fixture-coded
+type: skill
+description: coded check fixture
+---
+
+# Fixture
+
+` + "```check\n#!/bin/sh\nexit 0\n```\n"
+
+	mkWF := func(agentAttr string) string {
+		// agentAttr is either `agent=reviewer, ` or empty.
+		return wfDoc(baselineWorkflow, `"*"`, `digraph w {
+  backlog [shape=Mdiamond]
+  in_progress [agent=executor, prompt="@skill:code"]
+  done [shape=Msquare]
+  codecheck [`+agentAttr+`prompt="@skill:fixture-coded", on="done"]
+  backlog -> in_progress
+  in_progress -> done
+}`)
+	}
+
+	run := func(t *testing.T, wf string, checkOK bool) verb.GateDecision {
+		t.Helper()
+		docs := fakeDocs{
+			workflow:   wf,
+			skillFound: true,
+			extraSkills: []docindex.Doc{
+				{Kind: "skills", Name: "fixture-coded", Body: codedSkill},
+				{Kind: "skills", Name: "code", Body: conformantSkill("code", "implement")},
+			},
+		}
+		g, r := newEngine(t, `{"decision":"accept"}`, docs)
+		g.check = func(_ context.Context, dir, command, payload string) (string, error) {
+			if checkOK {
+				return "ok\n", nil
+			}
+			return "FAIL\n", errFakeExit
+		}
+		dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_t", Status: "in_progress"}, "done")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.got.SystemPrompt != "" {
+			t.Error("LLM must not run for coded-check gate")
+		}
+		return dec
+	}
+
+	for _, ok := range []bool{true, false} {
+		name := "accept"
+		if !ok {
+			name = "reject"
+		}
+		t.Run(name, func(t *testing.T) {
+			with := run(t, mkWF(`agent=reviewer, `), ok)
+			without := run(t, mkWF(``), ok)
+			if with.Accept != without.Accept || with.Gated != without.Gated {
+				t.Fatalf("accept/gated differ: with=%+v without=%+v", with, without)
+			}
+			// Notes for functional checks include the command / output; require equal.
+			bw, err := json.Marshal(with)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bo, err := json.Marshal(without)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(bw) != string(bo) {
+				t.Fatalf("GateDecision not byte-identical:\nwith:    %s\nwithout: %s", bw, bo)
+			}
+			if ok && !with.Accept {
+				t.Fatal("want accept")
+			}
+			if !ok && with.Accept {
+				t.Fatal("want reject")
+			}
+		})
+	}
+}

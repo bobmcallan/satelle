@@ -47,9 +47,16 @@ func InertCodedCheckAgentFindings(body string, skillIsCoded SkillIsCodedCheck) (
 		return nil, false
 	}
 
-	// Nodes: scoped or otherwise, any non-empty agent= with a coded prompt skill.
+	// Nodes: scoped gates only (on= + skill). Skip performing tokens
+	// (executor/planner/coder) — same skip as ScopedReviewersSplit — so a
+	// coded-check skill mis-attached to a performing node is never stripped
+	// into a non-performing state (AC4 behaviour-neutrality).
 	for _, st := range spec.States {
-		if st.Agent == "" || st.Skill == "" {
+		if st.Agent == "" || st.Skill == "" || len(st.On) == 0 {
+			continue
+		}
+		switch st.Agent {
+		case "executor", "planner", "coder":
 			continue
 		}
 		if !skillIsCoded(st.Skill) {
@@ -130,14 +137,8 @@ func stripInertCodedAgent(line string, skillIsCoded SkillIsCodedCheck) (string, 
 		if !coded {
 			return line, false, FormatFinding{}
 		}
-		// Rewrite agent=<non-default> → agent=reviewer.
-		rewritten := agentAttrRE.ReplaceAllString(line, `agent=reviewer`)
-		// tidy if the regex left spacing odd
-		rewritten = regexp.MustCompile(`agent=reviewer\s*=`).ReplaceAllString(rewritten, "agent=reviewer")
-		if rewritten == line {
-			// Fallback: replace agent=<value> token more carefully
-			rewritten = replaceAgentAttr(line, "reviewer")
-		}
+		// Rewrite agent=<non-default> → agent=reviewer (preserves on_enter_agent=).
+		rewritten := replaceAgentAttr(line, "reviewer")
 		if rewritten == line {
 			return line, false, FormatFinding{}
 		}
@@ -153,7 +154,7 @@ func stripInertCodedAgent(line string, skillIsCoded SkillIsCodedCheck) (string, 
 		}
 	}
 
-	// Node declaration.
+	// Node declaration: only scoped on= gates (mirrors finding scope).
 	id, attrs := dotNodeDecl(t)
 	if id == "" || attrs == nil {
 		return line, false, FormatFinding{}
@@ -162,15 +163,19 @@ func stripInertCodedAgent(line string, skillIsCoded SkillIsCodedCheck) (string, 
 	if agent == "" {
 		return line, false, FormatFinding{}
 	}
+	switch agent {
+	case "executor", "planner", "coder":
+		return line, false, FormatFinding{}
+	}
+	if attrs["on"] == "" {
+		return line, false, FormatFinding{}
+	}
 	prompt := attrs["prompt"]
 	if !strings.HasPrefix(prompt, "@skill:") {
 		return line, false, FormatFinding{}
 	}
+	// Skill is the full prompt suffix (parser stores it whole; no CSV split on nodes).
 	skill := strings.TrimPrefix(prompt, "@skill:")
-	// prompt may be CSV for multi-skill nodes (rare); treat first token.
-	if i := strings.Index(skill, ","); i >= 0 {
-		skill = skill[:i]
-	}
 	skill = strings.TrimSpace(skill)
 	if skill == "" || !skillIsCoded(skill) {
 		return line, false, FormatFinding{}
@@ -186,22 +191,24 @@ func stripInertCodedAgent(line string, skillIsCoded SkillIsCodedCheck) (string, 
 	}
 }
 
-// agentAttrRE matches agent=value (quoted or bare) for rewrite-to-reviewer on edges.
-var agentAttrRE = regexp.MustCompile(`(?i)agent\s*=\s*"[^"]*"|agent\s*=\s*'[^']*'|agent\s*=\s*[A-Za-z0-9_-]+`)
+// agentAttrRE matches the agent= attribute only — not on_enter_agent= — by
+// requiring a non-identifier boundary before "agent" ([ , or whitespace).
+var agentAttrRE = regexp.MustCompile(`(?i)(^|[\[,\s])agent\s*=\s*("[^"]*"|'[^']*'|[A-Za-z0-9_-]+)`)
 
-// stripAgentAttr removes agent=… from a node/edge attribute list.
+// stripAgentAttr removes agent=… from a node/edge attribute list without
+// touching on_enter_agent=.
 func stripAgentAttr(line string) string {
-	cleaned := agentAttrRE.ReplaceAllString(line, "")
+	cleaned := agentAttrRE.ReplaceAllString(line, "$1")
 	cleaned = regexp.MustCompile(`,\s*,`).ReplaceAllString(cleaned, ",")
 	cleaned = regexp.MustCompile(`\[\s*,`).ReplaceAllString(cleaned, "[")
 	cleaned = regexp.MustCompile(`,\s*\]`).ReplaceAllString(cleaned, "]")
 	cleaned = regexp.MustCompile(`\s{2,}`).ReplaceAllString(cleaned, " ")
-	// empty attr list → drop brackets? keep [] is odd; collapse empty []
 	cleaned = regexp.MustCompile(`\[\s*\]`).ReplaceAllString(cleaned, "")
 	return cleaned
 }
 
-// replaceAgentAttr sets agent=<name> on a line that already has agent=.
+// replaceAgentAttr sets agent=<name> on a line that already has agent= (not
+// on_enter_agent=).
 func replaceAgentAttr(line, name string) string {
-	return agentAttrRE.ReplaceAllString(line, "agent="+name)
+	return agentAttrRE.ReplaceAllString(line, "${1}agent="+name)
 }
