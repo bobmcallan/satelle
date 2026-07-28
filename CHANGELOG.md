@@ -1,3 +1,11 @@
+## [0.0.341] - 2026-07-28
+
+### Added
+- `satelle-executor-deliverables` principle promoted to the embedded system default (ondemand residency): executors are told required outcome artifacts, never gate-judging criteria; clean-init discoverability covered by an integration test (sty_fd4c3466)
+
+### Changed
+- Repo-local `.satelle/principles/satelle-executor-deliverables.md` removed so the embedded default is the single source (same shape as other binary-only principles); no second copy remains to diverge (sty_fd4c3466)
+
 ## [0.0.340] - 2026-07-28
 
 ### Fixed

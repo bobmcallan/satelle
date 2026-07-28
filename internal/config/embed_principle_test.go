@@ -35,6 +35,9 @@ func TestEmbeddedOperatingPrinciples(t *testing.T) {
 		// Promoted from repo-local: workflows resolve skills by name, so the
 		// naming scheme is product-canon (sty_24365c69).
 		"satelle-skill-naming",
+		// Promoted from repo-local (sty_fd4c3466): executor owes declared
+		// outcome artifacts, never gate-judging criteria.
+		"satelle-executor-deliverables",
 	} {
 		if body, ok := embedded[name]; !ok {
 			t.Errorf("operating principle %q must be embedded, but is missing from EmbeddedDefaults()", name)
@@ -76,6 +79,21 @@ func TestEmbeddedOperatingPrinciples(t *testing.T) {
 		t.Error("satelle-residency missing tags: frontmatter line")
 	} else if strings.Contains(tagsLine, "principles:session") {
 		t.Error("satelle-residency must be ondemand after context diet (no principles:session in tags:)")
+	}
+	// Surviving pin: executor-deliverables stays ondemand (reference principle;
+	// no residency argument made for session injection at promotion).
+	edBody := embedded["satelle-executor-deliverables"]
+	edTags := ""
+	for _, line := range strings.Split(edBody, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "tags:") {
+			edTags = line
+			break
+		}
+	}
+	if edTags == "" {
+		t.Error("satelle-executor-deliverables missing tags: frontmatter line")
+	} else if strings.Contains(edTags, "principles:session") {
+		t.Error("satelle-executor-deliverables must stay ondemand (no principles:session in tags:)")
 	}
 }
 
