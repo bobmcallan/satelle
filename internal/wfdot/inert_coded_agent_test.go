@@ -146,27 +146,56 @@ digraph t {
 
 func TestStripAgentAttr_DoesNotTouchOnEnterAgent(t *testing.T) {
 	line := `  blocked [agent=reviewer, prompt="@skill:satelle-story-blocked-review", on_enter_agent=blocked-triage, on_enter_prompt="@skill:triage"]`
-	// Not a coded-check strip scenario — unit-test the regex boundary only.
 	got := stripAgentAttr(line)
 	if !strings.Contains(got, "on_enter_agent=blocked-triage") {
 		t.Fatalf("on_enter_agent must survive stripAgentAttr:\n%s", got)
 	}
-	if strings.Contains(got, "agent=reviewer") {
-		// agent=reviewer should be gone; on_enter_agent remains
-		// But wait - if agent=reviewer is stripped, the line shouldn't have bare agent=reviewer
-		// Check carefully: on_enter_agent should remain and agent=reviewer should not appear as its own attr.
-	}
-	// After strip, agent=reviewer gone, on_enter_agent stays.
 	if strings.Contains(got, "[agent=reviewer") || strings.Contains(got, ", agent=reviewer") {
 		t.Fatalf("agent=reviewer should be stripped:\n%s", got)
 	}
-	// Rewrite path
+	// Leading indent preserved (no whole-line collapse to 1 space).
+	if !strings.HasPrefix(got, "  blocked") {
+		t.Fatalf("indent should be preserved:\n%q", got)
+	}
 	rewritten := replaceAgentAttr(line, "reviewer-summary")
 	if !strings.Contains(rewritten, "on_enter_agent=blocked-triage") {
 		t.Fatalf("on_enter_agent must survive replaceAgentAttr:\n%s", rewritten)
 	}
 	if !strings.Contains(rewritten, "agent=reviewer-summary") {
 		t.Fatalf("agent should rewrite to reviewer-summary:\n%s", rewritten)
+	}
+}
+
+func TestInertCodedCheckAgent_MixedEdgeUntouched(t *testing.T) {
+	// Mixed coded+LLM edge with non-default agent=: agent= is LIVE for the LLM
+	// skill — finding and refresh must leave it alone (every-not-any).
+	body := "---\nname: t\n---\n" + "```dot" + `
+digraph t {
+  graph [goal="g", vars="v"]
+  rankdir=LR
+  backlog [shape=Mdiamond]
+  in_progress [agent=executor, prompt="@skill:code"]
+  done [shape=Msquare]
+  backlog -> in_progress [agent=reviewer-deep, prompt="@skill:coded-a,llm-b"]
+  in_progress -> done
+}
+` + "```\n"
+	isCoded := func(skill string) bool { return skill == "coded-a" }
+	fs, ok := InertCodedCheckAgentFindings(body, isCoded)
+	if !ok {
+		t.Fatal("parse")
+	}
+	for _, f := range fs {
+		if strings.Contains(f.Where, "->") {
+			t.Fatalf("mixed edge must not fire: %+v", f)
+		}
+	}
+	out, changed, _ := Refresh(body, nil, isCoded)
+	if changed && strings.Contains(out, "agent=reviewer,") && !strings.Contains(out, "agent=reviewer-deep") {
+		t.Fatalf("refresh must not rewrite mixed edge agent=:\n%s", out)
+	}
+	if !strings.Contains(out, "agent=reviewer-deep") {
+		t.Fatalf("mixed edge agent=reviewer-deep must remain:\n%s", out)
 	}
 }
 

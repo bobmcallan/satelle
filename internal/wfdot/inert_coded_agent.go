@@ -73,6 +73,8 @@ func InertCodedCheckAgentFindings(body string, skillIsCoded SkillIsCodedCheck) (
 	}
 
 	// Edges: only non-default agent= is lag; agent=reviewer is parse bookkeeping.
+	// Every skill on the edge must be coded (every-not-any): a mixed CSV still
+	// dispatches the LLM path, so its agent= is live and must not be rewritten.
 	for _, tr := range spec.Transitions {
 		if tr.Agent == "" || tr.Agent == "reviewer" {
 			continue
@@ -81,13 +83,17 @@ func InertCodedCheckAgentFindings(body string, skillIsCoded SkillIsCodedCheck) (
 		if len(skills) == 0 && tr.Skill != "" {
 			skills = []string{tr.Skill}
 		}
-		var coded []string
+		if len(skills) == 0 {
+			continue
+		}
+		allCoded := true
 		for _, s := range skills {
-			if skillIsCoded(s) {
-				coded = append(coded, s)
+			if !skillIsCoded(s) {
+				allCoded = false
+				break
 			}
 		}
-		if len(coded) == 0 {
+		if !allCoded {
 			continue
 		}
 		where := tr.From + "->" + tr.To
@@ -95,8 +101,8 @@ func InertCodedCheckAgentFindings(body string, skillIsCoded SkillIsCodedCheck) (
 			Kind:  InertCodedCheckAgentKind,
 			Where: where,
 			Detail: fmt.Sprintf(
-				"edge %s carries non-default agent=%s but skill(s) %v are coded checks; use agent=reviewer (parse bookkeeping only) or keep agent=reviewer — refresh rewrites non-default agent to reviewer",
-				where, tr.Agent, coded,
+				"edge %s carries non-default agent=%s but all skill(s) %v are coded checks; use agent=reviewer (parse bookkeeping only) — refresh rewrites non-default agent to reviewer",
+				where, tr.Agent, skills,
 			),
 		})
 	}
@@ -127,14 +133,17 @@ func stripInertCodedAgent(line string, skillIsCoded SkillIsCodedCheck) (string, 
 			return line, false, FormatFinding{}
 		}
 		skills := splitCSVSkills(prompt)
-		coded := false
+		if len(skills) == 0 {
+			return line, false, FormatFinding{}
+		}
+		allCoded := true
 		for _, s := range skills {
-			if skillIsCoded(s) {
-				coded = true
+			if !skillIsCoded(s) {
+				allCoded = false
 				break
 			}
 		}
-		if !coded {
+		if !allCoded {
 			return line, false, FormatFinding{}
 		}
 		// Rewrite agent=<non-default> → agent=reviewer (preserves on_enter_agent=).
@@ -196,13 +205,21 @@ func stripInertCodedAgent(line string, skillIsCoded SkillIsCodedCheck) (string, 
 var agentAttrRE = regexp.MustCompile(`(?i)(^|[\[,\s])agent\s*=\s*("[^"]*"|'[^']*'|[A-Za-z0-9_-]+)`)
 
 // stripAgentAttr removes agent=… from a node/edge attribute list without
-// touching on_enter_agent=.
+// touching on_enter_agent=. Tidies only around the removal site (no whole-line
+// indent collapse).
 func stripAgentAttr(line string) string {
-	cleaned := agentAttrRE.ReplaceAllString(line, "$1")
+	cleaned := agentAttrRE.ReplaceAllStringFunc(line, func(m string) string {
+		// Keep the leading boundary (group 1) so "[agent=x," → "[" and ", agent=x" → ",".
+		sub := agentAttrRE.FindStringSubmatch(m)
+		if len(sub) >= 2 {
+			return sub[1]
+		}
+		return ""
+	})
 	cleaned = regexp.MustCompile(`,\s*,`).ReplaceAllString(cleaned, ",")
 	cleaned = regexp.MustCompile(`\[\s*,`).ReplaceAllString(cleaned, "[")
 	cleaned = regexp.MustCompile(`,\s*\]`).ReplaceAllString(cleaned, "]")
-	cleaned = regexp.MustCompile(`\s{2,}`).ReplaceAllString(cleaned, " ")
+	cleaned = regexp.MustCompile(`\[\s+`).ReplaceAllString(cleaned, "[")
 	cleaned = regexp.MustCompile(`\[\s*\]`).ReplaceAllString(cleaned, "")
 	return cleaned
 }

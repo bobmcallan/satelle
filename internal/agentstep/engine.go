@@ -1905,12 +1905,6 @@ func skillCheck(body string) string {
 	return structure.CheckCommand(body)
 }
 
-// bodyCheckBlock extracts the first ```check fence via structure.CheckFence
-// (kept for any residual callers; prefer structure.CheckCommand).
-func bodyCheckBlock(body string) string {
-	return structure.CheckFence(body)
-}
-
 // frontmatterScalar returns a single-line scalar value for key from a markdown
 // frontmatter block (quotes trimmed), or "" when absent. Used to read a gate's
 // `check:` command.
