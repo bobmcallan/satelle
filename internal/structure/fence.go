@@ -31,3 +31,24 @@ func CheckFence(body string) string {
 	}
 	return strings.TrimSpace(strings.Join(out, "\n"))
 }
+
+// CheckCommand returns the functional-check command for a skill body: the
+// fenced ```check script when present, else a single-line `check:` frontmatter
+// scalar. Empty when the skill is an LLM reviewer. Single definition the engine
+// (agentstep.skillCheck) and format-drift/refresh share (sty_4cebc624 /
+// sty_6830e78e).
+func CheckCommand(body string) string {
+	if block := CheckFence(body); block != "" {
+		return block
+	}
+	fm, _, ok := splitFM(body)
+	if !ok {
+		return ""
+	}
+	return fmScalar(fm, "check")
+}
+
+// IsCodedCheck reports whether a skill body is a functional-check skill.
+func IsCodedCheck(body string) bool {
+	return CheckCommand(body) != ""
+}

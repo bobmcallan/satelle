@@ -159,7 +159,7 @@ func TestFormatDrift_LegacyModel(t *testing.T) {
 
 func TestRefresh_StripsModel(t *testing.T) {
 	body := "---\nname: w\n---\n```dot\ndigraph w {\n  rankdir=LR\n  graph [goal=\"g\", vars=\"v\"]\n  a -> b [agent=reviewer, prompt=\"@skill:x\", model=\"opus\"]\n}\n```\n"
-	out, changed, rep := Refresh(body, nil)
+	out, changed, rep := Refresh(body, nil, nil)
 	if !changed {
 		t.Fatal("expected change")
 	}
@@ -167,7 +167,7 @@ func TestRefresh_StripsModel(t *testing.T) {
 		t.Fatalf("model= remains:\n%s", out)
 	}
 	// idempotent
-	out2, changed2, _ := Refresh(out, nil)
+	out2, changed2, _ := Refresh(out, nil, nil)
 	if changed2 {
 		t.Fatalf("second refresh should be no-op:\n%s", out2)
 	}

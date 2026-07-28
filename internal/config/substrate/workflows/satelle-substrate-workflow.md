@@ -57,7 +57,8 @@ digraph satelle_substrate_workflow {
 
  // The one gate: a DETERMINISTIC functional check on the close — the story's
  // change set must be substrate-only (no code); no commit required.
- subcheck [agent=reviewer, prompt="@skill:satelle-substrate-only-check", on="done"]
+ // Coded ```check: no agent= (engine returns before gateBinding; satelle-dot-standard).
+ subcheck [prompt="@skill:satelle-substrate-only-check", on="done"]
 
  backlog -> in_progress
  in_progress -> done // gated by subcheck (on="done"): substrate-only slice

@@ -54,16 +54,16 @@ ships no `code` skill.) Reviewer nodes name their gate the same way
 
 ## A step names an AGENT
 
-A gated edge or reviewer node may name the binding that runs it:
+A gated edge or LLM reviewer node may name the binding that runs it:
 
 ```dot
 release -> done [agent=reviewer-deep, prompt="@skill:satelle-story-release-review"]
 ```
 
-Omitted (or `agent=reviewer`), the gate uses the `[reviewer]` binding. The agents
-layer (`.satelle/agents.toml`) owns harness, tools, model, and effort — the
-workflow owns *who*, never *how*. To review a step on a different model, define a
-second `role = "reviewer"` binding and allocate it by name:
+Omitted (or `agent=reviewer`), an **LLM** gate uses the `[reviewer]` binding. The
+agents layer (`.satelle/agents.toml`) owns harness, tools, model, and effort —
+the workflow owns *who*, never *how*. To review a step on a different model,
+define a second `role = "reviewer"` binding and allocate it by name:
 
 ```toml
 [reviewer-deep]
@@ -75,6 +75,41 @@ model   = "opus"
 
 Legacy `model=` on a node or edge is accepted with a warning for one release and
 stripped by `satelle workflow refresh`. It is not written by the emitter.
+
+## Coded-check gates name no agent
+
+A skill whose body carries a coded `check` fence (triple-backtick fence labelled
+`check`, or a single-line `check:` in frontmatter) is a **functional check**: the
+script *is* the decision. The engine runs it and returns **before** `gateBinding`
+(`internal/agentstep/engine.go`) — no binding lookup, tools grant, role check, or
+agent process. Naming `agent=` on that path is inert and misleading (it reads as
+a deliberate dispatch that never happens).
+
+**Convention (omit):** a coded-check **scoped node** (`on=…`) names **no**
+`agent=`:
+
+```dot
+estimate [prompt="@skill:satelle-estimate-actual-review", on="in_progress,done"]
+```
+
+Then every `agent=` on a gate means a real LLM dispatch, readable at a glance.
+
+**Edge exception:** a gate *edge* still needs `agent=` for the parser to treat
+`prompt="@skill:…"` as a gate (`attrs["agent"] != ""` is required in
+`internal/wfdot`). Use the default `agent=reviewer` only — never a non-default
+binding (there is nothing for a cheaper model binding to do). The attribute is
+parse bookkeeping, not a resolved dispatch, when the skill is a coded check.
+
+**LLM degradation:** if a node later stops being a coded check, an omitted
+`agent=` degrades to `[reviewer]` via `gateBinding("")` rather than erroring. An
+agent-less scoped `on=` node is not performing (`IsPerforming` is false for
+`Agent == ""`), not an augmentation, and does not enter `PerformingStates()`.
+
+**Shipped defaults are aligned** with this convention (coded-check scoped nodes
+omit `agent=`; coded-check edges keep default `agent=reviewer` only). An existing
+repo that still carries the old shape discovers it via `satelle workflow
+format-drift` (`inert_coded_check_agent`) and removes it with `satelle workflow
+refresh` (consultative; `--apply` required).
 
 
 ## Step-level `applies_to` on scoped reviewer nodes

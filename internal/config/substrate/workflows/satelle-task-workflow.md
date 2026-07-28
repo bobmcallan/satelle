@@ -49,6 +49,9 @@ digraph satelle_task_workflow {
  done [shape=Msquare]
  cancelled [shape=Msquare]
 
+ // before-review is a coded check; edge form still needs agent= to parse as a
+ // gate (wfdot: attrs["agent"] != ""). Default reviewer only (satelle-dot-standard
+ // coded-check edge exception). after-review is LLM.
  backlog -> in_progress [agent=reviewer, prompt="@skill:satelle-task-validate-before-review"]
  in_progress -> done [agent=reviewer, prompt="@skill:satelle-task-validate-after-review"]
 

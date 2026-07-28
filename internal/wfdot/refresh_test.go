@@ -38,7 +38,7 @@ guardrails:
 	out, changed, report := Refresh(body, map[string]string{
 		"in_progress": "code",
 		"integration": "integrate",
-	})
+	}, nil)
 	if !changed {
 		t.Fatal("expected changes on legacy fixture")
 	}
@@ -92,7 +92,7 @@ digraph w {
 }
 ` + "```" + `
 `
-	out, changed, report := Refresh(body, nil)
+	out, changed, report := Refresh(body, nil, nil)
 	if changed {
 		t.Fatalf("canonical body must be no-op, got:\n%s", out)
 	}
@@ -120,7 +120,7 @@ digraph w {
 }
 ` + "```" + `
 `
-	out, changed, report := Refresh(body, nil)
+	out, changed, report := Refresh(body, nil, nil)
 	if !changed {
 		t.Fatal("legacy edge should still rewrite without prompt map")
 	}

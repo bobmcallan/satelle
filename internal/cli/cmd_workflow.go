@@ -18,6 +18,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/agentstep"
+	"github.com/bobmcallan/satelle/internal/app"
+	"github.com/bobmcallan/satelle/internal/structure"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 )
 
@@ -89,13 +91,18 @@ default. The head of the list is the active workflow the reviewer enforces.`,
 	// format-drift is advisory (exit 0 when the workflow parses) — format lag
 	// still runs; detection is for the operator / satelle-workflow-drift skill
 	// (sty_2c0c8599), not a hard engage gate.
+	// sty_4cebc624: also reports inert agent= on coded-check gates. Skill-body
+	// resolution lives HERE (CLI edge), not in wfdot — FormatDrift stays pure
+	// graph lint; InertCodedCheckAgentFindings takes a skillIsCoded predicate.
 	formatDrift := &cobra.Command{
 		Use:   "format-drift [name]",
 		Short: "Report format drift vs the canonical latest workflow DOT form (advisory)",
 		Long: `format-drift runs the deterministic format lint (wfdot.FormatDrift) against
-one or every on-disk workflow. Findings are FORMAT lag only (legacy reviewer_skill=
-edge gates, prompt-less performing nodes, missing graph goal/vars/rankdir) —
-distinct from binding-drift (workflow ↔ agents.toml). Repo-specific topology is
+one or every on-disk workflow, plus inert agent= on coded-check gates
+(sty_4cebc624). Findings are FORMAT lag only (legacy reviewer_skill= edge gates,
+prompt-less performing nodes, missing graph goal/vars/rankdir, inert coded-check
+agent=) — distinct from binding-drift (workflow ↔ agents.toml). Skill bodies are
+resolved at this CLI edge (wfdot stays stdlib-only). Repo-specific topology is
 never reported. Exit 0 when the body parses; non-zero only if a named workflow
 is missing. See the satelle-dot-standard principle and the satelle-workflow-drift skill.`,
 		Args:        cobra.MaximumNArgs(1),
@@ -112,8 +119,9 @@ is missing. See the satelle-dot-standard principle and the satelle-workflow-drif
 		Short: "Update a workflow DOT to the canonical latest format (consultative)",
 		Long: `refresh rewrites a named workflow's fenced DOT toward the canonical latest
 form (node-consistent edge gates, optional performing-node prompts via --prompt,
-missing rankdir/graph attrs). Topology, on= reviewers, comments, and guardrails
-prose are preserved — only format lag is patched.
+missing rankdir/graph attrs, strip inert agent= on coded-check gates). Topology,
+on= reviewers, comments, and guardrails prose are preserved — only format lag is
+patched. Never rewrites authored substrate without --apply (consultative).
 
 Default is a DRY RUN: print a line diff and the applied/gap report; write nothing.
 Pass --apply to write the file after you review the diff. Re-running on an
@@ -167,9 +175,12 @@ func runWorkflowFormatDrift(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	isCoded := skillIsCodedCheck(a)
 	totalFindings := 0
 	for _, d := range docs {
-		fs, ok := wfdot.FormatDrift(d.Body)
+		// FormatDriftWithSkills folds pure-graph lint + inert coded-check agent=
+		// so a caller cannot get format-drift without the new finding (sty_4cebc624).
+		fs, ok := wfdot.FormatDriftWithSkills(d.Body, isCoded)
 		if !ok {
 			fmt.Fprintf(out, "SKIP  workflows/%s — no parseable ```dot block\n", d.Name)
 			continue
@@ -186,6 +197,24 @@ func runWorkflowFormatDrift(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(out, "\nformat-drift: %d workflow(s), %d finding(s) (advisory)\n", len(docs), totalFindings)
 	return nil
+}
+
+// skillIsCodedCheck returns a predicate that resolves a skill body from the
+// docindex and reports whether it is a functional-check skill
+// (structure.IsCodedCheck). Widens the existence-only skillResolver seam
+// (app.go) for format-drift / refresh without importing docindex into wfdot.
+func skillIsCodedCheck(a *app.App) wfdot.SkillIsCodedCheck {
+	if a == nil || a.Store == nil || a.Store.DocIndex == nil {
+		return nil
+	}
+	idx := a.Store.DocIndex
+	return func(skill string) bool {
+		d, err := idx.Get(context.Background(), "skills", skill)
+		if err != nil {
+			return false
+		}
+		return structure.IsCodedCheck(d.Body)
+	}
 }
 
 // runWorkflowRefresh implements `satelle workflow refresh <name> [--apply] [--prompt node=skill]`.
@@ -210,7 +239,7 @@ func runWorkflowRefresh(cmd *cobra.Command, name string, apply bool, promptFlags
 		prompts[k] = v
 	}
 
-	newBody, changed, report := wfdot.Refresh(d.Body, prompts)
+	newBody, changed, report := wfdot.Refresh(d.Body, prompts, skillIsCodedCheck(a))
 	if !changed {
 		fmt.Fprintf(out, "workflows/%s — already canonical, no changes\n", name)
 		for _, g := range report.Gaps {

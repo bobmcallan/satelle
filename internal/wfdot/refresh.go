@@ -18,21 +18,26 @@ type RefreshReport struct {
 // Topology, on= reviewers, comments, guardrails, and prose outside the touched
 // attributes are preserved byte-for-byte.
 //
-// Auto-applied (deterministic, skill-neutral):
+// Auto-applied (deterministic, skill-neutral unless skillIsCoded is set):
 //   - edge reviewer_skill="…" → [agent=reviewer, prompt="@skill:…"]
 //   - missing rankdir=LR
 //   - missing graph [goal/vars] (TODO placeholders when absent)
+//   - inert agent= on coded-check gates when skillIsCoded is non-nil (sty_4cebc624)
 //
 // Operator-supplied: prompts maps node name → skill name for prompt-less
 // performing nodes. Unmapped promptless performing nodes stay as Gaps.
+// skillIsCoded is supplied by the CLI from skill bodies; nil skips the
+// inert-agent strip (keeps Refresh skill-neutral for unit tests that only
+// exercise graph rewrites).
 //
 // Idempotent: already-canonical input yields changed=false and empty Applied.
-func Refresh(body string, prompts map[string]string) (newBody string, changed bool, report RefreshReport) {
+// Consultative: callers write only when the operator passes --apply.
+func Refresh(body string, prompts map[string]string, skillIsCoded SkillIsCodedCheck) (newBody string, changed bool, report RefreshReport) {
 	block := dotBlock(body)
 	if block == "" {
 		return body, false, report
 	}
-	newBlock, applied, gaps := refreshDOTBlock(block, prompts)
+	newBlock, applied, gaps := refreshDOTBlock(block, prompts, skillIsCoded)
 	report.Applied = applied
 	report.Gaps = gaps
 	if newBlock == block {
@@ -46,7 +51,7 @@ func Refresh(body string, prompts map[string]string) (newBody string, changed bo
 }
 
 // refreshDOTBlock rewrites the interior of a digraph (no fences).
-func refreshDOTBlock(block string, prompts map[string]string) (string, []FormatFinding, []FormatFinding) {
+func refreshDOTBlock(block string, prompts map[string]string, skillIsCoded SkillIsCodedCheck) (string, []FormatFinding, []FormatFinding) {
 	var applied, gaps []FormatFinding
 	stmts := dotStatements(block)
 	// Rebuild from original block lines carefully: we rewrite statement text
@@ -116,13 +121,22 @@ func refreshDOTBlock(block string, prompts map[string]string) (string, []FormatF
 		}
 
 		// Edge with legacy reviewer_skill=
+		cur := ln
 		if strings.Contains(t, "->") && strings.Contains(t, "reviewer_skill") {
-			rewritten, ok, finding := rewriteLegacyEdge(ln)
+			rewritten, ok, finding := rewriteLegacyEdge(cur)
 			if ok {
-				out = append(out, rewritten)
+				cur = rewritten
 				applied = append(applied, finding)
-				continue
+				t = strings.TrimSpace(cur)
 			}
+		}
+
+		// Inert agent= on coded-check gates (sty_4cebc624) — after legacy rewrite
+		// so the node-consistent form is what we inspect.
+		if stripped, ok, finding := stripInertCodedAgent(cur, skillIsCoded); ok {
+			cur = stripped
+			applied = append(applied, finding)
+			t = strings.TrimSpace(cur)
 		}
 
 		// Performing node without prompt — apply --prompt mapping if present.
@@ -131,7 +145,7 @@ func refreshDOTBlock(block string, prompts map[string]string) (string, []FormatF
 			prompt := attrs["prompt"]
 			if agent != "" && agent != "reviewer" && !strings.HasPrefix(prompt, "@skill:") {
 				if skill, ok := prompts[id]; ok && skill != "" {
-					rewritten := addNodePrompt(ln, id, skill)
+					rewritten := addNodePrompt(cur, id, skill)
 					out = append(out, rewritten)
 					applied = append(applied, FormatFinding{
 						Kind: "performing_prompt", Where: id,
@@ -149,7 +163,7 @@ func refreshDOTBlock(block string, prompts map[string]string) (string, []FormatF
 
 		// Strip superseded model= (sty_a476a2f8) from any statement that carries it.
 		if strings.Contains(t, "model=") {
-			stripped, ok, finding := stripModelAttr(ln)
+			stripped, ok, finding := stripModelAttr(cur)
 			if ok {
 				out = append(out, stripped)
 				applied = append(applied, finding)
@@ -157,7 +171,7 @@ func refreshDOTBlock(block string, prompts map[string]string) (string, []FormatF
 			}
 		}
 
-		out = append(out, ln)
+		out = append(out, cur)
 	}
 	_ = stmts // reserved for future multi-line statement rewrites
 	return strings.Join(out, "\n"), applied, gaps

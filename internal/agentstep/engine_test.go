@@ -3136,3 +3136,22 @@ func TestDispatchRefusesReviewerRoleOnPerformingNode(t *testing.T) {
 	}
 	_ = called
 }
+
+// TestGateBindingEmptyDegradesToReviewer pins sty_4cebc624 AC4: an omitted
+// agent= on a gate (Agent == "") resolves to [reviewer] rather than erroring.
+func TestGateBindingEmptyDegradesToReviewer(t *testing.T) {
+	g := New(&fakeRunner{}, fakeDocs{}, "/repo", "opus")
+	g.reviewerBinding = config.AgentBinding{Command: "claude", Model: "opus"}
+	for _, sec := range []string{"", "reviewer", "  "} {
+		b, name, err := g.gateBinding(sec)
+		if err != nil {
+			t.Fatalf("gateBinding(%q) err: %v", sec, err)
+		}
+		if name != "reviewer" {
+			t.Errorf("gateBinding(%q) name=%q, want reviewer", sec, name)
+		}
+		if b.Model != "opus" {
+			t.Errorf("gateBinding(%q) model=%q, want opus", sec, b.Model)
+		}
+	}
+}

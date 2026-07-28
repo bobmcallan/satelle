@@ -1898,20 +1898,15 @@ func (g *Engine) runCheck(ctx context.Context, skill, command, payload string) v
 }
 
 // skillCheck returns a functional-check skill's command — the SELF-CONTAINED
-// check carried inside the skill artifact. It prefers an embedded fenced
-// ```check script block in the body (a multi-line, self-contained script), and
-// falls back to a single-line `check:` in frontmatter. Empty when the skill
-// carries no check (an LLM reviewer). A reviewer never references an external
-// file — see the satelle-reviewer-self-contained principle.
+// check carried inside the skill artifact. Delegates to structure.CheckCommand
+// (single definition shared with format-drift / refresh — sty_4cebc624 /
+// sty_6830e78e). Empty when the skill carries no check (an LLM reviewer).
 func skillCheck(body string) string {
-	if block := bodyCheckBlock(body); block != "" {
-		return block
-	}
-	return frontmatterScalar(body, "check")
+	return structure.CheckCommand(body)
 }
 
 // bodyCheckBlock extracts the first ```check fence via structure.CheckFence
-// (single extractor — sty_6830e78e).
+// (kept for any residual callers; prefer structure.CheckCommand).
 func bodyCheckBlock(body string) string {
 	return structure.CheckFence(body)
 }

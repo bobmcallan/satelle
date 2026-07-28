@@ -9,7 +9,8 @@ import (
 // canonical latest workflow DOT form (satelle-dot-standard / sty_ccf41efa).
 // Distinct from binding-drift (workflow ↔ agents.toml).
 type FormatFinding struct {
-	// Kind classifies the lag: legacy_edge_gate | promptless_performing | missing_graph_attr.
+	// Kind classifies the lag: legacy_edge_gate | legacy_model_attr |
+	// promptless_performing | missing_graph_attr | inert_coded_check_agent.
 	Kind string
 	// Where names the node, edge (from->to), or "graph".
 	Where string
@@ -18,12 +19,23 @@ type FormatFinding struct {
 }
 
 // FormatDrift reports format lag of a workflow body against the canonical latest
-// form. It is DETERMINISTIC (source DOT scan + parsed Spec) — not prose guesswork.
-// ok is false when the body has no parseable ```dot block (inline-YAML is itself
-// legacy input; callers may treat that separately). Empty findings mean no format
-// drift. Repo-specific topology (extra states, recovery edges, on= reviewers) is
-// never reported as format drift.
+// form. Equivalent to FormatDriftWithSkills(body, nil) — skill-body-aware
+// findings (inert_coded_check_agent) are skipped without a predicate.
 func FormatDrift(body string) (findings []FormatFinding, ok bool) {
+	return FormatDriftWithSkills(body, nil)
+}
+
+// FormatDriftWithSkills is FormatDrift plus inert agent= on coded-check gates
+// when skillIsCoded is non-nil (sty_4cebc624). The CLI supplies the predicate
+// from skill bodies so wfdot stays stdlib-only. nil predicate skips that check
+// (back-compat for pure graph lint).
+//
+// It is DETERMINISTIC (source DOT scan + parsed Spec + optional skill predicate)
+// — not prose guesswork. ok is false when the body has no parseable ```dot block
+// (inline-YAML is itself legacy input; callers may treat that separately). Empty
+// findings mean no format drift. Repo-specific topology (extra states, recovery
+// edges, on= reviewers) is never reported as format drift.
+func FormatDriftWithSkills(body string, skillIsCoded SkillIsCodedCheck) (findings []FormatFinding, ok bool) {
 	block := dotBlock(body)
 	if block == "" {
 		return nil, false
@@ -161,6 +173,14 @@ func FormatDrift(body string) (findings []FormatFinding, ok bool) {
 			Where:  "graph",
 			Detail: "graph is missing rankdir=LR; canonical form sets rankdir=LR",
 		})
+	}
+
+	// 4. Inert agent= on coded-check gates (sty_4cebc624). Appended last so
+	// pure-graph findings stay stable when skillIsCoded is nil.
+	if skillIsCoded != nil {
+		if inert, iok := InertCodedCheckAgentFindings(body, skillIsCoded); iok {
+			findings = append(findings, inert...)
+		}
 	}
 
 	return findings, true

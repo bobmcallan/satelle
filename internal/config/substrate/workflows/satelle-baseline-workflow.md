@@ -36,7 +36,8 @@ digraph satelle_baseline {
  // workflow itself declares the always-on plan-estimate/actual gate, so the DOT is
  // the sole gating authority — no skill tag injects an undeclared gate.
  // Advisory where the skill is absent (a fresh repo); enforced where present.
- estimate [agent=reviewer, prompt="@skill:satelle-estimate-actual-review", on="in_progress,done"]
+ // Coded ```check: no agent= (engine returns before gateBinding; satelle-dot-standard).
+ estimate [prompt="@skill:satelle-estimate-actual-review", on="in_progress,done"]
 
  backlog -> in_progress [agent=reviewer, prompt="@skill:satelle-story-intent-review"]
  // Implementation exit: CSV edge reviewers (edge-wins — node's done prompt is
