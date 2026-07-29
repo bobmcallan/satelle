@@ -1564,10 +1564,8 @@ func TestDispatchPayloadCarriesIdNotDocuments(t *testing.T) {
 	}
 }
 
-// streamingFakeRunner writes each of lines to req.Sink DURING Run, standing in
-// for a real subprocess that streams incremental output — so a test can assert
-// DispatchExecutor wired a live sink into the Request without spawning a real
-// agent CLI (sty_0aa67b7f).
+// streamingFakeRunner emits normalized events DURING Run, standing in for a real
+// subprocess that streams incremental output.
 type streamingFakeRunner struct {
 	lines []string
 	got   agentcli.Request
@@ -1578,18 +1576,14 @@ func (s *streamingFakeRunner) Command() string { return "streaming-fake" }
 func (s *streamingFakeRunner) Run(_ context.Context, req agentcli.Request) ([]byte, error) {
 	s.got = req
 	for _, l := range s.lines {
-		if req.Sink != nil {
-			_, _ = req.Sink.Write([]byte(l))
+		if req.OnEvent != nil {
+			req.OnEvent(agentcli.Event{Kind: agentcli.EventMessage, Text: l})
 		}
 	}
 	return []byte("ok"), nil
 }
 
-// TestDispatchExecutorWiresLiveSink pins AC1/AC3: when a log dir is configured,
-// DispatchExecutor opens a per-dispatch live log file and passes it through as
-// req.Sink, so the runner can stream incremental output to it AS THE RUN
-// PROCEEDS — verified here by writing through the sink mid-Run and reading the
-// file back once the (closed) dispatch returns.
+// TestDispatchExecutorWiresLiveSink pins normalized event logging.
 func TestDispatchExecutorWiresLiveSink(t *testing.T) {
 	dir := t.TempDir()
 	docs := fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true}
@@ -1605,8 +1599,11 @@ func TestDispatchExecutorWiresLiveSink(t *testing.T) {
 		workitem.Item{ID: "sty_1", Status: "backlog"}, "plan"); err != nil {
 		t.Fatal(err)
 	}
-	if r.got.Sink == nil {
-		t.Fatal("DispatchExecutor did not pass a Sink through to the runner's Request")
+	if r.got.OnEvent == nil {
+		t.Fatal("DispatchExecutor did not pass an OnEvent handler through to the runner's Request")
+	}
+	if r.got.Sink != nil {
+		t.Fatal("raw Sink should be disabled unless SATELLE_AGENT_TRACE_RAW is opted in")
 	}
 	matches, err := filepath.Glob(filepath.Join(dir, "dispatch", "dispatch-*.log"))
 	if err != nil || len(matches) != 1 {
@@ -1616,8 +1613,33 @@ func TestDispatchExecutorWiresLiveSink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "first line") || !strings.Contains(string(data), "second line") {
+	if !strings.Contains(string(data), "\tmessage\tfirst line") || !strings.Contains(string(data), "\tmessage\tsecond line") {
 		t.Errorf("dispatch log missing streamed lines: %q", data)
+	}
+}
+
+func TestDispatchExecutorRawTraceRequiresOptIn(t *testing.T) {
+	t.Setenv("SATELLE_AGENT_TRACE_RAW", "1")
+	dir := t.TempDir()
+	docs := fakeDocs{workflow: dispatchWF, skillBody: "rubric", skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	g.SetLogDir(dir, logfile.Config{})
+	r := &streamingFakeRunner{lines: []string{"normalized"}}
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Bash(satelle:*)"}, true
+	})
+	g.newRunner = func(string, string) (agentcli.Runner, error) { return r, nil }
+
+	if _, err := g.DispatchExecutor(context.Background(),
+		workitem.Item{ID: "sty_raw", Status: "backlog"}, "plan"); err != nil {
+		t.Fatal(err)
+	}
+	if r.got.Sink == nil {
+		t.Fatal("raw Sink should be present after explicit opt-in")
+	}
+	matches, err := filepath.Glob(filepath.Join(dir, "dispatch", "dispatch-*-raw.log"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("expected one opt-in raw log, got %v (err %v)", matches, err)
 	}
 }
 

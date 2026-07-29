@@ -8,6 +8,8 @@
 package tests
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -107,6 +109,9 @@ func TestDispatchStreamsLiveOutputBeforeExit(t *testing.T) {
 	cmd := exec.Command(testBin, "story", "set", id, "--status", "plan")
 	cmd.Dir = repo
 	cmd.Env = isolatedEnv(t)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -131,6 +136,12 @@ func TestDispatchStreamsLiveOutputBeforeExit(t *testing.T) {
 	if !sawPartial {
 		t.Error("expected to observe the first streamed line on the live log file before the dispatch finished")
 	}
+	if !json.Valid(stdout.Bytes()) {
+		t.Fatalf("structured stdout was corrupted by progress:\n%s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "agent architect") {
+		t.Fatalf("interactive stderr missing normalized progress:\n%s", stderr.String())
+	}
 
 	// AC2: the final structured result still parsed — the transition enacted.
 	got := mustRun(t, testBin, repo, "story", "get", id)
@@ -147,6 +158,9 @@ func TestDispatchStreamsLiveOutputBeforeExit(t *testing.T) {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("dispatch log missing %q:\n%s", want, data)
 		}
+	}
+	if !strings.Contains(string(data), "\tmessage\t") || !strings.Contains(string(data), "\tcompleted\t") {
+		t.Errorf("dispatch log is not normalized event output:\n%s", data)
 	}
 }
 

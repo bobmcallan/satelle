@@ -423,6 +423,53 @@ func TestACPCapture_ExcludesThoughtChunks(t *testing.T) {
 	}
 }
 
+func TestACPEmitsNormalizedEventsAndFiltersThoughtsFromRawTrace(t *testing.T) {
+	extra := `
+        send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_test","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"SECRET_REASONING"}}}})
+        send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_test","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Working"}}}})
+        send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_test","update":{"sessionUpdate":"tool_call","toolCallId":"c1","title":"read_file","kind":"read"}}})
+        send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_test","update":{"sessionUpdate":"tool_call_update","toolCallId":"c1","status":"completed"}}})
+`
+	peer := writeFakeACPPeer(t, extra)
+	r, err := RunnerFromBinding(InterfaceACP, peer+" stdio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw bytes.Buffer
+	var events []Event
+	_, err = r.Run(context.Background(), Request{
+		SystemPrompt: "x",
+		Payload:      "{}",
+		Sink:         &raw,
+		OnEvent:      func(ev Event) { events = append(events, ev) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw.String(), "SECRET_REASONING") {
+		t.Fatalf("thought leaked into raw trace: %s", raw.String())
+	}
+	var kinds []EventKind
+	for _, ev := range events {
+		kinds = append(kinds, ev.Kind)
+		if strings.Contains(ev.Text, "SECRET_REASONING") {
+			t.Fatalf("thought leaked into normalized event: %#v", ev)
+		}
+	}
+	for _, want := range []EventKind{EventStart, EventMessage, EventToolStart, EventToolEnd, EventCompleted} {
+		found := false
+		for _, got := range kinds {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("missing %s in %v", want, kinds)
+		}
+	}
+}
+
 // TestACPCapture_InterleavedToolFenced (AC8 fenced limb): the solidsafe-shaped
 // pattern — narration, tool fence, answer — keeps only the answer.
 func TestACPCapture_InterleavedToolFenced(t *testing.T) {

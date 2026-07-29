@@ -1,3 +1,13 @@
+## [0.0.350] - 2026-07-30
+
+### Added
+- Provider-neutral progressive execution events now cover lifecycle, heartbeats, safe messages, tool activity, artifact candidates, usage, completion, and failure across command and ACP agents (sty_f926256c)
+- Named dispatches now write normalized live diagnostics, with an explicit opt-in raw transport trace that filters hidden reasoning and redacts credential-shaped values (sty_f926256c)
+
+### Changed
+- Interactive isolated-agent progress and silence-aware heartbeats now stream on stderr while structured stdout and the authoritative final agent response remain unchanged (sty_f926256c)
+- Agent-dispatch help documents normalized diagnostics and the `SATELLE_AGENT_TRACE_RAW` troubleshooting opt-in (sty_f926256c)
+
 ## [0.0.349] - 2026-07-30
 
 ### Fixed

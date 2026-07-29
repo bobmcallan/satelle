@@ -70,6 +70,8 @@ func acpEffortArgvSupported(binary string, args []string) bool {
 }
 
 func (a acpRunner) Run(ctx context.Context, req Request) ([]byte, error) {
+	onEvent, stopEvents := eventStream(req)
+	defer stopEvents()
 	args := append([]string(nil), a.args...)
 	// Inject --reasoning-effort into spawn ONLY for Grok-shaped ACP peers
 	// (sty_aa726901). --reasoning-effort is a Grok CLI flag, not ACP; unknown
@@ -108,18 +110,22 @@ func (a acpRunner) Run(ctx context.Context, req Request) ([]byte, error) {
 		return nil, fmt.Errorf("agentcli: acp: stderr: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
+		ev := newEvent(EventFailed)
+		ev.Error = err.Error()
+		emitEvent(onEvent, ev)
 		return nil, fmt.Errorf("agentcli: acp: start %s: %w", a.binary, err)
 	}
+	emitEvent(onEvent, newEvent(EventStart))
 
 	var stderrBuf bytes.Buffer
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		teeLines(stderr, &stderrBuf, req.Sink, "[stderr] ")
+		teeEventLines(stderr, &stderrBuf, req.Sink, "[stderr] ", true, commandAdapter{}, onEvent)
 	}()
 
-	client := newACPClient(stdin, stdout, req.Sink)
+	client := newACPClient(stdin, stdout, req.Sink, onEvent)
 	client.setMutatorsOK(toolsAllowMutators(req.AllowedTools))
 	client.setCapture(req.Capture)
 	text, runErr := client.runSession(ctx, req)
@@ -130,20 +136,30 @@ func (a acpRunner) Run(ctx context.Context, req Request) ([]byte, error) {
 	wg.Wait()
 
 	if runErr != nil {
+		ev := newEvent(EventFailed)
+		ev.Error = runErr.Error()
+		emitEvent(onEvent, ev)
 		if msg := strings.TrimSpace(stderrBuf.String()); msg != "" {
 			return text, fmt.Errorf("agentcli: acp: %w: %s", runErr, msg)
 		}
 		return text, fmt.Errorf("agentcli: acp: %w", runErr)
 	}
 	if waitErr != nil && ctx.Err() != nil {
+		ev := newEvent(EventFailed)
+		ev.Error = ctx.Err().Error()
+		emitEvent(onEvent, ev)
 		return text, fmt.Errorf("agentcli: acp: %w", ctx.Err())
 	}
 	if waitErr != nil && len(bytes.TrimSpace(text)) == 0 {
+		ev := newEvent(EventFailed)
+		ev.Error = waitErr.Error()
+		emitEvent(onEvent, ev)
 		if msg := strings.TrimSpace(stderrBuf.String()); msg != "" {
 			return text, fmt.Errorf("agentcli: acp: process: %w: %s", waitErr, msg)
 		}
 		return text, fmt.Errorf("agentcli: acp: process: %w", waitErr)
 	}
+	emitEvent(onEvent, newEvent(EventCompleted))
 	return text, nil
 }
 
@@ -196,6 +212,7 @@ type acpClient struct {
 	session    string
 	mutatorsOK bool
 	sink       io.Writer
+	onEvent    EventHandler
 	readerDone chan struct{}
 	// capture is set from Request.Capture before runSession returns text.
 	capture CaptureMode
@@ -213,11 +230,12 @@ type acpRPC struct {
 	} `json:"error,omitempty"`
 }
 
-func newACPClient(w io.WriteCloser, r io.Reader, sink io.Writer) *acpClient {
+func newACPClient(w io.WriteCloser, r io.Reader, sink io.Writer, onEvent EventHandler) *acpClient {
 	c := &acpClient{
 		w:          w,
 		pending:    map[int64]chan acpRPC{},
 		sink:       sink,
+		onEvent:    onEvent,
 		readerDone: make(chan struct{}),
 	}
 	go c.readLoop(r)
@@ -251,12 +269,15 @@ func (c *acpClient) readLoop(r io.Reader) {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
-		if c.sink != nil {
-			_, _ = c.sink.Write(append(append([]byte{}, line...), '\n'))
-		}
 		var msg acpRPC
 		if err := json.Unmarshal(line, &msg); err != nil {
+			if c.sink != nil {
+				_, _ = c.sink.Write([]byte(RedactSecrets(string(line)) + "\n"))
+			}
 			continue
+		}
+		if c.sink != nil && !isHiddenReasoningLine(line) {
+			_, _ = c.sink.Write([]byte(RedactSecrets(string(line)) + "\n"))
 		}
 		if msg.Method == "session/update" {
 			c.handleUpdate(msg.Params)
@@ -284,6 +305,10 @@ func (c *acpClient) handleUpdate(params json.RawMessage) {
 	var p struct {
 		Update struct {
 			SessionUpdate string `json:"sessionUpdate"`
+			ToolCallID    string `json:"toolCallId"`
+			Title         string `json:"title"`
+			Kind          string `json:"kind"`
+			Status        string `json:"status"`
 			Content       struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
@@ -303,6 +328,9 @@ func (c *acpClient) handleUpdate(params json.RawMessage) {
 		c.raw.WriteString(p.Update.Content.Text)
 		c.cur.WriteString(p.Update.Content.Text)
 		c.mu.Unlock()
+		ev := newEvent(EventMessage)
+		ev.Text = p.Update.Content.Text
+		emitEvent(c.onEvent, ev)
 	case "tool_call", "tool_call_update":
 		// Close the open message run so post-tool answer is a new segment.
 		// agent_thought_chunk deliberately does NOT close — only the tool
@@ -310,6 +338,22 @@ func (c *acpClient) handleUpdate(params json.RawMessage) {
 		c.mu.Lock()
 		c.closeSegmentLocked()
 		c.mu.Unlock()
+		ev := newEvent(EventToolStart)
+		if su == "tool_call_update" {
+			ev.Kind = EventToolEnd
+		}
+		ev.Tool = p.Update.Title
+		if ev.Tool == "" {
+			ev.Tool = p.Update.Kind
+		}
+		if ev.Tool == "" {
+			ev.Tool = p.Update.ToolCallID
+		}
+		ev.Status = p.Update.Status
+		if ev.Status == "" && ev.Kind == EventToolStart {
+			ev.Status = "running"
+		}
+		emitEvent(c.onEvent, ev)
 		// agent_thought_chunk and every other sessionUpdate: ignore (not captured,
 		// not segmenting). AC7 locks thought exclusion at the capture boundary.
 	}

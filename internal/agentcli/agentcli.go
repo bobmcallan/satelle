@@ -142,6 +142,12 @@ type Request struct {
 	// the final JSON/usage parse; nil is a no-op (the default, unchanged behaviour).
 	// Sink.Write errors are ignored (best-effort, like the reviewer/executor logs).
 	Sink io.Writer
+	// OnEvent receives provider-neutral progressive events without changing the
+	// authoritative stdout returned by Run.
+	OnEvent EventHandler
+	// HeartbeatInterval controls liveness events while the transport is silent.
+	// Zero uses the production default; a negative value disables heartbeats.
+	HeartbeatInterval time.Duration
 	// Capture selects what an ACP runner returns from streamed session/update
 	// chunks (sty_844b6ab1). Zero value is CaptureAnswer: keep only the final
 	// agent_message run after tool_call fences, so narration before tools does
@@ -512,6 +518,8 @@ func composeEnv(base []string, overlay map[string]string) []string {
 // stdout regardless of req.Sink, so the caller's final JSON/usage parse is
 // unaffected. A non-zero exit surfaces stderr in the error, as before.
 func runProcess(ctx context.Context, binary string, args []string, req Request) ([]byte, error) {
+	onEvent, stopEvents := eventStream(req)
+	defer stopEvents()
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Stdin = strings.NewReader(req.Payload)
 	if req.Dir != "" {
@@ -528,23 +536,81 @@ func runProcess(ctx context.Context, binary string, args []string, req Request) 
 		return nil, fmt.Errorf("agentcli: %s: %w", binary, err)
 	}
 	if err := cmd.Start(); err != nil {
+		ev := newEvent(EventFailed)
+		ev.Error = err.Error()
+		emitEvent(onEvent, ev)
 		return nil, fmt.Errorf("agentcli: %s: %w", binary, err)
 	}
+	emitEvent(onEvent, newEvent(EventStart))
 
 	var stdout, stderr bytes.Buffer
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); teeLines(stdoutPipe, &stdout, req.Sink, "") }()
-	go func() { defer wg.Done(); teeLines(stderrPipe, &stderr, req.Sink, "[stderr] ") }()
+	adapter := commandAdapter{}
+	go func() { defer wg.Done(); teeEventLines(stdoutPipe, &stdout, req.Sink, "", false, adapter, onEvent) }()
+	go func() {
+		defer wg.Done()
+		teeEventLines(stderrPipe, &stderr, req.Sink, "[stderr] ", true, adapter, onEvent)
+	}()
 	wg.Wait()
 
 	if err := cmd.Wait(); err != nil {
+		ev := newEvent(EventFailed)
+		if ctx.Err() != nil {
+			ev.Error = ctx.Err().Error()
+		} else {
+			ev.Error = err.Error()
+		}
+		emitEvent(onEvent, ev)
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
 			return stdout.Bytes(), fmt.Errorf("agentcli: %s: %w: %s", binary, err, msg)
 		}
 		return stdout.Bytes(), fmt.Errorf("agentcli: %s: %w", binary, err)
 	}
+	emitEvent(onEvent, newEvent(EventCompleted))
 	return stdout.Bytes(), nil
+}
+
+const defaultHeartbeatInterval = 15 * time.Second
+
+func eventStream(req Request) (EventHandler, func()) {
+	if req.OnEvent == nil || req.HeartbeatInterval < 0 {
+		return req.OnEvent, func() {}
+	}
+	interval := req.HeartbeatInterval
+	if interval == 0 {
+		interval = defaultHeartbeatInterval
+	}
+	var mu sync.Mutex
+	lastActivity := time.Now()
+	handler := func(ev Event) {
+		if ev.Kind != EventHeartbeat {
+			mu.Lock()
+			lastActivity = time.Now()
+			mu.Unlock()
+		}
+		emitEvent(req.OnEvent, ev)
+	}
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				mu.Lock()
+				silent := time.Since(lastActivity) >= interval
+				mu.Unlock()
+				if silent {
+					emitEvent(req.OnEvent, newEvent(EventHeartbeat))
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
+	var once sync.Once
+	return handler, func() { once.Do(func() { close(done) }) }
 }
 
 // teeLines reads r line-by-line until EOF (the pipe closing, whether from a clean
@@ -565,6 +631,25 @@ func teeLines(r io.Reader, buf *bytes.Buffer, sink io.Writer, prefix string) {
 					_, _ = sink.Write([]byte(prefix))
 				}
 				_, _ = sink.Write(line)
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+func teeEventLines(r io.Reader, buf *bytes.Buffer, sink io.Writer, prefix string, stderr bool, adapter commandAdapter, onEvent EventHandler) {
+	reader := bufio.NewReader(r)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			buf.Write(line)
+			if sink != nil && !isHiddenReasoningLine(bytes.TrimSpace(line)) {
+				_, _ = sink.Write([]byte(prefix + RedactSecrets(string(line))))
+			}
+			for _, ev := range adapter.Adapt(line, stderr) {
+				emitEvent(onEvent, ev)
 			}
 		}
 		if err != nil {

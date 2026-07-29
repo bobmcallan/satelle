@@ -90,6 +90,22 @@ implements ACP agent stdio **and** the binding sets `interface = "acp"`. Workers
 never advance story status; they return text/verdicts that satelle enacts after
 gates.
 
+### Progressive execution diagnostics
+
+Command JSONL and ACP `session/update` traffic are normalized into the same
+provider-neutral execution events: start, heartbeat, safe message, tool start
+and completion, artifact candidate, usage, completion, and failure. Interactive
+CLI progress is written to stderr, while the command's structured result remains
+on stdout and the final agent response remains authoritative.
+
+Named dispatches write a sanitized normalized event log under the repository's
+Satelle runtime `logs/dispatch/` directory. Set
+`SATELLE_AGENT_TRACE_RAW=1` only for short-lived transport debugging to create a
+sibling `-raw.log`; raw traces are opt-in because provider traffic may be
+sensitive. Satelle filters hidden reasoning and redacts obvious credential
+shapes from both surfaces, but operators should still protect and remove raw
+traces after diagnosis.
+
 ### Planner transport evidence
 
 For this repository the default `[planner]` remains Claude's non-interactive

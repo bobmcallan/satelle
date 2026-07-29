@@ -904,9 +904,22 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	if terr != nil {
 		return verb.DispatchResult{}, fmt.Errorf("named agent %q: invalid timeout in .satelle/agents.toml [%s]: %w", dispatchAgent, dispatchAgent, terr)
 	}
-	sink, sinkPath, closeSink := g.dispatchSink(dispatchAgent, item.ID)
+	eventSink, sinkPath, closeSink := g.dispatchSink(dispatchAgent, item.ID)
 	if closeSink != nil {
 		defer closeSink()
+	}
+	rawSink, closeRaw := g.dispatchRawSink(sinkPath)
+	if closeRaw != nil {
+		defer closeRaw()
+	}
+	var eventSinkMu sync.Mutex
+	onEvent := func(ev agentcli.Event) {
+		if eventSink == nil {
+			return
+		}
+		eventSinkMu.Lock()
+		_, _ = io.WriteString(eventSink, agentcli.FormatEvent(ev))
+		eventSinkMu.Unlock()
 	}
 	if sinkPath != "" {
 		g.emitProgress("dispatching step %s to named agent %s (may take several minutes)… live output: %s", toStatus, dispatchAgent, sinkPath)
@@ -924,7 +937,8 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		Expect:  ExpectPerform,
 		Timeout: timeout,
 		Runner:  runner,
-		Sink:    sink,
+		Sink:    rawSink,
+		OnEvent: onEvent,
 		StoryID: item.ID,
 		Step:    toStatus,
 		Skill:   dispatchSkill,
@@ -945,6 +959,26 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		return res, fmt.Errorf("named agent %q failed performing step %q: %w", dispatchAgent, toStatus, invRes.Err)
 	}
 	return res, nil
+}
+
+// dispatchRawSink creates a sibling raw transport trace only when explicitly
+// requested. Hidden reasoning is still filtered and obvious credentials are
+// redacted by agentcli before bytes reach this writer.
+func (g *Engine) dispatchRawSink(normalizedPath string) (io.Writer, func()) {
+	if normalizedPath == "" {
+		return nil, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SATELLE_AGENT_TRACE_RAW"))) {
+	case "1", "true", "yes", "on":
+	default:
+		return nil, nil
+	}
+	path := strings.TrimSuffix(normalizedPath, ".log") + "-raw.log"
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, nil
+	}
+	return f, func() { _ = f.Close() }
 }
 
 // retrospectAgent / retrospectSkill name the post-story improvement step: an
@@ -1080,11 +1114,9 @@ func isNamedPerformer(section string, b config.AgentBinding) bool {
 	return config.ResolvedRole(section, b) != config.RoleReviewer
 }
 
-// dispatchSink opens a per-dispatch live log file under <data_dir>/logs/dispatch/
-// so a named executor's subprocess streams its stdout/stderr somewhere an
-// operator can `tail -f` WHILE it runs — observable before a hang or an
-// approaching timeout SIGKILLs it (sty_0aa67b7f), unlike executor.log which is
-// only written after the run completes. Returns a nil writer, empty path, and nil
+// dispatchSink opens a per-dispatch normalized event log under
+// <data_dir>/logs/dispatch/ so an operator can `tail -f` provider-neutral,
+// sanitized progress while it runs. Returns a nil writer, empty path, and nil
 // closer when no log dir is configured (most engine tests) or the file cannot be
 // created, so streaming degrades to a no-op rather than failing the dispatch —
 // best-effort, like the executor/reviewer logs. The caller must invoke the

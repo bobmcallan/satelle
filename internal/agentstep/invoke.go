@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
@@ -59,6 +60,9 @@ type InvokeRequest struct {
 	Attempts int
 	// Sink, when set, receives live subprocess stdout (named dispatch live log).
 	Sink io.Writer
+	// OnEvent observes provider-neutral progressive events. It is composed with
+	// the engine's interactive stderr progress consumer.
+	OnEvent agentcli.EventHandler
 
 	// Telemetry / progress context for the verdict retry loop (design note:
 	// Invoke needs labels beyond the minimal design sketch so retry telemetry
@@ -257,6 +261,34 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	if req.Sink != nil {
 		agentReq.Sink = req.Sink
 	}
+	var eventMu sync.Mutex
+	var lastMessage time.Time
+	agentReq.OnEvent = func(ev agentcli.Event) {
+		eventMu.Lock()
+		defer eventMu.Unlock()
+		if req.OnEvent != nil {
+			req.OnEvent(ev)
+		}
+		switch ev.Kind {
+		case agentcli.EventStart:
+			g.emitProgress("agent %s started", section)
+		case agentcli.EventHeartbeat:
+			g.emitProgress("agent %s still running…", section)
+		case agentcli.EventToolStart:
+			g.emitProgress("agent %s tool started: %s", section, progressLabel(ev.Tool))
+		case agentcli.EventToolEnd:
+			g.emitProgress("agent %s tool finished: %s", section, progressLabel(ev.Tool))
+		case agentcli.EventMessage:
+			// Token-level ACP chunks can be extremely noisy. Preserve every event
+			// in normalized diagnostics, but rate-limit interactive prose.
+			if time.Since(lastMessage) >= time.Second && strings.TrimSpace(ev.Text) != "" {
+				g.emitProgress("agent %s: %s", section, progressLabel(ev.Text))
+				lastMessage = time.Now()
+			}
+		case agentcli.EventFailed:
+			g.emitProgress("agent %s failed: %s", section, progressLabel(ev.Error))
+		}
+	}
 	// Verdict parsing extracts decision JSON from anywhere in the blob
 	// (parseDecision). Keep the full ACP stream so a decision emitted before
 	// trailing chatter is not dropped by the answer-only segment rule
@@ -292,6 +324,14 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	default: // ExpectVerdict
 		return g.invokeVerdict(ctx, req, runner, agentReq, cmdStr, timeout)
 	}
+}
+
+func progressLabel(s string) string {
+	s = agentcli.SafeText(s)
+	if s == "" {
+		return "activity"
+	}
+	return s
 }
 
 // IsRateLimitOrUnavailable reports whether an isolated-agent failure should
