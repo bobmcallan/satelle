@@ -376,6 +376,56 @@ func (s Spec) PerformingStates() []string {
 	return out
 }
 
+// EditCapableStates returns spine performing states allocated to the in-loop
+// executor. This is deliberately distinct from PerformingStates (which includes
+// isolated named agents) and NonTerminalEngagingStates (which controls lease
+// ownership): only the workflow's driving executor may authorize source edits
+// from the parent harness. The policy remains authored in DOT; no state name is
+// compiled into the hook.
+func (s Spec) EditCapableStates() []string {
+	var out []string
+	for _, st := range s.States {
+		if st.IsPerforming() && !st.IsAugmentation() && st.Agent == "executor" {
+			out = append(out, st.Name)
+		}
+	}
+	return out
+}
+
+// IsEditCapableState reports whether name is a spine performing node allocated
+// to the in-loop executor. Unknown names are not edit-capable.
+func (s Spec) IsEditCapableState(name string) bool {
+	for _, st := range s.States {
+		if st.Name == name {
+			return st.IsPerforming() && !st.IsAugmentation() && st.Agent == "executor"
+		}
+	}
+	return false
+}
+
+// StateAgent returns the node's agent allocation and whether the state exists.
+// An empty agent on a declared state is distinguishable from an unknown state.
+func (s Spec) StateAgent(name string) (string, bool) {
+	for _, st := range s.States {
+		if st.Name == name {
+			return st.Agent, true
+		}
+	}
+	return "", false
+}
+
+// StateOnEnterAgent returns the node's one-shot entry agent and whether the
+// state exists. It lets hook dispatch markers validate an on-enter performer
+// without teaching the hook state names.
+func (s Spec) StateOnEnterAgent(name string) (string, bool) {
+	for _, st := range s.States {
+		if st.Name == name {
+			return st.OnEnterAgent, true
+		}
+	}
+	return "", false
+}
+
 // NonTerminalEngagingStates returns all states that are neither the start state
 // (shape=Mdiamond) nor a terminal state (shape=Msquare), nor a cancel/exception
 // sink (agent=reviewer with no outgoing edges). This reads the DOT shape markers

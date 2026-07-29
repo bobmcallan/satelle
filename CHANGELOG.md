@@ -1,3 +1,15 @@
+## [0.0.348] - 2026-07-29
+
+### Added
+- Opt-in Claude command vs Grok ACP planner benchmark with representative fixtures and wall-time, usage, artifact, policy, and failure-observability evidence (sty_a3526df6)
+
+### Fixed
+- Workflow edit hooks now derive source-edit permission from executor-owned DOT states, deny driving-session work-ahead during transitions, and preserve exact isolated-performer dispatches across Claude, Grok, and Codex (sty_a3526df6)
+- In-tree shell mutations are governed consistently through edit and commit hooks, while read-only preflight and Satelle artifact recording remain available (sty_a3526df6)
+
+### Changed
+- Planner transport evidence retains Claude command as the repository default because the one-run ACP pilot did not meet the predeclared artifact and observability threshold (sty_a3526df6)
+
 ## [0.0.347] - 2026-07-29
 
 ### Fixed

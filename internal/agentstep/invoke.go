@@ -234,6 +234,21 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	if len(inv.env) == 0 {
 		inv.env = g.reviewerEnv
 	}
+	if expect == ExpectPerform {
+		// Mark isolated performers so PreToolUse can distinguish the child that
+		// the workflow deliberately dispatched from the driving session trying
+		// to work ahead while that transition is in flight. Copy before overlay
+		// so binding-owned environment remains intact and reserved marker keys
+		// cannot accidentally identify a different dispatch.
+		env := make(map[string]string, len(inv.env)+3)
+		for k, v := range inv.env {
+			env[k] = v
+		}
+		env[config.DispatchAgentEnv] = section
+		env[config.DispatchStepEnv] = req.Step
+		env[config.DispatchItemEnv] = req.StoryID
+		inv.env = env
+	}
 
 	agentReq, err := g.buildRequest(ctx, inv)
 	if err != nil {

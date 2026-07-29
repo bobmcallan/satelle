@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -141,7 +142,9 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 			// holder without a second store open (sty_1738f973 AC6). A live
 			// owner-held seat is also heartbeated (sty_3bb1d8be).
 			info, engaged, engErr := currentSeatTouch()
-			if p := filePathFromEvent(raw); p != "" {
+			p := filePathFromEvent(raw)
+			command := bashCommandFromEvent(raw)
+			if p != "" {
 				// Foreign-tree fence (sty_a8454d10 / sty_aadd4d6c): refuse edits
 				// that land in ANOTHER git working tree unless the operator opts
 				// in. Non-repo paths (temp, scratchpads) are not fenced.
@@ -165,16 +168,31 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 				if exemptTarget(p) {
 					return nil
 				}
+			} else if command != "" {
+				// Codex routes Bash/shell through this hook. Preserve read-only
+				// preflight: only shell commands with an in-tree mutation target
+				// need workflow edit permission. Foreign-tree containment stays
+				// active here as well as commitgate.
+				if !allowOutsideTreeEdits() {
+					_, foreign := bashMutationTargets(command, sessionAnchor())
+					if path, foreignRoot, ok := foreignTreeTarget(sessionAnchor(), foreign); ok {
+						return denyPreToolUse(cmd, raw, outsideAnchorBashReason(path, foreignRoot))
+					}
+				}
+				if !bashMutatesTree(command, sessionAnchor()) {
+					return nil
+				}
 			}
 			// Engagement-error surface: a broken deployment blocks the edit with a
 			// clear message rather than silently allowing it (sty_f3d5d4b8).
 			if engErr != nil {
 				return denyPreToolUse(cmd, raw, "satelle: "+engErr.Error())
 			}
-			if engaged {
+			_ = engaged // broad engagement remains available to other hook surfaces
+			if editPermitted(info, currentDispatchMarker()) {
 				return nil
 			}
-			return denyPreToolUse(cmd, raw, editGateDenyReason(info, time.Now().UTC()))
+			return denyPreToolUse(cmd, raw, editPermissionDenyReason(info, time.Now().UTC()))
 		},
 	}
 
@@ -207,6 +225,20 @@ behaviour exactly as above — opt-in, not a satelle default.`,
 					return denyPreToolUse(cmd, raw, outsideAnchorBashReason(path, foreignRoot))
 				}
 			}
+			var info seatInfo
+			var engaged bool
+			var seatResolved bool
+			if bashMutatesTree(command, sessionAnchor()) {
+				var err error
+				info, engaged, err = currentSeatTouch()
+				seatResolved = true
+				if err != nil {
+					return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
+				}
+				if !editPermitted(info, currentDispatchMarker()) {
+					return denyPreToolUse(cmd, raw, editPermissionDenyReason(info, time.Now().UTC()))
+				}
+			}
 			// Engage gate still applies only to commit/push (today's default).
 			// Opt-in [gate.command_allow] may restrict those (or other git
 			// subcommands) further by story status (sty_c21490cc).
@@ -223,9 +255,12 @@ behaviour exactly as above — opt-in, not a satelle default.`,
 			}
 			// Heartbeat only for gated commands (after the early return above) —
 			// activity on commit/push keeps the seat alive (sty_3bb1d8be).
-			info, engaged, err := currentSeatTouch()
-			if err != nil {
-				return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
+			if !seatResolved {
+				var err error
+				info, engaged, err = currentSeatTouch()
+				if err != nil {
+					return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
+				}
 			}
 			if needsEngage && !engaged {
 				// Deny only — never allow a fused engage+commit form. PreToolUse cannot
@@ -303,14 +338,27 @@ var hookHarnessFlag string
 // seatInfo is a single engagement-lease view for gate denials and session inject
 // (sty_1738f973). Empty ItemID means no lease row was relevant.
 type seatInfo struct {
-	ItemID      string
-	State       string // lease target / in-flight target (messaging)
-	StoryStatus string // committed work-item status (step policy; sty_c21490cc)
-	Owner       string
-	AcquiredAt  time.Time
-	HeartbeatAt time.Time
-	Stale       bool
-	InFlight    bool
+	ItemID       string
+	State        string // lease target / in-flight target (messaging)
+	TargetState  string // immutable lease target used to authenticate a dispatched performer
+	StoryStatus  string // committed work-item status (step policy; sty_c21490cc)
+	StateAgent   string // agent allocated to lease target / State
+	OnEnterAgent string // one-shot agent allocated on entry to lease target
+	Owner        string
+	AcquiredAt   time.Time
+	HeartbeatAt  time.Time
+	Stale        bool
+	InFlight     bool
+	// EditCapable is true only when the committed status is a spine performing
+	// node allocated by DOT to agent=executor. It is intentionally narrower
+	// than Engaged, which also includes isolated-agent planning states.
+	EditCapable bool
+	EditStates  []string
+	// DispatchAgents is the DOT-authored performer identity by target state.
+	// Lease.State intentionally remains the last committed state across a new
+	// transition, so an in-flight child marker must be checked against the spec,
+	// not mistaken for that prior state.
+	DispatchAgents map[string][]string
 	// Engaged is true when this row qualifies as live engagement (performing
 	// committed status, or fresh in-flight mid-transition).
 	Engaged bool
@@ -363,8 +411,7 @@ func resolveSeat(touch bool) (info seatInfo, engaged bool, err error) {
 	}
 	if a.Store.Leases == nil {
 		// Pre-migration or incomplete bootstrap: fall back to derived status scan.
-		ok, aerr := anyEngaged(items, wfs)
-		return seatInfo{}, ok, aerr
+		return derivedSeat(items, wfs)
 	}
 	leases, qerr := a.Store.Leases.List(ctx)
 	if qerr != nil {
@@ -480,6 +527,27 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 			spec = parsed
 			specCache[wf.Name] = spec
 		}
+		if _, known := spec.StateAgent(status); !known {
+			return seatInfo{}, seatInfo{}, fmt.Errorf(
+				"item %s status %q is not declared by workflow %s — cannot classify edit permission",
+				it.ID, status, wf.Name)
+		}
+		info.EditCapable = spec.IsEditCapableState(status)
+		info.EditStates = spec.EditCapableStates()
+		info.DispatchAgents = dispatchAgents(spec)
+		target := info.State
+		if target == "" {
+			target = status
+		}
+		info.TargetState = target
+		var targetKnown bool
+		info.StateAgent, targetKnown = spec.StateAgent(target)
+		if !targetKnown {
+			return seatInfo{}, seatInfo{}, fmt.Errorf(
+				"lease for item %s targets state %q not declared by workflow %s — cannot classify edit permission",
+				it.ID, target, wf.Name)
+		}
+		info.OnEnterAgent, _ = spec.StateOnEnterAgent(target)
 		engaging := map[string]bool{}
 		for _, s := range spec.NonTerminalEngagingStates() {
 			engaging[s] = true
@@ -507,6 +575,62 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 		}
 	}
 	return live, otherPick, nil
+}
+
+// dispatchMarker identifies an isolated performer spawned by the workflow.
+// Environment markers are deliberately an honest-posture boundary rather than
+// a sandbox: the harness hook is the enforcement point, and bypassing/spoofing
+// that hook remains visible operator misconduct.
+type dispatchMarker struct {
+	Agent string
+	Step  string
+	Item  string
+}
+
+func currentDispatchMarker() dispatchMarker {
+	return dispatchMarker{
+		Agent: os.Getenv(config.DispatchAgentEnv),
+		Step:  os.Getenv(config.DispatchStepEnv),
+		Item:  os.Getenv(config.DispatchItemEnv),
+	}
+}
+
+// editPermitted separates lease engagement from source-edit authorization.
+// A dispatched performer is allowed only for the exact in-flight item/target
+// and authored agent allocation. The driving session is allowed only in a
+// committed DOT state allocated to the in-loop executor, never mid-transition.
+func editPermitted(info seatInfo, marker dispatchMarker) bool {
+	if info.ItemID == "" || info.Stale || !info.Engaged {
+		return false
+	}
+	if marker.Agent != "" || marker.Step != "" || marker.Item != "" {
+		agents := info.DispatchAgents[marker.Step]
+		if len(agents) == 0 {
+			// Compatibility for legacy/derived pure callers that do not carry a
+			// parsed-spec dispatch map.
+			target := info.TargetState
+			if target == "" {
+				target = info.State
+			}
+			if marker.Step == target {
+				agents = []string{info.StateAgent, info.OnEnterAgent}
+			}
+		}
+		return info.InFlight && marker.Item == info.ItemID && slices.Contains(agents, marker.Agent)
+	}
+	return !info.InFlight && info.EditCapable
+}
+
+func dispatchAgents(spec wfdot.Spec) map[string][]string {
+	out := make(map[string][]string, len(spec.States))
+	for _, state := range spec.States {
+		for _, agent := range []string{state.Agent, state.OnEnterAgent} {
+			if agent != "" && !slices.Contains(out[state.Name], agent) {
+				out[state.Name] = append(out[state.Name], agent)
+			}
+		}
+	}
+	return out
 }
 
 // seatSuffix appends a discoverable seat descriptor to a gate deny reason when
@@ -626,6 +750,56 @@ func anyEngaged(items []workitem.Item, wfs []docindex.Doc) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// derivedSeat is the pre-lease-store compatibility path. It derives both the
+// broad engagement predicate and the narrower edit-capable predicate from the
+// governing DOT, so an old store never re-opens planning/reviewer states merely
+// because they are non-terminal.
+func derivedSeat(items []workitem.Item, wfs []docindex.Doc) (seatInfo, bool, error) {
+	specCache := map[string]wfdot.Spec{}
+	var other seatInfo
+	for _, it := range items {
+		wf, ok := wfgovern.GoverningWorkflow(wfs, it)
+		if !ok {
+			return seatInfo{}, false, fmt.Errorf("item %s has no resolving workflow — cannot determine engagement", it.ID)
+		}
+		spec, cached := specCache[wf.Name]
+		if !cached {
+			var dotOK bool
+			spec, dotOK = wfdot.Parse(wf.Body)
+			if !dotOK {
+				return seatInfo{}, false, fmt.Errorf("workflow %s has no DOT spec — cannot determine engagement", wf.Name)
+			}
+			specCache[wf.Name] = spec
+		}
+		agent, known := spec.StateAgent(it.Status)
+		if !known {
+			return seatInfo{}, false, fmt.Errorf(
+				"item %s status %q is not declared by workflow %s — cannot classify edit permission",
+				it.ID, it.Status, wf.Name)
+		}
+		info := seatInfo{
+			ItemID: it.ID, State: it.Status, StoryStatus: it.Status,
+			StateAgent: agent, EditCapable: spec.IsEditCapableState(it.Status),
+			EditStates: spec.EditCapableStates(),
+		}
+		engaging := false
+		for _, state := range spec.NonTerminalEngagingStates() {
+			if state == it.Status {
+				engaging = true
+				break
+			}
+		}
+		if engaging {
+			info.Engaged = true
+			return info, true, nil
+		}
+		if other.ItemID == "" {
+			other = info
+		}
+	}
+	return other, false, nil
 }
 
 // bashCommandFromEvent pulls the bash command out of a PreToolUse event.
@@ -862,6 +1036,34 @@ func editGateDenyReason(info seatInfo, now time.Time) string {
 		return droppedSeatEditReason(drop.ItemID, drop.StoryStatus)
 	}
 	return noEngagedStoryEditReason + seatSuffix(info, now)
+}
+
+const readOnlyPreflightReason = "Read-only preflight remains available: use Read/read_file/Grep/Glob or non-mutating shell commands, and record approved context with `satelle story attach` or `satelle story log`; advance through the workflow gate before editing."
+
+func editPermissionDenyReason(info seatInfo, now time.Time) string {
+	if info.ItemID == "" || !info.Engaged || info.Stale {
+		return editGateDenyReason(info, now) + " " + readOnlyPreflightReason
+	}
+	if info.InFlight {
+		target := info.State
+		if target == "" {
+			target = "the next state"
+		}
+		return fmt.Sprintf(
+			"satelle: story %s has a transition to %q IN FLIGHT (planner/reviewer or dispatched step running); the driving session cannot edit until the transition commits. %s",
+			info.ItemID, target, readOnlyPreflightReason)
+	}
+	agent := info.StateAgent
+	if agent == "" {
+		agent = "no in-loop executor"
+	}
+	states := strings.Join(info.EditStates, ", ")
+	if states == "" {
+		states = "(none declared)"
+	}
+	return fmt.Sprintf(
+		"satelle: story %s is at %q, which its workflow allocates to %q; source edits are permitted only in DOT states allocated to agent=executor (%s). Do not work ahead. %s",
+		info.ItemID, info.StoryStatus, agent, states, readOnlyPreflightReason)
 }
 
 // firstDroppedPerformingSeat finds a story/task whose committed status is

@@ -403,22 +403,30 @@ var mutationVerbs = map[string]bool{
 // --status). Read verbs and story/task create contribute no target. In-home
 // paths are filtered here so the FS layer never stats them.
 func mutationTargets(command, anchor string) []string {
+	_, foreign := bashMutationTargets(command, anchor)
+	return foreign
+}
+
+// bashMutationTargets classifies mutation candidates relative to anchor. The
+// foreign half preserves mutationTargets' containment surface; the inHome half
+// lets the workflow edit gate govern shell writes just like Edit/Write tools.
+func bashMutationTargets(command, anchor string) (inHome, foreign []string) {
 	anchor = filepath.Clean(anchor)
 	if anchor == "" || anchor == "." {
-		return nil
+		return nil, nil
 	}
-	var escaped []string
 	seen := map[string]bool{}
 	add := func(abs string) {
 		abs = filepath.Clean(abs)
 		if abs == "" || seen[abs] {
 			return
 		}
+		seen[abs] = true
 		if withinRoot(anchor, abs) {
+			inHome = append(inHome, abs)
 			return
 		}
-		seen[abs] = true
-		escaped = append(escaped, abs)
+		foreign = append(foreign, abs)
 	}
 
 	cwd := anchor
@@ -498,7 +506,19 @@ func mutationTargets(command, anchor string) []string {
 			}
 		}
 	}
-	return escaped
+	return inHome, foreign
+}
+
+// bashMutatesTree reports whether a command has an in-anchor mutation target
+// not exempted by the operator's [gate] edit_exempt_paths configuration.
+func bashMutatesTree(command, anchor string) bool {
+	inHome, _ := bashMutationTargets(command, anchor)
+	for _, target := range inHome {
+		if !exemptTarget(target) {
+			return true
+		}
+	}
+	return false
 }
 
 // foreignSatelleVerb returns a foreign target dir when the satelle segment is a

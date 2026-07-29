@@ -18,6 +18,15 @@ cancelled, blocked); finishing an edit does not close it.
 **Research reads; it does not write.** To investigate, use read tools
 (Read/grep/Glob) — never Edit/Write to "try" something out.
 
+**Preflight is read-only.** An engaged story does not make every workflow state
+editable. Source edits are permitted only while the story is in a performing
+state that its workflow allocates to the in-loop `agent=executor`, and never
+while a planner, reviewer, or transition is in flight. Other states may inspect
+with read tools or non-mutating shell commands and may record approved context
+with `satelle story attach` / `satelle story log`; advance through the declared
+gate before editing. A named isolated performer uses its own authored tool grant
+during its dispatched step.
+
 **The edit gate enforces this.** A silently inert gate is a defect to surface and
 fix, not permission to edit ungated. Commits and pushes are gated the same way —
 commit under the engaged story. Gate-routing discipline (including when a gate

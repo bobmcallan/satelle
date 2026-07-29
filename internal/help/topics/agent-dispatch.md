@@ -90,6 +90,22 @@ implements ACP agent stdio **and** the binding sets `interface = "acp"`. Workers
 never advance story status; they return text/verdicts that satelle enacts after
 gates.
 
+### Planner transport evidence
+
+For this repository the default `[planner]` remains Claude's non-interactive
+command transport. The comparison is reproducible with `make planner-bench`,
+which runs the same planning fixtures through that binding shape and Grok ACP
+and writes wall-time, token-cost, artifact-correctness, read-only-policy, and
+failure-observability evidence under `tests/plannerbench/out/`.
+
+Changing the binding requires ACP to preserve 100% artifact correctness and
+policy fidelity, introduce no reliability regression, and win at least two of:
+20% lower median wall time, lower median tokens, or strictly better failure
+diagnostics. An ambiguous or under-powered result retains Claude command.
+Operators can use Grok ACP as a temporary planner fallback by copying its
+benchmark binding into `[planner]`; the documented default is not rewritten
+automatically.
+
 ### Reasoning effort (`effort=`)
 
 Optional per-binding thinking/reasoning level (e.g. `low` | `medium` | `high`).

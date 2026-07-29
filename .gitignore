@@ -14,6 +14,9 @@
 /cmd/satelle/satelle
 /cmd/satelle-serve/satelle-serve
 
+# Opt-in live benchmark output (generated evidence, not source fixtures).
+/tests/plannerbench/out/
+
 # Legacy pre-rebrand state. The old `satellites` CLI (V5) writes a workspace
 # state dir at ./.satellites/ in whatever cwd it runs in. satelle (V6) uses
 # .satelle/ exclusively; .satellites/ is dead and must never be tracked.

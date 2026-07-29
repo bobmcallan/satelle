@@ -53,6 +53,15 @@ const (
 const (
 	InterfaceCommand = "command"
 	InterfaceACP     = "acp"
+
+	// Dispatch marker environment keys identify an isolated performing step to
+	// harness hooks. They let the dispatched child use its authored tool grant
+	// during the transition's in-flight window without opening that window to
+	// the parent driving session. They are an honest-posture boundary, not a
+	// sandbox: a process that bypasses or spoofs hooks is outside this contract.
+	DispatchAgentEnv = "SATELLE_DISPATCH_AGENT"
+	DispatchStepEnv  = "SATELLE_DISPATCH_STEP"
+	DispatchItemEnv  = "SATELLE_DISPATCH_ITEM"
 )
 
 // Principles selector tokens for AgentBinding.Principles — which principles ride

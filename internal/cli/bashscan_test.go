@@ -205,6 +205,49 @@ func TestMutationTargets(t *testing.T) {
 	}
 }
 
+func TestBashMutationTargetsClassifiesInHome(t *testing.T) {
+	anchor := "/work/repo"
+	cases := []struct {
+		command string
+		want    string
+	}{
+		{"sed -i s/a/b/ internal/x.go", "/work/repo/internal/x.go"},
+		{"echo hi > internal/x.go", "/work/repo/internal/x.go"},
+		{"echo hi | tee internal/x.go", "/work/repo/internal/x.go"},
+		{"cp source.go internal/x.go", "/work/repo/internal/x.go"},
+		{"mv source.go internal/x.go", "/work/repo/internal/x.go"},
+		{"rm internal/x.go", "/work/repo/internal/x.go"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.command, func(t *testing.T) {
+			home, foreign := bashMutationTargets(tc.command, anchor)
+			if len(foreign) != 0 {
+				t.Fatalf("foreign = %v, want none", foreign)
+			}
+			found := false
+			for _, p := range home {
+				if p == tc.want {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("inHome = %v, want %q", home, tc.want)
+			}
+		})
+	}
+	for _, command := range []string{
+		"git status",
+		"rg TODO internal",
+		`satelle story attach sty_x --name note --type note --body "later rm -rf internal"`,
+		`echo "rm internal/x.go"`,
+	} {
+		home, _ := bashMutationTargets(command, anchor)
+		if len(home) != 0 {
+			t.Errorf("read/prose command %q classified as mutation: %v", command, home)
+		}
+	}
+}
+
 func TestTokenizeBashQuotedOpaque(t *testing.T) {
 	// Prose in quotes must not yield word tokens "git" / "commit".
 	toks := tokenizeBash(`echo "please git commit and git push"`)

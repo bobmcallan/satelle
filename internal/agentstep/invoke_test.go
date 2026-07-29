@@ -322,6 +322,57 @@ func TestInvokeExpectPerformReturnsStdout(t *testing.T) {
 	}
 }
 
+func TestInvokeExpectPerformCarriesDispatchMarkers(t *testing.T) {
+	r := &fakeRunner{out: "ok"}
+	g := New(r, fakeDocs{workflow: testWorkflow}, "/repo", "")
+	res := g.Invoke(context.Background(), InvokeRequest{
+		Binding: config.AgentBinding{
+			Command: "fake run",
+			Env:     map[string]string{"KEEP": "binding", config.DispatchAgentEnv: "spoof"},
+		},
+		Section: "planner",
+		Expect:  ExpectPerform,
+		Runner:  r,
+		StoryID: "sty_mark",
+		Step:    "plan",
+	})
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	want := map[string]string{
+		"KEEP":                  "binding",
+		config.DispatchAgentEnv: "planner",
+		config.DispatchStepEnv:  "plan",
+		config.DispatchItemEnv:  "sty_mark",
+	}
+	for k, v := range want {
+		if r.got.Env[k] != v {
+			t.Errorf("Env[%q] = %q, want %q; full env=%v", k, r.got.Env[k], v, r.got.Env)
+		}
+	}
+}
+
+func TestInvokeVerdictOmitsDispatchMarkers(t *testing.T) {
+	r := &fakeRunner{out: `{"decision":"accept","notes":"ok"}`}
+	g := New(r, fakeDocs{workflow: testWorkflow}, "/repo", "")
+	res := g.Invoke(context.Background(), InvokeRequest{
+		Binding: config.AgentBinding{Command: "fake run", Env: map[string]string{"KEEP": "binding"}},
+		Section: "reviewer",
+		Expect:  ExpectVerdict,
+		Runner:  r,
+		StoryID: "sty_mark",
+		Step:    "plan",
+	})
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	for _, k := range []string{config.DispatchAgentEnv, config.DispatchStepEnv, config.DispatchItemEnv} {
+		if _, ok := r.got.Env[k]; ok {
+			t.Errorf("verdict request unexpectedly carries %s: %v", k, r.got.Env)
+		}
+	}
+}
+
 func TestParseDecisionReasoningOptional(t *testing.T) {
 	dec, err := parseDecision([]byte(`{"decision":"reject","notes":"n"}`))
 	if err != nil {

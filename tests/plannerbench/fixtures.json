@@ -1,0 +1,35 @@
+[
+  {
+    "name": "small_cli_change",
+    "title": "Add a dry-run flag",
+    "body": "Add a dry-run flag to a Go CLI command. The plan must identify parsing, execution, documentation, and tests without editing source.",
+    "acceptance": [
+      "The command accepts --dry-run and performs no mutations when set.",
+      "Help text documents the flag.",
+      "Hermetic tests cover dry-run and normal execution."
+    ]
+  },
+  {
+    "name": "medium_persistence_change",
+    "title": "Record retry telemetry",
+    "body": "Plan a change that records structured retry telemetry in SQLite and exposes it through an existing cost view. Preserve compatibility and avoid leaking secrets.",
+    "acceptance": [
+      "Retry attempts and terminal failures are stored with duration and token counts.",
+      "The cost view renders the new records while preserving old rows.",
+      "Secret-shaped fields are rejected and covered by hermetic tests.",
+      "The migration is safe for existing databases."
+    ]
+  },
+  {
+    "name": "workflow_guard",
+    "title": "Prevent workflow work-ahead",
+    "body": "Plan state-derived enforcement that permits source edits only in executor-owned workflow states. Named isolated performers must work during dispatch while the driving session remains denied.",
+    "acceptance": [
+      "Edit-capable states are derived from workflow DOT rather than hardcoded names.",
+      "Backlog, plan, reviewer parks, terminal states, and in-flight driving sessions deny edits.",
+      "The exact dispatched performer may edit during its matching step.",
+      "Claude, Grok, and Codex mutation events have hermetic coverage.",
+      "Resolution failures deny closed with actionable recovery text."
+    ]
+  }
+]

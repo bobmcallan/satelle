@@ -13,7 +13,7 @@ BUILD_TIME  := $(shell awk '$$1=="satelle.build:" {print $$2}' .version)
 LDFLAGS     := -X $(PKG).Name=satelle -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)
 SERVE_LDFLAGS := -X $(PKG).Name=satelle-serve -X $(PKG).Version=$(SERVE_VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)
 
-.PHONY: build install uninstall test integration judgment check-serve-version
+.PHONY: build install uninstall test integration judgment planner-bench check-serve-version
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/satelle
@@ -49,6 +49,11 @@ integration: build
 # never in default CI. See README ## Testing.
 judgment:
 	go test -tags llm ./tests/llm/...
+
+# Opt-in live comparison of the configured Claude command planner and Grok ACP
+# planner. Costs tokens and writes evidence under tests/plannerbench/out/.
+planner-bench: build
+	SATELLE_BIN=$(CURDIR)/$(BIN) SATELLE_PLANNER_BENCH=1 go test -tags plannerbench ./tests/plannerbench/ -count=1 -timeout 60m -v
 
 # Local Codex hook smoke (sty_71491143). Never part of CI. It uses the existing
 # Codex CLI login/configuration and clearly skips when Codex is unavailable.
