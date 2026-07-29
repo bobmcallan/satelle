@@ -1,6 +1,7 @@
 # Harness / agent local dirs — never commit (operator-owned)
 .claude/
 .grok/
+.codex/
 
 # satelle workspace (authored substrate + local config). Continuity is local
 # disk by default (or hosted sync); Git is not the recovery path.

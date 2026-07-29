@@ -131,11 +131,7 @@ func PrereqNote(name string) string {
 		} else {
 			parts = append(parts, "npx not on PATH — needed for DefaultCodexACPCommand")
 		}
-		if os.Getenv("CODEX_API_KEY") != "" || os.Getenv("OPENAI_API_KEY") != "" {
-			parts = append(parts, "CODEX_API_KEY/OPENAI_API_KEY set")
-		} else {
-			parts = append(parts, "set CODEX_API_KEY or OPENAI_API_KEY for live dogfood")
-		}
+		parts = append(parts, "authenticate with codex login for local verification")
 	}
 	return strings.Join(parts, "; ")
 }
@@ -158,7 +154,8 @@ principles = "session"
 # Paste into .satelle/agents.toml — does not change the default [reviewer].
 # Launcher execs: %s  (no stdio subcommand — not part of the adapter contract)
 # Equivalent direct form: command = %q
-# ENV: CODEX_API_KEY|OPENAI_API_KEY, CODEX_PATH, CODEX_CONFIG, INITIAL_AGENT_MODE, APP_SERVER_LOGS
+# Auth: use Codex CLI login/configuration; Satelle does not require an API-key environment variable.
+# Optional adapter environment: CODEX_PATH, CODEX_CONFIG, INITIAL_AGENT_MODE, APP_SERVER_LOGS
 `, cmd, agentcli.DefaultCodexACPCommand, agentcli.DefaultCodexACPCommand)
 	case "claude":
 		return fmt.Sprintf(`# Use launcher or DefaultClaudeCommand template; select with satelle agent set claude

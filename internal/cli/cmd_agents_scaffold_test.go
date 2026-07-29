@@ -256,6 +256,36 @@ func TestRemoveCodexDeletesWhollySatelleScaffold(t *testing.T) {
 	}
 }
 
+// Every command emitted by the Codex scaffold must be recognisably Satelle-owned,
+// otherwise remove could leave a supposedly wholly-owned hooks file behind.
+func TestRemoveCodexRecognisesEveryGeneratedCommand(t *testing.T) {
+	repo := t.TempDir()
+	if _, _, _, err := ensureCodexHooks(repo); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(codexHooksRel)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		t.Fatal(err)
+	}
+	for event, rawGroups := range root["hooks"].(map[string]any) {
+		for _, rawGroup := range rawGroups.([]any) {
+			for _, rawHandler := range rawGroup.(map[string]any)["hooks"].([]any) {
+				command := rawHandler.(map[string]any)["command"].(string)
+				if !isSatelleOwnedHookCommand(command) {
+					t.Fatalf("%s hook command is not removable as Satelle-owned: %q", event, command)
+				}
+			}
+		}
+	}
+	if action, _, _, err := removeCodexHooks(repo); err != nil || action != "removed" {
+		t.Fatalf("remove wholly-owned Codex scaffold: action=%q err=%v", action, err)
+	}
+}
+
 func TestRemoveCodexKeepsUserDescription(t *testing.T) {
 	repo := t.TempDir()
 	if _, _, _, err := ensureCodexHooks(repo); err != nil {
@@ -355,5 +385,31 @@ func TestBuildCodexHookSettingsShape(t *testing.T) {
 	}
 	if !strings.Contains(string(b), "apply_patch") {
 		t.Fatalf("gate matcher must cover apply_patch:\n%s", b)
+	}
+	pre := hooks["PreToolUse"].([]any)
+	if got := pre[0].(map[string]any)["matcher"]; got != "apply_patch|Edit|Write|Bash" {
+		t.Fatalf("Codex gate matcher = %q, want documented tool names", got)
+	}
+	if got := pre[1].(map[string]any)["matcher"]; got != "Bash" {
+		t.Fatalf("Codex commit matcher = %q, want Bash", got)
+	}
+	for event, rawGroups := range hooks {
+		groups, ok := rawGroups.([]any)
+		if !ok {
+			t.Fatalf("%s groups have unexpected type %T", event, rawGroups)
+		}
+		for _, rawGroup := range groups {
+			group := rawGroup.(map[string]any)
+			for _, rawHandler := range group["hooks"].([]any) {
+				handler := rawHandler.(map[string]any)
+				if handler["type"] != "command" {
+					t.Fatalf("%s handler type = %v", event, handler["type"])
+				}
+				async, ok := handler["async"].(bool)
+				if !ok || async {
+					t.Fatalf("%s command handler must explicitly set async=false: %#v", event, handler)
+				}
+			}
+		}
 	}
 }

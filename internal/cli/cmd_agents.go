@@ -43,6 +43,8 @@ so a Codex install path can be verified without changing the default reviewer.
 
 Codex hooks require trust on first use (Codex /hooks review). Automation may
 pass --dangerously-bypass-hook-trust to codex exec.
+Codex authentication comes from the Codex CLI (codex login); satelle requires
+no API-key or opt-in environment variable.
 
 For selecting or validating the headless agent CLI, use satelle agent (singular):
   satelle agent show | set | detect | validate`,

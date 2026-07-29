@@ -294,6 +294,13 @@ func TestHookGateAllowsUnderEngagedStory(t *testing.T) {
 	if !gateEvent(t, repo, code) {
 		t.Error("gate BLOCKED a code edit while a story is engaged")
 	}
+	// Codex uses the same accepted hook envelope as Claude. Its harness-specific
+	// path must preserve the normal engaged-story allow policy as well.
+	codexOut := hookStdoutArgs(t, repo, []string{"gate", "--harness", "codex"},
+		`{"tool_input":{"file_path":"`+code+`"},"hook_event_name":"PreToolUse"}`)
+	if strings.Contains(codexOut, `"permissionDecision":"deny"`) {
+		t.Errorf("Codex gate denied an edit while a story is engaged:\n%s", codexOut)
+	}
 }
 
 // TestHookGateHarnessSpecificDenyShape (sty_5e4bc568): a denied edit emits ONLY

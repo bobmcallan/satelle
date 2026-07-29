@@ -1,32 +1,23 @@
 //go:build codexlive
 
-// Opt-in live Codex smoke (sty_9e86f407 AC5). Never runs in make test / make
-// integration. Requires SATELLE_CODEX_LIVE=1.
+// Local Codex smoke (sty_71491143 AC1–AC3). Never runs in make test / make
+// integration. It uses the operator's existing Codex CLI login/configuration.
 //
 // 1) agents install codex → launcher + .codex/hooks.json
-// 2) codex exec loads hooks (SessionStart) through that hooks.json
-// 3) satelle hook gate --harness codex denies mutation with no story
-// 4) optional: live ACP via installed launcher when API keys present
+// 2) codex exec loads hooks through that hooks.json
+// 3) Codex's real PreToolUse path denies a no-story shell mutation
 package codexlive
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/bobmcallan/satelle/internal/agentcli"
-	"github.com/bobmcallan/satelle/internal/agentinstall"
 )
 
-func TestLiveCodexInstallHooksAndACP(t *testing.T) {
-	if os.Getenv("SATELLE_CODEX_LIVE") != "1" {
-		t.Skip("set SATELLE_CODEX_LIVE=1 to run live Codex smoke")
-	}
+func TestLiveCodexInstallHooksAndDeny(t *testing.T) {
 	bin := os.Getenv("SATELLE_TEST_BIN")
 	if bin == "" {
 		var err error
@@ -36,7 +27,15 @@ func TestLiveCodexInstallHooksAndACP(t *testing.T) {
 		}
 	}
 	if _, err := exec.LookPath("codex"); err != nil {
-		t.Skip("codex CLI not on PATH")
+		t.Skip("Codex prerequisite: install the codex CLI and log in with `codex login`")
+	}
+	status := exec.Command("codex", "login", "status")
+	if out, err := status.CombinedOutput(); err != nil {
+		t.Skipf("Codex prerequisite: authenticate with `codex login` before hook verification: %v\n%s", err, out)
+	}
+	features := exec.Command("codex", "features", "list")
+	if out, err := features.CombinedOutput(); err != nil || !hooksFeatureEnabled(string(out)) {
+		t.Skipf("Codex prerequisite: enable the hooks feature before hook verification: %v\n%s", err, out)
 	}
 
 	repo := t.TempDir()
@@ -59,48 +58,47 @@ func TestLiveCodexInstallHooksAndACP(t *testing.T) {
 	if !strings.Contains(string(hb), "satelle-hook.sh") && !strings.Contains(string(hb), "satelle hook") {
 		t.Fatalf("hooks.json missing satelle commands:\n%s", hb)
 	}
+	if !strings.Contains(string(hb), `"async": false`) {
+		t.Fatalf("hooks.json missing required explicit async=false command handlers:\n%s", hb)
+	}
 	launcher := filepath.Join(home, "agents", "bin", "satelle-codex")
 	if st, err := os.Stat(launcher); err != nil || st.Mode()&0o111 == 0 {
 		t.Fatalf("launcher missing/not executable: %v", err)
 	}
-
-	// Live path through installed .codex/hooks.json: codex exec must load hooks.
-	// Use isolated CODEX_HOME with project trust + hooks feature.
-	codexHome := filepath.Join(repo, "codexhome")
-	_ = os.MkdirAll(codexHome, 0o755)
-	cfg := `[features]
-hooks = true
-[projects."` + repo + `"]
-trust_level = "trusted"
-`
-	if err := os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(cfg), 0o644); err != nil {
-		t.Fatal(err)
+	// Replace one installed SessionStart command with a shell-safe absolute probe.
+	// The Codex hook contract executes command hooks from the session cwd, and
+	// this asserted side effect is deterministic discovery evidence rather than
+	// relying only on lifecycle log text.
+	probe := filepath.Join(repo, "session-start-probe")
+	patched := strings.Replace(string(hb), `"command": "satelle reindex"`, `"command": "touch `+probe+`"`, 1)
+	if patched == string(hb) {
+		t.Fatal("installed hooks.json has no SessionStart reindex command to probe")
 	}
-	probe := filepath.Join(repo, ".codex", "session-start-probe")
-	// Rewrite SessionStart to touch a probe file so we prove hooks.json ran.
-	// Keep PreToolUse satelle entries intact.
-	patched := strings.Replace(string(hb),
-		`"command": "satelle reindex"`,
-		`"command": "touch `+probe+`"`, 1)
 	if err := os.WriteFile(hooks, []byte(patched), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
+	// Use the operator's existing Codex CLI session: an isolated CODEX_HOME would
+	// discard its login and turn this into a credential failure instead of a hook
+	// verification. --dangerously-bypass-hook-trust makes this unattended without
+	// changing the user's hook-trust settings.
 	c2 := exec.Command("codex", "exec", "--dangerously-bypass-hook-trust", "--skip-git-repo-check",
 		"reply with only the word ok")
 	c2.Dir = repo
-	c2.Env = append(os.Environ(), "CODEX_HOME="+codexHome, "PATH="+filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
-	out2, _ := c2.CombinedOutput()
+	c2.Env = append(os.Environ(), "PATH="+filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out2, err := c2.CombinedOutput()
 	t.Logf("codex exec:\n%s", out2)
+	if err != nil {
+		t.Fatalf("Codex hook-load probe failed: %v\n%s", err, out2)
+	}
 	if _, err := os.Stat(probe); err != nil {
-		// SessionStart may still report "hook: SessionStart" even if touch failed.
-		if !strings.Contains(string(out2), "SessionStart") && !strings.Contains(string(out2), "hook:") {
-			t.Fatalf("installed .codex/hooks.json did not run (no SessionStart / probe): %v\n%s", err, out2)
-		}
-		t.Logf("SessionStart observed in output; probe file missing (sandbox?): %v", err)
+		t.Fatalf("installed SessionStart hook did not execute: %v\n%s", err, out2)
 	}
 
-	// Policy deny via the same binary the hooks invoke.
-	editEv := `{"tool_input":{"file_path":"` + filepath.Join(repo, "main.go") + `"},"hook_event_name":"PreToolUse"}`
+	// Policy deny via the exact installed hook wrapper path, with Codex's accepted
+	// PreToolUse envelope. The no-story condition is deliberate: the test never
+	// engages a Satelle story in this temporary repository.
+	editEv := `{"tool_input":{"command":"touch ` + filepath.Join(repo, "denied") + `"},"tool_name":"Bash","hook_event_name":"PreToolUse"}`
 	gate := exec.Command(bin, "hook", "gate", "--harness", "codex")
 	gate.Dir = repo
 	gate.Env = append(os.Environ(), "SATELLE_HOME="+home)
@@ -108,47 +106,41 @@ trust_level = "trusted"
 	var gateOut bytes.Buffer
 	gate.Stdout = &gateOut
 	if gerr := gate.Run(); gerr == nil {
-		t.Fatalf("gate must deny edit with no engaged story; stdout=%s", gateOut.String())
+		t.Fatalf("gate must deny shell mutation with no engaged story; stdout=%s", gateOut.String())
 	}
 	if !strings.Contains(gateOut.String(), "permissionDecision") || !strings.Contains(gateOut.String(), "deny") {
 		t.Fatalf("want Codex deny envelope, got %s", gateOut.String())
 	}
 
-	if os.Getenv("CODEX_API_KEY") == "" && os.Getenv("OPENAI_API_KEY") == "" {
-		t.Log("no API key — hooks.json + gate deny asserted; skip live ACP adapter")
-		return
+	// End-to-end: Codex must invoke the installed PreToolUse gate and prevent the
+	// mutation, not merely accept a synthetic event sent directly to Satelle.
+	denied := filepath.Join(repo, "should-not-exist")
+	c3 := exec.Command("codex", "exec", "--json", "--dangerously-bypass-hook-trust", "--skip-git-repo-check", "--sandbox", "workspace-write",
+		"Use your shell tool to run exactly: touch "+denied)
+	c3.Dir = repo
+	c3.Env = append(os.Environ(), "PATH="+filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out3, err := c3.CombinedOutput()
+	t.Logf("codex mutation probe:\n%s", out3)
+	if err == nil {
+		t.Fatalf("Codex mutation probe unexpectedly succeeded; want PreToolUse denial:\n%s", out3)
 	}
-	snip := agentinstall.BindingSnippet("codex", launcher)
-	cmdLine := extractCmd(snip)
-	if cmdLine == "" || !strings.Contains(cmdLine, launcher) {
-		t.Fatalf("bad binding command: %q", cmdLine)
+	if _, err := os.Stat(denied); err == nil {
+		t.Fatalf("Codex created %s despite the no-story PreToolUse gate:\n%s", denied, out3)
 	}
-	r, err := agentcli.RunnerFromBinding(agentcli.InterfaceACP, cmdLine)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	acpOut, err := r.Run(ctx, agentcli.Request{
-		SystemPrompt: "Reply with only: {\"decision\":\"accept\",\"notes\":\"live\"}",
-		Payload:      `{}`,
-		AllowedTools: "read_file,grep,list_dir",
-		Effort:       "low",
-	})
-	if err != nil {
-		t.Fatalf("live ACP via installed launcher: %v\nout=%s", err, acpOut)
-	}
-	if !strings.Contains(string(acpOut), "decision") {
-		t.Fatalf("live ACP response missing decision: %q", acpOut)
+	if !strings.Contains(strings.ToLower(string(out3)), "blocked by pretooluse hook") {
+		t.Fatalf("Codex did not report the PreToolUse block:\n%s", out3)
 	}
 }
 
-func extractCmd(snip string) string {
-	for _, line := range strings.Split(snip, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "command") && strings.Contains(line, "=") {
-			return strings.Trim(strings.TrimSpace(line[strings.Index(line, "=")+1:]), `"`)
+// hooksFeatureEnabled recognises the `hooks  <maturity>  true|false` row from
+// `codex features list`; presence alone is not enough because hooks can be
+// explicitly disabled.
+func hooksFeatureEnabled(out string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && fields[0] == "hooks" {
+			return fields[len(fields)-1] == "true"
 		}
 	}
-	return ""
+	return false
 }

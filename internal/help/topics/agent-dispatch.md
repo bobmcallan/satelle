@@ -179,8 +179,8 @@ satelle agents install all
 satelle agents install codex
 # Manual ACP fallback (or use npx each run):
 #   npm install -g @agentclientprotocol/codex-acp
-# Auth: CODEX_API_KEY or OPENAI_API_KEY (ChatGPT login also works for interactive)
-export CODEX_API_KEY=…                          # or OPENAI_API_KEY
+# Authenticate through the Codex CLI (for example, `codex login`). Satelle does
+# not require CODEX_API_KEY, OPENAI_API_KEY, or a Satelle-specific environment flag.
 # Optional: point at a specific codex binary
 export CODEX_PATH=$(which codex)
 # Reviewer dogfood: keep the adapter in read-only agent mode when possible
@@ -189,10 +189,10 @@ export INITIAL_AGENT_MODE=read-only
 # Automation: codex exec --dangerously-bypass-hook-trust …
 ```
 
-**Live smoke (optional, never CI):** set `SATELLE_CODEX_LIVE=1` and run
-`go test -tags codexlive ./tests/codexlive/` (or `make codex-smoke` when present).
-Requires credentials; costs tokens. Hermetic unit tests cover the install path
-without Codex, npm, or API keys.
+**Local hook smoke (never CI):** run `go test -tags codexlive ./tests/codexlive/`
+(or `make codex-smoke` when present). It uses existing Codex CLI login/configuration
+and reports a clear prerequisite when Codex is absent or unauthenticated. Hermetic
+unit tests cover the install path without Codex, npm, or API keys.
 
 #### Sample agents.toml — Codex ACP for low-cost / park roles
 

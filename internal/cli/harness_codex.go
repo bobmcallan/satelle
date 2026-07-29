@@ -20,33 +20,41 @@ const codexHooksRel = ".codex/hooks.json"
 const satelleCodexDesc = "satelle-owned compliance hooks — preserve non-satelle entries on remove"
 
 // buildCodexHookSettings returns .codex/hooks.json scaffold bytes.
-// Matchers cover Codex mutating tools: apply_patch (also Edit|Write aliases),
-// Bash/shell for commitgate. SessionStart/UserPromptSubmit/Stop mirror claude/grok.
+// Matchers cover Codex's documented mutating tool names: apply_patch (also
+// Edit|Write aliases) and Bash for shell/commit commands. SessionStart and
+// UserPromptSubmit mirror Claude/Grok.
 // repoRoot makes PreToolUse script paths absolute (cwd-safe).
 func buildCodexHookSettings(repoRoot string) []byte {
+	commandHook := func(command string) map[string]any {
+		// Codex's configured command-handler schema requires an explicit async
+		// value. Compliance hooks must synchronously decide before a mutation,
+		// so they are always false.
+		return map[string]any{"type": "command", "command": command, "async": false}
+	}
 	doc := map[string]any{
 		"description": satelleCodexDesc,
 		"hooks": map[string]any{
 			"SessionStart": []any{
 				map[string]any{"hooks": []any{
-					map[string]any{"type": "command", "command": "satelle reindex"},
-					map[string]any{"type": "command", "command": "satelle hook context"},
+					commandHook("satelle reindex"),
+					commandHook("satelle hook context"),
 				}},
 			},
 			"PreToolUse": []any{
 				map[string]any{
-					// apply_patch is canonical; Edit|Write aliases; write_file if present.
-					"matcher": "apply_patch|Edit|Write|write_file|Bash|shell",
-					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand(repoRoot, "codex", "gate")}},
+					// Codex documents Bash and apply_patch; Edit|Write are supported
+					// apply_patch aliases. Do not carry non-Codex matcher guesses here.
+					"matcher": "apply_patch|Edit|Write|Bash",
+					"hooks":   []any{commandHook(renderHookCommand(repoRoot, "codex", "gate"))},
 				},
 				map[string]any{
-					"matcher": "Bash|shell",
-					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand(repoRoot, "codex", "commitgate")}},
+					"matcher": "Bash",
+					"hooks":   []any{commandHook(renderHookCommand(repoRoot, "codex", "commitgate"))},
 				},
 			},
 			"UserPromptSubmit": []any{
 				map[string]any{"hooks": []any{
-					map[string]any{"type": "command", "command": promptHookCommand},
+					commandHook(promptHookCommand),
 				}},
 			},
 			// Codex documents Stop and SessionEnd; we deliberately omit Stop here

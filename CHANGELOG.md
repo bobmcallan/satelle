@@ -1,3 +1,12 @@
+## [0.0.346] - 2026-07-29
+
+### Fixed
+- Codex compliance hooks now use documented tool matchers and explicit synchronous command handlers; local hook verification uses Codex CLI login and proves SessionStart plus no-story PreToolUse denial (sty_71491143)
+- Codex install/remove verification now covers all generated hook ownership and the engaged-story allow path (sty_71491143)
+
+### Changed
+- Codex help and binding guidance no longer require Satelle-specific credential or opt-in environment variables (sty_71491143)
+
 ## [0.0.345] - 2026-07-29
 
 ### Added

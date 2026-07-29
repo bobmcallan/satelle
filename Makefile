@@ -50,9 +50,8 @@ integration: build
 judgment:
 	go test -tags llm ./tests/llm/...
 
-# Opt-in live Codex ACP/hooks smoke (sty_9e86f407). Never part of CI.
-# Requires SATELLE_CODEX_LIVE=1 and CODEX_API_KEY or OPENAI_API_KEY (or codex login).
+# Local Codex hook smoke (sty_71491143). Never part of CI. It uses the existing
+# Codex CLI login/configuration and clearly skips when Codex is unavailable.
 .PHONY: codex-smoke
 codex-smoke: build
-	SATELLE_CODEX_LIVE=1 SATELLE_TEST_BIN=$$(pwd)/$(BIN) go test -tags codexlive ./tests/codexlive/ -count=1 -v
-
+	SATELLE_TEST_BIN=$$(pwd)/$(BIN) go test -tags codexlive ./tests/codexlive/ -count=1 -v

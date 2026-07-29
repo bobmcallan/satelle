@@ -85,8 +85,8 @@ const DefaultGrokCommand = "grok -p {payload} --system-prompt-override {system} 
 //	interface = "acp"
 //	command   = DefaultCodexACPCommand  # or "codex-acp" with a multi-token spawn
 //
-// Live dogfood needs the adapter (npx/npm) and CODEX_API_KEY or OPENAI_API_KEY;
-// hermetic tests never invoke this binary.
+// Live dogfood needs the adapter (npx/npm) and an authenticated Codex CLI
+// session; hermetic tests never invoke this binary.
 const DefaultCodexACPCommand = "npx -y @agentclientprotocol/codex-acp"
 
 // DefaultCodexExecCommand is the secondary Codex command-template transport
