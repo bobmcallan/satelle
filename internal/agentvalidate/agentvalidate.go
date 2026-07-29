@@ -30,7 +30,7 @@ import (
 // Env VALUES are never included (secrets); key names may appear in Notes.
 type Grant struct {
 	Name              string
-	Backend           string // in-loop | isolated:claude | isolated:grok | isolated:<binary> | acp:<binary> | codex (unmapped)
+	Backend           string // in-loop | isolated:claude | isolated:grok | isolated:codex | isolated:<binary> | acp:<binary>
 	Interface         string // command | acp (epic:agent-dispatch-transport)
 	Tools             string
 	Model             string
@@ -408,10 +408,14 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 			if b.Tools == "" && strings.Contains(resolved, "read_file") {
 				g.Tools = "read_file,grep,list_dir"
 			}
+		case agentcli.CLICodex:
+			// Codex exec: sandbox mode is the ceiling evidence (sty_3b4909bb).
+			g.ReadOnly = commandHasCodexReadOnlySandbox(resolved)
 		default:
 			// Full template: surface the command so the ceiling is visible.
 			g.ReadOnly = strings.Contains(resolved, "--disallowedTools") ||
 				strings.Contains(resolved, "--deny") ||
+				commandHasCodexReadOnlySandbox(resolved) ||
 				(strings.Contains(resolved, "Read") && !strings.Contains(resolved, "Write"))
 		}
 		// Placeholder completeness (sty_21db3670): buildArgs substitutes only
@@ -422,13 +426,20 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 				"agents.toml [%s] command omits {system} as its own argv token — the gate/skill rubric is never appended and the agent runs without its rubric",
 				section))
 		}
+		// Hard-reject danger sandbox for role=reviewer (sty_3b4909bb AC3) — not a
+		// warning. danger-full-access / --dangerously-bypass-* erase the ceiling.
+		if role == config.RoleReviewer && commandHasDangerSandbox(resolved) {
+			problems = append(problems, fmt.Sprintf(
+				"agents.toml [%s] is role=reviewer with a command that disables the sandbox ceiling (%s) — refuse; use -s read-only (DefaultCodexExecCommand) or a non-danger template",
+				section, dangerSandboxToken(resolved)))
+		}
 		// Reviewer read-only ceiling: advisory when role=reviewer but no ceiling
 		// is expressed (no --disallowedTools/--deny / read-only heuristic miss).
 		// Warn not fail — g.ReadOnly is a heuristic and a legitimate ceiling form
 		// it misses must not hard-block engage (AC2).
-		if role == config.RoleReviewer && !g.ReadOnly {
+		if role == config.RoleReviewer && !g.ReadOnly && !commandHasDangerSandbox(resolved) {
 			warnings = append(warnings, fmt.Sprintf(
-				"agents.toml [%s] is role=reviewer with an isolated command that expresses no read-only ceiling (no --disallowedTools/--deny of mutators) — the reviewer could silently gain write; deny the mutators or use the default claude/grok template",
+				"agents.toml [%s] is role=reviewer with an isolated command that expresses no read-only ceiling (no --disallowedTools/--deny of mutators, no -s read-only) — the reviewer could silently gain write; deny the mutators or use the default claude/grok/codex template",
 				section))
 		}
 		if g.Notes == "" {
@@ -454,6 +465,53 @@ func hasToken(fields []string, tok string) bool {
 		}
 	}
 	return false
+}
+
+// commandHasCodexReadOnlySandbox reports Codex-style read-only sandbox ceiling
+// evidence in a resolved command template (sty_3b4909bb).
+func commandHasCodexReadOnlySandbox(resolved string) bool {
+	lower := strings.ToLower(resolved)
+	// Flag forms: -s read-only | --sandbox read-only | sandbox=read-only
+	if strings.Contains(lower, "sandbox=read-only") {
+		return true
+	}
+	fields := strings.Fields(lower)
+	for i, f := range fields {
+		if (f == "-s" || f == "--sandbox") && i+1 < len(fields) && fields[i+1] == "read-only" {
+			return true
+		}
+	}
+	return false
+}
+
+// commandHasDangerSandbox reports Codex (or similar) danger sandbox tokens that
+// erase a reviewer ceiling (sty_3b4909bb AC3).
+func commandHasDangerSandbox(resolved string) bool {
+	lower := strings.ToLower(resolved)
+	if strings.Contains(lower, "danger-full-access") {
+		return true
+	}
+	if strings.Contains(lower, "--dangerously-bypass-approvals-and-sandbox") {
+		return true
+	}
+	if strings.Contains(lower, "--dangerously-bypass-hook-trust") {
+		// Hook trust bypass alone is not a full sandbox erase; do not hard-fail.
+		return false
+	}
+	return false
+}
+
+// dangerSandboxToken returns a short label for the first danger marker found.
+func dangerSandboxToken(resolved string) string {
+	lower := strings.ToLower(resolved)
+	switch {
+	case strings.Contains(lower, "danger-full-access"):
+		return "danger-full-access"
+	case strings.Contains(lower, "--dangerously-bypass-approvals-and-sandbox"):
+		return "--dangerously-bypass-approvals-and-sandbox"
+	default:
+		return "danger sandbox"
+	}
 }
 
 // toolsGrantMutators mirrors agentcli.toolsAllowMutators for validate-time

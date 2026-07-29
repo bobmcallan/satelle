@@ -69,17 +69,77 @@ func TestNewRunnerMapping(t *testing.T) {
 	}
 }
 
-func TestCodexStubErrorsClearly(t *testing.T) {
-	r, err := NewRunner(CLICodex)
+// TestCodexPresetExpansion (sty_3b4909bb): NewRunner("codex") maps to the
+// command-template DefaultCodexExecCommand (not an unmapped stub). Preferred
+// ACP path is DefaultCodexACPCommand + interface=acp (separate test).
+func TestCodexPresetExpansion(t *testing.T) {
+	r := mustRunner(t, "codex")
+	if r.Name() != CLICodex {
+		t.Errorf("NewRunner(codex) name = %q, want %q", r.Name(), CLICodex)
+	}
+	if r.Command() != DefaultCodexExecCommand {
+		t.Errorf("NewRunner(codex) should equal DefaultCodexExecCommand\n got: %q\nwant: %q", r.Command(), DefaultCodexExecCommand)
+	}
+	// Bare token rejected on the agents.toml path (full template required).
+	if _, err := RunnerFromCommand("codex"); err == nil {
+		t.Fatal("RunnerFromCommand(codex) must error (bare presets removed)")
+	}
+	for _, want := range []string{
+		"codex", "exec", "-s", "read-only", "{system}", "-m", "{model}",
+	} {
+		if !strings.Contains(DefaultCodexExecCommand, want) {
+			t.Errorf("DefaultCodexExecCommand must include %q: %q", want, DefaultCodexExecCommand)
+		}
+	}
+	// Prompt is {system} alone — payload rides stdin (Claude-like dual delivery).
+	if strings.Contains(DefaultCodexExecCommand, "{payload}") {
+		t.Error("DefaultCodexExecCommand must not place {payload} on argv")
+	}
+}
+
+func TestCodexACPCommandShape(t *testing.T) {
+	r, err := RunnerFromBinding(InterfaceACP, DefaultCodexACPCommand)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("RunnerFromBinding(acp, DefaultCodexACPCommand): %v", err)
 	}
-	_, err = r.Run(context.Background(), Request{SystemPrompt: "x", Payload: "y"})
-	if err == nil {
-		t.Fatal("codex Run should error until mapped")
+	if r.Command() != DefaultCodexACPCommand {
+		t.Errorf("Command() = %q, want %q", r.Command(), DefaultCodexACPCommand)
 	}
-	if !strings.Contains(err.Error(), "not yet mapped") {
-		t.Errorf("codex error should be explicit, got: %v", err)
+	// First token is the spawn binary (npx); multi-token required by ACP path.
+	if r.Name() != "npx" {
+		t.Errorf("Name() = %q, want npx", r.Name())
+	}
+	if strings.Contains(DefaultCodexACPCommand, "{system}") || strings.Contains(DefaultCodexACPCommand, "{payload}") {
+		t.Error("ACP spawn must not carry template placeholders")
+	}
+}
+
+func TestCodexExecBuildArgs(t *testing.T) {
+	fields := strings.Fields(DefaultCodexExecCommand)
+	// Drop binary; buildArgs substitutes the template tail.
+	args := buildArgs(fields[1:], Request{
+		SystemPrompt: "gate rubric here",
+		Model:        "o4-mini",
+		Payload:      `{"story":{"id":"sty_x"}}`,
+	})
+	if !contains(args, "exec") || !contains(args, "read-only") {
+		t.Fatalf("args missing exec/read-only: %v", args)
+	}
+	if !contains(args, "gate rubric here") {
+		t.Errorf("system prompt must be one argv token: %v", args)
+	}
+	if !contains(args, "o4-mini") {
+		t.Errorf("model must be substituted: %v", args)
+	}
+	// Empty model drops -m.
+	argsEmpty := buildArgs(fields[1:], Request{SystemPrompt: "rubric"})
+	for _, a := range argsEmpty {
+		if a == "-m" {
+			t.Errorf("empty model should drop -m: %v", argsEmpty)
+		}
+	}
+	if !contains(argsEmpty, "rubric") {
+		t.Errorf("system still required when model empty: %v", argsEmpty)
 	}
 }
 

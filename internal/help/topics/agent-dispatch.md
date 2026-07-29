@@ -137,6 +137,92 @@ model     = "grok-4.5"
 principles = "session"
 ```
 
+### Codex — preferred ACP, secondary command (sty_3b4909bb)
+
+Codex is a first-class agent on the **same two transports** as everyone else.
+There is no third satelle interface. App Server is an implementation detail of
+the ACP adapter, not a satelle protocol.
+
+| Preference | Transport | Binding shape |
+| --- | --- | --- |
+| **1. Preferred** | ACP | `interface = "acp"` + `command = "npx -y @agentclientprotocol/codex-acp"` (`DefaultCodexACPCommand`) |
+| **2. Secondary** | command | `interface = "command"` (default) + full `codex exec -s read-only -m {model} {system}` (`DefaultCodexExecCommand`) |
+
+Bare `command = "codex"` is rejected by validate (like bare claude/grok);
+`satelle init` / migrate expands it to `DefaultCodexExecCommand`. Global
+`NewRunner("codex")` resolves to that **command** template — for ACP, set
+`interface = "acp"` explicitly.
+
+#### Install the ACP adapter (dogfood)
+
+```bash
+npm install -g @agentclientprotocol/codex-acp   # or use npx each run
+codex-acp --version                             # optional check
+# Auth: CODEX_API_KEY or OPENAI_API_KEY (ChatGPT login also works for interactive)
+export CODEX_API_KEY=…                          # or OPENAI_API_KEY
+# Optional: point at a specific codex binary
+export CODEX_PATH=$(which codex)
+# Reviewer dogfood: keep the adapter in read-only agent mode when possible
+export INITIAL_AGENT_MODE=read-only
+```
+
+#### Sample agents.toml — Codex ACP for low-cost / park roles
+
+```toml
+# Preferred: reuse satelle's ACP client (same as Grok).
+[reviewer-summary]
+role       = "reviewer"
+effort     = "low"
+interface  = "acp"
+command    = "npx -y @agentclientprotocol/codex-acp"
+tools      = "read_file,grep,list_dir"
+model      = "o4-mini"
+principles = "session"
+
+[retrospective]
+role       = "agent"
+effort     = "high"
+interface  = "acp"
+command    = "npx -y @agentclientprotocol/codex-acp"
+tools      = "read_file,grep,list_dir,Bash(satelle:*)"
+principles = "session"
+
+[blocked-triage]
+role       = "agent"
+effort     = "high"
+interface  = "acp"
+command    = "npx -y @agentclientprotocol/codex-acp"
+tools      = "read_file,grep,list_dir,Bash(satelle:*)"
+principles = "session"
+```
+
+#### Sample — Codex exec command transport
+
+```toml
+[reviewer-codex-exec]
+role      = "reviewer"
+command   = "codex exec -s read-only -m {model} {system}"
+# payload is always on stdin; do not add {payload} to argv
+model     = "o4-mini"
+principles = "session"
+```
+
+`satelle agent validate` treats `-s read-only` as reviewer ceiling evidence and
+**hard-rejects** `role=reviewer` templates that use `danger-full-access` or
+`--dangerously-bypass-approvals-and-sandbox`.
+
+#### Live dogfood vs CI
+
+- **Hermetic tests** (in `make integration` / unit suites) use fake ACP peers and
+  validate/buildArgs only — they never require `codex`, npm, or API keys.
+- **Live dogfood** is optional: set credentials, install the adapter, point a
+  named binding at Codex ACP or exec, run `satelle agent validate`, then drive a
+  cheap gate (e.g. step-summary) or a one-off story transition. Env gate
+  `SATELLE_CODEX_DOGFOOD=1` is the operator convention for optional live
+  probes — unset must never fail CI.
+
+Claude remains the default init `[reviewer]` preset until an operator opts in.
+
 ## The command template — full templates and placeholders
 
 Each binding's **`command`** says *how* the agent runs. With **`interface =

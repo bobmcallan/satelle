@@ -1,3 +1,12 @@
+## [0.0.343] - 2026-07-29
+
+### Added
+- Codex as a first-class agent transport: preferred ACP spawn (`DefaultCodexACPCommand` via `@agentclientprotocol/codex-acp`) and secondary `codex exec` template (`DefaultCodexExecCommand`); dogfood practice in `satelle help agent-dispatch` (sty_3b4909bb)
+
+### Changed
+- `NewRunner("codex")` maps to the exec command template (unmapped stub removed); migrate expands bare `command = "codex"` (sty_3b4909bb)
+- Agent validate treats Codex `-s read-only` as reviewer ceiling evidence and hard-rejects `danger-full-access` / `--dangerously-bypass-approvals-and-sandbox` for role=reviewer (sty_3b4909bb)
+
 ## [0.0.342] - 2026-07-29
 
 ### Fixed

@@ -15,9 +15,11 @@
 //
 // agents.toml bindings carry a FULL command template (or "in-loop"/empty). Bare
 // single-token CLI names are NOT accepted on the agents.toml path — the operator
-// must see the real argv. DefaultClaudeCommand / DefaultGrokCommand are the
-// canonical templates init seeds and migrate expands into; NewRunner still
-// generates those templates for init/migrate/detection only.
+// must see the real argv. DefaultClaudeCommand / DefaultGrokCommand /
+// DefaultCodexExecCommand are the canonical command templates init/migrate
+// expand into; DefaultCodexACPCommand is the preferred Codex spawn for
+// interface=acp (sty_3b4909bb). NewRunner generates command templates only
+// (init/migrate/detection).
 package agentcli
 
 import (
@@ -73,6 +75,29 @@ const DefaultClaudeCommand = "claude -p --output-format json --disallowedTools W
 // template instead of the bare preset. {model} is dropped (with -m) when unset, so
 // grok falls back to its own default unless the binding pins one (e.g. grok-4.5).
 const DefaultGrokCommand = "grok -p {payload} --system-prompt-override {system} --tools read_file,grep,list_dir -m {model} --reasoning-effort {effort} --deny Write --deny Edit --deny search_replace --deny write --always-approve --output-format plain --max-turns 16 --no-subagents"
+
+// DefaultCodexACPCommand is the preferred Codex transport spawn for
+// interface=acp (sty_3b4909bb). The @agentclientprotocol/codex-acp adapter starts
+// the Codex App Server and speaks Agent Client Protocol on stdio, so satelle
+// reuses the existing ACP client (sessions, stream, permission policy, tools
+// grant). No third satelle interface is required. Operators set:
+//
+//	interface = "acp"
+//	command   = DefaultCodexACPCommand  # or "codex-acp" with a multi-token spawn
+//
+// Live dogfood needs the adapter (npx/npm) and CODEX_API_KEY or OPENAI_API_KEY;
+// hermetic tests never invoke this binary.
+const DefaultCodexACPCommand = "npx -y @agentclientprotocol/codex-acp"
+
+// DefaultCodexExecCommand is the secondary Codex command-template transport
+// (interface=command / NewRunner("codex")). codex exec takes the gate rubric as
+// the initial PROMPT argv token ({system}); the satelle work-item always rides
+// on stdin (dual delivery — do not also place {payload} on argv). -s read-only
+// is the baked sandbox ceiling (Codex analogue of Claude --disallowedTools /
+// Grok --deny). -m {model} drops when model is empty. Preference remains ACP
+// (DefaultCodexACPCommand); this template covers operators who cannot run the
+// adapter.
+const DefaultCodexExecCommand = "codex exec -s read-only -m {model} {system}"
 
 // Request is one headless agent invocation.
 type Request struct {
@@ -216,9 +241,11 @@ type Runner interface {
 }
 
 // NewRunner returns the Runner for a bare CLI NAME — the preset. An empty name
-// defaults to claude; "grok" expands to the grok preset; "codex" is the
-// not-yet-mapped stub; an unknown name errors. Callers with a full command
-// template use RunnerFromCommand instead.
+// defaults to claude; "grok" expands to the grok command preset; "codex" expands
+// to DefaultCodexExecCommand (command transport). Preferred Codex path for
+// agents.toml is interface=acp + DefaultCodexACPCommand — NewRunner cannot
+// return an ACP runner (no interface arg); see help agent-dispatch. Unknown
+// names error. Callers with a full command template use RunnerFromCommand.
 func NewRunner(name string) (Runner, error) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "", CLIClaude:
@@ -226,7 +253,7 @@ func NewRunner(name string) (Runner, error) {
 	case CLIGrok:
 		return templateFromCommand(DefaultGrokCommand), nil
 	case CLICodex:
-		return codexRunner{binary: CLICodex}, nil
+		return templateFromCommand(DefaultCodexExecCommand), nil
 	default:
 		return nil, fmt.Errorf("agentcli: unknown agent cli %q (want %q, %q, or %q, or a full command template)", name, CLIClaude, CLIGrok, CLICodex)
 	}
@@ -375,21 +402,6 @@ func buildArgs(argTemplate []string, req Request) []string {
 		}
 	}
 	return args
-}
-
-// codexRunner is a placeholder: codex's headless surface differs from claude's
-// (no --append-system-prompt), so a faithful preset is follow-up work. It is
-// selectable so the seam is exercised, but Run errors clearly until mapped — a
-// repo can still use codex today by setting a full [reviewer] harness template.
-type codexRunner struct{ binary string }
-
-func (c codexRunner) Name() string { return CLICodex }
-
-// Command reports the codex binary; its full preset argv is not yet mapped.
-func (c codexRunner) Command() string { return c.binary }
-
-func (c codexRunner) Run(ctx context.Context, req Request) ([]byte, error) {
-	return nil, fmt.Errorf("agentcli: the codex preset is not yet mapped — install claude, use the grok preset, or set [reviewer] command to a full codex command template in .satelle/agents.toml")
 }
 
 // composeEnv layers overlay onto base ("KEY=VALUE" entries, as from os.Environ),

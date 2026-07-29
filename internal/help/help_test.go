@@ -65,6 +65,12 @@ func TestAgentDispatchTopic(t *testing.T) {
 		"story status",
 		"effort",    // sty_657f77b9
 		"secondary", // sty_5bf61f89
+		// Codex dual transport + dogfood (sty_3b4909bb).
+		"DefaultCodexACPCommand",
+		"codex exec",
+		"@agentclientprotocol/codex-acp",
+		"SATELLE_CODEX_DOGFOOD",
+		"INITIAL_AGENT_MODE",
 	} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("agent-dispatch topic missing %q", want)

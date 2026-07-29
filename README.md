@@ -158,7 +158,9 @@ node or an edge (the legacy edge `reviewer_skill=` attribute still parses). The 
 (`backlog → in_progress → done`) is the order-zero default; a repo overrides it
 under `.satelle/workflows`, and a YAML lifecycle is auto-converted to DOT on
 ingest. How each agent runs is bound in `.satelle/agents.toml` — the reviewer's
-agent CLI (`claude` works; `codex` is a selectable stub) and its read-only grant;
+agent CLI (`claude` and `grok` presets; Codex is first-class via preferred ACP
+(`interface=acp` + `@agentclientprotocol/codex-acp`) or secondary `codex exec`
+command template — see `satelle help agent-dispatch`) and its read-only grant;
 the executor runs in-loop.
 
 Process is configuration — change the workflow or its skills, change the process,

@@ -519,3 +519,84 @@ func TestValidate_GrantEffort(t *testing.T) {
 		t.Fatalf("reviewer grant effort = %q, want high", rev.Effort)
 	}
 }
+
+// TestValidate_CodexExecAndACP (sty_3b4909bb): command DefaultCodexExecCommand
+// is ReadOnly for reviewers; danger sandbox hard-rejects; ACP spawn accepts.
+func TestValidate_CodexExecAndACP(t *testing.T) {
+	// Accept: DefaultCodexExecCommand + role=reviewer.
+	agents := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop"},
+		Reviewer: config.AgentBinding{
+			Command: agentcli.DefaultCodexExecCommand,
+			Role:    "reviewer",
+		},
+	}
+	r := Validate(agents, nil, nil)
+	if !r.OK() {
+		t.Fatalf("DefaultCodexExecCommand reviewer must pass: %v", r.Problems)
+	}
+	var g Grant
+	for _, x := range r.Grants {
+		if x.Name == "reviewer" {
+			g = x
+		}
+	}
+	if !g.ReadOnly {
+		t.Error("codex exec -s read-only must count as ReadOnly ceiling")
+	}
+	if g.Backend != "isolated:codex" {
+		t.Errorf("backend = %q, want isolated:codex", g.Backend)
+	}
+
+	// Hard-reject: danger-full-access for role=reviewer.
+	agents.Reviewer = config.AgentBinding{
+		Command: "codex exec -s danger-full-access {system}",
+		Role:    "reviewer",
+	}
+	r = Validate(agents, nil, nil)
+	if r.OK() {
+		t.Fatal("danger-full-access reviewer must fail validate")
+	}
+	joined := strings.Join(r.Problems, "\n")
+	if !strings.Contains(joined, "danger-full-access") {
+		t.Errorf("problems must name danger-full-access:\n%s", joined)
+	}
+
+	// Hard-reject: --dangerously-bypass-approvals-and-sandbox.
+	agents.Reviewer = config.AgentBinding{
+		Command: "codex exec --dangerously-bypass-approvals-and-sandbox {system}",
+		Role:    "reviewer",
+	}
+	r = Validate(agents, nil, nil)
+	if r.OK() {
+		t.Fatal("dangerously-bypass reviewer must fail validate")
+	}
+	joined = strings.Join(r.Problems, "\n")
+	if !strings.Contains(joined, "dangerously-bypass") {
+		t.Errorf("problems must name dangerously-bypass:\n%s", joined)
+	}
+
+	// Accept: Codex ACP preferred path.
+	agents.Reviewer = config.AgentBinding{
+		Interface: "acp",
+		Command:   agentcli.DefaultCodexACPCommand,
+		Tools:     "read_file,grep,list_dir",
+		Role:      "reviewer",
+		Model:     "o4-mini",
+	}
+	r = Validate(agents, nil, nil)
+	if !r.OK() {
+		t.Fatalf("DefaultCodexACPCommand acp reviewer must pass: %v", r.Problems)
+	}
+	for _, x := range r.Grants {
+		if x.Name == "reviewer" {
+			g = x
+		}
+	}
+	if g.Interface != "acp" || !strings.HasPrefix(g.Backend, "acp:") {
+		t.Errorf("grant = %+v, want interface=acp backend acp:*", g)
+	}
+	if !g.ReadOnly {
+		t.Error("acp codex reviewer with read-only tools should be ReadOnly")
+	}
+}
