@@ -159,9 +159,12 @@ node or an edge (the legacy edge `reviewer_skill=` attribute still parses). The 
 under `.satelle/workflows`, and a YAML lifecycle is auto-converted to DOT on
 ingest. How each agent runs is bound in `.satelle/agents.toml` — the reviewer's
 agent CLI (`claude` and `grok` presets; Codex is first-class via preferred ACP
-(`interface=acp` + `@agentclientprotocol/codex-acp`) or secondary `codex exec`
-command template — see `satelle help agent-dispatch`) and its read-only grant;
-the executor runs in-loop.
+(`interface=acp` + `npx -y @agentclientprotocol/codex-acp`, no `stdio`
+subcommand) or secondary `codex exec` command template — see
+`satelle help agent-dispatch`) and its read-only grant; the executor runs
+in-loop. `satelle agents install claude|grok|codex|all` installs launchers and
+repo compliance hooks (`.claude` / `.grok` / `.codex`) so governed edits need
+an engaged story.
 
 Process is configuration — change the workflow or its skills, change the process,
 with no binary release. See `satelle help reviewer-checks` and the
@@ -219,6 +222,7 @@ remaining build phases are tracked as stories in the local database.
 | **GitHub CI** (`test` workflow) | `go build`, `go vet`, `gofmt`, `go test ./...`, and a no-cgo static build of every main under `cmd/` |
 | **Local** | `make integration` — integration + browser e2e under `tests/` (`-tags integration`); needs a real Chrome and drives the built binary |
 | **Judgment** (`make judgment`) | Opt-in LLM rubric fixtures under `tests/llm/` (`-tags llm`). **Costs tokens**, calls a live model, not hermetic — run at release time or on demand, never in default CI. Nondeterminism-tolerant (best of three). The human half of this tier is the re-runnable audit tasks (`tsk_substrate-audit`, `tsk_reviewer-objective-audit`, `tsk_context-audit`). |
+| **Codex live smoke** (`make codex-smoke`) | Opt-in live Codex ACP + hooks smoke under `tests/codexlive/` (`-tags codexlive`). Requires `SATELLE_CODEX_LIVE=1` and credentials. **Costs tokens**, never CI. See `satelle help agent-dispatch`. |
 
 Integration/e2e are intentionally **not** in GitHub CI (they need browser/binary
 fixtures). Run them before a release step when the workflow requires it. Property

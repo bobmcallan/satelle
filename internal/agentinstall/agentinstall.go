@@ -141,9 +141,14 @@ func PrereqNote(name string) string {
 }
 
 // BindingSnippet returns a pasteable agents.toml fragment for the launcher path.
+// Codex: multi-token ACP spawn via `sh <launcher>` so interface=acp accepts it
+// (bare single-token paths are rejected). The launcher body execs
+// DefaultCodexACPCommand with no stdio subcommand (sty_9e86f407 AC4/AC5).
 func BindingSnippet(name, launcherPath string) string {
 	switch name {
 	case "codex":
+		// sh + launcher is multi-token; launcher runs DefaultCodexACPCommand.
+		cmd := "sh " + launcherPath
 		return fmt.Sprintf(`[reviewer-codex-acp]
 role       = "reviewer"
 interface  = "acp"
@@ -151,7 +156,10 @@ command    = %q
 tools      = "read_file,grep,list_dir"
 principles = "session"
 # Paste into .satelle/agents.toml — does not change the default [reviewer].
-`, launcherPath+" stdio")
+# Launcher execs: %s  (no stdio subcommand — not part of the adapter contract)
+# Equivalent direct form: command = %q
+# ENV: CODEX_API_KEY|OPENAI_API_KEY, CODEX_PATH, CODEX_CONFIG, INITIAL_AGENT_MODE, APP_SERVER_LOGS
+`, cmd, agentcli.DefaultCodexACPCommand, agentcli.DefaultCodexACPCommand)
 	case "claude":
 		return fmt.Sprintf(`# Use launcher or DefaultClaudeCommand template; select with satelle agent set claude
 # command = %q  # optional wrapper; full template still required for {system}

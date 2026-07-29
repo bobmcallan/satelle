@@ -154,16 +154,30 @@ Bare `command = "codex"` is rejected by validate (like bare claude/grok);
 `interface = "acp"` explicitly.
 
 **`satelle agents` vs `satelle agent`:** `satelle agents install|remove` provisions
-satelle-owned launcher scripts under `$SATELLE_HOME/agents/bin/` (does not change
-the default reviewer or `[agent] cli`). `satelle agent` (singular) selects and
-validates the headless CLI / agents.toml.
+two satelle-owned surfaces per target (`claude` / `grok` / `codex` / `all`):
 
-#### Install the ACP adapter (dogfood)
+1. **Launchers** under `$SATELLE_HOME/agents/bin/` (e.g. `satelle-codex` →
+   `npx -y @agentclientprotocol/codex-acp` — **no** `stdio` subcommand; that is
+   not part of the adapter contract). Generated ACP bindings use
+   `command = "sh <launcher>"` (multi-token) so `interface=acp` accepts them.
+2. **Harness compliance scaffolds** in the repo: `.claude/settings.json`,
+   `.grok/hooks/satelle.json`, `.codex/hooks.json` — blocking PreToolUse hooks
+   that deny governed code-changing actions unless a satelle story is engaged.
+
+Ownership: only marker-bearing launchers and satelle hook entries are written or
+removed; user harness keys/hooks are preserved. Install/remove are idempotent.
+Neither path changes the default reviewer or `[agent] cli`.
+
+`satelle agent` (singular) selects and validates the headless CLI / agents.toml.
+
+#### Install compliance + ACP adapter (dogfood)
 
 ```bash
-# Preferred: satelle-owned launcher (does not change default reviewer)
+# Launchers + .claude/.grok/.codex blocking-hook scaffolds (repo cwd)
+satelle agents install all
+# Or a single harness:
 satelle agents install codex
-# Manual fallback (or use npx each run):
+# Manual ACP fallback (or use npx each run):
 #   npm install -g @agentclientprotocol/codex-acp
 # Auth: CODEX_API_KEY or OPENAI_API_KEY (ChatGPT login also works for interactive)
 export CODEX_API_KEY=…                          # or OPENAI_API_KEY
@@ -171,7 +185,14 @@ export CODEX_API_KEY=…                          # or OPENAI_API_KEY
 export CODEX_PATH=$(which codex)
 # Reviewer dogfood: keep the adapter in read-only agent mode when possible
 export INITIAL_AGENT_MODE=read-only
+# Codex will prompt to trust .codex/hooks.json on first run (/hooks).
+# Automation: codex exec --dangerously-bypass-hook-trust …
 ```
+
+**Live smoke (optional, never CI):** set `SATELLE_CODEX_LIVE=1` and run
+`go test -tags codexlive ./tests/codexlive/` (or `make codex-smoke` when present).
+Requires credentials; costs tokens. Hermetic unit tests cover the install path
+without Codex, npm, or API keys.
 
 #### Sample agents.toml — Codex ACP for low-cost / park roles
 

@@ -288,9 +288,17 @@ changed, or a story is engaged.`,
 		},
 	}
 
+	// Explicit harness for deny shape (sty_9e86f407): wrapper forwards
+	// --harness claude|grok|codex; empty falls back to harnessFromEvent.
+	gate.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|codex — deny envelope (default: sniff event)")
+	commitgate.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|codex — deny envelope (default: sniff event)")
 	hook.AddCommand(context, gate, commitgate, prompt, stopcheck)
 	register(hook)
 }
+
+// hookHarnessFlag is set by gate/commitgate --harness (wrapper forwards the
+// scaffold harness token). Empty → harnessFromEvent fallback.
+var hookHarnessFlag string
 
 // seatInfo is a single engagement-lease view for gate denials and session inject
 // (sty_1738f973). Empty ItemID means no lease row was relevant.
@@ -623,23 +631,39 @@ func anyEngaged(items []workitem.Item, wfs []docindex.Doc) (bool, error) {
 // bashCommandFromEvent pulls the bash command out of a PreToolUse event.
 // Accepts Claude Code's snake_case envelope (tool_input.command) AND Grok's
 // camelCase envelope (toolInput.command) — both harnesses fire the same hook
-// (epic:scoped-sync order:9 / sty_0d3665ee). Prefer the first non-empty value.
+// (epic:scoped-sync order:9 / sty_0d3665ee). Codex may send command as a JSON
+// array of argv tokens (shell); those are joined with spaces (sty_9e86f407).
+// Prefer the first non-empty value.
 func bashCommandFromEvent(raw []byte) string {
-	var ev struct {
-		// Claude Code
-		ToolInputSnake struct {
-			Command string `json:"command"`
-		} `json:"tool_input"`
-		// Grok
-		ToolInputCamel struct {
-			Command string `json:"command"`
-		} `json:"toolInput"`
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return ""
 	}
-	_ = json.Unmarshal(raw, &ev)
-	if c := ev.ToolInputSnake.Command; c != "" {
-		return c
+	for _, key := range []string{"tool_input", "toolInput"} {
+		rawTI, ok := top[key]
+		if !ok || len(rawTI) == 0 {
+			continue
+		}
+		var ti map[string]json.RawMessage
+		if err := json.Unmarshal(rawTI, &ti); err != nil {
+			continue
+		}
+		cmdRaw, ok := ti["command"]
+		if !ok || len(cmdRaw) == 0 {
+			continue
+		}
+		// String form (Claude / Grok).
+		var s string
+		if err := json.Unmarshal(cmdRaw, &s); err == nil && s != "" {
+			return s
+		}
+		// Array form (Codex shell argv).
+		var parts []string
+		if err := json.Unmarshal(cmdRaw, &parts); err == nil && len(parts) > 0 {
+			return strings.Join(parts, " ")
+		}
 	}
-	return ev.ToolInputCamel.Command
+	return ""
 }
 
 // filePathFromEvent pulls the edit target out of a PreToolUse edit event.
@@ -940,7 +964,11 @@ func outsideRepoEditErr(path, foreignRoot string) error {
 // detected from the PreToolUse event envelope (raw). The reason is also on the
 // error (cobra → stderr) for humans/transcripts.
 func denyPreToolUse(cmd *cobra.Command, raw []byte, reason string) error {
-	_ = emitPreToolUseDeny(cmd.OutOrStdout(), harnessFromEvent(raw), reason)
+	h := hookHarnessFlag
+	if h == "" {
+		h = harnessFromEvent(raw)
+	}
+	_ = emitPreToolUseDeny(cmd.OutOrStdout(), h, reason)
 	return fmt.Errorf("%s", reason)
 }
 
@@ -984,13 +1012,19 @@ type grokPreToolUseDenyOut struct {
 }
 
 // emitPreToolUseDeny writes one harness-correct deny JSON line to out.
-// harness is "grok" or anything else → Claude (see harnessFromEvent).
+// harness is "grok" → top-level decision/reason; "claude"/"codex"/other → Claude
+// envelope (Codex rejects empty reasons and does not accept Grok's top-level
+// shape for PreToolUse deny — sty_9e86f407).
 func emitPreToolUseDeny(out io.Writer, harness, reason string) error {
+	if strings.TrimSpace(reason) == "" {
+		reason = "satelle: denied (no reason supplied)"
+	}
 	var b []byte
 	var err error
 	if harness == "grok" {
 		b, err = json.Marshal(grokPreToolUseDenyOut{Decision: "deny", Reason: reason})
 	} else {
+		// Claude + Codex: hookSpecificOutput with deny + non-empty reason.
 		var doc claudePreToolUseDenyOut
 		doc.HookSpecificOutput.HookEventName = "PreToolUse"
 		doc.HookSpecificOutput.PermissionDecision = "deny"

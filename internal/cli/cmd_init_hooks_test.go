@@ -68,33 +68,40 @@ func TestReconcileClaudeHooks(t *testing.T) {
 func TestDetectProcessHarnesses(t *testing.T) {
 	repo := t.TempDir()
 	// Neither forced nor dirs → nothing (no PATH, no claude default).
-	c, g := detectProcessHarnesses(repo, nil)
-	if c || g {
-		t.Errorf("empty: claude=%v grok=%v, want neither", c, g)
+	c, g, x := detectProcessHarnesses(repo, nil)
+	if c || g || x {
+		t.Errorf("empty: claude=%v grok=%v codex=%v, want none", c, g, x)
 	}
 	// Forced flag only.
-	c, g = detectProcessHarnesses(repo, []string{"grok"})
-	if c || !g {
-		t.Errorf("forced grok: claude=%v grok=%v, want grok-only", c, g)
+	c, g, x = detectProcessHarnesses(repo, []string{"grok"})
+	if c || !g || x {
+		t.Errorf("forced grok: claude=%v grok=%v codex=%v, want grok-only", c, g, x)
 	}
-	c, g = detectProcessHarnesses(repo, []string{"claude", "grok"})
-	if !c || !g {
-		t.Errorf("forced both: claude=%v grok=%v, want both", c, g)
+	c, g, x = detectProcessHarnesses(repo, []string{"claude", "grok", "codex"})
+	if !c || !g || !x {
+		t.Errorf("forced all: claude=%v grok=%v codex=%v, want all", c, g, x)
 	}
 	// Existing harness dirs (PATH must not matter — forced nil).
 	if err := os.MkdirAll(filepath.Join(repo, ".grok"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	c, g = detectProcessHarnesses(repo, nil)
-	if c || !g {
-		t.Errorf(".grok dir only: claude=%v grok=%v, want grok-only", c, g)
+	c, g, x = detectProcessHarnesses(repo, nil)
+	if c || !g || x {
+		t.Errorf(".grok dir only: claude=%v grok=%v codex=%v, want grok-only", c, g, x)
 	}
 	if err := os.MkdirAll(filepath.Join(repo, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	c, g = detectProcessHarnesses(repo, nil)
-	if !c || !g {
-		t.Errorf("both dirs: claude=%v grok=%v, want both", c, g)
+	c, g, x = detectProcessHarnesses(repo, nil)
+	if !c || !g || x {
+		t.Errorf("claude+grok dirs: claude=%v grok=%v codex=%v", c, g, x)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c, g, x = detectProcessHarnesses(repo, nil)
+	if !c || !g || !x {
+		t.Errorf("all dirs: claude=%v grok=%v codex=%v, want all", c, g, x)
 	}
 }
 

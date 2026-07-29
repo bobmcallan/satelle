@@ -73,6 +73,9 @@ func TestAgentDispatchTopic(t *testing.T) {
 		"INITIAL_AGENT_MODE",
 		"satelle agents install",
 		"model_reasoning_effort",
+		"compliance",        // sty_9e86f407
+		".codex/hooks.json", // sty_9e86f407
+		"story is engaged",  // sty_9e86f407
 	} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("agent-dispatch topic missing %q", want)

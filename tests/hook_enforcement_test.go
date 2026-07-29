@@ -53,7 +53,14 @@ func gitBaseline(t *testing.T, repo string) {
 // stdout (ignoring a non-zero exit — a deny/block still writes the payload).
 func hookStdout(t *testing.T, repo, sub, event string) string {
 	t.Helper()
-	c := exec.Command(testBin, "hook", sub)
+	return hookStdoutArgs(t, repo, []string{sub}, event)
+}
+
+// hookStdoutArgs runs `satelle hook <args…>` with event on stdin (sty_9e86f407).
+func hookStdoutArgs(t *testing.T, repo string, args []string, event string) string {
+	t.Helper()
+	full := append([]string{"hook"}, args...)
+	c := exec.Command(testBin, full...)
 	c.Dir = repo
 	c.Env = isolatedEnv(t)
 	c.Stdin = strings.NewReader(event)
@@ -292,6 +299,7 @@ func TestHookGateAllowsUnderEngagedStory(t *testing.T) {
 // TestHookGateHarnessSpecificDenyShape (sty_5e4bc568): a denied edit emits ONLY
 // the Claude shape for tool_input envelopes and ONLY the Grok shape for toolInput.
 // Dual-format was the inert-gate bug (Claude schema rejects top-level decision).
+// sty_9e86f407: --harness codex forces Claude envelope on no-story deny.
 func TestHookGateHarnessSpecificDenyShape(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
@@ -304,6 +312,16 @@ func TestHookGateHarnessSpecificDenyShape(t *testing.T) {
 	}
 	if strings.Contains(claudeOut, `"decision":"deny"`) {
 		t.Errorf("Claude deny must not carry top-level decision:\n%s", claudeOut)
+	}
+
+	// Explicit --harness codex (wrapper forwards this after agents install).
+	codexOut := hookStdoutArgs(t, repo, []string{"gate", "--harness", "codex"},
+		`{"tool_input":{"file_path":"`+code+`"}}`)
+	if !strings.Contains(codexOut, `"permissionDecision":"deny"`) {
+		t.Errorf("Codex deny missing permissionDecision:\n%s", codexOut)
+	}
+	if strings.Contains(codexOut, `"decision":"deny"`) && !strings.Contains(codexOut, "hookSpecificOutput") {
+		t.Errorf("Codex deny must use Claude envelope:\n%s", codexOut)
 	}
 
 	grokOut := hookStdout(t, repo, "gate",

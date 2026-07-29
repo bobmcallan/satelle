@@ -117,7 +117,7 @@ func TestAgentsInstallRemove(t *testing.T) {
 		t.Fatalf("re-remove should be ok:\n%s", rem2)
 	}
 
-	// install all → three launchers exist
+	// install all → three launchers exist + harness scaffolds (sty_9e86f407)
 	allOut := mustRun(t, testBin, repo, "agents", "install", "all")
 	for _, name := range []string{"claude", "grok", "codex"} {
 		if !strings.Contains(allOut, name) {
@@ -125,6 +125,33 @@ func TestAgentsInstallRemove(t *testing.T) {
 		}
 		p := filepath.Join(home, "agents", "bin", "satelle-"+name)
 		assertLauncher(t, p, "")
+	}
+	// Compliance scaffolds in the repo.
+	for _, rel := range []string{
+		".claude/settings.json",
+		".grok/hooks/satelle.json",
+		".codex/hooks.json",
+	} {
+		p := filepath.Join(repo, filepath.FromSlash(rel))
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("scaffold %s: %v", rel, err)
+		}
+		if !strings.Contains(string(b), "satelle-hook.sh") && !strings.Contains(string(b), "satelle hook") {
+			t.Fatalf("scaffold %s missing satelle hook command:\n%s", rel, b)
+		}
+	}
+	// Codex sample binding must not advertise stdio subcommand.
+	if strings.Contains(allOut, `stdio`) && strings.Contains(allOut, "command") {
+		// Allow comment mention of "no stdio"; fail if command line has it.
+		for _, line := range strings.Split(allOut, "\n") {
+			if strings.Contains(line, "command") && strings.Contains(line, "=") && strings.Contains(line, "stdio") {
+				t.Fatalf("install output must not set command with stdio:\n%s", line)
+			}
+		}
+	}
+	if !strings.Contains(allOut, "Compliance") && !strings.Contains(allOut, "engaged") {
+		t.Fatalf("install should state compliance / engaged-story guarantee:\n%s", allOut)
 	}
 
 	// remove all → three gone

@@ -137,3 +137,54 @@ func TestContentClaudeGrok(t *testing.T) {
 		t.Fatalf("grok content: %v %q", err, g)
 	}
 }
+
+// TestCodexBindingHasNoUnsupportedArgv (sty_9e86f407 AC4): install-generated
+// ACP command uses DefaultCodexACPCommand with no stdio subcommand.
+func TestCodexBindingHasNoUnsupportedArgv(t *testing.T) {
+	snip := BindingSnippet("codex", "/tmp/home/agents/bin/satelle-codex")
+	// Parse the command = "..." line only — comments may mention "stdio" as a
+	// negative ("no stdio subcommand").
+	var cmdLine string
+	for _, line := range strings.Split(snip, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "command") && strings.Contains(line, "=") {
+			cmdLine = line
+			break
+		}
+	}
+	if cmdLine == "" {
+		t.Fatalf("no command line in snippet:\n%s", snip)
+	}
+	if strings.Contains(cmdLine, "stdio") {
+		t.Fatalf("command must not include stdio token: %s", cmdLine)
+	}
+	// Generated command must drive the installed launcher (sh <path>), not
+	// only the raw npx line (AC5: exercise installed artifact).
+	if !strings.Contains(cmdLine, "satelle-codex") || !strings.Contains(cmdLine, "sh ") {
+		t.Fatalf("want sh <launcher> form, got: %s\nsnippet:\n%s", cmdLine, snip)
+	}
+	if !strings.Contains(snip, `npx -y @agentclientprotocol/codex-acp`) {
+		t.Fatalf("snippet should document DefaultCodexACPCommand:\n%s", snip)
+	}
+	// Launcher body: marker + exec DefaultCodexACPCommand "$@"
+	body, err := Content("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, MarkerLine) {
+		t.Fatalf("launcher missing marker:\n%s", body)
+	}
+	if !strings.Contains(body, "exec npx -y @agentclientprotocol/codex-acp \"$@\"") {
+		t.Fatalf("launcher must exec DefaultCodexACPCommand:\n%s", body)
+	}
+	// Residual tokens after the package path: only passthrough "$@" is ok.
+	// Reject any unsupported subcommand baked into the script body.
+	for _, bad := range []string{" stdio", " login", " cli "} {
+		// " login" / " cli " as baked argv after the package are unsupported for
+		// the default launch path (adapter may accept them as subcommands, but
+		// the install-generated default must not add them).
+		if bad == " stdio" && strings.Contains(body, bad) {
+			t.Fatalf("launcher body must not bake %q:\n%s", bad, body)
+		}
+	}
+}

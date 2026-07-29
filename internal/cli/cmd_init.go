@@ -52,7 +52,7 @@ func init() {
     Repos still on the pre-relocation layout: run 'satelle migrate'.
   - process hooks ON DEMAND for coding harnesses in use (epic:minimal-harness-footprint):
     scaffolds only when the repo already has .claude/ or .grok/, or when
-    --harness names them (claude,grok). Never from PATH and never a silent
+    --harness names them (claude,grok,codex). Never from PATH and never a silent
     claude default. An empty repo with no flag gets zero harness scaffolds.
     Use-time lazy install: store-backed verbs detect CLAUDE_CODE_* / GROK_AGENT
     session markers and install the matching scaffold if missing (first session
@@ -78,11 +78,11 @@ shows what was added versus already present.`,
 	}
 	cmd.Flags().StringVar(&configArg, "config", "", "path to satelle.toml (resolves the repo root; default: walk up from CWD)")
 	cmd.Flags().BoolVar(&noWorkspace, "no-workspace", false, "skip registering this repo in the local workspace registry")
-	cmd.Flags().StringVar(&harnessFlag, "harness", "", "comma-separated harness scaffolds to install (claude,grok); when empty, only existing .claude/.grok dirs are scaffolded — never PATH")
+	cmd.Flags().StringVar(&harnessFlag, "harness", "", "comma-separated harness scaffolds to install (claude,grok,codex); when empty, only existing .claude/.grok/.codex dirs are scaffolded — never PATH")
 	register(cmd)
 }
 
-// parseHarnessFlag parses --harness claude,grok into a unique ordered list.
+// parseHarnessFlag parses --harness claude,grok,codex into a unique ordered list.
 func parseHarnessFlag(s string) ([]string, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -96,13 +96,13 @@ func parseHarnessFlag(s string) ([]string, error) {
 			continue
 		}
 		switch p {
-		case "claude", "grok":
+		case "claude", "grok", "codex":
 			if !seen[p] {
 				seen[p] = true
 				out = append(out, p)
 			}
 		default:
-			return nil, fmt.Errorf("init: unknown --harness %q (want claude and/or grok)", p)
+			return nil, fmt.Errorf("init: unknown --harness %q (want claude, grok, and/or codex)", p)
 		}
 	}
 	return out, nil
@@ -420,14 +420,17 @@ func renderHookCommand(repoRoot, harness, sub string) string {
 func parameterizedHookScriptBody() string {
 	claudeInfra := strings.ReplaceAll(infraDenyJSON("claude"), `'`, `'\''`)
 	grokInfra := strings.ReplaceAll(infraDenyJSON("grok"), `'`, `'\''`)
+	// Codex deny uses the Claude envelope (permissionDecision=deny + reason).
+	codexInfra := claudeInfra
 	return fmt.Sprintf(`#!/bin/sh
 %s
-# args: $1=gate|commitgate  $2=claude|grok
+# args: $1=gate|commitgate  $2=claude|grok|codex
 sub="$1"
 harness="$2"
 case "$harness" in
-  grok) infra='%s' ;;
-  *)    infra='%s' ;;
+  grok)  infra='%s' ;;
+  codex) infra='%s' ;;
+  *)     infra='%s' ;;
 esac
 # Prefer harness project pin so binary probe works even if invocation cwd drifted.
 root=""
@@ -444,19 +447,19 @@ p=$(cat)
 if [ "$sub" = "commitgate" ]; then
   docase(){ case "$p" in *git\ commit*|*git\ push*) printf '%%s\n' "$infra"; exit 2;; *) exit 0;; esac; }
   if [ -z "$b" ]; then docase; fi
-  o=$(printf '%%s' "$p" | "$b" hook commitgate 2>/dev/null); code=$?
+  o=$(printf '%%s' "$p" | "$b" hook commitgate --harness "$harness" 2>/dev/null); code=$?
   if [ -n "$o" ]; then printf '%%s\n' "$o"; fi
   if [ "$code" -eq 0 ]; then exit 0; fi
   if [ -z "$o" ]; then docase; fi
   exit 2
 fi
 if [ -z "$b" ]; then printf '%%s\n' "$infra"; exit 2; fi
-o=$(printf '%%s' "$p" | "$b" hook gate 2>/dev/null); code=$?
+o=$(printf '%%s' "$p" | "$b" hook gate --harness "$harness" 2>/dev/null); code=$?
 if [ -n "$o" ]; then printf '%%s\n' "$o"; fi
 if [ "$code" -eq 0 ]; then exit 0; fi
 if [ -z "$o" ]; then printf '%%s\n' "$infra"; fi
 exit 2
-`, failVisibleMarker, grokInfra, claudeInfra)
+`, failVisibleMarker, grokInfra, codexInfra, claudeInfra)
 }
 
 // failVisibleScriptBody returns the canonical wrapper body. The single script
@@ -612,10 +615,10 @@ var retiredHookCommands = map[string]string{
 // detectProcessHarnesses decides which process-hook scaffolds to apply
 // (epic:minimal-harness-footprint). Signals:
 //   - forced: explicit --harness list (wins when non-empty)
-//   - existing harness dirs in the repo (.claude / .grok)
+//   - existing harness dirs in the repo (.claude / .grok / .codex)
 //
 // Never PATH. Never a silent claude default (empty → install nothing).
-func detectProcessHarnesses(repoRoot string, forced []string) (claude, grok bool) {
+func detectProcessHarnesses(repoRoot string, forced []string) (claude, grok, codex bool) {
 	if len(forced) > 0 {
 		for _, h := range forced {
 			switch strings.ToLower(strings.TrimSpace(h)) {
@@ -623,13 +626,16 @@ func detectProcessHarnesses(repoRoot string, forced []string) (claude, grok bool
 				claude = true
 			case "grok":
 				grok = true
+			case "codex":
+				codex = true
 			}
 		}
-		return claude, grok
+		return claude, grok, codex
 	}
 	claude = dirExists(filepath.Join(repoRoot, ".claude"))
 	grok = dirExists(filepath.Join(repoRoot, ".grok"))
-	return claude, grok
+	codex = dirExists(filepath.Join(repoRoot, ".codex"))
+	return claude, grok, codex
 }
 
 // detectSessionHarnesses probes the process environment for harness session
@@ -698,9 +704,9 @@ func ensureProcessHooks(out io.Writer, repoRoot string, forced []string) error {
 	if err := writeHookScripts(repoRoot); err != nil {
 		return err
 	}
-	wantClaude, wantGrok := detectProcessHarnesses(repoRoot, forced)
-	if !wantClaude && !wantGrok {
-		fmt.Fprintln(out, "  · process hooks: none (no .claude/.grok dirs and no --harness; use --harness claude,grok or open a harness session for lazy install)")
+	wantClaude, wantGrok, wantCodex := detectProcessHarnesses(repoRoot, forced)
+	if !wantClaude && !wantGrok && !wantCodex {
+		fmt.Fprintln(out, "  · process hooks: none (no .claude/.grok/.codex dirs and no --harness; use --harness claude,grok,codex or open a harness session for lazy install)")
 		return nil
 	}
 	if wantClaude {
@@ -742,6 +748,21 @@ func ensureProcessHooks(out io.Writer, repoRoot string, forced []string) error {
 		// Grok; leave skills/rules/agents/mcps alone.
 		if err := ensureGrokCompatConfig(out); err != nil {
 			return err
+		}
+	}
+	if wantCodex {
+		added, updated, incomplete, err := ensureCodexHooks(repoRoot)
+		if err != nil {
+			return err
+		}
+		if len(updated) > 0 {
+			fmt.Fprintf(out, "  ~ %s (hook updated: %s)\n", codexHooksRel, strings.Join(updated, "; "))
+		} else {
+			fmt.Fprintln(out, initLine(added, codexHooksRel+" (process hooks)"))
+		}
+		if len(incomplete) > 0 {
+			fmt.Fprintf(out, "WARN  %s — incomplete satelle hooks after heal: missing %s\n",
+				codexHooksRel, strings.Join(incomplete, ", "))
 		}
 	}
 	return nil
@@ -905,9 +926,14 @@ func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) 
 	commitCmd := renderHookCommand(repoRoot, harness, "commitgate")
 	gateMatcher := "Edit|Write|MultiEdit|NotebookEdit"
 	commitMatcher := "Bash"
-	if harness == "grok" {
+	switch harness {
+	case "grok":
 		gateMatcher = "Edit|Write|MultiEdit|NotebookEdit|search_replace|write"
 		commitMatcher = "Bash|run_terminal_command"
+	case "codex":
+		// apply_patch is canonical; Edit|Write aliases; write_file if present.
+		gateMatcher = "apply_patch|Edit|Write|write_file|Bash|shell"
+		commitMatcher = "Bash|shell"
 	}
 	if !hookEventHasMarker(hooks["PreToolUse"], "satelle hook gate") &&
 		!hookEventHasMarker(hooks["PreToolUse"], "pretooluse-gate-") &&
@@ -936,7 +962,11 @@ func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) 
 		}
 	}
 
+	// Codex scaffold omits Stop (sty_9e86f407 plan event set); do not reinforce it.
 	for _, rh := range reinforcementSimpleHooks {
+		if harness == "codex" && rh.event == "Stop" {
+			continue
+		}
 		if hookEventHasMarker(hooks[rh.event], rh.marker) {
 			continue
 		}
@@ -1072,6 +1102,16 @@ func ensureGrokHooks(repoRoot string) (created bool, updated []string, incomplet
 	}
 	path := filepath.Join(repoRoot, filepath.FromSlash(grokHooksRel))
 	if _, err := os.Stat(path); err == nil {
+		// Wholly satelle-owned path: no satelle command at all ⇒ user-owned — skip
+		// (sty_9e86f407 AC1). A file with only retired `satelle index` is still
+		// satelle-owned and must heal (reconcile → reindex).
+		raw, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return false, nil, nil, fmt.Errorf("init: read %s: %w", path, rerr)
+		}
+		if !strings.Contains(string(raw), "satelle") {
+			return false, []string{"skipped (not satelle-owned)"}, nil, nil
+		}
 		updated, incomplete, herr := healExistingHookFile(path, "grok", repoRoot)
 		if herr != nil {
 			return false, nil, nil, herr

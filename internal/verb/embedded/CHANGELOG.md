@@ -1,3 +1,18 @@
+## [0.0.345] - 2026-07-29
+
+### Added
+- `satelle agents install|remove` creates/reconciles harness compliance scaffolds (`.claude/settings.json`, `.grok/hooks/satelle.json`, `.codex/hooks.json`) with blocking PreToolUse hooks, in addition to launchers (sty_9e86f407)
+- Codex harness support: `.codex/hooks.json`, `hook gate|commitgate --harness codex`, init `--harness codex` (sty_9e86f407)
+- Hermetic installed-launcher ACP suite and opt-in `make codex-smoke` / `tests/codexlive` (sty_9e86f407)
+
+### Fixed
+- Codex ACP install binding no longer appends unsupported `stdio` subcommand; generated command is `sh <launcher>` → `npx -y @agentclientprotocol/codex-acp` (sty_9e86f407)
+- `bashCommandFromEvent` accepts Codex shell `command` as a JSON argv array (sty_9e86f407)
+
+### Changed
+- Agent-dispatch help and README document three-harness compliance, ownership boundaries, and live smoke (sty_9e86f407)
+- Re-run `satelle init` (or `agents install`) after upgrade: `satelle-hook.sh` now forwards `--harness` (scaffold drift until healed)
+
 ## [0.0.344] - 2026-07-29
 
 ### Fixed

@@ -33,6 +33,7 @@ func DetectScaffoldDrift(repoRoot string) []ScaffoldFinding {
 	// Settings-driven checks (only when the harness file exists).
 	findings = append(findings, driftHarnessSettings(repoRoot, filepath.Join(repoRoot, ".claude", "settings.json"), "claude", ".claude/settings.json")...)
 	findings = append(findings, driftHarnessSettings(repoRoot, filepath.Join(repoRoot, filepath.FromSlash(grokHooksRel)), "grok", grokHooksRel)...)
+	findings = append(findings, driftHarnessSettings(repoRoot, filepath.Join(repoRoot, filepath.FromSlash(codexHooksRel)), "codex", codexHooksRel)...)
 	// Single parameterized script must match canonical when present.
 	rel := satelleHookScriptRel
 	path := filepath.Join(repoRoot, filepath.FromSlash(rel))

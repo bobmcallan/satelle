@@ -31,9 +31,9 @@ func TestCodexACP_NoReasoningEffortArgv(t *testing.T) {
 			if err := os.WriteFile(wrap, []byte(script), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			// Multi-token spawn: wrapper + package token + stdio (package token
+			// Multi-token spawn: wrapper + package token (no stdio subcommand) (package token
 			// documents Codex shape; peer ignores argv content).
-			cmdLine := wrap + " @agentclientprotocol/codex-acp stdio"
+			cmdLine := wrap + " @agentclientprotocol/codex-acp"
 			r, err := RunnerFromBinding(InterfaceACP, cmdLine)
 			if err != nil {
 				t.Fatal(err)
@@ -91,7 +91,7 @@ func TestCodexACP_InitModelEffortAndCapture(t *testing.T) {
 	if err := os.WriteFile(wrap, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cmdLine := wrap + " @agentclientprotocol/codex-acp stdio"
+	cmdLine := wrap + " @agentclientprotocol/codex-acp"
 	r, err := RunnerFromBinding(InterfaceACP, cmdLine)
 	if err != nil {
 		t.Fatal(err)
@@ -174,7 +174,7 @@ func TestCodexACP_DenyMutation(t *testing.T) {
 	if err := os.WriteFile(wrap, []byte("#!/bin/sh\nexec "+peer+" \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	r, err := RunnerFromBinding(InterfaceACP, wrap+" @agentclientprotocol/codex-acp stdio")
+	r, err := RunnerFromBinding(InterfaceACP, wrap+" @agentclientprotocol/codex-acp")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestCodexACP_SatelleOnlyOps(t *testing.T) {
 	if err := os.WriteFile(wrap, []byte("#!/bin/sh\nexec "+peer+" \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	r, err := RunnerFromBinding(InterfaceACP, wrap+" @agentclientprotocol/codex-acp stdio")
+	r, err := RunnerFromBinding(InterfaceACP, wrap+" @agentclientprotocol/codex-acp")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestCodexACP_SatelleOnlyOps(t *testing.T) {
 	if err := os.WriteFile(wrap2, []byte("#!/bin/sh\nexec "+peer2+" \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	r2, err := RunnerFromBinding(InterfaceACP, wrap2+" @agentclientprotocol/codex-acp stdio")
+	r2, err := RunnerFromBinding(InterfaceACP, wrap2+" @agentclientprotocol/codex-acp")
 	if err != nil {
 		t.Fatal(err)
 	}
