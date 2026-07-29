@@ -69,7 +69,7 @@ func TestAgentDispatchTopic(t *testing.T) {
 		"DefaultCodexACPCommand",
 		"codex exec",
 		"@agentclientprotocol/codex-acp",
-		"SATELLE_CODEX_DOGFOOD",
+		"codex login", // sty_71491143: agent CLI owns auth, not satelle
 		"INITIAL_AGENT_MODE",
 		"satelle agents install",
 		"model_reasoning_effort",

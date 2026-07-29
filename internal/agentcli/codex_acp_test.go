@@ -254,6 +254,79 @@ func TestCodexACP_SatelleOnlyOps(t *testing.T) {
 	}
 }
 
+// TestCodexACP_SkipsCLIOwnedAuthMethods (sty_71491143): real codex-acp advertises
+// api-key / chat-gpt. Satelle must not call authenticate for those — agent CLIs
+// own login (codex login), same posture as Claude/Grok outside Grok session reuse.
+func TestCodexACP_SkipsCLIOwnedAuthMethods(t *testing.T) {
+	dir := t.TempDir()
+	authLog := filepath.Join(dir, "auth.log")
+	path := filepath.Join(dir, "codex-auth-peer")
+	authEsc := strings.ReplaceAll(authLog, `\`, `\\`)
+	authEsc = strings.ReplaceAll(authEsc, `"`, `\"`)
+	script := `#!/usr/bin/env python3
+import json, sys
+AUTH = "` + authEsc + `"
+
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+def read():
+    line = sys.stdin.readline()
+    if not line:
+        return None
+    return json.loads(line)
+
+while True:
+    msg = read()
+    if msg is None:
+        break
+    mid = msg.get("id")
+    method = msg.get("method")
+    if method == "initialize":
+        # Real @agentclientprotocol/codex-acp order: api-key then chat-gpt.
+        send({"jsonrpc":"2.0","id":mid,"result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[{"id":"api-key"},{"id":"chat-gpt"}]}})
+    elif method == "authenticate":
+        with open(AUTH, "a") as f:
+            f.write("authenticate methodId=%s\n" % ((msg.get("params") or {}).get("methodId"),))
+        send({"jsonrpc":"2.0","id":mid,"result":{}})
+    elif method == "session/new":
+        send({"jsonrpc":"2.0","id":mid,"result":{"sessionId":"sess_test"}})
+    elif method == "session/prompt":
+        send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_test","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"{\"decision\":\"accept\",\"notes\":\"\"}"}}}})
+        send({"jsonrpc":"2.0","id":mid,"result":{"stopReason":"end_turn"}})
+    elif method == "session/cancel":
+        pass
+    else:
+        if mid is not None:
+            send({"jsonrpc":"2.0","id":mid,"result":{}})
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wrap := filepath.Join(dir, "codex-acp-wrapper")
+	if err := os.WriteFile(wrap, []byte("#!/bin/sh\nexec "+path+" \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r, err := RunnerFromBinding(InterfaceACP, wrap+" @agentclientprotocol/codex-acp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := r.Run(context.Background(), Request{
+		SystemPrompt: "rubric",
+		Payload:      `{}`,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(string(out), `"decision":"accept"`) {
+		t.Fatalf("stdout = %q", out)
+	}
+	if b, err := os.ReadFile(authLog); err == nil && len(b) > 0 {
+		t.Fatalf("Codex ACP must not call authenticate for api-key/chat-gpt; got:\n%s", b)
+	}
+}
+
 // writeCodexACPPeer is like writeFakeACPPeer but logs set_config_option calls
 // to cfgLog for Codex effort/model assertions.
 func writeCodexACPPeer(t *testing.T, cfgLog string) string {

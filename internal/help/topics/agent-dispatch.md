@@ -247,11 +247,12 @@ policy).
 
 - **Hermetic tests** (in `make integration` / unit suites) use fake ACP peers and
   validate/buildArgs only — they never require `codex`, npm, or API keys.
-- **Live dogfood** is optional: set credentials, install the adapter, point a
-  named binding at Codex ACP or exec, run `satelle agent validate`, then drive a
-  cheap gate (e.g. step-summary) or a one-off story transition. Env gate
-  `SATELLE_CODEX_DOGFOOD=1` is the operator convention for optional live
-  probes — unset must never fail CI.
+- **Live dogfood** is optional and uses the same model as Claude and Grok: the
+  operator authenticates the agent CLI itself (`codex login`, Claude login, Grok
+  session). Satelle never stores or injects agent API keys. Install the adapter
+  when using ACP, point a named binding at Codex ACP or exec, run
+  `satelle agent validate`, then drive a cheap gate (e.g. step-summary). Optional
+  live probes must never be required by CI.
 
 Claude remains the default init `[reviewer]` preset until an operator opts in.
 

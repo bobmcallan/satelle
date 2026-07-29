@@ -468,7 +468,11 @@ func (c *acpClient) runSession(ctx context.Context, req Request) ([]byte, error)
 		return nil, fmt.Errorf("initialize: %w", err)
 	}
 
-	// Authenticate when the agent advertises methods (Grok: cached_token / api key).
+	// Authenticate only for Grok-shaped methods that reuse an existing CLI
+	// session (cached_token / xai.api_key). Agent CLIs (Claude, Grok, Codex)
+	// own their own login/configuration — satelle never supplies API keys or
+	// drives Codex api-key / chat-gpt flows. Unknown advertised methods are
+	// skipped so session/new uses the peer's already-authenticated CLI state.
 	var initObj struct {
 		AuthMethods []struct {
 			ID string `json:"id"`
@@ -482,15 +486,12 @@ func (c *acpClient) runSession(ctx context.Context, req Request) ([]byte, error)
 			break
 		}
 	}
-	if methodID == "" && len(initObj.AuthMethods) > 0 {
-		methodID = initObj.AuthMethods[0].ID
-	}
 	if methodID != "" {
 		if _, err := c.request(ctx, "authenticate", map[string]any{
 			"methodId": methodID,
 			"_meta":    map[string]any{"headless": true},
 		}); err != nil {
-			// Some fake peers skip auth; only fail if agent listed methods.
+			// Some fake peers skip auth; only fail if we elected a known method.
 			return nil, fmt.Errorf("authenticate: %w", err)
 		}
 	}

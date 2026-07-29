@@ -1,3 +1,9 @@
+## [0.0.347] - 2026-07-29
+
+### Fixed
+- Codex ACP no longer calls authenticate for CLI-owned api-key/chat-gpt methods; session reuse follows operator `codex login` (sty_71491143)
+- Agent-dispatch help documents CLI-owned auth for live Codex dogfood instead of SATELLE_CODEX_DOGFOOD (sty_71491143)
+
 ## [0.0.346] - 2026-07-29
 
 ### Fixed
