@@ -428,16 +428,29 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 		}
 		// Hard-reject danger sandbox for role=reviewer (sty_3b4909bb AC3) — not a
 		// warning. danger-full-access / --dangerously-bypass-* erase the ceiling.
-		if role == config.RoleReviewer && commandHasDangerSandbox(resolved) {
+		codexCmd := isCodexCommand(name, resolved)
+		dangerHard := role == config.RoleReviewer && commandHasDangerSandbox(resolved)
+		if dangerHard {
 			problems = append(problems, fmt.Sprintf(
 				"agents.toml [%s] is role=reviewer with a command that disables the sandbox ceiling (%s) — refuse; use -s read-only (DefaultCodexExecCommand) or a non-danger template",
 				section, dangerSandboxToken(resolved)))
 		}
+		// Codex command reviewers must have effective sandbox read-only
+		// (sty_aa726901 AC3): workspace-write or omitted sandbox hard-reject.
+		// Danger already failed above — do not double-report. ACP branch returns
+		// earlier; Codex ACP uses tools grant, not -s.
+		codexSandboxHard := false
+		if role == config.RoleReviewer && codexCmd && !commandHasCodexReadOnlySandbox(resolved) && !dangerHard {
+			codexSandboxHard = true
+			problems = append(problems, fmt.Sprintf(
+				"agents.toml [%s] is role=reviewer with a Codex command whose effective sandbox is %q (want -s read-only) — refuse; use DefaultCodexExecCommand",
+				section, effectiveCodexSandbox(resolved)))
+		}
 		// Reviewer read-only ceiling: advisory when role=reviewer but no ceiling
 		// is expressed (no --disallowedTools/--deny / read-only heuristic miss).
-		// Warn not fail — g.ReadOnly is a heuristic and a legitimate ceiling form
-		// it misses must not hard-block engage (AC2).
-		if role == config.RoleReviewer && !g.ReadOnly && !commandHasDangerSandbox(resolved) {
+		// Warn not fail for non-Codex templates — g.ReadOnly is a heuristic.
+		// Codex non-RO already produced a Problem above (sty_aa726901).
+		if role == config.RoleReviewer && !g.ReadOnly && !dangerHard && !codexSandboxHard {
 			warnings = append(warnings, fmt.Sprintf(
 				"agents.toml [%s] is role=reviewer with an isolated command that expresses no read-only ceiling (no --disallowedTools/--deny of mutators, no -s read-only) — the reviewer could silently gain write; deny the mutators or use the default claude/grok/codex template",
 				section))
@@ -456,8 +469,9 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 }
 
 // hasToken reports whether tok appears as its own element of fields (exact match).
-// Mirrors agentcli.buildArgs placeholder substitution, which only substitutes a
-// token that equals the placeholder verbatim — not a fused substring.
+// Used for the {system} completeness check: the gate rubric must be its own argv
+// token. agentcli.buildArgs also supports fused {model}/{effort}/{settings}
+// (sty_aa726901); those do not apply to {system}, which stays exact-token-only.
 func hasToken(fields []string, tok string) bool {
 	for _, f := range fields {
 		if f == tok {
@@ -467,21 +481,49 @@ func hasToken(fields []string, tok string) bool {
 	return false
 }
 
+// isCodexCommand reports a Codex command-transport template (sty_aa726901 AC3):
+// binary name is codex, or the resolved line contains "codex exec".
+func isCodexCommand(name, resolved string) bool {
+	if strings.EqualFold(name, agentcli.CLICodex) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(resolved), "codex exec")
+}
+
 // commandHasCodexReadOnlySandbox reports Codex-style read-only sandbox ceiling
 // evidence in a resolved command template (sty_3b4909bb).
 func commandHasCodexReadOnlySandbox(resolved string) bool {
+	return effectiveCodexSandbox(resolved) == "read-only"
+}
+
+// effectiveCodexSandbox returns the sandbox mode token for a Codex-style command
+// template: "read-only", "workspace-write", "danger-full-access", or "none (omitted)"
+// (sty_aa726901 AC3). Prefer explicit -s/--sandbox/sandbox= over danger markers.
+func effectiveCodexSandbox(resolved string) string {
 	lower := strings.ToLower(resolved)
-	// Flag forms: -s read-only | --sandbox read-only | sandbox=read-only
-	if strings.Contains(lower, "sandbox=read-only") {
-		return true
+	// sandbox=VALUE fused form
+	if i := strings.Index(lower, "sandbox="); i >= 0 {
+		rest := lower[i+len("sandbox="):]
+		// token until space
+		end := strings.IndexAny(rest, " \t")
+		val := rest
+		if end >= 0 {
+			val = rest[:end]
+		}
+		if val != "" {
+			return val
+		}
 	}
 	fields := strings.Fields(lower)
 	for i, f := range fields {
-		if (f == "-s" || f == "--sandbox") && i+1 < len(fields) && fields[i+1] == "read-only" {
-			return true
+		if (f == "-s" || f == "--sandbox") && i+1 < len(fields) {
+			return fields[i+1]
 		}
 	}
-	return false
+	if strings.Contains(lower, "danger-full-access") {
+		return "danger-full-access"
+	}
+	return "none (omitted)"
 }
 
 // commandHasDangerSandbox reports Codex (or similar) danger sandbox tokens that

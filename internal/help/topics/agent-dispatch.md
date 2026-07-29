@@ -93,12 +93,12 @@ gates.
 ### Reasoning effort (`effort=`)
 
 Optional per-binding thinking/reasoning level (e.g. `low` | `medium` | `high`).
-Empty means the peer default. On **command** transport it substitutes into the
-`{effort}` placeholder (flag dropped when empty, like `{model}`). Default Claude
-and Grok templates include the flag when set. On **ACP**, satelle injects
-`--reasoning-effort` into the spawn line when possible and calls
-`session/set_config_option` for `reasoning_effort` / `effort` (failure-tolerant
-when the peer lacks the option).
+Empty means the peer default.
+
+| Transport | How effort is applied |
+| --- | --- |
+| **command** | Substitutes into `{effort}` (flag dropped when empty, like `{model}`). Also supports fused forms such as `model_reasoning_effort="{effort}"` (empty drops the whole token and a preceding `-`flag). Default Claude/Grok templates include the flag; DefaultCodexExecCommand uses `-c model_reasoning_effort="{effort}"` (TOML-quoted string for Codex `-c`). |
+| **ACP** | Session path: `session/set_config_option` for `reasoning_effort` / `effort` (failure-tolerant). **Grok-shaped** ACP spawns also receive argv `--reasoning-effort` (Grok CLI flag). **Codex ACP and other non-Grok peers never get that argv flag** — it is not ACP (sty_aa726901). |
 
 ### Rate-limit secondary (`secondary=` / `[defaults]`)
 
@@ -146,18 +146,25 @@ the ACP adapter, not a satelle protocol.
 | Preference | Transport | Binding shape |
 | --- | --- | --- |
 | **1. Preferred** | ACP | `interface = "acp"` + `command = "npx -y @agentclientprotocol/codex-acp"` (`DefaultCodexACPCommand`) |
-| **2. Secondary** | command | `interface = "command"` (default) + full `codex exec -s read-only -m {model} {system}` (`DefaultCodexExecCommand`) |
+| **2. Secondary** | command | `interface = "command"` (default) + full `codex exec -s read-only -m {model} -c model_reasoning_effort="{effort}" {system}` (`DefaultCodexExecCommand`) |
 
 Bare `command = "codex"` is rejected by validate (like bare claude/grok);
 `satelle init` / migrate expands it to `DefaultCodexExecCommand`. Global
 `NewRunner("codex")` resolves to that **command** template — for ACP, set
 `interface = "acp"` explicitly.
 
+**`satelle agents` vs `satelle agent`:** `satelle agents install|remove` provisions
+satelle-owned launcher scripts under `$SATELLE_HOME/agents/bin/` (does not change
+the default reviewer or `[agent] cli`). `satelle agent` (singular) selects and
+validates the headless CLI / agents.toml.
+
 #### Install the ACP adapter (dogfood)
 
 ```bash
-npm install -g @agentclientprotocol/codex-acp   # or use npx each run
-codex-acp --version                             # optional check
+# Preferred: satelle-owned launcher (does not change default reviewer)
+satelle agents install codex
+# Manual fallback (or use npx each run):
+#   npm install -g @agentclientprotocol/codex-acp
 # Auth: CODEX_API_KEY or OPENAI_API_KEY (ChatGPT login also works for interactive)
 export CODEX_API_KEY=…                          # or OPENAI_API_KEY
 # Optional: point at a specific codex binary
@@ -201,15 +208,19 @@ principles = "session"
 ```toml
 [reviewer-codex-exec]
 role      = "reviewer"
-command   = "codex exec -s read-only -m {model} {system}"
+command   = "codex exec -s read-only -m {model} -c model_reasoning_effort=\"{effort}\" {system}"
 # payload is always on stdin; do not add {payload} to argv
+effort    = "high"
 model     = "o4-mini"
 principles = "session"
 ```
 
 `satelle agent validate` treats `-s read-only` as reviewer ceiling evidence and
-**hard-rejects** `role=reviewer` templates that use `danger-full-access` or
-`--dangerously-bypass-approvals-and-sandbox`.
+**hard-rejects** `role=reviewer` Codex **command** templates whose effective
+sandbox is not read-only — including `workspace-write`, an omitted sandbox, and
+`danger-full-access` / `--dangerously-bypass-approvals-and-sandbox`. Codex ACP
+reviewers are not required to carry `-s` (ceiling = tools grant + permission
+policy).
 
 #### Live dogfood vs CI
 

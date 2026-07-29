@@ -97,7 +97,11 @@ const DefaultCodexACPCommand = "npx -y @agentclientprotocol/codex-acp"
 // Grok --deny). -m {model} drops when model is empty. Preference remains ACP
 // (DefaultCodexACPCommand); this template covers operators who cannot run the
 // adapter.
-const DefaultCodexExecCommand = "codex exec -s read-only -m {model} {system}"
+// model_reasoning_effort is the Codex config key for reasoning effort; fused
+// {effort} substitution (buildArgs) expands it or drops -c when effort is empty
+// (sty_aa726901). Value is TOML-quoted so Codex -c accepts a string (unquoted
+// bare tokens fail type checks). Preference remains ACP (DefaultCodexACPCommand).
+const DefaultCodexExecCommand = `codex exec -s read-only -m {model} -c model_reasoning_effort="{effort}" {system}`
 
 // Request is one headless agent invocation.
 type Request struct {
@@ -352,14 +356,23 @@ func (t templateRunner) Run(ctx context.Context, req Request) ([]byte, error) {
 	return runProcess(ctx, t.binary, buildArgs(t.argTemplate, req), req)
 }
 
-// buildArgs substitutes the placeholders in an argv template against req. Each of
-// {system}/{tools}/{model}/{effort}/{settings}/{payload} must be its own token, so a
-// multi-word value (a multi-line system prompt, a JSON settings object, or the
-// work-item payload) becomes exactly one argument. An empty {model}, {effort}, or
-// {settings} drops the placeholder AND a directly preceding flag token (e.g. "--model
-// {model}"), so the default template carries the flag without emitting an empty
-// value — a binding that authors no `settings` table emits no --settings arg at
-// all. {payload} never drops a preceding flag when empty: an empty payload is a
+// buildArgs substitutes the placeholders in an argv template against req.
+//
+// Exact-token form: each of {system}/{tools}/{model}/{effort}/{settings}/{payload}
+// as its own argv element becomes one argument (multi-word values stay one token).
+// Empty {model}, {effort}, or {settings} drops the placeholder AND a directly
+// preceding flag token (e.g. "--model {model}"), so the default template can
+// carry the flag without emitting an empty value.
+//
+// Fused form (sty_aa726901): a token that *contains* (but is not equal to)
+// {model}, {effort}, or {settings} is expanded in place when the value is set
+// (e.g. model_reasoning_effort={effort} → model_reasoning_effort=high). When the
+// value is empty, the whole token is dropped AND a directly preceding -flag is
+// dropped (so `-c model_reasoning_effort={effort}` vanishes when effort is unset).
+// {system}, {tools}, and {payload} are exact-token-only — fused use is not
+// substituted (they carry whole multi-line values; empty payload must not drop a flag).
+//
+// {payload} never drops a preceding flag when empty: an empty payload is a
 // deliberate empty user message (sty_5cf4a1fb). Payload is also always written to
 // stdin by runProcess — dual delivery — whether or not {payload} appears here.
 func buildArgs(argTemplate []string, req Request) []string {
@@ -398,10 +411,50 @@ func buildArgs(argTemplate []string, req Request) []string {
 			}
 			args = append(args, req.Settings)
 		default:
+			// Fused {model}/{effort}/{settings} (sty_aa726901) — e.g. Codex
+			// -c model_reasoning_effort={effort}. Exact-token cases handled above.
+			if sub, ok, empty := fusedPlaceholder(tok, req); ok {
+				if empty {
+					if n := len(args); n > 0 && strings.HasPrefix(args[n-1], "-") {
+						args = args[:n-1]
+					}
+					continue
+				}
+				args = append(args, sub)
+				continue
+			}
 			args = append(args, tok)
 		}
 	}
 	return args
+}
+
+// fusedPlaceholder expands a token that embeds {model}, {effort}, or {settings}
+// as a substring. ok is true when a fused placeholder was present. empty is true
+// when the substituted value is blank (caller drops the token and prior flag).
+// {system}/{tools}/{payload} are never fused.
+func fusedPlaceholder(tok string, req Request) (sub string, ok bool, empty bool) {
+	type pair struct {
+		ph, val string
+	}
+	for _, p := range []pair{
+		{"{model}", strings.TrimSpace(req.Model)},
+		{"{effort}", strings.TrimSpace(req.Effort)},
+		{"{settings}", strings.TrimSpace(req.Settings)},
+	} {
+		if !strings.Contains(tok, p.ph) || tok == p.ph {
+			continue
+		}
+		// Refuse fusing {system}/{tools}/{payload} even if mixed into the token.
+		if strings.Contains(tok, "{system}") || strings.Contains(tok, "{tools}") || strings.Contains(tok, "{payload}") {
+			return "", false, false
+		}
+		if p.val == "" {
+			return "", true, true
+		}
+		return strings.ReplaceAll(tok, p.ph, p.val), true, false
+	}
+	return "", false, false
 }
 
 // composeEnv layers overlay onto base ("KEY=VALUE" entries, as from os.Environ),

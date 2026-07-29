@@ -86,6 +86,7 @@ func TestCodexPresetExpansion(t *testing.T) {
 	}
 	for _, want := range []string{
 		"codex", "exec", "-s", "read-only", "{system}", "-m", "{model}",
+		`model_reasoning_effort="{effort}"`,
 	} {
 		if !strings.Contains(DefaultCodexExecCommand, want) {
 			t.Errorf("DefaultCodexExecCommand must include %q: %q", want, DefaultCodexExecCommand)
@@ -120,6 +121,7 @@ func TestCodexExecBuildArgs(t *testing.T) {
 	args := buildArgs(fields[1:], Request{
 		SystemPrompt: "gate rubric here",
 		Model:        "o4-mini",
+		Effort:       "high",
 		Payload:      `{"story":{"id":"sty_x"}}`,
 	})
 	if !contains(args, "exec") || !contains(args, "read-only") {
@@ -131,15 +133,31 @@ func TestCodexExecBuildArgs(t *testing.T) {
 	if !contains(args, "o4-mini") {
 		t.Errorf("model must be substituted: %v", args)
 	}
-	// Empty model drops -m.
+	if !contains(args, `model_reasoning_effort="high"`) {
+		t.Errorf("effort must fuse into quoted model_reasoning_effort: %v", args)
+	}
+	if !contains(args, "-c") {
+		t.Errorf("-c must remain when effort set: %v", args)
+	}
+	// Empty model drops -m; empty effort drops -c and fused token.
 	argsEmpty := buildArgs(fields[1:], Request{SystemPrompt: "rubric"})
 	for _, a := range argsEmpty {
-		if a == "-m" {
-			t.Errorf("empty model should drop -m: %v", argsEmpty)
+		if a == "-m" || a == "-c" || strings.Contains(a, "model_reasoning_effort") {
+			t.Errorf("empty model/effort should drop -m/-c/effort token: %v", argsEmpty)
 		}
 	}
 	if !contains(argsEmpty, "rubric") {
 		t.Errorf("system still required when model empty: %v", argsEmpty)
+	}
+	// Effort set, model empty.
+	argsEffortOnly := buildArgs(fields[1:], Request{SystemPrompt: "rubric", Effort: "low"})
+	if !contains(argsEffortOnly, `model_reasoning_effort="low"`) {
+		t.Errorf("effort-only: %v", argsEffortOnly)
+	}
+	for _, a := range argsEffortOnly {
+		if a == "-m" {
+			t.Errorf("empty model should still drop -m: %v", argsEffortOnly)
+		}
 	}
 }
 

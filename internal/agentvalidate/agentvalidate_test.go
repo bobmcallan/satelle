@@ -600,3 +600,78 @@ func TestValidate_CodexExecAndACP(t *testing.T) {
 		t.Error("acp codex reviewer with read-only tools should be ReadOnly")
 	}
 }
+
+// TestValidate_CodexReviewerSandboxHardReject (sty_aa726901 AC3): workspace-write
+// and omitted sandbox hard-reject for role=reviewer Codex command templates;
+// Claude/Grok templates still pass; ACP Codex does not require -s.
+func TestValidate_CodexReviewerSandboxHardReject(t *testing.T) {
+	agents := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop"},
+	}
+
+	// workspace-write → Problem naming workspace-write.
+	agents.Reviewer = config.AgentBinding{
+		Command: "codex exec -s workspace-write -m {model} {system}",
+		Role:    "reviewer",
+	}
+	r := Validate(agents, nil, nil)
+	if r.OK() {
+		t.Fatal("workspace-write Codex reviewer must fail validate")
+	}
+	joined := strings.Join(r.Problems, "\n")
+	if !strings.Contains(joined, "workspace-write") {
+		t.Errorf("problems must name workspace-write:\n%s", joined)
+	}
+
+	// Omitted sandbox → Problem.
+	agents.Reviewer = config.AgentBinding{
+		Command: "codex exec -m {model} {system}",
+		Role:    "reviewer",
+	}
+	r = Validate(agents, nil, nil)
+	if r.OK() {
+		t.Fatal("omitted-sandbox Codex reviewer must fail validate")
+	}
+	joined = strings.Join(r.Problems, "\n")
+	if !strings.Contains(joined, "none (omitted)") && !strings.Contains(joined, "read-only") {
+		t.Errorf("problems must name omitted sandbox:\n%s", joined)
+	}
+
+	// Claude default template → pass (no Codex sandbox problem).
+	agents.Reviewer = config.AgentBinding{
+		Command: agentcli.DefaultClaudeCommand,
+		Role:    "reviewer",
+		Tools:   "Read,Grep,Glob",
+	}
+	r = Validate(agents, nil, nil)
+	if !r.OK() {
+		t.Fatalf("DefaultClaudeCommand reviewer must pass: %v", r.Problems)
+	}
+
+	// Grok default template → pass.
+	agents.Reviewer = config.AgentBinding{
+		Command: agentcli.DefaultGrokCommand,
+		Role:    "reviewer",
+		Tools:   "read_file,grep,list_dir",
+	}
+	r = Validate(agents, nil, nil)
+	if !r.OK() {
+		t.Fatalf("DefaultGrokCommand reviewer must pass: %v", r.Problems)
+	}
+
+	// Danger still uses danger message (not double sandbox message).
+	agents.Reviewer = config.AgentBinding{
+		Command: "codex exec -s danger-full-access {system}",
+		Role:    "reviewer",
+	}
+	r = Validate(agents, nil, nil)
+	joined = strings.Join(r.Problems, "\n")
+	if !strings.Contains(joined, "danger-full-access") {
+		t.Errorf("danger must keep danger message:\n%s", joined)
+	}
+	// Should not also require "want -s read-only" path for the same binding when danger fires first.
+	if strings.Count(joined, "\n")+1 > 2 && strings.Contains(joined, "want -s read-only") && strings.Contains(joined, "disables the sandbox") {
+		// both messages would be a bug; allow only danger path
+		t.Errorf("danger and sandbox hard-reject must not both fire:\n%s", joined)
+	}
+}

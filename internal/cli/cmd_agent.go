@@ -34,7 +34,10 @@ global config (~/.satelle/config.toml) so it is set once per machine.
 agent validate checks this repo's .satelle/agents.toml (every binding's command,
 timeout, env) and each workflow's agent= node bindings, and surfaces each agent's
 resolved grant. Structural workflow checks (rubrics, unresolved gate skills) stay
-on satelle workflow validate — this command reuses them alongside the agent layer.`,
+on satelle workflow validate — this command reuses them alongside the agent layer.
+
+To install satelle-owned launcher scripts (e.g. Codex ACP adapter wrapper), use
+satelle agents install (plural) — that path never changes this [agent] cli default.`,
 	}
 
 	show := &cobra.Command{

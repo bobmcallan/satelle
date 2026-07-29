@@ -1,3 +1,18 @@
+## [0.0.344] - 2026-07-29
+
+### Fixed
+- Codex ACP no longer receives the Grok-only `--reasoning-effort` argv flag; effort rides `session/set_config_option` (Grok ACP argv injection preserved) (sty_aa726901)
+- Command-transport Codex forwards binding `effort` via `-c model_reasoning_effort="{effort}"` (empty drops the flag) (sty_aa726901)
+- Agent validate hard-rejects `role=reviewer` Codex *command* templates whose sandbox is not read-only (`workspace-write` or omitted), not only danger modes (sty_aa726901)
+
+### Added
+- Hermetic Codex-shaped ACP fixtures for init, model/effort config, CaptureAnswer/Full, mutation deny, Satelle-only grant contract (sty_aa726901)
+- `satelle agents install|remove` for `claude`/`grok`/`codex`/`all` — satelle-owned launchers under `$SATELLE_HOME/agents/bin/` without changing the default reviewer (sty_aa726901)
+
+### Changed
+- `buildArgs` supports fused `{model}`/`{effort}`/`{settings}` placeholders (exact-token behaviour unchanged for `{system}`/`{payload}`) (sty_aa726901)
+- Agent-dispatch help documents effort per transport, Codex sandbox hard-reject, and `satelle agents` vs `satelle agent` (sty_aa726901)
+
 ## [0.0.343] - 2026-07-29
 
 ### Added

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -50,11 +51,32 @@ func newACPRunner(command string) (Runner, error) {
 func (a acpRunner) Name() string    { return a.binary }
 func (a acpRunner) Command() string { return a.how }
 
+// acpEffortArgvSupported reports whether the ACP spawn is Grok-shaped and may
+// receive the Grok-only --reasoning-effort argv flag (sty_aa726901). Codex ACP
+// (npx -y @agentclientprotocol/codex-acp) and unknown peers are false — effort
+// rides session/set_config_option only. Deliberate allowlist: an unknown flag
+// can abort a non-Grok spawn.
+func acpEffortArgvSupported(binary string, args []string) bool {
+	base := strings.ToLower(filepath.Base(binary))
+	if strings.Contains(base, "grok") {
+		return true
+	}
+	for _, a := range args {
+		if strings.Contains(strings.ToLower(a), "grok") {
+			return true
+		}
+	}
+	return false
+}
+
 func (a acpRunner) Run(ctx context.Context, req Request) ([]byte, error) {
 	args := append([]string(nil), a.args...)
-	// Inject reasoning effort into spawn when set (sty_657f77b9) — prefer
+	// Inject --reasoning-effort into spawn ONLY for Grok-shaped ACP peers
+	// (sty_aa726901). --reasoning-effort is a Grok CLI flag, not ACP; unknown
+	// peers (including Codex ACP via @agentclientprotocol/codex-acp) get effort
+	// solely via session/set_config_option in runSession. Prefer insertion
 	// before trailing "stdio" so `grok agent --reasoning-effort high stdio`.
-	if e := strings.TrimSpace(req.Effort); e != "" {
+	if e := strings.TrimSpace(req.Effort); e != "" && acpEffortArgvSupported(a.binary, a.args) {
 		injected := false
 		for i, t := range args {
 			if t == "stdio" {

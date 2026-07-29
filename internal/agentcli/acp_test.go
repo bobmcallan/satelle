@@ -159,16 +159,15 @@ func TestACPRunner_FakePeerDecision(t *testing.T) {
 	}
 }
 
-// TestACPRunner_EffortInjection (sty_657f77b9): when Request.Effort is set,
-// spawn argv includes --reasoning-effort high before stdio (asserted via wrapper
-// log), and set_config_option is accepted for reasoning_effort/effort.
+// TestACPRunner_EffortInjection (sty_657f77b9 / sty_aa726901): Grok-shaped ACP
+// spawn gets --reasoning-effort on argv before stdio when Effort is set.
+// set_config_option is also accepted for reasoning_effort/effort.
 func TestACPRunner_EffortInjection(t *testing.T) {
 	peer := writeFakeACPPeer(t, "")
-	// Wrapper logs argv then execs peer — so we can assert inject without
-	// changing the ACP protocol peer.
+	// Wrapper must be Grok-shaped (sty_aa726901 allowlist) so argv injection runs.
 	dir := t.TempDir()
 	argvLog := filepath.Join(dir, "argv.log")
-	wrap := filepath.Join(dir, "wrap-peer")
+	wrap := filepath.Join(dir, "grok-agent-wrapper")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argvLog + "\nexec " + peer + " \"$@\"\n"
 	if err := os.WriteFile(wrap, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
