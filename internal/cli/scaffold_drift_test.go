@@ -79,7 +79,15 @@ func TestDetectScaffoldDrift_StaleScriptContent(t *testing.T) {
 	}
 	rel := hookScriptRel("claude", "gate")
 	path := filepath.Join(repo, filepath.FromSlash(rel))
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n# stale\n"), 0o755); err != nil {
+	// The faulty generation that mixed structured stdout with exit 2 while
+	// discarding the blocking reason on stderr must be recognised as drift.
+	stale := `#!/bin/sh
+o=$(satelle hook gate --harness claude 2>/dev/null); code=$?
+[ -n "$o" ] && printf '%s\n' "$o"
+[ "$code" -eq 0 ] && exit 0
+exit 2
+`
+	if err := os.WriteFile(path, []byte(stale), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// Settings still point at the script form so harness is "deployed".

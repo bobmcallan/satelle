@@ -563,141 +563,229 @@ func preToolUseCommands(body string) string {
 	return b.String()
 }
 
-// TestFailVisibleWrapperShell: drive the real script-file wrapper for both
-// harness shapes (sty_c75c73ed AC3/AC4/AC5, sty_adfb9862).
+// TestFailVisibleWrapperShell drives the generated wrapper with no resolvable
+// binary. Every harness receives a structured infrastructure deny with a
+// successful handler exit; commitgate still fails open for irrelevant Bash.
 func TestFailVisibleWrapperShell(t *testing.T) {
 	repo := t.TempDir()
 	if err := writeHookScripts(repo); err != nil {
 		t.Fatal(err)
 	}
-	// AC3: no binary → edit-gate emits infra deny JSON + exit 2.
-	for _, harness := range []string{"claude", "grok"} {
+	for _, harness := range []string{"claude", "grok", "codex"} {
 		full := renderHookCommand(repo, harness, "gate")
 		if strings.Contains(full, "$") || strings.HasPrefix(full, "sh -c ") {
 			t.Fatalf("command must be $-free script form: %s", full)
 		}
-		// Harness runs the command string from the repo root.
-		c := exec.Command("sh", "-c", full)
-		c.Dir = repo
-		c.Env = []string{"HOME=" + t.TempDir(), "PATH=/usr/bin:/bin"}
-		c.Stdin = strings.NewReader(`{"tool_input":{"file_path":"x.go"}}`)
-		var stdout, stderr bytes.Buffer
-		c.Stdout = &stdout
-		c.Stderr = &stderr
-		if err := c.Run(); err == nil {
-			t.Fatalf("%s gate with no binary: want non-zero exit", harness)
+		code, got, stderr := runHookScript(t, repo, full,
+			hookEditEvent(harness), t.TempDir())
+		if code != 0 {
+			t.Fatalf("%s gate with no binary: exit=%d stdout=%q stderr=%q",
+				harness, code, got, stderr)
 		}
-		got := stdout.String()
 		if !strings.Contains(got, "policy denial") {
-			t.Errorf("%s gate infra deny missing reason: stdout=%q stderr=%q", harness, got, stderr.String())
+			t.Errorf("%s gate infra deny missing reason: stdout=%q stderr=%q", harness, got, stderr)
 		}
-		if harness == "claude" && !strings.Contains(got, "hookSpecificOutput") {
+		if harness != "grok" && !strings.Contains(got, "hookSpecificOutput") {
 			t.Errorf("%s want Claude shape: %q", harness, got)
 		}
 		if harness == "grok" && !strings.Contains(got, `"decision":"deny"`) {
 			t.Errorf("%s want Grok shape: %q", harness, got)
 		}
+		assertHookDenyReason(t, harness, got)
 	}
 
-	// AC4: commitgate with no binary — echo hello allows; git commit denies.
-	for _, harness := range []string{"claude", "grok"} {
+	for _, harness := range []string{"claude", "grok", "codex"} {
 		full := renderHookCommand(repo, harness, "commitgate")
-		c := exec.Command("sh", "-c", full)
-		c.Dir = repo
-		c.Env = []string{"HOME=" + t.TempDir(), "PATH=/usr/bin:/bin"}
-		c.Stdin = strings.NewReader(`{"tool_input":{"command":"echo hello"}}`)
-		var stdout bytes.Buffer
-		c.Stdout = &stdout
-		if err := c.Run(); err != nil {
-			t.Errorf("%s commitgate echo hello must allow: %v out=%q", harness, err, stdout.String())
+		code, stdout, stderr := runHookScript(t, repo, full,
+			hookBashEvent(harness, "echo hello"), t.TempDir())
+		if code != 0 || stdout != "" || stderr != "" {
+			t.Errorf("%s commitgate echo hello = exit %d stdout=%q stderr=%q; want silent allow",
+				harness, code, stdout, stderr)
 		}
-		c = exec.Command("sh", "-c", full)
-		c.Dir = repo
-		c.Env = []string{"HOME=" + t.TempDir(), "PATH=/usr/bin:/bin"}
-		c.Stdin = strings.NewReader(`{"tool_input":{"command":"git commit -m x"}}`)
-		stdout.Reset()
-		c.Stdout = &stdout
-		if err := c.Run(); err == nil {
-			t.Errorf("%s commitgate git commit must deny", harness)
+		code, stdout, stderr = runHookScript(t, repo, full,
+			hookBashEvent(harness, "git commit -m x"), t.TempDir())
+		if code != 0 {
+			t.Errorf("%s commitgate git commit handler exit=%d stderr=%q", harness, code, stderr)
 		}
-		if !strings.Contains(stdout.String(), "policy denial") {
-			t.Errorf("%s commit deny missing reason: %q", harness, stdout.String())
+		if !strings.Contains(stdout, "policy denial") {
+			t.Errorf("%s commit deny missing reason: %q", harness, stdout)
 		}
+		assertHookDenyReason(t, harness, stdout)
 	}
 }
 
-// TestFailVisibleWrapperShellBinaryPresent: AC4 — when a satelle binary is
-// resolvable, the wrapper re-emits its stdout and preserves its exit code
-// (not the static infra JSON). Stub lives at .satelle/satelle (wrapper search order).
+// TestFailVisibleWrapperShellBinaryPresent covers policy deny, malformed/empty
+// failures, secret-bearing stderr, and silent allow for all harness shapes.
 func TestFailVisibleWrapperShellBinaryPresent(t *testing.T) {
 	repo := t.TempDir()
 	if err := writeHookScripts(repo); err != nil {
 		t.Fatal(err)
 	}
-	// Stub: print a unique marker on stdout and exit 2 (deny).
 	stubDir := filepath.Join(repo, ".satelle")
 	if err := os.MkdirAll(stubDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stub := filepath.Join(stubDir, "satelle")
-	// #!/bin/sh so the wrapper's -x check succeeds after WriteFile 0o755.
-	body := "#!/bin/sh\nprintf '%s\\n' 'STUB-DENY-JSON'\nexit 2\n"
+	body := `#!/bin/sh
+case "$4" in
+  grok) printf '%s\n' '{"decision":"deny","reason":"stub policy denial"}' ;;
+  *) printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"stub policy denial"}}' ;;
+esac
+printf '%s\n' 'TOKEN=must-not-leak' >&2
+exit 1
+`
 	if err := os.WriteFile(stub, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	home := t.TempDir()
-	env := []string{"HOME=" + home, "PATH=/usr/bin:/bin"}
 
-	for _, harness := range []string{"claude", "grok"} {
-		full := renderHookCommand(repo, harness, "gate")
-		c := exec.Command("sh", "-c", full)
-		c.Dir = repo
-		c.Env = env
-		c.Stdin = strings.NewReader(`{"tool_input":{"file_path":"x.go"}}`)
-		var stdout bytes.Buffer
-		c.Stdout = &stdout
-		if err := c.Run(); err == nil {
-			t.Fatalf("%s gate with stub: want non-zero (stub exit 2)", harness)
-		}
-		if !strings.Contains(stdout.String(), "STUB-DENY-JSON") {
-			t.Errorf("%s gate must re-emit stub stdout, got %q", harness, stdout.String())
-		}
-		if strings.Contains(stdout.String(), "policy denial") {
-			t.Errorf("%s gate with live stub must not fall back to infra JSON: %q", harness, stdout.String())
+	for _, harness := range []string{"claude", "grok", "codex"} {
+		for _, sub := range []string{"gate", "commitgate"} {
+			event := hookEditEvent(harness)
+			if sub == "commitgate" {
+				event = hookBashEvent(harness, "git push")
+			}
+			code, stdout, stderr := runHookScript(t, repo,
+				renderHookCommand(repo, harness, sub), event, home)
+			if code != 0 {
+				t.Fatalf("%s %s structured deny: exit=%d stdout=%q stderr=%q",
+					harness, sub, code, stdout, stderr)
+			}
+			if !strings.Contains(stdout, "stub policy denial") {
+				t.Errorf("%s %s missing stub reason: %q", harness, sub, stdout)
+			}
+			assertHookDenyReason(t, harness, stdout)
+			if strings.Contains(stdout+stderr, "TOKEN=must-not-leak") {
+				t.Errorf("%s %s leaked captured stderr: stdout=%q stderr=%q",
+					harness, sub, stdout, stderr)
+			}
 		}
 	}
 
-	// commitgate: stub exit 2 + stdout → re-emit and deny (even for non-mutating).
-	// The wrapper only fail-opens on empty stdout + missing binary; stub has output.
-	for _, harness := range []string{"claude", "grok"} {
-		full := renderHookCommand(repo, harness, "commitgate")
-		c := exec.Command("sh", "-c", full)
-		c.Dir = repo
-		c.Env = env
-		c.Stdin = strings.NewReader(`{"tool_input":{"command":"echo hello"}}`)
-		var stdout bytes.Buffer
-		c.Stdout = &stdout
-		if err := c.Run(); err == nil {
-			t.Fatalf("%s commitgate with denying stub: want non-zero", harness)
+	for _, failure := range []string{
+		"#!/bin/sh\nprintf '%s\\n' 'TOKEN=must-not-leak' >&2\nexit 1\n",
+		"#!/bin/sh\nprintf '%s\\n' 'not-json'\nprintf '%s\\n' 'TOKEN=must-not-leak' >&2\nexit 1\n",
+		"#!/bin/sh\nprintf '%s\\n' 'not-json'\nexit 0\n",
+	} {
+		if err := os.WriteFile(stub, []byte(failure), 0o755); err != nil {
+			t.Fatal(err)
 		}
-		if !strings.Contains(stdout.String(), "STUB-DENY-JSON") {
-			t.Errorf("%s commitgate must re-emit stub stdout, got %q", harness, stdout.String())
+		for _, harness := range []string{"claude", "grok", "codex"} {
+			code, stdout, stderr := runHookScript(t, repo,
+				renderHookCommand(repo, harness, "gate"),
+				hookEditEvent(harness), home)
+			if code != 0 || !strings.Contains(stdout, "INFRASTRUCTURE failure") {
+				t.Errorf("%s malformed failure = exit %d stdout=%q stderr=%q",
+					harness, code, stdout, stderr)
+			}
+			if strings.Contains(stdout+stderr, "TOKEN=must-not-leak") || strings.Contains(stdout, "not-json") {
+				t.Errorf("%s malformed failure leaked unsafe output: stdout=%q stderr=%q",
+					harness, stdout, stderr)
+			}
+			assertHookDenyReason(t, harness, stdout)
 		}
 	}
 
-	// Allow path: stub that exits 0 with empty stdout.
 	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, harness := range []string{"claude", "grok"} {
-		full := renderHookCommand(repo, harness, "gate")
-		c := exec.Command("sh", "-c", full)
-		c.Dir = repo
-		c.Env = env
-		c.Stdin = strings.NewReader(`{"tool_input":{"file_path":"x.go"}}`)
-		if err := c.Run(); err != nil {
-			t.Errorf("%s gate with allowing stub must exit 0: %v", harness, err)
+	for _, harness := range []string{"claude", "grok", "codex"} {
+		for _, sub := range []string{"gate", "commitgate"} {
+			event := hookEditEvent(harness)
+			if sub == "commitgate" {
+				event = hookBashEvent(harness, "echo hello")
+			}
+			code, stdout, stderr := runHookScript(t, repo,
+				renderHookCommand(repo, harness, sub), event, home)
+			if code != 0 || stdout != "" || stderr != "" {
+				t.Errorf("%s %s allow = exit %d stdout=%q stderr=%q",
+					harness, sub, code, stdout, stderr)
+			}
 		}
+	}
+}
+
+// TestFailVisibleWrapperRegression reproduces the old mixed contract exactly:
+// deny JSON on stdout, blocking exit 2, and an empty stderr channel.
+func TestFailVisibleWrapperRegression(t *testing.T) {
+	repo := t.TempDir()
+	stub := filepath.Join(repo, "satelle")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nprintf '%s\\n' '{\"hookSpecificOutput\":{\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"actionable\"}}'\nprintf '%s\\n' 'actionable' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(repo, "old.sh")
+	if err := os.WriteFile(old, []byte("#!/bin/sh\no=$(\"$1\" 2>/dev/null); code=$?\n[ -n \"$o\" ] && printf '%s\\n' \"$o\"\n[ \"$code\" -eq 0 ] && exit 0\nexit 2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := exec.Command("sh", old, stub)
+	var stdout, stderr bytes.Buffer
+	c.Stdout, c.Stderr = &stdout, &stderr
+	err := c.Run()
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 2 || stdout.Len() == 0 || stderr.Len() != 0 {
+		t.Fatalf("old wrapper did not reproduce exit-2/empty-stderr: err=%v stdout=%q stderr=%q",
+			err, stdout.String(), stderr.String())
+	}
+}
+
+func runHookScript(t *testing.T, repo, command, event, home string) (int, string, string) {
+	t.Helper()
+	c := exec.Command("sh", "-c", command)
+	c.Dir = repo
+	c.Env = []string{"HOME=" + home, "PATH=/usr/bin:/bin"}
+	c.Stdin = strings.NewReader(event)
+	var stdout, stderr bytes.Buffer
+	c.Stdout, c.Stderr = &stdout, &stderr
+	err := c.Run()
+	if err == nil {
+		return 0, stdout.String(), stderr.String()
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return exitErr.ExitCode(), stdout.String(), stderr.String()
+	}
+	t.Fatalf("run hook: %v", err)
+	return -1, stdout.String(), stderr.String()
+}
+
+func hookEditEvent(harness string) string {
+	if harness == "grok" {
+		return `{"toolInput":{"filePath":"x.go"}}`
+	}
+	return `{"tool_input":{"file_path":"x.go"}}`
+}
+
+func hookBashEvent(harness, command string) string {
+	key := "tool_input"
+	field := "command"
+	if harness == "grok" {
+		key = "toolInput"
+		field = "command"
+	}
+	b, _ := json.Marshal(map[string]any{key: map[string]string{field: command}})
+	return string(b)
+}
+
+func assertHookDenyReason(t *testing.T, harness, stdout string) {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &doc); err != nil {
+		t.Fatalf("%s deny is not JSON: %v: %q", harness, err, stdout)
+	}
+	if harness == "grok" {
+		if doc["decision"] != "deny" {
+			t.Fatalf("%s decision=%v, want deny", harness, doc["decision"])
+		}
+		if reason, _ := doc["reason"].(string); strings.TrimSpace(reason) == "" {
+			t.Fatalf("%s deny has empty reason: %q", harness, stdout)
+		}
+		return
+	}
+	hso, _ := doc["hookSpecificOutput"].(map[string]any)
+	if hso["permissionDecision"] != "deny" {
+		t.Fatalf("%s permissionDecision=%v, want deny", harness, hso["permissionDecision"])
+	}
+	if reason, _ := hso["permissionDecisionReason"].(string); strings.TrimSpace(reason) == "" {
+		t.Fatalf("%s deny has empty permissionDecisionReason: %q", harness, stdout)
 	}
 }
 

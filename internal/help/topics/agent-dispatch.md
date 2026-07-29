@@ -186,6 +186,25 @@ Neither path changes the default reviewer or `[agent] cli`.
 
 `satelle agent` (singular) selects and validates the headless CLI / agents.toml.
 
+#### PreToolUse deny channels
+
+The installed `satelle-hook.sh` uses one coherent structured-deny contract:
+
+| Harness | Structured deny emitted by Satelle | Handler exit |
+| --- | --- | --- |
+| Claude | `hookSpecificOutput.permissionDecision=deny` with a non-empty `permissionDecisionReason` | `0` |
+| Grok | top-level `decision=deny` with a non-empty `reason` | `0` |
+| Codex | `hookSpecificOutput.permissionDecision=deny` with a non-empty `permissionDecisionReason` | `0` |
+
+Exit `0` means the hook handler ran successfully; the JSON decision still blocks
+the tool. Claude and Codex use a separate fallback contract for exit `2`: the
+blocking reason must be non-empty on stderr and structured stdout is not the
+authoritative channel. Do not mix exit `2` with JSON-only stdout and empty
+stderr. Satelle's wrapper prefers the structured path for policy and
+infrastructure denials, emits a static safe infrastructure reason when the
+binary is absent or unusable, and keeps irrelevant/read-only Bash fail-open so
+the operator can diagnose the installation.
+
 #### Install compliance + ACP adapter (dogfood)
 
 ```bash

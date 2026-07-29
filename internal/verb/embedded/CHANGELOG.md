@@ -1,3 +1,12 @@
+## [0.0.349] - 2026-07-30
+
+### Fixed
+- Claude, Grok, and Codex PreToolUse wrappers now return coherent structured denials with actionable reasons instead of mixing JSON stdout with exit 2 and empty stderr (sty_56cda59c)
+- Hook infrastructure and malformed-output failures now use safe harness-specific fallback denials without leaking captured stderr, while irrelevant Bash remains fail-open (sty_56cda59c)
+
+### Changed
+- Agent-dispatch help documents each harness deny envelope and the distinction between structured exit-zero handling and exit-two stderr fallback (sty_56cda59c)
+
 ## [0.0.348] - 2026-07-29
 
 ### Added

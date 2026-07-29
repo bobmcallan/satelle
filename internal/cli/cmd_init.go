@@ -408,15 +408,19 @@ func renderHookCommand(repoRoot, harness, sub string) string {
 }
 
 // parameterizedHookScriptBody is the single script body for satelle-hook.sh.
-// Usage: sh .satelle/hooks/satelle-hook.sh <gate|commitgate> <claude|grok>
+// Usage: sh .satelle/hooks/satelle-hook.sh <gate|commitgate> <claude|grok|codex>
 //
 // The wrapper:
 //  1. Resolves satelle from $HOME/.local/bin/satelle → $CLAUDE_PROJECT_DIR/.satelle/satelle
 //     (or SATELLE_PROJECT_DIR) → relative .satelle/satelle → PATH
-//  2. Runs `satelle hook <sub>`, captures stdout
-//  3. Re-emits satelle's deny JSON when present
-//  4. On infra failure: harness-correct static deny JSON (never bare exit-2)
+//  2. Runs `satelle hook <sub>`, capturing stdout and stderr separately
+//  3. Normalises a usable deny to harness-correct JSON + handler exit 0
+//  4. On infra/malformed failure: harness-correct static deny JSON + exit 0
 //  5. commitgate: non-mutating bash fails OPEN on infra failure; commit/push closed
+//
+// A PreToolUse exit 2 is deliberately not used here: Claude and Codex ignore
+// structured stdout on that path and require the reason on stderr. Mixing JSON
+// stdout with exit 2 and discarded stderr caused the invisible-denial defect.
 func parameterizedHookScriptBody() string {
 	claudeInfra := strings.ReplaceAll(infraDenyJSON("claude"), `'`, `'\''`)
 	grokInfra := strings.ReplaceAll(infraDenyJSON("grok"), `'`, `'\''`)
@@ -444,21 +448,51 @@ for c in "$HOME/.local/bin/satelle" ${root:+"$root/.satelle/satelle"} ".satelle/
   if command -v "$c" >/dev/null 2>&1; then b=$(command -v "$c"); break; fi
 done
 p=$(cat)
+structured_deny(){
+  case "$harness" in
+    grok) case "$1" in *'"decision"'*'"deny"'*) return 0;; esac ;;
+    *)    case "$1" in *'"permissionDecision"'*'"deny"'*) return 0;; esac ;;
+  esac
+  return 1
+}
+deny_infra(){ printf '%%s\n' "$infra"; exit 0; }
+run_hook(){
+  errfile=$(mktemp "${TMPDIR:-/tmp}/satelle-hook.XXXXXX") || errfile=""
+  if [ -n "$errfile" ]; then
+    trap 'rm -f "$errfile"' 0
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    o=$(printf '%%s' "$p" | "$b" hook "$sub" --harness "$harness" 2>"$errfile")
+    code=$?
+  else
+    # Keep merged failure output private; an unusable result becomes the static
+    # infrastructure deny below rather than leaking arbitrary stderr or secrets.
+    o=$(printf '%%s' "$p" | "$b" hook "$sub" --harness "$harness" 2>&1)
+    code=$?
+  fi
+}
 if [ "$sub" = "commitgate" ]; then
-  docase(){ case "$p" in *git\ commit*|*git\ push*) printf '%%s\n' "$infra"; exit 2;; *) exit 0;; esac; }
+  docase(){ case "$p" in *git\ commit*|*git\ push*) deny_infra;; *) exit 0;; esac; }
   if [ -z "$b" ]; then docase; fi
-  o=$(printf '%%s' "$p" | "$b" hook commitgate --harness "$harness" 2>/dev/null); code=$?
-  if [ -n "$o" ]; then printf '%%s\n' "$o"; fi
-  if [ "$code" -eq 0 ]; then exit 0; fi
-  if [ -z "$o" ]; then docase; fi
-  exit 2
+  run_hook
+  if [ "$code" -eq 0 ]; then
+    if [ -z "$o" ]; then exit 0; fi
+    if structured_deny "$o"; then printf '%%s\n' "$o"; exit 0; fi
+    docase
+  fi
+  if structured_deny "$o"; then printf '%%s\n' "$o"; exit 0; fi
+  docase
 fi
-if [ -z "$b" ]; then printf '%%s\n' "$infra"; exit 2; fi
-o=$(printf '%%s' "$p" | "$b" hook gate --harness "$harness" 2>/dev/null); code=$?
-if [ -n "$o" ]; then printf '%%s\n' "$o"; fi
-if [ "$code" -eq 0 ]; then exit 0; fi
-if [ -z "$o" ]; then printf '%%s\n' "$infra"; fi
-exit 2
+if [ -z "$b" ]; then deny_infra; fi
+run_hook
+if [ "$code" -eq 0 ]; then
+  if [ -z "$o" ]; then exit 0; fi
+  if structured_deny "$o"; then printf '%%s\n' "$o"; exit 0; fi
+  deny_infra
+fi
+if structured_deny "$o"; then printf '%%s\n' "$o"; exit 0; fi
+deny_infra
 `, failVisibleMarker, grokInfra, codexInfra, claudeInfra)
 }
 

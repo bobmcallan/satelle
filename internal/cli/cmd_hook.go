@@ -93,8 +93,7 @@ byte ceiling (overflow noted on stderr); fails open so it never blocks a session
 		Use:   "gate",
 		Short: "PreToolUse edit gate — block code edits unless a story is engaged",
 		Long: `gate is the PreToolUse handler for Edit|Write|MultiEdit|NotebookEdit|
-search_replace|write. It exits non-zero (the wiring turns that into a block
-with '|| exit 2') unless a story is ENGAGED — in one of the active workflow's
+search_replace|write. It returns a deny unless a story is ENGAGED — in one of the active workflow's
 non-terminal engaging states (e.g. plan, in_progress, integration, release) —
 so the agent works under a tracked story. On deny it emits a single harness-
 correct JSON shape on stdout (detected from the event envelope: tool_input =
@@ -106,6 +105,13 @@ tool (sty_5e4bc568). The "engaged" policy is authored substrate — it reads the
 workflow's DOT shape markers (Mdiamond=start, Msquare=terminal) rather than
 hardcoding state names, so configuration drives the decision (sty_f3d5d4b8,
 sty_e4902c51).
+
+The installed satelle-hook.sh wrapper normalises that direct command result to
+structured deny JSON plus handler exit 0. Claude and Codex process structured
+stdout only on the successful-handler path; their exit-2 path instead requires
+a non-empty reason on stderr. Never combine JSON-only stdout, exit 2, and empty
+stderr. Grok receives its top-level decision/reason envelope through the same
+exit-0 structured path.
 
 The edit target is resolved to an ABSOLUTE path against the repo root before any
 containment test (sty_8c3d345c). Harnesses differ: Claude Code sends an absolute
@@ -206,7 +212,9 @@ anchor is denied unless [gate] allow_outside_tree_edits is true. Temp/scratchpad
 non-repo paths are not fenced (the sty_3026d890 stance that closed /tmp is
 superseded). Containment is a reminder and boundary, not a sandbox. Then, for
 git commit/push only, it exits non-zero unless a story is engaged. On deny it
-emits the same harness-specific PreToolUse deny shape as gate (sty_5e4bc568).
+emits the same harness-specific PreToolUse deny shape and uses the same installed
+wrapper contract as gate: structured deny JSON plus handler exit 0; an exit-2
+fallback would require a non-empty stderr reason (sty_5e4bc568, sty_56cda59c).
 Fails closed on store/listing/workflow-resolution errors (sty_f3d5d4b8).
 
 Optional step policy (sty_c21490cc): when [gate.command_allow] is authored in
@@ -1162,9 +1170,10 @@ func outsideRepoEditErr(path, foreignRoot string) error {
 }
 
 // denyPreToolUse emits a harness-specific deny payload on stdout and returns an
-// error so the process exits non-zero (hook wiring: `|| exit 2`). The harness is
-// detected from the PreToolUse event envelope (raw). The reason is also on the
-// error (cobra → stderr) for humans/transcripts.
+// error, so direct invocation has both structured stdout and a plain stderr
+// reason. The installed wrapper consumes that result and normalises a usable
+// deny to structured stdout + handler exit 0; it never discards stderr and then
+// exits 2. The harness is detected from the PreToolUse event envelope (raw).
 func denyPreToolUse(cmd *cobra.Command, raw []byte, reason string) error {
 	h := hookHarnessFlag
 	if h == "" {
