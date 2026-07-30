@@ -429,11 +429,55 @@ func restartServiceIfRunningRoot(out io.Writer, procRoot string) error {
 	return busFreeRestart(out, procRoot, livePID, wanted, wantedOK)
 }
 
+// restartSignalForPolicy maps a unit's Restart= policy to the signal that makes
+// systemd RESPAWN that unit — or reports that no signal does (sty_d45618d5).
+//
+// This is the correction to v0.0.361, which sent SIGTERM first and escalated to
+// SIGKILL. systemd classifies SIGTERM (with SIGHUP/SIGINT/SIGPIPE) as a CLEAN
+// exit, so an on-failure unit does not respawn from it — it STOPS, permanently,
+// and the escalation cannot recover it because the process is already gone. A
+// signal is therefore only ever sent when its effect on THIS policy is known:
+//
+//   - always     → SIGTERM. Graceful, and it respawns.
+//   - on-failure → SIGKILL. The only signal systemd counts as a failure, hence
+//     the only one this unit respawns from. Not an escalation — the correct
+//     first and only signal for this policy.
+//   - anything else (no, absent, unreadable, or a conditional policy whose
+//     respawn semantics are not established: on-abnormal, on-abort, on-success,
+//     on-watchdog) → NO signal. Stopping a service nothing will restart is
+//     strictly worse than leaving it stale.
+//
+// known distinguishes "the unit declares Restart=no" from "we could not read the
+// unit at all". Both forbid signalling, so the signal decision is the same; the
+// caller keeps the distinction for its message.
+func restartSignalForPolicy(policy string, known bool) (syscall.Signal, bool) {
+	if !known {
+		return 0, false
+	}
+	switch policy {
+	case "always":
+		return syscall.SIGTERM, true
+	case "on-failure":
+		return syscall.SIGKILL, true
+	}
+	return 0, false
+}
+
+// printInstallRemedy names the one-time fix for a service nothing would respawn.
+// Shared by both refusal branches so "the same remedy" is structural rather than
+// two strings that can drift apart.
+func printInstallRemedy(out io.Writer) {
+	fmt.Fprintf(out, "  satelle service install            (user unit; needs lingering)\n")
+	fmt.Fprintf(out, "  satelle service install --system   (persistent system unit)\n")
+}
+
 // busFreeRestart cycles a supervised process without any systemctl call: signal
-// it to exit, let its persistent supervisor respawn it from the unit file, then
-// CONFIRM by re-reading kernel facts. It never starts a process itself — an
-// ephemeral relaunch would satisfy a version check while breaking the durability
-// the release contract requires (sty_f20f3f3b).
+// it with the ONE signal its unit's Restart policy respawns from, let the
+// supervisor restart it from the unit file, then CONFIRM from kernel facts. It
+// never starts a process itself — an ephemeral relaunch would satisfy a version
+// check while breaking the durability the release contract requires
+// (sty_f20f3f3b), and it never sends a signal whose effect is unknown
+// (sty_d45618d5).
 func busFreeRestart(out io.Writer, procRoot string, livePID int, wanted exeIdentity, wantedOK bool) error {
 	sup, ok := persistentSupervisor(procRoot, livePID)
 	if !ok || !sup.Persistent {
@@ -444,28 +488,33 @@ func busFreeRestart(out io.Writer, procRoot string, livePID int, wanted exeIdent
 			owner = "its systemd user manager is not lingering, so it dies with the login session"
 		}
 		fmt.Fprintf(out, "%s (pid %d) is running on the OLD binary, but no persistent supervisor owns it (%s) — a restart would not be respawned, so it was left running. Install a persistent unit, then re-run `satelle update`:\n", serviceUnitName, livePID, owner)
-		fmt.Fprintf(out, "  satelle service install            (user unit; needs lingering)\n")
-		fmt.Fprintf(out, "  satelle service install --system   (persistent system unit)\n")
+		printInstallRemedy(out)
+		return nil
+	}
+
+	policy, known := unitRestartPolicy()
+	sig, willRespawn := restartSignalForPolicy(policy, known)
+	if !willRespawn {
+		why := fmt.Sprintf("its unit declares Restart=%s", policy)
+		if !known {
+			why = "its unit file could not be read, so its Restart policy is unknown"
+		} else if policy == "" {
+			why = "its unit declares no Restart policy"
+		}
+		fmt.Fprintf(out, "%s (pid %d) is running on the OLD binary, but %s — no signal would make systemd respawn it, so it was left running rather than stopped. Install a unit that restarts, then re-run `satelle update`:\n", serviceUnitName, livePID, why)
+		printInstallRemedy(out)
 		return nil
 	}
 
 	start := time.Now()
-	fmt.Fprintf(out, "%s (pid %d) is on the old binary; its supervisor (%s, pid %d) is unreachable by bus but will respawn it — cycling\n",
-		serviceUnitName, livePID, sup.Name, sup.PID)
+	fmt.Fprintf(out, "%s (pid %d) is on the old binary; its supervisor (%s, pid %d) is unreachable by bus but Restart=%s respawns on %s — cycling\n",
+		serviceUnitName, livePID, sup.Name, sup.PID, policy, sig)
 
-	// Graceful first. The serve process may hold a SQLite handle, so SIGKILL is a
-	// last resort, never the opening move.
-	newPID, ok := signalAndAwaitRespawn(procRoot, livePID, syscall.SIGTERM)
+	newPID, ok := signalAndAwaitRespawn(procRoot, livePID, sig)
 	if !ok {
-		// A unit still on the legacy Restart=on-failure treats SIGTERM as a CLEAN
-		// exit and will not respawn. systemd counts any other signal as a failure,
-		// so SIGKILL respawns it — with no unit edit and no daemon-reload (which
-		// would itself need the bus this path exists to avoid). New units get
-		// Restart=always from `satelle service install`, so they stop at the rung
-		// above.
-		newPID, ok = signalAndAwaitRespawn(procRoot, livePID, syscall.SIGKILL)
-	}
-	if !ok {
+		// No second, different signal: the policy already told us which one
+		// respawns, so a failure here is a failure to converge, not a reason to
+		// try a more destructive one.
 		return fmt.Errorf("%s (pid %d) did not respawn after %s — no replacement process is holding the service; start it with `satelle service install --system`",
 			serviceUnitName, livePID, time.Since(start).Round(time.Millisecond))
 	}
@@ -699,12 +748,8 @@ func identitiesMatch(a, b exeIdentity) bool {
 // false only when neither source resolves — callers must never treat that as a
 // match.
 func wantedExeIdentity(procRoot string) (exeIdentity, bool) {
-	for _, unitPath := range []string{userUnitPath(), systemUnitPath()} {
-		content, err := os.ReadFile(unitPath)
-		if err != nil {
-			continue
-		}
-		if bin := parseExecStartBinary(string(content)); bin != "" {
+	if content, ok := installedUnitFile(); ok {
+		if bin := parseExecStartBinary(content); bin != "" {
 			if id, ok := identityFromPath(bin); ok {
 				return id, true
 			}
@@ -716,18 +761,31 @@ func wantedExeIdentity(procRoot string) (exeIdentity, bool) {
 // parseExecStartBinary extracts the binary path from a unit file's ExecStart=
 // line (the first whitespace-delimited token). Pure/unit-tested.
 func parseExecStartBinary(unitContent string) string {
+	return firstToken(unitDirective(unitContent, "ExecStart"))
+}
+
+// unitDirective returns the value of the first `key=` line in a unit file, or ""
+// when absent. ONE scanner serves every directive the restart path reads
+// (ExecStart, Restart) so the two cannot diverge in whitespace or case handling
+// (sty_d45618d5).
+func unitDirective(unitContent, key string) string {
+	prefix := key + "="
 	for _, line := range strings.Split(unitContent, "\n") {
 		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "ExecStart=") {
+		if !strings.HasPrefix(line, prefix) {
 			continue
 		}
-		rest := strings.TrimSpace(strings.TrimPrefix(line, "ExecStart="))
-		if i := strings.IndexAny(rest, " \t"); i >= 0 {
-			rest = rest[:i]
-		}
-		return rest
+		return strings.TrimSpace(strings.TrimPrefix(line, prefix))
 	}
 	return ""
+}
+
+// firstToken returns s up to the first space or tab.
+func firstToken(s string) string {
+	if i := strings.IndexAny(s, " \t"); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 // --- Bus-independent discovery (AC2): find the live service process when

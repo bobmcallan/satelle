@@ -611,6 +611,7 @@ func TestBusFree_SupervisedRespawnedAfterGracefulSignal(t *testing.T) {
 	}
 	target := setupWantedIdentity(t)
 	shrinkPoll(t)
+	writeUnitFile(t, "always")
 	procRoot := t.TempDir()
 	staleFile := filepath.Join(t.TempDir(), "stale")
 	if err := os.WriteFile(staleFile, []byte("old bytes"), 0o755); err != nil {
@@ -642,41 +643,6 @@ func TestBusFree_SupervisedRespawnedAfterGracefulSignal(t *testing.T) {
 	}
 }
 
-// AC4: a legacy Restart=on-failure unit ignores SIGTERM, so the cycle escalates
-// to SIGKILL — which systemd counts as a failure and therefore respawns.
-func TestBusFree_EscalatesToKill(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("linux-only mechanism")
-	}
-	target := setupWantedIdentity(t)
-	shrinkPoll(t)
-	procRoot := t.TempDir()
-	staleFile := filepath.Join(t.TempDir(), "stale")
-	if err := os.WriteFile(staleFile, []byte("old bytes"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	supervisedFakeProc(t, procRoot, 902, staleFile)
-
-	var sigs []syscall.Signal
-	h := noSystemctlPath()
-	h.signalPID = func(_ int, sig syscall.Signal) error {
-		sigs = append(sigs, sig)
-		if sig == syscall.SIGKILL { // on-failure ignored the graceful stop
-			supervisedFakeProc(t, procRoot, 903, target)
-			os.RemoveAll(filepath.Join(procRoot, "902"))
-		}
-		return nil
-	}
-	withRestartHooks(t, h)
-	var buf bytes.Buffer
-	if err := restartServiceIfRunningRoot(&buf, procRoot); err != nil {
-		t.Fatalf("escalated cycle should succeed: %v", err)
-	}
-	if len(sigs) != 2 || sigs[0] != syscall.SIGTERM || sigs[1] != syscall.SIGKILL {
-		t.Errorf("signal order must be graceful-then-forceful, got %v", sigs)
-	}
-}
-
 // AC6: nothing respawns — fail honestly and non-zero, naming what was observed.
 func TestBusFree_NeverRespawns(t *testing.T) {
 	if runtime.GOOS != "linux" {
@@ -684,6 +650,7 @@ func TestBusFree_NeverRespawns(t *testing.T) {
 	}
 	setupWantedIdentity(t)
 	shrinkPoll(t)
+	writeUnitFile(t, "always")
 	procRoot := t.TempDir()
 	staleFile := filepath.Join(t.TempDir(), "stale")
 	if err := os.WriteFile(staleFile, []byte("old bytes"), 0o755); err != nil {
@@ -713,6 +680,7 @@ func TestBusFree_SignalOKButBinaryStale(t *testing.T) {
 	}
 	setupWantedIdentity(t)
 	shrinkPoll(t)
+	writeUnitFile(t, "always")
 	procRoot := t.TempDir()
 	staleFile := filepath.Join(t.TempDir(), "stale")
 	if err := os.WriteFile(staleFile, []byte("old bytes"), 0o755); err != nil {
@@ -744,6 +712,7 @@ func TestBusFree_OrphanRejected(t *testing.T) {
 	}
 	target := setupWantedIdentity(t)
 	shrinkPoll(t)
+	writeUnitFile(t, "always")
 	procRoot := t.TempDir()
 	staleFile := filepath.Join(t.TempDir(), "stale")
 	if err := os.WriteFile(staleFile, []byte("old bytes"), 0o755); err != nil {
@@ -918,5 +887,249 @@ func TestRestartServiceIfRunning_SudoFreePathsUnchanged(t *testing.T) {
 	}
 	if strings.Contains(buf2.String(), "sudo") {
 		t.Errorf("a successful respawn path must not mention sudo: %q", buf2.String())
+	}
+}
+
+// --- sty_d45618d5: signal selection derived from the unit's Restart policy ---
+
+// writeUnitFile installs a fake unit file at the USER unit path so
+// unitRestartPolicy() reads it. setupWantedIdentity already redirects HOME, so
+// userUnitPath() lands under the test's temp home.
+func writeUnitFile(t *testing.T, restart string) {
+	t.Helper()
+	path := userUnitPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "[Unit]\nDescription=satelle web server\n\n[Service]\nExecStart=/usr/local/bin/satelle-serve --addr 0.0.0.0 --port 8787\n"
+	if restart != "" {
+		body += "Restart=" + restart + "\n"
+	}
+	body += "\n[Install]\nWantedBy=default.target\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// fakeSystemd models systemd's DOCUMENTED signal semantics rather than the
+// author's expectation — the failure that shipped v0.0.361 (sty_d45618d5 AC6).
+//
+// systemd treats SIGHUP/SIGINT/SIGTERM/SIGPIPE as a CLEAN exit and everything
+// else as a failure. So:
+//   - Restart=always     respawns on ANY signal.
+//   - Restart=on-failure respawns ONLY on a non-clean signal. A SIGTERM STOPS it
+//     permanently — the fake marks it dead and it never comes back, so any future
+//     code that sends SIGTERM to an on-failure unit FAILS the suite instead of
+//     passing against a fake that was too forgiving.
+//   - Restart=no         never respawns.
+func fakeSystemd(t *testing.T, procRoot, policy string, oldPID, newPID int, newExe string) (func(int, syscall.Signal) error, *[]syscall.Signal, *bool) {
+	t.Helper()
+	var sigs []syscall.Signal
+	stoppedForGood := false
+	clean := map[syscall.Signal]bool{
+		syscall.SIGTERM: true, syscall.SIGINT: true,
+		syscall.SIGHUP: true, syscall.SIGPIPE: true,
+	}
+	fn := func(_ int, sig syscall.Signal) error {
+		sigs = append(sigs, sig)
+		os.RemoveAll(filepath.Join(procRoot, strconv.Itoa(oldPID))) // the process dies either way
+		respawn := false
+		switch policy {
+		case "always":
+			respawn = true
+		case "on-failure":
+			respawn = !clean[sig]
+		}
+		if !respawn {
+			stoppedForGood = true
+			return nil
+		}
+		supervisedFakeProc(t, procRoot, newPID, newExe)
+		return nil
+	}
+	return fn, &sigs, &stoppedForGood
+}
+
+// AC1/AC5: an on-failure unit must NEVER receive SIGTERM. This test fails against
+// the v0.0.361 behaviour, where SIGTERM was the opening move and stopped the
+// service permanently.
+func TestBusFree_OnFailureUnitNeverReceivesSIGTERM(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux-only mechanism")
+	}
+	target := setupWantedIdentity(t)
+	shrinkPoll(t)
+	writeUnitFile(t, "on-failure")
+	procRoot := t.TempDir()
+	stale := filepath.Join(t.TempDir(), "stale")
+	if err := os.WriteFile(stale, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	supervisedFakeProc(t, procRoot, 902, stale)
+
+	sigFn, sigs, stopped := fakeSystemd(t, procRoot, "on-failure", 902, 903, target)
+	h := noSystemctlPath()
+	h.signalPID = sigFn
+	withRestartHooks(t, h)
+	var buf bytes.Buffer
+	if err := restartServiceIfRunningRoot(&buf, procRoot); err != nil {
+		t.Fatalf("on-failure unit should be cycled successfully: %v (out=%q)", err, buf.String())
+	}
+	for _, s := range *sigs {
+		if s == syscall.SIGTERM {
+			t.Fatal("REGRESSION: SIGTERM to a Restart=on-failure unit stops it permanently — it must never be sent")
+		}
+	}
+	if len(*sigs) != 1 || (*sigs)[0] != syscall.SIGKILL {
+		t.Errorf("on-failure must receive exactly one SIGKILL, got %v", *sigs)
+	}
+	if *stopped {
+		t.Fatal("the service must not be left stopped")
+	}
+}
+
+// AC1: an always unit gets the graceful signal, and only that.
+func TestBusFree_AlwaysUnitGetsGracefulSignalOnly(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux-only mechanism")
+	}
+	target := setupWantedIdentity(t)
+	shrinkPoll(t)
+	writeUnitFile(t, "always")
+	procRoot := t.TempDir()
+	stale := filepath.Join(t.TempDir(), "stale")
+	if err := os.WriteFile(stale, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	supervisedFakeProc(t, procRoot, 902, stale)
+
+	sigFn, sigs, stopped := fakeSystemd(t, procRoot, "always", 902, 903, target)
+	h := noSystemctlPath()
+	h.signalPID = sigFn
+	withRestartHooks(t, h)
+	var buf bytes.Buffer
+	if err := restartServiceIfRunningRoot(&buf, procRoot); err != nil {
+		t.Fatalf("always unit should be cycled successfully: %v", err)
+	}
+	if len(*sigs) != 1 || (*sigs)[0] != syscall.SIGTERM {
+		t.Errorf("always must receive exactly one SIGTERM, got %v", *sigs)
+	}
+	if *stopped {
+		t.Fatal("the service must not be left stopped")
+	}
+	if !strings.Contains(buf.String(), "onto the new binary") {
+		t.Errorf("output = %q", buf.String())
+	}
+}
+
+// AC2/AC3: policies that never respawn must not be signalled at all.
+func TestBusFree_NonRespawningPolicyIsNeverSignalled(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux-only mechanism")
+	}
+	for _, tc := range []struct{ name, restart, want string }{
+		{"restart-no", "no", "Restart=no"},
+		{"absent", "", "no Restart policy"},
+		{"conditional-unestablished", "on-abnormal", "Restart=on-abnormal"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupWantedIdentity(t)
+			writeUnitFile(t, tc.restart)
+			procRoot := t.TempDir()
+			stale := filepath.Join(t.TempDir(), "stale")
+			if err := os.WriteFile(stale, []byte("old"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			supervisedFakeProc(t, procRoot, 902, stale)
+			signalled := false
+			h := noSystemctlPath()
+			h.signalPID = func(int, syscall.Signal) error { signalled = true; return nil }
+			withRestartHooks(t, h)
+			var buf bytes.Buffer
+			if err := restartServiceIfRunningRoot(&buf, procRoot); err != nil {
+				t.Fatalf("leaving it running is not a failure: %v", err)
+			}
+			if signalled {
+				t.Fatal("a policy that never respawns must never be signalled")
+			}
+			if !strings.Contains(buf.String(), tc.want) || !strings.Contains(buf.String(), "left running") {
+				t.Errorf("output should explain why and say it was left running: %q", buf.String())
+			}
+			if !strings.Contains(buf.String(), "satelle service install --system") {
+				t.Errorf("must name the same remedy as the unsupervised branch: %q", buf.String())
+			}
+		})
+	}
+}
+
+// AC2: an unreadable unit file is "unknown", not "no" — still no signal.
+func TestBusFree_UnreadableUnitIsNeverSignalled(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux-only mechanism")
+	}
+	setupWantedIdentity(t) // no unit file written
+	procRoot := t.TempDir()
+	stale := filepath.Join(t.TempDir(), "stale")
+	if err := os.WriteFile(stale, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	supervisedFakeProc(t, procRoot, 902, stale)
+	signalled := false
+	h := noSystemctlPath()
+	h.signalPID = func(int, syscall.Signal) error { signalled = true; return nil }
+	withRestartHooks(t, h)
+	var buf bytes.Buffer
+	if err := restartServiceIfRunningRoot(&buf, procRoot); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if signalled {
+		t.Fatal("an unknown Restart policy must never be signalled")
+	}
+	if !strings.Contains(buf.String(), "could not be read") {
+		t.Errorf("must distinguish unknown from Restart=no: %q", buf.String())
+	}
+}
+
+// AC1/AC3: the pure mapping, table-driven. No I/O.
+func TestRestartSignalForPolicy(t *testing.T) {
+	cases := []struct {
+		policy string
+		known  bool
+		sig    syscall.Signal
+		ok     bool
+	}{
+		{"always", true, syscall.SIGTERM, true},
+		{"on-failure", true, syscall.SIGKILL, true},
+		{"no", true, 0, false},
+		{"", true, 0, false},
+		{"on-abnormal", true, 0, false},
+		{"on-abort", true, 0, false},
+		{"on-success", true, 0, false},
+		{"on-watchdog", true, 0, false},
+		{"always", false, 0, false}, // unreadable unit: never signal, whatever we think we saw
+	}
+	for _, tc := range cases {
+		sig, ok := restartSignalForPolicy(tc.policy, tc.known)
+		if ok != tc.ok || (ok && sig != tc.sig) {
+			t.Errorf("restartSignalForPolicy(%q,%v) = (%v,%v), want (%v,%v)", tc.policy, tc.known, sig, ok, tc.sig, tc.ok)
+		}
+	}
+}
+
+// AC4: one scanner reads every unit directive.
+func TestUnitDirective(t *testing.T) {
+	unit := "[Service]\nExecStart=/bin/satelle-serve --port 8787\n  Restart=on-failure  \nRestartSec=2\n"
+	if got := unitDirective(unit, "Restart"); got != "on-failure" {
+		t.Errorf("Restart = %q", got)
+	}
+	if got := parseExecStartBinary(unit); got != "/bin/satelle-serve" {
+		t.Errorf("ExecStart binary = %q", got)
+	}
+	// RestartSec must not be mistaken for Restart.
+	if got := unitDirective("[Service]\nRestartSec=2\n", "Restart"); got != "" {
+		t.Errorf("RestartSec must not match Restart=, got %q", got)
+	}
+	if got := unitDirective(unit, "Nope"); got != "" {
+		t.Errorf("absent directive = %q", got)
 	}
 }

@@ -1,3 +1,14 @@
+## [0.0.362] - 2026-07-30
+
+### Fixed
+- **Regression in 0.0.361:** `satelle update`'s bus-free restart sent SIGTERM first and escalated to SIGKILL. systemd classifies SIGTERM as a CLEAN exit, so a `Restart=on-failure` unit did not respawn from it — it STOPPED, permanently, and the escalation could not recover it because the process was already gone. Any user on a bus-unreachable host whose unit predates 0.0.361 (every user unit satelle wrote before then) lost their service on update. **Upgrade from 0.0.361.** (sty_d45618d5)
+- The signal is now DERIVED from the unit's `Restart=` policy, read from the unit file on disk with no bus: `always` → SIGTERM, `on-failure` → SIGKILL (the only signal systemd counts as a failure, hence the only one that unit respawns from). A signal is sent only when its effect on that policy is established (sty_d45618d5)
+- Blind escalation is removed rather than reordered: exactly one signal is sent, ever. A policy that never respawns (`Restart=no`, absent, an unestablished conditional like `on-abnormal`) or an unreadable unit file means NO signal at all — the process is left running and the output says why, because stopping a service nothing will restart is strictly worse than leaving it stale (sty_d45618d5)
+
+### Changed
+- One reader now serves every unit-file directive the update path consults (`installedUnitFile` + `unitDirective`), so exe identity and the Restart policy can never be read from different files or parsed by different scanners (sty_d45618d5)
+- The test fake now models systemd's documented signal semantics instead of the author's expectation — an on-failure unit that receives SIGTERM goes down and stays down in the suite. The 0.0.361 defect was invisible because its fake respawned on SIGKILL regardless; a fake cannot falsify a belief about the system it stands in for (sty_d45618d5)
+
 ## [0.0.361] - 2026-07-30
 
 ### Fixed

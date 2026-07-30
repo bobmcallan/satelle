@@ -681,3 +681,30 @@ func joinArgs(s []string) string {
 	}
 	return out
 }
+
+// installedUnitFile returns the contents of the installed unit file — the user
+// unit first, then the system unit — and whether either was readable. It is the
+// SINGLE walk over unit paths that the update path shares, so exe identity and
+// the Restart policy can never be read from different files (sty_d45618d5).
+func installedUnitFile() (string, bool) {
+	for _, unitPath := range []string{userUnitPath(), systemUnitPath()} {
+		content, err := os.ReadFile(unitPath)
+		if err != nil {
+			continue
+		}
+		return string(content), true
+	}
+	return "", false
+}
+
+// unitRestartPolicy returns the installed unit's Restart= value, lower-cased, and
+// whether a unit file was readable at all. An unreadable unit is NOT reported as
+// a policy of "no": the caller must distinguish "declared not to restart" from
+// "we do not know", because both forbid signalling but for different reasons.
+func unitRestartPolicy() (string, bool) {
+	content, ok := installedUnitFile()
+	if !ok {
+		return "", false
+	}
+	return strings.ToLower(strings.TrimSpace(unitDirective(content, "Restart"))), true
+}
