@@ -569,18 +569,20 @@ type exeIdentity struct {
 	Size     int64
 }
 
-// identityFromPath stats path (following symlinks) and extracts dev+inode. ok is
-// false when the path cannot be stat'd or the platform has no syscall.Stat_t.
+// identityFromPath stats path (following symlinks) and extracts dev+inode via the
+// platform-specific statIdentity (cmd_update_identity_*.go — dev+inode has no
+// portable representation, e.g. Windows' os.FileInfo carries no syscall.Stat_t).
+// ok is false when the path cannot be stat'd or the platform cannot report identity.
 func identityFromPath(path string) (id exeIdentity, ok bool) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return exeIdentity{}, false
 	}
-	st, isStat := info.Sys().(*syscall.Stat_t)
-	if !isStat {
+	dev, ino, ok := statIdentity(info)
+	if !ok {
 		return exeIdentity{}, false
 	}
-	return exeIdentity{Dev: uint64(st.Dev), Ino: st.Ino, Size: info.Size()}, true
+	return exeIdentity{Dev: dev, Ino: ino, Size: info.Size()}, true
 }
 
 // identityFromPID stats procRoot/<pid>/exe directly (NOT a readlink+restat): Linux

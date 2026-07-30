@@ -1,3 +1,8 @@
+## [0.0.356] - 2026-07-30
+
+### Fixed
+- Exe-identity extraction now compiles on Windows via a platform-specific helper (`syscall.Stat_t` does not exist there); the v0.0.355 release failed its cross-compile matrix on this exact line and never published a tag (sty_c344d080)
+
 ## [0.0.355] - 2026-07-30
 
 ### Fixed
