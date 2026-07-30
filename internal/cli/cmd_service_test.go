@@ -16,7 +16,7 @@ func TestSystemdUnitContent(t *testing.T) {
 		"Description=satelle web server",
 		"ExecStart=/usr/local/bin/satelle-serve --addr 0.0.0.0 --port 8787",
 		"WorkingDirectory=", // $HOME preferred; not a single repo (sty_dbdadfa0)
-		"Restart=on-failure",
+		"Restart=always",
 		"WantedBy=default.target",
 	} {
 		if !strings.Contains(unit, want) {
@@ -84,13 +84,14 @@ func TestSystemSystemdUnit(t *testing.T) {
 	if strings.Contains(unit, "Restart=on-failure") {
 		t.Errorf("system unit must be Restart=always (a clean signal respawns), not on-failure:\n%s", unit)
 	}
-	// The per-user unit must NOT carry User=/multi-user.target, and keeps on-failure.
+	// The per-user unit must NOT carry User=/multi-user.target, and is Restart=always
+	// so `satelle update`'s bus-free cycle respawns on a GRACEFUL stop (sty_f20f3f3b).
 	userUnit := systemdUnit("/usr/local/bin/satelle", "/home/u/repo", "0.0.0.0", 8787)
 	if strings.Contains(userUnit, "User=") || strings.Contains(userUnit, "multi-user.target") {
 		t.Errorf("per-user unit should stay default.target with no User=:\n%s", userUnit)
 	}
-	if !strings.Contains(userUnit, "Restart=on-failure") {
-		t.Errorf("per-user unit should keep Restart=on-failure:\n%s", userUnit)
+	if !strings.Contains(userUnit, "Restart=always") {
+		t.Errorf("per-user unit must be Restart=always so a graceful stop respawns:\n%s", userUnit)
 	}
 }
 

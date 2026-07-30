@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -420,7 +421,7 @@ func withRestartHooks(t *testing.T, h struct {
 	restartUserUnit      func() error
 	systemUnitMainPID    func() int
 	systemUnitRestartAlw func() bool
-	signalTerm           func(int) error
+	signalPID            func(int, syscall.Signal) error
 	systemUnitRespawned  func(int) (int, bool)
 	systemUnitStartLtd   func() bool
 }) {
@@ -442,7 +443,7 @@ func noSystemctlPath() struct {
 	restartUserUnit      func() error
 	systemUnitMainPID    func() int
 	systemUnitRestartAlw func() bool
-	signalTerm           func(int) error
+	signalPID            func(int, syscall.Signal) error
 	systemUnitRespawned  func(int) (int, bool)
 	systemUnitStartLtd   func() bool
 } {
@@ -453,7 +454,7 @@ func noSystemctlPath() struct {
 		restartUserUnit      func() error
 		systemUnitMainPID    func() int
 		systemUnitRestartAlw func() bool
-		signalTerm           func(int) error
+		signalPID            func(int, syscall.Signal) error
 		systemUnitRespawned  func(int) (int, bool)
 		systemUnitStartLtd   func() bool
 	}{
@@ -463,7 +464,7 @@ func noSystemctlPath() struct {
 		restartUserUnit:      func() error { return fmt.Errorf("bus unreachable") },
 		systemUnitMainPID:    func() int { return 0 },
 		systemUnitRestartAlw: func() bool { return false },
-		signalTerm:           func(int) error { return fmt.Errorf("not called") },
+		signalPID:            func(int, syscall.Signal) error { return fmt.Errorf("not called") },
 		systemUnitRespawned:  func(int) (int, bool) { return 0, false },
 		systemUnitStartLtd:   func() bool { return false },
 	}
@@ -521,10 +522,11 @@ func TestRestartServiceIfRunning_StaleUnderReachableUserUnit(t *testing.T) {
 	}
 }
 
-// Scenario 3: stale process discoverable only via cgroup, no systemctl path
-// reachable — must report "supervisor is unreachable" and must NOT signal the
-// process (a user unit is Restart=on-failure; a SIGTERM would stop it).
-func TestRestartServiceIfRunning_StaleUnreachableUserUnitCgroup(t *testing.T) {
+// Scenario 3 (sty_f20f3f3b): stale process discoverable only via cgroup, no
+// systemctl path reachable, and NO persistent supervisor owns it. It must be
+// left running and never signalled — terminating it would take the service DOWN
+// and leave it down, strictly worse than stale.
+func TestRestartServiceIfRunning_UnsupervisedStaleIsLeftAlone(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("linux-only mechanism")
 	}
@@ -535,17 +537,293 @@ func TestRestartServiceIfRunning_StaleUnreachableUserUnitCgroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFakeCgroupPID(t, procRoot, 902, "/user.slice/user-1000.slice/user@1000.service/app.slice/satelle.service", staleFile)
+	// Parent is a plain shell, not a systemd manager.
+	writeFakeParent(t, procRoot, 902, 800, "bash")
 	signalled := false
 	h := noSystemctlPath()
-	h.signalTerm = func(int) error { signalled = true; return nil }
+	h.signalPID = func(int, syscall.Signal) error { signalled = true; return nil }
 	withRestartHooks(t, h)
 	var buf bytes.Buffer
-	restartServiceIfRunningRoot(&buf, procRoot)
-	if !strings.Contains(buf.String(), "supervisor is unreachable") {
-		t.Errorf("output = %q", buf.String())
+	if err := restartServiceIfRunningRoot(&buf, procRoot); err != nil {
+		t.Fatalf("leaving an unsupervised process alone is not a failure: %v", err)
 	}
 	if signalled {
-		t.Error("a cgroup-discovered user-unit process must never be signalled (Restart=on-failure would STOP it)")
+		t.Error("an unsupervised process must never be signalled — nothing would respawn it")
+	}
+	for _, want := range []string{"no persistent supervisor", "left running", "satelle service install --system"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("output missing %q: %q", want, buf.String())
+		}
+	}
+}
+
+// writeFakeParent gives pid a parent in the fake /proc: a stat file carrying
+// PPid, and a comm for the parent so persistentSupervisor can name it. The comm
+// deliberately contains a space and parens to prove stat parsing anchors on the
+// LAST ')' rather than splitting the whole line.
+func writeFakeParent(t *testing.T, procRoot string, pid, ppid int, parentName string) {
+	t.Helper()
+	dir := filepath.Join(procRoot, strconv.Itoa(pid))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stat := fmt.Sprintf("%d (satelle serve (x)) S %d 1 1 0 -1 4194304\n", pid, ppid)
+	if err := os.WriteFile(filepath.Join(dir, "stat"), []byte(stat), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pdir := filepath.Join(procRoot, strconv.Itoa(ppid))
+	if err := os.MkdirAll(pdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pdir, "comm"), []byte(parentName+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// supervisedFakeProc builds a fake /proc where pid is held by a lingering
+// systemd user manager (the WSL shape this story exists for).
+func supervisedFakeProc(t *testing.T, procRoot string, pid int, exeTarget string) {
+	t.Helper()
+	writeFakeCgroupPID(t, procRoot, pid, "/user.slice/user-1000.slice/user@1000.service/app.slice/satelle.service", exeTarget)
+	writeFakeParent(t, procRoot, pid, 308, "systemd")
+	lingerOn(t)
+}
+
+func lingerOn(t *testing.T) {
+	t.Helper()
+	prev := lingerEnabled
+	lingerEnabled = func(string) bool { return true }
+	t.Cleanup(func() { lingerEnabled = prev })
+}
+
+func shrinkPoll(t *testing.T) {
+	t.Helper()
+	pa, pi := identityPollAttempts, identityPollInterval
+	identityPollAttempts, identityPollInterval = 3, time.Millisecond
+	t.Cleanup(func() { identityPollAttempts, identityPollInterval = pa, pi })
+}
+
+// AC1/AC2/AC4: a supervised stale process is cycled with a GRACEFUL signal, the
+// supervisor respawns it onto the new binary, and success is confirmed.
+func TestBusFree_SupervisedRespawnedAfterGracefulSignal(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux-only mechanism")
+	}
+	target := setupWantedIdentity(t)
+	shrinkPoll(t)
+	procRoot := t.TempDir()
+	staleFile := filepath.Join(t.TempDir(), "stale")
+	if err := os.WriteFile(staleFile, []byte("old bytes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	supervisedFakeProc(t, procRoot, 902, staleFile)
+
+	var sigs []syscall.Signal
+	h := noSystemctlPath()
+	h.signalPID = func(_ int, sig syscall.Signal) error {
+		sigs = append(sigs, sig)
+		// The SUPERVISOR respawns: a new pid, same parent, on the installed binary.
+		supervisedFakeProc(t, procRoot, 903, target)
+		os.RemoveAll(filepath.Join(procRoot, "902"))
+		return nil
+	}
+	withRestartHooks(t, h)
+	var buf bytes.Buffer
+	if err := restartServiceIfRunningRoot(&buf, procRoot); err != nil {
+		t.Fatalf("supervised cycle should succeed: %v (out=%q)", err, buf.String())
+	}
+	if len(sigs) != 1 || sigs[0] != syscall.SIGTERM {
+		t.Errorf("must stop at the graceful rung, got %v", sigs)
+	}
+	for _, want := range []string{"supervisor respawn", "pid 903", "onto the new binary"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("output missing %q: %q", want, buf.String())
+		}
+	}
+}
+
+// AC4: a legacy Restart=on-failure unit ignores SIGTERM, so the cycle escalates
+// to SIGKILL — which systemd counts as a failure and therefore respawns.
+func TestBusFree_EscalatesToKill(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux-only mechanism")
+	}
+	target := setupWantedIdentity(t)
+	shrinkPoll(t)
+	procRoot := t.TempDir()
+	staleFile := filepath.Join(t.TempDir(), "stale")
+	if err := os.WriteFile(staleFile, []byte("old bytes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	supervisedFakeProc(t, procRoot, 902, staleFile)
+
+	var sigs []syscall.Signal
+	h := noSystemctlPath()
+	h.signalPID = func(_ int, sig syscall.Signal) error {
+		sigs = append(sigs, sig)
+		if sig == syscall.SIGKILL { // on-failure ignored the graceful stop
+			supervisedFakeProc(t, procRoot, 903, target)
+			os.RemoveAll(filepath.Join(procRoot, "902"))
+		}
+		return nil
+	}
+	withRestartHooks(t, h)
+	var buf bytes.Buffer
+	if err := restartServiceIfRunningRoot(&buf, procRoot); err != nil {
+		t.Fatalf("escalated cycle should succeed: %v", err)
+	}
+	if len(sigs) != 2 || sigs[0] != syscall.SIGTERM || sigs[1] != syscall.SIGKILL {
+		t.Errorf("signal order must be graceful-then-forceful, got %v", sigs)
+	}
+}
+
+// AC6: nothing respawns — fail honestly and non-zero, naming what was observed.
+func TestBusFree_NeverRespawns(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux-only mechanism")
+	}
+	setupWantedIdentity(t)
+	shrinkPoll(t)
+	procRoot := t.TempDir()
+	staleFile := filepath.Join(t.TempDir(), "stale")
+	if err := os.WriteFile(staleFile, []byte("old bytes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	supervisedFakeProc(t, procRoot, 902, staleFile)
+	h := noSystemctlPath()
+	h.signalPID = func(int, syscall.Signal) error { return nil } // signal "succeeds", nothing respawns
+	withRestartHooks(t, h)
+	var buf bytes.Buffer
+	err := restartServiceIfRunningRoot(&buf, procRoot)
+	if err == nil {
+		t.Fatal("a cycle that never converged must fail non-zero")
+	}
+	for _, want := range []string{"902", "did not respawn"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q: %v", want, err)
+		}
+	}
+}
+
+// AC5: the signal returning nil proves nothing. A respawn onto a DIFFERENT
+// binary must be reported as a failure, not as success.
+func TestBusFree_SignalOKButBinaryStale(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux-only mechanism")
+	}
+	setupWantedIdentity(t)
+	shrinkPoll(t)
+	procRoot := t.TempDir()
+	staleFile := filepath.Join(t.TempDir(), "stale")
+	if err := os.WriteFile(staleFile, []byte("old bytes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	supervisedFakeProc(t, procRoot, 902, staleFile)
+	h := noSystemctlPath()
+	h.signalPID = func(int, syscall.Signal) error {
+		supervisedFakeProc(t, procRoot, 903, staleFile) // respawned on the OLD binary
+		os.RemoveAll(filepath.Join(procRoot, "902"))
+		return nil
+	}
+	withRestartHooks(t, h)
+	var buf bytes.Buffer
+	err := restartServiceIfRunningRoot(&buf, procRoot)
+	if err == nil {
+		t.Fatal("a respawn onto the old binary must not be reported as success")
+	}
+	if !strings.Contains(err.Error(), "NOT running the newly installed binary") {
+		t.Errorf("error should name the identity mismatch: %v", err)
+	}
+}
+
+// AC2: a replacement that is NOT a child of the original supervisor is refused —
+// this is what stops an ephemeral orphan being mistaken for a durable restart.
+func TestBusFree_OrphanRejected(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux-only mechanism")
+	}
+	target := setupWantedIdentity(t)
+	shrinkPoll(t)
+	procRoot := t.TempDir()
+	staleFile := filepath.Join(t.TempDir(), "stale")
+	if err := os.WriteFile(staleFile, []byte("old bytes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	supervisedFakeProc(t, procRoot, 902, staleFile)
+	h := noSystemctlPath()
+	h.signalPID = func(int, syscall.Signal) error {
+		// New process on the right binary, but parented to a shell — an orphan.
+		writeFakeCgroupPID(t, procRoot, 903, "/user.slice/user-1000.slice/user@1000.service/app.slice/satelle.service", target)
+		writeFakeParent(t, procRoot, 903, 800, "bash")
+		os.RemoveAll(filepath.Join(procRoot, "902"))
+		return nil
+	}
+	withRestartHooks(t, h)
+	var buf bytes.Buffer
+	err := restartServiceIfRunningRoot(&buf, procRoot)
+	if err == nil {
+		t.Fatal("an orphan replacement must not count as a durable restart")
+	}
+	if !strings.Contains(err.Error(), "not respawned by the original supervisor") {
+		t.Errorf("error should name the supervisor mismatch: %v", err)
+	}
+}
+
+// AC10: a process already on the new binary is not signalled at all.
+func TestBusFree_AlreadyCurrentNoSignal(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux-only mechanism")
+	}
+	target := setupWantedIdentity(t)
+	procRoot := t.TempDir()
+	supervisedFakeProc(t, procRoot, 902, target)
+	signalled := false
+	h := noSystemctlPath()
+	h.signalPID = func(int, syscall.Signal) error { signalled = true; return nil }
+	withRestartHooks(t, h)
+	var buf bytes.Buffer
+	if err := restartServiceIfRunningRoot(&buf, procRoot); err != nil {
+		t.Fatalf("no cycle needed: %v", err)
+	}
+	if signalled {
+		t.Error("a process already on the new binary must never be signalled")
+	}
+	if !strings.Contains(buf.String(), "already running the new binary") {
+		t.Errorf("output = %q", buf.String())
+	}
+}
+
+// AC3 variant: a systemd USER manager WITHOUT linger dies with the login
+// session, so it is not a persistent supervisor and must not be signalled.
+func TestBusFree_UserManagerWithoutLingerIsNotPersistent(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux-only mechanism")
+	}
+	setupWantedIdentity(t)
+	procRoot := t.TempDir()
+	staleFile := filepath.Join(t.TempDir(), "stale")
+	if err := os.WriteFile(staleFile, []byte("old bytes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeCgroupPID(t, procRoot, 902, "/user.slice/user-1000.slice/user@1000.service/app.slice/satelle.service", staleFile)
+	writeFakeParent(t, procRoot, 902, 308, "systemd")
+	prev := lingerEnabled
+	lingerEnabled = func(string) bool { return false }
+	t.Cleanup(func() { lingerEnabled = prev })
+
+	signalled := false
+	h := noSystemctlPath()
+	h.signalPID = func(int, syscall.Signal) error { signalled = true; return nil }
+	withRestartHooks(t, h)
+	var buf bytes.Buffer
+	if err := restartServiceIfRunningRoot(&buf, procRoot); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if signalled {
+		t.Error("a non-lingering user manager is not persistent — must not signal")
+	}
+	if !strings.Contains(buf.String(), "not lingering") {
+		t.Errorf("output should explain WHY it is not persistent: %q", buf.String())
 	}
 }
 
@@ -559,7 +837,7 @@ func TestRestartServiceIfRunning_StartLimited(t *testing.T) {
 	h := noSystemctlPath()
 	h.systemUnitMainPID = func() int { return 903 }
 	h.systemUnitRestartAlw = func() bool { return true }
-	h.signalTerm = func(int) error { return nil }
+	h.signalPID = func(int, syscall.Signal) error { return nil }
 	h.systemUnitRespawned = func(int) (int, bool) { return 0, false } // did not come back
 	h.systemUnitStartLtd = func() bool { return true }
 	withRestartHooks(t, h)
@@ -582,7 +860,7 @@ func TestRestartServiceIfRunning_AlreadyCurrent(t *testing.T) {
 	signalled := false
 	restarted := false
 	h := noSystemctlPath()
-	h.signalTerm = func(int) error { signalled = true; return nil }
+	h.signalPID = func(int, syscall.Signal) error { signalled = true; return nil }
 	h.restartUserUnit = func() error { restarted = true; return nil }
 	withRestartHooks(t, h)
 	var buf bytes.Buffer
@@ -630,7 +908,7 @@ func TestRestartServiceIfRunning_SudoFreePathsUnchanged(t *testing.T) {
 	h2 := noSystemctlPath()
 	h2.systemUnitMainPID = func() int { return 800 }
 	h2.systemUnitRestartAlw = func() bool { return true }
-	h2.signalTerm = func(int) error { signalled = true; return nil }
+	h2.signalPID = func(int, syscall.Signal) error { signalled = true; return nil }
 	h2.systemUnitRespawned = func(int) (int, bool) { return 906, true }
 	withRestartHooks(t, h2)
 	var buf2 bytes.Buffer

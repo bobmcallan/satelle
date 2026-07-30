@@ -1,3 +1,15 @@
+## [0.0.361] - 2026-07-30
+
+### Fixed
+- `satelle update` now cycles the live service onto the new binary **without a reachable systemd bus**, instead of printing two systemctl commands that cannot work on the affected host. A supervisor respawns its own child from the unit file autonomously — D-Bus is only how an *external* actor requests a restart — so update signals the stale process and lets the supervisor do it. Graceful stop first, escalating to a forceful one only when a legacy `Restart=on-failure` unit ignores it (sty_f20f3f3b)
+- Success is confirmed from kernel facts — the pid now holding the port, its exe identity against the installed binary, and that its parent is still the same supervisor — never from the signal's exit code. A cycle that does not converge makes `satelle update` exit non-zero with what it observed, so it can no longer report an installed-and-live release it did not verify (sty_f20f3f3b)
+- Releases no longer require the operator to restart the service by hand. Three release stories (sty_acd4b61e, sty_4e6f0788, sty_87c0ef37) were delayed or parked by this; the last was parked at `release` with a green, published, CI-verified build and every check passing except the live footer (sty_f20f3f3b)
+
+### Changed
+- A process under **no persistent supervisor** is now deliberately left running rather than signalled — nothing would respawn it, so stopping it would be strictly worse than leaving it stale. `satelle update` says so and names the one-time `satelle service install --system` fix. A systemd *user* manager without lingering counts as non-persistent, because it dies with the login session (sty_f20f3f3b)
+- The per-user unit written by `satelle service install` is now `Restart=always` (was `on-failure`) so a graceful stop respawns it. Units already on disk keep their policy until re-installed — adopting a new one needs `daemon-reload`, which needs the bus this path exists to avoid — and are handled by the escalation instead (sty_f20f3f3b)
+- `.satelle/skills/release.md` no longer instructs the operator to cycle the service. `check_live_footer` is now a verification of what `satelle update` already did, the manual commands are demoted to the unsupervised case, and the section states that a per-release hand-restart is a defect to raise rather than a step to follow (sty_f20f3f3b)
+
 ## [0.0.360] - 2026-07-30
 
 ### Added

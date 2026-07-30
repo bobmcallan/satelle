@@ -372,10 +372,18 @@ func resolveServeBinary(selfPath, flagOverride string, exists func(string) bool)
 }
 
 // systemdUnit renders the per-user unit (WantedBy=default.target, runs as the
-// logged-in user via the user manager). Restart=on-failure: the user manager
-// handles reloads via `systemctl --user restart`.
+// logged-in user via the user manager).
+//
+// Restart=always, not on-failure (sty_f20f3f3b): `satelle update` cycles a
+// bus-unreachable service by making the process EXIT and letting its supervisor
+// respawn it. systemd counts a clean SIGTERM as success, so an on-failure unit
+// would STOP rather than reload — forcing the escalation to SIGKILL. Units
+// written from here stop at the graceful rung. Units already on disk keep
+// on-failure until re-installed (picking up a new policy needs daemon-reload,
+// which needs the bus this path exists to avoid), and are handled by that
+// escalation instead.
 func systemdUnit(binPath, repo, addr string, port int) string {
-	return renderUnit(binPath, repo, addr, port, "default.target", "", "on-failure")
+	return renderUnit(binPath, repo, addr, port, "default.target", "", "always")
 }
 
 // systemSystemdUnit renders the persistent SYSTEM unit (WantedBy=multi-user.target)

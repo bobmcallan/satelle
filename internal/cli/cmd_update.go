@@ -100,7 +100,12 @@ global service.`,
 			// The global service runs the global binary; a repo-local pin does not
 			// drive it, so only restart for a global update.
 			if cliUpdated && !noRestart && !local {
-				restartServiceIfRunning(out)
+				// A cycle that was ATTEMPTED and could not be confirmed fails the
+				// verb: update must never report an installed-and-live release it
+				// did not verify (sty_f20f3f3b).
+				if err := restartServiceIfRunning(out); err != nil {
+					return err
+				}
 			}
 			return nil
 		},
@@ -325,8 +330,8 @@ func replaceExecutable(target string, data []byte) error {
 // with an unreachable supervisor, or a start-limited unit — instead of one generic
 // line covering three different problems (AC3, AC4). A genuine sudo restart stays
 // the operator's fallback when nothing here can act.
-func restartServiceIfRunning(out io.Writer) {
-	restartServiceIfRunningRoot(out, "/proc")
+func restartServiceIfRunning(out io.Writer) error {
+	return restartServiceIfRunningRoot(out, "/proc")
 }
 
 // restartHooks are the seams restartServiceIfRunningRoot calls through instead of
@@ -342,7 +347,7 @@ var restartHooks = struct {
 	restartUserUnit      func() error
 	systemUnitMainPID    func() int
 	systemUnitRestartAlw func() bool
-	signalTerm           func(int) error
+	signalPID            func(int, syscall.Signal) error
 	systemUnitRespawned  func(int) (int, bool)
 	systemUnitStartLtd   func() bool
 }{
@@ -352,7 +357,7 @@ var restartHooks = struct {
 	restartUserUnit:      func() error { return runCaptureEnv(userEnv(), "systemctl", "--user", "restart", serviceUnitName) },
 	systemUnitMainPID:    systemUnitMainPID,
 	systemUnitRestartAlw: systemUnitRestartAlways,
-	signalTerm:           signalTerm,
+	signalPID:            signalPID,
 	systemUnitRespawned:  systemUnitRespawned,
 	systemUnitStartLtd:   systemUnitStartLimited,
 }
@@ -360,12 +365,12 @@ var restartHooks = struct {
 // restartServiceIfRunningRoot is the injectable core: procRoot lets hermetic tests
 // substitute a fake /proc tree (AC6) without touching the real system, and every
 // systemctl-touching step routes through restartHooks for the same reason.
-func restartServiceIfRunningRoot(out io.Writer, procRoot string) {
+func restartServiceIfRunningRoot(out io.Writer, procRoot string) error {
 	if runtime.GOOS != "linux" {
-		return // cgroup/port discovery and /proc identity are Linux-only (WSL is the story context)
+		return nil // cgroup/port discovery and /proc identity are Linux-only (WSL is the story context)
 	}
 	if restartHooks.lookSystemctl() != nil {
-		return
+		return nil
 	}
 	wanted, wantedOK := wantedExeIdentity(procRoot)
 
@@ -375,7 +380,7 @@ func restartServiceIfRunningRoot(out io.Writer, procRoot string) {
 		if err := restartHooks.restartUserUnit(); err == nil {
 			pid := restartHooks.userUnitMainPID()
 			reportRestartOutcome(out, "user unit", pid, waitForIdentity(procRoot, pid, wanted, wantedOK))
-			return
+			return nil
 		}
 	}
 	// 2) SYSTEM unit — sudo-free restart by signalling MainPID; Restart=always respawns.
@@ -385,19 +390,19 @@ func restartServiceIfRunningRoot(out io.Writer, procRoot string) {
 		// dead service; guide the operator to a persistent supervisor instead.
 		if !restartHooks.systemUnitRestartAlw() {
 			fmt.Fprintf(out, "system unit %s is not Restart=always — a signal would stop it, not respawn. Upgrade it with `satelle service install --system`, or restart manually: sudo systemctl restart %s\n", serviceUnitName, serviceUnitName)
-			return
+			return nil
 		}
-		if err := restartHooks.signalTerm(pid); err == nil {
+		if err := restartHooks.signalPID(pid, syscall.SIGTERM); err == nil {
 			if newPID, respawned := restartHooks.systemUnitRespawned(pid); respawned {
 				reportRestartOutcome(out, "system unit", newPID, waitForIdentity(procRoot, newPID, wanted, wantedOK))
-				return
+				return nil
 			}
 			if restartHooks.systemUnitStartLtd() {
 				fmt.Fprintf(out, "%s is start-limited (systemd exhausted its restart attempts and gave up) — run: systemctl reset-failed %s && sudo systemctl restart %s\n", serviceUnitName, serviceUnitName, serviceUnitName)
-				return
+				return nil
 			}
 			fmt.Fprintf(out, "signalled %s (pid %d) but it did not respawn — restart manually: sudo systemctl restart %s\n", serviceUnitName, pid, serviceUnitName)
-			return
+			return nil
 		}
 	}
 	// 3) Neither systemctl path is reachable. Locate the live process WITHOUT the
@@ -409,20 +414,106 @@ func restartServiceIfRunningRoot(out io.Writer, procRoot string) {
 	}
 	if livePID == 0 {
 		fmt.Fprintf(out, "binary updated, but no running %s process was found — start one with `satelle service install` (user) or `satelle service install --system` (persistent)\n", serviceUnitName)
-		return
+		return nil
 	}
 	live, liveOK := identityFromPID(procRoot, livePID)
 	if wantedOK && liveOK && identitiesMatch(live, wanted) {
 		fmt.Fprintf(out, "%s (pid %d) is already running the new binary — no restart needed\n", serviceUnitName, livePID)
-		return
+		return nil
 	}
-	// A stale (or unconfirmed) process is running, but its supervisor cannot be
-	// commanded from here. Do NOT signal it: a bus-unreachable unit discovered this
-	// way is very likely the USER unit (Restart=on-failure) — a clean SIGTERM would
-	// STOP it, not reload it (the exact mistake this story was raised to prevent).
-	fmt.Fprintf(out, "%s is running (pid %d) but its supervisor is unreachable from here (systemctl could not reach the user/system bus) — it may still be on the OLD binary. Restart it once the supervisor is reachable:\n", serviceUnitName, livePID)
-	fmt.Fprintf(out, "  systemctl --user restart %s   (if it is a user unit)\n", serviceUnitName)
-	fmt.Fprintf(out, "  sudo systemctl restart %s     (if it is a system unit)\n", serviceUnitName)
+	// A stale process is running and its supervisor cannot be COMMANDED from here —
+	// but it does not need to be. A supervisor respawns its own child from the unit
+	// file autonomously when that child exits; D-Bus is only the channel an EXTERNAL
+	// actor uses to REQUEST a restart. So terminate the stale process and let the
+	// supervisor do the rest, on the newly installed binary (sty_f20f3f3b).
+	return busFreeRestart(out, procRoot, livePID, wanted, wantedOK)
+}
+
+// busFreeRestart cycles a supervised process without any systemctl call: signal
+// it to exit, let its persistent supervisor respawn it from the unit file, then
+// CONFIRM by re-reading kernel facts. It never starts a process itself — an
+// ephemeral relaunch would satisfy a version check while breaking the durability
+// the release contract requires (sty_f20f3f3b).
+func busFreeRestart(out io.Writer, procRoot string, livePID int, wanted exeIdentity, wantedOK bool) error {
+	sup, ok := persistentSupervisor(procRoot, livePID)
+	if !ok || !sup.Persistent {
+		// Nothing would restart it. Signalling here would take the service DOWN and
+		// leave it down — strictly worse than stale. Change nothing, say so.
+		owner := "its parent is not a systemd manager"
+		if ok && sup.Name == "systemd" {
+			owner = "its systemd user manager is not lingering, so it dies with the login session"
+		}
+		fmt.Fprintf(out, "%s (pid %d) is running on the OLD binary, but no persistent supervisor owns it (%s) — a restart would not be respawned, so it was left running. Install a persistent unit, then re-run `satelle update`:\n", serviceUnitName, livePID, owner)
+		fmt.Fprintf(out, "  satelle service install            (user unit; needs lingering)\n")
+		fmt.Fprintf(out, "  satelle service install --system   (persistent system unit)\n")
+		return nil
+	}
+
+	start := time.Now()
+	fmt.Fprintf(out, "%s (pid %d) is on the old binary; its supervisor (%s, pid %d) is unreachable by bus but will respawn it — cycling\n",
+		serviceUnitName, livePID, sup.Name, sup.PID)
+
+	// Graceful first. The serve process may hold a SQLite handle, so SIGKILL is a
+	// last resort, never the opening move.
+	newPID, ok := signalAndAwaitRespawn(procRoot, livePID, syscall.SIGTERM)
+	if !ok {
+		// A unit still on the legacy Restart=on-failure treats SIGTERM as a CLEAN
+		// exit and will not respawn. systemd counts any other signal as a failure,
+		// so SIGKILL respawns it — with no unit edit and no daemon-reload (which
+		// would itself need the bus this path exists to avoid). New units get
+		// Restart=always from `satelle service install`, so they stop at the rung
+		// above.
+		newPID, ok = signalAndAwaitRespawn(procRoot, livePID, syscall.SIGKILL)
+	}
+	if !ok {
+		return fmt.Errorf("%s (pid %d) did not respawn after %s — no replacement process is holding the service; start it with `satelle service install --system`",
+			serviceUnitName, livePID, time.Since(start).Round(time.Millisecond))
+	}
+
+	// CONFIRM from kernel facts. The signal's error value proves nothing about what
+	// is running now, so it is not consulted here.
+	live, liveOK := identityFromPID(procRoot, newPID)
+	if !wantedOK || !liveOK || !identitiesMatch(live, wanted) {
+		return fmt.Errorf("%s respawned as pid %d after %s but it is NOT running the newly installed binary (exe identity does not match) — the old binary may still be on PATH ahead of the install",
+			serviceUnitName, newPID, time.Since(start).Round(time.Millisecond))
+	}
+	// The respawn must have come FROM the supervisor. Same parent proves it, and
+	// rules out an unrelated process having taken the port.
+	if got, ok := persistentSupervisor(procRoot, newPID); !ok || got.PID != sup.PID {
+		return fmt.Errorf("%s respawned as pid %d on the new binary, but it was not respawned by the original supervisor (pid %d) — refusing to report a durable restart",
+			serviceUnitName, newPID, sup.PID)
+	}
+	fmt.Fprintf(out, "restarted %s (supervisor respawn, pid %d) onto the new binary in %s\n",
+		serviceUnitName, newPID, time.Since(start).Round(time.Millisecond))
+	return nil
+}
+
+// signalAndAwaitRespawn signals pid and waits a BOUNDED window for a different
+// process to be holding the service. Returns the new pid and whether one
+// appeared. The wait reuses the identity poll cadence, so tests shrink it the
+// same way they shrink waitForIdentity.
+func signalAndAwaitRespawn(procRoot string, pid int, sig syscall.Signal) (int, bool) {
+	if err := restartHooks.signalPID(pid, sig); err != nil {
+		return 0, false
+	}
+	for i := 0; i < identityPollAttempts; i++ {
+		if newPID := discoverLivePID(procRoot); newPID > 0 && newPID != pid {
+			return newPID, true
+		}
+		time.Sleep(identityPollInterval)
+	}
+	return 0, false
+}
+
+// discoverLivePID finds whichever process is holding the service NOW — cgroup
+// first, then listening port. Re-run after a respawn rather than reusing the
+// pre-cycle pid: the old pid is gone, and the only thing that matters is what
+// currently serves.
+func discoverLivePID(procRoot string) int {
+	if pid := findPIDByCgroup(procRoot, serviceUnitName); pid > 0 {
+		return pid
+	}
+	return findPIDByListenPort(procRoot, servicePort())
 }
 
 // reportRestartOutcome renders the terminal message for a restart that WAS
@@ -465,15 +556,15 @@ func waitForIdentity(procRoot string, pid int, wanted exeIdentity, wantedOK bool
 	return false
 }
 
-// signalTerm sends SIGTERM to pid via os.Process.Signal (not syscall.Kill, which is
+// signalPID sends sig to pid via os.Process.Signal (not syscall.Kill, which is
 // Unix-only and breaks the Windows cross-build). The systemd restart path only runs
 // on Linux; this just has to COMPILE on Windows, where Signal returns unsupported.
-func signalTerm(pid int) error {
+func signalPID(pid int, sig syscall.Signal) error {
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return err
 	}
-	return proc.Signal(syscall.SIGTERM)
+	return proc.Signal(sig)
 }
 
 // userUnitActive reports whether the systemd USER unit is active, defaulting the
