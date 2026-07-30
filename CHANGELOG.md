@@ -1,3 +1,13 @@
+## [0.0.353] - 2026-07-30
+
+### Fixed
+- Planner benchmark runs now preserve schema-versioned redacted final results, attached artifacts, hashes, timestamps, and structured diagnostics in durable per-run evidence (sty_dec87e60)
+- Artifact scoring now parses the attached document body and reports explicit findings per acceptance criterion instead of relying on a fragile aggregate substring oracle (sty_dec87e60)
+- Unreported benchmark usage is now represented as unavailable with provenance and omitted token totals rather than ambiguous numeric zero (sty_dec87e60)
+
+### Changed
+- Infrastructure and under-sample failures now fail the live benchmark harness while artifact-quality findings remain auditable benchmark data, with hermetic coverage for failure classes and interruption retention (sty_dec87e60)
+
 ## [0.0.352] - 2026-07-30
 
 ### Added

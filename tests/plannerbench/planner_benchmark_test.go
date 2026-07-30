@@ -29,24 +29,15 @@ type fixture struct {
 
 type variant struct {
 	Name       string
+	Provider   string
+	Model      string
+	Effort     string
+	Interface  string
+	ToolPolicy string
 	AgentsTOML string
 }
 
-type result struct {
-	Variant                string `json:"variant"`
-	Fixture                string `json:"fixture"`
-	Run                    int    `json:"run"`
-	WallMS                 int64  `json:"wall_ms"`
-	Tokens                 int    `json:"tokens"`
-	TransitionOK           bool   `json:"transition_ok"`
-	ArtifactCorrect        bool   `json:"artifact_correct"`
-	ReadOnlyPolicyFaithful bool   `json:"read_only_policy_faithful"`
-	FailureObservability   string `json:"failure_observability"`
-	Error                  string `json:"error,omitempty"`
-}
-
 var idRE = regexp.MustCompile(`sty_[0-9a-f]+`)
-var totalRE = regexp.MustCompile(`(?m)^TOTAL\s+(\d+)\s+`)
 
 const workflow = `---
 name: planner-benchmark
@@ -100,7 +91,8 @@ func TestLivePlannerTransportBenchmark(t *testing.T) {
 
 	variants := []variant{
 		{
-			Name: "claude-command",
+			Name: "claude-command", Provider: "anthropic", Model: "opus",
+			Effort: "high", Interface: "command", ToolPolicy: "read-only",
 			AgentsTOML: `[planner]
 role = "agent"
 effort = "high"
@@ -111,7 +103,8 @@ principles = "session"
 `,
 		},
 		{
-			Name: "grok-acp",
+			Name: "grok-acp", Provider: "xai", Model: "grok-4.5",
+			Effort: "high", Interface: "acp", ToolPolicy: "read-only",
 			AgentsTOML: `[planner]
 role = "agent"
 effort = "high"
@@ -124,25 +117,47 @@ principles = "session"
 		},
 	}
 
-	var results []result
+	minimum := runs
+	if raw := os.Getenv("SATELLE_PLANNER_BENCH_MIN_SAMPLES"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			t.Fatalf("SATELLE_PLANNER_BENCH_MIN_SAMPLES=%q: want a positive integer", raw)
+		}
+		minimum = n
+	}
+	outDir := benchmarkOutDir()
+	var (
+		results          []runRecord
+		selectedVariants []string
+		selectedFixtures []string
+	)
 	for _, v := range variants {
 		if only := os.Getenv("SATELLE_PLANNER_BENCH_VARIANT"); only != "" && only != v.Name {
 			continue
 		}
+		selectedVariants = append(selectedVariants, v.Name)
 		for _, f := range loadFixtures(t) {
 			if only := os.Getenv("SATELLE_PLANNER_BENCH_FIXTURE"); only != "" && only != f.Name {
 				continue
+			}
+			if !containsString(selectedFixtures, f.Name) {
+				selectedFixtures = append(selectedFixtures, f.Name)
 			}
 			for run := 1; run <= runs; run++ {
 				t.Run(fmt.Sprintf("%s/%s/%d", v.Name, f.Name, run), func(t *testing.T) {
 					r := runCase(t, bin, string(plannerSkill), v, f, run)
 					results = append(results, r)
-					// Persist after every costly call so an outer timeout or later
-					// peer failure cannot erase already measured evidence.
-					writeEvidence(t, results)
-					t.Logf("wall=%s tokens=%d artifact=%v policy=%v failure-observability=%s err=%s",
-						time.Duration(r.WallMS)*time.Millisecond, r.Tokens,
-						r.ArtifactCorrect, r.ReadOnlyPolicyFaithful, r.FailureObservability, r.Error)
+					// The full record and raw/artifact sidecars land before the
+					// aggregate, so later interruption cannot erase this sample.
+					if err := writeRunEvidence(outDir, r); err != nil {
+						t.Fatalf("write durable run evidence: %v", err)
+					}
+					if err := writeAggregateEvidence(outDir, results); err != nil {
+						t.Fatalf("write aggregate evidence: %v", err)
+					}
+					t.Logf("wall=%s usage=%v artifact=%v policy=%v diagnostic=%s",
+						time.Duration(r.WallMS)*time.Millisecond, r.Usage.Available,
+						r.ArtifactScore.OK, r.ReadOnlyPolicyFaithful, r.Diagnostics.Class)
 				})
 			}
 		}
@@ -150,82 +165,136 @@ principles = "session"
 	if len(results) == 0 {
 		t.Fatal("benchmark filters selected no variant/fixture cases")
 	}
-	// Quality/policy failures are benchmark findings, not harness failures. They
-	// remain explicit in the evidence and disqualify a variant under the
-	// predeclared decision rule; the target itself fails only when it cannot run
-	// or record evidence.
+	for _, problem := range evidenceProblems(results, selectedVariants, selectedFixtures, minimum) {
+		t.Error(problem)
+	}
 }
 
-func runCase(t *testing.T, bin, plannerSkill string, v variant, f fixture, run int) result {
+func runCase(t *testing.T, bin, plannerSkill string, v variant, f fixture, run int) runRecord {
 	t.Helper()
+	record := newRunRecord(v.Name, f.Name, run)
+	record.StartedAt = time.Now().UTC()
+	record.Binding = bindingEvidence{
+		Name: v.Name, Provider: v.Provider, Model: v.Model, Effort: v.Effort,
+		Interface: v.Interface, ToolPolicy: v.ToolPolicy,
+		AgentsTOMLSHA: digest(v.AgentsTOML),
+	}
+	record.Environment.SatelleBinary = bin
+	record.Environment.SkillSHA = digest(plannerSkill)
+	record.Environment.WorkflowSHA = digest(workflow)
+	record.Environment.Settings = map[string]string{
+		"runs":           os.Getenv("SATELLE_PLANNER_BENCH_RUNS"),
+		"variant_filter": os.Getenv("SATELLE_PLANNER_BENCH_VARIANT"),
+		"fixture_filter": os.Getenv("SATELLE_PLANNER_BENCH_FIXTURE"),
+	}
+	if version, err := command(os.Environ(), ".", bin, "version"); err == nil {
+		record.Environment.SatelleVersion = strings.TrimSpace(version)
+	}
+	record.ContentHashes["fixture"] = digest(f.Title + "\n" + f.Body + "\n" + strings.Join(f.Acceptance, "\n"))
+	record.ContentHashes["agents_toml"] = record.Binding.AgentsTOMLSHA
+	record.ContentHashes["planner_skill"] = record.Environment.SkillSHA
+
+	failInfra := func(class, detail, raw string) runRecord {
+		record.FinishedAt = time.Now().UTC()
+		if !record.StartedAt.IsZero() {
+			record.WallMS = record.FinishedAt.Sub(record.StartedAt).Milliseconds()
+		}
+		record.InfrastructureFailure = true
+		record.Diagnostics = diagnosticEvidence{Class: class, Detail: detail}
+		record.RawFinalResult = textRecord(raw, "satelle-cli-combined-output", os.Getenv("HOME"))
+		record.ContentHashes["raw_final_result"] = record.RawFinalResult.SHA256
+		return record
+	}
+
 	root := t.TempDir()
 	repo := filepath.Join(root, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
-		t.Fatal(err)
+		return failInfra("setup", err.Error(), "")
 	}
 	env := append(os.Environ(), "SATELLE_HOME="+filepath.Join(root, "satelle-home"))
-	mustCommand(t, env, repo, bin, "init", "--no-workspace")
-	replace(t, filepath.Join(repo, ".satelle", "satelle.toml"), "gate_create = true", "gate_create = false")
-	write(t, filepath.Join(repo, ".satelle", "agents.toml"), v.AgentsTOML)
-	write(t, filepath.Join(repo, ".satelle", "skills", "plan.md"), plannerSkill)
-	write(t, filepath.Join(repo, ".satelle", "workflows", "planner-benchmark.md"), workflow)
-	mustCommand(t, env, repo, bin, "reindex")
+	if out, err := command(env, repo, bin, "init", "--no-workspace"); err != nil {
+		return failInfra("setup", "satelle init: "+err.Error(), out)
+	}
+	if err := replaceFile(filepath.Join(repo, ".satelle", "satelle.toml"), "gate_create = true", "gate_create = false"); err != nil {
+		return failInfra("setup", err.Error(), "")
+	}
+	for path, body := range map[string]string{
+		filepath.Join(repo, ".satelle", "agents.toml"):                       v.AgentsTOML,
+		filepath.Join(repo, ".satelle", "skills", "plan.md"):                 plannerSkill,
+		filepath.Join(repo, ".satelle", "workflows", "planner-benchmark.md"): workflow,
+	} {
+		if err := writeFile(path, body); err != nil {
+			return failInfra("setup", err.Error(), "")
+		}
+	}
+	if out, err := command(env, repo, bin, "reindex"); err != nil {
+		return failInfra("setup", "satelle reindex: "+err.Error(), out)
+	}
 
 	args := []string{"story", "create", "--category", "feature", "--title", f.Title, "--body", f.Body}
 	for i, ac := range f.Acceptance {
 		args = append(args, "--acceptance", fmt.Sprintf("%d. %s", i+1, ac))
 	}
-	created := mustCommand(t, env, repo, bin, args...)
+	created, err := command(env, repo, bin, args...)
+	if err != nil {
+		return failInfra("setup", "story create: "+err.Error(), created)
+	}
 	id := idRE.FindString(created)
 	if id == "" {
-		t.Fatalf("create output has no story id: %s", created)
+		return failInfra("setup", "create output has no story id", created)
 	}
-	before := productDigest(t, repo)
-	start := time.Now()
-	out, err := command(env, repo, bin, "story", "set", id, "--status", "plan")
-	elapsed := time.Since(start)
-
-	r := result{Variant: v.Name, Fixture: f.Name, Run: run, WallMS: elapsed.Milliseconds(), TransitionOK: err == nil}
+	before, err := productDigest(repo)
 	if err != nil {
-		r.Error = strings.TrimSpace(out)
+		return failInfra("setup", "product digest: "+err.Error(), "")
 	}
-	plan, planErr := command(env, repo, bin, "story", "doc", id, "plan")
-	r.ArtifactCorrect = planErr == nil && planLooksComplete(plan, len(f.Acceptance))
-	r.ReadOnlyPolicyFaithful = before == productDigest(t, repo)
-	ledger, _ := command(env, repo, bin, "ledger", "list", "--story", id)
-	switch {
-	case err == nil:
-		r.FailureObservability = "not-exercised"
-	case strings.Contains(ledger, "agent-failure") || strings.Contains(ledger, "agent-retry"):
-		r.FailureObservability = "structured-ledger"
-	case strings.TrimSpace(out) != "":
-		r.FailureObservability = "command-output-only"
-	default:
-		r.FailureObservability = "missing"
+	out, transitionErr := command(env, repo, bin, "story", "set", id, "--status", "plan")
+	record.FinishedAt = time.Now().UTC()
+	record.WallMS = record.FinishedAt.Sub(record.StartedAt).Milliseconds()
+	record.TransitionOK = transitionErr == nil
+	rawResult, provenance := out, "satelle-cli-combined-output"
+	if executorResult, err := findExecutorOutput(filepath.Join(root, "satelle-home"), id); err == nil {
+		rawResult, provenance = executorResult, "satelle-executor-log-final-output"
 	}
-	cost, _ := command(env, repo, bin, "story", "cost", id)
-	if m := totalRE.FindStringSubmatch(cost); len(m) == 2 {
-		r.Tokens, _ = strconv.Atoi(m[1])
-	}
-	return r
-}
+	record.RawFinalResult = textRecord(rawResult, provenance, os.Getenv("HOME"))
+	record.ContentHashes["raw_final_result"] = record.RawFinalResult.SHA256
 
-func planLooksComplete(plan string, acceptanceCount int) bool {
-	if len(strings.TrimSpace(plan)) < 500 {
-		return false
+	after, digestErr := productDigest(repo)
+	if digestErr != nil {
+		return failInfra("setup", "post-run product digest: "+digestErr.Error(), out)
 	}
-	lower := strings.ToLower(plan)
-	if !strings.Contains(lower, "test") {
-		return false
+	record.ReadOnlyPolicyFaithful = before == after
+	if !record.ReadOnlyPolicyFaithful {
+		record.Diagnostics = diagnosticEvidence{Class: "denied_mutation", Detail: "product tree digest changed"}
 	}
-	for i := 1; i <= acceptanceCount; i++ {
-		n := strconv.Itoa(i)
-		if !strings.Contains(lower, "ac"+n) && !strings.Contains(lower, "ac "+n) &&
-			!strings.Contains(lower, "criterion "+n) {
-			return false
+
+	planOut, planErr := command(env, repo, bin, "story", "doc", id, "plan")
+	if planErr == nil {
+		body, bodyErr := parseAttachedBody(planOut)
+		if bodyErr == nil {
+			record.Attachment = attachmentEvidence{OK: true, Body: body, SHA256: digest(body)}
+			record.ContentHashes["attached_artifact"] = record.Attachment.SHA256
+			record.ArtifactScore = scorePlan(body, f.Acceptance)
+		} else {
+			record.Attachment = attachmentEvidence{Error: bodyErr.Error()}
 		}
+	} else {
+		record.Attachment = attachmentEvidence{Error: strings.TrimSpace(planOut)}
 	}
-	return true
+
+	ledger, _ := command(env, repo, bin, "ledger", "list", "--story", id)
+	cost, _ := command(env, repo, bin, "story", "cost", id)
+	record.Usage = parseUsageEvidence(cost, ledger)
+	if transitionErr != nil {
+		class, infrastructure := classifyRunFailure(out)
+		record.Diagnostics = diagnosticEvidence{
+			Class: class, Detail: strings.TrimSpace(out), LedgerExcerpt: bounded(ledger, 4000),
+		}
+		record.InfrastructureFailure = infrastructure
+	} else if !record.Attachment.OK {
+		record.Diagnostics = diagnosticEvidence{Class: "attachment", Detail: record.Attachment.Error}
+		record.InfrastructureFailure = true
+	}
+	return record
 }
 
 func loadFixtures(t *testing.T) []fixture {
@@ -244,30 +313,12 @@ func loadFixtures(t *testing.T) []fixture {
 	return fixtures
 }
 
-func writeEvidence(t *testing.T, results []result) {
-	t.Helper()
+func benchmarkOutDir() string {
 	outDir := os.Getenv("SATELLE_PLANNER_BENCH_OUT")
 	if outDir == "" {
 		outDir = "out"
 	}
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := json.MarshalIndent(results, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	write(t, filepath.Join(outDir, "results.json"), string(raw)+"\n")
-	var md strings.Builder
-	md.WriteString("# Planner transport benchmark\n\n")
-	md.WriteString("| Variant | Fixture | Run | Wall ms | Tokens | Artifact | Read-only | Failure observability | Error |\n")
-	md.WriteString("|---|---|---:|---:|---:|---|---|---|---|\n")
-	for _, r := range results {
-		fmt.Fprintf(&md, "| %s | %s | %d | %d | %d | %t | %t | %s | %s |\n",
-			r.Variant, r.Fixture, r.Run, r.WallMS, r.Tokens, r.ArtifactCorrect,
-			r.ReadOnlyPolicyFaithful, r.FailureObservability, strings.ReplaceAll(r.Error, "|", "\\|"))
-	}
-	write(t, filepath.Join(outDir, "results.md"), md.String())
+	return outDir
 }
 
 func command(env []string, dir, bin string, args ...string) (string, error) {
@@ -278,39 +329,25 @@ func command(env []string, dir, bin string, args ...string) (string, error) {
 	return string(out), err
 }
 
-func mustCommand(t *testing.T, env []string, dir, bin string, args ...string) string {
-	t.Helper()
-	out, err := command(env, dir, bin, args...)
-	if err != nil {
-		t.Fatalf("%s %s: %v\n%s", bin, strings.Join(args, " "), err, out)
-	}
-	return out
-}
-
-func write(t *testing.T, path, body string) {
-	t.Helper()
+func writeFile(path, body string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
+		return err
 	}
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	return os.WriteFile(path, []byte(body), 0o644)
 }
 
-func replace(t *testing.T, path, old, replacement string) {
-	t.Helper()
+func replaceFile(path, old, replacement string) error {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 	if !strings.Contains(string(raw), old) {
-		t.Fatalf("%s does not contain %q", path, old)
+		return fmt.Errorf("%s does not contain %q", path, old)
 	}
-	write(t, path, strings.Replace(string(raw), old, replacement, 1))
+	return writeFile(path, strings.Replace(string(raw), old, replacement, 1))
 }
 
-func productDigest(t *testing.T, root string) string {
-	t.Helper()
+func productDigest(root string) (string, error) {
 	var entries []string
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -335,9 +372,76 @@ func productDigest(t *testing.T, root string) string {
 		return nil
 	})
 	if err != nil {
-		t.Fatal(err)
+		return "", err
 	}
 	sort.Strings(entries)
 	sum := sha256.Sum256([]byte(strings.Join(entries, "\n")))
-	return fmt.Sprintf("%x", sum)
+	return fmt.Sprintf("%x", sum), nil
+}
+
+func classifyRunFailure(out string) (string, bool) {
+	lower := strings.ToLower(out)
+	switch {
+	case strings.Contains(lower, "timeout"), strings.Contains(lower, "deadline exceeded"):
+		return "timeout", true
+	case strings.Contains(lower, "auth"), strings.Contains(lower, "unauthorized"):
+		return "auth", true
+	case strings.Contains(lower, "executable file not found"), strings.Contains(lower, "spawn"):
+		return "spawn", true
+	case strings.Contains(lower, "artifact attachment"):
+		return "attachment", true
+	case strings.Contains(lower, "structured output"), strings.Contains(lower, "no structured"),
+		strings.Contains(lower, "artifact.body"):
+		return "malformed_output", false
+	default:
+		return "execution", true
+	}
+}
+
+func bounded(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func findExecutorOutput(root, storyID string) (string, error) {
+	var found string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || d.Name() != "executor.log" {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			if !strings.Contains(line, "\t"+storyID+"\t") {
+				continue
+			}
+			if _, output, ok := strings.Cut(line, " — output: "); ok {
+				found = strings.ReplaceAll(output, `\n`, "\n")
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(found) == "" {
+		return "", fmt.Errorf("executor final output unavailable")
+	}
+	return found, nil
 }

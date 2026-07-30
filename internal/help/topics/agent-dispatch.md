@@ -182,8 +182,14 @@ Legacy self-attaching steps remain supported. To migrate one:
 For this repository the default `[planner]` remains Claude's non-interactive
 command transport. The comparison is reproducible with `make planner-bench`,
 which runs the same planning fixtures through that binding shape and Grok ACP
-and writes wall-time, token-cost, artifact-correctness, read-only-policy, and
-failure-observability evidence under `tests/plannerbench/out/`.
+and writes versioned per-run records plus redacted raw and attached-artifact
+sidecars under `tests/plannerbench/out/`. The schema and interpretation guide is
+`tests/plannerbench/EVIDENCE.md`.
+
+Artifact quality failures remain inspectable benchmark outcomes with explicit
+per-criterion reasons. Infrastructure failures or an under-sampled selected
+cell fail the target. Usage that a transport does not report is `n/a` with
+provenance, never numeric zero.
 
 Changing the binding requires ACP to preserve 100% artifact correctness and
 policy fidelity, introduce no reliability regression, and win at least two of:
