@@ -1,8 +1,13 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 func TestSystemdUnitContent(t *testing.T) {
@@ -156,5 +161,235 @@ func TestResolveServeBinary(t *testing.T) {
 	path, fb = resolveServeBinary("/opt/bin/satelle", "", func(string) bool { return false })
 	if path != "/opt/bin/satelle serve" || !fb {
 		t.Fatalf("fallback: path=%q fb=%v", path, fb)
+	}
+}
+
+// --- serviceStatusLine end-to-end scenarios (sty_acd4b61e AC1/AC5) ---
+//
+// Every case overrides serviceStatusHooks so NOTHING here ever shells out to the
+// real systemctl or touches the operator's actual satelle.service unit — the same
+// discipline restartServiceIfRunningRoot's tests already follow (sty_c344d080 AC6).
+
+func withServiceStatusHooks(t *testing.T, h struct {
+	userIsActive   func() (string, bool)
+	systemIsActive func() (string, bool)
+	systemStartLtd func() bool
+}) {
+	t.Helper()
+	prev := serviceStatusHooks
+	serviceStatusHooks = h
+	t.Cleanup(func() { serviceStatusHooks = prev })
+}
+
+func unreachableHooks() struct {
+	userIsActive   func() (string, bool)
+	systemIsActive func() (string, bool)
+	systemStartLtd func() bool
+} {
+	return struct {
+		userIsActive   func() (string, bool)
+		systemIsActive func() (string, bool)
+		systemStartLtd func() bool
+	}{
+		userIsActive:   func() (string, bool) { return "", false },
+		systemIsActive: func() (string, bool) { return "", false },
+		systemStartLtd: func() bool { return false },
+	}
+}
+
+// writeFakeUserUnit installs a fake ~/.config/systemd/user/satelle.service naming
+// execStart as its ExecStart binary, isolating HOME so the real operator unit is
+// never read. Returns the unit path.
+func writeFakeUserUnit(t *testing.T, execStart string) string {
+	t.Helper()
+	testutil.IsolateHome(t) // servicePort()'s config.LoadGlobal() needs SATELLE_HOME set
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".config", "systemd", "user")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, serviceUnitName)
+	content := "[Service]\nExecStart=" + execStart + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestServiceStatusLine_NotInstalled: (a) no unit file — never derived from a
+// systemctl query, purely a filesystem fact.
+func TestServiceStatusLine_NotInstalled(t *testing.T) {
+	testutil.IsolateHome(t)
+	t.Setenv("HOME", t.TempDir()) // empty HOME: no ~/.config/systemd/user/satelle.service
+	withServiceStatusHooks(t, unreachableHooks())
+	got := serviceStatusLine(t.TempDir())
+	if got != "not installed" {
+		t.Errorf("serviceStatusLine = %q, want %q", got, "not installed")
+	}
+}
+
+// TestServiceStatusLine_InstalledNotRunning: (b) unit installed, no process found
+// by kernel facts, supervisor reachable and confirms inactive.
+func TestServiceStatusLine_InstalledNotRunning(t *testing.T) {
+	writeFakeUserUnit(t, "/opt/bin/satelle-serve")
+	withServiceStatusHooks(t, struct {
+		userIsActive   func() (string, bool)
+		systemIsActive func() (string, bool)
+		systemStartLtd func() bool
+	}{
+		userIsActive:   func() (string, bool) { return "inactive", true },
+		systemIsActive: func() (string, bool) { return "", false },
+		systemStartLtd: func() bool { return false },
+	})
+	got := serviceStatusLine(t.TempDir()) // empty /proc: no live PID anywhere
+	if got != "installed, not running" {
+		t.Errorf("serviceStatusLine = %q, want %q", got, "installed, not running")
+	}
+}
+
+// TestServiceStatusLine_StartLimited: (e) unit installed, not running, and
+// systemd reports it start-limited — named explicitly, not folded into "stopped".
+func TestServiceStatusLine_StartLimited(t *testing.T) {
+	writeFakeUserUnit(t, "/opt/bin/satelle-serve")
+	withServiceStatusHooks(t, struct {
+		userIsActive   func() (string, bool)
+		systemIsActive func() (string, bool)
+		systemStartLtd func() bool
+	}{
+		userIsActive:   func() (string, bool) { return "failed", true },
+		systemIsActive: func() (string, bool) { return "", false },
+		systemStartLtd: func() bool { return true },
+	})
+	got := serviceStatusLine(t.TempDir())
+	if !strings.Contains(got, "start-limited") {
+		t.Errorf("serviceStatusLine = %q, want it to name start-limited", got)
+	}
+}
+
+// TestServiceStatusLine_RunningReachableActive: (c) process running under the
+// unit's cgroup, supervisor reachable and reports active — the WSL-restart-fixed
+// case this story was raised over. Also covers AC3 (exe identity matches).
+func TestServiceStatusLine_RunningReachableActive(t *testing.T) {
+	installDir := t.TempDir()
+	target := filepath.Join(installDir, "satelle-serve")
+	if err := os.WriteFile(target, []byte("the installed binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeUserUnit(t, target)
+	withServiceStatusHooks(t, struct {
+		userIsActive   func() (string, bool)
+		systemIsActive func() (string, bool)
+		systemStartLtd func() bool
+	}{
+		userIsActive:   func() (string, bool) { return "active", true },
+		systemIsActive: func() (string, bool) { return "", false },
+		systemStartLtd: func() bool { return false },
+	})
+	procRoot := t.TempDir()
+	writeFakeCgroupPID(t, procRoot, 334, "/user.slice/user-1000.slice/user@1000.service/app.slice/"+serviceUnitName, target)
+	got := serviceStatusLine(procRoot)
+	for _, want := range []string{"active (user unit, pid 334)", "matches the installed binary"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("serviceStatusLine = %q, want substring %q", got, want)
+		}
+	}
+}
+
+// TestServiceStatusLine_RunningUnreachable: (d) process running under the unit's
+// cgroup, but the supervisor is unreachable — the exact WSL-user-D-Bus-dead
+// condition both sty_c344d080 and sty_02acce1b were wrongly parked over. This must
+// NEVER render as "not installed" or "stopped" (sty_acd4b61e AC2).
+func TestServiceStatusLine_RunningUnreachable(t *testing.T) {
+	stale := filepath.Join(t.TempDir(), "old-satelle-serve")
+	if err := os.WriteFile(stale, []byte("stale binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(t.TempDir(), "satelle-serve")
+	if err := os.WriteFile(current, []byte("current installed binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeUserUnit(t, current)
+	withServiceStatusHooks(t, unreachableHooks())
+	procRoot := t.TempDir()
+	writeFakeCgroupPID(t, procRoot, 334, "/user.slice/user-1000.slice/user@1000.service/app.slice/"+serviceUnitName, stale)
+	got := serviceStatusLine(procRoot)
+	if !strings.Contains(got, "supervisor is unreachable") {
+		t.Errorf("serviceStatusLine = %q, want it to name the supervisor as unreachable", got)
+	}
+	if !strings.Contains(got, "pid 334") {
+		t.Errorf("serviceStatusLine = %q, want the live pid named", got)
+	}
+	for _, forbidden := range []string{"not installed", "not installed or stopped"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("serviceStatusLine = %q must never collapse a live process with an unreachable supervisor into %q", got, forbidden)
+		}
+	}
+	if !strings.Contains(got, "does NOT match") {
+		t.Errorf("serviceStatusLine = %q, want the stale exe identity named", got)
+	}
+}
+
+// TestServiceStatusLine_EphemeralOutsideSupervision: a process is physically
+// found (via the listening port, not the unit's cgroup) while the bus IS
+// reachable and reports the unit inactive — an ephemeral relaunch outside the
+// installed unit's supervision, the state release.md's dogfood forbids as a
+// final state. Must be named distinctly from both "active" and "unreachable".
+func TestServiceStatusLine_EphemeralOutsideSupervision(t *testing.T) {
+	writeFakeUserUnit(t, "/opt/bin/satelle-serve")
+	withServiceStatusHooks(t, struct {
+		userIsActive   func() (string, bool)
+		systemIsActive func() (string, bool)
+		systemStartLtd func() bool
+	}{
+		userIsActive:   func() (string, bool) { return "inactive", true },
+		systemIsActive: func() (string, bool) { return "inactive", true },
+		systemStartLtd: func() bool { return false },
+	})
+	procRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(procRoot, "net"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	port := 8787
+	body := "  sl  local_address rem_address   st tx_queue:rx_queue tr:tm->when retrnsmt   uid  timeout inode\n" +
+		"   0: 00000000:" + strconv.FormatInt(int64(port), 16) + " 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 88888 1 0 100 0 0 10 0\n"
+	if err := os.WriteFile(filepath.Join(procRoot, "net", "tcp"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fdDir := filepath.Join(procRoot, "777", "fd")
+	if err := os.MkdirAll(fdDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("socket:[88888]", filepath.Join(fdDir, "3")); err != nil {
+		t.Fatal(err)
+	}
+	got := serviceStatusLine(procRoot)
+	if !strings.Contains(got, "ephemeral") {
+		t.Errorf("serviceStatusLine = %q, want the ephemeral/outside-supervision state named", got)
+	}
+	if strings.Contains(got, "active (") {
+		t.Errorf("serviceStatusLine = %q must not report active when the unit itself reports inactive", got)
+	}
+}
+
+// TestServiceStatusLine_IdentityUnknown: AC3's "states plainly when the
+// comparison could not be made" branch — the unit file names a binary that does
+// not exist on disk, so identityFromPath cannot resolve either side.
+func TestServiceStatusLine_IdentityUnknown(t *testing.T) {
+	writeFakeUserUnit(t, "/nonexistent/satelle-serve")
+	withServiceStatusHooks(t, struct {
+		userIsActive   func() (string, bool)
+		systemIsActive func() (string, bool)
+		systemStartLtd func() bool
+	}{
+		userIsActive:   func() (string, bool) { return "active", true },
+		systemIsActive: func() (string, bool) { return "", false },
+		systemStartLtd: func() bool { return false },
+	})
+	procRoot := t.TempDir()
+	writeFakeCgroupPID(t, procRoot, 334, "/user.slice/user-1000.slice/user@1000.service/app.slice/"+serviceUnitName, "/nonexistent/satelle-serve")
+	got := serviceStatusLine(procRoot)
+	if !strings.Contains(got, "could not be determined") {
+		t.Errorf("serviceStatusLine = %q, want the identity-unknown case named plainly", got)
 	}
 }

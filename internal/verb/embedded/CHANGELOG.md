@@ -1,3 +1,9 @@
+## [0.0.357] - 2026-07-30
+
+### Fixed
+- `satelle service status` now derives its verdict from the unit file on disk, cgroup/listening-port process discovery, and exe identity (shared with `satelle update`'s restart path), instead of collapsing a failed or empty `systemctl --user is-active` query into "inactive (not installed or stopped)" — the exact false negative that wrongly parked two release stories as "world-not-ready" on a WSL host whose user-session D-Bus was unreachable (sty_acd4b61e)
+- `.satelle/skills/release.md`'s dogfood triad now names `satelle service status` as bus-independent evidence for `check_persistent_supervisor` and `check_live_footer`, so both checks are satisfiable on a host with no reachable user bus (sty_acd4b61e)
+
 ## [0.0.356] - 2026-07-30
 
 ### Fixed

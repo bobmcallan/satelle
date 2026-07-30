@@ -174,20 +174,145 @@ func serviceStatusCmd() *cobra.Command {
 				fmt.Fprintln(out, "systemctl not found.")
 				return nil
 			}
-			isActive := exec.Command("systemctl", "--user", "is-active", serviceUnitName)
-			isActive.Env = userEnv()
-			active, _ := isActive.Output()
-			state := "inactive (not installed or stopped)"
-			if s := string(active); len(s) > 0 {
-				state = s[:len(s)-1] // trim newline
-			}
 			gc, _ := config.LoadGlobal()
-			fmt.Fprintf(out, "service: %s\n", state)
+			fmt.Fprintf(out, "service: %s\n", serviceStatusLine("/proc"))
 			fmt.Fprintf(out, "config:  %s (port %d, addr %s, repo %s)\n",
 				config.GlobalConfigPath(), gc.Service.ResolvePort(), gc.Service.ResolveAddr(), gc.Service.Repo)
 			fmt.Fprintf(out, "url:     http://localhost:%d\n", gc.Service.ResolvePort())
 			return nil
 		},
+	}
+}
+
+// serviceStatusHooks are the systemctl-touching seams serviceStatusLine calls
+// through, mirroring restartHooks' rationale (cmd_update.go): hermetic tests
+// override these so status reporting is never exercised against the operator's
+// real systemctl or real satelle.service unit. systemStartLtd reuses
+// restartHooks.systemUnitStartLtd rather than re-querying (sty_acd4b61e AC4) —
+// it is assigned in init() below to avoid an initialization-order dependency
+// between the two package-level var blocks.
+var serviceStatusHooks = struct {
+	userIsActive   func() (state string, reachable bool)
+	systemIsActive func() (state string, reachable bool)
+	systemStartLtd func() bool
+}{
+	userIsActive:   func() (string, bool) { return queryIsActive(userEnv(), true) },
+	systemIsActive: func() (string, bool) { return queryIsActive(nil, false) },
+}
+
+func init() {
+	serviceStatusHooks.systemStartLtd = restartHooks.systemUnitStartLtd
+}
+
+// queryIsActive runs `systemctl [--user] is-active <unit>` and reports systemd's
+// verdict alongside whether the query reached a bus at all: a bus-unreachable
+// query prints its "Failed to connect to bus" diagnostic to stderr (discarded
+// here) and leaves stdout empty, which is NOT the same claim as "inactive" — an
+// empty result must never be read as a verdict about the unit (sty_acd4b61e AC2).
+func queryIsActive(env []string, asUser bool) (state string, reachable bool) {
+	args := []string{"is-active", serviceUnitName}
+	if asUser {
+		args = append([]string{"--user"}, args...)
+	}
+	c := exec.Command("systemctl", args...)
+	if env != nil {
+		c.Env = env
+	}
+	out, _ := c.Output()
+	s := strings.TrimSpace(string(out))
+	return s, s != ""
+}
+
+// unitFileExists reports whether a unit file is present on disk — installed-ness
+// is a filesystem fact, never derived from a systemctl query (sty_acd4b61e AC2).
+func unitFileExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && !st.IsDir()
+}
+
+// identityVerdict compares the live process's exe identity against the
+// installed binary named by whichever unit file is present. known is false
+// when the comparison could not be made at all — callers must never read that
+// as a match OR a mismatch (sty_acd4b61e AC3). suffix is the report fragment.
+func identityVerdict(procRoot string, pid int) (known, matches bool, suffix string) {
+	live, liveOK := identityFromPID(procRoot, pid)
+	wanted, wantedOK := wantedExeIdentity(procRoot)
+	switch {
+	case !liveOK || !wantedOK:
+		return false, false, "; exe identity: could not be determined"
+	case identitiesMatch(live, wanted):
+		return true, true, "; exe identity: matches the installed binary"
+	default:
+		return true, false, "; exe identity: does NOT match the installed binary (stale process)"
+	}
+}
+
+// serviceStatusLine is the injectable core (procRoot lets hermetic tests
+// substitute a fake /proc tree, mirroring restartServiceIfRunningRoot): it
+// derives the reported state from kernel facts first — a unit file on disk,
+// and the live process located by cgroup or listening-port inspection, neither
+// of which needs a reachable systemd bus (sty_acd4b61e AC1/AC2) — and consults
+// systemctl only to add detail (which supervisor, start-limited) when the live
+// process is confirmed by kernel facts. A failed or unreachable systemctl query
+// never by itself produces "not installed" or "stopped".
+func serviceStatusLine(procRoot string) string {
+	userInstalled := unitFileExists(userUnitPath())
+	sysInstalled := unitFileExists(systemUnitPath())
+	if !userInstalled && !sysInstalled {
+		return "not installed"
+	}
+
+	livePID := 0
+	if runtime.GOOS == "linux" {
+		livePID = findPIDByCgroup(procRoot, serviceUnitName)
+		if livePID == 0 {
+			livePID = findPIDByListenPort(procRoot, servicePort())
+		}
+	}
+
+	// Only consult the supervisor(s) that are actually installed — an unasked
+	// system-bus query answering about a system unit that was never installed is
+	// a reachable but IRRELEVANT signal, not evidence about this unit's state
+	// (this is what wrongly labelled a genuinely bus-unreachable user unit as an
+	// "ephemeral" process on this repo's own dogfood machine).
+	var userState, sysState string
+	var userReachable, sysReachable bool
+	if userInstalled {
+		userState, userReachable = serviceStatusHooks.userIsActive()
+	}
+	if sysInstalled {
+		sysState, sysReachable = serviceStatusHooks.systemIsActive()
+	}
+	reachable := userReachable || sysReachable
+
+	if livePID == 0 {
+		if !reachable {
+			return "installed, not running (supervisor unreachable — could not check for a start-limited unit)"
+		}
+		if serviceStatusHooks.systemStartLtd() {
+			return fmt.Sprintf("stopped — %s is start-limited (systemd exhausted its restart attempts and gave up); run: systemctl reset-failed %s && sudo systemctl restart %s",
+				serviceUnitName, serviceUnitName, serviceUnitName)
+		}
+		return "installed, not running"
+	}
+
+	known, matches, suffix := identityVerdict(procRoot, livePID)
+	switch {
+	case userReachable && userState == "active":
+		return fmt.Sprintf("active (user unit, pid %d)%s", livePID, suffix)
+	case sysReachable && sysState == "active":
+		return fmt.Sprintf("active (system unit, pid %d)%s", livePID, suffix)
+	case reachable:
+		return fmt.Sprintf("running (pid %d) but NOT reported active by the installed unit — an ephemeral process outside persistent supervision%s", livePID, suffix)
+	case known && matches:
+		// The supervisor can't be asked, but exe identity independently confirms the
+		// live process IS the installed binary — don't hedge a claim identity already
+		// settled; the gap here is restart CONTROL, not binary freshness.
+		return fmt.Sprintf("running (pid %d) on the installed binary, but its supervisor is unreachable from here (systemctl could not reach the user/system bus) — restart control is unavailable, not identity%s", livePID, suffix)
+	case known && !matches:
+		return fmt.Sprintf("running (pid %d) but its supervisor is unreachable from here (systemctl could not reach the user/system bus) — AND it is on the OLD binary%s", livePID, suffix)
+	default:
+		return fmt.Sprintf("running (pid %d) but its supervisor is unreachable from here (systemctl could not reach the user/system bus) — binary identity could not be confirmed%s", livePID, suffix)
 	}
 }
 
