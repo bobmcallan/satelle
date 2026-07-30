@@ -57,8 +57,12 @@ like `Verdict: reject` are tolerated, but the JSON block is the contract).
 
 ## 2. Declare it on the governing workflow
 
-Add one frontmatter key to the workflow that governs the story's category
-(`.satelle/workflows/<your-workflow>.md`):
+Create review is one **lifecycle hook** — an operation that fires outside the
+status graph, so it cannot be a DOT node or edge. Declare it in the frontmatter
+of the workflow that governs the story's category
+(`.satelle/workflows/<your-workflow>.md`).
+
+**Shorthand** — the skill only; the hook runs under the repo's `[reviewer]`:
 
 ```yaml
 ---
@@ -69,6 +73,31 @@ applies_to: ["*"]
 create_review: my-create-review   # <- the binding
 ---
 ```
+
+**Full form** — declares the logical agent as well, so the allocation is a
+choice you can read rather than a default you have to know about:
+
+```yaml
+---
+name: my-project-workflow
+scope: project
+type: workflow
+applies_to: ["*"]
+hooks:
+  - operation: create_review
+    skill: my-create-review
+    agent: strict-reviewer     # any role="reviewer" section in agents.toml
+---
+```
+
+Both forms resolve to the same thing; `agent:` is optional and defaults to
+`reviewer`. A hook declares **who** runs the skill, never **how** — model,
+effort, command, transport and tool grant all stay in `.satelle/agents.toml`
+(or a machine-wide profile it references). Keys like `model:` on a hook are
+refused for exactly that reason.
+
+Declaring the same operation both ways is an error: the `hooks:` entry wins and
+validation reports the duplicate.
 
 The binding lives on the **workflow**, not in code or config-by-filename: the
 draft's category selects the workflow, and that workflow names the reviewer.
@@ -88,9 +117,15 @@ gate_create = true
 - Read the workflow frontmatter: `satelle doc get workflows my-project-workflow`
   should show `create_review: my-create-review`.
 - Validate the skill: `satelle skill validate my-create-review` passes.
-- Validate the binding: `satelle workflow validate` flags a workflow that
-  declares a `create_review` which does not resolve in the substrate — a clean
-  pass means the binding is live.
+- Read the whole allocation: `satelle workflow show my-project-workflow` prints
+  the hook with its skill, logical agent, the profile or local binding it
+  resolves through, interface, model, effort, permission ceiling, and source
+  files.
+- Validate the binding: `satelle workflow validate` flags a hook whose skill
+  does not resolve in the substrate, and `satelle agent validate` flags one
+  whose agent has no binding, is not `role = "reviewer"`, or is `command =
+  "in-loop"` (which cannot produce an isolated verdict). Both refuse **before**
+  a story is ever created.
 - Try it: `satelle story create --title … --body … --acceptance "1. …" --category …`
   now runs your reviewer after the structure check; a reject blocks creation
   and prints the reviewer's notes.
@@ -101,3 +136,14 @@ This is a graceful degradation, not an error: no `gate_create`, no
 `create_review` declaration, or an unresolved skill each mean `story create`
 runs the deterministic structure check only. The `workflow validate` warning
 above is how an *intended-but-broken* binding is surfaced.
+
+## Other lifecycle operations
+
+`create_review` is the only lifecycle operation today. The `hooks:` grammar is
+generic: a future operation is a new `operation:` value, declared the same way
+and resolved through the same path. An operation this binary does not recognise
+is reported by name — never silently ignored, and never granted verdict
+authority.
+
+See `satelle help workflows` for how hooks differ from transition gates,
+deterministic structure checks, and agent judgments.

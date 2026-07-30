@@ -26,6 +26,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/wfdot"
+	"github.com/bobmcallan/satelle/internal/wfhook"
 )
 
 func init() {
@@ -2028,10 +2029,15 @@ func materializeDefaultSolution(dataDir string, backupOpts ...BackupOpts) []stri
 				skills[s] = true
 			}
 		}
-		// create_review is workflow frontmatter (not a DOT edge); seed it too
-		// so the create gate travels with the default solution (sty_83782ffb).
-		if cr := workflowFrontmatterScalar(body, "create_review"); cr != "" {
-			skills[cr] = true
+		// Lifecycle hooks are workflow FRONTMATTER (not DOT edges); seed their
+		// skills too so the create gate travels with the default solution
+		// (sty_83782ffb). Read through wfhook so both the `hooks:` block and the
+		// `create_review:` shorthand are covered by one call (sty_ede16f51).
+		declared, _ := wfhook.Parse(body)
+		for _, h := range declared {
+			if h.Skill != "" {
+				skills[h.Skill] = true
+			}
 		}
 	}
 	// Categories already claimed by an authored (on-disk) workflow. A default
@@ -2092,27 +2098,6 @@ func materializeDefaultSolution(dataDir string, backupOpts ...BackupOpts) []stri
 		}
 	}
 	return lines
-}
-
-// workflowFrontmatterScalar returns a single-line YAML scalar for key from the
-// leading markdown frontmatter of body, or "" when absent/unparseable. Used for
-// create_review (and similar) keys that are not DOT edge attributes.
-func workflowFrontmatterScalar(body, key string) string {
-	lines := strings.Split(body, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		return ""
-	}
-	prefix := key + ":"
-	for i := 1; i < len(lines); i++ {
-		t := strings.TrimSpace(lines[i])
-		if t == "---" {
-			return ""
-		}
-		if t == prefix || strings.HasPrefix(t, prefix+" ") {
-			return strings.TrimSpace(strings.TrimPrefix(t, prefix))
-		}
-	}
-	return ""
 }
 
 // referencedSkills returns every skill a workflow names — node prompts and edge

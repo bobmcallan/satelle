@@ -136,7 +136,7 @@ already-canonical workflow is a no-op. Performing-node rubrics are NEVER invente
 	refresh.Flags().BoolVar(&refreshApply, "apply", false, "write the refreshed workflow after showing the diff (default: dry-run)")
 	refresh.Flags().StringArrayVar(&refreshPrompts, "prompt", nil, "performing-node rubric mapping node=skill (repeatable)")
 
-	wf.AddCommand(list, authoredCreateCmd("workflows"), authoredValidateCmd("workflows"), formatDrift, refresh)
+	wf.AddCommand(list, workflowShowCmd(), authoredCreateCmd("workflows"), authoredValidateCmd("workflows"), formatDrift, refresh)
 	register(wf)
 }
 

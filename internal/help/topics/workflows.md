@@ -124,6 +124,49 @@ See the embedded `satelle-workflow-change-review` gate (bound on implementation
 exit edges in the baseline and project workflows) for a content judgment of
 workflow edits; structural validate stays PASS/FAIL only.
 
+## Four things a workflow governs — don't confuse them
+
+A workflow file carries four distinct kinds of governance. They differ in WHERE
+they are declared, WHEN they fire, and WHO decides:
+
+| | Declared in | Fires | Decided by |
+| --- | --- | --- | --- |
+| **Transition nodes / edges** | the fenced `dot` block | on a status change | a reviewer skill's verdict (or a coded ```check) |
+| **Lifecycle hooks** | frontmatter (`hooks:` / the `create_review:` shorthand) | outside the status graph — at story creation today | a reviewer skill's verdict |
+| **Deterministic structure checks** | nowhere — they are the binary's contract | always, before anything else | code (`internal/structure`); no LLM, never flaky |
+| **Agent judgments** | a reviewer skill's rubric | wherever a gate or hook names it | an isolated agent returning accept/reject |
+
+**Transition gates** are the status graph. They can only judge a move from one
+state to another, so anything that happens off the graph is out of their reach.
+
+**Lifecycle hooks** exist for exactly that gap. Story creation has no `from`
+state — the item does not exist yet — so it cannot be an edge. A hook declares
+the operation, the skill that judges it, and the logical agent that runs the
+skill:
+
+```yaml
+hooks:
+  - operation: create_review
+    skill: my-create-review
+    agent: strict-reviewer     # optional; defaults to reviewer
+```
+
+The scalar `create_review: my-create-review` is the documented shorthand for the
+same thing with the default agent. A hook declares **who** runs a skill, never
+**how**: model, effort, command, transport and tool grant stay in
+`.satelle/agents.toml`. `satelle workflow show <name>` prints each hook's full
+resolved allocation; `satelle agent validate` refuses one whose agent is
+missing, is not `role = "reviewer"`, or is `command = "in-loop"`.
+
+**Deterministic structure checks** are not configuration at all — a story needs
+a clear goal and at least one numbered acceptance criterion, judged by code so
+the result is harness-independent and identical every run. A structural failure
+pre-empts: no hook or gate reviewer is reached on a malformed draft.
+
+**Agent judgments** are the rubrics themselves. A gate or hook says *which*
+skill judges; the skill says *what* the judgment is. That split is why adding a
+criterion is a markdown edit rather than a release.
+
 ## Beyond validate: the semantic review
 
 `workflow validate` is deterministic structure only (plus the advisory over-fire

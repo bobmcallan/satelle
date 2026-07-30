@@ -306,6 +306,14 @@ func agentValidateCmd() *cobra.Command {
 			if len(report.Gates) > 0 {
 				fmt.Fprintln(out, "Gate/node effective models (binding that will run the gate):")
 				for _, ga := range report.Gates {
+					// A lifecycle HOOK fires outside the status graph, so it is labelled
+					// as such and carries how it was declared — an allocation that used
+					// to be an invisible fallback (sty_ede16f51).
+					if ga.Operation != "" {
+						fmt.Fprintf(out, "  HOOK [%s] %s gate=%s agent=%s effective_model=%q declared=%s\n",
+							ga.Workflow, ga.Node, ga.Skill, ga.Agent, ga.EffectiveModel, ga.Source)
+						continue
+					}
 					fmt.Fprintf(out, "  NODE [%s] %s gate=%s agent=%s effective_model=%q\n",
 						ga.Workflow, ga.Node, ga.Skill, ga.Agent, ga.EffectiveModel)
 				}

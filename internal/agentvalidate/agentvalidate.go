@@ -23,6 +23,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/wfdot"
+	"github.com/bobmcallan/satelle/internal/wfhook"
 )
 
 // Grant is one agent's resolved, inspectable capability surface — what validate
@@ -66,11 +67,19 @@ type Grant struct {
 // EffectiveModel is the binding's model — agents.toml owns model, not the DOT.
 type GateAllocation struct {
 	Workflow       string
-	Node           string // state name, or "edge:from→to" for edge gates
+	Node           string // state name, "edge:from→to" for edge gates, or "hook:<operation>"
 	Skill          string
 	Agent          string // binding section that will run the gate
 	BindingModel   string
 	EffectiveModel string // same as BindingModel (no DOT override)
+	// Operation is the lifecycle operation for a HOOK allocation (sty_ede16f51),
+	// empty for a DOT node or edge. Hooks fire outside the status graph, so they
+	// are surfaced alongside gates rather than being invisible.
+	Operation string
+	// Source records how a hook allocation was declared — wfhook.SourceHooks or
+	// wfhook.SourceShorthand — so a display can say whether the agent was chosen
+	// or defaulted. Empty for a DOT node or edge.
+	Source string
 }
 
 // Report is the structured result of Validate.
@@ -157,6 +166,11 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 	usedNamed := map[string]bool{}
 	revModel := agents.ReviewerBinding().Model
 	for _, doc := range workflows {
+		// Lifecycle hooks FIRST: they are frontmatter, so they must be checked even
+		// when the DOT below does not parse (sty_ede16f51).
+		hookProblems := checkHooks(doc, agents, revModel, usedNamed, &r)
+		r.Problems = append(r.Problems, hookProblems...)
+
 		spec, ok := wfdot.Parse(doc.Body)
 		if !ok {
 			continue // structure.Doc / workflow validate owns unparseable bodies
@@ -300,6 +314,71 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 		}
 	}
 	return r
+}
+
+// checkHooks validates one workflow's LIFECYCLE HOOK allocations and records a
+// GateAllocation per hook, so an operation that fires outside the status graph is
+// as inspectable and as checkable as a gated edge (sty_ede16f51).
+//
+// It owns the ALLOCATION half of hook validation — does the named binding exist
+// and can it produce a verdict. The DECLARATION half (unknown
+// operation, malformed entry, unresolved skill) belongs to
+// agentstep.WorkflowConsistency, which has the skill resolver this package
+// deliberately does not. `satelle agent validate` runs both, so one command still
+// covers the whole surface without either check reporting the other's findings
+// twice.
+func checkHooks(doc docindex.Doc, agents config.AgentsConfig, revModel string, usedNamed map[string]bool, r *Report) []string {
+	hooks, _ := wfhook.Parse(doc.Body)
+	var problems []string
+	for _, h := range hooks {
+		sec := strings.TrimSpace(h.Agent)
+		if sec == "" {
+			sec = wfhook.DefaultAgent
+		}
+		b := agents.ReviewerBinding()
+		bm := revModel
+		if sec != "reviewer" {
+			named, ok := agents.NamedBinding(sec)
+			if !ok {
+				problems = append(problems, fmt.Sprintf(
+					"workflow %q hook %s allocates agent=%s with no [%s] binding in agents.toml",
+					doc.Name, h.Operation, sec, sec))
+				continue
+			}
+			// A named binding a hook allocates is USED — never report it orphaned.
+			usedNamed[sec] = true
+			b, bm = named, named.Model
+		}
+		if h.Verdict {
+			// A verdict hook is a gate in everything but position, so it carries a
+			// gate's two mechanism requirements. Both are refused HERE, before a
+			// story is ever created, rather than only at invocation time.
+			if role := config.ResolvedRole(sec, b); role != config.RoleReviewer {
+				problems = append(problems, fmt.Sprintf(
+					"workflow %q hook %s allocates agent=%s with role=%q (want role=reviewer) — a verdict hook decides accept/reject and a named performer never does",
+					doc.Name, h.Operation, sec, role))
+			}
+			if config.IsInLoopCommand(b.CommandTemplate()) {
+				problems = append(problems, fmt.Sprintf(
+					"workflow %q hook %s allocates agent=%s with command=in-loop — it cannot produce an isolated verdict; the hook would be refused at invocation",
+					doc.Name, h.Operation, sec))
+			}
+			// The reviewer PERMISSION CEILING is deliberately NOT re-decided here.
+			// checkBinding already judges every section's ceiling with the severity
+			// split this package has settled on: a provable escape (a Codex danger
+			// sandbox, a non-read-only Codex sandbox) is a hard problem, while an
+			// unexpressed ceiling is a warning because ReadOnly is a heuristic. The
+			// hook's section is one of those sections, so it is already covered —
+			// re-checking it here would only re-decide the same heuristic at a
+			// harsher severity, and would hard-fail every repo whose reviewer
+			// template the heuristic cannot classify.
+		}
+		alloc := gateAlloc(doc.Name, "hook:"+h.Operation, h.Skill, sec, bm)
+		alloc.Operation = h.Operation
+		alloc.Source = h.Source
+		r.Gates = append(r.Gates, alloc)
+	}
+	return problems
 }
 
 // gateAlloc builds a GateAllocation for the binding that will run the gate.

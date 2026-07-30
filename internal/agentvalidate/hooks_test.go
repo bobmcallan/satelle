@@ -1,0 +1,239 @@
+package agentvalidate
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/wfhook"
+)
+
+// wfWithHook builds a minimal workflow doc whose frontmatter carries the given
+// lines and whose DOT is a trivial valid graph.
+func wfWithHook(fm string) docindex.Doc {
+	return docindex.Doc{
+		Kind: "workflows", Name: "w",
+		Body: "---\nname: w\n" + fm + "---\n\n```dot\ndigraph w {\n  backlog [shape=Mdiamond]\n  done [shape=Msquare]\n  backlog -> done\n}\n```\n",
+	}
+}
+
+// healthyAgents is an agents layer whose reviewer is a real isolated read-only
+// binding — the shape a hook allocation is judged against.
+func healthyAgents() config.AgentsConfig {
+	return config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop", Role: config.RoleAgent},
+		Reviewer: config.AgentBinding{
+			Role:    config.RoleReviewer,
+			Command: agentcli.DefaultClaudeCommand,
+			Tools:   "Read,Grep,Glob",
+		},
+	}
+}
+
+// TestValidateSurfacesHookAllocations pins AC4's validate half: a declared hook
+// produces an inspectable allocation naming the operation, skill, section, that
+// section's effective model, and how it was declared — and the named section is
+// not then reported as an orphaned binding.
+func TestValidateSurfacesHookAllocations(t *testing.T) {
+	agents := healthyAgents()
+	agents.Agents = map[string]config.AgentBinding{
+		"strict-reviewer": {
+			Role:    config.RoleReviewer,
+			Command: agentcli.DefaultClaudeCommand,
+			Tools:   "Read,Grep,Glob",
+			Model:   "opus",
+		},
+	}
+	doc := wfWithHook("hooks:\n  - operation: create_review\n    skill: strict-create-review\n    agent: strict-reviewer\n")
+
+	r := Validate(agents, nil, []docindex.Doc{doc})
+	if !r.OK() {
+		t.Fatalf("healthy hook allocation must validate green: %v", r.Problems)
+	}
+	var found bool
+	for _, ga := range r.Gates {
+		if ga.Node != "hook:create_review" {
+			continue
+		}
+		found = true
+		if ga.Operation != wfhook.OpCreateReview || ga.Skill != "strict-create-review" ||
+			ga.Agent != "strict-reviewer" || ga.EffectiveModel != "opus" || ga.Source != wfhook.SourceHooks {
+			t.Errorf("hook allocation = %+v", ga)
+		}
+	}
+	if !found {
+		t.Fatalf("no hook allocation in %+v", r.Gates)
+	}
+	for _, w := range r.Warnings {
+		if strings.Contains(w, "orphaned") && strings.Contains(w, "strict-reviewer") {
+			t.Errorf("a binding a hook allocates must not be reported orphaned: %s", w)
+		}
+	}
+}
+
+// TestValidateShorthandHookAllocatesTheDefaultAgentWithProvenance pins AC2 at
+// the validation surface: the scalar form still resolves to [reviewer], but now
+// as a DECLARED allocation with its source recorded rather than an empty
+// selector nothing could inspect.
+func TestValidateShorthandHookAllocatesTheDefaultAgentWithProvenance(t *testing.T) {
+	doc := wfWithHook("create_review: satelle-story-create-review\n")
+	r := Validate(healthyAgents(), nil, []docindex.Doc{doc})
+	if !r.OK() {
+		t.Fatalf("the shorthand must stay green: %v", r.Problems)
+	}
+	for _, ga := range r.Gates {
+		if ga.Node == "hook:create_review" {
+			if ga.Agent != wfhook.DefaultAgent || ga.Source != wfhook.SourceShorthand {
+				t.Errorf("shorthand allocation = %+v", ga)
+			}
+			return
+		}
+	}
+	t.Fatalf("no hook allocation in %+v", r.Gates)
+}
+
+// TestValidateRefusesUnsafeHookAllocations pins AC5's allocation classes. Each
+// is refused BEFORE the hook is ever invoked, and each problem names the
+// workflow, the operation, and the offending section so the fix is unambiguous.
+func TestValidateRefusesUnsafeHookAllocations(t *testing.T) {
+	cases := []struct {
+		name   string
+		agents func() config.AgentsConfig
+		fm     string
+		want   string
+	}{
+		{
+			name:   "missing agent binding",
+			agents: healthyAgents,
+			fm:     "hooks:\n  - operation: create_review\n    skill: s\n    agent: nobody\n",
+			want:   "no [nobody] binding",
+		},
+		{
+			name: "non-reviewer role on a verdict hook",
+			agents: func() config.AgentsConfig {
+				a := healthyAgents()
+				a.Agents = map[string]config.AgentBinding{
+					"worker": {Role: config.RoleAgent, Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob"},
+				}
+				return a
+			},
+			fm:   "hooks:\n  - operation: create_review\n    skill: s\n    agent: worker\n",
+			want: "want role=reviewer",
+		},
+		{
+			name: "in-loop verdict binding",
+			agents: func() config.AgentsConfig {
+				a := healthyAgents()
+				a.Agents = map[string]config.AgentBinding{
+					"inloop-judge": {Role: config.RoleReviewer, Command: "in-loop"},
+				}
+				return a
+			},
+			fm:   "hooks:\n  - operation: create_review\n    skill: s\n    agent: inloop-judge\n",
+			want: "cannot produce an isolated verdict",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := Validate(c.agents(), nil, []docindex.Doc{wfWithHook(c.fm)})
+			if r.OK() {
+				t.Fatalf("want a refusal for %s", c.name)
+			}
+			joined := strings.Join(r.Problems, "\n")
+			if !strings.Contains(joined, c.want) {
+				t.Errorf("problems should mention %q: %v", c.want, r.Problems)
+			}
+			for _, want := range []string{`workflow "w"`, "hook create_review"} {
+				if !strings.Contains(joined, want) {
+					t.Errorf("problems should name %q: %v", want, r.Problems)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateChecksHooksEvenWhenTheDotDoesNotParse pins the ordering: hooks are
+// FRONTMATTER, so an unparseable DOT block must not hide a broken allocation.
+func TestValidateChecksHooksEvenWhenTheDotDoesNotParse(t *testing.T) {
+	doc := docindex.Doc{
+		Kind: "workflows", Name: "w",
+		Body: "---\nname: w\nhooks:\n  - operation: create_review\n    skill: s\n    agent: nobody\n---\n\nno dot block here\n",
+	}
+	r := Validate(healthyAgents(), nil, []docindex.Doc{doc})
+	if r.OK() || !strings.Contains(strings.Join(r.Problems, "\n"), "nobody") {
+		t.Errorf("a hook must be checked independently of the DOT: %v", r.Problems)
+	}
+}
+
+// TestValidateHookCeilingIsOwnedByTheBindingCheck pins the severity split this
+// package settled on, applied to a hook's section. checkBinding is the single
+// owner of the reviewer permission ceiling: a PROVABLE escape (a Codex danger
+// sandbox) is a hard problem, while a merely unexpressed ceiling stays a warning
+// because ReadOnly is a heuristic. checkHooks deliberately does not re-decide it
+// — re-checking the same heuristic at a harsher severity would hard-fail every
+// repo whose reviewer template the heuristic cannot classify.
+func TestValidateHookCeilingIsOwnedByTheBindingCheck(t *testing.T) {
+	doc := wfWithHook("hooks:\n  - operation: create_review\n    skill: s\n    agent: judge\n")
+
+	// Provable escape → hard problem, naming the section the hook allocates.
+	danger := healthyAgents()
+	danger.Agents = map[string]config.AgentBinding{
+		"judge": {Role: config.RoleReviewer, Command: "codex exec -s danger-full-access {system}"},
+	}
+	r := Validate(danger, nil, []docindex.Doc{doc})
+	if r.OK() {
+		t.Fatal("a hook binding that erases its sandbox ceiling must be refused")
+	}
+	if joined := strings.Join(r.Problems, "\n"); !strings.Contains(joined, "judge") || !strings.Contains(joined, "danger-full-access") {
+		t.Errorf("problem should name the section and the escape: %v", r.Problems)
+	}
+
+	// Unexpressed ceiling → warning, not a hard failure.
+	loose := healthyAgents()
+	loose.Agents = map[string]config.AgentBinding{
+		"judge": {
+			Role:    config.RoleReviewer,
+			Command: "claude -p --append-system-prompt {system} --allowedTools {tools}",
+			Tools:   "Read,Grep,Glob",
+		},
+	}
+	lr := Validate(loose, nil, []docindex.Doc{doc})
+	if !lr.OK() {
+		t.Fatalf("a heuristically-unexpressed ceiling must stay advisory: %v", lr.Problems)
+	}
+	if !strings.Contains(strings.Join(lr.Warnings, "\n"), "read-only ceiling") {
+		t.Errorf("it must still WARN: %v", lr.Warnings)
+	}
+}
+
+// TestValidateHookAllocationResolvesThroughAProfile ties AC1 to sty_c7dfeedf: a
+// hook allocated to a binding that resolves through a machine-wide profile is
+// checked and reported on the RESOLVED binding.
+func TestValidateHookAllocationResolvesThroughAProfile(t *testing.T) {
+	global := catalog(t, `
+[profiles.judge-profile]
+role    = "reviewer"
+command = "claude -p --disallowedTools Write,Edit --append-system-prompt {system}"
+tools   = "Read,Grep,Glob"
+model   = "opus"
+`)
+	repo := healthyAgents()
+	repo.Agents = map[string]config.AgentBinding{"judge": {Profile: "judge-profile"}}
+	doc := wfWithHook("hooks:\n  - operation: create_review\n    skill: s\n    agent: judge\n")
+
+	r := ValidateEffective(repo, global, nil, []docindex.Doc{doc})
+	if !r.OK() {
+		t.Fatalf("a profile-resolved hook binding must validate green: %v", r.Problems)
+	}
+	for _, ga := range r.Gates {
+		if ga.Node == "hook:create_review" {
+			if ga.Agent != "judge" || ga.EffectiveModel != "opus" {
+				t.Errorf("the allocation must report the RESOLVED binding: %+v", ga)
+			}
+			return
+		}
+	}
+	t.Fatalf("no hook allocation in %+v", r.Gates)
+}

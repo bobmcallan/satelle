@@ -1,3 +1,21 @@
+## [0.0.366] - 2026-07-30
+
+### Added
+- **Lifecycle hooks are declarable substrate.** A workflow can now declare an operation that fires OUTSIDE the status graph — story creation today — naming both the skill that judges it and the logical agent that runs that skill. Previously create review resolved a skill from `create_review:` frontmatter and ran it against an EMPTY agent selector, which the engine silently resolved to `[reviewer]`; nothing in the substrate could inspect or change that allocation, and nothing validated it (sty_ede16f51)
+- One generic grammar, in the new stdlib-only `internal/wfhook`: `hooks:` with `operation`, `skill`, and an optional `agent`. Go's entire per-operation knowledge is a table of which operations exist and which yield a verdict — no provider, model, effort, command, or tool grant appears anywhere on the hook path, and keys like `model:` on a hook are refused. A future lifecycle operation is a name in that table plus its call site, not a new parser, resolver, or validator (sty_ede16f51)
+- `satelle workflow show <name>` renders one workflow's identity, graph shape, and each hook's full allocation: operation, skill, logical agent, the machine-wide profile or local binding it resolves through, interface, model, effort, permission ceiling, and source files. Read-only and deliberately tolerant — an unresolvable allocation is marked UNRESOLVED rather than failing, because diagnosing a misconfiguration is what the command is for (sty_ede16f51)
+- `satelle agent validate` prints a `HOOK` allocation line per declared hook, carrying how it was declared, and no longer reports a binding a hook allocates as orphaned (sty_ede16f51)
+- `satelle help workflows` gains a "Four things a workflow governs" section distinguishing transition nodes/edges, lifecycle hooks, deterministic structure checks, and agent judgments — where each is declared, when it fires, and who decides (sty_ede16f51)
+
+### Changed
+- The scalar `create_review: <skill>` form remains fully supported as the documented shorthand: it resolves to the same hook with `agent = reviewer`, but as a DECLARED default with provenance rather than an empty string falling through `gateBinding`. Every shipped workflow — this repo's five and the four embedded defaults — is left on the shorthand, which is the compatibility proof (sty_ede16f51)
+- Validation refuses a bad hook before it can run, split by ownership so neither check reports the other's findings twice: `workflow validate` owns the DECLARATION (unresolved skill, unknown operation, missing skill, an operation declared both ways), `agent validate` owns the ALLOCATION (missing binding, non-reviewer role on a verdict hook, an in-loop binding that cannot produce an isolated verdict). `satelle agent validate` runs both (sty_ede16f51)
+- `satelle init` seeds hook skills through the same parser, so a `hooks:`-declared skill travels with the default solution — the previous scalar-only read would have missed it (sty_ede16f51)
+
+### Fixed
+- Hooks are checked even when a workflow's DOT block does not parse. They are frontmatter, so an unparseable graph must not hide a broken allocation (sty_ede16f51)
+- The reviewer permission ceiling is judged in exactly one place. A first cut re-checked it per hook, which turned an intentionally-advisory heuristic into a hard failure and rejected every workflow's shorthand hook in any repo whose reviewer template the heuristic cannot classify. `checkBinding` remains the single owner, keeping its settled severity split: a provable escape (a Codex danger sandbox) is a hard problem, an unexpressed ceiling stays a warning (sty_ede16f51)
+
 ## [0.0.365] - 2026-07-30
 
 ### Added

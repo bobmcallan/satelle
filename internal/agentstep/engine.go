@@ -46,6 +46,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
+	"github.com/bobmcallan/satelle/internal/wfhook"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -1477,14 +1478,6 @@ type reviewerRef struct {
 // item at creation. Embedded by default; overridable under .satelle/skills.
 const structureSkill = "satelle-story-review"
 
-// createReviewKey is the workflow-frontmatter key that DECLARES the opt-in
-// content/alignment reviewer run after the structural check at creation
-// (sty_b031b29f). The binding lives on the active workflow — configuration, not a
-// hardcoded filename — so a repo wires create review by declaring it on the
-// workflow that governs the story's category. Absent, creation is
-// deterministic-only.
-const createReviewKey = "create_review"
-
 // summariserSkill recaps an enacted transition. Embedded by default; overridable.
 const summariserSkill = "satelle-step-summary"
 
@@ -1668,12 +1661,12 @@ func (g *Engine) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb
 	if problems := structure.Story(draft.Title, draft.Body, draft.AcceptanceCriteria, draft.Category); len(problems) > 0 {
 		return verb.GateDecision{Gated: true, Accept: false, Skill: structureSkill, Notes: strings.Join(problems, "; ")}, nil
 	}
-	// 2. Optional content/alignment review — the reviewer skill is DECLARED by the
-	// active workflow's `create_review` frontmatter (selected by the draft's
-	// category), NOT a hardcoded filename. Absent a declaration (or the skill does
-	// not resolve), creation stays deterministic-only.
-	skill := g.createReviewSkillFor(ctx, draft.Category)
-	if skill == "" {
+	// 2. Optional content/alignment review — the reviewer skill AND the logical
+	// agent that runs it are DECLARED by the active workflow's create-review hook
+	// (selected by the draft's category), not hardcoded. Absent a declaration (or
+	// the skill does not resolve), creation stays deterministic-only.
+	hook, declared := g.createReviewHook(ctx, draft.Category)
+	if !declared || hook.Skill == "" {
 		return verb.GateDecision{Gated: true, Accept: true, Skill: structureSkill}, nil
 	}
 	draftItem := workitem.Item{
@@ -1685,7 +1678,10 @@ func (g *Engine) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb
 		Tags:               draft.Tags,
 		Status:             "backlog",
 	}
-	dec, err := g.runReviewer(ctx, draftItem, "backlog", skill, "")
+	// The hook's DECLARED agent, not an empty selector: an omitted agent is
+	// wfhook.DefaultAgent ("reviewer") — the same binding as before, but chosen by
+	// the substrate and inspectable, rather than fallen into inside gateBinding.
+	dec, err := g.runReviewer(ctx, draftItem, "backlog", hook.Skill, hook.Agent)
 	if err != nil {
 		return verb.GateDecision{}, err
 	}
@@ -1697,16 +1693,23 @@ func (g *Engine) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb
 	return verb.GateDecision{Gated: true, Accept: true, Skill: structureSkill}, nil
 }
 
-// createReviewSkillFor resolves the content/alignment create reviewer DECLARED by
-// the workflow active for the category — its `create_review` frontmatter. Empty
-// when no workflow governs the category or none is declared, so creation stays
-// deterministic-only (the binding is configuration, never a hardcoded filename).
-func (g *Engine) createReviewSkillFor(ctx context.Context, category string) string {
+// createReviewHook resolves the create-review LIFECYCLE HOOK declared by the
+// workflow active for the category — its `hooks:` entry or the `create_review:`
+// shorthand. Not declared when no workflow governs the category or the workflow
+// declares none, so creation stays deterministic-only (the binding is
+// configuration, never a hardcoded filename).
+//
+// The hook carries both the skill and the logical agent; the engine does not
+// choose either. Declaration DEFECTS (an unknown operation, a missing skill) are
+// deliberately not judged here — that is validation's job, surfaced by
+// `satelle agent validate` / `satelle workflow validate` before anything runs.
+// The engine keeps only its mechanism-level refusals at dispatch (role, in-loop).
+func (g *Engine) createReviewHook(ctx context.Context, category string) (wfhook.Hook, bool) {
 	doc, err := g.activeWorkflow(ctx, category)
 	if err != nil {
-		return ""
+		return wfhook.Hook{}, false
 	}
-	return frontmatterScalar(doc.Body, createReviewKey)
+	return wfhook.For(doc.Body, wfhook.OpCreateReview)
 }
 
 // reviewerSkills resolves the ordered reviewer skills governing the (from→to)
@@ -1904,12 +1907,20 @@ func WorkflowConsistency(workflows []docindex.Doc, resolve func(skill string) bo
 	// (2) Referenced skills that do not resolve.
 	if resolve != nil {
 		for _, w := range workflows {
-			// A declared create_review binding must resolve too (sty_51ad783b):
-			// an unresolved one silently degrades creation to deterministic-only,
-			// which is exactly the misconfiguration to surface here.
-			if cr := frontmatterScalar(w.Body, createReviewKey); cr != "" && !resolve(cr) {
-				problems = append(problems, fmt.Sprintf(
-					"workflow %s declares create_review %q which does not resolve in the substrate", w.Name, cr))
+			// A declared lifecycle hook's skill must resolve too (sty_51ad783b,
+			// generalised in sty_ede16f51): an unresolved one silently degrades the
+			// operation, which is exactly the misconfiguration to surface here.
+			// Declaration defects (unknown operation, malformed entry) surface with
+			// it, so one check covers the whole hook grammar.
+			hooks, hookProblems := wfhook.Parse(w.Body)
+			for _, p := range hookProblems {
+				problems = append(problems, fmt.Sprintf("workflow %s %s", w.Name, p))
+			}
+			for _, h := range hooks {
+				if !resolve(h.Skill) {
+					problems = append(problems, fmt.Sprintf(
+						"workflow %s declares %s %q which does not resolve in the substrate", w.Name, h.Operation, h.Skill))
+				}
 			}
 			spec, ok := wfdot.Parse(w.Body)
 			if !ok {
@@ -1977,26 +1988,6 @@ func (g *Engine) runCheck(ctx context.Context, skill, command, payload string) v
 // sty_6830e78e). Empty when the skill carries no check (an LLM reviewer).
 func skillCheck(body string) string {
 	return structure.CheckCommand(body)
-}
-
-// frontmatterScalar returns a single-line scalar value for key from a markdown
-// frontmatter block (quotes trimmed), or "" when absent. Used to read a gate's
-// `check:` command.
-func frontmatterScalar(body, key string) string {
-	lines := strings.Split(body, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		return ""
-	}
-	for j := 1; j < len(lines); j++ {
-		t := strings.TrimSpace(lines[j])
-		if t == "---" {
-			return ""
-		}
-		if strings.HasPrefix(t, key+":") {
-			return strings.Trim(strings.TrimSpace(strings.TrimPrefix(t, key+":")), `"'`)
-		}
-	}
-	return ""
 }
 
 // tailLines returns the last n non-trailing-empty lines of s, so a long check log
