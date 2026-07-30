@@ -50,10 +50,20 @@ integration: build
 judgment:
 	go test -tags llm ./tests/llm/...
 
-# Opt-in live comparison of the configured Claude command planner and Grok ACP
-# planner. Costs tokens and writes evidence under tests/plannerbench/out/.
+# Opt-in live planner study: the controlled matrix declared in
+# tests/plannerbench/study.json. Costs tokens and writes durable per-sample
+# evidence plus report.md under tests/plannerbench/out/. Bindings whose binary is
+# not on PATH are skipped with a recorded reason rather than dropped.
 planner-bench: build
-	SATELLE_BIN=$(CURDIR)/$(BIN) SATELLE_PLANNER_BENCH=1 go test -tags plannerbench ./tests/plannerbench/ -count=1 -timeout 60m -v
+	SATELLE_BIN=$(CURDIR)/$(BIN) SATELLE_PLANNER_BENCH=1 go test -tags plannerbench ./tests/plannerbench/ -count=1 -timeout 90m -v
+
+# planner-report re-renders report.md/report.json from the durable run records
+# already under tests/plannerbench/out/runs. Pure and token-free: same records in,
+# same report out. Use it after an interrupted study, or to re-read a study
+# without paying for it again.
+.PHONY: planner-report
+planner-report:
+	SATELLE_PLANNER_REPORT=1 go test -tags plannerbench ./tests/plannerbench/ -run TestRegenerateReportFromDurableEvidence -count=1 -v
 
 # Local Codex hook smoke (sty_71491143). Never part of CI. It uses the existing
 # Codex CLI login/configuration and clearly skips when Codex is unavailable.
