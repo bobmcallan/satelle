@@ -1,3 +1,13 @@
+## [0.0.359] - 2026-07-30
+
+### Added
+- `satelle status --line` renders one statusline row — a live server link plus the engaged `<story_id>::<stage>` — for a terminal status area. It is strictly read-only: the engaged story comes from the `Leases.List` seat lookup, never `satelle story seat`, which reaps stale leases (writes) and would thrash lease state under Claude's 300ms debounce. It never fails loudly: any error yields one degraded, well-formed line and exit 0, so a statusline can never show a stack trace (sty_4e6f0788)
+- `satelle agents install claude|all` now installs a `statusLine` entry into `.claude/settings.json` running that renderer. Claude allows exactly one statusLine and offers no composition, so a statusLine the operator already owns is left byte-for-byte, the install still succeeds, and the exact snippet to fold satelle's segment into their own script is printed instead. `satelle agents remove` prunes only a satelle-owned entry (sty_4e6f0788)
+- The link degrades honestly: it is a real OSC 8 hyperlink only on terminals known to render one (iTerm2, WezTerm, Kitty) and plain text everywhere else, so Terminal.app never receives raw escape bytes; and only a service that actually answers is linked at all — a dead one renders unlinked and says so (sty_4e6f0788)
+
+### Changed
+- Grok and Codex intentionally get no statusline, and the reason is now recorded in the tree (`satelle agents` help and the Claude statusline source): Grok has no scriptable statusline, and Codex's built-in `[tui].status_line` takes a fixed item list with no command backing. Both harnesses see the same facts through the SessionStart availability line (sty_4e6f0788)
+
 ## [0.0.358] - 2026-07-30
 
 ### Changed

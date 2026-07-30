@@ -136,10 +136,15 @@ func removeClaudeHooks(repoRoot string) (action, path, note string, err error) {
 		}
 		return "", path, "", err
 	}
-	if !strings.Contains(string(raw), "satelle-hook.sh") && !strings.Contains(string(raw), "satelle hook ") {
+	// Statusline (sty_4e6f0788) is satelle-owned content too, so its presence
+	// alone justifies a remove pass even when no hook entries remain. Stripped
+	// first, on the raw bytes, so a foreign statusLine survives untouched.
+	stripped, droppedLine := stripSatelleStatusLine(raw)
+	if !droppedLine &&
+		!strings.Contains(string(raw), "satelle-hook.sh") && !strings.Contains(string(raw), "satelle hook ") {
 		return "skipped", path, "no satelle-owned hook entries — left in place", nil
 	}
-	pruned, _, perr := pruneSatelleHookEntries(raw)
+	pruned, _, perr := pruneSatelleHookEntries(stripped)
 	if perr != nil {
 		return "skipped", path, "unparseable settings.json — left in place", nil
 	}

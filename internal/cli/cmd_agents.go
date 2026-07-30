@@ -7,6 +7,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -36,6 +37,16 @@ Ownership boundary: only satelle-owned artifacts (marker-bearing launchers and
 hook entries whose command references satelle-hook.sh / satelle hook) are
 created, updated, or removed. User-authored harness keys and non-satelle hooks
 are preserved. Install and remove are idempotent.
+
+Statusline (Claude only): the claude scaffold also carries a statusLine running
+"satelle status --line" — a live server link plus the engaged <story_id>::<stage>.
+Claude allows exactly one statusLine and offers no composition, so a statusLine
+you already own is left byte-for-byte and the install prints the snippet to fold
+satelle's segment into your own script instead. Grok and Codex get no statusline
+because neither can accept one: Grok has no scriptable statusline, and Codex's
+built-in [tui].status_line takes a fixed item list (model, cwd, git branch,
+context usage) with no command backing. Those harnesses see the same facts
+through the SessionStart availability line, which reaches all three.
 
 They do not install third-party packages globally, do not change
 ~/.satelle/config.toml [agent] cli, and do not edit any repo's agents.toml —
@@ -93,6 +104,12 @@ For selecting or validating the headless agent CLI, use satelle agent (singular)
 						return err
 					}
 					printScaffoldOutcome(out, "claude", ".claude/settings.json", added, updated, incomplete)
+					// Claude allows one statusLine and offers no composition, so a
+					// foreign one is left intact and the operator gets the snippet
+					// instead (sty_4e6f0788). Install still succeeds.
+					if notice := foreignStatusLineNotice(filepath.Join(repoRoot, ".claude", "settings.json")); notice != "" {
+						fmt.Fprintln(out, notice)
+					}
 				case "grok":
 					added, updated, incomplete, err := ensureGrokHooks(repoRoot)
 					if err != nil {

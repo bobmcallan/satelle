@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"text/tabwriter"
 
@@ -13,11 +14,27 @@ import (
 )
 
 func init() {
-	register(&cobra.Command{
+	var line bool
+	c := &cobra.Command{
 		Use:         "status",
 		Short:       "Show the local repo's config, database, and store counts",
 		Annotations: needsStore(),
+		// --line is the Claude statusline renderer (sty_4e6f0788). It must never
+		// fail loudly, so it does NOT go through the store bootstrap: openAppForCmd
+		// refuses on breaking drift or a missing agents layer, and a refusal there
+		// would put an error where the operator's status area should be. Defining
+		// PersistentPreRunE here overrides the root's for this command only —
+		// every other status invocation still opens the store exactly as before.
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if line {
+				return nil
+			}
+			return openAppForCmd(cmd)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if line {
+				return runStatusLine(os.Stdout)
+			}
 			a, err := appFrom(cmd)
 			if err != nil {
 				return err
@@ -79,7 +96,10 @@ func init() {
 			}
 			return w.Flush()
 		},
-	})
+	}
+	c.Flags().BoolVar(&line, "line", false,
+		"render one line for a terminal statusline: server link plus <story_id>::<stage> (read-only; always exits 0)")
+	register(c)
 }
 
 // runtimeResidueLine reports in-repo .satelle/stories when the runtime plane is

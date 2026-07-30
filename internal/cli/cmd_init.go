@@ -591,6 +591,11 @@ func buildClaudeHookSettings(repoRoot string) []byte {
 				}},
 			},
 		},
+		// Claude-only live statusline (sty_4e6f0788): server link + engaged
+		// <story_id>::<stage>. Grok has no scriptable statusline and Codex's
+		// [tui].status_line is a fixed item list with no command backing, so
+		// neither harness gets one — capability, not preference.
+		"statusLine": claudeStatusLine(),
 	}
 	b, _ := json.MarshalIndent(doc, "", "  ")
 	return append(b, '\n')
@@ -1112,6 +1117,15 @@ func ensureClaudeHooks(repoRoot string) (created bool, updated []string, incompl
 		updated, incomplete, herr := healExistingHookFile(path, "claude", repoRoot)
 		if herr != nil {
 			return false, nil, nil, herr
+		}
+		// Statusline (sty_4e6f0788) is a Claude-only top-level key, so it heals
+		// here rather than in the shared hook path. Fresh creation covers new
+		// repos; this covers the ones that already had a settings.json. A foreign
+		// statusLine is left alone and reported by the caller, never replaced.
+		if note, serr := ensureClaudeStatusLine(path); serr != nil {
+			return false, nil, nil, serr
+		} else if note != "" {
+			updated = append(updated, note)
 		}
 		return false, updated, incomplete, nil
 	} else if !os.IsNotExist(err) {
