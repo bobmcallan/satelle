@@ -221,6 +221,74 @@ func RoleInferred(b AgentBinding) bool {
 	return r != RoleReviewer && r != RoleAgent
 }
 
+// GrantsContextChannel reports whether a binding's tool grant gives a DISPATCHED
+// agent a context channel — the pull-context contract (sty_47d31300). A dispatched
+// performer starts with no conversation history and reconstructs its context by
+// PULLING the story, its documents, and the ledger. Two channels satisfy it
+// (sty_565a0202):
+//
+//  1. satelle CLI via shell: `Bash(satelle…)`, broad `Bash`/`Bash(*)`, or `*`.
+//  2. Disk reads of story documents under the home-keyed runtime plane
+//     (~/.satelle/<repo-key>/stories/<id>/) via the grok-native `read_file`
+//     tool (used when headless Grok cannot enable run_terminal_command).
+//     The in-repo `.satelle/stories/` path is obsolete (sty_58fa970e).
+//
+// A grant with neither channel leaves the agent silently context-starved, so
+// dispatch refuses it loudly. Claude-only `Read` (without Bash) is intentionally
+// NOT accepted: the Claude pull path is the satelle CLI, not a disk-first rubric.
+//
+// REVIEWERS need no channel — satelle injects the attachments into the transition
+// payload's docs array and reviewer bindings never reach dispatch. A shell grant
+// on a reviewer is therefore unused capability, not a requirement.
+//
+// This is the SINGLE owner of the rule (sty_87c0ef37): the runtime dispatch
+// refusal and `satelle agent validate` both call it, so they cannot disagree
+// about any grant string. It carries its own quote-stripping tokenizer rather
+// than reusing splitList so that a quoted TOML token ("Bash(satelle:*)") is
+// judged identically on both paths.
+func GrantsContextChannel(tools string) bool {
+	for _, raw := range strings.Split(tools, ",") {
+		t := strings.Trim(strings.TrimSpace(raw), `"'`)
+		if t == "" {
+			continue
+		}
+		if t == "*" || t == "Bash" || t == "Bash(*)" || strings.HasPrefix(t, "Bash(satelle") {
+			return true
+		}
+		if t == "read_file" {
+			return true
+		}
+	}
+	return false
+}
+
+// ShellGrantToken returns the first token in a tool grant that confers shell
+// access, or "" when none does. It is a REPORTING helper — it names which token
+// a finding is about — and is deliberately not the channel decision, which
+// GrantsContextChannel alone owns.
+func ShellGrantToken(tools string) string {
+	for _, raw := range strings.Split(tools, ",") {
+		t := strings.Trim(strings.TrimSpace(raw), `"'`)
+		if t == "" {
+			continue
+		}
+		if t == "*" || t == "Bash" || t == "Bash(*)" || strings.HasPrefix(t, "Bash(") {
+			return t
+		}
+	}
+	return ""
+}
+
+// IsInLoopCommand reports whether a binding command is the in-loop preset (single
+// token "in-loop", case-insensitive). An in-loop binding is performed by the
+// driving session and never dispatched as a child, so it needs no context
+// channel and cannot produce an isolated verdict. Empty command is NOT in-loop:
+// tests and bootstrap leave command blank and wire a runner directly.
+func IsInLoopCommand(cmd string) bool {
+	fields := strings.Fields(strings.TrimSpace(cmd))
+	return len(fields) == 1 && strings.EqualFold(fields[0], "in-loop")
+}
+
 // ResolvedPrinciples returns the principles selector: Principles when set,
 // else session. The deprecated inject_principles field is no longer a runtime
 // fallback (breaking surface: run `satelle init` to MigrateAgents).

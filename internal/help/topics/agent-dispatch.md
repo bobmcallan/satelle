@@ -59,15 +59,39 @@ names *who*. Legacy DOT `model=` is superseded (warning + strip on refresh).
 See the satelle-dot-standard principle.
 
 
+### What each role needs
+
+The two roles get their context by opposite routes, so they need opposite grants.
+
+- **Performers** — a spine `agent=<name>` node, or `on_enter_agent=<name>` —
+  are **dispatched** as a child process with **no conversation history**. They
+  reconstruct context by *pulling* the story, its documents, and the ledger, so
+  the grant must carry a **context channel**: either `Bash(satelle:*)` (a broad
+  `Bash`, `Bash(*)` or `*` also qualifies) for the read-only satelle CLI, **or**
+  `read_file` for disk reads under `~/.satelle/<repo-key>/stories/<id>/`.
+  Claude-only `Read` does **not** qualify — the Claude pull path is the CLI, not
+  a disk-first rubric.
+- **Reviewers** (`role = "reviewer"`, on gated edges and `on=` nodes) need **no
+  channel**: satelle *pushes* the attachments into the transition payload's
+  `docs` array, and reviewer bindings never reach the dispatch path that
+  consults a grant. A shell grant on a reviewer is capability that is never
+  exercised — it only widens the ceiling.
+
+`satelle agent validate` judges both **before** you engage anything: a performer
+with no channel is an **error** (non-zero exit — dispatch would refuse it later
+anyway), and an unused reviewer shell grant is a **warning** (exit 0 — keeping
+it is the repo's call). One predicate decides the channel question for both the
+runtime refusal and validate, so they cannot disagree.
+
 **Refusals (fail loud, never silent):**
 
 - A node names `agent=<name>` but `.satelle/agents.toml` defines no `[<name>]`
   binding → the transition is **refused** (there is no silent in-loop fallback).
-- A binding's `tools` grant does not include the read-only satelle CLI
-  (`Bash(satelle:*)`, or a broad `Bash` / `*`) → the dispatch is **refused**,
-  because the agent could not pull its context (below).
+- A dispatched binding's `tools` grant carries no context channel (see *What
+  each role needs* above) → the dispatch is **refused**, because the agent could
+  not pull its context.
 - A binding whose `command` is `in-loop` keeps the step with the orchestrating
-  session — not dispatched.
+  session — not dispatched, and so exempt from the channel requirement.
 
 ## Control plane in vs agent I/O out
 
@@ -484,7 +508,8 @@ substrate, never in a harness's agent directory.
    [architect]
    command = "grok -p {payload} --system-prompt-override {system} --tools {tools} --always-approve --output-format plain --max-turns 8 --no-subagents"
    tools   = "read_file,grep,list_dir,run_terminal_command"  # Grok-native tool ids
-   # note: satelle's Bash(satelle:*) grant check still expects Claude-shaped tools for dispatch
+   # `read_file` IS a context channel (disk reads under ~/.satelle/<repo-key>/
+   # stories/<id>/), so a Grok-native grant needs no Bash(satelle:*) to dispatch.
    ```
 
 2. **Allocate a workflow node** to it in the DOT:

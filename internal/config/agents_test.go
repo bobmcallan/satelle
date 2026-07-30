@@ -442,3 +442,81 @@ func TestLoadAgentsEffortAndSecondaryFields(t *testing.T) {
 		t.Fatalf("secondary = %q", ac.Reviewer.Secondary)
 	}
 }
+
+// TestGrantsContextChannel covers the pull-context predicate that BOTH the
+// runtime dispatch refusal (internal/agentstep) and `satelle agent validate`
+// consult (sty_87c0ef37). It carries the cases the agentstep table asserted
+// before the predicate moved here, so the two paths cannot drift apart.
+func TestGrantsContextChannel(t *testing.T) {
+	cases := []struct {
+		tools string
+		want  bool
+	}{
+		{"", false},
+		{"Read,Grep,Glob", false}, // Claude-only Read is deliberately NOT a channel
+		{"write,search_replace", false},
+		{"grep,list_dir,write", false},
+		{"Bash(satelle:*)", true},
+		{"Read,Bash(satelle:*)", true},
+		{"Bash", true},
+		{"Bash(*)", true},
+		{"*", true},
+		{"read_file", true},
+		{"read_file,write,search_replace", true},
+		// Quoted TOML tokens must be judged identically to bare ones — the reason
+		// the predicate carries its own quote-stripping tokenizer.
+		{`"Bash(satelle:*)"`, true},
+		{` 'read_file' , grep `, true},
+		{`"Read","Grep"`, false},
+	}
+	for _, tc := range cases {
+		if got := GrantsContextChannel(tc.tools); got != tc.want {
+			t.Errorf("GrantsContextChannel(%q) = %v, want %v", tc.tools, got, tc.want)
+		}
+	}
+}
+
+// TestShellGrantToken names the token a reviewer finding is about; it is a
+// reporting helper, never the channel decision.
+func TestShellGrantToken(t *testing.T) {
+	cases := []struct {
+		tools string
+		want  string
+	}{
+		{"read_file,grep,list_dir", ""},
+		{"Read,Grep,Glob", ""},
+		{"", ""},
+		{"Read,Bash(satelle:*)", "Bash(satelle:*)"},
+		{"Bash", "Bash"},
+		{"Bash(*)", "Bash(*)"},
+		{"*", "*"},
+		{"Bash(go test)", "Bash(go test)"}, // any shell grant, not just satelle
+		{`"Bash(satelle:*)"`, "Bash(satelle:*)"},
+	}
+	for _, tc := range cases {
+		if got := ShellGrantToken(tc.tools); got != tc.want {
+			t.Errorf("ShellGrantToken(%q) = %q, want %q", tc.tools, got, tc.want)
+		}
+	}
+}
+
+// TestIsInLoopCommand — an in-loop binding is performed by the driving session
+// and never dispatched, so it is exempt from the context-channel requirement.
+func TestIsInLoopCommand(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want bool
+	}{
+		{"in-loop", true},
+		{"  in-loop  ", true},
+		{"IN-LOOP", true},
+		{"", false}, // blank is NOT in-loop: bootstrap wires a runner directly
+		{"claude -p", false},
+		{"in-loop extra", false},
+	}
+	for _, tc := range cases {
+		if got := IsInLoopCommand(tc.cmd); got != tc.want {
+			t.Errorf("IsInLoopCommand(%q) = %v, want %v", tc.cmd, got, tc.want)
+		}
+	}
+}

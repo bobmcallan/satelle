@@ -165,7 +165,7 @@ func (g *Engine) runArtifactAttempts(
 					return withUsage(lastResult, totalUsage), nil, fmt.Errorf(
 						"attempt_escalate_binding %q has role=reviewer; quality escalation requires a performer", section)
 				}
-				if !grantsSatelleCLI(binding.Tools) {
+				if !config.GrantsContextChannel(binding.Tools) {
 					return withUsage(lastResult, totalUsage), nil, fmt.Errorf(
 						"attempt_escalate_binding %q has no read-only context channel", section)
 				}

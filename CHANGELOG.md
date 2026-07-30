@@ -1,3 +1,18 @@
+## [0.0.360] - 2026-07-30
+
+### Added
+- `satelle agent validate` now JUDGES the role-vs-grant contract it previously only displayed. A binding a workflow allocates to a DISPATCHED performer (a spine `agent=<name>` node, or `on_enter_agent=`) whose `tools` grant carries no context channel is now an ERROR naming the binding, the allocating node, and both fixes — surfaced before a story is engaged, instead of as a dispatch refusal mid-transition (sty_87c0ef37)
+- A `role = "reviewer"` binding that grants shell is now a WARNING (exit 0). Reviewers are fed their documents in the transition payload and never reach the dispatch path that consults a grant, so the shell is capability that is never exercised. Stated as the mechanical fact — an unused grant — not as a prohibition; whether a repo keeps it stays the repo's call (sty_87c0ef37)
+- `satelle help agent-dispatch` states the contract positively and once, under "What each role needs": performers PULL their context and so need one of two channels (`Bash(satelle:*)` or `read_file`); reviewers are PUSHED theirs and need none. Previously the rule was only inferable from a refusal message you had to trigger first (sty_87c0ef37)
+
+### Changed
+- One predicate now owns "does this grant carry a context channel": `config.GrantsContextChannel`. The private `agentstep.grantsSatelleCLI` is deleted and its three dispatch call sites retargeted, so the runtime refusal and the validate error cannot disagree about any grant string. It carries its own quote-stripping tokenizer, so a quoted TOML token is judged identically on both paths (sty_87c0ef37)
+- `agentstep.isInLoopCommand` likewise folded into `config.IsInLoopCommand` rather than left as a second copy alongside it (sty_87c0ef37)
+- Engagement now refuses one transition EARLIER for an under-granted performer. `agentvalidate` is the shared authority for `satelle agent validate`, `satelle init`, and leaving the workflow entry state, so a workflow allocating a performer whose grant has no context channel is refused at engage rather than at the dispatch it protects — no agent is spawned. Same condition, same predicate, reported sooner (sty_87c0ef37)
+
+### Fixed
+- The `agent-dispatch` help topic no longer claims satelle's grant check "expects Claude-shaped tools for dispatch" — that contradicted `read_file` being an accepted channel, and would have sent a Grok-native repo hunting for a `Bash(satelle:*)` it does not need (sty_87c0ef37)
+
 ## [0.0.359] - 2026-07-30
 
 ### Added

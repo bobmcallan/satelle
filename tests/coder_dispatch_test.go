@@ -265,12 +265,26 @@ func TestCoderDispatchAcceptsGrokReadFileChannel(t *testing.T) {
 	out2 := mustRun(t, testBin, repo2, "story", "create", "--category", "feature",
 		"--title", "Channel-less coder", "--body", "must refuse", "--acceptance", "1. refused")
 	id2 := extractID(out2, "sty_")
-	mustRun(t, testBin, repo2, "story", "set", id2, "--status", "plan")
-	got, err := run(t, testBin, repo2, "story", "set", id2, "--status", "in_progress")
+	// The refusal now lands at ENGAGEMENT, one transition EARLIER than the
+	// dispatch it protects (sty_87c0ef37): agentvalidate is the shared authority
+	// for `agent validate`, `init`, and leaving the workflow entry state, so a
+	// performer allocation with no context channel is refused before any agent is
+	// spawned. Previously this repo engaged cleanly and only failed later, at the
+	// in_progress dispatch. Both points name the same condition via the same
+	// predicate, so this is the same guarantee reported sooner.
+	got, err := run(t, testBin, repo2, "story", "set", id2, "--status", "plan")
 	if err == nil {
-		t.Fatalf("channel-less grant must refuse, got ok:\n%s", got)
+		t.Fatalf("channel-less grant must refuse at engagement, got ok:\n%s", got)
 	}
 	if !strings.Contains(got, "context channel") {
 		t.Errorf("refusal should name context channel, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Bash(satelle:*)") || !strings.Contains(got, "read_file") {
+		t.Errorf("refusal should name BOTH fixes, got:\n%s", got)
+	}
+	// The stub must never have run — refusing early is only worth anything if no
+	// agent was spawned.
+	if _, err := os.ReadFile(filepath.Join(repo2, ".satelle", "coder-readfile-payload.json")); err == nil {
+		t.Error("channel-less coder must not be dispatched")
 	}
 }

@@ -42,6 +42,11 @@ type Grant struct {
 	Principles        string // resolved principles selector
 	RoleInferred      bool   // true when role was not declared in agents.toml
 	Notes             string // non-secret notes (e.g. env key names, command ceiling hints)
+	// ContextChannel reports whether the grant carries a pull-context channel —
+	// what a DISPATCHED performer needs to reconstruct its context, and what a
+	// reviewer never uses (sty_87c0ef37). Inspectable so the fact is visible
+	// without re-deriving it from Tools.
+	ContextChannel bool
 }
 
 // GateAllocation is one workflow gate/node's resolved binding (sty_a476a2f8).
@@ -182,18 +187,24 @@ func Validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 							"workflow %q node %q allocates agent=%s with role=reviewer on a performing node — use a gated edge or scoped on= node for judges",
 							doc.Name, st.Name, st.Agent))
 					}
+					if p := performerChannelProblem(doc.Name, st.Name, st.Agent, b); p != "" {
+						r.Problems = append(r.Problems, p)
+					}
 					r.Gates = append(r.Gates, gateAlloc(doc.Name, st.Name, st.Skill, st.Agent, b.Model))
 				}
 			}
 			// on_enter_agent=<name> one-shot entry performer (sty_5cabe26f) —
 			// orthogonal to agent=; must also resolve to a binding and counts
-			// as a use so the binding is not flagged orphaned.
+			// as a use so the binding is not flagged orphaned. It is DISPATCHED,
+			// so it carries the same context-channel requirement (sty_87c0ef37).
 			if st.OnEnterAgent != "" {
 				usedNamed[st.OnEnterAgent] = true
-				if _, ok := agents.NamedBinding(st.OnEnterAgent); !ok {
+				if b, ok := agents.NamedBinding(st.OnEnterAgent); !ok {
 					r.Problems = append(r.Problems, fmt.Sprintf(
 						"workflow %q node %q sets on_enter_agent=%s with no [%s] binding in agents.toml",
 						doc.Name, st.Name, st.OnEnterAgent, st.OnEnterAgent))
+				} else if p := performerChannelProblem(doc.Name, st.Name, st.OnEnterAgent, b); p != "" {
+					r.Problems = append(r.Problems, p)
 				}
 			}
 		}
@@ -256,6 +267,23 @@ func gateAlloc(workflow, node, skill, agent, bindingModel string) GateAllocation
 
 // checkBinding validates one binding and builds its Grant.
 // Returns hard problems and advisory warnings (role inference, role/path mismatch).
+// performerChannelProblem returns the finding for a binding a workflow allocates
+// to a DISPATCHED performing role whose grant carries no pull-context channel,
+// or "" when the allocation is sound (sty_87c0ef37).
+//
+// This is the same condition internal/agentstep refuses at dispatch time —
+// decided by the same config.GrantsContextChannel predicate — surfaced BEFORE a
+// story is engaged rather than mid-transition. An in-loop binding is performed by
+// the driving session with full context and is never dispatched, so it is exempt.
+func performerChannelProblem(workflow, node, section string, b config.AgentBinding) string {
+	if config.IsInLoopCommand(b.CommandTemplate()) || config.GrantsContextChannel(b.Tools) {
+		return ""
+	}
+	return fmt.Sprintf(
+		"workflow %q node %q allocates performer agent=%s whose agents.toml [%s] tools grant has no context channel — a dispatched agent starts with no history and must pull the story; add `Bash(satelle:*)` for the satelle CLI, or `read_file` for disk reads under ~/.satelle/<repo-key>/stories/<id>/. Dispatch will otherwise be refused",
+		workflow, node, section, section)
+}
+
 func checkBinding(section string, b config.AgentBinding) (Grant, []string, []string) {
 	var problems, warnings []string
 	cmd := b.CommandTemplate()
@@ -281,6 +309,7 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 		Role:              role,
 		Principles:        b.ResolvedPrinciples(),
 		RoleInferred:      config.RoleInferred(b),
+		ContextChannel:    config.GrantsContextChannel(b.Tools),
 	}
 	if g.RoleInferred {
 		warnings = append(warnings, fmt.Sprintf(
@@ -300,11 +329,21 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 	// In-loop reviewer cannot produce an isolated verdict — warn at validate;
 	// gate refuses loud at transition time (design §6.4).
 	if role == config.RoleReviewer {
-		fields0 := strings.Fields(cmd)
-		if len(fields0) == 1 && strings.EqualFold(fields0[0], "in-loop") {
+		if config.IsInLoopCommand(cmd) {
 			warnings = append(warnings, fmt.Sprintf(
 				"agents.toml [%s] is role=reviewer with command=in-loop — cannot produce an isolated verdict; gates will refuse",
 				section))
+		}
+		// Unused capability, not a prohibition (sty_87c0ef37): satelle injects a
+		// reviewer's documents into the transition payload's docs array, and
+		// reviewer bindings never reach the dispatch path that consults a context
+		// channel. A shell grant on a reviewer is therefore never exercised — it
+		// only widens the ceiling. Stated as the mechanical fact; whether a repo
+		// keeps it is the repo's call, so this is a warning, not a problem.
+		if tok := config.ShellGrantToken(b.Tools); tok != "" {
+			warnings = append(warnings, fmt.Sprintf(
+				"agents.toml [%s] is role=reviewer but grants shell (%s) — reviewers are fed their documents in the transition payload, so the grant is never used and only widens the ceiling",
+				section, tok))
 		}
 	}
 	if len(b.Env) > 0 {

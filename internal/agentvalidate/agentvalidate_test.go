@@ -14,7 +14,7 @@ func TestValidate_Healthy(t *testing.T) {
 		Executor: config.AgentBinding{Command: "in-loop"},
 		Reviewer: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: "read_file,grep,list_dir", Model: "grok-4.5"},
 		Agents: map[string]config.AgentBinding{
-			"planner": {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob", Model: "opus"},
+			"planner": {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob,Bash(satelle:*)", Model: "opus"},
 		},
 	}
 	wfs := []docindex.Doc{{
@@ -50,7 +50,7 @@ func TestValidate_GateBindingSection(t *testing.T) {
 		Executor: config.AgentBinding{Command: "in-loop"},
 		Reviewer: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: "read_file,grep,list_dir", Model: "grok-4.5"},
 		Agents: map[string]config.AgentBinding{
-			"planner":       {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob", Model: "sonnet", Role: "agent"},
+			"planner":       {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob,Bash(satelle:*)", Model: "sonnet", Role: "agent"},
 			"reviewer-deep": {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob", Model: "opus", Role: "reviewer"},
 		},
 	}
@@ -301,7 +301,7 @@ func TestValidate_PlaceholderHealthyUnchanged(t *testing.T) {
 		Executor: config.AgentBinding{Command: "in-loop"},
 		Reviewer: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: "read_file,grep,list_dir", Model: "grok-4.5"},
 		Agents: map[string]config.AgentBinding{
-			"planner": {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob", Model: "opus"},
+			"planner": {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob,Bash(satelle:*)", Model: "opus"},
 		},
 	}
 	r := Validate(agents, nil, nil)
@@ -674,4 +674,187 @@ func TestValidate_CodexReviewerSandboxHardReject(t *testing.T) {
 		// both messages would be a bug; allow only danger path
 		t.Errorf("danger and sandbox hard-reject must not both fire:\n%s", joined)
 	}
+}
+
+// channelWF is a minimal spine with ONE named performer node, used to vary only
+// the binding under test (sty_87c0ef37).
+const channelWF = "---\nname: w\n---\n```dot\ndigraph w {\n  backlog [shape=Mdiamond]\n  plan [agent=%s, prompt=\"@skill:plan\"]\n  done [shape=Msquare]\n  backlog -> plan -> done\n}\n```\n"
+
+// TestValidate_ContextChannelFindings is the AC1/AC2/AC7/AC8 matrix: a DISPATCHED
+// performer must carry a pull-context channel (error when it does not), and a
+// role=reviewer binding that grants shell holds capability it never uses
+// (warning). Correct configurations produce neither. Nothing dispatches an agent
+// — Validate is store-free and spawns no process.
+func TestValidate_ContextChannelFindings(t *testing.T) {
+	cases := []struct {
+		name        string
+		section     string // binding name allocated to the performing node
+		binding     config.AgentBinding
+		wantProblem bool
+		wantWarning bool
+	}{{
+		name:        "claude-only Read is not a channel — matches the runtime refusal",
+		section:     "planner",
+		binding:     config.AgentBinding{Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob", Model: "opus"},
+		wantProblem: true,
+	}, {
+		name:        "empty grant",
+		section:     "planner",
+		binding:     config.AgentBinding{Command: agentcli.DefaultClaudeCommand, Model: "opus"},
+		wantProblem: true,
+	}, {
+		name:    "satelle CLI channel",
+		section: "planner",
+		binding: config.AgentBinding{Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob,Bash(satelle:*)", Model: "opus"},
+	}, {
+		name:    "disk-read channel",
+		section: "planner",
+		binding: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: "read_file,grep,list_dir", Model: "grok-4.5"},
+	}, {
+		name:    "broad shell channel",
+		section: "planner",
+		binding: config.AgentBinding{Command: agentcli.DefaultClaudeCommand, Tools: "*", Model: "opus"},
+	}, {
+		name:    "in-loop performer is exempt — never dispatched",
+		section: "planner",
+		binding: config.AgentBinding{Command: "in-loop"},
+	}, {
+		// A repo-agnostic name (AC5): nothing keys off "planner".
+		name:        "arbitrary binding name is reported, not a known one",
+		section:     "architect",
+		binding:     config.AgentBinding{Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob", Model: "opus"},
+		wantProblem: true,
+	}}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			agents := config.AgentsConfig{
+				Executor: config.AgentBinding{Command: "in-loop"},
+				Reviewer: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: "read_file,grep,list_dir", Model: "grok-4.5"},
+				Agents:   map[string]config.AgentBinding{tc.section: tc.binding},
+			}
+			wfs := []docindex.Doc{{Kind: "workflows", Name: "w",
+				Body: strings.Replace(channelWF, "%s", tc.section, 1)}}
+			r := Validate(agents, nil, wfs)
+
+			got := findingWith(r.Problems, "no context channel")
+			if tc.wantProblem && got == "" {
+				t.Fatalf("want context-channel problem, got problems=%v", r.Problems)
+			}
+			if !tc.wantProblem && got != "" {
+				t.Fatalf("unexpected context-channel problem: %s", got)
+			}
+			if tc.wantProblem {
+				if !strings.Contains(got, tc.section) {
+					t.Errorf("problem must name the binding %q: %s", tc.section, got)
+				}
+				if !strings.Contains(got, "Bash(satelle:*)") || !strings.Contains(got, "read_file") {
+					t.Errorf("problem must name BOTH fixes: %s", got)
+				}
+				if !strings.Contains(got, `node "plan"`) {
+					t.Errorf("problem must name the allocating node: %s", got)
+				}
+				if r.OK() {
+					t.Error("a missing context channel must make the report not OK (non-zero exit)")
+				}
+			}
+		})
+	}
+}
+
+// TestValidate_ReviewerShellGrantIsUnusedCapability — AC2/AC4: reviewers are fed
+// their documents in the transition payload, so a shell grant is never consulted.
+// Reported as a WARNING (report stays OK → exit 0) because keeping it is the
+// repo's call; it is a statement of fact, not a prohibition.
+func TestValidate_ReviewerShellGrantIsUnusedCapability(t *testing.T) {
+	mk := func(tools string) Report {
+		agents := config.AgentsConfig{
+			Executor: config.AgentBinding{Command: "in-loop"},
+			Reviewer: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: tools, Model: "grok-4.5", Role: "reviewer"},
+			Agents: map[string]config.AgentBinding{
+				"planner": {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob,Bash(satelle:*)", Model: "opus"},
+			},
+		}
+		wfs := []docindex.Doc{{Kind: "workflows", Name: "w",
+			Body: strings.Replace(channelWF, "%s", "planner", 1)}}
+		return Validate(agents, nil, wfs)
+	}
+
+	r := mk("read_file,Bash(satelle:*)")
+	w := findingWith(r.Warnings, "grants shell")
+	if w == "" {
+		t.Fatalf("want unused-shell warning, got warnings=%v", r.Warnings)
+	}
+	if !strings.Contains(w, "reviewer") {
+		t.Errorf("warning must name the binding section: %s", w)
+	}
+	if !strings.Contains(w, "Bash(satelle:*)") {
+		t.Errorf("warning must name the offending token: %s", w)
+	}
+	if !r.OK() {
+		t.Error("an unused reviewer grant is advisory — the report must stay OK (exit 0)")
+	}
+	if p := findingWith(r.Problems, "grants shell"); p != "" {
+		t.Errorf("must not be a hard problem: %s", p)
+	}
+
+	// A reviewer with no shell grant is the correct shape — no finding (AC7).
+	if w := findingWith(mk("read_file,grep,list_dir").Warnings, "grants shell"); w != "" {
+		t.Errorf("clean reviewer must not warn: %s", w)
+	}
+}
+
+// TestValidate_UnallocatedBindingHasNoChannelFinding — AC8: a binding no workflow
+// allocates is an orphan, not a performer. Its grant is not judged for a channel
+// it will never need.
+func TestValidate_UnallocatedBindingHasNoChannelFinding(t *testing.T) {
+	agents := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop"},
+		Reviewer: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: "read_file,grep,list_dir", Model: "grok-4.5"},
+		Agents: map[string]config.AgentBinding{
+			"planner": {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob,Bash(satelle:*)", Model: "opus"},
+			"nobody":  {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob", Model: "opus"},
+		},
+	}
+	wfs := []docindex.Doc{{Kind: "workflows", Name: "w",
+		Body: strings.Replace(channelWF, "%s", "planner", 1)}}
+	r := Validate(agents, nil, wfs)
+	if p := findingWith(r.Problems, "no context channel"); p != "" {
+		t.Fatalf("unallocated binding must not be judged as a performer: %s", p)
+	}
+	if !r.OK() {
+		t.Fatalf("orphan alone must not fail the report: %v", r.Problems)
+	}
+}
+
+// TestValidate_OnEnterAgentNeedsChannel — on_enter_agent= is a dispatched
+// one-shot performer and carries the same requirement as a spine agent=.
+func TestValidate_OnEnterAgentNeedsChannel(t *testing.T) {
+	agents := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop"},
+		Reviewer: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: "read_file,grep,list_dir", Model: "grok-4.5"},
+		Agents: map[string]config.AgentBinding{
+			"triage": {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob", Model: "opus"},
+		},
+	}
+	wfs := []docindex.Doc{{Kind: "workflows", Name: "w",
+		Body: "---\nname: w\n---\n```dot\ndigraph w {\n  backlog [shape=Mdiamond]\n  done [shape=Msquare]\n  blocked [agent=reviewer, prompt=\"@skill:r\", on_enter_agent=triage, on_enter_prompt=\"@skill:t\", from=\"*\"]\n  backlog -> done\n}\n```\n",
+	}}
+	r := Validate(agents, nil, wfs)
+	got := findingWith(r.Problems, "no context channel")
+	if got == "" {
+		t.Fatalf("on_enter_agent performer must be checked: problems=%v", r.Problems)
+	}
+	if !strings.Contains(got, "triage") {
+		t.Errorf("problem must name the on_enter_agent binding: %s", got)
+	}
+}
+
+func findingWith(list []string, substr string) string {
+	for _, s := range list {
+		if strings.Contains(s, substr) {
+			return s
+		}
+	}
+	return ""
 }

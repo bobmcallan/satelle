@@ -1503,31 +1503,6 @@ func TestDispatchExecutorAcceptsGrokReadFileChannel(t *testing.T) {
 	}
 }
 
-// TestGrantsSatelleCLIChannels covers the pure grant predicate (CLI + disk).
-func TestGrantsSatelleCLIChannels(t *testing.T) {
-	cases := []struct {
-		tools string
-		want  bool
-	}{
-		{"", false},
-		{"Read,Grep,Glob", false},
-		{"write,search_replace", false},
-		{"Bash(satelle:*)", true},
-		{"Read,Bash(satelle:*)", true},
-		{"Bash", true},
-		{"Bash(*)", true},
-		{"*", true},
-		{"read_file", true},
-		{"read_file,write,search_replace", true},
-		{"grep,list_dir,write", false},
-	}
-	for _, tc := range cases {
-		if got := grantsSatelleCLI(tc.tools); got != tc.want {
-			t.Errorf("grantsSatelleCLI(%q) = %v, want %v", tc.tools, got, tc.want)
-		}
-	}
-}
-
 // coderWF is a repo opting `in_progress` into a dispatched code-writing agent
 // (agent=coder) — the sty_f5bd176f opt-in. The coder is reached from `plan`, a
 // PERFORMING node, so the story is engaged while the coder edits.

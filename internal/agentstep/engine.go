@@ -923,7 +923,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	// context channel the agent is silently context-starved. Refuse the dispatch
 	// with an actionable fix rather than run a blind agent — the no-silent-fallback
 	// style the engine uses for a missing binding.
-	if !grantsSatelleCLI(binding.Tools) {
+	if !config.GrantsContextChannel(binding.Tools) {
 		return verb.DispatchResult{}, fmt.Errorf(
 			"named agent %q cannot perform step %q: its .satelle/agents.toml [%s] tools grant has no context channel (add `Bash(satelle:*)` for the satelle CLI, or `read_file` for disk reads under ~/.satelle/<repo-key>/stories/<id>/)",
 			dispatchAgent, toStatus, dispatchAgent)
@@ -1091,7 +1091,7 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.Dispa
 	if runner == nil {
 		return verb.DispatchResult{}, fmt.Errorf("%s agent harness is in-loop; set a real harness to dispatch it", retrospectAgent)
 	}
-	if !grantsSatelleCLI(binding.Tools) {
+	if !config.GrantsContextChannel(binding.Tools) {
 		return verb.DispatchResult{}, fmt.Errorf(
 			"[%s] tools grant has no context channel (add `Bash(satelle:*)` for the satelle CLI, or `read_file` for disk reads) — it needs a channel to pull the story and file proposal stories", retrospectAgent)
 	}
@@ -1143,41 +1143,6 @@ func (g *Engine) setDecisionUsage(d *verb.GateDecision, u agentcli.UsageResult, 
 	} else {
 		d.Model = g.model
 	}
-}
-
-// grantsSatelleCLI reports whether a binding's tool grant gives a dispatched
-// agent a context channel — the pull-context contract (sty_47d31300). Two
-// channels satisfy it (sty_565a0202):
-//
-//  1. satelle CLI via shell: `Bash(satelle…)`, broad `Bash`/`Bash(*)`, or `*`.
-//  2. Disk reads of story documents under the home-keyed runtime plane
-//     (~/.satelle/<repo-key>/stories/<id>/) via the grok-native `read_file`
-//     tool (used when headless Grok cannot enable run_terminal_command).
-//     The in-repo `.satelle/stories/` path is obsolete (sty_58fa970e).
-//
-// A grant with neither channel is refused loudly. Reviewer bindings are
-// Bash-less by design and never reach here — they run via runReviewer, not
-// dispatch. Claude-only `Read` (without Bash) is intentionally not accepted:
-// the Claude pull path is the satelle CLI, not a disk-first rubric.
-func grantsSatelleCLI(tools string) bool {
-	for _, t := range splitTrimList(tools) {
-		if t == "*" || t == "Bash" || t == "Bash(*)" || strings.HasPrefix(t, "Bash(satelle") {
-			return true
-		}
-		if t == "read_file" {
-			return true
-		}
-	}
-	return false
-}
-
-// isInLoopCommand reports whether a binding command is the in-loop preset
-// (single-token "in-loop", case-insensitive) — cannot produce an isolated verdict.
-// Empty command is NOT in-loop: tests and bootstrap leave command blank and wire
-// g.runner directly.
-func isInLoopCommand(cmd string) bool {
-	fields := strings.Fields(strings.TrimSpace(cmd))
-	return len(fields) == 1 && strings.EqualFold(fields[0], "in-loop")
 }
 
 // isNamedPerformer reports whether a workflow node agent=<name> should run as a
@@ -1400,7 +1365,7 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 	}
 	// Mechanism: a gate needs an isolated verdict. command=in-loop cannot produce
 	// one — fail loud at gate time (design §6.4), not by policing tools/model.
-	if isInLoopCommand(binding.CommandTemplate()) {
+	if config.IsInLoopCommand(binding.CommandTemplate()) {
 		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
 			"gate refused: reviewer binding %q is command=in-loop and cannot produce an isolated verdict — set [%s] command to an isolated agent CLI (claude|grok|codex or a full template)", section, section)
 	}
