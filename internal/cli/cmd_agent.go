@@ -13,7 +13,11 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -90,8 +94,148 @@ satelle agents install (plural) — that path never changes this [agent] cli def
 		},
 	}
 
-	agent.AddCommand(show, set, detect, agentValidateCmd())
+	agent.AddCommand(show, set, detect, agentValidateCmd(), agentProfilesCmd(), agentMigrateCmd())
 	register(agent)
+}
+
+// agentProfilesCmd is `satelle agent profiles` — the machine-wide catalog view.
+// Read-only, store-free, and repo-independent: it answers "what execution
+// profiles does this machine offer?" without saying anything about which repo
+// consumes them (that is each repo's explicit `profile =` reference).
+func agentProfilesCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "profiles",
+		Short: "List the machine-wide agent profile catalog (~/.satelle/agents.toml)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			global, err := config.LoadGlobalAgents()
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if len(global.Profiles) == 0 && len(global.Roles) == 0 {
+				fmt.Fprintf(out, "no profiles defined — %s is absent or empty\n", config.GlobalAgentsPath())
+				fmt.Fprintln(out, "run `satelle agent migrate` to seed a starter catalog from the selected agent CLI")
+				return nil
+			}
+			printProfileCatalog(out, global)
+			return nil
+		},
+	}
+}
+
+// agentMigrateCmd is `satelle agent migrate` — the opt-in, non-destructive path
+// from the legacy machine-wide setting (`~/.satelle/config.toml [agent] cli`) to
+// a profile catalog. It NEVER runs automatically and never overwrites: an
+// existing catalog is left alone. Repo-only installations need no migration at
+// all — with no catalog present every repo resolves exactly as before.
+func agentMigrateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "migrate",
+		Short: "Seed ~/.satelle/agents.toml with a starter profile from the selected agent CLI",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			out := cmd.OutOrStdout()
+			path := config.GlobalAgentsPath()
+			if _, err := os.Stat(path); err == nil {
+				fmt.Fprintf(out, "%s already exists — edit it by hand; migrate never overwrites a catalog\n", path)
+				return nil
+			}
+			gc, err := config.LoadGlobal()
+			if err != nil {
+				return err
+			}
+			cli := gc.Agent.ResolveCLI()
+			body, err := config.StarterGlobalAgents(cli)
+			if err != nil {
+				return err
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "wrote %s — one %q profile derived from [agent] cli\n", path, cli)
+			fmt.Fprintln(out, "reference it from a repo with `profile = \"<name>\"` in .satelle/agents.toml; nothing changes until you do")
+			return nil
+		},
+	}
+}
+
+// printProfileCatalog renders the machine-wide catalog. Secret containment: env
+// and settings VALUES are never printed — only their key names, the same rule
+// the grant display already follows.
+func printProfileCatalog(out io.Writer, g config.GlobalAgentsConfig) {
+	if len(g.Profiles) == 0 && len(g.Roles) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "Global agent profiles (%s — execution configuration; workflow policy stays repo substrate):\n",
+		config.GlobalAgentsLabel)
+	for _, name := range sortedBindingNames(g.Profiles) {
+		b := g.Profiles[name]
+		fmt.Fprintf(out, "  PROFILE [%s] role=%q interface=%s model=%q effort=%q tools=%q timeout=%q\n",
+			name, b.Role, b.ResolvedInterface(), b.Model, b.Effort, b.Tools, b.Timeout)
+		if b.Profile != "" {
+			fmt.Fprintf(out, "          extends: %s\n", b.Profile)
+		}
+		if b.Command != "" {
+			fmt.Fprintf(out, "          command: %s\n", b.Command)
+		}
+		if len(b.Env) > 0 {
+			fmt.Fprintf(out, "          env keys: %s\n", strings.Join(sortedMapKeys(b.Env), ","))
+		}
+	}
+	for _, role := range sortedMapKeys(g.Roles) {
+		fmt.Fprintf(out, "  ROLE DEFAULT %s -> %s (applies only to a repo with [defaults] use_global_roles = true)\n",
+			role, g.Roles[role])
+	}
+}
+
+// printGrantSources renders each effective field with the tier that supplied it
+// (AC4): repo inline, an explicitly referenced profile, an opt-in role default,
+// or the binary's embedded fallback. env/settings values may be secrets, so
+// those lines name the field and its source only.
+func printGrantSources(out io.Writer, g agentvalidate.Grant) {
+	if len(g.Sources) == 0 {
+		return
+	}
+	vals := map[string]string{
+		"interface":  g.Interface,
+		"command":    g.Command,
+		"tools":      g.Tools,
+		"model":      g.Model,
+		"effort":     g.Effort,
+		"timeout":    g.Timeout,
+		"role":       g.Role,
+		"principles": g.Principles,
+		"secondary":  g.Secondary,
+	}
+	for _, f := range sortedMapKeys(g.Sources) {
+		if f == "env" || f == "settings" {
+			fmt.Fprintf(out, "         source: %s (%s) — values withheld\n", f, g.Sources[f])
+			continue
+		}
+		fmt.Fprintf(out, "         source: %s = %q (%s)\n", f, vals[f], g.Sources[f])
+	}
+}
+
+func sortedBindingNames(m map[string]config.AgentBinding) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedMapKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // agentValidateCmd is `satelle agent validate` — the standalone, deterministic
@@ -119,13 +263,22 @@ func agentValidateCmd() *cobra.Command {
 			if lerr != nil {
 				return fmt.Errorf("agents.toml: %w", lerr)
 			}
+			// The machine-wide profile catalog is EXECUTION configuration only
+			// (sty_c7dfeedf). A broken catalog is reported here as a problem, not a
+			// hard error, so one run shows every finding.
+			global, gerr := config.LoadGlobalAgents()
+			if gerr != nil {
+				fmt.Fprintf(out, "FAIL  %v\n", gerr)
+			}
 			wfs, werr := a.Store.DocIndex.List(context.Background(), "workflows")
 			if werr != nil {
 				return werr
 			}
 
-			// Agent layer + node→binding (shared with init + engage).
-			report := agentvalidate.Validate(agents, a.Config.Vars, wfs)
+			// Agent layer + node→binding (shared with init + engage), resolved
+			// against the catalog so what is judged is what will actually run.
+			report := agentvalidate.ValidateEffective(agents, global, a.Config.Vars, wfs)
+			printProfileCatalog(out, global)
 			fmt.Fprintln(out, "Agent grants (resolved):")
 			for _, g := range report.Grants {
 				ro := "read-write"
@@ -148,6 +301,7 @@ func agentValidateCmd() *cobra.Command {
 				if g.Notes != "" {
 					fmt.Fprintf(out, "         notes: %s\n", g.Notes)
 				}
+				printGrantSources(out, g)
 			}
 			if len(report.Gates) > 0 {
 				fmt.Fprintln(out, "Gate/node effective models (binding that will run the gate):")

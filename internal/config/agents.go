@@ -144,6 +144,14 @@ type AgentBinding struct {
 	// binding's dispatch fails with a classified rate-limit/unavailable error
 	// (sty_5bf61f89). Empty inherits [defaults] secondary. Empty both = no failover.
 	Secondary string `toml:"secondary"`
+	// Profile names a profile in the MACHINE-WIDE catalog ($SATELLE_HOME/
+	// agents.toml) this binding builds on (sty_c7dfeedf). The reference is always
+	// EXPLICIT: a catalog profile that happens to share this section's name is
+	// never merged in on its own, so adding a profile can never silently change a
+	// repo. Repo values on this binding win over the referenced profile field by
+	// field; role is identity and must not disagree. A profile may itself set
+	// profile= to extend another, with cycles refused at load. See ResolveAgents.
+	Profile string `toml:"profile"`
 }
 
 // AgentsDefaults is the optional [defaults] table in agents.toml (sty_5bf61f89).
@@ -151,6 +159,12 @@ type AgentsDefaults struct {
 	// Secondary is the default fallback binding name for isolated agents when
 	// a binding omits secondary= and the primary hits rate-limit/unavailable.
 	Secondary string `toml:"secondary"`
+	// UseGlobalRoles opts this repo into the machine-wide catalog's [roles]
+	// defaults for bindings that name no profile= of their own (sty_c7dfeedf).
+	// It is off by default and must be written by hand: without it, tier 3 of the
+	// precedence ladder is skipped entirely and the catalog can only reach a
+	// binding that explicitly asks for it.
+	UseGlobalRoles bool `toml:"use_global_roles"`
 }
 
 // TimeoutDuration resolves this binding's dispatch bound: the parsed Timeout when
@@ -483,10 +497,7 @@ func LoadAgents(dataDir string) (AgentsConfig, error) {
 // (sty_446c38b7).
 func (a AgentsConfig) validateTimeouts() error {
 	check := func(section string, b AgentBinding) error {
-		if _, err := b.TimeoutDuration(0); err != nil {
-			return fmt.Errorf("agents.toml [%s] timeout: %w", section, err)
-		}
-		return nil
+		return checkBindingTimeout(AgentsConfigName, section, b)
 	}
 	if err := check("executor", a.Executor); err != nil {
 		return err
@@ -506,17 +517,7 @@ func (a AgentsConfig) validateTimeouts() error {
 // (epic:agent-dispatch-transport). Empty is fine (defaults to command).
 func (a AgentsConfig) validateInterfaces() error {
 	check := func(section string, b AgentBinding) error {
-		raw := strings.TrimSpace(b.Interface)
-		if raw == "" {
-			return nil
-		}
-		switch strings.ToLower(raw) {
-		case InterfaceCommand, InterfaceACP:
-			return nil
-		default:
-			return fmt.Errorf("agents.toml [%s] interface %q: want %q or %q",
-				section, raw, InterfaceCommand, InterfaceACP)
-		}
+		return checkBindingInterface(AgentsConfigName, section, b)
 	}
 	if err := check("executor", a.Executor); err != nil {
 		return err

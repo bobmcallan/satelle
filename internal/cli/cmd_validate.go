@@ -77,8 +77,8 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 		}
 		// Per-gate effective model surface (sty_19456622) — same allocation view as
 		// `satelle agent validate`, informational (not a hard fail).
-		if agents, aerr := config.LoadAgents(dataDir); aerr == nil {
-			report := agentvalidate.Validate(agents, a.Config.Vars, wfs)
+		if eff, aerr := config.LoadEffectiveAgents(dataDir, a.Config.Vars); aerr == nil {
+			report := agentvalidate.Validate(eff.Agents, eff.Vars, wfs)
 			if len(report.Gates) > 0 {
 				fmt.Fprintln(out, "Gate/node effective models:")
 				for _, ga := range report.Gates {

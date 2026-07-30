@@ -6,11 +6,15 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/testutil"
 	"github.com/bobmcallan/satelle/internal/verb"
 )
 
 func TestProcessViewAllocations(t *testing.T) {
 	wire(t)
+	// The allocation view resolves the machine-wide profile catalog (sty_c7dfeedf);
+	// an isolated empty home is the repo-only baseline this case asserts.
+	testutil.IsolateHome(t)
 	data := t.TempDir()
 	wfDir := filepath.Join(data, "workflows")
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {

@@ -29,9 +29,16 @@ import (
 // surfaces so a preset's baked grant is visible without knowing the expansion.
 // Env VALUES are never included (secrets); key names may appear in Notes.
 type Grant struct {
-	Name              string
-	Backend           string // in-loop | isolated:claude | isolated:grok | isolated:codex | isolated:<binary> | acp:<binary>
-	Interface         string // command | acp (epic:agent-dispatch-transport)
+	Name      string
+	Backend   string // in-loop | isolated:claude | isolated:grok | isolated:codex | isolated:<binary> | acp:<binary>
+	Interface string // command | acp (epic:agent-dispatch-transport)
+	// Command is the effective command template — the literal argv the operator
+	// can read. Surfaced as a field (not only inside Notes) so a provenance
+	// display can attribute it like any other resolved value (sty_c7dfeedf).
+	Command string
+	// Secondary is the rate-limit failover binding name (sty_5bf61f89), empty
+	// when unconfigured.
+	Secondary         string
 	Tools             string
 	Model             string
 	Effort            string // optional reasoning effort (sty_657f77b9)
@@ -47,6 +54,12 @@ type Grant struct {
 	// reviewer never uses (sty_87c0ef37). Inspectable so the fact is visible
 	// without re-deriving it from Tools.
 	ContextChannel bool
+	// Sources maps each effective field (command, tools, model, …) to the tier
+	// that supplied it: "repo", "profile:<name>", "global-role:<name>", or
+	// "embedded" (sty_c7dfeedf). Nil when the caller validated without resolving
+	// the machine-wide catalog. An operator reading a grant can then see not only
+	// WHAT the reviewer will run but WHERE that value was authored.
+	Sources map[string]string
 }
 
 // GateAllocation is one workflow gate/node's resolved binding (sty_a476a2f8).
@@ -71,16 +84,47 @@ type Report struct {
 	// Gates lists every gate edge / scoped reviewer node / named performer with
 	// its effective model so drift audits see per-node allocation (sty_19456622).
 	Gates []GateAllocation
+	// Provenance is the per-binding, per-field source table when the report was
+	// produced by ValidateEffective; nil for the catalog-free Validate.
+	Provenance config.Provenance
 }
 
 // OK reports whether the report carries no hard problems.
 func (r Report) OK() bool { return len(r.Problems) == 0 }
 
+// ValidateEffective resolves a repo's agents layer against the machine-wide
+// profile catalog and validates the RESULT — the bindings that will actually run
+// (sty_c7dfeedf). A resolution failure (missing profile, reference cycle, repo/
+// profile role conflict) becomes a Problem rather than an early return, so
+// `satelle agent validate` reports the whole picture in one pass instead of
+// stopping at the first broken reference; the un-resolved repo layer is then
+// validated so the remaining findings still surface.
+//
+// Every other check — reviewer read-only ceiling, interface, context channel,
+// workflow allocation — runs against the merged binding, so a profile cannot
+// smuggle a capability past a check by supplying it from the catalog.
+func ValidateEffective(repo config.AgentsConfig, global config.GlobalAgentsConfig, repoVars map[string]string, workflows []docindex.Doc) Report {
+	eff, err := config.ResolveEffectiveAgents(repo, global, repoVars)
+	if err != nil {
+		r := validate(repo, config.LayerVars(global.Vars, repoVars), workflows, nil)
+		r.Problems = append([]string{err.Error()}, r.Problems...)
+		return r
+	}
+	return validate(eff.Agents, eff.Vars, workflows, eff.Provenance)
+}
+
 // Validate checks every agents.toml binding and each workflow's agent= node
 // allocations. vars is the [vars] KV used to resolve ${VAR} in binding env/
-// settings (may be nil). workflows may be empty (agent-only check).
+// settings (may be nil). workflows may be empty (agent-only check). Callers that
+// have already resolved the machine-wide catalog pass the effective layer here;
+// ValidateEffective is the form that resolves it and reports provenance.
 func Validate(agents config.AgentsConfig, vars map[string]string, workflows []docindex.Doc) Report {
+	return validate(agents, vars, workflows, nil)
+}
+
+func validate(agents config.AgentsConfig, vars map[string]string, workflows []docindex.Doc, prov config.Provenance) Report {
 	var r Report
+	r.Provenance = prov
 
 	// Env/settings resolution once — fail-fast naming section+key, never values.
 	if _, err := config.ResolveAgentEnvs(agents, vars); err != nil {
@@ -103,6 +147,7 @@ func Validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 
 	for _, sec := range sections {
 		g, problems, warnings := checkBinding(sec.name, sec.b)
+		g.Sources = prov[sec.name]
 		r.Grants = append(r.Grants, g)
 		r.Problems = append(r.Problems, problems...)
 		r.Warnings = append(r.Warnings, warnings...)
@@ -301,6 +346,8 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 	g := Grant{
 		Name:              section,
 		Interface:         iface,
+		Command:           cmd,
+		Secondary:         b.Secondary,
 		Tools:             b.Tools,
 		Model:             b.Model,
 		Effort:            b.Effort,

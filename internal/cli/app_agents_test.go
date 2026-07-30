@@ -8,12 +8,17 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // appAt builds the minimal *app.App requireAgents reads (DataDir + DBPath),
-// rooted at a temp .satelle dir (authored plane).
+// rooted at a temp .satelle dir (authored plane). SATELLE_HOME is isolated
+// because requireAgents now also reads the machine-wide profile catalog
+// (sty_c7dfeedf) — an empty isolated home means no catalog, which is exactly the
+// repo-only baseline these cases assert.
 func appAt(t *testing.T) (*app.App, string) {
 	t.Helper()
+	testutil.IsolateHome(t)
 	dataDir := filepath.Join(t.TempDir(), ".satelle")
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -78,11 +83,11 @@ func TestRequireAgentsWellFormedLoads(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dataDir, config.AgentsConfigName), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	agents, err := requireAgents(a)
+	eff, err := requireAgents(a)
 	if err != nil {
 		t.Fatalf("well-formed agents.toml must load: %v", err)
 	}
-	if rb := agents.ReviewerBinding(); rb.Model != "sonnet" || rb.Tools != "Read" {
+	if rb := eff.Agents.ReviewerBinding(); rb.Model != "sonnet" || rb.Tools != "Read" {
 		t.Errorf("binding not read from the file: %+v", rb)
 	}
 }

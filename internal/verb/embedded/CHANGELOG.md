@@ -1,3 +1,21 @@
+## [0.0.365] - 2026-07-30
+
+### Added
+- **Machine-wide agent profiles.** An operator running satelle across several repositories can now define each provider's execution binding once, in a profile catalog at `~/.satelle/agents.toml`, instead of restating it in every repo. A profile carries the full `AgentBinding` execution surface — role, interface, command, model, effort, tools, timeout, principles, env, settings, secondary — and may extend another profile (sty_c7dfeedf)
+- A repo consumes a profile only by naming it: `profile = "<name>"` on a binding in `.satelle/agents.toml`. Anything the repo states inline still wins, and `env`/`settings` merge key-wise with the repo's key winning. `role` is identity, not an override — a repo declaring a role that contradicts the profile's is refused rather than silently resolved either way (sty_c7dfeedf)
+- `satelle agent profiles` lists the catalog; `satelle agent validate` now reports every effective field with the tier that supplied it — `repo`, `profile:<name>`, `global-role:<name>`, or `embedded` — so an operator sees not only what will run but where it was authored. `env`/`settings` lines name the field and its source only; values may be secrets and are never printed (sty_c7dfeedf)
+- `satelle agent migrate` seeds a starter catalog from the machine's selected `[agent] cli`. It is opt-in, never automatic, never overwrites an existing catalog, and writes nothing into any repository. The catalog it seeds leaves `[roles]` commented out, so it changes nothing until a repo opts in (sty_c7dfeedf)
+- `satelle help global-agents` documents the file, the precedence ladder, and the boundary (sty_c7dfeedf)
+
+### Changed
+- Resolution has **one** site — `config.LoadEffectiveAgents` — which every surface (bootstrap, `agent validate`, `init` deployment validation, the process view) now calls. Two independently-merging call sites was the defect worth designing against (sty_c7dfeedf)
+- The `${VAR}` KV is layered: the catalog's `[vars]` is the machine-wide base and a repo's own `[vars]` (with its gitignored `satelle.local.toml` overlay) win per key. Expansion still happens in memory at dispatch wiring, so a machine-wide secret referenced as `${NAME}` reaches the agent process without ever being written into a repository (sty_c7dfeedf)
+- Reviewer ceiling, interface, context-channel and workflow-allocation checks all run against the **merged** binding, so a profile cannot smuggle a capability past a check by supplying it machine-wide (sty_c7dfeedf)
+
+### Fixed
+- Nothing changes for an existing installation. With no catalog on the machine — including a repo relying on `~/.satelle/config.toml [agent] cli` — every repo resolves exactly as before, and a repo with no `profile=` anywhere is untouched by whatever an operator later adds to the catalog. In particular there is **no implicit same-name merge**: a profile called `reviewer` and a repo `[reviewer]` that never mentions it do not combine (sty_c7dfeedf)
+- The catalog is execution configuration only, enforced mechanically rather than by convention: a profile carrying `applies_to`, `skill`, `prompt`, `on`, `output_*` or any other policy key is refused at load, and `LoadGlobalAgents` reads three sections and nothing else — workflows and skills dropped into the machine-wide home are invisible to workflow discovery (sty_c7dfeedf)
+
 ## [0.0.364] - 2026-07-30
 
 ### Changed

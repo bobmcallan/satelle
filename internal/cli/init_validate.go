@@ -43,11 +43,11 @@ func validateDeployment(out io.Writer, dataDir string) error {
 		} else {
 			fmt.Fprintf(out, "FAIL  %s — missing (the agents layer must be defined)\n", agentsRel)
 		}
-	} else if agents, lerr := config.LoadAgents(dataDir); lerr != nil {
+	} else if eff, lerr := config.LoadEffectiveAgents(dataDir, deployedVars(dataDir)); lerr != nil {
 		failed++
 		fmt.Fprintf(out, "FAIL  %s — %v\n", agentsRel, lerr)
 	} else {
-		report := agentvalidate.Validate(agents, deployedVars(dataDir), wfDocs)
+		report := agentvalidate.Validate(eff.Agents, eff.Vars, wfDocs)
 		for _, w := range report.Warnings {
 			fmt.Fprintf(out, "WARN  %s — %s\n", agentsRel, w)
 		}

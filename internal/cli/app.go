@@ -67,11 +67,12 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// (this command reached the store, so .satelle exists) must carry a loadable
 	// agents layer — no silent fallback to compiled defaults. `satelle init` is
 	// not store-backed, so a fresh repo still bootstraps and (re)seeds the file.
-	agents, err := requireAgents(a)
+	eff, err := requireAgents(a)
 	if err != nil {
 		_ = a.Close()
 		return err
 	}
+	agents := eff.Agents
 	// Wire the opened stores into the verb registry — the single seam both the
 	// CLI and the web server dispatch through. The CLI is one-shot, so wiring
 	// the package globals per invocation is correct.
@@ -117,7 +118,10 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetTagVocabulary(a.Config)
 	// Engage precondition (sty_93eec36d): agents.toml + workflow agent= validation
 	// before a story leaves its entry state. agents already loaded by requireAgents.
-	verb.SetAgentsConfig(agents, a.Config.Vars)
+	// Vars are the LAYERED KV (machine-wide catalog [vars] under the repo's own,
+	// repo keys winning — sty_c7dfeedf), so a profile that references ${SECRET}
+	// resolves from the operator's machine without the value entering the repo.
+	verb.SetAgentsConfig(agents, eff.Vars)
 	// A task, unlike a story, IS authored substrate: its <data_dir>/tasks/tsk_*.md
 	// work-definition file is the source of truth and the store is its index
 	// (sty_c1f9e74c). Wire the dir so create/set materialise the file and `reindex`
@@ -238,11 +242,11 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 	}
 	rev := agentstep.New(runner, a.Store.DocIndex, a.RepoRoot, "")
 	rev.SetLogDir(filepath.Join(a.RuntimeDir, "logs"), logRotation(a))
-	agents, err := requireAgents(a)
+	eff, err := requireAgents(a)
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := applyAgentGrants(rev, a, agents); err != nil {
+	if err := applyAgentGrants(rev, a, eff.Agents); err != nil {
 		return nil, nil, err
 	}
 	return rev, a, nil
@@ -309,13 +313,18 @@ func skillResolver(a *app.App) func(skill string) bool {
 	}
 }
 
-// requireAgents loads the agents layer (.satelle/agents.toml) for an INITIALIZED
-// repo and refuses when it is broken (sty_d0d6bb67): a malformed file, or an
-// absent one — `satelle init` always seeds it, so absence means a broken
-// deployment, not "use compiled defaults". The error names the file and the fix;
-// the compiled defaults remain only the pre-init bootstrap (a repo with no
-// .satelle at all never reaches this — init is not store-backed).
-func requireAgents(a *app.App) (config.AgentsConfig, error) {
+// requireAgents loads the EFFECTIVE agents layer for an INITIALIZED repo and
+// refuses when it is broken (sty_d0d6bb67): a malformed file, or an absent one —
+// `satelle init` always seeds it, so absence means a broken deployment, not "use
+// compiled defaults". The error names the file and the fix; the compiled defaults
+// remain only the pre-init bootstrap (a repo with no .satelle at all never
+// reaches this — init is not store-backed).
+//
+// "Effective" means the repo file folded with the machine-wide profile catalog
+// by the documented precedence (sty_c7dfeedf) — resolved through the single
+// config.LoadEffectiveAgents site, never merged here. A repo that references no
+// profile resolves exactly as before, catalog present or not.
+func requireAgents(a *app.App) (config.EffectiveAgents, error) {
 	// agents.toml is authored substrate — always under DataDir, never RuntimeDir
 	// (sty_4660bbe1: the DB leaving the repo must not take the agents layer with it).
 	dataDir := a.DataDir
@@ -325,26 +334,27 @@ func requireAgents(a *app.App) (config.AgentsConfig, error) {
 	rel := config.DefaultDataDir + "/" + config.AgentsConfigName
 	if _, err := os.Stat(filepath.Join(dataDir, config.AgentsConfigName)); os.IsNotExist(err) {
 		if _, lerr := os.Stat(filepath.Join(dataDir, config.ActorsConfigName)); lerr == nil {
-			return config.AgentsConfig{}, fmt.Errorf(
+			return config.EffectiveAgents{}, fmt.Errorf(
 				"missing %s but found the retired %s/%s — rename it to %s (the legacy filename is no longer loaded)",
 				rel, config.DefaultDataDir, config.ActorsConfigName, config.AgentsConfigName)
 		}
-		return config.AgentsConfig{}, fmt.Errorf(
+		return config.EffectiveAgents{}, fmt.Errorf(
 			"missing %s — an initialized repo must define its agents layer; run `satelle init` to seed the default", rel)
 	}
-	agents, err := config.LoadAgents(dataDir)
+	eff, err := config.LoadEffectiveAgents(dataDir, a.Config.Vars)
 	if err != nil {
-		return config.AgentsConfig{}, fmt.Errorf("broken %s: %w — fix it, or delete it and run `satelle init` to reseed the default", rel, err)
+		return config.EffectiveAgents{}, fmt.Errorf("broken %s: %w — fix it, or delete it and run `satelle init` to reseed the default", rel, err)
 	}
-	// Resolve every binding's env ${VAR} against the [vars] KV ONCE, here at load —
-	// fail-fast, the same style as the broken-file refusal above: an unknown var in
-	// any binding refuses the command with an actionable message rather than
-	// dispatching an agent with a blank credential later (sty_001558ce).
-	resolved, err := config.ResolveAgentEnvs(agents, a.Config.Vars)
+	// Resolve every binding's env ${VAR} against the LAYERED [vars] KV ONCE, here
+	// at load — fail-fast, the same style as the broken-file refusal above: an
+	// unknown var in any binding refuses the command with an actionable message
+	// rather than dispatching an agent with a blank credential later (sty_001558ce).
+	resolved, err := config.ResolveAgentEnvs(eff.Agents, eff.Vars)
 	if err != nil {
-		return config.AgentsConfig{}, fmt.Errorf("%s: %w", rel, err)
+		return config.EffectiveAgents{}, fmt.Errorf("%s: %w", rel, err)
 	}
-	return resolved, nil
+	eff.Agents = resolved
+	return eff, nil
 }
 
 // applyAgentGrants binds the loaded agents layer onto the engine: the reviewer's

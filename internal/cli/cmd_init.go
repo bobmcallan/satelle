@@ -1517,6 +1517,19 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer:
 # and in satelle.local.toml (gitignored):
 #   [vars]
 #   GLM_API_KEY = "sk-…"
+#
+# REUSING A MACHINE-WIDE PROFILE (profile=) — optional. An operator working across
+# several repos can define reusable EXECUTION profiles once in ~/.satelle/agents.toml
+# (see "satelle agent profiles" / "satelle agent migrate") and have a binding here
+# name one:
+#   [reviewer]
+#   profile = "claude-opus"     # explicit reference — inherits command/tools/model/…
+#   effort  = "low"             # anything stated here still WINS over the profile
+# The reference is always explicit: a profile that merely SHARES this section's name
+# is never merged in, so a repo with no profile= resolves identically whether or not
+# the machine has a catalog. Precedence: repo inline > referenced profile > an opt-in
+# [defaults] use_global_roles role default > satelle's embedded fallback. The catalog
+# is execution configuration ONLY — workflows and skills stay repo substrate here.
 
 [executor]
 role    = "agent"              # declared contract (agent | reviewer); do not leave inferred

@@ -62,13 +62,15 @@ func processView(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		view.AgentsError = "data dir not wired"
 		return json.Marshal(view)
 	}
-	agents, err := config.LoadAgents(dataDir)
+	// EFFECTIVE agents: the repo layer folded with the machine-wide profile
+	// catalog (sty_c7dfeedf), so the allocation view shows the binding that will
+	// actually run each gate rather than the un-resolved repo file.
+	eff, err := config.LoadEffectiveAgents(dataDir, nil)
 	if err != nil {
 		view.AgentsError = err.Error()
 		return json.Marshal(view)
 	}
-	// vars are optional for model resolution; empty map is fine.
-	rep := agentvalidate.Validate(agents, nil, workflows)
+	rep := agentvalidate.Validate(eff.Agents, eff.Vars, workflows)
 	view.Allocations = rep.Gates
 	return json.Marshal(view)
 }
