@@ -201,9 +201,24 @@ func unreachableHooks() struct {
 // writeFakeUserUnit installs a fake ~/.config/systemd/user/satelle.service naming
 // execStart as its ExecStart binary, isolating HOME so the real operator unit is
 // never read. Returns the unit path.
+// isolateSystemUnitDir points systemUnitPath() at a temp dir so no test reads the
+// operator's real /etc/systemd/system/satelle.service (sty_d50218d1). Returns the
+// dir so a test can plant a fixture unit in it. Mirrors the package's existing
+// isolation idiom: a package var swapped and restored via t.Cleanup, like
+// restartHooks. Tests using it must not call t.Parallel() — the var is global.
+func isolateSystemUnitDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	prev := systemUnitDir
+	systemUnitDir = dir
+	t.Cleanup(func() { systemUnitDir = prev })
+	return dir
+}
+
 func writeFakeUserUnit(t *testing.T, execStart string) string {
 	t.Helper()
 	testutil.IsolateHome(t) // servicePort()'s config.LoadGlobal() needs SATELLE_HOME set
+	isolateSystemUnitDir(t) // no real /etc/systemd/system read (sty_d50218d1)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	dir := filepath.Join(home, ".config", "systemd", "user")
@@ -223,6 +238,7 @@ func writeFakeUserUnit(t *testing.T, execStart string) string {
 func TestServiceStatusLine_NotInstalled(t *testing.T) {
 	testutil.IsolateHome(t)
 	t.Setenv("HOME", t.TempDir()) // empty HOME: no ~/.config/systemd/user/satelle.service
+	isolateSystemUnitDir(t)       // empty system dir too: "not installed" must mean NEITHER unit exists
 	withServiceStatusHooks(t, unreachableHooks())
 	got := serviceStatusLine(t.TempDir())
 	if got != "not installed" {
@@ -392,5 +408,60 @@ func TestServiceStatusLine_IdentityUnknown(t *testing.T) {
 	got := serviceStatusLine(procRoot)
 	if !strings.Contains(got, "could not be determined") {
 		t.Errorf("serviceStatusLine = %q, want the identity-unknown case named plainly", got)
+	}
+}
+
+// TestSystemUnitPathIsInjected guards the isolation itself (sty_d50218d1 AC4).
+// Without it, a future change reverting systemUnitPath() to a hardcoded
+// /etc/systemd/system would silently reintroduce the defect: the six tests it
+// broke would pass again on a CI runner (which has no system unit) and fail only
+// on a developer machine that does.
+//
+// HOME is emptied so the USER unit cannot shadow the system one — otherwise this
+// would pass even if the system path were still hardcoded.
+func TestSystemUnitPathIsInjected(t *testing.T) {
+	testutil.IsolateHome(t)
+	t.Setenv("HOME", t.TempDir()) // no ~/.config/systemd/user/satelle.service
+	dir := isolateSystemUnitDir(t)
+
+	if got := systemUnitPath(); got != filepath.Join(dir, serviceUnitName) {
+		t.Fatalf("systemUnitPath() = %q, want it under the injected dir %q", got, dir)
+	}
+	if strings.HasPrefix(systemUnitPath(), "/etc/") {
+		t.Fatal("systemUnitPath() still resolves under the real /etc — the injection is not wired")
+	}
+
+	// With no unit planted, the reader must take the no-unit path.
+	if content, ok := installedUnitFile(); ok {
+		t.Fatalf("installedUnitFile() found a unit in an empty sandbox: %q", content)
+	}
+	if _, known := unitRestartPolicy(); known {
+		t.Error("unitRestartPolicy() must report unknown when no unit file exists")
+	}
+
+	// Plant a fixture at the injected path: the readers must pick up THAT file,
+	// with a value the operator's real unit would not produce.
+	fixture := "[Service]\nExecStart=/nowhere/fixture-serve --port 1\nRestart=on-abnormal\n"
+	if err := os.WriteFile(filepath.Join(dir, serviceUnitName), []byte(fixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	content, ok := installedUnitFile()
+	if !ok || !strings.Contains(content, "/nowhere/fixture-serve") {
+		t.Fatalf("installedUnitFile() did not read the injected fixture: ok=%v content=%q", ok, content)
+	}
+	policy, known := unitRestartPolicy()
+	if !known || policy != "on-abnormal" {
+		t.Errorf("unitRestartPolicy() = (%q,%v), want (\"on-abnormal\",true) from the fixture", policy, known)
+	}
+	if got := parseExecStartBinary(content); got != "/nowhere/fixture-serve" {
+		t.Errorf("parseExecStartBinary = %q, want the fixture's binary", got)
+	}
+}
+
+// TestSystemUnitDirDefaultsToRealPath — production must still write and read the
+// real location; the injection point is test-only and has no env or flag knob.
+func TestSystemUnitDirDefaultsToRealPath(t *testing.T) {
+	if systemUnitDir != "/etc/systemd/system" {
+		t.Errorf("systemUnitDir default = %q, want /etc/systemd/system", systemUnitDir)
 	}
 }

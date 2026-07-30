@@ -1,3 +1,13 @@
+## [0.0.363] - 2026-07-30
+
+### Fixed
+- Unit tests no longer read the operator's real `/etc/systemd/system/satelle.service`. `systemUnitPath()` hardcoded that absolute path and no test redirected it, so `go test ./...` passed or failed depending on whether the developer happened to have a satelle system unit installed — and six tests in `internal/cli` went red the moment one was. GitHub runners have none, so CI would have stayed green while every developer with a real install saw red: CI and the developer machine silently testing different things (sty_d50218d1)
+- The path now resolves through a package-level `systemUnitDir` that hermetic tests redirect to a temp dir, the same idiom `restartHooks` and `procRoot` already use. Production is unchanged: the default is the real location, nothing outside tests assigns it, and there is deliberately no environment or flag knob for a test-only need (sty_d50218d1)
+- The six tests were repaired by isolating their environment, not by relaxing assertions — each still asserts exactly what it did before. `TestSystemUnitPathIsInjected` guards the isolation itself (empty `HOME` so the user unit cannot mask the system one), so a revert to a hardcoded path fails the suite (sty_d50218d1)
+
+### Added
+- The project workflow now carries four coded deployment gates, one per objective, so a failed deployment names the objective that failed: `satelle-build-unit-check` (go build + go test, on entry to integration — nothing ran the unit suite in the workflow before this), `satelle-integration-check` (make integration, plus an assertion that the operator's installed binary and running service are byte-identical before and after), `satelle-ci-published-check` (the test and release workflows concluded success for the actual HEAD SHA, and the tag for .version is published), and `satelle-dogfood-check` (the installed CLI reports .version and the serving process runs the installed binary under a persistent supervisor). All four VERIFY and never PERFORM — no gate pushes, tags, updates, installs or restarts. Substrate only; no binary change (sty_7a2dc74b)
+
 ## [0.0.362] - 2026-07-30
 
 ### Fixed

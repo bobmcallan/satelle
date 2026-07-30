@@ -509,9 +509,25 @@ func userUnitPath() string {
 	return filepath.Join(home, ".config", "systemd", "user", serviceUnitName)
 }
 
+// systemUnitDir is the directory a persistent SYSTEM unit lives in. A package
+// var rather than a constant so hermetic tests can point it at a temp dir, the
+// same way procRoot redirects /proc reads and restartHooks redirects the
+// systemctl seams (sty_d50218d1). PRODUCTION NEVER OVERRIDES IT — there is no
+// flag or environment knob, because this is a test-isolation need and a
+// production-visible knob would be a surface nobody asked for.
+//
+// Before this indirection, `userUnitPath()` was hermetic (it follows $HOME, which
+// tests redirect) while this path was not, so `go test ./...` read the operator's
+// real /etc and passed or failed depending on whether they happened to have a
+// system unit installed. CI runners have none, so CI stayed green while a
+// developer with a real install saw red.
+//
+// Overriding tests must not call t.Parallel(): the var is process-global.
+var systemUnitDir = "/etc/systemd/system"
+
 // systemUnitPath is where a persistent SYSTEM unit lives (needs root to write).
 func systemUnitPath() string {
-	return filepath.Join("/etc/systemd/system", serviceUnitName)
+	return filepath.Join(systemUnitDir, serviceUnitName)
 }
 
 // currentUsername returns the login name for a system unit's User=, falling back

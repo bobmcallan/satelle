@@ -360,11 +360,15 @@ func TestFindPIDByListenPort(t *testing.T) {
 
 // setupWantedIdentity points wantedExeIdentity's fallback (installTarget) at a
 // controllable file, with no real unit files in play: HOME is an empty temp dir
-// (no ~/.config/systemd/user/satelle.service) and the real /etc/systemd/system
-// path never exists in a test sandbox. Returns the resolved "wanted" binary path.
+// (no ~/.config/systemd/user/satelle.service) and systemUnitDir is redirected to
+// an empty temp dir. The comment here once claimed "the real /etc/systemd/system
+// path never exists in a test sandbox" — it does on any machine with a system
+// unit installed, and these tests read it (sty_d50218d1). Returns the resolved
+// "wanted" binary path.
 func setupWantedIdentity(t *testing.T) string {
 	t.Helper()
 	testutil.IsolateHome(t) // servicePort()'s config.LoadGlobal() refuses to run without SATELLE_HOME set
+	isolateSystemUnitDir(t) // never read the operator's real /etc (sty_d50218d1)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	installDir := t.TempDir()
