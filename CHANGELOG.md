@@ -1,3 +1,9 @@
+## [0.0.354] - 2026-07-30
+
+### Fixed
+- satelle-code-ac-review now judges a single primary objective and falsifies prohibition/invariant-shaped acceptance criteria by enumerating the paths that could violate them, instead of accepting on the presence of one compliant sample (sty_02acce1b)
+- satelle-reviewer-objective-audit now audits reviewer skills for evidentiary underreach (a presence-only bar unable to falsify a prohibition) alongside its existing overreach checks (sty_02acce1b)
+
 ## [0.0.353] - 2026-07-30
 
 ### Fixed
