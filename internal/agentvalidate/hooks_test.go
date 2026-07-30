@@ -7,6 +7,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/health"
 	"github.com/bobmcallan/satelle/internal/wfhook"
 )
 
@@ -236,4 +237,81 @@ model   = "opus"
 		}
 	}
 	t.Fatalf("no hook allocation in %+v", r.Gates)
+}
+
+// TestFindingsMirrorTheProseSurfaces pins the compatibility seam added for
+// doctor (sty_e9da28e2): every Problem and Warning has a Finding whose Detail is
+// that exact string, and every Finding carries a stable id. The two surfaces
+// cannot drift, so a caller reading either sees the same set.
+func TestFindingsMirrorTheProseSurfaces(t *testing.T) {
+	// A fixture that trips several distinct classes at once.
+	agents := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop", Role: config.RoleAgent},
+		Reviewer: config.AgentBinding{Role: config.RoleReviewer, Command: "codex exec -s danger-full-access {system}"},
+		Agents: map[string]config.AgentBinding{
+			"orphan": {Role: config.RoleReviewer, Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob"},
+		},
+	}
+	doc := wfWithHook("hooks:\n  - operation: create_review\n    skill: s\n    agent: nobody\n")
+	r := Validate(agents, nil, []docindex.Doc{doc})
+
+	if len(r.Problems) == 0 || len(r.Warnings) == 0 {
+		t.Fatalf("fixture must produce both problems and warnings: %+v", r)
+	}
+	errs := r.Findings.Details(health.SeverityError)
+	warns := r.Findings.Details(health.SeverityWarn)
+	if len(errs) != len(r.Problems) || len(warns) != len(r.Warnings) {
+		t.Fatalf("counts differ: %d/%d problems, %d/%d warnings", len(errs), len(r.Problems), len(warns), len(r.Warnings))
+	}
+	for i, p := range r.Problems {
+		if errs[i] != p {
+			t.Errorf("problem %d: finding detail %q != prose %q", i, errs[i], p)
+		}
+	}
+	for i, w := range r.Warnings {
+		if warns[i] != w {
+			t.Errorf("warning %d: finding detail %q != prose %q", i, warns[i], w)
+		}
+	}
+	known := map[string]bool{}
+	for _, id := range health.IDs() {
+		known[id] = true
+	}
+	for _, f := range r.Findings {
+		if !known[f.ID] {
+			t.Errorf("finding carries an unregistered id %q", f.ID)
+		}
+	}
+	// The classes this fixture is built to trip, each by id.
+	got := map[string]bool{}
+	for _, f := range r.Findings {
+		got[f.ID] = true
+	}
+	for _, want := range []string{health.IDReviewerUnsafe, health.IDHookAlloc, health.IDNodeAlloc} {
+		if !got[want] {
+			t.Errorf("expected a %s finding: %+v", want, r.Findings)
+		}
+	}
+}
+
+// TestFindingsClassifyByProducingSite guards the rule that an id comes from the
+// CHECK that produced it, never from matching the message text.
+func TestFindingsClassifyByProducingSite(t *testing.T) {
+	agents := healthyAgents()
+	agents.Agents = map[string]config.AgentBinding{
+		"bad": {Role: config.RoleReviewer, Command: "some-cli --model {model}"}, // omits {system}
+	}
+	r := Validate(agents, nil, nil)
+	var found bool
+	for _, f := range r.Findings {
+		if f.ID == health.IDAgentsBinding && strings.Contains(f.Detail, "{system}") {
+			found = true
+			if f.Artifact != "bad" || f.Remediation == "" {
+				t.Errorf("binding finding should name its section and a fix: %+v", f)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("a malformed command must be an %s finding: %+v", health.IDAgentsBinding, r.Findings)
+	}
 }

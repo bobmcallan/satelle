@@ -22,6 +22,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/health"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfhook"
 )
@@ -96,6 +97,41 @@ type Report struct {
 	// Provenance is the per-binding, per-field source table when the report was
 	// produced by ValidateEffective; nil for the catalog-free Validate.
 	Provenance config.Provenance
+	// Findings is the same set of observations as Problems/Warnings, carrying a
+	// STABLE identifier and remediation each (sty_e9da28e2). Problems/Warnings
+	// remain the prose surfaces older callers print; every finding's Detail is
+	// the very string that appears there, so the two cannot drift.
+	Findings health.Findings
+}
+
+// record appends findings and mirrors them into the prose lists, so a caller
+// that reads Problems/Warnings and one that reads Findings always agree.
+func (r *Report) record(fs ...health.Finding) {
+	for _, f := range fs {
+		r.Findings = append(r.Findings, f)
+		switch f.Severity {
+		case health.SeverityError:
+			r.Problems = append(r.Problems, f.Detail)
+		case health.SeverityWarn:
+			r.Warnings = append(r.Warnings, f.Detail)
+		}
+	}
+}
+
+// allocProblem records a workflow node/edge allocation defect — a node naming a
+// binding that does not exist, or one whose role cannot do the job.
+func (r *Report) allocProblem(msg string) {
+	r.record(health.Error(health.IDNodeAlloc, "Unusable workflow allocation", msg).
+		WithRemediation("add the named binding to .satelle/agents.toml, or change the workflow's agent="))
+}
+
+// tagged records already-authored prose under one stable id — used where a whole
+// region of checks shares a defect class (a node allocation, a hook allocation).
+// The id comes from the SITE, never from matching the message text.
+func (r *Report) tagged(id, title, remediation string, sev health.Severity, msgs ...string) {
+	for _, m := range msgs {
+		r.record(health.Finding{ID: id, Severity: sev, Title: title, Detail: m, Remediation: remediation})
+	}
 }
 
 // OK reports whether the report carries no hard problems.
@@ -116,7 +152,10 @@ func ValidateEffective(repo config.AgentsConfig, global config.GlobalAgentsConfi
 	eff, err := config.ResolveEffectiveAgents(repo, global, repoVars)
 	if err != nil {
 		r := validate(repo, config.LayerVars(global.Vars, repoVars), workflows, nil)
-		r.Problems = append([]string{err.Error()}, r.Problems...)
+		f := health.Error(health.IDAgentsProfileBroken, "Broken machine-wide profile reference", err.Error()).
+			WithRemediation("fix the profile= reference in .satelle/agents.toml, or the profile in " + config.GlobalAgentsLabel)
+		r.Problems = append([]string{f.Detail}, r.Problems...)
+		r.Findings = append(health.Findings{f}, r.Findings...)
 		return r
 	}
 	return validate(eff.Agents, eff.Vars, workflows, eff.Provenance)
@@ -137,7 +176,8 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 
 	// Env/settings resolution once — fail-fast naming section+key, never values.
 	if _, err := config.ResolveAgentEnvs(agents, vars); err != nil {
-		r.Problems = append(r.Problems, err.Error())
+		r.record(health.Error(health.IDEnvUnresolved, "Unresolved variable", err.Error()).
+			WithRemediation("define the named key under [vars] in satelle.local.toml (secrets) or satelle.toml"))
 	}
 
 	// Built-in roles first, then named agents in sorted order.
@@ -155,11 +195,10 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 	}
 
 	for _, sec := range sections {
-		g, problems, warnings := checkBinding(sec.name, sec.b)
+		g, _, _, fs := checkBinding(sec.name, sec.b)
 		g.Sources = prov[sec.name]
 		r.Grants = append(r.Grants, g)
-		r.Problems = append(r.Problems, problems...)
-		r.Warnings = append(r.Warnings, warnings...)
+		r.record(fs...)
 	}
 
 	// Workflow node → binding + orphan named bindings + per-gate effective model.
@@ -168,8 +207,9 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 	for _, doc := range workflows {
 		// Lifecycle hooks FIRST: they are frontmatter, so they must be checked even
 		// when the DOT below does not parse (sty_ede16f51).
-		hookProblems := checkHooks(doc, agents, revModel, usedNamed, &r)
-		r.Problems = append(r.Problems, hookProblems...)
+		r.tagged(health.IDHookAlloc, "Unusable lifecycle-hook allocation",
+			"declare an isolated role=\"reviewer\" binding for the hook's agent in .satelle/agents.toml",
+			health.SeverityError, checkHooks(doc, agents, revModel, usedNamed, &r)...)
 
 		spec, ok := wfdot.Parse(doc.Body)
 		if !ok {
@@ -191,12 +231,12 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 					if b, ok := agents.NamedBinding(sec); ok {
 						bm = b.Model
 						if config.ResolvedRole(sec, b) != config.RoleReviewer {
-							r.Problems = append(r.Problems, fmt.Sprintf(
+							r.allocProblem(fmt.Sprintf(
 								"workflow %q node %q allocates agent=%s with role=%q on a step-summary node (want role=reviewer)",
 								doc.Name, st.Name, sec, config.ResolvedRole(sec, b)))
 						}
 					} else {
-						r.Problems = append(r.Problems, fmt.Sprintf(
+						r.allocProblem(fmt.Sprintf(
 							"workflow %q node %q allocates agent=%s with no [%s] binding in agents.toml",
 							doc.Name, st.Name, sec, sec))
 					}
@@ -220,12 +260,12 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 						if b, ok := agents.NamedBinding(sec); ok {
 							bm = b.Model
 							if config.ResolvedRole(sec, b) != config.RoleReviewer {
-								r.Problems = append(r.Problems, fmt.Sprintf(
+								r.allocProblem(fmt.Sprintf(
 									"workflow %q node %q allocates agent=%s with role=%q on a gated node (want role=reviewer)",
 									doc.Name, st.Name, sec, config.ResolvedRole(sec, b)))
 							}
 						} else {
-							r.Problems = append(r.Problems, fmt.Sprintf(
+							r.allocProblem(fmt.Sprintf(
 								"workflow %q node %q allocates agent=%s with no [%s] binding in agents.toml",
 								doc.Name, st.Name, sec, sec))
 						}
@@ -237,17 +277,17 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 				usedNamed[st.Agent] = true
 				b, ok := agents.NamedBinding(st.Agent)
 				if !ok {
-					r.Problems = append(r.Problems, fmt.Sprintf(
+					r.allocProblem(fmt.Sprintf(
 						"workflow %q node %q allocates agent=%s with no [%s] binding in agents.toml",
 						doc.Name, st.Name, st.Agent, st.Agent))
 				} else {
 					if config.ResolvedRole(st.Agent, b) == config.RoleReviewer {
-						r.Problems = append(r.Problems, fmt.Sprintf(
+						r.allocProblem(fmt.Sprintf(
 							"workflow %q node %q allocates agent=%s with role=reviewer on a performing node — use a gated edge or scoped on= node for judges",
 							doc.Name, st.Name, st.Agent))
 					}
 					if p := performerChannelProblem(doc.Name, st.Name, st.Agent, b); p != "" {
-						r.Problems = append(r.Problems, p)
+						r.allocProblem(p)
 					}
 					r.Gates = append(r.Gates, gateAlloc(doc.Name, st.Name, st.Skill, st.Agent, b.Model))
 				}
@@ -259,11 +299,11 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 			if st.OnEnterAgent != "" {
 				usedNamed[st.OnEnterAgent] = true
 				if b, ok := agents.NamedBinding(st.OnEnterAgent); !ok {
-					r.Problems = append(r.Problems, fmt.Sprintf(
+					r.allocProblem(fmt.Sprintf(
 						"workflow %q node %q sets on_enter_agent=%s with no [%s] binding in agents.toml",
 						doc.Name, st.Name, st.OnEnterAgent, st.OnEnterAgent))
 				} else if p := performerChannelProblem(doc.Name, st.Name, st.OnEnterAgent, b); p != "" {
-					r.Problems = append(r.Problems, p)
+					r.allocProblem(p)
 				}
 			}
 		}
@@ -286,12 +326,12 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 				if b, ok := agents.NamedBinding(sec); ok {
 					bm = b.Model
 					if config.ResolvedRole(sec, b) != config.RoleReviewer {
-						r.Problems = append(r.Problems, fmt.Sprintf(
+						r.allocProblem(fmt.Sprintf(
 							"workflow %q edge %s→%s allocates agent=%s with role=%q (want role=reviewer) — a named performer never advances status",
 							doc.Name, tr.From, tr.To, sec, config.ResolvedRole(sec, b)))
 					}
 				} else {
-					r.Problems = append(r.Problems, fmt.Sprintf(
+					r.allocProblem(fmt.Sprintf(
 						"workflow %q edge %s→%s allocates agent=%s with no [%s] binding in agents.toml",
 						doc.Name, tr.From, tr.To, sec, sec))
 				}
@@ -308,9 +348,9 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 			// [retrospective] for `satelle story retrospect`) without an agent=
 			// node. The satelle-workflow-drift skill judges semantics; validate
 			// surfaces the orphan without blocking engage/init.
-			r.Warnings = append(r.Warnings, fmt.Sprintf(
+			r.record(health.Warn(health.IDNodeAlloc, "Orphaned binding", fmt.Sprintf(
 				"agents.toml [%s] is orphaned — no workflow node allocates agent=%s (ok if used by a non-workflow verb)",
-				name, name))
+				name, name)))
 		}
 	}
 	return r
@@ -408,8 +448,34 @@ func performerChannelProblem(workflow, node, section string, b config.AgentBindi
 		workflow, node, section, section)
 }
 
-func checkBinding(section string, b config.AgentBinding) (Grant, []string, []string) {
+// checkBinding validates one binding and builds its Grant. It reports the same
+// prose it always has, and records each observation as a health.Finding under a
+// stable id (sty_e9da28e2): every defect gets the SAME identifier wherever it
+// surfaces — agent validate, init, doctor, or an engage refusal. The id is
+// chosen by the SITE that produced the finding, never by matching its text.
+func checkBinding(section string, b config.AgentBinding) (Grant, []string, []string, health.Findings) {
 	var problems, warnings []string
+	var fs health.Findings
+	// Recorders: append the prose (unchanged) AND the classified finding, so the
+	// two can never drift apart.
+	bindingProblem := func(msg string) {
+		problems = append(problems, msg)
+		fs = append(fs, health.Error(health.IDAgentsBinding, "Invalid agent binding", msg).
+			About(section).WithRemediation("fix the ["+section+"] binding in .satelle/agents.toml"))
+	}
+	bindingWarn := func(msg string) {
+		warnings = append(warnings, msg)
+		fs = append(fs, health.Warn(health.IDAgentsBinding, "Agent binding advisory", msg).About(section))
+	}
+	ceilingProblem := func(msg string) {
+		problems = append(problems, msg)
+		fs = append(fs, health.Error(health.IDReviewerUnsafe, "Reviewer ceiling escaped", msg).
+			About(section).WithRemediation("restore a read-only ceiling on ["+section+"]"))
+	}
+	ceilingWarn := func(msg string) {
+		warnings = append(warnings, msg)
+		fs = append(fs, health.Warn(health.IDReviewerUnsafe, "Reviewer ceiling not expressed", msg).About(section))
+	}
 	cmd := b.CommandTemplate()
 	if cmd == "" {
 		// Should not happen after *Binding resolvers, but be defensive.
@@ -438,13 +504,13 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 		ContextChannel:    config.GrantsContextChannel(b.Tools),
 	}
 	if g.RoleInferred {
-		warnings = append(warnings, fmt.Sprintf(
+		bindingWarn(fmt.Sprintf(
 			"agents.toml [%s] has no role= declared — inferred role=%s; set role = %q to make the contract explicit",
 			section, role, role))
 	}
 	// Role/path mismatch warnings (not hard fails — user may reassign intentionally).
 	if section == "reviewer" && role != config.RoleReviewer {
-		warnings = append(warnings, fmt.Sprintf(
+		ceilingWarn(fmt.Sprintf(
 			"agents.toml [reviewer] resolves role=%s (want role=reviewer for gate verdicts)", role))
 	}
 	// Named role=reviewer bindings ARE allocatable on gated edges (sty_a476a2f8 /
@@ -456,7 +522,7 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 	// gate refuses loud at transition time (design §6.4).
 	if role == config.RoleReviewer {
 		if config.IsInLoopCommand(cmd) {
-			warnings = append(warnings, fmt.Sprintf(
+			ceilingWarn(fmt.Sprintf(
 				"agents.toml [%s] is role=reviewer with command=in-loop — cannot produce an isolated verdict; gates will refuse",
 				section))
 		}
@@ -467,7 +533,7 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 		// only widens the ceiling. Stated as the mechanical fact; whether a repo
 		// keeps it is the repo's call, so this is a warning, not a problem.
 		if tok := config.ShellGrantToken(b.Tools); tok != "" {
-			warnings = append(warnings, fmt.Sprintf(
+			ceilingWarn(fmt.Sprintf(
 				"agents.toml [%s] is role=reviewer but grants shell (%s) — reviewers are fed their documents in the transition payload, so the grant is never used and only widens the ceiling",
 				section, tok))
 		}
@@ -483,11 +549,11 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 
 	// Unknown interface (LoadAgents also rejects; keep validate defensive).
 	if iface != config.InterfaceCommand && iface != config.InterfaceACP {
-		problems = append(problems, fmt.Sprintf(
+		bindingProblem(fmt.Sprintf(
 			"agents.toml [%s] interface %q: want %q or %q",
 			section, b.Interface, config.InterfaceCommand, config.InterfaceACP))
 		g.Backend = "invalid"
-		return g, problems, warnings
+		return g, problems, warnings, fs
 	}
 
 	fields := strings.Fields(cmd)
@@ -500,7 +566,7 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 	if iface == config.InterfaceACP {
 		runner, err := agentcli.RunnerFromBinding(iface, cmd)
 		if err != nil {
-			problems = append(problems, fmt.Sprintf("agents.toml [%s] acp: %v", section, err))
+			bindingProblem(fmt.Sprintf("agents.toml [%s] acp: %v", section, err))
 			g.Backend = "invalid"
 		} else {
 			g.Backend = "acp:" + runner.Name()
@@ -513,11 +579,11 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 			g.ReadOnly = b.Tools != "" && !toolsGrantMutators(b.Tools)
 			if role == config.RoleReviewer {
 				if b.Tools == "" {
-					problems = append(problems, fmt.Sprintf(
+					ceilingProblem(fmt.Sprintf(
 						"agents.toml [%s] interface=acp role=reviewer requires tools= (grant evidence; ACP ceiling is tools + client permission policy, not argv --deny)",
 						section))
 				} else if !g.ReadOnly {
-					warnings = append(warnings, fmt.Sprintf(
+					ceilingWarn(fmt.Sprintf(
 						"agents.toml [%s] is role=reviewer with interface=acp and tools that appear to allow mutators (%s) — prefer a read-only tools list; satelle denies mutator ACP tool kinds only when tools look read-only",
 						section, b.Tools))
 				} else if g.Notes == "" {
@@ -528,9 +594,9 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 			}
 		}
 		if _, err := b.TimeoutDuration(0); err != nil {
-			problems = append(problems, fmt.Sprintf("agents.toml [%s] timeout: %v", section, err))
+			bindingProblem(fmt.Sprintf("agents.toml [%s] timeout: %v", section, err))
 		}
-		return g, problems, warnings
+		return g, problems, warnings, fs
 	}
 
 	switch {
@@ -546,13 +612,13 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 		// Bare CLI presets removed from the agents.toml path — full template required.
 		g.Backend = "invalid"
 		g.ReadOnly = false
-		problems = append(problems, fmt.Sprintf(
+		bindingProblem(fmt.Sprintf(
 			"agents.toml [%s] command %q: bare CLI presets removed — use a full command template or run satelle init to migrate",
 			section, fields[0]))
 	default:
 		runner, err := agentcli.RunnerFromCommand(cmd)
 		if err != nil {
-			problems = append(problems, fmt.Sprintf("agents.toml [%s] command: %v", section, err))
+			bindingProblem(fmt.Sprintf("agents.toml [%s] command: %v", section, err))
 			g.Backend = "invalid"
 			break
 		}
@@ -587,7 +653,7 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 		// tokens that equal {system} verbatim, so a multi-token isolated command
 		// without that token runs with no gate/skill rubric. Hard-fail.
 		if !hasToken(fields, "{system}") {
-			problems = append(problems, fmt.Sprintf(
+			bindingProblem(fmt.Sprintf(
 				"agents.toml [%s] command omits {system} as its own argv token — the gate/skill rubric is never appended and the agent runs without its rubric",
 				section))
 		}
@@ -596,7 +662,7 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 		codexCmd := isCodexCommand(name, resolved)
 		dangerHard := role == config.RoleReviewer && commandHasDangerSandbox(resolved)
 		if dangerHard {
-			problems = append(problems, fmt.Sprintf(
+			ceilingProblem(fmt.Sprintf(
 				"agents.toml [%s] is role=reviewer with a command that disables the sandbox ceiling (%s) — refuse; use -s read-only (DefaultCodexExecCommand) or a non-danger template",
 				section, dangerSandboxToken(resolved)))
 		}
@@ -607,7 +673,7 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 		codexSandboxHard := false
 		if role == config.RoleReviewer && codexCmd && !commandHasCodexReadOnlySandbox(resolved) && !dangerHard {
 			codexSandboxHard = true
-			problems = append(problems, fmt.Sprintf(
+			ceilingProblem(fmt.Sprintf(
 				"agents.toml [%s] is role=reviewer with a Codex command whose effective sandbox is %q (want -s read-only) — refuse; use DefaultCodexExecCommand",
 				section, effectiveCodexSandbox(resolved)))
 		}
@@ -616,7 +682,7 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 		// Warn not fail for non-Codex templates — g.ReadOnly is a heuristic.
 		// Codex non-RO already produced a Problem above (sty_aa726901).
 		if role == config.RoleReviewer && !g.ReadOnly && !dangerHard && !codexSandboxHard {
-			warnings = append(warnings, fmt.Sprintf(
+			ceilingWarn(fmt.Sprintf(
 				"agents.toml [%s] is role=reviewer with an isolated command that expresses no read-only ceiling (no --disallowedTools/--deny of mutators, no -s read-only) — the reviewer could silently gain write; deny the mutators or use the default claude/grok/codex template",
 				section))
 		}
@@ -628,9 +694,9 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 	}
 
 	if _, err := b.TimeoutDuration(0); err != nil {
-		problems = append(problems, fmt.Sprintf("agents.toml [%s] timeout: %v", section, err))
+		bindingProblem(fmt.Sprintf("agents.toml [%s] timeout: %v", section, err))
 	}
-	return g, problems, warnings
+	return g, problems, warnings, fs
 }
 
 // hasToken reports whether tok appears as its own element of fields (exact match).

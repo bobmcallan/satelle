@@ -7,6 +7,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentvalidate"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/health"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -62,13 +63,19 @@ func refuseBrokenAgentsOnEngage(ctx context.Context, current workitem.Item, toSt
 	if err != nil {
 		return fmt.Errorf("satelle: engage validate: list workflows: %w", err)
 	}
+	// agentsLayer is the EFFECTIVE layer (already folded with the machine-wide
+	// profile catalog at bootstrap), so a broken profile reference has refused the
+	// command long before this point. The refusal is rendered from the shared
+	// finding vocabulary, so the identifiers and remediation an operator sees here
+	// are the SAME ones `satelle doctor` prints for the same repo (sty_e9da28e2).
 	report := agentvalidate.Validate(agentsLayer, agentsVars, wfs)
 	if report.OK() {
 		return nil
 	}
-	return fmt.Errorf(
-		"satelle: refusing to engage story %s — agents.toml/workflow validation failed:\n  - %s\nFix with `satelle agent validate`, then retry",
-		current.ID, strings.Join(report.Problems, "\n  - "))
+	return fmt.Errorf("%s\nFix with `satelle doctor`, then retry",
+		health.RenderRefusal(
+			fmt.Sprintf("satelle: refusing to engage story %s — agents.toml/workflow validation failed", current.ID),
+			report.Findings))
 }
 
 // isCancelOrTerminalExit reports whether toStatus is a cancel exit (or a bare

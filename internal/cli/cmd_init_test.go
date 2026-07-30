@@ -238,8 +238,10 @@ func TestRunInitFailsValidationOnBrokenSubstrate(t *testing.T) {
 	if !strings.Contains(err.Error(), "failed validation") {
 		t.Errorf("error should say the deployed system failed validation: %v", err)
 	}
-	if !strings.Contains(out.String(), "FAIL  workflows/broken") {
-		t.Errorf("report should name the failing artifact:\n%s", out.String())
+	// init prints doctor's findings, so each FAIL carries the stable id as well as
+	// the artifact (sty_e9da28e2).
+	if !strings.Contains(out.String(), "FAIL  [workflow.structure] workflows/broken") {
+		t.Errorf("report should name the finding id and the failing artifact:\n%s", out.String())
 	}
 }
 

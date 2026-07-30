@@ -1,3 +1,25 @@
+## [0.0.367] - 2026-07-31
+
+### Added
+- **`satelle doctor`** — one diagnostic surface answering whether satelle is ready to govern a repository. It COMPOSES the validators that already own their rules (the agents layer and its machine-wide profile references, workflow structure, cross-workflow consistency, lifecycle-hook allocations, reviewer ceilings, required binaries, harness scaffolding) rather than adding rules of its own, so init, doctor, and the engagement precondition can never form three different opinions about the same repo (sty_e9da28e2)
+- `satelle doctor --all` checks every registered workspace repository **independently**: each root is contained, and an unreadable or uninitialised one becomes its own one-finding report rather than aborting the sweep. Output ends with a healthy/unhealthy tally and the exit code is the worst result across all of them (sty_e9da28e2)
+- `satelle doctor --live` adds bounded, opt-in provider probes — a `--version` call for a command binding, a single `initialize` handshake for an ACP one. Neither opens a session or sends a prompt, so **ordinary doctor performs no paid and no network model call at all**. Every probe runs in its own process group and is killed and reaped on the deadline or on cancellation, so a probe never leaves a provider process behind. Authentication is diagnosed only where the provider says so; an unexplained failure is reported as a spawn failure rather than guessed at (sty_e9da28e2)
+- **`internal/health`** — the shared finding vocabulary: a stable identifier, severity, and remediation per defect. The identifier is the contract, so the same defect reports the same id whether you meet it in `doctor`, in `satelle init`, or in an engagement refusal (sty_e9da28e2)
+- `satelle doctor --json` emits repos, findings, grants with per-field sources, gate and hook allocations, a summary, and the exit code. Exit codes are documented in both the help and the payload: `0` healthy (warnings allowed), `1` error findings, `2` doctor could not run (sty_e9da28e2)
+- `satelle help doctor` documents severity, exit codes, the `--live` side effect, and the distinction between repo workflow POLICY (`.satelle/`) and machine-wide EXECUTION profiles (`~/.satelle/agents.toml`) (sty_e9da28e2)
+
+### Changed
+- `satelle init`'s deployment validation is now a PRINTER over `doctor.Check`, not a second check list. Its FAIL/WARN lines carry the finding identifier alongside the artifact. The only check init still owns is the substrate analysis of what init itself just wrote (sty_e9da28e2)
+- `satelle service status` reports each registered repository's readiness — `N registered — H healthy, U unhealthy`, naming each unhealthy repo and its first finding — so an unhealthy repo is visible from the service surface instead of looking identical to a ready one. It stays informational: the service itself is running fine. The diagnostic lives on the CLI side deliberately, because satelle-serve is a push-fed mirror that never opens a repo database (sty_e9da28e2)
+- An engagement refusal is rendered from the shared vocabulary, so the identifiers and remediation it carries are the ones `satelle doctor` prints for the same repo. Fail-closed behaviour is unchanged (sty_e9da28e2)
+- `agentvalidate` reports `Findings` additively: `Problems`/`Warnings` are now derived from them, each finding's detail being the exact prose that always appeared, so the two surfaces cannot drift. Identifiers are assigned by the producing check, never by matching message text (sty_e9da28e2)
+- `satelle agent validate` and `satelle doctor` render per-field provenance through one function, so the two displays cannot diverge (sty_e9da28e2)
+
+### Fixed
+- Doctor judges the workflows that actually GOVERN a repo — authored files plus the embedded defaults none of them shadows. Reading only the authored directory left a repo governed by an embedded default with no allocation or lifecycle-hook checking at all, reported healthy without the governing workflow ever being looked at. The consistency (ambiguity) check still sees only authored files, because an on-disk wildcard workflow legitimately overrides the embedded wildcard baseline (sty_e9da28e2)
+- A missing agent executable is a WARNING, not a failure. Shipping it as an error refused `satelle init` on any machine without the provider CLI on PATH — including CI. A repo is legitimately initialised before its CLI exists; the gates stay inert until one is, and dispatch already refuses at the moment it matters. A MALFORMED command (one whose first token is a placeholder) stays an error: no environment can make it work (sty_e9da28e2)
+- Environment values are never printed, in any mode including `--json`. Doctor lists env KEY names with whether each resolved; an unresolved `${VAR}` names the key, never its contents (sty_e9da28e2)
+
 ## [0.0.366] - 2026-07-30
 
 ### Added

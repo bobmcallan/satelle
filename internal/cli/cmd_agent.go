@@ -25,6 +25,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/agentvalidate"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/doctor"
 )
 
 func init() {
@@ -194,30 +195,11 @@ func printProfileCatalog(out io.Writer, g config.GlobalAgentsConfig) {
 
 // printGrantSources renders each effective field with the tier that supplied it
 // (AC4): repo inline, an explicitly referenced profile, an opt-in role default,
-// or the binary's embedded fallback. env/settings values may be secrets, so
-// those lines name the field and its source only.
+// or the binary's embedded fallback. It DELEGATES to doctor's renderer so this
+// display and `satelle doctor`'s cannot drift (sty_e9da28e2); env/settings
+// values may be secrets and are never printed by either.
 func printGrantSources(out io.Writer, g agentvalidate.Grant) {
-	if len(g.Sources) == 0 {
-		return
-	}
-	vals := map[string]string{
-		"interface":  g.Interface,
-		"command":    g.Command,
-		"tools":      g.Tools,
-		"model":      g.Model,
-		"effort":     g.Effort,
-		"timeout":    g.Timeout,
-		"role":       g.Role,
-		"principles": g.Principles,
-		"secondary":  g.Secondary,
-	}
-	for _, f := range sortedMapKeys(g.Sources) {
-		if f == "env" || f == "settings" {
-			fmt.Fprintf(out, "         source: %s (%s) — values withheld\n", f, g.Sources[f])
-			continue
-		}
-		fmt.Fprintf(out, "         source: %s = %q (%s)\n", f, vals[f], g.Sources[f])
-	}
+	doctor.RenderGrantSources(out, "         ", g)
 }
 
 func sortedBindingNames(m map[string]config.AgentBinding) []string {

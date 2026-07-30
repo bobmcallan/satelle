@@ -8,6 +8,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -20,6 +21,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/doctor"
+	"github.com/bobmcallan/satelle/internal/health"
 )
 
 const serviceUnitName = "satelle.service"
@@ -179,8 +182,44 @@ func serviceStatusCmd() *cobra.Command {
 			fmt.Fprintf(out, "config:  %s (port %d, addr %s, repo %s)\n",
 				config.GlobalConfigPath(), gc.Service.ResolvePort(), gc.Service.ResolveAddr(), gc.Service.Repo)
 			fmt.Fprintf(out, "url:     http://localhost:%d\n", gc.Service.ResolvePort())
+			printRegisteredRepoHealth(out)
 			return nil
 		},
+	}
+}
+
+// printRegisteredRepoHealth summarises each registered repository's deterministic
+// readiness (sty_e9da28e2). Service startup used to say nothing about the repos
+// it serves, so an unhealthy one looked identical to a ready one until an agent
+// tried to engage a story there.
+//
+// The diagnostic lives on the CLI side deliberately: satelle-serve is a push-fed
+// mirror that never opens a repo database, and teaching it to would undo that
+// separation. This is the surface that already has the repo databases in reach.
+// It is INFORMATIONAL — an unhealthy repo never fails `service status`, because
+// the service itself is running fine; `satelle doctor --all` is where an operator
+// goes for the detail.
+func printRegisteredRepoHealth(out io.Writer) {
+	reports := doctor.CheckAll(context.Background(), doctor.Opts{ScaffoldDrift: scaffoldFindings})
+	if len(reports) == 0 {
+		return
+	}
+	healthy, unhealthy := doctor.Summarise(reports)
+	fmt.Fprintf(out, "repos:   %d registered — %d healthy, %d unhealthy\n", len(reports), healthy, unhealthy)
+	for _, r := range reports {
+		if r.OK {
+			fmt.Fprintf(out, "  OK        %s\n", r.Repo)
+			continue
+		}
+		errs := r.Findings.WithSeverity(health.SeverityError)
+		first := "unreadable"
+		if len(errs) > 0 {
+			first = errs[0].ID
+		}
+		fmt.Fprintf(out, "  UNHEALTHY %s — %d problem(s), first: %s\n", r.Repo, len(errs), first)
+	}
+	if unhealthy > 0 {
+		fmt.Fprintln(out, "         run `satelle doctor --all` for the detail")
 	}
 }
 

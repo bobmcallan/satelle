@@ -40,8 +40,10 @@ func TestInitFailsOnBrokenSubstrate(t *testing.T) {
 	if err == nil {
 		t.Fatalf("init must exit non-zero over broken substrate:\n%s", out)
 	}
-	if !strings.Contains(out, "FAIL  workflows/broken") {
-		t.Errorf("init should name the failing artifact:\n%s", out)
+	// init prints doctor's findings, so each FAIL carries the stable identifier
+	// as well as the artifact (sty_e9da28e2).
+	if !strings.Contains(out, "FAIL  [workflow.structure] workflows/broken") {
+		t.Errorf("init should name the finding id and the failing artifact:\n%s", out)
 	}
 }
 
