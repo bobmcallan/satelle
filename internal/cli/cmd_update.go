@@ -26,6 +26,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/buildinfo"
+	"github.com/bobmcallan/satelle/internal/config"
 )
 
 const updateRepo = "bobmcallan/satelle"
@@ -310,45 +311,158 @@ func replaceExecutable(target string, data []byte) error {
 }
 
 // restartServiceIfRunning restarts the background service onto the new binary,
-// SUDO-FREE, whatever supervises it. It tries the systemd USER unit first (with the
-// user-session env defaulted, so a headless/non-login shell can reach the bus);
-// then, if the user unit is not usable but the SYSTEM unit is active, it restarts
-// without sudo by SIGTERM-ing the unit's MainPID — the process runs as the operator
-// (User=), and the system unit's Restart=always makes systemd respawn it onto the
-// new binary (sty_1ac9f095). Previously this only tried `systemctl --user`, which is
-// a SILENT no-op when the user manager is down (a WSL quirk), leaving the live
-// service on the old binary. A genuine sudo restart stays the operator's fallback.
+// SUDO-FREE, whatever supervises it, and VERIFIES the restart by exe identity
+// (dev+inode of the running process's binary) rather than trusting a restart
+// command's exit code or a version string that may not have changed (sty_c344d080
+// AC1). It tries the systemd USER unit first (with the user-session env defaulted,
+// so a headless/non-login shell can reach the bus); then, if the user unit is not
+// usable but the SYSTEM unit is active, it restarts without sudo by SIGTERM-ing the
+// unit's MainPID — the process runs as the operator (User=), and the system unit's
+// Restart=always makes systemd respawn it onto the new binary (sty_1ac9f095). When
+// NEITHER systemctl path is reachable (a broken user D-Bus is a known WSL defect),
+// the running process is still located by cgroup or listening-port inspection
+// (AC2) so the operator gets a precise diagnosis — service absent, service stale
+// with an unreachable supervisor, or a start-limited unit — instead of one generic
+// line covering three different problems (AC3, AC4). A genuine sudo restart stays
+// the operator's fallback when nothing here can act.
 func restartServiceIfRunning(out io.Writer) {
-	if _, err := exec.LookPath("systemctl"); err != nil {
+	restartServiceIfRunningRoot(out, "/proc")
+}
+
+// restartHooks are the seams restartServiceIfRunningRoot calls through instead of
+// the real systemctl-touching functions directly. Hermetic tests override these
+// (restoring via t.Cleanup) so no test can ever shell out to the operator's actual
+// systemctl / actual satelle.service unit (AC6, the plan's "avoid real systemd in
+// unit tests") — the fake /proc tree alone is not enough, since the real functions
+// name the real serviceUnitName constant. Defaults are the real implementations.
+var restartHooks = struct {
+	lookSystemctl        func() error
+	userUnitActive       func() bool
+	userUnitMainPID      func() int
+	restartUserUnit      func() error
+	systemUnitMainPID    func() int
+	systemUnitRestartAlw func() bool
+	signalTerm           func(int) error
+	systemUnitRespawned  func(int) (int, bool)
+	systemUnitStartLtd   func() bool
+}{
+	lookSystemctl:        func() error { _, err := exec.LookPath("systemctl"); return err },
+	userUnitActive:       userUnitActive,
+	userUnitMainPID:      userUnitMainPID,
+	restartUserUnit:      func() error { return runCaptureEnv(userEnv(), "systemctl", "--user", "restart", serviceUnitName) },
+	systemUnitMainPID:    systemUnitMainPID,
+	systemUnitRestartAlw: systemUnitRestartAlways,
+	signalTerm:           signalTerm,
+	systemUnitRespawned:  systemUnitRespawned,
+	systemUnitStartLtd:   systemUnitStartLimited,
+}
+
+// restartServiceIfRunningRoot is the injectable core: procRoot lets hermetic tests
+// substitute a fake /proc tree (AC6) without touching the real system, and every
+// systemctl-touching step routes through restartHooks for the same reason.
+func restartServiceIfRunningRoot(out io.Writer, procRoot string) {
+	if runtime.GOOS != "linux" {
+		return // cgroup/port discovery and /proc identity are Linux-only (WSL is the story context)
+	}
+	if restartHooks.lookSystemctl() != nil {
 		return
 	}
-	// 1) systemd USER unit — sudo-free when the user manager is alive.
-	if userUnitActive() {
-		if err := runCaptureEnv(userEnv(), "systemctl", "--user", "restart", serviceUnitName); err == nil {
-			fmt.Fprintf(out, "restarted %s (user unit) onto the new binary\n", serviceUnitName)
+	wanted, wantedOK := wantedExeIdentity(procRoot)
+
+	// 1) systemd USER unit — sudo-free when the user manager is alive. Verify by
+	// identity, not by the restart command's exit code alone.
+	if restartHooks.userUnitActive() {
+		if err := restartHooks.restartUserUnit(); err == nil {
+			pid := restartHooks.userUnitMainPID()
+			reportRestartOutcome(out, "user unit", pid, waitForIdentity(procRoot, pid, wanted, wantedOK))
 			return
 		}
 	}
 	// 2) SYSTEM unit — sudo-free restart by signalling MainPID; Restart=always respawns.
-	if pid := systemUnitMainPID(); pid > 0 {
+	if pid := restartHooks.systemUnitMainPID(); pid > 0 {
 		// Only signal a unit that will RESPAWN — a clean SIGTERM to a Restart=on-failure
 		// unit would STOP the service, not reload it. Never leave a good release with a
 		// dead service; guide the operator to a persistent supervisor instead.
-		if !systemUnitRestartAlways() {
+		if !restartHooks.systemUnitRestartAlw() {
 			fmt.Fprintf(out, "system unit %s is not Restart=always — a signal would stop it, not respawn. Upgrade it with `satelle service install --system`, or restart manually: sudo systemctl restart %s\n", serviceUnitName, serviceUnitName)
 			return
 		}
-		if err := signalTerm(pid); err == nil {
-			if systemUnitRespawned(pid) {
-				fmt.Fprintf(out, "restarted %s (system unit, was pid %d) onto the new binary\n", serviceUnitName, pid)
-			} else {
-				fmt.Fprintf(out, "signalled %s (pid %d) but it did not respawn — restart manually: sudo systemctl restart %s\n", serviceUnitName, pid, serviceUnitName)
+		if err := restartHooks.signalTerm(pid); err == nil {
+			if newPID, respawned := restartHooks.systemUnitRespawned(pid); respawned {
+				reportRestartOutcome(out, "system unit", newPID, waitForIdentity(procRoot, newPID, wanted, wantedOK))
+				return
 			}
+			if restartHooks.systemUnitStartLtd() {
+				fmt.Fprintf(out, "%s is start-limited (systemd exhausted its restart attempts and gave up) — run: systemctl reset-failed %s && sudo systemctl restart %s\n", serviceUnitName, serviceUnitName, serviceUnitName)
+				return
+			}
+			fmt.Fprintf(out, "signalled %s (pid %d) but it did not respawn — restart manually: sudo systemctl restart %s\n", serviceUnitName, pid, serviceUnitName)
 			return
 		}
 	}
-	// 3) No reachable supervisor — tell the operator how to reload the new binary.
-	fmt.Fprintf(out, "binary updated, but no restartable service was found — reload it with `sudo systemctl restart %s` (system) or `systemctl --user restart %s` (user)\n", serviceUnitName, serviceUnitName)
+	// 3) Neither systemctl path is reachable. Locate the live process WITHOUT the
+	// bus (cgroup, then listening-port) so "no service configured" and "a service
+	// IS running but its supervisor is unreachable" are never the same message.
+	livePID := findPIDByCgroup(procRoot, serviceUnitName)
+	if livePID == 0 {
+		livePID = findPIDByListenPort(procRoot, servicePort())
+	}
+	if livePID == 0 {
+		fmt.Fprintf(out, "binary updated, but no running %s process was found — start one with `satelle service install` (user) or `satelle service install --system` (persistent)\n", serviceUnitName)
+		return
+	}
+	live, liveOK := identityFromPID(procRoot, livePID)
+	if wantedOK && liveOK && identitiesMatch(live, wanted) {
+		fmt.Fprintf(out, "%s (pid %d) is already running the new binary — no restart needed\n", serviceUnitName, livePID)
+		return
+	}
+	// A stale (or unconfirmed) process is running, but its supervisor cannot be
+	// commanded from here. Do NOT signal it: a bus-unreachable unit discovered this
+	// way is very likely the USER unit (Restart=on-failure) — a clean SIGTERM would
+	// STOP it, not reload it (the exact mistake this story was raised to prevent).
+	fmt.Fprintf(out, "%s is running (pid %d) but its supervisor is unreachable from here (systemctl could not reach the user/system bus) — it may still be on the OLD binary. Restart it once the supervisor is reachable:\n", serviceUnitName, livePID)
+	fmt.Fprintf(out, "  systemctl --user restart %s   (if it is a user unit)\n", serviceUnitName)
+	fmt.Fprintf(out, "  sudo systemctl restart %s     (if it is a system unit)\n", serviceUnitName)
+}
+
+// reportRestartOutcome renders the terminal message for a restart that WAS
+// commanded (user-unit restart, or a respawned system unit): success only when
+// exe identity confirms the live process is the newly installed binary (AC1) —
+// a restart command's exit code or a changed PID alone is not proof.
+func reportRestartOutcome(out io.Writer, via string, pid int, matched bool) {
+	switch {
+	case pid <= 0:
+		fmt.Fprintf(out, "restarted %s (%s) but could not locate its process to confirm the new binary is running\n", serviceUnitName, via)
+	case matched:
+		fmt.Fprintf(out, "restarted %s (%s, pid %d) onto the new binary\n", serviceUnitName, via, pid)
+	default:
+		fmt.Fprintf(out, "restarted %s (%s, pid %d) but could not confirm it is running the new binary\n", serviceUnitName, via, pid)
+	}
+}
+
+// identityPollAttempts/identityPollInterval bound waitForIdentity's poll — vars
+// (not consts) so hermetic tests shrink the window instead of paying the real
+// ~4.5s cost on every no-match scenario.
+var (
+	identityPollAttempts = 15
+	identityPollInterval = 300 * time.Millisecond
+)
+
+// waitForIdentity polls the live process's exe identity for a short window,
+// matching the existing systemUnitRespawned poll cadence — a fresh exec can take
+// a moment to show up. Returns false when either identity is unavailable, never
+// treating "unknown" as a match.
+func waitForIdentity(procRoot string, pid int, wanted exeIdentity, wantedOK bool) bool {
+	if pid <= 0 || !wantedOK {
+		return false
+	}
+	for i := 0; i < identityPollAttempts; i++ {
+		if live, ok := identityFromPID(procRoot, pid); ok && identitiesMatch(live, wanted) {
+			return true
+		}
+		time.Sleep(identityPollInterval)
+	}
+	return false
 }
 
 // signalTerm sends SIGTERM to pid via os.Process.Signal (not syscall.Kill, which is
@@ -407,13 +521,229 @@ func systemUnitRestartAlways() bool {
 
 // systemUnitRespawned confirms the system unit came back on a DIFFERENT MainPID
 // after the SIGTERM — proof the supervisor respawned it (Restart=always) rather
-// than it being a Restart=on-failure unit that stopped on the clean signal.
-func systemUnitRespawned(oldPID int) bool {
+// than it being a Restart=on-failure unit that stopped on the clean signal. Returns
+// the new PID so the caller can verify exe identity on it (AC1) — a changed PID
+// alone is evidence of a respawn, not evidence of WHICH binary it respawned onto.
+func systemUnitRespawned(oldPID int) (int, bool) {
 	for i := 0; i < 15; i++ {
 		time.Sleep(300 * time.Millisecond)
 		if np := systemUnitMainPID(); np > 0 && np != oldPID {
-			return true
+			return np, true
 		}
 	}
-	return false
+	return 0, false
+}
+
+// userUnitMainPID returns the MainPID of the ACTIVE user unit, or 0. Mirrors
+// systemUnitMainPID but through the user-session systemctl (userEnv()).
+func userUnitMainPID() int {
+	c := exec.Command("systemctl", "--user", "show", "--property=MainPID", "--value", serviceUnitName)
+	c.Env = userEnv()
+	out, _ := c.Output()
+	return parseMainPID(string(out))
+}
+
+// systemUnitStartLimited reports whether the system unit has exhausted systemd's
+// restart attempts (StartLimitBurst) and given up — a distinct, nameable failure
+// mode (AC4) rather than a silent fold into "did not respawn".
+func systemUnitStartLimited() bool {
+	out, _ := exec.Command("systemctl", "show", "--property=Result", "--value", serviceUnitName).Output()
+	return parseUnitStartLimited(string(out))
+}
+
+// parseUnitStartLimited is the pure classifier: `systemctl show --property=Result`
+// reports "start-limit-hit" when StartLimitBurst was exhausted. Pure/unit-tested.
+func parseUnitStartLimited(result string) bool {
+	return strings.TrimSpace(strings.ToLower(result)) == "start-limit-hit"
+}
+
+// --- Exe identity (AC1): proof a running process is the newly installed binary,
+// independent of a restart command's exit code or a version string that may not
+// have changed across a release that did not touch this binary. ---
+
+// exeIdentity is the on-disk identity of an executable: device+inode is the
+// authoritative comparison (survives a rename-over-target replace); size is cheap
+// corroboration only.
+type exeIdentity struct {
+	Dev, Ino uint64
+	Size     int64
+}
+
+// identityFromPath stats path (following symlinks) and extracts dev+inode. ok is
+// false when the path cannot be stat'd or the platform has no syscall.Stat_t.
+func identityFromPath(path string) (id exeIdentity, ok bool) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return exeIdentity{}, false
+	}
+	st, isStat := info.Sys().(*syscall.Stat_t)
+	if !isStat {
+		return exeIdentity{}, false
+	}
+	return exeIdentity{Dev: uint64(st.Dev), Ino: st.Ino, Size: info.Size()}, true
+}
+
+// identityFromPID stats procRoot/<pid>/exe directly (NOT a readlink+restat): Linux
+// resolves this magic symlink to the process's currently-mapped executable inode
+// even after the on-disk path has been renamed away (the exact situation right
+// after `satelle update` replaces the binary under a still-running process), so
+// this is reliable where readlink's path string ("...(deleted)") is not.
+func identityFromPID(procRoot string, pid int) (exeIdentity, bool) {
+	if pid <= 0 {
+		return exeIdentity{}, false
+	}
+	return identityFromPath(filepath.Join(procRoot, strconv.Itoa(pid), "exe"))
+}
+
+// identitiesMatch compares dev+inode — the same file, however it was reached.
+func identitiesMatch(a, b exeIdentity) bool {
+	return a.Dev == b.Dev && a.Ino == b.Ino
+}
+
+// wantedExeIdentity is the ground truth for "the newly installed binary": the
+// ExecStart binary named by whichever unit file is present (user, then system),
+// falling back to the CLI install target when no unit file can be read. ok is
+// false only when neither source resolves — callers must never treat that as a
+// match.
+func wantedExeIdentity(procRoot string) (exeIdentity, bool) {
+	for _, unitPath := range []string{userUnitPath(), systemUnitPath()} {
+		content, err := os.ReadFile(unitPath)
+		if err != nil {
+			continue
+		}
+		if bin := parseExecStartBinary(string(content)); bin != "" {
+			if id, ok := identityFromPath(bin); ok {
+				return id, true
+			}
+		}
+	}
+	return identityFromPath(installTarget())
+}
+
+// parseExecStartBinary extracts the binary path from a unit file's ExecStart=
+// line (the first whitespace-delimited token). Pure/unit-tested.
+func parseExecStartBinary(unitContent string) string {
+	for _, line := range strings.Split(unitContent, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "ExecStart=") {
+			continue
+		}
+		rest := strings.TrimSpace(strings.TrimPrefix(line, "ExecStart="))
+		if i := strings.IndexAny(rest, " \t"); i >= 0 {
+			rest = rest[:i]
+		}
+		return rest
+	}
+	return ""
+}
+
+// --- Bus-independent discovery (AC2): find the live service process when
+// systemctl cannot reach either the user or system bus. ---
+
+// findPIDByCgroup scans procRoot/<pid>/cgroup for a line naming unitName (e.g.
+// ".../app.slice/satelle.service"), bounded so a substring collision (e.g. a unit
+// named "notsatelle.service") does not false-match. Returns 0 when not found.
+// Bus-independent: cgroup membership is a kernel fact, not a systemctl query.
+func findPIDByCgroup(procRoot, unitName string) int {
+	entries, err := os.ReadDir(procRoot)
+	if err != nil {
+		return 0
+	}
+	suffix := "/" + unitName
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || pid <= 1 {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(procRoot, e.Name(), "cgroup"))
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimRight(line, "\r")
+			if line == unitName || strings.HasSuffix(line, suffix) {
+				return pid
+			}
+		}
+	}
+	return 0
+}
+
+// servicePort resolves the configured web-service port, falling back to the
+// documented default when global config cannot be loaded.
+func servicePort() int {
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		return config.DefaultWebPort
+	}
+	return gc.Service.ResolvePort()
+}
+
+// findPIDByListenPort locates the process holding a LISTENing TCP socket on port
+// by matching procRoot/net/tcp{,6}'s socket inode to a procRoot/<pid>/fd entry.
+// Bus-independent fallback for when cgroup discovery finds nothing (e.g. a
+// non-systemd supervisor). Best-effort: returns 0 on any lookup failure.
+func findPIDByListenPort(procRoot string, port int) int {
+	inode := ""
+	for _, name := range []string{"tcp", "tcp6"} {
+		data, err := os.ReadFile(filepath.Join(procRoot, "net", name))
+		if err != nil {
+			continue
+		}
+		if found := parseListenInode(string(data), port); found != "" {
+			inode = found
+			break
+		}
+	}
+	if inode == "" {
+		return 0
+	}
+	entries, err := os.ReadDir(procRoot)
+	if err != nil {
+		return 0
+	}
+	want := "socket:[" + inode + "]"
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || pid <= 1 {
+			continue
+		}
+		fds, err := os.ReadDir(filepath.Join(procRoot, e.Name(), "fd"))
+		if err != nil {
+			continue
+		}
+		for _, fd := range fds {
+			link, err := os.Readlink(filepath.Join(procRoot, e.Name(), "fd", fd.Name()))
+			if err == nil && link == want {
+				return pid
+			}
+		}
+	}
+	return 0
+}
+
+// parseListenInode finds the socket inode for a LISTEN-state (0A) row in
+// /proc/net/tcp{,6} whose local port matches. Pure/unit-tested. Format:
+// "  sl  local_address rem_address   st ... inode ...", local_address is
+// "hex_ip:hex_port".
+func parseListenInode(procNetTCP string, port int) string {
+	wantPort := strings.ToUpper(strconv.FormatInt(int64(port), 16))
+	lines := strings.Split(procNetTCP, "\n")
+	for _, line := range lines[1:] { // skip header
+		fields := strings.Fields(line)
+		if len(fields) < 10 {
+			continue
+		}
+		local := fields[1]
+		st := fields[3]
+		i := strings.LastIndexByte(local, ':')
+		if i < 0 || !strings.EqualFold(local[i+1:], wantPort) {
+			continue
+		}
+		if !strings.EqualFold(st, "0A") { // TCP_LISTEN
+			continue
+		}
+		return fields[9]
+	}
+	return ""
 }

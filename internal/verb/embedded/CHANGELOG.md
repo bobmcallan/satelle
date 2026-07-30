@@ -1,3 +1,10 @@
+## [0.0.355] - 2026-07-30
+
+### Fixed
+- `satelle update`'s restart step now verifies the live process is running the newly installed binary by exe device+inode identity, instead of trusting a restart command's exit code or a version string that may not have changed (sty_c344d080)
+- When neither the systemd user nor system bus is reachable, the running service is now located via cgroup and listening-port inspection so a stale-but-running process is never reported identically to "no service configured" (sty_c344d080)
+- A start-limited (restart-exhausted) systemd unit is now named explicitly with a `reset-failed` remedy, instead of falling through to a generic "no restartable service was found" message (sty_c344d080)
+
 ## [0.0.354] - 2026-07-30
 
 ### Fixed
