@@ -1,3 +1,12 @@
+## [0.0.358] - 2026-07-30
+
+### Changed
+- `satelle status` now reports the web service as a URL plus its real answering state (`live` / `not answering`), probed via the existing `healthzOK` seam, replacing the `web port <n>` config echo — a value that read like confirmation but could not fail (sty_fb5e6d96)
+- The global service port is now resolved through one path (`servicePortResolved`, which `servicePort` delegates to) for every surface that states a user-facing URL, so `satelle status` and the session-start line can never name different ports for the same machine state (sty_fb5e6d96)
+
+### Added
+- `satelle hook context` injects one line naming the web service URL and whether anything is answering on it, so a new session learns where the server is without asking the agent. It reaches Claude, Grok and Codex through the SessionStart wiring all three scaffolds already carry — no per-harness config change. An unreadable global config renders as `availability unknown`, never a fabricated `live`, and the hook stays fail-open (sty_fb5e6d96)
+
 ## [0.0.357] - 2026-07-30
 
 ### Fixed

@@ -50,7 +50,9 @@ func init() {
 					fmt.Fprint(w, line)
 				}
 			}
-			fmt.Fprintf(w, "web port\t%d\n", a.Config.ResolveWebPort())
+			// Real availability, not a config echo (sty_fb5e6d96): the URL a
+			// user opens plus whether anything is answering on it.
+			fmt.Fprintf(w, "web service\t%s\n", probeWebAvailability().statusValue())
 			fmt.Fprintf(w, "log level\t%s\n", a.Config.ResolveLogLevel())
 			fmt.Fprintf(w, "stories\t%d\n", stories)
 			fmt.Fprintf(w, "tasks\t%d\n", tasks)

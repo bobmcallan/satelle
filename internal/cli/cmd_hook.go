@@ -1368,6 +1368,12 @@ func runHookContext(out, stderr io.Writer) error {
 			"satelle hook context: always-content exceeded %d bytes and was truncated — trim an always-tagged doc or drop its %s tag\n",
 			alwaysContextCeiling, sessionTag)
 	}
+	// Web availability (sty_fb5e6d96): ONE line naming the URL and whether
+	// anything answers on it, ahead of the constitution so a new user sees where
+	// the server is without asking. Fail-open: probeWebAvailability never errors
+	// and renders "unknown" rather than a fabricated "live". This reaches Claude,
+	// Grok and Codex through the SessionStart wiring all three already carry.
+	content = prependAvailabilityLine(content, probeWebAvailability().hookLine())
 	// Scaffold drift (sty_ac25b787): fail-open warning — never blocks SessionStart.
 	// Names `satelle init` as the heal. DetectScaffoldDrift is pure comparison.
 	if warn := formatScaffoldDriftWarning(DetectScaffoldDrift(a.RepoRoot)); warn != "" {
@@ -1384,6 +1390,20 @@ func runHookContext(out, stderr io.Writer) error {
 		return nil
 	}
 	return emitAdditionalContext(out, "SessionStart", "", content)
+}
+
+// prependAvailabilityLine puts the one-line web-availability statement at the
+// head of the SessionStart body (sty_fb5e6d96). Exactly one line of content is
+// added — no heading, no table — so the always-resident cost stays a line.
+// Pure, for unit tests.
+func prependAvailabilityLine(content, line string) string {
+	if strings.TrimSpace(line) == "" {
+		return content
+	}
+	if strings.TrimSpace(content) == "" {
+		return line
+	}
+	return line + "\n\n" + content
 }
 
 // sessionSeatBlock returns the SessionStart seat inject for a, or "" when no

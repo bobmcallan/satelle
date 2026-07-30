@@ -674,11 +674,20 @@ func findPIDByCgroup(procRoot, unitName string) int {
 // servicePort resolves the configured web-service port, falling back to the
 // documented default when global config cannot be loaded.
 func servicePort() int {
+	port, _ := servicePortResolved()
+	return port
+}
+
+// servicePortResolved is servicePort plus whether the global config actually
+// loaded. Callers that must not fabricate certainty from a fallback port read
+// the flag (sty_fb5e6d96); the rest keep using servicePort. One resolution path
+// serves both, so no surface can drift onto a different port.
+func servicePortResolved() (int, bool) {
 	gc, err := config.LoadGlobal()
 	if err != nil {
-		return config.DefaultWebPort
+		return config.DefaultWebPort, false
 	}
-	return gc.Service.ResolvePort()
+	return gc.Service.ResolvePort(), true
 }
 
 // findPIDByListenPort locates the process holding a LISTENing TCP socket on port
