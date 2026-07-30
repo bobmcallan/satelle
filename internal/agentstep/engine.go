@@ -878,7 +878,10 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	if !isNamedPerformer(dispatchAgent, binding) {
 		return verb.DispatchResult{}, nil
 	}
-	var outputContract agentartifact.Contract
+	var (
+		outputContract agentartifact.Contract
+		attemptPolicy  agentartifact.AttemptPolicy
+	)
 	if dispatchSkill != "" {
 		skillBody, serr := g.skillBody(ctx, dispatchSkill)
 		if serr != nil && !errors.Is(serr, docindex.ErrNotFound) {
@@ -889,6 +892,14 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 			outputContract, cerr = agentartifact.ParseContract(skillBody)
 			if cerr != nil {
 				return verb.DispatchResult{}, fmt.Errorf("skill %q output contract: %w", dispatchSkill, cerr)
+			}
+			attemptPolicy, cerr = agentartifact.ParseAttemptPolicy(skillBody)
+			if cerr != nil {
+				return verb.DispatchResult{}, fmt.Errorf("skill %q attempt policy: %w", dispatchSkill, cerr)
+			}
+			if attemptPolicy.Active() && !outputContract.Active() {
+				return verb.DispatchResult{}, fmt.Errorf(
+					"skill %q declares an attempt policy without an output_* artifact contract", dispatchSkill)
 			}
 		}
 	}
@@ -953,22 +964,36 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	}
 	execPayload := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: dispatchSkill}
 	g.fillPayloadDocs(ctx, item.ID, &execPayload)
-	invRes := g.Invoke(ctx, InvokeRequest{
-		Binding: binding,
-		Section: dispatchAgent,
-		Rubric:  rubric,
-		Payload: execPayload,
-		Charter: executorCharter(dispatchAgent, toStatus, doc.Name),
-		Expect:  ExpectPerform,
-		Timeout: timeout,
-		Runner:  runner,
-		Sink:    rawSink,
-		OnEvent: onEvent,
-		StoryID: item.ID,
-		Step:    toStatus,
-		Skill:   dispatchSkill,
-		Actor:   "executor",
-	})
+	charter := executorCharter(dispatchAgent, toStatus, doc.Name)
+	var finalArtifact *agentartifact.Artifact
+	var invRes InvokeResult
+	if attemptPolicy.Active() {
+		var attemptErr error
+		invRes, finalArtifact, attemptErr = g.runArtifactAttempts(
+			ctx, item, toStatus, dispatchSkill, dispatchAgent, rubric,
+			execPayload, charter, binding, runner, timeout, rawSink, onEvent,
+			outputContract, attemptPolicy)
+		if attemptErr != nil {
+			invRes.Err = attemptErr
+		}
+	} else {
+		invRes = g.Invoke(ctx, InvokeRequest{
+			Binding: binding,
+			Section: dispatchAgent,
+			Rubric:  rubric,
+			Payload: execPayload,
+			Charter: charter,
+			Expect:  ExpectPerform,
+			Timeout: timeout,
+			Runner:  runner,
+			Sink:    rawSink,
+			OnEvent: onEvent,
+			StoryID: item.ID,
+			Step:    toStatus,
+			Skill:   dispatchSkill,
+			Actor:   "executor",
+		})
+	}
 	res := verb.DispatchResult{
 		Dispatched: true, Agent: dispatchAgent, Command: invRes.Command, Model: binding.Model, Skill: dispatchSkill,
 		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
@@ -984,21 +1009,27 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		return res, fmt.Errorf("named agent %q failed performing step %q: %w", dispatchAgent, toStatus, invRes.Err)
 	}
 	if outputContract.Active() {
-		artifact, derr := agentartifact.Decode(invRes.Stdout)
-		if derr != nil {
-			if !outputContract.Required && errors.Is(derr, agentartifact.ErrNoArtifact) {
-				return res, nil
+		if !attemptPolicy.Active() {
+			artifact, derr := agentartifact.Decode(invRes.Stdout)
+			if derr != nil {
+				if !outputContract.Required && errors.Is(derr, agentartifact.ErrNoArtifact) {
+					return res, nil
+				}
+				return res, fmt.Errorf("named agent %q structured output for step %q: %w", dispatchAgent, toStatus, derr)
 			}
-			return res, fmt.Errorf("named agent %q structured output for step %q: %w", dispatchAgent, toStatus, derr)
+			artifact, verr := agentartifact.Validate(artifact, outputContract, item.AcceptanceCriteria)
+			if verr != nil {
+				return res, fmt.Errorf("named agent %q structured output for step %q: %w", dispatchAgent, toStatus, verr)
+			}
+			finalArtifact = &artifact
 		}
-		artifact, verr := agentartifact.Validate(artifact, outputContract, item.AcceptanceCriteria)
-		if verr != nil {
-			return res, fmt.Errorf("named agent %q structured output for step %q: %w", dispatchAgent, toStatus, verr)
+		if finalArtifact == nil {
+			return res, nil
 		}
 		if g.attachArtifact == nil {
 			return res, fmt.Errorf("named agent %q produced contracted output for step %q but no artifact attachment writer is configured", dispatchAgent, toStatus)
 		}
-		name, typ, aerr := g.attachArtifact(ctx, item, artifact.Name, artifact.Type, artifact.Body)
+		name, typ, aerr := g.attachArtifact(ctx, item, finalArtifact.Name, finalArtifact.Type, finalArtifact.Body)
 		if aerr != nil {
 			return res, fmt.Errorf("named agent %q artifact attachment for step %q: %w", dispatchAgent, toStatus, aerr)
 		}

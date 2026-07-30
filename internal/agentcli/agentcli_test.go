@@ -499,20 +499,20 @@ func TestUnwrapUsage(t *testing.T) {
 	if string(text) != "the verdict text" {
 		t.Errorf("result not extracted: %q", text)
 	}
-	if u.InputTokens != 54 || u.OutputTokens != 59 || u.TotalTokens != 113 {
+	if !u.Available || u.InputTokens != 54 || u.OutputTokens != 59 || u.TotalTokens != 113 {
 		t.Errorf("usage = %+v, want 54/59/113", u)
 	}
 	// Plain text (a non-json harness) passes through verbatim with zero usage.
 	raw := "Verdict: accept.\n"
 	text, u = UnwrapUsage([]byte(raw))
-	if string(text) != raw || u.TotalTokens != 0 {
-		t.Errorf("plain text should pass through with zero usage: %q %+v", text, u)
+	if string(text) != raw || u.Available {
+		t.Errorf("plain text should pass through with unavailable usage: %q %+v", text, u)
 	}
 	// A JSON object that is NOT the envelope (no result, no text) passes through
 	// untouched, so verdict parsing still sees the original bytes (never a silent empty).
 	other := `{"decision":"accept"}`
 	text, u = UnwrapUsage([]byte(other))
-	if string(text) != other || u.TotalTokens != 0 {
+	if string(text) != other || u.Available {
 		t.Errorf("non-envelope json should pass through: %q %+v", text, u)
 	}
 	// Grok --output-format json envelope: model reply is in .text (often nested

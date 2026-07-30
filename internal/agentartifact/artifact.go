@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ErrNoArtifact means the final response contained no canonical artifact
@@ -23,6 +24,29 @@ type Contract struct {
 	Required       bool
 	RequiredFields []string
 	ACCoverage     bool
+}
+
+// AttemptPolicy is the provider-neutral validate/repair/escalate policy declared
+// beside an output contract in skill frontmatter. Zero values preserve the
+// legacy single-shot validate-or-fail behaviour.
+type AttemptPolicy struct {
+	RepairMax       int
+	EscalateMax     int
+	MaxTotal        int
+	TokenBudget     int
+	TimeBudget      time.Duration
+	OnExhaust       string
+	InitialEffort   string
+	RepairEffort    string
+	EscalateEffort  string
+	EscalateBinding string
+}
+
+// Active reports whether a skill opted into bounded attempt orchestration.
+func (p AttemptPolicy) Active() bool {
+	return p.RepairMax > 0 || p.EscalateMax > 0 || p.MaxTotal > 0 ||
+		p.TokenBudget > 0 || p.TimeBudget > 0 || p.InitialEffort != "" ||
+		p.RepairEffort != "" || p.EscalateEffort != "" || p.EscalateBinding != ""
 }
 
 // Active reports whether the skill opted into structured artifact handling.
@@ -86,6 +110,54 @@ func ParseContract(skillBody string) (Contract, error) {
 	return c, nil
 }
 
+// ParseAttemptPolicy reads generic attempt_* keys from skill frontmatter.
+// Selection remains authored substrate; the runtime only supplies bounded
+// orchestration. The only v1 exhaustion action is fail because attaching an
+// invalid artifact would bypass the declared validator.
+func ParseAttemptPolicy(skillBody string) (AttemptPolicy, error) {
+	fm, ok := frontmatter(skillBody)
+	if !ok {
+		return AttemptPolicy{}, nil
+	}
+	get := func(key string) string { return scalar(fm, key) }
+	p := AttemptPolicy{
+		OnExhaust:       get("attempt_on_exhaust"),
+		InitialEffort:   get("attempt_initial_effort"),
+		RepairEffort:    get("attempt_repair_effort"),
+		EscalateEffort:  get("attempt_escalate_effort"),
+		EscalateBinding: get("attempt_escalate_binding"),
+	}
+	var err error
+	for key, dst := range map[string]*int{
+		"attempt_repair_max":   &p.RepairMax,
+		"attempt_escalate_max": &p.EscalateMax,
+		"attempt_max_total":    &p.MaxTotal,
+		"attempt_token_budget": &p.TokenBudget,
+	} {
+		raw := get(key)
+		if raw == "" {
+			continue
+		}
+		*dst, err = strconv.Atoi(raw)
+		if err != nil || *dst < 0 {
+			return AttemptPolicy{}, fmt.Errorf("%s: expected a non-negative integer, got %q", key, raw)
+		}
+	}
+	if raw := get("attempt_time_budget"); raw != "" {
+		p.TimeBudget, err = time.ParseDuration(raw)
+		if err != nil || p.TimeBudget <= 0 {
+			return AttemptPolicy{}, fmt.Errorf("attempt_time_budget: expected a positive duration, got %q", raw)
+		}
+	}
+	if p.OnExhaust == "" {
+		p.OnExhaust = "fail"
+	}
+	if p.OnExhaust != "fail" {
+		return AttemptPolicy{}, fmt.Errorf("attempt_on_exhaust: unsupported value %q (supported: fail)", p.OnExhaust)
+	}
+	return p, nil
+}
+
 // Decode extracts the last canonical {"artifact":{...}} object from a final
 // agent response. Command and ACP outputs both use this seam after transport
 // unwrapping/capture.
@@ -142,45 +214,68 @@ func Decode(out []byte) (Artifact, error) {
 // Validate applies one skill's generic structural contract and fills omitted
 // name/type values from substrate. It never judges semantic artifact quality.
 func Validate(a Artifact, c Contract, acceptanceCriteria string) (Artifact, error) {
+	a, findings := ValidateAll(a, c, acceptanceCriteria)
+	if len(findings) > 0 {
+		return Artifact{}, fmt.Errorf("%s", strings.Join(findings, "; "))
+	}
+	return a, nil
+}
+
+// ValidateAll applies the structural contract and returns every deterministic
+// finding so a repair request can be precise rather than fixing one field per
+// model call.
+func ValidateAll(a Artifact, c Contract, acceptanceCriteria string) (Artifact, []string) {
 	if !c.Active() {
 		return a, nil
 	}
+	var findings []string
 	if a.Name != "" && a.Name != c.Name {
-		return Artifact{}, fmt.Errorf("artifact.name: want %q, got %q", c.Name, a.Name)
+		findings = append(findings, fmt.Sprintf("artifact.name: want %q, got %q", c.Name, a.Name))
 	}
 	if a.Type != "" && a.Type != c.Type {
-		return Artifact{}, fmt.Errorf("artifact.type: want %q, got %q", c.Type, a.Type)
+		findings = append(findings, fmt.Sprintf("artifact.type: want %q, got %q", c.Type, a.Type))
 	}
 	a.Name, a.Type = c.Name, c.Type
 	for _, field := range c.RequiredFields {
 		switch field {
 		case "name":
 			if strings.TrimSpace(a.Name) == "" {
-				return Artifact{}, fmt.Errorf("artifact.name: required field empty")
+				findings = append(findings, "artifact.name: required field empty")
 			}
 		case "type":
 			if strings.TrimSpace(a.Type) == "" {
-				return Artifact{}, fmt.Errorf("artifact.type: required field empty")
+				findings = append(findings, "artifact.type: required field empty")
 			}
 		case "body":
 			if strings.TrimSpace(a.Body) == "" {
-				return Artifact{}, fmt.Errorf("artifact.body: required field empty")
+				findings = append(findings, "artifact.body: required field empty")
 			}
 		}
 	}
 	if c.Required && strings.TrimSpace(a.Body) == "" {
-		return Artifact{}, fmt.Errorf("artifact.body: required field empty")
+		if !contains(findings, "artifact.body: required field empty") {
+			findings = append(findings, "artifact.body: required field empty")
+		}
 	}
 	if c.ACCoverage {
 		for _, m := range numberedCriterion.FindAllStringSubmatch(acceptanceCriteria, -1) {
 			n := m[1]
 			re := regexp.MustCompile(`(?im)(?:^|\b)AC\s*#?\s*` + regexp.QuoteMeta(n) + `\b|^\s*#{1,6}\s+.*\b` + regexp.QuoteMeta(n) + `\b|^\s*` + regexp.QuoteMeta(n) + `[.)]\s+`)
 			if !re.MatchString(a.Body) {
-				return Artifact{}, fmt.Errorf("artifact.body: missing acceptance criterion %s", n)
+				findings = append(findings, fmt.Sprintf("artifact.body: missing acceptance criterion %s", n))
 			}
 		}
 	}
-	return a, nil
+	return a, findings
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func frontmatter(body string) ([]string, bool) {

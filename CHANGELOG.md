@@ -1,3 +1,13 @@
+## [0.0.352] - 2026-07-30
+
+### Added
+- Contracted isolated steps can opt into bounded validate–repair–escalate policies through skill frontmatter, including efforts, escalation bindings, attempt limits, token/time budgets, and fail-on-exhaust handling (sty_b5c082ac)
+- Every quality attempt records provider-neutral binding, model, effort, duration, usage availability, validator findings, and escalation reason telemetry (sty_b5c082ac)
+
+### Changed
+- Structured artifact validation now reports all deterministic findings for targeted repair, attaches only the final valid candidate, and distinguishes unreported usage from measured zero (sty_b5c082ac)
+- Agent-dispatch help documents policy defaults, rate-limit failover separation, budget behavior, cancellation, and attempt evidence (sty_b5c082ac)
+
 ## [0.0.351] - 2026-07-30
 
 ### Added

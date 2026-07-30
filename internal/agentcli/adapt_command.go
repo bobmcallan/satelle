@@ -147,13 +147,11 @@ func usageFromMap(v map[string]any) *UsageResult {
 	u := &UsageResult{
 		InputTokens:  intValue(raw["input_tokens"]),
 		OutputTokens: intValue(raw["output_tokens"]),
+		Available:    true,
 	}
 	u.TotalTokens = intValue(raw["total_tokens"])
 	if u.TotalTokens == 0 {
 		u.TotalTokens = u.InputTokens + u.OutputTokens
-	}
-	if u.TotalTokens == 0 {
-		return nil
 	}
 	return u
 }

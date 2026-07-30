@@ -176,14 +176,17 @@ const (
 
 // UsageResult is the cost of one agent invocation — token counts and, when the
 // caller times the run, its wall-clock duration. Populated from a machine-readable
-// agent envelope (claude's `--output-format json`); a plain-text harness yields the
-// zero value, so cost capture degrades gracefully (sty_a699ad14). It never carries
-// the env or any secret — only numbers.
+// agent envelope (claude's `--output-format json`); a plain-text harness leaves
+// Available false, so unreported usage is distinct from a reported zero. It
+// never carries the env or any secret — only numbers.
 type UsageResult struct {
 	InputTokens  int
 	OutputTokens int
 	TotalTokens  int
 	Duration     time.Duration
+	// Available distinguishes a transport-reported zero from usage that was not
+	// reported at all.
+	Available bool
 }
 
 // claudeJSONEnvelope is the shape of `claude -p --output-format json` output: the
@@ -191,7 +194,7 @@ type UsageResult struct {
 // record are declared; extra fields are ignored.
 type claudeJSONEnvelope struct {
 	Result string `json:"result"`
-	Usage  struct {
+	Usage  *struct {
 		InputTokens  int `json:"input_tokens"`
 		OutputTokens int `json:"output_tokens"`
 	} `json:"usage"`
@@ -212,8 +215,8 @@ type grokJSONEnvelope struct {
 //   - Claude `--output-format json`: unwraps `.result` and captures `.usage`
 //   - Grok `--output-format json`: unwraps `.text` (usage zero when absent)
 //
-// Otherwise stdout is returned verbatim with a zero UsageResult — plain-text
-// harnesses keep working and simply report no cost. Duration is set by the
+// Otherwise stdout is returned verbatim with Available false — plain-text
+// harnesses keep working and explicitly report unavailable cost. Duration is set by the
 // caller (UnwrapUsage measures only tokens).
 func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 	trimmed := bytes.TrimSpace(stdout)
@@ -222,10 +225,12 @@ func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 	}
 	var claude claudeJSONEnvelope
 	if err := json.Unmarshal(trimmed, &claude); err == nil && claude.Result != "" {
-		u := UsageResult{
-			InputTokens:  claude.Usage.InputTokens,
-			OutputTokens: claude.Usage.OutputTokens,
-			TotalTokens:  claude.Usage.InputTokens + claude.Usage.OutputTokens,
+		u := UsageResult{}
+		if claude.Usage != nil {
+			u.Available = true
+			u.InputTokens = claude.Usage.InputTokens
+			u.OutputTokens = claude.Usage.OutputTokens
+			u.TotalTokens = claude.Usage.InputTokens + claude.Usage.OutputTokens
 		}
 		return []byte(claude.Result), u
 	}

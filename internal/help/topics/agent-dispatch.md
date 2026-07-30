@@ -132,6 +132,42 @@ or attachment failure refuses the transition and releases its in-flight lease.
 Because Satelle owns the write, a contracted planner can use only read-only
 repository tools.
 
+An output-contract skill can opt into a bounded validate–repair–escalate policy:
+
+```yaml
+attempt_repair_max: 1
+attempt_escalate_max: 1
+attempt_max_total: 3
+attempt_token_budget: 12000
+attempt_time_budget: 8m
+attempt_on_exhaust: fail
+attempt_initial_effort: low
+attempt_repair_effort: medium
+attempt_escalate_effort: high
+attempt_escalate_binding: stronger-planner
+```
+
+All keys are optional. With no `attempt_*` keys, dispatch remains a single
+validate-or-fail call. Binding names refer to ordinary provider-neutral
+`agents.toml` sections; effort overrides use the same command/ACP effort seam as
+the binding itself. Quality escalation is deliberately separate from
+`secondary=`, which remains reserved for rate-limit or service-unavailable
+failover.
+
+After each candidate, Satelle runs the declared deterministic output validators.
+A valid initial result attaches immediately. An invalid result can receive a
+targeted repair containing the prior draft and all validator findings; only
+after configured repair attempts fail can the stronger binding or effort run.
+Attempt count, token (when reported), and wall-time budgets bound the loop.
+Cancellation and invocation timeouts stop immediately. Exhaustion always fails
+the transition: no policy can attach an invalid artifact or bypass a workflow
+gate.
+
+Each policy attempt records an `agent-attempt` telemetry event with phase,
+binding, model, effort, elapsed time, validator findings, escalation reason, and
+`usage_available`. Token fields are omitted when the transport did not report
+usage, so unavailable cost is never represented as measured zero.
+
 Legacy self-attaching steps remain supported. To migrate one:
 
 1. Add the `output_*` contract to its skill.
