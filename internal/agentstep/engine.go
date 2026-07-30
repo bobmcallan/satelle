@@ -38,6 +38,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/logfile"
 
+	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
@@ -157,6 +158,10 @@ type Engine struct {
 	// disables it (tests / no-ledger environments); best-effort like the other
 	// engine-owned logging.
 	telemetry TelemetryFunc
+	// attachArtifact deposits a validated structured step artifact before the
+	// transition status commits. Nil refuses a contracted dispatch rather than
+	// silently dropping required output.
+	attachArtifact func(context.Context, workitem.Item, string, string, string) (string, string, error)
 }
 
 // TelemetryFunc records one typed telemetry/quality event for storyID. Callers
@@ -784,6 +789,12 @@ func (g *Engine) guardWorkflowStructure(ctx context.Context, item workitem.Item)
 // agent=<name> allocation (sty_fd427546). Nil keeps every step in-loop.
 func (g *Engine) SetNamedAgents(fn func(name string) (config.AgentBinding, bool)) { g.namedAgents = fn }
 
+// SetArtifactAttacher wires the verb-owned typed document writer used by
+// structured step output contracts.
+func (g *Engine) SetArtifactAttacher(fn func(context.Context, workitem.Item, string, string, string) (string, string, error)) {
+	g.attachArtifact = fn
+}
+
 // SetSecondaryResolver wires rate-limit failover (sty_5bf61f89). The resolver
 // returns (binding, name, ok) for a primary section + binding.
 func (g *Engine) SetSecondaryResolver(fn func(section string, b config.AgentBinding) (config.AgentBinding, string, bool)) {
@@ -866,6 +877,20 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	}
 	if !isNamedPerformer(dispatchAgent, binding) {
 		return verb.DispatchResult{}, nil
+	}
+	var outputContract agentartifact.Contract
+	if dispatchSkill != "" {
+		skillBody, serr := g.skillBody(ctx, dispatchSkill)
+		if serr != nil && !errors.Is(serr, docindex.ErrNotFound) {
+			return verb.DispatchResult{}, serr
+		}
+		if serr == nil {
+			var cerr error
+			outputContract, cerr = agentartifact.ParseContract(skillBody)
+			if cerr != nil {
+				return verb.DispatchResult{}, fmt.Errorf("skill %q output contract: %w", dispatchSkill, cerr)
+			}
+		}
 	}
 	// Engagement lease (sty_8426b9c0) is acquired for the TARGET engaging state
 	// BEFORE this dispatch runs (verb/workitem.go acquire-at-start). Edit/commit
@@ -957,6 +982,27 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 			"tokens_total": res.TokensTotal, "duration_ms": res.DurationMs,
 		})
 		return res, fmt.Errorf("named agent %q failed performing step %q: %w", dispatchAgent, toStatus, invRes.Err)
+	}
+	if outputContract.Active() {
+		artifact, derr := agentartifact.Decode(invRes.Stdout)
+		if derr != nil {
+			if !outputContract.Required && errors.Is(derr, agentartifact.ErrNoArtifact) {
+				return res, nil
+			}
+			return res, fmt.Errorf("named agent %q structured output for step %q: %w", dispatchAgent, toStatus, derr)
+		}
+		artifact, verr := agentartifact.Validate(artifact, outputContract, item.AcceptanceCriteria)
+		if verr != nil {
+			return res, fmt.Errorf("named agent %q structured output for step %q: %w", dispatchAgent, toStatus, verr)
+		}
+		if g.attachArtifact == nil {
+			return res, fmt.Errorf("named agent %q produced contracted output for step %q but no artifact attachment writer is configured", dispatchAgent, toStatus)
+		}
+		name, typ, aerr := g.attachArtifact(ctx, item, artifact.Name, artifact.Type, artifact.Body)
+		if aerr != nil {
+			return res, fmt.Errorf("named agent %q artifact attachment for step %q: %w", dispatchAgent, toStatus, aerr)
+		}
+		res.ArtifactName, res.ArtifactType = name, typ
 	}
 	return res, nil
 }

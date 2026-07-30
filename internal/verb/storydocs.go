@@ -143,6 +143,13 @@ func writeAttachedDoc(ctx context.Context, item workitem.Item, name, typ, body s
 	return bare, typ, nil
 }
 
+// AttachItemDoc exposes the verb-owned typed attachment mechanism to the
+// isolated-agent engine. The engine validates structured output first; this
+// function writes it through the same path as `satelle story attach`.
+func AttachItemDoc(ctx context.Context, item workitem.Item, name, typ, body string) (string, string, error) {
+	return writeAttachedDoc(ctx, item, name, typ, body, time.Now())
+}
+
 // storyLessonsList walks every story attachment dir and returns docs whose
 // frontmatter type is lesson or lessons — the offline friction corpus
 // (epic:substrate-convergence order:9). Repo-agnostic listing mechanism.

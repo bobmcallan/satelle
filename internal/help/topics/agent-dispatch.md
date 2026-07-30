@@ -106,6 +106,41 @@ sensitive. Satelle filters hidden reasoning and redacts obvious credential
 shapes from both surfaces, but operators should still protect and remove raw
 traces after diagnosis.
 
+### Structured step artifacts
+
+A skill can ask Satelle to own a dispatched step's final artifact by declaring a
+generic contract in its frontmatter:
+
+```yaml
+output_name: plan
+output_type: plan
+output_required: true
+output_schema: body
+output_ac_coverage: true
+```
+
+The isolated agent returns one canonical final object:
+
+```json
+{"artifact":{"name":"plan","type":"plan","body":"# Plan\n\n## AC1\n..."}}
+```
+
+Satelle decodes command and ACP results through the same seam, validates the
+declared fields and optional acceptance-criterion coverage, and attaches the
+typed document before committing the workflow transition. A decode, validation,
+or attachment failure refuses the transition and releases its in-flight lease.
+Because Satelle owns the write, a contracted planner can use only read-only
+repository tools.
+
+Legacy self-attaching steps remain supported. To migrate one:
+
+1. Add the `output_*` contract to its skill.
+2. Change its rubric to return the JSON artifact instead of running
+   `satelle story attach`.
+3. Remove `Bash(satelle:*)` from its binding when no other Satelle verb is
+   needed.
+4. Keep the workflow's exit review responsible for semantic artifact quality.
+
 ### Planner transport evidence
 
 For this repository the default `[planner]` remains Claude's non-interactive

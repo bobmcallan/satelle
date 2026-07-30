@@ -1224,18 +1224,21 @@ func reviewerPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 // dispatched step (planner, coder) the same way it does a reviewer gate.
 func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
 	p := struct {
-		From        string `json:"from"`
-		To          string `json:"to"`
-		Agent       string `json:"agent"`
-		Skill       string `json:"skill,omitempty"`
-		Command     string `json:"command,omitempty"`
-		Model       string `json:"model,omitempty"`
-		TokensIn    int    `json:"tokens_in,omitempty"`
-		TokensOut   int    `json:"tokens_out,omitempty"`
-		TokensTotal int    `json:"tokens_total,omitempty"`
-		DurationMs  int64  `json:"duration_ms,omitempty"`
+		From         string `json:"from"`
+		To           string `json:"to"`
+		Agent        string `json:"agent"`
+		Skill        string `json:"skill,omitempty"`
+		Command      string `json:"command,omitempty"`
+		Model        string `json:"model,omitempty"`
+		TokensIn     int    `json:"tokens_in,omitempty"`
+		TokensOut    int    `json:"tokens_out,omitempty"`
+		TokensTotal  int    `json:"tokens_total,omitempty"`
+		DurationMs   int64  `json:"duration_ms,omitempty"`
+		ArtifactName string `json:"artifact_name,omitempty"`
+		ArtifactType string `json:"artifact_type,omitempty"`
 	}{From: from, To: to, Agent: res.Agent, Skill: res.Skill, Command: res.Command, Model: res.Model,
-		TokensIn: res.TokensIn, TokensOut: res.TokensOut, TokensTotal: res.TokensTotal, DurationMs: res.DurationMs}
+		TokensIn: res.TokensIn, TokensOut: res.TokensOut, TokensTotal: res.TokensTotal, DurationMs: res.DurationMs,
+		ArtifactName: res.ArtifactName, ArtifactType: res.ArtifactType}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil

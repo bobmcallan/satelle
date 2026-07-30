@@ -146,6 +146,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// Attachment payload injection (sty_58fa970e): Bash-less reviewers
 			// receive plan/step-summary bodies in the transition payload.
 			rev.SetDocsResolver(docsResolver(a))
+			rev.SetArtifactAttacher(verb.AttachItemDoc)
 			// Structured retry/failure/timeout telemetry (sty_b73c3236): the engine
 			// sees each dispatch ATTEMPT (a killed/timed-out subprocess) the verb
 			// layer never does, so it writes those events itself via this sink.

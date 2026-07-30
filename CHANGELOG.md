@@ -1,3 +1,13 @@
+## [0.0.351] - 2026-07-30
+
+### Added
+- Skills can declare generic typed output contracts that Satelle decodes, validates, and attaches before committing a dispatched workflow transition (sty_52dbbf69)
+- Command and ACP final responses share one structured artifact decoder with field-level validation and optional acceptance-criterion coverage (sty_52dbbf69)
+
+### Changed
+- Contracted planners can run with read-only repository tools and return JSON artifacts, while legacy self-attaching steps retain their existing migration-compatible path (sty_52dbbf69)
+- Agent-dispatch help documents structured output contracts, canonical envelopes, transactional refusal, and legacy migration (sty_52dbbf69)
+
 ## [0.0.350] - 2026-07-30
 
 ### Added

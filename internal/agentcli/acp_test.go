@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/agentartifact"
 )
 
 func TestRunnerFromBinding_CommandDefault(t *testing.T) {
@@ -467,6 +469,26 @@ func TestACPEmitsNormalizedEventsAndFiltersThoughtsFromRawTrace(t *testing.T) {
 		if !found {
 			t.Errorf("missing %s in %v", want, kinds)
 		}
+	}
+}
+
+func TestACPFinalResponseUsesStructuredArtifactDecoder(t *testing.T) {
+	final := `{"artifact":{"name":"notes","type":"design","body":"## AC1\ncovered"}}`
+	peer := writeFakeACPPeer(t, "", final)
+	r, err := RunnerFromBinding(InterfaceACP, peer+" stdio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := r.Run(context.Background(), Request{SystemPrompt: "x", Payload: "{}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := agentartifact.Decode(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Name != "notes" || a.Type != "design" || !strings.Contains(a.Body, "AC1") {
+		t.Fatalf("artifact = %#v", a)
 	}
 }
 

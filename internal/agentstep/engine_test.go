@@ -1081,6 +1081,134 @@ var dispatchWF = wfDoc(baselineWorkflow, `"*"`, `digraph w {
   backlog -> plan -> in_progress -> done
 }`)
 
+const contractedDispatchSkill = `---
+name: architecture-alignment
+type: skill
+description: contracted test performer
+output_name: design
+output_type: design-note
+output_required: true
+output_schema: body
+output_ac_coverage: true
+---
+Return a structured artifact.`
+
+func TestDispatchExecutorValidatesAndAttachesContractedOutput(t *testing.T) {
+	docs := fakeDocs{workflow: dispatchWF, skillBody: contractedDispatchSkill, skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	r := &fakeRunner{out: `{"artifact":{"body":"# Design\n\n## AC1\ncovered\n\n## AC2\ncovered"}}`}
+	g.newRunner = func(string, string) (agentcli.Runner, error) { return r, nil }
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "read_file,grep,list_dir"}, true
+	})
+	var gotName, gotType, gotBody string
+	g.SetArtifactAttacher(func(_ context.Context, _ workitem.Item, name, typ, body string) (string, string, error) {
+		gotName, gotType, gotBody = name, typ, body
+		return name, typ, nil
+	})
+	res, err := g.DispatchExecutor(context.Background(), workitem.Item{
+		ID: "sty_contract", Status: "backlog", AcceptanceCriteria: "1. first\n2. second",
+	}, "plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotName != "design" || gotType != "design-note" || !strings.Contains(gotBody, "AC2") {
+		t.Fatalf("attached = %q %q %q", gotName, gotType, gotBody)
+	}
+	if res.ArtifactName != "design" || res.ArtifactType != "design-note" {
+		t.Fatalf("dispatch result = %#v", res)
+	}
+	if strings.Contains(r.got.AllowedTools, "Bash") {
+		t.Fatalf("contracted read-only performer received mutation CLI grant: %q", r.got.AllowedTools)
+	}
+}
+
+func TestDispatchExecutorContractFailuresRefuseBeforeAttach(t *testing.T) {
+	tests := []struct {
+		name string
+		out  string
+		want string
+	}{
+		{"malformed", "not json", "no structured"},
+		{"missing criterion", `{"artifact":{"body":"## AC1\ncovered"}}`, "criterion 2"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			docs := fakeDocs{workflow: dispatchWF, skillBody: contractedDispatchSkill, skillFound: true}
+			g, _ := newEngine(t, "", docs)
+			r := &fakeRunner{out: tc.out}
+			g.newRunner = func(string, string) (agentcli.Runner, error) { return r, nil }
+			g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+				return config.AgentBinding{Command: "fake -p {system}", Tools: "read_file"}, true
+			})
+			attached := false
+			g.SetArtifactAttacher(func(context.Context, workitem.Item, string, string, string) (string, string, error) {
+				attached = true
+				return "", "", nil
+			})
+			_, err := g.DispatchExecutor(context.Background(), workitem.Item{
+				ID: "sty_bad", Status: "backlog", AcceptanceCriteria: "1. first\n2. second",
+			}, "plan")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+			if attached {
+				t.Fatal("invalid output reached attachment writer")
+			}
+		})
+	}
+}
+
+func TestDispatchExecutorAttachmentFailureAndRetry(t *testing.T) {
+	docs := fakeDocs{workflow: dispatchWF, skillBody: contractedDispatchSkill, skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	r := &fakeRunner{out: `{"artifact":{"body":"## AC1\ncovered"}}`}
+	g.newRunner = func(string, string) (agentcli.Runner, error) { return r, nil }
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "read_file"}, true
+	})
+	attempts := 0
+	g.SetArtifactAttacher(func(_ context.Context, _ workitem.Item, name, typ, _ string) (string, string, error) {
+		attempts++
+		if attempts == 1 {
+			return "", "", errors.New("disk full")
+		}
+		return name, typ, nil
+	})
+	item := workitem.Item{ID: "sty_retry", Status: "backlog", AcceptanceCriteria: "1. first"}
+	if _, err := g.DispatchExecutor(context.Background(), item, "plan"); err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("first err = %v", err)
+	}
+	res, err := g.DispatchExecutor(context.Background(), item, "plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 || res.ArtifactName != "design" {
+		t.Fatalf("retry attempts=%d result=%#v", attempts, res)
+	}
+}
+
+func TestDispatchExecutorCancellationDoesNotAttach(t *testing.T) {
+	docs := fakeDocs{workflow: dispatchWF, skillBody: contractedDispatchSkill, skillFound: true}
+	g, _ := newEngine(t, "", docs)
+	r := &fakeRunner{err: context.Canceled}
+	g.newRunner = func(string, string) (agentcli.Runner, error) { return r, nil }
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "read_file"}, true
+	})
+	attached := false
+	g.SetArtifactAttacher(func(context.Context, workitem.Item, string, string, string) (string, string, error) {
+		attached = true
+		return "", "", nil
+	})
+	if _, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_cancel", Status: "backlog"}, "plan"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	if attached {
+		t.Fatal("cancelled run attached an artifact")
+	}
+}
+
 // TestDispatchExecutorRunsNamedBinding: entering a named-agent state spawns the
 // binding's harness with the item payload, the node's rubric, and the binding's
 // tools/model — nothing hardcoded (sty_fd427546).

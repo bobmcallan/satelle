@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/agentartifact"
 )
 
 // syncBuffer is a concurrency-safe io.Writer: runProcess tees stdout/stderr from
@@ -615,6 +617,24 @@ func TestRunKillRetainsStreamedOutputOnTimeout(t *testing.T) {
 	}
 	if !strings.Contains(sink.String(), "partial") {
 		t.Errorf("sink should retain the streamed line from before the kill: %q", sink.String())
+	}
+}
+
+func TestCommandFinalResponseUsesStructuredArtifactDecoder(t *testing.T) {
+	r := templateFromCommand("sh -c {system}")
+	out, err := r.Run(context.Background(), Request{
+		SystemPrompt: `printf '%s\n' '{"artifact":{"name":"notes","type":"design","body":"## AC1\ncovered"}}'`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, _ := UnwrapUsage(out)
+	a, err := agentartifact.Decode(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Name != "notes" || a.Type != "design" || !strings.Contains(a.Body, "AC1") {
+		t.Fatalf("artifact = %#v", a)
 	}
 }
 

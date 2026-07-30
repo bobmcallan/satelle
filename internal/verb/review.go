@@ -149,6 +149,10 @@ type DispatchResult struct {
 	// under the parent task's folder, so a run's evidence is discoverable per task
 	// rather than only in the central executor.log.
 	Output string `json:"output,omitempty"`
+	// ArtifactName/Type identify a Satelle-owned structured step artifact
+	// attached before the transition committed.
+	ArtifactName string `json:"artifact_name,omitempty"`
+	ArtifactType string `json:"artifact_type,omitempty"`
 }
 
 // ExecutorDispatcher runs the named isolated agent a workflow node allocates a
