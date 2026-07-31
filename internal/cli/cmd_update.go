@@ -60,6 +60,10 @@ global service.`,
 			}
 			current := installedVersion(target)
 			cliUpdated := false
+			// cliReplaced tracks the CLI BINARY specifically: deployed scaffolding is
+			// keyed to the CLI version, so a serve-only refresh does not stale the
+			// estate and must not print the estate guidance (sty_0f471251).
+			cliReplaced := false
 			if !updateAvailable(current, latest) {
 				fmt.Fprintf(out, "CLI already up to date (%s)\n", current)
 			} else if check {
@@ -72,6 +76,7 @@ global service.`,
 				}
 				fmt.Fprintf(out, "installed %s (%s)\n", target, latest)
 				cliUpdated = true
+				cliReplaced = true
 			}
 			if check {
 				// Surface serve channel too when independent (sty_19ff03f4).
@@ -121,6 +126,7 @@ global service.`,
 					return err
 				}
 			}
+			printEstateGuidance(out, cliReplaced, local)
 			return nil
 		},
 	}
@@ -128,6 +134,30 @@ global service.`,
 	cmd.Flags().BoolVar(&noRestart, "no-restart", false, "do not restart the background service after updating")
 	cmd.Flags().BoolVar(&local, "local", false, "install into this repo's .satelle/satelle (a repo-local pin) instead of the global binary")
 	register(cmd)
+}
+
+// printEstateGuidance tells the operator that upgrading the binary just
+// invalidated the deployed scaffolding of every OTHER registered repo
+// (sty_0f471251). Nothing used to say so, leaving a working binary, a
+// majority-stale estate, and no prompt.
+//
+// The staleness is not cosmetic: `satelle workspace add` refuses in a stale repo,
+// which wedges the serve mirror against those partitions — a failure the operator
+// will not connect back to the upgrade.
+//
+// Gated on cliReplaced, NOT cliUpdated: deployed scaffolding is keyed to the CLI
+// version, so a serve-only refresh does not stale the estate. A no-op update, a
+// --check, and a repo-local pin (which governs one repo, not the estate) all stay
+// quiet too.
+func printEstateGuidance(out io.Writer, cliReplaced, local bool) {
+	if !cliReplaced || local {
+		return
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Repos you already have are not migrated automatically —")
+	fmt.Fprintln(out, "scaffolding deployed by the previous binary is now stale:")
+	fmt.Fprintln(out, "  satelle doctor --all      # read-only: which registered repos are stale")
+	fmt.Fprintln(out, "  satelle init --all        # dry-run: what healing them would change")
 }
 
 // installTarget is the binary update replaces: SATELLE_INSTALL_DIR (else

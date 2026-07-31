@@ -121,8 +121,17 @@ case ":$PATH:" in
 	*) echo "satelle install: add $INSTALL_DIR to your PATH (e.g. export PATH=\"$INSTALL_DIR:\$PATH\")" ;;
 esac
 
+# Installing and upgrading are the same command, and this script cannot reliably
+# tell which one it just did. So it names BOTH cases rather than guessing
+# (sty_0f471251): a fresh install ignores the second block, and an upgrade — which
+# has just invalidated the scaffolding of every repo already on this machine —
+# finally gets told.
 echo
-echo "Next:"
+echo "Next (a new repo):"
 echo "  cd <your-repo>"
 echo "  satelle init             # scaffold .satelle/ (config, db, authored dirs)"
 echo "  satelle service install  # always-on web project page (uses satelle-serve when present)"
+echo
+echo "Repos you already have (if this was an upgrade):"
+echo "  satelle doctor --all     # read-only: scaffolding written by an older satelle is stale"
+echo "  satelle init --all       # dry-run: what healing them would change (--yes applies)"

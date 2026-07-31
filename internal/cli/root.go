@@ -7,12 +7,15 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/bobmcallan/satelle/internal/app"
 )
 
 var registered []*cobra.Command
@@ -40,7 +43,15 @@ dependency. See https://github.com/bobmcallan/satelle for docs.`,
 		// `--help` are unannotated, so they never create a database.
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Annotations[storeAnnotation] == "1" {
-				return openAppForCmd(cmd)
+				err := openAppForCmd(cmd)
+				// A store-optional command reports on something other than the
+				// current repo, so an ungoverned cwd must not stop it. It runs with
+				// no app and is responsible for handling that (sty_0f471251).
+				if err != nil && cmd.Annotations[storeOptionalAnnotation] == "1" &&
+					errors.Is(err, app.ErrNotInitialised) {
+					return nil
+				}
+				return err
 			}
 			return nil
 		},

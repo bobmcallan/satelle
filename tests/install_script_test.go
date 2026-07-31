@@ -189,6 +189,37 @@ func TestInstallScriptSuccessIsSilentOnStderr(t *testing.T) {
 	}
 }
 
+// TestInstallScriptNamesBothTheNewRepoAndExistingRepos (sty_0f471251 AC1):
+// installing and upgrading are the same command and the script cannot reliably
+// tell which one it just did, so it names BOTH cases rather than guessing. A
+// fresh install ignores the second block; an upgrade — which has just
+// invalidated the scaffolding of every repo already on the machine — finally
+// gets told, where previously the closing guidance was only ever about the one
+// repo the operator was about to create.
+func TestInstallScriptNamesBothTheNewRepoAndExistingRepos(t *testing.T) {
+	stdout, stderr, code, _ := runInstall(t, "success")
+	if code != 0 {
+		t.Fatalf("success exit = %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	for _, want := range []string{
+		"Next (a new repo):",
+		"satelle init ",
+		"satelle service install",
+		"Repos you already have",
+		"satelle doctor --all",
+		"satelle init --all",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("installer guidance must contain %q, got:\n%s", want, stdout)
+		}
+	}
+	// The upgrade block must come AFTER the new-repo block: a first-time user
+	// reads top-down and the new repo is their case.
+	if i, j := strings.Index(stdout, "Next (a new repo):"), strings.Index(stdout, "Repos you already have"); i < 0 || j < 0 || i > j {
+		t.Errorf("the new-repo block must precede the existing-repos block:\n%s", stdout)
+	}
+}
+
 // TestInstallScriptNoCurlFeedsAPipe is the STATIC half of the regression (AC3):
 // the defect is reintroduced the moment any curl in the script writes into a
 // pipe, whether or not a runtime test happens to cover that lookup. `||` is not

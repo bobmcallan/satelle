@@ -24,6 +24,23 @@ import (
 // and closes it after — so `satelle version` / `--help` never create a db.
 const storeAnnotation = "needs-store"
 
+// storeOptionalAnnotation marks a store-backed command that must ALSO be
+// runnable from a directory satelle does not govern — because what it reports is
+// not about the current repo. `satelle doctor --all` is the case: it enumerates
+// the workspace registry, so refusing it in an ungoverned cwd would make the
+// estate un-inspectable from anywhere but a satelle repo, and the upgrade
+// guidance names it as the blind-safe thing to run (sty_0f471251).
+//
+// Only ErrNotInitialised is tolerated. Any other bootstrap failure still stops
+// the command — this widens WHERE a command may run, never what it ignores.
+const storeOptionalAnnotation = "store-optional"
+
+// needsStoreOptional flags a store-backed command that tolerates an ungoverned
+// working directory. The command MUST handle a nil app.
+func needsStoreOptional() map[string]string {
+	return map[string]string{storeAnnotation: "1", storeOptionalAnnotation: "1"}
+}
+
 // appCtxKey carries the opened *app.App on the command context.
 type appCtxKey struct{}
 

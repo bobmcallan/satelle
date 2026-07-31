@@ -1,3 +1,13 @@
+## [0.0.376] - 2026-07-31
+
+### Added
+- **`satelle init --all`** — heal every registered repo whose deployed scaffolding was invalidated by a binary upgrade. Dry-run by default (following the `satelle migrate --yes` convention rather than inventing a second flag shape); `--yes` applies. It reports each stale repo and its findings before changing anything, preserves authored substrate byte-for-byte, and reports-and-skips a registry path that no longer resolves rather than aborting the run — the registry legitimately carries entries for unmounted volumes and detached checkouts (sty_0f471251)
+- Upgrading the binary now says so. `satelle update` prints the estate guidance after an actual CLI replacement — naming `satelle doctor --all` to inspect and `satelle init --all` to heal — and stays quiet for a no-op update, a `--check`, a serve-only refresh, and a `--local` pin. `scripts/install.sh` names **both** cases in its closing block ("a new repo" and "repos you already have"), because installing and upgrading are the same command and the script cannot reliably tell which one it just did (sty_0f471251)
+- Why it matters: the staleness is not cosmetic. `satelle workspace add` refuses in a repo with stale scaffolding, which wedges the serve mirror's reconcile loop against those partitions — a downstream failure the operator will not connect back to the upgrade. Healing an estate by hand is N × (`cd` + `satelle init`), which is exactly the chore that gets deferred. Verified live: 8 stale repos → 0, `14 registered — 14 healthy, 0 unhealthy` (sty_0f471251)
+
+### Fixed
+- **`satelle doctor --all` could not run from a directory satelle does not govern**, which is precisely where an operator lands after upgrading — so the command the new guidance names would have failed for the people most likely to need it. A store-backed command can now declare that it tolerates an ungoverned working directory when what it reports is not about the current repo; `--all` reports on the workspace registry. Only "not a satelle repo" is tolerated, so any other bootstrap failure still stops the command, and plain `satelle doctor` still refuses there and still names `satelle init` (sty_0f471251)
+
 ## [0.0.375] - 2026-07-31
 
 ### Fixed

@@ -13,6 +13,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/app"
+
 	"github.com/bobmcallan/satelle/internal/doctor"
 	"github.com/bobmcallan/satelle/internal/health"
 )
@@ -64,19 +66,32 @@ so neither is a paid model call — but both may consume provider authentication
 and rate budget. Every probe is bounded by --timeout and its process group is
 killed and reaped on the deadline or on cancellation.`,
 		Args:        cobra.NoArgs,
-		Annotations: needsStore(),
+		Annotations: needsStoreOptional(),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			out := cmd.OutOrStdout()
+			// --all reports on the REGISTRY, not on this directory, so it must run
+			// from anywhere — including a non-satelle cwd, which is exactly where an
+			// operator lands after upgrading the binary (sty_0f471251). CheckAll
+			// resolves each registered repo itself and never reads these opts, so
+			// running with no app costs nothing.
+			//
+			// The single-repo path still requires the app: without a repo there is
+			// nothing for it to diagnose, and the refusal names `satelle init`.
 			a, err := appFrom(cmd)
-			if err != nil {
+			if err != nil && !all {
+				if _, oerr := app.Open(); oerr != nil {
+					return oerr // the actionable "not a satelle repo — run satelle init"
+				}
 				return err
 			}
-			out := cmd.OutOrStdout()
 			opts := doctor.Opts{
-				RepoRoot:      a.RepoRoot,
-				DataDir:       a.DataDir,
 				Live:          live,
 				LiveTimeout:   timeout,
 				ScaffoldDrift: scaffoldFindings,
+			}
+			if a != nil {
+				opts.RepoRoot = a.RepoRoot
+				opts.DataDir = a.DataDir
 			}
 			ctx := context.Background()
 

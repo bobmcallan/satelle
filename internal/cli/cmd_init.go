@@ -33,6 +33,7 @@ func init() {
 	var configArg string
 	var noWorkspace bool
 	var harnessFlag string
+	var all, yes bool
 	cmd := &cobra.Command{
 		Use: "init",
 		// No `install` alias — it collided with `satelle service install`.
@@ -74,13 +75,100 @@ shows what was added versus already present.`,
 			if err != nil {
 				return err
 			}
+			if yes && !all {
+				return fmt.Errorf("--yes applies the bulk heal and only means something with --all; " +
+					"a single-repo `satelle init` already applies")
+			}
+			if all {
+				return runInitAll(cmd.OutOrStdout(), yes, forced)
+			}
 			return runInit(cmd.OutOrStdout(), initRepoRoot(configArg), noWorkspace, forced)
 		},
 	}
 	cmd.Flags().StringVar(&configArg, "config", "", "path to satelle.toml (resolves the repo root; default: walk up from CWD)")
 	cmd.Flags().BoolVar(&noWorkspace, "no-workspace", false, "skip registering this repo in the local workspace registry")
 	cmd.Flags().StringVar(&harnessFlag, "harness", "", "comma-separated harness scaffolds to install (claude,grok,codex); when empty, only existing .claude/.grok/.codex dirs are scaffolded — never PATH")
+	cmd.Flags().BoolVar(&all, "all", false, "heal EVERY registered repo whose deployed scaffolding is stale (dry-run; --yes applies)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "with --all: apply the heal (default is dry-run)")
 	register(cmd)
+}
+
+// runInitAll heals every registered repo whose deployed harness scaffolding is
+// stale — the chore an upgrade creates and nothing previously offered to do
+// (sty_0f471251). Upgrading the binary invalidates the scaffolding every other
+// repo deployed, and healing them by hand is N × (cd + satelle init), which is
+// exactly the chore an operator defers.
+//
+// Dry-run by default, --yes applies: the same convention `satelle migrate`
+// already established, deliberately not a second flag shape. The dry run opens
+// NO store and writes no byte — DetectScaffoldDrift is pure filesystem, so a
+// dry run cannot materialise a runtime plane for a repo it is only reporting on
+// (sty_20a7824c).
+//
+// A registry path that no longer resolves is REPORTED and skipped, never fatal:
+// the registry legitimately carries entries for unmounted volumes and detached
+// checkouts, and `satelle runtime reap` (sty_bd8af0b6) is the verb that clears
+// genuinely dead ones.
+func runInitAll(out io.Writer, apply bool, forcedHarness []string) error {
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		return fmt.Errorf("init --all: read the workspace registry: %w", err)
+	}
+	roots := gc.Workspace.Repos
+	if len(roots) == 0 {
+		fmt.Fprintln(out, "no registered repositories — add one with `satelle workspace add <path>`")
+		return nil
+	}
+
+	var stale, clean, skipped, healed, failed int
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		if st, serr := os.Stat(root); serr != nil || !st.IsDir() {
+			fmt.Fprintf(out, "  SKIP    %s — unreadable or gone (clear it with `satelle runtime reap`)\n", root)
+			skipped++
+			continue
+		}
+		findings := DetectScaffoldDrift(root)
+		if len(findings) == 0 {
+			clean++
+			continue
+		}
+		stale++
+		fmt.Fprintf(out, "  STALE   %s — %d item(s)\n", root, len(findings))
+		for _, f := range findings {
+			fmt.Fprintf(out, "            %s [%s]: %s\n", f.Path, f.Kind, f.Detail)
+		}
+		if !apply {
+			continue
+		}
+		// runInit is idempotent over AUTHORED substrate — it seeds only absent
+		// files — so healing deploys canonical scaffolding without touching
+		// anything the operator wrote.
+		if ierr := runInit(io.Discard, root, false, forcedHarness); ierr != nil {
+			fmt.Fprintf(out, "  FAILED  %s — %v\n", root, ierr)
+			failed++
+			continue
+		}
+		fmt.Fprintf(out, "  HEALED  %s\n", root)
+		healed++
+	}
+
+	fmt.Fprintf(out, "\n%d registered: %d stale, %d already current, %d skipped\n",
+		len(roots), stale, clean, skipped)
+	if !apply {
+		if stale > 0 {
+			fmt.Fprintln(out, "dry-run only — nothing was changed. Re-run with --yes to heal the repos listed above.")
+		}
+		return nil
+	}
+	fmt.Fprintf(out, "%d healed, %d failed\n", healed, failed)
+	if failed > 0 {
+		return fmt.Errorf("init --all: %d repositor(y|ies) failed to heal", failed)
+	}
+	return nil
 }
 
 // parseHarnessFlag parses --harness claude,grok,codex into a unique ordered list.
