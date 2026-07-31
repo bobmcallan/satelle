@@ -54,6 +54,14 @@ func loadRepo(ctx context.Context, root string) RepoView {
 	rv := RepoView{Path: root, Name: filepath.Base(root)}
 	// Home-keyed runtime plane (sty_4660bbe1): resolve DB the same way app.Open does.
 	cfg, _, _ := config.Load(filepath.Join(root, config.DefaultDataDir, config.ConfigName))
+	// Same governance guard as app.Open (sty_20a7824c). This is a READ-ONLY
+	// aggregation over registered repos, so a repo still in the registry whose
+	// .satelle/ has since been deleted must be reported, not silently given a
+	// fresh runtime plane on every `satelle service status`.
+	if _, ok := config.FindDataDir(root); !ok {
+		rv.Err = "not a satelle repo (no .satelle/) — run `satelle init` there, or clear the registry entry"
+		return rv
+	}
 	dbPath := cfg.ResolveDB(root)
 	db, err := store.Open(dbPath)
 	if err != nil {

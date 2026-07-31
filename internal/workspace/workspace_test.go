@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,14 +69,53 @@ func TestLoadAggregatesAcrossRepos(t *testing.T) {
 	}
 }
 
-func TestLoadEmptyRepoIsBenign(t *testing.T) {
+// TestLoadInitialisedRepoWithNoStoriesIsBenign: an initialised repo that simply
+// has no stories yet loads cleanly with no error and zero totals. This is the
+// genuinely benign case.
+func TestLoadInitialisedRepoWithNoStoriesIsBenign(t *testing.T) {
 	t.Setenv("SATELLE_HOME", t.TempDir())
-	// A path with no prior db yields an empty (created) repo view, not an error.
-	agg := workspace.Load(context.Background(), []string{t.TempDir()})
+	dir := t.TempDir()
+	seedRepo(t, dir) // .satelle/ + db, no stories
+
+	agg := workspace.Load(context.Background(), []string{dir})
 	if len(agg.Repos) != 1 || agg.Repos[0].Err != "" {
-		t.Fatalf("empty repo should load cleanly: %+v", agg.Repos)
+		t.Fatalf("initialised repo with no stories should load cleanly: %+v", agg.Repos)
 	}
 	if s, _, _ := agg.Totals(); s != 0 {
 		t.Errorf("empty repo totals should be 0, got %d", s)
+	}
+}
+
+// TestLoadUngovernedRepoReportsRatherThanCreating (sty_20a7824c AC3): Load is a
+// READ-ONLY aggregation over registered repos. A registry entry whose repo has
+// no .satelle/ — de-initialised, or never initialised — must be REPORTED, not
+// silently handed a freshly created runtime plane on every `satelle service
+// status`. Before the guard this path created a plane per call, which is how
+// orphan planes accumulated for repos satelle no longer governed.
+func TestLoadUngovernedRepoReportsRatherThanCreating(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SATELLE_HOME", home)
+	dir := t.TempDir() // no .satelle/
+
+	agg := workspace.Load(context.Background(), []string{dir})
+	if len(agg.Repos) != 1 {
+		t.Fatalf("want one repo view, got %+v", agg.Repos)
+	}
+	if agg.Repos[0].Err == "" {
+		t.Fatal("an ungoverned repo must be reported, not loaded silently")
+	}
+	if !strings.Contains(agg.Repos[0].Err, "satelle init") {
+		t.Errorf("the report must name the remedy, got %q", agg.Repos[0].Err)
+	}
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("no runtime plane may be created for an ungoverned repo, found: %v", names)
 	}
 }

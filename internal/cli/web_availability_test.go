@@ -247,7 +247,42 @@ func hookRepo(t *testing.T) {
 	t.Helper()
 	testutil.IsolateHome(t)
 	t.Setenv("SATELLE_CONFIG", "")
-	t.Chdir(t.TempDir())
+	repo := t.TempDir()
+	// A GOVERNED repo: these tests are about what the hook injects for a satelle
+	// repo. The .satelle/ directory is what makes it governed — without it the
+	// hook correctly injects nothing (sty_20a7824c), which is asserted separately
+	// by TestHookContextInjectsNothingInUngovernedRepo below. Before that guard
+	// this helper relied on zero-config open silently materialising a runtime
+	// plane for a bare temp dir.
+	if err := os.MkdirAll(filepath.Join(repo, config.DefaultDataDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+}
+
+// TestHookContextInjectsNothingInUngovernedRepo (sty_20a7824c AC3): a session
+// opened in an ordinary directory that satelle does not govern gets no
+// injection and — critically — no runtime plane. The hook must go INERT, not
+// error: it is strictly quieter than before, never fail-closed.
+func TestHookContextInjectsNothingInUngovernedRepo(t *testing.T) {
+	home := testutil.IsolateHome(t)
+	t.Setenv("SATELLE_CONFIG", "")
+	t.Chdir(t.TempDir()) // deliberately NO .satelle/
+
+	if got := hookContent(t); strings.TrimSpace(got) != "" {
+		t.Errorf("an ungoverned repo must get no injection, got:\n%s", got)
+	}
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("a session hook must not materialise a plane for an ungoverned repo, found: %v", names)
+	}
 }
 
 // TestHookContextEmitsExactlyOneAvailabilityLine (AC2, AC8): one line, at the

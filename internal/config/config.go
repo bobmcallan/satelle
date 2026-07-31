@@ -385,6 +385,37 @@ func Load(explicitPath string) (Config, string, error) {
 // resolvePath finds the committed config: an explicit path, then the
 // SATELLE_CONFIG env, then walking up from CWD for .satelle/satelle.toml.
 // Returns "" (no error) when none is found.
+// FindDataDir walks up from start (empty → CWD) for a `.satelle` DIRECTORY and
+// returns its path and whether one was found. This is satelle's one notion of
+// "this repo is initialised", and it deliberately keys on the DIRECTORY rather
+// than on `.satelle/satelle.toml`: zero-config is supported, so an initialised
+// repo may legitimately carry agents.toml and no satelle.toml, and keying on the
+// toml would classify it as ungoverned.
+//
+// resolvePath above walks for the CONFIG file and answers a different question
+// ("which config governs here"), so the two intentionally coexist.
+func FindDataDir(start string) (string, bool) {
+	dir := strings.TrimSpace(start)
+	if dir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", false
+		}
+		dir = cwd
+	}
+	for {
+		candidate := filepath.Join(dir, DefaultDataDir)
+		if st, err := os.Stat(candidate); err == nil && st.IsDir() {
+			return candidate, true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		dir = parent
+	}
+}
+
 func resolvePath(explicit string) (string, error) {
 	if explicit != "" {
 		return explicit, nil

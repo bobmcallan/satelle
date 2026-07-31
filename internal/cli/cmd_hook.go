@@ -22,6 +22,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -405,6 +406,14 @@ func currentSeatTouch() (info seatInfo, engaged bool, err error) {
 func resolveSeat(touch bool) (info seatInfo, engaged bool, err error) {
 	a, openErr := app.Open()
 	if openErr != nil {
+		// An ungoverned repo has no seat to determine — a session opened in an
+		// ordinary non-satelle directory must go INERT, not error (sty_20a7824c).
+		// This is strictly quieter than before: previously such a session paid
+		// for a materialised runtime plane and then got a "fix config and retry"
+		// it could not act on. Any other open failure still reports.
+		if errors.Is(openErr, app.ErrNotInitialised) {
+			return seatInfo{}, false, nil
+		}
 		return seatInfo{}, false, fmt.Errorf("cannot determine engagement (store open failed: %w) — fix config and retry", openErr)
 	}
 	defer func() { _ = a.Close() }()

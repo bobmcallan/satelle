@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,6 +38,14 @@ func needsStore() map[string]string { return map[string]string{storeAnnotation: 
 func openAppForCmd(cmd *cobra.Command) error {
 	a, err := app.Open()
 	if err != nil {
+		// An ungoverned repo is an operator condition, not a bootstrap fault:
+		// return the actionable line bare rather than wrapped in `bootstrap:`
+		// noise (sty_20a7824c). Non-zero, deliberately — this is the same class
+		// of refusal these verbs already returned via requireAgents, so scripts
+		// branching on a satelle verb keep their current semantics.
+		if errors.Is(err, app.ErrNotInitialised) {
+			return err
+		}
 		return fmt.Errorf("bootstrap: %w", err)
 	}
 	// Drift / breaking-surface gate: a deployed repo behind a breaking binary

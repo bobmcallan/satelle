@@ -1,3 +1,14 @@
+## [0.0.372] - 2026-07-31
+
+### Fixed
+- **A read-only verb no longer creates durable state for a repo satelle does not govern.** Running any store-backed verb — `status`, `doctor`, `validate`, `story list`, 48 in all — in a directory with no `.satelle/` created `~/.satelle/<repo-key>/` containing `repo.path` and a created-and-migrated `satelle.db`, and *then* failed with "missing .satelle/agents.toml". It paid two writes to produce no answer. `app.Open` now refuses an ungoverned repo with `ErrNotInitialised` **before** `store.Open` and `WriteRepoPathMarker` run, so the cost is zero writes. Exit status for every affected verb is unchanged (1) — the refusal simply arrives earlier, and names `satelle init` instead of an agents.toml file the operator never made (sty_20a7824c)
+- This is why a first-ever `satelle init` in an empty repo could report `= …/satelle.db (already present)` — reading as leftover state from a deleted repo, exactly the alarm that must not fire spuriously. init now reports the database as created (`+`) (sty_20a7824c)
+- **`satelle service status` no longer recreates a runtime plane for every de-registered repo it lists.** `workspace.Load` is read-only aggregation over registered repos, but opened each repo's database unconditionally — so a registry entry whose `.satelle/` had since been deleted got a fresh plane created on every call. It now reports the repo as un-initialised instead (sty_20a7824c)
+- A session hook firing in an ordinary non-satelle directory goes **inert** rather than erroring. `resolveSeat` previously returned "cannot determine engagement — fix config and retry", advice the operator could not act on, after paying for the plane. The other two hook sites already failed open (sty_20a7824c)
+
+### Added
+- `config.FindDataDir` — one notion of "this repo is initialised", walking up for the `.satelle` **directory**. It deliberately does not key on `satelle.toml`: zero-config is supported, so an initialised repo may carry `agents.toml` and no toml at all (sty_20a7824c)
+
 ## [0.0.371] - 2026-07-31
 
 ### Fixed
