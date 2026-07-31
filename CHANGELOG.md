@@ -1,3 +1,13 @@
+## [serve-v0.0.12] - 2026-07-31
+
+### Added
+- The service re-requests a full snapshot for every partition it renders — once at startup, then every five minutes — so a push that never landed no longer leaves the view stale forever, and renders a `stale · last update <time>` flag on any partition it could not reconcile (sty_e6e467fe)
+
+### Fixed
+- An identical re-posted snapshot is applied quietly: freshness only, no row rewrite, no live-update doorbell (sty_e6e467fe)
+- The listener binds before the repair loop starts, so its first pass cannot race its own endpoint (sty_e6e467fe)
+- Released as 0.0.12 because `serve-v0.0.11` was a stale tag on a 0.0.337-era commit with no published release, which left `satelle update` with no serve asset to install (sty_e6e467fe)
+
 ## [0.0.368] - 2026-07-31
 
 ### Added
