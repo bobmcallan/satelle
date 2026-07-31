@@ -11,7 +11,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -252,14 +251,25 @@ func agentValidateCmd() *cobra.Command {
 			if gerr != nil {
 				fmt.Fprintf(out, "FAIL  %v\n", gerr)
 			}
-			wfs, werr := a.Store.DocIndex.List(context.Background(), "workflows")
-			if werr != nil {
-				return werr
-			}
+			// Read the AUTHORED FILES, not the doc index — the same source, through
+			// the same helpers, that `satelle doctor` uses (sty_540cfcd3). Reading
+			// the index made these two commands contradict each other seconds apart
+			// on an unchanged tree: editing substrate is exactly when the index is
+			// most likely to lag, and validating right after the edit is exactly
+			// what an author does.
+			//
+			// The two sets are deliberately different, as doctor has always had it:
+			// ALLOCATION judges the GOVERNING set (authored ∪ unshadowed embedded),
+			// because an embedded default really does govern a repo that has not
+			// overridden it; CONSISTENCY judges only the AUTHORED set, because an
+			// on-disk wildcard workflow legitimately shadows the embedded wildcard
+			// baseline and feeding both to the ambiguity check would report every
+			// repo as broken.
+			governing := doctor.GoverningWorkflows(dataDir)
 
 			// Agent layer + node→binding (shared with init + engage), resolved
 			// against the catalog so what is judged is what will actually run.
-			report := agentvalidate.ValidateEffective(agents, global, a.Config.Vars, wfs)
+			report := agentvalidate.ValidateEffective(agents, global, a.Config.Vars, governing)
 			printProfileCatalog(out, global)
 			fmt.Fprintln(out, "Agent grants (resolved):")
 			for _, g := range report.Grants {
@@ -313,11 +323,12 @@ func agentValidateCmd() *cobra.Command {
 			}
 
 			// Structural workflow checks + consistency (owned elsewhere; re-run so
-			// one verb covers the mechanical agent↔workflow surface).
-			resolve := skillResolver(a)
+			// one verb covers the mechanical agent↔workflow surface). Disk-backed
+			// resolver and AUTHORED set, matching doctor (sty_540cfcd3).
+			resolve := doctor.SkillResolver(dataDir)
 			_, f, _ := validateAuthoredDir(out, "workflows", filepath.Join(dataDir, "workflows"), "", resolve)
 			failed += f
-			for _, p := range agentstep.WorkflowConsistency(wfs, resolve) {
+			for _, p := range agentstep.WorkflowConsistency(doctor.WorkflowDocs(dataDir), resolve) {
 				failed++
 				fmt.Fprintf(out, "FAIL  workflows (consistency) — %s\n", p)
 			}

@@ -122,7 +122,7 @@ func Check(ctx context.Context, o Opts) Report {
 	// baseline, so feeding both to the ambiguity check would report every repo as
 	// misconfigured for doing the normal thing.
 	authored := WorkflowDocs(dataDir)
-	governing := governingWorkflows(dataDir)
+	governing := GoverningWorkflows(dataDir)
 	resolve := SkillResolver(dataDir)
 	vars := RepoVars(dataDir)
 
@@ -305,7 +305,7 @@ func WorkflowDocs(dataDir string) []docindex.Doc {
 	return docs
 }
 
-// governingWorkflows is the set of workflows that actually GOVERN this repo: the
+// GoverningWorkflows is the set of workflows that actually GOVERN this repo: the
 // authored files on disk, plus the binary's embedded defaults that no on-disk
 // file shadows by name.
 //
@@ -314,7 +314,7 @@ func WorkflowDocs(dataDir string) []docindex.Doc {
 // report it healthy while never having looked at the workflow that runs. The
 // same union is what the resolution surfaces see once the substrate is indexed;
 // doctor computes it store-free so it also works before the first reindex.
-func governingWorkflows(dataDir string) []docindex.Doc {
+func GoverningWorkflows(dataDir string) []docindex.Doc {
 	docs := WorkflowDocs(dataDir)
 	onDisk := map[string]bool{}
 	for _, d := range docs {

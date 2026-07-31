@@ -1,3 +1,11 @@
+## [0.0.375] - 2026-07-31
+
+### Fixed
+- **`satelle agent validate` and `satelle doctor` could contradict each other about the same workflow, seconds apart, on an unchanged tree.** They ran the same checks over different sources: `agent validate` and `satelle validate` read the SQLite doc index, `doctor` read the authored files. Immediately after editing a workflow — which is exactly when the index lags, and exactly when an author validates — `agent validate` would report a binding orphaned while `doctor` simultaneously reported the node allocating it. Both were right about the source each had read; neither said which source that was, and neither named `satelle reindex` as the recovery. The index-backed checks now read authored files through the same helpers doctor uses, so the two agree by construction (sty_540cfcd3)
+- The lag is removed rather than reported: no substrate check consults the doc index any more, so there is no staleness to warn about and no reindex step to prescribe. Measured before and after on a workflow written to disk and not indexed — previously `validate` saw nothing while `doctor` saw the problem; now both see it (sty_540cfcd3)
+- The two sets stay deliberately distinct, as doctor has always had them: **allocation** judges the governing set (authored ∪ unshadowed embedded), because an embedded default really does govern a repo that has not overridden it; **consistency** judges only the authored set, because an on-disk wildcard workflow legitimately shadows the embedded wildcard baseline and feeding both to the ambiguity check would report every repo as broken. A naive swap to the authored set alone would have hidden every embedded default (sty_540cfcd3)
+- No read-only verb started writing to achieve this. Implicit reindexing was considered and rejected — it would have reintroduced exactly the pattern fixed in 0.0.372, where a command that presents as a diagnostic quietly materialises state (sty_540cfcd3)
+
 ## [0.0.374] - 2026-07-31
 
 ### Fixed

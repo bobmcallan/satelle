@@ -7,7 +7,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -21,6 +20,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/doctor"
 	"github.com/bobmcallan/satelle/internal/structure"
 )
 
@@ -51,12 +51,16 @@ func authoredValidateCmd(kind string) *cobra.Command {
 // fail. Workflows also get the cross-workflow consistency check.
 func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error {
 	out := cmd.OutOrStdout()
-	resolve := skillResolver(a)
 
 	dataDir := a.DataDir
 	if dataDir == "" {
 		dataDir = a.Config.ResolveDataDir(a.RepoRoot)
 	}
+	// Disk-backed, through the same helper `satelle doctor` uses, so the two can
+	// never contradict each other on an unchanged tree (sty_540cfcd3). The doc
+	// index lags an authored edit, and validating right after an edit is exactly
+	// what an author does.
+	resolve := doctor.SkillResolver(dataDir)
 	dir := a.AuthoredDirs()[kind]
 	if kind == "tasks" {
 		// Tasks are authored substrate under DataDir — never RuntimeDir (sty_4660bbe1).
@@ -67,18 +71,20 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 	// Cross-workflow consistency (ambiguous applies_to, unresolved referenced
 	// skills) — a whole-set check, so only for the workflows kind without a name.
 	if kind == "workflows" && nameFilter == "" {
-		wfs, lerr := a.Store.DocIndex.List(context.Background(), "workflows")
-		if lerr != nil {
-			return lerr
-		}
-		for _, p := range agentstep.WorkflowConsistency(wfs, resolve) {
+		// CONSISTENCY judges the AUTHORED set; ALLOCATION judges the GOVERNING set
+		// (authored ∪ unshadowed embedded). doctor has always drawn that line —
+		// an on-disk wildcard workflow legitimately shadows the embedded wildcard
+		// baseline, so feeding both to the ambiguity check would report every repo
+		// as broken, while allocation must still see embedded defaults that really
+		// do govern a repo which has not overridden them.
+		for _, p := range agentstep.WorkflowConsistency(doctor.WorkflowDocs(dataDir), resolve) {
 			failed++
 			fmt.Fprintf(out, "FAIL  workflows (consistency) — %s\n", p)
 		}
 		// Per-gate effective model surface (sty_19456622) — same allocation view as
 		// `satelle agent validate`, informational (not a hard fail).
 		if eff, aerr := config.LoadEffectiveAgents(dataDir, a.Config.Vars); aerr == nil {
-			report := agentvalidate.Validate(eff.Agents, eff.Vars, wfs)
+			report := agentvalidate.Validate(eff.Agents, eff.Vars, doctor.GoverningWorkflows(dataDir))
 			if len(report.Gates) > 0 {
 				fmt.Fprintln(out, "Gate/node effective models:")
 				for _, ga := range report.Gates {
@@ -103,11 +109,7 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 	// The ambiguity check is NOT run here: it compares repo workflows against
 	// each other, so it is whole-set by nature (AC3).
 	if kind == "workflows" && nameFilter != "" {
-		wfs, lerr := a.Store.DocIndex.List(context.Background(), "workflows")
-		if lerr != nil {
-			return lerr
-		}
-		for _, w := range wfs {
+		for _, w := range doctor.WorkflowDocs(dataDir) {
 			if w.Name != nameFilter {
 				continue
 			}
