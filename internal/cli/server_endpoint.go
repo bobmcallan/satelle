@@ -3,37 +3,27 @@ package cli
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/config"
 )
 
 // EnvServerEndpoint is the CLI override for [server] endpoint discovery and
-// push (sty_5aa08259). Values:
-//
-//	unset          — use config / auto-bootstrap probe as usual
-//	URL            — use that base URL; no default-port probe
-//	none|off|-|""  — disable discovery AND push (hermetic tests set this)
-const EnvServerEndpoint = "SATELLE_SERVER_ENDPOINT"
+// push (sty_5aa08259). The name and its parser live in internal/config so the
+// serve-side reconciler honours the same off-switch (sty_e6e467fe).
+const EnvServerEndpoint = config.EnvServerEndpoint
 
 // HeaderSatelleInstance is the serve /healthz response header carrying the
 // home-derived instance id (sty_5aa08259).
 const HeaderSatelleInstance = "X-Satelle-Instance"
 
-// resolveServerEndpointEnv inspects SATELLE_SERVER_ENDPOINT.
-// disabled=true means discovery and push must not run.
-// When disabled is false and endpoint is non-empty, callers should use it
-// instead of config / probe.
+// resolveServerEndpointEnv inspects SATELLE_SERVER_ENDPOINT via the shared
+// parser. disabled=true means discovery and push must not run. When disabled is
+// false and endpoint is non-empty, callers should use it instead of config /
+// probe.
 func resolveServerEndpointEnv() (endpoint string, disabled bool, set bool) {
-	v, ok := os.LookupEnv(EnvServerEndpoint)
-	if !ok {
-		return "", false, false
-	}
-	v = strings.TrimSpace(v)
-	if v == "" || strings.EqualFold(v, "none") || strings.EqualFold(v, "off") || v == "-" {
-		return "", true, true
-	}
-	return v, false, true
+	return config.ServerEndpointEnv()
 }
 
 // effectiveServerEndpoint merges env override with configured [server] endpoint.

@@ -51,6 +51,23 @@ func DefaultPath(globalDir string) string {
 }
 
 func (s *Store) migrate() error {
+	if err := s.createTables(); err != nil {
+		return err
+	}
+	// snap_hash carries the digest of the last snapshot body applied to this
+	// partition, so a periodic reconcile that finds nothing changed can record
+	// freshness without rewriting rows or ringing the SSE doorbell
+	// (sty_e6e467fe). Tolerated on an existing database: SQLite has no
+	// ADD COLUMN IF NOT EXISTS, so a duplicate-column error means it is present.
+	if _, err := s.db.Exec(`ALTER TABLE partitions ADD COLUMN snap_hash TEXT NOT NULL DEFAULT ''`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) createTables() error {
 	_, err := s.db.Exec(`
 CREATE TABLE IF NOT EXISTS partitions (
   repo_key   TEXT PRIMARY KEY,
@@ -106,6 +123,54 @@ ON CONFLICT(repo_key) DO UPDATE SET
 	}
 	err = s.db.QueryRowContext(ctx, `SELECT seq FROM partitions WHERE repo_key = ?`, repoKey).Scan(&seq)
 	return seq, err
+}
+
+// MarkFresh records that the partition was confirmed current at now WITHOUT
+// claiming anything changed: updated_at moves so the staleness badge clears,
+// seq does not, so no viewer is told to re-render (sty_e6e467fe). Used by the
+// reconcile path when the re-requested snapshot is byte-identical to the one
+// already stored. No-op success for an unknown repo_key.
+func (s *Store) MarkFresh(ctx context.Context, repoKey string, now time.Time) error {
+	repoKey = strings.TrimSpace(repoKey)
+	if repoKey == "" {
+		return fmt.Errorf("mirror: empty repo_key")
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE partitions SET updated_at = ? WHERE repo_key = ?`,
+		now.UTC().Format(time.RFC3339Nano), repoKey)
+	return err
+}
+
+// SnapshotHash returns the digest of the last snapshot applied to repoKey, or
+// "" when the partition is unknown or predates hashing.
+func (s *Store) SnapshotHash(ctx context.Context, repoKey string) (string, error) {
+	var h string
+	err := s.db.QueryRowContext(ctx, `SELECT snap_hash FROM partitions WHERE repo_key = ?`, repoKey).Scan(&h)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return h, err
+}
+
+// SetSnapshotHash records the digest of the snapshot body just applied.
+func (s *Store) SetSnapshotHash(ctx context.Context, repoKey, hash string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE partitions SET snap_hash = ? WHERE repo_key = ?`, hash, repoKey)
+	return err
+}
+
+// GetPartition returns one partition's metadata. ok is false when repoKey is
+// unknown.
+func (s *Store) GetPartition(ctx context.Context, repoKey string) (p Partition, ok bool, err error) {
+	err = s.db.QueryRowContext(ctx, `
+SELECT repo_key, slug, seq, updated_at FROM partitions WHERE repo_key = ?
+`, repoKey).Scan(&p.RepoKey, &p.Slug, &p.Seq, &p.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return Partition{}, false, nil
+	}
+	if err != nil {
+		return Partition{}, false, err
+	}
+	return p, true, nil
 }
 
 // UpsertItem stores one work item JSON payload under (repo_key, kind, id).

@@ -35,6 +35,33 @@ serving it at `/<slug>/`, with a fresh card on the landing — no restart.
 `satelle workspace remove <path>` stops serving it; `satelle workspace list`
 shows the registry.
 
+## When the UI looks stale
+
+The web UI is a **push-fed mirror**: the CLI posts a snapshot as each mutating
+verb finishes, and the service renders that copy. A push that never lands — the
+service was restarting (`satelle update` cycles it), down, or unreachable — used
+to leave the mirror on its last good frame forever, which reads as a stuck story
+rather than a stale view.
+
+The service now **re-requests** a snapshot for every project it renders: once at
+startup — which is what repairs the push a restart just swallowed — and then
+every **five minutes**, so a dropped push repairs itself within that bound
+without you doing anything. Two things you may still see:
+
+- **A `stale · last update <time>` chip** on the landing row or the project
+  header. That means the service could *not* re-request state — so the frame is
+  presented as unconfirmed, never as current. Check that the service is running
+  (`satelle service status`) and that `satelle` is installed beside it.
+- **Nothing changed after a mutation.** Re-seed by hand from the repo:
+
+      satelle workspace add
+
+  That is the manual recovery path — the same verb you joined with — and it is
+  always safe to re-run.
+
+The per-repo database stays the source of truth throughout; the mirror is only a
+read-only copy of it.
+
 ## When to use `service install` vs `workspace add`
 
 - **`satelle workspace add <repo>`** — register a project in the workspace registry

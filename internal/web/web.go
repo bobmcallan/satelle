@@ -74,6 +74,12 @@ type pageData struct {
 	Theme           string
 	TopBar          topBar
 	Projects        []crumbProject // workspace project switcher for the breadcrumb
+	// LastIngest is when this partition's state was last confirmed against the
+	// repo, and Stale says that confirmation is older than mirror.StaleAfter —
+	// so the page says so rather than presenting an unrepaired frame as current
+	// (sty_e6e467fe).
+	LastIngest time.Time
+	Stale      bool
 }
 
 type crumbProject struct {

@@ -288,6 +288,13 @@ header.app h1 .dot { color: var(--accent); }
 .tabs .n-engaged { margin-left: -6px; }
 .tabs .n-engaged .n-engaged-link { color: inherit; text-decoration: none; }
 .tabs .n-engaged .n-engaged-link:hover { text-decoration: underline; }
+/* stale-flag: same chip geometry as the backlog/engaged chips, tinted with the
+   muted --fail-soft so an unreconciled view reads as consequential without
+   claiming the data is wrong (sty_e6e467fe). */
+.stale-flag {
+  color: var(--fail-soft); font-size: 11px; padding: 1px 6px; margin-left: 5px;
+  border: 1px solid var(--fail-soft); border-radius: 0; line-height: 1.4; white-space: nowrap;
+}
 .panel { display: none; }
 .panel.active { display: block; }
 

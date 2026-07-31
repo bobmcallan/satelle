@@ -23,7 +23,33 @@ const (
 	// interfaces so it is reachable across the WSL↔Windows boundary in any
 	// networking mode. Restrict it to 127.0.0.1 in config to keep it off the LAN.
 	DefaultServiceAddr = "0.0.0.0"
+	// EnvServerEndpoint overrides [server] endpoint discovery and push
+	// (sty_5aa08259). Values:
+	//
+	//	unset          — use config / auto-bootstrap probe as usual
+	//	URL            — use that base URL; no default-port probe
+	//	none|off|-|""  — disable discovery AND push (hermetic tests set this)
+	//
+	// It lives here, not in internal/cli, because the serve-side mirror
+	// reconciler honours the same off-switch and cannot import cli
+	// (sty_e6e467fe).
+	EnvServerEndpoint = "SATELLE_SERVER_ENDPOINT"
 )
+
+// ServerEndpointEnv inspects EnvServerEndpoint. disabled=true means discovery
+// and push must not run. When disabled is false and endpoint is non-empty,
+// callers should use it instead of config / probe.
+func ServerEndpointEnv() (endpoint string, disabled bool, set bool) {
+	v, ok := os.LookupEnv(EnvServerEndpoint)
+	if !ok {
+		return "", false, false
+	}
+	v = strings.TrimSpace(v)
+	if v == "" || strings.EqualFold(v, "none") || strings.EqualFold(v, "off") || v == "-" {
+		return "", true, true
+	}
+	return v, false, true
+}
 
 // GlobalConfig is the machine-wide config at ~/.satelle/config.toml.
 type GlobalConfig struct {

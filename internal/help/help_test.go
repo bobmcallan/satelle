@@ -157,6 +157,13 @@ func TestProjectsTopic(t *testing.T) {
 			t.Errorf("projects topic body missing %q", want)
 		}
 	}
+	// An operator who sees a stale UI must find the recovery here rather than
+	// having to know that `workspace add` happens to re-seed (sty_e6e467fe).
+	for _, want := range []string{"stale", "re-request", "satelle workspace add"} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("projects topic must document the stale-mirror recovery: missing %q", want)
+		}
+	}
 }
 
 func TestGet(t *testing.T) {

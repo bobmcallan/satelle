@@ -1,3 +1,19 @@
+## [0.0.368] - 2026-07-31
+
+### Added
+- **The web service repairs its own mirror.** The UI is a push-fed copy: the CLI posts a snapshot as each mutating verb finishes, and a push that did not land — the service was restarting, down, or unreachable — was lost permanently, leaving the page on its last good frame forever. The serving tier now re-requests a full snapshot for every project it renders: once at startup, which is what repairs the push a `satelle update` restart just swallowed, then every five minutes. It re-requests by running `satelle workspace add` in the repo, so the CLI remains the sole reader of a per-repo database and the mirror remains a read-only view (sty_e6e467fe)
+- A view the service could not reconcile now says so: the landing row and the project header carry a **`stale · last update <time>`** flag naming the last confirmed ingest and the `satelle workspace add` remedy. A stale view is never again indistinguishable from a stuck story (sty_e6e467fe)
+- `satelle help projects` gains a "When the UI looks stale" section, and `satelle workspace add --help` now states plainly that the verb is the manual re-seed — recovery used to be an undocumented side effect (sty_e6e467fe)
+
+### Changed
+- `/ingest/snapshot` fingerprints the body it receives. An identical re-post records freshness only — no row rewrite, no live-update doorbell — so the repair loop never makes an open page re-render on a timer and never rewrites state it does not need to (sty_e6e467fe)
+- `SATELLE_SERVER_ENDPOINT` and its `none|off|-` off-switch moved to `internal/config`, so the serving tier honours exactly the same switch as the CLI push path (sty_e6e467fe)
+
+### Fixed
+- The mutating-verb path is untouched: the push stays fail-silent under its bounded budget, and no verb waits on UI delivery. CLI-side retry was considered and rejected — it repairs only the failures the CLI survived to notice, and it would put retry latency in every transition (sty_e6e467fe)
+- The repair loop refuses a partition whose repo directory is gone, or whose database this machine's `SATELLE_HOME` does not hold, so a service under a foreign home cannot re-seed from an empty store and wipe the view it exists to repair (sty_e6e467fe)
+- `satelle serve` binds its listener before starting the repair loop, so the startup pass cannot race its own endpoint (sty_e6e467fe)
+
 ## [0.0.367] - 2026-07-31
 
 ### Added

@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -58,8 +60,28 @@ func Run(ctx context.Context, opts Options) error {
 		defer cancel()
 		_ = srv.Shutdown(shutCtx)
 	}()
+
+	// Bind before serving so the repair loop's first pass — which re-requests
+	// snapshots through this very endpoint — cannot race the listener.
+	ln, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		return err
+	}
+
+	// Repair loop for pushes that never landed (sty_e6e467fe). Runs beside the
+	// server, off the request path, and stops with ctx.
+	rec := &Reconciler{
+		Targets: mirrorTargets(ms, config.GlobalDir()),
+		Log: func(format string, args ...any) {
+			line := fmt.Sprintf(format, args...)
+			fmt.Fprintln(os.Stderr, "satelle serve: "+line)
+			_ = logfile.Append(time.Now(), serverLog, logCfg, line)
+		},
+	}
+	go rec.Loop(ctx)
+
 	fmt.Printf("satelle serve (push-fed mirror) http://%s  mirror=%s  (Ctrl-C to stop)\n", listenAddr, mirrorPath)
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil

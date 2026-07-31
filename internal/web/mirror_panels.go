@@ -26,6 +26,19 @@ func mirrorIdentity(ctx context.Context, s *mirror.Store, repoKey string) mirror
 	return id
 }
 
+// partitionFreshness reports when this partition was last confirmed against its
+// repo and whether that is old enough that the view must not present itself as
+// current (sty_e6e467fe). An unknown partition is stale with a zero time: the
+// page then says it has no confirmation at all, which is the honest reading.
+func partitionFreshness(ctx context.Context, s *mirror.Store, repoKey string) (time.Time, bool) {
+	p, ok, err := s.GetPartition(ctx, repoKey)
+	if err != nil || !ok {
+		return time.Time{}, true
+	}
+	last, _ := p.LastIngest()
+	return last.Local(), p.Stale(time.Now())
+}
+
 // mirrorLoadPanels assembles pageData exclusively from mirror kinds (no repo DB).
 func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string) (pageData, mirror.IdentityMeta, error) {
 	id := mirrorIdentity(ctx, s, repoKey)
@@ -90,9 +103,13 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 		repoRoot = slug
 	}
 
+	lastIngest, stale := partitionFreshness(ctx, s, repoKey)
+
 	return pageData{
 		RepoRoot:        repoRoot,
 		ProjectName:     projectName,
+		LastIngest:      lastIngest,
+		Stale:           stale,
 		Stories:         attachLightsFrom(entriesByStory, stories, liveSeat, catStepOf),
 		BacklogCount:    backlog,
 		EngagementCount: len(engagedIDs),

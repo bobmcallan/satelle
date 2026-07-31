@@ -178,6 +178,12 @@ const templatesSrc = `
      (sty_2faa7dd4). fill=currentColor so it inherits the .github-btn ink colour. */}}
 {{define "github-svg"}}<svg viewBox="0 0 16 16" width="16" height="16" role="img" aria-hidden="true" focusable="false" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.02-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>{{end}}
 
+{{/* staleflag: the one wording for "this view was not confirmed against the
+     repository recently" (sty_e6e467fe). Rendered on the project header and the
+     landing row from any value carrying .LastIngest, so a mirror the serving
+     tier could not reconcile is never indistinguishable from a stuck story. */}}
+{{define "staleflag"}}<span class="stale-flag" title="Last confirmed against the repository at {{ftime .LastIngest}}. The serving tier could not re-request a snapshot, so this view may be behind the repository — run satelle workspace add in the repo to re-seed it.">stale · last update {{ftime .LastIngest}}</span>{{end}}
+
 {{define "footer"}}<footer class="site-footer">{{if footeremail}}<a class="footer-email" href="mailto:{{footeremail}}">{{footeremail}}</a>{{end}}<span class="footer-version">{{product}} {{version}}</span></footer>{{end}}
 
 {{/* favicon: satelle.dev ◐ monogram (animated terminator + reduced-motion static),
@@ -201,7 +207,7 @@ const templatesSrc = `
   <nav class="crumbs"><a href="/">workspace</a> <span class="sep">/</span> {{if gt (len .Projects) 1}}<details class="proj-switch"><summary class="cur">{{.ProjectName}} <span class="chev" aria-hidden="true">▾</span></summary><ul class="proj-menu">{{range .Projects}}<li><a href="/{{.Slug}}/" title="{{.Path}}"{{if .Current}} class="current" aria-current="page"{{end}}>{{.Name}}{{if .Ambiguous}} <span class="proj-slug">{{.Path}}</span>{{end}}</a></li>{{end}}</ul></details>{{else}}<span class="cur">{{.ProjectName}}</span>{{end}}</nav>
   <header class="app">
     <h1>{{.ProjectName}}</h1>
-    <div class="meta">{{.RepoRoot}} · <a href="help">help →</a> · <a href="settings">settings →</a></div>
+    <div class="meta">{{.RepoRoot}} · <a href="help">help →</a> · <a href="settings">settings →</a>{{if .Stale}} · {{template "staleflag" .}}{{end}}</div>
   </header>
 
   <div class="tabs" role="tablist">

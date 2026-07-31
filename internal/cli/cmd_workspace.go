@@ -68,6 +68,13 @@ This is the single join verb for the local UI (epic:serve-adoption). Later
 mutations are pushed automatically by the CLI change publisher — re-run
 workspace add only to re-seed the mirror manually.
 
+It is also the MANUAL RECOVERY for a mirror showing a stale frame: a push that
+never landed (the service was restarting, down, or unreachable) is repaired by
+re-running this verb from the repo. You rarely need to: a running serve already
+re-requests a snapshot for every partition it renders at startup and on an
+interval, and a view it could not reconcile says so with its last-ingest time
+rather than presenting itself as current.
+
 Path defaults to the current directory. When the path is a different repo than
 the one opened by the CLI, only registration runs — seed from inside that repo.`,
 		Args:        cobra.MaximumNArgs(1),

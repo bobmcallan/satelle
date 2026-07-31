@@ -14,9 +14,36 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/mirror"
 )
+
+// TestWorkspaceAddHelpNamesStaleRecovery (sty_e6e467fe AC7): the verb that
+// re-seeds a stale mirror must SAY that is what it is for. Recovery used to be
+// an undocumented side effect of a join verb.
+func TestWorkspaceAddHelpNamesStaleRecovery(t *testing.T) {
+	var add *cobra.Command
+	for _, c := range NewRootCmd().Commands() {
+		if c.Name() != "workspace" {
+			continue
+		}
+		for _, sub := range c.Commands() {
+			if sub.Name() == "add" {
+				add = sub
+			}
+		}
+	}
+	if add == nil {
+		t.Fatal("workspace add command not registered")
+	}
+	for _, want := range []string{"stale", "re-request", "last-ingest"} {
+		if !strings.Contains(add.Long, want) {
+			t.Errorf("workspace add help missing %q:\n%s", want, add.Long)
+		}
+	}
+}
 
 // TestWorkspaceAddRegistersAndSeeds (sty_805bee9c AC1): with [server] endpoint,
 // workspace add registers the repo and POSTs exactly one snapshot.

@@ -2,8 +2,11 @@ package mirror
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -120,8 +123,13 @@ func (h *IngestHandler) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "read body", http.StatusBadRequest)
+		return
+	}
 	var snap Snapshot
-	if err := json.NewDecoder(r.Body).Decode(&snap); err != nil {
+	if err := json.Unmarshal(body, &snap); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
@@ -131,6 +139,21 @@ func (h *IngestHandler) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now()
 	ctx := r.Context()
+	// A periodic reconcile re-posts the same state most of the time. When the
+	// body is byte-identical to the one already applied, record freshness and
+	// stop: no row rewrite, no SSE doorbell, so the repair loop is invisible to
+	// anyone watching a page (sty_e6e467fe). Any difference falls through to the
+	// full replace below.
+	digest := snapshotDigest(body)
+	if prev, err := h.Store.SnapshotHash(ctx, snap.RepoKey); err == nil && prev != "" && prev == digest {
+		if err := h.Store.MarkFresh(ctx, snap.RepoKey, now); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "unchanged": true})
+		return
+	}
 	// Fail-closed: landing /r/<slug>/ must map to one partition (sty_57d5ce25).
 	// Empty slug skips — the UI falls back to unique repo_key.
 	if slug := strings.TrimSpace(snap.Slug); slug != "" {
@@ -177,6 +200,10 @@ func (h *IngestHandler) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if err := h.Store.SetSnapshotHash(ctx, snap.RepoKey, digest); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if h.OnChange != nil {
 		h.OnChange("stories")
 		h.OnChange("tasks")
@@ -185,6 +212,14 @@ func (h *IngestHandler) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+// snapshotDigest fingerprints a snapshot body. Snapshot JSON is deterministic
+// for unchanged repo state (ordered queries, sorted map keys), so equal digests
+// mean equal state.
+func snapshotDigest(body []byte) string {
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
 }
 
 // slugConflictMessage builds the 409 body for a landing-slug collision: names
