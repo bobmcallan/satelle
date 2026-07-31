@@ -50,6 +50,8 @@ jobs:
           echo "cli_tag=v$CLI"        >> "$GITHUB_OUTPUT"
           echo "serve_tag=serve-v$SERVE" >> "$GITHUB_OUTPUT"
       - id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           CLI_TAG="${{ steps.read.outputs.cli_tag }}"
@@ -62,11 +64,15 @@ jobs:
           else
             echo "::notice::CLI tag $CLI_TAG exists — skip CLI release"
           fi
-          if ! git rev-parse -q --verify "refs/tags/$SERVE_TAG" >/dev/null; then
-            needs_serve=true
-            echo "::notice::serve tag $SERVE_TAG missing — will release serve"
+          # Key the serve decision on a PUBLISHED RELEASE, not a bare tag
+          # (sty_0dcedb0d). A tag pushed by a run that failed before
+          # `gh release create` would otherwise block that serve version's
+          # release forever, with nothing for `satelle update` to install.
+          if gh release view "$SERVE_TAG" --json tagName >/dev/null 2>&1; then
+            echo "::notice::serve release $SERVE_TAG published — skip serve release"
           else
-            echo "::notice::serve tag $SERVE_TAG exists — skip serve release"
+            needs_serve=true
+            echo "::notice::serve release $SERVE_TAG not published — will release serve"
           fi
           echo "needs_cli=$needs_cli" >> "$GITHUB_OUTPUT"
           echo "needs_serve=$needs_serve" >> "$GITHUB_OUTPUT"
@@ -246,8 +252,17 @@ jobs:
           set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "$TAG" -m "Release serve $TAG"
-          git push origin "$TAG"
+          # Idempotent tagging: this job now runs when the RELEASE is missing,
+          # which includes the case where a previous run pushed the tag and then
+          # failed. Re-tagging would abort under `set -e` and the release would
+          # never be created, so create the tag only when it is absent
+          # (sty_0dcedb0d).
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::notice::tag $TAG already exists — publishing the release onto it"
+          else
+            git tag -a "$TAG" -m "Release serve $TAG"
+            git push origin "$TAG"
+          fi
           # --latest=false keeps releases/latest on the CLI (install/update contract).
           gh release create "$TAG" \
             --title "$TAG" \

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -88,11 +89,24 @@ global service.`,
 					serveTarget += ".exe"
 				}
 				serveTag, serr := latestServeReleaseTag(cmd.Context(), updateRepo)
-				if serr != nil {
-					fmt.Fprintf(out, "satelle-serve update skipped: %v\n", serr)
-				} else if err := downloadAndReplaceNamed(cmd.Context(), updateRepo, serveTag, "satelle-serve", serveTarget); err != nil {
-					fmt.Fprintf(out, "satelle-serve update skipped: %v\n", err)
-				} else {
+				installedServe, servePresent := serveInstalledVersion(serveTarget)
+				switch outcome := classifyServeOutcome(installedServe, serveTag, serr, servePresent); outcome {
+				case serveCurrent:
+					fmt.Fprintf(out, "satelle-serve already up to date (%s)\n", serveTag)
+				case serveAbsentNoRelease:
+					// A fork that has never published a serve release, on a machine
+					// with no serve binary: nothing to install and nothing wrong.
+					fmt.Fprintf(out, "satelle-serve not installed and no serve release published — nothing to update\n")
+				case serveFail:
+					// A serve release that cannot be RESOLVED is a failure, not a
+					// skip: reporting exit 0 here is what let a release read green
+					// while the live service stayed on an older serve binary
+					// (sty_0dcedb0d). Same rule the CLI half already follows.
+					return fmt.Errorf("satelle-serve update failed: %w", serr)
+				default:
+					if err := downloadAndReplaceNamed(cmd.Context(), updateRepo, serveTag, "satelle-serve", serveTarget); err != nil {
+						return fmt.Errorf("satelle-serve update failed (%s): %w", serveTag, err)
+					}
 					fmt.Fprintf(out, "installed %s (%s)\n", serveTarget, serveTag)
 					cliUpdated = true // restart so serve process can pick up sibling if re-exec path
 				}
@@ -137,6 +151,73 @@ func installedVersion(target string) string {
 		}
 	}
 	return buildinfo.Resolve().Version
+}
+
+// serveOutcome is what `satelle update` should do about the sibling
+// satelle-serve binary. The three cases used to collapse into one printed
+// "skipped" line at exit 0, so an unresolvable release looked exactly like a
+// no-op and a release could report success while the live service ran an older
+// serve binary (sty_0dcedb0d).
+type serveOutcome int
+
+const (
+	// serveInstall — a serve release resolved and differs from what is installed.
+	serveInstall serveOutcome = iota
+	// serveCurrent — the installed serve binary already IS the resolved release.
+	serveCurrent
+	// serveFail — the release could not be resolved; the verb must fail.
+	serveFail
+	// serveAbsentNoRelease — no serve release exists AND no serve binary is
+	// installed: nothing to do, and nothing wrong.
+	serveAbsentNoRelease
+)
+
+// classifyServeOutcome decides which of the three (plus the narrow no-op) cases
+// applies. installedVer is what the installed serve binary reports ("" when it
+// could not be read — treated as unknown, never as current, because guessing
+// current is the exact failure this exists to kill). Pure for unit tests.
+func classifyServeOutcome(installedVer, serveTag string, discoveryErr error, servePresent bool) serveOutcome {
+	if discoveryErr != nil {
+		if !servePresent && isNoServeReleaseErr(discoveryErr) {
+			return serveAbsentNoRelease
+		}
+		return serveFail
+	}
+	if installedVer != "" && !updateAvailable(installedVer, tagVersion(serveTag)) {
+		return serveCurrent
+	}
+	return serveInstall
+}
+
+// tagVersion reduces a release tag to the bare version the binary reports:
+// serve-v0.0.12 → 0.0.12, v0.0.368 → 0.0.368.
+func tagVersion(tag string) string {
+	return normVer(strings.TrimPrefix(strings.TrimSpace(tag), "serve-"))
+}
+
+// isNoServeReleaseErr reports whether err means "this repo has no serve release
+// at all" rather than "the lookup failed". Only the former is a legitimate no-op.
+func isNoServeReleaseErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no published release with prefix")
+}
+
+// serveInstalledVersion reports the version the installed satelle-serve binary
+// prints (`--version`, the same flag the release workflow validates with) and
+// whether that binary exists at all. An unparseable answer yields ("", true):
+// present but unknown, which classifies as install rather than current.
+func serveInstalledVersion(target string) (version string, present bool) {
+	if _, err := os.Stat(target); err != nil {
+		return "", false
+	}
+	out, err := exec.Command(target, "--version").Output()
+	if err != nil {
+		return "", true
+	}
+	// "satelle-serve 0.0.12 (commit …)" → "0.0.12"
+	if fields := strings.Fields(string(out)); len(fields) >= 2 {
+		return fields[1], true
+	}
+	return "", true
 }
 
 // assetName is the release asset filename for this platform — identical to the
@@ -196,35 +277,105 @@ func parseLatestTag(body []byte) (string, error) {
 	return r.TagName, nil
 }
 
-// latestServeReleaseTag finds the newest serve-v* tag (sty_19ff03f4). Serve
-// releases are published with --latest=false so /releases/latest stays CLI.
+// releasePageSize / maxReleasePages bound the serve-release walk. Serve releases
+// are rare and CLI releases frequent, so the newest serve release routinely sits
+// far down the newest-first list: reading one page of 30 made discovery MISS a
+// published release entirely once ~30 CLI releases followed it, and report that
+// as "no release with prefix serve-v" (sty_0dcedb0d). One page of 100 answers
+// almost always; the cap is the backstop, and exhausting it is reported as such
+// rather than as an absence.
+const (
+	releasePageSize = 100
+	maxReleasePages = 10
+)
+
+// latestServeReleaseTag finds the newest published serve-v* release
+// (sty_19ff03f4). Serve releases are published with --latest=false so
+// /releases/latest stays CLI, which is why they must be found by listing.
 func latestServeReleaseTag(ctx context.Context, repo string) (string, error) {
-	url := os.Getenv("SATELLE_RELEASE_LIST_API")
-	if url == "" {
-		url = fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=30", repo)
+	base := os.Getenv("SATELLE_RELEASE_LIST_API")
+	if base == "" {
+		base = fmt.Sprintf("https://api.github.com/repos/%s/releases", repo)
 	}
-	body, err := httpGetBytes(ctx, url)
+	return firstPrefixedTagInPages(func(page int) ([]byte, error) {
+		return httpGetBytes(ctx, releaseListPageURL(base, page))
+	}, "serve-v", maxReleasePages)
+}
+
+// releaseListPageURL adds pagination to the release-list base URL, merging with
+// any query the base already carries (SATELLE_RELEASE_LIST_API overrides may).
+func releaseListPageURL(base string, page int) string {
+	u, err := url.Parse(base)
 	if err != nil {
-		return "", err
+		return base
 	}
-	return firstPrefixedTag(body, "serve-v")
+	q := u.Query()
+	q.Set("per_page", strconv.Itoa(releasePageSize))
+	q.Set("page", strconv.Itoa(page))
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// firstPrefixedTagInPages walks pages of the newest-first release list until it
+// finds a prefix match, a page comes back empty (the list is exhausted), or
+// maxPages is reached. An exhausted cap is a DISTINCT error from an exhausted
+// list: "searched N pages" says the answer may exist further back, which a bare
+// "not found" would hide. Pure over fetch for unit tests.
+func firstPrefixedTagInPages(fetch func(page int) ([]byte, error), prefix string, maxPages int) (string, error) {
+	for page := 1; page <= maxPages; page++ {
+		body, err := fetch(page)
+		if err != nil {
+			return "", err
+		}
+		tag, n, err := firstPrefixedTagOnPage(body, prefix)
+		if err != nil {
+			return "", err
+		}
+		if tag != "" {
+			return tag, nil
+		}
+		if n < releasePageSize {
+			// Short (or empty) page — that was the end of the list.
+			return "", fmt.Errorf("no published release with prefix %q", prefix)
+		}
+	}
+	return "", fmt.Errorf("no published release with prefix %q in the newest %d releases", prefix, maxPages*releasePageSize)
 }
 
 // firstPrefixedTag returns the first tag_name in a GitHub releases JSON array
 // that has the given prefix (newest-first list). Pure for unit tests.
 func firstPrefixedTag(body []byte, prefix string) (string, error) {
-	var releases []struct {
-		TagName string `json:"tag_name"`
-	}
-	if err := json.Unmarshal(body, &releases); err != nil {
+	tag, _, err := firstPrefixedTagOnPage(body, prefix)
+	if err != nil {
 		return "", err
 	}
+	if tag == "" {
+		return "", fmt.Errorf("no release tag with prefix %q", prefix)
+	}
+	return tag, nil
+}
+
+// firstPrefixedTagOnPage returns the first matching tag on one page plus how
+// many entries that page held (so the caller knows whether to keep walking).
+// tag is "" when the page holds no match. DRAFTS ARE SKIPPED: a draft carries no
+// downloadable asset, so selecting one would trade a missed release for a 404.
+func firstPrefixedTagOnPage(body []byte, prefix string) (tag string, count int, err error) {
+	var releases []struct {
+		TagName string `json:"tag_name"`
+		Draft   bool   `json:"draft"`
+	}
+	if err := json.Unmarshal(body, &releases); err != nil {
+		return "", 0, err
+	}
 	for _, r := range releases {
+		if r.Draft {
+			continue
+		}
 		if strings.HasPrefix(r.TagName, prefix) {
-			return r.TagName, nil
+			return r.TagName, len(releases), nil
 		}
 	}
-	return "", fmt.Errorf("no release tag with prefix %q", prefix)
+	return "", len(releases), nil
 }
 
 // downloadAndReplace downloads the platform asset for tag from repo's releases,

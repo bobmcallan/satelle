@@ -1,3 +1,11 @@
+## [0.0.369] - 2026-07-31
+
+### Fixed
+- **`satelle update` could stop installing the serve binary entirely, silently.** Serve-release discovery read a single page of `/releases`; serve releases are rare and CLI releases frequent, so once ~30 CLI releases followed a serve release it fell off that page and update reported `no release tag with prefix serve-v` — a published release, reported as absent. Discovery now walks the release list (100 per page, up to 1000 releases), skips drafts, and distinguishes "not found in the newest N" from "does not exist" (sty_0dcedb0d)
+- **A serve release that cannot be resolved now FAILS the verb** instead of printing a skip and exiting 0. That silent exit is how a release read green while the live web service kept running an older serve binary. The one exemption is deliberately narrow: no serve release published anywhere AND no serve binary installed is a no-op, so a fork that has never released one still updates cleanly (sty_0dcedb0d)
+- `satelle update` now reports `satelle-serve already up to date (<tag>)` and skips the download when the installed serve binary already is the released one, rather than re-downloading it every run. An unreadable installed version counts as unknown and installs — never as current (sty_0dcedb0d)
+- The release workflow decides whether to publish the serve artifact by asking whether the **release** exists, not whether the bare tag does, and tags idempotently — so a run that pushed a tag and then failed can no longer block that serve version's release forever (sty_0dcedb0d)
+
 ## [serve-v0.0.12] - 2026-07-31
 
 ### Added
@@ -6,7 +14,7 @@
 ### Fixed
 - An identical re-posted snapshot is applied quietly: freshness only, no row rewrite, no live-update doorbell (sty_e6e467fe)
 - The listener binds before the repair loop starts, so its first pass cannot race its own endpoint (sty_e6e467fe)
-- Released as 0.0.12 because `serve-v0.0.11` was a stale tag on a 0.0.337-era commit with no published release, which left `satelle update` with no serve asset to install (sty_e6e467fe)
+- Released as 0.0.12 because `satelle update` could not find the previous serve release to install. **Correction (sty_0dcedb0d):** the 0.0.368 notes first attributed this to `serve-v0.0.11` being an unpublished tag. It was published, on 2026-07-27, with its full asset set; serve-release discovery simply read only the first page of `/releases` and ~30 later CLI releases had pushed it off that page (sty_e6e467fe, sty_0dcedb0d)
 
 ## [0.0.368] - 2026-07-31
 
@@ -23,7 +31,7 @@
 - The mutating-verb path is untouched: the push stays fail-silent under its bounded budget, and no verb waits on UI delivery. CLI-side retry was considered and rejected — it repairs only the failures the CLI survived to notice, and it would put retry latency in every transition (sty_e6e467fe)
 - The repair loop refuses a partition whose repo directory is gone, or whose database this machine's `SATELLE_HOME` does not hold, so a service under a foreign home cannot re-seed from an empty store and wipe the view it exists to repair (sty_e6e467fe)
 - `satelle serve` binds its listener before starting the repair loop, so the startup pass cannot race its own endpoint (sty_e6e467fe)
-- The serve artifact ships as **satelle-serve 0.0.12**. `serve-v0.0.11` was a stale tag left on a 0.0.337-era commit with no published release, so `satelle update` had no serve asset to install and the running service could not be dogfooded onto this fix (sty_e6e467fe)
+- The serve artifact ships as **satelle-serve 0.0.12**, because `satelle update` reported `no release tag with prefix serve-v` and installed no serve binary at all, so the running service could not be dogfooded onto this fix. **Correction (sty_0dcedb0d):** these notes first blamed a stale, unpublished `serve-v0.0.11` tag. That was wrong — `serve-v0.0.11` is a fully published release from 2026-07-27 with 10 assets. The real cause was in `satelle update` itself: serve-release discovery read a single page of `/releases`, and the frequent CLI release cadence had carried the serve release past it (sty_e6e467fe, sty_0dcedb0d)
 
 ## [0.0.367] - 2026-07-31
 
