@@ -66,6 +66,11 @@ var tmplFuncs = template.FuncMap{
 			return "tl-pass"
 		case ledger.KindReviewReject:
 			return "tl-fail"
+		case ledger.KindGateSkipped:
+			// Deliberately NOT a pass: the edge advanced with no verdict because
+			// its gate skill did not resolve (sty_d59ec6a9). It must not read as
+			// green in the timeline.
+			return "tl-fail"
 		default:
 			return ""
 		}

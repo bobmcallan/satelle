@@ -1,3 +1,13 @@
+## [0.0.374] - 2026-07-31
+
+### Fixed
+- **A workflow gate naming a skill that does not exist was silent on both the authoring paths an author actually uses, and silent again at run time when the edge advanced ungated.** The consistency check that catches it was wired only into the whole-set commands: `satelle workflow validate <name>` skipped it (the block was guarded on an empty name filter) and `satelle workflow create` never ran it at all. So an author — human or agent — could write a gated edge, validate the workflow **by name**, get PASS, and drive stories through an edge that was never reviewed, with the DOT still showing the gate. The embedded `satelle-workflow-advisor` skill makes this worse by instructing agents to run exactly the named form (sty_d59ec6a9)
+- Both authoring paths now report it, as a **WARN** rather than a FAIL, and name the consequence — not just the missing file: *an edge whose gate skill does not resolve is ADVISORY — it advances UNGATED, with no reviewer and no verdict, until the skill exists*. WARN because a repo mid-authoring writes the workflow before it writes the gate skills; blocking would make the ordinary authoring sequence impossible. `create` still writes the file. The whole-set checks (`satelle validate`, bare `workflow validate`, `agent validate`, `doctor`) keep FAIL and their exact existing output — they answer a different question (sty_d59ec6a9)
+- **An ungated advance is now recorded as one.** A transition whose gate skill does not resolve still enacts — the fail-open is deliberate, so a fresh repo works before every gate is authored — but it writes a `gate_skipped` ledger row naming the skill, and prints the same line to stderr. Previously the evidence trail was indistinguishable from an edge that never carried a gate. The new row is its own ledger kind on purpose: folding it into a comment would bury it, and folding it into an accept would assert a judgement that never happened. It renders as an outcome of `skipped`, never green in the timeline, and does not count toward the reviewed-transition progress lights (sty_d59ec6a9)
+
+### Added
+- `agentstep.WorkflowSkillProblems` — the per-workflow half of `WorkflowConsistency`, so the whole-set callers and the single-document authoring paths share one definition and cannot drift. The cross-workflow ambiguity check stays whole-set only: it compares repo workflows against each other, so firing it per document would misreport (sty_d59ec6a9)
+
 ## [0.0.373] - 2026-07-31
 
 ### Added

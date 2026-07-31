@@ -33,6 +33,9 @@ func EventTelemetry(e Entry) (agent, model, outcome string, tokensTotal int, dur
 		return "", "", "accept", 0, 0
 	case KindReviewReject:
 		return "", "", "reject", 0, 0
+	case KindGateSkipped:
+		// Not an accept: nothing judged this edge (sty_d59ec6a9).
+		return "", "", "skipped", 0, 0
 	}
 	return "", "", "", 0, 0
 }

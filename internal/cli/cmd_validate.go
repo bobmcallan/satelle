@@ -89,6 +89,43 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 		}
 	}
 
+	// Named form: the whole-set block above is skipped, which used to mean a
+	// workflow naming a gate skill that does not resolve validated clean on the
+	// very path an author uses while authoring it — and then advanced ungated at
+	// run time (sty_d59ec6a9). Report the per-workflow half here.
+	//
+	// WARN, not FAIL: a repo mid-authoring writes the workflow before it writes
+	// the gate skills, and the embedded satelle-workflow-advisor skill drives
+	// exactly this named form. Blocking would make the ordinary authoring
+	// sequence impossible. The whole-set path keeps FAIL — it answers a
+	// different question (is my substrate coherent as shipped).
+	//
+	// The ambiguity check is NOT run here: it compares repo workflows against
+	// each other, so it is whole-set by nature (AC3).
+	if kind == "workflows" && nameFilter != "" {
+		wfs, lerr := a.Store.DocIndex.List(context.Background(), "workflows")
+		if lerr != nil {
+			return lerr
+		}
+		for _, w := range wfs {
+			if w.Name != nameFilter {
+				continue
+			}
+			problems := agentstep.WorkflowSkillProblems(w, resolve)
+			for _, p := range problems {
+				fmt.Fprintf(out, "WARN  workflows/%s — %s\n", w.Name, p)
+			}
+			if len(problems) > 0 {
+				// Name the CONSEQUENCE, not just the missing file. A warning that
+				// only says "skill not found" is the same silence one level up:
+				// the reader has to already know that an unresolved gate degrades
+				// to advisory and lets the transition through.
+				fmt.Fprintln(out, "      an edge whose gate skill does not resolve is ADVISORY — it advances UNGATED, with no reviewer and no verdict, until the skill exists")
+			}
+			break
+		}
+	}
+
 	// Placement invariants (order:6): embedded_sha, residency markers,
 	// no principle scope:, resident set under SessionStart ceiling. Whole-set
 	// only — same anchor pattern as workflow consistency.

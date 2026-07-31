@@ -32,6 +32,12 @@ const (
 	KindStatusTransition = "status_transition"
 	KindReviewAccept     = "review_accept"
 	KindReviewReject     = "review_reject"
+	// KindGateSkipped records that an edge DECLARED a gate whose skill does not
+	// resolve, so the transition advanced with no reviewer and no verdict. It is
+	// deliberately its own kind: folding it into a comment would bury it, and
+	// folding it into an accept would assert a judgement that never happened.
+	// A trail carrying this row says "this advance was not judged" (sty_d59ec6a9).
+	KindGateSkipped = "gate_skipped"
 	// KindStepSummary is the summariser's prose recap of an enacted transition.
 	KindStepSummary = "step_summary"
 	// KindAgentInvocation records HOW an isolated agent was invoked for a step —

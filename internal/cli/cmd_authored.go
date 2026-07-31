@@ -16,6 +16,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/agentstep"
+	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/structure"
 )
 
@@ -84,6 +86,27 @@ func authoredCreateCmd(kind string) *cobra.Command {
 			_, _ = a.Store.DocIndex.Sync(context.Background(), a.AuthoredDirs(), time.Now())
 
 			fmt.Fprintf(cmd.OutOrStdout(), "wrote %s (passed the %s structure check)\n", path, kind)
+
+			// A workflow may name a gate skill that does not exist. The structure
+			// check deliberately does not require reviewer gates to resolve
+			// (internal/structure/structure.go — only EXECUTOR-path skills are
+			// hard-required), so without this the file was written in silence and
+			// the edge advanced ungated at run time (sty_d59ec6a9).
+			//
+			// WARN after the write, not a refusal: a repo mid-authoring writes the
+			// workflow before it writes its gate skills, so blocking would make
+			// the ordinary sequence impossible. Written-but-ungated is the honest
+			// message. stderr, so stdout stays machine-readable.
+			if kind == "workflows" {
+				problems := agentstep.WorkflowSkillProblems(
+					docindex.Doc{Name: name, Body: body}, skillResolver(a))
+				for _, p := range problems {
+					fmt.Fprintf(cmd.ErrOrStderr(), "WARN  workflows/%s — %s\n", name, p)
+				}
+				if len(problems) > 0 {
+					fmt.Fprintln(cmd.ErrOrStderr(), "      an edge whose gate skill does not resolve is ADVISORY — it advances UNGATED, with no reviewer and no verdict, until the skill exists")
+				}
+			}
 			return nil
 		},
 	}

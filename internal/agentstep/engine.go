@@ -639,7 +639,11 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 			return dec, rerr
 		}
 		if !dec.Gated {
-			continue // declared but this reviewer's rubric is absent — advisory, skip it
+			// Declared but this reviewer's rubric is absent — advisory, skip it.
+			// Carry WHICH skill was skipped so the advance is recorded as ungated
+			// rather than looking like an edge that never had a gate (sty_d59ec6a9).
+			result.Unresolved = append(result.Unresolved, dec.Unresolved...)
+			continue
 		}
 		result.Gated = true
 		result.Skill = dec.Skill
@@ -717,6 +721,9 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 		}
 		dec := results[i].dec
 		if !dec.Gated {
+			// Same advisory carry as the serial path — without it the parallel
+			// edge silently loses the record of an ungated advance (sty_d59ec6a9).
+			result.Unresolved = append(result.Unresolved, dec.Unresolved...)
 			continue
 		}
 		result.Gated = true
@@ -1299,7 +1306,12 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 	body, err := g.skillBody(ctx, skill)
 	if err != nil {
 		if errors.Is(err, docindex.ErrNotFound) {
-			return verb.GateDecision{Gated: false}, nil
+			// Advisory degradation: the edge DECLARED this gate but its rubric is
+			// not installed, so nothing judges the transition and it advances.
+			// Fail-open is deliberate (a fresh repo must work before every gate is
+			// authored) — but it must not be SILENT, so name the skill that was
+			// skipped (sty_d59ec6a9).
+			return verb.GateDecision{Gated: false, Skill: skill, Unresolved: []string{skill}}, nil
 		}
 		return verb.GateDecision{}, err
 	}
@@ -1904,37 +1916,65 @@ func WorkflowConsistency(workflows []docindex.Doc, resolve func(skill string) bo
 		}
 	}
 
-	// (2) Referenced skills that do not resolve.
+	// (2) Referenced skills that do not resolve — per workflow, so the same
+	// definition serves the whole-set callers and the single-doc authoring paths
+	// (sty_d59ec6a9). The two cannot drift.
 	if resolve != nil {
 		for _, w := range workflows {
-			// A declared lifecycle hook's skill must resolve too (sty_51ad783b,
-			// generalised in sty_ede16f51): an unresolved one silently degrades the
-			// operation, which is exactly the misconfiguration to surface here.
-			// Declaration defects (unknown operation, malformed entry) surface with
-			// it, so one check covers the whole hook grammar.
-			hooks, hookProblems := wfhook.Parse(w.Body)
-			for _, p := range hookProblems {
-				problems = append(problems, fmt.Sprintf("workflow %s %s", w.Name, p))
-			}
-			for _, h := range hooks {
-				if !resolve(h.Skill) {
-					problems = append(problems, fmt.Sprintf(
-						"workflow %s declares %s %q which does not resolve in the substrate", w.Name, h.Operation, h.Skill))
-				}
-			}
-			spec, ok := wfdot.Parse(w.Body)
-			if !ok {
-				continue
-			}
-			for _, s := range referencedWorkflowSkills(spec) {
-				if !resolve(s) {
-					problems = append(problems, fmt.Sprintf(
-						"workflow %s references skill %q which does not resolve in the substrate", w.Name, s))
-				}
-			}
+			problems = append(problems, WorkflowSkillProblems(w, resolve)...)
 		}
 	}
 	sort.Strings(problems)
+	return problems
+}
+
+// WorkflowSkillProblems reports, for ONE workflow, every skill it names that
+// does not resolve in the substrate — edge gates, node @skill: prompts, and
+// declared lifecycle hooks — plus any hook declaration defect.
+//
+// This is the half of WorkflowConsistency that is meaningful per document. The
+// ambiguity check is deliberately NOT here: it compares repo workflows against
+// each other, so it is whole-set by nature and firing it on a single doc would
+// misreport (sty_d59ec6a9 AC3).
+//
+// Callers: WorkflowConsistency (whole set, where these are FAILs), and the
+// authoring paths `workflow validate <name>` / `workflow create` (where they are
+// WARNs — a repo mid-authoring writes the workflow before it writes the gate
+// skills, so blocking there would make the ordinary sequence impossible).
+func WorkflowSkillProblems(w docindex.Doc, resolve func(skill string) bool) []string {
+	if resolve == nil {
+		return nil
+	}
+	var problems []string
+	// A declared lifecycle hook's skill must resolve too (sty_51ad783b,
+	// generalised in sty_ede16f51): an unresolved one silently degrades the
+	// operation, which is exactly the misconfiguration to surface here.
+	// Declaration defects (unknown operation, malformed entry) surface with
+	// it, so one check covers the whole hook grammar.
+	hooks, hookProblems := wfhook.Parse(w.Body)
+	for _, p := range hookProblems {
+		problems = append(problems, fmt.Sprintf("workflow %s %s", w.Name, p))
+	}
+	for _, h := range hooks {
+		if !resolve(h.Skill) {
+			problems = append(problems, fmt.Sprintf(
+				"workflow %s declares %s %q which does not resolve in the substrate", w.Name, h.Operation, h.Skill))
+		}
+	}
+	spec, ok := wfdot.Parse(w.Body)
+	if !ok {
+		return problems
+	}
+	for _, s := range referencedWorkflowSkills(spec) {
+		if !resolve(s) {
+			// Message text is deliberately IDENTICAL to what the whole-set callers
+			// have always printed — AC3 requires their output unchanged. The
+			// authoring paths add the "will advance ungated" context around the
+			// WARN they wrap it in, rather than editing this shared string.
+			problems = append(problems, fmt.Sprintf(
+				"workflow %s references skill %q which does not resolve in the substrate", w.Name, s))
+		}
+	}
 	return problems
 }
 

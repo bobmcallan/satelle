@@ -501,6 +501,19 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 			notifyChange(panelTopic(current.Kind))
 			return nil, multiRejectError(current.Status, *req.Status, rejects)
 		}
+		// An edge may have DECLARED a gate whose skill does not resolve. That gate
+		// degraded to advisory and judged nothing, so this advance is ungated —
+		// record it as such. Without this row the trail is indistinguishable from
+		// an edge that never carried a gate at all, which is the silence
+		// sty_d59ec6a9 is about. It does not block: fail-open is deliberate.
+		for _, skill := range dec.Unresolved {
+			skippedBody := fmt.Sprintf(
+				"advanced %s→%s UNGATED — gate skill %q does not resolve in the substrate, so no reviewer judged this transition",
+				current.Status, *req.Status, skill)
+			appendLedgerEntry(ctx, current.ID, ledger.KindGateSkipped, "reviewer",
+				skippedBody, transitionPayload(current.Status, *req.Status, skill), now)
+			fmt.Fprintln(os.Stderr, skippedBody)
+		}
 		if len(reviewers) > 0 {
 			gatedAccepted = true
 		}

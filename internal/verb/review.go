@@ -37,6 +37,14 @@ type GateDecision struct {
 	TokensOut   int
 	TokensTotal int
 	DurationMs  int64
+	// Unresolved names gate skills this edge DECLARED that do not resolve in the
+	// substrate. Those gates degrade to advisory — the edge advances with no
+	// reviewer and no verdict — which is deliberate, so a fresh repo works before
+	// every gate is authored. It is EVIDENCE OF AN UNGATED ADVANCE, never a
+	// verdict: an advance recorded with a non-empty Unresolved was not judged,
+	// and without it that is indistinguishable from an edge carrying no gate at
+	// all (sty_d59ec6a9).
+	Unresolved []string
 }
 
 // ReviewerVerdict is one reviewer's verdict within a transition's ordered
