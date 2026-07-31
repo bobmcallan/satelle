@@ -13,6 +13,7 @@
 - The mutating-verb path is untouched: the push stays fail-silent under its bounded budget, and no verb waits on UI delivery. CLI-side retry was considered and rejected — it repairs only the failures the CLI survived to notice, and it would put retry latency in every transition (sty_e6e467fe)
 - The repair loop refuses a partition whose repo directory is gone, or whose database this machine's `SATELLE_HOME` does not hold, so a service under a foreign home cannot re-seed from an empty store and wipe the view it exists to repair (sty_e6e467fe)
 - `satelle serve` binds its listener before starting the repair loop, so the startup pass cannot race its own endpoint (sty_e6e467fe)
+- The serve artifact ships as **satelle-serve 0.0.12**. `serve-v0.0.11` was a stale tag left on a 0.0.337-era commit with no published release, so `satelle update` had no serve asset to install and the running service could not be dogfooded onto this fix (sty_e6e467fe)
 
 ## [0.0.367] - 2026-07-31
 
