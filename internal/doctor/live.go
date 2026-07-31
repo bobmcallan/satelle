@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/agentvalidate"
@@ -215,22 +214,4 @@ func authFailure(out string) string {
 		}
 	}
 	return ""
-}
-
-// setProcessGroup puts the child in its own process group so killGroup can take
-// down a peer that spawned children of its own (an npx wrapper, a shim).
-func setProcessGroup(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-}
-
-// killGroup signals the whole process group; falls back to the process when the
-// group is unavailable.
-func killGroup(cmd *exec.Cmd) error {
-	if cmd.Process == nil {
-		return nil
-	}
-	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err == nil {
-		return nil
-	}
-	return cmd.Process.Kill()
 }
