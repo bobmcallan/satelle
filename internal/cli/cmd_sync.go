@@ -246,6 +246,18 @@ func runSync(cmd *cobra.Command, serverArg string, dryRun bool) error {
 	if err := runSyncDocumentsPush(cmd, serverArg, "", dryRun); err != nil {
 		return err
 	}
+	// The documents PULL stays in bare sync — deliberately, unlike config deploy
+	// and workstate pull, which sit behind `sync rehydrate` (sty_4c3729e7 AC7).
+	// The difference is what each one does to local state. Deploy and workstate
+	// pull MATERIALISE a partition over local files; they answer "make this repo
+	// look like that one", so they are recovery, not routine. The documents pull
+	// is INCREMENTAL and cursor-driven: it applies only what changed since this
+	// repo's own cursor, and after this story it neither rewrites bytes it
+	// already has nor stops on a file it cannot write. That makes documents the
+	// one area that is genuinely two-way in normal use — an operator writing a
+	// document on another machine expects it here without invoking recovery.
+	// Moving it behind rehydrate would make routine convergence an explicit
+	// recovery step, which is the wrong default for the only bidirectional area.
 	if dryRun {
 		fmt.Fprintln(out, "documents pull: skipped under --dry-run (pull has no preview).")
 	} else if err := runSyncDocumentsPull(cmd, serverArg, ""); err != nil {
@@ -534,6 +546,13 @@ func runSyncConfigDeployOutcome(cmd *cobra.Command, serverArg, workspaceArg stri
 	cfgPath := filepath.Join(dataDir, config.ConfigName)
 	res, err := subsync.Restore(dataDir, files)
 	if err != nil {
+		return deployOutcome{}, fmt.Errorf("deploy: %w", err)
+	}
+	// A deploy materialises a whole partition deliberately — a file it could not
+	// write is a FAILED deploy, not a partial one. Restore stopped hard-erroring
+	// on an unwritable file so a cursor-driven pull can continue past it
+	// (sty_4c3729e7); this caller keeps the loud behaviour it always had.
+	if err := res.Err(); err != nil {
 		return deployOutcome{}, fmt.Errorf("deploy: %w", err)
 	}
 	outcome := deployOutcome{

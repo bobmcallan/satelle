@@ -284,6 +284,11 @@ func runPublishAdopt(cmd *cobra.Command, serverArg, workspaceArg string, version
 	}
 	if res, err := subsync.Restore(dataDir, []subsync.File{{Path: path, Content: content}}); err != nil {
 		return fmt.Errorf("write local copy: %w", err)
+	} else if ferr := res.Err(); ferr != nil {
+		// Single-file adopt: the one file is the whole job, so a file Restore
+		// could not write is a failed adopt. Restore itself no longer hard-errors
+		// on that (sty_4c3729e7) — this caller must not inherit the silence.
+		return fmt.Errorf("write local copy: %w", ferr)
 	} else if res.Written == 0 && len(res.Skipped) > 0 {
 		// Single-file adopt: an excluded path is a caller error, not a batch to skip past (sty_84f14ace).
 		return fmt.Errorf("write local copy: %q is a local-only path — refusing to adopt", path)
@@ -344,6 +349,9 @@ func runPublishCheck(cmd *cobra.Command, serverArg, workspaceArg string, doUpdat
 		}
 		if res, err := subsync.Restore(dataDir, []subsync.File{{Path: rec.Path, Content: content}}); err != nil {
 			return fmt.Errorf("update %s: %w", rec.Path, err)
+		} else if ferr := res.Err(); ferr != nil {
+			// Single-file update: same reasoning as adopt above (sty_4c3729e7).
+			return fmt.Errorf("update %s: %w", rec.Path, ferr)
 		} else if res.Written == 0 && len(res.Skipped) > 0 {
 			// Single-file update: excluded path is a caller error (sty_84f14ace).
 			return fmt.Errorf("update %s: local-only path — refusing to write", rec.Path)

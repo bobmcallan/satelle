@@ -1,3 +1,11 @@
+## [0.0.370] - 2026-07-31
+
+### Fixed
+- **`satelle sync` was permanently wedged by a read-only generated view.** The documents pull returned on the first file it could not write, and the cursor save sits after that return — so every later pull re-fetched the same batch and failed on the same file, forever. satelle's own protection for generated views (`0o444`, so nobody hand-edits them) was blocking satelle's own restore. A file that cannot be written is now recorded, reported, and stepped over; the batch completes and the cursor advances (sty_4c3729e7)
+- A restored document keeps the mode it had, a new one is created `0o644`, and a view carrying the `generated: satelle` marker is written **read-only** — previously a freshly pulled generated view landed `0o644` and silently lost its protection. `subsync.Restore` replaces a read-only destination rather than refusing it, the same way the doc-index materializer already does for exactly this case (sty_4c3729e7)
+- The documents pull no longer re-fetches or rewrites a document whose local bytes already match the manifest. A cursor batch lists what changed since your cursor, not what differs from your disk, so the files a push just uploaded came straight back to be rewritten — which is how the read-only view was being touched at all. The push leg has always compared SHAs before uploading; the pull now does the same on the way down (sty_4c3729e7)
+- Callers for which a partial restore is a failure stay loud: `sync config deploy` materialises a whole partition deliberately, and `publish adopt` / `publish update` are single-file, so any unwritten file fails them. Only the incremental documents pull continues past one (sty_4c3729e7)
+
 ## [0.0.369] - 2026-07-31
 
 ### Fixed

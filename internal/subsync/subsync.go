@@ -26,13 +26,43 @@ type File struct {
 	Content []byte
 }
 
-// Result is Restore's outcome: how many files were written and which excluded
-// (local-only) paths were skipped rather than applied (sty_84f14ace).
+// Result is Restore's outcome: how many files were written, which excluded
+// (local-only) paths were skipped rather than applied (sty_84f14ace), and which
+// files could not be written at all (sty_4c3729e7).
 type Result struct {
 	Written int
 	// Skipped holds the server-relative paths that excludedLocal refused.
 	// Empty when nothing was skipped. Paths are never written to disk.
 	Skipped []string
+	// Failed holds files Restore WANTED to write and could not — a filesystem
+	// condition, not policy. Deliberately distinct from Skipped: an operator
+	// reading "skipped" learns something routine happened, and a real failure
+	// must never be reported that way. A non-empty Failed is not an error by
+	// itself; each caller decides (a cursor-driven pull continues, a deliberate
+	// single-file or whole-partition write fails).
+	Failed []FileError
+}
+
+// FileError is one file Restore could not write, with the reason.
+type FileError struct {
+	Path string
+	Err  error
+}
+
+func (e FileError) Error() string { return e.Path + ": " + e.Err.Error() }
+
+// Err joins the failures into one error, or nil when there are none. Callers for
+// which a partial restore is a failure (config deploy, single-file publish) use
+// this so their loud behaviour is preserved.
+func (r Result) Err() error {
+	if len(r.Failed) == 0 {
+		return nil
+	}
+	msgs := make([]string, 0, len(r.Failed))
+	for _, f := range r.Failed {
+		msgs = append(msgs, f.Error())
+	}
+	return fmt.Errorf("subsync: %d file(s) not written: %s", len(r.Failed), strings.Join(msgs, "; "))
 }
 
 // excludedLocal reports paths (relative to the data dir) that are NEVER written
@@ -78,17 +108,28 @@ func ExcludedLocal(p string) bool {
 	return excludedLocal(rel)
 }
 
-// Restore writes files under <dataDir>, each byte-for-byte (0o644, parent dirs
-// created), overwriting any existing file at the same path. dataDir is the
-// repo's resolved .satelle data dir (the workspace-config root the server paths
-// are relative to).
+// Restore writes files under <dataDir>, each byte-for-byte, parent dirs created,
+// overwriting any existing file at the same path. dataDir is the repo's resolved
+// .satelle data dir (the workspace-config root the server paths are relative to).
 //
-// Unsafe paths (escape dataDir via cleanRel) still hard-error. Excluded
-// (local-only) paths are SKIPPED and listed in Result.Skipped — never written —
-// so a hostile or corrupt manifest cannot drop a satelle.db over a live one,
-// while a batch that also carries legitimate files (or a partition already
-// poisoned with backups/) can still complete and advance a pull cursor
-// (sty_84f14ace).
+// THREE outcomes per file, and they are not interchangeable:
+//
+//   - Unsafe paths (escape dataDir via cleanRel) still HARD-ERROR. That is the
+//     escape guard; a manifest that names one is hostile or corrupt.
+//   - Excluded (local-only) paths are SKIPPED and listed in Result.Skipped —
+//     never written — so a corrupt manifest cannot drop a satelle.db over a live
+//     one, while a batch carrying legitimate files can still complete and
+//     advance a pull cursor (sty_84f14ace).
+//   - A file that cannot be WRITTEN is recorded in Result.Failed and the batch
+//     CONTINUES (sty_4c3729e7). Returning on the first write failure wedged the
+//     documents pull permanently: the cursor save sits after that return, so
+//     every later pull re-fetched the same batch and failed on the same file.
+//
+// Mode: an existing destination keeps its current permissions, a new one is
+// created 0o644, and a file whose content carries the `generated: satelle`
+// frontmatter marker is forced to 0o444 — the mode the OKF materializer writes
+// its views with. See writeRestored for why a read-only destination is replaced
+// rather than refused.
 func Restore(dataDir string, files []File) (Result, error) {
 	var res Result
 	for _, f := range files {
@@ -102,14 +143,88 @@ func Restore(dataDir string, files []File) (Result, error) {
 		}
 		dest := filepath.Join(dataDir, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-			return res, fmt.Errorf("subsync: mkdir for %s: %w", rel, err)
+			res.Failed = append(res.Failed, FileError{Path: rel, Err: err})
+			continue
 		}
-		if err := os.WriteFile(dest, f.Content, 0o644); err != nil {
-			return res, fmt.Errorf("subsync: write %s: %w", rel, err)
+		if err := writeRestored(dest, f.Content); err != nil {
+			res.Failed = append(res.Failed, FileError{Path: rel, Err: err})
+			continue
 		}
 		res.Written++
 	}
 	return res, nil
+}
+
+// restoredMode picks the permissions a restored file ends at: an existing
+// destination keeps what it has, a new one gets 0o644, and generated content is
+// forced read-only whichever it was. Without the last rule a freshly pulled
+// generated view landed 0o644 and silently lost the protection that exists to
+// stop hand edits.
+func restoredMode(dest string, content []byte) os.FileMode {
+	mode := os.FileMode(0o644)
+	if fi, err := os.Stat(dest); err == nil {
+		mode = fi.Mode().Perm()
+	}
+	if isGenerated(content) {
+		mode = generatedViewMode
+	}
+	return mode
+}
+
+// generatedViewMode mirrors internal/docindex's okfViewMode: a generated view is
+// written read-only so nobody hand-edits it.
+const generatedViewMode = os.FileMode(0o444)
+
+// writeRestored replaces dest with content at the mode restoredMode chose.
+//
+// It REMOVES the destination first rather than writing over it. A 0o444 view
+// cannot be opened O_WRONLY even by its owner, so the plain WriteFile this
+// replaced failed with EACCES against satelle's own generated views — satelle's
+// read-only protection blocking satelle's own writer. The remedy is the one
+// internal/docindex already uses for exactly this case (okf.go: `_ = os.Remove(path)
+// // the existing view may be read-only`): that mode exists to stop HAND edits,
+// and Restore is satelle's writer, so it gets the same privilege. Skipping
+// marker-carrying files instead would leave the pull permanently unable to
+// converge generated content — divergence, silently.
+//
+// The explicit Chmod after the write is required, not redundant: WriteFile's
+// perm argument is masked by the umask on create, so 0o444 would otherwise land
+// as whatever the operator's umask allows.
+func writeRestored(dest string, content []byte) error {
+	mode := restoredMode(dest, content)
+	if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.WriteFile(dest, content, mode); err != nil {
+		return err
+	}
+	return os.Chmod(dest, mode)
+}
+
+// isGenerated reports whether content carries the `generated: satelle` marker in
+// its leading frontmatter block. The marker's spelling is owned by
+// internal/docindex (okfGeneratedKey / okfGeneratedVal); it is re-scanned here
+// rather than imported because this package is pure filesystem mechanism and
+// must not depend on the doc index.
+func isGenerated(content []byte) bool {
+	s := string(content)
+	if !strings.HasPrefix(s, "---\n") {
+		return false
+	}
+	end := strings.Index(s[4:], "\n---")
+	if end < 0 {
+		return false
+	}
+	for _, line := range strings.Split(s[4:4+end], "\n") {
+		k, v, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(k) == "generated" && strings.TrimSpace(v) == "satelle" {
+			return true
+		}
+	}
+	return false
 }
 
 // cleanRel validates a manifest path and returns its canonical relative form:
