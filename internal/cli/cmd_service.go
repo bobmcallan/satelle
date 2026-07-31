@@ -32,7 +32,7 @@ func init() {
 		Use:   "service",
 		Short: "Manage the background web service (always-on project page)",
 	}
-	svc.AddCommand(serviceInstallCmd(), serviceUninstallCmd(), serviceStatusCmd())
+	svc.AddCommand(serviceInstallCmd(), serviceUninstallCmd(), serviceStatusCmd(), serviceRestartCmd())
 	register(svc)
 }
 
@@ -188,6 +188,79 @@ func serviceStatusCmd() *cobra.Command {
 	}
 }
 
+// serviceRestartCmd is the remedy `service status` names when it reports a stale
+// process (sty_a7b2cd3c). It is deliberately NARROW: replacing the binary is what
+// leaves the running service on the old image, and the operator in that state has
+// an already-current binary and a stale process. `satelle update` would work, but
+// it is a wide instrument — it queries GitHub and may install a release — so
+// naming it as the fix for "stale process" tells the operator to run a network
+// release check to solve a local process problem.
+//
+// It reuses the SAME restart path `satelle update` uses; it adds no systemctl
+// call, no signal logic and no identity comparison of its own.
+func serviceRestartCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "restart",
+		Short: "Restart the background web service onto the installed binary",
+		Long: `restart cycles the running satelle web service so it executes the binary
+that is currently installed, and VERIFIES the result by exe identity.
+
+It installs nothing and checks no release — use ` + "`satelle update`" + ` when the
+binary itself is out of date. This verb is for the case where the binary is
+already current but the running process is still the old image, which is what
+` + "`satelle service status`" + ` reports as "(stale process)".
+
+It fails non-zero when the service is still stale afterwards: a verb invoked to
+fix a stale process must not report success while the process is still stale.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			out := cmd.OutOrStdout()
+			// Guard in the COBRA layer, not inside the shared restart function:
+			// restartServiceIfRunningRoot returns nil immediately off Linux, and
+			// silent success is wrong for a verb the operator typed. Keeping the
+			// guard here leaves `satelle update` untouched.
+			if runtime.GOOS == "windows" {
+				fmt.Fprintln(out, "On Windows, restart the satelle task in Task Scheduler.")
+				return nil
+			}
+			if _, err := exec.LookPath("systemctl"); err != nil {
+				fmt.Fprintln(out, "systemctl not found.")
+				return nil
+			}
+			return runServiceRestart(out, "/proc")
+		},
+	}
+}
+
+// runServiceRestart is the injectable core (procRoot lets hermetic tests
+// substitute a fake /proc tree, the same seam serviceStatusLine and
+// restartServiceIfRunningRoot already use).
+//
+// It restarts through the SHARED path and then VERIFIES with the SAME
+// identityVerdict that produced the stale verdict this verb exists to clear.
+// The shared path deliberately soft-fails on a non-matching respawn — it prints
+// "could not confirm …" and returns nil, which `satelle update` documents and
+// this slice does not change — so the loud failure belongs here, to the verb the
+// operator typed specifically to fix a stale process (sty_a7b2cd3c).
+func runServiceRestart(out io.Writer, procRoot string) error {
+	if err := restartServiceIfRunningRoot(out, procRoot); err != nil {
+		return err
+	}
+	pid := discoverLivePID(procRoot)
+	if pid <= 0 {
+		// Nothing running is not a failure: there was no stale process to fix.
+		return nil
+	}
+	known, matches, _ := identityVerdict(procRoot, pid)
+	if known && !matches {
+		return fmt.Errorf(
+			"service restarted but pid %d is still NOT running the installed binary — "+
+				"the old binary may be earlier on PATH, or the supervisor respawned the previous image; "+
+				"check `satelle service status`", pid)
+	}
+	return nil
+}
+
 // printRegisteredRepoHealth summarises each registered repository's deterministic
 // readiness (sty_e9da28e2). Service startup used to say nothing about the repos
 // it serves, so an unhealthy one looked identical to a ready one until an agent
@@ -282,7 +355,16 @@ func identityVerdict(procRoot string, pid int) (known, matches bool, suffix stri
 	case identitiesMatch(live, wanted):
 		return true, true, "; exe identity: matches the installed binary"
 	default:
-		return true, false, "; exe identity: does NOT match the installed binary (stale process)"
+		// Name the remedy on the same output, in the `→ fix: ` form the init
+		// validator established (sty_a7b2cd3c). Stating the problem and stopping
+		// left the operator to already know that restarting is the answer, and an
+		// un-actionable warning undercuts the health lines printed around it.
+		//
+		// The remedy lives HERE, in the one place the mismatch suffix is produced,
+		// so all four stale-capable branches of serviceStatusLine inherit it and
+		// cannot drift apart.
+		return true, false, "; exe identity: does NOT match the installed binary (stale process)" +
+			"\n         → fix: satelle service restart"
 	}
 }
 

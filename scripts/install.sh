@@ -132,6 +132,15 @@ echo "  cd <your-repo>"
 echo "  satelle init             # scaffold .satelle/ (config, db, authored dirs)"
 echo "  satelle service install  # always-on web project page (uses satelle-serve when present)"
 echo
+# This script INFORMS about the running service; it never restarts it
+# (sty_a7b2cd3c). `satelle update` restarts without asking because it is a verb
+# the operator invoked interactively about satelle's own installed state, with a
+# --no-restart opt-out, and it reports the outcome. This is a curl-to-shell
+# script: often non-interactive, may run under provisioning or CI, offers no
+# opt-out the operator saw before piping it to a shell, and one system unit can
+# serve a whole estate of repos. Cycling shared always-on infrastructure is a
+# side effect nobody asked for — the consent given here was "install a binary".
 echo "Repos you already have (if this was an upgrade):"
 echo "  satelle doctor --all     # read-only: scaffolding written by an older satelle is stale"
 echo "  satelle init --all       # dry-run: what healing them would change (--yes applies)"
+echo "  satelle service restart  # a running service stays on the OLD binary until restarted"

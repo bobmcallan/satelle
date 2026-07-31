@@ -1,3 +1,17 @@
+## [0.0.377] - 2026-07-31
+
+### Added
+- **`satelle service restart`** — cycle the running web service onto the installed binary and verify the result by exe identity. Deliberately narrow: it installs nothing and checks no release. `satelle update` would also do it, but it is a wide instrument that queries GitHub and may install a release, so naming it as the fix for "stale process" told the operator to run a network release check to solve a local process problem. It reuses the same restart path `satelle update` uses — no new systemctl call, no new signal logic, no new identity comparison (sty_a7b2cd3c)
+- The verb **fails non-zero when the service is still stale afterwards**. The shared restart path deliberately soft-fails on a non-matching respawn (it reports "could not confirm …" and exits 0, which `satelle update` documents and this change does not alter); a verb invoked specifically to fix a stale process must not report success while the process is still stale (sty_a7b2cd3c)
+
+### Fixed
+- **`satelle service status` reported a stale service process and then stopped**, leaving the operator to already know that restarting was the answer. The stale verdict now names its remedy on the same output, in the `→ fix: …` form the init validator established. The remedy lives in the one place the mismatch suffix is produced, so every stale-capable branch inherits it (sty_a7b2cd3c)
+- The remedy names a command that **exists** — the gap that motivated the story, where the proposed fix was a `satelle service restart` verb satelle did not ship. A test extracts the printed command from the live stale verdict and resolves it against the command tree, so the message and the surface now fail together (sty_a7b2cd3c)
+- A healthy service and one whose identity could not be determined carry no remedy: nothing has been shown to be wrong, and prompting a restart on no evidence would be worse than silence (sty_a7b2cd3c)
+
+### Changed
+- `scripts/install.sh` mentions the running service in its upgrade block — and deliberately **informs rather than restarts**. `satelle update` restarts without asking because it is a verb the operator invoked interactively about satelle's own installed state, with a `--no-restart` opt-out. A curl-to-shell script is often non-interactive, may run under provisioning or CI, offers no opt-out the operator saw before piping it to a shell, and one system unit can serve a whole estate — cycling shared always-on infrastructure is a side effect nobody asked for (sty_a7b2cd3c)
+
 ## [0.0.376] - 2026-07-31
 
 ### Added
