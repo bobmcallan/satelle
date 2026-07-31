@@ -27,16 +27,22 @@ case "$os" in
 	*) echo "satelle install: unsupported OS '$os' (use the .exe asset on Windows)" >&2; exit 1 ;;
 esac
 
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
 # --- CLI (always releases/latest) ---
-tag=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-	| grep -m1 '"tag_name"' | cut -d'"' -f4)
+# Fetch the API body to a FILE, then grep the file. Never `curl | grep -m1`:
+# grep exits on its first match, curl takes EPIPE mid-body and prints
+# `curl: (23) Failure writing output to destination` — a cosmetic error that
+# reads as a failed install (sty_87b5d4bc). No `2>/dev/null` and no `|| true`
+# here: this lookup is HARD-fail, so `set -e` aborts and curl's own diagnostic
+# (`curl: (6) Could not resolve host`, a 404, …) still reaches the operator.
+curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" -o "$tmp/latest.json"
+tag=$(grep -m1 '"tag_name"' "$tmp/latest.json" | cut -d'"' -f4)
 [ -n "$tag" ] || { echo "satelle install: could not resolve latest release" >&2; exit 1; }
 
 name="satelle-$tag-$os-$arch"
 url="https://github.com/$REPO/releases/download/$tag/$name"
-
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
 
 echo "satelle install: fetching $name ..."
 curl -fsSL "$url" -o "$tmp/satelle"
@@ -58,8 +64,14 @@ echo "satelle install: installed $INSTALL_DIR/satelle ($tag)"
 # --- serve (independent serve-v* tags; soft-fail if none) ---
 # Newest-first releases list; first serve-v* tag wins. Asset name uses v<Y>
 # (strip serve- prefix), never the full tag.
-serve_tag=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=30" \
-	| grep -oE '"tag_name": "serve-v[^"]+"' | head -1 | cut -d'"' -f4 || true)
+# De-piped for the same reason as the CLI lookup above, so `head -1` truncates a
+# grep reading a local file rather than a live curl. Unlike that one this branch
+# is deliberately SOFT-fail: `|| true` on both statements (and `2>/dev/null` on
+# the grep, for the case where the fetch left no file) so a missing serve release
+# falls through to the fallback branch below and still exits 0.
+curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=30" -o "$tmp/releases.json" || true
+serve_tag=$(grep -oE '"tag_name": "serve-v[^"]+"' "$tmp/releases.json" 2>/dev/null \
+	| head -1 | cut -d'"' -f4 || true)
 if [ -n "$serve_tag" ]; then
 	serve_ver=${serve_tag#serve-}
 	serve_name="satelle-serve-$serve_ver-$os-$arch"

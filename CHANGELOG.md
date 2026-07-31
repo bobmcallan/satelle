@@ -1,3 +1,12 @@
+## [0.0.371] - 2026-07-31
+
+### Fixed
+- **The published `curl … | sh` installer printed `curl: (23) Failure writing output to destination` as its very first line, above satelle's own output, on an install that then succeeded.** Both GitHub release lookups piped curl into a truncating reader (`grep -m1`, `head -1`); the reader exits on its first match, curl takes EPIPE mid-body and reports the write failure. `set -eu` never caught it because a pipeline's status is its last command's, so the install completed correctly and the first thing a new user ever saw from satelle was an error they had to learn to ignore. Both lookups now write the API body to a file under `$tmp` and grep the file — no pipe, no EPIPE (sty_87b5d4bc)
+- A genuine transport failure on the release lookup is now *more* legible, not less: nothing is redirected to `/dev/null`, so curl's own diagnostic (`curl: (6) Could not resolve host`, a 404) reaches the operator. Note the exit status for that case changes from `1` to curl's real status (6, 22, …) — the lookup is its own statement now, so `set -e` aborts on it. The two failure paths the script handles itself, an unresolvable latest release and a sha256 mismatch, still exit `1` with their existing messages, and the satelle-serve branch stays soft-fail (warn, keep the working CLI install, exit 0) (sty_87b5d4bc)
+
+### Added
+- `tests/install_script_test.go` — hermetic integration coverage that drives the real `scripts/install.sh` against a canned `curl` on `PATH`, asserting the success path emits **nothing** on stderr, that no curl in the script feeds a pipe, and that the transport-failure, empty-tag, sha256-mismatch and serve-404 paths keep their exit codes and artifacts. Verified to fail against the pre-fix script at both defect sites (sty_87b5d4bc)
+
 ## [0.0.370] - 2026-07-31
 
 ### Fixed
