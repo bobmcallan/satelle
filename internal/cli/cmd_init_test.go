@@ -16,6 +16,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentvalidate"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/health"
 	"github.com/bobmcallan/satelle/internal/structure"
 )
 
@@ -741,7 +742,15 @@ func TestInitAgentsLayerValidatesZeroWarnings(t *testing.T) {
 		t.Fatalf("runInit: %v\n%s", err, out.String())
 	}
 	// Init output itself must not emit agents-layer WARN lines (AC1 surface).
+	//
+	// binary.missing is excluded deliberately: it reports that the machine has no
+	// provider CLI on PATH, which is an ENVIRONMENT fact, not a defect in the
+	// agents layer this test guards. CI has no agent CLI installed, and a repo is
+	// legitimately initialised before one exists (sty_e9da28e2).
 	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.Contains(line, health.IDBinaryMissing) {
+			continue
+		}
 		if strings.Contains(line, "WARN") && strings.Contains(line, "agents.toml") {
 			t.Errorf("fresh init emitted agents-layer WARN:\n%s", line)
 		}
