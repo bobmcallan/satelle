@@ -177,8 +177,16 @@ func TestRuntimeListClassifies(t *testing.T) {
 	if !strings.Contains(s, orphanKey) || !strings.Contains(s, "unknown") {
 		t.Errorf("orphan should be unknown:\n%s", s)
 	}
-	if !strings.Contains(s, "rm -rf "+dirOrphan) {
-		t.Errorf("orphan should get rm suggestion:\n%s", s)
+	// `list` points at the supported removal path rather than printing raw rm
+	// commands (sty_bd8af0b6). It still deletes nothing itself.
+	if !strings.Contains(s, "satelle runtime reap") {
+		t.Errorf("orphan should point at the reap verb:\n%s", s)
+	}
+	if strings.Contains(s, "rm -rf") {
+		t.Errorf("list should no longer hand out raw rm commands:\n%s", s)
+	}
+	if _, err := os.Stat(dirOrphan); err != nil {
+		t.Errorf("list must not remove anything: %v", err)
 	}
 
 	var orphans strings.Builder

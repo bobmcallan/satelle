@@ -1,3 +1,13 @@
+## [0.0.373] - 2026-07-31
+
+### Added
+- **`satelle runtime reap`** — clears the debris a deleted repo leaves behind: its home-keyed runtime plane and its workspace-registry entry, in one action, because an operator cleaning up after a deleted repo wants both gone. A bare invocation **reports and removes nothing**; removal requires `--yes` and acts on exactly the set just reported. Default scope is `stale` (the plane's repo root no longer exists); `--include-unknown` widens to planes with no marker and no registry match; a `linked` plane — one whose repo still exists — is never a target under any flag, and is never even reported as one. Dangling registry entries are collected independently of planes, so an entry whose plane was already removed by hand is still cleared (sty_bd8af0b6)
+- Why it matters: registry entries for deleted repos count as `repo.unreadable` forever, so `repos: 21 registered — 6 healthy, 15 unhealthy` — the headline an operator reads to decide whether anything needs attention — was mostly tombstones. After a reap the unhealthy count drops by exactly the number of entries cleared, with no live repo changing state (sty_bd8af0b6)
+
+### Changed
+- **The "satelle never deletes" position is narrowed, deliberately: satelle never deletes _implicitly_.** It will delete what it has just reported, when you ask with `--yes`, and only where the repo path does not resolve. The help states the hazard that makes the report worth reading — a path can be absent because a volume is unmounted or a checkout is not yet restored, not only because the repo was deleted (sty_bd8af0b6)
+- `satelle runtime list` no longer prints raw `rm -rf` lines for orphans; it names `satelle runtime reap`. `list` itself still deletes nothing. Both verbs now share one collection pass, so they cannot disagree about what an orphan is (sty_bd8af0b6)
+
 ## [0.0.372] - 2026-07-31
 
 ### Fixed

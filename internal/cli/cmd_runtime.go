@@ -121,7 +121,8 @@ Status:
   stale    resolved root no longer exists
   unknown  no marker and no registry match (typical of leaked test key dirs)
 
-Does not delete anything. For unknown/stale dirs, prints an rm suggestion.
+Does not delete anything, ever. When it finds unknown/stale dirs it points at
+` + "`satelle runtime reap`" + `, which reports them and removes them only with --yes.
 Use --orphans to list only unknown and stale entries (sty_c36c211f).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -130,8 +131,157 @@ Use --orphans to list only unknown and stale entries (sty_c36c211f).`,
 	}
 	listCmd.Flags().BoolVar(&orphansOnly, "orphans", false, "list only unknown/stale key dirs")
 
-	root.AddCommand(pathCmd, migrateCmd, listCmd)
+	var reapYes, reapIncludeUnknown bool
+	reapCmd := &cobra.Command{
+		Use:   "reap",
+		Short: "Report — and with --yes, remove — runtime planes and registry entries for repos that are gone",
+		Long: `Clear the debris a deleted repo leaves behind: its home-keyed runtime plane
+under the machine home, and its workspace-registry entry. Both, in one action,
+because an operator cleaning up after a deleted repo wants both gone.
+
+A BARE invocation reports and removes NOTHING. Removal happens only with --yes,
+and only for what the report just listed.
+
+Scope:
+  stale     the plane's resolved repo root no longer exists  (default)
+  unknown   no marker and no registry match — leaked test dirs (--include-unknown)
+  linked    the repo root still exists — NEVER removed, under any flag
+
+Dangling registry entries are collected independently of planes, so an entry
+whose plane was already removed by hand is still cleared.
+
+satelle never deletes IMPLICITLY. It will delete what it has just reported, when
+you ask with --yes, and only where the repo path does not resolve. A path can be
+absent for reasons other than deletion — an unmounted volume, a detached disk, a
+checkout not yet restored — so read the report before you pass --yes.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRuntimeReap(cmd.OutOrStdout(), reapYes, reapIncludeUnknown)
+		},
+	}
+	reapCmd.Flags().BoolVar(&reapYes, "yes", false, "remove what was reported (default is report-only)")
+	reapCmd.Flags().BoolVar(&reapIncludeUnknown, "include-unknown", false, "also target unknown key dirs (no marker, no registry match)")
+
+	root.AddCommand(pathCmd, migrateCmd, listCmd, reapCmd)
 	register(root)
+}
+
+// runRuntimeReap reports stale runtime planes and dangling registry entries and,
+// when yes is set, removes exactly what it reported (sty_bd8af0b6).
+func runRuntimeReap(out io.Writer, yes, includeUnknown bool) error {
+	home, entries, err := collectRuntimeEntries()
+	if err != nil {
+		return err
+	}
+
+	// Targets. A linked plane is never a target — no flag widens to it.
+	var planes []runtimeListEntry
+	for _, e := range entries {
+		switch e.Status {
+		case "stale":
+			planes = append(planes, e)
+		case "unknown":
+			if includeUnknown {
+				planes = append(planes, e)
+			}
+		}
+	}
+	regTargets := danglingRegistryEntries()
+
+	if len(planes) == 0 && len(regTargets) == 0 {
+		fmt.Fprintln(out, "nothing to reap: no stale runtime planes, no dangling registry entries")
+		if !includeUnknown {
+			var unknown int
+			for _, e := range entries {
+				if e.Status == "unknown" {
+					unknown++
+				}
+			}
+			if unknown > 0 {
+				fmt.Fprintf(out, "(%d unknown key dir(s) not shown — re-run with --include-unknown)\n", unknown)
+			}
+		}
+		return nil
+	}
+
+	fmt.Fprintf(out, "home  %s\n\n", home)
+	if len(planes) > 0 {
+		fmt.Fprintf(out, "runtime planes (%d):\n", len(planes))
+		for _, e := range planes {
+			repo := e.Repo
+			if repo == "" {
+				repo = "<no repo.path marker, no registry match>"
+			}
+			fmt.Fprintf(out, "  %-8s  %s\n            repo: %s\n", e.Status, e.Dir, repo)
+		}
+	}
+	if len(regTargets) > 0 {
+		if len(planes) > 0 {
+			fmt.Fprintln(out)
+		}
+		fmt.Fprintf(out, "workspace registry entries (%d):\n", len(regTargets))
+		for _, p := range regTargets {
+			fmt.Fprintf(out, "  %s\n", p)
+		}
+	}
+
+	if !yes {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "nothing removed — re-run with --yes to remove exactly what is listed above")
+		return nil
+	}
+
+	fmt.Fprintln(out)
+	var removedPlanes, removedEntries int
+	for _, e := range planes {
+		if rerr := os.RemoveAll(e.Dir); rerr != nil {
+			fmt.Fprintf(out, "  FAILED %s: %v\n", e.Dir, rerr)
+			continue
+		}
+		removedPlanes++
+		fmt.Fprintf(out, "  removed plane %s\n", e.Dir)
+	}
+	if len(regTargets) > 0 {
+		gc, lerr := config.LoadGlobal()
+		if lerr != nil {
+			return fmt.Errorf("runtime reap: load global config: %w", lerr)
+		}
+		for _, p := range regTargets {
+			if gc.Workspace.RemoveRepo(p) {
+				removedEntries++
+				fmt.Fprintf(out, "  removed registry entry %s\n", p)
+			}
+		}
+		if removedEntries > 0 {
+			if serr := config.SaveGlobal(gc); serr != nil {
+				return fmt.Errorf("runtime reap: save global config: %w", serr)
+			}
+		}
+	}
+	fmt.Fprintf(out, "\nreaped %d plane(s), %d registry entry(ies)\n", removedPlanes, removedEntries)
+	return nil
+}
+
+// danglingRegistryEntries returns workspace-registry paths that no longer
+// resolve to a directory. Computed independently of runtime planes: the observed
+// case had planes already removed by hand while the registry entries survived,
+// and those entries are what keep counting as UNHEALTHY.
+func danglingRegistryEntries() []string {
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, p := range gc.Workspace.Repos {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if st, serr := os.Stat(p); serr != nil || !st.IsDir() {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func runRuntimePath(out io.Writer, cfg config.Config, repoRoot string) error {
@@ -161,15 +311,18 @@ type runtimeListEntry struct {
 	HasDB   bool
 }
 
-func runRuntimeList(out io.Writer, orphansOnly bool) error {
+// collectRuntimeEntries scans the home plane and returns every runtime key dir
+// with its repo resolved (marker first, workspace registry as fallback) and its
+// status classified. Shared by `runtime list` and `runtime reap` so the two can
+// never disagree about what an orphan is.
+func collectRuntimeEntries() (string, []runtimeListEntry, error) {
 	home := config.GlobalDir()
 	entries, err := listRuntimeKeyDirs(home)
 	if err != nil {
-		return err
+		return home, nil, err
 	}
-	// Registry fallback: key → abs repo path for dirs without a marker.
 	reg := registryKeyMap()
-	var shown []runtimeListEntry
+	out := make([]runtimeListEntry, 0, len(entries))
 	for _, e := range entries {
 		if e.Repo == "" {
 			if p, ok := reg[e.Key]; ok {
@@ -177,6 +330,18 @@ func runRuntimeList(out io.Writer, orphansOnly bool) error {
 			}
 		}
 		e.Status = classifyRuntimeEntry(e.Repo)
+		out = append(out, e)
+	}
+	return home, out, nil
+}
+
+func runRuntimeList(out io.Writer, orphansOnly bool) error {
+	home, entries, err := collectRuntimeEntries()
+	if err != nil {
+		return err
+	}
+	var shown []runtimeListEntry
+	for _, e := range entries {
 		if orphansOnly && e.Status == "linked" {
 			continue
 		}
@@ -204,19 +369,19 @@ func runRuntimeList(out io.Writer, orphansOnly bool) error {
 		}
 		fmt.Fprintf(out, "%-28s  %-8s  %10s  %-20s  %s\n", e.Key, e.Status, size, mtime, repo)
 	}
-	// Suggest rm for unknown/stale — never delete.
-	var rm []string
+	// Point at the supported removal path. `list` itself still never deletes;
+	// `runtime reap` reports first and removes only when asked (sty_bd8af0b6).
+	var orphans int
 	for _, e := range shown {
 		if e.Status == "unknown" || e.Status == "stale" {
-			rm = append(rm, e.Dir)
+			orphans++
 		}
 	}
-	if len(rm) > 0 {
+	if orphans > 0 {
 		fmt.Fprintln(out)
-		fmt.Fprintln(out, "To remove orphan/stale key dirs (review first — satelle never deletes):")
-		for _, d := range rm {
-			fmt.Fprintf(out, "  rm -rf %s\n", d)
-		}
+		fmt.Fprintf(out, "%d orphan/stale key dir(s). To review and remove them:\n", orphans)
+		fmt.Fprintln(out, "  satelle runtime reap          # report only, removes nothing")
+		fmt.Fprintln(out, "  satelle runtime reap --yes    # remove what was reported")
 	}
 	return nil
 }
