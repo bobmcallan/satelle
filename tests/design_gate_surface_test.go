@@ -3,8 +3,6 @@
 package tests
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -13,21 +11,15 @@ import (
 // TestDesignGateSurfaceScoped (sty_e4359efe): project workflow declares design
 // with applies_to surface:ui on integration; only UI-tagged stories enqueue it.
 func TestDesignGateSurfaceScoped(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join(repoRootForTest(), ".satelle", "workflows", "satelle-project-workflow.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec, ok := wfdot.Parse(string(body))
-	if !ok {
-		t.Fatal("parse project workflow")
-	}
+	spec := repoRouteSpec(t, "*", nil)
 	if probs := wfdot.Validate(spec); len(probs) > 0 {
 		t.Fatalf("validate: %v", probs)
 	}
-	// design node present with applies_to
+	// design gate present with applies_to. A derived route names a gate node
+	// after its skill (gate_<skill>) — the node name carries no contract.
 	found := false
 	for _, st := range spec.States {
-		if st.Name == "design" {
+		if st.Skill == "satelle-design-review" {
 			found = true
 			if st.Skill != "satelle-design-review" {
 				t.Errorf("skill = %q", st.Skill)

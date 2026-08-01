@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/bobmcallan/satelle/internal/lease"
-	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -170,11 +169,8 @@ func targetIsExitState(ctx context.Context, item workitem.Item, status string) b
 	if err != nil {
 		return false
 	}
-	wf, found := wfgovern.GoverningWorkflow(wfs, item)
-	if !found {
-		return false
-	}
-	spec, parsed := wfdot.Parse(wf.Body)
+	spec, _, _, serr := wfgovern.SpecFor(wfs, item)
+	parsed := serr == nil
 	if !parsed {
 		return false
 	}
@@ -291,11 +287,8 @@ func storyStatusIsEngaging(ctx context.Context, item workitem.Item, status strin
 	if err != nil {
 		return false, false
 	}
-	wf, found := wfgovern.GoverningWorkflow(wfs, item)
-	if !found {
-		return false, false
-	}
-	spec, parsed := wfdot.Parse(wf.Body)
+	spec, _, _, serr := wfgovern.SpecFor(wfs, item)
+	parsed := serr == nil
 	if !parsed {
 		return false, false
 	}

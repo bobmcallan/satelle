@@ -183,18 +183,11 @@ func governingSpec(ctx context.Context, item workitem.Item) (wfdot.Spec, string,
 	if err != nil {
 		return wfdot.Spec{}, "", nil, false
 	}
-	wf, ok := wfgovern.GoverningWorkflow(wfs, item)
-	if !ok {
+	spec, name, advisors, err := wfgovern.SpecFor(wfs, item)
+	if err != nil {
 		return wfdot.Spec{}, "", nil, false
 	}
-	spec, ok := wfdot.Parse(wf.Body)
-	if !ok {
-		return wfdot.Spec{}, "", nil, false
-	}
-	// No advisors from an authored DOT: entry dispatch is retired, so the graph
-	// has no attribute that names one. They arrive with the done.md/step.md front
-	// door (wfroute.AdvisorsFrom).
-	return spec, wf.Name, nil, true
+	return spec, name, advisors, true
 }
 
 func reviewKindFor(accept bool) string {

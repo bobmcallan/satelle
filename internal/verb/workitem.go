@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
-	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -1159,11 +1158,8 @@ func storyEntryState(ctx context.Context, item workitem.Item) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	wf, ok := wfgovern.GoverningWorkflow(wfs, item)
-	if !ok {
-		return "", false
-	}
-	spec, ok := wfdot.Parse(wf.Body)
+	spec, _, _, serr := wfgovern.SpecFor(wfs, item)
+	ok := serr == nil
 	if !ok {
 		return "", false
 	}

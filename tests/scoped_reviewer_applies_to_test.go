@@ -17,16 +17,42 @@ import (
 // declared status. Unknown attrs must not appear either (AC9 audit).
 func TestScopedReviewerAppliesTo_ShippedWorkflowsUnchanged(t *testing.T) {
 	root := repoRootForTest()
+	// This repo's own lifecycle is a DERIVED route, checked per category below;
+	// the embedded defaults are still authored graphs (sty_9835070d).
 	paths := []string{
-		filepath.Join(root, ".satelle", "workflows", "satelle-project-workflow.md"),
-		filepath.Join(root, ".satelle", "workflows", "satelle-parent-workflow.md"),
-		filepath.Join(root, ".satelle", "workflows", "satelle-substrate-workflow.md"),
-		filepath.Join(root, ".satelle", "workflows", "satelle-task-workflow.md"),
 		filepath.Join(root, "internal", "config", "substrate", "workflows", "satelle-baseline-workflow.md"),
 		filepath.Join(root, "internal", "config", "substrate", "workflows", "satelle-parent-workflow.md"),
 		filepath.Join(root, "internal", "config", "substrate", "workflows", "satelle-task-workflow.md"),
 	}
 	tags := []string{"surface:ui", "surface:cli", "web", "feature"}
+	specs := map[string]wfdot.Spec{}
+	for _, category := range []string{"*", "epic-parent", "parent", "substrate", "execution", "task"} {
+		specs["derived route ("+category+")"] = repoRouteSpec(t, category, nil)
+	}
+	check := func(p string, spec wfdot.Spec) {
+		if probs := wfdot.Validate(spec); len(probs) > 0 {
+			t.Errorf("%s Validate: %v", p, probs)
+		}
+		statuses := map[string]bool{"in_progress": true, "done": true, "release": true, "plan": true}
+		for _, st := range spec.States {
+			statuses[st.Name] = true
+			// After sty_e4359efe the project lifecycle may declare a surface-scoped
+			// design gate; nothing else should carry applies_to.
+			if len(st.AppliesTo) > 0 && st.Skill != "satelle-design-review" {
+				t.Errorf("%s node %s has unexpected applies_to=%v", p, st.Name, st.AppliesTo)
+			}
+		}
+		for status := range statuses {
+			a := spec.ScopedReviewers(status, nil)
+			b := spec.ScopedReviewers(status, tags)
+			if len(b) < len(a) {
+				t.Errorf("%s status %q: tags removed a scoped reviewer (%d → %d)", p, status, len(a), len(b))
+			}
+		}
+	}
+	for name, spec := range specs {
+		check(name, spec)
+	}
 	for _, p := range paths {
 		body, err := os.ReadFile(p)
 		if err != nil {

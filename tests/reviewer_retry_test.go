@@ -35,15 +35,11 @@ func TestGateRetriesTransientReviewerFailure(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(repo, ".satelle", "skills", "satelle-story-create-review.md"), string(rubric))
 
-	wf, err := os.ReadFile(filepath.Join(repoRootForTest(), ".satelle", "workflows", "satelle-project-workflow.md"))
-	if err != nil {
-		t.Fatalf("read workflow source: %v", err)
-	}
-	wfBody := strings.Replace(string(wf), `applies_to: ["*"]`, `applies_to: ["feature"]`, 1)
-	if err := os.MkdirAll(filepath.Join(repo, ".satelle", "workflows"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "satelle-project-workflow.md"), wfBody)
+	// The create binding is DECLARED on the active workflow (sty_b031b29f), not a
+	// hardcoded filename. This repo declares it on its DERIVED route's declaration
+	// of done, so installing the route source is what wires content review
+	// (sty_9835070d).
+	seedRouteSource(t, repo)
 
 	// A reviewer stub that returns NO verdict on call 1 (transient), a verdict after.
 	// A counter file records the number of invocations so the retry is observable.

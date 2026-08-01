@@ -315,3 +315,186 @@ edit_exempt_paths = [".satelle/", ".claude/"]
 		t.Errorf("empty list clobbered:\n%s", rawEmpty)
 	}
 }
+
+// migrateWorkflowRepo builds a minimal repo whose .satelle/workflows holds the
+// given files (name → body), plus the agents/config a migrate plan needs.
+func migrateWorkflowRepo(t *testing.T, files map[string]string) (repo, dataDir string) {
+	t.Helper()
+	disableServeProbe(t)
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	repo = t.TempDir()
+	dataDir = filepath.Join(repo, config.DefaultDataDir)
+	wfDir := filepath.Join(dataDir, "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "agents.toml"), []byte("[executor]\nharness = \"in-loop\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "satelle.toml"), []byte("web_port = 8182\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(wfDir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return repo, dataDir
+}
+
+const migrateDOTWorkflow = `---
+name: legacy-workflow
+type: workflow
+scope: project
+applies_to: ["*"]
+description: legacy graph
+---
+` + "```dot" + `
+digraph w {
+  backlog [shape=Mdiamond]
+  in_progress [agent=executor]
+  done [shape=Msquare]
+  backlog -> in_progress -> done
+}
+` + "```" + `
+`
+
+const migrateDoneMD = `---
+name: done
+type: workflow
+scope: project
+description: declaration of done
+---
+# Definition of done
+
+## *
+- raised
+- coded
+`
+
+const migrateStepMD = `---
+name: step
+type: workflow
+scope: project
+description: step catalogue
+---
+# Step catalogue
+
+## backlog
+start: true
+provides: raised
+
+## done
+terminal: true
+provides: coded
+requires: raised
+`
+
+// TestMigrateRetiresSupersededDOTWorkflows (sty_9835070d AC2): with an authored,
+// parseable route source present, migrate lists the superseded graphs in dry-run
+// and removes them — and only them — on apply.
+func TestMigrateRetiresSupersededDOTWorkflows(t *testing.T) {
+	repo, dataDir := migrateWorkflowRepo(t, map[string]string{
+		"legacy-workflow.md": migrateDOTWorkflow,
+		"done.md":            migrateDoneMD,
+		"step.md":            migrateStepMD,
+	})
+	cfg := config.Config{}
+	plan := planMigrate(cfg, repo, dataDir)
+	if len(plan.WorkflowRetire) != 1 || plan.WorkflowRetire[0] != "legacy-workflow.md" {
+		t.Fatalf("WorkflowRetire = %v, want [legacy-workflow.md]", plan.WorkflowRetire)
+	}
+	if len(plan.WorkflowConvertPending) != 0 {
+		t.Errorf("WorkflowConvertPending = %v, want none", plan.WorkflowConvertPending)
+	}
+	if plan.empty() {
+		t.Error("a retire-only plan must not report empty — it would print \"already on current structure\" and apply nothing")
+	}
+
+	a := &app.App{Config: cfg, RepoRoot: repo, DataDir: dataDir}
+	var dry strings.Builder
+	if err := runMigrate(&dry, a, false, false); err != nil {
+		t.Fatalf("dry-run: %v", err)
+	}
+	if !strings.Contains(dry.String(), "retire 1 superseded DOT workflow(s)") {
+		t.Errorf("dry-run did not list the retire step:\n%s", dry.String())
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "workflows", "legacy-workflow.md")); err != nil {
+		t.Error("dry-run must remove nothing")
+	}
+
+	var applied strings.Builder
+	if err := runMigrate(&applied, a, true, false); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "workflows", "legacy-workflow.md")); !os.IsNotExist(err) {
+		t.Error("apply must remove the superseded DOT workflow")
+	}
+	for _, keep := range []string{"done.md", "step.md"} {
+		if _, err := os.Stat(filepath.Join(dataDir, "workflows", keep)); err != nil {
+			t.Errorf("apply must not touch %s: %v", keep, err)
+		}
+	}
+	// Idempotent: a converged repo says so, with no outstanding notice.
+	var again strings.Builder
+	if err := runMigrate(&again, a, false, false); err != nil {
+		t.Fatalf("re-run: %v", err)
+	}
+	if !strings.Contains(again.String(), "already on current structure") {
+		t.Errorf("converged repo should report already-current:\n%s", again.String())
+	}
+	if strings.Contains(again.String(), "OUTSTANDING") {
+		t.Errorf("converged repo must not report an outstanding conversion:\n%s", again.String())
+	}
+}
+
+// TestMigrateReportsOutstandingConversion: with DOT workflows and no route
+// source, migrate must say the conversion is OUTSTANDING and remove nothing —
+// in dry-run AND on apply. It never derives a route: that is interpretation, and
+// it is authored and reviewed, not generated.
+func TestMigrateReportsOutstandingConversion(t *testing.T) {
+	repo, dataDir := migrateWorkflowRepo(t, map[string]string{
+		"legacy-workflow.md": migrateDOTWorkflow,
+	})
+	cfg := config.Config{}
+	plan := planMigrate(cfg, repo, dataDir)
+	if len(plan.WorkflowRetire) != 0 {
+		t.Errorf("WorkflowRetire = %v, want none without a route source", plan.WorkflowRetire)
+	}
+	if len(plan.WorkflowConvertPending) != 1 {
+		t.Fatalf("WorkflowConvertPending = %v, want [legacy-workflow.md]", plan.WorkflowConvertPending)
+	}
+
+	a := &app.App{Config: cfg, RepoRoot: repo, DataDir: dataDir}
+	for _, yes := range []bool{false, true} {
+		var out strings.Builder
+		if err := runMigrate(&out, a, yes, false); err != nil {
+			t.Fatalf("yes=%v: %v", yes, err)
+		}
+		if !strings.Contains(out.String(), "workflow conversion OUTSTANDING") {
+			t.Errorf("yes=%v: outstanding conversion not surfaced:\n%s", yes, out.String())
+		}
+		if _, err := os.Stat(filepath.Join(dataDir, "workflows", "legacy-workflow.md")); err != nil {
+			t.Errorf("yes=%v: nothing may be removed while the conversion is outstanding", yes)
+		}
+	}
+}
+
+// TestMigrateRefusesRetireOnMalformedRouteSource: a half-authored route source
+// must not be read as a working one — deleting the only remaining lifecycle
+// because a broken done.md happened to be on disk is the failure this step must
+// not have.
+func TestMigrateRefusesRetireOnMalformedRouteSource(t *testing.T) {
+	repo, dataDir := migrateWorkflowRepo(t, map[string]string{
+		"legacy-workflow.md": migrateDOTWorkflow,
+		"done.md":            migrateDoneMD,
+		"step.md":            "---\nname: step\ntype: workflow\n---\n# Step catalogue\n\n## backlog\nnot-a-key\n",
+	})
+	plan := planMigrate(config.Config{}, repo, dataDir)
+	if len(plan.WorkflowRetire) != 0 {
+		t.Errorf("WorkflowRetire = %v — a malformed route source must retire nothing", plan.WorkflowRetire)
+	}
+	if len(plan.WorkflowConvertPending) != 1 {
+		t.Errorf("WorkflowConvertPending = %v, want the DOT still pending", plan.WorkflowConvertPending)
+	}
+}

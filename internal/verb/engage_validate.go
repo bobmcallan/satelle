@@ -93,12 +93,8 @@ func isCancelOrTerminalExit(ctx context.Context, item workitem.Item, to string) 
 	if err != nil {
 		return false
 	}
-	wf, ok := wfgovern.GoverningWorkflow(wfs, item)
-	if !ok {
-		return false
-	}
-	spec, ok := wfdot.Parse(wf.Body)
-	if !ok {
+	spec, _, _, err := wfgovern.SpecFor(wfs, item)
+	if err != nil {
 		return false
 	}
 	for _, st := range spec.States {

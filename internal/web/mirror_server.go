@@ -420,18 +420,15 @@ func (s *MirrorServer) workflowFragment(w http.ResponseWriter, r *http.Request) 
 		http.NotFound(w, r)
 		return
 	}
-	// The route is derived from the same substrate the engine walks: done.md +
-	// step.md when they exist, the authored DOT until they do. The panel holds no
-	// lifecycle parser of its own (sty_085e1a5a).
-	var rs routeSource
-	if all, err := decodeDocs(r.Context(), s.Store, repoKey); err == nil {
-		var wfs []docindex.Doc
-		for _, d := range all {
+	// The route comes through the ONE front door (wfgovern.SpecFor via
+	// workflowRoute) — the panel implements no precedence of its own.
+	var all []docindex.Doc
+	if docs, err := decodeDocs(r.Context(), s.Store, repoKey); err == nil {
+		for _, d := range docs {
 			if d.Kind == "workflows" {
-				wfs = append(wfs, d.Doc)
+				all = append(all, d.Doc)
 			}
 		}
-		rs = routeSourceOf(wfs)
 	}
 	applies := frontmatterList(doc.Body, "applies_to")
 	id := mirrorIdentity(r.Context(), s.Store, repoKey)
@@ -440,7 +437,7 @@ func (s *MirrorServer) workflowFragment(w http.ResponseWriter, r *http.Request) 
 		Headline:   doc.Headline,
 		Scope:      workflowScope(doc.Doc),
 		AppliesTo:  applies,
-		Route:      workflowRoute(doc.Name, doc.Body, rs, panelCategory(applies), nil),
+		Route:      workflowRoute(all, doc.Doc, panelCategory(applies), nil),
 		Body:       strings.TrimSpace(stripDocFrontmatter(doc.Body)),
 		Provenance: doc.Provenance,
 		Source:     doc.Source,

@@ -17,6 +17,8 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/wfdot"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 )
 
 func init() {
@@ -87,6 +89,18 @@ type migratePlan struct {
 	PruneSeeds      []string // dataDir-relative unedited seed paths
 	Gitignore       bool     // managed block needs converge
 	ExemptGitignore bool     // [gate] edit_exempt_paths needs .gitignore (sty_f115e6bf)
+	// WorkflowRetire lists DOT workflow files superseded by an authored,
+	// PARSEABLE done.md + step.md (sty_9835070d). Actionable work: migrate
+	// removes them.
+	WorkflowRetire []string
+	// WorkflowConvertPending lists DOT workflow files present while the route
+	// source is absent or does not parse. A NOTICE, never work: migrate cannot
+	// author a route, because deriving obligations from a graph is interpretation
+	// that has to be authored and reviewed. It is deliberately outside empty() —
+	// nothing here is actionable — but it is never silent either, because
+	// "already on current structure" would then read as "nothing to do" about a
+	// conversion that is outstanding.
+	WorkflowConvertPending []string
 }
 
 func planMigrate(cfg config.Config, repoRoot, dataDir string) migratePlan {
@@ -104,11 +118,82 @@ func planMigrate(cfg config.Config, repoRoot, dataDir string) migratePlan {
 	p.PruneSeeds = listUneditedSeeds(dataDir)
 	p.Gitignore = gitignoreNeedsConverge(repoRoot)
 	p.ExemptGitignore = editExemptGitignoreNeedsConverge(dataDir)
+	p.WorkflowRetire, p.WorkflowConvertPending = workflowConversionState(dataDir)
 	return p
 }
 
+// workflowConversionState splits the on-disk DOT workflows into the ones a
+// working route source supersedes (retire) and the ones still waiting for one
+// (pending). Exactly one of the two is ever non-empty.
+//
+// The route source must PARSE before anything is retired: deleting the only
+// remaining lifecycle because a half-authored done.md happened to be on disk is
+// the one failure this step must not have.
+func workflowConversionState(dataDir string) (retire, pending []string) {
+	wfDir := filepath.Join(dataDir, "workflows")
+	entries, err := os.ReadDir(wfDir)
+	if err != nil {
+		return nil, nil
+	}
+	var dots []string
+	var doneBody, stepBody string
+	for _, e := range entries {
+		if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".md") ||
+			strings.EqualFold(e.Name(), "README.md") {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(wfDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		switch strings.TrimSuffix(e.Name(), filepath.Ext(e.Name())) {
+		case wfgovern.RouteSourceDone:
+			doneBody = string(body)
+			continue
+		case wfgovern.RouteSourceStep:
+			stepBody = string(body)
+			continue
+		}
+		if _, isDOT := wfdot.Parse(string(body)); isDOT {
+			dots = append(dots, e.Name())
+		}
+	}
+	if len(dots) == 0 {
+		return nil, nil
+	}
+	sort.Strings(dots)
+	if doneBody == "" || stepBody == "" {
+		return nil, dots
+	}
+	if _, err := wfdot.ParseDone(doneBody); err != nil {
+		return nil, dots
+	}
+	if _, err := wfdot.ParseSteps(stepBody); err != nil {
+		return nil, dots
+	}
+	return dots, nil
+}
+
+// printConversionPending states an outstanding conversion wherever migrate
+// reports, including the converged path — silence there would read as "nothing
+// to do" about work that has not been done.
+func printConversionPending(out io.Writer, pending []string) {
+	if len(pending) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "\nworkflow conversion OUTSTANDING — %d DOT workflow(s) and no route source:\n", len(pending))
+	for _, f := range pending {
+		fmt.Fprintf(out, "  - workflows/%s\n", f)
+	}
+	fmt.Fprintln(out, "  author workflows/done.md (a `## <category>` section per category, its obligations in order)")
+	fmt.Fprintln(out, "  and workflows/step.md (a `## <step>` per status, a `## gate <skill>` per always-on gate),")
+	fmt.Fprintln(out, "  then re-run migrate to retire the graphs. migrate does not derive them: turning a graph")
+	fmt.Fprintln(out, "  into obligations is interpretation, and it is authored and reviewed, not generated.")
+}
+
 func (p migratePlan) empty() bool {
-	return !p.RuntimeRelocate && len(p.Residue) == 0 && len(p.PruneSeeds) == 0 && !p.Gitignore && !p.ExemptGitignore
+	return !p.RuntimeRelocate && len(p.Residue) == 0 && len(p.PruneSeeds) == 0 &&
+		!p.Gitignore && !p.ExemptGitignore && len(p.WorkflowRetire) == 0
 }
 
 func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
@@ -122,6 +207,7 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 
 	if plan.empty() {
 		fmt.Fprintln(out, "already on current structure")
+		printConversionPending(out, plan.WorkflowConvertPending)
 		return nil
 	}
 
@@ -177,7 +263,17 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 	} else {
 		fmt.Fprintln(out, "  config:           (edit_exempt_paths current)")
 	}
+	if len(plan.WorkflowRetire) == 0 {
+		fmt.Fprintln(out, "  workflows:        (none superseded)")
+	} else {
+		fmt.Fprintf(out, "  workflows:        retire %d superseded DOT workflow(s) (done.md + step.md govern)\n",
+			len(plan.WorkflowRetire))
+		for _, f := range plan.WorkflowRetire {
+			fmt.Fprintf(out, "    - workflows/%s\n", f)
+		}
+	}
 	fmt.Fprintln(out, "  validate:         deployed system check")
+	printConversionPending(out, plan.WorkflowConvertPending)
 
 	if !yes {
 		if len(liveHolders) > 0 {
@@ -250,6 +346,21 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 			fmt.Fprintln(out, "  updated .gitignore managed block")
 		} else {
 			fmt.Fprintln(out, "  .gitignore already current")
+		}
+	}
+
+	if len(plan.WorkflowRetire) > 0 {
+		// Removal only. The route source is authored substrate this step never
+		// writes: baking a repo's lifecycle into the binary so migrate could
+		// install it is the config-over-code violation the constitution exists to
+		// prevent (sty_9835070d).
+		fmt.Fprintln(out, "\n→ retire superseded DOT workflows")
+		for _, f := range plan.WorkflowRetire {
+			path := filepath.Join(dataDir, "workflows", f)
+			if err := removePath(path); err != nil {
+				return fmt.Errorf("migrate: remove workflows/%s: %w", f, err)
+			}
+			fmt.Fprintf(out, "  removed workflows/%s\n", f)
 		}
 	}
 

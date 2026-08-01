@@ -26,6 +26,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/wfdot"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/wfhook"
 )
 
@@ -2117,6 +2118,12 @@ func materializeDefaultSolution(dataDir string, backupOpts ...BackupOpts) []stri
 				skills[s] = true
 			}
 		}
+		// A route source names its gates in the route grammar, not in a graph, so
+		// harvest them too — otherwise the default solution stops seeding the very
+		// skills the route references (sty_9835070d).
+		for _, s := range routeSourceSkills(body) {
+			skills[s] = true
+		}
 		// Lifecycle hooks are workflow FRONTMATTER (not DOT edges); seed their
 		// skills too so the create gate travels with the default solution
 		// (sty_83782ffb). Read through wfhook so both the `hooks:` block and the
@@ -2237,6 +2244,21 @@ func authoredWorkflowCategories(wfDir string) map[string]bool {
 		if err != nil {
 			continue
 		}
+		// A DERIVED route claims its categories through done.md's `## <category>`
+		// sections, not through applies_to — which it deliberately does not carry.
+		// Without this, converting a repo would make it look like it claimed
+		// NOTHING, and init would re-seed the embedded DOT defaults on top of the
+		// route that replaced them (sty_9835070d).
+		name := strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))
+		if name == wfgovern.RouteSourceDone {
+			for _, c := range wfgovern.RouteCategories(string(body)) {
+				claimed[c] = true
+			}
+			continue
+		}
+		if name == wfgovern.RouteSourceStep {
+			continue
+		}
 		for _, c := range appliesToCategories(string(body)) {
 			claimed[c] = true
 		}
@@ -2332,4 +2354,42 @@ func ensureDir(dir string) (bool, error) {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// routeSourceSkills harvests every skill a route source names — a step's
+// executor rubrics and entry reviewers, an always-on gate, a park/cancel gate.
+// It is tolerant on purpose: a body that is not a route source parses to
+// nothing, so one call covers both halves and every other workflow file
+// (sty_9835070d).
+func routeSourceSkills(body string) []string {
+	// An authored DOT is not a route source. Guarding on the fenced block keeps a
+	// graph's prose from being read as route grammar by accident.
+	if _, isDOT := wfdot.Parse(body); isDOT {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(names ...string) {
+		for _, n := range names {
+			if n != "" && !seen[n] {
+				seen[n] = true
+				out = append(out, n)
+			}
+		}
+	}
+	if lists, err := wfdot.ParseDone(body); err == nil {
+		for _, l := range lists {
+			add(l.ParkGate, l.CancelGate)
+		}
+	}
+	if cat, err := wfdot.ParseSteps(body); err == nil {
+		for _, st := range cat.Steps {
+			add(st.Skills...)
+			add(st.Reviewers...)
+		}
+		for _, g := range cat.Gates {
+			add(g.Skill)
+		}
+	}
+	return out
 }

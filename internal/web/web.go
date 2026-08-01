@@ -18,6 +18,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/wfdot"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -483,13 +484,32 @@ func categoryStepOf(docs []docindex.Doc) func(category, state string) int {
 	var longest map[string]int
 	byCat := map[string]map[string]int{}
 	var wild map[string]int
-	rs := routeSourceOf(docs)
-	for _, d := range docs {
-		if isRouteSourceDoc(d.Name) {
-			continue // half of a derived route, not a lifecycle of its own
+	// A DERIVED route numbers a story by its own CATEGORY, so it is expanded per
+	// declared category rather than per file — done.md and step.md are two halves
+	// of one route, not two workflows (sty_9835070d).
+	if rs := wfgovern.RouteSourceOf(docs); rs.Present() {
+		for _, cat := range wfgovern.RouteCategories(rs.Done) {
+			depths := spineDepths(routeSpecFor(docs, cat))
+			if len(depths) == 0 {
+				continue
+			}
+			if len(depths) > len(longest) {
+				longest = depths
+			}
+			if cat == wfdotWildcard {
+				if len(depths) > len(wild) {
+					wild = depths
+				}
+				continue
+			}
+			if _, ok := byCat[cat]; !ok {
+				byCat[cat] = depths
+			}
 		}
+	}
+	for _, d := range wfgovern.LifecycleWorkflows(docs) {
 		applies := frontmatterList(d.Body, "applies_to")
-		spec, _, ok := workflowSpec(d.Body, rs, panelCategory(applies), nil)
+		spec, ok := wfdot.Parse(d.Body)
 		if !ok {
 			continue
 		}
@@ -589,3 +609,18 @@ func httpError(w http.ResponseWriter, err error) {
 
 // footerEmail backs the shared footer template (mirror prefers identity meta).
 var footerEmail string
+
+// wfdotWildcard is the done.md section that governs every category with none of
+// its own — the route-source spelling of applies_to ["*"].
+const wfdotWildcard = wfdot.WildcardCategory
+
+// routeSpecFor builds one category's derived-route Spec through the shared front
+// door. An empty Spec on failure: the status lights are a read surface and must
+// degrade, never refuse (sty_9835070d).
+func routeSpecFor(docs []docindex.Doc, category string) wfdot.Spec {
+	spec, _, _, err := wfgovern.SpecFor(docs, workitem.Item{Kind: workitem.KindStory, Category: category})
+	if err != nil {
+		return wfdot.Spec{}
+	}
+	return spec
+}

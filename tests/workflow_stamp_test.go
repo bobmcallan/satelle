@@ -4,7 +4,6 @@ package tests
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,12 +16,7 @@ func TestWorkflowStampedAtCreate(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	wf, err := os.ReadFile(filepath.Join(repoRootForTest(), ".satelle", "workflows", "satelle-project-workflow.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	wfBody := strings.Replace(string(wf), `applies_to: ["*"]`, `applies_to: ["feature"]`, 1)
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "satelle-project-workflow.md"), wfBody)
+	seedRouteSource(t, repo)
 	mustRun(t, testBin, repo, "reindex")
 
 	out := mustRun(t, testBin, repo, "story", "create", "--category", "feature",
@@ -38,7 +32,7 @@ func TestWorkflowStampedAtCreate(t *testing.T) {
 	// (a) the workflow:<name> tag is stamped on the story.
 	var stamped bool
 	for _, tg := range story.Tags {
-		if tg == "workflow:satelle-project-workflow" {
+		if tg == "workflow:done.md+step.md" {
 			stamped = true
 		}
 	}
@@ -48,7 +42,7 @@ func TestWorkflowStampedAtCreate(t *testing.T) {
 
 	// (b) a workflow_stamped ledger event records the choice.
 	led := mustRun(t, testBin, repo, "ledger", "list", "--story", story.ID)
-	if !strings.Contains(led, "workflow_stamped") || !strings.Contains(led, "satelle-project-workflow") {
+	if !strings.Contains(led, "workflow_stamped") || !strings.Contains(led, "done.md+step.md") {
 		t.Errorf("no workflow_stamped ledger event for the choice:\n%s", led)
 	}
 }

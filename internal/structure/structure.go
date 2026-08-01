@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/wfdot"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 )
 
 // kebab matches a lower-kebab-case slug (the universal artifact-name shape).
@@ -75,7 +76,7 @@ func Doc(kind, name, body string, resolveSkill func(skill string) bool) []string
 // other kinds return nil. Warnings never become failures — validate prints
 // them as WARN lines without incrementing the failed count.
 func DocWarnings(kind, name, body string) []string {
-	if kind != "workflows" {
+	if kind != "workflows" || wfgovern.IsRouteSource(name) {
 		return nil
 	}
 	spec, ok := wfdot.Parse(body)
@@ -234,6 +235,77 @@ func checkPrinciple(name, body string) []string {
 	return p
 }
 
+// checkRouteSource validates one half of a DERIVED route (sty_9835070d). It is
+// not a workflow: it carries no lifecycle of its own, so the DOT checks above
+// would all fail on it. What IS checked is the half's own grammar — the parser
+// is the authority — plus the gate skills it names, so an unresolved reviewer is
+// still caught here rather than surfacing as an ungated transition later.
+//
+// A route source must NOT declare applies_to: selection is by the `## <category>`
+// sections in done.md, and a second selector would be a second precedence rule.
+func checkRouteSource(name string, fm []string, body string, resolveSkill func(skill string) bool) []string {
+	var p []string
+	p = append(p, requireName(fm, name)...)
+	if fmScalar(fm, "type") != "workflow" {
+		p = append(p, `frontmatter must have "type: workflow" (OKF)`)
+	}
+	if fmScalar(fm, "description") == "" {
+		p = append(p, "frontmatter missing a non-empty description")
+	}
+	if fmScalar(fm, "scope") == "" {
+		p = append(p, "frontmatter missing scope")
+	}
+	if fmHas(fm, "applies_to") {
+		p = append(p, "a route source must not declare applies_to — done.md's `## <category>` sections select it")
+	}
+	switch name {
+	case wfgovern.RouteSourceDone:
+		lists, err := wfdot.ParseDone(body)
+		if err != nil {
+			return append(p, "declaration of done does not parse: "+err.Error())
+		}
+		if len(lists) == 0 {
+			p = append(p, "no `## <category>` section — the file declares done for nothing")
+		}
+		seen := map[string]bool{}
+		for _, l := range lists {
+			if seen[l.Category] {
+				p = append(p, "duplicate `## "+l.Category+"` section — one declaration per category")
+			}
+			seen[l.Category] = true
+			if len(l.Obligations) == 0 {
+				p = append(p, "`## "+l.Category+"` declares no obligations")
+			}
+			for _, sk := range []string{l.ParkGate, l.CancelGate} {
+				if sk != "" && !resolveSkill(sk) {
+					p = append(p, "gate "+sk+" does not resolve in the substrate")
+				}
+			}
+		}
+	case wfgovern.RouteSourceStep:
+		cat, err := wfdot.ParseSteps(body)
+		if err != nil {
+			return append(p, "step catalogue does not parse: "+err.Error())
+		}
+		if len(cat.Steps) == 0 {
+			p = append(p, "no `## <step>` section — the catalogue is empty")
+		}
+		for _, st := range cat.Steps {
+			for _, sk := range append(append([]string(nil), st.Skills...), st.Reviewers...) {
+				if sk != "" && !resolveSkill(sk) {
+					p = append(p, "step "+st.Name+" names "+sk+" which does not resolve in the substrate")
+				}
+			}
+		}
+		for _, g := range cat.Gates {
+			if g.Skill != "" && !resolveSkill(g.Skill) {
+				p = append(p, "gate "+g.Skill+" does not resolve in the substrate")
+			}
+		}
+	}
+	return p
+}
+
 // checkWorkflow: frontmatter (name == slug, type: workflow, description,
 // applies_to, scope), a parseable DOT lifecycle, a sound graph (connected /
 // terminal / spine / backlog-start), and resolvable executor-path skills.
@@ -241,6 +313,9 @@ func checkWorkflow(name, body string, resolveSkill func(skill string) bool) []st
 	fm, _, ok := splitFM(body)
 	if !ok {
 		return []string{"missing YAML frontmatter"}
+	}
+	if wfgovern.IsRouteSource(name) {
+		return checkRouteSource(name, fm, body, resolveSkill)
 	}
 	var p []string
 	p = append(p, requireName(fm, name)...)

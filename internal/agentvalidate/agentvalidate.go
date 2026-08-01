@@ -24,6 +24,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/health"
 	"github.com/bobmcallan/satelle/internal/wfdot"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/wfhook"
 )
 
@@ -204,14 +205,18 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 	// Workflow node → binding + orphan named bindings + per-gate effective model.
 	usedNamed := map[string]bool{}
 	revModel := agents.ReviewerBinding().Model
-	for _, doc := range workflows {
+	// A DERIVED route has no per-workflow DOT, so its allocations would go
+	// unchecked if this loop only read authored graphs. Expand it into one
+	// pseudo-workflow per declared category, so every agent= the route names is
+	// validated exactly as an authored node's would be (sty_9835070d).
+	for _, doc := range expandRouteSources(workflows) {
 		// Lifecycle hooks FIRST: they are frontmatter, so they must be checked even
 		// when the DOT below does not parse (sty_ede16f51).
 		r.tagged(health.IDHookAlloc, "Unusable lifecycle-hook allocation",
 			"declare an isolated role=\"reviewer\" binding for the hook's agent in .satelle/agents.toml",
-			health.SeverityError, checkHooks(doc, agents, revModel, usedNamed, &r)...)
+			health.SeverityError, checkHooks(doc.Doc, agents, revModel, usedNamed, &r)...)
 
-		spec, ok := wfdot.Parse(doc.Body)
+		spec, ok := doc.spec()
 		if !ok {
 			continue // structure.Doc / workflow validate owns unparseable bodies
 		}
@@ -802,5 +807,64 @@ func sortedNames(m map[string]config.AgentBinding) []string {
 		out = append(out, k)
 	}
 	sort.Strings(out)
+	return out
+}
+
+// wfEntry is a workflow the allocation checks read: an authored DOT doc, or one
+// category of a DERIVED route presented as if it were one. Both answer the same
+// two questions — what is its name, and what is its lifecycle — which is all the
+// allocation loop needs (sty_9835070d).
+type wfEntry struct {
+	docindex.Doc
+	route *wfdot.Spec // non-nil for a derived-route category
+}
+
+func (e wfEntry) spec() (wfdot.Spec, bool) {
+	if e.route != nil {
+		return *e.route, true
+	}
+	return wfdot.Parse(e.Body)
+}
+
+// expandRouteSources turns the indexed workflow set into the entries to check.
+// A route source contributes one entry per category it declares (named
+// `done.md+step.md (<category>)`, so a problem says WHICH route it is in) and
+// the two halves themselves contribute none — they carry no lifecycle. Every
+// other workflow passes through unchanged.
+func expandRouteSources(workflows []docindex.Doc) []wfEntry {
+	var out []wfEntry
+	for _, w := range workflows {
+		if wfgovern.IsRouteSource(w.Name) {
+			continue
+		}
+		out = append(out, wfEntry{Doc: w})
+	}
+	rs := wfgovern.RouteSourceOf(workflows)
+	if !rs.Present() {
+		return out
+	}
+	lists, err := wfdot.ParseDone(rs.Done)
+	if err != nil {
+		return out // structure validate owns an unparseable route source
+	}
+	cat, err := wfdot.ParseSteps(rs.Step)
+	if err != nil {
+		return out
+	}
+	for _, l := range lists {
+		// No tags: the tag-scoped augmentations are validated by their own gate
+		// declarations, and a tagless build is the route every story shares.
+		spec, err := wfdot.BuildRoute(l, cat, nil)
+		if err != nil {
+			continue
+		}
+		doc := docindex.Doc{
+			Kind: "workflows",
+			Name: wfgovern.DerivedRouteName + " (" + l.Category + ")",
+			Body: rs.Step,
+		}
+		s := spec
+		out = append(out, wfEntry{Doc: doc, route: &s})
+	}
 	return out
 }

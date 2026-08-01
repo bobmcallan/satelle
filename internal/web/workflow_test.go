@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 )
 
 const sampleWorkflowDOT = `---
@@ -46,7 +47,8 @@ func TestFrontmatterListWeb(t *testing.T) {
 // spine in workflow order, each step's performer and rubrics, and the reviewers
 // that gate ENTRY to it. Park/cancel destinations are exits, not steps.
 func TestWorkflowRouteFromDOT(t *testing.T) {
-	r := workflowRoute("w", sampleWorkflowDOT, routeSource{}, "", nil)
+	dotDoc := docindex.Doc{Kind: "workflows", Name: "w", Body: sampleWorkflowDOT}
+	r := workflowRoute([]docindex.Doc{dotDoc}, dotDoc, "", nil)
 	var got []string
 	for _, s := range r.Steps {
 		got = append(got, s.Status)
@@ -77,7 +79,7 @@ func TestWorkflowRouteFromDOT(t *testing.T) {
 	if len(ip.Skipped) != 1 || ip.Skipped[0].Skill != "satelle-design-review" {
 		t.Errorf("in_progress skipped = %+v, want satelle-design-review", ip.Skipped)
 	}
-	tagged := workflowRoute("w", sampleWorkflowDOT, routeSource{}, "", []string{"surface:ui"})
+	tagged := workflowRoute([]docindex.Doc{dotDoc}, dotDoc, "", []string{"surface:ui"})
 	var found bool
 	for _, s := range tagged.Steps {
 		for _, rv := range s.Reviewers {
@@ -143,15 +145,16 @@ advise: retrospective @satelle-lessons
 // in the substrate, the panel derives the route from THEM — obligations appear
 // (a DOT has no obligation vocabulary) and declared advisors ride along.
 func TestWorkflowRouteFromDoneStep(t *testing.T) {
-	rs := routeSourceOf([]docindex.Doc{
-		{Name: routeSourceDone, Body: sampleDone},
-		{Name: routeSourceStep, Body: sampleStep},
-	})
-	if !rs.ok() {
-		t.Fatal("routeSourceOf did not pick up done + step")
+	set := []docindex.Doc{
+		{Kind: "workflows", Name: wfgovern.RouteSourceDone, Body: sampleDone},
+		{Kind: "workflows", Name: wfgovern.RouteSourceStep, Body: sampleStep},
+		{Kind: "workflows", Name: "w", Body: sampleWorkflowDOT},
+	}
+	if !wfgovern.RouteSourceOf(set).Present() {
+		t.Fatal("RouteSourceOf did not pick up done + step")
 	}
 	// The DOT body is present and must LOSE: a derived route wins when it exists.
-	r := workflowRoute("w", sampleWorkflowDOT, rs, "feature", nil)
+	r := workflowRoute(set, set[2], "feature", nil)
 	var got []string
 	for _, s := range r.Steps {
 		got = append(got, s.Status+"="+s.Obligation)
@@ -188,22 +191,30 @@ func TestWorkflowRouteFromDoneStep(t *testing.T) {
 		t.Errorf("exits = %+v, want a blocked park exit", r.Exits)
 	}
 	// An unknown category yields no route rather than a silently ungated one.
-	if len(workflowRoute("w", "", rs, "nonesuch", nil).Steps) != 0 {
-		t.Error("an unknown category must not resolve to a route")
+	if len(workflowRoute(set[:2], set[2], "nonesuch", nil).Steps) != 0 {
+		t.Error("an unknown category with no wildcard section must not resolve to a route")
+	}
+	// …but a `*` section governs it, which is how a wildcard workflow converts.
+	wild := []docindex.Doc{
+		{Kind: "workflows", Name: wfgovern.RouteSourceDone, Body: strings.Replace(sampleDone, "## feature", "## *", 1)},
+		{Kind: "workflows", Name: wfgovern.RouteSourceStep, Body: sampleStep},
+	}
+	if len(workflowRoute(wild, wild[0], "nonesuch", nil).Steps) != 4 {
+		t.Error("a `## *` section must govern a category with no section of its own")
 	}
 }
 
 // TestWorkflowDetailRendersRouteNotDiagram (AC1): the expand shows the ordered
 // route — step, obligation, performer, rubrics, entry gates — and NO diagram.
 func TestWorkflowDetailRendersRouteNotDiagram(t *testing.T) {
-	rs := routeSourceOf([]docindex.Doc{
-		{Name: routeSourceDone, Body: sampleDone},
-		{Name: routeSourceStep, Body: sampleStep},
-	})
+	set := []docindex.Doc{
+		{Kind: "workflows", Name: wfgovern.RouteSourceDone, Body: sampleDone},
+		{Kind: "workflows", Name: wfgovern.RouteSourceStep, Body: sampleStep},
+	}
 	vm := workflowDetailVM{
 		Name:      "satelle-project-workflow",
 		AppliesTo: []string{"feature"},
-		Route:     workflowRoute("satelle-project-workflow", "", rs, "feature", nil),
+		Route:     workflowRoute(set, set[0], "feature", nil),
 		Body:      "definition",
 	}
 	var buf strings.Builder
@@ -248,8 +259,8 @@ func TestWorkflowDetailEmptyRoute(t *testing.T) {
 // route, not two workflows — they get no row in the panel.
 func TestWorkflowRowsSkipRouteSource(t *testing.T) {
 	rows := workflowRows([]docindex.Doc{
-		{Name: routeSourceDone, Body: sampleDone},
-		{Name: routeSourceStep, Body: sampleStep},
+		{Name: wfgovern.RouteSourceDone, Body: sampleDone},
+		{Name: wfgovern.RouteSourceStep, Body: sampleStep},
 		{Name: "satelle-project-workflow", Body: sampleWorkflowDOT},
 	}, nil, nil)
 	if len(rows) != 1 || rows[0].Name != "satelle-project-workflow" {
@@ -265,7 +276,7 @@ func TestWebHoldsNoWorkflowParser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
-	banned := []string{"parseWorkflowDOT", "parseWorkflow", "parseState", "workflowDiagram", "edgeGateLabel"}
+	banned := []string{"parseWorkflowDOT", "parseWorkflow", "parseState", "workflowDiagram", "edgeGateLabel", "wfdot.ParseRoute"}
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {

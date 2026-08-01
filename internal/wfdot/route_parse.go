@@ -218,6 +218,8 @@ func applyGateKey(g *RouteGate, key, value string, line int) error {
 		g.On = splitCSV(value)
 	case "applies_to":
 		g.AppliesTo = splitCSV(value)
+	case "for":
+		g.For = splitCSV(value)
 	case "mandatory":
 		g.Mandatory = value == "true"
 	default:
@@ -239,15 +241,45 @@ func ParseRoute(doneBody, stepBody, category string, tags []string) (Spec, error
 	if err != nil {
 		return Spec{}, err
 	}
-	for _, l := range lists {
-		if l.Category == category {
-			return BuildRoute(l, cat, tags)
+	l, err := ListFor(lists, category)
+	if err != nil {
+		return Spec{}, err
+	}
+	return BuildRoute(l, cat, tags)
+}
+
+// WildcardCategory is the declaration of done that governs any category with no
+// section of its own — the route-source spelling of a workflow's
+// `applies_to: ["*"]`.
+const WildcardCategory = "*"
+
+// ListFor picks the declaration of done governing a category: an exact section
+// first, then the wildcard. That is the same precedence a workflow's applies_to
+// already gets (a category-specific workflow beats a wildcard one), so the two
+// front doors agree rather than each having a rule of its own.
+//
+// A category with neither is an ERROR, not an empty route. Enumerating every
+// category a repo will ever use is brittle — the next new one would silently
+// resolve to a workflow with no gates, which is the worst failure available. The
+// wildcard is how a repo says "this route governs everything else"; its absence
+// is how it says "refuse".
+func ListFor(lists []List, category string) (List, error) {
+	var wild *List
+	for i := range lists {
+		switch lists[i].Category {
+		case category:
+			return lists[i], nil
+		case WildcardCategory:
+			wild = &lists[i]
 		}
+	}
+	if wild != nil {
+		return *wild, nil
 	}
 	var known []string
 	for _, l := range lists {
 		known = append(known, l.Category)
 	}
-	return Spec{}, fmt.Errorf("no declaration of done for category %q (have: %s)",
-		category, strings.Join(known, ", "))
+	return List{}, fmt.Errorf("no declaration of done for category %q and no %q section (have: %s)",
+		category, WildcardCategory, strings.Join(known, ", "))
 }

@@ -81,6 +81,16 @@ type RouteGate struct {
 	On []string
 	// AppliesTo scopes the gate to stories carrying a matching tag.
 	AppliesTo []string
+	// For scopes the gate to named declaration-of-done SECTIONS — the categories
+	// whose route it belongs to. Empty means every route in the catalogue.
+	//
+	// The catalogue is shared, so without this a deployment gate on `done` would
+	// fire on every category's terminal step, including the routes that
+	// deliberately have no release to verify. AppliesTo cannot express it: that
+	// axis is the story's TAGS, this one is which route the gate is part of
+	// (sty_9835070d). A section is named by its category, so the wildcard section
+	// is named `*` here like anywhere else.
+	For []string
 	// Mandatory marks a gate whose failure must be surfaced, not swallowed.
 	Mandatory bool
 }
@@ -222,8 +232,12 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 	}
 
 	// Gates become edge-less nodes. Their node name carries no behavioural
-	// contract — a gate is identified by its skill — so it is derived.
+	// contract — a gate is identified by its skill — so it is derived. A gate
+	// scoped to other sections is not part of THIS route and emits nothing.
 	for _, g := range gates {
+		if !gateInRoute(g, l.Category) {
+			continue
+		}
 		spec.States = append(spec.States, State{
 			Name:      "gate_" + g.Skill,
 			Agent:     g.Agent,
@@ -404,4 +418,20 @@ func firstOf(ss []string) string {
 		return ""
 	}
 	return ss[0]
+}
+
+// gateInRoute reports whether a gate belongs to the route being built for
+// category. A gate with no `for:` belongs to every route — that is the common
+// case and stays unstated. A gate that names sections belongs only to those,
+// matched against the section's own name (the wildcard section is `*`).
+func gateInRoute(g RouteGate, category string) bool {
+	if len(g.For) == 0 {
+		return true
+	}
+	for _, c := range g.For {
+		if c == category {
+			return true
+		}
+	}
+	return false
 }

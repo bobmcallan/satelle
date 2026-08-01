@@ -5,8 +5,9 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/docindex"
-	"github.com/bobmcallan/satelle/internal/wfdot"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/wfroute"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // workflowRowVM is one workflow in the Workflow panel list — the row the user
@@ -22,90 +23,35 @@ type workflowRowVM struct {
 	Source     string
 }
 
-// routeSourceDone and routeSourceStep name the two authored bodies a DERIVED
-// route is built from: a declaration of done and a step catalogue, indexed under
-// the `workflows` kind like any other authored workflow doc. When both are
-// present the panel derives the route from them; otherwise it falls back to the
-// authored DOT, which is how this story lands before the workflows convert
-// (sty_9835070d) and after wfdot.Parse retires (sty_d953c5d8).
-const (
-	routeSourceDone = "done"
-	routeSourceStep = "step"
-)
-
-// routeSource carries the two authored bodies, empty when the substrate holds no
-// derived route yet.
-type routeSource struct {
-	Done string
-	Step string
-}
-
-func (rs routeSource) ok() bool { return rs.Done != "" && rs.Step != "" }
-
-// routeSourceOf picks the declaration of done and the step catalogue out of the
-// indexed workflow docs.
-func routeSourceOf(docs []docindex.Doc) routeSource {
-	var rs routeSource
-	for _, d := range docs {
-		switch d.Name {
-		case routeSourceDone:
-			rs.Done = d.Body
-		case routeSourceStep:
-			rs.Step = d.Body
-		}
-	}
-	return rs
-}
-
-// isRouteSourceDoc reports whether a workflow doc is one half of a derived
-// route rather than a workflow in its own right — it has no lifecycle of its
-// own and must not be resolved as one.
-func isRouteSourceDoc(name string) bool {
-	return name == routeSourceDone || name == routeSourceStep
-}
-
-// workflowSpec resolves a workflow's lifecycle WITHOUT parsing anything here:
-// both branches are calls into internal/wfdot, the one package that owns a
-// workflow front door. A derived route (done.md + step.md) wins when the
-// substrate carries one; an authored DOT body is the fallback. ok is false when
-// neither yields a lifecycle, and the caller then shows an empty route rather
-// than a wrong one.
-func workflowSpec(body string, rs routeSource, category string, tags []string) (wfdot.Spec, []wfroute.Advisor, bool) {
-	if rs.ok() {
-		lists, err := wfdot.ParseDone(rs.Done)
-		if err != nil {
-			return wfdot.Spec{}, nil, false
-		}
-		cat, err := wfdot.ParseSteps(rs.Step)
-		if err != nil {
-			return wfdot.Spec{}, nil, false
-		}
-		for _, l := range lists {
-			if category != "" && l.Category != category {
-				continue
-			}
-			spec, err := wfdot.BuildRoute(l, cat, tags)
-			if err != nil {
-				return wfdot.Spec{}, nil, false
-			}
-			return spec, wfroute.AdvisorsFrom(l, cat), true
-		}
-		return wfdot.Spec{}, nil, false
-	}
-	// An authored DOT names no advisor: entry dispatch is retired, so the graph
-	// has no attribute that could carry one (sty_05a5e203).
-	spec, ok := wfdot.Parse(body)
-	return spec, nil, ok
-}
-
 // workflowRoute resolves a workflow doc all the way to the route the panel
-// renders. Empty (len(Steps)==0) when no lifecycle resolves.
-func workflowRoute(name, body string, rs routeSource, category string, tags []string) wfroute.Route {
-	spec, advisors, ok := workflowSpec(body, rs, category, tags)
-	if !ok {
-		return wfroute.Route{Workflow: name}
+// renders, through the ONE front door (wfgovern.SpecFor): a derived route when
+// the substrate carries done.md + step.md, the authored DOT until it does. The
+// panel used to implement that precedence itself; a second copy of it is exactly
+// the defect a single front door exists to prevent (sty_9835070d).
+//
+// The web layer is the one caller allowed to DEGRADE on the error: it renders a
+// page, it does not gate a transition. It degrades by handling the error here —
+// an empty route, which the template shows as an explicit empty state — never by
+// the seam hiding it from callers that do gate.
+func workflowRoute(workflows []docindex.Doc, doc docindex.Doc, category string, tags []string) wfroute.Route {
+	// The panel asks about a WORKFLOW, not a story, so it synthesises the item
+	// whose lifecycle it wants: the category the row claims, plus any tags the
+	// caller is previewing.
+	item := workitem.Item{Kind: workitem.KindStory, Category: category, Tags: tags}
+	set := workflows
+	if !wfgovern.RouteSourceOf(workflows).Present() {
+		// No derived route: pin resolution to the row the user clicked rather than
+		// re-running applies_to precedence, which would show a different workflow.
+		set = []docindex.Doc{doc}
 	}
-	return wfroute.Build(spec, name, tags, advisors)
+	spec, name, advisors, err := wfgovern.SpecFor(set, item)
+	if err != nil {
+		return wfroute.Route{Workflow: doc.Name}
+	}
+	if wfgovern.IsRouteSource(doc.Name) {
+		doc.Name = name
+	}
+	return wfroute.Build(spec, doc.Name, tags, advisors)
 }
 
 // workflowDetailVM backs the inline expand: the ROUTE the workflow prescribes
@@ -130,7 +76,7 @@ type workflowDetailVM struct {
 func workflowRows(docs []docindex.Doc, prov, src map[string]string) []workflowRowVM {
 	out := make([]workflowRowVM, 0, len(docs))
 	for _, d := range docs {
-		if isRouteSourceDoc(d.Name) {
+		if wfgovern.IsRouteSource(d.Name) {
 			continue
 		}
 		key := "workflows\x00" + d.Name

@@ -21,6 +21,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/structure"
 	"github.com/bobmcallan/satelle/internal/wfdot"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 )
 
 // baselineWorkflowName is the canonical order-zero default the engine falls back
@@ -69,13 +70,27 @@ default. The head of the list is the active workflow the reviewer enforces.`,
 					docs = append(docs, base)
 				}
 			}
-			ordered := agentstep.OrderedWorkflows(docs, category)
-			out := make([]workflowChoice, 0, len(ordered))
-			for i, d := range ordered {
+			out := make([]workflowChoice, 0, len(docs))
+			// A DERIVED route governs before any authored workflow is considered,
+			// so it heads the list and is the ACTIVE choice (sty_9835070d). Listing
+			// only the authored graphs would name the embedded baseline as active
+			// while the route is what the engine actually enforces.
+			rs := wfgovern.RouteSourceOf(docs)
+			derived := rs.Present() && routeClaims(rs, category)
+			if derived {
+				out = append(out, workflowChoice{
+					Name:      wfgovern.DerivedRouteName,
+					Headline:  "derived route — done.md + step.md",
+					Scope:     "project",
+					AppliesTo: wfgovern.RouteCategories(rs.Done),
+					Active:    true,
+				})
+			}
+			for i, d := range agentstep.OrderedWorkflows(wfgovern.LifecycleWorkflows(docs), category) {
 				scope, applies := wfMeta(d.Body)
 				out = append(out, workflowChoice{
 					Name: d.Name, Headline: d.Headline, Scope: scope,
-					AppliesTo: applies, Embedded: d.Embedded, Active: i == 0,
+					AppliesTo: applies, Embedded: d.Embedded, Active: !derived && i == 0,
 				})
 			}
 			b, err := json.MarshalIndent(out, "", "  ")
@@ -373,4 +388,16 @@ func frontmatterListValue(body, key string) []string {
 		return out
 	}
 	return nil
+}
+
+// routeClaims reports whether the derived route governs the requested category —
+// its own section, or the wildcard. An empty category means "the wildcard view",
+// which the route answers with its `*` section.
+func routeClaims(rs wfgovern.RouteSource, category string) bool {
+	for _, c := range wfgovern.RouteCategories(rs.Done) {
+		if c == category || c == wfdot.WildcardCategory {
+			return true
+		}
+	}
+	return false
 }

@@ -20,8 +20,10 @@ func copyTaskExecSubstrate(t *testing.T, repo string) {
 		t.Fatal(err)
 	}
 	root := filepath.Dir(wd)
+	// The execution lifecycle is a category of this repo's DERIVED route now, not
+	// a workflow file of its own (sty_9835070d).
+	seedRouteSource(t, repo)
 	files := map[string]string{
-		filepath.Join(root, ".satelle", "workflows", "satelle-task-workflow.md"):            filepath.Join(repo, ".satelle", "workflows", "satelle-task-workflow.md"),
 		filepath.Join(root, ".satelle", "skills", "satelle-task-validate-before-review.md"): filepath.Join(repo, ".satelle", "skills", "satelle-task-validate-before-review.md"),
 		filepath.Join(root, ".satelle", "skills", "satelle-task-validate-after-review.md"):  filepath.Join(repo, ".satelle", "skills", "satelle-task-validate-after-review.md"),
 		// in_progress carries prompt="@skill:task-run" (format-lag fix); engage

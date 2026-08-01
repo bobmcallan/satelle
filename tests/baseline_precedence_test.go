@@ -70,14 +70,36 @@ func TestEmbeddedBaselinePrecedence(t *testing.T) {
 
 	// (c) A repo's own, distinctly-named wildcard workflow takes precedence over
 	// the embedded fallback.
-	wf, err := os.ReadFile(filepath.Join(repoRootForTest(), ".satelle", "workflows", "satelle-project-workflow.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "satelle-project-workflow.md"), string(wf))
+	// Authored inline rather than copied from this repo: the case under test is
+	// PRECEDENCE among authored graphs, and this repo no longer authors any — its
+	// lifecycle is a derived route (sty_9835070d).
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "satelle-project-workflow.md"), repoWildcardWorkflow)
 	mustRun(t, testBin, repo, "reindex")
 	rows = wfList(t, repo, "feature")
 	if len(rows) == 0 || rows[0].Name != "satelle-project-workflow" || !rows[0].Active {
 		t.Errorf("a repo wildcard workflow must beat the embedded baseline, got %+v", rows)
 	}
 }
+
+// repoWildcardWorkflow is a minimal repo-authored wildcard workflow — enough to
+// out-rank the embedded baseline, and nothing more.
+const repoWildcardWorkflow = `---
+name: satelle-project-workflow
+type: workflow
+scope: project
+applies_to: ["*"]
+description: A repo-authored wildcard lifecycle — backlog to done, one gated edge.
+---
+` + "```dot" + `
+digraph w {
+  backlog     [shape=Mdiamond]
+  in_progress [agent=executor, prompt="@skill:code"]
+  done        [shape=Msquare]
+  cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
+  backlog -> in_progress
+  in_progress -> done [agent=reviewer, prompt="@skill:satelle-story-done-review"]
+  backlog -> cancelled
+  in_progress -> cancelled
+}
+` + "```" + `
+`

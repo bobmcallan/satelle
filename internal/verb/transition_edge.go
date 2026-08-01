@@ -40,11 +40,8 @@ func refuseSkippedStep(ctx context.Context, current workitem.Item, toStatus stri
 	if err != nil {
 		return nil
 	}
-	wf, ok := wfgovern.GoverningWorkflow(wfs, current)
-	if !ok {
-		return nil
-	}
-	spec, ok := wfdot.Parse(wf.Body)
+	spec, wfName, _, serr := wfgovern.SpecFor(wfs, current)
+	ok := serr == nil
 	if !ok {
 		return nil
 	}
@@ -60,7 +57,7 @@ func refuseSkippedStep(ctx context.Context, current workitem.Item, toStatus stri
 			return nil
 		}
 		return wfgovern.Refusal{
-			Rule: wfgovern.RuleParkResume, Item: current.ID, Workflow: wf.Name,
+			Rule: wfgovern.RuleParkResume, Item: current.ID, Workflow: wfName,
 			From: from, To: toStatus,
 			Why: fmt.Sprintf(
 				"a parked story resumes to the state it parked from (%q), so the gates already passed to reach it are not re-run and none are skipped",
@@ -78,14 +75,14 @@ func refuseSkippedStep(ctx context.Context, current workitem.Item, toStatus stri
 	next := spec.Successors(from)
 	if len(next) == 0 {
 		return wfgovern.Refusal{
-			Rule: wfgovern.RuleSkippedStep, Item: current.ID, Workflow: wf.Name,
+			Rule: wfgovern.RuleSkippedStep, Item: current.ID, Workflow: wfName,
 			From: from, To: toStatus,
 			Why:    fmt.Sprintf("the route declares no step at all after %s, so there is nothing to move to from here", from),
 			Remedy: "open a session on a legal path, or fix the workflow's declaration of done",
 		}
 	}
 	return wfgovern.Refusal{
-		Rule: wfgovern.RuleSkippedStep, Item: current.ID, Workflow: wf.Name,
+		Rule: wfgovern.RuleSkippedStep, Item: current.ID, Workflow: wfName,
 		From: from, To: toStatus,
 		Why: fmt.Sprintf(
 			"the route puts %s after %s; a step may not be skipped because its gates are the only place the work is judged",
@@ -119,11 +116,8 @@ func parkOriginForTransition(ctx context.Context, current workitem.Item, toStatu
 	if err != nil {
 		return nil
 	}
-	wf, ok := wfgovern.GoverningWorkflow(wfs, current)
-	if !ok {
-		return nil
-	}
-	spec, ok := wfdot.Parse(wf.Body)
+	spec, _, _, serr := wfgovern.SpecFor(wfs, current)
+	ok := serr == nil
 	if !ok {
 		return nil
 	}

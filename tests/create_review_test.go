@@ -37,19 +37,10 @@ func TestCreateContentReviewGate(t *testing.T) {
 	writeFile(t, filepath.Join(repo, ".satelle", "skills", "satelle-story-create-review.md"), string(rubric))
 
 	// The create binding is DECLARED on the active workflow (sty_b031b29f), not a
-	// hardcoded filename — install this repo's project workflow (which declares
-	// create_review: satelle-story-create-review) so content review is wired.
-	wf, err := os.ReadFile(filepath.Join(repoRootForTest(), ".satelle", "workflows", "satelle-project-workflow.md"))
-	if err != nil {
-		t.Fatalf("read workflow source: %v", err)
-	}
-	// Scope it to the "feature" category so it wins as a category-specific match
-	// (independent of the embedded-baseline wildcard ordering).
-	wfBody := strings.Replace(string(wf), `applies_to: ["*"]`, `applies_to: ["feature"]`, 1)
-	if err := os.MkdirAll(filepath.Join(repo, ".satelle", "workflows"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "satelle-project-workflow.md"), wfBody)
+	// hardcoded filename. This repo declares it on its DERIVED route's declaration
+	// of done, so installing the route source is what wires content review
+	// (sty_9835070d).
+	seedRouteSource(t, repo)
 
 	// Stub the reviewer harness to a deterministic verdict script.
 	verdict := filepath.Join(repo, "verdict.sh")

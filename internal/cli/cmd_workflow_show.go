@@ -31,6 +31,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/wfdot"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/wfhook"
 )
 
@@ -79,7 +80,30 @@ func renderWorkflowShow(out io.Writer, a *app.App, doc docindex.Doc, resolves fu
 	}
 	fmt.Fprintf(out, "  source:     %s\n", workflowSourceFile(dataDir, doc))
 
-	if spec, ok := wfdot.Parse(doc.Body); ok {
+	if wfgovern.IsRouteSource(doc.Name) {
+		// A route SOURCE carries no lifecycle of its own — its half of the grammar
+		// is what there is to show, and the route itself is `satelle story route`
+		// (sty_9835070d).
+		fmt.Fprintln(out, "  kind:       route source (half of a derived route; not a workflow)")
+		switch doc.Name {
+		case wfgovern.RouteSourceDone:
+			if lists, err := wfdot.ParseDone(doc.Body); err == nil {
+				var cats []string
+				for _, l := range lists {
+					cats = append(cats, l.Category)
+				}
+				fmt.Fprintf(out, "  declares:   done for %s\n", strings.Join(cats, ", "))
+			} else {
+				fmt.Fprintf(out, "  declares:   (does not parse: %v)\n", err)
+			}
+		case wfgovern.RouteSourceStep:
+			if cat, err := wfdot.ParseSteps(doc.Body); err == nil {
+				fmt.Fprintf(out, "  declares:   %d step(s), %d always-on gate(s)\n", len(cat.Steps), len(cat.Gates))
+			} else {
+				fmt.Fprintf(out, "  declares:   (does not parse: %v)\n", err)
+			}
+		}
+	} else if spec, ok := wfdot.Parse(doc.Body); ok {
 		gated := 0
 		for _, tr := range spec.Transitions {
 			if len(tr.Skills) > 0 || tr.Skill != "" {

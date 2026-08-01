@@ -848,16 +848,12 @@ func (g *Engine) SetSecondaryResolver(fn func(section string, b config.AgentBind
 // steps never call steps, so an advisor is consulted by the orchestrator at a
 // moment it chooses, and the route names which advisor that is.
 func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toStatus string) (verb.DispatchResult, error) {
-	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
+	spec, wfName, err := g.activeSpec(ctx, item)
 	if err != nil {
-		if errors.Is(err, docindex.ErrNotFound) {
+		if ungoverned(err) {
 			return verb.DispatchResult{}, nil
 		}
 		return verb.DispatchResult{}, err
-	}
-	spec, ok := wfdot.Parse(doc.Body)
-	if !ok {
-		return verb.DispatchResult{}, nil
 	}
 	var target *wfdot.State
 	for i := range spec.States {
@@ -887,13 +883,13 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	}
 	if g.namedAgents == nil {
 		return verb.DispatchResult{}, fmt.Errorf(
-			"workflow %q allocates state %q to named agent %q but no agents layer is wired", doc.Name, toStatus, dispatchAgent)
+			"workflow %q allocates state %q to named agent %q but no agents layer is wired", wfName, toStatus, dispatchAgent)
 	}
 	binding, found := g.namedAgents(dispatchAgent)
 	if !found {
 		return verb.DispatchResult{}, fmt.Errorf(
 			"workflow %q allocates state %q to agent %q but .satelle/agents.toml defines no [%s] binding — define it, or reassign the step",
-			doc.Name, toStatus, dispatchAgent, dispatchAgent)
+			wfName, toStatus, dispatchAgent, dispatchAgent)
 	}
 	// model= on nodes is superseded (sty_a476a2f8); agents.toml owns the model.
 	// Design §9 (a): when the resolved binding is role=reviewer, it is a judge
@@ -902,7 +898,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	if config.ResolvedRole(dispatchAgent, binding) == config.RoleReviewer {
 		return verb.DispatchResult{}, fmt.Errorf(
 			"workflow %q allocates performing state %q to agent %q with role=reviewer — judges advance status only via gates; use a gated edge or scoped on= node",
-			doc.Name, toStatus, dispatchAgent)
+			wfName, toStatus, dispatchAgent)
 	}
 	if !isNamedPerformer(dispatchAgent, binding) {
 		return verb.DispatchResult{}, nil
@@ -993,7 +989,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	}
 	execPayload := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: dispatchSkill}
 	g.fillPayloadDocs(ctx, item.ID, &execPayload)
-	charter := executorCharter(dispatchAgent, toStatus, doc.Name)
+	charter := executorCharter(dispatchAgent, toStatus, wfName)
 	var finalArtifact *agentartifact.Artifact
 	var invRes InvokeResult
 	if attemptPolicy.Active() {
@@ -1239,16 +1235,15 @@ const engagementSkillCheck = "satelle-workflow-skill-check"
 // edge, when the workflow is not parseable DOT, or when every executor skill
 // resolves. A docs lookup error other than not-found is surfaced.
 func (g *Engine) guardEngagementExecutorSkills(ctx context.Context, item workitem.Item, toStatus string) (verb.GateDecision, bool, error) {
-	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
+	spec, _, err := g.activeSpec(ctx, item)
 	if err != nil {
-		if errors.Is(err, docindex.ErrNotFound) {
+		if ungoverned(err) {
 			return verb.GateDecision{}, false, nil
 		}
 		return verb.GateDecision{}, false, err
 	}
-	spec, ok := wfdot.Parse(doc.Body)
-	if !ok || item.Status != spec.Start() || toStatus == "cancelled" {
-		return verb.GateDecision{}, false, nil // not the engagement edge (or no DOT)
+	if item.Status != spec.Start() || toStatus == "cancelled" {
+		return verb.GateDecision{}, false, nil // not the engagement edge
 	}
 	// Tag-filtered: a missing surface-scoped augmentation blocks only stories
 	// whose tags match it (sty_8225d8a5); structure validate still requires all.
@@ -1471,16 +1466,12 @@ func outputTail(out []byte) string {
 // degrades to none — scoped reviewers are additive and must never break the
 // workflow's own edge gating.
 func (g *Engine) scopedReviewers(ctx context.Context, item workitem.Item, toStatus string, exclude []string) ([]reviewerRef, error) {
-	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
+	spec, _, err := g.activeSpec(ctx, item)
 	if err != nil {
-		if errors.Is(err, docindex.ErrNotFound) {
+		if ungoverned(err) {
 			return nil, nil
 		}
 		return nil, err
-	}
-	spec, ok := wfdot.Parse(doc.Body)
-	if !ok {
-		return nil, nil
 	}
 	var out []reviewerRef
 	// item.Tags decide whether a surface-scoped node is ENQUEUED (sty_c6d093c8).
@@ -1671,12 +1662,8 @@ func (g *Engine) MandatorySummary(ctx context.Context, item workitem.Item) bool 
 // step-summary node (wfdot StepSummary), its agent= section (empty → [reviewer]),
 // and whether it is mandatory.
 func (g *Engine) stepSummaryDeclared(ctx context.Context, item workitem.Item) (agent string, declared, mandatory bool) {
-	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
+	spec, _, err := g.activeSpec(ctx, item)
 	if err != nil {
-		return "", false, false
-	}
-	spec, ok := wfdot.Parse(doc.Body)
-	if !ok {
 		return "", false, false
 	}
 	return spec.StepSummaryBinding()
@@ -1738,6 +1725,15 @@ func (g *Engine) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb
 // `satelle agent validate` / `satelle workflow validate` before anything runs.
 // The engine keeps only its mechanism-level refusals at dispatch (role, in-loop).
 func (g *Engine) createReviewHook(ctx context.Context, category string) (wfhook.Hook, bool) {
+	// A lifecycle hook is workflow FRONTMATTER, and a derived route's frontmatter
+	// lives on its declaration of done — the half that says what this repo means
+	// by finished, which is where a create gate belongs. Read it first, so a
+	// converted repo keeps the gate its graphs used to declare (sty_9835070d).
+	if doc, err := g.docs.Get(ctx, "workflows", wfgovern.RouteSourceDone); err == nil {
+		if h, ok := wfhook.For(doc.Body, wfhook.OpCreateReview); ok {
+			return h, true
+		}
+	}
 	doc, err := g.activeWorkflow(ctx, category)
 	if err != nil {
 		return wfhook.Hook{}, false
@@ -1752,26 +1748,25 @@ func (g *Engine) createReviewHook(ctx context.Context, category string) (wfhook.
 // every edge is allowed and ungated (declared=true, no skills), so fresh repos
 // and the baseline keep working.
 func (g *Engine) reviewerSkills(ctx context.Context, item workitem.Item, from, to string) (skills []string, model string, parallel int, declared bool, err error) {
-	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
-	if errors.Is(err, docindex.ErrNotFound) {
+	spec, _, err := g.activeSpec(ctx, item)
+	if ungoverned(err) {
 		return nil, "", 0, true, nil
 	}
 	if err != nil {
+		// A lifecycle EXISTS and does not resolve. Refusing here is the point:
+		// falling through as "ungated but declared" would advance the story past
+		// every gate the route declares (sty_9835070d).
 		return nil, "", 0, false, err
 	}
-	skills, model, parallel, declared = reviewerSkillsFor(doc.Body, from, to)
+	skills, model, parallel, declared = specReviewerSkills(spec, from, to)
 	return skills, model, parallel, declared, nil
 }
 
 // successorsOf returns declared DOT successors of from for agent-facing refuse
 // messages (sty_ebd3d666). Empty when no workflow/DOT resolves.
 func (g *Engine) successorsOf(ctx context.Context, item workitem.Item, from string) []string {
-	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
+	spec, _, err := g.activeSpec(ctx, item)
 	if err != nil {
-		return nil
-	}
-	spec, ok := wfdot.Parse(doc.Body)
-	if !ok {
 		return nil
 	}
 	return spec.Successors(from)
@@ -1786,12 +1781,8 @@ func (g *Engine) parkResume(ctx context.Context, item workitem.Item, toStatus st
 	if origin == "" {
 		return false, nil
 	}
-	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
-	if err != nil {
-		return false, nil
-	}
-	spec, ok := wfdot.Parse(doc.Body)
-	if !ok || !spec.IsParkState(item.Status) {
+	spec, _, err := g.activeSpec(ctx, item)
+	if err != nil || !spec.IsParkState(item.Status) {
 		return false, nil
 	}
 	if toStatus == origin {
@@ -1873,10 +1864,67 @@ func (g *Engine) activeWorkflowPreferring(ctx context.Context, category, stamped
 	return g.activeWorkflow(ctx, category)
 }
 
+// activeSpec resolves the LIFECYCLE governing item through the one front door
+// (wfgovern.SpecFor): the derived route when the substrate carries one, the
+// governing authored DOT until it does. It replaces the
+// activeWorkflowPreferring-then-wfdot.Parse pair every gating path used to
+// repeat, so a repo's conversion needs no per-call-site change (sty_9835070d).
+//
+// The error is not collapsed. wfgovern.ErrNoWorkflow means nothing governs the
+// item at all — a fresh repo, the case every caller below already treats as
+// ungoverned. Any OTHER error means a lifecycle exists and does not resolve, and
+// that must never read the same way: a route that fails to build would otherwise
+// silently drop every gate it declares.
+func (g *Engine) activeSpec(ctx context.Context, item workitem.Item) (wfdot.Spec, string, error) {
+	workflows, err := g.docs.List(ctx, "workflows")
+	if err != nil {
+		return wfdot.Spec{}, "", err
+	}
+	spec, name, _, err := wfgovern.SpecFor(workflows, item)
+	if err == nil {
+		return spec, name, nil
+	}
+	if !errors.Is(err, wfgovern.ErrNoWorkflow) {
+		return wfdot.Spec{}, name, err
+	}
+	// Nothing applied by category: fall back to the embedded baseline, exactly as
+	// activeWorkflow does, so a repo with no authored workflow still has one.
+	doc, gerr := g.docs.Get(ctx, "workflows", baselineWorkflow)
+	if gerr != nil {
+		return wfdot.Spec{}, "", errors.Join(err, gerr)
+	}
+	base, ok := wfdot.Parse(doc.Body)
+	if !ok {
+		return wfdot.Spec{}, doc.Name, err
+	}
+	return base, doc.Name, nil
+}
+
+// ungoverned reports whether err from activeSpec means "nothing governs this
+// item" — the fresh-repo case a caller may treat as no governance. A route that
+// exists but does not build is NOT ungoverned and must not take this path.
+func ungoverned(err error) bool {
+	return errors.Is(err, wfgovern.ErrNoWorkflow) || errors.Is(err, docindex.ErrNotFound)
+}
+
 // WorkflowNameFor returns the name of the workflow that governs a story of the
 // given category — the value stamped on the story at create. Empty when no
 // workflow governs the category. Used by the create path to record the choice.
 func (g *Engine) WorkflowNameFor(ctx context.Context, category string) string {
+	// A story is stamped with what will GOVERN it. When a derived route claims
+	// the category, that is the route — stamping an authored workflow the engine
+	// will not consult would be a lie on every story created after a conversion
+	// (sty_9835070d).
+	if workflows, err := g.docs.List(ctx, "workflows"); err == nil {
+		rs := wfgovern.RouteSourceOf(workflows)
+		if rs.Present() {
+			for _, c := range wfgovern.RouteCategories(rs.Done) {
+				if c == category || c == wfdot.WildcardCategory {
+					return wfgovern.DerivedRouteName
+				}
+			}
+		}
+	}
 	doc, err := g.activeWorkflow(ctx, category)
 	if err != nil {
 		return ""
@@ -2192,15 +2240,7 @@ func reviewerSkillsFor(body, from, to string) (skills []string, agent string, pa
 	// DOT workflow: resolve the edge from the shared wfdot spec — entry to a
 	// reviewer node is the gated transition, carrying that node's skill.
 	if spec, ok := wfdot.Parse(body); ok {
-		for _, tr := range spec.Transitions {
-			if tr.From == from && tr.To == to {
-				if len(tr.Skills) > 0 {
-					return tr.Skills, tr.Agent, tr.Parallel, true
-				}
-				return nil, tr.Agent, tr.Parallel, true
-			}
-		}
-		return nil, "", 0, false
+		return specReviewerSkills(spec, from, to)
 	}
 	for _, line := range strings.Split(body, "\n") {
 		l := strings.TrimSpace(line)
@@ -2215,6 +2255,21 @@ func reviewerSkillsFor(body, from, to string) (skills []string, agent string, pa
 				return []string{s}, "", 0, true
 			}
 			return nil, "", 0, true
+		}
+	}
+	return nil, "", 0, false
+}
+
+// specReviewerSkills resolves an edge's gate off an already-built Spec. It is
+// the front-door form: whichever representation produced the Spec — an authored
+// DOT or a derived route — the edge answers the same way (sty_9835070d).
+func specReviewerSkills(spec wfdot.Spec, from, to string) (skills []string, agent string, parallel int, declared bool) {
+	for _, tr := range spec.Transitions {
+		if tr.From == from && tr.To == to {
+			if len(tr.Skills) > 0 {
+				return tr.Skills, tr.Agent, tr.Parallel, true
+			}
+			return nil, tr.Agent, tr.Parallel, true
 		}
 	}
 	return nil, "", 0, false

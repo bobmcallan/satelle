@@ -22,19 +22,9 @@ func TestParentWorkflowSelectedAndValid(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	// Install the real workflow artifact from the source tree into the temp repo.
-	src := filepath.Join(repoRootForTest(), ".satelle", "workflows", "satelle-parent-workflow.md")
-	body, err := os.ReadFile(src)
-	if err != nil {
-		t.Fatalf("read workflow source %s: %v", src, err)
-	}
-	dst := filepath.Join(repo, ".satelle", "workflows")
-	if err := os.MkdirAll(dst, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dst, "satelle-parent-workflow.md"), body, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	// Install this repo's real route source — the lifecycle that governs an
+	// epic-parent now that the graphs are retired (sty_9835070d).
+	seedRouteSource(t, repo)
 
 	run := func(args ...string) (string, error) {
 		cmd := exec.Command(testBin, args...)
@@ -51,14 +41,22 @@ func TestParentWorkflowSelectedAndValid(t *testing.T) {
 	// validate passes: the LLM structure review is advisory with no agent
 	// configured, and the graph check (backlog initial, done terminal, the spine
 	// gate present) is deterministic.
-	if out, err := run("workflow", "validate", "satelle-parent-workflow"); err != nil {
-		t.Fatalf("validate failed: %v\n%s", err, out)
+	// Only the declaration of done is validated here. `step` names this repo's
+	// full rubric set (code, integrate, release, the deployment checks), and this
+	// temp repo has only the embedded default skills — so a FAIL there would be
+	// the fixture's missing substrate, not the lifecycle under test. That the
+	// route source resolves its gate skills at all is covered in the real repo by
+	// `satelle workflow validate`.
+	if out, err := run("workflow", "validate", "done"); err != nil {
+		t.Fatalf("validate done failed: %v\n%s", err, out)
 	} else if !strings.Contains(out, "PASS") || strings.Contains(out, "FAIL") {
-		t.Errorf("validate did not pass cleanly:\n%s", out)
+		t.Errorf("validate done did not pass cleanly:\n%s", out)
 	}
 
-	// The new workflow is the ACTIVE (highest-priority) lifecycle for both
-	// container categories, overriding the wildcard project workflow.
+	// The DERIVED route is the ACTIVE lifecycle for both container categories: it
+	// governs before any authored workflow is considered (sty_9835070d), and it
+	// claims epic-parent and parent with sections of their own rather than
+	// falling through to the wildcard.
 	type wfRow struct {
 		Name   string `json:"name"`
 		Active bool   `json:"active"`
@@ -72,8 +70,23 @@ func TestParentWorkflowSelectedAndValid(t *testing.T) {
 		if err := json.Unmarshal([]byte(out), &rows); err != nil {
 			t.Fatalf("parse workflow list %s: %v\n%s", cat, err, out)
 		}
-		if len(rows) == 0 || rows[0].Name != "satelle-parent-workflow" || !rows[0].Active {
-			t.Errorf("category %s active workflow = %+v, want satelle-parent-workflow first/active", cat, rows)
+		if len(rows) == 0 || rows[0].Name != "done.md+step.md" || !rows[0].Active {
+			t.Errorf("category %s active workflow = %+v, want the derived route first/active", cat, rows)
+		}
+		// …and it is the container lifecycle, not the wildcard one: backlog closes
+		// straight to done, with no plan/in_progress/integration/release step.
+		spec := repoRouteSpec(t, cat, nil)
+		var names []string
+		for _, st := range spec.States {
+			names = append(names, st.Name)
+		}
+		for _, absent := range []string{"plan", "in_progress", "integration", "release"} {
+			if containsStrSlice(names, absent) {
+				t.Errorf("category %s must have no %q step — a container has no slice of its own (states %v)", cat, absent, names)
+			}
+		}
+		if !spec.HasEdge("backlog", "done") {
+			t.Errorf("category %s must close backlog → done directly (states %v)", cat, names)
 		}
 	}
 }

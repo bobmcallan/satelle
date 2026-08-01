@@ -484,9 +484,9 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 	for _, it := range items {
 		byID[it.ID] = it
 	}
-	// One Parse per workflow — this path runs on every UserPromptSubmit
-	// (sty_e16a2cd7). Spec is retained so AdvanceOptions reuses it.
-	specCache := map[string]wfdot.Spec{}
+	// The front door resolves the lifecycle per item, because a DERIVED route
+	// depends on the item's category and tags, not only on a workflow name — a
+	// name-keyed cache would hand one story another's route (sty_9835070d).
 	var otherPick seatInfo
 	for _, l := range leases {
 		stale := lease.IsStale(l, now)
@@ -530,23 +530,14 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 		// Also expose the committed status when it differs (e.g. lease state=plan
 		// while story is still backlog mid-transition) by preferring lease state
 		// for messaging, but judging on committed status.
-		wf, found := wfgovern.GoverningWorkflow(wfs, it)
-		if !found {
-			return seatInfo{}, seatInfo{}, fmt.Errorf("item %s has no resolving workflow — cannot determine engagement", it.ID)
-		}
-		spec, cached := specCache[wf.Name]
-		if !cached {
-			parsed, dotOK := wfdot.Parse(wf.Body)
-			if !dotOK {
-				return seatInfo{}, seatInfo{}, fmt.Errorf("workflow %s has no DOT spec — cannot determine engagement", wf.Name)
-			}
-			spec = parsed
-			specCache[wf.Name] = spec
+		spec, wfName, _, serr := wfgovern.SpecFor(wfs, it)
+		if serr != nil {
+			return seatInfo{}, seatInfo{}, fmt.Errorf("item %s: %w — cannot determine engagement", it.ID, serr)
 		}
 		if _, known := spec.StateAgent(status); !known {
 			return seatInfo{}, seatInfo{}, fmt.Errorf(
 				"item %s status %q is not declared by workflow %s — cannot classify edit permission",
-				it.ID, status, wf.Name)
+				it.ID, status, wfName)
 		}
 		info.EditCapable = spec.IsEditCapableState(status)
 		info.EditStates = spec.EditCapableStates()
@@ -561,7 +552,7 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 		if !targetKnown {
 			return seatInfo{}, seatInfo{}, fmt.Errorf(
 				"lease for item %s targets state %q not declared by workflow %s — cannot classify edit permission",
-				it.ID, target, wf.Name)
+				it.ID, target, wfName)
 		}
 		engaging := map[string]bool{}
 		for _, s := range spec.NonTerminalEngagingStates() {
@@ -742,23 +733,14 @@ func appendSeatToPrompt(msg string, info seatInfo, now time.Time) string {
 // or the workflow does not yield a DOT spec — fail-closed, not a silent allow. Pure
 // core, split for testing.
 func anyEngaged(items []workitem.Item, wfs []docindex.Doc) (bool, error) {
-	engagingCache := map[string]map[string]bool{} // workflow name → engaging-state set
 	for _, it := range items {
-		wf, ok := wfgovern.GoverningWorkflow(wfs, it)
-		if !ok {
-			return false, fmt.Errorf("item %s has no resolving workflow — cannot determine engagement", it.ID)
+		spec, _, _, serr := wfgovern.SpecFor(wfs, it)
+		if serr != nil {
+			return false, fmt.Errorf("item %s: %w — cannot determine engagement", it.ID, serr)
 		}
-		engaging, cached := engagingCache[wf.Name]
-		if !cached {
-			spec, dotOK := wfdot.Parse(wf.Body)
-			if !dotOK {
-				return false, fmt.Errorf("workflow %s has no DOT spec — cannot determine engagement", wf.Name)
-			}
-			engaging = map[string]bool{}
-			for _, s := range spec.NonTerminalEngagingStates() {
-				engaging[s] = true
-			}
-			engagingCache[wf.Name] = engaging
+		engaging := map[string]bool{}
+		for _, s := range spec.NonTerminalEngagingStates() {
+			engaging[s] = true
 		}
 		if engaging[it.Status] {
 			return true, nil
@@ -772,27 +754,17 @@ func anyEngaged(items []workitem.Item, wfs []docindex.Doc) (bool, error) {
 // governing DOT, so an old store never re-opens planning/reviewer states merely
 // because they are non-terminal.
 func derivedSeat(items []workitem.Item, wfs []docindex.Doc) (seatInfo, bool, error) {
-	specCache := map[string]wfdot.Spec{}
 	var other seatInfo
 	for _, it := range items {
-		wf, ok := wfgovern.GoverningWorkflow(wfs, it)
-		if !ok {
-			return seatInfo{}, false, fmt.Errorf("item %s has no resolving workflow — cannot determine engagement", it.ID)
-		}
-		spec, cached := specCache[wf.Name]
-		if !cached {
-			var dotOK bool
-			spec, dotOK = wfdot.Parse(wf.Body)
-			if !dotOK {
-				return seatInfo{}, false, fmt.Errorf("workflow %s has no DOT spec — cannot determine engagement", wf.Name)
-			}
-			specCache[wf.Name] = spec
+		spec, wfName, _, serr := wfgovern.SpecFor(wfs, it)
+		if serr != nil {
+			return seatInfo{}, false, fmt.Errorf("item %s: %w — cannot determine engagement", it.ID, serr)
 		}
 		agent, known := spec.StateAgent(it.Status)
 		if !known {
 			return seatInfo{}, false, fmt.Errorf(
 				"item %s status %q is not declared by workflow %s — cannot classify edit permission",
-				it.ID, it.Status, wf.Name)
+				it.ID, it.Status, wfName)
 		}
 		info := seatInfo{
 			ItemID: it.ID, State: it.Status, StoryStatus: it.Status,
@@ -1114,12 +1086,8 @@ func firstDroppedPerformingSeat() seatInfo {
 		if leased[it.ID] {
 			continue
 		}
-		wf, found := wfgovern.GoverningWorkflow(wfs, it)
-		if !found {
-			continue
-		}
-		spec, ok := wfdot.Parse(wf.Body)
-		if !ok {
+		spec, _, _, serr := wfgovern.SpecFor(wfs, it)
+		if serr != nil {
 			continue
 		}
 		engaging := false

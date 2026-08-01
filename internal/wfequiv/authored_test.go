@@ -8,9 +8,13 @@ import (
 	"github.com/bobmcallan/satelle/internal/wfdot"
 )
 
-// authoredWorkflows is every workflow this repo authors. Named rather than
-// globbed so a file silently disappearing fails the test instead of shrinking
-// the coverage to nothing.
+// authoredWorkflows is every workflow this repo USED to author in DOT. The
+// bodies are frozen under testdata/authored rather than read from
+// .satelle/workflows, because the conversion deletes the live files
+// (sty_9835070d) — and a checker whose "before" side disappears with the format
+// it was built to verify would prove nothing. Named rather than globbed so a
+// file silently disappearing fails the test instead of shrinking the coverage
+// to nothing.
 var authoredWorkflows = []string{
 	"satelle-project-workflow.md",
 	"satelle-parent-workflow.md",
@@ -51,11 +55,7 @@ func repoRoot() string {
 
 func loadAuthored(t *testing.T, name string) wfdot.Spec {
 	t.Helper()
-	dir := repoWorkflowDir()
-	if dir == "" {
-		t.Skip("no .satelle/workflows in this checkout")
-	}
-	body, err := os.ReadFile(filepath.Join(dir, name))
+	body, err := os.ReadFile(filepath.Join("testdata", "authored", name))
 	if err != nil {
 		t.Fatalf("read %s: %v", name, err)
 	}

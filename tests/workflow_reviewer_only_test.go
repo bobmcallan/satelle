@@ -3,7 +3,6 @@
 package tests
 
 import (
-	"os"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -19,14 +18,7 @@ import (
 // to in_progress (no dead-end). `integration` is an explicit, visible testing
 // step (sty_15dbc0dd).
 func TestProjectWorkflowReviewerFirst(t *testing.T) {
-	body, err := os.ReadFile("../.satelle/workflows/satelle-project-workflow.md")
-	if err != nil {
-		t.Fatalf("read project workflow: %v", err)
-	}
-	spec, ok := wfdot.Parse(string(body))
-	if !ok {
-		t.Fatal("project workflow DOT did not parse")
-	}
+	spec := repoRouteSpec(t, "*", nil)
 
 	states := map[string]wfdot.State{}
 	for _, s := range spec.States {
