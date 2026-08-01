@@ -1,0 +1,11 @@
+# satelle-project-workflow — authored DOT vs derived route
+
+## Divergence
+
+PATH (2)
+  - state "blocked" on_enter_agent: want "blocked-triage", got ""
+  - state "done" on_enter_agent: want "retrospective", got ""
+
+## Unexpressed by the obligation shape
+
+(none reported by Build)
