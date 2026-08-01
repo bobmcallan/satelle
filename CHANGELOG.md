@@ -1,3 +1,16 @@
+## [0.0.379] - 2026-08-01
+
+### Added
+- **`wfdot.BuildRoute` / `wfdot.ParseRoute`** — the second constructor onto `wfdot.Spec`. `Parse` reads authored DOT text; `ParseRoute` reads a declaration of done (`done.md`) and a step catalogue (`step.md`) and DERIVES the same lifecycle. Every consumer downstream — `Validate`, the reachability predicates, `ScopedReviewersSplit`, `ExecutorSkillsFor`, the engine, the seat, the edit gate — sees a normal `Spec` and cannot tell which front door it came through. That is the point: the graph stops being authored without the machinery that reads it changing at all (sty_4fc3d7f7)
+- **The binary now owns topology.** Cancel from every non-terminal step, park from anywhere (including expanding the `from="*"` wildcard into explicit inbound edges), and backward movement to a recovery step are SYNTHESISED, not authored. That is the boilerplate every workflow in this repo repeats identically today. Synthesised edges carry their role state's own gate, because an edge without it silently drops the cancel and park reviewers (sty_4fc3d7f7)
+- **Order is derived, never chosen.** Each step declares the obligation it provides and the obligations it requires; the route is the topological sort. An agent picks the SET of steps and never the SEQUENCE. A cycle, a prerequisite nothing provides, or an obligation with no discharging step is a construction error that NAMES the offending thing — a route that cannot be built never degrades into a partial one, because a partial route is a route with gates missing (sty_4fc3d7f7)
+- **Concurrent review is the shape's rule, not an opt-in.** Two or more entry gates on a step default to `DefaultParallelCap`, so a route cannot accidentally serialise a gate set by forgetting to declare it. An authored `parallel:` always wins, including an explicit `0` (sty_4fc3d7f7)
+- Markdown grammar hand-rolled in the idiom the package already uses — `##` opens a record, `key: value` fills it, CSV for lists. No YAML or TOML dependency added for two small authored files, and every malformed line is an error naming its line number (sty_4fc3d7f7)
+
+### Changed
+- The equivalence checker now builds through the production constructor rather than the prototype Go literal, and asserts **zero divergence** against `satelle-project-workflow` — the stronger line the previous story could not take, because there a non-empty report was the deliverable. `internal/wfequiv/obligation.go` is deleted; the prototype's two divergences (`on_enter_agent` on `blocked` and `done`) are now expressible via `on_enter:` and `advise`, so the epic removes on-enter dispatch from one place instead of inheriting a permanent carve-out in the checker (sty_4fc3d7f7)
+- No engine, seat, lease or edit-gate code changed. The whole diff is `internal/wfdot/` and `internal/wfequiv/` (sty_4fc3d7f7)
+
 ## [0.0.378] - 2026-08-01
 
 ### Added

@@ -6,100 +6,54 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/wfdot"
 )
 
 var updateGolden = flag.Bool("update", false, "rewrite testdata goldens")
 
-// projectRouteList is satelle-project-workflow.md transcribed by hand into the
-// obligation shape the epic proposes — the definition of done for a code change,
-// plus the step catalogue that discharges it. This transcription IS the paper
-// check: if the shape cannot carry the workflow, the divergence report says so
-// and the epic stops (story sty_c6184eaa).
-//
-// Order is deliberately NOT declared. Every step names the obligation it provides
-// and the obligations it requires, and Build topologically sorts them — the
-// epic's rule that an orchestrator chooses the set, never the sequence.
-func projectRouteList() List {
-	return List{
-		Category: "feature",
-		Steps: []Step{
-			{
-				Name: "backlog", Start: true, Provides: "raised",
-			},
-			{
-				Name: "plan", Agent: "planner", Skills: []string{"plan"},
-				Provides: "planned", Requires: []string{"raised"},
-				Reviewers: []string{"satelle-story-intent-review"}, ReviewerAgent: "reviewer",
-			},
-			{
-				Name: "in_progress", Agent: "executor", Skills: []string{"code"},
-				Provides: "coded", Requires: []string{"planned"},
-				Reviewers: []string{
-					"satelle-story-plan-review",
-					"satelle-story-architecture-review",
-					"satelle-story-integration-coverage-review",
-				},
-				ReviewerAgent: "reviewer", Parallel: 4,
-			},
-			{
-				Name: "integration", Agent: "executor", Skills: []string{"integrate"},
-				Provides: "integrated", Requires: []string{"coded"},
-				Reviewers: []string{
-					"satelle-code-ac-review",
-					"satelle-story-scope-review",
-					"satelle-workflow-change-review",
-				},
-				ReviewerAgent: "reviewer",
-			},
-			{
-				Name: "release", Agent: "executor", Skills: []string{"release"},
-				Provides: "released", Requires: []string{"integrated"},
-				Reviewers: []string{"satelle-integration-review"}, ReviewerAgent: "reviewer",
-			},
-			{
-				Name: "done", Terminal: true, Requires: []string{"released"},
-				Reviewers: []string{"satelle-story-release-review"}, ReviewerAgent: "reviewer",
-			},
-		},
-		Gates: []Gate{
-			{Skill: "satelle-step-summary", Agent: "reviewer-summary", Mandatory: true},
-			{Skill: "satelle-estimate-actual-review", On: []string{"in_progress", "done"}},
-			{Skill: "satelle-format-vet-check", On: []string{"integration"}},
-			{Skill: "satelle-build-unit-check", On: []string{"integration"}},
-			{Skill: "satelle-integration-check", On: []string{"release"}},
-			{Skill: "satelle-ci-published-check", On: []string{"done"}},
-			{Skill: "satelle-dogfood-check", On: []string{"done"}},
-			{Skill: "satelle-changelog-entry-check", On: []string{"done"}},
-			{Skill: "satelle-design-review", Agent: "reviewer",
-				On: []string{"integration"}, AppliesTo: []string{"surface:ui"}},
-		},
-		Cancel: "cancelled", CancelGate: "satelle-story-cancel-review",
-		Park: "blocked", ParkGate: "satelle-story-blocked-review",
-		Recover: "in_progress", RecoverFrom: []string{"integration", "release"},
+// projectRoute builds the derived route from the AUTHORED fixtures
+// (internal/wfdot/testdata/done.md + step.md) through the production constructor.
+// The prototype Go literal this replaced lived here only to answer "can the shape
+// express it" (sty_c6184eaa); now that the constructor is real, the checker
+// compares the real thing.
+func projectRoute(t *testing.T) wfdot.Spec {
+	t.Helper()
+	dir := repoRoot()
+	if dir == "" {
+		t.Skip("no repo root in this checkout")
 	}
+	done, err := os.ReadFile(filepath.Join(dir, "internal", "wfdot", "testdata", "done.md"))
+	if err != nil {
+		t.Fatalf("read done.md: %v", err)
+	}
+	step, err := os.ReadFile(filepath.Join(dir, "internal", "wfdot", "testdata", "step.md"))
+	if err != nil {
+		t.Fatalf("read step.md: %v", err)
+	}
+	spec, err := wfdot.ParseRoute(string(done), string(step), "feature", nil)
+	if err != nil {
+		t.Fatalf("ParseRoute: %v", err)
+	}
+	return spec
 }
 
-// TestProjectRouteEquivalence is the story's deliverable. It does NOT assert the
-// report is empty: a non-empty divergence is a finding, not a failure. Asserting
-// emptiness here would either force the obligation list to be fudged until it
-// agreed, or turn an honest negative result into a red build — either way it
-// would launder the epic's go/no-go signal.
+// TestProjectRouteEquivalence asserts the derived route is behaviourally
+// identical to the authored graph, and goldens the report either way.
+//
+// sty_c6184eaa could not assert emptiness — there a non-empty result WAS the
+// deliverable, and asserting otherwise would have laundered the go/no-go signal.
+// That question is settled, so this story holds the stronger line: any divergence
+// at all is a regression, and the golden records what it was.
 func TestProjectRouteEquivalence(t *testing.T) {
 	authored := loadAuthored(t, "satelle-project-workflow.md")
-	derived, unexpressed := Build(projectRouteList())
+	derived := projectRoute(t)
 	report := Diff(authored, derived)
 
 	var b strings.Builder
 	b.WriteString("# satelle-project-workflow — authored DOT vs derived route\n\n")
 	b.WriteString("## Divergence\n\n")
 	b.WriteString(report.String())
-	b.WriteString("\n## Unexpressed by the obligation shape\n\n")
-	if len(unexpressed) == 0 {
-		b.WriteString("(none reported by Build)\n")
-	}
-	for _, u := range unexpressed {
-		b.WriteString("  - " + u + "\n")
-	}
 	got := b.String()
 
 	path := filepath.Join("testdata", "project-route.golden")
@@ -110,7 +64,7 @@ func TestProjectRouteEquivalence(t *testing.T) {
 		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
 			t.Fatalf("write golden: %v", err)
 		}
-		t.Logf("golden updated (%d divergences, %d unexpressed)", report.Count(), len(unexpressed))
+		t.Logf("golden updated (%d divergences)", report.Count())
 		return
 	}
 	want, err := os.ReadFile(path)
@@ -119,6 +73,9 @@ func TestProjectRouteEquivalence(t *testing.T) {
 	}
 	if string(want) != got {
 		t.Errorf("project-route golden drifted.\n--- want ---\n%s\n--- got ---\n%s", want, got)
+	}
+	if !report.Empty() {
+		t.Errorf("derived route diverges from the authored graph:\n%s", report)
 	}
 }
 
@@ -129,7 +86,7 @@ func TestProjectRouteEquivalence(t *testing.T) {
 // golden; the spine is not negotiable.
 func TestProjectRouteSpineReproduces(t *testing.T) {
 	authored := loadAuthored(t, "satelle-project-workflow.md")
-	derived, _ := Build(projectRouteList())
+	derived := projectRoute(t)
 
 	if !equalStrings(authored.PerformingStates(), derived.PerformingStates()) {
 		t.Errorf("performing states diverge: want %v, got %v",

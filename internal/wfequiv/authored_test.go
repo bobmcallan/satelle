@@ -39,6 +39,16 @@ func repoWorkflowDir() string {
 	}
 }
 
+// repoRoot is the tree holding .satelle/workflows — the same walk-up as
+// repoWorkflowDir, returning the root rather than the workflow dir.
+func repoRoot() string {
+	dir := repoWorkflowDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Dir(filepath.Dir(dir))
+}
+
 func loadAuthored(t *testing.T, name string) wfdot.Spec {
 	t.Helper()
 	dir := repoWorkflowDir()
