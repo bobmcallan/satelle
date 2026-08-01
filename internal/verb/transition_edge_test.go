@@ -3,12 +3,14 @@ package verb_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -42,10 +44,30 @@ func TestRefuseSkippedStepPlanBlowThrough(t *testing.T) {
 		}
 	}
 
+	// sty_39e2d9df AC3: the refusal is STRUCTURED — the rule that fired, why it
+	// fired here, and where the story may go instead. With the graph derived there
+	// is no workflow file to open, so this is the only place that answer lives.
+	var ref wfgovern.Refusal
+	if !errors.As(err, &ref) {
+		t.Fatalf("refusal must be a wfgovern.Refusal, got %T: %v", err, err)
+	}
+	if ref.Rule != wfgovern.RuleSkippedStep {
+		t.Errorf("rule = %q; want %q", ref.Rule, wfgovern.RuleSkippedStep)
+	}
+	if ref.From != "backlog" || ref.To != "in_progress" || ref.Item != created.ID || ref.Workflow != "gate-wf" {
+		t.Errorf("refusal = %+v; want the edge, item and governing workflow named", ref)
+	}
+	if strings.TrimSpace(ref.Why) == "" {
+		t.Error("a structured refusal must say WHY the rule applied here")
+	}
+	if len(ref.Alternatives) != 1 || ref.Alternatives[0] != "plan" {
+		t.Errorf("alternatives = %v; want the legal moves ([plan])", ref.Alternatives)
+	}
+
 	// Legal edge: backlog → plan (may fail later gates; must not be edge fence).
 	req, _ = json.Marshal(map[string]any{"id": created.ID, "status": "plan"})
 	_, err = verb.Dispatch(context.Background(), "story-set", req)
-	if err != nil && strings.Contains(err.Error(), "not an edge") {
+	if err != nil && strings.Contains(err.Error(), wfgovern.RuleSkippedStep) {
 		t.Fatalf("legal backlog→plan refused by edge fence: %v", err)
 	}
 }

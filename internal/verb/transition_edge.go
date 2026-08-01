@@ -59,9 +59,15 @@ func refuseSkippedStep(ctx context.Context, current workitem.Item, toStatus stri
 		if spec.HasEdge(from, toStatus) && !spec.IsPerformingState(toStatus) {
 			return nil
 		}
-		return fmt.Errorf(
-			"satelle: refusing transition %s→%s on %s — park resume must return to origin %q (not %q); cancelled and other non-performing exits remain open when declared",
-			from, toStatus, current.ID, origin, toStatus)
+		return wfgovern.Refusal{
+			Rule: wfgovern.RuleParkResume, Item: current.ID, Workflow: wf.Name,
+			From: from, To: toStatus,
+			Why: fmt.Sprintf(
+				"a parked story resumes to the state it parked from (%q), so the gates already passed to reach it are not re-run and none are skipped",
+				origin),
+			Alternatives: append([]string{origin}, declaredExits(spec, from)...),
+			Remedy:       "cancelled and other declared non-performing exits remain open",
+		}
 	}
 
 	if spec.HasEdge(from, toStatus) {
@@ -71,13 +77,34 @@ func refuseSkippedStep(ctx context.Context, current workitem.Item, toStatus stri
 	// free-form — name successors of from when any, else generic.
 	next := spec.Successors(from)
 	if len(next) == 0 {
-		return fmt.Errorf(
-			"satelle: refusing transition %s→%s on %s — not an edge in workflow %s (no declared successors from %s); open a session on a legal path or fix the workflow DOT",
-			from, toStatus, current.ID, wf.Name, from)
+		return wfgovern.Refusal{
+			Rule: wfgovern.RuleSkippedStep, Item: current.ID, Workflow: wf.Name,
+			From: from, To: toStatus,
+			Why:    fmt.Sprintf("the route declares no step at all after %s, so there is nothing to move to from here", from),
+			Remedy: "open a session on a legal path, or fix the workflow's declaration of done",
+		}
 	}
-	return fmt.Errorf(
-		"satelle: refusing transition %s→%s on %s — not an edge in workflow %s; expected next step(s): %s",
-		from, toStatus, current.ID, wf.Name, strings.Join(next, ", "))
+	return wfgovern.Refusal{
+		Rule: wfgovern.RuleSkippedStep, Item: current.ID, Workflow: wf.Name,
+		From: from, To: toStatus,
+		Why: fmt.Sprintf(
+			"the route puts %s after %s; a step may not be skipped because its gates are the only place the work is judged",
+			strings.Join(next, " or "), from),
+		Alternatives: next,
+	}
+}
+
+// declaredExits returns the declared NON-PERFORMING targets of from — the exits a
+// parked story may still take (cancel and the like), so a park-resume refusal
+// names every legal move rather than only the origin.
+func declaredExits(spec wfdot.Spec, from string) []string {
+	var out []string
+	for _, to := range spec.Successors(from) {
+		if !spec.IsPerformingState(to) {
+			out = append(out, to)
+		}
+	}
+	return out
 }
 
 // parkOriginForTransition returns the park_origin value to stamp on a status

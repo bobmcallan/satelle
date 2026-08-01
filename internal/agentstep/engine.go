@@ -455,6 +455,13 @@ func (g *Engine) fillPayloadDocs(ctx context.Context, itemID string, tp *transit
 		if strings.EqualFold(d.Type, "change") {
 			continue
 		}
+		// The route document is the OPERATOR's artifact (sty_39e2d9df): it grows by
+		// one block per step, and injecting it into the gate that is about to write
+		// the NEXT block is both circular and quadratic in tokens. A reviewer already
+		// receives the plan and the step summaries. Pull via satelle story route.
+		if strings.EqualFold(d.Type, verb.RouteDocName) {
+			continue
+		}
 		if used >= docsPayloadCeiling {
 			out = append(out, DocState{Name: d.Name, Type: d.Type, Truncated: true})
 			continue
@@ -560,7 +567,7 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 	// fails its deterministic structure check must never gate work — refuse the
 	// transition with the problems, instead of silently proceeding under a broken
 	// definition.
-	if err := g.guardWorkflowStructure(ctx, item); err != nil {
+	if err := g.guardWorkflowStructure(ctx, item, toStatus); err != nil {
 		return verb.GateDecision{}, err
 	}
 	// Park resume-to-origin (sty_f75286dc): when ParkOrigin is set and the target
@@ -580,14 +587,23 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 		// The active workflow does not declare this edge — it is not a legal move.
 		// Refuse it (the caller blocks the transition), so a story cannot skip a
 		// gate by jumping across an edge the workflow never declared (sty_ebd3d666).
-		// Prefer Successors so the expected next step is named when the DOT is known.
-		msg := fmt.Sprintf("transition %s→%s is not a declared edge in the active workflow", item.Status, toStatus)
-		if next := g.successorsOf(ctx, item, item.Status); len(next) > 0 {
-			msg = fmt.Sprintf(
-				"satelle: refusing transition %s→%s — not a declared edge; expected next step(s): %s",
-				item.Status, toStatus, strings.Join(next, ", "))
+		// Structured (sty_39e2d9df): with the graph derived there is no file to open,
+		// so the refusal itself carries the rule, why it applied here, and where the
+		// story may go instead.
+		next := g.successorsOf(ctx, item, item.Status)
+		ref := wfgovern.Refusal{
+			Rule: wfgovern.RuleUndeclaredEdge, Item: item.ID,
+			From: item.Status, To: toStatus, Alternatives: next,
 		}
-		return verb.GateDecision{}, fmt.Errorf("%s", msg)
+		if len(next) > 0 {
+			ref.Why = fmt.Sprintf(
+				"the route puts %s after %s; entry to %s is gated, and an undeclared edge would reach it with no reviewer",
+				strings.Join(next, " or "), item.Status, toStatus)
+		} else {
+			ref.Why = fmt.Sprintf("the route declares no step after %s", item.Status)
+			ref.Remedy = "fix the workflow's declaration of done, or move the story to a declared state"
+		}
+		return verb.GateDecision{}, ref
 	}
 	// Before a story is IMPLEMENTED, guard against engaging it into a workflow that
 	// cannot complete. On the ENGAGEMENT edge, deterministically (no agent) resolve
@@ -769,7 +785,7 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 // Embedded canonical defaults are the binary's own bytes (validated by satelle's
 // tests), so only authored (non-embedded) substrate is judged here; no resolvable
 // workflow at all keeps the gateless path working.
-func (g *Engine) guardWorkflowStructure(ctx context.Context, item workitem.Item) error {
+func (g *Engine) guardWorkflowStructure(ctx context.Context, item workitem.Item, toStatus string) error {
 	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
 	if err != nil {
 		if errors.Is(err, docindex.ErrNotFound) {
@@ -785,9 +801,15 @@ func (g *Engine) guardWorkflowStructure(ctx context.Context, item workitem.Item)
 	// edge-scoped DECISION), not a hard structural error on every edge. This
 	// guard judges only whether the workflow DEFINITION itself is well-formed.
 	if problems := structure.Doc("workflows", doc.Name, doc.Body, nil); len(problems) > 0 {
-		return fmt.Errorf(
-			"gate refused: governing workflow %q fails structure validation: %s — fix the substrate (`satelle workflow validate %s`) before gated transitions can run",
-			doc.Name, strings.Join(problems, "; "), doc.Name)
+		// No alternatives on purpose: a workflow that fails structure validation
+		// governs NO legal move, so the only honest answer is the remedy.
+		return wfgovern.Refusal{
+			Rule: wfgovern.RuleStructureGuard, Item: item.ID, Workflow: doc.Name,
+			From: item.Status, To: toStatus,
+			Why: fmt.Sprintf("the governing workflow fails structure validation (%s), so no gate under it can be trusted to judge",
+				strings.Join(problems, "; ")),
+			Remedy: fmt.Sprintf("fix the substrate (`satelle workflow validate %s`) — no transition is legal until it passes", doc.Name),
+		}
 	}
 	return nil
 }
@@ -1783,9 +1805,20 @@ func (g *Engine) parkResume(ctx context.Context, item workitem.Item, toStatus st
 	// Performing targets other than origin, or undeclared exits: refuse so park
 	// cannot wormhole around gates (e.g. park from in_progress → release).
 	if spec.IsPerformingState(toStatus) || !spec.HasEdge(item.Status, toStatus) {
-		return false, fmt.Errorf(
-			"satelle: refusing transition %s→%s — park resume must return to origin %q",
-			item.Status, toStatus, origin)
+		var exits []string
+		for _, to := range spec.Successors(item.Status) {
+			if !spec.IsPerformingState(to) {
+				exits = append(exits, to)
+			}
+		}
+		return false, wfgovern.Refusal{
+			Rule: wfgovern.RuleParkResume, Item: item.ID,
+			From: item.Status, To: toStatus,
+			Why: fmt.Sprintf(
+				"a parked story resumes to the state it parked from (%q); resuming elsewhere would re-enter the route past gates it never passed",
+				origin),
+			Alternatives: append([]string{origin}, exits...),
+		}
 	}
 	return false, nil
 }

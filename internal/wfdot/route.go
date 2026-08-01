@@ -213,6 +213,7 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 			Name:         st.Name,
 			Agent:        st.Agent,
 			Skill:        firstOf(st.Skills),
+			Obligation:   st.Provides,
 			Shape:        shape,
 			AppliesTo:    st.AppliesTo,
 			OnEnterAgent: st.OnEnterAgent,

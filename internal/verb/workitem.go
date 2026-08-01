@@ -452,6 +452,11 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	// edge is governed by a reviewer skill. A reject blocks the whole set and
 	// pushes the reviewer's notes back to the executor; an ungated edge enacts.
 	gatedAccepted := false
+	// Verdicts carried past the gate block so the route document can append this
+	// step's outcome AFTER the transition commits (sty_39e2d9df). A local, not a
+	// signature change: the reasoning belongs on the same artifact as the route.
+	var routeVerdicts []ReviewerVerdict
+	var routeUnresolved []string
 	if transitioning && transitionGater != nil {
 		dec, gerr := transitionGater.Gate(ctx, current, *req.Status)
 		if gerr != nil {
@@ -517,6 +522,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		if len(reviewers) > 0 {
 			gatedAccepted = true
 		}
+		routeVerdicts, routeUnresolved = reviewers, dec.Unresolved
 	}
 
 	// A workflow node may allocate the TARGET state to a NAMED isolated agent
@@ -616,6 +622,10 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		// Record the change set for the step just closed (sty_948ad5df).
 		// Enumeration only; best-effort; never blocks the transition.
 		recordChangeSet(ctx, it, current.Status, *req.Status, now)
+		// Write the route forward (sty_39e2d9df): re-render the plan half so the
+		// "you are here" marker is current, and APPEND this step's verdicts and
+		// reviewer reasoning to the same artifact. Best-effort, like the change set.
+		recordRoute(ctx, it, current.Status, *req.Status, routeVerdicts, routeUnresolved, now)
 		// After a GATED transition is enacted, the read-only summariser recaps the
 		// step into a step_summary row — but ONLY where the active workflow declares
 		// a step-summary node (transparent opt-in; sty_9a139c78). The transition

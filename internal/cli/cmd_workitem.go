@@ -690,6 +690,38 @@ func storyDocCommands() []*cobra.Command {
 		},
 	}
 
+	// route — the story's route AND the reasoning behind every outcome, as one
+	// artifact (sty_39e2d9df). Renders the attached document when the story has
+	// moved; renders the route live from the governing workflow when it has not,
+	// so "what is my route" is answerable from backlog. Read-only.
+	route := &cobra.Command{
+		Use:   "route <id>",
+		Short: "Show a story's route — its ordered steps and the reasoning behind every outcome so far",
+		Long: `route renders the single artifact a story carries about its own process.
+
+The plan half is the ordered route: each step, the obligation it discharges, who
+performs it under which rubrics, and the reviewers gating entry — including which
+gates are present only because the story carries a tag.
+
+The outcome half is appended as steps resolve: each reviewer's verdict, its
+reasoning, and a pointer to the full output in the ledger.
+
+Read-only, and answerable without opening any workflow file.`,
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := appFrom(cmd); err != nil {
+				return err
+			}
+			body, err := verb.StoryRoute(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), strings.TrimRight(body, "\n"))
+			return nil
+		},
+	}
+
 	// lessons — cross-story enumeration of typed lessons/lesson attachments
 	// (offline friction corpus; never session-injected).
 	lessons := &cobra.Command{
@@ -701,7 +733,7 @@ func storyDocCommands() []*cobra.Command {
 			return dispatch(cmd, "story-lessons-list", map[string]any{})
 		},
 	}
-	return []*cobra.Command{attach, docs, doc, lessons}
+	return []*cobra.Command{attach, docs, doc, route, lessons}
 }
 
 // storyStopRequestCommand builds `satelle story stop-request <id> --reason …`

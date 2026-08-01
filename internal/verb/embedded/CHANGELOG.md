@@ -1,3 +1,21 @@
+## [0.0.380] - 2026-08-01
+
+### Added
+- **`satelle story route <id>`** — a story's route and the reasoning behind every outcome, as ONE artifact. The plan half is the ordered steps between the story and done: each step's obligation, who performs it under which rubrics, and the reviewers gating entry — with a gate present only because the story carries a tag marked as such, and one filtered out for want of that tag recorded as `skipped`, so "no gate" and "gate not for you" stay distinguishable. The outcome half is appended as each step resolves: every reviewer's verdict, its reasoning, and a pointer to the full output on the ledger (sty_39e2d9df)
+- **`internal/wfroute`** — the rendering half, a leaf with no store and no `verb` import. Its input is a `wfdot.Spec`, which is blind to its front door, so the AUTHORED DOT and the DERIVED route render the same steps, performers and gates. A test asserts exactly that, on the surface the operator actually reads (sty_39e2d9df)
+- **`wfgovern.Refusal`** — engine refusals are structured: the rule that fired (`undeclared-edge`, `skipped-step`, `park-resume-origin`, `structure-guard`), why it fired on this story, and the legal moves it leaves open. When the graph was authored, an operator who hit "that edge is not declared" could open the workflow file; a derived route has no file to open, so the refusal itself has to carry that answer. The structure guard is the one refusal with no alternatives — a broken workflow governs no legal move — and it carries a remedy instead (sty_39e2d9df)
+- `wfdot.State.Obligation`, populated by `BuildRoute` from the step's `provides`. Empty for an authored DOT, which has no obligation vocabulary; converting this repo's workflows fills it in (sty_39e2d9df)
+
+### Changed
+- The route is written FORWARD, on the same best-effort footing as the change record: the plan half is re-rendered on every transition so the "you are here" marker stays true, and everything after `## Outcomes` is carried verbatim, so history is appended and never rewritten. One doc name, one writer, one read verb — that is how "route and reasoning are one artifact" is enforced structurally rather than by convention (sty_39e2d9df)
+- **`type:route` is excluded from the gate docs payload**, like `type:change`. The route grows by one block per step, so injecting it into the gate about to write the NEXT block is circular and quadratic in tokens. It is also unsafe: because the route QUOTES prior verdicts, and a coded check's "notes" are its own script, the integration suite caught an estimate gate matching a literal from its own earlier output and accepting a close it should have rejected. The route now records a bounded excerpt — a pointer, not a transcript — and never reaches a gate's stdin (sty_39e2d9df)
+- Legibility is enforced, not aspirational: a test asserts the route renders one line per step within ~10 lines and names no workflow file. If it overflows, the route has become too dynamic to read, and the failing test is the signal (sty_39e2d9df)
+
+## [serve-v0.0.13] - 2026-08-01
+
+### Changed
+- Ships the timeline fix from 0.0.376 that had not yet reached a serve release: a `gate_skipped` row renders as **fail**, not pass. That edge advanced with no verdict because its gate skill did not resolve, and it must not read as green (sty_d59ec6a9, released here by sty_39e2d9df)
+
 ## [0.0.379] - 2026-08-01
 
 ### Added

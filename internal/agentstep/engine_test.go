@@ -17,6 +17,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -1047,6 +1048,21 @@ func TestGateRefusesBrokenWorkflowStructure(t *testing.T) {
 	if r.got.SystemPrompt != "" {
 		t.Error("no reviewer may run under a broken workflow definition")
 	}
+	// sty_39e2d9df AC3: structured, and honest about having NO alternative — a
+	// broken workflow governs no legal move, so the refusal offers a remedy instead.
+	var ref wfgovern.Refusal
+	if !errors.As(err, &ref) {
+		t.Fatalf("refusal must be a wfgovern.Refusal, got %T: %v", err, err)
+	}
+	if ref.Rule != wfgovern.RuleStructureGuard {
+		t.Errorf("rule = %q; want %q", ref.Rule, wfgovern.RuleStructureGuard)
+	}
+	if len(ref.Alternatives) != 0 {
+		t.Errorf("alternatives = %v; a broken workflow leaves none", ref.Alternatives)
+	}
+	if !strings.Contains(ref.Remedy, "satelle workflow validate") {
+		t.Errorf("remedy = %q; want the command that fixes the substrate", ref.Remedy)
+	}
 }
 
 // TestGateRefusesBrokenReviewerSkill: a PRESENT reviewer skill that fails its
@@ -1780,6 +1796,60 @@ func TestGateRefusesUndeclaredEdge(t *testing.T) {
 	if r.got.SystemPrompt != "" {
 		t.Errorf("reviewer must not run on an undeclared edge")
 	}
+	// sty_39e2d9df AC3: the refusal carries the rule, why it applied here, and the
+	// legal moves — the answer an operator used to get by opening the graph.
+	var ref wfgovern.Refusal
+	if !errors.As(err, &ref) {
+		t.Fatalf("refusal must be a wfgovern.Refusal, got %T: %v", err, err)
+	}
+	if ref.Rule != wfgovern.RuleUndeclaredEdge {
+		t.Errorf("rule = %q; want %q", ref.Rule, wfgovern.RuleUndeclaredEdge)
+	}
+	if ref.From != "in_progress" || ref.To != "integrated" {
+		t.Errorf("refusal = %+v; want the refused edge named", ref)
+	}
+	if strings.TrimSpace(ref.Why) == "" {
+		t.Error("a structured refusal must say WHY the rule applied here")
+	}
+	if len(ref.Alternatives) == 0 && ref.Remedy == "" {
+		t.Error("a refusal must leave the operator somewhere to go: alternatives or a remedy")
+	}
+}
+
+// TestParkResumeRefusalIsStructured (sty_39e2d9df AC3): leaving a park state for
+// anywhere but the recorded origin refuses with the origin named as the legal
+// move — the rule that would otherwise be invisible under a derived graph.
+func TestParkResumeRefusalIsStructured(t *testing.T) {
+	parkWorkflow := wfDoc(baselineWorkflow, `"*"`, `digraph w {
+  backlog [shape=Mdiamond]
+  in_progress [agent=executor]
+  release [agent=executor]
+  done [shape=Msquare]
+  blocked [agent=reviewer]
+  cancelled [agent=reviewer]
+  backlog -> in_progress
+  in_progress -> release
+  release -> done
+  in_progress -> blocked
+  blocked -> cancelled
+}`)
+	g, _ := newEngine(t, `{"decision":"accept"}`,
+		fakeDocs{workflow: parkWorkflow, skillBody: "rubric", skillFound: true})
+	_, err := g.Gate(context.Background(),
+		workitem.Item{ID: "sty_p", Status: "blocked", ParkOrigin: "in_progress"}, "release")
+	if err == nil {
+		t.Fatal("expected a refusal resuming from park to a state that is not the origin")
+	}
+	var ref wfgovern.Refusal
+	if !errors.As(err, &ref) {
+		t.Fatalf("refusal must be a wfgovern.Refusal, got %T: %v", err, err)
+	}
+	if ref.Rule != wfgovern.RuleParkResume {
+		t.Errorf("rule = %q; want %q", ref.Rule, wfgovern.RuleParkResume)
+	}
+	if len(ref.Alternatives) == 0 || ref.Alternatives[0] != "in_progress" {
+		t.Errorf("alternatives = %v; want the park origin first", ref.Alternatives)
+	}
 }
 
 // ReviewCreate is now DETERMINISTIC (internal/structure) — no rubric, no agent
@@ -2419,6 +2489,33 @@ func TestChangeRecordExcludedFromGatePayload(t *testing.T) {
 	}
 	if strings.Contains(r.got.Payload, `"name":"change-in_progress-integration"`) {
 		t.Error("type:change doc must not be listed in gate payload docs")
+	}
+}
+
+// TestRouteDocExcludedFromGatePayload (sty_39e2d9df): the route document is the
+// OPERATOR's artifact and must not ride the gate payload. It grows by one block
+// per step, so injecting it into the gate about to write the NEXT block is
+// circular and quadratic; and because it QUOTES prior verdicts, a coded check
+// that greps its stdin would end up matching a check's own earlier output.
+func TestRouteDocExcludedFromGatePayload(t *testing.T) {
+	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
+	g.SetDocsResolver(func(_ context.Context, itemID string) []DocState {
+		return []DocState{
+			{Name: "plan", Type: "plan", Body: "# plan body"},
+			{Name: verb.RouteDocName, Type: verb.RouteDocName, Body: "notes: functional check passed, quoting \"actual-minutes:\" from its own script"},
+		}
+	})
+	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_route", Status: "in_progress"}, "done"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.got.Payload, "plan body") {
+		t.Error("plan doc must still ride the payload")
+	}
+	if strings.Contains(r.got.Payload, "actual-minutes:") {
+		t.Error("the route document's quoted verdicts must not reach a gate's stdin")
+	}
+	if strings.Contains(r.got.Payload, `"name":"`+verb.RouteDocName+`"`) {
+		t.Error("the route document must not be listed in gate payload docs")
 	}
 }
 

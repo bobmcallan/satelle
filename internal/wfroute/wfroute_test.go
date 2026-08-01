@@ -1,0 +1,223 @@
+package wfroute
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/bobmcallan/satelle/internal/wfdot"
+)
+
+// repoRoot walks up for go.mod so the fixtures resolve from the package dir.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	for i := 0; i < 6; i++ {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		dir = filepath.Dir(dir)
+	}
+	t.Skip("no repo root in this checkout")
+	return ""
+}
+
+// derived builds a Spec through the DERIVED front door (done.md + step.md).
+func derived(t *testing.T, tags []string) wfdot.Spec {
+	t.Helper()
+	root := repoRoot(t)
+	done, err := os.ReadFile(filepath.Join(root, "internal", "wfdot", "testdata", "done.md"))
+	if err != nil {
+		t.Fatalf("read done.md: %v", err)
+	}
+	step, err := os.ReadFile(filepath.Join(root, "internal", "wfdot", "testdata", "step.md"))
+	if err != nil {
+		t.Fatalf("read step.md: %v", err)
+	}
+	spec, err := wfdot.ParseRoute(string(done), string(step), "feature", tags)
+	if err != nil {
+		t.Fatalf("ParseRoute: %v", err)
+	}
+	return spec
+}
+
+// authored builds a Spec through the AUTHORED front door (this repo's DOT).
+func authored(t *testing.T) wfdot.Spec {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(repoRoot(t), ".satelle", "workflows", "satelle-project-workflow.md"))
+	if err != nil {
+		t.Skipf("no authored project workflow in this checkout: %v", err)
+	}
+	spec, ok := wfdot.Parse(string(body))
+	if !ok {
+		t.Fatal("Parse: the authored project workflow has no parseable dot block")
+	}
+	return spec
+}
+
+// TestRouteExposesEveryStepField (AC1): a step names its status, its obligation,
+// its performer, its rubrics and its entry reviewers. All five, per step, or the
+// route is not a substitute for reading the graph.
+func TestRouteExposesEveryStepField(t *testing.T) {
+	r := Build(derived(t, nil), "satelle-project-workflow", nil)
+	byName := map[string]Step{}
+	for _, s := range r.Steps {
+		byName[s.Status] = s
+	}
+	for _, want := range []string{"backlog", "plan", "in_progress", "integration", "release", "done"} {
+		if _, ok := byName[want]; !ok {
+			t.Fatalf("route is missing step %q; got %v", want, byName)
+		}
+	}
+	if got := byName["in_progress"]; got.Obligation != "coded" || got.Agent != "executor" ||
+		len(got.Skills) != 1 || got.Skills[0] != "code" {
+		t.Errorf("in_progress = %+v; want obligation=coded agent=executor skills=[code]", got)
+	}
+	gates := skillsOf(byName["in_progress"].Reviewers)
+	for _, want := range []string{"satelle-story-plan-review", "satelle-estimate-actual-review"} {
+		if !contains(gates, want) {
+			t.Errorf("in_progress entry gates = %v; want %q among them", gates, want)
+		}
+	}
+	if !byName["done"].Terminal {
+		t.Error("done must render as the route's terminal step")
+	}
+}
+
+// TestRouteMarksTagScopedGates (AC1): a gate present only because the story
+// carries a tag says so, and one filtered out for want of that tag is recorded
+// as skipped — so "no gate" and "gate not for you" stay distinguishable.
+func TestRouteMarksTagScopedGates(t *testing.T) {
+	ui := stepAt(t, Build(derived(t, []string{"surface:ui"}), "wf", []string{"surface:ui"}), "integration")
+	var scoped *Reviewer
+	for i, rv := range ui.Reviewers {
+		if rv.Skill == "satelle-design-review" {
+			scoped = &ui.Reviewers[i]
+		}
+	}
+	if scoped == nil {
+		t.Fatalf("surface:ui story is missing the design gate; got %v", skillsOf(ui.Reviewers))
+	}
+	if len(scoped.ByTag) == 0 || scoped.ByTag[0] != "surface:ui" {
+		t.Errorf("design gate ByTag = %v; want [surface:ui] so the route says WHY it is present", scoped.ByTag)
+	}
+
+	cli := stepAt(t, Build(derived(t, []string{"surface:cli"}), "wf", []string{"surface:cli"}), "integration")
+	if contains(skillsOf(cli.Reviewers), "satelle-design-review") {
+		t.Error("a surface:cli story must not carry the surface:ui design gate")
+	}
+	if !contains(skillsOf(cli.Skipped), "satelle-design-review") {
+		t.Errorf("the design gate must be recorded as SKIPPED for surface:cli, not silently absent; got %v", cli.Skipped)
+	}
+}
+
+// TestRouteSeparatesExitsFromSteps: park and cancel are exits, never steps. A
+// route that listed them inline would claim the story passes through them.
+func TestRouteSeparatesExitsFromSteps(t *testing.T) {
+	r := Build(derived(t, nil), "wf", nil)
+	for _, s := range r.Steps {
+		if s.Status == "blocked" || s.Status == "cancelled" {
+			t.Fatalf("%q is an exit, not a step on the route", s.Status)
+		}
+	}
+	exits := map[string]Exit{}
+	for _, e := range r.Exits {
+		exits[e.Status] = e
+	}
+	if !exits["blocked"].Park {
+		t.Error("blocked must render as a park exit (it has onward movement)")
+	}
+	if exits["cancelled"].Park {
+		t.Error("cancelled must render as terminal, not park — nothing resumes from it")
+	}
+}
+
+// TestRouteIsBlindToItsFrontDoor: the authored DOT and the derived route render
+// the same steps, performers and gates. That is the epic's whole claim, checked
+// on the surface the operator actually reads.
+func TestRouteIsBlindToItsFrontDoor(t *testing.T) {
+	tags := []string{"surface:ui"}
+	a := Build(authored(t), "wf", tags)
+	d := Build(derived(t, tags), "wf", tags)
+	if len(a.Steps) != len(d.Steps) {
+		t.Fatalf("authored %d steps, derived %d", len(a.Steps), len(d.Steps))
+	}
+	for i := range a.Steps {
+		as, ds := a.Steps[i], d.Steps[i]
+		if as.Status != ds.Status || as.Agent != ds.Agent ||
+			strings.Join(as.Skills, ",") != strings.Join(ds.Skills, ",") {
+			t.Errorf("step %d: authored %+v vs derived %+v", i, as, ds)
+		}
+		ag, dg := append([]string(nil), skillsOf(as.Reviewers)...), append([]string(nil), skillsOf(ds.Reviewers)...)
+		sortStrings(ag)
+		sortStrings(dg)
+		if strings.Join(ag, ",") != strings.Join(dg, ",") {
+			t.Errorf("step %q gates: authored %v vs derived %v", as.Status, ag, dg)
+		}
+	}
+}
+
+// TestRouteFitsTheLegibilityBudget (AC4 / the story's own test): the route is one
+// line per step. If it overflows, the route has become too dynamic to read — the
+// failure is the signal, not a nuisance.
+func TestRouteFitsTheLegibilityBudget(t *testing.T) {
+	out := Build(derived(t, nil), "satelle-project-workflow", nil).Render("in_progress")
+	steps := 0
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "**") {
+			steps++
+		}
+	}
+	if steps != 6 {
+		t.Errorf("rendered %d step lines; want one per step (6)", steps)
+	}
+	if lines := len(strings.Split(strings.TrimSpace(out), "\n")); lines > 12 {
+		t.Errorf("route renders in %d lines; the budget is ~10 — the route is too dynamic to read", lines)
+	}
+	if !strings.Contains(out, "* 3. **in_progress**") {
+		t.Errorf("the route must mark where the story IS; got:\n%s", out)
+	}
+	if strings.Contains(out, ".satelle/workflows") || strings.Contains(out, "```dot") {
+		t.Error("the route must be readable without pointing at a workflow file")
+	}
+}
+
+func stepAt(t *testing.T, r Route, status string) Step {
+	t.Helper()
+	for _, s := range r.Steps {
+		if s.Status == status {
+			return s
+		}
+	}
+	t.Fatalf("no step %q on the route", status)
+	return Step{}
+}
+
+func skillsOf(rs []Reviewer) []string {
+	out := make([]string, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, r.Skill)
+	}
+	return out
+}
+
+func contains(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+func sortStrings(ss []string) {
+	for i := 1; i < len(ss); i++ {
+		for j := i; j > 0 && ss[j] < ss[j-1]; j-- {
+			ss[j], ss[j-1] = ss[j-1], ss[j]
+		}
+	}
+}

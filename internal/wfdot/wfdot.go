@@ -127,6 +127,12 @@ type State struct {
 	// executor step performs, or the gate a reviewer node judges by (empty when
 	// the node carries no prompt). Populated from the DOT grammar.
 	Skill string
+	// Obligation is what this step DISCHARGES — the declaration-of-done entry that
+	// put it on the route. Set by BuildRoute from the step's `provides`; empty for
+	// an authored DOT, which has no obligation vocabulary. Carried on State (not
+	// only in the route constructor) so the route a story renders is the same one
+	// whichever front door built the Spec (sty_39e2d9df).
+	Obligation string
 	// OnEnterAgent is an optional one-shot named performer dispatched on ENTRY
 	// to this state (on_enter_agent=<name>), orthogonal to Agent. Lets a park
 	// node stay agent=reviewer (non-engaging for edit/commit gates) while still

@@ -186,5 +186,28 @@ briefed, how it pulls the story/documents/ledger by id, what makes it
 self-sufficient, and why its EXIT edge must carry the review — see
 `satelle help agent-dispatch`.
 
+## Reading a story's route — `satelle story route <id>`
+
+A workflow file answers "what is the lifecycle". It does **not** answer "what is
+THIS story's lifecycle" — which tag-scoped gates are on for it, where it is now,
+and why each gate it has already passed decided as it did.
+
+`satelle story route <id>` is that answer, as one artifact:
+
+- the **plan half** — the ordered steps between the story and done, each with the
+  obligation it discharges, who performs it under which rubrics, and the
+  reviewers gating entry, marked when a gate is present only because the story
+  carries a tag (and marked `skipped` when it is absent for want of one);
+- the **outcome half** — appended as each step resolves: every reviewer's
+  verdict, its reasoning, and a pointer to the full output on the ledger.
+
+They are deliberately the **same document**. A route read separately from the
+verdicts is two things that drift.
+
+The route renders live before a story has moved, so it is answerable from
+backlog, and it never requires opening a workflow file. That matters more as the
+graph stops being authored: a derived route has no file to open, and refusals
+carry the same weight — an engine refusal names the **rule** that fired, why it
+fired on this story, and the legal moves it leaves open.
 
 A gated edge names its binding with `agent=<name>` (default `[reviewer]`). Models live in agents.toml only; DOT `model=` is superseded.
