@@ -1,3 +1,12 @@
+## [0.0.378] - 2026-08-01
+
+### Added
+- **`internal/wfequiv`** — a behavioural-equivalence checker for two `wfdot.Spec` values, and the paper check it exists to answer: can a route DERIVED from a declaration of done reproduce satelle's authored DOT? This is the go/no-go for `epic:derived-route`, which proposes retiring `.satelle/workflows/*.md` graphs in favour of `done.md` + `step.md`. Answer: it can. The hand-written obligation list reproduces `satelle-project-workflow` on first transcription, across path, gates, scoped reviewers and executor skills (sty_c6184eaa)
+- Equivalence is asserted over **method outputs, not struct fields**. `Spec.States` carries authoring detail whose equality is not required for identical behaviour, so diffing structs would manufacture divergence and make the checker useless as a migration net. What is compared is what `PerformingStates`, `ScopedReviewersSplit`, `ExecutorSkillsFor` and their siblings return — what the engine, the seat and the edit gate actually consume (sty_c6184eaa)
+- The comparison runs over a **tag matrix**, not once. Three of the four dimensions are tag-dependent because `applies_to` filters both scoped reviewers and executor augmentations; a single tag-less comparison passes while silently disarming the `surface:ui` design gate. A test asserts exactly that failure mode, because it is the one a one-shot comparison invites (sty_c6184eaa)
+- The one divergence found is **`on_enter_agent`** on `blocked` and `done` — inexpressible by design, not by accident, since a state firing another agent is what flat dispatch forbids. It is compared *because* it is live mechanism (`agentstep.DispatchExecutor` resolves it); a checker that only compared what the new shape could express would have returned clean and taught us nothing. Retiring it is a removal of working behaviour and is scoped to its own story, which re-homes both advisors onto the orchestrator (sty_c6184eaa)
+- The finding is recorded in `.satelle/documents/derived-route-equivalence.md`, with the machine-checked divergence report goldened at `internal/wfequiv/testdata/project-route.golden` — including what the check does **not** prove (sty_c6184eaa)
+
 ## [0.0.377] - 2026-07-31
 
 ### Added
