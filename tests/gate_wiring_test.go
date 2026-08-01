@@ -23,27 +23,29 @@ type gateRef struct {
 }
 
 // gateCoverageWaiver: gates not exercised via a simple CLI path in a temp repo.
+// Keys are "<route section>/<skill>" — the shipped lifecycle is one derived
+// route, so a gate belongs to the done.md section it fires on (sty_3795e7f6).
 // Prefer a fixture over a waiver; each entry must justify.
 var gateCoverageWaiver = map[string]string{
-	// Parent-workflow close needs child stories + parent category plumbing.
-	"satelle-parent-workflow/satelle-story-done-review": "parent close needs epic-parent + children; covered via baseline done gate",
-	// Task-workflow after gate is LLM; before is fence-covered in fence fixtures.
-	"satelle-task-workflow/satelle-task-validate-after-review": "task after-review needs execution lifecycle; before is fence golden",
+	// Container close needs child stories + parent category plumbing.
+	"epic-parent/satelle-story-done-review": "container close needs epic-parent + children; covered via the wildcard done gate",
+	"parent/satelle-story-done-review":      "container close needs epic-parent + children; covered via the wildcard done gate",
+	// The task section's after gate is LLM; before is fence-covered in fence fixtures.
+	"execution/satelle-task-validate-after-review": "task after-review needs execution lifecycle; before is fence golden",
+	"task/satelle-task-validate-after-review":      "task after-review needs execution lifecycle; before is fence golden",
+	"task/satelle-task-validate-before-review":     "same gate as the execution section, exercised there",
 	// Blocked triage is an ADVISOR the orchestrator consults (sty_05a5e203), not a
 	// gate reviewer — nothing dispatches it and it advances no status.
-	"satelle-baseline-workflow/satelle-story-blocked-triage":  "orchestrator-consulted advisor, not a status-advancing gate",
-	"satelle-substrate-workflow/satelle-story-blocked-triage": "orchestrator-consulted advisor, not a status-advancing gate",
+	"*/satelle-story-blocked-triage": "orchestrator-consulted advisor, not a status-advancing gate",
 	// Step summary is mandatory post-transition narration, not accept/reject gating.
-	"satelle-baseline-workflow/satelle-step-summary":          "summariser, not accept/reject gate",
-	"satelle-substrate-workflow/satelle-step-summary":         "summariser, not accept/reject gate",
-	"satelle-parent-workflow/satelle-step-summary":            "summariser, not accept/reject gate",
-	"satelle-task-workflow/satelle-step-summary":              "summariser, not accept/reject gate",
-	"satelle-substrate-workflow/satelle-story-cancel-review":  "substrate cancel; baseline cancel fixture covers the stub seam",
-	"satelle-parent-workflow/satelle-story-cancel-review":     "parent cancel; baseline cancel fixture covers the stub seam",
-	"satelle-baseline-workflow/satelle-story-blocked-review":  "park path; same reviewer command seam as intent/cancel",
-	"satelle-substrate-workflow/satelle-story-blocked-review": "park path; same reviewer command seam as intent/cancel",
+	"*/satelle-step-summary":                  "summariser, not accept/reject gate",
+	"parent/satelle-step-summary":             "summariser, not accept/reject gate",
+	"epic-parent/satelle-step-summary":        "summariser, not accept/reject gate",
+	"epic-parent/satelle-story-cancel-review": "container cancel; the wildcard cancel fixture covers the stub seam",
+	"parent/satelle-story-cancel-review":      "container cancel; the wildcard cancel fixture covers the stub seam",
+	"*/satelle-story-blocked-review":          "park path; same reviewer command seam as intent/cancel",
 	// Workflow-change is n/a-fast on slices that touch no workflow file — hard to force reject hermetically without content.
-	"satelle-baseline-workflow/satelle-workflow-change-review": "n/a-fast when no workflow files change; seam shared with intent",
+	"*/satelle-workflow-change-review": "n/a-fast when no workflow files change; seam shared with intent",
 }
 
 func enumerateEmbeddedGates(t *testing.T) []gateRef {
@@ -61,41 +63,48 @@ func enumerateEmbeddedGates(t *testing.T) []gateRef {
 		seen[key] = true
 		out = append(out, gateRef{workflow: wf, skill: sk, kind: kind})
 	}
-	for _, d := range config.EmbeddedDefaults() {
-		if d.Kind != "workflows" {
-			continue
+	// The shipped lifecycle is ONE derived route, so the gates are enumerated off
+	// the route grammar and keyed by the SECTION they belong to — the axis a
+	// waiver actually reasons about (sty_3795e7f6). done.md names the park and
+	// cancel gates and the create hook; step.md names each step's entry reviewers
+	// and the always-on gates, each scoped to the sections it fires on.
+	done, step := embeddedRouteHalves(t)
+	lists, err := wfdot.ParseDone(done)
+	if err != nil {
+		t.Fatalf("parse the shipped done.md: %v", err)
+	}
+	cat, err := wfdot.ParseSteps(step)
+	if err != nil {
+		t.Fatalf("parse the shipped step.md: %v", err)
+	}
+	for _, ln := range strings.Split(done, "\n") {
+		ln = strings.TrimSpace(ln)
+		if strings.HasPrefix(ln, "create_review:") {
+			sk := strings.TrimSpace(strings.TrimPrefix(ln, "create_review:"))
+			for _, l := range lists {
+				add(l.Category, sk, classifyGateSkill(sk))
+			}
 		}
-		spec, ok := wfdot.Parse(d.Body)
-		if !ok {
-			t.Fatalf("embedded workflow %s failed to parse", d.Name)
-			continue
+	}
+	for _, l := range lists {
+		add(l.Category, l.ParkGate, classifyGateSkill(l.ParkGate))
+		add(l.Category, l.CancelGate, classifyGateSkill(l.CancelGate))
+		add(l.Category, l.ParkAdvisorSkill, classifyGateSkill(l.ParkAdvisorSkill))
+		spec, err := wfdot.BuildRoute(l, cat, nil)
+		if err != nil {
+			t.Fatalf("derive the shipped route for %q: %v", l.Category, err)
 		}
-		for _, e := range spec.Transitions {
-			skills := e.Skills
-			if len(skills) == 0 && e.Skill != "" {
-				skills = []string{e.Skill}
+		for _, tr := range spec.Transitions {
+			skills := tr.Skills
+			if len(skills) == 0 && tr.Skill != "" {
+				skills = []string{tr.Skill}
 			}
 			for _, sk := range skills {
-				add(d.Name, sk, classifyGateSkill(sk))
+				add(l.Category, sk, classifyGateSkill(sk))
 			}
 		}
-		for _, n := range spec.States {
-			if n.Skill != "" {
-				add(d.Name, n.Skill, classifyGateSkill(n.Skill))
-			}
-		}
-		// create_review frontmatter is a gate binding not always in the DOT graph
-		if strings.HasPrefix(d.Body, "---") {
-			rest := d.Body[3:]
-			if i := strings.Index(rest, "\n---"); i >= 0 {
-				for _, ln := range strings.Split(rest[:i], "\n") {
-					ln = strings.TrimSpace(ln)
-					if strings.HasPrefix(ln, "create_review:") {
-						sk := strings.TrimSpace(strings.TrimPrefix(ln, "create_review:"))
-						add(d.Name, sk, classifyGateSkill(sk))
-					}
-				}
-			}
+		for _, st := range spec.States {
+			add(l.Category, st.Skill, classifyGateSkill(st.Skill))
 		}
 	}
 	return out
@@ -121,17 +130,17 @@ func classifyGateSkill(name string) string {
 func TestEmbeddedGateCoverageDiscovery(t *testing.T) {
 	covered := map[string]bool{
 		// Exercised below
-		"satelle-baseline-workflow/satelle-story-intent-review":     true,
-		"satelle-baseline-workflow/satelle-story-done-review":       true,
-		"satelle-baseline-workflow/satelle-story-cancel-review":     true,
-		"satelle-baseline-workflow/satelle-story-scope-review":      true,
-		"satelle-baseline-workflow/satelle-story-create-review":     true, // create_review frontmatter binding
-		"satelle-parent-workflow/satelle-story-create-review":       true,
-		"satelle-substrate-workflow/satelle-story-create-review":    true,
-		"satelle-task-workflow/satelle-story-create-review":         true,
-		"satelle-baseline-workflow/satelle-estimate-actual-review":  true,
-		"satelle-substrate-workflow/satelle-substrate-only-check":   true,
-		"satelle-task-workflow/satelle-task-validate-before-review": true,
+		"*/satelle-story-intent-review":                 true,
+		"*/satelle-story-done-review":                   true,
+		"*/satelle-story-cancel-review":                 true,
+		"*/satelle-story-scope-review":                  true,
+		"*/satelle-story-create-review":                 true, // create_review frontmatter binding
+		"epic-parent/satelle-story-create-review":       true,
+		"parent/satelle-story-create-review":            true,
+		"execution/satelle-story-create-review":         true,
+		"task/satelle-story-create-review":              true,
+		"*/satelle-estimate-actual-review":              true,
+		"execution/satelle-task-validate-before-review": true,
 	}
 	for _, g := range enumerateEmbeddedGates(t) {
 		key := g.workflow + "/" + g.skill
@@ -290,9 +299,10 @@ func TestGateWiringSubstrateOnlyFence(t *testing.T) {
 	gitCommitAll(t, repo, "baseline")
 	mustRun(t, testBin, repo, "init")
 	// Materialize substrate workflow + gate if not already from init
-	materializeDefault(t, repo, "workflows", "satelle-substrate-workflow")
+	seedSubstrateLane(t, repo)
 	materializeDefault(t, repo, "skills", "satelle-substrate-only-check")
 	stubReviewerAccept(t, repo)
+	mustRun(t, testBin, repo, "reindex") // the fixture route is written, not indexed
 	// Commit scaffold so live/worktree is clean at engage (sty_6469025e: an
 	// empty change set rejects; pre-dirty substrate from init would otherwise
 	// satisfy the close without intentional work).
@@ -417,7 +427,8 @@ func TestGateWiringScopeOnDone(t *testing.T) {
 func TestGateWiringTaskValidateBeforeFence(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	materializeDefault(t, repo, "workflows", "satelle-task-workflow")
+	materializeDefault(t, repo, "workflows", "done")
+	materializeDefault(t, repo, "workflows", "step")
 	materializeDefault(t, repo, "skills", "satelle-task-validate-before-review")
 	materializeDefault(t, repo, "skills", "satelle-task-validate-after-review")
 	stubReviewerAccept(t, repo)

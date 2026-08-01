@@ -164,15 +164,15 @@ func TestValidateStillSeesEmbeddedDefaults(t *testing.T) {
 	// Name the embedded workflow explicitly: these nodes exist ONLY in the
 	// embedded substrate, so seeing them proves the governing set (authored ∪
 	// unshadowed embedded) is in use, not the authored set alone.
-	if !strings.Contains(out, "NODE [satelle-baseline-workflow]") {
-		t.Errorf("allocations must come from the unshadowed EMBEDDED baseline workflow:\n%s", out)
+	if !strings.Contains(out, "NODE [done.md+step.md (*)]") {
+		t.Errorf("allocations must come from the unshadowed EMBEDDED route:\n%s", out)
 	}
 
 	agentOut, err := run(t, testBin, repo, "agent", "validate")
 	if err != nil {
 		t.Fatalf("agent validate should pass on a fresh repo: %v\n%s", err, agentOut)
 	}
-	if !strings.Contains(agentOut, "NODE [satelle-baseline-workflow]") {
+	if !strings.Contains(agentOut, "NODE [done.md+step.md (*)]") {
 		t.Errorf("agent validate must report node allocations from embedded defaults:\n%s", agentOut)
 	}
 	// A gate skill that resolves only as an EMBEDDED default must not be reported

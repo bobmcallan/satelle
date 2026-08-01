@@ -37,22 +37,14 @@ func init() {
      pre-mutation backups (sty_873a5380); online/personal channel is best-effort
      (see [backup] local_only and [hosted]).
   2. WIPES those three dirs (the backup is the undo),
-  3. REDEPLOYS the complete default solution: the generic base, parent, and
-     task-execution workflows plus every gate skill they reference, and the
+  3. REDEPLOYS the complete default solution: the shipped derived route
+     (workflows/done.md + step.md) plus every gate skill it references, and the
      embedded operating principles.
 
 Documents, tasks, story attachments, the constitution, satelle.toml/agents.toml,
 and the database are never touched. This is the "start clean" recovery, one step
 beyond 'satelle restore' (which only overwrites files that have embedded
 counterparts and leaves extras in place).
-
-A repo that has CONVERTED to a derived route (.satelle/workflows/done.md +
-step.md) is reset back to the embedded DOT workflows by this command — the
-embedded default solution is still authored as graphs. That is a real
-regression of the conversion, not a no-op, so rebase is the wrong tool for
-repairing a converted repo: restore the two files from the backup it wrote, or
-re-author them. 'satelle restore' never touches workflows and is the safer
-recovery (sty_9835070d).
 
 Because it wipes authored files it asks for confirmation first (pass --yes to
 confirm non-interactively).`,

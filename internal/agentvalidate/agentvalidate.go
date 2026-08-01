@@ -817,9 +817,15 @@ func sortedNames(m map[string]config.AgentBinding) []string {
 type wfEntry struct {
 	docindex.Doc
 	route *wfdot.Spec // non-nil for a derived-route category
+	// hooksOnly marks the entry that exists to carry a derived route's
+	// lifecycle-hook frontmatter (done.md). It has no lifecycle of its own.
+	hooksOnly bool
 }
 
 func (e wfEntry) spec() (wfdot.Spec, bool) {
+	if e.hooksOnly {
+		return wfdot.Spec{}, false
+	}
 	if e.route != nil {
 		return *e.route, true
 	}
@@ -831,6 +837,11 @@ func (e wfEntry) spec() (wfdot.Spec, bool) {
 // `done.md+step.md (<category>)`, so a problem says WHICH route it is in) and
 // the two halves themselves contribute none — they carry no lifecycle. Every
 // other workflow passes through unchanged.
+//
+// One entry leads: a hooks-only entry carrying done.md's body. A lifecycle hook
+// is frontmatter, and a route declares its hooks ONCE on done.md for the whole
+// route — reporting them per category would list the same create gate five
+// times. It has no Spec, so the allocation loop skips straight past its states.
 func expandRouteSources(workflows []docindex.Doc) []wfEntry {
 	var out []wfEntry
 	for _, w := range workflows {
@@ -843,6 +854,11 @@ func expandRouteSources(workflows []docindex.Doc) []wfEntry {
 	if !rs.Present() {
 		return out
 	}
+	out = append(out, wfEntry{Doc: docindex.Doc{
+		Kind: "workflows",
+		Name: wfgovern.DerivedRouteName,
+		Body: rs.Done,
+	}, hooksOnly: true})
 	lists, err := wfdot.ParseDone(rs.Done)
 	if err != nil {
 		return out // structure validate owns an unparseable route source
@@ -852,6 +868,12 @@ func expandRouteSources(workflows []docindex.Doc) []wfEntry {
 		return out
 	}
 	for _, l := range lists {
+		if _, governs := wfgovern.RouteGoverns(workflows, l.Category); !governs {
+			// An authored workflow outranks the shipped route for this category, so
+			// the route is not this repo's lifecycle there and has no allocation to
+			// check (sty_3795e7f6).
+			continue
+		}
 		// No tags: the tag-scoped augmentations are validated by their own gate
 		// declarations, and a tagless build is the route every story shares.
 		spec, err := wfdot.BuildRoute(l, cat, nil)

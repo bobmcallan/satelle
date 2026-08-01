@@ -245,6 +245,12 @@ func checkPrinciple(name, body string) []string {
 // sections in done.md, and a second selector would be a second precedence rule.
 func checkRouteSource(name string, fm []string, body string, resolveSkill func(skill string) bool) []string {
 	var p []string
+	if resolveSkill == nil {
+		// A caller that cannot resolve skills (the embedded-corpus conformance
+		// table) still gets the grammar and frontmatter checks; the gate-resolution
+		// half simply has no substrate to resolve against.
+		resolveSkill = func(string) bool { return true }
+	}
 	p = append(p, requireName(fm, name)...)
 	if fmScalar(fm, "type") != "workflow" {
 		p = append(p, `frontmatter must have "type: workflow" (OKF)`)

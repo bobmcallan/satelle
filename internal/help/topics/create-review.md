@@ -58,9 +58,11 @@ like `Verdict: reject` are tolerated, but the JSON block is the contract).
 ## 2. Declare it on the governing workflow
 
 Create review is one **lifecycle hook** — an operation that fires outside the
-status graph, so it cannot be a DOT node or edge. Declare it in the frontmatter
-of the workflow that governs the story's category
-(`.satelle/workflows/<your-workflow>.md`).
+status graph, so it is not a step or an edge. Declare it in the frontmatter of
+whatever governs the story's category: `.satelle/workflows/done.md` for a
+derived route (the half that says what this repo means by finished, which is
+where a create gate belongs), or `.satelle/workflows/<your-workflow>.md` for an
+authored graph.
 
 **Shorthand** — the skill only; the hook runs under the repo's `[reviewer]`:
 

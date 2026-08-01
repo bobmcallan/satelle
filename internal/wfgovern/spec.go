@@ -2,10 +2,12 @@
 // lifecycle is resolved, so every consumer — the engine, the verbs, the edit-gate
 // hooks, the web panel — sees the same route.
 //
-// There are two representations and exactly one precedence rule. A DERIVED route
-// (`done.md` + `step.md` under the workflows kind) wins when the substrate carries
-// one; an authored DOT workflow is the fallback while it does not. A second
-// implementation of that rule is the defect this file exists to prevent.
+// There are two representations and exactly one precedence rule, and RouteGoverns
+// is that rule. A DERIVED route (`done.md` + `step.md` under the workflows kind)
+// wins when the repo AUTHORED one; the route the BINARY ships is order zero and
+// yields to an authored workflow for the categories that workflow claims; an
+// authored DOT graph governs otherwise. A second implementation of that rule is
+// the defect this file exists to prevent.
 package wfgovern
 
 import (
@@ -48,6 +50,12 @@ func IsRouteSource(name string) bool {
 type RouteSource struct {
 	Done string
 	Step string
+	// Embedded marks a route that comes ENTIRELY from the binary's shipped
+	// defaults rather than from the repo's own substrate. It is what makes the
+	// shipped route ORDER ZERO: see RouteGoverns. A mixed pair (the repo authored
+	// one half, the other overlaid from the defaults) counts as authored — the
+	// repo intends a route, and BuildRoute fails loudly if the halves disagree.
+	Embedded bool
 }
 
 // Present reports whether both halves are there. One half alone is not a route
@@ -55,18 +63,57 @@ type RouteSource struct {
 func (rs RouteSource) Present() bool { return rs.Done != "" && rs.Step != "" }
 
 // RouteSourceOf picks the declaration of done and the step catalogue out of an
-// already-listed workflow doc set.
+// already-listed workflow doc set. It reports what is THERE; whether it governs
+// a given category is RouteGoverns.
 func RouteSourceOf(workflows []docindex.Doc) RouteSource {
 	var rs RouteSource
+	doneEmbedded, stepEmbedded := false, false
 	for _, w := range workflows {
 		switch w.Name {
 		case RouteSourceDone:
-			rs.Done = w.Body
+			rs.Done, doneEmbedded = w.Body, w.Embedded
 		case RouteSourceStep:
-			rs.Step = w.Body
+			rs.Step, stepEmbedded = w.Body, w.Embedded
 		}
 	}
+	rs.Embedded = doneEmbedded && stepEmbedded
 	return rs
+}
+
+// RouteGoverns is the ONE precedence rule for a derived route, and every surface
+// that resolves, displays or stamps a lifecycle asks it rather than re-deriving
+// its own answer.
+//
+// An AUTHORED route (the repo's own done.md + step.md) governs the categories it
+// claims — a repo that converted is governed by what it wrote. The route the
+// BINARY ships is order zero instead: it governs a category only when no
+// authored workflow claims that category. Without that distinction, shipping the
+// defaults as a route would silently shadow every repo's authored graph on the
+// next binary upgrade, because the doc index overlays an embedded default
+// wherever the repo has no file of that name.
+//
+// An empty category means the wildcard view, which a route answers with its `*`
+// section.
+func RouteGoverns(workflows []docindex.Doc, category string) (RouteSource, bool) {
+	rs := RouteSourceOf(workflows)
+	if !rs.Present() || !routeClaims(rs, category) {
+		return RouteSource{}, false
+	}
+	if rs.Embedded && len(OrderedWorkflows(LifecycleWorkflows(workflows), category)) > 0 {
+		return RouteSource{}, false // an authored workflow outranks the shipped route
+	}
+	return rs, true
+}
+
+// routeClaims reports whether the route declares a section for category — its
+// own, or the wildcard that governs everything else.
+func routeClaims(rs RouteSource, category string) bool {
+	for _, c := range RouteCategories(rs.Done) {
+		if c == category || c == wfdot.WildcardCategory {
+			return true
+		}
+	}
+	return false
 }
 
 // LifecycleWorkflows returns the docs that carry a lifecycle — every workflow
@@ -92,13 +139,14 @@ func LifecycleWorkflows(workflows []docindex.Doc) []docindex.Doc {
 // to degrade is a read surface rendering a page, and it degrades by handling the
 // error here, not by this seam hiding it.
 //
-// Precedence: a derived route claiming the item's category (or the wildcard)
-// wins; otherwise the governing authored workflow's DOT. An authored DOT names
-// no advisor — entry dispatch is retired, so the graph has no attribute that
-// could carry one (sty_05a5e203).
+// Precedence is RouteGoverns: a derived route claiming the item's category (or
+// the wildcard) wins, except that the route the BINARY ships yields to an
+// authored workflow; otherwise the governing authored workflow's DOT. An
+// authored DOT names no advisor — entry dispatch is retired, so the graph has no
+// attribute that could carry one (sty_05a5e203).
 func SpecFor(workflows []docindex.Doc, item workitem.Item) (wfdot.Spec, string, []wfroute.Advisor, error) {
 	category := WorkflowCategory(item)
-	if rs := RouteSourceOf(workflows); rs.Present() {
+	if rs, ok := RouteGoverns(workflows, category); ok {
 		spec, advisors, err := routeSpec(rs, category, item.Tags)
 		if err != nil {
 			return wfdot.Spec{}, DerivedRouteName, nil, err

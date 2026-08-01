@@ -4,8 +4,8 @@ package tests
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -25,70 +25,77 @@ func wfList(t *testing.T, repo, category string) []wfListRow {
 	return rows
 }
 
-// TestEmbeddedBaselinePrecedence proves the base-seeding reversal (sty_bf153cbf,
-// which reverses sty_3f9a6124's embedded-only stance): a fresh repo's seeded
-// satelle-baseline-workflow.md is a REAL, editable repo file and the active
-// default (a); with that file absent, the embedded copy still backstops the
-// order-zero Get fallback (b); and a repo's own distinctly-named wildcard
-// workflow takes precedence over the fallback (c).
-func TestEmbeddedBaselinePrecedence(t *testing.T) {
+// TestEmbeddedRoutePrecedence is the end-to-end proof of the ONE precedence rule
+// the shipped route introduced (sty_3795e7f6). The doc index overlays an
+// embedded default wherever a repo has no file of that name, so the shipped
+// done.md + step.md surface in every repo — including one that never converted.
+// The rule that keeps that safe:
+//
+//	(a) with no authored workflow, the shipped route governs and is what a story
+//	    is stamped with;
+//	(b) a repo's own workflow claiming the category OUTRANKS the shipped route —
+//	    upgrading the binary must not silently re-route an unconverted repo;
+//	(c) a repo's own done.md + step.md outrank everything, graph or no graph.
+func TestEmbeddedRoutePrecedence(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	materializeDefaultSolution(t, repo)
 	mustRun(t, testBin, repo, "reindex")
+	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"),
+		"[review]\ngate_create = false\n")
 
-	// (a) The seeded baseline workflow (a repo file, not embedded) is the active
-	// default of a fresh repo.
-	var sawBaseline bool
-	for _, r := range wfList(t, repo, "feature") {
-		if r.Name == "satelle-baseline-workflow" {
-			sawBaseline = true
-			if r.Embedded {
-				t.Errorf("the seeded baseline must be a real repo file, got embedded=true")
-			}
-			if !r.Active {
-				t.Errorf("the seeded baseline must be active for a fresh repo")
-			}
-		}
-	}
-	if !sawBaseline {
-		t.Fatal("baseline workflow not listed for a fresh repo")
-	}
-
-	// (b) With the repo file removed, the embedded baseline still backstops the
-	// order-zero fallback (embedded=true) and remains active — gating must keep
-	// working even when a repo has no authored workflow on disk at all.
-	baselinePath := filepath.Join(repo, ".satelle", "workflows", "satelle-baseline-workflow.md")
-	if err := os.Remove(baselinePath); err != nil {
-		t.Fatal(err)
-	}
-	mustRun(t, testBin, repo, "reindex")
+	// (a) The shipped route is the active lifecycle of a fresh repo, and it is
+	// what create stamps — the stamp must name what will actually gate.
 	rows := wfList(t, repo, "feature")
-	if len(rows) == 0 || rows[0].Name != "satelle-baseline-workflow" || !rows[0].Active || rows[0].Embedded != true {
-		t.Errorf("the embedded baseline must backstop the fallback once its repo file is gone, got %+v", rows)
+	if len(rows) == 0 || rows[0].Name != "done.md+step.md" || !rows[0].Active {
+		t.Fatalf("the shipped route must govern a fresh repo, got %+v", rows)
+	}
+	out := mustRun(t, testBin, repo, "story", "create", "--title", "Stamped by the shipped route",
+		"--category", "feature", "--body", "Prove the stamp names the governing lifecycle.",
+		"--acceptance", "1. stamped done.md+step.md")
+	if !strings.Contains(out, `"workflow:done.md+step.md"`) {
+		t.Errorf("create did not stamp the shipped route:\n%s", out)
 	}
 
-	// (c) A repo's own, distinctly-named wildcard workflow takes precedence over
-	// the embedded fallback.
-	// Authored inline rather than copied from this repo: the case under test is
-	// PRECEDENCE among authored graphs, and this repo no longer authors any — its
-	// lifecycle is a derived route (sty_9835070d).
+	// (b) A repo's own wildcard workflow OUTRANKS the shipped route. This is the
+	// upgrade case: a repo that authored a graph and never converted keeps being
+	// governed by that graph.
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "satelle-project-workflow.md"), repoWildcardWorkflow)
 	mustRun(t, testBin, repo, "reindex")
 	rows = wfList(t, repo, "feature")
 	if len(rows) == 0 || rows[0].Name != "satelle-project-workflow" || !rows[0].Active {
-		t.Errorf("a repo wildcard workflow must beat the embedded baseline, got %+v", rows)
+		t.Errorf("a repo workflow must outrank the shipped route, got %+v", rows)
+	}
+	for _, r := range rows {
+		if r.Name == "done.md+step.md" {
+			t.Errorf("the shipped route must not be listed while an authored workflow claims the category: %+v", rows)
+		}
+	}
+
+	// …and a category the authored workflow does NOT claim still resolves to the
+	// shipped route: one authored graph does not switch the whole repo off it.
+	rows = wfList(t, repo, "epic-parent")
+	if len(rows) == 0 || rows[0].Name != "done.md+step.md" || !rows[0].Active {
+		t.Errorf("an unclaimed category must still resolve to the shipped route, got %+v", rows)
+	}
+
+	// (c) The repo's OWN route source outranks its own graph.
+	seedRouteSource(t, repo)
+	mustRun(t, testBin, repo, "reindex")
+	rows = wfList(t, repo, "feature")
+	if len(rows) == 0 || rows[0].Name != "done.md+step.md" || !rows[0].Active {
+		t.Errorf("an authored route must outrank an authored workflow, got %+v", rows)
 	}
 }
 
 // repoWildcardWorkflow is a minimal repo-authored wildcard workflow — enough to
-// out-rank the embedded baseline, and nothing more.
+// out-rank the shipped route, and nothing more. `epic-parent` is deliberately
+// NOT claimed, so the unclaimed-category leg above is discriminating.
 const repoWildcardWorkflow = `---
 name: satelle-project-workflow
 type: workflow
 scope: project
-applies_to: ["*"]
-description: A repo-authored wildcard lifecycle — backlog to done, one gated edge.
+applies_to: ["feature"]
+description: A repo-authored lifecycle — backlog to done, one gated edge.
 ---
 ` + "```dot" + `
 digraph w {

@@ -26,8 +26,8 @@ func TestRestoreRecoversDriftedSubstrate(t *testing.T) {
 	}
 
 	// Materialize baseline workflow only to prove restore leaves workflows alone.
-	materializeDefault(t, repo, "workflows", "satelle-baseline-workflow")
-	baselineWF := filepath.Join(repo, ".satelle", "workflows", "satelle-baseline-workflow.md")
+	materializeDefault(t, repo, "workflows", "done")
+	baselineWF := filepath.Join(repo, ".satelle", "workflows", "done.md")
 	wfBefore, err := os.ReadFile(baselineWF)
 	if err != nil {
 		t.Fatalf("expected materialised baseline workflow: %v", err)

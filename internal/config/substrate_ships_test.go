@@ -6,8 +6,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-
-	"github.com/bobmcallan/satelle/internal/wfdot"
 )
 
 // shipsAllow is a per-artifact map of non-shipping tokens → justification.
@@ -68,21 +66,11 @@ var (
 // every embedded workflow (annotation/edge-less nodes excluded).
 func embeddedLifecycleStates() map[string]bool {
 	out := map[string]bool{}
-	for _, d := range EmbeddedDefaults() {
-		if d.Kind != "workflows" {
-			continue
-		}
-		spec, ok := wfdot.Parse(d.Body)
-		if !ok {
-			continue
-		}
-		incident := map[string]bool{}
+	// The shipped lifecycle is a derived route, so the states come from the route
+	// each declared category builds rather than from a graph (sty_3795e7f6).
+	for _, spec := range embeddedRouteSpecs() {
 		for _, tr := range spec.Transitions {
-			incident[tr.From] = true
-			incident[tr.To] = true
-		}
-		for name := range incident {
-			out[name] = true
+			out[tr.From], out[tr.To] = true, true
 		}
 	}
 	return out

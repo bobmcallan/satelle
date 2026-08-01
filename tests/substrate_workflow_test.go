@@ -11,40 +11,41 @@ import (
 	"testing"
 )
 
-// TestSubstrateWorkflowSeededAndDrivable proves satelle-substrate-workflow is
-// now part of the embedded canonical default solution (sty_825f45cc): a fresh
-// init (no authored workflows to collide with) seeds both the workflow and its
-// satelle-substrate-only-check gate skill, a category:substrate story resolves
-// to it (overriding the wildcard project default), and it validates and drives
-// backlog -> in_progress -> done through the DETERMINISTIC close check — no
-// LLM involved in that gate, so the test drives it for real rather than
-// stubbing it.
+// TestSubstrateWorkflowSeededAndDrivable proves the substrate LANE works as an
+// authored route section (sty_825f45cc, re-homed by sty_3795e7f6 — the shipped
+// default no longer declares one): a repo declares `## substrate`, the
+// satelle-substrate-only-check gate skill resolves from the embedded set, a
+// category:substrate story resolves to the lane rather than the wildcard one,
+// the route validates, and it drives backlog -> in_progress -> done through the
+// DETERMINISTIC close check — no LLM involved in that gate, so the test drives
+// it for real rather than stubbing it.
 func TestSubstrateWorkflowSeededAndDrivable(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	// Virtual defaults: materialize the substrate workflow + gate for on-disk path checks.
-	materializeDefault(t, repo, "workflows", "satelle-substrate-workflow")
+	seedSubstrateLane(t, repo)
 	materializeDefault(t, repo, "skills", "satelle-substrate-only-check")
 	stubReviewerAccept(t, repo) // the step-summary node is an LLM reviewer; stub it
 	mustRun(t, testBin, repo, "reindex")
 
 	for _, rel := range []string{
-		".satelle/workflows/satelle-substrate-workflow.md",
+		".satelle/workflows/done.md",
+		".satelle/workflows/step.md",
 		".satelle/skills/satelle-substrate-only-check.md",
 	} {
 		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
-			t.Fatalf("materialize did not land %s: %v", rel, err)
+			t.Fatalf("fixture did not land %s: %v", rel, err)
 		}
 	}
 
-	if out, err := run(t, testBin, repo, "workflow", "validate", "satelle-substrate-workflow"); err != nil {
+	if out, err := run(t, testBin, repo, "workflow", "validate", "done"); err != nil {
 		t.Fatalf("validate failed: %v\n%s", err, out)
 	} else if !strings.Contains(out, "PASS") || strings.Contains(out, "FAIL") {
 		t.Errorf("validate did not pass cleanly:\n%s", out)
 	}
 
-	// category:substrate resolves to the seeded workflow, overriding the
-	// wildcard project default (same precedence rule as the parent workflow).
+	// category:substrate resolves to the authored route, which claims the section
+	// and therefore outranks the shipped default.
 	type wfRow struct {
 		Name   string `json:"name"`
 		Active bool   `json:"active"`
@@ -54,8 +55,8 @@ func TestSubstrateWorkflowSeededAndDrivable(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &rows); err != nil {
 		t.Fatalf("parse workflow list: %v\n%s", err, out)
 	}
-	if len(rows) == 0 || rows[0].Name != "satelle-substrate-workflow" || !rows[0].Active {
-		t.Errorf("category substrate active workflow = %+v, want satelle-substrate-workflow first/active", rows)
+	if len(rows) == 0 || rows[0].Name != "done.md+step.md" || !rows[0].Active {
+		t.Errorf("category substrate active lifecycle = %+v, want the authored route first/active", rows)
 	}
 
 	// Drive a real story through backlog -> in_progress -> done, with the close
@@ -104,7 +105,7 @@ func TestManagedFootprintClosesSubstrateLane(t *testing.T) {
 	// Explicit harness so the managed footprint includes a hook settings file
 	// (bare init no longer scaffolds harnesses by default).
 	mustRun(t, testBin, repo, "init", "--harness", "claude")
-	materializeDefault(t, repo, "workflows", "satelle-substrate-workflow")
+	seedSubstrateLane(t, repo)
 	materializeDefault(t, repo, "skills", "satelle-substrate-only-check")
 	stubReviewerAccept(t, repo) // step-summary node is an LLM reviewer; stub it
 	mustRun(t, testBin, repo, "reindex")
@@ -225,7 +226,7 @@ func TestSubstrateOnlyCheckFourPostures(t *testing.T) {
 		t.Helper()
 		repo = t.TempDir()
 		mustRunEnv(t, testBin, repo, pathEnv, "init")
-		materializeDefault(t, repo, "workflows", "satelle-substrate-workflow")
+		seedSubstrateLane(t, repo)
 		materializeDefault(t, repo, "skills", "satelle-substrate-only-check")
 		stubReviewerAccept(t, repo)
 		mustRunEnv(t, testBin, repo, pathEnv, "reindex")

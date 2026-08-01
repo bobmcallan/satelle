@@ -120,6 +120,12 @@ func workflowSkillRefs(name, body string) []string {
 			}
 		}
 	}
+	// A route source names its gates in the route grammar, not in a graph
+	// (sty_3795e7f6). One call covers both halves; a DOT body yields nothing here
+	// and is read below.
+	for _, sk := range routeSourceSkillRefs(body) {
+		add(sk)
+	}
 	spec, ok := wfdot.Parse(body)
 	if !ok {
 		return out

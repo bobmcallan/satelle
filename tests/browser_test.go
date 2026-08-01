@@ -121,8 +121,12 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 	}
 	// Seed an on-disk workflow so the Workflow panel has a row: embedded defaults are
 	// not listed (sty_94da9ac9), so a fresh repo's panel would otherwise be empty.
-	wfBody := "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\n---\n" +
-		"```dot\n" + "digraph w {\n  backlog [shape=Mdiamond]\n  done [shape=Msquare, agent=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  backlog -> done\n}\n" + "```\n"
+	// It declares in_progress because progress_column_lights drives a story there:
+	// a route may not skip a step, so a backlog→done-only graph refuses the very
+	// transition the light is meant to appear after.
+	wfBody := "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\n" +
+		"description: A panel fixture lifecycle — backlog to done through one working step.\n---\n" +
+		"```dot\n" + "digraph w {\n  backlog [shape=Mdiamond]\n  in_progress [agent=executor]\n  done [shape=Msquare, agent=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  backlog -> in_progress\n  in_progress -> done\n}\n" + "```\n"
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "wf-x.md"), []byte(wfBody), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -1866,7 +1866,7 @@ func gitignoreNeedsConverge(repoRoot string) bool {
 // otherwise-empty dir tracked).
 var dirReadme = map[string]string{
 	"documents":  "# documents\n\nFree-form knowledge documents in the Open Knowledge Format (OKF):\nplain markdown with YAML frontmatter carrying a required `type`. Drop reference\nnotes, designs, and commit summaries here; `index.md`/`log.md` are reserved.\n",
-	"workflows":  "# workflows\n\nAuthored lifecycles in the DOT standard (the agent model): each node is a step\nwith an `agent` (executor|reviewer), each edge a transition, the edge into a\nreviewer node its gate. Frontmatter needs `type: workflow`, `scope`, `applies_to`.\nThe lifecycle must start at `backlog`; `done` is terminal.\n\nBinding form: gate-specific reviewers bind as edge CSV (`prompt=\"@skill:…\"` on the\nedge); scoped `on=` nodes are for multi-state/always-on only (estimate, step).\nSee `satelle help workflows` — edge CSV vs scoped on=, the over-fire trap, and\nlist-order / short-circuit semantics.\n",
+	"workflows":  "# workflows\n\nThe lifecycle, as a DERIVED ROUTE in two halves. `done.md` declares what DONE\nmeans: one `## <category>` section per category (`*` governs the rest), an\nordered list of obligations, and the park/cancel states. `step.md` is the step\ncatalogue: each `## <step>` says what it `provides`, what it `requires`, its\n`agent`, `skills`, and the `reviewers` gating ENTRY to it; each `## gate <skill>`\nis an always-on reviewer. The binary owns ORDER (a topological sort of the\nprerequisites) and topology (cancel, park, backward movement) — they are never\nauthored.\n\nThe shipped route is order zero: edit these two files rather than authoring a\nlifecycle from scratch. See `satelle help workflows` and `satelle story route <id>`.\n",
 	"principles": "# principles\n\nAuthored principles (markdown, `type: principle`). They are resolvable on demand;\nthe single always-resident operating principle is injected at session start.\n",
 	"skills":     "# skills\n\nAuthored skills (`type: skill`): executor rubrics, reviewer rubrics, or a\nself-contained functional check (a fenced ```check block or a `check:` key).\nEverything a reviewer needs lives inside the skill.\n",
 	"stories":    "# stories\n\nPer-story attachments live here under `<id>/…` (typed documents attached to a\nstory). The per-repo database is the sole story store — there is no markdown\nmirror of the backlog.\n",
@@ -2067,42 +2067,38 @@ func materializeAdvisorySkills(dataDir string, backupOpts ...BackupOpts) []strin
 	return lines
 }
 
-// defaultSolutionWorkflows are the embedded workflows init (and rebase) deploy
-// into a repo as EDITABLE substrate — the complete default solution: the minimal
-// repo-agnostic BASE lifecycle, the parent/epic container close, the
-// task-execution run, and the substrate-only lane for markdown-only changes.
-// sty_bf153cbf REVERSES sty_3f9a6124's embedded-only stance:
-// the base workflow is now seeded too, so a repo edits its lifecycle FROM it
-// rather than authoring one from scratch. This is collision-safe — the
-// overlappingCategory guard below skips seeding a default (base included) whose
-// applies_to overlaps a category an authored workflow already claims — and the
-// embedded copy still backstops the order-zero Get fallback when a repo has no
-// workflow on disk at all.
+// defaultSolutionWorkflows is the embedded default solution rebase deploys into
+// a repo as EDITABLE substrate: the two halves of the shipped DERIVED ROUTE
+// (sty_3795e7f6). done.md declares the obligations per category — one working
+// lane, the parent/epic container close, and the task-execution run — and
+// step.md declares the steps and always-on gates that discharge them. A repo
+// edits its lifecycle FROM them rather than authoring one from scratch.
+//
+// The two are seeded BOTH-OR-NEITHER: one half is not a route
+// (wfgovern.RouteSource.Present), and half a route on disk would shadow the
+// shipped pair with something that does not resolve. Seeding is collision-safe —
+// the overlappingCategory guard below skips the pair when an authored workflow
+// already claims a category the route declares — and the embedded copies still
+// govern as order zero through the doc index's read-time overlay when a repo has
+// no workflow on disk at all.
 var defaultSolutionWorkflows = []string{
-	"satelle-baseline-workflow",
-	"satelle-parent-workflow",
-	"satelle-task-workflow",
-	"satelle-substrate-workflow",
+	wfgovern.RouteSourceDone,
+	wfgovern.RouteSourceStep,
 }
 
 // materializeDefaultSolution seeds a repo's .satelle with the embedded default
-// solution ADDITIVELY, per file: the generic base/parent/task-execution
-// workflows plus every gate skill they reference (sty_a7cbd6dd). Each file is
-// seeded only when ABSENT; a same-named authored file is never overwritten or
-// modified.
+// solution: the two halves of the shipped derived route plus every gate skill
+// they reference (sty_a7cbd6dd). Each file is seeded only when ABSENT; a
+// same-named authored file is never overwritten or modified.
 //
-// There is no all-or-nothing guard (sty_f6bd6f84): a repo that authored one
-// workflow but is missing others (observed: satelle-server had a project
-// workflow but no satelle-parent-workflow and was missing a referenced gate
-// skill) is HEALED by re-running init — the absent defaults land, the present
-// ones and any authored files are untouched, and validation passes because the
-// skills a default workflow references are seeded even when that workflow's own
-// file is skipped. The ONE guard that survives is routing safety: a default
-// workflow whose applies_to overlaps a category an AUTHORED workflow already
-// claims is NOT seeded (it would create the same-precedence duplicate the
-// reindex consistency check rejects) — its gate skills are still collected and
-// seeded. rebase remains the reset path (backup+wipe+redeploy); init is the heal
-// path. Returns report lines.
+// Skills are seeded per file, and a repo missing one is HEALED by re-running
+// (sty_f6bd6f84). The route's two halves are the exception: they are seeded
+// BOTH-OR-NEITHER, because one half is not a route (sty_3795e7f6). Two guards
+// hold, both routing safety: the pair is not seeded when an authored workflow
+// already claims a category the route declares (it would create the
+// same-precedence duplicate the reindex consistency check rejects), and its gate
+// skills are still collected and seeded either way. rebase remains the reset
+// path (backup+wipe+redeploy). Returns report lines.
 func materializeDefaultSolution(dataDir string, backupOpts ...BackupOpts) []string {
 	var bopts BackupOpts
 	if len(backupOpts) > 0 {
@@ -2136,25 +2132,44 @@ func materializeDefaultSolution(dataDir string, backupOpts ...BackupOpts) []stri
 		}
 	}
 	// Categories already claimed by an authored (on-disk) workflow. A default
-	// whose applies_to overlaps one of these is skipped to avoid a
+	// whose categories overlap one of these is skipped to avoid a
 	// same-precedence routing duplicate.
 	claimed := authoredWorkflowCategories(wfDir)
+	bodies := make(map[string]string, len(defaultSolutionWorkflows))
+	seedPair := true
+	var conflict string
 	for _, name := range defaultSolutionWorkflows {
 		body, ok := embeddedDefault("workflows", name)
 		if !ok {
+			seedPair = false // a half that does not ship is not half a route
 			continue
 		}
-		collectSkills(body) // collect refs even if the workflow file is skipped
-		rel := "workflows/" + name + ".md"
-		p := filepath.Join(wfDir, name+".md")
-		// The overlappingCategory guard gates SEEDING an absent default only; an
-		// on-disk file is reconciled (converge/diverge) below, never routed here.
-		if !fileExists(p) {
-			if conflict := overlappingCategory(body, claimed); conflict != "" {
-				lines = append(lines, "  = "+config.DefaultDataDir+"/workflows/"+name+".md (applies_to "+conflict+" claimed by an authored workflow — not seeded)")
-				continue
+		bodies[name] = body
+		collectSkills(body) // collect refs even if the file itself is skipped
+		// The overlap guard gates SEEDING an absent default only; an on-disk file is
+		// reconciled (converge/diverge) below, never routed here. A route source
+		// claims its categories through done.md's sections, not applies_to.
+		if !fileExists(filepath.Join(wfDir, name+".md")) {
+			if c := overlappingCategory(body, claimed); c != "" {
+				seedPair, conflict = false, c
 			}
 		}
+	}
+	if !seedPair {
+		// Both-or-neither: report once, naming the category that outranked it.
+		why := "category " + conflict + " claimed by an authored workflow"
+		if conflict == "" {
+			why = "an embedded half is missing"
+		}
+		lines = append(lines, "  = "+config.DefaultDataDir+"/workflows/{done,step}.md ("+why+" — not seeded)")
+		bodies = nil
+	}
+	for _, name := range defaultSolutionWorkflows {
+		body, ok := bodies[name]
+		if !ok {
+			continue
+		}
+		rel := "workflows/" + name + ".md"
 		verb, bres, err := reconcileEmbeddedFile(dataDir, rel, body, bopts)
 		if err != nil {
 			continue
@@ -2266,10 +2281,18 @@ func authoredWorkflowCategories(wfDir string) map[string]bool {
 	return claimed
 }
 
-// overlappingCategory returns the first applies_to category the workflow body
-// declares that is already present in claimed, or "" when none overlaps.
+// overlappingCategory returns the first category the workflow body declares that
+// is already present in claimed, or "" when none overlaps. A DERIVED route
+// declares its categories through done.md's `## <category>` sections rather than
+// applies_to, so both forms are read — otherwise the shipped route would look
+// like it claimed nothing and would seed straight on top of an authored graph
+// (sty_3795e7f6).
 func overlappingCategory(body string, claimed map[string]bool) string {
-	for _, c := range appliesToCategories(body) {
+	cats := appliesToCategories(body)
+	if len(cats) == 0 {
+		cats = wfgovern.RouteCategories(body)
+	}
+	for _, c := range cats {
 		if claimed[c] {
 			return c
 		}

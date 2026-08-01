@@ -45,6 +45,13 @@ func conformantSkill(name, rubric string) string {
 		rubric + "\n\nReturn JSON {\"decision\": \"accept\"|\"reject\", \"notes\": \"…\"}.\n"
 }
 
+// baselineWorkflow is an arbitrary workflow DOC NAME these fixtures author their
+// own DOT under. It used to be the engine's by-name order-zero fallback; the
+// fallback is now the derived route the binary ships (sty_3795e7f6), so the name
+// carries no mechanism — it is only a fixture label, kept so the fixtures stay
+// recognisable.
+const baselineWorkflow = "satelle-baseline-workflow"
+
 var testWorkflow = wfDoc(baselineWorkflow, `"*"`, `digraph w {
   backlog -> in_progress [reviewer_skill="satelle-story-intent-review"]
   in_progress -> done [reviewer_skill="satelle-story-done-review"]
@@ -1034,7 +1041,7 @@ func TestScopedReviewerByOnList(t *testing.T) {
 // refused with the problems (sty_d0d6bb67), instead of silently proceeding
 // under a broken definition.
 func TestGateRefusesBrokenWorkflowStructure(t *testing.T) {
-	broken := "---\nname: " + baselineWorkflow + "\n---\n# no type/description/scope, no DOT\n"
+	broken := "---\nname: " + baselineWorkflow + "\napplies_to: [\"*\"]\n---\n# no type/description/scope, no DOT\n"
 	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: broken, skillBody: "rubric", skillFound: true})
 	_, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "in_progress")
 	if err == nil {
@@ -1951,7 +1958,7 @@ func TestReviewCreateStructurePreemptsContent(t *testing.T) {
 
 // stepWF declares a step-summary node; stepWFOptional declares a non-mandatory
 // one; the bare baselineWorkflow body (testWorkflow) declares none.
-const stepWF = "---\nname: " + baselineWorkflow + "\ntype: workflow\n---\n" + "```dot" + `
+const stepWF = "---\nname: " + baselineWorkflow + "\ntype: workflow\napplies_to: [\"*\"]\n---\n" + "```dot" + `
 digraph w {
   backlog     [shape=Mdiamond]
   in_progress [agent=executor]
@@ -1961,7 +1968,7 @@ digraph w {
 }
 ` + "```"
 
-const stepWFOptional = "---\nname: " + baselineWorkflow + "\ntype: workflow\n---\n" + "```dot" + `
+const stepWFOptional = "---\nname: " + baselineWorkflow + "\ntype: workflow\napplies_to: [\"*\"]\n---\n" + "```dot" + `
 digraph w {
   backlog     [shape=Mdiamond]
   in_progress [agent=executor]
@@ -2001,7 +2008,7 @@ func TestSummariseReturnsTrimmedProse(t *testing.T) {
 // TestSummariseUsesNamedBinding (sty_8ee40f94): agent= on the step node selects
 // the harness/model; default [reviewer] is unchanged when agent=reviewer.
 func TestSummariseUsesNamedBinding(t *testing.T) {
-	const namedWF = "---\nname: " + baselineWorkflow + "\ntype: workflow\n---\n" + "```dot" + `
+	const namedWF = "---\nname: " + baselineWorkflow + "\ntype: workflow\napplies_to: [\"*\"]\n---\n" + "```dot" + `
 digraph w {
   backlog     [shape=Mdiamond]
   in_progress [agent=executor]

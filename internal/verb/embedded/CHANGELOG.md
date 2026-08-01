@@ -1,3 +1,17 @@
+## [0.0.384] - 2026-08-01
+
+### Changed
+- **The embedded default substrate is a derived route** — `internal/config/substrate/workflows/` ships `done.md` + `step.md`, and the four DOT graphs (`satelle-baseline-workflow`, `satelle-parent-workflow`, `satelle-substrate-workflow`, `satelle-task-workflow`) are gone. The default declaration of done is the most basic story implementation there is — `raised → coded → closed`, with a park and a cancel — not this repo's plan/integration/release spine, which is this repo's process and not every repo's (sty_3795e7f6)
+- **One precedence rule for the shipped route (`wfgovern.RouteGoverns`).** The doc index overlays an embedded default wherever a repo has no file of that name, so the shipped halves surface in every repo — including one that never converted. A repo's OWN route governs; the SHIPPED route is order zero and yields to an authored workflow for the categories that workflow claims; an authored graph governs otherwise. Without it, upgrading the binary would have silently re-routed every DOT-only install. `workflow list`, the create stamp, the web panel and `agent validate` all ask the same predicate (sty_3795e7f6)
+- **The engine has no by-name lifecycle fallback left.** `const baselineWorkflow` and both `Get("satelle-baseline-workflow")` fallbacks are gone: the order-zero lifecycle arrives through the front door like any other, and `activeWorkflow` returns `ErrNotFound` when no authored workflow applies. `satelle rebase` no longer documents resetting a converted repo as a regression, because redeploying the default now redeploys a route (sty_3795e7f6)
+
+### Removed
+- **The embedded `substrate` lane** — a stated decision, not an omission. The lane exists to let a markdown-only change SKIP a heavier lane, and the default now has exactly one working lane to skip, so a second one would only offer a way around the default gates. `satelle-substrate-only-check` still ships for a repo that declares the section itself (sty_3795e7f6)
+
+### Added
+- `internal/wfequiv/embedded_test.go` and frozen `testdata/embedded/` snapshots — the same safety net this repo's own conversion got, pointed at the shipped defaults. Four of the five retired category routes reproduce their graph EXACTLY; the two divergences are named beside the assertions that exempt them, including the baseline's `done` node, which carried `agent=reviewer` and therefore read as a PARK state (sty_3795e7f6)
+- A fresh-repo integration proof: `satelle init` in an empty dir validates green, stamps `done.md+step.md`, and drives a story `backlog → in_progress → done` through the route's real gates — plus a deterministic source inventory that fails if any non-test Go file reaches for a retired embedded workflow by name (sty_3795e7f6)
+
 ## [0.0.383] - 2026-08-01
 
 ### Changed

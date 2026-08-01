@@ -489,6 +489,9 @@ func categoryStepOf(docs []docindex.Doc) func(category, state string) int {
 	// of one route, not two workflows (sty_9835070d).
 	if rs := wfgovern.RouteSourceOf(docs); rs.Present() {
 		for _, cat := range wfgovern.RouteCategories(rs.Done) {
+			if _, governs := wfgovern.RouteGoverns(docs, cat); !governs {
+				continue // an authored workflow outranks the shipped route here
+			}
 			depths := spineDepths(routeSpecFor(docs, cat))
 			if len(depths) == 0 {
 				continue

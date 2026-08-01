@@ -490,10 +490,7 @@ func materializeDefault(t *testing.T, repo, kind, name string) {
 // many integration tests that predate virtual sparse defaults.
 func materializeDefaultSolution(t *testing.T, repo string) {
 	t.Helper()
-	for _, wf := range []string{
-		"satelle-baseline-workflow", "satelle-parent-workflow",
-		"satelle-task-workflow", "satelle-substrate-workflow",
-	} {
+	for _, wf := range []string{"done", "step"} {
 		materializeDefault(t, repo, "workflows", wf)
 	}
 	for _, sk := range []string{
@@ -928,7 +925,8 @@ func TestInitDeploysDefaultSolution(t *testing.T) {
 
 	// Virtual sparse defaults: no seed files for workflows/skills.
 	for _, rel := range []string{
-		".satelle/workflows/satelle-baseline-workflow.md",
+		".satelle/workflows/done.md",
+		".satelle/workflows/step.md",
 		".satelle/skills/satelle-step-summary.md",
 	} {
 		if _, err := os.Stat(filepath.Join(repo, rel)); err == nil {
@@ -939,8 +937,8 @@ func TestInitDeploysDefaultSolution(t *testing.T) {
 	// Effective process is listed and validators pass against the virtual set.
 	mustRun(t, bin, repo, "reindex")
 	out := mustRun(t, bin, repo, "substrate", "list", "--json")
-	if !strings.Contains(out, "satelle-baseline-workflow") || !strings.Contains(out, `"provenance": "default"`) {
-		t.Errorf("substrate list missing virtual baseline:\n%s", out)
+	if !strings.Contains(out, `"name": "done"`) || !strings.Contains(out, `"provenance": "default"`) {
+		t.Errorf("substrate list missing the virtual route source:\n%s", out)
 	}
 	mustRun(t, bin, repo, "workflow", "validate")
 	mustRun(t, bin, repo, "skill", "validate")
@@ -952,8 +950,8 @@ func TestInitDeploysDefaultSolution(t *testing.T) {
 	if i := strings.Index(out, "}"); i >= 0 {
 		firstObj = out[:i]
 	}
-	if !strings.Contains(firstObj, `"name": "satelle-task-workflow"`) {
-		t.Errorf("head workflow for an execution is not satelle-task-workflow:\n%s", out)
+	if !strings.Contains(firstObj, `"name": "done.md+step.md"`) {
+		t.Errorf("head lifecycle for an execution is not the shipped route:\n%s", out)
 	}
 
 	// And a run can be created against an authored task: init seeds no example
@@ -1007,8 +1005,10 @@ func TestRebaseResetsSubstrate(t *testing.T) {
 	if _, serr := os.Stat(extra); serr == nil {
 		t.Error("rebase left the extra authored workflow in the live dir")
 	}
-	if _, serr := os.Stat(filepath.Join(repo, ".satelle", "workflows", "satelle-baseline-workflow.md")); serr != nil {
-		t.Error("rebase did not redeploy the default base workflow")
+	for _, half := range []string{"done.md", "step.md"} {
+		if _, serr := os.Stat(filepath.Join(repo, ".satelle", "workflows", half)); serr != nil {
+			t.Errorf("rebase did not redeploy %s — one half is not a route", half)
+		}
 	}
 
 	// The backup holds the pre-rebase files.
@@ -1041,8 +1041,8 @@ func TestStoryRestamp(t *testing.T) {
 	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"),
 		"[review]\ngate_create = false\n\n[categories]\nenforce = \"off\"\n")
 	out := mustRun(t, bin, repo, "story", "create", "--title", "Assess the rollout", "--category", "feature")
-	if !strings.Contains(out, `"workflow:satelle-baseline-workflow"`) {
-		t.Fatalf("create did not stamp the seeded base workflow:\n%s", out)
+	if !strings.Contains(out, `"workflow:done.md+step.md"`) {
+		t.Fatalf("create did not stamp the shipped route:\n%s", out)
 	}
 	id := extractID(out, "sty_")
 
@@ -1074,14 +1074,14 @@ description: Governance lifecycle moving backlog → in_progress → done with a
 	// Re-categorise, then restamp re-resolves from the CURRENT category.
 	mustRun(t, bin, repo, "story", "set", id, "--category", "governance")
 	out = mustRun(t, bin, repo, "story", "restamp", id)
-	if !strings.Contains(out, `"workflow:gov-workflow"`) || strings.Contains(out, `"workflow:satelle-baseline-workflow"`) {
+	if !strings.Contains(out, `"workflow:gov-workflow"`) || strings.Contains(out, `"workflow:done.md+step.md"`) {
 		t.Fatalf("restamp did not swap the governing workflow:\n%s", out)
 	}
 
 	// The trail records old -> new. The ledger JSON escapes ">" (>), so
 	// match the escaped body as printed.
 	out = mustRun(t, bin, repo, "ledger", "list", "--story", id)
-	if !strings.Contains(out, "re-stamped: satelle-baseline-workflow -\\u003e gov-workflow") {
+	if !strings.Contains(out, "re-stamped: done.md+step.md -\\u003e gov-workflow") {
 		t.Errorf("ledger missing the re-stamp row:\n%s", out)
 	}
 

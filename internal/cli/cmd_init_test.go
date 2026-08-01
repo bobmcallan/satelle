@@ -308,21 +308,15 @@ func TestRunInitSeedsAuditTask(t *testing.T) {
 		t.Errorf("seeded audit task must sit at status: done, got:\n%s", body)
 	}
 	// Workflows/skills still virtual.
-	if fileExists(filepath.Join(dataDir, "workflows", "satelle-baseline-workflow.md")) {
+	if fileExists(filepath.Join(dataDir, "workflows", "done.md")) {
 		t.Error("workflows must not be seeded")
 	}
 
-	var docs []docindex.Doc
-	for _, wf := range defaultSolutionWorkflows {
-		b, ok := embeddedDefault("workflows", wf)
-		if !ok {
-			t.Fatalf("embedded workflow %s missing", wf)
-		}
-		docs = append(docs, docindex.Doc{Name: wf, Body: b})
-	}
-	ordered := agentstep.OrderedWorkflows(docs, "task")
-	if len(ordered) == 0 || ordered[0].Name != "satelle-task-workflow" {
-		t.Errorf("audit task does not resolve to satelle-task-workflow: %+v", ordered)
+	// The audit task's KIND resolves to the route's own task section — not to the
+	// wildcard lane (sty_3795e7f6).
+	if spec := embeddedRouteFor(t, "task"); !spec.HasEdge("backlog", "in_progress") ||
+		!hasGate(spec, "backlog", "in_progress", "satelle-task-validate-before-review") {
+		t.Errorf("a task does not resolve to the route's task section: %+v", spec.Transitions)
 	}
 
 	skillBody, ok := embeddedDefault("skills", "satelle-task-validate-before-review")
@@ -352,11 +346,11 @@ func checkScript(t *testing.T, skillBody string) string {
 	return s
 }
 
-// defaultSolutionSkills is every gate/executor skill the seeded default solution
-// references — the set a fresh repo must hold on disk so nothing dangles. (The
-// story reviewers seed via the baseline lifecycle's declared gates — its intent,
-// done, and cancel reviews plus the coded estimate check and the step summary —
-// and the parent workflow's own close gate.)
+// defaultSolutionSkills is every gate skill the shipped default route names —
+// the set a fresh repo must resolve so nothing dangles. They come off the route
+// grammar: the wildcard lane's intent / close triad, the park and cancel gates,
+// the always-on estimate check and step summary, and the task section's two
+// validate gates.
 var defaultSolutionSkills = []string{
 	"satelle-estimate-actual-review",
 	"satelle-step-summary",
@@ -417,25 +411,46 @@ func TestRunInitVirtualDefaultSolution(t *testing.T) {
 		}
 	}
 
-	// An execution resolves to the task-execution workflow out of the box.
-	ordered := agentstep.OrderedWorkflows(docs, "execution")
-	if len(ordered) == 0 || ordered[0].Name != "satelle-task-workflow" {
-		t.Errorf("execution does not resolve to satelle-task-workflow: %+v", ordered)
+	// An execution resolves to the route's task section out of the box, gated by
+	// the two task-validate reviewers — never falling through to the wildcard.
+	exec := embeddedRouteFor(t, "execution")
+	if !hasGate(exec, "backlog", "in_progress", "satelle-task-validate-before-review") ||
+		!hasGate(exec, "in_progress", "done", "satelle-task-validate-after-review") {
+		t.Errorf("execution does not resolve to the route's task section: %+v", exec.Transitions)
+	}
+	for _, st := range exec.States {
+		if st.Obligation == "coded" {
+			t.Error("an execution fell through to the wildcard lane (it owes `coded`)")
+		}
 	}
 
-	baseBody, _ := embeddedDefault("workflows", "satelle-baseline-workflow")
-	for _, state := range []string{"commit", "push", "committed", "integration"} {
-		if strings.Contains(baseBody, state+" [") || strings.Contains(baseBody, state+"  [") {
-			t.Errorf("generic base workflow declares extra state %q", state)
+	// The generic lane stays generic: no this-repo spine, and every gate the
+	// retired baseline carried is still declared.
+	wild := embeddedRouteFor(t, "*")
+	declared := map[string]bool{}
+	for _, st := range wild.States {
+		declared[st.Name] = true
+		if st.Skill != "" {
+			declared[st.Skill] = true
 		}
 	}
-	for _, gate := range []string{"satelle-story-intent-review", "satelle-story-done-review", "satelle-story-cancel-review", "satelle-estimate-actual-review", "satelle-story-scope-review", "satelle-workflow-change-review"} {
-		if !strings.Contains(baseBody, gate) {
-			t.Errorf("generic base workflow must reference gate %q", gate)
+	for _, tr := range wild.Transitions {
+		for _, sk := range tr.Skills {
+			declared[sk] = true
 		}
 	}
-	if strings.Contains(baseBody, "satelle-code-ac-review") {
-		t.Error("generic base workflow must not reference satelle-code-ac-review")
+	for _, state := range []string{"commit", "push", "committed", "integration", "plan", "release"} {
+		if declared[state] {
+			t.Errorf("the generic lane declares extra state %q", state)
+		}
+	}
+	for _, gate := range []string{"satelle-story-intent-review", "satelle-story-done-review", "satelle-story-cancel-review", "satelle-estimate-actual-review", "satelle-story-scope-review", "satelle-workflow-change-review", "satelle-story-blocked-review", "satelle-step-summary"} {
+		if !declared[gate] {
+			t.Errorf("the generic lane must declare gate %q", gate)
+		}
+	}
+	if declared["satelle-code-ac-review"] {
+		t.Error("the generic lane must not reference satelle-code-ac-review")
 	}
 	estBody, _ := embeddedDefault("skills", "satelle-estimate-actual-review")
 	if !strings.Contains(estBody, "```check") {

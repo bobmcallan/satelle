@@ -3,8 +3,6 @@
 package tests
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,18 +14,16 @@ import (
 // ScopedReviewers(status, nil) equals ScopedReviewers(status, anyTags) for every
 // declared status. Unknown attrs must not appear either (AC9 audit).
 func TestScopedReviewerAppliesTo_ShippedWorkflowsUnchanged(t *testing.T) {
-	root := repoRootForTest()
-	// This repo's own lifecycle is a DERIVED route, checked per category below;
-	// the embedded defaults are still authored graphs (sty_9835070d).
-	paths := []string{
-		filepath.Join(root, "internal", "config", "substrate", "workflows", "satelle-baseline-workflow.md"),
-		filepath.Join(root, "internal", "config", "substrate", "workflows", "satelle-parent-workflow.md"),
-		filepath.Join(root, "internal", "config", "substrate", "workflows", "satelle-task-workflow.md"),
-	}
+	// Both shipped lifecycles are DERIVED ROUTES now — this repo's own
+	// (sty_9835070d) and the binary's default (sty_3795e7f6) — so each is checked
+	// per declared category rather than per file.
 	tags := []string{"surface:ui", "surface:cli", "web", "feature"}
 	specs := map[string]wfdot.Spec{}
 	for _, category := range []string{"*", "epic-parent", "parent", "substrate", "execution", "task"} {
-		specs["derived route ("+category+")"] = repoRouteSpec(t, category, nil)
+		specs["this repo's route ("+category+")"] = repoRouteSpec(t, category, nil)
+	}
+	for _, category := range embeddedRouteCategories(t) {
+		specs["the shipped route ("+category+")"] = embeddedRouteSpec(t, category, nil)
 	}
 	check := func(p string, spec wfdot.Spec) {
 		if probs := wfdot.Validate(spec); len(probs) > 0 {
@@ -52,53 +48,6 @@ func TestScopedReviewerAppliesTo_ShippedWorkflowsUnchanged(t *testing.T) {
 	}
 	for name, spec := range specs {
 		check(name, spec)
-	}
-	for _, p := range paths {
-		body, err := os.ReadFile(p)
-		if err != nil {
-			// parent may live only under project or only under embedded
-			if os.IsNotExist(err) {
-				continue
-			}
-			t.Fatalf("read %s: %v", p, err)
-		}
-		spec, ok := wfdot.Parse(string(body))
-		if !ok {
-			t.Fatalf("parse %s", p)
-		}
-		if probs := wfdot.Validate(spec); len(probs) > 0 {
-			t.Errorf("%s Validate: %v", p, probs)
-		}
-		// Collect statuses from states + a few fixed targets.
-		statuses := map[string]bool{"in_progress": true, "done": true, "release": true, "plan": true}
-		for _, st := range spec.States {
-			statuses[st.Name] = true
-			// After sty_e4359efe the project workflow may declare design with
-			// applies_to=surface:ui; other workflows should still be unscoped.
-			if len(st.AppliesTo) > 0 && st.Name != "design" {
-				t.Errorf("%s node %s has unexpected applies_to=%v", p, st.Name, st.AppliesTo)
-			}
-		}
-		for status := range statuses {
-			a := spec.ScopedReviewers(status, nil)
-			// Compare unscoped-only sets: surface-scoped nodes (e.g. design) may
-			// appear only when tags match, which is intentional (sty_e4359efe).
-			b := spec.ScopedReviewers(status, tags)
-			aSet, bSet := map[string]bool{}, map[string]bool{}
-			for _, s := range a {
-				aSet[s.Skill] = true
-			}
-			for _, s := range b {
-				bSet[s.Skill] = true
-			}
-			// Every skill in a (nil-tags) must still be in b (tagged) — absent
-			// applies_to is always enqueued.
-			for sk := range aSet {
-				if !bSet[sk] {
-					t.Errorf("%s status %s: skill %s present without tags but missing with tags", p, status, sk)
-				}
-			}
-		}
 	}
 }
 

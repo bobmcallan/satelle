@@ -24,13 +24,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 )
 
-// baselineWorkflowName is the canonical order-zero default the engine falls back
-// to by name. `satelle init` also seeds it onto disk as editable substrate
-// (sty_bf153cbf reverses sty_3f9a6124's embedded-only stance) when no authored
-// workflow already claims its category; the embedded copy still backstops the
-// fallback either way. Kept in sync with the reviewer package's const.
-const baselineWorkflowName = "satelle-baseline-workflow"
-
 func init() {
 	wf := &cobra.Command{Use: "workflow", Short: "Inspect workflows (read-only)"}
 
@@ -53,30 +46,12 @@ default. The head of the list is the active workflow the reviewer enforces.`,
 			if err != nil {
 				return err
 			}
-			// List enumerates only on-disk .satelle workflows (sty_94da9ac9). This is
-			// a RESOLUTION query — "what governs this category" — so include the embedded
-			// order-zero baseline as the fallback candidate (resolved by name via Get),
-			// since it governs any category no project workflow covers. A repo file of
-			// the same name already on disk wins and is not duplicated.
-			if base, gerr := a.Store.DocIndex.Get(ctx, "workflows", baselineWorkflowName); gerr == nil {
-				present := false
-				for _, d := range docs {
-					if d.Name == base.Name {
-						present = true
-						break
-					}
-				}
-				if !present {
-					docs = append(docs, base)
-				}
-			}
 			out := make([]workflowChoice, 0, len(docs))
-			// A DERIVED route governs before any authored workflow is considered,
-			// so it heads the list and is the ACTIVE choice (sty_9835070d). Listing
-			// only the authored graphs would name the embedded baseline as active
-			// while the route is what the engine actually enforces.
-			rs := wfgovern.RouteSourceOf(docs)
-			derived := rs.Present() && routeClaims(rs, category)
+			// A DERIVED route that GOVERNS heads the list and is the ACTIVE choice
+			// (sty_9835070d). The predicate is the front door's, not a second copy of
+			// it: an authored route beats every graph, the shipped route is order zero
+			// and yields to an authored graph (sty_3795e7f6).
+			rs, derived := wfgovern.RouteGoverns(docs, category)
 			if derived {
 				out = append(out, workflowChoice{
 					Name:      wfgovern.DerivedRouteName,
@@ -388,16 +363,4 @@ func frontmatterListValue(body, key string) []string {
 		return out
 	}
 	return nil
-}
-
-// routeClaims reports whether the derived route governs the requested category —
-// its own section, or the wildcard. An empty category means "the wildcard view",
-// which the route answers with its `*` section.
-func routeClaims(rs wfgovern.RouteSource, category string) bool {
-	for _, c := range wfgovern.RouteCategories(rs.Done) {
-		if c == category || c == wfdot.WildcardCategory {
-			return true
-		}
-	}
-	return false
 }

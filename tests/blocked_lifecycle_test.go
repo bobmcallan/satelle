@@ -16,7 +16,8 @@ func TestInitSeedsBlockedLifecycle(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	materializeDefault(t, repo, "skills", "satelle-story-blocked-review")
-	materializeDefault(t, repo, "workflows", "satelle-baseline-workflow")
+	materializeDefault(t, repo, "workflows", "done")
+	materializeDefault(t, repo, "workflows", "step")
 
 	skill := filepath.Join(repo, ".satelle", "skills", "satelle-story-blocked-review.md")
 	if _, err := os.Stat(skill); err != nil {
@@ -30,21 +31,18 @@ func TestInitSeedsBlockedLifecycle(t *testing.T) {
 		t.Error("seeded blocked-review skill should require a reason")
 	}
 
-	wf := filepath.Join(repo, ".satelle", "workflows", "satelle-baseline-workflow.md")
+	wf := filepath.Join(repo, ".satelle", "workflows", "done.md")
 	wbody, err := os.ReadFile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(wbody)
-	if !strings.Contains(s, "@skill:satelle-story-blocked-review") {
-		t.Error("seeded baseline must reference satelle-story-blocked-review")
-	}
-	// Park edges: into and out of the park node (authored name is substrate, not Go).
-	if !strings.Contains(s, "-> blocked") && !strings.Contains(s, "->blocked") {
-		// Accept either spacing; require the park skill on an edge or node.
-		if !strings.Contains(s, "satelle-story-blocked-review") {
-			t.Error("baseline must wire the blocked-review gate")
-		}
+	// A derived route DECLARES its park state and the reviewer that admits it on
+	// one `park:` line; the topology into and out of it is synthesised by the
+	// binary, so there is no edge to look for in the markdown (sty_3795e7f6).
+	if !strings.Contains(s, "park:") || !strings.Contains(s, "@satelle-story-blocked-review") {
+		t.Errorf("the seeded declaration of done must declare a park state gated by "+
+			"satelle-story-blocked-review:\n%s", s)
 	}
 	mustRun(t, testBin, repo, "reindex")
 	mustRun(t, testBin, repo, "workflow", "validate")

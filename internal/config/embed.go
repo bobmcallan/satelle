@@ -20,7 +20,7 @@ import (
 )
 
 // substrateFS holds the embedded default artifacts, filed by kind under
-// substrate/<kind>/<name>.md (e.g. substrate/workflows/satelle-baseline-workflow.md).
+// substrate/<kind>/<name>.md (e.g. substrate/workflows/done.md).
 //
 //go:embed substrate
 var substrateFS embed.FS

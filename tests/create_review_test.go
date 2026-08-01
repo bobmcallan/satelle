@@ -21,7 +21,7 @@ func TestCreateContentReviewGate(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	materializeDefault(t, repo, "skills", "satelle-story-create-review")
-	materializeDefault(t, repo, "workflows", "satelle-baseline-workflow")
+	materializeDefault(t, repo, "workflows", "done")
 
 	// Opt into create-gating via the local overlay (leaves the scaffold intact).
 	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"), "[review]\ngate_create = true\n")
@@ -171,8 +171,8 @@ func TestCreateGateRejectsEpicAsFeature(t *testing.T) {
 	}
 	// Virtual create_review skill + baseline: materialize for the stubbed gate path.
 	materializeDefault(t, repo, "skills", "satelle-story-create-review")
-	materializeDefault(t, repo, "workflows", "satelle-baseline-workflow")
-	wf, err := os.ReadFile(filepath.Join(repo, ".satelle", "workflows", "satelle-baseline-workflow.md"))
+	materializeDefault(t, repo, "workflows", "done")
+	wf, err := os.ReadFile(filepath.Join(repo, ".satelle", "workflows", "done.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

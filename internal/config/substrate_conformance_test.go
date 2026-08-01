@@ -19,12 +19,11 @@ var descWordBudget = map[string]int{
 	"tasks":      60,
 }
 
-// workflowScopeManifest: embedded defaults are scope:system (constitution).
+// workflowScopeManifest: embedded defaults are scope:system (constitution). The
+// shipped lifecycle is one derived route in two halves (sty_3795e7f6).
 var workflowScopeManifest = map[string]string{
-	"satelle-baseline-workflow":  "system",
-	"satelle-parent-workflow":    "system",
-	"satelle-substrate-workflow": "system",
-	"satelle-task-workflow":      "system",
+	"done": "system",
+	"step": "system",
 }
 
 // verdictBlockWaiver: skills whose body still carries more than one decision+notes

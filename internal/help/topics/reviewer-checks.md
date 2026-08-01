@@ -19,17 +19,23 @@ satelle does the context selection; the reviewer reads what it needs through its
 tools. This applies to **stories and tasks** alike — gating is by category,
 kind-agnostic.
 
-## Workflows are authored — YAML or DOT
+## The lifecycle is authored — a derived route, or a DOT graph
 
-The active workflow is authored substrate (the default set `satelle init` seeds
-under `.satelle/workflows`, a repo's own workflow, or the embedded
-`satelle-baseline-workflow` as the order-zero fallback). Its lifecycle may be
-written two ways, both parsed by the shared `wfdot`/web parser:
+The active lifecycle is authored substrate: a repo's own `.satelle/workflows`,
+or the **derived route the binary ships** as the order-zero default. It may be
+written two ways:
 
-- an inline-YAML `states:`/`transitions:` block (transitions carry `reviewer_skill`); or
+- a **derived route** — `done.md` (obligations per category, plus park/cancel)
+  and `step.md` (the step catalogue and always-on gates). Each step names its
+  `agent`, its `skills`, and the `reviewers` gating ENTRY to it; order and
+  topology are derived, never authored. This is the shipped form.
 - a fenced ```dot graph (node-centric): each node is a step carrying an `agent`,
   a reviewer node names its gate as `prompt="@skill:NAME"`, and the edge **into**
-  a reviewer node is the gated transition.
+  a reviewer node is the gated transition. An inline-YAML
+  `states:`/`transitions:` block is auto-converted to this form at ingest.
+
+A repo's own route outranks everything; a repo's own workflow outranks the
+shipped route for the categories it claims; the shipped route governs the rest.
 
 The per-noun `satelle <noun> validate` runs a DETERMINISTIC structure check on
 every authored doc — frontmatter (OKF `type`), naming, a usable definition, and

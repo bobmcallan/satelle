@@ -8,25 +8,41 @@ import (
 	"github.com/bobmcallan/satelle/internal/wfdot"
 )
 
-// TestEmbeddedBaselineOffersParkState pins AC1 of the blocked-lifecycle work:
-// the embedded baseline declares a park node (agent=reviewer, blocked-review
-// skill) with in_progress↔park edges, and that park node is not a performing
-// state — without hardcoding a product lifecycle name in Go mechanism.
-func TestEmbeddedBaselineOffersParkState(t *testing.T) {
-	var body string
+// embeddedRoute derives the shipped default route for a category. The embedded
+// lifecycle is done.md + step.md now, not a DOT graph (sty_3795e7f6).
+func embeddedRoute(t *testing.T, category string) wfdot.Spec {
+	t.Helper()
+	var done, step string
 	for _, d := range config.EmbeddedDefaults() {
-		if d.Kind == "workflows" && d.Name == "satelle-baseline-workflow" {
-			body = d.Body
-			break
+		if d.Kind != "workflows" {
+			continue
+		}
+		switch d.Name {
+		case "done":
+			done = d.Body
+		case "step":
+			step = d.Body
 		}
 	}
-	if body == "" {
-		t.Fatal("embedded baseline workflow missing")
+	if done == "" || step == "" {
+		t.Fatal("the binary must ship both halves of the default route")
 	}
-	spec, ok := wfdot.Parse(body)
-	if !ok {
-		t.Fatal("baseline DOT parse failed")
+	spec, err := wfdot.ParseRoute(done, step, category, nil)
+	if err != nil {
+		t.Fatalf("derive embedded route for %q: %v", category, err)
 	}
+	return spec
+}
+
+// TestEmbeddedBaselineOffersParkState pins AC1 of the blocked-lifecycle work:
+// the shipped default lifecycle offers a park state (agent=reviewer, the
+// blocked-review skill) reachable from a performing state and resumable back to
+// one, and that park state is not itself performing — without hardcoding a
+// product lifecycle name in Go mechanism. The park state is DECLARED on the
+// wildcard section's `park:` line and the topology is synthesised, so this now
+// asserts against the derived route rather than a graph.
+func TestEmbeddedBaselineOffersParkState(t *testing.T) {
+	spec := embeddedRoute(t, "*")
 
 	// The park skill must appear on a node and on the edge into that node.
 	const parkSkill = "satelle-story-blocked-review"
@@ -43,7 +59,10 @@ func TestEmbeddedBaselineOffersParkState(t *testing.T) {
 		}
 	}
 	if parkNode == "" {
-		t.Fatal("baseline has no node with @skill:satelle-story-blocked-review")
+		t.Fatal("the shipped route has no state gated by satelle-story-blocked-review")
+	}
+	if !spec.IsParkState(parkNode) {
+		t.Errorf("state %q is declared as the park state but does not read as one", parkNode)
 	}
 	// Engagement: park must not be engaging (edit/commit gates).
 	for _, s := range spec.NonTerminalEngagingStates() {
@@ -51,7 +70,8 @@ func TestEmbeddedBaselineOffersParkState(t *testing.T) {
 			t.Errorf("park node %q is engaging — must not be", parkNode)
 		}
 	}
-	// Edges: some performing state reaches park, and park reaches a performing state (resume).
+	// Edges: some performing state reaches park, and park reaches on (resume /
+	// cancel), so a parked story is never stranded.
 	var intoPark, outOfPark bool
 	for _, tr := range spec.Transitions {
 		if tr.To == parkNode {

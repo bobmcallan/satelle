@@ -67,10 +67,6 @@ type DocGetter interface {
 // (transparently, the operator's choice); the default grant is read-only.
 const defaultTools = "Read,Grep,Glob"
 
-// baselineWorkflow is the workflow doc whose transitions carry the reviewer
-// skills. The repo override or the embedded canonical resolves under this name.
-const baselineWorkflow = "satelle-baseline-workflow"
-
 // defaultCheckTimeout bounds a functional check (deploy/integration can be slow,
 // but a hung command must not block a transition forever).
 const defaultCheckTimeout = 20 * time.Minute
@@ -1729,9 +1725,17 @@ func (g *Engine) createReviewHook(ctx context.Context, category string) (wfhook.
 	// lives on its declaration of done — the half that says what this repo means
 	// by finished, which is where a create gate belongs. Read it first, so a
 	// converted repo keeps the gate its graphs used to declare (sty_9835070d).
-	if doc, err := g.docs.Get(ctx, "workflows", wfgovern.RouteSourceDone); err == nil {
-		if h, ok := wfhook.For(doc.Body, wfhook.OpCreateReview); ok {
-			return h, true
+	//
+	// Only when the route GOVERNS the category, though. The doc index overlays the
+	// shipped done.md wherever a repo has no file of that name, so reading it
+	// unconditionally would let the default's create gate shadow the one an
+	// authored workflow declares — the same precedence hole RouteGoverns closes
+	// for the lifecycle itself (sty_3795e7f6).
+	if workflows, err := g.docs.List(ctx, "workflows"); err == nil {
+		if rs, ok := wfgovern.RouteGoverns(workflows, category); ok {
+			if h, hooked := wfhook.For(rs.Done, wfhook.OpCreateReview); hooked {
+				return h, true
+			}
 		}
 	}
 	doc, err := g.activeWorkflow(ctx, category)
@@ -1813,21 +1817,27 @@ func (g *Engine) parkResume(ctx context.Context, item workitem.Item, toStatus st
 	return false, nil
 }
 
-// activeWorkflow returns the workflow doc governing an item of the given
-// category. Selection matches the item's category against each indexed
-// workflow's `applies_to` frontmatter: a workflow listing the category wins; a
-// wildcard (`applies_to: ["*"]`) workflow is the next-best; the embedded
-// baseline (resolved by name) is the final fallback. This is the
+// activeWorkflow returns the authored WORKFLOW doc governing an item of the
+// given category. Selection matches the item's category against each indexed
+// workflow's `applies_to` frontmatter: a workflow listing the category wins, a
+// wildcard (`applies_to: ["*"]`) workflow is the next-best. This is the
 // configuration-over-code path — a repo adds a category-specific workflow as
-// substrate and it takes effect with no binary change. A List error degrades to
-// the baseline so gating never silently disappears.
+// substrate and it takes effect with no binary change.
+//
+// It knows nothing about the derived route: the lifecycle front door is
+// activeSpec / wfgovern.SpecFor, and the order-zero fallback is now the route
+// the binary ships rather than a graph resolved by name (sty_3795e7f6). No
+// applicable workflow is ErrNotFound, which every caller already treats as "no
+// authored workflow governs this".
 func (g *Engine) activeWorkflow(ctx context.Context, category string) (docindex.Doc, error) {
-	if workflows, err := g.docs.List(ctx, "workflows"); err == nil {
-		if ordered := wfgovern.OrderedWorkflows(workflows, category); len(ordered) > 0 {
-			return ordered[0], nil // the highest-priority applicable workflow
-		}
+	workflows, err := g.docs.List(ctx, "workflows")
+	if err != nil {
+		return docindex.Doc{}, err
 	}
-	return g.docs.Get(ctx, "workflows", baselineWorkflow)
+	if ordered := wfgovern.OrderedWorkflows(wfgovern.LifecycleWorkflows(workflows), category); len(ordered) > 0 {
+		return ordered[0], nil // the highest-priority applicable workflow
+	}
+	return docindex.Doc{}, docindex.ErrNotFound
 }
 
 // WorkflowStampPrefix re-exports the stamp tag prefix (owned by wfgovern).
@@ -1884,20 +1894,12 @@ func (g *Engine) activeSpec(ctx context.Context, item workitem.Item) (wfdot.Spec
 	if err == nil {
 		return spec, name, nil
 	}
-	if !errors.Is(err, wfgovern.ErrNoWorkflow) {
-		return wfdot.Spec{}, name, err
-	}
-	// Nothing applied by category: fall back to the embedded baseline, exactly as
-	// activeWorkflow does, so a repo with no authored workflow still has one.
-	doc, gerr := g.docs.Get(ctx, "workflows", baselineWorkflow)
-	if gerr != nil {
-		return wfdot.Spec{}, "", errors.Join(err, gerr)
-	}
-	base, ok := wfdot.Parse(doc.Body)
-	if !ok {
-		return wfdot.Spec{}, doc.Name, err
-	}
-	return base, doc.Name, nil
+	// There is no second fallback to reach for: the order-zero lifecycle is the
+	// route the binary ships, and the doc index overlays it into `workflows`
+	// wherever the repo has no half of its own, so SpecFor has already considered
+	// it (sty_3795e7f6). ErrNoWorkflow here means the substrate genuinely governs
+	// nothing — a repo that deleted the shipped route.
+	return wfdot.Spec{}, name, err
 }
 
 // ungoverned reports whether err from activeSpec means "nothing governs this
@@ -1916,13 +1918,8 @@ func (g *Engine) WorkflowNameFor(ctx context.Context, category string) string {
 	// will not consult would be a lie on every story created after a conversion
 	// (sty_9835070d).
 	if workflows, err := g.docs.List(ctx, "workflows"); err == nil {
-		rs := wfgovern.RouteSourceOf(workflows)
-		if rs.Present() {
-			for _, c := range wfgovern.RouteCategories(rs.Done) {
-				if c == category || c == wfdot.WildcardCategory {
-					return wfgovern.DerivedRouteName
-				}
-			}
+		if _, ok := wfgovern.RouteGoverns(workflows, category); ok {
+			return wfgovern.DerivedRouteName
 		}
 	}
 	doc, err := g.activeWorkflow(ctx, category)

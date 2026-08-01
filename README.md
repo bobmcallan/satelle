@@ -151,13 +151,18 @@ through every gate on the path.
   fresh-context call over a payload satelle builds; satelle does the context
   selection, the reviewer reads what it needs through its read-only tools.
 
-Workflows are **authored substrate** in the **DOT standard** (Graphviz): a
-node-centric graph where each node is a step carrying an `agent`
-(`executor`/`reviewer`) and a gate is named `prompt="@skill:NAME"` on a reviewer
-node or an edge (the legacy edge `reviewer_skill=` attribute still parses). The embedded `satelle-baseline-workflow`
-(`backlog → in_progress → done`) is the order-zero default; a repo overrides it
-under `.satelle/workflows`, and a YAML lifecycle is auto-converted to DOT on
-ingest. How each agent runs is bound in `.satelle/agents.toml` — the reviewer's
+The lifecycle is **authored substrate**, and satelle DERIVES it from two files
+under `.satelle/workflows`: `done.md` declares what done means per category (an
+ordered list of obligations, plus the park and cancel states), and `step.md` is
+the catalogue of steps and always-on gates that discharge them — each step
+naming what it `provides`, what it `requires`, its `agent`, and the `reviewers`
+gating entry to it. The binary owns ORDER (a topological sort of the
+prerequisites) and topology (cancel, park, backward movement), so neither is
+authored. The embedded route (`backlog → in_progress → done`, plus container and
+task-run sections) is the order-zero default a repo edits or overrides; a repo's
+own workflow still governs the categories it claims, and an authored DOT graph
+is still parsed for repos that have one. How each agent runs is bound in
+`.satelle/agents.toml` — the reviewer's
 agent CLI (`claude` and `grok` presets; Codex is first-class via preferred ACP
 (`interface=acp` + `npx -y @agentclientprotocol/codex-acp`, no `stdio`
 subcommand) or secondary `codex exec` command template — see
