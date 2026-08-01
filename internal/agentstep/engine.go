@@ -782,6 +782,29 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 // tests), so only authored (non-embedded) substrate is judged here; no resolvable
 // workflow at all keeps the gateless path working.
 func (g *Engine) guardWorkflowStructure(ctx context.Context, item workitem.Item, toStatus string) error {
+	// A lifecycle is a DERIVED ROUTE, so the doc to judge is whichever half is
+	// malformed (sty_d953c5d8). Judging the route source is the whole point of
+	// this guard now — activeWorkflow deliberately does not return route halves,
+	// so without this the guard would pass every broken route silently.
+	if workflows, lerr := g.docs.List(ctx, "workflows"); lerr == nil {
+		if _, governs := wfgovern.RouteGoverns(workflows, workflowCategory(item)); governs {
+			for _, w := range workflows {
+				if !wfgovern.IsRouteSource(w.Name) || w.Embedded {
+					continue
+				}
+				if problems := structure.Doc("workflows", w.Name, w.Body, nil); len(problems) > 0 {
+					return wfgovern.Refusal{
+						Rule: wfgovern.RuleStructureGuard, Item: item.ID, Workflow: w.Name,
+						From: item.Status, To: toStatus,
+						Why: fmt.Sprintf("the governing workflow fails structure validation (%s), so no gate under it can be trusted to judge",
+							strings.Join(problems, "; ")),
+						Remedy: fmt.Sprintf("fix the substrate (`satelle workflow validate %s`) — no transition is legal until it passes", w.Name),
+					}
+				}
+			}
+			return nil
+		}
+	}
 	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
 	if err != nil {
 		if errors.Is(err, docindex.ErrNotFound) {
@@ -1875,10 +1898,10 @@ func (g *Engine) activeWorkflowPreferring(ctx context.Context, category, stamped
 }
 
 // activeSpec resolves the LIFECYCLE governing item through the one front door
-// (wfgovern.SpecFor): the derived route when the substrate carries one, the
-// governing authored DOT until it does. It replaces the
-// activeWorkflowPreferring-then-wfdot.Parse pair every gating path used to
-// repeat, so a repo's conversion needs no per-call-site change (sty_9835070d).
+// (wfgovern.SpecFor): the derived route the substrate carries, and a named
+// refusal when a workflows doc claims the category but declares no route. It
+// replaces the resolve-then-parse pair every gating path used to repeat, so a
+// repo's conversion needs no per-call-site change (sty_9835070d).
 //
 // The error is not collapsed. wfgovern.ErrNoWorkflow means nothing governs the
 // item at all — a fresh repo, the case every caller below already treats as
@@ -1933,29 +1956,18 @@ func (g *Engine) WorkflowNameFor(ctx context.Context, category string) string {
 // nodes on its TRANSITIONS (an edge-less declared reviewer node like estimate/
 // step is a gate declaration, not a lifecycle state) — and whether the workflow
 // resolves at all. The restamp validation seam (sty_ed3386cf): a story may only
-// be re-stamped onto a workflow that declares its current status. A resolved
-// workflow whose lifecycle is not parseable DOT returns no states, so the caller
-// skips the status check rather than stranding the story.
+// be re-stamped onto a workflow that declares its current status.
+//
+// A lifecycle is a DERIVED ROUTE now, and a route's states depend on the story's
+// category — which a name alone does not carry. So a name that resolves returns
+// no states, and the caller skips the status check rather than stranding the
+// story: the same contract an unparseable lifecycle always had here
+// (sty_d953c5d8).
 func (g *Engine) WorkflowStates(ctx context.Context, name string) ([]string, bool) {
-	doc, err := g.docs.Get(ctx, "workflows", name)
-	if err != nil {
+	if _, err := g.docs.Get(ctx, "workflows", name); err != nil {
 		return nil, false
 	}
-	spec, ok := wfdot.Parse(doc.Body)
-	if !ok {
-		return nil, true
-	}
-	seen := map[string]bool{}
-	var out []string
-	for _, tr := range spec.Transitions {
-		for _, s := range []string{tr.From, tr.To} {
-			if s != "" && !seen[s] {
-				seen[s] = true
-				out = append(out, s)
-			}
-		}
-	}
-	return out, true
+	return nil, true
 }
 
 // WorkflowConsistency reports cross-workflow inconsistencies an agent should
@@ -2038,11 +2050,9 @@ func WorkflowSkillProblems(w docindex.Doc, resolve func(skill string) bool) []st
 				"workflow %s declares %s %q which does not resolve in the substrate", w.Name, h.Operation, h.Skill))
 		}
 	}
-	spec, ok := wfdot.Parse(w.Body)
-	if !ok {
-		return problems
-	}
-	for _, s := range referencedWorkflowSkills(spec) {
+	// A lifecycle is a derived route, so the skills a workflow-kind doc names come
+	// from the route grammar rather than a graph (sty_d953c5d8).
+	for _, s := range referencedWorkflowSkills(w.Body) {
 		if !resolve(s) {
 			// Message text is deliberately IDENTICAL to what the whole-set callers
 			// have always printed — AC3 requires their output unchanged. The
@@ -2055,18 +2065,37 @@ func WorkflowSkillProblems(w docindex.Doc, resolve func(skill string) bool) []st
 	return problems
 }
 
-// referencedWorkflowSkills lists every skill a workflow names — node @skill:
-// prompts and edge gates — deduped.
-func referencedWorkflowSkills(spec wfdot.Spec) []string {
+// referencedWorkflowSkills lists every skill one half of a derived route names —
+// a step's executor rubrics and entry reviewers, an always-on gate, a park or
+// cancel gate — deduped and sorted. A body that is not route grammar names
+// nothing, which is the honest answer for a doc that carries no lifecycle
+// (sty_d953c5d8).
+func referencedWorkflowSkills(body string) []string {
 	set := map[string]bool{}
-	for _, s := range spec.States {
-		if s.Skill != "" {
-			set[s.Skill] = true
+	if lists, err := wfdot.ParseDone(body); err == nil {
+		for _, l := range lists {
+			for _, sk := range []string{l.ParkGate, l.CancelGate, l.ParkAdvisorSkill} {
+				if sk != "" {
+					set[sk] = true
+				}
+			}
 		}
 	}
-	for _, tr := range spec.Transitions {
-		if tr.Skill != "" {
-			set[tr.Skill] = true
+	if cat, err := wfdot.ParseSteps(body); err == nil {
+		for _, st := range cat.Steps {
+			for _, sk := range append(append([]string(nil), st.Skills...), st.Reviewers...) {
+				if sk != "" {
+					set[sk] = true
+				}
+			}
+			if st.AdvisorSkill != "" {
+				set[st.AdvisorSkill] = true
+			}
+		}
+		for _, g := range cat.Gates {
+			if g.Skill != "" {
+				set[g.Skill] = true
+			}
 		}
 	}
 	out := make([]string, 0, len(set))
@@ -2100,9 +2129,9 @@ func (g *Engine) runCheck(ctx context.Context, skill, command, payload string) v
 }
 
 // skillCheck returns a functional-check skill's command — the SELF-CONTAINED
-// check carried inside the skill artifact. Delegates to structure.CheckCommand
-// (single definition shared with format-drift / refresh — sty_4cebc624 /
-// sty_6830e78e). Empty when the skill carries no check (an LLM reviewer).
+// check carried inside the skill artifact. Delegates to structure.CheckCommand,
+// the single definition every caller shares (sty_4cebc624 / sty_6830e78e).
+// Empty when the skill carries no check (an LLM reviewer).
 func skillCheck(body string) string {
 	return structure.CheckCommand(body)
 }
@@ -2234,11 +2263,9 @@ func (g *Engine) composeSkillBodies(ctx context.Context, names []string) (string
 // the parallel concurrency cap (0 = sequential; sty_4f0a15db), and whether the
 // edge is DECLARED at all.
 func reviewerSkillsFor(body, from, to string) (skills []string, agent string, parallel int, declared bool) {
-	// DOT workflow: resolve the edge from the shared wfdot spec — entry to a
-	// reviewer node is the gated transition, carrying that node's skill.
-	if spec, ok := wfdot.Parse(body); ok {
-		return specReviewerSkills(spec, from, to)
-	}
+	// The inline `- {from:, to:}` grammar, which some fixtures and legacy bodies
+	// still carry. A DERIVED route never reaches here — the front door hands its
+	// callers a Spec, and specReviewerSkills answers off that (sty_d953c5d8).
 	for _, line := range strings.Split(body, "\n") {
 		l := strings.TrimSpace(line)
 		if !strings.HasPrefix(l, "- {") || !strings.Contains(l, "from:") || !strings.Contains(l, "to:") {

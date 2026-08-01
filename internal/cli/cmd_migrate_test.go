@@ -468,7 +468,12 @@ func TestMigrateReportsOutstandingConversion(t *testing.T) {
 	a := &app.App{Config: cfg, RepoRoot: repo, DataDir: dataDir}
 	for _, yes := range []bool{false, true} {
 		var out strings.Builder
-		if err := runMigrate(&out, a, yes, false); err != nil {
+		// The apply path also re-validates, and a leftover graph now FAILS that
+		// check — a workflows doc that is not a route source governs nothing
+		// (sty_d953c5d8). The outstanding-conversion report is what this test is
+		// about, and it must be printed either way.
+		err := runMigrate(&out, a, yes, false)
+		if err != nil && !strings.Contains(err.Error(), "failed validation") {
 			t.Fatalf("yes=%v: %v", yes, err)
 		}
 		if !strings.Contains(out.String(), "workflow conversion OUTSTANDING") {

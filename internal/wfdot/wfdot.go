@@ -1,30 +1,33 @@
-// Package wfdot parses a workflow's fenced ```dot block into a neutral spec — the
-// SINGLE DOT-to-spec path shared by the web diagram, the reviewer gater, and the
-// commit/edit hooks (so the grammar is defined once, never copied). The model is
-// node-centric: each DOT node is a step/state carrying an `agent`, each edge a
-// transition, and the edge INTO a reviewer node (whose gate is prompt="@skill:NAME")
-// carries that skill — so a story's status walks the nodes and entry to a reviewer
-// node is the gated transition. See the satelle-agent-model principle.
+// Package wfdot derives a workflow's neutral Spec from its two authored halves —
+// the SINGLE route-to-spec path shared by the web panel, the reviewer gater, and
+// the commit/edit hooks (so the grammar is defined once, never copied).
+//
+// The model is step-centric: each step carries an `agent`, its `skills` rubric,
+// and the `reviewers` gating ENTRY to it — so a story's status walks the steps
+// and entry to a gated step is the gated transition. ORDER and topology are
+// DERIVED (BuildRoute), never authored; the DOT text front end that used to
+// produce a Spec is retired (sty_d953c5d8). The package keeps its name because
+// Spec and its consumers are unchanged. See the satelle-agent-model and
+// satelle-route-standard principles.
 package wfdot
 
 import (
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 )
 
 // DefaultDoneGate is satelle's conventional close gate. It is no longer MANDATED
-// by Validate (sty_9a139c78): the done gate is whatever the workflow's `done`
-// node declares, transparently — a workflow may name it, name another, or omit it
+// by Validate (sty_9a139c78): the done gate is whatever the route's terminal
+// step declares, transparently — a route may name it, name another, or omit it
 // entirely ("if the user breaks the process, so be it"). The name remains the
 // convention init seeds and the docs reference.
 const DefaultDoneGate = "satelle-story-done-review"
 
-// StepSummarySkill is the conventional step-review/summary skill. A workflow opts
-// into per-transition step summaries by declaring a node whose gate is this skill
-// (transparently, in the DOT), optionally marked mandatory=true. There is no
-// hidden always-on summariser — the flow declares it (sty_9a139c78).
+// StepSummarySkill is the conventional step-review/summary skill. A route opts
+// into per-transition step summaries by declaring a `## gate` section for it
+// (transparently, in step.md), optionally marked `mandatory: true`. There is no
+// hidden always-on summariser — the route declares it (sty_9a139c78).
 const StepSummarySkill = "satelle-step-summary"
 
 // Validate checks a parsed workflow Spec for structural soundness, returning
@@ -118,34 +121,34 @@ func (s Spec) Start() string {
 	return ""
 }
 
-// State is one workflow node. Terminal is true when no transition leaves it.
+// State is one step of the derived route. Terminal is true when no transition
+// leaves it.
 type State struct {
 	Name     string
 	Agent    string
 	Terminal bool
-	// Skill is the node's own `@skill:NAME` prompt — the executor rubric an
-	// executor step performs, or the gate a reviewer node judges by (empty when
-	// the node carries no prompt). Populated from the DOT grammar.
+	// Skill is the step's own rubric — what an executor step performs, or the
+	// gate a reviewer step judges by (empty when the step names none). Populated
+	// from the step's `skills:`.
 	Skill string
 	// Obligation is what this step DISCHARGES — the declaration-of-done entry that
-	// put it on the route. Set by BuildRoute from the step's `provides`; empty for
-	// an authored DOT, which has no obligation vocabulary. Carried on State (not
-	// only in the route constructor) so the route a story renders is the same one
-	// whichever front door built the Spec (sty_39e2d9df).
+	// put it on the route. Set by BuildRoute from the step's `provides`. Carried
+	// on State (not only in the route constructor) so the route a story renders is
+	// the same one the Spec was built from (sty_39e2d9df).
 	Obligation string
-	// Mandatory is the node's `mandatory=true` attribute. For a step-summary node
-	// it means the step summary is required (a failure is surfaced, not swallowed);
-	// for other nodes it is advisory metadata. Populated from the DOT grammar.
+	// Mandatory is the gate's `mandatory: true` key. For the step-summary gate it
+	// means the summary is required (a failure is surfaced, not swallowed); for
+	// other steps it is advisory metadata.
 	Mandatory bool
-	// On is the node's `on="s1,s2"` (or `on="*"`) attribute — the target states a
-	// declared, edge-less reviewer node gates as a blocking gate. Empty for an
-	// ordinary node. `*` means every transition. This is the declarative
-	// replacement for the old reviewer:always tag layer: the DOT, not a skill tag,
-	// is the sole authority for which always-on gates run. Populated from the grammar.
+	// On is an always-on gate's `on:` list — the target steps it gates. Empty for
+	// an ordinary step. `*` means every transition. This is the declarative
+	// replacement for the old reviewer:always tag layer: the route, not a skill
+	// tag, is the sole authority for which always-on gates run.
 	On []string
-	// Shape is the node's DOT shape attribute — the visual classification the
-	// authored DOT uses to mark start/terminal states (Mdiamond=start,
-	// Msquare=terminal). Populated from the DOT grammar.
+	// Shape is the step's start/terminal classification (Mdiamond=start,
+	// Msquare=terminal). Set by BuildRoute from the step's `start:` / `terminal:`
+	// keys; the marker vocabulary is retained so every Spec consumer reads one
+	// spelling.
 	Shape string
 	// AppliesTo is the node's optional applies_to="surface:ui,…" list
 	// (sty_c6d093c8 / sty_8225d8a5). For an edge-less scoped reviewer or
@@ -194,9 +197,9 @@ type ScopedReviewer struct {
 
 // ScopedReviewers returns the DECLARED, edge-less reviewer nodes that gate the
 // transition into toStatus — a reviewer node whose `on=` list includes toStatus
-// or the wildcard "*". These are the workflow-declared always-on gates, replacing
-// the old reviewer:always skill-tag scan so the DOT is the sole gating authority.
-// The step-summary node is excluded: it is a post-transition summariser (run via
+// or the wildcard "*". These are the route-declared always-on gates, replacing
+// the old reviewer:always skill-tag scan so the route is the sole gating
+// authority. The step-summary gate is excluded: it is a post-transition summariser (run via
 // Summarise), not a blocking gate. Sorted by skill for a deterministic order.
 //
 // tags is the story's tag set (item.Tags). A node with applies_to is enqueued only
@@ -377,8 +380,8 @@ func (s Spec) PerformingStates() []string {
 // executor. This is deliberately distinct from PerformingStates (which includes
 // isolated named agents) and NonTerminalEngagingStates (which controls lease
 // ownership): only the workflow's driving executor may authorize source edits
-// from the parent harness. The policy remains authored in DOT; no state name is
-// compiled into the hook.
+// from the parent harness. The policy remains authored in the route; no state
+// name is compiled into the hook.
 func (s Spec) EditCapableStates() []string {
 	var out []string
 	for _, st := range s.States {
@@ -412,9 +415,9 @@ func (s Spec) StateAgent(name string) (string, bool) {
 }
 
 // NonTerminalEngagingStates returns all states that are neither the start state
-// (shape=Mdiamond) nor a terminal state (shape=Msquare), nor a cancel/exception
-// sink (agent=reviewer with no outgoing edges). This reads the DOT shape markers
-// directly — no hardcoded state names — so the hook's engagement check is
+// (Shape Mdiamond) nor a terminal state (Shape Msquare), nor a cancel/exception
+// sink (agent=reviewer with no outgoing edges). This reads the Spec's own
+// markers — no hardcoded state names — so the hook's engagement check is
 // configuration-over-code (sty_f3d5d4b8).
 func (s Spec) NonTerminalEngagingStates() []string {
 	var out []string
@@ -488,8 +491,8 @@ func (s Spec) IsTerminalState(name string) bool {
 }
 
 // IsParkState reports whether name is a reviewer-role non-start state (cancel
-// sinks, blocked/park nodes). Shape/role-derived so lease release keys to the
-// DOT rather than status string literals (sty_8426b9c0).
+// sinks, blocked/park steps). Shape/role-derived so lease release keys to the
+// route rather than status string literals (sty_8426b9c0).
 func (s Spec) IsParkState(name string) bool {
 	for _, st := range s.States {
 		if st.Name == name {
@@ -500,8 +503,8 @@ func (s Spec) IsParkState(name string) bool {
 }
 
 // Advance is one offered onward transition from a performing state — target
-// status and the reviewer gate skills the authored DOT declares on that edge
-// (sty_e16a2cd7). Gates is Transition.Skills as normalised by Parse.
+// status and the reviewer gate skills the route declares on entry to it
+// (sty_e16a2cd7). Gates is Transition.Skills.
 type Advance struct {
 	To    string
 	Gates []string
@@ -741,12 +744,12 @@ type Spec struct {
 	AttrWarnings []string
 }
 
-// Declares reports whether the DOT declares a directed transition from→to
+// Declares reports whether the route declares a directed transition from→to
 // (sty_ebd3d666). Recovery, park, and cancel edges count when declared.
 // Alias of HasEdge for call-site readability.
 func (s Spec) Declares(from, to string) bool { return s.HasEdge(from, to) }
 
-// HasEdge reports whether the DOT declares a directed transition from→to.
+// HasEdge reports whether the route declares a directed transition from→to.
 func (s Spec) HasEdge(from, to string) bool {
 	for _, tr := range s.Transitions {
 		if tr.From == from && tr.To == to {
@@ -770,399 +773,6 @@ func (s Spec) Successors(from string) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// Parse extracts the Spec from a workflow body's fenced ```dot block. ok is false
-// when the body carries no dot block, so callers fall back to the inline-YAML
-// grammar.
-func Parse(body string) (Spec, bool) {
-	block := dotBlock(body)
-	if block == "" {
-		return Spec{}, false
-	}
-	type node struct {
-		agent     string
-		skill     string   // resolved from prompt="@skill:NAME"
-		mandatory bool     // mandatory=true attribute
-		on        []string // on="s1,s2" / on="*" scope (declared always-on gate)
-		from      []string // from="s1,s2" / from="*" park inbound sources (sty_f75286dc)
-		shape     string   // DOT shape attribute (Mdiamond=start, Msquare=terminal)
-		appliesTo []string // applies_to="surface:ui,…" (sty_c6d093c8)
-	}
-	nodes := map[string]node{}
-	var order []string
-	seen := map[string]bool{}
-	add := func(name string) {
-		if name != "" && !seen[name] {
-			seen[name] = true
-			order = append(order, name)
-			nodes[name] = node{}
-		}
-	}
-	var spec Spec
-
-	for _, stmt := range dotStatements(block) {
-		t := strings.TrimSpace(stmt)
-		if t == "" || dotReserved(t) {
-			continue
-		}
-		if strings.Contains(t, "->") {
-			ids := dotEdgeNodes(t)
-			// Wildcards live in attribute values (on=, from=), never as edge
-			// endpoints (sty_f75286dc). Reject before registering a phantom node.
-			for _, id := range ids {
-				if id == "*" {
-					spec.AttrProblems = append(spec.AttrProblems,
-						`wildcard "*" is not a legal edge endpoint — use from="*" (or from="s1,s2") as a park node attribute`)
-					ids = nil
-					break
-				}
-			}
-			if len(ids) == 0 {
-				continue
-			}
-			// An edge may carry its gate directly (e.g. an intent gate on
-			// backlog->in_progress where the target is an executor node). Two
-			// equivalent forms are accepted (sty_be67919a): the edge-centric
-			// `reviewer_skill="NAME"`, and the NODE-CONSISTENT form
-			// `agent=reviewer, prompt="@skill:NAME"` — the same vocabulary a
-			// reviewer node uses — so every step reads the same way. reviewer_skill
-			// wins when both are present.
-			var edgeSkills []string
-			var edgeAgent string
-			var edgeParallel int
-			if open := strings.Index(t, "["); open >= 0 {
-				closeAt := strings.LastIndex(t, "]")
-				if closeAt < open {
-					closeAt = len(t)
-				}
-				attrs := parseDotAttrs(t[open+1 : closeAt])
-				edgeFrom, edgeTo := "", ""
-				if len(ids) >= 2 {
-					edgeFrom, edgeTo = ids[0], ids[len(ids)-1]
-				}
-				spec.AttrProblems = append(spec.AttrProblems, checkEdgeAttrs(edgeFrom, edgeTo, attrs)...)
-				edgeSkills = splitCSVSkills(attrs["reviewer_skill"])
-				// Any agent= with @skill: prompt is a gate edge (sty_a476a2f8).
-				if len(edgeSkills) == 0 && attrs["agent"] != "" && strings.HasPrefix(attrs["prompt"], "@skill:") {
-					edgeSkills = splitCSVSkills(attrs["prompt"])
-				}
-				edgeAgent = attrs["agent"]
-				if attrs["model"] != "" {
-					where := "edge"
-					if edgeFrom != "" {
-						where = edgeFrom + "->" + edgeTo
-					}
-					spec.AttrWarnings = append(spec.AttrWarnings, fmt.Sprintf(
-						"%s: model=%q is superseded — define an agents.toml binding with that model and allocate it with agent=<name> (sty_a476a2f8)",
-						where, attrs["model"]))
-				}
-				edgeParallel, _ = parseParallelAttr(attrs["parallel"])
-				// Malformed parallel= is ignored (cap 0) rather than hard-failing;
-				// unknown keys are already rejected by checkEdgeAttrs.
-			}
-			for _, id := range ids {
-				add(id)
-			}
-			for i := 0; i+1 < len(ids); i++ {
-				spec.Transitions = append(spec.Transitions, Transition{
-					From: ids[i], To: ids[i+1], Skill: first(edgeSkills), Skills: edgeSkills, Agent: edgeAgent, Parallel: edgeParallel,
-				})
-			}
-			continue
-		}
-		id, attrs := dotNodeDecl(t)
-		if id == "" {
-			continue
-		}
-		add(id)
-		spec.AttrProblems = append(spec.AttrProblems, checkNodeAttrs(id, attrs)...)
-		n := nodes[id]
-		if a := attrs["agent"]; a != "" {
-			n.agent = a
-		}
-		if p := attrs["prompt"]; strings.HasPrefix(p, "@skill:") {
-			n.skill = strings.TrimPrefix(p, "@skill:")
-		}
-		if strings.EqualFold(attrs["mandatory"], "true") {
-			n.mandatory = true
-		}
-		if on := splitCSV(attrs["on"]); len(on) > 0 {
-			n.on = on
-		}
-		if from := splitCSV(attrs["from"]); len(from) > 0 {
-			n.from = from
-		}
-		if s := attrs["shape"]; s != "" {
-			n.shape = s
-		}
-		if m := attrs["model"]; m != "" {
-			// Superseded (sty_a476a2f8): warn and discard — agents.toml owns model.
-			spec.AttrWarnings = append(spec.AttrWarnings, fmt.Sprintf(
-				"node %s: model=%q is superseded — define an agents.toml binding with that model and allocate it with agent=<name>",
-				id, m))
-		}
-		if at := splitAppliesTo(attrs["applies_to"]); len(at) > 0 {
-			n.appliesTo = at
-		}
-		nodes[id] = n
-	}
-	if len(order) == 0 {
-		return Spec{}, false
-	}
-
-	for _, name := range order {
-		n := nodes[name]
-		spec.States = append(spec.States, State{
-			Name: name, Agent: n.agent, Skill: n.skill,
-			Mandatory: n.mandatory, On: n.on, From: n.from, Shape: n.shape,
-			AppliesTo: n.appliesTo,
-		})
-	}
-	// Expand park from= into inbound edges so HasEdge/Successors/diagram see them
-	// without an N×2 edge explosion in the authored DOT (sty_f75286dc). Resume is
-	// NOT expanded — the engine enforces resume-to-origin against ParkOrigin.
-	spec.materializeParkFrom()
-	// A transition into a reviewer node is gated by that node's skill — unless the
-	// edge already carries an explicit reviewer_skill attribute, which wins.
-	for i := range spec.Transitions {
-		if len(spec.Transitions[i].Skills) > 0 {
-			continue
-		}
-		if to := nodes[spec.Transitions[i].To]; to.agent == "reviewer" && to.skill != "" {
-			spec.Transitions[i].Skill = to.skill
-			spec.Transitions[i].Skills = []string{to.skill}
-		}
-	}
-	froms := map[string]bool{}
-	for _, tr := range spec.Transitions {
-		froms[tr.From] = true
-	}
-	for i := range spec.States {
-		spec.States[i].Terminal = !froms[spec.States[i].Name]
-	}
-	return spec, true
-}
-
-// materializeParkFrom appends synthetic source→park edges for each park node
-// that declares from= (sty_f75286dc). Existing explicit edges win (no duplicate).
-// from="*" expands to every spine performing state. Gate skill comes from the
-// park node's prompt when the synthetic edge carries none.
-func (s *Spec) materializeParkFrom() {
-	existing := map[string]bool{}
-	for _, tr := range s.Transitions {
-		existing[tr.From+"\x00"+tr.To] = true
-	}
-	for _, st := range s.States {
-		if len(st.From) == 0 {
-			continue
-		}
-		// from= is a park-node declaration (agent=reviewer non-start).
-		if st.Agent != "reviewer" || st.Shape == "Mdiamond" {
-			s.AttrProblems = append(s.AttrProblems, fmt.Sprintf(
-				`from= on node %q is only valid on a park node (agent=reviewer, not start)`, st.Name))
-			continue
-		}
-		sources := st.From
-		if containsStr(st.From, "*") {
-			sources = s.PerformingStates()
-		}
-		for _, src := range sources {
-			if src == "" || src == st.Name || src == "*" {
-				continue
-			}
-			key := src + "\x00" + st.Name
-			if existing[key] {
-				continue
-			}
-			existing[key] = true
-			var skills []string
-			if st.Skill != "" {
-				skills = []string{st.Skill}
-			}
-			s.Transitions = append(s.Transitions, Transition{
-				From: src, To: st.Name, Skill: first(skills), Skills: skills,
-			})
-		}
-	}
-}
-
-// dotBlock returns the contents of the first fenced ```dot code block in body.
-func dotBlock(body string) string {
-	lines := strings.Split(body, "\n")
-	in := false
-	var out []string
-	for _, ln := range lines {
-		t := strings.TrimSpace(ln)
-		if !in {
-			if strings.HasPrefix(t, "```") {
-				info := strings.TrimSpace(strings.TrimPrefix(t, "```"))
-				if info == "dot" || strings.HasPrefix(info, "dot ") {
-					in = true
-				}
-			}
-			continue
-		}
-		if strings.HasPrefix(t, "```") {
-			break
-		}
-		out = append(out, ln)
-	}
-	return strings.TrimSpace(strings.Join(out, "\n"))
-}
-
-// dotStatements splits a DOT graph body into statements, keeping bracketed
-// attribute lists (which may span newlines) intact and treating graph braces as
-// separators. A `//` line comment OUTSIDE a quoted string is stripped to the end
-// of its line (so an edge like `a -> b // note` yields the clean `a -> b`); a
-// `//` inside a quoted attribute value (e.g. a URL) is preserved. Byte iteration
-// is safe: multi-byte runes only occur inside quoted strings, whose bytes are
-// copied verbatim.
-func dotStatements(block string) []string {
-	var stmts []string
-	var cur strings.Builder
-	depth := 0
-	inStr := false
-	flush := func() {
-		if s := strings.TrimSpace(cur.String()); s != "" {
-			stmts = append(stmts, s)
-		}
-		cur.Reset()
-	}
-	for i := 0; i < len(block); i++ {
-		c := block[i]
-		if inStr {
-			cur.WriteByte(c)
-			if c == '"' {
-				inStr = false
-			}
-			continue
-		}
-		// `//` line comment outside quotes — skip to end of line; the newline
-		// still acts as a statement separator (or a space inside an attr list).
-		if c == '/' && i+1 < len(block) && block[i+1] == '/' {
-			for i < len(block) && block[i] != '\n' {
-				i++
-			}
-			if depth == 0 {
-				flush()
-			} else {
-				cur.WriteByte(' ')
-			}
-			continue
-		}
-		switch c {
-		case '"':
-			inStr = true
-			cur.WriteByte(c)
-		case '[':
-			depth++
-			cur.WriteByte(c)
-		case ']':
-			if depth > 0 {
-				depth--
-			}
-			cur.WriteByte(c)
-		case '{', '}':
-			if depth == 0 {
-				flush()
-			} else {
-				cur.WriteByte(c)
-			}
-		case ';', '\n':
-			if depth == 0 {
-				flush()
-			} else {
-				cur.WriteByte(' ')
-			}
-		default:
-			cur.WriteByte(c)
-		}
-	}
-	flush()
-	return stmts
-}
-
-// dotReserved reports whether a statement is a DOT keyword/graph-attr line that
-// declares no workflow node.
-func dotReserved(stmt string) bool {
-	for _, kw := range []string{"digraph", "graph ", "graph[", "node ", "node[", "edge ", "edge[", "subgraph", "rankdir"} {
-		if strings.HasPrefix(stmt, kw) {
-			return true
-		}
-	}
-	return false
-}
-
-// dotNodeDecl splits `id [attrs]` into the node id and its parsed attributes.
-func dotNodeDecl(stmt string) (string, map[string]string) {
-	open := strings.Index(stmt, "[")
-	if open < 0 {
-		return dotUnquote(strings.TrimSpace(stmt)), nil
-	}
-	id := dotUnquote(strings.TrimSpace(stmt[:open]))
-	closeAt := strings.LastIndex(stmt, "]")
-	if closeAt < open {
-		closeAt = len(stmt)
-	}
-	return id, parseDotAttrs(stmt[open+1 : closeAt])
-}
-
-// dotEdgeNodes returns the node ids of an edge chain `a -> b -> c`, dropping any
-// trailing attribute list.
-func dotEdgeNodes(stmt string) []string {
-	if br := strings.Index(stmt, "["); br >= 0 {
-		stmt = stmt[:br]
-	}
-	var ids []string
-	for _, p := range strings.Split(stmt, "->") {
-		if id := dotUnquote(strings.TrimSpace(p)); id != "" {
-			ids = append(ids, id)
-		}
-	}
-	return ids
-}
-
-// parseDotAttrs parses `k=v, k="v"` pairs (commas inside quotes are literal).
-func parseDotAttrs(s string) map[string]string {
-	m := map[string]string{}
-	var parts []string
-	var cur strings.Builder
-	inStr := false
-	for _, r := range s {
-		switch r {
-		case '"':
-			inStr = !inStr
-			cur.WriteRune(r)
-		case ',':
-			if inStr {
-				cur.WriteRune(r)
-			} else {
-				parts = append(parts, cur.String())
-				cur.Reset()
-			}
-		default:
-			cur.WriteRune(r)
-		}
-	}
-	parts = append(parts, cur.String())
-	for _, p := range parts {
-		eq := strings.Index(p, "=")
-		if eq < 0 {
-			continue
-		}
-		k := strings.TrimSpace(p[:eq])
-		v := dotUnquote(strings.TrimSpace(p[eq+1:]))
-		if k != "" {
-			m[k] = v
-		}
-	}
-	return m
-}
-
-// dotUnquote trims surrounding double quotes from a DOT token.
-func dotUnquote(s string) string {
-	return strings.Trim(s, `"`)
 }
 
 // splitCSV splits a comma-separated attribute value into trimmed, non-empty
@@ -1204,327 +814,4 @@ func containsStr(ss []string, v string) bool {
 		}
 	}
 	return false
-}
-
-// Known DOT node attribute keys (sty_c6d093c8). Graph-level attrs (goal, vars)
-// never reach here — graph […] is short-circuited by dotReserved before attr parse.
-var knownNodeAttrs = map[string]bool{
-	"agent": true, "prompt": true,
-	"mandatory": true, "on": true, "from": true, "shape": true, "model": true, "applies_to": true,
-}
-
-// Known DOT edge attribute keys. reviewer_skill is parse-only legacy; agent+prompt
-// is the canonical node-consistent form.
-var knownEdgeAttrs = map[string]bool{
-	"reviewer_skill": true, "agent": true, "prompt": true, "model": true,
-	"parallel": true, // sty_4f0a15db: concurrent multi-reviewer opt-in
-}
-
-// checkNodeAttrs returns named problems for unknown keys on a node.
-func checkNodeAttrs(id string, attrs map[string]string) []string {
-	var out []string
-	for k := range attrs {
-		if !knownNodeAttrs[k] {
-			out = append(out, fmt.Sprintf("unknown node attribute %q on %q", k, id))
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// checkEdgeAttrs returns named problems for unknown keys and for applies_to on
-// an edge (rejected specifically: the edge IS the transition).
-func checkEdgeAttrs(from, to string, attrs map[string]string) []string {
-	edgeID := from + "->" + to
-	var out []string
-	if _, has := attrs["applies_to"]; has {
-		out = append(out, fmt.Sprintf(
-			"applies_to is not honoured on an edge (the edge IS the transition) — put it on an edge-less reviewer node (%s)",
-			edgeID))
-	}
-	for k := range attrs {
-		if k == "applies_to" {
-			continue // already named specifically
-		}
-		if !knownEdgeAttrs[k] {
-			out = append(out, fmt.Sprintf("unknown edge attribute %q on %s", k, edgeID))
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// parseParallelAttr interprets the edge parallel= value (sty_4f0a15db).
-// Returns (cap, ok). ok=false means absent or unrecognised → treat as sequential.
-//   - "" / "false" / "0" → (0, true) sequential
-//   - "true" → (DefaultParallelCap, true)
-//   - integer N≥1 → (N, true)
-//   - garbage → (0, false)
-func parseParallelAttr(raw string) (int, bool) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 0, true
-	}
-	switch strings.ToLower(raw) {
-	case "false", "0", "no", "off":
-		return 0, true
-	case "true", "yes", "on":
-		return DefaultParallelCap, true
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n < 0 {
-		return 0, false
-	}
-	return n, true
-}
-
-// splitAppliesTo parses applies_to="surface:ui,surface:cli" (CSV, same convention
-// as on=). Also accepts a single bracket-wrapped list form applies_to="[surface:ui]"
-// by stripping outer [ ] before CSV split — authoring convenience only.
-func splitAppliesTo(s string) []string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil
-	}
-	if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
-		s = strings.TrimSpace(s[1 : len(s)-1])
-	}
-	return splitCSV(s)
-}
-
-// ToDOT normalizes a workflow body to the DOT standard — the conversion satelle
-// runs at ingest (create/upload). A body that already carries a fenced ```dot
-// block is returned unchanged (changed=false). A body in the inline-YAML grammar
-// is parsed and re-emitted: its `states:`/`transitions:` block is replaced by an
-// equivalent ```dot graph in the CANONICAL node-consistent form (gated edges as
-// [agent=reviewer, prompt="@skill:NAME"]; nodes with a Skill emit prompt="@skill:…"),
-// and the frontmatter, prose, and any other YAML block (e.g. guardrails) are
-// preserved. ToDOT is idempotent. See the satelle-dot-standard principle.
-func ToDOT(body string) (string, bool) {
-	if dotBlock(body) != "" {
-		return body, false // already DOT
-	}
-	spec, ok := parseYAML(body)
-	if !ok {
-		return body, false
-	}
-	dot := "```dot\n" + emitDOT(spec, frontmatterName(body)) + "\n```"
-	return replaceYAMLLifecycleBlock(body, dot)
-}
-
-// parseYAML parses the inline-YAML lifecycle grammar (a `states:` block plus
-// `- {from, to[, reviewer_skill]}` transition lines) into a Spec. ok is false
-// when the body declares no states and no transitions.
-func parseYAML(body string) (Spec, bool) {
-	lines := strings.Split(body, "\n")
-	var spec Spec
-	for i, raw := range lines {
-		if strings.TrimSpace(raw) != "states:" {
-			continue
-		}
-		for j := i + 1; j < len(lines); j++ {
-			t := strings.TrimSpace(lines[j])
-			if t == "" {
-				continue
-			}
-			if !strings.HasPrefix(t, "- ") {
-				break
-			}
-			item := strings.TrimSpace(t[2:])
-			if strings.HasPrefix(item, "{") {
-				spec.States = append(spec.States, State{Name: inlineYAMLField(item, "name"), Agent: inlineYAMLField(item, "agent")})
-			} else {
-				spec.States = append(spec.States, State{Name: strings.Trim(item, `"'`)})
-			}
-		}
-		break
-	}
-	for _, raw := range lines {
-		t := strings.TrimSpace(raw)
-		if !strings.HasPrefix(t, "- {") || !strings.Contains(t, "from:") || !strings.Contains(t, "to:") {
-			continue
-		}
-		sk := inlineYAMLField(t, "reviewer_skill")
-		var skills []string
-		if sk != "" {
-			skills = []string{sk}
-		}
-		spec.Transitions = append(spec.Transitions, Transition{
-			From:   inlineYAMLField(t, "from"),
-			To:     inlineYAMLField(t, "to"),
-			Skill:  sk,
-			Skills: skills,
-		})
-	}
-	if len(spec.States) == 0 && len(spec.Transitions) == 0 {
-		return Spec{}, false
-	}
-	if len(spec.States) == 0 {
-		seen := map[string]bool{}
-		for _, tr := range spec.Transitions {
-			for _, n := range []string{tr.From, tr.To} {
-				if n != "" && !seen[n] {
-					seen[n] = true
-					spec.States = append(spec.States, State{Name: n})
-				}
-			}
-		}
-	}
-	froms := map[string]bool{}
-	for _, tr := range spec.Transitions {
-		froms[tr.From] = true
-	}
-	for i := range spec.States {
-		spec.States[i].Terminal = !froms[spec.States[i].Name]
-	}
-	return spec, true
-}
-
-// emitDOT renders a Spec as a DOT digraph body in the CANONICAL node-consistent
-// form: a gated edge is [agent=reviewer, prompt="@skill:NAME"] (CSV skills join
-// as prompt="@skill:a,b"); a node with State.Skill emits prompt="@skill:…".
-// Initial states (no incoming) get shape=Mdiamond and terminals shape=Msquare.
-// The legacy reviewer_skill= edge attribute is never written — it remains a
-// parse-only back-compat input. See the satelle-dot-standard principle.
-func emitDOT(spec Spec, name string) string {
-	indeg := map[string]int{}
-	for _, tr := range spec.Transitions {
-		indeg[tr.To]++
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "digraph %s {\n  rankdir=LR\n\n", sanitizeID(name))
-	for _, s := range spec.States {
-		var attrs []string
-		if indeg[s.Name] == 0 {
-			attrs = append(attrs, "shape=Mdiamond")
-		} else if s.Terminal {
-			attrs = append(attrs, "shape=Msquare")
-		}
-		if s.Agent != "" {
-			attrs = append(attrs, "agent="+s.Agent)
-		}
-		if s.Skill != "" {
-			attrs = append(attrs, fmt.Sprintf("prompt=\"@skill:%s\"", s.Skill))
-		}
-		if len(s.On) > 0 {
-			attrs = append(attrs, fmt.Sprintf("on=%q", strings.Join(s.On, ",")))
-		}
-		if len(s.From) > 0 {
-			attrs = append(attrs, fmt.Sprintf("from=%q", strings.Join(s.From, ",")))
-		}
-		if s.Mandatory {
-			attrs = append(attrs, "mandatory=true")
-		}
-		if len(s.AppliesTo) > 0 {
-			attrs = append(attrs, fmt.Sprintf("applies_to=%q", strings.Join(s.AppliesTo, ",")))
-		}
-		if len(attrs) > 0 {
-			fmt.Fprintf(&b, "  %s [%s]\n", s.Name, strings.Join(attrs, ", "))
-		} else {
-			fmt.Fprintf(&b, "  %s\n", s.Name)
-		}
-	}
-	b.WriteString("\n")
-	for _, tr := range spec.Transitions {
-		skills := tr.Skills
-		if len(skills) == 0 && tr.Skill != "" {
-			skills = []string{tr.Skill}
-		}
-		if len(skills) > 0 {
-			ag := tr.Agent
-			if ag == "" {
-				ag = "reviewer"
-			}
-			fmt.Fprintf(&b, "  %s -> %s [agent=%s, prompt=\"@skill:%s\"]\n",
-				tr.From, tr.To, ag, strings.Join(skills, ","))
-		} else {
-			fmt.Fprintf(&b, "  %s -> %s\n", tr.From, tr.To)
-		}
-	}
-	b.WriteString("}")
-	return b.String()
-}
-
-// replaceYAMLLifecycleBlock swaps the fenced code block containing `states:` (the
-// inline-YAML lifecycle) for the given dot block, leaving every other block (e.g.
-// the guardrails YAML) intact. changed=false when no such block is found.
-func replaceYAMLLifecycleBlock(body, dot string) (string, bool) {
-	lines := strings.Split(body, "\n")
-	inFence, fenceStart, hasStates := false, -1, false
-	start, end := -1, -1
-	for i, ln := range lines {
-		t := strings.TrimSpace(ln)
-		if !inFence {
-			if strings.HasPrefix(t, "```") {
-				inFence, fenceStart, hasStates = true, i, false
-			}
-			continue
-		}
-		if strings.HasPrefix(t, "states:") {
-			hasStates = true
-		}
-		if strings.HasPrefix(t, "```") { // closing fence
-			if hasStates {
-				start, end = fenceStart, i
-				break
-			}
-			inFence = false
-		}
-	}
-	if start < 0 {
-		return body, false
-	}
-	out := append([]string{}, lines[:start]...)
-	out = append(out, strings.Split(dot, "\n")...)
-	out = append(out, lines[end+1:]...)
-	return strings.Join(out, "\n"), true
-}
-
-// frontmatterName returns the `name:` from a markdown frontmatter block, or "".
-func frontmatterName(body string) string {
-	lines := strings.Split(body, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		return ""
-	}
-	for j := 1; j < len(lines); j++ {
-		t := strings.TrimSpace(lines[j])
-		if t == "---" {
-			return ""
-		}
-		if strings.HasPrefix(t, "name:") {
-			return strings.Trim(strings.TrimSpace(strings.TrimPrefix(t, "name:")), `"'`)
-		}
-	}
-	return ""
-}
-
-// inlineYAMLField extracts key's value from a YAML inline-map (`{key: val, …}`),
-// trimming quotes; the value runs to the next comma or closing brace.
-func inlineYAMLField(line, key string) string {
-	i := strings.Index(line, key+":")
-	if i < 0 {
-		return ""
-	}
-	rest := strings.TrimLeft(line[i+len(key)+1:], " ")
-	if end := strings.IndexAny(rest, ",}"); end >= 0 {
-		rest = rest[:end]
-	}
-	return strings.Trim(strings.TrimSpace(rest), `"'`)
-}
-
-// sanitizeID makes a safe DOT graph identifier from a workflow name.
-func sanitizeID(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('_')
-		}
-	}
-	if b.Len() == 0 {
-		return "workflow"
-	}
-	return b.String()
 }

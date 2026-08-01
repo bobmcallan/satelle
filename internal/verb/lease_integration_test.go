@@ -19,7 +19,7 @@ import (
 // TestLeaseStopRequestBlocksForward: stop-request refuses a forward engaging
 // move with the reason; park remains allowed (AC5).
 func TestLeaseStopRequestBlocksForward(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
+	wireWithWorkflows(t, singleStoryWF)
 
 	var a workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)
@@ -50,7 +50,7 @@ func TestLeaseStopRequestBlocksForward(t *testing.T) {
 // seat, stop-request is issued, A's forward engage is refused with the stop
 // reason, A parks, the seat frees, and story B engages. No terminal status.
 func TestLeaseStopRequestPreemptionHandoff(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
+	wireWithWorkflows(t, singleStoryWF)
 
 	var a, b workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Holder", "category": "feature"}), &a)
@@ -114,7 +114,7 @@ func TestLeaseStopRequestPreemptionHandoff(t *testing.T) {
 // TestLeaseSameTargetInFlightNoOp: re-engage same story to same status is a
 // no-op (AC3 — never two concurrent dispatches for one id/target).
 func TestLeaseSameTargetInFlightNoOp(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
+	wireWithWorkflows(t, singleStoryWF)
 	var a workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "plan"}), &a)
@@ -133,7 +133,7 @@ func TestLeaseSameTargetInFlightNoOp(t *testing.T) {
 // TestSameStatusReengageAfterDroppedSeat (sty_4f74d01f): force-release the lease
 // while status stays performing; story set --status <same> re-grants a seat.
 func TestSameStatusReengageAfterDroppedSeat(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
+	wireWithWorkflows(t, singleStoryWF)
 	var a workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "plan"}), &a)
@@ -161,7 +161,7 @@ func TestSameStatusReengageAfterDroppedSeat(t *testing.T) {
 // rejected by the gate, the just-claimed seat is released so another story can
 // engage (AC4 release-on-abort).
 func TestLeaseNewAcquireAbortFreesSeat(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
+	wireWithWorkflows(t, singleStoryWF)
 
 	verb.SetTransitionGater(rejectToGater{to: "plan", skill: "intent"})
 	t.Cleanup(func() { verb.SetTransitionGater(nil) })
@@ -193,7 +193,7 @@ func TestLeaseNewAcquireAbortFreesSeat(t *testing.T) {
 // still backlog), story B's concurrent engage is refused and A has not committed
 // plan yet (AC1/AC2 acquire-at-start window).
 func TestLeaseAcquireBeforeStatusCommit(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
+	wireWithWorkflows(t, singleStoryWF)
 
 	// Slow gater blocks A on backlog→plan long enough for B to race.
 	done := make(chan struct{})
@@ -261,7 +261,7 @@ func (s *slowGater) Gate(ctx context.Context, item workitem.Item, toStatus strin
 // TestLeaseGateRejectRetry: sequential plan→in_progress gate reject leaves
 // status at plan and clears in_flight so a retry can re-enter the edge.
 func TestLeaseGateRejectRetry(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
+	wireWithWorkflows(t, singleStoryWF)
 	var a workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "plan"}), &a)
@@ -309,7 +309,7 @@ func (r rejectToGater) Gate(ctx context.Context, item workitem.Item, toStatus st
 // TestLeaseAbortLeavesNoSeatRow: gate reject on NEW acquire leaves no seat row
 // (sty_1738f973 AC1 deferred release-on-abort).
 func TestLeaseAbortLeavesNoSeatRow(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
+	wireWithWorkflows(t, singleStoryWF)
 
 	verb.SetTransitionGater(rejectToGater{to: "plan", skill: "intent"})
 	t.Cleanup(func() { verb.SetTransitionGater(nil) })
@@ -334,7 +334,7 @@ func TestLeaseAbortLeavesNoSeatRow(t *testing.T) {
 // TestStorySeatListAndRelease: list reflects a live lease; release frees the seat
 // so another story can engage (sty_1738f973 AC4).
 func TestStorySeatListAndRelease(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
+	wireWithWorkflows(t, singleStoryWF)
 
 	var a, b workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)
@@ -384,8 +384,10 @@ func TestOrphanStaleLeaseDoesNotBlockEngage(t *testing.T) {
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(wfDir, "single-story-wf.md"), []byte(singleStoryWF), 0o644); err != nil {
-		t.Fatal(err)
+	for name, body := range singleStoryWF {
+		if err := os.WriteFile(filepath.Join(wfDir, name+".md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := db.DocIndex.Sync(context.Background(), map[string]string{"workflows": wfDir}, time.Now()); err != nil {
 		t.Fatalf("sync: %v", err)
@@ -455,7 +457,7 @@ func TestOrphanStaleLeaseDoesNotBlockEngage(t *testing.T) {
 
 // TestSameStatusReengageConflictWhenOtherHoldsSeat (sty_4f74d01f AC1 refuse path).
 func TestSameStatusReengageConflictWhenOtherHoldsSeat(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
+	wireWithWorkflows(t, singleStoryWF)
 	var a, b workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "B", "category": "feature"}), &b)

@@ -139,29 +139,33 @@ func LifecycleWorkflows(workflows []docindex.Doc) []docindex.Doc {
 // to degrade is a read surface rendering a page, and it degrades by handling the
 // error here, not by this seam hiding it.
 //
-// Precedence is RouteGoverns: a derived route claiming the item's category (or
-// the wildcard) wins, except that the route the BINARY ships yields to an
-// authored workflow; otherwise the governing authored workflow's DOT. An
-// authored DOT names no advisor — entry dispatch is retired, so the graph has no
-// attribute that could carry one (sty_05a5e203).
+// Precedence is RouteGoverns, and it is now the WHOLE rule: a derived route
+// claiming the item's category (or the wildcard) governs, except that the route
+// the BINARY ships yields to an authored workflow for the categories that
+// workflow claims. There is no second representation to fall back to — the DOT
+// front end is retired (sty_d953c5d8), so a repo whose workflows dir holds only
+// graphs resolves to nothing and gets ErrNoWorkflow naming the remedy.
 func SpecFor(workflows []docindex.Doc, item workitem.Item) (wfdot.Spec, string, []wfroute.Advisor, error) {
 	category := WorkflowCategory(item)
-	if rs, ok := RouteGoverns(workflows, category); ok {
-		spec, advisors, err := routeSpec(rs, category, item.Tags)
-		if err != nil {
-			return wfdot.Spec{}, DerivedRouteName, nil, err
-		}
-		return spec, DerivedRouteName, advisors, nil
-	}
-	wf, ok := GoverningWorkflow(LifecycleWorkflows(workflows), item)
+	rs, ok := RouteGoverns(workflows, category)
 	if !ok {
+		if wf, governs := GoverningWorkflow(LifecycleWorkflows(workflows), item); governs {
+			// A workflow doc claims the category but carries no lifecycle satelle can
+			// read. Saying so beats ErrNoWorkflow: the caller treats "nothing governs"
+			// as a fresh repo and lets the transition through, which for a repo that
+			// believes it IS governed would silently drop every gate it authored.
+			return wfdot.Spec{}, wf.Name, nil, fmt.Errorf(
+				"wfgovern: workflow %q declares no route — a lifecycle is done.md + step.md under .satelle/workflows. "+
+					"Read `satelle help workflow-convert` for how to convert this graph, then `satelle migrate --yes` to retire it",
+				wf.Name)
+		}
 		return wfdot.Spec{}, "", nil, fmt.Errorf("%w: category %q", ErrNoWorkflow, category)
 	}
-	spec, ok := wfdot.Parse(wf.Body)
-	if !ok {
-		return wfdot.Spec{}, wf.Name, nil, fmt.Errorf("wfgovern: workflow %q has no parseable DOT lifecycle", wf.Name)
+	spec, advisors, err := routeSpec(rs, category, item.Tags)
+	if err != nil {
+		return wfdot.Spec{}, DerivedRouteName, nil, err
 	}
-	return spec, wf.Name, nil, nil
+	return spec, DerivedRouteName, advisors, nil
 }
 
 // routeSpec derives the Spec and the advisors from the two authored bodies.

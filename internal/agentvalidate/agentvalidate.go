@@ -829,7 +829,7 @@ func (e wfEntry) spec() (wfdot.Spec, bool) {
 	if e.route != nil {
 		return *e.route, true
 	}
-	return wfdot.Parse(e.Body)
+	return wfdot.Spec{}, false // no DOT front end: only a derived route carries a lifecycle
 }
 
 // expandRouteSources turns the indexed workflow set into the entries to check.

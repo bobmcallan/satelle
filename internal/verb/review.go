@@ -165,7 +165,7 @@ type DispatchResult struct {
 
 // ExecutorDispatcher runs the named isolated agent a workflow node allocates a
 // step to (agent=<name> — sty_fd427546): agents.toml defines WHO, the workflow
-// DOT defines WHERE, the binary only RUNS it. Called after the edge's gates
+// The route defines WHERE, the binary only RUNS it. Called after the edge's gates
 // accept and BEFORE the status is enacted — an error refuses the transition
 // (status unchanged). Implemented in internal/agentstep.
 type ExecutorDispatcher interface {

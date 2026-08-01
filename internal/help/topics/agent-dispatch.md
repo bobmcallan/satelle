@@ -1,7 +1,7 @@
 # Named-agent dispatch — how an isolated step receives its instructions
 
-A workflow node can allocate a step to a **named agent** instead of the in-loop
-session. When a state carries `agent=<name>` (any name other than `executor` or
+A route's step can allocate its work to a **named agent** instead of the in-loop
+session. When a step carries `agent: <name>` (any name other than `executor` or
 `reviewer`), satelle **dispatches** that step: it spawns the agent CLI configured
 in `.satelle/agents.toml` under `[<name>]`, hands it the work, and folds the
 result back in. The agent runs with a **fresh context** — it never sees the
@@ -10,20 +10,20 @@ the rest of the story.
 
 ## The dispatch contract
 
-Dispatch fires **on entry** to the state, after that state's entry gate accepts,
-and ONLY because the spine allocated that step to a named agent.
+Dispatch fires **on entry** to the step, after that step's entry gate accepts,
+and ONLY because the route allocated that step to a named agent.
 
 **Flat dispatch.** The orchestrator is the sole scheduler: `orch → step → orch`.
-Steps never call steps. A reviewer node returns a verdict and dispatches nothing.
-An agent-less, `agent=executor` or `agent=reviewer` state dispatches nothing —
-entering a state never fires an agent of its own.
+Steps never call steps. A reviewer returns a verdict and dispatches nothing.
+An agent-less, `agent: executor` or `agent: reviewer` step dispatches nothing —
+entering a step never fires an agent of its own.
 
 An **advisor** is a named agent the route says the orchestrator MAY consult —
 park triage, a post-close retrospective. It is a declaration, never a dispatch:
 `satelle story route <id>` names it, the orchestrator decides when to consult it,
 and the orchestrator records the advice on the story. (The earlier
-`on_enter_agent=` entry dispatch is retired: a state that fires an agent at
-itself hides work from the one place accountable for the route.)
+on-enter entry dispatch is retired: a step that fires an agent at itself hides
+work from the one place accountable for the route.)
 
 The agent receives:
 
@@ -34,7 +34,7 @@ The agent receives:
      do the step's work, but **never change the item's status** (the workflow's
      gates govern every advance),
   3. the **pull-context call-to-action** (see below),
-  4. the node's `@skill:<name>` **rubric** — the instructions for the step.
+  4. the step's `skills:` **rubric** — the instructions for the step.
 - **Payload (dual delivery):** the work item as JSON —
   `{story, from, to, review_skill}`. `story` carries the id, title, body, and
   acceptance criteria; `from`/`to` are the transition being performed. Delivery
@@ -45,31 +45,29 @@ The agent receives:
   Empty `{model}`/`{settings}` drop their flag; empty `{payload}` does not.
 - **Capabilities**: the binding's `tools` grant, and its `model` unless the
 
-### Parallel multi-reviewer edges (`parallel=`)
+### Multi-reviewer steps (`parallel:`)
 
-An edge with multiple CSV reviewers (`prompt="@skill:a,@skill:b"`) runs them
-**sequentially** with first-reject short-circuit by default. Set `parallel=true`
-(default cap 4) or `parallel=N` on the **edge** to run that list concurrently:
-all verdicts are collected (no short-circuit), ledger order stays list order,
+A step with several `reviewers:` runs them **concurrently** by default (cap 4):
+all verdicts are collected with no short-circuit, ledger order stays list order,
 and any reject still refuses the transition (the error names every rejecting
-reviewer). Trade-off: a rejected parallel round spends tokens on every reviewer
-— keep parallel opt-in only on gates that need multi-axis judgment. Absent
-`parallel=` is byte-for-byte sequential. See `satelle help workflows`.
+reviewer). Trade-off: a rejected parallel round spends tokens on every reviewer.
+Set `parallel: 0` on the step for byte-for-byte sequential execution with
+first-reject short-circuit, or `parallel: N` to bound the fan-out. See
+`satelle help workflows`.
 
 ### Gate binding by agent name
 
-A gated edge or reviewer node may name any `role = "reviewer"` binding in
-`.satelle/agents.toml` via `agent=<name>`. Omitted or `agent=reviewer` uses
-`[reviewer]`. The agents layer owns harness, tools, and model — the workflow
-names *who*. Legacy DOT `model=` is superseded (warning + strip on refresh).
-See the satelle-dot-standard principle.
+A step's `reviewer_agent:` (or a `## gate` section's `agent:`) may name any
+`role = "reviewer"` binding in `.satelle/agents.toml`. Omitted, the gate uses
+`[reviewer]`. The agents layer owns harness, tools, and model — the route names
+*who*. See the satelle-route-standard principle.
 
 
 ### What each role needs
 
 The two roles get their context by opposite routes, so they need opposite grants.
 
-- **Performers** — a spine `agent=<name>` node —
+- **Performers** — a spine step with `agent: <name>` —
   are **dispatched** as a child process with **no conversation history**. They
   reconstruct context by *pulling* the story, its documents, and the ledger, so
   the grant must carry a **context channel**: either `Bash(satelle:*)` (a broad
@@ -77,8 +75,8 @@ The two roles get their context by opposite routes, so they need opposite grants
   `read_file` for disk reads under `~/.satelle/<repo-key>/stories/<id>/`.
   Claude-only `Read` does **not** qualify — the Claude pull path is the CLI, not
   a disk-first rubric.
-- **Reviewers** (`role = "reviewer"`, on gated edges and `on=` nodes) need **no
-  channel**: satelle *pushes* the attachments into the transition payload's
+- **Reviewers** (`role = "reviewer"`, named by a step's `reviewers:` or by a
+  `## gate` section) need **no channel**: satelle *pushes* the attachments into the transition payload's
   `docs` array, and reviewer bindings never reach the dispatch path that
   consults a grant. A shell grant on a reviewer is capability that is never
   exercised — it only widens the ceiling.
@@ -91,7 +89,7 @@ runtime refusal and validate, so they cannot disagree.
 
 **Refusals (fail loud, never silent):**
 
-- A node names `agent=<name>` but `.satelle/agents.toml` defines no `[<name>]`
+- A step names `agent: <name>` but `.satelle/agents.toml` defines no `[<name>]`
   binding → the transition is **refused** (there is no silent in-loop fallback).
 - A dispatched binding's `tools` grant carries no context channel (see *What
   each role needs* above) → the dispatch is **refused**, because the agent could
@@ -470,8 +468,8 @@ missing** (payload first, then CLI when available).
 
 ## What makes a step safe to dispatch (sufficiency)
 
-- **Give the node a rubric.** A dispatched node needs `prompt="@skill:<name>"`.
-  A rubric-less dispatched node (`agent=<name>` with no `@skill:`) receives only
+- **Give the step a rubric.** A dispatched step needs `skills: <name>`.
+  A rubric-less dispatched step (`agent: <name>` with no `skills:`) receives only
   the charter and the item — rarely enough to perform a real step.
 - **Make the item self-sufficient.** An isolated agent never sees the
   conversation, so the story's body, acceptance criteria, and attached docs must
@@ -518,10 +516,12 @@ substrate, never in a harness's agent directory.
    # stories/<id>/), so a Grok-native grant needs no Bash(satelle:*) to dispatch.
    ```
 
-2. **Allocate a workflow node** to it in the DOT:
+2. **Allocate a route step** to it in `step.md`:
 
-   ```dot
-   design [agent=architect, prompt="@skill:architect"]
+   ```
+   ## design
+   agent: architect
+   skills: architect
    ```
 
 3. **satelle dispatches it** on entry to `design`: the item on stdin, the
@@ -533,7 +533,7 @@ substrate, never in a harness's agent directory.
 `.claude/agents/architect.md`) works *for that one harness*, but hides the process
 configuration from satelle — it cannot see, validate, dispatch, or carry it
 repo-agnostically, and it silently pins the repo to one CLI vendor. Keep process
-agents in `.satelle/agents.toml` + the workflow DOT.
+agents in `.satelle/agents.toml` + the route's two halves.
 
 ## Mixing model backends — per-binding env + `${VAR}` (sty_001558ce)
 
@@ -577,4 +577,4 @@ See also: `satelle help workflows` (choosing a lifecycle) and
 `satelle help reviewer-checks` (gate skills).
 
 
-A gated edge names its binding with `agent=<name>` (default `[reviewer]`). Models live in agents.toml only; DOT `model=` is superseded.
+A step names the binding that gates it with `reviewer_agent:` (default `[reviewer]`). Models live in agents.toml only.

@@ -3,7 +3,6 @@
 package tests
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -49,66 +48,4 @@ func TestScopedReviewerAppliesTo_ShippedWorkflowsUnchanged(t *testing.T) {
 	for name, spec := range specs {
 		check(name, spec)
 	}
-}
-
-// TestScopedReviewerAppliesTo_EndToEndFilter proves a surface-scoped node is
-// enqueued only for matching tags (unit-level behaviour already covered in
-// wfdot; this guards the parse path against a real workflow-shaped body).
-func TestScopedReviewerAppliesTo_EndToEndFilter(t *testing.T) {
-	body := `---
-name: demo
-scope: project
-type: workflow
-applies_to: ["*"]
----
-` + "```dot" + `
-digraph demo {
-  backlog [shape=Mdiamond]
-  in_progress [agent=executor, prompt="@skill:code"]
-  done [shape=Msquare]
-  design [agent=reviewer, prompt="@skill:design-review", on="in_progress", applies_to="surface:ui"]
-  estimate [agent=reviewer, prompt="@skill:est", on="in_progress"]
-  backlog -> in_progress [agent=reviewer, prompt="@skill:intent"]
-  in_progress -> done
-}
-` + "```" + "\n"
-	spec, ok := wfdot.Parse(body)
-	if !ok {
-		t.Fatal("parse")
-	}
-	if probs := wfdot.Validate(spec); len(probs) > 0 {
-		t.Fatalf("validate: %v", probs)
-	}
-	ui := skillSet(spec.ScopedReviewers("in_progress", []string{"surface:ui"}))
-	cli := skillSet(spec.ScopedReviewers("in_progress", []string{"surface:cli"}))
-	if !ui["design-review"] || !ui["est"] {
-		t.Errorf("ui tags: want design+est, got %v", ui)
-	}
-	if cli["design-review"] || !cli["est"] {
-		t.Errorf("cli tags: want est only, got %v", cli)
-	}
-	// Unknown attr fails closed
-	bad := strings.Replace(body, `on="in_progress"`, `on="in_progress", when="x"`, 1)
-	bspec, ok := wfdot.Parse(bad)
-	if !ok {
-		t.Fatal("parse bad")
-	}
-	probs := wfdot.Validate(bspec)
-	found := false
-	for _, p := range probs {
-		if strings.Contains(p, "unknown") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("want unknown attr problem, got %v", probs)
-	}
-}
-
-func skillSet(ss []wfdot.ScopedReviewer) map[string]bool {
-	m := map[string]bool{}
-	for _, s := range ss {
-		m[s.Skill] = true
-	}
-	return m
 }

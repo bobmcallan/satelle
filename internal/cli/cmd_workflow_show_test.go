@@ -89,7 +89,7 @@ model   = "opus"
 		}
 	}
 	// Workflow identity + graph shape ride the same view.
-	for _, want := range []string{"WORKFLOW w", "scope:      project", `applies_to: ["*"]`, "graph:      2 states"} {
+	for _, want := range []string{"WORKFLOW w", "scope:      project", `applies_to: ["*"]`, "kind:       not a route source"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}

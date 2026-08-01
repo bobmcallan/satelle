@@ -95,28 +95,49 @@ func TestWorkflowValidateFlagsUnresolvedCreateReview(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 	// Virtual baseline is not on disk; author our own wildcard only.
 
-	wf := `---
-name: my-project-workflow
+	// The create-review binding rides on done.md — a lifecycle hook is declared
+	// where the declaration of done is (`satelle help workflow-convert`).
+	done := `---
+name: done
 scope: project
 type: workflow
 tags: [type:workflow]
-applies_to: ["*"]
 create_review: my-create-review
-description: A test workflow moving backlog → in_progress → done, carrying the create-review binding under test.
+description: A declaration of done carrying the create-review binding under test.
 ---
 
-# workflow
+## *
+- raised
+- coded
+- closed
+cancel: cancelled @satelle-story-cancel-review
+`
+	step := `---
+name: step
+scope: project
+type: workflow
+tags: [type:workflow]
+description: The step catalogue for the create-review fixture route.
+---
 
-` + "```dot\n" + `digraph w {
-  backlog [shape=Mdiamond]
-  in_progress [agent=executor]
-  done [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
-  cancelled [agent=reviewer]
-  backlog -> in_progress
-  in_progress -> done
-  backlog -> cancelled
-}` + "\n```\n"
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "my-project-workflow.md"), wf)
+## backlog
+start: true
+provides: raised
+
+## in_progress
+agent: executor
+provides: coded
+requires: raised
+
+## done
+reviewers: satelle-story-done-review
+reviewer_agent: reviewer
+terminal: true
+provides: closed
+requires: coded
+`
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "done.md"), done)
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "step.md"), step)
 	mustRun(t, testBin, repo, "reindex")
 
 	// Unresolved binding → workflow validate fails, naming it.
@@ -144,7 +165,7 @@ Judge the draft; reply with one JSON object:
 ` + "```json\n" + `{"decision": "accept", "notes": ""}` + "\n```\n"
 	writeFile(t, filepath.Join(repo, ".satelle", "skills", "my-create-review.md"), skill)
 	mustRun(t, testBin, repo, "reindex")
-	if out := mustRun(t, testBin, repo, "workflow", "validate"); !strings.Contains(out, "PASS  workflows/my-project-workflow") {
+	if out := mustRun(t, testBin, repo, "workflow", "validate"); !strings.Contains(out, "PASS  workflows/done") {
 		t.Errorf("workflow validate should pass once the create_review skill resolves:\n%s", out)
 	}
 }

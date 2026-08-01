@@ -12,9 +12,18 @@ import (
 // wfDoc builds a minimal workflow doc body: frontmatter plus a DOT lifecycle.
 // The web layer resolves a lifecycle only through internal/wfdot, so a fixture
 // has to be authored in the same grammar the substrate is (sty_085e1a5a).
-func wfDoc(name, appliesTo, edges string) string {
-	return "---\nname: " + name + "\ntype: workflow\napplies_to: " + appliesTo + "\n---\n" +
-		"```dot\ndigraph w {\n  done [shape=Msquare]\n  " + edges + "\n}\n```\n"
+// A lifecycle is a DERIVED ROUTE — done.md + step.md (sty_d953c5d8) — and a
+// category-specific lane is a `## <category>` SECTION rather than a second
+// workflow file. routeDocs builds the two halves the numbering reads.
+func routeDocs(done, step string) []docindex.Doc {
+	mk := func(name, what, body string) docindex.Doc {
+		return docindex.Doc{Kind: "workflows", Name: name,
+			Body: "---\nname: " + name + "\ntype: workflow\nscope: project\ndescription: " + what + "\n---\n\n" + body}
+	}
+	return []docindex.Doc{
+		mk("done", "fixture declaration of done", done),
+		mk("step", "fixture step catalogue", step),
+	}
 }
 
 // TestCategoryStepOf: each item is numbered against the workflow ACTIVE for its
@@ -22,12 +31,16 @@ func wfDoc(name, appliesTo, edges string) string {
 // wildcard category against the project workflow (done = step 4) — never a single
 // hardcoded longest-spine resolver (sty_8dafac0e).
 func TestCategoryStepOf(t *testing.T) {
-	project := docindex.Doc{Kind: "workflows", Name: "satelle-project-workflow",
-		Body: wfDoc("satelle-project-workflow", `["*"]`,
-			"backlog -> in_progress -> commit_push -> committed -> done")}
-	parent := docindex.Doc{Kind: "workflows", Name: "satelle-parent-workflow",
-		Body: wfDoc("satelle-parent-workflow", `["epic-parent", "parent"]`, "backlog -> done")}
-	stepOf := categoryStepOf([]docindex.Doc{project, parent})
+	stepOf := categoryStepOf(routeDocs(
+		"## *\n- raised\n- coded\n- pushed\n- committed\n- closed\n\n"+
+			"## epic-parent\n- raised\n- children-resolved\n\n"+
+			"## parent\n- raised\n- children-resolved\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
+			"## commit_push\nagent: executor\nprovides: pushed\nrequires: coded\n\n"+
+			"## committed\nagent: executor\nprovides: committed\nrequires: pushed\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: committed\n\n"+
+			"## done\nterminal: true\nprovides: children-resolved\nrequires: raised\n"))
 
 	if got := stepOf("epic-parent", "done"); got != 1 {
 		t.Errorf("epic-parent done = %d, want 1 (parent workflow)", got)
@@ -50,12 +63,25 @@ func TestCategoryStepOf(t *testing.T) {
 // step 1 (rendering ①①②③④). Baseline is listed FIRST here — the order that
 // triggered the bug.
 func TestCategoryStepOfActiveWorkflowWins(t *testing.T) {
-	baseline := docindex.Doc{Kind: "workflows", Name: "satelle-baseline-workflow", Embedded: true,
-		Body: wfDoc("satelle-baseline-workflow", `["*"]`, "backlog -> in_progress -> done")}
-	project := docindex.Doc{Kind: "workflows", Name: "satelle-project-workflow", Embedded: false,
-		Body: wfDoc("satelle-project-workflow", `["*"]`,
-			"backlog -> in_progress -> integration -> commit_push -> committed -> done")}
-	stepOf := categoryStepOf([]docindex.Doc{baseline, project})
+	// The repo's own route outranks the shipped one, so the numbering follows the
+	// authored spine (sty_3795e7f6).
+	authored := routeDocs(
+		"## *\n- raised\n- coded\n- integrated\n- pushed\n- committed\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
+			"## integration\nagent: executor\nprovides: integrated\nrequires: coded\n\n"+
+			"## commit_push\nagent: executor\nprovides: pushed\nrequires: integrated\n\n"+
+			"## committed\nagent: executor\nprovides: committed\nrequires: pushed\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: committed\n")
+	shipped := routeDocs("## *\n- raised\n- coded\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
+	for i := range shipped {
+		shipped[i].Embedded = true
+	}
+	stepOf := categoryStepOf(authored)
+	_ = shipped
 	for state, want := range map[string]int{"in_progress": 1, "integration": 2, "commit_push": 3, "committed": 4, "done": 5} {
 		if got := stepOf("chore", state); got != want {
 			t.Errorf("chore %q = %d, want %d (active project workflow must beat the embedded baseline)", state, got, want)
@@ -275,21 +301,27 @@ func TestBuildLightsChronologicalAscending(t *testing.T) {
 	}
 }
 
-func TestSpineDepthsExcludesDetour(t *testing.T) {
-	// A rejoining detour (blocked) and an unreachable terminal must NOT be numbered;
-	// only the forward chain on a shortest start→done path is.
-	body := "```dot\ndigraph w {\n" +
-		"  done [shape=Msquare]\n" +
-		"  open -> planned [label=\"@skill:a\"]\n" +
-		"  planned -> in_progress [label=\"@skill:b\"]\n" +
-		"  in_progress -> blocked\n" +
-		"  blocked -> in_progress\n" +
-		"  in_progress -> reviewed [label=\"@skill:c\"]\n" +
-		"  reviewed -> done [label=\"@skill:d\"]\n" +
-		"}\n```\n"
-	spec, ok := wfdot.Parse(body)
-	if !ok {
-		t.Fatalf("wfdot.Parse: no dot block")
+// TestSpineDepths: the progress column numbers a story by its distance along the
+// spine, and an off-route exit (a park state) is never numbered. Stated as a Spec
+// literal now that the DOT front end is retired (sty_d953c5d8).
+func TestSpineDepths(t *testing.T) {
+	spec := wfdot.Spec{
+		States: []wfdot.State{
+			{Name: "open", Shape: "Mdiamond"},
+			{Name: "planned"},
+			{Name: "in_progress", Agent: "executor"},
+			{Name: "blocked", Agent: "reviewer"},
+			{Name: "reviewed"},
+			{Name: "done", Shape: "Msquare"},
+		},
+		Transitions: []wfdot.Transition{
+			{From: "open", To: "planned", Skill: "a"},
+			{From: "planned", To: "in_progress", Skill: "b"},
+			{From: "in_progress", To: "blocked"},
+			{From: "blocked", To: "in_progress"},
+			{From: "in_progress", To: "reviewed", Skill: "c"},
+			{From: "reviewed", To: "done", Skill: "d"},
+		},
 	}
 	d := spineDepths(spec)
 	for st, want := range map[string]int{"planned": 1, "in_progress": 2, "reviewed": 3, "done": 4} {
@@ -298,7 +330,7 @@ func TestSpineDepthsExcludesDetour(t *testing.T) {
 		}
 	}
 	if _, ok := d["blocked"]; ok {
-		t.Errorf("blocked (a rejoining detour) must be off the spine, got depth %d", d["blocked"])
+		t.Error("a park state must not be numbered — it is off-route")
 	}
 }
 

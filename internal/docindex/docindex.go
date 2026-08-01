@@ -26,8 +26,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/bobmcallan/satelle/internal/wfdot"
 )
 
 // Doc is one indexed authored file.
@@ -434,17 +432,10 @@ func (s *Store) upsert(ctx context.Context, kind string, fi fileInfo, now time.T
 	if err != nil {
 		return fmt.Errorf("docindex: read %s: %w", fi.path, err)
 	}
-	// Workflows are normalized to the DOT standard AT INGEST (satelle-dot-standard):
-	// an inline-YAML lifecycle is converted to DOT and the source file rewritten in
-	// place, so DOT is the single stored grammar. Idempotent — a DOT workflow is
-	// returned unchanged; a write failure degrades to indexing the original body.
-	if kind == "workflows" {
-		if converted, changed := wfdot.ToDOT(string(body)); changed {
-			if werr := os.WriteFile(fi.path, []byte(converted), 0o644); werr == nil {
-				body = []byte(converted)
-			}
-		}
-	}
+	// Workflows are indexed exactly as authored. The DOT normalisation that used
+	// to run here existed only to feed the DOT parser; with that front end retired
+	// a lifecycle is done.md + step.md, which the index stores verbatim
+	// (sty_d953c5d8).
 	sum := sha256.Sum256(body)
 	d := Doc{
 		Kind:     kind,

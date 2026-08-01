@@ -300,7 +300,7 @@ const templatesSrc = `
   {{if not .ModTime.IsZero}}<div class="updated">updated {{ftime .ModTime}}</div>{{end}}
 </a>{{end}}</div>{{else}}<div class="empty">none indexed — run <code>satelle reindex</code></div>{{end}}{{end}}{{end}}
 
-{{define "workflowRows"}}{{range .}}<tr class="row" tabindex="0" role="button" aria-expanded="false" data-search="{{printf "%s %s %s %s %s" .Name .Headline .Scope .Provenance (join .AppliesTo " ") | lower}}" data-expand-url="fragment/workflow/{{.Name}}">
+{{define "workflowRows"}}{{range .}}<tr class="row" tabindex="0" role="button" aria-expanded="false" data-search="{{printf "%s %s %s %s %s" .Name .Headline .Scope .Provenance (join .AppliesTo " ") | lower}}" data-expand-url="fragment/workflow/{{.ExpandName}}">
   <td><div class="wi-title">{{.Name}}</div><div class="wi-tags">{{if .Provenance}}{{tagchip (printf "provenance:%s" .Provenance)}}{{end}}{{if .Scope}}{{tagchip (printf "scope:%s" .Scope)}}{{end}}{{range .AppliesTo}}{{tagchip (printf "applies_to:%s" .)}}{{end}}</div></td>
   <td>{{.Headline}}</td>
   <td class="updated">{{ftime .Updated}}</td>

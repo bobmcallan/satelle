@@ -4,8 +4,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/bobmcallan/satelle/internal/wfdot"
 )
 
 // Justified non-embedded wikilink targets. Each entry states WHY it cannot
@@ -120,27 +118,10 @@ func workflowSkillRefs(name, body string) []string {
 			}
 		}
 	}
-	// A route source names its gates in the route grammar, not in a graph
-	// (sty_3795e7f6). One call covers both halves; a DOT body yields nothing here
-	// and is read below.
+	// A lifecycle is a derived route, so its gates are named in the route grammar
+	// and nowhere else (sty_d953c5d8). One call covers both halves.
 	for _, sk := range routeSourceSkillRefs(body) {
 		add(sk)
-	}
-	spec, ok := wfdot.Parse(body)
-	if !ok {
-		return out
-	}
-	for _, e := range spec.Transitions {
-		skills := e.Skills
-		if len(skills) == 0 && e.Skill != "" {
-			skills = []string{e.Skill}
-		}
-		for _, sk := range skills {
-			add(sk)
-		}
-	}
-	for _, n := range spec.States {
-		add(n.Skill)
 	}
 	_ = name
 	return out

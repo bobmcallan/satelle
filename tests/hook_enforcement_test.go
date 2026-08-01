@@ -11,26 +11,16 @@ import (
 	"testing"
 )
 
-// enforcementWorkflow is a minimal GATE-FREE workflow (no reviewer edges) so a
+// writeEnforcementRoute lands a minimal GATE-FREE route (no reviewers) so a
 // feature story can be engaged without an agent CLI — the same technique
-// coder_dispatch_test uses. plan and in_progress are non-terminal engaging states.
-const enforcementWorkflow = `---
-name: wf-enforce
-type: workflow
-description: gate-free lifecycle for exercising the edit gate under an engaged story
-applies_to: ["feature"]
-scope: project
----
-
-` + "```dot" + `
-digraph w {
-  backlog [shape=Mdiamond]
-  plan [agent=executor]
-  in_progress [agent=executor]
-  done [shape=Msquare]
-  backlog -> plan -> in_progress -> done
+// coder_dispatch_test uses. plan and in_progress are non-terminal engaging steps.
+func writeEnforcementRoute(t *testing.T, repo string) {
+	t.Helper()
+	writeSpineFixture(t, repo, "", "", "",
+		"plan|executor|||",
+		"in_progress|executor|||",
+		"done||||")
 }
-` + "```\n"
 
 // gitBaseline makes repo a git repo with a clean tree (everything committed), so
 // a later `git status --porcelain` reflects only the test's intentional changes —
@@ -275,7 +265,7 @@ func TestHookPromptReminderAndLivenessWarning(t *testing.T) {
 func TestHookGateAllowsUnderEngagedStory(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-enforce.md"), enforcementWorkflow)
+	writeEnforcementRoute(t, repo)
 	mustRun(t, testBin, repo, "reindex")
 
 	code := filepath.Join(repo, "internal", "x.go")
@@ -380,26 +370,16 @@ func TestHookCommitgateDeniesWithoutStory(t *testing.T) {
 	}
 }
 
-// commandAllowWorkflow is gate-free with a release step so step policy can be
-// exercised without agent CLIs (sty_c21490cc).
-const commandAllowWorkflow = `---
-name: wf-cmd-allow
-type: workflow
-description: gate-free lifecycle with release for command_allow tests
-applies_to: ["feature"]
-scope: project
----
-
-` + "```dot" + `
-digraph w {
-  backlog [shape=Mdiamond]
-  plan [agent=executor]
-  in_progress [agent=executor]
-  release [agent=executor]
-  done [shape=Msquare]
-  backlog -> plan -> in_progress -> release -> done
+// writeCommandAllowRoute lands a gate-free route with a release step so step
+// policy can be exercised without agent CLIs (sty_c21490cc).
+func writeCommandAllowRoute(t *testing.T, repo string) {
+	t.Helper()
+	writeSpineFixture(t, repo, "", "", "",
+		"plan|executor|||",
+		"in_progress|executor|||",
+		"release|executor|||",
+		"done||||")
 }
-` + "```\n"
 
 // TestHookCommitgateCommandAllow (sty_c21490cc): opt-in [gate.command_allow]
 // blocks git push at in_progress, allows it at release; unconfigured engage-only
@@ -410,7 +390,7 @@ func TestHookCommitgateCommandAllow(t *testing.T) {
 	// --- unconfigured: engaged at in_progress → push allowed (engage-only) ---
 	repoOpen := t.TempDir()
 	mustRun(t, testBin, repoOpen, "init")
-	writeFile(t, filepath.Join(repoOpen, ".satelle", "workflows", "wf-cmd-allow.md"), commandAllowWorkflow)
+	writeCommandAllowRoute(t, repoOpen)
 	mustRun(t, testBin, repoOpen, "reindex", "--validate=false")
 	out := mustRun(t, testBin, repoOpen, "story", "create", "--category", "feature",
 		"--title", "t", "--body", "b", "--acceptance", "1. a")
@@ -428,7 +408,7 @@ func TestHookCommitgateCommandAllow(t *testing.T) {
 	// --- configured: push only at release ---
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-cmd-allow.md"), commandAllowWorkflow)
+	writeCommandAllowRoute(t, repo)
 	// Append command_allow to satelle.toml
 	tomlPath := filepath.Join(repo, ".satelle", "satelle.toml")
 	b, err := os.ReadFile(tomlPath)
@@ -474,7 +454,7 @@ func TestHookCommitgateCommandAllow(t *testing.T) {
 func TestHookStopcheck(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-enforce.md"), enforcementWorkflow)
+	writeEnforcementRoute(t, repo)
 	mustRun(t, testBin, repo, "reindex")
 	gitBaseline(t, repo) // clean tree
 

@@ -9,24 +9,26 @@ import (
 	"testing"
 )
 
-// wfNamingMissingSkill is a structurally valid workflow whose exit gate names a
+// routeNamingMissingSkill is a structurally valid route whose entry gate names a
 // skill that does not exist anywhere in the substrate — the mistake a first-time
 // author makes when adopting a domain gate their repo does not ship.
-func wfNamingMissingSkill(name string) string {
-	// scope is required frontmatter. The executor node deliberately carries NO
-	// @skill: prompt: an EXECUTOR-path skill that does not resolve is a hard
-	// validation failure by design (AC7), and that is not what this fixture is
-	// testing — only the REVIEWER gate is meant to be unresolvable.
-	return "---\nname: " + name + "\ntype: workflow\nscope: project\ntags: [type:workflow]\n" +
-		"applies_to: [\"nothing-selects-this\"]\n" +
-		"description: fixture lifecycle whose exit gate names a skill that does not exist\n---\n\n" +
-		"# fixture\n\n```dot\ndigraph w {\n" +
-		"  backlog     [shape=Mdiamond]\n" +
-		"  in_progress [agent=executor]\n" +
-		"  done        [shape=Msquare]\n" +
-		"  backlog     -> in_progress [agent=reviewer, prompt=\"@skill:construction-review\"]\n" +
-		"  in_progress -> done\n" +
-		"}\n```\n"
+//
+// The executor step deliberately carries NO skills: an EXECUTOR-path skill that
+// does not resolve is a hard validation failure by design (AC7), and that is not
+// what this fixture is testing — only the REVIEWER gate is meant to be
+// unresolvable.
+func routeNamingMissingSkill() (done, step string) {
+	return spineFixture("", "", "",
+		"in_progress|executor||construction-review|reviewer",
+		"done||||")
+}
+
+// writeRouteNamingMissingSkill lands that route in a repo.
+func writeRouteNamingMissingSkill(t *testing.T, repo string) {
+	t.Helper()
+	done, step := routeNamingMissingSkill()
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "done.md"), done)
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "step.md"), step)
 }
 
 // TestNamedWorkflowValidateWarnsOnUnresolvedGateSkill (sty_d59ec6a9 AC1): the
@@ -41,17 +43,12 @@ func TestNamedWorkflowValidateWarnsOnUnresolvedGateSkill(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	const name = "fixture-unresolved-gate"
-	wfDir := filepath.Join(repo, ".satelle", "workflows")
-	if err := os.MkdirAll(wfDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(wfDir, name+".md"), []byte(wfNamingMissingSkill(name)), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeRouteNamingMissingSkill(t, repo)
 	mustRun(t, testBin, repo, "reindex")
 
-	out, err := run(t, testBin, repo, "workflow", "validate", name)
+	// The named form narrows to one authored file; the half that names the gate
+	// is step.md.
+	out, err := run(t, testBin, repo, "workflow", "validate", "step")
 	if err != nil {
 		t.Fatalf("named validate must not FAIL on an unresolved gate skill (a repo mid-authoring "+
 			"writes the workflow before its skills): %v\n%s", err, out)
@@ -75,18 +72,18 @@ func TestWorkflowCreateWarnsOnUnresolvedGateSkill(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	const name = "fixture-created-unresolved"
+	_, step := routeNamingMissingSkill()
 	draft := filepath.Join(t.TempDir(), "draft.md")
-	if err := os.WriteFile(draft, []byte(wfNamingMissingSkill(name)), 0o644); err != nil {
+	if err := os.WriteFile(draft, []byte(step), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	out, err := run(t, testBin, repo, "workflow", "create", "--name", name, "--from", draft)
+	out, err := run(t, testBin, repo, "workflow", "create", "--name", "step", "--from", draft, "--force")
 	if err != nil {
-		t.Fatalf("create must still write the workflow, not refuse it: %v\n%s", err, out)
+		t.Fatalf("create must still write the route half, not refuse it: %v\n%s", err, out)
 	}
-	if _, statErr := os.Stat(filepath.Join(repo, ".satelle", "workflows", name+".md")); statErr != nil {
-		t.Fatalf("the workflow must be written: %v", statErr)
+	if _, statErr := os.Stat(filepath.Join(repo, ".satelle", "workflows", "step.md")); statErr != nil {
+		t.Fatalf("the route half must be written: %v", statErr)
 	}
 	if !strings.Contains(out, "construction-review") {
 		t.Errorf("create must name the unresolved gate skill:\n%s", out)
@@ -103,14 +100,7 @@ func TestWholeSetValidateStillFailsOnUnresolvedGateSkill(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	const name = "fixture-wholeset-unresolved"
-	wfDir := filepath.Join(repo, ".satelle", "workflows")
-	if err := os.MkdirAll(wfDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(wfDir, name+".md"), []byte(wfNamingMissingSkill(name)), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeRouteNamingMissingSkill(t, repo)
 	mustRun(t, testBin, repo, "reindex")
 
 	out, err := run(t, testBin, repo, "workflow", "validate")
@@ -130,24 +120,7 @@ func TestUngatedAdvanceIsRecordedOnTheLedger(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	const name = "fixture-ungated-advance"
-	wf := "---\nname: " + name + "\ntype: workflow\nscope: project\ntags: [type:workflow]\n" +
-		"applies_to: [\"ungated-fixture\"]\n" +
-		"description: fixture lifecycle whose intake gate names a skill that does not exist\n---\n\n" +
-		"# fixture\n\n```dot\ndigraph w {\n" +
-		"  backlog     [shape=Mdiamond]\n" +
-		"  in_progress [agent=executor]\n" +
-		"  done        [shape=Msquare]\n" +
-		"  backlog     -> in_progress [agent=reviewer, prompt=\"@skill:construction-review\"]\n" +
-		"  in_progress -> done\n" +
-		"}\n```\n"
-	wfDir := filepath.Join(repo, ".satelle", "workflows")
-	if err := os.MkdirAll(wfDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(wfDir, name+".md"), []byte(wf), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeRouteNamingMissingSkill(t, repo)
 	mustRun(t, testBin, repo, "reindex")
 
 	out := mustRun(t, testBin, repo, "story", "create",

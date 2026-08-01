@@ -30,7 +30,7 @@ func TestEmbeddedOperatingPrinciples(t *testing.T) {
 		"satelle-residency",
 		"satelle-done-is-last",
 		"satelle-reviewer-self-contained",
-		"satelle-dot-standard",
+		"satelle-route-standard",
 		"satelle-story-classification",
 		// Promoted from repo-local: workflows resolve skills by name, so the
 		// naming scheme is product-canon (sty_24365c69).

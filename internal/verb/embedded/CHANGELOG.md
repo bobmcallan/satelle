@@ -1,3 +1,19 @@
+## [0.0.385] - 2026-08-02
+
+### Removed
+- **`wfdot.Parse` and the DOT-text tooling are gone** — the lexer/emitter tail (`dotBlock`, `dotStatements`, `parseDotAttrs`, `checkNodeAttrs`, `ToDOT`, `parseYAML`, `emitDOT`, `materializeParkFrom`), `format_drift.go`, `refresh.go`, `inert_coded_agent.go`, `warnings.go`, the `satelle workflow format-drift` and `satelle workflow refresh` commands, and the ingest-time `ToDOT` normalisation in `docindex.upsert`. `internal/wfdot` is 1530 → 813 lines, and `BuildRoute` is now the only constructor onto `Spec`. `wfdot.Spec` and every method are untouched — the machinery that reads a lifecycle did not change at all (sty_d953c5d8)
+- **The equivalence corpus retires with the format it verified** — `wfequiv/authored_test.go`, `converted_test.go`, `embedded_test.go` and both frozen `testdata/` corpora parsed authored DOT to diff it against the derived route. With no second constructor there is nothing to compare; they did their job at conversion time (sty_9835070d, sty_3795e7f6). `wfequiv.go` and its Spec-vs-Spec unit tests stay (sty_d953c5d8)
+- **`satelle-dot-standard`** — the embedded principle described a format the binary no longer reads, which is a lie in every repo that ships it. Replaced by **`satelle-route-standard`**: the canonical authored form, what the binary owns versus what the author declares, and the conventions that survive the cutover — about half the length of the file it replaces (sty_d953c5d8)
+
+### Changed
+- **A workflows doc that declares no route REFUSES, loudly.** `wfgovern.SpecFor` returns a NAMED error — "workflow %q declares no route … read `satelle help workflow-convert`" — rather than `ErrNoWorkflow`. That distinction is load-bearing: callers treat `ErrNoWorkflow` as a fresh repo and let the transition through, so collapsing the two would silently drop every gate an unconverted repo authored (sty_d953c5d8)
+- **Substrate and docs describe the format that ships.** The embedded `satelle-workflow-advisor`, `satelle-workflow-change-review` and `satelle-story-blocked-triage` skills, the `workflows` / `reviewer-checks` / `agent-dispatch` / `substrate` help topics, `README.md` and the `agents.toml` seed comment all speak the route grammar. The `workflows` topic was rewritten — it also carried a paste defect from an earlier pass. One USER-FACING refusal string still said "source edits are permitted only in DOT states" (sty_d953c5d8)
+- The whole integration suite is driven through route fixtures (`tests/routefixture_test.go`): 24 files, 43 tests. Coverage that the cutover makes inexpressible is named where it was removed rather than dropped in silence — the `actor=` keyword rejection, `workflow refresh --apply`, the stamp-overrides-category leg, and per-category `create_review` hook allocation (sty_d953c5d8)
+
+### Fixed
+- **An unresolved REVIEWER gate is a WARN again, not a structure failure.** `structure.checkRouteSource` hard-failed on any unnamed skill, which contradicts sty_d59ec6a9 AC4: a repo mid-authoring writes its route before its gate skills, so `satelle workflow create` refused the file and the named `validate` failed. Only an unresolved EXECUTOR rubric fails now — that step cannot be performed, so the story can never reach its terminal state; reviewer gates surface as the WARN that names the consequence (sty_d953c5d8)
+- **The web Workflow panel listed nothing for a converted repo.** Both route halves were skipped as "not workflows" and no row replaced them, so a repo's only lifecycle was invisible in the panel it exists to show. The route now heads the list as ONE row, named as `satelle workflow list` names it and expanding through `done.md` (sty_d953c5d8)
+
 ## [0.0.384] - 2026-08-01
 
 ### Changed

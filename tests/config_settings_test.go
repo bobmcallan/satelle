@@ -57,7 +57,7 @@ func TestSettingsMaterializedEndToEnd(t *testing.T) {
 	// Gitignored overlay supplies the winning value the ${VAR} must resolve to.
 	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"), "[vars]\nTOKEN = \"LOCAL\"\n")
 
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "satelle-task-workflow.md"), dispatchTaskWorkflow)
+	writeDispatchTaskRoute(t, repo)
 	writeAuthoredTask(t, repo, "tsk_set01")
 	mustRun(t, testBin, repo, "reindex")
 
@@ -103,7 +103,7 @@ func TestNoSettingsDropsFlagEndToEnd(t *testing.T) {
 	appendToFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
 		"\n[runner]\ncommand = \""+script+" {system} --settings {settings}\"\ntools = \"Read,Bash(satelle:*)\"\n")
 
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "satelle-task-workflow.md"), dispatchTaskWorkflow)
+	writeDispatchTaskRoute(t, repo)
 	writeAuthoredTask(t, repo, "tsk_nos01")
 	mustRun(t, testBin, repo, "reindex")
 

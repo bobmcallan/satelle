@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/config"
-	"github.com/bobmcallan/satelle/internal/docindex"
 )
 
 // catalog parses a machine-wide profile catalog fixture.
@@ -204,10 +203,11 @@ model   = "haiku"
 		},
 		Agents: map[string]config.AgentBinding{"summariser": {Profile: "cheap-judge"}},
 	}
-	wfs := []docindex.Doc{{
-		Kind: "workflows", Name: "w",
-		Body: "---\nname: w\n---\n```dot\ndigraph w {\n  backlog [shape=Mdiamond]\n  done [shape=Msquare]\n  step [agent=summariser, prompt=\"@skill:satelle-step-summary\", mandatory=true]\n  backlog -> done\n}\n```\n",
-	}}
+	wfs := routeDocs(
+		"## *\n- raised\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: raised\n\n"+
+			"## gate satelle-step-summary\nagent: summariser\nmandatory: true\n")
 	r := ValidateEffective(repo, global, nil, wfs)
 	if !r.OK() {
 		t.Fatalf("a profile-supplied reviewer role must satisfy the summariser node: %v", r.Problems)

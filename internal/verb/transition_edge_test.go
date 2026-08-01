@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -19,10 +17,13 @@ import (
 func TestRefuseSkippedStepPlanBlowThrough(t *testing.T) {
 	wire(t)
 	wfDir := t.TempDir()
-	body := "---\nname: gate-wf\napplies_to: [\"feature\"]\n---\n\n```dot\ndigraph w {\n  backlog [shape=Mdiamond]\n  plan [agent=executor]\n  in_progress [agent=executor]\n  done [shape=Msquare]\n  blocked [agent=reviewer]\n  backlog -> plan\n  plan -> in_progress\n  in_progress -> done\n  in_progress -> blocked\n  blocked -> in_progress\n}\n```\n"
-	if err := os.WriteFile(filepath.Join(wfDir, "gate-wf.md"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	body := routeHalves(
+		"## feature\n- raised\n- planned\n- coded\n- closed\npark: blocked\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## plan\nagent: executor\nprovides: planned\nrequires: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: planned\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
+	writeRouteFiles(t, wfDir, body)
 	call(t, "doc-sync", map[string]any{"dirs": map[string]string{"workflows": wfDir}})
 
 	var created workitem.Item
@@ -54,7 +55,7 @@ func TestRefuseSkippedStepPlanBlowThrough(t *testing.T) {
 	if ref.Rule != wfgovern.RuleSkippedStep {
 		t.Errorf("rule = %q; want %q", ref.Rule, wfgovern.RuleSkippedStep)
 	}
-	if ref.From != "backlog" || ref.To != "in_progress" || ref.Item != created.ID || ref.Workflow != "gate-wf" {
+	if ref.From != "backlog" || ref.To != "in_progress" || ref.Item != created.ID || ref.Workflow != wfgovern.DerivedRouteName {
 		t.Errorf("refusal = %+v; want the edge, item and governing workflow named", ref)
 	}
 	if strings.TrimSpace(ref.Why) == "" {

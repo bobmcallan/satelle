@@ -10,32 +10,18 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-// singleStoryWF: backlog entry, plan+in_progress engaging, blocked park (reviewer),
-// done terminal — mirrors the process rule's engagement predicate.
-const singleStoryWF = `---
-name: single-story-wf
-type: workflow
-applies_to: ["*"]
----
-
-` + "```dot" + `
-digraph w {
-  backlog     [shape=Mdiamond]
-  plan        [agent=executor]
-  in_progress [agent=executor]
-  blocked     [agent=reviewer]
-  done        [shape=Msquare]
-  backlog -> plan -> in_progress -> done
-  plan -> blocked
-  in_progress -> blocked
-  blocked -> plan
-  blocked -> in_progress
-}
-` + "```" + `
-`
+// singleStoryWF: backlog entry, plan+in_progress engaging, blocked park (the
+// binary synthesises it from the `park:` line), done terminal — mirrors the
+// process rule's engagement predicate.
+var singleStoryWF = routeHalves(
+	"## *\n- raised\n- planned\n- coded\n- closed\npark: blocked\n",
+	"## backlog\nstart: true\nprovides: raised\n\n"+
+		"## plan\nagent: executor\nprovides: planned\nrequires: raised\n\n"+
+		"## in_progress\nagent: executor\nprovides: coded\nrequires: planned\n\n"+
+		"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
 
 func TestSingleStorySecondEngageRefused(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
+	wireWithWorkflows(t, singleStoryWF)
 
 	var a, b workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "First", "category": "feature"}), &a)
@@ -78,7 +64,7 @@ func TestSingleStorySecondEngageRefused(t *testing.T) {
 }
 
 func TestSingleStorySameStoryProgressAllowed(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
+	wireWithWorkflows(t, singleStoryWF)
 
 	var a workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Solo", "category": "feature"}), &a)
@@ -90,7 +76,7 @@ func TestSingleStorySameStoryProgressAllowed(t *testing.T) {
 }
 
 func TestSingleStoryBlockedFreesSeat(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
+	wireWithWorkflows(t, singleStoryWF)
 
 	var a, b workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Parked", "category": "feature"}), &a)
@@ -120,7 +106,7 @@ func TestSingleStoryBlockedFreesSeat(t *testing.T) {
 }
 
 func TestSingleStoryCreateIntoEngagingRefused(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
+	wireWithWorkflows(t, singleStoryWF)
 
 	var a workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature", "status": "in_progress"}), &a)
@@ -141,7 +127,7 @@ func TestSingleStoryCreateIntoEngagingRefused(t *testing.T) {
 }
 
 func TestSingleStoryDefaultIsEnforce(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"single-story-wf": singleStoryWF})
+	wireWithWorkflows(t, singleStoryWF)
 
 	var a, b workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)

@@ -119,17 +119,14 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "documents", "guide.md"), []byte("# Guide\n\nhello"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Seed an on-disk workflow so the Workflow panel has a row: embedded defaults are
+	// Seed an on-disk route so the Workflow panel has a row: embedded defaults are
 	// not listed (sty_94da9ac9), so a fresh repo's panel would otherwise be empty.
 	// It declares in_progress because progress_column_lights drives a story there:
-	// a route may not skip a step, so a backlog→done-only graph refuses the very
-	// transition the light is meant to appear after.
-	wfBody := "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\n" +
-		"description: A panel fixture lifecycle — backlog to done through one working step.\n---\n" +
-		"```dot\n" + "digraph w {\n  backlog [shape=Mdiamond]\n  in_progress [agent=executor]\n  done [shape=Msquare, agent=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  backlog -> in_progress\n  in_progress -> done\n}\n" + "```\n"
-	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "wf-x.md"), []byte(wfBody), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	// a route may not skip a step, so a backlog→done-only lane would refuse the
+	// very transition the light is meant to appear after.
+	writeSpineFixture(t, repo, "", "", "",
+		"in_progress|executor|||",
+		"done|||satelle-story-done-review|reviewer")
 	mustRun(t, testBin, repo, "reindex")
 	workspaceAddIfConfigured(t, repo)
 	_ = doneID
@@ -992,21 +989,13 @@ func TestBrowserMarkSoftRedOnDisconnect(t *testing.T) {
 func TestBrowserWorkflowRoute(t *testing.T) {
 	base, repo := serveRepo(t, "8816")
 	// A gated spine plus a cancel fan — the shape the retired diagram existed
-	// to draw, and the one the route now states in words.
-	wf := "---\nname: wf-int\ntype: workflow\nscope: project\napplies_to: [\"*\"]\n---\n" +
-		"```dot\n" + `digraph w {
-  backlog     [shape=Mdiamond]
-  in_progress [agent=executor, prompt="@skill:code"]
-  commit      [agent=executor]
-  done        [shape=Msquare]
-  rev         [agent=reviewer, prompt="@skill:satelle-story-done-review"]
-  cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
-  backlog -> in_progress -> commit -> rev -> done
-  in_progress -> cancelled
-}` + "\n```\n"
-	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "wf-int.md"), []byte(wf), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	// to draw, and the one the route now states in words. The fan is SYNTHESISED:
+	// the route declares only the cancel state.
+	writeSpineFixture(t, repo, "", "cancelled @satelle-story-cancel-review", "",
+		"in_progress|executor|code||",
+		"commit|executor|||",
+		"rev|||satelle-story-done-review|reviewer",
+		"done||||")
 	mustRun(t, testBin, repo, "reindex")
 	workspaceAddIfConfigured(t, repo)
 
@@ -1018,12 +1007,12 @@ func TestBrowserWorkflowRoute(t *testing.T) {
 		t.Fatalf("load page: %v", err)
 	}
 	clickJS(t, ctx, `.tab[data-panel="workflow"]`)
-	// Target the authored wf-int row specifically — init seeds the default
-	// workflow set, so the first row is no longer the one under test.
-	if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow tr.row[data-expand-url="fragment/workflow/wf-int"]')`, 5*time.Second) {
+	// Target the authored declaration of done specifically — init seeds the
+	// default workflow set, so the first row is no longer the one under test.
+	if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow tr.row[data-expand-url="fragment/workflow/done"]')`, 5*time.Second) {
 		t.Fatal("workflow row did not list")
 	}
-	clickJS(t, ctx, `#panel-workflow tr.row[data-expand-url="fragment/workflow/wf-int"]`)
+	clickJS(t, ctx, `#panel-workflow tr.row[data-expand-url="fragment/workflow/done"]`)
 	if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow .route .route-step[data-state="in_progress"]')`, 5*time.Second) {
 		t.Fatal("route did not render with per-step identifiers")
 	}

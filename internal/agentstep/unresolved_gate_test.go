@@ -57,12 +57,14 @@ func TestGateLeavesUnresolvedEmptyWhenGateResolves(t *testing.T) {
 // ambiguity problem — that compares repo workflows against each other, so it is
 // whole-set by nature and firing it per-doc would misreport.
 func TestWorkflowSkillProblemsIsPerDocAndExcludesAmbiguity(t *testing.T) {
-	a := docindex.Doc{Name: "wf-a", Body: wfDoc("wf-a", `"*"`, `digraph w {
-  backlog -> in_progress [reviewer_skill="does-not-exist"]
-}`)}
-	b := docindex.Doc{Name: "wf-b", Body: wfDoc("wf-b", `"*"`, `digraph w {
-  backlog -> in_progress
-}`)}
+	// A lifecycle names its gates in the route grammar (sty_d953c5d8), so the
+	// per-doc check reads the step catalogue.
+	a := docindex.Doc{Name: "wf-a", Body: "---\nname: wf-a\ntype: workflow\nscope: system\n" +
+		"description: fixture\napplies_to: [\"*\"]\n---\n\n" +
+		"## in_progress\nagent: executor\nreviewers: does-not-exist\nprovides: coded\nrequires: raised\n"}
+	b := docindex.Doc{Name: "wf-b", Body: "---\nname: wf-b\ntype: workflow\nscope: system\n" +
+		"description: fixture\napplies_to: [\"*\"]\n---\n\n" +
+		"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n"}
 	resolve := func(string) bool { return false }
 
 	single := WorkflowSkillProblems(a, resolve)
@@ -102,9 +104,9 @@ func TestWorkflowSkillProblemsIsPerDocAndExcludesAmbiguity(t *testing.T) {
 // behaviour-preserving for the whole-set callers, which report these as FAILs —
 // the exact string they have always printed.
 func TestWorkflowConsistencyMessageUnchanged(t *testing.T) {
-	d := docindex.Doc{Name: "wf", Body: wfDoc("wf", `"*"`, `digraph w {
-  backlog -> in_progress [reviewer_skill="missing-review"]
-}`)}
+	d := docindex.Doc{Name: "wf", Body: "---\nname: wf\ntype: workflow\nscope: system\n" +
+		"description: fixture\napplies_to: [\"*\"]\n---\n\n" +
+		"## in_progress\nagent: executor\nreviewers: missing-review\nprovides: coded\nrequires: raised\n"}
 	got := WorkflowConsistency([]docindex.Doc{d}, func(string) bool { return false })
 	want := `workflow wf references skill "missing-review" which does not resolve in the substrate`
 	var found bool

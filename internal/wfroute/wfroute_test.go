@@ -45,20 +45,6 @@ func derived(t *testing.T, tags []string) wfdot.Spec {
 	return spec
 }
 
-// authored builds a Spec through the AUTHORED front door (this repo's DOT).
-func authored(t *testing.T) wfdot.Spec {
-	t.Helper()
-	body, err := os.ReadFile(filepath.Join(repoRoot(t), ".satelle", "workflows", "satelle-project-workflow.md"))
-	if err != nil {
-		t.Skipf("no authored project workflow in this checkout: %v", err)
-	}
-	spec, ok := wfdot.Parse(string(body))
-	if !ok {
-		t.Fatal("Parse: the authored project workflow has no parseable dot block")
-	}
-	return spec
-}
-
 // TestRouteExposesEveryStepField (AC1): a step names its status, its obligation,
 // its performer, its rubrics and its entry reviewers. All five, per step, or the
 // route is not a substitute for reading the graph.
@@ -133,31 +119,6 @@ func TestRouteSeparatesExitsFromSteps(t *testing.T) {
 	}
 	if exits["cancelled"].Park {
 		t.Error("cancelled must render as terminal, not park — nothing resumes from it")
-	}
-}
-
-// TestRouteIsBlindToItsFrontDoor: the authored DOT and the derived route render
-// the same steps, performers and gates. That is the epic's whole claim, checked
-// on the surface the operator actually reads.
-func TestRouteIsBlindToItsFrontDoor(t *testing.T) {
-	tags := []string{"surface:ui"}
-	a := Build(authored(t), "wf", tags, nil)
-	d := Build(derived(t, tags), "wf", tags, nil)
-	if len(a.Steps) != len(d.Steps) {
-		t.Fatalf("authored %d steps, derived %d", len(a.Steps), len(d.Steps))
-	}
-	for i := range a.Steps {
-		as, ds := a.Steps[i], d.Steps[i]
-		if as.Status != ds.Status || as.Agent != ds.Agent ||
-			strings.Join(as.Skills, ",") != strings.Join(ds.Skills, ",") {
-			t.Errorf("step %d: authored %+v vs derived %+v", i, as, ds)
-		}
-		ag, dg := append([]string(nil), skillsOf(as.Reviewers)...), append([]string(nil), skillsOf(ds.Reviewers)...)
-		sortStrings(ag)
-		sortStrings(dg)
-		if strings.Join(ag, ",") != strings.Join(dg, ",") {
-			t.Errorf("step %q gates: authored %v vs derived %v", as.Status, ag, dg)
-		}
 	}
 }
 

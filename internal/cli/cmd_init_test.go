@@ -197,10 +197,11 @@ func TestRunInitAdvisorySkillsAreVirtual(t *testing.T) {
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	own := "---\nname: my-workflow\ntype: workflow\ndescription: my own lifecycle\napplies_to: [\"*\"]\nscope: project\n---\n\n```dot\ndigraph w {\n  backlog -> in_progress -> done\n}\n```\n"
-	if err := os.WriteFile(filepath.Join(wfDir, "my-workflow.md"), []byte(own), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeRoute(t, wfDir,
+		"## *\n- raised\n- coded\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
 	if err := runInitTest(t, io.Discard, repo); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
@@ -467,26 +468,22 @@ func TestRunInitBesideAuthoredWorkflowNoSeeds(t *testing.T) {
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	own := filepath.Join(wfDir, "my-workflow.md")
-	ownBody := "---\nname: my-workflow\ntype: workflow\ndescription: my own lifecycle\napplies_to: [\"*\"]\nscope: project\n---\n\n# mine\n\n```dot\ndigraph w {\n  backlog -> in_progress -> done\n  estimate [agent=reviewer, prompt=\"@skill:satelle-estimate-actual-review\", on=\"in_progress,done\"]\n}\n```\n"
-	if err := os.WriteFile(own, []byte(ownBody), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	own := filepath.Join(wfDir, "done.md")
+	writeRoute(t, wfDir,
+		"## *\n- raised\n- coded\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: coded\n\n"+
+			"## gate satelle-estimate-actual-review\non: in_progress, done\n")
 	if err := runInitTest(t, io.Discard, repo); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
 	// No default seeds.
-	for _, rel := range []string{
-		"workflows/satelle-baseline-workflow.md",
-		"workflows/satelle-parent-workflow.md",
-		"skills/satelle-estimate-actual-review.md",
-	} {
-		if fileExists(filepath.Join(repo, ".satelle", rel)) {
-			t.Errorf("init seeded %s — virtual defaults must not write unedited copies", rel)
-		}
+	if fileExists(filepath.Join(repo, ".satelle", "skills/satelle-estimate-actual-review.md")) {
+		t.Error("init seeded skills/satelle-estimate-actual-review.md — virtual defaults must not write unedited copies")
 	}
-	if got, _ := os.ReadFile(own); !strings.Contains(string(got), "# mine") {
-		t.Error("authored workflow was modified")
+	if got, _ := os.ReadFile(own); !strings.Contains(string(got), "fixture declaration of done") {
+		t.Error("the authored route source was modified")
 	}
 }
 
@@ -498,10 +495,12 @@ func TestRunInitVirtualGateSkillResolves(t *testing.T) {
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	own := "---\nname: my-workflow\ntype: workflow\ndescription: my own lifecycle\napplies_to: [\"*\"]\nscope: project\n---\n\n# mine\n\n```dot\ndigraph w {\n  backlog -> in_progress -> done\n  estimate [agent=reviewer, prompt=\"@skill:satelle-estimate-actual-review\", on=\"in_progress,done\"]\n}\n```\n"
-	if err := os.WriteFile(filepath.Join(wfDir, "my-workflow.md"), []byte(own), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeRoute(t, wfDir,
+		"## *\n- raised\n- coded\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: coded\n\n"+
+			"## gate satelle-estimate-actual-review\non: in_progress, done\n")
 	if err := runInitTest(t, io.Discard, repo); err != nil {
 		t.Fatalf("init must validate green with virtual gate skill: %v", err)
 	}

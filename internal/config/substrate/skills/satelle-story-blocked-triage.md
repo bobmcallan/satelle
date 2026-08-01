@@ -35,7 +35,7 @@ satelle ledger list --story <id>
 ```
 
 Read gate/hook deny text named in the reason, and enough repo/substrate state to
-ground the cause (workflow DOT for declared edges; `agents.toml` only if binding
+ground the cause (the route's two halves for declared steps; `agents.toml` only if binding
 is implicated). Classify **exactly one**:
 
 | Class | Meaning |

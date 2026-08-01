@@ -206,11 +206,6 @@ func validateAuthoredDir(out io.Writer, kind, dir, nameFilter string, resolve fu
 		} else {
 			fmt.Fprintf(out, "PASS  %s/%s\n", kind, name)
 		}
-		// Advisory only: scoped-reviewer over-fire (and future) warnings never
-		// increment failed / change exit (sty_9882b8c6).
-		for _, w := range structure.DocWarnings(kind, name, string(body)) {
-			fmt.Fprintf(out, "WARN  %s/%s — %s\n", kind, name, w)
-		}
 	}
 	return validated, failed, exempt
 }

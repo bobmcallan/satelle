@@ -54,6 +54,65 @@ var retiredEmbeddedWorkflows = []string{
 	"satelle-task-workflow",
 }
 
+// retiredDOTIdentifiers are the DOT front end and the tooling that maintained it
+// (sty_d953c5d8). AC1/AC4: no non-test source may reintroduce any of them.
+// Checked as identifiers, so a comment that merely NAMES the retired seam is
+// fine — reintroducing a call is not.
+var retiredDOTIdentifiers = []string{
+	"wfdot.Parse(", "wfdot.ToDOT(", "wfdot.Refresh(",
+	"wfdot.FormatDrift", "wfdot.OverFireWarnings(", "wfdot.SkillIsCodedCheck",
+	"wfdot.InertCodedCheckAgentFindings(",
+}
+
+// TestNoSourceParsesDOT is AC4: no DOT text is parsed anywhere in the tree. The
+// front end is gone, so its reappearance is a regression this fails on rather
+// than a review someone has to remember to do.
+func TestNoSourceParsesDOT(t *testing.T) {
+	var offenders []string
+	forEachNonTestGoFile(t, func(rel, body string) {
+		for _, id := range retiredDOTIdentifiers {
+			if strings.Contains(body, id) {
+				offenders = append(offenders, rel+" calls "+id)
+			}
+		}
+	})
+	if len(offenders) > 0 {
+		t.Errorf("the DOT front end is retired; these reintroduce it:\n  %s",
+			strings.Join(offenders, "\n  "))
+	}
+}
+
+// forEachNonTestGoFile walks the tree's non-test Go sources.
+func forEachNonTestGoFile(t *testing.T, fn func(rel, body string)) {
+	t.Helper()
+	root := repoRootFromTest(t)
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil //nolint:nilerr // an unreadable dir is not this test's business
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", "backups", "testdata", ".satelle-market":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		body, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		fn(rel, string(body))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestNoSourceReachesForARetiredEmbeddedWorkflow is the deterministic inventory
 // AC7 asks for: no non-test Go source may resolve one of the retired embedded
 // graphs by name. Asserting it by construction ("the remaining wfdot.Parse

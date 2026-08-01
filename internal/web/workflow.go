@@ -14,7 +14,12 @@ import (
 // filters and clicks to expand. Mirrors the stories/tasks row shape so the same
 // filter + expand/collapse interactions apply (the tab is read-only).
 type workflowRowVM struct {
-	Name       string
+	Name string
+	// ExpandName is the DOC the expand fragment loads. It equals Name for an
+	// authored workflow, and is the declaration of done for a derived route —
+	// whose displayed Name ("done.md+step.md") names two files rather than one
+	// doc, and so is not a URL the fragment handler could resolve.
+	ExpandName string
 	Headline   string
 	Scope      string
 	AppliesTo  []string
@@ -72,9 +77,31 @@ type workflowDetailVM struct {
 
 // workflowRows builds the Workflow panel rows from the indexed workflow docs.
 // prov maps "workflows\x00name" → provenance; src maps the same key → source.
-// The two halves of a derived route are not workflows and get no row.
+//
+// The two halves of a derived route are not workflows and get no row of their
+// own. The ROUTE they build does get one, at the head: it is the repo's
+// lifecycle, and a panel that listed nothing for a converted repo would hide the
+// only lifecycle it has. The row names itself as `satelle workflow list` does
+// and expands through done.md, the half the fragment resolves the route from.
 func workflowRows(docs []docindex.Doc, prov, src map[string]string) []workflowRowVM {
 	out := make([]workflowRowVM, 0, len(docs))
+	if rs := wfgovern.RouteSourceOf(docs); rs.Present() {
+		key := "workflows\x00" + wfgovern.RouteSourceDone
+		row := workflowRowVM{
+			Name:       wfgovern.DerivedRouteName,
+			ExpandName: wfgovern.RouteSourceDone,
+			Headline:   "derived route — done.md + step.md",
+			AppliesTo:  wfgovern.RouteCategories(rs.Done),
+			Provenance: prov[key],
+			Source:     src[key],
+		}
+		for _, d := range docs {
+			if d.Name == wfgovern.RouteSourceDone {
+				row.Scope, row.Updated = workflowScope(d), d.ModTime
+			}
+		}
+		out = append(out, row)
+	}
 	for _, d := range docs {
 		if wfgovern.IsRouteSource(d.Name) {
 			continue
@@ -82,6 +109,7 @@ func workflowRows(docs []docindex.Doc, prov, src map[string]string) []workflowRo
 		key := "workflows\x00" + d.Name
 		out = append(out, workflowRowVM{
 			Name:       d.Name,
+			ExpandName: d.Name,
 			Headline:   d.Headline,
 			Scope:      workflowScope(d),
 			AppliesTo:  frontmatterList(d.Body, "applies_to"),

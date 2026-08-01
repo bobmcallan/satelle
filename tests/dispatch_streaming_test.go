@@ -18,25 +18,13 @@ import (
 	"time"
 )
 
-// streamingWorkflow allocates the plan step to the NAMED agent "architect" so a
-// story set transition dispatches a real subprocess whose harness is a fake
+// writeStreamingRoute allocates the plan step to the NAMED agent "architect" so
+// a story set transition dispatches a real subprocess whose harness is a fake
 // agent script (below).
-const streamingWorkflow = `---
-name: wf-streaming
-type: workflow
-description: plan step performed by a streaming fake agent
-applies_to: ["feature"]
-scope: project
----
-
-` + "```dot" + `
-digraph w {
-  backlog [shape=Mdiamond]
-  plan [agent=architect]
-  done [shape=Msquare]
-  backlog -> plan -> done
+func writeStreamingRoute(t *testing.T, repo string) {
+	t.Helper()
+	writeSpineFixture(t, repo, "", "", "", "plan|architect|||", "done||||")
 }
-` + "```\n"
 
 // slowStreamingAgentScript echoes two lines with a real pause between them, then
 // exits 0 — a stand-in for an agent whose output arrives over time rather than
@@ -75,7 +63,7 @@ func setupStreamingRepo(t *testing.T, script string, extraAgentsToml string) (re
 	}
 	_ = f.Close()
 
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-streaming.md"), streamingWorkflow)
+	writeStreamingRoute(t, repo)
 	mustRun(t, testBin, repo, "reindex")
 
 	out := mustRun(t, testBin, repo, "story", "create", "--category", "feature",

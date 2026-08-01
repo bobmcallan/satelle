@@ -17,10 +17,11 @@ func TestValidate_Healthy(t *testing.T) {
 			"planner": {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob,Bash(satelle:*)", Model: "opus"},
 		},
 	}
-	wfs := []docindex.Doc{{
-		Kind: "workflows", Name: "w",
-		Body: "---\nname: w\n---\n```dot\ndigraph w {\n  backlog [shape=Mdiamond]\n  plan [agent=planner, prompt=\"@skill:plan\"]\n  done [shape=Msquare]\n  backlog -> plan -> done\n}\n```\n",
-	}}
+	wfs := routeDocs(
+		"## *\n- raised\n- planned\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## plan\nagent: planner\nskills: plan\nprovides: planned\nrequires: raised\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: planned\n")
 	r := Validate(agents, nil, wfs)
 	if !r.OK() {
 		t.Fatalf("healthy fixture must have no problems: %v", r.Problems)
@@ -54,17 +55,14 @@ func TestValidate_GateBindingSection(t *testing.T) {
 			"reviewer-deep": {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob", Model: "opus", Role: "reviewer"},
 		},
 	}
-	wfs := []docindex.Doc{{
-		Kind: "workflows", Name: "w",
-		Body: "---\nname: w\n---\n```dot\ndigraph w {\n" +
-			"  backlog [shape=Mdiamond]\n" +
-			"  plan [agent=planner, prompt=\"@skill:plan\"]\n" +
-			"  done [shape=Msquare]\n" +
-			"  estimate [agent=reviewer, prompt=\"@skill:est\", on=\"done\"]\n" +
-			"  backlog -> plan [agent=reviewer-deep, prompt=\"@skill:intent\"]\n" +
-			"  plan -> done [agent=reviewer, prompt=\"@skill:close\"]\n" +
-			"}\n```\n",
-	}}
+	wfs := routeDocs(
+		"## *\n- raised\n- planned\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## plan\nagent: planner\nskills: plan\nreviewers: intent\nreviewer_agent: reviewer-deep\n"+
+			"provides: planned\nrequires: raised\n\n"+
+			"## done\nreviewers: close\nreviewer_agent: reviewer\nterminal: true\n"+
+			"provides: closed\nrequires: planned\n\n"+
+			"## gate est\nagent: reviewer\non: done\n")
 	r := Validate(agents, nil, wfs)
 	if !r.OK() {
 		t.Fatalf("problems: %v", r.Problems)
@@ -86,7 +84,8 @@ func TestValidate_GateBindingSection(t *testing.T) {
 	if plan.Agent != "planner" || plan.EffectiveModel != "sonnet" {
 		t.Errorf("plan node = %+v, want planner/sonnet", plan)
 	}
-	est := by["estimate|est"]
+	// A derived route names an always-on gate node for its skill.
+	est := by["gate_est|est"]
 	if est.EffectiveModel != "grok-4.5" {
 		t.Errorf("estimate scoped = %+v, want grok-4.5", est)
 	}
@@ -112,14 +111,13 @@ func TestValidate_StepSummaryNamedReviewer(t *testing.T) {
 			},
 		},
 	}
-	wfNamed := "---\nname: w\n---\n```dot\ndigraph w {\n" +
-		"  backlog [shape=Mdiamond]\n" +
-		"  in_progress [agent=executor]\n" +
-		"  step [agent=reviewer-summary, prompt=\"@skill:satelle-step-summary\", mandatory=true]\n" +
-		"  done [shape=Msquare]\n" +
-		"  backlog -> in_progress -> done\n" +
-		"}\n```\n"
-	r := Validate(agents, nil, []docindex.Doc{{Kind: "workflows", Name: "w", Body: wfNamed}})
+	wfNamed := routeDocs(
+		"## *\n- raised\n- coded\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: coded\n\n"+
+			"## gate satelle-step-summary\nagent: reviewer-summary\nmandatory: true\n")
+	r := Validate(agents, nil, wfNamed)
 	if !r.OK() {
 		t.Fatalf("named step-summary reviewer must pass: %v", r.Problems)
 	}
@@ -130,7 +128,7 @@ func TestValidate_StepSummaryNamedReviewer(t *testing.T) {
 	}
 	found := false
 	for _, g := range r.Gates {
-		if g.Node == "step" && g.Skill == "satelle-step-summary" {
+		if g.Skill == "satelle-step-summary" {
 			found = true
 			if g.Agent != "reviewer-summary" || g.EffectiveModel != "grok-4.5" {
 				t.Errorf("step gate = %+v, want reviewer-summary/grok-4.5", g)
@@ -146,7 +144,7 @@ func TestValidate_StepSummaryNamedReviewer(t *testing.T) {
 	agentsBad.Agents = map[string]config.AgentBinding{
 		"reviewer-summary": {Command: "fake", Role: "agent", Tools: "Read", Model: "x"},
 	}
-	rBad := Validate(agentsBad, nil, []docindex.Doc{{Kind: "workflows", Name: "w", Body: wfNamed}})
+	rBad := Validate(agentsBad, nil, wfNamed)
 	if rBad.OK() {
 		t.Fatal("role=agent on step-summary must fail")
 	}
@@ -156,19 +154,18 @@ func TestValidate_StepSummaryNamedReviewer(t *testing.T) {
 		Executor: config.AgentBinding{Command: "in-loop"},
 		Reviewer: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: "read_file", Model: "opus"},
 	}
-	rMiss := Validate(agentsMiss, nil, []docindex.Doc{{Kind: "workflows", Name: "w", Body: wfNamed}})
+	rMiss := Validate(agentsMiss, nil, wfNamed)
 	if rMiss.OK() {
 		t.Fatal("missing binding on step-summary must fail")
 	}
 
-	// Legacy agent=reviewer stays green.
-	wfLegacy := "---\nname: w\n---\n```dot\ndigraph w {\n" +
-		"  backlog [shape=Mdiamond]\n" +
-		"  step [agent=reviewer, prompt=\"@skill:satelle-step-summary\", mandatory=true]\n" +
-		"  done [shape=Msquare]\n" +
-		"  backlog -> done\n" +
-		"}\n```\n"
-	rLeg := Validate(agents, nil, []docindex.Doc{{Kind: "workflows", Name: "w", Body: wfLegacy}})
+	// The plain agent=reviewer summariser stays green.
+	wfLegacy := routeDocs(
+		"## *\n- raised\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: raised\n\n"+
+			"## gate satelle-step-summary\nagent: reviewer\nmandatory: true\n")
+	rLeg := Validate(agents, nil, wfLegacy)
 	if !rLeg.OK() {
 		t.Fatalf("legacy agent=reviewer step must pass: %v", rLeg.Problems)
 	}
@@ -349,8 +346,14 @@ func TestValidate_MissingNodeBinding(t *testing.T) {
 	}
 	wfs := []docindex.Doc{{
 		Kind: "workflows", Name: "w",
-		Body: "---\nname: w\n---\n```dot\ndigraph w {\n  backlog [shape=Mdiamond]\n  work [agent=ghost, prompt=\"@skill:code\"]\n  done [shape=Msquare]\n  backlog -> work -> done\n}\n```\n",
+		Body: "",
 	}}
+	_ = wfs
+	wfs = routeDocs(
+		"## *\n- raised\n- worked\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## work\nagent: ghost\nskills: code\nprovides: worked\nrequires: raised\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: worked\n")
 	r := Validate(agents, nil, wfs)
 	if r.OK() {
 		t.Fatal("missing node binding must produce a problem")
@@ -371,8 +374,13 @@ func TestValidate_OrphanBinding(t *testing.T) {
 	}
 	wfs := []docindex.Doc{{
 		Kind: "workflows", Name: "w",
-		Body: "---\nname: w\n---\n```dot\ndigraph w {\n  backlog [shape=Mdiamond]\n  done [shape=Msquare]\n  backlog -> done\n}\n```\n",
+		Body: "",
 	}}
+	_ = wfs
+	wfs = routeDocs(
+		"## *\n- raised\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: raised\n")
 	r := Validate(agents, nil, wfs)
 	// Orphans are warnings (advisory) — [retrospective]-style non-workflow agents
 	// must not hard-fail engage/init.
@@ -644,7 +652,13 @@ func TestValidate_CodexReviewerSandboxHardReject(t *testing.T) {
 
 // channelWF is a minimal spine with ONE named performer node, used to vary only
 // the binding under test (sty_87c0ef37).
-const channelWF = "---\nname: w\n---\n```dot\ndigraph w {\n  backlog [shape=Mdiamond]\n  plan [agent=%s, prompt=\"@skill:plan\"]\n  done [shape=Msquare]\n  backlog -> plan -> done\n}\n```\n"
+func channelWF(section string) []docindex.Doc {
+	return routeDocs(
+		"## *\n- raised\n- planned\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## plan\nagent: "+section+"\nskills: plan\nprovides: planned\nrequires: raised\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: planned\n")
+}
 
 // TestValidate_ContextChannelFindings is the AC1/AC2/AC7/AC8 matrix: a DISPATCHED
 // performer must carry a pull-context channel (error when it does not), and a
@@ -699,8 +713,7 @@ func TestValidate_ContextChannelFindings(t *testing.T) {
 				Reviewer: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: "read_file,grep,list_dir", Model: "grok-4.5"},
 				Agents:   map[string]config.AgentBinding{tc.section: tc.binding},
 			}
-			wfs := []docindex.Doc{{Kind: "workflows", Name: "w",
-				Body: strings.Replace(channelWF, "%s", tc.section, 1)}}
+			wfs := channelWF(tc.section)
 			r := Validate(agents, nil, wfs)
 
 			got := findingWith(r.Problems, "no context channel")
@@ -741,8 +754,7 @@ func TestValidate_ReviewerShellGrantIsUnusedCapability(t *testing.T) {
 				"planner": {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob,Bash(satelle:*)", Model: "opus"},
 			},
 		}
-		wfs := []docindex.Doc{{Kind: "workflows", Name: "w",
-			Body: strings.Replace(channelWF, "%s", "planner", 1)}}
+		wfs := channelWF("planner")
 		return Validate(agents, nil, wfs)
 	}
 
@@ -782,8 +794,7 @@ func TestValidate_UnallocatedBindingHasNoChannelFinding(t *testing.T) {
 			"nobody":  {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob", Model: "opus"},
 		},
 	}
-	wfs := []docindex.Doc{{Kind: "workflows", Name: "w",
-		Body: strings.Replace(channelWF, "%s", "planner", 1)}}
+	wfs := channelWF("planner")
 	r := Validate(agents, nil, wfs)
 	if p := findingWith(r.Problems, "no context channel"); p != "" {
 		t.Fatalf("unallocated binding must not be judged as a performer: %s", p)

@@ -3,37 +3,27 @@
 package tests
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
 // TestWorkflowWithoutDoneGateValidates drives the real binary to prove the spine
-// mandate is relaxed (sty_9a139c78): a workflow whose edge into `done` carries no
-// gate still validates, and a transparent edge-less `step` node (the step-summary
+// mandate is relaxed (sty_9a139c78): a route whose terminal step carries no
+// reviewers still validates, and a transparent always-on gate (the step-summary
 // declaration, marked mandatory) parses and validates clean. "If the user breaks
 // the process, so be it" — the done gate is the author's choice, not a mandate.
 func TestWorkflowWithoutDoneGateValidates(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	wf := "---\nname: satelle-project-workflow\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: minimal lifecycle with no mandated done gate and a transparent step node\n---\n" + "```dot" + `
-digraph w {
-  backlog     [shape=Mdiamond]
-  in_progress [agent=executor]
-  step        [agent=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
-  done        [shape=Msquare]
-  backlog -> in_progress -> done
-}
-` + "```\n"
-	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "satelle-project-workflow.md"), []byte(wf), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeSpineFixture(t, repo, "", "",
+		"## gate satelle-step-summary\nagent: reviewer\nmandatory: true\nfor: *\n",
+		"in_progress|executor|||",
+		"done||||")
 	mustRun(t, testBin, repo, "reindex", "--validate=false")
 
-	out := mustRun(t, testBin, repo, "workflow", "validate", "satelle-project-workflow")
+	out := mustRun(t, testBin, repo, "workflow", "validate")
 	if !strings.Contains(out, "PASS") || strings.Contains(out, "FAIL") {
-		t.Errorf("a workflow without a done gate + a transparent step node should validate clean:\n%s", out)
+		t.Errorf("a route without a done gate + a transparent always-on gate should validate clean:\n%s", out)
 	}
 }

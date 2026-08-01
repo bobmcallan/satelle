@@ -6,42 +6,9 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
-
-// engagementBogusWorkflow overrides the baseline for all categories. Its path to
-// done runs through an EXECUTOR step whose @skill: prompt resolves to nothing in
-// the substrate — so engaging a story under it must be rejected up front by the
-// deterministic engagement guard, before any work, naming the missing skill.
-const engagementBogusWorkflow = `---
-name: satelle-baseline-workflow
-scope: project
-kind: workflow
-tags: [kind:workflow]
-applies_to: ["*"]
-description: Test workflow whose path to done has an executor step with a missing skill.
----
-
-# bogus
-
-` + "```dot" + `
-digraph w {
-  rankdir=LR
-  backlog     [shape=Mdiamond]
-  in_progress [agent=executor]
-  ship        [agent=executor, prompt="@skill:bogus-ship-skill"]
-  done        [shape=Msquare, agent=reviewer, prompt="@skill:satelle-story-done-review"]
-  cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
-  backlog -> in_progress
-  in_progress -> ship
-  ship -> done
-  backlog -> cancelled
-  in_progress -> cancelled
-}
-` + "```" + `
-`
 
 // TestEngagementBlockedOnMissingExecutorSkill drives the real binary: a story whose
 // active workflow's path to done has an executor step with an unresolvable skill
@@ -54,13 +21,13 @@ func TestEngagementBlockedOnMissingExecutorSkill(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	wfDir := filepath.Join(repo, ".satelle", "workflows")
-	if err := os.MkdirAll(wfDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(wfDir, "satelle-baseline-workflow.md"), []byte(engagementBogusWorkflow), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	// The route's path to done runs through an EXECUTOR step whose skill resolves
+	// to nothing in the substrate, so engaging a story under it must be rejected up
+	// front — before any work — naming the missing skill.
+	writeSpineFixture(t, repo, "", "cancelled @satelle-story-cancel-review", "",
+		"in_progress|executor|||",
+		"ship|executor|bogus-ship-skill||",
+		"done|||satelle-story-done-review|reviewer")
 
 	run := func(args ...string) (string, error) {
 		cmd := exec.Command(testBin, args...)

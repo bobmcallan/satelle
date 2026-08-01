@@ -14,15 +14,11 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-const changeWF = "---\nname: cr-wf\ntype: workflow\nscope: system\napplies_to: [\"*\"]\ndescription: change-record test\n---\n```dot\n" +
-	`digraph e {
-  backlog [shape=Mdiamond]
-  in_progress [agent=executor]
-  done [shape=Msquare]
-  backlog -> in_progress
-  in_progress -> done
-}
-` + "```\n"
+var changeWF = routeHalves(
+	"## *\n- raised\n- coded\n- closed\n",
+	"## backlog\nstart: true\nprovides: raised\n\n"+
+		"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
+		"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
 
 func gitRepo(t *testing.T) string {
 	t.Helper()
@@ -62,7 +58,7 @@ func TestChangeRecordPerEnactedTransition(t *testing.T) {
 	stories := filepath.Join(dir, "stories")
 	_ = os.MkdirAll(stories, 0o755)
 
-	wireWithWorkflows(t, map[string]string{"cr-wf": changeWF})
+	wireWithWorkflows(t, changeWF)
 	verb.SetStoryDir(stories)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
 	t.Cleanup(func() {
@@ -137,7 +133,7 @@ func TestChangeRecordVisibleOnLedgerList(t *testing.T) {
 	chdir(t, dir)
 	stories := filepath.Join(dir, "stories")
 	_ = os.MkdirAll(stories, 0o755)
-	wireWithWorkflows(t, map[string]string{"cr-wf": changeWF})
+	wireWithWorkflows(t, changeWF)
 	verb.SetStoryDir(stories)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
 	t.Cleanup(func() {
@@ -238,7 +234,7 @@ func TestChangeRecordNoGitDegrades(t *testing.T) {
 	chdir(t, dir)
 	stories := filepath.Join(dir, "stories")
 	_ = os.MkdirAll(stories, 0o755)
-	wireWithWorkflows(t, map[string]string{"cr-wf": changeWF})
+	wireWithWorkflows(t, changeWF)
 	verb.SetStoryDir(stories)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
 	t.Cleanup(func() {
@@ -284,7 +280,7 @@ func TestChangeRecordHasNoVerdict(t *testing.T) {
 	chdir(t, dir)
 	stories := filepath.Join(dir, "stories")
 	_ = os.MkdirAll(stories, 0o755)
-	wireWithWorkflows(t, map[string]string{"cr-wf": changeWF})
+	wireWithWorkflows(t, changeWF)
 	verb.SetStoryDir(stories)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
 	t.Cleanup(func() {
@@ -317,7 +313,7 @@ func TestChangeRecordPayloadCarriesNoContent(t *testing.T) {
 	chdir(t, dir)
 	stories := filepath.Join(dir, "stories")
 	_ = os.MkdirAll(stories, 0o755)
-	wireWithWorkflows(t, map[string]string{"cr-wf": changeWF})
+	wireWithWorkflows(t, changeWF)
 	verb.SetStoryDir(stories)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
 	t.Cleanup(func() {
@@ -358,7 +354,7 @@ func TestChangeRecordDoesNotAlterGateDecisions(t *testing.T) {
 	chdir(t, dir)
 	stories := filepath.Join(dir, "stories")
 	_ = os.MkdirAll(stories, 0o755)
-	wireWithWorkflows(t, map[string]string{"cr-wf": changeWF})
+	wireWithWorkflows(t, changeWF)
 	verb.SetStoryDir(stories)
 	// First engage with open gate so we land in_progress.
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
@@ -417,7 +413,7 @@ func TestChangeRecordNeedsNoHook(t *testing.T) {
 	chdir(t, dir)
 	stories := filepath.Join(dir, "stories")
 	_ = os.MkdirAll(stories, 0o755)
-	wireWithWorkflows(t, map[string]string{"cr-wf": changeWF})
+	wireWithWorkflows(t, changeWF)
 	verb.SetStoryDir(stories)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
 	t.Cleanup(func() {
@@ -454,7 +450,7 @@ func TestSubstrateOnlyCheckReadsRecordedChangeSet(t *testing.T) {
 	chdir(t, dir)
 	stories := filepath.Join(dir, "stories")
 	_ = os.MkdirAll(stories, 0o755)
-	wireWithWorkflows(t, map[string]string{"cr-wf": changeWF})
+	wireWithWorkflows(t, changeWF)
 	verb.SetStoryDir(stories)
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
 	t.Cleanup(func() {
@@ -515,7 +511,7 @@ func TestChangeRecordCapturesGitIgnoredSubstrate(t *testing.T) {
 	stories := filepath.Join(dir, "stories")
 	_ = os.MkdirAll(stories, 0o755)
 
-	wireWithWorkflows(t, map[string]string{"cr-wf": changeWF})
+	wireWithWorkflows(t, changeWF)
 	verb.SetStoryDir(stories)
 	verb.SetAuthoredDirs(map[string]string{"skills": satelleDir})
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})

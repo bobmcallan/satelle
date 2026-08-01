@@ -4,7 +4,6 @@ package tests
 
 import (
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -47,36 +46,29 @@ func TestWorkflowStampedAtCreate(t *testing.T) {
 	}
 }
 
-const wfXFeature = "---\nname: wf-x\ntype: workflow\ndescription: engage-edge lifecycle for feature stories\napplies_to: [\"feature\"]\nscope: project\n---\n# X declares the engage edge\n" +
-	"```dot\n" + `digraph x {
-  backlog [shape=Mdiamond]
-  in_progress [agent=executor]
-  done [shape=Msquare, agent=reviewer]
-  cancelled [agent=reviewer]
-  backlog -> in_progress
-  in_progress -> done
-  backlog -> cancelled
-}` + "\n```\n"
-
-const wfYChore = "---\nname: wf-y\ntype: workflow\ndescription: direct-close lifecycle for chore stories\napplies_to: [\"chore\"]\nscope: project\n---\n# Y has NO in_progress (engage edge undeclared)\n" +
-	"```dot\n" + `digraph y {
-  backlog [shape=Mdiamond]
-  done [shape=Msquare, agent=reviewer]
-  cancelled [agent=reviewer]
-  backlog -> done
-  backlog -> cancelled
-}` + "\n```\n"
-
-// TestStampedWorkflowGovernsGating proves AC2 end-to-end: a story's STAMPED
-// workflow governs its gating, overriding category resolution. wf-x (feature)
-// declares backlog->in_progress; wf-y (chore) does NOT. Two stories both end up
-// category=chore — they differ ONLY by their stamp. The one stamped wf-x can
-// engage (its workflow declares the edge); the one stamped wf-y cannot.
+// TestStampedWorkflowGovernsGating proves the AC2 property that survives the
+// cutover: the LANE a story resolves to governs its gating, so a lifecycle that
+// never declares an engage edge cannot be engaged (sty_3800ac23).
+//
+// The original test discriminated by STAMP — two workflow files, two stories both
+// re-categorised to chore, differing only by the workflow:<name> they carried.
+// A derived route has one name (`done.md+step.md`) for every category, so the
+// stamp can no longer name a second lifecycle to override category resolution
+// with; that leg retires with the DOT front end (sty_d953c5d8), and the stamp
+// keeps its remaining job — recording what governs — which
+// TestWorkflowStampedAtCreate above pins. What is still discriminating, and is
+// what this test now drives, is the SECTION: `feature` declares
+// backlog → in_progress → done, `chore` closes straight out of backlog.
 func TestStampedWorkflowGovernsGating(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-x.md"), wfXFeature)
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-y.md"), wfYChore)
+	writeRouteFixture(t, repo,
+		"## feature\n- raised\n- coded\n- closed\ncancel: cancelled @satelle-story-cancel-review\n\n"+
+			"## chore\n- raised\n- chore-closed\ncancel: cancelled @satelle-story-cancel-review\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: coded\n\n"+
+			"## done\nterminal: true\nprovides: chore-closed\nrequires: raised\n")
 	mustRun(t, testBin, repo, "reindex")
 
 	create := func(category string) string {
@@ -91,21 +83,20 @@ func TestStampedWorkflowGovernsGating(t *testing.T) {
 		return s.ID
 	}
 
-	// Stamped wf-x (created under feature), then moved to category chore.
+	// The feature lane declares the engage edge.
 	idX := create("feature")
-	mustRun(t, testBin, repo, "story", "set", idX, "--category", "chore")
 	mustRun(t, testBin, repo, "story", "estimate", idX, "--tokens", "1000", "--time", "10m")
 	if out, err := run(t, testBin, repo, "story", "set", idX, "--status", "in_progress"); err != nil {
-		t.Fatalf("a story stamped wf-x must engage (its workflow declares backlog->in_progress): %v\n%s", err, out)
+		t.Fatalf("a feature story must engage (its lane declares backlog->in_progress): %v\n%s", err, out)
 	}
-	// Free the single-story seat so the next engage is judged by workflow stamp,
-	// not the one-performing-story process rule (sty_c7149f8a).
+	// Free the single-story seat so the next engage is judged by the lane, not the
+	// one-performing-story process rule (sty_c7149f8a).
 	mustRun(t, testBin, repo, "story", "set", idX, "--status", "done")
 
-	// Stamped wf-y (created under chore): wf-y does not declare the engage edge.
+	// The chore lane closes straight out of backlog — there is no engage edge.
 	idY := create("chore")
 	mustRun(t, testBin, repo, "story", "estimate", idY, "--tokens", "1000", "--time", "10m")
 	if out, err := run(t, testBin, repo, "story", "set", idY, "--status", "in_progress"); err == nil {
-		t.Fatalf("a story stamped wf-y must NOT engage (undeclared edge); category alone would differ — stamp must govern\n%s", out)
+		t.Fatalf("a chore story must NOT engage — its lane declares no in_progress step\n%s", out)
 	}
 }

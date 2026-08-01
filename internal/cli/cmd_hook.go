@@ -103,7 +103,7 @@ Claude, toolInput = Grok) so the harness surfaces the reason to the agent
 Grok: decision=deny + reason), not a bare "hook denied (exit 2)". Emitting both
 shapes in one blob fails Claude's PreToolUse schema and silently unblocks the
 tool (sty_5e4bc568). The "engaged" policy is authored substrate — it reads the
-workflow's DOT shape markers (Mdiamond=start, Msquare=terminal) rather than
+route's start/terminal markers (Mdiamond=start, Msquare=terminal) rather than
 hardcoding state names, so configuration drives the decision (sty_f3d5d4b8,
 sty_e4902c51).
 
@@ -140,7 +140,7 @@ engaged story: config decides, never a Go rule. Generated views under the data
 dir stay protected by their 0o444 file mode regardless.
 
 Fails closed: a store open error, listing error, unresolvable workflow, or
-non-DOT workflow body blocks the edit with a clear error message rather than
+workflow body that declares no route blocks the edit with a clear error message rather than
 silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -297,10 +297,10 @@ behaviour exactly as above — opt-in, not a satelle default.`,
 		Short: "UserPromptSubmit reinforcement — re-inject the edits-require-a-story rule + a gate-liveness self-check",
 		Long: `prompt is the UserPromptSubmit handler. With no live engagement seat it
 re-injects a CONCISE reminder that tree edits require an engaged story (the full
-principle rides at SessionStart). With a LIVE seat that has a forward DOT
+principle rides at SessionStart). With a LIVE seat that has a forward route
 advance, that reminder is REPLACED by the engaged form — story id, status, next
-gate(s) and the satelle story set command — derived from the governing workflow's
-DOT (sty_e16a2cd7). It ALSO runs a gate-liveness SELF-CHECK: it reads the repo's
+gate(s) and the satelle story set command — derived from the governing route
+(sty_e16a2cd7). It ALSO runs a gate-liveness SELF-CHECK: it reads the repo's
 committed hook settings (.claude/settings.json / .grok/hooks/satelle.json) and,
 when it can confidently see that NO PreToolUse Edit-matcher hook invokes
 'satelle hook gate', it PREPENDS a LOUD warning that enforcement is not wired
@@ -358,11 +358,11 @@ type seatInfo struct {
 	Stale       bool
 	InFlight    bool
 	// EditCapable is true only when the committed status is a spine performing
-	// node allocated by DOT to agent=executor. It is intentionally narrower
+	// step the route allocates to agent=executor. It is intentionally narrower
 	// than Engaged, which also includes isolated-agent planning states.
 	EditCapable bool
 	EditStates  []string
-	// DispatchAgents is the DOT-authored performer identity by target state.
+	// DispatchAgents is the route-authored performer identity by target state.
 	// Lease.State intentionally remains the last committed state across a new
 	// transition, so an in-flight child marker must be checked against the spec,
 	// not mistaken for that prior state.
@@ -370,7 +370,7 @@ type seatInfo struct {
 	// Engaged is true when this row qualifies as live engagement (performing
 	// committed status, or fresh in-flight mid-transition).
 	Engaged bool
-	// Advance are DOT-declared forward transitions from the seat's committed
+	// Advance are route-declared forward transitions from the seat's committed
 	// status — terminal, park, and back-edges excluded (sty_e16a2cd7). Empty when
 	// the seat is live only via InFlight, or when no forward target survives.
 	Advance []wfdot.Advance
@@ -604,7 +604,7 @@ func currentDispatchMarker() dispatchMarker {
 // editPermitted separates lease engagement from source-edit authorization.
 // A dispatched performer is allowed only for the exact in-flight item/target
 // and authored agent allocation. The driving session is allowed only in a
-// committed DOT state allocated to the in-loop executor, never mid-transition.
+// committed route step allocated to the in-loop executor, never mid-transition.
 func editPermitted(info seatInfo, marker dispatchMarker) bool {
 	if info.ItemID == "" || info.Stale || !info.Engaged {
 		return false
@@ -725,12 +725,12 @@ func appendSeatToPrompt(msg string, info seatInfo, now time.Time) string {
 // anyEngaged reports whether any work item sits in a non-terminal engaging state
 // of the workflow that governs IT — the stamped workflow, else its category-selected
 // one (wfgovern.GoverningWorkflow). A "non-terminal engaging state" is one that
-// is neither start (shape=Mdiamond) nor terminal (shape=Msquare) nor cancel/exception
-// (agent=reviewer with no outgoing edges) — read from the authored DOT's shape
-// markers, not hardcoded (sty_f3d5d4b8).
+// is neither start (Shape Mdiamond) nor terminal (Shape Msquare) nor cancel/exception
+// (agent=reviewer with no outgoing edges) — read from the Spec's own markers,
+// not hardcoded (sty_f3d5d4b8).
 //
 // Returns (engaged, err): err is non-nil when an item has NO resolving workflow
-// or the workflow does not yield a DOT spec — fail-closed, not a silent allow. Pure
+// or the workflow does not yield a Spec — fail-closed, not a silent allow. Pure
 // core, split for testing.
 func anyEngaged(items []workitem.Item, wfs []docindex.Doc) (bool, error) {
 	for _, it := range items {
@@ -751,7 +751,7 @@ func anyEngaged(items []workitem.Item, wfs []docindex.Doc) (bool, error) {
 
 // derivedSeat is the pre-lease-store compatibility path. It derives both the
 // broad engagement predicate and the narrower edit-capable predicate from the
-// governing DOT, so an old store never re-opens planning/reviewer states merely
+// governing route, so an old store never re-opens planning/reviewer states merely
 // because they are non-terminal.
 func derivedSeat(items []workitem.Item, wfs []docindex.Doc) (seatInfo, bool, error) {
 	var other seatInfo
@@ -1049,7 +1049,7 @@ func editPermissionDenyReason(info seatInfo, now time.Time) string {
 		states = "(none declared)"
 	}
 	return fmt.Sprintf(
-		"satelle: story %s is at %q, which its workflow allocates to %q; source edits are permitted only in DOT states allocated to agent=executor (%s). Do not work ahead. %s",
+		"satelle: story %s is at %q, which its workflow allocates to %q; source edits are permitted only in route steps allocated to agent=executor (%s). Do not work ahead. %s",
 		info.ItemID, info.StoryStatus, agent, states, readOnlyPreflightReason)
 }
 
@@ -1638,7 +1638,7 @@ const gateNotWiredWarning = "⚠️ satelle: the edit gate is NOT wired into thi
 var promptEngagedCeiling = len(hookPromptReminder)
 
 // formatEngagedPrompt builds the live-seat UserPromptSubmit body: story id,
-// status, forward edge target(s) + gates from the DOT, and the story set
+// status, forward target(s) + gates from the route, and the story set
 // command (sty_e16a2cd7). Returns "" when there is nothing useful to say
 // (no id, no advance options) so the caller keeps today's reminder+seat path.
 // Never includes the static create-and-engage reminder — it REPLACES it.
@@ -1711,7 +1711,7 @@ func formatEngagedPrompt(info seatInfo, now time.Time) string {
 // runHookPrompt is the UserPromptSubmit handler: it re-injects the concise
 // edits-require-a-story reminder and, when a gate-liveness self-check confidently
 // finds no wired edit gate, prepends the LOUD not-wired warning. With a LIVE
-// seat that has forward DOT advances, the reminder is REPLACED by the engaged
+// seat that has forward route advances, the reminder is REPLACED by the engaged
 // form (id, status, next gate, story set) (sty_e16a2cd7). Otherwise a seat line
 // is appended as before (sty_1738f973 AC6). Fails open — a resolve/read failure
 // injects only the reminder.

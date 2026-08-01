@@ -36,8 +36,8 @@ const (
 	StatusBacklog    = "backlog"
 	StatusInProgress = "in_progress"
 	StatusDone       = "done"
-	// Park/resume state names (e.g. a workflow's agent=reviewer park node) are
-	// authored in the DOT — never hardcoded here (config-over-code).
+	// Park/resume state names are authored in the route's declaration of done
+	// (`park:` / `cancel:`) — never hardcoded here (config-over-code).
 )
 
 // Item is one story or task row.

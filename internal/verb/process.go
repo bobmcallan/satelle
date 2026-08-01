@@ -7,6 +7,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentvalidate"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/substrate"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 )
 
 func init() {
@@ -49,9 +50,12 @@ func processView(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		return nil, err
 	}
 	if req.Workflow != "" {
+		// A derived route is TWO docs that only mean anything together, so naming
+		// the route (or either half) keeps the pair (sty_d953c5d8).
+		wantRoute := req.Workflow == wfgovern.DerivedRouteName || wfgovern.IsRouteSource(req.Workflow)
 		filtered := workflows[:0]
 		for _, w := range workflows {
-			if w.Name == req.Workflow {
+			if w.Name == req.Workflow || (wantRoute && wfgovern.IsRouteSource(w.Name)) {
 				filtered = append(filtered, w)
 			}
 		}

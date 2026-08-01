@@ -154,7 +154,10 @@ func workflowConversionState(dataDir string) (retire, pending []string) {
 			stepBody = string(body)
 			continue
 		}
-		if _, isDOT := wfdot.Parse(string(body)); isDOT {
+		// Textual, because there is no DOT parser left to ask (sty_d953c5d8).
+		// migrate is the one place that must still RECOGNISE a graph: it is what
+		// tells an unconverted repo what it owes.
+		if strings.Contains(string(body), "```dot") {
 			dots = append(dots, e.Name())
 		}
 	}
@@ -185,10 +188,12 @@ func printConversionPending(out io.Writer, pending []string) {
 	for _, f := range pending {
 		fmt.Fprintf(out, "  - workflows/%s\n", f)
 	}
-	fmt.Fprintln(out, "  author workflows/done.md (a `## <category>` section per category, its obligations in order)")
-	fmt.Fprintln(out, "  and workflows/step.md (a `## <step>` per status, a `## gate <skill>` per always-on gate),")
-	fmt.Fprintln(out, "  then re-run migrate to retire the graphs. migrate does not derive them: turning a graph")
-	fmt.Fprintln(out, "  into obligations is interpretation, and it is authored and reviewed, not generated.")
+	fmt.Fprintln(out, "  until they are converted this repo REFUSES transitions rather than running them ungated.")
+	fmt.Fprintln(out, "  read `satelle help workflow-convert` — it maps each node, edge gate and park/cancel sink")
+	fmt.Fprintln(out, "  onto the two files, then author workflows/done.md (a `## <category>` section per category,")
+	fmt.Fprintln(out, "  its obligations in order) and workflows/step.md (a `## <step>` per status, a `## gate <skill>`")
+	fmt.Fprintln(out, "  per always-on gate), and re-run migrate to retire the graphs. migrate does not derive them:")
+	fmt.Fprintln(out, "  turning a graph into obligations is interpretation, and it is authored and reviewed.")
 }
 
 func (p migratePlan) empty() bool {

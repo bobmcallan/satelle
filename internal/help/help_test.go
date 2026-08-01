@@ -16,7 +16,7 @@ func TestListContainsCoreTopics(t *testing.T) {
 			t.Errorf("topic %q has empty body", top.Name)
 		}
 	}
-	for _, want := range []string{"create-story", "reviewer-checks", "principles", "projects", "create-review", "agent-dispatch"} {
+	for _, want := range []string{"create-story", "reviewer-checks", "principles", "projects", "create-review", "agent-dispatch", "workflow-convert"} {
 		if !names[want] {
 			t.Errorf("missing help topic %q", want)
 		}
@@ -33,7 +33,7 @@ func TestAgentDispatchTopic(t *testing.T) {
 	// makes a step self-sufficient, and the entry-dispatch / exit-review rule.
 	for _, want := range []string{
 		"agents.toml",            // where the binding lives
-		"@skill:",                // the rubric requirement
+		"skills:",                // the rubric requirement
 		"inject_principles",      // the principle-injection toggle
 		"refuse",                 // fail-loud on a missing binding / grant
 		"Bash(satelle:*)",        // the grant a dispatched agent needs
@@ -44,7 +44,7 @@ func TestAgentDispatchTopic(t *testing.T) {
 		"EXIT edge",                       // judge the exit edge
 		"{story, from, to, review_skill}", // the stdin shape (pull model, not push)
 		"[architect]",                     // the custom-agent worked example (binding)
-		"agent=architect",                 // the allocation
+		"agent: architect",                // the allocation
 		".claude/agents",                  // the harness-agent-dir anti-pattern
 		// Full-template requirement + placeholders (AC4, sty_6752e35b): bare
 		// single-token presets are rejected; only in-loop remains as a bare token.
@@ -105,9 +105,9 @@ func TestCreateReviewTopic(t *testing.T) {
 	}
 }
 
-// TestReviewerChecksTopic pins the restructured DOT-bullet content after the
-// paste-defect repair (sty_46c584b1): validate sentence and done-gate note sit
-// outside the fenced-DOT bullet, not jammed mid-bullet.
+// TestReviewerChecksTopic pins the lifecycle section: the authored form is a
+// DERIVED ROUTE (sty_d953c5d8), the validate sentence and the done-gate note sit
+// outside it, and the gates a step declares are named where they belong.
 func TestReviewerChecksTopic(t *testing.T) {
 	top, ok := Get("reviewer-checks")
 	if !ok {
@@ -117,8 +117,8 @@ func TestReviewerChecksTopic(t *testing.T) {
 		"satelle <noun> validate",
 		"DETERMINISTIC",
 		"The done gate is **not** mandated",
-		"@skill:",
-		"gated transition",
+		"derived route",
+		"gating ENTRY to it",
 	} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("reviewer-checks topic missing %q", want)
@@ -126,18 +126,20 @@ func TestReviewerChecksTopic(t *testing.T) {
 	}
 }
 
-// TestWorkflowsTopic pins the binding-form section (sty_9882b8c6).
+// TestWorkflowsTopic pins the binding-form section (sty_9882b8c6), restated for
+// the route grammar: a gate belongs to the step it admits, and an always-on
+// `## gate` is the multi-step form (sty_d953c5d8).
 func TestWorkflowsTopic(t *testing.T) {
 	top, ok := Get("workflows")
 	if !ok {
 		t.Fatal("workflows topic not found")
 	}
 	for _, want := range []string{
-		"Binding a reviewer: edge CSV vs scoped on=",
-		"on= over-fire",
+		"Binding a reviewer: a step's `reviewers:` vs an always-on `## gate`",
+		"The over-fire trap",
 		"first-reject short-circuit",
-		"list order = execution order",
-		"Edge wins",
+		"List order = execution order",
+		"Concurrency is the default",
 	} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("workflows topic missing %q", want)
@@ -176,5 +178,46 @@ func TestGet(t *testing.T) {
 	}
 	if _, ok := Get("does-not-exist"); ok {
 		t.Error("expected miss for unknown topic")
+	}
+}
+
+// TestWorkflowConvertTopic: when the DOT front end retired, a repo that had not
+// converted started REFUSING transitions, and the refusal points an agent here
+// (sty_d953c5d8). This topic is therefore the only thing standing between a
+// broken repo and a stuck agent, so it must actually carry the mapping — not
+// just say that a conversion is owed.
+func TestWorkflowConvertTopic(t *testing.T) {
+	top, ok := Get("workflow-convert")
+	if !ok {
+		t.Fatal("the conversion guide must ship: every refusal names it")
+	}
+	// The two files, and the frontmatter rule that trips every first attempt.
+	for _, want := range []string{"done.md", "step.md", "applies_to"} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("the guide does not mention %q", want)
+		}
+	}
+	// Every route-grammar key an agent has to write. A key missing here is a key
+	// the agent has to guess.
+	for _, key := range []string{
+		"provides", "requires", "reviewers", "reviewer_agent", "parallel",
+		"terminal", "start", "park:", "cancel:", "recover:", "## gate", "for:", "mandatory",
+	} {
+		if !strings.Contains(top.Body, key) {
+			t.Errorf("the guide does not cover the %q key", key)
+		}
+	}
+	// The two mistakes the conversion actually makes: authoring the topology the
+	// binary owns, and forgetting that a category-specific workflow is a section.
+	for _, want := range []string{"Do not author topology", "SECTION"} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("the guide does not warn about %q", want)
+		}
+	}
+	// And how to prove the conversion kept every gate.
+	for _, want := range []string{"satelle workflow validate", "satelle story route", "satelle migrate"} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("the guide does not name the verification step %q", want)
+		}
 	}
 }

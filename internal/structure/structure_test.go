@@ -89,45 +89,77 @@ func TestPrinciple(t *testing.T) {
 	}
 }
 
-const validWF = "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: test lifecycle\n---\n\n# wf\n\n```dot\ndigraph x {\n  backlog [shape=Mdiamond]\n  in_progress [agent=executor]\n  done [shape=Msquare, agent=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  backlog -> in_progress\n  in_progress -> done\n}\n```"
-
+// TestWorkflow: a lifecycle is a DERIVED ROUTE, so the workflows kind admits
+// exactly two docs — done.md and step.md — and anything else under the dir
+// governs nothing and is reported as such (sty_d953c5d8). The route-source
+// grammar checks live in TestRouteSource.
 func TestWorkflow(t *testing.T) {
 	resolveAll := func(string) bool { return true }
-	if p := Doc("workflows", "wf-x", validWF, resolveAll); len(p) != 0 {
-		t.Errorf("valid workflow should pass, got %v", p)
+	notARoute := "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: d\n---\n\n# x\n"
+	p := Doc("workflows", "wf-x", notARoute, resolveAll)
+	if !hasProb(p, "not a route source") {
+		t.Errorf("a workflows doc that is not a route source must say so, got %v", p)
 	}
-	// Missing applies_to.
-	noApplies := "---\nname: wf-x\ntype: workflow\nscope: project\ndescription: d\n---\n\n```dot\ndigraph x {\n  backlog [shape=Mdiamond]\n  done [shape=Msquare, agent=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  backlog -> done\n}\n```"
-	if p := Doc("workflows", "wf-x", noApplies, resolveAll); len(p) == 0 {
-		t.Error("missing applies_to: want reject, got pass")
+	// The remedy an agent can ACT on is the conversion guide, not a command that
+	// only reports the conversion is outstanding (sty_d953c5d8).
+	if !hasProb(p, "satelle help workflow-convert") {
+		t.Errorf("the message must name the conversion guide, got %v", p)
 	}
-	// Non-backlog start.
-	badStart := "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: d\n---\n\n```dot\ndigraph x {\n  open [shape=Mdiamond]\n  done [shape=Msquare, agent=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  open -> done\n}\n```"
-	if p := Doc("workflows", "wf-x", badStart, resolveAll); len(p) == 0 {
-		t.Error("non-backlog start: want reject, got pass")
+	// A doc with no frontmatter at all is still reported for that first.
+	if p := Doc("workflows", "wf-x", "# no frontmatter\n", resolveAll); !hasProb(p, "missing YAML frontmatter") {
+		t.Errorf("missing frontmatter: want that reject, got %v", p)
 	}
-	// Unresolved executor-step skill.
-	execSkill := "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: d\n---\n\n```dot\ndigraph x {\n  backlog [shape=Mdiamond]\n  in_progress [agent=executor, prompt=\"@skill:missing-skill\"]\n  done [shape=Msquare, agent=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  backlog -> in_progress\n  in_progress -> done\n}\n```"
-	if p := Doc("workflows", "wf-x", execSkill, func(s string) bool { return s != "missing-skill" }); len(p) == 0 {
-		t.Error("unresolved executor skill: want reject, got pass")
+}
+
+// routeHalf renders one half of a derived route with the frontmatter the check
+// requires, so a case only has to state the body it is about.
+func routeHalf(name, body string) string {
+	return "---\nname: " + name + "\ntype: workflow\nscope: project\ndescription: d\n---\n\n" + body
+}
+
+// TestRouteSource pins the route-source grammar checks, and in particular WHICH
+// unresolved skill is a hard failure.
+//
+// Only the EXECUTOR rubric is. A step whose rubric is missing cannot be
+// performed, so the story can never reach its terminal state (sty_09ef53d6). A
+// reviewer gate degrades to advisory when absent by design, and a repo
+// mid-authoring writes its route before its gate skills — hard-failing those
+// would make the ordinary authoring sequence impossible (sty_d59ec6a9). They
+// surface as the WARN agentstep.WorkflowSkillProblems reports instead.
+func TestRouteSource(t *testing.T) {
+	none := func(string) bool { return false }
+	all := func(string) bool { return true }
+
+	step := routeHalf("step", "## backlog\nstart: true\nprovides: raised\n\n"+
+		"## in_progress\nagent: executor\nreviewers: never-authored-review\nreviewer_agent: reviewer\n"+
+		"provides: coded\nrequires: raised\n\n"+
+		"## done\nterminal: true\nprovides: closed\nrequires: coded\n\n"+
+		"## gate never-authored-gate\non: done\nfor: *\n")
+	if p := Doc("workflows", "step", step, none); len(p) != 0 {
+		t.Errorf("an unresolved REVIEWER gate must not be a structure failure, got %v", p)
 	}
-	// Deprecated actor= keyword is rejected (sty_7db2ed7d): the retired performer
-	// keyword must fail validation with an actionable message, not silently drop a
-	// node's performer.
-	deprecated := "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: d\n---\n\n```dot\ndigraph x {\n  backlog [shape=Mdiamond]\n  in_progress [actor=executor]\n  done [shape=Msquare, agent=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  backlog -> in_progress\n  in_progress -> done\n}\n```"
-	if p := Doc("workflows", "wf-x", deprecated, resolveAll); !hasProb(p, `deprecated "actor"`) {
-		t.Errorf("deprecated actor= keyword: want a reject naming it, got %v", p)
+
+	exec := routeHalf("step", "## backlog\nstart: true\nprovides: raised\n\n"+
+		"## in_progress\nagent: executor\nskills: never-authored-rubric\nprovides: coded\nrequires: raised\n\n"+
+		"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
+	if p := Doc("workflows", "step", exec, none); !hasProb(p, "executor-step skill never-authored-rubric") {
+		t.Errorf("an unresolved EXECUTOR rubric must fail, got %v", p)
 	}
-	// Prose/DOT drift (sty_ca9f675f): a description whose lifecycle arrow-chain names
-	// a state absent from the DOT is rejected.
-	drift := "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: moves backlog → commit_push → done\n---\n\n```dot\ndigraph x {\n  backlog [shape=Mdiamond]\n  done [shape=Msquare, agent=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  backlog -> done\n}\n```"
-	if p := Doc("workflows", "wf-x", drift, resolveAll); !hasProb(p, "prose/DOT drift") {
-		t.Errorf("description naming a non-node state: want a drift reject, got %v", p)
+
+	// A route source selects by done.md's sections, so its own applies_to would
+	// be a second precedence rule.
+	withApplies := "---\nname: done\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: d\n---\n\n## *\n- raised\n"
+	if p := Doc("workflows", "done", withApplies, all); !hasProb(p, "must not declare applies_to") {
+		t.Errorf("a route source declaring applies_to must be rejected, got %v", p)
 	}
-	// An aligned arrow-chain passes the drift guard.
-	aligned := "---\nname: wf-x\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: moves backlog → done\n---\n\n```dot\ndigraph x {\n  backlog [shape=Mdiamond]\n  done [shape=Msquare, agent=reviewer, prompt=\"@skill:satelle-story-done-review\"]\n  backlog -> done\n}\n```"
-	if p := Doc("workflows", "wf-x", aligned, resolveAll); len(p) != 0 {
-		t.Errorf("aligned description should pass, got %v", p)
+
+	// An unresolved park/cancel gate is a gate too — reported, not a failure.
+	done := routeHalf("done", "## *\n- raised\ncancel: cancelled @never-authored-cancel\n")
+	if p := Doc("workflows", "done", done, none); len(p) != 0 {
+		t.Errorf("an unresolved cancel gate must not be a structure failure, got %v", p)
+	}
+	if p := Doc("workflows", "done", routeHalf("done", "## *\n"), all); !hasProb(p, "declares no obligations") {
+		t.Errorf("a section with no obligations must be reported, got %v", p)
 	}
 }
 

@@ -10,10 +10,14 @@ import (
 	"testing"
 )
 
-// hookRepo stands up a repo whose "feature" category is governed by a workflow
-// carrying the given frontmatter lines, with the create gate on and a stub
+// hookRepo stands up a repo governed by a route whose declaration of done
+// carries the given frontmatter lines, with the create gate on and a stub
 // reviewer harness. It returns the repo path and a setter that rewrites the stub
 // verdict, plus the path of the stub script so a second binding can point at it.
+//
+// A lifecycle hook is workflow FRONTMATTER, and a derived route's frontmatter
+// lives on done.md — the half that says what this repo means by finished, which
+// is where a create gate belongs.
 func hookRepo(t *testing.T, wfFrontmatter string) (repo string, setVerdict func(decision, notes string), stub string) {
 	t.Helper()
 	repo = t.TempDir()
@@ -30,9 +34,14 @@ func hookRepo(t *testing.T, wfFrontmatter string) (repo string, setVerdict func(
 	if err := os.MkdirAll(filepath.Join(repo, ".satelle", "workflows"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "hook-flow.md"),
-		"---\nname: hook-flow\nscope: project\ntype: workflow\ndescription: Test workflow governing the feature category through a declared lifecycle hook.\napplies_to: [\"feature\"]\n"+wfFrontmatter+
-			"---\n\n# hook flow\n\n```dot\ndigraph hook_flow {\n  backlog     [shape=Mdiamond]\n  in_progress [agent=executor]\n  done        [shape=Msquare]\n  backlog -> in_progress -> done\n}\n```\n")
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "done.md"),
+		"---\nname: done\nscope: project\ntype: workflow\ndescription: Test declaration of done carrying a declared lifecycle hook.\n"+wfFrontmatter+
+			"---\n\n## *\n- raised\n- coded\n- closed\n")
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "step.md"),
+		"---\nname: step\nscope: project\ntype: workflow\ndescription: Test step catalogue for the lifecycle-hook fixture route.\n---\n\n"+
+			"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
 
 	stub = filepath.Join(repo, "verdict.sh")
 	setVerdict = func(decision, notes string) {
@@ -61,7 +70,7 @@ func TestCreateHookDefaultShorthandRunsTheDefaultReviewer(t *testing.T) {
 	mustRun(t, testBin, repo, "reindex")
 
 	// The allocation is now VISIBLE — the point of the story.
-	show := mustRun(t, testBin, repo, "workflow", "show", "hook-flow")
+	show := mustRun(t, testBin, repo, "workflow", "show", "done")
 	for _, want := range []string{
 		"HOOK create_review (verdict)",
 		"skill:      hook-create-review",
@@ -112,7 +121,7 @@ func TestCreateHookNamedLocalReviewer(t *testing.T) {
 		defaultStub, strictStub))
 	mustRun(t, testBin, repo, "reindex")
 
-	show := mustRun(t, testBin, repo, "workflow", "show", "hook-flow")
+	show := mustRun(t, testBin, repo, "workflow", "show", "done")
 	for _, want := range []string{
 		"agent=strict-reviewer (declared in hooks)",
 		"binding:    local binding [strict-reviewer]",
@@ -123,7 +132,7 @@ func TestCreateHookNamedLocalReviewer(t *testing.T) {
 		}
 	}
 	validate := mustRun(t, testBin, repo, "agent", "validate")
-	if !strings.Contains(validate, "HOOK [hook-flow] hook:create_review") || !strings.Contains(validate, "agent=strict-reviewer") {
+	if !strings.Contains(validate, "HOOK [done.md+step.md] hook:create_review") || !strings.Contains(validate, "agent=strict-reviewer") {
 		t.Errorf("agent validate should surface the hook allocation:\n%s", validate)
 	}
 
@@ -161,7 +170,7 @@ model   = "profile-model"
 			"[catalog-reviewer]\nprofile = \"judge\"\n")
 	mustRun(t, testBin, repo, "reindex")
 
-	show := mustRun(t, testBin, repo, "workflow", "show", "hook-flow")
+	show := mustRun(t, testBin, repo, "workflow", "show", "done")
 	for _, want := range []string{
 		"binding:    local binding [catalog-reviewer] over profile judge",
 		"model:      profile-model",
@@ -227,7 +236,7 @@ func TestCreateHookMissingAllocationIsRefusedByValidate(t *testing.T) {
 		}
 	}
 	// show diagnoses rather than erroring — that is its read-only posture.
-	showOut := mustRun(t, testBin, repo, "workflow", "show", "hook-flow")
+	showOut := mustRun(t, testBin, repo, "workflow", "show", "done")
 	if !strings.Contains(showOut, "UNRESOLVED") {
 		t.Errorf("workflow show should mark the unresolved allocation:\n%s", showOut)
 	}
@@ -267,43 +276,42 @@ func TestCreateHookUnsafeAllocationsAreRefused(t *testing.T) {
 	}
 }
 
-// TestCreateHookCategorySelectedWorkflow is AC6 case 7: two workflows with
-// different applies_to and different hook allocations. Creating in each category
-// picks that category's workflow — so the hook travels with workflow selection
-// rather than being a global setting.
-func TestCreateHookCategorySelectedWorkflow(t *testing.T) {
+// TestCreateHookAppliesAcrossCategories is what AC6 case 7 becomes.
+//
+// The original drove TWO workflow files with different applies_to and different
+// hook allocations, proving the hook travelled with workflow SELECTION rather
+// than being a global setting. A repo now has ONE lifecycle — a derived route —
+// and its hooks ride on the single done.md, so a per-category hook allocation is
+// no longer expressible and that leg retires with the DOT front end
+// (sty_d953c5d8). Stated, not silently dropped: `hooks:` has no `for:` scoping,
+// and adding one would be new behaviour this story does not carry.
+//
+// What remains true, and is what this test drives: the declared allocation is
+// the one that runs, for EVERY category the route governs — including one the
+// route never names, which its `## *` section covers.
+func TestCreateHookAppliesAcrossCategories(t *testing.T) {
 	repo, _, featureStub := hookRepo(t,
 		"hooks:\n  - operation: create_review\n    skill: hook-create-review\n    agent: feature-reviewer\n")
 
-	// A second workflow governing "improvement", allocating a different binding.
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "improve-flow.md"),
-		"---\nname: improve-flow\nscope: project\ntype: workflow\ndescription: Test workflow governing the improvement category through a declared lifecycle hook.\napplies_to: [\"improvement\"]\n"+
-			"hooks:\n  - operation: create_review\n    skill: hook-create-review\n    agent: improve-reviewer\n"+
-			"---\n\n# improve flow\n\n```dot\ndigraph improve_flow {\n  backlog     [shape=Mdiamond]\n  in_progress [agent=executor]\n  done        [shape=Msquare]\n  backlog -> in_progress -> done\n}\n```\n")
-
-	improveStub := filepath.Join(repo, "improve.sh")
-	writeFile(t, featureStub, "#!/bin/sh\necho '{\"decision\":\"reject\",\"notes\":\"feature reviewer ran\"}'\n")
+	writeFile(t, featureStub, "#!/bin/sh\necho '{\"decision\":\"reject\",\"notes\":\"declared reviewer ran\"}'\n")
 	_ = os.Chmod(featureStub, 0o755)
-	writeFile(t, improveStub, "#!/bin/sh\necho '{\"decision\":\"reject\",\"notes\":\"improvement reviewer ran\"}'\n")
-	_ = os.Chmod(improveStub, 0o755)
 
 	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"), fmt.Sprintf(
 		"[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n"+
 			"[reviewer]\nrole = \"reviewer\"\ncommand = \"claude -p --disallowedTools Write,Edit --append-system-prompt {system}\"\ntools = \"Read,Grep,Glob\"\n\n"+
-			"[feature-reviewer]\nrole = \"reviewer\"\ncommand = \"%s {system} {tools} {model}\"\ntools = \"Read,Grep,Glob\"\n\n"+
-			"[improve-reviewer]\nrole = \"reviewer\"\ncommand = \"%s {system} {tools} {model}\"\ntools = \"Read,Grep,Glob\"\n",
-		featureStub, improveStub))
+			"[feature-reviewer]\nrole = \"reviewer\"\ncommand = \"%s {system} {tools} {model}\"\ntools = \"Read,Grep,Glob\"\n",
+		featureStub))
 	mustRun(t, testBin, repo, "reindex")
 
 	out, _ := createFeature(t, repo, "Feature widget")
-	if !strings.Contains(out, "feature reviewer ran") {
-		t.Errorf("the feature category must select hook-flow's allocation:\n%s", out)
+	if !strings.Contains(out, "declared reviewer ran") {
+		t.Errorf("the feature category must run the declared allocation:\n%s", out)
 	}
 
 	out, _ = run(t, testBin, repo, "story", "create", "--category", "improvement",
 		"--title", "Improve widget", "--body", "Make the widget faster", "--acceptance", "1. it is faster")
-	if !strings.Contains(out, "improvement reviewer ran") {
-		t.Errorf("the improvement category must select improve-flow's allocation:\n%s", out)
+	if !strings.Contains(out, "declared reviewer ran") {
+		t.Errorf("a category the route covers by `## *` must run the same declared allocation:\n%s", out)
 	}
 }
 

@@ -8,10 +8,10 @@
 // the story. This package is the rendering half — a leaf with no store, no ctx and
 // no verb import, so it can be tested against a Spec literal.
 //
-// The input is a wfdot.Spec, which is deliberately blind to its front door:
-// wfdot.Parse (authored DOT) and wfdot.ParseRoute (done.md + step.md) both
-// produce one, so the same route renders either way. Nothing here knows THIS
-// repo's step names — every name, gate and obligation comes from the Spec.
+// The input is a wfdot.Spec, which is deliberately blind to how it was built:
+// wfdot.BuildRoute derives one from done.md + step.md, and a test may hand one
+// over as a literal. Nothing here knows THIS repo's step names — every name,
+// gate and obligation comes from the Spec.
 //
 // Legibility budget: one line per step. If a route cannot render in roughly ten
 // lines it is too dynamic, and that is the signal the route is meant to give.
@@ -71,8 +71,8 @@ func AdvisorsFrom(l wfdot.List, cat wfdot.Catalogue) []Advisor {
 type Step struct {
 	// Status is the status the story holds while in this step.
 	Status string `json:"status"`
-	// Obligation is what the step discharges. Derived routes declare it; an
-	// authored DOT does not carry one, and the field is then empty.
+	// Obligation is what the step discharges — the declaration-of-done entry that
+	// put the step on the route. Empty for a Spec built without one.
 	Obligation string `json:"obligation,omitempty"`
 	// Agent allocates the performer: executor (in-loop), a named isolated agent,
 	// or empty for a state nothing performs.

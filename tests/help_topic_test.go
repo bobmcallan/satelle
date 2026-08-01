@@ -49,7 +49,7 @@ func TestHelpLifecycleHookTopics(t *testing.T) {
 
 	workflows := mustRun(t, testBin, dir, "help", "workflows")
 	for _, want := range []string{
-		"Transition nodes / edges",
+		"Step gates",
 		"Lifecycle hooks",
 		"Deterministic structure checks",
 		"Agent judgments",

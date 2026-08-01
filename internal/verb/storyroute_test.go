@@ -15,17 +15,14 @@ import (
 
 // routeWorkflow is a three-step lifecycle with a tag-scoped gate, so the route
 // can be checked for both the always-on and the by-tag case.
-const routeWorkflow = "---\nname: route-wf\ntype: workflow\ndescription: route fixture\napplies_to: [\"feature\"]\nscope: project\n---\n\n" +
-	"```dot\ndigraph w {\n" +
-	"  backlog [shape=Mdiamond]\n" +
-	"  in_progress [agent=executor, prompt=\"@skill:code\"]\n" +
-	"  done [shape=Msquare]\n" +
-	"  cancelled [agent=reviewer]\n" +
-	"  design [agent=reviewer, prompt=\"@skill:design-review\", on=\"done\", applies_to=\"surface:ui\"]\n" +
-	"  backlog -> in_progress [agent=reviewer, prompt=\"@skill:intent-review\"]\n" +
-	"  in_progress -> done [agent=reviewer, prompt=\"@skill:done-review\"]\n" +
-	"  backlog -> cancelled\n" +
-	"}\n```\n"
+var routeWorkflow = routeHalves(
+	"## feature\n- raised\n- coded\n- closed\ncancel: cancelled\n",
+	"## backlog\nstart: true\nprovides: raised\n\n"+
+		"## in_progress\nagent: executor\nskills: code\nreviewers: intent-review\nreviewer_agent: reviewer\n"+
+		"provides: coded\nrequires: raised\n\n"+
+		"## done\nreviewers: done-review\nreviewer_agent: reviewer\nterminal: true\n"+
+		"provides: closed\nrequires: coded\n\n"+
+		"## gate design-review\nagent: reviewer\non: done\napplies_to: surface:ui\n")
 
 // wireRoute opens a store with a story dir and the route fixture workflow
 // indexed, so a story created here is governed by a parseable lifecycle.
@@ -51,8 +48,10 @@ func wireRoute(t *testing.T) {
 	})
 
 	wfDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(wfDir, "route-wf.md"), []byte(routeWorkflow), 0o644); err != nil {
-		t.Fatal(err)
+	for name, half := range routeWorkflow {
+		if err := os.WriteFile(filepath.Join(wfDir, name+".md"), []byte(half), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	call(t, "doc-sync", map[string]any{"dirs": map[string]string{"workflows": wfDir}})
 }

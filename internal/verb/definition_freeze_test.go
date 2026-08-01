@@ -48,40 +48,41 @@ func wireWithWorkflows(t *testing.T, workflows map[string]string) {
 	})
 }
 
-const freezeWF = `---
-name: freeze-wf
-type: workflow
-applies_to: ["*"]
----
-
-` + "```dot" + `
-digraph w {
-  backlog     [shape=Mdiamond]
-  in_progress [agent=executor]
-  done        [shape=Msquare]
-  backlog -> in_progress -> done
+// writeRouteFiles lands a routeHalves map in a workflows dir.
+func writeRouteFiles(t *testing.T, wfDir string, halves map[string]string) {
+	t.Helper()
+	for name, body := range halves {
+		if err := os.WriteFile(filepath.Join(wfDir, name+".md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
-` + "```" + `
-`
 
-const triageWF = `---
-name: triage-wf
-type: workflow
-applies_to: ["triage-cat"]
----
-
-` + "```dot" + `
-digraph w {
-  triage      [shape=Mdiamond]
-  in_progress [agent=executor]
-  done        [shape=Msquare]
-  triage -> in_progress -> done
+// A lifecycle is a DERIVED ROUTE — done.md + step.md (sty_d953c5d8). routeHalves
+// names the two docs a fixture must write; a category-specific lane is a
+// `## <category>` section rather than a second workflow file.
+func routeHalves(done, step string) map[string]string {
+	mk := func(name, what, body string) string {
+		return "---\nname: " + name + "\ntype: workflow\nscope: project\ndescription: " + what + "\n---\n\n" + body
+	}
+	return map[string]string{
+		"done": mk("done", "fixture declaration of done", done),
+		"step": mk("step", "fixture step catalogue", step),
+	}
 }
-` + "```" + `
-`
+
+var freezeWF = routeHalves(
+	"## *\n- raised\n- coded\n- closed\n\n"+
+		"## triage-cat\n- triaged\n- t-coded\n- t-closed\n",
+	"## backlog\nstart: true\nprovides: raised\n\n"+
+		"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
+		"## done\nterminal: true\nprovides: closed\nrequires: coded\n\n"+
+		"## triage\nstart: true\nprovides: triaged\n\n"+
+		"## in_progress\nagent: executor\nprovides: t-coded\nrequires: triaged\n\n"+
+		"## done\nterminal: true\nprovides: t-closed\nrequires: t-coded\n")
 
 func TestDefinitionFreezeEngagedRefusesTitle(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"freeze-wf": freezeWF})
+	wireWithWorkflows(t, freezeWF)
 	// Create stamps workflow: by category with applies_to * → freeze-wf if we
 	// also wire a resolver, or stamp via tags after create.
 	// Create without resolver leaves no stamp; GoverningWorkflow falls to
@@ -120,7 +121,7 @@ func TestDefinitionFreezeEngagedRefusesTitle(t *testing.T) {
 }
 
 func TestDefinitionFreezeEntryStateAllowsEdit(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"freeze-wf": freezeWF})
+	wireWithWorkflows(t, freezeWF)
 	var created workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Open", "category": "feature"}), &created)
 
@@ -139,10 +140,8 @@ func TestDefinitionFreezeEntryStateAllowsEdit(t *testing.T) {
 }
 
 func TestDefinitionFreezeNonBacklogEntry(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{
-		"freeze-wf": freezeWF,
-		"triage-wf": triageWF,
-	})
+	// The triage-cat SECTION of the same route starts at `triage`, not `backlog`.
+	wireWithWorkflows(t, freezeWF)
 	// Story stamped onto triage-wf so entry state is "triage", not "backlog".
 	var created workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{
@@ -186,7 +185,7 @@ func TestDefinitionFreezeFailClosedNoWorkflow(t *testing.T) {
 }
 
 func TestDefinitionFreezeIdenticalResubmitOK(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"freeze-wf": freezeWF})
+	wireWithWorkflows(t, freezeWF)
 	var created workitem.Item
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "Same", "category": "feature"}), &created)
 	json.Unmarshal(call(t, "story-set", map[string]any{"id": created.ID, "status": "in_progress"}), &created)

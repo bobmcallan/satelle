@@ -19,8 +19,13 @@ func hookDocs(body string) []docindex.Doc {
 // hookWF declares create review through the explicit `hooks:` form, allocating
 // it to a NAMED reviewer binding — the allocation the old empty-selector path
 // could not express.
-const hookWF = "---\nname: " + baselineWorkflow + "\ntype: workflow\napplies_to: [\"*\"]\n" +
-	"hooks:\n  - operation: create_review\n    skill: my-create-review\n    agent: strict-reviewer\n---\n# wf\n"
+var hookWF = func() string {
+	// A lifecycle hook is workflow FRONTMATTER, and a derived route declares it on
+	// its declaration of done (sty_9835070d).
+	base := spineWF("", "", "", "in_progress|executor", "done")
+	return strings.Replace(base, "scope: system\n---",
+		"scope: system\nhooks:\n  - operation: create_review\n    skill: my-create-review\n    agent: strict-reviewer\n---", 1)
+}()
 
 // namedReviewer is an isolated read-only reviewer binding a hook can allocate.
 func namedReviewer(model string) config.AgentBinding {

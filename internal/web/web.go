@@ -512,10 +512,9 @@ func categoryStepOf(docs []docindex.Doc) func(category, state string) int {
 	}
 	for _, d := range wfgovern.LifecycleWorkflows(docs) {
 		applies := frontmatterList(d.Body, "applies_to")
-		spec, ok := wfdot.Parse(d.Body)
-		if !ok {
-			continue
-		}
+		// No DOT front end (sty_d953c5d8): a workflow-kind doc that is not half of
+		// the route carries no lifecycle, so it contributes no depths.
+		var spec wfdot.Spec
 		depths := spineDepths(spec)
 		if len(depths) > len(longest) {
 			longest = depths

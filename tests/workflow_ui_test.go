@@ -18,38 +18,47 @@ import (
 	"time"
 )
 
-// richWorkflow carries the shapes the route must handle: a gated spine, a
-// recovery (back) edge, and a cancel fan.
-const richWorkflow = `---
-name: wf-rich
-type: workflow
-description: gated spine with recovery and a cancel fan
-applies_to: ["feature"]
-scope: project
----
+// richRoute carries the shapes the rendered route must handle: a gated spine, a
+// recovery (back) edge, and a cancel fan. The fan and the back edge are
+// SYNTHESISED by the binary — the route declares only the recover target and the
+// cancel state.
+const richRouteDone = `## *
+- raised
+- coded
+- reviewed
+- closed
+cancel: cancelled @satelle-story-cancel-review
+recover: in_progress
+`
 
-` + "```dot" + `
-digraph w {
-  backlog     [shape=Mdiamond]
-  in_progress [agent=executor, prompt="@skill:code"]
-  review      [agent=executor]
-  done        [shape=Msquare]
-  cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
-  backlog -> in_progress
-  in_progress -> review [reviewer_skill="satelle-story-done-review"]
-  review -> done
-  review -> in_progress
-  backlog -> cancelled
-  in_progress -> cancelled
-  review -> cancelled
-}
-` + "```\n"
+const richRouteStep = `## backlog
+start: true
+provides: raised
+
+## in_progress
+agent: executor
+skills: code
+provides: coded
+requires: raised
+
+## review
+agent: executor
+reviewers: satelle-story-done-review
+reviewer_agent: reviewer
+provides: reviewed
+requires: coded
+
+## done
+terminal: true
+provides: closed
+requires: reviewed
+`
 
 func TestWorkflowPageRendersRoute(t *testing.T) {
 	bin := testBin
 	repo := t.TempDir()
 	mustRun(t, bin, repo, "init")
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-rich.md"), richWorkflow)
+	writeRouteFixture(t, repo, richRouteDone, richRouteStep)
 	mustRun(t, bin, repo, "reindex")
 
 	const port = 8794
@@ -75,8 +84,10 @@ func TestWorkflowPageRendersRoute(t *testing.T) {
 	seedWorkspaceAdd(t, bin, repo, base)
 
 	slug := filepath.Base(repo)
-	// The authored rich workflow's expand fragment carries the route.
-	body := httpGet(t, base+"/r/"+slug+"/fragment/workflow/wf-rich")
+	// The authored route's expand fragment carries the route. Its doc name is
+	// `done` — a lifecycle is two files, and the declaration of done is the half
+	// the panel lists.
+	body := httpGet(t, base+"/r/"+slug+"/fragment/workflow/done")
 	for _, want := range []string{
 		`class="route"`,               // the ordered steps
 		`data-state="backlog"`,        // stable per-step identifiers

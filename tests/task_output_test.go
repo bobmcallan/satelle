@@ -9,28 +9,64 @@ import (
 	"testing"
 )
 
-// dispatchTaskWorkflow overrides the seeded task workflow so the in_progress run
-// step is DISPATCHED to the named agent "runner" — exercising the dispatched
-// output-capture path (sty_890b86cb). The entry gate stays the coded
+// writeDispatchTaskRoute overrides the shipped route so the run step of the
+// execution/task lane is DISPATCHED to the named agent "runner" — exercising the
+// dispatched output-capture path (sty_890b86cb). The entry gate stays the coded
 // validate-before check; the exit gate is left off the driven path (we only need
 // backlog → in_progress, where dispatch fires).
-const dispatchTaskWorkflow = `---
-name: satelle-task-workflow
-type: workflow
-description: task-execution lifecycle whose run step is dispatched to a named agent
-applies_to: ["execution", "task"]
-scope: project
----
+//
+// A repo's own route overrides the shipped one WHOLLY, so the story lane is
+// re-declared alongside the two task lanes it exists to override.
+func writeDispatchTaskRoute(t *testing.T, repo string) {
+	t.Helper()
+	const done = `## *
+- raised
+- coded
+- closed
+cancel: cancelled @satelle-story-cancel-review
 
-` + "```dot" + `
-digraph w {
-  backlog [shape=Mdiamond]
-  in_progress [agent=runner]
-  done [shape=Msquare]
-  backlog -> in_progress [reviewer_skill="satelle-task-validate-before-review"]
-  in_progress -> done [reviewer_skill="satelle-task-validate-after-review"]
+## execution
+- raised
+- run
+- run-verified
+cancel: cancelled
+
+## task
+- raised
+- run
+- run-verified
+cancel: cancelled
+`
+	const step = `## backlog
+start: true
+provides: raised
+
+## in_progress
+agent: executor
+provides: coded
+requires: raised
+
+## done
+terminal: true
+provides: closed
+requires: coded
+
+## in_progress
+agent: runner
+reviewers: satelle-task-validate-before-review
+reviewer_agent: reviewer
+provides: run
+requires: raised
+
+## done
+reviewers: satelle-task-validate-after-review
+reviewer_agent: reviewer
+terminal: true
+provides: run-verified
+requires: run
+`
+	writeRouteFixture(t, repo, done, step)
 }
-` + "```\n"
 
 // runnerScript echoes distinctive run output on stdout (which satelle captures at
 // the dispatch site) after consuming the payload on stdin.
@@ -113,7 +149,7 @@ func TestDispatchedExecutionCapturesOutput(t *testing.T) {
 	}
 	_ = f.Close()
 
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "satelle-task-workflow.md"), dispatchTaskWorkflow)
+	writeDispatchTaskRoute(t, repo)
 	writeAuthoredTask(t, repo, "tsk_disp01")
 	mustRun(t, testBin, repo, "reindex")
 

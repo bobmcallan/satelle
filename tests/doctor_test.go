@@ -71,13 +71,12 @@ func TestDoctorAndEngagementAgree(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	// The workflow is authored FIRST so the story is stamped with it: a node
+	// The route is authored FIRST so the story is stamped with it: a step
 	// allocating a binding that does not exist. Engagement must refuse, and
 	// doctor must name the same defect.
-	wf := filepath.Join(repo, ".satelle", "workflows", "broken-alloc.md")
-	writeFile(t, wf, "---\nname: broken-alloc\nscope: project\ntype: workflow\n"+
-		"description: Fixture allocating a node to a binding that does not exist.\napplies_to: [\"feature\"]\n---\n\n# broken\n\n"+
-		"```dot\ndigraph broken {\n  backlog [shape=Mdiamond]\n  plan [agent=ghost-agent, prompt=\"@skill:plan\"]\n  done [shape=Msquare]\n  backlog -> plan -> done\n}\n```\n")
+	writeSpineFixture(t, repo, "", "", "",
+		"plan|ghost-agent|plan||",
+		"done||||")
 	mustRun(t, testBin, repo, "reindex")
 	mustRun(t, testBin, repo, "story", "create", "--category", "feature",
 		"--title", "Add a widget", "--body", "Render a widget on the dashboard", "--acceptance", "1. the widget renders")

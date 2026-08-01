@@ -27,11 +27,12 @@ func TestTransitionUnaffectedByUnreachablePush(t *testing.T) {
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	wf := "---\nname: push-probe-wf\ntype: workflow\nscope: project\ndescription: ungated lifecycle for the push-drop probe\napplies_to: [\"*\"]\n---\n\n" +
-		"```dot\ndigraph w {\n  backlog [shape=Mdiamond]\n  plan [agent=executor]\n  in_progress [agent=executor]\n  done [shape=Msquare]\n  backlog -> plan -> in_progress -> done\n}\n```\n"
-	if err := os.WriteFile(filepath.Join(wfDir, "push-probe-wf.md"), []byte(wf), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeRoute(t, wfDir,
+		"## *\n- raised\n- planned\n- coded\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## plan\nagent: executor\nprovides: planned\nrequires: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: planned\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
 	if out, err := runRoot(t, "reindex"); err != nil {
 		t.Fatalf("reindex: %v\n%s", err, out)
 	}

@@ -19,46 +19,26 @@ import (
 	"testing"
 )
 
-// coderPerformingWorkflow reaches the dispatched coder from `plan`, an in-loop
-// PERFORMING node, so the story is engaged while the coder edits. The
-// plan->in_progress edge is ungated to isolate the dispatch from the heavy gates.
-const coderPerformingWorkflow = `---
-name: wf-coder-ok
-type: workflow
-description: in_progress dispatched to a coder, reached from the performing plan state
-applies_to: ["feature"]
-scope: project
----
-
-` + "```dot" + `
-digraph w {
-  backlog [shape=Mdiamond]
-  plan [agent=executor]
-  in_progress [agent=coder, prompt="@skill:code"]
-  done [shape=Msquare]
-  backlog -> plan -> in_progress -> done
+// writeCoderPerformingRoute reaches the dispatched coder from `plan`, an in-loop
+// PERFORMING step, so the story is engaged while the coder edits. Every edge is
+// ungated to isolate the dispatch from the heavy gates.
+func writeCoderPerformingRoute(t *testing.T, repo string) {
+	t.Helper()
+	writeSpineFixture(t, repo, "", "", "",
+		"plan|executor|||",
+		"in_progress|coder|code||",
+		"done||||")
 }
-` + "```\n"
 
-// coderFromBacklogWorkflow reaches the coder directly from backlog. Under the
+// writeCoderFromBacklogRoute reaches the coder directly from backlog. Under the
 // engagement lease (sty_8426b9c0) this proceeds — the prior FROM-performing
 // refusal is gone (sty_f5bd176f band-aid removed).
-const coderFromBacklogWorkflow = `---
-name: wf-coder-bad
-type: workflow
-description: coder wired from backlog; lease authorises edit gate during dispatch
-applies_to: ["chore"]
-scope: project
----
-
-` + "```dot" + `
-digraph w {
-  backlog [shape=Mdiamond]
-  in_progress [agent=coder, prompt="@skill:code"]
-  done [shape=Msquare]
-  backlog -> in_progress -> done
+func writeCoderFromBacklogRoute(t *testing.T, repo string) {
+	t.Helper()
+	writeSpineFixture(t, repo, "", "", "",
+		"in_progress|coder|code||",
+		"done||||")
 }
-` + "```\n"
 
 // seedCodeSkill authors a minimal repo-local code skill. The binary no longer
 // ships an embedded code.md (sty_01f49dd5); workflows that reference @skill:code
@@ -122,7 +102,7 @@ func TestCoderDispatchEditGateAllowsFromPerformingState(t *testing.T) {
 	}
 	appendCoderBinding(t, repo, script)
 
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-coder-ok.md"), coderPerformingWorkflow)
+	writeCoderPerformingRoute(t, repo)
 	mustRun(t, testBin, repo, "reindex")
 
 	out := mustRun(t, testBin, repo, "story", "create", "--category", "feature",
@@ -181,7 +161,7 @@ func TestCoderDispatchFromBacklogUnderLease(t *testing.T) {
 	}
 	appendCoderBinding(t, repo, script)
 
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-coder-bad.md"), coderFromBacklogWorkflow)
+	writeCoderFromBacklogRoute(t, repo)
 	mustRun(t, testBin, repo, "reindex")
 
 	out := mustRun(t, testBin, repo, "story", "create", "--category", "chore",
@@ -226,7 +206,7 @@ func TestCoderDispatchAcceptsGrokReadFileChannel(t *testing.T) {
 	// Grok-shaped tools: disk channel via read_file, no Bash(satelle:*).
 	appendCoderBindingTools(t, repo, script, "read_file,grep,list_dir,write,search_replace")
 
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-coder-ok.md"), coderPerformingWorkflow)
+	writeCoderPerformingRoute(t, repo)
 	mustRun(t, testBin, repo, "reindex")
 
 	out := mustRun(t, testBin, repo, "story", "create", "--category", "feature",
@@ -260,7 +240,7 @@ func TestCoderDispatchAcceptsGrokReadFileChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	appendCoderBindingTools(t, repo2, script2, "write,search_replace,grep,list_dir")
-	writeFile(t, filepath.Join(repo2, ".satelle", "workflows", "wf-coder-ok.md"), coderPerformingWorkflow)
+	writeCoderPerformingRoute(t, repo2)
 	mustRun(t, testBin, repo2, "reindex")
 	out2 := mustRun(t, testBin, repo2, "story", "create", "--category", "feature",
 		"--title", "Channel-less coder", "--body", "must refuse", "--acceptance", "1. refused")

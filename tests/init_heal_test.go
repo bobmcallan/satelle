@@ -9,18 +9,22 @@ import (
 	"testing"
 )
 
-// TestInitHealsMissingDefaultVirtually: a repo with an authored workflow that
+// TestInitHealsMissingDefaultVirtually: a repo with an authored route that
 // references an embedded gate skill validates green without seeding the skill
-// (sty_29e5a9a5 virtual resolution). Authored file is untouched.
+// (sty_29e5a9a5 virtual resolution). Authored files are untouched.
 func TestInitHealsMissingDefaultVirtually(t *testing.T) {
 	repo := t.TempDir()
 	wfDir := filepath.Join(repo, ".satelle", "workflows")
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	own := "---\nname: my-workflow\ntype: workflow\ndescription: my own lifecycle\napplies_to: [\"*\"]\nscope: project\n---\n\n# mine\n\n```dot\ndigraph w {\n  backlog -> in_progress -> done\n  estimate [agent=reviewer, prompt=\"@skill:satelle-estimate-actual-review\", on=\"in_progress,done\"]\n}\n```\n"
-	if err := os.WriteFile(filepath.Join(wfDir, "my-workflow.md"), []byte(own), 0o644); err != nil {
-		t.Fatal(err)
+	done, step := spineFixture("", "", "## gate satelle-estimate-actual-review\non: in_progress, done\nfor: *\n",
+		"in_progress|executor|||",
+		"done||||")
+	for name, body := range map[string]string{"done.md": done, "step.md": step} {
+		if err := os.WriteFile(filepath.Join(wfDir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	mustRun(t, testBin, repo, "init")
@@ -29,10 +33,12 @@ func TestInitHealsMissingDefaultVirtually(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repo, ".satelle", "skills", "satelle-estimate-actual-review.md")); err == nil {
 		t.Error("init must not seed the virtual gate skill")
 	}
-	// Authored workflow untouched.
-	got, _ := os.ReadFile(filepath.Join(wfDir, "my-workflow.md"))
-	if string(got) != own {
-		t.Error("init modified the authored workflow")
+	// Authored route untouched.
+	for name, body := range map[string]string{"done.md": done, "step.md": step} {
+		got, _ := os.ReadFile(filepath.Join(wfDir, name))
+		if string(got) != body {
+			t.Errorf("init modified the authored %s", name)
+		}
 	}
 	// Idempotent.
 	out := mustRun(t, testBin, repo, "init")

@@ -57,7 +57,7 @@ func TestEnvOverlayWinsEndToEnd(t *testing.T) {
 	// Gitignored overlay: the winning value.
 	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"), "[vars]\nTOKEN = \"LOCAL\"\n")
 
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "satelle-task-workflow.md"), dispatchTaskWorkflow)
+	writeDispatchTaskRoute(t, repo)
 	writeAuthoredTask(t, repo, "tsk_env01")
 	mustRun(t, testBin, repo, "reindex")
 

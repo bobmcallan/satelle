@@ -8,41 +8,25 @@ import (
 	"testing"
 )
 
-// agentAliasWF is a wildcard workflow whose in_progress executor node is declared
-// with the canonical agent= keyword (not the legacy actor=) and names a skill that
-// does not resolve. The deterministic workflow structure check only collects an
-// executor-path skill from a node it recognises AS an executor — so it can only
-// report the unresolved skill if agent=executor was parsed as the performer.
-func agentAliasWF(name string) string {
-	return "---\nname: " + name + "\ntype: workflow\napplies_to: [\"*\"]\ndescription: a test wildcard workflow using the agent keyword\n---\n" +
-		"```dot\n" + `digraph w {
-  backlog [shape=Mdiamond]
-  in_progress [agent=executor, prompt="@skill:agent-alias-missing-skill"]
-  done [shape=Msquare, agent=reviewer]
-  cancelled [agent=reviewer]
-  backlog -> in_progress
-  in_progress -> done
-  backlog -> cancelled
-}` + "\n```\n"
-}
-
-// TestAgentKeywordParsesEndToEnd proves the agent= back-compat parse end-to-end
-// through the real binary (sty_536f9960): a workflow authored with agent=executor
-// is parsed as having an executor node, so `satelle workflow validate` reports its
-// unresolved executor-path skill — which it could only do if agent= was honoured
-// as the performer keyword.
+// TestAgentKeywordParsesEndToEnd proves the agent: key is honoured as the
+// PERFORMER end-to-end through the real binary (sty_536f9960): the deterministic
+// workflow structure check only collects an executor-path skill from a step it
+// recognises AS an executor, so `satelle workflow validate` can only report the
+// unresolved skill if `agent: executor` was parsed as the performer.
 func TestAgentKeywordParsesEndToEnd(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agent-kw.md"), agentAliasWF("agent-kw"))
+	writeSpineFixture(t, repo, "", "", "",
+		"in_progress|executor|agent-alias-missing-skill||",
+		"done||||")
 	mustRun(t, testBin, repo, "reindex")
 
 	out, err := run(t, testBin, repo, "workflow", "validate")
 	if err == nil {
-		t.Fatalf("validate should fail: the agent=executor node names an unresolved skill:\n%s", out)
+		t.Fatalf("validate should fail: the agent: executor step names an unresolved skill:\n%s", out)
 	}
 	if !strings.Contains(out, "agent-alias-missing-skill") {
-		t.Errorf("validate should report the unresolved executor-path skill (proving agent= parsed as executor):\n%s", out)
+		t.Errorf("validate should report the unresolved executor-path skill (proving agent: parsed as executor):\n%s", out)
 	}
 }
 
@@ -66,39 +50,10 @@ func TestAgentsTomlBootsEndToEnd(t *testing.T) {
 	}
 }
 
-// deprecatedActorWF is a wildcard workflow declaring its executor node with the
-// retired actor= keyword — which validate must now reject (sty_7db2ed7d).
-func deprecatedActorWF(name string) string {
-	return "---\nname: " + name + "\ntype: workflow\napplies_to: [\"*\"]\ndescription: a workflow using the retired actor keyword\n---\n" +
-		"```dot\n" + `digraph w {
-  backlog [shape=Mdiamond]
-  in_progress [actor=executor]
-  done [shape=Msquare, agent=reviewer]
-  cancelled [agent=reviewer]
-  backlog -> in_progress
-  in_progress -> done
-  backlog -> cancelled
-}` + "\n```\n"
-}
-
-// TestValidateRejectsActorKeyword proves the rename is ENFORCED end-to-end
-// (sty_7db2ed7d): a workflow authored with the retired actor= keyword fails
-// `satelle workflow validate` with an actionable message, so the rename cannot silently
-// regress.
-func TestValidateRejectsActorKeyword(t *testing.T) {
-	repo := t.TempDir()
-	mustRun(t, testBin, repo, "init")
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "legacy-kw.md"), deprecatedActorWF("legacy-kw"))
-	mustRun(t, testBin, repo, "reindex")
-
-	out, err := run(t, testBin, repo, "workflow", "validate")
-	if err == nil {
-		t.Fatalf("validate should fail on a workflow using the retired actor= keyword:\n%s", out)
-	}
-	if !strings.Contains(out, `deprecated "actor"`) {
-		t.Errorf("validate should name the deprecated actor keyword:\n%s", out)
-	}
-}
+// The retired actor= keyword had its own end-to-end rejection test
+// (TestValidateRejectsActorKeyword, sty_7db2ed7d). It retires with the DOT front
+// end that carried the keyword: the route grammar has one performer key, `agent:`,
+// and no `actor:` to deprecate (sty_d953c5d8).
 
 // TestReindexWarnsActorsToml proves reindex flags the retired actors.toml
 // filename (sty_7db2ed7d): a repo still carrying it is silently on defaults, so

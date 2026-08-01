@@ -24,24 +24,42 @@ command = "sh -c --disallowedTools Write,Edit {system} {tools} {model}"
 tools   = "Read,Grep,Glob"
 `
 
+// A lifecycle is a DERIVED ROUTE — done.md + step.md (sty_d953c5d8). The doctor
+// matrix installs both halves; workflowAdd still patches the done half's
+// frontmatter, which is where a lifecycle hook is declared.
 const healthyWorkflow = `---
-name: fixture-flow
+name: done
 scope: project
 type: workflow
-description: Fixture workflow governing every category for the doctor test matrix.
-applies_to: ["*"]
+description: Fixture declaration of done governing every category for the doctor test matrix.
 ---
 
-# fixture flow
+## *
+- raised
+- coded
+- closed
+`
 
-` + "```dot" + `
-digraph fixture_flow {
-  backlog     [shape=Mdiamond]
-  in_progress [agent=executor]
-  done        [shape=Msquare]
-  backlog -> in_progress -> done
-}
-` + "```" + `
+const healthySteps = `---
+name: step
+scope: project
+type: workflow
+description: Fixture step catalogue for the doctor test matrix.
+---
+
+## backlog
+start: true
+provides: raised
+
+## in_progress
+agent: executor
+provides: coded
+requires: raised
+
+## done
+terminal: true
+provides: closed
+requires: coded
 `
 
 // fixtureOpts are the deltas a case applies to the healthy baseline.
@@ -86,9 +104,10 @@ func newFixtureRepo(t *testing.T, o fixtureOpts) string {
 	}
 	wf := healthyWorkflow
 	if o.workflowAdd != "" {
-		wf = strings.Replace(wf, "applies_to: [\"*\"]\n", "applies_to: [\"*\"]\n"+o.workflowAdd, 1)
+		wf = strings.Replace(wf, "matrix.\n", "matrix.\n"+o.workflowAdd, 1)
 	}
-	write("workflows/fixture-flow.md", wf)
+	write("workflows/done.md", wf)
+	write("workflows/step.md", healthySteps)
 	for rel, body := range o.extraFiles {
 		write(rel, body)
 	}
@@ -209,9 +228,12 @@ func TestDefectMatrix(t *testing.T) {
 		},
 		{
 			name: "workflow node allocates a missing binding",
+			// The allocation lives on a STEP of the shipped route: a step whose
+			// agent names no binding (sty_d953c5d8).
 			opts: fixtureOpts{extraFiles: map[string]string{
-				"workflows/alloc.md": "---\nname: alloc\nscope: project\ntype: workflow\ndescription: Fixture allocating a node to an undeclared binding.\napplies_to: [\"bug\"]\n---\n\n# alloc\n\n" +
-					"```dot\ndigraph alloc {\n  backlog [shape=Mdiamond]\n  plan [agent=ghost, prompt=\"@skill:plan\"]\n  done [shape=Msquare]\n  backlog -> plan -> done\n}\n```\n",
+				"workflows/done.md": strings.Replace(healthyWorkflow, "- coded\n", "- planned\n- coded\n", 1),
+				"workflows/step.md": healthySteps +
+					"\n## plan\nagent: ghost\nprovides: planned\nrequires: raised\n",
 			}},
 			want: health.IDNodeAlloc,
 		},

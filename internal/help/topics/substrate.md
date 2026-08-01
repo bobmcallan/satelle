@@ -61,7 +61,8 @@ Every authored doc carries YAML frontmatter with a required **`type`** key (OKF)
 `type: workflow | principle | skill`, and `type: <category>` for free-form
 documents. The directory is authoritative for the kind; `type` mirrors it. A
 legacy `kind:` key is migrated to `type:` automatically at ingest. Bodies are
-ordinary markdown — a workflow's body carries its DOT graph, a skill's its rubric.
+ordinary markdown — a route half carries its declaration of done or its step
+catalogue, a skill its rubric.
 
 ## Validation is deterministic code
 

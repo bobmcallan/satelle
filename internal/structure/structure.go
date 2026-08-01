@@ -71,24 +71,6 @@ func Doc(kind, name, body string, resolveSkill func(skill string) bool) []string
 	}
 }
 
-// DocWarnings returns advisory (non-fatal) messages for an authored doc.
-// Currently only workflows emit warnings (scoped-reviewer over-fire lint);
-// other kinds return nil. Warnings never become failures — validate prints
-// them as WARN lines without incrementing the failed count.
-func DocWarnings(kind, name, body string) []string {
-	if kind != "workflows" || wfgovern.IsRouteSource(name) {
-		return nil
-	}
-	spec, ok := wfdot.Parse(body)
-	if !ok {
-		return nil
-	}
-	var out []string
-	out = append(out, spec.AttrWarnings...)
-	out = append(out, wfdot.OverFireWarnings(spec)...)
-	return out
-}
-
 // Checked reports whether a doc kind has a deterministic structure check (the
 // authored substrate kinds; free-form documents are covered by OKF instead).
 func Checked(kind string) bool {
@@ -238,8 +220,16 @@ func checkPrinciple(name, body string) []string {
 // checkRouteSource validates one half of a DERIVED route (sty_9835070d). It is
 // not a workflow: it carries no lifecycle of its own, so the DOT checks above
 // would all fail on it. What IS checked is the half's own grammar — the parser
-// is the authority — plus the gate skills it names, so an unresolved reviewer is
-// still caught here rather than surfacing as an ungated transition later.
+// is the authority — plus the EXECUTOR rubrics it names.
+//
+// Executor-path only, deliberately. A step whose executor rubric is missing
+// cannot be performed, so the story can never reach its terminal state (the
+// wasted-work trap, sty_09ef53d6) — that is a hard failure. Reviewer gates
+// degrade to ADVISORY when absent by design, and a repo mid-authoring writes the
+// route before it writes its gate skills, so hard-failing them would make the
+// ordinary authoring sequence impossible (sty_d59ec6a9). They are still
+// reported, as the WARN that names the consequence, by
+// agentstep.WorkflowSkillProblems.
 //
 // A route source must NOT declare applies_to: selection is by the `## <category>`
 // sections in done.md, and a second selector would be a second precedence rule.
@@ -247,7 +237,7 @@ func checkRouteSource(name string, fm []string, body string, resolveSkill func(s
 	var p []string
 	if resolveSkill == nil {
 		// A caller that cannot resolve skills (the embedded-corpus conformance
-		// table) still gets the grammar and frontmatter checks; the gate-resolution
+		// table) still gets the grammar and frontmatter checks; the skill-resolution
 		// half simply has no substrate to resolve against.
 		resolveSkill = func(string) bool { return true }
 	}
@@ -282,11 +272,6 @@ func checkRouteSource(name string, fm []string, body string, resolveSkill func(s
 			if len(l.Obligations) == 0 {
 				p = append(p, "`## "+l.Category+"` declares no obligations")
 			}
-			for _, sk := range []string{l.ParkGate, l.CancelGate} {
-				if sk != "" && !resolveSkill(sk) {
-					p = append(p, "gate "+sk+" does not resolve in the substrate")
-				}
-			}
 		}
 	case wfgovern.RouteSourceStep:
 		cat, err := wfdot.ParseSteps(body)
@@ -297,24 +282,22 @@ func checkRouteSource(name string, fm []string, body string, resolveSkill func(s
 			p = append(p, "no `## <step>` section — the catalogue is empty")
 		}
 		for _, st := range cat.Steps {
-			for _, sk := range append(append([]string(nil), st.Skills...), st.Reviewers...) {
+			for _, sk := range st.Skills {
 				if sk != "" && !resolveSkill(sk) {
-					p = append(p, "step "+st.Name+" names "+sk+" which does not resolve in the substrate")
+					p = append(p, "executor-step skill "+sk+" (step "+st.Name+") does not resolve in the substrate")
 				}
-			}
-		}
-		for _, g := range cat.Gates {
-			if g.Skill != "" && !resolveSkill(g.Skill) {
-				p = append(p, "gate "+g.Skill+" does not resolve in the substrate")
 			}
 		}
 	}
 	return p
 }
 
-// checkWorkflow: frontmatter (name == slug, type: workflow, description,
-// applies_to, scope), a parseable DOT lifecycle, a sound graph (connected /
-// terminal / spine / backlog-start), and resolvable executor-path skills.
+// checkWorkflow validates a doc under the workflows kind. A lifecycle is a
+// DERIVED ROUTE — done.md + step.md — and nothing else under this kind carries
+// one (sty_d953c5d8), so the two halves get the route-source check and anything
+// else is reported as what it is: a file in the workflows dir that governs
+// nothing. The message names the remedy rather than leaving a bare parse
+// failure, because the repo that hits it is one that has not converted.
 func checkWorkflow(name, body string, resolveSkill func(skill string) bool) []string {
 	fm, _, ok := splitFM(body)
 	if !ok {
@@ -323,67 +306,10 @@ func checkWorkflow(name, body string, resolveSkill func(skill string) bool) []st
 	if wfgovern.IsRouteSource(name) {
 		return checkRouteSource(name, fm, body, resolveSkill)
 	}
-	var p []string
-	p = append(p, requireName(fm, name)...)
-	if fmScalar(fm, "type") != "workflow" {
-		p = append(p, `frontmatter must have "type: workflow" (OKF)`)
+	return []string{
+		"not a route source — a lifecycle is done.md + step.md under this dir, and no other " +
+			"workflows doc declares one; read `satelle help workflow-convert` for how to convert it",
 	}
-	if fmScalar(fm, "description") == "" {
-		p = append(p, "frontmatter missing a non-empty description")
-	}
-	if !fmHas(fm, "applies_to") {
-		p = append(p, "frontmatter missing applies_to (the story categories it governs; [\"*\"] is the wildcard)")
-	}
-	if fmScalar(fm, "scope") == "" {
-		p = append(p, "frontmatter missing scope")
-	}
-	// Enforce the actor→agent rename (sty_7db2ed7d): the performer keyword is
-	// `agent` now; the legacy `actor=` (DOT) / `actor:` (inline state) no longer
-	// parses, so flag it explicitly rather than letting a node silently lose its
-	// performer.
-	if deprecatedActorKeyword.MatchString(body) {
-		p = append(p, `deprecated "actor" performer keyword — use "agent" (actor=/actor: no longer parses)`)
-	}
-	spec, parsed := wfdot.Parse(body)
-	if !parsed {
-		p = append(p, "no parseable DOT lifecycle (a fenced ```dot digraph)")
-		return p
-	}
-	p = append(p, wfdot.Validate(spec)...)
-	// Drift guard (sty_ca9f675f): the description's lifecycle arrow-chain must name
-	// only states that exist in the DOT. Hand-maintained prose drifts from the graph
-	// — a renamed node left in the description silently lies about the lifecycle —
-	// so flag any arrow-adjacent token that is not a node. The DOT is the authority;
-	// the description is checked against it.
-	if desc := fmScalar(fm, "description"); desc != "" {
-		nodeSet := map[string]bool{}
-		for _, st := range spec.States {
-			nodeSet[st.Name] = true
-		}
-		for _, tok := range arrowChainTokens(desc) {
-			if !nodeSet[tok] {
-				p = append(p, fmt.Sprintf("description's lifecycle arrow-chain names %q, which is not a node in the DOT (prose/DOT drift)", tok))
-			}
-		}
-	}
-	// backlog is the initial state — every satelle work item is created at
-	// backlog, so a workflow that begins elsewhere desyncs status and the
-	// progress lights. Checked only when a start is determinable.
-	if start := spec.Start(); start != "" && start != "backlog" {
-		p = append(p, fmt.Sprintf(`initial state is %q — the lifecycle must start at "backlog"`, start))
-	}
-	// Executor-path actionability: every EXECUTOR-step skill on a path to done
-	// must resolve, else the story cannot be driven to its terminal state (the
-	// wasted-work trap, sty_09ef53d6). Reviewer GATES degrade to advisory when
-	// absent by design, so they are not hard-required here.
-	if resolveSkill != nil {
-		for _, sk := range spec.ExecutorPathToDoneSkills() {
-			if !resolveSkill(sk) {
-				p = append(p, fmt.Sprintf("executor-step skill %q does not resolve in the substrate", sk))
-			}
-		}
-	}
-	return p
 }
 
 // requireName checks the frontmatter name is present, kebab-case, and matches the

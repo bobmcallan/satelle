@@ -113,19 +113,20 @@ func TestGoverningWorkflowStampWins(t *testing.T) {
 	}
 }
 
-// TestEntryStateNotHardcodedBacklog proves AC2: the entry state is the Mdiamond
-// / Start node whatever it is named — not a "backlog" literal.
-func TestEntryStateNotHardcodedBacklog(t *testing.T) {
-	body := "---\nname: triage-wf\napplies_to: [\"*\"]\n---\n\n```dot\n" +
-		"digraph w {\n" +
-		"  triage      [shape=Mdiamond]\n" +
-		"  in_progress [agent=executor]\n" +
-		"  done        [shape=Msquare]\n" +
-		"  triage -> in_progress -> done\n" +
-		"}\n```\n"
-	spec, ok := wfdot.Parse(body)
-	if !ok {
-		t.Fatal("parse failed")
+func TestStartIsTheDeclaredEntryState(t *testing.T) {
+	// Start() must read the lifecycle, never assume "backlog": a repo may name its
+	// entry state anything. Stated as a Spec literal now that the DOT front end is
+	// retired (sty_d953c5d8).
+	spec := wfdot.Spec{
+		States: []wfdot.State{
+			{Name: "triage", Shape: "Mdiamond"},
+			{Name: "in_progress", Agent: "executor"},
+			{Name: "done", Shape: "Msquare"},
+		},
+		Transitions: []wfdot.Transition{
+			{From: "triage", To: "in_progress"},
+			{From: "in_progress", To: "done"},
+		},
 	}
 	if got := spec.Start(); got != "triage" {
 		t.Fatalf("Start() = %q, want triage (not hardcoded backlog)", got)

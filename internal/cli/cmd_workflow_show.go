@@ -103,17 +103,10 @@ func renderWorkflowShow(out io.Writer, a *app.App, doc docindex.Doc, resolves fu
 				fmt.Fprintf(out, "  declares:   (does not parse: %v)\n", err)
 			}
 		}
-	} else if spec, ok := wfdot.Parse(doc.Body); ok {
-		gated := 0
-		for _, tr := range spec.Transitions {
-			if len(tr.Skills) > 0 || tr.Skill != "" {
-				gated++
-			}
-		}
-		fmt.Fprintf(out, "  graph:      %d states, %d transitions (%d gated)\n",
-			len(spec.States), len(spec.Transitions), gated)
 	} else {
-		fmt.Fprintln(out, "  graph:      (no parseable dot block)")
+		// A lifecycle is done.md + step.md; nothing else under the workflows kind
+		// carries one, so there is no graph to summarise (sty_d953c5d8).
+		fmt.Fprintln(out, "  kind:       not a route source — a lifecycle is done.md + step.md")
 	}
 
 	// The hook section — the reason this command exists.

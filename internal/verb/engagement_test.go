@@ -42,19 +42,11 @@ func TestEngagementBaselineIdempotentAndDiff(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
 
-	const engWF = "---\nname: eng\ntype: workflow\nscope: system\napplies_to: [\"*\"]\ndescription: engage test\n---\n```dot\n" +
-		`digraph e {
-  backlog [shape=Mdiamond]
-  in_progress [agent=executor]
-  blocked [agent=reviewer, from="*"]
-  done [shape=Msquare]
-  backlog -> in_progress
-  in_progress -> blocked
-  blocked -> in_progress
-  in_progress -> done
-}
-` + "```\n"
-	wireWithWorkflows(t, map[string]string{"eng": engWF})
+	wireWithWorkflows(t, routeHalves(
+		"## *\n- raised\n- coded\n- closed\npark: blocked\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: coded\n"))
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
 	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 

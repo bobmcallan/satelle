@@ -116,28 +116,14 @@ func editStateRepo(t *testing.T, status, leaseState string, inFlight bool) strin
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body := `---
-name: edit-state-wf
-type: workflow
-applies_to: ["*"]
----
-
-` + "```dot\n" + `digraph w {
-  backlog [shape=Mdiamond]
-  plan [agent=planner]
-  in_progress [agent=executor]
-  integration [agent=executor]
-  release [agent=executor]
-  blocked [agent=reviewer]
-  done [shape=Msquare]
-  backlog -> plan -> in_progress -> integration -> release -> done
-  in_progress -> blocked
-  blocked -> in_progress
-}
-` + "```\n"
-	if err := os.WriteFile(filepath.Join(wfDir, "edit-state-wf.md"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeRoute(t, wfDir,
+		"## *\n- raised\n- planned\n- coded\n- integrated\n- released\n- closed\npark: blocked\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## plan\nagent: planner\nprovides: planned\nrequires: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: planned\n\n"+
+			"## integration\nagent: executor\nprovides: integrated\nrequires: coded\n\n"+
+			"## release\nagent: executor\nprovides: released\nrequires: integrated\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: released\n")
 	if err := os.MkdirAll(filepath.Join(repo, "internal"), 0o755); err != nil {
 		t.Fatal(err)
 	}

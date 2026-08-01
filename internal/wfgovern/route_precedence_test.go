@@ -2,6 +2,7 @@ package wfgovern_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/docindex"
@@ -54,22 +55,17 @@ provides: closed
 requires: coded
 `
 
+// authoredGraph is a repo's own workflow file that is NOT a route source — the
+// unconverted case. It claims the wildcard, so it outranks the shipped route.
 const authoredGraph = `---
 name: my-workflow
 type: workflow
 scope: project
 applies_to: ["*"]
-description: A repo-authored wildcard lifecycle.
+description: A repo-authored wildcard lifecycle that was never converted.
 ---
-` + "```dot" + `
-digraph w {
-  backlog     [shape=Mdiamond]
-  in_progress [agent=executor]
-  done        [shape=Msquare]
-  backlog -> in_progress
-  in_progress -> done [agent=reviewer, prompt="@skill:my-done-review"]
-}
-` + "```" + `
+
+# my workflow
 `
 
 func routeDocs(embedded bool) []docindex.Doc {
@@ -83,19 +79,33 @@ func graphDoc() docindex.Doc {
 	return docindex.Doc{Kind: "workflows", Name: "my-workflow", Body: authoredGraph}
 }
 
-// TestShippedRouteYieldsToAnAuthoredWorkflow: the embedded route is ORDER ZERO.
-// A repo that authored a graph claiming the category keeps being governed by it.
+// TestShippedRouteYieldsToAnAuthoredWorkflow: the shipped route is ORDER ZERO —
+// it does not govern a category a repo's own workflow claims.
+//
+// With the DOT front end retired (sty_d953c5d8) that workflow carries no
+// lifecycle satelle can read, so the honest answer is a REFUSAL naming the
+// remedy — not a silent fallback to the shipped route (which would re-route the
+// repo behind its back) and not ErrNoWorkflow (which callers treat as a fresh
+// repo and let the transition through ungated).
 func TestShippedRouteYieldsToAnAuthoredWorkflow(t *testing.T) {
 	docs := append(routeDocs(true), graphDoc())
 	if _, ok := wfgovern.RouteGoverns(docs, "feature"); ok {
 		t.Error("the shipped route must not govern a category an authored workflow claims")
 	}
 	_, name, _, err := wfgovern.SpecFor(docs, workitem.Item{ID: "sty_1", Category: "feature"})
-	if err != nil {
-		t.Fatalf("SpecFor: %v", err)
+	if err == nil {
+		t.Fatal("a workflow that declares no route must refuse, not resolve")
+	}
+	if errors.Is(err, wfgovern.ErrNoWorkflow) {
+		t.Error("this is not the ungoverned case — a workflow claims the category and cannot be read")
+	}
+	// The remedy must be something the agent can ACT on: the conversion guide
+	// that maps its graph onto the two files (sty_d953c5d8).
+	if !strings.Contains(err.Error(), "satelle help workflow-convert") {
+		t.Errorf("the refusal must name the conversion guide, got %v", err)
 	}
 	if name != "my-workflow" {
-		t.Errorf("governing lifecycle = %q, want the authored workflow", name)
+		t.Errorf("the refusal must name the workflow at fault, got %q", name)
 	}
 }
 

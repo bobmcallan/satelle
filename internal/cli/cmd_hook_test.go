@@ -517,23 +517,29 @@ func TestEditExemptClassification(t *testing.T) {
 // have been removed. The hook now uses wfdot.Spec.NonTerminalEngagingStates() which reads
 // shape markers from the DOT. See tests in the wfdot package for shape-based engagement logic.
 
-// wfDoc builds a workflow Doc with the given name, applies_to frontmatter value
-// (e.g. `["*"]`), and DOT node/edge lines.
-func wfDoc(name, appliesTo, dot string) docindex.Doc {
-	body := "---\nname: " + name + "\napplies_to: " + appliesTo + "\n---\n" +
-		"```dot\ndigraph w {\n" + dot + "\n}\n```\n"
-	return docindex.Doc{Kind: "workflows", Name: name, Body: body}
+// routeWFs builds the two halves of a derived route — the only representation a
+// lifecycle has (sty_d953c5d8). A category-specific lane is a `## <category>`
+// SECTION in done.md rather than a second workflow file.
+func routeWFs(done, step string) []docindex.Doc {
+	mk := func(name, what, body string) docindex.Doc {
+		return docindex.Doc{Kind: "workflows", Name: name,
+			Body: "---\nname: " + name + "\ntype: workflow\nscope: project\ndescription: " + what + "\n---\n\n" + body}
+	}
+	return []docindex.Doc{
+		mk("done", "fixture declaration of done", done),
+		mk("step", "fixture step catalogue", step),
+	}
 }
 
 func TestAnyEngagedCountsTasks(t *testing.T) {
 	// One wildcard workflow governs both the story and the task; commit_push is a
 	// performing named-agent node.
-	wfs := []docindex.Doc{wfDoc("wf", `["*"]`, `
-  backlog     [shape=Mdiamond]
-  in_progress [agent=executor]
-  commit_push [agent=commit-agent, prompt="@skill:commit-push"]
-  done        [shape=Msquare]
-  backlog -> in_progress -> commit_push -> done`)}
+	wfs := routeWFs(
+		"## *\n- raised\n- coded\n- pushed\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
+			"## commit_push\nagent: commit-agent\nskills: commit-push\nprovides: pushed\nrequires: coded\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: pushed\n")
 	// A task in a performing state counts as engaged, exactly like a story.
 	engaged, err := anyEngaged([]workitem.Item{
 		{Kind: workitem.KindTask, Status: "commit_push"},
@@ -564,19 +570,15 @@ func TestAnyEngagedCountsTasks(t *testing.T) {
 // wildcard workflow has no `plan` node — the exact gap that blocked a dispatched
 // coder reached from `plan`.
 func TestAnyEngagedPerStoryWorkflow(t *testing.T) {
-	wfs := []docindex.Doc{
-		wfDoc("wild", `["*"]`, `
-  backlog     [shape=Mdiamond]
-  in_progress [agent=executor]
-  done        [shape=Msquare]
-  backlog -> in_progress -> done`),
-		wfDoc("feat", `["feature"]`, `
-  backlog     [shape=Mdiamond]
-  plan        [agent=executor]
-  in_progress [agent=coder, prompt="@skill:code"]
-  done        [shape=Msquare]
-  backlog -> plan -> in_progress -> done`),
-	}
+	wfs := routeWFs(
+		"## *\n- raised\n- coded\n- closed\n\n"+
+			"## feature\n- raised\n- planned\n- feat-coded\n- feat-closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
+			"## plan\nagent: executor\nprovides: planned\nrequires: raised\n\n"+
+			"## in_progress\nagent: coder\nskills: code\nprovides: feat-coded\nrequires: planned\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: coded\n\n"+
+			"## done\nterminal: true\nprovides: feat-closed\nrequires: feat-coded\n")
 	// A feature story in plan is engaged via the feature workflow (plan performs).
 	engaged, err := anyEngaged([]workitem.Item{{Kind: workitem.KindStory, Category: "feature", Status: "plan"}}, wfs)
 	if err != nil {
@@ -601,11 +603,13 @@ func TestAnyEngagedPerStoryWorkflow(t *testing.T) {
 // item with only a feature-applies workflow and no wildcard has no governing
 // workflow, so the hook blocks the edit rather than silently allowing it.
 func TestAnyEngagedFailClosedNoWorkflow(t *testing.T) {
-	wfs := []docindex.Doc{wfDoc("feat", `["feature"]`, `
-  backlog     [shape=Mdiamond]
-  in_progress [agent=executor]
-  done        [shape=Msquare]
-  backlog -> in_progress -> done`)}
+	// No wildcard section: a chore item resolves to nothing, which is the
+	// fail-closed case under test.
+	wfs := routeWFs(
+		"## feature\n- raised\n- coded\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
 	engaged, err := anyEngaged([]workitem.Item{{Kind: workitem.KindStory, Category: "chore", Status: "in_progress"}}, wfs)
 	if engaged {
 		t.Error("a chore item with no resolving workflow must not be engaged")
@@ -791,12 +795,12 @@ func mkfile(t *testing.T, path, body string) {
 // TestEvaluateSeatPerformingAndStale: the pure engagement predicate
 // (sty_1738f973 AC2/AC5/AC6).
 func TestEvaluateSeatPerformingAndStale(t *testing.T) {
-	wfs := []docindex.Doc{wfDoc("wf", `["*"]`, `
-  backlog     [shape=Mdiamond]
-  plan        [agent=executor]
-  in_progress [agent=executor]
-  done        [shape=Msquare]
-  backlog -> plan -> in_progress -> done`)}
+	wfs := routeWFs(
+		"## *\n- raised\n- planned\n- coded\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## plan\nagent: executor\nprovides: planned\nrequires: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: planned\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
 	now := time.Now().UTC()
 	items := []workitem.Item{
 		{ID: "sty_live", Kind: workitem.KindStory, Status: "in_progress", Category: "feature"},
@@ -1032,24 +1036,18 @@ func TestFormatEngagedPromptNamesNextGate(t *testing.T) {
 // quotes its own edges/gates and none of the other's. Invented names cannot be
 // hardcoded in Go.
 func TestEngagedPromptQuotesOwnWorkflow(t *testing.T) {
-	wfs := []docindex.Doc{
-		wfDoc("wf-a", `["cat-a"]`, `
-  start [shape=Mdiamond]
-  draft [agent=executor]
-  work  [agent=executor]
-  ship  [shape=Msquare]
-  start -> draft
-  draft -> work [agent=reviewer, prompt="@skill:wfa-work-gate"]
-  work -> ship`),
-		wfDoc("wf-b", `["cat-b"]`, `
-  start  [shape=Mdiamond]
-  triage [agent=executor]
-  build  [agent=executor]
-  verify [shape=Msquare]
-  start -> triage
-  triage -> build [agent=reviewer, prompt="@skill:wfb-build-gate"]
-  build -> verify`),
-	}
+	wfs := routeWFs(
+		"## cat-a\n- started\n- drafted\n- worked\n- shipped\n\n"+
+			"## cat-b\n- started\n- triaged\n- built\n- verified\n",
+		"## start\nstart: true\nprovides: started\n\n"+
+			"## draft\nagent: executor\nprovides: drafted\nrequires: started\n\n"+
+			"## work\nagent: executor\nreviewers: wfa-work-gate\nreviewer_agent: reviewer\n"+
+			"provides: worked\nrequires: drafted\n\n"+
+			"## ship\nterminal: true\nprovides: shipped\nrequires: worked\n\n"+
+			"## triage\nagent: executor\nprovides: triaged\nrequires: started\n\n"+
+			"## build\nagent: executor\nreviewers: wfb-build-gate\nreviewer_agent: reviewer\n"+
+			"provides: built\nrequires: triaged\n\n"+
+			"## verify\nterminal: true\nprovides: verified\nrequires: built\n")
 	now := time.Now().UTC()
 	items := []workitem.Item{
 		{ID: "sty_a", Kind: workitem.KindStory, Status: "draft", Category: "cat-a"},
@@ -1120,21 +1118,17 @@ func TestEngagedPromptWithinCeiling(t *testing.T) {
 
 // TestEvaluateSeatAdvanceSkipsTerminalPark: AC5 at evaluateSeat level.
 func TestEvaluateSeatAdvanceSkipsTerminalPark(t *testing.T) {
-	wfs := []docindex.Doc{wfDoc("wf", `["*"]`, `
-  backlog     [shape=Mdiamond]
-  in_progress [agent=executor]
-  integration [agent=executor]
-  release     [agent=executor]
-  done        [shape=Msquare]
-  cancelled   [agent=reviewer, prompt="@skill:cancel"]
-  backlog -> in_progress
-  in_progress -> integration [agent=reviewer, prompt="@skill:ac-rev"]
-  integration -> release [agent=reviewer, prompt="@skill:int-rev"]
-  release -> done [agent=reviewer, prompt="@skill:rel-rev"]
-  integration -> in_progress
-  release -> in_progress
-  in_progress -> cancelled
-  release -> cancelled`)}
+	wfs := routeWFs(
+		"## *\n- raised\n- coded\n- integrated\n- released\n- closed\n"+
+			"cancel: cancelled @cancel\nrecover: in_progress\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
+			"## integration\nagent: executor\nreviewers: ac-rev\nreviewer_agent: reviewer\n"+
+			"provides: integrated\nrequires: coded\n\n"+
+			"## release\nagent: executor\nreviewers: int-rev\nreviewer_agent: reviewer\n"+
+			"provides: released\nrequires: integrated\n\n"+
+			"## done\nreviewers: rel-rev\nreviewer_agent: reviewer\nterminal: true\n"+
+			"provides: closed\nrequires: released\n")
 	now := time.Now().UTC()
 	// release: only terminal + back-edge → Advance empty.
 	live, _, err := evaluateSeat([]lease.Lease{{

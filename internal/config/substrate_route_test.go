@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -101,7 +102,9 @@ func TestEmbeddedRouteIsTheOnlyLifecycle(t *testing.T) {
 			continue
 		}
 		names = append(names, d.Name)
-		if _, isDOT := wfdot.Parse(d.Body); isDOT {
+		// Textual: there is no DOT parser left to ask, which is exactly why the
+		// guard has to stand on its own (sty_d953c5d8).
+		if strings.Contains(d.Body, "```dot") {
 			t.Errorf("embedded workflow %q carries a DOT graph — the shipped lifecycle is a derived route", d.Name)
 		}
 	}

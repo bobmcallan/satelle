@@ -24,15 +24,21 @@ func TestProcessViewAllocations(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(data, "agents.toml"), []byte(agents), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	wfBody := "---\nname: toy\napplies_to: [\"*\"]\n---\n\n```dot\ndigraph t {\n  backlog [shape=Mdiamond]\n  plan [agent=executor]\n  done [shape=Msquare]\n  backlog -> plan [agent=reviewer, prompt=\"@skill:satelle-story-intent-review\"]\n  plan -> done\n}\n```\n"
-	if err := os.WriteFile(filepath.Join(wfDir, "toy.md"), []byte(wfBody), 0o644); err != nil {
-		t.Fatal(err)
+	for name, body := range routeHalves(
+		"## *\n- raised\n- planned\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## plan\nagent: executor\nreviewers: satelle-story-intent-review\nreviewer_agent: reviewer\n"+
+			"provides: planned\nrequires: raised\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: planned\n") {
+		if err := os.WriteFile(filepath.Join(wfDir, name+".md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	call(t, "doc-sync", map[string]any{"dirs": map[string]string{"workflows": wfDir}})
 	verb.SetDataDir(data)
 	t.Cleanup(func() { verb.SetDataDir("") })
 
-	raw := call(t, "process-view", map[string]any{"workflow": "toy"})
+	raw := call(t, "process-view", map[string]any{"workflow": "done.md+step.md"})
 	var view verb.ProcessView
 	if err := json.Unmarshal(raw, &view); err != nil {
 		t.Fatal(err)
@@ -48,7 +54,7 @@ func TestProcessViewAllocations(t *testing.T) {
 	}
 	found := false
 	for _, a := range view.Allocations {
-		if a.Workflow == "toy" && a.Agent != "" {
+		if a.Agent != "" {
 			found = true
 			break
 		}

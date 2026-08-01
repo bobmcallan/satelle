@@ -27,22 +27,11 @@ func liveSeatRepo(t *testing.T) (repo, storyID string) {
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	wfBody := `---
-name: seat-wf
-type: workflow
-applies_to: ["*"]
----
-
-` + "```dot\n" + `digraph w {
-  backlog     [shape=Mdiamond]
-  in_progress [agent=executor]
-  done        [shape=Msquare]
-  backlog -> in_progress -> done
-}
-` + "```\n"
-	if err := os.WriteFile(filepath.Join(wfDir, "seat-wf.md"), []byte(wfBody), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeRoute(t, wfDir,
+		"## *\n- raised\n- coded\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
 	// Non-exempt target for gate tests.
 	if err := os.MkdirAll(filepath.Join(repo, "internal"), 0o755); err != nil {
 		t.Fatal(err)
@@ -230,8 +219,11 @@ func TestHookHandlersDoNotRefreshForeignOwner(t *testing.T) {
 	t.Chdir(repo)
 	wfDir := filepath.Join(repo, ".satelle", "workflows")
 	_ = os.MkdirAll(wfDir, 0o755)
-	wfBody := "---\nname: seat-wf\ntype: workflow\napplies_to: [\"*\"]\n---\n\n```dot\ndigraph w {\n  backlog [shape=Mdiamond]\n  in_progress [agent=executor]\n  done [shape=Msquare]\n  backlog -> in_progress -> done\n}\n```\n"
-	_ = os.WriteFile(filepath.Join(wfDir, "seat-wf.md"), []byte(wfBody), 0o644)
+	writeRoute(t, wfDir,
+		"## *\n- raised\n- coded\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
 	_ = os.MkdirAll(filepath.Join(repo, "internal"), 0o755)
 	_ = os.WriteFile(filepath.Join(repo, "internal", "foo.go"), []byte("package internal\n"), 0o644)
 
@@ -527,25 +519,13 @@ func liveSeatRepoWithAdvance(t *testing.T) (repo, storyID string) {
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	wfBody := `---
-name: seat-wf-adv
-type: workflow
-applies_to: ["*"]
----
-
-` + "```dot\n" + `digraph w {
-  backlog     [shape=Mdiamond]
-  in_progress [agent=executor]
-  integration [agent=executor]
-  done        [shape=Msquare]
-  backlog -> in_progress
-  in_progress -> integration [agent=reviewer, prompt="@skill:ac-rev,scope-rev"]
-  integration -> done
-}
-` + "```\n"
-	if err := os.WriteFile(filepath.Join(wfDir, "seat-wf-adv.md"), []byte(wfBody), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeRoute(t, wfDir,
+		"## *\n- raised\n- coded\n- integrated\n- closed\n",
+		"## backlog\nstart: true\nprovides: raised\n\n"+
+			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
+			"## integration\nagent: executor\nreviewers: ac-rev, scope-rev\nreviewer_agent: reviewer\n"+
+			"provides: integrated\nrequires: coded\n\n"+
+			"## done\nterminal: true\nprovides: closed\nrequires: integrated\n")
 	if err := os.MkdirAll(filepath.Join(repo, "internal"), 0o755); err != nil {
 		t.Fatal(err)
 	}

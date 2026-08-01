@@ -3,7 +3,7 @@ name: satelle-workflow-change-review
 scope: system
 type: skill
 tags: [type:skill, type:reviewer]
-description: Implementation-exit gate judging workflow topology edits — binding form (edge CSV vs scoped on=), over-fire, skill resolution, recovery edges. Fast-accepts workflow:n/a when the slice touches no workflow file. Review-only.
+description: Implementation-exit gate judging route edits — where a gate is bound (a step's reviewers vs an always-on gate), over-fire, skill resolution, park/cancel/recover preserved. Fast-accepts workflow:n/a when the slice touches no workflow file. Review-only.
 ---
 
 # Workflow-change review
@@ -39,40 +39,45 @@ mentions and no plan claiming workflow edits **is** the n/a signal.
 
 ## How to judge (when the slice edits a workflow)
 
-Read the touched workflow file(s) (and any new reviewer skills they name). Judge:
+A lifecycle is a DERIVED ROUTE: `done.md` declares the obligations per category,
+`step.md` says what discharges each, and the binary sorts the topology. Read the
+touched half (and any new reviewer skills it names). Judge:
 
-1. **Binding form** — a **gate-specific** reviewer (intended for exactly one
- transition) must be an **edge CSV** skill:
- `prompt="@skill:a"` or `prompt="@skill:a,@skill:b"` on the edge.
- A new **single-state** `on=` scoped node for a gate-specific check is a
- reject — it belongs on the edge. Scoped `on=` is for genuinely multi-state
- or always-on reviewers (`estimate`, `step`, multi-state always-on).
+1. **Where the gate is bound** — a **gate-specific** reviewer (intended for
+ exactly one step) belongs in that step's `reviewers:` list, because a gate
+ belongs to the step it ADMITS. A new `## gate <skill>` section for a
+ gate-specific check is a reject. An always-on `## gate` is for genuinely
+ multi-step reviewers (estimate/actual, step summary).
 
-2. **No over-firing on=** — do not introduce a single-state `on=` node on a
- state that also has rework/recovery inbound edges unless the author clearly
- intends always-on re-fire. Prefer edge binding. See `satelle help workflows`.
+2. **No over-firing gate** — do not introduce a `## gate` whose `on:` names one
+ step that also has recovery inbound, unless the author clearly intends
+ always-on re-fire. Prefer the step's own `reviewers:`. A gate in a shared
+ catalogue also needs `for:` — the categories whose route it belongs to — or
+ it fires on lanes it was never meant for. See `satelle help workflows`.
 
-3. **DOT / prose agree** — description and frontmatter should not contradict
- the DOT (states, gates named).
+3. **Prose agrees with the route** — description and frontmatter should not
+ contradict the steps and gates the two halves declare.
 
-4. **Skills resolve** — every `@skill:NAME` on edges/nodes must exist under
+4. **Skills resolve** — every skill a step or gate names must exist under
  project skills layered over embedded defaults.
 
-5. **Recovery / park / cancel preserved** — do not silently drop recovery edges
- (`integration → in_progress`, park/cancel) that the prior graph had without
- a stated reason in the plan.
+5. **Obligations, park, cancel and recover preserved** — do not silently drop an
+ obligation from a `done.md` section, or its `park:` / `cancel:` / `recover:`
+ lines, without a stated reason in the plan. An obligation removed is a gate
+ removed.
 
-6. **Edge-wins hazard** — when an edge carries an explicit CSV into a node that
- already had a gate (e.g. `done` with `prompt="@skill:…"`), the edge's skills
- **replace** the node prompt for that edge. The CSV **must retain** the prior
- gate skill (e.g. keep `satelle-story-done-review` when adding a sibling).
- Dropping a close/intake gate is a reject.
+6. **No authored topology** — the binary owns ORDER (a topological sort of
+ `requires` / `provides`) and the synthesised shape: cancel from every
+ non-terminal step, park from anywhere, backward movement, park → cancel.
+ A `cancelled` or `blocked` authored as a STEP is a reject; it belongs on
+ done.md's `cancel:` / `park:` line.
 
 Fair gate: judge the change as written, not perfectionism.
 
-- **Accept** when binding form is sound, skills resolve, recovery intact, and
- edge-wins does not drop a prior gate.
-- **Reject** with a specific, fixable note (name the node/edge and the rewrite).
+- **Accept** when the gate is bound where it belongs, skills resolve,
+ obligations and exits are intact, and no topology is authored by hand.
+- **Reject** with a specific, fixable note (name the step or gate and the
+ rewrite).
 
 ## Verdict
 

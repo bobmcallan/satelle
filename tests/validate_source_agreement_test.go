@@ -34,29 +34,14 @@ func writeAgentsWithPlanner(t *testing.T, repo string) {
 	}
 }
 
-// writeWorkflowAllocatingPlanner writes a workflow whose node allocates
-// agent=planner, directly to disk.
-func writeWorkflowAllocatingPlanner(t *testing.T, repo, name string) {
+// writeRouteAllocatingPlanner writes a route whose plan step allocates
+// agent: planner, directly to disk.
+func writeRouteAllocatingPlanner(t *testing.T, repo string) {
 	t.Helper()
-	wf := "---\nname: " + name + "\ntype: workflow\nscope: project\ntags: [type:workflow]\n" +
-		"applies_to: [\"source-agreement-fixture\"]\n" +
-		"description: fixture lifecycle whose plan node allocates the planner binding\n---\n\n" +
-		"# fixture\n\n```dot\ndigraph w {\n" +
-		"  backlog     [shape=Mdiamond]\n" +
-		"  plan        [agent=planner]\n" +
-		"  in_progress [agent=executor]\n" +
-		"  done        [shape=Msquare]\n" +
-		"  backlog     -> plan\n" +
-		"  plan        -> in_progress\n" +
-		"  in_progress -> done\n" +
-		"}\n```\n"
-	dir := filepath.Join(repo, ".satelle", "workflows")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, name+".md"), []byte(wf), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeSpineFixture(t, repo, "", "", "",
+		"plan|planner|||",
+		"in_progress|executor|||",
+		"done||||")
 }
 
 // TestAgentValidateAndDoctorAgreeWithoutReindex (AC2) is the exact reported
@@ -68,7 +53,7 @@ func TestAgentValidateAndDoctorAgreeWithoutReindex(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 
 	writeAgentsWithPlanner(t, repo)
-	writeWorkflowAllocatingPlanner(t, repo, "fixture-source-agreement")
+	writeRouteAllocatingPlanner(t, repo)
 	// Deliberately NO reindex.
 
 	agentOut, _ := run(t, testBin, repo, "agent", "validate")
@@ -96,24 +81,10 @@ func TestValidateAndDoctorAgreeOnUnresolvedSkillWithoutReindex(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	const name = "fixture-unindexed-gate"
-	wf := "---\nname: " + name + "\ntype: workflow\nscope: project\ntags: [type:workflow]\n" +
-		"applies_to: [\"unindexed-fixture\"]\n" +
-		"description: fixture lifecycle naming a gate skill that does not exist\n---\n\n" +
-		"# fixture\n\n```dot\ndigraph w {\n" +
-		"  backlog     [shape=Mdiamond]\n" +
-		"  in_progress [agent=executor]\n" +
-		"  done        [shape=Msquare]\n" +
-		"  backlog     -> in_progress [agent=reviewer, prompt=\"@skill:never-authored-review\"]\n" +
-		"  in_progress -> done\n" +
-		"}\n```\n"
-	dir := filepath.Join(repo, ".satelle", "workflows")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, name+".md"), []byte(wf), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	// A route naming a gate skill that does not exist, written straight to disk.
+	writeSpineFixture(t, repo, "", "", "",
+		"in_progress|executor||never-authored-review|reviewer",
+		"done||||")
 	// Deliberately NO reindex.
 
 	validateOut, _ := run(t, testBin, repo, "workflow", "validate")
@@ -201,7 +172,7 @@ func TestDoctorStillWorksWithNoIndex(t *testing.T) {
 		t.Fatalf("init: %v\n%s", err, out)
 	}
 	writeAgentsWithPlanner(t, repo)
-	writeWorkflowAllocatingPlanner(t, repo, "fixture-no-index")
+	writeRouteAllocatingPlanner(t, repo)
 	if out, err := runIn("reindex"); err != nil {
 		t.Fatalf("reindex: %v\n%s", err, out)
 	}

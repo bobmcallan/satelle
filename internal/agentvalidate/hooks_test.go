@@ -16,7 +16,8 @@ import (
 func wfWithHook(fm string) docindex.Doc {
 	return docindex.Doc{
 		Kind: "workflows", Name: "w",
-		Body: "---\nname: w\n" + fm + "---\n\n```dot\ndigraph w {\n  backlog [shape=Mdiamond]\n  done [shape=Msquare]\n  backlog -> done\n}\n```\n",
+		Body: "---\nname: done\ntype: workflow\nscope: system\ndescription: fixture\n" + fm + "---\n\n" +
+			"## *\n- raised\n- closed\n",
 	}
 }
 

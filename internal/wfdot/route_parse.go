@@ -1,5 +1,5 @@
 // Markdown front-end for the route constructor: done.md and step.md in, a Spec
-// out. Hand-rolled with the same idiom the package already uses for DOT and
+// out. Hand-rolled with the same idiom the package already uses for
 // frontmatter — a `##` heading opens a record, `key: value` lines fill it, CSV
 // for lists. No YAML or TOML dependency is added for two small authored files.
 //

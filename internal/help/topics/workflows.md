@@ -1,148 +1,172 @@
 # Workflows — how a story's lifecycle is chosen
 
-A **workflow** is a story's lifecycle: the states it moves through and the
-reviewer that gates each edge, authored in DOT under `.satelle/workflows`. satelle
-does not hardcode a lifecycle — the operator authors it as substrate, and satelle
-enforces it.
+A **workflow** is a story's lifecycle: the steps it moves through and the
+reviewers that gate entry to each. satelle does not hardcode a lifecycle — the
+operator authors it as substrate under `.satelle/workflows`, and satelle enforces
+it.
 
-## The ideal: one governing workflow per story type
+The authored form is a **derived route**: two files, `done.md` and `step.md`.
+`satelle help workflow-convert` is the key-by-key reference (and the guide for
+converting a repo that still carries a retired DOT graph).
 
-A workflow declares, in its frontmatter, **what it governs** and **its purpose**:
+## The two halves
 
-```yaml
-applies_to: ["feature"]      # the story categories this workflow governs ("*" = any)
-description: ...             # what this lifecycle is for — read by the agent
-create_review: my-rubric    # (optional) the content/alignment reviewer for `story create`
+**`done.md` — what DONE means.** One `## <category>` section per story category,
+each an ordered list of obligations, plus the exits the binary synthesises. `## *`
+governs any category with no section of its own.
+
+```
+## *
+- raised
+- coded
+- closed
+park: blocked @satelle-story-blocked-review
+cancel: cancelled @satelle-story-cancel-review
++ surface:ui design-reviewed
 ```
 
-The ideal is **one workflow per category**. Selection is then unambiguous and
-deterministic.
+**`step.md` — what discharges each obligation.** One `## <name>` section per
+step, one `## gate <skill>` per always-on gate.
 
-## Multiple candidates → the agent chooses by content
+```
+## in_progress
+agent: executor
+skills: code
+reviewers: satelle-story-plan-review, satelle-story-architecture-review
+reviewer_agent: reviewer
+parallel: 0
+provides: coded
+requires: raised
+```
 
-A repo MAY have more than one workflow that could apply (e.g. a category-specific
-one and a wildcard). satelle resolves a single **active** workflow by precedence —
-a category-specific match beats a wildcard, and a repo workflow beats the embedded
-default. To see the candidates and their purpose for a story's category:
+Both files carry ordinary frontmatter (`name`, `type: workflow`, `scope`,
+`description`) and **must not** carry `applies_to` — done.md's sections are the
+selector, and a second one would be a second precedence rule. A lifecycle hook
+(`hooks:` / the `create_review:` shorthand) rides on **done.md**.
+
+**The binary owns topology.** Order is a topological sort of `requires` /
+`provides`; cancel from every non-terminal step, park from anywhere, backward
+movement and park → cancel are all synthesised. Authoring a `cancelled` or
+`blocked` step by hand is the most common conversion mistake.
+
+## Precedence
+
+A repo's own route governs the categories its `done.md` claims. The route the
+binary SHIPS is order zero: it governs a category only when no authored workflow
+claims it, so upgrading the binary never re-routes a repo behind its back.
 
 ```
 satelle workflow list --category <category>
 ```
 
-The head of that list is the active choice. When several genuinely fit, the agent
-picks by the story's content and **records the choice** by adding a
-`workflow:<name>` tag at create (otherwise satelle stamps the resolved active one
-automatically).
+The head of that list is the active choice. A workflows doc that declares no
+route governs nothing: satelle REFUSES transitions under it, naming
+`satelle help workflow-convert`, rather than falling back and silently dropping
+every gate the repo authored.
 
-## The choice is stamped and stable
+## The choice is stamped
 
-At create, the governing workflow is **stamped** on the story — a `workflow:<name>`
-tag plus a `workflow_stamped` ledger entry. Every gate thereafter reads the
-**stamped** workflow, not a freshly re-derived one, so a story's lifecycle is
-fixed once it begins (deterministic after create).
+At create, the governing lifecycle is **stamped** on the story — a
+`workflow:<name>` tag plus a `workflow_stamped` ledger entry — so the trail
+records what governed. With a derived route the stamp is `done.md+step.md` for
+every category; which LANE applies is chosen by the story's category, and
+`satelle story restamp` re-resolves it after a re-categorisation.
 
 ## Avoiding misconfiguration
 
-Flexibility is not a licence to over-configure. `satelle workflow validate` flags
-inconsistencies the operator should fix, and the agent should advise on them:
+`satelle workflow validate` flags what the operator should fix:
 
-- **Ambiguous `applies_to`** — two repo workflows that claim the same category (or
-  the wildcard) at the same precedence, so the tiebreak is arbitrary.
-- **An unresolved reviewer skill** — a workflow names a gate (an `@skill:NAME`
-  node or edge, or the legacy `reviewer_skill=` attribute) that does not resolve
-  in the substrate.
+- **An unresolved reviewer skill** — a step or gate names a reviewer that does
+  not resolve in the substrate. WARN, not FAIL, on the named form: a repo
+  mid-authoring writes its route before its gate skills.
+- **An unresolved executor rubric** — a step's `skills:` that does not resolve.
+  That IS a hard failure: the step cannot be performed, so the story can never
+  reach its terminal state.
 
-Run `satelle workflow validate` to surface these before they bite. That command
-also prints each gate/node's **effective model** (binding model, or a DOT
-`satelle agent validate` prints the same surface under its grant listing.
+That command also prints each gate's **effective model** (the binding's model, or
+the CLI default when the binding pins none). `satelle agent validate` prints the
+same surface under its grant listing. To review one gate on a different model,
+define a second `role = "reviewer"` binding in `.satelle/agents.toml` and name it
+as that step's `reviewer_agent:` — see `satelle help agent-dispatch` and the
+`satelle-route-standard` principle.
 
-gate/step while keeping the shared `[reviewer]` (or named) harness — see
-`satelle help agent-dispatch` and the satelle-dot-standard principle.
+## Binding a reviewer: a step's `reviewers:` vs an always-on `## gate`
 
-## Binding a reviewer: edge CSV vs scoped on=
+How a reviewer is **bound** matters as much as which skill it runs.
 
-How a reviewer is **bound** to the graph is as important as which skill it runs.
-Two forms exist; choosing wrong changes both the rendered flow and when the gate
-fires.
+### A step's `reviewers:` — gate-specific reviewers (prefer this)
 
-### Edge CSV — gate-specific reviewers (prefer this)
+A gate belongs to the step it ADMITS. Bind a gate-specific reviewer to that
+step:
 
-Bind a reviewer to **exactly one transition** on the edge:
-
-```dot
-in_progress -> integration [agent=reviewer, prompt="@skill:satelle-code-ac-review"]
-// multiple reviewers on one edge — list order = execution order:
-in_progress -> done [agent=reviewer, prompt="@skill:satelle-workflow-change-review,satelle-story-done-review"]
+```
+## integration
+reviewers: satelle-code-ac-review
+reviewer_agent: reviewer
 ```
 
 - **List order = execution order** (and ledger order). By default reviewers run
   **sequentially**, **all-must-accept**, with **first-reject short-circuit**
-  (later reviewers are not invoked once one rejects).
-- **Parallel opt-in** (per edge): set `parallel=true` (cap 4) or `parallel=N`
-  (N≥1) on the edge to run that edge's reviewer list **concurrently** with no
-  short-circuit — every reviewer still runs even if one rejects, so a rejected
-  round spends tokens on every reviewer. That is why parallel is **per-gate
-  opt-in**, not the default. Aggregation stays all-must-accept in the binary;
-  multi-reject refuse messages name every rejecting reviewer.
-- **Edge wins:** when an edge carries an explicit `prompt="@skill:…"`, the
-  target node's own `prompt` is **ignored for that edge**. If you add a CSV into
-  a node that already had a gate (e.g. `done`), **include the prior gate skill
-  in the CSV** or that gate silently drops.
+  (later reviewers are not invoked once one rejects) — but only when the step
+  says so with `parallel: 0`.
+- **Concurrency is the default for 2+ reviewers.** Unset `parallel` runs the
+  list concurrently with no short-circuit, so a rejected round spends tokens on
+  every reviewer. Set `parallel: 0` for sequential, or `parallel: N` (cap 4) to
+  bound the fan-out. Aggregation stays all-must-accept in the binary; a
+  multi-reject refusal names every rejecting reviewer.
 
-### Scoped on= nodes — multi-state / always-on only
+### An always-on `## gate` — multi-step only
 
-An edge-less reviewer node with `on="s1,s2"` (or `on="*"`) is an **always-on**
-gate for every inbound edge into those states:
+A `## gate <skill>` section with `on:` is an always-on gate for every entry into
+the steps it names:
 
-```dot
-estimate [prompt="@skill:satelle-estimate-actual-review", on="in_progress,done"]
-step     [agent=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
+```
+## gate satelle-estimate-actual-review
+on: in_progress, done
+for: *
+
+## gate satelle-step-summary
+agent: reviewer
+mandatory: true
+for: *
 ```
 
-Use scoped `on=` **only** when the gate genuinely belongs on every entry into
-the state (estimate at begin-work and close; step summaries; similar always-on
-checks). Do **not** author a gate-specific check as `on="in_progress"` — that is
-the common misuse.
+Use it **only** when the gate genuinely belongs on every entry into those steps
+(estimate at begin-work and close; step summaries). Authoring a gate-specific
+check as a single-step `## gate` is the common misuse.
 
-### The on= over-fire trap
+`for:` names the categories whose route the gate belongs to. In a shared
+catalogue, omitting it fires the gate on every lane — including ones with no
+release to verify.
 
-`on="in_progress"` matches **every** transition into `in_progress`, including
-rework/recovery edges (`integration → in_progress`, `release → in_progress`).
-Consequences:
+### The over-fire trap
 
-1. The rendered graph hangs the gate off the **state** box, so the flow misreads
-   as "always when entering in_progress" rather than "on this one transition".
-2. On every fix-loop re-entry the gate re-fires — an extra reviewer invocation
-   per rework cycle.
+A gate on one step matches **every** transition into it, including recovery
+(`integration → in_progress`). The gate then re-fires on every fix-loop
+re-entry — an extra reviewer invocation per rework cycle. Bind it to the step's
+own `reviewers:` instead unless always-on is what you mean.
 
-`satelle workflow validate` **WARNs** (non-fatal) when a **single-state** scoped
-reviewer sits on a state that has multiple inbound edges including a rework/loop
-edge: consider binding it to the edge instead. Multi-state `on=` and `on="*"` are
-not warned — those are the documented always-on patterns.
+See the embedded `satelle-workflow-change-review` gate for a content judgment of
+route edits; structural validate stays PASS/FAIL only.
 
-See the embedded `satelle-workflow-change-review` gate (bound on implementation
-exit edges in the baseline and project workflows) for a content judgment of
-workflow edits; structural validate stays PASS/FAIL only.
+## Four things a lifecycle governs — don't confuse them
 
-## Four things a workflow governs — don't confuse them
-
-A workflow file carries four distinct kinds of governance. They differ in WHERE
-they are declared, WHEN they fire, and WHO decides:
+They differ in WHERE they are declared, WHEN they fire, and WHO decides:
 
 | | Declared in | Fires | Decided by |
 | --- | --- | --- | --- |
-| **Transition nodes / edges** | the fenced `dot` block | on a status change | a reviewer skill's verdict (or a coded ```check) |
-| **Lifecycle hooks** | frontmatter (`hooks:` / the `create_review:` shorthand) | outside the status graph — at story creation today | a reviewer skill's verdict |
+| **Step gates** | a step's `reviewers:`, or a `## gate` section | on a status change | a reviewer skill's verdict (or a coded ```check) |
+| **Lifecycle hooks** | done.md frontmatter (`hooks:` / the `create_review:` shorthand) | outside the status graph — at story creation today | a reviewer skill's verdict |
 | **Deterministic structure checks** | nowhere — they are the binary's contract | always, before anything else | code (`internal/structure`); no LLM, never flaky |
 | **Agent judgments** | a reviewer skill's rubric | wherever a gate or hook names it | an isolated agent returning accept/reject |
 
-**Transition gates** are the status graph. They can only judge a move from one
-state to another, so anything that happens off the graph is out of their reach.
+**Step gates** are the status graph. They can only judge a move from one state to
+another, so anything off the graph is out of their reach.
 
 **Lifecycle hooks** exist for exactly that gap. Story creation has no `from`
-state — the item does not exist yet — so it cannot be an edge. A hook declares
-the operation, the skill that judges it, and the logical agent that runs the
-skill:
+state — the item does not exist yet — so it cannot be a transition. A hook
+declares the operation, the skill that judges it, and the logical agent that runs
+the skill:
 
 ```yaml
 hooks:
@@ -154,41 +178,39 @@ hooks:
 The scalar `create_review: my-create-review` is the documented shorthand for the
 same thing with the default agent. A hook declares **who** runs a skill, never
 **how**: model, effort, command, transport and tool grant stay in
-`.satelle/agents.toml`. `satelle workflow show <name>` prints each hook's full
-resolved allocation; `satelle agent validate` refuses one whose agent is
-missing, is not `role = "reviewer"`, or is `command = "in-loop"`.
+`.satelle/agents.toml`. `satelle workflow show done` prints each hook's full
+resolved allocation; `satelle agent validate` refuses one whose agent is missing,
+is not `role = "reviewer"`, or is `command = "in-loop"`.
 
-**Deterministic structure checks** are not configuration at all — a story needs
-a clear goal and at least one numbered acceptance criterion, judged by code so
-the result is harness-independent and identical every run. A structural failure
+**Deterministic structure checks** are not configuration at all — a story needs a
+clear goal and at least one numbered acceptance criterion, judged by code so the
+result is harness-independent and identical every run. A structural failure
 pre-empts: no hook or gate reviewer is reached on a malformed draft.
 
-**Agent judgments** are the rubrics themselves. A gate or hook says *which*
-skill judges; the skill says *what* the judgment is. That split is why adding a
+**Agent judgments** are the rubrics themselves. A gate or hook says *which* skill
+judges; the skill says *what* the judgment is. That split is why adding a
 criterion is a markdown edit rather than a release.
 
 ## Beyond validate: the semantic review
 
-`workflow validate` is deterministic structure only (plus the advisory over-fire
-WARNING above). The judgment it deliberately does not make — is each performing
-step's `agent=` allocation (and its binding's model) deliberate; does each
-performing step carry a reviewer gate on its exit edge; is a dispatched
-binding's grant scoped to its step; is a dispatched implementation step
-self-sufficient (an isolated agent sees only the item and its rubric, never the
-conversation); is **binding form** (edge CSV vs scoped on=) correct for each
-gate — is the **agent's** review, guided by the embedded
-`satelle-workflow-advisor` skill (`satelle doc get skills
-satelle-workflow-advisor`). Its findings are ADVICE to the operator; the coded
-structural check stays the only hard rule.
+`workflow validate` is deterministic structure only. The judgment it deliberately
+does not make — is each performing step's `agent:` allocation (and its binding's
+model) deliberate; does each performing step have a reviewer on the step that
+follows it; is a dispatched binding's grant scoped to its step; is a dispatched
+implementation step self-sufficient (an isolated agent sees only the item and its
+rubric, never the conversation); is each gate bound where it belongs — is the
+**agent's** review, guided by the embedded `satelle-workflow-advisor` skill
+(`satelle doc get skills satelle-workflow-advisor`). Its findings are ADVICE to
+the operator; the coded structural check stays the only hard rule.
 
-For the full contract a dispatched (`agent=<name>`) step runs under — how it is
+For the full contract a dispatched (`agent: <name>`) step runs under — how it is
 briefed, how it pulls the story/documents/ledger by id, what makes it
-self-sufficient, and why its EXIT edge must carry the review — see
+self-sufficient, and why the step that follows it must carry the review — see
 `satelle help agent-dispatch`.
 
 ## Reading a story's route — `satelle story route <id>`
 
-A workflow file answers "what is the lifecycle". It does **not** answer "what is
+The two halves answer "what is the lifecycle". They do **not** answer "what is
 THIS story's lifecycle" — which tag-scoped gates are on for it, where it is now,
 and why each gate it has already passed decided as it did.
 
@@ -205,9 +227,7 @@ They are deliberately the **same document**. A route read separately from the
 verdicts is two things that drift.
 
 The route renders live before a story has moved, so it is answerable from
-backlog, and it never requires opening a workflow file. That matters more as the
-graph stops being authored: a derived route has no file to open, and refusals
-carry the same weight — an engine refusal names the **rule** that fired, why it
-fired on this story, and the legal moves it leaves open.
-
-A gated edge names its binding with `agent=<name>` (default `[reviewer]`). Models live in agents.toml only; DOT `model=` is superseded.
+backlog, and it never requires opening a workflow file. That matters because the
+graph is no longer authored: there is no diagram to read, and refusals carry the
+same weight — an engine refusal names the **rule** that fired, why it fired on
+this story, and the legal moves it leaves open.

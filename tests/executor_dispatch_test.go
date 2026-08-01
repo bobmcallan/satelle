@@ -22,43 +22,6 @@ cat > .satelle/dispatch-payload.json
 echo done
 `
 
-// archWorkflow allocates the plan step to the named agent "architect" and
-// governs the feature category.
-const archWorkflow = `---
-name: wf-arch
-type: workflow
-description: plan step performed by the architect agent
-applies_to: ["feature"]
-scope: project
----
-
-` + "```dot" + `
-digraph w {
-  backlog [shape=Mdiamond]
-  plan [agent=architect]
-  done [shape=Msquare]
-  backlog -> plan -> done
-}
-` + "```\n"
-
-// ghostWorkflow allocates a step to an agent no binding defines.
-const ghostWorkflow = `---
-name: wf-ghost
-type: workflow
-description: step allocated to an undefined agent
-applies_to: ["chore"]
-scope: project
----
-
-` + "```dot" + `
-digraph w {
-  backlog [shape=Mdiamond]
-  review [agent=ghost]
-  done [shape=Msquare]
-  backlog -> review -> done
-}
-` + "```\n"
-
 // TestNamedAgentDispatchRunsBinding: entering plan (agent=architect) spawns the
 // [architect] harness from agents.toml — payload on stdin, system prompt as an
 // argument — and the transition enacts with the dispatch on the ledger.
@@ -82,7 +45,8 @@ func TestNamedAgentDispatchRunsBinding(t *testing.T) {
 	}
 	_ = f.Close()
 
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-arch.md"), archWorkflow)
+	// The plan step is allocated to the named agent "architect".
+	writeSpineFixture(t, repo, "", "", "", "plan|architect|||", "done||||")
 	mustRun(t, testBin, repo, "reindex")
 
 	out := mustRun(t, testBin, repo, "story", "create", "--category", "feature",
@@ -130,7 +94,8 @@ func TestNamedAgentDispatchRunsBinding(t *testing.T) {
 func TestNamedAgentMissingBindingRefuses(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-ghost.md"), ghostWorkflow)
+	// The review step is allocated to an agent no binding defines.
+	writeSpineFixture(t, repo, "", "", "", "review|ghost|||", "done||||")
 	mustRun(t, testBin, repo, "reindex")
 
 	out := mustRun(t, testBin, repo, "story", "create", "--category", "chore",

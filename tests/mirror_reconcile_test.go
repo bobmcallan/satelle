@@ -13,25 +13,12 @@ import (
 	"time"
 )
 
-// reconcileWorkflow is an ungated lifecycle: this test is about a dropped push,
-// not about gates.
-const reconcileWorkflow = `---
-name: reconcile-probe-wf
-type: workflow
-scope: project
-description: ungated lifecycle for the mirror reconcile probe
-applies_to: ["*"]
----
-
-` + "```dot" + `
-digraph w {
-  backlog [shape=Mdiamond]
-  plan        [agent=executor]
-  done        [shape=Msquare]
-  backlog -> plan -> done
+// writeReconcileRoute lands an ungated lifecycle: this test is about a dropped
+// push, not about gates.
+func writeReconcileRoute(t *testing.T, repo string) {
+	t.Helper()
+	writeSpineFixture(t, repo, "", "", "", "plan|executor|||", "done||||")
 }
-` + "```" + `
-`
 
 // TestMirrorReconcilesTerminalStateAfterServiceRestart proves AC2 of
 // sty_e6e467fe end to end, with the real binary, the real snapshot and the real
@@ -42,7 +29,7 @@ digraph w {
 func TestMirrorReconcilesTerminalStateAfterServiceRestart(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init", "--harness", "claude")
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "reconcile-probe-wf.md"), reconcileWorkflow)
+	writeReconcileRoute(t, repo)
 	mustRun(t, testBin, repo, "reindex")
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

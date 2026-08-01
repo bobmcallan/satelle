@@ -1547,23 +1547,22 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer:
 #     system prompt; it judges, never mutates (the default claude template
 #     denylists Write/Edit/NotebookEdit/Bash on top of the read-only grant).
 #   - any OTHER top-level [<name>] is an optional named agent, always isolated;
-#     a workflow node allocates a step to it via agent=<name>, and entering that
-#     state DISPATCHES the step to this binding's command (item on stdin, the
-#     node's @skill rubric as the system prompt, tools/model from the binding).
-#     A node naming an agent with NO binding here REFUSES the transition. A
+#     a route step allocates its work to it via agent: <name>, and entering that
+#     step DISPATCHES the work to this binding's command (item on stdin, the
+#     step's skills: rubric as the system prompt, tools/model from the binding).
+#     A step naming an agent with NO binding here REFUSES the transition. A
 #     named agent that MUTATES declares its own full command template + wide
 #     grant; its model key pins the step's model ({model} in the template), so
 #     per-step model selection is pure configuration.
-#   - Per-GATE model without a second binding (sty_19456622): a workflow edge or
-#     node may set model="…" (e.g. release->done [agent=reviewer, prompt="@skill:…",
-#     model="opus"]). That overrides ONLY the model for that gate/step; the
-#     allocated binding stays the source of command template + tools. Absent
-#     model= inherits the binding's model. See satelle help agent-dispatch and
-#     the satelle-dot-standard principle.
+#   - Per-GATE model: name a second reviewer binding and allocate it by name
+#     (a step's reviewer_agent:, or a gate section's agent:). The binding is the
+#     source of command template, tools AND model, so a gate on a different
+#     model is a second [<name>] section — not an attribute on the route. See
+#     satelle help agent-dispatch and the satelle-route-standard principle.
 # role= is the binding's declared contract (reviewer | agent); inference from
 # the section name is a fallback, not the norm — declare it.
 #
-# Define process/step agents HERE (a [<name>] binding + an agent=<name> node),
+# Define process/step agents HERE (a [<name>] binding + an agent: <name> step),
 # NEVER in a harness-specific agent dir (e.g. .claude/agents): those are invisible
 # to satelle — it cannot see, validate, dispatch, or carry them repo-agnostically —
 # and they silently pin the repo to one CLI vendor. See "satelle help agent-dispatch".
@@ -2109,14 +2108,9 @@ func materializeDefaultSolution(dataDir string, backupOpts ...BackupOpts) []stri
 	var lines []string
 	skills := map[string]bool{}
 	collectSkills := func(body string) {
-		if spec, parsed := wfdot.Parse(body); parsed {
-			for _, s := range referencedSkills(spec) {
-				skills[s] = true
-			}
-		}
-		// A route source names its gates in the route grammar, not in a graph, so
-		// harvest them too — otherwise the default solution stops seeding the very
-		// skills the route references (sty_9835070d).
+		// A route source names its gates in the route grammar (sty_9835070d), and
+		// with the DOT front end retired that is the only place they can be named
+		// (sty_d953c5d8).
 		for _, s := range routeSourceSkills(body) {
 			skills[s] = true
 		}
@@ -2385,9 +2379,10 @@ func fileExists(path string) bool {
 // nothing, so one call covers both halves and every other workflow file
 // (sty_9835070d).
 func routeSourceSkills(body string) []string {
-	// An authored DOT is not a route source. Guarding on the fenced block keeps a
-	// graph's prose from being read as route grammar by accident.
-	if _, isDOT := wfdot.Parse(body); isDOT {
+	// A body carrying a fenced graph is not a route source. The guard is textual
+	// because there is no DOT parser left to ask (sty_d953c5d8); it keeps a
+	// leftover graph's prose from being read as route grammar by accident.
+	if strings.Contains(body, "```dot") {
 		return nil
 	}
 	seen := map[string]bool{}

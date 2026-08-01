@@ -10,30 +10,17 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-const engageWF = `---
-name: engage-wf
-type: workflow
-applies_to: ["*"]
----
-
-` + "```dot" + `
-digraph w {
-  backlog     [shape=Mdiamond]
-  plan        [agent=executor]
-  cancelled   [shape=Msquare, agent=reviewer, prompt="@skill:cancel"]
-  done        [shape=Msquare]
-  backlog -> plan
-  backlog -> cancelled
-  plan -> done
-}
-` + "```" + `
-`
+var engageWF = routeHalves(
+	"## *\n- raised\n- planned\n- closed\ncancel: cancelled @cancel\n",
+	"## backlog\nstart: true\nprovides: raised\n\n"+
+		"## plan\nagent: executor\nprovides: planned\nrequires: raised\n\n"+
+		"## done\nterminal: true\nprovides: closed\nrequires: planned\n")
 
 // TestEngageRefusesBrokenAgents proves the engage precondition (sty_93eec36d):
 // leaving the workflow entry state for a non-cancel target refuses when
 // agents.toml is broken; cancel from entry is still allowed.
 func TestEngageRefusesBrokenAgents(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"engage-wf": engageWF})
+	wireWithWorkflows(t, engageWF)
 	verb.SetAgentsConfig(config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},
 		Reviewer: config.AgentBinding{Command: "not-a-real-cli"},
@@ -62,7 +49,7 @@ func TestEngageRefusesBrokenAgents(t *testing.T) {
 
 // TestEngageAllowsHealthyAgents: green agents.toml lets engage proceed.
 func TestEngageAllowsHealthyAgents(t *testing.T) {
-	wireWithWorkflows(t, map[string]string{"engage-wf": engageWF})
+	wireWithWorkflows(t, engageWF)
 	verb.SetAgentsConfig(config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},
 		Reviewer: config.AgentBinding{Command: config.DefaultReviewerCommand},

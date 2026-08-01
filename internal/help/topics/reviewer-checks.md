@@ -19,30 +19,29 @@ satelle does the context selection; the reviewer reads what it needs through its
 tools. This applies to **stories and tasks** alike — gating is by category,
 kind-agnostic.
 
-## The lifecycle is authored — a derived route, or a DOT graph
+## The lifecycle is authored — a derived route
 
 The active lifecycle is authored substrate: a repo's own `.satelle/workflows`,
-or the **derived route the binary ships** as the order-zero default. It may be
-written two ways:
+or the **derived route the binary ships** as the order-zero default. There is
+one authored form — two files:
 
-- a **derived route** — `done.md` (obligations per category, plus park/cancel)
-  and `step.md` (the step catalogue and always-on gates). Each step names its
-  `agent`, its `skills`, and the `reviewers` gating ENTRY to it; order and
-  topology are derived, never authored. This is the shipped form.
-- a fenced ```dot graph (node-centric): each node is a step carrying an `agent`,
-  a reviewer node names its gate as `prompt="@skill:NAME"`, and the edge **into**
-  a reviewer node is the gated transition. An inline-YAML
-  `states:`/`transitions:` block is auto-converted to this form at ingest.
+- `done.md` — the obligations per category, plus park and cancel.
+- `step.md` — the step catalogue and the always-on gates. Each step names its
+  `agent`, its `skills`, and the `reviewers` gating ENTRY to it.
 
-A repo's own route outranks everything; a repo's own workflow outranks the
-shipped route for the categories it claims; the shipped route governs the rest.
+Order and topology are DERIVED, never authored. `satelle help workflow-convert`
+is the key-by-key reference.
+
+A repo's own route outranks the shipped one. A workflows doc that declares no
+route governs nothing: satelle refuses transitions under it, naming that guide,
+rather than silently falling back and dropping every gate the repo authored.
 
 The per-noun `satelle <noun> validate` runs a DETERMINISTIC structure check on
 every authored doc — frontmatter (OKF `type`), naming, a usable definition, and
-for a workflow the graph (connected, a terminal `done`, a `backlog` start,
-resolvable executor skills). The structure check is code, not an LLM rubric, so
-it is harness-independent and never flaky. The done gate is **not** mandated —
-it is whatever the workflow declares (the author's choice).
+for a route half its own grammar plus resolvable executor rubrics. The structure
+check is code, not an LLM rubric, so it is harness-independent and never flaky.
+The done gate is **not** mandated — it is whatever the route declares (the
+author's choice).
 
 An edge is gated only when the workflow names a reviewer skill **and** that skill's
 rubric is installed; a named-but-absent rubric is advisory, so a fresh repo keeps
@@ -128,26 +127,25 @@ the substrate it reasons about as markdown under `.satelle/` (no shell, no CLI).
 
 ## Declared scoped gates — estimate/actual + integration check
 
-Always-on gates are **declared in the workflow DOT**, not injected by a skill tag
-— the DOT is the sole gating authority (no hidden `reviewer:always` layer). A
-reviewer node carries an `on="<states>"` (or `on="*"`) attribute and runs on the
-transitions into those target states, after the edge-named reviewers.
-`satelle-estimate-actual-review` (`on="in_progress,done"`) requires a recorded plan
+Always-on gates are **declared in the route**, not injected by a skill tag — the
+route is the sole gating authority (no hidden `reviewer:always` layer). A
+`## gate <skill>` section in `step.md` carries an `on:` list of steps and runs on
+the transitions into them, after that step's own `reviewers:`.
+`satelle-estimate-actual-review` (`on: in_progress, done`) requires a recorded plan
 estimate entering `in_progress` and the recorded actual entering `done`
 (`satelle story estimate` / `satelle story actual`); `satelle-integration-check`
-(`on="commit"`) runs `make integration` before a commit. An edge may also name
-multiple reviewers directly (`prompt="@skill:a,b"`; the legacy `reviewer_skill="a,b"`
-attribute still parses). `satelle-story-cancel-review`
+(`on: commit`) runs `make integration` before a commit. A step may also name
+several reviewers directly (`reviewers: a, b`). `satelle-story-cancel-review`
 records why an item is abandoned.
 
 ## Step summary — `satelle-step-summary` (transparent, opt-in)
 
-Not a gate. The step summary is **declared by the workflow**, not a hidden
-always-on behaviour: a workflow opts in by declaring an edge-less `step` node
-(`prompt="@skill:satelle-step-summary"`), optionally `mandatory=true`. Where
-declared, after each transition this read-only observer records a 1–3 sentence
-`step_summary` ledger row; a `mandatory` summary failure is surfaced on the
-ledger rather than swallowed. A workflow without the node records no summaries.
+Not a gate. The step summary is **declared by the route**, not a hidden
+always-on behaviour: a route opts in with a `## gate satelle-step-summary`
+section in `step.md`, optionally `mandatory: true`. Where declared, after each
+transition this read-only observer records a 1–3 sentence `step_summary` ledger
+row; a `mandatory` summary failure is surfaced on the ledger rather than
+swallowed. A route without the gate records no summaries.
 
 ## Where the rubrics live
 

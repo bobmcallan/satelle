@@ -16,29 +16,18 @@ import (
 	"testing"
 )
 
-// telemetryWorkflow is a minimal in-loop lifecycle (no gates) so the transitions
-// enact quickly and write the status_transition rows the per-step report reads.
-const telemetryWorkflow = `---
-name: wf-telemetry
-type: workflow
-description: minimal in-loop lifecycle for telemetry/cost coverage
-applies_to: ["chore"]
-scope: project
----
-
-` + "```dot" + `
-digraph w {
-  backlog [shape=Mdiamond]
-  in_progress [agent=executor]
-  done [shape=Msquare]
-  backlog -> in_progress -> done
+// writeTelemetryRoute lands a minimal in-loop lifecycle (no gates) so the
+// transitions enact quickly and write the status_transition rows the per-step
+// report reads.
+func writeTelemetryRoute(t *testing.T, repo string) {
+	t.Helper()
+	writeSpineFixture(t, repo, "", "", "", "in_progress|executor|||", "done||||")
 }
-` + "```\n"
 
 func TestStoryLogStepSelfReportAndNoSecrets(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-telemetry.md"), telemetryWorkflow)
+	writeTelemetryRoute(t, repo)
 	mustRun(t, testBin, repo, "reindex")
 
 	out := mustRun(t, testBin, repo, "story", "create", "--category", "chore",
@@ -116,25 +105,14 @@ func TestStoryLogRefusesSecretLookingData(t *testing.T) {
 	}
 }
 
-// gateTelemetryWorkflow gates begin-work with a reviewer skill so a stubbed
+// writeGateTelemetryRoute gates begin-work with a reviewer skill so a stubbed
 // no-verdict reviewer drives the dispatch engine's retry/failure path.
-const gateTelemetryWorkflow = `---
-name: wf-gate-telemetry
-type: workflow
-description: gated lifecycle to exercise dispatch-failure telemetry
-applies_to: ["chore"]
-scope: project
----
-
-` + "```dot" + `
-digraph w {
-  backlog [shape=Mdiamond]
-  in_progress [agent=executor]
-  done [shape=Msquare]
-  backlog -> in_progress [agent=reviewer, prompt="@skill:satelle-story-intent-review"]
-  in_progress -> done
+func writeGateTelemetryRoute(t *testing.T, repo string) {
+	t.Helper()
+	writeSpineFixture(t, repo, "", "", "",
+		"in_progress|executor||satelle-story-intent-review|reviewer",
+		"done||||")
 }
-` + "```\n"
 
 // TestDispatchTelemetryOnReviewerFailure pins AC2 end-to-end (sty_b73c3236): when
 // a gated transition's reviewer never returns a verdict, the dispatch engine —
@@ -153,7 +131,7 @@ func TestDispatchTelemetryOnReviewerFailure(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
 		"[reviewer]\ncommand = \""+stub+" {system}\"\ntools = \"Read\"\n")
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "wf-gate-telemetry.md"), gateTelemetryWorkflow)
+	writeGateTelemetryRoute(t, repo)
 	mustRun(t, testBin, repo, "reindex")
 
 	out := mustRun(t, testBin, repo, "story", "create", "--category", "chore",

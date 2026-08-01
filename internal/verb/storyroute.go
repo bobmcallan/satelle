@@ -79,10 +79,9 @@ func renderRouteDoc(spec wfdot.Spec, wfName string, item workitem.Item, at, outc
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Route — %s\n\n", item.ID)
 	fmt.Fprintf(&b, "`%s` · category %s · currently **%s**\n\n", item.ID, orDash(item.Category), item.Status)
-	// Advisors are declared by a done.md/step.md route, not by an authored DOT —
-	// entry dispatch is retired (sty_05a5e203), so an authored graph has no way to
-	// name one. governingSpec resolves the DOT front door today; converting this
-	// repo's workflows (order 6) is what starts feeding advisors through here.
+	// Advisors are declared by the route's `advise` lines — entry dispatch is
+	// retired (sty_05a5e203), so nothing dispatches them; the orchestrator
+	// consults them and records the advice.
 	b.WriteString(wfroute.Build(spec, wfName, item.Tags, advisors).Render(at))
 	b.WriteString("\n" + routeOutcomesHeading + "\n")
 	if strings.TrimSpace(outcomes) == "" {

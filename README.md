@@ -159,9 +159,10 @@ naming what it `provides`, what it `requires`, its `agent`, and the `reviewers`
 gating entry to it. The binary owns ORDER (a topological sort of the
 prerequisites) and topology (cancel, park, backward movement), so neither is
 authored. The embedded route (`backlog → in_progress → done`, plus container and
-task-run sections) is the order-zero default a repo edits or overrides; a repo's
-own workflow still governs the categories it claims, and an authored DOT graph
-is still parsed for repos that have one. How each agent runs is bound in
+task-run sections) is the order-zero default a repo edits or overrides. A repo
+that still carries a retired DOT graph governs nothing until it converts —
+satelle refuses transitions under it, naming `satelle help workflow-convert`,
+rather than silently dropping every gate it authored. How each agent runs is bound in
 `.satelle/agents.toml` — the reviewer's
 agent CLI (`claude` and `grok` presets; Codex is first-class via preferred ACP
 (`interface=acp` + `npx -y @agentclientprotocol/codex-acp`, no `stdio`
@@ -173,7 +174,7 @@ an engaged story.
 
 Process is configuration — change the workflow or its skills, change the process,
 with no binary release. See `satelle help reviewer-checks` and the
-`satelle-agent-model` and `satelle-dot-standard` principles.
+`satelle-agent-model` and `satelle-route-standard` principles.
 
 Optional **step-scoped command policy** (`[gate.command_allow]` in
 `satelle.toml`): restrict named git subcommands (e.g. `push = ["release"]`) to

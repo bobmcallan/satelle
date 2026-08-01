@@ -10,28 +10,16 @@ import (
 	"testing"
 )
 
-// planDemoWorkflow isolates the dispatched plan step: backlog → plan(planner) →
-// in_progress(in-loop) → done, with the plan → in_progress edge gated by the
-// real satelle-story-plan-review.
-const planDemoWorkflow = `---
-name: plan-demo-workflow
-type: workflow
-description: isolates the dispatched fable plan step and the plan-review gate
-applies_to: ["plandemo"]
-scope: project
----
-
-` + "```dot" + `
-digraph w {
-  backlog [shape=Mdiamond]
-  plan [agent=planner, prompt="@skill:plan"]
-  in_progress [agent=executor]
-  done [shape=Msquare]
-  backlog -> plan
-  plan -> in_progress [reviewer_skill="satelle-story-plan-review"]
-  in_progress -> done
+// writePlanDemoRoute isolates the dispatched plan step: backlog → plan(planner)
+// → in_progress(in-loop) → done, with entry to in_progress gated by the real
+// satelle-story-plan-review.
+func writePlanDemoRoute(t *testing.T, repo string) {
+	t.Helper()
+	writeSpineFixture(t, repo, "", "", "",
+		"plan|planner|plan||",
+		"in_progress|executor||satelle-story-plan-review|reviewer",
+		"done||||")
 }
-` + "```\n"
 
 const validStructuredPlannerScript = `#!/bin/sh
 cat >/dev/null
@@ -64,7 +52,7 @@ func setupStructuredPlanRepo(t *testing.T, scriptBody string) (repo, id, script 
 		t.Fatal(err)
 	}
 	_ = f.Close()
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "plan-demo-workflow.md"), planDemoWorkflow)
+	writePlanDemoRoute(t, repo)
 	mustRun(t, testBin, repo, "reindex")
 	out := mustRun(t, testBin, repo, "story", "create", "--category", "plandemo",
 		"--title", "Plan me", "--body", "do the thing", "--acceptance", "1. the thing is done")

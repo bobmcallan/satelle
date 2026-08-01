@@ -9,98 +9,10 @@ import (
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 )
 
-const sampleWorkflowDOT = `---
-name: satelle-project-workflow
-applies_to: ["*"]
----
-# Project workflow (DOT)
-
-` + "```dot" + `
-digraph satelle_workflow {
-  graph [goal="Drive a story to done", vars="story, repo_root"]
-  rankdir=LR
-  backlog     [shape=Mdiamond]
-  done        [shape=Msquare]
-
-  plan        [agent=planner, prompt="@skill:plan"]
-  in_progress [agent=executor, prompt="@skill:code"]
-  cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
-  design      [agent=reviewer, prompt="@skill:satelle-design-review", on="in_progress", applies_to="surface:ui"]
-
-  backlog -> plan [agent=reviewer, prompt="@skill:satelle-story-intent-review"]
-  plan -> in_progress [agent=reviewer, prompt="@skill:satelle-story-plan-review,satelle-story-architecture-review", parallel=true]
-  in_progress -> done [agent=reviewer, prompt="@skill:satelle-story-release-review"]
-  backlog -> cancelled
-  in_progress -> cancelled
-}
-` + "```" + `
-`
-
-func TestFrontmatterListWeb(t *testing.T) {
-	got := frontmatterList(sampleWorkflowDOT, "applies_to")
-	if len(got) != 1 || got[0] != "*" {
-		t.Fatalf("applies_to = %v, want [*]", got)
-	}
-}
-
-// TestWorkflowRouteFromDOT: an authored DOT resolves to the ordered route — the
-// spine in workflow order, each step's performer and rubrics, and the reviewers
-// that gate ENTRY to it. Park/cancel destinations are exits, not steps.
-func TestWorkflowRouteFromDOT(t *testing.T) {
-	dotDoc := docindex.Doc{Kind: "workflows", Name: "w", Body: sampleWorkflowDOT}
-	r := workflowRoute([]docindex.Doc{dotDoc}, dotDoc, "", nil)
-	var got []string
-	for _, s := range r.Steps {
-		got = append(got, s.Status)
-	}
-	want := []string{"backlog", "plan", "in_progress", "done"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("route steps = %v, want %v", got, want)
-	}
-	byStatus := map[string]int{}
-	for i, s := range r.Steps {
-		byStatus[s.Status] = i
-	}
-	if s := r.Steps[byStatus["plan"]]; s.Agent != "planner" || len(s.Skills) != 1 || s.Skills[0] != "plan" {
-		t.Errorf("plan step performer = %q %v, want planner [plan]", s.Agent, s.Skills)
-	}
-	if s := r.Steps[byStatus["plan"]]; len(s.Reviewers) != 1 || s.Reviewers[0].Skill != "satelle-story-intent-review" {
-		t.Errorf("plan entry gates = %+v, want satelle-story-intent-review", s.Reviewers)
-	}
-	if s := r.Steps[byStatus["in_progress"]]; len(s.Reviewers) != 2 {
-		t.Errorf("in_progress entry gates = %+v, want the two plan-edge reviewers", s.Reviewers)
-	}
-	if !r.Steps[byStatus["done"]].Terminal {
-		t.Error("done must be the route's terminal step")
-	}
-	// The scoped design gate applies only to surface:ui — without the tag it is
-	// SKIPPED, not absent, so "no gate" stays distinguishable from "not for you".
-	ip := r.Steps[byStatus["in_progress"]]
-	if len(ip.Skipped) != 1 || ip.Skipped[0].Skill != "satelle-design-review" {
-		t.Errorf("in_progress skipped = %+v, want satelle-design-review", ip.Skipped)
-	}
-	tagged := workflowRoute([]docindex.Doc{dotDoc}, dotDoc, "", []string{"surface:ui"})
-	var found bool
-	for _, s := range tagged.Steps {
-		for _, rv := range s.Reviewers {
-			if rv.Skill == "satelle-design-review" {
-				found = true
-			}
-		}
-	}
-	if !found {
-		t.Error("a surface:ui story should carry the scoped design gate on its route")
-	}
-	// cancelled is an exit, never a step.
-	for _, s := range r.Steps {
-		if s.Status == "cancelled" {
-			t.Error("cancelled must be an exit, not a step")
-		}
-	}
-	if len(r.Exits) != 1 || r.Exits[0].Status != "cancelled" {
-		t.Errorf("exits = %+v, want cancelled", r.Exits)
-	}
-}
+// A lifecycle is a DERIVED ROUTE — done.md + step.md (sty_d953c5d8). The route
+// rendering is covered against that grammar below (TestWorkflowRouteFromRoute
+// and friends); the retired DOT sample and the test that read it are gone with
+// the front end.
 
 const sampleDone = `# Definition of done
 
@@ -148,13 +60,11 @@ func TestWorkflowRouteFromDoneStep(t *testing.T) {
 	set := []docindex.Doc{
 		{Kind: "workflows", Name: wfgovern.RouteSourceDone, Body: sampleDone},
 		{Kind: "workflows", Name: wfgovern.RouteSourceStep, Body: sampleStep},
-		{Kind: "workflows", Name: "w", Body: sampleWorkflowDOT},
 	}
 	if !wfgovern.RouteSourceOf(set).Present() {
 		t.Fatal("RouteSourceOf did not pick up done + step")
 	}
-	// The DOT body is present and must LOSE: a derived route wins when it exists.
-	r := workflowRoute(set, set[2], "feature", nil)
+	r := workflowRoute(set, set[0], "feature", nil)
 	var got []string
 	for _, s := range r.Steps {
 		got = append(got, s.Status+"="+s.Obligation)
@@ -191,7 +101,7 @@ func TestWorkflowRouteFromDoneStep(t *testing.T) {
 		t.Errorf("exits = %+v, want a blocked park exit", r.Exits)
 	}
 	// An unknown category yields no route rather than a silently ungated one.
-	if len(workflowRoute(set[:2], set[2], "nonesuch", nil).Steps) != 0 {
+	if len(workflowRoute(set, set[0], "nonesuch", nil).Steps) != 0 {
 		t.Error("an unknown category with no wildcard section must not resolve to a route")
 	}
 	// …but a `*` section governs it, which is how a wildcard workflow converts.
@@ -255,13 +165,38 @@ func TestWorkflowDetailEmptyRoute(t *testing.T) {
 	}
 }
 
-// TestWorkflowRowsSkipRouteSource: done.md and step.md are two halves of ONE
-// route, not two workflows — they get no row in the panel.
-func TestWorkflowRowsSkipRouteSource(t *testing.T) {
+// TestWorkflowRowsListRouteAsOneRow: done.md and step.md are two halves of ONE
+// route, not two workflows — they get no row of their own, and the route they
+// build gets exactly one, at the head. A panel that listed neither would show a
+// converted repo nothing at all (sty_d953c5d8).
+func TestWorkflowRowsListRouteAsOneRow(t *testing.T) {
 	rows := workflowRows([]docindex.Doc{
 		{Name: wfgovern.RouteSourceDone, Body: sampleDone},
 		{Name: wfgovern.RouteSourceStep, Body: sampleStep},
-		{Name: "satelle-project-workflow", Body: sampleWorkflowDOT},
+		{Name: "satelle-project-workflow", Body: "---\nname: satelle-project-workflow\n---\n# not a route\n"},
+	}, nil, nil)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v, want the route plus the workflow", rows)
+	}
+	if rows[0].Name != wfgovern.DerivedRouteName {
+		t.Errorf("the route must head the list, got %q", rows[0].Name)
+	}
+	// The row must expand through a doc the fragment handler can resolve — the
+	// displayed name is two filenames, not one doc.
+	if rows[0].ExpandName != wfgovern.RouteSourceDone {
+		t.Errorf("route row expands %q, want %q", rows[0].ExpandName, wfgovern.RouteSourceDone)
+	}
+	if rows[1].Name != "satelle-project-workflow" || rows[1].ExpandName != "satelle-project-workflow" {
+		t.Errorf("an authored workflow expands through its own name, got %+v", rows[1])
+	}
+}
+
+// TestWorkflowRowsWithoutRoute: half a route is not a route, so an unconverted
+// repo gets no phantom row.
+func TestWorkflowRowsWithoutRoute(t *testing.T) {
+	rows := workflowRows([]docindex.Doc{
+		{Name: wfgovern.RouteSourceDone, Body: sampleDone},
+		{Name: "satelle-project-workflow", Body: "---\nname: satelle-project-workflow\n---\n# not a route\n"},
 	}, nil, nil)
 	if len(rows) != 1 || rows[0].Name != "satelle-project-workflow" {
 		t.Fatalf("rows = %+v, want only the workflow", rows)

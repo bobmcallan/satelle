@@ -1,12 +1,11 @@
 // Route construction: an obligation list plus a step catalogue in, a Spec out.
 //
-// This is the SECOND CONSTRUCTOR onto Spec, beside Parse. Parse reads authored
-// DOT text; BuildRoute reads a declaration of done (done.md) and a step catalogue
-// (step.md) and DERIVES the same lifecycle. Every consumer downstream — Validate,
-// the reachability predicates, ScopedReviewersSplit, ExecutorSkillsFor, the
-// engine, the seat, the edit gate — sees a normal Spec and cannot tell which
-// front door it came through. That is the whole point: the graph stops being
-// authored without the machinery that reads it changing at all.
+// This is now the ONLY constructor onto Spec. BuildRoute reads a declaration of
+// done (done.md) and a step catalogue (step.md) and DERIVES the lifecycle. Every
+// consumer downstream — Validate, the reachability predicates,
+// ScopedReviewersSplit, ExecutorSkillsFor, the engine, the seat, the edit gate —
+// sees a normal Spec. That is the whole point: the graph stopped being authored
+// without the machinery that reads it changing at all (sty_d953c5d8).
 //
 // What the AUTHOR declares: obligations, steps, gates, and each step's
 // prerequisites. What the BINARY owns: order (a topological sort of the
@@ -69,8 +68,8 @@ type Step struct {
 }
 
 // RouteGate is an always-on gate: a reviewer that judges entry to named steps
-// rather than occupying a stage of its own. It is the declarative form of the
-// DOT's edge-less on="<state>" node.
+// rather than occupying a stage of its own — a `## gate <skill>` section with an
+// `on:` list.
 type RouteGate struct {
 	// Skill is the reviewer rubric.
 	Skill string
@@ -290,9 +289,9 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 		spec.States = append(spec.States, State{
 			Name: l.Park, Agent: "reviewer", Skill: l.ParkGate, From: []string{"*"},
 		})
-		// Park-from-anywhere: the authored DOT writes from="*" and Parse expands
-		// it into explicit inbound edges, so the constructor must expand it too.
-		// The start state is excluded — nothing has begun there to park.
+		// Park-from-anywhere: From holds the wildcard, but every consumer reads
+		// explicit inbound edges, so the constructor expands it here. The start
+		// state is excluded — nothing has begun there to park.
 		for _, st := range spine {
 			if st.Terminal || st.Start {
 				continue

@@ -34,9 +34,9 @@ func CheckFence(body string) string {
 
 // CheckCommand returns the functional-check command for a skill body: the
 // fenced ```check script when present, else a single-line `check:` frontmatter
-// scalar. Empty when the skill is an LLM reviewer. Single definition the engine
-// (agentstep.skillCheck) and format-drift/refresh share (sty_4cebc624 /
-// sty_6830e78e).
+// scalar. Empty when the skill is an LLM reviewer. Single definition every
+// caller shares — the engine (agentstep.skillCheck) and the route-source
+// structure check (sty_4cebc624 / sty_6830e78e).
 func CheckCommand(body string) string {
 	if block := CheckFence(body); block != "" {
 		return block

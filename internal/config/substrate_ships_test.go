@@ -21,13 +21,6 @@ var shipsAllow = map[string]map[string]string{
 		"plan":                         "name-shape vocabulary example of a bare executor rubric / stage name",
 		"release":                      "name-shape vocabulary example of a bare executor rubric / stage name",
 	},
-	"principles/satelle-dot-standard": {
-		"satelle-story-release-review": "DOT format example of an edge gate over an arbitrary repo graph",
-		"satelle-design-review":        "DOT format example of a second-reviewer binding name",
-		"integration":                  "DOT format example lifecycle state a repo may author",
-		"plan":                         "DOT format example lifecycle state a repo may author",
-		"release":                      "DOT format example lifecycle state a repo may author",
-	},
 	"principles/satelle-done-is-last": {
 		"commit_push": "hedged e.g. illustration of a richer repo graph",
 		"committed":   "hedged e.g. illustration of a richer repo graph",
