@@ -82,7 +82,7 @@ func applyDoneKey(l *List, key, value string, line int) error {
 	case "park":
 		name, gate, advisor, advisorSkill := parseRoleValue(value)
 		l.Park, l.ParkGate = name, gate
-		l.ParkOnEnterAgent, l.ParkOnEnterSkill = advisor, advisorSkill
+		l.ParkAdvisor, l.ParkAdvisorSkill = advisor, advisorSkill
 	case "cancel":
 		name, gate, _, _ := parseRoleValue(value)
 		l.Cancel, l.CancelGate = name, gate
@@ -99,7 +99,8 @@ func applyDoneKey(l *List, key, value string, line int) error {
 }
 
 // parseRoleValue reads `name @gate-skill` with an optional `advise <agent>
-// @skill` suffix naming the one-shot entry advisor.
+// @skill` suffix naming the advisor the ORCHESTRATOR consults on that role
+// state. It is a declaration, never a dispatch (sty_05a5e203).
 func parseRoleValue(v string) (name, gate, advisor, advisorSkill string) {
 	rest := v
 	if head, tail, ok := strings.Cut(v, " advise "); ok {
@@ -197,8 +198,8 @@ func applyStepKey(s *Step, key, value string, line int) error {
 		s.Requires = splitCSV(value)
 	case "applies_to":
 		s.AppliesTo = splitCSV(value)
-	case "on_enter":
-		s.OnEnterAgent, s.OnEnterSkill = parseNameSkill(value)
+	case "advise":
+		s.Advisor, s.AdvisorSkill = parseNameSkill(value)
 	case "start":
 		s.Start = value == "true"
 	case "terminal":

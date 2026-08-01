@@ -54,14 +54,15 @@ type Step struct {
 	Requires []string
 	// AppliesTo scopes the step to stories carrying a matching tag.
 	AppliesTo []string
-	// OnEnterAgent is a one-shot performer dispatched on entry to this step.
-	// Present so the shape can express what the authored DOT expresses. The epic
-	// retires on-enter dispatch in a later story; expressing it here means that
-	// removal happens in ONE place rather than living on as a permanent
-	// carve-out in the equivalence checker.
-	OnEnterAgent string
-	// OnEnterSkill is the rubric for OnEnterAgent.
-	OnEnterSkill string
+	// Advisor is a named agent the ORCHESTRATOR may consult on this step, and the
+	// rubric it consults under. It is a declaration, never a dispatch: under flat
+	// dispatch the orchestrator is the sole scheduler, so an advisor advises the
+	// orchestrator and is never fired by entry to a state (sty_05a5e203). It is
+	// deliberately absent from the emitted Spec — Spec is topology; who to consult
+	// is an instruction to the orchestrator, carried on the route.
+	Advisor string
+	// AdvisorSkill is the rubric Advisor is consulted under.
+	AdvisorSkill string
 	// Start marks the entry state; Terminal marks a terminal success state.
 	Start    bool
 	Terminal bool
@@ -98,9 +99,10 @@ type List struct {
 	Park string
 	// ParkGate is the reviewer that judges entry to Park.
 	ParkGate string
-	// ParkOnEnterAgent / ParkOnEnterSkill are the park state's entry advisor.
-	ParkOnEnterAgent string
-	ParkOnEnterSkill string
+	// ParkAdvisor / ParkAdvisorSkill name the advisor the orchestrator consults
+	// when it parks a story. Declared, never dispatched (see Step.Advisor).
+	ParkAdvisor      string
+	ParkAdvisorSkill string
 	// Cancel is the cancel sink synthesised from every non-terminal step.
 	Cancel string
 	// CancelGate is the reviewer that judges entry to Cancel.
@@ -210,14 +212,12 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 				st.Name, len(st.Skills))
 		}
 		spec.States = append(spec.States, State{
-			Name:         st.Name,
-			Agent:        st.Agent,
-			Skill:        firstOf(st.Skills),
-			Obligation:   st.Provides,
-			Shape:        shape,
-			AppliesTo:    st.AppliesTo,
-			OnEnterAgent: st.OnEnterAgent,
-			OnEnterSkill: st.OnEnterSkill,
+			Name:       st.Name,
+			Agent:      st.Agent,
+			Skill:      firstOf(st.Skills),
+			Obligation: st.Provides,
+			Shape:      shape,
+			AppliesTo:  st.AppliesTo,
 		})
 	}
 
@@ -275,7 +275,6 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 	if l.Park != "" {
 		spec.States = append(spec.States, State{
 			Name: l.Park, Agent: "reviewer", Skill: l.ParkGate, From: []string{"*"},
-			OnEnterAgent: l.ParkOnEnterAgent, OnEnterSkill: l.ParkOnEnterSkill,
 		})
 		// Park-from-anywhere: the authored DOT writes from="*" and Parse expands
 		// it into explicit inbound edges, so the constructor must expand it too.

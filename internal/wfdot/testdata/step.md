@@ -43,7 +43,7 @@ reviewers: satelle-story-release-review
 reviewer_agent: reviewer
 provides: closed
 requires: released
-on_enter: retrospective @satelle-lessons
+advise: retrospective @satelle-lessons
 
 ## gate satelle-step-summary
 agent: reviewer-summary

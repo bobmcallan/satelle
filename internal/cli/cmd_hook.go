@@ -347,17 +347,16 @@ var hookHarnessFlag string
 // seatInfo is a single engagement-lease view for gate denials and session inject
 // (sty_1738f973). Empty ItemID means no lease row was relevant.
 type seatInfo struct {
-	ItemID       string
-	State        string // lease target / in-flight target (messaging)
-	TargetState  string // immutable lease target used to authenticate a dispatched performer
-	StoryStatus  string // committed work-item status (step policy; sty_c21490cc)
-	StateAgent   string // agent allocated to lease target / State
-	OnEnterAgent string // one-shot agent allocated on entry to lease target
-	Owner        string
-	AcquiredAt   time.Time
-	HeartbeatAt  time.Time
-	Stale        bool
-	InFlight     bool
+	ItemID      string
+	State       string // lease target / in-flight target (messaging)
+	TargetState string // immutable lease target used to authenticate a dispatched performer
+	StoryStatus string // committed work-item status (step policy; sty_c21490cc)
+	StateAgent  string // agent allocated to lease target / State
+	Owner       string
+	AcquiredAt  time.Time
+	HeartbeatAt time.Time
+	Stale       bool
+	InFlight    bool
 	// EditCapable is true only when the committed status is a spine performing
 	// node allocated by DOT to agent=executor. It is intentionally narrower
 	// than Engaged, which also includes isolated-agent planning states.
@@ -564,7 +563,6 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 				"lease for item %s targets state %q not declared by workflow %s — cannot classify edit permission",
 				it.ID, target, wf.Name)
 		}
-		info.OnEnterAgent, _ = spec.StateOnEnterAgent(target)
 		engaging := map[string]bool{}
 		for _, s := range spec.NonTerminalEngagingStates() {
 			engaging[s] = true
@@ -630,7 +628,7 @@ func editPermitted(info seatInfo, marker dispatchMarker) bool {
 				target = info.State
 			}
 			if marker.Step == target {
-				agents = []string{info.StateAgent, info.OnEnterAgent}
+				agents = []string{info.StateAgent}
 			}
 		}
 		return info.InFlight && marker.Item == info.ItemID && slices.Contains(agents, marker.Agent)
@@ -641,10 +639,10 @@ func editPermitted(info seatInfo, marker dispatchMarker) bool {
 func dispatchAgents(spec wfdot.Spec) map[string][]string {
 	out := make(map[string][]string, len(spec.States))
 	for _, state := range spec.States {
-		for _, agent := range []string{state.Agent, state.OnEnterAgent} {
-			if agent != "" && !slices.Contains(out[state.Name], agent) {
-				out[state.Name] = append(out[state.Name], agent)
-			}
+		// Only the SPINE allocation dispatches (sty_05a5e203): entry no longer
+		// fires an agent, so a state allocates at most one dispatch target.
+		if state.Agent != "" && !slices.Contains(out[state.Name], state.Agent) {
+			out[state.Name] = append(out[state.Name], state.Agent)
 		}
 	}
 	return out

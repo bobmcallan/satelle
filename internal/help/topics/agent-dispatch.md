@@ -10,14 +10,20 @@ the rest of the story.
 
 ## The dispatch contract
 
-Dispatch fires **on entry** to the state, after that state's entry gate accepts.
+Dispatch fires **on entry** to the state, after that state's entry gate accepts,
+and ONLY because the spine allocated that step to a named agent.
 
-A node may also carry **`on_enter_agent=<name>`** with optional
-`on_enter_prompt="@skill:…"` — a one-shot performer dispatched on entry while
-the node's **`agent=`** remains the engagement role (typically `agent=reviewer`
-for a park state). That keeps the parked status non-engaging for edit/commit
-gates while still running triage once on entry. When both a named `agent=`
-performer and `on_enter_agent` are set, the named `agent=` performer wins.
+**Flat dispatch.** The orchestrator is the sole scheduler: `orch → step → orch`.
+Steps never call steps. A reviewer node returns a verdict and dispatches nothing.
+An agent-less, `agent=executor` or `agent=reviewer` state dispatches nothing —
+entering a state never fires an agent of its own.
+
+An **advisor** is a named agent the route says the orchestrator MAY consult —
+park triage, a post-close retrospective. It is a declaration, never a dispatch:
+`satelle story route <id>` names it, the orchestrator decides when to consult it,
+and the orchestrator records the advice on the story. (The earlier
+`on_enter_agent=` entry dispatch is retired: a state that fires an agent at
+itself hides work from the one place accountable for the route.)
 
 The agent receives:
 
@@ -63,7 +69,7 @@ See the satelle-dot-standard principle.
 
 The two roles get their context by opposite routes, so they need opposite grants.
 
-- **Performers** — a spine `agent=<name>` node, or `on_enter_agent=<name>` —
+- **Performers** — a spine `agent=<name>` node —
   are **dispatched** as a child process with **no conversation history**. They
   reconstruct context by *pulling* the story, its documents, and the ledger, so
   the grant must carry a **context channel**: either `Bash(satelle:*)` (a broad

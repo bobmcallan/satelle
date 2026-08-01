@@ -55,16 +55,18 @@ digraph satelle_workflow {
   in_progress [agent=executor, prompt="@skill:code"]    // IN-LOOP: driving session implements
   integration [agent=executor, prompt="@skill:integrate"] // IN-LOOP: driving session tests
   release     [agent=executor, prompt="@skill:release"] // IN-LOOP: driving session releases
-  // Terminal success. on_enter_agent dispatches [retrospective] once with
-  // @skill:satelle-lessons to attach a typed friction corpus (order:9) without
-  // making done engaging — same pattern as blocked's on_enter triage.
-  done        [shape=Msquare, on_enter_agent=retrospective, on_enter_prompt="@skill:satelle-lessons"]
+  // Terminal success. Nothing fires on entry: under FLAT DISPATCH the
+  // orchestrator is the sole scheduler, so the lessons corpus is captured by the
+  // orchestrator running `satelle story retrospect <id>` after close, not by the
+  // state dispatching an agent at itself.
+  done        [shape=Msquare]
   cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
   // blocked is a park state (not engaged): world-not-ready, same ACs on resume.
   // agent=reviewer so the edit/commit gates do not treat it as engaged work.
-  // on_enter_agent dispatches [blocked-triage] once on entry (<story-id>) without
-  // making blocked engaging — orthogonal to agent=; park gate stays blocked-review.
-  blocked     [agent=reviewer, prompt="@skill:satelle-story-blocked-review", on_enter_agent=blocked-triage, on_enter_prompt="@skill:satelle-story-blocked-triage", from="*"]
+  // Entry dispatches NOTHING (<story-id>): the orchestrator consults
+  // [blocked-triage] under @skill:satelle-story-blocked-triage when it parks a
+  // story, and records the advice so the blocked-review gate judges it.
+  blocked     [agent=reviewer, prompt="@skill:satelle-story-blocked-review", from="*"]
 
   // step opts this workflow into per-transition step summaries (<story-id>):
   // an edge-less declaration, mandatory so a summary failure is surfaced.
@@ -120,7 +122,8 @@ the reviewer gates (`satelle-story-intent-review`, `satelle-story-plan-review`,
 `satelle-code-ac-review`, `satelle-integration-review`, `satelle-integration-check`,
 `satelle-story-release-review`, `satelle-estimate-actual-review`,
 `satelle-story-cancel-review`, `satelle-step-summary`), and the post-release
-lessons capture (`satelle-lessons`, dispatched on enter-done via the
+lessons capture (`satelle-lessons`, run by the ORCHESTRATOR after close via
+`satelle story retrospect <id>` on the
 `[retrospective]` binding) are authored in the adopting repo's `.satelle/skills` — so
 there is no dangling `@skill:` reference and a story drives to a terminal state
 without a missing-skill block. `satelle-workflow-change-review` (CSV sibling on

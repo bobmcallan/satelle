@@ -9,7 +9,7 @@ func TestEditCapableStatesAreDOTDerived(t *testing.T) {
   in_progress [agent=executor, prompt="@skill:code"]
   integration [agent=executor, prompt="@skill:integrate"]
   release     [agent=executor, prompt="@skill:release"]
-  parked      [agent=reviewer, on_enter_agent=triage]
+  parked      [agent=reviewer]
   augment     [agent=executor, on="in_progress", applies_to="surface:ui"]
   step        [agent=reviewer, prompt="@skill:satelle-step-summary"]
   done        [shape=Msquare]
@@ -42,9 +42,6 @@ func TestEditCapableStatesAreDOTDerived(t *testing.T) {
 	}
 	if agent, found := spec.StateAgent("plan"); !found || agent != "planner" {
 		t.Errorf("StateAgent(plan) = %q, %v", agent, found)
-	}
-	if entry, found := spec.StateOnEnterAgent("parked"); !found || entry != "triage" {
-		t.Errorf("StateOnEnterAgent(parked) = %q, %v", entry, found)
 	}
 	if _, found := spec.StateAgent("unknown"); found {
 		t.Error("unknown state reported found")

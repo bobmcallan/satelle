@@ -133,15 +133,6 @@ type State struct {
 	// only in the route constructor) so the route a story renders is the same one
 	// whichever front door built the Spec (sty_39e2d9df).
 	Obligation string
-	// OnEnterAgent is an optional one-shot named performer dispatched on ENTRY
-	// to this state (on_enter_agent=<name>), orthogonal to Agent. Lets a park
-	// node stay agent=reviewer (non-engaging for edit/commit gates) while still
-	// running a performing agent once on entry (sty_5cabe26f). Empty means no
-	// entry dispatch. Does not affect IsPerforming / isEngaging.
-	OnEnterAgent string
-	// OnEnterSkill is the @skill rubric for OnEnterAgent
-	// (on_enter_prompt="@skill:NAME"). Empty when no on_enter_prompt is set.
-	OnEnterSkill string
 	// Mandatory is the node's `mandatory=true` attribute. For a step-summary node
 	// it means the step summary is required (a failure is surfaced, not swallowed);
 	// for other nodes it is advisory metadata. Populated from the DOT grammar.
@@ -415,18 +406,6 @@ func (s Spec) StateAgent(name string) (string, bool) {
 	for _, st := range s.States {
 		if st.Name == name {
 			return st.Agent, true
-		}
-	}
-	return "", false
-}
-
-// StateOnEnterAgent returns the node's one-shot entry agent and whether the
-// state exists. It lets hook dispatch markers validate an on-enter performer
-// without teaching the hook state names.
-func (s Spec) StateOnEnterAgent(name string) (string, bool) {
-	for _, st := range s.States {
-		if st.Name == name {
-			return st.OnEnterAgent, true
 		}
 	}
 	return "", false
@@ -802,15 +781,13 @@ func Parse(body string) (Spec, bool) {
 		return Spec{}, false
 	}
 	type node struct {
-		agent        string
-		skill        string   // resolved from prompt="@skill:NAME"
-		onEnterAgent string   // on_enter_agent=<name> one-shot performer on entry
-		onEnterSkill string   // on_enter_prompt="@skill:NAME"
-		mandatory    bool     // mandatory=true attribute
-		on           []string // on="s1,s2" / on="*" scope (declared always-on gate)
-		from         []string // from="s1,s2" / from="*" park inbound sources (sty_f75286dc)
-		shape        string   // DOT shape attribute (Mdiamond=start, Msquare=terminal)
-		appliesTo    []string // applies_to="surface:ui,…" (sty_c6d093c8)
+		agent     string
+		skill     string   // resolved from prompt="@skill:NAME"
+		mandatory bool     // mandatory=true attribute
+		on        []string // on="s1,s2" / on="*" scope (declared always-on gate)
+		from      []string // from="s1,s2" / from="*" park inbound sources (sty_f75286dc)
+		shape     string   // DOT shape attribute (Mdiamond=start, Msquare=terminal)
+		appliesTo []string // applies_to="surface:ui,…" (sty_c6d093c8)
 	}
 	nodes := map[string]node{}
 	var order []string
@@ -907,12 +884,6 @@ func Parse(body string) (Spec, bool) {
 		if p := attrs["prompt"]; strings.HasPrefix(p, "@skill:") {
 			n.skill = strings.TrimPrefix(p, "@skill:")
 		}
-		if ea := attrs["on_enter_agent"]; ea != "" {
-			n.onEnterAgent = ea
-		}
-		if ep := attrs["on_enter_prompt"]; strings.HasPrefix(ep, "@skill:") {
-			n.onEnterSkill = strings.TrimPrefix(ep, "@skill:")
-		}
 		if strings.EqualFold(attrs["mandatory"], "true") {
 			n.mandatory = true
 		}
@@ -944,7 +915,6 @@ func Parse(body string) (Spec, bool) {
 		n := nodes[name]
 		spec.States = append(spec.States, State{
 			Name: name, Agent: n.agent, Skill: n.skill,
-			OnEnterAgent: n.onEnterAgent, OnEnterSkill: n.onEnterSkill,
 			Mandatory: n.mandatory, On: n.on, From: n.from, Shape: n.shape,
 			AppliesTo: n.appliesTo,
 		})
@@ -1239,7 +1209,7 @@ func containsStr(ss []string, v string) bool {
 // Known DOT node attribute keys (sty_c6d093c8). Graph-level attrs (goal, vars)
 // never reach here — graph […] is short-circuited by dotReserved before attr parse.
 var knownNodeAttrs = map[string]bool{
-	"agent": true, "prompt": true, "on_enter_agent": true, "on_enter_prompt": true,
+	"agent": true, "prompt": true,
 	"mandatory": true, "on": true, "from": true, "shape": true, "model": true, "applies_to": true,
 }
 
@@ -1435,12 +1405,6 @@ func emitDOT(spec Spec, name string) string {
 		}
 		if s.Skill != "" {
 			attrs = append(attrs, fmt.Sprintf("prompt=\"@skill:%s\"", s.Skill))
-		}
-		if s.OnEnterAgent != "" {
-			attrs = append(attrs, "on_enter_agent="+s.OnEnterAgent)
-		}
-		if s.OnEnterSkill != "" {
-			attrs = append(attrs, fmt.Sprintf("on_enter_prompt=\"@skill:%s\"", s.OnEnterSkill))
 		}
 		if len(s.On) > 0 {
 			attrs = append(attrs, fmt.Sprintf("on=%q", strings.Join(s.On, ",")))

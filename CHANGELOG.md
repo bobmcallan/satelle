@@ -1,3 +1,20 @@
+## [0.0.381] - 2026-08-01
+
+### Added
+- **Three constitution clauses** — `.satelle/constitution.md` gains "Route, dispatch, and quality". **No route as judgement**: an agent may COMPOSE a route but never subtract from it, reorder past a pending gate, or satisfy an obligation by assertion — agent freedom is additive only. **Flat dispatch**: the orchestrator is the sole scheduler (`orch → step → orch`); steps never call steps, a reviewer returns a verdict and never triggers remediation, an advisor advises the orchestrator and never the step. **Quality over speed**: a route is never shortened to go faster — the tie-breaker for every argument about what an orchestrator may drop. They extend "no gate as code" along the same axis: that clause forbids deciding a *verdict* in Go, these forbid deciding a *route* in an agent's head (sty_05a5e203)
+- **Route advisors** — `wfroute.Advisor` and `AdvisorsFrom`, read from the substrate's `advise` declarations. The route now NAMES who the orchestrator may consult at a step or exit, with a consult line that says nothing dispatches it. That is the re-homing of park triage and the post-close retrospective: a state no longer fires an agent at itself; the route says who to ask, and the orchestrator decides when (sty_05a5e203)
+
+### Removed
+- **On-enter dispatch is retired.** `on_enter_agent` / `on_enter_prompt` were LIVE mechanism — `DispatchExecutor` fired a one-shot performer when a node's role agent was empty, executor or reviewer (sty_5cabe26f). Removing it is a removal of working behaviour, not a cleanup, and flat dispatch is why: a state that fires an agent at itself hides work from the one place accountable for the route. Entering a state now dispatches nothing; only a named SPINE `agent=<name>` allocation does (sty_05a5e203)
+- Both attributes leave the DOT node set, the parser, the formatter, `wfdot.State`, `Spec.StateOnEnterAgent`, the equivalence checker's per-state comparison, the agent-layer entry-binding validation, the seat's dispatch-agent set, and the machine-wide profile policy keys. An authored `on_enter_agent=` is now an UNKNOWN attribute and fails validation loudly rather than being silently ignored (sty_05a5e203)
+- **The equivalence checker's one divergence is resolved by removal.** `on_enter_agent` was the only construct the derived route could not express — deliberately, since a state firing another agent is exactly what flat dispatch forbids. Both representations now agree with nothing left to carve out (sty_05a5e203)
+- `TestDispatchOnEnterAgentFromPerforming` is replaced by `TestParkEntryDispatchesNothing` — the same fixture with the assertion inverted, plus a resolver that fails the test if a binding is even looked up. That is the honest record that the behaviour was removed rather than merely untested (sty_05a5e203)
+
+### Changed
+- `satelle-story-blocked-triage` and `satelle-lessons` are re-homed as ADVISORS: the skills now say the orchestrator consults them, that nothing dispatches them, and that the advice must be recorded on the story — which is how it reaches the route document's outcome half through the existing single writer, rather than vanishing with the dispatch. The retrospective runs via `satelle story retrospect <id>` after close (sty_05a5e203)
+- `satelle help agent-dispatch` states flat dispatch: only a spine `agent=<name>` node dispatches, a reviewer node returns a verdict and dispatches nothing, and an advisor is a declaration the orchestrator acts on (sty_05a5e203)
+- Known signal change: `satelle agent validate` now warns that `[blocked-triage]` and `[retrospective]` are orphaned. That is literally true and correct — neither is a dispatch target any more, and the warning already carves out "ok if used by a non-workflow verb". Deleting the bindings would be the wrong fix (sty_05a5e203)
+
 ## [0.0.380] - 2026-08-01
 
 ### Added

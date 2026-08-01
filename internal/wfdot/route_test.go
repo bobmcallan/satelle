@@ -112,8 +112,12 @@ func TestSynthesisedTopologyValidates(t *testing.T) {
 	if got := idx["in_progress->blocked"].Skill; got != "satelle-story-blocked-review" {
 		t.Errorf("park edge gate = %q, want satelle-story-blocked-review", got)
 	}
-	if agent, _ := spec.StateOnEnterAgent("blocked"); agent != "blocked-triage" {
-		t.Errorf("park advisor = %q, want blocked-triage", agent)
+	// The park advisor is DECLARED (`advise blocked-triage @…` in done.md) but is
+	// deliberately absent from the Spec: flat dispatch means entry fires nothing,
+	// so who to consult is an instruction to the orchestrator carried on the
+	// route, not topology (sty_05a5e203).
+	if agent, _ := spec.StateAgent("blocked"); agent != "reviewer" {
+		t.Errorf("park role agent = %q, want reviewer", agent)
 	}
 }
 

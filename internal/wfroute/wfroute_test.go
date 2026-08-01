@@ -63,7 +63,7 @@ func authored(t *testing.T) wfdot.Spec {
 // its performer, its rubrics and its entry reviewers. All five, per step, or the
 // route is not a substitute for reading the graph.
 func TestRouteExposesEveryStepField(t *testing.T) {
-	r := Build(derived(t, nil), "satelle-project-workflow", nil)
+	r := Build(derived(t, nil), "satelle-project-workflow", nil, nil)
 	byName := map[string]Step{}
 	for _, s := range r.Steps {
 		byName[s.Status] = s
@@ -92,7 +92,7 @@ func TestRouteExposesEveryStepField(t *testing.T) {
 // carries a tag says so, and one filtered out for want of that tag is recorded
 // as skipped — so "no gate" and "gate not for you" stay distinguishable.
 func TestRouteMarksTagScopedGates(t *testing.T) {
-	ui := stepAt(t, Build(derived(t, []string{"surface:ui"}), "wf", []string{"surface:ui"}), "integration")
+	ui := stepAt(t, Build(derived(t, []string{"surface:ui"}), "wf", []string{"surface:ui"}, nil), "integration")
 	var scoped *Reviewer
 	for i, rv := range ui.Reviewers {
 		if rv.Skill == "satelle-design-review" {
@@ -106,7 +106,7 @@ func TestRouteMarksTagScopedGates(t *testing.T) {
 		t.Errorf("design gate ByTag = %v; want [surface:ui] so the route says WHY it is present", scoped.ByTag)
 	}
 
-	cli := stepAt(t, Build(derived(t, []string{"surface:cli"}), "wf", []string{"surface:cli"}), "integration")
+	cli := stepAt(t, Build(derived(t, []string{"surface:cli"}), "wf", []string{"surface:cli"}, nil), "integration")
 	if contains(skillsOf(cli.Reviewers), "satelle-design-review") {
 		t.Error("a surface:cli story must not carry the surface:ui design gate")
 	}
@@ -118,7 +118,7 @@ func TestRouteMarksTagScopedGates(t *testing.T) {
 // TestRouteSeparatesExitsFromSteps: park and cancel are exits, never steps. A
 // route that listed them inline would claim the story passes through them.
 func TestRouteSeparatesExitsFromSteps(t *testing.T) {
-	r := Build(derived(t, nil), "wf", nil)
+	r := Build(derived(t, nil), "wf", nil, nil)
 	for _, s := range r.Steps {
 		if s.Status == "blocked" || s.Status == "cancelled" {
 			t.Fatalf("%q is an exit, not a step on the route", s.Status)
@@ -141,8 +141,8 @@ func TestRouteSeparatesExitsFromSteps(t *testing.T) {
 // on the surface the operator actually reads.
 func TestRouteIsBlindToItsFrontDoor(t *testing.T) {
 	tags := []string{"surface:ui"}
-	a := Build(authored(t), "wf", tags)
-	d := Build(derived(t, tags), "wf", tags)
+	a := Build(authored(t), "wf", tags, nil)
+	d := Build(derived(t, tags), "wf", tags, nil)
 	if len(a.Steps) != len(d.Steps) {
 		t.Fatalf("authored %d steps, derived %d", len(a.Steps), len(d.Steps))
 	}
@@ -165,7 +165,7 @@ func TestRouteIsBlindToItsFrontDoor(t *testing.T) {
 // line per step. If it overflows, the route has become too dynamic to read — the
 // failure is the signal, not a nuisance.
 func TestRouteFitsTheLegibilityBudget(t *testing.T) {
-	out := Build(derived(t, nil), "satelle-project-workflow", nil).Render("in_progress")
+	out := Build(derived(t, nil), "satelle-project-workflow", nil, nil).Render("in_progress")
 	steps := 0
 	for _, line := range strings.Split(out, "\n") {
 		if strings.Contains(line, "**") {
@@ -218,6 +218,67 @@ func sortStrings(ss []string) {
 	for i := 1; i < len(ss); i++ {
 		for j := i; j > 0 && ss[j] < ss[j-1]; j-- {
 			ss[j], ss[j-1] = ss[j-1], ss[j]
+		}
+	}
+}
+
+// TestRouteNamesTheAdvisorsToConsult (sty_05a5e203 AC3): flat dispatch means
+// entering a state fires nothing, so the route has to TELL the orchestrator who
+// to consult. The park exit names its triage advisor and the terminal step names
+// its retrospective one, both read from the substrate's `advise` declarations.
+func TestRouteNamesTheAdvisorsToConsult(t *testing.T) {
+	root := repoRoot(t)
+	doneBody, err := os.ReadFile(filepath.Join(root, "internal", "wfdot", "testdata", "done.md"))
+	if err != nil {
+		t.Fatalf("read done.md: %v", err)
+	}
+	stepBody, err := os.ReadFile(filepath.Join(root, "internal", "wfdot", "testdata", "step.md"))
+	if err != nil {
+		t.Fatalf("read step.md: %v", err)
+	}
+	lists, err := wfdot.ParseDone(string(doneBody))
+	if err != nil {
+		t.Fatalf("ParseDone: %v", err)
+	}
+	cat, err := wfdot.ParseSteps(string(stepBody))
+	if err != nil {
+		t.Fatalf("ParseSteps: %v", err)
+	}
+	var list wfdot.List
+	for _, l := range lists {
+		if l.Category == "feature" {
+			list = l
+		}
+	}
+	advisors := AdvisorsFrom(list, cat)
+	if len(advisors) < 2 {
+		t.Fatalf("advisors = %+v; want at least the park and terminal advisors", advisors)
+	}
+
+	r := Build(derived(t, nil), "satelle-project-workflow", nil, advisors)
+
+	var park *Exit
+	for i, e := range r.Exits {
+		if e.Status == "blocked" {
+			park = &r.Exits[i]
+		}
+	}
+	if park == nil || park.Advisor == nil || park.Advisor.Agent != "blocked-triage" {
+		t.Fatalf("park exit advisor = %+v; want blocked-triage named on the route", park)
+	}
+	term := stepAt(t, r, "done")
+	if term.Advisor == nil || term.Advisor.Agent != "retrospective" {
+		t.Errorf("terminal advisor = %+v; want retrospective named on the route", term.Advisor)
+	}
+
+	out := r.Render("in_progress")
+	for _, want := range []string{
+		"advisor: retrospective under @skill:satelle-lessons",
+		"advisor: blocked-triage under @skill:satelle-story-blocked-triage",
+		"the orchestrator consults it and records the advice; nothing dispatches it",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered route is missing %q:\n%s", want, out)
 		}
 	}
 }

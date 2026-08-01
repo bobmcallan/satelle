@@ -3,19 +3,26 @@ name: satelle-story-blocked-triage
 scope: system
 type: skill
 tags: [type:skill, type:executor]
-description: On-enter triage for a blocked story: diagnose root cause, attach reasoning and an unblock plan, then action an in-process fix within satelle gates. Does not advance status past blocked.
+description: Advisor the ORCHESTRATOR consults on a blocked story: diagnose root cause, attach reasoning and an unblock plan, then action an in-process fix within satelle gates. Does not advance status past blocked.
 ---
 
 # Story blocked triage (performing)
 
-You are a **performing** triage agent for a story that is (or just entered)
-**blocked**. Fresh context. You diagnose, record, and where the fix is inside
-satelle's process, you action the unblock **by the process, never around it**.
-You are **not** a reviewer — you do not return a gate verdict and you do not
-self-review the recovery transition.
+You are an **advisor** the ORCHESTRATOR consults for a story that is (or is about
+to be) **blocked**. Nothing dispatches you: under flat dispatch the orchestrator
+is the sole scheduler, so it decides when to consult you, and it must RECORD your
+advice on the story (`satelle story attach` / `satelle story log`) before it
+requests the park gate — which is where the advice becomes part of the story's
+route document rather than vanishing.
 
-Recognition of blockage (when to park) is [[satelle-recognise-blockage]]. This
-skill is what runs **after** park.
+Fresh context. You diagnose, record, and where the fix is inside satelle's
+process, you action the unblock **by the process, never around it**. You are
+**not** a reviewer — you do not return a gate verdict and you do not self-review
+the recovery transition.
+
+Recognition of blockage (when to park) is [[satelle-recognise-blockage]]. The
+orchestrator consults this skill around the park — the route names it as the
+blocked advisor, and `satelle story route <id>` is where it is discoverable.
 
 ## 1. DIAGNOSE
 

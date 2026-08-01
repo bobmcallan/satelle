@@ -61,12 +61,14 @@ func TestEditPermitted(t *testing.T) {
 			s.State = "plan"
 			s.StateAgent = "planner"
 		}), dispatchMarker{Agent: "planner", Step: "plan", Item: "sty_other"}, false},
-		{"on-enter exact", withSeat(base, func(s *seatInfo) {
+		// Entry dispatch is retired (sty_05a5e203): a reviewer park node allocates
+		// no performer, so a marker claiming to be a dispatched agent on it is not
+		// a dispatch this seat authorises.
+		{"park entry dispatches nothing", withSeat(base, func(s *seatInfo) {
 			s.InFlight = true
 			s.State = "parked"
 			s.StateAgent = "reviewer"
-			s.OnEnterAgent = "triage"
-		}), dispatchMarker{Agent: "triage", Step: "parked", Item: "sty_x"}, true},
+		}), dispatchMarker{Agent: "triage", Step: "parked", Item: "sty_x"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

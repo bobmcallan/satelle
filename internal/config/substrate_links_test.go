@@ -135,7 +135,6 @@ func workflowSkillRefs(name, body string) []string {
 	}
 	for _, n := range spec.States {
 		add(n.Skill)
-		add(n.OnEnterSkill)
 	}
 	_ = name
 	return out

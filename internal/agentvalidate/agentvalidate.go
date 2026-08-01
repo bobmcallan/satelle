@@ -292,20 +292,11 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 					r.Gates = append(r.Gates, gateAlloc(doc.Name, st.Name, st.Skill, st.Agent, b.Model))
 				}
 			}
-			// on_enter_agent=<name> one-shot entry performer (sty_5cabe26f) —
-			// orthogonal to agent=; must also resolve to a binding and counts
-			// as a use so the binding is not flagged orphaned. It is DISPATCHED,
-			// so it carries the same context-channel requirement (sty_87c0ef37).
-			if st.OnEnterAgent != "" {
-				usedNamed[st.OnEnterAgent] = true
-				if b, ok := agents.NamedBinding(st.OnEnterAgent); !ok {
-					r.allocProblem(fmt.Sprintf(
-						"workflow %q node %q sets on_enter_agent=%s with no [%s] binding in agents.toml",
-						doc.Name, st.Name, st.OnEnterAgent, st.OnEnterAgent))
-				} else if p := performerChannelProblem(doc.Name, st.Name, st.OnEnterAgent, b); p != "" {
-					r.allocProblem(p)
-				}
-			}
+			// on_enter_agent was validated here as a one-shot entry performer. Flat
+			// dispatch retired it (sty_05a5e203): no node dispatches on entry, so
+			// there is no entry binding to resolve. An ADVISOR the orchestrator
+			// consults is declared on the route, not on a node, and is not a
+			// dispatch target — so it carries no context-channel requirement here.
 		}
 		// Edge gates: skills share the edge's agent= binding (default reviewer).
 		for _, tr := range spec.Transitions {

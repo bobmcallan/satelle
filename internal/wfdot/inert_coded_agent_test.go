@@ -144,11 +144,16 @@ digraph t {
 	}
 }
 
-func TestStripAgentAttr_DoesNotTouchOnEnterAgent(t *testing.T) {
-	line := `  blocked [agent=reviewer, prompt="@skill:satelle-story-blocked-review", on_enter_agent=blocked-triage, on_enter_prompt="@skill:triage"]`
+// TestStripAgentAttr_MatchesOnlyTheAgentAttribute: the rewrite targets `agent=`
+// at an attribute boundary, so a longer attribute ENDING in `agent=` is not
+// clipped. on_enter_agent= was the attribute that made this matter; flat dispatch
+// retired it (sty_05a5e203), but the boundary property is the regex's actual
+// contract and stays asserted with a synthetic neighbour.
+func TestStripAgentAttr_MatchesOnlyTheAgentAttribute(t *testing.T) {
+	line := `  blocked [agent=reviewer, prompt="@skill:satelle-story-blocked-review", other_agent=blocked-triage]`
 	got := stripAgentAttr(line)
-	if !strings.Contains(got, "on_enter_agent=blocked-triage") {
-		t.Fatalf("on_enter_agent must survive stripAgentAttr:\n%s", got)
+	if !strings.Contains(got, "other_agent=blocked-triage") {
+		t.Fatalf("an attribute merely ending in agent= must survive stripAgentAttr:\n%s", got)
 	}
 	if strings.Contains(got, "[agent=reviewer") || strings.Contains(got, ", agent=reviewer") {
 		t.Fatalf("agent=reviewer should be stripped:\n%s", got)
@@ -158,8 +163,8 @@ func TestStripAgentAttr_DoesNotTouchOnEnterAgent(t *testing.T) {
 		t.Fatalf("indent should be preserved:\n%q", got)
 	}
 	rewritten := replaceAgentAttr(line, "reviewer-summary")
-	if !strings.Contains(rewritten, "on_enter_agent=blocked-triage") {
-		t.Fatalf("on_enter_agent must survive replaceAgentAttr:\n%s", rewritten)
+	if !strings.Contains(rewritten, "other_agent=blocked-triage") {
+		t.Fatalf("an attribute merely ending in agent= must survive replaceAgentAttr:\n%s", rewritten)
 	}
 	if !strings.Contains(rewritten, "agent=reviewer-summary") {
 		t.Fatalf("agent should rewrite to reviewer-summary:\n%s", rewritten)

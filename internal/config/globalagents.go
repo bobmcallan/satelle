@@ -98,7 +98,6 @@ var globalAgentsPolicyKeys = map[string]bool{
 	"gates":          true,
 	"states":         true,
 	"on":             true,
-	"on_enter_agent": true,
 	"mandatory":      true,
 	"parallel":       true,
 	"category":       true,

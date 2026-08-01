@@ -1582,78 +1582,57 @@ func TestDispatchExecutorCodeWriterFromPerformingProceeds(t *testing.T) {
 	}
 }
 
-// onEnterParkWF: reviewer park with on_enter_agent triage — node name is
-// "parked" (not "blocked") so the mechanism has no state-name dependence.
-var onEnterParkWF = wfDoc("on-enter-park", `"*"`, `digraph w {
+// parkEntryWF: a reviewer park node whose name is "parked" (not "blocked") so
+// the mechanism has no state-name dependence.
+var parkEntryWF = wfDoc("park-entry-wf", `"*"`, `digraph w {
   backlog [shape=Mdiamond]
   in_progress [agent=executor]
-  parked [agent=reviewer, prompt="@skill:park-gate", on_enter_agent=triage, on_enter_prompt="@skill:triage-skill"]
+  parked [agent=reviewer, prompt="@skill:park-gate"]
   done [shape=Msquare]
   backlog -> in_progress -> done
   in_progress -> parked [agent=reviewer, prompt="@skill:park-gate"]
   parked -> in_progress
 }`)
 
-// TestDispatchOnEnterAgentFromPerforming: AC1 (sty_5cabe26f) — a park node with
-// agent=reviewer still dispatches on_enter_agent once on entry when FROM is
-// performing. Tools/model come from the named binding.
-func TestDispatchOnEnterAgentFromPerforming(t *testing.T) {
-	docs := fakeDocs{workflow: onEnterParkWF, skillBody: "triage rubric", skillFound: true}
-	g, _ := newEngine(t, "", docs)
-	fr := &fakeRunner{out: "triaged"}
-	g.newRunner = func(string, string) (agentcli.Runner, error) { return fr, nil }
-	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
-		if name != "triage" {
-			return config.AgentBinding{}, false
-		}
-		return config.AgentBinding{
-			Role: "agent", Command: "fake -p {system}", Model: "opus",
-			Tools: "Read,Write,Edit,Bash(satelle:*)",
-		}, true
-	})
-	res, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "parked")
-	if err != nil {
-		t.Fatalf("on_enter from performing state should dispatch: %v", err)
-	}
-	if !res.Dispatched || res.Agent != "triage" || res.Skill != "triage-skill" {
-		t.Fatalf("result = %+v, want dispatched by triage with triage-skill", res)
-	}
-	if res.Model != "opus" {
-		t.Errorf("model = %q, want opus from binding", res.Model)
-	}
-	if fr.got.SystemPrompt == "" {
-		t.Error("triage agent must reach the run")
-	}
-	if !strings.Contains(fr.got.SystemPrompt, "triage rubric") {
-		t.Errorf("system prompt should carry on_enter skill rubric, got %q", fr.got.SystemPrompt)
-	}
-}
-
-// TestDispatchOnEnterAgentCodeWriterFromNonPerformingProceeds: lease model
-// (sty_8426b9c0) removes the FROM-performing code-writer lock for on_enter_agent
-// as well — Write/Edit grant from backlog into park is allowed (the lease, not
-// FROM status, authorises engagement for the edit gate).
-func TestDispatchOnEnterAgentCodeWriterFromNonPerformingProceeds(t *testing.T) {
-	wf := wfDoc("on-enter-from-backlog", `"*"`, `digraph w {
-  backlog [shape=Mdiamond]
-  parked [agent=reviewer, prompt="@skill:park-gate", on_enter_agent=triage, on_enter_prompt="@skill:triage-skill"]
-  done [shape=Msquare]
-  backlog -> parked
-  parked -> done
-}`)
-	docs := fakeDocs{workflow: wf, skillBody: "triage rubric", skillFound: true}
+// TestParkEntryDispatchesNothing replaces TestDispatchOnEnterAgentFromPerforming
+// (sty_5cabe26f), which asserted that entering a park node fired its
+// on_enter_agent once. Flat dispatch retires that (sty_05a5e203): the
+// orchestrator is the sole scheduler, so entering a state NEVER dispatches an
+// agent of its own. Same fixture, inverted assertion — the honest record that the
+// behaviour was removed rather than merely untested.
+func TestParkEntryDispatchesNothing(t *testing.T) {
+	docs := fakeDocs{workflow: parkEntryWF, skillBody: "triage rubric", skillFound: true}
 	g, _ := newEngine(t, "", docs)
 	fr := &fakeRunner{out: "triaged"}
 	g.newRunner = func(string, string) (agentcli.Runner, error) { return fr, nil }
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
-		return config.AgentBinding{Role: "agent", Command: "fake -p {system}", Tools: "Read,Edit,Write,Bash(satelle:*)"}, true
+		t.Error("no binding may be resolved: entry dispatches nothing")
+		return config.AgentBinding{}, false
 	})
-	res, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "parked")
+	res, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "parked")
 	if err != nil {
-		t.Fatalf("on_enter code-writer from non-performing FROM should proceed: %v", err)
+		t.Fatalf("entering a park node must be a no-op, not an error: %v", err)
 	}
-	if !res.Dispatched || res.Agent != "triage" {
-		t.Fatalf("result = %+v, want dispatched by triage", res)
+	if res.Dispatched {
+		t.Errorf("result = %+v, want nothing dispatched on entry", res)
+	}
+	if fr.got.SystemPrompt != "" {
+		t.Error("no agent may run on entry to a state")
+	}
+}
+
+// TestTerminalEntryDispatchesNothing: the other live on-enter dispatch was the
+// retrospective on `done`. Under flat dispatch the orchestrator runs it
+// (satelle story retrospect) — reaching a terminal state fires nothing.
+func TestTerminalEntryDispatchesNothing(t *testing.T) {
+	g, _ := newEngine(t, "", fakeDocs{workflow: parkEntryWF, skillBody: "rubric", skillFound: true})
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		t.Error("no binding may be resolved on entry to a terminal state")
+		return config.AgentBinding{}, false
+	})
+	res, err := g.DispatchExecutor(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done")
+	if err != nil || res.Dispatched {
+		t.Errorf("done entry: res=%+v err=%v; want no dispatch and no error", res, err)
 	}
 }
 

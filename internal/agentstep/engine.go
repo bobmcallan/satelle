@@ -833,16 +833,20 @@ func (g *Engine) SetSecondaryResolver(fn func(section string, b config.AgentBind
 
 // DispatchExecutor implements verb.ExecutorDispatcher: when the TARGET state of
 // an accepted transition is allocated to a NAMED agent (agent=<name>, neither
-// "executor" nor "reviewer"), OR carries on_enter_agent=<name> while its role
-// agent is empty/executor/reviewer (one-shot entry perform — sty_5cabe26f), the
-// binding's harness performs the step synchronously — prompt assembled from the
-// item (title, body, acceptance criteria on stdin) plus the node's @skill rubric,
-// tools/model/principles from the binding, nothing hardcoded (sty_fd427546). A
-// missing binding or a failed run is an ERROR — the caller refuses the transition
-// (broken definition never silently falls back in-loop, consistent with
-// sty_d0d6bb67). agent=executor, agent-less, and reviewer states with no
-// on_enter_agent dispatch nothing; a named binding whose harness is explicitly
-// "in-loop" also stays with the orchestrator.
+// "executor" nor "reviewer"), the binding's harness performs the step
+// synchronously — prompt assembled from the item (title, body, acceptance
+// criteria on stdin) plus the node's @skill rubric, tools/model/principles from
+// the binding, nothing hardcoded (sty_fd427546). A missing binding or a failed
+// run is an ERROR — the caller refuses the transition (broken definition never
+// silently falls back in-loop, consistent with sty_d0d6bb67). agent=executor,
+// agent-less and reviewer states dispatch nothing; a named binding whose harness
+// is explicitly "in-loop" also stays with the orchestrator.
+//
+// Flat dispatch (sty_05a5e203): this is the ONLY dispatch entering a state can
+// cause, and it happens because the SPINE allocates the step — not because the
+// state fires an agent of its own. Entry dispatch (on_enter_agent) is retired:
+// steps never call steps, so an advisor is consulted by the orchestrator at a
+// moment it chooses, and the route names which advisor that is.
 func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toStatus string) (verb.DispatchResult, error) {
 	doc, err := g.activeWorkflowPreferring(ctx, workflowCategory(item), stampedWorkflowName(item))
 	if err != nil {
@@ -865,26 +869,21 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	if target == nil {
 		return verb.DispatchResult{}, nil
 	}
-	// Resolve WHO performs: a named agent= performer takes priority; otherwise
-	// on_enter_agent is the one-shot entry dispatch (park nodes stay
-	// agent=reviewer for engagement while still running triage once on entry).
+	// Resolve WHO performs: a named spine agent= performer, and nothing else.
+	// Flat dispatch (sty_05a5e203): the orchestrator is the sole scheduler, so
+	// entering a state never fires an agent of its own. An agent-less, executor or
+	// reviewer state dispatches nothing — an ADVISOR named on the route is
+	// consulted by the orchestrator, at a moment it chooses, and never by entry.
 	// Spine skill + surface-matched augmentations compose additively
 	// (sty_8225d8a5); dispatchSkill is the first (primary) name for telemetry.
+	if target.Agent == "" || target.Agent == "executor" || target.Agent == "reviewer" {
+		return verb.DispatchResult{}, nil
+	}
 	dispatchAgent := target.Agent
 	composed := spec.ExecutorSkillsFor(toStatus, item.Tags)
 	dispatchSkill := firstStr(composed)
 	if dispatchSkill == "" {
 		dispatchSkill = target.Skill
-	}
-	if target.Agent == "" || target.Agent == "executor" || target.Agent == "reviewer" {
-		if target.OnEnterAgent == "" {
-			return verb.DispatchResult{}, nil
-		}
-		dispatchAgent, dispatchSkill = target.OnEnterAgent, target.OnEnterSkill
-		composed = nil
-		if dispatchSkill != "" {
-			composed = []string{dispatchSkill}
-		}
 	}
 	if g.namedAgents == nil {
 		return verb.DispatchResult{}, fmt.Errorf(

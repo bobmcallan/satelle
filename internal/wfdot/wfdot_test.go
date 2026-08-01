@@ -1022,15 +1022,17 @@ func TestNonTerminalEngagingStatesReviewerPark(t *testing.T) {
 	}
 }
 
-// TestOnEnterAgentParkStaysNonEngaging: on_enter_agent is orthogonal to Agent —
-// a reviewer park with a one-shot entry performer remains non-engaging and
-// non-performing (sty_5cabe26f). Uses a non-"blocked" node name so no name
-// dependence is implied.
-func TestOnEnterAgentParkStaysNonEngaging(t *testing.T) {
+// TestReviewerParkStaysNonEngaging: a reviewer park node is non-engaging and
+// non-performing, so the edit and commit gates do not treat a parked story as
+// engaged work. Uses a non-"blocked" node name so no name dependence is implied.
+// This assertion outlived on_enter_agent (retired by sty_05a5e203) — the park
+// node's ROLE was always what made it non-engaging, never the absence of an
+// entry performer.
+func TestReviewerParkStaysNonEngaging(t *testing.T) {
 	body := "```dot\n" + `digraph w {
   backlog     [shape=Mdiamond]
   in_progress [agent=executor]
-  parked      [agent=reviewer, prompt="@skill:park-gate", on_enter_agent=triage, on_enter_prompt="@skill:triage-skill"]
+  parked      [agent=reviewer, prompt="@skill:park-gate"]
   done        [shape=Msquare]
   backlog -> in_progress -> done
   in_progress -> parked [agent=reviewer, prompt="@skill:park-gate"]
@@ -1054,15 +1056,12 @@ func TestOnEnterAgentParkStaysNonEngaging(t *testing.T) {
 	if park.Agent != "reviewer" || park.Skill != "park-gate" {
 		t.Errorf("park role/gate: agent=%q skill=%q", park.Agent, park.Skill)
 	}
-	if park.OnEnterAgent != "triage" || park.OnEnterSkill != "triage-skill" {
-		t.Errorf("on_enter: agent=%q skill=%q", park.OnEnterAgent, park.OnEnterSkill)
-	}
 	if park.IsPerforming() {
-		t.Error("on_enter_agent must not make the node performing")
+		t.Error("a reviewer park node must not be performing")
 	}
 	for _, s := range spec.NonTerminalEngagingStates() {
 		if s == "parked" {
-			t.Errorf("park with on_enter_agent must not be engaging, got %v", spec.NonTerminalEngagingStates())
+			t.Errorf("a reviewer park must not be engaging, got %v", spec.NonTerminalEngagingStates())
 		}
 	}
 	// Edge gate into park still resolves (AC4).

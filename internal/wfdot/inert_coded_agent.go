@@ -146,7 +146,7 @@ func stripInertCodedAgent(line string, skillIsCoded SkillIsCodedCheck) (string, 
 		if !allCoded {
 			return line, false, FormatFinding{}
 		}
-		// Rewrite agent=<non-default> → agent=reviewer (preserves on_enter_agent=).
+		// Rewrite agent=<non-default> → agent=reviewer.
 		rewritten := replaceAgentAttr(line, "reviewer")
 		if rewritten == line {
 			return line, false, FormatFinding{}
@@ -200,12 +200,13 @@ func stripInertCodedAgent(line string, skillIsCoded SkillIsCodedCheck) (string, 
 	}
 }
 
-// agentAttrRE matches the agent= attribute only — not on_enter_agent= — by
+// agentAttrRE matches the agent= attribute only — never a longer attribute that
+// merely ENDS in agent= — by
 // requiring a non-identifier boundary before "agent" ([ , or whitespace).
 var agentAttrRE = regexp.MustCompile(`(?i)(^|[\[,\s])agent\s*=\s*("[^"]*"|'[^']*'|[A-Za-z0-9_-]+)`)
 
 // stripAgentAttr removes agent=… from a node/edge attribute list without
-// touching on_enter_agent=. Tidies only around the removal site (no whole-line
+// touching a longer neighbour. Tidies only around the removal site (no whole-line
 // indent collapse).
 func stripAgentAttr(line string) string {
 	cleaned := agentAttrRE.ReplaceAllStringFunc(line, func(m string) string {
@@ -225,7 +226,7 @@ func stripAgentAttr(line string) string {
 }
 
 // replaceAgentAttr sets agent=<name> on a line that already has agent= (not
-// on_enter_agent=).
+// a longer attribute ending in agent=).
 func replaceAgentAttr(line, name string) string {
 	return agentAttrRE.ReplaceAllString(line, "${1}agent="+name)
 }

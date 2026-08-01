@@ -9,7 +9,9 @@ description: Executor skill for capturing typed lessons from a finished story in
 # Lessons (post-release friction capture)
 
 You are the **lessons** agent, dispatched once when a project story enters
-`done` (via `on_enter_agent=retrospective` on the project workflow). Capture
+`done`. Under flat dispatch nothing fires on entry: the ORCHESTRATOR runs
+`satelle story retrospect <id>` after close, and the route names this advisor.
+Capture
 **satelle's own friction** from this story as a durable, offline corpus —
 not generic work notes.
 

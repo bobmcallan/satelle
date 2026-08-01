@@ -385,45 +385,11 @@ func TestValidate_OrphanBinding(t *testing.T) {
 	}
 }
 
-// TestValidate_OnEnterAgentBinding: on_enter_agent counts as a use of the named
-// binding (not orphaned) and hard-fails when the binding is missing (sty_5cabe26f).
-func TestValidate_OnEnterAgentBinding(t *testing.T) {
-	wfs := []docindex.Doc{{
-		Kind: "workflows", Name: "w",
-		Body: "---\nname: w\n---\n```dot\ndigraph w {\n  backlog [shape=Mdiamond]\n  parked [agent=reviewer, prompt=\"@skill:park\", on_enter_agent=triage, on_enter_prompt=\"@skill:triage\"]\n  done [shape=Msquare]\n  backlog -> parked -> done\n}\n```\n",
-	}}
-	// Matching binding → OK, not orphaned.
-	okAgents := config.AgentsConfig{
-		Executor: config.AgentBinding{Command: "in-loop"},
-		Reviewer: config.AgentBinding{Command: agentcli.DefaultClaudeCommand},
-		Agents: map[string]config.AgentBinding{
-			"triage": {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Bash(satelle:*)"},
-		},
-	}
-	r := Validate(okAgents, nil, wfs)
-	if !r.OK() {
-		t.Fatalf("on_enter with matching binding must be OK: %v", r.Problems)
-	}
-	for _, w := range r.Warnings {
-		if strings.Contains(w, "triage") && strings.Contains(w, "orphan") {
-			t.Errorf("on_enter_agent must mark the binding used, got orphan warning: %s", w)
-		}
-	}
-	// Missing binding → hard problem.
-	missing := config.AgentsConfig{
-		Executor: config.AgentBinding{Command: "in-loop"},
-		Reviewer: config.AgentBinding{Command: agentcli.DefaultClaudeCommand},
-	}
-	r2 := Validate(missing, nil, wfs)
-	if r2.OK() {
-		t.Fatal("on_enter_agent without binding must produce a problem")
-	}
-	joined := strings.Join(r2.Problems, "\n")
-	if !strings.Contains(joined, "on_enter_agent=triage") || !strings.Contains(joined, "parked") {
-		t.Errorf("problem should name on_enter_agent and node:\n%s", joined)
-	}
-}
-
+// on_enter_agent validation lived here (sty_5cabe26f): the entry performer had
+// to resolve to a binding and counted as a use so the binding was not flagged
+// orphaned. Flat dispatch retired entry dispatch entirely (sty_05a5e203), so
+// there is no entry binding to validate — an ADVISOR is declared on the route,
+// consulted by the orchestrator, and is not a dispatch target.
 func TestValidate_BadTimeout(t *testing.T) {
 	// LoadAgents would refuse this at load; Validate still checks TimeoutDuration
 	// on the in-memory binding for callers that construct AgentsConfig directly.
@@ -824,29 +790,6 @@ func TestValidate_UnallocatedBindingHasNoChannelFinding(t *testing.T) {
 	}
 	if !r.OK() {
 		t.Fatalf("orphan alone must not fail the report: %v", r.Problems)
-	}
-}
-
-// TestValidate_OnEnterAgentNeedsChannel — on_enter_agent= is a dispatched
-// one-shot performer and carries the same requirement as a spine agent=.
-func TestValidate_OnEnterAgentNeedsChannel(t *testing.T) {
-	agents := config.AgentsConfig{
-		Executor: config.AgentBinding{Command: "in-loop"},
-		Reviewer: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: "read_file,grep,list_dir", Model: "grok-4.5"},
-		Agents: map[string]config.AgentBinding{
-			"triage": {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob", Model: "opus"},
-		},
-	}
-	wfs := []docindex.Doc{{Kind: "workflows", Name: "w",
-		Body: "---\nname: w\n---\n```dot\ndigraph w {\n  backlog [shape=Mdiamond]\n  done [shape=Msquare]\n  blocked [agent=reviewer, prompt=\"@skill:r\", on_enter_agent=triage, on_enter_prompt=\"@skill:t\", from=\"*\"]\n  backlog -> done\n}\n```\n",
-	}}
-	r := Validate(agents, nil, wfs)
-	got := findingWith(r.Problems, "no context channel")
-	if got == "" {
-		t.Fatalf("on_enter_agent performer must be checked: problems=%v", r.Problems)
-	}
-	if !strings.Contains(got, "triage") {
-		t.Errorf("problem must name the on_enter_agent binding: %s", got)
 	}
 }
 

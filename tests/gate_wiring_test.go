@@ -19,7 +19,7 @@ import (
 type gateRef struct {
 	workflow string
 	skill    string
-	kind     string // "llmStub" | "fence" | "summariser" | "on_enter"
+	kind     string // "llmStub" | "fence" | "summariser"
 }
 
 // gateCoverageWaiver: gates not exercised via a simple CLI path in a temp repo.
@@ -29,9 +29,10 @@ var gateCoverageWaiver = map[string]string{
 	"satelle-parent-workflow/satelle-story-done-review": "parent close needs epic-parent + children; covered via baseline done gate",
 	// Task-workflow after gate is LLM; before is fence-covered in fence fixtures.
 	"satelle-task-workflow/satelle-task-validate-after-review": "task after-review needs execution lifecycle; before is fence golden",
-	// Blocked triage is on_enter performer, not a gate reviewer.
-	"satelle-baseline-workflow/satelle-story-blocked-triage":  "on_enter performer, not a status-advancing gate",
-	"satelle-substrate-workflow/satelle-story-blocked-triage": "on_enter performer, not a status-advancing gate",
+	// Blocked triage is an ADVISOR the orchestrator consults (sty_05a5e203), not a
+	// gate reviewer — nothing dispatches it and it advances no status.
+	"satelle-baseline-workflow/satelle-story-blocked-triage":  "orchestrator-consulted advisor, not a status-advancing gate",
+	"satelle-substrate-workflow/satelle-story-blocked-triage": "orchestrator-consulted advisor, not a status-advancing gate",
 	// Step summary is mandatory post-transition narration, not accept/reject gating.
 	"satelle-baseline-workflow/satelle-step-summary":          "summariser, not accept/reject gate",
 	"satelle-substrate-workflow/satelle-step-summary":         "summariser, not accept/reject gate",
@@ -81,9 +82,6 @@ func enumerateEmbeddedGates(t *testing.T) []gateRef {
 		for _, n := range spec.States {
 			if n.Skill != "" {
 				add(d.Name, n.Skill, classifyGateSkill(n.Skill))
-			}
-			if n.OnEnterSkill != "" {
-				add(d.Name, n.OnEnterSkill, "on_enter")
 			}
 		}
 		// create_review frontmatter is a gate binding not always in the DOT graph

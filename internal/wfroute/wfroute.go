@@ -36,6 +36,37 @@ type Reviewer struct {
 	ByTag  []string `json:"by_tag,omitempty"`
 }
 
+// Advisor names an agent the ORCHESTRATOR may consult at a step, and the rubric
+// it consults under. It is never a dispatch: under flat dispatch the orchestrator
+// is the sole scheduler, so entering a state fires nothing and an advisor advises
+// the orchestrator, never the step (sty_05a5e203).
+//
+// Advisors are passed IN rather than read off the Spec, because they are not
+// topology: the Spec says where a story may go, the route says who the
+// orchestrator may consult on the way.
+type Advisor struct {
+	Step  string `json:"step"`
+	Agent string `json:"agent"`
+	Skill string `json:"skill,omitempty"`
+}
+
+// AdvisorsFrom derives the advisors a declaration of done and its step catalogue
+// declare: the park state's `advise <agent> @skill` suffix, plus any step's
+// `advise:` key. This is the only place the two forms are read, so a consumer
+// building a route from done.md + step.md does not re-derive them.
+func AdvisorsFrom(l wfdot.List, cat wfdot.Catalogue) []Advisor {
+	var out []Advisor
+	if l.Park != "" && l.ParkAdvisor != "" {
+		out = append(out, Advisor{Step: l.Park, Agent: l.ParkAdvisor, Skill: l.ParkAdvisorSkill})
+	}
+	for _, st := range cat.Steps {
+		if st.Advisor != "" {
+			out = append(out, Advisor{Step: st.Name, Agent: st.Advisor, Skill: st.AdvisorSkill})
+		}
+	}
+	return out
+}
+
 // Step is one stop on the route.
 type Step struct {
 	// Status is the status the story holds while in this step.
@@ -56,6 +87,8 @@ type Step struct {
 	Skipped []Reviewer `json:"skipped,omitempty"`
 	// Terminal marks the route's success end.
 	Terminal bool `json:"terminal,omitempty"`
+	// Advisor is the agent the orchestrator may consult at this step.
+	Advisor *Advisor `json:"advisor,omitempty"`
 }
 
 // Exit is an off-route destination — a park or cancel state the story may leave
@@ -68,6 +101,9 @@ type Exit struct {
 	Status string   `json:"status"`
 	Gates  []string `json:"gates,omitempty"`
 	Park   bool     `json:"park,omitempty"`
+	// Advisor is the agent the orchestrator may consult on this exit — the park
+	// triage advisor, most commonly.
+	Advisor *Advisor `json:"advisor,omitempty"`
 }
 
 // Route is the whole artifact's PLAN half: the ordered spine plus the exits.
@@ -85,8 +121,14 @@ type Route struct {
 // one hop, and it holds for a derived Spec without change because BuildRoute
 // marks its terminal step the same way. States that reach no success terminal
 // (park, cancel) are exits, not steps.
-func Build(spec wfdot.Spec, workflow string, tags []string) Route {
+func Build(spec wfdot.Spec, workflow string, tags []string, advisors []Advisor) Route {
 	r := Route{Workflow: workflow}
+	byStep := map[string]Advisor{}
+	for _, a := range advisors {
+		if a.Step != "" && a.Agent != "" {
+			byStep[a.Step] = a
+		}
+	}
 	dist := distToSuccess(spec)
 
 	order := map[string]int{}
@@ -116,9 +158,18 @@ func Build(spec wfdot.Spec, workflow string, tags []string) Route {
 		onSpine[st.Name] = true
 	}
 	for _, st := range spine {
-		r.Steps = append(r.Steps, buildStep(spec, st, tags))
+		step := buildStep(spec, st, tags)
+		if a, ok := byStep[st.Name]; ok {
+			step.Advisor = &a
+		}
+		r.Steps = append(r.Steps, step)
 	}
 	r.Exits = buildExits(spec, onSpine)
+	for i := range r.Exits {
+		if a, ok := byStep[r.Exits[i].Status]; ok {
+			r.Exits[i].Advisor = &a
+		}
+	}
 	return r
 }
 
@@ -251,6 +302,9 @@ func (r Route) Render(at string) string {
 		}
 		fmt.Fprintf(&b, "%s %d. **%s**%s%s%s\n", marker, i+1, s.Status,
 			renderObligation(s), renderPerformer(s), renderGates(s))
+		if line := renderAdvisor(s.Advisor); line != "" {
+			b.WriteString(line)
+		}
 	}
 	if len(r.Exits) > 0 {
 		var exits []string
@@ -267,8 +321,26 @@ func (r Route) Render(at string) string {
 			exits = append(exits, label)
 		}
 		fmt.Fprintf(&b, "\nExits (off-route): %s\n", strings.Join(exits, "; "))
+		for _, e := range r.Exits {
+			if line := renderAdvisor(e.Advisor); line != "" {
+				fmt.Fprintf(&b, "  on %s —%s", e.Status, strings.TrimPrefix(line, "   "))
+			}
+		}
 	}
 	return b.String()
+}
+
+// renderAdvisor writes the CONSULT line. It is addressed to the orchestrator on
+// purpose: nothing fires this agent, so the route has to say who to ask and when.
+func renderAdvisor(a *Advisor) string {
+	if a == nil {
+		return ""
+	}
+	rubric := ""
+	if a.Skill != "" {
+		rubric = " under @skill:" + a.Skill
+	}
+	return fmt.Sprintf("   advisor: %s%s — the orchestrator consults it and records the advice; nothing dispatches it\n", a.Agent, rubric)
 }
 
 func renderObligation(s Step) string {

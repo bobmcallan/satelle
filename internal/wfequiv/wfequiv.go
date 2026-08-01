@@ -132,16 +132,12 @@ func diffPath(want, got wfdot.Spec) []string {
 		if wa != ga {
 			out = append(out, fmt.Sprintf("state %q agent: want %q, got %q", name, wa, ga))
 		}
-		// on_enter_agent is LIVE dispatch (agentstep.DispatchExecutor resolves it
-		// as a one-shot entry performer), so a representation that cannot carry it
-		// must be REPORTED, not quietly blessed. The epic retires it deliberately;
-		// the checker's job is to make that a decision rather than an accident.
-		if we, _ := want.StateOnEnterAgent(name); true {
-			ge, _ := got.StateOnEnterAgent(name)
-			if we != ge {
-				out = append(out, fmt.Sprintf("state %q on_enter_agent: want %q, got %q", name, we, ge))
-			}
-		}
+		// on_enter_agent was compared here while it was LIVE dispatch: a
+		// representation that could not carry it had to be REPORTED, not quietly
+		// blessed. Flat dispatch retired it (sty_05a5e203) — entry no longer fires
+		// an agent in EITHER representation — so there is nothing left to compare.
+		// An advisor is an instruction to the orchestrator carried on the route,
+		// not topology, and topology is what this checker exists to compare.
 		for _, p := range []struct {
 			label string
 			w, g  bool
