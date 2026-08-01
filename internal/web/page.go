@@ -312,23 +312,16 @@ const templatesSrc = `
   <div class="wi-tags">{{if .Provenance}}{{tagchip (printf "provenance:%s" .Provenance)}}{{end}}{{if .Scope}}{{tagchip (printf "scope:%s" .Scope)}}{{end}}{{range .AppliesTo}}{{tagchip (printf "applies_to:%s" .)}}{{end}}</div>
   {{if .Source}}<div class="meta mono">source: {{.Source}}</div>{{end}}
 
-  {{if .Diagram}}<h4>Flow</h4>
-  <div class="wf-controls">
-    <button class="wf-toggle-alt" type="button" aria-pressed="true" title="show or hide cancel/recovery edges">cancel/recovery edges</button>
-    <span class="wf-hint">drag to pan · scroll to zoom · double-click to reset · hover a state to trace it · click a gate for its full skill</span>
-  </div>
-  <div class="wf-diagram-wrap">{{.Diagram}}</div>{{end}}
-
-  <h4>States</h4>
-  <div class="wf-states">{{range .Spec.States}}<span class="wf-node{{if .Terminal}} terminal{{end}}">{{.Name}}{{if .Agent}}<span class="wf-agent">{{.Agent}}</span>{{end}}</span>{{else}}<span class="empty">no states declared</span>{{end}}</div>
-
-  <h4>Transitions</h4>
-  {{if .Spec.Transitions}}<ul class="wf-edges">{{range .Spec.Transitions}}<li class="wf-edge" data-from="{{.From}}" data-to="{{.To}}"{{if gt .Parallel 0}} data-parallel="{{.Parallel}}"{{end}}>
-    <span class="wf-node sm">{{.From}}</span>
-    <span class="wf-arrow">→</span>
-    <span class="wf-node sm">{{.To}}</span>
-    {{if .Skills}}{{if gt .Parallel 0}}<span class="wf-gate parallel" title="concurrent multi-reviewer (parallel={{.Parallel}})">∥{{.Parallel}}</span>{{end}}{{range .Skills}}<span class="wf-gate" title="reviewer gate">{{.}}</span>{{end}}{{else if .Skill}}{{if gt .Parallel 0}}<span class="wf-gate parallel" title="concurrent multi-reviewer (parallel={{.Parallel}})">∥{{.Parallel}}</span>{{end}}<span class="wf-gate" title="reviewer gate">{{.Skill}}</span>{{else}}<span class="wf-gate ungated" title="no reviewer skill — advisory">ungated</span>{{end}}
-  </li>{{end}}</ul>{{else}}<div class="empty">no transitions declared</div>{{end}}
+  <h4>Route</h4>
+  {{if .Route.Steps}}<div class="meta">the ordered steps to done — order is the workflow's, not the agent's</div>
+  <ol class="route">{{range .Route.Steps}}<li class="route-step{{if .Terminal}} terminal{{end}}" data-state="{{.Status}}">
+    <div class="route-head"><span class="wf-node{{if .Terminal}} terminal{{end}}">{{.Status}}</span>{{if .Obligation}}<span class="route-oblig">{{.Obligation}}</span>{{end}}</div>
+    <div class="route-perf">{{if .Skills}}<span class="route-agent">{{if .Agent}}{{.Agent}}{{else}}in-loop{{end}}</span> runs {{range .Skills}}<span class="route-skill">@skill:{{.}}</span>{{end}}{{else if .Terminal}}<span class="route-none">terminal</span>{{else if .Agent}}<span class="route-agent">{{.Agent}}</span>{{else}}<span class="route-none">not performed</span>{{end}}</div>
+    <div class="route-gates">{{if or .Reviewers .Skipped}}<span class="route-label">entry gated by</span>{{range .Reviewers}}<span class="wf-gate"{{if .ByTag}} title="on the route because the story carries {{join .ByTag " or "}}"{{else}} title="reviewer gate"{{end}}>{{.Skill}}{{if .ByTag}} <span class="route-bytag">by tag {{join .ByTag "|"}}</span>{{end}}</span>{{end}}{{range .Skipped}}<span class="wf-gate skipped" title="skipped — this story carries none of {{join .ByTag " or "}}">{{.Skill}} <span class="route-bytag">needs tag {{join .ByTag "|"}}</span></span>{{end}}{{else}}<span class="wf-gate ungated" title="no reviewer gates entry to this step">entry ungated</span>{{end}}</div>
+    {{with .Advisor}}<div class="route-advisor">advisor: <span class="route-agent">{{.Agent}}</span>{{if .Skill}} under <span class="route-skill">@skill:{{.Skill}}</span>{{end}} — the orchestrator consults it and records the advice; nothing dispatches it</div>{{end}}
+  </li>{{end}}</ol>
+  {{if .Route.Exits}}<div class="route-exits"><span class="route-label">exits (off-route)</span>{{range .Route.Exits}}<span class="route-exit"><span class="wf-node sm">{{.Status}}</span><span class="route-none">{{if .Park}}park — resumes to origin{{else}}terminal{{end}}</span>{{range .Gates}}<span class="wf-gate">{{.}}</span>{{end}}</span>{{end}}</div>{{end}}
+  {{else}}<div class="empty">no route — this workflow declares no path to a terminal success state</div>{{end}}
 
   <h4>Definition</h4>
   <pre class="prose">{{.Body}}</pre>
@@ -353,6 +346,8 @@ const templatesSrc = `
     <div class="run-meta">created {{ftime .CreatedAt}} · updated {{ftime .UpdatedAt}}</div>
     {{if .Output}}<pre class="run-output prose">{{.Output}}</pre>{{else}}<div class="run-noout">no output recorded</div>{{end}}
   </li>{{end}}</ol>{{else}}<div class="empty">No runs yet — create one with <code>satelle execution create --parent {{.Item.ID}}</code>.</div>{{end}}{{end}}
+  {{with .Route}}<h4>Route</h4>
+  <article class="doc-article route-doc">{{.HTML}}</article>{{end}}
   {{if .Docs}}<h4>Documents</h4>
   <ul class="doc-list">{{range .Docs}}<li><details class="doc-item"><summary>{{.Name}}{{if .Type}} <span class="doc-item-type">{{.Type}}</span>{{end}}</summary><article class="doc-article">{{.HTML}}</article></details></li>{{end}}</ul>{{end}}
   <h4>Timeline</h4>

@@ -399,3 +399,83 @@ func TestMirrorProjectPageRendersTemplates(t *testing.T) {
 		t.Errorf("POST /theme must not succeed, got %d", presp.StatusCode)
 	}
 }
+
+// TestStoryDetailPresentsRouteDocument (sty_085e1a5a AC2): a story in flight
+// shows its route with each step's outcome, taken from the route DOCUMENT the
+// engine wrote — the web layer presents that artifact and lifts it out of the
+// generic attachment list, so nothing is re-derived here.
+func TestStoryDetailPresentsRouteDocument(t *testing.T) {
+	s, err := mirror.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	rk := "rk-route"
+	if _, err := s.TouchPartition(ctx, rk, "demo", now); err != nil {
+		t.Fatal(err)
+	}
+
+	story := workitem.Item{
+		ID: "sty_r", Kind: workitem.KindStory, Title: "Routed",
+		Status: workitem.StatusInProgress, Category: "feature", UpdatedAt: now, CreatedAt: now,
+	}
+	sb, _ := json.Marshal(story)
+	routeDoc, _ := json.Marshal(map[string]string{
+		"name": routeDocName, "type": "route",
+		"body": "## Route\n\n* 3. **in_progress**\n\n## Outcomes\n\n### plan → in_progress — accepted\n\n- **satelle-story-plan-review** — ACCEPT\n",
+	})
+	planDoc, _ := json.Marshal(map[string]string{"name": "plan", "type": "plan", "body": "# Plan\n"})
+	if err := s.ReplaceKind(ctx, rk, "story", []mirror.ItemRow{{ID: "sty_r", Payload: string(sb)}}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceKind(ctx, rk, "story_doc", []mirror.ItemRow{
+		{ID: "sty_r/route", Payload: string(routeDoc)},
+		{ID: "sty_r/plan", Payload: string(planDoc)},
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+
+	d, _, err := mirrorLoadDetail(ctx, s, rk, "story", "sty_r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Route == nil {
+		t.Fatal("the route document should be lifted into detailData.Route")
+	}
+	for _, name := range []string{routeDocName} {
+		for _, doc := range d.Docs {
+			if doc.Name == name {
+				t.Errorf("%s must not also appear in Documents (shown twice)", name)
+			}
+		}
+	}
+	if len(d.Docs) != 1 || d.Docs[0].Name != "plan" {
+		t.Errorf("Docs = %+v, want just the plan document", d.Docs)
+	}
+
+	var buf strings.Builder
+	if err := tmpl.ExecuteTemplate(&buf, "itemDetail", d); err != nil {
+		t.Fatalf("ExecuteTemplate: %v", err)
+	}
+	html := buf.String()
+	for _, want := range []string{"<h4>Route</h4>", "in_progress", "satelle-story-plan-review", "ACCEPT"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("story detail missing %q:\n%s", want, html)
+		}
+	}
+
+	// A story that has not transitioned yet gets no fabricated route.
+	if err := s.ReplaceKind(ctx, rk, "story_doc", nil, now); err != nil {
+		t.Fatal(err)
+	}
+	d2, _, err := mirrorLoadDetail(ctx, s, rk, "story", "sty_r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d2.Route != nil {
+		t.Error("no route document ⇒ no Route section; the web layer must not derive one")
+	}
+}

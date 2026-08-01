@@ -6,7 +6,16 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/wfdot"
 )
+
+// wfDoc builds a minimal workflow doc body: frontmatter plus a DOT lifecycle.
+// The web layer resolves a lifecycle only through internal/wfdot, so a fixture
+// has to be authored in the same grammar the substrate is (sty_085e1a5a).
+func wfDoc(name, appliesTo, edges string) string {
+	return "---\nname: " + name + "\ntype: workflow\napplies_to: " + appliesTo + "\n---\n" +
+		"```dot\ndigraph w {\n  done [shape=Msquare]\n  " + edges + "\n}\n```\n"
+}
 
 // TestCategoryStepOf: each item is numbered against the workflow ACTIVE for its
 // category — an epic-parent against the parent workflow (done = step 1), a
@@ -14,12 +23,10 @@ import (
 // hardcoded longest-spine resolver (sty_8dafac0e).
 func TestCategoryStepOf(t *testing.T) {
 	project := docindex.Doc{Kind: "workflows", Name: "satelle-project-workflow",
-		Body: "---\nname: satelle-project-workflow\ntype: workflow\napplies_to: [\"*\"]\n---\ntransitions:\n" +
-			"  - {from: backlog, to: in_progress}\n  - {from: in_progress, to: commit_push}\n" +
-			"  - {from: commit_push, to: committed}\n  - {from: committed, to: done}\n"}
+		Body: wfDoc("satelle-project-workflow", `["*"]`,
+			"backlog -> in_progress -> commit_push -> committed -> done")}
 	parent := docindex.Doc{Kind: "workflows", Name: "satelle-parent-workflow",
-		Body: "---\nname: satelle-parent-workflow\ntype: workflow\napplies_to: [\"epic-parent\", \"parent\"]\n---\ntransitions:\n" +
-			"  - {from: backlog, to: done}\n"}
+		Body: wfDoc("satelle-parent-workflow", `["epic-parent", "parent"]`, "backlog -> done")}
 	stepOf := categoryStepOf([]docindex.Doc{project, parent})
 
 	if got := stepOf("epic-parent", "done"); got != 1 {
@@ -44,13 +51,10 @@ func TestCategoryStepOf(t *testing.T) {
 // triggered the bug.
 func TestCategoryStepOfActiveWorkflowWins(t *testing.T) {
 	baseline := docindex.Doc{Kind: "workflows", Name: "satelle-baseline-workflow", Embedded: true,
-		Body: "---\nname: satelle-baseline-workflow\ntype: workflow\napplies_to: [\"*\"]\n---\ntransitions:\n" +
-			"  - {from: backlog, to: in_progress}\n  - {from: in_progress, to: done}\n"}
+		Body: wfDoc("satelle-baseline-workflow", `["*"]`, "backlog -> in_progress -> done")}
 	project := docindex.Doc{Kind: "workflows", Name: "satelle-project-workflow", Embedded: false,
-		Body: "---\nname: satelle-project-workflow\ntype: workflow\napplies_to: [\"*\"]\n---\ntransitions:\n" +
-			"  - {from: backlog, to: in_progress}\n  - {from: in_progress, to: integration}\n" +
-			"  - {from: integration, to: commit_push}\n  - {from: commit_push, to: committed}\n" +
-			"  - {from: committed, to: done}\n"}
+		Body: wfDoc("satelle-project-workflow", `["*"]`,
+			"backlog -> in_progress -> integration -> commit_push -> committed -> done")}
 	stepOf := categoryStepOf([]docindex.Doc{baseline, project})
 	for state, want := range map[string]int{"in_progress": 1, "integration": 2, "commit_push": 3, "committed": 4, "done": 5} {
 		if got := stepOf("chore", state); got != want {
@@ -274,16 +278,20 @@ func TestBuildLightsChronologicalAscending(t *testing.T) {
 func TestSpineDepthsExcludesDetour(t *testing.T) {
 	// A rejoining detour (blocked) and an unreachable terminal must NOT be numbered;
 	// only the forward chain on a shortest start→done path is.
-	body := `
-transitions:
-  - {from: open, to: planned, reviewer_skill: "a"}
-  - {from: planned, to: in_progress, reviewer_skill: "b"}
-  - {from: in_progress, to: blocked}
-  - {from: blocked, to: in_progress}
-  - {from: in_progress, to: reviewed, reviewer_skill: "c"}
-  - {from: reviewed, to: done, reviewer_skill: "d"}
-`
-	d := spineDepths(parseWorkflow(body))
+	body := "```dot\ndigraph w {\n" +
+		"  done [shape=Msquare]\n" +
+		"  open -> planned [label=\"@skill:a\"]\n" +
+		"  planned -> in_progress [label=\"@skill:b\"]\n" +
+		"  in_progress -> blocked\n" +
+		"  blocked -> in_progress\n" +
+		"  in_progress -> reviewed [label=\"@skill:c\"]\n" +
+		"  reviewed -> done [label=\"@skill:d\"]\n" +
+		"}\n```\n"
+	spec, ok := wfdot.Parse(body)
+	if !ok {
+		t.Fatalf("wfdot.Parse: no dot block")
+	}
+	d := spineDepths(spec)
 	for st, want := range map[string]int{"planned": 1, "in_progress": 2, "reviewed": 3, "done": 4} {
 		if d[st] != want {
 			t.Errorf("depth[%s] = %d, want %d", st, d[st], want)
@@ -297,15 +305,15 @@ transitions:
 // projSpec mirrors the project workflow: executor steps (in_progress, commit_push)
 // are NOT gated, a recovery back-edge (committed→in_progress) and a cancelled
 // detour exist. The OLD gated-only numbering rendered a clean run as 1 2 1 2.
-func projSpec() wfSpec {
-	return wfSpec{
-		States: []wfState{
+func projSpec() wfdot.Spec {
+	return wfdot.Spec{
+		States: []wfdot.State{
 			{Name: "backlog"}, {Name: "in_progress", Agent: "executor"},
 			{Name: "commit_push", Agent: "executor"}, {Name: "committed", Agent: "reviewer"},
-			{Name: "done", Agent: "reviewer", Terminal: true},
+			{Name: "done", Agent: "reviewer", Terminal: true, Shape: "Msquare"},
 			{Name: "cancelled", Agent: "reviewer", Terminal: true},
 		},
-		Transitions: []wfTransition{
+		Transitions: []wfdot.Transition{
 			{From: "backlog", To: "in_progress"},
 			{From: "in_progress", To: "commit_push"},
 			{From: "commit_push", To: "committed"},

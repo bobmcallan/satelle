@@ -285,127 +285,10 @@
     row.parentNode.insertBefore(exp, row.nextSibling);
     fetch(row.dataset.expandUrl, { headers: { "X-Requested-With": "fetch" } })
       .then(function (r) { return r.text(); })
-      .then(function (html) { td.innerHTML = html; enhanceWorkflowDiagrams(td); applyTimelineFields(); })
+      .then(function (html) { td.innerHTML = html; applyTimelineFields(); })
       .catch(function () { td.innerHTML = '<div class="expbody">failed to load</div>'; });
   }
 
-  // enhanceWorkflowDiagrams wires the dependency-free SVG workflow diagram for
-  // interactivity (sty_19b2107a) — progressive enhancement over the server-rendered
-  // SVG (no JS ⇒ the plain, readable diagram still renders). Hovering or keyboard-
-  // focusing a node highlights that node and every edge touching it (matched by the
-  // data-from/data-to the server stamps) and dims the rest; clicking/activating a
-  // node correlates the transition rows below (data-from/data-to on .wf-edge) and
-  // scrolls the first match into view. Scoped to `container` so it works inside a
-  // freshly-expanded fragment. No external graph library.
-  function enhanceWorkflowDiagrams(container) {
-    if (!container) return;
-    [].slice.call(container.querySelectorAll(".wf-diagram")).forEach(function (svg) {
-      if (svg.dataset.enhanced) return;
-      svg.dataset.enhanced = "1";
-      function setHi(state) {
-        svg.querySelectorAll(".wf-dnode").forEach(function (g) {
-          var on = g.dataset.state === state;
-          g.classList.toggle("wf-hi", on);
-          g.classList.toggle("wf-dim", !on);
-        });
-        svg.querySelectorAll(".wf-edge-path, .wf-edge-label").forEach(function (el) {
-          var inc = el.dataset.from === state || el.dataset.to === state;
-          el.classList.toggle("wf-hi", inc);
-          el.classList.toggle("wf-dim", !inc);
-        });
-      }
-      function clearHi() {
-        svg.querySelectorAll(".wf-hi, .wf-dim").forEach(function (el) {
-          el.classList.remove("wf-hi");
-          el.classList.remove("wf-dim");
-        });
-      }
-      function correlate(state) {
-        var first = null;
-        container.querySelectorAll(".wf-edges .wf-edge").forEach(function (li) {
-          var hit = li.dataset.from === state || li.dataset.to === state;
-          li.classList.toggle("wf-edge-hi", hit);
-          if (hit && !first) first = li;
-        });
-        if (first && first.scrollIntoView) first.scrollIntoView({ block: "nearest" });
-      }
-      [].slice.call(svg.querySelectorAll(".wf-dnode[data-state]")).forEach(function (g) {
-        var state = g.dataset.state;
-        g.addEventListener("mouseenter", function () { setHi(state); });
-        g.addEventListener("mouseleave", clearHi);
-        g.addEventListener("focus", function () { setHi(state); });
-        g.addEventListener("blur", clearHi);
-        g.addEventListener("click", function () { correlate(state); });
-        g.addEventListener("keydown", function (e) {
-          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); correlate(state); }
-        });
-      });
-
-      // Gate labels reveal their FULL reviewer skill on click (sty_677c604c) —
-      // the short label swaps with the <title> text and back.
-      [].slice.call(svg.querySelectorAll(".wf-edge-label")).forEach(function (el) {
-        var t = el.querySelector("title");
-        if (!t) return;
-        el.style.cursor = "pointer";
-        el.addEventListener("click", function (e) {
-          e.stopPropagation();
-          var node = el.childNodes[el.childNodes.length - 1];
-          if (!el.dataset.short) el.dataset.short = node.textContent;
-          node.textContent = node.textContent === el.dataset.short ? t.textContent : el.dataset.short;
-        });
-      });
-
-      // Pan (drag) + zoom (wheel) + reset (double-click) by viewBox manipulation
-      // (sty_677c604c) — read-only navigation, no library. data-vb keeps the
-      // original box for reset and for clamping the zoom range.
-      var base = (svg.getAttribute("data-vb") || svg.getAttribute("viewBox")).split(" ").map(Number);
-      var cur = base.slice();
-      function applyVB() { svg.setAttribute("viewBox", cur.join(" ")); }
-      function unitsPerPx() { return cur[2] / svg.getBoundingClientRect().width; }
-      svg.addEventListener("wheel", function (e) {
-        e.preventDefault();
-        var f = e.deltaY > 0 ? 1.15 : 1 / 1.15;
-        var nw = Math.min(Math.max(cur[2] * f, base[2] / 8), base[2] * 2);
-        f = nw / cur[2];
-        var r = svg.getBoundingClientRect();
-        var px = cur[0] + (e.clientX - r.left) * (cur[2] / r.width);
-        var py = cur[1] + (e.clientY - r.top) * (cur[3] / r.height);
-        cur = [px - (px - cur[0]) * f, py - (py - cur[1]) * f, cur[2] * f, cur[3] * f];
-        applyVB();
-      }, { passive: false });
-      var drag = null;
-      svg.addEventListener("pointerdown", function (e) {
-        if (e.target.closest(".wf-dnode") || e.target.closest(".wf-edge-label")) return;
-        drag = { x: e.clientX, y: e.clientY, vx: cur[0], vy: cur[1] };
-        try { svg.setPointerCapture(e.pointerId); } catch (_) { /* synthetic/untrusted pointer */ }
-        svg.classList.add("wf-panning");
-      });
-      svg.addEventListener("pointermove", function (e) {
-        if (!drag) return;
-        var u = unitsPerPx();
-        cur[0] = drag.vx - (e.clientX - drag.x) * u;
-        cur[1] = drag.vy - (e.clientY - drag.y) * u;
-        applyVB();
-      });
-      svg.addEventListener("pointerup", function () { drag = null; svg.classList.remove("wf-panning"); });
-      svg.addEventListener("dblclick", function () { cur = base.slice(); applyVB(); });
-    });
-
-    // The cancel/recovery toggle: de-emphasised edges (wf-edge-alt) can be hidden
-    // entirely so the spine reads clean. aria-pressed tracks state.
-    [].slice.call(container.querySelectorAll(".wf-toggle-alt")).forEach(function (btn) {
-      if (btn.dataset.enhanced) return;
-      btn.dataset.enhanced = "1";
-      btn.addEventListener("click", function () {
-        var wrap = btn.closest(".expbody") || container;
-        var on = btn.getAttribute("aria-pressed") !== "true";
-        btn.setAttribute("aria-pressed", on ? "true" : "false");
-        [].slice.call(wrap.querySelectorAll(".wf-diagram")).forEach(function (svg) {
-          svg.classList.toggle("wf-hide-alt", !on);
-        });
-      });
-    });
-  }
   function toggleRow(row) {
     if (row.getAttribute("aria-expanded") === "true") collapseRow(row); else expandRow(row);
   }
@@ -778,6 +661,5 @@
     initProjectSwitcher();
     initAccountMenu();
     initTimelineFields();
-    enhanceWorkflowDiagrams(document); // any diagram already in the server-rendered page
   });
 })();

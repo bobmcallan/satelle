@@ -1,9 +1,10 @@
 //go:build integration
 
-// Black-box coverage for sty_677c604c: the served workflow page renders the
-// interactive, read-only layered diagram — layered spine markup, de-emphasised
-// cancel/recovery edges (with their toggle), pan/zoom viewBox plumbing — and
-// offers no editing affordances.
+// Black-box coverage for sty_085e1a5a: the served workflow page renders the
+// ROUTE — the ordered steps to done with their performer and entry gates, the
+// off-route exits — and no diagram, and offers no editing affordances. It
+// replaces the layered-diagram coverage of sty_677c604c, which went with the
+// diagram itself.
 package tests
 
 import (
@@ -17,8 +18,8 @@ import (
 	"time"
 )
 
-// richWorkflow carries the shapes the layered layout must handle: a gated
-// spine, a recovery (back) edge, and a cancel fan.
+// richWorkflow carries the shapes the route must handle: a gated spine, a
+// recovery (back) edge, and a cancel fan.
 const richWorkflow = `---
 name: wf-rich
 type: workflow
@@ -30,7 +31,7 @@ scope: project
 ` + "```dot" + `
 digraph w {
   backlog     [shape=Mdiamond]
-  in_progress [agent=executor]
+  in_progress [agent=executor, prompt="@skill:code"]
   review      [agent=executor]
   done        [shape=Msquare]
   cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
@@ -44,7 +45,7 @@ digraph w {
 }
 ` + "```\n"
 
-func TestWorkflowPageInteractiveDiagram(t *testing.T) {
+func TestWorkflowPageRendersRoute(t *testing.T) {
 	bin := testBin
 	repo := t.TempDir()
 	mustRun(t, bin, repo, "init")
@@ -74,18 +75,27 @@ func TestWorkflowPageInteractiveDiagram(t *testing.T) {
 	seedWorkspaceAdd(t, bin, repo, base)
 
 	slug := filepath.Base(repo)
-	// The authored rich workflow's expand fragment carries the new diagram.
+	// The authored rich workflow's expand fragment carries the route.
 	body := httpGet(t, base+"/r/"+slug+"/fragment/workflow/wf-rich")
 	for _, want := range []string{
-		`class="wf-diagram"`,    // the SSR SVG
-		`data-vb="0 0 `,         // pan/zoom reset box
-		`class="wf-edge-path`,   // edges present
-		`wf-edge-alt`,           // de-emphasised cancel/recovery edges
-		`class="wf-toggle-alt"`, // the toggle control
-		`data-state="backlog"`,  // stable identifiers for hover-highlight
+		`class="route"`,               // the ordered steps
+		`data-state="backlog"`,        // stable per-step identifiers
+		`data-state="in_progress"`,    // the spine, in workflow order
+		`data-state="done"`,           // …through to the terminal step
+		"@skill:code",                 // the rubric the step performs
+		"satelle-story-done-review",   // the reviewer gating entry to review
+		"entry ungated",               // and a step no reviewer gates
+		"exits (off-route)",           // cancelled is an exit, not a step
+		"satelle-story-cancel-review", // with the gate that admits it
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("workflow fragment missing %q\nbody snippet: %s", want, body[:min(400, len(body))])
+		}
+	}
+	// The retired diagram must not come back on the served surface.
+	for _, gone := range []string{"<svg", "wf-diagram", "wf-edge-path", "wf-toggle-alt", "data-vb="} {
+		if strings.Contains(body, gone) {
+			t.Errorf("workflow fragment still renders the retired diagram (%q)", gone)
 		}
 	}
 	// Read-only: no editing affordances on the workflow surface.

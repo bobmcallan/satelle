@@ -470,61 +470,45 @@ ul.doc-list li { border: 1px solid var(--line); border-radius: 8px; background: 
 .kind-h { font-size: 12px; color: var(--accent); font-weight: 650; margin: 18px 0 8px; text-transform: lowercase; }
 .empty { color: var(--muted); font-style: italic; padding: 10px; }
 
-/* --- workflow tab: state/transition diagram (read-only, server-rendered) --- */
-/* workflow flow diagram (dependency-free SVG) */
-.wf-diagram-wrap { overflow-x: auto; margin: 4px 0 8px; }
-.wf-diagram { max-width: 100%; height: auto; }
-.wf-diagram .wf-dnode rect { fill: var(--panel); stroke: var(--line); stroke-width: 1; }
-.wf-diagram .wf-dnode text { fill: var(--ink); font-family: var(--mono); font-size: 13px; text-anchor: middle; }
-.wf-diagram .wf-dnode.terminal rect { stroke: var(--accent); stroke-dasharray: 4 3; }
-.wf-diagram .wf-edge-path { fill: none; stroke: var(--accent); stroke-width: 1.5; }
-.wf-diagram .wf-edge-path.ungated { stroke: var(--line); stroke-dasharray: 4 3; }
-.wf-diagram .wf-arrowhead { fill: var(--accent); }
-.wf-diagram .wf-edge-label { fill: var(--muted); font-family: var(--mono); font-size: 10.5px; dominant-baseline: middle; }
-/* Interactivity (sty_19b2107a) — progressive enhancement layered by app.js on top
-   of the SSR SVG: a hovered/focused node highlights itself + its incident edges and
-   dims the rest. Pure CSS state classes; no JS = no classes = the plain diagram. */
-.wf-diagram .wf-dnode { cursor: pointer; }
-.wf-diagram .wf-dnode:focus { outline: none; }
-.wf-diagram .wf-dnode:focus rect, .wf-diagram .wf-dnode.wf-hi rect { stroke: var(--accent); stroke-width: 2.5; }
-.wf-diagram .wf-edge-path.wf-hi { stroke: var(--accent); stroke-width: 2.5; }
-.wf-diagram .wf-edge-label.wf-hi { fill: var(--ink); font-weight: 600; }
-.wf-diagram .wf-dim { opacity: 0.25; }
-/* Layered layout extras (sty_677c604c): de-emphasised cancel/recovery edges
-   (toggleable), scoped-reviewer annotations, the named-agent badge, pan cursor. */
-.wf-diagram .wf-edge-path.wf-edge-alt { stroke: var(--line); stroke-width: 1.1; opacity: 0.75; }
-.wf-diagram .wf-edge-label.wf-edge-alt { opacity: 0.7; }
-.wf-diagram.wf-hide-alt .wf-edge-alt { display: none; }
-.wf-diagram .wf-edge-label { text-anchor: start; }
-.wf-diagram .wf-annot { fill: var(--muted); font-family: var(--mono); font-size: 10px; text-anchor: middle; }
-.wf-diagram .wf-foot { fill: var(--muted); font-family: var(--mono); font-size: 10px; }
-.wf-diagram .wf-agent-badge { fill: var(--muted); font-family: var(--mono); font-size: 9.5px; text-anchor: middle; letter-spacing: .04em; }
-.wf-diagram { cursor: grab; touch-action: none; }
-.wf-diagram.wf-panning { cursor: grabbing; }
-.wf-controls { display: flex; align-items: center; gap: 12px; margin: 2px 0 6px; }
-.wf-toggle-alt { font-family: var(--mono); font-size: 11px; color: var(--muted); background: var(--panel);
-  border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; cursor: pointer; }
-.wf-toggle-alt[aria-pressed="true"] { color: var(--ink); border-color: var(--accent); }
-.wf-hint { font-size: 11px; color: var(--muted); }
-/* The correlated transition row (clicking a node) gets a brief accent wash. */
-.wf-edge.wf-edge-hi { background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 4px; }
+/* --- workflow tab: the ROUTE (read-only, server-rendered) --- */
+/* The ordered steps to done — one row per step: the state, what it discharges,
+   who performs it under which rubrics, and the reviewers that gate entry. No
+   diagram: the route is the artifact, the same one `satelle story route` renders
+   (sty_085e1a5a). */
+.route { list-style: none; margin: 6px 0 10px; padding: 0; counter-reset: routestep; }
+.route-step { position: relative; padding: 9px 0 9px 30px; border-bottom: 1px solid var(--line); }
+.route-step:last-child { border-bottom: 0; }
+.route-step::before { counter-increment: routestep; content: counter(routestep);
+  position: absolute; left: 0; top: 11px; width: 19px; text-align: center;
+  font-family: var(--mono); font-size: 11px; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 999px; line-height: 17px; }
+.route-step.terminal::before { border-color: var(--accent); color: var(--accent); }
+.route-head { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+.route-oblig { color: var(--ink); font-size: 13px; }
+.route-perf, .route-gates, .route-advisor { display: flex; align-items: baseline;
+  gap: 6px; flex-wrap: wrap; margin-top: 4px; font-size: 12px; color: var(--muted); }
+.route-advisor { font-style: italic; }
+.route-label { text-transform: lowercase; letter-spacing: .03em; }
+.route-agent { font-family: var(--mono); color: var(--ink); }
+.route-skill { font-family: var(--mono); color: var(--accent); }
+.route-none { font-style: italic; }
+.route-bytag { opacity: .8; font-style: italic; }
+.route-exits { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  margin: 8px 0 4px; font-size: 12px; color: var(--muted); }
+.route-exit { display: inline-flex; align-items: baseline; gap: 6px; }
+/* The story's route DOCUMENT (plan half + appended outcomes) renders expanded,
+   not folded into a <details> among the other attachments. */
+.route-doc { border: 1px solid var(--line); border-radius: 6px; padding: 4px 14px; }
 
-.wf-states { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .wf-node { display: inline-flex; align-items: baseline; gap: 6px; padding: 3px 11px;
   border: 1px solid var(--line); border-radius: 999px; background: var(--panel);
   font-family: var(--mono); font-size: 12.5px; color: var(--ink); }
 .wf-node.terminal { border-color: var(--accent); border-style: dashed; }
 .wf-node.sm { padding: 1px 9px; font-size: 12px; }
-.wf-node .wf-agent { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
-.wf-edges { list-style: none; margin: 0; padding: 0; }
-.wf-edge { display: flex; align-items: center; gap: 9px; padding: 7px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-.wf-edge:last-child { border-bottom: 0; }
-.wf-arrow { color: var(--muted); font-size: 15px; }
 .wf-gate { font-family: var(--mono); font-size: 11px; color: #fff; background: var(--accent);
   border-radius: 4px; padding: 1px 7px; }
 .wf-gate.ungated { color: var(--muted); background: var(--chip); }
-.wf-gate.parallel { background: var(--chip); color: var(--accent); border: 1px solid var(--accent); }
-.wf-edge-label.parallel { font-weight: 600; }
+.wf-gate.skipped { color: var(--muted); background: var(--chip); text-decoration: line-through; }
 
 /* --- help page --- */
 .help-topic { margin: 22px 0; }

@@ -1,3 +1,20 @@
+## [0.0.382] - 2026-08-01
+
+### Changed
+- **The web workflow view renders the ROUTE, not a diagram** — the ordered steps to done, one row each: the status, the obligation it discharges, who performs it under which rubrics, and the reviewers that gate ENTRY, with a tag-scoped gate labelled `by tag …` and a filtered-out one struck through as `needs tag …`. Park and cancel destinations follow as off-route exits, and a step that declares an advisor carries the consult line saying nothing dispatches it. It is the same artifact `satelle story route` renders, through the same `wfroute.Build` — presented, not re-derived (sty_085e1a5a)
+- **A story in flight shows its route document** on its detail view — the plan half with the "you are here" marker AND the appended outcome half (each reviewer's verdict, its reasoning, the ledger pointer), expanded rather than folded into the attachment list. A story that has not transitioned shows no route: the live-render fallback stays with the CLI, which owns it (sty_085e1a5a)
+- The workflow panel resolves a lifecycle through the DERIVED front door when the substrate carries `done.md` + `step.md`, and the authored DOT until it does — so converting this repo's workflows (order 6) needs no further web change (sty_085e1a5a)
+
+### Removed
+- **`internal/web` no longer parses workflows.** `parseWorkflowDOT`, `parseWorkflow`, `parseState` and `workflowDiagram` are gone, and with them `edgeGateLabel`, the local `wfSpec`/`wfState`/`wfTransition`/`bindingVM` types, `inlineField`, `shortSkill` and `shortModel` — every one dead once the diagram went. The inline-YAML `states:`/`transitions:` fallback grammar goes too: that fallback WAS the second parser. `internal/web/workflow.go` falls from 730 lines to 232, and `internal/wfdot` is the one workflow front door (sty_085e1a5a)
+- The SVG diagram and its progressive enhancement — pan, zoom, hover-trace, gate-label reveal, the cancel/recovery edge toggle — leave `app.js` (5.9 KB) along with the `.wf-diagram*` / `.wf-edge*` / `.wf-annot` / `.wf-controls` stylesheet, replaced by a `.route*` set built from the existing chip idiom. `TestBrowserWorkflowDiagramInteractive` and `TestBrowserWorkflowDiagramPanZoomToggle` are replaced by `TestBrowserWorkflowRoute` — the old assertions inverted, which is the honest record that the behaviour was removed rather than merely untested (sty_085e1a5a)
+- `spineDepths` is retyped to `wfdot.Spec` with its algorithm untouched, so the status lights do not move; `TestWebHoldsNoWorkflowParser` reads the package source and fails if any of the five retired identifiers reappears (sty_085e1a5a)
+
+## [serve-v0.0.14] - 2026-08-01
+
+### Changed
+- Carries the route view: the workflow panel renders the ordered route instead of the SVG diagram, and a story detail leads with its route document (sty_085e1a5a)
+
 ## [0.0.381] - 2026-08-01
 
 ### Added

@@ -11,6 +11,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/help"
 	"github.com/bobmcallan/satelle/internal/mirror"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -419,21 +420,27 @@ func (s *MirrorServer) workflowFragment(w http.ResponseWriter, r *http.Request) 
 		http.NotFound(w, r)
 		return
 	}
-	spec := parseWorkflow(doc.Body)
-	bindings := map[string]bindingVM{}
-	for _, st := range spec.States {
-		if st.Agent != "" {
-			bindings[st.Name] = bindingVM{Agent: st.Agent, Skill: st.Skill}
+	// The route is derived from the same substrate the engine walks: done.md +
+	// step.md when they exist, the authored DOT until they do. The panel holds no
+	// lifecycle parser of its own (sty_085e1a5a).
+	var rs routeSource
+	if all, err := decodeDocs(r.Context(), s.Store, repoKey); err == nil {
+		var wfs []docindex.Doc
+		for _, d := range all {
+			if d.Kind == "workflows" {
+				wfs = append(wfs, d.Doc)
+			}
 		}
+		rs = routeSourceOf(wfs)
 	}
+	applies := frontmatterList(doc.Body, "applies_to")
 	id := mirrorIdentity(r.Context(), s.Store, repoKey)
 	mirrorRender(w, "workflowDetail", s.projectBase(slug), id.FooterEmail, workflowDetailVM{
 		Name:       doc.Name,
 		Headline:   doc.Headline,
 		Scope:      workflowScope(doc.Doc),
-		AppliesTo:  frontmatterList(doc.Body, "applies_to"),
-		Spec:       spec,
-		Diagram:    workflowDiagram(spec, bindings),
+		AppliesTo:  applies,
+		Route:      workflowRoute(doc.Name, doc.Body, rs, panelCategory(applies), nil),
 		Body:       strings.TrimSpace(stripDocFrontmatter(doc.Body)),
 		Provenance: doc.Provenance,
 		Source:     doc.Source,

@@ -242,8 +242,8 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 		if !waitCond(t, ctx, `!!document.querySelector('#panel-docs .doc') && getComputedStyle(document.querySelector('#panel-docs')).display === 'block'`, 5*time.Second) {
 			t.Error("documents panel/card not visible after clicking its tab")
 		}
-		// Workflow tab lists the on-disk workflow and expands to its
-		// state/transition diagram — read-only.
+		// Workflow tab lists the on-disk workflow and expands to its ROUTE —
+		// read-only (sty_085e1a5a).
 		clickJS(t, ctx, `.tab[data-panel="workflow"]`)
 		if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow tr.row[data-expand-url^="fragment/workflow/"]') && getComputedStyle(document.querySelector('#panel-workflow')).display === 'block'`, 5*time.Second) {
 			t.Error("workflow panel/row not visible after clicking its tab")
@@ -261,12 +261,12 @@ func TestBrowserProjectPageInteractions(t *testing.T) {
 			t.Errorf("workflow table headers wrong: hasUpdated=%v hasAppliesCol=%v", hasUpdated, hasAppliesCol)
 		}
 		clickJS(t, ctx, `#panel-workflow tr.row[data-expand-url^="fragment/workflow/"]`)
-		if !waitCond(t, ctx, `(function(){var e=document.querySelector('#panel-workflow tr.expansion .expbody');return !!e && e.textContent.includes('Transitions') && !!document.querySelector('#panel-workflow .wf-node');})()`, 5*time.Second) {
-			t.Error("workflow diagram (states/transitions) did not appear on row click")
+		if !waitCond(t, ctx, `(function(){var e=document.querySelector('#panel-workflow tr.expansion .expbody');return !!e && e.textContent.includes('Route') && !!document.querySelector('#panel-workflow .route .route-step');})()`, 5*time.Second) {
+			t.Error("workflow route did not appear on row click")
 		}
-		// The SVG flow diagram renders nodes and at least one edge (no mermaid).
-		if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow svg.wf-diagram .wf-dnode') && !!document.querySelector('#panel-workflow svg.wf-diagram .wf-edge-path')`, 5*time.Second) {
-			t.Error("workflow flow diagram (svg nodes + edges) did not render")
+		// Each step names its entry gates (or says it has none) — and no diagram.
+		if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow .route-step .route-gates') && !document.querySelector('#panel-workflow svg.wf-diagram')`, 5*time.Second) {
+			t.Error("workflow route did not render its gate rows, or still renders a diagram")
 		}
 		// Back to stories for the remaining checks.
 		clickJS(t, ctx, `.tab[data-panel="stories"]`)
@@ -978,23 +978,27 @@ func TestBrowserMarkSoftRedOnDisconnect(t *testing.T) {
 	}
 }
 
-// TestBrowserWorkflowDiagramInteractive exercises sty_19b2107a end-to-end: the
-// dependency-free SVG diagram is enhanced in vanilla JS so focusing a node
-// highlights it and its incident edges (and dims the rest), and activating a node
-// correlates the transition rows below. No graph library is loaded.
-func TestBrowserWorkflowDiagramInteractive(t *testing.T) {
+// TestBrowserWorkflowRoute replaces the two diagram interaction tests
+// (sty_19b2107a's hover/correlate, sty_677c604c's pan/zoom/toggle) with the
+// surface that took their place: the route is SERVER-rendered — the ordered
+// steps with their performer and entry gates, and the off-route exits — so
+// there is no diagram to enhance and no JS interaction to drive. The
+// assertions are the old ones inverted: nothing named wf-diagram, no graph
+// library, and the route legible with scripting or without (sty_085e1a5a).
+func TestBrowserWorkflowRoute(t *testing.T) {
 	base, repo := serveRepo(t, "8816")
-	// A workflow with a node (in_progress) carrying both an inbound and an outbound
-	// edge, plus an off-node edge (commit->done) that must DIM when in_progress is
-	// active.
+	// A gated spine plus a cancel fan — the shape the retired diagram existed
+	// to draw, and the one the route now states in words.
 	wf := "---\nname: wf-int\ntype: workflow\nscope: project\napplies_to: [\"*\"]\n---\n" +
 		"```dot\n" + `digraph w {
   backlog     [shape=Mdiamond]
-  in_progress [agent=executor]
+  in_progress [agent=executor, prompt="@skill:code"]
   commit      [agent=executor]
   done        [shape=Msquare]
   rev         [agent=reviewer, prompt="@skill:satelle-story-done-review"]
+  cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
   backlog -> in_progress -> commit -> rev -> done
+  in_progress -> cancelled
 }` + "\n```\n"
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "wf-int.md"), []byte(wf), 0o644); err != nil {
 		t.Fatal(err)
@@ -1016,11 +1020,11 @@ func TestBrowserWorkflowDiagramInteractive(t *testing.T) {
 		t.Fatal("workflow row did not list")
 	}
 	clickJS(t, ctx, `#panel-workflow tr.row[data-expand-url="fragment/workflow/wf-int"]`)
-	if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow svg.wf-diagram .wf-dnode[data-state="in_progress"]')`, 5*time.Second) {
-		t.Fatal("diagram did not render with identifiers")
+	if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow .route .route-step[data-state="in_progress"]')`, 5*time.Second) {
+		t.Fatal("route did not render with per-step identifiers")
 	}
 
-	// No graph library: only our app.js script tag is present.
+	// No graph library — and none needed, since nothing is drawn.
 	var scriptSrcs []string
 	if err := chromedp.Run(ctx, chromedp.Evaluate(
 		`[...document.querySelectorAll('script[src]')].map(s=>s.getAttribute('src'))`, &scriptSrcs)); err != nil {
@@ -1028,206 +1032,39 @@ func TestBrowserWorkflowDiagramInteractive(t *testing.T) {
 	}
 	for _, s := range scriptSrcs {
 		if strings.Contains(strings.ToLower(s), "mermaid") || strings.Contains(strings.ToLower(s), "d3") || strings.Contains(strings.ToLower(s), "cytoscape") {
-			t.Errorf("a graph library was loaded (%q) — the diagram must stay dependency-free", s)
+			t.Errorf("a graph library was loaded (%q) — the route is server-rendered text", s)
 		}
 	}
 
-	// Hovering OR focusing the in_progress node highlights it + its incident edges
-	// and dims a non-incident edge (rev->done, which does not touch in_progress).
-	// Both trigger paths are exercised (mouseenter, then a focus event); leaving
-	// clears the state. (SVG <g>.focus() is unreliable in headless Chrome, so the
-	// focus path is driven by dispatching the event the handler listens for.)
-	for _, trigger := range []string{"mouseenter", "focus"} {
-		readState := `(function(){
-			var n=document.querySelector('#panel-workflow .wf-dnode[data-state="in_progress"]');
-			n.dispatchEvent(new Event("` + trigger + `"));
-			var inc=document.querySelector('#panel-workflow .wf-edge-path[data-from="in_progress"][data-to="commit"]');
-			var off=document.querySelector('#panel-workflow .wf-edge-path[data-from="rev"][data-to="done"]');
-			return JSON.stringify({
-				node: n.classList.contains("wf-hi"),
-				inc: inc && inc.classList.contains("wf-hi"),
-				off: off && off.classList.contains("wf-dim")
-			});
-		})()`
-		var got string
-		if err := chromedp.Run(ctx, chromedp.Evaluate(readState, &got)); err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(got, `"node":true`) || !strings.Contains(got, `"inc":true`) || !strings.Contains(got, `"off":true`) {
-			t.Errorf("%s on a node should highlight it + incident edges and dim the rest; got %s", trigger, got)
-		}
-		// Leaving restores the default (no highlight/dim).
-		var cleared bool
-		clearEv := "mouseleave"
-		if trigger == "focus" {
-			clearEv = "blur"
-		}
-		if err := chromedp.Run(ctx, chromedp.Evaluate(`(function(){
-			document.querySelector('#panel-workflow .wf-dnode[data-state="in_progress"]').dispatchEvent(new Event("`+clearEv+`"));
-			return !document.querySelector('#panel-workflow .wf-diagram .wf-hi') && !document.querySelector('#panel-workflow .wf-diagram .wf-dim');
-		})()`, &cleared)); err != nil {
-			t.Fatal(err)
-		}
-		if !cleared {
-			t.Errorf("%s leave should clear the highlight/dim state", trigger)
-		}
-	}
-
-	// Activating (click) the in_progress node correlates the transition rows below.
-	clickAndRead := `(function(){
-		document.querySelector('#panel-workflow .wf-dnode[data-state="in_progress"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));
-		var hi=[...document.querySelectorAll('#panel-workflow .wf-edge.wf-edge-hi')].map(function(li){return li.dataset.from+"->"+li.dataset.to;});
-		return JSON.stringify(hi);
-	})()`
-	var rows string
-	if err := chromedp.Run(ctx, chromedp.Evaluate(clickAndRead, &rows)); err != nil {
+	// The route is complete without any script running: the spine in order, each
+	// step's performer and rubric, the reviewer gating entry, and the cancel
+	// destination as an off-route exit rather than a step.
+	var got string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`(function(){
+		var body=document.querySelector('#panel-workflow tr.expansion .expbody');
+		return JSON.stringify({
+			order: [...body.querySelectorAll('.route-step')].map(function(li){return li.dataset.state;}),
+			text: body.textContent,
+			diagram: !!body.querySelector('svg.wf-diagram')
+		});
+	})()`, &got)); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(rows, "backlog->in_progress") || !strings.Contains(rows, "in_progress->commit") {
-		t.Errorf("clicking a node should highlight its incident transition rows; got %s", rows)
+	if !strings.Contains(got, `["backlog","in_progress","commit","rev","done"]`) {
+		t.Errorf("route steps should read in workflow order; got %s", got)
 	}
-}
-
-// TestBrowserWorkflowDiagramPanZoomToggle exercises sty_677c604c's interactions
-// end-to-end in the real JS: wheel-zoom and drag-pan mutate the SVG viewBox and
-// double-click resets it; clicking a gate label swaps its short text for the
-// FULL reviewer skill name and back; and the cancel/recovery toggle applies
-// wf-hide-alt, actually hiding the de-emphasised edges.
-func TestBrowserWorkflowDiagramPanZoomToggle(t *testing.T) {
-	base, repo := serveRepo(t, "8821")
-	wf := "---\nname: wf-ia\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: interactive layout fixture\n---\n" +
-		"```dot\n" + `digraph w {
-  backlog     [shape=Mdiamond]
-  in_progress [agent=executor]
-  done        [shape=Msquare]
-  cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
-  backlog -> in_progress
-  in_progress -> done [reviewer_skill="satelle-story-done-review"]
-  backlog -> cancelled
-  in_progress -> cancelled
-  done -> cancelled
-}` + "\n```\n"
-	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "wf-ia.md"), []byte(wf), 0o644); err != nil {
-		t.Fatal(err)
+	for _, want := range []string{"executor", "@skill:code", "satelle-story-done-review", "exits (off-route)", "cancelled", "satelle-story-cancel-review"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("route missing %q; got %s", want, got)
+		}
 	}
-	mustRun(t, testBin, repo, "reindex")
-	workspaceAddIfConfigured(t, repo)
-
-	ctx := newChrome(t)
-	if err := chromedp.Run(ctx,
-		chromedp.Navigate(base+"/"),
-		chromedp.WaitVisible(`#panel-stories table.panel-table`, chromedp.ByQuery),
-	); err != nil {
-		t.Fatalf("load page: %v", err)
+	if strings.Contains(got, `"diagram":true`) {
+		t.Error("the workflow panel must render no diagram")
 	}
-	clickJS(t, ctx, `.tab[data-panel="workflow"]`)
-	if !waitCond(t, ctx, `!!document.querySelector('#panel-workflow tr.row[data-expand-url="fragment/workflow/wf-ia"]')`, 5*time.Second) {
-		t.Fatal("workflow row did not list")
+	// cancelled is an EXIT, never a step on the route.
+	if strings.Contains(got, `"cancelled","`) || strings.Contains(got, `,"cancelled"]`) {
+		t.Errorf("cancelled must be an exit, not a route step; got %s", got)
 	}
-	clickJS(t, ctx, `#panel-workflow tr.row[data-expand-url="fragment/workflow/wf-ia"]`)
-	svgSel := `#panel-workflow svg.wf-diagram`
-	if !waitCond(t, ctx, `!!document.querySelector('`+svgSel+`[data-vb]')`, 5*time.Second) {
-		t.Fatal("diagram with data-vb did not render")
-	}
-
-	readVB := func() string {
-		var vb string
-		if err := chromedp.Run(ctx, chromedp.Evaluate(
-			`document.querySelector('`+svgSel+`').getAttribute('viewBox')`, &vb)); err != nil {
-			t.Fatal(err)
-		}
-		return vb
-	}
-	base0 := readVB()
-
-	t.Run("wheel_zoom_drag_pan_dblclick_reset", func(t *testing.T) {
-		// Wheel zooms: the viewBox mutates away from the original.
-		if err := chromedp.Run(ctx, chromedp.Evaluate(`(function(){
-			var s=document.querySelector('`+svgSel+`');
-			var r=s.getBoundingClientRect();
-			s.dispatchEvent(new WheelEvent('wheel',{deltaY:-120,clientX:r.left+r.width/2,clientY:r.top+r.height/2,bubbles:true,cancelable:true}));
-		})()`, nil)); err != nil {
-			t.Fatal(err)
-		}
-		afterZoom := readVB()
-		if afterZoom == base0 {
-			t.Error("wheel should mutate the viewBox (zoom)")
-		}
-		// Drag pans: pointerdown on empty canvas, move, up — x/y shift again.
-		if err := chromedp.Run(ctx, chromedp.Evaluate(`(function(){
-			var s=document.querySelector('`+svgSel+`');
-			var r=s.getBoundingClientRect();
-			var o={bubbles:true,cancelable:true,pointerId:7,clientX:r.left+5,clientY:r.top+r.height-5};
-			s.dispatchEvent(new PointerEvent('pointerdown',o));
-			o.clientX+=60;o.clientY+=10;
-			s.dispatchEvent(new PointerEvent('pointermove',o));
-			s.dispatchEvent(new PointerEvent('pointerup',o));
-		})()`, nil)); err != nil {
-			t.Fatal(err)
-		}
-		afterPan := readVB()
-		if afterPan == afterZoom {
-			t.Error("drag should mutate the viewBox (pan)")
-		}
-		// Double-click resets to the original box.
-		if err := chromedp.Run(ctx, chromedp.Evaluate(`(function(){
-			document.querySelector('`+svgSel+`').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
-		})()`, nil)); err != nil {
-			t.Fatal(err)
-		}
-		if got := readVB(); got != base0 {
-			t.Errorf("dblclick should reset the viewBox to %q; got %q", base0, got)
-		}
-	})
-
-	t.Run("gate_label_click_reveals_full_skill", func(t *testing.T) {
-		labelSel := `#panel-workflow .wf-edge-label[data-from="in_progress"][data-to="done"]`
-		readLabel := `(function(){var e=document.querySelector('` + labelSel + `');return e.childNodes[e.childNodes.length-1].textContent;})()`
-		// SVG text nodes have no HTMLElement.click() — dispatch the event.
-		clickLabel := `document.querySelector('` + labelSel + `').dispatchEvent(new MouseEvent('click',{bubbles:true}))`
-		var short0 string
-		if err := chromedp.Run(ctx, chromedp.Evaluate(readLabel, &short0)); err != nil {
-			t.Fatal(err)
-		}
-		if short0 != "story-done" {
-			t.Fatalf("expected the short gate label, got %q", short0)
-		}
-		if err := chromedp.Run(ctx, chromedp.Evaluate(clickLabel, nil)); err != nil {
-			t.Fatal(err)
-		}
-		var full string
-		if err := chromedp.Run(ctx, chromedp.Evaluate(readLabel, &full)); err != nil {
-			t.Fatal(err)
-		}
-		if full != "satelle-story-done-review" {
-			t.Errorf("clicking the gate label should reveal the full skill; got %q", full)
-		}
-		if err := chromedp.Run(ctx, chromedp.Evaluate(clickLabel, nil)); err != nil {
-			t.Fatal(err)
-		}
-		var back string
-		if err := chromedp.Run(ctx, chromedp.Evaluate(readLabel, &back)); err != nil {
-			t.Fatal(err)
-		}
-		if back != short0 {
-			t.Errorf("clicking again should restore the short label; got %q", back)
-		}
-	})
-
-	t.Run("toggle_hides_alt_edges", func(t *testing.T) {
-		altSel := `#panel-workflow .wf-edge-path.wf-edge-alt`
-		if !waitCond(t, ctx, `getComputedStyle(document.querySelector('`+altSel+`')).display !== 'none'`, 3*time.Second) {
-			t.Fatal("alt edges should start visible (de-emphasised, not hidden)")
-		}
-		clickJS(t, ctx, `#panel-workflow .wf-toggle-alt`)
-		if !waitCond(t, ctx, `document.querySelector('`+svgSel+`').classList.contains('wf-hide-alt') && getComputedStyle(document.querySelector('`+altSel+`')).display === 'none'`, 3*time.Second) {
-			t.Error("toggle should apply wf-hide-alt and hide the alt edges")
-		}
-		clickJS(t, ctx, `#panel-workflow .wf-toggle-alt`)
-		if !waitCond(t, ctx, `!document.querySelector('`+svgSel+`').classList.contains('wf-hide-alt') && getComputedStyle(document.querySelector('`+altSel+`')).display !== 'none'`, 3*time.Second) {
-			t.Error("toggling again should restore the alt edges")
-		}
-	})
 }
 
 // countExpansions returns how many inline expansion rows are open in the stories

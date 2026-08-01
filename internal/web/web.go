@@ -17,6 +17,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -143,8 +144,13 @@ type seatRowVM struct {
 }
 
 type detailData struct {
-	Item       workitem.Item
-	Events     []eventVM
+	Item   workitem.Item
+	Events []eventVM
+	// Route is the story's route DOCUMENT — the plan half plus every resolved
+	// step's outcome, exactly as verb.recordRoute wrote it (sty_39e2d9df). Nil
+	// when the story has not transitioned yet: the web layer presents this
+	// artifact, it never re-derives one (sty_085e1a5a).
+	Route      *storyDocVM
 	Docs       []storyDocVM
 	Executions []executionVM // populated only for a TASK — its runs (sty_30a917f8)
 	TopBar     topBar
@@ -378,7 +384,10 @@ func buildLights(entries []ledger.Entry, status string, seatHeld bool, stepOf fu
 	return lights
 }
 
-func spineDepths(spec wfSpec) map[string]int {
+// spineDepths numbers the states on a shortest start→done path, which is what
+// the status lights count. It takes a wfdot.Spec — the one lifecycle type the
+// web layer knows — so no second parse or second shape exists here (sty_085e1a5a).
+func spineDepths(spec wfdot.Spec) map[string]int {
 	adj := map[string][]string{}
 	radj := map[string][]string{}
 	indeg := map[string]int{}
@@ -474,12 +483,20 @@ func categoryStepOf(docs []docindex.Doc) func(category, state string) int {
 	var longest map[string]int
 	byCat := map[string]map[string]int{}
 	var wild map[string]int
+	rs := routeSourceOf(docs)
 	for _, d := range docs {
-		depths := spineDepths(parseWorkflow(d.Body))
+		if isRouteSourceDoc(d.Name) {
+			continue // half of a derived route, not a lifecycle of its own
+		}
+		applies := frontmatterList(d.Body, "applies_to")
+		spec, _, ok := workflowSpec(d.Body, rs, panelCategory(applies), nil)
+		if !ok {
+			continue
+		}
+		depths := spineDepths(spec)
 		if len(depths) > len(longest) {
 			longest = depths
 		}
-		applies := frontmatterList(d.Body, "applies_to")
 		isWild := len(applies) == 0
 		for _, a := range applies {
 			if a == "*" {

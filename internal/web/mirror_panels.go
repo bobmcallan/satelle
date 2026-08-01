@@ -317,8 +317,11 @@ func mirrorLoadDetail(ctx context.Context, s *mirror.Store, repoKey, group, id s
 		evs[i] = eventVM{Entry: e, Chips: eventChips(e)}
 	}
 
-	// Story docs from mirror story_doc kind (id = story_id/name).
+	// Story docs from mirror story_doc kind (id = story_id/name). The route
+	// document is lifted out of the list into its own section — it is the story's
+	// route and the reasoning behind every outcome, not one attachment among many.
 	var docs []storyDocVM
+	var route *storyDocVM
 	if sdocs, err := s.ListItems(ctx, repoKey, "story_doc"); err == nil {
 		prefix := id + "/"
 		for _, r := range sdocs {
@@ -341,7 +344,12 @@ func mirrorLoadDetail(ctx context.Context, s *mirror.Store, repoKey, group, id s
 			if group == "task" && (strings.HasPrefix(name, "exe_") || strings.HasPrefix(name, "output-")) {
 				continue
 			}
-			docs = append(docs, storyDocVM{Name: name, Type: ref.Type, HTML: renderMarkdown(ref.Body)})
+			vm := storyDocVM{Name: name, Type: ref.Type, HTML: renderMarkdown(ref.Body)}
+			if name == routeDocName {
+				route = &vm
+				continue
+			}
+			docs = append(docs, vm)
 		}
 	}
 
@@ -361,10 +369,15 @@ func mirrorLoadDetail(ctx context.Context, s *mirror.Store, repoKey, group, id s
 
 	idMeta := mirrorIdentity(ctx, s, repoKey)
 	return detailData{
-		Item: item, Events: evs, Docs: docs, Executions: executions,
+		Item: item, Events: evs, Route: route, Docs: docs, Executions: executions,
 		TopBar: mirrorTopBar("", idMeta.FooterEmail),
 	}, idMeta, nil
 }
+
+// routeDocName is the name verb.RouteDocName writes the route document under.
+// Duplicated rather than imported: internal/serve must link neither verb nor the
+// rest of the repo-writing stack (internal/serve/deps_test.go).
+const routeDocName = "route"
 
 // mirrorTopBar builds chrome for the push-fed surface: no auth forms; optional
 // identity email from the pushed meta blob (order:4).

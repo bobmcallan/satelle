@@ -1,88 +1,12 @@
 package web
 
 import (
-	"fmt"
-	"regexp"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/docindex"
 )
-
-const sampleWorkflow = `---
-name: satelle-baseline-workflow
-applies_to: ["*"]
----
-# Baseline
-
-` + "```yaml" + `
-states:
-  - backlog
-  - {name: in_progress, agent: executor}
-  - done
-  - cancelled
-transitions:
-  - {from: backlog, to: in_progress, reviewer_skill: "satelle-story-intent-review"}
-  - {from: in_progress, to: done, reviewer_skill: "satelle-story-done-review"}
-  - {from: backlog, to: cancelled}
-` + "```" + `
-
-## Environment
-
-` + "```yaml" + `
-guardrails:
-  always:
-    - Drive an engaged item to a terminal state.
-  never:
-    - Self-enact a transition.
-` + "```" + `
-`
-
-// TestParseStateAgentKey proves parseState reads the canonical `agent:` inline key
-// and that the retired `actor:` key no longer sets a performer (sty_7db2ed7d).
-func TestParseStateAgentKey(t *testing.T) {
-	if got := parseState("{name: in_progress, agent: executor}").Agent; got != "executor" {
-		t.Errorf("agent: spelling = %q, want executor", got)
-	}
-	if got := parseState("{name: gate, actor: reviewer}").Agent; got != "" {
-		t.Errorf("retired actor: key must not set a performer, got %q", got)
-	}
-}
-
-func TestParseWorkflow(t *testing.T) {
-	spec := parseWorkflow(sampleWorkflow)
-	if len(spec.States) != 4 {
-		t.Fatalf("states = %d, want 4 (guardrail items must not be parsed as states): %+v", len(spec.States), spec.States)
-	}
-	// in_progress carries an actor and is non-terminal; done/cancelled are terminal.
-	byName := map[string]wfState{}
-	for _, s := range spec.States {
-		byName[s.Name] = s
-	}
-	if byName["in_progress"].Agent != "executor" {
-		t.Errorf("in_progress actor = %q, want executor", byName["in_progress"].Agent)
-	}
-	if !byName["done"].Terminal || !byName["cancelled"].Terminal {
-		t.Errorf("done/cancelled should be terminal")
-	}
-	if byName["backlog"].Terminal {
-		t.Errorf("backlog should not be terminal")
-	}
-	if len(spec.Transitions) != 3 {
-		t.Fatalf("transitions = %d, want 3: %+v", len(spec.Transitions), spec.Transitions)
-	}
-	if spec.Transitions[0].Skill != "satelle-story-intent-review" {
-		t.Errorf("first transition skill = %q", spec.Transitions[0].Skill)
-	}
-	if spec.Transitions[2].Skill != "" {
-		t.Errorf("backlog→cancelled should be ungated, got %q", spec.Transitions[2].Skill)
-	}
-}
-
-func TestFrontmatterListWeb(t *testing.T) {
-	got := frontmatterList(sampleWorkflow, "applies_to")
-	if len(got) != 1 || got[0] != "*" {
-		t.Fatalf("applies_to = %v, want [*]", got)
-	}
-}
 
 const sampleWorkflowDOT = `---
 name: satelle-project-workflow
@@ -94,444 +18,267 @@ applies_to: ["*"]
 digraph satelle_workflow {
   graph [goal="Drive a story to done", vars="story, repo_root"]
   rankdir=LR
-  start [shape=Mdiamond]
-  done  [shape=Msquare]
-
-  in_progress   [agent=executor]
-  commit_push   [agent=executor, prompt="@skill:commit-push"]
-  commit_review [agent=reviewer, prompt="@skill:satelle-commit-push-reviewer"]
-  done_review   [agent=reviewer, prompt="@skill:satelle-story-done-review"]
-
-  start -> in_progress -> commit_push -> commit_review -> done_review -> done
-}
-` + "```" + `
-`
-
-func TestParseWorkflowDOT(t *testing.T) {
-	spec := parseWorkflow(sampleWorkflowDOT)
-	if len(spec.States) != 6 {
-		t.Fatalf("states = %d, want 6: %+v", len(spec.States), spec.States)
-	}
-	byName := map[string]wfState{}
-	for _, s := range spec.States {
-		byName[s.Name] = s
-	}
-	if byName["commit_push"].Agent != "executor" {
-		t.Errorf("commit_push actor = %q, want executor", byName["commit_push"].Agent)
-	}
-	if byName["commit_review"].Agent != "reviewer" {
-		t.Errorf("commit_review actor = %q, want reviewer", byName["commit_review"].Agent)
-	}
-	if !byName["done"].Terminal {
-		t.Errorf("done should be terminal")
-	}
-	if byName["start"].Terminal {
-		t.Errorf("start should not be terminal")
-	}
-	// A transition INTO a reviewer node is gated by that node's skill; edges into
-	// executor / plain nodes are ungated.
-	skillByTarget := map[string]string{}
-	for _, tr := range spec.Transitions {
-		skillByTarget[tr.To] = tr.Skill
-	}
-	if got := skillByTarget["commit_review"]; got != "satelle-commit-push-reviewer" {
-		t.Errorf("edge into commit_review skill = %q, want satelle-commit-push-reviewer", got)
-	}
-	if got := skillByTarget["done_review"]; got != "satelle-story-done-review" {
-		t.Errorf("edge into done_review skill = %q, want satelle-story-done-review", got)
-	}
-	if got := skillByTarget["commit_push"]; got != "" {
-		t.Errorf("edge into executor commit_push should be ungated, got %q", got)
-	}
-	if got := skillByTarget["done"]; got != "" {
-		t.Errorf("edge into terminal done should be ungated, got %q", got)
-	}
-}
-
-// TestWorkflowDiagramNodeConsistentEdgeGate: the web DAG parser reads an edge
-// gate declared in the node-consistent form (agent=reviewer, prompt="@skill:…")
-// and the rendered diagram labels that edge with the gate (sty_be67919a).
-func TestWorkflowDiagramNodeConsistentEdgeGate(t *testing.T) {
-	dot := "---\nname: nc\n---\n" + "```dot" + `
-digraph nc {
   backlog     [shape=Mdiamond]
-  in_progress [agent=executor]
   done        [shape=Msquare]
-  backlog -> in_progress [agent=reviewer, prompt="@skill:satelle-story-intent-review"]
-  in_progress -> done
-}
-` + "```\n"
-	spec := parseWorkflow(dot)
-	skillByTarget := map[string]string{}
-	for _, tr := range spec.Transitions {
-		skillByTarget[tr.To] = tr.Skill
-	}
-	if got := skillByTarget["in_progress"]; got != "satelle-story-intent-review" {
-		t.Errorf("node-consistent edge gate = %q, want satelle-story-intent-review", got)
-	}
-	html := string(workflowDiagram(spec, nil))
-	if !strings.Contains(html, "satelle-story-intent-review") {
-		t.Errorf("diagram did not label the node-consistent edge gate:\n%s", html)
-	}
-}
 
-func TestWorkflowDiagramFromDOT(t *testing.T) {
-	spec := parseWorkflow(sampleWorkflowDOT)
-	html := string(workflowDiagram(spec, nil))
-	for _, want := range []string{"<svg", "commit_push", "commit_review", "<path", "satelle-commit-push-reviewer"} {
-		if !strings.Contains(html, want) {
-			t.Errorf("diagram HTML missing %q", want)
-		}
-	}
-}
-
-// TestWorkflowDiagramCarriesIdentifiers covers sty_19b2107a AC1/AC2: every node
-// carries a stable data-state and is focusable, and every edge path + label carries
-// data-from/data-to so JS can correlate a node with its incident edges.
-func TestWorkflowDiagramCarriesIdentifiers(t *testing.T) {
-	spec := parseWorkflow(sampleWorkflowDOT)
-	html := string(workflowDiagram(spec, nil))
-
-	// Nodes: a stable data-state and focusability (tabindex) for keyboard a11y.
-	for _, want := range []string{
-		`data-state="in_progress"`, `data-state="commit_push"`, `data-state="done"`,
-		`tabindex="0"`, `role="button"`,
-	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("node markup missing %q", want)
-		}
-	}
-	// Edge paths AND labels carry data-from/data-to for the edge into commit_review.
-	if !strings.Contains(html, `<path class="wf-edge-path" data-from="commit_push" data-to="commit_review"`) {
-		t.Errorf("edge path missing data-from/data-to identifiers:\n%s", html)
-	}
-	if !strings.Contains(html, `<text class="wf-edge-label" data-from="commit_push" data-to="commit_review"`) {
-		t.Errorf("edge label missing data-from/data-to identifiers:\n%s", html)
-	}
-}
-
-// layeredDOT mirrors the project workflow's shape: a gated spine, a recovery
-// (back) edge, a cancel fan, scoped (on=…) reviewers, and an edge-less
-// step-summary declaration — the fixture for the layered layout (sty_677c604c).
-const layeredDOT = `---
-name: w
-applies_to: ["*"]
----
-` + "```dot" + `
-digraph w {
-  backlog     [shape=Mdiamond]
-  in_progress [agent=executor]
-  integration [agent=integrator, prompt="@skill:integrate"]
-  commit      [agent=commit-agent, prompt="@skill:commit"]
-  done        [shape=Msquare]
-  cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
-  step        [agent=reviewer, prompt="@skill:satelle-step-summary", mandatory=true]
-  estimate    [agent=reviewer, prompt="@skill:satelle-estimate-actual-review", on="in_progress,done"]
-  backlog -> in_progress
-  in_progress -> integration [reviewer_skill="satelle-code-ac-review"]
-  integration -> commit [reviewer_skill="satelle-integration-review"]
-  commit -> done
-  commit -> in_progress
-  backlog -> cancelled
-  in_progress -> cancelled
-  integration -> cancelled
-}
-` + "```" + `
-`
-
-// nodePos extracts each wf-dnode's rect x/y keyed by data-state.
-func nodePos(t *testing.T, html string) map[string][2]int {
-	t.Helper()
-	re := regexp.MustCompile(`<g class="wf-dnode[^"]*" data-state="([^"]+)"[^>]*><rect x="(\d+)" y="(\d+)"`)
-	out := map[string][2]int{}
-	for _, m := range re.FindAllStringSubmatch(html, -1) {
-		var x, y int
-		fmt.Sscanf(m[2], "%d", &x)
-		fmt.Sscanf(m[3], "%d", &y)
-		out[m[1]] = [2]int{x, y}
-	}
-	return out
-}
-
-// TestWorkflowDiagramLayeredSpine covers sty_677c604c AC1: the main spine reads
-// left-to-right on ONE row (strictly increasing x, equal y), instead of the old
-// vertical stack with every edge arcing through the same right-hand field.
-func TestWorkflowDiagramLayeredSpine(t *testing.T) {
-	html := string(workflowDiagram(parseWorkflow(layeredDOT), nil))
-	pos := nodePos(t, html)
-	spine := []string{"backlog", "in_progress", "integration", "commit", "done"}
-	for i := 1; i < len(spine); i++ {
-		prev, cur := pos[spine[i-1]], pos[spine[i]]
-		if cur[0] <= prev[0] {
-			t.Errorf("spine x must increase: %s(x=%d) !> %s(x=%d)", spine[i], cur[0], spine[i-1], prev[0])
-		}
-		if cur[1] != prev[1] {
-			t.Errorf("spine must share one row: %s(y=%d) != %s(y=%d)", spine[i], cur[1], spine[i-1], prev[1])
-		}
-	}
-	// A gate label anchors BETWEEN its edge's nodes.
-	re := regexp.MustCompile(`<text class="wf-edge-label" data-from="in_progress" data-to="integration" x="(\d+)"`)
-	m := re.FindStringSubmatch(html)
-	if m == nil {
-		t.Fatalf("code-ac gate label missing:\n%s", html)
-	}
-	var lx int
-	fmt.Sscanf(m[1], "%d", &lx)
-	if lx <= pos["in_progress"][0] || lx >= pos["integration"][0]+148 {
-		t.Errorf("gate label x=%d not anchored between its nodes (%d..%d)", lx, pos["in_progress"][0], pos["integration"][0])
-	}
-	// The diagram keeps its original viewBox for JS pan/zoom reset.
-	if !strings.Contains(html, `data-vb="0 0 `) {
-		t.Error("diagram missing data-vb (pan/zoom reset box)")
-	}
-}
-
-// TestWorkflowDiagramAltAndAnnotations covers sty_677c604c AC2: cancel-fan and
-// recovery edges are de-emphasised (wf-edge-alt, the JS toggle's target), and a
-// scoped (on=…) reviewer renders as an annotation on each target state — never
-// as a free-floating node — while an edge-less unscoped declaration becomes a
-// footnote.
-func TestWorkflowDiagramAltAndAnnotations(t *testing.T) {
-	html := string(workflowDiagram(parseWorkflow(layeredDOT), nil))
-	// Recovery commit→in_progress is a BACK edge: muted + toggleable.
-	if !regexp.MustCompile(`<path class="wf-edge-path[^"]*back wf-edge-alt" data-from="commit" data-to="in_progress"`).MatchString(html) {
-		t.Errorf("recovery edge should carry back + wf-edge-alt:\n%s", html)
-	}
-	// Every cancel edge is de-emphasised.
-	for _, from := range []string{"backlog", "in_progress", "integration"} {
-		re := regexp.MustCompile(`<path class="wf-edge-path[^"]*wf-edge-alt" data-from="` + from + `" data-to="cancelled"`)
-		if !re.MatchString(html) {
-			t.Errorf("cancel edge %s→cancelled should carry wf-edge-alt:\n%s", from, html)
-		}
-	}
-	// estimate (on="in_progress,done") annotates BOTH targets and is NOT a node.
-	for _, target := range []string{"in_progress", "done"} {
-		if !strings.Contains(html, `<text class="wf-annot" data-state="`+target+`"`) {
-			t.Errorf("scoped reviewer should annotate %s:\n%s", target, html)
-		}
-	}
-	if strings.Contains(html, `data-state="estimate"`) && strings.Contains(html, `<g class="wf-dnode" data-state="estimate"`) {
-		t.Error("a scoped reviewer must not render as a free-floating node")
-	}
-	// step (edge-less, no on=) becomes the footnote line.
-	if !strings.Contains(html, `class="wf-foot"`) || !strings.Contains(html, "step-summary") {
-		t.Errorf("edge-less step declaration should render as a footnote:\n%s", html)
-	}
-	// A named-agent state carries its @agent badge.
-	if !strings.Contains(html, `class="wf-agent-badge"`) || !strings.Contains(html, "@integrator") {
-		t.Errorf("named-agent state should carry its badge:\n%s", html)
-	}
-}
-
-// TestWorkflowDiagramExecutorAugmentationAnnotation (sty_8225d8a5 AC6): an
-// edge-less executor with on= is an annotation on the target spine state, never
-// a free-floating lifecycle node (the phantom that agent==reviewer-only split
-// would reintroduce).
-func TestWorkflowDiagramExecutorAugmentationAnnotation(t *testing.T) {
-	dot := `---
-name: w
-applies_to: ["*"]
----
-` + "```dot" + `
-digraph w {
-  backlog [shape=Mdiamond]
+  plan        [agent=planner, prompt="@skill:plan"]
   in_progress [agent=executor, prompt="@skill:code"]
-  done [shape=Msquare]
-  codeui [agent=executor, prompt="@skill:code-ui", on="in_progress", applies_to="surface:ui"]
-  backlog -> in_progress -> done
-}
-` + "```" + "\n"
-	html := string(workflowDiagram(parseWorkflow(dot), nil))
-	if strings.Contains(html, `<g class="wf-dnode" data-state="codeui"`) {
-		t.Errorf("augmentation must not be a main-flow node:\n%s", html)
-	}
-	if !strings.Contains(html, `class="wf-annot" data-state="in_progress"`) {
-		t.Errorf("augmentation should annotate in_progress:\n%s", html)
-	}
-	// Spine nodes still present.
-	if !strings.Contains(html, `data-state="in_progress"`) {
-		t.Error("spine in_progress missing")
-	}
-}
-
-// TestWorkflowDiagramLabelsDoNotOverprint covers sty_19b2107a AC4: when several
-// edges target the same node (here all the cancel edges, plus the gated forward
-// edges), their labels must not collapse onto the same coordinate. The anti-collision
-// pass guarantees no two labels share an x-overlap at the same y.
-func TestWorkflowDiagramLabelsDoNotOverprint(t *testing.T) {
-	// A workflow with multiple gated edges into the same target (cancelled) — the
-	// shape that produced the run-together "code-acstory-cancel" label.
-	dot := `---
-name: w
-applies_to: ["*"]
----
-` + "```dot" + `
-digraph w {
-  backlog     [shape=Mdiamond]
-  in_progress [agent=executor]
-  integration [agent=executor]
-  commit      [agent=executor]
-  done        [shape=Msquare]
   cancelled   [agent=reviewer, prompt="@skill:satelle-story-cancel-review"]
-  rev1        [agent=reviewer, prompt="@skill:code-ac-review"]
-  backlog -> in_progress -> rev1 -> integration -> commit -> done
+  design      [agent=reviewer, prompt="@skill:satelle-design-review", on="in_progress", applies_to="surface:ui"]
+
+  backlog -> plan [agent=reviewer, prompt="@skill:satelle-story-intent-review"]
+  plan -> in_progress [agent=reviewer, prompt="@skill:satelle-story-plan-review,satelle-story-architecture-review", parallel=true]
+  in_progress -> done [agent=reviewer, prompt="@skill:satelle-story-release-review"]
   backlog -> cancelled
   in_progress -> cancelled
-  integration -> cancelled
-  commit -> cancelled
 }
 ` + "```" + `
 `
-	spec := parseWorkflow(dot)
-	html := string(workflowDiagram(spec, nil))
 
-	// Pull each <text class="wf-edge-label" … x=".." y=".."> and assert no two labels
-	// occupy the same (x,y) — the overprint the story reports.
-	re := regexp.MustCompile(`<text class="wf-edge-label[^"]*"[^>]*\bx="(\d+)" y="(\d+)"`)
-	seen := map[string]bool{}
-	matches := re.FindAllStringSubmatch(html, -1)
-	if len(matches) < 2 {
-		t.Fatalf("expected several edge labels, got %d:\n%s", len(matches), html)
-	}
-	for _, m := range matches {
-		key := m[1] + "," + m[2]
-		if seen[key] {
-			t.Errorf("two edge labels overprint at the same coordinate %s:\n%s", key, html)
-		}
-		seen[key] = true
+func TestFrontmatterListWeb(t *testing.T) {
+	got := frontmatterList(sampleWorkflowDOT, "applies_to")
+	if len(got) != 1 || got[0] != "*" {
+		t.Fatalf("applies_to = %v, want [*]", got)
 	}
 }
 
-// TestParseAndDiagramMultiReviewerParallel: multi-skill CSV + parallel=true are
-// carried into the web model and rendered on the edge label (sty_1b7a0ca2).
-func TestParseAndDiagramMultiReviewerParallel(t *testing.T) {
-	dot := "---\nname: multi\n---\n" + "```dot" + `
-digraph multi {
-  backlog [shape=Mdiamond]
-  plan [agent=planner]
-  in_progress [agent=executor]
-  done [shape=Msquare]
-  backlog -> plan [agent=reviewer, prompt="@skill:satelle-story-intent-review"]
-  plan -> in_progress [agent=reviewer, prompt="@skill:satelle-story-plan-review,satelle-story-architecture-review,satelle-story-integration-coverage-review", parallel=true]
-  in_progress -> done
-}
-` + "```\n"
-	spec := parseWorkflow(dot)
-	var planEdge *wfTransition
-	for i := range spec.Transitions {
-		tr := &spec.Transitions[i]
-		if tr.From == "plan" && tr.To == "in_progress" {
-			planEdge = tr
-			break
+// TestWorkflowRouteFromDOT: an authored DOT resolves to the ordered route — the
+// spine in workflow order, each step's performer and rubrics, and the reviewers
+// that gate ENTRY to it. Park/cancel destinations are exits, not steps.
+func TestWorkflowRouteFromDOT(t *testing.T) {
+	r := workflowRoute("w", sampleWorkflowDOT, routeSource{}, "", nil)
+	var got []string
+	for _, s := range r.Steps {
+		got = append(got, s.Status)
+	}
+	want := []string{"backlog", "plan", "in_progress", "done"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("route steps = %v, want %v", got, want)
+	}
+	byStatus := map[string]int{}
+	for i, s := range r.Steps {
+		byStatus[s.Status] = i
+	}
+	if s := r.Steps[byStatus["plan"]]; s.Agent != "planner" || len(s.Skills) != 1 || s.Skills[0] != "plan" {
+		t.Errorf("plan step performer = %q %v, want planner [plan]", s.Agent, s.Skills)
+	}
+	if s := r.Steps[byStatus["plan"]]; len(s.Reviewers) != 1 || s.Reviewers[0].Skill != "satelle-story-intent-review" {
+		t.Errorf("plan entry gates = %+v, want satelle-story-intent-review", s.Reviewers)
+	}
+	if s := r.Steps[byStatus["in_progress"]]; len(s.Reviewers) != 2 {
+		t.Errorf("in_progress entry gates = %+v, want the two plan-edge reviewers", s.Reviewers)
+	}
+	if !r.Steps[byStatus["done"]].Terminal {
+		t.Error("done must be the route's terminal step")
+	}
+	// The scoped design gate applies only to surface:ui — without the tag it is
+	// SKIPPED, not absent, so "no gate" stays distinguishable from "not for you".
+	ip := r.Steps[byStatus["in_progress"]]
+	if len(ip.Skipped) != 1 || ip.Skipped[0].Skill != "satelle-design-review" {
+		t.Errorf("in_progress skipped = %+v, want satelle-design-review", ip.Skipped)
+	}
+	tagged := workflowRoute("w", sampleWorkflowDOT, routeSource{}, "", []string{"surface:ui"})
+	var found bool
+	for _, s := range tagged.Steps {
+		for _, rv := range s.Reviewers {
+			if rv.Skill == "satelle-design-review" {
+				found = true
+			}
 		}
 	}
-	if planEdge == nil {
-		t.Fatal("missing plan→in_progress edge")
+	if !found {
+		t.Error("a surface:ui story should carry the scoped design gate on its route")
 	}
-	wantSkills := []string{
-		"satelle-story-plan-review",
-		"satelle-story-architecture-review",
-		"satelle-story-integration-coverage-review",
-	}
-	if len(planEdge.Skills) != 3 {
-		t.Fatalf("Skills = %v, want 3", planEdge.Skills)
-	}
-	for i, w := range wantSkills {
-		if planEdge.Skills[i] != w {
-			t.Errorf("Skills[%d] = %q, want %q", i, planEdge.Skills[i], w)
+	// cancelled is an exit, never a step.
+	for _, s := range r.Steps {
+		if s.Status == "cancelled" {
+			t.Error("cancelled must be an exit, not a step")
 		}
 	}
-	if planEdge.Skill != wantSkills[0] {
-		t.Errorf("Skill (first) = %q, want %q", planEdge.Skill, wantSkills[0])
-	}
-	if planEdge.Parallel != 4 { // DefaultParallelCap from parallel=true
-		t.Errorf("Parallel = %d, want 4", planEdge.Parallel)
-	}
-
-	html := string(workflowDiagram(spec, nil))
-	// Tooltip carries full skill names
-	for _, sk := range wantSkills {
-		if !strings.Contains(html, sk) {
-			t.Errorf("diagram missing skill %q in tooltip/content:\n%s", sk, html)
-		}
-	}
-	// Parallel marker on label + data-parallel
-	if !strings.Contains(html, "∥") {
-		t.Errorf("diagram missing parallel marker ∥:\n%s", html)
-	}
-	if !strings.Contains(html, `data-parallel="4"`) {
-		t.Errorf("diagram missing data-parallel=4:\n%s", html)
-	}
-	// Short labels present
-	for _, short := range []string{"story-plan", "story-architecture", "story-integration-coverage"} {
-		if !strings.Contains(html, short) {
-			t.Errorf("diagram missing short label %q", short)
-		}
-	}
-	// Single-skill edge still works
-	if !strings.Contains(html, "story-intent") && !strings.Contains(html, "satelle-story-intent-review") {
-		t.Error("single-skill intent edge missing from diagram")
+	if len(r.Exits) != 1 || r.Exits[0].Status != "cancelled" {
+		t.Errorf("exits = %+v, want cancelled", r.Exits)
 	}
 }
 
-func TestEdgeGateLabel(t *testing.T) {
-	vis, tip := edgeGateLabel(wfTransition{Skill: "satelle-story-plan-review", Skills: []string{"satelle-story-plan-review"}})
-	if vis != "story-plan" || !strings.Contains(tip, "satelle-story-plan-review") {
-		t.Errorf("single: vis=%q tip=%q", vis, tip)
-	}
-	vis, tip = edgeGateLabel(wfTransition{
-		Skills:   []string{"a-review", "b-review", "c-review"},
-		Parallel: 4,
+const sampleDone = `# Definition of done
+
+## feature
+- raised
+- planned
+- coded
+- closed
+park: blocked @satelle-story-blocked-review advise blocked-triage @satelle-story-blocked-triage
+cancel: cancelled @satelle-story-cancel-review
+`
+
+const sampleStep = `# Step catalogue
+
+## backlog
+start: true
+provides: raised
+
+## plan
+agent: planner
+skills: plan
+reviewers: satelle-story-intent-review
+provides: planned
+requires: raised
+
+## in_progress
+agent: executor
+skills: code
+reviewers: satelle-story-plan-review
+provides: coded
+requires: planned
+
+## done
+terminal: true
+reviewers: satelle-story-release-review
+provides: closed
+requires: coded
+advise: retrospective @satelle-lessons
+`
+
+// TestWorkflowRouteFromDoneStep: with a declaration of done and a step catalogue
+// in the substrate, the panel derives the route from THEM — obligations appear
+// (a DOT has no obligation vocabulary) and declared advisors ride along.
+func TestWorkflowRouteFromDoneStep(t *testing.T) {
+	rs := routeSourceOf([]docindex.Doc{
+		{Name: routeSourceDone, Body: sampleDone},
+		{Name: routeSourceStep, Body: sampleStep},
 	})
-	if !strings.HasPrefix(vis, "∥ ") {
-		t.Errorf("parallel prefix missing: %q", vis)
+	if !rs.ok() {
+		t.Fatal("routeSourceOf did not pick up done + step")
 	}
-	if !strings.Contains(tip, "parallel=4") {
-		t.Errorf("tip missing parallel: %q", tip)
+	// The DOT body is present and must LOSE: a derived route wins when it exists.
+	r := workflowRoute("w", sampleWorkflowDOT, rs, "feature", nil)
+	var got []string
+	for _, s := range r.Steps {
+		got = append(got, s.Status+"="+s.Obligation)
+	}
+	want := "backlog=raised,plan=planned,in_progress=coded,done=closed"
+	if strings.Join(got, ",") != want {
+		t.Fatalf("derived route = %v, want %s", got, want)
+	}
+	var advised int
+	for _, s := range r.Steps {
+		if s.Advisor != nil {
+			advised++
+			if s.Status == "done" && s.Advisor.Agent != "retrospective" {
+				t.Errorf("done advisor = %q, want retrospective", s.Advisor.Agent)
+			}
+		}
+	}
+	if advised == 0 {
+		t.Error("a derived route should carry the advisors its step catalogue declares")
+	}
+	var parked bool
+	for _, e := range r.Exits {
+		if e.Status == "blocked" {
+			parked = true
+			if !e.Park {
+				t.Error("blocked should be a PARK exit (resumes to origin)")
+			}
+			if e.Advisor == nil || e.Advisor.Agent != "blocked-triage" {
+				t.Errorf("blocked exit advisor = %+v, want blocked-triage", e.Advisor)
+			}
+		}
+	}
+	if !parked {
+		t.Errorf("exits = %+v, want a blocked park exit", r.Exits)
+	}
+	// An unknown category yields no route rather than a silently ungated one.
+	if len(workflowRoute("w", "", rs, "nonesuch", nil).Steps) != 0 {
+		t.Error("an unknown category must not resolve to a route")
 	}
 }
 
-// TestWorkflowDetailListsAllEdgeSkills (sty_1b7a0ca2 AC3): expand Transitions
-// list renders one gate chip per CSV skill and a parallel chip when Parallel > 0.
-func TestWorkflowDetailListsAllEdgeSkills(t *testing.T) {
+// TestWorkflowDetailRendersRouteNotDiagram (AC1): the expand shows the ordered
+// route — step, obligation, performer, rubrics, entry gates — and NO diagram.
+func TestWorkflowDetailRendersRouteNotDiagram(t *testing.T) {
+	rs := routeSourceOf([]docindex.Doc{
+		{Name: routeSourceDone, Body: sampleDone},
+		{Name: routeSourceStep, Body: sampleStep},
+	})
 	vm := workflowDetailVM{
-		Name: "test",
-		Spec: wfSpec{
-			States: []wfState{
-				{Name: "plan", Agent: "planner"},
-				{Name: "in_progress", Agent: "executor"},
-			},
-			Transitions: []wfTransition{{
-				From: "plan", To: "in_progress",
-				Skill:    "satelle-story-plan-review",
-				Skills:   []string{"satelle-story-plan-review", "satelle-story-architecture-review", "satelle-story-integration-coverage-review"},
-				Parallel: 4,
-			}},
-		},
+		Name:      "satelle-project-workflow",
+		AppliesTo: []string{"feature"},
+		Route:     workflowRoute("satelle-project-workflow", "", rs, "feature", nil),
+		Body:      "definition",
 	}
 	var buf strings.Builder
 	if err := tmpl.ExecuteTemplate(&buf, "workflowDetail", vm); err != nil {
 		t.Fatalf("ExecuteTemplate: %v", err)
 	}
 	html := buf.String()
-	for _, sk := range []string{
-		"satelle-story-plan-review",
-		"satelle-story-architecture-review",
-		"satelle-story-integration-coverage-review",
+	for _, want := range []string{
+		"in_progress", "coded", "executor", "@skill:code",
+		"satelle-story-plan-review", "entry gated by",
+		"blocked", "park — resumes to origin",
+		"advisor:", "retrospective", "nothing dispatches it",
 	} {
-		if !strings.Contains(html, sk) {
-			t.Errorf("workflowDetail missing gate chip %q:\n%s", sk, html)
+		if !strings.Contains(html, want) {
+			t.Errorf("workflowDetail missing %q:\n%s", want, html)
 		}
 	}
-	if !strings.Contains(html, `data-parallel="4"`) {
-		t.Errorf("workflowDetail missing data-parallel=4:\n%s", html)
+	// The ordinal marks the route's order without a diagram.
+	if !strings.Contains(html, `class="route"`) {
+		t.Errorf("workflowDetail missing the route list:\n%s", html)
 	}
-	if !strings.Contains(html, `class="wf-gate parallel"`) || !strings.Contains(html, "∥4") {
-		t.Errorf("workflowDetail missing parallel chip ∥4:\n%s", html)
+	for _, gone := range []string{"<svg", "wf-diagram", "wf-edge-path", "wf-toggle-alt", "<h4>Flow</h4>"} {
+		if strings.Contains(html, gone) {
+			t.Errorf("workflowDetail still renders the retired diagram (%q):\n%s", gone, html)
+		}
 	}
-	// Count wf-gate skill chips (exclude parallel chip)
-	nSkill := strings.Count(html, `class="wf-gate" title="reviewer gate"`)
-	if nSkill != 3 {
-		t.Errorf("want 3 skill gate chips, got %d", nSkill)
+}
+
+// TestWorkflowDetailEmptyRoute: a workflow with no path to a terminal success
+// state says so, rather than rendering a blank panel.
+func TestWorkflowDetailEmptyRoute(t *testing.T) {
+	var buf strings.Builder
+	if err := tmpl.ExecuteTemplate(&buf, "workflowDetail", workflowDetailVM{Name: "w"}); err != nil {
+		t.Fatalf("ExecuteTemplate: %v", err)
+	}
+	if !strings.Contains(buf.String(), "no route") {
+		t.Errorf("empty route should render an explicit empty state:\n%s", buf.String())
+	}
+}
+
+// TestWorkflowRowsSkipRouteSource: done.md and step.md are two halves of ONE
+// route, not two workflows — they get no row in the panel.
+func TestWorkflowRowsSkipRouteSource(t *testing.T) {
+	rows := workflowRows([]docindex.Doc{
+		{Name: routeSourceDone, Body: sampleDone},
+		{Name: routeSourceStep, Body: sampleStep},
+		{Name: "satelle-project-workflow", Body: sampleWorkflowDOT},
+	}, nil, nil)
+	if len(rows) != 1 || rows[0].Name != "satelle-project-workflow" {
+		t.Fatalf("rows = %+v, want only the workflow", rows)
+	}
+}
+
+// TestWebHoldsNoWorkflowParser (AC3): the second DOT parser and its diagram
+// renderer are gone, and nothing may reintroduce them. internal/wfdot is the one
+// workflow front door; internal/web renders what it returns.
+func TestWebHoldsNoWorkflowParser(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	banned := []string{"parseWorkflowDOT", "parseWorkflow", "parseState", "workflowDiagram", "edgeGateLabel"}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		for _, b := range banned {
+			if strings.Contains(string(src), b) {
+				t.Errorf("%s reintroduces %s — the web layer must hold no workflow parser of its own", name, b)
+			}
+		}
 	}
 }
