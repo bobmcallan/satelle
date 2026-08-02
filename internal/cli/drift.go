@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -61,7 +62,8 @@ func isDevVersion(v string) bool {
 
 // refuseBreakingDrift fails closed when the installed binary is newer than
 // .satelle/deployed.version AND CHANGELOG.md has a ### Breaking entry in the
-// open range (deployed, binary]. Instructs `satelle init` as the heal path.
+// open range (deployed, binary]. The REMEDIATION comes from that entry's own
+// bullets, not from Go — see breakingDriftError.
 // Non-breaking version gaps do not gate. Dev builds never gate.
 func refuseBreakingDrift(repoRoot string) error {
 	binVer := strings.TrimSpace(buildinfo.Resolve().Version)
@@ -82,21 +84,50 @@ func refuseBreakingDrift(repoRoot string) error {
 			"satelle: this repo has no .satelle/%s stamp — run `satelle init` to align with binary %s (breaking-surface heal path)",
 			deployedVersionName, binVer)
 	}
-	if verb.CmpSemverExported(deployed, binVer) >= 0 {
-		return nil // binary not newer
-	}
 	// Consult changelog for breaking entries in (deployed, binVer].
 	entries, err := verb.ChangelogRange(deployed, binVer)
 	if err != nil {
 		// Missing changelog: do not brick — init analysis still works.
 		return nil
 	}
+	return breakingDriftError(deployed, binVer, entries)
+}
+
+// breakingDriftError is the DECISION half of the drift gate: given the repo's
+// stamp, the running binary and the changelog entries in (deployed, binVer],
+// return the refusal or nil. Split from refuseBreakingDrift so the decision is
+// reachable without buildinfo — the dev short-circuit above makes every
+// assertion about the whole function vacuous under `go test` (sty_b36c051c).
+//
+// The remediation is CONFIGURATION: a release that has something specific to
+// say says it in its own ### Breaking bullets and those reach the operator
+// verbatim. The binary contributes only the preamble and, for an entry that
+// declares nothing, the generic `satelle init` fallback. There is deliberately
+// no per-release branch here — the next breaking change authors its heal path
+// in CHANGELOG.md, with no recompile.
+func breakingDriftError(deployed, binVer string, entries []verb.ChangelogEntry) error {
+	if verb.CmpSemverExported(deployed, binVer) >= 0 {
+		return nil // binary not newer
+	}
 	for _, e := range entries {
-		if e.Breaking {
-			return fmt.Errorf(
-				"satelle: binary %s is ahead of this repo's deployed stamp %s across BREAKING release %s — run `satelle init` to heal (see CHANGELOG.md ### Breaking)",
-				binVer, deployed, e.Version)
+		if !e.Breaking {
+			continue
 		}
+		head := fmt.Sprintf(
+			"satelle: binary %s is ahead of this repo's deployed stamp %s across BREAKING release %s",
+			binVer, deployed, e.Version)
+		bullets := e.Sections["Breaking"]
+		if len(bullets) == 0 {
+			return fmt.Errorf("%s — run `satelle init` to heal (see CHANGELOG.md ### Breaking)", head)
+		}
+		var b strings.Builder
+		b.WriteString(head)
+		b.WriteString(" — that release says:")
+		for _, ln := range bullets {
+			b.WriteString("\n  - ")
+			b.WriteString(ln)
+		}
+		return errors.New(b.String())
 	}
 	return nil
 }
