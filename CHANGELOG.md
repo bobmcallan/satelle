@@ -1,3 +1,10 @@
+## [0.0.390] - 2026-08-02
+
+### Changed
+- **The embedded default route teaches its own format.** `internal/config/substrate/workflows/done.md` and `step.md` are the first process files a new operator ever reads — and the only example they have — but they shipped bare: records with no preamble, no grouping, no provenance. Both now carry a "HOW TO READ THIS FILE" preamble stating the two-halves model and the one rule readers get wrong (**an obligation links to a step by that step's `provides:`, never by its heading** — headings are stage names, and `done` appears three times on purpose), route-family banners grouping the records, and a comment on every record naming the obligation it provides and the sections that select it. Deliberate absences are now labelled `DECISION, not omission:` — no park on containers, no park and an ungated cancel on task runs, no step summary or estimate gate for runs — so a reader can tell a decision from an oversight. The seeded `.satelle/workflows/README.md` gained the same linkage rule, the one-line-comment constraint, and a pointer to `satelle workflow validate`.
+
+  Three regression nets landed BEFORE the prose, so they prove something: a golden derived-route fingerprint per category (comment-only edits must not move a single line of it), a positive presence test that fails on a single un-commented record — a ban-list alone would pass an empty file — and a repo-agnostic lint over the embedded comments, since these ship in the binary and belong to every repo (sty_58911b1a)
+
 ## [0.0.389] - 2026-08-02
 
 ### Fixed

@@ -182,12 +182,25 @@ func TestRebaseHelpDescribesTheShippedRoute(t *testing.T) {
 // representation (the two halves), not the retired DOT standard.
 func TestWorkflowsReadmeDescribesTheRoute(t *testing.T) {
 	readme := dirReadme["workflows"]
-	if strings.Contains(readme, "DOT standard") {
-		t.Error("the workflows README still describes authored DOT as the shipped form")
+	// The DOT front end is retired, so ANY of its vocabulary in the text a fresh
+	// repo is seeded with would teach a format the binary cannot read. Banning
+	// only the phrase "DOT standard" let the rest of it through.
+	low := strings.ToLower(readme)
+	for _, banned := range []string{"dot standard", "digraph", ".dot", "mdiamond", "msquare", "edge csv"} {
+		if strings.Contains(low, banned) {
+			t.Errorf("the seeded workflows README carries retired DOT vocabulary %q", banned)
+		}
 	}
-	for _, want := range []string{"done.md", "step.md", "provides", "requires"} {
+	for _, want := range []string{
+		"done.md", "step.md", "provides", "requires",
+		// The linkage rule is the thing readers get wrong; a README that omits it
+		// leaves them matching obligations to headings.
+		"heading",
+		// The fastest post-edit feedback loop, and where the grammar is documented.
+		"satelle workflow validate", "satelle help workflows",
+	} {
 		if !strings.Contains(readme, want) {
-			t.Errorf("the workflows README does not mention %q — an operator needs the grammar", want)
+			t.Errorf("the workflows README does not mention %q — an operator needs it", want)
 		}
 	}
 }
