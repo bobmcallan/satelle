@@ -57,8 +57,24 @@ type Reconciler struct {
 	Targets func(ctx context.Context) []string
 	// Reseed re-requests one repo's snapshot; nil means reseedViaCLI.
 	Reseed func(ctx context.Context, repoPath string) error
-	// Log receives one line per failure (and the startup notice); nil discards.
+	// Log receives a line when a repo STARTS failing, when its reason CHANGES,
+	// and when it recovers — never once per pass per failing repo (sty_a2162ee3).
+	// nil discards.
 	Log func(format string, args ...any)
+
+	// failing remembers, per repo, the reason it last failed and how many
+	// consecutive passes have produced that same reason. It exists so silence
+	// can mean "unchanged": a line is written on a transition, never on a
+	// repetition. Lazily allocated; only pass() touches it, and pass() is only
+	// ever called from Loop's single goroutine, so there is no lock here
+	// because there is no concurrency to guard.
+	failing map[string]*repoFailure
+}
+
+// repoFailure is one repo's current failure streak.
+type repoFailure struct {
+	reason string // err.Error() of the last logged failure
+	passes int    // consecutive passes that produced exactly this reason
 }
 
 func (r *Reconciler) interval() time.Duration {
@@ -107,6 +123,24 @@ func (r *Reconciler) Loop(ctx context.Context) {
 
 // pass re-requests every target serially — a background repair must not spawn a
 // process per partition at once on an operator's machine.
+//
+// WHY NO BACKOFF (sty_a2162ee3, AC5). Every target is re-seeded on every pass,
+// including one that has failed identically for a day. That is a decision, not
+// an oversight:
+//
+//   - This poll is the ONLY signal that a repo recovered. Nothing notifies the
+//     service when an operator heals a repo, so backing off to (say) an hour
+//     would delay the recovery report by up to an hour — trading a log problem
+//     for a stale-view problem, which is the defect this file exists to fix.
+//   - The cost being avoided is not the one that hurt. A handful of repos, one
+//     bounded serial subprocess each, every interval, is negligible; the log
+//     volume was the whole complaint and report() removes that outright.
+//   - Backoff needs its own probe schedule, reset rule and documented bound —
+//     more machinery than the problem has left.
+//
+// If spawn cost ever does become the binding constraint, r.failing already
+// carries the consecutive-pass count a backoff would key on, so it is a
+// separable follow-up rather than a rewrite.
 func (r *Reconciler) pass(ctx context.Context) {
 	if r.Targets == nil {
 		return
@@ -115,17 +149,56 @@ func (r *Reconciler) pass(ctx context.Context) {
 	if reseed == nil {
 		reseed = reseedViaCLI
 	}
+	seen := map[string]bool{}
 	for _, path := range r.Targets(ctx) {
 		if ctx.Err() != nil {
 			return
 		}
+		seen[path] = true
 		runCtx, cancel := context.WithTimeout(ctx, r.timeout())
 		err := reseed(runCtx, path)
 		cancel()
-		if err != nil {
-			r.logf("mirror reconcile %s: %v", path, err)
+		r.report(path, err)
+	}
+	// Forget repos this pass no longer targets (partition removed, directory
+	// gone). Keeping the entry would emit a bogus "recovered" line across a gap
+	// the repo was not even being polled over.
+	for path := range r.failing {
+		if !seen[path] {
+			delete(r.failing, path)
 		}
 	}
+}
+
+// report turns one reseed outcome into at most one log line. A repo is reported
+// when it STARTS failing, when the reason CHANGES, and when it recovers; a
+// repetition of the same reason is counted and not written, so silence means
+// unchanged rather than lost.
+//
+// It never touches whether the reseed ran — suppression is about the log line
+// only. A repo whose line is suppressed is still re-seeded on every pass.
+func (r *Reconciler) report(path string, err error) {
+	prev := r.failing[path]
+	if err == nil {
+		if prev != nil {
+			r.logf("mirror reconcile %s: recovered after %d failed pass(es)", path, prev.passes)
+			delete(r.failing, path)
+		}
+		// Steady-state success has never been logged and must not start being.
+		return
+	}
+	reason := err.Error()
+	if prev != nil && prev.reason == reason {
+		prev.passes++
+		return
+	}
+	// First failure, or the reason changed. The format is byte-identical to the
+	// line this loop has always written, so an operator's grep still matches.
+	r.logf("mirror reconcile %s: %v", path, err)
+	if r.failing == nil {
+		r.failing = map[string]*repoFailure{}
+	}
+	r.failing[path] = &repoFailure{reason: reason, passes: 1}
 }
 
 // mirrorTargets returns the repo paths of every partition the mirror renders

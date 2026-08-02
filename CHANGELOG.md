@@ -1,3 +1,15 @@
+## [0.0.398] - 2026-08-02
+
+### Fixed
+- **The mirror reconcile loop stops writing the same failure line every pass.** `Reconciler.pass` logged one line per repo it could not re-seed, every interval, forever — on this machine 9 repos × one line every 5 minutes, roughly 40KB of a 396KB `server.log` and ~1,150 lines a day for repos that cannot heal without a human. A repeated line is not information: it says the same thing on the hundredth pass as on the first, so the log stops distinguishing a NEW failure from a long-standing one, and it dilutes the request log it shares a rotation budget with. A repo is now reported on a TRANSITION — when it starts failing, when the reason CHANGES, and when it recovers (with how many passes it was broken for) — so silence means unchanged rather than lost. The failure line is byte-identical to the one this loop has always written, so an operator's grep still matches, and a repo that leaves `Targets` is forgotten rather than emitting a bogus recovery across a gap it was not polled over. Failure identity is the full error text, deliberately: `reseedViaCLI` inlines the child's output, so a changed refusal re-logs once — which is exactly what happened when 0.0.396 gave every DOT-era repo a new reason to fail (sty_a2162ee3)
+- **Deliberate: no backoff.** Every target is still re-seeded on every pass, including one failing identically for a day, and `pass` says why in the file rather than leaving it to be re-derived. This poll is the ONLY signal that a repo recovered — nothing notifies the service when an operator heals one — so backing off would delay the recovery report by the backoff, trading a log problem for the stale-view problem this file exists to fix. The cost avoided was never the subprocess; it was the log volume, which suppression removes outright. Suppression touches the log line and never the reseed, and the test asserts the attempt count alongside the line count so "suppressed the work instead of the message" fails loudly. All four pre-existing reconcile tests pass unmodified, and each new assertion was verified to fail when its mechanism is removed (sty_a2162ee3)
+
+## [serve-v0.0.15] - 2026-08-02
+
+### Changed
+- Carries the reconcile-log fix (sty_a2162ee3). The loop runs inside `satelle-serve`, so the running service only picks it up through a serve release — without this bump `satelle update` reports "already up to date" and the fix never reaches the live process.
+- Also publishes the serve-path work already merged since serve-v0.0.14 but never shipped as a serve artifact: the derived-route workflow panel and the route-source web changes from 0.0.383–0.0.385 and 0.0.391. `make check-serve-version` had been red on that accumulated debt; this clears it.
+
 ## [0.0.397] - 2026-08-02
 
 ### Changed

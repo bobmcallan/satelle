@@ -3,6 +3,8 @@ package serve
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -111,6 +113,242 @@ func TestReconcileSurvivesFailingRepo(t *testing.T) {
 	}
 	if !sawFailure {
 		t.Fatalf("failing repo not logged: %v", logs)
+	}
+}
+
+// lineRecorder captures FORMATTED log lines. TestReconcileSurvivesFailingRepo
+// deliberately keeps recording bare format strings — it only asks whether the
+// failure shape was logged — but every assertion about WHICH repo and HOW MANY
+// times needs the rendered line.
+type lineRecorder struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (l *lineRecorder) log(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+}
+
+func (l *lineRecorder) snapshot() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.lines...)
+}
+
+// countLines returns how many recorded lines contain every one of subs.
+func countLines(lines []string, subs ...string) int {
+	n := 0
+	for _, ln := range lines {
+		all := true
+		for _, s := range subs {
+			if !strings.Contains(ln, s) {
+				all = false
+				break
+			}
+		}
+		if all {
+			n++
+		}
+	}
+	return n
+}
+
+// TestReconcileSuppressesRepeatedIdenticalFailure proves AC1: a repo that fails
+// the same way on every pass is logged when it starts failing and is NOT
+// re-logged identically afterwards. On this machine the un-suppressed loop wrote
+// ~1,150 identical lines a day for a repo that could not heal itself.
+//
+// The count of RESEED ATTEMPTS is asserted alongside the count of lines, because
+// the failure this test has to rule out is not "too few lines" — it is
+// suppressing the WORK instead of the log line.
+func TestReconcileSuppressesRepeatedIdenticalFailure(t *testing.T) {
+	var mu sync.Mutex
+	var badAttempts, goodAttempts int
+	rec := &lineRecorder{}
+	r := &Reconciler{
+		Interval: 5 * time.Millisecond,
+		Targets:  func(context.Context) []string { return []string{"/repo/bad", "/repo/good"} },
+		Reseed: func(ctx context.Context, repoPath string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			if repoPath == "/repo/bad" {
+				badAttempts++
+				return errors.New("workspace add: exit status 1: stale scaffolding")
+			}
+			goodAttempts++
+			return nil
+		},
+		Log: rec.log,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go r.Loop(ctx)
+
+	waitFor(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return badAttempts >= 5
+	})
+	cancel()
+
+	mu.Lock()
+	attempts := badAttempts
+	mu.Unlock()
+	lines := rec.snapshot()
+
+	if got := countLines(lines, "/repo/bad"); got != 1 {
+		t.Errorf("a stably-failing repo was logged %d times over %d passes, want 1:\n%s",
+			got, attempts, strings.Join(lines, "\n"))
+	}
+	// The reseed itself must NOT be suppressed — the repo is still polled.
+	if attempts < 5 {
+		t.Errorf("bad repo re-seeded only %d times — suppression must skip the LOG, never the work", attempts)
+	}
+	// A healthy repo has never been logged and must not start being.
+	if got := countLines(lines, "/repo/good"); got != 0 {
+		t.Errorf("a healthy repo produced %d lines, want 0:\n%s", got, strings.Join(lines, "\n"))
+	}
+}
+
+// TestReconcileReportsChangedReasonAndRecovery proves AC2 and AC3: silence means
+// UNCHANGED, never lost. A different failure reason and a recovery are both
+// still reported, and the first failure appears without waiting for any summary
+// interval.
+func TestReconcileReportsChangedReasonAndRecovery(t *testing.T) {
+	const (
+		reasonA = "workspace add: exit status 1: stale scaffolding"
+		reasonB = "workspace add: exit status 1: binary is ahead of the deployed stamp"
+	)
+	var mu sync.Mutex
+	calls := 0
+	rec := &lineRecorder{}
+	r := &Reconciler{
+		Interval: 5 * time.Millisecond,
+		Targets:  func(context.Context) []string { return []string{"/repo/one"} },
+		Reseed: func(ctx context.Context, repoPath string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			calls++
+			switch {
+			case calls <= 3:
+				return errors.New(reasonA)
+			case calls <= 6:
+				return errors.New(reasonB)
+			default:
+				return nil
+			}
+		},
+		Log: rec.log,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	go r.Loop(ctx)
+
+	// AC3: the FIRST failure is visible immediately — before the reason ever
+	// changes, and with no summary interval to wait out.
+	waitFor(t, time.Second, func() bool {
+		return countLines(rec.snapshot(), "/repo/one", reasonA) == 1
+	})
+	mu.Lock()
+	early := calls
+	mu.Unlock()
+	if early > 3 {
+		t.Errorf("first failure took %d passes to surface — it must be logged in the pass that produced it", early)
+	}
+
+	waitFor(t, 2*time.Second, func() bool {
+		return countLines(rec.snapshot(), "recovered") == 1
+	})
+	cancel()
+
+	all := rec.snapshot()
+	// Lines about THIS repo. Loop's one-off "mirror reconcile every %s" startup
+	// notice is not a per-repo report and is deliberately excluded.
+	var lines []string
+	for _, ln := range all {
+		if strings.Contains(ln, "/repo/one") {
+			lines = append(lines, ln)
+		}
+	}
+	// Each transition reported exactly once: start, reason change, recovery.
+	for _, c := range []struct {
+		what string
+		subs []string
+	}{
+		{"the first failure", []string{reasonA}},
+		{"the changed reason", []string{reasonB}},
+		{"the recovery", []string{"recovered"}},
+	} {
+		if got := countLines(lines, c.subs...); got != 1 {
+			t.Errorf("%s was logged %d times, want exactly 1:\n%s", c.what, got, strings.Join(all, "\n"))
+		}
+	}
+	// Three transitions over ~7+ passes: nothing else was written.
+	if len(lines) != 3 {
+		t.Errorf("want exactly 3 per-repo lines (start, change, recovery), got %d:\n%s",
+			len(lines), strings.Join(all, "\n"))
+		return
+	}
+	// Order matters: a recovery reported before the reason it recovered from
+	// would read as a repo that healed and then broke.
+	if !(strings.Contains(lines[0], reasonA) && strings.Contains(lines[1], reasonB) &&
+		strings.Contains(lines[2], "recovered")) {
+		t.Errorf("lines out of order:\n%s", strings.Join(lines, "\n"))
+	}
+	// The recovery line carries how long the repo was broken, which is the fact
+	// suppression would otherwise have thrown away.
+	if !strings.Contains(lines[2], "failed pass(es)") {
+		t.Errorf("recovery line does not say how many passes failed: %q", lines[2])
+	}
+}
+
+// TestReconcileForgetsRepoThatLeavesTargets proves the pruning half: a repo that
+// drops out of Targets while failing must not emit a "recovered" line if it
+// comes back healthy. It was not being polled across the gap, so the loop has
+// nothing to report a recovery FROM.
+func TestReconcileForgetsRepoThatLeavesTargets(t *testing.T) {
+	rec := &lineRecorder{}
+	r := &Reconciler{Log: rec.log, Timeout: time.Second}
+
+	var mu sync.Mutex
+	phase := 0
+	r.Targets = func(context.Context) []string {
+		mu.Lock()
+		defer mu.Unlock()
+		if phase == 1 {
+			return nil // partition removed
+		}
+		return []string{"/repo/gone"}
+	}
+	r.Reseed = func(ctx context.Context, repoPath string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if phase == 0 {
+			return errors.New("workspace add: exit status 1: stale scaffolding")
+		}
+		return nil
+	}
+
+	ctx := context.Background()
+	r.pass(ctx) // fails, logged
+	mu.Lock()
+	phase = 1
+	mu.Unlock()
+	r.pass(ctx) // not targeted — entry must be pruned
+	mu.Lock()
+	phase = 2
+	mu.Unlock()
+	r.pass(ctx) // targeted again and healthy
+
+	lines := rec.snapshot()
+	if got := countLines(lines, "recovered"); got != 0 {
+		t.Errorf("a repo that left Targets reported a recovery across the gap:\n%s", strings.Join(lines, "\n"))
+	}
+	if got := countLines(lines, "stale scaffolding"); got != 1 {
+		t.Errorf("the original failure was logged %d times, want 1:\n%s", got, strings.Join(lines, "\n"))
 	}
 }
 
