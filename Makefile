@@ -20,7 +20,10 @@ build:
 	go build -ldflags "$(SERVE_LDFLAGS)" -o $(SERVE_BIN) ./cmd/satelle-serve
 
 # Fail closed when serve-path sources changed since the last serve-v* tag but
-# satelle-serve.version was not advanced (sty_4a5c6924). Used by release path.
+# satelle-serve.version was not advanced (sty_4a5c6924). Run on EVERY release,
+# not only slices the author reads as serve-path (sty_a8853e85). The watch set is
+# derived from `go list -deps ./cmd/satelle-serve`; print it with
+# `bash scripts/check-serve-version.sh --paths`.
 check-serve-version:
 	@bash scripts/check-serve-version.sh
 

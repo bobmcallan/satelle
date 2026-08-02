@@ -2,8 +2,28 @@
 # check-serve-version — fail when serve-path sources changed since the last
 # serve-v* tag but satelle-serve.version was not advanced (sty_4a5c6924).
 # Exit 0 when no serve-path change, or when the serve version line advanced
-# relative to the tagged commit. Configuration-over-code: the path list and
-# .version key are the contract; this script is the gate mechanism.
+# relative to the tagged commit.
+#
+# THE WATCHED SET IS DERIVED, NOT AUTHORED (sty_a8853e85). It is exactly what
+# `cmd/satelle-serve` transitively imports, computed here at run time.
+#
+# It used to be a literal four-entry array, and that array was a SECOND answer to
+# a question the compiler already answers — so it drifted: 4 of the 16 in-repo
+# packages the serve binary compiles in were watched. `internal/serve`, which
+# runs ONLY inside the service, was not among them. The failure that makes this
+# worth deriving is silent by construction: with no `satelle-serve.version` bump,
+# `satelle update` reports "already up to date", the operator sees a green
+# release, and the running service keeps the old code.
+#
+# Configuration-over-code holds. The pass/fail RULE stays here, in configuration;
+# `go list` is a mechanism this check invokes to enumerate a surface, which is
+# exactly what a functional check is allowed to do. What is removed is the
+# hand-maintained fact, not the decision.
+#
+# Modes:
+#   (no args)            run the gate
+#   --paths              print the derived watch set, one per line, exit 0
+#   --check-path <path>  exit 0 if <path> is under the watch set, 1 if not
 set -euo pipefail
 
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
@@ -12,12 +32,69 @@ ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
 }
 cd "$ROOT"
 
-SERVE_PATHS=(
-  'cmd/satelle-serve/'
-  'internal/web/'
-  'internal/mirror/'
-  'internal/buildinfo/'
-)
+# serve_paths prints the directories the serve binary is built from. FAILS CLOSED:
+# a `go list` error or an empty set exits non-zero rather than yielding a gate
+# that watches nothing. An inert gate is worse than the narrow one being replaced.
+serve_paths() {
+  local mod deps out
+  mod=$(go list -m 2>/dev/null) || {
+    echo "check-serve-version: go list -m failed — cannot resolve the module path" >&2
+    return 1
+  }
+  [ -n "$mod" ] || {
+    echo "check-serve-version: go list -m returned nothing" >&2
+    return 1
+  }
+  deps=$(go list -deps ./cmd/satelle-serve 2>/dev/null) || {
+    echo "check-serve-version: go list -deps ./cmd/satelle-serve failed" >&2
+    return 1
+  }
+  # In-repo packages only; a stdlib or vendored dep is not ours to version.
+  # `cmd/satelle-serve` itself is in this list and must stay watched.
+  out=$(printf '%s\n' "$deps" | sed -n "s|^${mod}/||p" | sort -u | sed 's|$|/|')
+  [ -n "$out" ] || {
+    echo "check-serve-version: derived an EMPTY watch set" >&2
+    return 1
+  }
+  printf '%s\n' "$out"
+}
+
+# Capture with $( ) and test the status in the PARENT. `mapfile < <(serve_paths)`
+# reads better and is wrong: a process substitution is a subshell, so an `exit`
+# inside it ends only that subshell. The parent carried on with an EMPTY array —
+# and an empty array in `git diff -- "${SERVE_PATHS[@]}"` means NO pathspec, i.e.
+# every file in the repo. So a broken derivation did not fail closed; it either
+# passed green (go absent from PATH) or flagged unrelated files. Both observed
+# before this was fixed, in the very story that exists to stop a silent gate.
+if ! paths_raw=$(serve_paths); then
+  echo "check-serve-version: refusing to run a gate whose watch set could not be derived" >&2
+  exit 1
+fi
+mapfile -t SERVE_PATHS <<<"$paths_raw"
+if [ "${#SERVE_PATHS[@]}" -eq 0 ] || [ -z "${SERVE_PATHS[0]}" ]; then
+  echo "check-serve-version: derived an EMPTY watch set — refusing to run a gate that watches nothing" >&2
+  exit 1
+fi
+
+case "${1:-}" in
+--paths)
+  printf '%s\n' "${SERVE_PATHS[@]}"
+  exit 0
+  ;;
+--check-path)
+  target="${2:-}"
+  [ -n "$target" ] || { echo "check-serve-version: --check-path needs a path" >&2; exit 2; }
+  for p in "${SERVE_PATHS[@]}"; do
+    case "$target" in "$p"*) exit 0 ;; esac
+  done
+  exit 1
+  ;;
+"") ;;
+*)
+  echo "check-serve-version: unknown argument $1 (want --paths or --check-path <path>)" >&2
+  exit 2
+  ;;
+esac
 
 # Latest serve-v* tag (not latest CLI tag).
 BASE=$(git tag -l 'serve-v*' --sort=-v:refname | head -1 || true)
@@ -30,7 +107,19 @@ changed=$(git diff --name-only "${BASE}..HEAD" -- "${SERVE_PATHS[@]}" 2>/dev/nul
 # Also count unstaged/staged worktree changes on serve paths (pre-commit style).
 wt=$(git diff --name-only HEAD -- "${SERVE_PATHS[@]}" 2>/dev/null || true)
 cached=$(git diff --name-only --cached -- "${SERVE_PATHS[@]}" 2>/dev/null || true)
-all=$(printf '%s\n%s\n%s\n' "$changed" "$wt" "$cached" | grep -v '^$' | sort -u || true)
+# …and files that do not exist yet in git. `git diff` cannot see an untracked
+# file, and the release path runs this check BEFORE staging, so a brand-new
+# source file in a watched package would otherwise sail through — the same
+# looks-covered-but-is-not hole as the old narrow path list (sty_a8853e85).
+untracked=$(git ls-files --others --exclude-standard -- "${SERVE_PATHS[@]}" 2>/dev/null || true)
+all=$(printf '%s\n%s\n%s\n%s\n' "$changed" "$wt" "$cached" "$untracked" |
+  grep -v '^$' |
+  # A _test.go file is compiled into `go test`, never into the shipped binary,
+  # so it cannot make a running service stale. Demanding a serve release for one
+  # is a false positive, and with untracked files now counted it would be a
+  # frequent one. Only *_test.go — testdata can be embedded, so it stays watched.
+  grep -v '_test\.go$' |
+  sort -u || true)
 
 if [ -z "$all" ]; then
   echo "check-serve-version: no serve-path changes since $BASE"
