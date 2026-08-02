@@ -102,6 +102,16 @@ if [ -z "$BASE" ]; then
   echo "check-serve-version: no serve-v* tag yet — ok (first serve release uses current .version)"
   exit 0
 fi
+# A tag whose commit is absent is a SHALLOW clone, not a first release. Without
+# that commit there is no baseline: the diff yields nothing and the tagged
+# .version cannot be read, so every check below would report ok having compared
+# against nothing. Refuse instead — a gate that cannot establish a baseline must
+# not answer "fine" (sty_a8853e85). CI fetches full history for this reason.
+if ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+  echo "check-serve-version: tag $BASE exists but its commit is not in this clone (shallow checkout)" >&2
+  echo "check-serve-version: refusing to report a verdict with no baseline — fetch full history (git fetch --unshallow --tags)" >&2
+  exit 1
+fi
 
 changed=$(git diff --name-only "${BASE}..HEAD" -- "${SERVE_PATHS[@]}" 2>/dev/null || true)
 # Also count unstaged/staged worktree changes on serve paths (pre-commit style).

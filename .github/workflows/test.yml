@@ -12,6 +12,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Full history AND tags. cmd/satelle-serve/servepaths_test.go drives
+          # the real serve-version gate, which compares against the latest
+          # serve-v* tag and reads `.version` out of that tag's tree. The default
+          # shallow, tagless checkout leaves the gate with no baseline, so it
+          # exits early and every assertion about it passes for the wrong reason
+          # (sty_a8853e85 — observed: a planted serve source file "passed").
+          fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
           go-version: '1.26'

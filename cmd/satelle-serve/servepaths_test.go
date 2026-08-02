@@ -159,6 +159,14 @@ func gateRun(t *testing.T, root string) (bool, string) {
 // stale and must not demand a serve release.
 func TestServeGateSeesNewFiles(t *testing.T) {
 	root := repoRoot(t)
+	// The gate compares against the latest serve-v* tag. With no tag it exits
+	// early and answers ok to everything, so a planted file would "pass" and this
+	// test would report a hole that is not there — or worse, miss one that is.
+	// That is not hypothetical: it is how this test first failed CI, on a default
+	// shallow, tagless checkout. Refuse to conclude anything instead.
+	if run(t, root, "git", "tag", "-l", "serve-v*") == "" {
+		t.Skip("no serve-v* tag in this clone — the gate has no baseline, so planting a file proves nothing")
+	}
 	if ok, out := gateRun(t, root); !ok {
 		t.Skipf("gate is already failing in this tree, so planting a file proves nothing:\n%s", out)
 	}
