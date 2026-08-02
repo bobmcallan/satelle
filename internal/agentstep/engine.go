@@ -2082,6 +2082,10 @@ func referencedWorkflowSkills(body string) []string {
 		}
 	}
 	if cat, err := wfdot.ParseSteps(body); err == nil {
+		// Catalogue-wide DELIBERATELY: this wants the UNION of every skill any
+		// section names, so a skill referenced by any route resolves. Narrowing to
+		// one category's selected steps (wfdot.SelectSteps) would report skills the
+		// other route families use as unreferenced (sty_a7316b06).
 		for _, st := range cat.Steps {
 			for _, sk := range append(append([]string(nil), st.Skills...), st.Reviewers...) {
 				if sk != "" {

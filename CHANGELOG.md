@@ -1,3 +1,8 @@
+## [0.0.394] - 2026-08-02
+
+### Fixed
+- **An advisor no longer leaks across route families that share a stage name.** `wfroute.AdvisorsFrom` walked the whole shared step catalogue and keyed advisors by step NAME, but stage names repeat by design — this repo has four `## done` sections, one per route family. So the engineering spine's `advise: retrospective @satelle-lessons`, declared on the `## done` providing `closed`, attached to the `## done` providing `children-resolved` too: a container route claimed an advisor its section never selected, in `satelle workflow show epic-parent` and in the story route document alike. Same defect class as sty_ee0f4ae6 (`topoSortSteps` resolving the shared catalogue by name), and the same remedy: **key off the selected step set, never the catalogue**. The selection half of `BuildRoute` is now exported as `wfdot.SelectSteps` — one answer to "which steps did this category ask for", rather than a second one duplicated in a leaf package — and `AdvisorsFrom` takes `[]Step` instead of a `Catalogue`, so the wrong call cannot be written. Fixed once in the single `RouteSpecFor` chain, so every consumer is corrected together. Every other `Catalogue.Steps` consumer was audited and each is legitimately catalogue-wide (they want the union of skills any route names, not one route's selection); the two least obviously deliberate now say so in a comment (sty_a7316b06)
+
 ## [0.0.393] - 2026-08-02
 
 ### Fixed

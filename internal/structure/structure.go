@@ -281,6 +281,9 @@ func checkRouteSource(name string, fm []string, body string, resolveSkill func(s
 		if len(cat.Steps) == 0 {
 			p = append(p, "no `## <step>` section — the catalogue is empty")
 		}
+		// Catalogue-wide DELIBERATELY: every step's executor rubric must resolve,
+		// whichever route family selects it. This is not per-route data, so it does
+		// not belong on wfdot.SelectSteps (sty_a7316b06).
 		for _, st := range cat.Steps {
 			for _, sk := range st.Skills {
 				if sk != "" && !resolveSkill(sk) {

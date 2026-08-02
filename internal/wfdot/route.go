@@ -167,6 +167,25 @@ func (l List) ObligationsFor(tags []string) []string {
 // that would silently drop gates, which is exactly the authority this
 // representation exists to preserve.
 func BuildRoute(l List, cat Catalogue, tags []string) (Spec, error) {
+	ordered, err := SelectSteps(l, cat, tags)
+	if err != nil {
+		return Spec{}, err
+	}
+	return assemble(ordered, cat.Gates, l)
+}
+
+// SelectSteps returns the steps a category's route walks, topologically ordered.
+//
+// This is the ONE answer to "which steps did this category ask for". The
+// catalogue is SHARED and stage names repeat across route families by design, so
+// anything keying the catalogue by step name attaches to routes that never
+// selected that section — the defect class behind sty_ee0f4ae6 and sty_a7316b06.
+// A consumer that needs per-route step data takes this slice; it must never walk
+// Catalogue.Steps itself.
+//
+// Exported rather than duplicated because a second selection rule is a second
+// answer, and the two would drift.
+func SelectSteps(l List, cat Catalogue, tags []string) ([]Step, error) {
 	want := l.ObligationsFor(tags)
 	wanted := map[string]bool{}
 	for _, o := range want {
@@ -181,7 +200,7 @@ func BuildRoute(l List, cat Catalogue, tags []string) (Spec, error) {
 	}
 	for _, o := range want {
 		if !provided[o] {
-			return Spec{}, fmt.Errorf(
+			return nil, fmt.Errorf(
 				"obligation %q in category %q has no discharging step", o, l.Category)
 		}
 	}
@@ -200,14 +219,9 @@ func BuildRoute(l List, cat Catalogue, tags []string) (Spec, error) {
 	// its reviewers — out of the route silently. Checking afterwards would mean
 	// reporting on already-corrupted state.
 	if err := checkSelectionUnambiguous(selected, l.Category); err != nil {
-		return Spec{}, err
+		return nil, err
 	}
-
-	ordered, err := topoSortSteps(selected)
-	if err != nil {
-		return Spec{}, err
-	}
-	return assemble(ordered, cat.Gates, l)
+	return topoSortSteps(selected)
 }
 
 // checkSelectionUnambiguous refuses a selected step set that cannot be turned

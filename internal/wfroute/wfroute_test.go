@@ -211,7 +211,11 @@ func TestRouteNamesTheAdvisorsToConsult(t *testing.T) {
 			list = l
 		}
 	}
-	advisors := AdvisorsFrom(list, cat)
+	selected, serr := wfdot.SelectSteps(list, cat, nil)
+	if serr != nil {
+		t.Fatalf("SelectSteps: %v", serr)
+	}
+	advisors := AdvisorsFrom(list, selected)
 	if len(advisors) < 2 {
 		t.Fatalf("advisors = %+v; want at least the park and terminal advisors", advisors)
 	}

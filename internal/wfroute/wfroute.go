@@ -54,12 +54,21 @@ type Advisor struct {
 // declare: the park state's `advise <agent> @skill` suffix, plus any step's
 // `advise:` key. This is the only place the two forms are read, so a consumer
 // building a route from done.md + step.md does not re-derive them.
-func AdvisorsFrom(l wfdot.List, cat wfdot.Catalogue) []Advisor {
+// steps must be the SELECTED set for this category (wfdot.SelectSteps), never
+// Catalogue.Steps. The catalogue is shared and stage names repeat across route
+// families by design, so walking it attaches one family's advisor to every route
+// with a step of that name — a container route claiming the engineering spine's
+// retrospective advisor, for instance (sty_a7316b06). The parameter is typed as
+// []Step rather than a Catalogue precisely so the wrong call cannot be written.
+//
+// The park advisor is exempt from that hazard: it comes off List, which is
+// already per-category.
+func AdvisorsFrom(l wfdot.List, steps []wfdot.Step) []Advisor {
 	var out []Advisor
 	if l.Park != "" && l.ParkAdvisor != "" {
 		out = append(out, Advisor{Step: l.Park, Agent: l.ParkAdvisor, Skill: l.ParkAdvisorSkill})
 	}
-	for _, st := range cat.Steps {
+	for _, st := range steps {
 		if st.Advisor != "" {
 			out = append(out, Advisor{Step: st.Name, Agent: st.Advisor, Skill: st.AdvisorSkill})
 		}

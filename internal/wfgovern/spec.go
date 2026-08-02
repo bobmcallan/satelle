@@ -205,11 +205,19 @@ func RouteSpecFor(rs RouteSource, category string, tags []string) (DerivedRoute,
 	if err != nil {
 		return DerivedRoute{}, fmt.Errorf("wfgovern: %w", err)
 	}
+	// Select ONCE, then build and read advisors from the same slice. Advisors must
+	// come from the SELECTED steps, never the shared catalogue: stage names repeat
+	// across route families, so a catalogue walk hands one family's advisor to
+	// every route with a step of that name (sty_a7316b06).
+	selected, err := wfdot.SelectSteps(l, cat, tags)
+	if err != nil {
+		return DerivedRoute{}, fmt.Errorf("wfgovern: route for category %q: %w", category, err)
+	}
 	spec, err := wfdot.BuildRoute(l, cat, tags)
 	if err != nil {
 		return DerivedRoute{}, fmt.Errorf("wfgovern: route for category %q: %w", category, err)
 	}
-	return DerivedRoute{Spec: spec, List: l, Catalogue: cat, Advisors: wfroute.AdvisorsFrom(l, cat)}, nil
+	return DerivedRoute{Spec: spec, List: l, Catalogue: cat, Advisors: wfroute.AdvisorsFrom(l, selected)}, nil
 }
 
 // RouteCategories returns the categories a derived route claims, in declaration
