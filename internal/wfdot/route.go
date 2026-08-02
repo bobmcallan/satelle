@@ -293,7 +293,7 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 	// contract — a gate is identified by its skill — so it is derived. A gate
 	// scoped to other sections is not part of THIS route and emits nothing.
 	for _, g := range gates {
-		if !gateInRoute(g, l.Category) {
+		if !GateInRoute(g, l.Category) {
 			continue
 		}
 		spec.States = append(spec.States, State{
@@ -481,11 +481,15 @@ func firstOf(ss []string) string {
 	return ss[0]
 }
 
-// gateInRoute reports whether a gate belongs to the route being built for
+// GateInRoute reports whether a gate belongs to the route being built for
 // category. A gate with no `for:` belongs to every route — that is the common
 // case and stays unstated. A gate that names sections belongs only to those,
 // matched against the section's own name (the wildcard section is `*`).
-func gateInRoute(g RouteGate, category string) bool {
+//
+// Exported so a RENDERER can name the gates a `for:` excluded (sty_a989764d).
+// An excluded gate is deliberately absent from the Spec, so the only honest way
+// to report it is to ask this same predicate rather than re-derive the rule.
+func GateInRoute(g RouteGate, category string) bool {
 	if len(g.For) == 0 {
 		return true
 	}

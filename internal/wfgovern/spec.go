@@ -172,23 +172,44 @@ func SpecFor(workflows []docindex.Doc, item workitem.Item) (wfdot.Spec, string, 
 // Split from SpecFor so the advisors come off the same parse the Spec did,
 // rather than the caller re-parsing to find them.
 func routeSpec(rs RouteSource, category string, tags []string) (wfdot.Spec, []wfroute.Advisor, error) {
+	d, err := RouteSpecFor(rs, category, tags)
+	return d.Spec, d.Advisors, err
+}
+
+// DerivedRoute is one category's resolved route: the Spec every consumer reads,
+// plus the two authored halves it came from. The List and Catalogue ride along
+// because a RENDERER needs to say what did NOT make it — which done.md section
+// actually governed (the wildcard silently changes the answer), which gates a
+// `for:` excluded, and which topology the binary synthesised rather than the
+// author drawing it. None of that is recoverable from the Spec alone.
+type DerivedRoute struct {
+	Spec      wfdot.Spec
+	List      wfdot.List
+	Catalogue wfdot.Catalogue
+	Advisors  []wfroute.Advisor
+}
+
+// RouteSpecFor derives one category's route from the two authored halves. It is
+// the SINGLE derivation chain: routeSpec delegates here, so a renderer and the
+// engine cannot drift into answering the same question differently (sty_a989764d).
+func RouteSpecFor(rs RouteSource, category string, tags []string) (DerivedRoute, error) {
 	lists, err := wfdot.ParseDone(rs.Done)
 	if err != nil {
-		return wfdot.Spec{}, nil, fmt.Errorf("wfgovern: done.md: %w", err)
+		return DerivedRoute{}, fmt.Errorf("wfgovern: done.md: %w", err)
 	}
 	cat, err := wfdot.ParseSteps(rs.Step)
 	if err != nil {
-		return wfdot.Spec{}, nil, fmt.Errorf("wfgovern: step.md: %w", err)
+		return DerivedRoute{}, fmt.Errorf("wfgovern: step.md: %w", err)
 	}
 	l, err := wfdot.ListFor(lists, category)
 	if err != nil {
-		return wfdot.Spec{}, nil, fmt.Errorf("wfgovern: %w", err)
+		return DerivedRoute{}, fmt.Errorf("wfgovern: %w", err)
 	}
 	spec, err := wfdot.BuildRoute(l, cat, tags)
 	if err != nil {
-		return wfdot.Spec{}, nil, fmt.Errorf("wfgovern: route for category %q: %w", category, err)
+		return DerivedRoute{}, fmt.Errorf("wfgovern: route for category %q: %w", category, err)
 	}
-	return spec, wfroute.AdvisorsFrom(l, cat), nil
+	return DerivedRoute{Spec: spec, List: l, Catalogue: cat, Advisors: wfroute.AdvisorsFrom(l, cat)}, nil
 }
 
 // RouteCategories returns the categories a derived route claims, in declaration

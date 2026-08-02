@@ -36,8 +36,10 @@ import (
 )
 
 func workflowShowCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "show <name>",
+	var asCategory bool
+	var tags []string
+	c := &cobra.Command{
+		Use:   "show <name-or-category>",
 		Short: "Show one workflow's identity, graph shape, and lifecycle-hook allocations",
 		Long: `show renders a single workflow's effective governance.
 
@@ -55,13 +57,42 @@ the command; satelle agent validate is the surface that refuses one.`,
 			if err != nil {
 				return err
 			}
-			doc, err := a.Store.DocIndex.Get(context.Background(), "workflows", args[0])
-			if err != nil {
-				return fmt.Errorf("workflow %q: %w", args[0], err)
+			// A document name wins, so `show done` / `show step` / `show <workflow>`
+			// stay exactly what they were. --category is the explicit override for a
+			// category that collides with a workflow file name.
+			if !asCategory {
+				doc, derr := a.Store.DocIndex.Get(context.Background(), "workflows", args[0])
+				if derr == nil {
+					return renderWorkflowShow(cmd.OutOrStdout(), a, doc, skillResolver(a))
+				}
 			}
-			return renderWorkflowShow(cmd.OutOrStdout(), a, doc, skillResolver(a))
+			// Fall through to the DERIVED route for this category. The docindex miss
+			// is deliberately discarded: "not found in the doc index" answers a
+			// question the operator did not ask, and used to be the only thing
+			// `workflow show <category>` ever said (sty_a989764d).
+			return showDerivedRoute(cmd.OutOrStdout(), a, args[0], tags)
 		},
 	}
+	c.Flags().BoolVar(&asCategory, "category", false,
+		"treat the argument as a story CATEGORY and render its derived route, even if a workflow document shares the name")
+	c.Flags().StringSliceVar(&tags, "tags", nil,
+		"story tags to derive the route with: tag-appended obligations and tag-scoped gates (comma-separated)")
+	return c
+}
+
+// showDerivedRoute resolves the repo's route source and renders one category's
+// route. A category no route claims is reported as exactly that, never as a
+// document-index miss.
+func showDerivedRoute(out io.Writer, a *app.App, category string, tags []string) error {
+	docs, err := a.Store.DocIndex.List(context.Background(), "workflows")
+	if err != nil {
+		return fmt.Errorf("workflow show %q: %w", category, err)
+	}
+	rs, ok := wfgovern.RouteGoverns(docs, category)
+	if !ok {
+		return fmt.Errorf("workflow show %q: no workflow document of that name, and no derived route governs that category — see `satelle workflow list`", category)
+	}
+	return renderWorkflowRoute(out, rs, category, tags)
 }
 
 // renderWorkflowShow writes the whole view. Split from the cobra wiring — and

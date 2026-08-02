@@ -1,3 +1,10 @@
+## [0.0.391] - 2026-08-02
+
+### Added
+- **`satelle workflow show <category>` renders the DERIVED route.** It used to fail with `docindex: not found`, because `show` only ever resolved document names — so "what route does a story of category X actually get?" had no answer short of deriving it by hand from done.md + step.md. The view prints the obligations in route order with the step discharging each, the performer and rubric, the entry gates WITH the binding each runs under and whether they run serially or concurrently, the always-on gates in scope, and the synthesised park/cancel/recover marked as owned by the binary rather than authored. `--tags` derives the tagged variant; `--category` disambiguates a category that shares a name with a workflow document. Two things are disclosed that were previously silent: which done.md section actually governed (the wildcard answers for every category with no section of its own, which quietly changes the answer), and every gate a `for:` EXCLUDED — an excluded gate is deliberately absent from the Spec, so without naming it a reader cannot tell "does not apply to you" from "nobody declared it".
+
+  Nothing here re-derives anything: the Spec comes from `wfgovern.RouteSpecFor` (a thin export of the chain the engine already used, so there is still exactly one), the step lines come from `wfroute` (the same renderer the story route document uses), and gate scoping asks `wfdot.GateInRoute` — the predicate `BuildRoute` itself asks. A second opinion would be worse than no view: it would look authoritative while disagreeing with what runs. The document view (`show done`, `show step`, `show <workflow>`) is unchanged, and a category with no section and no wildcard reports the governing-section problem rather than a document-index miss (sty_a989764d)
+
 ## [0.0.390] - 2026-08-02
 
 ### Changed

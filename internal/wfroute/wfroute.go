@@ -85,6 +85,10 @@ type Step struct {
 	// Skipped are surface-scoped gates that WOULD have run had the story carried
 	// their tag. Recorded so "no gate" is distinguishable from "gate not for you".
 	Skipped []Reviewer `json:"skipped,omitempty"`
+	// Parallel is the entry gates' concurrency cap, read from the SPINE inbound
+	// edge — recovery and role edges carry 0 and would otherwise mask an authored
+	// cap. 0 means the gates run serially, which a route may author deliberately.
+	Parallel int `json:"parallel,omitempty"`
 	// Terminal marks the route's success end.
 	Terminal bool `json:"terminal,omitempty"`
 	// Advisor is the agent the orchestrator may consult at this step.
@@ -189,6 +193,11 @@ func buildStep(spec wfdot.Spec, st wfdot.State, tags []string) Step {
 	for _, tr := range spec.Transitions {
 		if tr.To != st.Name {
 			continue
+		}
+		// The spine edge is the one carrying the step's own gate list; take the cap
+		// from it and not from a recovery or park edge, which carry none.
+		if len(tr.Skills) > 0 && tr.Parallel > step.Parallel {
+			step.Parallel = tr.Parallel
 		}
 		for _, sk := range tr.Skills {
 			if sk == "" || seen[sk] {
