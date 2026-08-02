@@ -215,9 +215,87 @@ func TestWorkflowConvertTopic(t *testing.T) {
 		}
 	}
 	// And how to prove the conversion kept every gate.
-	for _, want := range []string{"satelle workflow validate", "satelle story route", "satelle migrate"} {
+	for _, want := range []string{
+		"satelle workflow validate", "satelle workflow show", "satelle story route", "satelle migrate",
+	} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("the guide does not name the verification step %q", want)
 		}
+	}
+}
+
+// TestWorkflowConvertTopicCoversTheWild guards the gap sty_e184768e measured: a
+// survey of every authored DOT graph on a real fleet found 15 constructs in use
+// and this topic documented 8. An undocumented construct is one an agent either
+// transcribes into a key the grammar rejects, or — worse — drops in silence.
+func TestWorkflowConvertTopicCoversTheWild(t *testing.T) {
+	top, ok := Get("workflow-convert")
+	if !ok {
+		t.Fatal("the conversion guide must ship: every refusal names it")
+	}
+	// Every construct the survey found. The eight already covered are asserted
+	// by TestWorkflowConvertTopic; these are the seven that were not.
+	for _, construct := range []string{
+		"reviewer_skill", "rankdir", "on_enter_agent", "on_enter_prompt",
+		"goal=", "vars=", "guardrails",
+	} {
+		if !strings.Contains(top.Body, construct) {
+			t.Errorf("no target documented for %q, which is present in the wild", construct)
+		}
+	}
+	// The dangerous one: a RETIRED mechanism, not a renamed key. An agent must
+	// be told to re-home the advisor, and told that nothing dispatches it.
+	for _, want := range []string{"RETIRED", "retired, not renamed", "advise <agent> @<skill>", "ORCHESTRATOR"} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("the on_enter callout is missing %q", want)
+		}
+	}
+	// The quiet one: real operator intent with no home in the grammar, and no
+	// warning when it vanishes. Both halves must be said.
+	for _, want := range []string{"constitution", "nothing will warn you"} {
+		if !strings.Contains(strings.ToLower(top.Body), strings.ToLower(want)) {
+			t.Errorf("the goal/vars/guardrails callout is missing %q", want)
+		}
+	}
+	// The two per-repo DECISIONS — named as decisions, with the traps that make
+	// them decisions rather than lookups.
+	for _, want := range []string{
+		"The two decisions only you can make",
+		"WHOLLY", "## execution", "## task", "## substrate", "ungated",
+	} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("the decisions section is missing %q", want)
+		}
+	}
+	// The verify loop must be an instruction with an ORDER: migrate deletes the
+	// graph you diff against.
+	for _, want := range []string{"gate by gate", "before** `satelle migrate --yes`"} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("the verification loop is missing %q", want)
+		}
+	}
+}
+
+// TestWorkflowConvertTopicIsRepoAgnostic: the topic ships in the binary and is
+// read by every repo. A story id, a this-repo category or an example lifted
+// from one repo's graph reads as instructions to everyone else.
+func TestWorkflowConvertTopicIsRepoAgnostic(t *testing.T) {
+	top, ok := Get("workflow-convert")
+	if !ok {
+		t.Fatal("the conversion guide must ship")
+	}
+	if strings.Contains(top.Body, "sty_") {
+		t.Error("the topic names a story id — it ships to repos that have never seen it")
+	}
+	// A named graph file is an example nobody else has on disk — including the
+	// embedded defaults, which no longer ship. Describe the graph by what it
+	// DECLARES (`applies_to: [...]`), never by its filename.
+	if strings.Contains(top.Body, "-workflow.md") {
+		t.Error("the topic names a specific graph file — describe graphs by what they declare")
+	}
+	// A path under .satelle/skills or a bare skill name is this repo's
+	// substrate; the topic's own examples must stay generic.
+	if strings.Contains(top.Body, ".satelle/skills/") {
+		t.Error("the topic reaches into a repo's authored skills")
 	}
 }
