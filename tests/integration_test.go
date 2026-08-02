@@ -984,6 +984,19 @@ func TestRebaseResetsSubstrate(t *testing.T) {
 	if err := os.WriteFile(extra, []byte("# extra\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Authored task and document, each carrying a distinct marker, so the
+	// untouched-class assertion below proves CONTENT survived rather than that a
+	// same-named file happens to exist.
+	authoredTask := filepath.Join(repo, ".satelle", "tasks", "tsk_authored-probe.md")
+	if err := os.WriteFile(authoredTask,
+		[]byte("---\nid: tsk_authored-probe\ntype: task\nstatus: done\n---\n\nACTION: MARKER-TASK. VERIFICATION: done.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	authoredDoc := filepath.Join(repo, ".satelle", "documents", "authored-probe.md")
+	if err := os.WriteFile(authoredDoc,
+		[]byte("---\nname: authored-probe\ntype: note\n---\n\nMARKER-DOCUMENT\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// No confirmation (empty stdin) → abort, nothing changed.
 	out, err := run(t, bin, repo, "rebase")
@@ -1006,6 +1019,31 @@ func TestRebaseResetsSubstrate(t *testing.T) {
 	}
 	if _, serr := os.Stat(extra); serr == nil {
 		t.Error("rebase left the extra authored workflow in the live dir")
+	}
+
+	// AC1: the repo must RUN immediately after a rebase. Its absence is what let
+	// the agents-layer wipe ship — every existing assertion inspected files, and
+	// none asked the binary to do anything (sty_72ccafaa).
+	mustRun(t, bin, repo, "status")
+
+	// AC4: the files rebase must never touch, asserted by CONTENT so a file that
+	// is recreated-but-emptied fails too. This is the class guard — the next time
+	// an authored file moves into a wiped dir, this catches it.
+	for _, tc := range []struct{ rel, marker string }{
+		{".satelle/workflows/agents.toml", "["},
+		{".satelle/constitution.md", "#"},
+		{".satelle/satelle.toml", "="},
+		{".satelle/tasks/tsk_authored-probe.md", "MARKER-TASK"},
+		{".satelle/documents/authored-probe.md", "MARKER-DOCUMENT"},
+	} {
+		b, rerr := os.ReadFile(filepath.Join(repo, filepath.FromSlash(tc.rel)))
+		if rerr != nil {
+			t.Errorf("rebase removed %s — it is not part of the default substrate: %v", tc.rel, rerr)
+			continue
+		}
+		if !strings.Contains(string(b), tc.marker) {
+			t.Errorf("rebase emptied %s (no %q in it)", tc.rel, tc.marker)
+		}
 	}
 
 	// The backup holds the pre-rebase files.

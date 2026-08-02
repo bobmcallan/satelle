@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/bobmcallan/satelle/internal/config"
 	"os"
 	"path/filepath"
 	"strings"
@@ -169,6 +170,59 @@ func TestRunRebaseLeavesDefaultsVirtual(t *testing.T) {
 	} {
 		if _, err := os.Stat(filepath.Join(dataDir, filepath.FromSlash(rel))); err == nil {
 			t.Errorf("rebase re-seeded %s — a materialised copy shadows the shipped default", rel)
+		}
+	}
+}
+
+// TestRunRebasePreservesAuthoredAgentsLayer: the agents layer lives inside a
+// rebaseKind (workflows/) but is repo CONFIGURATION, not default substrate. It
+// has no embedded counterpart, so the overlay cannot heal its absence and an
+// initialized repo without it refuses to run — wiping it BRICKS the repo rather
+// than resetting it (sty_72ccafaa). It must survive with its authored bytes.
+func TestRunRebasePreservesAuthoredAgentsLayer(t *testing.T) {
+	dataDir := t.TempDir()
+	seedCustomSubstrate(t, dataDir)
+
+	agents := filepath.Join(dataDir, filepath.FromSlash(config.AgentsRel))
+	if err := os.MkdirAll(filepath.Dir(agents), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	authored := "[reviewer]\nmodel = \"authored-by-the-operator\"\n"
+	if err := os.WriteFile(agents, []byte(authored), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out strings.Builder
+	if err := runRebase(&out, strings.NewReader(""), dataDir, dataDir, true, rebaseTestTime); err != nil {
+		t.Fatalf("runRebase: %v", err)
+	}
+
+	got, err := os.ReadFile(agents)
+	if err != nil {
+		t.Fatalf("rebase wiped the agents layer — the repo is now unrunnable: %v", err)
+	}
+	if string(got) != authored {
+		t.Errorf("the authored agents layer must survive byte-for-byte, not be reseeded:\ngot  %q\nwant %q", got, authored)
+	}
+	// The backup still holds its copy, so the pre-rebase tree remains a complete undo.
+	backed := filepath.Join(dataDir, "backups", "20260702-030405", filepath.FromSlash(config.AgentsRel))
+	if _, serr := os.Stat(backed); serr != nil {
+		t.Errorf("the backup must still carry the agents layer: %v", serr)
+	}
+	if !strings.Contains(out.String(), "preserved") {
+		t.Errorf("rebase must REPORT what it preserved:\n%s", out.String())
+	}
+}
+
+// TestRebaseHelpNamesEveryPreservedPath binds the help to the behaviour: a file
+// added to rebasePreserve without a word in the help would be an invisible
+// carve-out, and rebase's text promising something it does not do is the exact
+// defect sty_72ccafaa was.
+func TestRebaseHelpNamesEveryPreservedPath(t *testing.T) {
+	long := findCommandLong(t, "rebase")
+	for _, rel := range rebasePreserve {
+		if !strings.Contains(long, rel) {
+			t.Errorf("rebase help does not name the preserved path %q", rel)
 		}
 	}
 }

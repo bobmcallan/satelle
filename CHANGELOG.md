@@ -1,3 +1,8 @@
+## [0.0.393] - 2026-08-02
+
+### Fixed
+- **`satelle rebase` no longer wipes the agents layer and bricks the repo.** Moving the agents layer into `.satelle/workflows/` (0.0.387) put it inside a directory rebase backs up and WIPES, so a rebase left the repo unable to run: every command refused with "missing .satelle/workflows/agents.toml", and the suggested remedy — `satelle init` — would have reseeded a DEFAULT agents layer over the operator's authored bindings. Meanwhile rebase's own help still promised "satelle.toml/agents.toml … are never touched", which is the clearest statement of the defect: the text was true when written and the move made it a lie. Rebase now PRESERVES it, restoring it from the backup after the wipe (a copy, so the backup remains a complete undo), and the help says so. The distinction is recorded where the carve-out lives: every other file under those dirs has an embedded counterpart, so the read-time overlay heals its absence and wiping it is a reset — the agents layer has none, so wiping it is destruction. A new integration assertion runs a real command AFTER a rebase, which is what the existing tests never did — they all inspected files and none asked the binary to do anything — plus a content-marker guard over the whole class of files rebase must not touch, so the next authored file that moves into a wiped directory is caught (sty_72ccafaa)
+
 ## [0.0.392] - 2026-08-02
 
 ### Changed

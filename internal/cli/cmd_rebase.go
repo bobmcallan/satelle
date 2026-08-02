@@ -23,12 +23,30 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/bobmcallan/satelle/internal/config"
 )
 
 // rebaseKinds are the substrate dirs rebase backs up, wipes, and redeploys — the
 // kinds the embedded default solution owns. Documents, tasks, the constitution,
 // configs, and the database are the repo's own content and are never touched.
 var rebaseKinds = []string{"workflows", "skills", "principles"}
+
+// rebasePreserve are data-dir-relative paths that LIVE inside a rebaseKind but
+// are repo CONFIGURATION, not part of the embedded default solution. They are
+// restored from the backup after the wipe.
+//
+// The distinction that matters: every other file under those dirs has an
+// embedded counterpart, so the read-time overlay heals its absence — wiping it
+// returns it to its default. The agents layer has NO embedded counterpart, and
+// an initialized repo with no loadable agents layer refuses to run
+// (requireAgents, sty_d0d6bb67). Wiping it therefore bricks the repo rather than
+// resetting it, which is exactly what shipped when the agents layer moved into
+// workflows/ (sty_10f732ed) and nothing taught rebase about it (sty_72ccafaa).
+//
+// Spelled via config.AgentsRel so the location has ONE spelling and a future
+// relocation moves both ends together.
+var rebasePreserve = []string{config.AgentsRel}
 
 func init() {
 	var yes bool
@@ -52,6 +70,12 @@ func init() {
 
 The embedded default TASK re-seeds, because a coded gate checks for an on-disk
 task header — tasks cannot live virtually, and authored tasks are never wiped.
+
+Repo CONFIGURATION that happens to live inside those dirs is preserved across
+the wipe and restored from the backup — today that is workflows/agents.toml, the
+agents layer. It has no embedded counterpart, so unlike everything else there the
+overlay cannot heal its absence: wiping it would brick the repo rather than
+reset it.
 
 Documents, tasks, story attachments, the constitution, satelle.toml/agents.toml,
 and the database are never touched. This is the "start clean" recovery, one step
@@ -153,6 +177,24 @@ func runRebase(out io.Writer, in io.Reader, dataDir, runtimeDir string, yes bool
 			return fmt.Errorf("rebase: %w", err)
 		}
 	}
+	// Restore the preserved configuration the wipe swept up. The wipe is a
+	// directory RENAME, so the bytes are already in the backup; copy (not move)
+	// them back so the backup stays a complete undo of the pre-rebase tree.
+	for _, rel := range rebasePreserve {
+		src := filepath.Join(backupDir, filepath.FromSlash(rel))
+		if _, serr := os.Stat(src); serr != nil {
+			continue // the repo never had one; nothing to preserve
+		}
+		dst := filepath.Join(dataDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return fmt.Errorf("rebase: preserve %s: %w", rel, err)
+		}
+		if err := copyFile(src, dst); err != nil {
+			return fmt.Errorf("rebase: preserve %s: %w", rel, err)
+		}
+		fmt.Fprintf(out, "  = %s (preserved — repo configuration, not default substrate)\n", rel)
+	}
+
 	// Tasks are the one carve-out, and it is pre-existing and principled: coded
 	// gates check for an on-disk task HEADER, so a task cannot live virtually.
 	// "tasks" is NOT a rebaseKind — authored tasks are repo content and are never
