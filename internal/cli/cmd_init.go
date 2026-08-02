@@ -27,7 +27,6 @@ import (
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
-	"github.com/bobmcallan/satelle/internal/wfhook"
 )
 
 func init() {
@@ -340,6 +339,13 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []s
 	// workflows/skills/principles/tasks onto disk. List/Count overlay defaults at
 	// read time; day-one edit uses `satelle substrate edit`. Authored dirs stay
 	// empty scaffolds so an operator has somewhere to put an override.
+	//
+	// `satelle rebase` follows the SAME rule (sty_cc550a88): it backs up and wipes,
+	// then leaves the authored dirs empty — the overlay is the reset. It used to
+	// re-seed the whole default set afterwards, which defeated the reset, because a
+	// materialised copy shadows the shipped default and freezes it against the next
+	// binary upgrade. Tasks remain the one carve-out in both paths: a coded gate
+	// checks for an on-disk task HEADER, so a task cannot live virtually.
 	cfg, _, _ := config.Load(filepath.Join(repoRoot, config.DefaultDataDir, config.ConfigName))
 	bopts := ResolveBackupOpts(cfg)
 	rtEarly := cfg.ResolveRuntimeDir(repoRoot)
@@ -1974,43 +1980,6 @@ func convergeOnDiskDefaults(dataDir string, backupOpts ...BackupOpts) []string {
 	return lines
 }
 
-// materializePrinciples writes every embedded default PRINCIPLE into
-// .satelle/principles when absent, so the operating principles — including the
-// principles:session session set — live on disk and are LISTED for SessionStart
-// injection + doc-list discovery (the runtime index no longer overlays embedded
-// docs, sty_94da9ac9). Embedded principles remain the canonical seed; an existing
-// on-disk file is never clobbered.
-//
-// Deprecated for init after sty_29e5a9a5 (virtual defaults); retained for rebase.
-func materializePrinciples(dataDir string, backupOpts ...BackupOpts) []string {
-	var bopts BackupOpts
-	if len(backupOpts) > 0 {
-		bopts = backupOpts[0]
-	}
-	var backupAdvisoryOnce bool
-	var lines []string
-	for _, d := range config.EmbeddedDefaults() {
-		if d.Kind != "principles" {
-			continue
-		}
-		rel := "principles/" + d.Name + ".md"
-		verb, bres, err := reconcileEmbeddedFile(dataDir, rel, d.Body, bopts)
-		if err != nil {
-			continue
-		}
-		if verb != reconcileUnchanged {
-			lines = append(lines, reconcileReportLine(verb, rel))
-		}
-		if bres.Notice != "" && (!backupAdvisoryOnce || !strings.Contains(bres.Notice, "online/personal")) {
-			lines = append(lines, "  i "+bres.Notice)
-			if strings.Contains(bres.Notice, "online/personal") {
-				backupAdvisoryOnce = true
-			}
-		}
-	}
-	return lines
-}
-
 // materializeTasks writes every embedded default TASK into .satelle/tasks when
 // absent (sty_d4360e90). Tasks are authored substrate ingested by SyncTasks (not the
 // OKF doc index), so this lands the tsk_*.md header the task reconciler picks up — a
@@ -2050,51 +2019,6 @@ func materializeTasks(dataDir string, backupOpts ...BackupOpts) []string {
 	return lines
 }
 
-// advisorySkills are embedded rubrics that guide the IN-LOOP agent (or re-runnable
-// audits) and are referenced by no workflow — so the default-solution seeding
-// (which walks workflow references) never carries them. init seeds each when
-// absent, regardless of whether the repo authored its own workflows
-// (sty_f4c1bd90). Includes satelle-reviewer-objective-audit (reviewer primary-
-// objective audit skill, paired with tsk_reviewer-objective-audit) and
-// satelle-context-audit (paired with tsk_context-audit).
-var advisorySkills = []string{
-	"satelle-workflow-advisor",
-	"satelle-reviewer-objective-audit",
-	"satelle-context-audit",
-}
-
-// materializeAdvisorySkills writes each embedded advisory skill into
-// .satelle/skills when absent — never clobbering an authored copy. Report lines.
-func materializeAdvisorySkills(dataDir string, backupOpts ...BackupOpts) []string {
-	var bopts BackupOpts
-	if len(backupOpts) > 0 {
-		bopts = backupOpts[0]
-	}
-	var backupAdvisoryOnce bool
-	var lines []string
-	for _, name := range advisorySkills {
-		body, ok := embeddedDefault("skills", name)
-		if !ok {
-			continue
-		}
-		rel := "skills/" + name + ".md"
-		verb, bres, err := reconcileEmbeddedFile(dataDir, rel, body, bopts)
-		if err != nil {
-			continue
-		}
-		if verb != reconcileUnchanged {
-			lines = append(lines, reconcileReportLine(verb, rel))
-		}
-		if bres.Notice != "" && (!backupAdvisoryOnce || !strings.Contains(bres.Notice, "online/personal")) {
-			lines = append(lines, "  i "+bres.Notice)
-			if strings.Contains(bres.Notice, "online/personal") {
-				backupAdvisoryOnce = true
-			}
-		}
-	}
-	return lines
-}
-
 // defaultSolutionWorkflows is the embedded default solution rebase deploys into
 // a repo as EDITABLE substrate: the two halves of the shipped DERIVED ROUTE
 // (sty_3795e7f6). done.md declares the obligations per category — one working
@@ -2112,125 +2036,6 @@ func materializeAdvisorySkills(dataDir string, backupOpts ...BackupOpts) []strin
 var defaultSolutionWorkflows = []string{
 	wfgovern.RouteSourceDone,
 	wfgovern.RouteSourceStep,
-}
-
-// materializeDefaultSolution seeds a repo's .satelle with the embedded default
-// solution: the two halves of the shipped derived route plus every gate skill
-// they reference (sty_a7cbd6dd). Each file is seeded only when ABSENT; a
-// same-named authored file is never overwritten or modified.
-//
-// Skills are seeded per file, and a repo missing one is HEALED by re-running
-// (sty_f6bd6f84). The route's two halves are the exception: they are seeded
-// BOTH-OR-NEITHER, because one half is not a route (sty_3795e7f6). Two guards
-// hold, both routing safety: the pair is not seeded when an authored workflow
-// already claims a category the route declares (it would create the
-// same-precedence duplicate the reindex consistency check rejects), and its gate
-// skills are still collected and seeded either way. rebase remains the reset
-// path (backup+wipe+redeploy). Returns report lines.
-func materializeDefaultSolution(dataDir string, backupOpts ...BackupOpts) []string {
-	var bopts BackupOpts
-	if len(backupOpts) > 0 {
-		bopts = backupOpts[0]
-	}
-	var backupAdvisoryOnce bool
-	wfDir := filepath.Join(dataDir, "workflows")
-	var lines []string
-	skills := map[string]bool{}
-	collectSkills := func(body string) {
-		// A route source names its gates in the route grammar (sty_9835070d), and
-		// with the DOT front end retired that is the only place they can be named
-		// (sty_d953c5d8).
-		for _, s := range routeSourceSkills(body) {
-			skills[s] = true
-		}
-		// Lifecycle hooks are workflow FRONTMATTER (not DOT edges); seed their
-		// skills too so the create gate travels with the default solution
-		// (sty_83782ffb). Read through wfhook so both the `hooks:` block and the
-		// `create_review:` shorthand are covered by one call (sty_ede16f51).
-		declared, _ := wfhook.Parse(body)
-		for _, h := range declared {
-			if h.Skill != "" {
-				skills[h.Skill] = true
-			}
-		}
-	}
-	// Categories already claimed by an authored (on-disk) workflow. A default
-	// whose categories overlap one of these is skipped to avoid a
-	// same-precedence routing duplicate.
-	claimed := authoredWorkflowCategories(wfDir)
-	bodies := make(map[string]string, len(defaultSolutionWorkflows))
-	seedPair := true
-	var conflict string
-	for _, name := range defaultSolutionWorkflows {
-		body, ok := embeddedDefault("workflows", name)
-		if !ok {
-			seedPair = false // a half that does not ship is not half a route
-			continue
-		}
-		bodies[name] = body
-		collectSkills(body) // collect refs even if the file itself is skipped
-		// The overlap guard gates SEEDING an absent default only; an on-disk file is
-		// reconciled (converge/diverge) below, never routed here. A route source
-		// claims its categories through done.md's sections, not applies_to.
-		if !fileExists(filepath.Join(wfDir, name+".md")) {
-			if c := overlappingCategory(body, claimed); c != "" {
-				seedPair, conflict = false, c
-			}
-		}
-	}
-	if !seedPair {
-		// Both-or-neither: report once, naming the category that outranked it.
-		why := "category " + conflict + " claimed by an authored workflow"
-		if conflict == "" {
-			why = "an embedded half is missing"
-		}
-		lines = append(lines, "  = "+config.DefaultDataDir+"/workflows/{done,step}.md ("+why+" — not seeded)")
-		bodies = nil
-	}
-	for _, name := range defaultSolutionWorkflows {
-		body, ok := bodies[name]
-		if !ok {
-			continue
-		}
-		rel := "workflows/" + name + ".md"
-		verb, bres, err := reconcileEmbeddedFile(dataDir, rel, body, bopts)
-		if err != nil {
-			continue
-		}
-		lines = append(lines, reconcileReportLine(verb, rel))
-		if bres.Notice != "" && (!backupAdvisoryOnce || !strings.Contains(bres.Notice, "online/personal")) {
-			lines = append(lines, "  i "+bres.Notice)
-			if strings.Contains(bres.Notice, "online/personal") {
-				backupAdvisoryOnce = true
-			}
-		}
-	}
-	names := make([]string, 0, len(skills))
-	for s := range skills {
-		names = append(names, s)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		sBody, has := embeddedDefault("skills", name)
-		if !has {
-			continue // a referenced skill without an embedded rubric stays advisory by design
-		}
-		rel := "skills/" + name + ".md"
-		verb, bres, err := reconcileEmbeddedFile(dataDir, rel, sBody, bopts)
-		if err != nil {
-			continue
-		}
-		if verb != reconcileUnchanged {
-			lines = append(lines, reconcileReportLine(verb, rel))
-		}
-		if bres.Notice != "" && (!backupAdvisoryOnce || !strings.Contains(bres.Notice, "online/personal")) {
-			lines = append(lines, "  i "+bres.Notice)
-			if strings.Contains(bres.Notice, "online/personal") {
-				backupAdvisoryOnce = true
-			}
-		}
-	}
-	return lines
 }
 
 // referencedSkills returns every skill a workflow names — node prompts and edge

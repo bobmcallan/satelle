@@ -994,21 +994,18 @@ func TestRebaseResetsSubstrate(t *testing.T) {
 		t.Error("unconfirmed rebase removed the extra workflow")
 	}
 
-	// Confirmed rebase: backup + wipe + redeploy.
+	// Confirmed rebase: backup + wipe, and NO redeploy — the wipe IS the reset,
+	// because the embedded defaults govern through the read-time overlay
+	// (sty_cc550a88).
 	out = mustRun(t, bin, repo, "rebase", "--yes")
-	if !strings.Contains(out, "backed up") || !strings.Contains(out, "deployed") {
+	if !strings.Contains(out, "backed up") || !strings.Contains(out, "restored") {
 		t.Errorf("rebase report incomplete:\n%s", out)
 	}
-	if b, _ := os.ReadFile(skill); strings.Contains(string(b), "# drifted") {
-		t.Error("rebase did not reset the drifted skill to the embedded default")
+	if _, serr := os.Stat(skill); serr == nil {
+		t.Error("rebase left the drifted skill on disk — the reset returns it to its virtual default")
 	}
 	if _, serr := os.Stat(extra); serr == nil {
 		t.Error("rebase left the extra authored workflow in the live dir")
-	}
-	for _, half := range []string{"done.md", "step.md"} {
-		if _, serr := os.Stat(filepath.Join(repo, ".satelle", "workflows", half)); serr != nil {
-			t.Errorf("rebase did not redeploy %s — one half is not a route", half)
-		}
 	}
 
 	// The backup holds the pre-rebase files.

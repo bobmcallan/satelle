@@ -35,7 +35,7 @@ func seedCustomSubstrate(t *testing.T, dataDir string) map[string]string {
 	return paths
 }
 
-func TestRunRebaseBacksUpWipesRedeploys(t *testing.T) {
+func TestRunRebaseBacksUpAndWipes(t *testing.T) {
 	dataDir := t.TempDir()
 	custom := seedCustomSubstrate(t, dataDir)
 
@@ -56,22 +56,11 @@ func TestRunRebaseBacksUpWipesRedeploys(t *testing.T) {
 		}
 	}
 
-	// The complete default solution is redeployed: workflows + referenced skills
-	// + embedded principles, and each kind dir has its README keep-file back.
-	for _, wf := range defaultSolutionWorkflows {
-		if !fileExists(filepath.Join(dataDir, "workflows", wf+".md")) {
-			t.Errorf("rebase did not redeploy workflows/%s.md", wf)
-		}
-	}
-	for _, sk := range defaultSolutionSkills {
-		if !fileExists(filepath.Join(dataDir, "skills", sk+".md")) {
-			t.Errorf("rebase did not redeploy skills/%s.md", sk)
-		}
-	}
-	if !fileExists(filepath.Join(dataDir, "principles", "satelle-agent-goals.md")) {
-		t.Error("rebase did not redeploy the embedded principles")
-	}
-	// The embedded default substrate-audit TASK is re-seeded too (additive — tasks is
+	// No redeploy: the wipe IS the reset, because the embedded defaults govern
+	// virtually through the read-time overlay (sty_cc550a88). What the dirs must
+	// hold afterwards is asserted by TestRunRebaseLeavesDefaultsVirtual.
+	//
+	// The embedded default substrate-audit TASK is re-seeded though (additive — tasks is
 	// NOT a rebaseKind, so authored tasks are never wiped; only the absent default
 	// lands) (sty_d4360e90).
 	if !fileExists(filepath.Join(dataDir, "tasks", "tsk_substrate-audit.md")) {
@@ -83,12 +72,17 @@ func TestRunRebaseBacksUpWipesRedeploys(t *testing.T) {
 		}
 	}
 
-	// The report names the backup path and the deployed set.
+	// The report names the backup path and what it restored.
 	if !strings.Contains(out.String(), backupDir) {
 		t.Errorf("report does not name the backup path:\n%s", out.String())
 	}
-	if !strings.Contains(out.String(), "deployed") {
-		t.Errorf("report does not summarise the deployment:\n%s", out.String())
+	if !strings.Contains(out.String(), "restored") {
+		t.Errorf("report does not summarise what was restored:\n%s", out.String())
+	}
+	// The help and the report must stop promising a redeploy that no longer
+	// happens — a command that lies about its own effect is the defect here.
+	if strings.Contains(out.String(), "deployed") {
+		t.Errorf("report still claims a redeploy:\n%s", out.String())
 	}
 }
 
@@ -128,6 +122,53 @@ func TestRunRebaseAbortsWhenBackupCannotBeWritten(t *testing.T) {
 	for kind, p := range custom {
 		if !fileExists(p) {
 			t.Errorf("failed backup still wiped %s (%s)", kind, p)
+		}
+	}
+}
+
+// TestRunRebaseLeavesDefaultsVirtual is the invariant sty_cc550a88 exists to
+// establish: after a rebase, the authored dirs hold nothing but their READMEs.
+//
+// Under virtual sparse defaults (sty_29e5a9a5) the known-good default solution
+// IS the empty authored dir — List/Get overlay the embedded bytes at read time.
+// Seeding after the wipe DEFEATS the reset: it lands stamped copies that shadow
+// the shipped defaults, so the next binary upgrade leaves the repo running a
+// frozen fork. That is precisely the state sty_5604e741 had to delete by hand.
+//
+// Written to FAIL against the pre-change behaviour, where rebase restored all
+// three representatives below.
+func TestRunRebaseLeavesDefaultsVirtual(t *testing.T) {
+	dataDir := t.TempDir()
+	seedCustomSubstrate(t, dataDir)
+
+	var out strings.Builder
+	if err := runRebase(&out, strings.NewReader(""), dataDir, dataDir, true, rebaseTestTime); err != nil {
+		t.Fatalf("runRebase: %v", err)
+	}
+
+	for _, kind := range []string{"workflows", "skills", "principles"} {
+		ents, err := os.ReadDir(filepath.Join(dataDir, kind))
+		if err != nil {
+			t.Fatalf("read %s: %v", kind, err)
+		}
+		var names []string
+		for _, e := range ents {
+			names = append(names, e.Name())
+		}
+		if len(names) != 1 || names[0] != "README.md" {
+			t.Errorf("%s/ must hold only its README after a rebase — the overlay IS the reset; got %v", kind, names)
+		}
+	}
+
+	// One representative per seeding path that used to run, so a partial
+	// re-wiring of any of the three is caught.
+	for _, rel := range []string{
+		"skills/satelle-story-done-review.md", // a route gate skill
+		"skills/satelle-workflow-advisor.md",  // an advisory skill
+		"principles/satelle-agent-goals.md",   // an embedded principle
+	} {
+		if _, err := os.Stat(filepath.Join(dataDir, filepath.FromSlash(rel))); err == nil {
+			t.Errorf("rebase re-seeded %s — a materialised copy shadows the shipped default", rel)
 		}
 	}
 }

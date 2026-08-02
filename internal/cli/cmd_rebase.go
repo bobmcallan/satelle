@@ -1,9 +1,15 @@
 // `satelle rebase` — the "start clean" recovery: back up the repo's authored
-// process substrate (workflows, skills, principles), WIPE it, and redeploy the
-// complete embedded default solution. One step beyond `satelle restore`, which
-// only overwrites files that have embedded counterparts and never touches
-// extras. Destructive by design, so the backup is mandatory (no backup written →
-// abort) and the wipe needs an explicit confirmation (or --yes).
+// process substrate (workflows, skills, principles) and WIPE it, leaving the
+// authored dirs empty so the embedded defaults govern through the read-time
+// overlay. One step beyond `satelle restore`, which only overwrites files that
+// have embedded counterparts and never touches extras. Destructive by design, so
+// the backup is mandatory (no backup written → abort) and the wipe needs an
+// explicit confirmation (or --yes).
+//
+// It does NOT re-seed the defaults onto disk (sty_cc550a88). Under virtual sparse
+// defaults the known-good default solution IS the empty authored dir; seeding
+// after the wipe would land stamped copies that shadow the shipped defaults and
+// freeze them against the next binary upgrade — the opposite of a reset.
 
 package cli
 
@@ -28,7 +34,7 @@ func init() {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "rebase",
-		Short: "Back up the process substrate, then reset it to the complete default solution (DESTRUCTIVE)",
+		Short: "Back up the process substrate, then reset it to the embedded defaults (DESTRUCTIVE)",
 		Long: `rebase resets a repo's process substrate to the embedded default solution:
 
   1. BACKS UP .satelle/{workflows,skills,principles} to a timestamped directory
@@ -37,9 +43,15 @@ func init() {
      pre-mutation backups (sty_873a5380); online/personal channel is best-effort
      (see [backup] local_only and [hosted]).
   2. WIPES those three dirs (the backup is the undo),
-  3. REDEPLOYS the complete default solution: the shipped derived route
-     (workflows/done.md + step.md) plus every gate skill it references, and the
-     embedded operating principles.
+  3. RECREATES them empty, with only their README keep-file. It does NOT copy the
+     defaults back — the shipped route, gate skills and operating principles
+     govern from inside the binary through the read-time overlay, so an empty
+     authored dir IS the default solution. Copying them back would shadow the
+     shipped versions and freeze this repo against the next upgrade. Use
+     'satelle substrate edit <kind> <name>' to materialize one for editing.
+
+The embedded default TASK re-seeds, because a coded gate checks for an on-disk
+task header — tasks cannot live virtually, and authored tasks are never wiped.
 
 Documents, tasks, story attachments, the constitution, satelle.toml/agents.toml,
 and the database are never touched. This is the "start clean" recovery, one step
@@ -122,8 +134,16 @@ func runRebase(out io.Writer, in io.Reader, dataDir, runtimeDir string, yes bool
 		_ = n
 	}
 
-	// 2+3. Recreate each dir (with its README keep-file) and redeploy the complete
-	//      default solution — the same materialisers init uses on a fresh repo.
+	// 2+3. Recreate each dir with its README keep-file, and STOP. Under virtual
+	//      sparse defaults (sty_29e5a9a5) the known-good default solution IS the
+	//      empty authored dir: List/Get overlay the embedded bytes at read time,
+	//      so the wipe alone completes the reset.
+	//
+	//      Re-seeding here used to land 25+ stamped copies, which is worse than a
+	//      no-op: a materialised copy SHADOWS the shipped default, so the next
+	//      binary upgrade leaves the repo running a frozen fork of a gate it never
+	//      chose to pin. That is the state sty_5604e741 had to delete by hand, and
+	//      rebase was the thing putting it back (sty_cc550a88).
 	for _, kind := range rebaseKinds {
 		dir := filepath.Join(dataDir, kind)
 		if _, err := ensureDir(dir); err != nil {
@@ -133,32 +153,18 @@ func runRebase(out io.Writer, in io.Reader, dataDir, runtimeDir string, yes bool
 			return fmt.Errorf("rebase: %w", err)
 		}
 	}
-	deployed := 0
-	for _, line := range materializeDefaultSolution(dataDir, opts) {
-		fmt.Fprintln(out, line)
-		deployed++
-	}
-	for _, line := range materializePrinciples(dataDir, opts) {
-		fmt.Fprintln(out, line)
-		deployed++
-	}
-	// Advisory skills are referenced by no workflow, so the default-solution
-	// deploy above never carries them — redeploy them explicitly, exactly as
-	// init seeds them (sty_f4c1bd90).
-	for _, line := range materializeAdvisorySkills(dataDir, opts) {
-		fmt.Fprintln(out, line)
-		deployed++
-	}
-	// The embedded default TASK (substrate-audit) re-seeds here too, exactly as init
-	// seeds it — additive, never clobbering an authored same-id task. "tasks" is NOT
-	// a rebaseKind: authored tasks are repo content and are never wiped (sty_d4360e90).
+	// Tasks are the one carve-out, and it is pre-existing and principled: coded
+	// gates check for an on-disk task HEADER, so a task cannot live virtually.
+	// "tasks" is NOT a rebaseKind — authored tasks are repo content and are never
+	// wiped — making this purely additive healing (sty_d4360e90).
+	restored := 0
 	for _, line := range materializeTasks(dataDir, opts) {
 		fmt.Fprintln(out, line)
-		deployed++
+		restored++
 	}
 
-	fmt.Fprintf(out, "rebase: backed up %d dir(s) to %s; deployed %d default file(s) (run `satelle reindex` to sync the index)\n",
-		backedUp, backupDir, deployed)
+	fmt.Fprintf(out, "rebase: backed up %d dir(s) to %s; restored %d default task(s); workflows/skills/principles now resolve from the embedded defaults (run `satelle reindex` to sync the index)\n",
+		backedUp, backupDir, restored)
 	if _, err := writeDeployedVersion(dataDir); err != nil {
 		return fmt.Errorf("rebase: write deployed.version: %w", err)
 	}

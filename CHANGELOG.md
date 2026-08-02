@@ -1,3 +1,8 @@
+## [0.0.392] - 2026-08-02
+
+### Changed
+- **`satelle rebase` stops re-seeding the embedded defaults onto disk.** It backed up, wiped, and then copied 25+ default files back — which DEFEATED the reset it exists to perform. Under virtual sparse defaults (sty_29e5a9a5) the known-good default solution IS the empty authored dir: `List`/`Get` overlay the embedded bytes at read time, so the wipe alone completes the reset. Copying them back lands stamped copies that SHADOW the shipped defaults, freezing the repo against the next binary upgrade — exactly the state sty_5604e741 had to delete by hand, with rebase putting it back. `satelle init` already followed this rule; rebase now does too, and the reason is recorded beside init's rule so the next reader finds it. Tasks remain the one carve-out in both paths, because a coded gate checks for an on-disk task header and a task cannot live virtually. The help stops promising a redeploy it does not perform and points at `satelle substrate edit <kind> <name>` for materializing one deliberately; `materializeDefaultSolution`, `materializePrinciples` and `materializeAdvisorySkills` are deleted with their last caller, since leaving them invites exactly the re-wire this removes (sty_cc550a88)
+
 ## [0.0.391] - 2026-08-02
 
 ### Added

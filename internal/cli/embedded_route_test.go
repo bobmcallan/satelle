@@ -159,20 +159,24 @@ func TestNoSourceReachesForARetiredEmbeddedWorkflow(t *testing.T) {
 	}
 }
 
-// TestRebaseHelpDescribesTheShippedRoute is AC6's proof for rebase: the command
-// help no longer documents resetting a converted repo as a regression, because
-// redeploying the default now redeploys a route (sty_3795e7f6). A deterministic
-// assertion on the shipped text, not inspection.
+// TestRebaseHelpDescribesTheShippedRoute: the command help no longer documents
+// resetting a converted repo as a regression (sty_3795e7f6), AND it no longer
+// promises a redeploy it does not perform (sty_cc550a88). A command that lies
+// about its own effect is the defect, so this asserts the shipped text
+// deterministically rather than by inspection.
 func TestRebaseHelpDescribesTheShippedRoute(t *testing.T) {
 	long := findCommandLong(t, "rebase")
-	for _, banned := range append([]string{"regression"}, retiredEmbeddedWorkflows...) {
+	for _, banned := range append([]string{"regression", "REDEPLOYS"}, retiredEmbeddedWorkflows...) {
 		if strings.Contains(long, banned) {
 			t.Errorf("rebase help still mentions %q — the conversion removed that caveat", banned)
 		}
 	}
-	for _, want := range []string{"done.md", "step.md"} {
+	// It must instead say the defaults govern from the binary, and point at the
+	// verb that materializes one deliberately.
+	// Phrases kept short so a line wrap in the help text cannot break the check.
+	for _, want := range []string{"does NOT copy the", "IS the default solution", "satelle substrate edit"} {
 		if !strings.Contains(long, want) {
-			t.Errorf("rebase help does not name %s — it must say what it redeploys", want)
+			t.Errorf("rebase help does not say %q — an operator must know the wipe IS the reset", want)
 		}
 	}
 }

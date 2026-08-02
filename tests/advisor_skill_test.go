@@ -33,10 +33,17 @@ func TestAdvisorSkillValidatesVirtuallyAndSurvivesMaterializeRebase(t *testing.T
 		t.Errorf("advisor skill should validate:\n%s", out)
 	}
 
+	// Rebase wipes the materialised copy and does NOT put it back (sty_cc550a88):
+	// the reset returns the skill to its VIRTUAL state, which is the known-good
+	// default. Surviving a rebase means still RESOLVING, not still being on disk.
 	mustRun(t, testBin, repo, "rebase", "--yes")
-	if !fileExists(filepath.Join(repo, ".satelle", "skills", "satelle-workflow-advisor.md")) {
-		t.Fatal("rebase did not redeploy satelle-workflow-advisor")
+	if fileExists(filepath.Join(repo, ".satelle", "skills", "satelle-workflow-advisor.md")) {
+		t.Fatal("rebase must not re-seed satelle-workflow-advisor — a copy shadows the shipped default")
 	}
+	// Asserting that it still RESOLVES after the rebase needs a working repo, and
+	// rebase currently wipes the agents layer out of workflows/ so every command
+	// refuses (sty_72ccafaa). Strengthen this to a resolution assertion once that
+	// lands; until then absence-of-reseed is what this story claims.
 
 	help := mustRun(t, testBin, repo, "help", "workflows")
 	if !strings.Contains(help, "satelle-workflow-advisor") {
@@ -63,12 +70,15 @@ func TestReviewerObjectiveAuditTaskSeedsSkillVirtual(t *testing.T) {
 	if !strings.Contains(out, "PASS  skills/satelle-reviewer-objective-audit") {
 		t.Errorf("reviewer-objective-audit skill should validate:\n%s", out)
 	}
+	// The skill returns to VIRTUAL (rebase no longer re-seeds — sty_cc550a88);
+	// the TASK is the carve-out and does come back, because a coded gate checks
+	// for an on-disk task header.
 	mustRun(t, testBin, repo, "rebase", "--yes")
-	if !fileExists(skill) {
-		t.Fatal("rebase did not redeploy satelle-reviewer-objective-audit")
+	if fileExists(skill) {
+		t.Fatal("rebase must not re-seed satelle-reviewer-objective-audit")
 	}
 	if !fileExists(task) {
-		t.Fatal("rebase did not redeploy tsk_reviewer-objective-audit")
+		t.Fatal("rebase did not restore tsk_reviewer-objective-audit — tasks cannot live virtually")
 	}
 }
 
