@@ -28,8 +28,9 @@ import (
 // sty_fb5e6d96) — the same probed value `satelle status` and the SessionStart
 // line use, so no surface can imply a service is up when nothing answers.
 
-// statusLineCommand is the canonical invocation satelle installs into
-// .claude/settings.json, and the marker that identifies the entry as
+// statusLineCommand is the canonical invocation an operator puts in their own
+// ~/.claude/settings.json (satelle installs none — sty_325df80c), the snippet
+// every opt-in surface quotes, and the marker that identifies an entry as
 // satelle-owned. Ownership is decided by containment of this string, so an
 // operator who wraps it in their own script is still recognised.
 const statusLineCommand = "satelle status --line"

@@ -1,3 +1,8 @@
+## [0.0.386] - 2026-08-02
+
+### Changed
+- **satelle installs no statusLine into a repo's `.claude/settings.json`.** A statusline is an OPERATOR preference — which line the person at the terminal wants to look at — while that file is shared scaffold every session in the repo inherits, and in most repos it is committed. Seeding it there imposed one operator's choice on everyone who opened the repo, silently. `satelle status --line` is untouched; the opt-in home is the operator's own `~/.claude/settings.json`, named in the `agents install` output, the `agents` help and the `--line` flag help, with the snippet composed from the verb so the documented invocation cannot drift. There is deliberately no user-level install verb either: writing to the operator's global file to fix "we wrote to a file we should not have" is the same mistake at a wider scope. A repo seeded before this is HEALED — init strips the entry satelle put there and reports where to re-home it — and a statusLine you own is still left byte-for-byte (sty_325df80c)
+
 ## [0.0.385] - 2026-08-02
 
 ### Removed

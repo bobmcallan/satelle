@@ -310,9 +310,27 @@ func claudeSettingsPath(repo string) string {
 	return filepath.Join(repo, ".claude", "settings.json")
 }
 
-// TestInstallWritesStatusLineOnFreshScaffold (AC6, AC11): a repo with no
-// settings file gets satelle's statusLine alongside the hooks.
-func TestInstallWritesStatusLineOnFreshScaffold(t *testing.T) {
+// seedSatelleStatusLine puts satelle's legacy entry into an existing
+// settings.json — the state of a repo initialised before sty_325df80c. Fresh
+// scaffold no longer carries one, so every test about REMOVING it must first
+// create the thing being removed.
+func seedSatelleStatusLine(t *testing.T, repo string) {
+	t.Helper()
+	path := claudeSettingsPath(repo)
+	root := readSettings(t, path)
+	root["statusLine"] = map[string]any{"type": "command", "command": statusLineCommand}
+	b, _ := json.MarshalIndent(root, "", "  ")
+	if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestFreshScaffoldCarriesNoStatusLine (sty_325df80c AC1): a repo with no
+// settings file gets the hooks and NO statusLine — the line is an operator
+// preference and this file is shared repo scaffold. The hook events are asserted
+// alongside so this guards "the hooks it writes are unchanged", not just the
+// removal.
+func TestFreshScaffoldCarriesNoStatusLine(t *testing.T) {
 	repo := t.TempDir()
 	created, _, _, err := ensureClaudeHooks(repo)
 	if err != nil {
@@ -322,18 +340,24 @@ func TestInstallWritesStatusLineOnFreshScaffold(t *testing.T) {
 		t.Fatal("want a created scaffold")
 	}
 	root := readSettings(t, claudeSettingsPath(repo))
-	if !isSatelleOwnedStatusLine(root["statusLine"]) {
-		t.Fatalf("fresh scaffold must carry satelle's statusLine, got %v", root["statusLine"])
+	if v, present := root["statusLine"]; present {
+		t.Fatalf("fresh scaffold must carry no statusLine, got %v", v)
 	}
-	sl := root["statusLine"].(map[string]any)
-	if sl["type"] != "command" || sl["command"] != statusLineCommand {
-		t.Fatalf("statusLine entry = %v", sl)
+	hooks, ok := root["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("fresh scaffold must carry hooks, got %v", root["hooks"])
+	}
+	for _, event := range []string{"SessionStart", "PreToolUse", "UserPromptSubmit", "Stop"} {
+		if _, present := hooks[event]; !present {
+			t.Fatalf("hook event %q must survive the statusLine removal, hooks=%v", event, hooks)
+		}
 	}
 }
 
-// TestInstallStatusLineIsIdempotent (AC6): re-running install leaves a
-// satelle-owned statusLine byte-identical.
-func TestInstallStatusLineIsIdempotent(t *testing.T) {
+// TestFreshScaffoldInstallIsIdempotent (AC1): re-running install rewrites
+// nothing and says nothing about a statusLine — with none written, there is
+// never anything to heal.
+func TestFreshScaffoldInstallIsIdempotent(t *testing.T) {
 	repo := t.TempDir()
 	if _, _, _, err := ensureClaudeHooks(repo); err != nil {
 		t.Fatal(err)
@@ -342,13 +366,13 @@ func TestInstallStatusLineIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, updated, _, err := ensureClaudeHooks(repo); err != nil {
+	_, updated, _, err := ensureClaudeHooks(repo)
+	if err != nil {
 		t.Fatal(err)
-	} else {
-		for _, u := range updated {
-			if strings.Contains(u, "statusLine") {
-				t.Fatalf("second install must not touch statusLine, reported %q", u)
-			}
+	}
+	for _, u := range updated {
+		if strings.Contains(u, "statusLine") {
+			t.Fatalf("second install must not mention statusLine, reported %q", u)
 		}
 	}
 	second, err := os.ReadFile(claudeSettingsPath(repo))
@@ -360,46 +384,63 @@ func TestInstallStatusLineIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestInstallAddsStatusLineToExistingSettings (AC6): repos that already have a
-// settings.json (hooks but no statusLine) gain one on install — fresh creation
-// alone would leave every existing repo without it.
-func TestInstallAddsStatusLineToExistingSettings(t *testing.T) {
+// TestInstallRemovesSatelleStatusLineFromExistingSettings (AC2): a repo seeded
+// before this change is HEALED — satelle's entry goes, the removal is reported,
+// and every unrelated key survives.
+func TestInstallRemovesSatelleStatusLineFromExistingSettings(t *testing.T) {
 	repo := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repo, ".claude"), 0o755); err != nil {
+	if _, _, _, err := ensureClaudeHooks(repo); err != nil {
 		t.Fatal(err)
 	}
-	existing := `{
-  "hooks": {},
-  "model": "opus"
-}
-`
-	if err := os.WriteFile(claudeSettingsPath(repo), []byte(existing), 0o644); err != nil {
+	seedSatelleStatusLine(t, repo)
+	path := claudeSettingsPath(repo)
+	root := readSettings(t, path)
+	root["model"] = "opus"
+	b, _ := json.MarshalIndent(root, "", "  ")
+	if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	_, updated, _, err := ensureClaudeHooks(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := readSettings(t, claudeSettingsPath(repo))
-	if !isSatelleOwnedStatusLine(root["statusLine"]) {
-		t.Fatalf("existing settings must gain satelle's statusLine, got %v", root["statusLine"])
+	after := readSettings(t, path)
+	if v, present := after["statusLine"]; present {
+		t.Fatalf("a satelle-seeded statusLine must be removed on install, got %v", v)
 	}
-	if root["model"] != "opus" {
-		t.Fatalf("unrelated top-level keys must survive, got %v", root["model"])
+	if after["model"] != "opus" {
+		t.Fatalf("unrelated top-level keys must survive, got %v", after["model"])
 	}
 	var said bool
 	for _, u := range updated {
 		if strings.Contains(u, "statusLine") {
 			said = true
+			if !strings.Contains(u, claudeUserSettingsRel) {
+				t.Fatalf("the removal note must name the opt-in home, got %q", u)
+			}
 		}
 	}
 	if !said {
-		t.Fatalf("install should report the statusLine addition, got %v", updated)
+		t.Fatalf("install must report the statusLine removal, got %v", updated)
+	}
+
+	// Idempotent: a second install has nothing left to remove and says so by
+	// staying silent.
+	_, again, _, err := ensureClaudeHooks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range again {
+		if strings.Contains(u, "statusLine") {
+			t.Fatalf("second install must be a clean no-op, reported %q", u)
+		}
 	}
 }
 
-// TestInstallLeavesForeignStatusLineByteForByte (AC7): a statusLine the operator
-// owns is untouched, install still succeeds, and the paste snippet is offered.
+// TestInstallLeavesForeignStatusLineByteForByte (AC2): a statusLine the operator
+// owns is never touched — the removal pass reads ownership by containment, so
+// only satelle's own entry is in scope.
 func TestInstallLeavesForeignStatusLineByteForByte(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".claude"), 0o755); err != nil {
@@ -412,8 +453,14 @@ func TestInstallLeavesForeignStatusLineByteForByte(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, _, _, err := ensureClaudeHooks(repo); err != nil {
+	if _, updated, _, err := ensureClaudeHooks(repo); err != nil {
 		t.Fatalf("install must still succeed with a foreign statusLine: %v", err)
+	} else {
+		for _, u := range updated {
+			if strings.Contains(u, "statusLine") {
+				t.Fatalf("a foreign statusLine must not be reported as touched, got %q", u)
+			}
+		}
 	}
 
 	root := readSettings(t, claudeSettingsPath(repo))
@@ -422,25 +469,22 @@ func TestInstallLeavesForeignStatusLineByteForByte(t *testing.T) {
 	if string(got) != string(want) {
 		t.Fatalf("foreign statusLine was modified:\n got=%s\nwant=%s", got, want)
 	}
-
-	notice := foreignStatusLineNotice(claudeSettingsPath(repo))
-	if notice == "" {
-		t.Fatal("operator must be told the statusLine was skipped")
-	}
-	if !strings.Contains(notice, statusLineCommand) {
-		t.Fatalf("notice must carry the exact snippet to paste: %q", notice)
-	}
 }
 
-// TestNoForeignNoticeWhenSatelleOwned (AC7): the skip notice is only for a
-// genuinely foreign entry — satelle's own must not trigger it.
-func TestNoForeignNoticeWhenSatelleOwned(t *testing.T) {
-	repo := t.TempDir()
-	if _, _, _, err := ensureClaudeHooks(repo); err != nil {
-		t.Fatal(err)
+// TestStatusLineOptInNoticeNamesItsHome (AC4): an operator who wants the line
+// must be told where it goes — their own settings, not the repo's — and be
+// handed the exact invocation. Unconditional: it no longer depends on what the
+// repo's settings happen to contain.
+func TestStatusLineOptInNoticeNamesItsHome(t *testing.T) {
+	notice := statusLineOptInNotice()
+	if !strings.Contains(notice, claudeUserSettingsRel) {
+		t.Fatalf("notice must name the operator-owned settings file: %q", notice)
 	}
-	if notice := foreignStatusLineNotice(claudeSettingsPath(repo)); notice != "" {
-		t.Fatalf("satelle's own statusLine must not read as foreign: %q", notice)
+	if !strings.Contains(notice, statusLineCommand) {
+		t.Fatalf("notice must carry the exact invocation to paste: %q", notice)
+	}
+	if !strings.Contains(notice, "statusLine") {
+		t.Fatalf("notice must name the key it goes under: %q", notice)
 	}
 }
 
@@ -453,6 +497,7 @@ func TestRemovePrunesOnlySatelleStatusLine(t *testing.T) {
 	if _, _, _, err := ensureClaudeHooks(repo); err != nil {
 		t.Fatal(err)
 	}
+	seedSatelleStatusLine(t, repo)
 	path := claudeSettingsPath(repo)
 	root := readSettings(t, path)
 	if !isSatelleOwnedStatusLine(root["statusLine"]) {
@@ -498,6 +543,7 @@ func TestRemoveOfWhollySatelleScaffoldKeepsFile(t *testing.T) {
 	if _, _, _, err := ensureClaudeHooks(repo); err != nil {
 		t.Fatal(err)
 	}
+	seedSatelleStatusLine(t, repo)
 	if _, _, _, err := removeClaudeHooks(repo); err != nil {
 		t.Fatal(err)
 	}
@@ -552,22 +598,18 @@ func TestStatusLineAloneIsNotScaffoldDrift(t *testing.T) {
 	if _, _, _, err := ensureClaudeHooks(repo); err != nil {
 		t.Fatal(err)
 	}
-	withLine := DetectScaffoldDrift(repo)
-
-	path := claudeSettingsPath(repo)
-	root := readSettings(t, path)
-	delete(root, "statusLine")
-	b, _ := json.MarshalIndent(root, "", "  ")
-	if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	withoutLine := DetectScaffoldDrift(repo)
+
+	// A statusLine the operator added themselves must not read as drift either —
+	// satelle no longer writes one, so its PRESENCE is now the interesting case.
+	seedSatelleStatusLine(t, repo)
+	withLine := DetectScaffoldDrift(repo)
 
 	if len(withLine) != len(withoutLine) {
 		t.Fatalf("statusLine changed drift findings: %d with, %d without", len(withLine), len(withoutLine))
 	}
-	if len(withLine) != 0 {
-		t.Fatalf("a freshly installed scaffold must be drift-clean, got %v", withLine)
+	if len(withoutLine) != 0 {
+		t.Fatalf("a freshly installed scaffold must be drift-clean, got %v", withoutLine)
 	}
 }
 
