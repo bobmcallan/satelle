@@ -40,11 +40,12 @@ type partitionVM struct {
 	Tasks     int
 	Workflows int
 	Docs      int
-	// LastIngest/Stale carry the same freshness signal as the project page, so a
-	// partition the serving tier could not reconcile is visibly stale on the
-	// landing too (sty_e6e467fe).
+	// LastIngest carries the same freshness signal as the project page, so a
+	// partition the serving tier could not reconcile is visible on the landing
+	// too (sty_e6e467fe) — as elapsed time on every row, not a threshold badge
+	// on some of them (sty_226a661e). See pageData.LastIngest for why there is
+	// no Stale field beside it.
 	LastIngest time.Time
-	Stale      bool
 }
 
 // mirrorWorkspaceData backs the mirror workspace landing template.
@@ -205,7 +206,6 @@ func (s *MirrorServer) loadPartitions(ctx context.Context) ([]partitionVM, int, 
 	slugs := displaySlugs(parts)
 	var pvm []partitionVM
 	total := 0
-	now := time.Now()
 	for _, p := range parts {
 		slug := slugs[p.RepoKey]
 		id := mirrorIdentity(ctx, s.Store, p.RepoKey)
@@ -237,7 +237,7 @@ func (s *MirrorServer) loadPartitions(ctx context.Context) ([]partitionVM, int, 
 			Slug: slug, Name: name, Path: path,
 			Stories: len(stories), Backlog: backlog,
 			Tasks: len(tasks), Workflows: workflows, Docs: len(docs),
-			LastIngest: lastIngest.Local(), Stale: p.Stale(now),
+			LastIngest: lastIngest.Local(),
 		})
 	}
 	return pvm, total, nil
@@ -517,15 +517,18 @@ const mirrorWorkspaceSrc = `
   <div class="empty">No partitions yet — run <code>satelle workspace add</code> from a repo with <code>[server] endpoint</code> configured to seed the mirror.</div>
   {{else}}
   <table class="panel-table">
-    <thead><tr><th>Project</th><th>Path</th><th>Stories</th><th>Tasks</th><th>Workflow</th><th>Documents</th></tr></thead>
+    <thead><tr><th>Project</th><th>Path</th><th>Stories</th><th>Tasks</th><th>Workflow</th><th>Documents</th><th>Updated</th></tr></thead>
     <tbody data-rows>{{range .Partitions}}
       <tr class="row" data-slug="{{.Slug}}">
-        <td><a class="wi-title" href="/r/{{.Slug}}/">{{.Name}}</a>{{if .Stale}} {{template "staleflag" .}}{{end}}</td>
+        <td><a class="wi-title" href="/r/{{.Slug}}/">{{.Name}}</a></td>
         <td class="meta mono">{{.Path}}</td>
         <td class="n-stories"><span class="n">{{.Stories}}</span>{{if .Backlog}} <span class="n-backlog" title="stories in the open backlog">{{.Backlog}} backlog</span>{{end}}</td>
         <td class="n-tasks"><span class="n">{{.Tasks}}</span></td>
         <td class="n-workflows"><span class="n">{{.Workflows}}</span></td>
         <td class="n-docs"><span class="n">{{.Docs}}</span></td>
+        {{/* Rightmost deliberately: this replaces a badge that sat INSIDE the
+             Project cell and pushed the name around (sty_226a661e). */}}
+        <td class="updated-cell">{{template "freshness" .}}</td>
       </tr>{{end}}
     </tbody>
   </table>

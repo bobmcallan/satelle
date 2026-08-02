@@ -140,6 +140,35 @@ func TestServeGateWatchesInternalServe(t *testing.T) {
 	}
 }
 
+// serveVersionBumped reports whether the working tree's satelle-serve.version
+// already differs from the one in the latest serve-v* tag. When it does, the
+// gate passes on the version comparison alone and no planted file can change
+// that.
+func serveVersionBumped(t *testing.T, root string) bool {
+	t.Helper()
+	base := run(t, root, "git", "tag", "-l", "serve-v*", "--sort=-v:refname")
+	if i := strings.IndexByte(base, '\n'); i >= 0 {
+		base = base[:i]
+	}
+	if base == "" {
+		return false
+	}
+	serveVer := func(body string) string {
+		for _, ln := range strings.Split(body, "\n") {
+			if f := strings.Fields(ln); len(f) >= 2 && f[0] == "satelle-serve.version:" {
+				return f[1]
+			}
+		}
+		return ""
+	}
+	head, err := os.ReadFile(filepath.Join(root, ".version"))
+	if err != nil {
+		t.Fatalf("read .version: %v", err)
+	}
+	tagged := run(t, root, "git", "show", base+":.version")
+	return serveVer(string(head)) != serveVer(tagged)
+}
+
 // gateRun runs the gate itself and reports whether it passed.
 func gateRun(t *testing.T, root string) (bool, string) {
 	t.Helper()
@@ -166,6 +195,18 @@ func TestServeGateSeesNewFiles(t *testing.T) {
 	// shallow, tagless checkout. Refuse to conclude anything instead.
 	if run(t, root, "git", "tag", "-l", "serve-v*") == "" {
 		t.Skip("no serve-v* tag in this clone — the gate has no baseline, so planting a file proves nothing")
+	}
+	// A tree whose serve version is ALREADY bumped past the baseline tag cannot
+	// be made to fail by planting anything: the gate's verdict turns on the
+	// version comparison, which already passes. Asserting "planting a file makes
+	// it fail" there tests nothing and fails for the wrong reason — observed on
+	// exactly the release that first needed a serve bump after this test landed.
+	//
+	// This is the third precondition of the same kind (tagless clone, dirty
+	// baseline, bumped version). They share one rule: never conclude anything
+	// from a gate that could not have failed.
+	if serveVersionBumped(t, root) {
+		t.Skip("satelle-serve.version is already ahead of the baseline tag — the gate cannot fail, so planting a file proves nothing")
 	}
 	if ok, out := gateRun(t, root); !ok {
 		t.Skipf("gate is already failing in this tree, so planting a file proves nothing:\n%s", out)

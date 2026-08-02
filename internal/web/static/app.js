@@ -420,11 +420,39 @@
       return r.dataset.slug;
     });
   }
+  // Every cell the soft refresh must carry over. A class MISSING from this list
+  // silently freezes at its first-render value after the first SSE tick, with no
+  // error anywhere — which is why "updated-cell" is here (sty_226a661e).
   function copyCellCounts(fromRow, toRow) {
-    ["n-stories", "n-tasks", "n-workflows", "n-docs"].forEach(function (cls) {
+    ["n-stories", "n-tasks", "n-workflows", "n-docs", "updated-cell"].forEach(function (cls) {
       var src = fromRow.querySelector("." + cls);
       var dst = toRow.querySelector("." + cls);
       if (src && dst) dst.innerHTML = src.innerHTML;
+    });
+  }
+
+  // ---- freshness ticker (sty_226a661e) -------------------------------------
+  // relPhrase MIRRORS relTime() in internal/web/page.go — same thresholds, same
+  // floor arithmetic, same plural forms. They must agree exactly or the text
+  // re-words on the first tick with no time elapsed. Edit one, edit the other.
+  function relPhrase(ms) {
+    if (ms < 0) ms = 0; // clock skew: a future stamp reads as current, never "in 3 mins"
+    var mins = Math.floor(ms / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return mins === 1 ? "1 min ago" : mins + " mins ago";
+    var hrs = Math.floor(mins / 60);
+    if (hrs < 24) return hrs === 1 ? "1 hr ago" : hrs + " hrs ago";
+    var days = Math.floor(hrs / 24);
+    return days === 1 ? "1 day ago" : days + " days ago";
+  }
+  // renderRelTimes rewrites the PHRASE only. The title carries the absolute
+  // stamp and is written once server-side; recomputing it here would mean
+  // shipping a date formatter to the client for no gain.
+  function renderRelTimes(root) {
+    var now = Date.now();
+    [].slice.call((root || document).querySelectorAll("time.rel-time[datetime]")).forEach(function (el) {
+      var t = Date.parse(el.getAttribute("datetime"));
+      if (!isNaN(t)) el.textContent = relPhrase(now - t);
     });
   }
   function applyProjectsLive(html) {
@@ -446,6 +474,10 @@
     } else {
       live.innerHTML = html;
     }
+    // Both branches: freshly-inserted markup carries the SERVER's phrase, which
+    // is up to one tick behind this clock. Re-render immediately rather than
+    // letting it sit stale until the next interval.
+    renderRelTimes(live);
     var nEl = document.querySelector(".n-partitions");
     if (nEl) nEl.textContent = String(newSlugs.length);
   }
@@ -661,5 +693,23 @@
     initProjectSwitcher();
     initAccountMenu();
     initTimelineFields();
+    initRelTimes();
   });
+
+  // initRelTimes keeps every freshness phrase current. It is deliberately NOT
+  // part of initLive and deliberately NOT visibility-gated (sty_226a661e):
+  //
+  //   - It holds no connection and issues no request. The reason initLive closes
+  //     its EventSource on a hidden tab is HTTP/1.1's ~6-connections-per-host cap
+  //     starving the ACTIVE tab (sty_a4fc4d00). A timer costs none of that, so
+  //     gating it would only make a returning tab briefly show a stale phrase.
+  //   - Everything it needs is already in the DOM as an absolute datetime, so it
+  //     never has to ask the server what time it is.
+  //
+  // 30s, not 60s: at a 60s tick the phrase can be a full minute wrong at a
+  // minute boundary, which is exactly where it is most read.
+  function initRelTimes() {
+    renderRelTimes(document);
+    setInterval(function () { renderRelTimes(document); }, 30000);
+  }
 })();

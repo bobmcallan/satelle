@@ -344,6 +344,93 @@ func TestAppJSProjectsSoftRefreshNoReload(t *testing.T) {
 	}
 }
 
+// TestAppJSMirrorsRelTimeWording is the JS half of the AC7 wording contract
+// (sty_226a661e). relPhrase() in app.js and relTime() in page.go re-render the
+// SAME element — the server writes the phrase, the client rewrites it on a
+// timer — so a divergent edit to one side makes the text visibly re-word on the
+// first tick with no time elapsed.
+//
+// There is no JS runtime in this toolchain, so this is a static fence, not an
+// execution test: it asserts the literal strings and thresholds exist on the JS
+// side. TestRelTimeBuckets is what actually proves the Go semantics.
+func TestAppJSMirrorsRelTimeWording(t *testing.T) {
+	js, err := staticFS.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(js)
+	for _, want := range []string{
+		"relPhrase", "renderRelTimes", "time.rel-time[datetime]",
+		`"just now"`, `"1 min ago"`, `" mins ago"`,
+		`"1 hr ago"`, `" hrs ago"`, `"1 day ago"`, `" days ago"`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("app.js is missing %s — the client phrasing must mirror relTime() in page.go", want)
+		}
+	}
+	// AC4: a timer, and one that is not gated on visibility.
+	if !strings.Contains(src, "initRelTimes") || !strings.Contains(src, "setInterval") {
+		t.Error("app.js must tick the freshness phrases on a timer")
+	}
+	// AC6: a class absent from copyCellCounts silently freezes after the first
+	// SSE tick, with no error — the exact trap this column could fall into.
+	//
+	// Scoped to the FUNCTION BODY, not the whole file, and that is not fussiness:
+	// the first version of this check searched all of app.js and passed with the
+	// class removed from the array, because the comment above the array still
+	// named it. An assertion a nearby comment can satisfy proves nothing.
+	body := copyCellCountsBody(t, src)
+	if !strings.Contains(body, `"updated-cell"`) {
+		t.Errorf("copyCellCounts must carry updated-cell or the column freezes on soft refresh:\n%s", body)
+	}
+}
+
+// copyCellCountsBody returns the class list inside copyCellCounts — from the
+// function keyword to the end of the forEach it drives.
+func copyCellCountsBody(t *testing.T, src string) string {
+	t.Helper()
+	start := strings.Index(src, "function copyCellCounts")
+	if start < 0 {
+		t.Fatal("copyCellCounts is gone from app.js — the soft refresh no longer copies cells")
+	}
+	rest := src[start:]
+	end := strings.Index(rest, ".forEach(")
+	if end < 0 {
+		t.Fatalf("copyCellCounts no longer drives a forEach over a class list:\n%s", rest[:min(len(rest), 300)])
+	}
+	return rest[:end]
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// TestAppJSTickerAddsNoConnection is AC5: the freshness ticker must not have
+// become an excuse for a second stream or a poll. sty_a4fc4d00 closes the SSE
+// on a hidden tab because HTTP/1.1 caps ~6 connections per host and a stream
+// per hidden tab starves the ACTIVE tab. A timer costs none of that — but only
+// while it stays a timer.
+func TestAppJSTickerAddsNoConnection(t *testing.T) {
+	js, err := staticFS.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(js)
+	if n := strings.Count(src, "new EventSource"); n != 1 {
+		t.Errorf("want exactly 1 EventSource (the visibility-gated one), got %d", n)
+	}
+	if !strings.Contains(src, "visibilitychange") {
+		t.Error("the SSE visibility gate from sty_a4fc4d00 must remain")
+	}
+	// The ticker re-renders from the DOM; it must not fetch to learn the time.
+	if strings.Contains(src, "renderRelTimes") && strings.Contains(src, "fetch(\"fragment/time") {
+		t.Error("the ticker must render from the element's datetime, never by asking the server")
+	}
+}
+
 func httpGetBody(t *testing.T, url string) string {
 	t.Helper()
 	resp, err := http.Get(url)

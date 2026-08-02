@@ -77,11 +77,14 @@ type pageData struct {
 	TopBar          topBar
 	Projects        []crumbProject // workspace project switcher for the breadcrumb
 	// LastIngest is when this partition's state was last confirmed against the
-	// repo, and Stale says that confirmation is older than mirror.StaleAfter —
-	// so the page says so rather than presenting an unrepaired frame as current
-	// (sty_e6e467fe).
+	// repo, rendered as elapsed time so the page never presents an unrepaired
+	// frame as current (sty_e6e467fe, presented per sty_226a661e).
+	//
+	// There is deliberately no Stale companion. It existed to switch a badge on
+	// past mirror.StaleAfter; the elapsed time is shown unconditionally now, so
+	// a boolean here would be computed and never read — which reads to the next
+	// person as though a threshold still governs what is displayed.
 	LastIngest time.Time
-	Stale      bool
 }
 
 type crumbProject struct {
