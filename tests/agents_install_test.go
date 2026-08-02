@@ -34,7 +34,7 @@ func TestAgentsInstallRemove(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 	mustRun(t, testBin, repo, "reindex")
 
-	agentsToml := filepath.Join(repo, ".satelle", "agents.toml")
+	agentsToml := filepath.Join(repo, ".satelle", "workflows", "agents.toml")
 	beforeAgents, err := os.ReadFile(agentsToml)
 	if err != nil {
 		t.Fatalf("read agents.toml: %v", err)

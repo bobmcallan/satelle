@@ -44,7 +44,7 @@ func setupStructuredPlanRepo(t *testing.T, scriptBody string) (repo, id, script 
 	if err := os.WriteFile(script, []byte(scriptBody), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	f, err := os.OpenFile(filepath.Join(repo, ".satelle", "agents.toml"), os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(filepath.Join(repo, ".satelle", "workflows", "agents.toml"), os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}

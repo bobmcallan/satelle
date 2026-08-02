@@ -5,7 +5,7 @@
 // name a binary directly.
 //
 // `satelle agent validate` (sty_93eec36d) is the store-backed check of this repo's
-// .satelle/agents.toml + workflow agent= bindings — the same authority init and
+// .satelle/workflows/agents.toml + workflow agent= bindings — the same authority init and
 // story engagement use. It is deliberate that there is no top-level
 // `satelle validate`: each noun validates its own.
 package cli
@@ -35,7 +35,7 @@ func init() {
 shells out to for isolated reviews and summaries. The choice persists in the
 global config (~/.satelle/config.toml) so it is set once per machine.
 
-agent validate checks this repo's .satelle/agents.toml (every binding's command,
+agent validate checks this repo's .satelle/workflows/agents.toml (every binding's command,
 timeout, env) and each workflow's agent= node bindings, and surfaces each agent's
 resolved grant. Structural workflow checks (rubrics, unresolved gate skills) stay
 on satelle workflow validate — this command reuses them alongside the agent layer.
@@ -157,7 +157,7 @@ func agentMigrateCmd() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(out, "wrote %s — one %q profile derived from [agent] cli\n", path, cli)
-			fmt.Fprintln(out, "reference it from a repo with `profile = \"<name>\"` in .satelle/agents.toml; nothing changes until you do")
+			fmt.Fprintln(out, "reference it from a repo with `profile = \"<name>\"` in .satelle/workflows/agents.toml; nothing changes until you do")
 			return nil
 		},
 	}
@@ -226,7 +226,7 @@ func sortedMapKeys(m map[string]string) []string {
 func agentValidateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:         "validate",
-		Short:       "Validate .satelle/agents.toml and workflow agent= bindings; show resolved grants",
+		Short:       "Validate .satelle/workflows/agents.toml and workflow agent= bindings; show resolved grants",
 		Args:        cobra.NoArgs,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {

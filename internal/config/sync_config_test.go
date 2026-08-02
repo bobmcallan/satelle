@@ -123,7 +123,7 @@ func TestConfigFilesTierResolution(t *testing.T) {
 	writeFile(t, repo, ".satelle/skills/personal-one.md", "---\ntype: skill\n---\nbody\n")
 	writeFile(t, repo, ".satelle/skills/shared-one.md", "---\ntype: skill\nshared: true\n---\nbody\n")
 	writeFile(t, repo, ".satelle/principles/team-rule.md", "---\ntype: principle\n---\nbody\n")
-	writeFile(t, repo, ".satelle/agents.toml", "[executor]\nharness = \"in-loop\"\n")
+	writeFile(t, repo, ".satelle/workflows/agents.toml", "[executor]\nharness = \"in-loop\"\n")
 
 	cfg := Config{Sync: map[string]string{"skills": "personal", "principles": "shared", "agents": "personal"}}
 	b, err := ConfigFiles(cfg, repo)
@@ -149,7 +149,7 @@ func TestConfigFilesTierResolution(t *testing.T) {
 		t.Errorf("team-rule tier = %v, want SharedTier", f.Tier)
 	}
 	// agents.toml -> PersonalTier (personal area, TOML has no frontmatter).
-	if f, ok := findConfigFile(b.Files, "agents.toml"); !ok {
+	if f, ok := findConfigFile(b.Files, "workflows/agents.toml"); !ok {
 		t.Error("missing agents.toml")
 	} else if f.Tier != PersonalTier {
 		t.Errorf("agents.toml tier = %v, want PersonalTier", f.Tier)
@@ -324,7 +324,7 @@ func TestEveryConfigAreaWithholdsLocal(t *testing.T) {
 				continue
 			}
 			if area == "agents" {
-				writeFile(t, repo, ".satelle/agents.toml", "[x]\n")
+				writeFile(t, repo, ".satelle/workflows/agents.toml", "[x]\n")
 				// single-file area: LocalOnlyPath on agents.local.toml-shaped path
 				// is exercised by the basename of a would-be single-file area;
 				// plant a dir file for directory areas only.
@@ -341,7 +341,7 @@ func TestEveryConfigAreaWithholdsLocal(t *testing.T) {
 			continue
 		}
 		if area == "agents" {
-			writeFile(t, repo, ".satelle/agents.toml", "[x]\n")
+			writeFile(t, repo, ".satelle/workflows/agents.toml", "[x]\n")
 			continue
 		}
 		if area == "settings" {

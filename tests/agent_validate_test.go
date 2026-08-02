@@ -27,7 +27,7 @@ func TestAgentValidateHealthyAndBroken(t *testing.T) {
 	// Break the reviewer command with a known-invalid preset (force-write —
 	// the scaffold embeds a full command template and comments that mention
 	// `command = "claude"`, so a naive replace is unreliable).
-	agents := filepath.Join(repo, ".satelle", "agents.toml")
+	agents := filepath.Join(repo, ".satelle", "workflows", "agents.toml")
 	writeFile(t, agents, "[executor]\ncommand = \"in-loop\"\n\n[reviewer]\ncommand = \"not-a-real-cli\"\n")
 
 	out, err := run(t, testBin, repo, "agent", "validate")

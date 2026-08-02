@@ -8,7 +8,7 @@ the format it follows, and how it is validated.
 
 | Plane | Where | Holds |
 |---|---|---|
-| **Authored** | `<repo>/.satelle/` (git-optional) | satelle.toml, agents.toml, constitution, edited workflows/skills/principles, documents, tasks |
+| **Authored** | `<repo>/.satelle/` (git-optional) | satelle.toml, constitution, edited workflows (incl. `workflows/agents.toml`) / skills / principles, documents, tasks |
 | **Defaults** | embedded in the binary | sparse repo-agnostic workflows/skills/principles (resolved virtually; see virtual-defaults work) |
 | **Runtime** | `~/.satelle/<repo-key>/` | satelle.db (+wal/shm), logs/, backups/, stories attachment cache |
 
@@ -21,7 +21,7 @@ one isolated DB — never a flat multi-repo bag.
 
 `satelle init` lays a self-documenting skeleton under `.satelle/`:
 
-- `satelle.toml` and `agents.toml` (both documented, both optional to edit);
+- `satelle.toml` and `workflows/agents.toml` (both documented, both optional to edit);
 - a dir per authored kind — `documents/ workflows/ principles/ skills/ tasks/` —
   each with a `README.md` describing what it should contain (READMEs are dir
   descriptors; the indexer and OKF normaliser skip them);

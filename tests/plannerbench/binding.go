@@ -58,5 +58,5 @@ func shippedAgentsPath() string {
 	if p := strings.TrimSpace(os.Getenv("SATELLE_PLANNER_AGENTS_TOML")); p != "" {
 		return p
 	}
-	return filepath.Join("..", "..", ".satelle", "agents.toml")
+	return filepath.Join("..", "..", ".satelle", config.AgentsConfigDir, config.AgentsConfigName)
 }

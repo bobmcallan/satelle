@@ -24,7 +24,7 @@ import (
 func TestRepoReviewerModelIsActive(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	dataDir := filepath.Join(filepath.Dir(filepath.Dir(file)), ".satelle")
-	if _, err := os.Stat(filepath.Join(dataDir, "agents.toml")); os.IsNotExist(err) {
+	if _, err := os.Stat(func() string { p, _ := config.AgentsPath(dataDir); return p }()); os.IsNotExist(err) {
 		t.Skip(".satelle/agents.toml not present (gitignored operator substrate); dogfood pin is local-only")
 	}
 	ac, err := config.LoadAgents(dataDir)

@@ -649,7 +649,8 @@ func syncAreaPath(a *app.App, area string) (path string, isDir bool) {
 	case "constitution":
 		return a.Config.ResolveConstitution(a.RepoRoot), false
 	case "agents":
-		return filepath.Join(dataDir, config.AgentsConfigName), false
+		path, _ := config.AgentsPath(dataDir)
+		return path, false
 	case "tasks":
 		return filepath.Join(dataDir, "tasks"), true
 	case "settings":

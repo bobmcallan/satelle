@@ -412,9 +412,15 @@ func listLegacyResidue(dataDir string) []string {
 			}
 		}
 	}
-	// agents.*.bak (and similar) next to agents.toml
-	ents, err := os.ReadDir(dataDir)
-	if err == nil {
+	// agents.*.bak (and similar) beside the agents file — which now lives under
+	// workflows/ (sty_10f732ed), so scan there as well as the data dir, where a
+	// pre-move repo's backups still sit.
+	agentsPath, _ := config.AgentsPath(dataDir)
+	for _, dir := range []string{dataDir, filepath.Dir(agentsPath)} {
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
 		for _, e := range ents {
 			n := e.Name()
 			if strings.HasPrefix(n, "agents.") && strings.HasSuffix(n, ".bak") {

@@ -34,7 +34,7 @@ fi
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".satelle", "agents.toml"),
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 		[]byte(fmt.Sprintf("[reviewer]\nrole = \"reviewer\"\ncommand = \"%s {system} {tools} {model}\"\n", script)), 0o644); err != nil {
 		t.Fatal(err)
 	}

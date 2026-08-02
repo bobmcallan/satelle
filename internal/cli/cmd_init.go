@@ -242,11 +242,36 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []s
 	//     knobs without changing behaviour. A repo still carrying the legacy
 	//     actors.toml is treated as present (no re-scaffold) — the loader reads
 	//     either (sty_536f9960).
-	agentsPath := filepath.Join(dataDir, config.AgentsConfigName)
+	//     The canonical home is workflows/agents.toml, beside the route halves it
+	//     binds (sty_10f732ed); a repo whose file is still at the legacy path is
+	//     RELOCATED here — the one place that converts an unconverted repo, so the
+	//     loader's fallback stays a bridge rather than a second permanent home.
+	agentsPath := filepath.Join(dataDir, config.AgentsConfigDir, config.AgentsConfigName)
+	oldAgentsPath := filepath.Join(dataDir, config.AgentsConfigName)
 	legacyPath := filepath.Join(dataDir, config.ActorsConfigName)
 	_, legacyErr := os.Stat(legacyPath)
-	agentsRel := config.DefaultDataDir + "/" + config.AgentsConfigName
+	_, oldAgentsErr := os.Stat(oldAgentsPath)
+	agentsRel := config.DefaultDataDir + "/" + config.AgentsRel
 	switch _, statErr := os.Stat(agentsPath); {
+	case os.IsNotExist(statErr) && oldAgentsErr == nil:
+		// Relocate, then run the same format migration the in-place arm runs, so a
+		// converting repo is not left a release behind on format.
+		if mkErr := os.MkdirAll(filepath.Join(dataDir, config.AgentsConfigDir), 0o755); mkErr != nil {
+			return fmt.Errorf("init: mkdir %s: %w", config.AgentsConfigDir, mkErr)
+		}
+		if rerr := os.Rename(oldAgentsPath, agentsPath); rerr != nil {
+			return fmt.Errorf("init: relocate %s: %w", oldAgentsPath, rerr)
+		}
+		note := ""
+		if raw, rerr := os.ReadFile(agentsPath); rerr == nil {
+			if migrated, notes, merr := config.MigrateAgents(string(raw)); merr == nil && len(notes) > 0 {
+				if werr := os.WriteFile(agentsPath, []byte(migrated), 0o644); werr == nil {
+					note = "; migrated: " + strings.Join(notes, "; ")
+				}
+			}
+		}
+		fmt.Fprintf(out, "  ~ %s (relocated from %s/%s%s)\n",
+			agentsRel, config.DefaultDataDir, config.AgentsConfigName, note)
 	case statErr == nil:
 		// Format-migrate an existing agents.toml (harness→command, add role=)
 		// instead of reporting "= already present" — mirrors hook heal.
@@ -266,10 +291,13 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []s
 		// Legacy actors.toml present: leave it; report it rather than scaffolding.
 		fmt.Fprintln(out, initLine(false, config.DefaultDataDir+"/"+config.ActorsConfigName))
 	case os.IsNotExist(statErr):
+		if mkErr := os.MkdirAll(filepath.Join(dataDir, config.AgentsConfigDir), 0o755); mkErr != nil {
+			return fmt.Errorf("init: mkdir %s: %w", config.AgentsConfigDir, mkErr)
+		}
 		if werr := os.WriteFile(agentsPath, []byte(scaffoldAgentsToml), 0o644); werr != nil {
 			return fmt.Errorf("init: write %s: %w", agentsPath, werr)
 		}
-		fmt.Fprintln(out, initLine(true, config.DefaultDataDir+"/"+config.AgentsConfigName))
+		fmt.Fprintln(out, initLine(true, agentsRel))
 	default:
 		return fmt.Errorf("init: stat %s: %w", agentsPath, statErr)
 	}
@@ -451,7 +479,7 @@ func agentGuidance(repoRoot string) []string {
 		"Agent note: this repo carries " + strings.Join(files, " and ") + " — add a \"## satelle\" section there (or update the existing one) with the basics:",
 		"  - satelle runs this repo's workflow: create a story (`satelle story create`), drive it through its gates (`satelle story set <id> --status …`); status is the sole proof of done.",
 		"  - keep the section a short pointer: agents should consult `satelle help` (and `satelle help <topic>`) for the process — prefer that over duplicating satelle docs into " + strings.Join(files, "/") + ".",
-		"  - define process agents and workflow steps in `.satelle/agents.toml` (a `[<name>]` binding: command/tools/model) and allocate a workflow node `agent=<name>` — NOT in a harness-specific agent dir (e.g. `.claude/agents`), which satelle cannot see, validate, dispatch, or carry repo-agnostically. See `satelle help agent-dispatch`.",
+		"  - define process agents and workflow steps in `.satelle/workflows/agents.toml` (a `[<name>]` binding: command/tools/model) and allocate a workflow node `agent=<name>` — NOT in a harness-specific agent dir (e.g. `.claude/agents`), which satelle cannot see, validate, dispatch, or carry repo-agnostically. See `satelle help agent-dispatch`.",
 	}
 }
 
@@ -1531,7 +1559,10 @@ edit_exempt_paths = [".satelle/", ".gitignore"]
 // compiled defaults — the configuration executes as defined. A repo may widen
 // or rebind transparently — the override is a committed file, the operator's
 // choice.
-var scaffoldAgentsToml = strings.ReplaceAll(`# agents.toml — the agents layer: how each agent runs (backend + tool grant).
+var scaffoldAgentsToml = strings.ReplaceAll(`# workflows/agents.toml — the agents layer: how each agent runs (backend + tool
+# grant). It sits beside done.md and step.md because it is the other half of what
+# those declare: step.md names a performer and its gates by SECTION NAME, and the
+# [<name>] sections here say what those names actually run (sty_10f732ed).
 # FULLY DEFINED by init (no hidden coded configuration, sty_892517e7): every
 # value below is the ACTIVE default, written out so the operator sees exactly
 # what runs. Edit freely. This file is REQUIRED in an initialized repo

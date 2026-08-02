@@ -51,7 +51,7 @@ func TestGlobalProfileConsumedByRepo(t *testing.T) {
 	}
 
 	// Reference it, pinning one field inline.
-	agents := filepath.Join(repo, ".satelle", "agents.toml")
+	agents := filepath.Join(repo, ".satelle", "workflows", "agents.toml")
 	writeFile(t, agents, "[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n[reviewer]\nprofile = \"shared-reviewer\"\nmodel = \"repo-pinned\"\n")
 
 	out = mustRun(t, testBin, repo, "agent", "validate")
@@ -158,7 +158,7 @@ func TestAgentMigrateSeedsCatalogWithoutTouchingTheRepo(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 	mustRun(t, testBin, repo, "reindex")
 
-	agents := filepath.Join(repo, ".satelle", "agents.toml")
+	agents := filepath.Join(repo, ".satelle", "workflows", "agents.toml")
 	before, err := os.ReadFile(agents)
 	if err != nil {
 		t.Fatal(err)

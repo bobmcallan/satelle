@@ -163,7 +163,7 @@ task-run sections) is the order-zero default a repo edits or overrides. A repo
 that still carries a retired DOT graph governs nothing until it converts —
 satelle refuses transitions under it, naming `satelle help workflow-convert`,
 rather than silently dropping every gate it authored. How each agent runs is bound in
-`.satelle/agents.toml` — the reviewer's
+`.satelle/workflows/agents.toml` — the reviewer's
 agent CLI (`claude` and `grok` presets; Codex is first-class via preferred ACP
 (`interface=acp` + `npx -y @agentclientprotocol/codex-acp`, no `stdio`
 subcommand) or secondary `codex exec` command template — see

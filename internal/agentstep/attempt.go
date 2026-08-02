@@ -158,7 +158,7 @@ func (g *Engine) runArtifactAttempts(
 				binding, ok = g.namedAgents(policy.EscalateBinding)
 				if !ok {
 					return withUsage(lastResult, totalUsage), nil, fmt.Errorf(
-						"attempt_escalate_binding %q is not defined in .satelle/agents.toml", policy.EscalateBinding)
+						"attempt_escalate_binding %q is not defined in .satelle/workflows/agents.toml", policy.EscalateBinding)
 				}
 				section = policy.EscalateBinding
 				if config.ResolvedRole(section, binding) == config.RoleReviewer {

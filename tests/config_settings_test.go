@@ -22,7 +22,7 @@ func TestUnknownSettingsVarRefusesEndToEnd(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	// Append a named binding whose settings.env references a var defined nowhere.
-	appendToFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
+	appendToFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 		"\n[planner]\ncommand = \"claude -p {system} --settings {settings}\"\ntools = \"Read,Bash(satelle:*)\"\nsettings = { env = { ANTHROPIC_AUTH_TOKEN = \"${GLM_API_KEY}\" } }\n")
 	out, err := run(t, testBin, repo, "status")
 	if err == nil {
@@ -52,7 +52,7 @@ func TestSettingsMaterializedEndToEnd(t *testing.T) {
 	}
 	// Named run binding: settings.env.TOKEN resolves from ${TOKEN} in [vars]; the
 	// harness template carries the {settings} placeholder as its own token.
-	appendToFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
+	appendToFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 		"\n[runner]\ncommand = \""+script+" {system} --settings {settings}\"\ntools = \"Read,Bash(satelle:*)\"\nsettings = { env = { TOKEN = \"${TOKEN}\" } }\n")
 	// Gitignored overlay supplies the winning value the ${VAR} must resolve to.
 	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"), "[vars]\nTOKEN = \"LOCAL\"\n")
@@ -100,7 +100,7 @@ func TestNoSettingsDropsFlagEndToEnd(t *testing.T) {
 	}
 	// The {settings} placeholder is present in the template but the binding sets no
 	// settings — the flag and its placeholder must both drop.
-	appendToFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
+	appendToFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 		"\n[runner]\ncommand = \""+script+" {system} --settings {settings}\"\ntools = \"Read,Bash(satelle:*)\"\n")
 
 	writeDispatchTaskRoute(t, repo)

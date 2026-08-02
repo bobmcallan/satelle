@@ -66,7 +66,7 @@ func appendCoderBinding(t *testing.T, repo, script string) {
 // appendCoderBindingTools is the same as appendCoderBinding with an explicit tools grant.
 func appendCoderBindingTools(t *testing.T, repo, script, tools string) {
 	t.Helper()
-	agents := filepath.Join(repo, ".satelle", "agents.toml")
+	agents := filepath.Join(repo, ".satelle", "workflows", "agents.toml")
 	f, err := os.OpenFile(agents, os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		t.Fatal(err)

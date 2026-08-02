@@ -32,7 +32,7 @@ func TestNamedReviewerBindingOnEdge(t *testing.T) {
 	if err := os.WriteFile(stubD, []byte("#!/bin/sh\necho reviewer-deep >> '"+logPath+"'\necho '{\"decision\":\"accept\",\"notes\":\"\"}'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	mustWrite(t, filepath.Join(repo, ".satelle", "agents.toml"), fmt.Sprintf(
+	mustWrite(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"), fmt.Sprintf(
 		"[reviewer]\nrole=\"reviewer\"\ncommand=%q\ntools=\"read_file\"\n\n[reviewer-deep]\nrole=\"reviewer\"\ncommand=%q\ntools=\"read_file\"\nmodel=\"opus\"\n",
 		stubR+" {system} {tools} {model}", stubD+" {system} {tools} {model}"))
 
@@ -44,7 +44,7 @@ func TestNamedReviewerBindingOnEdge(t *testing.T) {
 	}
 
 	// Role mismatch: agent role on gated edge
-	mustWrite(t, filepath.Join(repo, ".satelle", "agents.toml"), fmt.Sprintf(
+	mustWrite(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"), fmt.Sprintf(
 		"[reviewer]\nrole=\"reviewer\"\ncommand=%q\ntools=\"read_file\"\n\n[coder-x]\nrole=\"agent\"\ncommand=%q\ntools=\"read_file\"\n",
 		stubR+" {system} {tools} {model}", stubR+" {system} {tools} {model}"))
 	writeSpineFixture(t, repo, "", "", "", "done|||satelle-story-intent-review|coder-x")
@@ -76,7 +76,7 @@ func TestNamedGateRunsNamedHarness(t *testing.T) {
 	if err := os.WriteFile(stubD, []byte("#!/bin/sh\necho reviewer-deep >> '"+logPath+"'\necho '{\"decision\":\"accept\",\"notes\":\"\"}'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	mustWrite(t, filepath.Join(repo, ".satelle", "agents.toml"), fmt.Sprintf(
+	mustWrite(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"), fmt.Sprintf(
 		"[reviewer]\nrole=\"reviewer\"\ncommand=%q\ntools=\"read_file\"\n\n[reviewer-deep]\nrole=\"reviewer\"\ncommand=%q\ntools=\"read_file\"\nmodel=\"opus\"\n",
 		stubR+" {system} {tools} {model}", stubD+" {system} {tools} {model}"))
 

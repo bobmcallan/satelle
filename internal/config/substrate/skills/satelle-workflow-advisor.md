@@ -21,7 +21,7 @@ nothing yourself.
  - `agent: executor` (or none) — the orchestrating session performs the step
  in-loop, with full conversation context.
  - `agent: <name>` — satelle DISPATCHES the step to the `[<name>]` binding in
- `.satelle/agents.toml`: the item (title, body, acceptance criteria) rides
+ `.satelle/workflows/agents.toml`: the item (title, body, acceptance criteria) rides
  on stdin, the step's `skills:` rubric + an executor charter + a
  pull-context call-to-action as the system prompt, tools/model from the
  binding. A missing binding **refuses the transition** — verify every named
@@ -72,7 +72,7 @@ nothing yourself.
  conversation is not.
 
 6. **Process agents live in the agents layer.** Flag as an anti-pattern any
- process/step agent defined OUTSIDE `.satelle/agents.toml` — e.g. a
+ process/step agent defined OUTSIDE `.satelle/workflows/agents.toml` — e.g. a
  harness-specific agent dir (`.claude/agents/*.md`, or any vendor's
  equivalent) describing what is really a workflow step. satelle cannot see,
  validate, dispatch, or carry such an agent repo-agnostically, and it

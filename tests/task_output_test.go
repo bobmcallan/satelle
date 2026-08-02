@@ -139,7 +139,7 @@ func TestDispatchedExecutionCapturesOutput(t *testing.T) {
 	if err := os.WriteFile(script, []byte(runnerScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	agents := filepath.Join(repo, ".satelle", "agents.toml")
+	agents := filepath.Join(repo, ".satelle", "workflows", "agents.toml")
 	f, err := os.OpenFile(agents, os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		t.Fatal(err)

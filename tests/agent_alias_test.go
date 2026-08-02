@@ -42,7 +42,7 @@ func TestAgentsTomlBootsEndToEnd(t *testing.T) {
 	// init scaffolds the canonical agents.toml; overwrite it with a reviewer-model
 	// binding. With no legacy actors.toml present, a loader that ignored agents.toml
 	// would resolve no binding at all.
-	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"), "[reviewer]\nmodel = \"sonnet\"\n")
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"), "[reviewer]\nmodel = \"sonnet\"\n")
 	mustRun(t, testBin, repo, "reindex")
 	out := mustRun(t, testBin, repo, "status")
 	if !strings.Contains(out, "repo root") {

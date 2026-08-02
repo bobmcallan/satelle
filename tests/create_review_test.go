@@ -48,7 +48,7 @@ func TestCreateContentReviewGate(t *testing.T) {
 		writeFile(t, verdict, fmt.Sprintf("#!/bin/sh\necho '{\"decision\":\"%s\",\"notes\":\"%s\"}'\n", decision, notes))
 		_ = os.Chmod(verdict, 0o755)
 	}
-	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 		fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\n", verdict))
 
 	setVerdict("reject", "stub: the ACs do not verify the goal")
@@ -218,7 +218,7 @@ esac
 echo '{"decision":"accept","notes":""}'
 `)
 	_ = os.Chmod(verdict, 0o755)
-	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 		fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\n", verdict))
 	mustRun(t, testBin, repo, "reindex")
 

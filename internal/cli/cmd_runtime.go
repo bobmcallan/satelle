@@ -552,7 +552,7 @@ func runRuntimeMigrate(out io.Writer, a *app.App, force, allowLive, dryRun bool)
 		filepath.Join(dataDir, "logs"),
 		filepath.Join(dataDir, "backups"),
 		filepath.Join(dataDir, "stories"))
-	fmt.Fprintf(out, "(Do not remove authored files: satelle.toml, agents.toml, constitution.md, workflows/, skills/, principles/, documents/, tasks/.)\n")
+	fmt.Fprintf(out, "(Do not remove authored files: satelle.toml, constitution.md, workflows/ (incl. agents.toml), skills/, principles/, documents/, tasks/.)\n")
 	return nil
 }
 

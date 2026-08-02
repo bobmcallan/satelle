@@ -357,8 +357,12 @@ func requireAgents(a *app.App) (config.EffectiveAgents, error) {
 	if dataDir == "" {
 		dataDir = a.Config.ResolveDataDir(a.RepoRoot)
 	}
-	rel := config.DefaultDataDir + "/" + config.AgentsConfigName
-	if _, err := os.Stat(filepath.Join(dataDir, config.AgentsConfigName)); os.IsNotExist(err) {
+	// AgentsPath prefers the canonical workflows/ location and falls back to the
+	// legacy one, so an unconverted repo still runs (sty_10f732ed). The message
+	// names the CANONICAL path — where the file belongs, not where it used to be.
+	rel := config.DefaultDataDir + "/" + config.AgentsRel
+	agentsPath, _ := config.AgentsPath(dataDir)
+	if _, err := os.Stat(agentsPath); os.IsNotExist(err) {
 		if _, lerr := os.Stat(filepath.Join(dataDir, config.ActorsConfigName)); lerr == nil {
 			return config.EffectiveAgents{}, fmt.Errorf(
 				"missing %s but found the retired %s/%s — rename it to %s (the legacy filename is no longer loaded)",
@@ -403,7 +407,7 @@ func applyAgentGrants(rev *agentstep.Engine, a *app.App, agents config.AgentsCon
 	r, err := agentcli.RunnerFromBinding(rb.ResolvedInterface(), rb.CommandTemplate())
 	if err != nil {
 		return fmt.Errorf("broken %s/%s: reviewer command: %w",
-			config.DefaultDataDir, config.AgentsConfigName, err)
+			config.DefaultDataDir, config.AgentsRel, err)
 	}
 	if r != nil {
 		rev.SetRunner(r)

@@ -16,7 +16,7 @@ import (
 func TestCommitAgentBindingInspectable(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 		"[commit-agent]\ncommand = \"claude -p --allowedTools {tools}\"\ntools = \"Read,Bash(git:*)\"\n")
 	writeSpineFixture(t, repo, "", "", "",
 		"in_progress|executor|||",

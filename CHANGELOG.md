@@ -1,3 +1,8 @@
+## [0.0.387] - 2026-08-02
+
+### Changed
+- **The repo agents layer moves to `.satelle/workflows/agents.toml`**, beside the two route halves it binds. A reader who opened `workflows/` used to see half a route: `step.md` names its performer and gates by SECTION NAME, and what those names actually run — command, transport, tools, model, effort — lived a directory away. `satelle workflow validate` already joined the two to print effective models per gate, which is the proof they are one definition. **No repo is bricked by the move**: an initialized repo with no loadable agents layer deliberately refuses to run, so `config.AgentsPath` prefers the canonical location and falls back to the legacy one, and `satelle init` RELOCATES the file (carrying the operator's content, then format-migrating it) and reports the move. Two traps came with living inside a directory-shaped sync area, and both are closed: the `workflows` walk skips the agents file so it is not pushed a second time under a `workflows/` key, and the `agents` area's server key became `workflows/agents.toml` so a deploy round-trips to the new home instead of pinning every pull to the legacy path. The machine-wide `~/.satelle/agents.toml` profile catalog is a different file, does not move, and still resolves `profile =` inheritance for a binding at either location (sty_10f732ed)
+
 ## [0.0.386] - 2026-08-02
 
 ### Changed

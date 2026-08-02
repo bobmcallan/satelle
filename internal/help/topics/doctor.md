@@ -44,7 +44,7 @@ GRANT [reviewer] role=reviewer interface=command backend=isolated:claude read-on
   source: tools = "Read,Grep,Glob" (embedded)
 ```
 
-The four sources are `repo` (inline in `.satelle/agents.toml`),
+The four sources are `repo` (inline in `.satelle/workflows/agents.toml`),
 `profile:<name>` (an explicitly referenced machine-wide profile),
 `global-role:<name>` (the catalog's opt-in `[roles]` default), and `embedded`
 (satelle's compiled fallback).

@@ -186,7 +186,7 @@ echo "{\"decision\":\"accept\",\"notes\":\"ok\"}"
 		t.Fatal(err)
 	}
 	agents := fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\n", stub)
-	if err := os.WriteFile(filepath.Join(repo, ".satelle", "agents.toml"), []byte(agents), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "agents.toml"), []byte(agents), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return logPath

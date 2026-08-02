@@ -37,7 +37,7 @@ func TestStoryRetrospectDispatchesAndRecordsCost(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A [retrospective] binding pointed at the stub, with the satelle CLI grant.
-	f, err := os.OpenFile(filepath.Join(repo, ".satelle", "agents.toml"), os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(filepath.Join(repo, ".satelle", "workflows", "agents.toml"), os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}

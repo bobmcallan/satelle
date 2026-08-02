@@ -38,7 +38,7 @@ func TestDoctorUnhealthyRepoExitsNonZeroWithIdentifiers(t *testing.T) {
 
 	// A command whose first token is a placeholder can never run, in any
 	// environment — that is an error, unlike a merely absent binary.
-	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 		"[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n"+
 			"[reviewer]\nrole = \"reviewer\"\ncommand = \"{system} --disallowedTools Write\"\ntools = \"Read,Grep,Glob\"\n")
 
@@ -54,7 +54,7 @@ func TestDoctorUnhealthyRepoExitsNonZeroWithIdentifiers(t *testing.T) {
 
 	// An absent binary is reported but ADVISORY: a repo is legitimately set up
 	// before its agent CLI is installed, so doctor must not refuse it.
-	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 		"[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n"+
 			"[reviewer]\nrole = \"reviewer\"\ncommand = \"definitely-not-installed --disallowedTools Write {system}\"\ntools = \"Read,Grep,Glob\"\n")
 	advisory := mustRun(t, testBin, repo, "doctor")
@@ -111,7 +111,7 @@ func TestDoctorAllReportsEveryRegisteredRepo(t *testing.T) {
 
 	bad := t.TempDir()
 	mustRun(t, testBin, bad, "init")
-	writeFile(t, filepath.Join(bad, ".satelle", "agents.toml"), "[reviewer\nnot toml")
+	writeFile(t, filepath.Join(bad, ".satelle", "workflows", "agents.toml"), "[reviewer\nnot toml")
 
 	mustRun(t, testBin, good, "workspace", "add", bad)
 
@@ -178,7 +178,7 @@ func TestDoctorSecretsNeverPrinted(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"),
 		fmt.Sprintf("[vars]\nDOCTOR_SECRET = %q\n", secret))
-	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 		"[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n"+
 			"[reviewer]\nrole = \"reviewer\"\ncommand = \"claude -p --disallowedTools Write,Edit --append-system-prompt {system}\"\ntools = \"Read,Grep,Glob\"\n"+
 			"env = { ANTHROPIC_AUTH_TOKEN = \"${DOCTOR_SECRET}\" }\n")
@@ -247,7 +247,7 @@ func TestServiceStatusReportsRegisteredRepoHealth(t *testing.T) {
 	mustRun(t, testBin, good, "init")
 	bad := t.TempDir()
 	mustRun(t, testBin, bad, "init")
-	writeFile(t, filepath.Join(bad, ".satelle", "agents.toml"), "[reviewer\nnot toml")
+	writeFile(t, filepath.Join(bad, ".satelle", "workflows", "agents.toml"), "[reviewer\nnot toml")
 	mustRun(t, testBin, good, "workspace", "add", bad)
 
 	out, _ := run(t, testBin, good, "service", "status")

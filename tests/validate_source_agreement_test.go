@@ -21,7 +21,7 @@ import (
 // writeAgentsWithPlanner appends a [planner] binding to the repo's agents.toml.
 func writeAgentsWithPlanner(t *testing.T, repo string) {
 	t.Helper()
-	path := filepath.Join(repo, ".satelle", "agents.toml")
+	path := filepath.Join(repo, ".satelle", "workflows", "agents.toml")
 	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

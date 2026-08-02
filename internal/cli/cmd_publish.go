@@ -119,6 +119,10 @@ func inferPublishKind(path string) string {
 	switch {
 	case strings.HasPrefix(p, "documents/"):
 		return "document"
+	// The agents layer lives under workflows/ but is its own kind (sty_10f732ed),
+	// so it must be matched BEFORE the workflows/ prefix claims it.
+	case p == config.AgentsRel || p == config.AgentsConfigName || strings.HasPrefix(p, "agents"):
+		return "agents"
 	case strings.HasPrefix(p, "workflows/"):
 		return "workflow"
 	case strings.HasPrefix(p, "skills/"):
@@ -127,8 +131,6 @@ func inferPublishKind(path string) string {
 		return "principle"
 	case p == "constitution.md" || strings.HasPrefix(p, "constitution"):
 		return "constitution"
-	case p == "agents.toml" || strings.HasPrefix(p, "agents"):
-		return "agents"
 	case strings.HasPrefix(p, "tasks/"):
 		return "task"
 	case strings.HasPrefix(p, "stories/"):

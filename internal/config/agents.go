@@ -11,14 +11,47 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 )
 
-// AgentsConfigName is the per-repo agents-binding file, beside satelle.toml under
-// the data dir (.satelle/agents.toml). ActorsConfigName is the now-removed legacy
-// filename — it is no longer loaded (sty_7db2ed7d); `satelle reindex` warns a repo
-// still carrying it so the rename is enforced rather than silently honoured.
+// AgentsConfigName is the per-repo agents-binding file. It lives in the workflows
+// dir (.satelle/workflows/agents.toml) beside the two route halves it binds:
+// step.md names a performer and its gates by SECTION NAME, and this file says
+// what those names actually run (sty_10f732ed). ActorsConfigName is the
+// now-removed legacy filename — it is no longer loaded (sty_7db2ed7d); `satelle
+// reindex` warns a repo still carrying it so the rename is enforced rather than
+// silently honoured.
 const (
 	AgentsConfigName = "agents.toml"
 	ActorsConfigName = "actors.toml"
+	// AgentsConfigDir is the data-dir-relative directory holding AgentsConfigName.
+	AgentsConfigDir = "workflows"
 )
+
+// AgentsRel is the data-dir-relative slash path of the repo agents layer — the
+// spelling every message, server key and sync entry uses so the canonical
+// location has ONE spelling.
+const AgentsRel = AgentsConfigDir + "/" + AgentsConfigName
+
+// AgentsPath resolves the repo agents layer, preferring the canonical location
+// and falling back to the legacy one beside satelle.toml.
+//
+// The fallback is what keeps an unconverted repo alive: an initialized repo with
+// no loadable agents layer REFUSES to run (requireAgents, sty_d0d6bb67), so a
+// hard cutover would brick every repo that had not re-inited. `satelle init`
+// relocates the file and reports it; until then the legacy path is read in place.
+//
+// When NEITHER exists the canonical path is returned with legacy=false, so a
+// "missing agents.toml" message names where the file belongs rather than where it
+// used to live.
+func AgentsPath(dataDir string) (path string, legacy bool) {
+	canonical := filepath.Join(dataDir, AgentsConfigDir, AgentsConfigName)
+	if _, err := os.Stat(canonical); err == nil {
+		return canonical, false
+	}
+	old := filepath.Join(dataDir, AgentsConfigName)
+	if _, err := os.Stat(old); err == nil {
+		return old, true
+	}
+	return canonical, false
+}
 
 // Default agent grants — the BOOTSTRAP values a binding's empty fields resolve
 // to: the executor drives in-loop (the agent itself); the reviewer runs as an
@@ -340,7 +373,7 @@ func normalizePrinciplesSelector(s string) string {
 	return strings.Join(out, ",")
 }
 
-// AgentsConfig is the on-disk shape at .satelle/agents.toml — the agents layer.
+// AgentsConfig is the on-disk shape at .satelle/workflows/agents.toml — the agents layer.
 // Every field is optional; the *Binding resolvers supply today's defaults, so
 // the zero value (and an absent file) is the current behaviour. Agents holds
 // OPTIONAL named agents (beyond the executor/reviewer roles) declared as flat
@@ -430,14 +463,16 @@ func (a AgentsConfig) ExecutorBinding() AgentBinding {
 	return b
 }
 
-// LoadAgents reads the agents layer from <dataDir>/agents.toml. The legacy
-// actors.toml is no longer read (sty_7db2ed7d); an absent agents.toml yields the
-// zero AgentsConfig — defaults via the *Binding resolvers — and a nil error.
-// Absence is judged by the CALLER: the CLI bootstrap treats a missing file in an
-// initialized repo as broken and refuses to run (requireAgents, sty_d0d6bb67);
-// pre-init surfaces (nothing to load yet) keep the zero-config bootstrap.
+// LoadAgents reads the agents layer through AgentsPath — the canonical
+// <dataDir>/workflows/agents.toml, or the legacy <dataDir>/agents.toml while a
+// repo is unconverted. The legacy actors.toml is no longer read (sty_7db2ed7d);
+// an absent agents.toml yields the zero AgentsConfig — defaults via the *Binding
+// resolvers — and a nil error. Absence is judged by the CALLER: the CLI bootstrap
+// treats a missing file in an initialized repo as broken and refuses to run
+// (requireAgents, sty_d0d6bb67); pre-init surfaces (nothing to load yet) keep the
+// zero-config bootstrap.
 func LoadAgents(dataDir string) (AgentsConfig, error) {
-	path := filepath.Join(dataDir, AgentsConfigName)
+	path, _ := AgentsPath(dataDir)
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

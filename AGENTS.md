@@ -33,7 +33,7 @@ Dogfood is part of each stage, not optional cleanup after "code is done".
 ## Process detail
 
 - Create and advance work with `satelle story create` / `satelle story set … --status …`.
-- Bind agents in `.satelle/agents.toml`; allocate them from workflow nodes
+- Bind agents in `.satelle/workflows/agents.toml`; allocate them from workflow nodes
   (`agent=<name>`). See `satelle help agent-dispatch`.
 - Workflows, principles, skills, and gates live under `.satelle/` — consult
   `satelle help` rather than copying them into this file.

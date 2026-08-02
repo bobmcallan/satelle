@@ -201,7 +201,7 @@ func hookSourceFiles(g agentvalidate.Grant, agentsFile, catalogFile string) []st
 // grant by section. A broken agents layer yields an empty index — every hook then
 // renders UNRESOLVED, which is the diagnosis this command is for.
 func hookGrantIndex(a *app.App, dataDir string) (map[string]agentvalidate.Grant, string, string) {
-	agentsFile := filepath.Join(dataDir, config.AgentsConfigName)
+	agentsFile, _ := config.AgentsPath(dataDir)
 	catalogFile := config.GlobalAgentsPath()
 	index := map[string]agentvalidate.Grant{}
 

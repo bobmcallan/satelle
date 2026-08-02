@@ -38,10 +38,11 @@ func validateDeployment(out io.Writer, dataDir string) error {
 
 	// The retired actors.toml deserves its own instruction, and only init is in a
 	// position to give it (doctor reports the file as simply missing).
-	if _, statErr := os.Stat(filepath.Join(dataDir, config.AgentsConfigName)); os.IsNotExist(statErr) {
+	agentsPath, _ := config.AgentsPath(dataDir)
+	if _, statErr := os.Stat(agentsPath); os.IsNotExist(statErr) {
 		if _, lerr := os.Stat(filepath.Join(dataDir, config.ActorsConfigName)); lerr == nil {
 			fmt.Fprintf(out, "FAIL  %s/%s — missing; the retired %s is present — rename it to %s\n",
-				config.DefaultDataDir, config.AgentsConfigName, config.ActorsConfigName, config.AgentsConfigName)
+				config.DefaultDataDir, config.AgentsRel, config.ActorsConfigName, config.AgentsRel)
 		}
 	}
 

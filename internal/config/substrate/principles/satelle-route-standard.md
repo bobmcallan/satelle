@@ -37,7 +37,7 @@ yourself declaring a `cancelled` or `blocked` step, delete it — `done.md`'s
 
 ## A step names an AGENT, never a harness
 
-A step's `agent:` and a gate's `agent:` name the `.satelle/agents.toml` binding
+A step's `agent:` and a gate's `agent:` name the `.satelle/workflows/agents.toml` binding
 that runs it. The agents layer owns harness, tools, model and effort — the route
 owns *who*, never *how*. To review a step on a different model, define a second
 `role = "reviewer"` binding and allocate it by name:

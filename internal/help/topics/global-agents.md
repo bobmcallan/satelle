@@ -10,7 +10,7 @@ The split is the constitution's line, applied to configuration:
 | Where | What lives there |
 | --- | --- |
 | `~/.satelle/agents.toml` (machine-wide) | **Execution** configuration — how an agent runs: command, transport, model, effort, tools, timeout, env, settings. |
-| `.satelle/agents.toml` (repo) | Which logical roles this repo has, and which profile (or inline binding) each one uses. |
+| `.satelle/workflows/agents.toml` (repo) | Which logical roles this repo has, and which profile (or inline binding) each one uses. |
 | `.satelle/workflows/*.md` (repo) | **Process** — which step runs which skill, which gate judges which edge. Never machine-wide. |
 
 A profile that tries to carry process — `applies_to`, `skill`, `prompt`, `on`,
@@ -59,7 +59,7 @@ Anything else — a policy key or a typo — fails the load by name.
 ## Consuming a profile from a repo
 
 ```toml
-# .satelle/agents.toml
+# .satelle/workflows/agents.toml
 [reviewer]
 profile = "claude-opus"   # explicit reference
 effort  = "low"           # …and this still wins over the profile's "high"
@@ -78,7 +78,7 @@ by field; a reference cycle is refused, naming the loop.
 
 Highest first:
 
-1. **repo** — an inline value on the binding in `.satelle/agents.toml`
+1. **repo** — an inline value on the binding in `.satelle/workflows/agents.toml`
 2. **profile** — the profile the binding explicitly names via `profile=`
    (and, transitively, whatever that profile extends)
 3. **global-role** — the catalog's `[roles]` default for the binding's role, and

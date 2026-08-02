@@ -65,7 +65,7 @@ func createFeature(t *testing.T, repo, title string) (string, error) {
 // shorthand keeps working and runs under [reviewer] — the compatibility floor.
 func TestCreateHookDefaultShorthandRunsTheDefaultReviewer(t *testing.T) {
 	repo, setVerdict, stub := hookRepo(t, "create_review: hook-create-review\n")
-	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 		fmt.Sprintf("[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n[reviewer]\nrole = \"reviewer\"\ncommand = \"%s {system} {tools} {model}\"\ntools = \"Read,Grep,Glob\"\n", stub))
 	mustRun(t, testBin, repo, "reindex")
 
@@ -114,7 +114,7 @@ func TestCreateHookNamedLocalReviewer(t *testing.T) {
 	writeFile(t, strictStub, "#!/bin/sh\necho '{\"decision\":\"reject\",\"notes\":\"strict reviewer ran\"}'\n")
 	_ = os.Chmod(strictStub, 0o755)
 
-	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"), fmt.Sprintf(
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"), fmt.Sprintf(
 		"[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n"+
 			"[reviewer]\nrole = \"reviewer\"\ncommand = \"%s {system} {tools} {model}\"\ntools = \"Read,Grep,Glob\"\n\n"+
 			"[strict-reviewer]\nrole = \"reviewer\"\ncommand = \"%s {system} {tools} {model}\"\ntools = \"Read,Grep,Glob\"\nmodel = \"strict-model\"\n",
@@ -164,7 +164,7 @@ model   = "profile-model"
 	writeFile(t, stub, "#!/bin/sh\necho '{\"decision\":\"reject\",\"notes\":\"profile-supplied reviewer ran\"}'\n")
 	_ = os.Chmod(stub, 0o755)
 
-	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 		"[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n"+
 			"[reviewer]\nrole = \"reviewer\"\ncommand = \"claude -p --disallowedTools Write,Edit --append-system-prompt {system}\"\ntools = \"Read,Grep,Glob\"\n\n"+
 			"[catalog-reviewer]\nprofile = \"judge\"\n")
@@ -196,7 +196,7 @@ func TestCreateHookDeterministicCheckSkill(t *testing.T) {
 	marker := filepath.Join(repo, "agent-ran.marker")
 	writeFile(t, stub, fmt.Sprintf("#!/bin/sh\ntouch %s\necho '{\"decision\":\"accept\"}'\n", marker))
 	_ = os.Chmod(stub, 0o755)
-	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 		fmt.Sprintf("[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n[reviewer]\nrole = \"reviewer\"\ncommand = \"%s {system} {tools} {model}\"\ntools = \"Read,Grep,Glob\"\n", stub))
 
 	// A deterministic check skill: the fenced command decides the verdict.
@@ -222,7 +222,7 @@ func TestCreateHookDeterministicCheckSkill(t *testing.T) {
 func TestCreateHookMissingAllocationIsRefusedByValidate(t *testing.T) {
 	repo, _, stub := hookRepo(t,
 		"hooks:\n  - operation: create_review\n    skill: hook-create-review\n    agent: nobody\n")
-	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 		fmt.Sprintf("[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n[reviewer]\nrole = \"reviewer\"\ncommand = \"%s {system} {tools} {model}\"\ntools = \"Read,Grep,Glob\"\n", stub))
 	mustRun(t, testBin, repo, "reindex")
 
@@ -260,7 +260,7 @@ func TestCreateHookUnsafeAllocationsAreRefused(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			repo, _, _ := hookRepo(t,
 				"hooks:\n  - operation: create_review\n    skill: hook-create-review\n    agent: worker\n")
-			writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
+			writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 				"[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n"+
 					"[reviewer]\nrole = \"reviewer\"\ncommand = \"claude -p --disallowedTools Write,Edit --append-system-prompt {system}\"\ntools = \"Read,Grep,Glob\"\n\n"+c.binding)
 			mustRun(t, testBin, repo, "reindex")
@@ -296,7 +296,7 @@ func TestCreateHookAppliesAcrossCategories(t *testing.T) {
 	writeFile(t, featureStub, "#!/bin/sh\necho '{\"decision\":\"reject\",\"notes\":\"declared reviewer ran\"}'\n")
 	_ = os.Chmod(featureStub, 0o755)
 
-	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"), fmt.Sprintf(
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"), fmt.Sprintf(
 		"[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n"+
 			"[reviewer]\nrole = \"reviewer\"\ncommand = \"claude -p --disallowedTools Write,Edit --append-system-prompt {system}\"\ntools = \"Read,Grep,Glob\"\n\n"+
 			"[feature-reviewer]\nrole = \"reviewer\"\ncommand = \"%s {system} {tools} {model}\"\ntools = \"Read,Grep,Glob\"\n",

@@ -1,5 +1,5 @@
 // Package agentvalidate is the store-free, deterministic check of the agents
-// layer (.satelle/agents.toml) and each workflow's agent= node bindings.
+// layer (.satelle/workflows/agents.toml) and each workflow's agent= node bindings.
 //
 // It is the SINGLE authority three callers share (sty_93eec36d):
 //   - `satelle agent validate` (standalone, on-demand)
@@ -123,7 +123,7 @@ func (r *Report) record(fs ...health.Finding) {
 // binding that does not exist, or one whose role cannot do the job.
 func (r *Report) allocProblem(msg string) {
 	r.record(health.Error(health.IDNodeAlloc, "Unusable workflow allocation", msg).
-		WithRemediation("add the named binding to .satelle/agents.toml, or change the workflow's agent="))
+		WithRemediation("add the named binding to .satelle/workflows/agents.toml, or change the workflow's agent="))
 }
 
 // tagged records already-authored prose under one stable id — used where a whole
@@ -154,7 +154,7 @@ func ValidateEffective(repo config.AgentsConfig, global config.GlobalAgentsConfi
 	if err != nil {
 		r := validate(repo, config.LayerVars(global.Vars, repoVars), workflows, nil)
 		f := health.Error(health.IDAgentsProfileBroken, "Broken machine-wide profile reference", err.Error()).
-			WithRemediation("fix the profile= reference in .satelle/agents.toml, or the profile in " + config.GlobalAgentsLabel)
+			WithRemediation("fix the profile= reference in .satelle/workflows/agents.toml, or the profile in " + config.GlobalAgentsLabel)
 		r.Problems = append([]string{f.Detail}, r.Problems...)
 		r.Findings = append(health.Findings{f}, r.Findings...)
 		return r
@@ -213,7 +213,7 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 		// Lifecycle hooks FIRST: they are frontmatter, so they must be checked even
 		// when the DOT below does not parse (sty_ede16f51).
 		r.tagged(health.IDHookAlloc, "Unusable lifecycle-hook allocation",
-			"declare an isolated role=\"reviewer\" binding for the hook's agent in .satelle/agents.toml",
+			"declare an isolated role=\"reviewer\" binding for the hook's agent in .satelle/workflows/agents.toml",
 			health.SeverityError, checkHooks(doc.Doc, agents, revModel, usedNamed, &r)...)
 
 		spec, ok := doc.spec()
@@ -457,7 +457,7 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 	bindingProblem := func(msg string) {
 		problems = append(problems, msg)
 		fs = append(fs, health.Error(health.IDAgentsBinding, "Invalid agent binding", msg).
-			About(section).WithRemediation("fix the ["+section+"] binding in .satelle/agents.toml"))
+			About(section).WithRemediation("fix the ["+section+"] binding in .satelle/workflows/agents.toml"))
 	}
 	bindingWarn := func(msg string) {
 		warnings = append(warnings, msg)

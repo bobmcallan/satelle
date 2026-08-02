@@ -65,7 +65,7 @@ A workflow node names its performer:
 
 - `agent=executor` — in-loop (default)
 - `agent=reviewer` — isolated gate
-- `agent=<name>` — isolated named agent bound in `.satelle/agents.toml` (e.g.
+- `agent=<name>` — isolated named agent bound in `.satelle/workflows/agents.toml` (e.g.
  `agent=planner` for the read-only plan step)
 
 Every top-level `[section]` in `agents.toml` is an agent. `[executor]` /

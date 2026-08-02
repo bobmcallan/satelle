@@ -151,7 +151,7 @@ interface  = "acp"
 command    = %q
 tools      = "read_file,grep,list_dir"
 principles = "session"
-# Paste into .satelle/agents.toml — does not change the default [reviewer].
+# Paste into .satelle/workflows/agents.toml — does not change the default [reviewer].
 # Launcher execs: %s  (no stdio subcommand — not part of the adapter contract)
 # Equivalent direct form: command = %q
 # Auth: use Codex CLI login/configuration; Satelle does not require an API-key environment variable.

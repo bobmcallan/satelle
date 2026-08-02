@@ -281,6 +281,14 @@ func filesForArea(cfg Config, repoRoot, area string) ([]ConfigFile, Scope, error
 	var out []ConfigFile
 	if !isDir {
 		serverPath := filepath.Base(location)
+		if area == "agents" {
+			// The agents layer lives under workflows/ (sty_10f732ed), so its server
+			// key must carry that prefix: subsync deploys each key as
+			// filepath.Join(dataDir, key), and a bare "agents.toml" would land every
+			// pull back at the legacy path forever. A legacy-path repo pushes under
+			// the canonical key too, so deploying converges it.
+			serverPath = AgentsRel
+		}
 		if cf, ok, err := readConfigFile(area, location, serverPath, scope); err != nil {
 			return nil, scope, err
 		} else if ok {
@@ -299,6 +307,12 @@ func filesForArea(cfg Config, repoRoot, area string) ([]ConfigFile, Scope, error
 			return nil
 		}
 		if isReservedView(filepath.Base(p)) {
+			return nil
+		}
+		// The agents layer sits IN the workflows dir but is its own sync area with
+		// its own tier and redaction semantics (sty_10f732ed). Without this skip the
+		// directory walk would push it a second time under a workflows/ key.
+		if area == "workflows" && filepath.Base(p) == AgentsConfigName {
 			return nil
 		}
 		rel, rerr := filepath.Rel(location, p)
@@ -383,7 +397,8 @@ func ConfigAreaLocation(cfg Config, repoRoot, area string) (location string, isD
 	case "constitution":
 		return cfg.ResolveConstitution(repoRoot), false
 	case "agents":
-		return filepath.Join(dataDir, AgentsConfigName), false
+		path, _ := AgentsPath(dataDir)
+		return path, false
 	case "tasks":
 		return filepath.Join(dataDir, "tasks"), true
 	case "settings":

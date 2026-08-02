@@ -263,7 +263,7 @@ func TestSubstrateOnlyCheckFourPostures(t *testing.T) {
 		gitCommitAll(t, repo, "ignore satelle")
 		// Author ignored skill + agents.toml after engage — live --include-substrate.
 		mustWrite(t, filepath.Join(repo, ".satelle", "skills", "posture.md"), "# skill\n")
-		mustWrite(t, filepath.Join(repo, ".satelle", "agents.toml"), "[executor]\nrole = \"agent\"\n")
+		mustWrite(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"), "[executor]\nrole = \"agent\"\n")
 		if out, err := runEnv(t, testBin, repo, pathEnv, "story", "set", sid, "--status", "done"); err != nil {
 			t.Fatalf("git-ignored substrate should close without commit: %v\n%s", err, out)
 		}

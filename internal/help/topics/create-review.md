@@ -94,7 +94,7 @@ hooks:
 
 Both forms resolve to the same thing; `agent:` is optional and defaults to
 `reviewer`. A hook declares **who** runs the skill, never **how** — model,
-effort, command, transport and tool grant all stay in `.satelle/agents.toml`
+effort, command, transport and tool grant all stay in `.satelle/workflows/agents.toml`
 (or a machine-wide profile it references). Keys like `model:` on a hook are
 refused for exactly that reason.
 

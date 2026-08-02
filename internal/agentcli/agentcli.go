@@ -2,7 +2,7 @@
 // shells out to for isolated reviews and summaries. satellites hardcoded claude's
 // flag surface (claude -p --append-system-prompt …); satelle routes every
 // subprocess through a Runner driven by a CONFIG TEMPLATE, so the operator picks
-// their agent and its exact argv in `.satelle/agents.toml` and no reviewer code
+// their agent and its exact argv in `.satelle/workflows/agents.toml` and no reviewer code
 // names a binary or a flag directly.
 //
 // A command string is a command template: the first token is the binary, the rest
@@ -61,7 +61,7 @@ const (
 // reviewer's default allow-grant ({tools}) is read-only (Read, Grep, Glob) and
 // needs no shell: the substrate it reasons about is materialised as markdown
 // under .satelle, so it reads it directly. A repo MAY widen the grant in
-// .satelle/agents.toml (transparently), but the default is read-only.
+// .satelle/workflows/agents.toml (transparently), but the default is read-only.
 const DefaultClaudeCommand = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model} --effort {effort}"
 
 // DefaultGrokCommand is the grok preset template — the proven dogfood reviewer

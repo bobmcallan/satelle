@@ -59,7 +59,7 @@ func TestRunInitScaffolds(t *testing.T) {
 	// default markdown is seeded.
 	for _, rel := range []string{
 		".satelle/satelle.toml",
-		".satelle/agents.toml",
+		".satelle/workflows/agents.toml",
 		".satelle/documents/README.md",
 		".satelle/workflows/README.md",
 		".satelle/principles/README.md",
@@ -549,7 +549,10 @@ func TestRunInitConvergesStaleGitignore(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.toml"), []byte("web_port = 8181\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".satelle", "agents.toml"), []byte("[executor]\nharness = \"in-loop\"\n"), 0o644); err != nil {
+	if err := os.MkdirAll(filepath.Join(repo, ".satelle", "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "agents.toml"), []byte("[executor]\nharness = \"in-loop\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	stale := "node_modules/\n# >>> satelle (managed) >>>\n.satelle/satelle.db\n.satelle/logs/\n.satelle/backups/\n.satelle/stories/\n# <<< satelle (managed) <<<\n# keep-me\n"
@@ -717,7 +720,7 @@ func TestRunInitAgentGuidance(t *testing.T) {
 				}
 			}
 			// AC4: the seeded agents.toml scaffold names the anti-pattern.
-			toml, _ := os.ReadFile(filepath.Join(repo, ".satelle", "agents.toml"))
+			toml, _ := os.ReadFile(filepath.Join(repo, ".satelle", "workflows", "agents.toml"))
 			for _, want := range []string{".claude/agents", "invisible", "one CLI vendor"} {
 				if !strings.Contains(string(toml), want) {
 					t.Errorf("seeded agents.toml missing anti-pattern comment %q:\n%s", want, toml)
@@ -780,7 +783,7 @@ func TestInitAgentsLayerValidatesZeroWarnings(t *testing.T) {
 			report.Warnings, report.Problems)
 	}
 	// AC4: re-init leaves an existing agents.toml untouched.
-	path := filepath.Join(dataDir, config.AgentsConfigName)
+	path := filepath.Join(dataDir, config.AgentsConfigDir, config.AgentsConfigName)
 	before, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -805,7 +808,7 @@ func TestRunInitMigratesDriftedAgentsToml(t *testing.T) {
 	if err := runInitTest(t, io.Discard, repo); err != nil {
 		t.Fatalf("seed init: %v", err)
 	}
-	path := filepath.Join(repo, config.DefaultDataDir, config.AgentsConfigName)
+	path := filepath.Join(repo, config.DefaultDataDir, config.AgentsConfigDir, config.AgentsConfigName)
 	drifted := `[executor]
 harness = "in-loop"
 

@@ -63,7 +63,7 @@ type DocGetter interface {
 // It needs NO shell: structural conformance is deterministic code (internal/
 // structure), and the substrate it reasons about — skills, principles, workflows —
 // is materialised as markdown under .satelle (satelle init), so Read/Grep/Glob
-// resolve everything. A repo may still widen this in .satelle/agents.toml
+// resolve everything. A repo may still widen this in .satelle/workflows/agents.toml
 // (transparently, the operator's choice); the default grant is read-only.
 const defaultTools = "Read,Grep,Glob"
 
@@ -139,7 +139,7 @@ type Engine struct {
 	// Zero/negative disables the bound (tests).
 	agentTimeout time.Duration
 	// namedAgents resolves a NAMED agent binding from the agents layer
-	// (.satelle/agents.toml [<name>] sections) for executor dispatch
+	// (.satelle/workflows/agents.toml [<name>] sections) for executor dispatch
 	// (sty_fd427546). Nil keeps every step in-loop.
 	namedAgents func(name string) (config.AgentBinding, bool)
 	// resolveSecondary returns a fallback binding for rate-limit failover
@@ -295,7 +295,7 @@ func (g *Engine) logProseFallback(skill string, accept bool) {
 // SetReviewerTools sets the reviewer's tool grant from the agents layer (the
 // resolved `reviewer` binding). It governs every isolated LLM reviewer this Engine
 // runs. The default remains the read-only grant; a repo may widen or narrow it in
-// .satelle/agents.toml without touching the workflow. An empty value is ignored
+// .satelle/workflows/agents.toml without touching the workflow. An empty value is ignored
 // so callers can pass through an unset binding safely. Also mutates reviewerBinding.
 func (g *Engine) SetReviewerTools(tools string) {
 	if strings.TrimSpace(tools) != "" {
@@ -834,7 +834,7 @@ func (g *Engine) guardWorkflowStructure(ctx context.Context, item workitem.Item,
 }
 
 // SetNamedAgents wires the resolver for NAMED agent bindings from the agents
-// layer (.satelle/agents.toml [<name>] sections) — the WHO of a workflow node's
+// layer (.satelle/workflows/agents.toml [<name>] sections) — the WHO of a workflow node's
 // agent=<name> allocation (sty_fd427546). Nil keeps every step in-loop.
 func (g *Engine) SetNamedAgents(fn func(name string) (config.AgentBinding, bool)) { g.namedAgents = fn }
 
@@ -907,7 +907,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	binding, found := g.namedAgents(dispatchAgent)
 	if !found {
 		return verb.DispatchResult{}, fmt.Errorf(
-			"workflow %q allocates state %q to agent %q but .satelle/agents.toml defines no [%s] binding — define it, or reassign the step",
+			"workflow %q allocates state %q to agent %q but .satelle/workflows/agents.toml defines no [%s] binding — define it, or reassign the step",
 			wfName, toStatus, dispatchAgent, dispatchAgent)
 	}
 	// model= on nodes is superseded (sty_a476a2f8); agents.toml owns the model.
@@ -954,7 +954,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	// performing. The prior FROM-performing band-aid (sty_f5bd176f) is removed.
 	runner, err := g.newRunner(binding.ResolvedInterface(), binding.CommandTemplate())
 	if err != nil {
-		return verb.DispatchResult{}, fmt.Errorf("named agent %q: broken command in .satelle/agents.toml: %w", dispatchAgent, err)
+		return verb.DispatchResult{}, fmt.Errorf("named agent %q: broken command in .satelle/workflows/agents.toml: %w", dispatchAgent, err)
 	}
 	if runner == nil {
 		return verb.DispatchResult{}, nil // command "in-loop": the orchestrator performs the step
@@ -969,7 +969,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	// style the engine uses for a missing binding.
 	if !config.GrantsContextChannel(binding.Tools) {
 		return verb.DispatchResult{}, fmt.Errorf(
-			"named agent %q cannot perform step %q: its .satelle/agents.toml [%s] tools grant has no context channel (add `Bash(satelle:*)` for the satelle CLI, or `read_file` for disk reads under ~/.satelle/<repo-key>/stories/<id>/)",
+			"named agent %q cannot perform step %q: its .satelle/workflows/agents.toml [%s] tools grant has no context channel (add `Bash(satelle:*)` for the satelle CLI, or `read_file` for disk reads under ~/.satelle/<repo-key>/stories/<id>/)",
 			dispatchAgent, toStatus, dispatchAgent)
 	}
 	// Composed rubrics: spine skill first, then matching augmentations in order
@@ -982,7 +982,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	}
 	timeout, terr := binding.TimeoutDuration(g.checkTimeout)
 	if terr != nil {
-		return verb.DispatchResult{}, fmt.Errorf("named agent %q: invalid timeout in .satelle/agents.toml [%s]: %w", dispatchAgent, dispatchAgent, terr)
+		return verb.DispatchResult{}, fmt.Errorf("named agent %q: invalid timeout in .satelle/workflows/agents.toml [%s]: %w", dispatchAgent, dispatchAgent, terr)
 	}
 	eventSink, sinkPath, closeSink := g.dispatchSink(dispatchAgent, item.ID)
 	if closeSink != nil {
@@ -1126,7 +1126,7 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.Dispa
 	binding, found := g.namedAgents(retrospectAgent)
 	if !found {
 		return verb.DispatchResult{}, fmt.Errorf(
-			"no [%s] binding in .satelle/agents.toml — define it (with Bash(satelle:*) so it can file proposals) to run the retrospective", retrospectAgent)
+			"no [%s] binding in .satelle/workflows/agents.toml — define it (with Bash(satelle:*) so it can file proposals) to run the retrospective", retrospectAgent)
 	}
 	runner, err := g.newRunner(binding.ResolvedInterface(), binding.CommandTemplate())
 	if err != nil {

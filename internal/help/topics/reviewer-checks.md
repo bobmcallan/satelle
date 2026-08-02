@@ -50,7 +50,7 @@ working until the rubrics ship.
 ## The agents layer — how a step runs
 
 *What* is injected (the skill + context subset) is satelle's; *how and where* an
-agent role runs is the **agents layer** (`.satelle/agents.toml`). It binds each agent role to
+agent role runs is the **agents layer** (`.satelle/workflows/agents.toml`). It binds each agent role to
 a backend and grant, defaulting to today's behaviour — the executor runs in-loop,
 the reviewer runs as an isolated `agent -p` with the read-only `Read,Grep,Glob`
 grant. A repo may rebind a backend or grant without touching the workflow; the

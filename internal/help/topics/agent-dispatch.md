@@ -3,7 +3,7 @@
 A route's step can allocate its work to a **named agent** instead of the in-loop
 session. When a step carries `agent: <name>` (any name other than `executor` or
 `reviewer`), satelle **dispatches** that step: it spawns the agent CLI configured
-in `.satelle/agents.toml` under `[<name>]`, hands it the work, and folds the
+in `.satelle/workflows/agents.toml` under `[<name>]`, hands it the work, and folds the
 result back in. The agent runs with a **fresh context** — it never sees the
 conversation — so the contract below is how it learns what to do and how it gets
 the rest of the story.
@@ -58,7 +58,7 @@ first-reject short-circuit, or `parallel: N` to bound the fan-out. See
 ### Gate binding by agent name
 
 A step's `reviewer_agent:` (or a `## gate` section's `agent:`) may name any
-`role = "reviewer"` binding in `.satelle/agents.toml`. Omitted, the gate uses
+`role = "reviewer"` binding in `.satelle/workflows/agents.toml`. Omitted, the gate uses
 `[reviewer]`. The agents layer owns harness, tools, and model — the route names
 *who*. See the satelle-route-standard principle.
 
@@ -89,7 +89,7 @@ runtime refusal and validate, so they cannot disagree.
 
 **Refusals (fail loud, never silent):**
 
-- A step names `agent: <name>` but `.satelle/agents.toml` defines no `[<name>]`
+- A step names `agent: <name>` but `.satelle/workflows/agents.toml` defines no `[<name>]`
   binding → the transition is **refused** (there is no silent in-loop fallback).
 - A dispatched binding's `tools` grant carries no context channel (see *What
   each role needs* above) → the dispatch is **refused**, because the agent could
@@ -103,7 +103,7 @@ runtime refusal and validate, so they cannot disagree.
   (`satelle story set`, `story get`, …). Small local surface — not an MCP tool
   dump of every verb. Status and engagement change only through satelle.
 - **Out** (satelle → isolated worker): subprocess configured in
-  `.satelle/agents.toml`. Two **transports**, one binding shape
+  `.satelle/workflows/agents.toml`. Two **transports**, one binding shape
   (epic:agent-dispatch-transport):
 
 | `interface` | Meaning |
@@ -491,7 +491,7 @@ To add a custom agent (say an `architect` that runs on a stronger model), you
 define it as a **binding** and **allocate a step to it** — both in satelle's own
 substrate, never in a harness's agent directory.
 
-1. **Define the binding** in `.satelle/agents.toml`:
+1. **Define the binding** in `.satelle/workflows/agents.toml`:
 
    ```toml
    [architect]
@@ -533,7 +533,7 @@ substrate, never in a harness's agent directory.
 `.claude/agents/architect.md`) works *for that one harness*, but hides the process
 configuration from satelle — it cannot see, validate, dispatch, or carry it
 repo-agnostically, and it silently pins the repo to one CLI vendor. Keep process
-agents in `.satelle/agents.toml` + the route's two halves.
+agents in `.satelle/workflows/agents.toml` + the route's two halves.
 
 ## Mixing model backends — per-binding env + `${VAR}` (sty_001558ce)
 
@@ -555,7 +555,7 @@ endpoint (the *same* `claude` CLI, no wrapper binary), while the in-loop session
 stays on its own model:
 
 ```toml
-# .satelle/agents.toml
+# .satelle/workflows/agents.toml
 [planner]
 command = "claude -p --append-system-prompt {system} --allowedTools {tools} --model {model}"
 tools   = "Read,Grep,Glob,Bash(satelle:*)"

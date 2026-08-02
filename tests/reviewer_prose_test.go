@@ -19,7 +19,7 @@ func stubReviewerProse(t *testing.T, repo, prose string) {
 	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho '"+prose+"'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".satelle", "agents.toml"),
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 		[]byte(fmt.Sprintf("[reviewer]\ncommand = \"%s {system} {tools} {model}\"\n", stub)), 0o644); err != nil {
 		t.Fatal(err)
 	}

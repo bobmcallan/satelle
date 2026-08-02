@@ -86,7 +86,7 @@ every category; which LANE applies is chosen by the story's category, and
 That command also prints each gate's **effective model** (the binding's model, or
 the CLI default when the binding pins none). `satelle agent validate` prints the
 same surface under its grant listing. To review one gate on a different model,
-define a second `role = "reviewer"` binding in `.satelle/agents.toml` and name it
+define a second `role = "reviewer"` binding in `.satelle/workflows/agents.toml` and name it
 as that step's `reviewer_agent:` — see `satelle help agent-dispatch` and the
 `satelle-route-standard` principle.
 
@@ -178,7 +178,7 @@ hooks:
 The scalar `create_review: my-create-review` is the documented shorthand for the
 same thing with the default agent. A hook declares **who** runs a skill, never
 **how**: model, effort, command, transport and tool grant stay in
-`.satelle/agents.toml`. `satelle workflow show done` prints each hook's full
+`.satelle/workflows/agents.toml`. `satelle workflow show done` prints each hook's full
 resolved allocation; `satelle agent validate` refuses one whose agent is missing,
 is not `role = "reviewer"`, or is `command = "in-loop"`.
 

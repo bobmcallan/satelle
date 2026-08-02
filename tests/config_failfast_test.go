@@ -52,7 +52,7 @@ func TestInitFailsOnBrokenSubstrate(t *testing.T) {
 func TestMalformedAgentsTomlRefuses(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"), "[reviewer\nnot toml\n")
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"), "[reviewer\nnot toml\n")
 	out, err := run(t, testBin, repo, "status")
 	if err == nil {
 		t.Fatalf("status must refuse under a malformed agents.toml:\n%s", out)
@@ -69,7 +69,7 @@ func TestMalformedAgentsTomlRefuses(t *testing.T) {
 func TestMissingAgentsTomlRefusesAndInitReseeds(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	if err := os.Remove(filepath.Join(repo, ".satelle", "agents.toml")); err != nil {
+	if err := os.Remove(filepath.Join(repo, ".satelle", "workflows", "agents.toml")); err != nil {
 		t.Fatal(err)
 	}
 	out, err := run(t, testBin, repo, "status")

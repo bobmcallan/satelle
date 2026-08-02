@@ -17,7 +17,7 @@ import (
 func TestDispatchTimeoutFailFast(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
-	agents := filepath.Join(repo, ".satelle", "agents.toml")
+	agents := filepath.Join(repo, ".satelle", "workflows", "agents.toml")
 
 	if err := os.WriteFile(agents, []byte("[worker]\ncommand = \"claude {system}\"\ntimeout = \"notaduration\"\n"), 0o644); err != nil {
 		t.Fatal(err)

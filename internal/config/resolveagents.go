@@ -3,7 +3,7 @@
 //
 // The ladder, highest first:
 //
-//  1. repo    — an inline value on the binding in .satelle/agents.toml
+//  1. repo    — an inline value on the binding in .satelle/workflows/agents.toml
 //  2. profile — the catalog profile the binding EXPLICITLY names via profile=
 //     (and, transitively, whatever that profile extends)
 //  3. global-role — the catalog's [roles] default for the binding's role, and

@@ -129,7 +129,7 @@ func TestDispatchTelemetryOnReviewerFailure(t *testing.T) {
 	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho 'no verdict here'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(repo, ".satelle", "agents.toml"),
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 		"[reviewer]\ncommand = \""+stub+" {system}\"\ntools = \"Read\"\n")
 	writeGateTelemetryRoute(t, repo)
 	mustRun(t, testBin, repo, "reindex")

@@ -21,7 +21,7 @@ func TestInitSkeleton(t *testing.T) {
 
 	for _, rel := range []string{
 		".satelle/satelle.toml",
-		".satelle/agents.toml",
+		".satelle/workflows/agents.toml",
 		".satelle/documents/README.md",
 		".satelle/workflows/README.md",
 		".satelle/principles/README.md",
@@ -49,7 +49,7 @@ func TestInitSkeleton(t *testing.T) {
 	}
 
 	// The scaffold agents.toml documents the reviewer-model knob (sty_dad271fd).
-	agents, err := os.ReadFile(filepath.Join(repo, ".satelle", "agents.toml"))
+	agents, err := os.ReadFile(filepath.Join(repo, ".satelle", "workflows", "agents.toml"))
 	if err != nil {
 		t.Fatalf("read agents.toml: %v", err)
 	}

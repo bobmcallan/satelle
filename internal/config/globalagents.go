@@ -11,7 +11,7 @@
 // the constitution's configuration-over-code rule).
 //
 // A repo consumes a profile only by naming it: `profile = "<name>"` on a
-// binding in .satelle/agents.toml, or — opt-in — through the catalog's [roles]
+// binding in .satelle/workflows/agents.toml, or — opt-in — through the catalog's [roles]
 // defaults. There is no implicit same-name merge, so adding a profile called
 // "reviewer" can never silently change a repo that never asked for it.
 package config
@@ -352,7 +352,7 @@ const starterGlobalAgentsTemplate = `# satelle machine-wide agent PROFILE catalo
 #
 # Nothing here applies to a repo until that repo asks for it:
 #
-#   # .satelle/agents.toml
+#   # .satelle/workflows/agents.toml
 #   [reviewer]
 #   profile = "%s-reviewer"   # explicit reference; repo keys below still win
 #   effort  = "low"
@@ -382,7 +382,7 @@ principles = "session"
 
 [roles]
 # OPT-IN per-role defaults. These reach ONLY a repo that sets
-# [defaults] use_global_roles = true in its own .satelle/agents.toml, and only
+# [defaults] use_global_roles = true in its own .satelle/workflows/agents.toml, and only
 # for a binding that names no profile= of its own. Leave commented out to keep
 # every repo explicit.
 # reviewer = "%s-reviewer"
