@@ -1,3 +1,8 @@
+## [0.0.388] - 2026-08-02
+
+### Fixed
+- **Integration fixtures resolve a skill the way the binary does, instead of assuming it sits on disk.** Four fixtures read `.satelle/skills/<embedded default>.md` directly, which asserts that an unedited embedded default is materialised in the repo — the opposite of what satelle actually does (virtual sparse defaults, sty_29e5a9a5: init converges on-disk copies but never creates a missing one, and the doc index overlays the default at read time). When this repo's stamped shadow copies were deleted, seven integration tests went red. A single `substrateSkillBody` helper now applies the same precedence the overlay does — an authored copy under `.satelle/skills/` wins, otherwise the embedded default — and fails loudly by name when a skill resolves nowhere, rather than yielding an empty body. Harness only; no production code changed (sty_b6ff0335)
+
 ## [0.0.387] - 2026-08-02
 
 ### Changed

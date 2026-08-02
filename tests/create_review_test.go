@@ -27,14 +27,11 @@ func TestCreateContentReviewGate(t *testing.T) {
 	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"), "[review]\ngate_create = true\n")
 
 	// Author the content rubric (the real one from this repo).
-	rubric, err := os.ReadFile(filepath.Join(repoRootForTest(), ".satelle", "skills", "satelle-story-create-review.md"))
-	if err != nil {
-		t.Fatalf("read rubric source: %v", err)
-	}
+	rubric := substrateSkillBody(t, "satelle-story-create-review")
 	if err := os.MkdirAll(filepath.Join(repo, ".satelle", "skills"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(repo, ".satelle", "skills", "satelle-story-create-review.md"), string(rubric))
+	writeFile(t, filepath.Join(repo, ".satelle", "skills", "satelle-story-create-review.md"), rubric)
 
 	// The create binding is DECLARED on the active workflow (sty_b031b29f), not a
 	// hardcoded filename. This repo declares it on its DERIVED route's declaration

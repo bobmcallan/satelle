@@ -33,12 +33,10 @@ func setupStructuredPlanRepo(t *testing.T, scriptBody string) (repo, id, script 
 	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"),
 		"[review]\ngate_create = false\n\n[categories]\nenforce = \"off\"\n")
 	stubReviewerAccept(t, repo)
+	// `plan` is authored here; satelle-story-plan-review is an embedded default
+	// served by the overlay. substrateSkillBody resolves each where it lives.
 	for _, name := range []string{"plan", "satelle-story-plan-review"} {
-		body, err := os.ReadFile(filepath.Join("..", ".satelle", "skills", name+".md"))
-		if err != nil {
-			t.Fatalf("read skill %s: %v", name, err)
-		}
-		writeFile(t, filepath.Join(repo, ".satelle", "skills", name+".md"), string(body))
+		writeFile(t, filepath.Join(repo, ".satelle", "skills", name+".md"), substrateSkillBody(t, name))
 	}
 	script = filepath.Join(repo, "planner.sh")
 	if err := os.WriteFile(script, []byte(scriptBody), 0o755); err != nil {

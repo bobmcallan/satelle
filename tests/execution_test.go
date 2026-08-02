@@ -15,27 +15,21 @@ import (
 // an embedded default). Reviewers are stubbed separately (stubReviewerAccept).
 func copyTaskExecSubstrate(t *testing.T, repo string) {
 	t.Helper()
-	wd, err := os.Getwd() // = <repoRoot>/tests when `go test ./tests/...`
-	if err != nil {
-		t.Fatal(err)
-	}
-	root := filepath.Dir(wd)
 	// The execution lifecycle is a category of this repo's DERIVED route now, not
 	// a workflow file of its own (sty_9835070d).
 	seedRouteSource(t, repo)
-	files := map[string]string{
-		filepath.Join(root, ".satelle", "skills", "satelle-task-validate-before-review.md"): filepath.Join(repo, ".satelle", "skills", "satelle-task-validate-before-review.md"),
-		filepath.Join(root, ".satelle", "skills", "satelle-task-validate-after-review.md"):  filepath.Join(repo, ".satelle", "skills", "satelle-task-validate-after-review.md"),
+	// The two task-validate gates are embedded defaults and the task-run rubric is
+	// authored here; substrateSkillBody resolves each wherever it actually lives,
+	// so this fixture no longer assumes an unedited default sits on disk.
+	for _, name := range []string{
+		"satelle-task-validate-before-review",
+		"satelle-task-validate-after-review",
 		// in_progress carries prompt="@skill:task-run" (format-lag fix); engage
 		// refuses if the performer skill is absent from the substrate.
-		filepath.Join(root, ".satelle", "skills", "task-run.md"): filepath.Join(repo, ".satelle", "skills", "task-run.md"),
-	}
-	for src, dst := range files {
-		data, err := os.ReadFile(src)
-		if err != nil {
-			t.Fatalf("read substrate %s: %v", src, err)
-		}
-		if err := os.WriteFile(dst, data, 0o644); err != nil {
+		"task-run",
+	} {
+		dst := filepath.Join(repo, ".satelle", "skills", name+".md")
+		if err := os.WriteFile(dst, []byte(substrateSkillBody(t, name)), 0o644); err != nil {
 			t.Fatalf("write substrate %s: %v", dst, err)
 		}
 	}
