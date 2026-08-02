@@ -1,12 +1,14 @@
 package cli
 
 import (
-	"github.com/bobmcallan/satelle/internal/config"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/config"
 )
 
 // rebaseTestTime pins the backup timestamp so tests can name the backup dir.
@@ -14,7 +16,23 @@ var rebaseTestTime = time.Date(2026, 7, 2, 3, 4, 5, 0, time.UTC)
 
 // seedCustomSubstrate lays down a customized substrate in dataDir: one custom
 // file per rebase-owned kind. Returns the custom file paths by kind.
-func seedCustomSubstrate(t *testing.T, dataDir string) map[string]string {
+// authoredAgentsTOML is the operator-authored agents layer the fixture seeds. One
+// spelling, so the fixture and every assertion about survival name the same bytes.
+const authoredAgentsTOML = "[reviewer]\nmodel = \"authored-by-the-operator\"\n"
+
+// seedCustomSubstrate builds the starting tree every rebase test works from: a
+// custom file per wiped kind, PLUS an authored agents layer.
+//
+// The agents layer is deliberately part of the same fixture rather than seeded
+// per-test. Rebase has two invariants that pull in opposite directions —
+// defaults are not re-seeded, and configuration IS preserved — and asserting
+// them over separate trees let each stay blind to the other: the
+// virtual-defaults test passed only because its fixture had no agents layer to
+// preserve, which is exactly how it came to document a rule that stopped being
+// true (sty_72ccafaa, sty_ec74ba8f).
+//
+// Returns the wiped files by kind, and the path of the preserved agents layer.
+func seedCustomSubstrate(t *testing.T, dataDir string) (map[string]string, string) {
 	t.Helper()
 	custom := map[string]string{
 		"workflows":  "my-workflow.md",
@@ -33,12 +51,19 @@ func seedCustomSubstrate(t *testing.T, dataDir string) map[string]string {
 		}
 		paths[kind] = p
 	}
-	return paths
+	agents := filepath.Join(dataDir, filepath.FromSlash(config.AgentsRel))
+	if err := os.MkdirAll(filepath.Dir(agents), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(agents, []byte(authoredAgentsTOML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return paths, agents
 }
 
 func TestRunRebaseBacksUpAndWipes(t *testing.T) {
 	dataDir := t.TempDir()
-	custom := seedCustomSubstrate(t, dataDir)
+	custom, agents := seedCustomSubstrate(t, dataDir)
 
 	var out strings.Builder
 	if err := runRebase(&out, strings.NewReader(""), dataDir, dataDir, true, rebaseTestTime); err != nil {
@@ -55,6 +80,14 @@ func TestRunRebaseBacksUpAndWipes(t *testing.T) {
 		if fileExists(custom[kind]) {
 			t.Errorf("custom file %s survived the wipe", custom[kind])
 		}
+	}
+
+	// The preserved configuration survives the same wipe that destroyed the
+	// custom substrate above — the two facts stated side by side, in one tree.
+	if b, rerr := os.ReadFile(agents); rerr != nil {
+		t.Errorf("the wipe destroyed the agents layer: %v", rerr)
+	} else if string(b) != authoredAgentsTOML {
+		t.Errorf("the agents layer was not preserved verbatim:\n%s", b)
 	}
 
 	// No redeploy: the wipe IS the reset, because the embedded defaults govern
@@ -89,7 +122,7 @@ func TestRunRebaseBacksUpAndWipes(t *testing.T) {
 
 func TestRunRebaseAbortsWithoutConfirmation(t *testing.T) {
 	dataDir := t.TempDir()
-	custom := seedCustomSubstrate(t, dataDir)
+	custom, agents := seedCustomSubstrate(t, dataDir)
 
 	var out strings.Builder
 	if err := runRebase(&out, strings.NewReader("no\n"), dataDir, dataDir, false, rebaseTestTime); err != nil {
@@ -103,6 +136,9 @@ func TestRunRebaseAbortsWithoutConfirmation(t *testing.T) {
 			t.Errorf("abort still wiped %s (%s)", kind, p)
 		}
 	}
+	if !fileExists(agents) {
+		t.Error("abort still wiped the agents layer — nothing should have run at all")
+	}
 	if fileExists(filepath.Join(dataDir, "backups")) {
 		t.Error("abort still created a backup dir")
 	}
@@ -110,7 +146,7 @@ func TestRunRebaseAbortsWithoutConfirmation(t *testing.T) {
 
 func TestRunRebaseAbortsWhenBackupCannotBeWritten(t *testing.T) {
 	dataDir := t.TempDir()
-	custom := seedCustomSubstrate(t, dataDir)
+	custom, agents := seedCustomSubstrate(t, dataDir)
 	// A FILE named "backups" makes the backup dir uncreatable.
 	if err := os.WriteFile(filepath.Join(dataDir, "backups"), []byte("in the way"), 0o644); err != nil {
 		t.Fatal(err)
@@ -125,10 +161,13 @@ func TestRunRebaseAbortsWhenBackupCannotBeWritten(t *testing.T) {
 			t.Errorf("failed backup still wiped %s (%s)", kind, p)
 		}
 	}
+	if !fileExists(agents) {
+		t.Error("a failed backup still wiped the agents layer — the wipe must not start")
+	}
 }
 
 // TestRunRebaseLeavesDefaultsVirtual is the invariant sty_cc550a88 exists to
-// establish: after a rebase, the authored dirs hold nothing but their READMEs.
+// establish: after a rebase, the authored dirs hold no materialised defaults.
 //
 // Under virtual sparse defaults (sty_29e5a9a5) the known-good default solution
 // IS the empty authored dir — List/Get overlay the embedded bytes at read time.
@@ -136,11 +175,15 @@ func TestRunRebaseAbortsWhenBackupCannotBeWritten(t *testing.T) {
 // the shipped defaults, so the next binary upgrade leaves the repo running a
 // frozen fork. That is precisely the state sty_5604e741 had to delete by hand.
 //
+// The dirs are NOT empty of everything, though: configuration that lives inside
+// them is preserved across the wipe (rebasePreserve — sty_72ccafaa), so the
+// expectation is derived from that slice rather than asserting a bare README.
+//
 // Written to FAIL against the pre-change behaviour, where rebase restored all
 // three representatives below.
 func TestRunRebaseLeavesDefaultsVirtual(t *testing.T) {
 	dataDir := t.TempDir()
-	seedCustomSubstrate(t, dataDir)
+	_, _ = seedCustomSubstrate(t, dataDir)
 
 	var out strings.Builder
 	if err := runRebase(&out, strings.NewReader(""), dataDir, dataDir, true, rebaseTestTime); err != nil {
@@ -148,16 +191,35 @@ func TestRunRebaseLeavesDefaultsVirtual(t *testing.T) {
 	}
 
 	for _, kind := range []string{"workflows", "skills", "principles"} {
+		// The true invariant: the README, plus any preserved configuration that
+		// happens to live in this dir. Derived from rebasePreserve rather than
+		// hardcoded, so a future preserved path lands in the expectation for free —
+		// the same single ownership TestRebaseHelpNamesEveryPreservedPath relies on.
+		want := map[string]bool{"README.md": true}
+		for _, rel := range rebasePreserve {
+			if dir, base, ok := strings.Cut(rel, "/"); ok && dir == kind {
+				want[base] = true
+			}
+		}
 		ents, err := os.ReadDir(filepath.Join(dataDir, kind))
 		if err != nil {
 			t.Fatalf("read %s: %v", kind, err)
 		}
+		got := map[string]bool{}
 		var names []string
 		for _, e := range ents {
+			got[e.Name()] = true
 			names = append(names, e.Name())
 		}
-		if len(names) != 1 || names[0] != "README.md" {
-			t.Errorf("%s/ must hold only its README after a rebase — the overlay IS the reset; got %v", kind, names)
+		if len(got) != len(want) {
+			t.Errorf("%s/ must hold only its README plus preserved configuration — the overlay IS the reset; got %v, want %v",
+				kind, names, sortedNames(want))
+			continue
+		}
+		for name := range want {
+			if !got[name] {
+				t.Errorf("%s/ is missing %s after a rebase; got %v", kind, name, names)
+			}
 		}
 	}
 
@@ -181,16 +243,7 @@ func TestRunRebaseLeavesDefaultsVirtual(t *testing.T) {
 // than resetting it (sty_72ccafaa). It must survive with its authored bytes.
 func TestRunRebasePreservesAuthoredAgentsLayer(t *testing.T) {
 	dataDir := t.TempDir()
-	seedCustomSubstrate(t, dataDir)
-
-	agents := filepath.Join(dataDir, filepath.FromSlash(config.AgentsRel))
-	if err := os.MkdirAll(filepath.Dir(agents), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	authored := "[reviewer]\nmodel = \"authored-by-the-operator\"\n"
-	if err := os.WriteFile(agents, []byte(authored), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	_, agents := seedCustomSubstrate(t, dataDir)
 
 	var out strings.Builder
 	if err := runRebase(&out, strings.NewReader(""), dataDir, dataDir, true, rebaseTestTime); err != nil {
@@ -201,8 +254,8 @@ func TestRunRebasePreservesAuthoredAgentsLayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rebase wiped the agents layer — the repo is now unrunnable: %v", err)
 	}
-	if string(got) != authored {
-		t.Errorf("the authored agents layer must survive byte-for-byte, not be reseeded:\ngot  %q\nwant %q", got, authored)
+	if string(got) != authoredAgentsTOML {
+		t.Errorf("the authored agents layer must survive byte-for-byte, not be reseeded:\ngot  %q\nwant %q", got, authoredAgentsTOML)
 	}
 	// The backup still holds its copy, so the pre-rebase tree remains a complete undo.
 	backed := filepath.Join(dataDir, "backups", "20260702-030405", filepath.FromSlash(config.AgentsRel))
@@ -225,4 +278,14 @@ func TestRebaseHelpNamesEveryPreservedPath(t *testing.T) {
 			t.Errorf("rebase help does not name the preserved path %q", rel)
 		}
 	}
+}
+
+// sortedNames renders a set deterministically for a failure message.
+func sortedNames(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

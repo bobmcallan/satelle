@@ -1,3 +1,8 @@
+## [0.0.395] - 2026-08-02
+
+### Fixed
+- **A rebase test documented an invariant the preserve carve-out made false.** `TestRunRebaseLeavesDefaultsVirtual` asserted "workflows/ holds only its README after a rebase" — true when written, and made false when rebase began preserving `workflows/agents.toml` (0.0.393). It still passed only because its fixture never created an agents layer, so the assertion was vacuous on exactly the file that made it wrong. Two costs: it stated a rule that is not the rule, and it was a tripwire on the fixture — the natural act of making the fixture realistic would have failed it for reasons unrelated to what it tests. The expectation is now derived from `rebasePreserve` rather than hardcoded, so a future preserved path lands in it for free, and the shared fixture seeds an authored agents layer. Rebase's two invariants — defaults are not re-seeded, configuration IS preserved — are now asserted over ONE identical starting tree instead of two mutually blind ones, which is how the first came to outlive its own truth. Both were verified to fail independently when broken. Test fidelity only; no product change (sty_ec74ba8f)
+
 ## [0.0.394] - 2026-08-02
 
 ### Fixed
