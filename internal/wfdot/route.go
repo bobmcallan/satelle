@@ -195,11 +195,70 @@ func BuildRoute(l List, cat Catalogue, tags []string) (Spec, error) {
 		}
 	}
 
+	// Refuse an ambiguous selection BEFORE the sort. topoSortSteps keys its maps
+	// by step name, so a duplicate would resolve last-wins and drop a step — with
+	// its reviewers — out of the route silently. Checking afterwards would mean
+	// reporting on already-corrupted state.
+	if err := checkSelectionUnambiguous(selected, l.Category); err != nil {
+		return Spec{}, err
+	}
+
 	ordered, err := topoSortSteps(selected)
 	if err != nil {
 		return Spec{}, err
 	}
 	return assemble(ordered, cat.Gates, l)
+}
+
+// checkSelectionUnambiguous refuses a selected step set that cannot be turned
+// into a route without picking a silent winner.
+//
+// Two collisions matter, and both are one authored done.md edit away — a
+// category listing two obligations whose steps share a stage name, or two steps
+// declaring the same `provides:`. Downstream, each resolves last-wins: a step
+// vanishes from the route carrying its reviewers with it, which is exactly the
+// "route that quietly loses a gate" this representation exists to prevent.
+//
+// The check is on the SELECTED set, never the catalogue. The catalogue
+// legitimately holds several steps per stage name — four `## done` sections is
+// the normal shape, one per route family — and only their co-selection is the
+// defect. Errors name the offending SECTIONS (name plus provides) because the
+// stage name alone cannot identify which two of them to fix.
+func checkSelectionUnambiguous(selected []Step, category string) error {
+	firstByName := map[string]Step{}
+	for _, st := range selected {
+		if prev, dup := firstByName[st.Name]; dup {
+			return fmt.Errorf(
+				"route for category %q selects two steps named %q (provides %s and %s); "+
+					"a route must select at most one step per stage name",
+				category, st.Name, quoteProvides(prev), quoteProvides(st))
+		}
+		firstByName[st.Name] = st
+	}
+	firstByProvides := map[string]Step{}
+	for _, st := range selected {
+		if st.Provides == "" {
+			continue
+		}
+		if prev, dup := firstByProvides[st.Provides]; dup {
+			return fmt.Errorf(
+				"route for category %q selects two steps providing obligation %q (steps %q and %q); "+
+					"an obligation must have exactly one discharging step on a route",
+				category, st.Provides, prev.Name, st.Name)
+		}
+		firstByProvides[st.Provides] = st
+	}
+	return nil
+}
+
+// quoteProvides renders a step's obligation for an error message. A role state
+// carries none, and an empty %q would read as a step that provides the empty
+// string rather than one that provides nothing.
+func quoteProvides(st Step) string {
+	if st.Provides == "" {
+		return "(no provides)"
+	}
+	return fmt.Sprintf("%q", st.Provides)
 }
 
 // assemble turns ordered steps, gates and the list's role-state declarations into
@@ -358,6 +417,9 @@ func recoverSources(l List, spine []Step) []string {
 // topoSortSteps orders steps by their prerequisite obligations — the rule that
 // order is derived, never chosen by an agent. Declaration order breaks ties, so
 // the result is deterministic.
+// Its name- and obligation-keyed maps would resolve last-wins on a duplicate;
+// that branch is unreachable because BuildRoute establishes the invariant first
+// via checkSelectionUnambiguous.
 func topoSortSteps(steps []Step) ([]Step, error) {
 	provider := map[string]string{} // obligation -> step name
 	for _, st := range steps {

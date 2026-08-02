@@ -44,11 +44,22 @@ func Validate(spec Spec) []string {
 		return []string{"workflow has no states"}
 	}
 	known := map[string]bool{}
+	var problems []string
+	// Duplicate state names are defence in depth (sty_ee0f4ae6): BuildRoute
+	// refuses an ambiguous selection before it can emit one, but Spec is a public
+	// type and every downstream predicate (Successors, AdvanceOptions, the
+	// reachability walks) reads a name as a unique key. Reported once per name, in
+	// declaration order, so the output cannot depend on map iteration.
 	for _, s := range spec.States {
+		if known[s.Name] {
+			if !containsStr(problems, duplicateStateProblem(s.Name)) {
+				problems = append(problems, duplicateStateProblem(s.Name))
+			}
+			continue
+		}
 		known[s.Name] = true
 	}
 	hasOut := map[string]bool{}
-	var problems []string
 	for _, tr := range spec.Transitions {
 		if !known[tr.From] {
 			problems = append(problems, fmt.Sprintf("transition from unknown state %q", tr.From))
@@ -103,6 +114,12 @@ func Validate(spec Spec) []string {
 		}
 	}
 	return problems
+}
+
+// duplicateStateProblem is the one spelling of the duplicate-name problem, so the
+// dedupe check above compares against exactly what it would append.
+func duplicateStateProblem(name string) string {
+	return fmt.Sprintf("state %q is declared more than once (a state name is a unique key)", name)
 }
 
 // Start returns the workflow's initial state — the first declared state with no

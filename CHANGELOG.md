@@ -1,3 +1,8 @@
+## [0.0.389] - 2026-08-02
+
+### Fixed
+- **Route construction fails closed on an ambiguous selection instead of silently dropping a step.** `topoSortSteps` keys its `provider`, `index`, `deps` and `state` maps by step NAME, so if a category's obligations ever selected two steps sharing a stage name — one `done.md` edit away, e.g. a list naming both `coded` and `authored`, which selects two `## in_progress` sections — `index[name]` resolved last-wins and one step VANISHED from the route carrying its reviewers with it. Two steps declaring the same `provides:` resolved last-wins the same way. That is exactly the "route that quietly loses a gate" failure the constructor's own header forbids, and it was dormant only because no category happens to co-select today. `BuildRoute` now refuses both, BEFORE the sort (checking afterwards would report on already-corrupted state), and the error names the offending SECTIONS — stage name plus both obligations, since the name alone cannot identify which two to fix. The check is on the SELECTED set, never the catalogue: a catalogue legitimately holds one `## done` per route family, and only co-selection is the defect. `Validate` also reports a duplicate state name as defence in depth, because `Spec` is public and every downstream predicate treats a name as a unique key (sty_ee0f4ae6)
+
 ## [0.0.388] - 2026-08-02
 
 ### Fixed
