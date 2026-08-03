@@ -1,3 +1,8 @@
+## [0.0.404] - 2026-08-03
+
+### Fixed
+- **Integration suite stamps testBin with release ldflags.** TestMain now applies the same `-X buildinfo.Version=…` flags as `make build`, so `writeDeployedVersion` is live under test and TestDeployedVersionStampAndBreakingDrift / TestScaffoldDriftSurfacesAndHeal no longer sit permanently red. SATELLE_BIN=dev builds still skip those paths loudly via isReleaseTestBin (sty_4c986ed8)
+
 ## [0.0.403] - 2026-08-03
 
 ### Fixed

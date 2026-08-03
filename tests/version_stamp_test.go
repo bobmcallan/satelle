@@ -3,6 +3,7 @@
 package tests
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,54 +11,75 @@ import (
 	"testing"
 )
 
+// readVersionField reads key from the repo's .version (module root = parent of
+// tests/). Usable from TestMain (no *testing.T). Keys include "satelle.version:",
+// "satelle.build:", "satelle-serve.version:".
+func readVersionField(key string) (string, error) {
+	b, err := os.ReadFile(filepath.Join("..", ".version"))
+	if err != nil {
+		return "", err
+	}
+	for _, ln := range strings.Split(string(b), "\n") {
+		if f := strings.Fields(ln); len(f) == 2 && f[0] == key {
+			return f[1], nil
+		}
+	}
+	return "", fmt.Errorf(".version has no %s line", key)
+}
+
 // repoVersion reads the canonical satelle.version value from the repo's .version
 // (the single source of truth, sty_27077b11).
 func repoVersion(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", ".version"))
+	v, err := readVersionField("satelle.version:")
 	if err != nil {
-		t.Fatalf("read .version: %v", err)
+		t.Fatal(err)
 	}
-	for _, ln := range strings.Split(string(b), "\n") {
-		if f := strings.Fields(ln); len(f) == 2 && f[0] == "satelle.version:" {
-			return f[1]
-		}
-	}
-	t.Fatal(".version has no satelle.version: line")
-	return ""
+	return v
 }
 
 // repoBuildDate reads the canonical satelle.build value from the repo's .version —
 // the single source for the build date, stamped by the commit step (sty_3aeeab18).
 func repoBuildDate(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", ".version"))
+	v, err := readVersionField("satelle.build:")
 	if err != nil {
-		t.Fatalf("read .version: %v", err)
+		t.Fatal(err)
 	}
-	for _, ln := range strings.Split(string(b), "\n") {
-		if f := strings.Fields(ln); len(f) == 2 && f[0] == "satelle.build:" {
-			return f[1]
-		}
-	}
-	t.Fatal(".version has no satelle.build: line")
-	return ""
+	return v
 }
 
 // repoServeVersion reads satelle-serve.version from .version (sty_19ff03f4).
 func repoServeVersion(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", ".version"))
+	v, err := readVersionField("satelle-serve.version:")
 	if err != nil {
-		t.Fatalf("read .version: %v", err)
+		t.Fatal(err)
 	}
-	for _, ln := range strings.Split(string(b), "\n") {
-		if f := strings.Fields(ln); len(f) == 2 && f[0] == "satelle-serve.version:" {
-			return f[1]
-		}
+	return v
+}
+
+// releaseTestBinLdflags returns the same -ldflags shape `make build` uses for
+// cmd/satelle, so TestMain's testBin is a release-stamped binary.
+// writeDeployedVersion refuses to stamp a dev sentinel; without these flags the
+// deployed.version and scaffold-drift tests can never pass (sty_4c986ed8).
+//
+// Commit is a fixed short hex so TestMain has no git dependency (tarball-safe).
+func releaseTestBinLdflags() (string, error) {
+	ver, err := readVersionField("satelle.version:")
+	if err != nil {
+		return "", err
 	}
-	t.Fatal(".version has no satelle-serve.version: line")
-	return ""
+	build, err := readVersionField("satelle.build:")
+	if err != nil {
+		return "", err
+	}
+	const pkg = "github.com/bobmcallan/satelle/internal/buildinfo"
+	const commit = "testbin000001"
+	return fmt.Sprintf(
+		"-X %s.Name=satelle -X %s.Version=%s -X %s.Commit=%s -X %s.BuildTime=%s",
+		pkg, pkg, ver, pkg, commit, pkg, build,
+	), nil
 }
 
 // TestMakefileStampsPerArtifactVersions proves `make build` stamps each main

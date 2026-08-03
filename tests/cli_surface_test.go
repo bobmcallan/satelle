@@ -3,6 +3,7 @@
 package tests
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +42,13 @@ func TestRetiredAliasesFailClosed(t *testing.T) {
 // TestDeployedVersionStampAndBreakingDrift: init stamps deployed.version; a stamp
 // behind a ### Breaking changelog entry makes store-backed verbs fail closed
 // naming satelle init; re-init heals.
+//
+// Requires a release-stamped testBin (sty_4c986ed8). TestMain stamps by default;
+// SATELLE_BIN=dev builds skip loudly via isReleaseTestBin.
 func TestDeployedVersionStampAndBreakingDrift(t *testing.T) {
+	if !isReleaseTestBin(t) {
+		t.Skip("testBin is not release-stamped (dev sentinel) — writeDeployedVersion refuses to stamp; need TestMain ldflags or SATELLE_BIN from `make build`")
+	}
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	stamp := filepath.Join(repo, ".satelle", "deployed.version")
@@ -53,13 +60,16 @@ func TestDeployedVersionStampAndBreakingDrift(t *testing.T) {
 		t.Fatalf("stamp content: %q", body)
 	}
 
-	// Plant older stamp + CHANGELOG with Breaking between stamp and any modern binary.
+	// Plant older stamp + CHANGELOG with Breaking between stamp and the binary's version.
+	// Use the binary's stamped version so the "behind Breaking" path stays real as
+	// .version advances (do not hardcode a fixed "modern" number).
+	binVer := repoVersion(t)
 	if err := os.WriteFile(stamp, []byte("satelle.version: 0.0.100\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cl := `# Changelog
+	cl := fmt.Sprintf(`# Changelog
 
-## [0.0.219] - 2026-07-13
+## [%s] - 2026-07-13
 
 ### Breaking
 - test break for drift gate
@@ -68,11 +78,11 @@ func TestDeployedVersionStampAndBreakingDrift(t *testing.T) {
 
 ### Fixed
 - ancient
-`
+`, binVer)
 	if err := os.WriteFile(filepath.Join(repo, "CHANGELOG.md"), []byte(cl), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Store-backed verb must fail closed (release testBin is 0.0.219 > 0.0.100).
+	// Store-backed verb must fail closed (stamped testBin > 0.0.100 with Breaking between).
 	out, err := run(t, testBin, repo, "story", "list")
 	if err == nil {
 		t.Fatalf("story list must fail closed when stamp is behind Breaking; out=%s", out)

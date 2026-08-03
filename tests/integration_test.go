@@ -117,6 +117,11 @@ func TestMain(m *testing.M) {
 			fmt.Fprintf(os.Stderr, "SATELLE_BIN=%q not usable: %v\n", env, err)
 			exit(1)
 		}
+		// SATELLE_BIN may or may not carry a release stamp. Tests that need
+		// writeDeployedVersion / deployed.version (TestDeployedVersionStampAndBreakingDrift,
+		// TestScaffoldDriftSurfacesAndHeal, and isReleaseTestBin branches) skip
+		// loudly when the binary is a dev sentinel. Prefer a stamped binary
+		// (e.g. make build && SATELLE_BIN=./satelle go test …).
 		testBin = abs
 		exit(m.Run())
 	}
@@ -127,9 +132,20 @@ func TestMain(m *testing.M) {
 	}
 	testBin = filepath.Join(dir, "satelle")
 	// The test runs from tests/, so the module root is one level up.
-	// Version stamp for deployed.version paths is a sibling story (sty_4c986ed8);
-	// this build stays bare so this slice only owns serve-lifetime integrity.
-	build := exec.Command("go", "build", "-o", testBin, "./cmd/satelle")
+	//
+	// Version stamp (sty_4c986ed8): stamp the same ldflags `make build` uses so
+	// writeDeployedVersion is live under test. A bare `go build` leaves
+	// Version=="dev", and writeDeployedVersion correctly refuses to stamp a dev
+	// sentinel — permanently red-ing TestDeployedVersionStampAndBreakingDrift and
+	// TestScaffoldDriftSurfacesAndHeal. Removing these ldflags re-breaks those
+	// paths. isReleaseTestBin remains the guard when SATELLE_BIN is a dev build.
+	ldflags, lerr := releaseTestBinLdflags()
+	if lerr != nil {
+		fmt.Fprintf(os.Stderr, "resolve version ldflags for testBin: %v\n", lerr)
+		_ = os.RemoveAll(dir)
+		exit(1)
+	}
+	build := exec.Command("go", "build", "-ldflags", ldflags, "-o", testBin, "./cmd/satelle")
 	build.Dir = ".."
 	if out, berr := build.CombinedOutput(); berr != nil {
 		fmt.Fprintf(os.Stderr, "build satelle: %v\n%s", berr, out)

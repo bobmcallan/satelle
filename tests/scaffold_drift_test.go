@@ -12,7 +12,13 @@ import (
 // TestScaffoldDriftSurfacesAndHeal (sty_ac25b787): a repo with previous-generation
 // inline PreToolUse wrappers against the current binary reports drift on
 // status + hook context, fails closed on store-backed verbs, and is clean after init.
+//
+// Fail-closed on store-backed verbs is gated on a deployed.version stamp
+// (sty_4c986ed8). Requires a release-stamped testBin; SATELLE_BIN=dev skips loudly.
 func TestScaffoldDriftSurfacesAndHeal(t *testing.T) {
+	if !isReleaseTestBin(t) {
+		t.Skip("testBin is not release-stamped (dev sentinel) — scaffold fail-closed needs deployed.version; need TestMain ldflags or SATELLE_BIN from `make build`")
+	}
 	repo := t.TempDir()
 	// Need a harness settings file to plant drift against; bare init scaffolds none.
 	mustRun(t, testBin, repo, "init", "--harness", "claude")
