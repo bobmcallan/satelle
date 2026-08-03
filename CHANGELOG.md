@@ -1,3 +1,8 @@
+## [0.0.406] - 2026-08-03
+
+### Fixed
+- **Integration cost-view tests assert unreported usage as — and the step-edge self-report nudge.** The honesty note substring is re-pinned; a black-box test drives a plain-text reviewer and refuses a confident 0/0 (sty_56aae77a)
+
 ## [0.0.405] - 2026-08-03
 
 ### Fixed

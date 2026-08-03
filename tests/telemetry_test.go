@@ -38,8 +38,18 @@ func TestStoryLogStepSelfReportAndNoSecrets(t *testing.T) {
 	}
 
 	// Drive in-loop transitions — these write status_transition rows (per-step
-	// wall-time is derived from their timestamps).
-	mustRun(t, testBin, repo, "story", "set", id, "--status", "in_progress")
+	// wall-time is derived from their timestamps). CombinedOutput captures the
+	// step-edge self-report nudge on stderr (sty_56aae77a AC3).
+	setOut := mustRun(t, testBin, repo, "story", "set", id, "--status", "in_progress")
+	if !strings.Contains(setOut, "step-self-report") || !strings.Contains(setOut, "step=backlog") {
+		t.Errorf("story set --status must nudge step-self-report for the left step:\n%s", setOut)
+	}
+
+	// Non-status set must not emit the nudge (title is frozen once engaged).
+	prioOut := mustRun(t, testBin, repo, "story", "set", id, "--priority", "low")
+	if strings.Contains(prioOut, "step-self-report") {
+		t.Errorf("priority-only set must not emit the step-edge nudge:\n%s", prioOut)
+	}
 
 	// Record the in-loop step's self-reported actual tokens + a per-step estimate
 	// via the generic telemetry verb (retiring `story step-cost`).
@@ -55,9 +65,11 @@ func TestStoryLogStepSelfReportAndNoSecrets(t *testing.T) {
 			t.Errorf("story cost missing %q:\n%s", want, cost)
 		}
 	}
-	// The honesty note: an unmeasured in-loop token cell is not "free".
-	if !strings.Contains(cost, "not free") {
-		t.Errorf("cost view should explain that '—' means unmeasured, not free:\n%s", cost)
+	// Honesty note (sty_56aae77a): unmeasured is never free; self-report is not measured.
+	for _, want := range []string{"unmeasured, never free", "session self-report", "not measured"} {
+		if !strings.Contains(cost, want) {
+			t.Errorf("cost view honesty note missing %q:\n%s", want, cost)
+		}
 	}
 
 	// The telemetry_event ledger payload carries numbers + the step name only —
@@ -152,5 +164,44 @@ func TestDispatchTelemetryOnReviewerFailure(t *testing.T) {
 		if !strings.Contains(led, want) {
 			t.Errorf("dispatch engine did not record structured %q telemetry on the ledger:\n%s", want, led)
 		}
+	}
+}
+
+// TestStoryCostUnreportedIsNotZero pins sty_56aae77a end-to-end: a plain-text
+// (no usage) reviewer invocation must render as —/— in satelle story cost, not
+// a confident 0/0, and the TOTAL must name unreported invocations when any exist.
+func TestStoryCostUnreportedIsNotZero(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+
+	// Reviewer stub: emit a valid accept with no usage envelope (plain text).
+	stub := filepath.Join(repo, "accept.sh")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho '{\"decision\":\"accept\",\"notes\":\"ok\"}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
+		"[reviewer]\ncommand = \""+stub+" {system}\"\ntools = \"Read\"\n")
+	writeGateTelemetryRoute(t, repo)
+	mustRun(t, testBin, repo, "reindex")
+
+	out := mustRun(t, testBin, repo, "story", "create", "--category", "chore",
+		"--title", "Unreported cost", "--body", "plain-text reviewer", "--acceptance", "1. done")
+	id := extractID(out, "sty_")
+	if id == "" {
+		t.Fatalf("no story id in:\n%s", out)
+	}
+	mustRun(t, testBin, repo, "story", "estimate", id, "--time", "5m", "--tokens", "100")
+	mustRun(t, testBin, repo, "story", "set", id, "--status", "in_progress")
+
+	cost := mustRun(t, testBin, repo, "story", "cost", id)
+	// Unreported plain-text invocation must not look measured.
+	if strings.Contains(cost, "0/0") {
+		t.Errorf("unreported invocation must not render as 0/0:\n%s", cost)
+	}
+	if !strings.Contains(cost, "—/—") && !strings.Contains(cost, "—") {
+		t.Errorf("cost table should show unreported as em-dash:\n%s", cost)
+	}
+	if !strings.Contains(cost, "unreported") && !strings.Contains(cost, "unmeasured") {
+		t.Errorf("cost view should call out unreported/unmeasured usage:\n%s", cost)
 	}
 }
