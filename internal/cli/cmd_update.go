@@ -33,7 +33,7 @@ import (
 const updateRepo = "bobmcallan/satelle"
 
 func init() {
-	var check, noRestart, local bool
+	var check, noRestart, local, force bool
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update satelle to the latest release (--local pins it under this repo's .satelle/)",
@@ -41,7 +41,15 @@ func init() {
 installed binary, downloads the platform asset, sha256-verifies it, and replaces
 the installed binary in place — the same asset/checksum/location scheme as the
 curl installer. If the background service is running it is restarted onto the new
-binary. --check reports availability without changing anything.
+binary. --check reports availability without installing.
+
+A matching version string is not enough proof the installed bytes match the
+published release. When the versions already match, update compares the local
+file's sha256 against the published <asset>.sha256 and reinstalls on a mismatch
+(for example a retagged version or a machine-wide make install of unreleased
+code). --force reinstalls the published asset even when both the version and the
+checksum already match — the recovery path when a global binary carries an
+unreleased build and the version strings look equal.
 
 --local installs the release into THIS repo's .satelle/satelle instead of the
 global install dir; a present .satelle/satelle then takes precedence (satelle
@@ -49,40 +57,95 @@ re-execs it) so the repo runs its own pinned binary. --local never restarts the
 global service.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if force && check {
+				return fmt.Errorf("--force and --check conflict: --check changes nothing")
+			}
 			out := cmd.OutOrStdout()
+			ctx := cmd.Context()
 			target := installTarget()
 			if local {
 				target = repoLocalTarget()
 			}
-			latest, err := latestReleaseTag(cmd.Context(), updateRepo)
+			latest, err := latestReleaseTag(ctx, updateRepo)
 			if err != nil {
 				return fmt.Errorf("resolve latest release: %w", err)
 			}
-			current := installedVersion(target)
+			current, currentCommit := installedBanner(target)
 			cliUpdated := false
 			// cliReplaced tracks the CLI BINARY specifically: deployed scaffolding is
 			// keyed to the CLI version, so a serve-only refresh does not stale the
 			// estate and must not print the estate guidance (sty_0f471251).
 			cliReplaced := false
-			if !updateAvailable(current, latest) {
-				fmt.Fprintf(out, "CLI already up to date (%s)\n", current)
-			} else if check {
-				fmt.Fprintf(out, "update available: %s → %s  (run `satelle update`)\n", current, latest)
-				// still report serve availability below when not --check-only for CLI
-			} else {
-				fmt.Fprintf(out, "updating %s: %s → %s\n", target, current, latest)
-				if err := downloadAndReplace(cmd.Context(), updateRepo, latest, target); err != nil {
-					return err
+
+			needCLI := force || updateAvailable(current, latest)
+			if !needCLI {
+				// Versions match — prove the installed bytes are the published asset
+				// (sty_1cd2ff01). A string match alone is not enough.
+				localSum, pubSum, art, artErr := resolveArtifactIdentity(ctx, updateRepo, latest, "satelle", target)
+				switch art {
+				case artifactMatch:
+					fmt.Fprintf(out, "CLI already up to date (%s, sha256 %s matches published asset)\n",
+						formatBanner(current, currentCommit), shortSum(localSum))
+				case artifactDiffer:
+					// Action word only when we will actually reinstall; --check is read-only.
+					action := " — reinstalling"
+					if check {
+						action = " — run `satelle update`"
+					}
+					fmt.Fprintf(out, "CLI %s installed build differs from published %s (installed sha256 %s, published %s)%s\n",
+						formatBanner(current, currentCommit), latest, shortSum(localSum), shortSum(pubSum), action)
+					needCLI = true
+				default: // artifactUnknown
+					fmt.Fprintf(out, "CLI version matches (%s) but identity NOT verified: %v — run `satelle update --force` to reinstall the published asset\n",
+						formatBanner(current, currentCommit), artErr)
 				}
-				fmt.Fprintf(out, "installed %s (%s)\n", target, latest)
-				cliUpdated = true
-				cliReplaced = true
+			}
+			if needCLI {
+				if check {
+					// Differ already printed the remediation; version-diff still needs the classic line.
+					if updateAvailable(current, latest) || force {
+						fmt.Fprintf(out, "update available: %s → %s  (run `satelle update`)\n", current, latest)
+					}
+				} else {
+					if force && !updateAvailable(current, latest) {
+						fmt.Fprintf(out, "forcing reinstall of %s (%s)\n", target, latest)
+					} else if updateAvailable(current, latest) {
+						fmt.Fprintf(out, "updating %s: %s → %s\n", target, current, latest)
+					}
+					if err := downloadAndReplace(ctx, updateRepo, latest, target); err != nil {
+						return err
+					}
+					fmt.Fprintf(out, "installed %s (%s)\n", target, latest)
+					cliUpdated = true
+					cliReplaced = true
+				}
 			}
 			if check {
-				// Surface serve channel too when independent (sty_19ff03f4).
+				// Surface serve channel too when independent (sty_19ff03f4), including
+				// the artifact-identity verdict so dogfood can read it (sty_1cd2ff01).
 				if !local {
-					if st, serr := latestServeReleaseTag(cmd.Context(), updateRepo); serr == nil {
-						fmt.Fprintf(out, "latest serve release: %s\n", st)
+					if st, serr := latestServeReleaseTag(ctx, updateRepo); serr == nil {
+						serveTarget := filepath.Join(filepath.Dir(target), "satelle-serve")
+						if runtime.GOOS == "windows" {
+							serveTarget += ".exe"
+						}
+						installedServe, servePresent := serveInstalledVersion(serveTarget)
+						if !servePresent {
+							fmt.Fprintf(out, "latest serve release: %s (not installed)\n", st)
+						} else {
+							localSum, pubSum, art, artErr := resolveArtifactIdentity(ctx, updateRepo, st, "satelle-serve", serveTarget)
+							switch art {
+							case artifactMatch:
+								fmt.Fprintf(out, "latest serve release: %s (installed %s, sha256 %s matches published asset)\n",
+									st, installedServe, shortSum(localSum))
+							case artifactDiffer:
+								fmt.Fprintf(out, "latest serve release: %s (installed build differs: installed sha256 %s, published %s — run `satelle update`)\n",
+									st, shortSum(localSum), shortSum(pubSum))
+							default:
+								fmt.Fprintf(out, "latest serve release: %s (installed %s; identity NOT verified: %v)\n",
+									st, installedServe, artErr)
+							}
+						}
 					}
 				}
 				return nil
@@ -93,11 +156,24 @@ global service.`,
 				if runtime.GOOS == "windows" {
 					serveTarget += ".exe"
 				}
-				serveTag, serr := latestServeReleaseTag(cmd.Context(), updateRepo)
+				serveTag, serr := latestServeReleaseTag(ctx, updateRepo)
 				installedServe, servePresent := serveInstalledVersion(serveTarget)
-				switch outcome := classifyServeOutcome(installedServe, serveTag, serr, servePresent); outcome {
+				_, serveCommit := installedServeBanner(serveTarget)
+				var art artifactIdentity
+				var localSum, pubSum string
+				var artErr error
+				if force {
+					art = artifactDiffer // force reinstall when a release resolves
+				} else if serr == nil && servePresent {
+					localSum, pubSum, art, artErr = resolveArtifactIdentity(ctx, updateRepo, serveTag, "satelle-serve", serveTarget)
+				}
+				switch outcome := classifyServeOutcome(installedServe, serveTag, serr, servePresent, art); outcome {
 				case serveCurrent:
-					fmt.Fprintf(out, "satelle-serve already up to date (%s)\n", serveTag)
+					fmt.Fprintf(out, "satelle-serve already up to date (%s, sha256 %s matches published asset)\n",
+						serveTag, shortSum(localSum))
+				case serveUnverified:
+					fmt.Fprintf(out, "satelle-serve version matches (%s) but identity NOT verified: %v — run `satelle update --force` to reinstall the published asset\n",
+						formatBanner(installedServe, serveCommit), artErr)
 				case serveAbsentNoRelease:
 					// A fork that has never published a serve release, on a machine
 					// with no serve binary: nothing to install and nothing wrong.
@@ -109,7 +185,13 @@ global service.`,
 					// (sty_0dcedb0d). Same rule the CLI half already follows.
 					return fmt.Errorf("satelle-serve update failed: %w", serr)
 				default:
-					if err := downloadAndReplaceNamed(cmd.Context(), updateRepo, serveTag, "satelle-serve", serveTarget); err != nil {
+					if art == artifactDiffer && !force && !updateAvailable(installedServe, tagVersion(serveTag)) {
+						fmt.Fprintf(out, "satelle-serve %s installed build differs from published %s (installed sha256 %s, published %s) — reinstalling\n",
+							formatBanner(installedServe, serveCommit), serveTag, shortSum(localSum), shortSum(pubSum))
+					} else if force {
+						fmt.Fprintf(out, "forcing reinstall of %s (%s)\n", serveTarget, serveTag)
+					}
+					if err := downloadAndReplaceNamed(ctx, updateRepo, serveTag, "satelle-serve", serveTarget); err != nil {
 						return fmt.Errorf("satelle-serve update failed (%s): %w", serveTag, err)
 					}
 					fmt.Fprintf(out, "installed %s (%s)\n", serveTarget, serveTag)
@@ -133,6 +215,7 @@ global service.`,
 	cmd.Flags().BoolVar(&check, "check", false, "report whether an update is available without installing")
 	cmd.Flags().BoolVar(&noRestart, "no-restart", false, "do not restart the background service after updating")
 	cmd.Flags().BoolVar(&local, "local", false, "install into this repo's .satelle/satelle (a repo-local pin) instead of the global binary")
+	cmd.Flags().BoolVar(&force, "force", false, "reinstall the published asset even when the reported versions already match")
 	register(cmd)
 }
 
@@ -174,13 +257,59 @@ func installTarget() string {
 // installedVersion returns the version the target binary reports, or the running
 // build's version if the target can't be run (e.g. not installed yet).
 func installedVersion(target string) string {
-	if out, err := exec.Command(target, "version").Output(); err == nil {
-		// "satelle v0.0.6 (commit …)" → "v0.0.6"
-		if fields := strings.Fields(string(out)); len(fields) >= 2 {
-			return fields[1]
-		}
+	ver, _ := installedBanner(target)
+	if ver != "" {
+		return ver
 	}
 	return buildinfo.Resolve().Version
+}
+
+// installedBanner returns the version and commit the target CLI binary reports
+// (`satelle version`). Missing fields are empty. One parser for both fields so
+// installedVersion cannot drift from the commit half (sty_1cd2ff01 review).
+func installedBanner(target string) (version, commit string) {
+	out, err := exec.Command(target, "version").Output()
+	if err != nil {
+		return "", ""
+	}
+	return parseVersionBanner(string(out))
+}
+
+// installedServeBanner is the serve sibling of installedBanner
+// (`satelle-serve --version`).
+func installedServeBanner(target string) (version, commit string) {
+	out, err := exec.Command(target, "--version").Output()
+	if err != nil {
+		return "", ""
+	}
+	return parseVersionBanner(string(out))
+}
+
+// parseVersionBanner extracts version (field 2) and the token after "commit "
+// from a banner like `satelle 0.0.6 (commit abc123, built …)` or
+// `satelle-serve 0.0.12 (commit abc, built now)`.
+func parseVersionBanner(out string) (version, commit string) {
+	if fields := strings.Fields(out); len(fields) >= 2 {
+		version = fields[1]
+	}
+	const marker = "commit "
+	if i := strings.Index(out, marker); i >= 0 {
+		rest := out[i+len(marker):]
+		if end := strings.IndexAny(rest, ",)\n \t"); end >= 0 {
+			commit = rest[:end]
+		} else {
+			commit = strings.TrimSpace(rest)
+		}
+	}
+	return version, commit
+}
+
+// formatBanner joins version and optional commit for operator messages.
+func formatBanner(version, commit string) string {
+	if commit == "" {
+		return version
+	}
+	return version + ", commit " + commit
 }
 
 // serveOutcome is what `satelle update` should do about the sibling
@@ -191,22 +320,30 @@ func installedVersion(target string) string {
 type serveOutcome int
 
 const (
-	// serveInstall — a serve release resolved and differs from what is installed.
+	// serveInstall — a serve release resolved and differs from what is installed
+	// (by version string OR by artifact checksum — sty_1cd2ff01).
 	serveInstall serveOutcome = iota
-	// serveCurrent — the installed serve binary already IS the resolved release.
+	// serveCurrent — the installed serve binary already IS the resolved release
+	// (version match AND artifact checksum match).
 	serveCurrent
 	// serveFail — the release could not be resolved; the verb must fail.
 	serveFail
 	// serveAbsentNoRelease — no serve release exists AND no serve binary is
 	// installed: nothing to do, and nothing wrong.
 	serveAbsentNoRelease
+	// serveUnverified — versions match but the published artifact checksum
+	// could not be compared (offline, 404, unreadable local file). Skip
+	// reinstall; never claim "up to date" (sty_1cd2ff01).
+	serveUnverified
 )
 
-// classifyServeOutcome decides which of the three (plus the narrow no-op) cases
-// applies. installedVer is what the installed serve binary reports ("" when it
-// could not be read — treated as unknown, never as current, because guessing
-// current is the exact failure this exists to kill). Pure for unit tests.
-func classifyServeOutcome(installedVer, serveTag string, discoveryErr error, servePresent bool) serveOutcome {
+// classifyServeOutcome decides which outcome applies. installedVer is what the
+// installed serve binary reports ("" when it could not be read — treated as
+// unknown, never as current). art is the artifact-checksum verdict when the
+// version strings already match; callers pass artifactMatch when force is set
+// is not in play and identity was not computed (absent binary / discovery fail
+// paths ignore art). Pure for unit tests.
+func classifyServeOutcome(installedVer, serveTag string, discoveryErr error, servePresent bool, art artifactIdentity) serveOutcome {
 	if discoveryErr != nil {
 		if !servePresent && isNoServeReleaseErr(discoveryErr) {
 			return serveAbsentNoRelease
@@ -214,9 +351,101 @@ func classifyServeOutcome(installedVer, serveTag string, discoveryErr error, ser
 		return serveFail
 	}
 	if installedVer != "" && !updateAvailable(installedVer, tagVersion(serveTag)) {
-		return serveCurrent
+		switch art {
+		case artifactMatch:
+			return serveCurrent
+		case artifactDiffer:
+			return serveInstall
+		default:
+			return serveUnverified
+		}
 	}
 	return serveInstall
+}
+
+// artifactIdentity is the result of comparing an installed binary's bytes to
+// the published release asset checksum. Named "artifact" deliberately — the
+// package already has identityVerdict/statIdentity for process-exe (dev+inode)
+// comparisons; those are a different concept (sty_1cd2ff01 architecture review).
+type artifactIdentity int
+
+const (
+	artifactMatch artifactIdentity = iota
+	artifactDiffer
+	artifactUnknown
+)
+
+// compareArtifactIdentity is pure: match when both sums present and equal,
+// differ when both present and unequal, unknown on any error or empty sum.
+func compareArtifactIdentity(localSum, publishedSum string, err error) artifactIdentity {
+	if err != nil || localSum == "" || publishedSum == "" {
+		return artifactUnknown
+	}
+	if strings.EqualFold(localSum, publishedSum) {
+		return artifactMatch
+	}
+	return artifactDiffer
+}
+
+// parseChecksumLine extracts the leading hex field from a sha256 line
+// ("<hex>  <name>"). Shared by verifyChecksum and publishedChecksum.
+func parseChecksumLine(shaLine string) string {
+	want := strings.TrimSpace(shaLine)
+	if i := strings.IndexAny(want, " \t"); i > 0 {
+		want = want[:i]
+	}
+	return want
+}
+
+// fileChecksum returns the sha256 hex of the file at path.
+func fileChecksum(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// publishedChecksum GETs the published <asset>.sha256 for binary@tag and
+// returns the hex sum. Uses SATELLE_RELEASE_BASE when set (mirrors, tests).
+func publishedChecksum(ctx context.Context, repo, tag, binary string) (string, error) {
+	base := os.Getenv("SATELLE_RELEASE_BASE")
+	if base == "" {
+		base = fmt.Sprintf("https://github.com/%s/releases/download", repo)
+	}
+	name := assetNameFor(binary, tag)
+	line, err := httpGetBytes(ctx, base+"/"+tag+"/"+name+".sha256")
+	if err != nil {
+		return "", err
+	}
+	sum := parseChecksumLine(string(line))
+	if sum == "" {
+		return "", fmt.Errorf("empty checksum for %s", name)
+	}
+	return sum, nil
+}
+
+// resolveArtifactIdentity compares local file bytes to the published asset
+// checksum. reason is set when the verdict is artifactUnknown.
+func resolveArtifactIdentity(ctx context.Context, repo, tag, binary, localPath string) (local, published string, id artifactIdentity, reason error) {
+	local, lerr := fileChecksum(localPath)
+	if lerr != nil {
+		return "", "", artifactUnknown, lerr
+	}
+	published, perr := publishedChecksum(ctx, repo, tag, binary)
+	if perr != nil {
+		return local, "", artifactUnknown, perr
+	}
+	return local, published, compareArtifactIdentity(local, published, nil), nil
+}
+
+// shortSum returns the first 8 hex chars of a checksum for operator messages.
+func shortSum(sum string) string {
+	if len(sum) <= 8 {
+		return sum
+	}
+	return sum[:8]
 }
 
 // tagVersion reduces a release tag to the bare version the binary reports:
@@ -239,15 +468,12 @@ func serveInstalledVersion(target string) (version string, present bool) {
 	if _, err := os.Stat(target); err != nil {
 		return "", false
 	}
-	out, err := exec.Command(target, "--version").Output()
-	if err != nil {
+	ver, _ := installedServeBanner(target)
+	if ver == "" {
+		// Present but unreadable / unparseable — never treat as current.
 		return "", true
 	}
-	// "satelle-serve 0.0.12 (commit …)" → "0.0.12"
-	if fields := strings.Fields(string(out)); len(fields) >= 2 {
-		return fields[1], true
-	}
-	return "", true
+	return ver, true
 }
 
 // assetName is the release asset filename for this platform — identical to the
@@ -457,10 +683,7 @@ func httpGetBytes(ctx context.Context, url string) ([]byte, error) {
 
 // verifyChecksum checks data against the sha256 in shaLine ("<hex>  <name>").
 func verifyChecksum(data []byte, shaLine string) error {
-	want := strings.TrimSpace(shaLine)
-	if i := strings.IndexAny(want, " \t"); i > 0 {
-		want = want[:i]
-	}
+	want := parseChecksumLine(shaLine)
 	sum := sha256.Sum256(data)
 	got := hex.EncodeToString(sum[:])
 	if !strings.EqualFold(want, got) {

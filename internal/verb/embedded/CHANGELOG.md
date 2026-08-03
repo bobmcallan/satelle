@@ -1,3 +1,8 @@
+## [0.0.417] - 2026-08-03
+
+### Fixed
+- **`satelle update` no longer treats a matching version string as proof the installed bytes match the published release.** When versions already match, update compares the local file against the published asset checksum and reinstalls on a mismatch (retagged version, or a machine-wide unreleased `make install`). Skips name the identity compared; offline/unverified identity is reported rather than claimed "up to date". `satelle update --force` reinstalls even when version and checksum match (recovery without a scratch clone). Dogfood requires checksum identity, not version alone (sty_1cd2ff01)
+
 ## [0.0.416] - 2026-08-03
 
 ### Fixed

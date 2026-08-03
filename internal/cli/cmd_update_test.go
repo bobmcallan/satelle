@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1135,5 +1136,400 @@ func TestUnitDirective(t *testing.T) {
 	}
 	if got := unitDirective(unit, "Nope"); got != "" {
 		t.Errorf("absent directive = %q", got)
+	}
+}
+
+// --- artifact identity (sty_1cd2ff01) ---
+
+func TestParseChecksumLine(t *testing.T) {
+	cases := map[string]string{
+		"abc123  satelle-v0.0.1-linux-amd64\n": "abc123",
+		"DEADBEEF\tname":                       "DEADBEEF",
+		"  onlyhex  ":                          "onlyhex",
+		"":                                     "",
+	}
+	for in, want := range cases {
+		if got := parseChecksumLine(in); got != want {
+			t.Errorf("parseChecksumLine(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestCompareArtifactIdentity(t *testing.T) {
+	cases := []struct {
+		local, pub string
+		err        error
+		want       artifactIdentity
+	}{
+		{"aa", "aa", nil, artifactMatch},
+		{"AA", "aa", nil, artifactMatch},
+		{"aa", "bb", nil, artifactDiffer},
+		{"", "aa", nil, artifactUnknown},
+		{"aa", "", nil, artifactUnknown},
+		{"aa", "aa", errors.New("boom"), artifactUnknown},
+	}
+	for _, tc := range cases {
+		if got := compareArtifactIdentity(tc.local, tc.pub, tc.err); got != tc.want {
+			t.Errorf("compareArtifactIdentity(%q,%q,%v) = %v, want %v",
+				tc.local, tc.pub, tc.err, got, tc.want)
+		}
+	}
+}
+
+func TestParseVersionBanner(t *testing.T) {
+	ver, commit := parseVersionBanner("satelle 0.0.400 (commit 0aaedad49804, built 2026-08-02-22-45-44) — global\n")
+	if ver != "0.0.400" || commit != "0aaedad49804" {
+		t.Fatalf("ver=%q commit=%q", ver, commit)
+	}
+	ver, commit = parseVersionBanner("satelle-serve 0.0.12 (commit abc)\n")
+	if ver != "0.0.12" || commit != "abc" {
+		t.Fatalf("serve ver=%q commit=%q", ver, commit)
+	}
+	ver, commit = parseVersionBanner("satelle 0.0.1\n")
+	if ver != "0.0.1" || commit != "" {
+		t.Fatalf("no-commit ver=%q commit=%q", ver, commit)
+	}
+}
+
+func TestFileChecksum(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "bin")
+	data := []byte("hello-artifact")
+	if err := os.WriteFile(p, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := fileChecksum(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	want := hex.EncodeToString(sum[:])
+	if got != want {
+		t.Fatalf("fileChecksum = %q, want %q", got, want)
+	}
+	if _, err := fileChecksum(filepath.Join(dir, "missing")); err == nil {
+		t.Fatal("expected error for missing file")
+	}
+}
+
+// resetUpdateFlags clears sticky cobra flags on the process-global update
+// command (NewRootCmd reuses the registered pointer; a prior Execute leaves
+// --force/--check set and poisons later tests).
+func resetUpdateFlags(t *testing.T) {
+	t.Helper()
+	for _, c := range registered {
+		if c.Name() != "update" {
+			continue
+		}
+		for _, name := range []string{"force", "check", "local", "no-restart"} {
+			if f := c.Flags().Lookup(name); f != nil {
+				_ = f.Value.Set(f.DefValue)
+			}
+		}
+	}
+}
+
+// TestUpdateRetagReplacesSameVersion is the AC4 reproduction for the CLI half:
+// install asset A at version X, then republish the same tag with asset B;
+// update must replace rather than report "already up to date".
+func TestUpdateRetagReplacesSameVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stub is POSIX-only")
+	}
+	resetUpdateFlags(t)
+	t.Cleanup(func() { resetUpdateFlags(t) })
+	installDir := t.TempDir()
+	t.Setenv("SATELLE_INSTALL_DIR", installDir)
+
+	// Script assets print a stable version banner so installedVersion matches.
+	scriptA := []byte("#!/bin/sh\nif [ \"$1\" = version ]; then echo 'satelle 0.0.99 (commit aaa, built t)'; else echo A; fi\n")
+	scriptB := []byte("#!/bin/sh\nif [ \"$1\" = version ]; then echo 'satelle 0.0.99 (commit bbb, built t)'; else echo B; fi\n")
+	sumA := sha256.Sum256(scriptA)
+	sumB := sha256.Sum256(scriptB)
+	name := assetNameFor("satelle", "v0.0.99")
+
+	var which bytes.Buffer // "A" or "B"
+	which.WriteString("A")
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"tag_name":"v0.0.99"}`)
+	})
+	// serve list: no serve release so the serve half is a quiet no-op
+	mux.HandleFunc("/releases", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[{"tag_name":"v0.0.99","draft":false}]`)
+	})
+	mux.HandleFunc("/download/v0.0.99/"+name, func(w http.ResponseWriter, r *http.Request) {
+		if which.String() == "A" {
+			w.Write(scriptA)
+		} else {
+			w.Write(scriptB)
+		}
+	})
+	mux.HandleFunc("/download/v0.0.99/"+name+".sha256", func(w http.ResponseWriter, r *http.Request) {
+		sum := sumA
+		if which.String() != "A" {
+			sum = sumB
+		}
+		fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(sum[:]), name)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	t.Setenv("SATELLE_RELEASE_API", srv.URL+"/releases/latest")
+	t.Setenv("SATELLE_RELEASE_LIST_API", srv.URL+"/releases")
+	t.Setenv("SATELLE_RELEASE_BASE", srv.URL+"/download")
+
+	// First install: no binary yet → version differs from nothing → install A.
+	// Seed a matching-version older-looking binary so we exercise the
+	// version-match + identity-differ path on the second pass.
+	target := filepath.Join(installDir, "satelle")
+	if err := os.WriteFile(target, scriptA, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Identity matches → already up to date, must name the checksum.
+	out1, err := runRoot(t, "update", "--no-restart")
+	if err != nil {
+		t.Fatalf("update (match): %v\n%s", err, out1)
+	}
+	if !strings.Contains(out1, "already up to date") || !strings.Contains(out1, "sha256") {
+		t.Fatalf("expected match message with sha256, got:\n%s", out1)
+	}
+
+	// Retag same version with different bytes.
+	which.Reset()
+	which.WriteString("B")
+
+	out2, err := runRoot(t, "update", "--no-restart")
+	if err != nil {
+		t.Fatalf("update (retag): %v\n%s", err, out2)
+	}
+	if strings.Contains(out2, "already up to date") {
+		t.Fatalf("retag must not claim up to date:\n%s", out2)
+	}
+	if !strings.Contains(out2, "differs from published") {
+		t.Fatalf("expected differ message:\n%s", out2)
+	}
+	got, _ := os.ReadFile(target)
+	if string(got) != string(scriptB) {
+		t.Fatalf("installed bytes not replaced with B: %q", got)
+	}
+}
+
+// TestUpdateForceReinstallsWhenMatch proves --force reinstalls even when
+// version and artifact identity already match (AC6).
+func TestUpdateForceReinstallsWhenMatch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stub is POSIX-only")
+	}
+	resetUpdateFlags(t)
+	t.Cleanup(func() { resetUpdateFlags(t) })
+	installDir := t.TempDir()
+	t.Setenv("SATELLE_INSTALL_DIR", installDir)
+
+	script := []byte("#!/bin/sh\nif [ \"$1\" = version ]; then echo 'satelle 0.0.88 (commit ccc, built t)'; fi\n")
+	// Force rewrite changes the on-disk content marker so we can detect the reinstall.
+	// Use two body variants that print the same version.
+	body1 := append([]byte{}, script...)
+	body1 = append(body1, []byte("# mark1\n")...)
+	body2 := append([]byte{}, script...)
+	body2 = append(body2, []byte("# mark2\n")...)
+	sum1 := sha256.Sum256(body1)
+	sum2 := sha256.Sum256(body2)
+	name := assetNameFor("satelle", "v0.0.88")
+
+	var serveBody = body1
+	mux := http.NewServeMux()
+	mux.HandleFunc("/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"tag_name":"v0.0.88"}`)
+	})
+	mux.HandleFunc("/releases", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[]`)
+	})
+	mux.HandleFunc("/download/v0.0.88/"+name, func(w http.ResponseWriter, r *http.Request) {
+		w.Write(serveBody)
+	})
+	mux.HandleFunc("/download/v0.0.88/"+name+".sha256", func(w http.ResponseWriter, r *http.Request) {
+		sum := sum1
+		if string(serveBody) == string(body2) {
+			sum = sum2
+		}
+		fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(sum[:]), name)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	t.Setenv("SATELLE_RELEASE_API", srv.URL+"/releases/latest")
+	t.Setenv("SATELLE_RELEASE_LIST_API", srv.URL+"/releases")
+	t.Setenv("SATELLE_RELEASE_BASE", srv.URL+"/download")
+
+	target := filepath.Join(installDir, "satelle")
+	if err := os.WriteFile(target, body1, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Swap published asset so a force reinstall is observable.
+	serveBody = body2
+
+	out, err := runRoot(t, "update", "--force", "--no-restart")
+	if err != nil {
+		t.Fatalf("update --force: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "forcing reinstall") {
+		t.Fatalf("expected force message:\n%s", out)
+	}
+	got, _ := os.ReadFile(target)
+	if string(got) != string(body2) {
+		t.Fatalf("force did not reinstall published body2: %q", got)
+	}
+}
+
+func TestUpdateForceCheckConflict(t *testing.T) {
+	resetUpdateFlags(t)
+	t.Cleanup(func() { resetUpdateFlags(t) })
+	_, err := runRoot(t, "update", "--force", "--check")
+	if err == nil || !strings.Contains(err.Error(), "--force and --check") {
+		t.Fatalf("expected flag conflict, got %v", err)
+	}
+}
+
+// TestUpdateUnknownIdentityLeavesBinary proves the offline/404 checksum path
+// (sty_1cd2ff01): versions match, .sha256 is missing, update exits 0, prints
+// "identity NOT verified" (never "up to date"), and leaves the binary alone.
+func TestUpdateUnknownIdentityLeavesBinary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stub is POSIX-only")
+	}
+	resetUpdateFlags(t)
+	t.Cleanup(func() { resetUpdateFlags(t) })
+	installDir := t.TempDir()
+	t.Setenv("SATELLE_INSTALL_DIR", installDir)
+
+	script := []byte("#!/bin/sh\nif [ \"$1\" = version ]; then echo 'satelle 0.0.77 (commit uuu, built t)'; fi\n")
+	name := assetNameFor("satelle", "v0.0.77")
+	// Deliberately NO .sha256 handler — identityUnknown.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"tag_name":"v0.0.77"}`)
+	})
+	mux.HandleFunc("/releases", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[]`)
+	})
+	mux.HandleFunc("/download/v0.0.77/"+name, func(w http.ResponseWriter, r *http.Request) {
+		w.Write(script)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	t.Setenv("SATELLE_RELEASE_API", srv.URL+"/releases/latest")
+	t.Setenv("SATELLE_RELEASE_LIST_API", srv.URL+"/releases")
+	t.Setenv("SATELLE_RELEASE_BASE", srv.URL+"/download")
+
+	target := filepath.Join(installDir, "satelle")
+	if err := os.WriteFile(target, script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(target)
+
+	out, err := runRoot(t, "update", "--no-restart")
+	if err != nil {
+		t.Fatalf("unknown identity must exit 0: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "already up to date") {
+		t.Fatalf("must not claim up to date when identity is unverified:\n%s", out)
+	}
+	if !strings.Contains(out, "identity NOT verified") {
+		t.Fatalf("expected unverified message:\n%s", out)
+	}
+	if !strings.Contains(out, "satelle update --force") {
+		t.Fatalf("expected --force remediation:\n%s", out)
+	}
+	after, _ := os.ReadFile(target)
+	if string(after) != string(before) {
+		t.Fatalf("binary must be left alone when identity is unknown")
+	}
+}
+
+// TestUpdateCheckReportsIdentity proves AC5's dogfood contract: --check emits
+// the match and differ wording check_installed_identity greps for.
+func TestUpdateCheckReportsIdentity(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stub is POSIX-only")
+	}
+	resetUpdateFlags(t)
+	t.Cleanup(func() { resetUpdateFlags(t) })
+	installDir := t.TempDir()
+	t.Setenv("SATELLE_INSTALL_DIR", installDir)
+
+	cliMatch := []byte("#!/bin/sh\nif [ \"$1\" = version ]; then echo 'satelle 0.0.66 (commit mmm, built t)'; fi\n")
+	cliDiffer := []byte("#!/bin/sh\nif [ \"$1\" = version ]; then echo 'satelle 0.0.66 (commit ddd, built t)'; fi\n# differ\n")
+	serveMatch := []byte("#!/bin/sh\necho 'satelle-serve 0.0.5 (commit sss, built t)'\n")
+	serveDiffer := []byte("#!/bin/sh\necho 'satelle-serve 0.0.5 (commit ttt, built t)'\n# differ\n")
+	cliSum := sha256.Sum256(cliMatch)
+	serveSum := sha256.Sum256(serveMatch)
+	cliName := assetNameFor("satelle", "v0.0.66")
+	serveName := assetNameFor("satelle-serve", "serve-v0.0.5")
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"tag_name":"v0.0.66"}`)
+	})
+	mux.HandleFunc("/releases", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[{"tag_name":"serve-v0.0.5","draft":false}]`)
+	})
+	mux.HandleFunc("/download/v0.0.66/"+cliName, func(w http.ResponseWriter, r *http.Request) {
+		w.Write(cliMatch)
+	})
+	mux.HandleFunc("/download/v0.0.66/"+cliName+".sha256", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(cliSum[:]), cliName)
+	})
+	mux.HandleFunc("/download/serve-v0.0.5/"+serveName, func(w http.ResponseWriter, r *http.Request) {
+		w.Write(serveMatch)
+	})
+	mux.HandleFunc("/download/serve-v0.0.5/"+serveName+".sha256", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(serveSum[:]), serveName)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	t.Setenv("SATELLE_RELEASE_API", srv.URL+"/releases/latest")
+	t.Setenv("SATELLE_RELEASE_LIST_API", srv.URL+"/releases")
+	t.Setenv("SATELLE_RELEASE_BASE", srv.URL+"/download")
+
+	cliPath := filepath.Join(installDir, "satelle")
+	servePath := filepath.Join(installDir, "satelle-serve")
+	if err := os.WriteFile(cliPath, cliMatch, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(servePath, serveMatch, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runRoot(t, "update", "--check")
+	if err != nil {
+		t.Fatalf("check match: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "already up to date") || !strings.Contains(out, "sha256") || !strings.Contains(out, "matches published asset") {
+		t.Fatalf("expected CLI match wording:\n%s", out)
+	}
+	if !strings.Contains(out, "latest serve release: serve-v0.0.5") || !strings.Contains(out, "matches published asset") {
+		t.Fatalf("expected serve match wording:\n%s", out)
+	}
+
+	// Differ: install different bytes at same version; published checksum stays on match body.
+	if err := os.WriteFile(cliPath, cliDiffer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(servePath, serveDiffer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out2, err := runRoot(t, "update", "--check")
+	if err != nil {
+		t.Fatalf("check differ: %v\n%s", err, out2)
+	}
+	if !strings.Contains(out2, "installed build differs") {
+		t.Fatalf("expected differ wording:\n%s", out2)
+	}
+	if !strings.Contains(out2, "run `satelle update`") {
+		t.Fatalf("expected remediation, not 'reinstalling', under --check:\n%s", out2)
+	}
+	if strings.Contains(out2, "reinstalling") {
+		t.Fatalf("--check must not say reinstalling:\n%s", out2)
 	}
 }

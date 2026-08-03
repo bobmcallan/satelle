@@ -29,6 +29,16 @@ Already installed? `satelle update` self-updates the CLI and refreshes
 `satelle-serve` from its own channel, then restarts the background service.
 `satelle update --check` reports availability without installing.
 
+A matching version string is not treated as proof the installed bytes match the
+published release: when versions already match, update compares the local file
+against the published asset checksum and reinstalls on a mismatch (a retagged
+version, or a machine-wide `make install` of unreleased code). To reinstall the
+published asset even when version and checksum already look equal:
+
+```sh
+satelle update --force
+```
+
 ## Quickstart
 
 ```sh

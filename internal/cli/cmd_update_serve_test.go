@@ -2,12 +2,15 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -139,20 +142,23 @@ func TestClassifyServeOutcome(t *testing.T) {
 		tag         string
 		err         error
 		servePresen bool
+		art         artifactIdentity
 		want        serveOutcome
 	}{
-		{"already current", "0.0.12", "serve-v0.0.12", nil, true, serveCurrent},
-		{"newer release available", "0.0.11", "serve-v0.0.12", nil, true, serveInstall},
-		{"binary absent, release exists", "", "serve-v0.0.12", nil, false, serveInstall},
-		{"version unreadable is never current", "", "serve-v0.0.12", nil, true, serveInstall},
-		{"unresolvable with a binary installed fails", "0.0.11", "", transport, true, serveFail},
-		{"transport error fails even with no binary", "", "", transport, false, serveFail},
-		{"no release and no binary is a no-op", "", "", notPublished, false, serveAbsentNoRelease},
-		{"no release but a binary is installed fails", "0.0.11", "", notPublished, true, serveFail},
+		{"already current (version+artifact)", "0.0.12", "serve-v0.0.12", nil, true, artifactMatch, serveCurrent},
+		{"version match but artifact differs", "0.0.12", "serve-v0.0.12", nil, true, artifactDiffer, serveInstall},
+		{"version match but artifact unverified", "0.0.12", "serve-v0.0.12", nil, true, artifactUnknown, serveUnverified},
+		{"newer release available", "0.0.11", "serve-v0.0.12", nil, true, artifactMatch, serveInstall},
+		{"binary absent, release exists", "", "serve-v0.0.12", nil, false, artifactUnknown, serveInstall},
+		{"version unreadable is never current", "", "serve-v0.0.12", nil, true, artifactMatch, serveInstall},
+		{"unresolvable with a binary installed fails", "0.0.11", "", transport, true, artifactUnknown, serveFail},
+		{"transport error fails even with no binary", "", "", transport, false, artifactUnknown, serveFail},
+		{"no release and no binary is a no-op", "", "", notPublished, false, artifactUnknown, serveAbsentNoRelease},
+		{"no release but a binary is installed fails", "0.0.11", "", notPublished, true, artifactUnknown, serveFail},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := classifyServeOutcome(tc.installed, tc.tag, tc.err, tc.servePresen); got != tc.want {
+			if got := classifyServeOutcome(tc.installed, tc.tag, tc.err, tc.servePresen, tc.art); got != tc.want {
 				t.Fatalf("classifyServeOutcome = %v, want %v", got, tc.want)
 			}
 		})
@@ -188,5 +194,99 @@ func TestServeInstalledVersion(t *testing.T) {
 	}
 	if v, present := serveInstalledVersion(broken); !present || v != "" {
 		t.Fatalf("unrunnable binary reported version=%q present=%v, want \"\"/true", v, present)
+	}
+}
+
+// TestServeRetagReplacesSameVersion is the AC4 reproduction for the serve half
+// (sty_1cd2ff01): install serve asset A at serve-vX, republish same tag as B;
+// update must replace rather than report "already up to date".
+func TestServeRetagReplacesSameVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stub is POSIX-only")
+	}
+	resetUpdateFlags(t)
+	t.Cleanup(func() { resetUpdateFlags(t) })
+	installDir := t.TempDir()
+	t.Setenv("SATELLE_INSTALL_DIR", installDir)
+
+	// CLI half: install a matching fake CLI so update does not try to replace it
+	// from a missing asset. We only care about the serve half.
+	cliScript := []byte("#!/bin/sh\necho 'satelle 9.9.9 (commit cli, built t)'\n")
+	cliSum := sha256.Sum256(cliScript)
+	cliName := assetNameFor("satelle", "v9.9.9")
+	if err := os.WriteFile(filepath.Join(installDir, "satelle"), cliScript, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	scriptA := []byte("#!/bin/sh\necho 'satelle-serve 0.0.17 (commit aaa, built t)'\n")
+	scriptB := []byte("#!/bin/sh\necho 'satelle-serve 0.0.17 (commit bbb, built t)'\n")
+	sumA := sha256.Sum256(scriptA)
+	sumB := sha256.Sum256(scriptB)
+	serveName := assetNameFor("satelle-serve", "serve-v0.0.17")
+
+	which := "A"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"tag_name":"v9.9.9"}`)
+	})
+	mux.HandleFunc("/releases", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[{"tag_name":"serve-v0.0.17","draft":false},{"tag_name":"v9.9.9","draft":false}]`)
+	})
+	mux.HandleFunc("/download/v9.9.9/"+cliName, func(w http.ResponseWriter, r *http.Request) {
+		w.Write(cliScript)
+	})
+	mux.HandleFunc("/download/v9.9.9/"+cliName+".sha256", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(cliSum[:]), cliName)
+	})
+	mux.HandleFunc("/download/serve-v0.0.17/"+serveName, func(w http.ResponseWriter, r *http.Request) {
+		if which == "A" {
+			w.Write(scriptA)
+		} else {
+			w.Write(scriptB)
+		}
+	})
+	mux.HandleFunc("/download/serve-v0.0.17/"+serveName+".sha256", func(w http.ResponseWriter, r *http.Request) {
+		sum := sumA
+		if which != "A" {
+			sum = sumB
+		}
+		fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(sum[:]), serveName)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	t.Setenv("SATELLE_RELEASE_API", srv.URL+"/releases/latest")
+	t.Setenv("SATELLE_RELEASE_LIST_API", srv.URL+"/releases")
+	t.Setenv("SATELLE_RELEASE_BASE", srv.URL+"/download")
+
+	serveTarget := filepath.Join(installDir, "satelle-serve")
+	if err := os.WriteFile(serveTarget, scriptA, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out1, err := runRoot(t, "update", "--no-restart")
+	if err != nil {
+		t.Fatalf("update (serve match): %v\n%s", err, out1)
+	}
+	if !strings.Contains(out1, "satelle-serve already up to date") {
+		t.Fatalf("expected serve match message:\n%s", out1)
+	}
+
+	which = "B"
+	out2, err := runRoot(t, "update", "--no-restart")
+	if err != nil {
+		t.Fatalf("update (serve retag): %v\n%s", err, out2)
+	}
+	if strings.Contains(out2, "already up to date") && strings.Contains(out2, "satelle-serve") {
+		// The CLI half may still say up to date; the serve half must not.
+		if strings.Contains(out2, "satelle-serve already up to date") {
+			t.Fatalf("serve retag must not claim up to date:\n%s", out2)
+		}
+	}
+	if !strings.Contains(out2, "differs from published") {
+		t.Fatalf("expected serve differ message:\n%s", out2)
+	}
+	got, _ := os.ReadFile(serveTarget)
+	if string(got) != string(scriptB) {
+		t.Fatalf("serve bytes not replaced with B: %q", got)
 	}
 }
