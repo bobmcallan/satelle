@@ -1,3 +1,8 @@
+## [0.0.411] - 2026-08-03
+
+### Changed
+- **Recorded satelle-code-ac-review cost delta after sty_343fe595.** Post-change stories sty_4c986ed8 (16,617 / 1 round) and sty_bf797fa9 (62,871 / 3) vs baselines 68,699/6 and 53,654/3 — including cases where cost did not fall (sty_c5f64fec)
+
 ## [0.0.410] - 2026-08-03
 
 ### Changed
