@@ -66,6 +66,10 @@ func TestIsDevVersion(t *testing.T) {
 		!isDevVersion("0.0.396+local") {
 		t.Error("dev sentinels")
 	}
+	// scripts/build-version.sh form for unreleased make install (sty_022929ef).
+	if !isDevVersion("0.0.417+0aaedad49804-dirty") || !isDevVersion("0.0.417+0aaedad49804") {
+		t.Error("build-version.sh +sha form must demote via isDevVersion")
+	}
 	if isDevVersion("0.0.218") {
 		t.Error("release version is not dev")
 	}

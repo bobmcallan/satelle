@@ -1,3 +1,8 @@
+## [0.0.418] - 2026-08-03
+
+### Fixed
+- **`make install` no longer stamps a plain release version onto a dirty or unreleased tree.** `scripts/build-version.sh` appends `+<sha>[-dirty]` when HEAD is not the tagged release (or the tree is dirty), so `isDevVersion` demotes the fleet-wide binary out of gating. Install still writes `~/.local/bin` by default; recovery remains `satelle update` / `--force` (sty_022929ef)
+
 ## [0.0.417] - 2026-08-03
 
 ### Fixed

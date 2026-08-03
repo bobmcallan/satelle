@@ -52,6 +52,8 @@ func readDeployedVersion(dataDir string) string {
 }
 
 // isDevVersion reports builds that must never self-gate (local make / go run).
+// scripts/build-version.sh produces the +<sha>[-dirty] form for unreleased
+// make install trees so they hit the '+' rule (sty_022929ef).
 func isDevVersion(v string) bool {
 	v = strings.TrimSpace(v)
 	if v == "" || v == "dev" {
