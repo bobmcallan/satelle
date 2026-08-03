@@ -1,3 +1,8 @@
+## [0.0.402] - 2026-08-03
+
+### Fixed
+- **`satelle story restamp` accepts the name the create path assigns.** `WorkflowStates` resolved a lifecycle by looking up a DOCUMENT of that name, and the derived route is the one lifecycle with no document of its own — it is BUILT from the two route-source halves. So the lookup always missed and restamp refused with `workflow "default" does not resolve in the substrate`, on the exact value `WorkflowNameFor` hands out at create. The bug predates the rename (the old file-pair name missed the same way); naming the route is what made it visible, because "default" reads like something that obviously ought to resolve. It now resolves BY NAME, and only when a route source is actually present — a repo with no route, or with half a route, still refuses, because a stamp naming a lifecycle that cannot be built is the failure the check exists to prevent. Pinned by a round-trip test asserting that whatever `WorkflowNameFor` returns, `WorkflowStates` accepts: they are two halves of one contract and nothing else held them together (sty_81bb0dde)
+
 ## [serve-v0.0.17] - 2026-08-03
 
 ### Fixed

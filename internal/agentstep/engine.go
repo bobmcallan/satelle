@@ -1963,11 +1963,32 @@ func (g *Engine) WorkflowNameFor(ctx context.Context, category string) string {
 // no states, and the caller skips the status check rather than stranding the
 // story: the same contract an unparseable lifecycle always had here
 // (sty_d953c5d8).
+//
+// The derived route resolves by NAME, not by doc lookup (sty_81bb0dde). It is
+// the one lifecycle that has no document of its own — it is built from the two
+// route-source halves — so asking the index for a doc called "default" always
+// misses, and `satelle story restamp` refused to stamp the very name the create
+// path assigns. That is the exact round trip a stamp has to support: whatever
+// WorkflowNameFor hands out, restamp must accept back.
 func (g *Engine) WorkflowStates(ctx context.Context, name string) ([]string, bool) {
+	if name == wfgovern.DerivedRouteName {
+		return nil, g.routeSourcePresent(ctx)
+	}
 	if _, err := g.docs.Get(ctx, "workflows", name); err != nil {
 		return nil, false
 	}
 	return nil, true
+}
+
+// routeSourcePresent reports whether a derived route exists to be stamped onto —
+// both halves, authored or shipped. Without this check the name would resolve in
+// a repo that has no route at all, which is the one case a stamp must refuse.
+func (g *Engine) routeSourcePresent(ctx context.Context) bool {
+	workflows, err := g.docs.List(ctx, "workflows")
+	if err != nil {
+		return false
+	}
+	return wfgovern.RouteSourceOf(workflows).Present()
 }
 
 // WorkflowConsistency reports cross-workflow inconsistencies an agent should
