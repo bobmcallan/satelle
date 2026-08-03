@@ -13,6 +13,33 @@ The split is the constitution's line, applied to configuration:
 | `.satelle/workflows/agents.toml` (repo) | Which logical roles this repo has, and which profile (or inline binding) each one uses. |
 | `.satelle/workflows/*.md` (repo) | **Process** — which step runs which skill, which gate judges which edge. Never machine-wide. |
 
+## Repo agents.toml posture (committed substrate)
+
+**`.satelle/workflows/agents.toml` is committed substrate by product default.**
+It declares the logical roles your workflows name (`agent=<name>`) and which
+profile or inline binding each one uses. A clone that tracks process under
+`.satelle` needs this file to run any gated step. Secrets and machine-specific
+execution detail never belong in it — put those in the catalog
+(`~/.satelle/agents.toml`) or the gitignored `satelle.local.toml`.
+
+`.satelle` as a whole stays **git-optional** (continuity is local disk or
+personal rehydrate). This is recommended posture when a team tracks process,
+not an enforcement: a repo that ignores all of `.satelle/` still runs.
+
+**Fresh clone checklist**
+
+1. If the repo commits `.satelle/workflows/agents.toml` and bindings are fully
+   inline (no `profile=`), gated steps run after a normal init of any other
+   missing scaffold.
+2. If bindings reference profiles, seed or restore the catalog
+   (`satelle agent migrate`, or restore a backed-up `~/.satelle/agents.toml`),
+   then run `satelle agent validate` so every binding resolves.
+3. Put secrets under `[vars]` in `satelle.local.toml` or the catalog — never in
+   the committed agents file.
+
+See the decision record in the satelle dogfood repo
+(`decision-repo-agents-posture`) for the full reason.
+
 A profile that tries to carry process — `applies_to`, `skill`, `prompt`, `on`,
 `output_*`, a workflow name — is **refused at load**. That refusal is the whole
 point: a machine-wide file must not be able to change what any repo's process

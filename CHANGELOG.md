@@ -1,3 +1,8 @@
+## [0.0.412] - 2026-08-03
+
+### Added
+- **Repo agents.toml committed-substrate posture is product guidance.** `satelle help global-agents` states that `.satelle/workflows/agents.toml` is committed by default (role set a clone needs for gated steps); secrets and machine HOW stay in the catalog / satelle.local.toml. Init scaffold and managed gitignore comments match; TestHelpGlobalAgentsTopic and init tests pin the claim (sty_552d2d87)
+
 ## [0.0.411] - 2026-08-03
 
 ### Changed

@@ -1570,6 +1570,10 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# workflows/agents.toml — the age
 # grant). It sits beside done.toml and step.toml because it is the other half of what
 # those declare: step.toml names a performer and its gates by SECTION NAME, and the
 # [<name>] sections here say what those names actually run (sty_10f732ed).
+# COMMITTED SUBSTRATE by product default (sty_552d2d87): this file declares the
+# roles your workflows name; a clone needs it to run any gated step. Prefer
+# profile= into ~/.satelle/agents.toml for shared HOW; put secrets in the
+# gitignored satelle.local.toml — never here. See "satelle help global-agents".
 # FULLY DEFINED by init (no hidden coded configuration, sty_892517e7): every
 # value below is the ACTIVE default, written out so the operator sees exactly
 # what runs. Edit freely. This file is REQUIRED in an initialized repo
@@ -1714,8 +1718,11 @@ const gitignoreMarkerEnd = "# <<< satelle (managed) <<<"
 // Runtime state (satelle.db, logs, backups, stories cache) lives under
 // ~/.satelle/<repo-key>/ — outside the repo — so it is not listed here.
 const gitignoreBlock = gitignoreMarker + `
-# RECOMMENDED defaults — the operator owns .gitignore. satelle does not require
-# satelle.toml or authored markdown under .satelle/ to be committed.
+# RECOMMENDED defaults — the operator owns .gitignore. .satelle is git-optional
+# overall (continuity is local disk or personal rehydrate). When a team tracks
+# process under .satelle, workflows/agents.toml is intended to be committed
+# (roles workflows name; sty_552d2d87) — it is deliberately NOT listed below.
+# Execution detail belongs in ~/.satelle/agents.toml; secrets in satelle.local.toml.
 # Continuity is local disk by default; with [sync] <area> = personal the bound
 # hosted project backs that area up and can rehydrate it (push = backup;
 # documents pull / config deploy = sync down). Git is not the recovery path.

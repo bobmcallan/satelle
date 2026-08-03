@@ -8,6 +8,11 @@ result back in. The agent runs with a **fresh context** — it never sees the
 conversation — so the contract below is how it learns what to do and how it gets
 the rest of the story.
 
+The repo agents file is **committed substrate by product default** (role set +
+bindings a clone needs to run gated steps); execution detail and secrets live
+in the machine catalog and `satelle.local.toml`. See
+`satelle help global-agents` for that posture and the fresh-clone checklist.
+
 ## The dispatch contract
 
 Dispatch fires **on entry** to the step, after that step's entry gate accepts,

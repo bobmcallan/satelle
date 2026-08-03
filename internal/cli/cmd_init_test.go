@@ -71,6 +71,18 @@ func TestRunInitScaffolds(t *testing.T) {
 			t.Errorf("missing %s: %v", rel, err)
 		}
 	}
+	// sty_552d2d87: seeded agents.toml carries the committed-substrate posture.
+	agentsBody, err := os.ReadFile(filepath.Join(repo, ".satelle", "workflows", "agents.toml"))
+	if err != nil {
+		t.Fatalf("read agents.toml: %v", err)
+	}
+	if !strings.Contains(string(agentsBody), "COMMITTED SUBSTRATE") {
+		t.Errorf("scaffold agents.toml missing COMMITTED SUBSTRATE posture comment:\n%s", agentsBody)
+	}
+	if !strings.Contains(string(agentsBody), "satelle help global-agents") {
+		t.Errorf("scaffold agents.toml should point at satelle help global-agents:\n%s", agentsBody)
+	}
+
 	// No unedited default seeds.
 	for _, rel := range []string{
 		".satelle/skills/satelle-step-summary.md",
@@ -578,6 +590,21 @@ func TestEnsureGitignoreAppendsOnce(t *testing.T) {
 	// Fresh append must use the home-keyed form (no runtime db ignore entries).
 	if strings.Contains(string(gi), ".satelle/satelle.db") {
 		t.Error("gitignore must not ignore .satelle/satelle.db (home-keyed)")
+	}
+	// sty_552d2d87: managed block must not ignore the repo agents layer —
+	// committed substrate when process is tracked; execution detail is catalog/local.
+	// Comments may mention agents.toml; only non-comment lines are ignore rules.
+	for _, line := range strings.Split(string(gi), "\n") {
+		trim := strings.TrimSpace(line)
+		if trim == "" || strings.HasPrefix(trim, "#") {
+			continue
+		}
+		if strings.Contains(trim, "agents.toml") {
+			t.Errorf("managed gitignore must not ignore agents.toml (repo agents is committed substrate); got rule %q", trim)
+		}
+	}
+	if !strings.Contains(string(gi), "sty_552d2d87") {
+		t.Error("managed gitignore comment should name sty_552d2d87 (agents posture)")
 	}
 }
 

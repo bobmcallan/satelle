@@ -77,6 +77,10 @@ func TestHelpGlobalAgentsTopic(t *testing.T) {
 		"satelle agent profiles",
 		"satelle agent migrate",
 		"embedded",
+		// sty_552d2d87 — committed substrate posture + fresh-clone path
+		".satelle/workflows/agents.toml",
+		"committed substrate",
+		"satelle agent validate",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("`satelle help global-agents` missing %q:\n%s", want, body)
