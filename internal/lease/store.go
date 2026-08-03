@@ -51,7 +51,11 @@ CREATE TABLE IF NOT EXISTS engagement_lease (
     stop_reason        TEXT NOT NULL DEFAULT '',
     in_flight          INTEGER NOT NULL DEFAULT 0,
     in_flight_at       TEXT NOT NULL DEFAULT '',
-    in_flight_pid      INTEGER NOT NULL DEFAULT 0
+    in_flight_pid      INTEGER NOT NULL DEFAULT 0,
+    activity_label     TEXT NOT NULL DEFAULT '',
+    activity_index     INTEGER NOT NULL DEFAULT 0,
+    activity_total     INTEGER NOT NULL DEFAULT 0,
+    activity_at        TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_engagement_lease_seat ON engagement_lease(story_seat);
 `
@@ -78,6 +82,12 @@ type Lease struct {
 	// share the seat). When non-zero and dead on this host, EffectiveInFlight
 	// is false immediately — the process that owned the transition is gone.
 	InFlightPid int
+	// Activity* describe the current gate/phase while in_flight (sty_598a8e1b).
+	// Empty when not in flight or when progress has not been stamped yet.
+	ActivityLabel string
+	ActivityIndex int
+	ActivityTotal int
+	ActivityAt    time.Time
 }
 
 // Outcome of Acquire.
@@ -121,6 +131,18 @@ func Migrate(db *sql.DB) error {
 	if _, err := db.Exec(`ALTER TABLE engagement_lease ADD COLUMN in_flight_pid INTEGER NOT NULL DEFAULT 0`); err != nil &&
 		!strings.Contains(err.Error(), "duplicate column") {
 		return fmt.Errorf("lease: migrate in_flight_pid: %w", err)
+	}
+	// Transition activity (which gate / index / total) for queryable progress (sty_598a8e1b).
+	for _, col := range []string{
+		"activity_label TEXT NOT NULL DEFAULT ''",
+		"activity_index INTEGER NOT NULL DEFAULT 0",
+		"activity_total INTEGER NOT NULL DEFAULT 0",
+		"activity_at TEXT NOT NULL DEFAULT ''",
+	} {
+		if _, err := db.Exec(`ALTER TABLE engagement_lease ADD COLUMN ` + col); err != nil &&
+			!strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("lease: migrate activity: %w", err)
+		}
 	}
 	// Backfill so pre-upgrade stuck in_flight rows age from a real clock, not
 	// from a hook-refreshed heartbeat. Without this, zero-InFlightAt residue
@@ -199,7 +221,7 @@ func (s *Store) Acquire(ctx context.Context, itemID, kind, owner, state string, 
 
 	// Existing row for this item?
 	cur, err := scanLease(tx.QueryRowContext(ctx,
-		`SELECT item_id, kind, story_seat, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid
+		`SELECT item_id, kind, story_seat, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid, activity_label, activity_index, activity_total, activity_at
 		 FROM engagement_lease WHERE item_id = ?`, itemID))
 	if err == nil {
 		if cur.Owner == owner {
@@ -264,7 +286,7 @@ func (s *Store) Acquire(ctx context.Context, itemID, kind, owner, state string, 
 	// Story seat single-flight: another live story_seat=1 blocks.
 	if occupiesStorySeat {
 		holder, herr := scanLease(tx.QueryRowContext(ctx,
-			`SELECT item_id, kind, story_seat, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid
+			`SELECT item_id, kind, story_seat, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid, activity_label, activity_index, activity_total, activity_at
 			 FROM engagement_lease WHERE story_seat = 1 LIMIT 1`))
 		if herr == nil {
 			if holder.ItemID != itemID {
@@ -316,7 +338,7 @@ func (s *Store) Confirm(ctx context.Context, itemID, committedState string) erro
 	}
 	nowS := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE engagement_lease SET state = ?, in_flight = 0, in_flight_at = '', in_flight_pid = 0, heartbeat_at = ? WHERE item_id = ?`,
+		`UPDATE engagement_lease SET state = ?, in_flight = 0, in_flight_at = '', in_flight_pid = 0, activity_label = '', activity_index = 0, activity_total = 0, activity_at = '', heartbeat_at = ? WHERE item_id = ?`,
 		committedState, nowS, itemID)
 	if err != nil {
 		return fmt.Errorf("lease: confirm: %w", err)
@@ -331,7 +353,7 @@ func (s *Store) ClearInFlight(ctx context.Context, itemID string) error {
 		return errors.New("lease: store not configured")
 	}
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE engagement_lease SET in_flight = 0, in_flight_at = '', in_flight_pid = 0 WHERE item_id = ?`, itemID)
+		`UPDATE engagement_lease SET in_flight = 0, in_flight_at = '', in_flight_pid = 0, activity_label = '', activity_index = 0, activity_total = 0, activity_at = '' WHERE item_id = ?`, itemID)
 	if err != nil {
 		return fmt.Errorf("lease: clear in_flight: %w", err)
 	}
@@ -351,7 +373,7 @@ func (s *Store) Release(ctx context.Context, itemID, owner string) error {
 	defer func() { _ = tx.Rollback() }()
 
 	cur, err := scanLease(tx.QueryRowContext(ctx,
-		`SELECT item_id, kind, story_seat, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid
+		`SELECT item_id, kind, story_seat, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid, activity_label, activity_index, activity_total, activity_at
 		 FROM engagement_lease WHERE item_id = ?`, itemID))
 	if errors.Is(err, ErrNotFound) {
 		return tx.Commit() // already free
@@ -411,7 +433,7 @@ func (s *Store) Get(ctx context.Context, itemID string) (Lease, error) {
 		return Lease{}, errors.New("lease: store not configured")
 	}
 	return scanLease(s.db.QueryRowContext(ctx,
-		`SELECT item_id, kind, story_seat, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid
+		`SELECT item_id, kind, story_seat, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid, activity_label, activity_index, activity_total, activity_at
 		 FROM engagement_lease WHERE item_id = ?`, itemID))
 }
 
@@ -438,7 +460,7 @@ func (s *Store) List(ctx context.Context) ([]Lease, error) {
 		return nil, errors.New("lease: store not configured")
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT item_id, kind, story_seat, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid
+		`SELECT item_id, kind, story_seat, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid, activity_label, activity_index, activity_total, activity_at
 		 FROM engagement_lease ORDER BY acquired_at`)
 	if err != nil {
 		return nil, fmt.Errorf("lease: list: %w", err)
@@ -447,14 +469,17 @@ func (s *Store) List(ctx context.Context) ([]Lease, error) {
 	var out []Lease
 	for rows.Next() {
 		var l Lease
-		var seat, inflight, inflightPid int
-		var acq, beat, inflightAt string
-		if err := rows.Scan(&l.ItemID, &l.Kind, &seat, &l.Owner, &l.State, &acq, &beat, &l.StopRequestedBy, &l.StopReason, &inflight, &inflightAt, &inflightPid); err != nil {
+		var seat, inflight, inflightPid, actIdx, actTotal int
+		var acq, beat, inflightAt, actAt string
+		if err := rows.Scan(&l.ItemID, &l.Kind, &seat, &l.Owner, &l.State, &acq, &beat, &l.StopRequestedBy, &l.StopReason,
+			&inflight, &inflightAt, &inflightPid, &l.ActivityLabel, &actIdx, &actTotal, &actAt); err != nil {
 			return nil, fmt.Errorf("lease: list scan: %w", err)
 		}
 		l.StorySeat = seat != 0
 		l.InFlight = inflight != 0
 		l.InFlightPid = inflightPid
+		l.ActivityIndex = actIdx
+		l.ActivityTotal = actTotal
 		l.AcquiredAt, _ = time.Parse(time.RFC3339Nano, acq)
 		if l.AcquiredAt.IsZero() {
 			l.AcquiredAt, _ = time.Parse(time.RFC3339, acq)
@@ -464,6 +489,7 @@ func (s *Store) List(ctx context.Context) ([]Lease, error) {
 			l.HeartbeatAt, _ = time.Parse(time.RFC3339, beat)
 		}
 		l.InFlightAt = parseLeaseTime(inflightAt)
+		l.ActivityAt = parseLeaseTime(actAt)
 		out = append(out, l)
 	}
 	if err := rows.Err(); err != nil {
@@ -562,9 +588,10 @@ func (s *Store) SetInFlightAt(ctx context.Context, itemID string, at time.Time) 
 
 func scanLease(row *sql.Row) (Lease, error) {
 	var l Lease
-	var seat, inflight, inflightPid int
-	var acq, beat, inflightAt string
-	err := row.Scan(&l.ItemID, &l.Kind, &seat, &l.Owner, &l.State, &acq, &beat, &l.StopRequestedBy, &l.StopReason, &inflight, &inflightAt, &inflightPid)
+	var seat, inflight, inflightPid, actIdx, actTotal int
+	var acq, beat, inflightAt, actAt string
+	err := row.Scan(&l.ItemID, &l.Kind, &seat, &l.Owner, &l.State, &acq, &beat, &l.StopRequestedBy, &l.StopReason,
+		&inflight, &inflightAt, &inflightPid, &l.ActivityLabel, &actIdx, &actTotal, &actAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Lease{}, ErrNotFound
 	}
@@ -574,6 +601,8 @@ func scanLease(row *sql.Row) (Lease, error) {
 	l.StorySeat = seat != 0
 	l.InFlight = inflight != 0
 	l.InFlightPid = inflightPid
+	l.ActivityIndex = actIdx
+	l.ActivityTotal = actTotal
 	l.AcquiredAt, _ = time.Parse(time.RFC3339Nano, acq)
 	if l.AcquiredAt.IsZero() {
 		l.AcquiredAt, _ = time.Parse(time.RFC3339, acq)
@@ -583,7 +612,43 @@ func scanLease(row *sql.Row) (Lease, error) {
 		l.HeartbeatAt, _ = time.Parse(time.RFC3339, beat)
 	}
 	l.InFlightAt = parseLeaseTime(inflightAt)
+	l.ActivityAt = parseLeaseTime(actAt)
 	return l, nil
+}
+
+// SetActivity stamps the current gate/phase on an in-flight lease so seat can
+// report progress without the dispatching terminal (sty_598a8e1b). Best-effort:
+// callers may ignore the error — observability must not fail a transition.
+func (s *Store) SetActivity(ctx context.Context, itemID, label string, index, total int) error {
+	if s == nil || s.db == nil {
+		return errors.New("lease: store not configured")
+	}
+	nowS := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE engagement_lease SET activity_label = ?, activity_index = ?, activity_total = ?, activity_at = ? WHERE item_id = ?`,
+		label, index, total, nowS, itemID)
+	if err != nil {
+		return fmt.Errorf("lease: set activity: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// EffectiveActivity returns the queryable progress for a live in-flight lease.
+// ok is false when the transition is not effectively in flight or no activity
+// has been stamped (sty_598a8e1b). Domain calculation lives in lease — same
+// rule as EffectiveInFlight.
+func EffectiveActivity(l Lease, now time.Time) (label string, index, total int, elapsed time.Duration, ok bool) {
+	if !EffectiveInFlight(l, now) {
+		return "", 0, 0, 0, false
+	}
+	if l.ActivityAt.IsZero() || l.ActivityLabel == "" {
+		return "", 0, 0, 0, false
+	}
+	return l.ActivityLabel, l.ActivityIndex, l.ActivityTotal, now.Sub(l.ActivityAt), true
 }
 
 func parseLeaseTime(s string) time.Time {

@@ -1,3 +1,16 @@
+## [0.0.408] - 2026-08-03
+
+### Added
+- **Queryable transition progress on the engagement seat.** While a transition is in flight, `satelle story seat` reports the current gate/phase, its index in the set, total gates, and elapsed time since that activity stamped. Progress is written best-effort onto the lease row so any observer can inspect a running gate without the dispatching terminal (sty_598a8e1b)
+
+### Fixed
+- **Dead transitioning pid recovery is regression-locked with a deliberate kill test.** Spawn a real child, stamp its pid on the lease, assert live, Kill+Wait, assert EffectiveInFlight false and re-acquire without force-release (sty_598a8e1b)
+
+## [serve-v0.0.19] - 2026-08-03
+
+### Added
+- **Seat activity columns** for live gate progress (label/index/total/at) on engagement leases (sty_598a8e1b)
+
 ## [0.0.407] - 2026-08-03
 
 ### Fixed

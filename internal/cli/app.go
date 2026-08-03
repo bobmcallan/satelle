@@ -168,6 +168,15 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// reviewer runs — emit progress to stderr so it is visibly distinct from
 			// a hang (sty_6c88ca10). stderr keeps stdout's JSON payload clean.
 			rev.SetProgress(func(msg string) { fmt.Fprintln(os.Stderr, msg) })
+			// Queryable gate progress on the engagement lease (sty_598a8e1b).
+			// Best-effort: a SetActivity failure must never fail a transition.
+			leases := a.Store.Leases
+			rev.SetActivity(func(itemID string, act agentstep.Activity) {
+				if leases == nil || itemID == "" {
+					return
+				}
+				_ = leases.SetActivity(context.Background(), itemID, act.Label, act.Index, act.Total)
+			})
 			if aerr := applyAgentGrants(rev, a, agents); aerr != nil {
 				_ = a.Close()
 				return aerr

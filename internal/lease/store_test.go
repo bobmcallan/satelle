@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"os/exec"
 	"sync"
 	"testing"
 	"time"
@@ -354,5 +355,123 @@ func TestListIsStaleReap(t *testing.T) {
 	_, out, _, err := s.Acquire(ctx, "sty_b", "story", "alice", "plan", true)
 	if err != nil || out != OutcomeAcquired {
 		t.Fatalf("acquire after reap: out=%v err=%v", out, err)
+	}
+}
+
+// TestSetActivityRoundTrip (sty_598a8e1b): activity stamps are readable and
+// EffectiveActivity is only ok while effectively in flight with a label.
+func TestSetActivityRoundTrip(t *testing.T) {
+	s := openTestDB(t)
+	ctx := context.Background()
+	_, out, _, err := s.Acquire(ctx, "sty_act", "story", "alice", "plan", true)
+	if err != nil || out != OutcomeAcquired {
+		t.Fatalf("acquire: %v %v", out, err)
+	}
+	if err := s.SetActivity(ctx, "sty_act", "satelle-story-plan-review", 2, 3); err != nil {
+		t.Fatal(err)
+	}
+	l, err := s.Get(ctx, "sty_act")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	label, idx, total, elapsed, ok := EffectiveActivity(l, now)
+	if !ok || label != "satelle-story-plan-review" || idx != 2 || total != 3 {
+		t.Fatalf("EffectiveActivity = (%q,%d,%d,%v,%v)", label, idx, total, elapsed, ok)
+	}
+	if elapsed < 0 || elapsed > time.Minute {
+		t.Fatalf("elapsed = %v", elapsed)
+	}
+	// Clear in_flight → activity not effective.
+	if err := s.ClearInFlight(ctx, "sty_act"); err != nil {
+		t.Fatal(err)
+	}
+	l, _ = s.Get(ctx, "sty_act")
+	if _, _, _, _, ok := EffectiveActivity(l, now); ok {
+		t.Fatal("activity must not be ok after ClearInFlight")
+	}
+}
+
+// TestEffectiveActivityDeadPidNotOk: activity never surfaces for a dead driver.
+func TestEffectiveActivityDeadPidNotOk(t *testing.T) {
+	now := time.Now().UTC()
+	dead := 1<<30 - 1
+	l := Lease{
+		InFlight: true, InFlightAt: now, InFlightPid: dead, HeartbeatAt: now,
+		ActivityLabel: "gate", ActivityIndex: 1, ActivityTotal: 2, ActivityAt: now,
+	}
+	if _, _, _, _, ok := EffectiveActivity(l, now); ok {
+		t.Fatal("dead pid must not expose activity")
+	}
+}
+
+// TestDeadPidAcquireWithoutForceRelease (sty_598a8e1b AC3/AC5): a lease marked
+// in_flight with a dead pid does not block re-acquire; no ForceRelease needed.
+func TestDeadPidAcquireWithoutForceRelease(t *testing.T) {
+	s := openTestDB(t)
+	ctx := context.Background()
+	_, out, _, err := s.Acquire(ctx, "sty_kill", "story", "alice", "plan", true)
+	if err != nil || out != OutcomeAcquired {
+		t.Fatalf("acquire: %v %v", out, err)
+	}
+	// Spawn a child, stamp its real pid, assert live, then kill+wait.
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := cmd.Process.Pid
+	// Force the in_flight_pid via SQL (SetInFlightAt keeps pid; update pid directly).
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE engagement_lease SET in_flight_pid = ?, activity_label = ?, activity_index = 1, activity_total = 1, activity_at = ? WHERE item_id = ?`,
+		pid, "test-gate", time.Now().UTC().Format(time.RFC3339Nano), "sty_kill"); err != nil {
+		_ = cmd.Process.Kill()
+		t.Fatal(err)
+	}
+	l, err := s.Get(ctx, "sty_kill")
+	if err != nil {
+		_ = cmd.Process.Kill()
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if !EffectiveInFlight(l, now) {
+		_ = cmd.Process.Kill()
+		t.Fatal("must be live while child lives")
+	}
+	if _, _, _, _, ok := EffectiveActivity(l, now); !ok {
+		_ = cmd.Process.Kill()
+		t.Fatal("activity must be visible while child lives")
+	}
+	// Kill and wait (reap) so pidAlive sees the death.
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = cmd.Process.Wait()
+	l, err = s.Get(ctx, "sty_kill")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if EffectiveInFlight(l, now) {
+		t.Fatal("must not be live after kill+wait")
+	}
+	if _, _, _, _, ok := EffectiveActivity(l, now); ok {
+		t.Fatal("activity must not surface after kill")
+	}
+	// Re-acquire without ForceRelease.
+	_, out, _, err = s.Acquire(ctx, "sty_kill", "story", "alice", "in_progress", true)
+	if err != nil || out != OutcomeAlreadyHeld {
+		t.Fatalf("re-acquire after dead pid: out=%v err=%v (want AlreadyHeld, no ForceRelease)", out, err)
+	}
+}
+
+// TestHeartbeatDoesNotReviveDeadPid (sty_598a8e1b AC4).
+func TestHeartbeatDoesNotReviveDeadPid(t *testing.T) {
+	now := time.Now().UTC()
+	dead := 1<<30 - 1
+	l := Lease{
+		InFlight: true, InFlightAt: now, InFlightPid: dead,
+		HeartbeatAt: now, // fresh
+	}
+	if EffectiveInFlight(l, now) {
+		t.Fatal("fresh heartbeat must not revive a dead transitioning pid")
 	}
 }

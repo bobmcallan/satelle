@@ -35,6 +35,12 @@ type seatRow struct {
 	Stale         bool   `json:"stale"`
 	StopRequested string `json:"stop_requested_by,omitempty"`
 	StopReason    string `json:"stop_reason,omitempty"`
+	// Activity fields — queryable gate progress while in_flight (sty_598a8e1b).
+	// Omitted when the transition is not live or no activity has been stamped.
+	Activity      string `json:"activity,omitempty"`
+	ActivityIndex int    `json:"activity_index,omitempty"`
+	ActivityTotal int    `json:"activity_total,omitempty"`
+	ActivityAge   string `json:"activity_age,omitempty"`
 }
 
 // storySeatList reaps stale leases then lists remaining rows with age/stale flags
@@ -86,7 +92,7 @@ func storySeatRelease(ctx context.Context, raw json.RawMessage) (json.RawMessage
 }
 
 func seatRowFromLease(l lease.Lease, now time.Time) seatRow {
-	return seatRow{
+	row := seatRow{
 		ID:            l.ItemID,
 		Kind:          l.Kind,
 		StorySeat:     l.StorySeat,
@@ -99,6 +105,13 @@ func seatRowFromLease(l lease.Lease, now time.Time) seatRow {
 		StopRequested: l.StopRequestedBy,
 		StopReason:    l.StopReason,
 	}
+	if label, idx, total, elapsed, ok := lease.EffectiveActivity(l, now); ok {
+		row.Activity = label
+		row.ActivityIndex = idx
+		row.ActivityTotal = total
+		row.ActivityAge = formatAge(elapsed)
+	}
+	return row
 }
 
 // formatAge renders a duration as a short human age (minutes/hours/days).

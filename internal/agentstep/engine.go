@@ -133,6 +133,10 @@ type Engine struct {
 	// visibly distinct from a hang (sty_6c88ca10). The CLI wires it to stderr;
 	// nil (web/tests) disables emission.
 	progress func(msg string)
+	// activity, when set, receives structured gate/phase progress so seat can
+	// expose which gate is running without the dispatching terminal (sty_598a8e1b).
+	// Callback includes the story id so the sink stays stateless.
+	activity func(itemID string, a Activity)
 	// agentTimeout bounds EACH nested agent invocation (a reviewer attempt or a
 	// step summary) with a context deadline, so a wedged subprocess yields a
 	// clear bounded failure instead of an open-ended block (sty_6c88ca10).
@@ -218,10 +222,28 @@ const defaultAgentTimeout = 10 * time.Minute
 // prints them to stderr). nil disables emission.
 func (g *Engine) SetProgress(fn func(msg string)) { g.progress = fn }
 
+// Activity is structured transition progress: which gate/phase is running,
+// its 1-based index, and the size of the set (sty_598a8e1b).
+type Activity struct {
+	Label string
+	Index int
+	Total int
+}
+
+// SetActivity wires the structured progress sink (CLI stamps the lease row).
+func (g *Engine) SetActivity(fn func(itemID string, a Activity)) { g.activity = fn }
+
 // emitProgress sends one progress line to the wired sink, if any.
 func (g *Engine) emitProgress(format string, a ...any) {
 	if g.progress != nil {
 		g.progress(fmt.Sprintf(format, a...))
+	}
+}
+
+// emitActivity sends structured progress for the given story, if wired.
+func (g *Engine) emitActivity(itemID, label string, index, total int) {
+	if g.activity != nil && itemID != "" {
+		g.activity(itemID, Activity{Label: label, Index: index, Total: total})
 	}
 }
 
@@ -641,11 +663,14 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 	}
 
 	var result verb.GateDecision
+	nGates := len(ordered)
+	g.emitActivity(item.ID, "gates", 0, nGates)
 	for i, ref := range ordered {
 		skill := ref.skill
 		if skill == "" {
 			continue
 		}
+		g.emitActivity(item.ID, skill, i+1, nGates)
 		dec, rerr := g.runReviewer(ctx, item, toStatus, skill, ref.agent)
 		if rerr != nil {
 			return dec, rerr
@@ -699,6 +724,10 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 	results := make([]slot, len(ordered))
 	sem := make(chan struct{}, cap)
 	var wg sync.WaitGroup
+	nGates := len(ordered)
+	g.emitActivity(item.ID, "gates (parallel)", 0, nGates)
+	var doneMu sync.Mutex
+	doneN := 0
 	for i, ref := range ordered {
 		if ref.skill == "" {
 			continue
@@ -713,7 +742,15 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 				results[i].err = ctx.Err()
 				return
 			}
+			// Approximate progress: most-recent start + completed count (sty_598a8e1b).
+			doneMu.Lock()
+			g.emitActivity(item.ID, ref.skill+" (parallel)", doneN+1, nGates)
+			doneMu.Unlock()
 			dec, rerr := g.runReviewer(ctx, item, toStatus, ref.skill, ref.agent)
+			doneMu.Lock()
+			doneN++
+			g.emitActivity(item.ID, ref.skill+" (parallel)", doneN, nGates)
+			doneMu.Unlock()
 			results[i] = slot{dec: dec, err: rerr}
 		}(i, ref)
 	}
@@ -1005,6 +1042,7 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		_, _ = io.WriteString(eventSink, agentcli.FormatEvent(ev))
 		eventSinkMu.Unlock()
 	}
+	g.emitActivity(item.ID, "dispatch:"+toStatus, 1, 1)
 	if sinkPath != "" {
 		g.emitProgress("dispatching step %s to named agent %s (may take several minutes)… live output: %s", toStatus, dispatchAgent, sinkPath)
 	} else {
@@ -1153,6 +1191,7 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.Dispa
 	} else if !errors.Is(rerr, docindex.ErrNotFound) {
 		return verb.DispatchResult{}, rerr
 	}
+	g.emitActivity(item.ID, "retrospective", 1, 1)
 	g.emitProgress("running retrospective on %s (may take a few minutes)…", item.ID)
 	retroPayload := transitionPayload{Story: item, From: item.Status, To: item.Status, ReviewSkill: retrospectSkill}
 	g.fillPayloadDocs(ctx, item.ID, &retroPayload)
@@ -1625,6 +1664,7 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 	if err != nil {
 		return verb.SummaryResult{}, err
 	}
+	g.emitActivity(item.ID, "summary", 1, 1)
 	g.emitProgress("summarising step %s→%s via [%s] (may take a minute)…", from, to, section)
 	// Retry the SAME transient a reviewer retries (a rate-limited/killed/empty
 	// subprocess under concurrent sessions — sty_d71b0791, sty_a1151fb0): a single
