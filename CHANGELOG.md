@@ -1,3 +1,8 @@
+## [0.0.419] - 2026-08-03
+
+### Fixed
+- **`satelle migrate` no longer deletes operator hand-made `agents.*.bak` as legacy runtime residue.** Those backups are outside migrate's ownership; keep them outside scan roots (or next to the machine-wide catalog). Residue remains satelle.db*, logs/, backups/, stories/ only (sty_0445104b)
+
 ## [0.0.418] - 2026-08-03
 
 ### Fixed

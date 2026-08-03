@@ -134,8 +134,9 @@ func TestMigrateConvergesLegacyFixture(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dataDir, "logs")); err == nil {
 		t.Fatal("legacy logs/ should be removed")
 	}
-	if _, err := os.Stat(filepath.Join(dataDir, "agents.toml.bak")); err == nil {
-		t.Fatal("agents.toml.bak should be removed")
+	// Operator hand-made agents.*.bak is NOT residue (sty_0445104b).
+	if _, err := os.Stat(filepath.Join(dataDir, "agents.toml.bak")); err != nil {
+		t.Fatal("agents.toml.bak must survive migrate — it is the operator's backup, not runtime residue")
 	}
 	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
 	if strings.Contains(string(gi), ".satelle/satelle.db") {
@@ -634,5 +635,40 @@ func TestMigrateRewritesFilePairWorkflowStamps(t *testing.T) {
 	}
 	if !strings.Contains(again.String(), "already on current structure") {
 		t.Errorf("second run should be a no-op:\n%s", again.String())
+	}
+}
+
+// TestListLegacyResidueLeavesAgentsBak proves sty_0445104b: operator
+// agents.*.bak under the repo is not classified as legacy residue.
+func TestListLegacyResidueLeavesAgentsBak(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dataDir, "agents.toml.bak"), []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wf := filepath.Join(dataDir, "workflows")
+	if err := os.MkdirAll(wf, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wf, "agents.toml.codex-broken.bak"), []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Real residue still listed.
+	if err := os.WriteFile(filepath.Join(dataDir, "satelle.db"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := listLegacyResidue(dataDir)
+	for _, p := range got {
+		if strings.Contains(p, ".bak") {
+			t.Fatalf("listLegacyResidue must not include operator backups, got %v", got)
+		}
+	}
+	foundDB := false
+	for _, p := range got {
+		if p == "satelle.db" {
+			foundDB = true
+		}
+	}
+	if !foundDB {
+		t.Fatalf("listLegacyResidue should still list satelle.db, got %v", got)
 	}
 }

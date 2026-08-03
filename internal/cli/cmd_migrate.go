@@ -36,8 +36,11 @@ func init() {
                             into ~/.satelle/<repo-key>/ (non-destructive)
   2. legacy residue       — remove in-repo runtime leftovers once home-keyed
                             (satelle.db*, logs/, backups/, stories/ — including
-                            attachment residue recreated under .satelle/stories/,
-                            agents.*.bak)
+                            attachment residue recreated under .satelle/stories/).
+                            Operator hand-made agents.*.bak under the repo is
+                            NOT residue (sty_0445104b); keep backups outside
+                            migrate's scan roots (e.g. next to the machine-wide
+                            catalog, or a path you control)
   3. substrate prune      — remove unedited embedded-default seed copies
   4. gitignore converge   — rewrite the managed .gitignore block to the current form
   5. config converge      — append ".gitignore" to [gate] edit_exempt_paths when a
@@ -550,8 +553,15 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 }
 
 // listLegacyResidue returns dataDir-relative paths that are obsolete once
-// runtime is home-keyed: satelle.db (+wal/shm), logs/, backups/, stories/,
-// and agents.*.bak siblings.
+// runtime is home-keyed: satelle.db (+wal/shm), logs/, backups/, stories/.
+//
+// Deliberately does NOT sweep agents.*.bak under the repo (sty_0445104b).
+// Those files are operator hand-made recovery snapshots, not satelle runtime
+// residue. The only satelle writer of agents.toml.bak is
+// `satelle agent profiles restore --force`, and it targets GlobalAgentsPath
+// under GlobalDir — outside migrate's scan roots. No historical satelle version
+// wrote agents.*.bak under the repo tree, so there is no exact-name exception
+// to keep.
 func listLegacyResidue(dataDir string) []string {
 	var out []string
 	for _, name := range []string{
@@ -568,22 +578,6 @@ func listLegacyResidue(dataDir string) []string {
 				out = append(out, name+"/")
 			} else {
 				out = append(out, name)
-			}
-		}
-	}
-	// agents.*.bak (and similar) beside the agents file — which now lives under
-	// workflows/ (sty_10f732ed), so scan there as well as the data dir, where a
-	// pre-move repo's backups still sit.
-	agentsPath, _ := config.AgentsPath(dataDir)
-	for _, dir := range []string{dataDir, filepath.Dir(agentsPath)} {
-		ents, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-		for _, e := range ents {
-			n := e.Name()
-			if strings.HasPrefix(n, "agents.") && strings.HasSuffix(n, ".bak") {
-				out = append(out, n)
 			}
 		}
 	}
