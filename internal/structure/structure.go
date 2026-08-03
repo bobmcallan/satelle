@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 )
@@ -231,8 +232,8 @@ func checkPrinciple(name, body string) []string {
 // reported, as the WARN that names the consequence, by
 // agentstep.WorkflowSkillProblems.
 //
-// A route source must NOT declare applies_to: selection is by the `## <category>`
-// sections in done.md, and a second selector would be a second precedence rule.
+// A route source must NOT declare applies_to: selection is by the `[<category>]`
+// tables in done.toml, and a second selector would be a second precedence rule.
 func checkRouteSource(name string, fm []string, body string, resolveSkill func(skill string) bool) []string {
 	var p []string
 	if resolveSkill == nil {
@@ -252,7 +253,7 @@ func checkRouteSource(name string, fm []string, body string, resolveSkill func(s
 		p = append(p, "frontmatter missing scope")
 	}
 	if fmHas(fm, "applies_to") {
-		p = append(p, "a route source must not declare applies_to — done.md's `## <category>` sections select it")
+		p = append(p, "a route source must not declare applies_to — done.toml's `[<category>]` tables select it")
 	}
 	switch name {
 	case wfgovern.RouteSourceDone:
@@ -261,16 +262,16 @@ func checkRouteSource(name string, fm []string, body string, resolveSkill func(s
 			return append(p, "declaration of done does not parse: "+err.Error())
 		}
 		if len(lists) == 0 {
-			p = append(p, "no `## <category>` section — the file declares done for nothing")
+			p = append(p, "no `[<category>]` table — the file declares done for nothing")
 		}
 		seen := map[string]bool{}
 		for _, l := range lists {
 			if seen[l.Category] {
-				p = append(p, "duplicate `## "+l.Category+"` section — one declaration per category")
+				p = append(p, "duplicate `["+l.Category+"]` table — one declaration per category")
 			}
 			seen[l.Category] = true
 			if len(l.Obligations) == 0 {
-				p = append(p, "`## "+l.Category+"` declares no obligations")
+				p = append(p, "`["+l.Category+"]` declares no obligations")
 			}
 		}
 	case wfgovern.RouteSourceStep:
@@ -279,7 +280,7 @@ func checkRouteSource(name string, fm []string, body string, resolveSkill func(s
 			return append(p, "step catalogue does not parse: "+err.Error())
 		}
 		if len(cat.Steps) == 0 {
-			p = append(p, "no `## <step>` section — the catalogue is empty")
+			p = append(p, "no `[<obligation>]` table — the catalogue is empty")
 		}
 		// Catalogue-wide DELIBERATELY: every step's executor rubric must resolve,
 		// whichever route family selects it. This is not per-route data, so it does
@@ -296,7 +297,7 @@ func checkRouteSource(name string, fm []string, body string, resolveSkill func(s
 }
 
 // checkWorkflow validates a doc under the workflows kind. A lifecycle is a
-// DERIVED ROUTE — done.md + step.md — and nothing else under this kind carries
+// DERIVED ROUTE — done.toml + step.toml — and nothing else under this kind carries
 // one (sty_d953c5d8), so the two halves get the route-source check and anything
 // else is reported as what it is: a file in the workflows dir that governs
 // nothing. The message names the remedy rather than leaving a bare parse
@@ -304,13 +305,15 @@ func checkRouteSource(name string, fm []string, body string, resolveSkill func(s
 func checkWorkflow(name, body string, resolveSkill func(skill string) bool) []string {
 	fm, _, ok := splitFM(body)
 	if !ok {
-		return []string{"missing YAML frontmatter"}
+		// Not "YAML" here, unlike every other kind: a workflows doc is TOML, and its
+		// frontmatter is a `[meta]` table (sty_81bb0dde).
+		return []string{"missing frontmatter — a route source declares a [meta] table"}
 	}
 	if wfgovern.IsRouteSource(name) {
 		return checkRouteSource(name, fm, body, resolveSkill)
 	}
 	return []string{
-		"not a route source — a lifecycle is done.md + step.md under this dir, and no other " +
+		"not a route source — a lifecycle is done.toml + step.toml under this dir, and no other " +
 			"workflows doc declares one; read `satelle help workflow-convert` for how to convert it",
 	}
 }
@@ -332,19 +335,15 @@ func requireName(fm []string, slug string) []string {
 
 // --- minimal frontmatter helpers (self-contained; mirror docindex/okf.go) ---
 
-// splitFM splits a markdown body into its YAML frontmatter lines and the
-// remaining body. ok is false when there is no terminated leading frontmatter.
+// splitFM splits a body into its frontmatter lines and the remaining body,
+// accepting either form: a markdown document's `---` block or a TOML file's
+// `[meta]` table (sty_81bb0dde). ok is false when there is no frontmatter.
+//
+// It delegates rather than re-implementing, because the ROUTE SOURCE is TOML and
+// a second copy of this logic here would report "missing YAML frontmatter" on a
+// perfectly valid file.
 func splitFM(body string) (fm []string, rest string, ok bool) {
-	lines := strings.Split(body, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		return nil, body, false
-	}
-	for j := 1; j < len(lines); j++ {
-		if strings.TrimSpace(lines[j]) == "---" {
-			return lines[1:j], strings.Join(lines[j+1:], "\n"), true
-		}
-	}
-	return nil, body, false
+	return docindex.FrontmatterBody(body)
 }
 
 // fmScalar returns the unquoted top-level scalar for key, or "".

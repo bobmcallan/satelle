@@ -88,7 +88,7 @@ func TestCheckAllEmptyRegistry(t *testing.T) {
 // TestJSONPayloadShape pins AC8's machine-readable contract: stable ids, the
 // summary, and the exit code all present and unmarshalable.
 func TestJSONPayloadShape(t *testing.T) {
-	root := newFixtureRepo(t, fixtureOpts{workflowAdd: "hooks:\n  - operation: create_review\n    skill: s\n    agent: nobody\n"})
+	root := newFixtureRepo(t, fixtureOpts{workflowAdd: "[[meta.hooks]]\noperation = \"create_review\"\nskill = \"s\"\nagent = \"nobody\"\n"})
 	r := check(t, root)
 
 	var buf strings.Builder

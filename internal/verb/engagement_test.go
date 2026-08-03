@@ -43,10 +43,24 @@ func TestEngagementBaselineIdempotentAndDiff(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
 
 	wireWithWorkflows(t, routeHalves(
-		"## *\n- raised\n- coded\n- closed\npark: blocked\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: coded\n"))
+		`["*"]
+obligations = ["raised", "coded", "closed"]
+park = { state = "blocked" }
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+`))
 	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
 	t.Cleanup(func() { verb.SetTransitionGater(nil) })
 

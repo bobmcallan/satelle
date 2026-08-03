@@ -70,7 +70,7 @@ func TestParentWorkflowSelectedAndValid(t *testing.T) {
 		if err := json.Unmarshal([]byte(out), &rows); err != nil {
 			t.Fatalf("parse workflow list %s: %v\n%s", cat, err, out)
 		}
-		if len(rows) == 0 || rows[0].Name != "done.md+step.md" || !rows[0].Active {
+		if len(rows) == 0 || rows[0].Name != "default" || !rows[0].Active {
 			t.Errorf("category %s active workflow = %+v, want the derived route first/active", cat, rows)
 		}
 		// …and it is the container lifecycle, not the wildcard one: backlog closes

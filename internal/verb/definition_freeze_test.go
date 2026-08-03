@@ -28,7 +28,7 @@ func wireWithWorkflows(t *testing.T, workflows map[string]string) {
 		t.Fatal(err)
 	}
 	for name, body := range workflows {
-		if err := os.WriteFile(filepath.Join(wfDir, name+".md"), []byte(body), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(wfDir, name+".toml"), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -48,22 +48,27 @@ func wireWithWorkflows(t *testing.T, workflows map[string]string) {
 	})
 }
 
-// writeRouteFiles lands a routeHalves map in a workflows dir.
+// writeRouteFiles lands a routeHalves map in a workflows dir. The route source
+// is TOML (sty_81bb0dde), and the extension is load-bearing: a `.md` half is
+// REFUSED by name as an unconverted repo, so a fixture written as markdown fails
+// every case with a conversion error rather than the behaviour under test.
 func writeRouteFiles(t *testing.T, wfDir string, halves map[string]string) {
 	t.Helper()
 	for name, body := range halves {
-		if err := os.WriteFile(filepath.Join(wfDir, name+".md"), []byte(body), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(wfDir, name+".toml"), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
 }
 
-// A lifecycle is a DERIVED ROUTE — done.md + step.md (sty_d953c5d8). routeHalves
-// names the two docs a fixture must write; a category-specific lane is a
-// `## <category>` section rather than a second workflow file.
+// A lifecycle is a DERIVED ROUTE — done.toml + step.toml (sty_d953c5d8).
+// routeHalves names the two docs a fixture must write; a category-specific lane
+// is a `[<category>]` table rather than a second workflow file. Frontmatter is
+// the `[meta]` table the TOML form uses (sty_81bb0dde).
 func routeHalves(done, step string) map[string]string {
 	mk := func(name, what, body string) string {
-		return "---\nname: " + name + "\ntype: workflow\nscope: project\ndescription: " + what + "\n---\n\n" + body
+		return "[meta]\nname = \"" + name + "\"\ntype = \"workflow\"\nscope = \"project\"\ndescription = \"" +
+			what + "\"\n\n" + body
 	}
 	return map[string]string{
 		"done": mk("done", "fixture declaration of done", done),
@@ -72,14 +77,40 @@ func routeHalves(done, step string) map[string]string {
 }
 
 var freezeWF = routeHalves(
-	"## *\n- raised\n- coded\n- closed\n\n"+
-		"## triage-cat\n- triaged\n- t-coded\n- t-closed\n",
-	"## backlog\nstart: true\nprovides: raised\n\n"+
-		"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
-		"## done\nterminal: true\nprovides: closed\nrequires: coded\n\n"+
-		"## triage\nstart: true\nprovides: triaged\n\n"+
-		"## in_progress\nagent: executor\nprovides: t-coded\nrequires: triaged\n\n"+
-		"## done\nterminal: true\nprovides: t-closed\nrequires: t-coded\n")
+	`["*"]
+obligations = ["raised", "coded", "closed"]
+
+[triage-cat]
+obligations = ["triaged", "t-coded", "t-closed"]
+`,
+	`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+
+[triaged]
+status = "triage"
+start = true
+
+[t-coded]
+status = "in_progress"
+agent = "executor"
+requires = ["triaged"]
+
+[t-closed]
+status = "done"
+terminal = true
+requires = ["t-coded"]
+`)
 
 func TestDefinitionFreezeEngagedRefusesTitle(t *testing.T) {
 	wireWithWorkflows(t, freezeWF)

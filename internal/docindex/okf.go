@@ -116,6 +116,12 @@ func normalizeTypeDir(dir, typeVal string) {
 			}
 			return nil
 		}
+		// `.md` ONLY, deliberately — do NOT widen this to Indexable(path).
+		// normalizeType rewrites a YAML `---` block and WRITES THE FILE BACK. Run
+		// against a TOML route source it would see no frontmatter, insert a
+		// markdown one at the top, and corrupt the file on the first index sync
+		// (sty_81bb0dde). A TOML file declares `type` in its [meta] table at
+		// authoring time and needs no back-fill.
 		if !strings.EqualFold(filepath.Ext(path), ".md") {
 			return nil
 		}
@@ -205,6 +211,8 @@ func normalizeOKFDir(dir string) {
 		return
 	}
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		// `.md` ONLY, for the same reason as normalizeTypeDir: this rewrites a
+		// YAML frontmatter block and writes the file back (sty_81bb0dde).
 		if err != nil || d.IsDir() || !strings.EqualFold(filepath.Ext(path), ".md") {
 			return nil
 		}

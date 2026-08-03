@@ -818,7 +818,7 @@ type wfEntry struct {
 	docindex.Doc
 	route *wfdot.Spec // non-nil for a derived-route category
 	// hooksOnly marks the entry that exists to carry a derived route's
-	// lifecycle-hook frontmatter (done.md). It has no lifecycle of its own.
+	// lifecycle-hook frontmatter (done.toml). It has no lifecycle of its own.
 	hooksOnly bool
 }
 
@@ -834,12 +834,12 @@ func (e wfEntry) spec() (wfdot.Spec, bool) {
 
 // expandRouteSources turns the indexed workflow set into the entries to check.
 // A route source contributes one entry per category it declares (named
-// `done.md+step.md (<category>)`, so a problem says WHICH route it is in) and
+// `done.toml+step.toml (<category>)`, so a problem says WHICH route it is in) and
 // the two halves themselves contribute none — they carry no lifecycle. Every
 // other workflow passes through unchanged.
 //
-// One entry leads: a hooks-only entry carrying done.md's body. A lifecycle hook
-// is frontmatter, and a route declares its hooks ONCE on done.md for the whole
+// One entry leads: a hooks-only entry carrying done.toml's body. A lifecycle hook
+// is frontmatter, and a route declares its hooks ONCE on done.toml for the whole
 // route — reporting them per category would list the same create gate five
 // times. It has no Spec, so the allocation loop skips straight past its states.
 func expandRouteSources(workflows []docindex.Doc) []wfEntry {

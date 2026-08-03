@@ -19,51 +19,45 @@ import (
 // re-declared alongside the two task lanes it exists to override.
 func writeDispatchTaskRoute(t *testing.T, repo string) {
 	t.Helper()
-	const done = `## *
-- raised
-- coded
-- closed
-cancel: cancelled @satelle-story-cancel-review
+	const done = `["*"]
+obligations = ["raised", "coded", "closed"]
+cancel = { state = "cancelled", gate = "satelle-story-cancel-review" }
 
-## execution
-- raised
-- run
-- run-verified
-cancel: cancelled
+[execution]
+obligations = ["raised", "run", "run-verified"]
+cancel = { state = "cancelled" }
 
-## task
-- raised
-- run
-- run-verified
-cancel: cancelled
+[task]
+obligations = ["raised", "run", "run-verified"]
+cancel = { state = "cancelled" }
 `
-	const step = `## backlog
-start: true
-provides: raised
+	const step = `[raised]
+status = "backlog"
+start = true
 
-## in_progress
-agent: executor
-provides: coded
-requires: raised
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
 
-## done
-terminal: true
-provides: closed
-requires: coded
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
 
-## in_progress
-agent: runner
-reviewers: satelle-task-validate-before-review
-reviewer_agent: reviewer
-provides: run
-requires: raised
+[run]
+status = "in_progress"
+agent = "runner"
+reviewers = ["satelle-task-validate-before-review"]
+reviewer_agent = "reviewer"
+requires = ["raised"]
 
-## done
-reviewers: satelle-task-validate-after-review
-reviewer_agent: reviewer
-terminal: true
-provides: run-verified
-requires: run
+[run-verified]
+status = "done"
+reviewers = ["satelle-task-validate-after-review"]
+reviewer_agent = "reviewer"
+terminal = true
+requires = ["run"]
 `
 	writeRouteFixture(t, repo, done, step)
 }

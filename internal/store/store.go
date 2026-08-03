@@ -98,7 +98,7 @@ func embeddedDefaultDocs() []docindex.Doc {
 			// a task as a doc (sty_d4360e90).
 			continue
 		}
-		out = append(out, docindex.Doc{Kind: d.Kind, Name: d.Name, Body: d.Body})
+		out = append(out, docindex.Doc{Kind: d.Kind, Name: d.Name, Body: d.Body, Ext: d.Ext})
 	}
 	return out
 }

@@ -227,10 +227,25 @@ func TestShippedChangelogMarksDOTRetirement(t *testing.T) {
 	}
 }
 
-// TestShippedChangelogSparesCurrentRepos is AC3 against the REAL corpus: the
-// retroactive marker must refuse only repos that are already broken. Ranges come
-// from verb.ChangelogRange over the shipped embed, so this fails if a later edit
-// marks a release Breaking that a converted repo has already walked past.
+// TestShippedChangelogSparesCurrentRepos is AC3 against the REAL corpus: a
+// repo is refused across a Breaking release and spared once it is stamped at or
+// after it. Ranges come from verb.ChangelogRange over the shipped embed, so this
+// fails if a later edit marks a release Breaking without accounting for who it
+// refuses.
+//
+// The expectations MOVE with each Breaking release, and they must — a `###
+// Breaking` marker exists to refuse the repos below it. Two markers ship today:
+//
+//   - 0.0.385, the DOT retirement. RETROACTIVE (sty_b36c051c) — added after the
+//     fact, so it can only refuse repos that were already broken.
+//   - 0.0.401, the route source becoming TOML (sty_81bb0dde). A REAL breaking
+//     release: every repo whose route source is still markdown stops resolving
+//     on upgrade, and being told so on the next command — rather than at work
+//     time, three gates in — is the entire point of the marker.
+//
+// So a stamp that this test spared before 0.0.401 is now correctly refused. What
+// stays invariant is the shape: at-or-after the newest marker is spared, and the
+// refusal a repo below it gets carries that release's own bullets.
 func TestShippedChangelogSparesCurrentRepos(t *testing.T) {
 	// A ceiling above every shipped entry, so the range is the widest one any
 	// future binary could ask for.
@@ -241,9 +256,10 @@ func TestShippedChangelogSparesCurrentRepos(t *testing.T) {
 		why      string
 	}{
 		{"0.0.380", true, "predates the DOT retirement — already broken, must be told"},
-		{"0.0.385", false, "stamped AT the retirement — converted or never on DOT"},
-		{"0.0.387", false, "this repo's own stamp at the time of the retro-mark"},
-		{"0.0.395", false, "current"},
+		{"0.0.385", true, "converted off DOT, but its route source is still markdown"},
+		{"0.0.395", true, "same — every pre-TOML stamp is refused across 0.0.401"},
+		{"0.0.401", false, "stamped AT the TOML cutover — converted, or never had a route"},
+		{"0.0.402", false, "past it"},
 	}
 	for _, c := range cases {
 		entries, err := verb.ChangelogRange(c.deployed, future)
@@ -256,6 +272,33 @@ func TestShippedChangelogSparesCurrentRepos(t *testing.T) {
 		}
 		if !c.refused && err != nil {
 			t.Errorf("stamp %s (%s): must not be refused:\n%v", c.deployed, c.why, err)
+		}
+	}
+}
+
+// TestShippedChangelogCarriesTheTomlRemediation (sty_81bb0dde AC6): the marker
+// only helps if the bullets an operator READS tell them what to do. A repo
+// stamped before the cutover must get the TOML conversion path verbatim — the
+// rename, the help topic, and the diff that proves no gate vanished — not the
+// older DOT-retirement text it also spans.
+func TestShippedChangelogCarriesTheTomlRemediation(t *testing.T) {
+	entries, err := verb.ChangelogRange("0.0.395", "9.9.9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = breakingDriftError("0.0.395", "9.9.9", entries)
+	if err == nil {
+		t.Fatal("a pre-TOML stamp must be refused across the cutover")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"done.toml", "step.toml",
+		"satelle help workflow-convert",
+		"satelle workflow show",
+		"satelle init` does NOT convert",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the TOML remediation is missing %q:\n%v", want, msg)
 		}
 	}
 }

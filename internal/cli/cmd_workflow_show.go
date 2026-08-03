@@ -135,9 +135,9 @@ func renderWorkflowShow(out io.Writer, a *app.App, doc docindex.Doc, resolves fu
 			}
 		}
 	} else {
-		// A lifecycle is done.md + step.md; nothing else under the workflows kind
+		// A lifecycle is done.toml + step.toml; nothing else under the workflows kind
 		// carries one, so there is no graph to summarise (sty_d953c5d8).
-		fmt.Fprintln(out, "  kind:       not a route source — a lifecycle is done.md + step.md")
+		fmt.Fprintln(out, "  kind:       not a route source — a lifecycle is done.toml + step.toml")
 	}
 
 	// The hook section — the reason this command exists.
@@ -270,7 +270,7 @@ func ceilingLabel(g agentvalidate.Grant) string {
 // workflowSourceFile names where the workflow body came from: the repo file when
 // one exists on disk, else the embedded default.
 func workflowSourceFile(dataDir string, doc docindex.Doc) string {
-	path := filepath.Join(dataDir, "workflows", doc.Name+".md")
+	path := filepath.Join(dataDir, "workflows", doc.Name+config.EmbeddedExt("workflows", doc.Name))
 	if fileExists(path) {
 		return path
 	}

@@ -26,17 +26,17 @@ func repoRoot(t *testing.T) string {
 	return ""
 }
 
-// derived builds a Spec through the DERIVED front door (done.md + step.md).
+// derived builds a Spec through the DERIVED front door (done.toml + step.toml).
 func derived(t *testing.T, tags []string) wfdot.Spec {
 	t.Helper()
 	root := repoRoot(t)
-	done, err := os.ReadFile(filepath.Join(root, "internal", "wfdot", "testdata", "done.md"))
+	done, err := os.ReadFile(filepath.Join(root, "internal", "wfdot", "testdata", "done.toml"))
 	if err != nil {
-		t.Fatalf("read done.md: %v", err)
+		t.Fatalf("read done.toml: %v", err)
 	}
-	step, err := os.ReadFile(filepath.Join(root, "internal", "wfdot", "testdata", "step.md"))
+	step, err := os.ReadFile(filepath.Join(root, "internal", "wfdot", "testdata", "step.toml"))
 	if err != nil {
-		t.Fatalf("read step.md: %v", err)
+		t.Fatalf("read step.toml: %v", err)
 	}
 	spec, err := wfdot.ParseRoute(string(done), string(step), "feature", tags)
 	if err != nil {
@@ -189,13 +189,13 @@ func sortStrings(ss []string) {
 // its retrospective one, both read from the substrate's `advise` declarations.
 func TestRouteNamesTheAdvisorsToConsult(t *testing.T) {
 	root := repoRoot(t)
-	doneBody, err := os.ReadFile(filepath.Join(root, "internal", "wfdot", "testdata", "done.md"))
+	doneBody, err := os.ReadFile(filepath.Join(root, "internal", "wfdot", "testdata", "done.toml"))
 	if err != nil {
-		t.Fatalf("read done.md: %v", err)
+		t.Fatalf("read done.toml: %v", err)
 	}
-	stepBody, err := os.ReadFile(filepath.Join(root, "internal", "wfdot", "testdata", "step.md"))
+	stepBody, err := os.ReadFile(filepath.Join(root, "internal", "wfdot", "testdata", "step.toml"))
 	if err != nil {
-		t.Fatalf("read step.md: %v", err)
+		t.Fatalf("read step.toml: %v", err)
 	}
 	lists, err := wfdot.ParseDone(string(doneBody))
 	if err != nil {

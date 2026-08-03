@@ -3,7 +3,7 @@
 // hooks, the web panel — sees the same route.
 //
 // There are two representations and exactly one precedence rule, and RouteGoverns
-// is that rule. A DERIVED route (`done.md` + `step.md` under the workflows kind)
+// is that rule. A DERIVED route (`done.toml` + `step.toml` under the workflows kind)
 // wins when the repo AUTHORED one; the route the BINARY ships is order zero and
 // yields to an authored workflow for the categories that workflow claims; an
 // authored DOT graph governs otherwise. A second implementation of that rule is
@@ -13,6 +13,9 @@ package wfgovern
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -29,10 +32,56 @@ const (
 	RouteSourceStep = "step"
 )
 
-// DerivedRouteName is what a derived route calls itself where a workflow name is
-// reported — the route document's header, `satelle workflow show`, a refusal.
-// It names the two files an operator would open, because there is no graph to.
-const DerivedRouteName = "done.md+step.md"
+// DerivedRouteName is what a derived route calls itself where a workflow NAME is
+// reported — the route document's header, `satelle workflow show`, a refusal,
+// and the `workflow:<name>` stamp a story carries.
+//
+// It is a name, not a file list. It used to be the pair "done.md+step.md", which
+// read acceptably in a header and badly everywhere else: `workflow:done.md+step.md`
+// on a story stamps an identity that no longer exists the moment the files are
+// renamed, and it is not a value an operator could pass to `--workflow`. A
+// derived route is the repo's DEFAULT lifecycle — the one that governs unless an
+// authored workflow claims the category — so that is what it is called.
+//
+// The file names survive where a human is being TOLD which files to open: the
+// headline beside this name on `satelle workflow list` and the web panel. That
+// is presentation, and it is deliberately not this constant.
+const DerivedRouteName = "default"
+
+// IsFilePairStamp reports whether a `workflow:<name>` stamp carries the OLD
+// file-pair spelling of the derived route ("done.md+step.md", and briefly
+// "done.toml+step.toml") rather than a workflow name.
+//
+// It matches the SHAPE, not the two literals: the point of retiring this
+// spelling is that a stamp tied to a filename goes stale the moment the file is
+// renamed, and hardcoding the extensions here would repeat that mistake. Any
+// `done.<ext>+step.<ext>` is a file list. `satelle migrate` rewrites what this
+// finds to DerivedRouteName.
+func IsFilePairStamp(name string) bool {
+	parts := strings.Split(name, "+")
+	if len(parts) != 2 {
+		return false
+	}
+	want := [2]string{RouteSourceDone, RouteSourceStep}
+	for i, p := range parts {
+		p = strings.TrimSpace(p)
+		ext := filepath.Ext(p)
+		if ext == "" || !strings.EqualFold(strings.TrimSuffix(p, ext), want[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// ErrLegacyMarkdownRoute reports a route source still authored as markdown
+// (sty_81bb0dde). It is deliberately DISTINCT from ErrNoWorkflow: callers treat
+// that one as "fresh repo, nothing governs yet" and let a transition through, so
+// collapsing the two would advance a story past every gate the repo authored.
+//
+// It must also beat the embedded overlay. A repo with done.md on disk has a
+// route it intends; resolving it to the SHIPPED default because its own file no
+// longer parses would run someone else's lifecycle without saying so.
+var ErrLegacyMarkdownRoute = errors.New("wfgovern: route source is still markdown")
 
 // ErrNoWorkflow reports that nothing governs the item: no derived route claims
 // its category and no authored workflow applies. It is deliberately an error
@@ -67,24 +116,93 @@ func (rs RouteSource) Present() bool { return rs.Done != "" && rs.Step != "" }
 // a given category is RouteGoverns.
 func RouteSourceOf(workflows []docindex.Doc) RouteSource {
 	var rs RouteSource
-	doneEmbedded, stepEmbedded := false, false
+	doneEmbedded, stepEmbedded := true, true
+	seenDone, seenStep := false, false
+	// AUTHORED beats EMBEDDED, explicitly. A well-formed doc list overlays the
+	// shipped default only where the repo has no file of that name, so a
+	// duplicate should not arise — but a caller that appends the defaults to the
+	// disk set produces one, and this used to resolve LAST-WINS. The consequence
+	// was silent and severe: the repo's own route was shadowed by the shipped one
+	// and `satelle agent validate` reported every binding the authored route
+	// allocates as orphaned, because it was walking a lifecycle the repo does not
+	// run (sty_81bb0dde).
+	take := func(cur string, curEmb, seen bool, w docindex.Doc) (string, bool, bool) {
+		if seen && curEmb == w.Embedded {
+			return cur, curEmb, seen // same provenance: first wins, stable
+		}
+		if seen && !curEmb {
+			return cur, curEmb, seen // already have the authored one
+		}
+		return w.Body, w.Embedded, true
+	}
 	for _, w := range workflows {
 		switch w.Name {
 		case RouteSourceDone:
-			rs.Done, doneEmbedded = w.Body, w.Embedded
+			rs.Done, doneEmbedded, seenDone = take(rs.Done, doneEmbedded, seenDone, w)
 		case RouteSourceStep:
-			rs.Step, stepEmbedded = w.Body, w.Embedded
+			rs.Step, stepEmbedded, seenStep = take(rs.Step, stepEmbedded, seenStep, w)
 		}
 	}
-	rs.Embedded = doneEmbedded && stepEmbedded
+	rs.Embedded = seenDone && seenStep && doneEmbedded && stepEmbedded
 	return rs
+}
+
+// LegacyMarkdownRoute returns the names of any route-source half still authored
+// as MARKDOWN on disk (sty_81bb0dde), so a repo that has not converted is
+// refused with instructions instead of having its file fed to a TOML decoder.
+//
+// It reports on AUTHORED docs only. An embedded default is shipped by this
+// binary and is TOML by construction; flagging one would mean the binary
+// refusing itself.
+//
+// A HALF-converted repo (done.toml beside step.md) is caught here too, and must
+// be: half a route is not a route, and applying the converted half alone would
+// drop every gate the other half declared.
+func LegacyMarkdownRoute(workflows []docindex.Doc) []string {
+	var stale []string
+	for _, w := range workflows {
+		if !IsRouteSource(w.Name) {
+			continue
+		}
+		// An EMBEDDED default is shipped by this binary and is TOML by
+		// construction. BOTH tests are here on purpose: the flag is the intent,
+		// the `embedded:` path scheme is the fact, and relying on the flag alone
+		// made this refusal fire on the binary's own defaults — which bricks every
+		// repo, and bricked this one during development until a reindex cleared
+		// the stale rows.
+		if w.Embedded || strings.HasPrefix(w.Path, "embedded:") {
+			continue
+		}
+		if strings.EqualFold(filepath.Ext(w.Path), ".md") {
+			stale = append(stale, w.Name+".md")
+		}
+	}
+	sort.Strings(stale)
+	return stale
+}
+
+// LegacyMarkdownRouteError renders the refusal for the halves LegacyMarkdownRoute
+// found. The message is the remediation: an operator who reads it knows what to
+// rename and where the mapping is.
+func LegacyMarkdownRouteError(stale []string) error {
+	return fmt.Errorf("%w: %s — the route source is TOML now; rename to %s and read `satelle help workflow-convert` for the key-by-key mapping",
+		ErrLegacyMarkdownRoute, strings.Join(stale, " and "),
+		strings.Join(tomlNames(stale), " and "))
+}
+
+func tomlNames(stale []string) []string {
+	out := make([]string, 0, len(stale))
+	for _, s := range stale {
+		out = append(out, strings.TrimSuffix(s, ".md")+".toml")
+	}
+	return out
 }
 
 // RouteGoverns is the ONE precedence rule for a derived route, and every surface
 // that resolves, displays or stamps a lifecycle asks it rather than re-deriving
 // its own answer.
 //
-// An AUTHORED route (the repo's own done.md + step.md) governs the categories it
+// An AUTHORED route (the repo's own done.toml + step.toml) governs the categories it
 // claims — a repo that converted is governed by what it wrote. The route the
 // BINARY ships is order zero instead: it governs a category only when no
 // authored workflow claims that category. Without that distinction, shipping the
@@ -147,6 +265,13 @@ func LifecycleWorkflows(workflows []docindex.Doc) []docindex.Doc {
 // graphs resolves to nothing and gets ErrNoWorkflow naming the remedy.
 func SpecFor(workflows []docindex.Doc, item workitem.Item) (wfdot.Spec, string, []wfroute.Advisor, error) {
 	category := WorkflowCategory(item)
+	// BEFORE anything resolves: a repo whose route source is still markdown is
+	// refused by name (sty_81bb0dde). This precedes RouteGoverns deliberately —
+	// otherwise the file fails to decode, the authored route looks absent, and
+	// the embedded default silently governs a repo that authored its own.
+	if stale := LegacyMarkdownRoute(workflows); len(stale) > 0 {
+		return wfdot.Spec{}, DerivedRouteName, nil, LegacyMarkdownRouteError(stale)
+	}
 	rs, ok := RouteGoverns(workflows, category)
 	if !ok {
 		if wf, governs := GoverningWorkflow(LifecycleWorkflows(workflows), item); governs {
@@ -155,7 +280,7 @@ func SpecFor(workflows []docindex.Doc, item workitem.Item) (wfdot.Spec, string, 
 			// as a fresh repo and lets the transition through, which for a repo that
 			// believes it IS governed would silently drop every gate it authored.
 			return wfdot.Spec{}, wf.Name, nil, fmt.Errorf(
-				"wfgovern: workflow %q declares no route — a lifecycle is done.md + step.md under .satelle/workflows. "+
+				"wfgovern: workflow %q declares no route — a lifecycle is done.toml + step.toml under .satelle/workflows. "+
 					"Read `satelle help workflow-convert` for how to convert this graph, then `satelle migrate --yes` to retire it",
 				wf.Name)
 		}
@@ -178,7 +303,7 @@ func routeSpec(rs RouteSource, category string, tags []string) (wfdot.Spec, []wf
 
 // DerivedRoute is one category's resolved route: the Spec every consumer reads,
 // plus the two authored halves it came from. The List and Catalogue ride along
-// because a RENDERER needs to say what did NOT make it — which done.md section
+// because a RENDERER needs to say what did NOT make it — which done.toml section
 // actually governed (the wildcard silently changes the answer), which gates a
 // `for:` excluded, and which topology the binary synthesised rather than the
 // author drawing it. None of that is recoverable from the Spec alone.
@@ -195,11 +320,11 @@ type DerivedRoute struct {
 func RouteSpecFor(rs RouteSource, category string, tags []string) (DerivedRoute, error) {
 	lists, err := wfdot.ParseDone(rs.Done)
 	if err != nil {
-		return DerivedRoute{}, fmt.Errorf("wfgovern: done.md: %w", err)
+		return DerivedRoute{}, fmt.Errorf("wfgovern: done.toml: %w", err)
 	}
 	cat, err := wfdot.ParseSteps(rs.Step)
 	if err != nil {
-		return DerivedRoute{}, fmt.Errorf("wfgovern: step.md: %w", err)
+		return DerivedRoute{}, fmt.Errorf("wfgovern: step.toml: %w", err)
 	}
 	l, err := wfdot.ListFor(lists, category)
 	if err != nil {

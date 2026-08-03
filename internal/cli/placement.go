@@ -78,7 +78,7 @@ func checkUnknownTagAxes(dataDir string) []string {
 func checkEmbeddedStamps(dataDir string, embedded []config.EmbeddedDefault) []string {
 	var out []string
 	for _, d := range embedded {
-		rel := filepath.Join(d.Kind, d.Name+".md")
+		rel := filepath.FromSlash(d.RelPath())
 		path := filepath.Join(dataDir, rel)
 		body, err := os.ReadFile(path)
 		if err != nil {

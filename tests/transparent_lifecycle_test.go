@@ -17,7 +17,12 @@ func TestWorkflowWithoutDoneGateValidates(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 
 	writeSpineFixture(t, repo, "", "",
-		"## gate satelle-step-summary\nagent: reviewer\nmandatory: true\nfor: *\n",
+		`[[gate]]
+skill = "satelle-step-summary"
+agent = "reviewer"
+mandatory = true
+for = ["*"]
+`,
 		"in_progress|executor|||",
 		"done||||")
 	mustRun(t, testBin, repo, "reindex", "--validate=false")

@@ -24,6 +24,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
@@ -1566,8 +1567,8 @@ edit_exempt_paths = [".satelle/", ".gitignore"]
 // or rebind transparently — the override is a committed file, the operator's
 // choice.
 var scaffoldAgentsToml = strings.ReplaceAll(`# workflows/agents.toml — the agents layer: how each agent runs (backend + tool
-# grant). It sits beside done.md and step.md because it is the other half of what
-# those declare: step.md names a performer and its gates by SECTION NAME, and the
+# grant). It sits beside done.toml and step.toml because it is the other half of what
+# those declare: step.toml names a performer and its gates by SECTION NAME, and the
 # [<name>] sections here say what those names actually run (sty_10f732ed).
 # FULLY DEFINED by init (no hidden coded configuration, sty_892517e7): every
 # value below is the ACTIVE default, written out so the operator sees exactly
@@ -1900,7 +1901,7 @@ func gitignoreNeedsConverge(repoRoot string) bool {
 // otherwise-empty dir tracked).
 var dirReadme = map[string]string{
 	"documents":  "# documents\n\nFree-form knowledge documents in the Open Knowledge Format (OKF):\nplain markdown with YAML frontmatter carrying a required `type`. Drop reference\nnotes, designs, and commit summaries here; `index.md`/`log.md` are reserved.\n",
-	"workflows":  "# workflows\n\nThe lifecycle, as a DERIVED ROUTE in two halves. `done.md` declares what DONE\nmeans: one `## <category>` section per category (`*` governs the rest), an\nordered list of obligations, and the park/cancel states. `step.md` is the step\ncatalogue: each `## <step>` says what it `provides`, what it `requires`, its\n`agent`, `skills`, and the `reviewers` gating ENTRY to it; each `## gate <skill>`\nis an always-on reviewer. The binary owns ORDER (a topological sort of the\nprerequisites) and topology (cancel, park, backward movement) — they are never\nauthored.\n\nAn obligation links to a step by that step's `provides:`, NEVER by the step's\nheading — a heading is a stage name, and steps deliberately share them.\n`agents.toml` sits here too: it binds the agent and gate names those files use to\nwhat actually runs them.\n\nComments must be self-contained on one line (`<!-- like this -->`); a comment\nwrapped across lines fails the parser on its continuation.\n\nThe shipped route is order zero: edit these two files rather than authoring a\nlifecycle from scratch. Run `satelle workflow validate` after an edit — it parses\nboth halves and prints the effective gate/model table, which is the fastest way\nto see what your change did. See also `satelle help workflows` and\n`satelle story route <id>`.\n",
+	"workflows":  "# workflows\n\nThe lifecycle, as a DERIVED ROUTE in two halves. `done.toml` declares what DONE\nmeans: one table per story category (`*` governs the rest), its obligations in\norder, and the park/cancel states. `step.toml` is the step catalogue: each table\nis keyed by the OBLIGATION it discharges and declares the `status` an item holds\nthere, what it `requires`, its `agent`, `skills`, and the `reviewers` gating\nENTRY to it; `[[gate]]` entries are always-on reviewers.\n\nAn obligation names a step by that step's TABLE KEY, never by its `status` — a\nstatus is a stage name, and steps deliberately share them. That is the one rule\nthe format itself does not make obvious.\n\nThe binary owns ORDER (a topological sort of the prerequisites) and topology\n(cancel, park, backward movement) — they are never authored.\n\n`agents.toml` sits here too: it binds the agent and gate names those files use to\nwhat actually runs them.\n\nThe shipped route is order zero: edit these two files rather than authoring a\nlifecycle from scratch. Run `satelle workflow validate` after an edit — it parses\nboth halves and prints the effective gate/model table, which is the fastest way\nto see what your change did. See also `satelle help workflows` and\n`satelle story route <id>`.\n",
 	"principles": "# principles\n\nAuthored principles (markdown, `type: principle`). They are resolvable on demand;\nthe single always-resident operating principle is injected at session start.\n",
 	"skills":     "# skills\n\nAuthored skills (`type: skill`): executor rubrics, reviewer rubrics, or a\nself-contained functional check (a fenced ```check block or a `check:` key).\nEverything a reviewer needs lives inside the skill.\n",
 	"stories":    "# stories\n\nPer-story attachments live here under `<id>/…` (typed documents attached to a\nstory). The per-repo database is the sole story store — there is no markdown\nmirror of the backlog.\n",
@@ -1956,7 +1957,9 @@ func convergeOnDiskDefaults(dataDir string, backupOpts ...BackupOpts) []string {
 		if d.Kind == "tasks" {
 			continue // SyncTasks owns virtual task ingest
 		}
-		rel := d.Kind + "/" + d.Name + ".md"
+		// The default's REAL extension — a route source is .toml (sty_81bb0dde).
+		// Hardcoding .md here would stop converging an authored copy of it on disk.
+		rel := d.Kind + "/" + d.Name + embeddedExt(d.Ext)
 		if !fileExists(filepath.Join(dataDir, filepath.FromSlash(rel))) {
 			continue
 		}
@@ -2021,9 +2024,9 @@ func materializeTasks(dataDir string, backupOpts ...BackupOpts) []string {
 
 // defaultSolutionWorkflows is the embedded default solution rebase deploys into
 // a repo as EDITABLE substrate: the two halves of the shipped DERIVED ROUTE
-// (sty_3795e7f6). done.md declares the obligations per category — one working
+// (sty_3795e7f6). done.toml declares the obligations per category — one working
 // lane, the parent/epic container close, and the task-execution run — and
-// step.md declares the steps and always-on gates that discharge them. A repo
+// step.toml declares the steps and always-on gates that discharge them. A repo
 // edits its lifecycle FROM them rather than authoring one from scratch.
 //
 // The two are seeded BOTH-OR-NEITHER: one half is not a route
@@ -2079,7 +2082,10 @@ func authoredWorkflowCategories(wfDir string) map[string]bool {
 		return claimed
 	}
 	for _, e := range entries {
-		if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".md") ||
+		// The route source is TOML (sty_81bb0dde); an authored graph, if any is
+		// left, is markdown. Both must be seen here or a converted repo looks like
+		// it claims nothing.
+		if e.IsDir() || !docindex.Indexable(e.Name()) ||
 			strings.EqualFold(e.Name(), "README.md") {
 			continue
 		}
@@ -2087,8 +2093,8 @@ func authoredWorkflowCategories(wfDir string) map[string]bool {
 		if err != nil {
 			continue
 		}
-		// A DERIVED route claims its categories through done.md's `## <category>`
-		// sections, not through applies_to — which it deliberately does not carry.
+		// A DERIVED route claims its categories through done.toml's `[[category]]`
+		// entries, not through applies_to — which it deliberately does not carry.
 		// Without this, converting a repo would make it look like it claimed
 		// NOTHING, and init would re-seed the embedded DOT defaults on top of the
 		// route that replaced them (sty_9835070d).
@@ -2111,7 +2117,7 @@ func authoredWorkflowCategories(wfDir string) map[string]bool {
 
 // overlappingCategory returns the first category the workflow body declares that
 // is already present in claimed, or "" when none overlaps. A DERIVED route
-// declares its categories through done.md's `## <category>` sections rather than
+// declares its categories through done.toml's `## <category>` sections rather than
 // applies_to, so both forms are read — otherwise the shipped route would look
 // like it claimed nothing and would seed straight on top of an authored graph
 // (sty_3795e7f6).
@@ -2244,4 +2250,15 @@ func routeSourceSkills(body string) []string {
 		}
 	}
 	return out
+}
+
+// embeddedExt is a shipped default's file extension, defaulting to markdown for
+// a default authored before Ext existed. The route source is TOML
+// (sty_81bb0dde), so a hardcoded ".md" here would silently stop converging an
+// authored copy of it.
+func embeddedExt(ext string) string {
+	if strings.TrimSpace(ext) == "" {
+		return ".md"
+	}
+	return ext
 }

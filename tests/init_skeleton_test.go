@@ -36,8 +36,8 @@ func TestInitSkeleton(t *testing.T) {
 	for _, rel := range []string{
 		".satelle/skills/satelle-step-summary.md",
 		".satelle/principles/satelle-agent-goals.md",
-		".satelle/workflows/done.md",
-		".satelle/workflows/step.md",
+		".satelle/workflows/done.toml",
+		".satelle/workflows/step.toml",
 	} {
 		if _, err := os.Stat(filepath.Join(repo, rel)); err == nil {
 			t.Errorf("init must not seed %s", rel)

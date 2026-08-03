@@ -31,7 +31,7 @@ func TestWorkflowStampedAtCreate(t *testing.T) {
 	// (a) the workflow:<name> tag is stamped on the story.
 	var stamped bool
 	for _, tg := range story.Tags {
-		if tg == "workflow:done.md+step.md" {
+		if tg == "workflow:default" {
 			stamped = true
 		}
 	}
@@ -41,7 +41,7 @@ func TestWorkflowStampedAtCreate(t *testing.T) {
 
 	// (b) a workflow_stamped ledger event records the choice.
 	led := mustRun(t, testBin, repo, "ledger", "list", "--story", story.ID)
-	if !strings.Contains(led, "workflow_stamped") || !strings.Contains(led, "done.md+step.md") {
+	if !strings.Contains(led, "workflow_stamped") || !strings.Contains(led, "default") {
 		t.Errorf("no workflow_stamped ledger event for the choice:\n%s", led)
 	}
 }
@@ -52,7 +52,7 @@ func TestWorkflowStampedAtCreate(t *testing.T) {
 //
 // The original test discriminated by STAMP — two workflow files, two stories both
 // re-categorised to chore, differing only by the workflow:<name> they carried.
-// A derived route has one name (`done.md+step.md`) for every category, so the
+// A derived route has one name (`default`) for every category, so the
 // stamp can no longer name a second lifecycle to override category resolution
 // with; that leg retires with the DOT front end (sty_d953c5d8), and the stamp
 // keeps its remaining job — recording what governs — which
@@ -63,12 +63,33 @@ func TestStampedWorkflowGovernsGating(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	writeRouteFixture(t, repo,
-		"## feature\n- raised\n- coded\n- closed\ncancel: cancelled @satelle-story-cancel-review\n\n"+
-			"## chore\n- raised\n- chore-closed\ncancel: cancelled @satelle-story-cancel-review\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: coded\n\n"+
-			"## done\nterminal: true\nprovides: chore-closed\nrequires: raised\n")
+		`[feature]
+obligations = ["raised", "coded", "closed"]
+cancel = { state = "cancelled", gate = "satelle-story-cancel-review" }
+
+[chore]
+obligations = ["raised", "chore-closed"]
+cancel = { state = "cancelled", gate = "satelle-story-cancel-review" }
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+
+[chore-closed]
+status = "done"
+terminal = true
+requires = ["raised"]
+`)
 	mustRun(t, testBin, repo, "reindex")
 
 	create := func(category string) string {

@@ -1750,7 +1750,7 @@ func (g *Engine) createReviewHook(ctx context.Context, category string) (wfhook.
 	// converted repo keeps the gate its graphs used to declare (sty_9835070d).
 	//
 	// Only when the route GOVERNS the category, though. The doc index overlays the
-	// shipped done.md wherever a repo has no file of that name, so reading it
+	// shipped done.toml wherever a repo has no file of that name, so reading it
 	// unconditionally would let the default's create gate shadow the one an
 	// authored workflow declares — the same precedence hole RouteGoverns closes
 	// for the lifecycle itself (sty_3795e7f6).

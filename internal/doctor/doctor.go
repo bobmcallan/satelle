@@ -294,14 +294,25 @@ func WorkflowDocs(dataDir string) []docindex.Doc {
 	var docs []docindex.Doc
 	for _, e := range entries {
 		fn := e.Name()
-		if e.IsDir() || !strings.HasSuffix(fn, ".md") || reservedKeepFile(fn) {
+		// The route source is TOML (sty_81bb0dde). A `.md`-only filter here does
+		// not merely miss it — GoverningWorkflows appends an embedded default for
+		// any name it does not see on disk, so the repo's OWN route was silently
+		// replaced by the shipped one, and every binding the authored route
+		// allocates was then reported orphaned by `satelle agent validate`.
+		if e.IsDir() || !docindex.Indexable(fn) || reservedKeepFile(fn) {
 			continue
 		}
 		body, rerr := os.ReadFile(filepath.Join(dir, fn))
 		if rerr != nil {
 			continue
 		}
-		docs = append(docs, docindex.Doc{Kind: "workflows", Name: strings.TrimSuffix(fn, ".md"), Body: string(body)})
+		docs = append(docs, docindex.Doc{
+			Kind: "workflows",
+			Name: strings.TrimSuffix(fn, filepath.Ext(fn)),
+			Path: filepath.Join(dir, fn),
+			Ext:  strings.ToLower(filepath.Ext(fn)),
+			Body: string(body),
+		})
 	}
 	return docs
 }
@@ -325,7 +336,15 @@ func GoverningWorkflows(dataDir string) []docindex.Doc {
 		if e.Kind != "workflows" || onDisk[e.Name] {
 			continue
 		}
-		docs = append(docs, docindex.Doc{Kind: "workflows", Name: e.Name, Body: e.Body})
+		// Embedded/Path are set so downstream can tell a SHIPPED default from an
+		// authored file — RouteGoverns keys order-zero precedence on it, and the
+		// legacy-markdown refusal must never fire on the binary's own defaults.
+		docs = append(docs, docindex.Doc{
+			Kind: "workflows", Name: e.Name, Body: e.Body,
+			Ext:      defaultExt(e.Ext),
+			Path:     "embedded:workflows/" + e.Name + defaultExt(e.Ext),
+			Embedded: true,
+		})
 	}
 	return docs
 }
@@ -388,4 +407,13 @@ func sortedBindingNames(m map[string]config.AgentBinding) []string {
 	}
 	sortStrings(out)
 	return out
+}
+
+// defaultExt is an embedded default's extension, defaulting to markdown for a
+// default authored before Ext existed (sty_81bb0dde).
+func defaultExt(ext string) string {
+	if strings.TrimSpace(ext) == "" {
+		return ".md"
+	}
+	return ext
 }

@@ -11,10 +11,24 @@ import (
 )
 
 var engageWF = routeHalves(
-	"## *\n- raised\n- planned\n- closed\ncancel: cancelled @cancel\n",
-	"## backlog\nstart: true\nprovides: raised\n\n"+
-		"## plan\nagent: executor\nprovides: planned\nrequires: raised\n\n"+
-		"## done\nterminal: true\nprovides: closed\nrequires: planned\n")
+	`["*"]
+obligations = ["raised", "planned", "closed"]
+cancel = { state = "cancelled", gate = "cancel" }
+`,
+	`[raised]
+status = "backlog"
+start = true
+
+[planned]
+status = "plan"
+agent = "executor"
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["planned"]
+`)
 
 // TestEngageRefusesBrokenAgents proves the engage precondition (sty_93eec36d):
 // leaving the workflow entry state for a non-cancel target refuses when

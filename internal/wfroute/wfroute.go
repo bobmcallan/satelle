@@ -9,7 +9,7 @@
 // no verb import, so it can be tested against a Spec literal.
 //
 // The input is a wfdot.Spec, which is deliberately blind to how it was built:
-// wfdot.BuildRoute derives one from done.md + step.md, and a test may hand one
+// wfdot.BuildRoute derives one from done.toml + step.toml, and a test may hand one
 // over as a literal. Nothing here knows THIS repo's step names — every name,
 // gate and obligation comes from the Spec.
 //
@@ -53,7 +53,7 @@ type Advisor struct {
 // AdvisorsFrom derives the advisors a declaration of done and its step catalogue
 // declare: the park state's `advise <agent> @skill` suffix, plus any step's
 // `advise:` key. This is the only place the two forms are read, so a consumer
-// building a route from done.md + step.md does not re-derive them.
+// building a route from done.toml + step.toml does not re-derive them.
 // steps must be the SELECTED set for this category (wfdot.SelectSteps), never
 // Catalogue.Steps. The catalogue is shared and stage names repeat across route
 // families by design, so walking it attaches one family's advisor to every route

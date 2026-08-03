@@ -22,36 +22,33 @@ import (
 // recovery (back) edge, and a cancel fan. The fan and the back edge are
 // SYNTHESISED by the binary — the route declares only the recover target and the
 // cancel state.
-const richRouteDone = `## *
-- raised
-- coded
-- reviewed
-- closed
-cancel: cancelled @satelle-story-cancel-review
-recover: in_progress
+const richRouteDone = `["*"]
+obligations = ["raised", "coded", "reviewed", "closed"]
+cancel = { state = "cancelled", gate = "satelle-story-cancel-review" }
+recover = { step = "in_progress" }
 `
 
-const richRouteStep = `## backlog
-start: true
-provides: raised
+const richRouteStep = `[raised]
+status = "backlog"
+start = true
 
-## in_progress
-agent: executor
-skills: code
-provides: coded
-requires: raised
+[coded]
+status = "in_progress"
+agent = "executor"
+skills = ["code"]
+requires = ["raised"]
 
-## review
-agent: executor
-reviewers: satelle-story-done-review
-reviewer_agent: reviewer
-provides: reviewed
-requires: coded
+[reviewed]
+status = "review"
+agent = "executor"
+reviewers = ["satelle-story-done-review"]
+reviewer_agent = "reviewer"
+requires = ["coded"]
 
-## done
-terminal: true
-provides: closed
-requires: reviewed
+[closed]
+status = "done"
+terminal = true
+requires = ["reviewed"]
 `
 
 func TestWorkflowPageRendersRoute(t *testing.T) {

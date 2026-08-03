@@ -102,26 +102,23 @@ func GoverningWorkflow(workflows []docindex.Doc, item workitem.Item) (docindex.D
 	return docindex.Doc{}, false
 }
 
-// FrontmatterList parses a list-valued key from a markdown frontmatter block,
-// handling both the inline flow form (`applies_to: ["*", "web"]`) and the block
-// list form (`applies_to:` then `- web` lines). Returns nil when absent.
+// FrontmatterList parses a list-valued key from a doc's frontmatter, WHICHEVER
+// form the doc is authored in — a markdown `---` block or a TOML `[meta]` table
+// (sty_81bb0dde). It handles the inline flow form (`applies_to: ["*", "web"]`,
+// which is also how docindex renders a TOML array) and the YAML block list form
+// (`applies_to:` then `- web` lines). Returns nil when absent.
+//
+// The frontmatter READER is docindex's, not a private one here. A second scanner
+// that only understood `---` is what made this repo's own applies_to invisible
+// the moment a workflow doc became TOML — and applies_to selects a lifecycle, so
+// invisible means ungoverned.
 func FrontmatterList(body, key string) []string {
-	lines := strings.Split(body, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+	lines, ok := docindex.Frontmatter(body)
+	if !ok {
 		return nil
 	}
-	end := -1
-	for j := 1; j < len(lines); j++ {
-		if strings.TrimSpace(lines[j]) == "---" {
-			end = j
-			break
-		}
-	}
-	if end < 0 {
-		return nil
-	}
-	for i := 1; i < end; i++ {
-		t := strings.TrimSpace(lines[i])
+	for i, ln := range lines {
+		t := strings.TrimSpace(ln)
 		if !strings.HasPrefix(t, key+":") {
 			continue
 		}
@@ -130,8 +127,8 @@ func FrontmatterList(body, key string) []string {
 			rest = strings.TrimSuffix(strings.TrimPrefix(rest, "["), "]")
 			return splitTrimList(rest)
 		}
-		var out []string // block list form
-		for j := i + 1; j < end; j++ {
+		var out []string // YAML block list form
+		for j := i + 1; j < len(lines); j++ {
 			l2 := strings.TrimSpace(lines[j])
 			if l2 == "" {
 				continue

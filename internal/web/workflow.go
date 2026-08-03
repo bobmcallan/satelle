@@ -17,8 +17,8 @@ type workflowRowVM struct {
 	Name string
 	// ExpandName is the DOC the expand fragment loads. It equals Name for an
 	// authored workflow, and is the declaration of done for a derived route —
-	// whose displayed Name ("done.md+step.md") names two files rather than one
-	// doc, and so is not a URL the fragment handler could resolve.
+	// whose displayed Name ("default") is a lifecycle's name, not a doc's, and so
+	// is not a URL the fragment handler could resolve.
 	ExpandName string
 	Headline   string
 	Scope      string
@@ -30,7 +30,7 @@ type workflowRowVM struct {
 
 // workflowRoute resolves a workflow doc all the way to the route the panel
 // renders, through the ONE front door (wfgovern.SpecFor): a derived route when
-// the substrate carries done.md + step.md, the authored DOT until it does. The
+// the substrate carries done.toml + step.toml, the authored DOT until it does. The
 // panel used to implement that precedence itself; a second copy of it is exactly
 // the defect a single front door exists to prevent (sty_9835070d).
 //
@@ -82,7 +82,7 @@ type workflowDetailVM struct {
 // own. The ROUTE they build does get one, at the head: it is the repo's
 // lifecycle, and a panel that listed nothing for a converted repo would hide the
 // only lifecycle it has. The row names itself as `satelle workflow list` does
-// and expands through done.md, the half the fragment resolves the route from.
+// and expands through done.toml, the half the fragment resolves the route from.
 func workflowRows(docs []docindex.Doc, prov, src map[string]string) []workflowRowVM {
 	out := make([]workflowRowVM, 0, len(docs))
 	if rs := wfgovern.RouteSourceOf(docs); rs.Present() {
@@ -90,7 +90,7 @@ func workflowRows(docs []docindex.Doc, prov, src map[string]string) []workflowRo
 		row := workflowRowVM{
 			Name:       wfgovern.DerivedRouteName,
 			ExpandName: wfgovern.RouteSourceDone,
-			Headline:   "derived route — done.md + step.md",
+			Headline:   "derived route — done.toml + step.toml",
 			AppliesTo:  wfgovern.RouteCategories(rs.Done),
 			Provenance: prov[key],
 			Source:     src[key],

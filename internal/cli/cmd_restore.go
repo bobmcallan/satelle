@@ -74,7 +74,7 @@ func runRestore(out io.Writer, in io.Reader, dataDir string, yes bool, backupOpt
 		if d.Kind == "workflows" {
 			continue // never restore workflows over a repo's own lifecycle — rebase owns that reset
 		}
-		rel := filepath.Join(d.Kind, d.Name+".md")
+		rel := filepath.FromSlash(d.RelPath())
 		p := filepath.Join(dataDir, rel)
 		// Embedded substrate is written in its STAMPED form (embedded_sha
 		// provenance, sty_304ee454) — the same bytes init/rebase materialise — so

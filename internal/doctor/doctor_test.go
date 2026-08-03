@@ -24,42 +24,39 @@ command = "sh -c --disallowedTools Write,Edit {system} {tools} {model}"
 tools   = "Read,Grep,Glob"
 `
 
-// A lifecycle is a DERIVED ROUTE — done.md + step.md (sty_d953c5d8). The doctor
-// matrix installs both halves; workflowAdd still patches the done half's
-// frontmatter, which is where a lifecycle hook is declared.
-const healthyWorkflow = `---
-name: done
-scope: project
-type: workflow
-description: Fixture declaration of done governing every category for the doctor test matrix.
----
+// A lifecycle is a DERIVED ROUTE — done.toml + step.toml (sty_d953c5d8). The
+// doctor matrix installs both halves; workflowAdd still patches the done half's
+// frontmatter, which is where a lifecycle hook is declared. Frontmatter is the
+// `[meta]` table now, so an addition is TOML (sty_81bb0dde).
+const healthyWorkflow = `[meta]
+name = "done"
+scope = "project"
+type = "workflow"
+description = "Fixture declaration of done governing every category for the doctor test matrix."
 
-## *
-- raised
-- coded
-- closed
+["*"]
+obligations = ["raised", "coded", "closed"]
 `
 
-const healthySteps = `---
-name: step
-scope: project
-type: workflow
-description: Fixture step catalogue for the doctor test matrix.
----
+const healthySteps = `[meta]
+name = "step"
+scope = "project"
+type = "workflow"
+description = "Fixture step catalogue for the doctor test matrix."
 
-## backlog
-start: true
-provides: raised
+[raised]
+status = "backlog"
+start = true
 
-## in_progress
-agent: executor
-provides: coded
-requires: raised
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
 
-## done
-terminal: true
-provides: closed
-requires: coded
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
 `
 
 // fixtureOpts are the deltas a case applies to the healthy baseline.
@@ -68,7 +65,7 @@ type fixtureOpts struct {
 	extraFiles  map[string]string
 	catalog     string // machine-wide profile catalog when non-empty
 	omitAgents  bool
-	workflowAdd string // extra frontmatter lines for the fixture workflow
+	workflowAdd string // extra [meta] lines for the fixture workflow (TOML)
 }
 
 // newFixtureRepo builds a repo under an isolated SATELLE_HOME and returns its
@@ -104,10 +101,13 @@ func newFixtureRepo(t *testing.T, o fixtureOpts) string {
 	}
 	wf := healthyWorkflow
 	if o.workflowAdd != "" {
-		wf = strings.Replace(wf, "matrix.\n", "matrix.\n"+o.workflowAdd, 1)
+		// Appended AFTER the [meta] scalars and BEFORE the first category table:
+		// a TOML key placed after a `["*"]` header would belong to that table, not
+		// to meta.
+		wf = strings.Replace(wf, "\n[\"*\"]\n", "\n"+o.workflowAdd+"\n[\"*\"]\n", 1)
 	}
-	write("workflows/done.md", wf)
-	write("workflows/step.md", healthySteps)
+	write("workflows/done.toml", wf)
+	write("workflows/step.toml", healthySteps)
 	for rel, body := range o.extraFiles {
 		write(rel, body)
 	}
@@ -200,12 +200,12 @@ func TestDefectMatrix(t *testing.T) {
 		},
 		{
 			name: "broken create hook",
-			opts: fixtureOpts{workflowAdd: "hooks:\n  - operation: create_review\n    skill: fixture-review\n    agent: nobody\n"},
+			opts: fixtureOpts{workflowAdd: "[[meta.hooks]]\noperation = \"create_review\"\nskill = \"fixture-review\"\nagent = \"nobody\"\n"},
 			want: health.IDHookAlloc,
 		},
 		{
 			name: "unresolved hook skill",
-			opts: fixtureOpts{workflowAdd: "create_review: no-such-skill\n"},
+			opts: fixtureOpts{workflowAdd: "create_review = \"no-such-skill\"\n"},
 			want: health.IDWorkflowConsistency,
 		},
 		{
@@ -231,9 +231,15 @@ func TestDefectMatrix(t *testing.T) {
 			// The allocation lives on a STEP of the shipped route: a step whose
 			// agent names no binding (sty_d953c5d8).
 			opts: fixtureOpts{extraFiles: map[string]string{
-				"workflows/done.md": strings.Replace(healthyWorkflow, "- coded\n", "- planned\n- coded\n", 1),
-				"workflows/step.md": healthySteps +
-					"\n## plan\nagent: ghost\nprovides: planned\nrequires: raised\n",
+				"workflows/done.toml": strings.Replace(healthyWorkflow,
+					`obligations = ["raised", "coded", "closed"]`,
+					`obligations = ["raised", "planned", "coded", "closed"]`, 1),
+				"workflows/step.toml": healthySteps +
+					`[planned]
+status = "plan"
+agent = "ghost"
+requires = ["raised"]
+`,
 			}},
 			want: health.IDNodeAlloc,
 		},

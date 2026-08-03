@@ -9,16 +9,15 @@ import (
 	"github.com/bobmcallan/satelle/internal/wfdot"
 )
 
-// wfDoc builds a minimal workflow doc body: frontmatter plus a DOT lifecycle.
-// The web layer resolves a lifecycle only through internal/wfdot, so a fixture
-// has to be authored in the same grammar the substrate is (sty_085e1a5a).
-// A lifecycle is a DERIVED ROUTE — done.md + step.md (sty_d953c5d8) — and a
-// category-specific lane is a `## <category>` SECTION rather than a second
-// workflow file. routeDocs builds the two halves the numbering reads.
+// routeDocs builds the two halves of a derived route the numbering reads. The
+// web layer resolves a lifecycle only through internal/wfdot, so a fixture has
+// to be authored in the same grammar the substrate is (sty_085e1a5a) — TOML,
+// with a `[meta]` header rather than a `---` block (sty_81bb0dde). A
+// category-specific lane is a `[<category>]` TABLE, not a second workflow file.
 func routeDocs(done, step string) []docindex.Doc {
 	mk := func(name, what, body string) docindex.Doc {
 		return docindex.Doc{Kind: "workflows", Name: name,
-			Body: "---\nname: " + name + "\ntype: workflow\nscope: project\ndescription: " + what + "\n---\n\n" + body}
+			Body: "[meta]\nname = \"" + name + "\"\ntype = \"workflow\"\nscope = \"project\"\ndescription = \"" + what + "\"\n\n" + body}
 	}
 	return []docindex.Doc{
 		mk("done", "fixture declaration of done", done),
@@ -32,15 +31,44 @@ func routeDocs(done, step string) []docindex.Doc {
 // hardcoded longest-spine resolver (sty_8dafac0e).
 func TestCategoryStepOf(t *testing.T) {
 	stepOf := categoryStepOf(routeDocs(
-		"## *\n- raised\n- coded\n- pushed\n- committed\n- closed\n\n"+
-			"## epic-parent\n- raised\n- children-resolved\n\n"+
-			"## parent\n- raised\n- children-resolved\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
-			"## commit_push\nagent: executor\nprovides: pushed\nrequires: coded\n\n"+
-			"## committed\nagent: executor\nprovides: committed\nrequires: pushed\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: committed\n\n"+
-			"## done\nterminal: true\nprovides: children-resolved\nrequires: raised\n"))
+		`["*"]
+obligations = ["raised", "coded", "pushed", "committed", "closed"]
+
+[epic-parent]
+obligations = ["raised", "children-resolved"]
+
+[parent]
+obligations = ["raised", "children-resolved"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[pushed]
+status = "commit_push"
+agent = "executor"
+requires = ["coded"]
+
+[committed]
+status = "committed"
+agent = "executor"
+requires = ["pushed"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["committed"]
+
+[children-resolved]
+status = "done"
+terminal = true
+requires = ["raised"]
+`))
 
 	if got := stepOf("epic-parent", "done"); got != 1 {
 		t.Errorf("epic-parent done = %d, want 1 (parent workflow)", got)
@@ -66,17 +94,55 @@ func TestCategoryStepOfActiveWorkflowWins(t *testing.T) {
 	// The repo's own route outranks the shipped one, so the numbering follows the
 	// authored spine (sty_3795e7f6).
 	authored := routeDocs(
-		"## *\n- raised\n- coded\n- integrated\n- pushed\n- committed\n- closed\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
-			"## integration\nagent: executor\nprovides: integrated\nrequires: coded\n\n"+
-			"## commit_push\nagent: executor\nprovides: pushed\nrequires: integrated\n\n"+
-			"## committed\nagent: executor\nprovides: committed\nrequires: pushed\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: committed\n")
-	shipped := routeDocs("## *\n- raised\n- coded\n- closed\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
+		`["*"]
+obligations = ["raised", "coded", "integrated", "pushed", "committed", "closed"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[integrated]
+status = "integration"
+agent = "executor"
+requires = ["coded"]
+
+[pushed]
+status = "commit_push"
+agent = "executor"
+requires = ["integrated"]
+
+[committed]
+status = "committed"
+agent = "executor"
+requires = ["pushed"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["committed"]
+`)
+	shipped := routeDocs(`["*"]
+obligations = ["raised", "coded", "closed"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+`)
 	for i := range shipped {
 		shipped[i].Embedded = true
 	}

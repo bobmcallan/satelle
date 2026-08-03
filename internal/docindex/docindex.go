@@ -30,9 +30,13 @@ import (
 
 // Doc is one indexed authored file.
 type Doc struct {
-	Kind      string    `json:"kind"`
-	Name      string    `json:"name"` // filename without the .md extension
-	Path      string    `json:"path"` // absolute path on disk, or embedded:<kind>/<name>.md
+	Kind string `json:"kind"`
+	Name string `json:"name"` // filename without its extension
+	Path string `json:"path"` // absolute path on disk, or embedded:<kind>/<name><ext>
+	// Ext is the source extension (".md" or ".toml"). Set on embedded defaults so
+	// SetDefaults can synthesise an honest provenance path; on-disk docs carry it
+	// in Path already (sty_81bb0dde).
+	Ext       string    `json:"ext,omitempty"`
 	Headline  string    `json:"headline,omitempty"`
 	Body      string    `json:"body"`
 	Hash      string    `json:"hash"` // sha256 of body, hex
@@ -94,7 +98,14 @@ func (s *Store) SetDefaults(defs []Doc) {
 			d.Hash = hex.EncodeToString(sum[:])
 		}
 		if d.Path == "" {
-			d.Path = "embedded:" + d.Kind + "/" + d.Name + ".md"
+			// Ext defaults to .md, the DOCUMENT form; a caller supplying a TOML
+			// default (the route source) sets it so provenance names the real file
+			// rather than a markdown one that does not exist (sty_81bb0dde).
+			ext := d.Ext
+			if ext == "" {
+				ext = ".md"
+			}
+			d.Path = "embedded:" + d.Kind + "/" + d.Name + ext
 		}
 		d.Size = int64(len(d.Body))
 		d.Embedded = true
@@ -381,7 +392,7 @@ func walkMarkdown(dir string) ([]fileInfo, error) {
 			}
 			return nil
 		}
-		if !strings.EqualFold(filepath.Ext(path), ".md") {
+		if !Indexable(path) {
 			return nil
 		}
 		// README.md is a dir-descriptor (what the dir should contain), not authored
@@ -434,7 +445,7 @@ func (s *Store) upsert(ctx context.Context, kind string, fi fileInfo, now time.T
 	}
 	// Workflows are indexed exactly as authored. The DOT normalisation that used
 	// to run here existed only to feed the DOT parser; with that front end retired
-	// a lifecycle is done.md + step.md, which the index stores verbatim
+	// a lifecycle is done.toml + step.toml, which the index stores verbatim
 	// (sty_d953c5d8).
 	sum := sha256.Sum256(body)
 	d := Doc{
@@ -470,9 +481,14 @@ func (s *Store) delete(ctx context.Context, kind, path string) error {
 	return nil
 }
 
-// headline returns the first meaningful line of a markdown body — the first
-// non-blank line after any YAML frontmatter, with a leading "# " heading marker
-// stripped. Empty for an empty body.
+// headline returns the one-line summary a list surface shows beside a doc's
+// name: the first non-blank line after any YAML frontmatter, with a leading
+// "# " heading marker stripped. Empty for an empty body.
+//
+// A TOML doc has no prose to take a first line FROM — its first line after the
+// header is another table — so it uses its frontmatter `description` instead.
+// Without this the route source listed itself as "[meta]" on `workflow list`
+// and in the web panel (sty_81bb0dde).
 func headline(body string) string {
 	lines := strings.Split(body, "\n")
 	i := 0
@@ -484,6 +500,13 @@ func headline(body string) string {
 				break
 			}
 		}
+	} else if fm, ok := tomlMetaLines(body); ok {
+		for _, ln := range fm {
+			if rest, hit := strings.CutPrefix(ln, "description:"); hit {
+				return strings.TrimSpace(rest)
+			}
+		}
+		return ""
 	}
 	for ; i < len(lines); i++ {
 		t := strings.TrimSpace(lines[i])

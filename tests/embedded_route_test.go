@@ -35,7 +35,7 @@ func TestFreshRepoDrivesAStoryOnTheShippedRoute(t *testing.T) {
 
 	logPath := stubReviewerDispatch(t, repo)
 	// The suite turns the create gate off after init (most tests create partial
-	// drafts); this one needs it ON, because `create_review:` on done.md is how
+	// drafts); this one needs it ON, because `create_review:` on done.toml is how
 	// the shipped route carries a create-time gate at all.
 	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"), "[review]\ngate_create = true\n")
 	mustRun(t, testBin, repo, "reindex")
@@ -45,7 +45,7 @@ func TestFreshRepoDrivesAStoryOnTheShippedRoute(t *testing.T) {
 	mustRun(t, testBin, repo, "skill", "validate")
 	mustRun(t, testBin, repo, "validate")
 
-	// Create → the create gate runs (done.md carries create_review:) and the
+	// Create → the create gate runs (done.toml carries create_review:) and the
 	// story is stamped with what will actually gate it.
 	out := mustRun(t, testBin, repo, "story", "create",
 		"--title", "Drive the shipped route",
@@ -56,11 +56,11 @@ func TestFreshRepoDrivesAStoryOnTheShippedRoute(t *testing.T) {
 	if id == "" {
 		t.Fatalf("no story id:\n%s", out)
 	}
-	if !strings.Contains(out, `"workflow:done.md+step.md"`) {
+	if !strings.Contains(out, `"workflow:default"`) {
 		t.Errorf("create did not stamp the shipped route:\n%s", out)
 	}
 	if body, _ := os.ReadFile(logPath); !strings.Contains(string(body), "satelle-story-create-review") {
-		t.Errorf("the create gate declared on done.md did not run; gate log:\n%s", body)
+		t.Errorf("the create gate declared on done.toml did not run; gate log:\n%s", body)
 	}
 
 	// backlog → in_progress: the estimate gate is a coded check, so it rejects
@@ -93,7 +93,7 @@ func TestFreshRepoDrivesAStoryOnTheShippedRoute(t *testing.T) {
 
 	// The route the story actually carries is the shipped one, reported honestly.
 	route := mustRun(t, testBin, repo, "story", "route", id)
-	if !strings.Contains(route, "done.md+step.md") {
+	if !strings.Contains(route, "default") {
 		t.Errorf("story route does not name the shipped route:\n%s", route)
 	}
 }
@@ -121,7 +121,7 @@ func TestFreshRepoExecutionUsesTheTaskSection(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &rows); err != nil {
 		t.Fatalf("parse workflow list: %v\n%s", err, out)
 	}
-	if len(rows) == 0 || rows[0].Name != "done.md+step.md" || !rows[0].Active {
+	if len(rows) == 0 || rows[0].Name != "default" || !rows[0].Active {
 		t.Fatalf("an execution must resolve to the shipped route, got %+v", rows)
 	}
 
@@ -155,7 +155,7 @@ func TestShippedRouteSurvivesReindex(t *testing.T) {
 	materializeDefault(t, repo, "workflows", "step")
 
 	before := map[string][]byte{}
-	for _, half := range []string{"done.md", "step.md"} {
+	for _, half := range []string{"done.toml", "step.toml"} {
 		b, err := os.ReadFile(filepath.Join(repo, ".satelle", "workflows", half))
 		if err != nil {
 			t.Fatal(err)

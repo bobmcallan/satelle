@@ -15,10 +15,23 @@ import (
 )
 
 var changeWF = routeHalves(
-	"## *\n- raised\n- coded\n- closed\n",
-	"## backlog\nstart: true\nprovides: raised\n\n"+
-		"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
-		"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
+	`["*"]
+obligations = ["raised", "coded", "closed"]
+`,
+	`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+`)
 
 func gitRepo(t *testing.T) string {
 	t.Helper()

@@ -12,59 +12,58 @@ import (
 // than the app, so no store is needed.
 
 func routeSourceFixture() wfgovern.RouteSource {
-	done := `## *
-- raised
-- coded
-- closed
-park: blocked @gate-blocked advise triage @triage-skill
-cancel: cancelled @gate-cancel
-recover: in_progress from release
+	done := `["*"]
+obligations = ["raised", "coded", "closed"]
+park = { state = "blocked", gate = "gate-blocked", advisor = "triage", advisor_skill = "triage-skill" }
+cancel = { state = "cancelled", gate = "gate-cancel" }
+recover = { step = "in_progress", from = ["release"] }
 
-## container
-- raised
-- children-resolved
-cancel: cancelled @gate-cancel
+[container]
+obligations = ["raised", "children-resolved"]
+cancel = { state = "cancelled", gate = "gate-cancel" }
 `
-	step := `## backlog
-start: true
-provides: raised
+	step := `[raised]
+status = "backlog"
+start = true
 
-## in_progress
-agent: executor
-skills: code
-reviewers: gate-plan, gate-arch
-reviewer_agent: reviewer
-provides: coded
-requires: raised
+[coded]
+status = "in_progress"
+agent = "executor"
+skills = ["code"]
+reviewers = ["gate-plan", "gate-arch"]
+reviewer_agent = "reviewer"
+requires = ["raised"]
 
-## release
-agent: executor
-provides: released
-requires: coded
+[released]
+status = "release"
+agent = "executor"
+requires = ["coded"]
 
-## done
-reviewers: gate-close
-reviewer_agent: reviewer
-terminal: true
-provides: closed
-requires: coded
+[closed]
+status = "done"
+reviewers = ["gate-close"]
+reviewer_agent = "reviewer"
+terminal = true
+requires = ["coded"]
 
-## done
-agent: reviewer
-reviewers: gate-children
-terminal: true
-provides: children-resolved
-requires: raised
+[children-resolved]
+status = "done"
+agent = "reviewer"
+reviewers = ["gate-children"]
+terminal = true
+requires = ["raised"]
 
-## gate gate-summary
-agent: reviewer-summary
-mandatory: true
-for: *
+[[gate]]
+skill = "gate-summary"
+agent = "reviewer-summary"
+mandatory = true
+for = ["*"]
 
-## gate gate-ui
-on: in_progress
-applies_to: surface:ui
-for: *
+[[gate]]
+skill = "gate-ui"
+on = ["in_progress"]
+applies_to = ["surface:ui"]
+for = ["*"]
 `
 	return wfgovern.RouteSource{Done: done, Step: step}
 }
@@ -87,7 +86,7 @@ func TestShowRouteRendersTheWildcardSpine(t *testing.T) {
 		"ROUTE feature",
 		// The wildcard governed; saying so matters because it silently changes
 		// which route the reader is looking at.
-		`## * (the wildcard`,
+		`[*] (the wildcard`,
 		"discharges: raised",
 		"discharges: coded",
 		"discharges: closed",
@@ -116,7 +115,7 @@ func TestShowRouteRendersTheWildcardSpine(t *testing.T) {
 func TestShowRouteRendersANonWildcardSection(t *testing.T) {
 	out := renderRoute(t, "container", nil)
 
-	if !strings.Contains(out, "section:      ## container") {
+	if !strings.Contains(out, "section:      [container]") {
 		t.Errorf("an exact section must be reported as itself, not the wildcard:\n%s", out)
 	}
 	if !strings.Contains(out, "discharges: children-resolved") {
@@ -177,8 +176,13 @@ func TestShowRouteMatchesTheEngineDerivation(t *testing.T) {
 // the governing-section problem — never a document-index miss.
 func TestShowRouteUnknownCategoryReportsTheSectionProblem(t *testing.T) {
 	rs := wfgovern.RouteSource{
-		Done: "## container\n- raised\n",
-		Step: "## backlog\nstart: true\nprovides: raised\n",
+		Done: `[container]
+obligations = ["raised"]
+`,
+		Step: `[raised]
+status = "backlog"
+start = true
+`,
 	}
 	var b strings.Builder
 	err := renderWorkflowRoute(&b, rs, "feature", nil)

@@ -106,15 +106,19 @@ func TestWorkflow(t *testing.T) {
 		t.Errorf("the message must name the conversion guide, got %v", p)
 	}
 	// A doc with no frontmatter at all is still reported for that first.
-	if p := Doc("workflows", "wf-x", "# no frontmatter\n", resolveAll); !hasProb(p, "missing YAML frontmatter") {
+	if p := Doc("workflows", "wf-x", "the body is not toml and has no frontmatter\n", resolveAll); !hasProb(p, "missing frontmatter") {
 		t.Errorf("missing frontmatter: want that reject, got %v", p)
 	}
 }
 
 // routeHalf renders one half of a derived route with the frontmatter the check
-// requires, so a case only has to state the body it is about.
+// requires, so a case only has to state the body it is about. A route source is
+// TOML, so its frontmatter is a `[meta]` table rather than a `---` block
+// (sty_81bb0dde) — emitting the YAML form here would hand the TOML parser a
+// document it cannot read, and every case would fail on line 1 for the wrong
+// reason.
 func routeHalf(name, body string) string {
-	return "---\nname: " + name + "\ntype: workflow\nscope: project\ndescription: d\n---\n\n" + body
+	return "[meta]\nname = \"" + name + "\"\ntype = \"workflow\"\nscope = \"project\"\ndescription = \"d\"\n\n" + body
 }
 
 // TestRouteSource pins the route-source grammar checks, and in particular WHICH
@@ -130,35 +134,67 @@ func TestRouteSource(t *testing.T) {
 	none := func(string) bool { return false }
 	all := func(string) bool { return true }
 
-	step := routeHalf("step", "## backlog\nstart: true\nprovides: raised\n\n"+
-		"## in_progress\nagent: executor\nreviewers: never-authored-review\nreviewer_agent: reviewer\n"+
-		"provides: coded\nrequires: raised\n\n"+
-		"## done\nterminal: true\nprovides: closed\nrequires: coded\n\n"+
-		"## gate never-authored-gate\non: done\nfor: *\n")
+	step := routeHalf("step", `[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+reviewers = ["never-authored-review"]
+reviewer_agent = "reviewer"
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+
+[[gate]]
+skill = "never-authored-gate"
+on = ["done"]
+for = ["*"]
+`)
 	if p := Doc("workflows", "step", step, none); len(p) != 0 {
 		t.Errorf("an unresolved REVIEWER gate must not be a structure failure, got %v", p)
 	}
 
-	exec := routeHalf("step", "## backlog\nstart: true\nprovides: raised\n\n"+
-		"## in_progress\nagent: executor\nskills: never-authored-rubric\nprovides: coded\nrequires: raised\n\n"+
-		"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
+	exec := routeHalf("step", `[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+skills = ["never-authored-rubric"]
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+`)
 	if p := Doc("workflows", "step", exec, none); !hasProb(p, "executor-step skill never-authored-rubric") {
 		t.Errorf("an unresolved EXECUTOR rubric must fail, got %v", p)
 	}
 
-	// A route source selects by done.md's sections, so its own applies_to would
-	// be a second precedence rule.
-	withApplies := "---\nname: done\ntype: workflow\nscope: project\napplies_to: [\"*\"]\ndescription: d\n---\n\n## *\n- raised\n"
+	// A route source selects by done.toml's category tables, so its own applies_to
+	// would be a second precedence rule.
+	withApplies := routeHalf("done", "[\"*\"]\nobligations = [\"raised\"]\n")
+	withApplies = strings.Replace(withApplies, "[meta]\n", "[meta]\napplies_to = [\"*\"]\n", 1)
 	if p := Doc("workflows", "done", withApplies, all); !hasProb(p, "must not declare applies_to") {
 		t.Errorf("a route source declaring applies_to must be rejected, got %v", p)
 	}
 
 	// An unresolved park/cancel gate is a gate too — reported, not a failure.
-	done := routeHalf("done", "## *\n- raised\ncancel: cancelled @never-authored-cancel\n")
+	done := routeHalf("done", `["*"]
+obligations = ["raised"]
+cancel = { state = "cancelled", gate = "never-authored-cancel" }
+`)
 	if p := Doc("workflows", "done", done, none); len(p) != 0 {
 		t.Errorf("an unresolved cancel gate must not be a structure failure, got %v", p)
 	}
-	if p := Doc("workflows", "done", routeHalf("done", "## *\n"), all); !hasProb(p, "declares no obligations") {
+	if p := Doc("workflows", "done", routeHalf("done", "[\"*\"]\n"), all); !hasProb(p, "declares no obligations") {
 		t.Errorf("a section with no obligations must be reported, got %v", p)
 	}
 }

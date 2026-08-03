@@ -488,7 +488,7 @@ func categoryStepOf(docs []docindex.Doc) func(category, state string) int {
 	byCat := map[string]map[string]int{}
 	var wild map[string]int
 	// A DERIVED route numbers a story by its own CATEGORY, so it is expanded per
-	// declared category rather than per file — done.md and step.md are two halves
+	// declared category rather than per file — done.toml and step.toml are two halves
 	// of one route, not two workflows (sty_9835070d).
 	if rs := wfgovern.RouteSourceOf(docs); rs.Present() {
 		for _, cat := range wfgovern.RouteCategories(rs.Done) {
@@ -615,7 +615,7 @@ func httpError(w http.ResponseWriter, err error) {
 // footerEmail backs the shared footer template (mirror prefers identity meta).
 var footerEmail string
 
-// wfdotWildcard is the done.md section that governs every category with none of
+// wfdotWildcard is the done.toml section that governs every category with none of
 // its own — the route-source spelling of applies_to ["*"].
 const wfdotWildcard = wfdot.WildcardCategory
 

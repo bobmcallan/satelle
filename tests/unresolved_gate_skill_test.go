@@ -27,8 +27,8 @@ func routeNamingMissingSkill() (done, step string) {
 func writeRouteNamingMissingSkill(t *testing.T, repo string) {
 	t.Helper()
 	done, step := routeNamingMissingSkill()
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "done.md"), done)
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "step.md"), step)
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "done.toml"), done)
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "step.toml"), step)
 }
 
 // TestNamedWorkflowValidateWarnsOnUnresolvedGateSkill (sty_d59ec6a9 AC1): the
@@ -47,7 +47,7 @@ func TestNamedWorkflowValidateWarnsOnUnresolvedGateSkill(t *testing.T) {
 	mustRun(t, testBin, repo, "reindex")
 
 	// The named form narrows to one authored file; the half that names the gate
-	// is step.md.
+	// is step.toml.
 	out, err := run(t, testBin, repo, "workflow", "validate", "step")
 	if err != nil {
 		t.Fatalf("named validate must not FAIL on an unresolved gate skill (a repo mid-authoring "+
@@ -82,7 +82,7 @@ func TestWorkflowCreateWarnsOnUnresolvedGateSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create must still write the route half, not refuse it: %v\n%s", err, out)
 	}
-	if _, statErr := os.Stat(filepath.Join(repo, ".satelle", "workflows", "step.md")); statErr != nil {
+	if _, statErr := os.Stat(filepath.Join(repo, ".satelle", "workflows", "step.toml")); statErr != nil {
 		t.Fatalf("the route half must be written: %v", statErr)
 	}
 	if !strings.Contains(out, "construction-review") {

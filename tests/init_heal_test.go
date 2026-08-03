@@ -18,10 +18,14 @@ func TestInitHealsMissingDefaultVirtually(t *testing.T) {
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	done, step := spineFixture("", "", "## gate satelle-estimate-actual-review\non: in_progress, done\nfor: *\n",
+	done, step := spineFixture("", "", `[[gate]]
+skill = "satelle-estimate-actual-review"
+on = ["in_progress", "done"]
+for = ["*"]
+`,
 		"in_progress|executor|||",
 		"done||||")
-	for name, body := range map[string]string{"done.md": done, "step.md": step} {
+	for name, body := range map[string]string{"done.toml": done, "step.toml": step} {
 		if err := os.WriteFile(filepath.Join(wfDir, name), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -34,7 +38,7 @@ func TestInitHealsMissingDefaultVirtually(t *testing.T) {
 		t.Error("init must not seed the virtual gate skill")
 	}
 	// Authored route untouched.
-	for name, body := range map[string]string{"done.md": done, "step.md": step} {
+	for name, body := range map[string]string{"done.toml": done, "step.toml": step} {
 		got, _ := os.ReadFile(filepath.Join(wfDir, name))
 		if string(got) != body {
 			t.Errorf("init modified the authored %s", name)

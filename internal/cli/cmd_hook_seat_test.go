@@ -28,10 +28,23 @@ func liveSeatRepo(t *testing.T) (repo, storyID string) {
 		t.Fatal(err)
 	}
 	writeRoute(t, wfDir,
-		"## *\n- raised\n- coded\n- closed\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
+		`["*"]
+obligations = ["raised", "coded", "closed"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+`)
 	// Non-exempt target for gate tests.
 	if err := os.MkdirAll(filepath.Join(repo, "internal"), 0o755); err != nil {
 		t.Fatal(err)
@@ -220,10 +233,23 @@ func TestHookHandlersDoNotRefreshForeignOwner(t *testing.T) {
 	wfDir := filepath.Join(repo, ".satelle", "workflows")
 	_ = os.MkdirAll(wfDir, 0o755)
 	writeRoute(t, wfDir,
-		"## *\n- raised\n- coded\n- closed\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
+		`["*"]
+obligations = ["raised", "coded", "closed"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+`)
 	_ = os.MkdirAll(filepath.Join(repo, "internal"), 0o755)
 	_ = os.WriteFile(filepath.Join(repo, "internal", "foo.go"), []byte("package internal\n"), 0o644)
 
@@ -520,12 +546,30 @@ func liveSeatRepoWithAdvance(t *testing.T) (repo, storyID string) {
 		t.Fatal(err)
 	}
 	writeRoute(t, wfDir,
-		"## *\n- raised\n- coded\n- integrated\n- closed\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
-			"## integration\nagent: executor\nreviewers: ac-rev, scope-rev\nreviewer_agent: reviewer\n"+
-			"provides: integrated\nrequires: coded\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: integrated\n")
+		`["*"]
+obligations = ["raised", "coded", "integrated", "closed"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[integrated]
+status = "integration"
+agent = "executor"
+reviewers = ["ac-rev", "scope-rev"]
+reviewer_agent = "reviewer"
+requires = ["coded"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["integrated"]
+`)
 	if err := os.MkdirAll(filepath.Join(repo, "internal"), 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -6,19 +6,23 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 func init() {
@@ -90,7 +94,7 @@ type migratePlan struct {
 	Gitignore       bool     // managed block needs converge
 	ExemptGitignore bool     // [gate] edit_exempt_paths needs .gitignore (sty_f115e6bf)
 	// WorkflowRetire lists DOT workflow files superseded by an authored,
-	// PARSEABLE done.md + step.md (sty_9835070d). Actionable work: migrate
+	// PARSEABLE done.toml + step.toml (sty_9835070d). Actionable work: migrate
 	// removes them.
 	WorkflowRetire []string
 	// WorkflowConvertPending lists DOT workflow files present while the route
@@ -101,6 +105,109 @@ type migratePlan struct {
 	// "already on current structure" would then read as "nothing to do" about a
 	// conversion that is outstanding.
 	WorkflowConvertPending []string
+	// StampRewrite lists work items whose `workflow:` tag still names the two
+	// route-source FILES instead of the lifecycle (sty_81bb0dde). Populated from
+	// the store rather than by planMigrate, which stays IO-free.
+	StampRewrite []stampRewrite
+	// StampCapped marks a stamp sweep that hit its page cap, so the report can
+	// say another pass is owed instead of implying the repo is converged.
+	StampCapped bool
+}
+
+// stampRewrite is one item's stale workflow stamp and the tag set that replaces
+// it. The whole tag set is carried so apply never re-derives it — the plan the
+// operator read is the plan that runs.
+type stampRewrite struct {
+	ID   string
+	Old  string
+	Tags []string
+}
+
+// stampSweepLimit caps one pass of the stamp sweep. It is the store's own
+// ceiling; a repo with more items than this rewrites what it found and says so,
+// and a second `migrate --yes` finishes the job. Truncating in silence would
+// report a converged repo that is not one.
+const stampSweepLimit = 2000
+
+// legacyStamps finds every work item stamped with the old file-pair spelling of
+// the derived route and computes its replacement tag set. Order and every other
+// tag are preserved: this rewrites ONE value, it does not re-canonicalise tags.
+// The second return is true when the sweep hit its page cap.
+//
+// Read-only, and it opens its OWN short-lived handle rather than taking one from
+// the App: migrate runs before the store is wired (and relocates the database
+// out from under it mid-run), so a handle held across the plan would be pointing
+// at the wrong file by the time apply runs. An absent database is not an error
+// — a repo with no ledger has no stamps — and is deliberately not created here,
+// so the dry-run path stays free of side effects.
+func legacyStamps(ctx context.Context, dbPath string) ([]stampRewrite, bool) {
+	if dbPath == "" || !fileExists(dbPath) {
+		return nil, false
+	}
+	db, err := store.Open(dbPath)
+	if err != nil {
+		return nil, false
+	}
+	defer db.Close()
+	items, err := db.Stories.List(ctx, workitem.ListFilter{
+		Limit: stampSweepLimit, IncludeArchived: true,
+	})
+	if err != nil {
+		return nil, false
+	}
+	var out []stampRewrite
+	for _, it := range items {
+		old := wfgovern.StampedWorkflowName(it)
+		if old == "" || !wfgovern.IsFilePairStamp(old) {
+			continue
+		}
+		tags := make([]string, len(it.Tags))
+		copy(tags, it.Tags)
+		for i, t := range tags {
+			if strings.HasPrefix(t, wfgovern.WorkflowStampPrefix) {
+				tags[i] = wfgovern.WorkflowStampPrefix + wfgovern.DerivedRouteName
+			}
+		}
+		out = append(out, stampRewrite{ID: it.ID, Old: old, Tags: tags})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, len(items) >= stampSweepLimit
+}
+
+// applyStamps writes the planned rewrites to the database at dbPath — resolved
+// AFTER any relocation, so the write lands in the authoritative ledger rather
+// than the copy that is about to be removed.
+func applyStamps(ctx context.Context, out io.Writer, dbPath string, plan []stampRewrite) error {
+	db, err := store.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("migrate: open %s: %w", dbPath, err)
+	}
+	defer db.Close()
+	now := time.Now()
+	for _, s := range plan {
+		tags := s.Tags
+		if _, err := db.Stories.Update(ctx, s.ID, workitem.UpdateInput{Tags: &tags}, now); err != nil {
+			return fmt.Errorf("migrate: restamp %s: %w", s.ID, err)
+		}
+		fmt.Fprintf(out, "  %s  %s%s → %s%s\n", s.ID,
+			wfgovern.WorkflowStampPrefix, s.Old,
+			wfgovern.WorkflowStampPrefix, wfgovern.DerivedRouteName)
+	}
+	return nil
+}
+
+// stampDB picks the database the stamp sweep reads at PLAN time: the home-keyed
+// one when it exists, else the legacy in-repo one. Before relocation the legacy
+// file is the only ledger there is, and planning against a home path that does
+// not exist yet would report "no stamps" for a repo full of them.
+func stampDB(cfg config.Config, repoRoot, dataDir string) string {
+	if home := cfg.ResolveDB(repoRoot); fileExists(home) {
+		return home
+	}
+	if legacy := filepath.Join(dataDir, config.DefaultDBName); fileExists(legacy) {
+		return legacy
+	}
+	return ""
 }
 
 func planMigrate(cfg config.Config, repoRoot, dataDir string) migratePlan {
@@ -127,8 +234,15 @@ func planMigrate(cfg config.Config, repoRoot, dataDir string) migratePlan {
 // (pending). Exactly one of the two is ever non-empty.
 //
 // The route source must PARSE before anything is retired: deleting the only
-// remaining lifecycle because a half-authored done.md happened to be on disk is
-// the one failure this step must not have.
+// remaining lifecycle because a half-authored done.toml happened to be on disk
+// is the one failure this step must not have.
+//
+// The route halves are read by NAME, whatever their extension. A repo mid-
+// conversion has done.md on disk and done.toml beside it; taking only one
+// extension would either miss the converted half (and report a conversion that
+// is done as outstanding) or feed markdown to the TOML parser. Reading both and
+// letting the parse decide keeps this honest — an unparseable half is an
+// unconverted repo, which is exactly what pending means.
 func workflowConversionState(dataDir string) (retire, pending []string) {
 	wfDir := filepath.Join(dataDir, "workflows")
 	entries, err := os.ReadDir(wfDir)
@@ -138,26 +252,30 @@ func workflowConversionState(dataDir string) (retire, pending []string) {
 	var dots []string
 	var doneBody, stepBody string
 	for _, e := range entries {
-		if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".md") ||
-			strings.EqualFold(e.Name(), "README.md") {
+		ext := filepath.Ext(e.Name())
+		name := strings.TrimSuffix(e.Name(), ext)
+		isMD := strings.EqualFold(ext, ".md")
+		if e.IsDir() || strings.EqualFold(e.Name(), "README.md") ||
+			!(isMD || strings.EqualFold(ext, ".toml")) {
 			continue
 		}
 		body, err := os.ReadFile(filepath.Join(wfDir, e.Name()))
 		if err != nil {
 			continue
 		}
-		switch strings.TrimSuffix(e.Name(), filepath.Ext(e.Name())) {
+		switch name {
 		case wfgovern.RouteSourceDone:
-			doneBody = string(body)
+			doneBody = pickRouteHalf(doneBody, string(body), isMD)
 			continue
 		case wfgovern.RouteSourceStep:
-			stepBody = string(body)
+			stepBody = pickRouteHalf(stepBody, string(body), isMD)
 			continue
 		}
 		// Textual, because there is no DOT parser left to ask (sty_d953c5d8).
 		// migrate is the one place that must still RECOGNISE a graph: it is what
-		// tells an unconverted repo what it owes.
-		if strings.Contains(string(body), "```dot") {
+		// tells an unconverted repo what it owes. A graph is always markdown — a
+		// .toml file is never one.
+		if isMD && strings.Contains(string(body), "```dot") {
 			dots = append(dots, e.Name())
 		}
 	}
@@ -177,6 +295,18 @@ func workflowConversionState(dataDir string) (retire, pending []string) {
 	return dots, nil
 }
 
+// pickRouteHalf chooses between two files claiming the same route half. The
+// TOML one wins: it is the converted form, and a repo that still has the
+// markdown beside it has finished the conversion but not deleted the old file.
+// Directory order is not stable, so this cannot be left to whichever is read
+// last.
+func pickRouteHalf(have, body string, isMD bool) string {
+	if have != "" && isMD {
+		return have
+	}
+	return body
+}
+
 // printConversionPending states an outstanding conversion wherever migrate
 // reports, including the converged path — silence there would read as "nothing
 // to do" about work that has not been done.
@@ -190,15 +320,16 @@ func printConversionPending(out io.Writer, pending []string) {
 	}
 	fmt.Fprintln(out, "  until they are converted this repo REFUSES transitions rather than running them ungated.")
 	fmt.Fprintln(out, "  read `satelle help workflow-convert` — it maps each node, edge gate and park/cancel sink")
-	fmt.Fprintln(out, "  onto the two files, then author workflows/done.md (a `## <category>` section per category,")
-	fmt.Fprintln(out, "  its obligations in order) and workflows/step.md (a `## <step>` per status, a `## gate <skill>`")
-	fmt.Fprintln(out, "  per always-on gate), and re-run migrate to retire the graphs. migrate does not derive them:")
+	fmt.Fprintln(out, "  onto the two files, then author workflows/done.toml (a `[<category>]` table per category,")
+	fmt.Fprintln(out, "  its obligations in order) and workflows/step.toml (a `[<obligation>]` table per step, a")
+	fmt.Fprintln(out, "  `[[gate]]` per always-on gate), and re-run migrate to retire the graphs. migrate does not derive them:")
 	fmt.Fprintln(out, "  turning a graph into obligations is interpretation, and it is authored and reviewed.")
 }
 
 func (p migratePlan) empty() bool {
 	return !p.RuntimeRelocate && len(p.Residue) == 0 && len(p.PruneSeeds) == 0 &&
-		!p.Gitignore && !p.ExemptGitignore && len(p.WorkflowRetire) == 0
+		!p.Gitignore && !p.ExemptGitignore && len(p.WorkflowRetire) == 0 &&
+		len(p.StampRewrite) == 0
 }
 
 func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
@@ -209,6 +340,8 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 		dataDir = cfg.ResolveDataDir(repoRoot)
 	}
 	plan := planMigrate(cfg, repoRoot, dataDir)
+	ctx := context.Background()
+	plan.StampRewrite, plan.StampCapped = legacyStamps(ctx, stampDB(cfg, repoRoot, dataDir))
 
 	if plan.empty() {
 		fmt.Fprintln(out, "already on current structure")
@@ -271,10 +404,22 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 	if len(plan.WorkflowRetire) == 0 {
 		fmt.Fprintln(out, "  workflows:        (none superseded)")
 	} else {
-		fmt.Fprintf(out, "  workflows:        retire %d superseded DOT workflow(s) (done.md + step.md govern)\n",
+		fmt.Fprintf(out, "  workflows:        retire %d superseded DOT workflow(s) (done.toml + step.toml govern)\n",
 			len(plan.WorkflowRetire))
 		for _, f := range plan.WorkflowRetire {
 			fmt.Fprintf(out, "    - workflows/%s\n", f)
+		}
+	}
+	if len(plan.StampRewrite) == 0 {
+		fmt.Fprintln(out, "  stamps:           (no file-pair workflow stamps)")
+	} else {
+		fmt.Fprintf(out, "  stamps:           rewrite %d item tag(s) → %s%s\n",
+			len(plan.StampRewrite), wfgovern.WorkflowStampPrefix, wfgovern.DerivedRouteName)
+		for _, s := range plan.StampRewrite {
+			fmt.Fprintf(out, "    - %s  %s%s\n", s.ID, wfgovern.WorkflowStampPrefix, s.Old)
+		}
+		if plan.StampCapped {
+			fmt.Fprintf(out, "    (sweep capped at %d item(s) — re-run migrate after this pass)\n", stampSweepLimit)
 		}
 	}
 	fmt.Fprintln(out, "  validate:         deployed system check")
@@ -369,6 +514,20 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 		}
 	}
 
+	if len(plan.StampRewrite) > 0 {
+		// The stamp names a LIFECYCLE. Every item found here was governed by the
+		// derived route — that is what the file-pair spelling meant — so they all
+		// rewrite to the same name; there is nothing to re-resolve per item.
+		//
+		// AFTER relocation and residue removal on purpose: a.DBPath is the
+		// post-relocate path by here, so the rewrite lands in the ledger the repo
+		// keeps rather than the copy that was just deleted.
+		fmt.Fprintln(out, "\n→ rewrite file-pair workflow stamps")
+		if err := applyStamps(ctx, out, a.DBPath, plan.StampRewrite); err != nil {
+			return err
+		}
+	}
+
 	if plan.ExemptGitignore {
 		fmt.Fprintln(out, "\n→ config converge")
 		changed, err := ensureEditExemptGitignore(dataDir)
@@ -444,7 +603,7 @@ func listUneditedSeeds(dataDir string) []string {
 		if d.Kind == "tasks" {
 			continue
 		}
-		rel := d.Kind + "/" + d.Name + ".md"
+		rel := d.RelPath()
 		path := filepath.Join(dataDir, filepath.FromSlash(rel))
 		body, err := os.ReadFile(path)
 		if err != nil {

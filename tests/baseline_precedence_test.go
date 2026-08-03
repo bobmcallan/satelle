@@ -28,14 +28,14 @@ func wfList(t *testing.T, repo, category string) []wfListRow {
 // TestEmbeddedRoutePrecedence is the end-to-end proof of the ONE precedence rule
 // the shipped route introduced (sty_3795e7f6). The doc index overlays an
 // embedded default wherever a repo has no file of that name, so the shipped
-// done.md + step.md surface in every repo — including one that never converted.
+// done.toml + step.toml surface in every repo — including one that never converted.
 // The rule that keeps that safe:
 //
 //	(a) with no authored workflow, the shipped route governs and is what a story
 //	    is stamped with;
 //	(b) a repo's own workflow claiming the category OUTRANKS the shipped route —
 //	    upgrading the binary must not silently re-route an unconverted repo;
-//	(c) a repo's own done.md + step.md outrank everything, graph or no graph.
+//	(c) a repo's own done.toml + step.toml outrank everything, graph or no graph.
 func TestEmbeddedRoutePrecedence(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
@@ -46,13 +46,13 @@ func TestEmbeddedRoutePrecedence(t *testing.T) {
 	// (a) The shipped route is the active lifecycle of a fresh repo, and it is
 	// what create stamps — the stamp must name what will actually gate.
 	rows := wfList(t, repo, "feature")
-	if len(rows) == 0 || rows[0].Name != "done.md+step.md" || !rows[0].Active {
+	if len(rows) == 0 || rows[0].Name != "default" || !rows[0].Active {
 		t.Fatalf("the shipped route must govern a fresh repo, got %+v", rows)
 	}
 	out := mustRun(t, testBin, repo, "story", "create", "--title", "Stamped by the shipped route",
 		"--category", "feature", "--body", "Prove the stamp names the governing lifecycle.",
-		"--acceptance", "1. stamped done.md+step.md")
-	if !strings.Contains(out, `"workflow:done.md+step.md"`) {
+		"--acceptance", "1. stamped default")
+	if !strings.Contains(out, `"workflow:default"`) {
 		t.Errorf("create did not stamp the shipped route:\n%s", out)
 	}
 
@@ -66,7 +66,7 @@ func TestEmbeddedRoutePrecedence(t *testing.T) {
 		t.Errorf("a repo workflow must outrank the shipped route, got %+v", rows)
 	}
 	for _, r := range rows {
-		if r.Name == "done.md+step.md" {
+		if r.Name == "default" {
 			t.Errorf("the shipped route must not be listed while an authored workflow claims the category: %+v", rows)
 		}
 	}
@@ -74,7 +74,7 @@ func TestEmbeddedRoutePrecedence(t *testing.T) {
 	// …and a category the authored workflow does NOT claim still resolves to the
 	// shipped route: one authored graph does not switch the whole repo off it.
 	rows = wfList(t, repo, "epic-parent")
-	if len(rows) == 0 || rows[0].Name != "done.md+step.md" || !rows[0].Active {
+	if len(rows) == 0 || rows[0].Name != "default" || !rows[0].Active {
 		t.Errorf("an unclaimed category must still resolve to the shipped route, got %+v", rows)
 	}
 
@@ -82,7 +82,7 @@ func TestEmbeddedRoutePrecedence(t *testing.T) {
 	seedRouteSource(t, repo)
 	mustRun(t, testBin, repo, "reindex")
 	rows = wfList(t, repo, "feature")
-	if len(rows) == 0 || rows[0].Name != "done.md+step.md" || !rows[0].Active {
+	if len(rows) == 0 || rows[0].Name != "default" || !rows[0].Active {
 		t.Errorf("an authored route must outrank an authored workflow, got %+v", rows)
 	}
 }

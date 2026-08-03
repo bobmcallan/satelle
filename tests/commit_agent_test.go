@@ -27,8 +27,10 @@ func TestCommitAgentBindingInspectable(t *testing.T) {
 	if out, err := run(t, testBin, repo, "workflow", "validate"); err != nil {
 		t.Fatalf("validate should pass for a named-agent route:\n%s\n%v", out, err)
 	}
+	// `doc get` emits JSON, so the body's own quotes arrive escaped — this is the
+	// route source as an operator would read it back off the index.
 	out := mustRun(t, testBin, repo, "doc", "get", "workflows", "step")
-	if !strings.Contains(out, "agent: commit-agent") {
+	if !strings.Contains(out, `agent = \"commit-agent\"`) {
 		t.Errorf("workflow inspection should show commit_push bound to commit-agent:\n%s", out)
 	}
 }

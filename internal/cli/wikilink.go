@@ -64,11 +64,18 @@ func auditWikilinks(dataDir string, embedded []config.EmbeddedDefault) []string 
 		if d.Kind == "" || d.Name == "" {
 			continue
 		}
-		onDisk := filepath.Join(dataDir, d.Kind, d.Name+".md")
+		// TOML has NO wikilinks, and scanning it produces guaranteed false
+		// positives: an array-of-tables header is spelled `[[category]]`, which is
+		// character-for-character a wikilink. That is TOML structure, not a
+		// reference to a document that ought to exist.
+		if !strings.EqualFold(d.Ext, ".md") && d.Ext != "" {
+			continue
+		}
+		onDisk := filepath.Join(dataDir, filepath.FromSlash(d.RelPath()))
 		if _, err := os.Stat(onDisk); err == nil {
 			continue // already scanned
 		}
-		virt := "embedded:" + d.Kind + "/" + d.Name + ".md"
+		virt := "embedded:" + d.RelPath()
 		problems = append(problems, danglingIn(d.Body, virt, catalog)...)
 	}
 
@@ -107,10 +114,18 @@ func wikilinkCatalog(dataDir string, embedded []config.EmbeddedDefault) map[stri
 	return cat
 }
 
+// codeSpanRe matches an inline `code span`. Text inside one is QUOTED, not
+// authored: a doc that shows `[[gate]]` is naming a TOML array-of-tables header,
+// not referring to a document called "gate". Stripping spans before the wikilink
+// scan is what lets prose talk about syntax without every example becoming a
+// dangling link.
+var codeSpanRe = regexp.MustCompile("`[^`\n]*`")
+
 // danglingIn returns problem lines for unresolved wikilinks in body.
 func danglingIn(body, where string, catalog map[string]bool) []string {
 	var out []string
 	seen := map[string]bool{}
+	body = codeSpanRe.ReplaceAllString(body, "")
 	for _, m := range wikiLinkRe.FindAllStringSubmatch(body, -1) {
 		target := strings.TrimSpace(m[1])
 		if target == "" || catalog[target] {

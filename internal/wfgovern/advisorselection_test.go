@@ -15,39 +15,35 @@ import (
 // any repo, so baking this repo's categories or skills in would make the test
 // about satelle rather than about the rule.
 func advisorFixture() RouteSource {
-	done := `## alpha
-- raised
-- built
-- closed
-park: parked @park-gate advise park-helper @park-rubric
-cancel: cancelled @cancel-gate
+	done := `[alpha]
+obligations = ["raised", "built", "closed"]
+park = { state = "parked", gate = "park-gate", advisor = "park-helper", advisor_skill = "park-rubric" }
+cancel = { state = "cancelled", gate = "cancel-gate" }
 
-## beta
-- raised
-- built
-- children-resolved
-cancel: cancelled @cancel-gate
+[beta]
+obligations = ["raised", "built", "children-resolved"]
+cancel = { state = "cancelled", gate = "cancel-gate" }
 `
-	step := `## backlog
-start: true
-provides: raised
+	step := `[raised]
+status = "backlog"
+start = true
 
-## build
-agent: executor
-provides: built
-requires: raised
+[built]
+status = "build"
+agent = "executor"
+requires = ["raised"]
 
-## done
-terminal: true
-provides: closed
-requires: built
-advise: retro @retro-rubric
+[closed]
+status = "done"
+terminal = true
+requires = ["built"]
+advise = { agent = "retro", skill = "retro-rubric" }
 
-## done
-agent: reviewer
-terminal: true
-provides: children-resolved
-requires: built
+[children-resolved]
+status = "done"
+agent = "reviewer"
+terminal = true
+requires = ["built"]
 `
 	return RouteSource{Done: done, Step: step}
 }

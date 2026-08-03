@@ -116,7 +116,7 @@ func runSubstrateEdit(out io.Writer, dataDir string, idx *docindex.Store, kind, 
 	if kind == "" || name == "" {
 		return fmt.Errorf("substrate edit: kind and name required")
 	}
-	rel := kind + "/" + name + ".md"
+	rel := kind + "/" + name + config.EmbeddedExt(kind, name)
 	path := filepath.Join(dataDir, filepath.FromSlash(rel))
 	if fileExists(path) {
 		fmt.Fprintln(out, path)
@@ -153,7 +153,7 @@ func runSubstratePrune(out io.Writer, in io.Reader, dataDir string, opts BackupO
 		if d.Kind == "tasks" {
 			continue
 		}
-		rel := d.Kind + "/" + d.Name + ".md"
+		rel := d.RelPath()
 		path := filepath.Join(dataDir, filepath.FromSlash(rel))
 		body, err := os.ReadFile(path)
 		if err != nil {

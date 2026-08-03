@@ -18,10 +18,24 @@ func TestValidate_Healthy(t *testing.T) {
 		},
 	}
 	wfs := routeDocs(
-		"## *\n- raised\n- planned\n- closed\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## plan\nagent: planner\nskills: plan\nprovides: planned\nrequires: raised\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: planned\n")
+		`["*"]
+obligations = ["raised", "planned", "closed"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[planned]
+status = "plan"
+agent = "planner"
+skills = ["plan"]
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["planned"]
+`)
 	r := Validate(agents, nil, wfs)
 	if !r.OK() {
 		t.Fatalf("healthy fixture must have no problems: %v", r.Problems)
@@ -56,13 +70,33 @@ func TestValidate_GateBindingSection(t *testing.T) {
 		},
 	}
 	wfs := routeDocs(
-		"## *\n- raised\n- planned\n- closed\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## plan\nagent: planner\nskills: plan\nreviewers: intent\nreviewer_agent: reviewer-deep\n"+
-			"provides: planned\nrequires: raised\n\n"+
-			"## done\nreviewers: close\nreviewer_agent: reviewer\nterminal: true\n"+
-			"provides: closed\nrequires: planned\n\n"+
-			"## gate est\nagent: reviewer\non: done\n")
+		`["*"]
+obligations = ["raised", "planned", "closed"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[planned]
+status = "plan"
+agent = "planner"
+skills = ["plan"]
+reviewers = ["intent"]
+reviewer_agent = "reviewer-deep"
+requires = ["raised"]
+
+[closed]
+status = "done"
+reviewers = ["close"]
+reviewer_agent = "reviewer"
+terminal = true
+requires = ["planned"]
+
+[[gate]]
+skill = "est"
+agent = "reviewer"
+on = ["done"]
+`)
 	r := Validate(agents, nil, wfs)
 	if !r.OK() {
 		t.Fatalf("problems: %v", r.Problems)
@@ -112,11 +146,28 @@ func TestValidate_StepSummaryNamedReviewer(t *testing.T) {
 		},
 	}
 	wfNamed := routeDocs(
-		"## *\n- raised\n- coded\n- closed\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: coded\n\n"+
-			"## gate satelle-step-summary\nagent: reviewer-summary\nmandatory: true\n")
+		`["*"]
+obligations = ["raised", "coded", "closed"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+
+[[gate]]
+skill = "satelle-step-summary"
+agent = "reviewer-summary"
+mandatory = true
+`)
 	r := Validate(agents, nil, wfNamed)
 	if !r.OK() {
 		t.Fatalf("named step-summary reviewer must pass: %v", r.Problems)
@@ -161,10 +212,23 @@ func TestValidate_StepSummaryNamedReviewer(t *testing.T) {
 
 	// The plain agent=reviewer summariser stays green.
 	wfLegacy := routeDocs(
-		"## *\n- raised\n- closed\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: raised\n\n"+
-			"## gate satelle-step-summary\nagent: reviewer\nmandatory: true\n")
+		`["*"]
+obligations = ["raised", "closed"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[closed]
+status = "done"
+terminal = true
+requires = ["raised"]
+
+[[gate]]
+skill = "satelle-step-summary"
+agent = "reviewer"
+mandatory = true
+`)
 	rLeg := Validate(agents, nil, wfLegacy)
 	if !rLeg.OK() {
 		t.Fatalf("legacy agent=reviewer step must pass: %v", rLeg.Problems)
@@ -350,10 +414,24 @@ func TestValidate_MissingNodeBinding(t *testing.T) {
 	}}
 	_ = wfs
 	wfs = routeDocs(
-		"## *\n- raised\n- worked\n- closed\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## work\nagent: ghost\nskills: code\nprovides: worked\nrequires: raised\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: worked\n")
+		`["*"]
+obligations = ["raised", "worked", "closed"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[worked]
+status = "work"
+agent = "ghost"
+skills = ["code"]
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["worked"]
+`)
 	r := Validate(agents, nil, wfs)
 	if r.OK() {
 		t.Fatal("missing node binding must produce a problem")
@@ -378,9 +456,18 @@ func TestValidate_OrphanBinding(t *testing.T) {
 	}}
 	_ = wfs
 	wfs = routeDocs(
-		"## *\n- raised\n- closed\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: raised\n")
+		`["*"]
+obligations = ["raised", "closed"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[closed]
+status = "done"
+terminal = true
+requires = ["raised"]
+`)
 	r := Validate(agents, nil, wfs)
 	// Orphans are warnings (advisory) — [retrospective]-style non-workflow agents
 	// must not hard-fail engage/init.
@@ -654,10 +741,24 @@ func TestValidate_CodexReviewerSandboxHardReject(t *testing.T) {
 // the binding under test (sty_87c0ef37).
 func channelWF(section string) []docindex.Doc {
 	return routeDocs(
-		"## *\n- raised\n- planned\n- closed\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## plan\nagent: "+section+"\nskills: plan\nprovides: planned\nrequires: raised\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: planned\n")
+		`["*"]
+obligations = ["raised", "planned", "closed"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[planned]
+status = "plan"
+agent = "`+section+`"
+skills = ["plan"]
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["planned"]
+`)
 }
 
 // TestValidate_ContextChannelFindings is the AC1/AC2/AC7/AC8 matrix: a DISPATCHED

@@ -31,16 +31,16 @@ func TestInitSeedsBlockedLifecycle(t *testing.T) {
 		t.Error("seeded blocked-review skill should require a reason")
 	}
 
-	wf := filepath.Join(repo, ".satelle", "workflows", "done.md")
+	wf := filepath.Join(repo, ".satelle", "workflows", "done.toml")
 	wbody, err := os.ReadFile(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(wbody)
 	// A derived route DECLARES its park state and the reviewer that admits it on
-	// one `park:` line; the topology into and out of it is synthesised by the
-	// binary, so there is no edge to look for in the markdown (sty_3795e7f6).
-	if !strings.Contains(s, "park:") || !strings.Contains(s, "@satelle-story-blocked-review") {
+	// one `park =` inline table; the topology into and out of it is synthesised by
+	// the binary, so there is no edge to look for in the file (sty_3795e7f6).
+	if !strings.Contains(s, "park =") || !strings.Contains(s, `"satelle-story-blocked-review"`) {
 		t.Errorf("the seeded declaration of done must declare a park state gated by "+
 			"satelle-story-blocked-review:\n%s", s)
 	}

@@ -198,10 +198,23 @@ func TestRunInitAdvisorySkillsAreVirtual(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeRoute(t, wfDir,
-		"## *\n- raised\n- coded\n- closed\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
+		`["*"]
+obligations = ["raised", "coded", "closed"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+`)
 	if err := runInitTest(t, io.Discard, repo); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
@@ -468,13 +481,29 @@ func TestRunInitBesideAuthoredWorkflowNoSeeds(t *testing.T) {
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	own := filepath.Join(wfDir, "done.md")
+	own := filepath.Join(wfDir, "done.toml")
 	writeRoute(t, wfDir,
-		"## *\n- raised\n- coded\n- closed\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: coded\n\n"+
-			"## gate satelle-estimate-actual-review\non: in_progress, done\n")
+		`["*"]
+obligations = ["raised", "coded", "closed"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+
+[[gate]]
+skill = "satelle-estimate-actual-review"
+on = ["in_progress", "done"]
+`)
 	if err := runInitTest(t, io.Discard, repo); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
@@ -496,11 +525,27 @@ func TestRunInitVirtualGateSkillResolves(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeRoute(t, wfDir,
-		"## *\n- raised\n- coded\n- closed\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: coded\n\n"+
-			"## gate satelle-estimate-actual-review\non: in_progress, done\n")
+		`["*"]
+obligations = ["raised", "coded", "closed"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+
+[[gate]]
+skill = "satelle-estimate-actual-review"
+on = ["in_progress", "done"]
+`)
 	if err := runInitTest(t, io.Discard, repo); err != nil {
 		t.Fatalf("init must validate green with virtual gate skill: %v", err)
 	}

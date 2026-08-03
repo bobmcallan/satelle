@@ -17,42 +17,38 @@ import (
 // the shipped route would shadow that graph the moment the binary upgraded —
 // these tests are the rule.
 
-const routeDone = `---
-name: done
-type: workflow
-scope: system
-description: fixture declaration of done.
----
+const routeDone = `[meta]
+name = "done"
+type = "workflow"
+scope = "system"
+description = "fixture declaration of done."
 
-## *
-- raised
-- coded
-- closed
-cancel: cancelled @cancel-review
+["*"]
+obligations = ["raised", "coded", "closed"]
+cancel = { state = "cancelled", gate = "cancel-review" }
 `
 
-const routeStep = `---
-name: step
-type: workflow
-scope: system
-description: fixture step catalogue.
----
+const routeStep = `[meta]
+name = "step"
+type = "workflow"
+scope = "system"
+description = "fixture step catalogue."
 
-## backlog
-start: true
-provides: raised
+[raised]
+status = "backlog"
+start = true
 
-## in_progress
-agent: executor
-reviewers: intent-review
-provides: coded
-requires: raised
+[coded]
+status = "in_progress"
+agent = "executor"
+reviewers = ["intent-review"]
+requires = ["raised"]
 
-## done
-reviewers: done-review
-terminal: true
-provides: closed
-requires: coded
+[closed]
+status = "done"
+reviewers = ["done-review"]
+terminal = true
+requires = ["coded"]
 `
 
 // authoredGraph is a repo's own workflow file that is NOT a route source — the

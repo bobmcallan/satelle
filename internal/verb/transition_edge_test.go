@@ -18,11 +18,29 @@ func TestRefuseSkippedStepPlanBlowThrough(t *testing.T) {
 	wire(t)
 	wfDir := t.TempDir()
 	body := routeHalves(
-		"## feature\n- raised\n- planned\n- coded\n- closed\npark: blocked\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## plan\nagent: executor\nprovides: planned\nrequires: raised\n\n"+
-			"## in_progress\nagent: executor\nprovides: coded\nrequires: planned\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
+		`[feature]
+obligations = ["raised", "planned", "coded", "closed"]
+park = { state = "blocked" }
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[planned]
+status = "plan"
+agent = "executor"
+requires = ["raised"]
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["planned"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+`)
 	writeRouteFiles(t, wfDir, body)
 	call(t, "doc-sync", map[string]any{"dirs": map[string]string{"workflows": wfDir}})
 

@@ -133,6 +133,13 @@ func TestEmbeddedWikilinksResolve(t *testing.T) {
 	idx := embeddedIndex()
 	for _, d := range EmbeddedDefaults() {
 		d := d
+		// TOML carries no wikilinks, and scanning it produces guaranteed false
+		// positives: an array-of-tables header is spelled `[[gate]]`, which is
+		// character-for-character a wikilink (sty_81bb0dde). Same carve-out the
+		// runtime audit makes in cli.auditWikilinks, for the same reason.
+		if !strings.EqualFold(d.Ext, ".md") && d.Ext != "" {
+			continue
+		}
 		t.Run(d.Kind+"/"+d.Name, func(t *testing.T) {
 			body := stripFences(d.Body)
 			for _, m := range wikilinkRe.FindAllStringSubmatch(body, -1) {

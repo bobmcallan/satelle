@@ -13,7 +13,7 @@ import (
 
 // AgentsConfigName is the per-repo agents-binding file. It lives in the workflows
 // dir (.satelle/workflows/agents.toml) beside the two route halves it binds:
-// step.md names a performer and its gates by SECTION NAME, and this file says
+// step.toml names a performer and its gates by SECTION NAME, and this file says
 // what those names actually run (sty_10f732ed). ActorsConfigName is the
 // now-removed legacy filename — it is no longer loaded (sty_7db2ed7d); `satelle
 // reindex` warns a repo still carrying it so the rename is enforced rather than

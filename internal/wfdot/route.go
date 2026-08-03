@@ -1,7 +1,7 @@
 // Route construction: an obligation list plus a step catalogue in, a Spec out.
 //
 // This is now the ONLY constructor onto Spec. BuildRoute reads a declaration of
-// done (done.md) and a step catalogue (step.md) and DERIVES the lifecycle. Every
+// done (done.toml) and a step catalogue (step.toml) and DERIVES the lifecycle. Every
 // consumer downstream — Validate, the reachability predicates,
 // ScopedReviewersSplit, ExecutorSkillsFor, the engine, the seat, the edit gate —
 // sees a normal Spec. That is the whole point: the graph stopped being authored
@@ -227,7 +227,7 @@ func SelectSteps(l List, cat Catalogue, tags []string) ([]Step, error) {
 // checkSelectionUnambiguous refuses a selected step set that cannot be turned
 // into a route without picking a silent winner.
 //
-// Two collisions matter, and both are one authored done.md edit away — a
+// Two collisions matter, and both are one authored done.toml edit away — a
 // category listing two obligations whose steps share a stage name, or two steps
 // declaring the same `provides:`. Downstream, each resolves last-wins: a step
 // vanishes from the route carrying its reviewers with it, which is exactly the

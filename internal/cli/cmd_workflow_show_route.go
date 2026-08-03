@@ -16,7 +16,7 @@ import (
 // this, `satelle workflow show <category>` failed with a docindex miss and the
 // only route views were the two authored halves — so the question "what route
 // does a story of category X actually get?" had no answer short of deriving it
-// by hand from done.md + step.md.
+// by hand from done.toml + step.toml.
 //
 // Everything here READS the derivation; nothing re-implements it. The Spec comes
 // from wfgovern.RouteSpecFor (the single chain the engine also uses), the step
@@ -35,14 +35,14 @@ func renderWorkflowRoute(out io.Writer, rs wfgovern.RouteSource, category string
 	}
 
 	fmt.Fprintf(out, "ROUTE %s\n", category)
-	fmt.Fprintf(out, "  derived from: done.md + step.md\n")
+	fmt.Fprintf(out, "  derived from: done.toml + step.toml\n")
 	// Which section governed is load-bearing: the wildcard silently answers for
 	// every category with no section of its own, and a reader who assumes an
 	// exact match would be reading someone else's route.
 	if d.List.Category == category {
-		fmt.Fprintf(out, "  section:      ## %s\n", d.List.Category)
+		fmt.Fprintf(out, "  section:      [%s]\n", d.List.Category)
 	} else {
-		fmt.Fprintf(out, "  section:      ## %s (the wildcard — %q declares no section of its own)\n",
+		fmt.Fprintf(out, "  section:      [%s] (the wildcard — %q declares no section of its own)\n",
 			d.List.Category, category)
 	}
 	if len(tags) > 0 {

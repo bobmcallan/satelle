@@ -154,10 +154,15 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 }
 
 // validateAuthoredDir runs the deterministic per-file check for one kind over a
-// directory's markdown files (nameFilter narrows to one), printing PASS/FAIL
+// directory's authored files (nameFilter narrows to one), printing PASS/FAIL
 // lines to out and returning the counts. It is file-based and store-free, so it
 // serves both the per-noun `satelle <noun> validate` (validateKind) and the init
 // deployment validation (sty_d0d6bb67), which runs before anything is indexed.
+//
+// Which files count is docindex.Indexable's answer, not a private `.md` test.
+// This walk carried its own and it silently stopped seeing the route source the
+// moment it became TOML: `workflow validate` reported "validated 0" on a
+// perfectly good route, which reads as a clean pass (sty_81bb0dde).
 func validateAuthoredDir(out io.Writer, kind, dir, nameFilter string, resolve func(skill string) bool) (validated, failed, exempt int) {
 	entries, derr := os.ReadDir(dir)
 	if derr != nil {
@@ -165,13 +170,13 @@ func validateAuthoredDir(out io.Writer, kind, dir, nameFilter string, resolve fu
 	}
 	for _, e := range entries {
 		fn := e.Name()
-		if e.IsDir() || !strings.HasSuffix(fn, ".md") {
+		if e.IsDir() || !docindex.Indexable(fn) {
 			continue
 		}
 		if kind == "tasks" && !strings.HasPrefix(fn, "tsk_") {
 			continue
 		}
-		name := strings.TrimSuffix(fn, ".md")
+		name := strings.TrimSuffix(fn, filepath.Ext(fn))
 		if nameFilter != "" && nameFilter != name {
 			continue
 		}

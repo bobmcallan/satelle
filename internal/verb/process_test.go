@@ -25,11 +25,25 @@ func TestProcessViewAllocations(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, body := range routeHalves(
-		"## *\n- raised\n- planned\n- closed\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## plan\nagent: executor\nreviewers: satelle-story-intent-review\nreviewer_agent: reviewer\n"+
-			"provides: planned\nrequires: raised\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: planned\n") {
+		`["*"]
+obligations = ["raised", "planned", "closed"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[planned]
+status = "plan"
+agent = "executor"
+reviewers = ["satelle-story-intent-review"]
+reviewer_agent = "reviewer"
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["planned"]
+`) {
 		if err := os.WriteFile(filepath.Join(wfDir, name+".md"), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -38,7 +52,7 @@ func TestProcessViewAllocations(t *testing.T) {
 	verb.SetDataDir(data)
 	t.Cleanup(func() { verb.SetDataDir("") })
 
-	raw := call(t, "process-view", map[string]any{"workflow": "done.md+step.md"})
+	raw := call(t, "process-view", map[string]any{"workflow": "default"})
 	var view verb.ProcessView
 	if err := json.Unmarshal(raw, &view); err != nil {
 		t.Fatal(err)

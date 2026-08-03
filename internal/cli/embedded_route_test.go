@@ -195,11 +195,21 @@ func TestWorkflowsReadmeDescribesTheRoute(t *testing.T) {
 			t.Errorf("the seeded workflows README carries retired DOT vocabulary %q", banned)
 		}
 	}
+	// Syntax the reader gets from TOML is not this README's to teach (AC4,
+	// sty_81bb0dde). The retired grammar's markers are banned outright: a seeded
+	// README that still shows `## <step>` sections teaches a format the parser
+	// cannot read, which is worse than teaching nothing.
+	for _, banned := range []string{"## <", "## gate", "<!--", "one line"} {
+		if strings.Contains(readme, banned) {
+			t.Errorf("the seeded workflows README carries retired format tuition %q", banned)
+		}
+	}
 	for _, want := range []string{
-		"done.md", "step.md", "provides", "requires",
-		// The linkage rule is the thing readers get wrong; a README that omits it
-		// leaves them matching obligations to headings.
-		"heading",
+		"done.toml", "step.toml", "[[gate]]", "requires",
+		// The linkage rule is the thing readers get wrong, and it is the one thing
+		// TOML does not make obvious: an obligation names a step by its TABLE KEY,
+		// not by the status the step declares.
+		"TABLE KEY", "status",
 		// The fastest post-edit feedback loop, and where the grammar is documented.
 		"satelle workflow validate", "satelle help workflows",
 	} {

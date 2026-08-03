@@ -59,12 +59,17 @@ func TestGateLeavesUnresolvedEmptyWhenGateResolves(t *testing.T) {
 func TestWorkflowSkillProblemsIsPerDocAndExcludesAmbiguity(t *testing.T) {
 	// A lifecycle names its gates in the route grammar (sty_d953c5d8), so the
 	// per-doc check reads the step catalogue.
-	a := docindex.Doc{Name: "wf-a", Body: "---\nname: wf-a\ntype: workflow\nscope: system\n" +
-		"description: fixture\napplies_to: [\"*\"]\n---\n\n" +
-		"## in_progress\nagent: executor\nreviewers: does-not-exist\nprovides: coded\nrequires: raised\n"}
-	b := docindex.Doc{Name: "wf-b", Body: "---\nname: wf-b\ntype: workflow\nscope: system\n" +
-		"description: fixture\napplies_to: [\"*\"]\n---\n\n" +
-		"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n"}
+	stepDoc := func(name, reviewers string) docindex.Doc {
+		body := "[meta]\nname = \"" + name + "\"\ntype = \"workflow\"\nscope = \"system\"\n" +
+			"description = \"fixture\"\napplies_to = [\"*\"]\n\n" +
+			"[coded]\nstatus = \"in_progress\"\nagent = \"executor\"\nrequires = [\"raised\"]\n"
+		if reviewers != "" {
+			body += "reviewers = [\"" + reviewers + "\"]\n"
+		}
+		return docindex.Doc{Name: name, Body: body}
+	}
+	a := stepDoc("wf-a", "does-not-exist")
+	b := stepDoc("wf-b", "")
 	resolve := func(string) bool { return false }
 
 	single := WorkflowSkillProblems(a, resolve)
@@ -104,9 +109,10 @@ func TestWorkflowSkillProblemsIsPerDocAndExcludesAmbiguity(t *testing.T) {
 // behaviour-preserving for the whole-set callers, which report these as FAILs —
 // the exact string they have always printed.
 func TestWorkflowConsistencyMessageUnchanged(t *testing.T) {
-	d := docindex.Doc{Name: "wf", Body: "---\nname: wf\ntype: workflow\nscope: system\n" +
-		"description: fixture\napplies_to: [\"*\"]\n---\n\n" +
-		"## in_progress\nagent: executor\nreviewers: missing-review\nprovides: coded\nrequires: raised\n"}
+	d := docindex.Doc{Name: "wf", Body: "[meta]\nname = \"wf\"\ntype = \"workflow\"\nscope = \"system\"\n" +
+		"description = \"fixture\"\napplies_to = [\"*\"]\n\n" +
+		"[coded]\nstatus = \"in_progress\"\nagent = \"executor\"\n" +
+		"reviewers = [\"missing-review\"]\nrequires = [\"raised\"]\n"}
 	got := WorkflowConsistency([]docindex.Doc{d}, func(string) bool { return false })
 	want := `workflow wf references skill "missing-review" which does not resolve in the substrate`
 	var found bool

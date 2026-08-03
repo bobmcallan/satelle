@@ -24,7 +24,7 @@ type gateRef struct {
 
 // gateCoverageWaiver: gates not exercised via a simple CLI path in a temp repo.
 // Keys are "<route section>/<skill>" — the shipped lifecycle is one derived
-// route, so a gate belongs to the done.md section it fires on (sty_3795e7f6).
+// route, so a gate belongs to the done.toml section it fires on (sty_3795e7f6).
 // Prefer a fixture over a waiver; each entry must justify.
 var gateCoverageWaiver = map[string]string{
 	// Container close needs child stories + parent category plumbing.
@@ -65,17 +65,17 @@ func enumerateEmbeddedGates(t *testing.T) []gateRef {
 	}
 	// The shipped lifecycle is ONE derived route, so the gates are enumerated off
 	// the route grammar and keyed by the SECTION they belong to — the axis a
-	// waiver actually reasons about (sty_3795e7f6). done.md names the park and
-	// cancel gates and the create hook; step.md names each step's entry reviewers
+	// waiver actually reasons about (sty_3795e7f6). done.toml names the park and
+	// cancel gates and the create hook; step.toml names each step's entry reviewers
 	// and the always-on gates, each scoped to the sections it fires on.
 	done, step := embeddedRouteHalves(t)
 	lists, err := wfdot.ParseDone(done)
 	if err != nil {
-		t.Fatalf("parse the shipped done.md: %v", err)
+		t.Fatalf("parse the shipped done.toml: %v", err)
 	}
 	cat, err := wfdot.ParseSteps(step)
 	if err != nil {
-		t.Fatalf("parse the shipped step.md: %v", err)
+		t.Fatalf("parse the shipped step.toml: %v", err)
 	}
 	for _, ln := range strings.Split(done, "\n") {
 		ln = strings.TrimSpace(ln)

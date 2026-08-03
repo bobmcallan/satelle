@@ -64,7 +64,7 @@ func TestHookGateExemptsSubstrate(t *testing.T) {
 	// No story engaged. Authored substrate under .satelle/ is ALLOWED (seeded exempt) …
 	for _, sub := range []string{
 		filepath.Join(repo, ".satelle", "skills", "plan.md"),
-		filepath.Join(repo, ".satelle", "workflows", "done.md"),
+		filepath.Join(repo, ".satelle", "workflows", "done.toml"),
 		filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 	} {
 		if !gateEvent(t, repo, sub) {

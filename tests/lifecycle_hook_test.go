@@ -16,9 +16,9 @@ import (
 // verdict, plus the path of the stub script so a second binding can point at it.
 //
 // A lifecycle hook is workflow FRONTMATTER, and a derived route's frontmatter
-// lives on done.md — the half that says what this repo means by finished, which
+// lives on done.toml — the half that says what this repo means by finished, which
 // is where a create gate belongs.
-func hookRepo(t *testing.T, wfFrontmatter string) (repo string, setVerdict func(decision, notes string), stub string) {
+func hookRepo(t *testing.T, hookDecl string) (repo string, setVerdict func(decision, notes string), stub string) {
 	t.Helper()
 	repo = t.TempDir()
 	mustRun(t, testBin, repo, "init")
@@ -34,14 +34,16 @@ func hookRepo(t *testing.T, wfFrontmatter string) (repo string, setVerdict func(
 	if err := os.MkdirAll(filepath.Join(repo, ".satelle", "workflows"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "done.md"),
-		"---\nname: done\nscope: project\ntype: workflow\ndescription: Test declaration of done carrying a declared lifecycle hook.\n"+wfFrontmatter+
-			"---\n\n## *\n- raised\n- coded\n- closed\n")
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "step.md"),
-		"---\nname: step\nscope: project\ntype: workflow\ndescription: Test step catalogue for the lifecycle-hook fixture route.\n---\n\n"+
-			"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "done.toml"),
+		"[meta]\nname = \"done\"\nscope = \"project\"\ntype = \"workflow\"\n"+
+			"description = \"Test declaration of done carrying a declared lifecycle hook.\"\n"+hookDecl+
+			"\n[\"*\"]\nobligations = [\"raised\", \"coded\", \"closed\"]\n")
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "step.toml"),
+		"[meta]\nname = \"step\"\nscope = \"project\"\ntype = \"workflow\"\n"+
+			"description = \"Test step catalogue for the lifecycle-hook fixture route.\"\n\n"+
+			"[raised]\nstatus = \"backlog\"\nstart = true\n\n"+
+			"[coded]\nstatus = \"in_progress\"\nagent = \"executor\"\nrequires = [\"raised\"]\n\n"+
+			"[closed]\nstatus = \"done\"\nterminal = true\nrequires = [\"coded\"]\n")
 
 	stub = filepath.Join(repo, "verdict.sh")
 	setVerdict = func(decision, notes string) {
@@ -64,7 +66,7 @@ func createFeature(t *testing.T, repo, title string) (string, error) {
 // TestCreateHookDefaultShorthandRunsTheDefaultReviewer is AC6 case 1: the scalar
 // shorthand keeps working and runs under [reviewer] — the compatibility floor.
 func TestCreateHookDefaultShorthandRunsTheDefaultReviewer(t *testing.T) {
-	repo, setVerdict, stub := hookRepo(t, "create_review: hook-create-review\n")
+	repo, setVerdict, stub := hookRepo(t, "create_review = \"hook-create-review\"\n")
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 		fmt.Sprintf("[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n[reviewer]\nrole = \"reviewer\"\ncommand = \"%s {system} {tools} {model}\"\ntools = \"Read,Grep,Glob\"\n", stub))
 	mustRun(t, testBin, repo, "reindex")
@@ -103,7 +105,7 @@ func TestCreateHookDefaultShorthandRunsTheDefaultReviewer(t *testing.T) {
 // actually ran.
 func TestCreateHookNamedLocalReviewer(t *testing.T) {
 	repo, _, defaultStub := hookRepo(t,
-		"hooks:\n  - operation: create_review\n    skill: hook-create-review\n    agent: strict-reviewer\n")
+		"[[meta.hooks]]\noperation = \"create_review\"\nskill = \"hook-create-review\"\nagent = \"strict-reviewer\"\n")
 
 	// [reviewer] always ACCEPTS; [strict-reviewer] always REJECTS. If the hook's
 	// declared allocation were ignored and the old fallback used, creation would
@@ -132,7 +134,7 @@ func TestCreateHookNamedLocalReviewer(t *testing.T) {
 		}
 	}
 	validate := mustRun(t, testBin, repo, "agent", "validate")
-	if !strings.Contains(validate, "HOOK [done.md+step.md] hook:create_review") || !strings.Contains(validate, "agent=strict-reviewer") {
+	if !strings.Contains(validate, "HOOK [default] hook:create_review") || !strings.Contains(validate, "agent=strict-reviewer") {
 		t.Errorf("agent validate should surface the hook allocation:\n%s", validate)
 	}
 
@@ -153,7 +155,7 @@ func TestCreateHookNamedLocalReviewer(t *testing.T) {
 // the display and the actual invocation come from that profile.
 func TestCreateHookReferencedGlobalProfile(t *testing.T) {
 	repo, _, stub := hookRepo(t,
-		"hooks:\n  - operation: create_review\n    skill: hook-create-review\n    agent: catalog-reviewer\n")
+		"[[meta.hooks]]\noperation = \"create_review\"\nskill = \"hook-create-review\"\nagent = \"catalog-reviewer\"\n")
 	writeCatalog(t, fmt.Sprintf(`
 [profiles.judge]
 role    = "reviewer"
@@ -192,7 +194,7 @@ model   = "profile-model"
 // invoked — the stub records that it was never run.
 func TestCreateHookDeterministicCheckSkill(t *testing.T) {
 	repo, _, stub := hookRepo(t,
-		"hooks:\n  - operation: create_review\n    skill: hook-check\n    agent: reviewer\n")
+		"[[meta.hooks]]\noperation = \"create_review\"\nskill = \"hook-check\"\nagent = \"reviewer\"\n")
 	marker := filepath.Join(repo, "agent-ran.marker")
 	writeFile(t, stub, fmt.Sprintf("#!/bin/sh\ntouch %s\necho '{\"decision\":\"accept\"}'\n", marker))
 	_ = os.Chmod(stub, 0o755)
@@ -221,7 +223,7 @@ func TestCreateHookDeterministicCheckSkill(t *testing.T) {
 // where a misconfiguration is caught; the engine does not grow a gate decision.
 func TestCreateHookMissingAllocationIsRefusedByValidate(t *testing.T) {
 	repo, _, stub := hookRepo(t,
-		"hooks:\n  - operation: create_review\n    skill: hook-create-review\n    agent: nobody\n")
+		"[[meta.hooks]]\noperation = \"create_review\"\nskill = \"hook-create-review\"\nagent = \"nobody\"\n")
 	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 		fmt.Sprintf("[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n[reviewer]\nrole = \"reviewer\"\ncommand = \"%s {system} {tools} {model}\"\ntools = \"Read,Grep,Glob\"\n", stub))
 	mustRun(t, testBin, repo, "reindex")
@@ -259,7 +261,7 @@ func TestCreateHookUnsafeAllocationsAreRefused(t *testing.T) {
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			repo, _, _ := hookRepo(t,
-				"hooks:\n  - operation: create_review\n    skill: hook-create-review\n    agent: worker\n")
+				"[[meta.hooks]]\noperation = \"create_review\"\nskill = \"hook-create-review\"\nagent = \"worker\"\n")
 			writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
 				"[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n"+
 					"[reviewer]\nrole = \"reviewer\"\ncommand = \"claude -p --disallowedTools Write,Edit --append-system-prompt {system}\"\ntools = \"Read,Grep,Glob\"\n\n"+c.binding)
@@ -281,7 +283,7 @@ func TestCreateHookUnsafeAllocationsAreRefused(t *testing.T) {
 // The original drove TWO workflow files with different applies_to and different
 // hook allocations, proving the hook travelled with workflow SELECTION rather
 // than being a global setting. A repo now has ONE lifecycle — a derived route —
-// and its hooks ride on the single done.md, so a per-category hook allocation is
+// and its hooks ride on the single done.toml, so a per-category hook allocation is
 // no longer expressible and that leg retires with the DOT front end
 // (sty_d953c5d8). Stated, not silently dropped: `hooks:` has no `for:` scoping,
 // and adding one would be new behaviour this story does not carry.
@@ -291,7 +293,7 @@ func TestCreateHookUnsafeAllocationsAreRefused(t *testing.T) {
 // route never names, which its `## *` section covers.
 func TestCreateHookAppliesAcrossCategories(t *testing.T) {
 	repo, _, featureStub := hookRepo(t,
-		"hooks:\n  - operation: create_review\n    skill: hook-create-review\n    agent: feature-reviewer\n")
+		"[[meta.hooks]]\noperation = \"create_review\"\nskill = \"hook-create-review\"\nagent = \"feature-reviewer\"\n")
 
 	writeFile(t, featureStub, "#!/bin/sh\necho '{\"decision\":\"reject\",\"notes\":\"declared reviewer ran\"}'\n")
 	_ = os.Chmod(featureStub, 0o755)

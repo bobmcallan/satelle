@@ -92,49 +92,45 @@ func TestWorkflowValidateFlagsUnresolvedCreateReview(t *testing.T) {
 	mustRun(t, testBin, repo, "init")
 	// Virtual baseline is not on disk; author our own wildcard only.
 
-	// The create-review binding rides on done.md — a lifecycle hook is declared
+	// The create-review binding rides on done.toml — a lifecycle hook is declared
 	// where the declaration of done is (`satelle help workflow-convert`).
-	done := `---
-name: done
-scope: project
-type: workflow
-tags: [type:workflow]
-create_review: my-create-review
-description: A declaration of done carrying the create-review binding under test.
----
+	done := `[meta]
+name = "done"
+scope = "project"
+type = "workflow"
+tags = ["type:workflow"]
+create_review = "my-create-review"
+description = "A declaration of done carrying the create-review binding under test."
 
-## *
-- raised
-- coded
-- closed
-cancel: cancelled @satelle-story-cancel-review
+["*"]
+obligations = ["raised", "coded", "closed"]
+cancel = { state = "cancelled", gate = "satelle-story-cancel-review" }
 `
-	step := `---
-name: step
-scope: project
-type: workflow
-tags: [type:workflow]
-description: The step catalogue for the create-review fixture route.
----
+	step := `[meta]
+name = "step"
+scope = "project"
+type = "workflow"
+tags = ["type:workflow"]
+description = "The step catalogue for the create-review fixture route."
 
-## backlog
-start: true
-provides: raised
+[raised]
+status = "backlog"
+start = true
 
-## in_progress
-agent: executor
-provides: coded
-requires: raised
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
 
-## done
-reviewers: satelle-story-done-review
-reviewer_agent: reviewer
-terminal: true
-provides: closed
-requires: coded
+[closed]
+status = "done"
+reviewers = ["satelle-story-done-review"]
+reviewer_agent = "reviewer"
+terminal = true
+requires = ["coded"]
 `
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "done.md"), done)
-	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "step.md"), step)
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "done.toml"), done)
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "step.toml"), step)
 	mustRun(t, testBin, repo, "reindex")
 
 	// Unresolved binding → workflow validate fails, naming it.
@@ -190,11 +186,11 @@ func TestCreateGateRejectsEpicAsFeature(t *testing.T) {
 	// Virtual create_review skill + baseline: materialize for the stubbed gate path.
 	materializeDefault(t, repo, "skills", "satelle-story-create-review")
 	materializeDefault(t, repo, "workflows", "done")
-	wf, err := os.ReadFile(filepath.Join(repo, ".satelle", "workflows", "done.md"))
+	wf, err := os.ReadFile(filepath.Join(repo, ".satelle", "workflows", "done.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(wf), "create_review: satelle-story-create-review") {
+	if !strings.Contains(string(wf), `create_review = "satelle-story-create-review"`) {
 		t.Fatalf("baseline must declare create_review:\n%s", wf)
 	}
 

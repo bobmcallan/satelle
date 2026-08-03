@@ -1,14 +1,18 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/store"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // TestMigrateConvergesLegacyFixture (sty_a3915840 AC5): a full legacy layout
@@ -359,35 +363,30 @@ digraph w {
 ` + "```" + `
 `
 
-const migrateDoneMD = `---
-name: done
-type: workflow
-scope: project
-description: declaration of done
----
-# Definition of done
+const migrateDoneMD = `[meta]
+name = "done"
+type = "workflow"
+scope = "project"
+description = "declaration of done"
 
-## *
-- raised
-- coded
+["*"]
+obligations = ["raised", "coded"]
 `
 
-const migrateStepMD = `---
-name: step
-type: workflow
-scope: project
-description: step catalogue
----
-# Step catalogue
+const migrateStepMD = `[meta]
+name = "step"
+type = "workflow"
+scope = "project"
+description = "step catalogue"
 
-## backlog
-start: true
-provides: raised
+[raised]
+status = "backlog"
+start = true
 
-## done
-terminal: true
-provides: coded
-requires: raised
+[coded]
+status = "done"
+terminal = true
+requires = ["raised"]
 `
 
 // TestMigrateRetiresSupersededDOTWorkflows (sty_9835070d AC2): with an authored,
@@ -501,5 +500,139 @@ func TestMigrateRefusesRetireOnMalformedRouteSource(t *testing.T) {
 	}
 	if len(plan.WorkflowConvertPending) != 1 {
 		t.Errorf("WorkflowConvertPending = %v, want the DOT still pending", plan.WorkflowConvertPending)
+	}
+}
+
+// TestMigrateRewritesFilePairWorkflowStamps (sty_81bb0dde): the `workflow:` tag
+// names a lifecycle, not the two files it is derived from. Stories stamped with
+// the retired file-pair spelling are rewritten to the derived route's name, every
+// other tag is left alone, and a second run is a no-op.
+func TestMigrateRewritesFilePairWorkflowStamps(t *testing.T) {
+	disableServeProbe(t)
+	home := t.TempDir()
+	t.Setenv("SATELLE_HOME", home)
+
+	repo := t.TempDir()
+	dataDir := filepath.Join(repo, config.DefaultDataDir)
+	if err := os.MkdirAll(filepath.Join(dataDir, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "workflows", "agents.toml"),
+		[]byte("[executor]\nrole = \"agent\"\nharness = \"in-loop\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	homeDB := filepath.Join(home, config.RepoKey(repo), config.DefaultDBName)
+	if err := os.MkdirAll(filepath.Dir(homeDB), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(homeDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Now()
+	// Three shapes: the original markdown pair, the brief TOML pair, and a story
+	// stamped with a real workflow name that must NOT be touched.
+	stale, err := db.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "stale md pair",
+		Tags: []string{"area:substrate", "workflow:done.md+step.md", "surface:cli"},
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleTOML, err := db.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "stale toml pair",
+		Tags: []string{"workflow:done.toml+step.toml"},
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	named, err := db.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "authored workflow",
+		Tags: []string{"workflow:gov-workflow"},
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	a := &app.App{
+		Config:     config.Config{},
+		RepoRoot:   repo,
+		DataDir:    dataDir,
+		RuntimeDir: filepath.Dir(homeDB),
+		DBPath:     homeDB,
+	}
+
+	// Dry-run names both stale stories and writes nothing.
+	var dry strings.Builder
+	if err := runMigrate(&dry, a, false, false); err != nil {
+		t.Fatalf("dry-run: %v\n%s", err, dry.String())
+	}
+	for _, id := range []string{stale.ID, staleTOML.ID} {
+		if !strings.Contains(dry.String(), id) {
+			t.Errorf("dry-run plan should name %s:\n%s", id, dry.String())
+		}
+	}
+	if strings.Contains(dry.String(), named.ID) {
+		t.Errorf("dry-run must not touch a story stamped with a workflow name:\n%s", dry.String())
+	}
+	reopened, err := store.Open(homeDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := reopened.Stories.Get(ctx, stale.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = reopened.Close()
+	if wf := wfgovern.StampedWorkflowName(got); wf != "done.md+step.md" {
+		t.Fatalf("dry-run rewrote the stamp: %q", wf)
+	}
+
+	// Apply.
+	var apply strings.Builder
+	if err := runMigrate(&apply, a, true, false); err != nil {
+		t.Fatalf("apply: %v\n%s", err, apply.String())
+	}
+	after, err := store.Open(homeDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer after.Close()
+	md, err := after.Stories.Get(ctx, stale.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf := wfgovern.StampedWorkflowName(md); wf != wfgovern.DerivedRouteName {
+		t.Errorf("stamp = %q, want %q", wf, wfgovern.DerivedRouteName)
+	}
+	// Every other tag survives, in order.
+	wantTags := []string{"area:substrate", "workflow:" + wfgovern.DerivedRouteName, "surface:cli"}
+	if strings.Join(md.Tags, ",") != strings.Join(wantTags, ",") {
+		t.Errorf("tags = %v, want %v", md.Tags, wantTags)
+	}
+	tm, err := after.Stories.Get(ctx, staleTOML.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf := wfgovern.StampedWorkflowName(tm); wf != wfgovern.DerivedRouteName {
+		t.Errorf("toml-pair stamp = %q, want %q", wf, wfgovern.DerivedRouteName)
+	}
+	keep, err := after.Stories.Get(ctx, named.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf := wfgovern.StampedWorkflowName(keep); wf != "gov-workflow" {
+		t.Errorf("named workflow stamp was rewritten to %q", wf)
+	}
+
+	// Idempotent.
+	var again strings.Builder
+	if err := runMigrate(&again, a, true, false); err != nil {
+		t.Fatalf("second run: %v\n%s", err, again.String())
+	}
+	if !strings.Contains(again.String(), "already on current structure") {
+		t.Errorf("second run should be a no-op:\n%s", again.String())
 	}
 }

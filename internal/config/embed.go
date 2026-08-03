@@ -20,7 +20,7 @@ import (
 )
 
 // substrateFS holds the embedded default artifacts, filed by kind under
-// substrate/<kind>/<name>.md (e.g. substrate/workflows/done.md).
+// substrate/<kind>/<name>.md (e.g. substrate/workflows/done.toml).
 //
 //go:embed substrate
 var substrateFS embed.FS
@@ -38,9 +38,56 @@ const OperatingPrinciple = "satelle-agent-goals"
 // EmbeddedDefault is one canonical default artifact carried in the binary.
 type EmbeddedDefault struct {
 	Kind string // workflows | principles | skills | tasks (the substrate subdir)
-	Name string // filename without the .md extension
-	Body string // raw markdown
+	Name string // filename without its extension
+	Body string // raw file text
+	// Ext is the source extension (".md" or ".toml"), carried so a synthesised
+	// provenance path and an on-disk materialisation name the real file rather
+	// than assuming markdown (sty_81bb0dde).
+	Ext string
 }
+
+// RelPath is the kind-relative slash path this default materialises to —
+// `workflows/done.toml`, `skills/x.md`. Every caller that lands, prunes,
+// restores or looks for an embedded default on disk asks for it here rather than
+// appending ".md" itself: a hardcoded extension makes a TOML default invisible
+// to that caller, and the failure is silent (a file never found is a file never
+// converged).
+func (d EmbeddedDefault) RelPath() string {
+	ext := d.Ext
+	if ext == "" {
+		ext = ".md"
+	}
+	return d.Kind + "/" + d.Name + ext
+}
+
+// EmbeddedExt returns the source extension of the named embedded default, or
+// ".md" when there is none — the document form, and the safe assumption for a
+// name the binary does not ship.
+func EmbeddedExt(kind, name string) string {
+	for _, d := range EmbeddedDefaults() {
+		if d.Kind == kind && d.Name == name {
+			return d.RelPath()[len(d.Kind)+1+len(d.Name):]
+		}
+	}
+	return ".md"
+}
+
+// substrateExts are the file types an embedded default may be authored in.
+// Documents are markdown; the route source is TOML, because it is records with
+// terse commentary and uses no markdown feature (sty_81bb0dde).
+var substrateExts = map[string]bool{".md": true, ".toml": true}
+
+// nonSubstrateKinds are subdirectories of substrate/ that the binary LOADS but
+// does not layer: machine configuration reached through its own accessor, with
+// no frontmatter, no headline and nothing to render.
+//
+// `config/` holds categories.toml, which predates the TOML route source and was
+// excluded for free while this walk was .md-only. Widening the walk swept it in
+// as a default doc of kind "config" — it reached the doc index and showed up in
+// `satelle process` output (sty_81bb0dde). This is the same carve-out
+// docindex.Indexable makes for the repo's agents.toml, and for the same reason:
+// a file being TOML does not make it substrate.
+var nonSubstrateKinds = map[string]bool{"config": true}
 
 // EmbeddedDefaults returns every embedded default artifact, across all kinds.
 // These are the canonical SEED + reference: init materialises them onto disk, the
@@ -50,13 +97,13 @@ type EmbeddedDefault struct {
 func EmbeddedDefaults() []EmbeddedDefault {
 	var out []EmbeddedDefault
 	_ = fs.WalkDir(substrateFS, "substrate", func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.EqualFold(path.Ext(p), ".md") {
+		if err != nil || d.IsDir() || !substrateExts[strings.ToLower(path.Ext(p))] {
 			return nil
 		}
 		rel := strings.TrimPrefix(p, "substrate/")
 		kind, _, ok := strings.Cut(rel, "/")
-		if !ok {
-			return nil // a file directly under substrate/ has no kind — skip
+		if !ok || nonSubstrateKinds[kind] {
+			return nil // no kind, or a kind the binary loads rather than layers
 		}
 		body, rerr := substrateFS.ReadFile(p)
 		if rerr != nil {
@@ -66,6 +113,7 @@ func EmbeddedDefaults() []EmbeddedDefault {
 			Kind: kind,
 			Name: strings.TrimSuffix(path.Base(p), path.Ext(p)),
 			Body: string(body),
+			Ext:  strings.ToLower(path.Ext(p)),
 		})
 		return nil
 	})

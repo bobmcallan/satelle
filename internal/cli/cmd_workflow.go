@@ -49,7 +49,7 @@ default. The head of the list is the active workflow the reviewer enforces.`,
 			if derived {
 				out = append(out, workflowChoice{
 					Name:      wfgovern.DerivedRouteName,
-					Headline:  "derived route — done.md + step.md",
+					Headline:  "derived route — done.toml + step.toml",
 					Scope:     "project",
 					AppliesTo: wfgovern.RouteCategories(rs.Done),
 					Active:    true,

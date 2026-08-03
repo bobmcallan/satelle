@@ -117,13 +117,39 @@ func editStateRepo(t *testing.T, status, leaseState string, inFlight bool) strin
 		t.Fatal(err)
 	}
 	writeRoute(t, wfDir,
-		"## *\n- raised\n- planned\n- coded\n- integrated\n- released\n- closed\npark: blocked\n",
-		"## backlog\nstart: true\nprovides: raised\n\n"+
-			"## plan\nagent: planner\nprovides: planned\nrequires: raised\n\n"+
-			"## in_progress\nagent: executor\nprovides: coded\nrequires: planned\n\n"+
-			"## integration\nagent: executor\nprovides: integrated\nrequires: coded\n\n"+
-			"## release\nagent: executor\nprovides: released\nrequires: integrated\n\n"+
-			"## done\nterminal: true\nprovides: closed\nrequires: released\n")
+		`["*"]
+obligations = ["raised", "planned", "coded", "integrated", "released", "closed"]
+park = { state = "blocked" }
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[planned]
+status = "plan"
+agent = "planner"
+requires = ["raised"]
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["planned"]
+
+[integrated]
+status = "integration"
+agent = "executor"
+requires = ["coded"]
+
+[released]
+status = "release"
+agent = "executor"
+requires = ["integrated"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["released"]
+`)
 	if err := os.MkdirAll(filepath.Join(repo, "internal"), 0o755); err != nil {
 		t.Fatal(err)
 	}

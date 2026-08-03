@@ -192,7 +192,7 @@ func TestWorkflowConvertTopic(t *testing.T) {
 		t.Fatal("the conversion guide must ship: every refusal names it")
 	}
 	// The two files, and the frontmatter rule that trips every first attempt.
-	for _, want := range []string{"done.md", "step.md", "applies_to"} {
+	for _, want := range []string{"done.toml", "step.toml", "applies_to"} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("the guide does not mention %q", want)
 		}
@@ -200,8 +200,8 @@ func TestWorkflowConvertTopic(t *testing.T) {
 	// Every route-grammar key an agent has to write. A key missing here is a key
 	// the agent has to guess.
 	for _, key := range []string{
-		"provides", "requires", "reviewers", "reviewer_agent", "parallel",
-		"terminal", "start", "park:", "cancel:", "recover:", "## gate", "for:", "mandatory",
+		"status", "requires", "reviewers", "reviewer_agent", "parallel",
+		"terminal", "start", "park", "cancel", "recover", "[[gate]]", "for", "mandatory",
 	} {
 		if !strings.Contains(top.Body, key) {
 			t.Errorf("the guide does not cover the %q key", key)
@@ -245,7 +245,7 @@ func TestWorkflowConvertTopicCoversTheWild(t *testing.T) {
 	}
 	// The dangerous one: a RETIRED mechanism, not a renamed key. An agent must
 	// be told to re-home the advisor, and told that nothing dispatches it.
-	for _, want := range []string{"RETIRED", "retired, not renamed", "advise <agent> @<skill>", "ORCHESTRATOR"} {
+	for _, want := range []string{"RETIRED", "retired, not renamed", "advise = {", "ORCHESTRATOR"} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("the on_enter callout is missing %q", want)
 		}
@@ -261,7 +261,7 @@ func TestWorkflowConvertTopicCoversTheWild(t *testing.T) {
 	// them decisions rather than lookups.
 	for _, want := range []string{
 		"The two decisions only you can make",
-		"WHOLLY", "## execution", "## task", "## substrate", "ungated",
+		"WHOLLY", "[execution]", "[task]", "[substrate]", "ungated",
 	} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("the decisions section is missing %q", want)
@@ -272,6 +272,50 @@ func TestWorkflowConvertTopicCoversTheWild(t *testing.T) {
 	for _, want := range []string{"gate by gate", "before** `satelle migrate --yes`"} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("the verification loop is missing %q", want)
+		}
+	}
+}
+
+// TestWorkflowConvertTopicCoversTheMarkdownRouteSource (sty_81bb0dde AC5): the
+// route source became TOML, and a repo already on the MARKDOWN route source is
+// refused by name until it converts. That refusal points here — this topic, not
+// a second one — so the key-by-key mapping has to be in it. Every construct the
+// markdown spelling had needs a target, or an agent either transcribes a key the
+// decoder rejects or drops it in silence.
+func TestWorkflowConvertTopicCoversTheMarkdownRouteSource(t *testing.T) {
+	top, ok := Get("workflow-convert")
+	if !ok {
+		t.Fatal("the conversion guide must ship")
+	}
+	if !strings.Contains(top.Body, "md-to-toml") {
+		t.Fatal("the guide carries no md-to-toml mapping — the refusal names this page")
+	}
+	for _, construct := range []string{
+		"`---` frontmatter block", "`[meta]` table",
+		"`## <category>` in done.md", "`- <obligation>` list",
+		"`park: <state> @<gate>`", "`cancel: <state> @<gate>`", "`recover: <step> from a, b`",
+		"`+ <tag> <obligation>`", "tag_obligation",
+		"`## <name>` in step.md", "`provides: <obligation>`",
+		"`## gate <skill>`", "`<!-- comment -->`",
+		"a `hooks:` block list", "[[meta.hooks]]",
+	} {
+		if !strings.Contains(top.Body, construct) {
+			t.Errorf("no md-to-toml target documented for %q", construct)
+		}
+	}
+	// The ONE part that is not a transcription: markdown keyed a step by its
+	// heading and named the obligation in `provides:`; TOML keys it by the
+	// obligation. An agent that misses this writes a catalogue that collides.
+	for _, want := range []string{"the KEY is what the step `provides:`", "stage names repeat"} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("the step-key rule is missing %q", want)
+		}
+	}
+	// And the prose the new format makes unnecessary must be named as deletable,
+	// or every converted repo carries tuition for a format it no longer uses.
+	for _, want := range []string{"HOW TO READ THIS FILE", "Delete them"} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("the guide does not say to drop the retired preamble: missing %q", want)
 		}
 	}
 }

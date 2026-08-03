@@ -9,13 +9,13 @@ import (
 
 func fixtures(t *testing.T) (done, step string) {
 	t.Helper()
-	d, err := os.ReadFile(filepath.Join("testdata", "done.md"))
+	d, err := os.ReadFile(filepath.Join("testdata", "done.toml"))
 	if err != nil {
-		t.Fatalf("read done.md: %v", err)
+		t.Fatalf("read done.toml: %v", err)
 	}
-	s, err := os.ReadFile(filepath.Join("testdata", "step.md"))
+	s, err := os.ReadFile(filepath.Join("testdata", "step.toml"))
 	if err != nil {
-		t.Fatalf("read step.md: %v", err)
+		t.Fatalf("read step.toml: %v", err)
 	}
 	return string(d), string(s)
 }
@@ -70,13 +70,13 @@ func TestParseRouteBuildsValidSpec(t *testing.T) {
 // backward edge, and all three appear — carrying their role state's own gate.
 func TestSynthesisedTopologyValidates(t *testing.T) {
 	done, step := fixtures(t)
-	for _, forbidden := range []string{"## cancelled", "## blocked"} {
+	for _, forbidden := range []string{"[cancelled]", "[blocked]"} {
 		if strings.Contains(step, forbidden) {
-			t.Fatalf("step.md declares %q — topology must be synthesised, not authored", forbidden)
+			t.Fatalf("step.toml declares %q — topology must be synthesised, not authored", forbidden)
 		}
 	}
 	if strings.Contains(done, "->") {
-		t.Fatal("done.md names an edge — topology must be synthesised, not authored")
+		t.Fatal("done.toml names an edge — topology must be synthesised, not authored")
 	}
 
 	spec := buildFixture(t, nil)
@@ -112,7 +112,7 @@ func TestSynthesisedTopologyValidates(t *testing.T) {
 	if got := idx["in_progress->blocked"].Skill; got != "satelle-story-blocked-review" {
 		t.Errorf("park edge gate = %q, want satelle-story-blocked-review", got)
 	}
-	// The park advisor is DECLARED (`advise blocked-triage @…` in done.md) but is
+	// The park advisor is DECLARED (`park.advisor` in done.toml) but is
 	// deliberately absent from the Spec: flat dispatch means entry fires nothing,
 	// so who to consult is an instruction to the orchestrator carried on the
 	// route, not topology (sty_05a5e203).
@@ -124,20 +124,23 @@ func TestSynthesisedTopologyValidates(t *testing.T) {
 // TestRouteOrderFromPrerequisites is AC3: declaration order is scrambled, and the
 // route still comes out in prerequisite order.
 func TestRouteOrderFromPrerequisites(t *testing.T) {
-	step := `
-## release
-agent: executor
-provides: released
-requires: coded
-## backlog
-start: true
-provides: raised
-## in_progress
-agent: executor
-provides: coded
-requires: raised
+	step := `[released]
+status = "release"
+agent = "executor"
+requires = ["coded"]
+
+[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
 `
-	done := "## feature\n- raised\n- coded\n- released\n"
+	done := `[feature]
+obligations = ["raised", "coded", "released"]
+`
 	spec, err := ParseRoute(done, step, "feature", nil)
 	if err != nil {
 		t.Fatalf("ParseRoute: %v", err)
@@ -152,16 +155,32 @@ requires: raised
 }
 
 func TestRouteCycleIsError(t *testing.T) {
-	step := "## a\nagent: executor\nprovides: x\nrequires: y\n## b\nagent: executor\nprovides: y\nrequires: x\n"
-	_, err := ParseRoute("## feature\n- x\n- y\n", step, "feature", nil)
+	step := `[x]
+status = "a"
+agent = "executor"
+requires = ["y"]
+
+[y]
+status = "b"
+agent = "executor"
+requires = ["x"]
+`
+	_, err := ParseRoute(`[feature]
+obligations = ["x", "y"]
+`, step, "feature", nil)
 	if err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("a prerequisite cycle must be an error naming it, got %v", err)
 	}
 }
 
 func TestRouteOrphanObligationNamesIt(t *testing.T) {
-	step := "## a\nagent: executor\nprovides: x\n"
-	_, err := ParseRoute("## feature\n- x\n- deployed\n", step, "feature", nil)
+	step := `[x]
+status = "a"
+agent = "executor"
+`
+	_, err := ParseRoute(`[feature]
+obligations = ["x", "deployed"]
+`, step, "feature", nil)
 	if err == nil || !strings.Contains(err.Error(), "deployed") {
 		t.Fatalf("an obligation with no discharging step must be NAMED, got %v", err)
 	}
@@ -257,10 +276,27 @@ func TestGatesSurviveScoping(t *testing.T) {
 
 // TestTagObligationsAppend covers the "tags append obligations" rule end to end.
 func TestTagObligationsAppend(t *testing.T) {
-	done := "## feature\n- raised\n- coded\n+ surface:ui styled\n"
-	step := "## backlog\nstart: true\nprovides: raised\n" +
-		"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n" +
-		"## style\nagent: executor\nprovides: styled\nrequires: coded\n"
+	done := `[feature]
+obligations = ["raised", "coded"]
+
+[[feature.tag_obligation]]
+tag = "surface:ui"
+obligation = "styled"
+`
+	step := `[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[styled]
+status = "style"
+agent = "executor"
+requires = ["coded"]
+`
 
 	plain, err := ParseRoute(done, step, "feature", nil)
 	if err != nil {
@@ -278,27 +314,76 @@ func TestTagObligationsAppend(t *testing.T) {
 	}
 }
 
-func TestParseErrorsNameTheLine(t *testing.T) {
+// A key no wire struct claims is an ERROR, never a silent drop: a typo'd
+// `reviewrs =` that parsed as "no reviewers" would lose a gate, and a route that
+// quietly loses a gate is the one failure this representation must not have. The
+// message names the FILE and the offending key path, because that is what an
+// author needs to fix it.
+func TestParseErrorsNameTheKey(t *testing.T) {
+	const doneOK = "[feature]\nobligations = [\"x\"]\n"
+	const stepOK = "[x]\nstatus = \"in_progress\"\n"
 	for _, tc := range []struct {
-		name, done, step, want string
+		name, done, step string
+		want             []string
 	}{
-		{"unknown done key", "## feature\nwibble: x\n", "", "unknown key"},
-		{"bad tag line", "## feature\n+ lonely\n", "", "expected"},
-		{"unknown step key", "## feature\n- x\n", "## a\nwibble: y\n", "unknown step key"},
-		{"non-numeric parallel", "## feature\n- x\n", "## a\nparallel: lots\n", "must be a number"},
+		{
+			name: "unknown done key",
+			done: "[feature]\nobligations = [\"x\"]\nwibble = \"y\"\n", step: stepOK,
+			want: []string{"done.toml", "unknown key", "feature.wibble"},
+		},
+		{
+			name: "unknown step key",
+			done: doneOK, step: "[x]\nstatus = \"in_progress\"\nreviewrs = [\"gate-a\"]\n",
+			want: []string{"step.toml", "unknown key", "x.reviewrs"},
+		},
+		{
+			name: "non-numeric parallel",
+			done: doneOK, step: "[x]\nstatus = \"in_progress\"\nparallel = \"lots\"\n",
+			want: []string{"step.toml", "parallel"},
+		},
+		{
+			// A step with no status has no stage name for an item to hold, so the
+			// route has nowhere to put it.
+			name: "step without a status",
+			done: doneOK, step: "[x]\nagent = \"executor\"\n",
+			want: []string{"step.toml", `step "x"`, "no status"},
+		},
+		{
+			// Malformed TOML is reported by the real parser, with a line number —
+			// the whole point of retiring the hand-rolled reader.
+			name: "malformed toml",
+			done: "[feature\nobligations = [\"x\"]\n", step: stepOK,
+			want: []string{"done.toml", "line 2", "end table name"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := ParseRoute(tc.done, tc.step, "feature", nil)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("want error containing %q, got %v", tc.want, err)
+			if err == nil {
+				t.Fatalf("want an error, got none")
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error must contain %q, got: %v", want, err)
+				}
 			}
 		})
 	}
 }
 
 func TestMultiSkillStepIsError(t *testing.T) {
-	step := "## backlog\nstart: true\nprovides: raised\n## a\nagent: executor\nskills: one, two\nprovides: x\nrequires: raised\n"
-	_, err := ParseRoute("## feature\n- raised\n- x\n", step, "feature", nil)
+	step := `[raised]
+status = "backlog"
+start = true
+
+[x]
+status = "a"
+agent = "executor"
+skills = ["one", "two"]
+requires = ["raised"]
+`
+	_, err := ParseRoute(`[feature]
+obligations = ["raised", "x"]
+`, step, "feature", nil)
 	if err == nil || !strings.Contains(err.Error(), "one rubric") {
 		t.Fatalf("a multi-skill spine step must be an error, got %v", err)
 	}

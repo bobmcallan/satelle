@@ -925,8 +925,8 @@ func TestInitDeploysDefaultSolution(t *testing.T) {
 
 	// Virtual sparse defaults: no seed files for workflows/skills.
 	for _, rel := range []string{
-		".satelle/workflows/done.md",
-		".satelle/workflows/step.md",
+		".satelle/workflows/done.toml",
+		".satelle/workflows/step.toml",
 		".satelle/skills/satelle-step-summary.md",
 	} {
 		if _, err := os.Stat(filepath.Join(repo, rel)); err == nil {
@@ -950,7 +950,7 @@ func TestInitDeploysDefaultSolution(t *testing.T) {
 	if i := strings.Index(out, "}"); i >= 0 {
 		firstObj = out[:i]
 	}
-	if !strings.Contains(firstObj, `"name": "done.md+step.md"`) {
+	if !strings.Contains(firstObj, `"name": "default"`) {
 		t.Errorf("head lifecycle for an execution is not the shipped route:\n%s", out)
 	}
 
@@ -1076,7 +1076,7 @@ func TestStoryRestamp(t *testing.T) {
 	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"),
 		"[review]\ngate_create = false\n\n[categories]\nenforce = \"off\"\n")
 	out := mustRun(t, bin, repo, "story", "create", "--title", "Assess the rollout", "--category", "feature")
-	if !strings.Contains(out, `"workflow:done.md+step.md"`) {
+	if !strings.Contains(out, `"workflow:default"`) {
 		t.Fatalf("create did not stamp the shipped route:\n%s", out)
 	}
 	id := extractID(out, "sty_")
@@ -1109,14 +1109,14 @@ description: Governance lifecycle moving backlog → in_progress → done with a
 	// Re-categorise, then restamp re-resolves from the CURRENT category.
 	mustRun(t, bin, repo, "story", "set", id, "--category", "governance")
 	out = mustRun(t, bin, repo, "story", "restamp", id)
-	if !strings.Contains(out, `"workflow:gov-workflow"`) || strings.Contains(out, `"workflow:done.md+step.md"`) {
+	if !strings.Contains(out, `"workflow:gov-workflow"`) || strings.Contains(out, `"workflow:default"`) {
 		t.Fatalf("restamp did not swap the governing workflow:\n%s", out)
 	}
 
 	// The trail records old -> new. The ledger JSON escapes ">" (>), so
 	// match the escaped body as printed.
 	out = mustRun(t, bin, repo, "ledger", "list", "--story", id)
-	if !strings.Contains(out, "re-stamped: done.md+step.md -\\u003e gov-workflow") {
+	if !strings.Contains(out, "re-stamped: default -\\u003e gov-workflow") {
 		t.Errorf("ledger missing the re-stamp row:\n%s", out)
 	}
 

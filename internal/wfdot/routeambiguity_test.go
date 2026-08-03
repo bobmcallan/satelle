@@ -10,14 +10,31 @@ import (
 // last-wins, so one step vanished from the route carrying its reviewers with it —
 // the "route that quietly loses a gate" the constructor exists to prevent.
 
-// AC1: two selected steps sharing a stage name. This is one done.md edit away —
-// a category listing both `coded` and `authored` selects two `## in_progress`
-// sections.
+// AC1: two selected steps sharing a stage name. This is one done.toml edit away
+// — a category listing both `coded` and `authored` selects two steps whose
+// `status` is `in_progress`.
 func TestDuplicateSelectedStepNameIsError(t *testing.T) {
-	step := "## backlog\nstart: true\nprovides: raised\n" +
-		"## in_progress\nagent: executor\nskills: code\nreviewers: gate-a\nprovides: coded\nrequires: raised\n" +
-		"## in_progress\nagent: executor\nskills: substrate\nreviewers: gate-b\nprovides: authored\nrequires: raised\n"
-	spec, err := ParseRoute("## feature\n- raised\n- coded\n- authored\n", step, "feature", nil)
+	step := `[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+skills = ["code"]
+reviewers = ["gate-a"]
+requires = ["raised"]
+
+[authored]
+status = "in_progress"
+agent = "executor"
+skills = ["substrate"]
+reviewers = ["gate-b"]
+requires = ["raised"]
+`
+	spec, err := ParseRoute(`[feature]
+obligations = ["raised", "coded", "authored"]
+`, step, "feature", nil)
 	if err == nil {
 		t.Fatal("selecting two steps named in_progress must fail construction")
 	}
@@ -34,17 +51,65 @@ func TestDuplicateSelectedStepNameIsError(t *testing.T) {
 	}
 }
 
-// AC2: two selected steps discharging the same obligation. Both BuildRoute's
-// `provided` set and topoSortSteps' `provider` map resolved this last-wins.
-func TestDuplicateSelectedProvidesIsError(t *testing.T) {
-	step := "## backlog\nstart: true\nprovides: raised\n" +
-		"## in_progress\nagent: executor\nreviewers: gate-a\nprovides: coded\nrequires: raised\n" +
-		"## rework\nagent: executor\nreviewers: gate-b\nprovides: coded\nrequires: raised\n"
-	spec, err := ParseRoute("## feature\n- raised\n- coded\n", step, "feature", nil)
+// AC2, at the AUTHORED layer: a catalogue cannot even express two steps
+// discharging one obligation, because the obligation is the table KEY. What used
+// to need a construction-time refusal is now a duplicate-key error from the TOML
+// decoder (sty_81bb0dde) — the representation makes the defect unrepresentable,
+// which is stronger than catching it. It must still fail CLOSED, naming the
+// obligation and yielding no partial Spec.
+func TestDuplicateProvidesInCatalogueIsError(t *testing.T) {
+	step := `[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+reviewers = ["gate-a"]
+requires = ["raised"]
+
+[coded]
+status = "rework"
+agent = "executor"
+reviewers = ["gate-b"]
+requires = ["raised"]
+`
+	spec, err := ParseRoute(`[feature]
+obligations = ["raised", "coded"]
+`, step, "feature", nil)
 	if err == nil {
 		t.Fatal("two steps providing one obligation must fail construction")
 	}
-	for _, want := range []string{`"coded"`, "in_progress", "rework"} {
+	for _, want := range []string{"step.toml", "coded"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error must name the file and the obligation; missing %s in: %v", want, err)
+		}
+	}
+	if len(spec.States) != 0 || len(spec.Transitions) != 0 {
+		t.Fatal("a failed construction must produce no partial Spec")
+	}
+}
+
+// AC2, at the CONSTRUCTOR layer: Catalogue is public and BuildRoute is reachable
+// without the parser, so the last-wins guard the parser now pre-empts must stay
+// proven on its own. Both BuildRoute's `provided` set and topoSortSteps'
+// `provider` map resolved a duplicate last-wins — a step vanished from the route
+// carrying its reviewers with it.
+func TestDuplicateSelectedProvidesIsError(t *testing.T) {
+	cat := Catalogue{Steps: []Step{
+		{Name: "backlog", Provides: "raised", Start: true},
+		{Name: "in_progress", Provides: "coded", Agent: "executor",
+			Reviewers: []string{"gate-a"}, Requires: []string{"raised"}},
+		{Name: "rework", Provides: "coded", Agent: "executor",
+			Reviewers: []string{"gate-b"}, Requires: []string{"raised"}},
+	}}
+	l := List{Category: "feature", Obligations: []string{"raised", "coded"}}
+
+	spec, err := BuildRoute(l, cat, nil)
+	if err == nil {
+		t.Fatal("two steps providing one obligation must fail construction")
+	}
+	for _, want := range []string{`"coded"`, "in_progress", "rework", "feature"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error must name the obligation and both steps; missing %s in: %v", want, err)
 		}
@@ -59,13 +124,36 @@ func TestDuplicateSelectedProvidesIsError(t *testing.T) {
 // defect, so a catalogue-wide duplicate that no category selects together must
 // still build. A catalogue-wide check would have broken every route on day one.
 func TestCatalogueDuplicateNamesStillBuild(t *testing.T) {
-	step := "## backlog\nstart: true\nprovides: raised\n" +
-		"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n" +
-		"## done\nterminal: true\nprovides: closed\nrequires: coded\n" +
-		"## in_progress\nagent: executor\nprovides: authored\nrequires: raised\n" +
-		"## done\nterminal: true\nprovides: substrate-verified\nrequires: authored\n"
-	done := "## feature\n- raised\n- coded\n- closed\n" +
-		"## substrate\n- raised\n- authored\n- substrate-verified\n"
+	step := `[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+
+[authored]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[substrate-verified]
+status = "done"
+terminal = true
+requires = ["authored"]
+`
+	done := `[feature]
+obligations = ["raised", "coded", "closed"]
+
+[substrate]
+obligations = ["raised", "authored", "substrate-verified"]
+`
 
 	for _, category := range []string{"feature", "substrate"} {
 		spec, err := ParseRoute(done, step, category, nil)

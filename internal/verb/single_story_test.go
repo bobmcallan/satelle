@@ -14,11 +14,29 @@ import (
 // binary synthesises it from the `park:` line), done terminal — mirrors the
 // process rule's engagement predicate.
 var singleStoryWF = routeHalves(
-	"## *\n- raised\n- planned\n- coded\n- closed\npark: blocked\n",
-	"## backlog\nstart: true\nprovides: raised\n\n"+
-		"## plan\nagent: executor\nprovides: planned\nrequires: raised\n\n"+
-		"## in_progress\nagent: executor\nprovides: coded\nrequires: planned\n\n"+
-		"## done\nterminal: true\nprovides: closed\nrequires: coded\n")
+	`["*"]
+obligations = ["raised", "planned", "coded", "closed"]
+park = { state = "blocked" }
+`,
+	`[raised]
+status = "backlog"
+start = true
+
+[planned]
+status = "plan"
+agent = "executor"
+requires = ["raised"]
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["planned"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+`)
 
 func TestSingleStorySecondEngageRefused(t *testing.T) {
 	wireWithWorkflows(t, singleStoryWF)

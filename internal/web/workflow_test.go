@@ -14,43 +14,36 @@ import (
 // and friends); the retired DOT sample and the test that read it are gone with
 // the front end.
 
-const sampleDone = `# Definition of done
-
-## feature
-- raised
-- planned
-- coded
-- closed
-park: blocked @satelle-story-blocked-review advise blocked-triage @satelle-story-blocked-triage
-cancel: cancelled @satelle-story-cancel-review
+const sampleDone = `[feature]
+obligations = ["raised", "planned", "coded", "closed"]
+park = { state = "blocked", gate = "satelle-story-blocked-review", advisor = "blocked-triage", advisor_skill = "satelle-story-blocked-triage" }
+cancel = { state = "cancelled", gate = "satelle-story-cancel-review" }
 `
 
-const sampleStep = `# Step catalogue
+const sampleStep = `[raised]
+status = "backlog"
+start = true
 
-## backlog
-start: true
-provides: raised
+[planned]
+status = "plan"
+agent = "planner"
+skills = ["plan"]
+reviewers = ["satelle-story-intent-review"]
+requires = ["raised"]
 
-## plan
-agent: planner
-skills: plan
-reviewers: satelle-story-intent-review
-provides: planned
-requires: raised
+[coded]
+status = "in_progress"
+agent = "executor"
+skills = ["code"]
+reviewers = ["satelle-story-plan-review"]
+requires = ["planned"]
 
-## in_progress
-agent: executor
-skills: code
-reviewers: satelle-story-plan-review
-provides: coded
-requires: planned
-
-## done
-terminal: true
-reviewers: satelle-story-release-review
-provides: closed
-requires: coded
-advise: retrospective @satelle-lessons
+[closed]
+status = "done"
+terminal = true
+reviewers = ["satelle-story-release-review"]
+requires = ["coded"]
+advise = { agent = "retrospective", skill = "satelle-lessons" }
 `
 
 // TestWorkflowRouteFromDoneStep: with a declaration of done and a step catalogue
@@ -106,7 +99,7 @@ func TestWorkflowRouteFromDoneStep(t *testing.T) {
 	}
 	// …but a `*` section governs it, which is how a wildcard workflow converts.
 	wild := []docindex.Doc{
-		{Kind: "workflows", Name: wfgovern.RouteSourceDone, Body: strings.Replace(sampleDone, "## feature", "## *", 1)},
+		{Kind: "workflows", Name: wfgovern.RouteSourceDone, Body: strings.Replace(sampleDone, "[feature]", `["*"]`, 1)},
 		{Kind: "workflows", Name: wfgovern.RouteSourceStep, Body: sampleStep},
 	}
 	if len(workflowRoute(wild, wild[0], "nonesuch", nil).Steps) != 4 {

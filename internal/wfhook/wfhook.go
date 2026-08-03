@@ -27,16 +27,21 @@
 // the existing binding path. Adding a future lifecycle operation is a name in
 // that table plus its call site — not a new parser, resolver, or validator.
 //
-// Stdlib-only leaf (same posture as wfdot) so agentstep, agentvalidate,
-// structure, and cli can all import it without a cycle. It deliberately carries
-// its own small frontmatter scan rather than depending on a package that would
-// pull the engine in.
+// Near-leaf so agentstep, agentvalidate, structure and cli can all import it
+// without a cycle. Its ONE dependency is docindex, itself a leaf, for reading
+// frontmatter — and that is deliberate, not a slip. A workflow's frontmatter is
+// now either a markdown `---` block or a TOML `[meta]` table (sty_81bb0dde), and
+// a private scan here that only understood `---` would find no `create_review`
+// in a TOML route source: the story-CREATE gate would stop firing, silently, on
+// the engine path. One reader for one question, or the two drift apart.
 package wfhook
 
 import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/bobmcallan/satelle/internal/docindex"
 )
 
 // OpCreateReview is the content/alignment review that runs when a work item is
@@ -140,7 +145,10 @@ func Parse(body string) ([]Hook, []string) {
 	if !ok {
 		return nil, nil
 	}
-	hooks, problems := parseHookBlock(fm)
+	hooks, problems := parseHookTables(body)
+	if hooks == nil && problems == nil {
+		hooks, problems = parseHookBlock(fm)
+	}
 
 	byOp := make(map[string]bool, len(hooks))
 	for _, h := range hooks {
@@ -178,6 +186,61 @@ func For(body, operation string) (Hook, bool) {
 		}
 	}
 	return Hook{}, false
+}
+
+// parseHookTables reads the TOML spelling of the block list — `[[meta.hooks]]`,
+// one table per hook (sty_81bb0dde):
+//
+//	[[meta.hooks]]
+//	operation = "create_review"
+//	skill     = "satelle-story-create-review"
+//	agent     = "strict-reviewer"           # optional
+//
+// It is the SAME grammar as the markdown block, in the format the file is
+// actually written in — not a second grammar. Both spellings land on the same
+// validation below, so a rule stated once applies to both.
+//
+// Returns (nil, nil) when the body is not TOML or declares no hooks table, which
+// is how Parse knows to fall through to the markdown form.
+func parseHookTables(body string) ([]Hook, []string) {
+	entries, ok := docindex.MetaTables(body, hookKey)
+	if !ok {
+		return nil, nil
+	}
+	hooks := make([]Hook, 0, len(entries))
+	var problems []string
+	for _, e := range entries {
+		h := Hook{Agent: DefaultAgent, Source: SourceHooks}
+		for _, k := range sortedKeys(e) {
+			switch k {
+			case "operation":
+				h.Operation = e[k]
+			case "skill":
+				h.Skill = e[k]
+			case "agent":
+				if e[k] != "" {
+					h.Agent, h.AgentDeclared = e[k], true
+				}
+			default:
+				problems = append(problems, fmt.Sprintf(
+					"hooks: unknown key %q — a hook declares operation, skill, and optionally agent", k))
+			}
+		}
+		hooks = append(hooks, h)
+	}
+	kept, more := validateHooks(hooks)
+	return kept, append(problems, more...)
+}
+
+// sortedKeys keeps problem order deterministic — map iteration must never reach
+// a reported message.
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // parseHookBlock reads the `hooks:` block list out of frontmatter lines.
@@ -250,6 +313,18 @@ func parseHookBlock(fm []string) ([]Hook, []string) {
 	}
 	flush()
 
+	kept, more := validateHooks(hooks)
+	return kept, append(problems, more...)
+}
+
+// validateHooks applies the declaration rules every spelling shares — an
+// operation and a skill are required, an operation is declared once, and an
+// unknown operation is CARRIED so validation can report it by name rather than
+// the declaration vanishing without a trace. Shared deliberately: a rule stated
+// once applies to the markdown block and the TOML tables alike, and the two
+// cannot drift.
+func validateHooks(hooks []Hook) ([]Hook, []string) {
+	var problems []string
 	seen := map[string]bool{}
 	kept := hooks[:0]
 	for _, h := range hooks {
@@ -266,8 +341,6 @@ func parseHookBlock(fm []string) ([]Hook, []string) {
 		}
 		seen[h.Operation] = true
 		if !Known(h.Operation) {
-			// Carried, not dropped: validation reports it by name rather than the
-			// declaration vanishing without a trace.
 			problems = append(problems, fmt.Sprintf(
 				"hooks: unknown operation %q — known operations: %s", h.Operation, strings.Join(Operations(), ", ")))
 		}
@@ -277,19 +350,15 @@ func parseHookBlock(fm []string) ([]Hook, []string) {
 	return kept, problems
 }
 
-// frontmatter returns the lines between the opening and closing `---` fences,
-// and whether a well-formed block was found.
+// frontmatter returns a workflow's frontmatter as `key: value` lines, from
+// EITHER a markdown `---` block or a TOML `[meta]` table (sty_81bb0dde).
+//
+// This delegation is load-bearing, not tidiness. The route source is TOML, and
+// `create_review` lives in its frontmatter — a reader that only understood `---`
+// would find nothing, return no hooks, and the story-CREATE gate would stop
+// firing with nothing anywhere reporting it. Silent, and on the engine path.
 func frontmatter(body string) ([]string, bool) {
-	lines := strings.Split(body, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		return nil, false
-	}
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "---" {
-			return lines[1:i], true
-		}
-	}
-	return nil, false
+	return docindex.Frontmatter(body)
 }
 
 // scalar reads a top-level `key: value` from frontmatter lines. Indented lines

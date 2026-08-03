@@ -26,7 +26,7 @@ const DefaultDoneGate = "satelle-story-done-review"
 
 // StepSummarySkill is the conventional step-review/summary skill. A route opts
 // into per-transition step summaries by declaring a `## gate` section for it
-// (transparently, in step.md), optionally marked `mandatory: true`. There is no
+// (transparently, in step.toml), optionally marked `mandatory: true`. There is no
 // hidden always-on summariser — the route declares it (sty_9a139c78).
 const StepSummarySkill = "satelle-step-summary"
 

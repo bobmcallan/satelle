@@ -21,73 +21,104 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
-// wfDoc wraps a digraph in the conformant workflow-doc envelope (frontmatter +
-// fenced ```dot) a Gate-path fixture needs: the gate's structure guard refuses a
-// governing workflow that fails its deterministic check (sty_d0d6bb67), so any
-// workflow a test drives Gate under must be a well-formed doc, exactly like the
-// authored substrate.
-// A lifecycle is a DERIVED ROUTE — done.md + step.md — and there is no DOT front
-// end left to author one with (sty_d953c5d8). The fixtures below are route
+// A lifecycle is a DERIVED ROUTE — done.toml + step.toml — and there is no DOT
+// front end left to author one with (sty_d953c5d8). The fixtures below are route
 // sources, but the ~50 `fakeDocs{workflow: …}` call sites pass ONE body, so
 // wfDoc packs the two halves with a sentinel and fakeDocs splits them back into
 // the two docs the front door reads. The packing is a test-harness convenience;
 // the bytes on each side of it are ordinary route grammar.
 const routeHalfSplit = "\n@@@step@@@\n"
 
-// wfDoc packs a fixture route. done is the `## <category>` body (obligations,
-// park, cancel); step is the step catalogue.
+// wfDoc packs a fixture route in the conformant workflow-doc envelope a
+// Gate-path fixture needs: the gate's structure guard refuses a governing
+// workflow that fails its deterministic check (sty_d0d6bb67), so any workflow a
+// test drives Gate under must be a well-formed doc, exactly like the authored
+// substrate. done is the category body (obligations, park, cancel); step is the
+// step catalogue. Both halves are TOML with a `[meta]` header (sty_81bb0dde).
 func wfDoc(done, step string) string {
-	return "---\nname: done\ntype: workflow\ndescription: test declaration of done\nscope: system\n---\n\n" +
-		done + routeHalfSplit +
-		"---\nname: step\ntype: workflow\ndescription: test step catalogue\nscope: system\n---\n\n" + step
+	head := func(name, what string) string {
+		return "[meta]\nname = \"" + name + "\"\ntype = \"workflow\"\ndescription = \"" +
+			what + "\"\nscope = \"system\"\n\n"
+	}
+	return head("done", "test declaration of done") + done + routeHalfSplit +
+		head("step", "test step catalogue") + step
+}
+
+// tomlList renders a CSV fixture field as a TOML array.
+func tomlList(csv string) string {
+	parts := strings.Split(csv, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, `"`+p+`"`)
+		}
+	}
+	return "[" + strings.Join(out, ", ") + "]"
+}
+
+// roleRef renders a fixture's "state @gate" shorthand as the inline table a
+// route source declares a park/cancel role with.
+func roleRef(spec string) string {
+	state, gate, _ := strings.Cut(spec, "@")
+	fields := []string{`state = "` + strings.TrimSpace(state) + `"`}
+	if gate = strings.TrimSpace(gate); gate != "" {
+		fields = append(fields, `gate = "`+gate+`"`)
+	}
+	return "{ " + strings.Join(fields, ", ") + " }"
 }
 
 // spineWF is the fixture shorthand most cases want: a wildcard lane whose steps
 // run in the given order, each discharging an obligation named for it. steps are
-// "name|agent|skill|reviewers(csv)|reviewer_agent|parallel"; a trailing step is
+// "status|agent|skill|reviewers(csv)|reviewer_agent|parallel"; a trailing step is
 // terminal. An omitted parallel leaves the route's own default (concurrent above
 // one reviewer); "0" asks for sequential first-reject.
 // park and cancel are "state @gate" (empty to omit).
+//
+// A step TABLE is keyed by the obligation it discharges, and its `status` is the
+// stage name — so the spec's first field names the status and the key is derived
+// from it. That is the file's own model, not a fixture convention.
 func spineWF(park, cancel string, gates string, steps ...string) string {
-	var done, cat strings.Builder
-	done.WriteString("## *\n- raised\n")
-	cat.WriteString("## backlog\nstart: true\nprovides: raised\n\n")
+	var cat strings.Builder
+	obligations := []string{`"raised"`}
+	cat.WriteString("[raised]\nstatus = \"backlog\"\nstart = true\n\n")
 	prev := "raised"
 	for i, spec := range steps {
 		f := strings.Split(spec, "|")
 		for len(f) < 6 {
 			f = append(f, "")
 		}
-		name, agent, skill, reviewers, ragent, par := f[0], f[1], f[2], f[3], f[4], f[5]
-		ob := "ob-" + name
-		done.WriteString("- " + ob + "\n")
-		cat.WriteString("## " + name + "\n")
+		status, agent, skill, reviewers, ragent, par := f[0], f[1], f[2], f[3], f[4], f[5]
+		ob := "ob-" + status
+		obligations = append(obligations, `"`+ob+`"`)
+		cat.WriteString("[" + ob + "]\nstatus = \"" + status + "\"\n")
 		if agent != "" {
-			cat.WriteString("agent: " + agent + "\n")
+			cat.WriteString("agent = \"" + agent + "\"\n")
 		}
 		if skill != "" {
-			cat.WriteString("skills: " + skill + "\n")
+			cat.WriteString("skills = " + tomlList(skill) + "\n")
 		}
 		if reviewers != "" {
-			cat.WriteString("reviewers: " + reviewers + "\n")
+			cat.WriteString("reviewers = " + tomlList(reviewers) + "\n")
 		}
 		if ragent != "" {
-			cat.WriteString("reviewer_agent: " + ragent + "\n")
+			cat.WriteString("reviewer_agent = \"" + ragent + "\"\n")
 		}
 		if par != "" {
-			cat.WriteString("parallel: " + par + "\n")
+			cat.WriteString("parallel = " + par + "\n")
 		}
 		if i == len(steps)-1 {
-			cat.WriteString("terminal: true\n")
+			cat.WriteString("terminal = true\n")
 		}
-		cat.WriteString("provides: " + ob + "\nrequires: " + prev + "\n\n")
+		cat.WriteString("requires = [\"" + prev + "\"]\n\n")
 		prev = ob
 	}
+	var done strings.Builder
+	done.WriteString("[\"*\"]\nobligations = [" + strings.Join(obligations, ", ") + "]\n")
 	if park != "" {
-		done.WriteString("park: " + park + "\n")
+		done.WriteString("park = " + roleRef(park) + "\n")
 	}
 	if cancel != "" {
-		done.WriteString("cancel: " + cancel + "\n")
+		done.WriteString("cancel = " + roleRef(cancel) + "\n")
 	}
 	cat.WriteString(gates)
 	return wfDoc(done.String(), cat.String())
@@ -425,8 +456,17 @@ func TestEngagementGuardSkippedOffEngagementEdge(t *testing.T) {
 
 // Surface-scoped design gate for skip-telemetry tests (sty_dcce86d5 AC4).
 var scopedAppliesDOT = spineWF("", "",
-	"## gate design-review\nagent: reviewer\non: in_progress\napplies_to: surface:ui\n\n"+
-		"## gate satelle-estimate-actual-review\nagent: reviewer\non: in_progress\n\n",
+	`[[gate]]
+skill = "design-review"
+agent = "reviewer"
+on = ["in_progress"]
+applies_to = ["surface:ui"]
+
+[[gate]]
+skill = "satelle-estimate-actual-review"
+agent = "reviewer"
+on = ["in_progress"]
+`,
 	"in_progress|executor|code|satelle-story-intent-review",
 	"done|||satelle-story-done-review")
 
@@ -477,7 +517,12 @@ func TestScopedGateSkippedTelemetry(t *testing.T) {
 
 // Augmentation DOT: code-ui is only required for surface:ui (sty_8225d8a5 AC5).
 var engageAugDOT = spineWF("", "",
-	"## gate code-ui\nagent: executor\non: in_progress\napplies_to: surface:ui\n\n",
+	`[[gate]]
+skill = "code-ui"
+agent = "executor"
+on = ["in_progress"]
+applies_to = ["surface:ui"]
+`,
 	"in_progress|executor|code|satelle-story-intent-review",
 	"done|||satelle-story-done-review")
 
@@ -600,7 +645,11 @@ func TestGate_clearErrorWhenNoVerdictAfterRetries(t *testing.T) {
 
 // summaryWorkflow declares a MANDATORY step-summary node, so Summarise runs.
 var summaryWorkflow = spineWF("", "cancelled",
-	"## gate satelle-step-summary\nagent: reviewer\nmandatory: true\n\n",
+	`[[gate]]
+skill = "satelle-step-summary"
+agent = "reviewer"
+mandatory = true
+`,
 	"in_progress|executor||satelle-story-intent-review",
 	"done|||satelle-story-done-review")
 
@@ -1041,7 +1090,11 @@ func TestGateScopedReviewerRunsLast(t *testing.T) {
 	// reviewer:always tag layer: the DOT, not a skill tag, declares the gate
 	// (sty_ca9f675f).
 	wf := spineWF("", "",
-		"## gate satelle-estimate-actual\nagent: reviewer\non: done\n\n",
+		`[[gate]]
+skill = "satelle-estimate-actual"
+agent = "reviewer"
+on = ["done"]
+`,
 		"in_progress|executor",
 		"done|||satelle-story-done-review")
 	mr := &mapRunner{}
@@ -1067,7 +1120,11 @@ func TestScopedReviewerByOnList(t *testing.T) {
 	// unlisted edge — declared in the DOT, so it costs nothing in between and the
 	// workflow remains the sole gating authority.
 	wf := spineWF("", "",
-		"## gate satelle-estimate-actual\nagent: reviewer\non: done\n\n",
+		`[[gate]]
+skill = "satelle-estimate-actual"
+agent = "reviewer"
+on = ["done"]
+`,
 		"in_progress|executor",
 		"reviewed|executor||satelle-story-code-review",
 		"done|||satelle-story-done-review")
@@ -1102,7 +1159,7 @@ func TestGateRefusesBrokenWorkflowStructure(t *testing.T) {
 	// A route source that RESOLVES but fails its structure check: the done half
 	// carries no scope, so the deterministic check rejects it.
 	broken := strings.Replace(spineWF("", "", "", "in_progress|executor", "done"),
-		"description: test declaration of done\nscope: system\n---", "---", 1)
+		"description = \"test declaration of done\"\nscope = \"system\"\n", "", 1)
 	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: broken, skillBody: "rubric", skillFound: true})
 	_, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "backlog"}, "in_progress")
 	if err == nil {
@@ -1930,7 +1987,8 @@ var createWF = func() string {
 	// The create hook is workflow FRONTMATTER, and a derived route declares it on
 	// its declaration of done (sty_9835070d).
 	base := spineWF("", "", "", "in_progress|executor", "done")
-	return strings.Replace(base, "scope: system\n---", "scope: system\ncreate_review: my-create-review\n---", 1)
+	return strings.Replace(base, "scope = \"system\"\n",
+		"scope = \"system\"\ncreate_review = \"my-create-review\"\n", 1)
 }()
 
 // plainWF is a wildcard workflow with NO create_review declaration.
@@ -2004,12 +2062,19 @@ func TestReviewCreateStructurePreemptsContent(t *testing.T) {
 // stepWF declares a step-summary node; stepWFOptional declares a non-mandatory
 // one; the bare baselineWorkflow body (testWorkflow) declares none.
 var stepWF = spineWF("", "",
-	"## gate satelle-step-summary\nagent: reviewer\nmandatory: true\n\n",
+	`[[gate]]
+skill = "satelle-step-summary"
+agent = "reviewer"
+mandatory = true
+`,
 	"in_progress|executor",
 	"done|||satelle-story-done-review")
 
 var stepWFOptional = spineWF("", "",
-	"## gate satelle-step-summary\nagent: reviewer\n\n",
+	`[[gate]]
+skill = "satelle-step-summary"
+agent = "reviewer"
+`,
 	"in_progress|executor",
 	"done|||satelle-story-done-review")
 
@@ -2044,7 +2109,11 @@ func TestSummariseReturnsTrimmedProse(t *testing.T) {
 // the harness/model; default [reviewer] is unchanged when agent=reviewer.
 func TestSummariseUsesNamedBinding(t *testing.T) {
 	namedWF := spineWF("", "",
-		"## gate satelle-step-summary\nagent: summariser-x\nmandatory: true\n\n",
+		`[[gate]]
+skill = "satelle-step-summary"
+agent = "summariser-x"
+mandatory = true
+`,
 		"in_progress|executor",
 		"done")
 	g, defaultR := newEngine(t, "default runner must not run",
@@ -2199,12 +2268,33 @@ func TestParseDecisionLenient(t *testing.T) {
 // category-specific lane is a SECTION now, not a second workflow file
 // (sty_d953c5d8). Both lanes select from the same catalogue.
 var categoryWF = wfDoc(
-	"## *\n- raised\n- coded\n- closed\n\n"+
-		"## web\n- raised\n- coded\n- web-closed\n",
-	"## backlog\nstart: true\nprovides: raised\n\n"+
-		"## in_progress\nagent: executor\nprovides: coded\nrequires: raised\n\n"+
-		"## done\nreviewers: satelle-story-done-review\nterminal: true\nprovides: closed\nrequires: coded\n\n"+
-		"## done\nreviewers: satelle-web-done-review\nterminal: true\nprovides: web-closed\nrequires: coded\n")
+	`["*"]
+obligations = ["raised", "coded", "closed"]
+
+[web]
+obligations = ["raised", "coded", "web-closed"]
+`,
+	`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[closed]
+status = "done"
+reviewers = ["satelle-story-done-review"]
+terminal = true
+requires = ["coded"]
+
+[web-closed]
+status = "done"
+reviewers = ["satelle-web-done-review"]
+terminal = true
+requires = ["coded"]
+`)
 
 func TestActiveWorkflowSelectByCategory(t *testing.T) {
 	docs := fakeDocs{
@@ -2712,8 +2802,9 @@ func TestWorkflowConsistency(t *testing.T) {
 	}
 	// (2) An unresolved referenced skill is flagged; resolved → clean.
 	wfSkill := docindex.Doc{Name: "x", Embedded: false,
-		Body: "---\nname: x\ntype: workflow\napplies_to: [\"feature\"]\n---\n" +
-			"## in_progress\nagent: executor\nreviewers: missing-skill\nprovides: coded\nrequires: raised\n"}
+		Body: "[meta]\nname = \"x\"\ntype = \"workflow\"\napplies_to = [\"feature\"]\n\n" +
+			"[coded]\nstatus = \"in_progress\"\nagent = \"executor\"\n" +
+			"reviewers = [\"missing-skill\"]\nrequires = [\"raised\"]\n"}
 	miss := WorkflowConsistency([]docindex.Doc{wfSkill}, func(s string) bool { return s != "missing-skill" })
 	if len(miss) == 0 || !strings.Contains(strings.Join(miss, "\n"), "missing-skill") {
 		t.Errorf("unresolved referenced skill should be flagged, got %v", miss)
@@ -3375,9 +3466,11 @@ description: coded check fixture
 ` + "```check\n#!/bin/sh\nexit 0\n```\n"
 
 	mkWF := func(agentAttr string) string {
-		// agentAttr is either "agent: reviewer\n" or empty.
+		// agentAttr is either `agent = "reviewer"` or empty.
 		return spineWF("", "",
-			"## gate fixture-coded\n"+agentAttr+"on: done\n\n",
+			`[[gate]]
+skill = "fixture-coded"
+`+agentAttr+"on = [\"done\"]\n\n",
 			"in_progress|executor|code",
 			"done")
 	}
@@ -3415,7 +3508,7 @@ description: coded check fixture
 			name = "reject"
 		}
 		t.Run(name, func(t *testing.T) {
-			with := run(t, mkWF("agent: reviewer\n"), ok)
+			with := run(t, mkWF("agent = \"reviewer\"\n"), ok)
 			without := run(t, mkWF(""), ok)
 			if with.Accept != without.Accept || with.Gated != without.Gated {
 				t.Fatalf("accept/gated differ: with=%+v without=%+v", with, without)

@@ -16,13 +16,35 @@ import (
 // routeWorkflow is a three-step lifecycle with a tag-scoped gate, so the route
 // can be checked for both the always-on and the by-tag case.
 var routeWorkflow = routeHalves(
-	"## feature\n- raised\n- coded\n- closed\ncancel: cancelled\n",
-	"## backlog\nstart: true\nprovides: raised\n\n"+
-		"## in_progress\nagent: executor\nskills: code\nreviewers: intent-review\nreviewer_agent: reviewer\n"+
-		"provides: coded\nrequires: raised\n\n"+
-		"## done\nreviewers: done-review\nreviewer_agent: reviewer\nterminal: true\n"+
-		"provides: closed\nrequires: coded\n\n"+
-		"## gate design-review\nagent: reviewer\non: done\napplies_to: surface:ui\n")
+	`[feature]
+obligations = ["raised", "coded", "closed"]
+cancel = { state = "cancelled" }
+`,
+	`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+skills = ["code"]
+reviewers = ["intent-review"]
+reviewer_agent = "reviewer"
+requires = ["raised"]
+
+[closed]
+status = "done"
+reviewers = ["done-review"]
+reviewer_agent = "reviewer"
+terminal = true
+requires = ["coded"]
+
+[[gate]]
+skill = "design-review"
+agent = "reviewer"
+on = ["done"]
+applies_to = ["surface:ui"]
+`)
 
 // wireRoute opens a store with a story dir and the route fixture workflow
 // indexed, so a story created here is governed by a parseable lifecycle.
@@ -49,7 +71,7 @@ func wireRoute(t *testing.T) {
 
 	wfDir := t.TempDir()
 	for name, half := range routeWorkflow {
-		if err := os.WriteFile(filepath.Join(wfDir, name+".md"), []byte(half), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(wfDir, name+".toml"), []byte(half), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}

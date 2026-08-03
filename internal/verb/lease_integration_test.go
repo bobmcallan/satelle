@@ -385,7 +385,7 @@ func TestOrphanStaleLeaseDoesNotBlockEngage(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, body := range singleStoryWF {
-		if err := os.WriteFile(filepath.Join(wfDir, name+".md"), []byte(body), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(wfDir, name+".toml"), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}

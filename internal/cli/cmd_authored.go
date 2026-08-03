@@ -70,7 +70,7 @@ func authoredCreateCmd(kind string) *cobra.Command {
 			if dir == "" {
 				return fmt.Errorf("no substrate dir configured for kind %q", kind)
 			}
-			path := filepath.Join(dir, name+".md")
+			path := filepath.Join(dir, name+docindex.AuthoredExt(kind))
 			if !force {
 				if _, statErr := os.Stat(path); statErr == nil {
 					return fmt.Errorf("%s already exists (use --force to overwrite)", path)
@@ -118,13 +118,14 @@ func authoredCreateCmd(kind string) *cobra.Command {
 }
 
 // validArtifactName rejects a name that is not a bare slug (no path separators,
-// no .md suffix), so create always writes <dir>/<name>.md.
+// no extension), so create always writes <dir>/<name> with the extension its
+// KIND dictates — the caller does not get to pick the format.
 func validArtifactName(name string) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("--name is required")
 	}
-	if strings.ContainsAny(name, "/\\") || strings.HasSuffix(name, ".md") {
-		return fmt.Errorf("--name must be a bare artifact name (no path, no .md)")
+	if strings.ContainsAny(name, "/\\") || strings.HasSuffix(name, ".md") || strings.HasSuffix(name, ".toml") {
+		return fmt.Errorf("--name must be a bare artifact name (no path, no extension)")
 	}
 	return nil
 }

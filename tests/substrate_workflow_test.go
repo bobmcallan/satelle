@@ -29,8 +29,8 @@ func TestSubstrateWorkflowSeededAndDrivable(t *testing.T) {
 	mustRun(t, testBin, repo, "reindex")
 
 	for _, rel := range []string{
-		".satelle/workflows/done.md",
-		".satelle/workflows/step.md",
+		".satelle/workflows/done.toml",
+		".satelle/workflows/step.toml",
 		".satelle/skills/satelle-substrate-only-check.md",
 	} {
 		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
@@ -55,7 +55,7 @@ func TestSubstrateWorkflowSeededAndDrivable(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &rows); err != nil {
 		t.Fatalf("parse workflow list: %v\n%s", err, out)
 	}
-	if len(rows) == 0 || rows[0].Name != "done.md+step.md" || !rows[0].Active {
+	if len(rows) == 0 || rows[0].Name != "default" || !rows[0].Active {
 		t.Errorf("category substrate active lifecycle = %+v, want the authored route first/active", rows)
 	}
 
