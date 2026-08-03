@@ -91,9 +91,16 @@ func validArtifactEnvelope(t *testing.T, f fixture) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Four-field usage shape (sty_8178f1c6); live classify only needs a valid
+	// envelope — totals are not asserted here.
 	envelope, err := json.Marshal(map[string]any{
 		"type": "result", "result": string(artifact),
-		"usage": map[string]int{"input_tokens": 120, "output_tokens": 480},
+		"usage": map[string]int{
+			"input_tokens":                120,
+			"cache_creation_input_tokens": 800,
+			"cache_read_input_tokens":     200,
+			"output_tokens":               480,
+		},
 	})
 	if err != nil {
 		t.Fatal(err)

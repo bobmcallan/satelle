@@ -241,9 +241,14 @@ func TestArtifactAttemptsTokenBudgetStopsBeforeRepair(t *testing.T) {
 	skill := strings.Replace(attemptedDispatchSkill,
 		"attempt_on_exhaust: fail", "attempt_token_budget: 50\nattempt_on_exhaust: fail", 1)
 	inner := validAttempt("invalid")
+	// Realistic four-field usage (sty_8178f1c6): total is uncached+cache+out = 60+100+10.
 	envelope, _ := json.Marshal(map[string]any{
 		"result": inner,
-		"usage":  map[string]any{"input_tokens": 60, "output_tokens": 10},
+		"usage": map[string]any{
+			"input_tokens":                60,
+			"cache_creation_input_tokens": 100,
+			"output_tokens":               10,
+		},
 	})
 	primary := &attemptRunner{runs: []attemptRun{{out: string(envelope)}}}
 	g, events := attemptedEngine(t, skill, primary, &attemptRunner{})
@@ -252,7 +257,7 @@ func TestArtifactAttemptsTokenBudgetStopsBeforeRepair(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	if len(primary.requests) != 1 || (*events)[0].data["usage_available"] != true ||
-		(*events)[0].data["tokens_total"] != 70 {
+		(*events)[0].data["tokens_total"] != 170 {
 		t.Fatalf("calls=%d events=%#v", len(primary.requests), *events)
 	}
 }

@@ -535,7 +535,7 @@ func storyCostCommands() []*cobra.Command {
 				}
 			}
 			fmt.Fprintln(cmd.OutOrStdout(),
-				"note: '—' means unmeasured, never free. Dispatched rows without provider usage are unknown; in-loop ACTUAL TOKENS need satelle story log --kind step-self-report. actual-* tags and step-self-report figures are session self-report, not measured transport cost.")
+				"note: '—' means unmeasured, never free. Dispatched rows without provider usage are unknown; in-loop ACTUAL TOKENS need satelle story log --kind step-self-report. actual-* tags and step-self-report figures are session self-report, not measured transport cost. TOKENS in includes cache-creation and cache-read tokens when the provider reports them (the full prompt, not the uncached remainder); rows recorded before that accounting omit cache and understate input.")
 			return nil
 		},
 	}

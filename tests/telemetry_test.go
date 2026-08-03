@@ -227,17 +227,19 @@ func TestStoryCostUnreportedIsNotZero(t *testing.T) {
 	}
 }
 
-// TestStoryCostMeasuredUsageRecorded pins AC1: a Claude-JSON usage envelope is
-// recorded on agent_invocation and surfaces as numbers in satelle story cost
-// with a TOTAL that has no unreported clause.
+// TestStoryCostMeasuredUsageRecorded pins that a Claude-JSON usage envelope
+// (including cache fields) is recorded on agent_invocation and surfaces as the
+// summed full-prompt input in satelle story cost, with a TOTAL that has no
+// unreported clause (sty_8178f1c6 — e2e surface of the cache-sum decision).
 func TestStoryCostMeasuredUsageRecorded(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	// Claude --output-format json envelope: result text + usage.
+	// Claude --output-format json envelope: result text + realistic usage with
+	// cache fields. Displayed input must be 22+11000+2500 = 13522, not 22.
 	stub := filepath.Join(repo, "claude-accept.sh")
 	script := `#!/bin/sh
-echo '{"result":"{\"decision\":\"accept\",\"notes\":\"ok\"}","usage":{"input_tokens":54,"output_tokens":59}}'
+echo '{"result":"{\"decision\":\"accept\",\"notes\":\"ok\"}","usage":{"input_tokens":22,"cache_creation_input_tokens":11000,"cache_read_input_tokens":2500,"output_tokens":59}}'
 `
 	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -267,30 +269,31 @@ echo '{"result":"{\"decision\":\"accept\",\"notes\":\"ok\"}","usage":{"input_tok
 	if gateLine == "" {
 		t.Fatalf("no gate row in cost:\n%s", cost)
 	}
-	if !strings.Contains(gateLine, "54/59") {
-		t.Errorf("gate row must show measured 54/59:\n%s", gateLine)
+	// Full prompt in/out (cache folded into input), not the uncached remainder alone.
+	if !strings.Contains(gateLine, "13522/59") {
+		t.Errorf("gate row must show measured 13522/59 (cache-inclusive input):\n%s", gateLine)
 	}
-	if !strings.Contains(gateLine, "113") {
-		t.Errorf("gate row must show total 113:\n%s", gateLine)
+	if !strings.Contains(gateLine, "13581") {
+		t.Errorf("gate row must show total 13581:\n%s", gateLine)
 	}
 	// Measured-only TOTAL: no unreported clause when every invocation reported.
 	totalLine := ""
 	for _, line := range strings.Split(cost, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "TOTAL") && strings.Contains(line, "113") {
+		if strings.HasPrefix(strings.TrimSpace(line), "TOTAL") && strings.Contains(line, "13581") {
 			totalLine = line
 			break
 		}
 	}
-	// At least one TOTAL line should include 113 without the unreported annotation
+	// At least one TOTAL line should include 13581 without the unreported annotation
 	// for the invocations table (first TOTAL).
 	foundMeasuredTotal := false
 	for _, line := range strings.Split(cost, "\n") {
-		if strings.Contains(line, "TOTAL") && strings.Contains(line, "113") && !strings.Contains(line, "unreported") {
+		if strings.Contains(line, "TOTAL") && strings.Contains(line, "13581") && !strings.Contains(line, "unreported") {
 			foundMeasuredTotal = true
 			break
 		}
 	}
 	if !foundMeasuredTotal {
-		t.Errorf("measured-only TOTAL 113 without unreported clause not found:\n%s\n(totalLine=%q)", cost, totalLine)
+		t.Errorf("measured-only TOTAL 13581 without unreported clause not found:\n%s\n(totalLine=%q)", cost, totalLine)
 	}
 }

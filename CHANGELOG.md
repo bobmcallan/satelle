@@ -1,3 +1,8 @@
+## [0.0.414] - 2026-08-03
+
+### Fixed
+- **Gate cost now includes cache tokens.** `UnwrapUsage` and `usageFromMap` sum `cache_creation_input_tokens` + `cache_read_input_tokens` into InputTokens so `satelle story cost` shows the full prompt, not the uncached remainder. Presentation is stated in the cost note; legacy rows keep pre-fix meaning (sty_8178f1c6)
+
 ## [0.0.413] - 2026-08-03
 
 ### Added

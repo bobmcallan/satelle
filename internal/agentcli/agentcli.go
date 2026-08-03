@@ -179,6 +179,13 @@ const (
 // agent envelope (claude's `--output-format json`); a plain-text harness leaves
 // Available false, so unreported usage is distinct from a reported zero. It
 // never carries the env or any secret — only numbers.
+//
+// InputTokens is the full prompt the provider processed for this invocation,
+// including cache-creation and cache-read tokens when the envelope reports them
+// (sty_8178f1c6). Anthropic's three input fields are disjoint; we sum them so a
+// reader of satelle story cost never mistakes the uncached remainder for the
+// whole prompt. Rows recorded before that change omitted cache and understate
+// input — they keep that meaning; no migration rewrites them.
 type UsageResult struct {
 	InputTokens  int
 	OutputTokens int
@@ -192,11 +199,17 @@ type UsageResult struct {
 // claudeJSONEnvelope is the shape of `claude -p --output-format json` output: the
 // model's text lands in `result`, with token usage alongside. Only the fields we
 // record are declared; extra fields are ignored.
+//
+// Cache fields (cache_creation_input_tokens, cache_read_input_tokens) are
+// disjoint from input_tokens under Anthropic's usage shape; UnwrapUsage sums
+// all three into UsageResult.InputTokens (sty_8178f1c6).
 type claudeJSONEnvelope struct {
 	Result string `json:"result"`
 	Usage  *struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
+		InputTokens              int `json:"input_tokens"`
+		OutputTokens             int `json:"output_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	} `json:"usage"`
 }
 
@@ -228,9 +241,13 @@ func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 		u := UsageResult{}
 		if claude.Usage != nil {
 			u.Available = true
-			u.InputTokens = claude.Usage.InputTokens
+			// Sum uncached + cache-creation + cache-read: the three fields are
+			// disjoint components of one prompt (sty_8178f1c6).
+			u.InputTokens = claude.Usage.InputTokens +
+				claude.Usage.CacheCreationInputTokens +
+				claude.Usage.CacheReadInputTokens
 			u.OutputTokens = claude.Usage.OutputTokens
-			u.TotalTokens = claude.Usage.InputTokens + claude.Usage.OutputTokens
+			u.TotalTokens = u.InputTokens + u.OutputTokens
 		}
 		return []byte(claude.Result), u
 	}

@@ -494,6 +494,7 @@ func TestRunInheritsParentEnvNoFilter(t *testing.T) {
 
 func TestUnwrapUsage(t *testing.T) {
 	// A claude --output-format json envelope: result text extracted, usage captured.
+	// Two-field shape (no cache keys) stays backward compatible.
 	env := `{"type":"result","result":"the verdict text","usage":{"input_tokens":54,"output_tokens":59}}`
 	text, u := UnwrapUsage([]byte(env))
 	if string(text) != "the verdict text" {
@@ -501,6 +502,17 @@ func TestUnwrapUsage(t *testing.T) {
 	}
 	if !u.Available || u.InputTokens != 54 || u.OutputTokens != 59 || u.TotalTokens != 113 {
 		t.Errorf("usage = %+v, want 54/59/113", u)
+	}
+	// Realistic envelope with cache fields: InputTokens is the full prompt
+	// (uncached + cache_creation + cache_read), not the uncached remainder alone
+	// (sty_8178f1c6 AC1). Numbers mirror the pre-fix understated 22/13394 shape.
+	cached := `{"type":"result","result":"the verdict text","usage":{"input_tokens":22,"cache_creation_input_tokens":11000,"cache_read_input_tokens":2500,"output_tokens":13394}}`
+	text, u = UnwrapUsage([]byte(cached))
+	if string(text) != "the verdict text" {
+		t.Errorf("cached envelope result not extracted: %q", text)
+	}
+	if !u.Available || u.InputTokens != 13522 || u.OutputTokens != 13394 || u.TotalTokens != 26916 {
+		t.Errorf("cached usage = %+v, want InputTokens=13522 OutputTokens=13394 TotalTokens=26916", u)
 	}
 	// Plain text (a non-json harness) passes through verbatim with zero usage.
 	raw := "Verdict: accept.\n"

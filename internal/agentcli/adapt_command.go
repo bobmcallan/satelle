@@ -139,19 +139,31 @@ func textValue(v any) string {
 	return ""
 }
 
+// usageFromMap extracts token usage from a progressive/stream event that carries
+// a nested "usage" object. Cache fields fold into InputTokens on the same rule
+// as UnwrapUsage (sty_8178f1c6): input + cache_creation + cache_read.
+// A provider-reported total_tokens is trusted only when it is ≥ the derived
+// in+out sum; otherwise we derive, so a pre-cache total cannot re-understate.
 func usageFromMap(v map[string]any) *UsageResult {
 	raw, _ := v["usage"].(map[string]any)
 	if raw == nil {
 		return nil
 	}
+	in := intValue(raw["input_tokens"]) +
+		intValue(raw["cache_creation_input_tokens"]) +
+		intValue(raw["cache_read_input_tokens"])
+	out := intValue(raw["output_tokens"])
 	u := &UsageResult{
-		InputTokens:  intValue(raw["input_tokens"]),
-		OutputTokens: intValue(raw["output_tokens"]),
+		InputTokens:  in,
+		OutputTokens: out,
 		Available:    true,
 	}
-	u.TotalTokens = intValue(raw["total_tokens"])
-	if u.TotalTokens == 0 {
-		u.TotalTokens = u.InputTokens + u.OutputTokens
+	derived := in + out
+	reported := intValue(raw["total_tokens"])
+	if reported >= derived && reported > 0 {
+		u.TotalTokens = reported
+	} else {
+		u.TotalTokens = derived
 	}
 	return u
 }
