@@ -168,8 +168,8 @@ func TestDispatchTelemetryOnReviewerFailure(t *testing.T) {
 }
 
 // TestStoryCostUnreportedIsNotZero pins sty_56aae77a end-to-end: a plain-text
-// (no usage) reviewer invocation must render as —/— in satelle story cost, not
-// a confident 0/0, and the TOTAL must name unreported invocations when any exist.
+// (no usage) reviewer invocation must render as —/— on the gate row itself, not
+// a confident 0/0, and the TOTAL must name unreported invocations.
 func TestStoryCostUnreportedIsNotZero(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
@@ -193,15 +193,104 @@ func TestStoryCostUnreportedIsNotZero(t *testing.T) {
 	mustRun(t, testBin, repo, "story", "estimate", id, "--time", "5m", "--tokens", "100")
 	mustRun(t, testBin, repo, "story", "set", id, "--status", "in_progress")
 
+	// Row must exist on the ledger before we trust the cost table.
+	led := mustRun(t, testBin, repo, "ledger", "list", "--story", id)
+	if !strings.Contains(led, "agent_invocation") {
+		t.Fatalf("expected agent_invocation for the reviewer:\n%s", led)
+	}
+
 	cost := mustRun(t, testBin, repo, "story", "cost", id)
-	// Unreported plain-text invocation must not look measured.
-	if strings.Contains(cost, "0/0") {
-		t.Errorf("unreported invocation must not render as 0/0:\n%s", cost)
+	// Gate skill must appear on a row with unreported tokens (not 0/0).
+	if !strings.Contains(cost, "satelle-story-intent-review") {
+		t.Errorf("cost table missing the gate skill row:\n%s", cost)
 	}
-	if !strings.Contains(cost, "—/—") && !strings.Contains(cost, "—") {
-		t.Errorf("cost table should show unreported as em-dash:\n%s", cost)
+	// Find the gate line and require —/— on it (not only in the static note).
+	gateLine := ""
+	for _, line := range strings.Split(cost, "\n") {
+		if strings.Contains(line, "satelle-story-intent-review") {
+			gateLine = line
+			break
+		}
 	}
-	if !strings.Contains(cost, "unreported") && !strings.Contains(cost, "unmeasured") {
-		t.Errorf("cost view should call out unreported/unmeasured usage:\n%s", cost)
+	if gateLine == "" {
+		t.Fatalf("no gate row in cost:\n%s", cost)
+	}
+	if strings.Contains(gateLine, "0/0") {
+		t.Errorf("gate row must not render 0/0:\n%s", gateLine)
+	}
+	if !strings.Contains(gateLine, "—/—") {
+		t.Errorf("gate row must render unreported as —/—:\n%s", gateLine)
+	}
+	// TOTAL names unreported count (measuredTotalLabel), not only the note.
+	if !strings.Contains(cost, "invocations unreported") {
+		t.Errorf("TOTAL must name unreported invocations:\n%s", cost)
+	}
+}
+
+// TestStoryCostMeasuredUsageRecorded pins AC1: a Claude-JSON usage envelope is
+// recorded on agent_invocation and surfaces as numbers in satelle story cost
+// with a TOTAL that has no unreported clause.
+func TestStoryCostMeasuredUsageRecorded(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+
+	// Claude --output-format json envelope: result text + usage.
+	stub := filepath.Join(repo, "claude-accept.sh")
+	script := `#!/bin/sh
+echo '{"result":"{\"decision\":\"accept\",\"notes\":\"ok\"}","usage":{"input_tokens":54,"output_tokens":59}}'
+`
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, ".satelle", "workflows", "agents.toml"),
+		"[reviewer]\ncommand = \""+stub+" {system}\"\ntools = \"Read\"\n")
+	writeGateTelemetryRoute(t, repo)
+	mustRun(t, testBin, repo, "reindex")
+
+	out := mustRun(t, testBin, repo, "story", "create", "--category", "chore",
+		"--title", "Measured cost", "--body", "claude-json usage", "--acceptance", "1. done")
+	id := extractID(out, "sty_")
+	if id == "" {
+		t.Fatalf("no story id in:\n%s", out)
+	}
+	mustRun(t, testBin, repo, "story", "estimate", id, "--time", "5m", "--tokens", "100")
+	mustRun(t, testBin, repo, "story", "set", id, "--status", "in_progress")
+
+	cost := mustRun(t, testBin, repo, "story", "cost", id)
+	gateLine := ""
+	for _, line := range strings.Split(cost, "\n") {
+		if strings.Contains(line, "satelle-story-intent-review") {
+			gateLine = line
+			break
+		}
+	}
+	if gateLine == "" {
+		t.Fatalf("no gate row in cost:\n%s", cost)
+	}
+	if !strings.Contains(gateLine, "54/59") {
+		t.Errorf("gate row must show measured 54/59:\n%s", gateLine)
+	}
+	if !strings.Contains(gateLine, "113") {
+		t.Errorf("gate row must show total 113:\n%s", gateLine)
+	}
+	// Measured-only TOTAL: no unreported clause when every invocation reported.
+	totalLine := ""
+	for _, line := range strings.Split(cost, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "TOTAL") && strings.Contains(line, "113") {
+			totalLine = line
+			break
+		}
+	}
+	// At least one TOTAL line should include 113 without the unreported annotation
+	// for the invocations table (first TOTAL).
+	foundMeasuredTotal := false
+	for _, line := range strings.Split(cost, "\n") {
+		if strings.Contains(line, "TOTAL") && strings.Contains(line, "113") && !strings.Contains(line, "unreported") {
+			foundMeasuredTotal = true
+			break
+		}
+	}
+	if !foundMeasuredTotal {
+		t.Errorf("measured-only TOTAL 113 without unreported clause not found:\n%s\n(totalLine=%q)", cost, totalLine)
 	}
 }

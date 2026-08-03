@@ -1,3 +1,8 @@
+## [0.0.407] - 2026-08-03
+
+### Fixed
+- **Black-box cost tests assert measured and unreported rows by name.** Gate skill line carries 54/59 or —/—; TOTAL names unreported count only when applicable (sty_56aae77a)
+
 ## [0.0.406] - 2026-08-03
 
 ### Fixed
