@@ -27,6 +27,7 @@ func TestStoryRetrospectRecordsInvocation(t *testing.T) {
 	verb.SetRetrospector(fakeRetro{res: verb.DispatchResult{
 		Dispatched: true, Agent: "retrospective", Model: "glm-4.6", Skill: "satelle-retrospective",
 		TokensTotal: 100, DurationMs: 5000, Output: "## PROPOSALS FILED\nnone",
+		UsageAvailable: true, // transport reported usage (sty_56aae77a)
 	}})
 	defer verb.SetRetrospector(nil)
 
@@ -36,11 +37,12 @@ func TestStoryRetrospectRecordsInvocation(t *testing.T) {
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "T", "body": "b", "acceptance": "1. x", "category": "feature"}), &created)
 
 	var r struct {
-		StoryID     string `json:"story_id"`
-		TokensTotal int    `json:"tokens_total"`
+		StoryID        string `json:"story_id"`
+		TokensTotal    int    `json:"tokens_total"`
+		UsageAvailable bool   `json:"usage_available"`
 	}
 	json.Unmarshal(call(t, "story-retrospect", map[string]any{"id": created.ID}), &r)
-	if r.StoryID != created.ID || r.TokensTotal != 100 {
+	if r.StoryID != created.ID || r.TokensTotal != 100 || !r.UsageAvailable {
 		t.Fatalf("retrospect result = %+v", r)
 	}
 

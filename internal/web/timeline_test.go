@@ -37,17 +37,21 @@ func evs(entries ...ledger.Entry) []eventVM {
 }
 
 // TestTimelineChips asserts the timeline renders data-driven agent-action chips
-// (sty_43d228e4): an agent_invocation row shows wall-time/tokens/model chips (no
-// outcome), a telemetry_event shows its outcome, and a plain status_transition
-// shows none — each chip carries its chip-<type> class the viewer toggle filters.
+// (sty_43d228e4 / sty_56aae77a): an agent_invocation row shows wall-time/tokens/model
+// chips (no outcome) when usage is measured; an unreported invocation never shows a
+// token chip; a telemetry_event shows its outcome; a plain status_transition shows none.
 func TestTimelineChips(t *testing.T) {
 	now := time.Now()
+	// Legacy non-zero total still measures (no usage_available field).
 	inv, _ := json.Marshal(map[string]any{"agent": "reviewer", "model": "sonnet", "tokens_total": 2000, "duration_ms": 2400})
+	// Explicit unreported: must not show a tokens chip (sty_56aae77a).
+	unrep, _ := json.Marshal(map[string]any{"agent": "reviewer", "model": "grok-4.5", "tokens_total": 0, "usage_available": false, "duration_ms": 800})
 	tel, _ := json.Marshal(map[string]any{"kind": "agent-retry", "data": map[string]any{"outcome": "error"}})
 	d := detailData{
 		Item: workitem.Item{ID: "sty_x", Kind: workitem.KindStory, Title: "x", Status: "in_progress", CreatedAt: now, UpdatedAt: now},
 		Events: evs(
 			ledger.Entry{Kind: ledger.KindAgentInvocation, Body: "invoked", Payload: inv, CreatedAt: now},
+			ledger.Entry{Kind: ledger.KindAgentInvocation, Body: "unreported", Payload: unrep, CreatedAt: now},
 			ledger.Entry{Kind: ledger.KindTelemetryEvent, Body: "telemetry", Payload: tel, CreatedAt: now},
 			ledger.Entry{Kind: ledger.KindStatusTransition, Body: "backlog → plan", CreatedAt: now},
 		),
@@ -67,9 +71,14 @@ func TestTimelineChips(t *testing.T) {
 			t.Errorf("timeline missing chip %q; got:\n%s", want, out)
 		}
 	}
-	// A plain status_transition carries no cost/verdict, so no chips.
-	if strings.Count(out, `class="chip `) != 4 {
-		t.Errorf("only the invocation (3) + telemetry (1) rows should have chips; got %d", strings.Count(out, `class="chip `))
+	// Unreported row: walltime + model only — never a tokens chip (measured zero
+	// would still need UsageAvailable; unreported must not invent one).
+	if strings.Contains(out, `chip-tokens">0`) || strings.Count(out, `chip-tokens`) != 1 {
+		t.Errorf("want exactly one tokens chip (the measured 2,000); got:\n%s", out)
+	}
+	// Measured inv: walltime + tokens + model; unreported: walltime + model; tel: outcome = 6.
+	if strings.Count(out, `class="chip `) != 6 {
+		t.Errorf("want 6 chips (3 measured + 2 unreported + 1 outcome); got %d", strings.Count(out, `class="chip `))
 	}
 }
 

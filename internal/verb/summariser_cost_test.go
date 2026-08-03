@@ -21,6 +21,7 @@ func (costSummariser) Summarise(_ context.Context, _ workitem.Item, _, _ string)
 	return verb.SummaryResult{
 		Text: "the recap", Command: "claude -p", Context: "satelle-step-summary", Model: "sonnet",
 		TokensIn: 1200, TokensOut: 800, TokensTotal: 2000, DurationMs: 4200,
+		UsageAvailable: true, // transport reported usage (sty_56aae77a)
 	}, nil
 }
 func (costSummariser) MandatorySummary(_ context.Context, _ workitem.Item) bool { return true }

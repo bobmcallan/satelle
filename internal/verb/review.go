@@ -33,10 +33,13 @@ type GateDecision struct {
 	// TokensIn/Out/Total and DurationMs are the invocation's cost (sty_a699ad14),
 	// recorded on the agent_invocation ledger entry so per-gate cost is auditable.
 	// Zero for a functional-check gate or a plain-text harness that emits no usage.
-	TokensIn    int
-	TokensOut   int
-	TokensTotal int
-	DurationMs  int64
+	// UsageAvailable distinguishes a transport-reported zero from unreported
+	// usage (sty_56aae77a) — false means the numbers are not measured.
+	TokensIn       int
+	TokensOut      int
+	TokensTotal    int
+	DurationMs     int64
+	UsageAvailable bool
 	// Unresolved names gate skills this edge DECLARED that do not resolve in the
 	// substrate. Those gates degrade to advisory — the edge advances with no
 	// reviewer and no verdict — which is deliberate, so a fresh repo works before
@@ -65,10 +68,13 @@ type ReviewerVerdict struct {
 	Model   string `json:"model,omitempty"` // reviewer's resolved model id (sty_a699ad14)
 	// Token/wall-time cost of this reviewer's invocation (sty_a699ad14), recorded
 	// on its agent_invocation entry for the per-gate cost view.
-	TokensIn    int   `json:"tokens_in,omitempty"`
-	TokensOut   int   `json:"tokens_out,omitempty"`
-	TokensTotal int   `json:"tokens_total,omitempty"`
-	DurationMs  int64 `json:"duration_ms,omitempty"`
+	// UsageAvailable is stamped without omitempty so unreported ≠ measured zero
+	// (sty_56aae77a).
+	TokensIn       int   `json:"tokens_in,omitempty"`
+	TokensOut      int   `json:"tokens_out,omitempty"`
+	TokensTotal    int   `json:"tokens_total,omitempty"`
+	DurationMs     int64 `json:"duration_ms,omitempty"`
+	UsageAvailable bool  `json:"usage_available"`
 }
 
 // TransitionGater judges a requested status transition in an isolated,
@@ -147,11 +153,13 @@ type DispatchResult struct {
 	Model string `json:"model,omitempty"`
 	// Token/wall-time cost of the dispatch (sty_a699ad14), recorded on the
 	// agent_invocation entry. Zero for a plain-text harness with no usage envelope.
-	TokensIn    int    `json:"-"`
-	TokensOut   int    `json:"-"`
-	TokensTotal int    `json:"-"`
-	DurationMs  int64  `json:"-"`
-	Skill       string `json:"skill,omitempty"`
+	// UsageAvailable false means the tokens were not reported (sty_56aae77a).
+	TokensIn       int    `json:"-"`
+	TokensOut      int    `json:"-"`
+	TokensTotal    int    `json:"-"`
+	DurationMs     int64  `json:"-"`
+	UsageAvailable bool   `json:"-"`
+	Skill          string `json:"skill,omitempty"`
 	// Output is the dispatched agent's captured stdout (sty_890b86cb). For a task
 	// EXECUTION run, the verb layer writes it through as an OKF run-output document
 	// under the parent task's folder, so a run's evidence is discoverable per task
@@ -197,14 +205,15 @@ func SetRetrospector(r Retrospector) { retrospector = r }
 // agent_invocation payload shape covers both. Zero-value cost fields mean the
 // summariser produced no billable invocation (e.g. it never ran).
 type SummaryResult struct {
-	Text        string
-	Command     string
-	Context     string
-	Model       string
-	TokensIn    int
-	TokensOut   int
-	TokensTotal int
-	DurationMs  int64
+	Text           string
+	Command        string
+	Context        string
+	Model          string
+	TokensIn       int
+	TokensOut      int
+	TokensTotal    int
+	DurationMs     int64
+	UsageAvailable bool
 }
 
 // StepSummariser produces a read-only prose recap of an enacted transition,

@@ -128,6 +128,16 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			req := map[string]any{"id": args[0]}
 			f := cmd.Flags()
+			// Step-edge self-report nudge (sty_56aae77a AC3): capture previous
+			// status before the transition so the advisory names the step just left.
+			var prevStatus string
+			if group == "story" && f.Changed("status") {
+				if a, aerr := appFrom(cmd); aerr == nil && a != nil {
+					if it, gerr := a.Store.Stories.Get(cmd.Context(), args[0]); gerr == nil {
+						prevStatus = it.Status
+					}
+				}
+			}
 			putChanged(req, f, "title", "title")
 			putChanged(req, f, "body", "body")
 			putChanged(req, f, "status", "status")
@@ -163,6 +173,18 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 					cat, _ := f.GetString("category")
 					if notice := categoryNotice(a.Config, cat); notice != "" {
 						fmt.Fprint(cmd.ErrOrStderr(), notice)
+					}
+				}
+			}
+			// Step-edge self-report nudge after a real status change (sty_56aae77a).
+			// No hardcoded terminal-status list — suppress only when status did not
+			// change or a self-report for the left step already exists.
+			if group == "story" && f.Changed("status") && prevStatus != "" {
+				newStatus, _ := f.GetString("status")
+				if newStatus != "" && newStatus != prevStatus {
+					already := verb.HasStepSelfReport(cmd.Context(), args[0], prevStatus)
+					if note := stepSelfReportNudge(args[0], prevStatus, already); note != "" {
+						fmt.Fprint(cmd.ErrOrStderr(), note)
 					}
 				}
 			}
@@ -476,16 +498,22 @@ func storyCostCommands() []*cobra.Command {
 			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			// Dispatched/reviewed invocations — the precise sub-process cost.
+			// Unreported usage renders as — (sty_56aae77a), never a confident 0.
 			fmt.Fprintln(w, "TRANSITION\tSTEP\tMODEL\tTOKENS in/out\tTOTAL\tDURATION")
 			for _, r := range sc.Rows {
 				step := r.Agent
 				if r.Skill != "" {
 					step = r.Skill
 				}
-				fmt.Fprintf(w, "%s→%s\t%s\t%s\t%d/%d\t%d\t%s\n",
-					r.From, r.To, step, dashIfEmpty(r.Model), r.TokensIn, r.TokensOut, r.TokensTotal, fmtDurationMs(r.DurationMs))
+				fmt.Fprintf(w, "%s→%s\t%s\t%s\t%s\t%s\t%s\n",
+					r.From, r.To, step, dashIfEmpty(r.Model),
+					rowTokensIO(r.TokensIn, r.TokensOut, r.UsageAvailable),
+					rowTokensTotal(r.TokensTotal, r.UsageAvailable),
+					fmtDurationMs(r.DurationMs))
 			}
-			fmt.Fprintf(w, "TOTAL\t\t\t\t%d\t%s\n", sc.TotalTokens, fmtDurationMs(sc.TotalDurationMs))
+			fmt.Fprintf(w, "TOTAL\t\t\t\t%s\t%s\n",
+				measuredTotalLabel(sc.TotalTokens, sc.MeasuredRows, sc.UnmeasuredRows),
+				fmtDurationMs(sc.TotalDurationMs))
 			if err := w.Flush(); err != nil {
 				return err
 			}
@@ -505,9 +533,9 @@ func storyCostCommands() []*cobra.Command {
 				if err := sw.Flush(); err != nil {
 					return err
 				}
-				fmt.Fprintln(cmd.OutOrStdout(),
-					"note: ACTUAL TOKENS is '—' for an in-loop step until self-reported (satelle story log --kind step-self-report) — the driving session's own tokens aren't measurable by the CLI; '—' means unmeasured, not free.")
 			}
+			fmt.Fprintln(cmd.OutOrStdout(),
+				"note: '—' means unmeasured, never free. Dispatched rows without provider usage are unknown; in-loop ACTUAL TOKENS need satelle story log --kind step-self-report. actual-* tags and step-self-report figures are session self-report, not measured transport cost.")
 			return nil
 		},
 	}
@@ -579,6 +607,46 @@ func stepTokens(total int, has bool) string {
 		return "—"
 	}
 	return strconv.Itoa(total)
+}
+
+// rowTokensIO renders TOKENS in/out for a dispatched row. Unreported usage is
+// '—/—' — never a confident 0/0 (sty_56aae77a).
+func rowTokensIO(in, out int, available bool) string {
+	if !available {
+		return "—/—"
+	}
+	return fmt.Sprintf("%d/%d", in, out)
+}
+
+// rowTokensTotal renders TOTAL for a dispatched row. Unreported → '—'.
+func rowTokensTotal(total int, available bool) string {
+	if !available {
+		return "—"
+	}
+	return strconv.Itoa(total)
+}
+
+// measuredTotalLabel renders the TOTAL column for the cost table. When some
+// invocations are unreported, the count is inline so the number is never
+// mistaken for a full-story total (sty_56aae77a).
+func measuredTotalLabel(totalTokens, measured, unmeasured int) string {
+	if unmeasured <= 0 {
+		return strconv.Itoa(totalTokens)
+	}
+	return fmt.Sprintf("%d (measured; %d of %d invocations unreported)",
+		totalTokens, unmeasured, measured+unmeasured)
+}
+
+// stepSelfReportNudge is the step-edge advisory printed after a real status
+// change (sty_56aae77a AC3). Empty when suppressed (already reported). Pure so
+// the CLI test can pin the wording without a full transition.
+func stepSelfReportNudge(storyID, prevStatus string, alreadyReported bool) string {
+	if storyID == "" || prevStatus == "" || alreadyReported {
+		return ""
+	}
+	return fmt.Sprintf(
+		"note: record the step you just finished —\n  satelle story log %s --kind step-self-report --data step=%s --data tokens_total=<n>\n",
+		storyID, prevStatus)
 }
 
 // dashIfZero renders a count, or '—' when zero (no estimate recorded).

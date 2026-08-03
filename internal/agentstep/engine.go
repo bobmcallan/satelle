@@ -667,10 +667,12 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 		result.Model = dec.Model
 		result.TokensIn, result.TokensOut, result.TokensTotal = dec.TokensIn, dec.TokensOut, dec.TokensTotal
 		result.DurationMs = dec.DurationMs
+		result.UsageAvailable = dec.UsageAvailable
 		result.Reviewers = append(result.Reviewers, verb.ReviewerVerdict{
 			Skill: skill, Order: i, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, System: i >= sysStart,
 			Command: dec.Command, Context: dec.Context, Model: dec.Model,
 			TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
+			UsageAvailable: dec.UsageAvailable,
 		})
 		if !dec.Accept {
 			return result, nil // a reject blocks the edge — do not run later reviewers
@@ -743,6 +745,7 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 			Skill: ref.skill, Order: i, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, System: i >= sysStart,
 			Command: dec.Command, Context: dec.Context, Model: dec.Model,
 			TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
+			UsageAvailable: dec.UsageAvailable,
 		})
 		d := dec
 		lastGated = &d
@@ -767,6 +770,7 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 		result.Model = pick.Model
 		result.TokensIn, result.TokensOut, result.TokensTotal = pick.TokensIn, pick.TokensOut, pick.TokensTotal
 		result.DurationMs = pick.DurationMs
+		result.UsageAvailable = pick.UsageAvailable
 		if firstReject == nil {
 			result.Accept = pick.Accept
 		}
@@ -1041,15 +1045,19 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	res := verb.DispatchResult{
 		Dispatched: true, Agent: dispatchAgent, Command: invRes.Command, Model: binding.Model, Skill: dispatchSkill,
 		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
-		DurationMs: invRes.Usage.Duration.Milliseconds(),
-		Output:     string(invRes.Stdout),
+		DurationMs: invRes.Usage.Duration.Milliseconds(), UsageAvailable: invRes.Usage.Available,
+		Output: string(invRes.Stdout),
 	}
 	g.logExecutorRun(dispatchAgent, item.ID, toStatus, invRes.Stdout, invRes.Err)
 	if invRes.Err != nil {
-		g.telemetryEvent(ctx, item.ID, "executor", "agent-failure", map[string]any{
+		failData := map[string]any{
 			"agent": dispatchAgent, "step": toStatus, "outcome": classifyOutcome(invRes.Err),
-			"tokens_total": res.TokensTotal, "duration_ms": res.DurationMs,
-		})
+			"duration_ms": res.DurationMs, "usage_available": res.UsageAvailable,
+		}
+		if res.UsageAvailable {
+			failData["tokens_total"] = res.TokensTotal
+		}
+		g.telemetryEvent(ctx, item.ID, "executor", "agent-failure", failData)
 		return res, fmt.Errorf("named agent %q failed performing step %q: %w", dispatchAgent, toStatus, invRes.Err)
 	}
 	if outputContract.Active() {
@@ -1165,8 +1173,8 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.Dispa
 	res := verb.DispatchResult{
 		Dispatched: true, Agent: retrospectAgent, Command: invRes.Command, Model: binding.Model, Skill: retrospectSkill,
 		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
-		DurationMs: invRes.Usage.Duration.Milliseconds(),
-		Output:     string(invRes.Stdout),
+		DurationMs: invRes.Usage.Duration.Milliseconds(), UsageAvailable: invRes.Usage.Available,
+		Output: string(invRes.Stdout),
 	}
 	g.logExecutorRun(retrospectAgent, item.ID, "retrospect", invRes.Stdout, invRes.Err)
 	if invRes.Err != nil {
@@ -1182,6 +1190,7 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.Dispa
 func (g *Engine) setDecisionUsage(d *verb.GateDecision, u agentcli.UsageResult, model string) {
 	d.TokensIn, d.TokensOut, d.TokensTotal = u.InputTokens, u.OutputTokens, u.TotalTokens
 	d.DurationMs = u.Duration.Milliseconds()
+	d.UsageAvailable = u.Available
 	if model != "" {
 		d.Model = model
 	} else {
@@ -1654,7 +1663,7 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 			return verb.SummaryResult{
 				Text: s, Command: runner.Command(), Context: summariserSkill, Model: model,
 				TokensIn: usage.InputTokens, TokensOut: usage.OutputTokens, TokensTotal: usage.TotalTokens,
-				DurationMs: usage.Duration.Milliseconds(),
+				DurationMs: usage.Duration.Milliseconds(), UsageAvailable: usage.Available,
 			}, nil
 		}
 		lastErr = fmt.Errorf("empty summary output")

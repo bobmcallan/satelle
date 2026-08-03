@@ -12,10 +12,9 @@ import (
 	"github.com/bobmcallan/satelle/internal/verb"
 )
 
-// TestComputeStoryCost pins the cost rollup (sty_a699ad14): agent_invocation
-// entries with recorded token/duration payloads sum into a per-story view; an
-// entry with no usage (a pre-instrumentation or plain-text invocation) contributes
-// zero without breaking the rollup.
+// TestComputeStoryCost pins the cost rollup (sty_a699ad14 / sty_56aae77a):
+// measured rows sum into TotalTokens; unreported rows are counted but do not
+// feed the total; a measured zero still participates.
 func TestComputeStoryCost(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
@@ -27,6 +26,7 @@ func TestComputeStoryCost(t *testing.T) {
 
 	ctx := context.Background()
 	now := time.Unix(1_700_000_000, 0)
+	// Legacy payloads without usage_available: non-zero total ⇒ measured.
 	cost := func(from, to, model string, in, out int, dur int64) json.RawMessage {
 		b, _ := json.Marshal(map[string]any{
 			"from": from, "to": to, "agent": "reviewer", "skill": "gate-" + to, "model": model,
@@ -43,32 +43,51 @@ func TestComputeStoryCost(t *testing.T) {
 	}
 	appendInv(cost("plan", "in_progress", "glm-4.7", 100, 200, 3000))
 	appendInv(cost("in_progress", "integration", "glm-5-turbo", 50, 60, 1500))
-	// An entry with no usage payload (uninstrumented) — must not break the rollup.
+	// Uninstrumented (no usage field, zero tokens) — unreported, not free.
 	appendInv(json.RawMessage(`{"from":"integration","to":"release","agent":"reviewer"}`))
+	// Explicit measured zero.
+	appendInv(json.RawMessage(`{"from":"release","to":"done","agent":"reviewer","tokens_total":0,"usage_available":true,"duration_ms":100}`))
+	// Explicit unreported with zero tokens.
+	appendInv(json.RawMessage(`{"from":"a","to":"b","agent":"reviewer","tokens_total":0,"usage_available":false,"duration_ms":50}`))
 
 	sc, err := verb.ComputeStoryCost(ctx, "sty_cost1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sc.Rows) != 3 {
-		t.Fatalf("rows = %d, want 3", len(sc.Rows))
+	if len(sc.Rows) != 5 {
+		t.Fatalf("rows = %d, want 5", len(sc.Rows))
 	}
-	if sc.TotalTokens != 410 { // 300 + 110 + 0
-		t.Errorf("total tokens = %d, want 410", sc.TotalTokens)
+	// Measured: 300 + 110 + 0 (explicit zero) = 410. Unreported rows excluded.
+	if sc.TotalTokens != 410 {
+		t.Errorf("total tokens = %d, want 410 (measured only)", sc.TotalTokens)
 	}
-	if sc.TotalDurationMs != 4500 {
-		t.Errorf("total duration = %d, want 4500", sc.TotalDurationMs)
+	if sc.MeasuredRows != 3 {
+		t.Errorf("measured rows = %d, want 3", sc.MeasuredRows)
 	}
-	// Order-independent: a glm-4.7 row of 300 tokens is present (per-gate model +
-	// tokens recorded).
+	if sc.UnmeasuredRows != 2 {
+		t.Errorf("unmeasured rows = %d, want 2", sc.UnmeasuredRows)
+	}
+	if sc.TotalDurationMs != 4650 { // 3000+1500+0+100+50
+		t.Errorf("total duration = %d, want 4650", sc.TotalDurationMs)
+	}
 	var found bool
 	for _, r := range sc.Rows {
-		if r.Model == "glm-4.7" && r.TokensTotal == 300 && r.TokensIn == 100 {
+		if r.Model == "glm-4.7" && r.TokensTotal == 300 && r.TokensIn == 100 && r.UsageAvailable {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected a glm-4.7 row with 300 tokens: %+v", sc.Rows)
+		t.Errorf("expected a measured glm-4.7 row with 300 tokens: %+v", sc.Rows)
+	}
+	// Uninstrumented row must be UsageAvailable=false.
+	var unreported bool
+	for _, r := range sc.Rows {
+		if r.From == "integration" && r.To == "release" && !r.UsageAvailable {
+			unreported = true
+		}
+	}
+	if !unreported {
+		t.Errorf("expected unreported integration→release row: %+v", sc.Rows)
 	}
 }
 

@@ -10,22 +10,26 @@ import (
 
 // StoryCostRow is one dispatched/reviewed step's recorded cost — the per-gate
 // tokens + wall-time captured on an agent_invocation ledger entry (sty_a699ad14).
+// UsageAvailable is true only when the transport reported usage (or, for legacy
+// rows without the field, when tokens_total > 0). False means unreported —
+// never a measured zero (sty_56aae77a).
 type StoryCostRow struct {
-	From        string `json:"from"`
-	To          string `json:"to"`
-	Agent       string `json:"agent"`
-	Skill       string `json:"skill,omitempty"`
-	Model       string `json:"model,omitempty"`
-	TokensIn    int    `json:"tokens_in"`
-	TokensOut   int    `json:"tokens_out"`
-	TokensTotal int    `json:"tokens_total"`
-	DurationMs  int64  `json:"duration_ms"`
+	From           string `json:"from"`
+	To             string `json:"to"`
+	Agent          string `json:"agent"`
+	Skill          string `json:"skill,omitempty"`
+	Model          string `json:"model,omitempty"`
+	TokensIn       int    `json:"tokens_in"`
+	TokensOut      int    `json:"tokens_out"`
+	TokensTotal    int    `json:"tokens_total"`
+	DurationMs     int64  `json:"duration_ms"`
+	UsageAvailable bool   `json:"usage_available"`
 }
 
 // EventTelemetry is the verb-package façade over ledger.EventTelemetry so
 // story-cost and the web timeline share one reader (sty_43d228e4). Ownership of
 // the extraction lives in ledger so the push-fed web package need not import verb.
-func EventTelemetry(e ledger.Entry) (agent, model, outcome string, tokensTotal int, durationMs int64) {
+func EventTelemetry(e ledger.Entry) ledger.Telemetry {
 	return ledger.EventTelemetry(e)
 }
 
@@ -65,7 +69,10 @@ type StoryStepRow struct {
 // precise sub-process cost) AND the per-step report (Steps, every state's wall-time
 // plus any self-reported in-loop tokens / per-step estimate). Together they make the
 // full cost of a driven story legible — dispatched and in-loop (sty_a699ad14,
-// sty_3b2e55f5).
+// sty_3b2e55f5, sty_56aae77a).
+//
+// TotalTokens sums measured rows only. UnmeasuredRows counts invocations whose
+// provider reported no usage — they render as unknown and never feed the total.
 type StoryCost struct {
 	StoryID         string         `json:"story_id"`
 	Rows            []StoryCostRow `json:"rows"`
@@ -73,6 +80,8 @@ type StoryCost struct {
 	TotalTokens     int            `json:"total_tokens"`
 	TotalDurationMs int64          `json:"total_duration_ms"`
 	TotalWallMs     int64          `json:"total_wall_ms,omitempty"`
+	MeasuredRows    int            `json:"measured_rows,omitempty"`
+	UnmeasuredRows  int            `json:"unmeasured_rows,omitempty"`
 }
 
 // mergeStepCost folds a self-reported actual + estimate onto r — the last
@@ -96,7 +105,8 @@ func mergeStepCost(r *StoryStepRow, d stepCostData) {
 
 // ComputeStoryCost reads the story's ledger and builds two complementary views:
 //   - Rows: the dispatched/reviewer agent_invocation cost (precise tokens + agent
-//     wall-time), exactly as before — entries with no usage contribute zero.
+//     wall-time). Token totals and usage availability come solely from
+//     ledger.EventTelemetry (sty_56aae77a) — this function does not re-infer.
 //   - Steps: a per-step report. Each state's WALL-TIME is derived from the deltas
 //     between consecutive status_transition timestamps (so IN-LOOP steps, which
 //     spawn no measurable subprocess, still get a duration), and its self-reported
@@ -161,13 +171,46 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 			if len(e.Payload) == 0 {
 				continue
 			}
-			var row StoryCostRow
-			if err := json.Unmarshal(e.Payload, &row); err != nil {
+			// Edge identity (from/to/skill) from the payload; token totals and
+			// usage availability from the sole ledger reader (sty_56aae77a).
+			var meta struct {
+				From  string `json:"from"`
+				To    string `json:"to"`
+				Agent string `json:"agent"`
+				Skill string `json:"skill"`
+				Model string `json:"model"`
+			}
+			if err := json.Unmarshal(e.Payload, &meta); err != nil {
 				continue
 			}
+			tel := ledger.EventTelemetry(e)
+			row := StoryCostRow{
+				From:           meta.From,
+				To:             meta.To,
+				Agent:          meta.Agent,
+				Skill:          meta.Skill,
+				Model:          meta.Model,
+				TokensIn:       tel.TokensIn,
+				TokensOut:      tel.TokensOut,
+				TokensTotal:    tel.TokensTotal,
+				DurationMs:     tel.DurationMs,
+				UsageAvailable: tel.UsageAvailable,
+			}
+			// Prefer telemetry agent/model when meta left them empty (defensive).
+			if row.Agent == "" {
+				row.Agent = tel.Agent
+			}
+			if row.Model == "" {
+				row.Model = tel.Model
+			}
 			sc.Rows = append(sc.Rows, row)
-			sc.TotalTokens += row.TokensTotal
 			sc.TotalDurationMs += row.DurationMs
+			if row.UsageAvailable {
+				sc.TotalTokens += row.TokensTotal
+				sc.MeasuredRows++
+			} else {
+				sc.UnmeasuredRows++
+			}
 		case ledger.KindStepCost:
 			// Legacy writer (retired, sty_b73c3236) — kept readable for history.
 			if len(e.Payload) == 0 {
@@ -207,4 +250,41 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 		sc.TotalWallMs += r.WallTimeMs
 	}
 	return sc, nil
+}
+
+// HasStepSelfReport reports whether the story ledger already carries a
+// step-self-report for step (used by the step-edge nudge, sty_56aae77a AC3).
+func HasStepSelfReport(ctx context.Context, storyID, step string) bool {
+	if step == "" {
+		return false
+	}
+	sc, err := ComputeStoryCost(ctx, storyID)
+	if err != nil {
+		return false
+	}
+	for _, s := range sc.Steps {
+		if s.Step == step && s.HasTokens {
+			return true
+		}
+	}
+	// HasTokens only true when tokens_total > 0; a report with only wall-time
+	// still counts — scan ledger directly for the kind.
+	ls, err := requireLedger()
+	if err != nil {
+		return false
+	}
+	entries, err := ls.ListByStory(ctx, storyID, ledger.KindTelemetryEvent)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		var env telemetryEnvelope
+		if json.Unmarshal(e.Payload, &env) != nil || env.Kind != stepSelfReportKind {
+			continue
+		}
+		if s, _ := env.Data["step"].(string); s == step {
+			return true
+		}
+	}
+	return false
 }

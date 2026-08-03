@@ -548,21 +548,23 @@ func categoryStepOf(docs []docindex.Doc) func(category, state string) int {
 }
 
 func eventChips(e ledger.Entry) []chipVM {
-	agent, model, outcome, tokens, durMs := ledger.EventTelemetry(e)
+	tel := ledger.EventTelemetry(e)
 	var chips []chipVM
-	if outcome != "" {
-		chips = append(chips, chipVM{Type: "outcome", Label: outcome})
+	if tel.Outcome != "" {
+		chips = append(chips, chipVM{Type: "outcome", Label: tel.Outcome})
 	}
-	if durMs > 0 {
-		chips = append(chips, chipVM{Type: "walltime", Label: humanMs(durMs)})
+	if tel.DurationMs > 0 {
+		chips = append(chips, chipVM{Type: "walltime", Label: humanMs(tel.DurationMs)})
 	}
-	if tokens > 0 {
-		chips = append(chips, chipVM{Type: "tokens", Label: humanTokens(tokens) + " tok"})
+	// Only show a token chip when usage was measured (sty_56aae77a). Unreported
+	// must not surface as a confident 0.
+	if tel.UsageAvailable && tel.TokensTotal > 0 {
+		chips = append(chips, chipVM{Type: "tokens", Label: humanTokens(tel.TokensTotal) + " tok"})
 	}
-	if model != "" {
-		chips = append(chips, chipVM{Type: "model", Label: model})
-	} else if agent != "" && agent != "reviewer" && agent != "executor" {
-		chips = append(chips, chipVM{Type: "model", Label: agent})
+	if tel.Model != "" {
+		chips = append(chips, chipVM{Type: "model", Label: tel.Model})
+	} else if tel.Agent != "" && tel.Agent != "reviewer" && tel.Agent != "executor" {
+		chips = append(chips, chipVM{Type: "model", Label: tel.Agent})
 	}
 	return chips
 }

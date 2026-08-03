@@ -1,3 +1,13 @@
+## [0.0.405] - 2026-08-03
+
+### Fixed
+- **Unreported gate usage no longer renders as a confident zero.** `usage_available` propagates from the agent transport through agent_invocation into `satelle story cost` and the web timeline. Unreported rows show `—`; totals sum measured rows only and name how many invocations were unreported. Legacy rows without the field still treat `tokens_total > 0` as measured. A step-edge stderr nudge after `story set --status` prompts for `step-self-report` (sty_56aae77a)
+
+## [serve-v0.0.18] - 2026-08-03
+
+### Fixed
+- **Timeline token chips omit unreported usage.** Web eventChips reads `usage_available` from the shared ledger.EventTelemetry reader so an unmeasured invocation never shows a confident 0 tok chip (sty_56aae77a)
+
 ## [0.0.404] - 2026-08-03
 
 ### Fixed

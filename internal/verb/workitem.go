@@ -469,7 +469,8 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		reviewers := dec.Reviewers
 		if len(reviewers) == 0 && dec.Gated {
 			reviewers = []ReviewerVerdict{{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, Command: dec.Command, Context: dec.Context, Model: dec.Model,
-				TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs}}
+				TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
+				UsageAvailable: dec.UsageAvailable}}
 		}
 		// Ledger ALL verdicts first (accepts and rejects), then refuse if any
 		// rejected — so parallel multi-reviewer rounds record every row
@@ -943,7 +944,18 @@ func storyRetrospect(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	if rerr != nil {
 		return nil, rerr
 	}
-	return json.Marshal(map[string]any{"story_id": it.ID, "output": res.Output, "tokens_total": res.TokensTotal, "duration_ms": res.DurationMs})
+	// Omit token numbers when usage was not reported — a bare 0 looks measured
+	// (sty_56aae77a). Always stamp usage_available so clients can distinguish.
+	out := map[string]any{
+		"story_id":        it.ID,
+		"output":          res.Output,
+		"duration_ms":     res.DurationMs,
+		"usage_available": res.UsageAvailable,
+	}
+	if res.UsageAvailable {
+		out["tokens_total"] = res.TokensTotal
+	}
+	return json.Marshal(out)
 }
 
 // recordCost upserts the prefix-minutes/prefix-tokens tags on a story (prefix is
@@ -1243,21 +1255,23 @@ func reviewerPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 // dispatched step (planner, coder) the same way it does a reviewer gate.
 func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
 	p := struct {
-		From         string `json:"from"`
-		To           string `json:"to"`
-		Agent        string `json:"agent"`
-		Skill        string `json:"skill,omitempty"`
-		Command      string `json:"command,omitempty"`
-		Model        string `json:"model,omitempty"`
-		TokensIn     int    `json:"tokens_in,omitempty"`
-		TokensOut    int    `json:"tokens_out,omitempty"`
-		TokensTotal  int    `json:"tokens_total,omitempty"`
-		DurationMs   int64  `json:"duration_ms,omitempty"`
-		ArtifactName string `json:"artifact_name,omitempty"`
-		ArtifactType string `json:"artifact_type,omitempty"`
+		From           string `json:"from"`
+		To             string `json:"to"`
+		Agent          string `json:"agent"`
+		Skill          string `json:"skill,omitempty"`
+		Command        string `json:"command,omitempty"`
+		Model          string `json:"model,omitempty"`
+		TokensIn       int    `json:"tokens_in,omitempty"`
+		TokensOut      int    `json:"tokens_out,omitempty"`
+		TokensTotal    int    `json:"tokens_total,omitempty"`
+		DurationMs     int64  `json:"duration_ms,omitempty"`
+		UsageAvailable bool   `json:"usage_available"` // unconditional — tri-state (sty_56aae77a)
+		ArtifactName   string `json:"artifact_name,omitempty"`
+		ArtifactType   string `json:"artifact_type,omitempty"`
 	}{From: from, To: to, Agent: res.Agent, Skill: res.Skill, Command: res.Command, Model: res.Model,
 		TokensIn: res.TokensIn, TokensOut: res.TokensOut, TokensTotal: res.TokensTotal, DurationMs: res.DurationMs,
-		ArtifactName: res.ArtifactName, ArtifactType: res.ArtifactType}
+		UsageAvailable: res.UsageAvailable,
+		ArtifactName:   res.ArtifactName, ArtifactType: res.ArtifactType}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil
@@ -1297,19 +1311,21 @@ func multiRejectError(from, to string, rejects []ReviewerVerdict) error {
 // timeline can show HOW the agent was invoked alongside its verdict (sty_fb3e0873).
 func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 	p := struct {
-		From        string `json:"from"`
-		To          string `json:"to"`
-		Agent       string `json:"agent"`
-		Skill       string `json:"skill,omitempty"`
-		Command     string `json:"command,omitempty"`
-		Context     string `json:"context,omitempty"`
-		Model       string `json:"model,omitempty"`
-		TokensIn    int    `json:"tokens_in,omitempty"`
-		TokensOut   int    `json:"tokens_out,omitempty"`
-		TokensTotal int    `json:"tokens_total,omitempty"`
-		DurationMs  int64  `json:"duration_ms,omitempty"`
+		From           string `json:"from"`
+		To             string `json:"to"`
+		Agent          string `json:"agent"`
+		Skill          string `json:"skill,omitempty"`
+		Command        string `json:"command,omitempty"`
+		Context        string `json:"context,omitempty"`
+		Model          string `json:"model,omitempty"`
+		TokensIn       int    `json:"tokens_in,omitempty"`
+		TokensOut      int    `json:"tokens_out,omitempty"`
+		TokensTotal    int    `json:"tokens_total,omitempty"`
+		DurationMs     int64  `json:"duration_ms,omitempty"`
+		UsageAvailable bool   `json:"usage_available"` // unconditional — tri-state (sty_56aae77a)
 	}{From: from, To: to, Agent: "reviewer", Skill: rv.Skill, Command: rv.Command, Context: rv.Context, Model: rv.Model,
-		TokensIn: rv.TokensIn, TokensOut: rv.TokensOut, TokensTotal: rv.TokensTotal, DurationMs: rv.DurationMs}
+		TokensIn: rv.TokensIn, TokensOut: rv.TokensOut, TokensTotal: rv.TokensTotal, DurationMs: rv.DurationMs,
+		UsageAvailable: rv.UsageAvailable}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil
@@ -1323,19 +1339,21 @@ func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 // (closing the documented gap, sty_a699ad14 / sty_b73c3236).
 func summariserInvocationPayload(from, to string, result SummaryResult) json.RawMessage {
 	p := struct {
-		From        string `json:"from"`
-		To          string `json:"to"`
-		Agent       string `json:"agent"`
-		Skill       string `json:"skill,omitempty"`
-		Command     string `json:"command,omitempty"`
-		Context     string `json:"context,omitempty"`
-		Model       string `json:"model,omitempty"`
-		TokensIn    int    `json:"tokens_in,omitempty"`
-		TokensOut   int    `json:"tokens_out,omitempty"`
-		TokensTotal int    `json:"tokens_total,omitempty"`
-		DurationMs  int64  `json:"duration_ms,omitempty"`
+		From           string `json:"from"`
+		To             string `json:"to"`
+		Agent          string `json:"agent"`
+		Skill          string `json:"skill,omitempty"`
+		Command        string `json:"command,omitempty"`
+		Context        string `json:"context,omitempty"`
+		Model          string `json:"model,omitempty"`
+		TokensIn       int    `json:"tokens_in,omitempty"`
+		TokensOut      int    `json:"tokens_out,omitempty"`
+		TokensTotal    int    `json:"tokens_total,omitempty"`
+		DurationMs     int64  `json:"duration_ms,omitempty"`
+		UsageAvailable bool   `json:"usage_available"` // unconditional — tri-state (sty_56aae77a)
 	}{From: from, To: to, Agent: "reviewer", Skill: result.Context, Command: result.Command, Context: result.Context, Model: result.Model,
-		TokensIn: result.TokensIn, TokensOut: result.TokensOut, TokensTotal: result.TokensTotal, DurationMs: result.DurationMs}
+		TokensIn: result.TokensIn, TokensOut: result.TokensOut, TokensTotal: result.TokensTotal, DurationMs: result.DurationMs,
+		UsageAvailable: result.UsageAvailable}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil
