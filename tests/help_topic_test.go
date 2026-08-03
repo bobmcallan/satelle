@@ -81,6 +81,9 @@ func TestHelpGlobalAgentsTopic(t *testing.T) {
 		".satelle/workflows/agents.toml",
 		"committed substrate",
 		"satelle agent validate",
+		// sty_940938e3 — personal catalog backup
+		"agent profiles push",
+		"[vars]",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("`satelle help global-agents` missing %q:\n%s", want, body)

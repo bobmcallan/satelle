@@ -98,37 +98,6 @@ satelle agents install (plural) — that path never changes this [agent] cli def
 	register(agent)
 }
 
-// agentProfilesCmd is `satelle agent profiles` — the machine-wide catalog view.
-// Read-only, store-free, and repo-independent: it answers "what execution
-// profiles does this machine offer?" without saying anything about which repo
-// consumes them (that is each repo's explicit `profile =` reference).
-func agentProfilesCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "profiles",
-		Short: "List the machine-wide agent profile catalog (~/.satelle/agents.toml)",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			global, err := config.LoadGlobalAgents()
-			if err != nil {
-				return err
-			}
-			out := cmd.OutOrStdout()
-			if len(global.Profiles) == 0 && len(global.Roles) == 0 {
-				fmt.Fprintf(out, "no profiles defined — %s is absent or empty\n", config.GlobalAgentsPath())
-				fmt.Fprintln(out, "run `satelle agent migrate` to seed a starter catalog from the selected agent CLI")
-				return nil
-			}
-			printProfileCatalog(out, global)
-			return nil
-		},
-	}
-}
-
-// agentMigrateCmd is `satelle agent migrate` — the opt-in, non-destructive path
-// from the legacy machine-wide setting (`~/.satelle/config.toml [agent] cli`) to
-// a profile catalog. It NEVER runs automatically and never overwrites: an
-// existing catalog is left alone. Repo-only installations need no migration at
-// all — with no catalog present every repo resolves exactly as before.
 func agentMigrateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "migrate",

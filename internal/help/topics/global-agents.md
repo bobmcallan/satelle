@@ -168,5 +168,26 @@ satelle agent migrate      # seed ~/.satelle/agents.toml from the selected CLI
 and never writes into a repository. The catalog it seeds leaves `[roles]`
 commented out, so it changes nothing until a repo writes `profile = "…"`.
 
+## Personal backup (operator runtime, not project sync)
+
+The catalog is machine-wide operator runtime. Project `satelle sync` never
+includes or requires it. To rehydrate a tuned catalog onto a new machine:
+
+```bash
+satelle login
+satelle agent profiles push      # upload (requires login); [vars] is NEVER uploaded
+satelle agent profiles restore   # download onto a clean home; refuses overwrite
+satelle agent profiles restore --force   # replace existing (keeps agents.toml.bak)
+```
+
+**`[vars]` is excluded from backup** (sty_940938e3): it is this machine's secret
+KV. After restore, re-enter secrets under `[vars]` (or in `satelle.local.toml`).
+Unauthenticated push/restore fail closed and name `satelle login` — they never
+silently no-op.
+
+The personal store path is `PUT|GET /api/v1/me/files/agents.toml` (not project
+config, not documents, not team publish). The hosted server must implement that
+route; the CLI ships the client and the OpenAPI contract.
+
 See also: `satelle help agent-dispatch` (how a dispatched step runs) and
 `satelle help workflows` (where process lives).

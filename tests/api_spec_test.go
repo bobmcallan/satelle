@@ -35,6 +35,8 @@ func TestOpenAPISpecCoversClientEndpoints(t *testing.T) {
 	// published as a path in the spec (AC1/AC4 — spec in sync with the client).
 	for _, path := range []string{
 		"/api/v1/me",
+		"/api/v1/me/files",
+		"/api/v1/me/files/{path}",
 		"/api/v1/projects",
 		"/api/v1/workspaces",
 		"/api/v1/projects/{project}/config",

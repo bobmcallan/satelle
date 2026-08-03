@@ -64,6 +64,86 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+
+  /api/v1/me/files:
+    get:
+      operationId: listMeFiles
+      summary: List personal user-store files
+      description: >-
+        Returns the authenticated principal's personal file store (operator
+        runtime, not project config). Used for machine-wide agent catalog backup
+        (path agents.toml). Never mixed with project config/documents/workstate.
+      tags: [me]
+      responses:
+        "200":
+          description: Array of personal file items.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MeFileItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/me/files/{path}:
+    parameters:
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Server-relative path (e.g. agents.toml).
+    put:
+      operationId: pushMeFile
+      summary: Push one personal user-store file
+      description: >-
+        Uploads one file's verbatim bytes (raw body) to the authenticated
+        principal's personal store. Not project-scoped. Auth required (401 when
+        logged out).
+      tags: [me]
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Idempotent re-push of the current head.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigPushResult"
+        "201":
+          description: New head created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigPushResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    get:
+      operationId: getMeFile
+      summary: Get one personal user-store file
+      description: >-
+        Returns one path's content as text/plain. 404 when never pushed.
+      tags: [me]
+      responses:
+        "200":
+          description: File content.
+          content:
+            text/plain:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Path not found in the personal store.
+
+
   /api/v1/projects:
     get:
       operationId: listProjects
@@ -799,6 +879,21 @@ components:
         name:
           type: string
           description: Human-readable workspace name; the handle clients select on.
+
+    MeFileItem:
+      type: object
+      description: One entry in the personal user-store file list (GET /api/v1/me/files).
+      required: [path]
+      properties:
+        path:
+          type: string
+        blob_sha256:
+          type: string
+        size:
+          type: integer
+          format: int64
+        updated_at:
+          type: string
 
     ConfigItem:
       type: object

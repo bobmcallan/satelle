@@ -1,3 +1,8 @@
+## [0.0.413] - 2026-08-03
+
+### Added
+- **Personal backup for the machine-wide agent profile catalog.** `satelle agent profiles push` / `restore` upload and rehydrate `~/.satelle/agents.toml` via `PUT|GET /api/v1/me/files/agents.toml` (not project sync). `[vars]` is never uploaded; restore is non-destructive without `--force` (sty_940938e3)
+
 ## [0.0.412] - 2026-08-03
 
 ### Added
