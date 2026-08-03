@@ -140,7 +140,13 @@ func danglingIn(body, where string, catalog map[string]bool) []string {
 			continue
 		}
 		seen[key] = true
-		out = append(out, fmt.Sprintf("%s: dangling wikilink [[%s]]", where, target))
+		line := fmt.Sprintf("%s: dangling wikilink [[%s]]", where, target)
+		// Enrich with the retirement map so an operator does not have to
+		// diagnose a binary-side rename. Still a FAIL.
+		if e, ok := config.LookupRetired(target); ok {
+			line += " — " + config.FormatRetirementMessage(target, e)
+		}
+		out = append(out, line)
 	}
 	return out
 }

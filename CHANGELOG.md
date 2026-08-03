@@ -1,3 +1,11 @@
+## [0.0.420] - 2026-08-03
+
+### Added
+- **Retired embedded substrate map.** `internal/config/retired.go` declares renamed and removed embedded names. `satelle validate` enriches dangling wikilinks with the retirement note; `satelle migrate` reports them and, under `--yes`, rewrites renames only (removals stay report-only). Future retirements must add a row to the map (sty_55a6aaeb)
+
+### Breaking
+- **Citing a retired embedded name still fails validate** (intentionally) — the message now names the successor or says there is none, and points at `satelle migrate --yes` for renames. Removals-with-no-replacement require hand-editing the citing prose; migrate will not invent a substitute. Known cases: `[[satelle-dot-standard]]` → `[[satelle-route-standard]]` (0.0.385); `[[satelle-configuration-over-code]]` retired into the constitution (0.0.11). Heal: `satelle migrate` (dry-run plan) then `satelle migrate --yes` for renames, or edit citing files by hand for removals.
+
 ## [0.0.419] - 2026-08-03
 
 ### Fixed

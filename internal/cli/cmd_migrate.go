@@ -46,7 +46,11 @@ func init() {
   5. config converge      — append ".gitignore" to [gate] edit_exempt_paths when a
                             non-empty list predates the managed-output exemption
                             (operator additions kept; empty list left alone)
-  6. validate             — deployed-system check (same as end of satelle init)
+  6. retired refs         — report (and under --yes, rewrite renames of) authored
+                            [[wikilinks]] that cite embedded names the binary
+                            retired ; removals-with-no-replacement
+                            are report-only — never silently rewritten
+  7. validate             — deployed-system check (same as end of satelle init)
 
 Dry-run by default: prints the full plan and applies nothing. Pass --yes to apply.
 Idempotent: a converged repo reports "already on current structure".
@@ -115,6 +119,18 @@ type migratePlan struct {
 	// StampCapped marks a stamp sweep that hit its page cap, so the report can
 	// say another pass is owed instead of implying the repo is converged.
 	StampCapped bool
+	// RetiredRefs lists authored [[wikilinks]] to embedded names the binary has
+	// retired . Renames are rewritten under --yes; removals are
+	// report-only. Dry-run never writes.
+	RetiredRefs []retiredRefHit
+}
+
+// retiredRefHit is one authored citation of a retired embedded name.
+type retiredRefHit struct {
+	Rel    string // dataDir-relative path or constitution name
+	Target string
+	Entry  config.RetiredEntry
+	Count  int
 }
 
 // stampRewrite is one item's stale workflow stamp and the tag set that replaces
@@ -229,7 +245,151 @@ func planMigrate(cfg config.Config, repoRoot, dataDir string) migratePlan {
 	p.Gitignore = gitignoreNeedsConverge(repoRoot)
 	p.ExemptGitignore = editExemptGitignoreNeedsConverge(dataDir)
 	p.WorkflowRetire, p.WorkflowConvertPending = workflowConversionState(dataDir)
+	p.RetiredRefs = planRetiredRefs(dataDir)
 	return p
+}
+
+// planRetiredRefs scans authored substrate for [[wikilinks]] to names in
+// config.RetiredSubstrate. One hit per (file, target); Count is occurrences.
+// Walk is recursive (matches auditWikilinks) so nested authored paths are not
+// silently missed.
+func planRetiredRefs(dataDir string) []retiredRefHit {
+	var hits []retiredRefHit
+	add := func(rel, body string) {
+		body = codeSpanRe.ReplaceAllString(body, "")
+		counts := map[string]int{}
+		for _, m := range wikiLinkRe.FindAllStringSubmatch(body, -1) {
+			target := strings.TrimSpace(m[1])
+			if _, ok := config.LookupRetired(target); ok {
+				counts[target]++
+			}
+		}
+		for target, n := range counts {
+			e, _ := config.LookupRetired(target)
+			hits = append(hits, retiredRefHit{Rel: rel, Target: target, Entry: e, Count: n})
+		}
+	}
+	for _, kind := range substrateKindsScanned {
+		root := filepath.Join(dataDir, kind)
+		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			if !strings.HasSuffix(d.Name(), ".md") {
+				return nil
+			}
+			rel, rerr := filepath.Rel(dataDir, path)
+			if rerr != nil {
+				return nil
+			}
+			b, rerr := os.ReadFile(path)
+			if rerr != nil {
+				return nil
+			}
+			add(filepath.ToSlash(rel), string(b))
+			return nil
+		})
+	}
+	// Constitution at dataDir root if present.
+	if b, err := os.ReadFile(filepath.Join(dataDir, config.DefaultConstitutionName)); err == nil {
+		add(config.DefaultConstitutionName, string(b))
+	}
+	sort.Slice(hits, func(i, j int) bool {
+		if hits[i].Rel != hits[j].Rel {
+			return hits[i].Rel < hits[j].Rel
+		}
+		return hits[i].Target < hits[j].Target
+	})
+	return hits
+}
+
+// applyRetiredRefRewrites rewrites [[old]]→[[new]] for renames only, under --yes.
+// Removals (empty Replacement) are never rewritten.
+func applyRetiredRefRewrites(out io.Writer, dataDir string, hits []retiredRefHit) error {
+	// Group by file so we rewrite once per file.
+	byFile := map[string][]retiredRefHit{}
+	for _, h := range hits {
+		if h.Entry.Replacement == "" {
+			fmt.Fprintf(out, "  leave %s: [[%s]] (no replacement — edit by hand)\n", h.Rel, h.Target)
+			continue
+		}
+		byFile[h.Rel] = append(byFile[h.Rel], h)
+	}
+	files := make([]string, 0, len(byFile))
+	for f := range byFile {
+		files = append(files, f)
+	}
+	sort.Strings(files)
+	for _, rel := range files {
+		path := filepath.Join(dataDir, rel)
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", rel, err)
+		}
+		body := string(b)
+		total := 0
+		for _, h := range byFile[rel] {
+			var n int
+			body, n = rewriteWikilinkTarget(body, h.Target, h.Entry.Replacement)
+			if n == 0 {
+				continue
+			}
+			total += n
+			fmt.Fprintf(out, "  rewrote %s: [[%s]] → [[%s]] (%d occurrence(s))\n",
+				rel, h.Target, h.Entry.Replacement, n)
+		}
+		if total == 0 {
+			continue
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			return fmt.Errorf("write %s: %w", rel, err)
+		}
+	}
+	return nil
+}
+
+// rewriteWikilinkTarget replaces [[old…]] forms with [[new…]], preserving
+// |label and #anchor suffixes. Code spans (backticks) are left untouched so
+// prose quoting the old name is not rewritten.
+func rewriteWikilinkTarget(body, old, newName string) (string, int) {
+	n := 0
+	// Mask code spans, rewrite, unmask — same span set as danglingIn detection.
+	type span struct{ from, to int }
+	var spans []span
+	for _, loc := range codeSpanRe.FindAllStringIndex(body, -1) {
+		spans = append(spans, span{loc[0], loc[1]})
+	}
+	inCode := func(i int) bool {
+		for _, s := range spans {
+			if i >= s.from && i < s.to {
+				return true
+			}
+		}
+		return false
+	}
+	var b strings.Builder
+	last := 0
+	for _, loc := range wikiLinkRe.FindAllStringSubmatchIndex(body, -1) {
+		// loc[0]:loc[1] full match; loc[2]:loc[3] target group
+		if inCode(loc[0]) {
+			continue
+		}
+		target := body[loc[2]:loc[3]]
+		if strings.TrimSpace(target) != old {
+			continue
+		}
+		b.WriteString(body[last:loc[0]])
+		// Rebuild: [[newName + suffix after old target
+		suffix := body[loc[3]:loc[1]] // from end of target through ]]
+		b.WriteString("[[" + newName + suffix)
+		last = loc[1]
+		n++
+	}
+	b.WriteString(body[last:])
+	if n == 0 {
+		return body, 0
+	}
+	return b.String(), n
 }
 
 // workflowConversionState splits the on-disk DOT workflows into the ones a
@@ -332,7 +492,7 @@ func printConversionPending(out io.Writer, pending []string) {
 func (p migratePlan) empty() bool {
 	return !p.RuntimeRelocate && len(p.Residue) == 0 && len(p.PruneSeeds) == 0 &&
 		!p.Gitignore && !p.ExemptGitignore && len(p.WorkflowRetire) == 0 &&
-		len(p.StampRewrite) == 0
+		len(p.StampRewrite) == 0 && len(p.RetiredRefs) == 0
 }
 
 func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
@@ -425,6 +585,20 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 			fmt.Fprintf(out, "    (sweep capped at %d item(s) — re-run migrate after this pass)\n", stampSweepLimit)
 		}
 	}
+	if len(plan.RetiredRefs) == 0 {
+		fmt.Fprintln(out, "  retired refs:     (none)")
+	} else {
+		fmt.Fprintf(out, "  retired refs:     %d citation(s) of retired embedded names\n", len(plan.RetiredRefs))
+		for _, h := range plan.RetiredRefs {
+			if h.Entry.Replacement != "" {
+				fmt.Fprintf(out, "    - %s: [[%s]] → [[%s]] (%dx; --yes rewrites)\n",
+					h.Rel, h.Target, h.Entry.Replacement, h.Count)
+			} else {
+				fmt.Fprintf(out, "    - %s: [[%s]] retired with no replacement (%dx; edit by hand)\n",
+					h.Rel, h.Target, h.Count)
+			}
+		}
+	}
 	fmt.Fprintln(out, "  validate:         deployed system check")
 	printConversionPending(out, plan.WorkflowConvertPending)
 
@@ -514,6 +688,13 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 				return fmt.Errorf("migrate: remove workflows/%s: %w", f, err)
 			}
 			fmt.Fprintf(out, "  removed workflows/%s\n", f)
+		}
+	}
+
+	if len(plan.RetiredRefs) > 0 {
+		fmt.Fprintln(out, "\n→ retired embedded refs ")
+		if err := applyRetiredRefRewrites(out, dataDir, plan.RetiredRefs); err != nil {
+			return fmt.Errorf("migrate: retired refs: %w", err)
 		}
 	}
 

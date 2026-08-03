@@ -672,3 +672,67 @@ func TestListLegacyResidueLeavesAgentsBak(t *testing.T) {
 		t.Fatalf("listLegacyResidue should still list satelle.db, got %v", got)
 	}
 }
+
+func TestMigrateRetiredRefsRenameAndRemoval(t *testing.T) {
+	// Full runMigrate path (AC1 migrate channel + AC2 dry-run never writes).
+	repo, dataDir := migrateWorkflowRepo(t, map[string]string{
+		"done.md": migrateDoneMD,
+		"step.md": migrateStepMD,
+	})
+	_ = os.MkdirAll(filepath.Join(dataDir, "workflows"), 0o755)
+	_ = os.WriteFile(filepath.Join(dataDir, "workflows", "agents.toml"), []byte("[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n[reviewer]\nrole = \"reviewer\"\ncommand = \"echo\"\n"), 0o644)
+	prin := filepath.Join(dataDir, "principles")
+	if err := os.MkdirAll(prin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\nname: cite\nscope: project\ntype: principle\n---\n\nSee [[satelle-dot-standard]] and [[satelle-configuration-over-code]].\n"
+	path := filepath.Join(prin, "cite.md")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{}
+	plan := planMigrate(cfg, repo, dataDir)
+	if len(plan.RetiredRefs) < 2 {
+		t.Fatalf("RetiredRefs = %+v, want >=2", plan.RetiredRefs)
+	}
+	if plan.empty() {
+		t.Fatal("plan with retired refs must not be empty — would print already-current")
+	}
+
+	a := &app.App{Config: cfg, RepoRoot: repo, DataDir: dataDir}
+	var dry strings.Builder
+	if err := runMigrate(&dry, a, false, false); err != nil {
+		t.Fatalf("dry-run: %v\n%s", err, dry.String())
+	}
+	ds := dry.String()
+	if !strings.Contains(ds, "retired refs") || !strings.Contains(ds, "satelle-dot-standard") ||
+		!strings.Contains(ds, "satelle-configuration-over-code") {
+		t.Fatalf("dry plan missing retired refs:\n%s", ds)
+	}
+	if !strings.Contains(ds, "--yes rewrites") || !strings.Contains(ds, "edit by hand") {
+		t.Fatalf("dry plan must distinguish rename vs removal remedies:\n%s", ds)
+	}
+	afterDry, _ := os.ReadFile(path)
+	if string(afterDry) != body {
+		t.Fatal("dry-run must leave authored substrate byte-identical")
+	}
+
+	var apply strings.Builder
+	// apply may fail later validation; retired rewrites happen before validate.
+	_ = runMigrate(&apply, a, true, false)
+	as := apply.String()
+	after, _ := os.ReadFile(path)
+	s := string(after)
+	if strings.Contains(s, "satelle-dot-standard") {
+		t.Fatalf("rename not applied under --yes: %s\nreport:\n%s", s, as)
+	}
+	if !strings.Contains(s, "[[satelle-route-standard]]") {
+		t.Fatalf("replacement missing: %s", s)
+	}
+	if !strings.Contains(s, "satelle-configuration-over-code") {
+		t.Fatalf("no-replacement was rewritten: %s", s)
+	}
+	if !strings.Contains(as, "rewrote") || !strings.Contains(as, "leave") {
+		t.Fatalf("apply report:\n%s", as)
+	}
+}

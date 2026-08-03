@@ -93,3 +93,40 @@ func TestEmbeddedWikilinksResolve(t *testing.T) {
 		t.Fatalf("embedded substrate has dangling wikilinks:\n%s", strings.Join(probs, "\n"))
 	}
 }
+
+func TestDanglingInEnrichesRetired(t *testing.T) {
+	catalog := map[string]bool{"satelle-route-standard": true}
+	// rename
+	got := danglingIn("see [[satelle-dot-standard]] please", "principles/x.md", catalog)
+	if len(got) != 1 || !strings.Contains(got[0], "renamed to [[satelle-route-standard]]") {
+		t.Fatalf("rename enrich: %v", got)
+	}
+	// removal
+	got = danglingIn("[[satelle-configuration-over-code]]", "skills/y.md", catalog)
+	if len(got) != 1 || !strings.Contains(got[0], "no replacement") {
+		t.Fatalf("removal enrich: %v", got)
+	}
+	// unknown still plain
+	got = danglingIn("[[totally-unknown-xyz]]", "z.md", catalog)
+	if len(got) != 1 || strings.Contains(got[0], "retired") {
+		t.Fatalf("unknown: %v", got)
+	}
+	// still a problem (count)
+	if len(danglingIn("[[satelle-dot-standard]]", "a.md", catalog)) != 1 {
+		t.Fatal("retired name must still count as dangling")
+	}
+}
+
+func TestRewriteWikilinkTarget(t *testing.T) {
+	in := "See [[satelle-dot-standard]] and [[satelle-dot-standard|label]] and [[satelle-dot-standard#a]]."
+	out, n := rewriteWikilinkTarget(in, "satelle-dot-standard", "satelle-route-standard")
+	if n != 3 {
+		t.Fatalf("n=%d want 3", n)
+	}
+	if strings.Contains(out, "satelle-dot-standard") {
+		t.Fatalf("old remains: %s", out)
+	}
+	if !strings.Contains(out, "[[satelle-route-standard|label]]") {
+		t.Fatalf("label not preserved: %s", out)
+	}
+}
