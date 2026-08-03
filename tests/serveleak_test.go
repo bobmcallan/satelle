@@ -113,6 +113,80 @@ func TestStartServeCleanupOnSubtestExit(t *testing.T) {
 	}
 }
 
+// TestServeLeakReportAnnouncesCoverage pins sty_948a2d42 AC1: a clean
+// serveLeakReport always returns a non-empty coverage message, and both
+// modes (proc / registry) are exercisable from the formatting helper.
+func TestServeLeakReportAnnouncesCoverage(t *testing.T) {
+	// Current platform always announces.
+	leaks, msg := serveLeakReport(map[int]string{})
+	if len(leaks) != 0 {
+		// Registry may have leftover pids from a parallel failure — still require msg.
+		t.Logf("unexpected leaks in clean-ish report: %v", leaks)
+	}
+	if msg == "" {
+		t.Fatal("serveLeakReport returned empty msg on clean comparison — silent no-op")
+	}
+	if !strings.Contains(msg, "serve-leak detection:") {
+		t.Fatalf("msg missing coverage prefix: %q", msg)
+	}
+	// Both mode strings are non-empty and distinct.
+	proc := serveScanCoverageFor("proc")
+	reg := serveScanCoverageFor("registry")
+	if proc == "" || reg == "" || proc == reg {
+		t.Fatalf("coverage strings bad: proc=%q reg=%q", proc, reg)
+	}
+	if !strings.Contains(reg, "registry-only") || !strings.Contains(reg, "NOT checked") {
+		t.Fatalf("registry coverage must name partial check and residual gap: %q", reg)
+	}
+	if !strings.Contains(reg, "Pdeathsig") {
+		t.Fatalf("registry coverage must name the hard-parent-kill gap (AC2): %q", reg)
+	}
+}
+
+// TestRegistryInventoryDetectsLeakedServe proves sty_948a2d42 AC3: the portable
+// registry inventory detects a deliberately leaked suite-owned serve. Not
+// Linux-gated — the registry is platform-independent.
+func TestRegistryInventoryDetectsLeakedServe(t *testing.T) {
+	home := t.TempDir()
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+	port := freeListenPort(t)
+	env := append(os.Environ(), "SATELLE_HOME="+home)
+
+	// Start without t.Cleanup reaping: use raw start + register, then stop
+	// only after we have asserted the leak. Pre-register a Stop on defer so a
+	// failure still reaps.
+	full := []string{"serve", "--addr", "127.0.0.1", "--port", port, "--no-watch"}
+	cmd := exec.Command(testBin, full...)
+	cmd.Dir = repo
+	cmd.Env = env
+	setServeProcAttr(cmd)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	pid := cmd.Process.Pid
+	registerServe(pid, strings.Join(full, " "))
+	h := &ServeHandle{Cmd: cmd, Port: port, Base: "http://127.0.0.1:" + port}
+	defer func() {
+		h.Stop()
+		unregisterServe(pid)
+	}()
+
+	// Do not call h.Stop yet — deliberate "leak" still in registry.
+	live := registryLiveServePIDs()
+	if _, ok := live[pid]; !ok {
+		t.Fatalf("registryLiveServePIDs missing deliberately leaked pid %d; got %v", pid, live)
+	}
+	// serveLeakReport against an empty before set must flag it.
+	leaks, msg := serveLeakReport(map[int]string{})
+	if _, ok := leaks[pid]; !ok {
+		t.Fatalf("serveLeakReport did not flag leaked pid %d; leaks=%v msg=%q", pid, leaks, msg)
+	}
+	if !strings.Contains(msg, "FATAL") {
+		t.Fatalf("leak msg should be FATAL: %q", msg)
+	}
+}
+
 // TestScanServePIDsMatchesRunningServe is a unit-ish check of the /proc scanner.
 func TestScanServePIDsMatchesRunningServe(t *testing.T) {
 	if _, err := os.Stat("/proc"); err != nil {

@@ -84,8 +84,13 @@ func TestMain(m *testing.M) {
 	beforeParts := captureMirrorPartitionKeys(hostRoots.satelleHome)
 	beforeServes := liveServePIDs()
 	exit := func(code int) {
-		if leaks, msg := serveLeakReport(beforeServes); len(leaks) > 0 {
+		// Always print coverage so a green run still says full vs PARTIAL
+		// (sty_948a2d42) — silence must not read as verified clean.
+		leaks, msg := serveLeakReport(beforeServes)
+		if msg != "" {
 			fmt.Fprint(os.Stderr, msg)
+		}
+		if len(leaks) > 0 {
 			killLeakedServes(leaks)
 			code = 1
 		}

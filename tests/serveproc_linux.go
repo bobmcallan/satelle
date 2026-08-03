@@ -7,6 +7,10 @@ import (
 	"syscall"
 )
 
+// serveScanKind identifies how liveServePIDs observes processes on this platform.
+// "proc" = full host /proc sweep (sty_948a2d42).
+const serveScanKind = "proc"
+
 // setServeProcAttr puts the child in its own process group and arms Pdeathsig
 // so a go-test timeout / hard kill of the parent cannot leave serve orphans.
 //

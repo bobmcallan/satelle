@@ -1,3 +1,8 @@
+## [0.0.416] - 2026-08-03
+
+### Fixed
+- **Off-Linux serve-leak detection is no longer a silent no-op.** Registry-only inventory detects suite-owned leaks; every suite run prints OK vs PARTIAL coverage so green is not mistaken for a full /proc sweep (sty_948a2d42)
+
 ## [0.0.415] - 2026-08-03
 
 ### Fixed

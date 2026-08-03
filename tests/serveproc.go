@@ -208,17 +208,49 @@ func serveAddrFromArgs(args []string) (port, base string) {
 	return port, base
 }
 
-// --- suite-level serve process inventory (AC1) ---
+// --- suite-level serve process inventory (sty_bf797fa9 AC1 / sty_948a2d42) ---
 
-// liveServePIDs returns pid → cmdline for processes whose argv looks like a
-// satelle serve (or the suite testBin path with a serve subcommand). Linux
-// only; other platforms return an empty map (documented no-op).
+// liveServePIDs returns pid → cmdline for processes that look like a satelle
+// serve. On Linux this is a full /proc sweep; off Linux it is the suite
+// registry of pids this run started (see serveScanKind).
 func liveServePIDs() map[int]string {
 	return scanServePIDs()
 }
 
-// serveLeakReport compares before/after pid sets and returns a non-empty
-// diagnostic when suite-owned serves survived. Host baseline pids are excluded.
+// registryLiveServePIDs returns registered suite-owned serve pids that still
+// respond to signal 0 (alive). Portable — no /proc. Used off Linux as the
+// inventory, and in tests that deliberately leak a registered pid (sty_948a2d42).
+func registryLiveServePIDs() map[int]string {
+	out := map[int]string{}
+	for pid, cmd := range registeredServeSnapshot() {
+		if err := syscall.Kill(pid, 0); err == nil {
+			out[pid] = cmd
+		}
+	}
+	return out
+}
+
+// serveScanCoverage describes what the current platform's inventory can see.
+// Always non-empty so a green suite cannot look like an unchecked no-op.
+func serveScanCoverage() string {
+	return serveScanCoverageFor(serveScanKind)
+}
+
+func serveScanCoverageFor(kind string) string {
+	switch kind {
+	case "proc":
+		return "/proc sweep — all satelle serve processes on this host"
+	case "registry":
+		return "registry-only — pids this suite started; strays not started by this suite are NOT checked (no /proc); hard parent-kill can still leave a process group (no portable Pdeathsig)"
+	default:
+		return "unknown serve-scan kind " + kind
+	}
+}
+
+// serveLeakReport compares before/after pid sets. Returns leaks (nil when
+// clean) and always a non-empty msg: either a FATAL leak report or a coverage
+// line so a green run still says whether detection was full or partial
+// (sty_948a2d42 AC1). Host baseline pids are excluded.
 func serveLeakReport(before map[int]string) (leaks map[int]string, msg string) {
 	after := liveServePIDs()
 	reg := registeredServeSnapshot()
@@ -240,10 +272,19 @@ func serveLeakReport(before map[int]string) (leaks map[int]string, msg string) {
 			}
 		}
 	}
+	coverage := serveScanCoverage()
 	if len(leaks) == 0 {
-		return nil, ""
+		switch serveScanKind {
+		case "proc":
+			return nil, fmt.Sprintf("serve-leak detection: OK (no leaks; %s, before=%d after=%d)\n",
+				coverage, len(before), len(after))
+		default:
+			return nil, fmt.Sprintf("serve-leak detection: PARTIAL (%s) — a green result here is unverified for strays (before=%d after=%d)\n",
+				coverage, len(before), len(after))
+		}
 	}
 	var b strings.Builder
+	fmt.Fprintf(&b, "serve-leak detection: FAILED (%s)\n", coverage)
 	fmt.Fprintf(&b, "FATAL: integration suite left %d satelle serve process(es) alive (before=%d after=%d).\n",
 		len(leaks), len(before), len(after))
 	for pid, cmd := range leaks {
