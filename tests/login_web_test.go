@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -34,17 +33,9 @@ func TestWebLoginMirrorReadOnlyAffordance(t *testing.T) {
 	}
 
 	home := t.TempDir()
-	cmd := exec.Command(testBin, "serve", "--addr", "127.0.0.1", "--port", fmt.Sprint(port))
-	cmd.Dir = repo
-	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir(), "SATELLE_HOME="+home)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start serve: %v", err)
-	}
-	defer func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() }()
-
-	if !waitHealthy(t, host+"/healthz", 5*time.Second) {
-		t.Fatal("server did not become healthy")
-	}
+	env := append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir(), "SATELLE_HOME="+home)
+	_ = StartServeHealthy(t, testBin, repo, env, 5*time.Second,
+		"--addr", "127.0.0.1", "--port", fmt.Sprint(port))
 	seedWorkspaceAdd(t, testBin, repo, host)
 
 	// Landing (workspace) — no oauth/login affordance.

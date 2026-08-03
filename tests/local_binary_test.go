@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -91,27 +90,10 @@ func TestPinnedServePushFedIsolation(t *testing.T) {
 	}
 
 	port := freeListenPort(t)
-	cmd := exec.Command(pin, "serve", "--port", port, "--no-watch")
-	cmd.Dir = repo
-	cmd.Env = append(os.Environ(), "SATELLE_HOME="+home)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start pin serve: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
-		done := make(chan struct{})
-		go func() { _, _ = cmd.Process.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			_ = cmd.Process.Kill()
-		}
-	})
-
-	base := "http://127.0.0.1:" + port
-	if !waitHealthy(t, base+"/healthz", 10*time.Second) {
-		t.Fatal("pin serve did not become healthy")
-	}
+	env := append(os.Environ(), "SATELLE_HOME="+home)
+	// pin is a byte-copy of testBin; StartServe still owns lifetime + process group.
+	h := StartServeHealthy(t, pin, repo, env, 10*time.Second, "--port", port, "--no-watch")
+	base := h.Base
 
 	localBody := fmt.Sprintf("[review]\ngate_create = false\n\n[server]\nendpoint = %q\n", base)
 	if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.local.toml"), []byte(localBody), 0o644); err != nil {

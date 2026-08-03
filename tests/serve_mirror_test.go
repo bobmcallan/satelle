@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -44,38 +43,13 @@ func TestServeMirrorPushFed(t *testing.T) {
 	)
 
 	home := t.TempDir()
-	startServe := func() *exec.Cmd {
-		cmd := exec.Command(testBin, "serve", "--addr", "127.0.0.1", "--port", fmt.Sprint(port))
-		cmd.Dir = repo
-		cmd.Env = append(os.Environ(), "SATELLE_HOME="+home)
-		if err := cmd.Start(); err != nil {
-			t.Fatal(err)
-		}
-		deadline := time.Now().Add(8 * time.Second)
-		for {
-			resp, err := http.Get(host + "/healthz")
-			if err == nil {
-				resp.Body.Close()
-				if resp.StatusCode == 200 {
-					break
-				}
-			}
-			if time.Now().After(deadline) {
-				_ = cmd.Process.Kill()
-				t.Fatalf("serve never healthy: %v", err)
-			}
-			time.Sleep(40 * time.Millisecond)
-		}
-		return cmd
+	env := append(os.Environ(), "SATELLE_HOME="+home)
+	startServe := func() *ServeHandle {
+		return StartServeHealthy(t, testBin, repo, env, 8*time.Second,
+			"--addr", "127.0.0.1", "--port", fmt.Sprint(port))
 	}
 
-	cmd := startServe()
-	t.Cleanup(func() {
-		if cmd != nil && cmd.Process != nil {
-			_ = cmd.Process.Kill()
-			_, _ = cmd.Process.Wait()
-		}
-	})
+	h := startServe()
 
 	// --- full snapshot via workspace add; story visible on project page ---
 	out := seedWorkspaceAdd(t, testBin, repo, host)
@@ -149,9 +123,8 @@ func TestServeMirrorPushFed(t *testing.T) {
 	}
 
 	// --- restart + reconcile restores view ---
-	_ = cmd.Process.Kill()
-	_, _ = cmd.Process.Wait()
-	cmd = startServe()
+	h.Stop()
+	h = startServe()
 	// empty mirror after new process? same SATELLE_HOME → same mirror.db survives
 	// kill and restart keeps mirror.db — still has data without re-push
 	proj2 := httpGet(t, host+"/r/"+slug+"/")

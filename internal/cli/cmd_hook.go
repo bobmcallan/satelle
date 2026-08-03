@@ -497,7 +497,9 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 			AcquiredAt:  l.AcquiredAt,
 			HeartbeatAt: l.HeartbeatAt,
 			Stale:       stale,
-			InFlight:    l.InFlight,
+			// EffectiveInFlight ages stuck flags; raw InFlight would wedge the
+			// edit gate forever when hooks keep the heartbeat fresh (sty_bf797fa9).
+			InFlight: lease.EffectiveInFlight(l, now),
 		}
 		if stale {
 			// Prefer naming a stale holder in deny/session text.
@@ -558,10 +560,14 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 		for _, s := range spec.NonTerminalEngagingStates() {
 			engaging[s] = true
 		}
-		// Live seat: committed status is performing, OR fresh in-flight mid-transition.
-		// InFlight+fresh covers the acquire-at-start window when status is still the
-		// start state (backlog) — without this, mid-dispatch edits would be denied.
-		if engaging[status] || l.InFlight {
+		// Live seat: committed status is performing, OR effective in-flight mid-transition.
+		// Use info.InFlight (EffectiveInFlight) not raw l.InFlight — a dead
+		// transitioning pid must not keep the seat "engaged" via residue
+		// (sty_bf797fa9 AC3).
+		// Effective in-flight covers the acquire-at-start window when status is
+		// still the start state (backlog) — without this, mid-dispatch edits
+		// would be denied.
+		if engaging[status] || info.InFlight {
 			info.Engaged = true
 			// Prefer the committed status in the descriptor when it is performing;
 			// otherwise keep lease.State (target of the in-flight transition).
@@ -1406,7 +1412,7 @@ func sessionSeatBlock(a *app.App) string {
 		info = seatInfo{
 			ItemID: l.ItemID, State: l.State, Owner: l.Owner,
 			AcquiredAt: l.AcquiredAt, HeartbeatAt: l.HeartbeatAt,
-			Stale: lease.IsStale(l, now), InFlight: l.InFlight,
+			Stale: lease.IsStale(l, now), InFlight: lease.EffectiveInFlight(l, now),
 		}
 	}
 	return formatSeatBlock(info, now)

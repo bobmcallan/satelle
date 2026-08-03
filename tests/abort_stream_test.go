@@ -8,10 +8,8 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -34,27 +32,9 @@ func TestProxiedSSEAbortDoesNotPoisonConnection(t *testing.T) {
 	workspaceAdd(t, home, repo, repo)
 
 	const port = "8822"
-	cmd := exec.Command(testBin, "serve", "--port", port, "--no-watch")
-	cmd.Dir = repo
-	cmd.Env = append(os.Environ(), "SATELLE_HOME="+home)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start serve: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
-		done := make(chan struct{})
-		go func() { _, _ = cmd.Process.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			_ = cmd.Process.Kill()
-		}
-	})
-
-	base := "http://127.0.0.1:" + port
-	if !waitHealthy(t, base+"/healthz", 10*time.Second) {
-		t.Fatal("serve did not become healthy")
-	}
+	env := append(os.Environ(), "SATELLE_HOME="+home)
+	h := StartServeHealthy(t, testBin, repo, env, 10*time.Second, "--port", port, "--no-watch")
+	base := h.Base
 	slug := filepath.Base(repo)
 
 	// Open the proxied child SSE, read the stream open, then abort mid-stream by

@@ -942,15 +942,59 @@ requires = ["coded"]
 	}
 
 	// Fresh in-flight at start state (backlog) → engaged (acquire-at-start window).
+	// Must set InFlightAt + live InFlightPid so EffectiveInFlight is true
+	// (sty_bf797fa9: raw InFlight alone is not enough).
 	live, _, err = evaluateSeat([]lease.Lease{{
 		ItemID: "sty_backlog", State: "plan", Owner: "alice", InFlight: true,
+		InFlightAt: now.Add(-time.Second), InFlightPid: os.Getpid(),
 		AcquiredAt: now.Add(-time.Minute), HeartbeatAt: now.Add(-time.Second),
 	}}, items, wfs, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if live.ItemID != "sty_backlog" || !live.Engaged {
+	if live.ItemID != "sty_backlog" || !live.Engaged || !live.InFlight {
 		t.Fatalf("fresh in-flight at start state must be live: %+v", live)
+	}
+
+	// Dead transitioning pid → not in-flight for gate purposes (sty_bf797fa9 AC3).
+	// Heartbeat is still fresh (hook-refresh shape); InFlightAt is young — only
+	// the dead pid makes EffectiveInFlight false.
+	deadPID := 1<<30 - 1
+	live, other, err = evaluateSeat([]lease.Lease{{
+		ItemID: "sty_backlog", State: "plan", Owner: "alice", InFlight: true,
+		InFlightAt: now, InFlightPid: deadPID,
+		AcquiredAt: now.Add(-time.Minute), HeartbeatAt: now,
+	}}, items, wfs, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live.ItemID != "" {
+		t.Fatalf("dead InFlightPid must not keep seat live mid-transition: %+v", live)
+	}
+	if other.ItemID != "sty_backlog" || other.InFlight {
+		t.Fatalf("other must name residue with InFlight=false: %+v", other)
+	}
+	// Edit gate: dead-pid residue on an edit-capable state must permit the owner.
+	// Plant a settled-shaped lease on plan (edit-capable in this fixture) that
+	// only looked in-flight via a dead pid — EffectiveInFlight clears it so
+	// Engaged falls through to performing-status check.
+	live, _, err = evaluateSeat([]lease.Lease{{
+		ItemID: "sty_plan", State: "plan", Owner: "alice", InFlight: true,
+		InFlightAt: now, InFlightPid: deadPID,
+		AcquiredAt: now.Add(-time.Minute), HeartbeatAt: now,
+	}}, []workitem.Item{{ID: "sty_plan", Status: "plan", Kind: workitem.KindStory}}, wfs, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// status=plan is performing → live seat; InFlight effective false → editPermitted.
+	if live.ItemID != "sty_plan" || !live.Engaged {
+		t.Fatalf("performing status with dead-pid in_flight residue must still engage: %+v", live)
+	}
+	if live.InFlight {
+		t.Fatalf("dead InFlightPid must surface InFlight=false on seatInfo: %+v", live)
+	}
+	if !editPermitted(live, dispatchMarker{}) {
+		t.Fatalf("edit must be permitted when effective in_flight is false: %+v", live)
 	}
 }
 

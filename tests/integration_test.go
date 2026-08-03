@@ -77,8 +77,18 @@ func TestMain(m *testing.M) {
 	// Also fingerprint host mirror partition keys (sty_5aa08259 AC1): hermetic
 	// runs must not seed the operator's push-fed mirror even when a live unit
 	// answers on :8787. File-level hash of serve/ is skipped (WAL noise); keys only.
+	//
+	// Serve process inventory (sty_bf797fa9 AC1): snapshot live serve pids BEFORE
+	// the suite so the operator's own serve on :8787 is excluded by identity;
+	// after m.Run, any new suite-owned serve is a leak — kill it and fail the suite.
 	beforeParts := captureMirrorPartitionKeys(hostRoots.satelleHome)
+	beforeServes := liveServePIDs()
 	exit := func(code int) {
+		if leaks, msg := serveLeakReport(beforeServes); len(leaks) > 0 {
+			fmt.Fprint(os.Stderr, msg)
+			killLeakedServes(leaks)
+			code = 1
+		}
 		afterSurface := captureHostSurfaceAt(hostRoots)
 		if diffs := diffHostSurface(beforeSurface, afterSurface); len(diffs) > 0 {
 			fmt.Fprintf(os.Stderr, "FATAL: host production surface changed during the integration suite (isolation failed).\n")
@@ -117,6 +127,8 @@ func TestMain(m *testing.M) {
 	}
 	testBin = filepath.Join(dir, "satelle")
 	// The test runs from tests/, so the module root is one level up.
+	// Version stamp for deployed.version paths is a sibling story (sty_4c986ed8);
+	// this build stays bare so this slice only owns serve-lifetime integrity.
 	build := exec.Command("go", "build", "-o", testBin, "./cmd/satelle")
 	build.Dir = ".."
 	if out, berr := build.CombinedOutput(); berr != nil {
@@ -798,21 +810,7 @@ func TestServeServesProjectPage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command(bin, "serve", "--port", port)
-	cmd.Dir = repo
-	// Same home as mustRun so the home-keyed DB has the created story.
-	cmd.Env = isolatedEnv(t)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start serve: %v", err)
-	}
-	defer func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	}()
-
-	if !waitHealthy(t, base+"/healthz", 5*time.Second) {
-		t.Fatal("server did not become healthy")
-	}
+	_ = StartServeHealthy(t, bin, repo, isolatedEnv(t), 5*time.Second, "--port", port)
 	seedWorkspaceAdd(t, bin, repo, base)
 
 	slug := filepath.Base(repo)

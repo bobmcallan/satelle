@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -36,25 +35,10 @@ func TestHermeticWorkspaceAddDoesNotPoisonLiveDefaultPort(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command(testBin, "serve", "--addr", "127.0.0.1", "--port", fmt.Sprint(port))
-	cmd.Env = append(os.Environ(), "SATELLE_HOME="+decoyHome)
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
-		done := make(chan struct{})
-		go func() { _, _ = cmd.Process.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			_ = cmd.Process.Kill()
-		}
-	})
-	base := fmt.Sprintf("http://127.0.0.1:%d", port)
-	if !waitHealthy(t, base+"/healthz", 8*time.Second) {
-		t.Fatal("decoy serve not healthy")
-	}
+	env := append(os.Environ(), "SATELLE_HOME="+decoyHome)
+	h := StartServeHealthy(t, testBin, "", env, 8*time.Second,
+		"--addr", "127.0.0.1", "--port", fmt.Sprint(port))
+	base := h.Base
 
 	before := captureMirrorPartitionKeys(decoyHome)
 

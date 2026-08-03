@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -44,25 +43,9 @@ func TestMultiPartitionMirrorServe(t *testing.T) {
 		}
 	}
 
-	cmd := exec.Command(testBin, "serve", "--addr", "127.0.0.1", "--port", fmt.Sprint(port))
-	cmd.Dir = repoA
-	cmd.Env = append(os.Environ(), "SATELLE_HOME="+home)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start serve: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
-		done := make(chan struct{})
-		go func() { _, _ = cmd.Process.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			_ = cmd.Process.Kill()
-		}
-	})
-	if !waitHealthy(t, host+"/healthz", 10*time.Second) {
-		t.Fatal("serve did not become healthy")
-	}
+	env := append(os.Environ(), "SATELLE_HOME="+home)
+	_ = StartServeHealthy(t, testBin, repoA, env, 10*time.Second,
+		"--addr", "127.0.0.1", "--port", fmt.Sprint(port))
 
 	seedWorkspaceAdd(t, testBin, repoA, host)
 	seedWorkspaceAdd(t, testBin, repoB, host)

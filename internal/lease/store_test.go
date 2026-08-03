@@ -3,6 +3,8 @@ package lease
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -171,6 +173,155 @@ func TestAcquireWithoutStorySeat(t *testing.T) {
 	_, out2, _, err := s.Acquire(ctx, "sty_b", "story", "bob", "plan", false)
 	if err != nil || out2 != OutcomeAcquired {
 		t.Fatalf("b: %v %v", out2, err)
+	}
+}
+
+// TestEffectiveInFlightAgesStuckFlag (sty_bf797fa9): a fresh heartbeat does not
+// keep an expired in_flight live for gate purposes; Acquire treats it as settled.
+func TestEffectiveInFlightAgesStuckFlag(t *testing.T) {
+	s := openTestDB(t)
+	ctx := context.Background()
+	_, out, _, err := s.Acquire(ctx, "sty_a", "story", "alice", "plan", true)
+	if err != nil || out != OutcomeAcquired {
+		t.Fatalf("acquire: out=%v err=%v", out, err)
+	}
+	// Age in_flight_at past TTL while keeping heartbeat fresh (hook-refresh shape).
+	old := time.Now().UTC().Add(-InFlightTTL - time.Minute)
+	if err := s.SetInFlightAt(ctx, "sty_a", old); err != nil {
+		t.Fatal(err)
+	}
+	// Heartbeat still current.
+	if err := s.Heartbeat(ctx, "sty_a", "alice"); err != nil {
+		t.Fatal(err)
+	}
+	l, err := s.Get(ctx, "sty_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if IsStale(l, now) {
+		t.Fatal("heartbeat is fresh — must not be IsStale")
+	}
+	if !l.InFlight {
+		t.Fatal("raw InFlight column still set")
+	}
+	if EffectiveInFlight(l, now) {
+		t.Fatal("EffectiveInFlight must be false after InFlightTTL despite fresh heartbeat")
+	}
+	// Re-acquire: stuck flag self-heals → OutcomeAlreadyHeld (settled path), not InFlight.
+	_, out, _, err = s.Acquire(ctx, "sty_a", "story", "alice", "in_progress", true)
+	if err != nil || out != OutcomeAlreadyHeld {
+		t.Fatalf("expired in_flight re-acquire: out=%v err=%v", out, err)
+	}
+}
+
+func TestEffectiveInFlightLiveWithinTTL(t *testing.T) {
+	now := time.Now().UTC()
+	l := Lease{InFlight: true, InFlightAt: now.Add(-time.Minute), HeartbeatAt: now}
+	if !EffectiveInFlight(l, now) {
+		t.Fatal("fresh in_flight_at must be live")
+	}
+	if EffectiveInFlight(Lease{InFlight: false, InFlightAt: now}, now) {
+		t.Fatal("InFlight=false must not be live")
+	}
+}
+
+// TestEffectiveInFlightZeroAtNotLive: missing InFlightAt must not fall back to
+// heartbeat freshness (hooks keep heartbeat current and would wedge forever).
+func TestEffectiveInFlightZeroAtNotLive(t *testing.T) {
+	now := time.Now().UTC()
+	l := Lease{InFlight: true, InFlightAt: time.Time{}, HeartbeatAt: now}
+	if EffectiveInFlight(l, now) {
+		t.Fatal("zero InFlightAt must not be live even with fresh heartbeat")
+	}
+}
+
+// TestEffectiveInFlightDeadPidNotLive: primary AC3 path — transitioning process
+// is gone, so the flag must not block even with a fresh heartbeat and young
+// InFlightAt. Does not require changing the pid-less default Owner.
+func TestEffectiveInFlightDeadPidNotLive(t *testing.T) {
+	now := time.Now().UTC()
+	// Pick a pid that is almost certainly not alive.
+	dead := 1<<30 - 1
+	if _, err := os.Stat(fmt.Sprintf("/proc/%d", dead)); err == nil {
+		t.Skip("improbable live pid; skip")
+	}
+	l := Lease{
+		InFlight: true, InFlightAt: now, InFlightPid: dead, HeartbeatAt: now,
+	}
+	if EffectiveInFlight(l, now) {
+		t.Fatal("dead InFlightPid must make EffectiveInFlight false immediately")
+	}
+	// Live pid (this test process) with young InFlightAt stays live.
+	live := Lease{
+		InFlight: true, InFlightAt: now, InFlightPid: os.Getpid(), HeartbeatAt: now,
+	}
+	if !EffectiveInFlight(live, now) {
+		t.Fatal("live InFlightPid with young InFlightAt must be live")
+	}
+}
+
+// TestAcquireSelfHealsDeadInFlightPid: Acquire re-enters after the transitioning
+// process dies rather than returning OutcomeInFlight forever.
+func TestAcquireSelfHealsDeadInFlightPid(t *testing.T) {
+	s := openTestDB(t)
+	ctx := context.Background()
+	_, out, _, err := s.Acquire(ctx, "sty_a", "story", "alice", "plan", true)
+	if err != nil || out != OutcomeAcquired {
+		t.Fatalf("acquire: out=%v err=%v", out, err)
+	}
+	// Plant a dead in_flight_pid while keeping heartbeat fresh and in_flight_at young.
+	dead := 1<<30 - 1
+	if _, err := s.db.Exec(`UPDATE engagement_lease SET in_flight_pid = ? WHERE item_id = ?`, dead, "sty_a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Heartbeat(ctx, "sty_a", "alice"); err != nil {
+		t.Fatal(err)
+	}
+	// Re-acquire must self-heal to AlreadyHeld (settled path), not InFlight.
+	_, out, _, err = s.Acquire(ctx, "sty_a", "story", "alice", "in_progress", true)
+	if err != nil || out != OutcomeAlreadyHeld {
+		t.Fatalf("dead-pid re-acquire: out=%v err=%v", out, err)
+	}
+}
+
+// TestMigrateBackfillsInFlightAt: pre-upgrade rows with in_flight=1 and empty
+// in_flight_at get heartbeat_at copied so EffectiveInFlight can age them.
+func TestMigrateBackfillsInFlightAt(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:lease-backfill-"+t.Name()+"?mode=memory&cache=shared&_txlock=immediate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	// Pre-column schema shape: create table without in_flight_at, then Migrate.
+	if _, err := db.Exec(`CREATE TABLE engagement_lease (
+		item_id TEXT PRIMARY KEY, kind TEXT, story_seat INTEGER, owner TEXT,
+		state TEXT, acquired_at TEXT, heartbeat_at TEXT,
+		stop_requested_by TEXT DEFAULT '', stop_reason TEXT DEFAULT '',
+		in_flight INTEGER NOT NULL DEFAULT 0
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	oldHB := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano)
+	if _, err := db.Exec(`INSERT INTO engagement_lease
+		(item_id, kind, story_seat, owner, state, acquired_at, heartbeat_at, in_flight)
+		VALUES ('sty_stuck', 'story', 1, 'alice', 'integration', ?, ?, 1)`, oldHB, oldHB); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	s := New(db)
+	l, err := s.Get(context.Background(), "sty_stuck")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.InFlightAt.IsZero() {
+		t.Fatal("Migrate must backfill in_flight_at for in_flight=1 rows")
+	}
+	// Aged past TTL → not effective.
+	if EffectiveInFlight(l, time.Now().UTC()) {
+		t.Fatal("backfilled aged in_flight_at must not be EffectiveInFlight")
 	}
 }
 

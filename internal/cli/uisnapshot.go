@@ -257,7 +257,7 @@ func listSeatsJSON(ctx context.Context, a *app.App) ([]json.RawMessage, error) {
 			"story_seat": l.StorySeat,
 			"owner":      l.Owner,
 			"state":      l.State,
-			"in_flight":  l.InFlight,
+			"in_flight":  lease.EffectiveInFlight(l, now),
 			"stale":      lease.IsStale(l, now),
 		}
 		b, err := json.Marshal(row)

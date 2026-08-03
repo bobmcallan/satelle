@@ -61,9 +61,15 @@ func scanLiveLeases(legacyDB string) ([]liveHolder, error) {
 	}
 	defer db.Close()
 
+	// Prefer the full column set (post sty_bf797fa9). Fall back for pre-upgrade DBs.
 	rows, err := db.Query(
-		`SELECT item_id, kind, owner, state, acquired_at, heartbeat_at, in_flight
+		`SELECT item_id, kind, owner, state, acquired_at, heartbeat_at, in_flight, in_flight_at, in_flight_pid
 		 FROM engagement_lease`)
+	if err != nil && strings.Contains(err.Error(), "no such column") {
+		rows, err = db.Query(
+			`SELECT item_id, kind, owner, state, acquired_at, heartbeat_at, in_flight
+			 FROM engagement_lease`)
+	}
 	if err != nil {
 		// Missing table on pre-lease DBs is not an error — nothing to refuse on.
 		if strings.Contains(err.Error(), "no such table") {
@@ -76,17 +82,26 @@ func scanLiveLeases(legacyDB string) ([]liveHolder, error) {
 	now := time.Now().UTC()
 	var out []liveHolder
 	for rows.Next() {
-		var itemID, kind, owner, state, acq, beat string
-		var inflight int
-		if err := rows.Scan(&itemID, &kind, &owner, &state, &acq, &beat, &inflight); err != nil {
-			return nil, fmt.Errorf("live-runtime: scan lease: %w", err)
+		var itemID, kind, owner, state, acq, beat, inflightAt string
+		var inflight, inflightPid int
+		// Try full scan first via column count from query shape.
+		cols, _ := rows.Columns()
+		var scanErr error
+		if len(cols) >= 9 {
+			scanErr = rows.Scan(&itemID, &kind, &owner, &state, &acq, &beat, &inflight, &inflightAt, &inflightPid)
+		} else {
+			scanErr = rows.Scan(&itemID, &kind, &owner, &state, &acq, &beat, &inflight)
+		}
+		if scanErr != nil {
+			return nil, fmt.Errorf("live-runtime: scan lease: %w", scanErr)
 		}
 		l := lease.Lease{
-			ItemID:   itemID,
-			Kind:     kind,
-			Owner:    owner,
-			State:    state,
-			InFlight: inflight != 0,
+			ItemID:      itemID,
+			Kind:        kind,
+			Owner:       owner,
+			State:       state,
+			InFlight:    inflight != 0,
+			InFlightPid: inflightPid,
 		}
 		l.AcquiredAt, _ = time.Parse(time.RFC3339Nano, acq)
 		if l.AcquiredAt.IsZero() {
@@ -95,6 +110,13 @@ func scanLiveLeases(legacyDB string) ([]liveHolder, error) {
 		l.HeartbeatAt, _ = time.Parse(time.RFC3339Nano, beat)
 		if l.HeartbeatAt.IsZero() {
 			l.HeartbeatAt, _ = time.Parse(time.RFC3339, beat)
+		}
+		if inflightAt != "" {
+			if t, perr := time.Parse(time.RFC3339Nano, inflightAt); perr == nil {
+				l.InFlightAt = t
+			} else if t, perr := time.Parse(time.RFC3339, inflightAt); perr == nil {
+				l.InFlightAt = t
+			}
 		}
 		if lease.IsStale(l, now) {
 			continue
@@ -105,7 +127,8 @@ func scanLiveLeases(legacyDB string) ([]liveHolder, error) {
 		}
 		detail := fmt.Sprintf("engagement lease  %s  owner %s  state %s  heartbeat %s ago",
 			itemID, owner, state, age)
-		if l.InFlight {
+		// EffectiveInFlight: decorate only when the flag is live for gate purposes.
+		if lease.EffectiveInFlight(l, now) {
 			detail += " (dispatch in flight)"
 		}
 		out = append(out, liveHolder{Kind: "lease", Detail: detail})

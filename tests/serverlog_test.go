@@ -4,7 +4,6 @@ package tests
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,21 +19,9 @@ func TestServeWritesServerLog(t *testing.T) {
 
 	home := isolatedHome(t)
 	const port = "8795"
-	cmd := exec.Command(testBin, "serve", "--port", port)
-	cmd.Dir = repo
-	cmd.Env = append(os.Environ(), "SATELLE_HOME="+home)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start serve: %v", err)
-	}
-	defer func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	}()
-
-	base := "http://127.0.0.1:" + port
-	if !waitHealthy(t, base+"/healthz", 5*time.Second) {
-		t.Fatal("server did not become healthy")
-	}
+	env := append(os.Environ(), "SATELLE_HOME="+home)
+	h := StartServeHealthy(t, testBin, repo, env, 5*time.Second, "--port", port)
+	base := h.Base
 	httpGet(t, base+"/")
 	if code := httpStatus(t, base+"/nope"); code != 404 {
 		t.Fatalf("/nope = %d, want 404", code)

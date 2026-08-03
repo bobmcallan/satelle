@@ -10,7 +10,6 @@ package tests
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -65,19 +64,8 @@ func TestWorkflowPageRendersRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command(bin, "serve", "--port", strconv.Itoa(port))
-	cmd.Dir = repo
-	cmd.Env = append(os.Environ(), "SATELLE_HOME="+t.TempDir())
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start serve: %v", err)
-	}
-	defer func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	}()
-	if !waitHealthy(t, base+"/healthz", 8*time.Second) {
-		t.Fatal("server did not become healthy")
-	}
+	env := append(os.Environ(), "SATELLE_HOME="+t.TempDir())
+	_ = StartServeHealthy(t, bin, repo, env, 8*time.Second, "--port", strconv.Itoa(port))
 	seedWorkspaceAdd(t, bin, repo, base)
 
 	slug := filepath.Base(repo)

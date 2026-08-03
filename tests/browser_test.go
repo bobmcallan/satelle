@@ -55,25 +55,11 @@ func serveRepo(t *testing.T, _ string) (string, string) {
 	mustRun(t, testBin, repo, "init")
 	stubReviewerAccept(t, repo) // baseline gates are active (sty_5b8bd8b2) — keep hermetic
 	port := freeListenPort(t)
-	cmd := exec.Command(testBin, "serve", "--port", port)
-	cmd.Dir = repo
 	// Same isolated SATELLE_HOME as mustRun/init so the home-keyed runtime plane
 	// (DB under ~/.satelle/<repo-key>/) matches the CLI (sty_4660bbe1).
-	cmd.Env = append(os.Environ(), "SATELLE_HOME="+isolatedHome(t))
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start serve: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	})
-	host := "http://127.0.0.1:" + port
-	if !waitHealthy(t, host+"/healthz", 5*time.Second) {
-		t.Fatal("server did not become healthy")
-	}
-	if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
-		t.Fatal("serve exited before becoming healthy (port bind failed?)")
-	}
+	env := append(os.Environ(), "SATELLE_HOME="+isolatedHome(t))
+	h := StartServeHealthy(t, testBin, repo, env, 5*time.Second, "--port", port)
+	host := h.Base
 	// Push-fed mirror: seed [server] endpoint + full snapshot so /r/<slug>/ has data.
 	ep := fmt.Sprintf("[server]\nendpoint = %q\n", host)
 	_ = os.WriteFile(filepath.Join(repo, ".satelle", "satelle.local.toml"), []byte(ep), 0o644)

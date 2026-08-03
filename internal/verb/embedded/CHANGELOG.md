@@ -1,3 +1,12 @@
+## [0.0.403] - 2026-08-03
+
+### Fixed
+- **Integration suite no longer leaves `satelle serve` orphans.** All serve spawns go through `StartServe` with process-group kill and Linux `Pdeathsig`; TestMain fails the suite if any suite-owned serve survives the run (sty_bf797fa9)
+- **Stuck engagement `in_flight` no longer wedges the edit gate.** The transitioning process pid is recorded on the lease; when that pid is gone, `EffectiveInFlight` is false immediately. Owner stays pid-less `local@host` so sequential CLI invocations still share the seat (sty_bf797fa9)
+
+### Changed
+- **Gate consumers read `EffectiveInFlight`, not raw `InFlight`.** Includes evaluateSeat engagement, edit permission, seat list, and migrate live-runtime decoration (sty_bf797fa9)
+
 ## [0.0.402] - 2026-08-03
 
 ### Fixed

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -47,13 +46,9 @@ func TestMirrorReconcilesTerminalStateAfterServiceRestart(t *testing.T) {
 	// per-repo database. (A service under a foreign home is refused a target by
 	// design; see internal/serve.)
 	home := isolatedHome(t)
-	var live *exec.Cmd
+	var live *ServeHandle
 	var serveOut strings.Builder
 	startServe := func(reconcile bool) {
-		cmd := exec.Command(testBin, "serve", "--addr", "127.0.0.1", "--port", fmt.Sprint(port))
-		cmd.Dir = repo
-		cmd.Stdout = &serveOut
-		cmd.Stderr = &serveOut
 		env := []string{"SATELLE_HOME=" + home}
 		for _, kv := range os.Environ() {
 			// Drop any ambient off-switch: this test decides it per start.
@@ -65,22 +60,19 @@ func TestMirrorReconcilesTerminalStateAfterServiceRestart(t *testing.T) {
 			// The pre-fix behaviour, so the dropped push stays observable.
 			env = append(env, "SATELLE_SERVER_ENDPOINT=none")
 		}
-		cmd.Env = env
-		if err := cmd.Start(); err != nil {
-			t.Fatal(err)
-		}
+		h := StartServeWithOutput(t, testBin, repo, env, &serveOut,
+			"--addr", "127.0.0.1", "--port", fmt.Sprint(port))
 		if !waitHealthy(t, host+"/healthz", 10*time.Second) {
-			_ = cmd.Process.Kill()
+			h.Stop()
 			t.Fatal("serve never became healthy")
 		}
-		live = cmd
+		live = h
 	}
 	stopServe := func() {
 		if live == nil {
 			return
 		}
-		_ = live.Process.Kill()
-		_, _ = live.Process.Wait()
+		live.Stop()
 		live = nil
 	}
 	t.Cleanup(stopServe)
