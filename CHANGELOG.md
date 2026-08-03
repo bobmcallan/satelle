@@ -1,3 +1,8 @@
+## [serve-v0.0.17] - 2026-08-03
+
+### Fixed
+- **The running service actually picks up the TOML route source.** `satelle-serve.version` was already `0.0.16` in `.version` before this story — declared by an earlier slice, but never tagged — so a machine that installed serve while 0.0.16 was untagged carries OLDER code under that same version string. This story's release then cut `serve-v0.0.16` at its own commit, making the tag's content current while the installed binary stayed behind. `satelle update` compares VERSION STRINGS, so it reported "satelle-serve already up to date (serve-v0.0.16)" and replaced nothing — the exact silent-staleness failure the serve-version gate exists to prevent, arriving through the one door it does not watch: a version that was bumped but not published. Bumping to 0.0.17 is the smallest change that makes the difference visible to `satelle update`. Without it the live panel keeps reading a repo's route with a binary that cannot parse TOML, so a CONVERTED repo renders whatever the embedded default says — a lifecycle it no longer authors — with nothing anywhere reporting a mismatch (sty_81bb0dde)
+
 ## [0.0.401] - 2026-08-03
 
 ### Breaking
