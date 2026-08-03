@@ -1,3 +1,8 @@
+## [0.0.409] - 2026-08-03
+
+### Fixed
+- **Seat activity coverage tests.** TestSeatListExposesActivity and TestGate_emitsActivity pin the AC1 paths the plan named; plan slice 5 (hook/UI decoration) is explicitly deferred (sty_598a8e1b)
+
 ## [0.0.408] - 2026-08-03
 
 ### Added

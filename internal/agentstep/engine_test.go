@@ -886,6 +886,39 @@ func TestGate_emitsProgress(t *testing.T) {
 	}
 }
 
+// A gated edge stamps structured activity (label + index/total) for seat
+// observability (sty_598a8e1b AC1).
+func TestGate_emitsActivity(t *testing.T) {
+	g, _ := newEngine(t, `{"decision":"accept"}`,
+		fakeDocs{workflow: testWorkflow, skillBody: "rubric body", skillFound: true})
+	var acts []Activity
+	g.SetActivity(func(id string, a Activity) {
+		if id != "sty_1" {
+			t.Errorf("itemID = %q, want sty_1", id)
+		}
+		acts = append(acts, a)
+	})
+	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done"); err != nil {
+		t.Fatalf("gate: %v", err)
+	}
+	if len(acts) < 2 {
+		t.Fatalf("expected gates start + at least one reviewer activity, got %v", acts)
+	}
+	// First stamp is the gate set (index 0); subsequent stamps have index >= 1.
+	if acts[0].Total < 1 {
+		t.Errorf("total must be positive: %v", acts[0])
+	}
+	var sawReviewer bool
+	for _, a := range acts {
+		if a.Index >= 1 && a.Label != "" && a.Label != "gates" {
+			sawReviewer = true
+		}
+	}
+	if !sawReviewer {
+		t.Errorf("expected a per-reviewer activity stamp: %v", acts)
+	}
+}
+
 // A wedged reviewer subprocess is BOUNDED by the per-invocation deadline: the
 // gate fails fast with a legible timeout (no blind retries of another full
 // window) and does not enact (sty_6c88ca10).
