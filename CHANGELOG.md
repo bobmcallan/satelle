@@ -1,3 +1,8 @@
+## [0.0.410] - 2026-08-03
+
+### Changed
+- **Integration entry runs mechanical preconditions before code-ac-review.** Project workflow lists satelle-ac-evidence-check and satelle-retired-route-grammar-check first on in_progress→integration; TestProjectWorkflowReviewerFirst matches multi-reviewer Skills (sty_a7eed214)
+
 ## [0.0.409] - 2026-08-03
 
 ### Fixed

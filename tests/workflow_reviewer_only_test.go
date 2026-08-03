@@ -56,11 +56,19 @@ func TestProjectWorkflowReviewerFirst(t *testing.T) {
 	}
 
 	// Edges: the reviewer-gated spine plus the recovery edge.
+	// Multi-reviewer edges list every skill (sty_a7eed214 / sty_b034ca97): mechanical
+	// preconditions first, then judgment gates — match any skill in Skills.
 	type edge struct{ from, to, skill string }
 	got := map[edge]bool{}
 	hasRecovery := false
 	for _, tr := range spec.Transitions {
-		got[edge{tr.From, tr.To, tr.Skill}] = true
+		skills := tr.Skills
+		if len(skills) == 0 && tr.Skill != "" {
+			skills = []string{tr.Skill}
+		}
+		for _, sk := range skills {
+			got[edge{tr.From, tr.To, sk}] = true
+		}
 		if tr.From == "release" && tr.To == "in_progress" {
 			hasRecovery = true
 		}
@@ -68,6 +76,7 @@ func TestProjectWorkflowReviewerFirst(t *testing.T) {
 	for _, want := range []edge{
 		{"backlog", "plan", "satelle-story-intent-review"},
 		{"plan", "in_progress", "satelle-story-plan-review"},
+		{"in_progress", "integration", "satelle-ac-evidence-check"},
 		{"in_progress", "integration", "satelle-code-ac-review"},
 		{"integration", "release", "satelle-integration-review"},
 		{"release", "done", "satelle-story-release-review"},
