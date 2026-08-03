@@ -47,6 +47,17 @@ var bannedStoriesPaths = []string{
 	"live under `.satelle/stories",
 }
 
+// dogfoodRepoDeferralRe catches deferral to "the satelle dogfood repo" (or
+// similar) as an authority for a product rule (sty_a319db89). Deferral-shaped
+// only — NOT a bare "dogfood" token ban: tsk_context-audit legitimately says
+// "no dogfood-repo story ids in the rubric" (rule stating itself).
+var dogfoodRepoDeferralRe = regexp.MustCompile(`(?i)(see|per|consult|record|reason|decision|full reason).{0,80}dogfood[ -]?repo`)
+
+// gitignoredPathDeferralRe catches authority-deferral to a gitignored tree
+// path (sty_a319db89). Deferral-shaped only so pedagogical "do not write under
+// .satelle/documents/" lines (e.g. satelle-reviewer-objective-audit) stay green.
+var gitignoredPathDeferralRe = regexp.MustCompile(`(?i)(see|consult|read|open|record in|decision).{0,60}\.satelle/(documents|stories)/`)
+
 // legalSkillRoleTags — at most one role tag beyond type:skill.
 var legalSkillRoleTags = map[string]bool{
 	"type:reviewer":         true,
@@ -170,6 +181,16 @@ func conformProblems(kind, name, body string) []string {
 		if strings.Contains(body, ban) {
 			p = append(p, fmt.Sprintf("directs agents under .satelle/stories/ (%q)", ban))
 		}
+	}
+
+	// Unreachable authority: deferral to a dogfood repo or a gitignored path
+	// (sty_a319db89). Deferral-shaped — see dogfoodRepoDeferralRe /
+	// gitignoredPathDeferralRe comments for why not a bare token ban.
+	if m := dogfoodRepoDeferralRe.FindString(body); m != "" {
+		p = append(p, fmt.Sprintf("defers to a dogfood repo as authority (%q)", m))
+	}
+	if m := gitignoredPathDeferralRe.FindString(body); m != "" {
+		p = append(p, fmt.Sprintf("defers to a gitignored path as authority (%q)", m))
 	}
 
 	// reviewer skills: accept/reject criteria + verdict JSON block(s) naming decision+notes.

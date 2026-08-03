@@ -62,8 +62,9 @@ func TestHelpLifecycleHookTopics(t *testing.T) {
 }
 
 // TestHelpGlobalAgentsTopic pins the machine-wide profile catalog's product
-// documentation (sty_c7dfeedf): the file, the precedence ladder, and the
-// no-implicit-merge guarantee.
+// documentation (sty_c7dfeedf / sty_552d2d87 / sty_a319db89): the file, the
+// precedence ladder, the no-implicit-merge guarantee, and the self-sufficient
+// committed-substrate rationale (no dangling external decision record).
 func TestHelpGlobalAgentsTopic(t *testing.T) {
 	dir := t.TempDir()
 	if list := mustRun(t, testBin, dir, "help"); !strings.Contains(list, "global-agents") {
@@ -84,9 +85,17 @@ func TestHelpGlobalAgentsTopic(t *testing.T) {
 		// sty_940938e3 — personal catalog backup
 		"agent profiles push",
 		"[vars]",
+		// sty_a319db89 — rationale is inline; help is self-sufficient
+		"Why committed",
+		"fail-closed",
+		"agent=",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("`satelle help global-agents` missing %q:\n%s", want, body)
 		}
+	}
+	// Dangling dogfood-repo pointer must not return (sty_a319db89 AC2/AC4).
+	if strings.Contains(strings.ToLower(body), "dogfood") {
+		t.Error("`satelle help global-agents` must not reference a dogfood repo or dogfood decision record")
 	}
 }

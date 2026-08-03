@@ -1,6 +1,7 @@
 package help
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -323,6 +324,11 @@ func TestWorkflowConvertTopicCoversTheMarkdownRouteSource(t *testing.T) {
 // TestWorkflowConvertTopicIsRepoAgnostic: the topic ships in the binary and is
 // read by every repo. A story id, a this-repo category or an example lifted
 // from one repo's graph reads as instructions to everyone else.
+//
+// Stricter than TestEmbeddedHelpHasNoUnreachableReferences (which permits bare
+// (sty_…) provenance annotations elsewhere): workflow-convert must stay fully
+// generic. Kept as its own test so that guarantee cannot be weakened by folding
+// into the corpus-wide rule (sty_a319db89 architecture note).
 func TestWorkflowConvertTopicIsRepoAgnostic(t *testing.T) {
 	top, ok := Get("workflow-convert")
 	if !ok {
@@ -341,5 +347,39 @@ func TestWorkflowConvertTopicIsRepoAgnostic(t *testing.T) {
 	// substrate; the topic's own examples must stay generic.
 	if strings.Contains(top.Body, ".satelle/skills/") {
 		t.Error("the topic reaches into a repo's authored skills")
+	}
+}
+
+// TestEmbeddedHelpHasNoUnreachableReferences sweeps every shipped help topic
+// for unreachable/repo-local authority (sty_a319db89 AC2 help half).
+//
+// Scope is help topics ONLY. Embedded substrate is owned by
+// internal/config/substrate_conformance_test.go (dogfoodIDRe, dogfood-repo
+// deferral, gitignored-path deferral) — do not re-scan that corpus from here.
+//
+// Bare "(sty_xxxxxxxx)" provenance annotations are allowed: agent-dispatch and
+// others use them as citations, not as "see sty_… for the rule". Authority
+// deferral (see/per/reason/decision … sty_) is banned.
+func TestEmbeddedHelpHasNoUnreachableReferences(t *testing.T) {
+	dogfoodRepo := regexp.MustCompile(`(?i)dogfood[ -]?repo`)
+	// Authority deferral to a story id (not bare provenance parentheticals like
+	// "… (sty_xxxxxxxx)." at end of a sentence, and not "per-binding").
+	// Word-bounded verbs only — "per-binding" must not match \bper\b.
+	styAuthority := regexp.MustCompile(`(?i)(\bsee\b|\bconsult\b|\brationale\b|full reason|\bdecision\b).{0,40}sty_[0-9a-f]{8}|\bper\s+sty_[0-9a-f]{8}`)
+	// Deferral to a gitignored tree path as something the reader should open.
+	gitignoredDeferral := regexp.MustCompile(`(?i)(see|consult|read|open|record in|decision).{0,60}\.satelle/(documents|stories)/`)
+	for _, top := range List() {
+		for i, line := range strings.Split(top.Body, "\n") {
+			ln := i + 1
+			if m := dogfoodRepo.FindString(line); m != "" {
+				t.Errorf("%s:%d: dogfood-repo reference in shipped help (%q)", top.Name, ln, m)
+			}
+			if m := styAuthority.FindString(line); m != "" {
+				t.Errorf("%s:%d: story id cited as authority for a product rule (%q)", top.Name, ln, m)
+			}
+			if m := gitignoredDeferral.FindString(line); m != "" {
+				t.Errorf("%s:%d: defers to a gitignored path (%q)", top.Name, ln, m)
+			}
+		}
 	}
 }

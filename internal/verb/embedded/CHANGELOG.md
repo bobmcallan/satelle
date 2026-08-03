@@ -1,3 +1,8 @@
+## [0.0.415] - 2026-08-03
+
+### Fixed
+- **Embedded help no longer points at a dogfood-only decision record.** `satelle help global-agents` states the committed-substrate rationale inline (Why committed); unreachable dogfood-repo / gitignored-path / story-as-authority deferrals are banned in help topics and embedded substrate under their existing owners (sty_a319db89)
+
 ## [0.0.414] - 2026-08-03
 
 ### Fixed

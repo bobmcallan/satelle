@@ -37,8 +37,19 @@ not an enforcement: a repo that ignores all of `.satelle/` still runs.
 3. Put secrets under `[vars]` in `satelle.local.toml` or the catalog — never in
    the committed agents file.
 
-See the decision record in the satelle dogfood repo
-(`decision-repo-agents-posture`) for the full reason.
+**Why committed.** Workflows name roles with `agent=<name>`; a clone whose
+agents file never declares those roles cannot run the gated steps that name
+them — the role set travels with the process it serves. The product already
+behaves this way: `satelle init` scaffolds a runnable agents file whose seeded
+body says secrets never belong in it, load is fail-closed on a missing or
+malformed agents.toml, and the managed gitignore block ignores
+`satelle.local.toml` and `.satelle/satelle`, never `workflows/agents.toml`.
+Operator-local pressure is relieved elsewhere: `profile=` keeps command, model,
+and effort machine-side; `[vars]` plus `satelle.local.toml` keep secrets out of
+the tree; repo-inline values still win per field. None of this forces git
+tracking of `.satelle` as a whole — continuity stays local disk or personal
+rehydrate; "committed substrate" means *if* you track process, track the agents
+layer with it.
 
 A profile that tries to carry process — `applies_to`, `skill`, `prompt`, `on`,
 `output_*`, a workflow name — is **refused at load**. That refusal is the whole
@@ -180,10 +191,9 @@ satelle agent profiles restore   # download onto a clean home; refuses overwrite
 satelle agent profiles restore --force   # replace existing (keeps agents.toml.bak)
 ```
 
-**`[vars]` is excluded from backup** (sty_940938e3): it is this machine's secret
-KV. After restore, re-enter secrets under `[vars]` (or in `satelle.local.toml`).
-Unauthenticated push/restore fail closed and name `satelle login` — they never
-silently no-op.
+**`[vars]` is never uploaded** — it is this machine's secret KV. After restore,
+re-enter secrets under `[vars]` (or in `satelle.local.toml`). Unauthenticated
+push/restore fail closed and name `satelle login` — they never silently no-op.
 
 The personal store path is `PUT|GET /api/v1/me/files/agents.toml` (not project
 config, not documents, not team publish). The hosted server must implement that
