@@ -84,6 +84,100 @@ A gate is either:
   rejects** with the output tail as notes. No LLM — the command is the decision.
   Like the push gate, a functional check may run real mechanism.
 
+## Shared suite evidence — record a run once, cite it from siblings
+
+When a repo's verification suite is expensive (long integration runs, image
+builds), several small stories delivered at the **same commit** should not each
+re-run it. Record the run **once** as SHA-keyed evidence and let the siblings
+**cite** it; the gate then checks the citation instead of the clock.
+
+**Record** (the story that actually ran the suite):
+
+```
+satelle ledger record-run --story <sty_id> --command 'make integration' --outcome green \
+  [--sha <commit>] [--started-at <RFC3339>] [--finished-at <RFC3339>]
+```
+
+`--sha` defaults to the current HEAD. `--outcome` is `green` or `red`. The
+command prints the created `suite_run` entry — keep its `id`.
+
+**Cite** (every sibling riding that run):
+
+```
+satelle ledger cite-run --story <sty_id> --run <evt_id>
+```
+
+A citation is a `suite_citation` ledger row whose `refs` names the run. Citing
+does **not** validate the target — a dangling citation is a fact the gate must
+be able to see. **Newest citation wins** if a story cites more than once.
+
+**Enumerate** (what a gate reads):
+
+```
+satelle ledger citation <sty_id>
+# or from a functional check (payload on stdin, no argv id):
+satelle ledger citation   # reads story.id from {story, from, to} on stdin
+```
+
+Output is JSON — **report only**, no pass/fail. Every enumerable state exits 0:
+
+| Field | Meaning |
+| --- | --- |
+| `cited` / `citations` | a citation exists on this story / how many |
+| `run_found` / `dangling` | the cited id resolves to a `suite_run` / it does not |
+| `run.sha`, `run.command`, `run.outcome` | what ran, where, and how it ended |
+| `run.started_at`, `run.finished_at`, `run.recorded_at` | when |
+| `head_sha`, `dirty` | the worktree now |
+| `sha_matches_head` | the cited run covers this exact commit |
+
+Non-zero exit is reserved for genuine errors (unknown story, git unavailable).
+
+### Sample gate check block
+
+The **gate** owns the rule and the refusal names — the binary only reports. Drop
+this in a reviewer skill's ```check block and set `EXPECTED` to the suite that
+gate requires. Stories carry no delivery SHA, so "this story's delivery" is
+defined as **clean HEAD at check time**; relax or tighten the rule by editing
+this script, not the binary.
+
+```bash
+#!/usr/bin/env bash
+# Suite-citation gate: accept when a green run of EXPECTED covers this commit.
+set -uo pipefail
+EXPECTED="${EXPECTED:-make integration}"   # the suite command this gate requires
+
+f=$(satelle ledger citation) || { echo "cannot enumerate the suite citation"; exit 1; }
+field() {
+  printf '%s' "$f" |
+    grep -oE "\"$1\"[[:space:]]*:[[:space:]]*(\"[^\"]*\"|true|false|[0-9]+)" |
+    head -1 | sed -E "s/^\"$1\"[[:space:]]*:[[:space:]]*//; s/^\"//; s/\"$//"
+}
+
+[ "$(field cited)" = true ] || {
+  echo "missing_citation: no suite run cited — record one and cite it:"
+  echo "  satelle ledger record-run --story <id> --command '$EXPECTED' --outcome green"
+  echo "  satelle ledger cite-run --story <id> --run <evt_id>"
+  exit 1; }
+[ "$(field run_found)" = true ] || {
+  echo "dangling_citation: cited run $(field run_id) is not a recorded suite_run"; exit 1; }
+[ "$(field outcome)" = green ] || {
+  echo "red_run: the cited suite run finished $(field outcome)"; exit 1; }
+[ "$(field command)" = "$EXPECTED" ] || {
+  echo "command_mismatch: cited run ran '$(field command)', this gate requires '$EXPECTED'"; exit 1; }
+[ "$(field dirty)" = false ] || {
+  echo "dirty_worktree: uncommitted changes are not covered by the cited run"; exit 1; }
+[ "$(field sha_matches_head)" = true ] || {
+  echo "stale_sha: cited run is at $(field sha), HEAD is $(field head_sha) — re-run the suite and cite the new run"; exit 1; }
+
+echo "suite citation accepted: $(field run_id) green at $(field head_sha)"
+exit 0
+```
+
+Whether the cited command is the **right** suite for this story stays reviewer
+judgment — the check only proves the named suite was green at this commit. Note
+the extractor compares the JSON-encoded command, so a suite command containing
+quotes or backslashes needs a real JSON parser instead.
+
 ## Create gate — deterministic story structure (code)
 
 When a draft is created (opt-in per repo via `[review] gate_create`), satelle

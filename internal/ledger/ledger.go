@@ -72,6 +72,16 @@ const (
 	// diff-since-engagement (sty_da169e03 / epic:scope-integrity). Enumeration
 	// only — no pass/fail in Go.
 	KindEngagementBaseline = "engagement_baseline"
+	// KindSuiteRun records ONE run of an expensive verification suite as
+	// SHA-keyed evidence: {sha, command, outcome, started_at, finished_at} in
+	// Payload, StoryID being the recording story (sty_183a0510). Sibling stories
+	// cite it rather than re-running the suite. Enumeration only — no pass/fail
+	// in Go; a gate's check block decides whether a cited run is acceptable.
+	KindSuiteRun = "suite_run"
+	// KindSuiteCitation records that a story RIDES a suite_run recorded elsewhere.
+	// Refs carries {"suite_run": "<entry id>"} — the first use of Entry.Refs
+	// (sty_183a0510). Enumeration only — no pass/fail in Go.
+	KindSuiteCitation = "suite_citation"
 	// KindChangeRecord records the set of files changed during a closed step at
 	// the enacted transition (sty_948ad5df). Payload is paths and counts only —
 	// never file content (the patch rides a type:change story attachment, local

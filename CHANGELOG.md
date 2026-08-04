@@ -1,3 +1,8 @@
+## [0.0.423] - 2026-08-04
+
+### Added
+- **SHA-keyed shared suite evidence** — record an expensive verification suite once and let sibling stories cite it instead of re-running it. `satelle ledger record-run --story <id> --command <cmd> --outcome green|red [--sha] [--started-at] [--finished-at]` writes a `suite_run` ledger row (sha defaults to HEAD); `satelle ledger cite-run --story <id> --run <evt_id>` writes a `suite_citation` whose `refs` names it (the first use of `Entry.Refs`); `satelle ledger citation [story-id]` enumerates the facts a gate needs — citation present, cited run resolved or dangling, its outcome/command/sha, current HEAD and dirty flag, `sha_matches_head` — and exits 0 for every enumerable state, stdin-tolerant like `story diff`. Enumeration only: the accept rule and the refusal names (`missing_citation`, `dangling_citation`, `red_run`, `command_mismatch`, `dirty_worktree`, `stale_sha`) live in the gate's check block, documented verbatim in `satelle help reviewer-checks` and executed by the tests so docs and behaviour cannot drift. `ledger.Store.GetByID` added for the primary-key read `ListFilter` cannot express; no schema change (sty_183a0510)
+
 ## [0.0.422] - 2026-08-04
 
 ### Added

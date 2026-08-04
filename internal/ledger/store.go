@@ -125,6 +125,36 @@ func (s *Store) ListByStory(ctx context.Context, storyID, kind string) ([]Entry,
 	return s.List(ctx, ListFilter{StoryID: storyID, Kind: kind, Limit: 2000})
 }
 
+// GetByID returns one entry by its primary key, and whether it exists. A
+// primary-key read the ListFilter surface cannot express (it selects by
+// story/project/kind only), added rather than making callers scan a kind's
+// whole result set for one id (sty_183a0510). Same table, same columns as
+// List — no schema change.
+func (s *Store) GetByID(ctx context.Context, id string) (Entry, bool, error) {
+	if strings.TrimSpace(id) == "" {
+		return Entry{}, false, fmt.Errorf("ledger: id required")
+	}
+	var (
+		e             Entry
+		payload, refs string
+		created       string
+	)
+	err := s.db.QueryRowContext(ctx, `
+        SELECT id, story_id, project_id, kind, actor, body, payload, refs, created_at
+        FROM evidence WHERE id = ?`, id).
+		Scan(&e.ID, &e.StoryID, &e.ProjectID, &e.Kind, &e.Actor, &e.Body, &payload, &refs, &created)
+	if err == sql.ErrNoRows {
+		return Entry{}, false, nil
+	}
+	if err != nil {
+		return Entry{}, false, fmt.Errorf("ledger: get by id: %w", err)
+	}
+	e.Payload = json.RawMessage(payload)
+	e.Refs = json.RawMessage(refs)
+	e.CreatedAt = parseTime(created)
+	return e, true, nil
+}
+
 // List returns entries matching the filter, oldest-first. At least one of
 // StoryID/ProjectID/Kind must be set; an unfiltered scan is refused.
 func (s *Store) List(ctx context.Context, f ListFilter) ([]Entry, error) {
