@@ -7,15 +7,24 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
 	"github.com/bobmcallan/satelle/internal/config"
 )
 
 // runRoot executes a fresh root command with args, returning combined output.
 // Always drains UI push and closes the store (mirrors Execute's error-path
 // cleanup — Cobra skips PersistentPostRunE when RunE fails).
+//
+// The registered command tree is process-global (init → register); pflag
+// Changed bits and string values persist across Execute calls. Reset them so
+// sequential runRoot invocations in one test (and across tests in a package)
+// do not trip mutual-exclusion checks on leftover flags (sty_40e5a305).
 func runRoot(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	root := NewRootCmd()
+	resetFlagState(root)
 	var buf bytes.Buffer
 	root.SetOut(&buf)
 	root.SetErr(&buf)
@@ -25,6 +34,25 @@ func runRoot(t *testing.T, args ...string) (string, error) {
 		closeAppForCmd(c)
 	}
 	return buf.String(), err
+}
+
+// resetFlagState clears Changed and restores DefValue on every flag in the
+// command tree so a prior Execute cannot poison the next one.
+func resetFlagState(cmd *cobra.Command) {
+	if cmd == nil {
+		return
+	}
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		f.Changed = false
+		_ = f.Value.Set(f.DefValue)
+	})
+	cmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
+		f.Changed = false
+		_ = f.Value.Set(f.DefValue)
+	})
+	for _, c := range cmd.Commands() {
+		resetFlagState(c)
+	}
 }
 
 // tempRepo creates a repo with .satelle/satelle.toml and points SATELLE_CONFIG

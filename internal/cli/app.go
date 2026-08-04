@@ -135,6 +135,9 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// Archive-retention policy for the closed-story attachment dirs — a no-op
 	// unless satelle.toml sets a count/age policy (sty_aba7200c).
 	verb.SetStoryRetention(a.Config.StoriesKeepClosed, a.Config.StoriesKeepDays)
+	// Binary attachment cap + content-type allowlist (sty_40e5a305): enforced
+	// in the verb so CLI and any future hosted/MCP caller share one rule.
+	verb.SetAttachmentPolicy(a.Config.ResolveAttachmentMaxBytes(), a.Config.ResolveAttachmentAllowTypes())
 	// Backups root is also runtime (sibling of stories/, not of tasks/).
 	verb.SetBackupsDir(filepath.Join(a.RuntimeDir, "backups"))
 	// Single performing story always enforced (sty_c7149f8a; allow_parallel removed sty_a614a0ea).
@@ -332,7 +335,15 @@ func docsResolver(a *app.App) func(ctx context.Context, itemID string) []agentst
 		}
 		out := make([]agentstep.DocState, 0, len(docs))
 		for _, d := range docs {
-			out = append(out, agentstep.DocState{Name: d.Name, Type: d.Type, Body: d.Body})
+			out = append(out, agentstep.DocState{
+				Name:        d.Name,
+				Type:        d.Type,
+				Body:        d.Body,
+				Binary:      d.Binary,
+				ContentType: d.ContentType,
+				Size:        d.Size,
+				SHA256:      d.SHA256,
+			})
 		}
 		return out
 	}

@@ -64,11 +64,22 @@ func resolveAttachmentDir(ctx context.Context, store *workitem.Store, id string)
 	return dir, nil
 }
 
-// safeName reduces a doc name to a bare filename (no path traversal) and ensures
-// a single .md extension.
-func safeName(name string) string {
+// baseSafe reduces a doc name to a bare filename with no path traversal.
+// Shared by safeName (markdown) and safeBinaryName so the traversal rule has
+// one definition (sty_40e5a305).
+func baseSafe(name string) string {
 	n := filepath.Base(strings.TrimSpace(name))
 	if n == "" || n == "." || n == ".." || n == string(filepath.Separator) {
+		return ""
+	}
+	return n
+}
+
+// safeName reduces a doc name to a bare filename (no path traversal) and ensures
+// a single .md extension. Markdown path only — binary names use safeBinaryName.
+func safeName(name string) string {
+	n := baseSafe(name)
+	if n == "" {
 		return ""
 	}
 	return strings.TrimSuffix(n, ".md") + ".md"
@@ -82,10 +93,14 @@ type docAttachReq struct {
 }
 
 type docRef struct {
-	StoryID string `json:"story_id"`
-	Name    string `json:"name"`
-	Type    string `json:"type"`
-	Body    string `json:"body,omitempty"`
+	StoryID     string `json:"story_id"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Body        string `json:"body,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+	Size        int64  `json:"size,omitempty"`
+	SHA256      string `json:"sha256,omitempty"`
+	Binary      bool   `json:"binary,omitempty"`
 }
 
 func storyDocAttach(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
@@ -232,6 +247,8 @@ func storyDocList(ctx context.Context, raw json.RawMessage) (json.RawMessage, er
 		}
 		out = append(out, docRef{StoryID: req.StoryID, Name: name, Type: typ})
 	}
+	// Binary attachments via sidecar (sty_40e5a305); markdown path unchanged.
+	out = append(out, listBinaryDocs(req.StoryID, dir)...)
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return json.Marshal(out)
 }
@@ -248,6 +265,12 @@ func storyDocGet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	dir, err := resolveAttachmentDir(ctx, store, req.StoryID)
 	if err != nil {
 		return nil, err
+	}
+	// Binary attachments must not stream raw bytes through the markdown get path
+	// (sty_40e5a305 AC6). Surface an actionable error pointing at --out.
+	if sc, ok := isBinaryAttachment(dir, req.Name); ok {
+		return nil, fmt.Errorf("verb: doc: %s is a binary attachment (%s, %d bytes); read it with: satelle story doc %s %s --out <path>",
+			sc.Name, sc.ContentType, sc.Size, req.StoryID, sc.Name)
 	}
 	file := safeName(req.Name)
 	if file == "" {
@@ -266,10 +289,16 @@ func storyDocGet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 
 // DocBody is one attachment's name/type/body for payload injection (sty_58fa970e).
 // Exported so agentstep can resolve docs without reaching into unexported storyDir.
+// Binary attachments set Binary=true with an empty Body (sty_40e5a305) so gates
+// learn a binary exists without consuming docsPayloadCeiling.
 type DocBody struct {
-	Name string
-	Type string
-	Body string
+	Name        string
+	Type        string
+	Body        string
+	Binary      bool
+	ContentType string
+	Size        int64
+	SHA256      string
 }
 
 // ItemDocs returns every attachment for the item, name-sorted, with full bodies.
@@ -306,6 +335,9 @@ func ItemDocs(ctx context.Context, id string) ([]DocBody, error) {
 		}
 		out = append(out, DocBody{Name: name, Type: typ, Body: string(data)})
 	}
+	// Reference-only binary entries (no body) — fillPayloadDocs skips them
+	// before the budget accumulator (sty_40e5a305 AC4).
+	out = append(out, binaryDocBodies(dir)...)
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }

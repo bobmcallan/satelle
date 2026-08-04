@@ -1,3 +1,8 @@
+## [0.0.422] - 2026-08-04
+
+### Added
+- **Binary story attachments** at the attach boundary: `satelle story attach --binary-file` stores PNG/PDF/etc. byte-for-byte with a `.satelle.json` sidecar (story id, type, content type, size, sha256). Cap (10 MiB default) and content-type allowlist (SVG/HTML denied) are enforced in the verb; overridable via `[attachments]` in satelle.toml. Binary bodies never enter gate payloads (`fillPayloadDocs` skips them like `type:change`). CLI `story doc --out` writes binaries without streaming raw bytes to stdout. MCP wire contract pinned for the hosted server (`attach_story_document_binary`); implementation is not in this repo (sty_40e5a305).
+
 ## [0.0.421] - 2026-08-03
 
 ### Added

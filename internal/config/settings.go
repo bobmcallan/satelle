@@ -59,6 +59,8 @@ var Settings = []Setting{
 	{Section: "gate", Key: "allow_outside_tree_edits", Label: "Allow outside-tree edits", Help: "Opt in to Bash/Edit mutations in another repo's working tree. Non-repo paths are never fenced. Default deny; only for a deliberate multi-repo install.", Kind: kindBool},
 	{Section: "hosted", Key: "project", Label: "Hosted project", Help: "Project slug this repo maps to (personal sync target).", Kind: kindString},
 	{Section: "hosted", Key: "workspace", Label: "Active workspace", Help: "Scoped-sync destination — personal default; a team-workspace name elects it.", Kind: kindString},
+	{Section: "attachments", Key: "max_bytes", Label: "Binary attachment max bytes", Help: "Per-attachment decoded size cap (default 10485760 = 10 MiB).", Kind: kindInt},
+	{Section: "attachments", Key: "allow_types", Label: "Binary content types", Help: "Allowlisted content types for binary attachments (comma-separated). SVG/HTML are hostile if served.", Kind: kindList},
 }
 
 // FieldID is the dotted key path ("section.key", or the bare key for a root key).
@@ -127,6 +129,10 @@ func SettingDisplay(cfg Config, s Setting) string {
 		// else the elected team-workspace name. The overlay is already merged by
 		// Load, so this reflects the effective per-developer choice.
 		return cfg.ResolveActiveWorkspace().Name
+	case "attachments.max_bytes":
+		return intStr(int(cfg.Attachments.MaxBytes))
+	case "attachments.allow_types":
+		return strings.Join(cfg.Attachments.AllowTypes, "\n")
 	}
 	return ""
 }

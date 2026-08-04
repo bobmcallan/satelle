@@ -130,6 +130,62 @@ type Config struct {
 	// may extend (extra) or replace (vocabulary). Enforce is off|warn|reject
 	// (default warn). Values are never a Go literal.
 	Categories CategoriesConfig `toml:"categories"`
+	// Attachments bounds binary story attachments (sty_40e5a305): max decoded
+	// size and the content-type allowlist. Defaults ship in code as mechanism
+	// bounds; a repo may override either in satelle.toml.
+	Attachments AttachmentsConfig `toml:"attachments"`
+}
+
+// AttachmentsConfig is the [attachments] table: size cap and content-type
+// allowlist for binary story attachments (sty_40e5a305). Zero/empty fields
+// resolve to DefaultAttachmentMaxBytes / DefaultAttachmentAllowTypes.
+type AttachmentsConfig struct {
+	// MaxBytes is the per-attachment decoded size cap. Zero means the default.
+	MaxBytes int64 `toml:"max_bytes"`
+	// AllowTypes is the content-type allowlist. Empty means the default set.
+	// image/svg+xml and text/html are never defaults — both execute if served.
+	AllowTypes []string `toml:"allow_types"`
+}
+
+// DefaultAttachmentMaxBytes is 10 MiB — covers screenshots and ordinary PDFs
+// while bounding the runtime plane and any future sync payload (sty_40e5a305).
+const DefaultAttachmentMaxBytes int64 = 10 << 20
+
+// DefaultAttachmentAllowTypes is the conservative binary content-type allowlist
+// (sty_40e5a305). SVG and HTML are deliberately absent: both execute script in a
+// browser if a delivery route is ever added.
+var DefaultAttachmentAllowTypes = []string{
+	"image/png",
+	"image/jpeg",
+	"image/gif",
+	"image/webp",
+	"application/pdf",
+	"application/zip",
+	"application/octet-stream",
+}
+
+// ResolveAttachmentMaxBytes returns the per-attachment size cap.
+func (c Config) ResolveAttachmentMaxBytes() int64 {
+	if c.Attachments.MaxBytes > 0 {
+		return c.Attachments.MaxBytes
+	}
+	return DefaultAttachmentMaxBytes
+}
+
+// ResolveAttachmentAllowTypes returns the effective content-type allowlist.
+func (c Config) ResolveAttachmentAllowTypes() []string {
+	if len(c.Attachments.AllowTypes) > 0 {
+		out := make([]string, 0, len(c.Attachments.AllowTypes))
+		for _, t := range c.Attachments.AllowTypes {
+			if s := strings.TrimSpace(strings.ToLower(t)); s != "" {
+				out = append(out, s)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return append([]string(nil), DefaultAttachmentAllowTypes...)
 }
 
 // BackupConfig is the operator policy for pre-mutation substrate backups

@@ -448,11 +448,17 @@ type ChildState struct {
 }
 
 // DocState is one story attachment injected into the transition payload.
+// Binary attachments carry Binary=true with empty Body and must never consume
+// docsPayloadCeiling (sty_40e5a305); fillPayloadDocs skips them entirely.
 type DocState struct {
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	Body      string `json:"body,omitempty"`
-	Truncated bool   `json:"truncated,omitempty"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Body        string `json:"body,omitempty"`
+	Truncated   bool   `json:"truncated,omitempty"`
+	Binary      bool   `json:"binary,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+	Size        int64  `json:"size,omitempty"`
+	SHA256      string `json:"sha256,omitempty"`
 }
 
 // fillPayloadDocs attaches resolved docs under the cumulative body budget.
@@ -467,6 +473,13 @@ func (g *Engine) fillPayloadDocs(ctx context.Context, itemID string, tp *transit
 	var used int
 	out := make([]DocState, 0, len(all))
 	for _, d := range all {
+		// Binary attachments are disk retention only (sty_40e5a305): a screenshot
+		// larger than the ceiling would starve plan/step-summary. Never inline
+		// bodies or count them against the budget — continue, do not break.
+		// Pull via satelle story doc <id> <name> --out <path>.
+		if d.Binary {
+			continue
+		}
 		// type:change patches are disk retention for on-demand review; they must
 		// not ride the cumulative payload ceiling or starve plan/step-summary
 		// (sty_948ad5df). Pull via satelle story doc / story diff --recorded.

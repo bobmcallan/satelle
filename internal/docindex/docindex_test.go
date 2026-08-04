@@ -37,6 +37,24 @@ func write(t *testing.T, dir, name, body string) string {
 	return p
 }
 
+// TestIndexableSkipsBinaryAttachments (sty_40e5a305 AC11): PNG and sidecar
+// metadata must never be treated as authored markdown.
+func TestIndexableSkipsBinaryAttachments(t *testing.T) {
+	for _, p := range []string{
+		"shot.png",
+		"shot.png.satelle.json",
+		"spec.pdf",
+		"notes.txt",
+	} {
+		if Indexable(p) {
+			t.Errorf("Indexable(%q) = true, want false", p)
+		}
+	}
+	if !Indexable("plan.md") {
+		t.Error("Indexable(plan.md) = false, want true")
+	}
+}
+
 func TestSyncIndexesAndExtractsHeadline(t *testing.T) {
 	db := openDB(t)
 	ctx := context.Background()

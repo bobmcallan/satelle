@@ -788,3 +788,63 @@ func TestWorkstatePushCarriesNoAttachmentBodies(t *testing.T) {
 		t.Error("planted change-attachment secret must not appear in any workstate POST body")
 	}
 }
+
+// TestWorkstatePushExcludesBinaryAttachment (sty_40e5a305 AC9): a binary
+// attachment under the runtime stories dir never rides the workstate mirror.
+func TestWorkstatePushExcludesBinaryAttachment(t *testing.T) {
+	const plant = "BIN40E5A305-WORKSTATE-EXCLUSION-MARKER"
+	// Minimal PNG-like bytes with planted ASCII so a leak is greppable.
+	png := []byte{
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+		0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89,
+		0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54,
+		0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01,
+		0x0d, 0x0a, 0x2d, 0xb4,
+		0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44,
+		0xae, 0x42, 0x60, 0x82,
+	}
+	png = append(png, []byte(plant)...)
+
+	ts, f := newFakeWorkstateServer(t)
+	seedCred(t, ts.URL)
+	_ = workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+
+	out, err := runRoot(t, "story", "create",
+		"--title", "Binary exclusion",
+		"--body", "Binary attachments stay off the workstate wire.",
+		"--acceptance", "1. binary not in push",
+	)
+	if err != nil {
+		t.Fatalf("create: %v\n%s", err, out)
+	}
+	var created map[string]any
+	if err := json.NewDecoder(strings.NewReader(out)).Decode(&created); err != nil {
+		t.Fatalf("parse: %v\n%s", err, out)
+	}
+	id, _ := created["id"].(string)
+	binPath := filepath.Join(t.TempDir(), "shot.png")
+	if err := os.WriteFile(binPath, png, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runRoot(t, "story", "attach", id,
+		"--name", "shot.png", "--type", "screenshot",
+		"--binary-file", binPath, "--content-type", "image/png",
+	); err != nil {
+		t.Fatalf("binary attach: %v\n%s", err, out)
+	}
+
+	if out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL); err != nil {
+		t.Fatalf("push: %v\n%s", err, out)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	blob, _ := json.Marshal(f.posts["probe"])
+	if strings.Contains(string(blob), plant) {
+		t.Error("binary plant must not appear in workstate POST bodies")
+	}
+	if strings.Contains(string(blob), "shot.png") && strings.Contains(string(blob), "data_base64") {
+		t.Error("binary attachment payload must not ride workstate")
+	}
+}

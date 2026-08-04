@@ -2600,6 +2600,68 @@ func TestGatePayloadIncludesDocs(t *testing.T) {
 	}
 }
 
+// TestBinaryExcludedFromGatePayload (sty_40e5a305 AC4/AC5): a binary larger
+// than docsPayloadCeiling must not starve plan/step-summary, and neither raw
+// bytes nor their base64 may appear in the serialized gate payload.
+func TestBinaryExcludedFromGatePayload(t *testing.T) {
+	plant := []byte("BIN40E5A305-PAYLOAD-POISON-MARKER\x00\xff")
+	big := make([]byte, 300<<10) // 300 KiB > 128 KiB ceiling
+	copy(big, plant)
+	// Distinctive ASCII substring (plant without the binary tail) for payload scan.
+	plantASCII := "BIN40E5A305-PAYLOAD-POISON-MARKER"
+
+	planBody := "# plan body for binary payload test"
+	summaryBody := "step summary must remain fully present"
+
+	run := func(t *testing.T, order []DocState) string {
+		t.Helper()
+		g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
+		g.SetDocsResolver(func(_ context.Context, itemID string) []DocState {
+			return order
+		})
+		if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_bin", Status: "in_progress"}, "done"); err != nil {
+			t.Fatal(err)
+		}
+		return r.got.Payload
+	}
+
+	binDoc := DocState{
+		Name: "shot.png", Type: "screenshot", Binary: true,
+		ContentType: "image/png", Size: int64(len(big)),
+		// Even if a buggy resolver inlined the body, the engine must drop it.
+		Body: string(big),
+	}
+	planDoc := DocState{Name: "plan", Type: "plan", Body: planBody}
+	sumDoc := DocState{Name: "step-summary-x", Type: "step-summary", Body: summaryBody}
+
+	// Binary first — skip must continue, not break.
+	payload := run(t, []DocState{binDoc, planDoc, sumDoc})
+	if !strings.Contains(payload, planBody) {
+		t.Error("plan must be fully present when binary is listed first")
+	}
+	if !strings.Contains(payload, summaryBody) {
+		t.Error("step-summary must be fully present when binary is listed first")
+	}
+	if strings.Contains(payload, plantASCII) {
+		t.Error("raw binary plant must not appear in gate payload")
+	}
+	if strings.Contains(payload, `"name":"shot.png"`) {
+		t.Error("binary doc must not be listed in gate payload docs (excluded like type:change)")
+	}
+	if strings.Contains(payload, `"truncated":true`) {
+		t.Error("plan/summary must not be truncated by a binary attachment")
+	}
+
+	// Binary last — same guarantees.
+	payload2 := run(t, []DocState{planDoc, sumDoc, binDoc})
+	if !strings.Contains(payload2, planBody) || !strings.Contains(payload2, summaryBody) {
+		t.Error("plan and step-summary must remain when binary is listed last")
+	}
+	if strings.Contains(payload2, plantASCII) {
+		t.Error("raw binary plant must not appear (binary last)")
+	}
+}
+
 // TestChangeRecordExcludedFromGatePayload (sty_948ad5df AC4): type:change
 // patches are disk retention only and must not ride the gate docs payload.
 func TestChangeRecordExcludedFromGatePayload(t *testing.T) {

@@ -2,10 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -295,6 +298,110 @@ func attachBody(body, file string) (string, error) {
 		return "", fmt.Errorf("attach: read --file: %w", err)
 	}
 	return string(data), nil
+}
+
+// attachBinary reads a local binary file, base64-encodes it, and dispatches
+// story-doc-attach-binary. Cap, allowlist, and sniff live in the verb
+// (sty_40e5a305); the CLI only defaults content-type from the extension when
+// --content-type is omitted.
+func attachBinary(cmd *cobra.Command, storyID, name, typ, path, contentType string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("attach: read --binary-file: %w", err)
+	}
+	if contentType == "" {
+		// Convenience default only — verb still sniffs and cross-checks.
+		if nameExt := filepath.Ext(name); nameExt != "" {
+			contentType = mime.TypeByExtension(nameExt)
+		}
+		if contentType == "" {
+			contentType = mime.TypeByExtension(filepath.Ext(path))
+		}
+	}
+	req := map[string]any{
+		"story_id":    storyID,
+		"name":        name,
+		"data_base64": base64.StdEncoding.EncodeToString(data),
+	}
+	putIf(req, "type", typ)
+	putIf(req, "content_type", contentType)
+	return dispatch(cmd, "story-doc-attach-binary", req)
+}
+
+// docWriteOut fetches a document and writes its body to path. Binary attachments
+// are decoded from base64; markdown is written as the attachment body string.
+// Never streams raw binary to stdout (sty_40e5a305 AC6).
+func docWriteOut(cmd *cobra.Command, storyID, name, outPath string, force bool) error {
+	if !force {
+		if _, err := os.Stat(outPath); err == nil {
+			return fmt.Errorf("doc: %s already exists (pass --force to overwrite)", outPath)
+		} else if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("doc: stat --out: %w", err)
+		}
+	}
+	// Probe list metadata via get-binary first when name looks binary; else markdown.
+	// Prefer binary get when the name has a non-.md extension.
+	ext := strings.ToLower(filepath.Ext(name))
+	if ext != "" && ext != ".md" {
+		return docWriteOutBinary(cmd, storyID, name, outPath)
+	}
+	// Markdown (or name without extension — try markdown get).
+	var body json.RawMessage
+	b, err := json.Marshal(map[string]any{"story_id": storyID, "name": name})
+	if err != nil {
+		return err
+	}
+	body, err = verb.Dispatch(cmd.Context(), "story-doc-get", b)
+	if err != nil {
+		// If markdown get failed because it is binary, fall through to binary path.
+		if strings.Contains(err.Error(), "binary attachment") {
+			return docWriteOutBinary(cmd, storyID, name, outPath)
+		}
+		return err
+	}
+	var ref struct {
+		Body string `json:"body"`
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(body, &ref); err != nil {
+		return fmt.Errorf("doc: decode: %w", err)
+	}
+	if err := os.WriteFile(outPath, []byte(ref.Body), 0o644); err != nil {
+		return fmt.Errorf("doc: write --out: %w", err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "wrote %s (%d bytes, type=%s)\n", outPath, len(ref.Body), ref.Type)
+	return nil
+}
+
+func docWriteOutBinary(cmd *cobra.Command, storyID, name, outPath string) error {
+	b, err := json.Marshal(map[string]any{"story_id": storyID, "name": name})
+	if err != nil {
+		return err
+	}
+	raw, err := verb.Dispatch(cmd.Context(), "story-doc-get-binary", b)
+	if err != nil {
+		return err
+	}
+	var ref struct {
+		Name        string `json:"name"`
+		ContentType string `json:"content_type"`
+		Size        int64  `json:"size"`
+		SHA256      string `json:"sha256"`
+		DataB64     string `json:"data_base64"`
+	}
+	if err := json.Unmarshal(raw, &ref); err != nil {
+		return fmt.Errorf("doc: decode binary: %w", err)
+	}
+	data, err := base64.StdEncoding.DecodeString(ref.DataB64)
+	if err != nil {
+		return fmt.Errorf("doc: decode base64: %w", err)
+	}
+	if err := os.WriteFile(outPath, data, 0o644); err != nil {
+		return fmt.Errorf("doc: write --out: %w", err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "wrote %s (%d bytes, %s, sha256:%s)\n", outPath, len(data), ref.ContentType, ref.SHA256)
+	return nil
 }
 
 // storySyncCommand builds `satelle story sync` (sty_8f7b2157): the dedicated,
@@ -710,17 +817,48 @@ only: tasks and executions are unstamped by design.`,
 }
 
 // storyDocCommands builds the per-story document attachment surface: attach a
-// typed markdown doc, list a story's docs, and read one. They dispatch to the
-// story-doc-* verbs, which store each doc as portable markdown beside the story.
+// typed markdown or binary doc, list a story's docs, and read one. Markdown
+// dispatches to story-doc-*; binary uses story-doc-attach-binary / get-binary
+// with sidecar metadata (sty_40e5a305). Multimodal gate judgment is out of scope.
 func storyDocCommands() []*cobra.Command {
-	var aName, aType, aBody, aFile string
+	var aName, aType, aBody, aFile, aBinaryFile, aContentType string
 	attach := &cobra.Command{
-		Use:         "attach <id>",
-		Short:       "Attach a typed markdown document to a story",
+		Use:   "attach <id>",
+		Short: "Attach a typed document (markdown or binary) to a story",
+		Long: `Attach a typed document to a story.
+
+Markdown (--body / --file) is stored with frontmatter beside the story.
+Binary (--binary-file) is stored byte-for-byte with a .satelle.json sidecar;
+size cap and content-type allowlist are enforced in the verb (SVG/HTML denied
+as executable if served). Gates receive a reference only — multimodal judgment
+of binary content is out of scope.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			body, err := attachBody(aBody, aFile)
+			// The root command tree is registered once (init → register); flag
+			// variables persist across invocations. Always key off Changed, never
+			// leftover string values from a prior call.
+			bodySet := cmd.Flags().Changed("body")
+			fileSet := cmd.Flags().Changed("file")
+			binSet := cmd.Flags().Changed("binary-file")
+			if (bodySet && fileSet) || (bodySet && binSet) || (fileSet && binSet) {
+				return fmt.Errorf("attach: --body, --file, and --binary-file are mutually exclusive")
+			}
+			if binSet {
+				ct := ""
+				if cmd.Flags().Changed("content-type") {
+					ct = aContentType
+				}
+				return attachBinary(cmd, args[0], aName, aType, aBinaryFile, ct)
+			}
+			bodyIn, fileIn := "", ""
+			if bodySet {
+				bodyIn = aBody
+			}
+			if fileSet {
+				fileIn = aFile
+			}
+			body, err := attachBody(bodyIn, fileIn)
 			if err != nil {
 				return err
 			}
@@ -731,10 +869,12 @@ func storyDocCommands() []*cobra.Command {
 			return dispatch(cmd, "story-doc-attach", req)
 		},
 	}
-	attach.Flags().StringVar(&aName, "name", "", "document name (required)")
-	attach.Flags().StringVar(&aType, "type", "", "document type (plan|change|output|…)")
+	attach.Flags().StringVar(&aName, "name", "", "document name (required; binary keeps its extension)")
+	attach.Flags().StringVar(&aType, "type", "", "document type (plan|change|output|screenshot|…)")
 	attach.Flags().StringVar(&aBody, "body", "", "document markdown body")
 	attach.Flags().StringVar(&aFile, "file", "", "read the document body from a file (alternative to --body)")
+	attach.Flags().StringVar(&aBinaryFile, "binary-file", "", "attach a binary file (PNG/PDF/…); mutually exclusive with --body/--file")
+	attach.Flags().StringVar(&aContentType, "content-type", "", "MIME type for --binary-file (defaulted from extension when omitted; verb still sniffs)")
 	attach.MarkFlagsMutuallyExclusive("body", "file")
 	_ = attach.MarkFlagRequired("name")
 
@@ -748,15 +888,27 @@ func storyDocCommands() []*cobra.Command {
 		},
 	}
 
+	var docOut string
+	var docForce bool
 	doc := &cobra.Command{
-		Use:         "doc <id> <name>",
-		Short:       "Read one of a story's attached documents",
+		Use:   "doc <id> <name>",
+		Short: "Read one of a story's attached documents",
+		Long: `Read one attached document.
+
+Markdown bodies print as JSON on stdout. Binary attachments never stream raw
+bytes to stdout: pass --out <path> to write the file (refuse overwrite unless
+--force), or the command fails with guidance.`,
 		Args:        cobra.ExactArgs(2),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if docOut != "" {
+				return docWriteOut(cmd, args[0], args[1], docOut, docForce)
+			}
 			return dispatch(cmd, "story-doc-get", map[string]any{"story_id": args[0], "name": args[1]})
 		},
 	}
+	doc.Flags().StringVar(&docOut, "out", "", "write the document body to this path (required for binary)")
+	doc.Flags().BoolVar(&docForce, "force", false, "overwrite --out if the path already exists")
 
 	// route — the story's route AND the reasoning behind every outcome, as one
 	// artifact (sty_39e2d9df). Renders the attached document when the story has

@@ -70,6 +70,8 @@ func TestExcludedLocalMatchesRestore(t *testing.T) {
 		"backups/pre-mutation/x.md",
 		"logs/server.log",
 		"stories/sty_x.md",
+		"stories/sty_x/shot.png", // binary attachment path (sty_40e5a305 AC9)
+		"stories/sty_x/shot.png.satelle.json",
 		"satelle.db",
 		"satelle.db-wal",
 		"satelle.local.toml",
