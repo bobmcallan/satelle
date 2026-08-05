@@ -687,6 +687,7 @@ func isScriptFormHookCommand(cmd, harness, sub, repoRoot string) bool {
 // prompt / stopcheck stay simple (fail open by design).
 // repoRoot makes PreToolUse script paths absolute (cwd-safe).
 func buildClaudeHookSettings(repoRoot string) []byte {
+	hs := harnessHooks("claude")
 	doc := map[string]any{
 		"hooks": map[string]any{
 			"SessionStart": []any{
@@ -697,11 +698,11 @@ func buildClaudeHookSettings(repoRoot string) []byte {
 			},
 			"PreToolUse": []any{
 				map[string]any{
-					"matcher": "Edit|Write|MultiEdit|NotebookEdit",
+					"matcher": hs.gateMatcher,
 					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand(repoRoot, "claude", "gate")}},
 				},
 				map[string]any{
-					"matcher": "Bash",
+					"matcher": hs.commitMatcher,
 					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand(repoRoot, "claude", "commitgate")}},
 				},
 			},
@@ -728,6 +729,7 @@ func buildClaudeHookSettings(repoRoot string) []byte {
 // Matchers cover Grok-native tool ids and Claude aliases Grok maps (sty_2fad11b0).
 // repoRoot makes PreToolUse script paths absolute (cwd-safe).
 func buildGrokHookSettings(repoRoot string) []byte {
+	hs := harnessHooks("grok")
 	doc := map[string]any{
 		"hooks": map[string]any{
 			"SessionStart": []any{
@@ -738,11 +740,11 @@ func buildGrokHookSettings(repoRoot string) []byte {
 			},
 			"PreToolUse": []any{
 				map[string]any{
-					"matcher": "Edit|Write|MultiEdit|NotebookEdit|search_replace|write",
+					"matcher": hs.gateMatcher,
 					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand(repoRoot, "grok", "gate")}},
 				},
 				map[string]any{
-					"matcher": "Bash|run_terminal_command",
+					"matcher": hs.commitMatcher,
 					"hooks":   []any{map[string]any{"type": "command", "command": renderHookCommand(repoRoot, "grok", "commitgate")}},
 				},
 			},
@@ -1086,17 +1088,12 @@ func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) 
 	}
 	gateCmd := renderHookCommand(repoRoot, harness, "gate")
 	commitCmd := renderHookCommand(repoRoot, harness, "commitgate")
-	gateMatcher := "Edit|Write|MultiEdit|NotebookEdit"
-	commitMatcher := "Bash"
-	switch harness {
-	case "grok":
-		gateMatcher = "Edit|Write|MultiEdit|NotebookEdit|search_replace|write"
-		commitMatcher = "Bash|run_terminal_command"
-	case "codex":
-		// apply_patch is canonical; Edit|Write aliases; write_file if present.
-		gateMatcher = "apply_patch|Edit|Write|write_file|Bash|shell"
-		commitMatcher = "Bash|shell"
-	}
+	// The matchers the heal appends are the BUILDER's, from the one table
+	// (sty_338a53f8) — a heal that wrote a matcher no scaffold emits produced a
+	// file the create path would never have written.
+	hs := harnessHooks(harness)
+	gateMatcher := hs.gateMatcher
+	commitMatcher := hs.commitMatcher
 	if !hookEventHasMarker(hooks["PreToolUse"], "satelle hook gate") &&
 		!hookEventHasMarker(hooks["PreToolUse"], "pretooluse-gate-") &&
 		!hookEventHasMarker(hooks["PreToolUse"], "satelle-hook.sh") {
@@ -1124,9 +1121,11 @@ func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) 
 		}
 	}
 
-	// Codex scaffold omits Stop (sty_9e86f407 plan event set); do not reinforce it.
+	// Reinforce only the events THIS harness's scaffold installs — the Codex
+	// scaffold omits Stop (sty_9e86f407 plan event set), and the omission is
+	// declared once in harnessHooks rather than repeated as a literal here.
 	for _, rh := range reinforcementSimpleHooks {
-		if harness == "codex" && rh.event == "Stop" {
+		if !hs.hasEvent(rh.event) {
 			continue
 		}
 		if hookEventHasMarker(hooks[rh.event], rh.marker) {
@@ -1158,7 +1157,12 @@ func ensureReinforcementHooks(path, harness, repoRoot string) ([]string, error) 
 // incompleteHookEvents returns event names still missing a satelle marker after
 // heal. Empty when the full set is present or the file is unparseable (caller
 // may still WARN on unparseable separately).
-func incompleteHookEvents(path string) []string {
+//
+// The expected set is PER HARNESS, read from the same harnessHooks table the
+// builder writes from (sty_338a53f8). Asking every harness for every event made
+// re-init WARN "missing Stop" about a Codex file the Codex builder deliberately
+// writes without one — a complete file reported incomplete.
+func incompleteHookEvents(path, harness string) []string {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return []string{"(unreadable)"}
@@ -1175,7 +1179,7 @@ func incompleteHookEvents(path string) []string {
 		"Stop":             {"satelle hook stopcheck"},
 	}
 	var missing []string
-	for _, event := range []string{"SessionStart", "PreToolUse", "UserPromptSubmit", "Stop"} {
+	for _, event := range harnessHooks(harness).events {
 		markers := need[event]
 		ok := false
 		for _, m := range markers {
@@ -1324,7 +1328,7 @@ func healExistingHookFile(path, harness, repoRoot string) (updated []string, inc
 	if n > 0 {
 		updated = append(updated, fmt.Sprintf("upgraded %d PreToolUse hook(s) to script-file form", n))
 	}
-	incomplete = incompleteHookEvents(path)
+	incomplete = incompleteHookEvents(path, harness)
 	return updated, incomplete, nil
 }
 
@@ -1991,7 +1995,7 @@ func convergeOnDiskDefaults(dataDir string, backupOpts ...BackupOpts) []string {
 		case reconcileUnchanged, reconcileCreated:
 			// silence
 		default:
-			lines = append(lines, reconcileReportLine(verb, rel))
+			lines = append(lines, reconcileReportLine(verb, rel, bres.LocalPath))
 		}
 		if bres.Notice != "" && (!backupAdvisoryOnce || !strings.Contains(bres.Notice, "online/personal")) {
 			lines = append(lines, "  i "+bres.Notice)
@@ -2030,7 +2034,7 @@ func materializeTasks(dataDir string, backupOpts ...BackupOpts) []string {
 			continue
 		}
 		if verb != reconcileUnchanged {
-			lines = append(lines, reconcileReportLine(verb, rel))
+			lines = append(lines, reconcileReportLine(verb, rel, bres.LocalPath))
 		}
 		if bres.Notice != "" && (!backupAdvisoryOnce || !strings.Contains(bres.Notice, "online/personal")) {
 			lines = append(lines, "  i "+bres.Notice)

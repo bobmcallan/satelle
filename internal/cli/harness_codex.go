@@ -20,11 +20,13 @@ const codexHooksRel = ".codex/hooks.json"
 const satelleCodexDesc = "satelle-owned compliance hooks — preserve non-satelle entries on remove"
 
 // buildCodexHookSettings returns .codex/hooks.json scaffold bytes.
-// Matchers cover Codex's documented mutating tool names: apply_patch (also
-// Edit|Write aliases) and Bash for shell/commit commands. SessionStart and
-// UserPromptSubmit mirror Claude/Grok.
+// Matchers and the event set come from harnessHooks("codex") — the same table
+// the healer and the completeness checker read (sty_338a53f8), so this file's
+// two deliberate Codex differences (documented-tool-names-only matchers, no
+// Stop) can no longer be contradicted by the paths that re-inspect the result.
 // repoRoot makes PreToolUse script paths absolute (cwd-safe).
 func buildCodexHookSettings(repoRoot string) []byte {
+	hs := harnessHooks("codex")
 	commandHook := func(command string) map[string]any {
 		// Codex's configured command-handler schema requires an explicit async
 		// value. Compliance hooks must synchronously decide before a mutation,
@@ -44,11 +46,11 @@ func buildCodexHookSettings(repoRoot string) []byte {
 				map[string]any{
 					// Codex documents Bash and apply_patch; Edit|Write are supported
 					// apply_patch aliases. Do not carry non-Codex matcher guesses here.
-					"matcher": "apply_patch|Edit|Write|Bash",
+					"matcher": hs.gateMatcher,
 					"hooks":   []any{commandHook(renderHookCommand(repoRoot, "codex", "gate"))},
 				},
 				map[string]any{
-					"matcher": "Bash",
+					"matcher": hs.commitMatcher,
 					"hooks":   []any{commandHook(renderHookCommand(repoRoot, "codex", "commitgate"))},
 				},
 			},
@@ -60,7 +62,8 @@ func buildCodexHookSettings(repoRoot string) []byte {
 			// Codex documents Stop and SessionEnd; we deliberately omit Stop here
 			// so the scaffold only uses events proven in the sty_9e86f407 plan probe
 			// (SessionStart, PreToolUse, UserPromptSubmit). stopcheck remains on
-			// Claude/Grok scaffolds.
+			// Claude/Grok scaffolds. That omission is declared in harnessHooks —
+			// the events written here are exactly hs.events.
 		},
 	}
 	b, _ := json.MarshalIndent(doc, "", "  ")

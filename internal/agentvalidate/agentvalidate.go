@@ -26,6 +26,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/wfhook"
+	"github.com/bobmcallan/satelle/internal/wfroute"
 )
 
 // Grant is one agent's resolved, inspectable capability surface — what validate
@@ -150,16 +151,20 @@ func (r Report) OK() bool { return len(r.Problems) == 0 }
 // workflow allocation — runs against the merged binding, so a profile cannot
 // smuggle a capability past a check by supplying it from the catalog.
 func ValidateEffective(repo config.AgentsConfig, global config.GlobalAgentsConfig, repoVars map[string]string, workflows []docindex.Doc) Report {
+	return validateEffective(repo, global, repoVars, workflows, nil)
+}
+
+func validateEffective(repo config.AgentsConfig, global config.GlobalAgentsConfig, repoVars map[string]string, workflows []docindex.Doc, skills SkillBody) Report {
 	eff, err := config.ResolveEffectiveAgents(repo, global, repoVars)
 	if err != nil {
-		r := validate(repo, config.LayerVars(global.Vars, repoVars), workflows, nil)
+		r := validate(repo, config.LayerVars(global.Vars, repoVars), workflows, nil, skills)
 		f := health.Error(health.IDAgentsProfileBroken, "Broken machine-wide profile reference", err.Error()).
 			WithRemediation("fix the profile= reference in .satelle/workflows/agents.toml, or the profile in " + config.GlobalAgentsLabel)
 		r.Problems = append([]string{f.Detail}, r.Problems...)
 		r.Findings = append(health.Findings{f}, r.Findings...)
 		return r
 	}
-	return validate(eff.Agents, eff.Vars, workflows, eff.Provenance)
+	return validate(eff.Agents, eff.Vars, workflows, eff.Provenance, skills)
 }
 
 // Validate checks every agents.toml binding and each workflow's agent= node
@@ -168,10 +173,27 @@ func ValidateEffective(repo config.AgentsConfig, global config.GlobalAgentsConfi
 // have already resolved the machine-wide catalog pass the effective layer here;
 // ValidateEffective is the form that resolves it and reports provenance.
 func Validate(agents config.AgentsConfig, vars map[string]string, workflows []docindex.Doc) Report {
-	return validate(agents, vars, workflows, nil)
+	return validate(agents, vars, workflows, nil, nil)
 }
 
-func validate(agents config.AgentsConfig, vars map[string]string, workflows []docindex.Doc, prov config.Provenance) Report {
+// SkillBody reads a skill's markdown body by name, reporting whether it
+// resolved. It is the ONE thing a caller can supply that this package cannot
+// derive from its arguments: whether a reviewer's rubric shells `satelle`, and
+// therefore whether a shell grant is live (sty_338a53f8).
+//
+// It is OPTIONAL. A nil resolver means "no skill bodies available", and every
+// check behaves exactly as it did before — a caller that only has the agents
+// layer in hand keeps working, it just cannot see that evidence.
+type SkillBody func(name string) (string, bool)
+
+// ValidateEffectiveWithSkills is ValidateEffective plus the skill-body resolver.
+// Surfaces that judge a whole DEPLOYED repo (doctor, and therefore `satelle
+// init`, and `satelle agent validate`) pass one; the narrower callers do not.
+func ValidateEffectiveWithSkills(repo config.AgentsConfig, global config.GlobalAgentsConfig, repoVars map[string]string, workflows []docindex.Doc, skills SkillBody) Report {
+	return validateEffective(repo, global, repoVars, workflows, skills)
+}
+
+func validate(agents config.AgentsConfig, vars map[string]string, workflows []docindex.Doc, prov config.Provenance, skills SkillBody) Report {
 	var r Report
 	r.Provenance = prov
 
@@ -204,6 +226,9 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 
 	// Workflow node → binding + orphan named bindings + per-gate effective model.
 	usedNamed := map[string]bool{}
+	// advisors accumulate across every governed route so the shell-grant check
+	// below sees an advisor's rubric as a reachable skill too.
+	var advisors []wfroute.Advisor
 	revModel := agents.ReviewerBinding().Model
 	// A DERIVED route has no per-workflow DOT, so its allocations would go
 	// unchecked if this loop only read authored graphs. Expand it into one
@@ -215,6 +240,20 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 		r.tagged(health.IDHookAlloc, "Unusable lifecycle-hook allocation",
 			"declare an isolated role=\"reviewer\" binding for the hook's agent in .satelle/workflows/agents.toml",
 			health.SeverityError, checkHooks(doc.Doc, agents, revModel, usedNamed, &r)...)
+
+		// ADVISORS are a USAGE signal and nothing more (sty_338a53f8). A route that
+		// names an agent as its park advisor or a step's `advise` is allocating that
+		// binding just as surely as a node's agent= does, so it must not be reported
+		// orphaned. It is deliberately NOT checked for role or context channel: an
+		// advisor is consulted by the ORCHESTRATOR and never dispatched
+		// (internal/wfdot/route.go — "declared, never dispatched"), so it carries
+		// none of a performer's dispatch obligations. Do not "complete" this check.
+		for _, ad := range doc.advisors {
+			if ad.Agent != "" && ad.Agent != "reviewer" && ad.Agent != "executor" {
+				usedNamed[ad.Agent] = true
+			}
+			advisors = append(advisors, ad)
+		}
 
 		spec, ok := doc.spec()
 		if !ok {
@@ -338,6 +377,31 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 			}
 		}
 	}
+	// Reviewer SHELL GRANT: unused capability, not a prohibition (sty_87c0ef37).
+	// satelle injects a reviewer's documents into the transition payload's docs
+	// array, and reviewer bindings never reach the dispatch path that consults a
+	// context channel — so a shell grant is normally never exercised and only
+	// widens the ceiling. Whether a repo keeps it is the repo's call, so this is a
+	// warning, not a problem.
+	//
+	// It is raised HERE rather than in checkBinding because "never used" is a
+	// claim about the whole system, not about one binding (sty_338a53f8): a
+	// reviewer SKILL the workflow reaches may shell `satelle` in its own body, and
+	// then the grant is exactly what makes that skill work. Saying otherwise sent
+	// operators to delete a live grant and blind their gates.
+	for _, sec := range sections {
+		if config.ResolvedRole(sec.name, sec.b) != config.RoleReviewer {
+			continue
+		}
+		tok := config.ShellGrantToken(sec.b.Tools)
+		if tok == "" || shellGrantExercised(sec.name, r.Gates, advisors, skills) {
+			continue
+		}
+		r.record(health.Warn(health.IDReviewerUnsafe, "Reviewer ceiling not expressed", fmt.Sprintf(
+			"agents.toml [%s] is role=reviewer but grants shell (%s) — reviewers are fed their documents in the transition payload, so the grant is never used and only widens the ceiling",
+			sec.name, tok)).About(sec.name))
+	}
+
 	for _, name := range sortedNames(agents.Agents) {
 		if !usedNamed[name] {
 			// Advisory only: a binding may serve a non-workflow verb (e.g.
@@ -415,6 +479,74 @@ func checkHooks(doc docindex.Doc, agents config.AgentsConfig, revModel string, u
 		r.Gates = append(r.Gates, alloc)
 	}
 	return problems
+}
+
+// shellGrantExercised reports whether a section's shell grant is actually USED:
+// whether any skill the workflow reaches under that binding — a gate, a scoped
+// node rubric, a lifecycle hook, or an advisor's rubric — shells `satelle` in
+// its own body (sty_338a53f8).
+//
+// With no resolver it answers false, which is the pre-existing behaviour: no
+// evidence of use, so the advisory stands.
+func shellGrantExercised(section string, gates []GateAllocation, advisors []wfroute.Advisor, skills SkillBody) bool {
+	if skills == nil {
+		return false
+	}
+	shells := func(name string) bool {
+		if name == "" {
+			return false
+		}
+		body, ok := skills(name)
+		return ok && skillShellsSatelle(body)
+	}
+	for _, g := range gates {
+		if g.Agent == section && shells(g.Skill) {
+			return true
+		}
+	}
+	for _, ad := range advisors {
+		if ad.Agent == section && shells(ad.Skill) {
+			return true
+		}
+	}
+	return false
+}
+
+// skillShellsSatelle reports whether a skill body invokes the satelle CLI.
+//
+// A heuristic, in the same register as the read-only ceiling test, and it reads
+// the body as the MARKDOWN it is: the invocation must sit in a code position —
+// inside a fenced or indented code block, in a code span, or after a shell
+// prompt. A skill that merely names satelle in a sentence ("satelle runs this
+// repo's workflow") is not shelling it, and a plain substring search called
+// every such body a shell user.
+//
+// It only ever SUPPRESSES an advisory, never raises one, so erring toward a
+// match costs a warning and never a false failure.
+func skillShellsSatelle(body string) bool {
+	inFence := false
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			continue
+		}
+		// A code span carries the command inline, anywhere on the line.
+		if strings.Contains(line, "`satelle ") {
+			return true
+		}
+		// Code position: inside a fence, an indented code block, or after a
+		// shell prompt marker.
+		cmd := strings.TrimLeft(trimmed, "$>")
+		cmd = strings.TrimLeft(cmd, " \t")
+		if !strings.HasPrefix(cmd, "satelle ") {
+			continue
+		}
+		if inFence || trimmed != cmd || strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") {
+			return true
+		}
+	}
+	return false
 }
 
 // gateAlloc builds a GateAllocation for the binding that will run the gate.
@@ -522,17 +654,11 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 				"agents.toml [%s] is role=reviewer with command=in-loop — cannot produce an isolated verdict; gates will refuse",
 				section))
 		}
-		// Unused capability, not a prohibition (sty_87c0ef37): satelle injects a
-		// reviewer's documents into the transition payload's docs array, and
-		// reviewer bindings never reach the dispatch path that consults a context
-		// channel. A shell grant on a reviewer is therefore never exercised — it
-		// only widens the ceiling. Stated as the mechanical fact; whether a repo
-		// keeps it is the repo's call, so this is a warning, not a problem.
-		if tok := config.ShellGrantToken(b.Tools); tok != "" {
-			ceilingWarn(fmt.Sprintf(
-				"agents.toml [%s] is role=reviewer but grants shell (%s) — reviewers are fed their documents in the transition payload, so the grant is never used and only widens the ceiling",
-				section, tok))
-		}
+		// The reviewer SHELL-GRANT advisory is NOT decided here. Its claim is that
+		// the grant is never exercised, and that is not knowable from one binding:
+		// a reviewer skill the workflow reaches may shell `satelle` itself, which
+		// exercises the grant directly (sty_338a53f8). validate raises it after the
+		// workflow loop, where the reachable skill set is known.
 	}
 	if len(b.Env) > 0 {
 		keys := make([]string, 0, len(b.Env))
@@ -820,6 +946,12 @@ type wfEntry struct {
 	// hooksOnly marks the entry that exists to carry a derived route's
 	// lifecycle-hook frontmatter (done.toml). It has no lifecycle of its own.
 	hooksOnly bool
+	// advisors are the agents this category's route declares for the orchestrator
+	// to consult — done.toml's park `advisor` and a step's `advise` (sty_338a53f8).
+	// They are deliberately absent from the Spec (Spec is topology), so an
+	// allocation check reading only the Spec reported every advisor-only binding
+	// orphaned.
+	advisors []wfroute.Advisor
 }
 
 func (e wfEntry) spec() (wfdot.Spec, bool) {
@@ -863,10 +995,6 @@ func expandRouteSources(workflows []docindex.Doc) []wfEntry {
 	if err != nil {
 		return out // structure validate owns an unparseable route source
 	}
-	cat, err := wfdot.ParseSteps(rs.Step)
-	if err != nil {
-		return out
-	}
 	for _, l := range lists {
 		if _, governs := wfgovern.RouteGoverns(workflows, l.Category); !governs {
 			// An authored workflow outranks the shipped route for this category, so
@@ -876,7 +1004,13 @@ func expandRouteSources(workflows []docindex.Doc) []wfEntry {
 		}
 		// No tags: the tag-scoped augmentations are validated by their own gate
 		// declarations, and a tagless build is the route every story shares.
-		spec, err := wfdot.BuildRoute(l, cat, nil)
+		//
+		// RouteSpecFor is the SINGLE derivation chain (sty_a989764d): it hands back
+		// the Spec and the advisors off one parse. Deriving them here instead would
+		// mean re-deriving the advisors, and the only correct source for those is
+		// the SELECTED steps — a Catalogue.Steps walk hands one route family's
+		// advisor to every route with a step of that name (sty_a7316b06).
+		dr, err := wfgovern.RouteSpecFor(rs, l.Category, nil)
 		if err != nil {
 			continue
 		}
@@ -885,8 +1019,8 @@ func expandRouteSources(workflows []docindex.Doc) []wfEntry {
 			Name: wfgovern.DerivedRouteName + " (" + l.Category + ")",
 			Body: rs.Step,
 		}
-		s := spec
-		out = append(out, wfEntry{Doc: doc, route: &s})
+		s := dr.Spec
+		out = append(out, wfEntry{Doc: doc, route: &s, advisors: dr.Advisors})
 	}
 	return out
 }

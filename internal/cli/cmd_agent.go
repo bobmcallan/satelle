@@ -238,7 +238,11 @@ func agentValidateCmd() *cobra.Command {
 
 			// Agent layer + node→binding (shared with init + engage), resolved
 			// against the catalog so what is judged is what will actually run.
-			report := agentvalidate.ValidateEffective(agents, global, a.Config.Vars, governing)
+			// Skill bodies too, from the same resolver doctor uses — otherwise this
+			// command and `satelle doctor` would report the reviewer shell grant
+			// differently on the same tree (sty_338a53f8).
+			report := agentvalidate.ValidateEffectiveWithSkills(agents, global, a.Config.Vars, governing,
+				doctor.SkillBodyResolver(dataDir))
 			printProfileCatalog(out, global)
 			fmt.Fprintln(out, "Agent grants (resolved):")
 			for _, g := range report.Grants {

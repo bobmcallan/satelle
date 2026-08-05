@@ -134,7 +134,15 @@ func writeEmbedded(path, body string) error {
 
 // reconcileReportLine renders the init report line for a reconcile outcome, in
 // the existing initLine register. relPath is the kind-relative slash path.
-func reconcileReportLine(verb reconcileVerb, relPath string) string {
+//
+// backupPath is where the pre-image ACTUALLY landed (BackupResult.LocalPath).
+// It must be threaded rather than composed: backups go under the backup ROOT,
+// which is the home-keyed runtime dir in a real run (sty_4660bbe1), so the
+// composed `.satelle/backups/…` this line used to print named a path that does
+// not exist and sent the operator looking for their file in the wrong tree
+// (sty_338a53f8). Empty falls back to the composed form for a caller that has
+// no BackupResult to hand.
+func reconcileReportLine(verb reconcileVerb, relPath, backupPath string) string {
 	disp := config.DefaultDataDir + "/" + relPath
 	switch verb {
 	case reconcileCreated:
@@ -144,7 +152,10 @@ func reconcileReportLine(verb reconcileVerb, relPath string) string {
 	case reconcileRestamped:
 		return "  ~ " + disp + " (restamped — identical body, missing embedded_sha)"
 	case reconcileDiverged:
-		return "  ! " + disp + " (diverged; backed up to " + config.DefaultDataDir + "/backups/diverged/" + relPath + "; needs merge)"
+		if backupPath == "" {
+			backupPath = config.DefaultDataDir + "/backups/diverged/" + relPath
+		}
+		return "  ! " + disp + " (diverged; backed up to " + backupPath + "; needs merge)"
 	default: // unchanged
 		return initLine(false, disp)
 	}

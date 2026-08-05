@@ -127,7 +127,10 @@ func Check(ctx context.Context, o Opts) Report {
 	resolve := SkillResolver(dataDir)
 	vars := RepoVars(dataDir)
 
-	av := agentvalidate.ValidateEffective(repoAgents, global, vars, governing)
+	// Skill BODIES ride along: a check that judges a deployed repo can see whether
+	// a reviewer's rubric shells `satelle`, and so whether a shell grant is live
+	// rather than idle (sty_338a53f8).
+	av := agentvalidate.ValidateEffectiveWithSkills(repoAgents, global, vars, governing, SkillBodyResolver(dataDir))
 	rep.Findings = append(rep.Findings, av.Findings...)
 	rep.Grants = av.Grants
 	rep.Gates = av.Gates
@@ -349,21 +352,35 @@ func GoverningWorkflows(dataDir string) []docindex.Doc {
 	return docs
 }
 
+// SkillBodyResolver reads a skill's body by name: the authored file under
+// dataDir when present, else the embedded default it would resolve to (the
+// virtual sparse defaults rule). It is the SINGLE disk-else-embedded lookup —
+// SkillResolver is derived from it, so "does this skill resolve" and "what does
+// it say" can never answer from different sources (sty_338a53f8).
+func SkillBodyResolver(dataDir string) func(string) (string, bool) {
+	emb := map[string]string{}
+	for _, d := range config.EmbeddedDefaults() {
+		if d.Kind == "skills" {
+			emb[d.Name] = d.Body
+		}
+	}
+	return func(skill string) (string, bool) {
+		if b, err := os.ReadFile(filepath.Join(dataDir, "skills", skill+".md")); err == nil {
+			return string(b), true
+		}
+		body, ok := emb[skill]
+		return body, ok
+	}
+}
+
 // SkillResolver reports whether a skill resolves on disk or as an embedded
 // default (the virtual sparse defaults rule). Exported for the same reason as
 // WorkflowDocs.
 func SkillResolver(dataDir string) func(string) bool {
-	emb := map[string]bool{}
-	for _, d := range config.EmbeddedDefaults() {
-		if d.Kind == "skills" {
-			emb[d.Name] = true
-		}
-	}
+	body := SkillBodyResolver(dataDir)
 	return func(skill string) bool {
-		if fileExists(filepath.Join(dataDir, "skills", skill+".md")) {
-			return true
-		}
-		return emb[skill]
+		_, ok := body(skill)
+		return ok
 	}
 }
 

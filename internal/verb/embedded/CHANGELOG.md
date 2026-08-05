@@ -1,3 +1,13 @@
+## [0.0.428] - 2026-08-05
+
+### Fixed
+- **`satelle init` stops reporting correct configuration as broken.** Five checker defects, each of which made a repo's live, load-bearing configuration look like damage (sty_338a53f8):
+  - **`[node.alloc]` counts ADVISOR bindings as allocations.** An agent bound only on an edge — `done.toml`'s park `advisor`, or a step's `advise` — was reported orphaned because the allocation walk read node `agent=` only, and advisors are deliberately absent from the emitted Spec (Spec is topology). The walk now derives each governed category through `wfgovern.RouteSpecFor`, the single derivation chain, so the advisors come off the same parse the Spec did. They are counted as USED and nothing more: an advisor is consulted by the orchestrator and never dispatched, so it carries no role or context-channel obligation.
+  - **`[reviewer.unsafe]` no longer claims a live shell grant "is never used".** The claim is about the whole system, not one binding: a reviewer SKILL the workflow reaches may shell `satelle` itself, and then the grant is exactly what makes that gate work. The advisory now runs after the workflow walk, where the reachable skill set is known, and stays silent when a reachable skill shells satelle in a code position. It still fires for a grant nothing exercises. `Validate`/`ValidateEffective` are unchanged; the skill-body resolver arrives via the new `ValidateEffectiveWithSkills`, wired at `doctor.Check` (and so `satelle init`) and `satelle agent validate`.
+  - **Hook completeness is per-harness.** `incompleteHookEvents` demanded `Stop` of every harness, so every re-init WARNed that `.codex/hooks.json` was incomplete — about a file the Codex builder deliberately writes without a Stop hook. The expected set now comes from the same table the builder writes from.
+  - **One definition of a harness's hook surface.** The heal path expected Codex PreToolUse matchers (`write_file`, `shell`) that no builder emits. Builders, healer and completeness check all read `harnessHooks` now. The create-path values are canonical, so the Codex heal matchers NARROW to the documented tool names — existing files are still recognised by command marker, not matcher, so no repo is rewritten.
+  - **The diverged-substrate advisory prints the path the backup was actually written to.** It composed `.satelle/backups/diverged/…`, but backups land under the backup root — the home-keyed runtime dir in a real run — so the path it named did not exist.
+
 ## [0.0.427] - 2026-08-05
 
 ### Added

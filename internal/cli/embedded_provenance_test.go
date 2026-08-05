@@ -154,6 +154,61 @@ func TestReconcileEditedDiverge(t *testing.T) {
 	}
 }
 
+// TestDivergedAdvisoryPrintsTheRealBackupPath (sty_338a53f8): the diverged line
+// must name the path the pre-image was ACTUALLY written to. Backups land under
+// the backup ROOT, which in a real run is the home-keyed runtime dir — so the
+// composed `.satelle/backups/…` this line used to print named a path that did
+// not exist and sent the operator hunting in the wrong tree.
+func TestDivergedAdvisoryPrintsTheRealBackupPath(t *testing.T) {
+	dataDir := t.TempDir()
+	// A backup root DISTINCT from dataDir — the shape of a home-keyed runtime dir.
+	runtimeDir := t.TempDir()
+
+	dest := filepath.Join(dataDir, "principles", "sample.md")
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	edited := strings.Replace(applyEmbeddedStamp(sampleFM, embeddedSHA(sampleFM)), "body line", "operator edit", 1)
+	if err := os.WriteFile(dest, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	verb, bres, err := reconcileEmbeddedFile(dataDir, "principles/sample.md", sampleFM,
+		BackupOpts{BackupsDir: runtimeDir, LocalOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verb != reconcileDiverged {
+		t.Fatalf("verb = %q, want diverged", verb)
+	}
+
+	line := reconcileReportLine(verb, "principles/sample.md", bres.LocalPath)
+	if !strings.Contains(line, bres.LocalPath) {
+		t.Errorf("advisory %q must name the real backup path %q", line, bres.LocalPath)
+	}
+	// The printed path exists on disk — the whole point of the finding.
+	for _, field := range strings.Fields(line) {
+		field = strings.Trim(field, ";")
+		if !strings.HasPrefix(field, runtimeDir) {
+			continue
+		}
+		if _, serr := os.Stat(field); serr != nil {
+			t.Errorf("advisory names %q, which does not exist: %v", field, serr)
+		}
+		return
+	}
+	t.Errorf("advisory %q names no path under the backup root %q", line, runtimeDir)
+}
+
+// TestReconcileReportLineFallsBackWhenNoBackup: a caller with no BackupResult
+// still gets a sane line rather than a dangling "backed up to ".
+func TestReconcileReportLineFallsBackWhenNoBackup(t *testing.T) {
+	line := reconcileReportLine(reconcileDiverged, "principles/sample.md", "")
+	if !strings.Contains(line, "backups/diverged/principles/sample.md") {
+		t.Errorf("empty backup path must fall back to the composed form, got %q", line)
+	}
+}
+
 // TestReconcileUnstampedUntouched (AC5): a file with NO stamp is operator-authored
 // and never modified, even when its body differs from the embedded default.
 func TestReconcileUnstampedUntouched(t *testing.T) {
