@@ -141,3 +141,73 @@ func TestServeMirrorPushFed(t *testing.T) {
 		t.Fatalf("expected mirror db: %v", err)
 	}
 }
+
+// TestCLICreateAppearsLiveWithoutRefresh (sty_3562c820 AC1/AC3): after a full
+// seed, a subsequent story create drains a light snapshot that lands as 2xx and
+// makes the new title visible on the project page without waiting for reconcile.
+func TestCLICreateAppearsLiveWithoutRefresh(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init", "--harness", "claude")
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	host := fmt.Sprintf("http://127.0.0.1:%d", port)
+
+	localBody := fmt.Sprintf("[review]\ngate_create = false\n\n[server]\nendpoint = %q\n", host)
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.local.toml"), []byte(localBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	home := t.TempDir()
+	env := append(os.Environ(), "SATELLE_HOME="+home)
+	h := StartServeHealthy(t, testBin, repo, env, 8*time.Second,
+		"--addr", "127.0.0.1", "--port", fmt.Sprint(port))
+	_ = h
+
+	seed := seedWorkspaceAdd(t, testBin, repo, host)
+	if !strings.Contains(seed, "workspace add: ok") {
+		t.Fatalf("workspace add: %s", seed)
+	}
+
+	// Override the suite-wide SATELLE_SERVER_ENDPOINT=none so the drain posts
+	// to this test serve (same seam as seedWorkspaceAdd).
+	pushEnv := []string{"SATELLE_SERVER_ENDPOINT=" + host}
+	out := mustRunEnv(t, testBin, repo, pushEnv, "story", "create",
+		"--title", "Live Drain Story",
+		"--body", "must appear without refresh",
+		"--acceptance", "1. visible live",
+		"--category", "chore",
+	)
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(out), &created); err != nil || created.ID == "" {
+		t.Fatalf("create parse: %v out=%s", err, out)
+	}
+
+	slug := filepath.Base(repo)
+	// Drain is synchronous before the verb returns; first GET should already
+	// see the row. Brief poll only covers page/serve race, not the 5m reconcile.
+	deadline := time.Now().Add(3 * time.Second)
+	var proj string
+	for time.Now().Before(deadline) {
+		proj = httpGet(t, host+"/r/"+slug+"/")
+		if strings.Contains(proj, "Live Drain Story") {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !strings.Contains(proj, "Live Drain Story") {
+		t.Fatalf("new story not visible after create drain (id=%s):\n%s", created.ID, proj)
+	}
+	// Priority set also drains; row must remain live.
+	mustRunEnv(t, testBin, repo, pushEnv, "story", "set", created.ID, "--priority", "high")
+	proj2 := httpGet(t, host+"/r/"+slug+"/")
+	if !strings.Contains(proj2, "Live Drain Story") {
+		t.Fatalf("story disappeared after set drain:\n%s", proj2)
+	}
+}

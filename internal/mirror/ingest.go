@@ -28,6 +28,10 @@ type RemoveEvent struct {
 
 // Snapshot is a full-state push for one partition (order:4 reconcile).
 // Every kind the UI reads must arrive here so serve never opens a repo DB.
+//
+// Partial drains (sty_3562c820) set Kinds / MergeKinds so only those partitions
+// are written; kinds named in neither are left untouched. Absent both fields,
+// behaviour is today's full replace of every kind (workspace add + reconcile).
 type Snapshot struct {
 	RepoKey      string            `json:"repo_key"`
 	Slug         string            `json:"slug,omitempty"`
@@ -42,6 +46,11 @@ type Snapshot struct {
 	// Identity is the per-partition meta blob (project name, repo path, footer email).
 	// Ingested as kind "identity" id "meta" (sty_400c022b / epic:mirror-ui-parity).
 	Identity json.RawMessage `json:"identity,omitempty"`
+	// Kinds is the explicit set of partitions this body authoritatively replaces
+	// (delete+insert). Empty means full snapshot: all standard kinds.
+	Kinds []string `json:"kinds,omitempty"`
+	// MergeKinds are applied as upsert-without-delete (ledger is append-only).
+	MergeKinds []string `json:"merge_kinds,omitempty"`
 }
 
 // IdentityMeta is the JSON shape of Snapshot.Identity — what the mirror footer
@@ -118,6 +127,11 @@ func (h *IngestHandler) handleChange(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "seq": seq})
 }
 
+// applySnapshotTimeout bounds server-side apply after the body is fully read.
+// Detached from the client so a drain that walks away mid-apply cannot cancel
+// a half-written multi-kind replace (sty_3562c820 AC2).
+const applySnapshotTimeout = 30 * time.Second
+
 func (h *IngestHandler) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -139,20 +153,22 @@ func (h *IngestHandler) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now()
 	ctx := r.Context()
-	// A periodic reconcile re-posts the same state most of the time. When the
-	// body is byte-identical to the one already applied, record freshness and
-	// stop: no row rewrite, no SSE doorbell, so the repair loop is invisible to
-	// anyone watching a page (sty_e6e467fe). Any difference falls through to the
-	// full replace below.
+	partial := len(snap.Kinds) > 0 || len(snap.MergeKinds) > 0
+	// A periodic reconcile re-posts the same FULL state most of the time. When
+	// the body is byte-identical to the one already applied, record freshness
+	// and stop (sty_e6e467fe). Partial drains never own snap_hash — skip the
+	// short-circuit so a light body cannot suppress a later full re-seed.
 	digest := snapshotDigest(body)
-	if prev, err := h.Store.SnapshotHash(ctx, snap.RepoKey); err == nil && prev != "" && prev == digest {
-		if err := h.Store.MarkFresh(ctx, snap.RepoKey, now); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+	if !partial {
+		if prev, err := h.Store.SnapshotHash(ctx, snap.RepoKey); err == nil && prev != "" && prev == digest {
+			if err := h.Store.MarkFresh(ctx, snap.RepoKey, now); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "unchanged": true})
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "unchanged": true})
-		return
 	}
 	// Fail-closed: landing /r/<slug>/ must map to one partition (sty_57d5ce25).
 	// Empty slug skips — the UI falls back to unique repo_key.
@@ -170,40 +186,27 @@ func (h *IngestHandler) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	replacements := []struct {
-		kind string
-		rows []ItemRow
-	}{
-		{"story", rawToRows(snap.Stories, "id")},
-		{"task", rawToRows(snap.Tasks, "id")},
-		{"execution", rawToRows(snap.Executions, "id")},
-		{"doc", rawToRows(snap.Docs, "name")},
-		{"ledger_event", rawToRows(snap.LedgerEvents, "id")},
-		{"story_doc", rawToRows(snap.StoryDocs, "id")},
-		{"seat", rawToRows(snap.Seats, "id")},
-	}
-	for _, r := range replacements {
-		if err := h.Store.ReplaceKind(ctx, snap.RepoKey, r.kind, r.rows, now); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-	if len(snap.Settings) > 0 {
-		if err := h.Store.ReplaceKind(ctx, snap.RepoKey, "settings", []ItemRow{{ID: "config", Payload: string(snap.Settings)}}, now); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-	if len(snap.Identity) > 0 {
-		if err := h.Store.ReplaceKind(ctx, snap.RepoKey, "identity", []ItemRow{{ID: "meta", Payload: string(snap.Identity)}}, now); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-	if err := h.Store.SetSnapshotHash(ctx, snap.RepoKey, digest); err != nil {
+
+	replace, merge := snapshotKindRows(snap)
+	// Detach from the client deadline: the body is already fully read; finishing
+	// (or failing) the single tx must not be cut short by the drain budget.
+	applyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), applySnapshotTimeout)
+	defer cancel()
+	if err := h.Store.ApplySnapshot(applyCtx, snap.RepoKey, replace, merge, now); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Only full bodies may set snap_hash. Partial applies clear it so the next
+	// reconcile cannot short-circuit against a light digest (sty_3562c820).
+	hash := digest
+	if partial {
+		hash = ""
+	}
+	if err := h.Store.SetSnapshotHash(ctx, snap.RepoKey, hash); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Doorbell only after a committed apply so viewers never refetch a failed push.
 	if h.OnChange != nil {
 		h.OnChange("stories")
 		h.OnChange("tasks")
@@ -212,6 +215,77 @@ func (h *IngestHandler) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+// snapshotKindRows builds the replace/merge sets for ApplySnapshot.
+// Empty Kinds+MergeKinds → full replace of every standard kind (and settings/
+// identity when present). Non-empty Kinds selects which replace partitions
+// apply; omitted kinds are left untouched.
+func snapshotKindRows(snap Snapshot) (replace, merge []KindRows) {
+	kindOK := func(kind string) bool {
+		if len(snap.Kinds) == 0 && len(snap.MergeKinds) == 0 {
+			return true // full snapshot
+		}
+		for _, k := range snap.Kinds {
+			if k == kind {
+				return true
+			}
+		}
+		return false
+	}
+	mergeOK := func(kind string) bool {
+		for _, k := range snap.MergeKinds {
+			if k == kind {
+				return true
+			}
+		}
+		return false
+	}
+	// When full (no Kinds), ledger is a replace. When light, ledger is merge-only.
+	full := len(snap.Kinds) == 0 && len(snap.MergeKinds) == 0
+	candidates := []struct {
+		kind  string
+		rows  []ItemRow
+		merge bool
+	}{
+		{"story", rawToRows(snap.Stories, "id"), false},
+		{"task", rawToRows(snap.Tasks, "id"), false},
+		{"execution", rawToRows(snap.Executions, "id"), false},
+		{"doc", rawToRows(snap.Docs, "name"), false},
+		{"ledger_event", rawToRows(snap.LedgerEvents, "id"), !full && mergeOK("ledger_event")},
+		{"story_doc", rawToRows(snap.StoryDocs, "id"), false},
+		{"seat", rawToRows(snap.Seats, "id"), false},
+	}
+	for _, c := range candidates {
+		if c.merge {
+			merge = append(merge, KindRows{Kind: c.kind, Items: c.rows})
+			continue
+		}
+		if full {
+			// Full path always replaces every standard kind (even empty).
+			if c.kind == "ledger_event" || kindOK(c.kind) {
+				replace = append(replace, KindRows{Kind: c.kind, Items: c.rows})
+			}
+			continue
+		}
+		if kindOK(c.kind) {
+			replace = append(replace, KindRows{Kind: c.kind, Items: c.rows})
+		}
+	}
+	if full || kindOK("settings") {
+		if len(snap.Settings) > 0 {
+			replace = append(replace, KindRows{Kind: "settings", Items: []ItemRow{{ID: "config", Payload: string(snap.Settings)}}})
+		} else if full {
+			// Full snapshot with empty settings still clears settings when we
+			// historically only wrote when present — keep that: only write if non-empty.
+		}
+	}
+	if full || kindOK("identity") {
+		if len(snap.Identity) > 0 {
+			replace = append(replace, KindRows{Kind: "identity", Items: []ItemRow{{ID: "meta", Payload: string(snap.Identity)}}})
+		}
+	}
+	return replace, merge
 }
 
 // snapshotDigest fingerprints a snapshot body. Snapshot JSON is deterministic

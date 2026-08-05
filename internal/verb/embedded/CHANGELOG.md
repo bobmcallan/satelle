@@ -1,3 +1,13 @@
+## [0.0.426] - 2026-08-05
+
+### Fixed
+- **CLI mutations now reach the live web view without a refresh on large repos.** End-of-verb UI drain posts a light partial snapshot (stories/tasks/seats/identity + recent ledger merge) instead of the multi-MB full body, so it lands inside the 1.5s hang budget. Snapshot apply is one transaction with a detached server deadline so a timed-out drain cannot half-replace a partition. Full snapshots remain for workspace add and the 5-minute reconcile (sty_3562c820).
+
+## [serve-v0.0.21] - 2026-08-05
+
+### Fixed
+- **Atomic snapshot ingest with partial-kind support.** `ApplySnapshot` commits all replace/merge kinds in one transaction; `Kinds`/`MergeKinds` on the wire leave unmentioned partitions untouched; `snap_hash` is only set for full bodies so light drains cannot suppress the next reconcile (sty_3562c820).
+
 ## [0.0.425] - 2026-08-05
 
 ### Fixed

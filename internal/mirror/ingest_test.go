@@ -2,6 +2,7 @@ package mirror_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/mirror"
 )
@@ -187,6 +189,124 @@ func TestIngestRejectsNonPOST(t *testing.T) {
 	mux.ServeHTTP(rr, req)
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("got %d", rr.Code)
+	}
+}
+
+// TestIngestPartialSnapshotLeavesOtherKinds (sty_3562c820): a light drain with
+// Kinds set replaces only those partitions; docs (etc.) stay put. snap_hash is
+// cleared so the next full reconcile cannot short-circuit against a light body.
+func TestIngestPartialSnapshotLeavesOtherKinds(t *testing.T) {
+	s, err := mirror.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	h := &mirror.IngestHandler{Store: s}
+	mux := http.NewServeMux()
+	h.Mount(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	post := func(snap mirror.Snapshot) int {
+		t.Helper()
+		body, _ := json.Marshal(snap)
+		resp, err := http.Post(srv.URL+"/ingest/snapshot", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	full := mirror.Snapshot{
+		RepoKey:  "rk-partial",
+		Slug:     "partial",
+		Stories:  []json.RawMessage{[]byte(`{"id":"sty_old","title":"Old"}`)},
+		Docs:     []json.RawMessage{[]byte(`{"name":"wf","kind":"workflows","body":"keep-me"}`)},
+		Identity: json.RawMessage(`{"project_name":"p","repo_root":"/tmp/p","footer_email":""}`),
+	}
+	if code := post(full); code != 200 {
+		t.Fatalf("full seed %d", code)
+	}
+	hash, err := s.SnapshotHash(t.Context(), "rk-partial")
+	if err != nil || hash == "" {
+		t.Fatalf("full path must set snap_hash, got %q err=%v", hash, err)
+	}
+	docsBefore, _ := s.ListItems(t.Context(), "rk-partial", "doc")
+	if len(docsBefore) != 1 {
+		t.Fatalf("docs before: %v", docsBefore)
+	}
+
+	// Light drain: new story, no docs in body, Kinds omit doc.
+	light := mirror.Snapshot{
+		RepoKey:      "rk-partial",
+		Slug:         "partial",
+		Kinds:        []string{"story", "task", "execution", "seat", "identity"},
+		MergeKinds:   []string{"ledger_event"},
+		Stories:      []json.RawMessage{[]byte(`{"id":"sty_new","title":"New"}`)},
+		LedgerEvents: []json.RawMessage{[]byte(`{"id":"evt_1","story_id":"sty_new","kind":"status_transition"}`)},
+		Identity:     json.RawMessage(`{"project_name":"p","repo_root":"/tmp/p","footer_email":""}`),
+	}
+	if code := post(light); code != 200 {
+		t.Fatalf("light drain %d", code)
+	}
+	stories, _ := s.ListItems(t.Context(), "rk-partial", "story")
+	if len(stories) != 1 || !bytes.Contains([]byte(stories[0].Payload), []byte("sty_new")) {
+		t.Fatalf("stories after light: %v", stories)
+	}
+	docsAfter, _ := s.ListItems(t.Context(), "rk-partial", "doc")
+	if len(docsAfter) != 1 || !bytes.Contains([]byte(docsAfter[0].Payload), []byte("keep-me")) {
+		t.Fatalf("docs must survive light drain: %v", docsAfter)
+	}
+	led, _ := s.ListItems(t.Context(), "rk-partial", "ledger_event")
+	if len(led) != 1 {
+		t.Fatalf("merge ledger: %v", led)
+	}
+	hashAfter, _ := s.SnapshotHash(t.Context(), "rk-partial")
+	if hashAfter != "" {
+		t.Fatalf("partial apply must clear snap_hash, got %q", hashAfter)
+	}
+}
+
+// TestApplySnapshotCancelledLeavesPriorState (sty_3562c820 AC2): a cancelled
+// apply context fails before commit and leaves the previous rows intact.
+func TestApplySnapshotCancelledLeavesPriorState(t *testing.T) {
+	s, err := mirror.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := t.Context()
+	now := time.Now()
+	if err := s.ReplaceKind(ctx, "rk", "story", []mirror.ItemRow{
+		{ID: "sty_a", Payload: `{"id":"sty_a","title":"A"}`},
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceKind(ctx, "rk", "doc", []mirror.ItemRow{
+		{ID: "wf", Payload: `{"name":"wf","body":"old"}`},
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+
+	cancelCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	err = s.ApplySnapshot(cancelCtx, "rk",
+		[]mirror.KindRows{
+			{Kind: "story", Items: []mirror.ItemRow{{ID: "sty_b", Payload: `{"id":"sty_b"}`}}},
+			{Kind: "doc", Items: []mirror.ItemRow{{ID: "wf", Payload: `{"name":"wf","body":"new"}`}}},
+		},
+		nil, now)
+	if err == nil {
+		t.Fatal("expected cancelled ApplySnapshot to fail")
+	}
+	stories, _ := s.ListItems(ctx, "rk", "story")
+	if len(stories) != 1 || stories[0].ID != "sty_a" {
+		t.Fatalf("story rows after cancelled apply: %v", stories)
+	}
+	docs, _ := s.ListItems(ctx, "rk", "doc")
+	if len(docs) != 1 || !bytes.Contains([]byte(docs[0].Payload), []byte("old")) {
+		t.Fatalf("doc rows after cancelled apply: %v", docs)
 	}
 }
 

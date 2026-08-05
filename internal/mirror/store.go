@@ -187,26 +187,61 @@ ON CONFLICT(repo_key, kind, id) DO UPDATE SET payload = excluded.payload, update
 	return err
 }
 
-// ReplaceKind deletes all items of kind for repoKey then inserts the given set.
-// Used by full snapshot reconcile.
-func (s *Store) ReplaceKind(ctx context.Context, repoKey, kind string, items []ItemRow, now time.Time) error {
+// KindRows is one kind's row set for ApplySnapshot (replace or merge).
+type KindRows struct {
+	Kind  string
+	Items []ItemRow
+}
+
+// ApplySnapshot applies every replace (delete+insert) and merge (upsert) kind
+// inside one transaction so a mid-apply failure leaves the partition unchanged
+// (sty_3562c820 AC2). Callers pass only the kinds they authorise.
+func (s *Store) ApplySnapshot(ctx context.Context, repoKey string, replace, merge []KindRows, now time.Time) error {
+	repoKey = strings.TrimSpace(repoKey)
+	if repoKey == "" {
+		return fmt.Errorf("mirror: empty repo_key")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM items WHERE repo_key = ? AND kind = ?`, repoKey, kind); err != nil {
-		return err
-	}
 	at := now.UTC().Format(time.RFC3339Nano)
-	for _, it := range items {
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO items (repo_key, kind, id, payload, updated_at) VALUES (?, ?, ?, ?, ?)
-`, repoKey, kind, it.ID, it.Payload, at); err != nil {
+	for _, kr := range replace {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM items WHERE repo_key = ? AND kind = ?`, repoKey, kr.Kind); err != nil {
 			return err
+		}
+		for _, it := range kr.Items {
+			if _, err := tx.ExecContext(ctx, `
+INSERT INTO items (repo_key, kind, id, payload, updated_at) VALUES (?, ?, ?, ?, ?)
+`, repoKey, kr.Kind, it.ID, it.Payload, at); err != nil {
+				return err
+			}
+		}
+	}
+	for _, kr := range merge {
+		for _, it := range kr.Items {
+			if _, err := tx.ExecContext(ctx, `
+INSERT INTO items (repo_key, kind, id, payload, updated_at) VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(repo_key, kind, id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at
+`, repoKey, kr.Kind, it.ID, it.Payload, at); err != nil {
+				return err
+			}
 		}
 	}
 	return tx.Commit()
+}
+
+// ReplaceKind deletes all items of kind for repoKey then inserts the given set.
+// Thin wrapper over ApplySnapshot so the DELETE+INSERT SQL lives once.
+func (s *Store) ReplaceKind(ctx context.Context, repoKey, kind string, items []ItemRow, now time.Time) error {
+	return s.ApplySnapshot(ctx, repoKey, []KindRows{{Kind: kind, Items: items}}, nil, now)
+}
+
+// UpsertItems insert-or-updates rows of one kind without deleting siblings
+// (ledger merge path for light drains — sty_3562c820).
+func (s *Store) UpsertItems(ctx context.Context, repoKey, kind string, items []ItemRow, now time.Time) error {
+	return s.ApplySnapshot(ctx, repoKey, nil, []KindRows{{Kind: kind, Items: items}}, now)
 }
 
 // ItemRow is a raw stored item.

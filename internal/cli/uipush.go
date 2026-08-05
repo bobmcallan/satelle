@@ -69,11 +69,13 @@ func (d *uiDrain) flush() {
 			_ = pub.PostContext(ctx, t)
 		}
 		// Snapshot last: handleSnapshot rings the all-topics doorbell after
-		// bodies land, so the final SSE reload sees full state.
+		// bodies land, so the final SSE reload sees full state. Drain uses a
+		// light partial snapshot so large repos land inside uiDrainBudget
+		// (sty_3562c820); workspace add still sends the full body.
 		if a == nil {
 			return
 		}
-		snap, err := buildUISnapshot(ctx, a)
+		snap, err := buildUIDrainSnapshot(ctx, a)
 		if err != nil || snap == nil {
 			return
 		}

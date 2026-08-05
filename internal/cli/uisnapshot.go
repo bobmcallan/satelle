@@ -64,7 +64,23 @@ func postUISnapshotContext(ctx context.Context, endpoint string, snap *mirror.Sn
 	return nil
 }
 
+// drainLedgerLimit is how many newest ledger events a light drain ships via
+// MergeKinds. Full snapshots still use 10k (sty_c5065d05).
+const drainLedgerLimit = 200
+
 func buildUISnapshot(ctx context.Context, a *app.App) (*mirror.Snapshot, error) {
+	return buildUISnapshotOpts(ctx, a, false)
+}
+
+// buildUIDrainSnapshot is the end-of-verb light push (sty_3562c820): stories /
+// tasks / executions / seats / identity plus a merge of recent ledger events.
+// Doc and story-doc bodies are omitted so the payload fits uiDrainBudget; the
+// 5-minute reconcile (full snapshot via workspace add) remains the repair path.
+func buildUIDrainSnapshot(ctx context.Context, a *app.App) (*mirror.Snapshot, error) {
+	return buildUISnapshotOpts(ctx, a, true)
+}
+
+func buildUISnapshotOpts(ctx context.Context, a *app.App, drain bool) (*mirror.Snapshot, error) {
 	repoKey := config.RepoKey(a.RepoRoot)
 	slug := filepath.Base(a.RepoRoot)
 	snap := &mirror.Snapshot{RepoKey: repoKey, Slug: slug}
@@ -88,43 +104,49 @@ func buildUISnapshot(ctx context.Context, a *app.App) (*mirror.Snapshot, error) 
 		}
 	}
 
-	// Provenance/source for process docs (workflows/skills/principles).
-	prov, src := map[string]string{}, map[string]string{}
-	if a.Store.DocIndex != nil {
-		if rows, err := substrate.List(ctx, a.Store.DocIndex); err == nil {
-			for _, r := range rows {
-				key := r.Kind + "\x00" + r.Name
-				prov[key] = r.Provenance
-				src[key] = r.Source
+	if !drain {
+		// Provenance/source for process docs (workflows/skills/principles).
+		prov, src := map[string]string{}, map[string]string{}
+		if a.Store.DocIndex != nil {
+			if rows, err := substrate.List(ctx, a.Store.DocIndex); err == nil {
+				for _, r := range rows {
+					key := r.Kind + "\x00" + r.Name
+					prov[key] = r.Provenance
+					src[key] = r.Source
+				}
 			}
-		}
-		docs, err := a.Store.DocIndex.List(ctx, "")
-		if err != nil {
-			return nil, err
-		}
-		for _, d := range docs {
-			key := d.Kind + "\x00" + d.Name
-			row := map[string]any{
-				"name":       d.Name,
-				"kind":       d.Kind,
-				"body":       d.Body,
-				"headline":   d.Headline,
-				"path":       d.Path,
-				"hash":       d.Hash,
-				"size":       d.Size,
-				"mod_time":   d.ModTime,
-				"indexed_at": d.IndexedAt,
-				"embedded":   d.Embedded,
-				"provenance": prov[key],
-				"source":     src[key],
+			docs, err := a.Store.DocIndex.List(ctx, "")
+			if err != nil {
+				return nil, err
 			}
-			b, _ := json.Marshal(row)
-			snap.Docs = append(snap.Docs, b)
+			for _, d := range docs {
+				key := d.Kind + "\x00" + d.Name
+				row := map[string]any{
+					"name":       d.Name,
+					"kind":       d.Kind,
+					"body":       d.Body,
+					"headline":   d.Headline,
+					"path":       d.Path,
+					"hash":       d.Hash,
+					"size":       d.Size,
+					"mod_time":   d.ModTime,
+					"indexed_at": d.IndexedAt,
+					"embedded":   d.Embedded,
+					"provenance": prov[key],
+					"source":     src[key],
+				}
+				b, _ := json.Marshal(row)
+				snap.Docs = append(snap.Docs, b)
+			}
 		}
 	}
 
 	if a.Store.Ledger != nil {
-		if led, err := listLedgerJSON(ctx, a); err == nil {
+		limit := 10000
+		if drain {
+			limit = drainLedgerLimit
+		}
+		if led, err := listLedgerJSONLimit(ctx, a, limit); err == nil {
 			snap.LedgerEvents = led
 		}
 	}
@@ -135,9 +157,11 @@ func buildUISnapshot(ctx context.Context, a *app.App) (*mirror.Snapshot, error) 
 		}
 	}
 
-	// Settings blob — display rows the RO settings page renders.
-	if cfgBytes, err := marshalSettingsBlob(a); err == nil {
-		snap.Settings = cfgBytes
+	if !drain {
+		// Settings blob — display rows the RO settings page renders.
+		if cfgBytes, err := marshalSettingsBlob(a); err == nil {
+			snap.Settings = cfgBytes
+		}
 	}
 
 	// Per-partition identity/meta for footer + account strip.
@@ -150,9 +174,17 @@ func buildUISnapshot(ctx context.Context, a *app.App) (*mirror.Snapshot, error) 
 		snap.Identity = b
 	}
 
-	// Story/task attachment docs (plans, step-summaries, …) under the runtime stories dir.
-	if docs, err := listStoryDocsJSON(a); err == nil {
-		snap.StoryDocs = docs
+	if !drain {
+		// Story/task attachment docs (plans, step-summaries, …) under the runtime stories dir.
+		if docs, err := listStoryDocsJSON(a); err == nil {
+			snap.StoryDocs = docs
+		}
+	}
+
+	if drain {
+		// Explicit partition set: omitted kinds stay untouched on the mirror.
+		snap.Kinds = []string{"story", "task", "execution", "seat", "identity"}
+		snap.MergeKinds = []string{"ledger_event"}
 	}
 
 	return snap, nil
@@ -220,11 +252,15 @@ func listStoryDocsJSON(a *app.App) ([]json.RawMessage, error) {
 }
 
 func listLedgerJSON(ctx context.Context, a *app.App) ([]json.RawMessage, error) {
+	// Full snapshot path: newest-first under the 10k budget (sty_c5065d05).
+	return listLedgerJSONLimit(ctx, a, 10000)
+}
+
+func listLedgerJSONLimit(ctx context.Context, a *app.App, limit int) ([]json.RawMessage, error) {
 	if a.Store.Ledger == nil {
 		return nil, nil
 	}
-	// Newest-first under the 10k budget so recent status lights survive large ledgers (sty_c5065d05).
-	entries, err := a.Store.Ledger.ListAll(ctx, 10000)
+	entries, err := a.Store.Ledger.ListAll(ctx, limit)
 	if err != nil {
 		return nil, err
 	}
