@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -136,7 +137,7 @@ func TestSessionSeatBlockRendersEveryLiveSeat(t *testing.T) {
 	t.Cleanup(func() { sessionWorktree = orig })
 	sessionWorktree = func() string { return "/w/b" }
 
-	out := renderSeatBlocks(live, now)
+	out := renderSeatBlocks(live, now, config.ParallelEpic)
 	if !strings.Contains(out, "sty_a") || !strings.Contains(out, "sty_b") {
 		t.Fatalf("session block must name every live seat: %s", out)
 	}

@@ -738,12 +738,24 @@ func formatSeatAge(d time.Duration) string {
 	return fmt.Sprintf("%dd", int(d.Hours())/24)
 }
 
+// seatModeLine states the ACTIVE seat concurrency mode as mechanism: what the
+// mode is, and — for a grouped seat — the two preconditions a second engagement
+// must satisfy. An agent that only meets the mode in a refusal has already lost a
+// turn to it. Nothing here says when a repo should choose a mode: that opinion is
+// the repo's own substrate, and satelle polices no sibling contention.
+func seatModeLine(mode string) string {
+	if mode == config.ParallelEpic {
+		return "seat mode: epic — a sibling under the SAME parent may engage alongside the holder, from a DISTINCT git working tree; a story under another parent (or none) is refused while that seat is held."
+	}
+	return "seat mode: none — one performing story at a time."
+}
+
 // formatSeatBlock is the SessionStart / prompt multi-line seat inject body.
-func formatSeatBlock(info seatInfo, now time.Time) string {
+func formatSeatBlock(info seatInfo, now time.Time, mode string) string {
 	if info.ItemID == "" {
 		return ""
 	}
-	return "## Engagement seat\n" + formatSeat(info, now) +
+	return "## Engagement seat\n" + formatSeat(info, now) + "\n" + seatModeLine(mode) +
 		"\nInspect: `satelle story seat` · Release: `satelle story seat release " + info.ItemID + "`"
 }
 
@@ -1438,8 +1450,16 @@ func sessionSeatBlock(a *app.App) string {
 		return ""
 	}
 	ctx := context.Background()
+	mode := a.Config.ResolveEngagementParallel()
 	leases, err := a.Store.Leases.List(ctx)
 	if err != nil || len(leases) == 0 {
+		// No seat to describe. Under the default mode that is the whole story and
+		// the inject stays silent; under a NON-default mode the agent still has to
+		// know the rule it will be engaging under, and a refusal is too late to
+		// learn it.
+		if mode != config.ParallelNone {
+			return "## Engagement seat\nseat free.\n" + seatModeLine(mode)
+		}
 		return ""
 	}
 	wfs, _ := a.Store.DocIndex.List(ctx, "workflows")
@@ -1450,7 +1470,7 @@ func sessionSeatBlock(a *app.App) string {
 	// render them ALL — an operator joining a project where work is in flight
 	// under a shared key must see every holder, not just one.
 	if len(live) > 0 {
-		return renderSeatBlocks(live, now)
+		return renderSeatBlocks(live, now, mode)
 	}
 	info := other
 	// No evaluateSeat pick (e.g. empty items+wfs): still name the first raw row.
@@ -1462,22 +1482,22 @@ func sessionSeatBlock(a *app.App) string {
 			Stale: lease.IsStale(l, now), InFlight: lease.EffectiveInFlight(l, now),
 		}
 	}
-	return formatSeatBlock(info, now)
+	return formatSeatBlock(info, now, mode)
 }
 
 // renderSeatBlocks formats every live seat for the SessionStart inject, leading
 // with this session's own (sty_c098dc2d). A project may hold more than one, and
 // an operator joining that work must see all of it — the old leases[0] pick
 // would have shown one and hidden the rest.
-func renderSeatBlocks(live []seatInfo, now time.Time) string {
+func renderSeatBlocks(live []seatInfo, now time.Time, mode string) string {
 	if len(live) == 0 {
 		return ""
 	}
 	mine := pickSessionSeat(live)
-	blocks := []string{formatSeatBlock(mine, now)}
+	blocks := []string{formatSeatBlock(mine, now, mode)}
 	for _, s := range live {
 		if s.ItemID != mine.ItemID {
-			blocks = append(blocks, formatSeatBlock(s, now))
+			blocks = append(blocks, formatSeatBlock(s, now, mode))
 		}
 	}
 	return strings.Join(blocks, "\n\n")

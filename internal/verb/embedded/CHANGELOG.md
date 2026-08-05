@@ -1,3 +1,8 @@
+## [0.0.430] - 2026-08-05
+
+### Changed
+- **The seat concurrency mode is now visible to the agent that must obey it.** `[engagement] parallel` joins the repo settings schema, so `satelle settings` lists it, `satelle settings engagement.parallel` reads it, `satelle settings engagement.parallel epic` writes it (creating the `[engagement]` table that `init` does not seed), and the read-only web settings page renders it — one schema row, every surface, because they all iterate `config.Settings`. The displayed value is the RESOLVED mode, so an unset key reports `none` rather than `(unset)`. The SessionStart seat inject now states the ACTIVE mode: under `none` a single factual line on a held seat, under `epic` the two preconditions a second engagement must satisfy — a sibling under the SAME parent, from a DISTINCT git working tree. With no seat held the inject stays silent under the default and emits the mode under a non-default one, which is the case where the rule matters before a collision rather than inside a refusal. Mechanism only: nothing here says when a repo should choose a mode, and satelle still polices no sibling contention (sty_050f3a19)
+
 ## [0.0.429] - 2026-08-05
 
 ### Added

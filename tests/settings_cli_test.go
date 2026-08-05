@@ -67,6 +67,34 @@ func TestSettingsRepoCLIEndToEnd(t *testing.T) {
 		t.Fatalf("unknown key should fail: err=%v out=%s", err, out)
 	}
 
+	// The seat concurrency mode is on the surface an agent enumerates, and its
+	// section is one `satelle init` does not seed — so the write must CREATE
+	// [engagement], not silently drop the edit (sty_050f3a19 AC1/AC2).
+	if out, _ := run("settings", "engagement.parallel"); strings.TrimSpace(out) != "none" {
+		t.Fatalf("unset engagement.parallel must resolve to the default: %q", out)
+	}
+	if !strings.Contains(mustList(t, run), "engagement.parallel = none") {
+		t.Fatalf("list must carry engagement.parallel:\n%s", mustList(t, run))
+	}
+	if out, err := run("settings", "engagement.parallel", "epic"); err != nil {
+		t.Fatalf("write engagement.parallel: %v\n%s", err, out)
+	}
+	saved, _ = os.ReadFile(cfgPath)
+	if !strings.Contains(string(saved), "[engagement]") || !strings.Contains(string(saved), `parallel = "epic"`) {
+		t.Fatalf("engagement write did not create the section:\n%s", saved)
+	}
+	if out, _ := run("settings", "engagement.parallel"); strings.TrimSpace(out) != "epic" {
+		t.Fatalf("read back after write: %q", out)
+	}
+	// A value outside the closed set is refused, and the file is left alone.
+	before, _ := os.ReadFile(cfgPath)
+	if out, err := run("settings", "engagement.parallel", "all"); err == nil || !strings.Contains(out, "none | epic") {
+		t.Fatalf("bogus mode must be refused naming the modes: err=%v out=%s", err, out)
+	}
+	if after, _ := os.ReadFile(cfgPath); string(after) != string(before) {
+		t.Fatalf("refused write must not touch the file:\n%s", after)
+	}
+
 	// A repo write must NEVER touch the global config.
 	if gc, _ := os.ReadFile(filepath.Join(ghome, "config.toml")); strings.Contains(string(gc), "warn") {
 		t.Fatalf("repo write leaked into the global config:\n%s", gc)
@@ -80,4 +108,14 @@ func TestSettingsRepoCLIEndToEnd(t *testing.T) {
 	if out, err := run("settings", "server", "https://legacy.example"); err != nil || !strings.Contains(out, "deprecated") {
 		t.Fatalf("legacy `settings server`: err=%v, must warn:\n%s", err, out)
 	}
+}
+
+// mustList runs bare `settings` and fails the test if it errors.
+func mustList(t *testing.T, run func(args ...string) (string, error)) string {
+	t.Helper()
+	out, err := run("settings")
+	if err != nil {
+		t.Fatalf("list: %v\n%s", err, out)
+	}
+	return out
 }

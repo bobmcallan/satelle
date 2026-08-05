@@ -41,3 +41,27 @@ func TestHookContextInjectsSessionSet(t *testing.T) {
 		t.Errorf("an on-demand (untagged) principle must NOT be injected:\n%s", out)
 	}
 }
+
+// TestHookContextNamesSeatMode: the SessionStart inject states the seat
+// concurrency mode the session is actually running under (sty_050f3a19 AC3).
+// Under the default it stays silent about an unheld seat — that is the whole
+// rule, and a line per session would be a token toll for nothing. Under `epic`
+// it names the mode and BOTH preconditions before the agent meets them in a
+// refusal.
+func TestHookContextNamesSeatMode(t *testing.T) {
+	repo := t.TempDir()
+	mustRun(t, testBin, repo, "init")
+
+	// Default mode, no seat held: no seat block at all.
+	if out := mustRun(t, testBin, repo, "hook", "context"); strings.Contains(out, "seat mode") {
+		t.Errorf("default mode with no seat must not inject a seat block:\n%s", out)
+	}
+
+	mustRun(t, testBin, repo, "settings", "engagement.parallel", "epic")
+	out := mustRun(t, testBin, repo, "hook", "context")
+	for _, want := range []string{"seat mode: epic", "parent", "working tree"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("epic-mode inject missing %q:\n%s", want, out)
+		}
+	}
+}

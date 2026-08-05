@@ -57,6 +57,7 @@ var Settings = []Setting{
 	{Section: "review", Key: "gate_create", Label: "Gate create", Help: "Run structure + create_review on story/task create (default on at init).", Kind: kindBool},
 	{Section: "gate", Key: "edit_exempt_paths", Label: "Edit-gate exempt paths", Help: "Path prefixes exempt from the engaged-story edit gate. Init seeds .satelle/ (authored substrate) and .gitignore (satelle-managed output).", Kind: kindList},
 	{Section: "gate", Key: "allow_outside_tree_edits", Label: "Allow outside-tree edits", Help: "Opt in to Bash/Edit mutations in another repo's working tree. Non-repo paths are never fenced. Default deny; only for a deliberate multi-repo install.", Kind: kindBool},
+	{Section: "engagement", Key: "parallel", Label: "Seat concurrency mode", Help: "none = one performing story at a time; epic = sibling children of one epic may engage concurrently, each from a distinct git working tree.", Kind: kindEnum, Enum: []string{ParallelNone, ParallelEpic}},
 	{Section: "hosted", Key: "project", Label: "Hosted project", Help: "Project slug this repo maps to (personal sync target).", Kind: kindString},
 	{Section: "hosted", Key: "workspace", Label: "Active workspace", Help: "Scoped-sync destination — personal default; a team-workspace name elects it.", Kind: kindString},
 	{Section: "attachments", Key: "max_bytes", Label: "Binary attachment max bytes", Help: "Per-attachment decoded size cap (default 10485760 = 10 MiB).", Kind: kindInt},
@@ -122,6 +123,11 @@ func SettingDisplay(cfg Config, s Setting) string {
 		return strings.Join(cfg.Gate.EditExemptPaths, "\n")
 	case "gate.allow_outside_tree_edits":
 		return boolStr(cfg.Gate.AllowOutsideTreeEdits)
+	case "engagement.parallel":
+		// The RESOLVED mode, not the raw field: an unset key means `none`, and an
+		// agent reading this surface needs the mode it is actually running under,
+		// not "(unset)".
+		return cfg.ResolveEngagementParallel()
 	case "hosted.project":
 		return cfg.Hosted.Project
 	case "hosted.workspace":

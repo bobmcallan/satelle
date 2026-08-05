@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/store"
@@ -1019,7 +1020,7 @@ func TestSeatInjectHelpers(t *testing.T) {
 		AcquiredAt: now.Add(-40 * time.Minute), HeartbeatAt: now.Add(-40 * time.Minute),
 		Stale: true,
 	}
-	block := formatSeatBlock(stale, now)
+	block := formatSeatBlock(stale, now, config.ParallelNone)
 	if !strings.Contains(block, "## Engagement seat") {
 		t.Fatalf("block missing heading: %q", block)
 	}
@@ -1063,7 +1064,7 @@ func TestSeatInjectHelpers(t *testing.T) {
 		AcquiredAt: now.Add(-10 * time.Minute), HeartbeatAt: now.Add(-time.Minute),
 		Engaged: true,
 	}
-	liveBlock := formatSeatBlock(live, now)
+	liveBlock := formatSeatBlock(live, now, config.ParallelNone)
 	if strings.Contains(liveBlock, "STALE") || strings.Contains(strings.ToLower(liveBlock), "stale ") {
 		// formatSeat uses "stale Nm" only when Stale=true; live must not.
 		if strings.Contains(liveBlock, ", stale ") {
@@ -1072,6 +1073,35 @@ func TestSeatInjectHelpers(t *testing.T) {
 	}
 	if !strings.Contains(liveBlock, "alice") || !strings.Contains(liveBlock, "sty_live") {
 		t.Fatalf("live block: %q", liveBlock)
+	}
+}
+
+// TestSeatModeInject: the seat inject names the ACTIVE concurrency mode, and under
+// a non-default mode says what a second engagement requires. An agent that only
+// meets the mode in a refusal has already lost a turn to it (sty_050f3a19 AC3).
+func TestSeatModeInject(t *testing.T) {
+	// Default mode: one short factual line, no preconditions to state.
+	none := seatModeLine(config.ParallelNone)
+	if !strings.Contains(none, "none") || !strings.Contains(none, "one performing story at a time") {
+		t.Errorf("none mode line: %q", none)
+	}
+	// Unset resolves to the default rather than an empty line.
+	if seatModeLine("") != none {
+		t.Errorf("unset mode must render as none: %q", seatModeLine(""))
+	}
+	// Epic states BOTH preconditions — same parent, distinct working tree.
+	epic := seatModeLine(config.ParallelEpic)
+	for _, want := range []string{"epic", "parent", "working tree"} {
+		if !strings.Contains(epic, want) {
+			t.Errorf("epic mode line missing %q: %q", want, epic)
+		}
+	}
+	// The mode rides the seat block, so a held seat carries it.
+	now := time.Now().UTC()
+	held := seatInfo{ItemID: "sty_held", State: "in_progress", Owner: "alice",
+		AcquiredAt: now.Add(-time.Minute), HeartbeatAt: now, Engaged: true}
+	if b := formatSeatBlock(held, now, config.ParallelEpic); !strings.Contains(b, "working tree") {
+		t.Errorf("held-seat block must carry the mode: %q", b)
 	}
 }
 
