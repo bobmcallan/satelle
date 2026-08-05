@@ -65,6 +65,12 @@ ACs**, not only to a plan artifact.
  not a leaf slice): title starts with `epic:`; body says "umbrella",
  "children", "closes when children"; tags include `kind:epic` or only an
  `epic:<theme>` theme without a leaf outcome.
+- **Route proportionality** — the category picks the ROUTE, so a slice whose
+ declared surface is entirely prose (body and ACs describe documentation and
+ name no code, config or build surface) must not sit on a code-shaped lane.
+ **Reject**, naming the lighter lane: `category: docs` — the shipped docs lane
+ — or the repo's own doc lane where it authors one. Correcting it here is
+ cheap; mid-route it is not, and no agent may skip steps to lighten a lane.
 - **No invented kind:\* axis** — reject tags like `kind:epic`, `kind:bug`. The
  durable class is `category`; themes use `epic:<theme>`, not `kind:`.
 - **Order/theme tags** — when present, `epic:<theme>`, `sprint:<N>`,
@@ -87,9 +93,10 @@ cheap to catch here — reject it.
 - **Accept** when goal is coherent, ACs verify it, premise is not falsified by
  named repo evidence, and category/tags fit the taxonomy.
 - **Reject** when content fails alignment/coherence/scope, premise is falsified
- with cited evidence, OR classification is wrong (epic as feature, invented
- `kind:*`) — name the specific problem and the fix (e.g. "use category
- epic-parent"; "premise false: contradicted by <path>:<symbol>").
+ with cited evidence, OR classification is wrong (epic as feature, doc-only
+ slice on a code lane, invented `kind:*`) — name the specific problem and the
+ fix (e.g. "use category epic-parent"; "use category docs"; "premise false:
+ contradicted by <path>:<symbol>").
 
 ## Verdict
 

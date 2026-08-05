@@ -39,6 +39,25 @@ park = { state = "blocked", gate = "satelle-story-blocked-review", advisor = "bl
 cancel = { state = "cancelled", gate = "satelle-story-cancel-review" }
 
 # ================================================================
+# THE DOCS LANE — a slice whose whole surface is prose
+# raised -> authored -> docs-verified
+# ================================================================
+
+[docs]
+# Documentation is AUTHORED, not coded, and its close asks one proportionate
+# question — did the change set stay inside doc-typed paths? — instead of the
+# working lane's code-shaped review. Same park and cancel as `*`: a doc slice
+# blocks and is abandoned like any other work.
+#
+# COMPOSITION: authored substrate overrides the embedded default per FILE, so a
+# repo carrying its own done.toml does NOT inherit this table — it adopts the
+# lane by copying this table into that file and the two steps into its
+# step.toml. A repo with no done.toml of its own gets the lane as shipped.
+obligations = ["raised", "authored", "docs-verified"]
+park = { state = "blocked", gate = "satelle-story-blocked-review", advisor = "blocked-triage", advisor_skill = "satelle-story-blocked-triage" }
+cancel = { state = "cancelled", gate = "satelle-story-cancel-review" }
+
+# ================================================================
 # CONTAINERS — closed by their children, not by work of their own
 # raised -> children-resolved
 # ================================================================

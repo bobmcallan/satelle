@@ -44,6 +44,14 @@ var gateCoverageWaiver = map[string]string{
 	"epic-parent/satelle-story-cancel-review": "container cancel; the wildcard cancel fixture covers the stub seam",
 	"parent/satelle-story-cancel-review":      "container cancel; the wildcard cancel fixture covers the stub seam",
 	"*/satelle-story-blocked-review":          "park path; same reviewer command seam as intent/cancel",
+	// The docs lane reuses the working lane's exits verbatim, so its park, cancel
+	// and triage bindings ride the same seams already fixtured above. Its close
+	// gate is a fence, golden-tabled in fenceFixtures rather than wired here.
+	"docs/satelle-story-blocked-review": "park path; same reviewer command seam as the wildcard lane",
+	"docs/satelle-story-cancel-review":  "same cancel gate as the wildcard lane, exercised there",
+	"docs/satelle-story-blocked-triage": "orchestrator-consulted advisor, not a status-advancing gate",
+	"docs/satelle-step-summary":         "summariser, not accept/reject gate",
+	"docs/satelle-docs-only-check":      "coded check; accept/reject goldens live in fenceFixtures",
 	// Workflow-change is n/a-fast on slices that touch no workflow file — hard to force reject hermetically without content.
 	"*/satelle-workflow-change-review": "n/a-fast when no workflow files change; seam shared with intent",
 }

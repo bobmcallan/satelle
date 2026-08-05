@@ -1,3 +1,11 @@
+## [0.0.429] - 2026-08-05
+
+### Added
+- **A shipped `docs` lane for doc-only slices.** The embedded `done.toml` gains a `[docs]` category table — `raised → authored → docs-verified`, with the working lane's park and cancel — so a zero-config repo routes a documentation story through an authoring step and ONE proportionate close instead of the code-shaped `coded` step and its close reviewers. `step.toml` gains the two steps; the close is the new `satelle-docs-only-check`, a functional check that unions the story's recorded, live-plus-substrate and commit evidence channels and rejects any path that is not doc-typed (and rejects an empty change set, which is not evidence of anything). The lane's file-type scope IS its configuration: `doc_paths` ships as markdown only and a repo widens or narrows it by overriding that skill under `.satelle/skills/` — no route or verdict decision moves into Go. A repo carrying its own `done.toml` does not inherit the table (authored substrate overrides the embedded default per FILE); it adopts the lane by copying the table and the two steps, which the `[docs]` comment states (sty_e05bb183)
+
+### Changed
+- **`satelle-story-create-review` judges route proportionality.** A story whose declared surface is entirely prose is rejected off a code-shaped category with the lighter lane named (`category: docs`, or the repo's own doc lane), so the route is corrected at create where it is cheap rather than mid-route where it is not. The embedded step-summary gate now also fires on the docs lane; the estimate gate deliberately still does not (sty_e05bb183)
+
 ## [0.0.428] - 2026-08-05
 
 ### Fixed

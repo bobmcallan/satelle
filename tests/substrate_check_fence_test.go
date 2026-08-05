@@ -136,6 +136,63 @@ var fenceFixtures = map[string][]fenceCase{
 			wantExit: 0,
 		},
 	},
+	"satelle-docs-only-check": {
+		{
+			name: "accepts a markdown-only slice",
+			sid:  "sty_d0c11111",
+			setup: func(t *testing.T, repo string) {
+				gitInit(t, repo)
+				mustWrite(t, filepath.Join(repo, "README.md"), "baseline\n")
+				gitCommitAll(t, repo, "baseline")
+				mustWrite(t, filepath.Join(repo, "README.md"), "baseline\n\n## Retry policy\n")
+				mustWrite(t, filepath.Join(repo, "docs", "guide.md"), "# Guide\n")
+				gitCommitAll(t, repo, "document the retry policy (sty_d0c11111)")
+			},
+			wantExit:   0,
+			wantStdout: "docs-only slice confirmed",
+		},
+		{
+			name: "rejects a non-doc path, naming the offender",
+			sid:  "sty_d0c22222",
+			setup: func(t *testing.T, repo string) {
+				gitInit(t, repo)
+				mustWrite(t, filepath.Join(repo, "README.md"), "baseline\n")
+				gitCommitAll(t, repo, "baseline")
+				mustWrite(t, filepath.Join(repo, "README.md"), "baseline\n\n## Config\n")
+				mustWrite(t, filepath.Join(repo, "cmd", "foo.go"), "package main\n")
+				gitCommitAll(t, repo, "docs plus code (sty_d0c22222)")
+			},
+			wantExit:   1,
+			wantStdout: "cmd/foo.go",
+		},
+		{
+			// The lane's whole file-type scope is the doc_paths pattern: a
+			// non-markdown doc form is out until a repo widens it by overriding
+			// this skill — the pattern is configuration, not a Go branch.
+			name: "rejects a non-markdown doc form under the shipped default",
+			sid:  "sty_d0c33333",
+			setup: func(t *testing.T, repo string) {
+				gitInit(t, repo)
+				mustWrite(t, filepath.Join(repo, "README.md"), "baseline\n")
+				gitCommitAll(t, repo, "baseline")
+				mustWrite(t, filepath.Join(repo, "docs", "guide.rst"), "Guide\n=====\n")
+				gitCommitAll(t, repo, "rst guide (sty_d0c33333)")
+			},
+			wantExit:   1,
+			wantStdout: "docs/guide.rst",
+		},
+		{
+			name: "rejects an empty change set",
+			sid:  "sty_d0c44444",
+			setup: func(t *testing.T, repo string) {
+				gitInit(t, repo)
+				mustWrite(t, filepath.Join(repo, "README.md"), "baseline\n")
+				gitCommitAll(t, repo, "baseline")
+			},
+			wantExit:   1,
+			wantStdout: "no change set found",
+		},
+	},
 	"satelle-substrate-only-check": {
 		{
 			name: "accepts managed footprint",
