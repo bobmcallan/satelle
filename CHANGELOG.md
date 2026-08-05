@@ -1,3 +1,13 @@
+## [0.0.425] - 2026-08-05
+
+### Fixed
+- **Publish the route-panel CSS fix on the live service.** v0.0.424 shipped the CLI with the `.route-doc` chrome alignment (sty_c3b1eb57) but left `satelle-serve.version` at 0.0.19, so `satelle update` reported serve already up to date and the running web service kept the old stylesheet. Bump to serve-v0.0.20 so the embedded `app.css` reaches the persistent service.
+
+## [serve-v0.0.20] - 2026-08-05
+
+### Fixed
+- **Route document panel matches sibling prose cards** on story detail pages (sty_c3b1eb57) — full detail-column width and shared card chrome; list attachments keep the 760px measure.
+
 ## [0.0.424] - 2026-08-05
 
 ### Fixed
