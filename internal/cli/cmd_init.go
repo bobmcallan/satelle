@@ -1481,7 +1481,7 @@ gate_create = true
 # to require an engaged story for those paths. An explicitly empty list is a
 # deliberate opt-out (everything gated). Repos that predate .gitignore: run
 # satelle migrate --yes to append it without clobbering operator additions.
-# One performing story at a time is always enforced (no opt-out).
+# How MANY stories may perform at once is NOT set here — see [engagement] below.
 # allow_outside_tree_edits (default false) opts INTO Bash/Edit mutations whose
 # targets land in another git working tree (sty_a8454d10 / sty_aadd4d6c).
 # Non-repo paths (temp, scratchpads) are never fenced. Leave false unless this
@@ -1497,6 +1497,19 @@ edit_exempt_paths = [".satelle/", ".gitignore"]
 # [gate.command_allow]
 # push = ["release"]
 # allow_outside_tree_edits = false
+
+# [engagement] — SEAT CONCURRENCY: how many stories may perform at once.
+# "none" (default, and what you get with no section) is single occupancy: one
+# performing story, everything else refused. "epic" keys the seat on the story's
+# PARENT, so children of one parent may engage concurrently — each from its OWN
+# git working tree (a second engagement from an already-leased tree is refused,
+# and story diff is anchored to the tree its story was engaged from). A story
+# under a different parent, or none, is refused while such a seat is held.
+# Satelle arbitrates ENGAGEMENT only: how concurrent work converges (merge order,
+# suite runs, one push) is this repo's workflow, and satelle polices no
+# sibling contention. Only these two values are accepted.
+# [engagement]
+# parallel = "epic"
 
 # substrate_roots — per-kind parent dir for authored markdown. Unset means
 # <data_dir>/<kind> (e.g. .satelle/documents). Point a kind elsewhere — even

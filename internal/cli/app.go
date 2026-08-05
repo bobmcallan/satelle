@@ -140,7 +140,12 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetAttachmentPolicy(a.Config.ResolveAttachmentMaxBytes(), a.Config.ResolveAttachmentAllowTypes())
 	// Backups root is also runtime (sibling of stories/, not of tasks/).
 	verb.SetBackupsDir(filepath.Join(a.RuntimeDir, "backups"))
-	// Single performing story always enforced (sty_c7149f8a; allow_parallel removed sty_a614a0ea).
+	// Seat concurrency mode (sty_c098dc2d): [engagement] parallel selects the
+	// arbitration KEY a story claims the engagement seat under — "none" (the
+	// default, and what this repo has always enforced: one performing story) or
+	// "epic" (sibling children of one epic, one working tree per lease). Unwired
+	// is "none", so a repo with no [engagement] section is unaffected.
+	verb.SetEngagementMode(a.Config)
 	// Controlled tag vocabulary (sty_034d843c): validate namespaces declared in
 	// satelle.toml [tags.vocabulary] at story/task create and set. Independent of
 	// the agent CLI — must work with no harness installed.

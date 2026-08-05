@@ -29,6 +29,11 @@ type engagementBaselinePayload struct {
 	HeadSHA string `json:"head_sha"`
 	Dirty   bool   `json:"dirty"`
 	To      string `json:"to"` // status entered when the baseline was recorded
+	// Worktree is the git working tree the baseline was taken in (sty_c098dc2d).
+	// Absent on baselines recorded before the anchor existed — those stay
+	// UNANCHORED and story diff keeps its old CWD-resolved behaviour for them,
+	// so an upgrade cannot start refusing an in-flight story's own diff.
+	Worktree string `json:"worktree,omitempty"`
 }
 
 // maybeRecordEngagementBaseline ledgers a one-shot baseline when a story first
@@ -52,14 +57,18 @@ func maybeRecordEngagementBaseline(ctx context.Context, item workitem.Item, from
 		dir = "."
 	}
 	sha, dirty, gerr := gitHeadAndDirty(dir)
+	tree := gitToplevel(dir)
 	body := fmt.Sprintf("engagement baseline at %s→%s head=%s", from, to, sha)
 	if dirty {
 		body += " (dirty worktree)"
 	}
+	if tree != "" {
+		body += " tree=" + tree
+	}
 	if gerr != nil {
 		body = fmt.Sprintf("engagement baseline at %s→%s: git error: %v", from, to, gerr)
 	}
-	payload, _ := json.Marshal(engagementBaselinePayload{HeadSHA: sha, Dirty: dirty, To: to})
+	payload, _ := json.Marshal(engagementBaselinePayload{HeadSHA: sha, Dirty: dirty, To: to, Worktree: tree})
 	appendLedgerEntry(ctx, item.ID, ledger.KindEngagementBaseline, "executor", body, payload, now)
 }
 
@@ -207,8 +216,11 @@ func storyDiff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 		dir = "."
 	}
 	// Resolve to git top-level when possible so paths are repo-relative.
-	if top, terr := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output(); terr == nil {
-		dir = strings.TrimSpace(string(top))
+	if top := gitToplevel(dir); top != "" {
+		dir = top
+	}
+	if aerr := refuseForeignTreeDiff(ctx, it.ID, base.Worktree, dir); aerr != nil {
+		return nil, aerr
 	}
 	files, stat, patch, derr := gitDiffSince(dir, base.HeadSHA, req.Patch)
 	if derr != nil {
@@ -231,6 +243,31 @@ func storyDiff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 		Note:     "enumeration only — no pass/fail; gates decide scope",
 	}
 	return json.Marshal(res)
+}
+
+// refuseForeignTreeDiff enforces the lease's working-tree anchor (sty_c098dc2d).
+// A story engaged from tree A diffs against a baseline taken in A; run from tree
+// B it would enumerate B's unrelated changes and attribute them to the story —
+// which is exactly the mis-attribution per-worktree leases exist to prevent.
+//
+// The LIVE lease is the authority when one exists (it is where the engagement
+// actually sits); the ledger baseline is the fallback for a story whose lease
+// has since been released. Either anchor absent → UNANCHORED, and the diff
+// proceeds as it always did, so pre-upgrade baselines and non-git checkouts are
+// unaffected.
+func refuseForeignTreeDiff(ctx context.Context, storyID, baselineTree, invokedTree string) error {
+	anchor := strings.TrimSpace(baselineTree)
+	if ls, err := requireLease(); err == nil {
+		if l, gerr := ls.Get(ctx, storyID); gerr == nil && strings.TrimSpace(l.Worktree) != "" {
+			anchor = strings.TrimSpace(l.Worktree)
+		}
+	}
+	if anchor == "" || strings.TrimSpace(invokedTree) == "" || anchor == invokedTree {
+		return nil
+	}
+	return fmt.Errorf(
+		"story-diff: %s was engaged from working tree %s but this invocation is in %s — the diff would attribute this tree's changes to the story. Run `satelle story diff %s` from %s",
+		storyID, anchor, invokedTree, storyID, anchor)
 }
 
 // gitDiffSince lists name-only files and --stat from baseline to the current

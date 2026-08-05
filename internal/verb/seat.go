@@ -24,9 +24,15 @@ func init() {
 
 // seatRow is one engagement_lease row for the agent/operator surface.
 type seatRow struct {
-	ID            string `json:"id"`
-	Kind          string `json:"kind"`
-	StorySeat     bool   `json:"story_seat"`
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	StorySeat bool   `json:"story_seat"`
+	// SeatKey is the arbitration key the seat is held under, and Worktree the
+	// tree the engagement is anchored to (sty_c098dc2d). Rows are listed in
+	// seat_key order, so co-holders of one key appear together — that grouping
+	// IS the epic view; the JSON stays a flat array carrying the key per row.
+	SeatKey       string `json:"seat_key,omitempty"`
+	Worktree      string `json:"worktree,omitempty"`
 	Owner         string `json:"owner"`
 	State         string `json:"state"`
 	InFlight      bool   `json:"in_flight"`
@@ -96,6 +102,8 @@ func seatRowFromLease(l lease.Lease, now time.Time) seatRow {
 		ID:            l.ItemID,
 		Kind:          l.Kind,
 		StorySeat:     l.StorySeat,
+		SeatKey:       l.SeatKey,
+		Worktree:      l.Worktree,
 		Owner:         l.Owner,
 		State:         l.State,
 		InFlight:      lease.EffectiveInFlight(l, now),

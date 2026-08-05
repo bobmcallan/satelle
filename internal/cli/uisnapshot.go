@@ -291,10 +291,14 @@ func listSeatsJSON(ctx context.Context, a *app.App) ([]json.RawMessage, error) {
 			"id":         l.ItemID,
 			"kind":       l.Kind,
 			"story_seat": l.StorySeat,
-			"owner":      l.Owner,
-			"state":      l.State,
-			"in_flight":  lease.EffectiveInFlight(l, now),
-			"stale":      lease.IsStale(l, now),
+			// Arbitration key + tree anchor, so the UI seat surface shows the
+			// same grouping as `satelle story seat` (sty_c098dc2d).
+			"seat_key":  l.SeatKey,
+			"worktree":  l.Worktree,
+			"owner":     l.Owner,
+			"state":     l.State,
+			"in_flight": lease.EffectiveInFlight(l, now),
+			"stale":     lease.IsStale(l, now),
 		}
 		b, err := json.Marshal(row)
 		if err != nil {

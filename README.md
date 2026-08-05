@@ -192,6 +192,54 @@ permitted story statuses while engaged. Opt-in only — unset leaves the
 commitgate as engage-only. See `satelle hook commitgate --help` and the init
 scaffold comments.
 
+### Seat concurrency — who may engage at once
+
+A story in a performing state holds the project's **engagement seat**. By
+default the seat is single-occupancy: one performing story, everything else
+refused. That default is what makes "is work in flight?" a one-lease question.
+
+A repo may widen it per project:
+
+```toml
+[engagement]
+parallel = "none"   # default — one performing story at a time
+parallel = "epic"   # children of one parent may engage concurrently
+```
+
+Under `epic` the seat is claimed at the **parent**, not the story: the first
+engagement keys the seat on its `parent_id`, and further engagements are
+admitted only if they share that parent **and** run from a **distinct git
+working tree**. A story under a different parent — or none — is refused while
+that seat is held, and the refusal names the parent holding it. A parentless
+story engaging first claims the seat as a singleton, which is `none` for its
+duration. The seat frees when the last sub-lease frees.
+
+Two rules follow, and both are load-bearing:
+
+- **One working tree per lease.** Each lease records the tree it was engaged
+  from; a second engagement from an already-leased tree is refused, even for a
+  valid sibling — two engaged stories sharing a tree would attribute each
+  other's edits. `satelle story diff` is anchored to the recorded tree for the
+  same reason: run it elsewhere and it refuses, naming where to run it.
+- **The parent is never engaged.** It is an arbitration key, not a lease.
+  Container stories keep their judge-only routes; nothing here makes them
+  performable.
+
+**What satelle does not own.** Satelle arbitrates concurrent *engagement*. It
+does not define how concurrent work *converges* — merge order, whether a batch
+pays for one integration suite at its head, citation, one push, one CI watch.
+That is workflow, and workflow is the repo's own substrate (`done.toml`,
+`step.toml`, skills), which already expresses it: categories are free-form and
+ledger `cite-run` already crosses stories. Whether a given parent's children run
+as a wave is decided per parent by its user or agent, from that parent's
+contents, inside the workflow the repo already has — no dedicated lane,
+category or extra concept to learn.
+
+Satelle performs **no sibling-contention policing**: no file-overlap detection
+between concurrent stories, no merge ordering, no batch semantics. That is a
+design choice, not a gap. A repo that turns the mode on with a workflow that
+does not suit it has a substrate defect in that repo, not a satelle issue.
+
 ## Architecture
 
 - **Pure-Go SQLite** (`modernc.org/sqlite`, no cgo) — one static binary.

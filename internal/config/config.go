@@ -91,6 +91,9 @@ type Config struct {
 	Review ReviewConfig `toml:"review"`
 	// Gate tunes the PreToolUse edit gate (the `satelle hook gate` handler).
 	Gate GateConfig `toml:"gate"`
+	// Engagement selects this project's SEAT CONCURRENCY MODE (sty_c098dc2d).
+	// Absent = "none", today's single-occupancy seat. See EngagementConfig.
+	Engagement EngagementConfig `toml:"engagement"`
 	// Hosted records the hosted-server binding for `satelle login` — the server
 	// URL and the project slug. Both are committed (secret-free); the OAuth
 	// access/refresh TOKENS are NEVER stored here — they live in the user-level
@@ -255,8 +258,11 @@ type ReviewConfig struct {
 // Empty means everything in-repo requires an engaged story (sty_8c3d345c /
 // sty_f115e6bf).
 //
-// One performing story at a time is always enforced (sty_c7149f8a) — there is
-// no allow_parallel opt-out (removed sty_a614a0ea).
+// How MANY stories may perform at once is NOT a gate concern: it is the seat
+// concurrency mode, [engagement] parallel (sty_c098dc2d), whose default "none"
+// is the single performing story this repo has always enforced (sty_c7149f8a).
+// The removed allow_parallel bool (sty_a614a0ea) is not coming back — the mode
+// is a closed named set, see EngagementConfig.
 //
 // AllowOutsideTreeEdits opts INTO Bash/Edit mutations whose targets resolve
 // inside another git working tree (root differs from the session-home anchor;
@@ -279,6 +285,38 @@ type GateConfig struct {
 	EditExemptPaths       []string            `toml:"edit_exempt_paths"`
 	AllowOutsideTreeEdits bool                `toml:"allow_outside_tree_edits"`
 	CommandAllow          map[string][]string `toml:"command_allow"`
+}
+
+// Seat concurrency modes for [engagement] parallel (sty_c098dc2d). The set is
+// CLOSED — Load refuses anything else, naming these two.
+const (
+	// ParallelNone is the default: one performing story per project. Every
+	// engagement is keyed uniquely by its own id, so any other live seat
+	// holder conflicts.
+	ParallelNone = "none"
+	// ParallelEpic keys the seat on the story's PARENT id, so sibling children
+	// of one epic may hold sub-leases concurrently — each from a distinct git
+	// working tree. A story under a different parent (or none) is refused while
+	// an epic-keyed seat is held. The parent itself is never engaged: the epic
+	// id is an arbitration KEY, not a lease on the container.
+	ParallelEpic = "epic"
+)
+
+// EngagementConfig selects the per-project seat concurrency mode.
+//
+//	[engagement]
+//	parallel = "none"   # default — one performing story at a time
+//	parallel = "epic"   # siblings of one epic, one working tree per lease
+//
+// Satelle arbitrates concurrent ENGAGEMENT only. How siblings converge (merge
+// order, batch-head suite runs, one push) is the repo's own substrate — the
+// binary performs no sibling-contention policing (sty_c098dc2d).
+//
+// A value outside the closed set is refused at load (Load → ValidateEngagement).
+// Note bare toml decoding ignores unknown keys, so a MISSPELLED section name
+// silently yields the default "none" — failing closed to today's behaviour.
+type EngagementConfig struct {
+	Parallel string `toml:"parallel"`
 }
 
 // ErrNotFound signals no satelle.toml was found walking up from CWD. Callers
@@ -323,6 +361,35 @@ func (c Config) ResolveEditExemptPaths(repoRoot string) []string {
 		}
 	}
 	return out
+}
+
+// ResolveEngagementParallel returns the seat concurrency mode, defaulting an
+// absent/blank value to ParallelNone. Load has already refused anything outside
+// the closed set, so callers may switch on the result without re-validating.
+func (c Config) ResolveEngagementParallel() string {
+	if s := strings.TrimSpace(c.Engagement.Parallel); s != "" {
+		return s
+	}
+	return ParallelNone
+}
+
+// ValidateEngagement refuses a seat concurrency mode outside the closed set,
+// naming the supported modes. Matching is EXACT — no case folding — so the
+// configured surface stays the one the docs state. Blank/absent is valid (it
+// means the default). path is named in the message so a multi-file overlay says
+// which file to fix.
+//
+// "all" is deliberately NOT special-cased: it was removed as an option
+// (sty_a614a0ea) and is a recorded non-goal, not reserved semantics, so it
+// fails through this ordinary unknown-value path.
+func ValidateEngagement(c Config, path string) error {
+	v := strings.TrimSpace(c.Engagement.Parallel)
+	if v == "" || v == ParallelNone || v == ParallelEpic {
+		return nil
+	}
+	return fmt.Errorf(
+		"config: %s: [engagement] parallel = %q is not a seat concurrency mode — supported modes are %q (one performing story at a time) and %q (sibling children of one epic, one working tree per lease)",
+		path, v, ParallelNone, ParallelEpic)
 }
 
 // ResolveConstitution returns the absolute path to the repo's project
@@ -434,6 +501,11 @@ func Load(explicitPath string) (Config, string, error) {
 		}
 	} else if !errors.Is(lerr, os.ErrNotExist) {
 		return Config{}, path, fmt.Errorf("config: read %s: %w", localPath, lerr)
+	}
+	// Closed-set values are refused HERE so every caller of Load shares one
+	// answer — a bad mode must not reach the seat as a silent default.
+	if err := ValidateEngagement(cfg, path); err != nil {
+		return Config{}, path, err
 	}
 	return cfg, path, nil
 }

@@ -3,6 +3,7 @@ package verb
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
@@ -37,10 +38,20 @@ func acquireEngagementLease(ctx context.Context, item workitem.Item, targetStatu
 		return false, false, refuseSecondEngagingStoryDerived(ctx, item.ID, targetStatus, item)
 	}
 	owner := lease.ResolveOwner()
-	// Stories always occupy the single story seat (one performing story).
-	// Tasks get a lease for gate "any engaged" but never the story seat.
+	// Stories occupy the story seat; tasks get a lease for gate "any engaged"
+	// but never hold the seat. How MANY stories may hold it at once is the
+	// repo's seat concurrency mode, expressed as the arbitration key
+	// (seatKeyFor) — the lease package applies the key, it never learns the mode.
 	occupiesSeat := item.Kind == workitem.KindStory
-	l, outcome, holder, err := ls.Acquire(ctx, item.ID, string(item.Kind), owner, targetStatus, occupiesSeat)
+	l, outcome, holder, err := ls.AcquireWith(ctx, lease.AcquireOpts{
+		ItemID:    item.ID,
+		Kind:      string(item.Kind),
+		Owner:     owner,
+		State:     targetStatus,
+		StorySeat: occupiesSeat,
+		SeatKey:   seatKeyFor(item),
+		Worktree:  engagementWorktree(),
+	})
 	if err != nil {
 		return false, false, err
 	}
@@ -60,6 +71,12 @@ func acquireEngagementLease(ctx context.Context, item workitem.Item, targetStatu
 			return false, true, nil
 		}
 		return false, false, nil
+	case lease.OutcomeTreeConflict:
+		self := item.ID
+		if self == "" {
+			self = "new story"
+		}
+		return false, false, treeConflictError(self, targetStatus, holder)
 	case lease.OutcomeConflict:
 		who := holder.ItemID
 		if holder.Owner != "" {
@@ -69,20 +86,64 @@ func acquireEngagementLease(ctx context.Context, item workitem.Item, targetStatu
 		if self == "" {
 			self = "new story"
 		}
-		return false, false, seatConflictError(self, targetStatus, who)
+		return false, false, seatConflictError(self, targetStatus, who, holderSeatKey(holder))
 	default:
 		return false, false, nil
 	}
 }
 
+// holderSeatKey returns a holder's arbitration key when it is a SHARED key
+// (i.e. not simply the holder's own id) — the id of whatever groups the seat.
+// Empty for a singleton holder, which keeps the refusal text unchanged for the
+// default mode.
+func holderSeatKey(holder *lease.Lease) string {
+	if holder == nil {
+		return ""
+	}
+	key := strings.TrimSpace(holder.SeatKey)
+	if key == "" || key == holder.ItemID {
+		return ""
+	}
+	return key
+}
+
 // seatConflictError is the single seat-refusal text (sty_7b69954a): LIVE holder →
 // stop-request arbitration; STALE seat → operator force-release. One function so
-// the two call sites cannot drift. Load-bearing phrases for existing tests:
+// the call sites cannot drift. Load-bearing phrases for existing tests:
 // "one performing story" and "engagement seat".
-func seatConflictError(self, targetStatus, who string) error {
+//
+// holderKey is the SHARED arbitration key the seat is held under when the seat
+// is grouped rather than singleton (sty_c098dc2d) — the refusal then names what
+// holds the seat, because the requester's route out is different: it is not
+// "wait for one story", it is "you are not under that container".
+func seatConflictError(self, targetStatus, who, holderKey string) error {
+	rule := "one performing story at a time"
+	if strings.TrimSpace(holderKey) != "" {
+		rule = fmt.Sprintf(
+			"the seat is held under %s, and only stories under %s may engage alongside it",
+			holderKey, holderKey)
+	}
 	return fmt.Errorf(
-		"satelle: refusing to engage %s (→ %s) while %s already holds the engagement seat — one performing story at a time. Inspect with `satelle story seat`. If the holder is LIVE (another agent working it): request preemption with `satelle story stop-request <holder> --reason \"<why>\"` — the holder is then refused forward moves and parks itself (blocked), which frees the seat. If the holder is your own work: finish it or park it (blocked). If the seat is STALE (no live agent, see the heartbeat age): `satelle story seat release <holder>`. Never cancel a healthy story to free the seat — cancelled is terminal",
-		self, targetStatus, who)
+		"satelle: refusing to engage %s (→ %s) while %s already holds the engagement seat — %s. Inspect with `satelle story seat`. If the holder is LIVE (another agent working it): request preemption with `satelle story stop-request <holder> --reason \"<why>\"` — the holder is then refused forward moves and parks itself (blocked), which frees the seat. If the holder is your own work: finish it or park it (blocked). If the seat is STALE (no live agent, see the heartbeat age): `satelle story seat release <holder>`. Never cancel a healthy story to free the seat — cancelled is terminal",
+		self, targetStatus, who, rule)
+}
+
+// treeConflictError refuses a second engagement from an ALREADY-LEASED working
+// tree (sty_c098dc2d). Distinct from a seat conflict and reported ahead of it:
+// the requester may be a perfectly valid co-holder, it just cannot share the
+// tree — two engaged stories in one tree would attribute each other's edits.
+// The fix is a new working tree, not preemption, so the text says so.
+func treeConflictError(self, targetStatus string, holder *lease.Lease) error {
+	who, tree := "another story", "this working tree"
+	if holder != nil {
+		who = holder.ItemID
+		if holder.Worktree != "" {
+			tree = "this working tree (" + holder.Worktree + ")"
+		}
+	}
+	return fmt.Errorf(
+		"satelle: refusing to engage %s (→ %s) — %w: %s is already engaged from %s, and two engaged stories sharing a tree attribute each other's edits. Engage %s from its OWN git working tree (`git worktree add`), or finish/park %s first. Inspect with `satelle story seat`",
+		self, targetStatus, lease.ErrTreeConflict, who, tree, self, who)
 }
 
 // releaseEngagementLease frees the seat for itemID if held by the current owner.
@@ -196,6 +257,13 @@ func refuseSecondEngagingStoryDerived(ctx context.Context, excludeID, targetStat
 	if err != nil {
 		return fmt.Errorf("satelle: cannot enforce single-story rule (list failed: %w)", err)
 	}
+	// The derived scan applies the SAME key rule as the lease path — it just
+	// reads committed statuses instead of lease rows. Without this it would be a
+	// second, mode-blind arbitration rule on a live path (the create path runs it
+	// right after the probe), and the two would disagree the moment a repo
+	// admitted co-holders. Both keys are derived by seatKeyFor, each from its own
+	// item, so the default mode (unique key per item) still refuses everything.
+	selfKey := seatKeyFor(item)
 	for _, other := range others {
 		if other.ID == excludeID {
 			continue
@@ -205,6 +273,10 @@ func refuseSecondEngagingStoryDerived(ctx context.Context, excludeID, targetStat
 			continue
 		}
 		if engaged {
+			otherKey := seatKeyFor(other)
+			if selfKey != "" && otherKey != "" && selfKey == otherKey {
+				continue // admitted co-holder; the lease path owns the tree rule
+			}
 			who := other.ID
 			if other.Title != "" {
 				who = other.ID + ` "` + other.Title + `"`
@@ -213,9 +285,15 @@ func refuseSecondEngagingStoryDerived(ctx context.Context, excludeID, targetStat
 			if self == "" {
 				self = "new story"
 			}
+			rule := "one performing story at a time; finish or park the other (blocked)"
+			if otherKey != other.ID {
+				rule = fmt.Sprintf(
+					"the seat is held under %s, and only stories under %s may engage alongside it",
+					otherKey, otherKey)
+			}
 			return fmt.Errorf(
-				"satelle: refusing to engage %s (→ %s) while %s is already engaged (status %q) — one performing story at a time; finish or park the other (blocked)",
-				self, targetStatus, who, other.Status)
+				"satelle: refusing to engage %s (→ %s) while %s is already engaged (status %q) — %s",
+				self, targetStatus, who, other.Status, rule)
 		}
 	}
 	return nil
@@ -236,21 +314,22 @@ func refuseSecondEngagingStory(ctx context.Context, excludeID, targetStatus stri
 	}
 	// Lease seat is the authority when wired (covers the pre-commit window).
 	if ls, err := requireLease(); err == nil {
-		// Look for any story_seat holder (other than excludeID).
-		// Acquire with a probe is wrong (would claim). Query via a throwaway path:
-		// try Acquire for a synthetic id is also wrong. Use Get on scan via Any + list.
-		// Simplest: attempt Acquire for excludeID if set (continuation); else check
-		// conflict by acquiring with a temporary probe — NO, that claims.
-		// Direct SQL is package-private. Use: Acquire for a unique probe id then
-		// immediately release if we got it; if conflict, refuse.
 		if excludeID != "" {
 			// Item already exists: real acquire path.
 			_, _, aerr := acquireEngagementLease(ctx, item, targetStatus)
 			return aerr
 		}
+		// No id yet, so the seat cannot be claimed for real: acquire a synthetic
+		// probe under the key and tree the story WOULD engage under, read the
+		// outcome, and release it immediately. Keying the probe is what lets a
+		// sibling be created straight into an engaging state while a stranger is
+		// still refused.
 		probeID := "__seat_probe__"
 		owner := lease.ResolveOwner()
-		_, outcome, holder, aerr := ls.Acquire(ctx, probeID, "story", owner, targetStatus, true)
+		_, outcome, holder, aerr := ls.AcquireWith(ctx, lease.AcquireOpts{
+			ItemID: probeID, Kind: "story", Owner: owner, State: targetStatus,
+			StorySeat: true, SeatKey: seatKeyFor(item), Worktree: engagementWorktree(),
+		})
 		if aerr != nil {
 			return aerr
 		}
@@ -261,12 +340,14 @@ func refuseSecondEngagingStory(ctx context.Context, excludeID, targetStatus stri
 			// Seat was free (or we stole stale). Derived scan still catches
 			// committed-status holders that somehow lack a lease.
 			return refuseSecondEngagingStoryDerived(ctx, excludeID, targetStatus, item)
+		case lease.OutcomeTreeConflict:
+			return treeConflictError("new story", targetStatus, holder)
 		case lease.OutcomeConflict:
 			who := "another story"
 			if holder != nil {
 				who = fmt.Sprintf("%s (owner %q, state %q)", holder.ItemID, holder.Owner, holder.State)
 			}
-			return seatConflictError("new story", targetStatus, who)
+			return seatConflictError("new story", targetStatus, who, holderSeatKey(holder))
 		case lease.OutcomeAlreadyHeld:
 			_ = ls.Release(ctx, probeID, owner)
 			return refuseSecondEngagingStoryDerived(ctx, excludeID, targetStatus, item)

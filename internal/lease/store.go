@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS engagement_lease (
     item_id            TEXT PRIMARY KEY,
     kind               TEXT NOT NULL DEFAULT '',
     story_seat         INTEGER NOT NULL DEFAULT 0,
+    seat_key           TEXT NOT NULL DEFAULT '',
+    worktree           TEXT NOT NULL DEFAULT '',
     owner              TEXT NOT NULL,
     state              TEXT NOT NULL DEFAULT '',
     acquired_at        TEXT NOT NULL,
@@ -60,11 +62,26 @@ CREATE TABLE IF NOT EXISTS engagement_lease (
 CREATE INDEX IF NOT EXISTS idx_engagement_lease_seat ON engagement_lease(story_seat);
 `
 
+// leaseCols is the column list every SELECT shares — one source so a new column
+// cannot reach some read paths and not others.
+const leaseCols = `item_id, kind, story_seat, seat_key, worktree, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid, activity_label, activity_index, activity_total, activity_at`
+
 // Lease is one engagement seat row.
 type Lease struct {
-	ItemID          string
-	Kind            string
-	StorySeat       bool
+	ItemID    string
+	Kind      string
+	StorySeat bool
+	// SeatKey is the ARBITRATION key this lease claimed the story seat under
+	// (sty_c098dc2d). Two live seat holders coexist only when their keys are
+	// equal and non-empty. The caller chooses the key policy — the item's own id
+	// (single occupancy) or its parent id (siblings of one epic). Empty on
+	// pre-migration rows, which therefore behave as singletons.
+	SeatKey string
+	// Worktree is the git working tree this engagement was anchored to (git
+	// toplevel at acquire). Two live seat leases never share a non-empty tree —
+	// they would attribute each other's edits. Empty when git was unavailable or
+	// on pre-migration rows; empty never participates in tree arbitration.
+	Worktree        string
 	Owner           string
 	State           string
 	AcquiredAt      time.Time
@@ -104,7 +121,45 @@ const (
 	OutcomeStolen
 	// OutcomeConflict — another live owner holds this item or the story seat.
 	OutcomeConflict
+	// OutcomeTreeConflict — another live seat lease is anchored to the same
+	// git working tree. Refused regardless of seat key: two engagements sharing
+	// one tree would attribute each other's edits (sty_c098dc2d).
+	OutcomeTreeConflict
 )
+
+// ErrTreeConflict is the sentinel a caller wraps when it turns
+// OutcomeTreeConflict into a refusal, so the reason survives as errors.Is
+// rather than as message text.
+var ErrTreeConflict = errors.New("one engagement per working tree")
+
+// AcquireOpts are the arbitration inputs for one seat claim. The lease package
+// is MECHANISM: it applies the key and tree rules it is handed and never learns
+// the name of the concurrency mode that chose them (configuration over code).
+type AcquireOpts struct {
+	ItemID string
+	Kind   string
+	Owner  string
+	State  string
+	// StorySeat gates the story-seat rule. Tasks take a lease (so "is anything
+	// engaged" sees them) but never occupy the story seat.
+	StorySeat bool
+	// SeatKey is the arbitration key. Callers pass the item's own id for single
+	// occupancy, or a shared key (e.g. a parent id) to admit co-holders. Empty
+	// is treated as a singleton keyed by ItemID.
+	SeatKey string
+	// Worktree is the git toplevel this engagement is anchored to. Empty opts
+	// out of tree arbitration (git unavailable / non-repo caller).
+	Worktree string
+}
+
+// seatKey returns the effective arbitration key (empty falls back to ItemID so
+// a caller that does not care gets today's single-occupancy behaviour).
+func (o AcquireOpts) seatKey() string {
+	if strings.TrimSpace(o.SeatKey) != "" {
+		return o.SeatKey
+	}
+	return o.ItemID
+}
 
 // Store wraps engagement_lease operations against a shared sqlite handle.
 type Store struct{ db *sql.DB }
@@ -143,6 +198,23 @@ func Migrate(db *sql.DB) error {
 			!strings.Contains(err.Error(), "duplicate column") {
 			return fmt.Errorf("lease: migrate activity: %w", err)
 		}
+	}
+	// Seat arbitration key + working-tree anchor (sty_c098dc2d). Empty on
+	// pre-upgrade rows: an empty key is a singleton (today's refusal) and an
+	// empty tree does not participate in tree arbitration, so a lease held
+	// across the upgrade keeps behaving exactly as it did.
+	for _, col := range []string{
+		"seat_key TEXT NOT NULL DEFAULT ''",
+		"worktree TEXT NOT NULL DEFAULT ''",
+	} {
+		if _, err := db.Exec(`ALTER TABLE engagement_lease ADD COLUMN ` + col); err != nil &&
+			!strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("lease: migrate seat arbitration: %w", err)
+		}
+	}
+	// After the column exists on upgraded DBs, not in schema above.
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_engagement_lease_seat_key ON engagement_lease(seat_key)`); err != nil {
+		return fmt.Errorf("lease: migrate seat_key index: %w", err)
 	}
 	// Backfill so pre-upgrade stuck in_flight rows age from a real clock, not
 	// from a hook-refreshed heartbeat. Without this, zero-InFlightAt residue
@@ -199,14 +271,40 @@ func ResolveOwner() string {
 	return "local@" + host
 }
 
-// Acquire claims the seat for itemID. occupiesStorySeat gates the single-story
-// rule (true for stories — one performing story seat). Returns the resulting
-// lease, the outcome, and — on OutcomeConflict — the conflicting holder.
-// check-and-insert runs in ONE immediate transaction.
+// Acquire claims the seat for itemID under single occupancy — the seat key is
+// the item's own id, so any other live seat holder conflicts. This is the
+// unkeyed, tree-unanchored form; AcquireWith is the full surface.
 func (s *Store) Acquire(ctx context.Context, itemID, kind, owner, state string, occupiesStorySeat bool) (Lease, Outcome, *Lease, error) {
+	return s.AcquireWith(ctx, AcquireOpts{
+		ItemID: itemID, Kind: kind, Owner: owner, State: state,
+		StorySeat: occupiesStorySeat, SeatKey: itemID,
+	})
+}
+
+// AcquireWith claims the seat for opts.ItemID. Returns the resulting lease, the
+// outcome, and — on OutcomeConflict / OutcomeTreeConflict — the blocking holder.
+// check-and-insert runs in ONE immediate transaction.
+//
+// Arbitration for a NEW story-seat claim, in order:
+//  1. KEY — a live seat lease conflicts unless its key equals this claim's key
+//     and both are non-empty. Single occupancy is simply "every key is the
+//     item's own id"; there is no mode branch here.
+//  2. TREE — among claims the key ADMITS, a live seat lease on the same
+//     non-empty worktree refuses (OutcomeTreeConflict): two engagements sharing
+//     one tree would attribute each other's edits.
+//
+// Key before tree because the two refusals give different advice, and only the
+// key answer survives moving: a claim the key rejects is not helped by a fresh
+// working tree, so telling it to make one would be wrong. It also means single
+// occupancy never reaches the tree branch, leaving its refusal exactly as it was.
+//
+// Stale holders are stolen (deleted) as they are encountered, exactly as before.
+func (s *Store) AcquireWith(ctx context.Context, opts AcquireOpts) (Lease, Outcome, *Lease, error) {
 	if s == nil || s.db == nil {
 		return Lease{}, 0, nil, errors.New("lease: store not configured")
 	}
+	itemID, kind, owner := opts.ItemID, opts.Kind, opts.Owner
+	occupiesStorySeat := opts.StorySeat
 	if strings.TrimSpace(itemID) == "" || strings.TrimSpace(owner) == "" {
 		return Lease{}, 0, nil, fmt.Errorf("lease: item_id and owner required")
 	}
@@ -221,8 +319,7 @@ func (s *Store) Acquire(ctx context.Context, itemID, kind, owner, state string, 
 
 	// Existing row for this item?
 	cur, err := scanLease(tx.QueryRowContext(ctx,
-		`SELECT item_id, kind, story_seat, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid, activity_label, activity_index, activity_total, activity_at
-		 FROM engagement_lease WHERE item_id = ?`, itemID))
+		`SELECT `+leaseCols+` FROM engagement_lease WHERE item_id = ?`, itemID))
 	if err == nil {
 		if cur.Owner == owner {
 			// Transition already in flight: AC3 no-op (never two concurrent dispatches).
@@ -244,9 +341,20 @@ func (s *Store) Acquire(ctx context.Context, itemID, kind, owner, state string, 
 			// COMMITTED engaging status; Confirm advances it after store.Update
 			// (avoids gate-reject poison).
 			pid := currentInFlightPid()
+			// The anchor is recorded ONCE, at first claim: a sequential step
+			// must not silently re-anchor the lease to wherever the next CLI
+			// invocation happened to run. Empty values are backfilled so a
+			// lease held across the upgrade gains its key/tree on the next step.
+			seatKey, worktree := cur.SeatKey, cur.Worktree
+			if strings.TrimSpace(seatKey) == "" {
+				seatKey = opts.seatKey()
+			}
+			if strings.TrimSpace(worktree) == "" {
+				worktree = opts.Worktree
+			}
 			if _, err := tx.ExecContext(ctx,
-				`UPDATE engagement_lease SET in_flight = 1, in_flight_at = ?, in_flight_pid = ?, heartbeat_at = ?, kind = ?, story_seat = ?
-				 WHERE item_id = ?`, nowS, pid, nowS, kind, boolInt(occupiesStorySeat), itemID); err != nil {
+				`UPDATE engagement_lease SET in_flight = 1, in_flight_at = ?, in_flight_pid = ?, heartbeat_at = ?, kind = ?, story_seat = ?, seat_key = ?, worktree = ?
+				 WHERE item_id = ?`, nowS, pid, nowS, kind, boolInt(occupiesStorySeat), seatKey, worktree, itemID); err != nil {
 				return Lease{}, 0, nil, fmt.Errorf("lease: mark in_flight: %w", err)
 			}
 			if err := tx.Commit(); err != nil {
@@ -258,6 +366,8 @@ func (s *Store) Acquire(ctx context.Context, itemID, kind, owner, state string, 
 			cur.HeartbeatAt = now
 			cur.Kind = kind
 			cur.StorySeat = occupiesStorySeat
+			cur.SeatKey = seatKey
+			cur.Worktree = worktree
 			return cur, OutcomeAlreadyHeld, nil, nil
 		}
 		// Different owner: stale → steal; live → conflict.
@@ -270,7 +380,7 @@ func (s *Store) Acquire(ctx context.Context, itemID, kind, owner, state string, 
 		}
 		// fall through to insert; mark stolen
 		stolen := cur
-		l, err := insertLease(ctx, tx, itemID, kind, owner, state, occupiesStorySeat, nowS)
+		l, err := insertLease(ctx, tx, opts, nowS)
 		if err != nil {
 			return Lease{}, 0, nil, err
 		}
@@ -283,28 +393,52 @@ func (s *Store) Acquire(ctx context.Context, itemID, kind, owner, state string, 
 		return Lease{}, 0, nil, err
 	}
 
-	// Story seat single-flight: another live story_seat=1 blocks.
+	// Story-seat arbitration against EVERY live seat holder — one lease or five,
+	// each is examined; a single LIMIT 1 probe would drop co-holders.
 	if occupiesStorySeat {
-		holder, herr := scanLease(tx.QueryRowContext(ctx,
-			`SELECT item_id, kind, story_seat, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid, activity_label, activity_index, activity_total, activity_at
-			 FROM engagement_lease WHERE story_seat = 1 LIMIT 1`))
-		if herr == nil {
-			if holder.ItemID != itemID {
-				if !isStale(holder, now) {
-					h := holder
-					return Lease{}, OutcomeConflict, &h, nil
-				}
-				// Steal stale seat holder.
-				if _, err := tx.ExecContext(ctx, `DELETE FROM engagement_lease WHERE item_id = ?`, holder.ItemID); err != nil {
+		holders, herr := scanLeases(tx.QueryContext(ctx,
+			`SELECT `+leaseCols+` FROM engagement_lease WHERE story_seat = 1`))
+		if herr != nil {
+			return Lease{}, 0, nil, herr
+		}
+		var live []Lease
+		for _, h := range holders {
+			if h.ItemID == itemID {
+				continue
+			}
+			if isStale(h, now) {
+				// Steal stale seat holder (same rule as before, now per row).
+				if _, err := tx.ExecContext(ctx, `DELETE FROM engagement_lease WHERE item_id = ?`, h.ItemID); err != nil {
 					return Lease{}, 0, nil, fmt.Errorf("lease: seat steal: %w", err)
 				}
+				continue
 			}
-		} else if !errors.Is(herr, ErrNotFound) {
-			return Lease{}, 0, nil, herr
+			live = append(live, h)
+		}
+		// 1. Key — co-holding requires equal, non-empty keys.
+		key := strings.TrimSpace(opts.seatKey())
+		for _, h := range live {
+			if key == "" || strings.TrimSpace(h.SeatKey) == "" || h.SeatKey != key {
+				blocker := h
+				return Lease{}, OutcomeConflict, &blocker, nil
+			}
+		}
+		// 2. Tree — only reachable once the key ADMITS, which is what makes it
+		//    the accurate reason: this claim may legitimately co-hold the seat,
+		//    it just cannot share a tree. Under single occupancy every key is
+		//    unique, so the loop above already refused and this never fires —
+		//    that is why the default mode's refusal text is untouched.
+		if tree := strings.TrimSpace(opts.Worktree); tree != "" {
+			for _, h := range live {
+				if h.Worktree == tree {
+					blocker := h
+					return Lease{}, OutcomeTreeConflict, &blocker, nil
+				}
+			}
 		}
 	}
 
-	l, err := insertLease(ctx, tx, itemID, kind, owner, state, occupiesStorySeat, nowS)
+	l, err := insertLease(ctx, tx, opts, nowS)
 	if err != nil {
 		return Lease{}, 0, nil, err
 	}
@@ -314,18 +448,21 @@ func (s *Store) Acquire(ctx context.Context, itemID, kind, owner, state string, 
 	return l, OutcomeAcquired, nil, nil
 }
 
-func insertLease(ctx context.Context, tx *sql.Tx, itemID, kind, owner, state string, seat bool, nowS string) (Lease, error) {
+func insertLease(ctx context.Context, tx *sql.Tx, opts AcquireOpts, nowS string) (Lease, error) {
 	// New lease starts in_flight=1; Confirm clears it after status commits.
 	pid := currentInFlightPid()
+	key := opts.seatKey()
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO engagement_lease (item_id, kind, story_seat, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, '', '', 1, ?, ?)`,
-		itemID, kind, boolInt(seat), owner, state, nowS, nowS, nowS, pid); err != nil {
+		`INSERT INTO engagement_lease (item_id, kind, story_seat, seat_key, worktree, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', 1, ?, ?)`,
+		opts.ItemID, opts.Kind, boolInt(opts.StorySeat), key, opts.Worktree,
+		opts.Owner, opts.State, nowS, nowS, nowS, pid); err != nil {
 		return Lease{}, fmt.Errorf("lease: insert: %w", err)
 	}
 	now, _ := time.Parse(time.RFC3339Nano, nowS)
 	return Lease{
-		ItemID: itemID, Kind: kind, StorySeat: seat, Owner: owner, State: state,
+		ItemID: opts.ItemID, Kind: opts.Kind, StorySeat: opts.StorySeat,
+		SeatKey: key, Worktree: opts.Worktree, Owner: opts.Owner, State: opts.State,
 		AcquiredAt: now, HeartbeatAt: now, InFlight: true, InFlightAt: now, InFlightPid: pid,
 	}, nil
 }
@@ -373,8 +510,7 @@ func (s *Store) Release(ctx context.Context, itemID, owner string) error {
 	defer func() { _ = tx.Rollback() }()
 
 	cur, err := scanLease(tx.QueryRowContext(ctx,
-		`SELECT item_id, kind, story_seat, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid, activity_label, activity_index, activity_total, activity_at
-		 FROM engagement_lease WHERE item_id = ?`, itemID))
+		`SELECT `+leaseCols+` FROM engagement_lease WHERE item_id = ?`, itemID))
 	if errors.Is(err, ErrNotFound) {
 		return tx.Commit() // already free
 	}
@@ -433,8 +569,7 @@ func (s *Store) Get(ctx context.Context, itemID string) (Lease, error) {
 		return Lease{}, errors.New("lease: store not configured")
 	}
 	return scanLease(s.db.QueryRowContext(ctx,
-		`SELECT item_id, kind, story_seat, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid, activity_label, activity_index, activity_total, activity_at
-		 FROM engagement_lease WHERE item_id = ?`, itemID))
+		`SELECT `+leaseCols+` FROM engagement_lease WHERE item_id = ?`, itemID))
 }
 
 // AnyActive reports whether any engagement lease row exists. Callers that gate
@@ -459,11 +594,39 @@ func (s *Store) List(ctx context.Context) ([]Lease, error) {
 	if s == nil || s.db == nil {
 		return nil, errors.New("lease: store not configured")
 	}
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT item_id, kind, story_seat, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid, activity_label, activity_index, activity_total, activity_at
-		 FROM engagement_lease ORDER BY acquired_at`)
-	if err != nil {
-		return nil, fmt.Errorf("lease: list: %w", err)
+	// Ordered by seat_key first so co-holders of one key list together (the
+	// `story seat` surface groups on this); acquired_at keeps it deterministic.
+	return scanLeases(s.db.QueryContext(ctx,
+		`SELECT `+leaseCols+` FROM engagement_lease ORDER BY seat_key, acquired_at`))
+}
+
+// PickForWorktree selects the lease anchored to worktree. This is the domain
+// answer to "which of these leases is THIS session's" — needed because the
+// default owner is pid-less local@host (see ResolveOwner), so two sibling
+// leases held from one host are indistinguishable by owner alone. A heartbeat
+// routed by owner would refresh whichever row came first and let the actually
+// worked sibling go stale at TTL (sty_c098dc2d).
+//
+// ok is false for an empty worktree or no match — callers then fall back to
+// their own rule rather than guessing.
+func PickForWorktree(leases []Lease, worktree string) (Lease, bool) {
+	tree := strings.TrimSpace(worktree)
+	if tree == "" {
+		return Lease{}, false
+	}
+	for _, l := range leases {
+		if l.Worktree == tree {
+			return l, true
+		}
+	}
+	return Lease{}, false
+}
+
+// scanLeases drains a lease query. Takes (rows, err) so callers can inline the
+// query call.
+func scanLeases(rows *sql.Rows, qerr error) ([]Lease, error) {
+	if qerr != nil {
+		return nil, fmt.Errorf("lease: list: %w", qerr)
 	}
 	defer rows.Close()
 	var out []Lease
@@ -471,7 +634,7 @@ func (s *Store) List(ctx context.Context) ([]Lease, error) {
 		var l Lease
 		var seat, inflight, inflightPid, actIdx, actTotal int
 		var acq, beat, inflightAt, actAt string
-		if err := rows.Scan(&l.ItemID, &l.Kind, &seat, &l.Owner, &l.State, &acq, &beat, &l.StopRequestedBy, &l.StopReason,
+		if err := rows.Scan(&l.ItemID, &l.Kind, &seat, &l.SeatKey, &l.Worktree, &l.Owner, &l.State, &acq, &beat, &l.StopRequestedBy, &l.StopReason,
 			&inflight, &inflightAt, &inflightPid, &l.ActivityLabel, &actIdx, &actTotal, &actAt); err != nil {
 			return nil, fmt.Errorf("lease: list scan: %w", err)
 		}
@@ -480,14 +643,8 @@ func (s *Store) List(ctx context.Context) ([]Lease, error) {
 		l.InFlightPid = inflightPid
 		l.ActivityIndex = actIdx
 		l.ActivityTotal = actTotal
-		l.AcquiredAt, _ = time.Parse(time.RFC3339Nano, acq)
-		if l.AcquiredAt.IsZero() {
-			l.AcquiredAt, _ = time.Parse(time.RFC3339, acq)
-		}
-		l.HeartbeatAt, _ = time.Parse(time.RFC3339Nano, beat)
-		if l.HeartbeatAt.IsZero() {
-			l.HeartbeatAt, _ = time.Parse(time.RFC3339, beat)
-		}
+		l.AcquiredAt = parseLeaseTime(acq)
+		l.HeartbeatAt = parseLeaseTime(beat)
 		l.InFlightAt = parseLeaseTime(inflightAt)
 		l.ActivityAt = parseLeaseTime(actAt)
 		out = append(out, l)
@@ -590,7 +747,7 @@ func scanLease(row *sql.Row) (Lease, error) {
 	var l Lease
 	var seat, inflight, inflightPid, actIdx, actTotal int
 	var acq, beat, inflightAt, actAt string
-	err := row.Scan(&l.ItemID, &l.Kind, &seat, &l.Owner, &l.State, &acq, &beat, &l.StopRequestedBy, &l.StopReason,
+	err := row.Scan(&l.ItemID, &l.Kind, &seat, &l.SeatKey, &l.Worktree, &l.Owner, &l.State, &acq, &beat, &l.StopRequestedBy, &l.StopReason,
 		&inflight, &inflightAt, &inflightPid, &l.ActivityLabel, &actIdx, &actTotal, &actAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Lease{}, ErrNotFound
@@ -603,14 +760,8 @@ func scanLease(row *sql.Row) (Lease, error) {
 	l.InFlightPid = inflightPid
 	l.ActivityIndex = actIdx
 	l.ActivityTotal = actTotal
-	l.AcquiredAt, _ = time.Parse(time.RFC3339Nano, acq)
-	if l.AcquiredAt.IsZero() {
-		l.AcquiredAt, _ = time.Parse(time.RFC3339, acq)
-	}
-	l.HeartbeatAt, _ = time.Parse(time.RFC3339Nano, beat)
-	if l.HeartbeatAt.IsZero() {
-		l.HeartbeatAt, _ = time.Parse(time.RFC3339, beat)
-	}
+	l.AcquiredAt = parseLeaseTime(acq)
+	l.HeartbeatAt = parseLeaseTime(beat)
 	l.InFlightAt = parseLeaseTime(inflightAt)
 	l.ActivityAt = parseLeaseTime(actAt)
 	return l, nil

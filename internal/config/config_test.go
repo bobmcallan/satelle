@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -102,6 +103,85 @@ func TestLoadWithLocalOverlay(t *testing.T) {
 	}
 	if RepoRootFromConfigPath(path) != repo {
 		t.Errorf("repo root = %q, want %q", RepoRootFromConfigPath(path), repo)
+	}
+}
+
+// writeConfig lands a satelle.toml (and optional overlay) and Loads it.
+func writeConfig(t *testing.T, committed string) (Config, error) {
+	t.Helper()
+	repo := t.TempDir()
+	satelleDir := filepath.Join(repo, ".satelle")
+	if err := os.MkdirAll(satelleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(satelleDir, ConfigName), []byte(committed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(filepath.Join(satelleDir, ConfigName))
+	return cfg, err
+}
+
+// TestEngagementParallelDefault (sty_c098dc2d AC1): an absent [engagement]
+// section, and an explicit "none", both resolve to single occupancy. The zero
+// value matters most — every repo that never heard of the mode keeps today's
+// behaviour with no config change.
+func TestEngagementParallelDefault(t *testing.T) {
+	var zero Config
+	if got := zero.ResolveEngagementParallel(); got != ParallelNone {
+		t.Errorf("zero Config mode = %q, want %q", got, ParallelNone)
+	}
+	cfg, err := writeConfig(t, "web_port = 9000\n")
+	if err != nil {
+		t.Fatalf("absent [engagement] must load: %v", err)
+	}
+	if got := cfg.ResolveEngagementParallel(); got != ParallelNone {
+		t.Errorf("absent section mode = %q, want %q", got, ParallelNone)
+	}
+	cfg, err = writeConfig(t, "[engagement]\nparallel = \"none\"\n")
+	if err != nil {
+		t.Fatalf("explicit none must load: %v", err)
+	}
+	if got := cfg.ResolveEngagementParallel(); got != ParallelNone {
+		t.Errorf("explicit none = %q", got)
+	}
+	// A MISSPELLED section is ignored by bare toml decoding and so fails closed
+	// to the default — a documented property, pinned so it cannot silently
+	// become "unknown mode" or, worse, an accidental opt-in.
+	cfg, err = writeConfig(t, "[engagment]\nparallel = \"epic\"\n")
+	if err != nil {
+		t.Fatalf("typo'd section must not error: %v", err)
+	}
+	if got := cfg.ResolveEngagementParallel(); got != ParallelNone {
+		t.Errorf("typo'd section mode = %q, want %q (fail closed)", got, ParallelNone)
+	}
+}
+
+// TestEngagementParallelValidation (sty_c098dc2d AC6): the mode set is CLOSED.
+// "epic" loads; anything else — including "all", a recorded non-goal, and a
+// case variant — is refused at load naming the supported modes.
+func TestEngagementParallelValidation(t *testing.T) {
+	cfg, err := writeConfig(t, "[engagement]\nparallel = \"epic\"\n")
+	if err != nil {
+		t.Fatalf("epic must load: %v", err)
+	}
+	if got := cfg.ResolveEngagementParallel(); got != ParallelEpic {
+		t.Errorf("epic mode = %q", got)
+	}
+	// Matching is exact — case variants are refused so the configured surface
+	// stays the one the docs name.
+	for _, bad := range []string{"all", "EPIC", "Epic", "sibling", "true"} {
+		_, err := writeConfig(t, "[engagement]\nparallel = \""+bad+"\"\n")
+		if err == nil {
+			t.Errorf("parallel = %q must be refused at load", bad)
+			continue
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, ParallelNone) || !strings.Contains(msg, ParallelEpic) {
+			t.Errorf("refusal for %q must name both modes: %v", bad, err)
+		}
+		if !strings.Contains(msg, bad) {
+			t.Errorf("refusal for %q must quote the offending value: %v", bad, err)
+		}
 	}
 }
 

@@ -19,6 +19,17 @@ import (
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
+// evaluateFirstSeat collapses evaluateSeat's live SET to the single seat these
+// cases were written against — each drives exactly one lease, so "the live one"
+// is unambiguous. Co-holding cases call evaluateSeat directly (sty_c098dc2d).
+func evaluateFirstSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Doc, now time.Time) (seatInfo, seatInfo, error) {
+	live, other, err := evaluateSeat(leases, items, wfs, now)
+	if len(live) == 0 {
+		return seatInfo{}, other, err
+	}
+	return live[0], other, err
+}
+
 func doc(name, body string) docindex.Doc {
 	return docindex.Doc{Kind: "principles", Name: name, Body: body}
 }
@@ -887,7 +898,7 @@ requires = ["coded"]
 	}
 
 	// Settled live lease on in_progress → engaged.
-	live, other, err := evaluateSeat([]lease.Lease{{
+	live, other, err := evaluateFirstSeat([]lease.Lease{{
 		ItemID: "sty_live", State: "in_progress", Owner: "alice",
 		AcquiredAt: now.Add(-time.Hour), HeartbeatAt: now.Add(-time.Minute),
 	}}, items, wfs, now)
@@ -902,7 +913,7 @@ requires = ["coded"]
 	}
 
 	// Settled lease on done → not engaged.
-	live, other, err = evaluateSeat([]lease.Lease{{
+	live, other, err = evaluateFirstSeat([]lease.Lease{{
 		ItemID: "sty_done", State: "done", Owner: "alice",
 		AcquiredAt: now.Add(-time.Hour), HeartbeatAt: now.Add(-time.Minute),
 	}}, items, wfs, now)
@@ -918,7 +929,7 @@ requires = ["coded"]
 
 	// Stale orphan (in_flight, committed backlog, heartbeat past TTL) → not engaged.
 	staleHB := now.Add(-lease.HeartbeatTTL - time.Minute)
-	live, other, err = evaluateSeat([]lease.Lease{{
+	live, other, err = evaluateFirstSeat([]lease.Lease{{
 		ItemID: "sty_backlog", State: "plan", Owner: "dead", InFlight: true,
 		AcquiredAt: staleHB, HeartbeatAt: staleHB,
 	}}, items, wfs, now)
@@ -944,7 +955,7 @@ requires = ["coded"]
 	// Fresh in-flight at start state (backlog) → engaged (acquire-at-start window).
 	// Must set InFlightAt + live InFlightPid so EffectiveInFlight is true
 	// (sty_bf797fa9: raw InFlight alone is not enough).
-	live, _, err = evaluateSeat([]lease.Lease{{
+	live, _, err = evaluateFirstSeat([]lease.Lease{{
 		ItemID: "sty_backlog", State: "plan", Owner: "alice", InFlight: true,
 		InFlightAt: now.Add(-time.Second), InFlightPid: os.Getpid(),
 		AcquiredAt: now.Add(-time.Minute), HeartbeatAt: now.Add(-time.Second),
@@ -960,7 +971,7 @@ requires = ["coded"]
 	// Heartbeat is still fresh (hook-refresh shape); InFlightAt is young — only
 	// the dead pid makes EffectiveInFlight false.
 	deadPID := 1<<30 - 1
-	live, other, err = evaluateSeat([]lease.Lease{{
+	live, other, err = evaluateFirstSeat([]lease.Lease{{
 		ItemID: "sty_backlog", State: "plan", Owner: "alice", InFlight: true,
 		InFlightAt: now, InFlightPid: deadPID,
 		AcquiredAt: now.Add(-time.Minute), HeartbeatAt: now,
@@ -978,7 +989,7 @@ requires = ["coded"]
 	// Plant a settled-shaped lease on plan (edit-capable in this fixture) that
 	// only looked in-flight via a dead pid — EffectiveInFlight clears it so
 	// Engaged falls through to performing-status check.
-	live, _, err = evaluateSeat([]lease.Lease{{
+	live, _, err = evaluateFirstSeat([]lease.Lease{{
 		ItemID: "sty_plan", State: "plan", Owner: "alice", InFlight: true,
 		InFlightAt: now, InFlightPid: deadPID,
 		AcquiredAt: now.Add(-time.Minute), HeartbeatAt: now,
@@ -1212,7 +1223,7 @@ requires = ["built"]
 		{ItemID: "sty_a", State: "draft", Owner: "alice", AcquiredAt: now.Add(-time.Hour), HeartbeatAt: now.Add(-time.Minute)},
 		{ItemID: "sty_b", State: "triage", Owner: "bob", AcquiredAt: now.Add(-time.Hour), HeartbeatAt: now.Add(-time.Minute)},
 	}
-	// evaluateSeat returns the first live seat; probe each lease alone.
+	// evaluateSeat returns every live seat; probe each lease alone.
 	for _, c := range []struct {
 		lease    lease.Lease
 		item     workitem.Item
@@ -1224,7 +1235,7 @@ requires = ["built"]
 		{leases[0], items[0], "work", "wfa-work-gate", "wfb-build-gate", "build"},
 		{leases[1], items[1], "build", "wfb-build-gate", "wfa-work-gate", "work"},
 	} {
-		live, _, err := evaluateSeat([]lease.Lease{c.lease}, []workitem.Item{c.item}, wfs, now)
+		live, _, err := evaluateFirstSeat([]lease.Lease{c.lease}, []workitem.Item{c.item}, wfs, now)
 		if err != nil {
 			t.Fatalf("%s: evaluateSeat: %v", c.item.ID, err)
 		}
@@ -1311,7 +1322,7 @@ requires = ["released"]
 `)
 	now := time.Now().UTC()
 	// release: only terminal + back-edge → Advance empty.
-	live, _, err := evaluateSeat([]lease.Lease{{
+	live, _, err := evaluateFirstSeat([]lease.Lease{{
 		ItemID: "sty_rel", State: "release", Owner: "a",
 		AcquiredAt: now.Add(-time.Hour), HeartbeatAt: now.Add(-time.Minute),
 	}}, []workitem.Item{{ID: "sty_rel", Kind: workitem.KindStory, Status: "release", Category: "feature"}}, wfs, now)
@@ -1325,7 +1336,7 @@ requires = ["released"]
 		t.Fatalf("release Advance = %+v, want empty", live.Advance)
 	}
 	// in_progress → integration only.
-	live, _, err = evaluateSeat([]lease.Lease{{
+	live, _, err = evaluateFirstSeat([]lease.Lease{{
 		ItemID: "sty_ip", State: "in_progress", Owner: "a",
 		AcquiredAt: now.Add(-time.Hour), HeartbeatAt: now.Add(-time.Minute),
 	}}, []workitem.Item{{ID: "sty_ip", Kind: workitem.KindStory, Status: "in_progress", Category: "feature"}}, wfs, now)

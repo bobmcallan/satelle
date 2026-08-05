@@ -148,8 +148,12 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 			if status == "" {
 				status = workitem.StatusBacklog
 			}
+			// ParentID rides along because the seat arbitration key may be
+			// derived from it (sty_c098dc2d) — a provisional without it would
+			// probe under the wrong key.
 			provisional := workitem.Item{
-				Kind: workitem.KindStory, Status: status, Category: req.Category, Tags: tags, Title: req.Title,
+				Kind: workitem.KindStory, Status: status, Category: req.Category, Tags: tags,
+				Title: req.Title, ParentID: req.ParentID,
 			}
 			if err := refuseSecondEngagingStory(ctx, "", status, provisional); err != nil {
 				return nil, err

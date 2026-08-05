@@ -353,6 +353,11 @@ type seatInfo struct {
 	StoryStatus string // committed work-item status (step policy; sty_c21490cc)
 	StateAgent  string // agent allocated to lease target / State
 	Owner       string
+	// Worktree is the git working tree the lease was engaged from, when
+	// recorded (sty_c098dc2d). It is how a session picks ITS seat out of
+	// several: the default owner is pid-less local@host, so co-held sibling
+	// leases are indistinguishable by owner.
+	Worktree    string
 	AcquiredAt  time.Time
 	HeartbeatAt time.Time
 	Stale       bool
@@ -437,13 +442,51 @@ func resolveSeat(touch bool) (info seatInfo, engaged bool, err error) {
 	if eerr != nil {
 		return seatInfo{}, false, eerr
 	}
-	if live.ItemID != "" {
+	if len(live) > 0 {
+		pick := pickSessionSeat(live)
 		if touch {
-			touchSeat(ctx, a.Store.Leases, live)
+			touchSeat(ctx, a.Store.Leases, pick)
 		}
-		return live, true, nil
+		return pick, true, nil
 	}
 	return other, false, nil
+}
+
+// pickSessionSeat chooses which live seat is THIS session's when a project
+// holds several (sty_c098dc2d). The session's own working tree is the
+// discriminator — owner cannot be, since the default is pid-less local@host and
+// co-held sibling leases share it. Routing the heartbeat this way is what stops
+// one sibling's activity from refreshing another's lease (and letting the
+// actually-worked one go stale at TTL).
+//
+// No tree match (unanchored leases, non-git session) falls back to the first
+// live seat — the previous behaviour, and still correct for a single seat.
+func pickSessionSeat(live []seatInfo) seatInfo {
+	if len(live) == 0 {
+		return seatInfo{}
+	}
+	if tree := sessionWorktree(); tree != "" {
+		for _, s := range live {
+			if s.Worktree == tree {
+				return s
+			}
+		}
+	}
+	return live[0]
+}
+
+// sessionWorktree resolves the git working tree this hook process runs in.
+// Empty when git cannot answer — callers then fall back rather than guess.
+var sessionWorktree = func() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	out, gerr := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	if gerr != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // touchSeat refreshes heartbeat_at for a live, owner-held seat (sty_3bb1d8be).
@@ -475,11 +518,13 @@ var seatHeartbeat = func(ctx context.Context, ls *lease.Store, itemID, owner str
 // first-transition dispatch; the residual sub-TTL orphan gap is the documented
 // cost (Acquire steals after HeartbeatTTL).
 //
-// Returns (live, other, err): live is the first qualifying seat (Engaged=true);
-// other is the most relevant non-qualifying lease for messaging (stale first,
-// else any row), with Engaged=false. err is non-nil when a leased item has no
-// resolving workflow (fail-closed, same as anyEngaged).
-func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Doc, now time.Time) (live, other seatInfo, err error) {
+// Returns (live, other, err): live is EVERY qualifying seat (Engaged=true), in
+// lease order — a project may hold more than one under a shared arbitration key
+// (sty_c098dc2d), and "is work in flight?" is len(live) > 0 whether that is one
+// lease or five. other is the most relevant non-qualifying lease for messaging
+// (stale first, else any row), with Engaged=false. err is non-nil when a leased
+// item has no resolving workflow (fail-closed, same as anyEngaged).
+func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Doc, now time.Time) (live []seatInfo, other seatInfo, err error) {
 	byID := make(map[string]workitem.Item, len(items))
 	for _, it := range items {
 		byID[it.ID] = it
@@ -501,6 +546,7 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 			// edit gate forever when hooks keep the heartbeat fresh (sty_bf797fa9).
 			InFlight: lease.EffectiveInFlight(l, now),
 		}
+		info.Worktree = l.Worktree
 		if stale {
 			// Prefer naming a stale holder in deny/session text.
 			if otherPick.ItemID == "" || (!otherPick.Stale && stale) {
@@ -534,10 +580,10 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 		// for messaging, but judging on committed status.
 		spec, wfName, _, serr := wfgovern.SpecFor(wfs, it)
 		if serr != nil {
-			return seatInfo{}, seatInfo{}, fmt.Errorf("item %s: %w — cannot determine engagement", it.ID, serr)
+			return nil, seatInfo{}, fmt.Errorf("item %s: %w — cannot determine engagement", it.ID, serr)
 		}
 		if _, known := spec.StateAgent(status); !known {
-			return seatInfo{}, seatInfo{}, fmt.Errorf(
+			return nil, seatInfo{}, fmt.Errorf(
 				"item %s status %q is not declared by workflow %s — cannot classify edit permission",
 				it.ID, status, wfName)
 		}
@@ -552,7 +598,7 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 		var targetKnown bool
 		info.StateAgent, targetKnown = spec.StateAgent(target)
 		if !targetKnown {
-			return seatInfo{}, seatInfo{}, fmt.Errorf(
+			return nil, seatInfo{}, fmt.Errorf(
 				"lease for item %s targets state %q not declared by workflow %s — cannot classify edit permission",
 				it.ID, target, wfName)
 		}
@@ -577,9 +623,7 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 				// in-flight-only seats sit at a not-yet-committed state (sty_e16a2cd7).
 				info.Advance = spec.AdvanceOptions(status)
 			}
-			if live.ItemID == "" {
-				live = info
-			}
+			live = append(live, info)
 			continue
 		}
 		if otherPick.ItemID == "" {
@@ -1402,20 +1446,41 @@ func sessionSeatBlock(a *app.App) string {
 	items, _ := a.Store.Stories.List(ctx, workitem.ListFilter{})
 	now := time.Now().UTC()
 	live, other, _ := evaluateSeat(leases, items, wfs, now)
-	info := live
-	if info.ItemID == "" {
-		info = other
+	// Several live seats: lead with this session's own (by working tree) but
+	// render them ALL — an operator joining a project where work is in flight
+	// under a shared key must see every holder, not just one.
+	if len(live) > 0 {
+		return renderSeatBlocks(live, now)
 	}
+	info := other
 	// No evaluateSeat pick (e.g. empty items+wfs): still name the first raw row.
 	if info.ItemID == "" {
 		l := leases[0]
 		info = seatInfo{
-			ItemID: l.ItemID, State: l.State, Owner: l.Owner,
+			ItemID: l.ItemID, State: l.State, Owner: l.Owner, Worktree: l.Worktree,
 			AcquiredAt: l.AcquiredAt, HeartbeatAt: l.HeartbeatAt,
 			Stale: lease.IsStale(l, now), InFlight: lease.EffectiveInFlight(l, now),
 		}
 	}
 	return formatSeatBlock(info, now)
+}
+
+// renderSeatBlocks formats every live seat for the SessionStart inject, leading
+// with this session's own (sty_c098dc2d). A project may hold more than one, and
+// an operator joining that work must see all of it — the old leases[0] pick
+// would have shown one and hidden the rest.
+func renderSeatBlocks(live []seatInfo, now time.Time) string {
+	if len(live) == 0 {
+		return ""
+	}
+	mine := pickSessionSeat(live)
+	blocks := []string{formatSeatBlock(mine, now)}
+	for _, s := range live {
+		if s.ItemID != mine.ItemID {
+			blocks = append(blocks, formatSeatBlock(s, now))
+		}
+	}
+	return strings.Join(blocks, "\n\n")
 }
 
 // selectAlwaysDocs returns the SESSION set — every principle carrying the
