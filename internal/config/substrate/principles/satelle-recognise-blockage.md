@@ -1,7 +1,7 @@
 ---
 name: satelle-recognise-blockage
 type: principle
-tags: [type:principle, principles:session]
+tags: [type:principle]
 applies_to: ["*"]
 description: Recognise process blockage and park — never thrash a denied tool call or ask to remove enforcement. When gates, missing deps, or contradictory instructions stop progress, stop retrying, move the engaged story to blocked with a structured reason, and let the blocked-triage path diagnose. Close the final engaged story last, after residual git work.
 ---
