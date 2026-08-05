@@ -1,3 +1,8 @@
+## [0.0.424] - 2026-08-05
+
+### Fixed
+- **Route document panel on a story detail page now matches sibling prose panels.** The expanded route card (`.route-doc`) takes the full detail-column width (`max-width: none`) and wears the same border radius, padding and panel background as Description / Acceptance criteria (`pre.prose`). Collapsed documents in the Documents list keep the 760px reading measure on `.doc-article`. CSS-only; no markup change (sty_c3b1eb57)
+
 ## [0.0.423] - 2026-08-04
 
 ### Added

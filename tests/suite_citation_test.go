@@ -69,9 +69,12 @@ func suiteCitationRepo(t *testing.T) (repo string, gate func(story, expected str
 	git("init")
 	git("config", "user.email", "t@t")
 	git("config", "user.name", "t")
-	// satelle's own runtime writes (backlog views, local settings) must not make
-	// the tree dirty — a consuming repo ignores them the same way.
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".satelle/\n.claude/\n"), 0o644); err != nil {
+	// satelle's own runtime writes (backlog views, local settings, harness
+	// scaffolds) must not make the tree dirty — a consuming repo ignores them
+	// the same way. Include every harness dir product .gitignore names so a
+	// lazy install under a live Grok/Claude/Codex session cannot dirty the
+	// citation fixture (sty_c3b1eb57 uncovered .grok/).
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".satelle/\n.claude/\n.grok/\n.codex/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	mustRun(t, testBin, repo, "init")
