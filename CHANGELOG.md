@@ -1,3 +1,11 @@
+## [0.0.432] - 2026-08-05
+
+### Added
+- **Route drift is detected and named instead of blaming the workflow.** A story's `workflow:` stamp records the LIFECYCLE; the LANE inside a derived route is re-derived from the story's category at every transition, so adding or altering a category table re-lanes work already in flight — with no re-stamp, no ledger entry and no notice. Until now a story stranded that way got the generic `skipped-step` text ("the route declares no step at all after X"), which sends the reader to fix a workflow that is not broken. It now gets `route-drift`: both lanes named — what the story walked, what its category derives now — and a remedy that is legal from where it sits. Reclassify while the story is still in its entry state; past that, category is frozen, so the refusal says cancel-with-reason and re-raise carrying `supersedes:<id>` rather than suggesting a `--category` edit the definition freeze would refuse. `wfgovern.DetectRouteDrift` is the enumeration, `verb.RouteWalked` reads the walked lane from the route document's outcome half — parsed in the package that WRITES that heading, pinned by a render→parse round-trip test, so a format change cannot silently disable the guard (sty_6e4f7fd8)
+
+### Changed
+- **The transition payload carries `route_drift` when, and only when, drift exists.** The binary enumerates and attaches; it decides nothing about whether a given drift is tolerable. That verdict is configuration: the new embedded `satelle-route-drift-check` judges the softer case — history off-lane while movement is still legal — and ships UNWIRED, so a repo names it on the step it wants guarded, best the engagement step, where reclassification is still legal. On the common path nothing is attached and nothing is dispatched (sty_6e4f7fd8)
+
 ## [0.0.431] - 2026-08-05
 
 ### Added

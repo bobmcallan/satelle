@@ -19,6 +19,14 @@ description = "Order-zero declaration of done every repo inherits — one table 
 # only the steps whose key it names, so a short list is a short route — that is
 # how a category opts out of work it does not need.
 #
+# A table selects the lane at EVERY transition, so adding or altering one
+# RE-LANES work already in flight under that category. A story that walked a step
+# the new lane does not declare is refused with `route-drift`, naming both lanes;
+# reclassify while the story is still in its entry state (category freezes after
+# that), or re-raise the work carrying `supersedes:<id>`. Name
+# satelle-route-drift-check on a step to have a gate judge the softer case, where
+# the history is off-lane but movement is still legal.
+#
 # Topology is synthesised too — park and cancel from every non-terminal step, and
 # the backward edges for recover — so nothing below draws them by hand.
 

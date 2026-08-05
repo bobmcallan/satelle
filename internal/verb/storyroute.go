@@ -225,3 +225,50 @@ func orDash(s string) string {
 	}
 	return s
 }
+
+// RouteWalked returns the lifecycle states a story has actually REACHED, in
+// order of first appearance, read from the route document's appended outcome
+// half (sty_6e4f7fd8). Empty for a story that has never transitioned.
+//
+// The parse lives here, beside renderOutcome which WRITES the heading it reads,
+// so one package owns the format. A reader in another package would fail OPEN on
+// a format change — returning nothing, reporting "no drift", and leaving the
+// guard that consumes it silently inert. TestRouteOutcomeRoundTrip pins the pair.
+func RouteWalked(item workitem.Item) []string {
+	return walkedFromOutcomes(readRouteDoc(item))
+}
+
+// walkedFromOutcomes is the pure half of RouteWalked: given a route document
+// body, return the states its outcome headings record, deduped in order.
+func walkedFromOutcomes(body string) []string {
+	_, after, found := strings.Cut(body, routeOutcomesHeading+"\n")
+	if !found {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			return
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	for _, line := range strings.Split(after, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "### ")
+		if !ok {
+			continue
+		}
+		// `<from> → <to> — <result> · <ts>`: cut the result off first so an em
+		// dash inside it cannot be mistaken for the separator.
+		edge, _, _ := strings.Cut(rest, " — ")
+		from, to, isEdge := strings.Cut(edge, " → ")
+		if !isEdge {
+			continue
+		}
+		add(from)
+		add(to)
+	}
+	return out
+}

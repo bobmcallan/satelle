@@ -29,6 +29,11 @@ const (
 	// RuleStructureGuard: the governing workflow itself fails structure validation,
 	// so nothing may transition under it.
 	RuleStructureGuard = "structure-guard"
+	// RuleRouteDrift: the item's status is not a state of the route its category
+	// derives NOW — the lane changed under work already in flight, so there is no
+	// legal edge from where it sits. Structural like RuleUndeclaredEdge, not a
+	// verdict on whether the drift was acceptable: that judgment is a gate's.
+	RuleRouteDrift = "route-drift"
 )
 
 // Refusal is a refused status transition, structured. Error() renders the single

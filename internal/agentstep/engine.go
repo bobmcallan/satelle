@@ -438,6 +438,12 @@ type transitionPayload struct {
 	// Bash-less reviewer can judge without reading any disk path (sty_58fa970e).
 	// Bodies may be Truncated when the cumulative budget is spent.
 	Docs []DocState `json:"docs,omitempty"`
+	// RouteDrift is present ONLY when the story's walked lane no longer matches
+	// the lane its category derives (sty_6e4f7fd8). Absent on every ordinary
+	// transition, so a reviewer that ignores it costs nothing and a gate that
+	// judges drift has the enumeration without shelling for it. Enumeration, not
+	// verdict — the binary attaches it and decides nothing.
+	RouteDrift *wfgovern.RouteDrift `json:"route_drift,omitempty"`
 }
 
 // ChildState is one child story's id and status, injected into a parent/epic
@@ -622,6 +628,22 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 		// so the refusal itself carries the rule, why it applied here, and where the
 		// story may go instead.
 		next := g.successorsOf(ctx, item, item.Status)
+		// Route drift first, when that is the actual cause: a status that is not a
+		// state of the lane its category derives NOW has no legal edge, and the
+		// generic undeclared-edge text ("no step after X") sends the reader to fix
+		// a workflow that is not broken. Structural, not a verdict on the drift.
+		if d, drifted := g.routeDriftFor(ctx, item); drifted && !d.StatusOnRoute {
+			entry := ""
+			if spec, _, serr := g.activeSpec(ctx, item); serr == nil {
+				entry = spec.Start()
+			}
+			return verb.GateDecision{}, wfgovern.Refusal{
+				Rule: wfgovern.RuleRouteDrift, Item: item.ID,
+				From: item.Status, To: toStatus, Alternatives: next,
+				Why:    wfgovern.DriftWhy(d),
+				Remedy: wfgovern.DriftRemedy(d, entry),
+			}
+		}
 		ref := wfgovern.Refusal{
 			Rule: wfgovern.RuleUndeclaredEdge, Item: item.ID,
 			From: item.Status, To: toStatus, Alternatives: next,
@@ -1432,6 +1454,12 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 		tp.Children = g.children(ctx, item.ID)
 	}
 	g.fillPayloadDocs(ctx, item.ID, &tp)
+	// Route drift rides the payload ONLY when it exists, so a repo that names a
+	// drift gate has the enumeration without shelling for it, and every other
+	// reviewer's payload is byte-for-byte unchanged (sty_6e4f7fd8).
+	if d, drifted := g.routeDriftFor(ctx, item); drifted {
+		tp.RouteDrift = &d
+	}
 	payload, err := json.Marshal(tp)
 	if err != nil {
 		return verb.GateDecision{}, err

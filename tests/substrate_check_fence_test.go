@@ -136,6 +136,21 @@ var fenceFixtures = map[string][]fenceCase{
 			wantExit: 0,
 		},
 	},
+	"satelle-route-drift-check": {
+		{
+			// The common path: no route_drift block in the payload, so there is
+			// nothing to judge and the gate must not cost a rejection.
+			name:     "accepts a payload with no drift block",
+			stdin:    `{"story":{"id":"sty_nodrift1"},"from":"plan","to":"in_progress"}`,
+			wantExit: 0,
+		},
+		{
+			name:       "rejects a drifted payload naming both lanes",
+			stdin:      `{"story":{"id":"sty_drift001"},"from":"in_progress","to":"done","route_drift":{"item":"sty_drift001","category":"docs","status":"in_progress","walked":["backlog","plan","in_progress"],"derived":["backlog","in_progress","done"],"off_route":["plan"],"status_on_route":true}}`,
+			wantExit:   1,
+			wantStdout: "route drift",
+		},
+	},
 	"satelle-docs-only-check": {
 		{
 			name: "accepts a markdown-only slice",

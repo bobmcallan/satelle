@@ -74,6 +74,19 @@ func refuseSkippedStep(ctx context.Context, current workitem.Item, toStatus stri
 	// free-form — name successors of from when any, else generic.
 	next := spec.Successors(from)
 	if len(next) == 0 {
+		// Route drift is the specific cause worth naming (sty_6e4f7fd8): the story
+		// sits on a state the lane its CATEGORY derives now does not declare, so
+		// the lane changed under work already in flight. The generic text below
+		// sends the reader to fix a workflow that is not broken. Structural, not a
+		// verdict on the drift — a status off the lane has no legal edge at all.
+		if d, drifted := wfgovern.DetectRouteDrift(current, spec, RouteWalked(current)); drifted && !d.StatusOnRoute {
+			return wfgovern.Refusal{
+				Rule: wfgovern.RuleRouteDrift, Item: current.ID, Workflow: wfName,
+				From: from, To: toStatus,
+				Why:    wfgovern.DriftWhy(d),
+				Remedy: wfgovern.DriftRemedy(d, spec.Start()),
+			}
+		}
 		return wfgovern.Refusal{
 			Rule: wfgovern.RuleSkippedStep, Item: current.ID, Workflow: wfName,
 			From: from, To: toStatus,
