@@ -61,8 +61,14 @@ catalogs are a separate verb: satelle publish.`,
 	syncCmd.Flags().StringVar(&syncServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
 	syncCmd.Flags().BoolVar(&syncDryRun, "dry-run", false, "Preview what each opted-in area would push without contacting the server (documents pull is not previewed).")
 	syncCmd.AddCommand(&cobra.Command{
-		Use:         "scopes",
-		Short:       "Print each .satelle area's resolved scope, and shared files within a personal area",
+		Use:   "scopes",
+		Short: "Print each .satelle area's resolved scope, and shared files within a personal area",
+		Long: `Print the resolved sync scope for every .satelle area — off, personal or team —
+and, inside a personal area, which files are nonetheless shared.
+
+Read this before a sync, not after: scope is what decides whether a file leaves
+the machine, and the per-file exceptions inside a personal area are exactly what
+a whole-area reading gets wrong. Read-only.`,
 		Annotations: needsStore(),
 		RunE:        runSyncScopes,
 	})
@@ -277,6 +283,12 @@ func newSyncConfigCmd() *cobra.Command {
 	group := &cobra.Command{
 		Use:   "config",
 		Short: "Push/deploy authored config for this repo's bound hosted project (local default: no hosted write)",
+		Long: `Move authored config between this repo and its bound hosted project: push what
+you have, or deploy what the project holds.
+
+Nothing leaves the machine by default — a hosted write happens only when the
+area is opted in, so running this in a repo that never opted in is a no-op by
+design rather than an error. Deploy OVERWRITES the local authored copy.`,
 	}
 
 	var pushServer, pushWorkspace string

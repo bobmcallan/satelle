@@ -36,6 +36,11 @@ func init() {
 	ws := &cobra.Command{
 		Use:   "workspace",
 		Short: "Manage the connected-repo registry the workspace view aggregates",
+		Long: `Manage the registry of repos this machine's workspace view aggregates.
+
+Local and machine-wide: registering a repo lets one serve show every project's
+stories together. It is not a hosted concept and copies no work — a repo that is
+not registered is simply absent from the view, not ungoverned.`,
 	}
 
 	add := &cobra.Command{
@@ -85,14 +90,25 @@ the one opened by the CLI, only registration runs — seed from inside that repo
 	remove := &cobra.Command{
 		Use:   "remove [path]",
 		Short: "Unregister a repo and purge its mirror partition (defaults to the current directory)",
-		Args:  cobra.MaximumNArgs(1),
-		RunE:  runWorkspaceRemove,
+		Long: `Unregister a repo from the workspace registry and purge its mirror partition,
+defaulting to the current directory.
+
+It removes the repo from the VIEW only: the repo keeps its own database, its
+substrate and its stories, and satelle governs it exactly as before. Re-add it
+with satelle workspace add.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: runWorkspaceRemove,
 	}
 
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List registered repos",
-		Args:  cobra.NoArgs,
+		Long: `List the repos registered in this machine's workspace registry.
+
+Registration is by PATH: a repo that moved is still listed under the old one and
+will read as unhealthy until it is re-added there. Use satelle doctor --all to
+see which registered repos are actually in good shape.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			gc, err := config.LoadGlobal()
 			if err != nil {
@@ -112,15 +128,26 @@ the one opened by the CLI, only registration runs — seed from inside that repo
 	parts := &cobra.Command{
 		Use:   "partitions",
 		Short: "List mirror partitions (repo_key, slug, path, counts) on the local serve",
-		Args:  cobra.NoArgs,
-		RunE:  runWorkspacePartitions,
+		Long: `List the mirror partitions the local serve holds — repo_key, slug, path and row
+counts, one per registered repo.
+
+This is the serve's own view, not the registry's: a partition with no matching
+repo is an orphan (usually a test or a moved checkout), and satelle workspace
+prune removes it by repo_key.`,
+		Args: cobra.NoArgs,
+		RunE: runWorkspacePartitions,
 	}
 
 	var pruneForce bool
 	prune := &cobra.Command{
 		Use:   "prune <repo_key>",
 		Short: "Remove a mirror partition by repo_key (orphans from tests; --force if path still exists)",
-		Args:  cobra.ExactArgs(1),
+		Long: `Remove one mirror partition from the local serve by repo_key.
+
+For orphans — partitions whose repo is gone. If the path still exists it refuses
+without --force, because pruning a live repo's partition drops it out of the
+workspace view until it is re-seeded. The repo's own database is never touched.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runWorkspacePrune(cmd, args[0], pruneForce)
 		},

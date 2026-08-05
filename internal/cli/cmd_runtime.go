@@ -37,7 +37,13 @@ path and prints a deprecation note. See decision-substrate-planes-local-first.`,
 	pathCmd := &cobra.Command{
 		Use:   "path",
 		Short: "Print the resolved runtime directory for this repo",
-		Args:  cobra.NoArgs,
+		Long: `Print the runtime directory satelle resolved for this repo — where the database,
+logs and backups actually live.
+
+The runtime plane is home-keyed (~/.satelle/<repo-key>/), NOT in the repo, so
+this is the answer to "where is my data" that a directory listing will not give
+you. Read-only.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, cfgPath, err := config.Load("")
 			if err != nil && err != config.ErrNotFound {

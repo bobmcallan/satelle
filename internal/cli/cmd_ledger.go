@@ -10,12 +10,22 @@ import (
 )
 
 func init() {
-	ledgerCmd := &cobra.Command{Use: "ledger", Short: "Append to and read the evidence ledger"}
+	ledgerCmd := &cobra.Command{Use: "ledger", Short: "Append to and read the evidence ledger",
+		Long: `The evidence ledger: what happened, appended in order and never rewritten.
+
+Gate verdicts, agent invocations and their cost, change records, suite runs. Use
+list to read it and append to add an entry; record-run and cite-run carry one
+verification run across stories so a sibling need not re-run the suite.`}
 
 	var aStory, aProject, aKind, aActor, aBody string
 	appendCmd := &cobra.Command{
-		Use:         "append",
-		Short:       "Append an entry to the ledger",
+		Use:   "append",
+		Short: "Append an entry to the ledger",
+		Long: `Append one entry to the evidence ledger.
+
+Append-only: there is no edit and no delete, because a record its writer can
+revise is not evidence. For a story-scoped telemetry event prefer satelle story
+log, which types the data and attaches it to the story.`,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			req := map[string]any{"kind": aKind}
@@ -36,8 +46,13 @@ func init() {
 	var lStory, lProject, lKind string
 	var lLimit int
 	listCmd := &cobra.Command{
-		Use:         "list",
-		Short:       "List ledger entries (filter by story, project, or kind)",
+		Use:   "list",
+		Short: "List ledger entries (filter by story, project, or kind)",
+		Long: `Read the ledger, filtered by story, project or kind.
+
+This is where a gate's FULL output lives: the route document shows the verdict
+and its reasoning and points here for everything the reviewer actually wrote.
+Reach for it when the summary is not enough.`,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			req := map[string]any{}
@@ -90,8 +105,13 @@ satelle ledger citation and decides in its own check block.
 
 	var cStory, cRun string
 	citeRunCmd := &cobra.Command{
-		Use:         "cite-run",
-		Short:       "Cite a recorded suite run from another story",
+		Use:   "cite-run",
+		Short: "Cite a recorded suite run from another story",
+		Long: `Cite a suite run another story already recorded, keyed by the commit SHA it ran
+against — so a sibling story on the same SHA need not re-run a green suite.
+
+The citation is only good while the SHA matches: change the tree and the cited
+run no longer describes it, and a gate reading the citation will say so.`,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return dispatch(cmd, "ledger-cite-run", map[string]any{"story_id": cStory, "run_id": cRun})

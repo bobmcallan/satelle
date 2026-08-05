@@ -30,7 +30,13 @@ func init() {
 
 // authoredGroup builds a `satelle <singular>` group with a gated `create`.
 func authoredGroup(singular, kind string) *cobra.Command {
-	g := &cobra.Command{Use: singular, Short: "Manage authored " + kind + " (markdown substrate)"}
+	g := &cobra.Command{Use: singular, Short: "Manage authored " + kind + " (markdown substrate)",
+		Long: `Author and check this repo's ` + kind + ` — markdown under .satelle/, which is the
+source of truth; the database only indexes it.
+
+create writes one through its structure gate; validate checks what is already on
+disk. A repo-authored file of the same name OVERRIDES the embedded default per
+FILE, so adopting a default means copying it and editing your copy.`}
 	g.AddCommand(authoredCreateCmd(kind), authoredValidateCmd(kind))
 	return g
 }

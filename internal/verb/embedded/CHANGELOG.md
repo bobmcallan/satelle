@@ -1,3 +1,8 @@
+## [0.0.431] - 2026-08-05
+
+### Added
+- **Every CLI command carries a brief, focused `Long`, and a test keeps it that way.** `--help` is the only description of a verb an agent can read at runtime, and 77 of the 132 commands had only a one-line `Short` — including `story create`, `story set`, `story list`, `story log`, `story seat`, `story estimate`, `task create`, `execution create`, `ledger append`. Each now answers the two questions a `Short` cannot: when this verb is the right one, and the constraint that is not guessable from the flags (`--category` selects the route and freezes on leaving the entry state; `--status` is a transition whose gates can refuse it; the estimate gate greps TAGS, not a plan section; `story cost` is measured cost while `actual-*` is self-report; heartbeat age separates a LIVE seat from a STALE one). `story`, `task` and `execution` share one factory, so their help is written once and PARAMETERISED — seat arbitration and the definition freeze appear only for stories, `--parent` only for executions. `TestEveryCommandHasLong` and `TestLongIsBrief` walk the cobra tree (group parents included; `completion`, `help` and hidden commands excluded), failing on a missing `Long` and on one over 130 words / 18 lines, with an exact-match shrink-only waiver for the 19 commands whose help is genuinely operational documentation. A fixture-tree test proves the guard fires for a command added tomorrow, not just for today's surface. `satelle story diff` was trimmed 166 → 129 words rather than waived, losing no fact (sty_a499e7f5)
+
 ## [0.0.430] - 2026-08-05
 
 ### Changed

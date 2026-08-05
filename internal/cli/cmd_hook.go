@@ -70,6 +70,12 @@ func init() {
 	hook := &cobra.Command{
 		Use:   "hook",
 		Short: "Claude Code hook handlers (SessionStart context injection, …)",
+		Long: `The handlers a harness calls on satelle's behalf: session context injection, the
+edit and commit gates, the prompt reminder.
+
+You do not run these by hand — the harness does, on its own events, and they read
+their payload from stdin. Read them to understand what satelle enforces in a
+session; install or remove the wiring with satelle agents.`,
 	}
 	context := &cobra.Command{
 		Use:   "context",

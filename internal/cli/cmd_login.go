@@ -61,6 +61,11 @@ satelle.toml.`,
 	logout := &cobra.Command{
 		Use:   "logout",
 		Short: "Clear stored hosted-server credentials",
+		Long: `Clear the stored hosted-server credentials on this machine.
+
+Local work is unaffected — satelle runs fully locally, and only the hosted sync
+and project commands need a session. Nothing already synced is withdrawn: this
+forgets a credential, it does not revoke or delete anything server-side.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runLogout(cmd, logoutServer)
 		},
@@ -72,6 +77,11 @@ satelle.toml.`,
 	whoami := &cobra.Command{
 		Use:   "whoami",
 		Short: "Print the hosted-server principal (GET /api/v1/me)",
+		Long: `Print who the stored credential authenticates as on the hosted server.
+
+Reach for it when a hosted command is refused: it separates "not logged in" from
+"logged in as the wrong principal", which the refusal alone often does not. It
+asks the server, so it needs the network.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runWhoami(cmd, whoamiServer)
 		},

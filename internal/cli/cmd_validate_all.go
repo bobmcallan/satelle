@@ -16,8 +16,14 @@ func init() {
 // deterministic check plus the cross-substrate wikilink audit.
 func validateAllCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:         "validate",
-		Short:       "Validate all authored substrate (per-kind checks + wikilink resolution)",
+		Use:   "validate",
+		Short: "Validate all authored substrate (per-kind checks + wikilink resolution)",
+		Long: `Run every per-kind structure check across this repo's authored substrate, then
+resolve wikilinks between the files.
+
+The cross-file half is what a per-kind validate cannot do: a skill that cites a
+principle by name is only correct if that name resolves, and a rename breaks it
+silently. Read-only, deterministic, no agent — run it after any substrate edit.`,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := appFrom(cmd)

@@ -27,6 +27,12 @@ func init() {
 	project := &cobra.Command{
 		Use:   "project",
 		Short: "Manage projects on the hosted satelle-server",
+		Long: `Manage the hosted-server projects this machine can reach, and which one this
+repo syncs to.
+
+Hosted only: every subcommand needs a session (satelle login) and the network.
+Local work never depends on it — the OSS tier runs entirely offline, and a repo
+with no bound project simply does not sync.`,
 	}
 
 	var (
@@ -53,6 +59,11 @@ and name. Requires a prior "satelle login".`,
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List your projects on the hosted server",
+		Long: `List the projects your credential can see on the hosted server.
+
+Reach for it to find the slug bind expects. It asks the server, so it needs
+login and the network; use satelle project show to see what this repo is already
+bound to.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runProjectList(cmd, listServer)
 		},
@@ -79,6 +90,12 @@ in the per-user credential store. "satelle project show" prints the binding.`,
 	show := &cobra.Command{
 		Use:   "show",
 		Short: "Show this repo's hosted server, bound project, and sign-in state",
+		Long: `Show this repo's hosted binding: which server, which project slug, and whether
+this machine is signed in.
+
+The first thing to read when a sync does nothing or is refused — it separates
+"no project bound" from "bound but not signed in", which the sync commands
+themselves report only indirectly.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runProjectShow(cmd, showServer)
 		},

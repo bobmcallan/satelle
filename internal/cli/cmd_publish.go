@@ -23,6 +23,12 @@ func init() {
 	pub := &cobra.Command{
 		Use:   "publish",
 		Short: "Publish local satelle artifacts to a team catalog (not sync)",
+		Long: `Share authored artifacts through a team catalog: push yours, list what others
+published, adopt one, and check adopted copies for newer versions.
+
+Publishing is NOT sync. Sync mirrors a repo's own state to its bound project;
+this offers a file to a team, and adopting it makes an independent COPY that
+never tracks the original until you check and update it deliberately.`,
 	}
 	var pubServer, pubWorkspace, pubKind, pubTitle string
 	var dryRun bool
@@ -49,6 +55,11 @@ The publisher retains control of later versions; other members adopt copies.`,
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List published artifacts on a team workspace",
+		Long: `List what a team workspace has published.
+
+Browsing, not installing: adopting one copies it into this repo with satelle
+publish adopt, and from then on your copy is yours. Needs a session and the
+network.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runPublishList(cmd, listServer, listWorkspace)
 		},
@@ -80,6 +91,12 @@ recorded in .satelle/adoptions.json for update checks.`,
 	check := &cobra.Command{
 		Use:   "check",
 		Short: "Show adopted items with a newer published version; optionally update",
+		Long: `Compare the artifacts this repo has adopted against the catalog and report the
+ones with a newer published version.
+
+Read-only unless you ask it to update. An adopted artifact is a COPY you own, so
+an update overwrites your copy — local edits to it are lost, which is the reason
+this reports before it acts.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runPublishCheck(cmd, checkServer, checkWorkspace, doUpdate)
 		},

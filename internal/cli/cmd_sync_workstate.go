@@ -39,6 +39,12 @@ func newSyncWorkstateCmd() *cobra.Command {
 	group := &cobra.Command{
 		Use:   "workstate",
 		Short: "Push/pull work state for this repo's bound hosted project personal collection (local default skips)",
+		Long: `Move work state — stories, tasks, ledger — between this repo and its bound
+hosted project's personal collection.
+
+This is the continuity path for the same work across machines, not a team
+channel: the personal collection is yours. Skipped entirely unless the workstate
+area is opted in, and a pull merges into local rows rather than replacing them.`,
 	}
 
 	var pushServer string

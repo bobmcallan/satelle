@@ -47,7 +47,11 @@ satelle agents install (plural) — that path never changes this [agent] cli def
 	show := &cobra.Command{
 		Use:   "show",
 		Short: "Show the selected agent CLI and whether it is installed",
-		Args:  cobra.NoArgs,
+		Long: `Print the selected agent CLI and whether its binary is actually on PATH.
+
+Reach for it when dispatch fails: a selection naming a CLI this machine does not
+have looks identical to a misconfigured workflow until you ask.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			gc, err := config.LoadGlobal()
 			if err != nil {
@@ -70,7 +74,12 @@ satelle agents install (plural) — that path never changes this [agent] cli def
 	set := &cobra.Command{
 		Use:   "set <claude|codex>",
 		Short: "Select and persist the agent CLI",
-		Args:  cobra.ExactArgs(1),
+		Long: `Select the agent CLI and persist it machine-wide.
+
+It records a preference; it installs nothing. Naming a CLI this machine does not
+have leaves dispatch broken until that binary exists, and satelle agent show is
+what tells you which case you are in.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Validate the name against the known runners before persisting.
 			if _, err := agentcli.NewRunner(args[0]); err != nil {
@@ -83,7 +92,12 @@ satelle agents install (plural) — that path never changes this [agent] cli def
 	detect := &cobra.Command{
 		Use:   "detect",
 		Short: "Auto-detect an installed agent CLI (claude preferred) and persist it",
-		Args:  cobra.NoArgs,
+		Long: `Look for an installed agent CLI and persist the one it finds, preferring claude.
+
+The convenience path on a new machine, where set would mean naming what you have
+not checked for. It only ever selects something present, so it cannot leave the
+selection pointing at a missing binary.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			found := agentcli.Detect()
 			if found == "" {
@@ -102,7 +116,13 @@ func agentMigrateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "migrate",
 		Short: "Seed ~/.satelle/agents.toml with a starter profile from the selected agent CLI",
-		Args:  cobra.NoArgs,
+		Long: `Seed the machine-wide agent profile from the currently selected CLI, so every
+repo does not have to author its own bindings from nothing.
+
+Run it once per machine, after the selection is right. What it writes is a
+STARTER profile: a repo's own .satelle/workflows/agents.toml still decides what
+runs each step.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 			path := config.GlobalAgentsPath()
@@ -194,8 +214,15 @@ func sortedMapKeys(m map[string]string) []string {
 // mechanical agent↔workflow surface without duplicating those checks.
 func agentValidateCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:         "validate",
-		Short:       "Validate .satelle/workflows/agents.toml and workflow agent= bindings; show resolved grants",
+		Use:   "validate",
+		Short: "Validate .satelle/workflows/agents.toml and workflow agent= bindings; show resolved grants",
+		Long: `Check this repo's agents layer: every agent= and reviewer_agent= the workflow
+names resolves to a binding, and each binding's resolved model, effort and tool
+grant is printed.
+
+Reach for it after editing agents.toml or a step's agent allocation. It reads
+both authored files together, so an orphaned binding and a dangling reference
+are both visible here rather than at the next dispatch.`,
 		Args:        cobra.NoArgs,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {

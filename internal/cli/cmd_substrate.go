@@ -37,8 +37,15 @@ See decision-substrate-planes-local-first.`,
 
 	var asJSON bool
 	listCmd := &cobra.Command{
-		Use:         "list",
-		Short:       "List effective substrate with provenance",
+		Use:   "list",
+		Short: "List effective substrate with provenance",
+		Long: `List the substrate this repo actually runs, each item tagged with where it came
+from: default (embedded), edited (a materialised copy you changed), or authored
+(yours alone).
+
+The provenance is the reason to run it. Overriding is per FILE, so an embedded
+default stays live until a repo-authored file of the same name exists — this is
+what shows you which half of the tree is really yours.`,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := appFrom(cmd)
@@ -53,8 +60,14 @@ See decision-substrate-planes-local-first.`,
 	listCmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON")
 
 	editCmd := &cobra.Command{
-		Use:         "edit [kind] [name]",
-		Short:       "Materialize an embedded default onto disk for editing",
+		Use:   "edit [kind] [name]",
+		Short: "Materialize an embedded default onto disk for editing",
+		Long: `Copy an embedded default onto disk under .satelle/ so you can edit it.
+
+The copy takes over from that moment: the file OVERRIDES the embedded default by
+name, and it no longer tracks improvements shipped in later binaries. Materialise
+what you actually intend to diverge on — satelle substrate prune removes copies
+that were never edited.`,
 		Args:        cobra.ExactArgs(2),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -68,8 +81,14 @@ See decision-substrate-planes-local-first.`,
 
 	var yes bool
 	pruneCmd := &cobra.Command{
-		Use:         "prune",
-		Short:       "Remove unedited seed copies of embedded defaults (dry-run unless --yes)",
+		Use:   "prune",
+		Short: "Remove unedited seed copies of embedded defaults (dry-run unless --yes)",
+		Long: `Remove on-disk copies of embedded defaults that were never edited, so the repo
+tracks the shipped version again.
+
+Dry-run unless --yes: it reports what it would remove first. Only byte-identical
+copies go — anything you changed is authored substrate and is left alone, which
+is why this cannot quietly discard your work.`,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := appFrom(cmd)

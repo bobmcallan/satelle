@@ -19,7 +19,13 @@ import (
 )
 
 func init() {
-	wf := &cobra.Command{Use: "workflow", Short: "Inspect workflows (read-only)"}
+	wf := &cobra.Command{Use: "workflow", Short: "Inspect workflows (read-only)",
+		Long: `Inspect the lifecycle this repo runs: which workflow governs a category, what a
+route derives to, and whether the authored halves are valid.
+
+Read-only — a lifecycle is authored markdown and TOML under .satelle/workflows,
+so this never edits it. For one story's actual route and its verdicts, use
+satelle story route.`}
 
 	var category string
 	list := &cobra.Command{

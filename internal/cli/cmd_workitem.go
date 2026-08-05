@@ -35,7 +35,7 @@ func init() {
 // subcommands dispatching to the <group>-* verbs. plural is used only in help
 // text (e.g. "List stories").
 func workItemGroup(group, plural, short string) *cobra.Command {
-	parent := &cobra.Command{Use: group, Short: short}
+	parent := &cobra.Command{Use: group, Short: short, Long: groupParentLong(group)}
 
 	// create
 	var cTitle, cBody, cStatus, cPriority, cCategory, cParent, cAccept string
@@ -43,6 +43,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 	create := &cobra.Command{
 		Use:         "create",
 		Short:       "Create a " + group,
+		Long:        groupCreateLong(group),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			req := map[string]any{"title": cTitle}
@@ -92,6 +93,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 	get := &cobra.Command{
 		Use:         "get <id>",
 		Short:       "Get a " + group + " by id",
+		Long:        groupGetLong(group),
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -105,6 +107,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 	list := &cobra.Command{
 		Use:         "list",
 		Short:       "List " + plural,
+		Long:        groupListLong(group, plural),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			req := map[string]any{}
@@ -126,6 +129,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 	set := &cobra.Command{
 		Use:         "set <id>",
 		Short:       "Update a " + group + " (only the flags you pass change)",
+		Long:        groupSetLong(group),
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -250,8 +254,14 @@ func refreshStoryBacklog(cmd *cobra.Command) {
 func executionRecordCommand() *cobra.Command {
 	var output string
 	cmd := &cobra.Command{
-		Use:         "record <exe_id>",
-		Short:       "Record a task execution's run output as an OKF doc under its task folder",
+		Use:   "record <exe_id>",
+		Short: "Record a task execution's run output as an OKF doc under its task folder",
+		Long: `Record what a run produced, as an authored document under the parent task's
+folder — the evidence half of an execution.
+
+--output takes the text; with the flag absent it reads STDIN, so a captured log
+pipes straight in. Reach for it before closing the run: the after-validator
+judges what the run did, and an unrecorded run leaves it nothing to read.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -275,8 +285,15 @@ func executionRecordCommand() *cobra.Command {
 // workflow status a task never runs through.
 func taskArchiveCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:         "archive <id>",
-		Short:       "Archive a task: move its files to backups and mark the record archived (excluded from list)",
+		Use:   "archive <id>",
+		Short: "Archive a task: move its files to backups and mark the record archived (excluded from list)",
+		Long: `Retire a superseded task: the record is marked archived (dropped from the
+default task list, still readable via task get) and its header plus executions
+MOVE to a timestamped backup directory.
+
+Archive is record DISPOSITION, not a workflow status — a task runs no lifecycle
+to close. The files move rather than vanish, so a mistaken archive is
+recoverable from the backup tree.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -409,8 +426,15 @@ func docWriteOutBinary(cmd *cobra.Command, storyID, name, outPath string) error 
 // artifact review that REPORTS orphans/misfiles (never deletes evidence).
 func storySyncCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:         "sync",
-		Short:       "Reconcile .satelle/stories: backlog-only views; review artifact dirs against the DB",
+		Use:   "sync",
+		Short: "Reconcile .satelle/stories: backlog-only views; review artifact dirs against the DB",
+		Long: `Reconcile the on-disk .satelle/stories tree against the database: rematerialise
+the backlog views and review the per-story artifact directories.
+
+Reach for it when the views look stale or an artifact directory is unaccounted
+for. It REPORTS orphans and problems and never deletes evidence — an ORPHANED
+directory is authored material with no story row, and removing it is your call,
+not this command's.`,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := appFrom(cmd)
@@ -446,27 +470,19 @@ func storyDiffCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "diff [id]",
 		Short: "List files changed since engagement baseline (enumeration only)",
-		Long: `Report files and a diffstat from the story's engagement baseline
-(git HEAD recorded on first entry into a performing state) through the current
-worktree, including uncommitted edits and untracked files. Use --patch for the
-full unified diff of tracked changes.
+		Long: `Enumerate the files a story changed since its engagement baseline (the git
+HEAD recorded on first entry into a performing state), including uncommitted
+and untracked ones. Reach for it when a gate — or you — must know the slice.
 
---recorded unions the file lists from every change_record ledger row written at
-enacted transitions (sty_948ad5df) instead of re-deriving from git. Prefer this
-when a gate must see what satelle already recorded, including git-ignored
-substrate paths.
 
---include-substrate (opt-in) also unions mtime-changed files under authored
-substrate dirs and the resolved data dir since engagement. Default live
-enumeration stays git-only so project scope-review is not polluted by mtime
-noise; the substrate close gate is the intended consumer.
+Three enumerations, and picking the wrong one is the usual mistake:
+  default              live git re-derive, baseline → worktree (--patch for the diff)
+  --recorded           the change_record rows satelle wrote at each transition —
+                       what a gate needs, and it sees git-ignored substrate too
+  --include-substrate  also unions mtime-changed authored substrate, opt-in
 
-No pass/fail: gates consume this output and decide. Stories without a baseline
-error clearly on the live path; --recorded returns an empty list with a note
-when no records exist yet.
-
-Gate functional checks may omit the id and pipe the transition JSON on stdin
-({story:{id}, from, to}); the verb reads story.id.`,
+It decides nothing; gates consume the output and judge. The diff is anchored to
+the tree the story was engaged from and refuses elsewhere.`,
 		Args:        cobra.MaximumNArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -521,8 +537,15 @@ func storyCostCommands() []*cobra.Command {
 	var eTime, eBasis string
 	var eTokens int
 	estimate := &cobra.Command{
-		Use:         "estimate <id>",
-		Short:       "Record a story's plan estimate (time/tokens)",
+		Use:   "estimate <id>",
+		Short: "Record a story's plan estimate (time/tokens)",
+		Long: `Record the plan's estimate for a story as estimate-minutes / estimate-tokens
+tags.
+
+The driving session records it — not the planner — and a workflow that gates on
+the estimate greps those TAGS, not a plan section, so a figure written only into
+the plan artifact leaves the gate unsatisfied. Record it before requesting the
+transition the gate fires on.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -542,8 +565,14 @@ func storyCostCommands() []*cobra.Command {
 	var aTime string
 	var aTokens int
 	actual := &cobra.Command{
-		Use:         "actual <id>",
-		Short:       "Record a story's actual cost (time/tokens)",
+		Use:   "actual <id>",
+		Short: "Record a story's actual cost (time/tokens)",
+		Long: `Record what the story actually cost as actual-minutes / actual-tokens tags,
+the counterpart to estimate.
+
+These are SELF-REPORT, not measurement: satelle story cost shows the transport
+cost it measured per gate. A workflow that gates the close on actuals greps
+these tags, so record them before requesting the closing transition.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -567,8 +596,15 @@ func storyCostCommands() []*cobra.Command {
 	var logKind string
 	var logData []string
 	log := &cobra.Command{
-		Use:         "log <id> --kind <kind> [--data key=val ...]",
-		Short:       "Record a typed telemetry/quality event against a story",
+		Use:   "log <id> --kind <kind> [--data key=val ...]",
+		Short: "Record a typed telemetry/quality event against a story",
+		Long: `Append a typed event to a story's ledger — a step self-report, a quality
+signal, whatever the kind names.
+
+--data takes key=value pairs and types them: a value that parses as a number is
+stored numerically, everything else as a string, so --data tokens_total=42000
+lands as a number a later reader can sum. Append-only: nothing here rewrites a
+prior entry.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -591,8 +627,14 @@ func storyCostCommands() []*cobra.Command {
 	// sees which reviewer/dispatch spent what. Distinct from estimate/actual (the
 	// plan's own time/token figures) — this is measured runtime cost.
 	cost := &cobra.Command{
-		Use:         "cost <id>",
-		Short:       "Show the measured per-gate token + wall-time cost recorded for a story",
+		Use:   "cost <id>",
+		Short: "Show the measured per-gate token + wall-time cost recorded for a story",
+		Long: `Show what a story actually cost to run: per-gate tokens and wall time, taken
+from the agent-invocation ledger entries, plus a per-step roll-up.
+
+This is MEASURED transport cost, distinct from the estimate/actual tags, which
+are the session's own figures. A row printed as "—" is unmeasured, never free:
+an in-loop step reports nothing unless a step self-report was logged.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -652,8 +694,14 @@ func storyCostCommands() []*cobra.Command {
 	// warning names when a transient kill holed the pull-context chain.
 	var rsFrom, rsTo string
 	resummarise := &cobra.Command{
-		Use:         "resummarise <id> --from <state> --to <state>",
-		Short:       "Re-run the step summariser for one edge to close a missing-summary gap",
+		Use:   "resummarise <id> --from <state> --to <state>",
+		Short: "Re-run the step summariser for one edge to close a missing-summary gap",
+		Long: `Re-run the step summariser for ONE edge whose summary is missing — the hole a
+transient kill leaves in the trail.
+
+Both --from and --to are required: this repairs a named edge, not the story.
+Reach for it when the route or a done-time warning says a summary is absent;
+it fills the gap rather than re-judging anything.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -667,8 +715,14 @@ func storyCostCommands() []*cobra.Command {
 	// improvement proposals (sty_b53730e2). Opt-in per story, so its cost (visible
 	// via `story cost`) is measured before it is ever made auto-on-done.
 	retrospect := &cobra.Command{
-		Use:         "retrospect <id>",
-		Short:       "Run the retrospective agent over a finished story to file improvement proposals",
+		Use:   "retrospect <id>",
+		Short: "Run the retrospective agent over a finished story to file improvement proposals",
+		Long: `Dispatch the retrospective agent over a FINISHED story: it reads what happened
+and files improvement proposals.
+
+Opt-in per story, deliberately — it costs a full agent turn, visible afterwards
+in satelle story cost. Reach for it on a story worth learning from, not as a
+routine close step.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -879,8 +933,14 @@ of binary content is out of scope.`,
 	_ = attach.MarkFlagRequired("name")
 
 	docs := &cobra.Command{
-		Use:         "docs <id>",
-		Short:       "List a story's attached documents",
+		Use:   "docs <id>",
+		Short: "List a story's attached documents",
+		Long: `List the documents attached to a story — plan, route, change records, step
+summaries, and whatever evidence was attached by hand.
+
+Names and types only; read one with satelle story doc <id> <name>. Reach for it
+when a gate asks for evidence you are not sure exists: the attachment NAME is
+what a presence check looks for.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -945,8 +1005,13 @@ Read-only, and answerable without opening any workflow file.`,
 	// lessons — cross-story enumeration of typed lessons/lesson attachments
 	// (offline friction corpus; never session-injected).
 	lessons := &cobra.Command{
-		Use:         "lessons",
-		Short:       "List typed lessons artifacts across all stories",
+		Use:   "lessons",
+		Short: "List typed lessons artifacts across all stories",
+		Long: `List every typed lessons artifact across all stories — the accumulated friction
+corpus, in one place.
+
+Read it when you want the record of what went wrong before, deliberately: these
+artifacts are never session-injected, so nothing surfaces them unless you ask.`,
 		Args:        cobra.NoArgs,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -985,8 +1050,15 @@ Never cancel a healthy story to free the seat — cancelled is terminal.`,
 // engagement seat (sty_1738f973 AC4).
 func storySeatCommands() []*cobra.Command {
 	seat := &cobra.Command{
-		Use:         "seat",
-		Short:       "List engagement seat leases (reaps stale rows first)",
+		Use:   "seat",
+		Short: "List engagement seat leases (reaps stale rows first)",
+		Long: `List the engagement seat leases: who holds one, from which working tree, and how
+old the heartbeat is. Stale rows are reaped before the list is rendered, so what
+you see is live.
+
+Reach for it when an engagement is refused. The heartbeat age is the reading
+that matters: a LIVE holder is another agent still working, and the path is
+stop-request; a STALE one is nobody, and the path is seat release.`,
 		Args:        cobra.NoArgs,
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -994,8 +1066,14 @@ func storySeatCommands() []*cobra.Command {
 		},
 	}
 	release := &cobra.Command{
-		Use:         "release <id>",
-		Short:       "Force-release an engagement seat by story/task id",
+		Use:   "release <id>",
+		Short: "Force-release an engagement seat by story/task id",
+		Long: `Force-release an engagement seat by the id holding it.
+
+For a STALE seat — no live agent behind it, which the heartbeat age in satelle
+story seat shows. Releasing a LIVE holder's seat abandons work another agent
+believes it is still doing: ask for it with stop-request instead, which lets the
+holder park itself. Never cancel a healthy story to free a seat.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -1004,4 +1082,100 @@ func storySeatCommands() []*cobra.Command {
 	}
 	seat.AddCommand(release)
 	return []*cobra.Command{seat}
+}
+
+// Help for the shared story/task/execution surface. One factory builds the three
+// groups, so their help is written once and PARAMETERISED — the constraints that
+// genuinely differ (seat arbitration and the definition freeze are story-only,
+// --parent is execution-only) are named per group rather than repeated three
+// times with two of them wrong (sty_a499e7f5).
+
+func groupParentLong(group string) string {
+	switch group {
+	case "task":
+		return `A task is an authored HEADER — a re-runnable definition of work and how its
+success is verified — not a running lifecycle. The markdown file under
+.satelle/tasks is the source of truth; the database only indexes it.
+
+Each RUN of a task is an execution: satelle execution create --parent <tsk_id>.
+Retire a superseded header with archive, which is record disposition, not a
+workflow status.`
+	case "execution":
+		return `An execution is one isolated RUN of a task. Create it with --parent <tsk_id>:
+without that parent it has no definition to run and no validators to gate it.
+
+The run carries the lifecycle (its before/after validators gate entry and
+close) while the task header it points at stays a stable definition. Record the
+run output with satelle execution record <exe_id>.`
+	}
+	return `A story is the unit of work satelle governs: it carries the goal, the
+acceptance criteria, and the route it walks to done. Edits to the repo require
+one engaged in a performing state — that is what the edit gate enforces.
+
+Reach for create/set to drive the lifecycle, get/list to read, attach/doc/docs
+to carry evidence, and route to see the steps and every verdict so far. The
+category chosen at create selects the route; see satelle help create-story.`
+}
+
+func groupCreateLong(group string) string {
+	switch group {
+	case "task":
+		return `Create a task header — the definition, not a run. Use it when the work is
+repeatable and you want one place that says what to do and how success is
+checked; use story create for a one-off slice with acceptance criteria.
+
+--title is required. The header is written as authored markdown under
+.satelle/tasks and indexed from there, so the file remains the source of truth.`
+	case "execution":
+		return `Create an execution: one isolated run of an existing task.
+
+--parent <tsk_id> is what makes it a run rather than an orphan, and the task
+header it names supplies both the action and the validators that gate the run.
+Record what the run produced with satelle execution record.`
+	}
+	return `Create a story. Reach for it before touching the repo: an edit needs an
+engaged story, and engagement starts here.
+
+--category is not cosmetic — it selects the ROUTE the story will walk, and it
+freezes once the story leaves its entry state, so a wrong category costs a
+cancel-and-re-raise later. When [review] gate_create is on, the create-review
+gate judges the draft and can REJECT it: the story is then not created, and the
+notes say what to fix.`
+}
+
+func groupGetLong(group string) string {
+	return `Print one ` + group + ` by id as JSON — every field, including tags and the
+acceptance criteria. Reach for it when you need the full record; list gives you
+the rows, this gives you the item.
+
+Read-only: no gate runs and nothing is recorded.`
+}
+
+func groupListLong(group, plural string) string {
+	return `List ` + plural + ` as JSON, newest first, capped at 500 rows unless --limit says
+otherwise. Reach for it to find an id or survey state; use get for one item.
+
+--tag matches a tag EXACTLY, and in a multi-value namespace it is an ANY-match:
+--tag sprint:4 returns an item carrying sprint:4 among others.`
+}
+
+func groupSetLong(group string) string {
+	if group == "story" {
+		return `Update a story: only the flags you pass change, so a status move never
+rewrites the body by accident.
+
+--status is a workflow transition, not an assignment. Its gates run and can
+REFUSE it, and a status that skips a step is refused before any gate. Engaging
+statuses also take the engagement seat, which is arbitrated per project.
+title/body/acceptance/category are FROZEN once the story leaves its entry
+state; status, tags, priority, estimate and actual stay mutable. --tags
+replaces the whole set, while --add-tags/--remove-tags are additive and may not
+be combined with it.`
+	}
+	return `Update a ` + group + `: only the flags you pass change, so a status move never
+rewrites the body by accident.
+
+--status is a workflow transition whose gates run and can REFUSE it; a status
+that skips a step is refused before any gate. --tags replaces the whole tag set,
+while --add-tags/--remove-tags are additive and may not be combined with it.`
 }

@@ -65,7 +65,13 @@ For selecting or validating the headless agent CLI, use satelle agent (singular)
 	install := &cobra.Command{
 		Use:   "install <claude|grok|codex|all>",
 		Short: "Install launchers + harness compliance hooks (idempotent)",
-		Args:  cobra.ExactArgs(1),
+		Long: `Install the satelle-owned launcher and compliance hooks for a harness, or for
+all of them.
+
+Idempotent: re-running converges rather than duplicating. It writes only the
+files satelle marks as its own, so a hook you authored by hand is never
+overwritten — which is also why remove leaves yours in place.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home := config.GlobalDir()
 			repoRoot := initRepoRoot("")
@@ -132,7 +138,12 @@ For selecting or validating the headless agent CLI, use satelle agent (singular)
 	remove := &cobra.Command{
 		Use:   "remove <claude|grok|codex|all>",
 		Short: "Remove satelle-owned launchers and hook scaffolds (idempotent; unmarked left in place)",
-		Args:  cobra.ExactArgs(1),
+		Long: `Remove the launchers and hook scaffolds satelle installed for a harness.
+
+Only satelle-MARKED files go; anything you authored yourself stays, deliberately.
+Afterwards that harness no longer enforces the edit gate, so reach for it when
+you mean to stop satelle governing the harness — not as tidying.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home := config.GlobalDir()
 			repoRoot := initRepoRoot("")

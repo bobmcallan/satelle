@@ -24,6 +24,11 @@ func newSyncDocumentsCmd() *cobra.Command {
 	group := &cobra.Command{
 		Use:   "documents",
 		Short: "Push/pull documents for this repo's bound hosted project (local default: no hosted write)",
+		Long: `Move authored documents between this repo and its bound hosted project.
+
+Nothing leaves the machine unless the documents area is opted in, so the default
+is a deliberate no-op. Documents are authored markdown: a pull writes files you
+own, so treat it as an incoming edit, not a refresh.`,
 	}
 
 	var pushServer, pushWorkspace string

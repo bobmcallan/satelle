@@ -31,6 +31,12 @@ func init() {
 	svc := &cobra.Command{
 		Use:   "service",
 		Short: "Manage the background web service (always-on project page)",
+		Long: `Manage the background web service that serves the always-on project page.
+
+install puts it under a persistent supervisor; status reports what is actually
+running; restart cycles it onto the installed binary. A persistent supervisor is
+the point: an ephemeral process dies with your shell, and satelle update cannot
+cycle a service nothing owns.`,
 	}
 	svc.AddCommand(serviceInstallCmd(), serviceUninstallCmd(), serviceStatusCmd(), serviceRestartCmd())
 	register(svc)
@@ -138,7 +144,13 @@ func serviceUninstallCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "uninstall",
 		Short: "Stop and remove the background web service",
-		Args:  cobra.NoArgs,
+		Long: `Stop the background web service and remove its unit.
+
+The project page stops being served; nothing in the repo or the database is
+touched, so this is reversible with install. Reach for it to stop serving on a
+machine, not to fix a bad build — restart cycles onto a new binary without
+tearing the unit down.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 			if runtime.GOOS == "windows" {
@@ -166,7 +178,14 @@ func serviceStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show the background web service status",
-		Args:  cobra.NoArgs,
+		Long: `Report what is actually serving: the unit on disk, the live process, and whether
+that process runs the INSTALLED binary.
+
+Bus-independent by design — it reads the unit file and finds the process by
+cgroup or listening port rather than trusting a systemctl query, so an
+unreachable user bus is reported as "restart control unavailable", not as a
+stopped service. That distinction is the whole value when a release goes wrong.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 			if runtime.GOOS == "windows" {

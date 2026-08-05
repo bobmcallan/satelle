@@ -28,8 +28,15 @@ import (
 // an authored kind (workflows/skills/principles/tasks).
 func authoredValidateCmd(kind string) *cobra.Command {
 	return &cobra.Command{
-		Use:         "validate [name]",
-		Short:       "Validate authored " + kind + " against the deterministic " + strings.TrimSuffix(kind, "s") + " check",
+		Use:   "validate [name]",
+		Short: "Validate authored " + kind + " against the deterministic " + strings.TrimSuffix(kind, "s") + " check",
+		Long: `Check authored ` + kind + ` against the deterministic structure check — frontmatter,
+required fields, the contract that kind must satisfy — for one name, or all of
+them when no name is given.
+
+Deterministic and read-only: it reports problems and changes nothing, and no
+agent is dispatched. Run it after editing a file; the same check runs where the
+binary loads that substrate, so a green result here is what loading expects.`,
 		Args:        cobra.MaximumNArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {

@@ -16,8 +16,14 @@ import (
 func init() {
 	var line bool
 	c := &cobra.Command{
-		Use:         "status",
-		Short:       "Show the local repo's config, database, and store counts",
+		Use:   "status",
+		Short: "Show the local repo's config, database, and store counts",
+		Long: `Show what satelle resolved for THIS repo: the config it loaded, where the
+database and runtime plane live, and how many stories, tasks and docs it holds.
+
+The orientation command in an unfamiliar checkout, and the first check when
+something writes to a place you did not expect. For "can satelle govern here at
+all", use satelle doctor, which judges rather than reports.`,
 		Annotations: needsStore(),
 		// --line is the Claude statusline renderer (sty_4e6f0788). It must never
 		// fail loudly, so it does NOT go through the store bootstrap: openAppForCmd
