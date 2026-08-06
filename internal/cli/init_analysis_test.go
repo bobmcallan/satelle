@@ -76,7 +76,7 @@ func TestAnalyzeSubstrateConfigMissing(t *testing.T) {
 			if d.Fatal {
 				t.Error("config drift must be advisory")
 			}
-			if !strings.Contains(d.Fix, `edit_exempt_paths = [".satelle/", ".gitignore"]`) {
+			if !strings.Contains(d.Fix, "edit_exempt_paths = "+defaultEditExemptTOML()) {
 				t.Errorf("fix must include exact block, got %q", d.Fix)
 			}
 		}
@@ -160,10 +160,11 @@ func TestAnalyzeSubstrateGateCreateOverlayParity(t *testing.T) {
 	}
 }
 
-// TestAnalyzeSubstrateEditExemptMissingGitignore: a non-empty list that predates
-// the .gitignore default yields an advisory WARN pointing at migrate; a list
-// that already carries it is quiet; an empty list is a deliberate opt-out.
-func TestAnalyzeSubstrateEditExemptMissingGitignore(t *testing.T) {
+// TestAnalyzeSubstrateEditExemptMissingManaged: a non-empty list that predates
+// part of the managed footprint yields an advisory WARN naming every missing
+// entry and pointing at migrate; a list that already carries the full set is
+// quiet; an empty list is a deliberate opt-out.
+func TestAnalyzeSubstrateEditExemptMissingManaged(t *testing.T) {
 	cases := []struct {
 		name    string
 		toml    string
@@ -176,7 +177,7 @@ func TestAnalyzeSubstrateEditExemptMissingGitignore(t *testing.T) {
 		},
 		{
 			name:    "already current",
-			toml:    "[gate]\nedit_exempt_paths = [\".satelle/\", \".gitignore\"]\n",
+			toml:    "[gate]\nedit_exempt_paths = " + defaultEditExemptTOML() + "\n",
 			wantDef: false,
 		},
 		{
@@ -198,10 +199,10 @@ func TestAnalyzeSubstrateEditExemptMissingGitignore(t *testing.T) {
 			defs := analyzeSubstrate(dataDir, filepath.Dir(dataDir))
 			var saw bool
 			for _, d := range defs {
-				if strings.Contains(d.Defect, `.gitignore`) && strings.Contains(d.Defect, "edit_exempt") {
+				if strings.Contains(d.Defect, "edit_exempt_paths lacks") {
 					saw = true
 					if d.Fatal {
-						t.Error("missing-.gitignore defect must be advisory")
+						t.Error("missing-managed-entry defect must be advisory")
 					}
 					if !strings.Contains(d.Fix, "migrate") {
 						t.Errorf("fix should name migrate, got %q", d.Fix)

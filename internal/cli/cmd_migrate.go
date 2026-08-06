@@ -43,9 +43,9 @@ func init() {
                             catalog, or a path you control)
   3. substrate prune      — remove unedited embedded-default seed copies
   4. gitignore converge   — rewrite the managed .gitignore block to the current form
-  5. config converge      — append ".gitignore" to [gate] edit_exempt_paths when a
-                            non-empty list predates the managed-output exemption
-                            (operator additions kept; empty list left alone)
+  5. config converge      — append satelle's deployed footprint (.gitignore, harness
+                            scaffolds) to a non-empty [gate] edit_exempt_paths that
+                            lacks them (operator additions kept; empty untouched)
   6. retired refs         — report (and under --yes, rewrite renames of) authored
                             [[wikilinks]] that cite embedded names the binary
                             retired ; removals-with-no-replacement
@@ -99,7 +99,9 @@ type migratePlan struct {
 	Residue         []string // dataDir-relative paths/globs to remove
 	PruneSeeds      []string // dataDir-relative unedited seed paths
 	Gitignore       bool     // managed block needs converge
-	ExemptGitignore bool     // [gate] edit_exempt_paths needs .gitignore (sty_f115e6bf)
+	// ExemptManaged lists the managed paths a non-empty [gate] edit_exempt_paths
+	// still lacks — satelle's own deployed footprint (sty_f115e6bf, sty_926cfcdc).
+	ExemptManaged []string
 	// WorkflowRetire lists DOT workflow files superseded by an authored,
 	// PARSEABLE done.toml + step.toml (sty_9835070d). Actionable work: migrate
 	// removes them.
@@ -243,7 +245,7 @@ func planMigrate(cfg config.Config, repoRoot, dataDir string) migratePlan {
 	}
 	p.PruneSeeds = listUneditedSeeds(dataDir)
 	p.Gitignore = gitignoreNeedsConverge(repoRoot)
-	p.ExemptGitignore = editExemptGitignoreNeedsConverge(dataDir)
+	p.ExemptManaged = editExemptManagedMissing(dataDir)
 	p.WorkflowRetire, p.WorkflowConvertPending = workflowConversionState(dataDir)
 	p.RetiredRefs = planRetiredRefs(dataDir)
 	return p
@@ -491,7 +493,7 @@ func printConversionPending(out io.Writer, pending []string) {
 
 func (p migratePlan) empty() bool {
 	return !p.RuntimeRelocate && len(p.Residue) == 0 && len(p.PruneSeeds) == 0 &&
-		!p.Gitignore && !p.ExemptGitignore && len(p.WorkflowRetire) == 0 &&
+		!p.Gitignore && len(p.ExemptManaged) == 0 && len(p.WorkflowRetire) == 0 &&
 		len(p.StampRewrite) == 0 && len(p.RetiredRefs) == 0
 }
 
@@ -559,8 +561,9 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 	} else {
 		fmt.Fprintln(out, "  gitignore:        (already current)")
 	}
-	if plan.ExemptGitignore {
-		fmt.Fprintln(out, "  config:           append .gitignore to [gate] edit_exempt_paths")
+	if len(plan.ExemptManaged) > 0 {
+		fmt.Fprintf(out, "  config:           append %s to [gate] edit_exempt_paths\n",
+			strings.Join(plan.ExemptManaged, ", "))
 	} else {
 		fmt.Fprintln(out, "  config:           (edit_exempt_paths current)")
 	}
@@ -712,9 +715,9 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 		}
 	}
 
-	if plan.ExemptGitignore {
+	if len(plan.ExemptManaged) > 0 {
 		fmt.Fprintln(out, "\n→ config converge")
-		changed, err := ensureEditExemptGitignore(dataDir)
+		changed, err := ensureEditExemptManaged(dataDir)
 		if err != nil {
 			return fmt.Errorf("migrate: edit_exempt_paths: %w", err)
 		}
@@ -806,21 +809,23 @@ func removePath(path string) error {
 	return os.Remove(path)
 }
 
-// editExemptGitignoreNeedsConverge reports whether satelle.toml's non-empty
-// [gate] edit_exempt_paths lacks the managed ".gitignore" entry (sty_f115e6bf).
-func editExemptGitignoreNeedsConverge(dataDir string) bool {
+// editExemptManagedMissing returns the managed edit_exempt_paths entries absent
+// from satelle.toml's non-empty [gate] edit_exempt_paths (sty_f115e6bf for
+// .gitignore; sty_926cfcdc for the harness scaffolds).
+func editExemptManagedMissing(dataDir string) []string {
 	raw, err := os.ReadFile(filepath.Join(dataDir, config.ConfigName))
 	if err != nil {
-		return false
+		return nil
 	}
-	return editExemptNeedsGitignore(string(raw))
+	return editExemptMissingManaged(string(raw))
 }
 
-// ensureEditExemptGitignore appends ".gitignore" to a non-empty
-// [gate] edit_exempt_paths list when missing. Operator entries and order are
-// preserved. Returns true when the file was rewritten. An absent key or an
-// explicitly empty list is left alone (init WARNs on absence; empty is opt-out).
-func ensureEditExemptGitignore(dataDir string) (bool, error) {
+// ensureEditExemptManaged appends every missing managedEditExemptEntries value
+// to a non-empty [gate] edit_exempt_paths list in one rewrite. Operator entries
+// and order are preserved. Returns true when the file was rewritten. An absent
+// key or an explicitly empty list is left alone (init WARNs on absence; empty is
+// a deliberate opt-out).
+func ensureEditExemptManaged(dataDir string) (bool, error) {
 	path := filepath.Join(dataDir, config.ConfigName)
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -830,12 +835,13 @@ func ensureEditExemptGitignore(dataDir string) (bool, error) {
 		return false, err
 	}
 	content := string(raw)
-	if !editExemptNeedsGitignore(content) {
+	missing := editExemptMissingManaged(content)
+	if len(missing) == 0 {
 		return false, nil
 	}
 	items := config.ListStringValues(content, "gate", "edit_exempt_paths")
 	// Append-only merge.
-	merged := append(append([]string{}, items...), managedEditExemptEntry)
+	merged := append(append([]string{}, items...), missing...)
 	quoted := make([]string, 0, len(merged))
 	for _, p := range merged {
 		quoted = append(quoted, `"`+p+`"`)

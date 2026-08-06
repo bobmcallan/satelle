@@ -1,3 +1,11 @@
+## [0.0.433] - 2026-08-06
+
+### Fixed
+- **satelle no longer blocks a session for files satelle wrote.** `init` seeded `[gate] edit_exempt_paths = [".satelle/", ".gitignore"]`, but the binary also writes harness hook scaffolds under `.claude/`, `.grok/` and `.codex/` — some lazily, mid-session, on the first store-backed verb, with no story engaged and no operator action. At the end of that session the stop gate refused it: "these edits were made UNGATED: .claude/". satelle made the change and then blamed the session for it, and the only route out was hand-editing the config the binary had already suggested in a comment. The seeded list is now the footprint the binary actually deploys — `[".satelle/", ".gitignore", ".claude/", ".grok/", ".codex/"]` — and the commented remediation variant is gone, because there is nothing left to remediate. It is still exactly the deployed footprint and nothing more: product paths stay gated, an empty list still gates everything including `.satelle/`, and no path is special-cased in Go — `exemptTarget` resolves solely from config, so this changes the seeded DEFAULT, not the mechanism. The binary now gives ONE answer about its own footprint: the embedded `satelle-substrate-only-check` gained `.codex/`, and a test reads that skill's embedded `allow=` expression and asserts every seeded managed entry appears in it, so the two cannot diverge again in silence (sty_926cfcdc)
+
+### Changed
+- **Already-initialised repos converge with `satelle migrate --yes`, not re-init.** Re-init never clobbers authored config, so it does not widen an existing list — `migrate` is the path. It appends every missing managed entry in one rewrite, preserving operator additions and their order; `satelle init` WARNs and names the exact missing entries until you run it. An explicitly empty `edit_exempt_paths` stays a deliberate opt-out and is never converged. Until a repo converges, the old stop-gate refusal is still waiting in it (sty_926cfcdc)
+
 ## [0.0.432] - 2026-08-05
 
 ### Added

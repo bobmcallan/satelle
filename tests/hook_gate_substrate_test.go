@@ -97,37 +97,47 @@ func TestHookGateExemptsSubstrate(t *testing.T) {
 }
 
 // TestHookGateExemptsConfiguredPaths drives the real binary to prove exemption is
-// CONFIG-only (sty_8c3d345c): a harness authoring dir (.claude/) is CODE — blocked —
+// CONFIG-only (sty_8c3d345c): a path the binary does NOT deploy is CODE — blocked —
 // until a repo lists it in [gate] edit_exempt_paths, after which its edits are exempt
 // while in-repo code stays gated, all with NO story engaged. This is AC3's before/after.
+//
+// The BEFORE case deliberately uses a harness dir satelle does not write. The
+// seeded default covers satelle's OWN deployed footprint (.gitignore, .claude/,
+// .grok/, .codex/) because the binary writes those unasked (sty_926cfcdc) — so
+// picking one of them here would test the seed, not the opt-in mechanism.
 func TestHookGateExemptsConfiguredPaths(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 
-	claudeSkill := filepath.Join(repo, ".claude", "skills", "audit", "SKILL.md")
+	vendorSkill := filepath.Join(repo, ".cursor", "rules", "audit.md")
 	code := filepath.Join(repo, "internal", "cli", "cmd_hook.go")
 
-	// BEFORE: init seeds .satelle/ + .gitignore, not .claude/, so a .claude/ edit
-	// is in-repo code — blocked (no story engaged), the binary staying
-	// CLI-vendor-neutral by default.
-	if gateEvent(t, repo, claudeSkill) {
-		t.Error("edit gate allowed a .claude/ edit before it was configured exempt (should be blocked as code)")
+	// BEFORE: init seeds .satelle/ plus satelle's own footprint — not .cursor/,
+	// which satelle never writes — so a .cursor/ edit is in-repo code, blocked
+	// (no story engaged). The binary stays CLI-vendor-neutral by default.
+	if gateEvent(t, repo, vendorSkill) {
+		t.Error("edit gate allowed a .cursor/ edit before it was configured exempt (should be blocked as code)")
 	}
 
-	// A repo opts .claude/ in (keeping .satelle/) via satelle.toml config.
-	setExemptPaths(t, repo, ".satelle/", ".claude/")
+	// A repo opts .cursor/ in (keeping .satelle/) via satelle.toml config.
+	setExemptPaths(t, repo, ".satelle/", ".cursor/")
 
-	// AFTER: the .claude/ edit is now exempt (configured, not code) …
-	if !gateEvent(t, repo, claudeSkill) {
-		t.Error("edit gate blocked a .claude/ edit after [gate] edit_exempt_paths opted it in (should be exempt)")
+	// AFTER: the .cursor/ edit is now exempt (configured, not code) …
+	if !gateEvent(t, repo, vendorSkill) {
+		t.Error("edit gate blocked a .cursor/ edit after [gate] edit_exempt_paths opted it in (should be exempt)")
 	}
 	// … the configured data dir still works …
 	if !gateEvent(t, repo, filepath.Join(repo, ".satelle", "skills", "plan.md")) {
 		t.Error("edit gate blocked authored substrate under a configured .satelle/ prefix (should be exempt)")
 	}
-	// … and in-repo CODE outside the exempt prefixes stays BLOCKED.
+	// … and in-repo CODE outside the exempt prefixes stays BLOCKED — including
+	// a harness path the seeded default WOULD have exempted, because the
+	// operator's narrowed list is now the only answer.
 	if gateEvent(t, repo, code) {
 		t.Error("edit gate allowed an in-repo code edit with no engaged story")
+	}
+	if gateEvent(t, repo, filepath.Join(repo, ".claude", "settings.json")) {
+		t.Error("edit gate allowed .claude/ after the repo narrowed edit_exempt_paths (config decides, not the binary)")
 	}
 }
 

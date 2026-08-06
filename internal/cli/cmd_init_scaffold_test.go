@@ -38,7 +38,7 @@ func TestScaffoldTomlDocumentsConfigSurface(t *testing.T) {
 			continue
 		}
 		switch s {
-		case "[gate]", `edit_exempt_paths = [".satelle/", ".gitignore"]`,
+		case "[gate]", "edit_exempt_paths = " + defaultEditExemptTOML(),
 			"[review]", "gate_create = true":
 			// expected seeded active lines
 		default:

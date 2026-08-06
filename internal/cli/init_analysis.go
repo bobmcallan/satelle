@@ -64,8 +64,8 @@ var scaffoldConfigDefaults = []scaffoldConfigDefault{
 		Section: "gate",
 		Key:     "edit_exempt_paths",
 		Block: `[gate]
-edit_exempt_paths = [".satelle/", ".gitignore"]`,
-		Why: "OOTB scaffold exempts .satelle/ (authored substrate) and .gitignore (satelle-managed init/migrate output) from the engaged-story edit gate",
+edit_exempt_paths = ` + defaultEditExemptTOML(),
+		Why: "OOTB scaffold exempts .satelle/ (authored substrate) and the footprint the binary itself deploys (.gitignore managed block, harness scaffolds) from the engaged-story edit gate",
 	},
 	{
 		// Seeded active when create-gating shipped. Do NOT auto-enable via migrate:
@@ -79,9 +79,35 @@ gate_create = true`,
 	},
 }
 
-// managedEditExemptEntry is the path migrate appends into a non-empty
-// edit_exempt_paths list that predates the default managed-output exemption.
-const managedEditExemptEntry = ".gitignore"
+// managedEditExemptEntries are the paths satelle's OWN machinery writes into a
+// repo without an engaged story — the binary's managed footprint outside the
+// data dir. Holding them against the session is the binary blaming the operator
+// for its own write, so init seeds them and migrate appends any that a
+// pre-existing non-empty list lacks.
+//
+// The list names ONLY what the binary deploys: the managed .gitignore block
+// (init/migrate) and the harness hook scaffolds init writes under .claude/,
+// .grok/ and .codex/ (ensureProcessHooks / ensureLazySessionHarness). A repo
+// that wants more exempt adds its own prefix; product paths stay gated. Keep it
+// in step with the embedded satelle-substrate-only-check allow list — one answer
+// about the footprint, not two (pinned by a test).
+var managedEditExemptEntries = []string{".gitignore", ".claude/", ".grok/", ".codex/"}
+
+// defaultEditExemptPaths is the list init seeds: this repo's authored substrate
+// plus the managed footprint above.
+func defaultEditExemptPaths() []string {
+	return append([]string{".satelle/"}, managedEditExemptEntries...)
+}
+
+// defaultEditExemptTOML renders defaultEditExemptPaths as a TOML array literal,
+// so the seeded line and the remediation init prints cannot drift apart.
+func defaultEditExemptTOML() string {
+	quoted := make([]string, 0, len(managedEditExemptEntries)+1)
+	for _, p := range defaultEditExemptPaths() {
+		quoted = append(quoted, `"`+p+`"`)
+	}
+	return "[" + strings.Join(quoted, ", ") + "]"
+}
 
 // analyzeSubstrate gathers placement + constitution-author + config-reconciliation
 // defects for dataDir/repoRoot. Pure over the filesystem; store-free.
@@ -141,11 +167,12 @@ func analyzeSubstrate(dataDir, repoRoot string) []substrateDefect {
 			continue
 		}
 		if d.Section == "gate" && d.Key == "edit_exempt_paths" && content != "" {
-			if editExemptNeedsGitignore(content) {
+			if missing := editExemptMissingManaged(content); len(missing) > 0 {
+				list := `"` + strings.Join(missing, `", "`) + `"`
 				out = append(out, substrateDefect{
 					File:   config.DefaultDataDir + "/" + config.ConfigName,
-					Defect: "edit_exempt_paths lacks \".gitignore\" — satelle-managed init/migrate output trips the engaged-story gate without it",
-					Fix:    "run `satelle migrate --yes` to append \".gitignore\" without clobbering operator additions (or add it by hand)",
+					Defect: "edit_exempt_paths lacks " + list + " — satelle-deployed output (managed .gitignore block, harness scaffolds) trips the engaged-story gate without it",
+					Fix:    "run `satelle migrate --yes` to append " + list + " without clobbering operator additions (or add them by hand)",
 					Fatal:  false,
 				})
 			}
@@ -156,19 +183,25 @@ func analyzeSubstrate(dataDir, repoRoot string) []substrateDefect {
 	return out
 }
 
-// editExemptNeedsGitignore reports whether content has a non-empty
-// [gate] edit_exempt_paths that lacks the managed ".gitignore" entry.
-// An absent key or an explicitly empty list returns false (missing-key is
-// handled separately; empty is a deliberate opt-out).
-func editExemptNeedsGitignore(content string) bool {
+// editExemptMissingManaged returns the managedEditExemptEntries absent from
+// content's non-empty [gate] edit_exempt_paths, in managed order. An absent key
+// or an explicitly empty list returns nil (missing-key is handled separately;
+// empty is a deliberate opt-out).
+func editExemptMissingManaged(content string) []string {
 	if !config.HasKey(content, "gate", "edit_exempt_paths") {
-		return false
+		return nil
 	}
 	items := config.ListStringValues(content, "gate", "edit_exempt_paths")
 	if len(items) == 0 {
-		return false
+		return nil
 	}
-	return !config.ListValueContains(content, "gate", "edit_exempt_paths", managedEditExemptEntry)
+	var missing []string
+	for _, want := range managedEditExemptEntries {
+		if !config.ListValueContains(content, "gate", "edit_exempt_paths", want) {
+			missing = append(missing, want)
+		}
+	}
+	return missing
 }
 
 // reportSubstrateAnalysis prints defects in AC4 form and returns the fatal count.

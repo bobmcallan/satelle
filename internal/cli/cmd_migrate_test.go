@@ -216,11 +216,12 @@ func TestEnsureGitignoreConvergesStaleBlock(t *testing.T) {
 	}
 }
 
-// TestMigrateAppendsEditExemptGitignore (sty_f115e6bf AC3): a non-empty
-// edit_exempt_paths that predates the managed .gitignore default is appended
-// to without clobbering operator additions; empty list is left alone; second
-// run is a no-op.
-func TestMigrateAppendsEditExemptGitignore(t *testing.T) {
+// TestMigrateAppendsEditExemptManaged (sty_f115e6bf AC3, widened by sty_926cfcdc
+// AC5): a non-empty edit_exempt_paths that predates the managed footprint is
+// appended to — every missing managed entry, in one rewrite — without clobbering
+// operator additions or their order; empty list is left alone; second run is a
+// no-op.
+func TestMigrateAppendsEditExemptManaged(t *testing.T) {
 	disableServeProbe(t)
 	home := t.TempDir()
 	t.Setenv("SATELLE_HOME", home)
@@ -233,7 +234,8 @@ func TestMigrateAppendsEditExemptGitignore(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dataDir, "agents.toml"), []byte("[executor]\nharness = \"in-loop\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Predating list: operator added .claude/; missing .gitignore.
+	// Predating list: operator added .claude/ by hand; the rest of the managed
+	// footprint (.gitignore, .grok/, .codex/) is missing.
 	tomlBody := `[gate]
 edit_exempt_paths = [".satelle/", ".claude/"]
 `
@@ -273,7 +275,7 @@ edit_exempt_paths = [".satelle/", ".claude/"]
 		t.Fatalf("dry-run rewrote toml:\n%s", raw)
 	}
 
-	// Apply: append .gitignore, keep .claude/.
+	// Apply: append every missing managed entry, keep .claude/ in its place.
 	var apply strings.Builder
 	if err := runMigrate(&apply, a, true, false); err != nil {
 		t.Fatalf("apply: %v\n%s", err, apply.String())
@@ -283,7 +285,7 @@ edit_exempt_paths = [".satelle/", ".claude/"]
 		t.Fatal(err)
 	}
 	s := string(got)
-	if !strings.Contains(s, `edit_exempt_paths = [".satelle/", ".claude/", ".gitignore"]`) {
+	if !strings.Contains(s, `edit_exempt_paths = [".satelle/", ".claude/", ".gitignore", ".grok/", ".codex/"]`) {
 		t.Errorf("want append-only merge, got:\n%s", s)
 	}
 	if !strings.Contains(apply.String(), "edit_exempt_paths") {
@@ -308,7 +310,7 @@ edit_exempt_paths = [".satelle/", ".claude/"]
 	if err := os.WriteFile(filepath.Join(emptyData, "satelle.toml"), []byte(emptyToml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	changed, err := ensureEditExemptGitignore(emptyData)
+	changed, err := ensureEditExemptManaged(emptyData)
 	if err != nil {
 		t.Fatal(err)
 	}

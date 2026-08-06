@@ -1417,8 +1417,12 @@ func legacyHookSub(cmd string) string {
 
 // scaffoldToml is the documented config a fresh init writes. Every key is
 // commented because each has a default — the repo runs zero-config until a knob
-// is uncommented.
-const scaffoldToml = `# satelle.toml — per-repo config (committed, secret-free). Every setting has a
+// is uncommented. The one exception, [gate] edit_exempt_paths, is seeded ACTIVE
+// from defaultEditExemptTOML so the seeded value and the managed set migrate
+// converges on cannot drift apart — hence the literal is split around it.
+var scaffoldToml = scaffoldTomlBeforeExempt + defaultEditExemptTOML() + scaffoldTomlAfterExempt
+
+const scaffoldTomlBeforeExempt = `# satelle.toml — per-repo config (committed, secret-free). Every setting has a
 # default, so this file may stay fully commented; uncomment a key to override.
 # Per-user overrides go in satelle.local.toml beside this file (gitignored).
 
@@ -1477,14 +1481,19 @@ gate_create = true
 # source — the binary does NOT special-case the data dir or any managed path.
 # ".satelle/" is seeded so this repo's authored substrate (workflows/skills/
 # principles/documents/tasks/config) stays editable without a release.
-# ".gitignore" is seeded because init/migrate write its managed block — satelle-
-# managed output the operator did not author (sty_f115e6bf). Without that
-# exemption, the binary's own convergence trips the stop hook and there is no
-# clean lane to commit it. Add a harness authoring dir that holds authored
-# markdown rather than product code (e.g. ".claude/"), or drop either default
-# to require an engaged story for those paths. An explicitly empty list is a
-# deliberate opt-out (everything gated). Repos that predate .gitignore: run
-# satelle migrate --yes to append it without clobbering operator additions.
+# The rest of the seeded list is the footprint SATELLE ITSELF deploys, unasked:
+# the ".gitignore" managed block init/migrate write (sty_f115e6bf), and the
+# harness hook scaffolds init installs under ".claude/", ".grok/" and ".codex/"
+# — some of them lazily, mid-session, with no story engaged (sty_926cfcdc).
+# Exempting them is not leniency: without it the binary writes a file and then
+# its own stop gate refuses the session for the write, with no clean lane to
+# commit it. Drop any default to require an engaged story for those paths, or
+# add your own prefix (a harness authoring dir holding markdown rather than
+# product code). Product paths stay gated — that is the point of the gate. An
+# explicitly empty list is a deliberate opt-out (everything gated) and is never
+# converged. Repos initialised before a path joined this list: run
+# satelle migrate --yes to append the missing entries without clobbering
+# operator additions.
 # How MANY stories may perform at once is NOT set here — see [engagement] below.
 # allow_outside_tree_edits (default false) opts INTO Bash/Edit mutations whose
 # targets land in another git working tree (sty_a8454d10 / sty_aadd4d6c).
@@ -1492,8 +1501,11 @@ gate_create = true
 # install deliberately spans multiple repos from one session — create stories
 # cross-repo stays allowed either way; progressing/mutating another tree does not.
 [gate]
-edit_exempt_paths = [".satelle/", ".gitignore"]
-# edit_exempt_paths = [".satelle/", ".gitignore", ".claude/"]
+edit_exempt_paths = `
+
+// scaffoldTomlAfterExempt is the remainder of the scaffold, resuming on the line
+// after the seeded edit_exempt_paths value.
+const scaffoldTomlAfterExempt = `
 # command_allow — OPT-IN step-scoped git policy (sty_c21490cc). Keys are git
 # subcommands; values are story statuses that may run them while engaged.
 # Absent/empty = no step restriction (commitgate only requires engagement).

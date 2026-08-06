@@ -156,8 +156,8 @@ func TestRunInitSeedsActiveEditExemptPaths(t *testing.T) {
 	}
 	tomlSrc := string(body)
 	// The [gate] table and edit_exempt_paths must be ACTIVE (no leading '#') and
-	// seed .satelle/ + .gitignore.
-	for _, want := range []string{"\n[gate]\n", "edit_exempt_paths = [\".satelle/\", \".gitignore\"]", "allow_outside_tree_edits"} {
+	// seed .satelle/ plus the footprint the binary itself deploys.
+	for _, want := range []string{"\n[gate]\n", "edit_exempt_paths = " + defaultEditExemptTOML(), "allow_outside_tree_edits"} {
 		if !strings.Contains(tomlSrc, want) {
 			t.Errorf("scaffold satelle.toml missing active %q:\n%s", want, tomlSrc)
 		}
@@ -168,14 +168,14 @@ func TestRunInitSeedsActiveEditExemptPaths(t *testing.T) {
 		t.Fatalf("scaffold satelle.toml does not parse: %v", err)
 	}
 	got := cfg.ResolveEditExemptPaths(repo)
-	if len(got) != 2 {
-		t.Fatalf("ResolveEditExemptPaths = %v, want 2 entries", got)
+	want := defaultEditExemptPaths()
+	if len(got) != len(want) {
+		t.Fatalf("ResolveEditExemptPaths = %v, want %d entries (%v)", got, len(want), want)
 	}
-	if !strings.HasSuffix(got[0], ".satelle") {
-		t.Errorf("ResolveEditExemptPaths[0] = %q, want ending .satelle", got[0])
-	}
-	if !strings.HasSuffix(got[1], ".gitignore") {
-		t.Errorf("ResolveEditExemptPaths[1] = %q, want ending .gitignore", got[1])
+	for i, w := range want {
+		if !strings.HasSuffix(got[i], strings.TrimSuffix(w, "/")) {
+			t.Errorf("ResolveEditExemptPaths[%d] = %q, want ending %q", i, got[i], w)
+		}
 	}
 }
 

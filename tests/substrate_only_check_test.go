@@ -32,11 +32,16 @@ func TestSubstrateOnlyCheckScript(t *testing.T) {
 	if s == "" {
 		t.Fatal("shipped satelle-substrate-only-check carries no ```check block")
 	}
-	// Surviving pin: default allow-list includes the managed harness footprint.
-	// Tables assert accept/reject behaviour; this asserts the expression itself.
-	if !strings.Contains(s, `allow='\.satelle/|docs/|\.gitignore$|\.claude/|\.grok/'`) &&
-		!strings.Contains(s, `allow='\.satelle/|docs/'`) {
-		t.Fatalf("shipped allow-list missing managed footprint:\n%s", s)
+	// Surviving pin: the default allow-list covers the managed footprint. Stated
+	// as CONTAINMENT, not an exact expression — the footprint grows when the
+	// binary starts deploying somewhere new, and the seeded edit_exempt_paths
+	// default must grow with it. internal/cli asserts the two agree (sty_926cfcdc);
+	// this asserts the shipped expression names each one. Tables assert
+	// accept/reject behaviour; this asserts the expression itself.
+	for _, want := range []string{`\.satelle/`, `docs/`, `\.gitignore$`, `\.claude/`, `\.grok/`, `\.codex/`} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("shipped allow-list missing managed footprint %q:\n%s", want, s)
+		}
 	}
 	// Behaviour cases are in TestCheckFenceGoldenTables.
 	if _, ok := fenceFixtures["satelle-substrate-only-check"]; !ok {
