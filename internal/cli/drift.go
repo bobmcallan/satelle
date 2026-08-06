@@ -111,10 +111,7 @@ func breakingDriftError(deployed, binVer string, entries []verb.ChangelogEntry) 
 	if verb.CmpSemverExported(deployed, binVer) >= 0 {
 		return nil // binary not newer
 	}
-	for _, e := range entries {
-		if !e.Breaking {
-			continue
-		}
+	if e, ok := firstBreaking(entries); ok {
 		head := fmt.Sprintf(
 			"satelle: binary %s is ahead of this repo's deployed stamp %s across BREAKING release %s",
 			binVer, deployed, e.Version)
@@ -132,4 +129,90 @@ func breakingDriftError(deployed, binVer string, entries []verb.ChangelogEntry) 
 		return errors.New(b.String())
 	}
 	return nil
+}
+
+// firstBreaking returns the first changelog entry in the range that declares a
+// ### Breaking section. Entries arrive newest-first, so that is the NEWEST
+// breaking release in the range — the same one the refusal names, which is the
+// point. ONE definition of "this gap crosses a breaking release",
+// shared by the refusal (breakingDriftError) and the session-start advisory
+// (versionDriftLine) so the two can never disagree about the same range.
+func firstBreaking(entries []verb.ChangelogEntry) (verb.ChangelogEntry, bool) {
+	for _, e := range entries {
+		if e.Breaking {
+			return e, true
+		}
+	}
+	return verb.ChangelogEntry{}, false
+}
+
+// versionDriftAdvisory gathers the inputs versionDriftLine decides on: the
+// running binary, this repo's stamp, and the changelog entries between them.
+// The gatherer/decision split mirrors refuseBreakingDrift/breakingDriftError —
+// the dev short-circuit below makes assertions about the whole function vacuous
+// under `go test`, so the decision has to be reachable without buildinfo.
+//
+// Returns "" for every quiet case. It has NO error channel by construction:
+// this feeds `satelle hook context`, and a hook that errors breaks the session
+// instead of informing it.
+func versionDriftAdvisory(repoRoot string) string {
+	binVer := strings.TrimSpace(buildinfo.Resolve().Version)
+	if isDevVersion(binVer) {
+		return ""
+	}
+	dataDir := filepath.Join(repoRoot, config.DefaultDataDir)
+	// Uninitialised repo: nothing was ever deployed here, so there is no gap to
+	// report — same guard refuseBreakingDrift applies.
+	if st, err := os.Stat(dataDir); err != nil || !st.IsDir() {
+		return ""
+	}
+	deployed := readDeployedVersion(dataDir)
+	// A missing/unreadable CHANGELOG diverges DELIBERATELY from the refusal path:
+	// there it silences the gate (never brick a repo over a missing file), here it
+	// only costs the breaking classification. The gap itself is still real and
+	// still worth naming, so advise with no entries rather than going quiet.
+	entries, err := verb.ChangelogRange(deployed, binVer)
+	if err != nil {
+		entries = nil
+	}
+	return versionDriftLine(deployed, binVer, entries)
+}
+
+// versionDriftLine is the DECISION half: ONE advisory line when this repo's
+// stamp is behind the running binary, "" otherwise. Advisory, never a refusal.
+//
+// The binary is machine-wide, so `satelle update` in one repo moves every repo
+// onto the new binary while each repo's stamp keeps naming the binary that last
+// deployed its scaffolding. That gap is harmless until a release in the open
+// range (deployed, binVer] declares ### Breaking — at which point the first
+// store-backed verb fails closed, and at session start that verb is the
+// SessionStart hook's own reindex. This line is the warning ahead of that
+// refusal.
+//
+// Deliberately ONE line and no bullet list: the refusal path already prints the
+// release's own ### Breaking bullets verbatim, and duplicating them here would
+// be a per-session token toll in every repo. Silent when the stamp matches, for
+// the same reason.
+func versionDriftLine(deployed, binVer string, entries []verb.ChangelogEntry) string {
+	if strings.TrimSpace(binVer) == "" {
+		return ""
+	}
+	if deployed == "" {
+		// Initialised but never stamped: the first store-backed verb REFUSES this
+		// repo outright, so the unstamped case is exactly the one worth warning
+		// about ahead of time.
+		return fmt.Sprintf(
+			"\u26a0\ufe0f satelle: binary %s — this repo has no .satelle/%s stamp, so the next store-backed verb will refuse it; run `satelle init` to establish the baseline.",
+			binVer, deployedVersionName)
+	}
+	if verb.CmpSemverExported(deployed, binVer) >= 0 {
+		return "" // stamp current (or ahead) — the common path stays silent
+	}
+	gap := "no breaking release in that range"
+	if e, ok := firstBreaking(entries); ok {
+		gap = "BREAKING release " + e.Version + " in that range"
+	}
+	return fmt.Sprintf(
+		"\u26a0\ufe0f satelle: binary %s is ahead of this repo's .satelle/%s stamp %s (%s) — run `satelle init` to heal.",
+		binVer, deployedVersionName, deployed, gap)
 }

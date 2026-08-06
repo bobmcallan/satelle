@@ -380,13 +380,13 @@ func TestHookAndStatusAgreeOnPort(t *testing.T) {
 
 // TestPrependAvailabilityLine covers the composition helper's edges.
 func TestPrependAvailabilityLine(t *testing.T) {
-	if got := prependAvailabilityLine("body", ""); got != "body" {
+	if got := prependContextLine("body", ""); got != "body" {
 		t.Fatalf("empty line must not alter content, got %q", got)
 	}
-	if got := prependAvailabilityLine("", "line"); got != "line" {
+	if got := prependContextLine("", "line"); got != "line" {
 		t.Fatalf("empty content must not gain a separator, got %q", got)
 	}
-	if got := prependAvailabilityLine("body", "line"); got != "line\n\nbody" {
+	if got := prependContextLine("body", "line"); got != "line\n\nbody" {
 		t.Fatalf("got %q", got)
 	}
 }

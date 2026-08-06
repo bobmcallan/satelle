@@ -1417,7 +1417,7 @@ func runHookContext(out, stderr io.Writer) error {
 	// the server is without asking. Fail-open: probeWebAvailability never errors
 	// and renders "unknown" rather than a fabricated "live". This reaches Claude,
 	// Grok and Codex through the SessionStart wiring all three already carry.
-	content = prependAvailabilityLine(content, probeWebAvailability().hookLine())
+	content = prependContextLine(content, probeWebAvailability().hookLine())
 	// Scaffold drift (sty_ac25b787): fail-open warning — never blocks SessionStart.
 	// Names `satelle init` as the heal. DetectScaffoldDrift is pure comparison.
 	if warn := formatScaffoldDriftWarning(DetectScaffoldDrift(a.RepoRoot)); warn != "" {
@@ -1427,6 +1427,13 @@ func runHookContext(out, stderr io.Writer) error {
 			content = warn + "\n\n" + content
 		}
 	}
+	// VERSION-STAMP drift (sty_8ecdae90): a separate, one-line advisory beside
+	// the scaffold block above — different trigger, different text, neither
+	// replacing the other. The binary is machine-wide, so a repo can sit behind
+	// it indefinitely and learn nothing until a store-backed verb fails closed.
+	// Advisory only: versionDriftAdvisory has no error channel, so `hook context`
+	// keeps its fail-open contract and a stale repo still receives its context.
+	content = prependContextLine(content, versionDriftAdvisory(a.RepoRoot))
 	// Seat inject: prefer a live seat; else name any non-live residue so the agent
 	// can release a stuck holder. Fail open — a seat-read error injects nothing.
 	content = appendSeatToContext(content, sessionSeatBlock(a), alwaysContextCeiling)
@@ -1436,11 +1443,13 @@ func runHookContext(out, stderr io.Writer) error {
 	return emitAdditionalContext(out, "SessionStart", "", content)
 }
 
-// prependAvailabilityLine puts the one-line web-availability statement at the
-// head of the SessionStart body (sty_fb5e6d96). Exactly one line of content is
-// added — no heading, no table — so the always-resident cost stays a line.
-// Pure, for unit tests.
-func prependAvailabilityLine(content, line string) string {
+// prependContextLine puts a one-line SessionStart advisory at the head of the
+// body (sty_fb5e6d96 for web availability; sty_8ecdae90 for version-stamp
+// drift). Exactly one line of content is added — no heading, no table — so the
+// always-resident cost stays a line, and an empty line is a no-op so every
+// caller can hand it a value that is silent on the common path. Pure, for unit
+// tests.
+func prependContextLine(content, line string) string {
 	if strings.TrimSpace(line) == "" {
 		return content
 	}
