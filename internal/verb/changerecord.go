@@ -45,6 +45,11 @@ type changeRecordPayload struct {
 	// partial row must never advance the anchor over changes no full enumeration
 	// has seen yet.
 	PartialEnumeration bool `json:"partial_enumeration,omitempty"`
+	// ReanchorResume marks the row written when a story LEAVES a park state
+	// (sty_526d6a68). It says why the row carries no files: nothing was
+	// enumerated, the anchor was moved to the resume point so commits other
+	// stories landed during the park are not attributed to this one.
+	ReanchorResume bool `json:"reanchor_resume,omitempty"`
 }
 
 // authoredDirs is wired by SetAuthoredDirs (substrate roots for leg C).
@@ -65,6 +70,14 @@ func SetSubstrateConfigDir(dir string) { substrateConfigDir = dir }
 // Best-effort: never fails the transition.
 func recordChangeSet(ctx context.Context, item workitem.Item, from, to string, now time.Time) {
 	if item.Kind != workitem.KindStory {
+		return
+	}
+	// Leaving a park: enumerate NOTHING and move the anchor to the resume point.
+	// The park-entry row anchored at park-time HEAD, so enumerating here would
+	// sweep in every commit another story landed while this one sat parked
+	// (sty_526d6a68).
+	if statusIsParkState(ctx, item, from) {
+		recordResumeReanchor(ctx, item, from, to, now)
 		return
 	}
 	payload := changeRecordPayload{
@@ -143,6 +156,55 @@ func recordChangeSet(ctx context.Context, item workitem.Item, from, to string, n
 	}
 	raw, _ := json.Marshal(payload)
 	appendLedgerEntry(ctx, item.ID, ledger.KindChangeRecord, "executor", body, raw, now)
+}
+
+// recordResumeReanchor ledgers the zero-file row that moves a resumed story's
+// enumeration anchor to the resume point (sty_526d6a68). The row is deliberately
+// FULL, not partial: both anchor walks skip partial rows, so a partial row here
+// would defeat the whole point.
+func recordResumeReanchor(ctx context.Context, item workitem.Item, from, to string, now time.Time) {
+	payload := changeRecordPayload{
+		From:           from,
+		To:             to,
+		Files:          []string{},
+		ReanchorResume: true,
+	}
+	head, _, gerr := gitHeadAndDirty(changeRecordRepoRoot())
+	body := fmt.Sprintf("change record %s→%s: re-anchored at resume head=%s", from, to, head)
+	if gerr != nil {
+		// No HeadSHA: the anchor walk falls through to the previous full row or
+		// the engagement baseline, which is the pre-existing degradation.
+		payload.Unavailable = "no-git"
+		body = fmt.Sprintf("change record %s→%s: re-anchor at resume unavailable (no-git)", from, to)
+	} else {
+		payload.HeadSHA = head
+		payload.SinceSHA = head
+	}
+	raw, _ := json.Marshal(payload)
+	appendLedgerEntry(ctx, item.ID, ledger.KindChangeRecord, "executor", body, raw, now)
+}
+
+// latestResumeReanchor returns the newest re-anchor row's SHA and time, if any.
+// ok is false when the story never parked, or git was unavailable at resume.
+func latestResumeReanchor(ctx context.Context, storyID string) (sha string, at time.Time, ok bool) {
+	ls, err := requireLedger()
+	if err != nil {
+		return "", time.Time{}, false
+	}
+	recs, err := ls.ListByStory(ctx, storyID, ledger.KindChangeRecord)
+	if err != nil {
+		return "", time.Time{}, false
+	}
+	for i := len(recs) - 1; i >= 0; i-- {
+		var p changeRecordPayload
+		if json.Unmarshal(recs[i].Payload, &p) != nil {
+			continue
+		}
+		if p.ReanchorResume && p.HeadSHA != "" {
+			return p.HeadSHA, recs[i].CreatedAt, true
+		}
+	}
+	return "", time.Time{}, false
 }
 
 // changeRecordRepoRoot resolves the repo-relative path space every change_record

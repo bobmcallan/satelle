@@ -211,6 +211,14 @@ func storyDiff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 	if base.HeadSHA == "" {
 		return nil, fmt.Errorf("story-diff: engagement baseline for %s has empty head_sha (git was unavailable at engage)", it.ID)
 	}
+	// A story resumed from a park enumerates from the RESUME point, not from its
+	// first engagement — otherwise every commit another story landed during the
+	// park is attributed to this one (sty_526d6a68). This moves WHEN only: the
+	// worktree anchor and DirtyAt still come from the engagement baseline.
+	sinceSHA := base.HeadSHA
+	if sha, at, ok := latestResumeReanchor(ctx, it.ID); ok {
+		sinceSHA, baseAt = sha, at
+	}
 	dir, err := os.Getwd()
 	if err != nil {
 		dir = "."
@@ -222,7 +230,7 @@ func storyDiff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 	if aerr := refuseForeignTreeDiff(ctx, it.ID, base.Worktree, dir); aerr != nil {
 		return nil, aerr
 	}
-	files, stat, patch, derr := gitDiffSince(dir, base.HeadSHA, req.Patch)
+	files, stat, patch, derr := gitDiffSince(dir, sinceSHA, req.Patch)
 	if derr != nil {
 		return nil, derr
 	}
@@ -233,8 +241,10 @@ func storyDiff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 		files = uniqueSorted(append(files, sub...))
 	}
 	res := storyDiffResult{
-		StoryID:  it.ID,
-		Baseline: base.HeadSHA,
+		StoryID: it.ID,
+		// The anchor actually used, so the surface never claims to have diffed
+		// from a point it did not.
+		Baseline: sinceSHA,
 		DirtyAt:  base.Dirty,
 		Files:    files,
 		Stat:     stat,

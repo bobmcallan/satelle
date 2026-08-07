@@ -1,3 +1,14 @@
+## [0.0.436] - 2026-08-07
+
+### Fixed
+- **A story resumed from a park no longer swallows the commits another story landed while it sat there.** Entering a park writes a change_record anchored at park-time HEAD, but nothing re-anchored on the way OUT, so the next transition enumerated `parkHEAD..resumeHEAD` and attributed every intervening commit to the resumed story. Observed on sty_90e903e9: parked at 4882b8b, resumed past cee11af, and it acquired 9 product paths (`.version`, `CHANGELOG.md`, `internal/cli/*`, `internal/verb/*`, `tests/*`) it never touched — enough for `satelle-substrate-only-check` to reject the close, naming another story's slice back at it. Leaving a park now enumerates NOTHING and instead writes a re-anchor row carrying the resume HEAD, so the story's next transition starts counting from where it actually resumed. Park-ness is read from the workflow spec (`IsParkState`), not a hardcoded status, so this keys to the route in any repo; an unparsable workflow re-anchors nothing and behaves exactly as before. The row is deliberately a FULL record rather than `partial_enumeration` — both anchor walks skip partial rows, so marking it partial would have defeated the fix — and carries `reanchor_resume` so a zero-file row never reads as 'this step changed nothing' (sty_526d6a68)
+
+### Changed
+- **Both channels the close gate reads now honour the resume anchor, not just the recorded one.** `satelle-substrate-only-check` unions the recorded change_record set with a LIVE `satelle story diff <id> --include-substrate`, and that live leg anchored at `firstEngagementBaseline` — so fixing only the recorded side would have left the gate rejecting on exactly the same paths. The live path now takes its enumeration anchor from the newest re-anchor row when one exists, and reports that anchor as the baseline rather than claiming to have diffed from a point it did not. Scoped to WHEN only: the working-tree anchor `refuseForeignTreeDiff` enforces and the `baseline_dirty` flag still come from the engagement baseline, because a re-anchor answers 'since when', never 'which tree'. The regression test asserts both channels and carries a control proving it fails without the fix (sty_526d6a68)
+
+### Note
+- This fix is FORWARD-ONLY. Stories whose ledgers were already contaminated stay contaminated — nothing legitimately deletes a ledger row — and need their own disposition; sty_90e903e9 was cancelled and superseded for exactly this reason (sty_526d6a68)
+
 ## [0.0.435] - 2026-08-07
 
 ### Fixed

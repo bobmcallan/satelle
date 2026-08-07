@@ -222,20 +222,21 @@ func stopRequestBlocksForward(ctx context.Context, item workitem.Item, targetSta
 
 // targetIsExitState reports terminal or park via the governing workflow DOT.
 func targetIsExitState(ctx context.Context, item workitem.Item, status string) bool {
-	idx, err := requireDocIndex()
-	if err != nil {
-		return false
-	}
-	wfs, err := idx.List(ctx, "workflows")
-	if err != nil {
-		return false
-	}
-	spec, _, _, serr := wfgovern.SpecFor(wfs, item)
-	parsed := serr == nil
-	if !parsed {
+	spec, _, _, ok := governingSpec(ctx, item)
+	if !ok {
 		return false
 	}
 	return spec.IsTerminalState(status) || spec.IsParkState(status)
+}
+
+// statusIsParkState reports whether status is a park state of item's workflow.
+// Shape-derived, so re-anchoring keys to the route rather than a status literal.
+func statusIsParkState(ctx context.Context, item workitem.Item, status string) bool {
+	spec, _, _, ok := governingSpec(ctx, item)
+	if !ok {
+		return false
+	}
+	return spec.IsParkState(status)
 }
 
 // refuseSecondEngagingStoryDerived is the pre-lease scan of committed statuses —
