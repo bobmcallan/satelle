@@ -13,12 +13,16 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/substrate"
+	"github.com/bobmcallan/satelle/internal/verb"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 func init() {
@@ -97,7 +101,11 @@ is why this cannot quietly discard your work.`,
 			}
 			opts := ResolveBackupOpts(a.Config)
 			opts.BackupsDir = a.RuntimeDir
-			return runSubstratePrune(cmd.OutOrStdout(), cmd.InOrStdin(), a.DataDir, opts, yes)
+			// Resolve the seat off the app handle this command already opened —
+			// currentSeat() would app.Open() a second handle on the same DB.
+			storyID, state := pruneSeat(cmd.Context(), a)
+			return runSubstratePrune(cmd.Context(), cmd.OutOrStdout(), cmd.InOrStdin(),
+				a.DataDir, opts, yes, storyID, state)
 		},
 	}
 	pruneCmd.Flags().BoolVar(&yes, "yes", false, "actually remove files (default is dry-run)")
@@ -166,7 +174,38 @@ func runSubstrateEdit(out io.Writer, dataDir string, idx *docindex.Store, kind, 
 	return nil
 }
 
-func runSubstratePrune(out io.Writer, in io.Reader, dataDir string, opts BackupOpts, yes bool) error {
+// recordPruneChange is the seam prune records removals through (injectable so
+// the CLI test can observe the call without a live ledger).
+var recordPruneChange = verb.RecordPathMutation
+
+// pruneSeat reports the engaged story and the status it is engaged at, using the
+// already-open app handle. Fail-open: no seat, or an unreadable one, means prune
+// records nothing — pruning outside a story is legitimate.
+func pruneSeat(ctx context.Context, a *app.App) (storyID, state string) {
+	if a.Store == nil || a.Store.Leases == nil {
+		return "", ""
+	}
+	wfs, err := a.Store.DocIndex.List(ctx, "workflows")
+	if err != nil {
+		return "", ""
+	}
+	items, err := a.Store.Stories.List(ctx, workitem.ListFilter{})
+	if err != nil {
+		return "", ""
+	}
+	leases, err := a.Store.Leases.List(ctx)
+	if err != nil {
+		return "", ""
+	}
+	live, _, err := evaluateSeat(leases, items, wfs, time.Now().UTC())
+	if err != nil || len(live) == 0 {
+		return "", ""
+	}
+	seat := pickSessionSeat(live)
+	return seat.ItemID, seat.StoryStatus
+}
+
+func runSubstratePrune(ctx context.Context, out io.Writer, in io.Reader, dataDir string, opts BackupOpts, yes bool, storyID, storyState string) error {
 	var plan []string // rel paths to remove
 	for _, d := range config.EmbeddedDefaults() {
 		if d.Kind == "tasks" {
@@ -195,6 +234,7 @@ func runSubstratePrune(out io.Writer, in io.Reader, dataDir string, opts BackupO
 		fmt.Fprintln(out, "dry-run only — re-run with --yes to remove (edited/authored files are never touched)")
 		return nil
 	}
+	var removed []string
 	for _, rel := range plan {
 		path := filepath.Join(dataDir, filepath.FromSlash(rel))
 		body, _ := os.ReadFile(path)
@@ -204,7 +244,17 @@ func runSubstratePrune(out io.Writer, in io.Reader, dataDir string, opts BackupO
 		if err := os.Remove(path); err != nil {
 			return fmt.Errorf("prune: remove %s: %w", rel, err)
 		}
+		removed = append(removed, path)
 		fmt.Fprintf(out, "  removed %s\n", rel)
+	}
+	// These deletions are invisible to every re-derived evidence channel — git
+	// cannot see an ignored path and the mtime walk cannot see a file that is
+	// gone — so record them here or the engaged story has no evidence of the
+	// slice (sty_30d3bd99). Best-effort: never lose the operator their prune.
+	if storyID != "" && len(removed) > 0 {
+		if err := recordPruneChange(ctx, storyID, removed, storyState, storyState, time.Now().UTC()); err != nil {
+			fmt.Fprintf(out, "prune: warning: could not record the removals against %s: %v\n", storyID, err)
+		}
 	}
 	fmt.Fprintf(out, "prune: removed %d seed(s); effective process is unchanged (virtual defaults)\n", len(plan))
 	return nil

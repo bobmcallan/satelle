@@ -261,3 +261,125 @@ func TestSubstrateChangedFilesWidened(t *testing.T) {
 		t.Errorf("zero since must be empty, got %v", n)
 	}
 }
+
+// Deletion-only recording: a verb that removed git-ignored substrate is the only
+// source of evidence for it, so RecordPathMutation must ledger the paths even
+// though nothing on disk remains to enumerate (sty_30d3bd99 AC1/AC3).
+func TestRecordPathMutationRecordsDeletedPaths(t *testing.T) {
+	wireCR(t)
+	ctx := context.Background()
+	now := time.Now()
+	ws, err := requireWorkItem()
+	if err != nil {
+		t.Fatal(err)
+	}
+	it, err := ws.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "prune", Category: "substrate",
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root := changeRecordRepoRoot()
+	// Paths that do NOT exist — the whole point is that they were removed.
+	gone := []string{
+		filepath.Join(root, ".satelle", "principles", "b-gone.md"),
+		filepath.Join(root, ".satelle", "principles", "a-gone.md"),
+	}
+	if err := RecordPathMutation(ctx, it.ID, gone, "in_progress", "in_progress", now); err != nil {
+		t.Fatal(err)
+	}
+
+	files, records, err := recordedChangeSet(ctx, it.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if records != 1 {
+		t.Fatalf("want exactly 1 change_record, got %d", records)
+	}
+	want := []string{".satelle/principles/a-gone.md", ".satelle/principles/b-gone.md"}
+	if strings.Join(files, ",") != strings.Join(want, ",") {
+		t.Errorf("recorded files = %v, want %v", files, want)
+	}
+
+	// The row must declare itself partial, or the anchor walk cannot skip it.
+	ls, err := requireLedger()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recs, _ := ls.ListByStory(ctx, it.ID, ledger.KindChangeRecord)
+	var p changeRecordPayload
+	if err := json.Unmarshal(recs[len(recs)-1].Payload, &p); err != nil {
+		t.Fatal(err)
+	}
+	if !p.PartialEnumeration {
+		t.Error("a verb-written row must be marked PartialEnumeration")
+	}
+	if p.FileCount != 2 {
+		t.Errorf("FileCount = %d, want 2", p.FileCount)
+	}
+
+	// Empty story id, empty path set, and out-of-root paths write no row.
+	if err := RecordPathMutation(ctx, "", gone, "in_progress", "in_progress", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordPathMutation(ctx, it.ID, nil, "in_progress", "in_progress", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordPathMutation(ctx, it.ID, []string{"/elsewhere/x.md"}, "in", "in", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, records, _ = recordedChangeSet(ctx, it.ID); records != 1 {
+		t.Errorf("empty/out-of-root mutations must append no row, got %d records", records)
+	}
+}
+
+// A partial row must NOT become the mtime anchor: if it did, substrate edited
+// before the prune but never enumerated would silently drop out of the next
+// transition's change set — the same evidence loss sty_30d3bd99 exists to fix.
+func TestPartialRowDoesNotAdvanceMtimeAnchor(t *testing.T) {
+	wireCR(t)
+	ctx := context.Background()
+	ws, err := requireWorkItem()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().Add(-time.Hour)
+	it, err := ws.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "anchor", Category: "substrate",
+	}, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bp, _ := json.Marshal(engagementBaselinePayload{HeadSHA: "deadbeef", To: "in_progress"})
+	appendLedgerEntry(ctx, it.ID, ledger.KindEngagementBaseline, "executor", "baseline", bp, base)
+
+	anchor, ok := changeRecordSinceTime(ctx, it.ID)
+	if !ok {
+		t.Fatal("want an anchor from the engagement baseline")
+	}
+
+	// A prune lands well after the baseline.
+	if err := RecordPathMutation(ctx, it.ID,
+		[]string{filepath.Join(changeRecordRepoRoot(), ".satelle", "principles", "x.md")},
+		"in_progress", "in_progress", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := changeRecordSinceTime(ctx, it.ID)
+	if !ok {
+		t.Fatal("anchor disappeared after a partial row")
+	}
+	if !got.Equal(anchor) {
+		t.Errorf("partial row moved the mtime anchor: %v -> %v", anchor, got)
+	}
+
+	// A FULL row is still allowed to anchor.
+	fp, _ := json.Marshal(changeRecordPayload{From: "in_progress", To: "done", Files: []string{"docs/a.md"}, FileCount: 1})
+	full := time.Now().Add(time.Minute)
+	appendLedgerEntry(ctx, it.ID, ledger.KindChangeRecord, "executor", "full", fp, full)
+	got, ok = changeRecordSinceTime(ctx, it.ID)
+	if !ok || got.Equal(anchor) {
+		t.Errorf("a full enumeration must advance the anchor, got %v (baseline %v)", got, anchor)
+	}
+}

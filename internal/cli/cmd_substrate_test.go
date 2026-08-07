@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +42,7 @@ func TestSubstratePruneRemovesOnlyUneditedSeeds(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := runSubstratePrune(&out, strings.NewReader(""), dataDir, BackupOpts{LocalOnly: true}, false); err != nil {
+	if err := runSubstratePrune(context.Background(), &out, strings.NewReader(""), dataDir, BackupOpts{LocalOnly: true}, false, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "satelle-step-summary") || !strings.Contains(out.String(), "dry-run") {
@@ -52,7 +53,7 @@ func TestSubstratePruneRemovesOnlyUneditedSeeds(t *testing.T) {
 	}
 
 	out.Reset()
-	if err := runSubstratePrune(&out, strings.NewReader(""), dataDir, BackupOpts{LocalOnly: true, BackupsDir: t.TempDir()}, true); err != nil {
+	if err := runSubstratePrune(context.Background(), &out, strings.NewReader(""), dataDir, BackupOpts{LocalOnly: true, BackupsDir: t.TempDir()}, true, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if fileExists(seedPath) {
@@ -97,5 +98,82 @@ func TestSubstrateListEditedProvenance(t *testing.T) {
 	}
 	if !strings.Contains(s, `"provenance": "edited"`) {
 		t.Fatalf("expected edited provenance:\n%s", s)
+	}
+}
+
+// prune --yes under an engaged story hands the removed paths to the recorder, so
+// the deletion leaves change evidence the substrate close gate can see; a dry-run
+// records nothing (sty_30d3bd99 AC1/AC3).
+func TestSubstratePruneRecordsRemovedPathsUnderEngagedStory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SATELLE_HOME", home)
+	repo := t.TempDir()
+	dataDir := filepath.Join(repo, config.DefaultDataDir)
+	if err := os.MkdirAll(filepath.Join(dataDir, "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body, ok := embeddedDefault("skills", "satelle-step-summary")
+	if !ok {
+		t.Fatal("embedded step-summary missing")
+	}
+	seedPath := filepath.Join(dataDir, "skills", "satelle-step-summary.md")
+	stamped := applyEmbeddedStamp(body, embeddedSHA(body))
+	if err := os.WriteFile(seedPath, []byte(stamped), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	type call struct {
+		storyID string
+		paths   []string
+		from    string
+	}
+	var calls []call
+	prev := recordPruneChange
+	recordPruneChange = func(_ context.Context, storyID string, paths []string, from, to string, _ time.Time) error {
+		calls = append(calls, call{storyID: storyID, paths: paths, from: from})
+		return nil
+	}
+	t.Cleanup(func() { recordPruneChange = prev })
+
+	opts := BackupOpts{LocalOnly: true, BackupsDir: t.TempDir()}
+	ctx := context.Background()
+
+	// Dry-run removes nothing, so it must record nothing.
+	var out strings.Builder
+	if err := runSubstratePrune(ctx, &out, strings.NewReader(""), dataDir, opts, false, "sty_test", "in_progress"); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("dry-run must record nothing, got %+v", calls)
+	}
+
+	out.Reset()
+	if err := runSubstratePrune(ctx, &out, strings.NewReader(""), dataDir, opts, true, "sty_test", "in_progress"); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("want 1 recorder call, got %d", len(calls))
+	}
+	if calls[0].storyID != "sty_test" || calls[0].from != "in_progress" {
+		t.Errorf("recorder got story=%q from=%q", calls[0].storyID, calls[0].from)
+	}
+	if len(calls[0].paths) != 1 || calls[0].paths[0] != seedPath {
+		t.Errorf("recorder paths = %v, want [%s]", calls[0].paths, seedPath)
+	}
+	if fileExists(seedPath) {
+		t.Error("prune --yes must remove the unedited seed")
+	}
+
+	// No engaged story: prune still works and records nothing.
+	if err := os.WriteFile(seedPath, []byte(stamped), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	out.Reset()
+	if err := runSubstratePrune(ctx, &out, strings.NewReader(""), dataDir, opts, true, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("unengaged prune must record nothing, got %+v", calls)
 	}
 }

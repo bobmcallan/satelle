@@ -39,6 +39,12 @@ type changeRecordPayload struct {
 	PatchTruncated bool     `json:"patch_truncated,omitempty"`
 	PatchName      string   `json:"patch_name,omitempty"`
 	Unavailable    string   `json:"unavailable,omitempty"`
+	// PartialEnumeration marks a row a binary verb wrote for the paths IT
+	// mutated, rather than a transition-time enumeration of everything since the
+	// last anchor (sty_30d3bd99). Anchor selection walks past these rows: a
+	// partial row must never advance the anchor over changes no full enumeration
+	// has seen yet.
+	PartialEnumeration bool `json:"partial_enumeration,omitempty"`
 }
 
 // authoredDirs is wired by SetAuthoredDirs (substrate roots for leg C).
@@ -66,13 +72,7 @@ func recordChangeSet(ctx context.Context, item workitem.Item, from, to string, n
 		To:    to,
 		Files: []string{},
 	}
-	dir, err := os.Getwd()
-	if err != nil {
-		dir = "."
-	}
-	if top, terr := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output(); terr == nil {
-		dir = strings.TrimSpace(string(top))
-	}
+	dir := changeRecordRepoRoot()
 
 	sinceSHA, _, unavail := changeRecordAnchor(ctx, item.ID)
 	payload.SinceSHA = sinceSHA
@@ -145,16 +145,88 @@ func recordChangeSet(ctx context.Context, item workitem.Item, from, to string, n
 	appendLedgerEntry(ctx, item.ID, ledger.KindChangeRecord, "executor", body, raw, now)
 }
 
+// changeRecordRepoRoot resolves the repo-relative path space every change_record
+// is written in: the git toplevel, falling back to the working directory.
+func changeRecordRepoRoot() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		dir = "."
+	}
+	if top, terr := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output(); terr == nil {
+		dir = strings.TrimSpace(string(top))
+	}
+	return dir
+}
+
+// RecordPathMutation ledgers a change_record row for paths a binary verb
+// mutated under the engaged story. A deletion of git-ignored substrate is
+// invisible to every re-derived channel — git cannot see an ignored path, and
+// the mtime walk cannot see a file that is gone — so the verb that removed it is
+// the only place the evidence can come from (sty_30d3bd99).
+//
+// The row is PARTIAL: it reports the paths this verb touched, not everything
+// changed since the last anchor, so anchor selection walks past it. Empty story
+// or no in-root paths writes nothing — an empty row is not evidence.
+func RecordPathMutation(ctx context.Context, storyID string, absPaths []string, from, to string, now time.Time) error {
+	storyID = strings.TrimSpace(storyID)
+	if storyID == "" || len(absPaths) == 0 {
+		return nil
+	}
+	root := changeRecordRepoRoot()
+	var files []string
+	for _, p := range absPaths {
+		// Pure string math: the paths are already removed, so never Stat them.
+		rel, rerr := filepath.Rel(root, p)
+		if rerr != nil || strings.HasPrefix(rel, "..") {
+			continue
+		}
+		files = append(files, filepath.ToSlash(rel))
+	}
+	files = uniqueSorted(files)
+	if len(files) == 0 {
+		return nil
+	}
+	payload := changeRecordPayload{
+		From:               from,
+		To:                 to,
+		PartialEnumeration: true,
+	}
+	if len(files) > changeRecordFileLimit {
+		payload.FilesTruncated = true
+		files = files[:changeRecordFileLimit]
+	}
+	payload.Files = files
+	payload.FileCount = len(files)
+
+	ls, err := requireLedger()
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	body := fmt.Sprintf("change record %s: %d path(s) mutated", from, payload.FileCount)
+	_, err = ls.Append(ctx, ledger.AppendInput{
+		StoryID: storyID,
+		Kind:    ledger.KindChangeRecord,
+		Actor:   "executor",
+		Body:    body,
+		Payload: raw,
+	}, now)
+	return err
+}
+
 func changeRecordAnchor(ctx context.Context, storyID string) (sinceSHA string, headSHA string, unavail string) {
 	ls, err := requireLedger()
 	if err != nil {
 		return "", "", "no-baseline"
 	}
-	// Prefer most recent change_record head_sha.
+	// Prefer the most recent FULL change_record's head_sha. Partial rows carry no
+	// SHA anyway; skipping them explicitly keeps the two anchor walks symmetric.
 	recs, err := ls.ListByStory(ctx, storyID, ledger.KindChangeRecord)
-	if err == nil && len(recs) > 0 {
-		var p changeRecordPayload
-		if json.Unmarshal(recs[len(recs)-1].Payload, &p) == nil && p.HeadSHA != "" {
+	if err == nil {
+		if p, ok := lastFullChangeRecord(recs); ok && p.HeadSHA != "" {
 			return p.HeadSHA, p.HeadSHA, ""
 		}
 	}
@@ -165,16 +237,44 @@ func changeRecordAnchor(ctx context.Context, storyID string) (sinceSHA string, h
 	return base.HeadSHA, base.HeadSHA, ""
 }
 
+// lastFullChangeRecord returns the newest row that is a FULL enumeration, i.e.
+// not a partial row written by a binary verb for the paths it touched. recs is
+// oldest-first; the walk is newest-first. ok is false when every row is partial.
+func lastFullChangeRecord(recs []ledger.Entry) (changeRecordPayload, bool) {
+	for i := len(recs) - 1; i >= 0; i-- {
+		var p changeRecordPayload
+		if json.Unmarshal(recs[i].Payload, &p) != nil {
+			continue
+		}
+		if p.PartialEnumeration {
+			continue
+		}
+		return p, true
+	}
+	return changeRecordPayload{}, false
+}
+
 // changeRecordSinceTime returns the anchor time and whether one exists.
 // ok is false when neither a change_record nor engagement baseline is present.
+//
+// PARTIAL rows are skipped. A partial row states only the paths one verb
+// touched, so letting it anchor would advance the mtime window past authored
+// substrate no full enumeration has seen — edit a skill, prune, transition, and
+// the edit would silently drop out of the change set (sty_30d3bd99).
 func changeRecordSinceTime(ctx context.Context, storyID string) (time.Time, bool) {
 	ls, err := requireLedger()
 	if err != nil {
 		return time.Time{}, false
 	}
 	recs, err := ls.ListByStory(ctx, storyID, ledger.KindChangeRecord)
-	if err == nil && len(recs) > 0 {
-		return recs[len(recs)-1].CreatedAt, true
+	if err == nil {
+		for i := len(recs) - 1; i >= 0; i-- {
+			var p changeRecordPayload
+			if json.Unmarshal(recs[i].Payload, &p) == nil && p.PartialEnumeration {
+				continue
+			}
+			return recs[i].CreatedAt, true
+		}
 	}
 	entries, err := ls.ListByStory(ctx, storyID, ledger.KindEngagementBaseline)
 	if err == nil && len(entries) > 0 {

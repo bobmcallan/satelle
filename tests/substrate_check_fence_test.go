@@ -16,10 +16,14 @@ import (
 
 // fenceCase is one golden (stdin, wantExit, wantStdoutSub) for a coded-check skill.
 type fenceCase struct {
-	name       string
-	setup      func(t *testing.T, repo string) // optional prep (git, files)
-	stdin      string                          // if empty, built from sid via defaultStoryPayload
-	sid        string                          // story id for payload + commits
+	name  string
+	setup func(t *testing.T, repo string) // optional prep (git, files)
+	stdin string                          // if empty, built from sid via defaultStoryPayload
+	sid   string                          // story id for payload + commits
+	// pathPrefix is prepended to PATH so a case can shim a binary the check
+	// shells out to (e.g. a `satelle story diff` stub for the recorded channel).
+	// Relative to the case's repo dir.
+	pathPrefix string
 	wantExit   int
 	wantStdout string
 }
@@ -226,6 +230,35 @@ var fenceFixtures = map[string][]fenceCase{
 			wantStdout: "substrate-only slice confirmed",
 		},
 		{
+			// sty_30d3bd99 AC2: a prune slice is deletions of git-ignored
+			// .satelle/ files, so git sees nothing and there is no commit — the
+			// recorded channel is the ONLY evidence. The gate must accept it
+			// rather than reporting "no change set found".
+			name:       "accepts a deletion-only prune slice from the recorded channel",
+			sid:        "sty_44be0001",
+			pathPrefix: "bin",
+			setup: func(t *testing.T, repo string) {
+				gitInit(t, repo)
+				mustWrite(t, filepath.Join(repo, "README.md"), "baseline\n")
+				gitCommitAll(t, repo, "baseline")
+				// The removed seeds are gone from disk and were never tracked.
+				mustWrite(t, filepath.Join(repo, "bin", "satelle"), `#!/usr/bin/env bash
+for a in "$@"; do
+  if [ "$a" = "--recorded" ]; then
+    echo '{"files":[".satelle/principles/satelle-agent-goals.md",".satelle/principles/satelle-agent-model.md"]}'
+    exit 0
+  fi
+done
+echo '{"files":[]}'
+`)
+				if err := os.Chmod(filepath.Join(repo, "bin", "satelle"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantExit:   0,
+			wantStdout: "substrate-only slice confirmed",
+		},
+		{
 			name: "rejects code slice naming offenders",
 			sid:  "sty_bbb22222",
 			setup: func(t *testing.T, repo string) {
@@ -369,7 +402,7 @@ func TestCheckFenceGoldenTables(t *testing.T) {
 						}
 						stdin = `{"story":{"id":"` + sid + `"},"from":"in_progress","to":"done"}`
 					}
-					out, exit := runFenceScript(t, scriptPath, repo, stdin)
+					out, exit := runFenceScript(t, scriptPath, repo, stdin, tc.pathPrefix)
 					if exit != tc.wantExit {
 						t.Fatalf("exit=%d want %d\nout:\n%s", exit, tc.wantExit, out)
 					}
@@ -382,11 +415,15 @@ func TestCheckFenceGoldenTables(t *testing.T) {
 	}
 }
 
-func runFenceScript(t *testing.T, scriptPath, repo, stdin string) (string, int) {
+func runFenceScript(t *testing.T, scriptPath, repo, stdin, pathPrefix string) (string, int) {
 	t.Helper()
 	cmd := exec.Command("bash", scriptPath)
 	cmd.Dir = repo
 	cmd.Stdin = strings.NewReader(stdin)
+	if pathPrefix != "" {
+		cmd.Env = append(os.Environ(),
+			"PATH="+filepath.Join(repo, pathPrefix)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf

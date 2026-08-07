@@ -1,3 +1,11 @@
+## [0.0.435] - 2026-08-07
+
+### Fixed
+- **A substrate prune now leaves change evidence for the engaged story.** `satelle substrate prune --yes` deleted unedited seed copies and wrote no `change_record` row, which stranded the very slice it performed: deletions of git-ignored `.satelle/` files are invisible to EVERY channel the `satelle-substrate-only-check` close gate unions — the recorded channel had no rows, the live git leg cannot see an ignored path, and the mtime substrate leg cannot see a file that no longer exists. The gate then refused the close with "no change set found" even though the slice was real and lane-clean, and the only routes out were faking evidence or abandoning a correct change. Prune now records what it removed: the new `verb.RecordPathMutation` ledgers a `change_record` row carrying the removed paths (repo-relative, forward-slashed — the path space the gate greps), so `satelle story diff <id> --recorded` reports them and the close gate accepts a deletion-only slice with no gate-skill change. The seat is resolved off the app handle the command already opened rather than a second `app.Open()`, and recording is best-effort — a ledger failure warns and never costs the operator their prune. `satelle migrate`'s prune passes no story id: it is repo maintenance, not a slice of authored work (sty_30d3bd99)
+
+### Changed
+- **A verb-written change row never becomes the enumeration anchor.** `change_record` rows now carry `partial_enumeration`, set only by `RecordPathMutation`, and both anchor walks (`changeRecordSinceTime`, and `changeRecordAnchor` via `lastFullChangeRecord`) skip past them to the newest FULL row — falling through to the engagement baseline when every row is partial. Without this the fix would have introduced the defect it repairs: a partial row states only the paths one verb touched, so letting it anchor would advance the mtime window past authored substrate no full enumeration had seen, and an edit made before a prune would silently drop out of the next transition's change set. The guard is symmetric with the existing `head_sha != ""` one, and the regression test asserts the INVERTED property — a partial row must leave the anchor where it was, while a full enumeration must still advance it (sty_30d3bd99)
+
 ## [0.0.434] - 2026-08-06
 
 ### Added

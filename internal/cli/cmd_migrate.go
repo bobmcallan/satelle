@@ -659,7 +659,9 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 		// Always re-resolve: even when RuntimeRelocate was false, the App may
 		// have been constructed with a stale/empty RuntimeDir.
 		opts.BackupsDir = cfg.ResolveRuntimeDir(repoRoot).Dir
-		if err := runSubstratePrune(out, strings.NewReader(""), dataDir, opts, true); err != nil {
+		// No story id: migrate is repo maintenance, not a slice of authored work,
+		// so its prune records nothing against an engaged story (sty_30d3bd99).
+		if err := runSubstratePrune(context.Background(), out, strings.NewReader(""), dataDir, opts, true, "", ""); err != nil {
 			return fmt.Errorf("migrate: prune: %w", err)
 		}
 		// Prune backups go under the home-keyed runtime dir — never re-create
