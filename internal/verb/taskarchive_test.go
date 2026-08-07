@@ -95,7 +95,7 @@ func TestTaskArchiveDisposesRecordAndFiles(t *testing.T) {
 	}
 
 	// SyncTasks must NOT resurrect the archived record to a file.
-	if _, _, err := verb.SyncTasks(ctx, st, time.Now()); err != nil {
+	if _, _, _, err := verb.SyncTasks(ctx, st, time.Now()); err != nil {
 		t.Fatalf("SyncTasks: %v", err)
 	}
 	if _, err := os.Stat(header); !os.IsNotExist(err) {

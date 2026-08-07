@@ -1,3 +1,11 @@
+## [0.0.437] - 2026-08-07
+
+### Fixed
+- **`satelle reindex` no longer aborts its task-sync leg on one hand-authored file.** Every run of `satelle reindex` in this repo ended with `reindex: task sync: workitem: upsert needs an id`. The culprit was a single run file, `.satelle/tasks/tsk_backlog-groom/exe_full-backlog-cull.md`, whose frontmatter parses cleanly but carries no `id:`: `parseItemFile` accepted it, `upsertIfChanged` hit the store's (correct) empty-id rejection, and `ingestExecutions` RETURNED that error — so one unusable file silently cost the repo its entire task index. A file's NAME now supplies its id when the frontmatter has none. That is a widening of an existing convention rather than a guess: the `tsk_`/`exe_` prefix filters upstream have already decided the stem is a well-formed id of that kind, and `ingestItemBody` has always done exactly this for embedded defaults — both now go through one `idFromName` so the two cannot drift. The offending data file was deliberately NOT edited: adding an `id:` to it would clear the symptom and leave the class live for the next hand-authored run file (sty_0828e855)
+
+### Changed
+- **A task file sync cannot use is now named, not silently dropped and not fatal.** `SyncTasks` returns a `skipped` list of `<path>: <reason>` notes; a per-file parse or upsert failure becomes a note and the sync carries on to its siblings, and `satelle reindex` prints `reindex: task sync: skipped <path>: <reason>` so an operator goes straight to the offending file. Genuinely fatal errors — creating or reading the task dir, and the store list that drives adoption — stay errors, so reindex keeps its documented pass-through contract in both directions: it never fails on a bad task file, and it never hides one either. On this repo the fix took the leg from aborting to `tasks: indexed 4` — four task files that had never reached the store at all (sty_0828e855)
+
 ## [0.0.436] - 2026-08-07
 
 ### Fixed

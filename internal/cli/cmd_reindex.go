@@ -58,7 +58,13 @@ starts serve loses nothing if these three paths fire.`,
 			// Tasks are authored substrate (sty_c1f9e74c): ingest every .satelle/tasks
 			// work-definition file into the store (the file is the source of truth) and
 			// adopt any legacy DB-only task by writing its file.
-			if idx, mig, terr := verb.SyncTasks(cmd.Context(), a.Store.Stories, time.Now()); terr != nil {
+			idx, mig, skipped, terr := verb.SyncTasks(cmd.Context(), a.Store.Stories, time.Now())
+			// A file sync could not use is NAMED, not silently dropped and not a
+			// reason to abandon the rest of the leg (sty_0828e855).
+			for _, note := range skipped {
+				fmt.Fprintf(cmd.ErrOrStderr(), "reindex: task sync: skipped %s\n", note)
+			}
+			if terr != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "reindex: task sync: %v\n", terr)
 			} else if idx > 0 || mig > 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "tasks: indexed %d, migrated %d\n", idx, mig)

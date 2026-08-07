@@ -118,12 +118,12 @@ func fileStat(path string) bool {
 // virtual sparse defaults). Archived tasks are excluded from the store List that
 // drives adoption, so an archived record is never resurrected (sty_cd209b8a).
 // Returns (indexed, migrated). A no-op when taskDir is unset or the store is nil.
-func SyncTasks(ctx context.Context, store *workitem.Store, now time.Time) (indexed, migrated int, err error) {
+func SyncTasks(ctx context.Context, store *workitem.Store, now time.Time) (indexed, migrated int, skipped []string, err error) {
 	if taskDir == "" || store == nil {
-		return 0, 0, nil
+		return 0, 0, nil, nil
 	}
 	if err = os.MkdirAll(taskDir, 0o755); err != nil {
-		return 0, 0, fmt.Errorf("task file dir: %w", err)
+		return 0, 0, nil, fmt.Errorf("task file dir: %w", err)
 	}
 	// Embedded task names that must not be re-written to disk by adopt when they
 	// exist only as virtual defaults.
@@ -138,7 +138,7 @@ func SyncTasks(ctx context.Context, store *workitem.Store, now time.Time) (index
 	for _, kind := range []workitem.Kind{workitem.KindTask, workitem.KindExecution} {
 		dbItems, lerr := store.List(ctx, workitem.ListFilter{Kind: kind})
 		if lerr != nil {
-			return indexed, migrated, lerr
+			return indexed, migrated, skipped, lerr
 		}
 		for _, it := range dbItems {
 			var path string
@@ -156,7 +156,7 @@ func SyncTasks(ctx context.Context, store *workitem.Store, now time.Time) (index
 			}
 			if _, serr := os.Stat(path); os.IsNotExist(serr) {
 				if werr := writeItemFile(it); werr != nil {
-					return indexed, migrated, werr
+					return indexed, migrated, skipped, werr
 				}
 				migrated++
 			}
@@ -168,22 +168,23 @@ func SyncTasks(ctx context.Context, store *workitem.Store, now time.Time) (index
 	onDiskTasks := map[string]struct{}{}
 	entries, derr := os.ReadDir(taskDir)
 	if derr != nil {
-		return indexed, migrated, derr
+		return indexed, migrated, skipped, derr
 	}
 	for _, ent := range entries {
 		name := ent.Name()
 		switch {
 		case ent.IsDir() && strings.HasPrefix(name, "tsk_"):
-			n, ierr := ingestExecutions(ctx, store, filepath.Join(taskDir, name), now)
+			n, sk, ierr := ingestExecutions(ctx, store, filepath.Join(taskDir, name), now)
 			if ierr != nil {
-				return indexed, migrated, ierr
+				return indexed, migrated, skipped, ierr
 			}
+			skipped = append(skipped, sk...)
 			indexed += n
 		case !ent.IsDir() && strings.HasPrefix(name, "tsk_") && strings.HasSuffix(name, ".md"):
 			onDiskTasks[strings.TrimSuffix(name, ".md")] = struct{}{}
-			did, ierr := ingestItemFile(ctx, store, filepath.Join(taskDir, name), workitem.KindTask, now)
-			if ierr != nil {
-				return indexed, migrated, ierr
+			did, note := ingestItemFile(ctx, store, filepath.Join(taskDir, name), workitem.KindTask, now)
+			if note != "" {
+				skipped = append(skipped, note)
 			}
 			if did {
 				indexed++
@@ -201,73 +202,109 @@ func SyncTasks(ctx context.Context, store *workitem.Store, now time.Time) (index
 		}
 		// Write to a temp path? ingestItemFile needs a path. Parse body directly.
 		if did, ierr := ingestItemBody(ctx, store, d.Name, d.Body, workitem.KindTask, now); ierr != nil {
-			return indexed, migrated, ierr
+			skipped = append(skipped, skipNote("embedded:tasks/"+d.Name, ierr.Error()))
 		} else if did {
 			indexed++
 		}
 	}
-	return indexed, migrated, nil
+	return indexed, migrated, skipped, nil
 }
 
 // ingestExecutions ingests every exe_*.md run file under a task's folder,
 // stamping KindExecution and the parent task id (the folder name). Returns how
 // many runs were (re)indexed.
-func ingestExecutions(ctx context.Context, store *workitem.Store, dir string, now time.Time) (int, error) {
+func ingestExecutions(ctx context.Context, store *workitem.Store, dir string, now time.Time) (int, []string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	parentID := filepath.Base(dir)
 	n := 0
+	var skipped []string
 	for _, ent := range entries {
 		name := ent.Name()
 		if ent.IsDir() || !strings.HasPrefix(name, "exe_") || !strings.HasSuffix(name, ".md") {
 			continue
 		}
-		it, ok := parseItemFile(filepath.Join(dir, name), workitem.KindExecution, now)
+		path := filepath.Join(dir, name)
+		it, reason, ok := parseItemFile(path, workitem.KindExecution, now)
 		if !ok {
+			skipped = append(skipped, skipNote(path, reason))
 			continue
 		}
 		it.ParentID = parentID // the folder is the authority on parentage
 		did, uerr := upsertIfChanged(ctx, store, it, now)
 		if uerr != nil {
-			return n, uerr
+			// One unusable run file is named and stepped over, never a reason to
+			// abandon the rest of the sync (sty_0828e855).
+			skipped = append(skipped, skipNote(path, uerr.Error()))
+			continue
 		}
 		if did {
 			n++
 		}
 	}
-	return n, nil
+	return n, skipped, nil
 }
 
 // parseItemFile reads a work-item .md file, stamping the given kind and seeding
-// CreatedAt when absent. ok is false when the file can't be read/parsed (skipped
-// so one malformed file never aborts the whole sync).
-func parseItemFile(path string, kind workitem.Kind, now time.Time) (workitem.Item, bool) {
+// CreatedAt when absent. ok is false when the file can't be read/parsed, and
+// reason then names why — one malformed file never aborts the whole sync.
+//
+// A hand-authored file may carry no `id:`; its FILENAME supplies one. The
+// prefix filters upstream (tsk_/exe_) already decided the stem is a well-formed
+// id of this kind, so this is a widening of an existing convention, not a guess
+// — see idFromName, which ingestItemBody applies to embedded defaults.
+func parseItemFile(path string, kind workitem.Kind, now time.Time) (workitem.Item, string, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return workitem.Item{}, false
+		return workitem.Item{}, "unreadable: " + err.Error(), false
 	}
 	it, perr := workitem.Parse(data)
 	if perr != nil {
-		return workitem.Item{}, false
+		return workitem.Item{}, "parse: " + perr.Error(), false
 	}
 	it.Kind = kind
+	idFromName(&it, strings.TrimSuffix(filepath.Base(path), ".md"))
+	if it.ID == "" {
+		return workitem.Item{}, "no id in frontmatter and the filename yields none", false
+	}
 	if it.CreatedAt.IsZero() {
 		it.CreatedAt = now
 	}
-	return it, true
+	return it, "", true
+}
+
+// idFromName seeds an item's id from the name its source is filed under when
+// the content carries none. The file path (or embedded default name) is the
+// authority on identity in both ingest paths; keeping the rule in one place
+// stops the two from drifting.
+func idFromName(it *workitem.Item, name string) {
+	if strings.TrimSpace(it.ID) == "" {
+		it.ID = strings.TrimSpace(name)
+	}
 }
 
 // ingestItemFile parses one file and upserts it when its content differs from
-// the store. Returns whether a row was (re)indexed. A parse failure is skipped
-// (did=false, no error) so one malformed file never aborts the whole sync.
-func ingestItemFile(ctx context.Context, store *workitem.Store, path string, kind workitem.Kind, now time.Time) (bool, error) {
-	it, ok := parseItemFile(path, kind, now)
+// the store. Returns whether a row was (re)indexed, and a skip note naming the
+// file when it could not be. No error is returned for a bad file: one malformed
+// file never aborts the whole sync (sty_0828e855).
+func ingestItemFile(ctx context.Context, store *workitem.Store, path string, kind workitem.Kind, now time.Time) (bool, string) {
+	it, reason, ok := parseItemFile(path, kind, now)
 	if !ok {
-		return false, nil
+		return false, skipNote(path, reason)
 	}
-	return upsertIfChanged(ctx, store, it, now)
+	did, uerr := upsertIfChanged(ctx, store, it, now)
+	if uerr != nil {
+		return false, skipNote(path, uerr.Error())
+	}
+	return did, ""
+}
+
+// skipNote is the one format for "this file was skipped, and why" — the string
+// reindex prints so an operator can go straight to the offending path.
+func skipNote(path, reason string) string {
+	return fmt.Sprintf("%s: %s", path, reason)
 }
 
 // ingestItemBody parses an in-memory task body (virtual embedded default) and
@@ -278,9 +315,7 @@ func ingestItemBody(ctx context.Context, store *workitem.Store, name, body strin
 		return false, nil
 	}
 	it.Kind = kind
-	if it.ID == "" {
-		it.ID = name
-	}
+	idFromName(&it, name)
 	if it.CreatedAt.IsZero() {
 		it.CreatedAt = now
 	}
