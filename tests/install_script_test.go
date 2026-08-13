@@ -36,7 +36,7 @@ import (
 //	transport_fail the release-lookup host does not resolve (curl exit 6)
 //	no_tag         the lookup returns 200 with a body carrying no tag_name
 //	sha_mismatch   the CLI .sha256 does not match the downloaded asset
-//	serve_404      the satelle-serve asset 404s (the soft-fail branch)
+//	serve_404      the satelled asset 404s (the soft-fail branch)
 func installStub(t *testing.T, dir, mode, wantSHA string) {
 	t.Helper()
 	stub := fmt.Sprintf(`#!/bin/sh
@@ -102,8 +102,17 @@ $pad  \"end\": true
 }
 "
 	exit 0 ;;
+*/satelled-*.sha256)
+	printf '%%s  satelled\n' "%[2]s" >"$out"; exit 0 ;;
+*/satelled-*)
+	if [ "$STUB_MODE" = serve_404 ]; then
+		echo "curl: (22) The requested URL returned error: 404" >&2
+		exit 22
+	fi
+	printf 'SERVE-BINARY\n' >"$out"; exit 0 ;;
 */satelle-serve-*.sha256)
-	printf '%%s  satelle-serve\n' "%[2]s" >"$out"; exit 0 ;;
+	# Compatibility fallback — older serve-v* tags publish this asset name.
+	printf '%%s  satelled\n' "%[2]s" >"$out"; exit 0 ;;
 */satelle-serve-*)
 	if [ "$STUB_MODE" = serve_404 ]; then
 		echo "curl: (22) The requested URL returned error: 404" >&2
@@ -177,7 +186,7 @@ func TestInstallScriptSuccessIsSilentOnStderr(t *testing.T) {
 	if !strings.HasPrefix(first, "satelle install: fetching ") {
 		t.Errorf("first stdout line = %q, want the satelle fetching line", first)
 	}
-	for _, name := range []string{"satelle", "satelle-serve"} {
+	for _, name := range []string{"satelle", "satelled"} {
 		info, err := os.Stat(filepath.Join(dir, name))
 		if err != nil {
 			t.Errorf("expected %s to be installed: %v", name, err)
@@ -323,7 +332,7 @@ func TestInstallScriptServeSoftFailPreserved(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "satelle")); err != nil {
 		t.Errorf("the CLI must remain installed when serve is unavailable: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "satelle-serve")); err == nil {
-		t.Errorf("satelle-serve must not be installed when its asset 404s")
+	if _, err := os.Stat(filepath.Join(dir, "satelled")); err == nil {
+		t.Errorf("satelled must not be installed when its asset 404s")
 	}
 }

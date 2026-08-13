@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # check-serve-version — fail when serve-path sources changed since the last
-# serve-v* tag but satelle-serve.version was not advanced (sty_4a5c6924).
+# serve-v* tag but satelled.version was not advanced (sty_4a5c6924).
 # Exit 0 when no serve-path change, or when the serve version line advanced
 # relative to the tagged commit.
 #
 # THE WATCHED SET IS DERIVED, NOT AUTHORED (sty_a8853e85). It is exactly what
-# `cmd/satelle-serve` transitively imports, computed here at run time.
+# `cmd/satelled` transitively imports, computed here at run time.
 #
 # It used to be a literal four-entry array, and that array was a SECOND answer to
 # a question the compiler already answers — so it drifted: 4 of the 16 in-repo
 # packages the serve binary compiles in were watched. `internal/serve`, which
 # runs ONLY inside the service, was not among them. The failure that makes this
-# worth deriving is silent by construction: with no `satelle-serve.version` bump,
+# worth deriving is silent by construction: with no `satelled.version` bump,
 # `satelle update` reports "already up to date", the operator sees a green
 # release, and the running service keeps the old code.
 #
@@ -45,12 +45,12 @@ serve_paths() {
     echo "check-serve-version: go list -m returned nothing" >&2
     return 1
   }
-  deps=$(go list -deps ./cmd/satelle-serve 2>/dev/null) || {
-    echo "check-serve-version: go list -deps ./cmd/satelle-serve failed" >&2
+  deps=$(go list -deps ./cmd/satelled 2>/dev/null) || {
+    echo "check-serve-version: go list -deps ./cmd/satelled failed" >&2
     return 1
   }
   # In-repo packages only; a stdlib or vendored dep is not ours to version.
-  # `cmd/satelle-serve` itself is in this list and must stay watched.
+  # `cmd/satelled` itself is in this list and must stay watched.
   out=$(printf '%s\n' "$deps" | sed -n "s|^${mod}/||p" | sort -u | sed 's|$|/|')
   [ -n "$out" ] || {
     echo "check-serve-version: derived an EMPTY watch set" >&2
@@ -137,24 +137,33 @@ if [ -z "$all" ]; then
 fi
 
 # Version at BASE vs HEAD (and working tree .version).
+# HEAD uses satelled.version. Old tags still carry satelle-serve.version —
+# compatibility fallback, not a current name (sty_bd9de06d).
+ver_field() {
+  awk '
+    $1=="satelled.version:" { print $2; found=1; exit }
+    $1=="satelle-serve.version:" { legacy=$2 }
+    END { if (!found && legacy != "") print legacy }
+  ' "$@"
+}
 ver_at() {
-  git show "$1:.version" 2>/dev/null | awk '$1=="satelle-serve.version:" {print $2; exit}'
+  git show "$1:.version" 2>/dev/null | ver_field
 }
 base_ver=$(ver_at "$BASE")
-head_ver=$(awk '$1=="satelle-serve.version:" {print $2; exit}' .version)
+head_ver=$(ver_field .version)
 if [ -z "$head_ver" ]; then
-  echo "check-serve-version: satelle-serve.version missing from .version" >&2
+  echo "check-serve-version: satelled.version missing from .version" >&2
   exit 1
 fi
 if [ -z "$base_ver" ]; then
-  echo "check-serve-version: tag $BASE has no satelle-serve.version — require current $head_ver present"
+  echo "check-serve-version: tag $BASE has no satelled.version (or legacy satelle-serve.version) — require current $head_ver present"
   exit 0
 fi
 if [ "$head_ver" = "$base_ver" ]; then
-  echo "check-serve-version: serve-path changes since $BASE but satelle-serve.version still $base_ver" >&2
+  echo "check-serve-version: serve-path changes since $BASE but satelled.version still $base_ver" >&2
   echo "changed:" >&2
   printf '  %s\n' $all >&2
-  echo "bump satelle-serve.version in .version (and changelog serve-v entry) before release" >&2
+  echo "bump satelled.version in .version (and changelog serve-v entry) before release" >&2
   exit 1
 fi
 echo "check-serve-version: ok — serve-path changed since $BASE; version $base_ver → $head_ver"

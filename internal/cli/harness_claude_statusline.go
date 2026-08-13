@@ -107,7 +107,7 @@ func stripSatelleStatusLine(raw []byte) (out []byte, changed bool) {
 func statusLineOptInNotice() string {
 	return fmt.Sprintf(`  note: satelle installs no statusLine — it is an operator preference, and a
         repo's .claude/settings.json is shared scaffold. To show satelle's line
-        (server link plus the engaged <story_id>::<stage>), add this to your own
+        (satelled link plus the engaged <story_id>::<stage>), add this to your own
         %s:
           "statusLine": { "type": "command", "command": %q }`,
 		claudeUserSettingsRel, statusLineCommand)

@@ -160,7 +160,7 @@ func probeServe(cfg config.Config, repoRoot string) (liveHolder, bool) {
 		}
 		return liveHolder{
 			Kind:   "serve",
-			Detail: fmt.Sprintf("web server        http://127.0.0.1:%d/ responding", port),
+			Detail: fmt.Sprintf("satelled          http://127.0.0.1:%d/ responding", port),
 		}, true
 	}
 	return liveHolder{}, false

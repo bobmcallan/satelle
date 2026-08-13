@@ -1,5 +1,5 @@
 // Package serve runs the push-fed mirror UI HTTP server (sty_80233c10).
-// Shared by the dedicated satelle-serve binary and the deprecated `satelle serve`
+// Shared by the dedicated satelled binary and the deprecated `satelle serve`
 // CLI alias so behaviour cannot drift.
 package serve
 
@@ -74,13 +74,13 @@ func Run(ctx context.Context, opts Options) error {
 		Targets: mirrorTargets(ms, config.GlobalDir()),
 		Log: func(format string, args ...any) {
 			line := fmt.Sprintf(format, args...)
-			fmt.Fprintln(os.Stderr, "satelle serve: "+line)
+			fmt.Fprintln(os.Stderr, "satelled: "+line)
 			_ = logfile.Append(time.Now(), serverLog, logCfg, line)
 		},
 	}
 	go rec.Loop(ctx)
 
-	fmt.Printf("satelle serve (push-fed mirror) http://%s  mirror=%s  (Ctrl-C to stop)\n", listenAddr, mirrorPath)
+	fmt.Printf("satelled (push-fed mirror) http://%s  mirror=%s  (Ctrl-C to stop)\n", listenAddr, mirrorPath)
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

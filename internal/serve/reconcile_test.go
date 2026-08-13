@@ -438,7 +438,7 @@ func TestSatelleBinaryPrefersSibling(t *testing.T) {
 	if err := os.WriteFile(sibling, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	got, err := satelleBinaryFrom(filepath.Join(dir, "satelle-serve"))
+	got, err := satelleBinaryFrom(filepath.Join(dir, "satelled"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,7 +467,7 @@ func TestPassInvokesSnapshot(t *testing.T) {
 // the reconciler disables itself with a reason rather than failing silently.
 func TestSatelleBinaryReportsMissing(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	if _, err := satelleBinaryFrom(filepath.Join(t.TempDir(), "satelle-serve")); err == nil {
+	if _, err := satelleBinaryFrom(filepath.Join(t.TempDir(), "satelled")); err == nil {
 		t.Fatal("expected an error when no satelle can be resolved")
 	}
 }

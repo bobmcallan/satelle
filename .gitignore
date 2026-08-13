@@ -8,11 +8,12 @@
 .satelle/
 
 # Built binaries — leading `/` is required so only the *named path* is ignored.
-# A bare `satelle-serve` would also match cmd/satelle-serve/ and hide the source.
+# A bare `satelled` would also match cmd/satelled/ and hide the source.
 /satelle
+/satelled
 /satelle-serve
 /cmd/satelle/satelle
-/cmd/satelle-serve/satelle-serve
+/cmd/satelled/satelled
 
 # Opt-in live benchmark output (generated evidence, not source fixtures).
 /tests/plannerbench/out/

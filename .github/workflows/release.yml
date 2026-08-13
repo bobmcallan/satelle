@@ -1,8 +1,9 @@
 name: release
 
-# .version is canonical: satelle.version (CLI) and satelle-serve.version are
-# independent (sty_19ff03f4). CLI releases use tag v<cli> and remain GitHub
-# "latest". Serve releases use tag serve-v<serve> with --latest=false so
+# .version is canonical: satelle.version (CLI) and satelled.version are
+# independent (sty_19ff03f4 / sty_bd9de06d). CLI releases use tag v<cli> and
+# remain GitHub "latest". Daemon releases use tag serve-v<serve> (prefix kept
+# so older installed CLIs still discover the channel) with --latest=false so
 # installed CLI self-update keeps resolving releases/latest correctly.
 on:
   workflow_run:
@@ -39,10 +40,10 @@ jobs:
         run: |
           set -euo pipefail
           CLI=$(awk '$1=="satelle.version:" {print $2}' .version)
-          SERVE=$(awk '$1=="satelle-serve.version:" {print $2}' .version)
+          SERVE=$(awk '$1=="satelled.version:" {print $2}' .version)
           BUILD=$(awk '$1=="satelle.build:" {print $2}' .version)
           [ -n "$CLI" ] || { echo "satelle.version missing" >&2; exit 1; }
-          [ -n "$SERVE" ] || { echo "satelle-serve.version missing" >&2; exit 1; }
+          [ -n "$SERVE" ] || { echo "satelled.version missing" >&2; exit 1; }
           [ -n "$BUILD" ] || { echo "satelle.build missing" >&2; exit 1; }
           echo "cli_version=$CLI"     >> "$GITHUB_OUTPUT"
           echo "serve_version=$SERVE" >> "$GITHUB_OUTPUT"
@@ -96,11 +97,11 @@ jobs:
           - { artifact: satelle,       pkg: ./cmd/satelle,       goos: darwin,  goarch: amd64, validate: false }
           - { artifact: satelle,       pkg: ./cmd/satelle,       goos: darwin,  goarch: arm64, validate: false }
           - { artifact: satelle,       pkg: ./cmd/satelle,       goos: windows, goarch: amd64, validate: false }
-          - { artifact: satelle-serve, pkg: ./cmd/satelle-serve, goos: linux,   goarch: amd64, validate: true  }
-          - { artifact: satelle-serve, pkg: ./cmd/satelle-serve, goos: linux,   goarch: arm64, validate: false }
-          - { artifact: satelle-serve, pkg: ./cmd/satelle-serve, goos: darwin,  goarch: amd64, validate: false }
-          - { artifact: satelle-serve, pkg: ./cmd/satelle-serve, goos: darwin,  goarch: arm64, validate: false }
-          - { artifact: satelle-serve, pkg: ./cmd/satelle-serve, goos: windows, goarch: amd64, validate: false }
+          - { artifact: satelled, pkg: ./cmd/satelled, goos: linux,   goarch: amd64, validate: true  }
+          - { artifact: satelled, pkg: ./cmd/satelled, goos: linux,   goarch: arm64, validate: false }
+          - { artifact: satelled, pkg: ./cmd/satelled, goos: darwin,  goarch: amd64, validate: false }
+          - { artifact: satelled, pkg: ./cmd/satelled, goos: darwin,  goarch: arm64, validate: false }
+          - { artifact: satelled, pkg: ./cmd/satelled, goos: windows, goarch: amd64, validate: false }
     steps:
       - name: skip if artifact not releasing
         id: gate
@@ -108,7 +109,7 @@ jobs:
           set -euo pipefail
           if [ "${{ matrix.artifact }}" = "satelle" ] && [ "${{ needs.derive-tag.outputs.needs_cli }}" != "true" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-          elif [ "${{ matrix.artifact }}" = "satelle-serve" ] && [ "${{ needs.derive-tag.outputs.needs_serve }}" != "true" ]; then
+          elif [ "${{ matrix.artifact }}" = "satelled" ] && [ "${{ needs.derive-tag.outputs.needs_serve }}" != "true" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -152,7 +153,8 @@ jobs:
             -o "${OUT}" "${{ matrix.pkg }}"
           sha256sum "${OUT}" > "${OUT}.sha256"
           echo "OUT=${OUT}" >> "$GITHUB_ENV"
-          # Namespace carefully: dist-satelle-* would also match dist-satelle-serve-*.
+          # Namespace by role, not artifact prefix: dist-satelle-* would also
+          # match dist-satelled-* (satelled starts with satelle).
           if [ "${{ matrix.artifact }}" = "satelle" ]; then
             echo "ART=dist-cli-${GOOS}-${GOARCH}" >> "$GITHUB_ENV"
           else
@@ -242,7 +244,7 @@ jobs:
         run: |
           set -euo pipefail
           cd artifacts
-          for sum in satelle-serve-*.sha256; do sha256sum -c "${sum}"; done
+          for sum in satelled-*.sha256; do sha256sum -c "${sum}"; done
       - name: tag + release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -267,5 +269,5 @@ jobs:
           gh release create "$TAG" \
             --title "$TAG" \
             --latest=false \
-            --notes "satelle-serve v${VER} (push-fed mirror UI binary)" \
+            --notes "satelled v${VER} (local-tier daemon — push-fed mirror UI)" \
             artifacts/*

@@ -11,10 +11,10 @@ import (
 )
 
 func TestSystemdUnitContent(t *testing.T) {
-	unit := systemdUnit("/usr/local/bin/satelle-serve", "/home/u/repo", "0.0.0.0", 8787)
+	unit := systemdUnit("/usr/local/bin/satelled", "/home/u/repo", "0.0.0.0", 8787)
 	for _, want := range []string{
-		"Description=satelle web server",
-		"ExecStart=/usr/local/bin/satelle-serve --addr 0.0.0.0 --port 8787",
+		"Description=satelled",
+		"ExecStart=/usr/local/bin/satelled --addr 0.0.0.0 --port 8787",
 		"WorkingDirectory=", // $HOME preferred; not a single repo (sty_dbdadfa0)
 		"Restart=always",
 		"WantedBy=default.target",
@@ -65,9 +65,9 @@ func TestUserSystemctlEnv(t *testing.T) {
 // runs as the given user, with the correct ExecStart (sty_00dadc91). WorkingDirectory
 // is $HOME (push-fed serve needs no per-repo cwd; sty_dbdadfa0 / sty_455f0d6e).
 func TestSystemSystemdUnit(t *testing.T) {
-	unit := systemSystemdUnit("/usr/local/bin/satelle-serve", "/home/u/repo", "0.0.0.0", 8787, "bobmc")
+	unit := systemSystemdUnit("/usr/local/bin/satelled", "/home/u/repo", "0.0.0.0", 8787, "bobmc")
 	for _, want := range []string{
-		"ExecStart=/usr/local/bin/satelle-serve --addr 0.0.0.0 --port 8787",
+		"ExecStart=/usr/local/bin/satelled --addr 0.0.0.0 --port 8787",
 		"WorkingDirectory=", // non-empty home or repo fallback
 		"User=bobmc",
 		"Group=bobmc",
@@ -148,10 +148,23 @@ func TestResolveServeBinary(t *testing.T) {
 	exists := func(want string) func(string) bool {
 		return func(p string) bool { return p == want }
 	}
-	// sibling present
-	path, fb := resolveServeBinary("/opt/bin/satelle", "", exists("/opt/bin/satelle-serve"))
-	if path != "/opt/bin/satelle-serve" || fb {
+	// sibling present (current name)
+	path, fb := resolveServeBinary("/opt/bin/satelle", "", exists("/opt/bin/satelled"))
+	if path != "/opt/bin/satelled" || fb {
 		t.Fatalf("sibling: path=%q fb=%v", path, fb)
+	}
+	// legacy sibling still picked when only satelle-serve exists
+	path, fb = resolveServeBinary("/opt/bin/satelle", "", exists("/opt/bin/satelle-serve"))
+	if path != "/opt/bin/satelle-serve" || fb {
+		t.Fatalf("legacy sibling: path=%q fb=%v", path, fb)
+	}
+	// current name wins over legacy when both exist
+	both := func(p string) bool {
+		return p == "/opt/bin/satelled" || p == "/opt/bin/satelle-serve"
+	}
+	path, fb = resolveServeBinary("/opt/bin/satelle", "", both)
+	if path != "/opt/bin/satelled" || fb {
+		t.Fatalf("prefer current: path=%q fb=%v", path, fb)
 	}
 	// flag override
 	path, fb = resolveServeBinary("/opt/bin/satelle", "/x/serve", exists("/x/serve"))
@@ -244,12 +257,20 @@ func TestServiceStatusLine_NotInstalled(t *testing.T) {
 	if got != "not installed" {
 		t.Errorf("serviceStatusLine = %q, want %q", got, "not installed")
 	}
+	// AC1: status reports the local tier as satelled, not "the satelle server".
+	report := serviceStatusReport(t.TempDir())
+	if !strings.HasPrefix(report, "satelled — ") {
+		t.Errorf("serviceStatusReport = %q, want prefix satelled —", report)
+	}
+	if !strings.Contains(report, "not installed") {
+		t.Errorf("serviceStatusReport = %q, want the kernel-derived state", report)
+	}
 }
 
 // TestServiceStatusLine_InstalledNotRunning: (b) unit installed, no process found
 // by kernel facts, supervisor reachable and confirms inactive.
 func TestServiceStatusLine_InstalledNotRunning(t *testing.T) {
-	writeFakeUserUnit(t, "/opt/bin/satelle-serve")
+	writeFakeUserUnit(t, "/opt/bin/satelled")
 	withServiceStatusHooks(t, struct {
 		userIsActive   func() (string, bool)
 		systemIsActive func() (string, bool)
@@ -268,7 +289,7 @@ func TestServiceStatusLine_InstalledNotRunning(t *testing.T) {
 // TestServiceStatusLine_StartLimited: (e) unit installed, not running, and
 // systemd reports it start-limited — named explicitly, not folded into "stopped".
 func TestServiceStatusLine_StartLimited(t *testing.T) {
-	writeFakeUserUnit(t, "/opt/bin/satelle-serve")
+	writeFakeUserUnit(t, "/opt/bin/satelled")
 	withServiceStatusHooks(t, struct {
 		userIsActive   func() (string, bool)
 		systemIsActive func() (string, bool)
@@ -289,7 +310,7 @@ func TestServiceStatusLine_StartLimited(t *testing.T) {
 // case this story was raised over. Also covers AC3 (exe identity matches).
 func TestServiceStatusLine_RunningReachableActive(t *testing.T) {
 	installDir := t.TempDir()
-	target := filepath.Join(installDir, "satelle-serve")
+	target := filepath.Join(installDir, "satelled")
 	if err := os.WriteFile(target, []byte("the installed binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -318,11 +339,11 @@ func TestServiceStatusLine_RunningReachableActive(t *testing.T) {
 // condition both sty_c344d080 and sty_02acce1b were wrongly parked over. This must
 // NEVER render as "not installed" or "stopped" (sty_acd4b61e AC2).
 func TestServiceStatusLine_RunningUnreachable(t *testing.T) {
-	stale := filepath.Join(t.TempDir(), "old-satelle-serve")
+	stale := filepath.Join(t.TempDir(), "old-satelled")
 	if err := os.WriteFile(stale, []byte("stale binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	current := filepath.Join(t.TempDir(), "satelle-serve")
+	current := filepath.Join(t.TempDir(), "satelled")
 	if err := os.WriteFile(current, []byte("current installed binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +374,7 @@ func TestServiceStatusLine_RunningUnreachable(t *testing.T) {
 // installed unit's supervision, the state release.md's dogfood forbids as a
 // final state. Must be named distinctly from both "active" and "unreachable".
 func TestServiceStatusLine_EphemeralOutsideSupervision(t *testing.T) {
-	writeFakeUserUnit(t, "/opt/bin/satelle-serve")
+	writeFakeUserUnit(t, "/opt/bin/satelled")
 	withServiceStatusHooks(t, struct {
 		userIsActive   func() (string, bool)
 		systemIsActive func() (string, bool)
@@ -393,7 +414,7 @@ func TestServiceStatusLine_EphemeralOutsideSupervision(t *testing.T) {
 // comparison could not be made" branch — the unit file names a binary that does
 // not exist on disk, so identityFromPath cannot resolve either side.
 func TestServiceStatusLine_IdentityUnknown(t *testing.T) {
-	writeFakeUserUnit(t, "/nonexistent/satelle-serve")
+	writeFakeUserUnit(t, "/nonexistent/satelled")
 	withServiceStatusHooks(t, struct {
 		userIsActive   func() (string, bool)
 		systemIsActive func() (string, bool)
@@ -404,7 +425,7 @@ func TestServiceStatusLine_IdentityUnknown(t *testing.T) {
 		systemStartLtd: func() bool { return false },
 	})
 	procRoot := t.TempDir()
-	writeFakeCgroupPID(t, procRoot, 334, "/user.slice/user-1000.slice/user@1000.service/app.slice/"+serviceUnitName, "/nonexistent/satelle-serve")
+	writeFakeCgroupPID(t, procRoot, 334, "/user.slice/user-1000.slice/user@1000.service/app.slice/"+serviceUnitName, "/nonexistent/satelled")
 	got := serviceStatusLine(procRoot)
 	if !strings.Contains(got, "could not be determined") {
 		t.Errorf("serviceStatusLine = %q, want the identity-unknown case named plainly", got)

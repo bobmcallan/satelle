@@ -21,9 +21,12 @@ the release commit. See [[satelle-agent-model]], [[satelle-reviewer-self-contain
 #!/usr/bin/env bash
 set -uo pipefail
 # Independent versions (<story-id>): CLI key satelle.version → ## [X.Y.Z];
-# serve key satelle-serve.version → ## [serve-vY]. Both required when present.
+# daemon key satelled.version → ## [serve-vY] (legacy satelle-serve.version still read).
 CLI=$(awk '$1=="satelle.version:" {print $2}' .version 2>/dev/null)
-SERVE=$(awk '$1=="satelle-serve.version:" {print $2}' .version 2>/dev/null)
+SERVE=$(awk '$1=="satelled.version:" {print $2}' .version 2>/dev/null)
+if [ -z "$SERVE" ]; then
+  SERVE=$(awk '$1=="satelle-serve.version:" {print $2}' .version 2>/dev/null)
+fi
 if [ -z "$CLI" ]; then
   echo "could not read satelle.version from .version on HEAD"
   exit 1

@@ -10,7 +10,7 @@ import (
 )
 
 // The serve-version gate (scripts/check-serve-version.sh) demands a
-// satelle-serve.version bump when a source file the serve binary is built from
+// satelled.version bump when a source file the daemon binary is built from
 // changes. Its watch set used to be a hand-kept four-entry array while the
 // binary compiled in sixteen in-repo packages, so a change to
 // `internal/serve` — which runs ONLY inside the service — released with no
@@ -57,7 +57,7 @@ func repoRoot(t *testing.T) string {
 func serveDeps(t *testing.T, root string) []string {
 	t.Helper()
 	mod := run(t, root, "go", "list", "-m")
-	deps := run(t, root, "go", "list", "-deps", "./cmd/satelle-serve")
+	deps := run(t, root, "go", "list", "-deps", "./cmd/satelled")
 	var out []string
 	for _, ln := range strings.Split(deps, "\n") {
 		ln = strings.TrimSpace(ln)
@@ -119,7 +119,7 @@ func TestServeGateWatchesEveryServeDependency(t *testing.T) {
 	}
 	if len(missed) > 0 {
 		t.Errorf("the serve binary links these packages but the version gate does not watch them:\n  %s\n"+
-			"A change confined to one of them would release with no satelle-serve.version bump, and the "+
+			"A change confined to one of them would release with no satelled.version bump, and the "+
 			"running service would silently keep the old code.", strings.Join(missed, "\n  "))
 	}
 	// A watch set that collapsed to nothing would pass the loop above vacuously.
@@ -135,15 +135,15 @@ func TestServeGateWatchesEveryServeDependency(t *testing.T) {
 func TestServeGateWatchesInternalServe(t *testing.T) {
 	root := repoRoot(t)
 	if !watches(t, root, "internal/serve/reconcile.go") {
-		t.Error("internal/serve is unwatched — it runs ONLY inside satelle-serve, " +
+		t.Error("internal/serve is unwatched — it runs ONLY inside satelled, " +
 			"so a change there that ships without a serve bump never reaches a running service")
 	}
 }
 
-// serveVersionBumped reports whether the working tree's satelle-serve.version
+// serveVersionBumped reports whether the working tree's satelled.version
 // already differs from the one in the latest serve-v* tag. When it does, the
 // gate passes on the version comparison alone and no planted file can change
-// that.
+// that. Old tags still carry satelle-serve.version (compatibility fallback).
 func serveVersionBumped(t *testing.T, root string) bool {
 	t.Helper()
 	base := run(t, root, "git", "tag", "-l", "serve-v*", "--sort=-v:refname")
@@ -154,12 +154,18 @@ func serveVersionBumped(t *testing.T, root string) bool {
 		return false
 	}
 	serveVer := func(body string) string {
+		var legacy string
 		for _, ln := range strings.Split(body, "\n") {
-			if f := strings.Fields(ln); len(f) >= 2 && f[0] == "satelle-serve.version:" {
-				return f[1]
+			if f := strings.Fields(ln); len(f) >= 2 {
+				switch f[0] {
+				case "satelled.version:":
+					return f[1]
+				case "satelle-serve.version:":
+					legacy = f[1]
+				}
 			}
 		}
-		return ""
+		return legacy
 	}
 	head, err := os.ReadFile(filepath.Join(root, ".version"))
 	if err != nil {
@@ -206,7 +212,7 @@ func TestServeGateSeesNewFiles(t *testing.T) {
 	// baseline, bumped version). They share one rule: never conclude anything
 	// from a gate that could not have failed.
 	if serveVersionBumped(t, root) {
-		t.Skip("satelle-serve.version is already ahead of the baseline tag — the gate cannot fail, so planting a file proves nothing")
+		t.Skip("satelled.version is already ahead of the baseline tag — the gate cannot fail, so planting a file proves nothing")
 	}
 	if ok, out := gateRun(t, root); !ok {
 		t.Skipf("gate is already failing in this tree, so planting a file proves nothing:\n%s", out)

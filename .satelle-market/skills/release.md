@@ -21,7 +21,7 @@ You are the **executor** for the merged `release` step (in-loop on the driving s
    ```bash
    make check-serve-version  # example: optional dual-binary version discipline check
    ```
-   Exit non-zero means bump `satelle-serve.version` (and the serve-v changelog
+   Exit non-zero means bump `satelled.version` (and the serve-v changelog
    entry) before releasing. The check is configuration (`scripts/check-serve-version.sh`);
    the release step is the release-path gate that runs it.
 1. **Format, then stage the STORY'S SLICE** — only the files this story changed (read the story body/acceptance criteria and `git status --short`):
@@ -31,7 +31,7 @@ You are the **executor** for the merged `release` step (in-loop on the driving s
    Do NOT `git add -A`: the tree may carry another session's in-flight changes. Confirm the staged set is exactly the slice (`git diff --cached --stat`).
 2. **Bump `.version`** — MANDATORY. Single source of truth for the release tag (`v<satelle.version>`) and the baked build identity; `release` cuts a tag ONLY when `.version` changed, so a missed bump strands the released binary.
    - Increment the **patch** of `satelle.version` (`0.0.11` → `0.0.12`).
-   - When the slice is serve-path work, also advance `satelle-serve.version` as required by `make check-serve-version  # example: optional dual-binary version discipline check`.
+   - When the slice is serve-path work, also advance `satelled.version` as required by `make check-serve-version  # example: optional dual-binary version discipline check`.
    - Set `satelle.build` to `date -u +"%Y-%m-%d-%H-%M-%S"`. `git add .version`.
 3. **Update `CHANGELOG.md`** — MANDATORY (<story-id>). The `release → done` gate
    `satelle-changelog-entry-check` fails closed when the version on HEAD has no entry.
@@ -76,18 +76,18 @@ names when a gap is present):
 | Named check | What must be true |
 | --- | --- |
 | **`check_cli_version`** | `satelle version` reports `$CLI_VER` (and the pushed commit SHA prefix) |
-| **`check_live_footer`** | Live web footer matches the **running** service binary's version (<story-id>): if ExecStart is `satelle-serve`, grep `$SERVE_VER`; if still the deprecated `satelle serve` alias, grep `$CLI_VER`. Prefer migrating the unit to satelle-serve (`satelle service install`). |
+| **`check_live_footer`** | Live web footer matches the **running** service binary's version (<story-id>): if ExecStart is `satelled`, grep `$SERVE_VER`; if still the deprecated `satelle serve` alias, grep `$CLI_VER`. Prefer migrating the unit to satelled (`satelle service install`). |
 | **`check_persistent_supervisor`** | The live service is under a **persistent** supervisor (system unit or linger-backed user manager), never an ephemeral `nohup`/`setsid` relaunch |
 
 ```bash
 CLI_VER=$(awk '$1=="satelle.version:"{print $2}' .version)
-SERVE_VER=$(awk '$1=="satelle-serve.version:"{print $2}' .version)
+SERVE_VER=$(awk '$1=="satelled.version:"{print $2}' .version)
 satelle update                                   # pulls CLI + serve assets (sudo-free),
                                                  # restarts the supervisor onto the new binary
 satelle version                                  # check_cli_version: must report $CLI_VER + SHA prefix
 # check_live_footer: version of the process that holds the port
-curl -fsS "http://127.0.0.1:${PORT:-8787}/" | grep -E "satelle-serve $SERVE_VER|satelle $CLI_VER"
-# expect satelle-serve $SERVE_VER when unit runs satelle-serve; satelle $CLI_VER for deprecated CLI alias
+curl -fsS "http://127.0.0.1:${PORT:-8787}/" | grep -E "satelled $SERVE_VER|satelle $CLI_VER"
+# expect satelled $SERVE_VER when unit runs satelled; satelle $CLI_VER for deprecated CLI alias
 # check_persistent_supervisor: confirm service is the installed unit, not a throwaway serve
 ```
 

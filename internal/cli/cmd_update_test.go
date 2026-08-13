@@ -193,11 +193,11 @@ func TestFirstPrefixedTag(t *testing.T) {
 
 func TestAssetNameForServeTag(t *testing.T) {
 	// ensure serve- tag prefix is stripped (asset uses vY, not serve-vY twice).
-	name := assetNameFor("satelle-serve", "serve-v0.0.2")
-	if !strings.HasPrefix(name, "satelle-serve-v0.0.2-") {
-		t.Fatalf("name=%q want satelle-serve-v0.0.2-…", name)
+	name := assetNameFor("satelled", "serve-v0.0.2")
+	if !strings.HasPrefix(name, "satelled-v0.0.2-") {
+		t.Fatalf("name=%q want satelled-v0.0.2-…", name)
 	}
-	if strings.Contains(name, "satelle-serve-serve-") {
+	if strings.Contains(name, "satelled-serve-") {
 		t.Fatalf("double serve- prefix: %q", name)
 	}
 }
@@ -1460,12 +1460,12 @@ func TestUpdateCheckReportsIdentity(t *testing.T) {
 
 	cliMatch := []byte("#!/bin/sh\nif [ \"$1\" = version ]; then echo 'satelle 0.0.66 (commit mmm, built t)'; fi\n")
 	cliDiffer := []byte("#!/bin/sh\nif [ \"$1\" = version ]; then echo 'satelle 0.0.66 (commit ddd, built t)'; fi\n# differ\n")
-	serveMatch := []byte("#!/bin/sh\necho 'satelle-serve 0.0.5 (commit sss, built t)'\n")
-	serveDiffer := []byte("#!/bin/sh\necho 'satelle-serve 0.0.5 (commit ttt, built t)'\n# differ\n")
+	serveMatch := []byte("#!/bin/sh\necho 'satelled 0.0.5 (commit sss, built t)'\n")
+	serveDiffer := []byte("#!/bin/sh\necho 'satelled 0.0.5 (commit ttt, built t)'\n# differ\n")
 	cliSum := sha256.Sum256(cliMatch)
 	serveSum := sha256.Sum256(serveMatch)
 	cliName := assetNameFor("satelle", "v0.0.66")
-	serveName := assetNameFor("satelle-serve", "serve-v0.0.5")
+	serveName := assetNameFor("satelled", "serve-v0.0.5")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/releases/latest", func(w http.ResponseWriter, r *http.Request) {
@@ -1493,7 +1493,7 @@ func TestUpdateCheckReportsIdentity(t *testing.T) {
 	t.Setenv("SATELLE_RELEASE_BASE", srv.URL+"/download")
 
 	cliPath := filepath.Join(installDir, "satelle")
-	servePath := filepath.Join(installDir, "satelle-serve")
+	servePath := filepath.Join(installDir, "satelled")
 	if err := os.WriteFile(cliPath, cliMatch, 0o755); err != nil {
 		t.Fatal(err)
 	}

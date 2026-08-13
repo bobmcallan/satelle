@@ -1,5 +1,5 @@
 BIN         := satelle
-SERVE_BIN   := satelle-serve
+SERVE_BIN   := satelled
 PREFIX      ?= $(HOME)/.local
 INSTALL_DIR := $(PREFIX)/bin
 
@@ -11,24 +11,24 @@ INSTALL_DIR := $(PREFIX)/bin
 # own ldflags and never calls this script — published assets stay plain.
 PKG         := github.com/bobmcallan/satelle/internal/buildinfo
 BASE_VERSION := $(shell awk '$$1=="satelle.version:" {print $$2}' .version)
-BASE_SERVE_VERSION := $(shell awk '$$1=="satelle-serve.version:" {print $$2}' .version)
+BASE_SERVE_VERSION := $(shell awk '$$1=="satelled.version:" {print $$2}' .version)
 VERSION     := $(shell bash scripts/build-version.sh $(BASE_VERSION))
 SERVE_VERSION := $(shell bash scripts/build-version.sh $(BASE_SERVE_VERSION) serve-v)
 COMMIT      := $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo none)
 BUILD_TIME  := $(shell awk '$$1=="satelle.build:" {print $$2}' .version)
 LDFLAGS     := -X $(PKG).Name=satelle -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)
-SERVE_LDFLAGS := -X $(PKG).Name=satelle-serve -X $(PKG).Version=$(SERVE_VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)
+SERVE_LDFLAGS := -X $(PKG).Name=satelled -X $(PKG).Version=$(SERVE_VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)
 
 .PHONY: build install uninstall test integration judgment planner-bench check-serve-version
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/satelle
-	go build -ldflags "$(SERVE_LDFLAGS)" -o $(SERVE_BIN) ./cmd/satelle-serve
+	go build -ldflags "$(SERVE_LDFLAGS)" -o $(SERVE_BIN) ./cmd/satelled
 
 # Fail closed when serve-path sources changed since the last serve-v* tag but
-# satelle-serve.version was not advanced (sty_4a5c6924). Run on EVERY release,
+# satelled.version was not advanced (sty_4a5c6924). Run on EVERY release,
 # not only slices the author reads as serve-path (sty_a8853e85). The watch set is
-# derived from `go list -deps ./cmd/satelle-serve`; print it with
+# derived from `go list -deps ./cmd/satelled`; print it with
 # `bash scripts/check-serve-version.sh --paths`.
 check-serve-version:
 	@bash scripts/check-serve-version.sh
@@ -63,7 +63,7 @@ test:
 # into isDevVersion (sty_022929ef).
 integration:
 	go build -ldflags "-X $(PKG).Name=satelle -X $(PKG).Version=$(BASE_VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)" -o $(BIN) ./cmd/satelle
-	go build -ldflags "-X $(PKG).Name=satelle-serve -X $(PKG).Version=$(BASE_SERVE_VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)" -o $(SERVE_BIN) ./cmd/satelle-serve
+	go build -ldflags "-X $(PKG).Name=satelled -X $(PKG).Version=$(BASE_SERVE_VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)" -o $(SERVE_BIN) ./cmd/satelled
 	SATELLE_BIN=$(CURDIR)/$(BIN) go test -tags integration ./tests/...
 
 # judgment: opt-in LLM rubric fixtures (sty_6830e78e). Costs tokens, not hermetic,

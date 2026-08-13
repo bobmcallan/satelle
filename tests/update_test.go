@@ -122,9 +122,9 @@ func TestUpdateInstallsServeFromLaterPage(t *testing.T) {
 	const cliTag = "v9.9.9"
 	const serveTag = "serve-v9.9.8"
 	cliName := fmt.Sprintf("satelle-%s-%s-%s", cliTag, runtime.GOOS, runtime.GOARCH)
-	serveName := fmt.Sprintf("satelle-serve-v9.9.8-%s-%s", runtime.GOOS, runtime.GOARCH)
+	serveName := fmt.Sprintf("satelled-v9.9.8-%s-%s", runtime.GOOS, runtime.GOARCH)
 	cliBin := []byte("new satelle binary\n")
-	serveBin := []byte("new satelle-serve binary\n")
+	serveBin := []byte("new satelled binary\n")
 	cliSum, serveSum := sha256.Sum256(cliBin), sha256.Sum256(serveBin)
 
 	mux := http.NewServeMux()
@@ -170,7 +170,7 @@ func TestUpdateInstallsServeFromLaterPage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update: %v\n%s", err, out)
 	}
-	serveTarget := filepath.Join(installDir, "satelle-serve")
+	serveTarget := filepath.Join(installDir, "satelled")
 	if runtime.GOOS == "windows" {
 		serveTarget += ".exe"
 	}
@@ -211,7 +211,7 @@ func TestUpdateFailsWhenServeReleaseUnresolvable(t *testing.T) {
 	defer srv.Close()
 
 	installDir := t.TempDir()
-	serveTarget := filepath.Join(installDir, "satelle-serve")
+	serveTarget := filepath.Join(installDir, "satelled")
 	if runtime.GOOS == "windows" {
 		serveTarget += ".exe"
 	}
@@ -230,7 +230,7 @@ func TestUpdateFailsWhenServeReleaseUnresolvable(t *testing.T) {
 	if err == nil {
 		t.Fatalf("update must FAIL when the serve release cannot be resolved:\n%s", out)
 	}
-	if !strings.Contains(string(out), "satelle-serve update failed") {
+	if !strings.Contains(string(out), "satelled update failed") {
 		t.Errorf("failure must name the serve half:\n%s", out)
 	}
 }

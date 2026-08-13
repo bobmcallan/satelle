@@ -12,7 +12,7 @@ func TestFooterUsesProductName(t *testing.T) {
 	if !strings.Contains(templatesSrc, "{{product}} {{version}}") {
 		t.Fatalf("footer must render {{product}} {{version}}; got no match in templatesSrc")
 	}
-	// Default resolve name is satelle; serve stamps satelle-serve via ldflags.
+	// Default resolve name is satelle; satelled stamps Name=satelled via ldflags.
 	if buildinfo.Resolve().Name == "" {
 		t.Fatal("buildinfo.Name empty")
 	}

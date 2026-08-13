@@ -171,7 +171,7 @@ func TestClassifyServeOutcome(t *testing.T) {
 func TestServeInstalledVersion(t *testing.T) {
 	dir := t.TempDir()
 
-	missing := filepath.Join(dir, "satelle-serve")
+	missing := filepath.Join(dir, "satelled")
 	if v, present := serveInstalledVersion(missing); present || v != "" {
 		t.Fatalf("absent binary reported version=%q present=%v", v, present)
 	}
@@ -180,7 +180,7 @@ func TestServeInstalledVersion(t *testing.T) {
 		t.Skip("shell stub is POSIX-only")
 	}
 	stub := filepath.Join(dir, "stub-serve")
-	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho 'satelle-serve 0.0.12 (commit abc, built now)'\n"), 0o755); err != nil {
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho 'satelled 0.0.12 (commit abc, built now)'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	v, present := serveInstalledVersion(stub)
@@ -218,11 +218,11 @@ func TestServeRetagReplacesSameVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	scriptA := []byte("#!/bin/sh\necho 'satelle-serve 0.0.17 (commit aaa, built t)'\n")
-	scriptB := []byte("#!/bin/sh\necho 'satelle-serve 0.0.17 (commit bbb, built t)'\n")
+	scriptA := []byte("#!/bin/sh\necho 'satelled 0.0.17 (commit aaa, built t)'\n")
+	scriptB := []byte("#!/bin/sh\necho 'satelled 0.0.17 (commit bbb, built t)'\n")
 	sumA := sha256.Sum256(scriptA)
 	sumB := sha256.Sum256(scriptB)
-	serveName := assetNameFor("satelle-serve", "serve-v0.0.17")
+	serveName := assetNameFor("satelled", "serve-v0.0.17")
 
 	which := "A"
 	mux := http.NewServeMux()
@@ -258,7 +258,7 @@ func TestServeRetagReplacesSameVersion(t *testing.T) {
 	t.Setenv("SATELLE_RELEASE_LIST_API", srv.URL+"/releases")
 	t.Setenv("SATELLE_RELEASE_BASE", srv.URL+"/download")
 
-	serveTarget := filepath.Join(installDir, "satelle-serve")
+	serveTarget := filepath.Join(installDir, "satelled")
 	if err := os.WriteFile(serveTarget, scriptA, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestServeRetagReplacesSameVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update (serve match): %v\n%s", err, out1)
 	}
-	if !strings.Contains(out1, "satelle-serve already up to date") {
+	if !strings.Contains(out1, "satelled already up to date") {
 		t.Fatalf("expected serve match message:\n%s", out1)
 	}
 
@@ -276,9 +276,9 @@ func TestServeRetagReplacesSameVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update (serve retag): %v\n%s", err, out2)
 	}
-	if strings.Contains(out2, "already up to date") && strings.Contains(out2, "satelle-serve") {
+	if strings.Contains(out2, "already up to date") && strings.Contains(out2, "satelled") {
 		// The CLI half may still say up to date; the serve half must not.
-		if strings.Contains(out2, "satelle-serve already up to date") {
+		if strings.Contains(out2, "satelled already up to date") {
 			t.Fatalf("serve retag must not claim up to date:\n%s", out2)
 		}
 	}

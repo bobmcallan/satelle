@@ -125,15 +125,12 @@ global service.`,
 				// the artifact-identity verdict so dogfood can read it (sty_1cd2ff01).
 				if !local {
 					if st, serr := latestServeReleaseTag(ctx, updateRepo); serr == nil {
-						serveTarget := filepath.Join(filepath.Dir(target), "satelle-serve")
-						if runtime.GOOS == "windows" {
-							serveTarget += ".exe"
-						}
+						serveTarget := installedDaemonPath(target)
 						installedServe, servePresent := serveInstalledVersion(serveTarget)
 						if !servePresent {
 							fmt.Fprintf(out, "latest serve release: %s (not installed)\n", st)
 						} else {
-							localSum, pubSum, art, artErr := resolveArtifactIdentity(ctx, updateRepo, st, "satelle-serve", serveTarget)
+							localSum, pubSum, art, artErr := resolveDaemonIdentity(ctx, updateRepo, st, serveTarget)
 							switch art {
 							case artifactMatch:
 								fmt.Fprintf(out, "latest serve release: %s (installed %s, sha256 %s matches published asset)\n",
@@ -150,49 +147,47 @@ global service.`,
 				}
 				return nil
 			}
-			// Always refresh sibling satelle-serve from serve-v* even when CLI was current.
+			// Always refresh sibling satelled from serve-v* even when CLI was current.
 			if !local {
-				serveTarget := filepath.Join(filepath.Dir(target), "satelle-serve")
-				if runtime.GOOS == "windows" {
-					serveTarget += ".exe"
-				}
+				serveTarget := daemonInstallPath(target)
+				installedAt := installedDaemonPath(target)
 				serveTag, serr := latestServeReleaseTag(ctx, updateRepo)
-				installedServe, servePresent := serveInstalledVersion(serveTarget)
-				_, serveCommit := installedServeBanner(serveTarget)
+				installedServe, servePresent := serveInstalledVersion(installedAt)
+				_, serveCommit := installedServeBanner(installedAt)
 				var art artifactIdentity
 				var localSum, pubSum string
 				var artErr error
 				if force {
 					art = artifactDiffer // force reinstall when a release resolves
 				} else if serr == nil && servePresent {
-					localSum, pubSum, art, artErr = resolveArtifactIdentity(ctx, updateRepo, serveTag, "satelle-serve", serveTarget)
+					localSum, pubSum, art, artErr = resolveDaemonIdentity(ctx, updateRepo, serveTag, installedAt)
 				}
 				switch outcome := classifyServeOutcome(installedServe, serveTag, serr, servePresent, art); outcome {
 				case serveCurrent:
-					fmt.Fprintf(out, "satelle-serve already up to date (%s, sha256 %s matches published asset)\n",
+					fmt.Fprintf(out, "satelled already up to date (%s, sha256 %s matches published asset)\n",
 						serveTag, shortSum(localSum))
 				case serveUnverified:
-					fmt.Fprintf(out, "satelle-serve version matches (%s) but identity NOT verified: %v — run `satelle update --force` to reinstall the published asset\n",
+					fmt.Fprintf(out, "satelled version matches (%s) but identity NOT verified: %v — run `satelle update --force` to reinstall the published asset\n",
 						formatBanner(installedServe, serveCommit), artErr)
 				case serveAbsentNoRelease:
 					// A fork that has never published a serve release, on a machine
-					// with no serve binary: nothing to install and nothing wrong.
-					fmt.Fprintf(out, "satelle-serve not installed and no serve release published — nothing to update\n")
+					// with no daemon binary: nothing to install and nothing wrong.
+					fmt.Fprintf(out, "satelled not installed and no serve release published — nothing to update\n")
 				case serveFail:
 					// A serve release that cannot be RESOLVED is a failure, not a
 					// skip: reporting exit 0 here is what let a release read green
-					// while the live service stayed on an older serve binary
+					// while the live service stayed on an older daemon binary
 					// (sty_0dcedb0d). Same rule the CLI half already follows.
-					return fmt.Errorf("satelle-serve update failed: %w", serr)
+					return fmt.Errorf("satelled update failed: %w", serr)
 				default:
 					if art == artifactDiffer && !force && !updateAvailable(installedServe, tagVersion(serveTag)) {
-						fmt.Fprintf(out, "satelle-serve %s installed build differs from published %s (installed sha256 %s, published %s) — reinstalling\n",
+						fmt.Fprintf(out, "satelled %s installed build differs from published %s (installed sha256 %s, published %s) — reinstalling\n",
 							formatBanner(installedServe, serveCommit), serveTag, shortSum(localSum), shortSum(pubSum))
 					} else if force {
 						fmt.Fprintf(out, "forcing reinstall of %s (%s)\n", serveTarget, serveTag)
 					}
-					if err := downloadAndReplaceNamed(ctx, updateRepo, serveTag, "satelle-serve", serveTarget); err != nil {
-						return fmt.Errorf("satelle-serve update failed (%s): %w", serveTag, err)
+					if err := downloadDaemon(ctx, updateRepo, serveTag, serveTarget); err != nil {
+						return fmt.Errorf("satelled update failed (%s): %w", serveTag, err)
 					}
 					fmt.Fprintf(out, "installed %s (%s)\n", serveTarget, serveTag)
 					cliUpdated = true // restart so serve process can pick up sibling if re-exec path
@@ -276,7 +271,7 @@ func installedBanner(target string) (version, commit string) {
 }
 
 // installedServeBanner is the serve sibling of installedBanner
-// (`satelle-serve --version`).
+// (`satelled --version`).
 func installedServeBanner(target string) (version, commit string) {
 	out, err := exec.Command(target, "--version").Output()
 	if err != nil {
@@ -287,7 +282,7 @@ func installedServeBanner(target string) (version, commit string) {
 
 // parseVersionBanner extracts version (field 2) and the token after "commit "
 // from a banner like `satelle 0.0.6 (commit abc123, built …)` or
-// `satelle-serve 0.0.12 (commit abc, built now)`.
+// `satelled 0.0.12 (commit abc, built now)`.
 func parseVersionBanner(out string) (version, commit string) {
 	if fields := strings.Fields(out); len(fields) >= 2 {
 		version = fields[1]
@@ -313,7 +308,7 @@ func formatBanner(version, commit string) string {
 }
 
 // serveOutcome is what `satelle update` should do about the sibling
-// satelle-serve binary. The three cases used to collapse into one printed
+// satelled binary. The three cases used to collapse into one printed
 // "skipped" line at exit 0, so an unresolvable release looked exactly like a
 // no-op and a release could report success while the live service ran an older
 // serve binary (sty_0dcedb0d).
@@ -460,7 +455,7 @@ func isNoServeReleaseErr(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "no published release with prefix")
 }
 
-// serveInstalledVersion reports the version the installed satelle-serve binary
+// serveInstalledVersion reports the version the installed satelled binary
 // prints (`--version`, the same flag the release workflow validates with) and
 // whether that binary exists at all. An unparseable answer yields ("", true):
 // present but unknown, which classifies as install rather than current.
@@ -483,7 +478,7 @@ func assetName(tag string) string {
 	return assetNameFor("satelle", tag)
 }
 
-// assetNameFor builds a release asset name for binary (satelle | satelle-serve).
+// assetNameFor builds a release asset name for binary (satelle | satelled).
 // Tags may be vX (CLI) or serve-vY (serve); assets always use the v-prefixed version.
 func assetNameFor(binary, tag string) string {
 	ver := tag
@@ -641,13 +636,58 @@ func downloadAndReplace(ctx context.Context, repo, tag, target string) error {
 	return downloadAndReplaceNamed(ctx, repo, tag, "satelle", target)
 }
 
-// downloadAndReplaceNamed downloads a named binary asset (satelle | satelle-serve).
+// downloadAndReplaceNamed downloads a named binary asset (satelle | satelled).
 func downloadAndReplaceNamed(ctx context.Context, repo, tag, binary, target string) error {
 	base := os.Getenv("SATELLE_RELEASE_BASE")
 	if base == "" {
 		base = fmt.Sprintf("https://github.com/%s/releases/download", repo)
 	}
 	return downloadAndReplaceFrom(ctx, base+"/"+tag, assetNameFor(binary, tag), target)
+}
+
+// daemonInstallPath is where a newly installed daemon binary lands (always satelled).
+func daemonInstallPath(cliTarget string) string {
+	p := filepath.Join(filepath.Dir(cliTarget), buildinfo.DaemonName)
+	if runtime.GOOS == "windows" {
+		p += ".exe"
+	}
+	return p
+}
+
+// installedDaemonPath is the existing daemon binary if any: satelled first,
+// then the legacy satelle-serve sibling (compatibility fallback, not a name).
+func installedDaemonPath(cliTarget string) string {
+	primary := daemonInstallPath(cliTarget)
+	if _, err := os.Stat(primary); err == nil {
+		return primary
+	}
+	legacy := filepath.Join(filepath.Dir(cliTarget), buildinfo.LegacyDaemonName)
+	if runtime.GOOS == "windows" {
+		legacy += ".exe"
+	}
+	if _, err := os.Stat(legacy); err == nil {
+		return legacy
+	}
+	return primary
+}
+
+// downloadDaemon fetches the satelled asset, then the legacy satelle-serve
+// asset name on older serve-v* tags (compatibility fallback, not a name).
+func downloadDaemon(ctx context.Context, repo, tag, target string) error {
+	if err := downloadAndReplaceNamed(ctx, repo, tag, buildinfo.DaemonName, target); err == nil {
+		return nil
+	}
+	return downloadAndReplaceNamed(ctx, repo, tag, buildinfo.LegacyDaemonName, target)
+}
+
+// resolveDaemonIdentity compares against the satelled asset, then the legacy
+// satelle-serve asset name when the new name is unpublished on that tag.
+func resolveDaemonIdentity(ctx context.Context, repo, tag, localPath string) (local, published string, id artifactIdentity, reason error) {
+	local, published, id, reason = resolveArtifactIdentity(ctx, repo, tag, buildinfo.DaemonName, localPath)
+	if id != artifactUnknown {
+		return local, published, id, reason
+	}
+	return resolveArtifactIdentity(ctx, repo, tag, buildinfo.LegacyDaemonName, localPath)
 }
 
 // downloadAndReplaceFrom is the injectable core: baseURL/<name> is the binary,

@@ -12,9 +12,25 @@ import (
 	"strings"
 )
 
+// Artifact names. One source for the daemon identity so service, update,
+// and the dedicated main do not each invent a string (sty_bd9de06d).
+const (
+	// CLIName is the command users type.
+	CLIName = "satelle"
+	// DaemonName is the local-tier daemon binary.
+	DaemonName = "satelled"
+	// LegacyDaemonName is the pre-rename artifact. Compatibility fallback
+	// only — not a current name.
+	LegacyDaemonName = "satelle-serve"
+	// DaemonVersionKey is the .version field for the daemon.
+	DaemonVersionKey = "satelled.version"
+	// LegacyDaemonVersionKey is the pre-rename .version field, read from old tags.
+	LegacyDaemonVersionKey = "satelle-serve.version"
+)
+
 // Info is the resolved build identity.
 type Info struct {
-	// Name is the artifact identity (e.g. "satelle", "satelle-serve") so
+	// Name is the artifact identity (e.g. "satelle", "satelled") so
 	// footers and version lines brand the running binary, not a hard-coded
 	// product string.
 	Name      string `json:"name"`
@@ -27,9 +43,9 @@ type Info struct {
 // single source of truth for satelle's build identity. Stamp with:
 //
 //	-ldflags "-X github.com/bobmcallan/satelle/internal/buildinfo.Version=0.0.1 ..."
-//	-ldflags "-X github.com/bobmcallan/satelle/internal/buildinfo.Name=satelle-serve ..."
+//	-ldflags "-X github.com/bobmcallan/satelle/internal/buildinfo.Name=satelled ..."
 var (
-	// Name defaults to the CLI product; the serve main stamps Name=satelle-serve.
+	// Name defaults to the CLI product; the daemon main stamps Name=satelled.
 	Name      = "satelle"
 	Version   = "dev"
 	Commit    = "none"

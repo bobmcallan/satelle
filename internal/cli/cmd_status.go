@@ -104,7 +104,7 @@ all", use satelle doctor, which judges rather than reports.`,
 		},
 	}
 	c.Flags().BoolVar(&line, "line", false,
-		"render one line for a terminal statusline: server link plus <story_id>::<stage> (read-only; always exits 0). "+
+		"render one line for a terminal statusline: local web service link plus <story_id>::<stage> (read-only; always exits 0). "+
 			"Opt in by setting it as statusLine.command in your own "+claudeUserSettingsRel+" — satelle never installs it")
 	register(c)
 }

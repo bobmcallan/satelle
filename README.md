@@ -5,7 +5,7 @@ authored process — stories, tasks, an evidence ledger, and authored markdown
 (documents, workflows, principles, skills) — backed by a per-repo SQLite
 database. Work moves through a **gated workflow**: the agent executes; isolated
 reviewers gate every status change. satelle runs **100% locally**: pure-Go
-static binaries (CLI + optional `satelle-serve` UI), no external server, no cgo.
+static binaries (CLI + optional `satelled` UI), no external server, no cgo.
 
 > V6 rebrand of `satellites`. See [`docs/`](./docs) for the product spec, port
 > architecture, and the operating model.
@@ -17,16 +17,16 @@ curl -fsSL https://github.com/bobmcallan/satelle/releases/latest/download/instal
 ```
 
 Downloads the latest **CLI** release for your platform (and the latest
-**satelle-serve** when a `serve-v*` release exists), sha256-verifies each, and
+**satelled** when a `serve-v*` release exists), sha256-verifies each, and
 installs to `~/.local/bin` (override with `SATELLE_INSTALL_DIR`). Or build from
-source: `make install` (builds both `satelle` and `satelle-serve`).
+source: `make install` (builds both `satelle` and `satelled`).
 
-CLI and serve carry **independent versions** in `.version`
-(`satelle.version` / `satelle-serve.version`). GitHub tags are `vX` for the CLI
+CLI and daemon carry **independent versions** in `.version`
+(`satelle.version` / `satelled.version`). GitHub tags are `vX` for the CLI
 (always `releases/latest`) and `serve-vY` for the UI binary (not latest).
 
 Already installed? `satelle update` self-updates the CLI and refreshes
-`satelle-serve` from its own channel, then restarts the background service.
+`satelled` from its own channel, then restarts the background service.
 `satelle update --check` reports availability without installing.
 
 A matching version string is not treated as proof the installed bytes match the
@@ -42,7 +42,7 @@ satelle update --force
 ## Quickstart
 
 ```sh
-make install           # build + install satelle and satelle-serve to ~/.local/bin
+make install           # build + install satelle and satelled to ~/.local/bin
 
 cd your-repo
 satelle init           # scaffold .satelle/ + validate; reports workspace: member|not-member
@@ -50,20 +50,20 @@ satelle story create --title "Ship the thing" --priority high
 satelle task create  --title "write release notes"
 satelle reindex        # index authored markdown under .satelle/
 satelle status         # config, database, and store counts
-satelle service install   # always-on UI (prefers satelle-serve); or: satelle-serve --port 8787
+satelle service install   # always-on UI (prefers satelled); or: satelled --port 8787
 ```
 
 The UI is a **push-fed read-only mirror** (not a live DB browser). Project pages
 live under `/r/<slug>/` on the workspace landing (`http://127.0.0.1:8787/`).
 
-### Push-fed UI (CLI → satelle-serve)
+### Push-fed UI (CLI → satelled)
 
 The web UI is a **read-only mirror** fed by the CLI (serve-split architecture;
 serve-adoption onboarding):
 
-1. Run the UI: `satelle-serve` (or `satelle service install`, which prefers the
+1. Run the UI: `satelled` (or `satelle service install`, which prefers the
    dedicated binary). `satelle serve` remains a **deprecated alias** that prints
-   a migration notice and runs the same mirror server.
+   a migration notice and runs the same mirror.
 2. Join the workspace and seed the mirror in one verb:
    ```sh
    satelle workspace add         # register + seed; bootstraps endpoint when a matching serve is up
@@ -101,18 +101,18 @@ start) to land in the store/index. See `satelle reindex --help`.
 
 ### Always-on service
 
-Prefer the dedicated **`satelle-serve`** binary for the UI process. Install both
-artifacts, then install the service (it picks `satelle-serve` next to the CLI when
+Prefer the dedicated **`satelled`** binary for the UI process. Install both
+artifacts, then install the service (it picks `satelled` next to the CLI when
 present; falls back to `satelle serve` with a notice):
 
 ```sh
-make install                 # build + place satelle and satelle-serve on PATH
+make install                 # build + place satelle and satelled on PATH
 cd your-repo
 satelle service install      # systemd user unit (Linux/WSL); --system for persistent system unit
 satelle service status       # show state + URL
 ```
 
-Foreground: `satelle-serve --addr 0.0.0.0 --port 8787`. The old `satelle serve`
+Foreground: `satelled --addr 0.0.0.0 --port 8787`. The old `satelle serve`
 subcommand still works as a deprecated alias.
 
 Settings live in the machine-wide `~/.satelle/config.toml` (`[service]` port /
@@ -142,7 +142,7 @@ repo it governs.
 | `settings` | Read/write config in two scopes: repo `<key> [value]` (committed `.satelle/satelle.toml`; no args lists all) is the default; `--global server <url>` sets the machine-wide hosted server in `~/.satelle/config.toml` (no login; sign in after via the UI or `login`) |
 | | `init`, `reindex`, `status`, `version` |
 | `workspace` | `add` (register + seed mirror), `remove`, `list` |
-| UI process | `satelle-serve` (dedicated binary); `satelle serve` is a deprecated alias |
+| UI process | `satelled` (dedicated binary); `satelle serve` is a deprecated alias |
 
 The CLI is the sole writer into repo stores. The UI process only serves the
 push-fed mirror (plus ingest).

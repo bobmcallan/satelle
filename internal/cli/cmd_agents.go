@@ -40,7 +40,7 @@ are preserved. Install and remove are idempotent.
 Statusline: satelle installs NONE. A statusline is an operator preference and a
 repo's .claude/settings.json is shared scaffold, so seeding one there imposes a
 choice on everyone who opens the repo. The renderer stays — to show a live
-server link plus the engaged <story_id>::<stage>, put "satelle status --line"
+satelled link plus the engaged <story_id>::<stage>, put "satelle status --line"
 in your own ~/.claude/settings.json as statusLine.command; install prints the
 snippet. An entry satelle seeded into a repo before this is removed on install,
 and a statusLine you own is left byte-for-byte. Grok and Codex could not take

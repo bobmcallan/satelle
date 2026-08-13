@@ -363,7 +363,7 @@ func cmdlineLooksLikeServe(parts []string, joined string) bool {
 		return false
 	}
 	base := filepath.Base(parts[0])
-	if base == "satelle" || base == "satelle-serve" || strings.HasPrefix(base, "satelle") {
+	if base == "satelle" || base == "satelled" || base == "satelle-serve" || strings.HasPrefix(base, "satelle") {
 		return true
 	}
 	// Copied pin binaries (local_binary_test) still run serve.

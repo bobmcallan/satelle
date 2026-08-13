@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          # Full history AND tags. cmd/satelle-serve/servepaths_test.go drives
+          # Full history AND tags. cmd/satelled/servepaths_test.go drives
           # the real serve-version gate, which compares against the latest
           # serve-v* tag and reads `.version` out of that tag's tree. The default
           # shallow, tagless checkout leaves the gate with no baseline, so it
@@ -37,7 +37,7 @@ jobs:
       - name: unit tests
         run: go test ./...
       - name: no-cgo static build
-        # Cover every main under cmd/ (CLI + satelle-serve; sty_19ff03f4).
+        # Cover every main under cmd/ (CLI + satelled; sty_19ff03f4).
         run: CGO_ENABLED=0 go build -o /dev/null ./cmd/...
       # Integration + browser e2e tests (tests/, -tags integration) run LOCALLY
       # via `make integration` — they need a real Chrome and exercise the running

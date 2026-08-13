@@ -21,7 +21,7 @@
 //
 // The re-request EXECS THE CLI (`satelle workspace add`) rather than reading a
 // repo database directly: the serve binary is forbidden from linking
-// internal/cli, internal/app and internal/store (cmd/satelle-serve/deps_test.go),
+// internal/cli, internal/app and internal/store (cmd/satelled/deps_test.go),
 // and internal/cli imports this package, so exec is the mechanism, not a
 // preference. The CLI stays the sole reader of a per-repo database and the
 // mirror stays a read-only view.
@@ -301,7 +301,7 @@ func snapshotViaCLI(ctx context.Context, repoPath string) error {
 }
 
 // satelleBinary resolves the CLI as a sibling of this executable first — the
-// service runs the installed satelle-serve and its satelle is installed beside
+// service runs the installed satelled and its satelle is installed beside
 // it, so a dev build must not reconcile through whatever is on PATH.
 func satelleBinary() (string, error) {
 	self, err := os.Executable()

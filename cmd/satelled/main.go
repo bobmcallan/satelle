@@ -1,6 +1,6 @@
-// Command satelle-serve is the dedicated push-fed mirror UI binary
-// (sty_80233c10 / epic:serve-adoption). It has no CLI verb surface and cannot
-// mutate repo state — only ingest + read-only render.
+// Command satelled is the dedicated local-tier daemon (push-fed mirror UI)
+// (sty_80233c10 / epic:serve-adoption; renamed sty_bd9de06d). It has no CLI
+// verb surface and cannot mutate repo state — only ingest + read-only render.
 package main
 
 import (
@@ -16,10 +16,10 @@ import (
 )
 
 func main() {
-	// Bare `go build` without ldflags still brands as satelle-serve (Makefile /
-	// release.yml stamp Name=satelle-serve for release builds).
-	if buildinfo.Name == "satelle" || buildinfo.Name == "" {
-		buildinfo.Name = "satelle-serve"
+	// Bare `go build` without ldflags still brands as satelled (Makefile /
+	// release.yml stamp Name=satelled for release builds).
+	if buildinfo.Name == buildinfo.CLIName || buildinfo.Name == "" {
+		buildinfo.Name = buildinfo.DaemonName
 	}
 	addr := flag.String("addr", "127.0.0.1", "bind address")
 	port := flag.Int("port", 0, "listen port (default from global service config or 8787)")

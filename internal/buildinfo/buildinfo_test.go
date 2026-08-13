@@ -22,7 +22,7 @@ func TestIsReleaseVersion(t *testing.T) {
 }
 
 func TestResolveFrom_ReleaseVerbatim(t *testing.T) {
-	in := Info{Name: "satelle-serve", Version: "0.0.5", Commit: "deadbeef", BuildTime: "2026-06-26"}
+	in := Info{Name: "satelled", Version: "0.0.5", Commit: "deadbeef", BuildTime: "2026-06-26"}
 	// VCS settings present but must be ignored for a stamped release.
 	got := resolveFrom(in, []debug.BuildSetting{{Key: "vcs.revision", Value: "ffffffffffffffff"}})
 	if got != in {

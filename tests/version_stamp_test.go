@@ -13,7 +13,7 @@ import (
 
 // readVersionField reads key from the repo's .version (module root = parent of
 // tests/). Usable from TestMain (no *testing.T). Keys include "satelle.version:",
-// "satelle.build:", "satelle-serve.version:".
+// "satelle.build:", "satelled.version:".
 func readVersionField(key string) (string, error) {
 	b, err := os.ReadFile(filepath.Join("..", ".version"))
 	if err != nil {
@@ -49,10 +49,10 @@ func repoBuildDate(t *testing.T) string {
 	return v
 }
 
-// repoServeVersion reads satelle-serve.version from .version (sty_19ff03f4).
+// repoServeVersion reads satelled.version from .version (sty_19ff03f4).
 func repoServeVersion(t *testing.T) string {
 	t.Helper()
-	v, err := readVersionField("satelle-serve.version:")
+	v, err := readVersionField("satelled.version:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestMakefileStampsPerArtifactVersions(t *testing.T) {
 	// Split by go build lines so a shared-LDFLAGS regression fails.
 	var cliLine, serveLine string
 	for _, ln := range strings.Split(s, "\n") {
-		if strings.Contains(ln, "./cmd/satelle-serve") {
+		if strings.Contains(ln, "./cmd/satelled") {
 			serveLine = ln
 		} else if strings.Contains(ln, "./cmd/satelle") {
 			cliLine = ln

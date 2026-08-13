@@ -5,9 +5,11 @@
 #
 # (Published as a release asset on the CLI release, which remains GitHub "latest".)
 #
-# CLI and serve carry independent versions (sty_19ff03f4):
+# CLI and daemon carry independent versions (sty_19ff03f4 / sty_bd9de06d):
 #   - CLI: tag v<X>, asset satelle-v<X>-<os>-<arch>, always latest
-#   - serve: tag serve-v<Y>, asset satelle-serve-v<Y>-…, not latest
+#   - daemon: tag serve-v<Y> (prefix kept so older CLIs still discover the
+#     channel), asset satelled-v<Y>-…, not latest. Older tags publish
+#     satelle-serve-v<Y>-… — compatibility fallback, not a current name.
 #
 # Next: `satelle init` in a repo, then `satelle service install`.
 set -eu
@@ -61,58 +63,63 @@ mkdir -p "$INSTALL_DIR"
 mv "$tmp/satelle" "$INSTALL_DIR/satelle"
 echo "satelle install: installed $INSTALL_DIR/satelle ($tag)"
 
-# --- serve (independent serve-v* tags; soft-fail if none) ---
+# --- daemon (independent serve-v* tags; soft-fail if none) ---
 # Newest-first releases list; first serve-v* tag wins. Asset name uses v<Y>
-# (strip serve- prefix), never the full tag.
+# (strip serve- prefix), never the full tag. Tag prefix serve-v* is kept so
+# older installed CLIs still discover the channel (sty_bd9de06d).
 # De-piped for the same reason as the CLI lookup above, so `head -1` truncates a
 # grep reading a local file rather than a live curl. Unlike that one this branch
 # is deliberately SOFT-fail: `|| true` on both statements (and `2>/dev/null` on
 # the grep, for the case where the fetch left no file) so a missing serve release
 # falls through to the fallback branch below and still exits 0.
+install_daemon_asset() {
+	# $1 = tag, $2 = asset base name (satelled | satelle-serve). Always installs
+	# as satelled. satelle-serve is a compatibility fallback for older tags.
+	_tag=$1
+	_base=$2
+	# serve-vY → vY in the asset name; a combined-release CLI tag (vX) is used as-is.
+	if [ "$_tag" = "${_tag#serve-}" ]; then
+		_name="${_base}-$_tag-$os-$arch"
+	else
+		_name="${_base}-${_tag#serve-}-$os-$arch"
+	fi
+	_url="https://github.com/$REPO/releases/download/$_tag/$_name"
+	if curl -fsSL "$_url" -o "$tmp/satelled" 2>/dev/null \
+		&& curl -fsSL "$_url.sha256" -o "$tmp/satelled.sha256" 2>/dev/null; then
+		swant=$(cut -d' ' -f1 "$tmp/satelled.sha256")
+		if command -v sha256sum >/dev/null 2>&1; then
+			sgot=$(sha256sum "$tmp/satelled" | cut -d' ' -f1)
+		else
+			sgot=$(shasum -a 256 "$tmp/satelled" | cut -d' ' -f1)
+		fi
+		if [ "$swant" = "$sgot" ]; then
+			chmod +x "$tmp/satelled"
+			mv "$tmp/satelled" "$INSTALL_DIR/satelled"
+			echo "satelle install: installed $INSTALL_DIR/satelled ($_tag)"
+			return 0
+		fi
+		echo "satelle install: satelled sha256 mismatch — skipped (use satelle serve fallback)" >&2
+		return 1
+	fi
+	return 1
+}
+
 curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=30" -o "$tmp/releases.json" || true
 serve_tag=$(grep -oE '"tag_name": "serve-v[^"]+"' "$tmp/releases.json" 2>/dev/null \
 	| head -1 | cut -d'"' -f4 || true)
 if [ -n "$serve_tag" ]; then
-	serve_ver=${serve_tag#serve-}
-	serve_name="satelle-serve-$serve_ver-$os-$arch"
-	serve_url="https://github.com/$REPO/releases/download/$serve_tag/$serve_name"
-	if curl -fsSL "$serve_url" -o "$tmp/satelle-serve" 2>/dev/null \
-		&& curl -fsSL "$serve_url.sha256" -o "$tmp/satelle-serve.sha256" 2>/dev/null; then
-		swant=$(cut -d' ' -f1 "$tmp/satelle-serve.sha256")
-		if command -v sha256sum >/dev/null 2>&1; then
-			sgot=$(sha256sum "$tmp/satelle-serve" | cut -d' ' -f1)
-		else
-			sgot=$(shasum -a 256 "$tmp/satelle-serve" | cut -d' ' -f1)
+	if ! install_daemon_asset "$serve_tag" "satelled"; then
+		# Compatibility fallback — older serve-v* tags publish satelle-serve-… assets.
+		if ! install_daemon_asset "$serve_tag" "satelle-serve"; then
+			echo "satelle install: could not fetch satelled (or legacy satelle-serve) for $serve_tag — service install will fall back to satelle serve"
 		fi
-		if [ "$swant" = "$sgot" ]; then
-			chmod +x "$tmp/satelle-serve"
-			mv "$tmp/satelle-serve" "$INSTALL_DIR/satelle-serve"
-			echo "satelle install: installed $INSTALL_DIR/satelle-serve ($serve_tag)"
-		else
-			echo "satelle install: satelle-serve sha256 mismatch — skipped (use satelle serve fallback)" >&2
-		fi
-	else
-		echo "satelle install: could not fetch $serve_name — service install will fall back to satelle serve"
 	fi
 else
 	# Pre-split releases may still carry both under v*; try same tag once.
-	serve_name="satelle-serve-$tag-$os-$arch"
-	serve_url="https://github.com/$REPO/releases/download/$tag/$serve_name"
-	if curl -fsSL "$serve_url" -o "$tmp/satelle-serve" 2>/dev/null \
-		&& curl -fsSL "$serve_url.sha256" -o "$tmp/satelle-serve.sha256" 2>/dev/null; then
-		swant=$(cut -d' ' -f1 "$tmp/satelle-serve.sha256")
-		if command -v sha256sum >/dev/null 2>&1; then
-			sgot=$(sha256sum "$tmp/satelle-serve" | cut -d' ' -f1)
-		else
-			sgot=$(shasum -a 256 "$tmp/satelle-serve" | cut -d' ' -f1)
+	if ! install_daemon_asset "$tag" "satelled"; then
+		if ! install_daemon_asset "$tag" "satelle-serve"; then
+			echo "satelle install: no satelled release yet — service install will fall back to satelle serve"
 		fi
-		if [ "$swant" = "$sgot" ]; then
-			chmod +x "$tmp/satelle-serve"
-			mv "$tmp/satelle-serve" "$INSTALL_DIR/satelle-serve"
-			echo "satelle install: installed $INSTALL_DIR/satelle-serve ($tag, combined release)"
-		fi
-	else
-		echo "satelle install: no satelle-serve release yet — service install will fall back to satelle serve"
 	fi
 fi
 
@@ -130,7 +137,7 @@ echo
 echo "Next (a new repo):"
 echo "  cd <your-repo>"
 echo "  satelle init             # scaffold .satelle/ (config, db, authored dirs)"
-echo "  satelle service install  # always-on web project page (uses satelle-serve when present)"
+echo "  satelle service install  # always-on web project page (uses satelled when present)"
 echo
 # This script INFORMS about the running service; it never restarts it
 # (sty_a7b2cd3c). `satelle update` restarts without asking because it is a verb

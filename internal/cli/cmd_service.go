@@ -20,17 +20,21 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/buildinfo"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/doctor"
 	"github.com/bobmcallan/satelle/internal/health"
 )
 
+// serviceUnitName is the on-disk unit filename. Kept as satelle.service so
+// already-installed units and cgroup-path matchers keep working; the unit
+// *references* satelled via Description and ExecStart (sty_bd9de06d).
 const serviceUnitName = "satelle.service"
 
 func init() {
 	svc := &cobra.Command{
 		Use:   "service",
-		Short: "Manage the background web service (always-on project page)",
+		Short: "Manage satelled (always-on project page)",
 		Long: `Manage the background web service that serves the always-on project page.
 
 install puts it under a persistent supervisor; status reports what is actually
@@ -51,7 +55,7 @@ func serviceInstallCmd() *cobra.Command {
 		Short: "Install and start the background web service (systemd user unit)",
 		Long: `install resolves the service settings (flags > ~/.satelle/config.toml >
 defaults), saves them to the global config, and installs a systemd user service
-that runs 'satelle serve' for the chosen repo — so the project page stays up
+that runs satelled for the chosen repo — so the project page stays up
 across terminals and WSL restarts, reachable from a Windows browser.
 
 Re-running after 'make install' restarts the unit so the live process loads the
@@ -78,7 +82,7 @@ re-running 'satelle service install'.`,
 			}
 			bin, viaFallback := resolveServeBinary(self, serveBinFlag, nil)
 			if viaFallback {
-				fmt.Fprintln(out, "service: satelle-serve not found next to this binary — unit will use `satelle serve` fallback; install satelle-serve alongside for the dedicated artifact")
+				fmt.Fprintln(out, "service: satelled not found next to this binary — unit will use `satelle serve` fallback; install satelled alongside for the dedicated artifact")
 			}
 
 			// Resolve settings: flags override the saved global config; repo
@@ -135,7 +139,7 @@ re-running 'satelle service install'.`,
 	cmd.Flags().IntVar(&port, "port", 0, "service port (default 8787 or saved global config)")
 	cmd.Flags().StringVar(&addr, "addr", "", "bind address (default 0.0.0.0 — reachable from Windows)")
 	cmd.Flags().StringVar(&repo, "repo", "", "repo to serve (default: current directory or saved config)")
-	cmd.Flags().StringVar(&serveBinFlag, "serve-bin", "", "path to satelle-serve binary (default: sibling of this binary)")
+	cmd.Flags().StringVar(&serveBinFlag, "serve-bin", "", "path to satelled binary (default: sibling of this binary)")
 	cmd.Flags().BoolVar(&system, "system", false, "install a persistent system unit via sudo (survives session loss; needs sudo)")
 	return cmd
 }
@@ -177,7 +181,7 @@ tearing the unit down.`,
 func serviceStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "Show the background web service status",
+		Short: "Show satelled status (unit, live process, installed binary)",
 		Long: `Report what is actually serving: the unit on disk, the live process, and whether
 that process runs the INSTALLED binary.
 
@@ -197,7 +201,7 @@ stopped service. That distinction is the whole value when a release goes wrong.`
 				return nil
 			}
 			gc, _ := config.LoadGlobal()
-			fmt.Fprintf(out, "service: %s\n", serviceStatusLine("/proc"))
+			fmt.Fprintf(out, "service: %s\n", serviceStatusReport("/proc"))
 			fmt.Fprintf(out, "config:  %s (port %d, addr %s, repo %s)\n",
 				config.GlobalConfigPath(), gc.Service.ResolvePort(), gc.Service.ResolveAddr(), gc.Service.Repo)
 			fmt.Fprintf(out, "url:     http://localhost:%d\n", gc.Service.ResolvePort())
@@ -221,7 +225,7 @@ func serviceRestartCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "restart",
 		Short: "Restart the background web service onto the installed binary",
-		Long: `restart cycles the running satelle web service so it executes the binary
+		Long: `restart cycles the running satelled service so it executes the binary
 that is currently installed, and VERIFIES the result by exe identity.
 
 It installs nothing and checks no release — use ` + "`satelle update`" + ` when the
@@ -285,7 +289,7 @@ func runServiceRestart(out io.Writer, procRoot string) error {
 // it serves, so an unhealthy one looked identical to a ready one until an agent
 // tried to engage a story there.
 //
-// The diagnostic lives on the CLI side deliberately: satelle-serve is a push-fed
+// The diagnostic lives on the CLI side deliberately: satelled is a push-fed
 // mirror that never opens a repo database, and teaching it to would undo that
 // separation. This is the surface that already has the repo databases in reach.
 // It is INFORMATIONAL — an unhealthy repo never fails `service status`, because
@@ -395,6 +399,13 @@ func identityVerdict(procRoot string, pid int) (known, matches bool, suffix stri
 // systemctl only to add detail (which supervisor, start-limited) when the live
 // process is confirmed by kernel facts. A failed or unreachable systemctl query
 // never by itself produces "not installed" or "stopped".
+// serviceStatusReport prefixes the kernel-derived state with the local-tier
+// name so `satelle service status` always reports the daemon as satelled
+// (sty_bd9de06d AC1).
+func serviceStatusReport(procRoot string) string {
+	return buildinfo.DaemonName + " — " + serviceStatusLine(procRoot)
+}
+
 func serviceStatusLine(procRoot string) string {
 	userInstalled := unitFileExists(userUnitPath())
 	sysInstalled := unitFileExists(systemUnitPath())
@@ -474,7 +485,7 @@ func renderUnit(binPath, repo, addr string, port int, wantedBy, runAsUser, resta
 		wd = repo
 	}
 	return fmt.Sprintf(`[Unit]
-Description=satelle web server (push-fed mirror UI)
+Description=satelled — local read-only mirror (push-fed web UI)
 After=network.target
 
 [Service]
@@ -488,8 +499,9 @@ WantedBy=%s
 `, binPath, addr, port, wd, userLines, restartPolicy, wantedBy)
 }
 
-// resolveServeBinary picks the dedicated satelle-serve binary (sibling of self
-// or --serve-bin), falling back to "<self> serve" when absent (sty_80233c10).
+// resolveServeBinary picks the dedicated satelled binary (sibling of self
+// or --serve-bin), then the legacy satelle-serve sibling (compatibility
+// fallback, not a current name), then "<self> serve" (sty_80233c10 / sty_bd9de06d).
 // exists is injectable for tests; nil uses os.Stat.
 func resolveServeBinary(selfPath, flagOverride string, exists func(string) bool) (execPath string, viaFallback bool) {
 	if exists == nil {
@@ -503,9 +515,15 @@ func resolveServeBinary(selfPath, flagOverride string, exists func(string) bool)
 			return flagOverride, false
 		}
 	}
-	sib := filepath.Join(filepath.Dir(selfPath), "satelle-serve")
+	dir := filepath.Dir(selfPath)
+	sib := filepath.Join(dir, buildinfo.DaemonName)
 	if exists(sib) {
 		return sib, false
+	}
+	// Compatibility fallback — older installs still ship satelle-serve.
+	legacy := filepath.Join(dir, buildinfo.LegacyDaemonName)
+	if exists(legacy) {
+		return legacy, false
 	}
 	// Fallback: keep the CLI verb so old installs still work until re-install.
 	return selfPath + " serve", true
@@ -624,7 +642,7 @@ func printWindowsGuidance(out io.Writer, bin, repo, addr string, port int) {
 func printNoSystemdGuidance(out io.Writer, unit string) {
 	fmt.Fprintln(out, "\nsystemctl not found (systemd not enabled in this environment).")
 	fmt.Fprintln(out, "Enable systemd in WSL (/etc/wsl.conf → [boot] systemd=true, then `wsl --shutdown`),")
-	fmt.Fprintln(out, "or run the server in the background yourself. The unit to install once systemd is on:")
+	fmt.Fprintln(out, "or run satelled in the background yourself. The unit to install once systemd is on:")
 	fmt.Fprintln(out, "\n"+unit)
 }
 
