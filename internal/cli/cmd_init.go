@@ -223,11 +223,18 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []s
 	}
 	fmt.Fprintln(out, initLine(created, config.DefaultDataDir+"/"))
 
-	// 2. satelle.toml — created only if absent; never overwritten.
+	// 2. satelle.toml — created only if absent; never overwritten as a whole.
+	// A leftover [hosted] table is folded onto [sync] and dropped (sty_5eb1bb8a).
 	tomlPath := filepath.Join(dataDir, config.ConfigName)
 	switch _, statErr := os.Stat(tomlPath); {
 	case statErr == nil:
-		fmt.Fprintln(out, initLine(false, config.DefaultDataDir+"/"+config.ConfigName))
+		if changed, herr := healHostedBinding(dataDir); herr != nil {
+			return fmt.Errorf("init: fold [hosted] into [sync]: %w", herr)
+		} else if changed {
+			fmt.Fprintf(out, "~ %s ([hosted] folded into [sync])\n", config.DefaultDataDir+"/"+config.ConfigName)
+		} else {
+			fmt.Fprintln(out, initLine(false, config.DefaultDataDir+"/"+config.ConfigName))
+		}
 	case os.IsNotExist(statErr):
 		if werr := os.WriteFile(tomlPath, []byte(scaffoldToml), 0o644); werr != nil {
 			return fmt.Errorf("init: write %s: %w", tomlPath, werr)
@@ -1565,7 +1572,7 @@ const scaffoldTomlAfterExempt = `
 # Unset server = https://satelle.dev. Unset project = this repo's directory name.
 # satelle login records the machine-wide server; satelle project bind <slug>
 # writes [sync] project when the directory name is not the slug you want.
-# >>> satelle-example: enable sync/hosted (uncomment to opt in)
+# >>> satelle-example: enable sync (uncomment to opt in)
 # [sync]
 # all = "personal"               # every area personal unless overridden below
 # documents = "personal"         # per-area override wins over 'all'
@@ -1587,8 +1594,8 @@ const scaffoldTomlAfterExempt = `
 # local_only = true
 # hosted = true
 
-# Connection settings live on [sync] (server / project / workspace). A leftover
-# [hosted] table still resolves until satelle migrate --yes copies it.
+# Connection settings live on [sync] (server / project / workspace).
+# satelle init and satelle migrate --yes fold any leftover hosted table away.
 #
 # [server] — LOCAL push-fed UI server the CLI publishes mutation events to
 # (epic:serve-split). Distinct from the hosted origin on [sync].

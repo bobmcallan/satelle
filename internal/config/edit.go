@@ -107,6 +107,44 @@ func RemoveKey(content, section, key string) string {
 	return content
 }
 
+// HasSection reports whether content contains an exact trimmed `[section]` header.
+func HasSection(content, section string) bool {
+	if strings.TrimSpace(section) == "" {
+		return false
+	}
+	start, _ := sectionRange(strings.Split(content, "\n"), section)
+	return start != -1
+}
+
+// RemoveSection drops `[section]` and its body (up to the next table header or
+// EOF). Missing section is a no-op. One blank-line seam is collapsed so a
+// removed middle table does not leave a double gap.
+func RemoveSection(content, section string) string {
+	if strings.TrimSpace(section) == "" {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	start, end := sectionRange(lines, section)
+	if start == -1 {
+		return content
+	}
+	header := start - 1 // sectionRange start is the line AFTER the header
+	if header < 0 {
+		return content
+	}
+	out := append([]string{}, lines[:header]...)
+	rest := lines[end:]
+	// Drop one leading blank of the remainder when the kept prefix already
+	// ends on a blank (or is empty), so the seam is a single blank line.
+	if len(rest) > 0 && strings.TrimSpace(rest[0]) == "" {
+		if len(out) == 0 || strings.TrimSpace(out[len(out)-1]) == "" {
+			rest = rest[1:]
+		}
+	}
+	out = append(out, rest...)
+	return strings.Join(out, "\n")
+}
+
 // HasKey reports whether content already assigns `key` inside `section`
 // (empty section = root block before the first table header). Distinguishes
 // "key absent from the file" from "key present with empty value" — Load cannot

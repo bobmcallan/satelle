@@ -324,6 +324,43 @@ func TestRunInitIdempotent(t *testing.T) {
 	}
 }
 
+// TestRunInitFoldsLeftoverHosted: collector-sdk shape — [sync] plus leftover
+// [hosted] project — becomes the simple [sync] view (sty_5eb1bb8a).
+func TestRunInitFoldsLeftoverHosted(t *testing.T) {
+	repo := t.TempDir()
+	if err := runInitTest(t, io.Discard, repo); err != nil {
+		t.Fatal(err)
+	}
+	tomlPath := filepath.Join(repo, ".satelle", "satelle.toml")
+	body := `[sync]
+all = "personal"
+
+[hosted]
+project = "solidsafe-collector-sdk-go"
+`
+	if err := os.WriteFile(tomlPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := runInitTest(t, &out, repo); err != nil {
+		t.Fatalf("init: %v\n%s", err, out.String())
+	}
+	got, err := os.ReadFile(tomlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	if strings.Contains(s, "[hosted]") {
+		t.Fatalf("init left [hosted]:\n%s", s)
+	}
+	if !strings.Contains(s, `all = "personal"`) || !strings.Contains(s, `project = "solidsafe-collector-sdk-go"`) {
+		t.Fatalf("init did not fold project onto [sync]:\n%s", s)
+	}
+	if !strings.Contains(out.String(), "folded into [sync]") {
+		t.Errorf("init should report the fold:\n%s", out.String())
+	}
+}
+
 // TestRunInitSeedsAuditTask asserts the embedded substrate-audit task is still
 // seeded (tasks plane carve-out — coded gates require an on-disk header) and is
 // re-runnable from done (sty_d4360e90). Workflows/skills stay virtual.

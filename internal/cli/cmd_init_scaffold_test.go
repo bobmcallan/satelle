@@ -12,14 +12,17 @@ import (
 // TestScaffoldTomlDocumentsConfigSurface is the sty_8966f18a guard: the init
 // scaffold documents every top-level config.Config table/key, stays fully
 // commented except the seeded [gate] and [review] tables, and the
-// sentinel-wrapped [sync]/[hosted]/[vars] examples uncomment-and-load via
+// sentinel-wrapped [sync]/[vars] examples uncomment-and-load via
 // config.Load. [review] gate_create = true is seeded ON (sty_83782ffb).
 func TestScaffoldTomlDocumentsConfigSurface(t *testing.T) {
-	// AC3: every top-level Config toml key/table appears in the scaffold.
+	if strings.Contains(scaffoldToml, "[hosted]") {
+		t.Fatal("scaffold must not present a repo [hosted] table")
+	}
+	// AC3: every live top-level Config toml key/table appears in the scaffold.
 	for _, want := range []string{
 		"data_dir", "db", "substrate_roots", "web_port", "log_level",
 		"logs_max_size_kb", "logs_max_files", "stories_keep_closed", "stories_keep_days",
-		"[review]", "[gate]", "[hosted]", "[vars]", "[sync]",
+		"[review]", "[gate]", "[vars]", "[sync]",
 		// AC1 pointers
 		"local|personal|shared", "satelle project bind", "satelle login",
 		`all = "personal"`,

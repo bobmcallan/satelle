@@ -1,3 +1,8 @@
+## [0.0.447] - 2026-08-13
+
+### Fixed
+- **`satelle init` and `satelle migrate --yes` fold leftover `[hosted]` into `[sync]` and drop the table.** A repo that still has `[sync] all = "personal"` plus `[hosted] project = …` (the collector-sdk shape) becomes the simple `[sync]` view. Already-set `[sync]` keys are not clobbered. The init scaffold no longer presents a repo `[hosted]` table. Machine-wide login `~/.satelle/config.toml [hosted] server` is unchanged. (sty_5eb1bb8a)
+
 ## [0.0.446] - 2026-08-13
 
 ### Fixed

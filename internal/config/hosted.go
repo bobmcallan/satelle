@@ -5,7 +5,8 @@ package config
 // [hosted] server, written by `satelle login`) and still wins. Repo connection
 // settings live on [sync] (server / project / workspace) with defaults:
 // server https://satelle.dev, project = this repo's directory name. A leftover
-// satelle.toml [hosted] table is a read-only fallback until migrate copies it.
+// satelle.toml [hosted] table is a read-only fallback until init/migrate
+// copies leftover keys onto [sync] and drops the table (sty_5eb1bb8a).
 // Tokens stay in the credstore (internal/hosted).
 
 import (

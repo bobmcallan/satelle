@@ -88,6 +88,35 @@ func TestSaveConfigValuesRoundTripPreservesUnmodeled(t *testing.T) {
 	}
 }
 
+func TestRemoveSection(t *testing.T) {
+	in := `[review]
+gate_create = true
+
+[hosted]
+project = "alpha"
+server = "https://x"
+
+[sync]
+all = "personal"
+`
+	got := RemoveSection(in, "hosted")
+	if strings.Contains(got, "[hosted]") || strings.Contains(got, `project = "alpha"`) {
+		t.Fatalf("hosted table remains:\n%s", got)
+	}
+	if !strings.Contains(got, "[review]") || !strings.Contains(got, "[sync]") {
+		t.Fatalf("neighbor tables lost:\n%s", got)
+	}
+	if strings.Contains(got, "\n\n\n") {
+		t.Fatalf("double blank seam:\n%s", got)
+	}
+	if RemoveSection(in, "missing") != in {
+		t.Fatal("absent section must be a no-op")
+	}
+	if !HasSection(in, "hosted") || HasSection(got, "hosted") {
+		t.Fatal("HasSection must track the table")
+	}
+}
+
 func TestHasKeyDetectsPresentAndAbsent(t *testing.T) {
 	in := `[gate]
 edit_exempt_paths = [".satelle/"]

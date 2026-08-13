@@ -109,8 +109,11 @@ type migratePlan struct {
 	// dump names; empty list is a deliberate opt-out.
 	ExemptGlobsManaged []string
 	// HostedToSync lists leftover [hosted] keys that [sync] still lacks
-	// (sty_a13d7c4a). Copied onto [sync]; [hosted] is left in place.
+	// (sty_a13d7c4a). Copied onto [sync] before the leftover table is dropped.
 	HostedToSync []string
+	// HostedTableDrop is true when a leftover [hosted] table is still in the
+	// file (sty_5eb1bb8a). Dropped after any HostedToSync copy.
+	HostedTableDrop bool
 	// WorkflowRetire lists DOT workflow files superseded by an authored,
 	// PARSEABLE done.toml + step.toml (sty_9835070d). Actionable work: migrate
 	// removes them.
@@ -257,6 +260,7 @@ func planMigrate(cfg config.Config, repoRoot, dataDir string) migratePlan {
 	p.ExemptManaged = editExemptManagedMissing(dataDir)
 	p.ExemptGlobsManaged = editExemptGlobsManagedMissing(dataDir)
 	p.HostedToSync = hostedBindingMissingOnSync(dataDir)
+	p.HostedTableDrop = hasHostedTable(dataDir)
 	p.WorkflowRetire, p.WorkflowConvertPending = workflowConversionState(dataDir)
 	p.RetiredRefs = planRetiredRefs(dataDir)
 	return p
@@ -504,7 +508,7 @@ func printConversionPending(out io.Writer, pending []string) {
 
 func (p migratePlan) empty() bool {
 	return !p.RuntimeRelocate && len(p.Residue) == 0 && len(p.PruneSeeds) == 0 &&
-		!p.Gitignore && len(p.ExemptManaged) == 0 && len(p.ExemptGlobsManaged) == 0 && len(p.HostedToSync) == 0 && len(p.WorkflowRetire) == 0 &&
+		!p.Gitignore && len(p.ExemptManaged) == 0 && len(p.ExemptGlobsManaged) == 0 && len(p.HostedToSync) == 0 && !p.HostedTableDrop && len(p.WorkflowRetire) == 0 &&
 		len(p.StampRewrite) == 0 && len(p.RetiredRefs) == 0
 }
 
@@ -589,6 +593,9 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 			strings.Join(plan.HostedToSync, ", "))
 	} else {
 		fmt.Fprintln(out, "  config:           ([sync] binding current)")
+	}
+	if plan.HostedTableDrop {
+		fmt.Fprintln(out, "  config:           drop leftover [hosted] table")
 	}
 	if len(plan.WorkflowRetire) == 0 {
 		fmt.Fprintln(out, "  workflows:        (none superseded)")
@@ -740,7 +747,7 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 		}
 	}
 
-	if len(plan.ExemptManaged) > 0 || len(plan.ExemptGlobsManaged) > 0 || len(plan.HostedToSync) > 0 {
+	if len(plan.ExemptManaged) > 0 || len(plan.ExemptGlobsManaged) > 0 || len(plan.HostedToSync) > 0 || plan.HostedTableDrop {
 		fmt.Fprintln(out, "\n→ config converge")
 		if len(plan.ExemptManaged) > 0 {
 			changed, err := ensureEditExemptManaged(dataDir)
@@ -764,13 +771,13 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 				fmt.Fprintln(out, "  edit_exempt_globs already current")
 			}
 		}
-		if len(plan.HostedToSync) > 0 {
-			changed, err := ensureHostedBindingOnSync(dataDir)
+		if len(plan.HostedToSync) > 0 || plan.HostedTableDrop {
+			changed, err := healHostedBinding(dataDir)
 			if err != nil {
 				return fmt.Errorf("migrate: [sync] binding: %w", err)
 			}
 			if changed {
-				fmt.Fprintln(out, "  copied leftover [hosted] keys onto [sync]")
+				fmt.Fprintln(out, "  folded leftover [hosted] into [sync] and dropped the table")
 			} else {
 				fmt.Fprintln(out, "  [sync] binding already current")
 			}
@@ -937,7 +944,17 @@ func hostedBindingMissingOnSync(dataDir string) []string {
 	return missing
 }
 
-func ensureHostedBindingOnSync(dataDir string) (bool, error) {
+func hasHostedTable(dataDir string) bool {
+	raw, err := os.ReadFile(filepath.Join(dataDir, config.ConfigName))
+	if err != nil {
+		return false
+	}
+	return config.HasSection(string(raw), "hosted")
+}
+
+// healHostedBinding copies leftover [hosted] server/project/workspace onto
+// [sync] when [sync] does not already set them, then drops the [hosted] table.
+func healHostedBinding(dataDir string) (bool, error) {
 	path := filepath.Join(dataDir, config.ConfigName)
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -951,7 +968,6 @@ func ensureHostedBindingOnSync(dataDir string) (bool, error) {
 		return false, err
 	}
 	content := string(raw)
-	changed := false
 	for _, k := range hostedBindingMissingOnSync(dataDir) {
 		var val string
 		switch k {
@@ -965,13 +981,12 @@ func ensureHostedBindingOnSync(dataDir string) (bool, error) {
 		if val == "" {
 			continue
 		}
-		next := config.UpsertKey(content, "sync", k, strconv.Quote(val))
-		if next != content {
-			content = next
-			changed = true
-		}
+		content = config.UpsertKey(content, "sync", k, strconv.Quote(val))
 	}
-	if !changed {
+	if config.HasSection(content, "hosted") {
+		content = config.RemoveSection(content, "hosted")
+	}
+	if content == string(raw) {
 		return false, nil
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

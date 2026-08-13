@@ -516,13 +516,16 @@ workspace = "Legacy Team"
 	}
 	got, _ := os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
 	s := string(got)
-	for _, want := range []string{`all = "personal"`, `server = "https://legacy.example"`, `project = "legacy-proj"`, `workspace = "Legacy Team"`, "[hosted]"} {
+	for _, want := range []string{`all = "personal"`, `server = "https://legacy.example"`, `project = "legacy-proj"`, `workspace = "Legacy Team"`} {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing %q in:\n%s", want, s)
 		}
 	}
+	if strings.Contains(s, "[hosted]") {
+		t.Errorf("leftover [hosted] table must be dropped:\n%s", s)
+	}
 
-	// Already-set [sync] project is not clobbered.
+	// Already-set [sync] project is not clobbered; table still drops.
 	clobber := `[sync]
 project = "keep-me"
 [hosted]
@@ -532,28 +535,51 @@ server = "https://legacy.example"
 	if err := os.WriteFile(filepath.Join(dataDir, "satelle.toml"), []byte(clobber), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	changed, err := ensureHostedBindingOnSync(dataDir)
+	changed, err := healHostedBinding(dataDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !changed {
-		t.Fatal("expected server copy")
+		t.Fatal("expected copy+drop")
 	}
 	got, _ = os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
-	if !strings.Contains(string(got), "[sync]\nproject = \"keep-me\"") {
+	if !strings.Contains(string(got), `project = "keep-me"`) {
 		t.Errorf("clobbered [sync] project:\n%s", got)
 	}
+	if strings.Contains(string(got), `project = "ignore-me"`) || strings.Contains(string(got), "[hosted]") {
+		t.Errorf("hosted residue remains:\n%s", got)
+	}
 
-	// Second full migrate is a no-op once [sync] has the leftover keys.
-	if err := os.WriteFile(filepath.Join(dataDir, "satelle.toml"), []byte(tomlBody), 0o644); err != nil {
+	// Collector-sdk shape: [sync] all + leftover [hosted] project.
+	collector := `[sync]
+all = "personal"
+
+[hosted]
+project = "solidsafe-collector-sdk-go"
+`
+	if err := os.WriteFile(filepath.Join(dataDir, "satelle.toml"), []byte(collector), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ensureHostedBindingOnSync(dataDir); err != nil {
+	if _, err := healHostedBinding(dataDir); err != nil {
 		t.Fatal(err)
 	}
-	changed, err = ensureHostedBindingOnSync(dataDir)
+	got, _ = os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
+	if strings.Contains(string(got), "[hosted]") {
+		t.Errorf("collector shape still has [hosted]:\n%s", got)
+	}
+	if !strings.Contains(string(got), `all = "personal"`) || !strings.Contains(string(got), `project = "solidsafe-collector-sdk-go"`) {
+		t.Errorf("collector binding not folded onto [sync]:\n%s", got)
+	}
+
+	// No [hosted] → byte-identical no-op.
+	clean := string(got)
+	changed, err = healHostedBinding(dataDir)
 	if err != nil || changed {
-		t.Fatalf("second copy changed=%v err=%v", changed, err)
+		t.Fatalf("second heal changed=%v err=%v", changed, err)
+	}
+	again, _ := os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
+	if string(again) != clean {
+		t.Errorf("no-op rewrote the file:\n%s", again)
 	}
 }
 
