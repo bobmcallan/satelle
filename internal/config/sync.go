@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Scope is a position on the local -> personal -> shared sync ladder for a
@@ -74,10 +75,35 @@ var SyncAreas = buildSyncAreas()
 // fallthrough scope in ScopeFor.
 const syncAllKey = "all"
 
+// syncStaleAfterKey is the [sync] duration after which an opted-in workstate
+// partition is unbacked (sty_30696eeb). Reserved so it is never treated as an area.
+const syncStaleAfterKey = "stale_after"
+
+// WorkstateAreas are the [sync] areas that form the work-state kind.
+var WorkstateAreas = []string{"stories", "executions", "ledger"}
+
 // reservedSyncKeys are [sync] connection keys, not area scopes. ScopeFor
 // never looks them up; they must never be minted as SyncAreas.
 var reservedSyncKeys = map[string]bool{
 	syncAllKey: true, syncServerKey: true, syncProjectKey: true, syncWorkspaceKey: true,
+	syncStaleAfterKey: true,
+}
+
+// WorkstateStaleAfter reads [sync] stale_after. ok=false when the key is
+// absent. An unparseable or non-positive value is a config error.
+func WorkstateStaleAfter(cfg Config) (time.Duration, bool, error) {
+	raw := strings.TrimSpace(cfg.Sync[syncStaleAfterKey])
+	if raw == "" {
+		return 0, false, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, false, fmt.Errorf("sync: stale_after %q is not a duration: %w", raw, err)
+	}
+	if d <= 0 {
+		return 0, false, fmt.Errorf("sync: stale_after must be positive, got %s", d)
+	}
+	return d, true, nil
 }
 
 func buildSyncAreas() []string {

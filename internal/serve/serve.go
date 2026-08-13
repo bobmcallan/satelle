@@ -16,6 +16,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/mirror"
+	"github.com/bobmcallan/satelle/internal/syncstate"
 	"github.com/bobmcallan/satelle/internal/web"
 )
 
@@ -54,10 +55,14 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	// Hook must be installed before Listen: an ingest on the first accepted
 	// connection has to find Notify already wired (sty_c526753a).
+	home := config.GlobalDir()
 	pusher := &Pusher{
-		Resolve: resolvePushPath(ms, config.GlobalDir()),
+		Resolve: resolvePushPath(ms, home),
 		Keys:    pushKeys(ms),
 		Log:     logLine,
+		Record: func(repoPath string, success bool, reason string) {
+			_ = syncstate.RecordPush(home, repoPath, success, reason, "", time.Now())
+		},
 	}
 	webSrv := web.NewMirrorHooks(ms, config.SafeCurrentInstanceID(), pusher.Notify)
 	handler := web.RequestLog(webSrv.Handler, serverLog, logCfg)
@@ -80,8 +85,11 @@ func Run(ctx context.Context, opts Options) error {
 	// Repair loop for pushes that never landed (sty_e6e467fe). Runs beside the
 	// server, off the request path, and stops with ctx.
 	rec := &Reconciler{
-		Targets: mirrorTargets(ms, config.GlobalDir()),
+		Targets: mirrorTargets(ms, home),
 		Log:     logLine,
+		Record: func(repoPath string, success bool, reason string) {
+			_ = syncstate.RecordSnapshot(home, repoPath, success, reason, "", time.Now())
+		},
 	}
 	go rec.Loop(ctx)
 	go pusher.Run(ctx)

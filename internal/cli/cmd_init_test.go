@@ -361,6 +361,35 @@ project = "solidsafe-collector-sdk-go"
 	}
 }
 
+func TestHealStaleAfterSeedsMissingKey(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "satelle.toml")
+	if err := os.WriteFile(path, []byte("[review]\ngate_create = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := healStaleAfter(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected heal to insert stale_after")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), `stale_after = "24h"`) {
+		t.Fatalf("missing stale_after:\n%s", got)
+	}
+	changed, err = healStaleAfter(dir)
+	if err != nil || changed {
+		t.Fatalf("second heal must not clobber: changed=%v err=%v", changed, err)
+	}
+}
+
 // TestRunInitSeedsAuditTask asserts the embedded substrate-audit task is still
 // seeded (tasks plane carve-out — coded gates require an on-disk header) and is
 // re-runnable from done (sty_d4360e90). Workflows/skills stay virtual.

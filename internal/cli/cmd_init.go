@@ -228,11 +228,22 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []s
 	tomlPath := filepath.Join(dataDir, config.ConfigName)
 	switch _, statErr := os.Stat(tomlPath); {
 	case statErr == nil:
-		if changed, herr := healHostedBinding(dataDir); herr != nil {
+		hostedChanged, herr := healHostedBinding(dataDir)
+		if herr != nil {
 			return fmt.Errorf("init: fold [hosted] into [sync]: %w", herr)
-		} else if changed {
+		}
+		staleChanged, serr := healStaleAfter(dataDir)
+		if serr != nil {
+			return fmt.Errorf("init: seed [sync] stale_after: %w", serr)
+		}
+		switch {
+		case hostedChanged && staleChanged:
+			fmt.Fprintf(out, "~ %s ([hosted] folded into [sync]; stale_after seeded)\n", config.DefaultDataDir+"/"+config.ConfigName)
+		case hostedChanged:
 			fmt.Fprintf(out, "~ %s ([hosted] folded into [sync])\n", config.DefaultDataDir+"/"+config.ConfigName)
-		} else {
+		case staleChanged:
+			fmt.Fprintf(out, "~ %s ([sync] stale_after seeded)\n", config.DefaultDataDir+"/"+config.ConfigName)
+		default:
 			fmt.Fprintln(out, initLine(false, config.DefaultDataDir+"/"+config.ConfigName))
 		}
 	case os.IsNotExist(statErr):
@@ -1567,10 +1578,12 @@ const scaffoldTomlAfterExempt = `
 # choice — satelle does not require it. Git is for the application repo.
 # Areas: documents, workflows, principles, skills, constitution, agents, tasks,
 # settings (satelle.toml, including [sync]), stories, ledger, executions.
-# Reserved keys: 'all' (blanket default), server, project, workspace.
+# Reserved keys: 'all' (blanket default), server, project, workspace, stale_after.
 # Unset server = https://satelle.dev. Unset project = this repo's directory name.
 # satelle login records the machine-wide server; satelle project bind <slug>
 # writes [sync] project when the directory name is not the slug you want.
+[sync]
+stale_after = "24h"
 # >>> satelle-example: enable sync (uncomment to opt in)
 # [sync]
 # all = "personal"               # every area personal unless overridden below

@@ -1,3 +1,13 @@
+## [0.0.451] - 2026-08-13
+
+### Added
+- **`satelle doctor` reports workstate backup health and no longer PASSes an unbacked repo.** Per-partition last successful push, standing failure, and age vs `[sync] stale_after` are recorded by satelled (and by `satelle sync workstate push`) as readable JSON — no hosted call, no re-attempt. A repo whose work-state areas are all local is reported as such and is not flagged. `stale_after = "24h"` is a live key in the init scaffold; `satelle init` / `satelle migrate --yes` seed it on existing repos without clobbering a set value. The mirror landing and project page show push-failing / last-pushed beside freshness. (sty_30696eeb)
+
+## [serve-v0.0.25] - 2026-08-13
+
+### Added
+- satelled records per-partition workstate push/snapshot outcomes; the mirror UI shows standing push failure. (sty_30696eeb)
+
 ## [0.0.450] - 2026-08-13
 
 ### Changed

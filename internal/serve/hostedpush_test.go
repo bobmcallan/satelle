@@ -332,6 +332,25 @@ func TestPusherLogsOnReasonTransition(t *testing.T) {
 	waitFor(t, time.Second, func() bool { return countLines(logs.snapshot(), "recovered") == 1 })
 }
 
+func TestPusherReportRecordsEveryOutcome(t *testing.T) {
+	var recs []string
+	p := &Pusher{
+		Record: func(path string, success bool, reason string) {
+			if success {
+				recs = append(recs, path+":ok")
+			} else {
+				recs = append(recs, path+":"+reason)
+			}
+		},
+	}
+	p.report("rk", "/repo", errors.New("boom"))
+	p.report("rk", "/repo", errors.New("boom"))
+	p.report("rk", "/repo", nil)
+	if len(recs) != 3 || recs[0] != "/repo:boom" || recs[2] != "/repo:ok" {
+		t.Fatalf("recordings = %v", recs)
+	}
+}
+
 func TestResolvePushPathGuards(t *testing.T) {
 	ms := openTestMirror(t)
 	home := t.TempDir()

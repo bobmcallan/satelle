@@ -3,15 +3,18 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/mirror"
+	"github.com/bobmcallan/satelle/internal/syncstate"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -33,6 +36,26 @@ func mirrorIdentity(ctx context.Context, s *mirror.Store, repoKey string) mirror
 // It no longer returns a stale BOOLEAN. The view renders elapsed time on every
 // surface unconditionally (sty_226a661e), so nothing consumes a threshold —
 // mirror.Partition.Stale remains for callers that genuinely branch on it.
+// loadPartitionSync reads recorded hosted-push state. Missing file is empty
+// (no marker, no false green). Never contacts satelle.dev.
+func loadPartitionSync(repoPath string) syncstate.State {
+	if strings.TrimSpace(repoPath) == "" {
+		return syncstate.State{}
+	}
+	home := strings.TrimSpace(os.Getenv("SATELLE_HOME"))
+	if home == "" {
+		if testing.Testing() {
+			return syncstate.State{}
+		}
+		home = config.GlobalDir()
+	}
+	st, _, err := syncstate.Load(home, repoPath)
+	if err != nil {
+		return syncstate.State{}
+	}
+	return st
+}
+
 func partitionFreshness(ctx context.Context, s *mirror.Store, repoKey string) time.Time {
 	p, ok, err := s.GetPartition(ctx, repoKey)
 	if err != nil || !ok {
@@ -106,10 +129,14 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 		repoRoot = slug
 	}
 
+	syncSt := loadPartitionSync(repoRoot)
 	return pageData{
 		RepoRoot:        repoRoot,
 		ProjectName:     projectName,
 		LastIngest:      partitionFreshness(ctx, s, repoKey),
+		SyncLastSuccess: syncSt.PushLastSuccess,
+		SyncReason:      syncSt.PushReason,
+		SyncLocal:       syncSt.Scope == "local",
 		Stories:         attachLightsFrom(entriesByStory, stories, liveSeat, catStepOf),
 		BacklogCount:    backlog,
 		EngagementCount: len(engagedIDs),

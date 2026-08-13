@@ -294,6 +294,8 @@ header.app h1 .dot { color: var(--accent); }
    ignore red. It is metadata, styled as metadata (sty_226a661e, replacing the
    .stale-flag chip from sty_e6e467fe). */
 .rel-time { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.sync-fail { color: var(--fail); font-size: 12px; white-space: nowrap; margin-left: 6px; }
+.sync-local, .sync-ok { color: var(--muted); font-size: 12px; white-space: nowrap; margin-left: 6px; }
 td.updated-cell { white-space: nowrap; }
 .panel { display: none; }
 .panel.active { display: block; }

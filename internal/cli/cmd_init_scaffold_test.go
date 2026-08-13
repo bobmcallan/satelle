@@ -34,7 +34,7 @@ func TestScaffoldTomlDocumentsConfigSurface(t *testing.T) {
 		}
 	}
 
-	// AC4: only [gate] + edit_exempt_paths and [review] + gate_create are active.
+	// AC4: only [gate], [review], and live [sync] stale_after are active.
 	for i, line := range strings.Split(scaffoldToml, "\n") {
 		s := strings.TrimSpace(line)
 		if s == "" || strings.HasPrefix(s, "#") {
@@ -43,10 +43,11 @@ func TestScaffoldTomlDocumentsConfigSurface(t *testing.T) {
 		switch s {
 		case "[gate]", "edit_exempt_paths = " + defaultEditExemptTOML(),
 			"edit_exempt_globs = " + defaultEditExemptGlobsTOML(),
-			"[review]", "gate_create = true":
+			"[review]", "gate_create = true",
+			"[sync]", `stale_after = "24h"`:
 			// expected seeded active lines
 		default:
-			t.Errorf("scaffold line %d is active (want fully-commented except [gate]/[review]): %q", i+1, s)
+			t.Errorf("scaffold line %d is active (want fully-commented except [gate]/[review]/[sync] stale_after): %q", i+1, s)
 		}
 	}
 

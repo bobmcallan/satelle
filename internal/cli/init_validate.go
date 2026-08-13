@@ -54,14 +54,23 @@ func validateDeployment(out io.Writer, dataDir string) error {
 	for _, f := range rep.Findings.WithSeverity(health.SeverityWarn) {
 		fmt.Fprintf(out, "WARN  [%s] %s\n", f.ID, f.Detail)
 	}
+	deployOK := true
 	for _, f := range rep.Findings.WithSeverity(health.SeverityError) {
+		// Sync backup state is runtime health, not a scaffold defect. `satelle
+		// doctor` still fails these (sty_30696eeb); init/migrate must not refuse
+		// a repo that has not yet pushed.
+		if f.ID == health.IDSyncUnbacked || f.ID == health.IDSyncFailing || f.ID == health.IDSyncConfig {
+			fmt.Fprintf(out, "WARN  [%s] %s\n", f.ID, f.Detail)
+			continue
+		}
+		deployOK = false
 		failed++
 		fmt.Fprintf(out, "FAIL  [%s] %s\n", f.ID, f.Detail)
 		if f.Remediation != "" {
 			fmt.Fprintf(out, "      fix: %s\n", f.Remediation)
 		}
 	}
-	if rep.OK {
+	if deployOK {
 		fmt.Fprintln(out, "PASS  agents layer, workflows, skills, principles, tasks")
 	}
 

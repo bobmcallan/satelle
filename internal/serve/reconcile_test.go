@@ -463,6 +463,33 @@ func TestPassInvokesSnapshot(t *testing.T) {
 	}
 }
 
+func TestReportRecordsWithoutChangingLogRules(t *testing.T) {
+	var recs []string
+	logs := &lineRecorder{}
+	r := &Reconciler{
+		Log: logs.log,
+		Record: func(path string, success bool, reason string) {
+			recs = append(recs, path+":"+reason)
+		},
+	}
+	r.report("/repo", errors.New("boom"))
+	r.report("/repo", errors.New("boom"))
+	r.report("/repo", errors.New("boom"))
+	if n := countLines(logs.snapshot(), "boom"); n != 1 {
+		t.Fatalf("log lines = %d, want 1: %v", n, logs.snapshot())
+	}
+	if len(recs) != 3 {
+		t.Fatalf("recordings = %d, want 3", len(recs))
+	}
+	r.report("/repo", nil)
+	if n := countLines(logs.snapshot(), "recovered"); n != 1 {
+		t.Fatalf("recovered logs = %d: %v", n, logs.snapshot())
+	}
+	if recs[len(recs)-1] != "/repo:" {
+		t.Fatalf("success recording = %q", recs[len(recs)-1])
+	}
+}
+
 func TestPassInvokesPush(t *testing.T) {
 	var pushed []string
 	r := &Reconciler{

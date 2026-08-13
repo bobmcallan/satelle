@@ -80,6 +80,13 @@ const (
 	IDRepoUnreadable  = "repo.unreadable"  // a registered repo could not be checked at all
 	IDConfigStray     = "config.stray"     // machine-scope key leftover in a repo file (sty_21a7d16d)
 
+	// Workstate sync health (sty_30696eeb).
+	IDSyncLocal    = "sync.local"    // work-state areas are all local
+	IDSyncOk       = "sync.ok"       // last successful push is within threshold
+	IDSyncFailing  = "sync.failing"  // standing hosted-push failure
+	IDSyncUnbacked = "sync.unbacked" // last successful push older than stale_after
+	IDSyncConfig   = "sync.config"   // stale_after missing or unparseable
+
 	// Live probes (opt-in only).
 	IDLiveOK           = "live.ok"            // a provider answered
 	IDLiveAuth         = "live.auth"          // the provider reported an authentication problem
@@ -97,6 +104,7 @@ var ids = []string{
 	IDBinaryMissing, IDBinaryMalformed,
 	IDWorkflowStructure, IDWorkflowConsistency,
 	IDScaffoldStale, IDScaffoldMissing, IDRepoUnreadable, IDConfigStray,
+	IDSyncLocal, IDSyncOk, IDSyncFailing, IDSyncUnbacked, IDSyncConfig,
 	IDLiveOK, IDLiveAuth, IDLiveTimeout, IDLiveSpawn, IDLiveACPHandshake,
 }
 

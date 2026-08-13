@@ -85,6 +85,10 @@ type pageData struct {
 	// a boolean here would be computed and never read — which reads to the next
 	// person as though a threshold still governs what is displayed.
 	LastIngest time.Time
+	// SyncLastSuccess / SyncReason are recorded hosted-push state (sty_30696eeb).
+	SyncLastSuccess time.Time
+	SyncReason      string
+	SyncLocal       bool
 }
 
 type crumbProject struct {

@@ -52,6 +52,9 @@ type Pusher struct {
 	// Log receives a line when a repo STARTS failing, when its reason CHANGES,
 	// and when it recovers — same discipline as Reconciler.report. nil discards.
 	Log func(format string, args ...any)
+	// Record persists a push-leg outcome (sty_30696eeb). Called on every flush,
+	// including the ones Log suppresses. nil discards.
+	Record func(repoPath string, success bool, reason string)
 
 	mu      sync.Mutex
 	dirty   map[string]bool
@@ -222,6 +225,13 @@ func (p *Pusher) flush(ctx context.Context) {
 // report logs on failure-reason transition and recovered, never on a repeat.
 // On failure it also arms per-repo exponential backoff.
 func (p *Pusher) report(key, path string, err error) {
+	if p.Record != nil {
+		reason := ""
+		if err != nil {
+			reason = err.Error()
+		}
+		p.Record(path, err == nil, reason)
+	}
 	if p.backoff == nil {
 		p.backoff = map[string]*pushState{}
 	}

@@ -46,6 +46,11 @@ type partitionVM struct {
 	// on some of them (sty_226a661e). See pageData.LastIngest for why there is
 	// no Stale field beside it.
 	LastIngest time.Time
+	// SyncLastSuccess / SyncReason are recorded hosted-push state
+	// (sty_30696eeb). Empty reason = no standing failure.
+	SyncLastSuccess time.Time
+	SyncReason      string
+	SyncLocal       bool
 }
 
 // mirrorWorkspaceData backs the mirror workspace landing template.
@@ -239,11 +244,15 @@ func (s *MirrorServer) loadPartitions(ctx context.Context) ([]partitionVM, int, 
 		}
 		total += len(stories)
 		lastIngest, _ := p.LastIngest()
+		st := loadPartitionSync(path)
 		pvm = append(pvm, partitionVM{
 			Slug: slug, Name: name, Path: path,
 			Stories: len(stories), Backlog: backlog,
 			Tasks: len(tasks), Workflows: workflows, Docs: len(docs),
-			LastIngest: lastIngest.Local(),
+			LastIngest:      lastIngest.Local(),
+			SyncLastSuccess: st.PushLastSuccess,
+			SyncReason:      st.PushReason,
+			SyncLocal:       st.Scope == "local",
 		})
 	}
 	return pvm, total, nil
@@ -534,7 +543,7 @@ const mirrorWorkspaceSrc = `
         <td class="n-docs"><span class="n">{{.Docs}}</span></td>
         {{/* Rightmost deliberately: this replaces a badge that sat INSIDE the
              Project cell and pushed the name around (sty_226a661e). */}}
-        <td class="updated-cell">{{template "freshness" .}}</td>
+        <td class="updated-cell">{{template "freshness" .}} {{template "syncstate" .}}</td>
       </tr>{{end}}
     </tbody>
   </table>

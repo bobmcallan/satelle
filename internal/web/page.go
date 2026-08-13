@@ -249,6 +249,8 @@ const templatesSrc = `
      instant; the ticker never touches the title. */}}
 {{define "freshness"}}<time class="rel-time"{{if isotime .LastIngest}} datetime="{{isotime .LastIngest}}"{{end}} title="Last confirmed against the repository at {{ftime .LastIngest}}">{{reltime .LastIngest}}</time>{{end}}
 
+{{define "syncstate"}}{{if .SyncLocal}}<span class="sync-local" title="work-state areas are local">local</span>{{else if .SyncReason}}<span class="sync-fail" title="{{.SyncReason}}">push failing</span>{{else if isotime .SyncLastSuccess}}<time class="rel-time sync-ok"{{if isotime .SyncLastSuccess}} datetime="{{isotime .SyncLastSuccess}}"{{end}} title="Last successful hosted push at {{ftime .SyncLastSuccess}}">pushed {{reltime .SyncLastSuccess}}</time>{{end}}{{end}}
+
 {{define "footer"}}<footer class="site-footer">{{if footeremail}}<a class="footer-email" href="mailto:{{footeremail}}">{{footeremail}}</a>{{end}}<span class="footer-version">{{product}} {{version}}</span></footer>{{end}}
 
 {{/* favicon: satelle.dev ◐ monogram (animated terminator + reduced-motion static),
@@ -272,7 +274,7 @@ const templatesSrc = `
   <nav class="crumbs"><a href="/">workspace</a> <span class="sep">/</span> {{if gt (len .Projects) 1}}<details class="proj-switch"><summary class="cur">{{.ProjectName}} <span class="chev" aria-hidden="true">▾</span></summary><ul class="proj-menu">{{range .Projects}}<li><a href="/{{.Slug}}/" title="{{.Path}}"{{if .Current}} class="current" aria-current="page"{{end}}>{{.Name}}{{if .Ambiguous}} <span class="proj-slug">{{.Path}}</span>{{end}}</a></li>{{end}}</ul></details>{{else}}<span class="cur">{{.ProjectName}}</span>{{end}}</nav>
   <header class="app">
     <h1>{{.ProjectName}}</h1>
-    <div class="meta">{{.RepoRoot}} · <a href="help">help →</a> · <a href="settings">settings →</a> · updated {{template "freshness" .}}</div>
+    <div class="meta">{{.RepoRoot}} · <a href="help">help →</a> · <a href="settings">settings →</a> · updated {{template "freshness" .}} · {{template "syncstate" .}}</div>
   </header>
 
   <div class="tabs" role="tablist">

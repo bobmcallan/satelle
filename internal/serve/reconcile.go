@@ -68,6 +68,9 @@ type Reconciler struct {
 	// and when it recovers — never once per pass per failing repo (sty_a2162ee3).
 	// nil discards.
 	Log func(format string, args ...any)
+	// Record persists a snapshot-leg outcome (sty_30696eeb). Called on every
+	// pass, including the ones Log suppresses. nil discards.
+	Record func(repoPath string, success bool, reason string)
 
 	// failing remembers, per repo, the reason it last failed and how many
 	// consecutive passes have produced that same reason. It exists so silence
@@ -217,6 +220,13 @@ func (r *Reconciler) pass(ctx context.Context) {
 // It never touches whether the reseed ran — suppression is about the log line
 // only. A repo whose line is suppressed is still re-seeded on every pass.
 func (r *Reconciler) report(path string, err error) {
+	if r.Record != nil {
+		reason := ""
+		if err != nil {
+			reason = err.Error()
+		}
+		r.Record(path, err == nil, reason)
+	}
 	prev := r.failing[path]
 	if err == nil {
 		if prev != nil {

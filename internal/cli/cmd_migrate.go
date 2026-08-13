@@ -887,6 +887,12 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 		}
 	}
 
+	if changed, err := healStaleAfter(dataDir); err != nil {
+		return fmt.Errorf("migrate: [sync] stale_after: %w", err)
+	} else if changed {
+		fmt.Fprintln(out, "  seeded [sync] stale_after = \"24h\"")
+	}
+
 	if len(plan.MachineStrays) > 0 {
 		fmt.Fprintln(out, "\n→ re-home machine-scope keys")
 		if err := applyMachineStrays(out, dataDir, plan.MachineStrays); err != nil {
@@ -1096,6 +1102,34 @@ func healHostedBinding(dataDir string) (bool, error) {
 	if config.HasSection(content, "hosted") {
 		content = config.RemoveSection(content, "hosted")
 	}
+	if content == string(raw) {
+		return false, nil
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// healStaleAfter writes [sync] stale_after = "24h" when the key is absent
+// (sty_30696eeb). An already-set value is not clobbered.
+func healStaleAfter(dataDir string) (bool, error) {
+	path := filepath.Join(dataDir, config.ConfigName)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	cfg, _, err := config.Load(path)
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(cfg.Sync["stale_after"]) != "" {
+		return false, nil
+	}
+	content := config.UpsertKey(string(raw), "sync", "stale_after", strconv.Quote("24h"))
 	if content == string(raw) {
 		return false, nil
 	}

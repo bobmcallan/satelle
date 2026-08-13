@@ -43,6 +43,9 @@ type Opts struct {
 	Live bool
 	// LiveTimeout bounds one probe; zero means DefaultLiveTimeout.
 	LiveTimeout time.Duration
+	// GlobalDir is the machine home used to read recorded sync state.
+	// Empty means config.GlobalDir().
+	GlobalDir string
 	// ScaffoldDrift reports deployed-vs-canonical harness scaffold mismatches.
 	// INJECTED rather than imported: the canonical wrapper bodies live beside the
 	// code that writes them (internal/cli), and doctor must not import cli. Nil
@@ -163,6 +166,13 @@ func Check(ctx context.Context, o Opts) Report {
 		rep.Findings = append(rep.Findings, health.Warn(health.IDConfigStray, "Stray machine-scope key",
 			s.Warning()).About(s.File).WithRemediation("run `satelle migrate --yes`"))
 	}
+
+	// 5c. Recorded workstate-push health (sty_30696eeb). Reads syncstate only.
+	globalDir := strings.TrimSpace(o.GlobalDir)
+	if globalDir == "" {
+		globalDir = config.GlobalDir()
+	}
+	rep.Findings = append(rep.Findings, checkSyncHealth(o.RepoRoot, dataDir, globalDir, time.Now())...)
 
 	// 6. Live probes — opt-in, bounded, and never part of the deterministic pass.
 	if o.Live {

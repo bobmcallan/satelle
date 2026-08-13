@@ -21,6 +21,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/syncstate"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -28,7 +29,7 @@ import (
 // WorkstateAreas are the [sync] areas that form the work-state kind. A shared
 // scope on any of these only means "eligible to leave the machine" — destination
 // remains the personal workspace.
-var WorkstateAreas = []string{"stories", "executions", "ledger"}
+var WorkstateAreas = config.WorkstateAreas
 
 // ErrWorkstatePullConflict is returned when local and hosted both have data for
 // an opted-in area and --force was not set. Nothing is written before this error.
@@ -221,6 +222,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	if len(batch.Items) == 0 && len(batch.Ledger) == 0 {
 		if hadCursor && !full {
 			fmt.Fprintf(out, "Work-state up to date on %s — no records changed since the last push.\n", server)
+			recordWorkstatePush(a.RepoRoot, true, "")
 			return nil
 		}
 		fmt.Fprintln(out, "No work-state rows to push (opted-in areas are empty).")
@@ -261,8 +263,10 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		res, perr := client.Apply(cmd.Context(), project, chunk)
 		if perr != nil {
 			if errors.Is(perr, hosted.ErrLoginRequired) {
+				recordWorkstatePush(a.RepoRoot, false, perr.Error())
 				return perr
 			}
+			recordWorkstatePush(a.RepoRoot, false, perr.Error())
 			return fmt.Errorf("apply workstate: %w", perr)
 		}
 		totalItems += res.Items
@@ -278,7 +282,12 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	}
 	fmt.Fprintf(out, "Pushed work-state to project %q personal collection on %s: %d item(s), %d ledger entr(y/ies).\n",
 		project, server, totalItems, totalLedger)
+	recordWorkstatePush(a.RepoRoot, true, "")
 	return nil
+}
+
+func recordWorkstatePush(repoPath string, success bool, reason string) {
+	_ = syncstate.RecordPush(config.GlobalDir(), repoPath, success, reason, "", time.Now())
 }
 
 func chunkRaw(in []json.RawMessage, size int) [][]json.RawMessage {

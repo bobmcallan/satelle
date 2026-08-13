@@ -7,7 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"time"
+
 	"github.com/bobmcallan/satelle/internal/health"
+	"github.com/bobmcallan/satelle/internal/syncstate"
 	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
@@ -155,6 +158,45 @@ func TestHealthyRepo(t *testing.T) {
 	// The composition ran: grants and provenance are present.
 	if len(r.Grants) < 2 || len(r.Sources) < 2 {
 		t.Errorf("composition did not produce grants/provenance: %+v", r)
+	}
+}
+
+// TestCheckFailsUnbackedWorkstate is the doctor-surface proof of sty_30696eeb
+// AC5: Check (not just checkSyncHealth) refuses PASS when a recorded push is
+// older than [sync] stale_after.
+func TestCheckFailsUnbackedWorkstate(t *testing.T) {
+	root := newFixtureRepo(t, fixtureOpts{
+		extraFiles: map[string]string{
+			"satelle.toml": "[sync]\nstories = \"personal\"\nstale_after = \"1h\"\n",
+		},
+	})
+	if err := syncstate.RecordPush(os.Getenv("SATELLE_HOME"), root, true, "", "", time.Now().Add(-2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	r := check(t, root)
+	if r.OK {
+		t.Fatalf("unbacked repo must not PASS: %v", r.Findings)
+	}
+	if !ids(r)[health.IDSyncUnbacked] {
+		t.Fatalf("missing %s: %v", health.IDSyncUnbacked, r.Findings)
+	}
+}
+
+func TestCheckFailsStandingPushFailure(t *testing.T) {
+	root := newFixtureRepo(t, fixtureOpts{
+		extraFiles: map[string]string{
+			"satelle.toml": "[sync]\nstories = \"personal\"\nstale_after = \"24h\"\n",
+		},
+	})
+	if err := syncstate.RecordPush(os.Getenv("SATELLE_HOME"), root, false, "hosted down", "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	r := check(t, root)
+	if r.OK {
+		t.Fatalf("standing failure must not PASS: %v", r.Findings)
+	}
+	if !ids(r)[health.IDSyncFailing] {
+		t.Fatalf("missing %s: %v", health.IDSyncFailing, r.Findings)
 	}
 }
 
