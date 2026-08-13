@@ -3,7 +3,10 @@
 Conformance specification for the satelle hosted server interface. The CLI
 publishes this; servers in any language implement it with their own types
 (verified by contract tests on the server side). No shared Go module exists
-— the [OpenAPI spec](openapi.yaml) is the canonical definition.
+— the [OpenAPI spec](openapi.yaml) is the canonical definition of the REST
+surface. The [checkout-sync proto](checkout_sync.proto) is the canonical
+definition of the gRPC Sync service. satelle-server copies that proto
+verbatim; it is not implemented in this repo.
 
 ## Auth conventions
 
@@ -19,6 +22,23 @@ Tokens are obtained via OAuth 2.1 + PKCE S256:
 **Refresh:** On a 401, clients should attempt a `refresh_token` grant
 (`grant_type=refresh_token` + `refresh_token` + `client_id`) and retry the
 original request once.
+
+## gRPC checkout-sync
+
+Canonical contract: [`checkout_sync.proto`](checkout_sync.proto) (`service Sync`
+with `Apply` and `Snapshot` only). satelle-server copies this proto verbatim
+and implements it. This repo publishes the contract and does not implement
+the server.
+
+OAuth 2.1 + PKCE **stays on HTTP** `GET /oauth/authorize` and
+`POST /oauth/token` (the section above). **No gRPC login** RPC is specified.
+
+Every `Sync` RPC carries gRPC metadata key `authorization` (lowercase;
+metadata keys are case-insensitive) with value `Bearer <access_token>`.
+
+`UNAUTHENTICATED` is the gRPC analogue of HTTP 401: the client performs a
+`refresh_token` grant **over HTTP** `POST /oauth/token`, then retries the RPC
+**once** — the same retry-once policy as REST `doAuthed`.
 
 ## Endpoints
 

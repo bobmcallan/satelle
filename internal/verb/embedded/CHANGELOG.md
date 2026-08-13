@@ -1,3 +1,8 @@
+## [0.0.438] - 2026-08-13
+
+### Added
+- **Published the gRPC checkout-sync contract.** `api/checkout_sync.proto` defines `service Sync` with `Apply` and `Snapshot` only (Subscribe is a later story). Hand-written Go types in `api/sync_types.go` mirror the proto and stay JSON-identical to the existing REST workstate shapes. OAuth stays on HTTP `/oauth/*`; every Sync RPC carries lowercase `authorization: Bearer <token>`; `UNAUTHENTICATED` means refresh over HTTP and retry once. satelle-server copies this proto the same way it copies `openapi.yaml`. REST workstate methods are unchanged (sty_7ece3dc3)
+
 ## [0.0.437] - 2026-08-07
 
 ### Fixed
