@@ -41,7 +41,6 @@ func TestOpenAPISpecCoversClientEndpoints(t *testing.T) {
 		"/api/v1/workspaces",
 		"/api/v1/projects/{project}/config",
 		"/api/v1/projects/{project}/documents",
-		"/api/v1/projects/{project}/workstate",
 		"/api/v1/workspaces/{workspaceId}/published",
 		"/oauth/authorize",
 		"/oauth/token",

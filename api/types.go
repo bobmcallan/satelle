@@ -103,22 +103,21 @@ type DocumentChanges struct {
 	Cursor string       `json:"cursor"`
 }
 
-// WorkstateIngest is the POST body for /api/v1/workspaces/{id}/workstate —
-// a local→server batch of stories/executions (items) and ledger entries.
-// The server stamps origin=cli-sync; the client never supplies origin.
-// Pull uses GET …/workstate/items and GET …/workstate/ledger (rehydrate).
+// WorkstateIngest is a local→server batch of stories/executions (items) and
+// ledger entries, carried by gRPC Sync/Apply. The server stamps origin=cli-sync;
+// the client never supplies origin.
 type WorkstateIngest struct {
 	Items  []json.RawMessage `json:"items"`
 	Ledger []json.RawMessage `json:"ledger"`
 }
 
-// WorkstateIngestResult is the POST response: counts of upserted rows.
+// WorkstateIngestResult is the Apply response: counts of upserted rows.
 type WorkstateIngestResult struct {
 	Items  int `json:"items"`
 	Ledger int `json:"ledger"`
 }
 
-// WorkstateItem is one row from GET …/workstate/items (mirror list for pull).
+// WorkstateItem is one mirrored work-state row from Sync/Snapshot.
 type WorkstateItem struct {
 	ID     string          `json:"id"`
 	Kind   string          `json:"kind"`
@@ -129,7 +128,7 @@ type WorkstateItem struct {
 	Record json.RawMessage `json:"record"`
 }
 
-// WorkstateLedgerRow is one row from GET …/workstate/ledger.
+// WorkstateLedgerRow is one mirrored ledger row from Sync/Snapshot.
 type WorkstateLedgerRow struct {
 	ID      string          `json:"id"`
 	StoryID string          `json:"story_id"`

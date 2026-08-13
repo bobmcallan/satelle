@@ -1,3 +1,8 @@
+## [0.0.444] - 2026-08-13
+
+### Changed
+- **Work-state sync is gRPC only.** `satelle sync workstate push` calls Sync/Apply; `pull` and rehydrate call Sync/Snapshot. The leftover REST methods (`PushWorkstate`, `ListWorkstateItems`, `ListWorkstateLedger`) and the published `/api/v1/projects/{project}/workstate` paths are gone. OAuth, config, documents, and publish stay HTTP. (sty_f85fac97)
+
 ## [0.0.443] - 2026-08-13
 
 ### Changed

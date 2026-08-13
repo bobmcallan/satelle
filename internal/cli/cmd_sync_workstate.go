@@ -258,12 +258,12 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		if chunk.Ledger == nil {
 			chunk.Ledger = []json.RawMessage{}
 		}
-		res, perr := client.PushWorkstate(cmd.Context(), project, chunk)
+		res, perr := client.Apply(cmd.Context(), project, chunk)
 		if perr != nil {
 			if errors.Is(perr, hosted.ErrLoginRequired) {
 				return perr
 			}
-			return fmt.Errorf("push workstate: %w", perr)
+			return fmt.Errorf("apply workstate: %w", perr)
 		}
 		totalItems += res.Items
 		totalLedger += res.Ledger
@@ -380,25 +380,18 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force bo
 
 	client := hosted.NewClient(server, hosted.FileStore{}, nil)
 
-	var items []hosted.WorkstateItem
-	if optIn["stories"] || optIn["executions"] {
-		items, err = client.ListWorkstateItems(ctx, project, "")
-		if err != nil {
-			if errors.Is(err, hosted.ErrLoginRequired) {
-				return err
-			}
-			return fmt.Errorf("list workstate items: %w", err)
+	items, ledgerRows, err := client.Snapshot(ctx, project, "")
+	if err != nil {
+		if errors.Is(err, hosted.ErrLoginRequired) {
+			return err
 		}
+		return fmt.Errorf("snapshot workstate: %w", err)
 	}
-	var ledgerRows []hosted.WorkstateLedgerRow
-	if optIn["ledger"] {
-		ledgerRows, err = client.ListWorkstateLedger(ctx, project, "")
-		if err != nil {
-			if errors.Is(err, hosted.ErrLoginRequired) {
-				return err
-			}
-			return fmt.Errorf("list workstate ledger: %w", err)
-		}
+	if !(optIn["stories"] || optIn["executions"]) {
+		items = nil
+	}
+	if !optIn["ledger"] {
+		ledgerRows = nil
 	}
 
 	// Partition hosted rows by area for conflict checks and materialize.

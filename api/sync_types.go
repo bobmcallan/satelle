@@ -24,7 +24,7 @@ type ApplyResponse struct {
 }
 
 // SnapshotRequest is the Sync.Snapshot input. Kind optionally filters items
-// (mirrors REST ListWorkstateItems ?kind=).
+// (story|execution).
 type SnapshotRequest struct {
 	Project string `json:"project"`
 	Kind    string `json:"kind,omitempty"`

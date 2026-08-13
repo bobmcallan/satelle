@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/hosted/syncpb"
 )
 
 // areaScopes parses `sync scopes` tabwriter output into area -> scope,
@@ -155,8 +157,8 @@ func newFakeSyncServer(t *testing.T) (*httptest.Server, *fakeSyncServer) {
 	hosted.DocumentSyncStatePathOverride = "" // isolate the pull cursor to this XDG dir
 	f := &fakeSyncServer{docs: newFakeDocStore(), cfg: &fakeConfigStore{data: map[string]map[string][][]byte{}}}
 	mux := http.NewServeMux()
-	// Project-addressed config/documents/workstate (sty_ca64d0cb). Store key is
-	// the project id/slug alone.
+	// Project-addressed config/documents (sty_ca64d0cb). Store key is
+	// the project id/slug alone. Work-state is gRPC Sync (attachTestGRPC).
 	mux.HandleFunc("/api/v1/projects/", func(w http.ResponseWriter, r *http.Request) {
 		segs := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/api/v1/projects/"), "/", 3) // [project, kind, path?]
 		if len(segs) < 2 {
@@ -216,27 +218,38 @@ func newFakeSyncServer(t *testing.T) (*httptest.Server, *fakeSyncServer) {
 			default:
 				http.NotFound(w, r)
 			}
-		case "workstate":
-			if r.Method != http.MethodPost {
-				http.NotFound(w, r)
-				return
-			}
-			body, _ := io.ReadAll(r.Body)
-			var batch map[string]any
-			_ = json.Unmarshal(body, &batch)
-			f.mu.Lock()
-			f.workstate++
-			f.mu.Unlock()
-			items, _ := batch["items"].([]any)
-			ledger, _ := batch["ledger"].([]any)
-			_ = json.NewEncoder(w).Encode(map[string]int{"items": len(items), "ledger": len(ledger)})
 		default:
 			http.NotFound(w, r)
 		}
 	})
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
+	attachTestGRPC(t, &fakeSyncGRPC{f: f})
 	return ts, f
+}
+
+type fakeSyncGRPC struct {
+	syncpb.UnimplementedSyncServer
+	f *fakeSyncServer
+}
+
+func (s *fakeSyncGRPC) Apply(_ context.Context, req *syncpb.ApplyRequest) (*syncpb.ApplyResponse, error) {
+	s.f.mu.Lock()
+	s.f.workstate++
+	s.f.mu.Unlock()
+	return &syncpb.ApplyResponse{Items: int32(len(req.GetItems())), Ledger: int32(len(req.GetLedger()))}, nil
+}
+
+type rehydrateSnapGRPC struct {
+	syncpb.UnimplementedSyncServer
+	record []byte
+}
+
+func (s *rehydrateSnapGRPC) Snapshot(_ context.Context, _ *syncpb.SnapshotRequest) (*syncpb.SnapshotResponse, error) {
+	return &syncpb.SnapshotResponse{Items: []*syncpb.WorkItem{{
+		Id: "sty_rehy1", Kind: "story", Type: "stories", Status: "backlog",
+		Title: "Rehydrated", Origin: "cli-sync", Record: s.record,
+	}}}, nil
 }
 
 // TestSyncDefaultRunsFullBundleLive drives bare `satelle sync` (non-dry-run)
@@ -468,23 +481,14 @@ func TestSyncRehydrateEmptyTreeHappyPath(t *testing.T) {
 	mux.HandleFunc("GET /api/v1/projects/{project}/documents", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}, "cursor": ""})
 	})
-	// workstate items after deploy opt-in
 	itemRec := map[string]any{
 		"id": "sty_rehy1", "kind": "story", "status": "backlog", "title": "Rehydrated",
 		"body": "from hosted", "acceptance_criteria": "1. ok",
 	}
 	recBytes, _ := json.Marshal(itemRec)
-	mux.HandleFunc("GET /api/v1/projects/{project}/workstate/items", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode([]map[string]any{{
-			"id": "sty_rehy1", "kind": "story", "type": "stories", "status": "backlog",
-			"title": "Rehydrated", "origin": "cli-sync", "record": json.RawMessage(recBytes),
-		}})
-	})
-	mux.HandleFunc("GET /api/v1/projects/{project}/workstate/ledger", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode([]any{})
-	})
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
+	attachTestGRPC(t, &rehydrateSnapGRPC{record: recBytes})
 	seedCred(t, ts.URL)
 
 	// Bind creates minimal toml.
@@ -672,37 +676,26 @@ func newCountingSyncServer(t *testing.T) (*httptest.Server, *countingSyncFake) {
 			default:
 				http.NotFound(w, r)
 			}
-		case "workstate":
-			if r.Method != http.MethodPost {
-				http.NotFound(w, r)
-				return
-			}
-			body, _ := io.ReadAll(r.Body)
-			var batch map[string]any
-			_ = json.Unmarshal(body, &batch)
-			f.mu.Lock()
-			f.workstatePOST++
-			if f.ws.itemsByID[project] == nil {
-				f.ws.itemsByID[project] = map[string]any{}
-			}
-			items, _ := batch["items"].([]any)
-			ledger, _ := batch["ledger"].([]any)
-			for _, it := range items {
-				if m, ok := it.(map[string]any); ok {
-					if id, _ := m["id"].(string); id != "" {
-						f.ws.itemsByID[project][id] = m
-					}
-				}
-			}
-			f.mu.Unlock()
-			_ = json.NewEncoder(w).Encode(map[string]int{"items": len(items), "ledger": len(ledger)})
 		default:
 			http.NotFound(w, r)
 		}
 	})
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
+	attachTestGRPC(t, &countingSyncGRPC{f: f})
 	return ts, f
+}
+
+type countingSyncGRPC struct {
+	syncpb.UnimplementedSyncServer
+	f *countingSyncFake
+}
+
+func (s *countingSyncGRPC) Apply(ctx context.Context, req *syncpb.ApplyRequest) (*syncpb.ApplyResponse, error) {
+	s.f.mu.Lock()
+	s.f.workstatePOST++
+	s.f.mu.Unlock()
+	return (&fakeWorkstateGRPC{f: s.f.ws}).Apply(ctx, req)
 }
 
 // TestSyncNoopZeroContentUploads (sty_88e83180 AC7): a second full `satelle

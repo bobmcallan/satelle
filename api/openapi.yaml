@@ -30,10 +30,6 @@ tags:
     description: >-
       Project-addressed authored-document store (byte-exact markdown, no
       conversion). Per-file push/pull with an incremental changed-since list.
-  - name: workstate
-    description: >-
-      One-way local→server work-state mirror (stories, executions, ledger).
-      Project-addressed; origin stamped cli-sync server-side.
   - name: published
     description: >-
       Team-workspace publisher-owned catalog (satelle publish). Not a sync
@@ -456,90 +452,6 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           description: No such path.
-
-  /api/v1/projects/{project}/workstate:
-    post:
-      operationId: ingestWorkstate
-      summary: Ingest a work-state batch (local→server backup)
-      description: >-
-        Upserts stories/executions (items) and ledger entries into the workspace
-        mirror. The server stamps origin=cli-sync on every row — the client must
-        not supply origin. Idempotent on re-push (upsert by id). Editor/owner
-        required. Work-state is per-user by design; the CLI always targets the
-        personal workspace even when a team workspace is active for config/docs.
-        Pull (rehydrate) uses GET …/workstate/items and GET …/workstate/ledger.
-      tags: [workstate]
-      parameters:
-        - $ref: "#/components/parameters/Project"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/WorkstateIngest"
-      responses:
-        "200":
-          description: Upsert counts for this batch.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WorkstateIngestResult"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /api/v1/projects/{project}/workstate/items:
-    get:
-      operationId: listWorkstateItems
-      summary: List mirrored work-state items (pull/rehydrate)
-      description: >-
-        Returns the project partition's mirrored stories/executions. Any member
-        may read. The CLI uses this for satelle sync workstate pull.
-      tags: [workstate]
-      parameters:
-        - $ref: "#/components/parameters/Project"
-        - name: kind
-          in: query
-          schema:
-            type: string
-          description: Optional exact kind filter (story|execution).
-      responses:
-        "200":
-          description: Mirrored items with promoted fields and CLI record payload.
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/WorkstateItem"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /api/v1/projects/{project}/workstate/ledger:
-    get:
-      operationId: listWorkstateLedger
-      summary: List mirrored work-state ledger (pull/rehydrate)
-      description: >-
-        Returns the project partition's mirrored ledger entries. Optional
-        ?story= narrows to one story; omit for the whole project ledger.
-      tags: [workstate]
-      parameters:
-        - $ref: "#/components/parameters/Project"
-        - name: story
-          in: query
-          schema:
-            type: string
-          description: Optional story id filter.
-      responses:
-        "200":
-          description: Mirrored ledger rows with CLI record payload.
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/WorkstateLedgerRow"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
 
   /api/v1/workspaces/{workspaceId}/published:
     get:
@@ -1006,7 +918,7 @@ components:
     WorkstateItem:
       type: object
       required: [id, kind, type, status, title, origin, record]
-      description: One mirrored work-state item from listWorkstateItems (pull).
+      description: One mirrored work-state item from Sync/Snapshot.
       properties:
         id:
           type: string
@@ -1030,7 +942,7 @@ components:
     WorkstateLedgerRow:
       type: object
       required: [id, story_id, kind, type, origin, record]
-      description: One mirrored ledger row from listWorkstateLedger (pull).
+      description: One mirrored ledger row from Sync/Snapshot.
       properties:
         id:
           type: string

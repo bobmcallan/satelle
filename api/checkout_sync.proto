@@ -34,7 +34,7 @@ message ApplyResponse {
 
 message SnapshotRequest {
   string project = 1;
-  string kind = 2; // optional filter; mirrors REST ListWorkstateItems
+  string kind = 2; // optional filter (story|execution)
 }
 
 message SnapshotResponse {

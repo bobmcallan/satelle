@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -15,15 +14,17 @@ import (
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/hosted/syncpb"
 )
 
-// fakeWorkstateServer records POST /workstate bodies per workspace and
-// accumulates items/ledger by id across POSTs (sty_88e83180 AC8).
+// fakeWorkstateServer records Apply batches per project and accumulates
+// items/ledger by id across Applies (sty_88e83180 AC8).
 type fakeWorkstateServer struct {
 	mu         sync.Mutex
 	posts      map[string][]map[string]any // wsID -> posted batches
@@ -52,122 +53,19 @@ func newFakeWorkstateServer(t *testing.T) (*httptest.Server, *fakeWorkstateServe
 			{"id": "ws-team", "kind": "team", "name": "Acme"},
 		})
 	})
-	mux.HandleFunc("POST /api/v1/projects/{project}/workstate", func(w http.ResponseWriter, r *http.Request) {
-		key := r.PathValue("project")
-		body, _ := io.ReadAll(r.Body)
-		f.mu.Lock()
-		f.postN++
-		n := f.postN
-		fail := f.failOnPost
-		f.mu.Unlock()
-		if fail > 0 && n == fail {
-			http.Error(w, "injected failure", http.StatusInternalServerError)
-			return
-		}
-		var batch map[string]any
-		_ = json.Unmarshal(body, &batch)
-		f.mu.Lock()
-		f.posts[key] = append(f.posts[key], batch)
-		if f.itemsByID[key] == nil {
-			f.itemsByID[key] = map[string]any{}
-		}
-		if f.ledgerByID[key] == nil {
-			f.ledgerByID[key] = map[string]any{}
-		}
-		items, _ := batch["items"].([]any)
-		ledger, _ := batch["ledger"].([]any)
-		for _, it := range items {
-			m, ok := it.(map[string]any)
-			if !ok {
-				continue
-			}
-			id, _ := m["id"].(string)
-			if id != "" {
-				f.itemsByID[key][id] = m
-			}
-		}
-		for _, it := range ledger {
-			m, ok := it.(map[string]any)
-			if !ok {
-				continue
-			}
-			id, _ := m["id"].(string)
-			if id != "" {
-				f.ledgerByID[key][id] = m
-			}
-		}
-		f.mu.Unlock()
-		_ = json.NewEncoder(w).Encode(map[string]int{"items": len(items), "ledger": len(ledger)})
-	})
-	// Mirror GET shape: promote fields from accumulated records.
-	mux.HandleFunc("GET /api/v1/projects/{project}/workstate/items", func(w http.ResponseWriter, r *http.Request) {
-		f.mu.Lock()
-		f.gets++
-		key := r.PathValue("project")
-		byID := f.itemsByID[key]
-		f.mu.Unlock()
-		kindFilter := r.URL.Query().Get("kind")
-		out := make([]map[string]any, 0, len(byID))
-		for _, it := range byID {
-			m, ok := it.(map[string]any)
-			if !ok {
-				continue
-			}
-			kind, _ := m["kind"].(string)
-			if kindFilter != "" && kind != kindFilter {
-				continue
-			}
-			id, _ := m["id"].(string)
-			status, _ := m["status"].(string)
-			title, _ := m["title"].(string)
-			rec, _ := json.Marshal(m)
-			out = append(out, map[string]any{
-				"id": id, "kind": kind, "type": kind, "status": status, "title": title,
-				"origin": "cli-sync", "record": json.RawMessage(rec),
-			})
-		}
-		_ = json.NewEncoder(w).Encode(out)
-	})
-	mux.HandleFunc("GET /api/v1/projects/{project}/workstate/ledger", func(w http.ResponseWriter, r *http.Request) {
-		f.mu.Lock()
-		f.gets++
-		key := r.PathValue("project")
-		byID := f.ledgerByID[key]
-		f.mu.Unlock()
-		storyFilter := r.URL.Query().Get("story")
-		out := make([]map[string]any, 0, len(byID))
-		for _, it := range byID {
-			m, ok := it.(map[string]any)
-			if !ok {
-				continue
-			}
-			sid, _ := m["story_id"].(string)
-			if storyFilter != "" && sid != storyFilter {
-				continue
-			}
-			id, _ := m["id"].(string)
-			kind, _ := m["kind"].(string)
-			rec, _ := json.Marshal(m)
-			out = append(out, map[string]any{
-				"id": id, "story_id": sid, "kind": kind, "type": "ledger",
-				"origin": "cli-sync", "record": json.RawMessage(rec),
-			})
-		}
-		_ = json.NewEncoder(w).Encode(out)
-	})
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 	attachFakeWorkstateGRPC(t, f)
 	return ts, f
 }
 
-// attachFakeWorkstateGRPC serves Sync against the same maps the REST
-// handlers write, so snapshot (gRPC) sees what push (REST) stored.
-func attachFakeWorkstateGRPC(t *testing.T, f *fakeWorkstateServer) {
+// attachTestGRPC installs a process-wide bufconn dialer for hosted.Client
+// gRPC (SetTestGRPCDial is not safe for t.Parallel).
+func attachTestGRPC(t *testing.T, srv syncpb.SyncServer) {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	gs := grpc.NewServer()
-	syncpb.RegisterSyncServer(gs, &fakeWorkstateGRPC{f: f})
+	syncpb.RegisterSyncServer(gs, srv)
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(func() {
 		gs.Stop()
@@ -184,6 +82,12 @@ func attachFakeWorkstateGRPC(t *testing.T, f *fakeWorkstateServer) {
 	})
 }
 
+// attachFakeWorkstateGRPC serves Sync against the same maps push/pull tests use.
+func attachFakeWorkstateGRPC(t *testing.T, f *fakeWorkstateServer) {
+	t.Helper()
+	attachTestGRPC(t, &fakeWorkstateGRPC{f: f})
+}
+
 type fakeWorkstateGRPC struct {
 	syncpb.UnimplementedSyncServer
 	f *fakeWorkstateServer
@@ -192,6 +96,10 @@ type fakeWorkstateGRPC struct {
 func (s *fakeWorkstateGRPC) Apply(ctx context.Context, req *syncpb.ApplyRequest) (*syncpb.ApplyResponse, error) {
 	s.f.mu.Lock()
 	defer s.f.mu.Unlock()
+	s.f.postN++
+	if s.f.failOnPost > 0 && s.f.postN == s.f.failOnPost {
+		return nil, status.Error(codes.Internal, "injected failure")
+	}
 	key := req.GetProject()
 	if s.f.itemsByID[key] == nil {
 		s.f.itemsByID[key] = map[string]any{}
@@ -199,26 +107,31 @@ func (s *fakeWorkstateGRPC) Apply(ctx context.Context, req *syncpb.ApplyRequest)
 	if s.f.ledgerByID[key] == nil {
 		s.f.ledgerByID[key] = map[string]any{}
 	}
+	items := make([]any, 0, len(req.GetItems()))
 	for _, it := range req.GetItems() {
 		var m map[string]any
 		if err := json.Unmarshal(it.GetRecord(), &m); err != nil {
 			continue
 		}
+		items = append(items, m)
 		id, _ := m["id"].(string)
 		if id != "" {
 			s.f.itemsByID[key][id] = m
 		}
 	}
+	ledger := make([]any, 0, len(req.GetLedger()))
 	for _, e := range req.GetLedger() {
 		var m map[string]any
 		if err := json.Unmarshal(e.GetRecord(), &m); err != nil {
 			continue
 		}
+		ledger = append(ledger, m)
 		id, _ := m["id"].(string)
 		if id != "" {
 			s.f.ledgerByID[key][id] = m
 		}
 	}
+	s.f.posts[key] = append(s.f.posts[key], map[string]any{"items": items, "ledger": ledger})
 	return &syncpb.ApplyResponse{Items: int32(len(req.GetItems())), Ledger: int32(len(req.GetLedger()))}, nil
 }
 
