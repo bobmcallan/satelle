@@ -107,7 +107,7 @@ binding ignored). Requires "satelle project bind <slug>".`,
 		Short:       "Pull current hosted work-state into the local store (lazy Snapshot)",
 		Annotations: needsStore(),
 		Long: `snapshot fetches the bound project's current work-state via the checkout-sync
-Snapshot adapter (existing workstate list routes) and materializes opted-in
+Snapshot adapter (gRPC Sync/Snapshot) and materializes opted-in
 areas into the local store. Local-only areas are a no-op. satelle-serve may
 exec this verb; it does not talk to the hosted server itself.`,
 		RunE: func(cmd *cobra.Command, args []string) error {

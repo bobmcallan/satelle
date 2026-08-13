@@ -3,15 +3,22 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
+	"net"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/hosted/syncpb"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -105,37 +112,46 @@ func TestApplyWorkstateNowPostsAndSurvives500(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("SATELLE_HOME", t.TempDir())
 
-	var posts int
-	var sawConfig, sawDocs bool
-	status := http.StatusOK
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/config") {
-			sawConfig = true
-		}
-		if strings.Contains(r.URL.Path, "/documents") {
-			sawDocs = true
-		}
-		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/workstate") {
-			posts++
-			if status != http.StatusOK {
-				http.Error(w, "nope", status)
-				return
+	var mu sync.Mutex
+	applies := 0
+	failNext := false
+	lis := bufconn.Listen(1 << 20)
+	gs := grpc.NewServer()
+	syncpb.RegisterSyncServer(gs, applyCountServer{
+		fn: func(req *syncpb.ApplyRequest) (*syncpb.ApplyResponse, error) {
+			mu.Lock()
+			applies++
+			fail := failNext
+			mu.Unlock()
+			if fail {
+				return nil, status.Error(codes.Internal, "nope")
 			}
-			_, _ = w.Write([]byte(`{"items":1,"ledger":0}`))
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(ts.Close)
+			return &syncpb.ApplyResponse{Items: int32(len(req.GetItems()))}, nil
+		},
+	})
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(func() {
+		gs.Stop()
+		_ = lis.Close()
+		hosted.SetTestGRPCDial(nil)
+	})
+	hosted.SetTestGRPCDial(func(ctx context.Context, target string) (*grpc.ClientConn, error) {
+		return grpc.NewClient("passthrough:///buf",
+			grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+				return lis.DialContext(ctx)
+			}),
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+	})
 
 	if err := (hosted.FileStore{}).Save(hosted.Credential{
-		ServerURL: ts.URL, AccessToken: "tok", RefreshToken: "r",
+		ServerURL: "http://hosted.example", AccessToken: "tok", RefreshToken: "r",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.Config{
 		Sync:   map[string]string{"all": "personal"},
-		Hosted: config.HostedConfig{Server: ts.URL, Project: "probe"},
+		Hosted: config.HostedConfig{Server: "http://hosted.example", Project: "probe"},
 	}
 	a := &app.App{Config: cfg}
 
@@ -173,14 +189,16 @@ func TestApplyWorkstateNowPostsAndSurvives500(t *testing.T) {
 	if err := json.Unmarshal(raw, &created); err != nil {
 		t.Fatal(err)
 	}
-	if created.ID == "" || posts != 1 {
-		t.Fatalf("id=%s posts=%d", created.ID, posts)
-	}
-	if sawConfig || sawDocs {
-		t.Fatal("mutate apply hit config/documents")
+	mu.Lock()
+	n := applies
+	mu.Unlock()
+	if created.ID == "" || n != 1 {
+		t.Fatalf("id=%s applies=%d", created.ID, n)
 	}
 
-	status = http.StatusInternalServerError
+	mu.Lock()
+	failNext = true
+	mu.Unlock()
 	logs = nil
 	body, _ = json.Marshal(map[string]any{"title": "ApplyFail"})
 	raw, err = verb.Dispatch(context.Background(), "story-create", body)
@@ -196,4 +214,13 @@ func TestApplyWorkstateNowPostsAndSurvives500(t *testing.T) {
 	if len(logs) == 0 || !strings.Contains(logs[0], "workstate apply") {
 		t.Fatalf("expected apply log, got %v", logs)
 	}
+}
+
+type applyCountServer struct {
+	syncpb.UnimplementedSyncServer
+	fn func(*syncpb.ApplyRequest) (*syncpb.ApplyResponse, error)
+}
+
+func (s applyCountServer) Apply(ctx context.Context, req *syncpb.ApplyRequest) (*syncpb.ApplyResponse, error) {
+	return s.fn(req)
 }

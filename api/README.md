@@ -28,7 +28,9 @@ original request once.
 Canonical contract: [`checkout_sync.proto`](checkout_sync.proto) (`service Sync`
 with `Apply` and `Snapshot` only). satelle-server copies this proto verbatim
 and implements it. This repo publishes the contract and does not implement
-the server.
+the server. The CLI consumes Apply/Snapshot from `internal/hosted`
+(generated stubs in `internal/hosted/syncpb` so `internal` does not import
+`api/`).
 
 OAuth 2.1 + PKCE **stays on HTTP** `GET /oauth/authorize` and
 `POST /oauth/token` (the section above). **No gRPC login** RPC is specified.

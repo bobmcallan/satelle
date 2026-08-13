@@ -1,3 +1,8 @@
+## [0.0.442] - 2026-08-13
+
+### Changed
+- **Checkout-sync Apply/Snapshot now speak gRPC.** `hosted.Client.Apply` and `Snapshot` dial `satelle.sync.v1.Sync` on the hosted origin (`https` → `:443` TLS, `http` → explicit port or `:80`). Every RPC carries lowercase `authorization: Bearer <token>` from the credstore. `UNAUTHENTICATED` refreshes over HTTP `/oauth/token` and retries once — the same policy as REST `doAuthed`. REST `PushWorkstate` / list methods stay for other callers. Generated stubs live in `internal/hosted/syncpb` so `internal` does not import `api/`. satelle-serve still does not import hosted. (sty_3658edff)
+
 ## [0.0.441] - 2026-08-13
 
 ### Added

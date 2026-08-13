@@ -1,11 +1,11 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
-
 	"errors"
-	"github.com/bobmcallan/satelle/internal/hosted"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +13,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
+
+	"github.com/bobmcallan/satelle/internal/hosted"
+	"github.com/bobmcallan/satelle/internal/hosted/syncpb"
 )
 
 // fakeWorkstateServer records POST /workstate bodies per workspace and
@@ -150,7 +157,111 @@ func newFakeWorkstateServer(t *testing.T) (*httptest.Server, *fakeWorkstateServe
 	})
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
+	attachFakeWorkstateGRPC(t, f)
 	return ts, f
+}
+
+// attachFakeWorkstateGRPC serves Sync against the same maps the REST
+// handlers write, so snapshot (gRPC) sees what push (REST) stored.
+func attachFakeWorkstateGRPC(t *testing.T, f *fakeWorkstateServer) {
+	t.Helper()
+	lis := bufconn.Listen(1 << 20)
+	gs := grpc.NewServer()
+	syncpb.RegisterSyncServer(gs, &fakeWorkstateGRPC{f: f})
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(func() {
+		gs.Stop()
+		_ = lis.Close()
+		hosted.SetTestGRPCDial(nil)
+	})
+	hosted.SetTestGRPCDial(func(ctx context.Context, target string) (*grpc.ClientConn, error) {
+		return grpc.NewClient("passthrough:///buf",
+			grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+				return lis.DialContext(ctx)
+			}),
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+	})
+}
+
+type fakeWorkstateGRPC struct {
+	syncpb.UnimplementedSyncServer
+	f *fakeWorkstateServer
+}
+
+func (s *fakeWorkstateGRPC) Apply(ctx context.Context, req *syncpb.ApplyRequest) (*syncpb.ApplyResponse, error) {
+	s.f.mu.Lock()
+	defer s.f.mu.Unlock()
+	key := req.GetProject()
+	if s.f.itemsByID[key] == nil {
+		s.f.itemsByID[key] = map[string]any{}
+	}
+	if s.f.ledgerByID[key] == nil {
+		s.f.ledgerByID[key] = map[string]any{}
+	}
+	for _, it := range req.GetItems() {
+		var m map[string]any
+		if err := json.Unmarshal(it.GetRecord(), &m); err != nil {
+			continue
+		}
+		id, _ := m["id"].(string)
+		if id != "" {
+			s.f.itemsByID[key][id] = m
+		}
+	}
+	for _, e := range req.GetLedger() {
+		var m map[string]any
+		if err := json.Unmarshal(e.GetRecord(), &m); err != nil {
+			continue
+		}
+		id, _ := m["id"].(string)
+		if id != "" {
+			s.f.ledgerByID[key][id] = m
+		}
+	}
+	return &syncpb.ApplyResponse{Items: int32(len(req.GetItems())), Ledger: int32(len(req.GetLedger()))}, nil
+}
+
+func (s *fakeWorkstateGRPC) Snapshot(ctx context.Context, req *syncpb.SnapshotRequest) (*syncpb.SnapshotResponse, error) {
+	s.f.mu.Lock()
+	defer s.f.mu.Unlock()
+	s.f.gets++
+	key := req.GetProject()
+	out := &syncpb.SnapshotResponse{}
+	kindFilter := req.GetKind()
+	for _, it := range s.f.itemsByID[key] {
+		m, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		kind, _ := m["kind"].(string)
+		if kindFilter != "" && kind != kindFilter {
+			continue
+		}
+		id, _ := m["id"].(string)
+		status, _ := m["status"].(string)
+		title, _ := m["title"].(string)
+		rec, _ := json.Marshal(m)
+		out.Items = append(out.Items, &syncpb.WorkItem{
+			Id: id, Kind: kind, Type: kind, Status: status, Title: title,
+			Origin: "cli-sync", Record: rec,
+		})
+	}
+	for _, it := range s.f.ledgerByID[key] {
+		m, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, _ := m["id"].(string)
+		sid, _ := m["story_id"].(string)
+		kind, _ := m["kind"].(string)
+		rec, _ := json.Marshal(m)
+		out.Ledger = append(out.Ledger, &syncpb.LedgerEntry{
+			Id: id, StoryId: sid, Kind: kind, Type: "ledger",
+			Origin: "cli-sync", Record: rec,
+		})
+	}
+	return out, nil
 }
 
 func (f *fakeWorkstateServer) postCount(wsID string) int {

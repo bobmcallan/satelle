@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"google.golang.org/grpc"
 )
 
 // ErrLoginRequired is returned when there is no usable credential — no stored
@@ -58,6 +60,9 @@ type Client struct {
 	server string
 	store  Store
 	http   *http.Client
+	// dialGRPC, if set, opens the Sync connection (tests inject bufconn).
+	// Nil uses grpc.NewClient against grpcTarget(server).
+	dialGRPC func(ctx context.Context, target string) (*grpc.ClientConn, error)
 }
 
 // NewClient builds a client for server, backed by store for token persistence.
@@ -354,9 +359,21 @@ func (c *Client) doAuthed(ctx context.Context, method, path string, payload []by
 	// (the old one dies on rotation; a late persist would strand a dead token on
 	// crash), then retry the request exactly once.
 	resp.Body.Close()
+	rotated, rErr := c.refreshAndPersist(ctx, cred)
+	if rErr != nil {
+		return nil, rErr
+	}
+	return c.send(ctx, method, path, rotated.AccessToken, payload, contentType)
+}
+
+// refreshAndPersist runs the HTTP refresh_token grant, carries identity
+// fields across rotation, and persists the new pair before returning it.
+// Shared by HTTP doAuthed and gRPC withGRPCAuth so the two transports
+// cannot drift on that invariant.
+func (c *Client) refreshAndPersist(ctx context.Context, cred Credential) (Credential, error) {
 	tok, rErr := refreshGrant(ctx, c.http, c.server, cred.RefreshToken)
 	if rErr != nil {
-		return nil, fmt.Errorf("%w (refresh failed: %v)", ErrLoginRequired, rErr)
+		return Credential{}, fmt.Errorf("%w (refresh failed: %v)", ErrLoginRequired, rErr)
 	}
 	rotated := credentialFromToken(c.server, tok)
 	// Carry the stored identity across rotation — credentialFromToken only knows
@@ -364,9 +381,9 @@ func (c *Client) doAuthed(ctx context.Context, method, path string, payload []by
 	// every refresh (~1h after login), sending the UI back to the legacy path.
 	rotated.DisplayName, rotated.Email, rotated.PrincipalID = cred.DisplayName, cred.Email, cred.PrincipalID
 	if sErr := c.store.Save(rotated); sErr != nil {
-		return nil, fmt.Errorf("hosted: persist refreshed credential: %w", sErr)
+		return Credential{}, fmt.Errorf("hosted: persist refreshed credential: %w", sErr)
 	}
-	return c.send(ctx, method, path, rotated.AccessToken, payload, contentType)
+	return rotated, nil
 }
 
 // contentJSON is the Content-Type for JSON request bodies.
