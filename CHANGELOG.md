@@ -1,3 +1,13 @@
+## [0.0.450] - 2026-08-13
+
+### Changed
+- **Hosted workstate delivery moves off the CLI command path onto satelled.** `satelle story create` / `satelle story set` no longer open a connection to satelle.dev. The local ingest (`POST /ingest/snapshot`) is the trigger: satelled execs `satelle sync workstate push` after a short debounce. The push is cursor-driven, so mutations made while the daemon was down ride the next start; a persistently failing hosted target backs off (30s–15m) without growing unbounded work. `satelle sync` remains the manual escape hatch and still exits non-zero on a failed hosted call. The post-mutate Apply hook is gone — that is the 505-on-every-create. (sty_c526753a)
+
+## [serve-v0.0.24] - 2026-08-13
+
+### Added
+- satelled forwards local ingest to hosted workstate via `satelle sync workstate push` (catch-up on start, reconcile backstop, per-repo backoff). (sty_c526753a)
+
 ## [0.0.449] - 2026-08-13
 
 ### Changed

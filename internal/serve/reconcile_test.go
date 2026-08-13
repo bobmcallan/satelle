@@ -463,6 +463,22 @@ func TestPassInvokesSnapshot(t *testing.T) {
 	}
 }
 
+func TestPassInvokesPush(t *testing.T) {
+	var pushed []string
+	r := &Reconciler{
+		Targets: func(ctx context.Context) []string { return []string{"/repo"} },
+		Reseed:  func(ctx context.Context, repoPath string) error { return nil },
+		Push: func(ctx context.Context, repoPath string) error {
+			pushed = append(pushed, repoPath)
+			return nil
+		},
+	}
+	r.pass(context.Background())
+	if len(pushed) != 1 || pushed[0] != "/repo" {
+		t.Fatalf("push = %v", pushed)
+	}
+}
+
 // TestSatelleBinaryReportsMissing proves an unresolvable CLI is a named error —
 // the reconciler disables itself with a reason rather than failing silently.
 func TestSatelleBinaryReportsMissing(t *testing.T) {

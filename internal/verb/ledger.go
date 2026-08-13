@@ -53,7 +53,6 @@ func ledgerAppend(ctx context.Context, raw json.RawMessage) (json.RawMessage, er
 	if err != nil {
 		return nil, err
 	}
-	fireWorkstateApply(ctx, nil, []ledger.Entry{e})
 	return json.Marshal(e)
 }
 

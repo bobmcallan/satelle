@@ -175,6 +175,55 @@ func TestIngestChangeAndSnapshot(t *testing.T) {
 	}
 }
 
+// TestIngestFiresOnIngest (sty_c526753a D3): change, committed snapshot, and
+// the unchanged short-circuit all notify the hosted-push hook.
+func TestIngestFiresOnIngest(t *testing.T) {
+	s, err := mirror.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	var keys []string
+	h := &mirror.IngestHandler{Store: s, OnIngest: func(repoKey string) { keys = append(keys, repoKey) }}
+	mux := http.NewServeMux()
+	h.Mount(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	body, _ := json.Marshal(mirror.ChangeEvent{RepoKey: "rk1", Topic: "stories", Entity: "story", At: "t"})
+	resp, err := http.Post(srv.URL+"/ingest/change", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	snap := mirror.Snapshot{
+		RepoKey: "rk1",
+		Stories: []json.RawMessage{[]byte(`{"id":"sty_a","title":"Hello"}`)},
+	}
+	body, _ = json.Marshal(snap)
+	resp, err = http.Post(srv.URL+"/ingest/snapshot", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	resp, err = http.Post(srv.URL+"/ingest/snapshot", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if len(keys) != 3 {
+		t.Fatalf("OnIngest calls = %d, want 3 (change+snapshot+unchanged): %v", len(keys), keys)
+	}
+	for i, k := range keys {
+		if k != "rk1" {
+			t.Errorf("keys[%d] = %q", i, k)
+		}
+	}
+}
+
 func TestIngestRejectsNonPOST(t *testing.T) {
 	s, err := mirror.Open(filepath.Join(t.TempDir(), "m.db"))
 	if err != nil {

@@ -62,10 +62,11 @@ type IdentityMeta struct {
 }
 
 // IngestHandler serves POST /ingest/change and POST /ingest/snapshot.
-// onChange is optional (SSE doorbell).
+// OnChange is optional (SSE doorbell). OnIngest is optional (hosted push trigger).
 type IngestHandler struct {
 	Store    *Store
 	OnChange func(topic string)
+	OnIngest func(repoKey string)
 }
 
 // Mount registers ingest routes on mux.
@@ -123,6 +124,9 @@ func (h *IngestHandler) handleChange(w http.ResponseWriter, r *http.Request) {
 		h.OnChange(ev.Topic)
 		h.OnChange("projects")
 	}
+	if h.OnIngest != nil {
+		h.OnIngest(ev.RepoKey)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "seq": seq})
 }
@@ -164,6 +168,11 @@ func (h *IngestHandler) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 			if err := h.Store.MarkFresh(ctx, snap.RepoKey, now); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
+			}
+			// Unchanged bytes can still coincide with a hosted-side gap; the
+			// push is a cursor no-op when there is nothing to send (sty_c526753a).
+			if h.OnIngest != nil {
+				h.OnIngest(snap.RepoKey)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "unchanged": true})
@@ -212,6 +221,9 @@ func (h *IngestHandler) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		h.OnChange("tasks")
 		h.OnChange("docs")
 		h.OnChange("projects")
+	}
+	if h.OnIngest != nil {
+		h.OnIngest(snap.RepoKey)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})

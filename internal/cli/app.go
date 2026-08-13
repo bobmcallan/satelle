@@ -166,8 +166,6 @@ func openAppForCmd(cmd *cobra.Command) error {
 		}
 		return cred.PrincipalID
 	})
-	// Triggered workstate Apply (sty_adaf4db1): after local mutate when opted in.
-	wireWorkstateApplier(a)
 	// Engage precondition (sty_93eec36d): agents.toml + workflow agent= validation
 	// before a story leaves its entry state. agents already loaded by requireAgents.
 	// Vars are the LAYERED KV (machine-wide catalog [vars] under the repo's own,

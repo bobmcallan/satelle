@@ -656,6 +656,9 @@ func TestSyncWorkstatePullIgnoresTeamBinding(t *testing.T) {
 // TestSyncWorkstatePushCursorSurvivesMidRunFailure (sty_88e83180 AC3): force two
 // item chunks; the second POST fails after the first succeeded; cursor stays
 // pre-run so the next push re-sends the unconfirmed chunk.
+// TestSyncWorkstatePushCursorSurvivesMidRunFailure (sty_88e83180 AC3 +
+// sty_c526753a AC5): Apply failure is a non-nil error and the cursor does not
+// advance. satelle sync stays the manual escape hatch.
 func TestSyncWorkstatePushCursorSurvivesMidRunFailure(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
@@ -778,8 +781,10 @@ func TestSyncWorkstateIncrementalRehydrate(t *testing.T) {
 	}
 }
 
-// TestSyncWorkstatePushIncrementalOnlyChanged (sty_88e83180 AC1): after a full
-// push, mutating one of two stories makes the next POST carry only that id.
+// TestSyncWorkstatePushIncrementalOnlyChanged (sty_88e83180 AC1 +
+// sty_c526753a AC4): after a full push, mutating one of two stories makes the
+// next POST carry only that id. Down-window rows (created with no push, as if
+// satelled was down) ride a later push via the stored cursor.
 func TestSyncWorkstatePushIncrementalOnlyChanged(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)

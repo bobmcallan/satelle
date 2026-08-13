@@ -45,9 +45,21 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	defer ms.Close()
 
-	webSrv := web.NewMirror(ms)
 	serverLog := filepath.Join(config.GlobalDir(), mirror.DefaultDirName, "server.log")
 	logCfg := logfile.Config{MaxSizeBytes: config.DefaultLogsMaxSizeKB * 1024, MaxFiles: config.DefaultLogsMaxFiles}
+	logLine := func(format string, args ...any) {
+		line := fmt.Sprintf(format, args...)
+		fmt.Fprintln(os.Stderr, "satelled: "+line)
+		_ = logfile.Append(time.Now(), serverLog, logCfg, line)
+	}
+	// Hook must be installed before Listen: an ingest on the first accepted
+	// connection has to find Notify already wired (sty_c526753a).
+	pusher := &Pusher{
+		Resolve: resolvePushPath(ms, config.GlobalDir()),
+		Keys:    pushKeys(ms),
+		Log:     logLine,
+	}
+	webSrv := web.NewMirrorHooks(ms, config.SafeCurrentInstanceID(), pusher.Notify)
 	handler := web.RequestLog(webSrv.Handler, serverLog, logCfg)
 
 	srv := &http.Server{Addr: listenAddr, Handler: handler}
@@ -69,13 +81,10 @@ func Run(ctx context.Context, opts Options) error {
 	// server, off the request path, and stops with ctx.
 	rec := &Reconciler{
 		Targets: mirrorTargets(ms, config.GlobalDir()),
-		Log: func(format string, args ...any) {
-			line := fmt.Sprintf(format, args...)
-			fmt.Fprintln(os.Stderr, "satelled: "+line)
-			_ = logfile.Append(time.Now(), serverLog, logCfg, line)
-		},
+		Log:     logLine,
 	}
 	go rec.Loop(ctx)
+	go pusher.Run(ctx)
 
 	fmt.Printf("satelled (push-fed mirror) http://%s  mirror=%s  (Ctrl-C to stop)\n", listenAddr, mirrorPath)
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {

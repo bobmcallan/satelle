@@ -60,6 +60,10 @@ type Reconciler struct {
 	// Snapshot execs the CLI workstate snapshot verb; nil means snapshotViaCLI.
 	// Always invoked (opt-in is the CLI's decision).
 	Snapshot func(ctx context.Context, repoPath string) error
+	// Push execs the CLI workstate push verb; nil means pushViaCLI.
+	// Always invoked (opt-in is the CLI's decision). Periodic backstop for a
+	// Notify dropped between ingest and debounce fire (sty_c526753a AC4).
+	Push func(ctx context.Context, repoPath string) error
 	// Log receives a line when a repo STARTS failing, when its reason CHANGES,
 	// and when it recovers — never once per pass per failing repo (sty_a2162ee3).
 	// nil discards.
@@ -161,6 +165,15 @@ func (r *Reconciler) pass(ctx context.Context) {
 			snapshot = func(context.Context, string) error { return nil }
 		}
 	}
+	push := r.Push
+	if push == nil {
+		if r.Reseed == nil {
+			push = pushViaCLI
+		} else {
+			// Tests inject Reseed; do not exec the CLI unless they also set Push.
+			push = func(context.Context, string) error { return nil }
+		}
+	}
 	seen := map[string]bool{}
 	for _, path := range r.Targets(ctx) {
 		if ctx.Err() != nil {
@@ -174,6 +187,13 @@ func (r *Reconciler) pass(ctx context.Context) {
 				err = fmt.Errorf("%v; snapshot: %w", err, serr)
 			} else {
 				err = serr
+			}
+		}
+		if perr := push(runCtx, path); perr != nil {
+			if err != nil {
+				err = fmt.Errorf("%v; push: %w", err, perr)
+			} else {
+				err = perr
 			}
 		}
 		cancel()

@@ -76,6 +76,12 @@ func NewMirror(m *mirror.Store) *MirrorServer {
 // NewMirrorWithInstance is like NewMirror but sets an explicit instance id
 // (tests inject a fixed id; production uses CurrentInstanceID).
 func NewMirrorWithInstance(m *mirror.Store, instanceID string) *MirrorServer {
+	return NewMirrorHooks(m, instanceID, nil)
+}
+
+// NewMirrorHooks is NewMirrorWithInstance plus an optional OnIngest hook
+// (satelled hosted push; sty_c526753a). Tests and NewMirror pass nil.
+func NewMirrorHooks(m *mirror.Store, instanceID string, onIngest func(string)) *MirrorServer {
 	serverStart = time.Now()
 	h := newHub()
 	mux := http.NewServeMux()
@@ -102,7 +108,7 @@ func NewMirrorWithInstance(m *mirror.Store, instanceID string) *MirrorServer {
 	mux.HandleFunc("GET /theme", getTheme)
 	// POST /theme removed (only ingest mutates). Theme persists client-side.
 
-	ing := &mirror.IngestHandler{Store: m, OnChange: h.publish}
+	ing := &mirror.IngestHandler{Store: m, OnChange: h.publish, OnIngest: onIngest}
 	ing.Mount(mux)
 
 	// Workspace landing (order:3) and project surface under /r/{slug}/ (order:2).

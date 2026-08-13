@@ -6,10 +6,11 @@ import (
 	"testing"
 )
 
-// TestReconcilerKeepsServeOffTheRepoDB proves AC5 of sty_e6e467fe at the package
-// that gained the reconcile loop: the serving tier re-requests state by exec'ing
-// the CLI, so it must still link none of the repo-writing stack. The per-repo
-// database keeps its single reader and the mirror stays a read-only view.
+// TestReconcilerKeepsServeOffTheRepoDB proves AC5 of sty_e6e467fe and AC7 of
+// sty_c526753a: the serving tier re-requests state and forwards workstate by
+// exec'ing the CLI, so it must still link none of the repo-writing stack
+// (including internal/hosted). The per-repo database keeps its single reader
+// and the mirror stays a read-only view.
 func TestReconcilerKeepsServeOffTheRepoDB(t *testing.T) {
 	out, err := exec.Command("go", "list", "-deps", ".").CombinedOutput()
 	if err != nil {
