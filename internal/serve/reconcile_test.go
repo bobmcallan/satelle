@@ -447,6 +447,22 @@ func TestSatelleBinaryPrefersSibling(t *testing.T) {
 	}
 }
 
+func TestPassInvokesSnapshot(t *testing.T) {
+	var snap []string
+	r := &Reconciler{
+		Targets: func(ctx context.Context) []string { return []string{"/repo"} },
+		Reseed:  func(ctx context.Context, repoPath string) error { return nil },
+		Snapshot: func(ctx context.Context, repoPath string) error {
+			snap = append(snap, repoPath)
+			return nil
+		},
+	}
+	r.pass(context.Background())
+	if len(snap) != 1 || snap[0] != "/repo" {
+		t.Fatalf("snapshot = %v", snap)
+	}
+}
+
 // TestSatelleBinaryReportsMissing proves an unresolvable CLI is a named error —
 // the reconciler disables itself with a reason rather than failing silently.
 func TestSatelleBinaryReportsMissing(t *testing.T) {

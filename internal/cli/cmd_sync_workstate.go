@@ -101,7 +101,58 @@ binding ignored). Requires "satelle project bind <slug>".`,
 	pull.Flags().BoolVar(&force, "force", false, "Materialize even when local and hosted both have data for an area (upsert by id; no wipe).")
 	group.AddCommand(pull)
 
+	var snapServer string
+	snap := &cobra.Command{
+		Use:         "snapshot",
+		Short:       "Pull current hosted work-state into the local store (lazy Snapshot)",
+		Annotations: needsStore(),
+		Long: `snapshot fetches the bound project's current work-state via the checkout-sync
+Snapshot adapter (existing workstate list routes) and materializes opted-in
+areas into the local store. Local-only areas are a no-op. satelle-serve may
+exec this verb; it does not talk to the hosted server itself.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runSyncWorkstateSnapshot(cmd, snapServer)
+		},
+	}
+	snap.Flags().StringVar(&snapServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	group.AddCommand(snap)
+
 	return group
+}
+
+func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string) error {
+	a, err := appFrom(cmd)
+	if err != nil {
+		return err
+	}
+	optIn, err := workstateOptIn(a.Config)
+	if err != nil {
+		return err
+	}
+	if len(optIn) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "workstate snapshot: all areas local, nothing to pull")
+		return nil
+	}
+	server := resolveServer(serverArg)
+	if server == "" {
+		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
+	}
+	project, err := resolveBoundProject(a.Config)
+	if err != nil {
+		return err
+	}
+	client := hosted.NewClient(server, hosted.FileStore{}, nil)
+	items, ledgerRows, err := client.Snapshot(cmd.Context(), project, "")
+	if err != nil {
+		return err
+	}
+	nItems, nLedger, merr := materializeWorkstate(cmd.Context(), a, optIn, items, ledgerRows)
+	if merr != nil {
+		return merr
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Snapshot work-state from project %q: %d item(s), %d ledger.\n",
+		project, nItems, nLedger)
+	return nil
 }
 
 // Chunk sizes for work-state push (package vars so tests can shrink them).

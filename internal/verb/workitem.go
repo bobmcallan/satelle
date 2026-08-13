@@ -175,6 +175,7 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 		if err != nil {
 			return nil, err
 		}
+		fireWorkstateApply(ctx, []workitem.Item{it}, nil)
 		// Create-into-engaging: claim the seat now that the id exists (sty_8426b9c0).
 		if _, _, aerr := acquireEngagementLease(ctx, it, it.Status); aerr != nil {
 			// Best-effort: item was created; surface the seat error so the operator
@@ -435,6 +436,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 				if uerr != nil {
 					return nil, uerr
 				}
+				fireWorkstateApply(ctx, []workitem.Item{it}, nil)
 				return json.Marshal(it)
 			}
 		} else if inFlight {
@@ -603,6 +605,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	if err != nil {
 		return nil, err
 	}
+	fireWorkstateApply(ctx, []workitem.Item{it}, nil)
 	// Release the seat on transition into terminal (Msquare) or park (agent=reviewer).
 	// Force-release: exit is config-driven and must free the seat even when the
 	// exit CLI process is not the acquire-time owner (default owner is stable

@@ -328,6 +328,23 @@ func TestSyncWorkstatePullSkipsLocal(t *testing.T) {
 	}
 }
 
+func TestSyncWorkstateSnapshotSkipsLocal(t *testing.T) {
+	ts, f := newFakeWorkstateServer(t)
+	seedCred(t, ts.URL)
+	workstateRepo(t, "web_port = 8181\n")
+
+	out, err := runRoot(t, "sync", "workstate", "snapshot", "--server", ts.URL)
+	if err != nil {
+		t.Fatalf("snapshot: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "all areas local") {
+		t.Fatalf("expected local-skip message, got: %q", out)
+	}
+	if f.getCount() != 0 {
+		t.Errorf("local snapshot contacted server %d time(s)", f.getCount())
+	}
+}
+
 // TestSyncWorkstatePullRequiresBoundProject: no project → fail before network.
 func TestSyncWorkstatePullRequiresBoundProject(t *testing.T) {
 	var hits int
@@ -447,6 +464,66 @@ func TestSyncWorkstatePullRoundTrip(t *testing.T) {
 	}
 	if !strings.Contains(got, "AC survives pull") {
 		t.Errorf("acceptance_criteria missing after pull: %s", got)
+	}
+}
+
+func TestSyncWorkstateSnapshotRoundTrip(t *testing.T) {
+	ts, f := newFakeWorkstateServer(t)
+	seedCred(t, ts.URL)
+	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\nledger = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+
+	out, err := runRoot(t, "story", "create",
+		"--title", "Snapshot story",
+		"--body", "Body for snapshot.",
+		"--acceptance", "1. AC survives snapshot",
+		"--category", "feature",
+	)
+	if err != nil {
+		t.Fatalf("story create: %v\n%s", err, out)
+	}
+	listOut, err := runRoot(t, "story", "list", "--limit", "5")
+	if err != nil {
+		t.Fatalf("list: %v\n%s", err, listOut)
+	}
+	var stories []map[string]any
+	if jerr := json.Unmarshal([]byte(listOut), &stories); jerr != nil {
+		t.Fatalf("parse list: %v\n%s", jerr, listOut)
+	}
+	var styID string
+	for _, s := range stories {
+		if title, _ := s["title"].(string); title == "Snapshot story" {
+			styID, _ = s["id"].(string)
+			break
+		}
+	}
+	if styID == "" {
+		t.Fatalf("story not found: %s", listOut)
+	}
+	out, err = runRoot(t, "sync", "workstate", "push", "--server", ts.URL)
+	if err != nil {
+		t.Fatalf("push: %v\n%s", err, out)
+	}
+	if f.postCount("probe") < 1 {
+		t.Fatalf("posts = %d", f.postCount("probe"))
+	}
+	dbPath := runtimeDBPath(t)
+	_ = os.Remove(dbPath)
+	_ = os.Remove(dbPath + "-wal")
+	_ = os.Remove(dbPath + "-shm")
+
+	out, err = runRoot(t, "sync", "workstate", "snapshot", "--server", ts.URL)
+	if err != nil {
+		t.Fatalf("snapshot: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Snapshot work-state") {
+		t.Fatalf("snapshot output: %q", out)
+	}
+	got, err := runRoot(t, "story", "get", styID)
+	if err != nil {
+		t.Fatalf("get after snapshot: %v\n%s", err, got)
+	}
+	if !strings.Contains(got, "Snapshot story") {
+		t.Errorf("title missing: %s", got)
 	}
 }
 

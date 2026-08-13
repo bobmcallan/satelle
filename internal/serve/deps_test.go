@@ -21,6 +21,7 @@ func TestReconcilerKeepsServeOffTheRepoDB(t *testing.T) {
 		"github.com/bobmcallan/satelle/internal/store",
 		"github.com/bobmcallan/satelle/internal/cli",
 		"github.com/bobmcallan/satelle/internal/verb",
+		"github.com/bobmcallan/satelle/internal/hosted",
 	} {
 		if strings.Contains(deps, f) {
 			t.Errorf("internal/serve must not depend on %s", f)

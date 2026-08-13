@@ -57,6 +57,9 @@ type Reconciler struct {
 	Targets func(ctx context.Context) []string
 	// Reseed re-requests one repo's snapshot; nil means reseedViaCLI.
 	Reseed func(ctx context.Context, repoPath string) error
+	// Snapshot execs the CLI workstate snapshot verb; nil means snapshotViaCLI.
+	// Always invoked (opt-in is the CLI's decision).
+	Snapshot func(ctx context.Context, repoPath string) error
 	// Log receives a line when a repo STARTS failing, when its reason CHANGES,
 	// and when it recovers — never once per pass per failing repo (sty_a2162ee3).
 	// nil discards.
@@ -149,6 +152,15 @@ func (r *Reconciler) pass(ctx context.Context) {
 	if reseed == nil {
 		reseed = reseedViaCLI
 	}
+	snapshot := r.Snapshot
+	if snapshot == nil {
+		if r.Reseed == nil {
+			snapshot = snapshotViaCLI
+		} else {
+			// Tests inject Reseed; do not exec the CLI unless they also set Snapshot.
+			snapshot = func(context.Context, string) error { return nil }
+		}
+	}
 	seen := map[string]bool{}
 	for _, path := range r.Targets(ctx) {
 		if ctx.Err() != nil {
@@ -157,6 +169,13 @@ func (r *Reconciler) pass(ctx context.Context) {
 		seen[path] = true
 		runCtx, cancel := context.WithTimeout(ctx, r.timeout())
 		err := reseed(runCtx, path)
+		if serr := snapshot(runCtx, path); serr != nil {
+			if err != nil {
+				err = fmt.Errorf("%v; snapshot: %w", err, serr)
+			} else {
+				err = serr
+			}
+		}
 		cancel()
 		r.report(path, err)
 	}
@@ -261,6 +280,22 @@ func reseedViaCLI(ctx context.Context, repoPath string) error {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s workspace add: %w: %s", bin, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// snapshotViaCLI runs `satelle sync workstate snapshot` inside repoPath.
+// The CLI no-ops when work-state areas are local.
+func snapshotViaCLI(ctx context.Context, repoPath string) error {
+	bin, err := satelleBinary()
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, bin, "sync", "workstate", "snapshot")
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s sync workstate snapshot: %w: %s", bin, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

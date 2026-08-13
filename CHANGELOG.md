@@ -1,3 +1,8 @@
+## [0.0.440] - 2026-08-13
+
+### Added
+- **Triggered work-state Apply after local mutate, and a Snapshot CLI verb.** When `[sync]` stories/executions/ledger (or `all`) are opted in and a hosted credential exists, a successful story/task/ledger write posts the existing workstate ingest route. Transport failure is logged and does not fail the local write. `satelle sync workstate snapshot` pulls current hosted rows into the local store; satelle-serve may exec that verb and must not import `internal/hosted`. Bare `satelle sync` is unchanged. (sty_adaf4db1)
+
 ## [0.0.439] - 2026-08-13
 
 ### Added
