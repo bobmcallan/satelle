@@ -31,7 +31,7 @@ func TestMigrateConvergesLegacyFixture(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dataDir, "agents.toml"), []byte("[executor]\nharness = \"in-loop\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "satelle.toml"), []byte("web_port = 8181\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dataDir, "satelle.toml"), []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// Legacy runtime under data_dir.
@@ -598,7 +598,7 @@ func migrateWorkflowRepo(t *testing.T, files map[string]string) (repo, dataDir s
 	if err := os.WriteFile(filepath.Join(dataDir, "agents.toml"), []byte("[executor]\nharness = \"in-loop\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "satelle.toml"), []byte("web_port = 8182\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dataDir, "satelle.toml"), []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for name, body := range files {
@@ -996,5 +996,93 @@ func TestMigrateRetiredRefsRenameAndRemoval(t *testing.T) {
 	}
 	if !strings.Contains(as, "rewrote") || !strings.Contains(as, "leave") {
 		t.Fatalf("apply report:\n%s", as)
+	}
+}
+
+func machineStrayRepo(t *testing.T, toml string) (a *app.App, dataDir string) {
+	t.Helper()
+	disableServeProbe(t)
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	repo := t.TempDir()
+	dataDir = filepath.Join(repo, config.DefaultDataDir)
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "agents.toml"), []byte("[executor]\nharness = \"in-loop\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "satelle.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a = &app.App{
+		Config:   config.Config{},
+		RepoRoot: repo,
+		DataDir:  dataDir,
+	}
+	return a, dataDir
+}
+
+func TestMigrateRehomesWebPortPreservingComments(t *testing.T) {
+	a, dataDir := machineStrayRepo(t, "# keep me\nweb_port = 9000\nlog_level = \"info\"\n")
+	var apply strings.Builder
+	if err := runMigrate(&apply, a, true, false); err != nil {
+		t.Fatalf("migrate: %v\n%s", err, apply.String())
+	}
+	if !strings.Contains(apply.String(), "re-homed") {
+		t.Fatalf("expected re-home line:\n%s", apply.String())
+	}
+	body, err := os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(body)
+	if !strings.Contains(s, "# keep me") || !strings.Contains(s, `log_level = "info"`) {
+		t.Fatalf("comments/neighbours lost:\n%s", s)
+	}
+	if strings.Contains(s, "web_port") {
+		t.Fatalf("web_port still in repo file:\n%s", s)
+	}
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gc.Service.Port != 9000 {
+		t.Fatalf("machine port = %d, want 9000", gc.Service.Port)
+	}
+}
+
+func TestMigrateMachineWinsDiscardsRepoWebPort(t *testing.T) {
+	a, dataDir := machineStrayRepo(t, "web_port = 9000\n")
+	if err := config.SaveGlobal(config.GlobalConfig{Service: config.ServiceConfig{Port: 8787}}); err != nil {
+		t.Fatal(err)
+	}
+	var apply strings.Builder
+	if err := runMigrate(&apply, a, true, false); err != nil {
+		t.Fatalf("migrate: %v\n%s", err, apply.String())
+	}
+	if !strings.Contains(apply.String(), "already set") {
+		t.Fatalf("expected machine-wins line:\n%s", apply.String())
+	}
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gc.Service.Port != 8787 {
+		t.Fatalf("machine port clobbered: %d", gc.Service.Port)
+	}
+	body, _ := os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
+	if strings.Contains(string(body), "web_port") {
+		t.Fatalf("repo key not removed:\n%s", body)
+	}
+}
+
+func TestMigrateMachineStraysSecondRunNoOp(t *testing.T) {
+	a, _ := machineStrayRepo(t, "web_port = 9000\n")
+	if err := runMigrate(new(strings.Builder), a, true, false); err != nil {
+		t.Fatal(err)
+	}
+	plan := planMigrate(a.Config, a.RepoRoot, a.DataDir)
+	if len(plan.MachineStrays) != 0 {
+		t.Fatalf("second plan still has strays: %#v", plan.MachineStrays)
 	}
 }

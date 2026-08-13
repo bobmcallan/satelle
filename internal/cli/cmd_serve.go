@@ -35,7 +35,7 @@ keeps existing units and muscle memory working.`,
 			return serve.Run(cmd.Context(), serve.Options{Addr: addr, Port: port})
 		},
 	}
-	serveCmd.Flags().StringVar(&addr, "addr", "127.0.0.1", "bind address")
+	serveCmd.Flags().StringVar(&addr, "addr", "", "bind address (default from global [service] addr)")
 	serveCmd.Flags().IntVar(&port, "port", 0, "listen port (default from global service config or 8787)")
 	serveCmd.Flags().BoolVar(&noWatch, "no-watch", false, "ignored (no maintenance loops remain; sty_dbdadfa0)")
 	serveCmd.Flags().StringVar(&basePath, "base-path", "", "ignored (no supervised children; sty_dbdadfa0)")

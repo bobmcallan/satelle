@@ -23,8 +23,8 @@ const (
 	// interfaces so it is reachable across the WSL↔Windows boundary in any
 	// networking mode. Restrict it to 127.0.0.1 in config to keep it off the LAN.
 	DefaultServiceAddr = "0.0.0.0"
-	// EnvServerEndpoint overrides [server] endpoint discovery and push
-	// (sty_5aa08259). Values:
+	// EnvServerEndpoint overrides [service] endpoint discovery and push
+	// (sty_5aa08259 / sty_21a7d16d). Values:
 	//
 	//	unset          — use config / auto-bootstrap probe as usual
 	//	URL            — use that base URL; no default-port probe
@@ -134,14 +134,20 @@ func (a AgentConfig) ResolveCLI() string {
 	return DefaultAgentCLI
 }
 
-// ServiceConfig configures the background web service (`satelle service`).
+// ServiceConfig configures the background web service (`satelle service` /
+// satelled). Listen keys are machine-scope only — never read from a repo file.
 type ServiceConfig struct {
 	// Port the service listens on; zero means DefaultWebPort.
 	Port int `toml:"port"`
 	// Addr the service binds; empty means DefaultServiceAddr (0.0.0.0).
 	Addr string `toml:"addr"`
-	// Repo is the repository the service serves (its working directory). Empty
-	// until set by `satelle service install`, which defaults it to the CWD.
+	// Endpoint is the CLI→satelled base URL (e.g. http://127.0.0.1:8787).
+	// Empty derives http://127.0.0.1:<ResolvePort()>. SATELLE_SERVER_ENDPOINT
+	// overrides; none|off|-|"" disables discovery and push.
+	Endpoint string `toml:"endpoint"`
+	// Repo is install-scope only: the working directory recorded by
+	// `satelle service install` for the unit/status line. It is not "the repo
+	// satelled serves" — the mirror is N partitions. Empty until install.
 	Repo string `toml:"repo"`
 }
 
@@ -159,6 +165,22 @@ func (s ServiceConfig) ResolveAddr() string {
 		return a
 	}
 	return DefaultServiceAddr
+}
+
+// ResolveEndpoint returns the CLI→satelled base URL: SATELLE_SERVER_ENDPOINT
+// (none|off|-|"" disables), then [service] endpoint, then
+// http://127.0.0.1:<ResolvePort()>.
+func (s ServiceConfig) ResolveEndpoint() string {
+	if ep, disabled, set := ServerEndpointEnv(); set {
+		if disabled {
+			return ""
+		}
+		return ep
+	}
+	if e := strings.TrimSpace(s.Endpoint); e != "" {
+		return e
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d", s.ResolvePort())
 }
 
 // GlobalDir returns the machine-wide satelle home (~/.satelle), honoring the
@@ -226,7 +248,7 @@ func SaveGlobal(gc GlobalConfig) error {
 		}
 		repos = "[" + strings.Join(quoted, ", ") + "]"
 	}
-	body := fmt.Sprintf(globalTemplate, gc.Service.ResolvePort(), gc.Service.ResolveAddr(), gc.Service.Repo, gc.Agent.ResolveCLI(), repos, gc.UI.Theme, gc.Hosted.ResolveServer())
+	body := fmt.Sprintf(globalTemplate, gc.Service.ResolvePort(), gc.Service.ResolveAddr(), strings.TrimSpace(gc.Service.Endpoint), gc.Service.Repo, gc.Agent.ResolveCLI(), repos, gc.UI.Theme, gc.Hosted.ResolveServer())
 	path := GlobalConfigPath()
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		return fmt.Errorf("config: write %s: %w", path, err)
@@ -277,7 +299,12 @@ port = %d
 # addr it binds. 0.0.0.0 is reachable from Windows when satelle runs in WSL;
 # set to "127.0.0.1" to keep the service off the local network.
 addr = %q
-# repo the service serves (its working directory). Set by 'service install'.
+# endpoint the CLI publishes mutation events to. Unset derives
+# http://127.0.0.1:<port>. SATELLE_SERVER_ENDPOINT=none disables push.
+endpoint = %q
+# repo is install-scope only: the working directory recorded by
+# 'service install' for the unit/status line. Not "the repo satelled serves"
+# — the mirror holds N partitions.
 repo = %q
 
 [agent]

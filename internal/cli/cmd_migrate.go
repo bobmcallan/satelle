@@ -137,6 +137,9 @@ type migratePlan struct {
 	// retired . Renames are rewritten under --yes; removals are
 	// report-only. Dry-run never writes.
 	RetiredRefs []retiredRefHit
+	// MachineStrays are leftover machine-scope keys in repo config files
+	// (sty_21a7d16d). Re-homed under --yes; never silently ignored.
+	MachineStrays []config.Stray
 }
 
 // retiredRefHit is one authored citation of a retired embedded name.
@@ -263,6 +266,7 @@ func planMigrate(cfg config.Config, repoRoot, dataDir string) migratePlan {
 	p.HostedTableDrop = hasHostedTable(dataDir)
 	p.WorkflowRetire, p.WorkflowConvertPending = workflowConversionState(dataDir)
 	p.RetiredRefs = planRetiredRefs(dataDir)
+	p.MachineStrays = config.MachineScopeStrays(dataDir)
 	return p
 }
 
@@ -409,6 +413,97 @@ func rewriteWikilinkTarget(body, old, newName string) (string, int) {
 	return b.String(), n
 }
 
+// applyMachineStrays re-homes leftover machine-scope keys into
+// ~/.satelle/config.toml when the machine key is unset, then removes them from
+// the repo file. An already-set machine value wins; the repo assignment is
+// still dropped. Comments are preserved (RemoveKey).
+func applyMachineStrays(out io.Writer, dataDir string, strays []config.Stray) error {
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		return err
+	}
+	dirty := false
+	byFile := map[string][]config.Stray{}
+	for _, s := range strays {
+		wrote, msg := rehomeStray(&gc, s)
+		if wrote {
+			dirty = true
+		}
+		fmt.Fprintf(out, "  %s\n", msg)
+		byFile[s.File] = append(byFile[s.File], s)
+	}
+	if dirty {
+		if err := config.SaveGlobal(gc); err != nil {
+			return err
+		}
+	}
+	for file, list := range byFile {
+		path := filepath.Join(dataDir, file)
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		content := string(b)
+		for _, s := range list {
+			section, key := straySectionKey(s.Key)
+			content = config.RemoveKey(content, section, key)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "  removed stray key(s) from .satelle/%s\n", file)
+	}
+	return nil
+}
+
+func rehomeStray(gc *config.GlobalConfig, s config.Stray) (wrote bool, msg string) {
+	switch {
+	case s.Key == "web_port" || s.Key == "[service] port":
+		if gc.Service.Port > 0 {
+			return false, s.Key + ": machine port " + strconv.Itoa(gc.Service.Port) + " already set — kept (repo discarded)"
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(s.RepoValue))
+		if err != nil || n <= 0 {
+			return false, s.Key + ": not a port — removed from repo only"
+		}
+		gc.Service.Port = n
+		return true, s.Key + ": re-homed to ~/.satelle/config.toml [service] port = " + strconv.Itoa(n)
+	case s.Key == "[server] endpoint" || s.Key == "[service] endpoint":
+		if strings.TrimSpace(gc.Service.Endpoint) != "" {
+			return false, s.Key + ": machine endpoint already set — kept (repo discarded)"
+		}
+		gc.Service.Endpoint = strings.TrimSpace(s.RepoValue)
+		return true, s.Key + ": re-homed to ~/.satelle/config.toml [service] endpoint"
+	case s.Key == "[service] addr":
+		if strings.TrimSpace(gc.Service.Addr) != "" {
+			return false, s.Key + ": machine addr already set — kept (repo discarded)"
+		}
+		gc.Service.Addr = strings.TrimSpace(s.RepoValue)
+		return true, s.Key + ": re-homed to ~/.satelle/config.toml [service] addr"
+	case s.Key == "[service] repo":
+		if strings.TrimSpace(gc.Service.Repo) != "" {
+			return false, s.Key + ": machine repo already set — kept (repo discarded)"
+		}
+		gc.Service.Repo = strings.TrimSpace(s.RepoValue)
+		return true, s.Key + ": re-homed to ~/.satelle/config.toml [service] repo"
+	default:
+		return false, s.Key + ": removed from repo (no machine mapping)"
+	}
+}
+
+func straySectionKey(key string) (section, name string) {
+	switch {
+	case key == "web_port":
+		return "", "web_port"
+	case strings.HasPrefix(key, "[server] "):
+		return "server", strings.TrimPrefix(key, "[server] ")
+	case strings.HasPrefix(key, "[service] "):
+		return "service", strings.TrimPrefix(key, "[service] ")
+	default:
+		return "", key
+	}
+}
+
 // workflowConversionState splits the on-disk DOT workflows into the ones a
 // working route source supersedes (retire) and the ones still waiting for one
 // (pending). Exactly one of the two is ever non-empty.
@@ -509,7 +604,7 @@ func printConversionPending(out io.Writer, pending []string) {
 func (p migratePlan) empty() bool {
 	return !p.RuntimeRelocate && len(p.Residue) == 0 && len(p.PruneSeeds) == 0 &&
 		!p.Gitignore && len(p.ExemptManaged) == 0 && len(p.ExemptGlobsManaged) == 0 && len(p.HostedToSync) == 0 && !p.HostedTableDrop && len(p.WorkflowRetire) == 0 &&
-		len(p.StampRewrite) == 0 && len(p.RetiredRefs) == 0
+		len(p.StampRewrite) == 0 && len(p.RetiredRefs) == 0 && len(p.MachineStrays) == 0
 }
 
 func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
@@ -616,6 +711,14 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 		}
 		if plan.StampCapped {
 			fmt.Fprintf(out, "    (sweep capped at %d item(s) — re-run migrate after this pass)\n", stampSweepLimit)
+		}
+	}
+	if len(plan.MachineStrays) == 0 {
+		fmt.Fprintln(out, "  machine keys:     (none)")
+	} else {
+		fmt.Fprintf(out, "  machine keys:     re-home %d stray(s)\n", len(plan.MachineStrays))
+		for _, s := range plan.MachineStrays {
+			fmt.Fprintf(out, "    - %s\n", s.Warning())
 		}
 	}
 	if len(plan.RetiredRefs) == 0 {
@@ -781,6 +884,13 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 			} else {
 				fmt.Fprintln(out, "  [sync] binding already current")
 			}
+		}
+	}
+
+	if len(plan.MachineStrays) > 0 {
+		fmt.Fprintln(out, "\n→ re-home machine-scope keys")
+		if err := applyMachineStrays(out, dataDir, plan.MachineStrays); err != nil {
+			return fmt.Errorf("migrate: machine keys: %w", err)
 		}
 	}
 

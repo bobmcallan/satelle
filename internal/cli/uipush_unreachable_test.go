@@ -20,7 +20,6 @@ import (
 // would show up here as a slower or failable transition.
 func TestTransitionUnaffectedByUnreachablePush(t *testing.T) {
 	repo := tempRepo(t)
-	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
 
 	// An ungated lifecycle: this test is about the push path, not about gates.
 	wfDir := filepath.Join(repo, ".satelle", "workflows")
@@ -108,10 +107,7 @@ requires = ["coded"]
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := os.WriteFile(cfgPath, []byte(
-				"web_port = 8181\n\n[review]\ngate_create = false\n\n[server]\nendpoint = \""+tc.endpoint+"\"\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			t.Setenv(EnvServerEndpoint, tc.endpoint)
 			start := time.Now()
 			out, err := runRoot(t, "story", "set", created.ID, "--status", tc.status)
 			elapsed := time.Since(start)

@@ -72,6 +72,15 @@ func TestMain(m *testing.M) {
 		_ = os.RemoveAll(backstop)
 		os.Exit(1)
 	}
+	// Suite-wide off-switch (sty_5aa08259 / sty_21a7d16d). Machine
+	// ResolveEndpoint now defaults to http://127.0.0.1:8787, so without this
+	// every CLI drain would POST to the operator's live satelled. Tests that
+	// seed a test serve override SATELLE_SERVER_ENDPOINT to that URL.
+	if err := os.Setenv("SATELLE_SERVER_ENDPOINT", "none"); err != nil {
+		fmt.Fprintln(os.Stderr, "setenv SATELLE_SERVER_ENDPOINT:", err)
+		_ = os.RemoveAll(backstop)
+		os.Exit(1)
+	}
 
 	// os.Exit skips defers; clean up and enforce the host-surface guard explicitly.
 	// Also fingerprint host mirror partition keys (sty_5aa08259 AC1): hermetic

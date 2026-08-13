@@ -20,7 +20,7 @@ func TestScaffoldTomlDocumentsConfigSurface(t *testing.T) {
 	}
 	// AC3: every live top-level Config toml key/table appears in the scaffold.
 	for _, want := range []string{
-		"data_dir", "db", "substrate_roots", "web_port", "log_level",
+		"data_dir", "db", "substrate_roots", "log_level",
 		"logs_max_size_kb", "logs_max_files", "stories_keep_closed", "stories_keep_days",
 		"[review]", "[gate]", "[vars]", "[sync]",
 		// AC1 pointers

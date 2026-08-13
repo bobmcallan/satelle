@@ -289,7 +289,7 @@ func TestRunInitIdempotent(t *testing.T) {
 	}
 	// Capture a user edit to the toml; a second init must not clobber it.
 	tomlPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	marker := "\nweb_port = 9123\n"
+	marker := "\nlog_level = \"debug\"\n"
 	orig, _ := os.ReadFile(tomlPath)
 	if err := os.WriteFile(tomlPath, append(orig, []byte(marker)...), 0o644); err != nil {
 		t.Fatal(err)
@@ -305,7 +305,7 @@ func TestRunInitIdempotent(t *testing.T) {
 	}
 	// The user edit survived.
 	after, _ := os.ReadFile(tomlPath)
-	if !strings.Contains(string(after), "web_port = 9123") {
+	if !strings.Contains(string(after), `log_level = "debug"`) {
 		t.Error("second init clobbered the user's toml edit")
 	}
 
@@ -665,7 +665,7 @@ func TestRunInitConvergesStaleGitignore(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repo, ".satelle"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.toml"), []byte("web_port = 8181\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".satelle", "satelle.toml"), []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(repo, ".satelle", "workflows"), 0o755); err != nil {

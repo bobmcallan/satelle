@@ -1441,7 +1441,6 @@ const scaffoldTomlBeforeExempt = `# satelle.toml — per-repo config (committed,
 #                                # (db, logs, backups, stories cache) lives outside
 #                                # the repo. Migrate a legacy in-repo DB with
 #                                # 'satelle runtime migrate'.
-# web_port = 8787                # 'satelle serve' listen port (default)
 # log_level = "info"             # debug | info | warn | error (default info)
 # logs_max_size_kb = 5120        # roll a runtime logs/ file past this size (default 5 MiB)
 # logs_max_files = 7             # keep at most this many rotated log files (default 7)
@@ -1597,12 +1596,9 @@ const scaffoldTomlAfterExempt = `
 # Connection settings live on [sync] (server / project / workspace).
 # satelle init and satelle migrate --yes fold any leftover hosted table away.
 #
-# [server] — LOCAL push-fed UI server the CLI publishes mutation events to
-# (epic:serve-split). Distinct from the hosted origin on [sync].
-# Unset = change publisher inert (no network). Fail-silent: a dead endpoint
-# never blocks or fails a verb.
-# [server]
-# endpoint = "http://127.0.0.1:8787"
+# The local push-fed UI endpoint is machine-scope (~/.satelle/config.toml
+# [service] endpoint). Unset derives http://127.0.0.1:<port>. Disable with
+# SATELLE_SERVER_ENDPOINT=none. Do not put [server] endpoint in this file.
 #
 # [vars] — operator KV substituted into agents.toml binding env values via
 # ${NAME}. NON-secret vars may live here; SECRETS go in gitignored
@@ -1825,9 +1821,9 @@ func ensureWorkspaceRegistration(out io.Writer, repoRoot string, noWorkspace boo
 
 // printWorkspaceMembership re-reads the registry and prints the stable
 // member / not-member line (agent-readable; sty_805bee9c). When the repo is
-// registered but has no [server] endpoint, the line still greps as
-// "workspace: member" but qualifies that registry-only is not a landing join
-// (sty_0122610a AC3) — init stays offline (config presence only, no probe).
+// registered but the machine endpoint is disabled (SATELLE_SERVER_ENDPOINT=none),
+// the line still greps as "workspace: member" but qualifies that registry-only
+// is not a landing join (sty_0122610a AC3) — init stays offline (no probe).
 func printWorkspaceMembership(out io.Writer, abs string, priorErr error) {
 	if priorErr != nil || abs == "" {
 		fmt.Fprintln(out, "workspace: not-member — join with `satelle workspace add`")
@@ -1840,7 +1836,7 @@ func printWorkspaceMembership(out io.Writer, abs string, priorErr error) {
 	}
 	for _, r := range gc.Workspace.Repos {
 		if r == abs {
-			if !repoHasServerEndpoint(abs) {
+			if gc.Service.ResolveEndpoint() == "" {
 				fmt.Fprintf(out, "workspace: member (%d repos registered) — registry only; seed the mirror with `satelle workspace add`\n", len(gc.Workspace.Repos))
 				return
 			}
@@ -1849,17 +1845,6 @@ func printWorkspaceMembership(out io.Writer, abs string, priorErr error) {
 		}
 	}
 	fmt.Fprintln(out, "workspace: not-member — join with `satelle workspace add`")
-}
-
-// repoHasServerEndpoint reports whether the committed satelle.toml or its
-// local.toml overlay sets [server] endpoint for the repo at abs (offline).
-func repoHasServerEndpoint(repoAbs string) bool {
-	cfgPath := filepath.Join(repoAbs, config.DefaultDataDir, config.ConfigName)
-	cfg, _, err := config.Load(cfgPath)
-	if err != nil {
-		return false
-	}
-	return strings.TrimSpace(cfg.Server.Endpoint) != ""
 }
 
 // ensureGitignore writes or converges the managed block in the repo's

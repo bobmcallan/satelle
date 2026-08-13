@@ -62,6 +62,7 @@ func resetFlagState(cmd *cobra.Command) {
 func tempRepo(t *testing.T) string {
 	t.Helper()
 	t.Setenv("SATELLE_HOME", t.TempDir())
+	t.Setenv("SATELLE_SERVER_ENDPOINT", "none")
 	repo := t.TempDir()
 	satelleDir := filepath.Join(repo, ".satelle")
 	if err := os.MkdirAll(satelleDir, 0o755); err != nil {
@@ -71,7 +72,7 @@ func tempRepo(t *testing.T) string {
 	// Explicit gate_create = false: hermetic fixtures that create stories must
 	// not trip the ungated-create notice (stderr advisory that would break
 	// combined out+err JSON parsers). Pre-seed / gated cases rewrite this file.
-	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n\n[review]\ngate_create = false\n"), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("[review]\ngate_create = false\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// An initialized repo must carry its agents layer — store-backed commands

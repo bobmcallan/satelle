@@ -56,7 +56,7 @@ func TestSettingsRepoCLIEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v\n%s", err, out)
 	}
-	for _, want := range []string{"web_port =", "log_level = warn", "review.gate_create = false"} {
+	for _, want := range []string{"log_level = warn", "review.gate_create = false"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("list missing %q:\n%s", want, out)
 		}

@@ -3,17 +3,24 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 func TestServiceDefaults(t *testing.T) {
+	testutil.IsolateHome(t)
 	var s ServiceConfig
 	if s.ResolvePort() != DefaultWebPort {
 		t.Errorf("port default = %d", s.ResolvePort())
 	}
 	if s.ResolveAddr() != DefaultServiceAddr {
 		t.Errorf("addr default = %q, want %q", s.ResolveAddr(), DefaultServiceAddr)
+	}
+	if s.ResolveEndpoint() != "http://127.0.0.1:8787" {
+		t.Errorf("endpoint default = %q", s.ResolveEndpoint())
 	}
 }
 
@@ -67,6 +74,7 @@ func TestSaveLoadGlobalRoundTrip(t *testing.T) {
 	// Save then reload.
 	gc.Service.Port = 9090
 	gc.Service.Addr = "127.0.0.1"
+	gc.Service.Endpoint = "http://127.0.0.1:9090"
 	gc.Service.Repo = "/home/u/repo"
 	if err := SaveGlobal(gc); err != nil {
 		t.Fatalf("SaveGlobal: %v", err)
@@ -75,8 +83,42 @@ func TestSaveLoadGlobalRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadGlobal: %v", err)
 	}
-	if got.Service.Port != 9090 || got.Service.Addr != "127.0.0.1" || got.Service.Repo != "/home/u/repo" {
+	if got.Service.Port != 9090 || got.Service.Addr != "127.0.0.1" || got.Service.Endpoint != "http://127.0.0.1:9090" || got.Service.Repo != "/home/u/repo" {
 		t.Errorf("round-trip mismatch: %+v", got.Service)
+	}
+}
+
+func TestResolveEndpointPrecedence(t *testing.T) {
+	testutil.IsolateHome(t)
+	s := ServiceConfig{Port: 9001, Endpoint: "http://explicit.example:9"}
+	if got := s.ResolveEndpoint(); got != "http://explicit.example:9" {
+		t.Errorf("config endpoint = %q", got)
+	}
+	t.Setenv(EnvServerEndpoint, "http://env.example:8")
+	if got := s.ResolveEndpoint(); got != "http://env.example:8" {
+		t.Errorf("env endpoint = %q", got)
+	}
+	t.Setenv(EnvServerEndpoint, "none")
+	if got := s.ResolveEndpoint(); got != "" {
+		t.Errorf("none must disable: %q", got)
+	}
+	t.Setenv(EnvServerEndpoint, "")
+	_ = os.Unsetenv(EnvServerEndpoint)
+	s.Endpoint = ""
+	if got := s.ResolveEndpoint(); got != "http://127.0.0.1:9001" {
+		t.Errorf("derived endpoint = %q", got)
+	}
+}
+
+func TestGlobalConfigHasNoSyncField(t *testing.T) {
+	rt := reflect.TypeOf(GlobalConfig{})
+	if _, ok := rt.FieldByName("Sync"); ok {
+		t.Fatal("GlobalConfig must not carry a sync field — [sync] stays per-repo")
+	}
+	for i := 0; i < rt.NumField(); i++ {
+		if tag := rt.Field(i).Tag.Get("toml"); tag == "sync" {
+			t.Fatalf("GlobalConfig field %s has toml:\"sync\"", rt.Field(i).Name)
+		}
 	}
 }
 

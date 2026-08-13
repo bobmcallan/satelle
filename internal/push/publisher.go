@@ -1,6 +1,7 @@
 // Package push is the CLI→local-UI-server change publisher (epic:serve-split).
-// When satelle.toml configures [server] endpoint, mutating verbs emit a
-// fire-and-forget change event to the server ingest. Unset = inert (no network).
+// When the machine [service] endpoint is set (or derived), mutating verbs emit a
+// fire-and-forget change event to the server ingest. SATELLE_SERVER_ENDPOINT=none
+// disables (no network).
 // Failures never alter verb outcomes or block the caller (sty_126228b2).
 package push
 

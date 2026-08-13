@@ -1,3 +1,13 @@
+## [0.0.449] - 2026-08-13
+
+### Changed
+- **Machine-scope listen keys live only in `~/.satelle/config.toml` `[service]`.** `web_port` and `[server] endpoint` are no longer read from a repo's satelle.toml. satelled binds port/addr from `[service]`; the CLI publishes to `[service] endpoint` (or `http://127.0.0.1:<port>`). `[sync]` scopes stay per-repo. A leftover machine-scope key in a repo file is a warning (doctor/status) naming the key, the value satelled used, and `satelle migrate --yes`. That command copies unset machine keys then removes the repo leftovers; already-set machine values are not clobbered. `satelle settings --global port|addr|endpoint` is the write path; `satelle settings web_port` (repo scope) fails with the same warning. No new required config — defaults remain 8787 / 0.0.0.0 / derived endpoint. (sty_21a7d16d)
+
+## [serve-v0.0.23] - 2026-08-13
+
+### Changed
+- satelled listen addr/port come only from machine `[service]` config. (sty_21a7d16d)
+
 ## [0.0.448] - 2026-08-13
 
 ### Changed

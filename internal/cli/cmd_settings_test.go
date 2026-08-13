@@ -79,9 +79,9 @@ func TestSettingsServerSetPrintClear(t *testing.T) {
 // TestSettingsRepoReadWriteRoundTrip proves the repo scope reads and writes committed
 // satelle.toml keys through the surgical upsert — comments and unmodeled keys survive.
 func TestSettingsRepoReadWriteRoundTrip(t *testing.T) {
-	cfgPath := repoConfig(t, "# keep me\nweb_port = 8787\nfuture_key = \"x\"\n\n[review]\ngate_create = true\n")
+	cfgPath := repoConfig(t, "# keep me\nlog_level = \"info\"\nfuture_key = \"x\"\n\n[review]\ngate_create = true\n")
 
-	for _, kv := range [][2]string{{"web_port", "9100"}, {"log_level", "warn"}, {"gate_create", "false"}, {"edit_exempt_paths", ".claude/,vendor/"}} {
+	for _, kv := range [][2]string{{"log_level", "warn"}, {"gate_create", "false"}, {"edit_exempt_paths", ".claude/,vendor/"}} {
 		cmd, _ := testCmd()
 		if err := runSettings(cmd, []string{kv[0], kv[1]}, false); err != nil {
 			t.Fatalf("write %s=%s: %v", kv[0], kv[1], err)
@@ -90,11 +90,11 @@ func TestSettingsRepoReadWriteRoundTrip(t *testing.T) {
 
 	// Read one key back through the CLI.
 	cmd, buf := testCmd()
-	if err := runSettings(cmd, []string{"web_port"}, false); err != nil {
+	if err := runSettings(cmd, []string{"log_level"}, false); err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(buf.String()) != "9100" {
-		t.Fatalf("web_port read = %q", buf.String())
+	if strings.TrimSpace(buf.String()) != "warn" {
+		t.Fatalf("log_level read = %q", buf.String())
 	}
 
 	// Comment + unmodeled key survived the writes.
@@ -104,7 +104,7 @@ func TestSettingsRepoReadWriteRoundTrip(t *testing.T) {
 	}
 	// Values applied.
 	cfg, _, _ := config.Load(cfgPath)
-	if cfg.WebPort != 9100 || cfg.LogLevel != "warn" || cfg.Review.GateCreate {
+	if cfg.LogLevel != "warn" || cfg.Review.GateCreate {
 		t.Fatalf("values not applied: %+v", cfg)
 	}
 	if len(cfg.Gate.EditExemptPaths) != 2 {
@@ -114,7 +114,7 @@ func TestSettingsRepoReadWriteRoundTrip(t *testing.T) {
 
 // TestSettingsRepoList proves bare `satelle settings` lists every repo key + value.
 func TestSettingsRepoList(t *testing.T) {
-	repoConfig(t, "web_port = 8123\n")
+	repoConfig(t, "log_level = \"debug\"\n")
 	cmd, buf := testCmd()
 	if err := runSettings(cmd, nil, false); err != nil {
 		t.Fatal(err)
@@ -125,15 +125,19 @@ func TestSettingsRepoList(t *testing.T) {
 			t.Errorf("list missing key %q", id)
 		}
 	}
-	if !strings.Contains(body, "web_port = 8123") {
+	if !strings.Contains(body, "log_level = debug") {
 		t.Errorf("list missing resolved value:\n%s", body)
+	}
+	if strings.Contains(body, "web_port") {
+		t.Errorf("repo list must not include web_port:\n%s", body)
 	}
 }
 
 // TestSettingsRepoErrors covers unknown keys, the substrate_roots read-only exception,
 // value validation, and the global-scope one-key rule.
 func TestSettingsRepoErrors(t *testing.T) {
-	repoConfig(t, "web_port = 8123\n")
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	repoConfig(t, "log_level = \"info\"\n")
 	cases := []struct {
 		name   string
 		args   []string
@@ -142,10 +146,10 @@ func TestSettingsRepoErrors(t *testing.T) {
 	}{
 		{"unknown key", []string{"nope", "x"}, false, "unknown repo setting"},
 		{"substrate_roots read-only", []string{"substrate_roots", "x"}, false, "read-only"},
-		{"bad int", []string{"web_port", "abc"}, false, "whole number"},
+		{"stray web_port", []string{"web_port", "9000"}, false, "satelle migrate --yes"},
 		{"bad bool", []string{"gate_create", "yes"}, false, "true or false"},
 		{"bad enum", []string{"log_level", "loud"}, false, "must be one of"},
-		{"global non-server key", []string{"web_port", "9"}, true, "global scope manages one key"},
+		{"global unknown key", []string{"nope", "9"}, true, "unknown global setting"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -164,9 +168,48 @@ func TestSettingsRepoNoConfig(t *testing.T) {
 	t.Setenv("SATELLE_CONFIG", "")
 	t.Chdir(t.TempDir())
 	cmd, _ := testCmd()
-	err := runSettings(cmd, []string{"web_port"}, false)
+	err := runSettings(cmd, []string{"log_level"}, false)
 	if err == nil || !strings.Contains(err.Error(), "no .satelle/satelle.toml found") {
 		t.Fatalf("got %v, want not-found error", err)
+	}
+}
+
+func TestSettingsGlobalListenKeys(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	cmd, _ := testCmd()
+	if err := runSettings(cmd, []string{"port", "9099"}, true); err != nil {
+		t.Fatal(err)
+	}
+	cmd, buf := testCmd()
+	if err := runSettings(cmd, []string{"port"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(buf.String()) != "9099" {
+		t.Fatalf("port read = %q", buf.String())
+	}
+	cmd, _ = testCmd()
+	if err := runSettings(cmd, []string{"addr", "127.0.0.1"}, true); err != nil {
+		t.Fatal(err)
+	}
+	cmd, _ = testCmd()
+	if err := runSettings(cmd, []string{"endpoint", "http://127.0.0.1:9099"}, true); err != nil {
+		t.Fatal(err)
+	}
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gc.Service.Port != 9099 || gc.Service.Addr != "127.0.0.1" || gc.Service.Endpoint != "http://127.0.0.1:9099" {
+		t.Fatalf("global listen keys = %+v", gc.Service)
+	}
+	cmd, buf = testCmd()
+	if err := runSettings(cmd, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"port = 9099", "addr = 127.0.0.1", "endpoint = http://127.0.0.1:9099"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("list missing %q:\n%s", want, buf.String())
+		}
 	}
 }
 

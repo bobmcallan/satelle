@@ -7,7 +7,6 @@
 package cli
 
 import (
-	"hash/fnv"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -113,27 +112,6 @@ func localPinRepoRoot() (string, bool) {
 	return pinRepoRootOf(resolvePathOrSelf(self))
 }
 
-// localWebPortBase/Span define the deterministic local-mode web-port range
-// (8800–8999) — distinct from the global DefaultWebPort (8787).
-const (
-	localWebPortBase = 8800
-	localWebPortSpan = 200
-)
-
-// localDeterministicPort maps a repo root to a STABLE web port in the local-mode
-// range, so each repo's local instance gets its own predictable port that never
-// collides with the global default or (barring hash collisions) other repos. Same
-// root → same port.
-func localDeterministicPort(repoRoot string) int {
-	abs := repoRoot
-	if p, err := filepath.Abs(repoRoot); err == nil {
-		abs = p
-	}
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(abs))
-	return localWebPortBase + int(h.Sum32()%uint32(localWebPortSpan))
-}
-
 // binaryScopeLabelOf describes which install the path `self` is — the repo-local
 // pin (with its path) or the global install — so `satelle version`/`status` make
 // the active binary obvious (sty_fc1163dd). PURE core, keyed off the same
@@ -153,22 +131,6 @@ func binaryScopeLabel() string {
 		return "global"
 	}
 	return binaryScopeLabelOf(resolvePathOrSelf(self))
-}
-
-// resolveServePort picks the web port for `serve`: an explicit --port wins, then
-// an explicit [web_port] in config, then the local-mode deterministic per-repo
-// port, then the global default. Pure, so the precedence is unit-tested.
-func resolveServePort(portFlag, configPort int, localRoot string, isLocal bool) int {
-	switch {
-	case portFlag > 0:
-		return portFlag
-	case configPort > 0:
-		return configPort
-	case isLocal:
-		return localDeterministicPort(localRoot)
-	default:
-		return config.DefaultWebPort
-	}
 }
 
 // reexecLocalIfPresent runs the repo-local satelle pin in place of this process

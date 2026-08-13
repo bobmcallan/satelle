@@ -166,22 +166,14 @@ func probeServe(cfg config.Config, repoRoot string) (liveHolder, bool) {
 	return liveHolder{}, false
 }
 
-// livenessPorts returns ports to probe: configured / deterministic / default.
-// Deduped. The multi-serve parent often binds DefaultWebPort even when a
-// local pin would use a different port for a single-repo serve.
+// livenessPorts returns the one machine service port to probe.
 func livenessPorts(cfg config.Config, repoRoot string) []int {
-	seen := map[int]bool{}
-	var out []int
-	add := func(p int) {
-		if p > 0 && !seen[p] {
-			seen[p] = true
-			out = append(out, p)
-		}
+	_ = cfg
+	_ = repoRoot
+	if gc, err := config.LoadGlobal(); err == nil {
+		return []int{gc.Service.ResolvePort()}
 	}
-	add(cfg.WebPort)
-	add(localDeterministicPort(repoRoot))
-	add(config.DefaultWebPort)
-	return out
+	return []int{config.DefaultWebPort}
 }
 
 // healthzOK is the dial+GET used by the serve probe; tests swap it.

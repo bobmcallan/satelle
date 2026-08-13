@@ -27,17 +27,14 @@ type Options struct {
 
 // Run opens the machine-wide mirror store and serves the RO UI until ctx ends.
 func Run(ctx context.Context, opts Options) error {
+	gc, _ := config.LoadGlobal()
 	port := opts.Port
 	if port == 0 {
-		if gc, err := config.LoadGlobal(); err == nil && gc.Service.Port > 0 {
-			port = gc.Service.Port
-		} else {
-			port = config.DefaultWebPort
-		}
+		port = gc.Service.ResolvePort()
 	}
 	addr := opts.Addr
 	if addr == "" {
-		addr = "127.0.0.1"
+		addr = gc.Service.ResolveAddr()
 	}
 	listenAddr := fmt.Sprintf("%s:%d", addr, port)
 

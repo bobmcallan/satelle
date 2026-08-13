@@ -45,7 +45,6 @@ type Setting struct {
 // Settings is the ordered repo-key whitelist. The order and Label/Help strings are
 // shared with the web settings page, so it renders identically.
 var Settings = []Setting{
-	{Key: "web_port", Label: "Web port", Help: "Applies on the next serve start.", Kind: kindInt},
 	{Key: "log_level", Label: "Log level", Help: "debug | info | warn | error", Kind: kindEnum, Enum: []string{"debug", "info", "warn", "error"}},
 	{Key: "data_dir", Label: "Data dir", Help: "Authored substrate home under the repo (default .satelle). Runtime state is home-keyed separately. Applies on the next serve start.", Kind: kindString},
 	{Key: "db", Label: "Database path", Help: "Override for the per-repo local ledger; default is ~/.satelle/<repo-key>/satelle.db (one project per DB). Applies on the next serve start.", Kind: kindString},
@@ -101,8 +100,6 @@ func SettingIDs() []string {
 // line). It is the single display entry point shared by the web page and the CLI.
 func SettingDisplay(cfg Config, s Setting) string {
 	switch s.FieldID() {
-	case "web_port":
-		return intStr(cfg.WebPort)
 	case "log_level":
 		return cfg.LogLevel
 	case "data_dir":

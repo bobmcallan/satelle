@@ -1,9 +1,8 @@
 // `satelle workspace` manages the connected-repo registry the /workspace view
 // aggregates (build order step 6). The registry lives in the global config
 // (~/.satelle/config.toml [workspace] repos); per-repo databases stay the source
-// of truth. `workspace add` also seeds the push-fed serve mirror, bootstrapping
-// [server] endpoint into satelle.local.toml when a local serve is reachable
-// (sty_805bee9c / sty_0122610a / epic:serve-adoption).
+// of truth. `workspace add` also seeds the push-fed serve mirror against the
+// machine [service] endpoint (sty_805bee9c / sty_0122610a / sty_21a7d16d).
 //
 // Mirror hygiene (epic:mirror-hygiene / sty_5aa08259 / sty_eb61be02):
 //   - SATELLE_SERVER_ENDPOINT=none disables discovery and push (hermetic tests).
@@ -21,13 +20,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/mirror"
 )
@@ -45,23 +42,20 @@ not registered is simply absent from the view, not ungoverned.`,
 
 	add := &cobra.Command{
 		Use:   "add [path]",
-		Short: "Join the workspace: register, seed the serve mirror (bootstraps [server] endpoint when a matching local serve is running)",
+		Short: "Join the workspace: register and seed the serve mirror",
 		Long: `workspace add registers a repo in the machine-local workspace registry
 (~/.satelle/config.toml [workspace] repos) and seeds the push-fed serve mirror
 so the project appears on the landing.
 
-[server] endpoint is required to seed. It usually lives in the gitignored
-per-machine .satelle/satelle.local.toml (not committed satelle.toml). When no
-endpoint is set and a local serve answers at the global service port (default
-http://127.0.0.1:8787) WITH a matching X-Satelle-Instance for this SATELLE_HOME,
-workspace add writes that endpoint into local.toml and seeds in the same command.
-A value already present in satelle.toml or local.toml is respected and not
-overwritten. SATELLE_SERVER_ENDPOINT overrides: a URL forces that endpoint; none|off|-
-disables discovery and push (used by hermetic tests).
+The seed target is the machine [service] endpoint in ~/.satelle/config.toml
+(env SATELLE_SERVER_ENDPOINT > [service] endpoint > http://127.0.0.1:<port>).
+A live serve must answer that URL with a matching X-Satelle-Instance for this
+SATELLE_HOME. SATELLE_SERVER_ENDPOINT=none|off|- disables discovery and push
+(used by hermetic tests).
 
-If no endpoint is set and no matching serve answers, the verb still registers
-the path, prints that seed was skipped, and exits 0 — re-run after starting
-serve, or set [server] endpoint.
+If no matching serve answers, the verb still registers the path, prints that
+seed was skipped, and exits 0 — re-run after starting serve, or set
+` + "`satelle settings --global endpoint`" + `.
 
 The landing URL slug is the repo directory's basename (e.g. /r/my-app/ for a
 repo at …/my-app). Seeding a second repo whose basename already belongs to
@@ -200,17 +194,13 @@ func runWorkspaceAdd(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "workspace add: registered %s; run `satelle workspace add` from inside that repo to seed its mirror\n", path)
 		return nil
 	}
-	ep, bootstrapped, skipReason, err := resolveSeedEndpoint(a, gc)
+	ep, skipReason, err := resolveSeedEndpoint(gc)
 	if err != nil {
 		return err
 	}
 	if ep == "" {
 		fmt.Fprintln(cmd.OutOrStdout(), seedSkipNotice(skipReason))
 		return nil
-	}
-	if bootstrapped {
-		fmt.Fprintf(cmd.OutOrStdout(), "workspace add: bootstrapped [server] endpoint = %q into %s\n",
-			ep, localTomlPath(a))
 	}
 	snap, err := buildUISnapshot(cmd.Context(), a)
 	if err != nil {
@@ -225,53 +215,35 @@ func runWorkspaceAdd(cmd *cobra.Command, args []string) error {
 }
 
 // resolveSeedEndpoint returns the serve base URL to seed against.
-// Design (sty_5aa08259, recorded in-story): BOTH an explicit off-switch
-// (SATELLE_SERVER_ENDPOINT=none) AND instance identity on auto-bootstrap.
-// Empty endpoint with skipReason is not an error — registration already
-// succeeded (AC3: exit 0, seed skipped).
-func resolveSeedEndpoint(a *app.App, gc config.GlobalConfig) (endpoint string, bootstrapped bool, skipReason string, err error) {
+// Design (sty_5aa08259 / sty_21a7d16d): SATELLE_SERVER_ENDPOINT=none disables;
+// otherwise the machine [service] endpoint (explicit or derived) is used.
+// A derived default still requires a matching live serve. Empty endpoint with
+// skipReason is not an error — registration already succeeded (AC3: exit 0).
+func resolveSeedEndpoint(gc config.GlobalConfig) (endpoint string, skipReason string, err error) {
 	if ep, disabled, set := resolveServerEndpointEnv(); set {
 		if disabled {
-			return "", false, EnvServerEndpoint + "=none (discovery and push disabled)", nil
+			return "", EnvServerEndpoint + "=none (discovery and push disabled)", nil
 		}
-		return ep, false, "", nil
+		return ep, "", nil
 	}
-	if ep := strings.TrimSpace(a.Config.Server.Endpoint); ep != "" {
-		return ep, false, "", nil
+	if ep := strings.TrimSpace(gc.Service.Endpoint); ep != "" {
+		return ep, "", nil
 	}
-	candidate := defaultServerEndpoint(gc)
+	candidate := gc.Service.ResolveEndpoint()
+	if candidate == "" {
+		return "", "no service endpoint", nil
+	}
 	want := config.CurrentInstanceID()
 	hz := strings.TrimRight(candidate, "/") + "/healthz"
 	if !healthzInstanceOK(hz, want) {
-		// Distinguish unreachable vs foreign instance for the skip message.
 		if !healthzOK(hz) {
-			return "", false, fmt.Sprintf(
-				"no [server] endpoint and no serve answered %s — start serve then re-run, or set endpoint in %s",
-				hz, localTomlPath(a)), nil
+			return "", fmt.Sprintf(
+				"no serve answered %s — start serve then re-run, or set endpoint with `satelle settings --global endpoint`",
+				hz), nil
 		}
-		return "", false, instanceMismatchReason(candidate, want), nil
+		return "", instanceMismatchReason(candidate, want), nil
 	}
-	localPath := localTomlPath(a)
-	edit := config.KeyEdit{Section: "server", Key: "endpoint", Value: strconv.Quote(candidate)}
-	if err := config.SaveConfigValues(localPath, []config.KeyEdit{edit}); err != nil {
-		return "", false, "", fmt.Errorf("workspace add: bootstrap [server] endpoint into %s: %w", localPath, err)
-	}
-	// Keep the in-memory config in step so any same-process reader sees it.
-	a.Config.Server.Endpoint = candidate
-	return candidate, true, "", nil
-}
-
-// defaultServerEndpoint is the bootstrap candidate from the global service port
-// (DefaultWebPort when unset). Always 127.0.0.1 — the CLI publishes to a local
-// serve, not a remote bind address.
-func defaultServerEndpoint(gc config.GlobalConfig) string {
-	return fmt.Sprintf("http://127.0.0.1:%d", gc.Service.ResolvePort())
-}
-
-// localTomlPath is the gitignored per-machine overlay beside the committed
-// satelle.toml for the active repo.
-func localTomlPath(a *app.App) string {
-	return filepath.Join(a.DataDir, config.LocalConfigName)
+	return candidate, "", nil
 }
 
 // resolveRepoArg returns the absolute repo path from an optional arg, defaulting
@@ -423,25 +395,17 @@ func resolveOperatorEndpoint(cmd *cobra.Command, hintPath string) (endpoint, sou
 		}
 		return ep, EnvServerEndpoint
 	}
-	if a, err := appFrom(cmd); err == nil && a != nil {
-		if ep := strings.TrimSpace(a.Config.Server.Endpoint); ep != "" {
-			return ep, "[server] endpoint"
-		}
-	}
-	// Optional: load repo config (committed + local overlay) from hintPath.
-	if hintPath != "" {
-		committed := filepath.Join(hintPath, ".satelle", config.ConfigName)
-		if cfg, _, err := config.Load(committed); err == nil {
-			if ep := strings.TrimSpace(cfg.Server.Endpoint); ep != "" {
-				return ep, committed
-			}
-		}
-	}
 	gc, err := config.LoadGlobal()
 	if err != nil {
 		return "", "no global config"
 	}
-	candidate := defaultServerEndpoint(gc)
+	if ep := strings.TrimSpace(gc.Service.Endpoint); ep != "" {
+		return ep, "[service] endpoint"
+	}
+	candidate := gc.Service.ResolveEndpoint()
+	if candidate == "" {
+		return "", "no service endpoint"
+	}
 	want := config.CurrentInstanceID()
 	hz := strings.TrimRight(candidate, "/") + "/healthz"
 	if healthzInstanceOK(hz, want) {

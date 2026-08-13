@@ -21,7 +21,7 @@ func TestWebSettingsReadOnly(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
 	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	known := "# sentinel-comment\nweb_port = 8798\nlog_level = \"debug\"\n\n[hosted]\nserver = \"https://should-not-show.example\"\n"
+	known := "# sentinel-comment\nlog_level = \"debug\"\n\n[hosted]\nserver = \"https://should-not-show.example\"\n"
 	if err := os.WriteFile(cfgPath, []byte(known), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestWebSettingsReadOnly(t *testing.T) {
 
 	// POST /settings (root or project) → not an OK mutation path.
 	for _, path := range []string{"/settings", "/r/" + slug + "/settings"} {
-		req, _ := http.NewRequest(http.MethodPost, host+path, strings.NewReader("log_level=warn&web_port=8890"))
+		req, _ := http.NewRequest(http.MethodPost, host+path, strings.NewReader("log_level=warn"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("X-Satelle-Settings", "1")
 		resp, err := http.DefaultClient.Do(req)

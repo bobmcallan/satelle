@@ -51,7 +51,7 @@ var longWordWaiver = map[string]int{
 	// steps and the refusals are the documentation.
 	"satelle migrate":             420, // structural convergence per area, with the refusal paths
 	"satelle agents":              331, // per-harness launcher + hook install matrix
-	"satelle workspace add":       330, // registration + mirror seeding, and what each half does
+	"satelle workspace add":       284, // registration + machine-scope seed target
 	"satelle doctor":              280, // the readiness checklist it runs, item by item
 	"satelle init":                275, // what the scaffold writes and what it leaves alone
 	"satelle rebase":              263, // DESTRUCTIVE: backup, reset, what is not recoverable

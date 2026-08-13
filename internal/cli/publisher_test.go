@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -40,12 +39,8 @@ func TestChangePublisherCLI(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	// --- active publisher: both paths arrive before runRoot returns ---
-	repo := tempRepo(t)
-	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n\n[review]\ngate_create = false\n\n[server]\nendpoint = \""+srv.URL+"\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SATELLE_CONFIG", cfgPath)
+	_ = tempRepo(t)
+	t.Setenv(EnvServerEndpoint, srv.URL)
 
 	out, err := runRoot(t, "story", "create",
 		"--title", "Push Probe",
@@ -75,11 +70,10 @@ func TestChangePublisherCLI(t *testing.T) {
 		t.Errorf("event = %+v", ev)
 	}
 
-	// --- inert (no [server]) ---
+	// --- inert (SATELLE_SERVER_ENDPOINT=none from tempRepo) ---
 	changeHits.Store(0)
 	snapHits.Store(0)
 	repo2 := tempRepo(t)
-	// tempRepo already sets SATELLE_CONFIG without [server]
 	out, err = runRoot(t, "story", "create",
 		"--title", "No Push",
 		"--body", "publisher off",
@@ -95,12 +89,8 @@ func TestChangePublisherCLI(t *testing.T) {
 	_ = repo2
 
 	// --- fail-silent connection refused ---
-	repo3 := tempRepo(t)
-	cfg3 := filepath.Join(repo3, ".satelle", "satelle.toml")
-	if err := os.WriteFile(cfg3, []byte("web_port = 8181\n\n[server]\nendpoint = \"http://127.0.0.1:1\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SATELLE_CONFIG", cfg3)
+	_ = tempRepo(t)
+	t.Setenv(EnvServerEndpoint, "http://127.0.0.1:1")
 	start := time.Now()
 	out, err = runRoot(t, "story", "create",
 		"--title", "Blackhole",
@@ -144,13 +134,9 @@ func TestChangePublisherCLI(t *testing.T) {
 			}(c)
 		}
 	}()
-	repo4 := tempRepo(t)
-	cfg4 := filepath.Join(repo4, ".satelle", "satelle.toml")
+	_ = tempRepo(t)
 	ep := "http://" + ln.Addr().String()
-	if err := os.WriteFile(cfg4, []byte("web_port = 8181\n\n[server]\nendpoint = \""+ep+"\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SATELLE_CONFIG", cfg4)
+	t.Setenv(EnvServerEndpoint, ep)
 	start = time.Now()
 	out, err = runRoot(t, "story", "create",
 		"--title", "Hang Probe",
@@ -185,12 +171,8 @@ func TestUIDrainDeliversBeforeExit(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	repo := tempRepo(t)
-	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n\n[review]\ngate_create = false\n\n[server]\nendpoint = \""+srv.URL+"\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SATELLE_CONFIG", cfgPath)
+	_ = tempRepo(t)
+	t.Setenv(EnvServerEndpoint, srv.URL)
 
 	out, err := runRoot(t, "story", "create",
 		"--title", "Drain Create",
@@ -240,11 +222,7 @@ func TestUIDrainConvergesMirror(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	repo := tempRepo(t)
-	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n\n[review]\ngate_create = false\n\n[server]\nendpoint = \""+srv.URL+"\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SATELLE_CONFIG", cfgPath)
+	t.Setenv(EnvServerEndpoint, srv.URL)
 
 	out, err := runRoot(t, "story", "create",
 		"--title", "Mirror Converge",
@@ -279,14 +257,13 @@ func TestUIDrainConvergesMirror(t *testing.T) {
 	}
 }
 
-// TestInitScaffoldsServerBlock proves init's committed satelle.toml documents
-// the [server] endpoint knob (commented; push off by default).
+// TestInitScaffoldsServerBlock proves init's committed satelle.toml points
+// listen/push at machine [service] endpoint, not a repo [server] table.
 func TestInitScaffoldsServerBlock(t *testing.T) {
-	if !strings.Contains(scaffoldToml, "[server]") || !strings.Contains(scaffoldToml, "endpoint") {
-		t.Fatal("scaffoldToml must document commented [server] endpoint")
+	if strings.Contains(scaffoldToml, "\n[server]\n") || strings.Contains(scaffoldToml, "\n# [server]\n") {
+		t.Fatal("scaffoldToml must not teach a repo [server] table")
 	}
-	if !strings.Contains(scaffoldToml, "epic:serve-split") && !strings.Contains(scaffoldToml, "push-fed") {
-		// soft: comment names the purpose
-		t.Log("scaffold comment should name serve-split / push purpose")
+	if !strings.Contains(scaffoldToml, "[service] endpoint") && !strings.Contains(scaffoldToml, "config.toml") {
+		t.Fatal("scaffoldToml must document machine-scope [service] endpoint")
 	}
 }

@@ -76,6 +76,9 @@ all", use satelle doctor, which judges rather than reports.`,
 			// Real availability, not a config echo (sty_fb5e6d96): the URL a
 			// user opens plus whether anything is answering on it.
 			fmt.Fprintf(w, "web service\t%s\n", probeWebAvailability().statusValue())
+			for _, s := range config.MachineScopeStrays(a.DataDir) {
+				fmt.Fprintf(w, "config stray\t%s\n", s.Warning())
+			}
 			fmt.Fprintf(w, "log level\t%s\n", a.Config.ResolveLogLevel())
 			fmt.Fprintf(w, "stories\t%d\n", stories)
 			fmt.Fprintf(w, "tasks\t%d\n", tasks)

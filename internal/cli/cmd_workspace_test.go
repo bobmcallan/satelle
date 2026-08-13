@@ -60,11 +60,7 @@ func TestWorkspaceAddRegistersAndSeeds(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	repo := tempRepo(t)
-	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n\n[server]\nendpoint = \""+srv.URL+"\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SATELLE_CONFIG", cfgPath)
+	t.Setenv(EnvServerEndpoint, srv.URL)
 
 	// Seed a story so the snapshot body is non-empty.
 	if out, err := runRoot(t, "story", "create",
@@ -113,9 +109,9 @@ func TestWorkspaceAddRegistersAndSeeds(t *testing.T) {
 	}
 }
 
-// TestWorkspaceAddBootstrapsEndpointFromServicePort (sty_0122610a AC1/AC5 +
-// sty_5aa08259): no [server] endpoint, but a live serve on the global service
-// port with matching X-Satelle-Instance → write local.toml, seed once, exit 0.
+// TestWorkspaceAddSeedsFromDerivedServicePort (sty_0122610a / sty_21a7d16d):
+// no explicit endpoint, but a live serve on the global service port with
+// matching X-Satelle-Instance → seed once, do not write satelle.local.toml.
 func TestWorkspaceAddBootstrapsEndpointFromServicePort(t *testing.T) {
 	var snapHits atomic.Int32
 	// tempRepo isolates SATELLE_HOME first so CurrentInstanceID matches healthz.
@@ -145,26 +141,22 @@ func TestWorkspaceAddBootstrapsEndpointFromServicePort(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// tempRepo already isolated SATELLE_HOME; pin service port to httptest's.
+	// tempRepo already isolated SATELLE_HOME; pin service port to httptest's
+	// and clear the hermetic none-switch so the derived endpoint is used.
+	t.Setenv(EnvServerEndpoint, "")
+	_ = os.Unsetenv(EnvServerEndpoint)
 	if err := config.SaveGlobal(config.GlobalConfig{
 		Service: config.ServiceConfig{Port: port},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	// No [server] in committed config.
-	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SATELLE_CONFIG", cfgPath)
-
 	out, err := runRoot(t, "workspace", "add")
 	if err != nil {
 		t.Fatalf("workspace add: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "bootstrapped") {
-		t.Fatalf("expected bootstrap line:\n%s", out)
+	if strings.Contains(out, "bootstrapped") {
+		t.Fatalf("must not write repo [server] endpoint:\n%s", out)
 	}
 	if !strings.Contains(out, "workspace add: ok") {
 		t.Fatalf("expected ok line:\n%s", out)
@@ -173,12 +165,8 @@ func TestWorkspaceAddBootstrapsEndpointFromServicePort(t *testing.T) {
 		t.Fatalf("snapshot posts = %d, want 1", snapHits.Load())
 	}
 	localPath := filepath.Join(repo, ".satelle", "satelle.local.toml")
-	b, err := os.ReadFile(localPath)
-	if err != nil {
-		t.Fatalf("local.toml missing after bootstrap: %v", err)
-	}
-	if !strings.Contains(string(b), "endpoint") || !strings.Contains(string(b), srv.URL) {
-		t.Fatalf("local.toml missing endpoint=%s:\n%s", srv.URL, b)
+	if _, err := os.Stat(localPath); err == nil {
+		t.Fatal("satelle.local.toml must not be written for machine-scope endpoint")
 	}
 }
 
@@ -221,7 +209,7 @@ func TestWorkspaceAddNoServeSkipsSeedExit0(t *testing.T) {
 // matching X-Satelle-Instance is not auto-adopted.
 func TestWorkspaceAddForeignInstanceSkipsSeed(t *testing.T) {
 	var snapHits atomic.Int32
-	repo := tempRepo(t)
+	_ = tempRepo(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/healthz":
@@ -238,16 +226,13 @@ func TestWorkspaceAddForeignInstanceSkipsSeed(t *testing.T) {
 	t.Cleanup(srv.Close)
 	u, _ := url.Parse(srv.URL)
 	port, _ := strconv.Atoi(u.Port())
+	t.Setenv(EnvServerEndpoint, "")
+	_ = os.Unsetenv(EnvServerEndpoint)
 	if err := config.SaveGlobal(config.GlobalConfig{
 		Service: config.ServiceConfig{Port: port},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SATELLE_CONFIG", cfgPath)
 
 	out, err := runRoot(t, "workspace", "add")
 	if err != nil {
@@ -265,7 +250,7 @@ func TestWorkspaceAddForeignInstanceSkipsSeed(t *testing.T) {
 // disables discovery even when a matching serve answers.
 func TestWorkspaceAddEnvNoneDisablesSeed(t *testing.T) {
 	var snapHits atomic.Int32
-	repo := tempRepo(t)
+	_ = tempRepo(t)
 	wantInst := config.CurrentInstanceID()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -281,9 +266,6 @@ func TestWorkspaceAddEnvNoneDisablesSeed(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	port, _ := strconv.Atoi(u.Port())
 	_ = config.SaveGlobal(config.GlobalConfig{Service: config.ServiceConfig{Port: port}})
-	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	_ = os.WriteFile(cfgPath, []byte("web_port = 8181\n"), 0o644)
-	t.Setenv("SATELLE_CONFIG", cfgPath)
 	t.Setenv(EnvServerEndpoint, "none")
 
 	out, err := runRoot(t, "workspace", "add")
@@ -298,8 +280,8 @@ func TestWorkspaceAddEnvNoneDisablesSeed(t *testing.T) {
 	}
 }
 
-// TestWorkspaceAddRespectsConfiguredEndpoint (sty_0122610a direction item 3):
-// endpoint already in satelle.toml → no probe, no local.toml write.
+// TestWorkspaceAddRespectsConfiguredEndpoint (sty_0122610a / sty_21a7d16d):
+// explicit machine [service] endpoint → no probe, no local.toml write.
 func TestWorkspaceAddRespectsConfiguredEndpoint(t *testing.T) {
 	var snapHits atomic.Int32
 	var healthzHits atomic.Int32
@@ -319,11 +301,13 @@ func TestWorkspaceAddRespectsConfiguredEndpoint(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	repo := tempRepo(t)
-	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n\n[server]\nendpoint = \""+srv.URL+"\"\n"), 0o644); err != nil {
+	if err := config.SaveGlobal(config.GlobalConfig{
+		Service: config.ServiceConfig{Endpoint: srv.URL},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("SATELLE_CONFIG", cfgPath)
+	t.Setenv(EnvServerEndpoint, "")
+	_ = os.Unsetenv(EnvServerEndpoint)
 
 	out, err := runRoot(t, "workspace", "add")
 	if err != nil {
@@ -352,11 +336,7 @@ func TestWorkspaceAddPushFailureKeepsRegistration(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	repo := tempRepo(t)
-	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n\n[server]\nendpoint = \""+srv.URL+"\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SATELLE_CONFIG", cfgPath)
+	t.Setenv(EnvServerEndpoint, srv.URL)
 
 	out, err := runRoot(t, "workspace", "add")
 	if err == nil {
@@ -398,11 +378,7 @@ func TestWorkspaceRemovePurgesPartition(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	repo := tempRepo(t)
-	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n\n[server]\nendpoint = \""+srv.URL+"\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SATELLE_CONFIG", cfgPath)
+	t.Setenv(EnvServerEndpoint, srv.URL)
 
 	// Register first.
 	if out, err := runRoot(t, "workspace", "add"); err != nil {

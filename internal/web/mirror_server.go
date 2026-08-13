@@ -514,7 +514,7 @@ const mirrorWorkspaceSrc = `
 {{/* mirrorProjectsLive: the landing live region — full page embeds it; GET
      /fragment/projects returns only this so app.js can soft-refresh counts. */}}
 {{define "mirrorProjectsLive"}}{{if .Empty}}
-  <div class="empty">No partitions yet — run <code>satelle workspace add</code> from a repo with <code>[server] endpoint</code> configured to seed the mirror.</div>
+  <div class="empty">No partitions yet — run <code>satelle workspace add</code> to seed the mirror (satelled listens at the machine <code>[service] endpoint</code>).</div>
   {{else}}
   <table class="panel-table">
     <thead><tr><th>Project</th><th>Path</th><th>Stories</th><th>Tasks</th><th>Workflow</th><th>Documents</th><th>Updated</th></tr></thead>

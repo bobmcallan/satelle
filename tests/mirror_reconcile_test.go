@@ -40,12 +40,17 @@ func TestMirrorReconcilesTerminalStateAfterServiceRestart(t *testing.T) {
 	host := fmt.Sprintf("http://127.0.0.1:%d", port)
 
 	writeFile(t, filepath.Join(repo, ".satelle", "satelle.local.toml"),
-		fmt.Sprintf("[review]\ngate_create = false\n\n[server]\nendpoint = %q\n", host))
+		"[review]\ngate_create = false\n")
 
 	// The service and the CLI share one home — the same machine, the same
 	// per-repo database. (A service under a foreign home is refused a target by
 	// design; see internal/serve.)
 	home := isolatedHome(t)
+	// Machine-scope endpoint (sty_21a7d16d): do not write [server] endpoint in
+	// the repo. Pin the isolated home so an unset SATELLE_SERVER_ENDPOINT cannot
+	// default to the operator's live :8787.
+	writeFile(t, filepath.Join(home, "config.toml"),
+		fmt.Sprintf("[service]\nendpoint = %q\nport = %d\n", host, port))
 	var live *ServeHandle
 	var serveOut strings.Builder
 	startServe := func(reconcile bool) {
@@ -59,6 +64,9 @@ func TestMirrorReconcilesTerminalStateAfterServiceRestart(t *testing.T) {
 		if !reconcile {
 			// The pre-fix behaviour, so the dropped push stays observable.
 			env = append(env, "SATELLE_SERVER_ENDPOINT=none")
+		} else {
+			// Reconcile-on must target THIS test serve, never the live :8787 default.
+			env = append(env, "SATELLE_SERVER_ENDPOINT="+host)
 		}
 		h := StartServeWithOutput(t, testBin, repo, env, &serveOut,
 			"--addr", "127.0.0.1", "--port", fmt.Sprint(port))

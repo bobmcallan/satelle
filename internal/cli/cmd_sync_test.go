@@ -54,7 +54,7 @@ func TestSyncScopesDefaultsToLocal(t *testing.T) {
 func TestSyncScopesConfiguredAndOverlay(t *testing.T) {
 	repo := tempRepo(t)
 	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	committed := "web_port = 8181\n\n[sync]\nskills = \"shared\"\ndocuments = \"personal\"\n"
+	committed := "[sync]\nskills = \"shared\"\ndocuments = \"personal\"\n"
 	if err := os.WriteFile(cfgPath, []byte(committed), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestSyncDefaultAllLocalNothingToSync(t *testing.T) {
 func TestSyncDefaultDryRunRunsOptedInAreasInOrder(t *testing.T) {
 	repo := tempRepo(t)
 	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	cfg := "web_port = 8181\n\n[sync]\nskills = \"personal\"\ndocuments = \"personal\"\nstories = \"personal\"\n"
+	cfg := "[sync]\nskills = \"personal\"\ndocuments = \"personal\"\nstories = \"personal\"\n"
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +404,7 @@ func TestSyncRehydrateLocalOnly(t *testing.T) {
 	repo := tempRepo(t)
 	// Bound project so deploy can resolve; fake server returns empty manifest.
 	cfgPath := filepath.Join(repo, ".satelle", "satelle.toml")
-	if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n\n[hosted]\nproject = \"probe\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("[hosted]\nproject = \"probe\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
@@ -451,7 +451,7 @@ func TestSyncRehydrateEmptyTreeHappyPath(t *testing.T) {
 	// Fake server serves config (satelle.toml with personal scopes + agents),
 	// empty docs changes, and workstate items/ledger from a prior push shape.
 	const project = "probe"
-	hostedToml := "web_port = 8181\n\n[sync]\nall = \"personal\"\n\n[hosted]\nproject = \"probe\"\n"
+	hostedToml := "[sync]\nall = \"personal\"\n\n[hosted]\nproject = \"probe\"\n"
 	agentsToml := "[executor]\nharness = \"in-loop\"\n"
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
@@ -572,7 +572,7 @@ func TestSyncScopesReportsWithheldFiles(t *testing.T) {
 func TestSyncNoopMakesNoContentUploads(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
 	out, err := runRoot(t, "story", "create",
 		"--title", "Noop", "--body", "b", "--acceptance", "1. ok", "--category", "chore")
 	if err != nil {

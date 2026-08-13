@@ -78,6 +78,7 @@ const (
 	IDScaffoldStale   = "scaffold.stale"   // deployed harness scaffolding differs from the binary's canonical form
 	IDScaffoldMissing = "scaffold.missing" // canonical harness scaffolding is absent
 	IDRepoUnreadable  = "repo.unreadable"  // a registered repo could not be checked at all
+	IDConfigStray     = "config.stray"     // machine-scope key leftover in a repo file (sty_21a7d16d)
 
 	// Live probes (opt-in only).
 	IDLiveOK           = "live.ok"            // a provider answered
@@ -95,7 +96,7 @@ var ids = []string{
 	IDReviewerUnsafe, IDNodeAlloc, IDHookAlloc,
 	IDBinaryMissing, IDBinaryMalformed,
 	IDWorkflowStructure, IDWorkflowConsistency,
-	IDScaffoldStale, IDScaffoldMissing, IDRepoUnreadable,
+	IDScaffoldStale, IDScaffoldMissing, IDRepoUnreadable, IDConfigStray,
 	IDLiveOK, IDLiveAuth, IDLiveTimeout, IDLiveSpawn, IDLiveACPHandshake,
 }
 

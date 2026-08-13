@@ -217,7 +217,7 @@ func workstateRepo(t *testing.T, satelleToml string) string {
 func TestSyncWorkstatePushSkipsLocal(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "web_port = 8181\n") // no [sync] → all local
+	workstateRepo(t, "") // no [sync] → all local
 
 	out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL)
 	if err != nil {
@@ -236,7 +236,7 @@ func TestSyncWorkstatePushSkipsLocal(t *testing.T) {
 func TestSyncWorkstatePushPersonalAndIdempotent(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
 
 	// Create a story so there is something to push.
 	out, err := runRoot(t, "story", "create",
@@ -284,7 +284,7 @@ func TestSyncWorkstatePushPersonalAndIdempotent(t *testing.T) {
 func TestSyncWorkstatePushIgnoresTeamBinding(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"shared\"\n\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
+	workstateRepo(t, "[sync]\nstories = \"shared\"\n\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
 
 	out, err := runRoot(t, "story", "create",
 		"--title", "Team binding probe",
@@ -322,7 +322,7 @@ func TestSyncWorkstatePushRequiresBoundProject(t *testing.T) {
 	t.Cleanup(ts.Close)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	seedCred(t, ts.URL)
-	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n") // no project
+	workstateRepo(t, "[sync]\nstories = \"personal\"\n") // no project
 
 	out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL)
 	if err != nil && strings.Contains(err.Error(), "no sync project") {
@@ -334,7 +334,7 @@ func TestSyncWorkstatePushRequiresBoundProject(t *testing.T) {
 func TestSyncWorkstatePullSkipsLocal(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "web_port = 8181\n")
+	workstateRepo(t, "")
 
 	out, err := runRoot(t, "sync", "workstate", "pull", "--server", ts.URL)
 	if err != nil {
@@ -351,7 +351,7 @@ func TestSyncWorkstatePullSkipsLocal(t *testing.T) {
 func TestSyncWorkstateSnapshotSkipsLocal(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "web_port = 8181\n")
+	workstateRepo(t, "")
 
 	out, err := runRoot(t, "sync", "workstate", "snapshot", "--server", ts.URL)
 	if err != nil {
@@ -377,7 +377,7 @@ func TestSyncWorkstatePullRequiresBoundProject(t *testing.T) {
 	t.Cleanup(ts.Close)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	seedCred(t, ts.URL)
-	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n")
+	workstateRepo(t, "[sync]\nstories = \"personal\"\n")
 
 	out, err := runRoot(t, "sync", "workstate", "pull", "--server", ts.URL)
 	if err != nil && strings.Contains(err.Error(), "no sync project") {
@@ -389,7 +389,7 @@ func TestSyncWorkstatePullRequiresBoundProject(t *testing.T) {
 func TestSyncWorkstatePullDryRun(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
 
 	out, err := runRoot(t, "sync", "workstate", "pull", "--server", ts.URL, "--dry-run")
 	if err != nil {
@@ -407,7 +407,7 @@ func TestSyncWorkstatePullDryRun(t *testing.T) {
 func TestSyncWorkstatePullRoundTrip(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\nledger = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	workstateRepo(t, "[sync]\nstories = \"personal\"\nledger = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
 
 	out, err := runRoot(t, "story", "create",
 		"--title", "Roundtrip story",
@@ -487,7 +487,7 @@ func TestSyncWorkstatePullRoundTrip(t *testing.T) {
 func TestSyncWorkstateSnapshotRoundTrip(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\nledger = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	workstateRepo(t, "[sync]\nstories = \"personal\"\nledger = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
 
 	out, err := runRoot(t, "story", "create",
 		"--title", "Snapshot story",
@@ -548,7 +548,7 @@ func TestSyncWorkstateSnapshotRoundTrip(t *testing.T) {
 func TestSyncWorkstatePullConflictFails(t *testing.T) {
 	ts, _ := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
 
 	out, err := runRoot(t, "story", "create",
 		"--title", "Local kept",
@@ -596,7 +596,7 @@ func TestSyncWorkstatePullConflictFails(t *testing.T) {
 func TestSyncWorkstatePullConflictForceOverrides(t *testing.T) {
 	ts, _ := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
 
 	out, err := runRoot(t, "story", "create",
 		"--title", "Hosted title",
@@ -624,7 +624,7 @@ func TestSyncWorkstatePullConflictForceOverrides(t *testing.T) {
 func TestSyncWorkstatePullIgnoresTeamBinding(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"shared\"\n\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
+	workstateRepo(t, "[sync]\nstories = \"shared\"\n\n[hosted]\nproject = \"probe\"\nworkspace = \"Acme\"\n")
 
 	// Seed hosted via push first.
 	out, err := runRoot(t, "story", "create",
@@ -659,7 +659,7 @@ func TestSyncWorkstatePullIgnoresTeamBinding(t *testing.T) {
 func TestSyncWorkstatePushCursorSurvivesMidRunFailure(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	repo := workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	repo := workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
 
 	prevItem, prevLed := workstateItemChunk, workstateLedgerChunk
 	workstateItemChunk, workstateLedgerChunk = 1, 1
@@ -721,7 +721,7 @@ func TestSyncWorkstatePushCursorSurvivesMidRunFailure(t *testing.T) {
 func TestSyncWorkstateIncrementalRehydrate(t *testing.T) {
 	ts, _ := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\nledger = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	workstateRepo(t, "[sync]\nstories = \"personal\"\nledger = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
 
 	out, err := runRoot(t, "story", "create",
 		"--title", "Keep me", "--body", "body", "--acceptance", "1. ok", "--category", "feature")
@@ -783,7 +783,7 @@ func TestSyncWorkstateIncrementalRehydrate(t *testing.T) {
 func TestSyncWorkstatePushIncrementalOnlyChanged(t *testing.T) {
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
 
 	var ids []string
 	for _, title := range []string{"Alpha", "Beta"} {
@@ -836,7 +836,7 @@ func TestWorkstatePushCarriesNoAttachmentBodies(t *testing.T) {
 	const secret = "planted-change-attachment-secret-xyz-948ad5df"
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	repo := workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	repo := workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
 
 	out, err := runRoot(t, "story", "create",
 		"--title", "Attachment secrecy",
@@ -903,7 +903,7 @@ func TestWorkstatePushExcludesBinaryAttachment(t *testing.T) {
 
 	ts, f := newFakeWorkstateServer(t)
 	seedCred(t, ts.URL)
-	_ = workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+	_ = workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
 
 	out, err := runRoot(t, "story", "create",
 		"--title", "Binary exclusion",

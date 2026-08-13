@@ -109,16 +109,17 @@ func openAppForCmd(cmd *cobra.Command) error {
 	verb.SetAuthoredDirs(a.AuthoredDirs())
 	verb.SetSubstrateConfigDir(a.Config.ResolveDataDir(a.RepoRoot))
 	verb.SetLeaseStore(a.Store.Leases)
-	// UI push drain (sty_9ba3d709 / sty_126228b2): when [server] endpoint is set,
-	// mutating verbs mark topics on the ChangeNotifier seam; a bounded drain
-	// posts change events + one snapshot BEFORE store close (not fire-and-forget
-	// — those races process exit). Unset = inert (no network). Clear first so a
-	// prior test/process state cannot leak sinks into this one-shot invocation.
-	// SATELLE_SERVER_ENDPOINT=none disables push even when config has endpoint
-	// (sty_5aa08259 / hermetic tests).
+	// UI push drain (sty_9ba3d709 / sty_126228b2 / sty_21a7d16d): machine
+	// [service] endpoint (env > config > derived localhost:port). SATELLE_SERVER_ENDPOINT=none
+	// disables push (hermetic tests). Clear first so a prior test/process state
+	// cannot leak sinks into this one-shot invocation.
 	verb.SetChangeNotifier(nil)
 	var drain *uiDrain
-	if ep := effectiveServerEndpoint(a.Config.Server.Endpoint); ep != "" {
+	var serveEP string
+	if gc, gerr := config.LoadGlobal(); gerr == nil {
+		serveEP = gc.Service.ResolveEndpoint()
+	}
+	if ep := serveEP; ep != "" {
 		drain = &uiDrain{
 			endpoint: ep,
 			repoKey:  config.RepoKey(a.RepoRoot),

@@ -157,6 +157,13 @@ func Check(ctx context.Context, o Opts) Report {
 		rep.Findings = append(rep.Findings, o.ScaffoldDrift(o.RepoRoot)...)
 	}
 
+	// 5b. Leftover machine-scope keys in repo files (config.MachineScopeStrays
+	// owns the rule; doctor only surfaces it — sty_21a7d16d AC4).
+	for _, s := range config.MachineScopeStrays(dataDir) {
+		rep.Findings = append(rep.Findings, health.Warn(health.IDConfigStray, "Stray machine-scope key",
+			s.Warning()).About(s.File).WithRemediation("run `satelle migrate --yes`"))
+	}
+
 	// 6. Live probes — opt-in, bounded, and never part of the deterministic pass.
 	if o.Live {
 		rep.Findings = append(rep.Findings, probeGrants(ctx, o, av.Grants)...)

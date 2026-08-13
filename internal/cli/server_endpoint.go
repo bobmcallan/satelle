@@ -9,7 +9,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 )
 
-// EnvServerEndpoint is the CLI override for [server] endpoint discovery and
+// EnvServerEndpoint is the CLI override for [service] endpoint discovery and
 // push (sty_5aa08259). The name and its parser live in internal/config so the
 // serve-side reconciler honours the same off-switch (sty_e6e467fe).
 const EnvServerEndpoint = config.EnvServerEndpoint
@@ -24,18 +24,6 @@ const HeaderSatelleInstance = "X-Satelle-Instance"
 // probe.
 func resolveServerEndpointEnv() (endpoint string, disabled bool, set bool) {
 	return config.ServerEndpointEnv()
-}
-
-// effectiveServerEndpoint merges env override with configured [server] endpoint.
-// When the env disables push, returns "" even if config has a value.
-func effectiveServerEndpoint(cfgEndpoint string) string {
-	if ep, disabled, set := resolveServerEndpointEnv(); set {
-		if disabled {
-			return ""
-		}
-		return ep
-	}
-	return strings.TrimSpace(cfgEndpoint)
 }
 
 // healthzInstanceOK reports whether url (…/healthz) answers 200 with body

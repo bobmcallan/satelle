@@ -25,7 +25,7 @@ func seedRepo(t *testing.T, dir string, titles ...string) {
 	}
 	cfgPath := filepath.Join(dataDir, config.ConfigName)
 	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
-		if err := os.WriteFile(cfgPath, []byte("web_port = 8181\n"), 0o644); err != nil {
+		if err := os.WriteFile(cfgPath, []byte(""), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -42,7 +42,7 @@ type scaffoldConfigDefault struct {
 
 // scaffoldConfigDefaults is the curated list of scaffold-seeded keys that a
 // pre-existing toml may lack after a binary upgrade. Only keys seeded ACTIVE in
-// scaffoldToml belong here — commented-by-design keys (tags.vocabulary, web_port,
+// scaffoldToml belong here — commented-by-design keys (tags.vocabulary,
 // log_level, retention, substrate_roots, [sync], [hosted], [vars]) stay free of
 // this table: their absence means the binary default applies, as intended.
 //

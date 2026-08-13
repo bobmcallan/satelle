@@ -77,7 +77,7 @@ func TestSaveConfigValuesRoundTripPreservesUnmodeled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.WebPort != 9001 || cfg.LogLevel != "warn" {
+	if cfg.LogLevel != "warn" {
 		t.Fatalf("scalar edits not applied: %+v", cfg)
 	}
 	if cfg.Review.GateCreate {

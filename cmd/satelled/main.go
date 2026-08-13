@@ -21,7 +21,7 @@ func main() {
 	if buildinfo.Name == buildinfo.CLIName || buildinfo.Name == "" {
 		buildinfo.Name = buildinfo.DaemonName
 	}
-	addr := flag.String("addr", "127.0.0.1", "bind address")
+	addr := flag.String("addr", "", "bind address (default from global [service] addr)")
 	port := flag.Int("port", 0, "listen port (default from global service config or 8787)")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()

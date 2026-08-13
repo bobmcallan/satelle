@@ -13,9 +13,7 @@ import "fmt"
 //
 //   - Port resolution goes through servicePort / servicePortResolved (the global
 //     service port, cmd_update.go) — the port the service binds and the URL
-//     `satelle service status` already prints. The repo overlay's
-//     Config.ResolveWebPort stays what it is: `satelle serve`'s port. No third
-//     resolver.
+//     `satelle service status` already prints. One port per machine.
 //   - Reachability goes through the existing healthzOK seam
 //     (runtime_liveness.go). No second probe, no new HTTP client. A single port
 //     is probed — the one whose URL is shown — so "live" can never refer to a

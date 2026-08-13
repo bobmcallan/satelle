@@ -66,8 +66,6 @@ type Config struct {
 	// for a kind means the default <data_dir>/<kind>. An absolute value lets a
 	// kind's source live anywhere on disk.
 	SubstrateRoots map[string]string `toml:"substrate_roots"`
-	// WebPort is the local web server port; zero means DefaultWebPort.
-	WebPort int `toml:"web_port"`
 	// LogLevel is arbor's level (debug|info|warn|error); empty means info.
 	LogLevel string `toml:"log_level"`
 	// LogsMaxSizeKB caps each flat evidence log under .satelle/logs before it rolls;
@@ -99,10 +97,6 @@ type Config struct {
 	// access/refresh TOKENS are NEVER stored here — they live in the user-level
 	// credential store outside the repo (see internal/hosted). (sty_2fc93374)
 	Hosted HostedConfig `toml:"hosted"`
-	// Server is the LOCAL push-fed UI server endpoint the CLI publishes mutation
-	// events to (epic:serve-split / sty_126228b2). Distinct from Hosted (the
-	// remote satelle-server tier). Unset = change publisher inert (no network).
-	Server ServerConfig `toml:"server"`
 	// Backup tunes pre-mutation substrate backups (sty_873a5380). Local copies
 	// under .satelle/backups/ are always written; LocalOnly suppresses the
 	// advisory about enabling online/personal backup when no hosted channel is
@@ -206,15 +200,6 @@ type BackupConfig struct {
 	// set hosted = true re-introduce poison into the partition but, post-
 	// unwedge, pull only skips those paths rather than failing the whole sync.
 	Hosted bool `toml:"hosted"`
-}
-
-// ServerConfig points the CLI change publisher at a local read-only UI server
-// (sty_126228b2). Secret-free; mechanism only — the binary carries no server
-// opinion beyond POSTing events when Endpoint is set.
-type ServerConfig struct {
-	// Endpoint is the base URL of the local UI server (e.g. http://127.0.0.1:8787).
-	// Empty means the change publisher is a no-op.
-	Endpoint string `toml:"endpoint"`
 }
 
 // HostedConfig binds a repo to a hosted satelle-server. Secret-free and
@@ -437,14 +422,6 @@ func (c Config) ResolveDB(repoRoot string) string {
 		return resolveUnder(repoRoot, p)
 	}
 	return c.ResolveRuntimeDB(repoRoot)
-}
-
-// ResolveWebPort returns the web port, defaulting when unset.
-func (c Config) ResolveWebPort() int {
-	if c.WebPort > 0 {
-		return c.WebPort
-	}
-	return DefaultWebPort
 }
 
 // ResolveLogsMaxSizeBytes returns the per-file size cap (bytes) for the flat

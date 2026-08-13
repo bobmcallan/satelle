@@ -20,9 +20,6 @@ func TestZeroConfigDefaults(t *testing.T) {
 	if got := c.ResolveDB(repo); got != wantDB {
 		t.Errorf("ResolveDB = %q, want %q", got, wantDB)
 	}
-	if got := c.ResolveWebPort(); got != DefaultWebPort {
-		t.Errorf("ResolveWebPort = %d", got)
-	}
 	if got := c.ResolveLogLevel(); got != "info" {
 		t.Errorf("ResolveLogLevel = %q", got)
 	}
@@ -104,12 +101,12 @@ func TestLoadWithLocalOverlay(t *testing.T) {
 	if err := os.MkdirAll(satelleDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	committed := "web_port = 9000\nlog_level = \"warn\"\n"
+	committed := "log_level = \"warn\"\nstories_keep_closed = 10\n"
 	if err := os.WriteFile(filepath.Join(satelleDir, ConfigName), []byte(committed), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Overlay overrides web_port but not log_level.
-	local := "web_port = 9999\n"
+	// Overlay overrides stories_keep_closed but not log_level.
+	local := "stories_keep_closed = 3\n"
 	if err := os.WriteFile(filepath.Join(satelleDir, LocalConfigName), []byte(local), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -117,8 +114,8 @@ func TestLoadWithLocalOverlay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ResolveWebPort() != 9999 {
-		t.Errorf("overlay web_port = %d, want 9999", cfg.ResolveWebPort())
+	if cfg.StoriesKeepClosed != 3 {
+		t.Errorf("overlay stories_keep_closed = %d, want 3", cfg.StoriesKeepClosed)
 	}
 	if cfg.ResolveLogLevel() != "warn" {
 		t.Errorf("committed log_level lost: %q", cfg.ResolveLogLevel())
@@ -152,7 +149,7 @@ func TestEngagementParallelDefault(t *testing.T) {
 	if got := zero.ResolveEngagementParallel(); got != ParallelNone {
 		t.Errorf("zero Config mode = %q, want %q", got, ParallelNone)
 	}
-	cfg, err := writeConfig(t, "web_port = 9000\n")
+	cfg, err := writeConfig(t, "log_level = \"info\"\n")
 	if err != nil {
 		t.Fatalf("absent [engagement] must load: %v", err)
 	}

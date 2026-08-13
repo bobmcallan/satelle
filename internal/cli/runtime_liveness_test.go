@@ -39,7 +39,7 @@ func liveLegacyFixture(t *testing.T) (home, repo, dataDir, legacyDB string, a *a
 	if err := os.WriteFile(filepath.Join(dataDir, "agents.toml"), []byte("[executor]\nharness = \"in-loop\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "satelle.toml"), []byte("web_port = 18181\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dataDir, "satelle.toml"), []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	legacyDB = filepath.Join(dataDir, config.DefaultDBName)
@@ -188,6 +188,7 @@ func TestMigrateHelpDocumentsSplitBrainRecovery(t *testing.T) {
 
 // TestProbeServeViaHealthz: serve probe returns a holder when /healthz is ok.
 func TestProbeServeViaHealthz(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
 			_, _ = w.Write([]byte("ok"))
@@ -213,7 +214,7 @@ func TestProbeServeViaHealthz(t *testing.T) {
 	serveProbeEnabled = true
 	t.Cleanup(func() { serveProbeEnabled = prevProbe })
 
-	h, ok := probeServe(config.Config{WebPort: 1}, "/unused")
+	h, ok := probeServe(config.Config{}, "/unused")
 	if !ok {
 		t.Fatal("expected serve holder")
 	}
