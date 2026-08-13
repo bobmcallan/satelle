@@ -296,6 +296,10 @@ header.app h1 .dot { color: var(--accent); }
 .rel-time { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .sync-fail { color: var(--fail); font-size: 12px; white-space: nowrap; margin-left: 6px; }
 .sync-local, .sync-ok { color: var(--muted); font-size: 12px; white-space: nowrap; margin-left: 6px; }
+.sync-fail-body { color: var(--fail); font-size: 12px; margin-top: 4px; max-width: 72rem; }
+.sync-fail-reason { white-space: pre-wrap; word-break: break-word; }
+.sync-fail-log { color: var(--muted); }
+tr.sync-fail-detail td { padding-top: 0; padding-bottom: 10px; }
 td.updated-cell { white-space: nowrap; }
 .panel { display: none; }
 .panel.active { display: block; }

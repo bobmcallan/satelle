@@ -50,6 +50,12 @@ func DefaultPath(globalDir string) string {
 	return filepath.Join(globalDir, DefaultDirName, DefaultDBName)
 }
 
+// ServerLogPath is the satelled request/push log under the machine home.
+// One path, used by serve.Run and the mirror UI (sty_34037275).
+func ServerLogPath(globalDir string) string {
+	return filepath.Join(globalDir, DefaultDirName, "server.log")
+}
+
 func (s *Store) migrate() error {
 	if err := s.createTables(); err != nil {
 		return err

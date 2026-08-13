@@ -67,7 +67,7 @@ path: "satelle sync workstate pull".`,
 			return runSyncWorkstatePush(cmd, pushServer, dryRun, full)
 		},
 	}
-	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	push.Flags().BoolVar(&dryRun, "dry-run", false, "List which areas would be pushed without contacting the server.")
 	push.Flags().BoolVar(&full, "full", false, "Ignore the stored cursor and push the complete set (then advance the cursor).")
 	group.AddCommand(push)
@@ -97,7 +97,7 @@ binding ignored). Requires "satelle project bind <slug>".`,
 			return runSyncWorkstatePull(cmd, pullServer, pullDryRun, force)
 		},
 	}
-	pull.Flags().StringVar(&pullServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	pull.Flags().StringVar(&pullServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	pull.Flags().BoolVar(&pullDryRun, "dry-run", false, "List which areas would be pulled without contacting the server.")
 	pull.Flags().BoolVar(&force, "force", false, "Materialize even when local and hosted both have data for an area (upsert by id; no wipe).")
 	group.AddCommand(pull)
@@ -115,7 +115,7 @@ exec this verb; it does not talk to the hosted server itself.`,
 			return runSyncWorkstateSnapshot(cmd, snapServer)
 		},
 	}
-	snap.Flags().StringVar(&snapServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	snap.Flags().StringVar(&snapServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	group.AddCommand(snap)
 
 	return group

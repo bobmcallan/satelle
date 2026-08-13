@@ -89,6 +89,7 @@ type pageData struct {
 	SyncLastSuccess time.Time
 	SyncReason      string
 	SyncLocal       bool
+	SyncLogPath     string
 }
 
 type crumbProject struct {

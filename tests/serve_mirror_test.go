@@ -67,8 +67,8 @@ func TestServeMirrorPushFed(t *testing.T) {
 		t.Fatalf("project page missing story after workspace add:\n%s", proj)
 	}
 
-	// --- AC4: non-ingest POSTs rejected ---
-	for _, path := range []string{"/theme", "/settings/global", "/oauth/logout"} {
+	// --- non-ingest POSTs rejected, except loopback /settings/global (sty_34037275) ---
+	for _, path := range []string{"/theme", "/oauth/logout"} {
 		req, _ := http.NewRequest(http.MethodPost, host+path, strings.NewReader(""))
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {

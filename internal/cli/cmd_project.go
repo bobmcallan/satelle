@@ -6,7 +6,7 @@ package cli
 // (the caller becomes owner); list GETs the caller's projects; bind records
 // which hosted project this repo's personal sync targets; show prints server,
 // binding, and sign-in state. All reuse the login flow's resolveServer
-// (--server → global [hosted] server → repo satelle.toml) and the per-user
+// (--server → machine [hosted] server → DefaultHostedServer) and the per-user
 // credential store. Like login/whoami these commands never touch the local DB,
 // so they carry no store annotation and work in a fresh clone.
 
@@ -49,7 +49,7 @@ and name. Requires a prior "satelle login".`,
 			return runProjectCreate(cmd, createServer, slug, name)
 		},
 	}
-	create.Flags().StringVar(&createServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	create.Flags().StringVar(&createServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	create.Flags().StringVar(&slug, "slug", "", "Project slug (required).")
 	create.Flags().StringVar(&name, "name", "", "Human-readable project name (required).")
 	project.AddCommand(create)
@@ -67,7 +67,7 @@ bound to.`,
 			return runProjectList(cmd, listServer)
 		},
 	}
-	list.Flags().StringVar(&listServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	list.Flags().StringVar(&listServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	project.AddCommand(list)
 
 	// bind — record which hosted project this repo's personal sync targets.
@@ -99,7 +99,7 @@ themselves report only indirectly.`,
 			return runProjectShow(cmd, showServer)
 		},
 	}
-	show.Flags().StringVar(&showServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	show.Flags().StringVar(&showServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	project.AddCommand(show)
 
 	register(project)

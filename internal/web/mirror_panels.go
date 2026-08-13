@@ -56,6 +56,17 @@ func loadPartitionSync(repoPath string) syncstate.State {
 	return st
 }
 
+func displayedSyncLogPath() string {
+	home := strings.TrimSpace(os.Getenv("SATELLE_HOME"))
+	if home == "" {
+		if testing.Testing() {
+			return filepath.Join(mirror.DefaultDirName, "server.log")
+		}
+		home = config.GlobalDir()
+	}
+	return mirror.ServerLogPath(home)
+}
+
 func partitionFreshness(ctx context.Context, s *mirror.Store, repoKey string) time.Time {
 	p, ok, err := s.GetPartition(ctx, repoKey)
 	if err != nil || !ok {
@@ -130,6 +141,10 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 	}
 
 	syncSt := loadPartitionSync(repoRoot)
+	logPath := ""
+	if syncSt.PushReason != "" {
+		logPath = displayedSyncLogPath()
+	}
 	return pageData{
 		RepoRoot:        repoRoot,
 		ProjectName:     projectName,
@@ -137,6 +152,7 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 		SyncLastSuccess: syncSt.PushLastSuccess,
 		SyncReason:      syncSt.PushReason,
 		SyncLocal:       syncSt.Scope == "local",
+		SyncLogPath:     logPath,
 		Stories:         attachLightsFrom(entriesByStory, stories, liveSeat, catStepOf),
 		BacklogCount:    backlog,
 		EngagementCount: len(engagedIDs),

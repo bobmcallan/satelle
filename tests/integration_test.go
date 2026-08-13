@@ -311,6 +311,12 @@ func hashTree(root string, preExistingKeys map[string]struct{}) map[string]strin
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
+		// Live satelled rewrites this cursor independently of the suite
+		// (same class as serve/ WAL). Fingerprinting it false-fails every
+		// release on a machine whose daemon is running.
+		if rel == "document-sync-state.json" {
+			return nil
+		}
 		top := strings.SplitN(rel, "/", 2)[0]
 		// Live push-fed serve plane (mirror.db, server.log) — skip contents.
 		if top == "serve" {

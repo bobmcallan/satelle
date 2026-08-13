@@ -44,7 +44,8 @@ func TestBackupExistingFileLocalFloorAndAdvisory(t *testing.T) {
 // (sty_84f14ace AC5). Direct BackupOpts with server+project still pushes (tests
 // and explicit call sites).
 func TestResolveBackupOptsHostedOptIn(t *testing.T) {
-	// Isolate global hosted config so ResolveHostedServer only sees repo config.
+	// Isolate SATELLE_HOME so ResolveHostedServer cannot pick up the operator's
+	// machine hosted server (repo [sync]/[hosted] server is no longer a source).
 	t.Setenv("SATELLE_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -58,8 +59,8 @@ func TestResolveBackupOptsHostedOptIn(t *testing.T) {
 
 	cfg.Backup.Hosted = true
 	opts = ResolveBackupOpts(cfg, t.TempDir())
-	if opts.HostedServer != "https://example.test" || opts.HostedProject != "proj" {
-		t.Fatalf("Backup.Hosted=true should resolve channel, got server=%q project=%q", opts.HostedServer, opts.HostedProject)
+	if opts.HostedServer != config.DefaultHostedServer || opts.HostedProject != "proj" {
+		t.Fatalf("Backup.Hosted=true should resolve machine hosted server + repo project, got server=%q project=%q", opts.HostedServer, opts.HostedProject)
 	}
 
 	// AC5 / sty_0fd04503 AC4: inject HostedPush and assert it is never reached

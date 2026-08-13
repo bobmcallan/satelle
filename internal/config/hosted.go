@@ -1,13 +1,11 @@
 package config
 
-// Hosted-server RESOLUTION (sty_53ccf845 / sty_a13d7c4a). The hosted server
-// the CLI signs in to is a per-USER/machine setting (~/.satelle/config.toml
-// [hosted] server, written by `satelle login`) and still wins. Repo connection
-// settings live on [sync] (server / project / workspace) with defaults:
-// server https://satelle.dev, project = this repo's directory name. A leftover
-// satelle.toml [hosted] table is a read-only fallback until init/migrate
-// copies leftover keys onto [sync] and drops the table (sty_5eb1bb8a).
-// Tokens stay in the credstore (internal/hosted).
+// Hosted-server RESOLUTION (sty_34037275). The hosted origin is a machine
+// setting only: ~/.satelle/config.toml [hosted] server, written by
+// `satelle login` / `satelle settings --global server`. Unset →
+// DefaultHostedServer. Repo [sync] server is a leftover stray (never
+// resolved). [sync] project / workspace stay per-repo. Tokens stay in the
+// credstore (internal/hosted).
 
 import (
 	"path/filepath"
@@ -31,14 +29,6 @@ func (c Config) syncValue(key string) string {
 	return strings.TrimSpace(c.Sync[key])
 }
 
-// SyncServer is [sync] server, else leftover [hosted] server (raw, un-defaulted).
-func (c Config) SyncServer() string {
-	if s := c.syncValue(syncServerKey); s != "" {
-		return strings.TrimRight(s, "/")
-	}
-	return strings.TrimRight(strings.TrimSpace(c.Hosted.Server), "/")
-}
-
 // SyncProject is [sync] project, else leftover [hosted] project (raw, un-defaulted).
 func (c Config) SyncProject() string {
 	if s := c.syncValue(syncProjectKey); s != "" {
@@ -55,25 +45,21 @@ func (c Config) SyncWorkspace() string {
 	return strings.TrimSpace(c.Hosted.Workspace)
 }
 
-// HostedServerFor: global login server, then repo SyncServer, then DefaultHostedServer.
+// HostedServerFor is machine [hosted] server, else DefaultHostedServer.
+// repo is unused (signature kept so call sites stay unchanged).
 func HostedServerFor(gc GlobalConfig, repo Config) string {
+	_ = repo
 	if s := gc.Hosted.ResolveServer(); s != "" {
-		return s
-	}
-	if s := repo.SyncServer(); s != "" {
 		return s
 	}
 	return DefaultHostedServer
 }
 
 // ResolveHostedServer loads the global config and applies HostedServerFor.
-// A malformed global degrades to repo SyncServer then the default.
+// A malformed or missing global degrades to DefaultHostedServer.
 func ResolveHostedServer(repo Config) string {
 	gc, err := LoadGlobal()
 	if err != nil {
-		if s := repo.SyncServer(); s != "" {
-			return s
-		}
 		return DefaultHostedServer
 	}
 	return HostedServerFor(gc, repo)

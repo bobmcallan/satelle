@@ -57,7 +57,7 @@ catalogs are a separate verb: satelle publish.`,
 			return runSync(cmd, syncServer, syncDryRun)
 		},
 	}
-	syncCmd.Flags().StringVar(&syncServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	syncCmd.Flags().StringVar(&syncServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	syncCmd.Flags().BoolVar(&syncDryRun, "dry-run", false, "Preview what each opted-in area would push without contacting the server (documents pull is not previewed).")
 	syncCmd.AddCommand(&cobra.Command{
 		Use:   "scopes",
@@ -115,7 +115,7 @@ machine. Optional --force is passed to workstate pull only (conflict override).`
 			return runSyncRehydrate(c, server, force)
 		},
 	}
-	cmd.Flags().StringVar(&server, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	cmd.Flags().StringVar(&server, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	cmd.Flags().BoolVar(&force, "force", false, "Pass --force to workstate pull (upsert on conflict).")
 	return cmd
 }
@@ -308,7 +308,7 @@ Requires "satelle project bind <slug>".`,
 			return runSyncConfigPush(cmd, pushServer, pushWorkspace, dryRun)
 		},
 	}
-	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	push.Flags().StringVar(&pushWorkspace, "workspace", "", "Ignored for push (sync is personal-only; kept for flag compatibility).")
 	push.Flags().BoolVar(&dryRun, "dry-run", false, "List what would be pushed without contacting the server.")
 	group.AddCommand(push)
@@ -331,7 +331,7 @@ on push; deploy always materializes from the bound project partition.`,
 			return runSyncConfigDeploy(cmd, deployServer, deployWorkspace, version)
 		},
 	}
-	deploy.Flags().StringVar(&deployServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	deploy.Flags().StringVar(&deployServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	deploy.Flags().StringVar(&deployWorkspace, "workspace", "", "Workspace to deploy from (overrides the active workspace).")
 	deploy.Flags().IntVar(&version, "version", 0, "Pin a per-file version (default: latest head of each path).")
 	group.AddCommand(deploy)

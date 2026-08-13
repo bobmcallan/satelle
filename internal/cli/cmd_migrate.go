@@ -108,8 +108,9 @@ type migratePlan struct {
 	// (sty_fefc88cd / sty_e8e1879c). Absent key materialises the managed
 	// dump names; empty list is a deliberate opt-out.
 	ExemptGlobsManaged []string
-	// HostedToSync lists leftover [hosted] keys that [sync] still lacks
-	// (sty_a13d7c4a). Copied onto [sync] before the leftover table is dropped.
+	// HostedToSync lists leftover [hosted] project/workspace that [sync] still
+	// lacks. Copied onto [sync] before the leftover table is dropped.
+	// [hosted] server is machine-scope (sty_34037275) and is never copied here.
 	HostedToSync []string
 	// HostedTableDrop is true when a leftover [hosted] table is still in the
 	// file (sty_5eb1bb8a). Dropped after any HostedToSync copy.
@@ -489,6 +490,12 @@ func rehomeStray(gc *config.GlobalConfig, s config.Stray) (wrote bool, msg strin
 		}
 		gc.Service.Repo = strings.TrimSpace(s.RepoValue)
 		return true, s.Key + ": re-homed to ~/.satelle/config.toml [service] repo"
+	case s.Key == "[sync] server" || s.Key == "[hosted] server":
+		if strings.TrimSpace(gc.Hosted.ResolveServer()) != "" {
+			return false, s.Key + ": machine hosted server already set — kept (repo discarded)"
+		}
+		gc.Hosted.Server = strings.TrimSpace(s.RepoValue)
+		return true, s.Key + ": re-homed to ~/.satelle/config.toml [hosted] server"
 	default:
 		return false, s.Key + ": removed from repo (no machine mapping)"
 	}
@@ -502,6 +509,10 @@ func straySectionKey(key string) (section, name string) {
 		return "server", strings.TrimPrefix(key, "[server] ")
 	case strings.HasPrefix(key, "[service] "):
 		return "service", strings.TrimPrefix(key, "[service] ")
+	case strings.HasPrefix(key, "[sync] "):
+		return "sync", strings.TrimPrefix(key, "[sync] ")
+	case strings.HasPrefix(key, "[hosted] "):
+		return "hosted", strings.TrimPrefix(key, "[hosted] ")
 	default:
 		return "", key
 	}
@@ -1054,7 +1065,7 @@ func hostedBindingMissingOnSync(dataDir string) []string {
 	}
 	content := string(raw)
 	var missing []string
-	for _, k := range []string{"server", "project", "workspace"} {
+	for _, k := range []string{"project", "workspace"} {
 		if !config.HasKey(content, "hosted", k) {
 			continue
 		}
@@ -1074,8 +1085,10 @@ func hasHostedTable(dataDir string) bool {
 	return config.HasSection(string(raw), "hosted")
 }
 
-// healHostedBinding copies leftover [hosted] server/project/workspace onto
-// [sync] when [sync] does not already set them, then drops the [hosted] table.
+// healHostedBinding copies leftover [hosted] project/workspace onto [sync]
+// when [sync] does not already set them, re-homes leftover [hosted] server
+// onto the machine file (never onto [sync] — sty_34037275), then drops the
+// leftover [hosted] table.
 func healHostedBinding(dataDir string) (bool, error) {
 	path := filepath.Join(dataDir, config.ConfigName)
 	raw, err := os.ReadFile(path)
@@ -1089,12 +1102,22 @@ func healHostedBinding(dataDir string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if server := strings.TrimSpace(cfg.Hosted.Server); server != "" {
+		gc, gerr := config.LoadGlobal()
+		if gerr != nil {
+			return false, gerr
+		}
+		if strings.TrimSpace(gc.Hosted.ResolveServer()) == "" {
+			gc.Hosted.Server = server
+			if serr := config.SaveGlobal(gc); serr != nil {
+				return false, serr
+			}
+		}
+	}
 	content := string(raw)
 	for _, k := range hostedBindingMissingOnSync(dataDir) {
 		var val string
 		switch k {
-		case "server":
-			val = strings.TrimSpace(cfg.Hosted.Server)
 		case "project":
 			val = strings.TrimSpace(cfg.Hosted.Project)
 		case "workspace":

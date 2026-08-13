@@ -78,8 +78,8 @@ func TestScaffoldTomlDocumentsConfigSurface(t *testing.T) {
 	if got := cfg.Sync["project"]; got != "my-project-slug" {
 		t.Errorf("Sync[project] = %q, want my-project-slug", got)
 	}
-	if got := cfg.Sync["server"]; got == "" {
-		t.Error("Sync[server] empty after uncommenting example")
+	if got := cfg.Sync["server"]; got != "" {
+		t.Errorf("example must not seed repo [sync] server (machine-scope), got %q", got)
 	}
 	if cfg.Vars["MODEL_BASE_URL"] == "" {
 		t.Error("Vars[MODEL_BASE_URL] empty after uncommenting example")

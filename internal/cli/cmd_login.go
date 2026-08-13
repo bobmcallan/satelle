@@ -69,7 +69,7 @@ forgets a credential, it does not revoke or delete anything server-side.`,
 			return runLogout(cmd, logoutServer)
 		},
 	}
-	logout.Flags().StringVar(&logoutServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	logout.Flags().StringVar(&logoutServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	register(logout)
 
 	var whoamiServer string
@@ -85,14 +85,13 @@ asks the server, so it needs the network.`,
 			return runWhoami(cmd, whoamiServer)
 		},
 	}
-	whoami.Flags().StringVar(&whoamiServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	whoami.Flags().StringVar(&whoamiServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	register(whoami)
 }
 
-// resolveServer picks the server: the flag wins, else the GLOBAL config's
-// [hosted] server (the machine-wide binding), else the committed repo config's
-// [hosted] server (the read-only backward-compat fallback). A blank result is an
-// error at the caller.
+// resolveServer picks the server: the flag wins, else the machine
+// ~/.satelle/config.toml [hosted] server, else DefaultHostedServer. Repo
+// satelle.toml is not a source.
 func resolveServer(flagServer string) string {
 	cfg, _, err := config.Load("")
 	if err != nil && !errors.Is(err, config.ErrNotFound) {
@@ -102,7 +101,6 @@ func resolveServer(flagServer string) string {
 	if s := strings.TrimSpace(flagServer); s != "" {
 		return strings.TrimRight(s, "/")
 	}
-	// Global-first, with the repo config as the read-only fallback.
 	return config.ResolveHostedServer(cfg)
 }
 

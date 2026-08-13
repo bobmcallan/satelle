@@ -59,7 +59,7 @@ var Settings = []Setting{
 	{Section: "gate", Key: "allow_outside_tree_edits", Label: "Allow outside-tree edits", Help: "Opt in to Bash/Edit mutations in another repo's working tree. Non-repo paths are never fenced. Default deny; only for a deliberate multi-repo install.", Kind: kindBool},
 	{Section: "engagement", Key: "parallel", Label: "Seat concurrency mode", Help: "none = one performing story at a time; epic = sibling children of one epic may engage concurrently, each from a distinct git working tree.", Kind: kindEnum, Enum: []string{ParallelNone, ParallelEpic}},
 	{Section: "sync", Key: "project", Label: "Sync project", Help: "Hosted project slug this repo maps to. Unset = this repo's directory name.", Kind: kindString},
-	{Section: "sync", Key: "server", Label: "Sync server", Help: "Hosted origin. Unset = https://satelle.dev. A machine-wide login server still wins.", Kind: kindString},
+	{Section: "sync", Key: "server", Label: "Sync server (leftover)", Help: "Leftover repo key — not resolved. Hosted origin is machine-scope (satelle settings --global server). Re-home with satelle migrate --yes.", Kind: kindString},
 	{Section: "sync", Key: "workspace", Label: "Active workspace", Help: "Scoped-sync destination — personal default; a team-workspace name elects it.", Kind: kindString},
 	{Section: "attachments", Key: "max_bytes", Label: "Binary attachment max bytes", Help: "Per-attachment decoded size cap (default 10485760 = 10 MiB).", Kind: kindInt},
 	{Section: "attachments", Key: "allow_types", Label: "Binary content types", Help: "Allowlisted content types for binary attachments (comma-separated). SVG/HTML are hostile if served.", Kind: kindList},

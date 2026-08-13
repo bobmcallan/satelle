@@ -14,7 +14,7 @@ import (
 
 // Stray is one machine-scope key still present in a repo config file.
 type Stray struct {
-	Key            string // web_port | [server] endpoint | [service] <name>
+	Key            string // web_port | [server] endpoint | [service] <name> | [sync] server | [hosted] server
 	File           string // satelle.toml or satelle.local.toml (basename)
 	RepoValue      string // raw right-hand side as written in the repo file
 	EffectiveValue string // value satelled actually uses
@@ -33,8 +33,9 @@ func (s Stray) Warning() string {
 }
 
 // MachineScopeStrays raw-byte-scans satelle.toml and satelle.local.toml under
-// dataDir for uncommented web_port, [server] endpoint, and any [service] key.
-// It does not decode those keys into Config — they have no repo-scope fields.
+// dataDir for uncommented web_port, [server] endpoint, any [service] key, and
+// leftover [sync] server / [hosted] server. It does not decode those keys
+// into Config — they have no repo-scope fields.
 func MachineScopeStrays(dataDir string) []Stray {
 	if strings.TrimSpace(dataDir) == "" {
 		return nil
@@ -94,6 +95,17 @@ func scanMachineScopeStrays(content, file string, gc GlobalConfig) []Stray {
 				File:           file,
 				RepoValue:      val,
 				EffectiveValue: serviceEffective(gc, key),
+			})
+		case (section == "sync" || section == "hosted") && key == "server":
+			eff := gc.Hosted.ResolveServer()
+			if eff == "" {
+				eff = DefaultHostedServer
+			}
+			out = append(out, Stray{
+				Key:            "[" + section + "] server",
+				File:           file,
+				RepoValue:      val,
+				EffectiveValue: eff,
 			})
 		}
 	}

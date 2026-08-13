@@ -46,7 +46,7 @@ catalog. Requires "satelle project bind <slug>".`,
 			return runSyncDocumentsPush(cmd, pushServer, pushWorkspace, dryRun)
 		},
 	}
-	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	push.Flags().StringVar(&pushServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	push.Flags().StringVar(&pushWorkspace, "workspace", "", "Ignored for push (sync is personal-only; kept for flag compatibility).")
 	push.Flags().BoolVar(&dryRun, "dry-run", false, "List what would be pushed without contacting the server.")
 	group.AddCommand(push)
@@ -63,7 +63,7 @@ them byte-for-byte into this repo's documents area. Up-to-date trees report
 			return runSyncDocumentsPull(cmd, pullServer, pullWorkspace)
 		},
 	}
-	pull.Flags().StringVar(&pullServer, "server", "", "Hosted server URL (overrides the configured global/repo server).")
+	pull.Flags().StringVar(&pullServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
 	pull.Flags().StringVar(&pullWorkspace, "workspace", "", "Ignored for pull (sync is personal-only; kept for flag compatibility).")
 	group.AddCommand(pull)
 

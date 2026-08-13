@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"html/template"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -26,7 +28,9 @@ type MirrorServer struct {
 	// auto-bootstrap only seeds a serve that matches the caller's SATELLE_HOME
 	// (sty_5aa08259 / epic:mirror-hygiene).
 	InstanceID string
-	hub        *hub
+	// LogPath is the satelled server.log shown next to a standing push failure.
+	LogPath string
+	hub     *hub
 }
 
 // partitionVM is one workspace row on the mirror landing. Counts mirror the
@@ -51,6 +55,7 @@ type partitionVM struct {
 	SyncLastSuccess time.Time
 	SyncReason      string
 	SyncLocal       bool
+	SyncLogPath     string
 }
 
 // mirrorWorkspaceData backs the mirror workspace landing template.
@@ -101,7 +106,7 @@ func NewMirrorHooks(m *mirror.Store, instanceID string, onIngest func(string)) *
 		_, _ = w.Write(b)
 	})
 
-	s := &MirrorServer{Store: m, InstanceID: instanceID, hub: h}
+	s := &MirrorServer{Store: m, InstanceID: instanceID, hub: h, LogPath: displayedSyncLogPath()}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		if s.InstanceID != "" {
@@ -135,7 +140,9 @@ func NewMirrorHooks(m *mirror.Store, instanceID string, onIngest func(string)) *
 	mux.HandleFunc("GET /r/{slug}/doc/{kind}/{name}", s.docPage)
 	mux.HandleFunc("GET /r/{slug}/help", s.helpPage)
 	mux.HandleFunc("GET /r/{slug}/settings", s.settingsPage)
-	// No POST settings/global, oauth — RO only.
+	mux.HandleFunc("GET /settings/global", s.globalSettingsPage)
+	mux.HandleFunc("POST /settings/global", s.globalSettingsSave)
+	// oauth stays unmounted; product state is still RO.
 
 	s.Handler = mux
 	return s
@@ -245,6 +252,10 @@ func (s *MirrorServer) loadPartitions(ctx context.Context) ([]partitionVM, int, 
 		total += len(stories)
 		lastIngest, _ := p.LastIngest()
 		st := loadPartitionSync(path)
+		logPath := ""
+		if st.PushReason != "" {
+			logPath = s.LogPath
+		}
 		pvm = append(pvm, partitionVM{
 			Slug: slug, Name: name, Path: path,
 			Stories: len(stories), Backlog: backlog,
@@ -253,6 +264,7 @@ func (s *MirrorServer) loadPartitions(ctx context.Context) ([]partitionVM, int, 
 			SyncLastSuccess: st.PushLastSuccess,
 			SyncReason:      st.PushReason,
 			SyncLocal:       st.Scope == "local",
+			SyncLogPath:     logPath,
 		})
 	}
 	return pvm, total, nil
@@ -517,6 +529,78 @@ func (s *MirrorServer) settingsPage(w http.ResponseWriter, r *http.Request) {
 	mirrorRender(w, "settings", s.projectBase(slug), id.FooterEmail, data)
 }
 
+type globalSettingsData struct {
+	Saved  bool
+	Server string
+	Theme  string
+	TopBar topBar
+}
+
+func (s *MirrorServer) globalSettingsPage(w http.ResponseWriter, r *http.Request) {
+	gc, _ := config.LoadGlobal()
+	mirrorRender(w, "globalSettings", "/", "", globalSettingsData{
+		Saved:  r.URL.Query().Get("saved") == "1",
+		Server: gc.Hosted.Server,
+		Theme:  gc.UI.Theme,
+		TopBar: mirrorTopBar("projects", ""),
+	})
+}
+
+func (s *MirrorServer) globalSettingsSave(w http.ResponseWriter, r *http.Request) {
+	if !remoteIsLoopback(r.RemoteAddr) {
+		http.Error(w, "writes are accepted only from this machine (loopback)", http.StatusForbidden)
+		return
+	}
+	// FormValue parses urlencoded or multipart (the page's FormData submit).
+	// Do not call ParseForm first — that marks the form parsed and leaves
+	// multipart fields empty.
+	server := strings.TrimSpace(r.FormValue("server"))
+	if server == "" {
+		if err := config.ClearGlobalHostedServer(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		if err := validateHostedServerURL(server); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := config.SaveGlobalHostedServer(server); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	if theme := strings.TrimSpace(r.FormValue("theme")); theme == "light" || theme == "dark" {
+		gc, err := config.LoadGlobal()
+		if err == nil {
+			gc.UI.Theme = theme
+			_ = config.SaveGlobal(gc)
+		}
+	}
+	if r.Header.Get("X-Satelle-Settings") != "" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, "/settings/global?saved=1", http.StatusSeeOther)
+}
+
+func remoteIsLoopback(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func validateHostedServerURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("hosted server must be an absolute http(s) URL")
+	}
+	return nil
+}
+
 // MirrorDefaultPath is a convenience for tests.
 func MirrorDefaultPath() string {
 	return mirror.DefaultPath(config.GlobalDir())
@@ -544,7 +628,10 @@ const mirrorWorkspaceSrc = `
         {{/* Rightmost deliberately: this replaces a badge that sat INSIDE the
              Project cell and pushed the name around (sty_226a661e). */}}
         <td class="updated-cell">{{template "freshness" .}} {{template "syncstate" .}}</td>
-      </tr>{{end}}
+      </tr>{{if .SyncReason}}
+      <tr class="sync-fail-detail">
+        <td colspan="7">{{template "syncfail" .}}</td>
+      </tr>{{end}}{{end}}
     </tbody>
   </table>
   {{end}}{{end}}

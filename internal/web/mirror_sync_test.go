@@ -38,8 +38,59 @@ func TestLandingRendersStandingSyncFailure(t *testing.T) {
 	rr := httptest.NewRecorder()
 	ms.Handler.ServeHTTP(rr, httptest.NewRequest("GET", "/", nil))
 	body := rr.Body.String()
-	if !strings.Contains(body, "sync-fail") || !strings.Contains(body, "hosted 505") {
-		t.Fatalf("standing failure not rendered:\n%s", body)
+	if !strings.Contains(body, "sync-fail") {
+		t.Fatalf("standing failure chip missing:\n%s", body)
+	}
+	if strings.Contains(body, `title="hosted 505"`) {
+		t.Fatal("reason must not live only in a title tooltip")
+	}
+	if !strings.Contains(body, ">hosted 505<") {
+		t.Fatalf("reason not a visible text node:\n%s", body)
+	}
+	if !strings.Contains(body, "logged to") || !strings.Contains(body, "server.log") {
+		t.Fatalf("log path missing:\n%s", body)
+	}
+	if n := strings.Count(body, `tr class="row" data-slug=`); n != 1 {
+		t.Fatalf("landing must have exactly one primary row per partition, got %d:\n%s", n, body)
+	}
+	if strings.Contains(body, `tr class="row sync-fail-detail"`) || strings.Contains(body, `sync-fail-detail" data-slug=`) {
+		t.Fatal("failure detail row must not carry class=row or data-slug")
+	}
+}
+
+func TestProjectPageRendersStandingSyncFailure(t *testing.T) {
+	testutil.IsolateHome(t)
+	s, err := mirror.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := t.Context()
+	if _, err := s.TouchPartition(ctx, "rk", "demo", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	if err := s.ReplaceKind(ctx, "rk", "identity", []mirror.ItemRow{{
+		ID: "meta", Payload: `{"project_name":"demo","repo_root":"` + repo + `"}`,
+	}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncstate.RecordPush(config.GlobalDir(), repo, false, "hosted 505", "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	ms := NewMirror(s)
+	rr := httptest.NewRecorder()
+	ms.Handler.ServeHTTP(rr, httptest.NewRequest("GET", "/r/demo/", nil))
+	body := rr.Body.String()
+	if strings.Contains(body, `title="hosted 505"`) {
+		t.Fatal("reason must not live only in a title tooltip")
+	}
+	if !strings.Contains(body, ">hosted 505<") {
+		t.Fatalf("project page reason not a visible text node:\n%s", body)
+	}
+	if !strings.Contains(body, "logged to") || !strings.Contains(body, "server.log") {
+		t.Fatalf("project page log path missing:\n%s", body)
 	}
 }
 

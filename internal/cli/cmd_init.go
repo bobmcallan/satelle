@@ -1588,7 +1588,6 @@ stale_after = "24h"
 # [sync]
 # all = "personal"               # every area personal unless overridden below
 # documents = "personal"         # per-area override wins over 'all'
-# server = "https://satelle.dev" # default; a machine-wide login server still wins
 # project = "my-project-slug"    # default: this repo's directory name
 # workspace = "team-name"        # per-developer; usually satelle.local.toml
 # [vars]
@@ -1606,8 +1605,11 @@ stale_after = "24h"
 # local_only = true
 # hosted = true
 
-# Connection settings live on [sync] (server / project / workspace).
-# satelle init and satelle migrate --yes fold any leftover hosted table away.
+# [sync] project / workspace stay per-repo. Do not put server in this file —
+# the hosted origin is machine-scope (satelle settings --global server /
+# satelle login). satelle init and satelle migrate --yes re-home a leftover
+# repo hosted server onto the machine file and fold leftover hosted
+# project/workspace onto [sync], then drop the leftover hosted table.
 #
 # The local push-fed UI endpoint is machine-scope (~/.satelle/config.toml
 # [service] endpoint). Unset derives http://127.0.0.1:<port>. Disable with

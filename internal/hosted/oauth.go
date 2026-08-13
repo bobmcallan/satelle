@@ -137,7 +137,7 @@ func randomURLToken(n int) (string, error) {
 func Login(ctx context.Context, httpClient *http.Client, server string, opts LoginOptions) (Credential, error) {
 	server = normalizeServerURL(server)
 	if server == "" {
-		return Credential{}, fmt.Errorf("hosted: server URL not set (pass --server or set [hosted] server in satelle.toml)")
+		return Credential{}, fmt.Errorf("hosted: server URL not set (pass --server or set [hosted] server in ~/.satelle/config.toml)")
 	}
 	timeout := opts.Timeout
 	if timeout <= 0 {

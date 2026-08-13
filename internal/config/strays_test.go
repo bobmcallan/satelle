@@ -26,6 +26,8 @@ func TestMachineScopeStraysTable(t *testing.T) {
 		{"web_port committed", ConfigName, "web_port = 9000\nlog_level = \"info\"\n", "web_port", "9000"},
 		{"server endpoint local", LocalConfigName, "[server]\nendpoint = \"http://127.0.0.1:9\"\n", "[server] endpoint", "http://127.0.0.1:9"},
 		{"service repo", ConfigName, "[service]\nrepo = \"/old/path\"\n", "[service] repo", "/old/path"},
+		{"sync server leftover", ConfigName, "[sync]\nserver = \"https://other.dev\"\nproject = \"satelle\"\n", "[sync] server", "https://other.dev"},
+		{"hosted server leftover", ConfigName, "[hosted]\nserver = \"https://legacy.example\"\nproject = \"satelle\"\n", "[hosted] server", "https://legacy.example"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -64,6 +66,30 @@ func TestMachineScopeStraysCleanRepoZero(t *testing.T) {
 	}
 	if got := MachineScopeStrays(dataDir); len(got) != 0 {
 		t.Fatalf("clean repo strays = %#v", got)
+	}
+}
+
+func TestMachineScopeStraysIgnoresSyncProjectAndStaleAfter(t *testing.T) {
+	testutil.IsolateHome(t)
+	dataDir := t.TempDir()
+	body := "[sync]\nproject = \"satelle\"\nstale_after = \"24h\"\nall = \"personal\"\n"
+	if err := os.WriteFile(filepath.Join(dataDir, ConfigName), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := MachineScopeStrays(dataDir); len(got) != 0 {
+		t.Fatalf("per-repo [sync] keys must not be strays: %#v", got)
+	}
+}
+
+func TestMachineScopeStraysIgnoresCommentedSyncServer(t *testing.T) {
+	testutil.IsolateHome(t)
+	dataDir := t.TempDir()
+	body := "[sync]\n# server = \"https://other.dev\"\nproject = \"satelle\"\n"
+	if err := os.WriteFile(filepath.Join(dataDir, ConfigName), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := MachineScopeStrays(dataDir); len(got) != 0 {
+		t.Fatalf("commented [sync] server must not be a stray: %#v", got)
 	}
 }
 

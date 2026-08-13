@@ -101,7 +101,7 @@ func runSettings(cmd *cobra.Command, args []string, global bool) error {
 
 func isStrayRepoKey(key string) bool {
 	switch strings.TrimSpace(key) {
-	case "web_port", "server.endpoint", "endpoint":
+	case "web_port", "server.endpoint", "endpoint", "sync.server":
 		return true
 	default:
 		return false
@@ -116,7 +116,16 @@ func strayRepoKeyError(key string) error {
 		RepoValue:      "(settings write refused)",
 		EffectiveValue: strconv.Itoa(gc.Service.ResolvePort()),
 	}
-	if key != "web_port" {
+	switch key {
+	case "web_port":
+		// port already set
+	case "sync.server":
+		if e := gc.Hosted.ResolveServer(); e != "" {
+			s.EffectiveValue = e
+		} else {
+			s.EffectiveValue = config.DefaultHostedServer
+		}
+	default:
 		if e := gc.Service.ResolveEndpoint(); e != "" {
 			s.EffectiveValue = e
 		} else {

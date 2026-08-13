@@ -91,11 +91,11 @@ func TestWebHeaderBrandingEndToEnd(t *testing.T) {
 		t.Errorf("workspace landing did not mark the Projects nav link active:\n%s", w)
 	}
 
-	// Project settings (RO mirror) — no global settings write surface.
+	// Project settings stay RO; machine hosted server is writable on /settings/global.
 	if g := httpGet(t, base+"/settings"); !strings.Contains(g, "settings") || !strings.Contains(g, "read-only") {
 		t.Errorf("project settings did not render as read-only:\n%s", g)
 	}
-	if g := httpGet(t, host+"/settings/global"); strings.Contains(g, `name="server"`) {
-		t.Errorf("mirror must not expose global settings write form")
+	if g := httpGet(t, host+"/settings/global"); !strings.Contains(g, `name="server"`) {
+		t.Errorf("global settings must expose the hosted-server field:\n%s", g)
 	}
 }

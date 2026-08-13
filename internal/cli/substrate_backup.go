@@ -66,7 +66,7 @@ type BackupOpts struct {
 // a zero config. Hosted documents push is OPT-IN via [backup] hosted = true
 // (sty_84f14ace); when false, HostedServer/HostedProject stay empty so the
 // existing server+project gate on the push path stays quiet. Hosted server URL
-// uses global→repo precedence (config.ResolveHostedServer) when opted in.
+// is the machine setting (config.ResolveHostedServer) when opted in.
 func ResolveBackupOpts(cfg config.Config, repoRoot string) BackupOpts {
 	opts := BackupOpts{LocalOnly: cfg.Backup.LocalOnly}
 	if cfg.Backup.Hosted {

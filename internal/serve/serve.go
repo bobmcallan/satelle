@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
@@ -46,7 +45,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	defer ms.Close()
 
-	serverLog := filepath.Join(config.GlobalDir(), mirror.DefaultDirName, "server.log")
+	serverLog := mirror.ServerLogPath(config.GlobalDir())
 	logCfg := logfile.Config{MaxSizeBytes: config.DefaultLogsMaxSizeKB * 1024, MaxFiles: config.DefaultLogsMaxFiles}
 	logLine := func(format string, args ...any) {
 		line := fmt.Sprintf(format, args...)

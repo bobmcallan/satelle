@@ -198,6 +198,16 @@ func TestCheckFailsStandingPushFailure(t *testing.T) {
 	if !ids(r)[health.IDSyncFailing] {
 		t.Fatalf("missing %s: %v", health.IDSyncFailing, r.Findings)
 	}
+	var detail string
+	for _, f := range r.Findings {
+		if f.ID == health.IDSyncFailing {
+			detail = f.Detail
+			break
+		}
+	}
+	if detail != "hosted down" {
+		t.Fatalf("sync.failing detail = %q, want exact recorded reason", detail)
+	}
 }
 
 // TestDefectMatrix is AC7: one case per defect class, each asserting the stable

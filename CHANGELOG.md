@@ -1,4 +1,20 @@
+## [0.0.453] - 2026-08-14
+
+### Changed
+- **Hosted server URL is machine-scope only.** `config.HostedServerFor` / `ResolveHostedServer` no longer fall through to repo `[sync] server`. Leftover `[sync] server` or `[hosted] server` in a repo file is a stray (doctor/status); `satelle migrate --yes` re-homes an unset machine value and never clobbers a set `[hosted] server`. The init example no longer seeds a repo server line. Write the origin with `satelle settings --global server` or `satelle login`. (sty_34037275)
+
+### Added
+- **Satelled serves writable Global settings** at `/settings/global` (loopback-only POST into `~/.satelle/config.toml [hosted] server`). The project settings page links there. (sty_34037275)
+- **A standing push failure names its reason** on the project page and landing row (not only a tooltip) and points at satelled's `serve/server.log`. `satelle doctor` still emits `sync.failing` with that exact text. (sty_34037275)
+
+## [serve-v0.0.26] - 2026-08-14
+
+### Changed
+- satelled mounts loopback-only GET/POST `/settings/global` for the machine hosted-server URL. (sty_34037275)
+- Standing push failures render the recorded reason and the server.log path on the landing and project page. (sty_34037275)
+
 ## [0.0.452] - 2026-08-13
+
 
 ### Fixed
 - **`satelle migrate --yes` seeds `[sync] stale_after` even when nothing else is pending.** A repo already on current structure used to print "already on current structure" and leave the key absent, so doctor could not judge staleness. (sty_30696eeb)

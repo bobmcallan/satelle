@@ -516,13 +516,23 @@ workspace = "Legacy Team"
 	}
 	got, _ := os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
 	s := string(got)
-	for _, want := range []string{`all = "personal"`, `server = "https://legacy.example"`, `project = "legacy-proj"`, `workspace = "Legacy Team"`} {
+	for _, want := range []string{`all = "personal"`, `project = "legacy-proj"`, `workspace = "Legacy Team"`} {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing %q in:\n%s", want, s)
 		}
 	}
+	if strings.Contains(s, `server = "https://legacy.example"`) {
+		t.Errorf("legacy [hosted] server must not be folded onto [sync]:\n%s", s)
+	}
 	if strings.Contains(s, "[hosted]") {
 		t.Errorf("leftover [hosted] table must be dropped:\n%s", s)
+	}
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gc.Hosted.ResolveServer() != "https://legacy.example" {
+		t.Fatalf("legacy [hosted] server not re-homed to machine: %q", gc.Hosted.Server)
 	}
 
 	// Already-set [sync] project is not clobbered; table still drops.
@@ -1073,6 +1083,107 @@ func TestMigrateMachineWinsDiscardsRepoWebPort(t *testing.T) {
 	body, _ := os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
 	if strings.Contains(string(body), "web_port") {
 		t.Fatalf("repo key not removed:\n%s", body)
+	}
+}
+
+func TestMigrateRehomesSyncServerWhenMachineUnset(t *testing.T) {
+	a, dataDir := machineStrayRepo(t, "[sync]\n# keep me\nserver = \"https://from-repo.dev\"\nproject = \"satelle\"\n")
+	var apply strings.Builder
+	if err := runMigrate(&apply, a, true, false); err != nil {
+		t.Fatalf("migrate: %v\n%s", err, apply.String())
+	}
+	if !strings.Contains(apply.String(), "re-homed") {
+		t.Fatalf("expected re-home line:\n%s", apply.String())
+	}
+	body, err := os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(body)
+	if !strings.Contains(s, "# keep me") || !strings.Contains(s, `project = "satelle"`) {
+		t.Fatalf("comments/neighbours lost:\n%s", s)
+	}
+	if strings.Contains(s, "server =") {
+		t.Fatalf("repo [sync] server still present:\n%s", s)
+	}
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gc.Hosted.ResolveServer() != "https://from-repo.dev" {
+		t.Fatalf("machine hosted = %q", gc.Hosted.Server)
+	}
+}
+
+func TestMigrateKeepsMachineHostedServer(t *testing.T) {
+	a, dataDir := machineStrayRepo(t, "[sync]\nserver = \"https://from-repo.dev\"\n")
+	if err := config.SaveGlobalHostedServer("https://already.dev"); err != nil {
+		t.Fatal(err)
+	}
+	var apply strings.Builder
+	if err := runMigrate(&apply, a, true, false); err != nil {
+		t.Fatalf("migrate: %v\n%s", err, apply.String())
+	}
+	if !strings.Contains(apply.String(), "already set") {
+		t.Fatalf("expected machine-wins line:\n%s", apply.String())
+	}
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gc.Hosted.ResolveServer() != "https://already.dev" {
+		t.Fatalf("machine hosted clobbered: %q", gc.Hosted.Server)
+	}
+	body, _ := os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
+	if strings.Contains(string(body), "server =") {
+		t.Fatalf("repo [sync] server not removed:\n%s", body)
+	}
+}
+
+func TestMigrateLegacyHostedServerOnePass(t *testing.T) {
+	a, dataDir := machineStrayRepo(t, "[hosted]\nserver = \"https://legacy.example\"\nproject = \"legacy-proj\"\n")
+	var apply strings.Builder
+	if err := runMigrate(&apply, a, true, false); err != nil {
+		t.Fatalf("migrate: %v\n%s", err, apply.String())
+	}
+	body, err := os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(body)
+	if strings.Contains(s, "server =") {
+		t.Fatalf("repo still names a hosted server:\n%s", s)
+	}
+	if strings.Contains(s, "[hosted]") {
+		t.Fatalf("leftover [hosted] table remains:\n%s", s)
+	}
+	if !strings.Contains(s, `project = "legacy-proj"`) {
+		t.Fatalf("project not folded onto [sync]:\n%s", s)
+	}
+	gc, err := config.LoadGlobal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gc.Hosted.ResolveServer() != "https://legacy.example" {
+		t.Fatalf("machine hosted = %q", gc.Hosted.Server)
+	}
+	plan := planMigrate(a.Config, a.RepoRoot, a.DataDir)
+	if len(plan.MachineStrays) != 0 {
+		t.Fatalf("second plan still has strays: %#v", plan.MachineStrays)
+	}
+	if len(plan.HostedToSync) != 0 || plan.HostedTableDrop {
+		t.Fatalf("second plan still has hosted heal work: %#v", plan)
+	}
+}
+
+func TestMigrateSyncServerSecondPlanEmpty(t *testing.T) {
+	a, _ := machineStrayRepo(t, "[sync]\nserver = \"https://from-repo.dev\"\n")
+	if err := runMigrate(new(strings.Builder), a, true, false); err != nil {
+		t.Fatal(err)
+	}
+	plan := planMigrate(a.Config, a.RepoRoot, a.DataDir)
+	if len(plan.MachineStrays) != 0 {
+		t.Fatalf("second plan still has strays: %#v", plan.MachineStrays)
 	}
 }
 

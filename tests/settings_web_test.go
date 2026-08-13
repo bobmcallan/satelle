@@ -15,8 +15,9 @@ import (
 
 // TestWebSettingsReadOnly drives the push-fed serve: project settings are a
 // READ-ONLY view of the pushed settings blob (sty_e1740d82 + epic:mirror-ui-parity).
-// GET /r/{slug}/settings renders resolved values with no form/inputs/Save; global
-// settings are omitted on the mirror; non-ingest POSTs stay rejected.
+// GET /r/{slug}/settings renders resolved values with no form/inputs/Save and
+// links to the machine-wide global settings page (sty_34037275). Repo
+// settings POSTs stay rejected.
 func TestWebSettingsReadOnly(t *testing.T) {
 	repo := t.TempDir()
 	mustRun(t, testBin, repo, "init")
@@ -53,8 +54,11 @@ func TestWebSettingsReadOnly(t *testing.T) {
 			t.Fatalf("read-only settings page missing %q:\n%s", want, page)
 		}
 	}
-	// Mirror RO: no global-settings link, no write UI, hosted.server not shown.
-	for _, forbidden := range []string{`name="log_level"`, `<textarea`, "settings-save", "settings/global", "should-not-show"} {
+	if !strings.Contains(page, `href="/settings/global"`) {
+		t.Fatalf("project settings must link to global settings:\n%s", page)
+	}
+	// Repo settings stay RO: no write UI, leftover [hosted] server not shown.
+	for _, forbidden := range []string{`name="log_level"`, `<textarea`, "settings-save", "should-not-show"} {
 		if strings.Contains(page, forbidden) {
 			t.Fatalf("read-only settings page must not contain %q", forbidden)
 		}

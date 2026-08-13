@@ -249,7 +249,9 @@ const templatesSrc = `
      instant; the ticker never touches the title. */}}
 {{define "freshness"}}<time class="rel-time"{{if isotime .LastIngest}} datetime="{{isotime .LastIngest}}"{{end}} title="Last confirmed against the repository at {{ftime .LastIngest}}">{{reltime .LastIngest}}</time>{{end}}
 
-{{define "syncstate"}}{{if .SyncLocal}}<span class="sync-local" title="work-state areas are local">local</span>{{else if .SyncReason}}<span class="sync-fail" title="{{.SyncReason}}">push failing</span>{{else if isotime .SyncLastSuccess}}<time class="rel-time sync-ok"{{if isotime .SyncLastSuccess}} datetime="{{isotime .SyncLastSuccess}}"{{end}} title="Last successful hosted push at {{ftime .SyncLastSuccess}}">pushed {{reltime .SyncLastSuccess}}</time>{{end}}{{end}}
+{{define "syncstate"}}{{if .SyncLocal}}<span class="sync-local" title="work-state areas are local">local</span>{{else if .SyncReason}}<span class="sync-fail">push failing</span>{{else if isotime .SyncLastSuccess}}<time class="rel-time sync-ok"{{if isotime .SyncLastSuccess}} datetime="{{isotime .SyncLastSuccess}}"{{end}} title="Last successful hosted push at {{ftime .SyncLastSuccess}}">pushed {{reltime .SyncLastSuccess}}</time>{{end}}{{end}}
+
+{{define "syncfail"}}<div class="sync-fail-body"><span class="sync-fail-reason">{{.SyncReason}}</span>{{if .SyncLogPath}} <span class="sync-fail-log">logged to <code>{{.SyncLogPath}}</code></span>{{end}}</div>{{end}}
 
 {{define "footer"}}<footer class="site-footer">{{if footeremail}}<a class="footer-email" href="mailto:{{footeremail}}">{{footeremail}}</a>{{end}}<span class="footer-version">{{product}} {{version}}</span></footer>{{end}}
 
@@ -275,6 +277,7 @@ const templatesSrc = `
   <header class="app">
     <h1>{{.ProjectName}}</h1>
     <div class="meta">{{.RepoRoot}} · <a href="help">help →</a> · <a href="settings">settings →</a> · updated {{template "freshness" .}} · {{template "syncstate" .}}</div>
+    {{if .SyncReason}}{{template "syncfail" .}}{{end}}
   </header>
 
   <div class="tabs" role="tablist">
@@ -542,7 +545,7 @@ const templatesSrc = `
     <h1>satelle<span class="dot">.</span> settings</h1>
     <div class="meta">{{.RepoRoot}} · read-only view of <code>.satelle/satelle.toml</code></div>
   </header>
-  <div class="settings-note settings-readonly-note">Repo settings are read-only here — edit <code>.satelle/satelle.toml</code> directly (and commit it under the workflow) to change them.{{if not .MirrorRO}} Account and machine-wide settings live on the <a href="settings/global">global settings</a> page.{{end}} Overlay (<code>satelle.local.toml</code>) values are not shown here.</div>
+  <div class="settings-note settings-readonly-note">Repo settings are read-only here — edit <code>.satelle/satelle.toml</code> directly (and commit it under the workflow) to change them. Machine-wide hosted server lives on <a href="/settings/global">global settings</a>. Overlay (<code>satelle.local.toml</code>) values are not shown here.</div>
   <div class="settings">
     {{range .Rows}}{{if .SectHead}}<h2 class="kind-h settings-sect">{{.SectHead}}</h2>{{end}}<div class="setting-row">
       <div class="setting-label"><span class="setting-key">{{.FieldID}}</span><span class="setting-label-name">{{.Label}}</span>{{if .Help}}<span class="setting-help">{{.Help}}</span>{{end}}</div>

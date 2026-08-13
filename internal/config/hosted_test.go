@@ -7,9 +7,8 @@ import (
 	"testing"
 )
 
-// TestHostedServerForPrecedence pins the resolution rule (sty_53ccf845): the
-// global hosted server wins; the repo's committed [hosted] server is only the
-// read-only fallback; both are normalized; neither set → "".
+// TestHostedServerForPrecedence (sty_34037275): machine [hosted] server only;
+// a repo [sync] server is ignored.
 func TestHostedServerForPrecedence(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -17,32 +16,30 @@ func TestHostedServerForPrecedence(t *testing.T) {
 		want         string
 	}{
 		{"global wins over repo", "https://global/", "https://repo", "https://global"},
-		{"repo fallback when global empty", "", "https://repo/", "https://repo"},
+		{"repo sync server ignored when global empty", "", "https://from-sync/", DefaultHostedServer},
 		{"default when neither set", "", "", DefaultHostedServer},
 		{"global normalized", "https://g//", "", "https://g"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			gc := GlobalConfig{Hosted: GlobalHostedConfig{Server: c.global}}
-			repo := Config{Hosted: HostedConfig{Server: c.repo}}
+			repo := Config{Sync: map[string]string{"server": c.repo}}
 			if got := HostedServerFor(gc, repo); got != c.want {
-				t.Fatalf("HostedServerFor(%q,%q) = %q, want %q", c.global, c.repo, got, c.want)
+				t.Fatalf("HostedServerFor(%q, sync=%q) = %q, want %q", c.global, c.repo, got, c.want)
 			}
 		})
 	}
 }
 
 // TestResolveHostedServerReadsGlobal proves the convenience resolver reads the
-// on-disk global config and applies the precedence rule (global-first), with the
-// repo server as the backward-compat fallback for a repo bound before the global
-// model.
+// on-disk global config and ignores a leftover repo [sync] server.
 func TestResolveHostedServerReadsGlobal(t *testing.T) {
 	t.Setenv("SATELLE_HOME", t.TempDir())
 
-	// No global server yet → the repo's legacy [hosted] server still resolves.
-	repo := Config{Hosted: HostedConfig{Server: "https://legacy-repo/"}}
-	if got := ResolveHostedServer(repo); got != "https://legacy-repo" {
-		t.Fatalf("repo fallback = %q, want https://legacy-repo", got)
+	// No global server → default, even if the repo still names one.
+	repo := Config{Sync: map[string]string{"server": "https://legacy-repo/"}}
+	if got := ResolveHostedServer(repo); got != DefaultHostedServer {
+		t.Fatalf("repo [sync] server must be ignored, got %q", got)
 	}
 
 	// Record a global server → it now wins over the repo one.
@@ -88,14 +85,14 @@ func TestSaveGlobalHostedServerRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSyncServerPrefersSyncOverHosted(t *testing.T) {
+func TestSyncServerIsNotResolved(t *testing.T) {
 	t.Setenv("SATELLE_HOME", t.TempDir())
 	repo := Config{
 		Sync:   map[string]string{"server": "https://from-sync/"},
 		Hosted: HostedConfig{Server: "https://from-hosted/"},
 	}
-	if got := HostedServerFor(GlobalConfig{}, repo); got != "https://from-sync" {
-		t.Fatalf("got %q", got)
+	if got := HostedServerFor(GlobalConfig{}, repo); got != DefaultHostedServer {
+		t.Fatalf("got %q, want default", got)
 	}
 }
 
