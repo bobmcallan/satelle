@@ -1,9 +1,7 @@
 ## [0.0.448] - 2026-08-13
 
-### Breaking
-- **The local daemon is now `satelled`, not `satelle-serve`.** New installs and `satelle update` place the UI binary at `satelled`. Existing units that still ExecStart `satelle-serve` keep working until you re-point them: run `satelle service install` (it prefers a sibling `satelled`, then a leftover `satelle-serve`). The CLI command is still `satelle`. Hosted satelle-server is unchanged. (sty_bd9de06d)
-
 ### Changed
+- **The local daemon is now `satelled`, not `satelle-serve`.** New installs and `satelle update` place the UI binary at `satelled`. Existing units that still ExecStart `satelle-serve` keep working until you re-point them: run `satelle service install` (it prefers a sibling `satelled`, then a leftover `satelle-serve`). The CLI command is still `satelle`. Hosted satelle-server is unchanged. This is not a repo-scaffold break — it does not require `satelle init`. (sty_bd9de06d)
 - **Local-tier naming is satelled everywhere the operator sees it.** `satelle serve` / `satelle service` help, the unit Description, `satelle service status` (`satelled — …`), daemon log prefixes, README, and release assets all say satelled. The systemd unit filename stays `satelle.service`. The serve release tag prefix stays `serve-v*` so older CLIs still find the channel. (sty_bd9de06d)
 
 ## [serve-v0.0.22] - 2026-08-13
