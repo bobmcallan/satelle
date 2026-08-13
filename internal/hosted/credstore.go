@@ -32,12 +32,14 @@ type Credential struct {
 	RefreshToken string `toml:"refresh_token"`
 	TokenType    string `toml:"token_type,omitempty"`
 	Scope        string `toml:"scope,omitempty"`
-	// DisplayName/Email cache the principal from /api/v1/me, stamped at login, so
-	// the UI resolves identity from this local file — never a render-time network
-	// call (sty_467c6944). Optional: an older credential without them is the
-	// "legacy" case that self-heals via a background warm.
+	// DisplayName/Email/PrincipalID cache the principal from /api/v1/me,
+	// stamped at login, so the UI and assignee checks resolve identity from
+	// this local file — never a render-time network call (sty_467c6944,
+	// sty_8ccaa906). PrincipalID is the holder id, not the ledger actor role.
+	// Optional: a credential without them loads empty fields.
 	DisplayName string `toml:"display_name,omitempty"`
 	Email       string `toml:"email,omitempty"`
+	PrincipalID string `toml:"principal_id,omitempty"`
 	// ExpiresAt is the access token's expiry as RFC3339 (advisory — refresh is
 	// driven by an actual 401, not by this clock).
 	ExpiresAt string `toml:"expires_at,omitempty"`

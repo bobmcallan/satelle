@@ -10,6 +10,51 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func TestMigrateAssigneeIdempotentOnPreColumnRows(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:workitem-pre-assignee-"+t.Name()+"?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`
+CREATE TABLE work_items (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'backlog',
+    priority TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT '',
+    parent_id TEXT NOT NULL DEFAULT '',
+    acceptance_criteria TEXT NOT NULL DEFAULT '',
+    tags TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    archived INTEGER NOT NULL DEFAULT 0,
+    park_origin TEXT NOT NULL DEFAULT ''
+)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO work_items (id, kind, title, created_at, updated_at)
+		VALUES ('sty_pre', 'story', 'pre', 't', 't')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	st := New(db)
+	got, err := st.Get(context.Background(), "sty_pre")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Assignee != "" {
+		t.Fatalf("pre-column row assignee = %q, want empty", got.Assignee)
+	}
+}
+
 func openStore(t *testing.T) *Store {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file:workitem-"+t.Name()+"?mode=memory&cache=shared")

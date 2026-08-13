@@ -13,7 +13,7 @@ import (
 
 // wire opens a temp store and wires it into the verb registry, resetting on
 // cleanup so cases don't leak globals into each other.
-func wire(t *testing.T) {
+func wire(t *testing.T) *store.DB {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
 	if err != nil {
@@ -30,6 +30,7 @@ func wire(t *testing.T) {
 		verb.SetDocIndexStore(nil)
 		verb.SetLeaseStore(nil)
 	})
+	return db
 }
 
 func call(t *testing.T, name string, req any) json.RawMessage {

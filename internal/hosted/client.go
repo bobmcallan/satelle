@@ -362,7 +362,7 @@ func (c *Client) doAuthed(ctx context.Context, method, path string, payload []by
 	// Carry the stored identity across rotation — credentialFromToken only knows
 	// the token response, so without this the display_name/email would be wiped on
 	// every refresh (~1h after login), sending the UI back to the legacy path.
-	rotated.DisplayName, rotated.Email = cred.DisplayName, cred.Email
+	rotated.DisplayName, rotated.Email, rotated.PrincipalID = cred.DisplayName, cred.Email, cred.PrincipalID
 	if sErr := c.store.Save(rotated); sErr != nil {
 		return nil, fmt.Errorf("hosted: persist refreshed credential: %w", sErr)
 	}

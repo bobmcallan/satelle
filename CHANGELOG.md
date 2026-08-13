@@ -1,3 +1,8 @@
+## [0.0.439] - 2026-08-13
+
+### Added
+- **Stories and tasks carry an assignee (hosted principal id).** Create stamps the cached `PrincipalID` from the credstore when signed in; engage refuses if the item is assigned to someone else (the error names the holder — not "allocated" or "actor"). An empty assignee (offline, or a pre-column row) can be engaged; if a principal is cached, that engage stamps it. No credential keeps assignee empty and still works. The machine seat is unchanged. (sty_8ccaa906)
+
 ## [0.0.438] - 2026-08-13
 
 ### Added

@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS work_items (
     tags                TEXT NOT NULL DEFAULT '[]',
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL,
-    archived            INTEGER NOT NULL DEFAULT 0
+    archived            INTEGER NOT NULL DEFAULT 0,
+    assignee            TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_work_items_kind   ON work_items(kind, status);
 CREATE INDEX IF NOT EXISTS idx_work_items_parent ON work_items(parent_id);`
@@ -60,6 +61,12 @@ func Migrate(db *sql.DB) error {
 		!strings.Contains(err.Error(), "duplicate column") {
 		return fmt.Errorf("workitem: migrate park_origin column: %w", err)
 	}
+	// assignee is the hosted principal id that may engage this item
+	// (sty_8ccaa906). Empty = unassigned. Existing rows survive as empty.
+	if _, err := db.Exec(`ALTER TABLE work_items ADD COLUMN assignee TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("workitem: migrate assignee column: %w", err)
+	}
 	return nil
 }
 
@@ -81,6 +88,7 @@ type CreateInput struct {
 	ParentID           string
 	AcceptanceCriteria string
 	Tags               []string
+	Assignee           string
 }
 
 // Create inserts a new item and returns it with its assigned id and timestamps.
@@ -112,15 +120,16 @@ func (s *Store) Create(ctx context.Context, in CreateInput, now time.Time) (Item
 		Tags:               nonNilTags(in.Tags),
 		CreatedAt:          now,
 		UpdatedAt:          now,
+		Assignee:           in.Assignee,
 	}
 	tagsJSON, _ := json.Marshal(it.Tags)
 	_, err := s.db.ExecContext(ctx, `
         INSERT INTO work_items
-            (id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, assignee)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		it.ID, string(it.Kind), it.Title, it.Body, it.Status, it.Priority, it.Category,
 		it.ParentID, it.AcceptanceCriteria, string(tagsJSON),
-		now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+		now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), it.Assignee)
 	if err != nil {
 		return Item{}, fmt.Errorf("workitem: create: %w", err)
 	}
@@ -160,15 +169,22 @@ func (s *Store) Upsert(ctx context.Context, it Item, now time.Time) (Item, error
 	if it.Archived {
 		archived = 1
 	}
-	// archived and park_origin must be listed: INSERT OR REPLACE deletes+reinserts,
-	// so omitting a column would reset it to DEFAULT (workstate rehydrate).
+	// Markdown import does not carry assignee (machine-set). Keep the existing
+	// holder when the incoming row leaves it blank so Upsert cannot wipe it.
+	if strings.TrimSpace(it.Assignee) == "" {
+		if existing, gerr := s.Get(ctx, it.ID); gerr == nil {
+			it.Assignee = existing.Assignee
+		}
+	}
+	// archived, park_origin and assignee must be listed: INSERT OR REPLACE
+	// deletes+reinserts, so omitting a column would reset it to DEFAULT.
 	_, err := s.db.ExecContext(ctx, `
         INSERT OR REPLACE INTO work_items
-            (id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, archived, park_origin)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, archived, park_origin, assignee)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		it.ID, string(it.Kind), it.Title, it.Body, it.Status, it.Priority, it.Category,
 		it.ParentID, it.AcceptanceCriteria, string(tagsJSON),
-		it.CreatedAt.UTC().Format(time.RFC3339Nano), it.UpdatedAt.UTC().Format(time.RFC3339Nano), archived, it.ParkOrigin)
+		it.CreatedAt.UTC().Format(time.RFC3339Nano), it.UpdatedAt.UTC().Format(time.RFC3339Nano), archived, it.ParkOrigin, it.Assignee)
 	if err != nil {
 		return Item{}, fmt.Errorf("workitem: upsert: %w", err)
 	}
@@ -272,6 +288,7 @@ type UpdateInput struct {
 	AcceptanceCriteria *string
 	Tags               *[]string
 	ParkOrigin         *string
+	Assignee           *string
 }
 
 // Update applies the set fields to the item and returns the updated row.
@@ -299,6 +316,7 @@ func (s *Store) Update(ctx context.Context, id string, in UpdateInput, now time.
 	addStr("parent_id", in.ParentID)
 	addStr("acceptance_criteria", in.AcceptanceCriteria)
 	addStr("park_origin", in.ParkOrigin)
+	addStr("assignee", in.Assignee)
 	if in.Tags != nil {
 		tagsJSON, _ := json.Marshal(nonNilTags(*in.Tags))
 		sets = append(sets, "tags = ?")
@@ -434,7 +452,7 @@ func (s *Store) ListChangedSince(ctx context.Context, kind Kind, since time.Time
 
 // selectCols is the shared SELECT prefix for Get/List, fixing column order so
 // one scan() serves both.
-const selectCols = `SELECT id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, archived, park_origin FROM work_items`
+const selectCols = `SELECT id, kind, title, body, status, priority, category, parent_id, acceptance_criteria, tags, created_at, updated_at, archived, park_origin, assignee FROM work_items`
 
 // scanner is satisfied by both *sql.Row and *sql.Rows.
 type scanner interface{ Scan(dest ...any) error }
@@ -448,7 +466,7 @@ func scan(sc scanner) (Item, error) {
 	)
 	if err := sc.Scan(&it.ID, &kind, &it.Title, &it.Body, &it.Status,
 		&it.Priority, &it.Category, &it.ParentID, &it.AcceptanceCriteria,
-		&tags, &created, &updated, &archived, &it.ParkOrigin); err != nil {
+		&tags, &created, &updated, &archived, &it.ParkOrigin, &it.Assignee); err != nil {
 		return Item{}, err
 	}
 	it.Kind = Kind(kind)

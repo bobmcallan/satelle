@@ -170,6 +170,7 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 			ParentID:           req.ParentID,
 			AcceptanceCriteria: req.AcceptanceCriteria,
 			Tags:               tags,
+			Assignee:           resolveAssignee(),
 		}, now)
 		if err != nil {
 			return nil, err
@@ -404,6 +405,14 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 				return nil, err
 			}
 		}
+		// Assignee holder check (sty_8ccaa906): who may acquire the seat.
+		// Before the lease so a refusal never takes it. Non-engaging moves
+		// (park, cancel, field edits) are not blocked.
+		if eng, ok := storyStatusIsEngaging(ctx, current, *req.Status); ok && eng {
+			if err := refuseWrongHolder(current, resolveAssignee()); err != nil {
+				return nil, err
+			}
+		}
 		acq, inFlight, aerr := acquireEngagementLease(ctx, current, *req.Status)
 		if aerr != nil {
 			return nil, aerr
@@ -420,7 +429,9 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 				req.Category == nil && req.ParentID == nil && req.AcceptanceCriteria == nil &&
 				req.Tags == nil {
 				// Pure re-engage: return updated record after optional no-op Update.
-				it, uerr := store.Update(ctx, req.ID, workitem.UpdateInput{Status: req.Status}, now)
+				it, uerr := store.Update(ctx, req.ID, workitem.UpdateInput{
+					Status: req.Status, Assignee: stampEmptyAssignee(ctx, current, req.Status),
+				}, now)
 				if uerr != nil {
 					return nil, uerr
 				}
@@ -587,6 +598,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		AcceptanceCriteria: req.AcceptanceCriteria,
 		Tags:               req.Tags,
 		ParkOrigin:         parkOrigin,
+		Assignee:           stampEmptyAssignee(ctx, current, req.Status),
 	}, now)
 	if err != nil {
 		return nil, err

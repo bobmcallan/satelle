@@ -13,6 +13,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/oplog"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -150,6 +151,20 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// satelle.toml [tags.vocabulary] at story/task create and set. Independent of
 	// the agent CLI — must work with no harness installed.
 	verb.SetTagVocabulary(a.Config)
+	// Assignee holder (sty_8ccaa906): local credstore PrincipalID only — no
+	// hosted.Client.Me, no network. Empty server or missing credential means
+	// unassigned (offline team-of-1).
+	verb.SetAssigneeResolver(func() string {
+		server := config.ResolveHostedServer(a.Config)
+		if server == "" {
+			return ""
+		}
+		cred, err := (hosted.FileStore{}).Load(server)
+		if err != nil {
+			return ""
+		}
+		return cred.PrincipalID
+	})
 	// Engage precondition (sty_93eec36d): agents.toml + workflow agent= validation
 	// before a story leaves its entry state. agents already loaded by requireAgents.
 	// Vars are the LAYERED KV (machine-wide catalog [vars] under the repo's own,

@@ -114,7 +114,7 @@ func TestClientRefreshPreservesIdentity(t *testing.T) {
 
 	store := &memStore{}
 	_ = store.Save(Credential{ServerURL: ts.URL, AccessToken: "access-1", RefreshToken: "refresh-1",
-		DisplayName: "Kept Name", Email: "kept@x.io"})
+		DisplayName: "Kept Name", Email: "kept@x.io", PrincipalID: "prin_p"})
 
 	if _, err := NewClient(ts.URL, store, ts.Client()).Me(context.Background()); err != nil {
 		t.Fatalf("Me: %v", err)
@@ -123,7 +123,7 @@ func TestClientRefreshPreservesIdentity(t *testing.T) {
 	if got.AccessToken != "access-2" || got.RefreshToken != "refresh-2" {
 		t.Fatalf("tokens not rotated: %+v", got)
 	}
-	if got.DisplayName != "Kept Name" || got.Email != "kept@x.io" {
+	if got.DisplayName != "Kept Name" || got.Email != "kept@x.io" || got.PrincipalID != "prin_p" {
 		t.Fatalf("identity lost across refresh: %+v", got)
 	}
 }

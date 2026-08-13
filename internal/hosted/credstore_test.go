@@ -59,6 +59,41 @@ func TestSaveLoadIdentityFields(t *testing.T) {
 	}
 }
 
+func TestSaveLoadPrincipalID(t *testing.T) {
+	s := tempStore(t)
+	in := Credential{ServerURL: "https://h", AccessToken: "a", RefreshToken: "r",
+		PrincipalID: "prin_p"}
+	if err := s.Save(in); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Load("https://h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PrincipalID != "prin_p" {
+		t.Fatalf("PrincipalID = %q", got.PrincipalID)
+	}
+}
+
+func TestLoadMissingPrincipalIDIsEmpty(t *testing.T) {
+	s := tempStore(t)
+	if err := os.WriteFile(s.Path, []byte(`
+[[credential]]
+server_url = "https://h"
+access_token = "a"
+refresh_token = "r"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Load("https://h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PrincipalID != "" {
+		t.Fatalf("missing principal_id loaded as %q", got.PrincipalID)
+	}
+}
+
 func TestSaveUpsertByServer(t *testing.T) {
 	s := tempStore(t)
 	_ = s.Save(Credential{ServerURL: "https://a", AccessToken: "1", RefreshToken: "1"})

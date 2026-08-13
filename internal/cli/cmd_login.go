@@ -251,7 +251,7 @@ func runLogin(cmd *cobra.Command, serverArg, workspaceArg string, noBrowser bool
 		return nil
 	}
 	if fresh, lErr := store.Load(server); lErr == nil {
-		fresh.DisplayName, fresh.Email = who.DisplayName, who.Email
+		fresh.DisplayName, fresh.Email, fresh.PrincipalID = who.DisplayName, who.Email, who.ID
 		_ = store.Save(fresh)
 	}
 	printPrincipal(cmd, server, who, activeWorkspace)

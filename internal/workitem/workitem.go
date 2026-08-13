@@ -63,6 +63,10 @@ type Item struct {
 	// (sty_f75286dc). Authoritative for resume-to-origin enforcement — not
 	// derived from the ledger. Empty when not parked (or after resume).
 	ParkOrigin string `json:"park_origin,omitempty"`
+	// Assignee is the hosted principal id that may engage this item
+	// (sty_8ccaa906). Empty means unassigned. Machine-set, not authored
+	// markdown — omitempty keeps it off file views.
+	Assignee string `json:"assignee,omitempty"`
 }
 
 // idPrefix returns the id prefix for a kind: sty_ for stories, tsk_ for tasks,
