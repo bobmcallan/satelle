@@ -251,6 +251,9 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 		env[config.DispatchAgentEnv] = section
 		env[config.DispatchStepEnv] = req.Step
 		env[config.DispatchItemEnv] = req.StoryID
+		if id := config.SessionFromEnv(); id != "" {
+			env[config.SessionEnv] = id
+		}
 		inv.env = env
 	}
 

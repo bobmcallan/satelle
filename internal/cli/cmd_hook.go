@@ -90,9 +90,10 @@ byte ceiling (overflow noted on stderr); fails open so it never blocks a session
 		// so any bootstrap failure fails OPEN (exit 0, inject nothing) rather than
 		// blocking the session.
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Drain stdin (the hook event JSON) — tolerated and ignored; the repo
-			// is resolved from the working directory like every other command.
-			_, _ = io.ReadAll(cmd.InOrStdin())
+			// Bind identity from the SessionStart payload so a later
+			// `satelle story set` in this harness tree can stamp the same id.
+			raw, _ := io.ReadAll(cmd.InOrStdin())
+			_ = bindSessionID(raw)
 			return runHookContext(cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
@@ -154,7 +155,7 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 			// currentSeatTouch is resolved once so deny reasons can name a non-live
 			// holder without a second store open (sty_1738f973 AC6). A live
 			// owner-held seat is also heartbeated (sty_3bb1d8be).
-			info, engaged, engErr := currentSeatTouch()
+			info, engaged, engErr := resolveSeat(true, bindSessionID(raw))
 			p := filePathFromEvent(raw)
 			command := bashCommandFromEvent(raw)
 			if p != "" {
@@ -247,7 +248,7 @@ behaviour exactly as above — opt-in, not a satelle default.`,
 			var seatResolved bool
 			if bashMutatesTree(command, sessionAnchor()) {
 				var err error
-				info, engaged, err = currentSeatTouch()
+				info, engaged, err = resolveSeat(true, bindSessionID(raw))
 				seatResolved = true
 				if err != nil {
 					return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
@@ -274,7 +275,7 @@ behaviour exactly as above — opt-in, not a satelle default.`,
 			// activity on commit/push keeps the seat alive (sty_3bb1d8be).
 			if !seatResolved {
 				var err error
-				info, engaged, err = currentSeatTouch()
+				info, engaged, err = resolveSeat(true, bindSessionID(raw))
 				if err != nil {
 					return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
 				}
@@ -317,7 +318,8 @@ never blocks the prompt. Output is the Claude-shaped hookSpecificOutput/
 additionalContext envelope for both harnesses (AC7 finding on sty_e16a2cd7).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, _ = io.ReadAll(cmd.InOrStdin())
+			raw, _ := io.ReadAll(cmd.InOrStdin())
+			_ = bindSessionID(raw)
 			return runHookPrompt(cmd.OutOrStdout())
 		},
 	}
@@ -366,6 +368,8 @@ type seatInfo struct {
 	// several: the default owner is pid-less local@host, so co-held sibling
 	// leases are indistinguishable by owner.
 	Worktree    string
+	SessionID   string
+	Mine        bool
 	AcquiredAt  time.Time
 	HeartbeatAt time.Time
 	Stale       bool
@@ -403,19 +407,49 @@ func storyEngaged() (bool, error) {
 // refreshing the lease heartbeat. Prefer currentSeatTouch from hook handlers
 // that observe ongoing work (gate, commitgate, prompt).
 func currentSeat() (info seatInfo, engaged bool, err error) {
-	return resolveSeat(false)
+	return resolveSeat(false, config.ResolveSession())
 }
 
 // currentSeatTouch is currentSeat plus a fail-open heartbeat of a live
 // owner-held seat (sty_3bb1d8be). Activity keeps the seat alive; the write
 // never changes a verdict.
 func currentSeatTouch() (info seatInfo, engaged bool, err error) {
-	return resolveSeat(true)
+	return resolveSeat(true, config.ResolveSession())
 }
 
-// resolveSeat is the shared seat lookup. When touch is true and a live seat is
-// found for the current owner, heartbeat_at is refreshed (fail-open).
-func resolveSeat(touch bool) (info seatInfo, engaged bool, err error) {
+func sessionIDFromHook(raw []byte) string {
+	var ev struct {
+		SessionID      string `json:"session_id"`
+		SessionIDCamel string `json:"sessionId"`
+	}
+	if json.Unmarshal(raw, &ev) != nil {
+		return ""
+	}
+	if s := strings.TrimSpace(ev.SessionID); s != "" {
+		return s
+	}
+	return strings.TrimSpace(ev.SessionIDCamel)
+}
+
+// bindSessionID is the hook identity: prefer SATELLE_SESSION (dispatch and
+// operator stamp) so a performer inherits the lease stamp; otherwise take the
+// harness payload and publish it for a later Acquire in this process tree.
+func bindSessionID(raw []byte) string {
+	if id := config.SessionFromEnv(); id != "" {
+		config.PublishSession(id)
+		return id
+	}
+	if id := sessionIDFromHook(raw); id != "" {
+		config.PublishSession(id)
+		return id
+	}
+	return config.ResolveSession()
+}
+
+// resolveSeat is the shared seat lookup. When touch is true and a seat is
+// bound (stamped-other returns empty), heartbeat_at is refreshed (fail-open)
+// so unstamped tree-routed seats still stay alive.
+func resolveSeat(touch bool, sessionID string) (info seatInfo, engaged bool, err error) {
 	a, openErr := app.Open()
 	if openErr != nil {
 		// An ungoverned repo has no seat to determine — a session opened in an
@@ -451,7 +485,11 @@ func resolveSeat(touch bool) (info seatInfo, engaged bool, err error) {
 		return seatInfo{}, false, eerr
 	}
 	if len(live) > 0 {
-		pick := pickSessionSeat(live)
+		pick, mine := pickSessionSeat(live, sessionID)
+		if pick.ItemID == "" {
+			return other, false, nil
+		}
+		pick.Mine = mine
 		if touch {
 			touchSeat(ctx, a.Store.Leases, pick)
 		}
@@ -460,27 +498,40 @@ func resolveSeat(touch bool) (info seatInfo, engaged bool, err error) {
 	return other, false, nil
 }
 
-// pickSessionSeat chooses which live seat is THIS session's when a project
-// holds several (sty_c098dc2d). The session's own working tree is the
-// discriminator — owner cannot be, since the default is pid-less local@host and
-// co-held sibling leases share it. Routing the heartbeat this way is what stops
-// one sibling's activity from refreshing another's lease (and letting the
-// actually-worked one go stale at TTL).
-//
-// No tree match (unanchored leases, non-git session) falls back to the first
-// live seat — the previous behaviour, and still correct for a single seat.
-func pickSessionSeat(live []seatInfo) seatInfo {
+// pickSessionSeat chooses which live seat is THIS session's. A matching
+// SessionID is identity (mine=true). A different non-empty SessionID is
+// skipped. Unstamped seats still tree-route with mine=false — that is
+// today's permission path, not ownership.
+func pickSessionSeat(live []seatInfo, sessionID string) (seatInfo, bool) {
 	if len(live) == 0 {
-		return seatInfo{}
+		return seatInfo{}, false
+	}
+	id := strings.TrimSpace(sessionID)
+	if id != "" {
+		for _, s := range live {
+			if s.SessionID == id {
+				return s, true
+			}
+		}
+		tree := sessionWorktree()
+		for _, s := range live {
+			if s.SessionID != "" && s.SessionID != id {
+				continue
+			}
+			if tree != "" && s.Worktree == tree {
+				return s, false
+			}
+		}
+		return seatInfo{}, false
 	}
 	if tree := sessionWorktree(); tree != "" {
 		for _, s := range live {
 			if s.Worktree == tree {
-				return s
+				return s, false
 			}
 		}
 	}
-	return live[0]
+	return live[0], false
 }
 
 // sessionWorktree resolves the git working tree this hook process runs in.
@@ -555,6 +606,7 @@ func evaluateSeat(leases []lease.Lease, items []workitem.Item, wfs []docindex.Do
 			InFlight: lease.EffectiveInFlight(l, now),
 		}
 		info.Worktree = l.Worktree
+		info.SessionID = l.SessionID
 		if stale {
 			// Prefer naming a stale holder in deny/session text.
 			if otherPick.ItemID == "" || (!otherPick.Stale && stale) {
@@ -1136,8 +1188,13 @@ func editPermissionDenyReason(info seatInfo, now time.Time) string {
 		if target == "" {
 			target = "the next state"
 		}
+		if info.Mine {
+			return fmt.Sprintf(
+				"satelle: story %s has a transition to %q IN FLIGHT (planner/reviewer or dispatched step running); the driving session cannot edit until the transition commits. %s",
+				info.ItemID, target, pre)
+		}
 		return fmt.Sprintf(
-			"satelle: story %s has a transition to %q IN FLIGHT (planner/reviewer or dispatched step running); the driving session cannot edit until the transition commits. %s",
+			"satelle: story %s has a transition to %q IN FLIGHT (planner/reviewer or dispatched step running). %s",
 			info.ItemID, target, pre)
 	}
 	agent := info.StateAgent
@@ -1591,7 +1648,10 @@ func renderSeatBlocks(live []seatInfo, now time.Time, mode string) string {
 	if len(live) == 0 {
 		return ""
 	}
-	mine := pickSessionSeat(live)
+	mine, _ := pickSessionSeat(live, config.ResolveSession())
+	if mine.ItemID == "" {
+		mine = live[0]
+	}
 	blocks := []string{formatSeatBlock(mine, now, mode)}
 	for _, s := range live {
 		if s.ItemID != mine.ItemID {

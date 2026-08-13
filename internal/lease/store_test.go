@@ -326,6 +326,36 @@ func TestMigrateBackfillsInFlightAt(t *testing.T) {
 	}
 }
 
+func TestLeaseSessionColumnMigration(t *testing.T) {
+	ctx := context.Background()
+	s := openTestDB(t)
+	_, out, _, err := s.AcquireWith(ctx, AcquireOpts{
+		ItemID: "sty_s", Kind: "story", Owner: "alice", State: "plan",
+		StorySeat: true, SessionID: "sess-A",
+	})
+	if err != nil || out != OutcomeAcquired {
+		t.Fatalf("acquire: out=%v err=%v", out, err)
+	}
+	l, err := s.Get(ctx, "sty_s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.SessionID != "sess-A" {
+		t.Fatalf("SessionID = %q", l.SessionID)
+	}
+	_, out, _, err = s.Acquire(ctx, "sty_empty", "story", "alice", "plan", false)
+	if err != nil || out != OutcomeAcquired {
+		t.Fatalf("unstamped acquire: out=%v err=%v", out, err)
+	}
+	empty, err := s.Get(ctx, "sty_empty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.SessionID != "" {
+		t.Fatalf("default SessionID must be empty, got %q", empty.SessionID)
+	}
+}
+
 // TestListIsStaleReap: List returns rows; IsStale flags aged heartbeats; Reap
 // deletes them so a subsequent seat-occupying acquire succeeds (sty_1738f973 AC3).
 func TestListIsStaleReap(t *testing.T) {

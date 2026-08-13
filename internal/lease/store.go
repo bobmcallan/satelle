@@ -57,14 +57,15 @@ CREATE TABLE IF NOT EXISTS engagement_lease (
     activity_label     TEXT NOT NULL DEFAULT '',
     activity_index     INTEGER NOT NULL DEFAULT 0,
     activity_total     INTEGER NOT NULL DEFAULT 0,
-    activity_at        TEXT NOT NULL DEFAULT ''
+    activity_at        TEXT NOT NULL DEFAULT '',
+    session_id         TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_engagement_lease_seat ON engagement_lease(story_seat);
 `
 
 // leaseCols is the column list every SELECT shares — one source so a new column
 // cannot reach some read paths and not others.
-const leaseCols = `item_id, kind, story_seat, seat_key, worktree, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid, activity_label, activity_index, activity_total, activity_at`
+const leaseCols = `item_id, kind, story_seat, seat_key, worktree, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid, activity_label, activity_index, activity_total, activity_at, session_id`
 
 // Lease is one engagement seat row.
 type Lease struct {
@@ -99,6 +100,10 @@ type Lease struct {
 	// share the seat). When non-zero and dead on this host, EffectiveInFlight
 	// is false immediately — the process that owned the transition is gone.
 	InFlightPid int
+	// SessionID is the acquiring session (SATELLE_SESSION or a published
+	// harness session_id). Empty when Acquire could not establish one.
+	// Stamped only at Acquire.
+	SessionID string
 	// Activity* describe the current gate/phase while in_flight (sty_598a8e1b).
 	// Empty when not in flight or when progress has not been stamped yet.
 	ActivityLabel string
@@ -150,6 +155,9 @@ type AcquireOpts struct {
 	// Worktree is the git toplevel this engagement is anchored to. Empty opts
 	// out of tree arbitration (git unavailable / non-repo caller).
 	Worktree string
+	// SessionID is the acquiring session identity. Empty if the caller
+	// could not establish one. The lease package does not read the env.
+	SessionID string
 }
 
 // seatKey returns the effective arbitration key (empty falls back to ItemID so
@@ -215,6 +223,10 @@ func Migrate(db *sql.DB) error {
 	// After the column exists on upgraded DBs, not in schema above.
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_engagement_lease_seat_key ON engagement_lease(seat_key)`); err != nil {
 		return fmt.Errorf("lease: migrate seat_key index: %w", err)
+	}
+	if _, err := db.Exec(`ALTER TABLE engagement_lease ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("lease: migrate session_id: %w", err)
 	}
 	// Backfill so pre-upgrade stuck in_flight rows age from a real clock, not
 	// from a hook-refreshed heartbeat. Without this, zero-InFlightAt residue
@@ -453,10 +465,10 @@ func insertLease(ctx context.Context, tx *sql.Tx, opts AcquireOpts, nowS string)
 	pid := currentInFlightPid()
 	key := opts.seatKey()
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO engagement_lease (item_id, kind, story_seat, seat_key, worktree, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', 1, ?, ?)`,
+		`INSERT INTO engagement_lease (item_id, kind, story_seat, seat_key, worktree, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid, session_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', 1, ?, ?, ?)`,
 		opts.ItemID, opts.Kind, boolInt(opts.StorySeat), key, opts.Worktree,
-		opts.Owner, opts.State, nowS, nowS, nowS, pid); err != nil {
+		opts.Owner, opts.State, nowS, nowS, nowS, pid, strings.TrimSpace(opts.SessionID)); err != nil {
 		return Lease{}, fmt.Errorf("lease: insert: %w", err)
 	}
 	now, _ := time.Parse(time.RFC3339Nano, nowS)
@@ -464,6 +476,7 @@ func insertLease(ctx context.Context, tx *sql.Tx, opts AcquireOpts, nowS string)
 		ItemID: opts.ItemID, Kind: opts.Kind, StorySeat: opts.StorySeat,
 		SeatKey: key, Worktree: opts.Worktree, Owner: opts.Owner, State: opts.State,
 		AcquiredAt: now, HeartbeatAt: now, InFlight: true, InFlightAt: now, InFlightPid: pid,
+		SessionID: strings.TrimSpace(opts.SessionID),
 	}, nil
 }
 
@@ -635,7 +648,7 @@ func scanLeases(rows *sql.Rows, qerr error) ([]Lease, error) {
 		var seat, inflight, inflightPid, actIdx, actTotal int
 		var acq, beat, inflightAt, actAt string
 		if err := rows.Scan(&l.ItemID, &l.Kind, &seat, &l.SeatKey, &l.Worktree, &l.Owner, &l.State, &acq, &beat, &l.StopRequestedBy, &l.StopReason,
-			&inflight, &inflightAt, &inflightPid, &l.ActivityLabel, &actIdx, &actTotal, &actAt); err != nil {
+			&inflight, &inflightAt, &inflightPid, &l.ActivityLabel, &actIdx, &actTotal, &actAt, &l.SessionID); err != nil {
 			return nil, fmt.Errorf("lease: list scan: %w", err)
 		}
 		l.StorySeat = seat != 0
@@ -748,7 +761,7 @@ func scanLease(row *sql.Row) (Lease, error) {
 	var seat, inflight, inflightPid, actIdx, actTotal int
 	var acq, beat, inflightAt, actAt string
 	err := row.Scan(&l.ItemID, &l.Kind, &seat, &l.SeatKey, &l.Worktree, &l.Owner, &l.State, &acq, &beat, &l.StopRequestedBy, &l.StopReason,
-		&inflight, &inflightAt, &inflightPid, &l.ActivityLabel, &actIdx, &actTotal, &actAt)
+		&inflight, &inflightAt, &inflightPid, &l.ActivityLabel, &actIdx, &actTotal, &actAt, &l.SessionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Lease{}, ErrNotFound
 	}

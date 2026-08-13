@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -156,6 +157,52 @@ func forceRelease(t *testing.T, id string) {
 
 func editEvent(path string) string {
 	return fmt.Sprintf(`{"tool_input":{"file_path":%q}}`, path)
+}
+
+func TestBindSessionIDPrefersEnvAndPublishesHook(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	t.Setenv(config.SessionEnv, "sess-env")
+	if got := bindSessionID([]byte(`{"session_id":"sess-hook"}`)); got != "sess-env" {
+		t.Fatalf("env must win over hook payload, got %q", got)
+	}
+	t.Setenv(config.SessionEnv, "")
+	_ = os.Unsetenv(config.SessionEnv)
+	if got := bindSessionID([]byte(`{"session_id":"sess-hook"}`)); got != "sess-hook" {
+		t.Fatalf("empty env must take hook payload, got %q", got)
+	}
+	if got := config.ResolveSession(); got != "sess-hook" {
+		t.Fatalf("hook payload must be published for Acquire, got %q", got)
+	}
+}
+
+func TestHookGateTwoSessionsSameTree(t *testing.T) {
+	repo, storyID := liveSeatRepo(t)
+	db, err := store.Open(runtimeDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	_ = db.Leases.ForceRelease(ctx, storyID)
+	if _, _, _, err := db.Leases.AcquireWith(ctx, lease.AcquireOpts{
+		ItemID: storyID, Kind: "story", Owner: lease.ResolveOwner(),
+		State: "in_progress", StorySeat: true, SessionID: "sess-A",
+		Worktree: repo,
+	}); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	out, err := runRootIn(t, `{"session_id":"sess-B","tool_input":{"file_path":"internal/foo.go"}}`, "hook", "gate")
+	if err == nil {
+		t.Fatalf("sess-B should not inherit sess-A in-flight; got allow:\n%s", out)
+	}
+	if strings.Contains(out, "the driving session cannot edit") {
+		t.Fatalf("sess-B must not be addressed as the driver:\n%s", out)
+	}
+	if strings.Contains(out, "IN FLIGHT") {
+		t.Fatalf("sess-B must not inherit in-flight gating:\n%s", out)
+	}
 }
 
 func bashEvent(cmd string) string {

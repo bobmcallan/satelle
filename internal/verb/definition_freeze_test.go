@@ -18,6 +18,11 @@ import (
 // so story-set freeze resolution can List them.
 func wireWithWorkflows(t *testing.T, workflows map[string]string) {
 	t.Helper()
+	_ = wireWithWorkflowsStore(t, workflows)
+}
+
+func wireWithWorkflowsStore(t *testing.T, workflows map[string]string) *store.DB {
+	t.Helper()
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "satelle.db"))
 	if err != nil {
@@ -46,6 +51,7 @@ func wireWithWorkflows(t *testing.T, workflows map[string]string) {
 		verb.SetDocIndexStore(nil)
 		verb.SetLeaseStore(nil)
 	})
+	return db
 }
 
 // writeRouteFiles lands a routeHalves map in a workflows dir. The route source

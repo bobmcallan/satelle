@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -88,7 +89,7 @@ func TestEditPermissionDenyReasonsNameRecovery(t *testing.T) {
 	now := time.Now().UTC()
 	inFlight := seatInfo{
 		ItemID: "sty_x", State: "integration", StoryStatus: "in_progress",
-		StateAgent: "executor", Engaged: true, InFlight: true,
+		StateAgent: "executor", Engaged: true, InFlight: true, Mine: true,
 	}
 	got := editPermissionDenyReason(inFlight, now)
 	for _, want := range []string{"IN FLIGHT", "sty_x", "integration", "satelle story attach"} {
@@ -99,6 +100,21 @@ func TestEditPermissionDenyReasonsNameRecovery(t *testing.T) {
 	plan := seatInfo{
 		ItemID: "sty_x", State: "plan", StoryStatus: "plan",
 		StateAgent: "planner", Engaged: true, EditStates: []string{"in_progress", "release"},
+	}
+	got = editPermissionDenyReason(inFlight, now)
+	if !strings.Contains(got, "the driving session cannot edit") {
+		t.Errorf("driver in-flight must address the driver: %s", got)
+	}
+	inFlight.Mine = false
+	got = editPermissionDenyReason(inFlight, now)
+	if strings.Contains(got, "the driving session cannot edit") {
+		t.Errorf("unstamped/non-mine must not be addressed as the driver: %s", got)
+	}
+	if strings.Contains(got, "not the driver") {
+		t.Errorf("unstamped/non-mine must not claim this session is not the driver: %s", got)
+	}
+	if !strings.Contains(got, "IN FLIGHT") || !strings.Contains(got, "sty_x") {
+		t.Errorf("unstamped/non-mine must still name the in-flight story: %s", got)
 	}
 	got = editPermissionDenyReason(plan, now)
 	for _, want := range []string{`at "plan"`, `"planner"`, "in_progress, release", "Do not work ahead", "Read-only"} {
@@ -184,6 +200,136 @@ requires = ["released"]
 		}
 	}
 	return repo
+}
+
+// TestHookGateDispatchedPerformerSeesUnstampedInFlight: an isolated performer
+// (SATELLE_DISPATCH_*, own hook session_id) must still resolve an unstamped
+// in-flight seat so editPermitted's dispatch-marker branch can fire.
+func TestHookGateDispatchedPerformerSeesUnstampedInFlight(t *testing.T) {
+	editStateRepo(t, "in_progress", "integration", true)
+	repo, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origTree := sessionWorktree
+	t.Cleanup(func() { sessionWorktree = origTree })
+	sessionWorktree = func() string { return repo }
+	db, err := store.Open(runtimeDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	leases, err := db.Leases.List(ctx)
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if len(leases) != 1 {
+		_ = db.Close()
+		t.Fatalf("want one lease, got %d", len(leases))
+	}
+	storyID := leases[0].ItemID
+	_ = db.Leases.ForceRelease(ctx, storyID)
+	if _, _, _, err := db.Leases.AcquireWith(ctx, lease.AcquireOpts{
+		ItemID: storyID, Kind: "story", Owner: lease.ResolveOwner(),
+		State: "integration", StorySeat: true, Worktree: repo,
+	}); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	t.Setenv(config.DispatchAgentEnv, "executor")
+	t.Setenv(config.DispatchStepEnv, "integration")
+	t.Setenv(config.DispatchItemEnv, storyID)
+
+	out, err := runRootIn(t, `{"session_id":"sess-performer","tool_input":{"file_path":"internal/foo.go"}}`, "hook", "gate")
+	if err != nil {
+		t.Fatalf("dispatched performer must see the unstamped in-flight seat: %v\n%s", err, out)
+	}
+}
+
+// TestHookGatePrefersEnvStampOverPayload: a driving session that stamped the
+// lease from SATELLE_SESSION must still resolve that seat when the harness
+// payload carries a different session_id (the identity namespaces must meet).
+func TestHookGatePrefersEnvStampOverPayload(t *testing.T) {
+	editStateRepo(t, "in_progress", "in_progress", false)
+	repo, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origTree := sessionWorktree
+	t.Cleanup(func() { sessionWorktree = origTree })
+	sessionWorktree = func() string { return repo }
+
+	db, err := store.Open(runtimeDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	leases, err := db.Leases.List(ctx)
+	if err != nil || len(leases) != 1 {
+		_ = db.Close()
+		t.Fatalf("leases: %v n=%d", err, len(leases))
+	}
+	storyID := leases[0].ItemID
+	_ = db.Leases.ForceRelease(ctx, storyID)
+	if _, _, _, err := db.Leases.AcquireWith(ctx, lease.AcquireOpts{
+		ItemID: storyID, Kind: "story", Owner: lease.ResolveOwner(),
+		State: "in_progress", StorySeat: true, Worktree: repo, SessionID: "sess-A",
+	}); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Leases.Confirm(ctx, storyID, "in_progress"); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	t.Setenv(config.SessionEnv, "sess-A")
+	out, err := runRootIn(t, `{"session_id":"harness-uuid","tool_input":{"file_path":"internal/foo.go"}}`, "hook", "gate")
+	if err != nil {
+		t.Fatalf("driver must keep its stamped seat when hook payload differs: %v\n%s", err, out)
+	}
+}
+
+// TestHookGatePublishedIdentityStampsAndSkipsSibling: SessionStart-shaped
+// publish makes ResolveSession return the harness id; a sibling hook id does
+// not inherit the stamped in-flight seat.
+func TestHookGatePublishedIdentityStampsAndSkipsSibling(t *testing.T) {
+	repo, storyID := liveSeatRepo(t)
+	config.PublishSession("sess-A")
+	if got := config.ResolveSession(); got != "sess-A" {
+		t.Fatalf("publish must be visible to Acquire, got %q", got)
+	}
+	db, err := store.Open(runtimeDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	_ = db.Leases.ForceRelease(ctx, storyID)
+	if _, _, _, err := db.Leases.AcquireWith(ctx, lease.AcquireOpts{
+		ItemID: storyID, Kind: "story", Owner: lease.ResolveOwner(),
+		State: "in_progress", StorySeat: true, SessionID: config.ResolveSession(),
+		Worktree: repo,
+	}); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	origTree := sessionWorktree
+	t.Cleanup(func() { sessionWorktree = origTree })
+	sessionWorktree = func() string { return repo }
+
+	out, err := runRootIn(t, `{"session_id":"sess-B","tool_input":{"file_path":"internal/foo.go"}}`, "hook", "gate")
+	if err == nil {
+		t.Fatalf("sess-B should not inherit sess-A in-flight; got allow:\n%s", out)
+	}
+	if strings.Contains(out, "IN FLIGHT") {
+		t.Fatalf("sess-B must not inherit in-flight gating:\n%s", out)
+	}
 }
 
 func TestGateDeniesPlanningAndInFlightAcrossHarnesses(t *testing.T) {

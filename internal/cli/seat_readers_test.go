@@ -105,21 +105,46 @@ func TestPickSessionSeatRoutesByWorktree(t *testing.T) {
 	t.Cleanup(func() { sessionWorktree = orig })
 
 	sessionWorktree = func() string { return "/w/b" }
-	if got := pickSessionSeat(live); got.ItemID != "sty_b" {
-		t.Errorf("session in /w/b must pick sty_b, got %+v", got)
+	if got, mine := pickSessionSeat(live, ""); got.ItemID != "sty_b" || mine {
+		t.Errorf("session in /w/b must pick sty_b mine=false, got %+v mine=%v", got, mine)
 	}
 	sessionWorktree = func() string { return "/w/a" }
-	if got := pickSessionSeat(live); got.ItemID != "sty_a" {
-		t.Errorf("session in /w/a must pick sty_a, got %+v", got)
+	if got, mine := pickSessionSeat(live, ""); got.ItemID != "sty_a" || mine {
+		t.Errorf("session in /w/a must pick sty_a mine=false, got %+v mine=%v", got, mine)
 	}
 	// No tree answer (non-git session) falls back to the first live seat rather
 	// than reporting no seat at all — the gate question must stay answered.
 	sessionWorktree = func() string { return "" }
-	if got := pickSessionSeat(live); got.ItemID != "sty_a" {
-		t.Errorf("unresolvable tree must fall back to the first live seat: %+v", got)
+	if got, mine := pickSessionSeat(live, ""); got.ItemID != "sty_a" || mine {
+		t.Errorf("unresolvable tree must fall back to the first live seat: %+v mine=%v", got, mine)
 	}
-	if got := pickSessionSeat(nil); got.ItemID != "" {
+	if got, _ := pickSessionSeat(nil, ""); got.ItemID != "" {
 		t.Errorf("no live seats must yield no pick: %+v", got)
+	}
+}
+
+func TestSameTreeSessionsDoNotShareSeat(t *testing.T) {
+	a := seatInfo{ItemID: "sty_a", Worktree: "/w/a", SessionID: "sess-A", InFlight: true}
+	live := []seatInfo{a}
+	orig := sessionWorktree
+	t.Cleanup(func() { sessionWorktree = orig })
+	sessionWorktree = func() string { return "/w/a" }
+
+	got, mine := pickSessionSeat(live, "sess-A")
+	if got.ItemID != "sty_a" || !mine {
+		t.Fatalf("driver must pick sty_a mine=true, got %+v mine=%v", got, mine)
+	}
+	got, mine = pickSessionSeat(live, "sess-B")
+	if got.ItemID != "" || mine {
+		t.Fatalf("sibling must not inherit stamped seat, got %+v mine=%v", got, mine)
+	}
+	got, mine = pickSessionSeat([]seatInfo{{ItemID: "sty_a", Worktree: "/w/a"}}, "sess-B")
+	if got.ItemID != "sty_a" || mine {
+		t.Fatalf("unstamped non-flight tree match is mine=false, got %+v mine=%v", got, mine)
+	}
+	got, mine = pickSessionSeat([]seatInfo{{ItemID: "sty_a", Worktree: "/w/a", InFlight: true}}, "sess-B")
+	if got.ItemID != "sty_a" || mine {
+		t.Fatalf("unstamped in-flight still tree-routes mine=false, got %+v mine=%v", got, mine)
 	}
 }
 

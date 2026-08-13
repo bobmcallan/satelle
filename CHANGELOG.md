@@ -1,3 +1,8 @@
+## [0.0.446] - 2026-08-13
+
+### Fixed
+- **Same-tree sessions no longer share an engagement seat.** A lease is stamped with the harness session id (published from the hook, resolved at `story set`); a sibling session with a different id is not IN FLIGHT-denied on a transition it is not driving. Unstamped seats keep today's tree-routed permissions. The in-flight deny names the story without claiming the hook is the driver when it cannot establish that. Isolated performers inherit the parent's `SATELLE_SESSION`. (sty_a8ef4041)
+
 ## [0.0.445] - 2026-08-13
 
 ### Fixed

@@ -130,6 +130,29 @@ func TestLeaseSameTargetInFlightNoOp(t *testing.T) {
 	}
 }
 
+// TestStorySetStampsResolvedSession: the production acquire path (story-set →
+// acquireEngagementLease) stamps SATELLE_SESSION onto the lease. Deleting
+// SessionID: sessionID from that call must fail this test.
+func TestStorySetStampsResolvedSession(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	t.Setenv("SATELLE_SESSION", "sess-A")
+	db := wireWithWorkflowsStore(t, singleStoryWF)
+
+	var a workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "A", "category": "feature"}), &a)
+	json.Unmarshal(call(t, "story-set", map[string]any{"id": a.ID, "status": "plan"}), &a)
+	if a.Status != "plan" {
+		t.Fatalf("status = %q", a.Status)
+	}
+	l, err := db.Leases.Get(context.Background(), a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.SessionID != "sess-A" {
+		t.Fatalf("story-set must stamp SATELLE_SESSION on the lease, got %q", l.SessionID)
+	}
+}
+
 // TestSameStatusReengageAfterDroppedSeat (sty_4f74d01f): force-release the lease
 // while status stays performing; story set --status <same> re-grants a seat.
 func TestSameStatusReengageAfterDroppedSeat(t *testing.T) {

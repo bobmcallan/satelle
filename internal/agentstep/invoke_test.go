@@ -323,6 +323,7 @@ func TestInvokeExpectPerformReturnsStdout(t *testing.T) {
 }
 
 func TestInvokeExpectPerformCarriesDispatchMarkers(t *testing.T) {
+	t.Setenv(config.SessionEnv, "sess-A")
 	r := &fakeRunner{out: "ok"}
 	g := New(r, fakeDocs{workflow: testWorkflow}, "/repo", "")
 	res := g.Invoke(context.Background(), InvokeRequest{
@@ -344,6 +345,7 @@ func TestInvokeExpectPerformCarriesDispatchMarkers(t *testing.T) {
 		config.DispatchAgentEnv: "planner",
 		config.DispatchStepEnv:  "plan",
 		config.DispatchItemEnv:  "sty_mark",
+		config.SessionEnv:       "sess-A",
 	}
 	for k, v := range want {
 		if r.got.Env[k] != v {

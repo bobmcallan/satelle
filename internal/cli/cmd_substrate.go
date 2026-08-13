@@ -201,7 +201,7 @@ func pruneSeat(ctx context.Context, a *app.App) (storyID, state string) {
 	if err != nil || len(live) == 0 {
 		return "", ""
 	}
-	seat := pickSessionSeat(live)
+	seat, _ := pickSessionSeat(live, config.ResolveSession())
 	return seat.ItemID, seat.StoryStatus
 }
 

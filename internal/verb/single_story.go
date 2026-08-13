@@ -3,8 +3,10 @@ package verb
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -43,6 +45,10 @@ func acquireEngagementLease(ctx context.Context, item workitem.Item, targetStatu
 	// repo's seat concurrency mode, expressed as the arbitration key
 	// (seatKeyFor) — the lease package applies the key, it never learns the mode.
 	occupiesSeat := item.Kind == workitem.KindStory
+	sessionID := config.ResolveSession()
+	if sessionID != "" {
+		_ = os.Setenv(config.SessionEnv, sessionID)
+	}
 	l, outcome, holder, err := ls.AcquireWith(ctx, lease.AcquireOpts{
 		ItemID:    item.ID,
 		Kind:      string(item.Kind),
@@ -51,6 +57,7 @@ func acquireEngagementLease(ctx context.Context, item workitem.Item, targetStatu
 		StorySeat: occupiesSeat,
 		SeatKey:   seatKeyFor(item),
 		Worktree:  engagementWorktree(),
+		SessionID: sessionID,
 	})
 	if err != nil {
 		return false, false, err
