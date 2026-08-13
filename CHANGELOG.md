@@ -1,3 +1,8 @@
+## [0.0.441] - 2026-08-13
+
+### Added
+- **Edit-gate filename globs so agent story-reference dumps are not blocked.** A sibling `[gate] edit_exempt_globs` key matches basenames via `filepath.Match` (a pattern containing `/` is repo-relative). Init seeds `sty_*_body.md` and `sty_*_ac.md` into the gate config and the managed `.gitignore` block; migrate appends missing managed globs to a non-empty list and leaves an empty list as a deliberate opt-out. Prefix exemptions are unchanged. The no-engaged-story deny text names the session scratchpad, `/tmp`, or those dump names. Removing the authored globs re-gates the names — the decision is configuration, not a Go branch. (sty_fefc88cd)
+
 ## [0.0.440] - 2026-08-13
 
 ### Added

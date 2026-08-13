@@ -258,6 +258,11 @@ type ReviewConfig struct {
 // Empty means everything in-repo requires an engaged story (sty_8c3d345c /
 // sty_f115e6bf).
 //
+// EditExemptGlobs lists filename globs whose edits are also exempt (sty_fefc88cd).
+// Basename match unless the pattern contains `/` (then repo-relative). Sibling
+// of EditExemptPaths — prefix semantics stay exact. Init seeds story-reference
+// dump names; the operator owns the list.
+//
 // How MANY stories may perform at once is NOT a gate concern: it is the seat
 // concurrency mode, [engagement] parallel (sty_c098dc2d), whose default "none"
 // is the single performing story this repo has always enforced (sty_c7149f8a).
@@ -283,6 +288,7 @@ type ReviewConfig struct {
 // Not a satelle default — the operator authors the policy per repo.
 type GateConfig struct {
 	EditExemptPaths       []string            `toml:"edit_exempt_paths"`
+	EditExemptGlobs       []string            `toml:"edit_exempt_globs"`
 	AllowOutsideTreeEdits bool                `toml:"allow_outside_tree_edits"`
 	CommandAllow          map[string][]string `toml:"command_allow"`
 }
@@ -359,6 +365,25 @@ func (c Config) ResolveEditExemptPaths(repoRoot string) []string {
 		if s := strings.TrimSpace(p); s != "" {
 			out = append(out, resolveUnder(repoRoot, s))
 		}
+	}
+	return out
+}
+
+// ResolveEditExemptGlobs returns trimmed [gate] edit_exempt_globs entries.
+// Blank entries are dropped. Patterns are not paths — no repo-root join.
+// Returns nil when nothing is configured so the pattern classifier is a no-op.
+func (c Config) ResolveEditExemptGlobs() []string {
+	if len(c.Gate.EditExemptGlobs) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(c.Gate.EditExemptGlobs))
+	for _, p := range c.Gate.EditExemptGlobs {
+		if s := strings.TrimSpace(p); s != "" {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

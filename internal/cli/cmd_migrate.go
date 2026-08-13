@@ -43,9 +43,9 @@ func init() {
                             catalog, or a path you control)
   3. substrate prune      — remove unedited embedded-default seed copies
   4. gitignore converge   — rewrite the managed .gitignore block to the current form
-  5. config converge      — append satelle's deployed footprint (.gitignore, harness
-                            scaffolds) to a non-empty [gate] edit_exempt_paths that
-                            lacks them (operator additions kept; empty untouched)
+  5. config converge      — append missing managed entries to non-empty
+                            [gate] edit_exempt_paths / edit_exempt_globs
+                            (operator additions kept; empty untouched)
   6. retired refs         — report (and under --yes, rewrite renames of) authored
                             [[wikilinks]] that cite embedded names the binary
                             retired ; removals-with-no-replacement
@@ -102,6 +102,9 @@ type migratePlan struct {
 	// ExemptManaged lists the managed paths a non-empty [gate] edit_exempt_paths
 	// still lacks — satelle's own deployed footprint (sty_f115e6bf, sty_926cfcdc).
 	ExemptManaged []string
+	// ExemptGlobsManaged lists managed [gate] edit_exempt_globs still lacking
+	// (sty_fefc88cd). Empty list is a deliberate opt-out and is never converged.
+	ExemptGlobsManaged []string
 	// WorkflowRetire lists DOT workflow files superseded by an authored,
 	// PARSEABLE done.toml + step.toml (sty_9835070d). Actionable work: migrate
 	// removes them.
@@ -246,6 +249,7 @@ func planMigrate(cfg config.Config, repoRoot, dataDir string) migratePlan {
 	p.PruneSeeds = listUneditedSeeds(dataDir)
 	p.Gitignore = gitignoreNeedsConverge(repoRoot)
 	p.ExemptManaged = editExemptManagedMissing(dataDir)
+	p.ExemptGlobsManaged = editExemptGlobsManagedMissing(dataDir)
 	p.WorkflowRetire, p.WorkflowConvertPending = workflowConversionState(dataDir)
 	p.RetiredRefs = planRetiredRefs(dataDir)
 	return p
@@ -493,7 +497,7 @@ func printConversionPending(out io.Writer, pending []string) {
 
 func (p migratePlan) empty() bool {
 	return !p.RuntimeRelocate && len(p.Residue) == 0 && len(p.PruneSeeds) == 0 &&
-		!p.Gitignore && len(p.ExemptManaged) == 0 && len(p.WorkflowRetire) == 0 &&
+		!p.Gitignore && len(p.ExemptManaged) == 0 && len(p.ExemptGlobsManaged) == 0 && len(p.WorkflowRetire) == 0 &&
 		len(p.StampRewrite) == 0 && len(p.RetiredRefs) == 0
 }
 
@@ -566,6 +570,12 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 			strings.Join(plan.ExemptManaged, ", "))
 	} else {
 		fmt.Fprintln(out, "  config:           (edit_exempt_paths current)")
+	}
+	if len(plan.ExemptGlobsManaged) > 0 {
+		fmt.Fprintf(out, "  config:           append %s to [gate] edit_exempt_globs\n",
+			strings.Join(plan.ExemptGlobsManaged, ", "))
+	} else {
+		fmt.Fprintln(out, "  config:           (edit_exempt_globs current)")
 	}
 	if len(plan.WorkflowRetire) == 0 {
 		fmt.Fprintln(out, "  workflows:        (none superseded)")
@@ -717,16 +727,29 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 		}
 	}
 
-	if len(plan.ExemptManaged) > 0 {
+	if len(plan.ExemptManaged) > 0 || len(plan.ExemptGlobsManaged) > 0 {
 		fmt.Fprintln(out, "\n→ config converge")
-		changed, err := ensureEditExemptManaged(dataDir)
-		if err != nil {
-			return fmt.Errorf("migrate: edit_exempt_paths: %w", err)
+		if len(plan.ExemptManaged) > 0 {
+			changed, err := ensureEditExemptManaged(dataDir)
+			if err != nil {
+				return fmt.Errorf("migrate: edit_exempt_paths: %w", err)
+			}
+			if changed {
+				fmt.Fprintln(out, "  updated .satelle/satelle.toml [gate] edit_exempt_paths")
+			} else {
+				fmt.Fprintln(out, "  edit_exempt_paths already current")
+			}
 		}
-		if changed {
-			fmt.Fprintln(out, "  updated .satelle/satelle.toml [gate] edit_exempt_paths")
-		} else {
-			fmt.Fprintln(out, "  edit_exempt_paths already current")
+		if len(plan.ExemptGlobsManaged) > 0 {
+			changed, err := ensureGateListManaged(dataDir, "edit_exempt_globs", managedEditExemptGlobs)
+			if err != nil {
+				return fmt.Errorf("migrate: edit_exempt_globs: %w", err)
+			}
+			if changed {
+				fmt.Fprintln(out, "  updated .satelle/satelle.toml [gate] edit_exempt_globs")
+			} else {
+				fmt.Fprintln(out, "  edit_exempt_globs already current")
+			}
 		}
 	}
 
@@ -822,12 +845,26 @@ func editExemptManagedMissing(dataDir string) []string {
 	return editExemptMissingManaged(string(raw))
 }
 
+func editExemptGlobsManagedMissing(dataDir string) []string {
+	raw, err := os.ReadFile(filepath.Join(dataDir, config.ConfigName))
+	if err != nil {
+		return nil
+	}
+	return listMissingManaged(string(raw), "edit_exempt_globs", managedEditExemptGlobs)
+}
+
 // ensureEditExemptManaged appends every missing managedEditExemptEntries value
 // to a non-empty [gate] edit_exempt_paths list in one rewrite. Operator entries
 // and order are preserved. Returns true when the file was rewritten. An absent
 // key or an explicitly empty list is left alone (init WARNs on absence; empty is
 // a deliberate opt-out).
 func ensureEditExemptManaged(dataDir string) (bool, error) {
+	return ensureGateListManaged(dataDir, "edit_exempt_paths", managedEditExemptEntries)
+}
+
+// ensureGateListManaged appends missing managed values to a non-empty [gate]
+// list key. Empty list is a deliberate opt-out and is never rewritten.
+func ensureGateListManaged(dataDir, key string, managed []string) (bool, error) {
 	path := filepath.Join(dataDir, config.ConfigName)
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -837,19 +874,18 @@ func ensureEditExemptManaged(dataDir string) (bool, error) {
 		return false, err
 	}
 	content := string(raw)
-	missing := editExemptMissingManaged(content)
+	missing := listMissingManaged(content, key, managed)
 	if len(missing) == 0 {
 		return false, nil
 	}
-	items := config.ListStringValues(content, "gate", "edit_exempt_paths")
-	// Append-only merge.
+	items := config.ListStringValues(content, "gate", key)
 	merged := append(append([]string{}, items...), missing...)
 	quoted := make([]string, 0, len(merged))
 	for _, p := range merged {
 		quoted = append(quoted, `"`+p+`"`)
 	}
 	value := "[" + strings.Join(quoted, ", ") + "]"
-	next := config.UpsertKey(content, "gate", "edit_exempt_paths", value)
+	next := config.UpsertKey(content, "gate", key, value)
 	if next == content {
 		return false, nil
 	}

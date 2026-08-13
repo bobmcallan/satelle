@@ -323,6 +323,106 @@ edit_exempt_paths = [".satelle/", ".claude/"]
 	}
 }
 
+// TestMigrateAppendsEditExemptGlobs (sty_fefc88cd AC3): a non-empty
+// edit_exempt_globs that predates the managed dump names is appended to
+// without clobbering operator additions; an empty list is a deliberate
+// opt-out and is left alone.
+func TestMigrateAppendsEditExemptGlobs(t *testing.T) {
+	disableServeProbe(t)
+	home := t.TempDir()
+	t.Setenv("SATELLE_HOME", home)
+
+	repo := t.TempDir()
+	dataDir := filepath.Join(repo, config.DefaultDataDir)
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "agents.toml"), []byte("[executor]\nharness = \"in-loop\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tomlBody := `[gate]
+edit_exempt_paths = ` + defaultEditExemptTOML() + `
+edit_exempt_globs = ["notes/*.md"]
+`
+	if err := os.WriteFile(filepath.Join(dataDir, "satelle.toml"), []byte(tomlBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	homeDB := filepath.Join(home, config.RepoKey(repo), config.DefaultDBName)
+	if err := os.MkdirAll(filepath.Dir(homeDB), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(homeDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	a := &app.App{
+		Config:     config.Config{},
+		RepoRoot:   repo,
+		DataDir:    dataDir,
+		RuntimeDir: filepath.Dir(homeDB),
+		DBPath:     homeDB,
+	}
+
+	var dry strings.Builder
+	if err := runMigrate(&dry, a, false, false); err != nil {
+		t.Fatalf("dry-run: %v\n%s", err, dry.String())
+	}
+	if !strings.Contains(dry.String(), "edit_exempt_globs") {
+		t.Errorf("dry-run plan should name glob converge:\n%s", dry.String())
+	}
+	raw, _ := os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
+	if string(raw) != tomlBody {
+		t.Fatalf("dry-run rewrote toml:\n%s", raw)
+	}
+
+	var apply strings.Builder
+	if err := runMigrate(&apply, a, true, false); err != nil {
+		t.Fatalf("apply: %v\n%s", err, apply.String())
+	}
+	got, err := os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	if !strings.Contains(s, `edit_exempt_globs = ["notes/*.md", "sty_*_body.md", "sty_*_ac.md"]`) {
+		t.Errorf("want append-only glob merge, got:\n%s", s)
+	}
+	if !strings.Contains(apply.String(), "edit_exempt_globs") {
+		t.Errorf("apply report should name the update:\n%s", apply.String())
+	}
+
+	var again strings.Builder
+	if err := runMigrate(&again, a, true, false); err != nil {
+		t.Fatalf("second run: %v\n%s", err, again.String())
+	}
+	if !strings.Contains(again.String(), "already on current structure") {
+		t.Errorf("second run should be no-op:\n%s", again.String())
+	}
+
+	emptyRepo := t.TempDir()
+	emptyData := filepath.Join(emptyRepo, config.DefaultDataDir)
+	if err := os.MkdirAll(emptyData, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	emptyToml := "[gate]\nedit_exempt_globs = []\n"
+	if err := os.WriteFile(filepath.Join(emptyData, "satelle.toml"), []byte(emptyToml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := ensureGateListManaged(emptyData, "edit_exempt_globs", managedEditExemptGlobs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Error("empty edit_exempt_globs must not be rewritten")
+	}
+	rawEmpty, _ := os.ReadFile(filepath.Join(emptyData, "satelle.toml"))
+	if string(rawEmpty) != emptyToml {
+		t.Errorf("empty glob list clobbered:\n%s", rawEmpty)
+	}
+}
+
 // migrateWorkflowRepo builds a minimal repo whose .satelle/workflows holds the
 // given files (name → body), plus the agents/config a migrate plan needs.
 func migrateWorkflowRepo(t *testing.T, files map[string]string) (repo, dataDir string) {

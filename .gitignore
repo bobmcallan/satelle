@@ -38,4 +38,7 @@
 .satelle/satelle.local.toml
 # the repo-local pinned binary (satelle update --local) is local state, never committed
 .satelle/satelle
+# agent story-reference dumps (edit-gate exempt via [gate] edit_exempt_globs)
+sty_*_body.md
+sty_*_ac.md
 # <<< satelle (managed) <<<

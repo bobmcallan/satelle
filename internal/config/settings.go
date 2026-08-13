@@ -56,6 +56,7 @@ var Settings = []Setting{
 	{Key: "stories_keep_days", Label: "Keep closed stories (days)", Help: "0 = no age pruning.", Kind: kindInt},
 	{Section: "review", Key: "gate_create", Label: "Gate create", Help: "Run structure + create_review on story/task create (default on at init).", Kind: kindBool},
 	{Section: "gate", Key: "edit_exempt_paths", Label: "Edit-gate exempt paths", Help: "Path prefixes exempt from the engaged-story edit gate. Init seeds .satelle/ (authored substrate) plus the footprint satelle deploys itself (.gitignore block, harness scaffolds).", Kind: kindList},
+	{Section: "gate", Key: "edit_exempt_globs", Label: "Edit-gate exempt globs", Help: "Filename globs exempt from the engaged-story edit gate (basename match; a pattern containing / is repo-relative). Init seeds sty_*_body.md and sty_*_ac.md for agent story-reference dumps.", Kind: kindList},
 	{Section: "gate", Key: "allow_outside_tree_edits", Label: "Allow outside-tree edits", Help: "Opt in to Bash/Edit mutations in another repo's working tree. Non-repo paths are never fenced. Default deny; only for a deliberate multi-repo install.", Kind: kindBool},
 	{Section: "engagement", Key: "parallel", Label: "Seat concurrency mode", Help: "none = one performing story at a time; epic = sibling children of one epic may engage concurrently, each from a distinct git working tree.", Kind: kindEnum, Enum: []string{ParallelNone, ParallelEpic}},
 	{Section: "hosted", Key: "project", Label: "Hosted project", Help: "Project slug this repo maps to (personal sync target).", Kind: kindString},
@@ -121,6 +122,8 @@ func SettingDisplay(cfg Config, s Setting) string {
 		return boolStr(cfg.Review.GateCreate)
 	case "gate.edit_exempt_paths":
 		return strings.Join(cfg.Gate.EditExemptPaths, "\n")
+	case "gate.edit_exempt_globs":
+		return strings.Join(cfg.Gate.EditExemptGlobs, "\n")
 	case "gate.allow_outside_tree_edits":
 		return boolStr(cfg.Gate.AllowOutsideTreeEdits)
 	case "engagement.parallel":

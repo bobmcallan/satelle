@@ -42,6 +42,28 @@ func TestManagedEditExemptEntriesAreDeployedFootprint(t *testing.T) {
 	}
 }
 
+// TestManagedEditExemptGlobsAreNarrow pins the seeded dump-name set. Any
+// matching filename bypasses the edit gate, so widening this list is a
+// deliberate reviewed edit, not drift (sty_fefc88cd).
+func TestManagedEditExemptGlobsAreNarrow(t *testing.T) {
+	want := []string{"sty_*_body.md", "sty_*_ac.md"}
+	if strings.Join(managedEditExemptGlobs, ",") != strings.Join(want, ",") {
+		t.Fatalf("managedEditExemptGlobs = %v, want %v — widening the seeded dump names is a deliberate change",
+			managedEditExemptGlobs, want)
+	}
+	if got := defaultEditExemptGlobsTOML(); got != `["sty_*_body.md", "sty_*_ac.md"]` {
+		t.Errorf("defaultEditExemptGlobsTOML() = %s", got)
+	}
+	if !strings.Contains(scaffoldToml, "edit_exempt_globs = "+defaultEditExemptGlobsTOML()) {
+		t.Error("scaffoldToml must seed [gate] edit_exempt_globs from defaultEditExemptGlobsTOML")
+	}
+	for _, g := range want {
+		if !strings.Contains(gitignoreBlock, g+"\n") {
+			t.Errorf("managed .gitignore block missing dump pattern %q", g)
+		}
+	}
+}
+
 // TestSeededExemptionsAgreeWithSubstrateOnlyCheck is the AC4 guard: the embedded
 // satelle-substrate-only-check names the same managed footprint in its allow
 // regex. Two answers about what the binary deploys is the defect this story

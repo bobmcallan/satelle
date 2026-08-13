@@ -157,7 +157,12 @@ func TestRunInitSeedsActiveEditExemptPaths(t *testing.T) {
 	tomlSrc := string(body)
 	// The [gate] table and edit_exempt_paths must be ACTIVE (no leading '#') and
 	// seed .satelle/ plus the footprint the binary itself deploys.
-	for _, want := range []string{"\n[gate]\n", "edit_exempt_paths = " + defaultEditExemptTOML(), "allow_outside_tree_edits"} {
+	for _, want := range []string{
+		"\n[gate]\n",
+		"edit_exempt_paths = " + defaultEditExemptTOML(),
+		"edit_exempt_globs = " + defaultEditExemptGlobsTOML(),
+		"allow_outside_tree_edits",
+	} {
 		if !strings.Contains(tomlSrc, want) {
 			t.Errorf("scaffold satelle.toml missing active %q:\n%s", want, tomlSrc)
 		}
@@ -176,6 +181,9 @@ func TestRunInitSeedsActiveEditExemptPaths(t *testing.T) {
 		if !strings.HasSuffix(got[i], strings.TrimSuffix(w, "/")) {
 			t.Errorf("ResolveEditExemptPaths[%d] = %q, want ending %q", i, got[i], w)
 		}
+	}
+	if globs := cfg.ResolveEditExemptGlobs(); strings.Join(globs, ",") != strings.Join(managedEditExemptGlobs, ",") {
+		t.Errorf("ResolveEditExemptGlobs = %v, want %v", globs, managedEditExemptGlobs)
 	}
 }
 

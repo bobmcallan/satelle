@@ -134,14 +134,14 @@ repo. Temp dirs, scratchpads, and non-repo paths are outside the fence's
 concern and are allowed.
 
 Exemption is CONFIGURATION, not code (the constitution: configuration over
-code). An edit is exempt from the engaged-story check ONLY when its target falls
-under a [gate] edit_exempt_paths prefix (repo-root-relative or absolute). The
-binary does NOT special-case the data dir or any managed path: 'satelle init'
-SEEDS .satelle/ and the footprint it deploys (.gitignore, harness scaffolds)
-into edit_exempt_paths so authored substrate (workflows, skills, principles,
-documents, tasks, config) and satelle-written output stay editable without a
-release OOTB — but the operator sees and owns that list and may add prefixes
-or drop any default. With an empty edit_exempt_paths, even a .satelle/ edit needs an
+code). An edit is exempt when its target falls under a [gate] edit_exempt_paths
+prefix (repo-root-relative or absolute) or matches a [gate] edit_exempt_globs
+filename pattern. The binary does NOT special-case the data dir or any managed
+path: 'satelle init' SEEDS .satelle/ and the footprint it deploys (.gitignore,
+harness scaffolds) into edit_exempt_paths, and dump names into
+edit_exempt_globs, so authored substrate and satelle-written output stay
+editable without a release OOTB — but the operator owns those lists and may
+add or drop any default. With empty lists, even a .satelle/ edit needs an
 engaged story: config decides, never a Go rule. Generated views under the data
 dir stay protected by their 0o444 file mode regardless.
 
@@ -169,15 +169,17 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 					}
 				}
 				// Exemption is CONFIGURATION, not code (the constitution:
-				// configuration over code). Only a path under a [gate]
-				// edit_exempt_paths prefix is exempt from the engaged-story gate.
+				// configuration over code). A path under a [gate]
+				// edit_exempt_paths prefix or a [gate] edit_exempt_globs
+				// filename pattern is exempt from the engaged-story gate.
 				// The data dir / managed paths are NOT special-cased in the binary —
 				// `satelle init` seeds .satelle/ and the footprint it deploys itself
-				// (.gitignore block, harness scaffolds) into edit_exempt_paths so
-				// authored substrate and satelle-written output stay editable without
-				// a release OOTB, but the operator owns that list. With an
-				// empty list, even a .satelle/ edit needs an engaged story: config
-				// decides, never a Go rule.
+				// (.gitignore block, harness scaffolds) into edit_exempt_paths, and
+				// story-dump names into edit_exempt_globs, so authored substrate
+				// and satelle-written output stay editable without a release OOTB,
+				// but the operator owns those lists. With empty lists, even a
+				// .satelle/ edit needs an engaged story: config decides, never a
+				// Go rule.
 				if exemptTarget(p) {
 					return nil
 				}
@@ -1072,7 +1074,8 @@ func outsideAnchorBashReason(path, foreignRoot string) string {
 const noEngagedStoryEditReason = "satelle: you're mutating the tree without a performing story, or you have used the wrong tool for reading. " +
 	"Open a story session before editing code: satelle story create …, then satelle story set <id> --status plan. " +
 	"That session stays open through your edits until the story reaches a terminal or parked state (done, cancelled, or blocked) — finishing an edit does NOT close it. " +
-	"For research, use read tools (Read/read_file/grep/Glob) — not Edit/Write/search_replace."
+	"For research, use read tools (Read/read_file/grep/Glob) — not Edit/Write/search_replace. " +
+	"Story-reference copies belong in the session scratchpad or /tmp, or as sty_*_body.md / sty_*_ac.md dumps (edit-gate exempt when those globs are authored)."
 
 // droppedSeatEditReason is the deny when a story is still in a performing
 // status but its engagement lease is missing (sty_4f74d01f). Distinct from
@@ -1093,7 +1096,7 @@ func editGateDenyReason(info seatInfo, now time.Time) string {
 	return noEngagedStoryEditReason + seatSuffix(info, now)
 }
 
-const readOnlyPreflightReason = "Read-only preflight remains available: use Read/read_file/Grep/Glob or non-mutating shell commands, and record approved context with `satelle story attach` or `satelle story log`; advance through the workflow gate before editing."
+const readOnlyPreflightReason = "Read-only preflight remains available: use Read/read_file/Grep/Glob or non-mutating shell commands, and record approved context with `satelle story attach` or `satelle story log`; advance through the workflow gate before editing. Story-reference copies belong in the session scratchpad or /tmp, or as sty_*_body.md / sty_*_ac.md dumps when those globs are authored."
 
 func editPermissionDenyReason(info seatInfo, now time.Time) string {
 	if info.ItemID == "" || !info.Engaged || info.Stale {
@@ -1309,23 +1312,29 @@ func infraDenyJSON(harness string) string {
 }
 
 // exemptTarget reports whether an edit to target is exempt from the engaged-story
-// gate: it resolves under a configured [gate] edit_exempt_paths prefix. Exemption
-// is CONFIGURATION, not code (the constitution: configuration over code) — the
+// gate: it resolves under a configured [gate] edit_exempt_paths prefix or
+// matches a [gate] edit_exempt_globs filename pattern. Exemption is
+// CONFIGURATION, not code (the constitution: configuration over code) — the
 // binary no longer special-cases the data dir or managed paths; `satelle init`
 // seeds .satelle/ and the footprint it deploys itself (.gitignore block, harness
-// scaffolds) into edit_exempt_paths so authored substrate and satelle-written
-// output stay editable OOTB, but the operator owns that list (sty_8c3d345c /
-// sty_f115e6bf / sty_926cfcdc). The target is resolved to
-// absolute against the repo root FIRST, so a repo-relative path (as Grok sends)
-// is classified correctly. Returns false if the config/root cannot be resolved,
-// so the gate stays conservative (still applies) on any resolution failure.
+// scaffolds) into edit_exempt_paths, and story-dump names into edit_exempt_globs,
+// so authored substrate and satelle-written output stay editable OOTB, but the
+// operator owns those lists (sty_8c3d345c / sty_f115e6bf / sty_926cfcdc /
+// sty_fefc88cd). The target is resolved to absolute against the repo root FIRST,
+// so a repo-relative path (as Grok sends) is classified correctly. Returns false
+// if the config/root cannot be resolved, so the gate stays conservative (still
+// applies) on any resolution failure.
 func exemptTarget(target string) bool {
 	cfg, cfgPath, err := config.Load("")
 	if err != nil {
 		return false
 	}
 	root := config.RepoRootFromConfigPath(cfgPath)
-	return editExempt(cfg.ResolveEditExemptPaths(root), resolveAbsTarget(root, target))
+	abs := resolveAbsTarget(root, target)
+	if editExempt(cfg.ResolveEditExemptPaths(root), abs) {
+		return true
+	}
+	return editExemptPattern(cfg.ResolveEditExemptGlobs(), root, abs)
 }
 
 // editExempt is the pure classification the edit-gate exemption rests on: target
@@ -1337,6 +1346,39 @@ func exemptTarget(target string) bool {
 func editExempt(exemptRoots []string, target string) bool {
 	for _, r := range exemptRoots {
 		if strings.TrimSpace(r) != "" && withinRoot(r, target) {
+			return true
+		}
+	}
+	return false
+}
+
+// editExemptPattern reports whether target matches an authored filename glob.
+// Basename match unless the pattern contains `/` (then repo-relative, slash-
+// normalized). Blank and unparseable patterns are skipped — never fail-open
+// toward exempt-everything (sty_fefc88cd). Kept pure so classification is
+// unit-tested directly.
+func editExemptPattern(patterns []string, root, target string) bool {
+	for _, p := range patterns {
+		s := strings.TrimSpace(p)
+		if s == "" {
+			continue
+		}
+		subject := filepath.Base(target)
+		if strings.ContainsRune(s, '/') {
+			if strings.TrimSpace(root) == "" {
+				continue
+			}
+			rel, err := filepath.Rel(root, target)
+			if err != nil || strings.HasPrefix(rel, "..") {
+				continue
+			}
+			subject = filepath.ToSlash(rel)
+		}
+		ok, err := filepath.Match(s, subject)
+		if err != nil {
+			continue
+		}
+		if ok {
 			return true
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -216,6 +217,58 @@ func TestAnalyzeSubstrateEditExemptMissingManaged(t *testing.T) {
 	}
 }
 
+func TestAnalyzeSubstrateEditExemptGlobsMissingManaged(t *testing.T) {
+	cases := []struct {
+		name    string
+		toml    string
+		wantDef bool
+	}{
+		{
+			name:    "predates default",
+			toml:    "[gate]\nedit_exempt_globs = [\"notes/*.md\"]\n",
+			wantDef: true,
+		},
+		{
+			name:    "already current",
+			toml:    "[gate]\nedit_exempt_globs = " + defaultEditExemptGlobsTOML() + "\n",
+			wantDef: false,
+		},
+		{
+			name:    "empty opt-out",
+			toml:    "[gate]\nedit_exempt_globs = []\n",
+			wantDef: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			_ = os.MkdirAll(filepath.Join(dataDir, "principles"), 0o755)
+			if err := os.WriteFile(filepath.Join(dataDir, "constitution.md"), []byte("# Real\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dataDir, config.ConfigName), []byte(tc.toml), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			defs := analyzeSubstrate(dataDir, filepath.Dir(dataDir))
+			var saw bool
+			for _, d := range defs {
+				if strings.Contains(d.Defect, "edit_exempt_globs lacks") {
+					saw = true
+					if d.Fatal {
+						t.Error("missing-managed-glob defect must be advisory")
+					}
+					if !strings.Contains(d.Fix, "migrate") {
+						t.Errorf("fix should name migrate, got %q", d.Fix)
+					}
+				}
+			}
+			if saw != tc.wantDef {
+				t.Fatalf("wantDef=%v saw=%v defects=%+v", tc.wantDef, saw, defs)
+			}
+		})
+	}
+}
+
 func TestReportSubstrateAnalysisFormat(t *testing.T) {
 	var buf bytes.Buffer
 	n := reportSubstrateAnalysis(&buf, []substrateDefect{
@@ -236,15 +289,17 @@ func TestReportSubstrateAnalysisFormat(t *testing.T) {
 
 func TestInitAnalysisRepoAgnostic(t *testing.T) {
 	// Guard: analysis source must not embed this-repo story/task ids.
+	// Filename globs such as sty_*_body.md are repo-agnostic patterns, not ids.
 	body, err := os.ReadFile("init_analysis.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(body)
-	for _, ban := range []string{"sty_", "tsk_"} {
-		if strings.Contains(s, ban) {
-			t.Errorf("init_analysis.go must not contain %q (repo-agnostic)", ban)
-		}
+	if re := regexp.MustCompile(`sty_[0-9a-f]{8}`); re.MatchString(s) {
+		t.Error("init_analysis.go must not contain a story id (repo-agnostic)")
+	}
+	if strings.Contains(s, "tsk_") {
+		t.Error("init_analysis.go must not contain tsk_ (repo-agnostic)")
 	}
 }
 

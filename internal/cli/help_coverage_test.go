@@ -44,12 +44,12 @@ const (
 var longWordWaiver = map[string]int{
 	// Machine-invoked hook handlers: an operator reads these to understand what
 	// the harness does on their behalf, and the decision tables ARE the content.
-	"satelle hook gate":       478, // every deny reason the edit gate can return, and its remedy
+	"satelle hook gate":       475, // every deny reason the edit gate can return, and its remedy
 	"satelle hook commitgate": 163, // the commit/push fence and the engagement it requires
 	"satelle hook prompt":     135, // what the per-prompt reminder injects and when
 	// Operator procedures: destructive, converging, or recovery paths where the
 	// steps and the refusals are the documentation.
-	"satelle migrate":             425, // structural convergence per area, with the refusal paths
+	"satelle migrate":             420, // structural convergence per area, with the refusal paths
 	"satelle agents":              331, // per-harness launcher + hook install matrix
 	"satelle workspace add":       330, // registration + mirror seeding, and what each half does
 	"satelle doctor":              280, // the readiness checklist it runs, item by item

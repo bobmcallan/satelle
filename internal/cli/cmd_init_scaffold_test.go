@@ -39,6 +39,7 @@ func TestScaffoldTomlDocumentsConfigSurface(t *testing.T) {
 		}
 		switch s {
 		case "[gate]", "edit_exempt_paths = " + defaultEditExemptTOML(),
+			"edit_exempt_globs = " + defaultEditExemptGlobsTOML(),
 			"[review]", "gate_create = true":
 			// expected seeded active lines
 		default:

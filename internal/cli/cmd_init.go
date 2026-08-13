@@ -1417,10 +1417,11 @@ func legacyHookSub(cmd string) string {
 
 // scaffoldToml is the documented config a fresh init writes. Every key is
 // commented because each has a default — the repo runs zero-config until a knob
-// is uncommented. The one exception, [gate] edit_exempt_paths, is seeded ACTIVE
-// from defaultEditExemptTOML so the seeded value and the managed set migrate
-// converges on cannot drift apart — hence the literal is split around it.
-var scaffoldToml = scaffoldTomlBeforeExempt + defaultEditExemptTOML() + scaffoldTomlAfterExempt
+// is uncommented. The exceptions, [gate] edit_exempt_paths and edit_exempt_globs,
+// are seeded ACTIVE from the managed-list helpers so the seeded values and the
+// set migrate converges on cannot drift apart — hence the literal is split
+// around them.
+var scaffoldToml = scaffoldTomlBeforeExempt + defaultEditExemptTOML() + scaffoldTomlBetweenExempt + defaultEditExemptGlobsTOML() + scaffoldTomlAfterExempt
 
 const scaffoldTomlBeforeExempt = `# satelle.toml — per-repo config (committed, secret-free). Every setting has a
 # default, so this file may stay fully commented; uncomment a key to override.
@@ -1503,8 +1504,19 @@ gate_create = true
 [gate]
 edit_exempt_paths = `
 
-// scaffoldTomlAfterExempt is the remainder of the scaffold, resuming on the line
-// after the seeded edit_exempt_paths value.
+// scaffoldTomlBetweenExempt is the seeded [gate] edit_exempt_globs line
+// (sty_fefc88cd). Basename globs match at any depth; a pattern containing /
+// is repo-relative. The seeded set is narrow — any matching filename bypasses
+// the edit gate. Removing an entry re-gates that name. Do not seed *.
+const scaffoldTomlBetweenExempt = `
+# edit_exempt_globs — filename globs (basename match at any depth; a pattern
+# containing / is matched against the repo-relative path). Seeded for agent
+# story-reference dumps. Narrow on purpose: a matching filename bypasses the
+# edit gate. Removing an entry re-gates that name.
+edit_exempt_globs = `
+
+// scaffoldTomlAfterExempt is the remainder of the scaffold, resuming after
+// the seeded edit_exempt_globs value.
 const scaffoldTomlAfterExempt = `
 # command_allow — OPT-IN step-scoped git policy (sty_c21490cc). Keys are git
 # subcommands; values are story statuses that may run them while engaged.
@@ -1746,7 +1758,7 @@ const gitignoreMarkerEnd = "# <<< satelle (managed) <<<"
 // local DB to be git-tracked. Entries below are local-state defaults only.
 // Runtime state (satelle.db, logs, backups, stories cache) lives under
 // ~/.satelle/<repo-key>/ — outside the repo — so it is not listed here.
-const gitignoreBlock = gitignoreMarker + `
+var gitignoreBlock = gitignoreMarker + `
 # RECOMMENDED defaults — the operator owns .gitignore. .satelle is git-optional
 # overall (continuity is local disk or personal rehydrate). When a team tracks
 # process under .satelle, workflows/agents.toml is intended to be committed
@@ -1761,7 +1773,7 @@ const gitignoreBlock = gitignoreMarker + `
 .satelle/satelle.local.toml
 # the repo-local pinned binary (satelle update --local) is local state, never committed
 .satelle/satelle
-` + gitignoreMarkerEnd + "\n"
+` + managedEditExemptGitignore() + gitignoreMarkerEnd + "\n"
 
 // ensureWorkspaceRegistration registers repoRoot in the machine-local workspace
 // registry (gc.Workspace — the connected-repo list for /workspace and multi-serve).

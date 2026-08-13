@@ -399,6 +399,9 @@ func TestEmitPreToolUseDenyClaudeSchema(t *testing.T) {
 		"Open a story session",
 		"stays open",
 		"done, cancelled, or blocked",
+		"scratchpad",
+		"sty_*_body.md",
+		"sty_*_ac.md",
 	} {
 		if !strings.Contains(reason, want) {
 			t.Errorf("canonical reason missing %q:\n%s", want, reason)
@@ -521,6 +524,49 @@ func TestEditExemptClassification(t *testing.T) {
 	for _, c := range cases {
 		if got := editExempt(c.exemptRoots, c.target); got != c.want {
 			t.Errorf("%s: editExempt(%q) = %v, want %v", c.name, c.target, got, c.want)
+		}
+	}
+}
+
+// TestEditExemptPrefixUnchangedWhenGlobsPresent (sty_fefc88cd AC2): editExempt
+// is prefix-only. A populated glob list is a different classifier — it must
+// not change prefix results, including a dump name that the glob matcher
+// would allow.
+func TestEditExemptPrefixUnchangedWhenGlobsPresent(t *testing.T) {
+	roots := []string{"/home/u/repo/.satelle"}
+	if editExempt(roots, "/home/u/repo/internal/cli/app.go") {
+		t.Fatal("product path must stay prefix-gated")
+	}
+	if editExempt(roots, "/home/u/repo/sty_abc_body.md") {
+		t.Fatal("dump basename is not a prefix exemption")
+	}
+}
+
+// TestEditExemptPatternClassification is the pure matcher table for
+// edit_exempt_globs (sty_fefc88cd AC2/AC5): basename match, repo-relative
+// when the pattern contains /, blank/bad patterns skipped conservatively.
+func TestEditExemptPatternClassification(t *testing.T) {
+	const root = "/home/u/repo"
+	cases := []struct {
+		name     string
+		patterns []string
+		target   string
+		want     bool
+	}{
+		{"match root", []string{"sty_*_body.md"}, root + "/sty_abc_body.md", true},
+		{"match subdir basename", []string{"sty_*_ac.md"}, root + "/notes/sty_abc_ac.md", true},
+		{"non-match product", []string{"sty_*_body.md"}, root + "/internal/cli/cmd_hook.go", false},
+		{"non-match near miss", []string{"sty_*_body.md"}, root + "/sty_abc_body.go", false},
+		{"blank does not exempt everything", []string{"", "sty_*_ac.md"}, root + "/main.go", false},
+		{"bad pattern skipped", []string{"sty_[_body.md"}, root + "/sty_x_body.md", false},
+		{"path-form match", []string{"docs/sty_*_body.md"}, root + "/docs/sty_a_body.md", true},
+		{"path-form does not match other dir", []string{"docs/sty_*_body.md"}, root + "/sty_a_body.md", false},
+		{"path-form outside root skipped", []string{"docs/*.md"}, "/tmp/docs/x.md", false},
+		{"nil patterns no-op", nil, root + "/sty_abc_body.md", false},
+	}
+	for _, c := range cases {
+		if got := editExemptPattern(c.patterns, root, c.target); got != c.want {
+			t.Errorf("%s: editExemptPattern(%v, %q) = %v, want %v", c.name, c.patterns, c.target, got, c.want)
 		}
 	}
 }

@@ -60,6 +60,28 @@ func TestResolveEditExemptPaths(t *testing.T) {
 	}
 }
 
+func TestResolveEditExemptGlobs(t *testing.T) {
+	var zero Config
+	if got := zero.ResolveEditExemptGlobs(); got != nil {
+		t.Errorf("unconfigured ResolveEditExemptGlobs = %v, want nil", got)
+	}
+	c := Config{Gate: GateConfig{EditExemptGlobs: []string{"sty_*_body.md", "", "  ", "sty_*_ac.md"}}}
+	got := c.ResolveEditExemptGlobs()
+	want := []string{"sty_*_body.md", "sty_*_ac.md"}
+	if len(got) != len(want) {
+		t.Fatalf("ResolveEditExemptGlobs = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("ResolveEditExemptGlobs[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	allBlank := Config{Gate: GateConfig{EditExemptGlobs: []string{"", "  "}}}
+	if got := allBlank.ResolveEditExemptGlobs(); got != nil {
+		t.Errorf("all-blank ResolveEditExemptGlobs = %v, want nil", got)
+	}
+}
+
 func TestResolveAuthoredDirs(t *testing.T) {
 	c := Config{SubstrateRoots: map[string]string{
 		"skills": "/elsewhere", // absolute override → /elsewhere/skills

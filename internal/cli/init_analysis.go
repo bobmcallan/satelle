@@ -49,6 +49,7 @@ type scaffoldConfigDefault struct {
 // Audit of every scaffold seed (why only two entries):
 //
 //	[gate] edit_exempt_paths  — seeded active; absence is LOUD (every edit denied)
+//	[gate] edit_exempt_globs  — seeded active; absence is LOUD for story dumps only
 //	[review] gate_create      — seeded active; absence is SILENT (stories file
 //	                            unreviewed) — the reach gap this table + create
 //	                            notice close
@@ -66,6 +67,12 @@ var scaffoldConfigDefaults = []scaffoldConfigDefault{
 		Block: `[gate]
 edit_exempt_paths = ` + defaultEditExemptTOML(),
 		Why: "OOTB scaffold exempts .satelle/ (authored substrate) and the footprint the binary itself deploys (.gitignore managed block, harness scaffolds) from the engaged-story edit gate",
+	},
+	{
+		Section: "gate",
+		Key:     "edit_exempt_globs",
+		Block:   `edit_exempt_globs = ` + defaultEditExemptGlobsTOML(),
+		Why:     "OOTB scaffold exempts agent story-reference dump names (sty_*_body.md, sty_*_ac.md) from the engaged-story edit gate",
 	},
 	{
 		// Seeded active when create-gating shipped. Do NOT auto-enable via migrate:
@@ -107,6 +114,29 @@ func defaultEditExemptTOML() string {
 		quoted = append(quoted, `"`+p+`"`)
 	}
 	return "[" + strings.Join(quoted, ", ") + "]"
+}
+
+// managedEditExemptGlobs are story-reference dump names agents write as a
+// working copy of a story body/ACs. Kept narrow — any matching filename
+// bypasses the edit gate. Operators own the authored list.
+var managedEditExemptGlobs = []string{"sty_*_body.md", "sty_*_ac.md"}
+
+func defaultEditExemptGlobsTOML() string {
+	quoted := make([]string, 0, len(managedEditExemptGlobs))
+	for _, p := range managedEditExemptGlobs {
+		quoted = append(quoted, `"`+p+`"`)
+	}
+	return "[" + strings.Join(quoted, ", ") + "]"
+}
+
+func managedEditExemptGitignore() string {
+	var b strings.Builder
+	b.WriteString("# agent story-reference dumps (edit-gate exempt via [gate] edit_exempt_globs)\n")
+	for _, g := range managedEditExemptGlobs {
+		b.WriteString(g)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // analyzeSubstrate gathers placement + constitution-author + config-reconciliation
@@ -177,6 +207,17 @@ func analyzeSubstrate(dataDir, repoRoot string) []substrateDefect {
 				})
 			}
 		}
+		if d.Section == "gate" && d.Key == "edit_exempt_globs" && content != "" {
+			if missing := listMissingManaged(content, "edit_exempt_globs", managedEditExemptGlobs); len(missing) > 0 {
+				list := `"` + strings.Join(missing, `", "`) + `"`
+				out = append(out, substrateDefect{
+					File:   config.DefaultDataDir + "/" + config.ConfigName,
+					Defect: "edit_exempt_globs lacks " + list + " — agent story-reference dumps trip the engaged-story gate without it",
+					Fix:    "run `satelle migrate --yes` to append " + list + " without clobbering operator additions (or add them by hand)",
+					Fatal:  false,
+				})
+			}
+		}
 	}
 
 	_ = repoRoot // reserved for future absolute-path reports; keep signature stable
@@ -188,16 +229,23 @@ func analyzeSubstrate(dataDir, repoRoot string) []substrateDefect {
 // or an explicitly empty list returns nil (missing-key is handled separately;
 // empty is a deliberate opt-out).
 func editExemptMissingManaged(content string) []string {
-	if !config.HasKey(content, "gate", "edit_exempt_paths") {
+	return listMissingManaged(content, "edit_exempt_paths", managedEditExemptEntries)
+}
+
+// listMissingManaged returns managed entries absent from a non-empty [gate]
+// list key. An absent key or an explicitly empty list returns nil (missing-key
+// is handled separately; empty is a deliberate opt-out).
+func listMissingManaged(content, key string, managed []string) []string {
+	if !config.HasKey(content, "gate", key) {
 		return nil
 	}
-	items := config.ListStringValues(content, "gate", "edit_exempt_paths")
+	items := config.ListStringValues(content, "gate", key)
 	if len(items) == 0 {
 		return nil
 	}
 	var missing []string
-	for _, want := range managedEditExemptEntries {
-		if !config.ListValueContains(content, "gate", "edit_exempt_paths", want) {
+	for _, want := range managed {
+		if !config.ListValueContains(content, "gate", key, want) {
 			missing = append(missing, want)
 		}
 	}
