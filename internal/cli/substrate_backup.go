@@ -67,11 +67,11 @@ type BackupOpts struct {
 // (sty_84f14ace); when false, HostedServer/HostedProject stay empty so the
 // existing server+project gate on the push path stays quiet. Hosted server URL
 // uses global→repo precedence (config.ResolveHostedServer) when opted in.
-func ResolveBackupOpts(cfg config.Config) BackupOpts {
+func ResolveBackupOpts(cfg config.Config, repoRoot string) BackupOpts {
 	opts := BackupOpts{LocalOnly: cfg.Backup.LocalOnly}
 	if cfg.Backup.Hosted {
 		opts.HostedServer = config.ResolveHostedServer(cfg)
-		opts.HostedProject = strings.TrimSpace(cfg.Hosted.Project)
+		opts.HostedProject = config.ResolveBoundProject(cfg, repoRoot)
 	}
 	return opts
 }
@@ -115,7 +115,7 @@ func backupExistingFile(dataDir string, kind BackupKind, relPath string, body []
 	// No hosted channel: advisory unless operator opted local-only.
 	if !opts.LocalOnly {
 		res.Notice = "backup: local only at " + local +
-			" — online/personal backup is opt-in via [backup] hosted = true (requires satelle login + [hosted] project); set [backup] local_only = true to suppress this advisory"
+			" — online/personal backup is opt-in via [backup] hosted = true (requires satelle login + [sync] project); set [backup] local_only = true to suppress this advisory"
 	}
 	return res, nil
 }
@@ -172,7 +172,7 @@ func backupPolicyNotice(opts BackupOpts, localRoot string) string {
 		return ""
 	}
 	return "backup: local only at " + localRoot +
-		" — online/personal backup is opt-in via [backup] hosted = true (requires satelle login + [hosted] project); set [backup] local_only = true to suppress this advisory"
+		" — online/personal backup is opt-in via [backup] hosted = true (requires satelle login + [sync] project); set [backup] local_only = true to suppress this advisory"
 }
 
 // pushBackupTreeHosted walks a local backup tree (e.g. rebase's timestamped

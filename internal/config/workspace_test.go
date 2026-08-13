@@ -34,12 +34,16 @@ func TestResolveActiveWorkspaceDefault(t *testing.T) {
 // TestResolveActiveWorkspaceTeam covers an elected team workspace: an explicit
 // non-personal value resolves to a team workspace carrying that name handle.
 func TestResolveActiveWorkspaceTeam(t *testing.T) {
-	got := (Config{Hosted: HostedConfig{Workspace: "Acme Team"}}).ResolveActiveWorkspace()
+	got := (Config{Sync: map[string]string{"workspace": "Acme Team"}}).ResolveActiveWorkspace()
 	if got.IsPersonal() {
 		t.Fatalf("expected team, got personal")
 	}
 	if got.Name != "Acme Team" || got.Kind != WorkspaceKindTeam {
 		t.Fatalf("got %+v", got)
+	}
+	leftover := (Config{Hosted: HostedConfig{Workspace: "Legacy Team"}}).ResolveActiveWorkspace()
+	if leftover.Name != "Legacy Team" || leftover.Kind != WorkspaceKindTeam {
+		t.Fatalf("leftover hosted workspace = %+v", leftover)
 	}
 }
 

@@ -91,7 +91,7 @@ confirm non-interactively).`,
 				return err
 			}
 			// Authored kinds live under DataDir; the mandatory backup lands under RuntimeDir.
-			opts := ResolveBackupOpts(a.Config)
+			opts := ResolveBackupOpts(a.Config, a.RepoRoot)
 			opts.BackupsDir = a.RuntimeDir
 			return runRebase(cmd.OutOrStdout(), cmd.InOrStdin(), a.DataDir, a.RuntimeDir, yes, time.Now(), opts)
 		},

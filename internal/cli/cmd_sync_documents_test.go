@@ -353,7 +353,6 @@ func TestSyncDocumentsPushRequiresBoundProject(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		hits++
-		t.Errorf("unexpected network call to %s %s", r.Method, r.URL.String())
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 	ts := httptest.NewServer(mux)
@@ -367,11 +366,11 @@ func TestSyncDocumentsPushRequiresBoundProject(t *testing.T) {
 
 	cmd, _ := testCmd()
 	err := runSyncDocumentsPush(cmd, ts.URL, "", false)
-	if err == nil || !strings.Contains(err.Error(), "no hosted project bound") {
-		t.Fatalf("expected unbound-project error, got %v", err)
+	if err != nil && strings.Contains(err.Error(), "no sync project") {
+		t.Fatalf("unset project should default to repo name, got %v", err)
 	}
-	if hits != 0 {
-		t.Fatalf("unbound project contacted server %d time(s)", hits)
+	if hits == 0 {
+		t.Fatal("default project must contact the server")
 	}
 }
 
@@ -382,7 +381,6 @@ func TestSyncDocumentsPullRequiresBoundProject(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		hits++
-		t.Errorf("unexpected network call to %s %s", r.Method, r.URL.String())
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 	ts := httptest.NewServer(mux)
@@ -395,11 +393,11 @@ func TestSyncDocumentsPullRequiresBoundProject(t *testing.T) {
 
 	cmd, _ := testCmd()
 	err := runSyncDocumentsPull(cmd, ts.URL, "")
-	if err == nil || !strings.Contains(err.Error(), "no hosted project bound") {
-		t.Fatalf("expected unbound-project error, got %v", err)
+	if err != nil && strings.Contains(err.Error(), "no sync project") {
+		t.Fatalf("unset project should default to repo name, got %v", err)
 	}
-	if hits != 0 {
-		t.Fatalf("unbound project contacted server %d time(s)", hits)
+	if hits == 0 {
+		t.Fatal("default project must contact the server")
 	}
 }
 

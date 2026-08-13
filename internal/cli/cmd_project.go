@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/config"
@@ -77,7 +76,7 @@ bound to.`,
 		Short: "Bind this repo to a hosted project slug (personal sync target)",
 		Long: `bind records which hosted project this repo's personal sync
 (config / documents / workstate) targets. The slug is written to the committed
-.satelle/satelle.toml [hosted] project key — secret-free, since tokens live only
+.satelle/satelle.toml [sync] project key — secret-free, since tokens live only
 in the per-user credential store. "satelle project show" prints the binding.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -106,12 +105,13 @@ themselves report only indirectly.`,
 	register(project)
 }
 
-// resolveBoundProject returns the repo's [hosted] project slug, or a clear
-// operator error when personal sync is requested without a binding (AC5).
-func resolveBoundProject(cfg config.Config) (string, error) {
-	slug := strings.TrimSpace(cfg.Hosted.Project)
+// resolveBoundProject returns the [sync] project (or leftover [hosted]
+// project, or the repo directory name). Empty only when there is no repo root
+// to default from.
+func resolveBoundProject(cfg config.Config, repoRoot string) (string, error) {
+	slug := config.ResolveBoundProject(cfg, repoRoot)
 	if slug == "" {
-		return "", fmt.Errorf("no hosted project bound — run \"satelle login\", then \"satelle project create --slug <slug> --name <name>\" (or \"satelle project bind <slug>\" if the project already exists), or set [hosted] project in .satelle/satelle.toml (personal sync targets this repo's bound project only)")
+		return "", fmt.Errorf("no sync project — run \"satelle login\", then \"satelle project create --slug <slug> --name <name>\" (or \"satelle project bind <slug>\"), or set [sync] project in .satelle/satelle.toml")
 	}
 	return slug, nil
 }
@@ -134,7 +134,7 @@ func runProjectBind(cmd *cobra.Command, slug string) error {
 		}
 		cfgPath = filepath.Join(cwd, config.DefaultDataDir, config.ConfigName)
 	}
-	edit := config.KeyEdit{Section: "hosted", Key: "project", Value: strconv.Quote(slug)}
+	edit := config.BoundProjectEdit(slug)
 	if err := config.SaveConfigValues(cfgPath, []config.KeyEdit{edit}); err != nil {
 		return fmt.Errorf("record hosted project in satelle.toml: %w", err)
 	}
@@ -149,7 +149,7 @@ func runProjectBind(cmd *cobra.Command, slug string) error {
 }
 
 func runProjectShow(cmd *cobra.Command, serverArg string) error {
-	cfg, _, err := config.Load("")
+	cfg, cfgPath, err := config.Load("")
 	if err != nil && !errors.Is(err, config.ErrNotFound) {
 		return fmt.Errorf("load config: %w", err)
 	}
@@ -163,7 +163,11 @@ func runProjectShow(cmd *cobra.Command, serverArg string) error {
 	} else {
 		fmt.Fprintf(out, "hosted server: %s\n", server)
 	}
-	if slug := strings.TrimSpace(cfg.Hosted.Project); slug == "" {
+	root := ""
+	if cfgPath != "" {
+		root = config.RepoRootFromConfigPath(cfgPath)
+	}
+	if slug := config.ResolveBoundProject(cfg, root); slug == "" {
 		fmt.Fprintln(out, "bound project: (none — run \"satelle project bind <slug>\")")
 	} else {
 		fmt.Fprintf(out, "bound project: %s\n", slug)

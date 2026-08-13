@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/hosted"
 )
 
@@ -416,7 +417,6 @@ func TestSyncConfigPushRequiresBoundProject(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		hits++
-		t.Errorf("unexpected network call to %s %s", r.Method, r.URL.String())
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 	ts := httptest.NewServer(mux)
@@ -430,11 +430,11 @@ func TestSyncConfigPushRequiresBoundProject(t *testing.T) {
 
 	cmd, _ := testCmd()
 	err := runSyncConfigPush(cmd, ts.URL, "", false)
-	if err == nil || !strings.Contains(err.Error(), "no hosted project bound") {
-		t.Fatalf("expected unbound-project error, got %v", err)
+	if err != nil && strings.Contains(err.Error(), "no sync project") {
+		t.Fatalf("unset project should default to repo name, got %v", err)
 	}
-	if hits != 0 {
-		t.Fatalf("unbound project contacted server %d time(s)", hits)
+	if hits == 0 {
+		t.Fatal("default project must contact the server")
 	}
 }
 
@@ -445,7 +445,6 @@ func TestSyncConfigDeployRequiresBoundProject(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		hits++
-		t.Errorf("unexpected network call to %s %s", r.Method, r.URL.String())
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 	ts := httptest.NewServer(mux)
@@ -457,11 +456,11 @@ func TestSyncConfigDeployRequiresBoundProject(t *testing.T) {
 	pointAt(t, repo)
 	cmd, _ := testCmd()
 	err := runSyncConfigDeploy(cmd, ts.URL, "personal", 0)
-	if err == nil || !strings.Contains(err.Error(), "no hosted project bound") {
-		t.Fatalf("expected unbound-project error, got %v", err)
+	if err != nil && strings.Contains(err.Error(), "no sync project") {
+		t.Fatalf("unset project should default to repo name, got %v", err)
 	}
-	if hits != 0 {
-		t.Fatalf("unbound project contacted server %d time(s)", hits)
+	if hits == 0 {
+		t.Fatal("default project must contact the server")
 	}
 }
 
@@ -531,8 +530,12 @@ func TestSyncConfigDeployPreservesHostedProject(t *testing.T) {
 	if !strings.Contains(body, `project = "beta"`) {
 		t.Errorf("local binding not preserved: %s", body)
 	}
-	if strings.Contains(body, `project = "alpha"`) {
-		t.Errorf("foreign project leaked into local toml: %s", body)
+	cfg, _, err := config.Load(filepath.Join(repo, ".satelle", "satelle.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := config.ResolveBoundProject(cfg, repo); got != "beta" {
+		t.Errorf("resolved project = %q, want beta; toml:\n%s", got, body)
 	}
 }
 

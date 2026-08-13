@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -105,6 +106,9 @@ type migratePlan struct {
 	// ExemptGlobsManaged lists managed [gate] edit_exempt_globs still lacking
 	// (sty_fefc88cd). Empty list is a deliberate opt-out and is never converged.
 	ExemptGlobsManaged []string
+	// HostedToSync lists leftover [hosted] keys that [sync] still lacks
+	// (sty_a13d7c4a). Copied onto [sync]; [hosted] is left in place.
+	HostedToSync []string
 	// WorkflowRetire lists DOT workflow files superseded by an authored,
 	// PARSEABLE done.toml + step.toml (sty_9835070d). Actionable work: migrate
 	// removes them.
@@ -250,6 +254,7 @@ func planMigrate(cfg config.Config, repoRoot, dataDir string) migratePlan {
 	p.Gitignore = gitignoreNeedsConverge(repoRoot)
 	p.ExemptManaged = editExemptManagedMissing(dataDir)
 	p.ExemptGlobsManaged = editExemptGlobsManagedMissing(dataDir)
+	p.HostedToSync = hostedBindingMissingOnSync(dataDir)
 	p.WorkflowRetire, p.WorkflowConvertPending = workflowConversionState(dataDir)
 	p.RetiredRefs = planRetiredRefs(dataDir)
 	return p
@@ -497,7 +502,7 @@ func printConversionPending(out io.Writer, pending []string) {
 
 func (p migratePlan) empty() bool {
 	return !p.RuntimeRelocate && len(p.Residue) == 0 && len(p.PruneSeeds) == 0 &&
-		!p.Gitignore && len(p.ExemptManaged) == 0 && len(p.ExemptGlobsManaged) == 0 && len(p.WorkflowRetire) == 0 &&
+		!p.Gitignore && len(p.ExemptManaged) == 0 && len(p.ExemptGlobsManaged) == 0 && len(p.HostedToSync) == 0 && len(p.WorkflowRetire) == 0 &&
 		len(p.StampRewrite) == 0 && len(p.RetiredRefs) == 0
 }
 
@@ -576,6 +581,12 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 			strings.Join(plan.ExemptGlobsManaged, ", "))
 	} else {
 		fmt.Fprintln(out, "  config:           (edit_exempt_globs current)")
+	}
+	if len(plan.HostedToSync) > 0 {
+		fmt.Fprintf(out, "  config:           copy [hosted] %s onto [sync]\n",
+			strings.Join(plan.HostedToSync, ", "))
+	} else {
+		fmt.Fprintln(out, "  config:           ([sync] binding current)")
 	}
 	if len(plan.WorkflowRetire) == 0 {
 		fmt.Fprintln(out, "  workflows:        (none superseded)")
@@ -665,7 +676,7 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 
 	if len(plan.PruneSeeds) > 0 {
 		fmt.Fprintln(out, "\n→ substrate prune")
-		opts := ResolveBackupOpts(cfg)
+		opts := ResolveBackupOpts(cfg, repoRoot)
 		// Always re-resolve: even when RuntimeRelocate was false, the App may
 		// have been constructed with a stale/empty RuntimeDir.
 		opts.BackupsDir = cfg.ResolveRuntimeDir(repoRoot).Dir
@@ -727,7 +738,7 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 		}
 	}
 
-	if len(plan.ExemptManaged) > 0 || len(plan.ExemptGlobsManaged) > 0 {
+	if len(plan.ExemptManaged) > 0 || len(plan.ExemptGlobsManaged) > 0 || len(plan.HostedToSync) > 0 {
 		fmt.Fprintln(out, "\n→ config converge")
 		if len(plan.ExemptManaged) > 0 {
 			changed, err := ensureEditExemptManaged(dataDir)
@@ -749,6 +760,17 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 				fmt.Fprintln(out, "  updated .satelle/satelle.toml [gate] edit_exempt_globs")
 			} else {
 				fmt.Fprintln(out, "  edit_exempt_globs already current")
+			}
+		}
+		if len(plan.HostedToSync) > 0 {
+			changed, err := ensureHostedBindingOnSync(dataDir)
+			if err != nil {
+				return fmt.Errorf("migrate: [sync] binding: %w", err)
+			}
+			if changed {
+				fmt.Fprintln(out, "  copied leftover [hosted] keys onto [sync]")
+			} else {
+				fmt.Fprintln(out, "  [sync] binding already current")
 			}
 		}
 	}
@@ -890,6 +912,69 @@ func ensureGateListManaged(dataDir, key string, managed []string) (bool, error) 
 		return false, nil
 	}
 	if err := os.WriteFile(path, []byte(next), 0o644); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func hostedBindingMissingOnSync(dataDir string) []string {
+	path := filepath.Join(dataDir, config.ConfigName)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	content := string(raw)
+	var missing []string
+	for _, k := range []string{"server", "project", "workspace"} {
+		if !config.HasKey(content, "hosted", k) {
+			continue
+		}
+		if config.HasKey(content, "sync", k) {
+			continue
+		}
+		missing = append(missing, k)
+	}
+	return missing
+}
+
+func ensureHostedBindingOnSync(dataDir string) (bool, error) {
+	path := filepath.Join(dataDir, config.ConfigName)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	cfg, _, err := config.Load(path)
+	if err != nil {
+		return false, err
+	}
+	content := string(raw)
+	changed := false
+	for _, k := range hostedBindingMissingOnSync(dataDir) {
+		var val string
+		switch k {
+		case "server":
+			val = strings.TrimSpace(cfg.Hosted.Server)
+		case "project":
+			val = strings.TrimSpace(cfg.Hosted.Project)
+		case "workspace":
+			val = strings.TrimSpace(cfg.Hosted.Workspace)
+		}
+		if val == "" {
+			continue
+		}
+		next := config.UpsertKey(content, "sync", k, strconv.Quote(val))
+		if next != content {
+			content = next
+			changed = true
+		}
+	}
+	if !changed {
+		return false, nil
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return false, err
 	}
 	return true, nil

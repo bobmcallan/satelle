@@ -3,8 +3,8 @@ package config
 // Repo-settings SCHEMA (sty_e2fba595): the single source of truth for the committed
 // satelle.toml keys the UI and CLI expose. Both the read-only web settings page
 // (internal/web, sty_e1740d82) and the `satelle settings` CLI iterate THIS list, so
-// the two surfaces never drift. hosted.server is deliberately absent — it is the
-// machine-wide global binding (~/.satelle/config.toml), not a repo key.
+// the two surfaces never drift. The machine-wide login server stays in
+// ~/.satelle/config.toml; repo connection settings live on [sync].
 //
 // A Setting carries how to DISPLAY a resolved value (SettingDisplay) and how to
 // ENCODE a user-supplied value into a TOML right-hand side for the surgical
@@ -59,8 +59,9 @@ var Settings = []Setting{
 	{Section: "gate", Key: "edit_exempt_globs", Label: "Edit-gate exempt globs", Help: "Filename globs exempt from the engaged-story edit gate (basename match; a pattern containing / is repo-relative). Init seeds sty_*_body.md and sty_*_ac.md for agent story-reference dumps.", Kind: kindList},
 	{Section: "gate", Key: "allow_outside_tree_edits", Label: "Allow outside-tree edits", Help: "Opt in to Bash/Edit mutations in another repo's working tree. Non-repo paths are never fenced. Default deny; only for a deliberate multi-repo install.", Kind: kindBool},
 	{Section: "engagement", Key: "parallel", Label: "Seat concurrency mode", Help: "none = one performing story at a time; epic = sibling children of one epic may engage concurrently, each from a distinct git working tree.", Kind: kindEnum, Enum: []string{ParallelNone, ParallelEpic}},
-	{Section: "hosted", Key: "project", Label: "Hosted project", Help: "Project slug this repo maps to (personal sync target).", Kind: kindString},
-	{Section: "hosted", Key: "workspace", Label: "Active workspace", Help: "Scoped-sync destination — personal default; a team-workspace name elects it.", Kind: kindString},
+	{Section: "sync", Key: "project", Label: "Sync project", Help: "Hosted project slug this repo maps to. Unset = this repo's directory name.", Kind: kindString},
+	{Section: "sync", Key: "server", Label: "Sync server", Help: "Hosted origin. Unset = https://satelle.dev. A machine-wide login server still wins.", Kind: kindString},
+	{Section: "sync", Key: "workspace", Label: "Active workspace", Help: "Scoped-sync destination — personal default; a team-workspace name elects it.", Kind: kindString},
 	{Section: "attachments", Key: "max_bytes", Label: "Binary attachment max bytes", Help: "Per-attachment decoded size cap (default 10485760 = 10 MiB).", Kind: kindInt},
 	{Section: "attachments", Key: "allow_types", Label: "Binary content types", Help: "Allowlisted content types for binary attachments (comma-separated). SVG/HTML are hostile if served.", Kind: kindList},
 }
@@ -131,9 +132,11 @@ func SettingDisplay(cfg Config, s Setting) string {
 		// agent reading this surface needs the mode it is actually running under,
 		// not "(unset)".
 		return cfg.ResolveEngagementParallel()
-	case "hosted.project":
-		return cfg.Hosted.Project
-	case "hosted.workspace":
+	case "sync.project":
+		return cfg.SyncProject()
+	case "sync.server":
+		return cfg.syncValue(syncServerKey)
+	case "sync.workspace":
 		// The resolved active workspace — "personal" by default (zero-config),
 		// else the elected team-workspace name. The overlay is already merged by
 		// Load, so this reflects the effective per-developer choice.

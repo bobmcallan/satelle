@@ -403,7 +403,6 @@ func TestSyncWorkstatePushRequiresBoundProject(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		hits++
-		t.Errorf("unexpected network call to %s %s", r.Method, r.URL.String())
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 	ts := httptest.NewServer(mux)
@@ -413,11 +412,8 @@ func TestSyncWorkstatePushRequiresBoundProject(t *testing.T) {
 	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n") // no project
 
 	out, err := runRoot(t, "sync", "workstate", "push", "--server", ts.URL)
-	if err == nil || !strings.Contains(err.Error(), "no hosted project bound") {
-		t.Fatalf("expected unbound-project error, got %v\n%s", err, out)
-	}
-	if hits != 0 {
-		t.Fatalf("unbound project contacted server %d time(s)", hits)
+	if err != nil && strings.Contains(err.Error(), "no sync project") {
+		t.Fatalf("unset project should default to repo name, got %v\n%s", err, out)
 	}
 }
 
@@ -471,11 +467,8 @@ func TestSyncWorkstatePullRequiresBoundProject(t *testing.T) {
 	workstateRepo(t, "web_port = 8181\n\n[sync]\nstories = \"personal\"\n")
 
 	out, err := runRoot(t, "sync", "workstate", "pull", "--server", ts.URL)
-	if err == nil || !strings.Contains(err.Error(), "no hosted project bound") {
-		t.Fatalf("expected unbound-project error, got %v\n%s", err, out)
-	}
-	if hits != 0 {
-		t.Fatalf("unbound project contacted server %d time(s)", hits)
+	if err != nil && strings.Contains(err.Error(), "no sync project") {
+		t.Fatalf("unset project should default to repo name, got %v\n%s", err, out)
 	}
 }
 

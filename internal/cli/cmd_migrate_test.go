@@ -423,6 +423,86 @@ edit_exempt_globs = ["notes/*.md"]
 	}
 }
 
+func TestMigrateCopiesHostedBindingOntoSync(t *testing.T) {
+	disableServeProbe(t)
+	home := t.TempDir()
+	t.Setenv("SATELLE_HOME", home)
+	repo := t.TempDir()
+	dataDir := filepath.Join(repo, config.DefaultDataDir)
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "agents.toml"), []byte("[executor]\nharness = \"in-loop\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tomlBody := `[sync]
+all = "personal"
+[hosted]
+server = "https://legacy.example"
+project = "legacy-proj"
+workspace = "Legacy Team"
+`
+	if err := os.WriteFile(filepath.Join(dataDir, "satelle.toml"), []byte(tomlBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	homeDB := filepath.Join(home, config.RepoKey(repo), config.DefaultDBName)
+	if err := os.MkdirAll(filepath.Dir(homeDB), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(homeDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	a := &app.App{Config: config.Config{}, RepoRoot: repo, DataDir: dataDir, RuntimeDir: filepath.Dir(homeDB), DBPath: homeDB}
+
+	var apply strings.Builder
+	if err := runMigrate(&apply, a, true, false); err != nil {
+		t.Fatalf("apply: %v\n%s", err, apply.String())
+	}
+	got, _ := os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
+	s := string(got)
+	for _, want := range []string{`all = "personal"`, `server = "https://legacy.example"`, `project = "legacy-proj"`, `workspace = "Legacy Team"`, "[hosted]"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q in:\n%s", want, s)
+		}
+	}
+
+	// Already-set [sync] project is not clobbered.
+	clobber := `[sync]
+project = "keep-me"
+[hosted]
+project = "ignore-me"
+server = "https://legacy.example"
+`
+	if err := os.WriteFile(filepath.Join(dataDir, "satelle.toml"), []byte(clobber), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := ensureHostedBindingOnSync(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected server copy")
+	}
+	got, _ = os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
+	if !strings.Contains(string(got), "[sync]\nproject = \"keep-me\"") {
+		t.Errorf("clobbered [sync] project:\n%s", got)
+	}
+
+	// Second full migrate is a no-op once [sync] has the leftover keys.
+	if err := os.WriteFile(filepath.Join(dataDir, "satelle.toml"), []byte(tomlBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ensureHostedBindingOnSync(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	changed, err = ensureHostedBindingOnSync(dataDir)
+	if err != nil || changed {
+		t.Fatalf("second copy changed=%v err=%v", changed, err)
+	}
+}
+
 // migrateWorkflowRepo builds a minimal repo whose .satelle/workflows holds the
 // given files (name → body), plus the agents/config a migrate plan needs.
 func migrateWorkflowRepo(t *testing.T, files map[string]string) (repo, dataDir string) {

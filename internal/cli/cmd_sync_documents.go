@@ -116,7 +116,7 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 		return nil
 	}
 	// Bound project before any network (AC5).
-	project, err := resolveBoundProject(cfg)
+	project, err := resolveBoundProject(cfg, repoRoot)
 	if err != nil {
 		return err
 	}
@@ -185,7 +185,7 @@ func runSyncDocumentsPull(cmd *cobra.Command, serverArg, workspaceArg string) er
 		absRoot = repoRoot
 	}
 	// Bound project before any network (AC5).
-	project, err := resolveBoundProject(cfg)
+	project, err := resolveBoundProject(cfg, repoRoot)
 	if err != nil {
 		return err
 	}

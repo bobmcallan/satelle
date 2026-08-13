@@ -348,7 +348,7 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []s
 	// binary upgrade. Tasks remain the one carve-out in both paths: a coded gate
 	// checks for an on-disk task HEADER, so a task cannot live virtually.
 	cfg, _, _ := config.Load(filepath.Join(repoRoot, config.DefaultDataDir, config.ConfigName))
-	bopts := ResolveBackupOpts(cfg)
+	bopts := ResolveBackupOpts(cfg, repoRoot)
 	rtEarly := cfg.ResolveRuntimeDir(repoRoot)
 	if err := os.MkdirAll(rtEarly.Dir, 0o755); err != nil {
 		return fmt.Errorf("init: mkdir runtime dir %s: %w", rtEarly.Dir, err)
@@ -1550,7 +1550,7 @@ const scaffoldTomlAfterExempt = `
 # Unset = local: nothing leaves the machine until an area is opted in.
 # Never syncs, at any scope: files with a .local segment (satelle.local.toml,
 # notes.local.md). Unconditional — no setting enables it; secrets stay put.
-# personal = this repo's BOUND hosted project (not a dump across every project).
+# personal = this repo's hosted project (default: this directory's name).
 # shared = team catalog eligibility; use 'satelle publish' for the team catalog
 # (sync itself does not write to a team workspace). Inspect with 'satelle sync scopes'.
 # Continuity: local = your disk; personal = push backup + sync-down rehydrate for
@@ -1558,15 +1558,16 @@ const scaffoldTomlAfterExempt = `
 # choice — satelle does not require it. Git is for the application repo.
 # Areas: documents, workflows, principles, skills, constitution, agents, tasks,
 # settings (satelle.toml, including [sync]), stories, ledger, executions.
-# Reserved key 'all' blanket-defaults every area not set explicitly; a per-area
-# key still overrides it.
+# Reserved keys: 'all' (blanket default), server, project, workspace.
+# Unset server = https://satelle.dev. Unset project = this repo's directory name.
+# satelle login records the machine-wide server; satelle project bind <slug>
+# writes [sync] project when the directory name is not the slug you want.
 # >>> satelle-example: enable sync/hosted (uncomment to opt in)
 # [sync]
 # all = "personal"               # every area personal unless overridden below
 # documents = "personal"         # per-area override wins over 'all'
-# [hosted]
-# server = "https://hosted.satelle.dev"
-# project = "my-project-slug"    # set via: satelle project bind <slug>
+# server = "https://satelle.dev" # default; a machine-wide login server still wins
+# project = "my-project-slug"    # default: this repo's directory name
 # workspace = "team-name"        # per-developer; usually satelle.local.toml
 # [vars]
 # MODEL_BASE_URL = "https://example.invalid"  # non-secret; secrets → satelle.local.toml
@@ -1583,14 +1584,11 @@ const scaffoldTomlAfterExempt = `
 # local_only = true
 # hosted = true
 
-# [hosted] — secret-free hosted-server binding (committed). Tokens live in the
-# user credential store, never here. 'satelle login' sets the server URL;
-# 'satelle project bind <slug>' writes project. workspace is a per-developer
-# choice (prefer satelle.local.toml / 'satelle login --workspace'); a value
-# committed here is only a team default the overlay can override.
+# Connection settings live on [sync] (server / project / workspace). A leftover
+# [hosted] table still resolves until satelle migrate --yes copies it.
 #
 # [server] — LOCAL push-fed UI server the CLI publishes mutation events to
-# (epic:serve-split). Distinct from [hosted] (remote satelle-server tier).
+# (epic:serve-split). Distinct from the hosted origin on [sync].
 # Unset = change publisher inert (no network). Fail-silent: a dead endpoint
 # never blocks or fails a verb.
 # [server]

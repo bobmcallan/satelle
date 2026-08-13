@@ -74,6 +74,12 @@ var SyncAreas = buildSyncAreas()
 // fallthrough scope in ScopeFor.
 const syncAllKey = "all"
 
+// reservedSyncKeys are [sync] connection keys, not area scopes. ScopeFor
+// never looks them up; they must never be minted as SyncAreas.
+var reservedSyncKeys = map[string]bool{
+	syncAllKey: true, syncServerKey: true, syncProjectKey: true, syncWorkspaceKey: true,
+}
+
 func buildSyncAreas() []string {
 	out := make([]string, 0, len(AuthoredKinds)+7)
 	out = append(out, AuthoredKinds...)
@@ -366,7 +372,8 @@ func redactForTransmit(area string, body []byte) []byte {
 	if area != "settings" {
 		return body
 	}
-	return []byte(RemoveKey(string(body), "hosted", "project"))
+	s := RemoveKey(string(body), "sync", "project")
+	return []byte(RemoveKey(s, "hosted", "project"))
 }
 
 // sortConfigFiles orders files by server Path for a deterministic push.

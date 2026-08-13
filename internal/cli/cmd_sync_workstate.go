@@ -137,7 +137,7 @@ func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string) error {
 	if server == "" {
 		return fmt.Errorf("no hosted server configured — run \"satelle login\" or pass --server <url>")
 	}
-	project, err := resolveBoundProject(a.Config)
+	project, err := resolveBoundProject(a.Config, a.RepoRoot)
 	if err != nil {
 		return err
 	}
@@ -190,7 +190,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		return nil
 	}
 
-	project, err := resolveBoundProject(a.Config)
+	project, err := resolveBoundProject(a.Config, a.RepoRoot)
 	if err != nil {
 		return err
 	}
@@ -373,7 +373,7 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force bo
 		return nil
 	}
 
-	project, err := resolveBoundProject(a.Config)
+	project, err := resolveBoundProject(a.Config, a.RepoRoot)
 	if err != nil {
 		return err
 	}

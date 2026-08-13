@@ -71,11 +71,11 @@ func TestScaffoldTomlDocumentsConfigSurface(t *testing.T) {
 	if got := cfg.Sync["documents"]; got != "personal" {
 		t.Errorf("Sync[documents] = %q, want personal", got)
 	}
-	if cfg.Hosted.Project != "my-project-slug" {
-		t.Errorf("Hosted.Project = %q, want my-project-slug", cfg.Hosted.Project)
+	if got := cfg.Sync["project"]; got != "my-project-slug" {
+		t.Errorf("Sync[project] = %q, want my-project-slug", got)
 	}
-	if cfg.Hosted.Server == "" {
-		t.Error("Hosted.Server empty after uncommenting example")
+	if got := cfg.Sync["server"]; got == "" {
+		t.Error("Sync[server] empty after uncommenting example")
 	}
 	if cfg.Vars["MODEL_BASE_URL"] == "" {
 		t.Error("Vars[MODEL_BASE_URL] empty after uncommenting example")

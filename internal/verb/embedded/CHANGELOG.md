@@ -1,3 +1,8 @@
+## [0.0.443] - 2026-08-13
+
+### Changed
+- **Repo connection settings live on `[sync]`, with satelle.dev defaults.** Operators no longer author a `[hosted]` table or Fly proxy knobs. Unset `[sync] server` is `https://satelle.dev`; unset `[sync] project` is this repo's directory name. `satelle project bind` and `login --workspace` write `[sync]` keys. A leftover `[hosted]` table still resolves; `satelle migrate --yes` copies missing server/project/workspace onto `[sync]` without clobbering keys already set. The machine-wide login server still wins. (sty_a13d7c4a)
+
 ## [0.0.442] - 2026-08-13
 
 ### Changed

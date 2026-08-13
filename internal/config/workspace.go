@@ -10,10 +10,8 @@ package config
 // There are two distinct "workspace" concepts in satelle and they must not
 // collide: internal/workspace (the multi-repo aggregate view, a global connected-
 // repo registry) and THIS active-workspace binding (the scoped-sync destination,
-// held under the repo [hosted] table). The new one lives under [hosted]
-// workspace precisely to avoid the collision.
-
-import "strings"
+// held under the repo [sync] workspace key). It lives there (not in
+// internal/workspace) precisely to avoid the collision.
 
 // PersonalWorkspace is the zero-config active workspace: every developer's own
 // workspace. The default when [hosted] workspace is unset — nothing to configure
@@ -51,7 +49,7 @@ func (a ActiveWorkspace) IsPersonal() bool { return a.Kind == WorkspaceKindPerso
 // The satelle.local.toml overlay is already merged by Load, so a per-developer
 // choice recorded there overrides a committed team default transparently.
 func (c Config) ResolveActiveWorkspace() ActiveWorkspace {
-	w := strings.TrimSpace(c.Hosted.Workspace)
+	w := c.SyncWorkspace()
 	if w == "" || w == PersonalWorkspace {
 		return ActiveWorkspace{Name: PersonalWorkspace, Kind: WorkspaceKindPersonal}
 	}

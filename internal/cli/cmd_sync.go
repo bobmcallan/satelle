@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -50,7 +49,7 @@ Files whose name carries a .local segment (satelle.local.toml, notes.local.md)
 never leave the machine at any scope — unconditional, not a setting.
 Personal opt-in targets this repo's bound hosted project only (never a shared
 dump across all personal projects under your account). Bind with "satelle
-project bind <slug>" (or set [hosted] project in .satelle/satelle.toml). Team
+project bind <slug>" (or set [sync] project in .satelle/satelle.toml). Team
 catalogs are a separate verb: satelle publish.`,
 		Args:        cobra.NoArgs,
 		Annotations: needsStore(),
@@ -96,11 +95,11 @@ Full operator path (pinned so scopes return before scope-gated pulls):
   1. install satelle          — binary on PATH
   2. satelle login            — global credentials
   3. satelle project bind <slug>
-       creates .satelle/satelle.toml with [hosted] project when absent
+       creates .satelle/satelle.toml with [sync] project when absent
   4. satelle sync rehydrate   — this command, which runs:
        a. config deploy       — restores substrate AND satelle.toml (the settings
           area, including [sync] scopes) from the bound project's personal config
-          collection; the local [hosted] project binding is preserved (never
+          collection; the local [sync] project binding is preserved (never
           taken from the deployed file)
        b. documents pull
        c. workstate pull      — stories/executions/ledger into the local store
@@ -300,7 +299,7 @@ design rather than an error. Deploy OVERWRITES the local authored copy.`,
 agents/tasks/settings) per their resolved [sync] scope — skipping local areas — and uploads
 each file as a new version into this repo's bound hosted PROJECT's personal
 collection only (epic:sync-publish). The settings area is satelle.toml (including
-[sync] scopes); [hosted] project is redacted at push so a deploy cannot rebind
+[sync] scopes); [sync] project is redacted at push so a deploy cannot rebind
 another repo. Identical content is idempotent (no new version). Files with a
 .local segment are never uploaded (reported as withheld). Team is not a sync
 destination; use satelle publish to expose artifacts to a team catalog.
@@ -322,7 +321,7 @@ Requires "satelle project bind <slug>".`,
 		Long: `deploy fetches this repo's bound hosted PROJECT's personal config collection
 (or an explicit --workspace when reading another developer's personal set) and
 writes every file byte-for-byte into this repo's data dir — including satelle.toml
-(settings) with its [sync] scopes when present. The local [hosted] project
+(settings) with its [sync] scopes when present. The local [sync] project
 binding is preserved after restore (never taken from the deployed file).
 --version N pins a per-file version (default: latest). This is the "set up
 project X like project Y" operation for process config. Requires "satelle
@@ -420,7 +419,7 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 		return nil
 	}
 	// Bound project before any network (AC5).
-	project, err := resolveBoundProject(cfg)
+	project, err := resolveBoundProject(cfg, repoRoot)
 	if err != nil {
 		return err
 	}
@@ -499,7 +498,7 @@ func runSyncConfigDeploy(cmd *cobra.Command, serverArg, workspaceArg string, ver
 }
 
 func runSyncConfigDeployOutcome(cmd *cobra.Command, serverArg, workspaceArg string, version int) (deployOutcome, error) {
-	cfg, _, dataDir, err := loadRepoConfig()
+	cfg, repoRoot, dataDir, err := loadRepoConfig()
 	if err != nil {
 		return deployOutcome{}, err
 	}
@@ -510,7 +509,7 @@ func runSyncConfigDeployOutcome(cmd *cobra.Command, serverArg, workspaceArg stri
 	// Project-addressed config routes (sty_ca64d0cb). --workspace is accepted
 	// but inert for routing (workspace is derived from the project server-side);
 	// keep it in user-facing messages for the deprecation window.
-	project, err := resolveBoundProject(cfg)
+	project, err := resolveBoundProject(cfg, repoRoot)
 	if err != nil {
 		return deployOutcome{}, err
 	}
@@ -584,11 +583,11 @@ func runSyncConfigDeployOutcome(cmd *cobra.Command, serverArg, workspaceArg stri
 		if settingsWritten {
 			outcome.SettingsRestored = true
 			if err := config.SaveConfigValues(cfgPath, []config.KeyEdit{
-				{Section: "hosted", Key: "project", Value: strconv.Quote(boundProject)},
+				config.BoundProjectEdit(boundProject),
 			}); err != nil {
-				return outcome, fmt.Errorf("deploy: preserve [hosted] project: %w", err)
+				return outcome, fmt.Errorf("deploy: preserve [sync] project: %w", err)
 			}
-			fmt.Fprintf(out, "settings: satelle.toml restored; [hosted] project preserved as %q (not taken from the deployed file).\n", boundProject)
+			fmt.Fprintf(out, "settings: satelle.toml restored; [sync] project preserved as %q (not taken from the deployed file).\n", boundProject)
 		}
 	}
 	pinned := "latest"

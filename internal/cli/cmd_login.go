@@ -17,7 +17,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -143,7 +142,7 @@ func recordActiveWorkspace(cfgPath, name string) error {
 		return nil // out-of-repo login authenticates without recording
 	}
 	localPath := filepath.Join(filepath.Dir(cfgPath), config.LocalConfigName)
-	edit := config.KeyEdit{Section: "hosted", Key: "workspace", Value: strconv.Quote(name)}
+	edit := config.BoundWorkspaceEdit(name)
 	if err := config.SaveConfigValues(localPath, []config.KeyEdit{edit}); err != nil {
 		return fmt.Errorf("record active workspace: %w", err)
 	}

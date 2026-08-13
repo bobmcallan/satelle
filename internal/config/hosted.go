@@ -1,40 +1,131 @@
 package config
 
-// Hosted-server RESOLUTION (sty_53ccf845). The hosted server the CLI and web UI
-// sign in to is a per-USER/machine setting, held in the global config
-// (~/.satelle/config.toml [hosted] server, written by `satelle login`). A repo's
-// committed satelle.toml [hosted] server is kept only as a READ-ONLY backward-
-// compatibility fallback for repos bound before the global model — it is never
-// written any more. This file owns the one precedence rule every consumer routes
-// through, so a single login is reflected uniformly across every project. The
-// OAuth tokens are secrets and live in the per-user credential store outside any
-// config (internal/hosted), never here. The repo project slug (hosted.project)
-// stays in the committed satelle.toml, written à-la-carte via SaveConfigValues
-// (`satelle project bind`).
+// Hosted-server RESOLUTION (sty_53ccf845 / sty_a13d7c4a). The hosted server
+// the CLI signs in to is a per-USER/machine setting (~/.satelle/config.toml
+// [hosted] server, written by `satelle login`) and still wins. Repo connection
+// settings live on [sync] (server / project / workspace) with defaults:
+// server https://satelle.dev, project = this repo's directory name. A leftover
+// satelle.toml [hosted] table is a read-only fallback until migrate copies it.
+// Tokens stay in the credstore (internal/hosted).
 
-import "strings"
+import (
+	"path/filepath"
+	"strconv"
+	"strings"
+)
 
-// HostedServerFor applies the precedence rule: the global hosted server wins;
-// the repo's committed [hosted] server is the read-only fallback for a repo that
-// predates the global binding. Both are normalized so a "https://h/" value can
-// never mismatch the credential-store key "https://h". Returns "" when neither
-// is set.
+// DefaultHostedServer is the zero-config hosted origin.
+const DefaultHostedServer = "https://satelle.dev"
+
+const (
+	syncServerKey    = "server"
+	syncProjectKey   = "project"
+	syncWorkspaceKey = "workspace"
+)
+
+func (c Config) syncValue(key string) string {
+	if c.Sync == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Sync[key])
+}
+
+// SyncServer is [sync] server, else leftover [hosted] server (raw, un-defaulted).
+func (c Config) SyncServer() string {
+	if s := c.syncValue(syncServerKey); s != "" {
+		return strings.TrimRight(s, "/")
+	}
+	return strings.TrimRight(strings.TrimSpace(c.Hosted.Server), "/")
+}
+
+// SyncProject is [sync] project, else leftover [hosted] project (raw, un-defaulted).
+func (c Config) SyncProject() string {
+	if s := c.syncValue(syncProjectKey); s != "" {
+		return s
+	}
+	return strings.TrimSpace(c.Hosted.Project)
+}
+
+// SyncWorkspace is [sync] workspace, else leftover [hosted] workspace.
+func (c Config) SyncWorkspace() string {
+	if s := c.syncValue(syncWorkspaceKey); s != "" {
+		return s
+	}
+	return strings.TrimSpace(c.Hosted.Workspace)
+}
+
+// HostedServerFor: global login server, then repo SyncServer, then DefaultHostedServer.
 func HostedServerFor(gc GlobalConfig, repo Config) string {
 	if s := gc.Hosted.ResolveServer(); s != "" {
 		return s
 	}
-	return strings.TrimRight(strings.TrimSpace(repo.Hosted.Server), "/")
+	if s := repo.SyncServer(); s != "" {
+		return s
+	}
+	return DefaultHostedServer
 }
 
-// ResolveHostedServer is the convenience resolver for callers that hold only the
-// repo config: it loads the global config (a malformed global degrades to the
-// repo fallback so a render or read command never fails on it) and applies the
-// precedence rule. The login WRITE path calls LoadGlobal directly so it can still
-// surface a malformed-global error.
+// ResolveHostedServer loads the global config and applies HostedServerFor.
+// A malformed global degrades to repo SyncServer then the default.
 func ResolveHostedServer(repo Config) string {
 	gc, err := LoadGlobal()
 	if err != nil {
-		return strings.TrimRight(strings.TrimSpace(repo.Hosted.Server), "/")
+		if s := repo.SyncServer(); s != "" {
+			return s
+		}
+		return DefaultHostedServer
 	}
 	return HostedServerFor(gc, repo)
+}
+
+// Slugify is the one project-slug rule: lowercase, non [a-z0-9-] become '-',
+// runs of '-' collapse, leading/trailing '-' stripped.
+func Slugify(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	prevDash := false
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevDash = false
+		default:
+			if !prevDash && b.Len() > 0 {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+// ResolveBoundProject is [sync]/leftover [hosted] project, else Slugify of
+// the repo directory name. Empty repoRoot yields "".
+func ResolveBoundProject(c Config, repoRoot string) string {
+	if s := c.SyncProject(); s != "" {
+		return s
+	}
+	root := strings.TrimSpace(repoRoot)
+	if root == "" || root == "." || root == string(filepath.Separator) {
+		return ""
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return ""
+	}
+	base := filepath.Base(abs)
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return ""
+	}
+	return Slugify(base)
+}
+
+// BoundProjectEdit is the single write of the repo project binding.
+func BoundProjectEdit(slug string) KeyEdit {
+	return KeyEdit{Section: "sync", Key: syncProjectKey, Value: strconv.Quote(Slugify(slug))}
+}
+
+// BoundWorkspaceEdit is the single write of the active-workspace overlay.
+func BoundWorkspaceEdit(name string) KeyEdit {
+	return KeyEdit{Section: "sync", Key: syncWorkspaceKey, Value: strconv.Quote(strings.TrimSpace(name))}
 }

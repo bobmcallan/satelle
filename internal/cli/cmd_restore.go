@@ -40,7 +40,7 @@ workflows, documents, tasks, configs, constitution — are never touched.`,
 			if err != nil {
 				return err
 			}
-			opts := ResolveBackupOpts(a.Config)
+			opts := ResolveBackupOpts(a.Config, a.RepoRoot)
 			opts.BackupsDir = a.RuntimeDir
 			return runRestore(cmd.OutOrStdout(), cmd.InOrStdin(), a.DataDir, yes, opts)
 		},

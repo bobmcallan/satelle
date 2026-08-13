@@ -18,7 +18,7 @@ func TestHostedServerForPrecedence(t *testing.T) {
 	}{
 		{"global wins over repo", "https://global/", "https://repo", "https://global"},
 		{"repo fallback when global empty", "", "https://repo/", "https://repo"},
-		{"empty when neither set", "", "", ""},
+		{"default when neither set", "", "", DefaultHostedServer},
 		{"global normalized", "https://g//", "", "https://g"},
 	}
 	for _, c := range cases {
@@ -85,6 +85,52 @@ func TestSaveGlobalHostedServerRoundTrip(t *testing.T) {
 	}
 	if strings.Contains(string(body), "token") {
 		t.Fatalf("global config must never contain a token:\n%s", body)
+	}
+}
+
+func TestSyncServerPrefersSyncOverHosted(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	repo := Config{
+		Sync:   map[string]string{"server": "https://from-sync/"},
+		Hosted: HostedConfig{Server: "https://from-hosted/"},
+	}
+	if got := HostedServerFor(GlobalConfig{}, repo); got != "https://from-sync" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestResolveHostedServerDefaultsWithoutGlobal(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	if got := ResolveHostedServer(Config{}); got != DefaultHostedServer {
+		t.Fatalf("got %q, want %s", got, DefaultHostedServer)
+	}
+}
+
+func TestSlugifyAndResolveBoundProject(t *testing.T) {
+	if got := Slugify("My Repo"); got != "my-repo" {
+		t.Fatalf("Slugify = %q", got)
+	}
+	if got := ResolveBoundProject(Config{}, "/tmp/My Repo"); got != "my-repo" {
+		t.Fatalf("dirname default = %q", got)
+	}
+	if got := ResolveBoundProject(Config{Hosted: HostedConfig{Project: "legacy"}}, "/tmp/My Repo"); got != "legacy" {
+		t.Fatalf("leftover hosted project = %q", got)
+	}
+	if got := ResolveBoundProject(Config{Sync: map[string]string{"project": "from-sync"}, Hosted: HostedConfig{Project: "legacy"}}, "/tmp/x"); got != "from-sync" {
+		t.Fatalf("sync project = %q", got)
+	}
+	if got := ResolveBoundProject(Config{}, ""); got != "" {
+		t.Fatalf("empty root = %q", got)
+	}
+}
+
+func TestReservedSyncKeysAreNotAreas(t *testing.T) {
+	for _, k := range []string{"server", "project", "workspace", "all"} {
+		for _, a := range SyncAreas {
+			if a == k {
+				t.Fatalf("%q must not be a SyncArea", k)
+			}
+		}
 	}
 }
 

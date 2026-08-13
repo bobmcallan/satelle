@@ -60,7 +60,7 @@ func applyWorkstateNow(ctx context.Context, a *app.App, items []workitem.Item, e
 	if server == "" {
 		return nil
 	}
-	project, err := resolveBoundProject(a.Config)
+	project, err := resolveBoundProject(a.Config, a.RepoRoot)
 	if err != nil {
 		return err
 	}

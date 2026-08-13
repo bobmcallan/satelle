@@ -51,13 +51,13 @@ func TestResolveBackupOptsHostedOptIn(t *testing.T) {
 	cfg := config.Config{
 		Hosted: config.HostedConfig{Server: "https://example.test", Project: "proj"},
 	}
-	opts := ResolveBackupOpts(cfg)
+	opts := ResolveBackupOpts(cfg, t.TempDir())
 	if opts.HostedServer != "" || opts.HostedProject != "" {
 		t.Fatalf("default Backup.Hosted=false must leave channel empty, got server=%q project=%q", opts.HostedServer, opts.HostedProject)
 	}
 
 	cfg.Backup.Hosted = true
-	opts = ResolveBackupOpts(cfg)
+	opts = ResolveBackupOpts(cfg, t.TempDir())
 	if opts.HostedServer != "https://example.test" || opts.HostedProject != "proj" {
 		t.Fatalf("Backup.Hosted=true should resolve channel, got server=%q project=%q", opts.HostedServer, opts.HostedProject)
 	}
@@ -69,7 +69,7 @@ func TestResolveBackupOptsHostedOptIn(t *testing.T) {
 	opts = ResolveBackupOpts(config.Config{
 		Hosted: config.HostedConfig{Server: "https://example.test", Project: "proj"},
 		// Backup.Hosted false
-	})
+	}, t.TempDir())
 	pushes := 0
 	opts.HostedPush = func(ctx context.Context, relPath string, body []byte) (string, error) {
 		pushes++

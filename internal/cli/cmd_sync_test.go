@@ -508,7 +508,7 @@ func TestSyncRehydrateEmptyTreeHappyPath(t *testing.T) {
 	if !strings.Contains(out, "settings: satelle.toml restored") {
 		t.Errorf("expected settings restored line:\n%s", out)
 	}
-	if !strings.Contains(out, "[hosted] project preserved") {
+	if !strings.Contains(out, "[sync] project preserved") {
 		t.Errorf("expected binding preservation line:\n%s", out)
 	}
 	if strings.Contains(out, "satelle.toml was not restored from hosted") {

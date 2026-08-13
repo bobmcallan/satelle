@@ -483,9 +483,9 @@ func TestLocalOnlyPathSettingsOverlay(t *testing.T) {
 
 // TestRedactForTransmitStripsHostedProject: only settings area is redacted.
 func TestRedactForTransmitStripsHostedProject(t *testing.T) {
-	body := []byte("[sync]\nall = \"personal\"\n[hosted]\nproject = \"alpha\"\nserver = \"https://x\"\n")
+	body := []byte("[sync]\nall = \"personal\"\nproject = \"from-sync\"\n[hosted]\nproject = \"alpha\"\nserver = \"https://x\"\n")
 	got := string(redactForTransmit("settings", body))
-	if strings.Contains(got, `project = "alpha"`) {
+	if strings.Contains(got, `project = "alpha"`) || strings.Contains(got, `project = "from-sync"`) {
 		t.Errorf("project not stripped: %s", got)
 	}
 	if !strings.Contains(got, `all = "personal"`) {

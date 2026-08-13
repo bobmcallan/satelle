@@ -99,7 +99,7 @@ is why this cannot quietly discard your work.`,
 			if err != nil {
 				return err
 			}
-			opts := ResolveBackupOpts(a.Config)
+			opts := ResolveBackupOpts(a.Config, a.RepoRoot)
 			opts.BackupsDir = a.RuntimeDir
 			// Resolve the seat off the app handle this command already opened —
 			// currentSeat() would app.Open() a second handle on the same DB.

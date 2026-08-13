@@ -172,8 +172,8 @@ func TestRunProjectShow(t *testing.T) {
 	if !strings.Contains(out, "sign-in state: signed out") {
 		t.Fatalf("show missing signed-out state: %q", out)
 	}
-	if !strings.Contains(out, "bound project: (none") {
-		t.Fatalf("show should report unbound project: %q", out)
+	if !strings.Contains(out, "bound project:") || strings.Contains(out, "bound project: (none") {
+		t.Fatalf("show should report the directory-name default: %q", out)
 	}
 
 	// Signed in for the server: sign-in state flips.
@@ -209,8 +209,8 @@ func TestRunProjectBindAndShow(t *testing.T) {
 		t.Fatalf("bind: %v", err)
 	}
 	b, _ := os.ReadFile(toml)
-	if !strings.Contains(string(b), `project = "acme"`) {
-		t.Fatalf("bind did not record the project:\n%s", b)
+	if !strings.Contains(string(b), "[sync]") || !strings.Contains(string(b), `project = "acme"`) {
+		t.Fatalf("bind did not record [sync] project:\n%s", b)
 	}
 	if !strings.Contains(string(b), "keep this comment") || !strings.Contains(string(b), "data_dir") {
 		t.Fatalf("bind clobbered unrelated config:\n%s", b)
@@ -230,17 +230,16 @@ func TestRunProjectBindAndShow(t *testing.T) {
 
 // TestResolveBoundProjectEmpty: blank hosted.project yields the clear AC5 error.
 func TestResolveBoundProjectEmpty(t *testing.T) {
-	_, err := resolveBoundProject(config.Config{})
-	if err == nil || !strings.Contains(err.Error(), "no hosted project bound") {
+	_, err := resolveBoundProject(config.Config{}, "")
+	if err == nil || !strings.Contains(err.Error(), "no sync project") {
 		t.Fatalf("expected unbound error, got %v", err)
 	}
-	// Actionable guidance names the full operator path (login / create / bind / toml).
-	for _, want := range []string{"satelle login", "project create", "project bind", "[hosted] project"} {
+	for _, want := range []string{"satelle login", "project create", "project bind", "[sync] project"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("unbound error missing %q: %v", want, err)
 		}
 	}
-	slug, err := resolveBoundProject(config.Config{Hosted: config.HostedConfig{Project: "  acme  "}})
+	slug, err := resolveBoundProject(config.Config{Hosted: config.HostedConfig{Project: "  acme  "}}, "")
 	if err != nil || slug != "acme" {
 		t.Fatalf("trim/bound = %q, %v", slug, err)
 	}
@@ -264,8 +263,11 @@ func TestProjectBindCreatesTomlWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected satelle.toml after bind: %v", err)
 	}
-	if !strings.Contains(string(b), "fresh-slug") {
-		t.Fatalf("toml missing project slug: %s", b)
+	if !strings.Contains(string(b), `project = "fresh-slug"`) || !strings.Contains(string(b), "[sync]") {
+		t.Fatalf("toml missing [sync] project: %s", b)
+	}
+	if strings.Contains(string(b), "[hosted]") {
+		t.Fatalf("bind must not write [hosted]: %s", b)
 	}
 	if !strings.Contains(buf.String(), "fresh-slug") {
 		t.Fatalf("output: %s", buf.String())
