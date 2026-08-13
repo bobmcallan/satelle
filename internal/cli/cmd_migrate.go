@@ -114,6 +114,8 @@ type migratePlan struct {
 	// HostedTableDrop is true when a leftover [hosted] table is still in the
 	// file (sty_5eb1bb8a). Dropped after any HostedToSync copy.
 	HostedTableDrop bool
+	// StaleAfter is true when [sync] stale_after is absent (sty_30696eeb).
+	StaleAfter bool
 	// WorkflowRetire lists DOT workflow files superseded by an authored,
 	// PARSEABLE done.toml + step.toml (sty_9835070d). Actionable work: migrate
 	// removes them.
@@ -264,6 +266,7 @@ func planMigrate(cfg config.Config, repoRoot, dataDir string) migratePlan {
 	p.ExemptGlobsManaged = editExemptGlobsManagedMissing(dataDir)
 	p.HostedToSync = hostedBindingMissingOnSync(dataDir)
 	p.HostedTableDrop = hasHostedTable(dataDir)
+	p.StaleAfter = staleAfterMissing(dataDir)
 	p.WorkflowRetire, p.WorkflowConvertPending = workflowConversionState(dataDir)
 	p.RetiredRefs = planRetiredRefs(dataDir)
 	p.MachineStrays = config.MachineScopeStrays(dataDir)
@@ -603,7 +606,7 @@ func printConversionPending(out io.Writer, pending []string) {
 
 func (p migratePlan) empty() bool {
 	return !p.RuntimeRelocate && len(p.Residue) == 0 && len(p.PruneSeeds) == 0 &&
-		!p.Gitignore && len(p.ExemptManaged) == 0 && len(p.ExemptGlobsManaged) == 0 && len(p.HostedToSync) == 0 && !p.HostedTableDrop && len(p.WorkflowRetire) == 0 &&
+		!p.Gitignore && len(p.ExemptManaged) == 0 && len(p.ExemptGlobsManaged) == 0 && len(p.HostedToSync) == 0 && !p.HostedTableDrop && !p.StaleAfter && len(p.WorkflowRetire) == 0 &&
 		len(p.StampRewrite) == 0 && len(p.RetiredRefs) == 0 && len(p.MachineStrays) == 0
 }
 
@@ -691,6 +694,9 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 	}
 	if plan.HostedTableDrop {
 		fmt.Fprintln(out, "  config:           drop leftover [hosted] table")
+	}
+	if plan.StaleAfter {
+		fmt.Fprintln(out, "  config:           seed [sync] stale_after = \"24h\"")
 	}
 	if len(plan.WorkflowRetire) == 0 {
 		fmt.Fprintln(out, "  workflows:        (none superseded)")
@@ -850,7 +856,7 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 		}
 	}
 
-	if len(plan.ExemptManaged) > 0 || len(plan.ExemptGlobsManaged) > 0 || len(plan.HostedToSync) > 0 || plan.HostedTableDrop {
+	if len(plan.ExemptManaged) > 0 || len(plan.ExemptGlobsManaged) > 0 || len(plan.HostedToSync) > 0 || plan.HostedTableDrop || plan.StaleAfter {
 		fmt.Fprintln(out, "\n→ config converge")
 		if len(plan.ExemptManaged) > 0 {
 			changed, err := ensureEditExemptManaged(dataDir)
@@ -1109,6 +1115,15 @@ func healHostedBinding(dataDir string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func staleAfterMissing(dataDir string) bool {
+	path := filepath.Join(dataDir, config.ConfigName)
+	cfg, _, err := config.Load(path)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(cfg.Sync["stale_after"]) == ""
 }
 
 // healStaleAfter writes [sync] stale_after = "24h" when the key is absent

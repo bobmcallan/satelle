@@ -18,6 +18,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/health"
 	"github.com/bobmcallan/satelle/internal/structure"
+	"github.com/bobmcallan/satelle/internal/testutil"
 )
 
 // isolateUserHome pins HOME and SATELLE_HOME to a disposable dir for this test
@@ -387,6 +388,24 @@ func TestHealStaleAfterSeedsMissingKey(t *testing.T) {
 	changed, err = healStaleAfter(dir)
 	if err != nil || changed {
 		t.Fatalf("second heal must not clobber: changed=%v err=%v", changed, err)
+	}
+}
+
+func TestPlanMigrateIncludesMissingStaleAfter(t *testing.T) {
+	testutil.IsolateHome(t)
+	dir := t.TempDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "satelle.toml"), []byte("[review]\ngate_create = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := planMigrate(config.Config{}, t.TempDir(), dir)
+	if !p.StaleAfter {
+		t.Fatal("missing stale_after must appear on the migrate plan")
+	}
+	if p.empty() {
+		t.Fatal("plan must not be empty when stale_after is missing")
 	}
 }
 

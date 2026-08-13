@@ -1,3 +1,8 @@
+## [0.0.452] - 2026-08-13
+
+### Fixed
+- **`satelle migrate --yes` seeds `[sync] stale_after` even when nothing else is pending.** A repo already on current structure used to print "already on current structure" and leave the key absent, so doctor could not judge staleness. (sty_30696eeb)
+
 ## [0.0.451] - 2026-08-13
 
 ### Added
