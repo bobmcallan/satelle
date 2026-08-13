@@ -287,6 +287,10 @@ type ReviewConfig struct {
 //
 // Not a satelle default — the operator authors the policy per repo.
 type GateConfig struct {
+	// EditExemptPaths are repo-root-relative (or absolute) prefixes whose
+	// edits skip the engaged-story gate. An absolute prefix that sits
+	// outside the session repo (e.g. /tmp/) never exempts a path inside
+	// that repo — it only covers out-of-tree drafts.
 	EditExemptPaths       []string            `toml:"edit_exempt_paths"`
 	EditExemptGlobs       []string            `toml:"edit_exempt_globs"`
 	AllowOutsideTreeEdits bool                `toml:"allow_outside_tree_edits"`

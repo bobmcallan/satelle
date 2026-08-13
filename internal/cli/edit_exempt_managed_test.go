@@ -33,7 +33,10 @@ func TestManagedEditExemptEntriesAreDeployedFootprint(t *testing.T) {
 		t.Fatalf("managedEditExemptEntries = %v, want %v — widening the seeded default is a deliberate change, not a drift",
 			managedEditExemptEntries, want)
 	}
-	if got := defaultEditExemptTOML(); got != `[".satelle/", ".gitignore", ".claude/", ".grok/", ".codex/"]` {
+	if strings.Join(managedDraftExemptPrefixes, ",") != "/tmp/" {
+		t.Fatalf("managedDraftExemptPrefixes = %v, want [/tmp/]", managedDraftExemptPrefixes)
+	}
+	if got := defaultEditExemptTOML(); got != `[".satelle/", ".gitignore", ".claude/", ".grok/", ".codex/", "/tmp/"]` {
 		t.Errorf("defaultEditExemptTOML() = %s", got)
 	}
 	// The scaffold seeds from the helper, so the two cannot drift apart.
@@ -116,7 +119,7 @@ func TestSeededExemptionCoversLazyHarnessWrite(t *testing.T) {
 		".gitignore", ".satelle/satelle.toml",
 	}
 	for _, rel := range exempt {
-		if !editExempt(roots, resolveAbsTarget(repo, rel)) {
+		if !editExempt(roots, repo, resolveAbsTarget(repo, rel)) {
 			t.Errorf("%q must be edit-gate exempt — satelle writes it itself, with no story engaged", rel)
 		}
 	}
@@ -124,7 +127,7 @@ func TestSeededExemptionCoversLazyHarnessWrite(t *testing.T) {
 	// AC3: product paths stay gated. The seeded list buys satelle's own
 	// footprint an exemption and nothing else.
 	for _, rel := range []string{"main.go", "internal/cli/cmd_init.go", "Makefile", ".github/workflows/ci.yml"} {
-		if editExempt(roots, resolveAbsTarget(repo, rel)) {
+		if editExempt(roots, repo, resolveAbsTarget(repo, rel)) {
 			t.Errorf("%q must stay gated — only satelle's own deployed footprint is exempt", rel)
 		}
 	}

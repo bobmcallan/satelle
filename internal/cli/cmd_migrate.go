@@ -100,11 +100,13 @@ type migratePlan struct {
 	Residue         []string // dataDir-relative paths/globs to remove
 	PruneSeeds      []string // dataDir-relative unedited seed paths
 	Gitignore       bool     // managed block needs converge
-	// ExemptManaged lists the managed paths a non-empty [gate] edit_exempt_paths
-	// still lacks — satelle's own deployed footprint (sty_f115e6bf, sty_926cfcdc).
+	// ExemptManaged lists path prefixes still missing from [gate]
+	// edit_exempt_paths (footprint + draft prefixes). An absent key
+	// materialises the seed set; empty list is a deliberate opt-out.
 	ExemptManaged []string
 	// ExemptGlobsManaged lists managed [gate] edit_exempt_globs still lacking
-	// (sty_fefc88cd). Empty list is a deliberate opt-out and is never converged.
+	// (sty_fefc88cd / sty_e8e1879c). Absent key materialises the managed
+	// dump names; empty list is a deliberate opt-out.
 	ExemptGlobsManaged []string
 	// HostedToSync lists leftover [hosted] keys that [sync] still lacks
 	// (sty_a13d7c4a). Copied onto [sync]; [hosted] is left in place.
@@ -752,7 +754,7 @@ func runMigrate(out io.Writer, a *app.App, yes, allowLive bool) error {
 			}
 		}
 		if len(plan.ExemptGlobsManaged) > 0 {
-			changed, err := ensureGateListManaged(dataDir, "edit_exempt_globs", managedEditExemptGlobs)
+			changed, err := ensureGateListManaged(dataDir, "edit_exempt_globs", managedEditExemptGlobs, managedEditExemptGlobs)
 			if err != nil {
 				return fmt.Errorf("migrate: edit_exempt_globs: %w", err)
 			}
@@ -872,21 +874,19 @@ func editExemptGlobsManagedMissing(dataDir string) []string {
 	if err != nil {
 		return nil
 	}
-	return listMissingManaged(string(raw), "edit_exempt_globs", managedEditExemptGlobs)
+	return listMissingManaged(string(raw), "edit_exempt_globs", managedEditExemptGlobs, managedEditExemptGlobs)
 }
 
-// ensureEditExemptManaged appends every missing managedEditExemptEntries value
-// to a non-empty [gate] edit_exempt_paths list in one rewrite. Operator entries
-// and order are preserved. Returns true when the file was rewritten. An absent
-// key or an explicitly empty list is left alone (init WARNs on absence; empty is
-// a deliberate opt-out).
+// ensureEditExemptManaged converges [gate] edit_exempt_paths: an absent key
+// materialises the seed set; a non-empty list gains missing converge entries
+// (footprint + draft prefixes). An empty list is a deliberate opt-out.
 func ensureEditExemptManaged(dataDir string) (bool, error) {
-	return ensureGateListManaged(dataDir, "edit_exempt_paths", managedEditExemptEntries)
+	return ensureGateListManaged(dataDir, "edit_exempt_paths", defaultEditExemptPaths(), managedEditExemptConverge())
 }
 
-// ensureGateListManaged appends missing managed values to a non-empty [gate]
-// list key. Empty list is a deliberate opt-out and is never rewritten.
-func ensureGateListManaged(dataDir, key string, managed []string) (bool, error) {
+// ensureGateListManaged applies listMissingManaged and writes the result.
+// Empty list is a deliberate opt-out and is never rewritten.
+func ensureGateListManaged(dataDir, key string, absentSet, convergeSet []string) (bool, error) {
 	path := filepath.Join(dataDir, config.ConfigName)
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -896,7 +896,7 @@ func ensureGateListManaged(dataDir, key string, managed []string) (bool, error) 
 		return false, err
 	}
 	content := string(raw)
-	missing := listMissingManaged(content, key, managed)
+	missing := listMissingManaged(content, key, absentSet, convergeSet)
 	if len(missing) == 0 {
 		return false, nil
 	}

@@ -1490,7 +1490,10 @@ gate_create = true
 # its own stop gate refuses the session for the write, with no clean lane to
 # commit it. Drop any default to require an engaged story for those paths, or
 # add your own prefix (a harness authoring dir holding markdown rather than
-# product code). Product paths stay gated — that is the point of the gate. An
+# product code). "/tmp/" is seeded so out-of-tree story drafts are writable
+# with no performing story; an outside-tree prefix never exempts a path
+# inside this repo (a checkout that lives under /tmp still gates product
+# code). Product paths stay gated — that is the point of the gate. An
 # explicitly empty list is a deliberate opt-out (everything gated) and is never
 # converged. Repos initialised before a path joined this list: run
 # satelle migrate --yes to append the missing entries without clobbering

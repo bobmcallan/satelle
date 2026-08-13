@@ -178,7 +178,9 @@ func TestRunInitSeedsActiveEditExemptPaths(t *testing.T) {
 		t.Fatalf("ResolveEditExemptPaths = %v, want %d entries (%v)", got, len(want), want)
 	}
 	for i, w := range want {
-		if !strings.HasSuffix(got[i], strings.TrimSuffix(w, "/")) {
+		gotEnd := strings.TrimSuffix(got[i], string(filepath.Separator))
+		wantEnd := strings.TrimSuffix(w, "/")
+		if !strings.HasSuffix(gotEnd, wantEnd) {
 			t.Errorf("ResolveEditExemptPaths[%d] = %q, want ending %q", i, got[i], w)
 		}
 	}

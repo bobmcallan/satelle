@@ -285,7 +285,7 @@ edit_exempt_paths = [".satelle/", ".claude/"]
 		t.Fatal(err)
 	}
 	s := string(got)
-	if !strings.Contains(s, `edit_exempt_paths = [".satelle/", ".claude/", ".gitignore", ".grok/", ".codex/"]`) {
+	if !strings.Contains(s, `edit_exempt_paths = [".satelle/", ".claude/", ".gitignore", ".grok/", ".codex/", "/tmp/"]`) {
 		t.Errorf("want append-only merge, got:\n%s", s)
 	}
 	if !strings.Contains(apply.String(), "edit_exempt_paths") {
@@ -410,7 +410,7 @@ edit_exempt_globs = ["notes/*.md"]
 	if err := os.WriteFile(filepath.Join(emptyData, "satelle.toml"), []byte(emptyToml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	changed, err := ensureGateListManaged(emptyData, "edit_exempt_globs", managedEditExemptGlobs)
+	changed, err := ensureGateListManaged(emptyData, "edit_exempt_globs", managedEditExemptGlobs, managedEditExemptGlobs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,6 +420,60 @@ edit_exempt_globs = ["notes/*.md"]
 	rawEmpty, _ := os.ReadFile(filepath.Join(emptyData, "satelle.toml"))
 	if string(rawEmpty) != emptyToml {
 		t.Errorf("empty glob list clobbered:\n%s", rawEmpty)
+	}
+}
+
+// TestMigrateSeedsAbsentEditExemptGlobs (sty_e8e1879c AC2): a [gate] table
+// with edit_exempt_paths but no edit_exempt_globs key receives the managed
+// dump names. Empty list stays an opt-out. A non-empty paths list missing
+// /tmp/ gains that draft prefix.
+func TestMigrateSeedsAbsentEditExemptGlobs(t *testing.T) {
+	disableServeProbe(t)
+	home := t.TempDir()
+	t.Setenv("SATELLE_HOME", home)
+
+	repo := t.TempDir()
+	dataDir := filepath.Join(repo, config.DefaultDataDir)
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "agents.toml"), []byte("[executor]\nharness = \"in-loop\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tomlBody := "[gate]\nedit_exempt_paths = [\".satelle/\"]\n"
+	if err := os.WriteFile(filepath.Join(dataDir, "satelle.toml"), []byte(tomlBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	homeDB := filepath.Join(home, config.RepoKey(repo), config.DefaultDBName)
+	if err := os.MkdirAll(filepath.Dir(homeDB), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(homeDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	a := &app.App{
+		Config: config.Config{}, RepoRoot: repo, DataDir: dataDir,
+		RuntimeDir: filepath.Dir(homeDB), DBPath: homeDB,
+	}
+	var apply strings.Builder
+	if err := runMigrate(&apply, a, true, false); err != nil {
+		t.Fatalf("apply: %v\n%s", err, apply.String())
+	}
+	got, err := os.ReadFile(filepath.Join(dataDir, "satelle.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	if !strings.Contains(s, `edit_exempt_globs = ["sty_*_body.md", "sty_*_ac.md"]`) {
+		t.Errorf("absent globs key must materialise dump names:\n%s", s)
+	}
+	if !strings.Contains(s, `"/tmp/"`) {
+		t.Errorf("non-empty paths list must gain /tmp/:\n%s", s)
+	}
+	if strings.Count(s, "[gate]") != 1 {
+		t.Errorf("must not duplicate [gate] table:\n%s", s)
 	}
 }
 

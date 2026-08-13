@@ -70,9 +70,9 @@ func TestHookGateDumpExemptConfigDecides(t *testing.T) {
 	if allowed {
 		t.Error("edit gate allowed sty_*_body.md after edit_exempt_globs was emptied (config decides)")
 	}
-	for _, want := range []string{"scratchpad", "sty_*_body.md", "sty_*_ac.md"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("deny text missing sanctioned-location clause %q:\n%s", want, out)
+	for _, banned := range []string{"sty_*_body.md", "sty_*_ac.md"} {
+		if strings.Contains(out, banned) {
+			t.Errorf("deny text must not promise emptied glob %q:\n%s", banned, out)
 		}
 	}
 	if gateEvent(t, repo, ac) {

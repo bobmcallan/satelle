@@ -100,16 +100,28 @@ gate_create = true`,
 // about the footprint, not two (pinned by a test).
 var managedEditExemptEntries = []string{".gitignore", ".claude/", ".grok/", ".codex/"}
 
-// defaultEditExemptPaths is the list init seeds: this repo's authored substrate
-// plus the managed footprint above.
+// managedDraftExemptPrefixes are out-of-tree drafting locations the edit
+// gate seeds as exempt. Not the binary's deployed footprint —
+// they never belong on managedEditExemptEntries. An outside-tree prefix
+// never exempts a path inside the session repo (see editExempt).
+var managedDraftExemptPrefixes = []string{"/tmp/"}
+
+// managedEditExemptConverge is the set migrate appends onto a non-empty
+// [gate] edit_exempt_paths list: footprint + draft prefixes.
+func managedEditExemptConverge() []string {
+	return append(append([]string{}, managedEditExemptEntries...), managedDraftExemptPrefixes...)
+}
+
+// defaultEditExemptPaths is the list init seeds: authored substrate, the
+// managed footprint, and out-of-tree draft prefixes.
 func defaultEditExemptPaths() []string {
-	return append([]string{".satelle/"}, managedEditExemptEntries...)
+	return append(append([]string{".satelle/"}, managedEditExemptEntries...), managedDraftExemptPrefixes...)
 }
 
 // defaultEditExemptTOML renders defaultEditExemptPaths as a TOML array literal,
 // so the seeded line and the remediation init prints cannot drift apart.
 func defaultEditExemptTOML() string {
-	quoted := make([]string, 0, len(managedEditExemptEntries)+1)
+	quoted := make([]string, 0, len(defaultEditExemptPaths()))
 	for _, p := range defaultEditExemptPaths() {
 		quoted = append(quoted, `"`+p+`"`)
 	}
@@ -208,7 +220,7 @@ func analyzeSubstrate(dataDir, repoRoot string) []substrateDefect {
 			}
 		}
 		if d.Section == "gate" && d.Key == "edit_exempt_globs" && content != "" {
-			if missing := listMissingManaged(content, "edit_exempt_globs", managedEditExemptGlobs); len(missing) > 0 {
+			if missing := listMissingManaged(content, "edit_exempt_globs", managedEditExemptGlobs, managedEditExemptGlobs); len(missing) > 0 {
 				list := `"` + strings.Join(missing, `", "`) + `"`
 				out = append(out, substrateDefect{
 					File:   config.DefaultDataDir + "/" + config.ConfigName,
@@ -224,27 +236,27 @@ func analyzeSubstrate(dataDir, repoRoot string) []substrateDefect {
 	return out
 }
 
-// editExemptMissingManaged returns the managedEditExemptEntries absent from
-// content's non-empty [gate] edit_exempt_paths, in managed order. An absent key
-// or an explicitly empty list returns nil (missing-key is handled separately;
-// empty is a deliberate opt-out).
+// editExemptMissingManaged returns path entries still missing from
+// [gate] edit_exempt_paths. An absent key materialises the seed set
+// (defaultEditExemptPaths). A present non-empty list is checked against
+// managedEditExemptConverge. An empty list is a deliberate opt-out.
 func editExemptMissingManaged(content string) []string {
-	return listMissingManaged(content, "edit_exempt_paths", managedEditExemptEntries)
+	return listMissingManaged(content, "edit_exempt_paths", defaultEditExemptPaths(), managedEditExemptConverge())
 }
 
-// listMissingManaged returns managed entries absent from a non-empty [gate]
-// list key. An absent key or an explicitly empty list returns nil (missing-key
-// is handled separately; empty is a deliberate opt-out).
-func listMissingManaged(content, key string, managed []string) []string {
+// listMissingManaged is the three-way converge rule for a [gate] list key.
+// Absent key → copy of absentSet. Present empty list → nil (opt-out).
+// Present non-empty → entries from convergeSet the list does not already have.
+func listMissingManaged(content, key string, absentSet, convergeSet []string) []string {
 	if !config.HasKey(content, "gate", key) {
-		return nil
+		return append([]string{}, absentSet...)
 	}
 	items := config.ListStringValues(content, "gate", key)
 	if len(items) == 0 {
 		return nil
 	}
 	var missing []string
-	for _, want := range managed {
+	for _, want := range convergeSet {
 		if !config.ListValueContains(content, "gate", key, want) {
 			missing = append(missing, want)
 		}

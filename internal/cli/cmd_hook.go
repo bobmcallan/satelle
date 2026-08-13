@@ -1074,8 +1074,7 @@ func outsideAnchorBashReason(path, foreignRoot string) string {
 const noEngagedStoryEditReason = "satelle: you're mutating the tree without a performing story, or you have used the wrong tool for reading. " +
 	"Open a story session before editing code: satelle story create …, then satelle story set <id> --status plan. " +
 	"That session stays open through your edits until the story reaches a terminal or parked state (done, cancelled, or blocked) — finishing an edit does NOT close it. " +
-	"For research, use read tools (Read/read_file/grep/Glob) — not Edit/Write/search_replace. " +
-	"Story-reference copies belong in the session scratchpad or /tmp, or as sty_*_body.md / sty_*_ac.md dumps (edit-gate exempt when those globs are authored)."
+	"For research, use read tools (Read/read_file/grep/Glob) — not Edit/Write/search_replace."
 
 // droppedSeatEditReason is the deny when a story is still in a performing
 // status but its engagement lease is missing (sty_4f74d01f). Distinct from
@@ -1096,11 +1095,41 @@ func editGateDenyReason(info seatInfo, now time.Time) string {
 	return noEngagedStoryEditReason + seatSuffix(info, now)
 }
 
-const readOnlyPreflightReason = "Read-only preflight remains available: use Read/read_file/Grep/Glob or non-mutating shell commands, and record approved context with `satelle story attach` or `satelle story log`; advance through the workflow gate before editing. Story-reference copies belong in the session scratchpad or /tmp, or as sty_*_body.md / sty_*_ac.md dumps when those globs are authored."
+const readOnlyPreflightBase = "Read-only preflight remains available: use Read/read_file/Grep/Glob or non-mutating shell commands, and record approved context with `satelle story attach` or `satelle story log`; advance through the workflow gate before editing."
+
+// readOnlyPreflightReason names only drafting locations the live [gate]
+// config actually allows. Config load failure or an empty exemption set
+// promises nothing.
+func readOnlyPreflightReason() string {
+	return readOnlyPreflightReasonFrom(func() (config.Config, string, error) {
+		return config.Load("")
+	})
+}
+
+func readOnlyPreflightReasonFrom(load func() (config.Config, string, error)) string {
+	cfg, cfgPath, err := load()
+	if err != nil {
+		return readOnlyPreflightBase + " No [gate] exemptions could be read — every in-repo path is gated."
+	}
+	root := config.RepoRootFromConfigPath(cfgPath)
+	var locs []string
+	for _, p := range cfg.ResolveEditExemptPaths(root) {
+		if root != "" && withinRoot(root, p) {
+			continue
+		}
+		locs = append(locs, p)
+	}
+	locs = append(locs, cfg.ResolveEditExemptGlobs()...)
+	if len(locs) == 0 {
+		return readOnlyPreflightBase + " No [gate] exemptions are authored in this repo — every in-repo path is gated."
+	}
+	return readOnlyPreflightBase + " Story-reference copies belong in " + strings.Join(locs, ", ") + "."
+}
 
 func editPermissionDenyReason(info seatInfo, now time.Time) string {
+	pre := readOnlyPreflightReason()
 	if info.ItemID == "" || !info.Engaged || info.Stale {
-		return editGateDenyReason(info, now) + " " + readOnlyPreflightReason
+		return editGateDenyReason(info, now) + " " + pre
 	}
 	if info.InFlight {
 		target := info.State
@@ -1109,7 +1138,7 @@ func editPermissionDenyReason(info seatInfo, now time.Time) string {
 		}
 		return fmt.Sprintf(
 			"satelle: story %s has a transition to %q IN FLIGHT (planner/reviewer or dispatched step running); the driving session cannot edit until the transition commits. %s",
-			info.ItemID, target, readOnlyPreflightReason)
+			info.ItemID, target, pre)
 	}
 	agent := info.StateAgent
 	if agent == "" {
@@ -1121,7 +1150,7 @@ func editPermissionDenyReason(info seatInfo, now time.Time) string {
 	}
 	return fmt.Sprintf(
 		"satelle: story %s is at %q, which its workflow allocates to %q; source edits are permitted only in route steps allocated to agent=executor (%s). Do not work ahead. %s",
-		info.ItemID, info.StoryStatus, agent, states, readOnlyPreflightReason)
+		info.ItemID, info.StoryStatus, agent, states, pre)
 }
 
 // firstDroppedPerformingSeat finds a story/task whose committed status is
@@ -1331,21 +1360,32 @@ func exemptTarget(target string) bool {
 	}
 	root := config.RepoRootFromConfigPath(cfgPath)
 	abs := resolveAbsTarget(root, target)
-	if editExempt(cfg.ResolveEditExemptPaths(root), abs) {
+	if editExempt(cfg.ResolveEditExemptPaths(root), root, abs) {
 		return true
 	}
 	return editExemptPattern(cfg.ResolveEditExemptGlobs(), root, abs)
 }
 
 // editExempt is the pure classification the edit-gate exemption rests on: target
-// is exempt when it resolves under any configured exempt prefix. Kept pure (no
-// config/filesystem) so the path classification is unit-tested directly. Callers
-// pass an already-absolute target (see resolveAbsTarget) and absolute prefixes
-// (ResolveEditExemptPaths); blank prefixes are skipped — a blank prefix would make
-// withinRoot fail open TOWARD inside and exempt everything, so this is the guard.
-func editExempt(exemptRoots []string, target string) bool {
+// is exempt when it resolves under any configured exempt prefix. A prefix that
+// itself sits outside repoRoot (e.g. /tmp/) matches only targets also outside
+// repoRoot — it never exempts in-tree product code, even when the repo lives
+// under that prefix. Kept pure (no config/filesystem) so the path classification
+// is unit-tested directly. Callers pass an already-absolute target (see
+// resolveAbsTarget) and absolute prefixes (ResolveEditExemptPaths); blank
+// prefixes are skipped — a blank prefix would make withinRoot fail open TOWARD
+// inside and exempt everything, so this is the guard. An empty repoRoot
+// disables the outside-tree restriction (tests of prefix-only matching).
+func editExempt(exemptRoots []string, repoRoot, target string) bool {
+	inRepo := repoRoot != "" && withinRoot(repoRoot, target)
 	for _, r := range exemptRoots {
-		if strings.TrimSpace(r) != "" && withinRoot(r, target) {
+		if strings.TrimSpace(r) == "" {
+			continue
+		}
+		if repoRoot != "" && !withinRoot(repoRoot, r) && inRepo {
+			continue
+		}
+		if withinRoot(r, target) {
 			return true
 		}
 	}

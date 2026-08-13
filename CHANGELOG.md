@@ -1,3 +1,8 @@
+## [0.0.445] - 2026-08-13
+
+### Fixed
+- **Edit gate no longer denies the drafting path it names.** Out-of-tree `/tmp/` drafts are seeded exempt (an outside-tree prefix never punches into the session repo). Deny text is derived from live `[gate]` config and no longer promises `/tmp` or dump names the gate does not allow. `satelle migrate --yes` materialises missing `edit_exempt_globs` and appends `/tmp/` onto a non-empty `edit_exempt_paths`; an empty list stays an opt-out. Product-path Writes stay gated. (sty_e8e1879c)
+
 ## [0.0.444] - 2026-08-13
 
 ### Changed

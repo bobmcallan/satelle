@@ -399,9 +399,6 @@ func TestEmitPreToolUseDenyClaudeSchema(t *testing.T) {
 		"Open a story session",
 		"stays open",
 		"done, cancelled, or blocked",
-		"scratchpad",
-		"sty_*_body.md",
-		"sty_*_ac.md",
 	} {
 		if !strings.Contains(reason, want) {
 			t.Errorf("canonical reason missing %q:\n%s", want, reason)
@@ -493,11 +490,39 @@ func TestResolveAbsTarget(t *testing.T) {
 	// classed as inside the data dir — the exact mis-classification that let Grok
 	// (relative-path) edits bypass the gate before the fix.
 	dataDir := "/home/u/repo/.satelle"
-	if editExempt([]string{dataDir}, resolveAbsTarget(repo, "internal/config/sync.go")) {
+	if editExempt([]string{dataDir}, repo, resolveAbsTarget(repo, "internal/config/sync.go")) {
 		t.Error("a relative product-code path resolved to inside the data dir (the pre-fix bypass)")
 	}
-	if !editExempt([]string{dataDir}, resolveAbsTarget(repo, ".satelle/skills/plan.md")) {
+	if !editExempt([]string{dataDir}, repo, resolveAbsTarget(repo, ".satelle/skills/plan.md")) {
 		t.Error("a relative substrate path under an exempt prefix should classify exempt")
+	}
+}
+
+func TestReadOnlyPreflightReasonDerivesFromConfig(t *testing.T) {
+	withTmp := config.Config{Gate: config.GateConfig{
+		EditExemptPaths: []string{"/tmp/"},
+		EditExemptGlobs: []string{"sty_*_body.md", "sty_*_ac.md"},
+	}}
+	got := readOnlyPreflightReasonFrom(func() (config.Config, string, error) {
+		return withTmp, "/home/u/repo/.satelle/satelle.toml", nil
+	})
+	for _, want := range []string{"/tmp/", "sty_*_body.md", "sty_*_ac.md"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("configured clause missing %q: %s", want, got)
+		}
+	}
+	empty := config.Config{Gate: config.GateConfig{
+		EditExemptPaths: []string{},
+		EditExemptGlobs: []string{},
+	}}
+	got = readOnlyPreflightReasonFrom(func() (config.Config, string, error) {
+		return empty, "/home/u/repo/.satelle/satelle.toml", nil
+	})
+	if strings.Contains(got, "/tmp") || strings.Contains(got, "sty_*_body.md") {
+		t.Errorf("empty exemptions must not promise locations: %s", got)
+	}
+	if !strings.Contains(got, "No [gate] exemptions") {
+		t.Errorf("empty exemptions should say so: %s", got)
 	}
 }
 
@@ -507,22 +532,31 @@ func TestResolveAbsTarget(t *testing.T) {
 // blank prefix must NOT silently exempt everything. Targets are absolute, as
 // callers pass them (resolveAbsTarget runs first).
 func TestEditExemptClassification(t *testing.T) {
+	const repo = "/home/u/repo"
 	exemptRoots := []string{"/home/u/repo/.satelle", "/home/u/repo/.claude"}
+	tmpRoots := append(append([]string{}, exemptRoots...), "/tmp/")
+	tmpRepo := "/tmp/TestRepo/repo"
 	cases := []struct {
 		name        string
 		exemptRoots []string
+		repoRoot    string
 		target      string
 		want        bool
 	}{
-		{"configured data dir exempt", exemptRoots, "/home/u/repo/.satelle/skills/x.md", true},
-		{"configured harness dir exempt", exemptRoots, "/home/u/repo/.claude/skills/foo/SKILL.md", true},
-		{"in-repo code stays gated", exemptRoots, "/home/u/repo/internal/cli/app.go", false},
-		{"no prefixes: data dir NOT exempt", nil, "/home/u/repo/.satelle/skills/x.md", false},
-		{"no prefixes: code not exempt", nil, "/home/u/repo/internal/cli/app.go", false},
-		{"blank prefix does not exempt everything", []string{"  "}, "/home/u/repo/internal/cli/app.go", false},
+		{"configured data dir exempt", exemptRoots, repo, "/home/u/repo/.satelle/skills/x.md", true},
+		{"configured harness dir exempt", exemptRoots, repo, "/home/u/repo/.claude/skills/foo/SKILL.md", true},
+		{"in-repo code stays gated", exemptRoots, repo, "/home/u/repo/internal/cli/app.go", false},
+		{"no prefixes: data dir NOT exempt", nil, repo, "/home/u/repo/.satelle/skills/x.md", false},
+		{"no prefixes: code not exempt", nil, repo, "/home/u/repo/internal/cli/app.go", false},
+		{"blank prefix does not exempt everything", []string{"  "}, repo, "/home/u/repo/internal/cli/app.go", false},
+		{"out-of-tree /tmp draft exempt", tmpRoots, repo, "/tmp/itest-epic-buildout/c1-title.txt", true},
+		{"out-of-tree /tmp/x.md exempt", tmpRoots, repo, "/tmp/x.md", true},
+		{"/tmpfoo is not under /tmp/", tmpRoots, repo, "/tmpfoo/x.md", false},
+		{"/tmp/ prefix does not exempt product in a /tmp repo", append([]string{"/tmp/"}, tmpRepo+"/.satelle"), tmpRepo, tmpRepo + "/internal/cli/cmd_hook.go", false},
+		{"no /tmp/ config: out-of-tree /tmp denied", exemptRoots, repo, "/tmp/x.md", false},
 	}
 	for _, c := range cases {
-		if got := editExempt(c.exemptRoots, c.target); got != c.want {
+		if got := editExempt(c.exemptRoots, c.repoRoot, c.target); got != c.want {
 			t.Errorf("%s: editExempt(%q) = %v, want %v", c.name, c.target, got, c.want)
 		}
 	}
@@ -534,10 +568,10 @@ func TestEditExemptClassification(t *testing.T) {
 // would allow.
 func TestEditExemptPrefixUnchangedWhenGlobsPresent(t *testing.T) {
 	roots := []string{"/home/u/repo/.satelle"}
-	if editExempt(roots, "/home/u/repo/internal/cli/app.go") {
+	if editExempt(roots, "/home/u/repo", "/home/u/repo/internal/cli/app.go") {
 		t.Fatal("product path must stay prefix-gated")
 	}
-	if editExempt(roots, "/home/u/repo/sty_abc_body.md") {
+	if editExempt(roots, "/home/u/repo", "/home/u/repo/sty_abc_body.md") {
 		t.Fatal("dump basename is not a prefix exemption")
 	}
 }
