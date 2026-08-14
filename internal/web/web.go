@@ -199,7 +199,7 @@ type eventVM struct {
 type helpTopic struct {
 	Name  string
 	Title string
-	Body  string
+	HTML  template.HTML
 }
 
 type docPageData struct {

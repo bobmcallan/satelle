@@ -136,3 +136,22 @@ func inlineMarkdown(s string) string {
 	})
 	return s
 }
+
+// stripLeadingHeading drops the first markdown heading and the blank lines
+// immediately after it. Used by the help page, which already prints Title in
+// its own <h2>. Bodies with no leading heading are returned unchanged.
+func stripLeadingHeading(src string) string {
+	lines := strings.Split(src, "\n")
+	i := 0
+	for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+		i++
+	}
+	if i >= len(lines) || mdHeading.FindStringSubmatch(strings.TrimSpace(lines[i])) == nil {
+		return src
+	}
+	i++
+	for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+		i++
+	}
+	return strings.Join(lines[i:], "\n")
+}

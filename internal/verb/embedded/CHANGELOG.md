@@ -1,4 +1,15 @@
+## [0.0.456] - 2026-08-14
+
+### Changed
+- **Help is formatted markdown at full content width.** `/r/{slug}/help` renders `satelle help` topics as HTML (not a raw `<pre>`) and fills the content panel. (sty_067dc4b0)
+
+## [serve-v0.0.28] - 2026-08-14
+
+### Changed
+- Help page renders markdown and spans the full `.wrap` width. (sty_067dc4b0)
+
 ## [0.0.455] - 2026-08-14
+
 
 ### Fixed
 - **Project header keeps both time labels.** "updated" is last confirm against the repo; "pushed" is last successful hosted push. The client ticker no longer strips "pushed". (sty_8931ab84)

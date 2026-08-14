@@ -506,7 +506,11 @@ func (s *MirrorServer) helpPage(w http.ResponseWriter, r *http.Request) {
 	id := mirrorIdentity(r.Context(), s.Store, repoKey)
 	topics := make([]helpTopic, 0)
 	for _, t := range help.List() {
-		topics = append(topics, helpTopic{Name: t.Name, Title: t.Title, Body: t.Body})
+		topics = append(topics, helpTopic{
+			Name:  t.Name,
+			Title: t.Title,
+			HTML:  renderMarkdown(stripLeadingHeading(t.Body)),
+		})
 	}
 	mirrorRender(w, "help", s.projectBase(slug), id.FooterEmail, helpPageData{
 		Topics: topics,

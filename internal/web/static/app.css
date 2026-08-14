@@ -523,3 +523,5 @@ ul.doc-list li { border: 1px solid var(--line); border-radius: 8px; background: 
 /* --- help page --- */
 .help-topic { margin: 22px 0; }
 .help-topic h2 .meta { font-family: var(--mono); font-size: 11px; }
+/* Full .wrap width — do not inherit .doc-article's 760px reading measure. */
+.help-doc { max-width: none; }

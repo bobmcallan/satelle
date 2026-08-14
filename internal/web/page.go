@@ -518,7 +518,7 @@ const templatesSrc = `
   </header>
   {{range .Topics}}<section class="help-topic" id="{{.Name}}">
     <h2 class="kind-h">{{.Title}} <span class="meta">{{.Name}}</span></h2>
-    <pre class="prose">{{.Body}}</pre>
+    <article class="doc-article help-doc">{{.HTML}}</article>
   </section>{{else}}<div class="empty">no help topics</div>{{end}}
   {{template "footer"}}
 </div>
