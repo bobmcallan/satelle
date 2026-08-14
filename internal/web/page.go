@@ -236,20 +236,21 @@ const templatesSrc = `
 
 {{/* freshness: the one presentation of "when was this view last confirmed
      against the repository", rendered from any value carrying .LastIngest —
-     the project header and every landing row (sty_226a661e).
+     the project header and every landing row (sty_226a661e, sty_8104248a).
 
-     It replaces the red "stale" badge (sty_e6e467fe), which was binary where
-     the useful signal is continuous: it said nothing at all until StaleAfter
-     and then said the same thing forever. This shows the elapsed time on EVERY
-     row instead, with no alarm colour, and keeps the absolute stamp one hover
-     away in the title.
+     Labels live HERE (not at the two call sites) so header and landing cannot
+     drift. "local: updated" is a sibling of the <time>, never inside it —
+     the app.js ticker rewrites only time.rel-time text.
 
-     The datetime attribute is what the app.js ticker re-renders from, so the
+     The datetime attribute is what the ticker re-renders from, so the
      phrase stays current with no refetch and no focus. It is a plain absolute
      instant; the ticker never touches the title. */}}
-{{define "freshness"}}<time class="rel-time"{{if isotime .LastIngest}} datetime="{{isotime .LastIngest}}"{{end}} title="Last confirmed against the repository at {{ftime .LastIngest}}">{{reltime .LastIngest}}</time>{{end}}
+{{define "freshness"}}local: updated <time class="rel-time"{{if isotime .LastIngest}} datetime="{{isotime .LastIngest}}"{{end}} title="Last confirmed against the repository at {{ftime .LastIngest}}">{{reltime .LastIngest}}</time>{{end}}
 
-{{define "syncstate"}}{{if .SyncLocal}}<span class="sync-local" title="work-state areas are local">local</span>{{else if .SyncReason}}<span class="sync-fail">push failing</span>{{else if isotime .SyncLastSuccess}}<span class="sync-ok" title="Last successful hosted push at {{ftime .SyncLastSuccess}}">pushed <time class="rel-time" datetime="{{isotime .SyncLastSuccess}}">{{reltime .SyncLastSuccess}}</time></span>{{end}}{{end}}
+{{/* syncstate: hosted workstate plane. "remote:" prefixes every branch so
+     the header and landing name the same clock (sty_8104248a). "pushed" stays
+     outside time.rel-time so the ticker cannot strip it. */}}
+{{define "syncstate"}}{{if or .SyncLocal .SyncReason (isotime .SyncLastSuccess)}}remote: {{end}}{{if .SyncLocal}}<span class="sync-local" title="work-state areas are local">local</span>{{else if .SyncReason}}<span class="sync-fail">push failing</span>{{else if isotime .SyncLastSuccess}}<span class="sync-ok" title="Last successful hosted push at {{ftime .SyncLastSuccess}}">pushed <time class="rel-time" datetime="{{isotime .SyncLastSuccess}}">{{reltime .SyncLastSuccess}}</time></span>{{end}}{{end}}
 
 {{define "syncfail"}}<div class="sync-fail-body"><span class="sync-fail-reason">{{.SyncReason}}</span>{{if .SyncLogPath}} <span class="sync-fail-log">logged to <code>{{.SyncLogPath}}</code></span>{{end}}</div>{{end}}
 
@@ -276,7 +277,7 @@ const templatesSrc = `
   <nav class="crumbs"><a href="/">workspace</a> <span class="sep">/</span> {{if gt (len .Projects) 1}}<details class="proj-switch"><summary class="cur">{{.ProjectName}} <span class="chev" aria-hidden="true">▾</span></summary><ul class="proj-menu">{{range .Projects}}<li><a href="/{{.Slug}}/" title="{{.Path}}"{{if .Current}} class="current" aria-current="page"{{end}}>{{.Name}}{{if .Ambiguous}} <span class="proj-slug">{{.Path}}</span>{{end}}</a></li>{{end}}</ul></details>{{else}}<span class="cur">{{.ProjectName}}</span>{{end}}</nav>
   <header class="app">
     <h1>{{.ProjectName}}</h1>
-    <div class="meta">{{.RepoRoot}} · <a href="help">help →</a> · <a href="settings">settings →</a> · updated {{template "freshness" .}} · {{template "syncstate" .}}</div>
+    <div class="meta">{{.RepoRoot}} · <a href="help">help →</a> · <a href="settings">settings →</a> · {{template "freshness" .}} · {{template "syncstate" .}}</div>
     {{if .SyncReason}}{{template "syncfail" .}}{{end}}
   </header>
 

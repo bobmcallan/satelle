@@ -41,6 +41,9 @@ func TestLandingRendersStandingSyncFailure(t *testing.T) {
 	if !strings.Contains(body, "sync-fail") {
 		t.Fatalf("standing failure chip missing:\n%s", body)
 	}
+	if !strings.Contains(body, `remote: <span class="sync-fail">push failing`) {
+		t.Fatalf("push failing must follow remote::\n%s", body)
+	}
 	if strings.Contains(body, `title="hosted 505"`) {
 		t.Fatal("reason must not live only in a title tooltip")
 	}
@@ -83,6 +86,9 @@ func TestProjectPageRendersStandingSyncFailure(t *testing.T) {
 	rr := httptest.NewRecorder()
 	ms.Handler.ServeHTTP(rr, httptest.NewRequest("GET", "/r/demo/", nil))
 	body := rr.Body.String()
+	if !strings.Contains(body, `remote: <span class="sync-fail">push failing`) {
+		t.Fatalf("project page push failing must follow remote::\n%s", body)
+	}
 	if strings.Contains(body, `title="hosted 505"`) {
 		t.Fatal("reason must not live only in a title tooltip")
 	}
@@ -121,6 +127,9 @@ func TestLandingRendersLastSuccessfulPush(t *testing.T) {
 	if !strings.Contains(body, "sync-ok") || !strings.Contains(body, "pushed") {
 		t.Fatalf("successful push not rendered:\n%s", body)
 	}
+	if !strings.Contains(body, "local: updated") || !strings.Contains(body, "remote:") {
+		t.Fatalf("landing Updated cell missing local:/remote: prefixes:\n%s", body)
+	}
 	if !strings.Contains(body, ">pushed <time") {
 		t.Fatalf("pushed must sit outside time.rel-time so the ticker cannot strip it:\n%s", body)
 	}
@@ -153,8 +162,11 @@ func TestProjectPageNamesBothTimes(t *testing.T) {
 	rr := httptest.NewRecorder()
 	ms.Handler.ServeHTTP(rr, httptest.NewRequest("GET", "/r/demo/", nil))
 	body := rr.Body.String()
-	if !strings.Contains(body, "updated <time") {
-		t.Fatalf("project header missing updated label outside time.rel-time:\n%s", body)
+	if !strings.Contains(body, "local: updated <time") {
+		t.Fatalf("project header missing local: updated outside time.rel-time:\n%s", body)
+	}
+	if !strings.Contains(body, "remote:") {
+		t.Fatalf("project header missing remote: prefix:\n%s", body)
 	}
 	if !strings.Contains(body, ">pushed <time") {
 		t.Fatalf("project header must show pushed outside time.rel-time:\n%s", body)
@@ -187,6 +199,9 @@ func TestLandingRendersLocalOnly(t *testing.T) {
 	body := rr.Body.String()
 	if !strings.Contains(body, "sync-local") {
 		t.Fatalf("local-only marker not rendered:\n%s", body)
+	}
+	if !strings.Contains(body, `remote: <span class="sync-local"`) {
+		t.Fatalf("local-only marker must follow remote::\n%s", body)
 	}
 }
 

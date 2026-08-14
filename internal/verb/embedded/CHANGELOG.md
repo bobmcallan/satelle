@@ -1,3 +1,13 @@
+## [0.0.458] - 2026-08-14
+
+### Changed
+- **Project times name their plane.** Header and landing read `local: updated … · remote: pushed …` so the two clocks are not two unlabeled “just now”s. (sty_8104248a)
+
+## [serve-v0.0.29] - 2026-08-14
+
+### Changed
+- Project header and landing Updated cell prefix ingest and hosted-push times as `local:` and `remote:`. (sty_8104248a)
+
 ## [0.0.457] - 2026-08-14
 
 ### Changed
