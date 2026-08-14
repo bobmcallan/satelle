@@ -63,6 +63,12 @@ func TestCheckoutSyncProtoContract(t *testing.T) {
 		"service Sync",
 		"rpc Apply(",
 		"rpc Snapshot(",
+		"rpc Refresh(",
+		"RefreshRequest",
+		"RefreshResponse",
+		"refresh_token",
+		"access_token",
+		"expires_in",
 	} {
 		if !strings.Contains(proto, want) {
 			t.Errorf("checkout_sync.proto missing %q", want)
@@ -93,9 +99,13 @@ func TestCheckoutSyncProtoContract(t *testing.T) {
 		"/oauth/token",
 		"No gRPC login",
 		"checkout_sync.proto",
+		"Sync.Refresh",
 	} {
 		if !strings.Contains(readme, want) {
 			t.Errorf("api/README.md missing checkout-sync marker %q", want)
 		}
+	}
+	if strings.Contains(readme, "grant **over HTTP**") {
+		t.Error("api/README.md gRPC section still instructs HTTP refresh")
 	}
 }

@@ -26,21 +26,25 @@ original request once.
 ## gRPC checkout-sync
 
 Canonical contract: [`checkout_sync.proto`](checkout_sync.proto) (`service Sync`
-with `Apply` and `Snapshot` only). satelle-server copies this proto verbatim
-and implements it. This repo publishes the contract and does not implement
-the server. The CLI consumes Apply/Snapshot from `internal/hosted`
-(generated stubs in `internal/hosted/syncpb` so `internal` does not import
-`api/`).
+with `Apply`, `Snapshot`, and `Refresh`). satelle-server copies this proto
+verbatim and implements it. This repo publishes the contract and does not
+implement the server. The CLI consumes Apply/Snapshot/Refresh from
+`internal/hosted` (generated stubs in `internal/hosted/syncpb` so `internal`
+does not import `api/`).
 
 OAuth 2.1 + PKCE **stays on HTTP** `GET /oauth/authorize` and
-`POST /oauth/token` (the section above). **No gRPC login** RPC is specified.
+`POST /oauth/token` (the section above) for browser login and for REST
+`doAuthed`. **No gRPC login** RPC is specified.
 
-Every `Sync` RPC carries gRPC metadata key `authorization` (lowercase;
+`Apply` and `Snapshot` carry gRPC metadata key `authorization` (lowercase;
 metadata keys are case-insensitive) with value `Bearer <access_token>`.
+`Sync.Refresh` must **not** require a valid bearer — the refresh token in
+the request is the credential. A server that demands a live access token
+on Refresh can never recover from `UNAUTHENTICATED`.
 
-`UNAUTHENTICATED` is the gRPC analogue of HTTP 401: the client performs a
-`refresh_token` grant **over HTTP** `POST /oauth/token`, then retries the RPC
-**once** — the same retry-once policy as REST `doAuthed`.
+`UNAUTHENTICATED` is the gRPC analogue of HTTP 401: the client calls
+`Sync.Refresh` on the **same connection**, persists the rotated pair, then
+retries the RPC **once** — the same retry-once policy as REST `doAuthed`.
 
 ## Endpoints
 

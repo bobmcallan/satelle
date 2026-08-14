@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -23,14 +22,19 @@ import (
 
 type stubSync struct {
 	syncpb.UnimplementedSyncServer
-	mu      sync.Mutex
-	auths   []string
-	applies int
-	snaps   int
-	kind    string
-	fail    []error
-	apply   func(*syncpb.ApplyRequest) (*syncpb.ApplyResponse, error)
-	snap    func(*syncpb.SnapshotRequest) (*syncpb.SnapshotResponse, error)
+	mu          sync.Mutex
+	auths       []string
+	applies     int
+	snaps       int
+	refreshes   int
+	refreshTok  string
+	refreshAuth []string
+	kind        string
+	fail        []error
+	apply       func(*syncpb.ApplyRequest) (*syncpb.ApplyResponse, error)
+	snap        func(*syncpb.SnapshotRequest) (*syncpb.SnapshotResponse, error)
+	refresh     func(*syncpb.RefreshRequest) (*syncpb.RefreshResponse, error)
+	refreshErr  error
 }
 
 func (s *stubSync) recordAuth(ctx context.Context) {
@@ -79,6 +83,31 @@ func (s *stubSync) Snapshot(ctx context.Context, req *syncpb.SnapshotRequest) (*
 		return s.snap(req)
 	}
 	return &syncpb.SnapshotResponse{}, nil
+}
+
+func (s *stubSync) Refresh(ctx context.Context, req *syncpb.RefreshRequest) (*syncpb.RefreshResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	md, _ := metadata.FromIncomingContext(ctx)
+	vals := md.Get("authorization")
+	if len(vals) == 0 {
+		s.refreshAuth = append(s.refreshAuth, "")
+	} else {
+		s.refreshAuth = append(s.refreshAuth, vals[0])
+	}
+	s.refreshes++
+	s.refreshTok = req.GetRefreshToken()
+	if s.refreshErr != nil {
+		return nil, s.refreshErr
+	}
+	if s.refresh != nil {
+		return s.refresh(req)
+	}
+	return &syncpb.RefreshResponse{
+		AccessToken:  "access-2",
+		RefreshToken: "refresh-2",
+		ExpiresIn:    3600,
+	}, nil
 }
 
 func newTestGRPCClient(t *testing.T, stub *stubSync, store Store, httpClient *http.Client) *Client {
@@ -205,35 +234,8 @@ func TestApplyRefreshesOnUnauthenticated(t *testing.T) {
 		ServerURL: "http://hosted.example", AccessToken: "access-1", RefreshToken: "refresh-1",
 		DisplayName: "A", Email: "a@b.c", PrincipalID: "u1",
 	})
-	var refreshPosts int
-	mux := http.NewServeMux()
-	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
-		refreshPosts++
-		_ = r.ParseForm()
-		if r.Form.Get("refresh_token") != "refresh-1" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		_, _ = io.WriteString(w, `{"access_token":"access-2","refresh_token":"refresh-2","token_type":"Bearer","expires_in":3600}`)
-	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("unexpected HTTP %s %s", r.Method, r.URL.Path)
-		http.Error(w, "nope", 500)
-	})
-	ts := httptest.NewServer(mux)
-	t.Cleanup(ts.Close)
-
-	// Client.server must match the stored credential AND the refresh URL.
-	// newTestGRPCClient hardcodes http://hosted.example — override after
-	// construction and store against ts.URL.
-	store = &memStore{}
-	_ = store.Save(Credential{
-		ServerURL: ts.URL, AccessToken: "access-1", RefreshToken: "refresh-1",
-		DisplayName: "A", Email: "a@b.c", PrincipalID: "u1",
-	})
 	stub := &stubSync{fail: []error{status.Error(codes.Unauthenticated, "unauthenticated")}}
-	c := newTestGRPCClient(t, stub, store, ts.Client())
-	c.server = ts.URL
+	c := newTestGRPCClient(t, stub, store, fatalHTTP(t))
 
 	res, err := c.Apply(context.Background(), "probe", WorkstateIngest{
 		Items: []json.RawMessage{json.RawMessage(`{"id":"sty_1"}`)},
@@ -247,13 +249,16 @@ func TestApplyRefreshesOnUnauthenticated(t *testing.T) {
 	if stub.applies != 2 {
 		t.Fatalf("applies = %d", stub.applies)
 	}
-	if refreshPosts != 1 {
-		t.Fatalf("refresh posts = %d", refreshPosts)
+	if stub.refreshes != 1 || stub.refreshTok != "refresh-1" {
+		t.Fatalf("refresh = %d tok=%q", stub.refreshes, stub.refreshTok)
+	}
+	if len(stub.refreshAuth) != 1 || stub.refreshAuth[0] != "" {
+		t.Fatalf("refresh must not carry bearer, got %v", stub.refreshAuth)
 	}
 	if len(stub.auths) != 2 || stub.auths[0] != "Bearer access-1" || stub.auths[1] != "Bearer access-2" {
 		t.Fatalf("auths = %v", stub.auths)
 	}
-	got, err := store.Load(ts.URL)
+	got, err := store.Load("http://hosted.example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,19 +267,43 @@ func TestApplyRefreshesOnUnauthenticated(t *testing.T) {
 	}
 }
 
-func TestApplyRefreshFailureIsLoginRequired(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = io.WriteString(w, `{"error":"invalid_grant"}`)
-	})
-	ts := httptest.NewServer(mux)
-	t.Cleanup(ts.Close)
+func TestSnapshotRefreshesOnUnauthenticated(t *testing.T) {
 	store := &memStore{}
-	_ = store.Save(Credential{ServerURL: ts.URL, AccessToken: "access-1", RefreshToken: "refresh-1"})
+	_ = store.Save(Credential{
+		ServerURL: "http://hosted.example", AccessToken: "access-1", RefreshToken: "refresh-1",
+		DisplayName: "A", Email: "a@b.c", PrincipalID: "u1",
+	})
 	stub := &stubSync{fail: []error{status.Error(codes.Unauthenticated, "unauthenticated")}}
-	c := newTestGRPCClient(t, stub, store, ts.Client())
-	c.server = ts.URL
+	c := newTestGRPCClient(t, stub, store, fatalHTTP(t))
+	_, _, err := c.Snapshot(context.Background(), "probe", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stub.snaps != 2 {
+		t.Fatalf("snaps = %d", stub.snaps)
+	}
+	if stub.refreshes != 1 || stub.refreshTok != "refresh-1" {
+		t.Fatalf("refresh = %d tok=%q", stub.refreshes, stub.refreshTok)
+	}
+	got, err := store.Load("http://hosted.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RefreshToken != "refresh-2" || got.DisplayName != "A" {
+		t.Fatalf("rotated cred = %+v", got)
+	}
+}
+
+func TestApplyRefreshFailureIsLoginRequired(t *testing.T) {
+	store := &memStore{}
+	_ = store.Save(Credential{
+		ServerURL: "http://hosted.example", AccessToken: "access-1", RefreshToken: "refresh-1",
+	})
+	stub := &stubSync{
+		fail:       []error{status.Error(codes.Unauthenticated, "unauthenticated")},
+		refreshErr: status.Error(codes.Unauthenticated, "invalid_grant"),
+	}
+	c := newTestGRPCClient(t, stub, store, fatalHTTP(t))
 	_, err := c.Apply(context.Background(), "probe", WorkstateIngest{
 		Items: []json.RawMessage{json.RawMessage(`{"id":"sty_1"}`)},
 	})
@@ -283,6 +312,9 @@ func TestApplyRefreshFailureIsLoginRequired(t *testing.T) {
 	}
 	if stub.applies != 1 {
 		t.Fatalf("applies = %d", stub.applies)
+	}
+	if stub.refreshes != 1 {
+		t.Fatalf("refreshes = %d", stub.refreshes)
 	}
 }
 

@@ -60,10 +60,25 @@ type LedgerEntry struct {
 	Record  json.RawMessage `json:"record"`
 }
 
-// SyncAuthMetadata returns the gRPC metadata map every Sync RPC carries.
+// RefreshRequest is the Sync.Refresh input: the stored refresh token.
+// The RPC must not require a valid bearer; this token is the credential.
+type RefreshRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+// RefreshResponse is the Sync.Refresh result: a rotated access/refresh pair.
+// ExpiresIn is seconds until the access token expires (0 if the server omits it).
+type RefreshResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int64  `json:"expires_in"`
+}
+
+// SyncAuthMetadata returns the gRPC metadata map Apply and Snapshot carry.
 // The key is lowercase authorization (gRPC metadata keys are case-insensitive
 // but canonically lowercase). Value is "Bearer <accessToken>". Token issue
-// and refresh stay on HTTP /oauth/*; there is no gRPC login.
+// stays on HTTP /oauth/*; refresh on the gRPC path is Sync.Refresh. There is
+// no gRPC login.
 func SyncAuthMetadata(accessToken string) map[string]string {
 	return map[string]string{"authorization": "Bearer " + accessToken}
 }

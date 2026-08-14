@@ -279,6 +279,48 @@ func TestSyncWorkstatePushPersonalAndIdempotent(t *testing.T) {
 	}
 }
 
+// TestSyncWorkstatePushNoREST: the satelled child verb talks gRPC Apply only.
+// A hosted origin that 500s every HTTP request still succeeds.
+func TestSyncWorkstatePushNoREST(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	hosted.DocumentSyncStatePathOverride = filepath.Join(t.TempDir(), "document-sync-state.json")
+	t.Cleanup(func() { hosted.DocumentSyncStatePathOverride = "" })
+	f := &fakeWorkstateServer{
+		posts:      map[string][]map[string]any{},
+		itemsByID:  map[string]map[string]any{},
+		ledgerByID: map[string]map[string]any{},
+	}
+	var hits int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		t.Errorf("unexpected HTTP %s %s", r.Method, r.URL.Path)
+		http.Error(w, "no REST", http.StatusInternalServerError)
+	}))
+	t.Cleanup(ts.Close)
+	attachFakeWorkstateGRPC(t, f)
+	seedCred(t, ts.URL)
+	workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+
+	out, err := runRoot(t, "story", "create",
+		"--title", "Workstate no-REST probe",
+		"--body", "A story for the workstate push no-REST test.",
+		"--acceptance", "1. pushed",
+	)
+	if err != nil {
+		t.Fatalf("story create: %v\n%s", err, out)
+	}
+	out, err = runRoot(t, "sync", "workstate", "push", "--server", ts.URL)
+	if err != nil {
+		t.Fatalf("push: %v\n%s", err, out)
+	}
+	if f.postCount("probe") != 1 {
+		t.Fatalf("gRPC applies = %d, want 1", f.postCount("probe"))
+	}
+	if hits != 0 {
+		t.Fatalf("HTTP hits = %d, want 0", hits)
+	}
+}
+
 // TestSyncWorkstatePushIgnoresTeamBinding: even with active team workspace,
 // work-state goes to personal only (AC1, AC3, AC5).
 func TestSyncWorkstatePushIgnoresTeamBinding(t *testing.T) {

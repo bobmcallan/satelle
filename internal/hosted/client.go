@@ -366,19 +366,23 @@ func (c *Client) doAuthed(ctx context.Context, method, path string, payload []by
 	return c.send(ctx, method, path, rotated.AccessToken, payload, contentType)
 }
 
-// refreshAndPersist runs the HTTP refresh_token grant, carries identity
-// fields across rotation, and persists the new pair before returning it.
-// Shared by HTTP doAuthed and gRPC withGRPCAuth so the two transports
-// cannot drift on that invariant.
+// refreshAndPersist runs the HTTP refresh_token grant and persists the rotated
+// pair. REST doAuthed is the only caller; gRPC withGRPCAuth uses
+// refreshOverGRPC so the satelled path never requires POST /oauth/token.
 func (c *Client) refreshAndPersist(ctx context.Context, cred Credential) (Credential, error) {
 	tok, rErr := refreshGrant(ctx, c.http, c.server, cred.RefreshToken)
 	if rErr != nil {
 		return Credential{}, fmt.Errorf("%w (refresh failed: %v)", ErrLoginRequired, rErr)
 	}
+	return c.persistRotated(cred, tok)
+}
+
+// persistRotated carries identity fields across rotation and saves the new pair.
+// Shared by the HTTP and gRPC grants so display_name/email/principal cannot
+// drift: credentialFromToken only knows the token response, so without this
+// the UI would lose identity ~1h after login.
+func (c *Client) persistRotated(cred Credential, tok tokenResponse) (Credential, error) {
 	rotated := credentialFromToken(c.server, tok)
-	// Carry the stored identity across rotation — credentialFromToken only knows
-	// the token response, so without this the display_name/email would be wiped on
-	// every refresh (~1h after login), sending the UI back to the legacy path.
 	rotated.DisplayName, rotated.Email, rotated.PrincipalID = cred.DisplayName, cred.Email, cred.PrincipalID
 	if sErr := c.store.Save(rotated); sErr != nil {
 		return Credential{}, fmt.Errorf("hosted: persist refreshed credential: %w", sErr)

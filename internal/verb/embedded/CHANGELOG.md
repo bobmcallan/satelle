@@ -1,3 +1,8 @@
+## [0.0.457] - 2026-08-14
+
+### Changed
+- **Hosted workstate refresh is gRPC.** `satelle sync workstate push` (the satelled child) rotates expired tokens via Sync.Refresh on the same connection as Apply. A valid or expired session no longer requires POST /oauth/token on that path. Browser login and REST config/documents refresh stay HTTP. (sty_d94eb1a4)
+
 ## [0.0.456] - 2026-08-14
 
 ### Changed

@@ -5,7 +5,9 @@
 // repo publishes the contract; it does not implement the server.
 //
 // Subscribe is deliberately out of scope (a later story). Do not add it here.
-// There is no gRPC login — OAuth stays on HTTP /oauth/*.
+// Browser login (authorization_code) stays on HTTP /oauth/*. Token refresh on
+// the sync path is Sync.Refresh — the RPC must not require a valid bearer;
+// the refresh token in the request is the credential.
 //
 // record fields carry UTF-8 JSON (the opaque CLI work-item / ledger payload);
 // the server may promote fields from them, matching REST json.RawMessage.
@@ -425,6 +427,110 @@ func (x *LedgerEntry) GetRecord() []byte {
 	return nil
 }
 
+type RefreshRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RefreshToken  string                 `protobuf:"bytes,1,opt,name=refresh_token,json=refreshToken,proto3" json:"refresh_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RefreshRequest) Reset() {
+	*x = RefreshRequest{}
+	mi := &file_checkout_sync_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RefreshRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RefreshRequest) ProtoMessage() {}
+
+func (x *RefreshRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_checkout_sync_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RefreshRequest.ProtoReflect.Descriptor instead.
+func (*RefreshRequest) Descriptor() ([]byte, []int) {
+	return file_checkout_sync_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *RefreshRequest) GetRefreshToken() string {
+	if x != nil {
+		return x.RefreshToken
+	}
+	return ""
+}
+
+type RefreshResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AccessToken   string                 `protobuf:"bytes,1,opt,name=access_token,json=accessToken,proto3" json:"access_token,omitempty"`
+	RefreshToken  string                 `protobuf:"bytes,2,opt,name=refresh_token,json=refreshToken,proto3" json:"refresh_token,omitempty"`
+	ExpiresIn     int64                  `protobuf:"varint,3,opt,name=expires_in,json=expiresIn,proto3" json:"expires_in,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RefreshResponse) Reset() {
+	*x = RefreshResponse{}
+	mi := &file_checkout_sync_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RefreshResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RefreshResponse) ProtoMessage() {}
+
+func (x *RefreshResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_checkout_sync_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RefreshResponse.ProtoReflect.Descriptor instead.
+func (*RefreshResponse) Descriptor() ([]byte, []int) {
+	return file_checkout_sync_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *RefreshResponse) GetAccessToken() string {
+	if x != nil {
+		return x.AccessToken
+	}
+	return ""
+}
+
+func (x *RefreshResponse) GetRefreshToken() string {
+	if x != nil {
+		return x.RefreshToken
+	}
+	return ""
+}
+
+func (x *RefreshResponse) GetExpiresIn() int64 {
+	if x != nil {
+		return x.ExpiresIn
+	}
+	return 0
+}
+
 var File_checkout_sync_proto protoreflect.FileDescriptor
 
 const file_checkout_sync_proto_rawDesc = "" +
@@ -457,10 +563,18 @@ const file_checkout_sync_proto_rawDesc = "" +
 	"\x04kind\x18\x03 \x01(\tR\x04kind\x12\x12\n" +
 	"\x04type\x18\x04 \x01(\tR\x04type\x12\x16\n" +
 	"\x06origin\x18\x05 \x01(\tR\x06origin\x12\x16\n" +
-	"\x06record\x18\x06 \x01(\fR\x06record2\x9f\x01\n" +
+	"\x06record\x18\x06 \x01(\fR\x06record\"5\n" +
+	"\x0eRefreshRequest\x12#\n" +
+	"\rrefresh_token\x18\x01 \x01(\tR\frefreshToken\"x\n" +
+	"\x0fRefreshResponse\x12!\n" +
+	"\faccess_token\x18\x01 \x01(\tR\vaccessToken\x12#\n" +
+	"\rrefresh_token\x18\x02 \x01(\tR\frefreshToken\x12\x1d\n" +
+	"\n" +
+	"expires_in\x18\x03 \x01(\x03R\texpiresIn2\xed\x01\n" +
 	"\x04Sync\x12F\n" +
 	"\x05Apply\x12\x1d.satelle.sync.v1.ApplyRequest\x1a\x1e.satelle.sync.v1.ApplyResponse\x12O\n" +
-	"\bSnapshot\x12 .satelle.sync.v1.SnapshotRequest\x1a!.satelle.sync.v1.SnapshotResponseB\xbc\x01\n" +
+	"\bSnapshot\x12 .satelle.sync.v1.SnapshotRequest\x1a!.satelle.sync.v1.SnapshotResponse\x12L\n" +
+	"\aRefresh\x12\x1f.satelle.sync.v1.RefreshRequest\x1a .satelle.sync.v1.RefreshResponseB\xbc\x01\n" +
 	"\x13com.satelle.sync.v1B\x11CheckoutSyncProtoP\x01Z4github.com/bobmcallan/satelle/internal/hosted/syncpb\xa2\x02\x03SSX\xaa\x02\x0fSatelle.Sync.V1\xca\x02\x0fSatelle\\Sync\\V1\xe2\x02\x1bSatelle\\Sync\\V1\\GPBMetadata\xea\x02\x11Satelle::Sync::V1b\x06proto3"
 
 var (
@@ -475,7 +589,7 @@ func file_checkout_sync_proto_rawDescGZIP() []byte {
 	return file_checkout_sync_proto_rawDescData
 }
 
-var file_checkout_sync_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_checkout_sync_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_checkout_sync_proto_goTypes = []any{
 	(*ApplyRequest)(nil),     // 0: satelle.sync.v1.ApplyRequest
 	(*ApplyResponse)(nil),    // 1: satelle.sync.v1.ApplyResponse
@@ -483,6 +597,8 @@ var file_checkout_sync_proto_goTypes = []any{
 	(*SnapshotResponse)(nil), // 3: satelle.sync.v1.SnapshotResponse
 	(*WorkItem)(nil),         // 4: satelle.sync.v1.WorkItem
 	(*LedgerEntry)(nil),      // 5: satelle.sync.v1.LedgerEntry
+	(*RefreshRequest)(nil),   // 6: satelle.sync.v1.RefreshRequest
+	(*RefreshResponse)(nil),  // 7: satelle.sync.v1.RefreshResponse
 }
 var file_checkout_sync_proto_depIdxs = []int32{
 	4, // 0: satelle.sync.v1.ApplyRequest.items:type_name -> satelle.sync.v1.WorkItem
@@ -491,10 +607,12 @@ var file_checkout_sync_proto_depIdxs = []int32{
 	5, // 3: satelle.sync.v1.SnapshotResponse.ledger:type_name -> satelle.sync.v1.LedgerEntry
 	0, // 4: satelle.sync.v1.Sync.Apply:input_type -> satelle.sync.v1.ApplyRequest
 	2, // 5: satelle.sync.v1.Sync.Snapshot:input_type -> satelle.sync.v1.SnapshotRequest
-	1, // 6: satelle.sync.v1.Sync.Apply:output_type -> satelle.sync.v1.ApplyResponse
-	3, // 7: satelle.sync.v1.Sync.Snapshot:output_type -> satelle.sync.v1.SnapshotResponse
-	6, // [6:8] is the sub-list for method output_type
-	4, // [4:6] is the sub-list for method input_type
+	6, // 6: satelle.sync.v1.Sync.Refresh:input_type -> satelle.sync.v1.RefreshRequest
+	1, // 7: satelle.sync.v1.Sync.Apply:output_type -> satelle.sync.v1.ApplyResponse
+	3, // 8: satelle.sync.v1.Sync.Snapshot:output_type -> satelle.sync.v1.SnapshotResponse
+	7, // 9: satelle.sync.v1.Sync.Refresh:output_type -> satelle.sync.v1.RefreshResponse
+	7, // [7:10] is the sub-list for method output_type
+	4, // [4:7] is the sub-list for method input_type
 	4, // [4:4] is the sub-list for extension type_name
 	4, // [4:4] is the sub-list for extension extendee
 	0, // [0:4] is the sub-list for field type_name
@@ -511,7 +629,7 @@ func file_checkout_sync_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_checkout_sync_proto_rawDesc), len(file_checkout_sync_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

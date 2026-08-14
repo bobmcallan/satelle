@@ -5,7 +5,9 @@
 // repo publishes the contract; it does not implement the server.
 //
 // Subscribe is deliberately out of scope (a later story). Do not add it here.
-// There is no gRPC login — OAuth stays on HTTP /oauth/*.
+// Browser login (authorization_code) stays on HTTP /oauth/*. Token refresh on
+// the sync path is Sync.Refresh — the RPC must not require a valid bearer;
+// the refresh token in the request is the credential.
 //
 // record fields carry UTF-8 JSON (the opaque CLI work-item / ledger payload);
 // the server may promote fields from them, matching REST json.RawMessage.
@@ -19,6 +21,7 @@ option go_package = "github.com/bobmcallan/satelle/api;api";
 service Sync {
   rpc Apply(ApplyRequest) returns (ApplyResponse);
   rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
+  rpc Refresh(RefreshRequest) returns (RefreshResponse);
 }
 
 message ApplyRequest {
@@ -59,4 +62,14 @@ message LedgerEntry {
   string type = 4;
   string origin = 5;
   bytes record = 6;
+}
+
+message RefreshRequest {
+  string refresh_token = 1;
+}
+
+message RefreshResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  int64 expires_in = 3;
 }

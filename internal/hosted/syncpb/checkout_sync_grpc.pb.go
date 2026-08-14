@@ -5,7 +5,9 @@
 // repo publishes the contract; it does not implement the server.
 //
 // Subscribe is deliberately out of scope (a later story). Do not add it here.
-// There is no gRPC login — OAuth stays on HTTP /oauth/*.
+// Browser login (authorization_code) stays on HTTP /oauth/*. Token refresh on
+// the sync path is Sync.Refresh — the RPC must not require a valid bearer;
+// the refresh token in the request is the credential.
 //
 // record fields carry UTF-8 JSON (the opaque CLI work-item / ledger payload);
 // the server may promote fields from them, matching REST json.RawMessage.
@@ -33,6 +35,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	Sync_Apply_FullMethodName    = "/satelle.sync.v1.Sync/Apply"
 	Sync_Snapshot_FullMethodName = "/satelle.sync.v1.Sync/Snapshot"
+	Sync_Refresh_FullMethodName  = "/satelle.sync.v1.Sync/Refresh"
 )
 
 // SyncClient is the client API for Sync service.
@@ -41,6 +44,7 @@ const (
 type SyncClient interface {
 	Apply(ctx context.Context, in *ApplyRequest, opts ...grpc.CallOption) (*ApplyResponse, error)
 	Snapshot(ctx context.Context, in *SnapshotRequest, opts ...grpc.CallOption) (*SnapshotResponse, error)
+	Refresh(ctx context.Context, in *RefreshRequest, opts ...grpc.CallOption) (*RefreshResponse, error)
 }
 
 type syncClient struct {
@@ -71,12 +75,23 @@ func (c *syncClient) Snapshot(ctx context.Context, in *SnapshotRequest, opts ...
 	return out, nil
 }
 
+func (c *syncClient) Refresh(ctx context.Context, in *RefreshRequest, opts ...grpc.CallOption) (*RefreshResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RefreshResponse)
+	err := c.cc.Invoke(ctx, Sync_Refresh_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SyncServer is the server API for Sync service.
 // All implementations must embed UnimplementedSyncServer
 // for forward compatibility.
 type SyncServer interface {
 	Apply(context.Context, *ApplyRequest) (*ApplyResponse, error)
 	Snapshot(context.Context, *SnapshotRequest) (*SnapshotResponse, error)
+	Refresh(context.Context, *RefreshRequest) (*RefreshResponse, error)
 	mustEmbedUnimplementedSyncServer()
 }
 
@@ -92,6 +107,9 @@ func (UnimplementedSyncServer) Apply(context.Context, *ApplyRequest) (*ApplyResp
 }
 func (UnimplementedSyncServer) Snapshot(context.Context, *SnapshotRequest) (*SnapshotResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Snapshot not implemented")
+}
+func (UnimplementedSyncServer) Refresh(context.Context, *RefreshRequest) (*RefreshResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Refresh not implemented")
 }
 func (UnimplementedSyncServer) mustEmbedUnimplementedSyncServer() {}
 func (UnimplementedSyncServer) testEmbeddedByValue()              {}
@@ -150,6 +168,24 @@ func _Sync_Snapshot_Handler(srv interface{}, ctx context.Context, dec func(inter
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Sync_Refresh_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RefreshRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SyncServer).Refresh(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Sync_Refresh_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SyncServer).Refresh(ctx, req.(*RefreshRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Sync_ServiceDesc is the grpc.ServiceDesc for Sync service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -164,6 +200,10 @@ var Sync_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Snapshot",
 			Handler:    _Sync_Snapshot_Handler,
+		},
+		{
+			MethodName: "Refresh",
+			Handler:    _Sync_Refresh_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
