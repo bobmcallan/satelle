@@ -1,4 +1,15 @@
+## [0.0.455] - 2026-08-14
+
+### Fixed
+- **Project header keeps both time labels.** "updated" is last confirm against the repo; "pushed" is last successful hosted push. The client ticker no longer strips "pushed". (sty_8931ab84)
+
+## [serve-v0.0.27] - 2026-08-14
+
+### Fixed
+- "pushed" stays visible next to the last hosted-push time (label is outside the ticker-managed `<time>`). (sty_8931ab84)
+
 ## [0.0.454] - 2026-08-14
+
 
 ### Fixed
 - **CLI unit tests no longer seed the live satelled landing.** Isolating `SATELLE_HOME` also sets `SATELLE_SERVER_ENDPOINT=none` unless the test already chose a serve URL, so `story create` in `go test ./internal/cli` cannot POST snapshots to :8787. (sty_cb74c03b)

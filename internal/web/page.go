@@ -249,7 +249,7 @@ const templatesSrc = `
      instant; the ticker never touches the title. */}}
 {{define "freshness"}}<time class="rel-time"{{if isotime .LastIngest}} datetime="{{isotime .LastIngest}}"{{end}} title="Last confirmed against the repository at {{ftime .LastIngest}}">{{reltime .LastIngest}}</time>{{end}}
 
-{{define "syncstate"}}{{if .SyncLocal}}<span class="sync-local" title="work-state areas are local">local</span>{{else if .SyncReason}}<span class="sync-fail">push failing</span>{{else if isotime .SyncLastSuccess}}<time class="rel-time sync-ok"{{if isotime .SyncLastSuccess}} datetime="{{isotime .SyncLastSuccess}}"{{end}} title="Last successful hosted push at {{ftime .SyncLastSuccess}}">pushed {{reltime .SyncLastSuccess}}</time>{{end}}{{end}}
+{{define "syncstate"}}{{if .SyncLocal}}<span class="sync-local" title="work-state areas are local">local</span>{{else if .SyncReason}}<span class="sync-fail">push failing</span>{{else if isotime .SyncLastSuccess}}<span class="sync-ok" title="Last successful hosted push at {{ftime .SyncLastSuccess}}">pushed <time class="rel-time" datetime="{{isotime .SyncLastSuccess}}">{{reltime .SyncLastSuccess}}</time></span>{{end}}{{end}}
 
 {{define "syncfail"}}<div class="sync-fail-body"><span class="sync-fail-reason">{{.SyncReason}}</span>{{if .SyncLogPath}} <span class="sync-fail-log">logged to <code>{{.SyncLogPath}}</code></span>{{end}}</div>{{end}}
 

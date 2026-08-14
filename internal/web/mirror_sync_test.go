@@ -121,6 +121,44 @@ func TestLandingRendersLastSuccessfulPush(t *testing.T) {
 	if !strings.Contains(body, "sync-ok") || !strings.Contains(body, "pushed") {
 		t.Fatalf("successful push not rendered:\n%s", body)
 	}
+	if !strings.Contains(body, ">pushed <time") {
+		t.Fatalf("pushed must sit outside time.rel-time so the ticker cannot strip it:\n%s", body)
+	}
+	if strings.Contains(body, `class="rel-time sync-ok"`) {
+		t.Fatal("sync-ok must wrap the label, not live on the time element")
+	}
+}
+
+func TestProjectPageNamesBothTimes(t *testing.T) {
+	testutil.IsolateHome(t)
+	s, err := mirror.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := t.Context()
+	if _, err := s.TouchPartition(ctx, "rk", "demo", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	if err := s.ReplaceKind(ctx, "rk", "identity", []mirror.ItemRow{{
+		ID: "meta", Payload: `{"project_name":"demo","repo_root":"` + repo + `"}`,
+	}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncstate.RecordPush(config.GlobalDir(), repo, true, "", "", time.Now().Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	ms := NewMirror(s)
+	rr := httptest.NewRecorder()
+	ms.Handler.ServeHTTP(rr, httptest.NewRequest("GET", "/r/demo/", nil))
+	body := rr.Body.String()
+	if !strings.Contains(body, "updated <time") {
+		t.Fatalf("project header missing updated label outside time.rel-time:\n%s", body)
+	}
+	if !strings.Contains(body, ">pushed <time") {
+		t.Fatalf("project header must show pushed outside time.rel-time:\n%s", body)
+	}
 }
 
 func TestLandingRendersLocalOnly(t *testing.T) {
