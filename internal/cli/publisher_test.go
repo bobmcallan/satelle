@@ -70,9 +70,10 @@ func TestChangePublisherCLI(t *testing.T) {
 		t.Errorf("event = %+v", ev)
 	}
 
-	// --- inert (SATELLE_SERVER_ENDPOINT=none from tempRepo) ---
+	// --- inert (explicit none — tempRepo will not clobber a leftover serve URL) ---
 	changeHits.Store(0)
 	snapHits.Store(0)
+	t.Setenv(EnvServerEndpoint, "none")
 	repo2 := tempRepo(t)
 	out, err = runRoot(t, "story", "create",
 		"--title", "No Push",

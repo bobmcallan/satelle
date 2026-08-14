@@ -62,7 +62,9 @@ func resetFlagState(cmd *cobra.Command) {
 func tempRepo(t *testing.T) string {
 	t.Helper()
 	t.Setenv("SATELLE_HOME", t.TempDir())
-	t.Setenv("SATELLE_SERVER_ENDPOINT", "none")
+	if strings.TrimSpace(os.Getenv("SATELLE_SERVER_ENDPOINT")) == "" {
+		t.Setenv("SATELLE_SERVER_ENDPOINT", "none")
+	}
 	repo := t.TempDir()
 	satelleDir := filepath.Join(repo, ".satelle")
 	if err := os.MkdirAll(satelleDir, 0o755); err != nil {

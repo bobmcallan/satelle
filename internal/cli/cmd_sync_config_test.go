@@ -153,6 +153,9 @@ func syncConfigRepo(t *testing.T, satelleToml string) string {
 	if strings.TrimSpace(os.Getenv("SATELLE_HOME")) == "" {
 		t.Setenv("SATELLE_HOME", t.TempDir())
 	}
+	if strings.TrimSpace(os.Getenv("SATELLE_SERVER_ENDPOINT")) == "" {
+		t.Setenv("SATELLE_SERVER_ENDPOINT", "none")
+	}
 	repo := t.TempDir()
 	dir := filepath.Join(repo, ".satelle")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -171,6 +174,9 @@ func pointAt(t *testing.T, repo string) {
 	t.Helper()
 	if strings.TrimSpace(os.Getenv("SATELLE_HOME")) == "" {
 		t.Setenv("SATELLE_HOME", t.TempDir())
+	}
+	if strings.TrimSpace(os.Getenv("SATELLE_SERVER_ENDPOINT")) == "" {
+		t.Setenv("SATELLE_SERVER_ENDPOINT", "none")
 	}
 	t.Setenv("SATELLE_CONFIG", filepath.Join(repo, ".satelle", "satelle.toml"))
 }

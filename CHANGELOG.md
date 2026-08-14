@@ -1,4 +1,10 @@
+## [0.0.454] - 2026-08-14
+
+### Fixed
+- **CLI unit tests no longer seed the live satelled landing.** Isolating `SATELLE_HOME` also sets `SATELLE_SERVER_ENDPOINT=none` unless the test already chose a serve URL, so `story create` in `go test ./internal/cli` cannot POST snapshots to :8787. (sty_cb74c03b)
+
 ## [0.0.453] - 2026-08-14
+
 
 ### Changed
 - **Hosted server URL is machine-scope only.** `config.HostedServerFor` / `ResolveHostedServer` no longer fall through to repo `[sync] server`. Leftover `[sync] server` or `[hosted] server` in a repo file is a stray (doctor/status); `satelle migrate --yes` re-homes an unset machine value and never clobbers a set `[hosted] server`. The init example no longer seeds a repo server line. Write the origin with `satelle settings --global server` or `satelle login`. (sty_34037275)

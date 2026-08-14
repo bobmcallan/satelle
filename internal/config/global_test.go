@@ -12,6 +12,9 @@ import (
 
 func TestServiceDefaults(t *testing.T) {
 	testutil.IsolateHome(t)
+	// IsolateHome disables UI push; this test asserts the derived default.
+	t.Setenv(EnvServerEndpoint, "")
+	_ = os.Unsetenv(EnvServerEndpoint)
 	var s ServiceConfig
 	if s.ResolvePort() != DefaultWebPort {
 		t.Errorf("port default = %d", s.ResolvePort())
@@ -90,6 +93,8 @@ func TestSaveLoadGlobalRoundTrip(t *testing.T) {
 
 func TestResolveEndpointPrecedence(t *testing.T) {
 	testutil.IsolateHome(t)
+	t.Setenv(EnvServerEndpoint, "")
+	_ = os.Unsetenv(EnvServerEndpoint)
 	s := ServiceConfig{Port: 9001, Endpoint: "http://explicit.example:9"}
 	if got := s.ResolveEndpoint(); got != "http://explicit.example:9" {
 		t.Errorf("config endpoint = %q", got)
