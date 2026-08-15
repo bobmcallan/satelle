@@ -299,7 +299,13 @@ header.app h1 .dot { color: var(--accent); }
 .sync-fail-body { color: var(--fail); font-size: 12px; margin-top: 4px; max-width: 72rem; }
 .sync-fail-reason { white-space: pre-wrap; word-break: break-word; }
 .sync-fail-log { color: var(--muted); }
-tr.sync-fail-detail td { padding-top: 0; padding-bottom: 10px; }
+/* Landing Updated cell: local stamp on line 1, fail tag on line 2
+   (sty_a447695e). Chip box matches .n-backlog; fail colour is the signal. */
+.sync-tag-fail {
+  display: block; width: fit-content; margin-top: 4px;
+  color: var(--fail); font-size: 11px; padding: 1px 6px;
+  border: 1px solid var(--fail); border-radius: 0; line-height: 1.4; white-space: nowrap;
+}
 td.updated-cell { white-space: nowrap; }
 .panel { display: none; }
 .panel.active { display: block; }

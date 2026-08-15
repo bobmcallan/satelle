@@ -234,25 +234,31 @@ const templatesSrc = `
      (sty_2faa7dd4). fill=currentColor so it inherits the .github-btn ink colour. */}}
 {{define "github-svg"}}<svg viewBox="0 0 16 16" width="16" height="16" role="img" aria-hidden="true" focusable="false" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.02-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>{{end}}
 
-{{/* freshness: the one presentation of "when was this view last confirmed
-     against the repository", rendered from any value carrying .LastIngest —
-     the project header and every landing row (sty_226a661e, sty_8104248a).
-
-     Labels live HERE (not at the two call sites) so header and landing cannot
-     drift. "local: updated" is a sibling of the <time>, never inside it —
-     the app.js ticker rewrites only time.rel-time text.
+{{/* freshnessBare: the <time> only — LastIngest as a ticker-backed relative
+     phrase. Landing Updated cells use this bare form (sty_a447695e): no
+     "local:" prefix, no remote clock. The header composes freshness on top
+     so both surfaces render one <time> from one place.
 
      The datetime attribute is what the ticker re-renders from, so the
      phrase stays current with no refetch and no focus. It is a plain absolute
      instant; the ticker never touches the title. */}}
-{{define "freshness"}}local: updated <time class="rel-time"{{if isotime .LastIngest}} datetime="{{isotime .LastIngest}}"{{end}} title="Last confirmed against the repository at {{ftime .LastIngest}}">{{reltime .LastIngest}}</time>{{end}}
+{{define "freshnessBare"}}<time class="rel-time"{{if isotime .LastIngest}} datetime="{{isotime .LastIngest}}"{{end}} title="Last confirmed against the repository at {{ftime .LastIngest}}">{{reltime .LastIngest}}</time>{{end}}
 
-{{/* syncstate: hosted workstate plane. "remote:" prefixes every branch so
-     the header and landing name the same clock (sty_8104248a). "pushed" stays
-     outside time.rel-time so the ticker cannot strip it. */}}
+{{/* freshness: project-header presentation. "local: updated" is a sibling of
+     the <time>, never inside it — the app.js ticker rewrites only
+     time.rel-time text (sty_226a661e, sty_8104248a). */}}
+{{define "freshness"}}local: updated {{template "freshnessBare" .}}{{end}}
+
+{{/* syncstate: hosted workstate plane on the project header (sty_8104248a).
+     "pushed" stays outside time.rel-time so the ticker cannot strip it.
+     Landing does not call this — it shows a Push Failing tag instead. */}}
 {{define "syncstate"}}{{if or .SyncLocal .SyncReason (isotime .SyncLastSuccess)}}remote: {{end}}{{if .SyncLocal}}<span class="sync-local" title="work-state areas are local">local</span>{{else if .SyncReason}}<span class="sync-fail">push failing</span>{{else if isotime .SyncLastSuccess}}<span class="sync-ok" title="Last successful hosted push at {{ftime .SyncLastSuccess}}">pushed <time class="rel-time" datetime="{{isotime .SyncLastSuccess}}">{{reltime .SyncLastSuccess}}</time></span>{{end}}{{end}}
 
 {{define "syncfail"}}<div class="sync-fail-body"><span class="sync-fail-reason">{{.SyncReason}}</span>{{if .SyncLogPath}} <span class="sync-fail-log">logged to <code>{{.SyncLogPath}}</code></span>{{end}}</div>{{end}}
+
+{{/* syncfailtag: landing-only status chip. No reason, no log path — those
+     stay on the project page (sty_a447695e). */}}
+{{define "syncfailtag"}}{{if .SyncReason}}<span class="sync-tag-fail" title="hosted push is failing — see the project page">Push Failing</span>{{end}}{{end}}
 
 {{define "footer"}}<footer class="site-footer">{{if footeremail}}<a class="footer-email" href="mailto:{{footeremail}}">{{footeremail}}</a>{{end}}<span class="footer-version">{{product}} {{version}}</span></footer>{{end}}
 

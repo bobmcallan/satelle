@@ -1,3 +1,13 @@
+## [0.0.459] - 2026-08-15
+
+### Changed
+- **Landing Updated is local time plus a Push Failing tag.** The workspace row shows the local ingest stamp only. A standing push failure is a compact tag in that cell, not a log dump. The project page still shows both clocks and the fail log. (sty_a447695e)
+
+## [serve-v0.0.30] - 2026-08-15
+
+### Changed
+- Landing Updated cell is the local ingest stamp; a standing fail is a `Push Failing` tag. Fail reason and log path stay on the project page. (sty_a447695e)
+
 ## [0.0.458] - 2026-08-14
 
 ### Changed

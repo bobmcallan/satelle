@@ -630,12 +630,11 @@ const mirrorWorkspaceSrc = `
         <td class="n-workflows"><span class="n">{{.Workflows}}</span></td>
         <td class="n-docs"><span class="n">{{.Docs}}</span></td>
         {{/* Rightmost deliberately: this replaces a badge that sat INSIDE the
-             Project cell and pushed the name around (sty_226a661e). */}}
-        <td class="updated-cell">{{template "freshness" .}} {{template "syncstate" .}}</td>
-      </tr>{{if .SyncReason}}
-      <tr class="sync-fail-detail">
-        <td colspan="7">{{template "syncfail" .}}</td>
-      </tr>{{end}}{{end}}
+             Project cell and pushed the name around (sty_226a661e). Landing
+             shows local ingest only; a standing fail is a tag, not a log
+             dump (sty_a447695e). */}}
+        <td class="updated-cell">{{template "freshnessBare" .}}{{template "syncfailtag" .}}</td>
+      </tr>{{end}}
     </tbody>
   </table>
   {{end}}{{end}}

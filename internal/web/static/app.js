@@ -469,16 +469,7 @@
       newSlugs.forEach(function (slug) {
         var src = tmp.querySelector('tr.row[data-slug="' + slug + '"]');
         var dst = live.querySelector('tr.row[data-slug="' + slug + '"]');
-        if (src && dst) {
-          copyCellCounts(src, dst);
-          var srcNext = src.nextElementSibling;
-          var dstNext = dst.nextElementSibling;
-          var srcFail = srcNext && srcNext.classList.contains("sync-fail-detail");
-          var dstFail = dstNext && dstNext.classList.contains("sync-fail-detail");
-          if (srcFail && dstFail) dstNext.innerHTML = srcNext.innerHTML;
-          else if (srcFail && !dstFail) dst.insertAdjacentElement("afterend", srcNext);
-          else if (!srcFail && dstFail) dstNext.remove();
-        }
+        if (src && dst) copyCellCounts(src, dst);
       });
     } else {
       live.innerHTML = html;
