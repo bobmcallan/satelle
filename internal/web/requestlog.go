@@ -31,8 +31,12 @@ var slowThreshold = 1 * time.Second
 // aborts and closes the connection as designed — recovering it would return a
 // mid-stream (aborted-SSE) connection to the keep-alive pool, hanging the next
 // request that reuses it (sty_fa24469a).
-func RequestLog(next http.Handler, logPath string, cfg logfile.Config) http.Handler {
+func RequestLog(next http.Handler, logPath string, cfg logfile.Config, notify func()) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isLogsPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		start := time.Now()
 		sr := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		defer func() {
@@ -54,6 +58,9 @@ func RequestLog(next http.Handler, logPath string, cfg logfile.Config) http.Hand
 				}
 				logServer(logPath, cfg, start, "ERROR", r.Method, r.URL.Path,
 					http.StatusInternalServerError, dur, fmt.Sprintf("panic: %v", rec))
+				if notify != nil {
+					notify()
+				}
 				return
 			}
 			level := "INFO"
@@ -64,9 +71,16 @@ func RequestLog(next http.Handler, logPath string, cfg logfile.Config) http.Hand
 				level = "WARN"
 			}
 			logServer(logPath, cfg, start, level, r.Method, r.URL.Path, sr.status, dur, "")
+			if notify != nil {
+				notify()
+			}
 		}()
 		next.ServeHTTP(sr, r)
 	})
+}
+
+func isLogsPath(p string) bool {
+	return p == "/logs" || p == "/fragment/logs"
 }
 
 // logServer appends one line, best-effort (a write error is ignored, matching the

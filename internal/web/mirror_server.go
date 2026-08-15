@@ -142,6 +142,8 @@ func NewMirrorHooks(m *mirror.Store, instanceID string, onIngest func(string)) *
 	mux.HandleFunc("GET /r/{slug}/settings", s.settingsPage)
 	mux.HandleFunc("GET /settings/global", s.globalSettingsPage)
 	mux.HandleFunc("POST /settings/global", s.globalSettingsSave)
+	mux.HandleFunc("GET /logs", s.logsPage)
+	mux.HandleFunc("GET /fragment/logs", s.logsFragment)
 	// oauth stays unmounted; product state is still RO.
 
 	s.Handler = mux

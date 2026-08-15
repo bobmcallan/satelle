@@ -111,7 +111,7 @@ func TestMirrorTopbarOmitsBareMirrorPill(t *testing.T) {
 		t.Errorf("empty-identity landing still has opaque mirror pill:\n%s", body)
 	}
 	for _, want := range []string{
-		">Install</a>", ">Docs</a>", ">Projects</a>",
+		">Install</a>", ">Docs</a>", ">Projects</a>", ">Logs</a>",
 		"https://satelle.dev/install", "https://satelle.dev/docs",
 		`class="theme-toggle"`,
 	} {

@@ -487,6 +487,10 @@
       .then(applyProjectsLive)
       .catch(function () {});
   }
+  function applyLogsLive(html) {
+    var live = document.getElementById("logs-live");
+    if (live) live.innerHTML = html;
+  }
 
   // initLive wires realtime through ONE visibility-gated EventSource that serves
   // both consumers — the panel refetch (list pages) and the detail-fragment
@@ -506,6 +510,7 @@
     // title tooltip (a server render-time value). (was the .uptime pill, sty_efeb2a69)
     var dot = document.querySelector(".brand-mark");
     var isProjects = document.body.getAttribute("data-page") === "projects";
+    var isLogs = document.body.getAttribute("data-page") === "logs";
     var detailEl = document.getElementById("detail-live");
     var detailKind = detailEl ? detailEl.dataset.kind : null;
     var detailId = detailEl ? detailEl.dataset.id : null;
@@ -514,6 +519,12 @@
     var refetch = {}; // per-topic debounced panel refetch (built once, reused)
     LIVE_TOPICS.forEach(function (tp) { refetch[tp] = debounce(function () { refetchPanel(tp); }, 250); });
     var refreshProjects = isProjects ? debounce(refetchProjects, 250) : null;
+    var refreshLogs = isLogs ? debounce(function () {
+      fetch("/fragment/logs" + location.search)
+        .then(function (r) { return r.text(); })
+        .then(applyLogsLive)
+        .catch(function () {});
+    }, 250) : null;
     var refreshDetail = detailEl ? debounce(function () {
       fetch("fragment/" + detailKind + "/" + detailId)
         .then(function (r) { return r.text(); })
@@ -525,6 +536,7 @@
     // reopen after hidden→visible) so nothing is missed while disconnected.
     function reconcile() {
       if (isProjects) { if (refreshProjects) refreshProjects(); return; }
+      if (isLogs) { if (refreshLogs) refreshLogs(); return; }
       LIVE_TOPICS.forEach(function (tp) { refetchPanel(tp); });
       if (refreshDetail) refreshDetail();
     }
@@ -554,6 +566,7 @@
         if (refreshDetail && ev.data === detailTopic) refreshDetail();
         // Landing soft-refreshes counts via /fragment/projects — no full reload.
         if (ev.data === "projects" && refreshProjects) refreshProjects();
+        if (ev.data === "logs" && refreshLogs) refreshLogs();
       });
       src.onerror = function () { if (dot) dot.classList.add("sse-down"); }; // stream dropped → mark red
     }

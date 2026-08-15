@@ -47,10 +47,14 @@ func Run(ctx context.Context, opts Options) error {
 
 	serverLog := mirror.ServerLogPath(config.GlobalDir())
 	logCfg := logfile.Config{MaxSizeBytes: config.DefaultLogsMaxSizeKB * 1024, MaxFiles: config.DefaultLogsMaxFiles}
+	var publishLogs func()
 	logLine := func(format string, args ...any) {
 		line := fmt.Sprintf(format, args...)
 		fmt.Fprintln(os.Stderr, "satelled: "+line)
 		_ = logfile.Append(time.Now(), serverLog, logCfg, line)
+		if publishLogs != nil {
+			publishLogs()
+		}
 	}
 	// Hook must be installed before Listen: an ingest on the first accepted
 	// connection has to find Notify already wired (sty_c526753a).
@@ -64,7 +68,8 @@ func Run(ctx context.Context, opts Options) error {
 		},
 	}
 	webSrv := web.NewMirrorHooks(ms, config.SafeCurrentInstanceID(), pusher.Notify)
-	handler := web.RequestLog(webSrv.Handler, serverLog, logCfg)
+	publishLogs = func() { webSrv.Publish("logs") }
+	handler := web.RequestLog(webSrv.Handler, serverLog, logCfg, publishLogs)
 
 	srv := &http.Server{Addr: listenAddr, Handler: handler}
 	go func() {

@@ -348,7 +348,7 @@ func TestMirrorProjectPageRendersTemplates(t *testing.T) {
 		// sty_eea989dd: identity strip explains RO local UI (no bare "mirror" mode pill).
 		`title="Read-only local UI — project data pushed by the CLI (not live-edited here)"`,
 		`aria-label="Operator identity a@b.c; read-only local UI, project data pushed by the CLI"`,
-		">Install</a>", ">Docs</a>", ">Projects</a>",
+		">Install</a>", ">Docs</a>", ">Projects</a>", ">Logs</a>",
 		"https://satelle.dev/install", "https://satelle.dev/docs",
 		// sty_e4632f45: engagement chip hidden at 0; tab labels use bold-ghost spans.
 		`class="tab-label"`, `class="tab-cluster"`,
@@ -383,7 +383,7 @@ func TestMirrorProjectPageRendersTemplates(t *testing.T) {
 	if strings.Contains(land, ">mirror</span>") {
 		t.Error("landing must not show bare mirror pill when identity is empty")
 	}
-	for _, want := range []string{">Install</a>", ">Docs</a>", ">Projects</a>"} {
+	for _, want := range []string{">Install</a>", ">Docs</a>", ">Projects</a>", ">Logs</a>"} {
 		if !strings.Contains(land, want) {
 			t.Errorf("landing missing nav %q", want)
 		}

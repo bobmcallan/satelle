@@ -19,7 +19,7 @@ import (
 func serve(t *testing.T, logPath string, cfg logfile.Config, h http.HandlerFunc, target string) (*httptest.ResponseRecorder, string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	RequestLog(h, logPath, cfg).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	RequestLog(h, logPath, cfg, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
 	data, _ := os.ReadFile(logPath)
 	return rec, string(data)
 }
@@ -114,7 +114,7 @@ func TestRequestLogAbortHandlerRepanics(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "abort.log")
 	h := RequestLog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { panic(http.ErrAbortHandler) }),
-		logPath, logfile.DefaultConfig)
+		logPath, logfile.DefaultConfig, nil)
 
 	func() {
 		defer func() {
@@ -149,7 +149,7 @@ func TestRequestLogAbortClosesConnection(t *testing.T) {
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 
-	srv := httptest.NewServer(RequestLog(mux, logPath, cfg))
+	srv := httptest.NewServer(RequestLog(mux, logPath, cfg, nil))
 	defer srv.Close()
 
 	// One client → one keep-alive transport shared across both requests.

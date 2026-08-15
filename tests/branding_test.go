@@ -55,7 +55,7 @@ func TestWebHeaderBrandingEndToEnd(t *testing.T) {
 
 	order := []string{
 		`class="brand-mark"`, `>Install</a>`, `>Docs</a>`,
-		`>Projects</a>`, `class="github-btn"`, `class="theme-toggle"`,
+		`>Projects</a>`, `>Logs</a>`, `class="github-btn"`, `class="theme-toggle"`,
 	}
 	prev := -1
 	for _, needle := range order {

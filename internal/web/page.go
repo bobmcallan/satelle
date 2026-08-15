@@ -182,9 +182,10 @@ const templatesSrc = `
 {{/* topbar: the ONE shared navbar, a full-bleed band placed directly inside <body>,
      above every page's .wrap. Matches the LIVE satelle.dev header (sty_2faa7dd4):
      the ◐ satelle mark LEADS at the left (the ◐ is accent, the wordmark is ink); a
-     right-aligned nav row of TEXT links (Install · Docs · Projects) — Install/Docs
-     open satelle.dev in a new tab, Projects is the local workspace landing (active
-     via .Active) — then a GitHub OUTLINED ICON button (new tab, not a text link);
+     right-aligned nav row of TEXT links (Install · Docs · Projects · Logs) —
+     Install/Docs open satelle.dev in a new tab, Projects is the local workspace
+     landing, Logs is the machine-wide server.log (sty_df4a0785); active via
+     .Active — then a GitHub OUTLINED ICON button (new tab, not a text link);
      the account control; and the theme toggle LAST. There are no Home/Help top-nav
      items — the mark IS the home affordance and Help stays on the meta/breadcrumb
      line. The mark folds in two signals: the uptime snapshot rides in its title
@@ -192,7 +193,7 @@ const templatesSrc = `
      connected, muted --fail-soft on the ◐ only (.sse-down, added by app.js) when the
      stream drops. The theme toggle glyph is ☾/☀ (app.js), never ◐. Mobile-collapsible
      nav is out of scope — the row stays inline. */}}
-{{define "topbar"}}<header class="topbar"><div class="topbar-inner"><a class="brand-mark" href="https://satelle.dev/" target="_blank" rel="noopener" title="satelle — home{{if .Uptime}} · {{.Uptime}} at page load · mark colour = live-update connection{{end}}" aria-label="satelle home (opens in a new tab)">{{template "brandmark-svg"}}<span class="brand-word">satelle</span></a><div class="topbar-controls"><nav class="topnav"><a href="https://satelle.dev/install" target="_blank" rel="noopener">Install</a><a href="https://satelle.dev/docs" target="_blank" rel="noopener">Docs</a><a href="/"{{if eq .Active "projects"}} class="active" aria-current="page"{{end}}>Projects</a><a class="github-btn" href="https://github.com/bobmcallan/satelle" target="_blank" rel="noopener" aria-label="GitHub" title="GitHub">{{template "github-svg"}}</a></nav>{{if .MirrorRO}}{{if .IdentityEmail}}<span class="signin" title="Read-only local UI — project data pushed by the CLI (not live-edited here)" aria-label="Operator identity {{.IdentityEmail}}; read-only local UI, project data pushed by the CLI">{{.IdentityEmail}}</span>{{end}}{{else}}{{template "account" .User}}{{end}}<button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">☾</button></div></div></header>{{end}}
+{{define "topbar"}}<header class="topbar"><div class="topbar-inner"><a class="brand-mark" href="https://satelle.dev/" target="_blank" rel="noopener" title="satelle — home{{if .Uptime}} · {{.Uptime}} at page load · mark colour = live-update connection{{end}}" aria-label="satelle home (opens in a new tab)">{{template "brandmark-svg"}}<span class="brand-word">satelle</span></a><div class="topbar-controls"><nav class="topnav"><a href="https://satelle.dev/install" target="_blank" rel="noopener">Install</a><a href="https://satelle.dev/docs" target="_blank" rel="noopener">Docs</a><a href="/"{{if eq .Active "projects"}} class="active" aria-current="page"{{end}}>Projects</a><a href="/logs"{{if eq .Active "logs"}} class="active" aria-current="page"{{end}}>Logs</a><a class="github-btn" href="https://github.com/bobmcallan/satelle" target="_blank" rel="noopener" aria-label="GitHub" title="GitHub">{{template "github-svg"}}</a></nav>{{if .MirrorRO}}{{if .IdentityEmail}}<span class="signin" title="Read-only local UI — project data pushed by the CLI (not live-edited here)" aria-label="Operator identity {{.IdentityEmail}}; read-only local UI, project data pushed by the CLI">{{.IdentityEmail}}</span>{{end}}{{else}}{{template "account" .User}}{{end}}<button class="theme-toggle" id="theme-toggle" type="button" title="Toggle light/dark" aria-label="Toggle light/dark theme">☾</button></div></div></header>{{end}}
 
 {{/* account: the hosted-server sign-in control (sty_9ae98484, sty_2faa7dd4).
      Signed out → a "Sign in" link (relative href, so the <base> resolves the /slug/
@@ -670,6 +671,47 @@ fetch('settings/global',{method:'POST',headers:{'X-Satelle-Settings':'1'},body:n
     <div class="meta">{{.Item.ID}}</div>
   </header>
   <div id="detail-live" data-kind="{{.Item.Kind}}" data-id="{{.Item.ID}}">{{template "itemDetail" .}}</div>
+  {{template "footer"}}
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>{{end}}
+
+{{define "logsLive"}}{{if .Rows}}{{range .Rows}}<tr class="log-row"{{if .Structured}} data-level="{{.Level}}"{{end}}>
+      <td class="log-time">{{if .Structured}}{{ftime .Time}}{{else}}—{{end}}</td>
+      <td class="log-level">{{if .Structured}}<span class="lvl-{{.Level}}">{{.Level}}</span>{{else}}—{{end}}</td>
+      <td class="log-text mono">{{.Text}}</td>
+    </tr>{{end}}{{else}}<tr class="log-empty"><td colspan="3"><div class="empty">No log lines yet.</div></td></tr>{{end}}{{end}}
+
+{{define "logs"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>satelle · logs</title>
+<script>(function(){try{var t=localStorage.getItem('satelle-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<base href="{{basehref}}">
+{{template "favicon"}}
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body data-page="logs">
+{{template "topbar" .TopBar}}
+<div class="wrap">
+  <nav class="crumbs"><a href="/">workspace</a> <span class="sep">/</span> <span class="cur">logs</span></nav>
+  <header class="app">
+    <h1>logs</h1>
+    <div class="meta">satelled · <code class="logs-path">{{.Path}}</code></div>
+  </header>
+  <nav class="logs-filter" aria-label="filter by level">
+    <a href="/logs"{{if eq .Filter ""}} class="active" aria-current="page"{{end}}>all</a>
+    <a href="/logs?level=info"{{if eq .Filter "info"}} class="active" aria-current="page"{{end}}>INFO</a>
+    <a href="/logs?level=warn"{{if eq .Filter "warn"}} class="active" aria-current="page"{{end}}>WARN</a>
+    <a href="/logs?level=error"{{if eq .Filter "error"}} class="active" aria-current="page"{{end}}>ERROR</a>
+  </nav>
+  <table class="panel-table logs-table">
+    <thead><tr><th>Time</th><th>Level</th><th>Message</th></tr></thead>
+    <tbody data-rows id="logs-live">{{template "logsLive" .}}</tbody>
+  </table>
   {{template "footer"}}
 </div>
 <script src="/static/app.js"></script>

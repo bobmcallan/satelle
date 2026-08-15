@@ -307,6 +307,18 @@ header.app h1 .dot { color: var(--accent); }
   border: 1px solid var(--fail); border-radius: 0; line-height: 1.4; white-space: nowrap;
 }
 td.updated-cell { white-space: nowrap; }
+.logs-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.logs-filter a {
+  color: var(--muted); font-size: 11px; padding: 1px 6px;
+  border: 1px solid var(--line); line-height: 1.4; text-decoration: none;
+}
+.logs-filter a:hover { color: var(--ink); }
+.logs-filter a.active { color: var(--ink); border-color: var(--ink); }
+.logs-path { font-family: var(--mono); }
+.logs-table .log-time, .logs-table .log-level { white-space: nowrap; width: 1%; }
+.logs-table .log-text { font-family: var(--mono); font-size: 12.5px; word-break: break-word; }
+.lvl-INFO, .lvl-WARN { color: var(--muted); font-size: 11px; }
+.lvl-ERROR { color: var(--fail); font-size: 11px; }
 .panel { display: none; }
 .panel.active { display: block; }
 

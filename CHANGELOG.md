@@ -1,3 +1,13 @@
+## [0.0.460] - 2026-08-15
+
+### Added
+- **Logs in the top nav.** A machine-wide Logs page at `/logs` tails satelled's `serve/server.log` (newest first, last 500 lines), filters by level, and live-updates over the existing `/events` stream. (sty_df4a0785)
+
+## [serve-v0.0.31] - 2026-08-15
+
+### Added
+- Top nav Logs item opens `/logs`; live tail of the active server.log. (sty_df4a0785)
+
 ## [0.0.459] - 2026-08-15
 
 ### Changed
