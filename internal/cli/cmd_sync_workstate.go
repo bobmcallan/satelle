@@ -103,6 +103,7 @@ binding ignored). Requires "satelle project bind <slug>".`,
 	group.AddCommand(pull)
 
 	var snapServer string
+	var snapForce bool
 	snap := &cobra.Command{
 		Use:         "snapshot",
 		Short:       "Pull current hosted work-state into the local store (lazy Snapshot)",
@@ -110,18 +111,23 @@ binding ignored). Requires "satelle project bind <slug>".`,
 		Long: `snapshot fetches the bound project's current work-state via the checkout-sync
 Snapshot adapter (gRPC Sync/Snapshot) and materializes opted-in
 areas into the local store. Local-only areas are a no-op. satelled may
-exec this verb; it does not talk to the hosted server itself.`,
+exec this verb; it does not talk to the hosted server itself.
+
+A hosted story whose updated_at is older than the local row — or older than
+the local ledger's last status_transition — is skipped so a stale hosted
+copy cannot rewind status. --force upserts hosted over those rows.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSyncWorkstateSnapshot(cmd, snapServer)
+			return runSyncWorkstateSnapshot(cmd, snapServer, snapForce)
 		},
 	}
 	snap.Flags().StringVar(&snapServer, "server", "", "Hosted server URL (overrides the configured machine hosted server).")
+	snap.Flags().BoolVar(&snapForce, "force", false, "Upsert hosted rows even when the local copy or ledger is newer.")
 	group.AddCommand(snap)
 
 	return group
 }
 
-func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string) error {
+func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string, force bool) error {
 	a, err := appFrom(cmd)
 	if err != nil {
 		return err
@@ -147,12 +153,15 @@ func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string) error {
 	if err != nil {
 		return err
 	}
-	nItems, nLedger, merr := materializeWorkstate(cmd.Context(), a, optIn, items, ledgerRows)
+	nItems, nLedger, nKept, merr := materializeWorkstate(cmd.Context(), a, optIn, items, ledgerRows, force)
 	if merr != nil {
 		return merr
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Snapshot work-state from project %q: %d item(s), %d ledger.\n",
 		project, nItems, nLedger)
+	if nKept > 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), "%d item(s) kept — local copy is newer than hosted\n", nKept)
+	}
 	return nil
 }
 
@@ -425,16 +434,19 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force bo
 		}
 	}
 
-	nItems, nLedger, merr := materializeWorkstate(ctx, a, optIn, items, ledgerRows)
+	nItems, nLedger, nKept, merr := materializeWorkstate(ctx, a, optIn, items, ledgerRows, force)
 	if merr != nil {
 		return merr
 	}
-	if nItems == 0 && nLedger == 0 {
+	if nItems == 0 && nLedger == 0 && nKept == 0 {
 		fmt.Fprintln(out, "No work-state rows to pull (hosted opted-in areas are empty).")
 		return nil
 	}
 	fmt.Fprintf(out, "Pulled work-state from project %q personal collection on %s: %d item(s), %d ledger entr(y/ies).\n",
 		project, server, nItems, nLedger)
+	if nKept > 0 {
+		fmt.Fprintf(out, "%d item(s) kept — local copy is newer than hosted\n", nKept)
+	}
 	return nil
 }
 
@@ -488,9 +500,10 @@ func localWorkstateCount(ctx context.Context, a *app.App, area string) (int, err
 }
 
 // materializeWorkstate upserts hosted rows into the local store for opted-in
-// areas, then regenerates the backlog view. Returns counts of rows applied.
+// areas, then regenerates the backlog view. Returns counts of rows applied
+// and of local rows kept because they (or their ledger) are newer than hosted.
 // On mid-batch error, reports how many landed and that re-run is safe.
-func materializeWorkstate(ctx context.Context, a *app.App, optIn map[string]bool, items []hosted.WorkstateItem, ledgerRows []hosted.WorkstateLedgerRow) (nItems, nLedger int, err error) {
+func materializeWorkstate(ctx context.Context, a *app.App, optIn map[string]bool, items []hosted.WorkstateItem, ledgerRows []hosted.WorkstateLedgerRow, force bool) (nItems, nLedger, nKept int, err error) {
 	now := time.Now().UTC()
 	for _, hi := range items {
 		area := workstateAreaForKind(hi.Kind)
@@ -499,10 +512,20 @@ func materializeWorkstate(ctx context.Context, a *app.App, optIn map[string]bool
 		}
 		it, perr := parseWorkstateItem(hi)
 		if perr != nil {
-			return nItems, nLedger, fmt.Errorf("materialize item %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hi.ID, nItems, nLedger, perr)
+			return nItems, nLedger, nKept, fmt.Errorf("materialize item %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hi.ID, nItems, nLedger, perr)
+		}
+		if !force {
+			keep, kerr := keepLocalWorkstateItem(ctx, a, it)
+			if kerr != nil {
+				return nItems, nLedger, nKept, fmt.Errorf("compare item %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hi.ID, nItems, nLedger, kerr)
+			}
+			if keep {
+				nKept++
+				continue
+			}
 		}
 		if _, uerr := a.Store.Stories.Upsert(ctx, it, now); uerr != nil {
-			return nItems, nLedger, fmt.Errorf("upsert item %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hi.ID, nItems, nLedger, uerr)
+			return nItems, nLedger, nKept, fmt.Errorf("upsert item %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hi.ID, nItems, nLedger, uerr)
 		}
 		nItems++
 	}
@@ -510,18 +533,45 @@ func materializeWorkstate(ctx context.Context, a *app.App, optIn map[string]bool
 		for _, hr := range ledgerRows {
 			e, perr := parseWorkstateLedger(hr)
 			if perr != nil {
-				return nItems, nLedger, fmt.Errorf("materialize ledger %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hr.ID, nItems, nLedger, perr)
+				return nItems, nLedger, nKept, fmt.Errorf("materialize ledger %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hr.ID, nItems, nLedger, perr)
 			}
 			if _, uerr := a.Store.Ledger.Upsert(ctx, e, now); uerr != nil {
-				return nItems, nLedger, fmt.Errorf("upsert ledger %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hr.ID, nItems, nLedger, uerr)
+				return nItems, nLedger, nKept, fmt.Errorf("upsert ledger %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hr.ID, nItems, nLedger, uerr)
 			}
 			nLedger++
 		}
 	}
 	if _, _, verr := verb.SyncStoryBacklog(ctx, a.Store.Stories, now); verr != nil {
-		return nItems, nLedger, fmt.Errorf("regenerate story views after %d item(s), %d ledger: %w — store rows landed; re-run is safe", nItems, nLedger, verr)
+		return nItems, nLedger, nKept, fmt.Errorf("regenerate story views after %d item(s), %d ledger: %w — store rows landed; re-run is safe", nItems, nLedger, verr)
 	}
-	return nItems, nLedger, nil
+	return nItems, nLedger, nKept, nil
+}
+
+// keepLocalWorkstateItem reports whether the local row (or its ledger) is
+// newer than the incoming hosted item, so upserting would rewind status.
+func keepLocalWorkstateItem(ctx context.Context, a *app.App, incoming workitem.Item) (bool, error) {
+	local, err := a.Store.Stories.Get(ctx, incoming.ID)
+	if err != nil {
+		if errors.Is(err, workitem.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	if local.UpdatedAt.After(incoming.UpdatedAt) {
+		return true, nil
+	}
+	e, ok, lerr := verb.LatestStatusTransition(ctx, a.Store.Ledger, incoming.ID)
+	if lerr != nil {
+		return false, lerr
+	}
+	if !ok {
+		return false, nil
+	}
+	to := verb.TransitionTo(e)
+	if to != "" && to != incoming.Status && e.CreatedAt.After(incoming.UpdatedAt) {
+		return true, nil
+	}
+	return false, nil
 }
 
 func workstateAreaForKind(kind string) string {

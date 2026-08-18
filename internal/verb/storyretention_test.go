@@ -28,11 +28,13 @@ func wireStories(t *testing.T) (*workitem.Store, string) {
 	}
 	verb.SetWorkItemStore(db.Stories)
 	verb.SetLedgerStore(db.Ledger)
+	verb.SetTxRunner(db.InTx)
 	verb.SetStoryDir(storyDir)
 	t.Cleanup(func() {
 		db.Close()
 		verb.SetWorkItemStore(nil)
 		verb.SetLedgerStore(nil)
+		verb.SetTxRunner(nil)
 		verb.SetStoryDir("")
 		verb.SetStoryRetention(0, 0)
 	})

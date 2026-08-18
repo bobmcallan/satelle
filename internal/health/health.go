@@ -81,11 +81,12 @@ const (
 	IDConfigStray     = "config.stray"     // machine-scope key leftover in a repo file (sty_21a7d16d)
 
 	// Workstate sync health (sty_30696eeb).
-	IDSyncLocal    = "sync.local"    // work-state areas are all local
-	IDSyncOk       = "sync.ok"       // last successful push is within threshold
-	IDSyncFailing  = "sync.failing"  // standing hosted-push failure
-	IDSyncUnbacked = "sync.unbacked" // last successful push older than stale_after
-	IDSyncConfig   = "sync.config"   // stale_after missing or unparseable
+	IDSyncLocal    = "sync.local"         // work-state areas are all local
+	IDSyncOk       = "sync.ok"            // last successful push is within threshold
+	IDSyncFailing  = "sync.failing"       // standing hosted-push failure
+	IDSyncUnbacked = "sync.unbacked"      // last successful push older than stale_after
+	IDSyncConfig   = "sync.config"        // stale_after missing or unparseable
+	IDStatusDrift  = "story.status.drift" // work-item row disagrees with last status_transition
 
 	// Live probes (opt-in only).
 	IDLiveOK           = "live.ok"            // a provider answered
@@ -105,6 +106,7 @@ var ids = []string{
 	IDWorkflowStructure, IDWorkflowConsistency,
 	IDScaffoldStale, IDScaffoldMissing, IDRepoUnreadable, IDConfigStray,
 	IDSyncLocal, IDSyncOk, IDSyncFailing, IDSyncUnbacked, IDSyncConfig,
+	IDStatusDrift,
 	IDLiveOK, IDLiveAuth, IDLiveTimeout, IDLiveSpawn, IDLiveACPHandshake,
 }
 

@@ -52,6 +52,10 @@ type Opts struct {
 	// means the scaffold check is skipped — a caller that cannot supply the
 	// authority gets no scaffold findings rather than a wrong verdict.
 	ScaffoldDrift func(repoRoot string) health.Findings
+	// StatusDrift reports work-item rows whose status disagrees with the last
+	// status_transition. Injected: the detector lives in verb and needs a store;
+	// doctor does not open the database. Nil means the check is skipped.
+	StatusDrift func(repoRoot string) health.Findings
 	// probe overrides the live prober in tests. Nil uses the real one.
 	probe func(ctx context.Context, g agentvalidate.Grant, timeout time.Duration) health.Findings
 }
@@ -158,6 +162,9 @@ func Check(ctx context.Context, o Opts) Report {
 	// 5. Hook scaffold integrity (injected authority; skipped when unavailable).
 	if o.ScaffoldDrift != nil && strings.TrimSpace(o.RepoRoot) != "" {
 		rep.Findings = append(rep.Findings, o.ScaffoldDrift(o.RepoRoot)...)
+	}
+	if o.StatusDrift != nil && strings.TrimSpace(o.RepoRoot) != "" {
+		rep.Findings = append(rep.Findings, o.StatusDrift(o.RepoRoot)...)
 	}
 
 	// 5b. Leftover machine-scope keys in repo files (config.MachineScopeStrays

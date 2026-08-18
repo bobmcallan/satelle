@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -114,6 +116,32 @@ func TestStoryLifecycle(t *testing.T) {
 
 	if _, err := db.Stories.Get(ctx, "sty_missing"); err != workitem.ErrNotFound {
 		t.Errorf("missing get err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestInTxRollbackLeavesRowUnchanged(t *testing.T) {
+	db := openTemp(t)
+	ctx := context.Background()
+	now := time.Now()
+	it, err := db.Stories.Create(ctx, workitem.CreateInput{Kind: workitem.KindStory, Title: "tx"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.InTx(ctx, func(tx *sql.Tx) error {
+		if _, uerr := db.Stories.WithTx(tx).SetStatus(ctx, it.ID, workitem.StatusDone, now.Add(time.Minute)); uerr != nil {
+			return uerr
+		}
+		return errors.New("forced")
+	})
+	if err == nil || err.Error() != "forced" {
+		t.Fatalf("want forced error, got %v", err)
+	}
+	got, gerr := db.Stories.Get(ctx, it.ID)
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	if got.Status != workitem.StatusBacklog {
+		t.Errorf("rolled-back row status = %q, want backlog", got.Status)
 	}
 }
 

@@ -50,6 +50,7 @@ func wireDocs(t *testing.T) (storyDir string) {
 	storyDir = filepath.Join(dir, "stories")
 	verb.SetWorkItemStore(db.Stories)
 	verb.SetLedgerStore(db.Ledger)
+	verb.SetTxRunner(db.InTx)
 	verb.SetDocIndexStore(db.DocIndex)
 	verb.SetStoryDir(storyDir)
 	verb.SetAttachmentPolicy(0, nil) // defaults
@@ -57,6 +58,7 @@ func wireDocs(t *testing.T) (storyDir string) {
 		db.Close()
 		verb.SetWorkItemStore(nil)
 		verb.SetLedgerStore(nil)
+		verb.SetTxRunner(nil)
 		verb.SetDocIndexStore(nil)
 		verb.SetStoryDir("")
 		verb.SetAttachmentPolicy(0, nil)

@@ -70,11 +70,29 @@ func Migrate(db *sql.DB) error {
 	return nil
 }
 
+// execer is the subset of *sql.DB / *sql.Tx that this store uses, so a
+// shallow copy can bind to an open transaction without a second connection.
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // Store wraps work_items operations against a shared sqlite handle.
-type Store struct{ db *sql.DB }
+type Store struct{ db execer }
 
 // New returns a Store bound to db.
 func New(db *sql.DB) *Store { return &Store{db: db} }
+
+// WithTx returns a shallow copy bound to tx. The original store is unchanged.
+func (s *Store) WithTx(tx *sql.Tx) *Store {
+	if s == nil {
+		return nil
+	}
+	out := *s
+	out.db = tx
+	return &out
+}
 
 // CreateInput is the typed shape of a create. Kind and Title are required;
 // Status defaults to open when blank.

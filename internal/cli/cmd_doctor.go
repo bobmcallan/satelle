@@ -8,15 +8,20 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/app"
-
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/doctor"
 	"github.com/bobmcallan/satelle/internal/health"
+	"github.com/bobmcallan/satelle/internal/store"
+	"github.com/bobmcallan/satelle/internal/verb"
 )
 
 func init() {
@@ -88,6 +93,7 @@ killed and reaped on the deadline or on cancellation.`,
 				Live:          live,
 				LiveTimeout:   timeout,
 				ScaffoldDrift: scaffoldFindings,
+				StatusDrift:   statusDriftFindings,
 			}
 			if a != nil {
 				opts.RepoRoot = a.RepoRoot
@@ -144,6 +150,37 @@ func scaffoldFindings(repoRoot string) health.Findings {
 		out = append(out, health.Error(id, title,
 			fmt.Sprintf("%s [%s]: %s", f.Path, f.Kind, f.Detail)).
 			About(f.Path).WithRemediation("run `satelle init` to heal"))
+	}
+	return out
+}
+
+// statusDriftFindings opens the repo's store (if it exists) and reports
+// work-item rows whose status disagrees with the last status_transition.
+// No store ⇒ no finding (the check is optional).
+func statusDriftFindings(repoRoot string) health.Findings {
+	cfg, _, err := config.Load(filepath.Join(repoRoot, config.DefaultDataDir, config.ConfigName))
+	if err != nil && !errors.Is(err, config.ErrNotFound) {
+		return nil
+	}
+	dbPath := cfg.ResolveDB(repoRoot)
+	if _, sterr := os.Stat(dbPath); sterr != nil {
+		return nil
+	}
+	db, oerr := store.Open(dbPath)
+	if oerr != nil {
+		return nil
+	}
+	defer db.Close()
+	drifts, derr := verb.DetectStatusDrift(context.Background(), db.Stories, db.Ledger)
+	if derr != nil {
+		return health.Findings{health.Warn(health.IDStatusDrift, "Story status drift",
+			derr.Error()).About(repoRoot)}
+	}
+	var out health.Findings
+	for _, d := range drifts {
+		out = append(out, health.Error(health.IDStatusDrift, "Story status disagrees with ledger",
+			fmt.Sprintf("%s row=%s ledger=%s", d.ID, d.RowStatus, d.LedgerStatus)).
+			About(d.ID).WithRemediation("run `satelle story reconcile --repair`"))
 	}
 	return out
 }

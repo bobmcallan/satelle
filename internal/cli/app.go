@@ -105,6 +105,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 	// the package globals per invocation is correct.
 	verb.SetWorkItemStore(a.Store.Stories)
 	verb.SetLedgerStore(a.Store.Ledger)
+	verb.SetTxRunner(a.Store.InTx)
 	verb.SetDocIndexStore(a.Store.DocIndex)
 	verb.SetAuthoredDirs(a.AuthoredDirs())
 	verb.SetSubstrateConfigDir(a.Config.ResolveDataDir(a.RepoRoot))

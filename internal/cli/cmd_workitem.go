@@ -215,6 +215,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storyCostCommands()...)
 		parent.AddCommand(storyDiffCommand())
 		parent.AddCommand(storySyncCommand())
+		parent.AddCommand(storyReconcileCommand())
 		parent.AddCommand(storyRestampCommand())
 		parent.AddCommand(storyStopRequestCommand())
 		parent.AddCommand(storySeatCommands()...)
@@ -459,6 +460,79 @@ not this command's.`,
 			return nil
 		},
 	}
+}
+
+// storyReconcileCommand builds `satelle story reconcile [--repair] [--json]`.
+// Default is a dry-run report of row/ledger status drift; --repair applies.
+func storyReconcileCommand() *cobra.Command {
+	var repair, asJSON bool
+	cmd := &cobra.Command{
+		Use:   "reconcile",
+		Short: "Detect (and optionally repair) story rows whose status disagrees with the ledger",
+		Long: `Compare each work-item row's status to its last status_transition ledger
+event. The ledger is the source of truth: a recorded transition whose 'to'
+does not match the row is drift.
+
+Default is a dry-run report. --repair sets each drifted row from the ledger
+and records a status_reconcile event. Dry-run exits non-zero when drift is
+found so the check is scriptable.`,
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := appFrom(cmd)
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			out := cmd.OutOrStdout()
+			if repair {
+				repaired, rerr := verb.RepairStatusDrift(ctx, a.Store.Stories, a.Store.Ledger, time.Now())
+				if rerr != nil {
+					return rerr
+				}
+				if asJSON {
+					enc := json.NewEncoder(out)
+					enc.SetIndent("", "  ")
+					return enc.Encode(map[string]any{"repaired": repaired, "count": len(repaired)})
+				}
+				if len(repaired) == 0 {
+					fmt.Fprintln(out, "status: clean — no row disagrees with its last status_transition")
+					return nil
+				}
+				fmt.Fprintf(out, "repaired %d stor(y/ies) from the ledger:\n", len(repaired))
+				for _, d := range repaired {
+					fmt.Fprintf(out, "  %s  %s → %s\n", d.ID, d.RowStatus, d.LedgerStatus)
+				}
+				return nil
+			}
+			drifts, derr := verb.DetectStatusDrift(ctx, a.Store.Stories, a.Store.Ledger)
+			if derr != nil {
+				return derr
+			}
+			if asJSON {
+				enc := json.NewEncoder(out)
+				enc.SetIndent("", "  ")
+				if err := enc.Encode(map[string]any{"drift": drifts, "count": len(drifts)}); err != nil {
+					return err
+				}
+			} else if len(drifts) == 0 {
+				fmt.Fprintln(out, "status: clean — no row disagrees with its last status_transition")
+			} else {
+				fmt.Fprintf(out, "%d stor(y/ies) disagree with the ledger:\n", len(drifts))
+				for _, d := range drifts {
+					fmt.Fprintf(out, "  %s  row=%s ledger=%s  (last transition %s)\n",
+						d.ID, d.RowStatus, d.LedgerStatus, d.TransitionAt.UTC().Format(time.RFC3339))
+				}
+				fmt.Fprintln(out, "re-run with --repair to set each row from the ledger")
+			}
+			if len(drifts) > 0 {
+				return fmt.Errorf("story reconcile: %d drifted", len(drifts))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&repair, "repair", false, "set drifted rows from the last status_transition")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit machine-readable JSON")
+	return cmd
 }
 
 // storyDiffCommand builds `satelle story diff [id]`: enumerate files changed

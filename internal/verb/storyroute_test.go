@@ -57,6 +57,7 @@ func wireRoute(t *testing.T) {
 	}
 	verb.SetWorkItemStore(db.Stories)
 	verb.SetLedgerStore(db.Ledger)
+	verb.SetTxRunner(db.InTx)
 	verb.SetDocIndexStore(db.DocIndex)
 	verb.SetLeaseStore(db.Leases)
 	verb.SetStoryDir(filepath.Join(dir, "stories"))
@@ -64,6 +65,7 @@ func wireRoute(t *testing.T) {
 		db.Close()
 		verb.SetWorkItemStore(nil)
 		verb.SetLedgerStore(nil)
+		verb.SetTxRunner(nil)
 		verb.SetDocIndexStore(nil)
 		verb.SetLeaseStore(nil)
 		verb.SetStoryDir("")

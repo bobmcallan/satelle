@@ -2,6 +2,7 @@ package verb
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -588,7 +589,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	if transitioning {
 		parkOrigin = parkOriginForTransition(ctx, current, *req.Status)
 	}
-	it, err := store.Update(ctx, req.ID, workitem.UpdateInput{
+	upd := workitem.UpdateInput{
 		Title:              req.Title,
 		Body:               req.Body,
 		Status:             req.Status,
@@ -599,9 +600,37 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		Tags:               req.Tags,
 		ParkOrigin:         parkOrigin,
 		Assignee:           stampEmptyAssignee(ctx, current, req.Status),
-	}, now)
-	if err != nil {
-		return nil, err
+	}
+	transitionInTx := false
+	var it workitem.Item
+	if transitioning && ledgerStore != nil && txRunner == nil {
+		return nil, fmt.Errorf("verb: ledger store is wired without a tx runner — refusing a non-atomic status transition")
+	}
+	if transitioning && txRunner != nil {
+		err = txRunner(ctx, func(tx *sql.Tx) error {
+			var uerr error
+			it, uerr = store.WithTx(tx).Update(ctx, req.ID, upd, now)
+			if uerr != nil {
+				return uerr
+			}
+			_, aerr := ledgerStore.WithTx(tx).Append(ctx, ledger.AppendInput{
+				StoryID: it.ID,
+				Kind:    ledger.KindStatusTransition,
+				Actor:   "executor",
+				Body:    fmt.Sprintf("%s → %s", current.Status, *req.Status),
+				Payload: transitionPayload(current.Status, *req.Status, ""),
+			}, now)
+			return aerr
+		})
+		if err != nil {
+			return nil, err
+		}
+		transitionInTx = true
+	} else {
+		it, err = store.Update(ctx, req.ID, upd, now)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// Release the seat on transition into terminal (Msquare) or park (agent=reviewer).
 	// Force-release: exit is config-driven and must free the seat even when the
@@ -627,10 +656,13 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	}
 	if transitioning {
 		// An enacted status change records a transition row (feeds the progress
-		// column), regardless of whether the edge was gated.
-		appendLedgerEntry(ctx, it.ID, ledger.KindStatusTransition, "executor",
-			fmt.Sprintf("%s → %s", current.Status, *req.Status),
-			transitionPayload(current.Status, *req.Status, ""), now)
+		// column), regardless of whether the edge was gated. When the write ran
+		// inside the tx above, the row is already there.
+		if !transitionInTx {
+			appendLedgerEntry(ctx, it.ID, ledger.KindStatusTransition, "executor",
+				fmt.Sprintf("%s → %s", current.Status, *req.Status),
+				transitionPayload(current.Status, *req.Status, ""), now)
+		}
 		// First entry into an engaging state: record engagement baseline once
 		// (sty_da169e03). Enumerates git HEAD for later satelle story diff;
 		// never a verdict. Idempotent across park/resume.

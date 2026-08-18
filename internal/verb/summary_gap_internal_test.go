@@ -23,8 +23,14 @@ func TestSurfaceMissingSummaries(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	SetLedgerStore(db.Ledger)
+	SetTxRunner(db.InTx)
 	SetStoryDir(filepath.Join(dir, "stories"))
-	t.Cleanup(func() { db.Close(); SetLedgerStore(nil); SetStoryDir("") })
+	t.Cleanup(func() {
+		db.Close()
+		SetLedgerStore(nil)
+		SetTxRunner(nil)
+		SetStoryDir("")
+	})
 
 	ctx := context.Background()
 	now := time.Unix(1_700_000_000, 0)

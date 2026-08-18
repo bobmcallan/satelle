@@ -35,6 +35,7 @@ func TestStoryResummarise(t *testing.T) {
 	}
 	verb.SetWorkItemStore(db.Stories)
 	verb.SetLedgerStore(db.Ledger)
+	verb.SetTxRunner(db.InTx)
 	verb.SetDocIndexStore(db.DocIndex)
 	verb.SetStoryDir(filepath.Join(dir, "stories"))
 	verb.SetStepSummariser(stubSummariser{out: "the recovered recap", mandatory: true})
@@ -42,6 +43,7 @@ func TestStoryResummarise(t *testing.T) {
 		db.Close()
 		verb.SetWorkItemStore(nil)
 		verb.SetLedgerStore(nil)
+		verb.SetTxRunner(nil)
 		verb.SetDocIndexStore(nil)
 		verb.SetStoryDir("")
 		verb.SetStepSummariser(nil)

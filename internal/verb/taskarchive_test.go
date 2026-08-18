@@ -27,11 +27,13 @@ func wireTasks(t *testing.T) (*workitem.Store, string) {
 	taskDir := filepath.Join(dir, ".satelle", "tasks")
 	verb.SetWorkItemStore(db.Stories)
 	verb.SetLedgerStore(db.Ledger)
+	verb.SetTxRunner(db.InTx)
 	verb.SetTaskDir(taskDir)
 	t.Cleanup(func() {
 		db.Close()
 		verb.SetWorkItemStore(nil)
 		verb.SetLedgerStore(nil)
+		verb.SetTxRunner(nil)
 		verb.SetTaskDir("")
 	})
 	return db.Stories, taskDir

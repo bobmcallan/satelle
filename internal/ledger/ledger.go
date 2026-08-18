@@ -30,8 +30,11 @@ const (
 	// verdict; every enacted status change records a transition. These feed the
 	// progress/review-lights column.
 	KindStatusTransition = "status_transition"
-	KindReviewAccept     = "review_accept"
-	KindReviewReject     = "review_reject"
+	// KindStatusReconcile records that a story row's status was repaired from
+	// the last status_transition (the row is a projection of the ledger).
+	KindStatusReconcile = "status_reconcile"
+	KindReviewAccept    = "review_accept"
+	KindReviewReject    = "review_reject"
 	// KindGateSkipped records that an edge DECLARED a gate whose skill does not
 	// resolve, so the transition advanced with no reviewer and no verdict. It is
 	// deliberately its own kind: folding it into a comment would bury it, and

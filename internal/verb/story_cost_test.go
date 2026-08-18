@@ -22,7 +22,9 @@ func TestComputeStoryCost(t *testing.T) {
 	}
 	defer db.Close()
 	verb.SetLedgerStore(db.Ledger)
+	verb.SetTxRunner(db.InTx)
 	defer verb.SetLedgerStore(nil)
+	verb.SetTxRunner(nil)
 
 	ctx := context.Background()
 	now := time.Unix(1_700_000_000, 0)
@@ -103,7 +105,9 @@ func TestComputeStoryCostSteps(t *testing.T) {
 	}
 	defer db.Close()
 	verb.SetLedgerStore(db.Ledger)
+	verb.SetTxRunner(db.InTx)
 	defer verb.SetLedgerStore(nil)
+	verb.SetTxRunner(nil)
 
 	ctx := context.Background()
 	t0 := time.Unix(1_700_000_000, 0)
@@ -183,7 +187,9 @@ func TestComputeStoryCostStepCostDurationOverride(t *testing.T) {
 	}
 	defer db.Close()
 	verb.SetLedgerStore(db.Ledger)
+	verb.SetTxRunner(db.InTx)
 	defer verb.SetLedgerStore(nil)
+	verb.SetTxRunner(nil)
 
 	ctx := context.Background()
 	t0 := time.Unix(1_700_000_000, 0)

@@ -328,6 +328,31 @@ requires = ["raised"]
 // TestScaffoldFindingsAreInjectedNotImported pins the dependency direction:
 // doctor never imports the harness-scaffold writer, it consumes the detector as
 // an injected authority. A nil injection skips the check rather than guessing.
+func TestStatusDriftFindingsAreInjected(t *testing.T) {
+	root := newFixtureRepo(t, fixtureOpts{})
+	base := check(t, root)
+	if ids(base)[health.IDStatusDrift] {
+		t.Fatal("no status-drift authority was injected, so no drift finding may appear")
+	}
+	withDrift := Check(context.Background(), Opts{
+		RepoRoot: root, DataDir: filepath.Join(root, ".satelle"),
+		StatusDrift: func(string) health.Findings {
+			return health.Findings{health.Error(health.IDStatusDrift, "Story status disagrees with ledger",
+				"sty_x row=backlog ledger=done")}
+		},
+	})
+	if !ids(withDrift)[health.IDStatusDrift] || withDrift.OK {
+		t.Errorf("injected status drift must FAIL the report: %+v", withDrift.Findings)
+	}
+	clean := Check(context.Background(), Opts{
+		RepoRoot: root, DataDir: filepath.Join(root, ".satelle"),
+		StatusDrift: func(string) health.Findings { return nil },
+	})
+	if ids(clean)[health.IDStatusDrift] {
+		t.Errorf("empty injection must not invent drift: %+v", clean.Findings)
+	}
+}
+
 func TestScaffoldFindingsAreInjectedNotImported(t *testing.T) {
 	root := newFixtureRepo(t, fixtureOpts{})
 	base := check(t, root)

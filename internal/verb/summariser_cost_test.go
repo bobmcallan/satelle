@@ -39,6 +39,7 @@ func TestSummariserCostFoldsIntoAgentInvocation(t *testing.T) {
 	}
 	verb.SetWorkItemStore(db.Stories)
 	verb.SetLedgerStore(db.Ledger)
+	verb.SetTxRunner(db.InTx)
 	verb.SetDocIndexStore(db.DocIndex)
 	verb.SetStoryDir(filepath.Join(dir, "stories"))
 	verb.SetStepSummariser(costSummariser{})
@@ -46,6 +47,7 @@ func TestSummariserCostFoldsIntoAgentInvocation(t *testing.T) {
 		db.Close()
 		verb.SetWorkItemStore(nil)
 		verb.SetLedgerStore(nil)
+		verb.SetTxRunner(nil)
 		verb.SetDocIndexStore(nil)
 		verb.SetStoryDir("")
 		verb.SetStepSummariser(nil)
@@ -88,6 +90,7 @@ func TestSummariserNoCostRowWhenNoCommand(t *testing.T) {
 	}
 	verb.SetWorkItemStore(db.Stories)
 	verb.SetLedgerStore(db.Ledger)
+	verb.SetTxRunner(db.InTx)
 	verb.SetDocIndexStore(db.DocIndex)
 	verb.SetStoryDir(filepath.Join(dir, "stories"))
 	verb.SetStepSummariser(stubSummariser{out: "recap only", mandatory: true})
@@ -95,6 +98,7 @@ func TestSummariserNoCostRowWhenNoCommand(t *testing.T) {
 		db.Close()
 		verb.SetWorkItemStore(nil)
 		verb.SetLedgerStore(nil)
+		verb.SetTxRunner(nil)
 		verb.SetDocIndexStore(nil)
 		verb.SetStoryDir("")
 		verb.SetStepSummariser(nil)

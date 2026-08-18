@@ -10,6 +10,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -105,6 +106,29 @@ func embeddedDefaultDocs() []docindex.Doc {
 
 // SQL exposes the raw handle for callers that need it (tests, future stores).
 func (d *DB) SQL() *sql.DB { return d.db }
+
+// InTx runs fn inside a single sqlite transaction on the shared handle.
+// Rollback on any error (or panic); commit only when fn returns nil.
+func (d *DB) InTx(ctx context.Context, fn func(*sql.Tx) error) error {
+	if d == nil || d.db == nil {
+		return fmt.Errorf("store: InTx on a nil database")
+	}
+	if fn == nil {
+		return fmt.Errorf("store: InTx missing func")
+	}
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit tx: %w", err)
+	}
+	return nil
+}
 
 // Close releases the underlying database handle.
 func (d *DB) Close() error { return d.db.Close() }

@@ -1,6 +1,8 @@
 package verb
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 
 	"github.com/bobmcallan/satelle/internal/docindex"
@@ -23,6 +25,10 @@ var (
 	ledgerStore   *ledger.Store
 	docIndexStore *docindex.Store
 	leaseStore    *lease.Store
+	// txRunner runs a func inside one sqlite transaction spanning Stories and
+	// Ledger. Required whenever ledgerStore is set: a missing runner refuses
+	// the transition rather than writing the two sides separately.
+	txRunner TxRunner
 	// opLog mirrors each state-mutating verb to a flat file a read-only reviewer
 	// can scan (sty_be257fef). Nil-safe: an unwired log records nothing.
 	opLog *oplog.Logger
@@ -36,6 +42,13 @@ func SetWorkItemStore(s *workitem.Store) { workItemStore = s }
 
 // SetLedgerStore wires the evidence-ledger store.
 func SetLedgerStore(s *ledger.Store) { ledgerStore = s }
+
+// TxRunner runs fn inside one database transaction.
+type TxRunner func(ctx context.Context, fn func(*sql.Tx) error) error
+
+// SetTxRunner wires the transaction runner used to enact a status change and
+// its status_transition append atomically. Pass nil to reset (tests).
+func SetTxRunner(r TxRunner) { txRunner = r }
 
 // SetDocIndexStore wires the authored-doc index store.
 func SetDocIndexStore(s *docindex.Store) { docIndexStore = s }

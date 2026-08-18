@@ -35,15 +35,50 @@ func Migrate(db *sql.DB) error {
 	return nil
 }
 
+// execer is the subset of *sql.DB / *sql.Tx that this store uses, so a
+// shallow copy can bind to an open transaction without a second connection.
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // Store wraps evidence-table operations against a shared sqlite handle.
-type Store struct{ db *sql.DB }
+type Store struct {
+	db execer
+	// failAppend, when set, makes the next Append return that error (tests).
+	failAppend error
+}
 
 // New returns a Store bound to db.
 func New(db *sql.DB) *Store { return &Store{db: db} }
 
+// WithTx returns a shallow copy bound to tx. The original store is unchanged.
+func (s *Store) WithTx(tx *sql.Tx) *Store {
+	if s == nil {
+		return nil
+	}
+	out := *s
+	out.db = tx
+	return &out
+}
+
+// InjectAppendError makes the next Append return err. Test seam for proving
+// a failed ledger write rolls back the paired story-row UPDATE.
+func (s *Store) InjectAppendError(err error) {
+	if s != nil {
+		s.failAppend = err
+	}
+}
+
 // Append inserts one row and returns it. Kind is required; now defaults to
 // time.Now().UTC() when zero. Payload/Refs default to {}/[] when empty.
 func (s *Store) Append(ctx context.Context, in AppendInput, now time.Time) (Entry, error) {
+	if s != nil && s.failAppend != nil {
+		err := s.failAppend
+		s.failAppend = nil
+		return Entry{}, err
+	}
 	if strings.TrimSpace(in.Kind) == "" {
 		return Entry{}, fmt.Errorf("ledger: kind required")
 	}

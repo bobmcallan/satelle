@@ -1,4 +1,10 @@
+## [0.0.461] - 2026-08-18
+
+### Fixed
+- **A recorded status_transition can no longer leave the story row on an older status.** Transition writes the row and the ledger event in one transaction; a hosted workstate snapshot will not overwrite a newer local row or a later local transition; `satelle story reconcile [--repair]` repairs existing drift; doctor reports it. (sty_8e01ba7f)
+
 ## [0.0.460] - 2026-08-15
+
 
 ### Added
 - **Logs in the top nav.** A machine-wide Logs page at `/logs` tails satelled's `serve/server.log` (newest first, last 500 lines), filters by level, and live-updates over the existing `/events` stream. (sty_df4a0785)
