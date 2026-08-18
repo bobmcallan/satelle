@@ -1,3 +1,8 @@
+## [0.0.463] - 2026-08-18
+
+### Fixed
+- **A process-temp write is no longer gated as an in-repo product edit.** The hook allows a target under `os.TempDir` / `/tmp` at plan and with no seat, even when a custom `[gate] edit_exempt_paths` omits `/tmp/`; a repo that lives under the temp dir still gates its own tree. (sty_e33f78fe)
+
 ## [0.0.462] - 2026-08-18
 
 ### Fixed

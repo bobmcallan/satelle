@@ -518,11 +518,47 @@ func TestReadOnlyPreflightReasonDerivesFromConfig(t *testing.T) {
 	got = readOnlyPreflightReasonFrom(func() (config.Config, string, error) {
 		return empty, "/home/u/repo/.satelle/satelle.toml", nil
 	})
-	if strings.Contains(got, "/tmp") || strings.Contains(got, "sty_*_body.md") {
-		t.Errorf("empty exemptions must not promise locations: %s", got)
+	if strings.Contains(got, "sty_*_body.md") {
+		t.Errorf("empty authored exemptions must not promise globs: %s", got)
 	}
-	if !strings.Contains(got, "No [gate] exemptions") {
-		t.Errorf("empty exemptions should say so: %s", got)
+	// Process temp is a mechanism drafting location even when the authored
+	// list is empty (sty_e33f78fe) — in-repo paths stay gated.
+	namedTemp := false
+	for _, p := range tempDraftRoots() {
+		if strings.Contains(got, p) {
+			namedTemp = true
+			break
+		}
+	}
+	if !namedTemp {
+		t.Errorf("empty authored exemptions should still name process temp: %s", got)
+	}
+}
+
+// TestTempDraftTarget is the pure classifier for process-temp writes
+// (sty_e33f78fe): out-of-tree temp drafts allow; in-repo product — including
+// a repo that lives under the temp dir — does not.
+func TestTempDraftTarget(t *testing.T) {
+	tmp := os.TempDir()
+	outside := "/home/u/repo"
+	if withinRoot(tmp, outside) {
+		outside = "/var/satelle-test-repo"
+	}
+	if !tempDraftTarget(outside, filepath.Join(tmp, "anything.txt")) {
+		t.Errorf("temp draft under os.TempDir must allow for a repo outside the temp dir")
+	}
+	if !tempDraftTarget(outside, "/tmp/scratch-notes.md") {
+		t.Error("/tmp draft must allow even when TMPDIR differs")
+	}
+	if tempDraftTarget(outside, filepath.Join(outside, "internal", "cli", "cmd_hook.go")) {
+		t.Error("in-repo product must not be a temp draft")
+	}
+	tmpRepo := filepath.Join(tmp, "TestTempDraftRepo", "repo")
+	if tempDraftTarget(tmpRepo, filepath.Join(tmpRepo, "internal", "cli", "cmd_hook.go")) {
+		t.Error("in-tree product of a temp-dir repo must not be a temp draft")
+	}
+	if tempDraftTarget(outside, "/tmpfoo/x.md") {
+		t.Error("/tmpfoo is not under /tmp")
 	}
 }
 

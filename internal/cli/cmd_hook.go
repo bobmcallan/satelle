@@ -169,18 +169,19 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 						return denyPreToolUse(cmd, raw, outsideRepoEditReason(p, foreignRoot))
 					}
 				}
-				// Exemption is CONFIGURATION, not code (the constitution:
-				// configuration over code). A path under a [gate]
-				// edit_exempt_paths prefix or a [gate] edit_exempt_globs
-				// filename pattern is exempt from the engaged-story gate.
+				// Exemption is configuration plus one mechanism rule (path
+				// containment, same class as the foreign-tree fence): a write
+				// under the process temp dir is not an in-repo product edit
+				// (sty_e33f78fe). A path under a [gate] edit_exempt_paths prefix
+				// or a [gate] edit_exempt_globs filename pattern is also exempt.
 				// The data dir / managed paths are NOT special-cased in the binary —
 				// `satelle init` seeds .satelle/ and the footprint it deploys itself
 				// (.gitignore block, harness scaffolds) into edit_exempt_paths, and
 				// story-dump names into edit_exempt_globs, so authored substrate
 				// and satelle-written output stay editable without a release OOTB,
 				// but the operator owns those lists. With empty lists, even a
-				// .satelle/ edit needs an engaged story: config decides, never a
-				// Go rule.
+				// .satelle/ edit needs an engaged story: config decides in-repo
+				// paths, never a Go rule.
 				if exemptTarget(p) {
 					return nil
 				}
@@ -1165,11 +1166,24 @@ func readOnlyPreflightReasonFrom(load func() (config.Config, string, error)) str
 	}
 	root := config.RepoRootFromConfigPath(cfgPath)
 	var locs []string
-	for _, p := range cfg.ResolveEditExemptPaths(root) {
-		if root != "" && withinRoot(root, p) {
-			continue
+	seen := map[string]bool{}
+	addLoc := func(p string) {
+		if p == "" || seen[p] {
+			return
 		}
+		if root != "" && withinRoot(root, p) {
+			return
+		}
+		seen[p] = true
 		locs = append(locs, p)
+	}
+	for _, p := range cfg.ResolveEditExemptPaths(root) {
+		addLoc(p)
+	}
+	// Process temp is a mechanism drafting location, independent of the
+	// authored list — keep the deny advice truthful when a custom list omits /tmp/.
+	for _, p := range tempDraftRoots() {
+		addLoc(p)
 	}
 	locs = append(locs, cfg.ResolveEditExemptGlobs()...)
 	if len(locs) == 0 {
@@ -1398,18 +1412,20 @@ func infraDenyJSON(harness string) string {
 }
 
 // exemptTarget reports whether an edit to target is exempt from the engaged-story
-// gate: it resolves under a configured [gate] edit_exempt_paths prefix or
-// matches a [gate] edit_exempt_globs filename pattern. Exemption is
-// CONFIGURATION, not code (the constitution: configuration over code) — the
-// binary no longer special-cases the data dir or managed paths; `satelle init`
-// seeds .satelle/ and the footprint it deploys itself (.gitignore block, harness
-// scaffolds) into edit_exempt_paths, and story-dump names into edit_exempt_globs,
-// so authored substrate and satelle-written output stay editable OOTB, but the
-// operator owns those lists (sty_8c3d345c / sty_f115e6bf / sty_926cfcdc /
-// sty_fefc88cd). The target is resolved to absolute against the repo root FIRST,
-// so a repo-relative path (as Grok sends) is classified correctly. Returns false
-// if the config/root cannot be resolved, so the gate stays conservative (still
-// applies) on any resolution failure.
+// gate. Exemption is configuration plus one mechanism rule: a write under the
+// process temp directory is not an in-repo product edit, so it is never gated
+// (sty_e33f78fe). Authored exemptions remain [gate] edit_exempt_paths prefixes
+// and [gate] edit_exempt_globs filename patterns. The binary does not special-
+// case the data dir or managed paths; `satelle init` seeds .satelle/ and the
+// footprint it deploys itself (.gitignore block, harness scaffolds) into
+// edit_exempt_paths, and story-dump names into edit_exempt_globs, so authored
+// substrate and satelle-written output stay editable OOTB, but the operator
+// owns those lists (sty_8c3d345c / sty_f115e6bf / sty_926cfcdc / sty_fefc88cd).
+// The target is resolved to absolute against the repo root FIRST, so a
+// repo-relative path (as Grok sends) is classified correctly. Returns false if
+// the config/root cannot be resolved, so the gate stays conservative (still
+// applies) on any resolution failure — including a temp-dir target, so a
+// broken config does not fail open.
 func exemptTarget(target string) bool {
 	cfg, cfgPath, err := config.Load("")
 	if err != nil {
@@ -1417,10 +1433,50 @@ func exemptTarget(target string) bool {
 	}
 	root := config.RepoRootFromConfigPath(cfgPath)
 	abs := resolveAbsTarget(root, target)
+	if tempDraftTarget(root, abs) {
+		return true
+	}
 	if editExempt(cfg.ResolveEditExemptPaths(root), root, abs) {
 		return true
 	}
 	return editExemptPattern(cfg.ResolveEditExemptGlobs(), root, abs)
+}
+
+// tempDraftRoots is the process temp directory (os.TempDir already honours
+// TMPDIR) plus a literal /tmp when that is not already covered. A session may
+// run with TMPDIR pointed elsewhere while the agent still drafts to /tmp.
+func tempDraftRoots() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(p string) {
+		p = filepath.Clean(strings.TrimSpace(p))
+		if p == "" || p == "." || seen[p] {
+			return
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	add(os.TempDir())
+	add("/tmp")
+	return out
+}
+
+// tempDraftTarget reports whether target is an out-of-repo write under the
+// process temp directory. A target inside repoRoot is never a temp draft — a
+// repo that lives under the temp dir still gates its own tree (same
+// containment as editExempt). Pure: no config, no extra filesystem. Containment
+// is checked before the temp-prefix match so a t.TempDir repo cannot exempt
+// its whole tree.
+func tempDraftTarget(repoRoot, target string) bool {
+	if repoRoot != "" && withinRoot(repoRoot, target) {
+		return false
+	}
+	for _, r := range tempDraftRoots() {
+		if withinRoot(r, target) {
+			return true
+		}
+	}
+	return false
 }
 
 // editExempt is the pure classification the edit-gate exemption rests on: target
