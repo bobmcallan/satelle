@@ -14,7 +14,9 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/logfile"
+	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
@@ -565,6 +567,16 @@ func newEngine(t *testing.T, out string, docs fakeDocs) (*Engine, *fakeRunner) {
 	t.Helper()
 	r := &fakeRunner{out: out}
 	return New(r, docs, "/repo", ""), r
+}
+
+func openEngineLedger(t *testing.T) *ledger.Store {
+	t.Helper()
+	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db.Ledger
 }
 
 var errFakeAgent = errors.New("fake agent failure")
@@ -1992,6 +2004,56 @@ func TestGateRefusesUndeclaredEdge(t *testing.T) {
 // TestParkResumeRefusalIsStructured (sty_39e2d9df AC3): leaving a park state for
 // anywhere but the recorded origin refuses with the origin named as the legal
 // move — the rule that would otherwise be invisible under a derived graph.
+func TestParkResumeOriginlessWithLedgerIsUngated(t *testing.T) {
+	parkWorkflow := spineWF("blocked", "cancelled", "",
+		"in_progress|executor",
+		"done")
+	g, _ := newEngine(t, `{"decision":"accept"}`,
+		fakeDocs{workflow: parkWorkflow, skillBody: "rubric", skillFound: true})
+	// Empty column + last transition into blocked from a performing state.
+	db := openEngineLedger(t)
+	verb.SetLedgerStore(db)
+	t.Cleanup(func() { verb.SetLedgerStore(nil) })
+	_, err := db.Append(context.Background(), ledger.AppendInput{
+		StoryID: "sty_7bc2de55", Kind: ledger.KindStatusTransition,
+		Body: "in_progress → blocked",
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec, err := g.Gate(context.Background(),
+		workitem.Item{ID: "sty_7bc2de55", Status: "blocked", ParkOrigin: ""}, "in_progress")
+	if err != nil {
+		t.Fatalf("origin-less park with ledger must resume: %v", err)
+	}
+	if dec.Gated {
+		t.Error("resume-to-origin is ungated")
+	}
+}
+
+func TestParkResumeOriginlessEmptyLedgerRefusesParkNotSkip(t *testing.T) {
+	parkWorkflow := spineWF("blocked", "cancelled", "",
+		"in_progress|executor",
+		"done")
+	g, _ := newEngine(t, `{"decision":"accept"}`,
+		fakeDocs{workflow: parkWorkflow, skillBody: "rubric", skillFound: true})
+	_, err := g.Gate(context.Background(),
+		workitem.Item{ID: "sty_empty", Status: "blocked", ParkOrigin: ""}, "in_progress")
+	if err == nil {
+		t.Fatal("origin-less park with no ledger must refuse resume")
+	}
+	var ref wfgovern.Refusal
+	if !errors.As(err, &ref) {
+		t.Fatalf("got %T: %v", err, err)
+	}
+	if ref.Rule != wfgovern.RuleParkResume {
+		t.Errorf("rule = %q; want park-resume, not skipped-step", ref.Rule)
+	}
+	if !strings.Contains(ref.Why, "no recorded origin") {
+		t.Errorf("why = %q; want the origin-less wording", ref.Why)
+	}
+}
+
 func TestParkResumeRefusalIsStructured(t *testing.T) {
 	parkWorkflow := spineWF("blocked", "cancelled", "",
 		"in_progress|executor",

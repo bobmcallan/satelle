@@ -68,6 +68,36 @@ func openStore(t *testing.T) *Store {
 	return New(db)
 }
 
+func TestUpsertPreservesParkOriginWhenIncomingBlank(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	it, err := st.Create(ctx, CreateInput{
+		Kind: KindStory, Title: "parked", Body: "b", AcceptanceCriteria: "1. a",
+		Status: "blocked",
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := "in_progress"
+	if _, err := st.Update(ctx, it.ID, UpdateInput{ParkOrigin: &origin}, now); err != nil {
+		t.Fatal(err)
+	}
+	incoming := it
+	incoming.ParkOrigin = ""
+	incoming.Status = "blocked"
+	if _, err := st.Upsert(ctx, incoming, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Get(ctx, it.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ParkOrigin != "in_progress" {
+		t.Errorf("Upsert wiped park_origin to %q", got.ParkOrigin)
+	}
+}
+
 func TestListChangedSincePagesPast2000(t *testing.T) {
 	st := openStore(t)
 	ctx := context.Background()

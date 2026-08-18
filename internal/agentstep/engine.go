@@ -1893,16 +1893,38 @@ func (g *Engine) successorsOf(ctx context.Context, item workitem.Item, from stri
 }
 
 // parkResume reports whether item→toStatus is a park resume-to-origin (resume
-// true, ungated) or an illegal resume (refuse non-nil). When ParkOrigin is empty
-// both are zero and the caller falls through to ordinary edge handling
-// (sty_f75286dc).
+// true, ungated) or an illegal resume (refuse non-nil). Origin is
+// verb.ParkOriginOf — the stamped column, else the last transition into this
+// park (sty_524f091d). An origin-less park refuses performing targets instead
+// of falling through to undeclared-edge.
 func (g *Engine) parkResume(ctx context.Context, item workitem.Item, toStatus string) (resume bool, refuse error) {
-	origin := strings.TrimSpace(item.ParkOrigin)
-	if origin == "" {
-		return false, nil
-	}
 	spec, _, err := g.activeSpec(ctx, item)
 	if err != nil || !spec.IsParkState(item.Status) {
+		return false, nil
+	}
+	origin := verb.ParkOriginOf(ctx, item, spec)
+	if origin == "" {
+		// Origin-less park: do not fall through to undeclared-edge (that
+		// names cancelled as the only successor). Non-performing exits
+		// stay on the ordinary gate path; performing targets refuse.
+		if spec.HasEdge(item.Status, toStatus) && !spec.IsPerformingState(toStatus) {
+			return false, nil
+		}
+		if spec.IsPerformingState(toStatus) || !spec.HasEdge(item.Status, toStatus) {
+			var exits []string
+			for _, to := range spec.Successors(item.Status) {
+				if !spec.IsPerformingState(to) {
+					exits = append(exits, to)
+				}
+			}
+			return false, wfgovern.Refusal{
+				Rule: wfgovern.RuleParkResume, Item: item.ID,
+				From: item.Status, To: toStatus,
+				Why:          "this park has no recorded origin — the column is empty and the ledger has no transition into this park — so resume is not admitted",
+				Alternatives: exits,
+				Remedy:       "cancelled and other declared non-performing exits remain open",
+			}
+		}
 		return false, nil
 	}
 	if toStatus == origin {

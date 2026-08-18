@@ -187,11 +187,15 @@ func (s *Store) Upsert(ctx context.Context, it Item, now time.Time) (Item, error
 	if it.Archived {
 		archived = 1
 	}
-	// Markdown import does not carry assignee (machine-set). Keep the existing
-	// holder when the incoming row leaves it blank so Upsert cannot wipe it.
-	if strings.TrimSpace(it.Assignee) == "" {
-		if existing, gerr := s.Get(ctx, it.ID); gerr == nil {
+	// Markdown import / workstate wire may omit machine-set columns. Keep the
+	// existing holder and park origin when the incoming row leaves them blank
+	// so Upsert cannot wipe them (sty_524f091d).
+	if existing, gerr := s.Get(ctx, it.ID); gerr == nil {
+		if strings.TrimSpace(it.Assignee) == "" {
 			it.Assignee = existing.Assignee
+		}
+		if strings.TrimSpace(it.ParkOrigin) == "" {
+			it.ParkOrigin = existing.ParkOrigin
 		}
 	}
 	// archived, park_origin and assignee must be listed: INSERT OR REPLACE

@@ -1,3 +1,8 @@
+## [0.0.464] - 2026-08-18
+
+### Fixed
+- **A parked story with an empty `park_origin` can resume again.** Workstate pull used to wipe the stamp (the wire omitted the column; Upsert replaced it with blank). Resume now derives the last transition into the park when the column is empty; the wire and Upsert keep a non-empty stamp; route text keys “resumes to origin” on the synthesised park, not on “has outbound edges”. (sty_524f091d)
+
 ## [0.0.463] - 2026-08-18
 
 ### Fixed

@@ -64,6 +64,12 @@ func TestParseRouteBuildsValidSpec(t *testing.T) {
 	if !spec.IsParkState("blocked") || !spec.IsParkState("cancelled") {
 		t.Error("blocked and cancelled must be park/role states")
 	}
+	if !spec.IsResumePark("blocked") {
+		t.Error("blocked is the from=* resume park")
+	}
+	if spec.IsResumePark("cancelled") {
+		t.Error("cancelled is not a resume park")
+	}
 }
 
 // TestSynthesisedTopologyValidates is AC2: the author declares no cancel, park or

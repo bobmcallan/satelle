@@ -238,10 +238,6 @@ func buildStep(spec wfdot.Spec, st wfdot.State, tags []string) Step {
 // buildExits lists the off-spine destinations reachable from the spine, with the
 // gate that admits entry to each.
 func buildExits(spec wfdot.Spec, onSpine map[string]bool) []Exit {
-	hasOut := map[string]bool{}
-	for _, tr := range spec.Transitions {
-		hasOut[tr.From] = true
-	}
 	seen := map[string]bool{}
 	var out []Exit
 	for _, tr := range spec.Transitions {
@@ -249,7 +245,10 @@ func buildExits(spec wfdot.Spec, onSpine map[string]bool) []Exit {
 			continue
 		}
 		seen[tr.To] = true
-		out = append(out, Exit{Status: tr.To, Gates: tr.Skills, Park: hasOut[tr.To]})
+		// Promise and enforcement agree: only the synthesised from="*" park
+		// resumes to origin. hasOut[to] used to label any exit with outbound
+		// edges as a park, including a cancel that happened to have one.
+		out = append(out, Exit{Status: tr.To, Gates: tr.Skills, Park: spec.IsResumePark(tr.To)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Status < out[j].Status })
 	return out

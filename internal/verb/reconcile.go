@@ -41,6 +41,23 @@ func TransitionTo(e ledger.Entry) string {
 	return ""
 }
 
+// TransitionFrom reads the source status from a status_transition payload.
+// Falls back to the "from → to" body only when the payload has no `from`.
+func TransitionFrom(e ledger.Entry) string {
+	var p struct {
+		From string `json:"from"`
+	}
+	if len(e.Payload) > 0 && json.Unmarshal(e.Payload, &p) == nil {
+		if from := strings.TrimSpace(p.From); from != "" {
+			return from
+		}
+	}
+	if i := strings.Index(e.Body, " → "); i >= 0 {
+		return strings.TrimSpace(e.Body[:i])
+	}
+	return ""
+}
+
 // LatestStatusTransition returns the newest status_transition for storyID.
 func LatestStatusTransition(ctx context.Context, led *ledger.Store, storyID string) (ledger.Entry, bool, error) {
 	if led == nil {

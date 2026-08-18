@@ -32,6 +32,28 @@ func hostedStory(id, status string, updated time.Time) hosted.WorkstateItem {
 	return hosted.WorkstateItem{ID: id, Kind: string(workitem.KindStory), Status: status, Title: "T", Record: rec}
 }
 
+func TestWorkstateItemRoundTripPreservesParkOrigin(t *testing.T) {
+	it := workitem.Item{
+		ID: "sty_park", Kind: workitem.KindStory, Title: "T",
+		Status: "blocked", ParkOrigin: "in_progress",
+		UpdatedAt: time.Date(2026, 8, 16, 23, 19, 50, 0, time.UTC),
+		CreatedAt: time.Date(2026, 8, 16, 22, 0, 0, 0, time.UTC),
+	}
+	raw, err := marshalWorkstateItem(it)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := parseWorkstateItem(hosted.WorkstateItem{
+		ID: it.ID, Kind: string(it.Kind), Status: it.Status, Title: it.Title, Record: raw,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ParkOrigin != "in_progress" {
+		t.Errorf("round-trip park_origin = %q", got.ParkOrigin)
+	}
+}
+
 func TestMaterializeSkipsStaleHostedRow(t *testing.T) {
 	a := testApp(t)
 	ctx := context.Background()

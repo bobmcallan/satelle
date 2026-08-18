@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -54,22 +55,39 @@ func refuseSkippedStep(ctx context.Context, current workitem.Item, toStatus stri
 	}
 
 	// Park resume-to-origin (sty_f75286dc): origin is authoritative state.
-	if spec.IsParkState(from) && strings.TrimSpace(current.ParkOrigin) != "" {
-		origin := current.ParkOrigin
-		if toStatus == origin {
-			return nil // resume — always legal
+	// An empty column is not "cancel only" — derive from the last transition
+	// into this park when the workstate wire has wiped the stamp (sty_524f091d).
+	if spec.IsParkState(from) {
+		origin := ParkOrigin(current, spec, parkOriginEntries(ctx, current.ID))
+		if origin != "" {
+			if toStatus == origin {
+				return nil // resume — always legal
+			}
+			// Explicit non-performing exits (cancelled, etc.) still use declared edges.
+			if spec.HasEdge(from, toStatus) && !spec.IsPerformingState(toStatus) {
+				return nil
+			}
+			return wfgovern.Refusal{
+				Rule: wfgovern.RuleParkResume, Item: current.ID, Workflow: wfName,
+				From: from, To: toStatus,
+				Why: fmt.Sprintf(
+					"a parked story resumes to the state it parked from (%q), so the gates already passed to reach it are not re-run and none are skipped",
+					origin),
+				Alternatives: append([]string{origin}, declaredExits(spec, from)...),
+				Remedy:       "cancelled and other declared non-performing exits remain open",
+			}
 		}
-		// Explicit non-performing exits (cancelled, etc.) still use declared edges.
+		// Parked with no origin: do not fall through to skipped-step (that
+		// names cancelled as the only next step and looks like a missing
+		// recover edge). Non-performing declared exits stay open.
 		if spec.HasEdge(from, toStatus) && !spec.IsPerformingState(toStatus) {
 			return nil
 		}
 		return wfgovern.Refusal{
 			Rule: wfgovern.RuleParkResume, Item: current.ID, Workflow: wfName,
 			From: from, To: toStatus,
-			Why: fmt.Sprintf(
-				"a parked story resumes to the state it parked from (%q), so the gates already passed to reach it are not re-run and none are skipped",
-				origin),
-			Alternatives: append([]string{origin}, declaredExits(spec, from)...),
+			Why:          "this park has no recorded origin — the column is empty and the ledger has no transition into this park — so resume is not admitted",
+			Alternatives: declaredExits(spec, from),
 			Remedy:       "cancelled and other declared non-performing exits remain open",
 		}
 	}
@@ -126,7 +144,10 @@ func declaredExits(spec wfdot.Spec, from string) []string {
 
 // parkOriginForTransition returns the park_origin value to stamp on a status
 // transition (sty_f75286dc). Entering a park node stores the prior status;
-// leaving a park node clears it. Nil means leave the column unchanged.
+// leaving a park node clears it. A stay-parked row with an empty column is
+// healed from the ledger when a performing origin can be derived (sty_524f091d).
+// Nil means leave the column unchanged. This is the only write seam for the
+// column on a transition — ParkOrigin itself is a pure derivation.
 func parkOriginForTransition(ctx context.Context, current workitem.Item, toStatus string) *string {
 	idx, err := requireDocIndex()
 	if err != nil {
@@ -151,5 +172,55 @@ func parkOriginForTransition(ctx context.Context, current workitem.Item, toStatu
 		// Leave park (resume or cancel): clear origin.
 		return &empty
 	}
+	if spec.IsParkState(current.Status) && strings.TrimSpace(current.ParkOrigin) == "" {
+		if o := ParkOrigin(current, spec, parkOriginEntries(ctx, current.ID)); o != "" {
+			return &o
+		}
+	}
 	return nil
+}
+
+// ParkOrigin is the single resume-origin computation (sty_524f091d). The
+// stamped column wins; otherwise the last status_transition into the current
+// park status is used, and only when that from-state is a declared performing
+// state of spec. Pure: no store, no write.
+func ParkOrigin(item workitem.Item, spec wfdot.Spec, entries []ledger.Entry) string {
+	if o := strings.TrimSpace(item.ParkOrigin); o != "" {
+		return o
+	}
+	if !spec.IsParkState(item.Status) {
+		return ""
+	}
+	for i := len(entries) - 1; i >= 0; i-- {
+		if TransitionTo(entries[i]) != item.Status {
+			continue
+		}
+		from := TransitionFrom(entries[i])
+		if from == "" {
+			continue
+		}
+		if spec.IsPerformingState(from) {
+			return from
+		}
+		return ""
+	}
+	return ""
+}
+
+// ParkOriginOf is ParkOrigin with the wired ledger. Callers that already have
+// entries should call ParkOrigin directly so tests stay store-free.
+func ParkOriginOf(ctx context.Context, item workitem.Item, spec wfdot.Spec) string {
+	return ParkOrigin(item, spec, parkOriginEntries(ctx, item.ID))
+}
+
+func parkOriginEntries(ctx context.Context, storyID string) []ledger.Entry {
+	led, err := requireLedger()
+	if err != nil || led == nil || strings.TrimSpace(storyID) == "" {
+		return nil
+	}
+	entries, err := led.ListByStory(ctx, storyID, ledger.KindStatusTransition)
+	if err != nil {
+		return nil
+	}
+	return entries
 }

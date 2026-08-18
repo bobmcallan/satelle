@@ -601,6 +601,7 @@ type workstateItemWire struct {
 	UpdatedAt          time.Time `json:"updated_at"`
 	CreatedAt          time.Time `json:"created_at"`
 	Archived           bool      `json:"archived,omitempty"`
+	ParkOrigin         string    `json:"park_origin,omitempty"`
 }
 
 func parseWorkstateItem(hi hosted.WorkstateItem) (workitem.Item, error) {
@@ -641,6 +642,7 @@ func parseWorkstateItem(hi hosted.WorkstateItem) (workitem.Item, error) {
 		Priority: w.Priority, Category: w.Category, ParentID: w.ParentID,
 		AcceptanceCriteria: w.AcceptanceCriteria, Tags: w.Tags,
 		CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, Archived: w.Archived,
+		ParkOrigin: w.ParkOrigin,
 	}, nil
 }
 
@@ -786,6 +788,7 @@ func marshalWorkstateItem(it workitem.Item) (json.RawMessage, error) {
 		Body: it.Body, Priority: it.Priority, Category: it.Category, ParentID: it.ParentID,
 		AcceptanceCriteria: it.AcceptanceCriteria, Tags: it.Tags,
 		UpdatedAt: it.UpdatedAt, CreatedAt: it.CreatedAt, Archived: it.Archived,
+		ParkOrigin: it.ParkOrigin,
 	}
 	b, err := json.Marshal(w)
 	if err != nil {

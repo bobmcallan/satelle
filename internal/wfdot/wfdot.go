@@ -519,6 +519,28 @@ func (s Spec) IsParkState(name string) bool {
 	return false
 }
 
+// IsResumePark reports whether name is the synthesised park (from="*") —
+// the off-route state whose route text may say "resumes to origin".
+// Cancel sinks are IsParkState (they release the seat) but are not resume
+// parks, even when they grow an outbound edge (sty_524f091d).
+func (s Spec) IsResumePark(name string) bool {
+	for _, st := range s.States {
+		if st.Name != name {
+			continue
+		}
+		if st.Agent != "reviewer" || st.Shape == "Mdiamond" {
+			return false
+		}
+		for _, f := range st.From {
+			if f == "*" {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
 // Advance is one offered onward transition from a performing state — target
 // status and the reviewer gate skills the route declares on entry to it
 // (sty_e16a2cd7). Gates is Transition.Skills.

@@ -115,10 +115,24 @@ func TestRouteSeparatesExitsFromSteps(t *testing.T) {
 		exits[e.Status] = e
 	}
 	if !exits["blocked"].Park {
-		t.Error("blocked must render as a park exit (it has onward movement)")
+		t.Error("blocked must render as a park exit (from=* resume park)")
 	}
 	if exits["cancelled"].Park {
 		t.Error("cancelled must render as terminal, not park — nothing resumes from it")
+	}
+}
+
+// TestExitParkFollowsResumePark (sty_524f091d AC3): the promise is
+// IsResumePark, not "has outbound edges". A cancel sink with an extra outbound
+// edge is still not advertised as a park.
+func TestExitParkFollowsResumePark(t *testing.T) {
+	r := Build(derived(t, nil), "wf", nil, nil)
+	out := r.Render("in_progress")
+	if !strings.Contains(out, "blocked (park — resumes to origin)") {
+		t.Errorf("default route must still advertise blocked as a resume park:\n%s", out)
+	}
+	if strings.Contains(out, "cancelled (park — resumes to origin)") {
+		t.Errorf("cancelled must not be advertised as a resume park:\n%s", out)
 	}
 }
 
