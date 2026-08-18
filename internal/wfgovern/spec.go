@@ -89,6 +89,13 @@ var ErrLegacyMarkdownRoute = errors.New("wfgovern: route source is still markdow
 // story advance ungated.
 var ErrNoWorkflow = errors.New("wfgovern: no workflow governs this item")
 
+// ErrRouteSourceBroken reports that an authored done.toml / step.toml exists
+// but does not parse. It is deliberately DISTINCT from ErrNoWorkflow: callers
+// treat that one as "fresh repo, nothing governs yet" and let a transition
+// through, so collapsing a broken route into it would advance a story past
+// every gate the repo authored (sty_5b88aa1b).
+var ErrRouteSourceBroken = errors.New("wfgovern: route source does not parse")
+
 // IsRouteSource reports whether a workflow-kind doc is one half of a derived
 // route rather than a workflow in its own right.
 func IsRouteSource(name string) bool {
@@ -272,6 +279,12 @@ func SpecFor(workflows []docindex.Doc, item workitem.Item) (wfdot.Spec, string, 
 	if stale := LegacyMarkdownRoute(workflows); len(stale) > 0 {
 		return wfdot.Spec{}, DerivedRouteName, nil, LegacyMarkdownRouteError(stale)
 	}
+	// A present authored route that does not parse is BROKEN, not absent.
+	// RouteGoverns would otherwise swallow the parse error (RouteCategories
+	// returns nil) and fall through to ErrNoWorkflow — ungated close.
+	if err := authoredRouteParseError(workflows); err != nil {
+		return wfdot.Spec{}, DerivedRouteName, nil, err
+	}
 	rs, ok := RouteGoverns(workflows, category)
 	if !ok {
 		if wf, governs := GoverningWorkflow(LifecycleWorkflows(workflows), item); governs {
@@ -284,7 +297,7 @@ func SpecFor(workflows []docindex.Doc, item workitem.Item) (wfdot.Spec, string, 
 					"Read `satelle help workflow-convert` for how to convert this graph, then `satelle migrate --yes` to retire it",
 				wf.Name)
 		}
-		return wfdot.Spec{}, "", nil, fmt.Errorf("%w: category %q", ErrNoWorkflow, category)
+		return wfdot.Spec{}, "", nil, fmt.Errorf("%w: category %q — satelle workflow validate reads the FILE; gating reads the INDEX. If the file on disk is already correct, the index is stale — run `satelle reindex`", ErrNoWorkflow, category)
 	}
 	spec, advisors, err := routeSpec(rs, category, item.Tags)
 	if err != nil {
@@ -350,16 +363,51 @@ func RouteSpecFor(rs RouteSource, category string, tags []string) (DerivedRoute,
 // workflow's applies_to used to — seeding defaults, most importantly, which
 // would otherwise re-seed a DOT workflow over the route that replaced it.
 func RouteCategories(doneBody string) []string {
+	cs, _ := routeCategories(doneBody)
+	return cs
+}
+
+// routeCategories is the error-returning core. Display callers use
+// RouteCategories and degrade; SpecFor uses this so a parse failure is not
+// collapsed into "claims nothing".
+func routeCategories(doneBody string) ([]string, error) {
 	if doneBody == "" {
-		return nil
+		return nil, nil
 	}
 	lists, err := wfdot.ParseDone(doneBody)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	out := make([]string, 0, len(lists))
 	for _, l := range lists {
 		out = append(out, l.Category)
 	}
-	return out
+	return out, nil
+}
+
+const staleIndexRemedy = "satelle workflow validate reads the FILE; gating reads the INDEX. If the file on disk is already correct, the index is stale — run `satelle reindex`"
+
+// authoredRouteParseError returns ErrRouteSourceBroken when an authored
+// (non-embedded) route half is present and does not parse. Embedded defaults
+// are exempt — refusing the binary's own bytes would brick every repo.
+func authoredRouteParseError(workflows []docindex.Doc) error {
+	for _, w := range workflows {
+		if !IsRouteSource(w.Name) || w.Embedded || strings.HasPrefix(w.Path, "embedded:") {
+			continue
+		}
+		if strings.TrimSpace(w.Body) == "" {
+			continue
+		}
+		var err error
+		switch w.Name {
+		case RouteSourceDone:
+			_, err = wfdot.ParseDone(w.Body)
+		case RouteSourceStep:
+			_, err = wfdot.ParseSteps(w.Body)
+		}
+		if err != nil {
+			return fmt.Errorf("%w: %s: %v — %s", ErrRouteSourceBroken, w.Name+".toml", err, staleIndexRemedy)
+		}
+	}
+	return nil
 }

@@ -1184,6 +1184,54 @@ on = ["done"]
 	}
 }
 
+func TestUngovernedDoesNotMatchBrokenRoute(t *testing.T) {
+	if ungoverned(wfgovern.ErrRouteSourceBroken) {
+		t.Fatal("ErrRouteSourceBroken must not be treated as ungoverned")
+	}
+	if !ungoverned(wfgovern.ErrNoWorkflow) {
+		t.Fatal("ErrNoWorkflow must stay the ungoverned case")
+	}
+}
+
+func TestGateRefusesUnknownParkAgentKey(t *testing.T) {
+	broken := wfDoc(
+		`["*"]
+obligations = ["raised", "coded", "closed"]
+park = { state = "blocked", agent = "reviewer", gate = "blocked-review" }
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+`)
+	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: broken, skillBody: "rubric", skillFound: true})
+	_, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress", Category: "feature"}, "done")
+	if err == nil {
+		t.Fatal("want the close refused under a done.toml with park.agent")
+	}
+	if r.got.SystemPrompt != "" {
+		t.Error("no reviewer may run under a broken route source")
+	}
+	var ref wfgovern.Refusal
+	if !errors.As(err, &ref) {
+		if !errors.Is(err, wfgovern.ErrRouteSourceBroken) {
+			t.Fatalf("want Refusal or ErrRouteSourceBroken, got %T: %v", err, err)
+		}
+		return
+	}
+	if ref.Rule != wfgovern.RuleStructureGuard {
+		t.Errorf("rule = %q; want %q", ref.Rule, wfgovern.RuleStructureGuard)
+	}
+}
+
 // TestGateRefusesBrokenWorkflowStructure: a governing workflow that fails its
 // deterministic structure check must never gate work — the transition is
 // refused with the problems (sty_d0d6bb67), instead of silently proceeding

@@ -2,6 +2,7 @@ package verb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -43,6 +44,12 @@ func refuseSkippedStep(ctx context.Context, current workitem.Item, toStatus stri
 	spec, wfName, _, serr := wfgovern.SpecFor(wfs, current)
 	ok := serr == nil
 	if !ok {
+		// A broken authored route source must fail closed. Other resolution
+		// errors (fresh repo / unconverted graph) stay the existing fail-open
+		// owned by the gate engine.
+		if errors.Is(serr, wfgovern.ErrRouteSourceBroken) {
+			return serr
+		}
 		return nil
 	}
 

@@ -97,6 +97,7 @@ func Open() (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	st.DocIndex.SetRoots(cfg.ResolveAuthoredDirs(repoRoot))
 	// Record reverse map for `satelle runtime list` (sty_c36c211f). Best-effort —
 	// a marker write failure must not block open.
 	_ = config.WriteRepoPathMarker(rt.Dir, repoRoot)

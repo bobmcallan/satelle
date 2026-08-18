@@ -108,6 +108,53 @@ func TestShippedRouteYieldsToAnAuthoredWorkflow(t *testing.T) {
 // TestShippedRouteGovernsWhenNothingIsAuthored: with no authored workflow, the
 // shipped route is what governs — this is the fresh-repo case, and the reason
 // the engine needs no by-name fallback of its own.
+func TestAuthoredBrokenRouteIsNotUngoverned(t *testing.T) {
+	brokenDone := strings.Replace(routeDone,
+		`cancel = { state = "cancelled", gate = "cancel-review" }`,
+		`park = { state = "blocked", agent = "reviewer", gate = "blocked-review" }`,
+		1)
+	docs := []docindex.Doc{
+		{Kind: "workflows", Name: "done", Body: brokenDone, Path: "/repo/.satelle/workflows/done.toml"},
+		{Kind: "workflows", Name: "step", Body: routeStep, Path: "/repo/.satelle/workflows/step.toml"},
+	}
+	_, _, _, err := wfgovern.SpecFor(docs, workitem.Item{ID: "sty_1", Category: "feature"})
+	if err == nil {
+		t.Fatal("a broken authored route must refuse")
+	}
+	if !errors.Is(err, wfgovern.ErrRouteSourceBroken) {
+		t.Errorf("err = %v, want ErrRouteSourceBroken", err)
+	}
+	if errors.Is(err, wfgovern.ErrNoWorkflow) {
+		t.Error("must not collapse into ErrNoWorkflow")
+	}
+	if !strings.Contains(err.Error(), "satelle reindex") {
+		t.Errorf("broken-route refusal must name satelle reindex, got %v", err)
+	}
+}
+
+func TestErrNoWorkflowNamesReindex(t *testing.T) {
+	_, _, _, err := wfgovern.SpecFor(nil, workitem.Item{ID: "sty_1", Category: "feature"})
+	if !errors.Is(err, wfgovern.ErrNoWorkflow) {
+		t.Fatalf("err = %v, want ErrNoWorkflow", err)
+	}
+	if !strings.Contains(err.Error(), "satelle reindex") {
+		t.Errorf("ErrNoWorkflow must name satelle reindex, got %v", err)
+	}
+}
+
+func TestEmbeddedBrokenRouteDoesNotBrick(t *testing.T) {
+	// A parse failure on an EMBEDDED half is a broken binary; we must not
+	// refuse every repo. Embedded skip matches LegacyMarkdownRoute.
+	docs := []docindex.Doc{
+		{Kind: "workflows", Name: "done", Body: "not toml", Embedded: true, Path: "embedded:workflows/done.toml"},
+		{Kind: "workflows", Name: "step", Body: routeStep, Embedded: true, Path: "embedded:workflows/step.toml"},
+	}
+	_, _, _, err := wfgovern.SpecFor(docs, workitem.Item{ID: "sty_1", Category: "feature"})
+	if errors.Is(err, wfgovern.ErrRouteSourceBroken) {
+		t.Fatalf("embedded parse failure must not be ErrRouteSourceBroken: %v", err)
+	}
+}
+
 func TestShippedRouteGovernsWhenNothingIsAuthored(t *testing.T) {
 	docs := routeDocs(true)
 	if _, ok := wfgovern.RouteGoverns(docs, "feature"); !ok {

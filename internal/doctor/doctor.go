@@ -245,13 +245,13 @@ func checkAuthoredDir(kind, dir string, resolve func(string) bool) health.Findin
 	var out health.Findings
 	for _, e := range entries {
 		fn := e.Name()
-		if e.IsDir() || !strings.HasSuffix(fn, ".md") {
+		if e.IsDir() || !docindex.Indexable(fn) {
 			continue
 		}
 		if kind == "tasks" && !strings.HasPrefix(fn, "tsk_") {
 			continue
 		}
-		name := strings.TrimSuffix(fn, ".md")
+		name := strings.TrimSuffix(fn, filepath.Ext(fn))
 		if reservedKeepFile(fn) {
 			continue
 		}

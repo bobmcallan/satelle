@@ -79,10 +79,22 @@ func Migrate(db *sql.DB) error {
 type Store struct {
 	db       *sql.DB
 	defaults []Doc // embedded canonical defaults, normalised; keyed by (Kind, Name)
+	// roots is the authored kind→dir map. When set, List("workflows")
+	// best-effort Syncs that dir first so a corrected file is visible to
+	// gating without a manual reindex (sty_5b88aa1b).
+	roots map[string]string
 }
 
 // New returns a Store bound to db.
 func New(db *sql.DB) *Store { return &Store{db: db} }
+
+// SetRoots records the authored-dir map used by List to refresh workflows.
+func (s *Store) SetRoots(dirs map[string]string) {
+	if s == nil {
+		return
+	}
+	s.roots = dirs
+}
 
 // SetDefaults installs the embedded canonical defaults overlaid under the disk
 // index. Each input needs only Kind, Name, and Body; the rest (Headline, Hash,
@@ -232,6 +244,13 @@ func (s *Store) Watch(ctx context.Context, dirs map[string]string, interval time
 // epic:substrate-planes — virtual sparse defaults). Disk always wins. Empty kind
 // returns every kind. Sync stays file-driven; the overlay is READ-TIME only.
 func (s *Store) List(ctx context.Context, kind string) ([]Doc, error) {
+	// Best-effort: a workflows List is what every gating path reads. Refresh
+	// that kind from disk so a corrected done.toml is visible without reindex.
+	if strings.TrimSpace(kind) == "workflows" && s.roots != nil {
+		if dir := strings.TrimSpace(s.roots["workflows"]); dir != "" {
+			_, _ = s.Sync(ctx, map[string]string{"workflows": dir}, time.Now())
+		}
+	}
 	q := `SELECT kind, name, path, headline, body, hash, size, mod_time, indexed_at FROM authored_docs`
 	var args []any
 	if strings.TrimSpace(kind) != "" {

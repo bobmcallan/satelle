@@ -268,6 +268,22 @@ func TestDefectMatrix(t *testing.T) {
 			want: health.IDWorkflowStructure,
 		},
 		{
+			name: "broken done.toml route source",
+			opts: fixtureOpts{extraFiles: map[string]string{
+				"workflows/done.toml": `[meta]
+name = "done"
+scope = "project"
+type = "workflow"
+description = "Broken park.agent key."
+
+["*"]
+obligations = ["raised", "coded", "closed"]
+park = { state = "blocked", agent = "reviewer", gate = "satelle-story-blocked-review" }
+`,
+			}},
+			want: health.IDWorkflowStructure,
+		},
+		{
 			name: "missing agents layer",
 			opts: fixtureOpts{omitAgents: true},
 			want: health.IDAgentsLoad,

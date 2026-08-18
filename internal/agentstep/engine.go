@@ -863,21 +863,24 @@ func (g *Engine) guardWorkflowStructure(ctx context.Context, item workitem.Item,
 	// this guard now — activeWorkflow deliberately does not return route halves,
 	// so without this the guard would pass every broken route silently.
 	if workflows, lerr := g.docs.List(ctx, "workflows"); lerr == nil {
-		if _, governs := wfgovern.RouteGoverns(workflows, workflowCategory(item)); governs {
-			for _, w := range workflows {
-				if !wfgovern.IsRouteSource(w.Name) || w.Embedded {
-					continue
-				}
-				if problems := structure.Doc("workflows", w.Name, w.Body, nil); len(problems) > 0 {
-					return wfgovern.Refusal{
-						Rule: wfgovern.RuleStructureGuard, Item: item.ID, Workflow: w.Name,
-						From: item.Status, To: toStatus,
-						Why: fmt.Sprintf("the governing workflow fails structure validation (%s), so no gate under it can be trusted to judge",
-							strings.Join(problems, "; ")),
-						Remedy: fmt.Sprintf("fix the substrate (`satelle workflow validate %s`) — no transition is legal until it passes", w.Name),
-					}
+		// Judge authored route halves regardless of whether RouteGoverns
+		// currently resolves: a parse failure makes RouteGoverns false, which
+		// is exactly when this guard must still fire (sty_5b88aa1b).
+		for _, w := range workflows {
+			if !wfgovern.IsRouteSource(w.Name) || w.Embedded {
+				continue
+			}
+			if problems := structure.Doc("workflows", w.Name, w.Body, nil); len(problems) > 0 {
+				return wfgovern.Refusal{
+					Rule: wfgovern.RuleStructureGuard, Item: item.ID, Workflow: w.Name,
+					From: item.Status, To: toStatus,
+					Why: fmt.Sprintf("the governing workflow fails structure validation (%s), so no gate under it can be trusted to judge",
+						strings.Join(problems, "; ")),
+					Remedy: fmt.Sprintf("fix the substrate (`satelle workflow validate %s`) — if the file on disk already passes, the index is stale: run `satelle reindex`", w.Name),
 				}
 			}
+		}
+		if _, governs := wfgovern.RouteGoverns(workflows, workflowCategory(item)); governs {
 			return nil
 		}
 	}

@@ -1,4 +1,10 @@
+## [0.0.462] - 2026-08-18
+
+### Fixed
+- **A route source that does not parse no longer reads as ungoverned.** A broken `done.toml` / `step.toml` fails closed (distinct from “no workflow”); refusals name `satelle reindex`; doctor structure-checks the TOML halves; `List(workflows)` refreshes from disk so a revert restores governance without a manual reindex. (sty_5b88aa1b)
+
 ## [0.0.461] - 2026-08-18
+
 
 ### Fixed
 - **A recorded status_transition can no longer leave the story row on an older status.** Transition writes the row and the ledger event in one transaction; a hosted workstate snapshot will not overwrite a newer local row or a later local transition; `satelle story reconcile [--repair]` repairs existing drift; doctor reports it. (sty_8e01ba7f)
