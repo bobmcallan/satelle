@@ -1,3 +1,8 @@
+## [0.0.471] - 2026-08-25
+
+### Changed
+- **The embedded route reference teaches the TOML form the parser accepts.** `satelle-route-standard`, `satelle-workflow-change-review` and `satelle-workflow-advisor` still described `done.md`/`step.md` with `## <category>` and `## gate <skill>` sections — artifacts the binary cannot read — so the reference other workflow tooling cites, and the gate that judges route edits, both named a form that no longer exists. Rewritten to `done.toml`/`step.toml` with category tables, obligation-keyed step tables and always-on gate entries, doctrine carried over unchanged, and leading with the one rule the format does not make obvious: an obligation names a step by its TABLE KEY, never by the status the step declares. A gate's `on` is the documented exception — it matches statuses. (sty_8c115e7a)
+
 ## [0.0.470] - 2026-08-25
 
 ### Fixed
