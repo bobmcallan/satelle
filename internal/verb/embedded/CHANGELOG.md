@@ -1,3 +1,8 @@
+## [0.0.466] - 2026-08-24
+
+### Fixed
+- **A slice that only DELETES git-ignored substrate is now enumerable.** The engagement baseline snapshots a `substrate_manifest` — the sorted, repo-relative paths of every authored substrate file present at engage — and `satelle story diff <id> --include-substrate` unions the manifest paths that have since vanished. Retiring a drifted `.satelle/` override in a repo that git-ignores its substrate no longer fails the substrate close gate with "no change set found": the mtime walk can only see files that still exist, so the manifest is what a deletion is measured against. The git-only default leg is unchanged, and a baseline without a manifest (any engagement predating this) reports no deletions and no error. (sty_7e1e2deb)
+
 ## [0.0.465] - 2026-08-24
 
 ### Added
