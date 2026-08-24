@@ -7,7 +7,9 @@
 //
 // Repo-agnostic: catalog is built from dataDir + EmbeddedDefaults only. Bash
 // `[[` tests are excluded (target must start with an alphanumeric — character
-// classes like [[:space:]] do not match).
+// classes like [[:space:]] do not match). Quoted code — fenced blocks and
+// inline spans — is masked before the scan: a doc that SHOWS `[[gate]]` is
+// naming a TOML array-of-tables header, not referring to a document.
 package cli
 
 import (
@@ -116,16 +118,46 @@ func wikilinkCatalog(dataDir string, embedded []config.EmbeddedDefault) map[stri
 
 // codeSpanRe matches an inline `code span`. Text inside one is QUOTED, not
 // authored: a doc that shows `[[gate]]` is naming a TOML array-of-tables header,
-// not referring to a document called "gate". Stripping spans before the wikilink
+// not referring to a document called "gate". Masking spans before the wikilink
 // scan is what lets prose talk about syntax without every example becoming a
 // dangling link.
 var codeSpanRe = regexp.MustCompile("`[^`\n]*`")
+
+// fencedBlockRe matches a fenced code block: up to three spaces of indent, an
+// opening run of three or more backticks or tildes with an optional info
+// string, the body, and a closing fence — or end of input when the fence is
+// never closed. A regex is the proportionate tool for a substrate linter;
+// nested and list-indented fences are out of scope.
+var fencedBlockRe = regexp.MustCompile("(?ms)^ {0,3}(?:`{3,}|~{3,})[^\n]*\n.*?(?:^ {0,3}(?:`{3,}|~{3,})[^\n]*$|\\z)")
+
+// maskQuotedCode blanks the contents of fenced code blocks and inline code
+// spans, returning a copy of body with the SAME byte length (non-newline bytes
+// become spaces, newlines are kept). Length preservation is load-bearing:
+// rewriteWikilinkTarget finds matches in the masked copy and slices the
+// original by those offsets, so a mask that removed bytes would corrupt files.
+// Fences are masked first so a stray backtick inside one cannot pair across the
+// fence boundary.
+func maskQuotedCode(body string) string {
+	// Blank BYTE-wise, not rune-wise: strings.Map would collapse a multi-byte
+	// rune to a one-byte space and break the offset invariant.
+	blank := func(s string) string {
+		b := []byte(s)
+		for i := range b {
+			if b[i] != '\n' {
+				b[i] = ' '
+			}
+		}
+		return string(b)
+	}
+	masked := fencedBlockRe.ReplaceAllStringFunc(body, blank)
+	return codeSpanRe.ReplaceAllStringFunc(masked, blank)
+}
 
 // danglingIn returns problem lines for unresolved wikilinks in body.
 func danglingIn(body, where string, catalog map[string]bool) []string {
 	var out []string
 	seen := map[string]bool{}
-	body = codeSpanRe.ReplaceAllString(body, "")
+	body = maskQuotedCode(body)
 	for _, m := range wikiLinkRe.FindAllStringSubmatch(body, -1) {
 		target := strings.TrimSpace(m[1])
 		if target == "" || catalog[target] {

@@ -281,7 +281,7 @@ func planMigrate(cfg config.Config, repoRoot, dataDir string) migratePlan {
 func planRetiredRefs(dataDir string) []retiredRefHit {
 	var hits []retiredRefHit
 	add := func(rel, body string) {
-		body = codeSpanRe.ReplaceAllString(body, "")
+		body = maskQuotedCode(body)
 		counts := map[string]int{}
 		for _, m := range wikiLinkRe.FindAllStringSubmatch(body, -1) {
 			target := strings.TrimSpace(m[1])
@@ -374,31 +374,17 @@ func applyRetiredRefRewrites(out io.Writer, dataDir string, hits []retiredRefHit
 }
 
 // rewriteWikilinkTarget replaces [[old…]] forms with [[new…]], preserving
-// |label and #anchor suffixes. Code spans (backticks) are left untouched so
-// prose quoting the old name is not rewritten.
+// |label and #anchor suffixes. Quoted code — fenced blocks and inline spans —
+// is left untouched so prose quoting the old name is not rewritten.
 func rewriteWikilinkTarget(body, old, newName string) (string, int) {
 	n := 0
-	// Mask code spans, rewrite, unmask — same span set as danglingIn detection.
-	type span struct{ from, to int }
-	var spans []span
-	for _, loc := range codeSpanRe.FindAllStringIndex(body, -1) {
-		spans = append(spans, span{loc[0], loc[1]})
-	}
-	inCode := func(i int) bool {
-		for _, s := range spans {
-			if i >= s.from && i < s.to {
-				return true
-			}
-		}
-		return false
-	}
+	// Scan the masked copy so quoted occurrences are invisible, but slice the
+	// ORIGINAL: maskQuotedCode is length-preserving, so offsets agree.
+	masked := maskQuotedCode(body)
 	var b strings.Builder
 	last := 0
-	for _, loc := range wikiLinkRe.FindAllStringSubmatchIndex(body, -1) {
+	for _, loc := range wikiLinkRe.FindAllStringSubmatchIndex(masked, -1) {
 		// loc[0]:loc[1] full match; loc[2]:loc[3] target group
-		if inCode(loc[0]) {
-			continue
-		}
 		target := body[loc[2]:loc[3]]
 		if strings.TrimSpace(target) != old {
 			continue

@@ -130,3 +130,78 @@ func TestRewriteWikilinkTarget(t *testing.T) {
 		t.Fatalf("label not preserved: %s", out)
 	}
 }
+
+func TestRewriteWikilinkTargetLeavesQuotedCode(t *testing.T) {
+	in := "Prose [[satelle-dot-standard]] rewrites.\n" +
+		"\n" +
+		"```toml\n" +
+		"# [[satelle-dot-standard]] — quoted, must survive\n" +
+		"```\n" +
+		"\n" +
+		"Inline `[[satelle-dot-standard]]` also survives.\n"
+	out, n := rewriteWikilinkTarget(in, "satelle-dot-standard", "satelle-route-standard")
+	if n != 1 {
+		t.Fatalf("n=%d want 1 (prose only)", n)
+	}
+	if strings.Count(out, "[[satelle-dot-standard]]") != 2 {
+		t.Fatalf("quoted occurrences must survive verbatim:\n%s", out)
+	}
+	if !strings.Contains(out, "Prose [[satelle-route-standard]] rewrites.") {
+		t.Fatalf("prose not rewritten:\n%s", out)
+	}
+}
+
+func TestDanglingInIgnoresFencedCodeBlocks(t *testing.T) {
+	catalog := map[string]bool{"satelle-known-name": true}
+	body := "# Placement\n" +
+		"\n" +
+		"```toml\n" +
+		"[[gate]]\n" +
+		"skill = \"satelle-agent-roster-check\"\n" +
+		"```\n" +
+		"\n" +
+		"Tilde fence:\n" +
+		"\n" +
+		"~~~toml\n" +
+		"[[table]]\n" +
+		"~~~\n" +
+		"\n" +
+		"Inline: `[[gate]]` is a TOML header — em dash keeps the mask honest.\n" +
+		"\n" +
+		"Resolvable: [[satelle-known-name]].\n" +
+		"\n" +
+		"Real dangler AFTER the fences: [[satelle-missing-thing]].\n"
+
+	got := danglingIn(body, "skills/x.md", catalog)
+	if len(got) != 1 {
+		t.Fatalf("want exactly one problem, got %d: %v", len(got), got)
+	}
+	if !strings.Contains(got[0], "satelle-missing-thing") {
+		t.Fatalf("want the prose dangler reported, got %v", got)
+	}
+	for _, banned := range []string{"gate", "table"} {
+		if strings.Contains(got[0], "[["+banned+"]]") {
+			t.Fatalf("quoted %q must not be reported: %v", banned, got)
+		}
+	}
+}
+
+func TestMaskQuotedCodePreservesLength(t *testing.T) {
+	// Byte length must survive masking — rewriteWikilinkTarget slices the
+	// original body by offsets found in the masked copy. Multi-byte runes
+	// (em dash) inside quoted code are the trap.
+	for _, body := range []string{
+		"```toml\n[[gate]] — quoted\n```\ntail\n",
+		"prose `[[gate]] — inline` tail\n",
+		"unterminated:\n```toml\n[[gate]] — no close\n",
+		"no quoted code at all\n",
+	} {
+		masked := maskQuotedCode(body)
+		if len(masked) != len(body) {
+			t.Errorf("length changed %d→%d for %q", len(body), len(masked), body)
+		}
+		if strings.Count(masked, "\n") != strings.Count(body, "\n") {
+			t.Errorf("newline count changed for %q → %q", body, masked)
+		}
+	}
+}
