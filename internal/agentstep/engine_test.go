@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -2707,6 +2708,149 @@ func TestGatePayloadIncludesDocs(t *testing.T) {
 		if !strings.Contains(r.got.Payload, want) {
 			t.Errorf("payload missing %q:\n%s", want, r.got.Payload)
 		}
+	}
+}
+
+// planEdgeWorkflow gates plan → in_progress, the edge sty_0f5e600c's prior-verdict
+// injection is authored against.
+var planEdgeWorkflow = spineWF("", "cancelled", "",
+	"plan|||satelle-story-intent-review",
+	"in_progress|executor||satelle-story-plan-review",
+	"done|||satelle-story-done-review")
+
+// TestGatePayloadIncludesPriorVerdicts (sty_0f5e600c AC1/AC2): the edge's earlier
+// verdicts ride the gate payload oldest-first, numbered from 1 over the FULL
+// history and windowed to the most recent five; a first attempt carries no key at
+// all, and the resolver is asked for THIS edge only.
+func TestGatePayloadIncludesPriorVerdicts(t *testing.T) {
+	verdict := func(i int, decision string) PriorVerdict {
+		return PriorVerdict{
+			Skill:     "satelle-story-plan-review",
+			Decision:  decision,
+			Notes:     fmt.Sprintf("PV-NOTE-%d", i),
+			CreatedAt: fmt.Sprintf("2026-08-24T0%d:00:00Z", i),
+		}
+	}
+	gateOnce := func(t *testing.T, resolver func(ctx context.Context, itemID, from, to string) []PriorVerdict) string {
+		t.Helper()
+		g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: planEdgeWorkflow, skillBody: "rubric", skillFound: true})
+		if resolver != nil {
+			g.SetPriorVerdictsResolver(resolver)
+		}
+		if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_pv", Status: "plan"}, "in_progress"); err != nil {
+			t.Fatal(err)
+		}
+		return r.got.Payload
+	}
+
+	t.Run("three rejects then an accept ride in order", func(t *testing.T) {
+		var gotFrom, gotTo, gotID string
+		payload := gateOnce(t, func(_ context.Context, itemID, from, to string) []PriorVerdict {
+			gotID, gotFrom, gotTo = itemID, from, to
+			return []PriorVerdict{verdict(1, "reject"), verdict(2, "reject"), verdict(3, "reject"), verdict(4, "accept")}
+		})
+		// AC2 (unit half): the engine asks for the edge under review, so a
+		// resolver filtering on from/to cannot be handed another edge's verdicts.
+		if gotID != "sty_pv" || gotFrom != "plan" || gotTo != "in_progress" {
+			t.Errorf("resolver called with (%q, %q, %q), want (sty_pv, plan, in_progress)", gotID, gotFrom, gotTo)
+		}
+		if !strings.Contains(payload, `"prior_verdicts"`) {
+			t.Fatalf("payload missing prior_verdicts:\n%s", payload)
+		}
+		var last int
+		for i := 1; i <= 4; i++ {
+			at := strings.Index(payload, fmt.Sprintf("PV-NOTE-%d", i))
+			if at < 0 {
+				t.Fatalf("payload missing PV-NOTE-%d:\n%s", i, payload)
+			}
+			if at < last {
+				t.Errorf("PV-NOTE-%d is out of order (oldest first expected)", i)
+			}
+			last = at
+		}
+		for _, want := range []string{`"attempt":1`, `"attempt":4`, `"decision":"reject"`, `"decision":"accept"`, `"skill":"satelle-story-plan-review"`, `"created_at":"2026-08-24T01:00:00Z"`} {
+			if !strings.Contains(payload, want) {
+				t.Errorf("payload missing %q:\n%s", want, payload)
+			}
+		}
+	})
+
+	t.Run("capped at the most recent five, numbered over the full history", func(t *testing.T) {
+		payload := gateOnce(t, func(_ context.Context, _, _, _ string) []PriorVerdict {
+			all := make([]PriorVerdict, 0, 8)
+			for i := 1; i <= 8; i++ {
+				all = append(all, verdict(i, "reject"))
+			}
+			return all
+		})
+		for i := 1; i <= 3; i++ {
+			if strings.Contains(payload, fmt.Sprintf(`"PV-NOTE-%d"`, i)) {
+				t.Errorf("verdict %d is outside the most-recent-5 window but rode the payload", i)
+			}
+		}
+		for i := 4; i <= 8; i++ {
+			if !strings.Contains(payload, fmt.Sprintf("PV-NOTE-%d", i)) {
+				t.Errorf("verdict %d missing from the window", i)
+			}
+		}
+		// Numbering is over the FULL history: the window starts at attempt 4, so a
+		// reviewer reading attempt 8 learns how deep the edge is.
+		for _, want := range []string{`"attempt":4`, `"attempt":8`} {
+			if !strings.Contains(payload, want) {
+				t.Errorf("payload missing %q:\n%s", want, payload)
+			}
+		}
+		if strings.Contains(payload, `"attempt":1`) {
+			t.Error("windowed verdicts must not be renumbered from 1")
+		}
+	})
+
+	t.Run("first attempt carries no key", func(t *testing.T) {
+		if payload := gateOnce(t, nil); strings.Contains(payload, "prior_verdicts") {
+			t.Errorf("unwired resolver must inject nothing:\n%s", payload)
+		}
+		empty := gateOnce(t, func(_ context.Context, _, _, _ string) []PriorVerdict { return nil })
+		if strings.Contains(empty, "prior_verdicts") {
+			t.Errorf("a first attempt (no prior verdicts) must omit the key:\n%s", empty)
+		}
+	})
+}
+
+// TestPriorVerdictsBoundedAndDoNotStarveDocs (sty_0f5e600c AC3): a paragraph-long
+// verdict is excerpted, and the prior-verdict budget is independent of
+// docsPayloadCeiling — the plan a reviewer must judge is never starved by the
+// verdicts about it.
+func TestPriorVerdictsBoundedAndDoNotStarveDocs(t *testing.T) {
+	const marker = "PVBIGNOTE"
+	huge := strings.Repeat(marker, (20<<10)/len(marker)) // ~20 KiB
+	planBody := "PVPLANMARKER plan body the reviewer must still receive in full"
+
+	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: planEdgeWorkflow, skillBody: "rubric", skillFound: true})
+	g.SetDocsResolver(func(_ context.Context, _ string) []DocState {
+		return []DocState{{Name: "plan", Type: "plan", Body: planBody}}
+	})
+	g.SetPriorVerdictsResolver(func(_ context.Context, _, _, _ string) []PriorVerdict {
+		return []PriorVerdict{{Skill: "satelle-story-plan-review", Decision: "reject", Notes: huge}}
+	})
+	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_pvbig", Status: "plan"}, "in_progress"); err != nil {
+		t.Fatal(err)
+	}
+	payload := r.got.Payload
+
+	if !strings.Contains(payload, planBody) {
+		t.Errorf("plan body must ride in full alongside a huge prior verdict:\n%s", payload)
+	}
+	if strings.Contains(payload, `"truncated":true`) {
+		t.Error("prior verdicts must not consume the docs budget")
+	}
+	if !strings.Contains(payload, marker) {
+		t.Error("the prior verdict's notes must still be present, excerpted")
+	}
+	if !strings.Contains(payload, "[truncated]") {
+		t.Error("an over-cap note must be marked as excerpted")
+	}
+	if got, cap := strings.Count(payload, marker), (priorVerdictNotesCeiling/len(marker))+1; got > cap {
+		t.Errorf("note excerpt carries %d markers, want at most %d (%d-byte cap)", got, cap, priorVerdictNotesCeiling)
 	}
 }
 

@@ -1,3 +1,8 @@
+## [0.0.465] - 2026-08-24
+
+### Added
+- **A re-reviewed gate now sees what it already judged.** The transition payload carries `prior_verdicts` for the same story and the same from→to edge — `{skill, decision, notes, created_at, attempt}`, oldest first, attempts numbered over the full edge history and windowed to the most recent 5, each note excerpted to 2 KiB so it can never starve the `docs` budget. Absent on a first attempt, so a reviewer that ignores it costs nothing. The embedded `satelle-story-plan-review` skill now asks for every blocking finding in one verdict, and on a re-review to close or keep open the previous verdict's findings rather than raising a fresh disjoint set. (sty_0f5e600c)
+
 ## [0.0.464] - 2026-08-18
 
 ### Fixed

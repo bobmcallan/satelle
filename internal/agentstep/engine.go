@@ -35,6 +35,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bobmcallan/satelle/internal/logfile"
 
@@ -101,6 +102,11 @@ type Engine struct {
 	// (sty_58fa970e). Nil-safe: an unwired resolver injects no docs.
 	// Named itemDocs to avoid clashing with the docs DocGetter substrate field.
 	itemDocs func(ctx context.Context, itemID string) []DocState
+	// priorVerdicts resolves the verdicts already recorded for THIS item on THIS
+	// from→to edge (oldest first), so a re-review judges the delta instead of
+	// re-reading the artefact with no memory (sty_0f5e600c). Nil-safe: an unwired
+	// resolver injects nothing.
+	priorVerdicts func(ctx context.Context, itemID, from, to string) []PriorVerdict
 	// injectPrinciples is a cache of the reviewer binding's principle injection
 	// (sty_46a40208). Order:2 feeds Invoke from reviewerBinding; this flag remains
 	// so SetInjectPrinciples / tests keep working until order:3 retires the scalar.
@@ -362,9 +368,28 @@ func (g *Engine) SetDocsResolver(fn func(ctx context.Context, itemID string) []D
 	g.itemDocs = fn
 }
 
+// SetPriorVerdictsResolver wires the resolver that lists the verdicts already
+// recorded for an item on the edge under review, oldest first — the enumeration
+// a re-reviewer needs to judge what CHANGED rather than re-deriving a verdict
+// from scratch (sty_0f5e600c). Enumeration, not verdict: the binary attaches the
+// rows, the reviewer skill decides what to do with them. Nil-safe: an unwired
+// resolver injects no prior verdicts.
+func (g *Engine) SetPriorVerdictsResolver(fn func(ctx context.Context, itemID, from, to string) []PriorVerdict) {
+	g.priorVerdicts = fn
+}
+
 // docsPayloadCeiling bounds how many attachment body bytes ride in one payload
 // so a long-lived story with many step summaries does not blow the prompt.
 const docsPayloadCeiling = 128 << 10
+
+// priorVerdictCount bounds how many of an edge's verdicts ride in one payload,
+// and priorVerdictNotesCeiling bounds each entry's notes — together an upper
+// bound of ~10 KiB, deliberately independent of docsPayloadCeiling so a
+// paragraph-long verdict can never starve the plan the reviewer must judge.
+const (
+	priorVerdictCount        = 5
+	priorVerdictNotesCeiling = 2 << 10
+)
 
 // SetReviewerModel sets the reviewer's model from the agents layer (the resolved
 // `reviewer` binding's `model`). It rides as `--model` to every isolated reviewer
@@ -444,6 +469,24 @@ type transitionPayload struct {
 	// judges drift has the enumeration without shelling for it. Enumeration, not
 	// verdict — the binary attaches it and decides nothing.
 	RouteDrift *wfgovern.RouteDrift `json:"route_drift,omitempty"`
+	// PriorVerdicts carries the verdicts already recorded for this story on THIS
+	// from→to edge, oldest first (sty_0f5e600c) — so a re-review judges the delta
+	// against what it already settled instead of returning a fresh, disjoint
+	// finding set each pass. Absent on a first attempt, so a reviewer that ignores
+	// it costs nothing. Enumeration, not verdict.
+	PriorVerdicts []PriorVerdict `json:"prior_verdicts,omitempty"`
+}
+
+// PriorVerdict is one verdict already recorded on the edge under review.
+// Attempt is 1-based over the edge's FULL history (not the injected window), so
+// a reviewer seeing attempt 7 learns the edge is deep even when the window
+// starts at 3.
+type PriorVerdict struct {
+	Skill     string `json:"skill,omitempty"`
+	Decision  string `json:"decision"` // "accept" | "reject"
+	Notes     string `json:"notes,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"` // RFC3339
+	Attempt   int    `json:"attempt"`
 }
 
 // ChildState is one child story's id and status, injected into a parent/epic
@@ -515,6 +558,46 @@ func (g *Engine) fillPayloadDocs(ctx context.Context, itemID string, tp *transit
 		used += len(body)
 	}
 	tp.Docs = out
+}
+
+// fillPriorVerdicts attaches the edge's earlier verdicts, numbered from 1 over
+// the FULL resolved history, then windowed to the most recent
+// priorVerdictCount with each note capped. The two budgets stay separate on
+// purpose: this runs AFTER fillPayloadDocs and never touches its counter, so
+// prior verdicts provably cannot consume docsPayloadCeiling.
+func (g *Engine) fillPriorVerdicts(ctx context.Context, itemID, from, to string, tp *transitionPayload) {
+	if g.priorVerdicts == nil || itemID == "" {
+		return
+	}
+	all := g.priorVerdicts(ctx, itemID, from, to)
+	if len(all) == 0 {
+		return
+	}
+	for i := range all {
+		all[i].Attempt = i + 1
+	}
+	if len(all) > priorVerdictCount {
+		all = all[len(all)-priorVerdictCount:]
+	}
+	out := make([]PriorVerdict, 0, len(all))
+	for _, v := range all {
+		v.Notes = excerpt(v.Notes, priorVerdictNotesCeiling)
+		out = append(out, v)
+	}
+	tp.PriorVerdicts = out
+}
+
+// excerpt cuts s to at most limit bytes on a rune boundary, marking the cut so
+// a reviewer never mistakes a truncated verdict for the whole of one.
+func excerpt(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	cut := s[:limit]
+	for len(cut) > 0 && !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	return cut + "… [truncated]"
 }
 
 // alwaysPrinciples returns the bodies of the SESSION-resident (principles:session)
@@ -1457,6 +1540,11 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 		tp.Children = g.children(ctx, item.ID)
 	}
 	g.fillPayloadDocs(ctx, item.ID, &tp)
+	// Prior verdicts ride ONLY the gate payload (sty_0f5e600c): they are re-review
+	// context, so the executor and retrospective payloads deliberately go without —
+	// a performer optimising for the last rejection instead of the story is the
+	// failure mode that would create.
+	g.fillPriorVerdicts(ctx, item.ID, item.Status, toStatus, &tp)
 	// Route drift rides the payload ONLY when it exists, so a repo that names a
 	// drift gate has the enumeration without shelling for it, and every other
 	// reviewer's payload is byte-for-byte unchanged (sty_6e4f7fd8).

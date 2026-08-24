@@ -210,6 +210,9 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// Attachment payload injection (sty_58fa970e): Bash-less reviewers
 			// receive plan/step-summary bodies in the transition payload.
 			rev.SetDocsResolver(docsResolver(a))
+			// Prior-verdict injection (sty_0f5e600c): a re-reviewed edge carries
+			// what it already judged, so the gate judges the delta.
+			rev.SetPriorVerdictsResolver(priorVerdictsResolver())
 			rev.SetArtifactAttacher(verb.AttachItemDoc)
 			// Structured retry/failure/timeout telemetry (sty_b73c3236): the engine
 			// sees each dispatch ATTEMPT (a killed/timed-out subprocess) the verb
@@ -302,6 +305,11 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 	}
 	rev := agentstep.New(runner, a.Store.DocIndex, a.RepoRoot, "")
 	rev.SetLogDir(filepath.Join(a.RuntimeDir, "logs"), logRotation(a))
+	// Same prior-verdict injection as the transition gater (sty_0f5e600c): this
+	// read-path engine gates `create` and the per-noun validates too. It
+	// deliberately wires no docs resolver — that omission is this site's own
+	// question, out of scope here.
+	rev.SetPriorVerdictsResolver(priorVerdictsResolver())
 	eff, err := requireAgents(a)
 	if err != nil {
 		return nil, nil, err
@@ -365,6 +373,33 @@ func docsResolver(a *app.App) func(ctx context.Context, itemID string) []agentst
 				ContentType: d.ContentType,
 				Size:        d.Size,
 				SHA256:      d.SHA256,
+			})
+		}
+		return out
+	}
+}
+
+// priorVerdictsResolver lists the verdicts already recorded on the edge under
+// review for transition-payload injection (sty_0f5e600c), so a re-review judges
+// the delta instead of re-reading the artefact with no memory. verb.PriorVerdicts
+// reads the package-global ledger store wired above; a read failure degrades to
+// no prior verdicts and never fails the transition.
+func priorVerdictsResolver() func(ctx context.Context, itemID, from, to string) []agentstep.PriorVerdict {
+	return func(ctx context.Context, itemID, from, to string) []agentstep.PriorVerdict {
+		if itemID == "" {
+			return nil
+		}
+		verdicts, err := verb.PriorVerdicts(ctx, itemID, from, to)
+		if err != nil || len(verdicts) == 0 {
+			return nil
+		}
+		out := make([]agentstep.PriorVerdict, 0, len(verdicts))
+		for _, v := range verdicts {
+			out = append(out, agentstep.PriorVerdict{
+				Skill:     v.Skill,
+				Decision:  v.Decision,
+				Notes:     v.Notes,
+				CreatedAt: v.CreatedAt,
 			})
 		}
 		return out

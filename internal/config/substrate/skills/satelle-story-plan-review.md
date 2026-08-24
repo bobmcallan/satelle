@@ -40,6 +40,16 @@ Every numbered AC must have a concrete claim **in the attached plan**
 
 Do not reject for style or for a design you prefer.
 
+Return **every** blocking finding in this one verdict — a blocker held back for
+a later pass is a defect of the review, not of the plan.
+
+## 3. Re-review
+
+When the payload carries `prior_verdicts` (this edge's earlier verdicts, oldest
+first), judge the **most recent** one's findings first: say for each whether it
+is now closed — and never re-raise a closed one — or still open. Then judge the
+rest of the plan.
+
 ## Verdict
 
 ```json
