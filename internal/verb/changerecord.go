@@ -345,15 +345,11 @@ func changeRecordSinceTime(ctx context.Context, storyID string) (time.Time, bool
 	return time.Time{}, false
 }
 
-// substrateChangedFiles lists repo-relative paths under authored dirs and the
-// substrate config dir whose mtime is strictly after since. since must be a real
-// anchor. Paths outside repoRoot are skipped (path-space: repo-relative only).
-// Runtime/state files under the config dir are excluded so mtime churn never
-// lands in a change set.
-func substrateChangedFiles(repoRoot string, dirs map[string]string, configDir string, since time.Time) []string {
-	if since.IsZero() {
-		return nil
-	}
+// substrateWalk lists repo-relative paths under authored dirs and the substrate
+// config dir that satisfy keep (nil keeps every file). Paths outside repoRoot
+// are skipped (path-space: repo-relative only). Runtime/state files under the
+// config dir are excluded so mtime churn never lands in a change set.
+func substrateWalk(repoRoot string, dirs map[string]string, configDir string, keep func(os.FileInfo) bool) []string {
 	var out []string
 	seen := map[string]bool{}
 	walk := func(root string) {
@@ -367,7 +363,7 @@ func substrateChangedFiles(repoRoot string, dirs map[string]string, configDir st
 			if substrateRuntimeFile(info.Name()) {
 				return nil
 			}
-			if !info.ModTime().After(since) {
+			if keep != nil && !keep(info) {
 				return nil
 			}
 			rel, rerr := filepath.Rel(repoRoot, path)
@@ -386,6 +382,45 @@ func substrateChangedFiles(repoRoot string, dirs map[string]string, configDir st
 		walk(root)
 	}
 	walk(configDir)
+	sort.Strings(out)
+	return out
+}
+
+// substrateChangedFiles lists repo-relative paths under authored dirs and the
+// substrate config dir whose mtime is strictly after since. since must be a real
+// anchor.
+func substrateChangedFiles(repoRoot string, dirs map[string]string, configDir string, since time.Time) []string {
+	if since.IsZero() {
+		return nil
+	}
+	return substrateWalk(repoRoot, dirs, configDir, func(info os.FileInfo) bool {
+		return info.ModTime().After(since)
+	})
+}
+
+// substrateManifest snapshots every authored substrate path that exists now
+// (sty_7e1e2deb). The mtime leg can only see files that still EXIST, so a slice
+// whose whole content is deleting git-ignored substrate is invisible to every
+// re-derived channel. Recording the set at engagement gives the deletion
+// something to be measured against.
+func substrateManifest(repoRoot string, dirs map[string]string, configDir string) []string {
+	return substrateWalk(repoRoot, dirs, configDir, nil)
+}
+
+// substrateDeletedFiles returns the manifest paths that are no longer on disk
+// under repoRoot. A path we cannot stat for any other reason is skipped — a
+// permission error is not evidence of a deletion.
+func substrateDeletedFiles(repoRoot string, manifest []string) []string {
+	var out []string
+	for _, rel := range manifest {
+		rel = filepath.ToSlash(strings.TrimSpace(rel))
+		if rel == "" || strings.HasPrefix(rel, "../") || rel == ".." || filepath.IsAbs(rel) {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(repoRoot, filepath.FromSlash(rel))); os.IsNotExist(err) {
+			out = append(out, rel)
+		}
+	}
 	sort.Strings(out)
 	return out
 }

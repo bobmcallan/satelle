@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/bobmcallan/satelle/internal/structure"
 )
 
 // TestSubstrateWorkflowSeededAndDrivable proves the substrate LANE works as an
@@ -320,4 +322,90 @@ func TestSubstrateOnlyCheckFourPostures(t *testing.T) {
 			t.Fatalf("empty commit must reject with no-change-set message, got:\n%s", out)
 		}
 	})
+}
+
+// TestSubstrateOnlyCheckClosesDeletionOnlySlice (sty_7e1e2deb): a repo that
+// git-ignores .satelle/ makes "retire this authored skill" a slice git cannot
+// see and no commit records. Before the engagement manifest, every channel the
+// close gate unions was blind to it and the story could not close. The deleted
+// path rides the gate's existing .satelle/ allow prefix, so the skill needs no
+// edit — only the enumeration had to learn about deletions.
+func TestSubstrateOnlyCheckClosesDeletionOnlySlice(t *testing.T) {
+	pathEnv := withTestBinOnPATH(t)
+	repo := t.TempDir()
+	mustRunEnv(t, testBin, repo, pathEnv, "init")
+	seedSubstrateLane(t, repo)
+	materializeDefault(t, repo, "skills", "satelle-substrate-only-check")
+	stubReviewerAccept(t, repo)
+	mustRunEnv(t, testBin, repo, pathEnv, "reindex")
+
+	gitInit(t, repo)
+	gitCommitAll(t, repo, "initial scaffold")
+	// Ignore .satelle/ from here on, committed WITHOUT a story id so the commit
+	// channel cannot supply the evidence under test.
+	gi := filepath.Join(repo, ".gitignore")
+	b, err := os.ReadFile(gi)
+	if err != nil {
+		t.Fatalf("init should have written root .gitignore: %v", err)
+	}
+	if err := os.WriteFile(gi, append(b, []byte("\n.satelle/\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommitAll(t, repo, "ignore satelle")
+
+	// The drifted override this slice exists to retire — present BEFORE engage,
+	// so it is what the engagement manifest snapshots.
+	doomed := filepath.Join(repo, ".satelle", "skills", "retired-override.md")
+	mustWrite(t, doomed, "# retired override\n")
+
+	sid := extractID(mustRunEnv(t, testBin, repo, pathEnv, "story", "create",
+		"--title", "retire the drifted override", "--category", "substrate",
+		"--body", "Delete one git-ignored authored skill; nothing else."), "sty_")
+	if sid == "" {
+		t.Fatal("no story id")
+	}
+	mustRunEnv(t, testBin, repo, pathEnv, "story", "set", sid, "--status", "in_progress")
+
+	// The ENTIRE slice: one deletion. Nothing written, nothing committed.
+	if err := os.Remove(doomed); err != nil {
+		t.Fatal(err)
+	}
+
+	// The check's own stdout: run the materialized fence against the live repo
+	// with the binary under test on PATH. The transition surface reports only the
+	// verdict, so this is where the named slice is observable.
+	body, err := os.ReadFile(filepath.Join(repo, ".satelle", "skills", "satelle-substrate-only-check.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := structure.CheckFence(string(body))
+	if script == "" {
+		t.Fatal("materialized satelle-substrate-only-check carries no check fence")
+	}
+	scriptPath := filepath.Join(t.TempDir(), "check.sh")
+	if err := os.WriteFile(scriptPath, []byte(script+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", scriptPath)
+	cmd.Dir = repo
+	cmd.Stdin = strings.NewReader(`{"story":{"id":"` + sid + `"},"from":"in_progress","to":"done"}`)
+	// Same isolated SATELLE_HOME the transitions ran under, so the `satelle story
+	// diff` the check shells out to reads THIS story's ledger.
+	cmd.Env = append(isolatedEnv(t), pathEnv...)
+	raw, runErr := cmd.CombinedOutput()
+	out := string(raw)
+	if runErr != nil {
+		t.Fatalf("deletion-only slice must pass the check: %v\n%s", runErr, out)
+	}
+	if !strings.Contains(out, "substrate-only slice confirmed") {
+		t.Fatalf("check must confirm the slice, got:\n%s", out)
+	}
+	if !strings.Contains(out, ".satelle/skills/retired-override.md") {
+		t.Fatalf("the confirmed slice must name the deleted path, got:\n%s", out)
+	}
+
+	// And the same slice drives the real close edge through the real gate.
+	if out, err := runEnv(t, testBin, repo, pathEnv, "story", "set", sid, "--status", "done"); err != nil {
+		t.Fatalf("deletion-only substrate slice should close: %v\n%s", err, out)
+	}
 }

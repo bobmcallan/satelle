@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -355,4 +356,176 @@ requires = ["coded"]
 	if !has(cl, "after_control.txt") {
 		t.Fatalf("control: an unparked story must still see commits since engagement: %v", cl)
 	}
+}
+
+// The engagement baseline snapshots the authored substrate so a slice that only
+// DELETES git-ignored substrate is still enumerable (sty_7e1e2deb). AC1: the
+// manifest lands on the baseline payload. AC2: a path deleted after engagement
+// shows up under --include-substrate, and NOT on the git-only default leg
+// (sty_6469025e preserved).
+func TestEngagementBaselineManifestReportsSubstrateDeletions(t *testing.T) {
+	dir := gitRepo(t)
+	chdir(t, dir)
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+	// .satelle/ ignored: the normal posture for a repo that does not track its
+	// substrate, and the one where git can see nothing at all.
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".satelle/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("git", "add", ".gitignore")
+	run("git", "commit", "-m", "ignore satelle")
+
+	skillDir := filepath.Join(dir, ".satelle", "skills")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	doomed := filepath.Join(skillDir, "doomed.md")
+	for name, body := range map[string]string{"doomed.md": "# doomed\n", "kept.md": "# kept\n"} {
+		if err := os.WriteFile(filepath.Join(skillDir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stories := filepath.Join(dir, "stories")
+	_ = os.MkdirAll(stories, 0o755)
+
+	wireWithWorkflows(t, changeWF)
+	verb.SetStoryDir(stories)
+	verb.SetAuthoredDirs(map[string]string{"skills": skillDir})
+	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
+	t.Cleanup(func() {
+		verb.SetTransitionGater(nil)
+		verb.SetStoryDir("")
+		verb.SetAuthoredDirs(nil)
+	})
+
+	var it workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{
+		"title": "manifest slice", "body": "goal", "acceptance_criteria": "1. ok",
+		"category": "feature", "tags": []string{"workflow:cr-wf"},
+	}), &it)
+	json.Unmarshal(call(t, "story-set", map[string]any{"id": it.ID, "status": "in_progress"}), &it)
+
+	// AC1: both authored paths, repo-relative and sorted, on the baseline payload.
+	var entries []ledger.Entry
+	json.Unmarshal(call(t, "ledger-list", map[string]any{"story_id": it.ID, "kind": ledger.KindEngagementBaseline}), &entries)
+	if len(entries) != 1 {
+		t.Fatalf("want 1 engagement_baseline, got %d", len(entries))
+	}
+	var base struct {
+		SubstrateManifest []string `json:"substrate_manifest"`
+	}
+	json.Unmarshal(entries[0].Payload, &base)
+	for _, want := range []string{".satelle/skills/doomed.md", ".satelle/skills/kept.md"} {
+		found := false
+		for _, got := range base.SubstrateManifest {
+			if got == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("manifest missing %s: %v", want, base.SubstrateManifest)
+		}
+	}
+	if !sort.StringsAreSorted(base.SubstrateManifest) {
+		t.Errorf("manifest not sorted: %v", base.SubstrateManifest)
+	}
+
+	// AC2: the whole slice is one deletion of git-ignored substrate.
+	if err := os.Remove(doomed); err != nil {
+		t.Fatal(err)
+	}
+
+	var sub struct {
+		Files []string `json:"files"`
+	}
+	json.Unmarshal(call(t, "story-diff", map[string]any{"id": it.ID, "include_substrate": true}), &sub)
+	if !containsPath(sub.Files, ".satelle/skills/doomed.md") {
+		t.Errorf("--include-substrate must list the deleted path, got %v", sub.Files)
+	}
+
+	var plain struct {
+		Files []string `json:"files"`
+	}
+	json.Unmarshal(call(t, "story-diff", map[string]any{"id": it.ID}), &plain)
+	if containsPath(plain.Files, ".satelle/skills/doomed.md") {
+		t.Errorf("git-only default leg must stay substrate-free, got %v", plain.Files)
+	}
+}
+
+// AC3: a baseline carrying no substrate_manifest — every engagement recorded
+// before the field existed — reports no deletions and no error.
+func TestManifestlessBaselineReportsNoDeletions(t *testing.T) {
+	dir := gitRepo(t)
+	chdir(t, dir)
+	skillDir := filepath.Join(dir, ".satelle", "skills")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	doomed := filepath.Join(skillDir, "doomed.md")
+	if err := os.WriteFile(doomed, []byte("# doomed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stories := filepath.Join(dir, "stories")
+	_ = os.MkdirAll(stories, 0o755)
+
+	wireWithWorkflows(t, changeWF)
+	verb.SetStoryDir(stories)
+	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
+	t.Cleanup(func() {
+		verb.SetTransitionGater(nil)
+		verb.SetStoryDir("")
+		verb.SetAuthoredDirs(nil)
+	})
+
+	// Engage with no authored roots wired: the baseline lands WITHOUT the field,
+	// which is byte-for-byte the pre-upgrade payload shape.
+	var it workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{
+		"title": "old baseline", "body": "goal", "acceptance_criteria": "1. ok",
+		"category": "feature", "tags": []string{"workflow:cr-wf"},
+	}), &it)
+	json.Unmarshal(call(t, "story-set", map[string]any{"id": it.ID, "status": "in_progress"}), &it)
+
+	var entries []ledger.Entry
+	json.Unmarshal(call(t, "ledger-list", map[string]any{"story_id": it.ID, "kind": ledger.KindEngagementBaseline}), &entries)
+	if len(entries) != 1 {
+		t.Fatalf("want 1 engagement_baseline, got %d", len(entries))
+	}
+	if strings.Contains(string(entries[0].Payload), "substrate_manifest") {
+		t.Fatalf("fixture is not manifest-less: %s", entries[0].Payload)
+	}
+
+	// Now wire the roots and delete: with nothing to compare against, the leg is
+	// silent rather than erroring.
+	verb.SetAuthoredDirs(map[string]string{"skills": skillDir})
+	if err := os.Remove(doomed); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := dispatchRaw(t, "story-diff", map[string]any{"id": it.ID, "include_substrate": true})
+	if err != nil {
+		t.Fatalf("manifest-less baseline must not error: %v", err)
+	}
+	var sub struct {
+		Files []string `json:"files"`
+	}
+	json.Unmarshal(raw, &sub)
+	if containsPath(sub.Files, ".satelle/skills/doomed.md") {
+		t.Errorf("manifest-less baseline must report no deletions, got %v", sub.Files)
+	}
+}
+
+func containsPath(files []string, want string) bool {
+	for _, f := range files {
+		if f == want {
+			return true
+		}
+	}
+	return false
 }

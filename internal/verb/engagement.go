@@ -34,6 +34,12 @@ type engagementBaselinePayload struct {
 	// UNANCHORED and story diff keeps its old CWD-resolved behaviour for them,
 	// so an upgrade cannot start refusing an in-flight story's own diff.
 	Worktree string `json:"worktree,omitempty"`
+	// SubstrateManifest is the sorted repo-relative path of every authored
+	// substrate file present at engagement (sty_7e1e2deb). Paths only, no
+	// hashes — it exists so `story diff --include-substrate` can report what has
+	// since VANISHED, which the mtime walk can never see. Absent on baselines
+	// recorded before it existed; those report no deletions, exactly as before.
+	SubstrateManifest []string `json:"substrate_manifest,omitempty"`
 }
 
 // maybeRecordEngagementBaseline ledgers a one-shot baseline when a story first
@@ -68,7 +74,19 @@ func maybeRecordEngagementBaseline(ctx context.Context, item workitem.Item, from
 	if gerr != nil {
 		body = fmt.Sprintf("engagement baseline at %s→%s: git error: %v", from, to, gerr)
 	}
-	payload, _ := json.Marshal(engagementBaselinePayload{HeadSHA: sha, Dirty: dirty, To: to, Worktree: tree})
+	// The manifest is anchored to the repo root when git can name one, so its
+	// paths are repo-relative in the same path-space story-diff resolves in.
+	manifestRoot := dir
+	if tree != "" {
+		manifestRoot = tree
+	}
+	payload, _ := json.Marshal(engagementBaselinePayload{
+		HeadSHA:           sha,
+		Dirty:             dirty,
+		To:                to,
+		Worktree:          tree,
+		SubstrateManifest: substrateManifest(manifestRoot, authoredDirs, substrateConfigDir),
+	})
 	appendLedgerEntry(ctx, item.ID, ledger.KindEngagementBaseline, "executor", body, payload, now)
 }
 
@@ -236,9 +254,16 @@ func storyDiff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 	}
 	// Opt-in substrate leg only (--include-substrate). Default live path stays
 	// git-only so scope-review is not polluted by mtime noise (sty_6469025e).
-	if req.IncludeSubstrate && !baseAt.IsZero() {
-		sub := substrateChangedFiles(dir, authoredDirs, substrateConfigDir, baseAt)
-		files = uniqueSorted(append(files, sub...))
+	if req.IncludeSubstrate {
+		if !baseAt.IsZero() {
+			files = append(files, substrateChangedFiles(dir, authoredDirs, substrateConfigDir, baseAt)...)
+		}
+		// Deletions are measured against the FIRST engagement baseline's manifest,
+		// not the resume re-anchor above: the manifest says what existed when the
+		// story took the tree, and that is the only thing a vanished path can be
+		// compared to. Do not "fix" this to re-anchor with sinceSHA.
+		files = append(files, substrateDeletedFiles(dir, base.SubstrateManifest)...)
+		files = uniqueSorted(files)
 	}
 	res := storyDiffResult{
 		StoryID: it.ID,
