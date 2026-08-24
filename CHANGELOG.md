@@ -1,3 +1,8 @@
+## [0.0.470] - 2026-08-25
+
+### Fixed
+- **Substrate that QUOTES TOML array-of-tables syntax no longer fails wikilink validation.** A `[[gate]]` inside a fenced ```toml block was read as a dangling wikilink, so any document showing workflow-authoring TOML failed `satelle principle validate`. Inline code spans were already exempt; fenced blocks (backtick and tilde, info strings, unterminated) now are too, via a shared byte-length-preserving `maskQuotedCode`. `satelle migrate --yes` shares the extractor and so also stops rewriting a retired name that a fence merely quotes. (sty_cc06b5a6)
+
 ## [0.0.469] - 2026-08-24
 
 ### Added
