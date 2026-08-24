@@ -15,11 +15,11 @@ func embeddedRouteFor(t *testing.T, category string) wfdot.Spec {
 	t.Helper()
 	done, ok := embeddedDefault("workflows", "done")
 	if !ok {
-		t.Fatal("the binary ships no workflows/done.md")
+		t.Fatal("the binary ships no workflows/done.toml")
 	}
 	step, ok := embeddedDefault("workflows", "step")
 	if !ok {
-		t.Fatal("the binary ships no workflows/step.md")
+		t.Fatal("the binary ships no workflows/step.toml")
 	}
 	spec, err := wfdot.ParseRoute(done, step, category, nil)
 	if err != nil {
@@ -247,5 +247,45 @@ func repoRootFromTest(t *testing.T) string {
 			t.Fatal("no go.mod above the test working directory")
 		}
 		dir = parent
+	}
+}
+
+// routeReferenceSubstrate are the embedded prose files that TEACH the authored
+// route form — the reference other workflow tooling cites, and the two gates
+// that judge route edits. A repo reads these to learn what to write, so a
+// retired form here misleads every author and misjudges every real edit.
+// wants names the halves that file must still talk about, so the guard cannot
+// pass by a rewrite that simply stops mentioning the form. The advisor reasons
+// about steps and their bindings only, so it owes step.toml alone.
+var routeReferenceSubstrate = []struct {
+	kind, name string
+	wants      []string
+}{
+	{"principles", "satelle-route-standard", []string{"done.toml", "step.toml"}},
+	{"skills", "satelle-workflow-change-review", []string{"done.toml", "step.toml"}},
+	{"skills", "satelle-workflow-advisor", []string{"step.toml"}},
+}
+
+// TestRouteReferenceSubstrateTeachesTheTOMLForm keeps the reference cluster on
+// the form the parser actually accepts. The markdown halves and their `## gate`
+// sections are retired, so naming them as a CURRENT form teaches a route the
+// binary cannot read — a one-time grep would go stale, this fails instead.
+func TestRouteReferenceSubstrateTeachesTheTOMLForm(t *testing.T) {
+	for _, ref := range routeReferenceSubstrate {
+		body, ok := embeddedDefault(ref.kind, ref.name)
+		if !ok {
+			t.Errorf("the binary ships no %s/%s", ref.kind, ref.name)
+			continue
+		}
+		for _, banned := range []string{"done.md", "step.md", "## gate"} {
+			if strings.Contains(body, banned) {
+				t.Errorf("%s/%s still teaches the retired route form %q", ref.kind, ref.name, banned)
+			}
+		}
+		for _, want := range ref.wants {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s/%s does not mention %q — it teaches the authored route form", ref.kind, ref.name, want)
+			}
+		}
 	}
 }

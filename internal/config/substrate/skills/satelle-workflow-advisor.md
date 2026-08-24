@@ -16,13 +16,13 @@ nothing yourself.
 
 ## What to check
 
-1. **Per-step agent allocation is deliberate.** For every performing step in
- `step.md`, read its `agent:` value:
- - `agent: executor` (or none) — the orchestrating session performs the step
- in-loop, with full conversation context.
- - `agent: <name>` — satelle DISPATCHES the step to the `[<name>]` binding in
+1. **Per-step agent allocation is deliberate.** For every performing step table
+ in `step.toml`, read its `agent` value:
+ - `agent = "executor"` (or none) — the orchestrating session performs the
+ step in-loop, with full conversation context.
+ - `agent = "<name>"` — satelle DISPATCHES the step to the `[<name>]` binding in
  `.satelle/workflows/agents.toml`: the item (title, body, acceptance criteria) rides
- on stdin, the step's `skills:` rubric + an executor charter + a
+ on stdin, the step's `skills` rubric + an executor charter + a
  pull-context call-to-action as the system prompt, tools/model from the
  binding. A missing binding **refuses the transition** — verify every named
  agent resolves, flag one that doesn't. The binding's `tools` must also
@@ -40,7 +40,7 @@ nothing yourself.
  CLI default — flag it when the operator clearly intended a pinned model.
 
 3. **Reviewer coverage — judge what comes AFTER.** A gate belongs to the step
- it admits, so a performing step is judged by the `reviewers:` on its
+ it admits, so a performing step is judged by the `reviewers` on its
  SUCCESSOR. Prefer every performing step to have one beyond satelle's coded
  structural checks — an unreviewed performing step advances on the executor's
  own say-so. This matters most for a **dispatched** step: dispatch fires on
@@ -54,7 +54,7 @@ nothing yourself.
  Advise when a step's grant is wider than its rubric needs (a verify-only
  step with mutating tools) or too narrow to complete (a commit step without
  its VCS tools). A **code-writing** dispatched step (Write/Edit in the grant,
- e.g. a `coder` on `in_progress`) must be reached ONLY from a PERFORMING
+ e.g. a `coder` on the `in_progress` status) must be reached ONLY from a PERFORMING
  state — dispatch fires while the status is still the FROM state, and the
  engaged-story edit gate allows the agent's edits only when that FROM state
  is itself performing. satelle REFUSES a code-writer dispatched from a
@@ -64,7 +64,7 @@ nothing yourself.
 5. **Dispatched-step self-sufficiency.** An isolated agent sees ONLY the item
  body/acceptance criteria and the step's rubric — never the conversation.
  For any dispatched implementation step, advise that story bodies must stand
- alone; a rubric-less dispatched step (`agent: <name>` with no `skills:`) gets
+ alone; a rubric-less dispatched step (`agent` set with no `skills`) gets
  only the charter and the item, rarely enough — flag it. The **attached
  documents** — the plan and per-transition step summaries the agent pulls by id
  (`satelle story doc <id> <name>`, `satelle ledger list --story <id>`) — are
@@ -77,9 +77,9 @@ nothing yourself.
  equivalent) describing what is really a workflow step. satelle cannot see,
  validate, dispatch, or carry such an agent repo-agnostically, and it
  silently pins the repo to one CLI vendor. Advise moving it to a `[<name>]`
- binding (harness/tools/model) plus an `agent: <name>` step allocation.
+ binding (harness/tools/model) plus an `agent = "<name>"` step allocation.
 
-7. **Binding form (step `reviewers:` vs an always-on `## gate`).** Judged fully by [[satelle-workflow-change-review]] — do not restate it here. Flag a gate that admits ONE step but is authored as an always-on `## gate` section, and point the author at that gate's rewrite guidance (and `satelle help workflows`).
+7. **Binding form (a step table's `reviewers` vs an always-on gate entry).** Judged fully by [[satelle-workflow-change-review]] — do not restate it here. Flag a gate that admits ONE step but is authored as an always-on `[[gate]]` entry in `step.toml`, and point the author at that gate's rewrite guidance (and `satelle help workflows`).
 
 ## How to report
 

@@ -32,13 +32,13 @@ var (
 
 // stripFences removes fenced code blocks so regex classes like [[:space:]]
 // inside ```check scripts are not treated as wikilinks. NOT used for workflow
-// skill-ref resolution — those live inside ```dot and are parsed via wfdot.
+// skill-ref resolution — those are parsed from the route source.
 func stripFences(body string) string {
 	var b strings.Builder
 	inFence := false
 	for _, ln := range strings.Split(body, "\n") {
 		t := strings.TrimSpace(ln)
-		if strings.HasPrefix(t, "```") {
+		if strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
 			inFence = !inFence
 			continue
 		}
@@ -48,6 +48,19 @@ func stripFences(body string) string {
 		}
 	}
 	return b.String()
+}
+
+// codeSpanRe matches an inline `code span`.
+var codeSpanRe = regexp.MustCompile("`[^`\n]*`")
+
+// stripQuotedCode strips fences AND inline code spans. For wikilinks only: a
+// doc that SHOWS the TOML array-of-tables header `[[gate]]` is naming syntax,
+// not referring to an artifact that ought to exist. Same carve-out the runtime
+// audit makes in cli.maskQuotedCode, for the same reason. The ships-claim check
+// deliberately uses stripFences instead — an inline-quoted `release` is exactly
+// the claim it exists to catch.
+func stripQuotedCode(body string) string {
+	return codeSpanRe.ReplaceAllString(stripFences(body), "")
 }
 
 func embeddedIndex() map[string]map[string]bool {
@@ -141,7 +154,7 @@ func TestEmbeddedWikilinksResolve(t *testing.T) {
 			continue
 		}
 		t.Run(d.Kind+"/"+d.Name, func(t *testing.T) {
-			body := stripFences(d.Body)
+			body := stripQuotedCode(d.Body)
 			for _, m := range wikilinkRe.FindAllStringSubmatch(body, -1) {
 				target := m[1]
 				if i := strings.IndexByte(target, '|'); i >= 0 {
@@ -202,7 +215,7 @@ func TestEmbeddedProseSkillRefsResolve(t *testing.T) {
 		d := d
 		t.Run(d.Kind+"/"+d.Name, func(t *testing.T) {
 			// Strip fences so check-script examples do not pollute; keep prose.
-			body := stripFences(d.Body)
+			body := stripQuotedCode(d.Body)
 			for _, m := range skillRefRe.FindAllStringSubmatch(body, -1) {
 				name := m[1]
 				if skills[name] {

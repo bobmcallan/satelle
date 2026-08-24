@@ -3,7 +3,7 @@ name: satelle-workflow-change-review
 scope: system
 type: skill
 tags: [type:skill, type:reviewer]
-description: Implementation-exit gate judging route edits — where a gate is bound (a step's reviewers vs an always-on gate), over-fire, skill resolution, park/cancel/recover preserved. Fast-accepts workflow:n/a when the slice touches no workflow file. Review-only.
+description: Implementation-exit gate judging route edits — where a gate is bound (a step table's reviewers vs an always-on gate entry), over-fire, skill and obligation resolution, park/cancel/recover preserved. Fast-accepts workflow:n/a when the slice touches no workflow file. Review-only.
 ---
 
 # Workflow-change review
@@ -39,38 +39,44 @@ mentions and no plan claiming workflow edits **is** the n/a signal.
 
 ## How to judge (when the slice edits a workflow)
 
-A lifecycle is a DERIVED ROUTE: `done.md` declares the obligations per category,
-`step.md` says what discharges each, and the binary sorts the topology. Read the
-touched half (and any new reviewer skills it names). Judge:
+A lifecycle is a DERIVED ROUTE, authored as two TOML halves: `done.toml`
+declares the obligations per category, `step.toml` says what discharges each,
+and the binary sorts the topology. Read the touched half (and any new reviewer
+skills it names). Judge:
 
 1. **Where the gate is bound** — a **gate-specific** reviewer (intended for
- exactly one step) belongs in that step's `reviewers:` list, because a gate
- belongs to the step it ADMITS. A new `## gate <skill>` section for a
- gate-specific check is a reject. An always-on `## gate` is for genuinely
+ exactly one step) belongs in that step table's `reviewers = [...]`, because a
+ gate belongs to the step it ADMITS. A new `[[gate]]` entry for a
+ gate-specific check is a reject. An always-on `[[gate]]` is for genuinely
  multi-step reviewers (estimate/actual, step summary).
 
-2. **No over-firing gate** — do not introduce a `## gate` whose `on:` names one
- step that also has recovery inbound, unless the author clearly intends
- always-on re-fire. Prefer the step's own `reviewers:`. A gate in a shared
- catalogue also needs `for:` — the categories whose route it belongs to — or
- it fires on lanes it was never meant for. See `satelle help workflows`.
+2. **No over-firing gate** — do not introduce a `[[gate]]` whose `on = [...]`
+ names one step that also has recovery inbound, unless the author clearly
+ intends always-on re-fire. Prefer the step table's own `reviewers`. A gate in
+ a shared catalogue also needs `for = [...]` — the categories whose route it
+ belongs to — or it fires on lanes it was never meant for. See `satelle help
+ workflows`.
 
-3. **Prose agrees with the route** — description and frontmatter should not
+3. **Prose agrees with the route** — description and `[meta]` should not
  contradict the steps and gates the two halves declare.
 
-4. **Skills resolve** — every skill a step or gate names must exist under
- project skills layered over embedded defaults.
+4. **Skills resolve, and every obligation resolves to a step** — every skill a
+ step or gate names must exist under project skills layered over embedded
+ defaults. Every obligation listed in a `done.toml` category table must name a
+ **step table KEY** in `step.toml`, never a `status`: statuses repeat across
+ steps by design, so an obligation written as one is the most likely real
+ failure of a route edit.
 
 5. **Obligations, park, cancel and recover preserved** — do not silently drop an
- obligation from a `done.md` section, or its `park:` / `cancel:` / `recover:`
- lines, without a stated reason in the plan. An obligation removed is a gate
- removed.
+ obligation from a `done.toml` category table, or its `park` / `cancel` /
+ `recover` keys, without a stated reason in the plan. An obligation removed is
+ a gate removed.
 
 6. **No authored topology** — the binary owns ORDER (a topological sort of
- `requires` / `provides`) and the synthesised shape: cancel from every
- non-terminal step, park from anywhere, backward movement, park → cancel.
- A `cancelled` or `blocked` authored as a STEP is a reject; it belongs on
- done.md's `cancel:` / `park:` line.
+ `requires`) and the synthesised shape: cancel from every non-terminal step,
+ park from anywhere, backward movement, park → cancel. A `cancelled` or
+ `blocked` authored as a STEP table is a reject; it belongs on the category
+ table's `cancel` / `park` key.
 
 Fair gate: judge the change as written, not perfectionism.
 

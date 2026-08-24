@@ -81,7 +81,9 @@ func embeddedSkillNames() map[string]bool {
 }
 
 // shipsClaimProblems reports tokens in body that claim a non-shipping state or
-// gate as if it shipped, after fence-stripping. allow is the per-artifact map.
+// gate as if it shipped, after fence-stripping. Inline code spans are KEPT:
+// `release` in prose is exactly the claim this check exists to catch.
+// allow is the per-artifact map.
 func shipsClaimProblems(kind, name, body string, states, skills map[string]bool, allow map[string]string) []string {
 	prose := stripFences(body)
 	var problems []string
