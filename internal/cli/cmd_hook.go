@@ -169,6 +169,9 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 						return denyPreToolUse(cmd, raw, outsideRepoEditReason(p, foreignRoot))
 					}
 				}
+				if err := denyIfNoImplement(cmd, raw, p); err != nil {
+					return err
+				}
 				// Exemption is configuration plus one mechanism rule (path
 				// containment, same class as the foreign-tree fence): a write
 				// under the process temp dir is not an in-repo product edit
@@ -347,8 +350,46 @@ changed, or a story is engaged.`,
 	// --harness claude|grok|codex; empty falls back to harnessFromEvent.
 	gate.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|codex — deny envelope (default: sniff event)")
 	commitgate.Flags().StringVar(&hookHarnessFlag, "harness", "", "claude|grok|codex — deny envelope (default: sniff event)")
-	hook.AddCommand(context, gate, commitgate, prompt, stopcheck)
+	explain := &cobra.Command{
+		Use:   "explain",
+		Short: "Show how the PreToolUse model rule would decide for a payload",
+		Long: `explain is read-only: it prints which transcript was chosen, by which key,
+the model found, the matched glob, any no-implement carve-out, and the decision.
+It does not touch the engagement seat. A denied agent can run it to see why.`,
+		Args: cobra.NoArgs,
+		RunE: runHookExplain,
+	}
+	explain.Flags().String("payload", "", "PreToolUse JSON file (`-` reads stdin)")
+	_ = explain.MarkFlagRequired("payload")
+	hook.AddCommand(context, gate, commitgate, prompt, stopcheck, explain)
 	register(hook)
+}
+
+func runHookExplain(cmd *cobra.Command, args []string) error {
+	path, _ := cmd.Flags().GetString("payload")
+	var raw []byte
+	var err error
+	if path == "-" {
+		raw, err = io.ReadAll(cmd.InOrStdin())
+	} else {
+		raw, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return err
+	}
+	caller := resolveCaller(raw, osCallerFS{})
+	cfg, cfgPath, loadErr := config.Load("")
+	root := ""
+	if loadErr == nil {
+		root = config.RepoRootFromConfigPath(cfgPath)
+	}
+	target := filePathFromEvent(raw)
+	if target != "" && root != "" {
+		target = resolveAbsTarget(root, target)
+	}
+	d, glob, exempt, reason := evaluateNoImplement(caller, target, root, cfg)
+	_, _ = fmt.Fprint(cmd.OutOrStdout(), formatHookExplain(caller, d, glob, exempt, reason))
+	return nil
 }
 
 // hookHarnessFlag is set by gate/commitgate --harness (wrapper forwards the

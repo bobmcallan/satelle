@@ -1,3 +1,8 @@
+## [0.0.468] - 2026-08-24
+
+### Added
+- **The PreToolUse edit hook identifies the calling agent from the payload, not file mtimes.** `[gate] no_implement_models` / `no_implement_message` are the model-role rule (absent = no model check; the binary ships no default glob or message). A separate `[gate] no_implement_exempt_paths` / `no_implement_exempt_globs` is that rule's carve-out, so enabling it cannot weaken `edit_exempt_paths`. Grok/Codex payloads with no resolvable caller model skip the model rule. `satelle hook explain --payload` prints the decision. Init prints a one-line notice when the keys are set and `~/.claude/settings.json` still names a foreign Edit hook. (sty_bdeff052)
+
 ## [0.0.467] - 2026-08-24
 
 ### Fixed

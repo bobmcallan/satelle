@@ -271,15 +271,26 @@ type ReviewConfig struct {
 //	push = ["release"]
 //
 // Not a satelle default — the operator authors the policy per repo.
+//
+// NoImplementModels / NoImplementMessage are the model-role edit rule
+// (sty_bdeff052). Absent list ⇒ the hook makes no model decision. The binary
+// ships neither a default glob nor a default message. NoImplementExemptPaths
+// and NoImplementExemptGlobs are THAT rule's carve-out (empty ⇒ the rule
+// applies everywhere it is configured). They are not edit_exempt_paths —
+// that list stays the sole engaged-story exemption.
 type GateConfig struct {
 	// EditExemptPaths are repo-root-relative (or absolute) prefixes whose
 	// edits skip the engaged-story gate. An absolute prefix that sits
 	// outside the session repo (e.g. /tmp/) never exempts a path inside
 	// that repo — it only covers out-of-tree drafts.
-	EditExemptPaths       []string            `toml:"edit_exempt_paths"`
-	EditExemptGlobs       []string            `toml:"edit_exempt_globs"`
-	AllowOutsideTreeEdits bool                `toml:"allow_outside_tree_edits"`
-	CommandAllow          map[string][]string `toml:"command_allow"`
+	EditExemptPaths        []string            `toml:"edit_exempt_paths"`
+	EditExemptGlobs        []string            `toml:"edit_exempt_globs"`
+	AllowOutsideTreeEdits  bool                `toml:"allow_outside_tree_edits"`
+	CommandAllow           map[string][]string `toml:"command_allow"`
+	NoImplementModels      []string            `toml:"no_implement_models"`
+	NoImplementMessage     string              `toml:"no_implement_message"`
+	NoImplementExemptPaths []string            `toml:"no_implement_exempt_paths"`
+	NoImplementExemptGlobs []string            `toml:"no_implement_exempt_globs"`
 }
 
 // Seat concurrency modes for [engagement] parallel (sty_c098dc2d). The set is
@@ -367,6 +378,40 @@ func (c Config) ResolveEditExemptGlobs() []string {
 	}
 	out := make([]string, 0, len(c.Gate.EditExemptGlobs))
 	for _, p := range c.Gate.EditExemptGlobs {
+		if s := strings.TrimSpace(p); s != "" {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// ResolveNoImplementExemptPaths is ResolveEditExemptPaths for the model-rule
+// carve-out. Same prefix semantics; a separate list so enabling the model
+// rule cannot weaken the engaged-story gate.
+func (c Config) ResolveNoImplementExemptPaths(repoRoot string) []string {
+	if len(c.Gate.NoImplementExemptPaths) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(c.Gate.NoImplementExemptPaths))
+	for _, p := range c.Gate.NoImplementExemptPaths {
+		if s := strings.TrimSpace(p); s != "" {
+			out = append(out, resolveUnder(repoRoot, s))
+		}
+	}
+	return out
+}
+
+// ResolveNoImplementExemptGlobs is ResolveEditExemptGlobs for the model-rule
+// carve-out.
+func (c Config) ResolveNoImplementExemptGlobs() []string {
+	if len(c.Gate.NoImplementExemptGlobs) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(c.Gate.NoImplementExemptGlobs))
+	for _, p := range c.Gate.NoImplementExemptGlobs {
 		if s := strings.TrimSpace(p); s != "" {
 			out = append(out, s)
 		}

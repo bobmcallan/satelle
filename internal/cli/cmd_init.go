@@ -905,6 +905,7 @@ func ensureProcessHooks(out io.Writer, repoRoot string, forced []string) error {
 			fmt.Fprintf(out, "WARN  .claude/settings.json — incomplete satelle hooks after heal: missing %s\n",
 				strings.Join(incomplete, ", "))
 		}
+		printNoImplementHandover(out, repoRoot)
 	}
 	if wantGrok {
 		added, updated, incomplete, err := ensureGrokHooks(repoRoot)
