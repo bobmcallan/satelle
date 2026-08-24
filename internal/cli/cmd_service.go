@@ -391,6 +391,33 @@ func identityVerdict(procRoot string, pid int) (known, matches bool, suffix stri
 	}
 }
 
+// cgroupOwnerUnit names WHICH installed unit a live process's cgroup path
+// identifies as its supervisor: a `user@<uid>.service` segment means the user
+// manager owns it, anything else is a system slice. It returns "" when there is
+// no claim to make — no cgroup path (the process was located by listening port
+// instead, so nothing supervises it as far as kernel facts go), or the unit that
+// WOULD own it is not installed here.
+//
+// Segment-bounded on purpose: a substring test would false-match a path that
+// merely contains "user@" inside some other name.
+func cgroupOwnerUnit(cgroupPath string, userInstalled, sysInstalled bool) string {
+	if cgroupPath == "" {
+		return ""
+	}
+	for _, seg := range strings.Split(cgroupPath, "/") {
+		if strings.HasPrefix(seg, "user@") && strings.HasSuffix(seg, ".service") {
+			if userInstalled {
+				return "user unit"
+			}
+			return ""
+		}
+	}
+	if sysInstalled {
+		return "system unit"
+	}
+	return ""
+}
+
 // serviceStatusLine is the injectable core (procRoot lets hermetic tests
 // substitute a fake /proc tree, mirroring restartServiceIfRunningRoot): it
 // derives the reported state from kernel facts first — a unit file on disk,
@@ -414,8 +441,9 @@ func serviceStatusLine(procRoot string) string {
 	}
 
 	livePID := 0
+	cgroupPath := ""
 	if runtime.GOOS == "linux" {
-		livePID = findPIDByCgroup(procRoot, serviceUnitName)
+		livePID, cgroupPath = findPIDAndCgroup(procRoot, serviceUnitName)
 		if livePID == 0 {
 			livePID = findPIDByListenPort(procRoot, servicePort())
 		}
@@ -448,11 +476,21 @@ func serviceStatusLine(procRoot string) string {
 	}
 
 	known, matches, suffix := identityVerdict(procRoot, livePID)
+	owner := cgroupOwnerUnit(cgroupPath, userInstalled, sysInstalled)
 	switch {
 	case userReachable && userState == "active":
 		return fmt.Sprintf("active (user unit, pid %d)%s", livePID, suffix)
 	case sysReachable && sysState == "active":
 		return fmt.Sprintf("active (system unit, pid %d)%s", livePID, suffix)
+	case reachable && owner != "":
+		// The live pid's cgroup names an installed unit — that unit is supervising
+		// it even when a sibling unit is reachable-and-inactive (sty_29b2af69).
+		// Name the sibling only when both units are actually installed.
+		sibling := ""
+		if userInstalled && sysInstalled {
+			sibling = "; another installed unit for this service is not active"
+		}
+		return fmt.Sprintf("active (%s, pid %d) — supervised by the installed %s (its cgroup names the unit%s)%s", owner, livePID, owner, sibling, suffix)
 	case reachable:
 		return fmt.Sprintf("running (pid %d) but NOT reported active by the installed unit — an ephemeral process outside persistent supervision%s", livePID, suffix)
 	case known && matches:

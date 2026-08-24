@@ -246,6 +246,23 @@ func writeFakeUserUnit(t *testing.T, execStart string) string {
 	return path
 }
 
+// writeFakeSystemUnit plants a fake system unit in the ALREADY-isolated
+// systemUnitDir, so a test can model a dual-unit host (sty_29b2af69). It refuses
+// to run against the real /etc/systemd/system rather than silently reading the
+// operator's machine (the discipline sty_d50218d1 established).
+func writeFakeSystemUnit(t *testing.T, execStart string) string {
+	t.Helper()
+	if systemUnitDir == "/etc/systemd/system" {
+		t.Fatal("writeFakeSystemUnit: call isolateSystemUnitDir(t) first — never write the real system unit dir")
+	}
+	path := systemUnitPath()
+	content := "[Service]\nExecStart=" + execStart + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // TestServiceStatusLine_NotInstalled: (a) no unit file — never derived from a
 // systemctl query, purely a filesystem fact.
 func TestServiceStatusLine_NotInstalled(t *testing.T) {
@@ -407,6 +424,122 @@ func TestServiceStatusLine_EphemeralOutsideSupervision(t *testing.T) {
 	}
 	if strings.Contains(got, "active (") {
 		t.Errorf("serviceStatusLine = %q must not report active when the unit itself reports inactive", got)
+	}
+	// sty_29b2af69 AC2: a port-located process has no cgroup naming a unit, so
+	// the verdict must not name a supervisor either — that claim belongs only to
+	// cgroup-located processes.
+	if strings.Contains(got, "supervised by the installed") {
+		t.Errorf("serviceStatusLine = %q must not name a supervising unit for a process found only by listening port", got)
+	}
+}
+
+// TestServiceStatusLine_CgroupNamedUnitIsPersistent_DualUnit: sty_29b2af69 AC1 —
+// the dogfood host carries BOTH units for one port, so the sibling that lost the
+// race is reachable-and-inactive. That used to render the ephemeral line even
+// though the live pid's cgroup names an installed unit that IS supervising it.
+// The cgroup path is the stronger fact, and the verdict must say WHICH unit it
+// names so a dual-unit host reads which supervisor owns the process.
+func TestServiceStatusLine_CgroupNamedUnitIsPersistent_DualUnit(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		cgroupPath string
+		wantUnit   string
+	}{
+		{"user slice", "/user.slice/user-1000.slice/user@1000.service/app.slice/" + serviceUnitName, "user unit"},
+		{"system slice", "/system.slice/" + serviceUnitName, "system unit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target := filepath.Join(t.TempDir(), "satelled")
+			if err := os.WriteFile(target, []byte("the installed binary"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeFakeUserUnit(t, target) // also isolates HOME and the system unit dir
+			writeFakeSystemUnit(t, target)
+			withServiceStatusHooks(t, struct {
+				userIsActive   func() (string, bool)
+				systemIsActive func() (string, bool)
+				systemStartLtd func() bool
+			}{
+				// Both installed units answer "inactive" from a reachable bus — the
+				// `case reachable:` arm the story names.
+				userIsActive:   func() (string, bool) { return "inactive", true },
+				systemIsActive: func() (string, bool) { return "inactive", true },
+				systemStartLtd: func() bool { return false },
+			})
+			procRoot := t.TempDir()
+			writeFakeCgroupPID(t, procRoot, 1739150, tc.cgroupPath, target)
+
+			got := serviceStatusLine(procRoot)
+			if strings.Contains(got, "ephemeral") {
+				t.Errorf("serviceStatusLine = %q must never call a cgroup-supervised process ephemeral", got)
+			}
+			for _, want := range []string{tc.wantUnit, "pid 1739150", "supervised by the installed", "another installed unit for this service is not active"} {
+				if !strings.Contains(got, want) {
+					t.Errorf("serviceStatusLine = %q, want substring %q", got, want)
+				}
+			}
+		})
+	}
+}
+
+// TestServiceStatusLine_CgroupNamedUnitIsPersistent_SingleUnit: the same
+// cgroup-owned verdict on a host that has only one unit must name that unit
+// and must not invent a sibling.
+func TestServiceStatusLine_CgroupNamedUnitIsPersistent_SingleUnit(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "satelled")
+	if err := os.WriteFile(target, []byte("the installed binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeUserUnit(t, target)
+	withServiceStatusHooks(t, struct {
+		userIsActive   func() (string, bool)
+		systemIsActive func() (string, bool)
+		systemStartLtd func() bool
+	}{
+		userIsActive:   func() (string, bool) { return "inactive", true },
+		systemIsActive: func() (string, bool) { return "inactive", true },
+		systemStartLtd: func() bool { return false },
+	})
+	procRoot := t.TempDir()
+	writeFakeCgroupPID(t, procRoot, 1739150, "/user.slice/user-1000.slice/user@1000.service/app.slice/"+serviceUnitName, target)
+
+	got := serviceStatusLine(procRoot)
+	if strings.Contains(got, "ephemeral") {
+		t.Errorf("serviceStatusLine = %q must never call a cgroup-supervised process ephemeral", got)
+	}
+	if strings.Contains(got, "another installed unit") {
+		t.Errorf("serviceStatusLine = %q must not claim a sibling unit when only the user unit is installed", got)
+	}
+	for _, want := range []string{"user unit", "pid 1739150", "supervised by the installed"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("serviceStatusLine = %q, want substring %q", got, want)
+		}
+	}
+}
+
+// TestCgroupOwnerUnit covers the classifier itself: which installed unit a
+// cgroup path names, and the cases where it must make no claim at all.
+func TestCgroupOwnerUnit(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		path          string
+		userInstalled bool
+		sysInstalled  bool
+		want          string
+	}{
+		{"user slice, user unit installed", "0::/user.slice/user-1000.slice/user@1000.service/app.slice/" + serviceUnitName, true, false, "user unit"},
+		{"system slice, system unit installed", "0::/system.slice/" + serviceUnitName, false, true, "system unit"},
+		{"user slice but no user unit on disk", "0::/user.slice/user-1000.slice/user@1000.service/app.slice/" + serviceUnitName, false, true, ""},
+		{"system slice but no system unit on disk", "0::/system.slice/" + serviceUnitName, true, false, ""},
+		{"no cgroup path (found by listening port)", "", true, true, ""},
+		// Segment-bounded: "user@" inside another name is not a user slice.
+		{"user@ only as a substring", "0::/system.slice/notauser@host.mount/" + serviceUnitName, false, true, "system unit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cgroupOwnerUnit(tc.path, tc.userInstalled, tc.sysInstalled); got != tc.want {
+				t.Errorf("cgroupOwnerUnit(%q, %v, %v) = %q, want %q", tc.path, tc.userInstalled, tc.sysInstalled, got, tc.want)
+			}
+		})
 	}
 }
 

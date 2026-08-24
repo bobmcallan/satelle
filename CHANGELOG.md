@@ -1,3 +1,8 @@
+## [0.0.467] - 2026-08-24
+
+### Fixed
+- **`satelle service status` no longer calls a cgroup-supervised process ephemeral when a sibling unit is inactive.** On a dual-unit host the inactive sibling made the bus reachable and the old `reachable` arm printed the release-skill failure line even though the live pid's cgroup named an installed unit that was supervising it. The verdict now names which unit the cgroup identifies (user vs system) and only mentions a sibling when both units are actually installed. A process found only by listening port still reports ephemeral. (sty_29b2af69)
+
 ## [0.0.466] - 2026-08-24
 
 ### Fixed

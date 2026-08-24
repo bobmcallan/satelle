@@ -1240,9 +1240,20 @@ func firstToken(s string) string {
 // named "notsatelle.service") does not false-match. Returns 0 when not found.
 // Bus-independent: cgroup membership is a kernel fact, not a systemctl query.
 func findPIDByCgroup(procRoot, unitName string) int {
+	pid, _ := findPIDAndCgroup(procRoot, unitName)
+	return pid
+}
+
+// findPIDAndCgroup is findPIDByCgroup plus the cgroup line that matched. The
+// path is not incidental detail: it names the SLICE the process sits in, which
+// says WHICH installed unit supervises it (a user@<uid>.service slice → the user
+// unit, otherwise a system slice) — the fact `satelle service status` needs to
+// avoid calling a supervised process ephemeral (sty_29b2af69). One scanner
+// serves both callers so the pid and the path can never disagree.
+func findPIDAndCgroup(procRoot, unitName string) (int, string) {
 	entries, err := os.ReadDir(procRoot)
 	if err != nil {
-		return 0
+		return 0, ""
 	}
 	suffix := "/" + unitName
 	for _, e := range entries {
@@ -1257,11 +1268,11 @@ func findPIDByCgroup(procRoot, unitName string) int {
 		for _, line := range strings.Split(string(data), "\n") {
 			line = strings.TrimRight(line, "\r")
 			if line == unitName || strings.HasSuffix(line, suffix) {
-				return pid
+				return pid, line
 			}
 		}
 	}
-	return 0
+	return 0, ""
 }
 
 // servicePort resolves the configured web-service port, falling back to the
