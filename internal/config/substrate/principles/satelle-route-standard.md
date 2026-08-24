@@ -51,7 +51,7 @@ requires  = ["planned"]
 
 [[gate]]                    # an always-on gate occupies no stage
 skill = "satelle-step-summary"
-on    = ["*"]
+on    = ["*"]               # STATUSES it fires on entry to ("*" = every step)
 for   = ["*"]
 ```
 
@@ -98,8 +98,9 @@ leaving `parallel` unset is not the same as setting it to 0 — unset, two or mo
 reviewers run concurrently.
 
 An always-on gate — one that fires on entry to several steps rather than one —
-is a `[[gate]]` entry with `on = [...]` naming those steps (`["*"]` for every
-step).
+is a `[[gate]]` entry with `on = [...]`. **`on` matches STATUSES, not step table
+keys** — it is the one place the table-key rule above does not apply, and an
+`on` written as a step key silently never fires. `["*"]` fires on every step.
 
 ## Coded-check gates name no agent
 

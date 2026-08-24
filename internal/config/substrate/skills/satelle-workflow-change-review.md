@@ -52,7 +52,8 @@ skills it names). Judge:
 
 2. **No over-firing gate** — do not introduce a `[[gate]]` whose `on = [...]`
  names one step that also has recovery inbound, unless the author clearly
- intends always-on re-fire. Prefer the step table's own `reviewers`. A gate in
+ intends always-on re-fire. `on` matches STATUSES, not step table keys — an
+ `on` written as a step key silently never fires, so reject it. Prefer the step table's own `reviewers`. A gate in
  a shared catalogue also needs `for = [...]` — the categories whose route it
  belongs to — or it fires on lanes it was never meant for. See `satelle help
  workflows`.
