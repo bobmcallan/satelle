@@ -19,6 +19,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/logsread"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/wfroute"
@@ -126,6 +128,9 @@ func renderOutcome(itemID, from, to string, verdicts []ReviewerVerdict, unresolv
 		fmt.Fprintf(&b, "  - full output: `satelle ledger list --story %s --kind %s`%s\n",
 			itemID, reviewKindFor(v.Accept), modelNote(v.Model))
 	}
+	if rel := dispatchLogRel(itemID, now); rel != "" {
+		fmt.Fprintf(&b, "- log: `%s`\n", rel)
+	}
 	for _, skill := range unresolved {
 		fmt.Fprintf(&b, "- **%s** — NOT JUDGED (rubric does not resolve in the substrate; this advance was ungated)\n", skill)
 	}
@@ -133,6 +138,30 @@ func renderOutcome(itemID, from, to string, verdicts []ReviewerVerdict, unresolv
 		b.WriteString("- no reviewer governed this edge\n")
 	}
 	return b.String()
+}
+
+func dispatchLogRel(storyID string, at time.Time) string {
+	dir := ""
+	if wd, err := os.Getwd(); err == nil {
+		p := filepath.Join(wd, ".satelle", "logs")
+		if st, err := os.Lstat(p); err == nil && st.Mode()&os.ModeSymlink != 0 {
+			dir = p
+		}
+	}
+	if dir == "" && strings.TrimSpace(os.Getenv("SATELLE_HOME")) != "" {
+		cfg, cfgPath, err := config.Load("")
+		if err == nil {
+			dir = cfg.ResolveLogsDir(config.RepoRootFromConfigPath(cfgPath))
+		}
+	}
+	if dir == "" {
+		return ""
+	}
+	f, ok, err := logsread.LatestDispatchAtOrBefore(dir, storyID, "", at)
+	if err != nil || !ok {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Join(".satelle/logs/dispatch", filepath.Base(f.Path)))
 }
 
 // routeOutcomes returns the accumulated outcome blocks from the existing

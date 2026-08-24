@@ -37,9 +37,10 @@ const (
 	DefaultWebPort = 8787
 	// DefaultLogLevel is arbor's level when log_level is unset.
 	DefaultLogLevel = "info"
-	// DefaultLogsMaxSizeKB caps each flat evidence log (.satelle/logs/*.log) before
-	// it rolls; DefaultLogsMaxFiles bounds how many rotations are kept. Daily
-	// rolling is always on regardless of these (sty_a67e6e8c).
+	// DefaultLogsMaxSizeKB caps each flat evidence log under the home-keyed
+	// runtime logs directory (~/.satelle/<repo-key>/logs; .satelle/logs is a symlink pointer to it) before it rolls; DefaultLogsMaxFiles bounds how
+	// many rotations are kept. Daily rolling is always on regardless of these
+	// (sty_a67e6e8c).
 	DefaultLogsMaxSizeKB = 5120 // 5 MiB
 	DefaultLogsMaxFiles  = 7
 	// ConfigName / LocalConfigName are the committed config and its gitignored
@@ -68,7 +69,9 @@ type Config struct {
 	SubstrateRoots map[string]string `toml:"substrate_roots"`
 	// LogLevel is arbor's level (debug|info|warn|error); empty means info.
 	LogLevel string `toml:"log_level"`
-	// LogsMaxSizeKB caps each flat evidence log under .satelle/logs before it rolls;
+	// LogsMaxSizeKB caps each flat evidence log under the home-keyed runtime logs
+	// directory (~/.satelle/<repo-key>/logs; .satelle/logs is a symlink pointer)
+	// before it rolls;
 	// zero means DefaultLogsMaxSizeKB. LogsMaxFiles bounds kept rotations; zero means
 	// DefaultLogsMaxFiles. Daily rolling is always on.
 	LogsMaxSizeKB int `toml:"logs_max_size_kb"`
@@ -470,7 +473,7 @@ func (c Config) ResolveDB(repoRoot string) string {
 }
 
 // ResolveLogsMaxSizeBytes returns the per-file size cap (bytes) for the flat
-// evidence logs under .satelle/logs, before a file rolls.
+// evidence logs under the home-keyed runtime logs directory, before a file rolls.
 func (c Config) ResolveLogsMaxSizeBytes() int64 {
 	kb := c.LogsMaxSizeKB
 	if kb <= 0 {

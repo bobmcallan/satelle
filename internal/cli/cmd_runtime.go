@@ -512,9 +512,11 @@ func runRuntimeMigrate(out io.Writer, a *app.App, force, allowLive, dryRun bool)
 		fmt.Fprintf(out, "  database: %s → %s (VACUUM INTO)\n", legacyDB, targetDB)
 		for _, name := range []string{"logs", "backups", "stories"} {
 			src := filepath.Join(dataDir, name)
-			if st, err := os.Stat(src); err == nil && st.IsDir() {
-				fmt.Fprintf(out, "  dir:      %s → %s\n", src, filepath.Join(targetDir, name))
+			st, err := os.Lstat(src)
+			if err != nil || st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
+				continue
 			}
+			fmt.Fprintf(out, "  dir:      %s → %s\n", src, filepath.Join(targetDir, name))
 		}
 		fmt.Fprintf(out, "  leave legacy tree in place at %s\n", dataDir)
 		if len(holders) > 0 {
@@ -542,7 +544,8 @@ func runRuntimeMigrate(out io.Writer, a *app.App, force, allowLive, dryRun bool)
 	for _, name := range []string{"logs", "backups", "stories"} {
 		src := filepath.Join(dataDir, name)
 		dst := filepath.Join(targetDir, name)
-		if st, err := os.Stat(src); err != nil || !st.IsDir() {
+		st, err := os.Lstat(src)
+		if err != nil || st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
 			continue
 		}
 		if err := copyDir(src, dst); err != nil {
@@ -554,10 +557,11 @@ func runRuntimeMigrate(out io.Writer, a *app.App, force, allowLive, dryRun bool)
 	fmt.Fprintf(out, "\nmigration complete. Legacy tree left at %s\n", dataDir)
 	fmt.Fprintf(out, "After verifying with `satelle status`, you may remove runtime leftovers:\n")
 	fmt.Fprintf(out, "  rm -f %s %s-wal %s-shm\n", legacyDB, legacyDB, legacyDB)
-	fmt.Fprintf(out, "  rm -rf %s %s %s\n",
-		filepath.Join(dataDir, "logs"),
+	fmt.Fprintf(out, "  rm -rf %s %s\n",
 		filepath.Join(dataDir, "backups"),
 		filepath.Join(dataDir, "stories"))
+	fmt.Fprintf(out, "  # only if logs/ is a real directory, not the .satelle/logs pointer:\n")
+	fmt.Fprintf(out, "  rm -rf %s\n", filepath.Join(dataDir, "logs"))
 	fmt.Fprintf(out, "(Do not remove authored files: satelle.toml, constitution.md, workflows/ (incl. agents.toml), skills/, principles/, documents/, tasks/.)\n")
 	return nil
 }

@@ -412,6 +412,9 @@ func runInit(out io.Writer, repoRoot string, noWorkspace bool, forcedHarness []s
 	_ = config.WriteRepoPathMarker(rt.Dir, repoRoot)
 	fmt.Fprintln(out, initLine(!dbExisted, dbPath))
 
+	// 5a. .satelle/logs pointer to the home-keyed runtime logs directory.
+	plantLogsPointer(out, repoRoot)
+
 	// 5. .gitignore managed block — ignore in-repo local-state only (local.toml,
 	//    pinned binary). Runtime files no longer live under the repo.
 	if added, gerr := ensureGitignore(repoRoot); gerr != nil {
@@ -1454,7 +1457,7 @@ const scaffoldTomlBeforeExempt = `# satelle.toml — per-repo config (committed,
 #                                # the repo. Migrate a legacy in-repo DB with
 #                                # 'satelle runtime migrate'.
 # log_level = "info"             # debug | info | warn | error (default info)
-# logs_max_size_kb = 5120        # roll a runtime logs/ file past this size (default 5 MiB)
+# logs_max_size_kb = 5120        # roll a runtime log file past this size (default 5 MiB). Logs live in ~/.satelle/<repo-key>/logs; .satelle/logs is a symlink pointer to it.
 # logs_max_files = 7             # keep at most this many rotated log files (default 7)
 
 # Archive retention for CLOSED-story attachment dirs under the runtime stories/
@@ -1773,12 +1776,17 @@ const gitignoreMarker = "# >>> satelle (managed) >>>"
 // owned by satelle and rewritten on every init/migrate (sty_87c8a69c).
 const gitignoreMarkerEnd = "# <<< satelle (managed) <<<"
 
-// gitignoreBlock is the RECOMMENDED ignore set satelle init writes. The
-// operator owns .gitignore; satelle does not require process substrate or the
-// local DB to be git-tracked. Entries below are local-state defaults only.
-// Runtime state (satelle.db, logs, backups, stories cache) lives under
-// ~/.satelle/<repo-key>/ — outside the repo — so it is not listed here.
-var gitignoreBlock = gitignoreMarker + `
+// gitignoreBlock is the RECOMMENDED ignore set for a repo that tracks
+// .satelle (the .satelle/logs pointer line is included). gitignoreBlockFor omits
+// that pointer when the existing file already ignores all of .satelle/.
+var gitignoreBlock = gitignoreBlockFor("")
+
+func gitignoreBlockFor(existing string) string {
+	logsLine := ""
+	if !gitignoreTextIgnoresSatelleDir(existing) {
+		logsLine = ".satelle/logs\n"
+	}
+	return gitignoreMarker + `
 # RECOMMENDED defaults — the operator owns .gitignore. .satelle is git-optional
 # overall (continuity is local disk or personal rehydrate). When a team tracks
 # process under .satelle, workflows/agents.toml is intended to be committed
@@ -1787,13 +1795,15 @@ var gitignoreBlock = gitignoreMarker + `
 # Continuity is local disk by default; with [sync] <area> = personal the bound
 # hosted project backs that area up and can rehydrate it (push = backup;
 # documents pull / config deploy = sync down). Git is not the recovery path.
-# Runtime state (satelle.db, logs, backups, stories cache) lives under
-# ~/.satelle/<repo-key>/ — outside the repo — so it is not listed here.
+# Runtime state (satelle.db, backups, stories cache) lives under
+# ~/.satelle/<repo-key>/ — outside the repo. .satelle/logs is a symlink pointer
+# to that logs directory and is listed here only when .satelle/ is not already ignored.
 # Sync credentials and cursors live under ~/.config/satelle.
-.satelle/satelle.local.toml
+` + logsLine + `.satelle/satelle.local.toml
 # the repo-local pinned binary (satelle update --local) is local state, never committed
 .satelle/satelle
 ` + managedEditExemptGitignore() + gitignoreMarkerEnd + "\n"
+}
 
 // ensureWorkspaceRegistration registers repoRoot in the machine-local workspace
 // registry (gc.Workspace — the connected-repo list for /workspace and multi-serve).
@@ -1885,7 +1895,7 @@ func ensureGitignore(repoRoot string) (bool, error) {
 		}
 		return true, nil
 	case os.IsNotExist(err):
-		if werr := os.WriteFile(path, []byte(gitignoreBlock), 0o644); werr != nil {
+		if werr := os.WriteFile(path, []byte(gitignoreBlockFor("")), 0o644); werr != nil {
 			return false, fmt.Errorf("init: write %s: %w", path, werr)
 		}
 		return true, nil
@@ -1906,7 +1916,7 @@ func convergeGitignore(in string) (next string, changed bool) {
 		if body != "" {
 			body += "\n"
 		}
-		return body + gitignoreBlock, true
+		return body + gitignoreBlockFor(in), true
 	}
 	start := strings.Index(in, gitignoreMarker)
 	// Find end marker after start; if missing, replace from start to EOF.
@@ -1928,7 +1938,7 @@ func convergeGitignore(in string) (next string, changed bool) {
 	if before != "" && !strings.HasSuffix(before, "\n") {
 		before += "\n"
 	}
-	out := before + gitignoreBlock
+	out := before + gitignoreBlockFor(in)
 	if after != "" {
 		if !strings.HasPrefix(after, "\n") && !strings.HasSuffix(out, "\n") {
 			out += "\n"

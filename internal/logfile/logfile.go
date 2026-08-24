@@ -1,5 +1,6 @@
 // Package logfile is the single, shared rotating-append writer for satelle's flat
-// evidence logs under .satelle/logs (the operation log and the reviewer log). It
+// evidence logs under the home-keyed runtime logs directory
+// (~/.satelle/<repo-key>/logs; .satelle/logs is a symlink pointer) (the operation log and the reviewer log). It
 // bounds their growth — roll by UTC day and by max size, keep at most N rotated
 // files — so a long-running repo does not accumulate an unbounded log (sty_a67e6e8c).
 //

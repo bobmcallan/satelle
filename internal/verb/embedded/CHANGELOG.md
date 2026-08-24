@@ -1,3 +1,8 @@
+## [0.0.469] - 2026-08-24
+
+### Added
+- **Runtime logs are reachable from the repo.** `.satelle/logs` is a symlink pointer to `~/.satelle/<repo-key>/logs` (storage stays home-keyed). Init plants it; migrate leaves it (Lstat, not Stat). The managed gitignore lists `.satelle/logs` only when `.satelle/` is not already ignored. `satelle logs --story/--role/--tail/--path` reads dispatch logs; `satelle story route` shows a `- log:` clause when a matching dispatch file exists. (sty_52634ccf)
+
 ## [0.0.468] - 2026-08-24
 
 ### Added

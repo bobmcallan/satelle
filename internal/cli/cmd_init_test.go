@@ -117,8 +117,13 @@ func TestRunInitScaffolds(t *testing.T) {
 	if strings.Contains(string(gi), ".satelle/satelle.db") {
 		t.Error("gitignore must not list satelle.db — runtime is home-keyed")
 	}
+	// sty_52634ccf reversal: the pointer is listed (slashless) so it is never
+	// committed on repos that track .satelle/. Storage stays home-keyed.
+	if !strings.Contains(string(gi), ".satelle/logs\n") && !strings.Contains(string(gi), ".satelle/logs\r") {
+		t.Error("gitignore must list .satelle/logs — the pointer, not storage")
+	}
 	if strings.Contains(string(gi), ".satelle/logs/") {
-		t.Error("gitignore must not list .satelle/logs/ — runtime is home-keyed")
+		t.Error("gitignore must not list .satelle/logs/ (trailing slash misses the symlink)")
 	}
 	if !strings.Contains(string(gi), ".satelle/satelle.local.toml") {
 		t.Error("gitignore missing satelle.local.toml entry")
@@ -741,10 +746,13 @@ func TestRunInitConvergesStaleGitignore(t *testing.T) {
 	if !strings.Contains(s, "# keep-me") {
 		t.Error("content after markers must survive")
 	}
-	for _, staleEntry := range []string{".satelle/satelle.db", ".satelle/logs/", ".satelle/backups/", ".satelle/stories/"} {
+	for _, staleEntry := range []string{".satelle/satelle.db", ".satelle/backups/", ".satelle/stories/"} {
 		if strings.Contains(s, staleEntry) {
 			t.Errorf("stale ignore %q must be gone after init re-run:\n%s", staleEntry, s)
 		}
+	}
+	if !strings.Contains(s, ".satelle/logs\n") && !strings.Contains(s, ".satelle/logs\r") {
+		t.Errorf("pointer entry .satelle/logs must be kept:\n%s", s)
 	}
 	if !strings.Contains(s, ".satelle/satelle.local.toml") {
 		t.Errorf("current block must list local.toml:\n%s", s)

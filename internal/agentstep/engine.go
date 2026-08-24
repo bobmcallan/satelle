@@ -38,6 +38,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/bobmcallan/satelle/internal/logfile"
+	"github.com/bobmcallan/satelle/internal/logsread"
 
 	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/agentcli"
@@ -1384,7 +1385,7 @@ func (g *Engine) dispatchSink(agent, itemID string) (io.Writer, string, func()) 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, "", nil
 	}
-	path := filepath.Join(dir, fmt.Sprintf("dispatch-%s-%d-%s.log", agent, time.Now().UnixNano(), itemID))
+	path := filepath.Join(dir, logsread.FormatDispatchName(agent, itemID, time.Now().UnixNano()))
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, "", nil

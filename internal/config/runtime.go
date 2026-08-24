@@ -191,6 +191,13 @@ func (c Config) ResolveRuntimeDB(repoRoot string) string {
 	return filepath.Join(c.ResolveRuntimeDir(repoRoot).Dir, DefaultDBName)
 }
 
+// ResolveLogsDir is the sole storage path for this repo's runtime logs
+// (~/.satelle/<repo-key>/logs). The in-repo .satelle/logs pointer is not
+// storage; it is a symlink to this directory.
+func (c Config) ResolveLogsDir(repoRoot string) string {
+	return filepath.Join(c.ResolveRuntimeDir(repoRoot).Dir, "logs")
+}
+
 // LegacyRuntimeNote is the one-line deprecation message when a repo still has
 // its database under the authored data dir. Empty when not legacy.
 func (c Config) LegacyRuntimeNote(repoRoot string) string {

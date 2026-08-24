@@ -208,7 +208,10 @@ func TestEnsureGitignoreConvergesStaleBlock(t *testing.T) {
 		t.Errorf("outside content lost:\n%s", s)
 	}
 	if strings.Contains(s, ".satelle/logs/") {
-		t.Errorf("stale logs entry remains:\n%s", s)
+		t.Errorf("stale trailing-slash logs entry remains:\n%s", s)
+	}
+	if !strings.Contains(s, ".satelle/logs\n") && !strings.Contains(s, ".satelle/logs\r") {
+		t.Errorf("pointer entry .satelle/logs must be kept:\n%s", s)
 	}
 	changed2, _ := ensureGitignore(repo)
 	if changed2 {

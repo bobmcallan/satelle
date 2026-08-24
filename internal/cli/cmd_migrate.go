@@ -946,12 +946,17 @@ func listLegacyResidue(dataDir string) []string {
 		"stories",
 	} {
 		p := filepath.Join(dataDir, name)
-		if st, err := os.Stat(p); err == nil {
-			if st.IsDir() {
-				out = append(out, name+"/")
-			} else {
-				out = append(out, name)
-			}
+		st, err := os.Lstat(p)
+		if err != nil {
+			continue
+		}
+		if name == "logs" && st.Mode()&os.ModeSymlink != 0 {
+			continue // .satelle/logs pointer is not residue (sty_52634ccf)
+		}
+		if st.IsDir() {
+			out = append(out, name+"/")
+		} else {
+			out = append(out, name)
 		}
 	}
 	sort.Strings(out)

@@ -20,7 +20,7 @@ var slowThreshold = 1 * time.Second
 // the same daily+size rotation as the other flat evidence logs. Best-effort: a log
 // write never affects the response. It is wired at the serve listener (not web.New),
 // so httptest servers stay log-free and each serve process logs to its own repo's
-// .satelle/logs/server.log.
+// runtime logs/server.log (reached from the repo via the .satelle/logs pointer).
 //
 // Line: <rfc3339>\t<LEVEL>\t<method>\t<path>\t<status>\t<duration_ms>[\t<note>].
 // LEVEL is INFO, WARN when slow (SSE /events exempt — it is open for its lifetime),

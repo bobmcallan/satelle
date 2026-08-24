@@ -1,9 +1,13 @@
 package verb
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/logsread"
 )
 
 // TestRouteOutcomeRoundTrip: renderOutcome WRITES the outcome heading and
@@ -35,5 +39,41 @@ func TestWalkedFromOutcomesEdges(t *testing.T) {
 	body := routeOutcomesHeading + "\n\n### release → done — rejected · 2026-08-06T00:00:00Z\n\n- **x** — REJECT\n"
 	if got := strings.Join(walkedFromOutcomes(body), ","); got != "release,done" {
 		t.Errorf("walked = %q, want release,done", got)
+	}
+}
+
+func TestDispatchLogRelFromPointer(t *testing.T) {
+	now := time.Date(2026, 8, 6, 1, 2, 3, 0, time.UTC)
+	repo := t.TempDir()
+	rt := t.TempDir()
+	disp := filepath.Join(rt, "dispatch")
+	if err := os.MkdirAll(disp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := logsread.FormatDispatchName("planner", "sty_round01", now.UnixNano()-1)
+	if err := os.WriteFile(filepath.Join(disp, name), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".satelle"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(rt, filepath.Join(repo, ".satelle", "logs")); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+	got := dispatchLogRel("sty_round01", now)
+	want := ".satelle/logs/dispatch/" + name
+	if got != want {
+		t.Fatalf("log rel = %q, want %q", got, want)
+	}
+	body := renderOutcome("sty_round01", "backlog", "plan", []ReviewerVerdict{{Skill: "s", Accept: true}}, nil, now)
+	if !strings.Contains(body, "- log: `"+want+"`") {
+		t.Fatalf("renderOutcome missing log clause:\n%s", body)
+	}
+	if err := os.Remove(filepath.Join(disp, name)); err != nil {
+		t.Fatal(err)
+	}
+	if got := dispatchLogRel("sty_round01", now); got != "" {
+		t.Fatalf("empty dispatch dir must omit clause, got %q", got)
 	}
 }

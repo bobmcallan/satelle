@@ -15,7 +15,7 @@
 //     not project history (the ledger DB is the durable record). Tracking it would
 //     produce churny diffs and merge conflicts. A reviewer runs in the SAME working
 //     tree where the operation happened, so the local file is present for it. The
-//     repo's .gitignore carries `.satelle/logs/`.
+//     repo's managed .gitignore lists the `.satelle/logs` pointer when `.satelle/` is tracked.
 //   - Rotation/size: bounded via the shared internal/logfile writer — daily
 //     rolling plus a size cap, keeping a configured number of rotations
 //     (satelle.toml logs_max_size_kb / logs_max_files). The ACTIVE file stays
