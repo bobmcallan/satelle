@@ -76,11 +76,9 @@ declared `cancel-reason` vocabulary (`satelle.toml` `[tags.vocabulary]`) means
 *preempted*; a `cancel-reason:` tag present anyway is metadata, not
 justification, and does not rescue it.
 
-Notes must name the correct path: `satelle story stop-request <id> --reason "…"`,
-then the holder parks (`blocked`) with the reason on record (and ideally a
-`preempted-by:<id>` tag); the ACs stay frozen and the story resumes. Cancel of a
+Notes must name the correct path — `satelle story stop-request <id> --reason "…"`
+— per [[satelle-recognise-blockage]], which derives what follows. Cancel of a
 healthy paused story to free the seat cannot pass this gate.
-
 
 ### Legitimate supersedes (accept with named evidence)
 

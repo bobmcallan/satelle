@@ -8,15 +8,14 @@ description: Content/alignment create gate after the deterministic structural ch
 
 # Story create — content, alignment, and classification review
 
-Isolated, **read-only** reviewer for a DRAFT story at creation, after it
-passed the deterministic structural check (non-empty goal body, not a title
-restatement; ≥1 numbered AC; non-empty category). Input on stdin:
+Isolated, **read-only** reviewer for a DRAFT story at creation. Input on stdin:
 `{story, from, to}` — `story` carries `title`, `body`, `acceptance_criteria`,
 `category`, `tags`. May read the repo (Read/Grep/Glob) for context; must not
 modify anything. Pull the taxonomy on demand: [[satelle-story-classification]].
 
-Structure is already guaranteed — do not re-check it. Judge content,
-alignment, premise, and **classification**:
+The deterministic structural check has already passed, so structure is
+guaranteed — do not re-check it. Judge content, alignment, premise, and
+**classification**:
 
 ## How to judge
 
@@ -51,44 +50,31 @@ ACs**, not only to a plan artifact.
 
 ### Classification (against [[satelle-story-classification]])
 
-- **Category fit** — among **legal** values (the controlled vocabulary:
-  embedded default + satelle.toml `[categories]`), does `category` match the
-  kind of work the body describes? **Do not re-litigate legality** — unknown
-  values are handled deterministically by the vocabulary (warn or reject per
-  config). Judge FIT only: leaf vs container, type of work.
- - A draft that is clearly a **container** (umbrella over children, epic body
- of work with no own implementable slice) must use `category: epic-parent`
- (or `parent` for a non-epic container). **Reject** when the title/body
- describe an epic/container but category is a leaf class (`feature`, `fix`,
- `chore`, `substrate`, …).
- - Signals of an epic/container (any one is enough when the draft is clearly
- not a leaf slice): title starts with `epic:`; body says "umbrella",
- "children", "closes when children"; tags include `kind:epic` or only an
- `epic:<theme>` theme without a leaf outcome.
+Legality is already deterministic — the vocabulary decides it. **Judge FIT
+only**, and never reject a value for being unknown.
+
+- **Category fit** — does `category` match the kind of work the body describes?
+ A draft that is clearly a **container** (umbrella over children, no
+ implementable slice of its own) must use `category: epic-parent`, or `parent`
+ for a non-epic container. **Reject** a container filed under a leaf class.
+ Strongest signals, any one enough: title starts with `epic:`; body says
+ "umbrella", "children", "closes when children"; a theme tag with no leaf
+ outcome of its own.
 - **Route proportionality** — the category picks the ROUTE, so a slice whose
  declared surface is entirely prose (body and ACs describe documentation and
  name no code, config or build surface) must not sit on a code-shaped lane.
  **Reject**, naming the lighter lane: `category: docs` — the shipped docs lane
  — or the repo's own doc lane where it authors one. Correcting it here is
  cheap; mid-route it is not, and no agent may skip steps to lighten a lane.
-- **No invented kind:\* axis** — reject tags like `kind:epic`, `kind:bug`. The
- durable class is `category`; themes use `epic:<theme>`, not `kind:`.
-- **Order/theme tags** — when present, `epic:<theme>`, `sprint:<N>`,
- `order:<N>` should be well-formed (kebab theme, plain integer N). Malformed
- tags alone are not enough to reject if category is otherwise correct;
- inventing a parallel class axis is.
-- **Controlled namespaces** — when the draft carries tags in a namespace the
- repo has listed under satelle.toml `[tags.vocabulary]`, the value must be one
- the repo declared (the deterministic create/set check already rejects unknown
- values; still classify intent: a story that clearly touches an interface the
- vocabulary names should carry the matching tag rather than omit it). Read the
- vocabulary from the repo's satelle.toml when available — do not invent values.
- Multi-surface uses repeated keys (`namespace:a` + `namespace:b`), never a
- comma-joined value.
+- **No invented kind:\* axis** — reject tags like `kind:epic`, `kind:bug`. A
+ malformed `epic:` / `sprint:` / `order:` tag is NOT reject grounds on its own
+ (the linked principle carries their form); inventing a parallel class axis is.
+- **Controlled namespaces** — a story that clearly touches an interface the
+ repo's satelle.toml `[tags.vocabulary]` names should carry the matching tag
+ rather than omit it. Read the values from that config; never invent them.
 
 Fair gate, not perfectionist: a clear leaf story with a fitting category and
-ACs that plausibly verify the goal accepts. An epic misfiled as `feature` is
-cheap to catch here — reject it.
+ACs that plausibly verify the goal accepts.
 
 - **Accept** when goal is coherent, ACs verify it, premise is not falsified by
  named repo evidence, and category/tags fit the taxonomy.

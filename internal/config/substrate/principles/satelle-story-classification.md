@@ -63,7 +63,8 @@ durable membership. The epic *item itself* carries `category: epic-parent`.
 
 A **sprint** is a time-boxed increment of delivery. Tag every story in it
 `sprint:<index>`, where the **index form is a repo choice** — a plain integer
-counter (`sprint:1`) or a date index (`sprint:2026-07-25`). A bare `sprint` tag
+counter (`sprint:1`) or a date index (`sprint:2026-07-25`) — kept consistent
+within a repo so increments stay enumerable. A bare `sprint` tag
 with no index is incomplete: it asserts "in a sprint" but not which one. Always
 carry an index; fix the form in the repo's own substrate, not here.
 
@@ -97,7 +98,7 @@ in that sprint (`order:<N>`).
 Tags are a set of strings, often `namespace:value`. **Multiple values in one
 namespace use repeated keys** — separate entries, not a comma-joined value:
 
-- Canonical: `epic:this`, `epic:that` (two tags).
+- Canonical: `epic:this`, `epic:that` — or `surface:ui`, `surface:cli` (two tags).
 - Not canonical: `epic:this,that` (one tag) — it fights CLI `StringSlice` parsing
  and loses round-trip fidelity through create/set/get.
 
@@ -106,8 +107,7 @@ This matches the store (`[]string`), additive mutation (`--add-tags` /
 with `satelle story list --tag <tag>` (and the same flag on `task list`): an item
 matches when it **holds that exact tag** among its set (ANY-match — a story with
 both `epic:this` and `epic:that` matches `--tag epic:this`). The tag filter
-composes with `--status` and `--parent`. The sprint index form (integer or date) is the repo's choice; keep it consistent
-within that repo so increments stay enumerable.
+composes with `--status` and `--parent`.
 
 ## Controlled tag namespaces — `tags.vocabulary` in satelle.toml
 
@@ -129,8 +129,6 @@ surface = ["ui", "cli"] # this repo's surfaces; another repo might use api/worke
  `order:`, and any organically-grown topic tags).
 - A story with **no** controlled-namespace tag is always valid — the vocabulary
  only constrains values when the namespace is used.
-- Multi-value still uses **repeated keys**: `surface:ui` + `surface:cli` (two
- tags), never `surface:ui,cli` — same rule as the `epic:` example above.
 
 ### Category is TYPE, not a surface
 

@@ -3,7 +3,7 @@ name: satelle-story-blocked-review
 scope: system
 type: skill
 tags: [type:skill, type:reviewer]
-description: Gate for parking an engaged story (in_progress → blocked). Isolated reviewer allowing the move when a reason is recorded — world-not-ready, waiting on a dependency, or operator/agent preemption for higher-priority seat use — refusing a bare block with no reason on record. Mirrors satelle-story-cancel-review.
+description: Gate for parking an engaged story (in_progress → blocked). Isolated reviewer allowing the move when a reason is recorded — world-not-ready, a dependency, or preemption — and refusing a bare block with no reason on record.
 ---
 
 # Story blocked review (park gate)
@@ -23,10 +23,10 @@ recent ledger entry, or an explicit statement of why. Legitimate reasons include
 
 - **World not ready** — waiting on dependency `blocked-by:<id>`, external
   capability missing
-- **Preemption** — higher-priority work needs the engagement seat (typically
-  after `satelle story stop-request`); ideally tagged `preempted-by:<id>` naming
-  the story that needs the seat. Preemption needs **no impediment** — the held
-  story may be healthy
+- **Preemption** — higher-priority work needs the engagement seat; ideally
+  tagged `preempted-by:<id>` naming the story that needs it. Preemption needs
+  **no impediment** — the held story may be healthy. The path it arrives by is
+  derived in [[satelle-recognise-blockage]]
 
 Bar is low: a clear, human-readable reason is enough. May read the repo
 (Read/Grep/Glob) and run read-only `satelle` commands to check the story's
