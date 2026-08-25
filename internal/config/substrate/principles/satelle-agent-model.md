@@ -3,7 +3,7 @@ name: satelle-agent-model
 type: principle
 tags: [type:principle]
 applies_to: ["*"]
-description: The agent model. A workflow is a graph of steps, each run by a defined role with a bounded grant: the executor does the work; the reviewer is read-only, returning a verdict on the OUTCOME. Any role but the in-loop executor runs isolated over a satelle-built payload. satelle is the status gatekeeper — only a reviewer's accept advances gated status.
+description: The agent model, for any question about a workflow step or role. A graph of steps, each run by a role with a bounded grant: the executor works, the reviewer judges read-only.
 ---
 
 # The agent execution model

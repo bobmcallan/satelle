@@ -3,7 +3,7 @@ name: satelle-recognise-blockage
 type: principle
 tags: [type:principle]
 applies_to: ["*"]
-description: Recognise process blockage and park — never thrash a denied tool call or ask to remove enforcement. When gates, missing deps, or contradictory instructions stop progress, stop retrying, move the engaged story to blocked with a structured reason, and let the blocked-triage path diagnose. Close the final engaged story last, after residual git work.
+description: When a gate, a missing dependency, or a contradictory instruction stops progress: stop retrying, park the engaged story as blocked with a structured reason, and let the blocked-triage path diagnose it.
 ---
 
 # Recognise blockage
@@ -82,12 +82,6 @@ escape. Sequence tidy-up **before** the last `done` transition, never after.
 - Closing the last engaged story while residual commit/push work remains
 - Treating a missing engagement as blockage instead of engaging a story
 - Cancelling a healthy story to free the engagement seat
-
-## Motivation (not normative)
-
-Session traces of solvable process blocks (fused engage+commit deny; post-close
-commit with zero engagement) are the cases this principle names. They illustrate;
-they do not define process.
 
 See [[satelle-agent-goals]], [[satelle-edits-require-a-story]],
 [[satelle-story-blocked-triage]], [[satelle-agent-model]].

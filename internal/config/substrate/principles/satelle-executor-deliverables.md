@@ -28,13 +28,11 @@ adds the complementary half: **what to produce**, not **how to be judged**.
 ## Why (the evidence trap)
 
 When an executor is left without a closing account of outcomes, reviewers
-reconstruct the mapping from the tree on every round. Worse, limited gate
-awareness already produces a failure mode where a test that **existed,
-compiled, passed, and measured the wrong thing** survives multiple expensive
-review rounds. Widening the executor's model of the gates would likely
-**sharpen** optimisation-for-verdict, not fix it. The fix is an outcome
-artifact the executor must close with — a realised mapping of evidence to
-criteria, format and lint evidence — not a deeper brief of reviewer rubrics.
+reconstruct the evidence-to-criteria mapping from the tree on every round. The
+fix is an outcome artifact the executor must close with — a realised mapping of
+evidence to criteria, plus format and lint evidence — not a deeper brief of the
+reviewer rubrics, which would sharpen optimisation-for-verdict rather than fix
+it.
 
 ## Every required artifact must be verifiable
 

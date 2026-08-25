@@ -3,7 +3,7 @@ name: satelle-task-validate-after-review
 scope: system
 type: skill
 tags: [type:skill, type:reviewer]
-description: Exit gate for a task EXECUTION (in_progress → done): isolated read-only reviewer judging whether the ACTION was carried out and the VERIFICATION is satisfied, reading the repo for evidence. Judges, never enacts — the gate into the execution's terminal done (satelle-done-is-last). Pushes back with specifics.
+description: Exit gate for a task EXECUTION (in_progress → done): isolated read-only reviewer judging whether the ACTION was carried out and the VERIFICATION is satisfied, reading the repo for evidence. Judges, never enacts.
 ---
 
 # Task execution — validate-after (close-run gate)

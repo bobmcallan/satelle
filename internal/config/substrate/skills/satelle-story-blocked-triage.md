@@ -85,10 +85,4 @@ existing park/resume machinery and [[satelle-story-blocked-review]] (and any
 edge the operator authorises) stay authority. Report class, doc name, and next
 legal edge.
 
-## Worked case (pointer)
-
-Session process-block thrash → park → second agent sees in-process fix:
-the blocked-review gate notes and the story ledger. Normative
-content is this skill + [[satelle-recognise-blockage]], not the trace.
-
 See [[satelle-agent-goals]], [[satelle-agent-model]], [[satelle-edits-require-a-story]].

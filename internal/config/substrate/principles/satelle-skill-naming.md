@@ -3,7 +3,7 @@ name: satelle-skill-naming
 type: principle
 tags: [type:principle]
 applies_to: ["*"]
-description: The naming convention for satelle skills — satelle-<object>-<name>-<function> — so a skill's owner, subject, and kind read from its filename alone. Reviewers and system skills carry the satelle- prefix and encode object (story|task|execution|workflow|…), an optional name (the stage/aspect), and function (review|check|…). Executor rubrics are bare action names. A skill named against this convention is a defect a reviewer should flag.
+description: When naming or reviewing a skill filename: satelle-<object>-<name>-<function>, so a skill's owner, subject and kind read from the name alone. Executor rubrics are bare action names, with no prefix.
 ---
 
 # satelle skill naming — `satelle-<object>-<name>-<function>`

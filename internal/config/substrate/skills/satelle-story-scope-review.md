@@ -32,10 +32,10 @@ accept/reject.
  ```json
  {"decision": "accept", "notes": "scope: no-baseline"}
  ```
- Do **not** reject solely for a missing baseline (pre-feature stories).
-- After this feature ships, if a baseline **exists** but the executor provided
- **no** enumeration (no attachment and no usable diff), reject: name that
- scope evidence is missing — the driver should run `story diff` and re-request.
+ Do **not** reject solely for a missing baseline.
+- When a baseline **exists** but the executor provided **no** enumeration (no
+ attachment and no usable diff), reject: name that scope evidence is missing —
+ the driver should run `story diff` and re-request.
 
 ## How to judge (when a baseline exists)
 
