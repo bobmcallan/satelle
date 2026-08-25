@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -16,6 +18,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/bobmcallan/satelle/internal/hosted/syncpb"
 )
@@ -291,6 +294,50 @@ func TestSnapshotRefreshesOnUnauthenticated(t *testing.T) {
 	}
 	if got.RefreshToken != "refresh-2" || got.DisplayName != "A" {
 		t.Fatalf("rotated cred = %+v", got)
+	}
+}
+
+func TestSnapshotAcceptsLargeMessage(t *testing.T) {
+	store := &memStore{}
+	_ = store.Save(Credential{ServerURL: "http://hosted.example", AccessToken: "tok", RefreshToken: "r"})
+	pad := strings.Repeat("a", 128<<10)
+	items := make([]*syncpb.WorkItem, 40)
+	for i := range items {
+		rec := fmt.Sprintf(`{"id":"sty_%d","pad":%q}`, i, pad)
+		items[i] = &syncpb.WorkItem{Id: fmt.Sprintf("sty_%d", i), Kind: "story", Record: []byte(rec)}
+	}
+	resp := &syncpb.SnapshotResponse{Items: items}
+	if n := proto.Size(resp); n <= 4<<20 {
+		t.Fatalf("fixture encoded size %d, want > 4 MiB", n)
+	}
+	stub := &stubSync{snap: func(*syncpb.SnapshotRequest) (*syncpb.SnapshotResponse, error) {
+		return resp, nil
+	}}
+	c := newTestGRPCClient(t, stub, store, fatalHTTP(t))
+	got, _, err := c.Snapshot(context.Background(), "probe", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 40 {
+		t.Fatalf("items = %d, want 40", len(got))
+	}
+	if got[0].ID != "sty_0" || len(got[0].Record) == 0 {
+		t.Fatalf("first = %+v", got[0])
+	}
+}
+
+func TestSnapshotResourceExhaustedNamesCap(t *testing.T) {
+	store := &memStore{}
+	_ = store.Save(Credential{ServerURL: "http://hosted.example", AccessToken: "tok", RefreshToken: "r"})
+	stub := &stubSync{fail: []error{status.Error(codes.ResourceExhausted, "grpc: received message larger than max (25136676 vs. 4194304)")}}
+	c := newTestGRPCClient(t, stub, store, fatalHTTP(t))
+	_, _, err := c.Snapshot(context.Background(), "probe", "")
+	if err == nil {
+		t.Fatal("expected snapshot error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "Snapshot") || !strings.Contains(msg, "64 MiB") {
+		t.Fatalf("error = %q, want Snapshot and 64 MiB", msg)
 	}
 }
 

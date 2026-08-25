@@ -46,6 +46,13 @@ on Refresh can never recover from `UNAUTHENTICATED`.
 `Sync.Refresh` on the **same connection**, persists the rotated pair, then
 retries the RPC **once** — the same retry-once policy as REST `doAuthed`.
 
+Unary Sync messages (`Apply`, `Snapshot`, `Refresh`) are capped at **64 MiB**
+(67108864 bytes) in each direction. The CLI sets this as a per-call option
+(`MaxCallRecvMsgSize` / `MaxCallSendMsgSize`); grpc-go's default recv cap is
+4 MiB, which real project snapshots already exceed (satelle ~24 MiB). A server
+with a lower recv cap will reject large `Apply` batches. Snapshot is unpaged,
+so a whole project's work-state rides in one message.
+
 ## Endpoints
 
 ### `GET /api/v1/me`

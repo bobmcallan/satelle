@@ -11,6 +11,12 @@
 //
 // record fields carry UTF-8 JSON (the opaque CLI work-item / ledger payload);
 // the server may promote fields from them, matching REST json.RawMessage.
+//
+// Unary Sync messages are capped at 64 MiB (67108864 bytes) in each direction.
+// The CLI sets MaxCallRecvMsgSize / MaxCallSendMsgSize accordingly; satelle-server
+// should set MaxRecvMsgSize / MaxSendMsgSize to match. Snapshot is unpaged today,
+// so a whole project's work-state rides in one message (paging is a follow-up
+// if a project exceeds the cap).
 
 syntax = "proto3";
 

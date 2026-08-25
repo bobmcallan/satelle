@@ -100,6 +100,7 @@ func TestCheckoutSyncProtoContract(t *testing.T) {
 		"No gRPC login",
 		"checkout_sync.proto",
 		"Sync.Refresh",
+		"64 MiB",
 	} {
 		if !strings.Contains(readme, want) {
 			t.Errorf("api/README.md missing checkout-sync marker %q", want)

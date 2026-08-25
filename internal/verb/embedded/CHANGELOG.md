@@ -1,3 +1,13 @@
+## [0.0.475] - 2026-08-25
+
+### Fixed
+- **CLI gRPC Sync Snapshot no longer dies at grpc-go's 4 MiB recv default.** Apply, Snapshot and Refresh set `MaxCallRecvMsgSize` / `MaxCallSendMsgSize` to 64 MiB (documented on the published contract). Real project snapshots already exceeded 4 MiB (vire ~7.6 MiB, satelle ~24 MiB). `ResourceExhausted` size failures now name the cap and the RPC. (sty_8c277e1b)
+
+## [serve-v0.0.32] - 2026-08-25
+
+### Changed
+- **Serve channel catches up to serve-path commits since serve-v0.0.31.** CLI-only releases 0.0.460–0.0.474 left `satelled.version` at 0.0.31 while embedded substrate, ledger, and route code on the serve watch set moved. Bump so `satelle update` actually refreshes the running service. (sty_8c277e1b)
+
 ## [0.0.474] - 2026-08-25
 
 ### Changed

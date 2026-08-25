@@ -20,6 +20,19 @@ import (
 	"github.com/bobmcallan/satelle/internal/hosted/syncpb"
 )
 
+// MaxSyncMessageBytes caps a single unary Sync message (Apply / Snapshot /
+// Refresh) at 64 MiB, well over grpc-go's 4 MiB MaxCallRecvMsgSize default.
+// Snapshot is unpaged, so a whole project's work-state rides in one message
+// (satelle.dev/satelle was 24 MiB on 2026-08-25).
+const MaxSyncMessageBytes = 64 << 20
+
+func syncCallOpts() []grpc.CallOption {
+	return []grpc.CallOption{
+		grpc.MaxCallRecvMsgSize(MaxSyncMessageBytes),
+		grpc.MaxCallSendMsgSize(MaxSyncMessageBytes),
+	}
+}
+
 // testGRPCDial, when set, is used by every Client that has no per-client
 // dialer. CLI integration tests install a bufconn fake here.
 var testGRPCDial func(ctx context.Context, target string) (*grpc.ClientConn, error)
@@ -51,7 +64,7 @@ func (c *Client) Apply(ctx context.Context, project string, batch WorkstateInges
 	var out *syncpb.ApplyResponse
 	err = c.withGRPCAuth(ctx, cli, func(ctx context.Context) error {
 		var rpcErr error
-		out, rpcErr = cli.Apply(ctx, req)
+		out, rpcErr = cli.Apply(ctx, req, syncCallOpts()...)
 		return rpcErr
 	})
 	if err != nil {
@@ -71,7 +84,7 @@ func (c *Client) Snapshot(ctx context.Context, project, kind string) (items []Wo
 	var out *syncpb.SnapshotResponse
 	err = c.withGRPCAuth(ctx, cli, func(ctx context.Context) error {
 		var rpcErr error
-		out, rpcErr = cli.Snapshot(ctx, &syncpb.SnapshotRequest{Project: project, Kind: kind})
+		out, rpcErr = cli.Snapshot(ctx, &syncpb.SnapshotRequest{Project: project, Kind: kind}, syncCallOpts()...)
 		return rpcErr
 	})
 	if err != nil {
@@ -227,7 +240,7 @@ func (c *Client) withGRPCAuth(ctx context.Context, cli syncpb.SyncClient, fn fun
 // access token has just been rejected; the refresh token in the request is
 // the credential.
 func (c *Client) refreshOverGRPC(ctx context.Context, cli syncpb.SyncClient, cred Credential) (Credential, error) {
-	out, err := cli.Refresh(ctx, &syncpb.RefreshRequest{RefreshToken: cred.RefreshToken})
+	out, err := cli.Refresh(ctx, &syncpb.RefreshRequest{RefreshToken: cred.RefreshToken}, syncCallOpts()...)
 	if err != nil {
 		return Credential{}, fmt.Errorf("%w (refresh failed: %v)", ErrLoginRequired, err)
 	}
@@ -251,7 +264,17 @@ func mapGRPCErr(op string, err error) error {
 		return err
 	}
 	if st, ok := status.FromError(err); ok {
+		if st.Code() == codes.ResourceExhausted && isMessageSizeErr(st.Message()) {
+			return fmt.Errorf("hosted: grpc %s: message exceeds the %d MiB satelle Sync cap: %s",
+				op, MaxSyncMessageBytes>>20, st.Message())
+		}
 		return fmt.Errorf("hosted: grpc %s: %s", op, st.Message())
 	}
 	return fmt.Errorf("hosted: grpc %s: %w", op, err)
+}
+
+// isMessageSizeErr sniffs grpc-go's message-size wording. That text is not a
+// stable API; a miss falls through to the generic mapGRPCErr message.
+func isMessageSizeErr(msg string) bool {
+	return strings.Contains(msg, "larger than max")
 }
