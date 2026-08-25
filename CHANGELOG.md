@@ -1,3 +1,8 @@
+## [0.0.474] - 2026-08-25
+
+### Changed
+- **Skill naming and tag hygiene in the embedded defaults.** `satelle-estimate-actual-review` is a functional check — a `check` fence decides, no agent is dispatched — but carried only `type:reviewer`; it now also carries `type:functional-check`, the machine-readable kind marker audits and route conventions key off. `satelle-skill-naming` defined only `review` and `check` while the shipped corpus also contains advisors, summarisers and audits, so the principle was out of convention with its own corpus; the function list now names all five shipped roles, with the advisor entry written as an explicit carve-out to the bare-verb executor rule it sits above. The two coded checks named `-review` are recorded as known drift with three deprecation options and a forward rule — a skill name is a binding surface, so nothing is renamed. (sty_7a0b27e0)
+
 ## [0.0.473] - 2026-08-25
 
 ### Changed
