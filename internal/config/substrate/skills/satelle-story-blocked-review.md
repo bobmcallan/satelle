@@ -25,8 +25,8 @@ recent ledger entry, or an explicit statement of why. Legitimate reasons include
   capability missing
 - **Preemption** — higher-priority work needs the engagement seat; ideally
   tagged `preempted-by:<id>` naming the story that needs it. Preemption needs
-  **no impediment** — the held story may be healthy. The path it arrives by is
-  derived in [[satelle-recognise-blockage]]
+  **no impediment** — the held story may be healthy. It arrives by
+  `satelle story stop-request`, which [[satelle-recognise-blockage]] derives
 
 Bar is low: a clear, human-readable reason is enough. May read the repo
 (Read/Grep/Glob) and run read-only `satelle` commands to check the story's
