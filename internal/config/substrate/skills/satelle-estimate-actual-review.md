@@ -2,7 +2,7 @@
 name: satelle-estimate-actual-review
 scope: system
 type: skill
-tags: [type:skill, type:reviewer]
+tags: [type:skill, type:reviewer, type:functional-check]
 description: CODED gate judging PRESENCE of self-reported cost tags — an estimate entering in_progress and an actual entering done. Scoped reviewer node (on="in_progress,done"); self-contained functional check, no agent. Presence is judged, not accuracy.
 ---
 
