@@ -1,3 +1,8 @@
+## [0.0.473] - 2026-08-25
+
+### Changed
+- **Leaner always-resident descriptions in the embedded defaults.** A frontmatter description is paid on every discovery and every dispatch, and six ran 46-66 words as compressed copies of their own bodies. All six — `satelle-reviewer-self-contained`, `satelle-agent-model`, `satelle-skill-naming`, `satelle-recognise-blockage`, `satelle-done-is-last`, `satelle-task-validate-after-review` — are now 29-32 words, keeping a trigger clause and a one-line what. Every dropped clause was checked against its own body first; `satelle-done-is-last`'s claim that the binary enforces a "mandatory done gate on the workflow spine" was dropped rather than restated, because no such mechanism exists (`mandatory` is the step-summary flag, and "spine" is retired DOT vocabulary). Non-normative body prose also removed: `satelle-recognise-blockage`'s Motivation section, `satelle-story-blocked-triage`'s Worked-case pointer (it named no locatable artifact), and the anecdote in `satelle-executor-deliverables`' evidence-trap paragraph. `satelle-story-scope-review`'s baseline rule no longer narrates its own rollout. No accept/reject condition or executor obligation was lost. (sty_953cd947)
+
 ## [0.0.472] - 2026-08-25
 
 ### Changed
