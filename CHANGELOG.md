@@ -1,3 +1,8 @@
+## [0.0.472] - 2026-08-25
+
+### Changed
+- **One owner per doctrine in the embedded defaults.** Three clusters stated the same rules in two or three files, where they would drift. `satelle-story-create-review` no longer re-explains the taxonomy `satelle-story-classification` owns and already links — it keeps the judgments unique to the create edge and both guards against a false reject (882 → 743 words). The stop-request/park path is derived only in `satelle-recognise-blockage`; `satelle-story-cancel-review` and `satelle-story-blocked-review` name the verb and keep their own accept/reject rules. `satelle-story-classification` stated repeated-keys and the sprint index form twice each; each is now stated once. No judging rule was weakened. (sty_f9c1d9b9)
+
 ## [0.0.471] - 2026-08-25
 
 ### Changed
