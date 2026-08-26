@@ -1,3 +1,8 @@
+## [0.0.476] - 2026-08-26
+
+### Fixed
+- **internal/cli test suite is hermetic against an inherited `SATELLE_SESSION`.** The engaged `satelle story set` process exports the session id, so the build-unit-check gate's `go test ./...` child inherited it — and the seat fixtures acquire leases with no session stamp, so their seats read as foreign-session and the hook-seat, edit-state and statusline tests failed, making the `in_progress→integration` edge impossible to pass from inside any engaged session. `tempRepo` (the shared fixture root that already isolates `SATELLE_HOME`/`SATELLE_CONFIG`) now scrubs `SATELLE_SESSION`; tests that need a session identity set their own after the fixture. (sty_dad373f0)
+
 ## [0.0.475] - 2026-08-25
 
 ### Fixed

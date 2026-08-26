@@ -59,9 +59,16 @@ func resetFlagState(cmd *cobra.Command) {
 // at it, so config resolution lands there without a process-global chdir.
 // Isolates SATELLE_HOME so the home-keyed runtime plane (sty_4660bbe1) does not
 // write into the developer's real ~/.satelle during tests.
+// Also scrubs SATELLE_SESSION: fixtures acquire seats without a session stamp,
+// and an ambient value — inherited whenever the suite runs as a child of an
+// engaged `satelle story set` (the build-unit-check gate does exactly that) —
+// would make those seats read as foreign-session. Tests that need a session
+// identity set it themselves after the fixture.
 func tempRepo(t *testing.T) string {
 	t.Helper()
 	t.Setenv("SATELLE_HOME", t.TempDir())
+	t.Setenv(config.SessionEnv, "")
+	_ = os.Unsetenv(config.SessionEnv)
 	if strings.TrimSpace(os.Getenv("SATELLE_SERVER_ENDPOINT")) == "" {
 		t.Setenv("SATELLE_SERVER_ENDPOINT", "none")
 	}
