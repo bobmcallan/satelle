@@ -118,11 +118,9 @@ func TestServiceStatusHealthyAndUndeterminedCarryNoRemedy(t *testing.T) {
 // test would give the same assertion two homes that could drift.
 
 // TestServiceRestartFailsLoudlyWhenStillStale (AC7): the shared restart path
-// deliberately SOFT-fails on a non-matching respawn — it prints "could not
-// confirm …" and returns nil, which `satelle update` documents. For a verb the
-// operator typed specifically to fix a stale process, exiting 0 while the process
-// is still stale would be the same class of defect this story is correcting, so
-// the verb verifies and fails.
+// returns error on a non-matching respawn (sty_062656a5 AC4). This wrapper
+// still fails loudly so an explicit restart cannot exit 0 while the process
+// is stale.
 //
 // Overriding restartHooks is what proves the SHARED path is the one exercised: a
 // reimplementation would not observe these hooks.
@@ -149,7 +147,8 @@ func TestServiceRestartFailsLoudlyWhenStillStale(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a restart that left the process stale must fail loudly, got nil\noutput:\n%s", buf.String())
 	}
-	if !strings.Contains(err.Error(), "still NOT running the installed binary") {
+	if !strings.Contains(err.Error(), "still NOT running the installed binary") &&
+		!strings.Contains(err.Error(), "could not confirm it is running the new binary") {
 		t.Errorf("the error must say the process is still stale, got: %v", err)
 	}
 	// The shared path was genuinely used — its soft message is in the output.

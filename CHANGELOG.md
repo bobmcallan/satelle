@@ -1,3 +1,8 @@
+## [0.0.478] - 2026-08-27
+
+### Fixed
+- **`satelle update` no longer signals a stale system-unit MainPID or advises a hand-restart of a healthy service.** On a dual-unit host it used to trust `systemctl show MainPID` even when that pid was dead, print "did not respawn — restart manually", and exit 0 — skipping the kernel-fact path `satelle service status` already uses. Update now short-circuits when the live process (cgroup, then listen port) already matches the installed binary, only signals a system-unit pid that *is* the live service, and returns non-zero on failure phrasing. `satelle service restart` still cycles (the short-circuit is update-only). (sty_062656a5)
+
 ## [0.0.477] - 2026-08-27
 
 ### Fixed

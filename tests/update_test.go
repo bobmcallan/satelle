@@ -69,6 +69,64 @@ func TestUpdateReplacesBinary(t *testing.T) {
 	}
 }
 
+// TestUpdateAlreadyCurrentReportsNoRestartAdvice (sty_062656a5 AC6): when the
+// installed CLI already matches the published latest, update exits 0 and does
+// not advise a hand-restart.
+func TestUpdateAlreadyCurrentReportsNoRestartAdvice(t *testing.T) {
+	verOut, err := exec.Command(testBin, "version").CombinedOutput()
+	if err != nil {
+		t.Fatalf("version: %v\n%s", err, verOut)
+	}
+	fields := strings.Fields(string(verOut))
+	if len(fields) < 2 {
+		t.Fatalf("unexpected version output: %q", verOut)
+	}
+	ver := strings.TrimPrefix(fields[1], "v")
+	tag := "v" + ver
+
+	bin, err := os.ReadFile(testBin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(bin)
+	name := fmt.Sprintf("satelle-%s-%s-%s", tag, runtime.GOOS, runtime.GOARCH)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"tag_name":%q}`, tag)
+	})
+	mux.HandleFunc("/api/releases", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `[]`) })
+	mux.HandleFunc("/dl/"+tag+"/"+name, func(w http.ResponseWriter, r *http.Request) { w.Write(bin) })
+	mux.HandleFunc("/dl/"+tag+"/"+name+".sha256", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(sum[:]), name)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	installDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(installDir, "satelle"), bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(testBin, "update")
+	cmd.Env = append(os.Environ(),
+		"SATELLE_RELEASE_API="+srv.URL+"/api/releases/latest",
+		"SATELLE_RELEASE_LIST_API="+srv.URL+"/api/releases",
+		"SATELLE_RELEASE_BASE="+srv.URL+"/dl",
+		"SATELLE_INSTALL_DIR="+installDir,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("update: %v\n%s", err, out)
+	}
+	s := string(out)
+	for _, bad := range []string{"restart manually", "did not respawn", "sudo systemctl restart"} {
+		if strings.Contains(s, bad) {
+			t.Errorf("already-current update must not contain %q:\n%s", bad, s)
+		}
+	}
+}
+
 // TestUpdateLocalInstallsIntoRepo drives `satelle update --local` against a
 // fixture release server: it must install the release into THIS repo's
 // .satelle/satelle (the repo-local pin), not the global install dir

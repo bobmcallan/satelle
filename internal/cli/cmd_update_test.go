@@ -406,7 +406,7 @@ func TestReportRestartOutcome(t *testing.T) {
 	}
 	for _, c := range cases {
 		var buf bytes.Buffer
-		reportRestartOutcome(&buf, "user unit", c.pid, c.matched)
+		_ = reportRestartOutcome(&buf, "user unit", c.pid, c.matched)
 		if !strings.Contains(buf.String(), c.want) {
 			t.Errorf("%s: output = %q, want substring %q", c.name, buf.String(), c.want)
 		}
@@ -510,20 +510,30 @@ func TestRestartServiceIfRunning_StaleUnderReachableUserUnit(t *testing.T) {
 	h.userUnitMainPID = func() int { return 900 }
 	withRestartHooks(t, h)
 	var buf bytes.Buffer
-	restartServiceIfRunningRoot(&buf, procRoot)
-	if !strings.Contains(buf.String(), "could not confirm it is running the new binary") {
-		t.Errorf("exit-0 restart with a stale identity must not claim success: %q", buf.String())
+	err := restartServiceIfRunningRoot(&buf, procRoot)
+	if err == nil {
+		t.Fatal("a restart that cannot confirm the new binary must fail")
+	}
+	if !strings.Contains(err.Error(), "could not confirm it is running the new binary") {
+		t.Errorf("error = %v, output = %q", err, buf.String())
 	}
 
-	// Matched case: the process now IS the wanted binary (symlink points at target).
+	// Already-current (sty_062656a5): matching identity short-circuits before any restart.
 	procRoot2 := t.TempDir()
 	writeFakeCgroupPID(t, procRoot2, 901, "/user.slice/user-1000.slice/user@1000.service/app.slice/satelle.service", target)
+	restarted := false
+	h.restartUserUnit = func() error { restarted = true; return nil }
 	h.userUnitMainPID = func() int { return 901 }
 	withRestartHooks(t, h)
 	var buf2 bytes.Buffer
-	restartServiceIfRunningRoot(&buf2, procRoot2)
-	if !strings.Contains(buf2.String(), "onto the new binary") {
-		t.Errorf("matched identity must report success: %q", buf2.String())
+	if err := restartServiceIfRunningRoot(&buf2, procRoot2); err != nil {
+		t.Fatalf("already-current must succeed: %v", err)
+	}
+	if restarted {
+		t.Error("already-current must not restart the user unit")
+	}
+	if !strings.Contains(buf2.String(), "already running the new binary") {
+		t.Errorf("matched identity must report no-restart-needed: %q", buf2.String())
 	}
 }
 
@@ -549,8 +559,9 @@ func TestRestartServiceIfRunning_UnsupervisedStaleIsLeftAlone(t *testing.T) {
 	h.signalPID = func(int, syscall.Signal) error { signalled = true; return nil }
 	withRestartHooks(t, h)
 	var buf bytes.Buffer
-	if err := restartServiceIfRunningRoot(&buf, procRoot); err != nil {
-		t.Fatalf("leaving an unsupervised process alone is not a failure: %v", err)
+	err := restartServiceIfRunningRoot(&buf, procRoot)
+	if err == nil {
+		t.Fatal("leaving an unsupervised stale process must fail (printed failure, non-zero exit)")
 	}
 	if signalled {
 		t.Error("an unsupervised process must never be signalled — nothing would respawn it")
@@ -790,8 +801,9 @@ func TestBusFree_UserManagerWithoutLingerIsNotPersistent(t *testing.T) {
 	h.signalPID = func(int, syscall.Signal) error { signalled = true; return nil }
 	withRestartHooks(t, h)
 	var buf bytes.Buffer
-	if err := restartServiceIfRunningRoot(&buf, procRoot); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	err := restartServiceIfRunningRoot(&buf, procRoot)
+	if err == nil {
+		t.Fatal("a non-lingering user manager on the OLD binary must fail")
 	}
 	if signalled {
 		t.Error("a non-lingering user manager is not persistent — must not signal")
@@ -815,10 +827,19 @@ func TestRestartServiceIfRunning_StartLimited(t *testing.T) {
 	h.systemUnitRespawned = func(int) (int, bool) { return 0, false } // did not come back
 	h.systemUnitStartLtd = func() bool { return true }
 	withRestartHooks(t, h)
+	procRoot := t.TempDir()
+	staleFile := filepath.Join(t.TempDir(), "stale")
+	if err := os.WriteFile(staleFile, []byte("old bytes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeCgroupPID(t, procRoot, 903, "/system.slice/satelle.service", staleFile)
 	var buf bytes.Buffer
-	restartServiceIfRunningRoot(&buf, t.TempDir())
-	if !strings.Contains(buf.String(), "start-limited") || !strings.Contains(buf.String(), "reset-failed") {
-		t.Errorf("output = %q", buf.String())
+	err := restartServiceIfRunningRoot(&buf, procRoot)
+	if err == nil {
+		t.Fatal("start-limited must fail")
+	}
+	if !strings.Contains(err.Error(), "start-limited") || !strings.Contains(err.Error(), "reset-failed") {
+		t.Errorf("error = %v, output = %q", err, buf.String())
 	}
 }
 
@@ -845,6 +866,24 @@ func TestRestartServiceIfRunning_AlreadyCurrent(t *testing.T) {
 	if signalled || restarted {
 		t.Error("an already-current process must not be restarted or signalled")
 	}
+
+	// Dual-unit host (sty_062656a5): user unit live+current, system unit reports
+	// a pid — still no restart, no signal, no "restart manually".
+	h.userUnitActive = func() bool { return true }
+	h.systemUnitMainPID = func() int { return 1 }
+	h.restartUserUnit = func() error { restarted = true; return nil }
+	withRestartHooks(t, h)
+	signalled, restarted = false, false
+	var buf2 bytes.Buffer
+	if err := restartServiceIfRunningRoot(&buf2, procRoot); err != nil {
+		t.Fatalf("already-current dual-unit: %v", err)
+	}
+	if signalled || restarted {
+		t.Error("dual-unit already-current must not restart or signal")
+	}
+	if strings.Contains(buf2.String(), "restart manually") || strings.Contains(buf2.String(), "sudo") {
+		t.Errorf("must not advise a hand-restart: %q", buf2.String())
+	}
 }
 
 // AC7 regression: the two paths that already worked sudo-free keep working the
@@ -856,9 +895,13 @@ func TestRestartServiceIfRunning_SudoFreePathsUnchanged(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("linux-only mechanism")
 	}
-	target := setupWantedIdentity(t)
+	setupWantedIdentity(t)
+	staleFile := filepath.Join(t.TempDir(), "stale")
+	if err := os.WriteFile(staleFile, []byte("old bytes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	procRoot := t.TempDir()
-	writeFakeCgroupPID(t, procRoot, 905, "irrelevant-for-this-case", target)
+	writeFakeCgroupPID(t, procRoot, 905, "irrelevant-for-this-case", staleFile)
 	restartUserCalled := false
 	signalCalled := false
 	h := noSystemctlPath()
@@ -867,7 +910,7 @@ func TestRestartServiceIfRunning_SudoFreePathsUnchanged(t *testing.T) {
 	h.userUnitMainPID = func() int { return 905 }
 	withRestartHooks(t, h)
 	var buf bytes.Buffer
-	restartServiceIfRunningRoot(&buf, procRoot)
+	_ = restartServiceIfRunningRoot(&buf, procRoot)
 	if !restartUserCalled {
 		t.Error("reachable user unit must still be restarted via systemctl --user (no sudo)")
 	}
@@ -876,8 +919,9 @@ func TestRestartServiceIfRunning_SudoFreePathsUnchanged(t *testing.T) {
 	}
 
 	// System unit, Restart=always, healthy respawn — still SIGTERM, no sudo.
+	// Reported MainPID must be ALIVE (sty_062656a5) or this branch is skipped.
 	procRoot2 := t.TempDir()
-	writeFakeCgroupPID(t, procRoot2, 906, "irrelevant", target)
+	writeFakeCgroupPID(t, procRoot2, 800, "/system.slice/satelle.service", staleFile)
 	signalled := false
 	h2 := noSystemctlPath()
 	h2.systemUnitMainPID = func() int { return 800 }
@@ -886,13 +930,165 @@ func TestRestartServiceIfRunning_SudoFreePathsUnchanged(t *testing.T) {
 	h2.systemUnitRespawned = func(int) (int, bool) { return 906, true }
 	withRestartHooks(t, h2)
 	var buf2 bytes.Buffer
-	restartServiceIfRunningRoot(&buf2, procRoot2)
+	_ = restartServiceIfRunningRoot(&buf2, procRoot2)
 	if !signalled {
 		t.Error("healthy Restart=always system unit must still be signalled directly (no sudo)")
 	}
-	if strings.Contains(buf2.String(), "sudo") {
+	if strings.Contains(buf2.String(), "sudo") && !strings.Contains(buf2.String(), "onto the new binary") {
 		t.Errorf("a successful respawn path must not mention sudo: %q", buf2.String())
 	}
+}
+
+func writeListenPortPID(t *testing.T, procRoot string, pid, port, inode int) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(procRoot, "net"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hexPort := fmt.Sprintf("%04X", port)
+	body := "  sl  local_address rem_address   st tx_queue:rx_queue tr:tm->when retrnsmt   uid  timeout inode\n" +
+		fmt.Sprintf("   0: 00000000:%s 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 %d 1 0 100 0 0 10 0\n", hexPort, inode)
+	if err := os.WriteFile(filepath.Join(procRoot, "net", "tcp"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pidDir := filepath.Join(procRoot, strconv.Itoa(pid), "fd")
+	if err := os.MkdirAll(pidDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(fmt.Sprintf("socket:[%d]", inode), filepath.Join(pidDir, "3")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// AC5: a recorded pid that is not alive falls through to the port holder.
+func TestResolveServicePID_DeadRecordedPID(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux-only mechanism")
+	}
+	setupWantedIdentity(t)
+	procRoot := t.TempDir()
+	writeListenPortPID(t, procRoot, 321, servicePort(), 77777)
+	if got := resolveServicePID(procRoot, 999999); got != 321 {
+		t.Errorf("dead reported pid: got %d, want 321", got)
+	}
+	if got := resolveServicePID(procRoot, 321); got != 321 {
+		t.Errorf("live reported pid: got %d, want 321", got)
+	}
+	if got := resolveServicePID(t.TempDir(), 999999); got != 0 {
+		t.Errorf("empty root must not invent a pid: got %d", got)
+	}
+}
+
+// AC2: dead system-unit MainPID is never signalled; the live port holder is used.
+func TestRestartServiceIfRunning_DeadSystemPIDFallsThrough(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux-only mechanism")
+	}
+	target := setupWantedIdentity(t)
+	procRoot := t.TempDir()
+	writeFakeCgroupPID(t, procRoot, 321, "/user.slice/user-1000.slice/user@1000.service/app.slice/satelle.service", target)
+	signalled := []int{}
+	h := noSystemctlPath()
+	h.systemUnitMainPID = func() int { return 839481 } // dead, not in procRoot
+	h.systemUnitRestartAlw = func() bool { return true }
+	h.signalPID = func(pid int, _ syscall.Signal) error { signalled = append(signalled, pid); return nil }
+	withRestartHooks(t, h)
+	var buf bytes.Buffer
+	if err := restartServiceIfRunningRoot(&buf, procRoot); err != nil {
+		t.Fatalf("already-current live process: %v", err)
+	}
+	for _, p := range signalled {
+		if p == 839481 {
+			t.Fatal("dead system-unit MainPID must never be signalled")
+		}
+	}
+	if !strings.Contains(buf.String(), "already running the new binary") {
+		t.Errorf("live current process must short-circuit: %q", buf.String())
+	}
+}
+
+// AC4: printed failure phrasing implies non-zero exit, and a nil error prints none of it.
+func TestRestartOutcome_ExitAgreesWithOutput(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux-only mechanism")
+	}
+	failPhrases := []string{"restart manually", "did not respawn", "start-limited", "could not confirm", "is running the OLD binary"}
+	check := func(t *testing.T, err error, out string) {
+		t.Helper()
+		joined := out
+		if err != nil {
+			joined += " " + err.Error()
+		}
+		hasFail := false
+		for _, p := range failPhrases {
+			if strings.Contains(joined, p) {
+				hasFail = true
+				break
+			}
+		}
+		if hasFail && err == nil {
+			t.Errorf("failure phrasing with nil error:\n%s", joined)
+		}
+		if err == nil {
+			for _, p := range failPhrases {
+				if strings.Contains(out, p) {
+					t.Errorf("nil error output contains %q: %q", p, out)
+				}
+			}
+		}
+	}
+
+	t.Run("already-current", func(t *testing.T) {
+		target := setupWantedIdentity(t)
+		procRoot := t.TempDir()
+		writeFakeCgroupPID(t, procRoot, 904, "/user.slice/user-1000.slice/user@1000.service/app.slice/satelle.service", target)
+		withRestartHooks(t, noSystemctlPath())
+		var buf bytes.Buffer
+		err := restartServiceIfRunningRoot(&buf, procRoot)
+		check(t, err, buf.String())
+	})
+	t.Run("start-limited", func(t *testing.T) {
+		setupWantedIdentity(t)
+		procRoot := t.TempDir()
+		stale := filepath.Join(t.TempDir(), "stale")
+		if err := os.WriteFile(stale, []byte("old"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFakeCgroupPID(t, procRoot, 903, "/system.slice/satelle.service", stale)
+		h := noSystemctlPath()
+		h.systemUnitMainPID = func() int { return 903 }
+		h.systemUnitRestartAlw = func() bool { return true }
+		h.signalPID = func(int, syscall.Signal) error { return nil }
+		h.systemUnitRespawned = func(int) (int, bool) { return 0, false }
+		h.systemUnitStartLtd = func() bool { return true }
+		withRestartHooks(t, h)
+		var buf bytes.Buffer
+		err := restartServiceIfRunningRoot(&buf, procRoot)
+		check(t, err, buf.String())
+		if err == nil {
+			t.Fatal("start-limited must error")
+		}
+	})
+	t.Run("did-not-respawn", func(t *testing.T) {
+		setupWantedIdentity(t)
+		procRoot := t.TempDir()
+		stale := filepath.Join(t.TempDir(), "stale")
+		if err := os.WriteFile(stale, []byte("old"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFakeCgroupPID(t, procRoot, 903, "/system.slice/satelle.service", stale)
+		h := noSystemctlPath()
+		h.systemUnitMainPID = func() int { return 903 }
+		h.systemUnitRestartAlw = func() bool { return true }
+		h.signalPID = func(int, syscall.Signal) error { return nil }
+		h.systemUnitRespawned = func(int) (int, bool) { return 0, false }
+		withRestartHooks(t, h)
+		var buf bytes.Buffer
+		err := restartServiceIfRunningRoot(&buf, procRoot)
+		check(t, err, buf.String())
+		if err == nil || !strings.Contains(err.Error(), "did not respawn") {
+			t.Fatalf("want did-not-respawn error, got %v", err)
+		}
+	})
 }
 
 // --- sty_d45618d5: signal selection derived from the unit's Restart policy ---
@@ -1051,8 +1247,9 @@ func TestBusFree_NonRespawningPolicyIsNeverSignalled(t *testing.T) {
 			h.signalPID = func(int, syscall.Signal) error { signalled = true; return nil }
 			withRestartHooks(t, h)
 			var buf bytes.Buffer
-			if err := restartServiceIfRunningRoot(&buf, procRoot); err != nil {
-				t.Fatalf("leaving it running is not a failure: %v", err)
+			err := restartServiceIfRunningRoot(&buf, procRoot)
+			if err == nil {
+				t.Fatal("a non-respawning stale process must fail")
 			}
 			if signalled {
 				t.Fatal("a policy that never respawns must never be signalled")
@@ -1084,8 +1281,9 @@ func TestBusFree_UnreadableUnitIsNeverSignalled(t *testing.T) {
 	h.signalPID = func(int, syscall.Signal) error { signalled = true; return nil }
 	withRestartHooks(t, h)
 	var buf bytes.Buffer
-	if err := restartServiceIfRunningRoot(&buf, procRoot); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	err := restartServiceIfRunningRoot(&buf, procRoot)
+	if err == nil {
+		t.Fatal("an unknown Restart policy on the OLD binary must fail")
 	}
 	if signalled {
 		t.Fatal("an unknown Restart policy must never be signalled")

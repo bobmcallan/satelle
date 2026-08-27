@@ -261,12 +261,11 @@ fix a stale process must not report success while the process is still stale.`,
 //
 // It restarts through the SHARED path and then VERIFIES with the SAME
 // identityVerdict that produced the stale verdict this verb exists to clear.
-// The shared path deliberately soft-fails on a non-matching respawn — it prints
-// "could not confirm …" and returns nil, which `satelle update` documents and
-// this slice does not change — so the loud failure belongs here, to the verb the
-// operator typed specifically to fix a stale process (sty_a7b2cd3c).
+// The shared path now returns error on a non-matching respawn (sty_062656a5 AC4).
+// This wrapper still re-checks identityVerdict so a skipIfCurrent=false cycle
+// that printed success cannot hide a stale process (sty_a7b2cd3c).
 func runServiceRestart(out io.Writer, procRoot string) error {
-	if err := restartServiceIfRunningRoot(out, procRoot); err != nil {
+	if err := restartServiceIfRunningRootOpt(out, procRoot, false); err != nil {
 		return err
 	}
 	pid := discoverLivePID(procRoot)

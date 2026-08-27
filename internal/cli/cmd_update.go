@@ -810,6 +810,13 @@ var restartHooks = struct {
 // substitute a fake /proc tree (AC6) without touching the real system, and every
 // systemctl-touching step routes through restartHooks for the same reason.
 func restartServiceIfRunningRoot(out io.Writer, procRoot string) error {
+	return restartServiceIfRunningRootOpt(out, procRoot, true)
+}
+
+// restartServiceIfRunningRootOpt is the injectable core. skipIfCurrent is true
+// for `satelle update` (already-current is a no-op) and false for
+// `satelle service restart` (the operator asked for a cycle).
+func restartServiceIfRunningRootOpt(out io.Writer, procRoot string, skipIfCurrent bool) error {
 	if runtime.GOOS != "linux" {
 		return nil // cgroup/port discovery and /proc identity are Linux-only (WSL is the story context)
 	}
@@ -817,52 +824,56 @@ func restartServiceIfRunningRoot(out io.Writer, procRoot string) error {
 		return nil
 	}
 	wanted, wantedOK := wantedExeIdentity(procRoot)
+	livePID := discoverLivePID(procRoot)
+
+	// Kernel-fact already-current check FIRST (sty_062656a5). A healthy,
+	// correctly-versioned process must never be signalled, and must never be
+	// told to restart manually — including on a dual-unit host whose system
+	// unit still reports a stale MainPID. Gated to the update caller: an
+	// explicit `satelle service restart` must still cycle (skipIfCurrent=false).
+	if skipIfCurrent && livePID > 0 && wantedOK {
+		if live, ok := identityFromPID(procRoot, livePID); ok && identitiesMatch(live, wanted) {
+			fmt.Fprintf(out, "%s (pid %d) is already running the new binary — no restart needed\n", serviceUnitName, livePID)
+			return nil
+		}
+	}
 
 	// 1) systemd USER unit — sudo-free when the user manager is alive. Verify by
 	// identity, not by the restart command's exit code alone.
 	if restartHooks.userUnitActive() {
 		if err := restartHooks.restartUserUnit(); err == nil {
-			pid := restartHooks.userUnitMainPID()
-			reportRestartOutcome(out, "user unit", pid, waitForIdentity(procRoot, pid, wanted, wantedOK))
-			return nil
+			pid := resolveServicePID(procRoot, restartHooks.userUnitMainPID())
+			return reportRestartOutcome(out, "user unit", pid, waitForIdentity(procRoot, pid, wanted, wantedOK))
 		}
 	}
 	// 2) SYSTEM unit — sudo-free restart by signalling MainPID; Restart=always respawns.
-	if pid := restartHooks.systemUnitMainPID(); pid > 0 {
+	// Only enter when the reported MainPID IS the live service process
+	// (discoverLivePID). A dead or recycled MainPID, or a dual-unit host where
+	// a different pid holds the port, falls through (sty_062656a5).
+	if sysPID := restartHooks.systemUnitMainPID(); sysPID > 0 && sysPID == livePID {
 		// Only signal a unit that will RESPAWN — a clean SIGTERM to a Restart=on-failure
 		// unit would STOP the service, not reload it. Never leave a good release with a
 		// dead service; guide the operator to a persistent supervisor instead.
 		if !restartHooks.systemUnitRestartAlw() {
-			fmt.Fprintf(out, "system unit %s is not Restart=always — a signal would stop it, not respawn. Upgrade it with `satelle service install --system`, or restart manually: sudo systemctl restart %s\n", serviceUnitName, serviceUnitName)
-			return nil
+			return fmt.Errorf("system unit %s is not Restart=always — a signal would stop it, not respawn. Upgrade it with `satelle service install --system`, or restart manually: sudo systemctl restart %s", serviceUnitName, serviceUnitName)
 		}
-		if err := restartHooks.signalPID(pid, syscall.SIGTERM); err == nil {
-			if newPID, respawned := restartHooks.systemUnitRespawned(pid); respawned {
-				reportRestartOutcome(out, "system unit", newPID, waitForIdentity(procRoot, newPID, wanted, wantedOK))
-				return nil
+		if err := restartHooks.signalPID(sysPID, syscall.SIGTERM); err == nil {
+			if newPID, respawned := restartHooks.systemUnitRespawned(sysPID); respawned {
+				return reportRestartOutcome(out, "system unit", newPID, waitForIdentity(procRoot, newPID, wanted, wantedOK))
 			}
 			if restartHooks.systemUnitStartLtd() {
-				fmt.Fprintf(out, "%s is start-limited (systemd exhausted its restart attempts and gave up) — run: systemctl reset-failed %s && sudo systemctl restart %s\n", serviceUnitName, serviceUnitName, serviceUnitName)
-				return nil
+				return fmt.Errorf("%s is start-limited (systemd exhausted its restart attempts and gave up) — run: systemctl reset-failed %s && sudo systemctl restart %s", serviceUnitName, serviceUnitName, serviceUnitName)
 			}
-			fmt.Fprintf(out, "signalled %s (pid %d) but it did not respawn — restart manually: sudo systemctl restart %s\n", serviceUnitName, pid, serviceUnitName)
-			return nil
+			return fmt.Errorf("signalled %s (pid %d) but it did not respawn — restart manually: sudo systemctl restart %s", serviceUnitName, sysPID, serviceUnitName)
 		}
 	}
-	// 3) Neither systemctl path is reachable. Locate the live process WITHOUT the
-	// bus (cgroup, then listening-port) so "no service configured" and "a service
-	// IS running but its supervisor is unreachable" are never the same message.
-	livePID := findPIDByCgroup(procRoot, serviceUnitName)
+	// 3) Neither systemctl path is reachable, or the bus-reported pid was dead.
+	// Locate the live process WITHOUT the bus (cgroup, then listening-port).
 	if livePID == 0 {
-		livePID = findPIDByListenPort(procRoot, servicePort())
+		livePID = discoverLivePID(procRoot)
 	}
 	if livePID == 0 {
 		fmt.Fprintf(out, "binary updated, but no running %s process was found — start one with `satelle service install` (user) or `satelle service install --system` (persistent)\n", serviceUnitName)
-		return nil
-	}
-	live, liveOK := identityFromPID(procRoot, livePID)
-	if wantedOK && liveOK && identitiesMatch(live, wanted) {
-		fmt.Fprintf(out, "%s (pid %d) is already running the new binary — no restart needed\n", serviceUnitName, livePID)
 		return nil
 	}
 	// A stale process is running and its supervisor cannot be COMMANDED from here —
@@ -909,10 +920,10 @@ func restartSignalForPolicy(policy string, known bool) (syscall.Signal, bool) {
 
 // printInstallRemedy names the one-time fix for a service nothing would respawn.
 // Shared by both refusal branches so "the same remedy" is structural rather than
-// two strings that can drift apart.
-func printInstallRemedy(out io.Writer) {
-	fmt.Fprintf(out, "  satelle service install            (user unit; needs lingering)\n")
-	fmt.Fprintf(out, "  satelle service install --system   (persistent system unit)\n")
+// two strings that can drift apart. Returned so it travels with the error (sty_062656a5 AC4).
+func printInstallRemedy() string {
+	return "  satelle service install            (user unit; needs lingering)\n" +
+		"  satelle service install --system   (persistent system unit)\n"
 }
 
 // busFreeRestart cycles a supervised process without any systemctl call: signal
@@ -931,9 +942,9 @@ func busFreeRestart(out io.Writer, procRoot string, livePID int, wanted exeIdent
 		if ok && sup.Name == "systemd" {
 			owner = "its systemd user manager is not lingering, so it dies with the login session"
 		}
-		fmt.Fprintf(out, "%s (pid %d) is running on the OLD binary, but no persistent supervisor owns it (%s) — a restart would not be respawned, so it was left running. Install a persistent unit, then re-run `satelle update`:\n", serviceUnitName, livePID, owner)
-		printInstallRemedy(out)
-		return nil
+		msg := fmt.Sprintf("%s (pid %d) is running on the OLD binary, but no persistent supervisor owns it (%s) — a restart would not be respawned, so it was left running. Install a persistent unit, then re-run `satelle update`:\n%s", serviceUnitName, livePID, owner, printInstallRemedy())
+		fmt.Fprint(out, msg)
+		return fmt.Errorf("%s", strings.TrimRight(msg, "\n"))
 	}
 
 	policy, known := unitRestartPolicy()
@@ -945,9 +956,9 @@ func busFreeRestart(out io.Writer, procRoot string, livePID int, wanted exeIdent
 		} else if policy == "" {
 			why = "its unit declares no Restart policy"
 		}
-		fmt.Fprintf(out, "%s (pid %d) is running on the OLD binary, but %s — no signal would make systemd respawn it, so it was left running rather than stopped. Install a unit that restarts, then re-run `satelle update`:\n", serviceUnitName, livePID, why)
-		printInstallRemedy(out)
-		return nil
+		msg := fmt.Sprintf("%s (pid %d) is running on the OLD binary, but %s — no signal would make systemd respawn it, so it was left running rather than stopped. Install a unit that restarts, then re-run `satelle update`:\n%s", serviceUnitName, livePID, why, printInstallRemedy())
+		fmt.Fprint(out, msg)
+		return fmt.Errorf("%s", strings.TrimRight(msg, "\n"))
 	}
 
 	start := time.Now()
@@ -1009,18 +1020,43 @@ func discoverLivePID(procRoot string) int {
 	return findPIDByListenPort(procRoot, servicePort())
 }
 
+// pidAlive reports whether /proc/<pid> exists under procRoot. A bus-reported
+// MainPID that is not alive is stale (sty_062656a5).
+func pidAlive(procRoot string, pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(procRoot, strconv.Itoa(pid)))
+	return err == nil
+}
+
+// resolveServicePID honours a bus-reported pid only when it is alive in
+// procRoot; otherwise it falls back to discoverLivePID (cgroup, then port).
+func resolveServicePID(procRoot string, reported int) int {
+	if reported > 0 && pidAlive(procRoot, reported) {
+		return reported
+	}
+	return discoverLivePID(procRoot)
+}
+
 // reportRestartOutcome renders the terminal message for a restart that WAS
 // commanded (user-unit restart, or a respawned system unit): success only when
 // exe identity confirms the live process is the newly installed binary (AC1) —
 // a restart command's exit code or a changed PID alone is not proof.
-func reportRestartOutcome(out io.Writer, via string, pid int, matched bool) {
+// Failure phrasing returns an error so exit code and output agree (sty_062656a5 AC4).
+func reportRestartOutcome(out io.Writer, via string, pid int, matched bool) error {
 	switch {
 	case pid <= 0:
-		fmt.Fprintf(out, "restarted %s (%s) but could not locate its process to confirm the new binary is running\n", serviceUnitName, via)
+		msg := fmt.Sprintf("restarted %s (%s) but could not locate its process to confirm the new binary is running", serviceUnitName, via)
+		fmt.Fprintln(out, msg)
+		return fmt.Errorf("%s", msg)
 	case matched:
 		fmt.Fprintf(out, "restarted %s (%s, pid %d) onto the new binary\n", serviceUnitName, via, pid)
+		return nil
 	default:
-		fmt.Fprintf(out, "restarted %s (%s, pid %d) but could not confirm it is running the new binary\n", serviceUnitName, via, pid)
+		msg := fmt.Sprintf("restarted %s (%s, pid %d) but could not confirm it is running the new binary", serviceUnitName, via, pid)
+		fmt.Fprintln(out, msg)
+		return fmt.Errorf("%s", msg)
 	}
 }
 
