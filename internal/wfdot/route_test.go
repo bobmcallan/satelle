@@ -192,6 +192,106 @@ obligations = ["x", "deployed"]
 	}
 }
 
+func TestUnresolvedObligations(t *testing.T) {
+	step := `[raised]
+status = "backlog"
+start = true
+
+[planned]
+status = "plan"
+agent = "planner"
+requires = ["raised"]
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["planned"]
+`
+	cat, err := ParseSteps(step)
+	if err != nil {
+		t.Fatalf("ParseSteps: %v", err)
+	}
+
+	t.Run("fail: obligation is a status not a table key", func(t *testing.T) {
+		lists, err := ParseDone(`["*"]
+obligations = ["raised", "in_progress", "coded"]
+`)
+		if err != nil {
+			t.Fatalf("ParseDone: %v", err)
+		}
+		got := UnresolvedObligations(lists, cat)
+		if len(got) != 1 {
+			t.Fatalf("want 1 problem, got %v", got)
+		}
+		if !strings.Contains(got[0], "in_progress") || !strings.Contains(got[0], "*") || !strings.Contains(got[0], "has no discharging step") {
+			t.Errorf("problem must name category, obligation, and why: %q", got[0])
+		}
+	})
+
+	t.Run("fail: unresolved tag_obligation", func(t *testing.T) {
+		lists, err := ParseDone(`["*"]
+obligations = ["raised", "coded"]
+[["*".tag_obligation]]
+tag = "surface:ui"
+obligation = "styled"
+`)
+		if err != nil {
+			t.Fatalf("ParseDone: %v", err)
+		}
+		got := UnresolvedObligations(lists, cat)
+		if len(got) != 1 || !strings.Contains(got[0], "styled") {
+			t.Fatalf("want unresolved tag obligation styled, got %v", got)
+		}
+	})
+
+	t.Run("pass: every obligation is a table key", func(t *testing.T) {
+		lists, err := ParseDone(`["*"]
+obligations = ["raised", "planned", "coded"]
+`)
+		if err != nil {
+			t.Fatalf("ParseDone: %v", err)
+		}
+		if got := UnresolvedObligations(lists, cat); len(got) != 0 {
+			t.Fatalf("legal route must report nothing, got %v", got)
+		}
+	})
+
+	t.Run("pass: seeded testdata fixtures", func(t *testing.T) {
+		done, stepBody := fixtures(t)
+		lists, err := ParseDone(done)
+		if err != nil {
+			t.Fatalf("ParseDone testdata: %v", err)
+		}
+		seedCat, err := ParseSteps(stepBody)
+		if err != nil {
+			t.Fatalf("ParseSteps testdata: %v", err)
+		}
+		if got := UnresolvedObligations(lists, seedCat); len(got) != 0 {
+			t.Fatalf("seeded testdata must resolve, got %v", got)
+		}
+	})
+
+	t.Run("parity with SelectSteps", func(t *testing.T) {
+		lists, err := ParseDone(`[feature]
+obligations = ["raised", "in_progress"]
+`)
+		if err != nil {
+			t.Fatalf("ParseDone: %v", err)
+		}
+		got := UnresolvedObligations(lists, cat)
+		if len(got) != 1 {
+			t.Fatalf("want 1 problem, got %v", got)
+		}
+		_, selErr := SelectSteps(lists[0], cat, nil)
+		if selErr == nil {
+			t.Fatal("SelectSteps must fail the same fixture")
+		}
+		if got[0] != selErr.Error() {
+			t.Errorf("checker %q != SelectSteps %q", got[0], selErr.Error())
+		}
+	})
+}
+
 func TestRouteUnknownCategoryIsError(t *testing.T) {
 	done, step := fixtures(t)
 	_, err := ParseRoute(done, step, "nonesuch", nil)

@@ -1,3 +1,13 @@
+## [0.0.477] - 2026-08-27
+
+### Fixed
+- **`satelle workflow validate` refuses an obligation that names no step.** It used to parse `done.toml` and `step.toml` independently and PASS both, even when a category listed a step STATUS (`in_progress`) rather than a table KEY (`coded`). Derivation already refused that (`obligation "…" in category "…" has no discharging step`); validate now joins the governing route source and fails in the same words, so the verb an author is told to run after editing actually catches the usual TOML-route mistake. (sty_5d712bc5)
+
+## [serve-v0.0.33] - 2026-08-27
+
+### Changed
+- **Serve channel follows the wfdot join check.** `internal/wfdot/route.go` is on the satelled watch set; bump so `satelle update` refreshes the running service with 0.0.477. (sty_5d712bc5)
+
 ## [0.0.476] - 2026-08-26
 
 ### Fixed

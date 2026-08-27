@@ -22,6 +22,8 @@ import (
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/doctor"
 	"github.com/bobmcallan/satelle/internal/structure"
+	"github.com/bobmcallan/satelle/internal/wfdot"
+	"github.com/bobmcallan/satelle/internal/wfgovern"
 )
 
 // authoredValidateCmd builds the per-noun `<noun> validate [name]` subcommand for
@@ -132,6 +134,29 @@ func validateKind(cmd *cobra.Command, a *app.App, kind, nameFilter string) error
 				fmt.Fprintln(out, "      an edge whose gate skill does not resolve is ADVISORY — it advances UNGATED, with no reviewer and no verdict, until the skill exists")
 			}
 			break
+		}
+	}
+
+	// Cross-half route join (sty_5d712bc5): every obligation in every category
+	// table must resolve to a step table key. Per-file checks cannot see the
+	// sibling half, so this lives here — both whole-set and named forms, because
+	// an author validating one half must still see the break. If a half does
+	// not parse, emit nothing: structure.Doc already named the parse failure.
+	if kind == "workflows" {
+		rs := wfgovern.RouteSourceOf(doctor.GoverningWorkflows(dataDir))
+		if rs.Present() {
+			lists, derr := wfdot.ParseDone(rs.Done)
+			cat, serr := wfdot.ParseSteps(rs.Step)
+			if derr == nil && serr == nil {
+				unresolved := wfdot.UnresolvedObligations(lists, cat)
+				for _, p := range unresolved {
+					failed++
+					fmt.Fprintf(out, "FAIL  workflows (route) — %s\n", p)
+				}
+				if len(unresolved) > 0 {
+					fmt.Fprintln(out, "      an obligation names a step's TABLE KEY, never the status it declares — statuses repeat across steps by design")
+				}
+			}
 		}
 	}
 

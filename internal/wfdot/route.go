@@ -174,6 +174,65 @@ func BuildRoute(l List, cat Catalogue, tags []string) (Spec, error) {
 	return assemble(ordered, cat.Gates, l)
 }
 
+// unresolvedMsg is the ONE wording for "this obligation has no discharging
+// step". SelectSteps (derivation) and UnresolvedObligations (validate) both
+// use it so an author sees one diagnosis rather than two (sty_5d712bc5).
+func unresolvedMsg(obligation, category string) string {
+	return fmt.Sprintf("obligation %q in category %q has no discharging step", obligation, category)
+}
+
+func providedSet(cat Catalogue) map[string]bool {
+	provided := map[string]bool{}
+	for _, st := range cat.Steps {
+		if st.Provides != "" {
+			provided[st.Provides] = true
+		}
+	}
+	return provided
+}
+
+// UnresolvedObligations reports every declarable obligation across lists that
+// no step in cat discharges, in the same words route derivation uses.
+//
+// This is a SUPERSET of SelectSteps: it checks l.Obligations and every
+// TagObligations value unconditionally. SelectSteps resolves the tag-filtered
+// ObligationsFor(tags) for one story; this checker must not call SelectSteps
+// (that would reintroduce tag-conditional blindness). Resolve against
+// Step.Provides (the table key), never Step.Name (the status).
+func UnresolvedObligations(lists []List, cat Catalogue) []string {
+	provided := providedSet(cat)
+	var out []string
+	seen := map[string]bool{}
+	report := func(o, category string) {
+		msg := unresolvedMsg(o, category)
+		if seen[msg] {
+			return
+		}
+		seen[msg] = true
+		out = append(out, msg)
+	}
+	for _, l := range lists {
+		for _, o := range l.Obligations {
+			if !provided[o] {
+				report(o, l.Category)
+			}
+		}
+		var keys []string
+		for k := range l.TagObligations {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			for _, o := range l.TagObligations[k] {
+				if !provided[o] {
+					report(o, l.Category)
+				}
+			}
+		}
+	}
+	return out
+}
+
 // SelectSteps returns the steps a category's route walks, topologically ordered.
 //
 // This is the ONE answer to "which steps did this category ask for". The
@@ -192,16 +251,10 @@ func SelectSteps(l List, cat Catalogue, tags []string) ([]Step, error) {
 		wanted[o] = true
 	}
 
-	provided := map[string]bool{}
-	for _, st := range cat.Steps {
-		if st.Provides != "" {
-			provided[st.Provides] = true
-		}
-	}
+	provided := providedSet(cat)
 	for _, o := range want {
 		if !provided[o] {
-			return nil, fmt.Errorf(
-				"obligation %q in category %q has no discharging step", o, l.Category)
+			return nil, fmt.Errorf("%s", unresolvedMsg(o, l.Category))
 		}
 	}
 
