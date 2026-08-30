@@ -524,7 +524,15 @@ func materializeWorkstate(ctx context.Context, a *app.App, optIn map[string]bool
 				continue
 			}
 		}
-		if _, uerr := a.Store.Stories.Upsert(ctx, it, now); uerr != nil {
+		// --force means the hosted copy wins outright, including a status the
+		// local row has already moved past — so it takes the store's explicit
+		// opt-out from the stale-status guard (sty_2c71eff6). The default path
+		// keeps the guard, on top of the newer-local check above.
+		upsert := a.Store.Stories.Upsert
+		if force {
+			upsert = a.Store.Stories.UpsertForce
+		}
+		if _, uerr := upsert(ctx, it, now); uerr != nil {
 			return nItems, nLedger, nKept, fmt.Errorf("upsert item %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hi.ID, nItems, nLedger, uerr)
 		}
 		nItems++

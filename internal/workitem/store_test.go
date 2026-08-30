@@ -3,6 +3,7 @@ package workitem
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -95,6 +96,102 @@ func TestUpsertPreservesParkOriginWhenIncomingBlank(t *testing.T) {
 	}
 	if got.ParkOrigin != "in_progress" {
 		t.Errorf("Upsert wiped park_origin to %q", got.ParkOrigin)
+	}
+}
+
+// sty_2c71eff6: a writer that read the row, spent minutes in a gate and a
+// dispatched agent run, and then wrote back must lose to whoever moved the
+// status meanwhile — the CAS says so, and names both statuses.
+func TestUpdateCompareAndSetRefusesStaleStatus(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	it, err := st.Create(ctx, CreateInput{
+		Kind: KindStory, Title: "cas", Body: "b", AcceptanceCriteria: "1. a", Status: "backlog",
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SetStatus(ctx, it.ID, "in_progress", now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	stale := "backlog"
+	body := "late planner write"
+	_, err = st.Update(ctx, it.ID, UpdateInput{Body: &body, Status: &stale, ExpectStatus: &stale}, now.Add(2*time.Second))
+	var conflict *StatusConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("Update err = %v, want *StatusConflictError", err)
+	}
+	if conflict.Expected != "backlog" || conflict.Actual != "in_progress" {
+		t.Errorf("conflict = %+v, want expected backlog / actual in_progress", conflict)
+	}
+	if !errors.Is(err, ErrStatusConflict) {
+		t.Errorf("errors.Is(err, ErrStatusConflict) = false")
+	}
+	if errors.Is(err, ErrNotFound) {
+		t.Errorf("a CAS conflict must not surface as ErrNotFound")
+	}
+	got, err := st.Get(ctx, it.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "in_progress" || got.Body != "b" {
+		t.Errorf("refused write leaked: status=%q body=%q", got.Status, got.Body)
+	}
+	// The matching snapshot still writes: CAS refuses staleness, not concurrency.
+	fresh := "in_progress"
+	if _, err := st.Update(ctx, it.ID, UpdateInput{Body: &body, ExpectStatus: &fresh}, now.Add(3*time.Second)); err != nil {
+		t.Fatalf("current-snapshot write refused: %v", err)
+	}
+	// An unknown id is still ErrNotFound, not a conflict.
+	if _, err := st.Update(ctx, "sty_missing", UpdateInput{Body: &body, ExpectStatus: &fresh}, now); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown id err = %v, want ErrNotFound", err)
+	}
+}
+
+// sty_2c71eff6: Upsert is a full-row write, so a stale import snapshot would
+// otherwise rewrite status backwards. The older stamp keeps the stored status;
+// UpsertForce is the explicit opt-out the --force workstate pull uses.
+func TestUpsertKeepsStoredStatusForOlderSnapshot(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	it, err := st.Create(ctx, CreateInput{
+		Kind: KindStory, Title: "stale-import", Body: "b", AcceptanceCriteria: "1. a", Status: "backlog",
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved, err := st.SetStatus(ctx, it.ID, "in_progress", now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := it
+	stale.Status = "backlog"
+	stale.Body = "snapshot body"
+	stale.UpdatedAt = moved.UpdatedAt.Add(-time.Second)
+	if _, err := st.Upsert(ctx, stale, now); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Get(ctx, it.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "in_progress" {
+		t.Errorf("stale Upsert regressed status to %q", got.Status)
+	}
+	if got.Body != "snapshot body" {
+		t.Errorf("guard also blocked the non-status fields: body = %q", got.Body)
+	}
+	if _, err := st.UpsertForce(ctx, stale, now); err != nil {
+		t.Fatal(err)
+	}
+	forced, err := st.Get(ctx, it.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forced.Status != "backlog" {
+		t.Errorf("UpsertForce status = %q, want the incoming backlog", forced.Status)
 	}
 }
 

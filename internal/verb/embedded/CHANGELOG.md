@@ -1,3 +1,8 @@
+## [0.0.479] - 2026-08-30
+
+### Fixed
+- **A status transition can no longer be clobbered by a write built on a stale snapshot.** `story set` reads the row, then spends the reviewer gate and the named-agent dispatch (minutes) before enacting the status — and the dispatched planner is handed that PRE-transition row, so a write it derives from it could land afterwards and drag status back to the FROM state while the ledger already recorded the move (seen three times in vire; healed only by `story reconcile --repair`). Every write `story set` derives from its snapshot is now a compare-and-set (`workitem.UpdateInput.ExpectStatus` → `AND status = ?`), so the stale writer is refused by name (expected vs. actual, "re-read and retry") instead of silently winning; a losing CAS inside the transition rolls the ledger append back with it. `Store.Upsert` — a full-row `INSERT OR REPLACE`, the other regression vector — now keeps the stored status when the incoming row is stamped strictly older, with `UpsertForce` as the explicit opt-out used only by `sync workstate pull --force`. Dispatch ordering is unchanged: a dispatch failure still refuses the transition. (sty_2c71eff6)
+
 ## [0.0.478] - 2026-08-27
 
 ### Fixed

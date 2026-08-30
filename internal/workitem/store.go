@@ -13,6 +13,28 @@ import (
 // ErrNotFound is returned when a Get/Update misses.
 var ErrNotFound = errors.New("workitem: not found")
 
+// ErrStatusConflict is returned when a compare-and-set write (UpdateInput.
+// ExpectStatus) finds the row no longer holds the status the caller read
+// (sty_2c71eff6). The caller's snapshot is stale: re-read and retry rather than
+// overwrite a status somebody else already moved.
+var ErrStatusConflict = errors.New("workitem: status conflict")
+
+// StatusConflictError names the losing CAS write: what the caller expected the
+// row to still hold, and what it actually holds now. Wraps ErrStatusConflict so
+// callers match with errors.Is.
+type StatusConflictError struct {
+	ID       string
+	Expected string
+	Actual   string
+}
+
+func (e *StatusConflictError) Error() string {
+	return fmt.Sprintf("workitem: %s: status changed under this write (expected %q, found %q) — re-read and retry",
+		e.ID, e.Expected, e.Actual)
+}
+
+func (e *StatusConflictError) Unwrap() error { return ErrStatusConflict }
+
 // schema is the work_items table holding both stories and tasks, partitioned
 // by the kind column. Self-migrating (CREATE IF NOT EXISTS).
 const schema = `
@@ -158,7 +180,23 @@ func (s *Store) Create(ctx context.Context, in CreateInput, now time.Time) (Item
 // portable markdown story (Parse → Upsert), which must preserve the id and
 // timestamps rather than mint a new one the way Create does. Missing timestamps
 // default to now so a hand-authored file without them still lands.
+//
+// Upsert is a FULL-ROW write (INSERT OR REPLACE), so an importer holding a
+// stale snapshot would otherwise rewrite status backwards. Upsert therefore
+// keeps the stored status when the incoming row is demonstrably older
+// (sty_2c71eff6); UpsertForce is the explicit opt-out.
 func (s *Store) Upsert(ctx context.Context, it Item, now time.Time) (Item, error) {
+	return s.upsert(ctx, it, now, false)
+}
+
+// UpsertForce is Upsert without the stale-status guard: the caller has decided
+// the incoming row wins outright (a `--force` workstate pull materialising the
+// hosted copy over local rows). Every other importer should use Upsert.
+func (s *Store) UpsertForce(ctx context.Context, it Item, now time.Time) (Item, error) {
+	return s.upsert(ctx, it, now, true)
+}
+
+func (s *Store) upsert(ctx context.Context, it Item, now time.Time, force bool) (Item, error) {
 	if strings.TrimSpace(it.ID) == "" {
 		return Item{}, fmt.Errorf("workitem: upsert needs an id")
 	}
@@ -196,6 +234,14 @@ func (s *Store) Upsert(ctx context.Context, it Item, now time.Time) (Item, error
 		}
 		if strings.TrimSpace(it.ParkOrigin) == "" {
 			it.ParkOrigin = existing.ParkOrigin
+		}
+		// Stale-snapshot guard (sty_2c71eff6): an incoming row stamped STRICTLY
+		// older than the stored one is a snapshot taken before the stored write,
+		// so its status is history — keep the stored status rather than let the
+		// import drag the row backwards. Equal or newer stamps still win, so a
+		// hand-authored file (timestamp defaulted to now, above) lands unchanged.
+		if !force && it.UpdatedAt.Before(existing.UpdatedAt) {
+			it.Status = existing.Status
 		}
 	}
 	// archived, park_origin and assignee must be listed: INSERT OR REPLACE
@@ -311,10 +357,19 @@ type UpdateInput struct {
 	Tags               *[]string
 	ParkOrigin         *string
 	Assignee           *string
+	// ExpectStatus makes the write a COMPARE-AND-SET: the UPDATE only applies
+	// while the row still holds this status. A caller that read the row, spent
+	// time deciding (a reviewer gate, a dispatched agent run), and then writes
+	// back is holding a snapshot that may have gone stale under it; without the
+	// predicate its write silently wins and can drag status backwards
+	// (sty_2c71eff6). Nil keeps the unconditional write.
+	ExpectStatus *string
 }
 
 // Update applies the set fields to the item and returns the updated row.
-// updated_at is always advanced. Returns ErrNotFound for an unknown id.
+// updated_at is always advanced. Returns ErrNotFound for an unknown id, and a
+// *StatusConflictError (errors.Is ErrStatusConflict) when ExpectStatus is set
+// and the row has moved on.
 func (s *Store) Update(ctx context.Context, id string, in UpdateInput, now time.Time) (Item, error) {
 	if now.IsZero() {
 		now = time.Now()
@@ -344,13 +399,27 @@ func (s *Store) Update(ctx context.Context, id string, in UpdateInput, now time.
 		sets = append(sets, "tags = ?")
 		args = append(args, string(tagsJSON))
 	}
+	where := "id = ?"
 	args = append(args, id)
+	if in.ExpectStatus != nil {
+		where += " AND status = ?"
+		args = append(args, *in.ExpectStatus)
+	}
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE work_items SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
+		`UPDATE work_items SET `+strings.Join(sets, ", ")+` WHERE `+where, args...)
 	if err != nil {
 		return Item{}, fmt.Errorf("workitem: update: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
+		// With a CAS predicate, zero rows is ambiguous: unknown id, or a row that
+		// moved. Re-read to tell them apart so a conflict never surfaces as a
+		// bogus "unknown id" (sty_2c71eff6).
+		if in.ExpectStatus != nil {
+			cur, gerr := s.Get(ctx, id)
+			if gerr == nil {
+				return Item{}, &StatusConflictError{ID: id, Expected: *in.ExpectStatus, Actual: cur.Status}
+			}
+		}
 		return Item{}, ErrNotFound
 	}
 	return s.Get(ctx, id)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -300,6 +301,16 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 
 	// Resolve the current item so we can detect a status transition and gate it
 	// before anything is enacted.
+	//
+	// Write ordering (sty_2c71eff6). This snapshot is read HERE, but the write it
+	// feeds lands far below — after the reviewer gate (minutes) and after the
+	// named-agent dispatch (minutes more) have run. In that window the dispatched
+	// agent holds the PRE-transition row (status still the FROM state) and may
+	// itself shell `satelle story set`; its write, derived from that stale
+	// snapshot, would otherwise land unconditionally and drag status back to the
+	// FROM state while the ledger already records the transition. Every write
+	// below therefore carries ExpectStatus = current.Status: a compare-and-set, so
+	// the loser of the race is refused loudly instead of silently winning.
 	current, err := store.Get(ctx, req.ID)
 	if err != nil {
 		return nil, err
@@ -432,6 +443,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 				// Pure re-engage: return updated record after optional no-op Update.
 				it, uerr := store.Update(ctx, req.ID, workitem.UpdateInput{
 					Status: req.Status, Assignee: stampEmptyAssignee(ctx, current, req.Status),
+					ExpectStatus: &current.Status,
 				}, now)
 				if uerr != nil {
 					return nil, uerr
@@ -600,6 +612,10 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		Tags:               req.Tags,
 		ParkOrigin:         parkOrigin,
 		Assignee:           stampEmptyAssignee(ctx, current, req.Status),
+		// Compare-and-set against the snapshot this call gated and dispatched on
+		// (sty_2c71eff6). A transition enacts only from the status the reviewers
+		// judged; a late write built on a stale read loses instead of clobbering.
+		ExpectStatus: &current.Status,
 	}
 	transitionInTx := false
 	var it workitem.Item
@@ -623,13 +639,13 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 			return aerr
 		})
 		if err != nil {
-			return nil, err
+			return nil, staleWriteError(current, req.Status, err)
 		}
 		transitionInTx = true
 	} else {
 		it, err = store.Update(ctx, req.ID, upd, now)
 		if err != nil {
-			return nil, err
+			return nil, staleWriteError(current, req.Status, err)
 		}
 	}
 	// Release the seat on transition into terminal (Msquare) or park (agent=reviewer).
@@ -720,6 +736,24 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	}
 	notifyChange(panelTopic(it.Kind))
 	return json.Marshal(it)
+}
+
+// staleWriteError turns a losing compare-and-set into an actionable refusal
+// (sty_2c71eff6). The write was built on a snapshot read before the reviewer
+// gate and the named-agent dispatch; by the time it reached the row, somebody
+// else had moved the status. Nothing was written — say what was attempted, what
+// the row holds now, and that the fix is to re-read, never to force the write.
+// Non-conflict errors pass through untouched.
+func staleWriteError(current workitem.Item, target *string, err error) error {
+	if !errors.Is(err, workitem.ErrStatusConflict) {
+		return err
+	}
+	attempt := "field update"
+	if target != nil && *target != current.Status {
+		attempt = fmt.Sprintf("transition %s→%s", current.Status, *target)
+	}
+	return fmt.Errorf("%s refused on %s: %w — nothing was written; re-read the story (satelle story get %s) and retry from its current status",
+		attempt, current.ID, err, current.ID)
 }
 
 // restampReq is the request body for story-restamp: the story id and an optional
