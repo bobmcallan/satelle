@@ -2,6 +2,7 @@ package verb_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -74,5 +75,41 @@ func TestStoryEstimateRequiresAValue(t *testing.T) {
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x"}), &it)
 	if _, err := dispatchRaw(t, "story-estimate", map[string]any{"id": it.ID}); err == nil {
 		t.Error("estimate with neither tokens nor time should error")
+	}
+}
+
+// sty_ef8a896b AC2: the unitless and suffixed paths both land through the one
+// recordCost funnel, so `--time 38` records 38 minutes on estimate AND actual,
+// while a malformed value is refused with a usable example.
+func TestStoryCostTimeAcceptsUnitlessMinutes(t *testing.T) {
+	wire(t)
+	var it workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "units"}), &it)
+
+	var est workitem.Item
+	json.Unmarshal(call(t, "story-estimate", map[string]any{"id": it.ID, "time": "38"}), &est)
+	if !hasTag(est.Tags, "estimate-minutes:38") {
+		t.Errorf(`estimate --time "38" tags = %v, want estimate-minutes:38`, est.Tags)
+	}
+	var act workitem.Item
+	json.Unmarshal(call(t, "story-actual", map[string]any{"id": it.ID, "time": "38"}), &act)
+	if !hasTag(act.Tags, "actual-minutes:38") {
+		t.Errorf(`actual --time "38" tags = %v, want actual-minutes:38`, act.Tags)
+	}
+	// The suffixed path is unchanged.
+	var suffixed workitem.Item
+	json.Unmarshal(call(t, "story-estimate", map[string]any{"id": it.ID, "time": "2h"}), &suffixed)
+	if !hasTag(suffixed.Tags, "estimate-minutes:120") {
+		t.Errorf(`estimate --time "2h" tags = %v, want estimate-minutes:120`, suffixed.Tags)
+	}
+
+	_, err := dispatchRaw(t, "story-estimate", map[string]any{"id": it.ID, "time": "38x"})
+	if err == nil {
+		t.Fatal(`estimate --time "38x" should error`)
+	}
+	for _, want := range []string{"30m", "38"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should carry the example %q", err, want)
+		}
 	}
 }

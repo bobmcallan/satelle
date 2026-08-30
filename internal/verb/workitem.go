@@ -1067,11 +1067,11 @@ func recordCost(ctx context.Context, raw json.RawMessage, prefix, kind string) (
 		kv[prefix+"-tokens"] = strconv.Itoa(req.Tokens)
 	}
 	if req.Time != "" {
-		d, perr := time.ParseDuration(req.Time)
+		d, perr := parseCostDuration(req.Time)
 		if perr != nil {
-			return nil, fmt.Errorf("verb: invalid --time %q: %w", req.Time, perr)
+			return nil, perr
 		}
-		kv[prefix+"-minutes"] = strconv.Itoa(int(d.Minutes()))
+		kv[prefix+"-minutes"] = strconv.Itoa(costMinutes(d))
 	}
 	merged := upsertKeyedTags(current.Tags, kv)
 	now := time.Now()
@@ -1087,6 +1087,45 @@ func recordCost(ctx context.Context, raw json.RawMessage, prefix, kind string) (
 	appendOpLog("story-"+prefix, it.ID, body, now)
 	notifyChange(panelTopic(it.Kind))
 	return json.Marshal(it)
+}
+
+// parseCostDuration parses the --time value shared by story estimate and story
+// actual. A bare number is read as MINUTES (sty_ef8a896b): the tag this writes
+// is literally <prefix>-minutes, so `--time 38` means what its author meant, and
+// time.ParseDuration's bare "missing unit in duration" cost a retry every time.
+// Anything else goes through time.ParseDuration, so 30m / 2h / 1h30m are
+// unchanged. A malformed or non-positive value is refused with an example of
+// each accepted shape.
+func parseCostDuration(s string) (time.Duration, error) {
+	trimmed := strings.TrimSpace(s)
+	invalid := func() error {
+		return fmt.Errorf(`verb: invalid --time %q: use a duration like 30m or 2h, or a bare number of minutes like 38`, s)
+	}
+	var d time.Duration
+	if mins, err := strconv.ParseFloat(trimmed, 64); err == nil {
+		d = time.Duration(mins * float64(time.Minute))
+	} else {
+		parsed, perr := time.ParseDuration(trimmed)
+		if perr != nil {
+			return 0, invalid()
+		}
+		d = parsed
+	}
+	if d <= 0 {
+		return 0, invalid()
+	}
+	return d, nil
+}
+
+// costMinutes converts a parsed --time to the whole minutes the tag stores.
+// Truncating alone would record real work as "0 minutes" for anything under a
+// minute, so any positive duration is worth at least 1 (sty_ef8a896b).
+func costMinutes(d time.Duration) int {
+	m := int(d.Minutes())
+	if m == 0 && d > 0 {
+		m = 1
+	}
+	return m
 }
 
 // applyTagMutation applies remove then add against existing tags (sty_033d4611).

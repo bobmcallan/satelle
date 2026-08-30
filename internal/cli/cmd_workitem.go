@@ -307,9 +307,22 @@ recoverable from the backup tree.`,
 // from a file (sty_97c53d72 — a multi-KB summary should not shell-quote through
 // a flag), otherwise --body is used verbatim. The flags are declared mutually
 // exclusive; a read failure is surfaced with the path context.
-func attachBody(body, file string) (string, error) {
+//
+// `--file -` reads STDIN (sty_ef8a896b): piping evidence is what an agent
+// reaches for, and the bare os.ReadFile failed on the conventional sentinel with
+// a confusing "open -: no such file". in is the command's own reader
+// (cmd.InOrStdin()), the same idiom `execution record` uses, so a test can
+// inject one.
+func attachBody(in io.Reader, body, file string) (string, error) {
 	if file == "" {
 		return body, nil
+	}
+	if file == "-" {
+		data, err := io.ReadAll(in)
+		if err != nil {
+			return "", fmt.Errorf(`attach: read --file - (stdin): %w`, err)
+		}
+		return string(data), nil
 	}
 	data, err := os.ReadFile(file)
 	if err != nil {
@@ -619,7 +632,9 @@ tags.
 The driving session records it — not the planner — and a workflow that gates on
 the estimate greps those TAGS, not a plan section, so a figure written only into
 the plan artifact leaves the gate unsatisfied. Record it before requesting the
-transition the gate fires on.`,
+transition the gate fires on.
+
+--time takes a duration (30m, 2h, 1h30m) or a bare number of MINUTES (38).`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -632,7 +647,7 @@ transition the gate fires on.`,
 			return dispatch(cmd, "story-estimate", req)
 		},
 	}
-	estimate.Flags().StringVar(&eTime, "time", "", "estimated duration (e.g. 30m, 2h)")
+	estimate.Flags().StringVar(&eTime, "time", "", "estimated duration: 30m, 2h, or a bare number of minutes (38)")
 	estimate.Flags().IntVar(&eTokens, "tokens", 0, "estimated tokens")
 	estimate.Flags().StringVar(&eBasis, "basis", "", "optional note on the estimate basis")
 
@@ -646,7 +661,9 @@ the counterpart to estimate.
 
 These are SELF-REPORT, not measurement: satelle story cost shows the transport
 cost it measured per gate. A workflow that gates the close on actuals greps
-these tags, so record them before requesting the closing transition.`,
+these tags, so record them before requesting the closing transition.
+
+--time takes a duration (50m, 2h, 1h30m) or a bare number of MINUTES (38).`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -658,7 +675,7 @@ these tags, so record them before requesting the closing transition.`,
 			return dispatch(cmd, "story-actual", req)
 		},
 	}
-	actual.Flags().StringVar(&aTime, "time", "", "actual duration (e.g. 50m)")
+	actual.Flags().StringVar(&aTime, "time", "", "actual duration: 50m, 2h, or a bare number of minutes (38)")
 	actual.Flags().IntVar(&aTokens, "tokens", 0, "actual tokens")
 
 	// log — the generic typed telemetry/quality event write primitive (AC1,
@@ -955,7 +972,9 @@ func storyDocCommands() []*cobra.Command {
 		Short: "Attach a typed document (markdown or binary) to a story",
 		Long: `Attach a typed document to a story.
 
-Markdown (--body / --file) is stored with frontmatter beside the story.
+Markdown (--body / --file) is stored with frontmatter beside the story. Use
+--file - to pipe the body in on STDIN, which is how a generated report or a
+heredoc of evidence reaches the store without shell-quoting it through --body.
 Binary (--binary-file) is stored byte-for-byte with a .satelle.json sidecar;
 size cap and content-type allowlist are enforced in the verb (SVG/HTML denied
 as executable if served). Gates receive a reference only — multimodal judgment
@@ -979,6 +998,12 @@ of binary content is out of scope.`,
 				}
 				return attachBinary(cmd, args[0], aName, aType, aBinaryFile, ct)
 			}
+			if !bodySet && !fileSet {
+				// Name the valid inputs rather than attach an empty document
+				// (sty_ef8a896b): an agent that reached for an unsupported input
+				// flag otherwise gets a silent empty attachment, not a fix.
+				return fmt.Errorf(`attach: one of --body, --file (use "-" for stdin), or --binary-file is required`)
+			}
 			bodyIn, fileIn := "", ""
 			if bodySet {
 				bodyIn = aBody
@@ -986,7 +1011,7 @@ of binary content is out of scope.`,
 			if fileSet {
 				fileIn = aFile
 			}
-			body, err := attachBody(bodyIn, fileIn)
+			body, err := attachBody(cmd.InOrStdin(), bodyIn, fileIn)
 			if err != nil {
 				return err
 			}
@@ -1000,7 +1025,7 @@ of binary content is out of scope.`,
 	attach.Flags().StringVar(&aName, "name", "", "document name (required; binary keeps its extension)")
 	attach.Flags().StringVar(&aType, "type", "", "document type (plan|change|output|screenshot|…)")
 	attach.Flags().StringVar(&aBody, "body", "", "document markdown body")
-	attach.Flags().StringVar(&aFile, "file", "", "read the document body from a file (alternative to --body)")
+	attach.Flags().StringVar(&aFile, "file", "", `read the document body from a file, or "-" for stdin (alternative to --body)`)
 	attach.Flags().StringVar(&aBinaryFile, "binary-file", "", "attach a binary file (PNG/PDF/…); mutually exclusive with --body/--file")
 	attach.Flags().StringVar(&aContentType, "content-type", "", "MIME type for --binary-file (defaulted from extension when omitted; verb still sniffs)")
 	attach.MarkFlagsMutuallyExclusive("body", "file")

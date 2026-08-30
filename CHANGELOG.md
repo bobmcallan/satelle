@@ -1,3 +1,9 @@
+## [0.0.480] - 2026-08-30
+
+### Fixed
+- **`satelle story attach --file -` reads the document body from stdin, and an attach with no input flag says so.** `--file` did a bare `os.ReadFile`, so the conventional `-` sentinel failed with `open -: no such file or directory` — an agent piping evidence lost an invocation to it every time. `-` now reads the command's stdin (the idiom `execution record` already uses), documented in the `--file` usage string and the command's help; an attach with none of `--body`, `--file`, `--binary-file` is refused by name instead of silently storing an empty document. (sty_ef8a896b)
+- **`story estimate` / `story actual` `--time` accepts a bare number of minutes.** `--time 38` failed with `time: missing unit in duration "38"` even though the tag written is literally `estimate-minutes`. A bare integer or decimal is now read as minutes; `30m`, `2h`, `1h30m` are unchanged; malformed or non-positive input is refused with `use a duration like 30m or 2h, or a bare number of minutes like 38`. The fix sits in the shared verb funnel, so CLI, web and MCP inherit it, and a positive duration under a minute now records as 1 minute rather than 0. (sty_ef8a896b)
+
 ## [0.0.479] - 2026-08-30
 
 ### Fixed

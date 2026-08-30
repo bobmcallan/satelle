@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,13 +74,66 @@ func TestAttachBody(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got, err := attachBody("inline", ""); err != nil || got != "inline" {
+	empty := strings.NewReader("")
+	if got, err := attachBody(empty, "inline", ""); err != nil || got != "inline" {
 		t.Errorf("body passthrough = (%q, %v), want (inline, nil)", got, err)
 	}
-	if got, err := attachBody("", p); err != nil || got != "# from file\n" {
+	if got, err := attachBody(empty, "", p); err != nil || got != "# from file\n" {
 		t.Errorf("file read = (%q, %v), want file content", got, err)
 	}
-	if _, err := attachBody("", filepath.Join(dir, "absent.md")); err == nil || !strings.Contains(err.Error(), "read --file") {
+	if _, err := attachBody(empty, "", filepath.Join(dir, "absent.md")); err == nil || !strings.Contains(err.Error(), "read --file") {
 		t.Errorf("missing file should error with path context, got %v", err)
+	}
+	// sty_ef8a896b: "-" reads the command's stdin instead of a file named "-".
+	if got, err := attachBody(strings.NewReader("# piped\n"), "", "-"); err != nil || got != "# piped\n" {
+		t.Errorf(`attachBody(--file -) = (%q, %v), want the piped body`, got, err)
+	}
+}
+
+// TestStoryAttachFromStdin (sty_ef8a896b AC1) proves the wiring end to end:
+// `story attach … --file -` stores what was piped in, and an attach with no
+// input flag names the valid ones instead of storing an empty document.
+func TestStoryAttachFromStdin(t *testing.T) {
+	_ = tempRepo(t)
+
+	out, err := runRoot(t, "story", "create",
+		"--title", "Piped evidence",
+		"--body", "Attach a doc from stdin.",
+		"--acceptance", "1. round trip",
+	)
+	if err != nil {
+		t.Fatalf("create: %v\n%s", err, out)
+	}
+	var created map[string]any
+	if err := json.Unmarshal([]byte(out), &created); err != nil {
+		t.Fatalf("parse create: %v\n%s", err, out)
+	}
+	id, _ := created["id"].(string)
+	if id == "" {
+		t.Fatalf("no id in %s", out)
+	}
+
+	const piped = "# piped evidence\n\nline two\n"
+	if out, err := runRootIn(t, piped, "story", "attach", id,
+		"--name", "ac-evidence", "--type", "output", "--file", "-",
+	); err != nil {
+		t.Fatalf("attach from stdin: %v\n%s", err, out)
+	}
+	doc, err := runRoot(t, "story", "doc", id, "ac-evidence")
+	if err != nil {
+		t.Fatalf("doc: %v\n%s", err, doc)
+	}
+	if !strings.Contains(doc, "piped evidence") || !strings.Contains(doc, "line two") {
+		t.Fatalf("attached doc does not carry the piped body:\n%s", doc)
+	}
+
+	noInput, err := runRoot(t, "story", "attach", id, "--name", "empty", "--type", "output")
+	if err == nil {
+		t.Fatalf("attach with no input flag should refuse, got:\n%s", noInput)
+	}
+	for _, want := range []string{"--body", `--file (use "-" for stdin)`, "--binary-file"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should name %q", err.Error(), want)
+		}
 	}
 }

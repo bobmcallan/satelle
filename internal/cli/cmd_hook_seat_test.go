@@ -127,9 +127,13 @@ func heartbeatOf(t *testing.T, id string) time.Time {
 }
 
 // runRootIn is runRoot with stdin payload (hook handlers read the event from stdin).
+// runRootIn runs the command tree with stdin bound to the given text. Flag
+// state is reset first: the tree is registered once, so flag variables (and
+// their Changed bits) persist across runs in the same process.
 func runRootIn(t *testing.T, stdin string, args ...string) (string, error) {
 	t.Helper()
 	root := NewRootCmd()
+	resetFlagState(root)
 	var buf bytes.Buffer
 	root.SetOut(&buf)
 	root.SetErr(&buf)
