@@ -543,7 +543,8 @@ func materializeDefaultSolution(t *testing.T, repo string) {
 	}
 	for _, sk := range []string{
 		"satelle-estimate-actual-review", "satelle-step-summary",
-		"satelle-story-blocked-review", "satelle-story-cancel-review",
+		"satelle-story-amend-review", "satelle-story-blocked-review",
+		"satelle-story-cancel-review",
 		"satelle-story-create-review", "satelle-story-done-review",
 		"satelle-story-intent-review", "satelle-task-validate-before-review",
 		"satelle-task-validate-after-review", "satelle-workflow-advisor",

@@ -4,6 +4,7 @@ type = "workflow"
 scope = "system"
 tags = ["type:workflow"]
 create_review = "satelle-story-create-review"
+amend_review = "satelle-story-amend-review"
 description = "Order-zero declaration of done every repo inherits — one table per story category, listing the obligations discharged before work closes, plus the park and cancel states the binary synthesises. Half of a derived route; step.toml is the other half. Selected by category name; `*` governs the rest."
 
 # Order zero: one working lane, plus containers and task runs. A repo edits this
@@ -29,6 +30,16 @@ description = "Order-zero declaration of done every repo inherits — one table 
 #
 # Topology is synthesised too — park and cancel from every non-terminal step, and
 # the backward edges for recover — so nothing below draws them by hand.
+#
+# The two `[meta]` hooks above — create_review and amend_review — are LIFECYCLE
+# hooks: they fire outside the status graph, so they are declared ONCE for the
+# whole workflow rather than per category the way park and cancel are. amend_review
+# judges `satelle story amend`, the only way a story's frozen definition fields
+# (title, body, acceptance criteria, category) can change after it leaves its entry
+# state. Delete the line and there is no amend path at all — with nothing to judge
+# the correction the freeze holds, and cancel-and-re-raise is the only exit. That
+# is a choice made by editing this file; the JUDGEMENT itself lives in the skill
+# the line names, never in the binary.
 
 # ================================================================
 # THE WORKING LANE — governs every category with no table of its own

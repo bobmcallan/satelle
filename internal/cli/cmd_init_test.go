@@ -475,10 +475,12 @@ func checkScript(t *testing.T, skillBody string) string {
 // defaultSolutionSkills is every gate skill the shipped default route names —
 // the set a fresh repo must resolve so nothing dangles. They come off the route
 // grammar: the wildcard lane's intent / close triad, the park and cancel gates,
-// the always-on estimate check and step summary, and the task section's two
-// validate gates.
+// the always-on estimate check and step summary, the task section's two validate
+// gates, and the [meta] lifecycle hooks (amend_review — sty_5c768dd3), which name
+// a gate skill without being an edge.
 var defaultSolutionSkills = []string{
 	"satelle-estimate-actual-review",
+	"satelle-story-amend-review",
 	"satelle-step-summary",
 	"satelle-story-blocked-review",
 	"satelle-story-cancel-review",

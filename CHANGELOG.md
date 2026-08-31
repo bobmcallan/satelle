@@ -1,3 +1,8 @@
+## [0.0.482] - 2026-08-31
+
+### Added
+- **The amend gate now ships with the binary, so `satelle story amend` works out of the box.** 0.0.481 landed the mechanism fail-closed with no embedded reviewer, which left the feature inert in every repo until an operator hand-authored both the rubric and the hook. `satelle-story-amend-review` now ships as an embedded default skill (`scope: system`) beside the other lifecycle reviewers, and the shipped declaration of done declares `amend_review = "satelle-story-amend-review"` once in its `[meta]` frontmatter alongside `create_review` — a lifecycle hook fires outside the status graph, so it is declared for the workflow, never per category the way park and cancel are. A freshly initialised repo resolves the hook and can correct a wrong definition mid-flight. **Nothing about fail-closed changed:** delete the line from your own `done.toml` (or point it at a rubric that does not resolve) and amend is refused again — that remains the escape for a repo that wants definitions permanently frozen, and an authored `done.toml` must restate the hook because substrate override is per file, not per key. No Go changed: the judgement lives in the skill body. (sty_5c768dd3)
+
 ## [0.0.481] - 2026-08-31
 
 ### Added
