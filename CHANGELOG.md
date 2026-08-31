@@ -1,3 +1,8 @@
+## [0.0.484] - 2026-08-31
+
+### Added
+- **The four Go toolchain pins are now asserted to agree.** `go.mod`'s directive, the tracked `mise.toml`, and `go-version` in both CI workflows had nothing tying them together, so a partial bump would drift silently — local gates, CI and the released binary each building on a different toolchain with no signal. A test under `make test` reads all four and requires them to agree on the version components each one declares, so CI's minor-only `'1.27'` floats the patch by design while `go.mod` and `mise.toml` must match exactly. A mismatch names every file and the version it declares, plus each conflicting pair. It is a check, not a generator: nothing rewrites a pin. Deliberately test-only — the paths it knows about exist because of how this repo is built, so they stay out of the binary. (sty_02d79953)
+
 ## [0.0.483] - 2026-08-31
 
 ### Changed
