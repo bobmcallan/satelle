@@ -14,8 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // Kind discriminators for the canonical entry shapes the work layer emits.
@@ -120,8 +119,10 @@ type Entry struct {
 // migrated. This is a recorded internal exemption, not an oversight.
 
 // NewID returns a fresh ledger-entry id in the evt_<8hex> form, visually
-// distinct from sty_/tsk_ ids in tool output.
-func NewID() string { return fmt.Sprintf("evt_%s", uuid.NewString()[:8]) }
+// distinct from sty_/tsk_ ids in tool output. NewV4 explicitly — see
+// workitem.Kind.newID for why a truncated id may not ride on New's current
+// algorithm (sty_5515036d).
+func NewID() string { return fmt.Sprintf("evt_%s", uuid.NewV4().String()[:8]) }
 
 // AppendInput is the typed shape of one ledger insert. Kind is required; every
 // correlation id and payload is optional.

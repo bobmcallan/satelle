@@ -1,0 +1,11 @@
+# Repo-local toolchain pin (sty_5515036d). mise resolves a tool from the nearest
+# config directory-wards, so any shell whose cwd is this repo — including the
+# non-interactive one a workflow gate's check block runs in — gets the same Go the
+# CI workflows pin, without anyone repinning their global default.
+#
+# Keep this in step with go.mod's `go` directive and `go-version` in
+# .github/workflows/{test,release}.yml. CI installs Go with actions/setup-go and
+# never reads this file; it exists so a local build cannot silently disagree with
+# the toolchain the release is built on.
+[tools]
+go = "1.27.0"

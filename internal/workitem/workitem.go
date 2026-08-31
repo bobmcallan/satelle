@@ -10,8 +10,7 @@ package workitem
 import (
 	"fmt"
 	"time"
-
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // Kind discriminates stories from tasks. It selects the id prefix and the
@@ -83,8 +82,14 @@ func (k Kind) idPrefix() string {
 }
 
 // newID returns a fresh id for the kind in the <prefix><8hex> form.
+//
+// NewV4 explicitly, not New (sty_5515036d): the id keeps only the first 8 hex
+// characters, so those bits must be random. A v7 UUID leads with a millisecond
+// timestamp, which would make ids minted in the same instant collide; New is
+// documented as "at this time" equivalent to v4, and this truncation cannot rely
+// on that staying true.
 func (k Kind) newID() string {
-	return fmt.Sprintf("%s%s", k.idPrefix(), uuid.NewString()[:8])
+	return fmt.Sprintf("%s%s", k.idPrefix(), uuid.NewV4().String()[:8])
 }
 
 // valid reports whether k is a known kind.

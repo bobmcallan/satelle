@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -44,4 +45,31 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// TestNewIDShapeSurvivesTheGenerator (sty_5515036d): the id keeps only the first
+// 8 hex characters of a UUID, so those bits must be RANDOM. This pins the shape
+// and the randomness across the swap from github.com/google/uuid to the Go 1.27
+// stdlib package — a v7 UUID leads with a millisecond timestamp, and truncating
+// one would collide for every id minted in the same instant.
+func TestNewIDShapeSurvivesTheGenerator(t *testing.T) {
+	const draws = 2000
+	seen := make(map[string]bool, draws)
+	for i := 0; i < draws; i++ {
+		id := NewID()
+		rest, ok := strings.CutPrefix(id, "evt_")
+		if !ok || len(rest) != 8 {
+			t.Fatalf("id %q is not evt_<8 chars>", id)
+		}
+		for _, r := range rest {
+			if !strings.ContainsRune("0123456789abcdef", r) {
+				t.Fatalf("id %q carries a non lowercase-hex character %q", id, r)
+			}
+		}
+		seen[id] = true
+	}
+	// A timestamp-leading generator would repeat heavily within one run.
+	if len(seen) < draws-1 {
+		t.Errorf("%d distinct ids from %d draws — the truncated prefix is not random enough", len(seen), draws)
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -234,5 +235,37 @@ func TestListChangedSincePagesPast2000(t *testing.T) {
 	}
 	if len(all) != n {
 		t.Fatalf("ListChangedSince paged %d, want %d", len(all), n)
+	}
+}
+
+// TestNewIDShapeSurvivesTheGenerator (sty_5515036d): a work-item id is its kind
+// prefix plus the first 8 hex characters of a UUID, so those bits must be
+// RANDOM. Pinned across the swap to the Go 1.27 stdlib uuid package — New is only
+// "at this time" a v4, and a v7's leading millisecond timestamp would make ids
+// minted together collide once truncated.
+func TestNewIDShapeSurvivesTheGenerator(t *testing.T) {
+	for _, k := range []Kind{KindStory, KindTask, KindExecution} {
+		const draws = 1000
+		seen := make(map[string]bool, draws)
+		prefix := k.idPrefix()
+		if prefix == "" {
+			t.Fatalf("kind %q has no id prefix", k)
+		}
+		for i := 0; i < draws; i++ {
+			id := k.newID()
+			rest, ok := strings.CutPrefix(id, prefix)
+			if !ok || len(rest) != 8 {
+				t.Fatalf("%s id %q is not %s<8 chars>", k, id, prefix)
+			}
+			for _, r := range rest {
+				if !strings.ContainsRune("0123456789abcdef", r) {
+					t.Fatalf("id %q carries a non lowercase-hex character %q", id, r)
+				}
+			}
+			seen[id] = true
+		}
+		if len(seen) < draws-1 {
+			t.Errorf("%s: %d distinct ids from %d draws — the truncated prefix is not random enough", k, len(seen), draws)
+		}
 	}
 }

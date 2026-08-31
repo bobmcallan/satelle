@@ -1,3 +1,9 @@
+## [0.0.483] - 2026-08-31
+
+### Changed
+- **Go toolchain upgraded to 1.27.0.** `go.mod`'s directive, both CI workflows (`go-version: '1.27'`, still `check-latest: true`), and a new repo-local `mise.toml` pinning `go = "1.27.0"` so a local build cannot silently disagree with the toolchain a release is built on — and so a workflow gate's non-interactive check shell resolves the right Go from the repo rather than from whatever the machine's global default happens to be. No `toolchain` line: a gate run must never depend on a network toolchain download. `go test` now runs the `stdversion` vet check by default; it reports nothing on this tree, and nothing was suppressed to keep it quiet. (sty_5515036d)
+- **`github.com/google/uuid` dropped as a direct dependency** in favour of Go 1.27's standard-library `uuid` package. Both id generators (`workitem` and `ledger`) call `uuid.NewV4().String()` explicitly rather than `New()`: an id keeps only the first 8 hex characters, and `New` is documented as equivalent to v4 only "at this time" — a v7's leading millisecond timestamp would make ids minted in the same instant collide. Id shape is unchanged (`sty_`/`tsk_`/`exe_`/`evt_` plus 8 lowercase hex) and now regression-tested. The module still carries uuid indirectly via `modernc.org/sqlite`. (sty_5515036d)
+
 ## [0.0.482] - 2026-08-31
 
 ### Added
