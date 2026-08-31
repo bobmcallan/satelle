@@ -3883,3 +3883,49 @@ skill = "fixture-coded"
 		})
 	}
 }
+
+// TestStructureRefusalNamesTheOpenDiagnosis (sty_88d40a60 AC2): when the
+// indexer has already raised a story about the document that will not parse, the
+// refusal names it — the operator is handed the diagnosis instead of hunting the
+// symptom. With no such story (an unwired resolver) the refusal is unchanged.
+func TestStructureRefusalNamesTheOpenDiagnosis(t *testing.T) {
+	broken := strings.Replace(spineWF("", "", "", "in_progress|executor", "done"),
+		"description = \"test declaration of done\"\nscope = \"system\"\n", "", 1)
+	item := workitem.Item{ID: "sty_1", Status: "backlog"}
+
+	// Unwired: the refusal fires and names no story.
+	g, _ := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: broken, skillBody: "rubric", skillFound: true})
+	_, err := g.Gate(context.Background(), item, "in_progress")
+	if err == nil {
+		t.Fatal("want the gate refused under a structurally broken workflow")
+	}
+	silent := err.Error()
+	if strings.Contains(silent, "already diagnosed") {
+		t.Fatalf("no resolver wired, so no story may be named:\n%s", silent)
+	}
+
+	// Wired: the same refusal points at the open story for that document.
+	var askedKind, askedName string
+	g2, _ := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: broken, skillBody: "rubric", skillFound: true})
+	g2.SetTrackingStoryResolver(func(_ context.Context, kind, name string) string {
+		askedKind, askedName = kind, name
+		return "sty_906f59df"
+	})
+	_, err = g2.Gate(context.Background(), item, "in_progress")
+	if err == nil {
+		t.Fatal("want the gate refused under a structurally broken workflow")
+	}
+	named := err.Error()
+	for _, want := range []string{"structure validation", "sty_906f59df", "satelle story get sty_906f59df"} {
+		if !strings.Contains(named, want) {
+			t.Errorf("refusal missing %q:\n%s", want, named)
+		}
+	}
+	if askedKind != "workflows" || askedName == "" {
+		t.Errorf("resolver asked for (%q, %q), want the workflow document being judged", askedKind, askedName)
+	}
+	var ref wfgovern.Refusal
+	if !errors.As(err, &ref) || ref.TrackingStory != "sty_906f59df" {
+		t.Errorf("typed refusal must carry the story id, got %+v", ref)
+	}
+}

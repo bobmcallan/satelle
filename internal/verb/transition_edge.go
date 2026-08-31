@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/docstory"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
@@ -49,7 +51,18 @@ func refuseSkippedStep(ctx context.Context, current workitem.Item, toStatus stri
 		// errors (fresh repo / unconverted graph) stay the existing fail-open
 		// owned by the gate engine.
 		if errors.Is(serr, wfgovern.ErrRouteSourceBroken) {
-			return serr
+			// Point at the diagnosis (sty_88d40a60). The indexer already raised a
+			// story naming the exact file and key when the route source stopped
+			// parsing; a refusal that does not name it sends the operator to hunt
+			// the symptom instead. Wrapped, so errors.Is(ErrRouteSourceBroken)
+			// keeps matching and the refusal stays fail-closed either way.
+			return wfgovern.Refusal{
+				Rule: wfgovern.RuleStructureGuard, Item: current.ID,
+				From: from, To: toStatus,
+				Why:           serr.Error(),
+				TrackingStory: brokenRouteTrackingStory(ctx, wfs),
+				Err:           serr,
+			}
 		}
 		return nil
 	}
@@ -223,4 +236,25 @@ func parkOriginEntries(ctx context.Context, storyID string) []ledger.Entry {
 		return nil
 	}
 	return entries
+}
+
+// brokenRouteTrackingStory names the open story diagnosing whichever authored
+// route half failed to parse. Route-source-scoped on purpose: the refusal is
+// about the route, so an unrelated document's story must not be offered as its
+// explanation. Silent when nothing qualifies.
+func brokenRouteTrackingStory(ctx context.Context, wfs []docindex.Doc) string {
+	store, err := requireWorkItem()
+	if err != nil {
+		return ""
+	}
+	refs := docstory.Open(ctx, store.List)
+	for _, w := range wfs {
+		if !wfgovern.IsRouteSource(w.Name) || w.Embedded {
+			continue
+		}
+		if id := docstory.IDForDoc(refs, "workflows", w.Name); id != "" {
+			return id
+		}
+	}
+	return ""
 }

@@ -37,6 +37,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/docstory"
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
@@ -1670,6 +1671,12 @@ func runHookContext(out, stderr io.Writer) error {
 	// Advisory only: versionDriftAdvisory has no error channel, so `hook context`
 	// keeps its fail-open contract and a stale repo still receives its context.
 	content = prependContextLine(content, versionDriftAdvisory(a.RepoRoot))
+	// An auto-raised diagnosis is worth nothing unread (sty_88d40a60): when the
+	// indexer has filed a high-priority system story about an authored document
+	// that fails its structure check, name it here. A session that opens against
+	// broken governance then starts from the diagnosis instead of the symptom.
+	// Fail-open and silent when there is none, like every other line above.
+	content = prependContextLine(content, systemDocStoryAdvisory(openDocStories(a)))
 	// Seat inject: prefer a live seat; else name any non-live residue so the agent
 	// can release a stuck holder. Fail open — a seat-read error injects nothing.
 	content = appendSeatToContext(content, sessionSeatBlock(a), alwaysContextCeiling)
@@ -1677,6 +1684,43 @@ func runHookContext(out, stderr io.Writer) error {
 		return nil
 	}
 	return emitAdditionalContext(out, "SessionStart", "", content)
+}
+
+// openDocStories reads the open document-diagnosis stories for a, or nothing
+// when the store is unavailable — the same fail-open contract runHookContext
+// keeps for every other line it renders.
+func openDocStories(a *app.App) []docstory.Ref {
+	if a == nil || a.Store == nil || a.Store.Stories == nil {
+		return nil
+	}
+	return docstory.Open(context.Background(), a.Store.Stories.List)
+}
+
+// systemDocStoryAdvisory renders the one-line SessionStart advisory naming open
+// stories the indexer raised about failing authored documents (sty_88d40a60).
+// Pure, for unit tests. Empty for no refs, so a repo with sound substrate gains
+// no output at all — the bound that keeps this from becoming noise is
+// docstory.Qualifies, not a judgement made here.
+//
+// One line, capped at three ids: it rides ahead of the always-content ceiling,
+// so it must not be able to displace principle content however broken a repo is.
+func systemDocStoryAdvisory(refs []docstory.Ref) string {
+	if len(refs) == 0 {
+		return ""
+	}
+	const show = 3
+	named := make([]string, 0, show)
+	for _, r := range refs[:min(len(refs), show)] {
+		named = append(named, fmt.Sprintf("%s (%s)", r.ID, r.Doc()))
+	}
+	listed := strings.Join(named, ", ")
+	if len(refs) > show {
+		listed += fmt.Sprintf(", … (+%d more)", len(refs)-show)
+	}
+	return fmt.Sprintf(
+		"⚠️ satelle: %d open system stor%s already diagnos%s a failing authored document — %s. Read %s before debugging governance behaviour: it names the file and the fault.",
+		len(refs), plural(len(refs), "y", "ies"), plural(len(refs), "es", "e"), listed,
+		plural(len(refs), "it", "them"))
 }
 
 // prependContextLine puts a one-line SessionStart advisory at the head of the

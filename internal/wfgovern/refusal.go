@@ -52,7 +52,21 @@ type Refusal struct {
 	Why          string   `json:"why"`
 	Alternatives []string `json:"alternatives,omitempty"`
 	Remedy       string   `json:"remedy,omitempty"`
+	// TrackingStory is the id of an OPEN story that already diagnoses why this
+	// refusal fired — the one the indexer auto-raised against the document that
+	// will not parse (sty_88d40a60). A refusal that fires because the governing
+	// definition is broken, while a story naming the exact file and key sits in
+	// backlog unread, sends the operator to hunt the symptom. Empty on every
+	// refusal that has no such story, and Error() then renders exactly as before.
+	TrackingStory string `json:"tracking_story,omitempty"`
+	// Err is the underlying sentinel this refusal wraps (ErrRouteSourceBroken,
+	// …), so a caller matching with errors.Is keeps matching after the refusal
+	// gains structure. Not serialised: the fields above carry the content.
+	Err error `json:"-"`
 }
+
+// Unwrap exposes the wrapped sentinel to errors.Is/As.
+func (r Refusal) Unwrap() error { return r.Err }
 
 // Error renders the refusal as one operator-facing line:
 //
@@ -80,6 +94,10 @@ func (r Refusal) Error() string {
 	}
 	if r.Remedy != "" {
 		b.WriteString("; " + strings.TrimSpace(r.Remedy))
+	}
+	if r.TrackingStory != "" {
+		b.WriteString("; already diagnosed — see " + r.TrackingStory +
+			" (`satelle story get " + r.TrackingStory + "`)")
 	}
 	return b.String()
 }

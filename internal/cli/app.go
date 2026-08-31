@@ -13,6 +13,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/docstory"
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/logfile"
 	"github.com/bobmcallan/satelle/internal/oplog"
@@ -244,6 +245,13 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// returns ungated and the verb treats an unjudged amendment as refused),
 			// so wiring it never lifts a freeze on its own.
 			verb.SetAmendReviewer(rev)
+			// Point a structure-guard refusal at the story the indexer already
+			// raised about the document that will not parse (sty_88d40a60). The
+			// engine stays store-free; this is the injection.
+			storyStore := a.Store.Stories
+			rev.SetTrackingStoryResolver(func(ctx context.Context, kind, name string) string {
+				return docstory.IDForDoc(docstory.Open(ctx, storyStore.List), kind, name)
+			})
 			// The summariser recaps gated transitions; inert until gating is active.
 			verb.SetStepSummariser(rev)
 			// Create-gating is opt-in per repo (satelle.toml [review] gate_create):

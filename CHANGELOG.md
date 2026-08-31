@@ -1,3 +1,8 @@
+## [0.0.485] - 2026-08-31
+
+### Fixed
+- **The diagnosis satelle already raised about a broken document is now put in front of you.** When an authored document fails its structure check, `satelle reindex` files a high-priority system story naming the exact file and fault — and nothing read it back, so it sat in backlog while the symptom was hunted (an hour, in the reported case, against a `done.toml` carrying an unknown key). Two surfaces now name it: a session start (`satelle hook context`) carries a one-line advisory naming the story and its document, and a transition refused because the governing route source will not parse ends with `already diagnosed — see sty_… (satelle story get sty_…)`. Bounded so it cannot become noise: only a non-terminal, high-priority story carrying the indexer's `type:system` marker AND a `doc:<kind>/<name>` relationship qualifies, so a repo with sound substrate gains no output at all. The refusal is unchanged when there is no such story, and still fails closed either way. (sty_88d40a60)
+
 ## [0.0.484] - 2026-08-31
 
 ### Added

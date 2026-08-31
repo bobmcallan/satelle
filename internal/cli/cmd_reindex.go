@@ -14,6 +14,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/app"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/docstory"
 	"github.com/bobmcallan/satelle/internal/structure"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -177,8 +178,11 @@ func plural(n int, sing, plur string) string {
 	return plur
 }
 
-// docTag is the dedup key tagging a system story to the doc it tracks.
-func docTag(ch docindex.DocRef) string { return "doc:" + ch.Kind + "/" + ch.Name }
+// docTag is the dedup key tagging a system story to the doc it tracks. The
+// string itself is owned by internal/docstory, which is also what reads it back
+// at a session start and on a gate refusal (sty_88d40a60) — one definition, so
+// the writer and the readers cannot drift apart.
+func docTag(ch docindex.DocRef) string { return docstory.Tag(ch.Kind, ch.Name) }
 
 // fileSystemStory creates a type:system story for a non-conforming doc, unless a
 // still-open (non-terminal) story already tracks it (same doc tag). Returns the
@@ -211,8 +215,8 @@ func fileSystemStory(ctx context.Context, a *app.App, ch docindex.DocRef, notes 
 		ch.Kind, ch.Name, strings.TrimSuffix(ch.Kind, "s"), ch.Name)
 	it, err := a.Store.Stories.Create(ctx, workitem.CreateInput{
 		Kind: workitem.KindStory, Title: title, Body: body, AcceptanceCriteria: ac,
-		Category: "system", Priority: "high",
-		Tags: []string{"type:system", tag},
+		Category: "system", Priority: docstory.Priority,
+		Tags: []string{docstory.MarkerTag, tag},
 	}, time.Now())
 	if err != nil {
 		return "", false, err

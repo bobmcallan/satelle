@@ -1,6 +1,7 @@
 package wfgovern_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -213,5 +214,46 @@ func TestEveryDefaultCategoryResolvesAWorkflow(t *testing.T) {
 		if len(got) == 0 || got[0].Name != "satelle-task-workflow" {
 			t.Errorf("kind %q head = %v, want task workflow", kind, names(got))
 		}
+	}
+}
+
+// TestRefusalTrackingStoryIsAdditive (sty_88d40a60 AC2): a refusal that knows
+// the open diagnosis names it, and one that does not renders byte-identically to
+// before the field existed — an additive field must not reword every refusal.
+func TestRefusalTrackingStoryIsAdditive(t *testing.T) {
+	base := wfgovern.Refusal{
+		Rule: wfgovern.RuleStructureGuard, Item: "sty_x", Workflow: "done",
+		From: "backlog", To: "in_progress",
+		Why:    "the governing workflow fails structure validation",
+		Remedy: "fix the substrate",
+	}
+	silent := base.Error()
+	if strings.Contains(silent, "already diagnosed") {
+		t.Fatalf("a refusal with no tracking story must not mention one:\n%s", silent)
+	}
+
+	named := base
+	named.TrackingStory = "sty_906f59df"
+	got := named.Error()
+	if !strings.HasPrefix(got, silent) {
+		t.Errorf("naming the diagnosis must APPEND, not reword:\nbefore: %s\nafter:  %s", silent, got)
+	}
+	for _, want := range []string{"already diagnosed", "sty_906f59df", "satelle story get sty_906f59df"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("refusal missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestRefusalUnwrapsItsSentinel: wrapping the broken-route sentinel in a
+// structured refusal must not break the errors.Is matching callers rely on to
+// stay fail-closed.
+func TestRefusalUnwrapsItsSentinel(t *testing.T) {
+	r := wfgovern.Refusal{Rule: wfgovern.RuleStructureGuard, Why: "route source does not parse", Err: wfgovern.ErrRouteSourceBroken}
+	if !errors.Is(r, wfgovern.ErrRouteSourceBroken) {
+		t.Error("a refusal wrapping wfgovern.ErrRouteSourceBroken must still match errors.Is")
+	}
+	if errors.Is(wfgovern.Refusal{Rule: wfgovern.RuleStructureGuard}, wfgovern.ErrRouteSourceBroken) {
+		t.Error("a refusal wrapping nothing must not match")
 	}
 }

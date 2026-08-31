@@ -108,6 +108,12 @@ type Engine struct {
 	// re-reading the artefact with no memory (sty_0f5e600c). Nil-safe: an unwired
 	// resolver injects nothing.
 	priorVerdicts func(ctx context.Context, itemID, from, to string) []PriorVerdict
+	// trackingStory resolves the id of an OPEN story already diagnosing a failing
+	// authored document, so a refusal caused by that document points at the
+	// diagnosis instead of leaving it in backlog (sty_88d40a60). Injected because
+	// this package must stay free of the store; nil-safe — an unwired resolver
+	// names nothing and the refusal reads exactly as before.
+	trackingStory func(ctx context.Context, kind, name string) string
 	// injectPrinciples is a cache of the reviewer binding's principle injection
 	// (sty_46a40208). Order:2 feeds Invoke from reviewerBinding; this flag remains
 	// so SetInjectPrinciples / tests keep working until order:3 retires the scalar.
@@ -359,6 +365,21 @@ func (g *Engine) SetConstitution(body string) { g.constitution = strings.TrimSpa
 // resolver simply injects no children.
 func (g *Engine) SetChildrenResolver(fn func(ctx context.Context, parentID string) []ChildState) {
 	g.children = fn
+}
+
+// SetTrackingStoryResolver wires the lookup from a failing document to the open
+// story that diagnoses it (sty_88d40a60). Pass nil to disable — a refusal then
+// carries no story id, which is the correct silence for a repo with none.
+func (g *Engine) SetTrackingStoryResolver(fn func(ctx context.Context, kind, name string) string) {
+	g.trackingStory = fn
+}
+
+// trackingStoryFor is the nil-safe read of that resolver.
+func (g *Engine) trackingStoryFor(ctx context.Context, kind, name string) string {
+	if g.trackingStory == nil {
+		return ""
+	}
+	return g.trackingStory(ctx, kind, name)
 }
 
 // SetDocsResolver wires the resolver that lists an item's attachments so every
@@ -972,6 +993,7 @@ func (g *Engine) guardWorkflowStructure(ctx context.Context, item workitem.Item,
 				return wfgovern.Refusal{
 					Rule: wfgovern.RuleStructureGuard, Item: item.ID, Workflow: w.Name,
 					From: item.Status, To: toStatus,
+					TrackingStory: g.trackingStoryFor(ctx, "workflows", w.Name),
 					Why: fmt.Sprintf("the governing workflow fails structure validation (%s), so no gate under it can be trusted to judge",
 						strings.Join(problems, "; ")),
 					Remedy: fmt.Sprintf("fix the substrate (`satelle workflow validate %s`) — if the file on disk already passes, the index is stale: run `satelle reindex`", w.Name),
@@ -1002,6 +1024,7 @@ func (g *Engine) guardWorkflowStructure(ctx context.Context, item workitem.Item,
 		return wfgovern.Refusal{
 			Rule: wfgovern.RuleStructureGuard, Item: item.ID, Workflow: doc.Name,
 			From: item.Status, To: toStatus,
+			TrackingStory: g.trackingStoryFor(ctx, "workflows", doc.Name),
 			Why: fmt.Sprintf("the governing workflow fails structure validation (%s), so no gate under it can be trusted to judge",
 				strings.Join(problems, "; ")),
 			Remedy: fmt.Sprintf("fix the substrate (`satelle workflow validate %s`) — no transition is legal until it passes", doc.Name),
