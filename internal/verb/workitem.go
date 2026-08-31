@@ -361,8 +361,8 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 			}
 			if current.Status != entry {
 				return nil, fmt.Errorf(
-					"satelle: refusing to change frozen definition field(s) [%s] on engaged story %s (status %q; entry state is %q) — title/body/acceptance_criteria/category are immutable once a story leaves its workflow entry state; status/estimate/actual/tags/priority/attachments are unaffected",
-					strings.Join(frozen, ", "), current.ID, current.Status, entry)
+					"satelle: refusing to change frozen definition field(s) [%s] on engaged story %s (status %q; entry state is %q) — title/body/acceptance_criteria/category are immutable once a story leaves its workflow entry state; status/estimate/actual/tags/priority/attachments are unaffected. To CORRECT a wrong definition mid-flight, use `satelle story amend %s --reason …`, which is judged by the repo's amend gate and records the before/after on the ledger",
+					strings.Join(frozen, ", "), current.ID, current.Status, entry, current.ID)
 			}
 		}
 	}

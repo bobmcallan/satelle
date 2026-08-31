@@ -110,13 +110,18 @@ cancel = { state = "cancelled" }
 	if !strings.Contains(rej, "plan") || !strings.Contains(rej, "chore") {
 		t.Errorf("refusal must name the status and the category:\n%s", rej)
 	}
-	// Past the entry state, category is frozen: the remedy must be re-raise, and
-	// must NOT suggest --category, which the definition freeze would refuse.
+	// Past the entry state, category is frozen: the remedy is the GATED amend
+	// (sty_81aa4d8f), with cancel-and-re-raise for work that is misconceived
+	// rather than misfiled. It must never read as a plain `story set --category`,
+	// which the definition freeze refuses.
 	if !strings.Contains(rej, "supersedes:"+id) {
-		t.Errorf("past the entry state the remedy is cancel-and-re-raise:\n%s", rej)
+		t.Errorf("past the entry state cancel-and-re-raise must stay on offer:\n%s", rej)
 	}
-	if strings.Contains(rej, "--category") {
-		t.Errorf("remedy must not suggest --category for a story past its entry state:\n%s", rej)
+	if !strings.Contains(rej, "story amend "+id+" --category") || !strings.Contains(rej, "--reason") {
+		t.Errorf("past the entry state the remedy is the gated amend:\n%s", rej)
+	}
+	if strings.Contains(rej, "story set "+id+" --category") {
+		t.Errorf("remedy must not suggest a plain set for a story past its entry state:\n%s", rej)
 	}
 }
 

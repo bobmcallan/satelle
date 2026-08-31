@@ -89,7 +89,30 @@ recorded evidence before close:
 Drive each transition and let its gate judge it; a reject blocks the move and
 records why. You never self-enact a gated edge.
 
-## 4. Cancel (any → cancelled)
+## 4. Correct a wrong definition mid-flight (amend)
+
+`title`, `body`, `acceptance_criteria` and `category` **freeze** once a story
+leaves its entry state, so an agent cannot quietly weaken its own acceptance
+criteria to make a gate pass. `satelle story set` refuses them from then on. When
+the definition itself turns out to be wrong — a gate demands a criterion the ACs
+never named, or an AC is factually false — amend it rather than cancelling and
+re-raising (which retires the id, its ledger, and its accepted plan):
+
+    satelle story amend <id> --acceptance - --reason "AC2 asserted behaviour the system does not have" < ac.md
+
+The freeze is not lifted, it is **judged**: `--reason` is mandatory, the repo's
+`amend_review` lifecycle hook names the reviewer that accepts or rejects the
+correction (a reject changes nothing), and an accepted amendment records every
+field's **old and new** value on the ledger as `definition_amended`. A repo that
+declares no `amend_review` hook has no amend path — with nothing to judge the
+correction, the freeze holds.
+
+Amend never moves status. It runs from a performing state and from the parked
+(`blocked`) state, so a story parked over a wrong definition is corrected and
+resumed in place. Terminal and cancelled stories are refused: their record is
+history — raise a new story carrying `supersedes:<id>`.
+
+## 5. Cancel (any → cancelled)
 
 To abandon an item, record why:
 

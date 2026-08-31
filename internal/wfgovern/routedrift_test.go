@@ -107,9 +107,17 @@ func TestDriftRefusalText(t *testing.T) {
 			t.Errorf("why must name both lanes, missing %q: %s", want, why)
 		}
 	}
+	// Past the entry state `story set --category` is refused, so the remedy is
+	// the gated amend (sty_81aa4d8f), with cancel-and-re-raise kept for work that
+	// is misconceived rather than misfiled. It must never read as a plain set.
 	remedy := DriftRemedy(past, "backlog")
-	if !strings.Contains(remedy, "supersedes:sty_past") || strings.Contains(remedy, "--category") {
-		t.Errorf("past the entry state the remedy is re-raise, never --category: %s", remedy)
+	for _, want := range []string{"story amend sty_past --category", "--reason", "supersedes:sty_past"} {
+		if !strings.Contains(remedy, want) {
+			t.Errorf("past-entry remedy missing %q: %s", want, remedy)
+		}
+	}
+	if strings.Contains(remedy, "reclassify now") || strings.Contains(remedy, "story set sty_past") {
+		t.Errorf("past the entry state the remedy must not be a plain set: %s", remedy)
 	}
 
 	entry, ok := DetectRouteDrift(workitem.Item{ID: "sty_entry", Category: "docs", Status: "backlog"}, docs,

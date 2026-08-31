@@ -190,10 +190,39 @@ func TestScalarIgnoresIndentedKeys(t *testing.T) {
 // table names operations and their verdict nature — nothing else.
 func TestOperationsTableIsTheOnlyPerOperationKnowledge(t *testing.T) {
 	ops := Operations()
-	if len(ops) != 1 || ops[0] != OpCreateReview {
-		t.Fatalf("operations table = %v", ops)
+	want := []string{OpAmendReview, OpCreateReview} // sorted
+	if len(ops) != len(want) {
+		t.Fatalf("operations table = %v, want %v", ops, want)
 	}
-	if !IsVerdict(OpCreateReview) || !Known(OpCreateReview) {
-		t.Error("create_review is a known verdict operation")
+	for i, op := range want {
+		if ops[i] != op {
+			t.Fatalf("operations table = %v, want %v", ops, want)
+		}
+		if !IsVerdict(op) || !Known(op) {
+			t.Errorf("%s is a known verdict operation", op)
+		}
+	}
+}
+
+// TestAmendReviewIsDeclarableInBothSpellings (sty_81aa4d8f): the amend gate is a
+// lifecycle hook like create_review — declarable as the shorthand or as a hooks:
+// entry with its own agent, and a verdict operation, so it carries a gate's
+// requirements through validation.
+func TestAmendReviewIsDeclarableInBothSpellings(t *testing.T) {
+	short, problems := For(wrap("name: w\namend_review: satelle-story-amend-review\n"), OpAmendReview)
+	if !problems || short.Skill != "satelle-story-amend-review" || short.Agent != DefaultAgent {
+		t.Fatalf("shorthand hook = %+v (declared %v)", short, problems)
+	}
+	if !short.Verdict || short.Source != SourceShorthand {
+		t.Errorf("amend_review must be a verdict operation with shorthand provenance: %+v", short)
+	}
+	block, declared := For(wrap("name: w\nhooks:\n  - operation: amend_review\n    skill: strict-amend\n    agent: strict-reviewer\n"), OpAmendReview)
+	if !declared || block.Skill != "strict-amend" || block.Agent != "strict-reviewer" || !block.AgentDeclared {
+		t.Fatalf("hooks-block hook = %+v (declared %v)", block, declared)
+	}
+	// Both spellings coexist with create_review rather than displacing it.
+	hooks, probs := Parse(wrap("name: w\ncreate_review: c\namend_review: a\n"))
+	if len(probs) != 0 || len(hooks) != 2 {
+		t.Fatalf("hooks = %+v, problems = %v", hooks, probs)
 	}
 }

@@ -89,7 +89,9 @@ func DriftRemedy(d RouteDrift, entryState string) string {
 			", and this is the last step where the cheap fix exists"
 	}
 	return "category is frozen once a story leaves " + entryState +
-		", so this one cannot be reclassified: cancel it with a recorded reason (`--add-tags cancel-reason:superseded`) and re-raise the work carrying `supersedes:" + d.Item + "`"
+		", so `story set --category` is refused: amend it under the gate — `satelle story amend " + d.Item +
+		" --category <category> --reason <why the category was wrong>` — which keeps the id and its history, and is refused if the new lane declares no `" + d.Status +
+		"` state. If the WORK itself is misconceived rather than misfiled, cancel it with a recorded reason (`--add-tags cancel-reason:superseded`) and re-raise carrying `supersedes:" + d.Item + "`"
 }
 
 // DriftWhy states the fact both lanes make plain, for the refusal's Why.

@@ -1,3 +1,8 @@
+## [0.0.481] - 2026-08-31
+
+### Added
+- **`satelle story amend <id> --reason …` — gate-approved correction of a story's frozen definition fields.** `title`, `body`, `acceptance_criteria` and `category` freeze when a story leaves its entry state, and until now a wrong definition mid-flight could only be escaped by cancel-and-re-raise: a new id, a lost ledger, and a full route re-walk. amend keeps the id and pays for it with judgement — `--reason` is mandatory, the repo's new `amend_review` lifecycle hook names the reviewer that accepts or rejects the correction (a reject writes nothing at all), and an accepted amendment records every field's old and new value as a `definition_amended` ledger row. It never moves status, and it is reachable from the parked (`blocked`) state, so a story parked over a wrong definition is corrected and resumed in place; terminal and cancelled states are refused, and a category amendment onto a lane that declares no such state is refused rather than stranding the story off-route. `satelle story set` on those fields stays refused, and now names the amend path. **Fail closed:** a repo that declares no `amend_review` hook — including the embedded defaults — has no amend path at all; with nothing to judge the correction the freeze holds. The route-drift remedy, `satelle help create-story`, and `satelle-route-drift-check` describe the amend path where it applies. (sty_81aa4d8f)
+
 ## [0.0.480] - 2026-08-30
 
 ### Fixed

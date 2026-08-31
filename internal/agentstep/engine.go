@@ -476,6 +476,20 @@ type transitionPayload struct {
 	// finding set each pass. Absent on a first attempt, so a reviewer that ignores
 	// it costs nothing. Enumeration, not verdict.
 	PriorVerdicts []PriorVerdict `json:"prior_verdicts,omitempty"`
+	// Amendment is present ONLY on the amend_review gate's payload
+	// (sty_81aa4d8f): the before/after of every definition field the amendment
+	// proposes, plus the caller's reason. Without it the reviewer would see only
+	// the amended story and could not tell a correction from a weakening — the
+	// one judgement this gate exists to make. Enumeration, not verdict.
+	Amendment *AmendmentState `json:"amendment,omitempty"`
+}
+
+// AmendmentState is the proposed amendment handed to the amend gate: the state
+// the story sits in, the reason given, and each field's old and new value.
+type AmendmentState struct {
+	Status string            `json:"status"`
+	Reason string            `json:"reason"`
+	Fields []verb.AmendField `json:"fields"`
 }
 
 // PriorVerdict is one verdict already recorded on the edge under review.
@@ -1508,6 +1522,14 @@ func (g *Engine) gateBinding(section string) (config.AgentBinding, string, error
 }
 
 func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, skill, gateAgent string) (verb.GateDecision, error) {
+	return g.runReviewerWith(ctx, item, toStatus, skill, gateAgent, nil)
+}
+
+// runReviewerWith is runReviewer with an optional payload decorator, for a gate
+// that judges something the item alone does not carry — today the amendment's
+// before/after (sty_81aa4d8f). Everything else about the run is identical, so a
+// decorated gate is not a second reviewer path.
+func (g *Engine) runReviewerWith(ctx context.Context, item workitem.Item, toStatus, skill, gateAgent string, decorate func(*transitionPayload)) (verb.GateDecision, error) {
 	body, err := g.skillBody(ctx, skill)
 	if err != nil {
 		if errors.Is(err, docindex.ErrNotFound) {
@@ -1551,6 +1573,9 @@ func (g *Engine) runReviewer(ctx context.Context, item workitem.Item, toStatus, 
 	// reviewer's payload is byte-for-byte unchanged (sty_6e4f7fd8).
 	if d, drifted := g.routeDriftFor(ctx, item); drifted {
 		tp.RouteDrift = &d
+	}
+	if decorate != nil {
+		decorate(&tp)
 	}
 	payload, err := json.Marshal(tp)
 	if err != nil {
@@ -1926,6 +1951,72 @@ func (g *Engine) ReviewCreate(ctx context.Context, draft verb.CreateDraft) (verb
 // `satelle agent validate` / `satelle workflow validate` before anything runs.
 // The engine keeps only its mechanism-level refusals at dispatch (role, in-loop).
 func (g *Engine) createReviewHook(ctx context.Context, category string) (wfhook.Hook, bool) {
+	return g.lifecycleHook(ctx, category, wfhook.OpCreateReview)
+}
+
+// ReviewAmend judges a proposed amendment of a story's FROZEN definition fields
+// (sty_81aa4d8f) against the skill+agent the active workflow declares for the
+// amend_review lifecycle hook. The reviewer is handed the AMENDED story plus the
+// per-field before/after and the caller's reason, because the question it exists
+// to answer — correction or self-serving weakening? — cannot be read off the
+// amended text alone.
+//
+// An UNDECLARED hook (or one whose skill does not resolve) returns Gated false,
+// which the verb treats as a refusal: piercing the freeze without a judge is not
+// on offer. That inverts ReviewCreate's fail-open, deliberately — a bare create
+// must stay legal, an unjudged amendment must not.
+func (g *Engine) ReviewAmend(ctx context.Context, draft verb.AmendDraft) (verb.GateDecision, error) {
+	amended := applyAmendment(draft)
+	// Deterministic structure first, exactly as create does: an amendment may
+	// correct a definition but never leave the story structurally invalid.
+	if problems := structure.Story(amended.Title, amended.Body, amended.AcceptanceCriteria, amended.Category); len(problems) > 0 {
+		return verb.GateDecision{Gated: true, Accept: false, Skill: structureSkill, Notes: strings.Join(problems, "; ")}, nil
+	}
+	hook, declared := g.lifecycleHook(ctx, amended.Category, wfhook.OpAmendReview)
+	if !declared || hook.Skill == "" {
+		return verb.GateDecision{}, nil // no gate declared — the verb refuses
+	}
+	dec, err := g.runReviewerWith(ctx, amended, amended.Status, hook.Skill, hook.Agent,
+		func(tp *transitionPayload) {
+			tp.Amendment = &AmendmentState{
+				Status: draft.Status,
+				Reason: draft.Reason,
+				Fields: draft.Fields,
+			}
+		})
+	if err != nil {
+		return verb.GateDecision{}, err
+	}
+	// dec.Gated false here means the declared rubric does not resolve. For a
+	// transition that degrades to advisory; for an amendment it stays a refusal,
+	// carried back as-is so the caller reports the unresolved skill.
+	return dec, nil
+}
+
+// applyAmendment returns the story as the amendment would leave it — what the
+// reviewer judges and what the structure check runs against.
+func applyAmendment(draft verb.AmendDraft) workitem.Item {
+	out := draft.Item
+	for _, f := range draft.Fields {
+		switch f.Field {
+		case "title":
+			out.Title = f.New
+		case "body":
+			out.Body = f.New
+		case "acceptance_criteria":
+			out.AcceptanceCriteria = f.New
+		case "category":
+			out.Category = f.New
+		}
+	}
+	return out
+}
+
+// lifecycleHook resolves one lifecycle hook declared by the workflow active for
+// the category — its `hooks:` entry or the `<operation>:` shorthand. Not
+// declared when no workflow governs the category or the workflow declares none;
+// what that ABSENCE means is the caller's decision, not this resolver's.
+func (g *Engine) lifecycleHook(ctx context.Context, category, operation string) (wfhook.Hook, bool) {
 	// A lifecycle hook is workflow FRONTMATTER, and a derived route's frontmatter
 	// lives on its declaration of done — the half that says what this repo means
 	// by finished, which is where a create gate belongs. Read it first, so a
@@ -1938,7 +2029,7 @@ func (g *Engine) createReviewHook(ctx context.Context, category string) (wfhook.
 	// for the lifecycle itself (sty_3795e7f6).
 	if workflows, err := g.docs.List(ctx, "workflows"); err == nil {
 		if rs, ok := wfgovern.RouteGoverns(workflows, category); ok {
-			if h, hooked := wfhook.For(rs.Done, wfhook.OpCreateReview); hooked {
+			if h, hooked := wfhook.For(rs.Done, operation); hooked {
 				return h, true
 			}
 		}
@@ -1947,7 +2038,7 @@ func (g *Engine) createReviewHook(ctx context.Context, category string) (wfhook.
 	if err != nil {
 		return wfhook.Hook{}, false
 	}
-	return wfhook.For(doc.Body, wfhook.OpCreateReview)
+	return wfhook.For(doc.Body, operation)
 }
 
 // reviewerSkills resolves the ordered reviewer skills governing the (from→to)

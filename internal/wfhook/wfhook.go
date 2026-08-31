@@ -45,8 +45,18 @@ import (
 )
 
 // OpCreateReview is the content/alignment review that runs when a work item is
-// CREATED — the one lifecycle hook that exists today.
+// CREATED.
 const OpCreateReview = "create_review"
+
+// OpAmendReview is the review that judges an AMENDMENT of a story's frozen
+// definition fields (sty_81aa4d8f) — the gate `satelle story amend` runs. It
+// fires outside the status graph for the same reason create_review does: the
+// operation is not an edge, so no node or transition can carry it.
+//
+// Unlike create_review, an UNDECLARED amend_review does not degrade to "allowed"
+// — the caller refuses the amendment. The hook exists to pierce the definition
+// freeze, so its absence must mean the freeze holds, not that it lifts.
+const OpAmendReview = "amend_review"
 
 // DefaultAgent is the logical agent a hook resolves to when it declares none:
 // the repo's `[reviewer]` binding. It is a DOCUMENTED default with provenance,
@@ -72,6 +82,7 @@ const hookKey = "hooks"
 // the distinction lives here rather than being inferred at each call site.
 var operations = map[string]bool{
 	OpCreateReview: true,
+	OpAmendReview:  true,
 }
 
 // Operations returns every known lifecycle operation, sorted.

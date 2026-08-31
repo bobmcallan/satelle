@@ -23,9 +23,12 @@ past a step can find itself on a lane that never had that step.
 
 On the **engagement step** — entry to the first performing state — because
 `category` is a frozen definition field once a story leaves its entry state.
-That edge is the last one where the cheap fix (reclassify) is still legal;
-afterwards the only remedy is cancel-and-re-raise. A repo that wants the check
-later as well names it on later steps too.
+That edge is the last one where the cheap fix (`story set --category`) is still
+legal; afterwards the category can only be corrected under the amend gate
+(`satelle story amend <id> --category … --reason …`, when the repo declares an
+`amend_review` hook and the new lane declares the story's current state), or the
+story is cancelled and re-raised. A repo that wants the check later as well names
+it on later steps too.
 
 It ships **unwired**: which step it guards is the repo's decision, authored in
 `step.toml`, not the binary's.

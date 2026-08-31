@@ -90,6 +90,12 @@ const (
 	// never file content (the patch rides a type:change story attachment, local
 	// only). Enumeration only — no pass/fail in Go.
 	KindChangeRecord = "change_record"
+	// KindDefinitionAmended records a gate-approved amendment of a story's frozen
+	// definition fields (sty_81aa4d8f): Payload carries {reason, skill, fields:
+	// [{field, old, new}]} so the trail shows WHAT the definition was before the
+	// correction, not merely that one happened. Enumeration only — the accept/
+	// reject decision belongs to the authored amend_review gate.
+	KindDefinitionAmended = "definition_amended"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional

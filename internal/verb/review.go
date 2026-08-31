@@ -117,6 +117,43 @@ var createReviewer CreateReviewer
 // SetCreateReviewer wires the required-structure reviewer. Pass nil to disable.
 func SetCreateReviewer(r CreateReviewer) { createReviewer = r }
 
+// AmendField is one definition field an amendment proposes to change, with the
+// value it holds now and the value proposed — the before/after pair the gate
+// judges and the ledger records (sty_81aa4d8f).
+type AmendField struct {
+	Field string `json:"field"`
+	Old   string `json:"old"`
+	New   string `json:"new"`
+}
+
+// AmendDraft is a proposed amendment of a story's FROZEN definition fields,
+// handed to the amend gate before anything is written. It carries the story as
+// it stands (so the reviewer can judge the correction in context), the state the
+// story sits in, the per-field before/after set, and the caller's reason.
+type AmendDraft struct {
+	Item   workitem.Item `json:"item"`
+	Status string        `json:"status"`
+	Fields []AmendField  `json:"fields"`
+	Reason string        `json:"reason"`
+}
+
+// AmendReviewer judges an amendment of frozen definition fields, in an isolated
+// subprocess, against the skill+agent the active workflow declares for the
+// amend_review lifecycle hook. Implemented in internal/agentstep.
+//
+// A GateDecision with Gated false means the repo declares no amend gate: the
+// caller REFUSES the amendment (the freeze holds) rather than allowing it —
+// the opposite of create, where an undeclared gate keeps a bare create legal.
+type AmendReviewer interface {
+	ReviewAmend(ctx context.Context, draft AmendDraft) (GateDecision, error)
+}
+
+var amendReviewer AmendReviewer
+
+// SetAmendReviewer wires the amendment gate. Pass nil to disable — with no
+// reviewer wired, `story amend` refuses (fail closed).
+func SetAmendReviewer(r AmendReviewer) { amendReviewer = r }
+
 // WorkflowResolver names the workflow that governs a story of a given category,
 // so the create path can STAMP the choice on the story (sty_3800ac23) and the
 // restamp path can re-resolve it mid-flight (sty_ed3386cf). Wired independently

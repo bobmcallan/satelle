@@ -217,6 +217,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storySyncCommand())
 		parent.AddCommand(storyReconcileCommand())
 		parent.AddCommand(storyRestampCommand())
+		parent.AddCommand(storyAmendCommand())
 		parent.AddCommand(storyStopRequestCommand())
 		parent.AddCommand(storySeatCommands()...)
 	}
@@ -961,6 +962,69 @@ only: tasks and executions are unstamped by design.`,
 	return restamp
 }
 
+// storyAmendCommand builds `satelle story amend <id>` — the gated correction of
+// a story's FROZEN definition fields (sty_81aa4d8f). `story set` refuses those
+// fields once a story leaves its entry state, and before this the only exit from
+// a wrong definition was cancel-and-re-raise: a new id and a full route re-walk.
+// Amend keeps the id and the history, and pays for that with a gate: the repo's
+// amend_review reviewer judges the correction, the reason is mandatory, and the
+// ledger records every field's before and after.
+func storyAmendCommand() *cobra.Command {
+	var mTitle, mBody, mAccept, mCategory, mReason string
+	amend := &cobra.Command{
+		Use:   "amend <id>",
+		Short: "Amend a story's frozen definition fields under the amend gate (title/body/acceptance/category)",
+		Long: `Correct a wrong definition on a story that has already left its entry state.
+
+title, body, acceptance_criteria and category freeze there, so an agent cannot
+weaken its own acceptance criteria to make a gate pass. amend does not lift that
+freeze — it makes the correction judged: --reason is mandatory, the repo's
+amend_review reviewer accepts or rejects it, a reject changes nothing, and an
+accepted change records each field's old and new value on the ledger. Declare no
+amend_review hook and there is no amend.
+
+Status never moves. amend runs from a performing state and from the parked
+(blocked) state, so a story parked over a wrong definition is corrected and
+resumed in place; terminal and cancelled are refused. --body and --acceptance
+take "-" to read stdin.`,
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			f := cmd.Flags()
+			req := map[string]any{"id": args[0]}
+			putChanged(req, f, "title", "title")
+			putChanged(req, f, "category", "category")
+			// body/acceptance may be piped: a corrected AC list is exactly the
+			// multi-line value that should not shell-quote through a flag.
+			for _, m := range []struct{ flag, key string }{
+				{"body", "body"}, {"acceptance", "acceptance_criteria"},
+			} {
+				if !f.Changed(m.flag) {
+					continue
+				}
+				v, _ := f.GetString(m.flag)
+				if v == "-" {
+					data, err := io.ReadAll(cmd.InOrStdin())
+					if err != nil {
+						return fmt.Errorf("amend: read --%s - (stdin): %w", m.flag, err)
+					}
+					v = string(data)
+				}
+				req[m.key] = v
+			}
+			putIf(req, "reason", mReason)
+			return dispatch(cmd, "story-amend", req)
+		},
+	}
+	amend.Flags().StringVar(&mTitle, "title", "", "corrected title")
+	amend.Flags().StringVar(&mBody, "body", "", `corrected body, or "-" to read it from stdin`)
+	amend.Flags().StringVar(&mAccept, "acceptance", "", `corrected acceptance criteria, or "-" to read them from stdin`)
+	amend.Flags().StringVar(&mCategory, "category", "", "corrected category (re-lanes the route; refused if the new lane has no such state)")
+	amend.Flags().StringVar(&mReason, "reason", "", "why the definition was wrong (required; recorded and judged)")
+	_ = amend.MarkFlagRequired("reason")
+	return amend
+}
+
 // storyDocCommands builds the per-story document attachment surface: attach a
 // typed markdown or binary doc, list a story's docs, and read one. Markdown
 // dispatches to story-doc-*; binary uses story-doc-attach-binary / get-binary
@@ -1236,8 +1300,8 @@ Record what the run produced with satelle execution record.`
 engaged story, and engagement starts here.
 
 --category is not cosmetic — it selects the ROUTE the story will walk, and it
-freezes once the story leaves its entry state, so a wrong category costs a
-cancel-and-re-raise later. When [review] gate_create is on, the create-review
+freezes once the story leaves its entry state, so a wrong category then costs a
+gated story amend at best. When [review] gate_create is on, the create-review
 gate judges the draft and can REJECT it: the story is then not created, and the
 notes say what to fix.`
 }

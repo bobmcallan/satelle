@@ -137,3 +137,29 @@ func TestStoryAttachFromStdin(t *testing.T) {
 		}
 	}
 }
+
+// TestStoryAmendSurface (sty_81aa4d8f AC1/AC3) pins the CLI half of the amend
+// path: the command exists on the story group, --reason is mandatory (the gate
+// and the ledger both read it), and --acceptance takes "-" for stdin so a
+// corrected AC list does not shell-quote through a flag.
+func TestStoryAmendSurface(t *testing.T) {
+	_ = tempRepo(t)
+
+	out, err := runRoot(t, "story", "amend", "sty_missing", "--acceptance", "1. corrected")
+	if err == nil {
+		t.Fatalf("amend without --reason should be refused:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "reason") {
+		t.Errorf("error %q should name the required --reason", err)
+	}
+
+	help, herr := runRoot(t, "story", "amend", "--help")
+	if herr != nil {
+		t.Fatal(herr)
+	}
+	for _, want := range []string{"amend_review", "blocked", `"-" to read stdin`} {
+		if !strings.Contains(help, want) {
+			t.Errorf("amend help should document %q:\n%s", want, help)
+		}
+	}
+}
