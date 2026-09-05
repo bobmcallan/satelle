@@ -50,6 +50,16 @@ nothing yourself.
  ADVICE, not enforcement: name each ungated successor and let the operator
  decide. Terminal and cancel exits follow the same preference.
 
+ After that coverage check, look at the *kind* of successor reviewer on an
+ implementation step (`in_progress` / coded). Scope, design-tokens, and
+ packaging judges do not count as a slice-quality or proof-honesty judge —
+ a successor that only has those can still accept a slice nobody read for
+ quality of solution or honesty of proof. Flag it. Name the missing **slot**
+ (a slice-quality or proof-honesty reviewer) and bind it on the successor
+ step's `reviewers` list, not as a `[[gate]]`. Do not name a skill this
+ binary does not ship — the repo authors its own. Advisory only; do not
+ fail `workflow validate`.
+
 4. **Grant scoping.** A dispatched binding's `tools` is its capability ceiling.
  Advise when a step's grant is wider than its rubric needs (a verify-only
  step with mutating tools) or too narrow to complete (a commit step without
