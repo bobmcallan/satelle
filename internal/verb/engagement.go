@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +14,16 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/workitem"
+)
+
+// Classified engagement-slice errors (sty_76796b8e). liveStoryDiff returns them
+// as errors (unchanged contract). story-proof maps them to exit-0 state strings
+// so a functional check can report rather than fail the transition.
+var (
+	errNoBaseline  = errors.New("no engagement baseline")
+	errEmptyHead   = errors.New("engagement baseline has empty head_sha")
+	errForeignTree = errors.New("story engaged from a different working tree")
+	errNoGit       = errors.New("git unavailable")
 )
 
 func init() {
@@ -254,12 +265,58 @@ func StoryDiff(ctx context.Context, id string, wantPatch bool) (StoryDiffResult,
 }
 
 func liveStoryDiff(ctx context.Context, it workitem.Item, wantPatch, includeSubstrate bool) (StoryDiffResult, error) {
-	base, _, baseAt, err := firstEngagementBaseline(ctx, it.ID)
+	sl, err := resolveEngagementSlice(ctx, it, wantPatch)
 	if err != nil {
 		return StoryDiffResult{}, err
 	}
+	files := sl.Files
+	// Opt-in substrate leg only (--include-substrate). Default live path stays
+	// git-only so scope-review is not polluted by mtime noise (sty_6469025e).
+	if includeSubstrate {
+		if !sl.BaseAt.IsZero() {
+			files = append(files, substrateChangedFiles(sl.Dir, authoredDirs, substrateConfigDir, sl.BaseAt)...)
+		}
+		// Deletions are measured against the FIRST engagement baseline's manifest,
+		// not the resume re-anchor above: the manifest says what existed when the
+		// story took the tree, and that is the only thing a vanished path can be
+		// compared to. Do not "fix" this to re-anchor with sinceSHA.
+		files = append(files, substrateDeletedFiles(sl.Dir, sl.Base.SubstrateManifest)...)
+		files = uniqueSorted(files)
+	}
+	return StoryDiffResult{
+		StoryID: it.ID,
+		// The anchor actually used, so the surface never claims to have diffed
+		// from a point it did not.
+		Baseline: sl.SinceSHA,
+		DirtyAt:  sl.Base.Dirty,
+		Files:    files,
+		Stat:     sl.Stat,
+		Patch:    sl.Patch,
+		Source:   "live",
+		Note:     "enumeration only — no pass/fail; gates decide scope",
+	}, nil
+}
+
+// engagementSlice is the live git enumeration since a story's engagement
+// (or resume re-anchor). Owned by resolveEngagementSlice so story-diff and
+// story-proof cannot drift on WHEN / WHICH TREE (sty_76796b8e).
+type engagementSlice struct {
+	SinceSHA string
+	Dir      string
+	Base     engagementBaselinePayload
+	BaseAt   time.Time
+	Files    []string
+	Stat     string
+	Patch    string
+}
+
+func resolveEngagementSlice(ctx context.Context, it workitem.Item, wantPatch bool) (engagementSlice, error) {
+	base, _, baseAt, err := firstEngagementBaseline(ctx, it.ID)
+	if err != nil {
+		return engagementSlice{}, fmt.Errorf("%w: %v", errNoBaseline, err)
+	}
 	if base.HeadSHA == "" {
-		return StoryDiffResult{}, fmt.Errorf("story-diff: engagement baseline for %s has empty head_sha (git was unavailable at engage)", it.ID)
+		return engagementSlice{}, fmt.Errorf("%w: story-diff: engagement baseline for %s has empty head_sha (git was unavailable at engage)", errEmptyHead, it.ID)
 	}
 	// A story resumed from a park enumerates from the RESUME point, not from its
 	// first engagement — otherwise every commit another story landed during the
@@ -273,41 +330,24 @@ func liveStoryDiff(ctx context.Context, it workitem.Item, wantPatch, includeSubs
 	if err != nil {
 		dir = "."
 	}
-	// Resolve to git top-level when possible so paths are repo-relative.
 	if top := gitToplevel(dir); top != "" {
 		dir = top
 	}
 	if aerr := refuseForeignTreeDiff(ctx, it.ID, base.Worktree, dir); aerr != nil {
-		return StoryDiffResult{}, aerr
+		return engagementSlice{}, fmt.Errorf("%w: %v", errForeignTree, aerr)
 	}
 	files, stat, patch, derr := gitDiffSince(dir, sinceSHA, wantPatch)
 	if derr != nil {
-		return StoryDiffResult{}, derr
+		return engagementSlice{}, fmt.Errorf("%w: %v", errNoGit, derr)
 	}
-	// Opt-in substrate leg only (--include-substrate). Default live path stays
-	// git-only so scope-review is not polluted by mtime noise (sty_6469025e).
-	if includeSubstrate {
-		if !baseAt.IsZero() {
-			files = append(files, substrateChangedFiles(dir, authoredDirs, substrateConfigDir, baseAt)...)
-		}
-		// Deletions are measured against the FIRST engagement baseline's manifest,
-		// not the resume re-anchor above: the manifest says what existed when the
-		// story took the tree, and that is the only thing a vanished path can be
-		// compared to. Do not "fix" this to re-anchor with sinceSHA.
-		files = append(files, substrateDeletedFiles(dir, base.SubstrateManifest)...)
-		files = uniqueSorted(files)
-	}
-	return StoryDiffResult{
-		StoryID: it.ID,
-		// The anchor actually used, so the surface never claims to have diffed
-		// from a point it did not.
-		Baseline: sinceSHA,
-		DirtyAt:  base.Dirty,
+	return engagementSlice{
+		SinceSHA: sinceSHA,
+		Dir:      dir,
+		Base:     base,
+		BaseAt:   baseAt,
 		Files:    files,
 		Stat:     stat,
 		Patch:    patch,
-		Source:   "live",
-		Note:     "enumeration only — no pass/fail; gates decide scope",
 	}, nil
 }
 

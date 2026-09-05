@@ -120,6 +120,7 @@ func TestReviewerChecksTopic(t *testing.T) {
 		"The done gate is **not** mandated",
 		"derived route",
 		"gating ENTRY to it",
+		"story proof",
 	} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("reviewer-checks topic missing %q", want)

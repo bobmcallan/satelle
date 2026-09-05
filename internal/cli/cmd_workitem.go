@@ -214,6 +214,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storyDocCommands()...)
 		parent.AddCommand(storyCostCommands()...)
 		parent.AddCommand(storyDiffCommand())
+		parent.AddCommand(storyProofCommand())
 		parent.AddCommand(storySyncCommand())
 		parent.AddCommand(storyReconcileCommand())
 		parent.AddCommand(storyRestampCommand())
@@ -614,6 +615,52 @@ the tree the story was engaged from and refuses elsewhere.`,
 	cmd.Flags().BoolVar(&patch, "patch", false, "include full unified patch since baseline (tracked)")
 	cmd.Flags().BoolVar(&recorded, "recorded", false, "union change_record file lists instead of live git re-derive (sty_948ad5df)")
 	cmd.Flags().BoolVar(&includeSubstrate, "include-substrate", false, "opt-in: union substrate mtime leg (authored dirs + data dir); default live path stays git-only")
+	return cmd
+}
+
+// storyProofCommand builds `satelle story proof [id]`: enumerate tests added or
+// changed since the engagement baseline (sty_76796b8e). Enumeration only — it
+// never runs tests and never exits non-zero for an enumerable state (including
+// no-baseline and no new tests). Stdin-tolerant like story diff.
+func storyProofCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "proof [id]",
+		Short: "List tests changed since engagement baseline (enumeration only)",
+		Long: `Enumerate the tests a story added or changed since its engagement baseline.
+JSON only. Report-only — it does not run tests and does not decide pass/fail.
+
+Reach for it from a functional-check gate (pipe the transition payload, no argv
+id) or as an operator inspecting the slice. Default isolated reviewers have no
+shell; this command is not injected into their payload.
+
+Enumerable states always exit 0: no baseline (state=no_baseline), no new tests
+(tests=[]), unparseable languages (listed under skipped with a reason), foreign
+tree, git unavailable. Non-zero only for unknown id or a non-story item.
+
+Go _test.go files include parsed func Test* names. Other languages are listed
+by path with skipped reason. Changed non-test paths appear in non_test_files
+so an empty tests list is not confused with a classifier miss.`,
+		Args:        cobra.MaximumNArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				return dispatch(cmd, "story-proof", map[string]any{"id": args[0]})
+			}
+			in, err := io.ReadAll(cmd.InOrStdin())
+			if err != nil {
+				return err
+			}
+			var body map[string]any
+			if len(bytes.TrimSpace(in)) > 0 {
+				if err := json.Unmarshal(in, &body); err != nil {
+					return fmt.Errorf("story proof: stdin JSON: %w", err)
+				}
+			} else {
+				body = map[string]any{}
+			}
+			return dispatch(cmd, "story-proof", body)
+		},
+	}
 	return cmd
 }
 

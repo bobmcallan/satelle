@@ -79,6 +79,25 @@ and `diff` are facts the binary attaches; the skill decides. A missing
 baseline is a `no_baseline` marker, never a refused transition. The patch is
 capped under its own ceiling so it cannot starve the plan.
 
+## `satelle story proof` (test enumeration)
+
+Same family as `satelle story diff` and `satelle ledger citation`: the binary
+**reports**, the gate skill decides. It lists tests added or changed since the
+engagement baseline. **Report only — no pass/fail; it does not run tests.**
+
+```
+satelle story proof <id>
+# or from a functional check (payload on stdin, no argv id):
+satelle story proof   # reads story.id from {story, from, to} on stdin
+```
+
+JSON fields: `story_id`, `baseline`, `head`, `dirty`, `state`, `tests`
+(path + language + `functions` when parseable), `skipped` (path + reason),
+`non_test_files` (changed paths the classifier did not treat as tests).
+`state` is `ok`, `no_baseline`, `foreign_tree`, or `no_git`. Every enumerable
+state exits 0, including no baseline and no new tests. Non-zero only for an
+unknown id or a non-story item.
+
 ## Two gate kinds: LLM reviewers and functional checks
 
 A gate is either:

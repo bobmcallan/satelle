@@ -1,3 +1,8 @@
+## [0.0.487] - 2026-09-05
+
+### Added
+- **`satelle story proof` enumerates tests since the engagement baseline without judging them.** Same family as `satelle story diff`: JSON only, report-only, never runs tests. Go `_test.go` files include parsed `func Test*` names; other languages are listed with a skipped reason. No-baseline, no new tests, foreign tree and git-unavailable all exit 0 with a `state` field so a functional check can report rather than fail the transition. Not injected into reviewer payloads. (sty_76796b8e)
+
 ## [0.0.486] - 2026-09-05
 
 ### Added
