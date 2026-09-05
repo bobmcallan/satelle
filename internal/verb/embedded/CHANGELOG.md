@@ -1,3 +1,8 @@
+## [0.0.488] - 2026-09-05
+
+### Changed
+- **Workflow advisor flags an implementation exit with no slice-quality reviewer.** Item 3 of embedded `satelle-workflow-advisor` still prefers a successor reviewer, but scope, design-tokens and packaging no longer count as judging the slice. The advice names the missing slot (a slice-quality or proof-honesty judge on the successor `reviewers` list, not a `[[gate]]`), not a skill the binary does not ship. Advisory only — `workflow validate` stays structure-only. (sty_fb934eef, sty_a8315e17)
+
 ## [0.0.487] - 2026-09-05
 
 ### Added
