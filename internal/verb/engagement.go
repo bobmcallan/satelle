@@ -147,8 +147,9 @@ type storyDiffReq struct {
 	IncludeSubstrate bool   `json:"include_substrate,omitempty"` // opt-in substrate mtime leg (sty_6469025e)
 }
 
-// storyDiffResult is the deterministic enumeration result (no verdict).
-type storyDiffResult struct {
+// StoryDiffResult is the deterministic enumeration result (no verdict).
+// Shared by `satelle story diff` and the reviewer-payload Diff field (sty_a125b440).
+type StoryDiffResult struct {
 	StoryID  string   `json:"story_id"`
 	Baseline string   `json:"baseline_sha"`
 	DirtyAt  bool     `json:"baseline_dirty"`
@@ -209,7 +210,7 @@ func storyDiff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 		if rerr != nil {
 			return nil, rerr
 		}
-		res := storyDiffResult{
+		res := StoryDiffResult{
 			StoryID: it.ID,
 			Files:   files,
 			Records: n,
@@ -222,12 +223,43 @@ func storyDiff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 		return json.Marshal(res)
 	}
 
-	base, _, baseAt, err := firstEngagementBaseline(ctx, it.ID)
+	res, err := liveStoryDiff(ctx, it, req.Patch, req.IncludeSubstrate)
 	if err != nil {
 		return nil, err
 	}
+	return json.Marshal(res)
+}
+
+// StoryDiff enumerates the live git slice since the story's engagement baseline
+// (sty_a125b440). Same derivation as `satelle story diff` without --recorded.
+// Errors on unknown story, missing baseline, empty head_sha, foreign tree, or
+// git failure — the reviewer-payload resolver maps those to a no-baseline marker
+// and must never fail a transition.
+func StoryDiff(ctx context.Context, id string, wantPatch bool) (StoryDiffResult, error) {
+	store, err := requireWorkItem()
+	if err != nil {
+		return StoryDiffResult{}, err
+	}
+	if strings.TrimSpace(id) == "" {
+		return StoryDiffResult{}, fmt.Errorf("story-diff: id required")
+	}
+	it, err := store.Get(ctx, id)
+	if err != nil {
+		return StoryDiffResult{}, err
+	}
+	if it.Kind != workitem.KindStory {
+		return StoryDiffResult{}, fmt.Errorf("story-diff: %s is not a story", id)
+	}
+	return liveStoryDiff(ctx, it, wantPatch, false)
+}
+
+func liveStoryDiff(ctx context.Context, it workitem.Item, wantPatch, includeSubstrate bool) (StoryDiffResult, error) {
+	base, _, baseAt, err := firstEngagementBaseline(ctx, it.ID)
+	if err != nil {
+		return StoryDiffResult{}, err
+	}
 	if base.HeadSHA == "" {
-		return nil, fmt.Errorf("story-diff: engagement baseline for %s has empty head_sha (git was unavailable at engage)", it.ID)
+		return StoryDiffResult{}, fmt.Errorf("story-diff: engagement baseline for %s has empty head_sha (git was unavailable at engage)", it.ID)
 	}
 	// A story resumed from a park enumerates from the RESUME point, not from its
 	// first engagement — otherwise every commit another story landed during the
@@ -246,15 +278,15 @@ func storyDiff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 		dir = top
 	}
 	if aerr := refuseForeignTreeDiff(ctx, it.ID, base.Worktree, dir); aerr != nil {
-		return nil, aerr
+		return StoryDiffResult{}, aerr
 	}
-	files, stat, patch, derr := gitDiffSince(dir, sinceSHA, req.Patch)
+	files, stat, patch, derr := gitDiffSince(dir, sinceSHA, wantPatch)
 	if derr != nil {
-		return nil, derr
+		return StoryDiffResult{}, derr
 	}
 	// Opt-in substrate leg only (--include-substrate). Default live path stays
 	// git-only so scope-review is not polluted by mtime noise (sty_6469025e).
-	if req.IncludeSubstrate {
+	if includeSubstrate {
 		if !baseAt.IsZero() {
 			files = append(files, substrateChangedFiles(dir, authoredDirs, substrateConfigDir, baseAt)...)
 		}
@@ -265,7 +297,7 @@ func storyDiff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 		files = append(files, substrateDeletedFiles(dir, base.SubstrateManifest)...)
 		files = uniqueSorted(files)
 	}
-	res := storyDiffResult{
+	return StoryDiffResult{
 		StoryID: it.ID,
 		// The anchor actually used, so the surface never claims to have diffed
 		// from a point it did not.
@@ -276,8 +308,7 @@ func storyDiff(ctx context.Context, raw json.RawMessage) (json.RawMessage, error
 		Patch:    patch,
 		Source:   "live",
 		Note:     "enumeration only — no pass/fail; gates decide scope",
-	}
-	return json.Marshal(res)
+	}, nil
 }
 
 // refuseForeignTreeDiff enforces the lease's working-tree anchor (sty_c098dc2d).

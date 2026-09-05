@@ -214,6 +214,10 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// Prior-verdict injection (sty_0f5e600c): a re-reviewed edge carries
 			// what it already judged, so the gate judges the delta.
 			rev.SetPriorVerdictsResolver(priorVerdictsResolver())
+			// Engagement-diff injection (sty_a125b440): Bash-less reviewers
+			// receive the live slice in the transition payload. Enumeration
+			// only; a missing baseline is a marker, never a refused gate.
+			rev.SetDiffResolver(diffResolver())
 			rev.SetArtifactAttacher(verb.AttachItemDoc)
 			// Structured retry/failure/timeout telemetry (sty_b73c3236): the engine
 			// sees each dispatch ATTEMPT (a killed/timed-out subprocess) the verb
@@ -417,6 +421,32 @@ func priorVerdictsResolver() func(ctx context.Context, itemID, from, to string) 
 			})
 		}
 		return out
+	}
+}
+
+// diffResolver enumerates the live engagement slice for reviewer-payload
+// injection (sty_a125b440). verb.StoryDiff is the same derivation as
+// `satelle story diff`; ANY error (no baseline, empty sha, foreign tree, git
+// unavailable) becomes a no-baseline marker so the transition cannot fail on
+// enumeration.
+func diffResolver() func(ctx context.Context, itemID string) *agentstep.DiffState {
+	return func(ctx context.Context, itemID string) *agentstep.DiffState {
+		if itemID == "" {
+			return &agentstep.DiffState{NoBaseline: true, Note: "empty item id"}
+		}
+		res, err := verb.StoryDiff(ctx, itemID, true)
+		if err != nil {
+			return &agentstep.DiffState{NoBaseline: true, Note: err.Error()}
+		}
+		return &agentstep.DiffState{
+			Baseline: res.Baseline,
+			Dirty:    res.DirtyAt,
+			Files:    res.Files,
+			Stat:     res.Stat,
+			Patch:    res.Patch,
+			Note:     res.Note,
+			Source:   res.Source,
+		}
 	}
 }
 

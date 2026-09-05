@@ -72,6 +72,13 @@ Output is JSON: `files` (sorted, includes untracked), `stat`, optional `patch`.
 **Report only** — no pass/fail. The gate skill decides. Missing baseline → clear
 error (pre-feature stories degrade gracefully).
 
+Implementation-exit reviewers also receive that same enumeration on the
+transition payload as `diff` (files, stat, patch) whenever a baseline exists —
+no executor attachment and no shell. `docs`, `prior_verdicts`, `route_drift`,
+and `diff` are facts the binary attaches; the skill decides. A missing
+baseline is a `no_baseline` marker, never a refused transition. The patch is
+capped under its own ceiling so it cannot starve the plan.
+
 ## Two gate kinds: LLM reviewers and functional checks
 
 A gate is either:

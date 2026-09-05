@@ -465,8 +465,10 @@ the agent **pulls** everything else itself, by id, with the read-only satelle CL
   verdicts, summaries).
 
 A read-only reviewer whose grant excludes Bash judges attachments from the
-transition payload's `docs` array (injected by the engine, sty_58fa970e) — no
-disk path required. Shell-granted agents may also pull more via the satelle CLI.
+transition payload's `docs` array (injected by the engine, sty_58fa970e) and
+the engagement slice from the payload's `diff` object (files, stat, patch;
+sty_a125b440) — no disk path required. Both are enumeration, not verdict.
+Shell-granted agents may also pull more via the satelle CLI.
 Do **not** use in-repo `.satelle/stories/` — that path is obsolete
 post-relocation. **Fetch before concluding a document or a prior step is
 missing** (payload first, then CLI when available).

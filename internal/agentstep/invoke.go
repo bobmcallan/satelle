@@ -567,7 +567,9 @@ const pullContextCallToAction = "## Reconstruct your context (you start fresh)\n
 	"work item (its `id`, title, body, acceptance criteria), the transition, and a " +
 	"`docs` array of every attached document (`name`, `type`, `body`). Prefer the " +
 	"payload `docs` for the plan and step summaries — that is how a Bash-less " +
-	"reviewer reads what it judges. When `truncated: true` on a doc, the body is " +
+	"reviewer reads what it judges. The payload `diff` object (when present) is " +
+	"the engagement slice (`files`, `stat`, `patch`) — enumeration, not a verdict. " +
+	"When `truncated: true` on a doc, the body is " +
 	"omitted; pull the full text with the CLI when your grant includes shell:\n\n" +
 	"- `satelle story get <id>` — the full current record.\n" +
 	"- `satelle story docs <id>`, then `satelle story doc <id> <name>` — attachments " +

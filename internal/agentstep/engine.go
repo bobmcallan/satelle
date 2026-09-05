@@ -108,6 +108,11 @@ type Engine struct {
 	// re-reading the artefact with no memory (sty_0f5e600c). Nil-safe: an unwired
 	// resolver injects nothing.
 	priorVerdicts func(ctx context.Context, itemID, from, to string) []PriorVerdict
+	// itemDiff resolves the live engagement slice for a reviewer payload
+	// (sty_a125b440). Nil-safe: an unwired resolver injects no Diff. The
+	// resolver itself must never error — map missing baseline / git failure to
+	// a no-baseline marker so the transition cannot fail on enumeration.
+	itemDiff func(ctx context.Context, itemID string) *DiffState
 	// trackingStory resolves the id of an OPEN story already diagnosing a failing
 	// authored document, so a refusal caused by that document points at the
 	// diagnosis instead of leaving it in backlog (sty_88d40a60). Injected because
@@ -400,6 +405,15 @@ func (g *Engine) SetPriorVerdictsResolver(fn func(ctx context.Context, itemID, f
 	g.priorVerdicts = fn
 }
 
+// SetDiffResolver wires the resolver that enumerates the engagement slice for
+// a reviewer payload (sty_a125b440). Enumeration, not verdict: the binary
+// attaches the facts, the skill decides. Nil-safe: an unwired resolver injects
+// no Diff. The callback must not fail the transition — return a no-baseline
+// marker on any error.
+func (g *Engine) SetDiffResolver(fn func(ctx context.Context, itemID string) *DiffState) {
+	g.itemDiff = fn
+}
+
 // docsPayloadCeiling bounds how many attachment body bytes ride in one payload
 // so a long-lived story with many step summaries does not blow the prompt.
 const docsPayloadCeiling = 128 << 10
@@ -411,6 +425,16 @@ const docsPayloadCeiling = 128 << 10
 const (
 	priorVerdictCount        = 5
 	priorVerdictNotesCeiling = 2 << 10
+)
+
+// diffPayloadCeiling bounds the patch body that rides in one reviewer payload,
+// and diffFilesCount bounds the files list — together deliberately independent
+// of docsPayloadCeiling so a large slice cannot starve the plan the reviewer
+// must judge (sty_a125b440). Stat is capped too (small, but bounded).
+const (
+	diffPayloadCeiling = 64 << 10
+	diffFilesCount     = 500
+	diffStatCeiling    = 4 << 10
 )
 
 // SetReviewerModel sets the reviewer's model from the agents layer (the resolved
@@ -503,6 +527,27 @@ type transitionPayload struct {
 	// the amended story and could not tell a correction from a weakening — the
 	// one judgement this gate exists to make. Enumeration, not verdict.
 	Amendment *AmendmentState `json:"amendment,omitempty"`
+	// Diff is the live engagement slice (files, stat, patch) when a baseline
+	// exists (sty_a125b440). Enumeration, not verdict — the binary attaches it
+	// and decides nothing. Absent when the resolver is unwired. A no-baseline
+	// marker (NoBaseline=true, no patch) is used when the resolver ran and
+	// found no baseline, so a skill's fast-accept branch is unambiguous.
+	Diff *DiffState `json:"diff,omitempty"`
+}
+
+// DiffState is the engagement-slice enumeration handed to a reviewer. JSON
+// tags match `satelle story diff` so a skill that already knows that shape
+// reads the payload unchanged.
+type DiffState struct {
+	Baseline   string   `json:"baseline_sha,omitempty"`
+	Dirty      bool     `json:"baseline_dirty,omitempty"`
+	Files      []string `json:"files,omitempty"`
+	Stat       string   `json:"stat,omitempty"`
+	Patch      string   `json:"patch,omitempty"`
+	Truncated  bool     `json:"truncated,omitempty"`
+	NoBaseline bool     `json:"no_baseline,omitempty"`
+	Note       string   `json:"note,omitempty"`
+	Source     string   `json:"source,omitempty"`
 }
 
 // AmendmentState is the proposed amendment handed to the amend gate: the state
@@ -621,6 +666,40 @@ func (g *Engine) fillPriorVerdicts(ctx context.Context, itemID, from, to string,
 		out = append(out, v)
 	}
 	tp.PriorVerdicts = out
+}
+
+// fillDiff attaches the engagement slice under its own ceiling. Runs AFTER
+// fillPayloadDocs and never touches that counter. Called unconditionally on
+// the gate payload — no status-name switch (sty_a125b440 AC2). Gate payload
+// only: executor and retrospective payloads deliberately go without, matching
+// prior_verdicts (an executor modelling its own slice is the failure mode).
+func (g *Engine) fillDiff(ctx context.Context, itemID string, tp *transitionPayload) {
+	if g.itemDiff == nil || itemID == "" {
+		return
+	}
+	d := g.itemDiff(ctx, itemID)
+	if d == nil {
+		return
+	}
+	cp := *d
+	if len(cp.Files) > diffFilesCount {
+		cp.Files = append([]string(nil), cp.Files[:diffFilesCount]...)
+		cp.Truncated = true
+	}
+	if len(cp.Stat) > diffStatCeiling {
+		cp.Stat = excerpt(cp.Stat, diffStatCeiling)
+		cp.Truncated = true
+	}
+	if len(cp.Patch) > diffPayloadCeiling {
+		cp.Patch = excerpt(cp.Patch, diffPayloadCeiling)
+		cp.Truncated = true
+	}
+	if cp.NoBaseline {
+		cp.Files = nil
+		cp.Stat = ""
+		cp.Patch = ""
+	}
+	tp.Diff = &cp
 }
 
 // excerpt cuts s to at most limit bytes on a rune boundary, marking the cut so
@@ -1591,6 +1670,10 @@ func (g *Engine) runReviewerWith(ctx context.Context, item workitem.Item, toStat
 	// a performer optimising for the last rejection instead of the story is the
 	// failure mode that would create.
 	g.fillPriorVerdicts(ctx, item.ID, item.Status, toStatus, &tp)
+	// Engagement diff rides the GATE payload only (sty_a125b440): reviewers
+	// without a shell need the slice; executors have one. fillDiff never
+	// errors — a missing baseline is a marker, not a refused transition.
+	g.fillDiff(ctx, item.ID, &tp)
 	// Route drift rides the payload ONLY when it exists, so a repo that names a
 	// drift gate has the enumeration without shelling for it, and every other
 	// reviewer's payload is byte-for-byte unchanged (sty_6e4f7fd8).

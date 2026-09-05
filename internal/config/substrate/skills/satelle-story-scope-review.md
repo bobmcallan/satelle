@@ -15,10 +15,12 @@ stdin. Read the story (title, body, ACs, non-goals) and the
 
 ## Enumeration (mechanism, not a verdict)
 
-**Attachment-first.** Prefer a story attachment named `scope-diff` (or similar)
-in the payload `docs` array when the executor attached
-`satelle story diff <id> --patch` output before the gate. Also use plan/step
-summaries. When shell is available and no attachment:
+**Payload-first.** Prefer the transition payload's `diff` object (files, stat,
+patch — the same shape as `satelle story diff`) when it is present. Satelle
+injects it whenever an engagement baseline exists; no executor
+attachment and no shell are required. Then a story attachment named `scope-diff`
+(or similar) in the payload `docs` array. Also use plan/step summaries. When
+shell is available and payload `diff` is absent:
 
 ```bash
 satelle story diff <story.id>
@@ -28,14 +30,16 @@ satelle story diff <story.id>
 That command is **report-only** (files + stat; optional --patch). You decide
 accept/reject.
 
-- **No engagement baseline** (error from story diff / never recorded) →
+- **No engagement baseline** (`diff.no_baseline` is true, or error from story
+  diff / never recorded) →
  ```json
  {"decision": "accept", "notes": "scope: no-baseline"}
  ```
  Do **not** reject solely for a missing baseline.
-- When a baseline **exists** but the executor provided **no** enumeration (no
- attachment and no usable diff), reject: name that scope evidence is missing —
- the driver should run `story diff` and re-request.
+- When a baseline **exists** but the payload carries **no** `diff` (and no
+  attachment, and no usable shell enumeration), reject: name that scope
+  evidence is missing — the driver should retry the edge so the payload can
+  carry the slice.
 
 ## How to judge (when a baseline exists)
 

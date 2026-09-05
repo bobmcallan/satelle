@@ -2968,6 +2968,148 @@ func TestRouteDocExcludedFromGatePayload(t *testing.T) {
 	}
 }
 
+// TestGatePayloadIncludesDiffWhenBaselineExists (sty_a125b440 AC1): the
+// engagement slice rides the gate payload when the resolver returns one.
+func TestGatePayloadIncludesDiffWhenBaselineExists(t *testing.T) {
+	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
+	g.SetDiffResolver(func(_ context.Context, itemID string) *DiffState {
+		if itemID != "sty_diff" {
+			t.Errorf("diff resolver itemID = %q", itemID)
+		}
+		return &DiffState{
+			Baseline: "abc123",
+			Dirty:    true,
+			Files:    []string{"foo.go", "foo_test.go"},
+			Stat:     " 2 files changed, 10 insertions(+)",
+			Patch:    "diff --git a/foo.go b/foo.go\n+hello",
+			Note:     "enumeration only — no pass/fail; gates decide scope",
+			Source:   "live",
+		}
+	})
+	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_diff", Status: "in_progress"}, "done"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"diff"`, `"baseline_sha":"abc123"`, `"baseline_dirty":true`,
+		`"foo.go"`, `"foo_test.go"`, "2 files changed",
+		"diff --git a/foo.go", `"source":"live"`,
+	} {
+		if !strings.Contains(r.got.Payload, want) {
+			t.Errorf("payload missing %q:\n%s", want, r.got.Payload)
+		}
+	}
+	if strings.Contains(r.got.Payload, `"no_baseline"`) {
+		t.Error("present baseline must not set no_baseline")
+	}
+}
+
+// TestGatePayloadDiffMarksNoBaseline (sty_a125b440 AC1): a resolver that found
+// no baseline injects a marker, never omits in a way that looks like an
+// unwired resolver, and never fails the gate.
+func TestGatePayloadDiffMarksNoBaseline(t *testing.T) {
+	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
+	g.SetDiffResolver(func(_ context.Context, _ string) *DiffState {
+		return &DiffState{NoBaseline: true, Note: "no engagement baseline recorded"}
+	})
+	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_nobase", Status: "in_progress"}, "done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec.Accept {
+		t.Fatalf("missing baseline must not refuse the gate: %+v", dec)
+	}
+	if !strings.Contains(r.got.Payload, `"no_baseline":true`) {
+		t.Errorf("payload missing no_baseline marker:\n%s", r.got.Payload)
+	}
+	if strings.Contains(r.got.Payload, `"patch":`) {
+		t.Error("no-baseline marker must not carry a patch")
+	}
+}
+
+// TestGatePayloadDiffAdversarialPatchStillAccepts (sty_a125b440 AC1): a huge
+// or hostile patch is truncated; the stub reviewer still accepts — the binary
+// did not reject on diff contents.
+func TestGatePayloadDiffAdversarialPatchStillAccepts(t *testing.T) {
+	huge := strings.Repeat("A", diffPayloadCeiling+4096)
+	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
+	g.SetDiffResolver(func(_ context.Context, _ string) *DiffState {
+		return &DiffState{Baseline: "deadbeef", Files: []string{"x.go"}, Patch: huge}
+	})
+	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_adv", Status: "in_progress"}, "done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec.Accept {
+		t.Fatalf("adversarial patch must not refuse the gate: %+v", dec)
+	}
+	if !strings.Contains(r.got.Payload, `"truncated":true`) {
+		t.Error("over-ceiling patch must be marked truncated")
+	}
+	if strings.Count(r.got.Payload, "A") > diffPayloadCeiling+16 {
+		t.Error("truncated patch still exceeds the ceiling")
+	}
+}
+
+// TestDiffDoesNotConsumeDocsCeiling (sty_a125b440 AC2): a patch larger than
+// docsPayloadCeiling must not starve the plan.
+func TestDiffDoesNotConsumeDocsCeiling(t *testing.T) {
+	planBody := "DIFFPLANMARKER plan body the reviewer must still receive in full"
+	huge := strings.Repeat("P", docsPayloadCeiling+1024)
+	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
+	g.SetDocsResolver(func(_ context.Context, _ string) []DocState {
+		return []DocState{{Name: "plan", Type: "plan", Body: planBody}}
+	})
+	g.SetDiffResolver(func(_ context.Context, _ string) *DiffState {
+		return &DiffState{Baseline: "abc", Files: []string{"z.go"}, Patch: huge}
+	})
+	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_diffdocs", Status: "in_progress"}, "done"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.got.Payload, planBody) {
+		t.Errorf("plan body must ride in full alongside a huge patch:\n%s", r.got.Payload)
+	}
+	if strings.Contains(r.got.Payload, `"name":"plan"`) && strings.Contains(r.got.Payload, `"truncated":true`) &&
+		!strings.Contains(r.got.Payload, planBody) {
+		t.Error("plan must not be truncated by the diff budget")
+	}
+	if !strings.Contains(r.got.Payload, `"truncated":true`) {
+		t.Error("the over-cap patch must still be marked truncated")
+	}
+}
+
+// inventedEdgeWorkflow uses status names that are not this repo's spine, so
+// injection cannot be accidentally keyed on integration/release/done.
+var inventedEdgeWorkflow = spineWF("", "cancelled", "",
+	"draft|executor||satelle-story-intent-review",
+	"shipped|||satelle-story-done-review")
+
+// TestDiffInjectedOnArbitraryEdge (sty_a125b440 AC2): fillDiff runs on the
+// gate payload with no status-name switch.
+func TestDiffInjectedOnArbitraryEdge(t *testing.T) {
+	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: inventedEdgeWorkflow, skillBody: "rubric", skillFound: true})
+	g.SetDiffResolver(func(_ context.Context, _ string) *DiffState {
+		return &DiffState{Baseline: "abc", Files: []string{"a.go"}, Patch: "+x"}
+	})
+	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_invented", Status: "draft"}, "shipped"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.got.Payload, `"diff"`) || !strings.Contains(r.got.Payload, `"a.go"`) {
+		t.Errorf("diff must ride an invented-status edge:\n%s", r.got.Payload)
+	}
+}
+
+// TestGatePayloadDiffUnwiredOmitsKey (sty_a125b440): an unwired resolver
+// leaves the payload byte-identical on the diff key.
+func TestGatePayloadDiffUnwiredOmitsKey(t *testing.T) {
+	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
+	if _, err := g.Gate(context.Background(), workitem.Item{ID: "sty_nodiff", Status: "in_progress"}, "done"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(r.got.Payload, `"diff"`) {
+		t.Errorf("unwired resolver must inject no diff:\n%s", r.got.Payload)
+	}
+}
+
 func TestSetReviewerModel(t *testing.T) {
 	g := New(nil, nil, "", "")
 	if g.model != "" {

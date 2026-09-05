@@ -1,3 +1,8 @@
+## [0.0.486] - 2026-09-05
+
+### Added
+- **Reviewer payloads carry the engagement slice.** Isolated reviewers (no shell) were told to read `satelle story diff`, but the transition payload injected docs, prior verdicts and route drift — not the slice — so quality review depended on the executor attaching it. The payload now includes a report-only `diff` object (`files`, `stat`, `patch`) whenever an engagement baseline exists, the same shape as `satelle story diff`. Missing baseline is a `no_baseline` marker, never a refused transition. The field is not keyed on this repo's status names. The patch has its own ceiling so it cannot starve the plan. Embedded `satelle-story-scope-review` prefers `payload.diff`. Enumeration, not verdict. (sty_a125b440)
+
 ## [0.0.485] - 2026-08-31
 
 ### Fixed

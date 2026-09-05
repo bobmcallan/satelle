@@ -1,6 +1,7 @@
 package verb_test
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -173,6 +174,75 @@ requires = ["coded"]
 	json.Unmarshal(raw2, &res2)
 	if res2.Patch == "" {
 		t.Error("want patch body with patch:true")
+	}
+
+	// sty_a125b440: the exported StoryDiff API is the same live derivation the
+	// JSON verb uses (payload injection shares it).
+	_, err := verb.StoryDiff(context.Background(), it.ID, true)
+	if err != nil {
+		t.Fatalf("StoryDiff after engage: %v", err)
+	}
+}
+
+// TestStoryDiffNoBaselineError (sty_a125b440): the exported API errors when no
+// baseline exists — the reviewer resolver maps that to a no-baseline marker.
+func TestStoryDiffNoBaselineError(t *testing.T) {
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+	run("git", "init")
+	run("git", "config", "user.email", "t@t")
+	run("git", "config", "user.name", "t")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("git", "add", "a.txt")
+	run("git", "commit", "-m", "init")
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	wireWithWorkflows(t, routeHalves(
+		`["*"]
+obligations = ["raised", "coded", "closed"]
+park = { state = "blocked" }
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "executor"
+requires = ["raised"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+`))
+	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{Gated: false}})
+	t.Cleanup(func() { verb.SetTransitionGater(nil) })
+	var it workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{
+		"title": "no baseline yet", "body": "goal for story-diff no-baseline",
+		"acceptance_criteria": "1. errors without baseline",
+		"category":            "feature",
+		"tags":                []string{"workflow:eng"},
+	}), &it)
+	_, err := verb.StoryDiff(context.Background(), it.ID, true)
+	if err == nil {
+		t.Fatal("want error with no baseline")
+	}
+	if !strings.Contains(err.Error(), "no engagement baseline") {
+		t.Errorf("error should mention no baseline: %v", err)
 	}
 }
 
