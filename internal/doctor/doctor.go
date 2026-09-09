@@ -122,6 +122,16 @@ func Check(ctx context.Context, o Opts) Report {
 			WithRemediation("fix "+config.GlobalAgentsLabel+"; it is machine-wide EXECUTION configuration only").
 			About(config.GlobalAgentsLabel))
 	}
+	// The synced workspace bindings layer (sty_01949949) is judged with the
+	// repo's file so doctor and `satelle agent validate` describe the same
+	// effective bindings. Absent is the zero layer; unreadable is a finding.
+	workspaceAgents, wsErr := config.LoadWorkspaceAgents(dataDir)
+	if wsErr != nil {
+		rep.Findings = append(rep.Findings, health.Error(health.IDAgentsLoad, "Unreadable workspace bindings layer",
+			fmt.Sprintf("%s/%s: %v", config.DefaultDataDir, config.WorkspaceAgentsRel, wsErr)).
+			WithRemediation("re-run `satelle sync bindings pull`, or delete the file to drop the layer").
+			About(config.DefaultDataDir+"/"+config.WorkspaceAgentsRel))
+	}
 
 	// Two workflow sets, deliberately: ALLOCATION checks judge everything that
 	// governs (authored files plus the embedded defaults none of them shadows),
@@ -137,7 +147,7 @@ func Check(ctx context.Context, o Opts) Report {
 	// Skill BODIES ride along: a check that judges a deployed repo can see whether
 	// a reviewer's rubric shells `satelle`, and so whether a shell grant is live
 	// rather than idle (sty_338a53f8).
-	av := agentvalidate.ValidateEffectiveWithSkills(repoAgents, global, vars, governing, SkillBodyResolver(dataDir))
+	av := agentvalidate.ValidateEffectiveLayered(repoAgents, workspaceAgents, global, vars, governing, SkillBodyResolver(dataDir))
 	rep.Findings = append(rep.Findings, av.Findings...)
 	rep.Grants = av.Grants
 	rep.Gates = av.Gates

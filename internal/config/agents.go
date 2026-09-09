@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BurntSushi/toml"
 	"github.com/bobmcallan/satelle/internal/agentcli"
 )
 
@@ -29,6 +28,23 @@ const (
 // spelling every message, server key and sync entry uses so the canonical
 // location has ONE spelling.
 const AgentsRel = AgentsConfigDir + "/" + AgentsConfigName
+
+// WorkspaceAgentsName is the SYNCED workspace bindings layer (sty_01949949):
+// what `satelle sync bindings pull` materialises from the bound team
+// workspace's publish catalog. It is a separate file beside the authored
+// agents.toml — sync never rewrites authored bytes — and it is a LAYER UNDER
+// the repo's own file (see resolveagents.go: a repo table wins field by field;
+// a workspace-only table applies). Like agents.toml it is machine configuration
+// the directory monitor must not index as a workflow doc.
+const WorkspaceAgentsName = "agents.workspace.toml"
+
+// WorkspaceAgentsRel is the data-dir-relative slash path of the workspace layer.
+const WorkspaceAgentsRel = AgentsConfigDir + "/" + WorkspaceAgentsName
+
+// WorkspaceAgentsPath is where the synced workspace bindings layer lives.
+func WorkspaceAgentsPath(dataDir string) string {
+	return filepath.Join(dataDir, AgentsConfigDir, WorkspaceAgentsName)
+}
 
 // AgentsPath resolves the repo agents layer, preferring the canonical location
 // and falling back to the legacy one beside satelle.toml.
@@ -490,42 +506,16 @@ func LoadAgents(dataDir string) (AgentsConfig, error) {
 		}
 		return AgentsConfig{}, err
 	}
-	// Decode into a generic table so EVERY top-level section can be classified:
-	// `executor`/`reviewer` are the built-in roles; any OTHER top-level table is a
-	// named agent in the FLAT form [<name>] (sty_6e0ba71c). The legacy nested
-	// container [agents.<name>] is still read for back-compat.
-	var raw map[string]toml.Primitive
-	md, err := toml.Decode(string(b), &raw)
+	return loadAgentsBody(string(b))
+}
+
+// loadAgentsBody classifies an agents-layer body through the ONE decoder
+// (decodeAgents, live form: nested [agents.<name>] ignored — MigrateAgents
+// flattens it on init) and applies the fail-fast load checks.
+func loadAgentsBody(body string) (AgentsConfig, error) {
+	ac, err := decodeAgents(body, false)
 	if err != nil {
 		return AgentsConfig{}, err
-	}
-	ac := AgentsConfig{Agents: map[string]AgentBinding{}}
-	for key, prim := range raw {
-		switch key {
-		case "defaults":
-			if err := md.PrimitiveDecode(prim, &ac.Defaults); err != nil {
-				return AgentsConfig{}, err
-			}
-		case "executor":
-			if err := md.PrimitiveDecode(prim, &ac.Executor); err != nil {
-				return AgentsConfig{}, err
-			}
-		case "reviewer":
-			if err := md.PrimitiveDecode(prim, &ac.Reviewer); err != nil {
-				return AgentsConfig{}, err
-			}
-		case "agents":
-			// Nested [agents.<name>] is no longer a live dual-read. Ignore the
-			// table so an un-migrated file does not silently load nested agents;
-			// MigrateAgents flattens it on init.
-			continue
-		default: // flat [<name>] — a named isolated agent
-			var bnd AgentBinding
-			if err := md.PrimitiveDecode(prim, &bnd); err != nil {
-				return AgentsConfig{}, err
-			}
-			ac.Agents[key] = bnd
-		}
 	}
 	if err := ac.validateTimeouts(); err != nil {
 		return AgentsConfig{}, err
@@ -534,6 +524,47 @@ func LoadAgents(dataDir string) (AgentsConfig, error) {
 		return AgentsConfig{}, err
 	}
 	return ac, nil
+}
+
+// LoadWorkspaceAgents reads the synced workspace bindings layer
+// (WorkspaceAgentsPath). An absent file is the zero config and a nil error, so
+// a repo that never pulled one resolves byte-identically to today; a present
+// but malformed file is an error, so a broken layer fails loud rather than
+// silently dropping out of the ladder (sty_01949949).
+func LoadWorkspaceAgents(dataDir string) (AgentsConfig, error) {
+	b, err := os.ReadFile(WorkspaceAgentsPath(dataDir))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return AgentsConfig{}, nil
+		}
+		return AgentsConfig{}, err
+	}
+	ac, err := loadAgentsBody(string(b))
+	if err != nil {
+		return AgentsConfig{}, fmt.Errorf("%s: %w", WorkspaceAgentsRel, err)
+	}
+	return ac, nil
+}
+
+// ExecutableToken returns the program a command template would spawn — its
+// first whitespace-separated token — or "" for the in-loop / empty command
+// (nothing is spawned). It is what local resolution looks up on PATH
+// (sty_01949949 AC3): a workspace-published binding names `claude`, and THIS
+// machine decides whether `claude` exists.
+func ExecutableToken(command string) string {
+	if IsInLoopCommand(command) {
+		return ""
+	}
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
+}
+
+// ExecutableToken is ExecutableToken over the binding's effective command template.
+func (b AgentBinding) ExecutableToken() string {
+	return ExecutableToken(b.CommandTemplate())
 }
 
 // validateTimeouts fails fast on a malformed or non-positive [<section>] timeout

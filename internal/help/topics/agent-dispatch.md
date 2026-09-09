@@ -328,6 +328,60 @@ channels** below): a mutator tool ask is denied by satelle without prompting
 the human when the story is not in an executor-owned performing state (or a
 transition is in flight). Otherwise the human is asked allow/deny.
 
+### Workspace bindings layer — `satelle sync bindings` (sty_01949949)
+
+The agents layer can be decided centrally and executed locally. Two verbs and
+one file:
+
+- `satelle sync bindings push [--dry-run]` publishes this repo's
+  `.satelle/workflows/agents.toml` into the bound TEAM workspace's publish
+  catalog (kind `agents`), **redacted**.
+- `satelle sync bindings pull` applies that catalog entry as
+  `.satelle/workflows/agents.workspace.toml` — a separate file, so sync never
+  rewrites authored bytes. The bare `satelle sync` aggregate pulls it too when
+  the `agents` area is opted in.
+- The workspace file is a **layer under** the repo's `agents.toml` in the
+  precedence ladder: `repo → workspace → profile / global-role → embedded`. A
+  repo field wins; a workspace field fills a repo blank; a workspace-only table
+  applies whole. Role is identity on this tier as on a profile — a disagreement
+  is refused. `satelle agent validate` prints the layer's presence and names
+  the source of every effective field (`source: tools = "…" (workspace)`).
+
+**Redaction is a property of the agents kind, not of a verb.** Every transport
+of an agents layer — `sync bindings push`, `publish push` of
+`workflows/agents.toml` (whatever `--kind` was typed), the `agents` area of
+`sync config push`, and `sync bindings pull` on **ingest** — goes through the
+same function: literal `env` values are blanked (keys survive: "this binding
+needs `ANTHROPIC_AUTH_TOKEN`"; a pure `${VAR}` reference survives too — a
+variable name is not a secret, and it is what lets the receiving machine's
+`[vars]` fail-fast fire), secret-shaped `settings` values and everything under
+`settings.env` are blanked the same way, absolute path strings anywhere in
+`command` or `settings` are reduced to their base name, `profile=` is dropped.
+A body that does not parse is an error, never shipped raw. Ingest redacts again
+so a catalog entry an older path left unredacted cannot land absolute paths or
+env values as live bindings.
+
+**A blank left by redaction is "declared, unsatisfied", never a value.** The
+workspace tier drops blank env keys and blank secret settings before it is
+merged, so a pulled layer can never lay `KEY=` over the machine's real
+environment or a blank secret over `settings.local.json`. And when a redacted
+store copy is written back over the authored `agents.toml` — `sync config
+deploy`, `publish adopt`, `publish check --update` — the file is either left
+byte-for-byte alone (the store matches it after redaction) or the store's
+layout is deployed with this machine's env values, command paths and
+`profile=` re-applied from the local file.
+
+**Executables and `${VAR}` resolve on the machine that runs the binding.** The
+workspace says `claude -p …`; this machine's PATH decides whether `claude`
+exists. A binding whose program is missing is a hard refusal at dispatch — the
+same posture as a missing binding, never a silent in-loop fallback — and a
+`WARN` in `satelle agent validate`. `${VAR}` references expand from the local
+`[vars]` at wiring time, as they always have.
+
+A repo with no hosted server or no team workspace does nothing on either verb
+and contacts nothing; a repo that never pulled a layer resolves byte-identically
+to before.
+
 ### Codex — preferred ACP, secondary command (sty_3b4909bb)
 
 Codex is a first-class agent on the **same command and acp transports** as

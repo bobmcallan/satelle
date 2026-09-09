@@ -234,9 +234,40 @@ func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Engine
 		runner: runner, docs: docs, repoRoot: repoRoot, model: model, tools: defaultTools,
 		checkTimeout: defaultCheckTimeout, check: execCheck, injectPrinciples: true,
 		attempts: defaultReviewerAttempts, backoff: defaultReviewerBackoff,
-		agentTimeout: defaultAgentTimeout, newRunner: agentcli.RunnerFromBinding,
+		agentTimeout: defaultAgentTimeout, newRunner: lookupRunner,
 		newOpener: agentcli.OpenerFromBinding,
 	}
+}
+
+// ExecutableNotFoundError is returned by the default runner constructor when a
+// binding's program is not on this machine's PATH (sty_01949949 AC3). Local
+// resolution is the rule for every binding — a workspace-published one names
+// `claude`, and THIS machine decides whether `claude` exists — and a miss is a
+// hard refusal, never a silent in-loop downgrade (the failure mode the AC
+// names). DispatchExecutor formats it with the workflow/state/agent context.
+type ExecutableNotFoundError struct {
+	Command string // the command template
+	Token   string // the program token that failed to resolve
+	Err     error  // the exec.LookPath error
+}
+
+func (e *ExecutableNotFoundError) Error() string {
+	return fmt.Sprintf("command %q is not executable on this machine (%v)", e.Token, e.Err)
+}
+
+func (e *ExecutableNotFoundError) Unwrap() error { return e.Err }
+
+// lookupRunner is the DEFAULT runner constructor: agentcli.RunnerFromBinding
+// preceded by local executable resolution. It is the default rather than an
+// unconditional step inside DispatchExecutor so tests that inject fake commands
+// through the newRunner seam keep their transport-level fakes.
+func lookupRunner(iface, command string) (agentcli.Runner, error) {
+	if tok := config.ExecutableToken(command); tok != "" {
+		if _, err := exec.LookPath(tok); err != nil {
+			return nil, &ExecutableNotFoundError{Command: command, Token: tok, Err: err}
+		}
+	}
+	return agentcli.RunnerFromBinding(iface, command)
 }
 
 // defaultAgentTimeout bounds one nested agent invocation. A real review takes
@@ -1289,6 +1320,15 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	// performing. The prior FROM-performing band-aid (sty_f5bd176f) is removed.
 	runner, err := g.newRunner(binding.ResolvedInterface(), binding.CommandTemplate())
 	if err != nil {
+		var enf *ExecutableNotFoundError
+		if errors.As(err, &enf) {
+			// Local resolution refused (sty_01949949 AC3): same voice as the
+			// missing-binding refusal above, and the same posture — the caller
+			// rejects the transition; nothing is performed in-loop instead.
+			return verb.DispatchResult{}, fmt.Errorf(
+				"workflow %q allocates state %q to agent %q but its command %q is not executable on this machine (%v) — install it or rebind the agent",
+				wfName, toStatus, dispatchAgent, enf.Token, enf.Err)
+		}
 		return verb.DispatchResult{}, fmt.Errorf("named agent %q: broken command in .satelle/workflows/agents.toml: %w", dispatchAgent, err)
 	}
 	if runner == nil {

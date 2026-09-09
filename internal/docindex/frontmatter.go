@@ -26,7 +26,12 @@ func Indexable(path string) bool {
 	// Named here rather than at each walk for the same reason the extension test
 	// is: three walks with three private opinions is how a format ends up
 	// half-supported.
-	if strings.EqualFold(filepath.Base(path), "agents.toml") {
+	//
+	// The SYNCED workspace bindings layer (agents.workspace.toml, sty_01949949)
+	// sits in the same directory and is the same kind of thing: configuration,
+	// not a document. Same exclusion, same reason.
+	switch strings.ToLower(filepath.Base(path)) {
+	case "agents.toml", "agents.workspace.toml":
 		return false
 	}
 	switch strings.ToLower(filepath.Ext(path)) {

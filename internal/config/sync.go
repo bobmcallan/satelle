@@ -344,7 +344,9 @@ func filesForArea(cfg Config, repoRoot, area string) ([]ConfigFile, Scope, error
 		// The agents layer sits IN the workflows dir but is its own sync area with
 		// its own tier and redaction semantics (sty_10f732ed). Without this skip the
 		// directory walk would push it a second time under a workflows/ key.
-		if area == "workflows" && filepath.Base(p) == AgentsConfigName {
+		if area == "workflows" && (filepath.Base(p) == AgentsConfigName || filepath.Base(p) == WorkspaceAgentsName) {
+			// agents.workspace.toml is the SYNCED workspace layer (sty_01949949):
+			// it came from the team catalog and is never pushed back as config.
 			return nil
 		}
 		rel, rerr := filepath.Rel(location, p)
@@ -379,7 +381,10 @@ func readConfigFile(area, absPath, serverPath string, scope Scope) (ConfigFile, 
 		}
 		return ConfigFile{}, false, fmt.Errorf("read %s: %w", absPath, err)
 	}
-	body = redactForTransmit(area, body)
+	body, err = redactForTransmit(area, body)
+	if err != nil {
+		return ConfigFile{}, false, fmt.Errorf("%s: %w", absPath, err)
+	}
 	tier := PersonalTier
 	if scope == SharedScope {
 		tier = SharedTier
@@ -389,17 +394,25 @@ func readConfigFile(area, absPath, serverPath string, scope Scope) (ConfigFile, 
 	return ConfigFile{Area: area, Path: serverPath, Tier: tier, Content: body}, true, nil
 }
 
-// redactForTransmit strips repo-identifying keys from a file about to leave the
-// machine. For the settings area (satelle.toml) it removes [hosted] project so
-// a push cannot rebind another repo; deploy re-applies the local binding after
-// restore (the load-bearing guard against older unredacted hosted copies).
-// All other areas pass through byte-identical.
-func redactForTransmit(area string, body []byte) []byte {
-	if area != "settings" {
-		return body
+// redactForTransmit strips machine-local and repo-identifying content from a
+// file about to leave the machine. For the settings area (satelle.toml) it
+// removes [hosted] project so a push cannot rebind another repo; deploy
+// re-applies the local binding after restore (the load-bearing guard against
+// older unredacted hosted copies). For the agents area it applies
+// RedactAgentsTransport — env values, absolute command paths, profile names —
+// the same redaction every agents-kind transport shares (sty_01949949). An
+// agents body that does not decode is an error, never shipped raw. All other
+// areas pass through byte-identical.
+func redactForTransmit(area string, body []byte) ([]byte, error) {
+	switch area {
+	case "settings":
+		s := RemoveKey(string(body), "sync", "project")
+		return []byte(RemoveKey(s, "hosted", "project")), nil
+	case "agents":
+		return RedactAgentsTransport(body)
+	default:
+		return body, nil
 	}
-	s := RemoveKey(string(body), "sync", "project")
-	return []byte(RemoveKey(s, "hosted", "project"))
 }
 
 // sortConfigFiles orders files by server Path for a deterministic push.

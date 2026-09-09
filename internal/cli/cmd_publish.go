@@ -216,6 +216,17 @@ func runPublishPush(cmd *cobra.Command, serverArg, workspaceArg, kind, title str
 		if k == "" {
 			k = inferPublishKind(rel)
 		}
+		if k == "agents" || inferPublishKind(rel) == "agents" {
+			// Redaction is a property of agents-kind transport, not of one verb
+			// (sty_01949949): env values, absolute command paths and profile names
+			// never leave the machine whichever command carried the file — and
+			// whichever --kind the caller typed for the agents path.
+			redacted, rerr := config.RedactAgentsTransport(content)
+			if rerr != nil {
+				return fmt.Errorf("publish %s: %w", rel, rerr)
+			}
+			content = redacted
+		}
 		item, perr := client.PublishFile(cmd.Context(), wsID, rel, k, title, content)
 		if perr != nil {
 			if errors.Is(perr, hosted.ErrLoginRequired) {
@@ -301,6 +312,20 @@ func runPublishAdopt(cmd *cobra.Command, serverArg, workspaceArg string, version
 		}
 		return fmt.Errorf("fetch published %s: %w", path, err)
 	}
+	if path == config.AgentsRel {
+		// A published agents layer is REDACTED (sty_01949949): never write it
+		// straight over the authored file.
+		merged, skip, herr := rehydrateAgentsForWrite(cmd.OutOrStdout(), dataDir, "adopt", content)
+		if herr != nil {
+			return herr
+		}
+		if skip {
+			return saveAdoption(dataDir, adoptionRecord{
+				Workspace: teamName, Path: path, Version: meta.Version, Kind: meta.Kind, PublisherID: meta.PublisherID,
+			})
+		}
+		content = merged
+	}
 	if res, err := subsync.Restore(dataDir, []subsync.File{{Path: path, Content: content}}); err != nil {
 		return fmt.Errorf("write local copy: %w", err)
 	} else if ferr := res.Err(); ferr != nil {
@@ -365,6 +390,24 @@ func runPublishCheck(cmd *cobra.Command, serverArg, workspaceArg string, doUpdat
 		fmt.Fprintf(out, "%s: new version published (local v%d → remote v%d)\n", rec.Path, rec.Version, meta.Version)
 		if !doUpdate {
 			continue
+		}
+		if rec.Path == config.AgentsRel {
+			// Same ingest rule as adopt/deploy: a redacted agents layer is
+			// rehydrated from the authored file, never written raw over it.
+			merged, skip, herr := rehydrateAgentsForWrite(out, dataDir, "update", content)
+			if herr != nil {
+				return herr
+			}
+			if skip {
+				rec.Version = meta.Version
+				rec.PublisherID = meta.PublisherID
+				if err := saveAdoption(dataDir, rec); err != nil {
+					return err
+				}
+				updates++
+				continue
+			}
+			content = merged
 		}
 		if res, err := subsync.Restore(dataDir, []subsync.File{{Path: rec.Path, Content: content}}); err != nil {
 			return fmt.Errorf("update %s: %w", rec.Path, err)

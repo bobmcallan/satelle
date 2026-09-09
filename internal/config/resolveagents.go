@@ -34,6 +34,10 @@ import (
 const (
 	SourceRepo     = "repo"
 	SourceEmbedded = "embedded"
+	// SourceWorkspace labels a field supplied by the synced workspace bindings
+	// layer (agents.workspace.toml, sty_01949949) — the tier directly under the
+	// repo's own file, above any catalog profile.
+	SourceWorkspace = "workspace"
 )
 
 // SourceProfile labels a field won by an explicitly referenced catalog profile.
@@ -94,18 +98,29 @@ func LoadEffectiveAgents(dataDir string, repoVars map[string]string) (EffectiveA
 	if err != nil {
 		return EffectiveAgents{}, err
 	}
+	workspace, err := LoadWorkspaceAgents(dataDir)
+	if err != nil {
+		return EffectiveAgents{}, err
+	}
 	global, err := LoadGlobalAgents()
 	if err != nil {
 		return EffectiveAgents{}, err
 	}
-	return ResolveEffectiveAgents(repo, global, repoVars)
+	return ResolveEffectiveAgentsLayered(repo, workspace, global, repoVars)
 }
 
-// ResolveEffectiveAgents folds an already-loaded repo layer and catalog. Split
-// from LoadEffectiveAgents so tests and multi-repo fixtures can resolve without
-// disk, and so the precedence logic has no I/O in it.
+// ResolveEffectiveAgents folds an already-loaded repo layer and catalog with no
+// workspace layer. Split from LoadEffectiveAgents so tests and multi-repo
+// fixtures can resolve without disk, and so the precedence logic has no I/O in it.
 func ResolveEffectiveAgents(repo AgentsConfig, global GlobalAgentsConfig, repoVars map[string]string) (EffectiveAgents, error) {
-	agents, prov, err := ResolveAgents(repo, global)
+	return ResolveEffectiveAgentsLayered(repo, AgentsConfig{}, global, repoVars)
+}
+
+// ResolveEffectiveAgentsLayered is ResolveEffectiveAgents with the synced
+// workspace bindings layer in the ladder (sty_01949949). A zero workspace
+// resolves byte-identically to ResolveEffectiveAgents.
+func ResolveEffectiveAgentsLayered(repo, workspace AgentsConfig, global GlobalAgentsConfig, repoVars map[string]string) (EffectiveAgents, error) {
+	agents, prov, err := ResolveAgentsLayered(repo, workspace, global)
 	if err != nil {
 		return EffectiveAgents{}, err
 	}
@@ -135,12 +150,24 @@ func LayerVars(global, repo map[string]string) map[string]string {
 // reference cycle, or a repo/profile role conflict is an error — resolution
 // never half-applies a broken reference.
 func ResolveAgents(repo AgentsConfig, global GlobalAgentsConfig) (AgentsConfig, Provenance, error) {
+	return ResolveAgentsLayered(repo, AgentsConfig{}, global)
+}
+
+// ResolveAgentsLayered is the ladder with the synced workspace bindings layer
+// in it (sty_01949949), highest first: repo → workspace → profile /
+// global-role → embedded. The workspace tier sits directly under the repo's
+// file: a repo table wins field by field (overlayBinding skips blanks), a
+// workspace-only field fills a blank, and a workspace-only SECTION applies
+// whole — so the iteration is the sorted UNION of both layers' named bindings,
+// not the repo's alone. Defaults stay the repo's: the workspace does not opt a
+// repo into global roles or a secondary it did not write.
+func ResolveAgentsLayered(repo, workspace AgentsConfig, global GlobalAgentsConfig) (AgentsConfig, Provenance, error) {
 	out := AgentsConfig{Defaults: repo.Defaults, Agents: map[string]AgentBinding{}}
 	prov := Provenance{}
 	useRoles := repo.Defaults.UseGlobalRoles
 
-	resolve := func(section string, b AgentBinding) (AgentBinding, error) {
-		merged, src, err := resolveBindingProfile(section, b, global, useRoles)
+	resolve := func(section string, repoB, wsB AgentBinding) (AgentBinding, error) {
+		merged, src, err := resolveBindingProfile(section, repoB, wsB, global, useRoles)
 		if err != nil {
 			return AgentBinding{}, err
 		}
@@ -150,14 +177,25 @@ func ResolveAgents(repo AgentsConfig, global GlobalAgentsConfig) (AgentsConfig, 
 	}
 
 	var err error
-	if out.Executor, err = resolve("executor", repo.Executor); err != nil {
+	if out.Executor, err = resolve("executor", repo.Executor, workspace.Executor); err != nil {
 		return AgentsConfig{}, nil, err
 	}
-	if out.Reviewer, err = resolve("reviewer", repo.Reviewer); err != nil {
+	if out.Reviewer, err = resolve("reviewer", repo.Reviewer, workspace.Reviewer); err != nil {
 		return AgentsConfig{}, nil, err
 	}
-	for _, name := range sortedKeys(repo.Agents) {
-		b, rerr := resolve(name, repo.Agents[name])
+	seen := map[string]bool{}
+	var names []string
+	for _, layer := range []map[string]AgentBinding{repo.Agents, workspace.Agents} {
+		for n := range layer {
+			if !seen[n] {
+				seen[n] = true
+				names = append(names, n)
+			}
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		b, rerr := resolve(name, repo.Agents[name], workspace.Agents[name])
 		if rerr != nil {
 			return AgentsConfig{}, nil, rerr
 		}
@@ -166,9 +204,11 @@ func ResolveAgents(repo AgentsConfig, global GlobalAgentsConfig) (AgentsConfig, 
 	return out, prov, nil
 }
 
-// resolveBindingProfile merges one binding against the catalog, returning the
-// effective binding and its per-field sources.
-func resolveBindingProfile(section string, repoB AgentBinding, global GlobalAgentsConfig, useRoles bool) (AgentBinding, map[string]string, error) {
+// resolveBindingProfile merges one binding against the workspace layer and the
+// catalog, returning the effective binding and its per-field sources. Order:
+// the profile chain (reached only by the REPO's explicit reference or opt-in)
+// is the base; the workspace layer overlays it; the repo overlays last.
+func resolveBindingProfile(section string, repoB, wsB AgentBinding, global GlobalAgentsConfig, useRoles bool) (AgentBinding, map[string]string, error) {
 	base := AgentBinding{}
 	baseSrc := map[string]string{}
 
@@ -203,8 +243,26 @@ func resolveBindingProfile(section string, repoB AgentBinding, global GlobalAgen
 			"%s [%s] declares role=%q but %s declares role=%q for the profile it references — role is identity and must agree",
 			AgentsConfigName, section, repoB.Role, GlobalAgentsLabel, base.Role)
 	}
+	// The workspace layer is held to the same identity rule against the repo.
+	wsRole := strings.ToLower(strings.TrimSpace(wsB.Role))
+	if repoRole != "" && wsRole != "" && repoRole != wsRole {
+		return AgentBinding{}, nil, fmt.Errorf(
+			"%s [%s] declares role=%q but the workspace layer (%s) declares role=%q — role is identity and must agree",
+			AgentsConfigName, section, repoB.Role, WorkspaceAgentsRel, wsB.Role)
+	}
 
-	merged, src := overlayBinding(base, baseSrc, repoB, SourceRepo)
+	// Workspace under repo: a synced binding fills what the repo left blank and
+	// never overrides what the repo wrote. profile= is never taken from the
+	// workspace layer (a catalog name means nothing on another machine; ingest
+	// redaction drops it anyway). A blank env/settings value on this tier is
+	// "declared, unsatisfied" — the layer arrived redacted — and is DROPPED
+	// before the merge, so it can never lay `KEY=` over the machine's real
+	// environment or --settings over settings.local.json (AC3). A ${VAR}
+	// reference survives redaction and is resolved locally at wiring time.
+	wsB.Profile = ""
+	wsB = PruneUnsatisfied(wsB)
+	merged, src := overlayBinding(base, baseSrc, wsB, SourceWorkspace)
+	merged, src = overlayBinding(merged, src, repoB, SourceRepo)
 	merged.Profile = repoB.Profile
 	return merged, src, nil
 }

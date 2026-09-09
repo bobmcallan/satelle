@@ -124,11 +124,17 @@ func TestConfigFilesTierResolution(t *testing.T) {
 	writeFile(t, repo, ".satelle/skills/shared-one.md", "---\ntype: skill\nshared: true\n---\nbody\n")
 	writeFile(t, repo, ".satelle/principles/team-rule.md", "---\ntype: principle\n---\nbody\n")
 	writeFile(t, repo, ".satelle/workflows/agents.toml", "[executor]\nharness = \"in-loop\"\n")
+	// The synced workspace layer (sty_01949949) lives beside agents.toml and is
+	// never pushed back as config — not under workflows/, not under agents.
+	writeFile(t, repo, ".satelle/workflows/agents.workspace.toml", "[reviewer]\nrole = \"reviewer\"\n")
 
-	cfg := Config{Sync: map[string]string{"skills": "personal", "principles": "shared", "agents": "personal"}}
+	cfg := Config{Sync: map[string]string{"skills": "personal", "principles": "shared", "agents": "personal", "workflows": "personal"}}
 	b, err := ConfigFiles(cfg, repo)
 	if err != nil {
 		t.Fatalf("ConfigFiles: %v", err)
+	}
+	if _, ok := findConfigFile(b.Files, "workflows/agents.workspace.toml"); ok {
+		t.Error("agents.workspace.toml must never be pushed as config")
 	}
 	// skills/personal-one.md -> PersonalTier (personal area, no shared flag).
 	if f, ok := findConfigFile(b.Files, "skills/personal-one.md"); !ok {
@@ -484,7 +490,11 @@ func TestLocalOnlyPathSettingsOverlay(t *testing.T) {
 // TestRedactForTransmitStripsHostedProject: only settings area is redacted.
 func TestRedactForTransmitStripsHostedProject(t *testing.T) {
 	body := []byte("[sync]\nall = \"personal\"\nproject = \"from-sync\"\n[hosted]\nproject = \"alpha\"\nserver = \"https://x\"\n")
-	got := string(redactForTransmit("settings", body))
+	gotB, err := redactForTransmit("settings", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(gotB)
 	if strings.Contains(got, `project = "alpha"`) || strings.Contains(got, `project = "from-sync"`) {
 		t.Errorf("project not stripped: %s", got)
 	}
@@ -492,8 +502,33 @@ func TestRedactForTransmitStripsHostedProject(t *testing.T) {
 		t.Errorf("sync lost: %s", got)
 	}
 	// other areas unchanged
-	other := redactForTransmit("skills", body)
+	other, err := redactForTransmit("skills", body)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(other) != string(body) {
 		t.Error("non-settings area was redacted")
+	}
+}
+
+// TestRedactForTransmitAgentsArea (sty_01949949 R1): the agents area goes
+// through RedactAgentsTransport on the sync config push path — the same
+// redaction every agents-kind transport shares — and an unparseable agents
+// body is an error, never shipped raw.
+func TestRedactForTransmitAgentsArea(t *testing.T) {
+	body := []byte("[reviewer]\nrole = \"reviewer\"\ncommand = \"/opt/local/bin/claude -p --append-system-prompt {system}\"\nenv = { ANTHROPIC_AUTH_TOKEN = \"sk-literal-secret\", ANTHROPIC_BASE_URL = \"${BASE_URL}\" }\n")
+	got, err := redactForTransmit("agents", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	if strings.Contains(s, "sk-literal-secret") || strings.Contains(s, "/opt/local/bin") {
+		t.Fatalf("agents area not redacted on the sync path:\n%s", s)
+	}
+	if !strings.Contains(s, "ANTHROPIC_AUTH_TOKEN") || !strings.Contains(s, "${BASE_URL}") || !strings.Contains(s, "claude -p") {
+		t.Fatalf("redaction must keep env keys, ${VAR} references and the base command:\n%s", s)
+	}
+	if _, err := redactForTransmit("agents", []byte("[reviewer\nnot toml")); err == nil {
+		t.Fatal("unparseable agents body must be an error, not passed through raw")
 	}
 }

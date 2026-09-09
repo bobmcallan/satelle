@@ -22,7 +22,7 @@ import (
 // stale, out equals content byte-for-byte and changes is empty (idempotent).
 // A parse error returns err; callers must leave the on-disk file intact.
 func MigrateAgents(content string) (out string, changes []string, err error) {
-	ac, err := decodeAgentsContent(content)
+	ac, err := decodeAgents(content, true)
 	if err != nil {
 		return "", nil, err
 	}
@@ -162,9 +162,17 @@ func removeKeyInSection(lines []string, header, key string) {
 	}
 }
 
-// decodeAgentsContent parses agents.toml body the same way LoadAgents classifies
-// sections. Returns an error when the file is unparseable.
-func decodeAgentsContent(content string) (AgentsConfig, error) {
+// decodeAgents is the ONE agents-layer classifier (sty_01949949): every
+// top-level table is sorted into `defaults` / `executor` / `reviewer` / a flat
+// named binding. LoadAgents, LoadWorkspaceAgents, RedactAgentsTransport and
+// MigrateAgents all call it, so a new section type is classified in one place.
+//
+// legacyNested is the single difference between its callers: MigrateAgents
+// reads the retired nested [agents.<name>] container so it can flatten it;
+// every live loader ignores that container (the dual-read is retired and
+// `satelle init` migrates it), so an un-migrated file cannot silently load
+// nested agents.
+func decodeAgents(content string, legacyNested bool) (AgentsConfig, error) {
 	var raw map[string]toml.Primitive
 	md, err := toml.Decode(content, &raw)
 	if err != nil {
@@ -173,6 +181,10 @@ func decodeAgentsContent(content string) (AgentsConfig, error) {
 	ac := AgentsConfig{Agents: map[string]AgentBinding{}}
 	for key, prim := range raw {
 		switch key {
+		case "defaults":
+			if err := md.PrimitiveDecode(prim, &ac.Defaults); err != nil {
+				return AgentsConfig{}, fmt.Errorf("parse [defaults]: %w", err)
+			}
 		case "executor":
 			var b AgentBinding
 			if err := md.PrimitiveDecode(prim, &b); err != nil {
@@ -186,7 +198,10 @@ func decodeAgentsContent(content string) (AgentsConfig, error) {
 			}
 			ac.Reviewer = b
 		case "agents":
-			// legacy nested container
+			if !legacyNested {
+				continue
+			}
+			// legacy nested container — migration input only
 			var nested map[string]AgentBinding
 			if err := md.PrimitiveDecode(prim, &nested); err != nil {
 				return AgentsConfig{}, fmt.Errorf("parse [agents]: %w", err)

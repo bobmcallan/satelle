@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -247,6 +248,18 @@ are both visible here rather than at the next dispatch.`,
 			if gerr != nil {
 				fmt.Fprintf(out, "FAIL  %v\n", gerr)
 			}
+			// The synced workspace bindings layer (sty_01949949) sits under the
+			// repo's file in the ladder; it is judged here so the grants printed
+			// are the ones that will run, each field naming its source.
+			workspace, werr := config.LoadWorkspaceAgents(dataDir)
+			if werr != nil {
+				fmt.Fprintf(out, "FAIL  %v\n", werr)
+			}
+			if _, serr := os.Stat(config.WorkspaceAgentsPath(dataDir)); serr == nil {
+				fmt.Fprintf(out, "Workspace bindings layer: %s (present — a repo field wins; a workspace field fills a blank; source shown per field)\n", config.WorkspaceAgentsRel)
+			} else {
+				fmt.Fprintf(out, "Workspace bindings layer: %s (absent — repo bindings only)\n", config.WorkspaceAgentsRel)
+			}
 			// Read the AUTHORED FILES, not the doc index — the same source, through
 			// the same helpers, that `satelle doctor` uses (sty_540cfcd3). Reading
 			// the index made these two commands contradict each other seconds apart
@@ -268,7 +281,7 @@ are both visible here rather than at the next dispatch.`,
 			// Skill bodies too, from the same resolver doctor uses — otherwise this
 			// command and `satelle doctor` would report the reviewer shell grant
 			// differently on the same tree (sty_338a53f8).
-			report := agentvalidate.ValidateEffectiveWithSkills(agents, global, a.Config.Vars, governing,
+			report := agentvalidate.ValidateEffectiveLayered(agents, workspace, global, a.Config.Vars, governing,
 				doctor.SkillBodyResolver(dataDir))
 			printProfileCatalog(out, global)
 			fmt.Fprintln(out, "Agent grants (resolved):")
@@ -294,6 +307,17 @@ are both visible here rather than at the next dispatch.`,
 					fmt.Fprintf(out, "         notes: %s\n", g.Notes)
 				}
 				printGrantSources(out, g)
+				// Local resolution (sty_01949949 AC3): a binding — workspace-supplied
+				// or not — names a program; THIS machine decides whether it exists.
+				// A warning here, a hard refusal at dispatch: an operator may inspect
+				// a machine that intentionally lacks a binding without bricking validate.
+				if g.Backend != "in-loop" && g.Backend != "invalid" {
+					if tok := config.ExecutableToken(g.Command); tok != "" {
+						if _, lerr := exec.LookPath(tok); lerr != nil {
+							fmt.Fprintf(out, "WARN  [%s] command %q is not executable on this machine (%v) — dispatch will refuse; install it or rebind the agent\n", g.Name, tok, lerr)
+						}
+					}
+				}
 			}
 			if len(report.Gates) > 0 {
 				fmt.Fprintln(out, "Gate/node effective models (binding that will run the gate):")

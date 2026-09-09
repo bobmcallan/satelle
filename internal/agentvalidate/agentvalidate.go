@@ -151,11 +151,20 @@ func (r Report) OK() bool { return len(r.Problems) == 0 }
 // workflow allocation — runs against the merged binding, so a profile cannot
 // smuggle a capability past a check by supplying it from the catalog.
 func ValidateEffective(repo config.AgentsConfig, global config.GlobalAgentsConfig, repoVars map[string]string, workflows []docindex.Doc) Report {
-	return validateEffective(repo, global, repoVars, workflows, nil)
+	return validateEffective(repo, config.AgentsConfig{}, global, repoVars, workflows, nil)
 }
 
-func validateEffective(repo config.AgentsConfig, global config.GlobalAgentsConfig, repoVars map[string]string, workflows []docindex.Doc, skills SkillBody) Report {
-	eff, err := config.ResolveEffectiveAgents(repo, global, repoVars)
+// ValidateEffectiveLayered is ValidateEffectiveWithSkills with the synced
+// workspace bindings layer in the ladder (sty_01949949), so what is judged —
+// and the provenance each grant reports — is what will actually run once a
+// repo has pulled workspace bindings. Surfaces that read a deployed repo from
+// disk (doctor, `satelle agent validate`) pass config.LoadWorkspaceAgents.
+func ValidateEffectiveLayered(repo, workspace config.AgentsConfig, global config.GlobalAgentsConfig, repoVars map[string]string, workflows []docindex.Doc, skills SkillBody) Report {
+	return validateEffective(repo, workspace, global, repoVars, workflows, skills)
+}
+
+func validateEffective(repo, workspace config.AgentsConfig, global config.GlobalAgentsConfig, repoVars map[string]string, workflows []docindex.Doc, skills SkillBody) Report {
+	eff, err := config.ResolveEffectiveAgentsLayered(repo, workspace, global, repoVars)
 	if err != nil {
 		r := validate(repo, config.LayerVars(global.Vars, repoVars), workflows, nil, skills)
 		f := health.Error(health.IDAgentsProfileBroken, "Broken machine-wide profile reference", err.Error()).
@@ -190,7 +199,7 @@ type SkillBody func(name string) (string, bool)
 // Surfaces that judge a whole DEPLOYED repo (doctor, and therefore `satelle
 // init`, and `satelle agent validate`) pass one; the narrower callers do not.
 func ValidateEffectiveWithSkills(repo config.AgentsConfig, global config.GlobalAgentsConfig, repoVars map[string]string, workflows []docindex.Doc, skills SkillBody) Report {
-	return validateEffective(repo, global, repoVars, workflows, skills)
+	return validateEffective(repo, config.AgentsConfig{}, global, repoVars, workflows, skills)
 }
 
 func validate(agents config.AgentsConfig, vars map[string]string, workflows []docindex.Doc, prov config.Provenance, skills SkillBody) Report {

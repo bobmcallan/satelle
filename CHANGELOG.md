@@ -1,3 +1,18 @@
+## [0.0.495] - 2026-09-09
+
+### Added
+- **`satelle sync bindings push` / `pull` — agent bindings on the workspace sync path.** `push` publishes the repo's `.satelle/workflows/agents.toml` into the bound team workspace's catalog (kind `agents`); `pull` applies the catalog entry as `.satelle/workflows/agents.workspace.toml`, a **layer under** the repo's own file in the precedence ladder (`repo → workspace → profile / global-role → embedded`): a repo field wins, a workspace field fills a blank, a workspace-only table applies. The bare `satelle sync` pulls it when the `agents` area is opted in. `satelle agent validate` and `doctor` report the layer and name the source of every effective field (`(workspace)` / `(repo)`). An unbound repo does nothing and contacts nothing. (sty_01949949)
+- **Redaction is a property of the agents kind, not of a verb.** One function (`config.RedactAgentsTransport`) now guards every agents-layer transport: `sync bindings push`, `publish push` of the agents path (whatever `--kind`), the `agents` area of `sync config push`, and `sync bindings pull` on ingest. Literal env values are blanked with keys kept, pure `${VAR}` references survive (a name is not a secret), secret-shaped settings and `settings.env` are blanked, absolute paths in `command` or `settings` become base names, `profile=` is dropped; an unparseable body is an error, never shipped raw. (sty_01949949)
+- **Local resolution.** A blank a redacted layer left is "declared, unsatisfied" and is dropped from the merge, so a pulled layer can never lay `KEY=` over the machine's environment. `${VAR}` expands from the local `[vars]`. A named binding whose program is not on PATH is a hard refusal at dispatch (never an in-loop fallback) and a `WARN` in `agent validate`. (sty_01949949)
+
+### Changed
+- **Writing a redacted agents layer back over the authored file rehydrates it.** `sync config deploy`, `publish adopt` and `publish check --update` either leave `agents.toml` byte-for-byte alone (the store copy matches it after redaction) or deploy the store's layout with this machine's env values, command paths and `profile=` re-applied from the local file. The agents-layer classifier is now one function shared by the loader, the workspace layer, transport redaction and migration. (sty_01949949)
+
+## [serve-v0.0.37] - 2026-09-09
+
+### Added
+- **Serve path carries the workspace bindings layer.** `internal/config` (workspace tier, transport redaction), `internal/docindex` and `internal/help` are on the satelled watch set; bump so `satelle update` refreshes the running service. (sty_01949949)
+
 ## [0.0.494] - 2026-09-09
 
 ### Added

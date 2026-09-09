@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,6 +75,7 @@ a whole-area reading gets wrong. Read-only.`,
 	syncCmd.AddCommand(newSyncConfigCmd())
 	syncCmd.AddCommand(newSyncDocumentsCmd())
 	syncCmd.AddCommand(newSyncWorkstateCmd())
+	syncCmd.AddCommand(newSyncBindingsCmd())
 	syncCmd.AddCommand(newSyncRehydrateCmd())
 	register(syncCmd)
 }
@@ -267,6 +269,18 @@ func runSync(cmd *cobra.Command, serverArg string, dryRun bool) error {
 		fmt.Fprintln(out, "documents pull: skipped under --dry-run (pull has no preview).")
 	} else if err := runSyncDocumentsPull(cmd, serverArg, ""); err != nil {
 		return err
+	}
+	// The workspace bindings layer (sty_01949949) rides the aggregate only when
+	// the agents area is opted in; it applies from the TEAM catalog and is a
+	// no-op for a repo with no team workspace. Pull, not push: the aggregate
+	// converges this repo onto the workspace's decision; publishing bindings
+	// is an explicit `sync bindings push`.
+	if scope, serr := config.ScopeFor(a.Config, "agents"); serr == nil && scope != config.LocalScope {
+		if dryRun {
+			fmt.Fprintln(out, "bindings pull: skipped under --dry-run (pull has no preview).")
+		} else if err := runSyncBindingsPull(cmd, serverArg, ""); err != nil {
+			return err
+		}
 	}
 	return runSyncWorkstatePush(cmd, serverArg, dryRun, false)
 }
@@ -492,6 +506,63 @@ func contentMatchesSHA(sha string, content []byte) bool {
 	return hex.EncodeToString(sum[:]) == sha
 }
 
+// rehydrateDeployedAgents applies rehydrateAgentsForWrite to the agents-layer
+// entry of a deploy set and drops the workspace layer if an old manifest
+// carries one.
+func rehydrateDeployedAgents(out io.Writer, dataDir string, files []subsync.File) ([]subsync.File, error) {
+	kept := files[:0]
+	for _, f := range files {
+		switch f.Path {
+		case config.WorkspaceAgentsRel:
+			fmt.Fprintf(out, "agents: %s is the synced workspace layer — not deployed from the personal store (use `satelle sync bindings pull`).\n", f.Path)
+			continue
+		case config.AgentsRel:
+			content, skip, err := rehydrateAgentsForWrite(out, dataDir, "deploy", f.Content)
+			if err != nil {
+				return nil, err
+			}
+			if skip {
+				continue
+			}
+			f.Content = content
+		}
+		kept = append(kept, f)
+	}
+	return kept, nil
+}
+
+// rehydrateAgentsForWrite is the ONE ingest step for a REDACTED agents layer
+// about to be written over the authored .satelle/workflows/agents.toml —
+// `sync config deploy`, `publish adopt`, `publish check --update` all pass
+// through it (sty_01949949). It returns the bytes to write, or skip=true when
+// the authored file already matches the store copy after redaction and must be
+// left byte-for-byte alone. A local file that cannot be parsed is reported and
+// the store copy is written as-is (the operator asked for the store's config;
+// a broken local file is not worth more than that). verb names the caller in
+// the messages.
+func rehydrateAgentsForWrite(out io.Writer, dataDir, verb string, content []byte) ([]byte, bool, error) {
+	localPath, _ := config.AgentsPath(dataDir)
+	local, rerr := os.ReadFile(localPath)
+	if rerr != nil && !os.IsNotExist(rerr) {
+		return nil, false, fmt.Errorf("%s: read %s: %w", verb, config.AgentsRel, rerr)
+	}
+	if os.IsNotExist(rerr) || len(local) == 0 {
+		fmt.Fprintf(out, "agents: %s written from the store copy — no local %s to re-apply values from. The copy is redacted: literal env values are blank (supply them locally) and ${VAR} references resolve from this machine's [vars].\n", config.AgentsRel, config.AgentsRel)
+		return content, false, nil
+	}
+	merged, keepLocal, herr := config.RehydrateAgents(content, local)
+	if herr != nil {
+		fmt.Fprintf(out, "agents: could not merge local values into the %s copy of %s (%v) — writing the store copy; re-enter env values and profile= locally.\n", verb, config.AgentsRel, herr)
+		return content, false, nil
+	}
+	if keepLocal {
+		fmt.Fprintf(out, "agents: %s kept — the store copy matches the authored file after redaction.\n", config.AgentsRel)
+		return nil, true, nil
+	}
+	fmt.Fprintf(out, "agents: %s written with local env values, command paths and profile= re-applied (the store copy is redacted).\n", config.AgentsRel)
+	return merged, false, nil
+}
+
 func runSyncConfigDeploy(cmd *cobra.Command, serverArg, workspaceArg string, version int) error {
 	_, err := runSyncConfigDeployOutcome(cmd, serverArg, workspaceArg, version)
 	return err
@@ -550,6 +621,15 @@ func runSyncConfigDeployOutcome(cmd *cobra.Command, serverArg, workspaceArg stri
 	if len(files) == 0 {
 		fmt.Fprintf(out, "Nothing to deploy — version %d matched no files in workspace %q.\n", version, sourceName)
 		return deployOutcome{}, nil
+	}
+	// The agents layer in the store is REDACTED (sty_01949949): materialising it
+	// over the authored file would blank live env values, drop profile= and
+	// strip command paths. Rehydrate from the on-disk file — or leave the file
+	// untouched when the store holds nothing the repo does not already have.
+	// The synced workspace layer is never deployed from the personal store.
+	files, err = rehydrateDeployedAgents(out, dataDir, files)
+	if err != nil {
+		return deployOutcome{}, err
 	}
 	// Capture the local binding before restore; re-apply after so a hosted
 	// satelle.toml (even an older unredacted one) cannot rebind this repo.
