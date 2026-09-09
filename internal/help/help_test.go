@@ -62,6 +62,8 @@ func TestAgentDispatchTopic(t *testing.T) {
 		"acp",
 		"stream",
 		"DefaultClaudeStreamCommand",
+		"story chat",
+		"[orchestrator]",
 		"CLI verbs",
 		"Claude",
 		"MCP",

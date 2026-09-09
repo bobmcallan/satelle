@@ -224,6 +224,7 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storyHoldCommands())
 		parent.AddCommand(storyMessageCommand())
 		parent.AddCommand(storyMessagesCommand())
+		parent.AddCommand(storyChatCommand())
 	}
 	if group == "task" {
 		// tasks are authored substrate → `satelle task validate` runs the

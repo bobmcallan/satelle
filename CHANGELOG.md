@@ -1,3 +1,14 @@
+## [0.0.494] - 2026-09-09
+
+### Added
+- **`satelle story chat <id>` and the `[orchestrator]` binding.** The orchestrator may now be a dispatched live session (`interface = "acp"` or `"stream"`) instead of the hook channel: satelle opens the session with the story payload plus `messages[]`, forwards human lines as turns, streams replies, and answers permission requests through the same predicate as the PreToolUse edit gate — a mutator outside an executor-owned performing state is denied without asking; otherwise the human is asked. Every human turn, orchestrator reply, tool boundary and permission decision is a ledger row (`agent_message` / `agent_invocation`), written from the synchronous transport event sink, never the lossy render channel. `command = "in-loop"` (or no binding) keeps today's hook channel; chat refuses rather than guessing a spawn. Steps dispatched from inside the session run the unchanged synchronous path and inherit the chat seat via `SATELLE_SESSION`. (sty_1de7494c)
+- **Stream transport reports pre-allowed tools.** `tool_use` / `tool_result` content blocks — the only boundary for tools the binding allowed without a `can_use_tool` request — surface as `EventToolStart` / `EventToolEnd`. (sty_1de7494c)
+
+## [serve-v0.0.36] - 2026-09-09
+
+### Added
+- **Serve path carries the orchestrator session opener and stream tool events.** `internal/agentcli` and `internal/help` are on the satelled watch set; bump so `satelle update` refreshes the running service. (sty_1de7494c)
+
 ## [0.0.493] - 2026-09-09
 
 ### Added

@@ -175,6 +175,9 @@ type Engine struct {
 	// swappable in tests; defaults to agentcli.RunnerFromBinding
 	// (epic:agent-dispatch-transport). iface is "command" (default) or "acp".
 	newRunner func(iface, command string) (agentcli.Runner, error)
+	// newOpener builds a SessionOpener for a live binding (sty_1de7494c).
+	// Swappable in tests; defaults to agentcli.OpenerFromBinding.
+	newOpener func(iface, command string) (agentcli.SessionOpener, error)
 	// telemetry records a structured, queryable dispatch outcome (a reviewer/
 	// executor retry, failure, or timeout) that only the binary observes — the
 	// verb layer sees just the final result, not each attempt (sty_b73c3236). Nil
@@ -232,6 +235,7 @@ func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Engine
 		checkTimeout: defaultCheckTimeout, check: execCheck, injectPrinciples: true,
 		attempts: defaultReviewerAttempts, backoff: defaultReviewerBackoff,
 		agentTimeout: defaultAgentTimeout, newRunner: agentcli.RunnerFromBinding,
+		newOpener: agentcli.OpenerFromBinding,
 	}
 }
 
@@ -1515,6 +1519,80 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.Dispa
 		return res, fmt.Errorf("%s agent failed on %s: %w", retrospectAgent, item.ID, invRes.Err)
 	}
 	return res, nil
+}
+
+const orchestratorBinding = "orchestrator"
+
+// ChatPayload is the first-turn payload for satelle story chat: the same
+// transitionPayload shape as a gate/executor dispatch, with from == to ==
+// current status, plus messages[] for the orchestrator address set
+// (sty_1de7494c).
+func (g *Engine) ChatPayload(ctx context.Context, item workitem.Item) (transitionPayload, error) {
+	tp := transitionPayload{Story: item, From: item.Status, To: item.Status}
+	if g.children != nil {
+		tp.Children = g.children(ctx, item.ID)
+	}
+	g.fillPayloadDocs(ctx, item.ID, &tp)
+	g.fillMessages(ctx, item.ID, []string{orchestratorBinding}, &tp)
+	return tp, nil
+}
+
+// OpenOrchestrator opens a live Session for the [orchestrator] named binding.
+// in-loop / command / missing bindings return a clear error; they do not fall
+// back to a guessed spawn (sty_1de7494c). onEvent, when non-nil, is installed
+// as the request's OnEvent: transports call it inline from their reader
+// goroutine BEFORE the lossy Events() fan-out, so a caller that must record
+// every tool boundary (the chat transcript) hangs its ledger writer here, not
+// on the drained channel.
+func (g *Engine) OpenOrchestrator(ctx context.Context, item workitem.Item, pol agentcli.PermissionPolicy, onEvent agentcli.EventHandler) (agentcli.Session, error) {
+	if g.namedAgents == nil {
+		return nil, fmt.Errorf("no agents layer is wired — cannot open the %q session", orchestratorBinding)
+	}
+	binding, found := g.namedAgents(orchestratorBinding)
+	if !found {
+		return nil, fmt.Errorf("no [%s] binding in .satelle/workflows/agents.toml — define interface=acp or stream to open a live session", orchestratorBinding)
+	}
+	if config.IsInLoopCommand(binding.CommandTemplate()) {
+		return nil, fmt.Errorf("satelle story chat: [%s] is in-loop — the hook channel remains the orchestrator; set interface=acp or stream to open a live session", orchestratorBinding)
+	}
+	openerFn := g.newOpener
+	if openerFn == nil {
+		openerFn = agentcli.OpenerFromBinding
+	}
+	opener, err := openerFn(binding.ResolvedInterface(), binding.CommandTemplate())
+	if err != nil {
+		if errors.Is(err, agentcli.ErrNotLiveCapable) {
+			return nil, fmt.Errorf("satelle story chat: [%s] interface=%s is not live-capable — set interface=acp or stream", orchestratorBinding, binding.ResolvedInterface())
+		}
+		return nil, err
+	}
+	payload, err := g.ChatPayload(ctx, item)
+	if err != nil {
+		return nil, err
+	}
+	req, err := g.buildRequest(ctx, invocation{
+		charter:    executorCharter(orchestratorBinding, item.Status, "orchestrator live session"),
+		payload:    payload,
+		tools:      binding.Tools,
+		model:      binding.Model,
+		effort:     binding.Effort,
+		settings:   binding.Settings,
+		env:        binding.Env,
+		principles: binding.ResolvedPrinciples(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if req.Env == nil {
+		req.Env = map[string]string{}
+	}
+	if sid := strings.TrimSpace(os.Getenv(config.SessionEnv)); sid != "" {
+		req.Env[config.SessionEnv] = sid
+	}
+	if onEvent != nil {
+		req.OnEvent = onEvent
+	}
+	return opener(ctx, req, pol)
 }
 
 // setDecisionUsage copies an invocation's token/wall-time cost onto a gate

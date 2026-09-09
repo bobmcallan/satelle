@@ -300,6 +300,34 @@ claude -p --input-format stream-json --output-format stream-json --verbose --dis
 stay `command`** — a live channel does not help a cold one-shot verdict.
 `stream` exists for the orchestrator binding (order:4 of epic:agent-messaging).
 
+#### Orchestrator binding and `satelle story chat`
+
+The orchestrator may be a live session (`interface = "acp"` or `"stream"`) or
+today's hook channel (`command = "in-loop"`). `[orchestrator]` is a named
+binding consumed by a verb, not a third Role constant.
+
+```toml
+[orchestrator]
+role      = "agent"
+interface = "stream"   # or "acp"; omit / "command" / in-loop = hook channel
+command   = "claude -p --input-format stream-json --output-format stream-json --verbose --allowedTools {tools} --model {model} --effort {effort}"
+tools     = "Read,Grep,Glob,Bash(satelle:*)"
+model     = "opus"
+effort    = "high"
+```
+
+`satelle story chat <id>` opens that session, forwards human lines as turns,
+streams replies, and records every turn on the story ledger (`agent_message`
+for human/orchestrator turns; `agent_invocation` for permission decisions).
+It does not change story status. `command = "in-loop"` (or no binding) keeps
+the SessionStart / PreToolUse / Stop hook channel — chat refuses rather than
+opening a process.
+
+The permission channel is the same policy as PreToolUse (see **PreToolUse deny
+channels** below): a mutator tool ask is denied by satelle without prompting
+the human when the story is not in an executor-owned performing state (or a
+transition is in flight). Otherwise the human is asked allow/deny.
+
 ### Codex — preferred ACP, secondary command (sty_3b4909bb)
 
 Codex is a first-class agent on the **same command and acp transports** as

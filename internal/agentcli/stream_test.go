@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -58,6 +59,11 @@ while True:
         uout = os.environ.get("USER_OUT")
         if uout:
             open(uout, "w").write(text)
+    if os.environ.get("STREAM_TOOL") == "1" and n == 1:
+        send({"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"Read","input":{"file_path":"x"}}]}})
+        send({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"ok"}]}})
+        send({"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu2","name":"Bash","input":{"command":"false"}}]}})
+        send({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu2","is_error":True,"content":"boom"}]}})
     if os.environ.get("STREAM_PERM") == "1" and n == 1:
         send({"type":"control_request","request_id":"req1","request":{"subtype":"can_use_tool","tool_name":"Edit"}})
         resp = read()
@@ -170,6 +176,61 @@ func TestStreamSession_SecondTurn(t *testing.T) {
 	}
 	if n := strings.Count(string(b), "start"); n != 1 {
 		t.Fatalf("process started %d times, want 1", n)
+	}
+}
+
+// TestStreamSession_ToolEventsFromContentBlocks (sty_1de7494c AC4): tools the
+// binding pre-allowed raise no can_use_tool request, so their tool_use /
+// tool_result content blocks are the only boundary — the session reports them
+// as EventToolStart / EventToolEnd through the synchronous OnEvent path.
+func TestStreamSession_ToolEventsFromContentBlocks(t *testing.T) {
+	skipWithoutPython3(t)
+	peer := writeFakeStreamPeer(t)
+	r, err := newStreamRunner(peer + " --output-format stream-json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var seen []Event
+	done := make(chan struct{}, 1)
+	sess, err := openStreamSession(context.Background(), r.(streamRunner), Request{
+		AllowedTools: "Read,Grep,Glob",
+		Env:          map[string]string{"STREAM_TOOL": "1"},
+		OnEvent: func(ev Event) {
+			mu.Lock()
+			seen = append(seen, ev)
+			mu.Unlock()
+			if ev.Kind == EventCompleted {
+				select {
+				case done <- struct{}{}:
+				default:
+				}
+			}
+		},
+	}, defaultPermissionPolicy(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+	if err := sess.Send(context.Background(), Turn{System: "sys", Text: "one"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no completed event")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	var got []string
+	for _, ev := range seen {
+		if ev.Kind == EventToolStart || ev.Kind == EventToolEnd {
+			got = append(got, string(ev.Kind)+":"+ev.Tool+":"+ev.Status)
+		}
+	}
+	want := []string{"tool_start:Read:running", "tool_end:Read:done", "tool_start:Bash:running", "tool_end:Bash:error"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("tool events = %v, want %v", got, want)
 	}
 }
 

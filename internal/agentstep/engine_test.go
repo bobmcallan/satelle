@@ -3418,6 +3418,78 @@ func TestRetrospectRequiresSatelleCLI(t *testing.T) {
 	}
 }
 
+func TestChatPayloadFromEqualsTo(t *testing.T) {
+	g, _ := newEngine(t, "", fakeDocs{})
+	g.SetMessagesResolver(func(_ context.Context, itemID string, addrs []string) []MessageState {
+		if itemID != "sty_chat" {
+			t.Errorf("item %s", itemID)
+		}
+		if len(addrs) != 1 || addrs[0] != "orchestrator" {
+			t.Errorf("addrs = %v", addrs)
+		}
+		return []MessageState{{From: "human", To: "orchestrator", Body: "hi"}}
+	})
+	tp, err := g.ChatPayload(context.Background(), workitem.Item{ID: "sty_chat", Status: "in_progress"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tp.From != "in_progress" || tp.To != "in_progress" {
+		t.Fatalf("from/to = %q/%q", tp.From, tp.To)
+	}
+	if len(tp.Messages) != 1 || tp.Messages[0].Body != "hi" {
+		t.Fatalf("messages = %#v", tp.Messages)
+	}
+}
+
+func TestOpenOrchestratorInjectsSessionEnv(t *testing.T) {
+	t.Setenv("SATELLE_SESSION", "sess-chat")
+	g, _ := newEngine(t, "", fakeDocs{})
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		if name != "orchestrator" {
+			return config.AgentBinding{}, false
+		}
+		return config.AgentBinding{Interface: "stream", Command: "claude -p --input-format stream-json --output-format stream-json --allowedTools {tools}"}, true
+	})
+	var gotEnv map[string]string
+	g.newOpener = func(iface, command string) (agentcli.SessionOpener, error) {
+		if iface != "stream" {
+			t.Errorf("iface = %q", iface)
+		}
+		return func(_ context.Context, req agentcli.Request, _ agentcli.PermissionPolicy) (agentcli.Session, error) {
+			gotEnv = req.Env
+			return closedSess{}, nil
+		}, nil
+	}
+	handler := func(agentcli.Event) {}
+	var gotOnEvent agentcli.EventHandler
+	g.newOpener = func(iface, command string) (agentcli.SessionOpener, error) {
+		return func(_ context.Context, req agentcli.Request, _ agentcli.PermissionPolicy) (agentcli.Session, error) {
+			gotEnv = req.Env
+			gotOnEvent = req.OnEvent
+			return closedSess{}, nil
+		}, nil
+	}
+	sess, err := g.OpenOrchestrator(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, nil, handler)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = sess
+	if gotEnv["SATELLE_SESSION"] != "sess-chat" {
+		t.Fatalf("env = %#v, want SATELLE_SESSION=sess-chat", gotEnv)
+	}
+	if gotOnEvent == nil {
+		t.Fatal("OpenOrchestrator must install the caller's OnEvent on the request (synchronous transcript sink)")
+	}
+}
+
+type closedSess struct{}
+
+func (closedSess) Send(context.Context, agentcli.Turn) error { return nil }
+func (closedSess) Events() <-chan agentcli.Event             { return nil }
+func (closedSess) Cancel() error                             { return nil }
+func (closedSess) Close() error                              { return nil }
+func (closedSess) Captured() []byte                          { return nil }
+
 // --- AC2 dispatch-outcome telemetry (sty_b73c3236) --------------------------
 //
 // The dispatch engine records STRUCTURED, queryable outcomes for every agent

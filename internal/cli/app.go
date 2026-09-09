@@ -378,6 +378,7 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 	if err := applyAgentGrants(rev, a, eff.Agents); err != nil {
 		return nil, nil, err
 	}
+	rev.SetNamedAgents(eff.Agents.NamedBinding)
 	return rev, a, nil
 }
 

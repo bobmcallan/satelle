@@ -27,6 +27,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -323,6 +324,35 @@ func RunnerFromBinding(iface, command string) (Runner, error) {
 		return newACPRunner(command)
 	case InterfaceStream:
 		return newStreamRunner(command)
+	default:
+		return nil, fmt.Errorf("agentcli: unknown interface %q (want %q, %q, or %q)", iface, InterfaceCommand, InterfaceACP, InterfaceStream)
+	}
+}
+
+// ErrNotLiveCapable is returned by OpenerFromBinding for command / in-loop /
+// empty bindings that cannot open a Session (sty_1de7494c).
+var ErrNotLiveCapable = errors.New("agentcli: binding is not live-capable (want interface=acp or stream)")
+
+// OpenerFromBinding resolves an agents.toml transport + command to a
+// SessionOpener. acp and stream return the existing Open methods; command,
+// empty, and in-loop return ErrNotLiveCapable so the caller can fall back to
+// today's hook channel rather than guess.
+func OpenerFromBinding(iface, command string) (SessionOpener, error) {
+	switch strings.ToLower(strings.TrimSpace(iface)) {
+	case InterfaceACP:
+		r, err := newACPRunner(command)
+		if err != nil {
+			return nil, err
+		}
+		return r.(acpRunner).Open, nil
+	case InterfaceStream:
+		r, err := newStreamRunner(command)
+		if err != nil {
+			return nil, err
+		}
+		return r.(streamRunner).Open, nil
+	case "", InterfaceCommand:
+		return nil, ErrNotLiveCapable
 	default:
 		return nil, fmt.Errorf("agentcli: unknown interface %q (want %q, %q, or %q)", iface, InterfaceCommand, InterfaceACP, InterfaceStream)
 	}

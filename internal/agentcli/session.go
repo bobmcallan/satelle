@@ -45,6 +45,17 @@ type PermissionDecision struct {
 // default (mutator kinds denied unless the grant allows mutators).
 type PermissionPolicy func(PermissionRequest) PermissionDecision
 
+// IsMutatorRequest reports whether a permission ask is a tree-mutating or
+// arbitrary-code tool. Shared by ACP, stream, and the chat permission gate
+// (sty_1de7494c) so the mutator classification is not forked.
+func IsMutatorRequest(req PermissionRequest) bool {
+	kind := req.Kind
+	if kind == "" {
+		kind = toolNameKind(req.ToolName)
+	}
+	return isMutatorToolKind(kind)
+}
+
 func defaultPermissionPolicy(allowMutators bool) PermissionPolicy {
 	return func(req PermissionRequest) PermissionDecision {
 		kind := req.Kind

@@ -70,6 +70,10 @@ type streamSession struct {
 	captured  strings.Builder
 	closed    chan struct{}
 	closeOnce sync.Once
+	// toolNames maps a tool_use block id to its tool name so the matching
+	// tool_result (which carries only the id) can be reported as EventToolEnd
+	// under the same name. Touched only by readLoop (sty_1de7494c).
+	toolNames map[string]string
 }
 
 func openStreamSession(ctx context.Context, s streamRunner, req Request, pol PermissionPolicy) (Session, error) {
@@ -188,9 +192,35 @@ func (s *streamSession) readLoop() {
 		typ, _ := raw["type"].(string)
 		switch typ {
 		case "assistant":
+			// tool_use blocks are the tool boundary for tools the binding
+			// pre-allowed (no can_use_tool control request is raised for them),
+			// so they are reported here, synchronously, as EventToolStart.
+			for _, tu := range streamToolUses(raw) {
+				if s.toolNames == nil {
+					s.toolNames = map[string]string{}
+				}
+				if tu.id != "" {
+					s.toolNames[tu.id] = tu.name
+				}
+				ev := newEvent(EventToolStart)
+				ev.Tool = tu.name
+				ev.Status = "running"
+				emitEvent(s.onEvent, ev)
+			}
 			if txt := streamAssistantText(raw); txt != "" {
 				ev := newEvent(EventMessage)
 				ev.Text = SafeText(txt)
+				emitEvent(s.onEvent, ev)
+			}
+		case "user":
+			// The CLI echoes tool results as user-role tool_result blocks.
+			for _, tr := range streamToolResults(raw) {
+				ev := newEvent(EventToolEnd)
+				ev.Tool = s.toolNames[tr.id]
+				ev.Status = "done"
+				if tr.isError {
+					ev.Status = "error"
+				}
 				emitEvent(s.onEvent, ev)
 			}
 		case "control_request":
@@ -239,6 +269,59 @@ func streamAssistantText(raw map[string]any) string {
 		}
 	}
 	return b.String()
+}
+
+type streamToolUse struct{ id, name string }
+
+type streamToolResult struct {
+	id      string
+	isError bool
+}
+
+func streamContentBlocks(raw map[string]any) []map[string]any {
+	msg, _ := raw["message"].(map[string]any)
+	if msg == nil {
+		return nil
+	}
+	content, _ := msg["content"].([]any)
+	out := make([]map[string]any, 0, len(content))
+	for _, c := range content {
+		if m, ok := c.(map[string]any); ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// streamToolUses returns the tool_use blocks of an assistant record, in order.
+func streamToolUses(raw map[string]any) []streamToolUse {
+	var out []streamToolUse
+	for _, m := range streamContentBlocks(raw) {
+		if m["type"] != "tool_use" {
+			continue
+		}
+		name, _ := m["name"].(string)
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		id, _ := m["id"].(string)
+		out = append(out, streamToolUse{id: id, name: name})
+	}
+	return out
+}
+
+// streamToolResults returns the tool_result blocks of a user record, in order.
+func streamToolResults(raw map[string]any) []streamToolResult {
+	var out []streamToolResult
+	for _, m := range streamContentBlocks(raw) {
+		if m["type"] != "tool_result" {
+			continue
+		}
+		id, _ := m["tool_use_id"].(string)
+		isErr, _ := m["is_error"].(bool)
+		out = append(out, streamToolResult{id: id, isError: isErr})
+	}
+	return out
 }
 
 func (s *streamSession) handleControl(raw map[string]any) {
