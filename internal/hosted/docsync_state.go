@@ -21,6 +21,10 @@ import (
 type documentSyncStateFile struct {
 	Cursors   map[string]string          `json:"cursors"`
 	Workstate map[string]WorkstateCursor `json:"workstate,omitempty"`
+	// Holds is a local cache of which story ids this checkout holds
+	// (sty_f6cff549). Server is still authority; push uses this to skip
+	// foreign-held items without forking a second copy.
+	Holds map[string]map[string]string `json:"holds,omitempty"`
 }
 
 // WorkstateCursor tracks the high-water marks of the last successful work-state
@@ -118,6 +122,83 @@ func SaveWorkstateCursor(server, project, repoRoot string, c WorkstateCursor) er
 		state.Workstate = map[string]WorkstateCursor{}
 	}
 	state.Workstate[documentCursorKey(server, project, repoRoot)] = c
+	return writeDocumentSyncState(state)
+}
+
+// LoadHolds returns the local hold registry for the key (id → location id).
+func LoadHolds(server, project, repoRoot string) (map[string]string, error) {
+	docSyncMu.Lock()
+	defer docSyncMu.Unlock()
+	state, err := loadDocumentSyncState()
+	if err != nil {
+		return nil, err
+	}
+	if state.Holds == nil {
+		return map[string]string{}, nil
+	}
+	out := state.Holds[documentCursorKey(server, project, repoRoot)]
+	if out == nil {
+		return map[string]string{}, nil
+	}
+	cp := make(map[string]string, len(out))
+	for k, v := range out {
+		cp[k] = v
+	}
+	return cp, nil
+}
+
+// RecordHold records that this location holds id.
+func RecordHold(server, project, repoRoot, id, locationID string) error {
+	id = strings.TrimSpace(id)
+	locationID = strings.TrimSpace(locationID)
+	if id == "" || locationID == "" {
+		return nil
+	}
+	docSyncMu.Lock()
+	defer docSyncMu.Unlock()
+	state, err := loadDocumentSyncState()
+	if err != nil {
+		return err
+	}
+	if state.Holds == nil {
+		state.Holds = map[string]map[string]string{}
+	}
+	key := documentCursorKey(server, project, repoRoot)
+	m := state.Holds[key]
+	if m == nil {
+		m = map[string]string{}
+	}
+	m[id] = locationID
+	state.Holds[key] = m
+	return writeDocumentSyncState(state)
+}
+
+// ForgetHold drops id from the local hold registry.
+func ForgetHold(server, project, repoRoot, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	docSyncMu.Lock()
+	defer docSyncMu.Unlock()
+	state, err := loadDocumentSyncState()
+	if err != nil {
+		return err
+	}
+	if state.Holds == nil {
+		return nil
+	}
+	key := documentCursorKey(server, project, repoRoot)
+	m := state.Holds[key]
+	if m == nil {
+		return nil
+	}
+	delete(m, id)
+	if len(m) == 0 {
+		delete(state.Holds, key)
+	} else {
+		state.Holds[key] = m
+	}
 	return writeDocumentSyncState(state)
 }
 

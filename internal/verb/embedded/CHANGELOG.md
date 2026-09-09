@@ -1,3 +1,8 @@
+## [0.0.491] - 2026-09-09
+
+### Changed
+- **Workstate push is hold-and-reconcile.** Stories this location holds Apply in place (same sty_ id). Stories held elsewhere are skipped (holder named; items cursor not advanced so they are not dropped). Unbound/local-scope push is unchanged. (sty_f6cff549)
+
 ## [0.0.490] - 2026-09-09
 
 ### Added

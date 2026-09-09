@@ -228,6 +228,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	if !full && !cursor.LedgerCreatedAt.IsZero() {
 		batch.Ledger = filterLedgerAfter(batch.Ledger, cursor.LedgerCreatedAt)
 	}
+
 	if len(batch.Items) == 0 && len(batch.Ledger) == 0 {
 		if hadCursor && !full {
 			fmt.Fprintf(out, "Work-state up to date on %s — no records changed since the last push.\n", server)
@@ -242,6 +243,25 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	// Prefer a single POST when both sides fit in one chunk (preserves the
 	// small-batch shape tests and production already rely on).
 	client := newHostedClient(cmd.Context(), server, a.RepoRoot)
+	skipped, keep, skipErr := partitionByHold(cmd.Context(), client, server, project, repoRoot, batch.Items)
+	if skipErr != nil {
+		return skipErr
+	}
+	for _, s := range skipped {
+		fmt.Fprintf(out, "skip %s (held elsewhere): %s\n", s.ItemID, s.Error())
+	}
+	batch.Items = keep
+	if len(skipped) > 0 {
+		// Do not advance the items cursor past a skipped foreign-held row
+		// or it is silently dropped until --full (sty_f6cff549).
+		maxItems = cursor.ItemsUpdatedAt
+	} else if len(keep) > 0 {
+		maxItems = maxItemUpdatedAt(keep)
+	}
+	if len(batch.Items) == 0 && len(batch.Ledger) == 0 {
+		fmt.Fprintln(out, "No work-state rows to push after hold partition.")
+		return nil
+	}
 	var totalItems, totalLedger int
 	type partial struct {
 		items  []json.RawMessage
@@ -271,7 +291,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 		}
 		res, perr := client.Apply(cmd.Context(), project, chunk)
 		if perr != nil {
-			if errors.Is(perr, hosted.ErrLoginRequired) {
+			if errors.Is(perr, hosted.ErrLoginRequired) || errors.Is(perr, hosted.ErrHeldElsewhere) {
 				recordWorkstatePush(a.RepoRoot, false, perr.Error())
 				return perr
 			}
@@ -803,6 +823,64 @@ func marshalWorkstateItem(it workitem.Item) (json.RawMessage, error) {
 		return nil, fmt.Errorf("encode workstate item %s: %w", it.ID, err)
 	}
 	return b, nil
+}
+
+func rawItemID(raw json.RawMessage) string {
+	var w struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(raw, &w)
+	return w.ID
+}
+
+func maxItemUpdatedAt(items []json.RawMessage) time.Time {
+	var max time.Time
+	for _, raw := range items {
+		var w struct {
+			UpdatedAt time.Time `json:"updated_at"`
+		}
+		_ = json.Unmarshal(raw, &w)
+		if w.UpdatedAt.After(max) {
+			max = w.UpdatedAt
+		}
+	}
+	return max
+}
+
+// partitionByHold drops items held by another location so push cannot fork
+// a second live copy (sty_f6cff549). Local registry is a cache; ItemHold
+// probes unknown ids. Probe errors fall through to Apply (server authority).
+func partitionByHold(ctx context.Context, client *hosted.Client, server, project, repoRoot string, items []json.RawMessage) (skipped []*hosted.HeldError, keep []json.RawMessage, err error) {
+	if len(items) == 0 {
+		return nil, items, nil
+	}
+	reg, err := hosted.LoadHolds(server, project, repoRoot)
+	if err != nil {
+		return nil, nil, err
+	}
+	self := client.Location()
+	keep = make([]json.RawMessage, 0, len(items))
+	for _, raw := range items {
+		id := rawItemID(raw)
+		if id == "" {
+			keep = append(keep, raw)
+			continue
+		}
+		if loc, ok := reg[id]; ok && loc != "" && self != "" && loc != self {
+			skipped = append(skipped, &hosted.HeldError{ItemID: id, Hold: hosted.HoldState{LocationID: loc}})
+			continue
+		}
+		if self != "" && (reg[id] == "" || reg[id] != self) {
+			st, herr := client.ItemHold(ctx, project, id)
+			if herr == nil && st.LocationID != "" && st.LocationID != self {
+				_ = hosted.RecordHold(server, project, repoRoot, id, st.LocationID)
+				skipped = append(skipped, &hosted.HeldError{ItemID: id, Hold: st})
+				continue
+			}
+		}
+		keep = append(keep, raw)
+	}
+	return skipped, keep, nil
 }
 
 // marshalWorkstateLedger encodes a ledger entry for ingest.

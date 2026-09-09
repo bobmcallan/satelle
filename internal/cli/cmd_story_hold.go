@@ -85,7 +85,7 @@ func holdClient(cmd *cobra.Command, serverArg string) (client *hosted.Client, pr
 }
 
 func runStoryHoldCheckout(cmd *cobra.Command, serverArg, id string) error {
-	client, project, _, err := holdClient(cmd, serverArg)
+	client, project, repoRoot, err := holdClient(cmd, serverArg)
 	if err != nil {
 		return err
 	}
@@ -93,24 +93,26 @@ func runStoryHoldCheckout(cmd *cobra.Command, serverArg, id string) error {
 	if err != nil {
 		return err
 	}
+	_ = hosted.RecordHold(resolveServer(serverArg), project, repoRoot, id, h.LocationID)
 	fmt.Fprintf(cmd.OutOrStdout(), "checked out %s — held here (%s)\n", id, h.LocationID)
 	return nil
 }
 
 func runStoryHoldRelease(cmd *cobra.Command, serverArg, id string) error {
-	client, project, _, err := holdClient(cmd, serverArg)
+	client, project, repoRoot, err := holdClient(cmd, serverArg)
 	if err != nil {
 		return err
 	}
 	if err := client.ReleaseHold(cmd.Context(), project, id); err != nil {
 		return err
 	}
+	_ = hosted.ForgetHold(resolveServer(serverArg), project, repoRoot, id)
 	fmt.Fprintf(cmd.OutOrStdout(), "released %s — unheld (not satelle story seat release)\n", id)
 	return nil
 }
 
 func runStoryHoldTakeover(cmd *cobra.Command, serverArg, id string) error {
-	client, project, _, err := holdClient(cmd, serverArg)
+	client, project, repoRoot, err := holdClient(cmd, serverArg)
 	if err != nil {
 		return err
 	}
@@ -118,6 +120,7 @@ func runStoryHoldTakeover(cmd *cobra.Command, serverArg, id string) error {
 	if err != nil {
 		return err
 	}
+	_ = hosted.RecordHold(resolveServer(serverArg), project, repoRoot, id, res.Hold.LocationID)
 	if strings.TrimSpace(res.Previous.LocationID) == "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "hold moved here (%s) — was unheld\n", res.Hold.LocationID)
 		return nil

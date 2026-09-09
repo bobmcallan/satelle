@@ -21,6 +21,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/hosted/syncpb"
+	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
 // fakeWorkstateServer records Apply batches per project and accumulates
@@ -295,6 +296,10 @@ func TestSyncWorkstatePushNoREST(t *testing.T) {
 		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/locations" {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"id":"ok"}`))
+			return
+		}
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/workstate/items/") {
+			http.NotFound(w, r)
 			return
 		}
 		hits++
@@ -992,5 +997,168 @@ func TestWorkstatePushExcludesBinaryAttachment(t *testing.T) {
 	}
 	if strings.Contains(string(blob), "shot.png") && strings.Contains(string(blob), "data_base64") {
 		t.Error("binary attachment payload must not ride workstate")
+	}
+}
+
+func TestWorkstateItemWireEpicRoundTrip(t *testing.T) {
+	parent := workitem.Item{
+		ID: "sty_parent", Kind: workitem.KindStory, Status: "backlog", Title: "epic",
+		Category: "epic-parent", Tags: []string{"epic:story-checkout", "order:0"},
+		AcceptanceCriteria: "1. parent",
+	}
+	child := workitem.Item{
+		ID: "sty_child", Kind: workitem.KindStory, Status: "backlog", Title: "child",
+		Category: "feature", ParentID: "sty_parent",
+		Tags:               []string{"epic:story-checkout", "order:1"},
+		AcceptanceCriteria: "1. first\n2. second",
+		Body:               "goal",
+	}
+	for _, it := range []workitem.Item{parent, child} {
+		raw, err := marshalWorkstateItem(it)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := parseWorkstateItem(hosted.WorkstateItem{ID: it.ID, Kind: string(it.Kind), Record: raw})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.ParentID != it.ParentID || got.Category != it.Category || got.Kind != it.Kind {
+			t.Errorf("shape: %+v vs %+v", got, it)
+		}
+		if got.AcceptanceCriteria != it.AcceptanceCriteria || got.Body != it.Body {
+			t.Errorf("body/ac: %+v vs %+v", got, it)
+		}
+		if len(got.Tags) != len(it.Tags) {
+			t.Fatalf("tags %v vs %v", got.Tags, it.Tags)
+		}
+		for i := range it.Tags {
+			if got.Tags[i] != it.Tags[i] {
+				t.Errorf("tag[%d] = %q want %q", i, got.Tags[i], it.Tags[i])
+			}
+		}
+	}
+}
+
+func TestPartitionByHoldSkipsForeign(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	hosted.DocumentSyncStatePathOverride = filepath.Join(t.TempDir(), "document-sync-state.json")
+	t.Cleanup(func() { hosted.DocumentSyncStatePathOverride = "" })
+	server, project, repo := "https://s.example", "probe", "/repo"
+	_ = hosted.RecordHold(server, project, repo, "sty_foreign", "loc_other")
+	_ = hosted.RecordHold(server, project, repo, "sty_mine", "loc_self")
+	mine, _ := marshalWorkstateItem(workitem.Item{ID: "sty_mine", Kind: workitem.KindStory, Title: "m"})
+	foreign, _ := marshalWorkstateItem(workitem.Item{ID: "sty_foreign", Kind: workitem.KindStory, Title: "f"})
+	c := hosted.NewClient(server, hosted.FileStore{}, nil)
+	c.SetLocation("loc_self")
+	skipped, keep, err := partitionByHold(context.Background(), c, server, project, repo, []json.RawMessage{mine, foreign})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keep) != 1 || rawItemID(keep[0]) != "sty_mine" {
+		t.Fatalf("keep = %v", keep)
+	}
+	if len(skipped) != 1 || skipped[0].ItemID != "sty_foreign" {
+		t.Fatalf("skipped = %+v", skipped)
+	}
+}
+
+func TestSyncWorkstatePushSkipsForeignHeldLeavesCursor(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	hosted.DocumentSyncStatePathOverride = filepath.Join(t.TempDir(), "document-sync-state.json")
+	t.Cleanup(func() { hosted.DocumentSyncStatePathOverride = "" })
+	f := &fakeWorkstateServer{
+		posts:      map[string][]map[string]any{},
+		itemsByID:  map[string]map[string]any{},
+		ledgerByID: map[string]map[string]any{},
+	}
+	var foreignID string
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/locations", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"ok"}`))
+	})
+	mux.HandleFunc("GET /api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]string{{"id": "ws-personal", "kind": "personal", "name": "personal"}})
+	})
+	mux.HandleFunc("GET /api/v1/projects/{project}/workstate/items/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if id == foreignID {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":   id,
+				"hold": map[string]string{"location_id": "loc_other", "last_seen_at": "2026-09-01T00:00:00Z"},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	attachFakeWorkstateGRPC(t, f)
+	seedCred(t, ts.URL)
+	repo := workstateRepo(t, "[sync]\nstories = \"personal\"\n\n[hosted]\nproject = \"probe\"\n")
+
+	out, err := runRoot(t, "story", "create", "--title", "Foreign held", "--body", "x", "--acceptance", "1. x")
+	if err != nil {
+		t.Fatalf("create foreign: %v\n%s", err, out)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	dec := json.NewDecoder(strings.NewReader(out))
+	if err := dec.Decode(&created); err != nil || created.ID == "" {
+		t.Fatalf("parse create: %v %s", err, out)
+	}
+	foreignID = created.ID
+	if _, err := runRoot(t, "story", "create", "--title", "Mine", "--body", "y", "--acceptance", "1. y"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err = runRoot(t, "sync", "workstate", "push", "--server", ts.URL)
+	if err != nil {
+		t.Fatalf("push: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "skip "+foreignID) {
+		t.Fatalf("expected skip line, got %q", out)
+	}
+	for _, it := range f.lastItems("probe") {
+		m, _ := it.(map[string]any)
+		id, _ := m["id"].(string)
+		if id == foreignID {
+			t.Fatalf("foreign id was Applied: %v", it)
+		}
+	}
+	cur, err := hosted.LoadWorkstateCursor(ts.URL, "probe", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cur.ItemsUpdatedAt.IsZero() {
+		t.Fatalf("items cursor advanced past skipped row: %v", cur.ItemsUpdatedAt)
+	}
+}
+
+func TestPartitionByHoldProbesForeign(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	hosted.DocumentSyncStatePathOverride = filepath.Join(t.TempDir(), "document-sync-state.json")
+	t.Cleanup(func() { hosted.DocumentSyncStatePathOverride = "" })
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/projects/{project}/workstate/items/{id}", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":   "sty_y",
+			"hold": map[string]string{"location_id": "loc_other", "last_seen_at": "2026-09-01T00:00:00Z", "label": "desk"},
+		})
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	store := hosted.FileStore{}
+	_ = store.Save(hosted.Credential{ServerURL: ts.URL, AccessToken: "tok", RefreshToken: "r"})
+	c := hosted.NewClient(ts.URL, store, ts.Client())
+	c.SetLocation("loc_self_hold_aaaaaaaa")
+	raw, _ := marshalWorkstateItem(workitem.Item{ID: "sty_y", Kind: workitem.KindStory, Title: "y"})
+	skipped, keep, err := partitionByHold(context.Background(), c, ts.URL, "probe", "/repo", []json.RawMessage{raw})
+	if err != nil || len(keep) != 0 || len(skipped) != 1 {
+		t.Fatalf("keep=%d skip=%d err=%v", len(keep), len(skipped), err)
+	}
+	if skipped[0].Hold.LocationID != "loc_other" || skipped[0].Hold.LastSeenAt == "" {
+		t.Fatalf("skip hold = %+v", skipped[0].Hold)
 	}
 }

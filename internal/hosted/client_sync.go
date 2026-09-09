@@ -282,6 +282,9 @@ func mapGRPCErr(op string, err error) error {
 			return fmt.Errorf("hosted: grpc %s: message exceeds the %d MiB satelle Sync cap: %s",
 				op, MaxSyncMessageBytes>>20, st.Message())
 		}
+		if held := heldErrorFromStatus(st); held != nil {
+			return held
+		}
 		return fmt.Errorf("hosted: grpc %s: %s", op, st.Message())
 	}
 	return fmt.Errorf("hosted: grpc %s: %w", op, err)
@@ -291,4 +294,32 @@ func mapGRPCErr(op string, err error) error {
 // stable API; a miss falls through to the generic mapGRPCErr message.
 func isMessageSizeErr(msg string) bool {
 	return strings.Contains(msg, "larger than max")
+}
+
+// heldErrorFromStatus maps a server held refusal onto *HeldError without a
+// proto change (sty_f6cff549 AC4). Sniffs FailedPrecondition/Aborted plus
+// "held" in the message; extracts location id when the wording matches.
+func heldErrorFromStatus(st *status.Status) *HeldError {
+	if st == nil {
+		return nil
+	}
+	switch st.Code() {
+	case codes.FailedPrecondition, codes.Aborted, codes.PermissionDenied:
+	default:
+		return nil
+	}
+	msg := st.Message()
+	if !strings.Contains(strings.ToLower(msg), "held") {
+		return nil
+	}
+	h := &HeldError{}
+	// "held by location loc_xxx" — best-effort parse, never fail the mapping.
+	if i := strings.Index(msg, "location "); i >= 0 {
+		rest := msg[i+len("location "):]
+		id := strings.Fields(rest)
+		if len(id) > 0 {
+			h.Hold.LocationID = strings.Trim(id[0], "(),")
+		}
+	}
+	return h
 }

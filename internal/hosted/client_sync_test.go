@@ -230,6 +230,18 @@ func TestApplyOmitsLocationWhenUnset(t *testing.T) {
 	}
 }
 
+func TestMapGRPCErrHeldElsewhere(t *testing.T) {
+	st := status.New(codes.FailedPrecondition, "workstate: sty_h held by location loc_other_bbbb (desk), last seen 2026-09-01T00:00:00Z")
+	err := mapGRPCErr("Apply", st.Err())
+	if !errors.Is(err, ErrHeldElsewhere) {
+		t.Fatalf("err = %v", err)
+	}
+	var held *HeldError
+	if !errors.As(err, &held) || held.Hold.LocationID != "loc_other_bbbb" {
+		t.Fatalf("held = %+v (%v)", held, err)
+	}
+}
+
 func TestApplyTransportError(t *testing.T) {
 	store := &memStore{}
 	_ = store.Save(Credential{ServerURL: "http://hosted.example", AccessToken: "tok", RefreshToken: "r"})

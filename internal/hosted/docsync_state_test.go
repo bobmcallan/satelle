@@ -5,6 +5,26 @@ import (
 	"testing"
 )
 
+func TestHoldRegistryRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	DocumentSyncStatePathOverride = filepath.Join(dir, "document-sync-state.json")
+	t.Cleanup(func() { DocumentSyncStatePathOverride = "" })
+	if err := RecordHold("https://s.example", "p", "/repo", "sty_a", "loc_self"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadHolds("https://s.example", "p", "/repo")
+	if err != nil || got["sty_a"] != "loc_self" {
+		t.Fatalf("load = %v %v", got, err)
+	}
+	if err := ForgetHold("https://s.example", "p", "/repo", "sty_a"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = LoadHolds("https://s.example", "p", "/repo")
+	if _, ok := got["sty_a"]; ok {
+		t.Fatalf("forgot id still present: %v", got)
+	}
+}
+
 func TestDocumentCursorRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	DocumentSyncStatePathOverride = filepath.Join(dir, "document-sync-state.json")
