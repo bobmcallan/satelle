@@ -60,10 +60,26 @@ type Client struct {
 	server string
 	store  Store
 	http   *http.Client
+	// location is the checkout id stamped as x-satelle-location. Empty means
+	// the caller did not attach one (unbound, login, tests). Opt-in via SetLocation.
+	location string
 	// dialGRPC, if set, opens the Sync connection (tests inject bufconn).
 	// Nil uses grpc.NewClient against grpcTarget(server).
 	dialGRPC func(ctx context.Context, target string) (*grpc.ClientConn, error)
 }
+
+// SetLocation attaches a checkout identity. Empty clears it. Invalid ids are
+// ignored so a corrupt state file cannot stamp a header the server will 400.
+func (c *Client) SetLocation(id string) {
+	id = strings.TrimSpace(id)
+	if id != "" && !ValidLocationID(id) {
+		return
+	}
+	c.location = id
+}
+
+// Location returns the attached checkout id, or "".
+func (c *Client) Location() string { return c.location }
 
 // NewClient builds a client for server, backed by store for token persistence.
 // A nil httpClient uses a 30s-timeout default.
@@ -408,6 +424,9 @@ func (c *Client) send(ctx context.Context, method, path, accessToken string, pay
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
+	if c.location != "" {
+		req.Header.Set(LocationHeader, c.location)
+	}
 	if payload != nil && contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}

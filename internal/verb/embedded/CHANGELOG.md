@@ -1,3 +1,8 @@
+## [0.0.489] - 2026-09-09
+
+### Added
+- **Bound checkouts send a stable location identity on hosted sync.** A bound repo derives `loc_` + sha256(machine-id + repo path), persists it per-user beside credentials, registers once via `POST /api/v1/locations`, and stamps `x-satelle-location` on authenticated REST and gRPC Sync calls (including the 401-refresh retry). Login, project, and publish stay unstamped. Unbound repos are unchanged. (sty_e88d77ce)
+
 ## [0.0.488] - 2026-09-05
 
 ### Changed

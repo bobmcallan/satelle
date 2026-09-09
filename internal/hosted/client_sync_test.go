@@ -27,6 +27,7 @@ type stubSync struct {
 	syncpb.UnimplementedSyncServer
 	mu          sync.Mutex
 	auths       []string
+	locs        []string
 	applies     int
 	snaps       int
 	refreshes   int
@@ -45,9 +46,15 @@ func (s *stubSync) recordAuth(ctx context.Context) {
 	vals := md.Get("authorization")
 	if len(vals) == 0 {
 		s.auths = append(s.auths, "")
-		return
+	} else {
+		s.auths = append(s.auths, vals[0])
 	}
-	s.auths = append(s.auths, vals[0])
+	locs := md.Get(LocationHeader)
+	if len(locs) == 0 {
+		s.locs = append(s.locs, "")
+	} else {
+		s.locs = append(s.locs, locs[0])
+	}
 }
 
 func (s *stubSync) nextFail() error {
@@ -177,6 +184,49 @@ func TestApplyUsesGRPC(t *testing.T) {
 	}
 	if len(stub.auths) != 1 || stub.auths[0] != "Bearer tok" {
 		t.Fatalf("auth = %v", stub.auths)
+	}
+}
+
+func TestApplySendsLocationMetadata(t *testing.T) {
+	store := &memStore{}
+	_ = store.Save(Credential{ServerURL: "http://hosted.example", AccessToken: "tok", RefreshToken: "r"})
+	stub := &stubSync{}
+	c := newTestGRPCClient(t, stub, store, fatalHTTP(t))
+	c.SetLocation("loc_grpc_apply_bbbbbbbb")
+	if _, err := c.Apply(context.Background(), "probe", WorkstateIngest{
+		Items: []json.RawMessage{json.RawMessage(`{"id":"sty_1"}`)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(stub.locs) != 1 || stub.locs[0] != "loc_grpc_apply_bbbbbbbb" {
+		t.Fatalf("location metadata = %v", stub.locs)
+	}
+}
+
+func TestSnapshotSendsLocationMetadata(t *testing.T) {
+	store := &memStore{}
+	_ = store.Save(Credential{ServerURL: "http://hosted.example", AccessToken: "tok", RefreshToken: "r"})
+	stub := &stubSync{}
+	c := newTestGRPCClient(t, stub, store, fatalHTTP(t))
+	c.SetLocation("loc_grpc_snap_cccccccc")
+	if _, _, err := c.Snapshot(context.Background(), "probe", ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(stub.locs) != 1 || stub.locs[0] != "loc_grpc_snap_cccccccc" {
+		t.Fatalf("location metadata = %v", stub.locs)
+	}
+}
+
+func TestApplyOmitsLocationWhenUnset(t *testing.T) {
+	store := &memStore{}
+	_ = store.Save(Credential{ServerURL: "http://hosted.example", AccessToken: "tok", RefreshToken: "r"})
+	stub := &stubSync{}
+	c := newTestGRPCClient(t, stub, store, fatalHTTP(t))
+	if _, err := c.Apply(context.Background(), "probe", WorkstateIngest{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(stub.locs) != 1 || stub.locs[0] != "" {
+		t.Fatalf("unset location leaked metadata %v", stub.locs)
 	}
 }
 

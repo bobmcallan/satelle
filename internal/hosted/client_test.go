@@ -88,7 +88,60 @@ func TestClientRefreshRotationOn401(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	if meCalls != 2 {
-		t.Fatalf("expected exactly one retry (2 /me calls), got %d", meCalls)
+		t.Fatalf("Me calls = %d, want 2 (401 then retry)", meCalls)
+	}
+}
+
+func TestSendStampsLocationHeaderIncludingRetry(t *testing.T) {
+	var headers []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/me", func(w http.ResponseWriter, r *http.Request) {
+		headers = append(headers, r.Header.Get(LocationHeader))
+		if r.Header.Get("Authorization") != "Bearer access-2" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(Principal{ID: "u1"})
+	})
+	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "access-2", "refresh_token": "refresh-2",
+			"token_type": "Bearer", "expires_in": 3600,
+		})
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	store := &memStore{}
+	_ = store.Save(Credential{ServerURL: ts.URL, AccessToken: "access-1", RefreshToken: "refresh-1"})
+	c := NewClient(ts.URL, store, ts.Client())
+	c.SetLocation("loc_header_retry_aaaaaa")
+	if _, err := c.Me(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(headers) != 2 {
+		t.Fatalf("requests = %d, want 2 (401 + retry)", len(headers))
+	}
+	for i, h := range headers {
+		if h != "loc_header_retry_aaaaaa" {
+			t.Errorf("request %d location header = %q", i, h)
+		}
+	}
+}
+
+func TestSendOmitsLocationWhenUnset(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/me", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(LocationHeader) != "" {
+			t.Errorf("unexpected location header %q", r.Header.Get(LocationHeader))
+		}
+		_ = json.NewEncoder(w).Encode(Principal{ID: "u1"})
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	store := &memStore{}
+	_ = store.Save(Credential{ServerURL: ts.URL, AccessToken: "tok", RefreshToken: "r"})
+	if _, err := NewClient(ts.URL, store, ts.Client()).Me(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -148,7 +148,7 @@ func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string, force bool) 
 	if err != nil {
 		return err
 	}
-	client := hosted.NewClient(server, hosted.FileStore{}, nil)
+	client := newHostedClient(cmd.Context(), server, a.RepoRoot)
 	items, ledgerRows, err := client.Snapshot(cmd.Context(), project, "")
 	if err != nil {
 		return err
@@ -241,7 +241,7 @@ func runSyncWorkstatePush(cmd *cobra.Command, serverArg string, dryRun, full boo
 	// Chunked push; cursor advances only after every chunk confirms (AC3).
 	// Prefer a single POST when both sides fit in one chunk (preserves the
 	// small-batch shape tests and production already rely on).
-	client := hosted.NewClient(server, hosted.FileStore{}, nil)
+	client := newHostedClient(cmd.Context(), server, a.RepoRoot)
 	var totalItems, totalLedger int
 	type partial struct {
 		items  []json.RawMessage
@@ -396,7 +396,7 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force bo
 		return err
 	}
 
-	client := hosted.NewClient(server, hosted.FileStore{}, nil)
+	client := newHostedClient(ctx, server, a.RepoRoot)
 
 	items, ledgerRows, err := client.Snapshot(ctx, project, "")
 	if err != nil {

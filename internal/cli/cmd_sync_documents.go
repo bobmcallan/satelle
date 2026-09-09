@@ -120,7 +120,7 @@ func runSyncDocumentsPush(cmd *cobra.Command, serverArg, workspaceArg string, dr
 	if err != nil {
 		return err
 	}
-	client := hosted.NewClient(server, hosted.FileStore{}, nil)
+	client := newHostedClient(cmd.Context(), server, repoRoot)
 	// Skip unchanged bytes via server document manifest (sty_88e83180 AC6).
 	// Empty since = full set; does not touch the pull cursor.
 	headSHA := map[string]string{}
@@ -189,7 +189,7 @@ func runSyncDocumentsPull(cmd *cobra.Command, serverArg, workspaceArg string) er
 	if err != nil {
 		return err
 	}
-	client := hosted.NewClient(server, hosted.FileStore{}, nil)
+	client := newHostedClient(cmd.Context(), server, repoRoot)
 
 	// Personal only (epic:sync-publish). Team catalog is via publish/adopt.
 	// Project-addressed routes (sty_ca64d0cb) need no workspace id.

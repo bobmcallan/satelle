@@ -224,7 +224,7 @@ func (c *Client) withGRPCAuth(ctx context.Context, cli syncpb.SyncClient, fn fun
 		}
 		return err
 	}
-	err = fn(withBearer(ctx, cred.AccessToken))
+	err = fn(c.callCtx(ctx, cred.AccessToken))
 	if err == nil || status.Code(err) != codes.Unauthenticated {
 		return err
 	}
@@ -232,7 +232,7 @@ func (c *Client) withGRPCAuth(ctx context.Context, cli syncpb.SyncClient, fn fun
 	if rErr != nil {
 		return rErr
 	}
-	return fn(withBearer(ctx, rotated.AccessToken))
+	return fn(c.callCtx(ctx, rotated.AccessToken))
 }
 
 // refreshOverGRPC rotates tokens via Sync.Refresh on the same connection as
@@ -240,7 +240,7 @@ func (c *Client) withGRPCAuth(ctx context.Context, cli syncpb.SyncClient, fn fun
 // access token has just been rejected; the refresh token in the request is
 // the credential.
 func (c *Client) refreshOverGRPC(ctx context.Context, cli syncpb.SyncClient, cred Credential) (Credential, error) {
-	out, err := cli.Refresh(ctx, &syncpb.RefreshRequest{RefreshToken: cred.RefreshToken}, syncCallOpts()...)
+	out, err := cli.Refresh(c.withLocation(ctx), &syncpb.RefreshRequest{RefreshToken: cred.RefreshToken}, syncCallOpts()...)
 	if err != nil {
 		return Credential{}, fmt.Errorf("%w (refresh failed: %v)", ErrLoginRequired, err)
 	}
@@ -257,6 +257,20 @@ func (c *Client) refreshOverGRPC(ctx context.Context, cli syncpb.SyncClient, cre
 
 func withBearer(ctx context.Context, token string) context.Context {
 	return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token)
+}
+
+func (c *Client) withLocation(ctx context.Context) context.Context {
+	if c.location != "" {
+		return metadata.AppendToOutgoingContext(ctx, LocationHeader, c.location)
+	}
+	return ctx
+}
+
+// callCtx is the authenticated outgoing context for Apply/Snapshot:
+// bearer plus, when set, x-satelle-location. Used on both the first attempt
+// and the post-refresh retry.
+func (c *Client) callCtx(ctx context.Context, token string) context.Context {
+	return c.withLocation(withBearer(ctx, token))
 }
 
 func mapGRPCErr(op string, err error) error {

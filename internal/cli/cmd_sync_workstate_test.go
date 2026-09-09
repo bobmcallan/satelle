@@ -292,6 +292,11 @@ func TestSyncWorkstatePushNoREST(t *testing.T) {
 	}
 	var hits int
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/locations" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"ok"}`))
+			return
+		}
 		hits++
 		t.Errorf("unexpected HTTP %s %s", r.Method, r.URL.Path)
 		http.Error(w, "no REST", http.StatusInternalServerError)

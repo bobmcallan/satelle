@@ -423,7 +423,7 @@ func runSyncConfigPush(cmd *cobra.Command, serverArg, workspaceArg string, dryRu
 	if err != nil {
 		return err
 	}
-	client := hosted.NewClient(server, hosted.FileStore{}, nil)
+	client := newHostedClient(cmd.Context(), server, repoRoot)
 	// Prefer skipping unchanged bytes via server manifest (sty_88e83180 AC6).
 	// On manifest failure: degrade to full upload with a printed note.
 	headSHA := map[string]string{}
@@ -514,7 +514,7 @@ func runSyncConfigDeployOutcome(cmd *cobra.Command, serverArg, workspaceArg stri
 		return deployOutcome{}, err
 	}
 	sourceName := resolveDeploySourceName(cfg, workspaceArg)
-	client := hosted.NewClient(server, hosted.FileStore{}, nil)
+	client := newHostedClient(cmd.Context(), server, repoRoot)
 	manifest, err := client.ConfigManifest(cmd.Context(), project)
 	if err != nil {
 		if errors.Is(err, hosted.ErrLoginRequired) {
