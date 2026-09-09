@@ -1,3 +1,13 @@
+## [0.0.493] - 2026-09-09
+
+### Added
+- **Live-session abstraction and `interface = "stream"`.** `internal/agentcli` now has a `Session` (open / send / events / permission policy / cancel / close). ACP is expressed on it; Claude stream-json is a third transport. `{system}`/`{payload}` ride the first user message; reviewers stay `command`. (sty_d244fe1b)
+
+## [serve-v0.0.35] - 2026-09-09
+
+### Added
+- **Serve path carries the stream interface and session abstraction.** `internal/agentcli`, `internal/config`, and `internal/help` are on the satelled watch set; bump so `satelle update` refreshes the running service. (sty_d244fe1b)
+
 ## [0.0.492] - 2026-09-09
 
 ### Added

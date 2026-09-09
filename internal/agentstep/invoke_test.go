@@ -375,6 +375,18 @@ func TestInvokeVerdictOmitsDispatchMarkers(t *testing.T) {
 	}
 }
 
+func TestParseDecisionStreamUnwrappedResult(t *testing.T) {
+	// stream Captured() unwraps {"type":"result","result":"<json>"} to the inner
+	// bytes (sty_d244fe1b). parseDecision must accept those exact bytes.
+	dec, err := parseDecision([]byte(`{"decision":"accept","notes":"stream-ok"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec.Accept || dec.Notes != "stream-ok" {
+		t.Errorf("unwrapped stream result: %+v", dec)
+	}
+}
+
 func TestParseDecisionReasoningOptional(t *testing.T) {
 	dec, err := parseDecision([]byte(`{"decision":"reject","notes":"n"}`))
 	if err != nil {

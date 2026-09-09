@@ -64,6 +64,13 @@ const (
 // .satelle/workflows/agents.toml (transparently), but the default is read-only.
 const DefaultClaudeCommand = "claude -p --output-format json --disallowedTools Write,Edit,NotebookEdit,Bash --append-system-prompt {system} --allowedTools {tools} --model {model} --effort {effort}"
 
+// DefaultClaudeStreamCommand is the Claude live-session spawn for
+// interface=stream (sty_d244fe1b). System and payload ride the first user
+// message, not argv — so this line must not contain {system} or {payload}.
+// {tools}/{model}/{effort} stay spawn-time flags (empty drops the preceding
+// flag via buildArgs). Reviewers stay on DefaultClaudeCommand (command).
+const DefaultClaudeStreamCommand = "claude -p --input-format stream-json --output-format stream-json --verbose --disallowedTools Write,Edit,NotebookEdit,Bash --allowedTools {tools} --model {model} --effort {effort}"
+
 // DefaultGrokCommand is the grok preset template — the proven dogfood reviewer
 // command (this repo's own [reviewer]) behind the single-token "grok" preset.
 // Grok is argv-first, so the work-item rides on -p {payload} (and also stdin, dual
@@ -296,22 +303,28 @@ func NewRunner(name string) (Runner, error) {
 const (
 	InterfaceCommand = "command"
 	InterfaceACP     = "acp"
+	InterfaceStream  = "stream"
 )
 
 // RunnerFromBinding resolves an agents.toml transport + command to a Runner
-// (epic:agent-dispatch-transport). iface is "command" (default when empty) or "acp".
+// (epic:agent-dispatch-transport). iface is "command" (default when empty),
+// "acp", or "stream".
 //
 //   - command / empty: same as RunnerFromCommand (full argv template; in-loop → nil).
 //   - acp: spawn line only (no {system}/{payload} substitution on argv); ACP session
 //     protocol carries system/payload. Does not silently fall back to command.
+//   - stream: Claude-style stream-json spawn; {system}/{payload} rejected (they
+//     ride the first user message) while {tools}/{model}/{effort} remain argv.
 func RunnerFromBinding(iface, command string) (Runner, error) {
 	switch strings.ToLower(strings.TrimSpace(iface)) {
 	case "", InterfaceCommand:
 		return RunnerFromCommand(command)
 	case InterfaceACP:
 		return newACPRunner(command)
+	case InterfaceStream:
+		return newStreamRunner(command)
 	default:
-		return nil, fmt.Errorf("agentcli: unknown interface %q (want %q or %q)", iface, InterfaceCommand, InterfaceACP)
+		return nil, fmt.Errorf("agentcli: unknown interface %q (want %q, %q, or %q)", iface, InterfaceCommand, InterfaceACP, InterfaceStream)
 	}
 }
 

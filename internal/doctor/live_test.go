@@ -76,6 +76,14 @@ func TestProbeCommandReachable(t *testing.T) {
 	}
 }
 
+func TestProbeStreamUsesCommandVersion(t *testing.T) {
+	bin := fakeBin(t, "fake-cli", `echo "fake-cli 1.2.3"; exit 0`)
+	fs := probeGrant(context.Background(), grantFor("orch", bin+" --input-format stream-json", config.InterfaceStream), 5*time.Second)
+	if len(fs) != 1 || fs[0].ID != health.IDLiveOK || fs[0].Severity != health.SeverityInfo {
+		t.Fatalf("stream probe should use --version like command, got %+v", fs)
+	}
+}
+
 // TestProbeCommandAuthFailure pins that authentication is diagnosed only where
 // the provider SAYS so — an observable marker, never inferred from a bare
 // non-zero exit.

@@ -108,20 +108,22 @@ runtime refusal and validate, so they cannot disagree.
   (`satelle story set`, `story get`, …). Small local surface — not an MCP tool
   dump of every verb. Status and engagement change only through satelle.
 - **Out** (satelle → isolated worker): subprocess configured in
-  `.satelle/workflows/agents.toml`. Two **transports**, one binding shape
+  `.satelle/workflows/agents.toml`. Three **transports**, one binding shape
   (epic:agent-dispatch-transport):
 
 | `interface` | Meaning |
 |-------------|---------|
-| **`command`** (default; omit = command) | Full multi-token argv template; any CLI (Claude Code, `grok -p`, wrappers, custom). |
+| **`command`** (default; omit = command) | Full multi-token argv template; any CLI (Claude Code, `grok -p`, wrappers, custom). One-shot stdin/argv; reviewers stay here. |
 | **`acp`** | Agent Client Protocol over stdio; `command` is the **spawn line only** (e.g. `grok agent stdio`). System/payload ride the session, not `{placeholders}`. |
+| **`stream`** | Claude stream-json live session (`DefaultClaudeStreamCommand`). `{system}`/`{payload}` are rejected — they ride the first user message; `{tools}`/`{model}`/`{effort}` remain argv. For the orchestrator binding (live turns), not reviewers. |
 
-Shared fields on both: `role`, `tools`, `model`, `effort`, `secondary`,
-`principles`, `env`, `timeout`, `settings`. Claude Code does **not** support ACP
-— keep Claude on `interface = command`. An ACP-capable CLI is usable when it
-implements ACP agent stdio **and** the binding sets `interface = "acp"`. Workers
-never advance story status; they return text/verdicts that satelle enacts after
-gates.
+Shared fields on all three: `role`, `tools`, `model`, `effort`, `secondary`,
+`principles`, `env`, `timeout`, `settings`. Reviewers keep Claude on
+`interface = command` (cold one-shot, verdict contract). `stream` is the
+live-session option for an orchestrator binding. An ACP-capable CLI is usable
+when it implements ACP agent stdio **and** the binding sets `interface = "acp"`.
+Workers never advance story status; they return text/verdicts that satelle
+enacts after gates.
 
 ### Progressive execution diagnostics
 
@@ -279,11 +281,31 @@ model     = "grok-4.5"
 principles = "session"
 ```
 
+### Stream-json (Claude live session, sty_d244fe1b)
+
+`interface = "stream"` speaks Claude Code's native bidirectional NDJSON
+(`--input-format stream-json --output-format stream-json`). Satelle writes the
+system prompt and payload as the first user message, answers `control_request`
+permission asks with the same mutator policy as ACP, and unwraps the terminal
+`{"type":"result","result":"…"}` so `parseDecision` sees the verdict JSON.
+
+Preset: `DefaultClaudeStreamCommand` —
+
+```
+claude -p --input-format stream-json --output-format stream-json --verbose --disallowedTools Write,Edit,NotebookEdit,Bash --allowedTools {tools} --model {model} --effort {effort}
+```
+
+`{system}` and `{payload}` are rejected on the spawn line; `{tools}` /
+`{model}` / `{effort}` stay argv (empty drops the preceding flag). **Reviewers
+stay `command`** — a live channel does not help a cold one-shot verdict.
+`stream` exists for the orchestrator binding (order:4 of epic:agent-messaging).
+
 ### Codex — preferred ACP, secondary command (sty_3b4909bb)
 
-Codex is a first-class agent on the **same two transports** as everyone else.
-There is no third satelle interface. App Server is an implementation detail of
-the ACP adapter, not a satelle protocol.
+Codex is a first-class agent on the **same command and acp transports** as
+everyone else. Codex needs no third interface. App Server is an implementation
+detail of the ACP adapter, not a satelle protocol. `stream` is Claude's live
+channel, not a Codex transport.
 
 | Preference | Transport | Binding shape |
 | --- | --- | --- |

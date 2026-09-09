@@ -85,6 +85,8 @@ func probeGrant(ctx context.Context, g agentvalidate.Grant, timeout time.Duratio
 	if g.Interface == config.InterfaceACP {
 		return probeACP(ctx, g, fields, timeout)
 	}
+	// command and stream: cheapest proof the binary exists is --version.
+	// stream does not open a session at probe time (sty_d244fe1b).
 	return probeCommand(ctx, g, fields, timeout)
 }
 

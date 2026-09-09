@@ -51,6 +51,10 @@ func newACPRunner(command string) (Runner, error) {
 func (a acpRunner) Name() string    { return a.binary }
 func (a acpRunner) Command() string { return a.how }
 
+func (a acpRunner) Open(ctx context.Context, req Request, pol PermissionPolicy) (Session, error) {
+	return openACPSession(ctx, a, req, pol)
+}
+
 // acpEffortArgvSupported reports whether the ACP spawn is Grok-shaped and may
 // receive the Grok-only --reasoning-effort argv flag (sty_aa726901). Codex ACP
 // (npx -y @agentclientprotocol/codex-acp) and unknown peers are false — effort
@@ -70,13 +74,41 @@ func acpEffortArgvSupported(binary string, args []string) bool {
 }
 
 func (a acpRunner) Run(ctx context.Context, req Request) ([]byte, error) {
-	onEvent, stopEvents := eventStream(req)
-	defer stopEvents()
+	pol := defaultPermissionPolicy(toolsAllowMutators(req.AllowedTools))
+	sess, err := openACPSession(ctx, a, req, pol)
+	if err != nil {
+		return nil, err
+	}
+	return runOneShot(ctx, sess, req)
+}
+
+type acpSession struct {
+	cmd       *exec.Cmd
+	stdin     io.WriteCloser
+	client    *acpClient
+	pol       PermissionPolicy
+	onEvent   EventHandler
+	ev        <-chan Event
+	closeEv   func()
+	stopHB    func()
+	stderrBuf *bytes.Buffer
+	wg        sync.WaitGroup
+	closeOnce sync.Once
+	sendMu    sync.Mutex
+	promptErr error
+	ctx       context.Context
+}
+
+func openACPSession(ctx context.Context, a acpRunner, req Request, pol PermissionPolicy) (Session, error) {
+	if pol == nil {
+		pol = defaultPermissionPolicy(toolsAllowMutators(req.AllowedTools))
+	}
+	onEvent, stopHB := eventStream(req)
 	args := append([]string(nil), a.args...)
 	// Inject --reasoning-effort into spawn ONLY for Grok-shaped ACP peers
 	// (sty_aa726901). --reasoning-effort is a Grok CLI flag, not ACP; unknown
 	// peers (including Codex ACP via @agentclientprotocol/codex-acp) get effort
-	// solely via session/set_config_option in runSession. Prefer insertion
+	// solely via session/set_config_option in handshake. Prefer insertion
 	// before trailing "stdio" so `grok agent --reasoning-effort high stdio`.
 	if e := strings.TrimSpace(req.Effort); e != "" && acpEffortArgvSupported(a.binary, a.args) {
 		injected := false
@@ -99,68 +131,261 @@ func (a acpRunner) Run(ctx context.Context, req Request) ([]byte, error) {
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		stopHB()
 		return nil, fmt.Errorf("agentcli: acp: stdin: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		stopHB()
 		return nil, fmt.Errorf("agentcli: acp: stdout: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		stopHB()
 		return nil, fmt.Errorf("agentcli: acp: stderr: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
 		ev := newEvent(EventFailed)
 		ev.Error = err.Error()
 		emitEvent(onEvent, ev)
+		stopHB()
 		return nil, fmt.Errorf("agentcli: acp: start %s: %w", a.binary, err)
 	}
-	emitEvent(onEvent, newEvent(EventStart))
+
+	fanout, evCh, closeEv := fanoutEvents(onEvent)
+	emitEvent(fanout, newEvent(EventStart))
 
 	var stderrBuf bytes.Buffer
-	var wg sync.WaitGroup
-	wg.Add(1)
+	sess := &acpSession{
+		cmd: cmd, stdin: stdin, pol: pol,
+		onEvent: fanout, ev: evCh, closeEv: closeEv, stopHB: stopHB,
+		stderrBuf: &stderrBuf, ctx: ctx,
+	}
+	sess.wg.Add(1)
 	go func() {
-		defer wg.Done()
-		teeEventLines(stderr, &stderrBuf, req.Sink, "[stderr] ", true, commandAdapter{}, onEvent)
+		defer sess.wg.Done()
+		teeEventLines(stderr, &stderrBuf, req.Sink, "[stderr] ", true, commandAdapter{}, fanout)
 	}()
 
-	client := newACPClient(stdin, stdout, req.Sink, onEvent)
+	client := newACPClient(stdin, stdout, req.Sink, fanout)
 	client.setMutatorsOK(toolsAllowMutators(req.AllowedTools))
+	client.setPolicy(pol)
 	client.setCapture(req.Capture)
-	text, runErr := client.runSession(ctx, req)
+	sess.client = client
 
-	_ = client.tryCancel()
-	_ = stdin.Close()
-	waitErr := cmd.Wait()
-	wg.Wait()
+	if err := sess.handshake(ctx, req); err != nil {
+		sess.promptErr = err
+		if closeErr := sess.Close(); closeErr != nil {
+			return nil, closeErr
+		}
+		return nil, fmt.Errorf("agentcli: acp: %w", err)
+	}
+	return sess, nil
+}
 
-	if runErr != nil {
-		ev := newEvent(EventFailed)
-		ev.Error = runErr.Error()
-		emitEvent(onEvent, ev)
-		if msg := strings.TrimSpace(stderrBuf.String()); msg != "" {
-			return text, fmt.Errorf("agentcli: acp: %w: %s", runErr, msg)
+func (s *acpSession) Events() <-chan Event { return s.ev }
+
+func (s *acpSession) Captured() []byte {
+	if s.client == nil {
+		return nil
+	}
+	s.client.mu.Lock()
+	defer s.client.mu.Unlock()
+	if s.promptErr != nil {
+		return []byte(s.client.raw.String())
+	}
+	return []byte(s.client.capturedLocked())
+}
+
+func (s *acpSession) Send(ctx context.Context, turn Turn) error {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	var blocks []map[string]any
+	if sp := strings.TrimSpace(turn.System); sp != "" {
+		blocks = append(blocks, map[string]any{"type": "text", "text": sp})
+	}
+	if pay := strings.TrimSpace(turn.Text); pay != "" {
+		blocks = append(blocks, map[string]any{"type": "text", "text": pay})
+	}
+	if len(blocks) == 0 {
+		blocks = append(blocks, map[string]any{"type": "text", "text": "{}"})
+	}
+	c := s.client
+	c.mu.Lock()
+	sid := c.session
+	c.mu.Unlock()
+	if _, err := c.request(ctx, "session/prompt", map[string]any{
+		"sessionId": sid,
+		"prompt":    blocks,
+	}); err != nil {
+		s.promptErr = fmt.Errorf("session/prompt: %w", err)
+		return s.promptErr
+	}
+	emitEvent(s.onEvent, newEvent(EventCompleted))
+	return nil
+}
+
+func (s *acpSession) Cancel() error {
+	if s.client != nil {
+		return s.client.tryCancel()
+	}
+	return nil
+}
+
+func (s *acpSession) Close() error {
+	var err error
+	s.closeOnce.Do(func() {
+		if s.client != nil {
+			_ = s.client.tryCancel()
 		}
-		return text, fmt.Errorf("agentcli: acp: %w", runErr)
-	}
-	if waitErr != nil && ctx.Err() != nil {
-		ev := newEvent(EventFailed)
-		ev.Error = ctx.Err().Error()
-		emitEvent(onEvent, ev)
-		return text, fmt.Errorf("agentcli: acp: %w", ctx.Err())
-	}
-	if waitErr != nil && len(bytes.TrimSpace(text)) == 0 {
-		ev := newEvent(EventFailed)
-		ev.Error = waitErr.Error()
-		emitEvent(onEvent, ev)
-		if msg := strings.TrimSpace(stderrBuf.String()); msg != "" {
-			return text, fmt.Errorf("agentcli: acp: process: %w: %s", waitErr, msg)
+		if s.stdin != nil {
+			_ = s.stdin.Close()
 		}
-		return text, fmt.Errorf("agentcli: acp: process: %w", waitErr)
+		var waitErr error
+		if s.cmd != nil {
+			waitErr = s.cmd.Wait()
+		}
+		s.wg.Wait()
+		if s.stopHB != nil {
+			s.stopHB()
+		}
+		text := s.Captured()
+		if s.promptErr != nil {
+			ev := newEvent(EventFailed)
+			ev.Error = s.promptErr.Error()
+			emitEvent(s.onEvent, ev)
+			if s.stderrBuf != nil {
+				if msg := strings.TrimSpace(s.stderrBuf.String()); msg != "" {
+					err = fmt.Errorf("agentcli: acp: %w: %s", s.promptErr, msg)
+				} else {
+					err = fmt.Errorf("agentcli: acp: %w", s.promptErr)
+				}
+			} else {
+				err = fmt.Errorf("agentcli: acp: %w", s.promptErr)
+			}
+		} else if waitErr != nil && s.ctx != nil && s.ctx.Err() != nil {
+			ev := newEvent(EventFailed)
+			ev.Error = s.ctx.Err().Error()
+			emitEvent(s.onEvent, ev)
+			err = fmt.Errorf("agentcli: acp: %w", s.ctx.Err())
+		} else if waitErr != nil && len(bytes.TrimSpace(text)) == 0 {
+			ev := newEvent(EventFailed)
+			ev.Error = waitErr.Error()
+			emitEvent(s.onEvent, ev)
+			if s.stderrBuf != nil {
+				if msg := strings.TrimSpace(s.stderrBuf.String()); msg != "" {
+					err = fmt.Errorf("agentcli: acp: process: %w: %s", waitErr, msg)
+				} else {
+					err = fmt.Errorf("agentcli: acp: process: %w", waitErr)
+				}
+			} else {
+				err = fmt.Errorf("agentcli: acp: process: %w", waitErr)
+			}
+		}
+		if s.closeEv != nil {
+			s.closeEv()
+		}
+	})
+	return err
+}
+
+func (s *acpSession) handshake(ctx context.Context, req Request) error {
+	c := s.client
+	cwd := req.Dir
+	if cwd == "" {
+		cwd, _ = os.Getwd()
 	}
-	emitEvent(onEvent, newEvent(EventCompleted))
-	return text, nil
+
+	initRes, err := c.request(ctx, "initialize", map[string]any{
+		"protocolVersion": 1,
+		"clientInfo":      map[string]any{"name": "satelle", "version": "0"},
+		"clientCapabilities": map[string]any{
+			"fs":       map[string]any{"readTextFile": true, "writeTextFile": false},
+			"terminal": false,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("initialize: %w", err)
+	}
+
+	// Authenticate only for Grok-shaped methods that reuse an existing CLI
+	// session (cached_token / xai.api_key). Agent CLIs (Claude, Grok, Codex)
+	// own their own login/configuration — satelle never supplies API keys or
+	// drives Codex api-key / chat-gpt flows. Unknown advertised methods are
+	// skipped so session/new uses the peer's already-authenticated CLI state.
+	var initObj struct {
+		AuthMethods []struct {
+			ID string `json:"id"`
+		} `json:"authMethods"`
+	}
+	_ = json.Unmarshal(initRes, &initObj)
+	methodID := ""
+	for _, m := range initObj.AuthMethods {
+		if m.ID == "cached_token" || m.ID == "xai.api_key" {
+			methodID = m.ID
+			break
+		}
+	}
+	if methodID != "" {
+		if _, err := c.request(ctx, "authenticate", map[string]any{
+			"methodId": methodID,
+			"_meta":    map[string]any{"headless": true},
+		}); err != nil {
+			return fmt.Errorf("authenticate: %w", err)
+		}
+	}
+
+	sessRes, err := c.request(ctx, "session/new", map[string]any{
+		"cwd":        cwd,
+		"mcpServers": []any{},
+	})
+	if err != nil {
+		return fmt.Errorf("session/new: %w", err)
+	}
+	var sessObj struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(sessRes, &sessObj); err != nil || sessObj.SessionID == "" {
+		return fmt.Errorf("session/new: missing sessionId")
+	}
+	c.mu.Lock()
+	c.session = sessObj.SessionID
+	c.mu.Unlock()
+
+	// Optional model config (sty_a476a2f8). A peer that explicitly rejects the
+	// model value fails the run (so a reported model is the model that ran).
+	// Peers that do not implement set_config_option (Method not found / unsupported)
+	// are a soft miss — log and continue; the binding still spawned with its
+	// default model (same as before for those peers).
+	if m := strings.TrimSpace(req.Model); m != "" {
+		if _, err := c.request(ctx, "session/set_config_option", map[string]any{
+			"sessionId": sessObj.SessionID,
+			"configId":  "model",
+			"value":     m,
+		}); err != nil {
+			es := err.Error()
+			if strings.Contains(strings.ToLower(es), "method not found") ||
+				strings.Contains(strings.ToLower(es), "not supported") ||
+				strings.Contains(strings.ToLower(es), "unknown method") {
+				_ = es
+			} else {
+				return fmt.Errorf("session/set_config_option model=%q rejected by peer: %w", m, err)
+			}
+		}
+	}
+	if e := strings.TrimSpace(req.Effort); e != "" {
+		_, _ = c.request(ctx, "session/set_config_option", map[string]any{
+			"sessionId": sessObj.SessionID,
+			"configId":  "reasoning_effort",
+			"value":     e,
+		})
+		_, _ = c.request(ctx, "session/set_config_option", map[string]any{
+			"sessionId": sessObj.SessionID,
+			"configId":  "effort",
+			"value":     e,
+		})
+	}
+	return nil
 }
 
 // toolsAllowMutators is true when the binding's tools grant includes a write/edit
@@ -211,10 +436,11 @@ type acpClient struct {
 	segments   []string
 	session    string
 	mutatorsOK bool
+	pol        PermissionPolicy
 	sink       io.Writer
 	onEvent    EventHandler
 	readerDone chan struct{}
-	// capture is set from Request.Capture before runSession returns text.
+	// capture is set from Request.Capture before handshake returns.
 	capture CaptureMode
 }
 
@@ -251,6 +477,12 @@ func (c *acpClient) setMutatorsOK(v bool) {
 func (c *acpClient) setCapture(m CaptureMode) {
 	c.mu.Lock()
 	c.capture = m
+	c.mu.Unlock()
+}
+
+func (c *acpClient) setPolicy(pol PermissionPolicy) {
+	c.mu.Lock()
+	c.pol = pol
 	c.mu.Unlock()
 }
 
@@ -400,7 +632,15 @@ func (c *acpClient) handlePermission(id int64, params json.RawMessage) {
 	}
 	_ = json.Unmarshal(params, &p)
 
-	deny := isMutatorToolKind(p.ToolCall.Kind) && !c.allowMutators()
+	c.mu.Lock()
+	pol := c.pol
+	c.mu.Unlock()
+	var deny bool
+	if pol != nil {
+		deny = !pol(PermissionRequest{ToolName: p.ToolCall.Kind, Kind: p.ToolCall.Kind}).Allow
+	} else {
+		deny = isMutatorToolKind(p.ToolCall.Kind) && !c.allowMutators()
+	}
 	optionID := ""
 	for _, o := range p.Options {
 		if deny && (o.Kind == "reject_once" || o.Kind == "reject_always") {
@@ -492,134 +732,4 @@ func (c *acpClient) tryCancel() error {
 		"method":  "session/cancel",
 		"params":  map[string]any{"sessionId": sid},
 	})
-}
-
-func (c *acpClient) runSession(ctx context.Context, req Request) ([]byte, error) {
-	cwd := req.Dir
-	if cwd == "" {
-		cwd, _ = os.Getwd()
-	}
-
-	initRes, err := c.request(ctx, "initialize", map[string]any{
-		"protocolVersion": 1,
-		"clientInfo":      map[string]any{"name": "satelle", "version": "0"},
-		"clientCapabilities": map[string]any{
-			"fs":       map[string]any{"readTextFile": true, "writeTextFile": false},
-			"terminal": false,
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("initialize: %w", err)
-	}
-
-	// Authenticate only for Grok-shaped methods that reuse an existing CLI
-	// session (cached_token / xai.api_key). Agent CLIs (Claude, Grok, Codex)
-	// own their own login/configuration — satelle never supplies API keys or
-	// drives Codex api-key / chat-gpt flows. Unknown advertised methods are
-	// skipped so session/new uses the peer's already-authenticated CLI state.
-	var initObj struct {
-		AuthMethods []struct {
-			ID string `json:"id"`
-		} `json:"authMethods"`
-	}
-	_ = json.Unmarshal(initRes, &initObj)
-	methodID := ""
-	for _, m := range initObj.AuthMethods {
-		if m.ID == "cached_token" || m.ID == "xai.api_key" {
-			methodID = m.ID
-			break
-		}
-	}
-	if methodID != "" {
-		if _, err := c.request(ctx, "authenticate", map[string]any{
-			"methodId": methodID,
-			"_meta":    map[string]any{"headless": true},
-		}); err != nil {
-			// Some fake peers skip auth; only fail if we elected a known method.
-			return nil, fmt.Errorf("authenticate: %w", err)
-		}
-	}
-
-	sessRes, err := c.request(ctx, "session/new", map[string]any{
-		"cwd":        cwd,
-		"mcpServers": []any{},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("session/new: %w", err)
-	}
-	var sessObj struct {
-		SessionID string `json:"sessionId"`
-	}
-	if err := json.Unmarshal(sessRes, &sessObj); err != nil || sessObj.SessionID == "" {
-		return nil, fmt.Errorf("session/new: missing sessionId")
-	}
-	c.mu.Lock()
-	c.session = sessObj.SessionID
-	c.mu.Unlock()
-
-	// Optional model config (sty_a476a2f8). A peer that explicitly rejects the
-	// model value fails the run (so a reported model is the model that ran).
-	// Peers that do not implement set_config_option (Method not found / unsupported)
-	// are a soft miss — log and continue; the binding still spawned with its
-	// default model (same as before for those peers).
-	if m := strings.TrimSpace(req.Model); m != "" {
-		if _, err := c.request(ctx, "session/set_config_option", map[string]any{
-			"sessionId": sessObj.SessionID,
-			"configId":  "model",
-			"value":     m,
-		}); err != nil {
-			es := err.Error()
-			if strings.Contains(strings.ToLower(es), "method not found") ||
-				strings.Contains(strings.ToLower(es), "not supported") ||
-				strings.Contains(strings.ToLower(es), "unknown method") {
-				// soft: peer lacks the method — cannot confirm model change
-				_ = es
-			} else {
-				return nil, fmt.Errorf("session/set_config_option model=%q rejected by peer: %w", m, err)
-			}
-		}
-	}
-	// Effort: try common config ids; ignore failures (peers vary).
-	if e := strings.TrimSpace(req.Effort); e != "" {
-		// Prefer reasoning_effort; also try effort for peers that use that id.
-		_, _ = c.request(ctx, "session/set_config_option", map[string]any{
-			"sessionId": sessObj.SessionID,
-			"configId":  "reasoning_effort",
-			"value":     e,
-		})
-		_, _ = c.request(ctx, "session/set_config_option", map[string]any{
-			"sessionId": sessObj.SessionID,
-			"configId":  "effort",
-			"value":     e,
-		})
-	}
-
-	// Pack system + payload as text content blocks (no argv placeholders).
-	var blocks []map[string]any
-	if sp := strings.TrimSpace(req.SystemPrompt); sp != "" {
-		blocks = append(blocks, map[string]any{"type": "text", "text": sp})
-	}
-	if pay := strings.TrimSpace(req.Payload); pay != "" {
-		blocks = append(blocks, map[string]any{"type": "text", "text": pay})
-	}
-	if len(blocks) == 0 {
-		blocks = append(blocks, map[string]any{"type": "text", "text": "{}"})
-	}
-
-	if _, err := c.request(ctx, "session/prompt", map[string]any{
-		"sessionId": sessObj.SessionID,
-		"prompt":    blocks,
-	}); err != nil {
-		// Error path: return full raw accumulation for diagnostics — truncating
-		// to the answer segment would lose the reason the run failed.
-		c.mu.Lock()
-		partial := c.raw.String()
-		c.mu.Unlock()
-		return []byte(partial), fmt.Errorf("session/prompt: %w", err)
-	}
-
-	c.mu.Lock()
-	out := c.capturedLocked()
-	c.mu.Unlock()
-	return []byte(out), nil
 }

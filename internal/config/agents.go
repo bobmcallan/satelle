@@ -82,10 +82,12 @@ const (
 // Interface values for AgentBinding.Interface — how satelle runs the isolated
 // worker subprocess (epic:agent-dispatch-transport). Orthogonal to role:
 // command = full argv template (default; any CLI including Claude);
-// acp = Agent Client Protocol over stdio (spawn line only; satelle is client).
+// acp = Agent Client Protocol over stdio (spawn line only; satelle is client);
+// stream = Claude stream-json live session (sty_d244fe1b).
 const (
 	InterfaceCommand = "command"
 	InterfaceACP     = "acp"
+	InterfaceStream  = "stream"
 
 	// Dispatch marker environment keys identify an isolated performing step to
 	// harness hooks. They let the dispatched child use its authored tool grant
@@ -116,9 +118,10 @@ const (
 // (true→session, false→none); Principles wins when both are set.
 //
 // Interface selects the dispatch transport (epic:agent-dispatch-transport):
-// "command" (default) or "acp". Shared grant fields apply to both; spawn shape differs.
+// "command" (default), "acp", or "stream". Shared grant fields apply to all;
+// spawn shape differs.
 type AgentBinding struct {
-	// Interface is "command" | "acp". Empty means command. Unknown values fail at load.
+	// Interface is "command" | "acp" | "stream". Empty means command. Unknown values fail at load.
 	Interface string `toml:"interface"`
 	// Command is the agent's spawn/template string.
 	//   command transport: multi-token full argv template with {system}/{tools}/
@@ -225,8 +228,8 @@ func (b AgentBinding) CommandTemplate() string {
 	return b.Command
 }
 
-// ResolvedInterface returns the effective dispatch transport: command (default)
-// or acp. Unknown non-empty values are returned lowercased so LoadAgents /
+// ResolvedInterface returns the effective dispatch transport: command (default),
+// acp, or stream. Unknown non-empty values are returned lowercased so LoadAgents /
 // agentvalidate can reject them (epic:agent-dispatch-transport).
 func (b AgentBinding) ResolvedInterface() string {
 	switch strings.ToLower(strings.TrimSpace(b.Interface)) {
@@ -234,6 +237,8 @@ func (b AgentBinding) ResolvedInterface() string {
 		return InterfaceCommand
 	case InterfaceACP:
 		return InterfaceACP
+	case InterfaceStream:
+		return InterfaceStream
 	default:
 		return strings.ToLower(strings.TrimSpace(b.Interface))
 	}
@@ -242,6 +247,11 @@ func (b AgentBinding) ResolvedInterface() string {
 // IsACP reports whether this binding uses the ACP transport.
 func (b AgentBinding) IsACP() bool {
 	return b.ResolvedInterface() == InterfaceACP
+}
+
+// IsStream reports whether this binding uses the stream-json transport.
+func (b AgentBinding) IsStream() bool {
+	return b.ResolvedInterface() == InterfaceStream
 }
 
 // ResolvedRole returns the binding's effective role: the declared Role when set

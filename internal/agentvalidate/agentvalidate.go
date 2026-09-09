@@ -34,8 +34,8 @@ import (
 // Env VALUES are never included (secrets); key names may appear in Notes.
 type Grant struct {
 	Name      string
-	Backend   string // in-loop | isolated:claude | isolated:grok | isolated:codex | isolated:<binary> | acp:<binary>
-	Interface string // command | acp (epic:agent-dispatch-transport)
+	Backend   string // in-loop | isolated:claude | isolated:grok | isolated:codex | isolated:<binary> | acp:<binary> | stream:<binary>
+	Interface string // command | acp | stream (epic:agent-dispatch-transport)
 	// Command is the effective command template — the literal argv the operator
 	// can read. Surfaced as a field (not only inside Notes) so a provenance
 	// display can attribute it like any other resolved value (sty_c7dfeedf).
@@ -670,10 +670,10 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 	}
 
 	// Unknown interface (LoadAgents also rejects; keep validate defensive).
-	if iface != config.InterfaceCommand && iface != config.InterfaceACP {
+	if iface != config.InterfaceCommand && iface != config.InterfaceACP && iface != config.InterfaceStream {
 		bindingProblem(fmt.Sprintf(
-			"agents.toml [%s] interface %q: want %q or %q",
-			section, b.Interface, config.InterfaceCommand, config.InterfaceACP))
+			"agents.toml [%s] interface %q: want %q, %q, or %q",
+			section, b.Interface, config.InterfaceCommand, config.InterfaceACP, config.InterfaceStream))
 		g.Backend = "invalid"
 		return g, problems, warnings, fs
 	}
@@ -684,34 +684,39 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 		lower0 = strings.ToLower(fields[0])
 	}
 
-	// ACP transport (epic:agent-dispatch-transport): spawn line only; no argv placeholders.
-	if iface == config.InterfaceACP {
+	// ACP / stream transports: spawn line via RunnerFromBinding; ceiling is
+	// tools grant + client permission policy (not argv --deny).
+	if iface == config.InterfaceACP || iface == config.InterfaceStream {
+		label := "acp"
+		if iface == config.InterfaceStream {
+			label = "stream"
+		}
 		runner, err := agentcli.RunnerFromBinding(iface, cmd)
 		if err != nil {
-			bindingProblem(fmt.Sprintf("agents.toml [%s] acp: %v", section, err))
+			bindingProblem(fmt.Sprintf("agents.toml [%s] %s: %v", section, label, err))
 			g.Backend = "invalid"
 		} else {
-			g.Backend = "acp:" + runner.Name()
+			g.Backend = label + ":" + runner.Name()
 			if g.Notes == "" {
-				g.Notes = "acp spawn: " + runner.Command()
+				g.Notes = label + " spawn: " + runner.Command()
 			} else {
-				g.Notes += "; acp spawn: " + runner.Command()
+				g.Notes += "; " + label + " spawn: " + runner.Command()
 			}
 			// Ceiling: tools grant + client permission policy (not argv --deny).
 			g.ReadOnly = b.Tools != "" && !toolsGrantMutators(b.Tools)
 			if role == config.RoleReviewer {
 				if b.Tools == "" {
 					ceilingProblem(fmt.Sprintf(
-						"agents.toml [%s] interface=acp role=reviewer requires tools= (grant evidence; ACP ceiling is tools + client permission policy, not argv --deny)",
-						section))
+						"agents.toml [%s] interface=%s role=reviewer requires tools= (grant evidence; %s ceiling is tools + client permission policy, not argv --deny)",
+						section, label, label))
 				} else if !g.ReadOnly {
 					ceilingWarn(fmt.Sprintf(
-						"agents.toml [%s] is role=reviewer with interface=acp and tools that appear to allow mutators (%s) — prefer a read-only tools list; satelle denies mutator ACP tool kinds only when tools look read-only",
-						section, b.Tools))
+						"agents.toml [%s] is role=reviewer with interface=%s and tools that appear to allow mutators (%s) — prefer a read-only tools list; satelle denies mutator tool kinds only when tools look read-only",
+						section, label, b.Tools))
 				} else if g.Notes == "" {
-					g.Notes = "ceiling: acp permission policy + tools"
+					g.Notes = "ceiling: " + label + " permission policy + tools"
 				} else {
-					g.Notes += "; ceiling: acp permission policy + tools"
+					g.Notes += "; ceiling: " + label + " permission policy + tools"
 				}
 			}
 		}

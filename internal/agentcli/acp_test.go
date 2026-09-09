@@ -568,3 +568,84 @@ while True:
 		t.Fatalf("want model set_config_option error, got %v", err)
 	}
 }
+
+func TestACPSession_SecondTurn(t *testing.T) {
+	dir := t.TempDir()
+	mark := filepath.Join(dir, "mark.txt")
+	path := filepath.Join(dir, "fake-acp-turns")
+	script := `#!/usr/bin/env python3
+import json, os, sys
+
+mark = os.environ.get("ACP_MARK")
+if mark:
+    with open(mark, "a") as f:
+        f.write("start\n")
+
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+def read():
+    line = sys.stdin.readline()
+    if not line:
+        return None
+    return json.loads(line)
+
+n = 0
+while True:
+    msg = read()
+    if msg is None:
+        break
+    mid = msg.get("id")
+    method = msg.get("method")
+    if method == "initialize":
+        send({"jsonrpc":"2.0","id":mid,"result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}})
+    elif method == "session/new":
+        send({"jsonrpc":"2.0","id":mid,"result":{"sessionId":"sess_test"}})
+    elif method == "session/set_config_option":
+        send({"jsonrpc":"2.0","id":mid,"result":{}})
+    elif method == "session/prompt":
+        n += 1
+        send({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_test","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"acp-turn-%d" % n}}}})
+        send({"jsonrpc":"2.0","id":mid,"result":{"stopReason":"end_turn"}})
+    elif method == "session/cancel":
+        pass
+    elif mid is not None:
+        send({"jsonrpc":"2.0","id":mid,"result":{}})
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r, err := newACPRunner(path + " stdio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ar := r.(acpRunner)
+	sess, err := openACPSession(context.Background(), ar, Request{
+		AllowedTools: "read_file,grep,list_dir",
+		Env:          map[string]string{"ACP_MARK": mark},
+	}, defaultPermissionPolicy(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+
+	if err := sess.Send(context.Background(), Turn{System: "sys", Text: "one"}); err != nil {
+		t.Fatalf("send 1: %v", err)
+	}
+	got1 := waitEventText(t, sess, "acp-turn-1")
+	if err := sess.Send(context.Background(), Turn{Text: "two"}); err != nil {
+		t.Fatalf("send 2: %v", err)
+	}
+	got2 := waitEventText(t, sess, "acp-turn-2")
+	if got1 != "acp-turn-1" || got2 != "acp-turn-2" {
+		t.Fatalf("texts = %q %q", got1, got2)
+	}
+	b, err := os.ReadFile(mark)
+	if err != nil {
+		t.Fatalf("mark: %v", err)
+	}
+	if n := strings.Count(string(b), "start"); n != 1 {
+		t.Fatalf("process started %d times, want 1", n)
+	}
+}

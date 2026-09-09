@@ -60,6 +60,8 @@ func TestAgentDispatchTopic(t *testing.T) {
 		`interface`,
 		"command",
 		"acp",
+		"stream",
+		"DefaultClaudeStreamCommand",
 		"CLI verbs",
 		"Claude",
 		"MCP",

@@ -362,8 +362,17 @@ func TestResolvedInterfaceAndLoad(t *testing.T) {
 	if got := (AgentBinding{Interface: "acp"}).ResolvedInterface(); got != InterfaceACP {
 		t.Errorf("acp = %q", got)
 	}
+	if got := (AgentBinding{Interface: "stream"}).ResolvedInterface(); got != InterfaceStream {
+		t.Errorf("stream = %q", got)
+	}
 	if !(AgentBinding{Interface: "acp"}).IsACP() {
 		t.Error("IsACP should be true")
+	}
+	if !(AgentBinding{Interface: "stream"}).IsStream() {
+		t.Error("IsStream should be true")
+	}
+	if (AgentBinding{Interface: "acp"}).IsStream() {
+		t.Error("IsStream should be false for acp")
 	}
 
 	dir := t.TempDir()
@@ -376,8 +385,8 @@ func TestResolvedInterfaceAndLoad(t *testing.T) {
 		t.Fatalf("want interface load error, got %v", err)
 	}
 
-	// Valid acp + omit interface still load.
-	ok := "[reviewer]\ninterface = \"acp\"\ncommand = \"grok agent stdio\"\ntools = \"read_file\"\n[planner]\ncommand = \"claude -p {system}\"\n"
+	// Valid acp + stream + omit interface still load.
+	ok := "[reviewer]\ninterface = \"acp\"\ncommand = \"grok agent stdio\"\ntools = \"read_file\"\n[planner]\ncommand = \"claude -p {system}\"\n[orchestrator]\ninterface = \"stream\"\ncommand = \"claude -p --input-format stream-json --output-format stream-json --verbose --allowedTools {tools}\"\n"
 	if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(ok), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -390,6 +399,9 @@ func TestResolvedInterfaceAndLoad(t *testing.T) {
 	}
 	if ac.Agents["planner"].ResolvedInterface() != InterfaceCommand {
 		t.Errorf("planner should default command")
+	}
+	if ac.Agents["orchestrator"].ResolvedInterface() != InterfaceStream {
+		t.Errorf("orchestrator interface = %q", ac.Agents["orchestrator"].ResolvedInterface())
 	}
 }
 

@@ -559,6 +559,45 @@ func TestValidate_ACPInterface(t *testing.T) {
 	}
 }
 
+func TestValidate_StreamInterface(t *testing.T) {
+	agents := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop"},
+		Reviewer: config.AgentBinding{
+			Interface: "stream",
+			Command:   "claude -p --input-format stream-json {system}",
+			Tools:     "Read,Grep,Glob",
+			Role:      "reviewer",
+		},
+	}
+	r := Validate(agents, nil, nil)
+	if r.OK() {
+		t.Fatal("stream with {system} must fail validate")
+	}
+
+	agents.Reviewer = config.AgentBinding{
+		Interface: "stream",
+		Command:   agentcli.DefaultClaudeStreamCommand,
+		Tools:     "Read,Grep,Glob",
+		Role:      "reviewer",
+	}
+	r = Validate(agents, nil, nil)
+	if !r.OK() {
+		t.Fatalf("valid stream reviewer problems: %v", r.Problems)
+	}
+	var g Grant
+	for _, x := range r.Grants {
+		if x.Name == "reviewer" {
+			g = x
+		}
+	}
+	if g.Interface != "stream" || !strings.HasPrefix(g.Backend, "stream:") {
+		t.Errorf("grant = %+v, want interface=stream backend stream:*", g)
+	}
+	if !g.ReadOnly {
+		t.Error("stream reviewer with read-only tools should be ReadOnly")
+	}
+}
+
 func TestValidate_GrantEffort(t *testing.T) {
 	agents := config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},
