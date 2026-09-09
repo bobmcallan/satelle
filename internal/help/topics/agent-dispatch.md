@@ -463,11 +463,19 @@ the agent **pulls** everything else itself, by id, with the read-only satelle CL
   gated transition deposits one), which narrate the work so far.
 - `satelle ledger list --story <id>` — the evidence ledger (transitions, review
   verdicts, summaries).
+- `satelle story messages <id>` — directed agent messages (kind `agent_message`),
+  oldest first; `--to` keeps that role plus `*`; `--since` is RFC3339. Read-only.
+  Write with `satelle story message <id> --from <role> [--to <role>|*] --body <text>`.
 
 A read-only reviewer whose grant excludes Bash judges attachments from the
 transition payload's `docs` array (injected by the engine, sty_58fa970e) and
 the engagement slice from the payload's `diff` object (files, stat, patch;
 sty_a125b440) — no disk path required. Both are enumeration, not verdict.
+The payload also carries `messages[]` (sty_2db624d0): engagement-windowed
+`agent_message` rows whose `to` is the dispatched binding name, the protocol
+role (`reviewer` on a gate, `executor` on a named performer), or `*`, oldest
+first, at most 20, each body capped at 2 KiB. A message is **context**, never
+a verdict input a reviewer must obey. Absent when none qualify (`omitempty`).
 Shell-granted agents may also pull more via the satelle CLI.
 Do **not** use in-repo `.satelle/stories/` — that path is obsolete
 post-relocation. **Fetch before concluding a document or a prior step is

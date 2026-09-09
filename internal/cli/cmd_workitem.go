@@ -222,6 +222,8 @@ func workItemGroup(group, plural, short string) *cobra.Command {
 		parent.AddCommand(storyStopRequestCommand())
 		parent.AddCommand(storySeatCommands()...)
 		parent.AddCommand(storyHoldCommands())
+		parent.AddCommand(storyMessageCommand())
+		parent.AddCommand(storyMessagesCommand())
 	}
 	if group == "task" {
 		// tasks are authored substrate → `satelle task validate` runs the
@@ -1293,6 +1295,64 @@ holder park itself. Never cancel a healthy story to free a seat.`,
 	}
 	seat.AddCommand(release)
 	return []*cobra.Command{seat}
+}
+
+// storyMessageCommand is `satelle story message <id> --from <role> [--to <role>|*] --body <text>`.
+func storyMessageCommand() *cobra.Command {
+	var from, to, body string
+	cmd := &cobra.Command{
+		Use:   "message <id>",
+		Short: "Append a directed agent message to a story",
+		Long: `Write a directed agent message onto a story's ledger (kind agent_message).
+
+--from is the sending role (orchestrator, executor, human, …). --to defaults
+to * (every next dispatch). The next gate or executor payload carries matching
+messages in messages[].`,
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := map[string]any{"id": args[0], "from": from, "body": body}
+			if to != "" {
+				req["to"] = to
+			}
+			return dispatch(cmd, "story-message", req)
+		},
+	}
+	cmd.Flags().StringVar(&from, "from", "", "sending role (required)")
+	cmd.Flags().StringVar(&to, "to", "", "receiving role or * (default *)")
+	cmd.Flags().StringVar(&body, "body", "", "message body (required)")
+	_ = cmd.MarkFlagRequired("from")
+	_ = cmd.MarkFlagRequired("body")
+	return cmd
+}
+
+// storyMessagesCommand is `satelle story messages <id> [--since RFC3339] [--to role]`.
+func storyMessagesCommand() *cobra.Command {
+	var since, to string
+	cmd := &cobra.Command{
+		Use:   "messages <id>",
+		Short: "List directed agent messages on a story (read-only)",
+		Long: `List agent_message ledger rows for a story, oldest first.
+
+Read-only — a dispatched agent may call this under Bash(satelle:*). --to keeps
+that role plus *. --since is RFC3339. No engagement window (the payload already
+applied that).`,
+		Args:        cobra.ExactArgs(1),
+		Annotations: needsStore(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := map[string]any{"id": args[0]}
+			if since != "" {
+				req["since"] = since
+			}
+			if to != "" {
+				req["to"] = to
+			}
+			return dispatch(cmd, "story-messages", req)
+		},
+	}
+	cmd.Flags().StringVar(&since, "since", "", "RFC3339 lower bound on created_at")
+	cmd.Flags().StringVar(&to, "to", "", "receiving role (plus *)")
+	return cmd
 }
 
 // Help for the shared story/task/execution surface. One factory builds the three

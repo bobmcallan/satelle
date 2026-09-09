@@ -113,6 +113,10 @@ type Engine struct {
 	// resolver itself must never error — map missing baseline / git failure to
 	// a no-baseline marker so the transition cannot fail on enumeration.
 	itemDiff func(ctx context.Context, itemID string) *DiffState
+	// itemMessages resolves directed agent messages for a gate/executor payload
+	// (sty_2db624d0). Nil-safe: an unwired resolver injects nothing. The
+	// resolver itself must never error — skip unreadable rows.
+	itemMessages func(ctx context.Context, itemID string, addresses []string) []MessageState
 	// trackingStory resolves the id of an OPEN story already diagnosing a failing
 	// authored document, so a refusal caused by that document points at the
 	// diagnosis instead of leaving it in backlog (sty_88d40a60). Injected because
@@ -414,6 +418,14 @@ func (g *Engine) SetDiffResolver(fn func(ctx context.Context, itemID string) *Di
 	g.itemDiff = fn
 }
 
+// SetMessagesResolver wires the resolver that lists directed agent messages
+// for a dispatch payload (sty_2db624d0). addresses is the engine-built set
+// (binding name + protocol role + implicit *); the resolver matches `to` in
+// that set or `to=="*"`. Nil-safe. Never fail a transition.
+func (g *Engine) SetMessagesResolver(fn func(ctx context.Context, itemID string, addresses []string) []MessageState) {
+	g.itemMessages = fn
+}
+
 // docsPayloadCeiling bounds how many attachment body bytes ride in one payload
 // so a long-lived story with many step summaries does not blow the prompt.
 const docsPayloadCeiling = 128 << 10
@@ -533,6 +545,21 @@ type transitionPayload struct {
 	// marker (NoBaseline=true, no patch) is used when the resolver ran and
 	// found no baseline, so a skill's fast-accept branch is unambiguous.
 	Diff *DiffState `json:"diff,omitempty"`
+	// Messages is the engagement-windowed agent_message list for this
+	// recipient (sty_2db624d0). Enumeration, not verdict — context, never a
+	// verdict input a reviewer must obey. Absent when none qualify or the
+	// resolver is unwired (omitempty matches prior_verdicts).
+	Messages []MessageState `json:"messages,omitempty"`
+}
+
+// MessageState is one agent_message as injected into a transition payload.
+type MessageState struct {
+	ID            string `json:"id"`
+	From          string `json:"from"`
+	To            string `json:"to"`
+	Body          string `json:"body"`
+	CreatedAt     string `json:"created_at"`
+	EngagementSHA string `json:"engagement_sha"`
 }
 
 // DiffState is the engagement-slice enumeration handed to a reviewer. JSON
@@ -700,6 +727,31 @@ func (g *Engine) fillDiff(ctx context.Context, itemID string, tp *transitionPayl
 		cp.Patch = ""
 	}
 	tp.Diff = &cp
+}
+
+const (
+	messagesCount       = 20
+	messagesBodyCeiling = 2 << 10
+)
+
+// fillMessages attaches engagement-windowed agent messages for recipient.
+// Runs AFTER fillPayloadDocs / fillDiff and never touches those counters.
+// Oldest 20 kept; each body excerpted. Nil-safe; never errors.
+func (g *Engine) fillMessages(ctx context.Context, itemID string, addresses []string, tp *transitionPayload) {
+	if g.itemMessages == nil || itemID == "" {
+		return
+	}
+	msgs := g.itemMessages(ctx, itemID, addresses)
+	if len(msgs) == 0 {
+		return
+	}
+	if len(msgs) > messagesCount {
+		msgs = msgs[:messagesCount]
+	}
+	for i := range msgs {
+		msgs[i].Body = excerpt(msgs[i].Body, messagesBodyCeiling)
+	}
+	tp.Messages = msgs
 }
 
 // excerpt cuts s to at most limit bytes on a rune boundary, marking the cut so
@@ -1288,6 +1340,11 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	}
 	execPayload := transitionPayload{Story: item, From: item.Status, To: toStatus, ReviewSkill: dispatchSkill}
 	g.fillPayloadDocs(ctx, item.ID, &execPayload)
+	execAddrs := []string{dispatchAgent, "executor"}
+	if role := config.ResolvedRole(dispatchAgent, binding); role != "" {
+		execAddrs = append(execAddrs, role)
+	}
+	g.fillMessages(ctx, item.ID, execAddrs, &execPayload)
 	charter := executorCharter(dispatchAgent, toStatus, wfName)
 	var finalArtifact *agentartifact.Artifact
 	var invRes InvokeResult
@@ -1674,6 +1731,11 @@ func (g *Engine) runReviewerWith(ctx context.Context, item workitem.Item, toStat
 	// without a shell need the slice; executors have one. fillDiff never
 	// errors — a missing baseline is a marker, not a refused transition.
 	g.fillDiff(ctx, item.ID, &tp)
+	gateAddrs := []string{"reviewer"}
+	if strings.TrimSpace(gateAgent) != "" && gateAgent != "reviewer" {
+		gateAddrs = append(gateAddrs, gateAgent)
+	}
+	g.fillMessages(ctx, item.ID, gateAddrs, &tp)
 	// Route drift rides the payload ONLY when it exists, so a repo that names a
 	// drift gate has the enumeration without shelling for it, and every other
 	// reviewer's payload is byte-for-byte unchanged (sty_6e4f7fd8).

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -258,6 +259,7 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// receive the live slice in the transition payload. Enumeration
 			// only; a missing baseline is a marker, never a refused gate.
 			rev.SetDiffResolver(diffResolver())
+			rev.SetMessagesResolver(messagesResolver())
 			rev.SetArtifactAttacher(verb.AttachItemDoc)
 			// Structured retry/failure/timeout telemetry (sty_b73c3236): the engine
 			// sees each dispatch ATTEMPT (a killed/timed-out subprocess) the verb
@@ -368,6 +370,7 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 	// deliberately wires no docs resolver — that omission is this site's own
 	// question, out of scope here.
 	rev.SetPriorVerdictsResolver(priorVerdictsResolver())
+	rev.SetMessagesResolver(messagesResolver()) // create-path engine; harmless, never fills a transition payload
 	eff, err := requireAgents(a)
 	if err != nil {
 		return nil, nil, err
@@ -487,6 +490,29 @@ func diffResolver() func(ctx context.Context, itemID string) *agentstep.DiffStat
 			Note:     res.Note,
 			Source:   res.Source,
 		}
+	}
+}
+
+// messagesResolver injects engagement-windowed agent messages into gate and
+// executor payloads (sty_2db624d0). Never fails the transition.
+func messagesResolver() func(ctx context.Context, itemID string, addresses []string) []agentstep.MessageState {
+	return func(ctx context.Context, itemID string, addresses []string) []agentstep.MessageState {
+		raw := verb.MessagesSince(ctx, itemID, addresses)
+		if len(raw) == 0 {
+			return nil
+		}
+		out := make([]agentstep.MessageState, len(raw))
+		for i, m := range raw {
+			out[i] = agentstep.MessageState{
+				ID:            m.ID,
+				From:          m.From,
+				To:            m.To,
+				Body:          m.Body,
+				CreatedAt:     m.CreatedAt.UTC().Format(time.RFC3339),
+				EngagementSHA: m.EngagementSHA,
+			}
+		}
+		return out
 	}
 }
 

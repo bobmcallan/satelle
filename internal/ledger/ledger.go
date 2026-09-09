@@ -95,6 +95,11 @@ const (
 	// correction, not merely that one happened. Enumeration only — the accept/
 	// reject decision belongs to the authored amend_review gate.
 	KindDefinitionAmended = "definition_amended"
+	// KindAgentMessage is a directed, role-addressed agent message on a story
+	// (sty_2db624d0 / epic:agent-messaging). Payload: {from, to, body,
+	// engagement_sha}. Not KindComment — a directed engagement-scoped row is
+	// not a human comment.
+	KindAgentMessage = "agent_message"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional

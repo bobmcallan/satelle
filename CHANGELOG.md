@@ -1,3 +1,13 @@
+## [0.0.492] - 2026-09-09
+
+### Added
+- **`satelle story message` / `satelle story messages` and `messages[]` on the transition payload.** Directed agent messages are ledger kind `agent_message` and are injected into the next gate or named-performer dispatch (oldest-first, engagement-scoped, 20×2KiB budget). `--to reviewer` reaches default gates; `--to executor` reaches named performers. Message-free payloads are unchanged. (sty_2db624d0)
+
+## [serve-v0.0.34] - 2026-09-09
+
+### Added
+- **Serve channel carries `agent_message` ledger kind and the dispatch help contract.** `internal/ledger` and `internal/help` are on the satelled watch set; bump so `satelle update` refreshes the running service. (sty_2db624d0)
+
 ## [0.0.491] - 2026-09-09
 
 ### Changed
