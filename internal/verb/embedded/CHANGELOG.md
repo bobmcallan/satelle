@@ -1,3 +1,8 @@
+## [0.0.490] - 2026-09-09
+
+### Added
+- **`satelle story hold checkout|release|takeover`** against the hosted REST hold surface. Distinct from `satelle story seat release`. Engaging a story held elsewhere or unheld on the server is refused (takeover / checkout named); list/get still work. Unbound repos unchanged. REST workstate ingest/list stay unpublished. (sty_dec88606)
+
 ## [0.0.489] - 2026-09-09
 
 ### Added

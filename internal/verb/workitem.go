@@ -424,6 +424,9 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 			if err := refuseWrongHolder(current, resolveAssignee()); err != nil {
 				return nil, err
 			}
+			if err := refuseHeldElsewhere(ctx, current); err != nil {
+				return nil, err
+			}
 		}
 		acq, inFlight, aerr := acquireEngagementLease(ctx, current, *req.Status)
 		if aerr != nil {
