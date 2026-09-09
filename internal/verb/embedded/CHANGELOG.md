@@ -1,3 +1,8 @@
+## [0.0.496] - 2026-09-09
+
+### Fixed
+- **Stop check no longer blocks a read-only session for a sibling session's engaged edits.** The Stop hook compared a repo-wide dirty tree against a session-scoped seat, so a second session in the same repo was told it had made ungated edits it could neither claim nor revert. The seat question is now repo-wide to match: a live seat held by a sibling session attributes the dirty tree to that holder, and stopcheck allows the stop with a `systemMessage` naming the holding story and session. The block still fires when no live seat exists anywhere in the repo; this session's own seat, a clean tree, exempt-only changes and `stop_hook_active` stay silent allows. The PreToolUse edit gate is unchanged and stays session-scoped. (sty_211d8419)
+
 ## [0.0.495] - 2026-09-09
 
 ### Added

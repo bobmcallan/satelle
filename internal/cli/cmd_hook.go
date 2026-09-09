@@ -333,13 +333,16 @@ additionalContext envelope for both harnesses (AC7 finding on sty_e16a2cd7).`,
 		Short: "Stop post-hoc detector — block finishing when the tree was edited ungated (no engaged story)",
 		Long: `stopcheck is the Stop handler. It catches the incident the PreToolUse gate is
 meant to prevent even if that gate never fired this session: on Stop, if the tree
-has uncommitted, NON-EXEMPT in-repo changes while NO story is engaged, it emits a
-Stop block ({"decision":"block","reason":…}) naming the ungated files so the agent
-cannot silently finish an ungated edit (sty_949e8739). Stop uses top-level
-decision/reason (not PreToolUse hookSpecificOutput; sty_5e4bc568 AC6). It
-honours the event's stop_hook_active flag so it never re-blocks a stop it already
-blocked, and fails OPEN when git is absent, the tree is clean, only exempt paths
-changed, or a story is engaged.`,
+has uncommitted, NON-EXEMPT changes while NO live seat exists anywhere in this
+repo, it emits a Stop block ({"decision":"block","reason":…}) naming the ungated
+files (sty_949e8739; top-level decision/reason, sty_5e4bc568 AC6).
+
+The dirty check is repo-wide, so the seat question is too (sty_211d8419): a live
+seat held by a SIBLING session attributes the dirty tree to that holder, and
+stopcheck allows the stop with a systemMessage naming the holding story and
+session. It honours stop_hook_active (never re-blocks its own block) and fails
+OPEN when git is absent, the tree is clean, only exempt paths changed, or this
+session holds the seat.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw, _ := io.ReadAll(cmd.InOrStdin())
@@ -492,7 +495,21 @@ func bindSessionID(raw []byte) string {
 // resolveSeat is the shared seat lookup. When touch is true and a seat is
 // bound (stamped-other returns empty), heartbeat_at is refreshed (fail-open)
 // so unstamped tree-routed seats still stay alive.
+//
+// This is the SESSION-scoped answer every gate uses. Do not widen it: a
+// repo-wide allow in runHookGate would let any session edit under a sibling's
+// story. The repo-wide set is exposed separately by resolveSeats for the ONE
+// surface whose question is repo-wide — stopcheck (sty_211d8419).
 func resolveSeat(touch bool, sessionID string) (info seatInfo, engaged bool, err error) {
+	info, engaged, _, err = resolveSeats(touch, sessionID)
+	return info, engaged, err
+}
+
+// resolveSeats is resolveSeat plus the repo-wide LIVE seat set the same
+// computation already produced (sty_211d8419): every qualifying seat in this
+// repo, whoever holds it, before pickSessionSeat narrows to this session. live
+// is nil on the derived-status fallback and the ungoverned-repo early return.
+func resolveSeats(touch bool, sessionID string) (info seatInfo, engaged bool, live []seatInfo, err error) {
 	a, openErr := app.Open()
 	if openErr != nil {
 		// An ungoverned repo has no seat to determine — a session opened in an
@@ -501,44 +518,64 @@ func resolveSeat(touch bool, sessionID string) (info seatInfo, engaged bool, err
 		// for a materialised runtime plane and then got a "fix config and retry"
 		// it could not act on. Any other open failure still reports.
 		if errors.Is(openErr, app.ErrNotInitialised) {
-			return seatInfo{}, false, nil
+			return seatInfo{}, false, nil, nil
 		}
-		return seatInfo{}, false, fmt.Errorf("cannot determine engagement (store open failed: %w) — fix config and retry", openErr)
+		return seatInfo{}, false, nil, fmt.Errorf("cannot determine engagement (store open failed: %w) — fix config and retry", openErr)
 	}
 	defer func() { _ = a.Close() }()
 	ctx := context.Background()
 	wfs, werr := a.Store.DocIndex.List(ctx, "workflows")
 	if werr != nil {
-		return seatInfo{}, false, fmt.Errorf("cannot determine engagement (workflow list failed: %w) — fix config and retry", werr)
+		return seatInfo{}, false, nil, fmt.Errorf("cannot determine engagement (workflow list failed: %w) — fix config and retry", werr)
 	}
 	items, lerr := a.Store.Stories.List(ctx, workitem.ListFilter{})
 	if lerr != nil {
-		return seatInfo{}, false, fmt.Errorf("cannot determine engagement (story list failed: %w) — fix config and retry", lerr)
+		return seatInfo{}, false, nil, fmt.Errorf("cannot determine engagement (story list failed: %w) — fix config and retry", lerr)
 	}
 	if a.Store.Leases == nil {
 		// Pre-migration or incomplete bootstrap: fall back to derived status scan.
-		return derivedSeat(items, wfs)
+		info, engaged, err = derivedSeat(items, wfs)
+		return info, engaged, nil, err
 	}
 	leases, qerr := a.Store.Leases.List(ctx)
 	if qerr != nil {
-		return seatInfo{}, false, fmt.Errorf("cannot determine engagement (lease query failed: %w) — fix config and retry", qerr)
+		return seatInfo{}, false, nil, fmt.Errorf("cannot determine engagement (lease query failed: %w) — fix config and retry", qerr)
 	}
 	live, other, eerr := evaluateSeat(leases, items, wfs, time.Now().UTC())
 	if eerr != nil {
-		return seatInfo{}, false, eerr
+		return seatInfo{}, false, nil, eerr
 	}
 	if len(live) > 0 {
 		pick, mine := pickSessionSeat(live, sessionID)
 		if pick.ItemID == "" {
-			return other, false, nil
+			return other, false, live, nil
 		}
 		pick.Mine = mine
 		if touch {
 			touchSeat(ctx, a.Store.Leases, pick)
 		}
-		return pick, true, nil
+		return pick, true, live, nil
 	}
-	return other, false, nil
+	return other, false, live, nil
+}
+
+// stopcheckSeat is the repo-wide engagement answer stopcheck compares against
+// its repo-wide dirty check (sty_211d8419): mine when THIS session holds a live
+// seat (engaged, today's allow); otherwise the first live seat held elsewhere
+// in this repo with the count of any further ones; otherwise none. It never
+// touches a heartbeat — Stop observes, it does not work.
+func stopcheckSeat() (mine bool, other seatInfo, extra int, err error) {
+	_, engaged, live, err := resolveSeats(false, config.ResolveSession())
+	if err != nil {
+		return false, seatInfo{}, 0, err
+	}
+	if engaged {
+		return true, seatInfo{}, 0, nil
+	}
+	if len(live) == 0 {
+		return false, seatInfo{}, 0, nil
+	}
+	return false, live[0], len(live) - 1, nil
 }
 
 // pickSessionSeat chooses which live seat is THIS session's. A matching
@@ -2137,10 +2174,21 @@ func runHookPrompt(out io.Writer) error {
 
 // runHookStopcheck is the Stop handler: a post-hoc detector for the exact
 // incident the PreToolUse gate prevents. It blocks finishing when the tree has
-// uncommitted non-exempt in-repo changes while no story is engaged — so an
-// ungated edit cannot be silently finished even if the PreToolUse hook never
-// fired. Honours stop_hook_active (never re-blocks its own block) and fails open
-// (git absent, clean tree, only exempt changes, or a story engaged → allow).
+// uncommitted non-exempt in-repo changes while NO live seat exists anywhere in
+// this repo — so an ungated edit cannot be silently finished even if the
+// PreToolUse hook never fired. Honours stop_hook_active (never re-blocks its own
+// block) and fails open (git absent, clean tree, only exempt changes, or a story
+// engaged by this session → allow).
+//
+// The dirty check is repo-wide, so the engagement question must be too
+// (sty_211d8419): a live seat held by a SIBLING session attributes the dirty
+// tree to that holder — the edits were gated, in that session — so this session
+// is allowed to stop and told who holds the seat, instead of being blocked with
+// a demand it cannot satisfy (engaging would claim another session's work;
+// reverting would destroy it). Branch order is a decision: `mine` short-circuits
+// before the git call (today's cost profile for the common case), and the dirty
+// check runs before the other-holder note so a sibling session that edited
+// nothing gets no chatter on every Stop.
 func runHookStopcheck(raw []byte, out io.Writer) error {
 	if stopHookActive(raw) {
 		return nil // anti-loop: never re-block a stop we already blocked
@@ -2149,16 +2197,20 @@ func runHookStopcheck(raw []byte, out io.Writer) error {
 	if !ok {
 		return nil // fail open — unresolvable repo blocks nothing
 	}
-	engaged, err := storyEngaged()
-	if err != nil || engaged {
-		// A story is engaged (edits are legitimate) OR engagement is unknowable —
-		// stopcheck is a secondary detector, so it fails OPEN rather than blocking a
-		// finish on a broken deployment (the PreToolUse gate is the fail-closed one).
+	mine, other, extra, err := stopcheckSeat()
+	if err != nil || mine {
+		// This session holds a live seat (edits are legitimate) OR engagement is
+		// unknowable — stopcheck is a secondary detector, so it fails OPEN rather
+		// than blocking a finish on a broken deployment (the PreToolUse gate is the
+		// fail-closed one).
 		return nil
 	}
 	gated, derr := dirtyGatedPaths(root)
 	if derr != nil || len(gated) == 0 {
 		return nil // git absent / clean / only exempt (.satelle) changes — nothing to flag
+	}
+	if other.ItemID != "" {
+		return emitStopNote(out, stopcheckSiblingNote(other, extra, gated, time.Now().UTC()))
 	}
 	return emitStopBlock(out, stopcheckReason(gated))
 }
@@ -2289,6 +2341,42 @@ func stopcheckReason(paths []string) string {
 	return "satelle: STOP BLOCKED — the tree has uncommitted, non-exempt changes but NO story is engaged, so these edits were made UNGATED: " +
 		strings.Join(shown, ", ") + suffix + ". This is exactly what the edit gate exists to prevent. " +
 		"Engage a story now (satelle story create … then satelle story set <id> --status plan) so the change is tracked through its workflow, or revert the ungated edits."
+}
+
+// stopcheckSiblingNote is the informational line stopcheck emits when the dirty
+// tree is attributed to a live seat held by ANOTHER session (sty_211d8419). It
+// names the holding story and session so the reader can tell the edits were
+// gated elsewhere, and it never reads as a demand: this session holds no seat
+// and is not blocked.
+func stopcheckSiblingNote(holder seatInfo, extra int, paths []string, now time.Time) string {
+	session := strings.TrimSpace(holder.SessionID)
+	if session == "" {
+		session = "unstamped"
+	}
+	more := ""
+	if extra > 0 {
+		more = fmt.Sprintf(" (+%d more live seat(s))", extra)
+	}
+	return fmt.Sprintf("satelle: %d uncommitted non-exempt change(s) in this tree are attributed to a live seat held elsewhere — %s, session %s%s. This session holds no seat and is not blocked; those edits were gated in the holding session. Inspect: satelle story seat.",
+		len(paths), formatSeat(holder, now), session, more)
+}
+
+// stopAllowOut is the Stop-hook allow-with-note payload: no decision field, so
+// the stop proceeds, and systemMessage surfaces the note to the operator. It is
+// deliberately NOT stopBlockOut — the JSON on stdout must never read as a block
+// on this path (sty_211d8419).
+type stopAllowOut struct {
+	SystemMessage string `json:"systemMessage"`
+}
+
+// emitStopNote writes the allow-with-note JSON (one line) and returns nil.
+func emitStopNote(out io.Writer, note string) error {
+	b, err := json.Marshal(stopAllowOut{SystemMessage: note})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(out, string(b))
+	return nil
 }
 
 // stopBlockOut is the Stop-hook block payload (AC6 / sty_5e4bc568 audit): Claude
