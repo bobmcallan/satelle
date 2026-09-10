@@ -201,6 +201,23 @@ var fenceFixtures = map[string][]fenceCase{
 			wantStdout: "docs/guide.rst",
 		},
 		{
+			// sty_8221c090: story B's commit cites story A in its BODY. Only a
+			// SUBJECT match owns a commit, so A's slice stays its own prose.
+			name: "body citation of another story does not attribute that commit",
+			sid:  "sty_d0c55555",
+			setup: func(t *testing.T, repo string) {
+				gitInit(t, repo)
+				mustWrite(t, filepath.Join(repo, "README.md"), "baseline\n")
+				gitCommitAll(t, repo, "baseline")
+				mustWrite(t, filepath.Join(repo, "docs", "guide.md"), "# Guide\n")
+				gitCommitAll(t, repo, "document the lane (sty_d0c55555)")
+				mustWrite(t, filepath.Join(repo, "cmd", "foo.go"), "package main\n")
+				gitCommitAll(t, repo, "code change (sty_d0c66666)\n\nExists because sty_d0c55555 needed it.")
+			},
+			wantExit:   0,
+			wantStdout: "docs-only slice confirmed",
+		},
+		{
 			name: "rejects an empty change set",
 			sid:  "sty_d0c44444",
 			setup: func(t *testing.T, repo string) {
@@ -298,6 +315,25 @@ echo '{"files":[]}'
 				gitCommitAll(t, repo, "baseline with fresh-init exempt")
 				mustWrite(t, filepath.Join(repo, ".gitignore"), "# managed\n.satelle/local.toml\n")
 				gitCommitAll(t, repo, "gitignore converge (sty_ddd44444)")
+			},
+			wantExit:   0,
+			wantStdout: "substrate-only slice confirmed",
+		},
+		{
+			// sty_8221c090 — the d7bf17d shape: story B's commit names B in its
+			// SUBJECT and cites A in its BODY while touching a product path. A
+			// whole-message `git log --grep` handed A that file and rejected A's
+			// close. Only a subject match owns a commit, so A still accepts.
+			name: "body citation of another story does not attribute that commit",
+			sid:  "sty_fff66666",
+			setup: func(t *testing.T, repo string) {
+				gitInit(t, repo)
+				mustWrite(t, filepath.Join(repo, "README.md"), "baseline\n")
+				gitCommitAll(t, repo, "baseline")
+				mustWrite(t, filepath.Join(repo, ".satelle", "skills", "a.md"), "# A\n")
+				gitCommitAll(t, repo, "substrate change (sty_fff66666)")
+				mustWrite(t, filepath.Join(repo, "cmd", "foo.go"), "package main\n")
+				gitCommitAll(t, repo, "code change (sty_ggg77777)\n\nExists because sty_fff66666 needed it.")
 			},
 			wantExit:   0,
 			wantStdout: "substrate-only slice confirmed",

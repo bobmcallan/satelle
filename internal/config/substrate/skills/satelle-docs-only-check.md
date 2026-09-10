@@ -33,7 +33,9 @@ Never a branch in the binary: the binary runs the enumeration mechanism
 2. **Live + substrate** — `satelle story diff <id> --include-substrate` (git
    worktree since engagement, plus mtime-changed substrate, so prose under a
    git-ignored authored dir is visible too)
-3. **Commits** — any commit whose message mentions the story id
+3. **Commits** — any commit whose **subject** names the story id (the trailing
+   `(sty_…)` convention); a mention only in another commit's body is a citation,
+   not ownership
 
 The check is the embedded ```check script below — **self-contained**, no
 external file (see [[satelle-reviewer-self-contained]]). Exit 0 accepts;
@@ -82,15 +84,24 @@ if live=$(satelle story diff "$sid" --include-substrate 2>/dev/null); then
   liv=$(printf '%s' "$live" | extract_files)
 fi
 
+# Commits whose SUBJECT names the story. The trailing "(sty_…)" subject
+# convention is what marks ownership; a citation in the BODY of another story's
+# commit is not. The --grep narrowing is a cheap candidate filter only — the
+# subject test below is the rule, and dropping it brings the body-citation
+# misattribution back.
 com=""
-commits=$(git log --grep="$sid" --format=%H 2>/dev/null || true)
-if [ -n "$commits" ]; then
-  com=$(for c in $commits; do git show --name-only --format= "$c" 2>/dev/null; done | grep -v '^$' || true)
+owned=""
+for c in $(git log --grep="$sid" --format=%H 2>/dev/null || true); do
+  subj=$(git show -s --format=%s "$c" 2>/dev/null || true)
+  case "$subj" in *"$sid"*) owned="$owned $c" ;; esac
+done
+if [ -n "$owned" ]; then
+  com=$(for c in $owned; do git show --name-only --format= "$c" 2>/dev/null; done | grep -v '^$' || true)
 fi
 
 changed=$(printf '%s\n%s\n%s\n' "$rec" "$liv" "$com" | grep -v '^$' | sort -u)
 if [ -z "$changed" ]; then
-  echo "no change set found for $sid — nothing recorded, nothing in the working tree since engagement, and no commit mentions it. Empty is not evidence of a documentation change."
+  echo "no change set found for $sid — nothing recorded, nothing in the working tree since engagement, and no commit subject names it. Empty is not evidence of a documentation change."
   exit 1
 fi
 

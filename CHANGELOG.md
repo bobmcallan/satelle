@@ -1,3 +1,13 @@
+## [0.0.500] - 2026-09-10
+
+### Fixed
+- **A story id cited in another commit's body no longer hands that commit's files to the cited story.** `satelle-substrate-only-check` and `satelle-docs-only-check` built their commit channel from `git log --grep="$sid"`, which matches the WHOLE message. So d7bf17d — subject `… (sty_0496c77c)`, body citing sty_ae16cd44 as the reason that story exists — was attributed to sty_ae16cd44, and its close was rejected for `.version`, both CHANGELOGs and a `_test.go` file that were never its slice. The repo's ownership signal is the trailing `(sty_…)` in the **subject**, so each candidate is now tested with `git show -s --format=%s` and only subject matches accumulate; `--grep` is retained as a cheap candidate narrowing and the fence comment says so, because dropping the subject test reopens the defect. Deliberately **not** a channel-1 short-circuit: channel 3 still runs unconditionally and unions with the recorded and live channels, so a later subject-owned commit that adds product files still rejects. Both ````check` fences carry the fix and both gained a golden case reproducing the d7bf17d shape — a story's in-lane commit plus a later commit whose subject names a different story and whose body cites this one while touching `cmd/foo.go` — which exits 1 against the pre-fix fence. (sty_8221c090)
+
+## [serve-v0.0.40] - 2026-09-10
+
+### Fixed
+- **Serve path carries the corrected commit-attribution rule.** The two check skills under `internal/config/substrate/skills/` are on the satelled watch set; bump so `satelle update` refreshes the running service's embedded substrate. (sty_8221c090)
+
 ## [0.0.499] - 2026-09-10
 
 ### Fixed
