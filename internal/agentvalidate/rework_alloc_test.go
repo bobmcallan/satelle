@@ -107,6 +107,9 @@ func TestValidate_ReworkConsultMissingBindingWarns(t *testing.T) {
 		if !strings.Contains(f.Detail, "no [consultant] binding") {
 			t.Errorf("finding must name the missing section: %q", f.Detail)
 		}
+		if !strings.Contains(f.Detail, "rounds=3") {
+			t.Errorf("finding must report the authored budget: %q", f.Detail)
+		}
 	}
 }
 

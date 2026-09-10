@@ -30,6 +30,16 @@ func TestScaffoldAgentsTomlFullyDefined(t *testing.T) {
 	if !strings.Contains(scaffoldAgentsToml, `# role    = "agent"`) {
 		t.Error(`scaffold commented [commit-agent] missing # role    = "agent"`)
 	}
+	// Live-capable examples stay commented (sty_cec967b5): a fresh repo's
+	// behaviour is unchanged until the operator uncomments them.
+	for _, want := range []string{"# [orchestrator]", "# [coder]", "satelle story rework", "interface = \"acp\" or \"stream\""} {
+		if !strings.Contains(scaffoldAgentsToml, want) {
+			t.Errorf("scaffold missing commented live-capable example %q", want)
+		}
+	}
+	if strings.Contains(scaffoldAgentsToml, "\n[orchestrator]\n") || strings.Contains(scaffoldAgentsToml, "\n[coder]\n") {
+		t.Error("scaffold [orchestrator]/[coder] examples must stay fully commented")
+	}
 	// The scaffold header must DOCUMENT full-template requirement + placeholders
 	// (AC4, sty_6752e35b) so an operator editing the file sees that bare presets
 	// are rejected and only in-loop is a valid single token.

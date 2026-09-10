@@ -353,6 +353,21 @@ channels** below): a mutator tool ask is denied by satelle without prompting
 the human when the story is not in an executor-owned performing state (or a
 transition is in flight). Otherwise the human is asked allow/deny.
 
+### Converge then gate
+
+Two loops, contrasted. The **expensive** loop is present-edge → gate rejects →
+re-present until the gate accepts. The **cheap** loop is warm convergence
+between a coder session and a consulting reviewer, then **one** cold gate. The
+second does not replace the first — it precedes it. Authority stays with the
+gate: a consultant's `READY` is a signal to the orchestrator, never a verdict
+(see the READY contract under **Rework relay** below).
+
+**Blocked fallback** (authored in the orchestrator skill, not compiled): after
+the round budget without `READY`, or after a declared number of gate rejections
+on the same edge, the orchestrator parks to `blocked` quoting the last objection
+and messages the developer. The binary carries only the relay and its
+termination rule. See `satelle doc get principles satelle-agent-consultation`.
+
 #### Rework relay — `satelle story rework` (sty_8e0b29a0)
 
 The reject → re-present cycle is the expensive loop. The cheaper shape is **warm
@@ -377,7 +392,7 @@ line; `satelle agent validate` **warns** when `consult` names a missing or
 non-live-capable binding (warn, never a refusal — a repo may author the loop
 before wiring the binding, and the relay is opened by hand). Both `agent` and
 `consult` must be live-capable bindings: a `command = "in-loop"` performer
-cannot be relayed, which is why this repo's own route declares no `rework`.
+cannot be relayed, so a step that opts in must allocate a live-capable one.
 
 **Who opens it.** The orchestrator or the in-repo agent runs
 `satelle story rework <id>`, at the story's *current* status. Nothing dispatches

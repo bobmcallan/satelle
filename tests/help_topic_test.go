@@ -61,6 +61,19 @@ func TestHelpLifecycleHookTopics(t *testing.T) {
 	}
 }
 
+// TestHelpConvergeThenGateSection pins sty_cec967b5 AC3 through the real binary:
+// agent-dispatch names the converge-then-gate section, the READY contract, and
+// the blocked fallback.
+func TestHelpConvergeThenGateSection(t *testing.T) {
+	dir := t.TempDir()
+	body := mustRun(t, testBin, dir, "help", "agent-dispatch")
+	for _, want := range []string{"Converge then gate", "READY", "blocked", "orchestrator skill"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("`satelle help agent-dispatch` missing %q:\n%s", want, body)
+		}
+	}
+}
+
 // TestHelpGlobalAgentsTopic pins the machine-wide profile catalog's product
 // documentation (sty_c7dfeedf / sty_552d2d87 / sty_a319db89): the file, the
 // precedence ladder, the no-implicit-merge guarantee, and the self-sufficient

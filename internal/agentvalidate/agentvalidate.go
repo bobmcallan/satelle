@@ -280,15 +280,15 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 			b, found := agents.NamedBinding(w.Consult)
 			if !found {
 				r.record(health.Warn(health.IDNodeAlloc, "Rework consult binding missing", fmt.Sprintf(
-					"workflow %q step %q declares rework consult=%s with no [%s] binding in agents.toml — satelle story rework cannot open it",
-					doc.Name, w.Step, w.Consult, w.Consult)).
+					"workflow %q step %q declares rework consult=%s rounds=%d with no [%s] binding in agents.toml — satelle story rework cannot open it",
+					doc.Name, w.Step, w.Consult, w.Rounds, w.Consult)).
 					WithRemediation("add a live-capable [" + w.Consult + "] binding (interface=acp or stream) to .satelle/workflows/agents.toml, or drop the rework key"))
 				continue
 			}
 			if reason := notLiveCapable(w.Consult, b); reason != "" {
 				r.record(health.Warn(health.IDNodeAlloc, "Rework consult binding not live-capable", fmt.Sprintf(
-					"workflow %q step %q declares rework consult=%s but %s — the rework relay opens it as a live session",
-					doc.Name, w.Step, w.Consult, reason)).About(w.Consult).
+					"workflow %q step %q declares rework consult=%s rounds=%d but %s — the rework relay opens it as a live session",
+					doc.Name, w.Step, w.Consult, w.Rounds, reason)).About(w.Consult).
 					WithRemediation("set interface=acp or interface=stream on [" + w.Consult + "]"))
 			}
 		}

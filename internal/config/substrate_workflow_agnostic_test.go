@@ -71,6 +71,31 @@ var formatTuition = map[string]string{
 	"self-contained on one": "same",
 }
 
+// TestEmbeddedStepTomlDocumentsRework pins sty_cec967b5 AC2 for the virtual
+// default: init does not seed step.toml on disk, so the comment lives in the
+// embedded catalogue and must name the three facts a fresh repo's agent needs.
+func TestEmbeddedStepTomlDocumentsRework(t *testing.T) {
+	_, step := embeddedRouteHalves()
+	if step == "" {
+		t.Fatal("the shipped step.toml is missing")
+	}
+	for _, want := range []string{
+		"rework = { consult",
+		"rounds",
+		"Absent means",
+		"cold",
+		"READY",
+		"satelle story rework",
+	} {
+		if !strings.Contains(step, want) {
+			t.Errorf("embedded step.toml missing rework doc %q", want)
+		}
+	}
+	if strings.Contains(step, "\nrework = {") {
+		t.Error("shipped step.toml must document rework in comments only — declare no live rework key")
+	}
+}
+
 func TestEmbeddedRouteSourcesCarryNoFormatTuition(t *testing.T) {
 	done, step := embeddedRouteHalves()
 	if done == "" || step == "" {

@@ -99,6 +99,12 @@ func TestAgentDispatchTopic(t *testing.T) {
 		"never** sets status",
 		`cc = "*"`,
 		"denied by policy",
+		// Converge then gate (sty_cec967b5): named section, READY contract,
+		// blocked fallback living in the orchestrator skill.
+		"Converge then gate",
+		"READY",
+		"blocked",
+		"orchestrator skill",
 	} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("agent-dispatch topic missing %q", want)

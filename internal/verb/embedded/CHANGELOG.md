@@ -1,3 +1,16 @@
+## [0.0.501] - 2026-09-10
+
+### Added
+- **A fresh repo can find converge-then-gate in what `satelle init` seeds.** The seeded `.satelle/workflows/agents.toml` now ends with commented `[orchestrator]` and `[coder]` example tables: live-capable (`interface = "stream"`; `acp` works the same way), a read-oriented orchestrator grant beside a coder grant that includes `Edit,Write`, and a note that these bindings are consumed by verbs (`satelle story chat`, `satelle story rework`), not allocated by a workflow node. Every line is a comment, so a fresh repo's binding set and behaviour are unchanged. (sty_cec967b5)
+- **The seeded workflows README and `step.toml` document `rework = { consult, rounds }`.** One paragraph each: the key opens a bounded coder/consultant relay through `satelle story rework`; absent means off; the gate reviewer still runs cold and one-shot, and the consultant's `READY` is a signal, never a verdict. The shipped `step.toml` stays comment-only and declares no `rework` key. (sty_cec967b5)
+- **`satelle help agent-dispatch` has a "Converge then gate" section.** It sets the expensive loop (present, reject, re-present) against the cheap one (warm convergence, then one cold gate), points at the `READY` contract, and states the blocked fallback: after the round budget without `READY`, or a declared number of rejections on the same edge, the orchestrator parks to `blocked` quoting the last objection. That rule lives in the orchestrator skill; the binary does not compile it. (sty_cec967b5)
+
+### Changed
+- **`satelle agent validate` and `satelle doctor` report the rework round budget.** Both existing rework-consult WARNs, for a missing binding and for one that cannot hold a live session, now include `rounds=N` in their detail. They are still WARNs and never block, and no new finding ID was added. (sty_cec967b5)
+
+### Fixed
+- **`satelle help agent-dispatch` no longer says this repo's route declares no `rework`.** That was true until order:4 (sty_ae16cd44) opted this repo's `coded` step in. The sentence now gives the rule instead: an in-loop performer cannot be relayed, so a step that opts in must allocate a live-capable one. (sty_cec967b5)
+
 ## [0.0.500] - 2026-09-10
 
 ### Fixed

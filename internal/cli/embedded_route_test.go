@@ -212,6 +212,8 @@ func TestWorkflowsReadmeDescribesTheRoute(t *testing.T) {
 		"TABLE KEY", "status",
 		// The fastest post-edit feedback loop, and where the grammar is documented.
 		"satelle workflow validate", "satelle help workflows",
+		// Rework loop docs (sty_cec967b5): absent-means-off, cold gate.
+		"rework", "consult", "rounds", "Absent means", "cold", "READY",
 	} {
 		if !strings.Contains(readme, want) {
 			t.Errorf("the workflows README does not mention %q — an operator needs it", want)
