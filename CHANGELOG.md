@@ -1,3 +1,8 @@
+## [0.0.499] - 2026-09-10
+
+### Fixed
+- **`TestProjectWorkflowReviewerFirst` no longer forbids this repo's own converge-then-gate opt-in.** The reviewer-first integration test pinned `in_progress` to in-loop `agent=executor @skill:code`, a wall sty_db003275 built when it reverted a brief, *unbounded* `agent=coder` experiment. epic:converge-then-gate order:4 (sty_ae16cd44) then allocated the `coded` step to the dispatched `[coder]` binding **with** a bounded rework relay, so the live route emits `agent="coder" skill="coder"` and the test failed the very substrate it governs. `in_progress` now accepts either sanctioned allocation — in-loop `executor@code` for repos that have not opted in, dispatched `coder@coder` for those that have — and nothing else; `integration` and `release` stay pinned in-loop, and the doc comment records both decisions so a later reader does not restore the wall. The relay's round budget is deliberately **not** asserted: `rework` is an orchestrator instruction, not topology, it is absent from the emitted Spec by design, and `satelle story route` already prints it — compiling it into Go would be another process-in-Go pin. (sty_0496c77c)
+
 ## [0.0.498] - 2026-09-10
 
 ### Added

@@ -10,13 +10,27 @@ import (
 
 // TestProjectWorkflowReviewerFirst asserts this repo's project workflow is
 // reviewer-first: a reviewer gates every transition on the spine. Plan
-// dispatches to an isolated read-only planner; in_progress, integration, and
-// release run IN-LOOP on the driving session (agent=executor) — sty_db003275
-// reverted the brief agent=coder experiment. backlog -> plan is gated by
+// dispatches to an isolated read-only planner; integration and release run
+// IN-LOOP on the driving session (agent=executor). backlog -> plan is gated by
 // satelle-story-intent-review (sty_3437b803). The former commit/push/committed
 // states are merged into one `release` state, and there are recovery edges back
 // to in_progress (no dead-end). `integration` is an explicit, visible testing
 // step (sty_15dbc0dd).
+//
+// in_progress accepts EITHER allocation. sty_db003275 reverted a brief,
+// unbounded agent=coder experiment, which is why this used to pin in-loop
+// executor@code. sty_ae16cd44 (epic:converge-then-gate order:4) re-opened the
+// dispatched coder for this repo, this time WITH a bounded rework relay (coder
+// <-> reviewer-consult — consultation, not review), so the pin no longer
+// forbids the opt-in: it bounds in_progress to the two sanctioned allocations
+// (in-loop executor@code for repos that have not opted in, dispatched
+// coder@coder for those that have) and still pins integration and release
+// in-loop.
+//
+// The relay's round budget is deliberately NOT asserted here. rework is an
+// orchestrator instruction, not topology, so it is absent from the emitted
+// Spec by design; `satelle story route` prints it. Compiling it into a Go
+// assertion would be another process-in-Go pin.
 func TestProjectWorkflowReviewerFirst(t *testing.T) {
 	spec := repoRouteSpec(t, "*", nil)
 
@@ -25,9 +39,8 @@ func TestProjectWorkflowReviewerFirst(t *testing.T) {
 		states[s.Name] = s
 	}
 
-	// in_progress, integration, and release are IN-LOOP (agent=executor).
+	// integration and release are IN-LOOP (agent=executor).
 	for name, wantSkill := range map[string]string{
-		"in_progress": "code",
 		"integration": "integrate",
 		"release":     "release",
 	} {
@@ -38,6 +51,24 @@ func TestProjectWorkflowReviewerFirst(t *testing.T) {
 		}
 		if s.Agent != "executor" || s.Skill != wantSkill {
 			t.Errorf("state %q must run in-loop agent=executor @skill:%s, got agent=%q skill=%q", name, wantSkill, s.Agent, s.Skill)
+		}
+	}
+
+	// in_progress is either in-loop or the dispatched coder — nothing else.
+	type alloc struct{ agent, skill string }
+	allowed := []alloc{{"executor", "code"}, {"coder", "coder"}}
+	if s, present := states["in_progress"]; !present {
+		t.Errorf("missing execution state %q", "in_progress")
+	} else {
+		ok := false
+		for _, a := range allowed {
+			if s.Agent == a.agent && s.Skill == a.skill {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			t.Errorf("state %q must run in-loop agent=executor @skill:code or dispatched agent=coder @skill:coder, got agent=%q skill=%q", "in_progress", s.Agent, s.Skill)
 		}
 	}
 
