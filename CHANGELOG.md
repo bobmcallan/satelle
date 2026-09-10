@@ -1,3 +1,19 @@
+## [0.0.497] - 2026-09-10
+
+### Added
+- **`satelle story chat --agent <binding>` — chat is a consultation mechanism, not an orchestrator console.** The session binding is now a choice: `--agent reviewer` opens the `[reviewer]` binding, `--agent <name>` any live-capable binding (`interface = "acp"` or `"stream"`), and no flag opens `[orchestrator]` exactly as before. A `command`/in-loop or missing binding refuses with the same message shape as today, naming the binding it was asked for. The session runs on that binding's own tool grant, so a consulted reviewer keeps its read-only `Read,Grep,Glob`. This is how the in-repo agent interrogates a rejection with the rejecting reviewer, or takes a second opinion to a block. (sty_a0372443)
+- **`satelle story chat --from <role>` — the ledger says which agent spoke.** Defaults to `developer-agent` when `SATELLE_SESSION` is set (an agent is driving) and `human` otherwise. The driving turn is ledgered `<from> → <binding>` and the reply `<binding> → <from>`, so `satelle story messages <id>` shows both directions with the real roles; `agent_invocation` rows for tool boundaries and permission decisions are actored by the binding rather than a hardcoded `orchestrator`. (sty_a0372443)
+- **The first turn's inbox is the chosen role's.** The payload's `messages[]` are those addressed to the opened binding's role or to `*`; a message addressed to another role is not delivered, and the inbox watermark keys on the chosen `--from` rather than the literal `human`. (sty_a0372443)
+
+### Changed
+- **A consulted binding is told it is consulting, not judging.** Charter selection is by binding name: `[orchestrator]` is the scheduler and is *driving*, so it keeps the executor charter; any other binding opened by hand gets a consulting charter stating that its reply is context and not a verdict, that the gate judging the edge still runs cold and one-shot over the payload satelle builds, and that it does not run `satelle story set`. Consultation never advances a stage — only a gate verdict does. See `satelle doc get principles satelle-agent-consultation`. (sty_a0372443)
+- **`satelle help agent-dispatch`** — the orchestrator-binding section is now **Consultation sessions**, documenting `--agent` / `--from`, the live-capability requirement and its refusals, the address set, and the consulting charter. Permission policy is unchanged: mutators stay denied outside an executor-owned performing state, and are denied outright when a session is driven non-interactively. (sty_a0372443)
+
+## [serve-v0.0.38] - 2026-09-10
+
+### Changed
+- **Embedded help carries the consultation-sessions topic.** `internal/help` is on the satelled watch set; bump so `satelle update` refreshes the running service's `agent-dispatch` topic. (sty_a0372443)
+
 ## [0.0.496] - 2026-09-09
 
 ### Fixed

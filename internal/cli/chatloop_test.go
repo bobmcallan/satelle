@@ -192,6 +192,86 @@ func TestChatLedgerHumanDecisions(t *testing.T) {
 	}
 }
 
+// TestChatLoopLedgersConfiguredRoles (sty_a0372443 AC2): with --from
+// developer-agent --agent reviewer, the driving turn is ledgered
+// developer-agent → reviewer and the reply reviewer → developer-agent.
+func TestChatLoopLedgersConfiguredRoles(t *testing.T) {
+	sess := newFakeSess()
+	led := &memLedger{}
+	loop := wireLoop(sess, led, nil, nil)
+	loop.From, loop.To = "developer-agent", "reviewer"
+	var out bytes.Buffer
+	if err := loop.Run(context.Background(), strings.NewReader("why did you reject\n/quit\n"), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(led.msgs) != 2 {
+		t.Fatalf("msgs = %#v, want the turn and the reply", led.msgs)
+	}
+	if led.msgs[0].From != "developer-agent" || led.msgs[0].To != "reviewer" {
+		t.Errorf("turn row = %s -> %s", led.msgs[0].From, led.msgs[0].To)
+	}
+	if led.msgs[1].From != "reviewer" || led.msgs[1].To != "developer-agent" {
+		t.Errorf("reply row = %s -> %s", led.msgs[1].From, led.msgs[1].To)
+	}
+	if !strings.Contains(out.String(), "reply:why did you reject") {
+		t.Errorf("stdout = %q", out.String())
+	}
+}
+
+// TestChatLoopDefaultsRolesWhenUnset: an unwired loop still ledgers the
+// historical human → orchestrator pair, so the no-flag path is unchanged.
+func TestChatLoopDefaultsRolesWhenUnset(t *testing.T) {
+	sess := newFakeSess()
+	led := &memLedger{}
+	loop := wireLoop(sess, led, nil, nil)
+	var out bytes.Buffer
+	if err := loop.Run(context.Background(), strings.NewReader("hi\n/quit\n"), &out); err != nil {
+		t.Fatal(err)
+	}
+	if led.msgs[0].From != "human" || led.msgs[0].To != "orchestrator" {
+		t.Fatalf("turn row = %s -> %s, want human -> orchestrator", led.msgs[0].From, led.msgs[0].To)
+	}
+	if led.msgs[1].From != "orchestrator" || led.msgs[1].To != "human" {
+		t.Fatalf("reply row = %s -> %s", led.msgs[1].From, led.msgs[1].To)
+	}
+}
+
+// TestChatInboxKeysOnConfiguredRoles (sty_a0372443 AC3): the inbox fetch asks
+// for the CHOSEN binding's address set, and the loop's own --from rows are not
+// re-rendered back at it.
+func TestChatInboxKeysOnConfiguredRoles(t *testing.T) {
+	sess := newFakeSess()
+	led := &memLedger{}
+	loop := wireLoop(sess, led, nil, nil)
+	loop.From, loop.To = "developer-agent", "reviewer"
+	var out bytes.Buffer
+	if err := loop.Run(context.Background(), strings.NewReader("one\n"), &out); err != nil {
+		t.Fatal(err)
+	}
+	// One row for the reviewer, one for the orchestrator only.
+	if err := led.WriteMessage("executor", "reviewer", "note-for-reviewer"); err != nil {
+		t.Fatal(err)
+	}
+	led.msgs[len(led.msgs)-1].CreatedAt = time.Now().Add(time.Second)
+	if err := led.WriteMessage("executor", "orchestrator", "note-for-console"); err != nil {
+		t.Fatal(err)
+	}
+	led.msgs[len(led.msgs)-1].CreatedAt = time.Now().Add(2 * time.Second)
+	if err := loop.Run(context.Background(), strings.NewReader("two\n/quit\n"), &out); err != nil {
+		t.Fatal(err)
+	}
+	second := sess.turns[1].Text
+	if !strings.Contains(second, "note-for-reviewer") {
+		t.Errorf("second turn missing the reviewer inbox row: %q", second)
+	}
+	if strings.Contains(second, "note-for-console") {
+		t.Errorf("a message addressed to another role was delivered: %q", second)
+	}
+	if strings.Contains(second, "from developer-agent") {
+		t.Errorf("the loop's own turns must not be re-rendered as inbox: %q", second)
+	}
+}
+
 func TestChatDeliversMessagesOnNextTurn(t *testing.T) {
 	sess := newFakeSess()
 	led := &memLedger{}

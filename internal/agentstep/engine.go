@@ -1563,37 +1563,57 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.Dispa
 
 const orchestratorBinding = "orchestrator"
 
+// ChatSessionBinding normalises a `satelle story chat --agent` value: empty
+// means the default [orchestrator] console, any other name is a consultation
+// binding (sty_a0372443).
+func ChatSessionBinding(name string) string {
+	if n := strings.TrimSpace(name); n != "" {
+		return n
+	}
+	return orchestratorBinding
+}
+
 // ChatPayload is the first-turn payload for satelle story chat: the same
 // transitionPayload shape as a gate/executor dispatch, with from == to ==
-// current status, plus messages[] for the orchestrator address set
-// (sty_1de7494c).
-func (g *Engine) ChatPayload(ctx context.Context, item workitem.Item) (transitionPayload, error) {
+// current status, plus messages[] for the chosen binding's address set —
+// messages addressed to that role, or to "*" (verb.MessagesSince unions the
+// wildcard). A message to another role is not delivered (sty_a0372443).
+func (g *Engine) ChatPayload(ctx context.Context, item workitem.Item, binding string) (transitionPayload, error) {
 	tp := transitionPayload{Story: item, From: item.Status, To: item.Status}
 	if g.children != nil {
 		tp.Children = g.children(ctx, item.ID)
 	}
 	g.fillPayloadDocs(ctx, item.ID, &tp)
-	g.fillMessages(ctx, item.ID, []string{orchestratorBinding}, &tp)
+	g.fillMessages(ctx, item.ID, []string{ChatSessionBinding(binding)}, &tp)
 	return tp, nil
 }
 
-// OpenOrchestrator opens a live Session for the [orchestrator] named binding.
+// OpenSession opens a live Session for a named binding — [orchestrator] by
+// default (empty name), any other binding when the caller is CONSULTING it.
 // in-loop / command / missing bindings return a clear error; they do not fall
 // back to a guessed spawn (sty_1de7494c). onEvent, when non-nil, is installed
 // as the request's OnEvent: transports call it inline from their reader
 // goroutine BEFORE the lossy Events() fan-out, so a caller that must record
 // every tool boundary (the chat transcript) hangs its ledger writer here, not
 // on the drained channel.
-func (g *Engine) OpenOrchestrator(ctx context.Context, item workitem.Item, pol agentcli.PermissionPolicy, onEvent agentcli.EventHandler) (agentcli.Session, error) {
+//
+// Charter selection is by binding NAME, not a flag: the orchestrator is the
+// scheduler and is DRIVING, so it keeps the executor charter; any other binding
+// opened by hand is being CONSULTED and gets consultCharter — its reply is
+// context, never a verdict ([[satelle-agent-consultation]]). Tools stay the
+// binding's own grant either way, so a consulted reviewer keeps its read-only
+// grant (sty_a0372443).
+func (g *Engine) OpenSession(ctx context.Context, name string, item workitem.Item, pol agentcli.PermissionPolicy, onEvent agentcli.EventHandler) (agentcli.Session, error) {
+	name = ChatSessionBinding(name)
 	if g.namedAgents == nil {
-		return nil, fmt.Errorf("no agents layer is wired — cannot open the %q session", orchestratorBinding)
+		return nil, fmt.Errorf("no agents layer is wired — cannot open the %q session", name)
 	}
-	binding, found := g.namedAgents(orchestratorBinding)
+	binding, found := g.namedAgents(name)
 	if !found {
-		return nil, fmt.Errorf("no [%s] binding in .satelle/workflows/agents.toml — define interface=acp or stream to open a live session", orchestratorBinding)
+		return nil, fmt.Errorf("no [%s] binding in .satelle/workflows/agents.toml — define interface=acp or stream to open a live session", name)
 	}
 	if config.IsInLoopCommand(binding.CommandTemplate()) {
-		return nil, fmt.Errorf("satelle story chat: [%s] is in-loop — the hook channel remains the orchestrator; set interface=acp or stream to open a live session", orchestratorBinding)
+		return nil, fmt.Errorf("satelle story chat: [%s] is in-loop — the hook channel remains the orchestrator; set interface=acp or stream to open a live session", name)
 	}
 	openerFn := g.newOpener
 	if openerFn == nil {
@@ -1602,16 +1622,20 @@ func (g *Engine) OpenOrchestrator(ctx context.Context, item workitem.Item, pol a
 	opener, err := openerFn(binding.ResolvedInterface(), binding.CommandTemplate())
 	if err != nil {
 		if errors.Is(err, agentcli.ErrNotLiveCapable) {
-			return nil, fmt.Errorf("satelle story chat: [%s] interface=%s is not live-capable — set interface=acp or stream", orchestratorBinding, binding.ResolvedInterface())
+			return nil, fmt.Errorf("satelle story chat: [%s] interface=%s is not live-capable — set interface=acp or stream", name, binding.ResolvedInterface())
 		}
 		return nil, err
 	}
-	payload, err := g.ChatPayload(ctx, item)
+	payload, err := g.ChatPayload(ctx, item, name)
 	if err != nil {
 		return nil, err
 	}
+	charter := executorCharter(name, item.Status, "orchestrator live session")
+	if name != orchestratorBinding {
+		charter = consultCharter(name, config.ResolvedRole(name, binding), item.Status)
+	}
 	req, err := g.buildRequest(ctx, invocation{
-		charter:    executorCharter(orchestratorBinding, item.Status, "orchestrator live session"),
+		charter:    charter,
 		payload:    payload,
 		tools:      binding.Tools,
 		model:      binding.Model,

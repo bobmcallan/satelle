@@ -21,10 +21,24 @@ type chatLedger interface {
 	ListMessagesSince(since time.Time, to string) ([]verb.AgentMessage, error)
 }
 
-// chatLoop is the transport-free story-chat core (sty_1de7494c).
+// Default chat identities: the driving side is a human at a prompt and the
+// session is the orchestrator console, unless --from/--agent say otherwise
+// (sty_a0372443).
+const (
+	chatDefaultFrom  = "human"
+	chatDefaultTo    = orchestratorRole
+	orchestratorRole = "orchestrator"
+)
+
+// chatLoop is the transport-free story-chat core (sty_1de7494c). From is the
+// role the driving side speaks as (--from); To is the binding it is talking to
+// (--agent). Both ledger directions and the inbox address set key on them
+// rather than on the literals "human"/"orchestrator" (sty_a0372443).
 type chatLoop struct {
 	Sess    agentcli.Session
 	StoryID string
+	From    string
+	To      string
 	Ledger  chatLedger
 	Ask     func(agentcli.PermissionRequest) bool
 	Seat    func() (seatInfo, bool, error)
@@ -106,6 +120,12 @@ func (l *chatLoop) Run(ctx context.Context, in io.Reader, out io.Writer) error {
 	if l.Now == nil {
 		l.Now = time.Now
 	}
+	if strings.TrimSpace(l.From) == "" {
+		l.From = chatDefaultFrom
+	}
+	if strings.TrimSpace(l.To) == "" {
+		l.To = chatDefaultTo
+	}
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for {
@@ -124,7 +144,7 @@ func (l *chatLoop) Run(ctx context.Context, in io.Reader, out io.Writer) error {
 		}
 		text := l.prependInbox(line)
 		if l.Ledger != nil {
-			_ = l.Ledger.WriteMessage("human", "orchestrator", line)
+			_ = l.Ledger.WriteMessage(l.From, l.To, line)
 		}
 		if err := l.Sess.Send(ctx, agentcli.Turn{Text: text}); err != nil {
 			return err
@@ -134,7 +154,7 @@ func (l *chatLoop) Run(ctx context.Context, in io.Reader, out io.Writer) error {
 			return err
 		}
 		if reply != "" && l.Ledger != nil {
-			_ = l.Ledger.WriteMessage("orchestrator", "human", reply)
+			_ = l.Ledger.WriteMessage(l.To, l.From, reply)
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -147,12 +167,12 @@ func (l *chatLoop) prependInbox(line string) string {
 	if l.Ledger == nil {
 		return line
 	}
-	msgs, err := l.Ledger.ListMessagesSince(l.lastMsg, "orchestrator")
+	msgs, err := l.Ledger.ListMessagesSince(l.lastMsg, l.To)
 	if err != nil || len(msgs) == 0 {
 		return line
 	}
 	// The watermark advances over EVERY row seen — including the loop's own
-	// human turns — so a row is fetched once whatever `--since` semantics the
+	// From turns — so a row is fetched once whatever `--since` semantics the
 	// store applies, and no turn re-renders an inbox it already delivered.
 	since := l.lastMsg
 	latest := l.lastMsg
@@ -165,7 +185,7 @@ func (l *chatLoop) prependInbox(line string) string {
 		if m.CreatedAt.After(latest) {
 			latest = m.CreatedAt
 		}
-		if strings.EqualFold(m.From, "human") {
+		if strings.EqualFold(m.From, l.From) {
 			continue
 		}
 		if n == 0 {
@@ -211,7 +231,7 @@ func (l *chatLoop) drain(ctx context.Context, out io.Writer) (string, error) {
 				if ev.Error != "" {
 					return reply.String(), fmt.Errorf("%s", ev.Error)
 				}
-				return reply.String(), fmt.Errorf("orchestrator session failed")
+				return reply.String(), fmt.Errorf("%s session failed", l.To)
 			case agentcli.EventCompleted:
 				return reply.String(), nil
 			}

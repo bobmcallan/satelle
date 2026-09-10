@@ -19,7 +19,7 @@ func TestChatRefusesInLoopOrchestrator(t *testing.T) {
 		}
 		return config.AgentBinding{Command: "in-loop"}, true
 	})
-	_, err := g.OpenOrchestrator(t.Context(), workitem.Item{ID: "sty_x", Status: "in_progress", Kind: workitem.KindStory}, nil, nil)
+	_, err := g.OpenSession(t.Context(), "", workitem.Item{ID: "sty_x", Status: "in_progress", Kind: workitem.KindStory}, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "in-loop") {
 		t.Fatalf("want in-loop refusal, got %v", err)
 	}
@@ -28,9 +28,73 @@ func TestChatRefusesInLoopOrchestrator(t *testing.T) {
 func TestChatRefusesMissingOrchestrator(t *testing.T) {
 	g := agentstep.New(nil, nil, t.TempDir(), "")
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) { return config.AgentBinding{}, false })
-	_, err := g.OpenOrchestrator(t.Context(), workitem.Item{ID: "sty_x", Kind: workitem.KindStory}, nil, nil)
+	_, err := g.OpenSession(t.Context(), "", workitem.Item{ID: "sty_x", Kind: workitem.KindStory}, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "orchestrator") {
 		t.Fatalf("want missing-binding error, got %v", err)
+	}
+}
+
+// TestChatAgentFlagRefusalNamesTheBinding (sty_a0372443 AC1): the refusals keep
+// their existing message SHAPE; only the binding name varies, so `--agent
+// reviewer` against an in-loop or non-live-capable [reviewer] says so plainly.
+func TestChatAgentFlagRefusalNamesTheBinding(t *testing.T) {
+	item := workitem.Item{ID: "sty_x", Status: "integration", Kind: workitem.KindStory}
+	for _, tc := range []struct {
+		name    string
+		binding config.AgentBinding
+		found   bool
+		want    string
+	}{
+		{"in-loop", config.AgentBinding{Role: "reviewer", Command: "in-loop"}, true, "[reviewer] is in-loop"},
+		{"command", config.AgentBinding{Role: "reviewer", Interface: "command", Command: "claude -p {system}"}, true, "[reviewer] interface=command is not live-capable"},
+		{"missing", config.AgentBinding{}, false, "no [reviewer] binding"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := agentstep.New(nil, nil, t.TempDir(), "")
+			g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+				if name != "reviewer" || !tc.found {
+					return config.AgentBinding{}, false
+				}
+				return tc.binding, true
+			})
+			_, err := g.OpenSession(t.Context(), "reviewer", item, nil, nil)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+// TestChatFromRoleDefault (sty_a0372443 AC2): an explicit --from wins; with no
+// flag a live SATELLE_SESSION means an agent is driving, and no session means a
+// human at a prompt.
+func TestChatFromRoleDefault(t *testing.T) {
+	for _, tc := range []struct{ flag, session, want string }{
+		{"", "", "human"},
+		{"", "sess-1", "developer-agent"},
+		{"reviewer", "sess-1", "reviewer"},
+		{"  human  ", "sess-1", "human"},
+	} {
+		if got := chatFromRole(tc.flag, tc.session); got != tc.want {
+			t.Errorf("chatFromRole(%q, %q) = %q, want %q", tc.flag, tc.session, got, tc.want)
+		}
+	}
+}
+
+// TestStoryChatFlagsRegistered: --agent/--from exist and default to the
+// orchestrator console so the no-flag invocation is unchanged.
+func TestStoryChatFlagsRegistered(t *testing.T) {
+	c := storyChatCommand()
+	for _, name := range []string{"agent", "from"} {
+		if c.Flags().Lookup(name) == nil {
+			t.Fatalf("missing --%s flag", name)
+		}
+	}
+	if got := agentstep.ChatSessionBinding(""); got != "orchestrator" {
+		t.Fatalf("default binding = %q", got)
+	}
+	if !strings.Contains(c.Long, "--agent") || !strings.Contains(c.Long, "--from") {
+		t.Errorf("chat Long does not document the flags: %q", c.Long)
 	}
 }
 

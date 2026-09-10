@@ -3429,7 +3429,7 @@ func TestChatPayloadFromEqualsTo(t *testing.T) {
 		}
 		return []MessageState{{From: "human", To: "orchestrator", Body: "hi"}}
 	})
-	tp, err := g.ChatPayload(context.Background(), workitem.Item{ID: "sty_chat", Status: "in_progress"})
+	tp, err := g.ChatPayload(context.Background(), workitem.Item{ID: "sty_chat", Status: "in_progress"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3438,6 +3438,119 @@ func TestChatPayloadFromEqualsTo(t *testing.T) {
 	}
 	if len(tp.Messages) != 1 || tp.Messages[0].Body != "hi" {
 		t.Fatalf("messages = %#v", tp.Messages)
+	}
+}
+
+// TestChatPayloadAddressesChosenBinding (sty_a0372443 AC3): --agent reviewer
+// asks for the REVIEWER address set, and only messages addressed to that role
+// or to "*" are delivered — a message to another role is not.
+func TestChatPayloadAddressesChosenBinding(t *testing.T) {
+	g, _ := newEngine(t, "", fakeDocs{})
+	all := []MessageState{
+		{From: "developer-agent", To: "reviewer", Body: "why did you reject"},
+		{From: "developer-agent", To: "*", Body: "broadcast"},
+		{From: "human", To: "orchestrator", Body: "for the console only"},
+	}
+	var gotAddrs []string
+	g.SetMessagesResolver(func(_ context.Context, _ string, addrs []string) []MessageState {
+		gotAddrs = addrs
+		// Mirror verb.MessagesSince: the named addresses UNION "*".
+		want := map[string]bool{"*": true}
+		for _, a := range addrs {
+			want[a] = true
+		}
+		var out []MessageState
+		for _, m := range all {
+			if want[m.To] {
+				out = append(out, m)
+			}
+		}
+		return out
+	})
+	tp, err := g.ChatPayload(context.Background(), workitem.Item{ID: "sty_chat", Status: "integration"}, "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotAddrs) != 1 || gotAddrs[0] != "reviewer" {
+		t.Fatalf("addrs = %v, want [reviewer]", gotAddrs)
+	}
+	if len(tp.Messages) != 2 {
+		t.Fatalf("messages = %#v, want the reviewer row and the * row", tp.Messages)
+	}
+	for _, m := range tp.Messages {
+		if m.To == "orchestrator" {
+			t.Fatalf("a message addressed to another role was delivered: %#v", m)
+		}
+	}
+}
+
+// TestOpenSessionConsultingReviewer (sty_a0372443 AC1/AC4): a live-capable
+// non-orchestrator binding opens, is told in its charter that it is CONSULTING
+// rather than judging, and runs on the BINDING's own (read-only) tool grant.
+func TestOpenSessionConsultingReviewer(t *testing.T) {
+	g, _ := newEngine(t, "", fakeDocs{})
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		if name != "reviewer" {
+			return config.AgentBinding{}, false
+		}
+		return config.AgentBinding{
+			Role: "reviewer", Interface: "stream", Tools: "Read,Grep,Glob",
+			Command: "claude -p --input-format stream-json --output-format stream-json --allowedTools {tools}",
+		}, true
+	})
+	var got agentcli.Request
+	g.newOpener = func(iface, _ string) (agentcli.SessionOpener, error) {
+		if iface != "stream" {
+			t.Errorf("iface = %q", iface)
+		}
+		return func(_ context.Context, req agentcli.Request, _ agentcli.PermissionPolicy) (agentcli.Session, error) {
+			got = req
+			return closedSess{}, nil
+		}, nil
+	}
+	sess, err := g.OpenSession(context.Background(), "reviewer", workitem.Item{ID: "sty_1", Status: "integration"}, nil, nil)
+	if err != nil {
+		t.Fatalf("a live-capable [reviewer] must open: %v", err)
+	}
+	_ = sess
+	if !strings.Contains(got.SystemPrompt, "CONSULTED on this story") ||
+		!strings.Contains(got.SystemPrompt, "consulting, NOT judging") ||
+		!strings.Contains(got.SystemPrompt, "CONTEXT, not a verdict") {
+		t.Fatalf("consulting charter missing from system prompt: %q", got.SystemPrompt)
+	}
+	if strings.Contains(got.SystemPrompt, "isolated satelle executor agent") {
+		t.Fatalf("a consulted binding must not get the executor charter: %q", got.SystemPrompt)
+	}
+	if got.AllowedTools != "Read,Grep,Glob" {
+		t.Fatalf("tools = %q, want the binding's own read-only grant", got.AllowedTools)
+	}
+}
+
+// TestOpenSessionOrchestratorKeepsExecutorCharter: the default console is
+// DRIVING, not consulting — charter selection is by binding name.
+func TestOpenSessionOrchestratorKeepsExecutorCharter(t *testing.T) {
+	g, _ := newEngine(t, "", fakeDocs{})
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		if name != "orchestrator" {
+			return config.AgentBinding{}, false
+		}
+		return config.AgentBinding{Interface: "stream", Tools: "Read,Grep,Glob,Bash(satelle:*)", Command: "claude -p {tools}"}, true
+	})
+	var got agentcli.Request
+	g.newOpener = func(string, string) (agentcli.SessionOpener, error) {
+		return func(_ context.Context, req agentcli.Request, _ agentcli.PermissionPolicy) (agentcli.Session, error) {
+			got = req
+			return closedSess{}, nil
+		}, nil
+	}
+	if _, err := g.OpenSession(context.Background(), "", workitem.Item{ID: "sty_1", Status: "in_progress"}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got.SystemPrompt, "isolated satelle executor agent") {
+		t.Fatalf("default binding must keep the executor charter: %q", got.SystemPrompt)
+	}
+	if strings.Contains(got.SystemPrompt, "consulting, NOT judging") {
+		t.Fatalf("the orchestrator drives; it is not consulted: %q", got.SystemPrompt)
 	}
 }
 
@@ -3469,7 +3582,7 @@ func TestOpenOrchestratorInjectsSessionEnv(t *testing.T) {
 			return closedSess{}, nil
 		}, nil
 	}
-	sess, err := g.OpenOrchestrator(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, nil, handler)
+	sess, err := g.OpenSession(context.Background(), "", workitem.Item{ID: "sty_1", Status: "in_progress"}, nil, handler)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3478,7 +3591,7 @@ func TestOpenOrchestratorInjectsSessionEnv(t *testing.T) {
 		t.Fatalf("env = %#v, want SATELLE_SESSION=sess-chat", gotEnv)
 	}
 	if gotOnEvent == nil {
-		t.Fatal("OpenOrchestrator must install the caller's OnEvent on the request (synchronous transcript sink)")
+		t.Fatal("OpenSession must install the caller's OnEvent on the request (synchronous transcript sink)")
 	}
 }
 

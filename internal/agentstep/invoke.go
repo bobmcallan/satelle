@@ -596,3 +596,19 @@ func executorCharter(agent, step, workflow string) string {
 		"— the workflow's gates govern every advance. ", agent, step, workflow) +
 		isolatedAgentBriefing
 }
+
+// consultCharter is the charter for a named binding opened as a CONSULTANT by
+// `satelle story chat --agent <binding>` — a reviewer interrogated about a
+// rejection, a second opinion on a block. Consultation is not review
+// ([[satelle-agent-consultation]]): the reply is context the caller may act on,
+// the gate that judges the edge still runs cold and one-shot over the payload
+// satelle builds, and the consultant never touches story state (sty_a0372443).
+func consultCharter(binding, role, status string) string {
+	return fmt.Sprintf("## You are the %q binding %q, CONSULTED on this story at status %q\n\n"+
+		"You are consulting, NOT judging. Your reply is CONTEXT, not a verdict: the "+
+		"reviewer that judges this edge still runs cold and one-shot over the payload "+
+		"satelle builds, and its verdict alone advances the stage. Do NOT run "+
+		"`satelle story set` and do NOT change the item's status. Stay centered on the "+
+		"story's acceptance criteria — the conversation is context, never a criterion. ",
+		role, binding, status) + isolatedAgentBriefing
+}

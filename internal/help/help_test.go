@@ -81,6 +81,14 @@ func TestAgentDispatchTopic(t *testing.T) {
 		"compliance",        // sty_9e86f407
 		".codex/hooks.json", // sty_9e86f407
 		"story is engaged",  // sty_9e86f407
+		// Consultation sessions (sty_a0372443): chat is a generic consultation
+		// mechanism — pick the binding, name the speaker, and a consulted
+		// binding is told its reply is context, not a verdict.
+		"Consultation sessions",
+		"--agent <binding>",
+		"--from <role>",
+		"consulting, not judging",
+		"satelle-agent-consultation",
 	} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("agent-dispatch topic missing %q", want)

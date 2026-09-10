@@ -300,11 +300,12 @@ claude -p --input-format stream-json --output-format stream-json --verbose --dis
 stay `command`** — a live channel does not help a cold one-shot verdict.
 `stream` exists for the orchestrator binding (order:4 of epic:agent-messaging).
 
-#### Orchestrator binding and `satelle story chat`
+#### Consultation sessions — `satelle story chat`
 
-The orchestrator may be a live session (`interface = "acp"` or `"stream"`) or
-today's hook channel (`command = "in-loop"`). `[orchestrator]` is a named
-binding consumed by a verb, not a third Role constant.
+Any live-capable binding (`interface = "acp"` or `"stream"`) can be opened as a
+session; `command = "in-loop"` is today's hook channel and is refused. The
+default is `[orchestrator]` — a named binding consumed by a verb, not a third
+Role constant.
 
 ```toml
 [orchestrator]
@@ -316,12 +317,36 @@ model     = "opus"
 effort    = "high"
 ```
 
-`satelle story chat <id>` opens that session, forwards human lines as turns,
+`satelle story chat <id>` opens that session, forwards typed lines as turns,
 streams replies, and records every turn on the story ledger (`agent_message`
-for human/orchestrator turns; `agent_invocation` for permission decisions).
-It does not change story status. `command = "in-loop"` (or no binding) keeps
-the SessionStart / PreToolUse / Stop hook channel — chat refuses rather than
-opening a process.
+for the turn pair; `agent_invocation` for tool boundaries and permission
+decisions, actored by the binding). It does not change story status.
+`command = "in-loop"` (or no binding) keeps the SessionStart / PreToolUse /
+Stop hook channel — chat refuses rather than opening a process.
+
+**`--agent <binding>`** (default `orchestrator`) chooses *who you talk to*. The
+binding must be live-capable; `command`/in-loop and a missing binding refuse by
+name (`no [reviewer] binding …`, `[reviewer] is in-loop …`,
+`[reviewer] interface=command is not live-capable …`). The session runs on that
+binding's own tool grant — a consulted reviewer keeps its read-only
+`Read,Grep,Glob`.
+
+**`--from <role>`** (default `developer-agent` when `SATELLE_SESSION` is set,
+else `human`) names *who is speaking*. Both ledger directions carry it — the
+driving turn is `<from> → <binding>`, the reply `<binding> → <from>` — and
+`satelle story messages <id>` shows both. The first turn's inbox is the
+messages addressed to the chosen binding's role or to `*`; a message to another
+role is not delivered.
+
+This is the consultation mechanism the in-repo agent uses to raise
+implementation quality: interrogate a rejection with the *rejecting reviewer's*
+binding, take a second opinion to a block, converge an implementation with a
+consulting reviewer. A non-orchestrator binding is told in its charter that it
+is **consulting, not judging** — its reply is context, not a verdict; the gate
+that judges the edge still runs cold and one-shot over the payload satelle
+builds, and the consultant does not run `satelle story set`. The orchestrator
+is the scheduler and is *driving*, so it keeps the executor charter. See
+`satelle doc get principles satelle-agent-consultation`.
 
 The permission channel is the same policy as PreToolUse (see **PreToolUse deny
 channels** below): a mutator tool ask is denied by satelle without prompting

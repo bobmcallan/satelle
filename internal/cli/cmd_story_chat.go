@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/verb"
@@ -21,21 +22,42 @@ import (
 func storyChatCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "chat <id>",
-		Short: "Open a live orchestrator session on a story",
-		Long: `Open the [orchestrator] live session (interface=acp or stream) and
-forward human turns. Permission requests for mutator tools are denied by
-satelle when the story is not in an executor-owned performing state — the
-same policy as the PreToolUse edit gate. command=in-loop keeps today's
-hook channel; chat refuses that binding rather than opening a session.
+		Short: "Open a live consultation session on a story",
+		Long: `Open a live session (interface=acp or stream) with a named binding and
+forward turns. --agent picks the binding (default orchestrator); any other
+binding is told it is CONSULTING — its reply is context, not a verdict, and
+it does not change status. --from names the speaking role (default
+developer-agent under SATELLE_SESSION, else human): both ledger directions
+carry it, and the inbox delivers messages addressed to the binding or "*".
 
-Does not change story status. On exit the engagement seat is left as the
-workflow left it.`,
+Mutator tool requests are denied by satelle when the story is not in an
+executor-owned performing state — the PreToolUse edit-gate policy.
+command=in-loop is refused rather than opened.
+
+Does not change story status. See satelle help agent-dispatch.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE:        runStoryChat,
 	}
+	cmd.Flags().String("agent", "", "binding to open the session with (default orchestrator)")
+	cmd.Flags().String("from", "", "role the driving side speaks as (default developer-agent under SATELLE_SESSION, else human)")
 	return cmd
 }
+
+// chatFromRole resolves --from: an explicit role wins; otherwise a session id
+// means an AGENT is driving (developer-agent), and no session means a human at
+// a prompt (sty_a0372443).
+func chatFromRole(flag, sessionID string) string {
+	if r := strings.TrimSpace(flag); r != "" {
+		return r
+	}
+	if strings.TrimSpace(sessionID) != "" {
+		return developerAgentRole
+	}
+	return chatDefaultFrom
+}
+
+const developerAgentRole = "developer-agent"
 
 func runStoryChat(cmd *cobra.Command, args []string) error {
 	id := strings.TrimSpace(args[0])
@@ -57,9 +79,16 @@ func runStoryChat(cmd *cobra.Command, args []string) error {
 	}
 	_, _, _ = resolveSeat(true, sid)
 
+	agentFlag, _ := cmd.Flags().GetString("agent")
+	fromFlag, _ := cmd.Flags().GetString("from")
+	binding := agentstep.ChatSessionBinding(agentFlag)
+	from := chatFromRole(fromFlag, sid)
+
 	loop := &chatLoop{
 		StoryID: it.ID,
-		Ledger:  &storeChatLedger{ctx: cmd.Context(), storyID: it.ID, ls: a.Store.Ledger},
+		From:    from,
+		To:      binding,
+		Ledger:  &storeChatLedger{ctx: cmd.Context(), storyID: it.ID, ls: a.Store.Ledger, actor: binding},
 		Seat: func() (seatInfo, bool, error) {
 			return resolveSeat(true, config.ResolveSession())
 		},
@@ -76,14 +105,14 @@ func runStoryChat(cmd *cobra.Command, args []string) error {
 		loop.Ask = func(agentcli.PermissionRequest) bool { return false }
 	}
 
-	sess, err := eng.OpenOrchestrator(cmd.Context(), it, loop.policy(), loop.EventHandler())
+	sess, err := eng.OpenSession(cmd.Context(), binding, it, loop.policy(), loop.EventHandler())
 	if err != nil {
 		return err
 	}
 	loop.Sess = sess
 	defer func() { _ = sess.Close() }()
 
-	fmt.Fprintf(out, "satelle story chat %s  (status %s; /quit to exit)\n", it.ID, it.Status)
+	fmt.Fprintf(out, "satelle story chat %s  (status %s; %s → %s; /quit to exit)\n", it.ID, it.Status, from, binding)
 	if err := loop.Run(cmd.Context(), in, out); err != nil {
 		_ = sess.Cancel()
 		return err
@@ -95,6 +124,11 @@ type storeChatLedger struct {
 	ctx     context.Context
 	storyID string
 	ls      *ledger.Store
+	// actor is the binding the session was opened with — the agent whose tool
+	// boundaries and permission decisions these invocation rows describe. A
+	// hardcoded "orchestrator" here would contradict the message rows once the
+	// session can be any binding (sty_a0372443).
+	actor string
 }
 
 func (s *storeChatLedger) WriteMessage(from, to, body string) error {
@@ -121,7 +155,7 @@ func (s *storeChatLedger) WriteInvocation(tool, kind, decision, decidedBy string
 	_, err = s.ls.Append(s.ctx, ledger.AppendInput{
 		StoryID: s.storyID,
 		Kind:    ledger.KindAgentInvocation,
-		Actor:   "orchestrator",
+		Actor:   agentstep.ChatSessionBinding(s.actor),
 		Body:    body,
 		Payload: payload,
 	}, time.Now())

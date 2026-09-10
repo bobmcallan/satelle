@@ -200,4 +200,132 @@ while True:
 			t.Errorf("ledger missing %s:\n%s", want, led)
 		}
 	}
+
+	// AC2 (sty_a0372443): SATELLE_SESSION is set here, so the driving side is an
+	// AGENT — `story messages` must show both directions with developer-agent as
+	// the counterpart, not the literal "human".
+	msgs, err := runRoot(t, "story", "messages", id)
+	if err != nil {
+		t.Fatalf("messages: %v\n%s", err, msgs)
+	}
+	assertMessagePair(t, msgs, "developer-agent", "orchestrator")
+}
+
+// assertMessagePair checks `story messages` carries a from→to row and its
+// to→from reply — the two ledger directions a chat turn writes.
+func assertMessagePair(t *testing.T, msgs, from, to string) {
+	t.Helper()
+	var rows []struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	if err := json.Unmarshal([]byte(msgs), &rows); err != nil {
+		t.Fatalf("parse messages: %v\n%s", err, msgs)
+	}
+	var fwd, back bool
+	for _, r := range rows {
+		if r.From == from && r.To == to {
+			fwd = true
+		}
+		if r.From == to && r.To == from {
+			back = true
+		}
+	}
+	if !fwd || !back {
+		t.Fatalf("want both %s -> %s and %s -> %s in:\n%s", from, to, to, from, msgs)
+	}
+}
+
+// TestStoryChatE2EConsultationRoles (sty_a0372443 AC1/AC2): `story chat --agent
+// <binding> --from <role>` opens the NAMED binding — not [orchestrator] — and
+// both ledger directions carry the chosen roles.
+func TestStoryChatE2EConsultationRoles(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available")
+	}
+	repo := tempRepo(t)
+	t.Chdir(repo)
+	wfDir := filepath.Join(repo, ".satelle", "workflows")
+	writeRoute(t, wfDir,
+		`["*"]
+obligations = ["raised", "closed"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[closed]
+status = "done"
+terminal = true
+requires = ["raised"]
+`)
+
+	// A consultant that answers by naming the charter line it was given, so the
+	// test proves the CONSULTING binding (not the orchestrator) was opened.
+	peer := filepath.Join(t.TempDir(), "fake-consultant")
+	script := `#!/usr/bin/env python3
+import json, os, sys
+def send(o):
+    sys.stdout.write(json.dumps(o) + "\n"); sys.stdout.flush()
+while True:
+    line = sys.stdin.readline()
+    if not line:
+        break
+    msg = json.loads(line)
+    if msg.get("type") != "user":
+        continue
+    send({"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"consulted-ok"}]}})
+    send({"type":"result","result":"consulted-ok"})
+`
+	if err := os.WriteFile(peer, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agents := "[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n" +
+		"[orchestrator]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n" +
+		"[consultant]\nrole = \"reviewer\"\ninterface = \"stream\"\n" +
+		"command = \"" + peer + " --output-format stream-json\"\n" +
+		"tools = \"Read,Grep,Glob\"\n"
+	if err := os.WriteFile(filepath.Join(wfDir, config.AgentsConfigName), []byte(agents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(filepath.Join(repo, ".satelle", config.AgentsConfigName))
+
+	out, err := runRoot(t, "story", "create",
+		"--title", "chat consultation e2e",
+		"--body", "the in-repo agent consults a reviewer binding",
+		"--acceptance", "1. the consulted binding answers and both directions are ledgered",
+		"--category", "chore",
+	)
+	if err != nil {
+		t.Fatalf("create: %v\n%s", err, out)
+	}
+	var created map[string]any
+	if err := json.NewDecoder(strings.NewReader(out)).Decode(&created); err != nil {
+		t.Fatalf("parse create: %v\n%s", err, out)
+	}
+	id, _ := created["id"].(string)
+	if id == "" {
+		t.Fatalf("no id in %s", out)
+	}
+
+	// [orchestrator] is in-loop here: without --agent chat must refuse, and with
+	// --agent consultant it must open the live consultant instead.
+	if _, err := runRootIn(t, "/quit\n", "story", "chat", id); err == nil {
+		t.Fatal("chat with an in-loop [orchestrator] must refuse")
+	}
+
+	chatOut, err := runRootIn(t, "why did you reject\n/quit\n",
+		"story", "chat", id, "--agent", "consultant", "--from", "developer-agent")
+	if err != nil {
+		t.Fatalf("chat --agent consultant: %v\n%s", err, chatOut)
+	}
+	if !strings.Contains(chatOut, "consulted-ok") {
+		t.Fatalf("consultant reply missing:\n%s", chatOut)
+	}
+
+	msgs, err := runRoot(t, "story", "messages", id)
+	if err != nil {
+		t.Fatalf("messages: %v\n%s", err, msgs)
+	}
+	assertMessagePair(t, msgs, "developer-agent", "consultant")
 }
