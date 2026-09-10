@@ -59,6 +59,16 @@ type recoverRef struct {
 	From []string `toml:"from"`
 }
 
+// reworkRef is a performing step's `rework = { consult = "…", rounds = N }` —
+// the consulting binding the orchestrator may converse with before presenting
+// this step's exit edge, and the round budget that bounds the conversation.
+// Configuration, not a decision: the binary runs the relay and its termination
+// rule, and this key says WHO and HOW MANY (sty_8e0b29a0).
+type reworkRef struct {
+	Consult string `toml:"consult"`
+	Rounds  int    `toml:"rounds"`
+}
+
 // adviseRef is a step's `advise = { agent = "…", skill = "…" }`.
 type adviseRef struct {
 	Agent string `toml:"agent"`
@@ -101,8 +111,12 @@ type stepWire struct {
 	Requires  []string   `toml:"requires"`
 	AppliesTo []string   `toml:"applies_to"`
 	Advise    *adviseRef `toml:"advise"`
-	Start     bool       `toml:"start"`
-	Terminal  bool       `toml:"terminal"`
+	// Rework is a POINTER for the same reason Parallel is: an absent key must be
+	// distinguishable from an authored zero, because absent means "no loop" and
+	// `rounds = 0` is a mis-authored budget this parser refuses.
+	Rework   *reworkRef `toml:"rework"`
+	Start    bool       `toml:"start"`
+	Terminal bool       `toml:"terminal"`
 }
 
 type gateWire struct {
@@ -276,6 +290,7 @@ func ParseSteps(body string) (Catalogue, error) {
 		return Catalogue{}, err
 	}
 	var cat Catalogue
+	reworkDeclared := map[string]bool{}
 	for _, provides := range sortedKeys(recs) {
 		var s stepWire
 		if err := md.PrimitiveDecode(recs[provides], &s); err != nil {
@@ -302,6 +317,14 @@ func ParseSteps(body string) (Catalogue, error) {
 		if s.Advise != nil {
 			st.Advisor, st.AdvisorSkill = s.Advise.Agent, s.Advise.Skill
 		}
+		if s.Rework != nil {
+			// Recorded here, VALIDATED after the unknown-key pass below. Order
+			// matters: a typo'd `round = 2` decodes as no rounds at all, and
+			// "rounds must be > 0" would be a confusing answer to a misspelling
+			// the strict pass can name exactly (sty_8e0b29a0).
+			st.ReworkConsult, st.ReworkRounds = strings.TrimSpace(s.Rework.Consult), s.Rework.Rounds
+			reworkDeclared[provides] = true
+		}
 		cat.Steps = append(cat.Steps, st)
 	}
 	var gates []gateWire
@@ -321,6 +344,24 @@ func ParseSteps(body string) (Catalogue, error) {
 	}
 	if err := undecodedErr(md, "step.toml"); err != nil {
 		return Catalogue{}, err
+	}
+	// Rework validation LAST, so a misspelled key inside the sub-table is
+	// reported as the unknown key it is rather than as its consequence. Each of
+	// the three refusals exists because the alternative is a silent no-op, and a
+	// rework key that does nothing is indistinguishable from a route that never
+	// declared one (sty_8e0b29a0).
+	for _, st := range cat.Steps {
+		if !reworkDeclared[st.Provides] {
+			continue
+		}
+		switch {
+		case st.ReworkConsult == "":
+			return Catalogue{}, fmt.Errorf("step.toml: step %q: rework needs consult = \"<binding>\"", st.Provides)
+		case st.ReworkRounds <= 0:
+			return Catalogue{}, fmt.Errorf("step.toml: step %q: rework rounds must be > 0 (a zero budget is a loop that never runs)", st.Provides)
+		case strings.TrimSpace(st.Agent) == "":
+			return Catalogue{}, fmt.Errorf("step.toml: step %q: rework needs the step to allocate a performer (agent = …) — there is nobody to code with", st.Provides)
+		}
 	}
 	return cat, nil
 }

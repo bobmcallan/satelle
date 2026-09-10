@@ -49,14 +49,14 @@ func workflowRoute(workflows []docindex.Doc, doc docindex.Doc, category string, 
 		// re-running applies_to precedence, which would show a different workflow.
 		set = []docindex.Doc{doc}
 	}
-	spec, name, advisors, err := wfgovern.SpecFor(set, item)
+	d, name, err := wfgovern.RouteFor(set, item)
 	if err != nil {
 		return wfroute.Route{Workflow: doc.Name}
 	}
 	if wfgovern.IsRouteSource(doc.Name) {
 		doc.Name = name
 	}
-	return wfroute.Build(spec, doc.Name, tags, advisors)
+	return wfroute.Build(d.Spec, doc.Name, tags, d.Advisors, d.Reworks)
 }
 
 // workflowDetailVM backs the inline expand: the ROUTE the workflow prescribes

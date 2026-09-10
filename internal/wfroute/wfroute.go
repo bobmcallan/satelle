@@ -50,6 +50,35 @@ type Advisor struct {
 	Skill string `json:"skill,omitempty"`
 }
 
+// Rework names the binding the ORCHESTRATOR may converse with about a step's
+// slice before presenting its exit edge, and the round budget that bounds the
+// conversation (sty_8e0b29a0). Like Advisor it is passed IN rather than read off
+// the Spec, and for the same reason: the Spec says where a story may go, the
+// route says who the orchestrator may talk to on the way. Also like Advisor it
+// is never a dispatch — entering the state fires nothing; the orchestrator opens
+// `satelle story rework` and the relay returns a signal, never a verdict.
+type Rework struct {
+	Step    string `json:"step"`
+	Consult string `json:"consult"`
+	Rounds  int    `json:"rounds"`
+}
+
+// ReworksFrom derives the rework loops a step catalogue declares. steps must be
+// the SELECTED set for this category (wfdot.SelectSteps), never
+// Catalogue.Steps — the catalogue is shared and stage names repeat across route
+// families by design, so walking it would attach one family's loop to every
+// route with a step of that name. The parameter is typed []Step rather than a
+// Catalogue precisely so the wrong call cannot be written (see AdvisorsFrom).
+func ReworksFrom(steps []wfdot.Step) []Rework {
+	var out []Rework
+	for _, st := range steps {
+		if st.ReworkConsult != "" {
+			out = append(out, Rework{Step: st.Name, Consult: st.ReworkConsult, Rounds: st.ReworkRounds})
+		}
+	}
+	return out
+}
+
 // AdvisorsFrom derives the advisors a declaration of done and its step catalogue
 // declare: the park state's `advise <agent> @skill` suffix, plus any step's
 // `advise:` key. This is the only place the two forms are read, so a consumer
@@ -102,6 +131,9 @@ type Step struct {
 	Terminal bool `json:"terminal,omitempty"`
 	// Advisor is the agent the orchestrator may consult at this step.
 	Advisor *Advisor `json:"advisor,omitempty"`
+	// Rework is the bounded consultation loop the orchestrator may open at this
+	// step before presenting its exit edge. Nil when the step declares none.
+	Rework *Rework `json:"rework,omitempty"`
 }
 
 // Exit is an off-route destination — a park or cancel state the story may leave
@@ -134,12 +166,18 @@ type Route struct {
 // one hop, and it holds for a derived Spec without change because BuildRoute
 // marks its terminal step the same way. States that reach no success terminal
 // (park, cancel) are exits, not steps.
-func Build(spec wfdot.Spec, workflow string, tags []string, advisors []Advisor) Route {
+func Build(spec wfdot.Spec, workflow string, tags []string, advisors []Advisor, reworks []Rework) Route {
 	r := Route{Workflow: workflow}
 	byStep := map[string]Advisor{}
 	for _, a := range advisors {
 		if a.Step != "" && a.Agent != "" {
 			byStep[a.Step] = a
+		}
+	}
+	reworkByStep := map[string]Rework{}
+	for _, w := range reworks {
+		if w.Step != "" && w.Consult != "" {
+			reworkByStep[w.Step] = w
 		}
 	}
 	dist := distToSuccess(spec)
@@ -174,6 +212,9 @@ func Build(spec wfdot.Spec, workflow string, tags []string, advisors []Advisor) 
 		step := buildStep(spec, st, tags)
 		if a, ok := byStep[st.Name]; ok {
 			step.Advisor = &a
+		}
+		if w, ok := reworkByStep[st.Name]; ok {
+			step.Rework = &w
 		}
 		r.Steps = append(r.Steps, step)
 	}
@@ -322,6 +363,9 @@ func (r Route) Render(at string) string {
 		if line := renderAdvisor(s.Advisor); line != "" {
 			b.WriteString(line)
 		}
+		if line := renderRework(s.Rework); line != "" {
+			b.WriteString(line)
+		}
 	}
 	if len(r.Exits) > 0 {
 		var exits []string
@@ -358,6 +402,17 @@ func renderAdvisor(a *Advisor) string {
 		rubric = " under @skill:" + a.Skill
 	}
 	return fmt.Sprintf("   advisor: %s%s — the orchestrator consults it and records the advice; nothing dispatches it\n", a.Agent, rubric)
+}
+
+// renderRework writes the REWORK line, addressed to the orchestrator for the
+// same reason renderAdvisor is: nothing fires the loop, so the route has to say
+// who may be talked to, for how long, and that the gate still decides.
+func renderRework(w *Rework) string {
+	if w == nil {
+		return ""
+	}
+	return fmt.Sprintf("   rework: consult %s, up to %d round(s) — the orchestrator may open `satelle story rework`; the outcome is context, the entry gate still decides\n",
+		w.Consult, w.Rounds)
 }
 
 func renderObligation(s Step) string {

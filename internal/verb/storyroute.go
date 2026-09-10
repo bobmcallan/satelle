@@ -42,12 +42,12 @@ func recordRoute(ctx context.Context, item workitem.Item, from, to string, verdi
 	if item.Kind != workitem.KindStory && item.Kind != workitem.KindTask {
 		return
 	}
-	spec, wfName, advisors, ok := governingSpec(ctx, item)
+	d, wfName, ok := governingRoute(ctx, item)
 	if !ok {
 		return
 	}
 	prior := routeOutcomes(item)
-	body := renderRouteDoc(spec, wfName, item, to, prior+renderOutcome(item.ID, from, to, verdicts, unresolved, now), advisors)
+	body := renderRouteDoc(d, wfName, item, to, prior+renderOutcome(item.ID, from, to, verdicts, unresolved, now))
 	_, _, _ = writeAttachedDoc(ctx, item, RouteDocName, RouteDocName, body, now)
 }
 
@@ -68,23 +68,23 @@ func StoryRoute(ctx context.Context, id string) (string, error) {
 	if body := readRouteDoc(item); body != "" {
 		return body, nil
 	}
-	spec, wfName, advisors, ok := governingSpec(ctx, item)
+	d, wfName, ok := governingRoute(ctx, item)
 	if !ok {
 		return "", fmt.Errorf("verb: route: %s has no governing workflow with a parseable lifecycle", id)
 	}
-	return renderRouteDoc(spec, wfName, item, item.Status, "", advisors), nil
+	return renderRouteDoc(d, wfName, item, item.Status, ""), nil
 }
 
 // renderRouteDoc assembles the whole artifact: the plan half rendered fresh, then
 // the outcome half (prior blocks plus any new one) under a stable heading.
-func renderRouteDoc(spec wfdot.Spec, wfName string, item workitem.Item, at, outcomes string, advisors []wfroute.Advisor) string {
+func renderRouteDoc(d wfgovern.DerivedRoute, wfName string, item workitem.Item, at, outcomes string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Route — %s\n\n", item.ID)
 	fmt.Fprintf(&b, "`%s` · category %s · currently **%s**\n\n", item.ID, orDash(item.Category), item.Status)
 	// Advisors are declared by the route's `advise` lines — entry dispatch is
 	// retired (sty_05a5e203), so nothing dispatches them; the orchestrator
 	// consults them and records the advice.
-	b.WriteString(wfroute.Build(spec, wfName, item.Tags, advisors).Render(at))
+	b.WriteString(wfroute.Build(d.Spec, wfName, item.Tags, d.Advisors, d.Reworks).Render(at))
 	b.WriteString("\n" + routeOutcomesHeading + "\n")
 	if strings.TrimSpace(outcomes) == "" {
 		b.WriteString("\n(no step has resolved yet)\n")
@@ -203,19 +203,27 @@ func readRouteDoc(item workitem.Item) string {
 // ok=false when no workflow resolves or its lifecycle is not parseable — the
 // route is then simply unavailable, never wrong.
 func governingSpec(ctx context.Context, item workitem.Item) (wfdot.Spec, string, []wfroute.Advisor, bool) {
+	d, name, ok := governingRoute(ctx, item)
+	return d.Spec, name, d.Advisors, ok
+}
+
+// governingRoute is governingSpec's whole answer: the DerivedRoute, so a
+// renderer reads the Spec AND the annotations that are not topology (advisors,
+// rework loops) off one resolution (sty_8e0b29a0).
+func governingRoute(ctx context.Context, item workitem.Item) (wfgovern.DerivedRoute, string, bool) {
 	idx, err := requireDocIndex()
 	if err != nil {
-		return wfdot.Spec{}, "", nil, false
+		return wfgovern.DerivedRoute{}, "", false
 	}
 	wfs, err := idx.List(ctx, "workflows")
 	if err != nil {
-		return wfdot.Spec{}, "", nil, false
+		return wfgovern.DerivedRoute{}, "", false
 	}
-	spec, name, advisors, err := wfgovern.SpecFor(wfs, item)
+	d, name, err := wfgovern.RouteFor(wfs, item)
 	if err != nil {
-		return wfdot.Spec{}, "", nil, false
+		return wfgovern.DerivedRoute{}, "", false
 	}
-	return spec, name, advisors, true
+	return d, name, true
 }
 
 func reviewKindFor(accept bool) string {

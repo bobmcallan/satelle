@@ -89,10 +89,39 @@ func TestAgentDispatchTopic(t *testing.T) {
 		"--from <role>",
 		"consulting, not judging",
 		"satelle-agent-consultation",
+		// Rework relay (sty_8e0b29a0): the step key, the verb, the termination
+		// contract with its literal marker, and the two permission policies.
+		"Rework relay",
+		"satelle story rework",
+		"rework = { consult",
+		"NOT READY: <the single most important thing still wrong>",
+		"consumes a round",
+		"never** sets status",
+		`cc = "*"`,
+		"denied by policy",
 	} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("agent-dispatch topic missing %q", want)
 		}
+	}
+}
+
+// TestReworkMarkerContractStatedIdentically: the READY contract appears in the
+// help topic AND in `satelle story rework --help`. A contract stated in two
+// places is a contract that drifts, so both are pinned to the same literals —
+// the CLI half is asserted in internal/cli (TestReworkCommandLongStatesTheMarkerContract).
+func TestReworkMarkerContractStatedIdentically(t *testing.T) {
+	top, ok := Get("agent-dispatch")
+	if !ok {
+		t.Fatal("agent-dispatch topic not found")
+	}
+	for _, want := range []string{"READY", "NOT READY:"} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("the marker %q must appear verbatim in the topic", want)
+		}
+	}
+	if strings.Contains(top.Body, "Ready\n") || strings.Contains(top.Body, "ready marker is `ready`") {
+		t.Errorf("the marker is case-sensitive; the topic must not show a lowercase form as the contract")
 	}
 }
 

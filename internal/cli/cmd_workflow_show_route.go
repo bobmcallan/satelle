@@ -50,7 +50,7 @@ func renderWorkflowRoute(out io.Writer, rs wfgovern.RouteSource, category string
 	}
 	fmt.Fprintln(out)
 
-	route := wfroute.Build(d.Spec, wfgovern.DerivedRouteName, tags, d.Advisors)
+	route := wfroute.Build(d.Spec, wfgovern.DerivedRouteName, tags, d.Advisors, d.Reworks)
 	renderRouteSteps(out, route, d.List)
 	renderRouteGateScope(out, d)
 	renderSynthesised(out, route, d.List)
@@ -96,6 +96,10 @@ func renderRouteSteps(out io.Writer, route wfroute.Route, l wfdot.List) {
 		if st.Advisor != nil {
 			fmt.Fprintf(out, "       advisor:    %s @%s (consulted by the orchestrator, never dispatched by entry)\n",
 				st.Advisor.Agent, st.Advisor.Skill)
+		}
+		if st.Rework != nil {
+			fmt.Fprintf(out, "       rework:     consult %s, up to %d round(s) (satelle story rework; the entry gate still decides)\n",
+				st.Rework.Consult, st.Rework.Rounds)
 		}
 	}
 	fmt.Fprintln(out)

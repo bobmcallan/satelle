@@ -62,6 +62,16 @@ type Step struct {
 	Advisor string
 	// AdvisorSkill is the rubric Advisor is consulted under.
 	AdvisorSkill string
+	// ReworkConsult / ReworkRounds declare the step's bounded rework loop: the
+	// binding the orchestrator may converse with about this slice, and how many
+	// rounds that conversation may run before it must stop (sty_8e0b29a0). Like
+	// Advisor it is a DECLARATION, never a dispatch — entering the state fires
+	// nothing; the orchestrator opens `satelle story rework` and the relay's
+	// outcome is a signal, never a verdict. Empty ReworkConsult means no loop.
+	// Also deliberately absent from the emitted Spec: Spec is topology, and a
+	// consult budget is an instruction to the orchestrator.
+	ReworkConsult string
+	ReworkRounds  int
 	// Start marks the entry state; Terminal marks a terminal success state.
 	Start    bool
 	Terminal bool

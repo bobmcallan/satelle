@@ -264,6 +264,35 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 			advisors = append(advisors, ad)
 		}
 
+		// REWORK consult bindings are a usage signal like an advisor's, and they
+		// carry ONE obligation an advisor does not: the relay opens them as a LIVE
+		// session, so a `command`/in-loop binding cannot serve. Both checks are
+		// WARN, never a refusal — a repo may author the loop before wiring the
+		// binding, and the loop is opened by hand, so a broken one costs a clear
+		// error at `satelle story rework` rather than a broken gate (sty_8e0b29a0).
+		for _, w := range doc.reworks {
+			if w.Consult == "" {
+				continue
+			}
+			if w.Consult != "reviewer" && w.Consult != "executor" {
+				usedNamed[w.Consult] = true
+			}
+			b, found := agents.NamedBinding(w.Consult)
+			if !found {
+				r.record(health.Warn(health.IDNodeAlloc, "Rework consult binding missing", fmt.Sprintf(
+					"workflow %q step %q declares rework consult=%s with no [%s] binding in agents.toml — satelle story rework cannot open it",
+					doc.Name, w.Step, w.Consult, w.Consult)).
+					WithRemediation("add a live-capable [" + w.Consult + "] binding (interface=acp or stream) to .satelle/workflows/agents.toml, or drop the rework key"))
+				continue
+			}
+			if reason := notLiveCapable(w.Consult, b); reason != "" {
+				r.record(health.Warn(health.IDNodeAlloc, "Rework consult binding not live-capable", fmt.Sprintf(
+					"workflow %q step %q declares rework consult=%s but %s — the rework relay opens it as a live session",
+					doc.Name, w.Step, w.Consult, reason)).About(w.Consult).
+					WithRemediation("set interface=acp or interface=stream on [" + w.Consult + "]"))
+			}
+		}
+
 		spec, ok := doc.spec()
 		if !ok {
 			continue // structure.Doc / workflow validate owns unparseable bodies
@@ -423,6 +452,21 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 		}
 	}
 	return r
+}
+
+// notLiveCapable reports, in prose, why a binding cannot be opened as a live
+// session — "" when it can. It asks the runtime's OWN two questions in the
+// runtime's order (agentstep.OpenSessionAs): is the command in-loop, and does
+// the interface resolve to a session opener. Validate and the relay therefore
+// cannot disagree about what "live-capable" means (sty_8e0b29a0).
+func notLiveCapable(name string, b config.AgentBinding) string {
+	if config.IsInLoopCommand(b.CommandTemplate()) {
+		return fmt.Sprintf("[%s] is command=in-loop — the hook channel cannot be relayed", name)
+	}
+	if _, err := agentcli.OpenerFromBinding(b.ResolvedInterface(), b.CommandTemplate()); err != nil {
+		return fmt.Sprintf("[%s] interface=%s cannot open a session: %v", name, b.ResolvedInterface(), err)
+	}
+	return ""
 }
 
 // checkHooks validates one workflow's LIFECYCLE HOOK allocations and records a
@@ -966,6 +1010,10 @@ type wfEntry struct {
 	// allocation check reading only the Spec reported every advisor-only binding
 	// orphaned.
 	advisors []wfroute.Advisor
+	// reworks are the bounded consultation loops this category's steps declare.
+	// Off the Spec for the same reason advisors are, and a USAGE signal in the
+	// same way: a step's rework consult allocates that binding (sty_8e0b29a0).
+	reworks []wfroute.Rework
 }
 
 func (e wfEntry) spec() (wfdot.Spec, bool) {
@@ -1034,7 +1082,7 @@ func expandRouteSources(workflows []docindex.Doc) []wfEntry {
 			Body: rs.Step,
 		}
 		s := dr.Spec
-		out = append(out, wfEntry{Doc: doc, route: &s, advisors: dr.Advisors})
+		out = append(out, wfEntry{Doc: doc, route: &s, advisors: dr.Advisors, reworks: dr.Reworks})
 	}
 	return out
 }

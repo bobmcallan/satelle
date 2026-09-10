@@ -54,7 +54,7 @@ func advisorFor(t *testing.T, category, step string) *wfroute.Advisor {
 	if err != nil {
 		t.Fatalf("RouteSpecFor(%q): %v", category, err)
 	}
-	route := wfroute.Build(d.Spec, DerivedRouteName, nil, d.Advisors)
+	route := wfroute.Build(d.Spec, DerivedRouteName, nil, d.Advisors, d.Reworks)
 	for _, st := range route.Steps {
 		if st.Status == step {
 			return st.Advisor

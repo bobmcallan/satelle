@@ -56,8 +56,8 @@ type memLedger struct {
 	inv  []map[string]string
 }
 
-func (m *memLedger) WriteMessage(from, to, body string) error {
-	m.msgs = append(m.msgs, verb.AgentMessage{From: from, To: to, Body: body, CreatedAt: time.Now()})
+func (m *memLedger) WriteMessage(from, to, cc, body string) error {
+	m.msgs = append(m.msgs, verb.AgentMessage{From: from, To: to, Cc: cc, Body: body, CreatedAt: time.Now()})
 	return nil
 }
 func (m *memLedger) WriteInvocation(tool, kind, decision, decidedBy string) error {
@@ -249,11 +249,11 @@ func TestChatInboxKeysOnConfiguredRoles(t *testing.T) {
 		t.Fatal(err)
 	}
 	// One row for the reviewer, one for the orchestrator only.
-	if err := led.WriteMessage("executor", "reviewer", "note-for-reviewer"); err != nil {
+	if err := led.WriteMessage("executor", "reviewer", "", "note-for-reviewer"); err != nil {
 		t.Fatal(err)
 	}
 	led.msgs[len(led.msgs)-1].CreatedAt = time.Now().Add(time.Second)
-	if err := led.WriteMessage("executor", "orchestrator", "note-for-console"); err != nil {
+	if err := led.WriteMessage("executor", "orchestrator", "", "note-for-console"); err != nil {
 		t.Fatal(err)
 	}
 	led.msgs[len(led.msgs)-1].CreatedAt = time.Now().Add(2 * time.Second)
@@ -282,7 +282,7 @@ func TestChatDeliversMessagesOnNextTurn(t *testing.T) {
 	if err := loop.Run(context.Background(), in, &out); err != nil {
 		t.Fatal(err)
 	}
-	if err := led.WriteMessage("executor", "orchestrator", "mid-session-note"); err != nil {
+	if err := led.WriteMessage("executor", "orchestrator", "", "mid-session-note"); err != nil {
 		t.Fatal(err)
 	}
 	led.msgs[len(led.msgs)-1].CreatedAt = time.Now().Add(time.Second)

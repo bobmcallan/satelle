@@ -353,6 +353,85 @@ channels** below): a mutator tool ask is denied by satelle without prompting
 the human when the story is not in an executor-owned performing state (or a
 transition is in flight). Otherwise the human is asked allow/deny.
 
+#### Rework relay — `satelle story rework` (sty_8e0b29a0)
+
+The reject → re-present cycle is the expensive loop. The cheaper shape is **warm
+convergence then a cold gate**: a coder session and a *consulting* reviewer
+session converse about the slice until the consultant says ready or a round
+budget is spent; then the orchestrator presents the edge and the edge's reviewer
+runs cold and one-shot with the transcript in its payload. Neither live session
+moves status. Authority stays with the gate.
+
+**Declared as configuration, on the step.** A performing step opts in; a step
+without the key has no loop and behaves exactly as before.
+
+```toml
+[coded]
+status = "in_progress"
+agent  = "coder"                                  # the performer — the CODER side
+rework = { consult = "reviewer", rounds = 3 }     # who to converse with, for how long
+```
+
+`satelle story route <id>` and `satelle workflow show <category>` print the
+line; `satelle agent validate` **warns** when `consult` names a missing or
+non-live-capable binding (warn, never a refusal — a repo may author the loop
+before wiring the binding, and the relay is opened by hand). Both `agent` and
+`consult` must be live-capable bindings: a `command = "in-loop"` performer
+cannot be relayed, which is why this repo's own route declares no `rework`.
+
+**Who opens it.** The orchestrator or the in-repo agent runs
+`satelle story rework <id>`, at the story's *current* status. Nothing dispatches
+it — entering a state fires no agent (flat dispatch), and satelle relays rather
+than anyone monitoring. `--rounds N` may only **lower** the authored budget:
+the budget is configuration.
+
+**Turn protocol.** The consultant speaks first (it reviews the slice as it
+stands against the ACs). Then each round is consultant → coder → consultant.
+Every turn is ledgered as an `agent_message` with its real `from`/`to` roles —
+the binding names — plus `cc = "*"`, so `satelle story messages <id>` reads as
+the conversation *and* the transcript reaches whoever later judges the edge
+through the payload's `messages[]` (within the existing message budget). `cc` is
+an additional address a row is readable under; `to` stays who it is for.
+
+**Termination is a rule, not a decision.** The consultant's reply must end with
+a FINAL non-empty line that is exactly:
+
+```
+READY
+NOT READY: <the single most important thing still wrong>
+```
+
+`READY` ends the relay with `converged=true`. Anything else — including a reply
+that ignores the contract — counts as **NOT READY** with the objection captured
+and **consumes a round**, so a consultant that cannot follow the contract cannot
+hang the loop. When the budget is spent the relay ends with `converged=false`
+and the last objection.
+
+The relay prints its result and records the same as a ledger row:
+
+```json
+{"converged": true, "rounds": 2}
+{"converged": false, "rounds": 3, "last_objection": "AC4 has no test"}
+```
+
+It **never** sets status. `READY` is a signal to the orchestrator, never a
+verdict: the orchestrator presents the edge, or — after the budget without
+ready, or after a declared number of gate rejections on the same edge — parks to
+`blocked` quoting the last objection. It never lowers an AC to converge. See
+`satelle doc get principles satelle-agent-consultation`.
+
+**Permission policy, per side.** The two sessions are *not* symmetric:
+
+| Side | Charter | Mutator tools |
+| --- | --- | --- |
+| coder (step's `agent`) | executor — it is driving its own edits | allowed **iff** its own binding's `tools` grant admits mutators **and** the seat is live, not mid-transition, and its committed status is a performing state the route allocates to **that binding** |
+| consultant (`consult`) | consulting — reply is context, not a verdict | **denied by policy**, whatever the seat says |
+
+The coder's rule is the route's own allocation, read from the seat — not a state
+name compiled into the binary. The consultant's grant is already read-only; the
+policy is the second, non-negotiable refusal, because a consultant that can edit
+is a reviewer marking its own work.
+
 ### Workspace bindings layer — `satelle sync bindings` (sty_01949949)
 
 The agents layer can be decided centrally and executed locally. Two verbs and

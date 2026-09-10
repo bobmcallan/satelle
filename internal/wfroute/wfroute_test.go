@@ -49,7 +49,7 @@ func derived(t *testing.T, tags []string) wfdot.Spec {
 // its performer, its rubrics and its entry reviewers. All five, per step, or the
 // route is not a substitute for reading the graph.
 func TestRouteExposesEveryStepField(t *testing.T) {
-	r := Build(derived(t, nil), "satelle-project-workflow", nil, nil)
+	r := Build(derived(t, nil), "satelle-project-workflow", nil, nil, nil)
 	byName := map[string]Step{}
 	for _, s := range r.Steps {
 		byName[s.Status] = s
@@ -78,7 +78,7 @@ func TestRouteExposesEveryStepField(t *testing.T) {
 // carries a tag says so, and one filtered out for want of that tag is recorded
 // as skipped — so "no gate" and "gate not for you" stay distinguishable.
 func TestRouteMarksTagScopedGates(t *testing.T) {
-	ui := stepAt(t, Build(derived(t, []string{"surface:ui"}), "wf", []string{"surface:ui"}, nil), "integration")
+	ui := stepAt(t, Build(derived(t, []string{"surface:ui"}), "wf", []string{"surface:ui"}, nil, nil), "integration")
 	var scoped *Reviewer
 	for i, rv := range ui.Reviewers {
 		if rv.Skill == "satelle-design-review" {
@@ -92,7 +92,7 @@ func TestRouteMarksTagScopedGates(t *testing.T) {
 		t.Errorf("design gate ByTag = %v; want [surface:ui] so the route says WHY it is present", scoped.ByTag)
 	}
 
-	cli := stepAt(t, Build(derived(t, []string{"surface:cli"}), "wf", []string{"surface:cli"}, nil), "integration")
+	cli := stepAt(t, Build(derived(t, []string{"surface:cli"}), "wf", []string{"surface:cli"}, nil, nil), "integration")
 	if contains(skillsOf(cli.Reviewers), "satelle-design-review") {
 		t.Error("a surface:cli story must not carry the surface:ui design gate")
 	}
@@ -104,7 +104,7 @@ func TestRouteMarksTagScopedGates(t *testing.T) {
 // TestRouteSeparatesExitsFromSteps: park and cancel are exits, never steps. A
 // route that listed them inline would claim the story passes through them.
 func TestRouteSeparatesExitsFromSteps(t *testing.T) {
-	r := Build(derived(t, nil), "wf", nil, nil)
+	r := Build(derived(t, nil), "wf", nil, nil, nil)
 	for _, s := range r.Steps {
 		if s.Status == "blocked" || s.Status == "cancelled" {
 			t.Fatalf("%q is an exit, not a step on the route", s.Status)
@@ -126,7 +126,7 @@ func TestRouteSeparatesExitsFromSteps(t *testing.T) {
 // IsResumePark, not "has outbound edges". A cancel sink with an extra outbound
 // edge is still not advertised as a park.
 func TestExitParkFollowsResumePark(t *testing.T) {
-	r := Build(derived(t, nil), "wf", nil, nil)
+	r := Build(derived(t, nil), "wf", nil, nil, nil)
 	out := r.Render("in_progress")
 	if !strings.Contains(out, "blocked (park — resumes to origin)") {
 		t.Errorf("default route must still advertise blocked as a resume park:\n%s", out)
@@ -140,7 +140,7 @@ func TestExitParkFollowsResumePark(t *testing.T) {
 // line per step. If it overflows, the route has become too dynamic to read — the
 // failure is the signal, not a nuisance.
 func TestRouteFitsTheLegibilityBudget(t *testing.T) {
-	out := Build(derived(t, nil), "satelle-project-workflow", nil, nil).Render("in_progress")
+	out := Build(derived(t, nil), "satelle-project-workflow", nil, nil, nil).Render("in_progress")
 	steps := 0
 	for _, line := range strings.Split(out, "\n") {
 		if strings.Contains(line, "**") {
@@ -234,7 +234,7 @@ func TestRouteNamesTheAdvisorsToConsult(t *testing.T) {
 		t.Fatalf("advisors = %+v; want at least the park and terminal advisors", advisors)
 	}
 
-	r := Build(derived(t, nil), "satelle-project-workflow", nil, advisors)
+	r := Build(derived(t, nil), "satelle-project-workflow", nil, advisors, nil)
 
 	var park *Exit
 	for i, e := range r.Exits {

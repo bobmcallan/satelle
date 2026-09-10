@@ -817,6 +817,39 @@ func editPermitted(info seatInfo, marker dispatchMarker) bool {
 	return !info.InFlight && info.EditCapable
 }
 
+// dispatchedPerformerPermitted reports whether BINDING may mutate the tree from
+// a live session satelle itself opened on the seat — the rework relay's coder
+// (sty_8e0b29a0). It is a third branch of the same policy, not a fork of it.
+//
+// editPermitted cannot answer this question. With an empty marker it takes the
+// driving-session branch, whose EditCapable is Spec.IsEditCapableState — true
+// only for agent="executor" — and OpenSession refuses an in-loop binding, so a
+// relay coder is ALWAYS a named live binding and would be denied every mutator
+// in exactly the configuration the relay exists for. With a marker it requires
+// InFlight, and the relay runs at a committed status, not mid-transition.
+//
+// So the rule is stated directly: a live, non-stale seat that is NOT
+// mid-transition, whose COMMITTED status the route allocates to that binding.
+// The allocation is read from info.DispatchAgents — route-authored, never
+// compiled in — and for binding "executor" it agrees with EditCapable by
+// construction, so the in-loop policy is unchanged.
+func dispatchedPerformerPermitted(info seatInfo, binding string) bool {
+	if binding == "" || info.ItemID == "" || info.Stale || !info.Engaged || info.InFlight {
+		return false
+	}
+	status := info.StoryStatus
+	if status == "" {
+		status = info.State
+	}
+	agents := info.DispatchAgents[status]
+	if len(agents) == 0 && status == info.State {
+		// Same compatibility path editPermitted takes for legacy/derived pure
+		// callers that carry no parsed-spec dispatch map.
+		agents = []string{info.StateAgent}
+	}
+	return slices.Contains(agents, binding)
+}
+
 func dispatchAgents(spec wfdot.Spec) map[string][]string {
 	out := make(map[string][]string, len(spec.States))
 	for _, state := range spec.States {

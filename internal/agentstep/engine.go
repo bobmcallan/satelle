@@ -1588,6 +1588,24 @@ func (g *Engine) ChatPayload(ctx context.Context, item workitem.Item, binding st
 	return tp, nil
 }
 
+// SessionSeed is the story payload a hand-opened live session should be given
+// on its FIRST turn, as JSON — the same shape a dispatch receives (story, ACs,
+// docs, children, and the messages addressed to that binding). A live session's
+// command template need not carry {payload}, so a caller that must guarantee
+// the agent saw the acceptance criteria sends this rather than assuming the
+// transport did (sty_8e0b29a0).
+func (g *Engine) SessionSeed(ctx context.Context, item workitem.Item, binding string) (string, error) {
+	tp, err := g.ChatPayload(ctx, item, binding)
+	if err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(tp)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
 // OpenSession opens a live Session for a named binding — [orchestrator] by
 // default (empty name), any other binding when the caller is CONSULTING it.
 // in-loop / command / missing bindings return a clear error; they do not fall
@@ -1604,6 +1622,32 @@ func (g *Engine) ChatPayload(ctx context.Context, item workitem.Item, binding st
 // binding's own grant either way, so a consulted reviewer keeps its read-only
 // grant (sty_a0372443).
 func (g *Engine) OpenSession(ctx context.Context, name string, item workitem.Item, pol agentcli.PermissionPolicy, onEvent agentcli.EventHandler) (agentcli.Session, error) {
+	role := SessionRoleConsult
+	if ChatSessionBinding(name) == orchestratorBinding {
+		role = SessionRoleDriving
+	}
+	return g.OpenSessionAs(ctx, name, role, item, pol, onEvent)
+}
+
+// SessionRole says which CHARTER a live session opens under. It is a parameter
+// rather than an inference from the binding name because the two are not the
+// same question: a repo may name its coder binding anything, including
+// "orchestrator", and a coder driving a rework relay must not be handed the
+// consultant's "your reply is not a verdict" charter — nor the reverse
+// (sty_8e0b29a0).
+type SessionRole int
+
+const (
+	// SessionRoleDriving is the scheduler's own console: the executor charter.
+	SessionRoleDriving SessionRole = iota
+	// SessionRoleConsult is a binding opened to be ASKED: its reply is context,
+	// never a verdict, and it does not move status.
+	SessionRoleConsult
+)
+
+// OpenSessionAs is OpenSession with the charter role stated. OpenSession keeps
+// today's name-based selection so `satelle story chat` is byte-identical.
+func (g *Engine) OpenSessionAs(ctx context.Context, name string, role SessionRole, item workitem.Item, pol agentcli.PermissionPolicy, onEvent agentcli.EventHandler) (agentcli.Session, error) {
 	name = ChatSessionBinding(name)
 	if g.namedAgents == nil {
 		return nil, fmt.Errorf("no agents layer is wired — cannot open the %q session", name)
@@ -1613,7 +1657,7 @@ func (g *Engine) OpenSession(ctx context.Context, name string, item workitem.Ite
 		return nil, fmt.Errorf("no [%s] binding in .satelle/workflows/agents.toml — define interface=acp or stream to open a live session", name)
 	}
 	if config.IsInLoopCommand(binding.CommandTemplate()) {
-		return nil, fmt.Errorf("satelle story chat: [%s] is in-loop — the hook channel remains the orchestrator; set interface=acp or stream to open a live session", name)
+		return nil, fmt.Errorf("satelle: cannot open a live session: [%s] is in-loop — the hook channel remains the orchestrator; set interface=acp or stream to open a live session", name)
 	}
 	openerFn := g.newOpener
 	if openerFn == nil {
@@ -1622,7 +1666,7 @@ func (g *Engine) OpenSession(ctx context.Context, name string, item workitem.Ite
 	opener, err := openerFn(binding.ResolvedInterface(), binding.CommandTemplate())
 	if err != nil {
 		if errors.Is(err, agentcli.ErrNotLiveCapable) {
-			return nil, fmt.Errorf("satelle story chat: [%s] interface=%s is not live-capable — set interface=acp or stream", name, binding.ResolvedInterface())
+			return nil, fmt.Errorf("satelle: cannot open a live session: [%s] interface=%s is not live-capable — set interface=acp or stream", name, binding.ResolvedInterface())
 		}
 		return nil, err
 	}
@@ -1631,7 +1675,7 @@ func (g *Engine) OpenSession(ctx context.Context, name string, item workitem.Ite
 		return nil, err
 	}
 	charter := executorCharter(name, item.Status, "orchestrator live session")
-	if name != orchestratorBinding {
+	if role == SessionRoleConsult {
 		charter = consultCharter(name, config.ResolvedRole(name, binding), item.Status)
 	}
 	req, err := g.buildRequest(ctx, invocation{

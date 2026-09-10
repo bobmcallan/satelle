@@ -56,6 +56,14 @@ func IsMutatorRequest(req PermissionRequest) bool {
 	return isMutatorToolKind(kind)
 }
 
+// GrantAllowsMutators reports whether an agents.toml `tools` grant admits a
+// tree-mutating or arbitrary-code tool at all. It is the CEILING a live
+// session's policy multiplies with its own rule — the rework relay's coder may
+// edit only if its own binding's grant allows it (sty_8e0b29a0) — and it is
+// deliberately the same predicate the transports apply by default, so there is
+// one classification of "this grant can mutate" and not two.
+func GrantAllowsMutators(tools string) bool { return toolsAllowMutators(tools) }
+
 func defaultPermissionPolicy(allowMutators bool) PermissionPolicy {
 	return func(req PermissionRequest) PermissionDecision {
 		kind := req.Kind

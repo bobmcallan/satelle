@@ -131,8 +131,11 @@ type storeChatLedger struct {
 	actor string
 }
 
-func (s *storeChatLedger) WriteMessage(from, to, body string) error {
+func (s *storeChatLedger) WriteMessage(from, to, cc, body string) error {
 	req := map[string]any{"id": s.storyID, "from": from, "to": to, "body": body}
+	if strings.TrimSpace(cc) != "" {
+		req["cc"] = cc
+	}
 	raw, err := json.Marshal(req)
 	if err != nil {
 		return err

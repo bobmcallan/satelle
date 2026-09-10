@@ -16,7 +16,11 @@ import (
 // chatLedger is the transcript sink for satelle story chat. Human and agent
 // turns go through story-message; tool/permission decisions are invocation rows.
 type chatLedger interface {
-	WriteMessage(from, to, body string) error
+	// WriteMessage records one turn. cc is an ADDITIONAL address the row is
+	// readable under while to stays who the turn is FOR — empty for chat, "*"
+	// for a rework relay turn so the transcript reaches whoever judges the edge
+	// (sty_8e0b29a0).
+	WriteMessage(from, to, cc, body string) error
 	WriteInvocation(tool, kind, decision, decidedBy string) error
 	ListMessagesSince(since time.Time, to string) ([]verb.AgentMessage, error)
 }
@@ -144,17 +148,17 @@ func (l *chatLoop) Run(ctx context.Context, in io.Reader, out io.Writer) error {
 		}
 		text := l.prependInbox(line)
 		if l.Ledger != nil {
-			_ = l.Ledger.WriteMessage(l.From, l.To, line)
+			_ = l.Ledger.WriteMessage(l.From, l.To, "", line)
 		}
 		if err := l.Sess.Send(ctx, agentcli.Turn{Text: text}); err != nil {
 			return err
 		}
-		reply, err := l.drain(ctx, out)
+		reply, err := drainReply(ctx, l.Sess, out, l.To)
 		if err != nil {
 			return err
 		}
 		if reply != "" && l.Ledger != nil {
-			_ = l.Ledger.WriteMessage(l.To, l.From, reply)
+			_ = l.Ledger.WriteMessage(l.To, l.From, "", reply)
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -207,13 +211,18 @@ func (l *chatLoop) prependInbox(line string) string {
 	return b.String()
 }
 
-func (l *chatLoop) drain(ctx context.Context, out io.Writer) (string, error) {
+// drainReply reads one turn's events off sess until the session completes,
+// accumulating the assistant text and rendering progress to out. who names the
+// session in the failure message. Shared by the interactive chat loop and the
+// headless rework relay — one reply-accumulation implementation, not two
+// (sty_8e0b29a0).
+func drainReply(ctx context.Context, sess agentcli.Session, out io.Writer, who string) (string, error) {
 	var reply strings.Builder
 	for {
 		select {
 		case <-ctx.Done():
 			return reply.String(), ctx.Err()
-		case ev, ok := <-l.Sess.Events():
+		case ev, ok := <-sess.Events():
 			if !ok {
 				return reply.String(), nil
 			}
@@ -231,7 +240,7 @@ func (l *chatLoop) drain(ctx context.Context, out io.Writer) (string, error) {
 				if ev.Error != "" {
 					return reply.String(), fmt.Errorf("%s", ev.Error)
 				}
-				return reply.String(), fmt.Errorf("%s session failed", l.To)
+				return reply.String(), fmt.Errorf("%s session failed", who)
 			case agentcli.EventCompleted:
 				return reply.String(), nil
 			}

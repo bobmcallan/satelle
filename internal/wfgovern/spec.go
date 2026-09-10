@@ -271,19 +271,30 @@ func LifecycleWorkflows(workflows []docindex.Doc) []docindex.Doc {
 // front end is retired (sty_d953c5d8), so a repo whose workflows dir holds only
 // graphs resolves to nothing and gets ErrNoWorkflow naming the remedy.
 func SpecFor(workflows []docindex.Doc, item workitem.Item) (wfdot.Spec, string, []wfroute.Advisor, error) {
+	d, name, err := RouteFor(workflows, item)
+	return d.Spec, name, d.Advisors, err
+}
+
+// RouteFor is SpecFor's whole resolution, returning the DerivedRoute rather
+// than the Spec alone. A route carries annotations that are NOT topology —
+// advisors, and now a step's rework loop (sty_8e0b29a0) — and a renderer needs
+// them all off the same parse. SpecFor stays the narrow seam for the many
+// callers that want only the graph, so adding an annotation does not touch
+// twenty gate sites.
+func RouteFor(workflows []docindex.Doc, item workitem.Item) (DerivedRoute, string, error) {
 	category := WorkflowCategory(item)
 	// BEFORE anything resolves: a repo whose route source is still markdown is
 	// refused by name (sty_81bb0dde). This precedes RouteGoverns deliberately —
 	// otherwise the file fails to decode, the authored route looks absent, and
 	// the embedded default silently governs a repo that authored its own.
 	if stale := LegacyMarkdownRoute(workflows); len(stale) > 0 {
-		return wfdot.Spec{}, DerivedRouteName, nil, LegacyMarkdownRouteError(stale)
+		return DerivedRoute{}, DerivedRouteName, LegacyMarkdownRouteError(stale)
 	}
 	// A present authored route that does not parse is BROKEN, not absent.
 	// RouteGoverns would otherwise swallow the parse error (RouteCategories
 	// returns nil) and fall through to ErrNoWorkflow — ungated close.
 	if err := authoredRouteParseError(workflows); err != nil {
-		return wfdot.Spec{}, DerivedRouteName, nil, err
+		return DerivedRoute{}, DerivedRouteName, err
 	}
 	rs, ok := RouteGoverns(workflows, category)
 	if !ok {
@@ -292,26 +303,18 @@ func SpecFor(workflows []docindex.Doc, item workitem.Item) (wfdot.Spec, string, 
 			// read. Saying so beats ErrNoWorkflow: the caller treats "nothing governs"
 			// as a fresh repo and lets the transition through, which for a repo that
 			// believes it IS governed would silently drop every gate it authored.
-			return wfdot.Spec{}, wf.Name, nil, fmt.Errorf(
+			return DerivedRoute{}, wf.Name, fmt.Errorf(
 				"wfgovern: workflow %q declares no route — a lifecycle is done.toml + step.toml under .satelle/workflows. "+
 					"Read `satelle help workflow-convert` for how to convert this graph, then `satelle migrate --yes` to retire it",
 				wf.Name)
 		}
-		return wfdot.Spec{}, "", nil, fmt.Errorf("%w: category %q — satelle workflow validate reads the FILE; gating reads the INDEX. If the file on disk is already correct, the index is stale — run `satelle reindex`", ErrNoWorkflow, category)
+		return DerivedRoute{}, "", fmt.Errorf("%w: category %q — satelle workflow validate reads the FILE; gating reads the INDEX. If the file on disk is already correct, the index is stale — run `satelle reindex`", ErrNoWorkflow, category)
 	}
-	spec, advisors, err := routeSpec(rs, category, item.Tags)
+	d, err := RouteSpecFor(rs, category, item.Tags)
 	if err != nil {
-		return wfdot.Spec{}, DerivedRouteName, nil, err
+		return DerivedRoute{}, DerivedRouteName, err
 	}
-	return spec, DerivedRouteName, advisors, nil
-}
-
-// routeSpec derives the Spec and the advisors from the two authored bodies.
-// Split from SpecFor so the advisors come off the same parse the Spec did,
-// rather than the caller re-parsing to find them.
-func routeSpec(rs RouteSource, category string, tags []string) (wfdot.Spec, []wfroute.Advisor, error) {
-	d, err := RouteSpecFor(rs, category, tags)
-	return d.Spec, d.Advisors, err
+	return d, DerivedRouteName, nil
 }
 
 // DerivedRoute is one category's resolved route: the Spec every consumer reads,
@@ -325,6 +328,9 @@ type DerivedRoute struct {
 	List      wfdot.List
 	Catalogue wfdot.Catalogue
 	Advisors  []wfroute.Advisor
+	// Reworks are the bounded consultation loops the selected steps declare —
+	// off the Spec for the same reason Advisors are (sty_8e0b29a0).
+	Reworks []wfroute.Rework
 }
 
 // RouteSpecFor derives one category's route from the two authored halves. It is
@@ -355,7 +361,11 @@ func RouteSpecFor(rs RouteSource, category string, tags []string) (DerivedRoute,
 	if err != nil {
 		return DerivedRoute{}, fmt.Errorf("wfgovern: route for category %q: %w", category, err)
 	}
-	return DerivedRoute{Spec: spec, List: l, Catalogue: cat, Advisors: wfroute.AdvisorsFrom(l, selected)}, nil
+	return DerivedRoute{
+		Spec: spec, List: l, Catalogue: cat,
+		Advisors: wfroute.AdvisorsFrom(l, selected),
+		Reworks:  wfroute.ReworksFrom(selected),
+	}, nil
 }
 
 // RouteCategories returns the categories a derived route claims, in declaration

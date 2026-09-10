@@ -29,9 +29,16 @@ func init() {
 // (decision-agent-messaging.md). Story id and created_at live on the ledger
 // row; the JSON payload carries from/to/body/engagement_sha.
 type AgentMessage struct {
-	ID            string    `json:"id,omitempty"`
-	From          string    `json:"from"`
-	To            string    `json:"to"`
+	ID   string `json:"id,omitempty"`
+	From string `json:"from"`
+	To   string `json:"to"`
+	// Cc is an ADDITIONAL address the row is readable under, while To stays who
+	// the message is FOR. It exists because a directed conversation can still be
+	// context for a third party: the rework relay ledgers real `coder`/`consult`
+	// directions AND needs the transcript in the edge reviewer's payload, and a
+	// single To field can only do one of those (sty_8e0b29a0). Empty is the
+	// overwhelming case and reads exactly as before — no reader admits "".
+	Cc            string    `json:"cc,omitempty"`
 	Body          string    `json:"body"`
 	CreatedAt     time.Time `json:"created_at,omitempty"`
 	EngagementSHA string    `json:"engagement_sha"`
@@ -41,6 +48,7 @@ type storyMessageReq struct {
 	ID   string `json:"id"`
 	From string `json:"from"`
 	To   string `json:"to,omitempty"`
+	Cc   string `json:"cc,omitempty"`
 	Body string `json:"body"`
 }
 
@@ -93,6 +101,7 @@ func storyMessage(ctx context.Context, raw json.RawMessage) (json.RawMessage, er
 	payload, err := json.Marshal(AgentMessage{
 		From:          from,
 		To:            to,
+		Cc:            strings.TrimSpace(req.Cc),
 		Body:          body,
 		EngagementSHA: engagementSHA,
 	})
@@ -151,7 +160,10 @@ func storyMessages(ctx context.Context, raw json.RawMessage) (json.RawMessage, e
 		if !since.IsZero() && m.CreatedAt.Before(since) {
 			continue
 		}
-		if to != "" && m.To != to && m.To != "*" {
+		// Cc widens READ access only, and only when set: an empty Cc can never
+		// match a non-empty filter, so a row without one is filtered exactly as
+		// it was before the field existed (sty_8e0b29a0).
+		if to != "" && m.To != to && m.To != "*" && m.Cc != to && m.Cc != "*" {
 			continue
 		}
 		out = append(out, m)
@@ -215,7 +227,10 @@ func MessagesSince(ctx context.Context, itemID string, addresses []string) []Age
 		if m.EngagementSHA != "" && windowSHA != "" && m.EngagementSHA != windowSHA {
 			continue
 		}
-		if !want[m.To] {
+		// want never holds "" (addresses are trimmed and empties skipped), so a
+		// row with no Cc is admitted on To alone — byte-identical to before the
+		// field existed (sty_8e0b29a0).
+		if !want[m.To] && !want[m.Cc] {
 			continue
 		}
 		out = append(out, m)
