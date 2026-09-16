@@ -26,6 +26,10 @@
   var DEFAULT_ORDER = "updated"; // applied when no explicit order: token (order:none opts out)
   var PRIORITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
 
+  // Capture ?expand=<id> before initFilters' replaceState drops it (sty_49666ca9).
+  var pendingExpand = null;
+  try { pendingExpand = new URLSearchParams(location.search).get("expand"); } catch (e) {}
+
   function topicForKind(kind) { return kind === "task" ? "tasks" : "stories"; }
 
   function debounce(fn, ms) {
@@ -528,7 +532,11 @@
     var refreshDetail = detailEl ? debounce(function () {
       fetch("fragment/" + detailKind + "/" + detailId)
         .then(function (r) { return r.text(); })
-        .then(function (html) { detailEl.innerHTML = html; applyTimelineFields(); })
+        .then(function (html) {
+          detailEl.innerHTML = html;
+          applyTimelineFields();
+          openHashDoc(); // keep the hash-opened doc open across live replace
+        })
         .catch(function () {});
     }, 250) : null;
 
@@ -625,6 +633,36 @@
   // Attached documents are now a native <details> list (sty_1a239b4d) — no JS
   // needed; the disclosure works without a handler and survives live re-renders.
 
+  // openHashDoc expands/scrolls a document named by #doc-<slug> (or #doc-route)
+  // on the standalone story page (sty_49666ca9). Tab hashes (#stories) are ignored.
+  function openHashDoc() {
+    var hash = (location.hash || "").replace(/^#/, "");
+    if (!hash || hash.indexOf("doc-") !== 0) return;
+    var el = document.getElementById(hash);
+    if (!el) return;
+    if (el.classList.contains("doc-item")) {
+      el.open = true;
+      el.scrollIntoView({ block: "start" });
+      return;
+    }
+    if (el.classList.contains("route-doc") || el.id === "doc-route") {
+      el.scrollIntoView({ block: "start" });
+    }
+  }
+
+  // consumeExpandParam restores the project-page row named by ?expand=<id>
+  // after filters have rendered (and dropped the query param). One-shot.
+  function consumeExpandParam() {
+    if (!pendingExpand) return;
+    var id = pendingExpand;
+    pendingExpand = null;
+    showTab((location.hash || "#stories").slice(1));
+    var row = document.querySelector('tr.row[data-expand-url$="' + id + '"]');
+    if (!row) return;
+    expandRow(row);
+    try { row.scrollIntoView({ block: "nearest" }); } catch (e) {}
+  }
+
   // Project switcher (sty_2bc00a9d): the breadcrumb <details> dropdown works without
   // JS (native disclosure + tabbable links); this only adds the expected dropdown
   // ergonomics — close on outside click and on Escape (returning focus to summary).
@@ -702,6 +740,9 @@
     initTabs();
     initExpand();
     initFilters();
+    consumeExpandParam(); // after filters so ?expand survives replaceState drop
+    openHashDoc();
+    window.addEventListener("hashchange", openHashDoc);
     initLive(); // one visibility-gated SSE serves both panels and detail
     initProjectSwitcher();
     initAccountMenu();

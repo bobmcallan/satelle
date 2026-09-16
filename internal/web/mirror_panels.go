@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -349,22 +351,13 @@ func mirrorLoadDetail(ctx context.Context, s *mirror.Store, repoKey, group, id s
 		item.ID = id
 	}
 
-	entriesByStory, _ := decodeLedgerByStory(ctx, s, repoKey)
-	events := entriesByStory[id]
-	// Reverse for timeline (newest first) — same as loadDetail.
-	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
-		events[i], events[j] = events[j], events[i]
-	}
-	evs := make([]eventVM, len(events))
-	for i, e := range events {
-		evs[i] = eventVM{Entry: e, Chips: eventChips(e)}
-	}
-
 	// Story docs from mirror story_doc kind (id = story_id/name). The route
 	// document is lifted out of the list into its own section — it is the story's
 	// route and the reasoning behind every outcome, not one attachment among many.
+	// Built before the timeline so story_doc_attached events can resolve hrefs.
 	var docs []storyDocVM
 	var route *storyDocVM
+	presentDocs := map[string]bool{}
 	if sdocs, err := s.ListItems(ctx, repoKey, "story_doc"); err == nil {
 		prefix := id + "/"
 		for _, r := range sdocs {
@@ -387,13 +380,42 @@ func mirrorLoadDetail(ctx context.Context, s *mirror.Store, repoKey, group, id s
 			if group == "task" && (strings.HasPrefix(name, "exe_") || strings.HasPrefix(name, "output-")) {
 				continue
 			}
-			vm := storyDocVM{Name: name, Type: ref.Type, HTML: renderMarkdown(ref.Body)}
+			vm := storyDocVM{
+				Name: name, Type: ref.Type, Anchor: docAnchor(name),
+				HTML: renderMarkdown(ref.Body),
+			}
 			if name == routeDocName {
 				route = &vm
+				presentDocs[routeDocName] = true
 				continue
 			}
 			docs = append(docs, vm)
+			presentDocs[name] = true
 		}
+	}
+
+	entriesByStory, _ := decodeLedgerByStory(ctx, s, repoKey)
+	events := entriesByStory[id]
+	// Reverse for timeline (newest first) — same as loadDetail.
+	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+		events[i], events[j] = events[j], events[i]
+	}
+	kindPath := "story"
+	if group == "task" {
+		kindPath = "task"
+	}
+	evs := make([]eventVM, len(events))
+	for i, e := range events {
+		ev := eventVM{Entry: e, Chips: eventChips(e)}
+		if e.Kind == "story_doc_attached" {
+			name, typ := attachedDocRef(e)
+			ev.DocName = name
+			ev.DocType = typ
+			if name != "" && presentDocs[name] {
+				ev.DocHref = kindPath + "/" + item.ID + "#" + docAnchor(name)
+			}
+		}
+		evs[i] = ev
 	}
 
 	var executions []executionVM
@@ -421,6 +443,67 @@ func mirrorLoadDetail(ctx context.Context, s *mirror.Store, repoKey, group, id s
 // Duplicated rather than imported: internal/serve must link neither verb nor the
 // rest of the repo-writing stack (internal/serve/deps_test.go).
 const routeDocName = "route"
+
+// docAnchor returns the fragment id for a story document (doc-<slug>).
+func docAnchor(name string) string {
+	var b strings.Builder
+	b.WriteString("doc-")
+	prevDash := true // suppress leading dashes
+	for _, r := range strings.ToLower(name) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			prevDash = false
+			continue
+		}
+		if !prevDash {
+			b.WriteByte('-')
+			prevDash = true
+		}
+	}
+	s := b.String()
+	return strings.TrimRight(s, "-")
+}
+
+// attachedQuotedNameRe finds quoted runs in a story_doc_attached body
+// (`attached plan document "plan"` / binary bodies with the filename quoted).
+var attachedQuotedNameRe = regexp.MustCompile(`"(?:\\.|[^"\\])*"`)
+
+// attachedDocRef resolves the document name/type for a story_doc_attached
+// ledger entry: prefer the structured payload, fall back to parsing the body
+// so pre-payload ledger rows still render a named timeline item.
+func attachedDocRef(e ledger.Entry) (name, typ string) {
+	if len(e.Payload) > 0 && string(e.Payload) != "{}" {
+		var p struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(e.Payload, &p) == nil {
+			name, typ = p.Name, p.Type
+		}
+	}
+	if name == "" {
+		if m := attachedQuotedNameRe.FindAllString(e.Body, -1); len(m) > 0 {
+			if u, err := strconv.Unquote(m[len(m)-1]); err == nil {
+				name = u
+			}
+		}
+	}
+	if typ == "" {
+		// "attached <type> document|binary \"…\""
+		body := strings.TrimSpace(e.Body)
+		if strings.HasPrefix(body, "attached ") {
+			rest := strings.TrimPrefix(body, "attached ")
+			fields := strings.Fields(rest)
+			if len(fields) >= 2 && (fields[1] == "document" || fields[1] == "binary") {
+				typ = fields[0]
+			}
+		}
+	}
+	if name == "" {
+		name = "(unknown)"
+	}
+	return name, typ
+}
 
 // mirrorTopBar builds chrome for the push-fed surface: no auth forms; optional
 // identity email from the pushed meta blob (order:4).

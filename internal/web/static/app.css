@@ -77,6 +77,8 @@ footer { margin-top: 40px; color: var(--muted); font-size: 12px; border-top: 1px
 .crumbs a { color: var(--accent); }
 .crumbs .sep { margin: 0 7px; color: #cbd5e1; }
 .crumbs .cur { color: var(--ink); }
+.crumbs .back-link { color: var(--muted); text-decoration: none; margin-right: 4px; }
+.crumbs .back-link:hover { color: var(--ink); }
 
 /* Breadcrumb project switcher (sty_2bc00a9d): the <project> segment as a dropdown. */
 .proj-switch { display: inline-block; position: relative; }
@@ -439,6 +441,10 @@ ol.timeline li.tl-fail::before { background: #e74c3c; }
 .ev-kind { font-weight: 600; font-size: 13px; }
 .ev-meta { color: var(--muted); font-size: 11.5px; font-family: var(--mono); }
 .ev-body { font-size: 13.5px; margin-top: 2px; }
+.ev-doc { font-size: 13.5px; margin-top: 2px; }
+.ev-doc a { color: var(--accent); text-decoration: none; }
+.ev-doc a:hover { text-decoration: underline; }
+.ev-doc .doc-item-type { margin-left: 4px; }
 
 /* Data-driven agent-action chips on a timeline event (sty_43d228e4). Each chip's
    chip-<type> class is toggled off by a hide-<type> class the viewer's Timeline

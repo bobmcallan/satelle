@@ -1395,6 +1395,64 @@ func TestBrowserDocRendersMarkdown(t *testing.T) {
 	}
 }
 
+// TestBrowserTimelineDocLink (sty_49666ca9): attach a named doc → timeline
+// carries a real link for it; click from the inline expand lands on the
+// standalone story page with that doc open/reviewable; ← returns to the
+// project stories tab with that row expanded.
+func TestBrowserTimelineDocLink(t *testing.T) {
+	base, repo := serveRepo(t, "8860")
+	id := createStory(t, repo, "Timeline doc link story", "")
+	mustRun(t, testBin, repo, "story", "attach", id, "--name", "plan", "--type", "plan",
+		"--body", "# Plan\n\n- clickable from timeline\n")
+	workspaceAddIfConfigured(t, repo)
+
+	ctx := newChrome(t)
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(base+"/"),
+		chromedp.WaitVisible(`.tab[data-panel="stories"]`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	rowSel := fmt.Sprintf(`#panel-stories tr.row[data-expand-url$="%s"]`, id)
+	if !waitCond(t, ctx, fmt.Sprintf(`!!document.querySelector(%q)`, rowSel), 8*time.Second) {
+		t.Fatalf("story row not shown for %s", id)
+	}
+	clickJS(t, ctx, rowSel)
+	linkSel := `#panel-stories tr.expansion .timeline .ev-doc a`
+	if !waitCond(t, ctx, fmt.Sprintf(`!!document.querySelector(%q)`, linkSel), 8*time.Second) {
+		t.Fatal("timeline doc link not present after expanding the row")
+	}
+
+	clickJS(t, ctx, linkSel)
+	if !waitCond(t, ctx, `!!document.querySelector('#detail-live') && location.pathname.indexOf('/story/') !== -1`, 8*time.Second) {
+		t.Fatal("timeline doc link did not land on the standalone story page")
+	}
+	var path string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`location.pathname`, &path)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(path, "/story/"+id) {
+		t.Errorf("pathname = %q, want …/story/%s", path, id)
+	}
+	if !waitCond(t, ctx, `!!document.querySelector('#detail-live .timeline')`, 5*time.Second) {
+		t.Fatal("standalone page missing the full timeline")
+	}
+	// Hash-open: the clicked doc is expanded with rendered markdown.
+	if !waitCond(t, ctx, `(function(){var d=document.querySelector('.doc-list .doc-item[open]#doc-plan .doc-article');return !!d && !!d.querySelector('h1');})()`, 5*time.Second) {
+		t.Error("clicked document is not open/reviewable (rendered markdown) on the standalone page")
+	}
+
+	clickJS(t, ctx, `.crumbs .back-link`)
+	if !waitCond(t, ctx, `!!document.querySelector('#panel-stories') && getComputedStyle(document.querySelector('#panel-stories')).display !== 'none'`, 8*time.Second) {
+		t.Fatal("← did not return to the project stories tab")
+	}
+	expanded := fmt.Sprintf(`(function(){var r=document.querySelector('tr.row[data-expand-url$="%s"]');return !!r && r.getAttribute('aria-expanded')==='true' && !!r.nextElementSibling && r.nextElementSibling.classList.contains('expansion');})()`, id)
+	if !waitCond(t, ctx, expanded, 8*time.Second) {
+		t.Error("← did not restore the expanded story row")
+	}
+}
+
 // TestBrowserStoryDocList attaches a document to a story and asserts it renders
 // as a collapsible LIST entry before the Timeline (sty_1a239b4d) — collapsed by
 // default (a list, not a wall of text), expanding on click to reveal the rendered

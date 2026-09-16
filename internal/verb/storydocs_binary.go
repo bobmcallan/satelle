@@ -218,8 +218,9 @@ func writeAttachedBinary(ctx context.Context, item workitem.Item, name, typ, con
 		_ = os.Remove(filepath.Join(dir, file))
 		return docBinaryRef{}, fmt.Errorf("verb: attach-binary: sidecar: %w", err)
 	}
-	appendLedger(ctx, item.ID, KindStoryDocAttached,
-		fmt.Sprintf("attached %s binary %q (%s, %d bytes, sha256:%s)", typ, file, ct, len(data), digest), now)
+	payload, _ := json.Marshal(map[string]any{"name": file, "type": typ, "binary": true})
+	appendLedgerEntry(ctx, item.ID, KindStoryDocAttached, "",
+		fmt.Sprintf("attached %s binary %q (%s, %d bytes, sha256:%s)", typ, file, ct, len(data), digest), payload, now)
 	return docBinaryRef{
 		StoryID:     item.ID,
 		Name:        file,

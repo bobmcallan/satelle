@@ -1,3 +1,13 @@
+## [0.0.503] - 2026-09-16
+
+### Added
+- **Story timeline: attached documents are named, clickable line items.** `story_doc_attached` carries `{name,type}` (legacy body-parse still names pre-existing rows). The timeline link opens `/r/{slug}/story/{id}#doc-<name>` with that document expanded. A `←` on the standalone story page returns to the project stories tab with that row expanded (`?expand=<id>`). (sty_49666ca9)
+
+## [serve-v0.0.42] - 2026-09-16
+
+### Added
+- **Timeline document links and back-to-expanded-row.** Serve-path (`internal/web` detail VM, templates, `app.js`/`app.css`); `satelle update` refreshes satelled so operators can review agent-attached docs from the timeline. (sty_49666ca9)
+
 ## [0.0.502] - 2026-09-16
 
 ### Added

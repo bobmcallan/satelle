@@ -421,13 +421,14 @@ const templatesSrc = `
     {{if .Output}}<pre class="run-output prose">{{.Output}}</pre>{{else}}<div class="run-noout">no output recorded</div>{{end}}
   </li>{{end}}</ol>{{else}}<div class="empty">No runs yet — create one with <code>satelle execution create --parent {{.Item.ID}}</code>.</div>{{end}}{{end}}
   {{with .Route}}<h4>Route</h4>
-  <article class="doc-article route-doc">{{.HTML}}</article>{{end}}
+  <article class="doc-article route-doc" id="doc-route">{{.HTML}}</article>{{end}}
   {{if .Docs}}<h4>Documents</h4>
-  <ul class="doc-list">{{range .Docs}}<li><details class="doc-item"><summary>{{.Name}}{{if .Type}} <span class="doc-item-type">{{.Type}}</span>{{end}}</summary><article class="doc-article">{{.HTML}}</article></details></li>{{end}}</ul>{{end}}
+  <ul class="doc-list">{{range .Docs}}<li><details class="doc-item" id="{{.Anchor}}"><summary>{{.Name}}{{if .Type}} <span class="doc-item-type">{{.Type}}</span>{{end}}</summary><article class="doc-article">{{.HTML}}</article></details></li>{{end}}</ul>{{end}}
   <h4>Timeline</h4>
   {{if .Events}}<ol class="timeline">{{range .Events}}<li{{with evdot .Kind}} class="{{.}}"{{end}}>
     <div class="ev-kind">{{.Kind}}</div>
     <div class="ev-meta">{{ftime .CreatedAt}}{{if .Actor}} · {{.Actor}}{{end}}</div>
+    {{if .DocName}}<div class="ev-doc">{{if .DocHref}}<a href="{{.DocHref}}">{{.DocName}}{{if .DocType}} <span class="doc-item-type">{{.DocType}}</span>{{end}}</a>{{else}}{{.DocName}}{{if .DocType}} <span class="doc-item-type">{{.DocType}}</span>{{end}}{{end}}</div>{{end}}
     {{if .Body}}<div class="ev-body">{{.Body}}</div>{{end}}
     {{if .Chips}}<div class="ev-chips">{{range .Chips}}<span class="chip chip-{{.Type}}">{{.Label}}</span>{{end}}</div>{{end}}
   </li>{{end}}</ol>{{else}}<div class="empty">No ledger events yet.</div>{{end}}
@@ -665,7 +666,7 @@ fetch('settings/global',{method:'POST',headers:{'X-Satelle-Settings':'1'},body:n
 <body>
 {{template "topbar" .TopBar}}
 <div class="wrap">
-  <nav class="crumbs"><a href="{{basehref}}">project</a> <span class="sep">/</span> <a href="{{basehref}}#{{tabof .Item.Kind}}">{{.Item.Kind}}</a> <span class="sep">/</span> <span class="cur">{{.Item.ID}}</span></nav>
+  <nav class="crumbs"><a class="back-link" href="{{basehref}}?expand={{.Item.ID}}#{{tabof .Item.Kind}}" aria-label="Back to project">←</a> <a href="{{basehref}}">project</a> <span class="sep">/</span> <a href="{{basehref}}#{{tabof .Item.Kind}}">{{.Item.Kind}}</a> <span class="sep">/</span> <span class="cur">{{.Item.ID}}</span></nav>
   <header class="app">
     <div class="kind-h">{{.Item.Kind}}</div>
     <h1>{{.Item.Title}}</h1>

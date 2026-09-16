@@ -153,8 +153,9 @@ func writeAttachedDoc(ctx context.Context, item workitem.Item, name, typ, body s
 	if err := os.WriteFile(filepath.Join(dir, file), []byte(b.String()), 0o644); err != nil {
 		return "", "", fmt.Errorf("verb: attach: %w", err)
 	}
-	appendLedger(ctx, item.ID, KindStoryDocAttached,
-		fmt.Sprintf("attached %s document %q", typ, bare), now)
+	payload, _ := json.Marshal(map[string]string{"name": bare, "type": typ})
+	appendLedgerEntry(ctx, item.ID, KindStoryDocAttached, "",
+		fmt.Sprintf("attached %s document %q", typ, bare), payload, now)
 	return bare, typ, nil
 }
 

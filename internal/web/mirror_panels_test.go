@@ -479,3 +479,150 @@ func TestStoryDetailPresentsRouteDocument(t *testing.T) {
 		t.Error("no route document ⇒ no Route section; the web layer must not derive one")
 	}
 }
+
+// TestMirrorTimelineDocLink (sty_49666ca9): story_doc_attached ledger rows
+// render as named timeline items; resolvable docs get a real link into the
+// standalone page hash-anchor; legacy payload-less rows still name the doc;
+// unresolvable/binary rows stay named but unlinked; the ← back-link restores
+// the expanded project row.
+func TestMirrorTimelineDocLink(t *testing.T) {
+	s, err := mirror.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	rk := "rk-tl-doc"
+	slug := "tldoc"
+	if _, err := s.TouchPartition(ctx, rk, slug, now); err != nil {
+		t.Fatal(err)
+	}
+
+	id := "sty_tl"
+	story := workitem.Item{
+		ID: id, Kind: workitem.KindStory, Title: "Timeline Doc Link",
+		Status: workitem.StatusInProgress, Category: "feature",
+		UpdatedAt: now, CreatedAt: now,
+	}
+	sb, _ := json.Marshal(story)
+	planDoc, _ := json.Marshal(map[string]string{
+		"name": "plan", "type": "plan", "body": "# Plan\n\nDo the thing.\n",
+	})
+	ident, _ := json.Marshal(mirror.IdentityMeta{ProjectName: slug, RepoRoot: "/tmp/" + slug})
+
+	// Payload-carrying attach (new path).
+	ledPayload, _ := json.Marshal(map[string]any{
+		"id": "evt_pay", "story_id": id, "kind": "story_doc_attached",
+		"body": `attached plan document "plan"`, "created_at": now,
+		"payload": map[string]string{"name": "plan", "type": "plan"},
+	})
+	// Legacy payload-less attach (body parse fallback).
+	ledLegacy, _ := json.Marshal(map[string]any{
+		"id": "evt_leg", "story_id": id, "kind": "story_doc_attached",
+		"body": `attached plan document "plan"`, "created_at": now.Add(-time.Minute),
+		"payload": map[string]any{},
+	})
+	// Binary / unresolvable — named but no href (doc not in story_doc set).
+	ledBin, _ := json.Marshal(map[string]any{
+		"id": "evt_bin", "story_id": id, "kind": "story_doc_attached",
+		"body":       `attached image binary "shot.png" (image/png, 12 bytes, sha256:abc)`,
+		"created_at": now.Add(-2 * time.Minute),
+		"payload":    map[string]any{"name": "shot.png", "type": "image", "binary": true},
+	})
+
+	for _, r := range []struct {
+		kind string
+		rows []mirror.ItemRow
+	}{
+		{"story", []mirror.ItemRow{{ID: id, Payload: string(sb)}}},
+		{"story_doc", []mirror.ItemRow{{ID: id + "/plan", Payload: string(planDoc)}}},
+		{"ledger_event", []mirror.ItemRow{
+			{ID: "evt_pay", Payload: string(ledPayload)},
+			{ID: "evt_leg", Payload: string(ledLegacy)},
+			{ID: "evt_bin", Payload: string(ledBin)},
+		}},
+		{"identity", []mirror.ItemRow{{ID: "meta", Payload: string(ident)}}},
+	} {
+		if err := s.ReplaceKind(ctx, rk, r.kind, r.rows, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	d, _, err := mirrorLoadDetail(ctx, s, rk, "story", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Docs) != 1 || d.Docs[0].Name != "plan" || d.Docs[0].Anchor != "doc-plan" {
+		t.Fatalf("Docs = %+v, want plan with Anchor doc-plan", d.Docs)
+	}
+
+	var linked, legacyNamed, binUnlinked int
+	for _, ev := range d.Events {
+		if ev.Kind != "story_doc_attached" {
+			continue
+		}
+		if ev.DocName == "" {
+			t.Errorf("story_doc_attached %s missing DocName", ev.ID)
+		}
+		switch ev.ID {
+		case "evt_pay":
+			if ev.DocName != "plan" || ev.DocType != "plan" {
+				t.Errorf("payload event: DocName/Type = %q/%q", ev.DocName, ev.DocType)
+			}
+			wantHref := "story/" + id + "#doc-plan"
+			if ev.DocHref != wantHref {
+				t.Errorf("payload DocHref = %q, want %q", ev.DocHref, wantHref)
+			}
+			linked++
+		case "evt_leg":
+			if ev.DocName != "plan" || ev.DocType != "plan" {
+				t.Errorf("legacy event: DocName/Type = %q/%q", ev.DocName, ev.DocType)
+			}
+			if ev.DocHref != "story/"+id+"#doc-plan" {
+				t.Errorf("legacy DocHref = %q (body-parse should still link when doc present)", ev.DocHref)
+			}
+			legacyNamed++
+		case "evt_bin":
+			if ev.DocName != "shot.png" || ev.DocType != "image" {
+				t.Errorf("binary event: DocName/Type = %q/%q", ev.DocName, ev.DocType)
+			}
+			if ev.DocHref != "" {
+				t.Errorf("binary DocHref = %q, want empty (unresolvable)", ev.DocHref)
+			}
+			binUnlinked++
+		}
+	}
+	if linked != 1 || legacyNamed != 1 || binUnlinked != 1 {
+		t.Fatalf("counts linked=%d legacy=%d bin=%d", linked, legacyNamed, binUnlinked)
+	}
+
+	ms := NewMirror(s)
+	srv := httptest.NewServer(ms.Handler)
+	t.Cleanup(srv.Close)
+
+	body := httpGetBody(t, srv.URL+"/r/"+slug+"/story/"+id)
+	for _, want := range []string{
+		`class="ev-doc"`,
+		`href="story/` + id + `#doc-plan"`,
+		`id="doc-plan"`,
+		`class="back-link"`,
+		`?expand=` + id + `#stories`,
+		`>plan <span class="doc-item-type">plan</span>`,
+		`shot.png`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("detail page missing %q", want)
+		}
+	}
+	// Unresolvable binary must be named but not linked.
+	if strings.Contains(body, `href="story/`+id+`#doc-shot-png"`) ||
+		strings.Contains(body, `href="story/`+id+`#doc-shot.png"`) {
+		t.Error("binary attachment must not produce a dead timeline href")
+	}
+	// Named plain-text for the binary row (no wrapping <a>).
+	if !strings.Contains(body, `<div class="ev-doc">shot.png`) {
+		t.Error("binary row should render named-but-unlinked ev-doc")
+	}
+}

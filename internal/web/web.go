@@ -181,9 +181,10 @@ type storyDocRef struct {
 }
 
 type storyDocVM struct {
-	Name string
-	Type string
-	HTML template.HTML
+	Name   string
+	Type   string
+	Anchor string // id="doc-<slug>" for hash-open from timeline links
+	HTML   template.HTML
 }
 
 type chipVM struct {
@@ -193,7 +194,10 @@ type chipVM struct {
 
 type eventVM struct {
 	ledger.Entry
-	Chips []chipVM
+	Chips   []chipVM
+	DocName string // set for story_doc_attached — names the document on the timeline
+	DocType string
+	DocHref string // relative "story/<id>#doc-<slug>" when the doc is present; else empty
 }
 
 type helpTopic struct {
