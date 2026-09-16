@@ -5,53 +5,69 @@ reviewers that gate entry to each. satelle does not hardcode a lifecycle — the
 operator authors it as substrate under `.satelle/workflows`, and satelle enforces
 it.
 
-The authored form is a **derived route**: two files, `done.md` and `step.md`.
-`satelle help workflow-convert` is the key-by-key reference (and the guide for
-converting a repo that still carries a retired DOT graph).
+The authored form is a **derived route**: two files, `done.toml` and `step.toml`.
+`satelle help workflow-convert` is the guide for a repo still on the retired
+markdown route source — or still carrying a retired DOT graph — and the
+key-by-key mapping that converts them.
 
 ## The two halves
 
-**`done.md` — what DONE means.** One `## <category>` section per story category,
-each an ordered list of obligations, plus the exits the binary synthesises. `## *`
-governs any category with no section of its own.
+**`done.toml` — what DONE means.** One category table per story category, each an
+ordered list of obligations, plus the exits the binary synthesises. `["*"]`
+governs any category with no table of its own.
 
-```
-## *
-- raised
-- coded
-- closed
-park: blocked @satelle-story-blocked-review
-cancel: cancelled @satelle-story-cancel-review
-+ surface:ui design-reviewed
-```
+```toml
+[meta]
+name = "done"
+type = "workflow"
+scope = "project"
+description = "What done means per category."
 
-**`step.md` — what discharges each obligation.** One `## <name>` section per
-step, one `## gate <skill>` per always-on gate.
+["*"]
+obligations = ["raised", "coded", "closed"]
+park = { state = "blocked", gate = "satelle-story-blocked-review" }
+cancel = { state = "cancelled", gate = "satelle-story-cancel-review" }
 
-```
-## in_progress
-agent: executor
-skills: code
-reviewers: satelle-story-plan-review, satelle-story-architecture-review
-reviewer_agent: reviewer
-parallel: 0
-provides: coded
-requires: raised
+[docs]
+obligations = ["raised", "doc-authored", "docs-verified"]
+cancel = { state = "cancelled", gate = "satelle-story-cancel-review" }
 ```
 
-Both files carry ordinary frontmatter (`name`, `type: workflow`, `scope`,
-`description`) and **must not** carry `applies_to` — done.md's sections are the
-selector, and a second one would be a second precedence rule. A lifecycle hook
-(`hooks:` / the `create_review:` shorthand) rides on **done.md**.
+**`step.toml` — what discharges each obligation.** One obligation-keyed table per
+step, one `[[gate]]` entry per always-on gate. **The table key IS the obligation**
+the step discharges — there is no `provides` key.
 
-**The binary owns topology.** Order is a topological sort of `requires` /
-`provides`; cancel from every non-terminal step, park from anywhere, backward
-movement and park → cancel are all synthesised. Authoring a `cancelled` or
-`blocked` step by hand is the most common conversion mistake.
+```toml
+[meta]
+name = "step"
+type = "workflow"
+scope = "project"
+description = "Step catalogue and always-on gates."
+
+[coded]
+status = "in_progress"
+agent = "executor"
+skills = ["code"]
+reviewers = ["satelle-story-plan-review", "satelle-story-architecture-review"]
+reviewer_agent = "reviewer"
+parallel = 0
+requires = ["raised"]
+```
+
+Both files carry a `[meta]` table (`name`, `type = "workflow"`, `scope`,
+`description`) and **must not** carry `applies_to` — done.toml's category tables
+are the selector, and a second one would be a second precedence rule. A lifecycle
+hook (`create_review` / `[[meta.hooks]]`) rides on **done.toml**'s `[meta]`.
+
+**The binary owns topology.** Order is a topological sort of `requires` against
+the obligation each step's table key discharges; cancel from every non-terminal
+step, park from anywhere, backward movement and park → cancel are all
+synthesised. Authoring a `cancelled` or `blocked` step by hand is the most
+common conversion mistake.
 
 ## Precedence
 
-A repo's own route governs the categories its `done.md` claims. The route the
+A repo's own route governs the categories its `done.toml` claims. The route the
 binary SHIPS is order zero: it governs a category only when no authored workflow
 claims it, so upgrading the binary never re-routes a repo behind its back.
 
@@ -68,7 +84,7 @@ every gate the repo authored.
 
 At create, the governing lifecycle is **stamped** on the story — a
 `workflow:<name>` tag plus a `workflow_stamped` ledger entry — so the trail
-records what governed. With a derived route the stamp is `done.md+step.md` for
+records what governed. With a derived route the stamp is `workflow:default` for
 every category; which LANE applies is chosen by the story's category, and
 `satelle story restamp` re-resolves it after a re-categorisation.
 
@@ -90,52 +106,56 @@ define a second `role = "reviewer"` binding in `.satelle/workflows/agents.toml` 
 as that step's `reviewer_agent:` — see `satelle help agent-dispatch` and the
 `satelle-route-standard` principle.
 
-## Binding a reviewer: a step's `reviewers:` vs an always-on `## gate`
+## Binding a reviewer: a step's `reviewers` vs an always-on `[[gate]]`
 
 How a reviewer is **bound** matters as much as which skill it runs.
 
-### A step's `reviewers:` — gate-specific reviewers (prefer this)
+### A step's `reviewers` — gate-specific reviewers (prefer this)
 
 A gate belongs to the step it ADMITS. Bind a gate-specific reviewer to that
 step:
 
-```
-## integration
-reviewers: satelle-code-ac-review
-reviewer_agent: reviewer
+```toml
+[integrated]
+status = "integration"
+reviewers = ["satelle-code-ac-review"]
+reviewer_agent = "reviewer"
+requires = ["coded"]
 ```
 
 - **List order = execution order** (and ledger order). By default reviewers run
   **sequentially**, **all-must-accept**, with **first-reject short-circuit**
   (later reviewers are not invoked once one rejects) — but only when the step
-  says so with `parallel: 0`.
+  says so with `parallel = 0`.
 - **Concurrency is the default for 2+ reviewers.** Unset `parallel` runs the
   list concurrently with no short-circuit, so a rejected round spends tokens on
-  every reviewer. Set `parallel: 0` for sequential, or `parallel: N` (cap 4) to
+  every reviewer. Set `parallel = 0` for sequential, or `parallel = N` (cap 4) to
   bound the fan-out. Aggregation stays all-must-accept in the binary; a
   multi-reject refusal names every rejecting reviewer.
 
-### An always-on `## gate` — multi-step only
+### An always-on `[[gate]]` — multi-step only
 
-A `## gate <skill>` section with `on:` is an always-on gate for every entry into
-the steps it names:
+A `[[gate]]` entry with `on` is an always-on gate for every entry into the steps
+it names:
 
-```
-## gate satelle-estimate-actual-review
-on: in_progress, done
-for: *
+```toml
+[[gate]]
+skill = "satelle-estimate-actual-review"
+on = ["in_progress", "done"]
+for = ["*"]
 
-## gate satelle-step-summary
-agent: reviewer
-mandatory: true
-for: *
+[[gate]]
+skill = "satelle-step-summary"
+agent = "reviewer"
+mandatory = true
+for = ["*"]
 ```
 
 Use it **only** when the gate genuinely belongs on every entry into those steps
 (estimate at begin-work and close; step summaries). Authoring a gate-specific
-check as a single-step `## gate` is the common misuse.
+check as a single-step `[[gate]]` is the common misuse.
 
-`for:` names the categories whose route the gate belongs to. In a shared
+`for` names the categories whose route the gate belongs to. In a shared
 catalogue, omitting it fires the gate on every lane — including ones with no
 release to verify.
 
@@ -144,7 +164,7 @@ release to verify.
 A gate on one step matches **every** transition into it, including recovery
 (`integration → in_progress`). The gate then re-fires on every fix-loop
 re-entry — an extra reviewer invocation per rework cycle. Bind it to the step's
-own `reviewers:` instead unless always-on is what you mean.
+own `reviewers` instead unless always-on is what you mean.
 
 See the embedded `satelle-workflow-change-review` gate for a content judgment of
 route edits; structural validate stays PASS/FAIL only.
@@ -155,8 +175,8 @@ They differ in WHERE they are declared, WHEN they fire, and WHO decides:
 
 | | Declared in | Fires | Decided by |
 | --- | --- | --- | --- |
-| **Step gates** | a step's `reviewers:`, or a `## gate` section | on a status change | a reviewer skill's verdict (or a coded ```check) |
-| **Lifecycle hooks** | done.md frontmatter (`hooks:` / the `create_review:` shorthand) | outside the status graph — at story creation today | a reviewer skill's verdict |
+| **Step gates** | a step's `reviewers`, or a `[[gate]]` entry | on a status change | a reviewer skill's verdict (or a coded ```check) |
+| **Lifecycle hooks** | done.toml's `[meta]` (`create_review` / `[[meta.hooks]]`) | outside the status graph — at story creation today | a reviewer skill's verdict |
 | **Deterministic structure checks** | nowhere — they are the binary's contract | always, before anything else | code (`internal/structure`); no LLM, never flaky |
 | **Agent judgments** | a reviewer skill's rubric | wherever a gate or hook names it | an isolated agent returning accept/reject |
 
@@ -168,14 +188,22 @@ state — the item does not exist yet — so it cannot be a transition. A hook
 declares the operation, the skill that judges it, and the logical agent that runs
 the skill:
 
-```yaml
-hooks:
-  - operation: create_review
-    skill: my-create-review
-    agent: strict-reviewer     # optional; defaults to reviewer
+```toml
+# Shorthand — default agent = reviewer:
+[meta]
+name = "done"
+type = "workflow"
+scope = "project"
+create_review = "my-create-review"
+
+# Or the array form, when a non-default agent is needed (do not set both):
+# [[meta.hooks]]
+# operation = "create_review"
+# skill     = "my-create-review"
+# agent     = "strict-reviewer"
 ```
 
-The scalar `create_review: my-create-review` is the documented shorthand for the
+The scalar `create_review = "my-create-review"` is the documented shorthand for the
 same thing with the default agent. A hook declares **who** runs a skill, never
 **how**: model, effort, command, transport and tool grant stay in
 `.satelle/workflows/agents.toml`. `satelle workflow show done` prints each hook's full

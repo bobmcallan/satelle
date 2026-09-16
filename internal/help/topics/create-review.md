@@ -58,13 +58,24 @@ like `Verdict: reject` are tolerated, but the JSON block is the contract).
 ## 2. Declare it on the governing workflow
 
 Create review is one **lifecycle hook** — an operation that fires outside the
-status graph, so it is not a step or an edge. Declare it in the frontmatter of
-whatever governs the story's category: `.satelle/workflows/done.md` for a
-derived route (the half that says what this repo means by finished, which is
-where a create gate belongs), or `.satelle/workflows/<your-workflow>.md` for an
-authored graph.
+status graph, so it is not a step or an edge. Declare it on whatever governs the
+story's category: `.satelle/workflows/done.toml` for a derived route (the half
+that says what this repo means by finished, which is where a create gate
+belongs), or `.satelle/workflows/<your-workflow>.md` for an authored graph.
 
-**Shorthand** — the skill only; the hook runs under the repo's `[reviewer]`:
+**Shorthand on `done.toml`** — the skill only; the hook runs under the repo's
+`[reviewer]`:
+
+```toml
+[meta]
+name = "done"
+type = "workflow"
+scope = "project"
+create_review = "my-create-review"   # <- the binding
+```
+
+**Shorthand on an authored graph** — same binding, YAML frontmatter spelling
+(`create_review: my-create-review`):
 
 ```yaml
 ---
@@ -77,7 +88,16 @@ create_review: my-create-review   # <- the binding
 ```
 
 **Full form** — declares the logical agent as well, so the allocation is a
-choice you can read rather than a default you have to know about:
+choice you can read rather than a default you have to know about. On
+`done.toml` that is a `[[meta.hooks]]` table; on an authored graph it is a
+`hooks:` block:
+
+```toml
+[[meta.hooks]]
+operation = "create_review"
+skill     = "my-create-review"
+agent     = "strict-reviewer"     # any role="reviewer" section in agents.toml
+```
 
 ```yaml
 ---
@@ -98,8 +118,8 @@ effort, command, transport and tool grant all stay in `.satelle/workflows/agents
 (or a machine-wide profile it references). Keys like `model:` on a hook are
 refused for exactly that reason.
 
-Declaring the same operation both ways is an error: the `hooks:` entry wins and
-validation reports the duplicate.
+Declaring the same operation both ways is an error: the `hooks:` /
+`[[meta.hooks]]` entry wins and validation reports the duplicate.
 
 The binding lives on the **workflow**, not in code or config-by-filename: the
 draft's category selects the workflow, and that workflow names the reviewer.

@@ -176,15 +176,15 @@ func TestReviewerChecksTopic(t *testing.T) {
 }
 
 // TestWorkflowsTopic pins the binding-form section (sty_9882b8c6), restated for
-// the route grammar: a gate belongs to the step it admits, and an always-on
-// `## gate` is the multi-step form (sty_d953c5d8).
+// the TOML route grammar (sty_a69d7090): a gate belongs to the step it admits,
+// and an always-on `[[gate]]` is the multi-step form.
 func TestWorkflowsTopic(t *testing.T) {
 	top, ok := Get("workflows")
 	if !ok {
 		t.Fatal("workflows topic not found")
 	}
 	for _, want := range []string{
-		"Binding a reviewer: a step's `reviewers:` vs an always-on `## gate`",
+		"Binding a reviewer: a step's `reviewers` vs an always-on `[[gate]]`",
 		"The over-fire trap",
 		"first-reject short-circuit",
 		"List order = execution order",
@@ -192,6 +192,46 @@ func TestWorkflowsTopic(t *testing.T) {
 	} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("workflows topic missing %q", want)
+		}
+	}
+}
+
+// TestHelpTopicsTeachTheTOMLRouteForm keeps the live-form operator topics on the
+// form the parser actually accepts (sty_a69d7090). The markdown halves and their
+// `## gate` sections are retired, so naming them as a CURRENT form teaches a
+// route the binary cannot read. wants names the halves each topic must still
+// talk about, so the guard cannot pass by a rewrite that simply stops mentioning
+// the form.
+//
+// workflow-convert is deliberately absent: it is the md→toml mapping and MUST
+// keep the retired spellings; TestWorkflowConvertTopicCoversTheMarkdownRouteSource
+// pins them.
+func TestHelpTopicsTeachTheTOMLRouteForm(t *testing.T) {
+	topics := []struct {
+		name  string
+		wants []string
+	}{
+		{"workflows", []string{"done.toml", "step.toml", "[[gate]]"}},
+		{"reviewer-checks", []string{"done.toml", "step.toml"}},
+		{"agent-dispatch", []string{"step.toml"}},
+		{"create-review", []string{"done.toml"}},
+	}
+	banned := []string{"done.md", "step.md", "## gate"}
+	for _, topic := range topics {
+		top, ok := Get(topic.name)
+		if !ok {
+			t.Errorf("help topic %q not found", topic.name)
+			continue
+		}
+		for _, b := range banned {
+			if strings.Contains(top.Body, b) {
+				t.Errorf("%s still teaches the retired route form %q", topic.name, b)
+			}
+		}
+		for _, want := range topic.wants {
+			if !strings.Contains(top.Body, want) {
+				t.Errorf("%s does not mention %q — it teaches the authored route form", topic.name, want)
+			}
 		}
 	}
 }

@@ -25,8 +25,8 @@ The active lifecycle is authored substrate: a repo's own `.satelle/workflows`,
 or the **derived route the binary ships** as the order-zero default. There is
 one authored form — two files:
 
-- `done.md` — the obligations per category, plus park and cancel.
-- `step.md` — the step catalogue and the always-on gates. Each step names its
+- `done.toml` — the obligations per category, plus park and cancel.
+- `step.toml` — the step catalogue and the always-on gates. Each step names its
   `agent`, its `skills`, and the `reviewers` gating ENTRY to it.
 
 Order and topology are DERIVED, never authored. `satelle help workflow-convert`
@@ -249,20 +249,20 @@ the substrate it reasons about as markdown under `.satelle/` (no shell, no CLI).
 
 Always-on gates are **declared in the route**, not injected by a skill tag — the
 route is the sole gating authority (no hidden `reviewer:always` layer). A
-`## gate <skill>` section in `step.md` carries an `on:` list of steps and runs on
-the transitions into them, after that step's own `reviewers:`.
-`satelle-estimate-actual-review` (`on: in_progress, done`) requires a recorded plan
+`[[gate]]` entry in `step.toml` carries an `on` list of steps and runs on
+the transitions into them, after that step's own `reviewers`.
+`satelle-estimate-actual-review` (`on = ["in_progress", "done"]`) requires a recorded plan
 estimate entering `in_progress` and the recorded actual entering `done`
 (`satelle story estimate` / `satelle story actual`); `satelle-integration-check`
 (`on: commit`) runs `make integration` before a commit. A step may also name
-several reviewers directly (`reviewers: a, b`). `satelle-story-cancel-review`
+several reviewers directly (`reviewers = ["a", "b"]`). `satelle-story-cancel-review`
 records why an item is abandoned.
 
 ## Step summary — `satelle-step-summary` (transparent, opt-in)
 
 Not a gate. The step summary is **declared by the route**, not a hidden
-always-on behaviour: a route opts in with a `## gate satelle-step-summary`
-section in `step.md`, optionally `mandatory: true`. Where declared, after each
+always-on behaviour: a route opts in with a `[[gate]]` entry naming
+`satelle-step-summary`, optionally `mandatory = true`. Where declared, after each
 transition this read-only observer records a 1–3 sentence `step_summary` ledger
 row; a `mandatory` summary failure is surfaced on the ledger rather than
 swallowed. A route without the gate records no summaries.

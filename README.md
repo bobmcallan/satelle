@@ -162,11 +162,11 @@ through every gate on the path.
   selection, the reviewer reads what it needs through its read-only tools.
 
 The lifecycle is **authored substrate**, and satelle DERIVES it from two files
-under `.satelle/workflows`: `done.md` declares what done means per category (an
-ordered list of obligations, plus the park and cancel states), and `step.md` is
+under `.satelle/workflows`: `done.toml` declares what done means per category (an
+ordered list of obligations, plus the park and cancel states), and `step.toml` is
 the catalogue of steps and always-on gates that discharge them — each step
-naming what it `provides`, what it `requires`, its `agent`, and the `reviewers`
-gating entry to it. The binary owns ORDER (a topological sort of the
+keyed by the obligation it discharges, naming what it `requires`, its `agent`,
+and the `reviewers` gating entry to it. The binary owns ORDER (a topological sort of the
 prerequisites) and topology (cancel, park, backward movement), so neither is
 authored. The embedded route (`backlog → in_progress → done`, plus container and
 task-run sections) is the order-zero default a repo edits or overrides. A repo

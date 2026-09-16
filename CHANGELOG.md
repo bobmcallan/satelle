@@ -1,3 +1,13 @@
+## [0.0.504] - 2026-09-16
+
+### Changed
+- **`satelle help workflows` teaches the TOML route source.** Operator help (and README, reviewer-checks, create-review, agent-dispatch) now describe `done.toml` / `step.toml` with category tables, obligation-keyed steps and `[[gate]]` entries. The conversion guide keeps its md-to-toml mapping. A help-test fence fails if the live-form topics regress to `done.md`/`step.md`. (sty_a69d7090)
+
+## [serve-v0.0.43] - 2026-09-16
+
+### Changed
+- **Serve help topics match the TOML route.** `internal/help` is on the satelled watch set; bump so `satelle update` refreshes the running service's help pages. (sty_a69d7090)
+
 ## [0.0.503] - 2026-09-16
 
 ### Added

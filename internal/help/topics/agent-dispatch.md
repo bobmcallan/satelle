@@ -62,7 +62,7 @@ first-reject short-circuit, or `parallel: N` to bound the fan-out. See
 
 ### Gate binding by agent name
 
-A step's `reviewer_agent:` (or a `## gate` section's `agent:`) may name any
+A step's `reviewer_agent:` (or a `[[gate]]` entry's `agent`) may name any
 `role = "reviewer"` binding in `.satelle/workflows/agents.toml`. Omitted, the gate uses
 `[reviewer]`. The agents layer owns harness, tools, and model — the route names
 *who*. See the satelle-route-standard principle.
@@ -81,7 +81,7 @@ The two roles get their context by opposite routes, so they need opposite grants
   Claude-only `Read` does **not** qualify — the Claude pull path is the CLI, not
   a disk-first rubric.
 - **Reviewers** (`role = "reviewer"`, named by a step's `reviewers:` or by a
-  `## gate` section) need **no channel**: satelle *pushes* the attachments into the transition payload's
+  `[[gate]]` entry) need **no channel**: satelle *pushes* the attachments into the transition payload's
   `docs` array, and reviewer bindings never reach the dispatch path that
   consults a grant. A shell grant on a reviewer is capability that is never
   exercised — it only widens the ceiling.
@@ -754,12 +754,13 @@ substrate, never in a harness's agent directory.
    # stories/<id>/), so a Grok-native grant needs no Bash(satelle:*) to dispatch.
    ```
 
-2. **Allocate a route step** to it in `step.md`:
+2. **Allocate a route step** to it in `step.toml` (`agent: architect`):
 
-   ```
-   ## design
-   agent: architect
-   skills: architect
+   ```toml
+   [designed]
+   status = "design"
+   agent = "architect"
+   skills = ["architect"]
    ```
 
 3. **satelle dispatches it** on entry to `design`: the item on stdin, the
