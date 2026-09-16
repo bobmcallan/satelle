@@ -625,7 +625,8 @@ const mirrorWorkspaceSrc = `
     <thead><tr><th>Project</th><th>Path</th><th>Stories</th><th>Tasks</th><th>Workflow</th><th>Documents</th><th>Updated</th></tr></thead>
     <tbody data-rows>{{range .Partitions}}
       <tr class="row" data-slug="{{.Slug}}">
-        <td><a class="wi-title" href="/r/{{.Slug}}/">{{.Name}}</a></td>
+        {{/* row-link + CSS ::after stretch the name <a> across the row (sty_be23ae50). */}}
+        <td><a class="wi-title row-link" href="/r/{{.Slug}}/">{{.Name}}</a></td>
         <td class="meta mono">{{.Path}}</td>
         <td class="n-stories"><span class="n">{{.Stories}}</span>{{if .Backlog}} <span class="n-backlog" title="stories in the open backlog">{{.Backlog}} backlog</span>{{end}}</td>
         <td class="n-tasks"><span class="n">{{.Tasks}}</span></td>

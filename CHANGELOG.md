@@ -1,3 +1,13 @@
+## [0.0.502] - 2026-09-16
+
+### Added
+- **Workspace landing: the whole project row opens the project page.** The name stays a real `<a href="/r/{slug}/">`; a CSS `::after` stretch (scoped to `tr.row[data-slug]`) extends the hit target across Path, counts, and Updated so the pointer cursor matches the click. Project-page story/task rows are untouched — they still expand inline via `data-expand-url`. (sty_be23ae50)
+
+## [serve-v0.0.41] - 2026-09-16
+
+### Added
+- **Landing rows stretch the project-name link across the row.** Serve-path (`internal/web` template + `app.css`); `satelle update` refreshes the running satelled so the workspace landing matches the pointer affordance. (sty_be23ae50)
+
 ## [0.0.501] - 2026-09-10
 
 ### Added

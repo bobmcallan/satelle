@@ -302,6 +302,8 @@ func TestLandingFragmentProjects(t *testing.T) {
 	for _, want := range []string{
 		`data-slug="frag"`, `class="n-stories"`, `1 backlog`,
 		"<th>Stories</th>", "<th>Workflow</th>", "<th>Documents</th>",
+		// Soft-refresh fragment must carry the stretched-link anchor (sty_be23ae50).
+		`class="wi-title row-link"`, `href="/r/frag/"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("fragment missing %q\n%s", want, body)
@@ -320,6 +322,94 @@ func TestLandingFragmentProjects(t *testing.T) {
 	empty := httpGetBody(t, srv2.URL+"/fragment/projects")
 	if !strings.Contains(empty, "No partitions yet") {
 		t.Errorf("empty fragment missing empty state:\n%s", empty)
+	}
+}
+
+// TestLandingRowIsWholeRowLink (sty_be23ae50): landing project rows are one
+// stretched name <a> (markup + CSS), with no second click path, and project-page
+// expand rows stay free of data-slug / row-link.
+func TestLandingRowIsWholeRowLink(t *testing.T) {
+	s, err := mirror.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	now := time.Now().UTC()
+	rk := "rk-rowlink"
+	if _, err := s.TouchPartition(ctx, rk, "rowlink", now); err != nil {
+		t.Fatal(err)
+	}
+	story := workitem.Item{
+		ID: "sty_rl", Kind: workitem.KindStory, Title: "Row link story",
+		Status: workitem.StatusBacklog, Category: "chore",
+		UpdatedAt: now, CreatedAt: now,
+	}
+	sb, _ := json.Marshal(story)
+	ident, _ := json.Marshal(mirror.IdentityMeta{
+		ProjectName: "rowlink", RepoRoot: "/tmp/rowlink",
+	})
+	if err := s.ReplaceKind(ctx, rk, "story", []mirror.ItemRow{{ID: "sty_rl", Payload: string(sb)}}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceKind(ctx, rk, "identity", []mirror.ItemRow{{ID: "meta", Payload: string(ident)}}, now); err != nil {
+		t.Fatal(err)
+	}
+
+	ms := NewMirror(s)
+	srv := httptest.NewServer(ms.Handler)
+	t.Cleanup(srv.Close)
+
+	land := httpGetBody(t, srv.URL+"/")
+	for _, want := range []string{
+		`tr class="row" data-slug="rowlink"`,
+		`class="wi-title row-link" href="/r/rowlink/"`,
+	} {
+		if !strings.Contains(land, want) {
+			t.Errorf("landing missing %q\n%s", want, land)
+		}
+	}
+	if strings.Contains(land, "onclick=") {
+		t.Error("landing row must not carry onclick= (native <a> only)")
+	}
+	if strings.Contains(land, "data-expand-url") {
+		t.Error("landing row must not carry data-expand-url")
+	}
+	if strings.Contains(land, "data-href") {
+		t.Error("landing row must not carry data-href")
+	}
+
+	css, err := staticFS.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cssSrc := string(css)
+	for _, want := range []string{
+		`tr.row[data-slug] { position: relative`,
+		`tr.row[data-slug] a.row-link::after`,
+		`inset: 0`,
+	} {
+		if !strings.Contains(cssSrc, want) {
+			t.Errorf("app.css missing stretched-link contract %q", want)
+		}
+	}
+	// Fence: no unqualified stretch that would hit project-page expand rows.
+	if strings.Contains(cssSrc, `.panel-table tr.row a.row-link::after`) {
+		t.Error("stretched-link ::after must not use unqualified .panel-table tr.row a.row-link::after")
+	}
+
+	proj := httpGetBody(t, srv.URL+"/r/rowlink/")
+	if !strings.Contains(proj, `data-expand-url=`) {
+		t.Error("project page story/task rows must keep data-expand-url")
+	}
+	if strings.Contains(proj, `data-slug=`) {
+		t.Error("project page rows must not carry data-slug")
+	}
+	if strings.Contains(proj, `row-link`) {
+		t.Error("project page must not emit row-link")
+	}
+	if strings.Contains(proj, `<a class="wi-title`) {
+		t.Error("project page titles must stay <div class=\"wi-title\">, not navigating <a>")
 	}
 }
 
@@ -382,6 +472,11 @@ func TestAppJSMirrorsRelTimeWording(t *testing.T) {
 	body := copyCellCountsBody(t, src)
 	if !strings.Contains(body, `"updated-cell"`) {
 		t.Errorf("copyCellCounts must carry updated-cell or the column freezes on soft refresh:\n%s", body)
+	}
+	// sty_be23ae50: soft refresh must leave the Project name cell (and its
+	// stretched <a>) alone — only count/updated classes are rewritten.
+	if strings.Contains(body, `wi-title`) || strings.Contains(body, `row-link`) {
+		t.Errorf("copyCellCounts must not rewrite the project-name cell:\n%s", body)
 	}
 }
 
