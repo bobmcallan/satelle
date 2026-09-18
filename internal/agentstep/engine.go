@@ -262,9 +262,14 @@ func (e *ExecutableNotFoundError) Unwrap() error { return e.Err }
 // unconditional step inside DispatchExecutor so tests that inject fake commands
 // through the newRunner seam keep their transport-level fakes.
 func lookupRunner(iface, command string) (agentcli.Runner, error) {
-	if tok := config.ExecutableToken(command); tok != "" {
-		if _, err := exec.LookPath(tok); err != nil {
-			return nil, &ExecutableNotFoundError{Command: command, Token: tok, Err: err}
+	// typesafe is HTTP: command is the System One URL, nothing is spawned, so
+	// LookPath would always fail on https://… (sty_6b6a2f98). Skip PATH lookup
+	// for that interface only; command/acp/stream still resolve a local binary.
+	if iface != config.InterfaceTypeSafe {
+		if tok := config.ExecutableToken(command); tok != "" {
+			if _, err := exec.LookPath(tok); err != nil {
+				return nil, &ExecutableNotFoundError{Command: command, Token: tok, Err: err}
+			}
 		}
 	}
 	return agentcli.RunnerFromBinding(iface, command)

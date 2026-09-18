@@ -1,3 +1,8 @@
+## [0.0.506] - 2026-09-18
+
+### Fixed
+- **`interface=typesafe` dispatch no longer LookPaths the System One HTTPS URL.** `lookupRunner` and `satelle agent validate` skip PATH resolution when the binding interface is typesafe (HTTP transport; nothing is spawned). command/acp/stream still LookPath. Default `[reviewer]` unchanged. (sty_6b6a2f98)
+
 ## [0.0.505] - 2026-09-18
 
 ### Added
