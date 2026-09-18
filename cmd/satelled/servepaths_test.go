@@ -215,6 +215,11 @@ func TestServeGateSeesNewFiles(t *testing.T) {
 		t.Skip("satelled.version is already ahead of the baseline tag — the gate cannot fail, so planting a file proves nothing")
 	}
 	if ok, out := gateRun(t, root); !ok {
+		// sty_da6c3874: a stale or unverifiable remote baseline also fails the
+		// gate before any planted file can matter — same skip rule.
+		if strings.Contains(out, serveGateStaleBaseline) || strings.Contains(out, serveGateCannotVerify) {
+			t.Skipf("serve-tag baseline not verified in this clone, so planting a file proves nothing:\n%s", out)
+		}
 		t.Skipf("gate is already failing in this tree, so planting a file proves nothing:\n%s", out)
 	}
 	// The probe must carry the package clause its directory already uses. A

@@ -20,6 +20,13 @@
 # exactly what a functional check is allowed to do. What is removed is the
 # hand-maintained fact, not the decision.
 #
+# Baseline: the newest local serve-v* tag, but only after verifying it is not
+# stale against the remote (sty_da6c3874). Serve tags are cut by the GitHub
+# release workflow and exist only on the remote until fetched; answering from a
+# lagging local list is the same class of defect as a shallow clone whose tag
+# commit is missing — refuse rather than answer "fine". The gate never fetches;
+# it prints the remedy. Override the remote name with SERVE_TAG_REMOTE (tests).
+#
 # Modes:
 #   (no args)            run the gate
 #   --paths              print the derived watch set, one per line, exit 0
@@ -95,6 +102,38 @@ case "${1:-}" in
   exit 2
   ;;
 esac
+
+# Remote-baseline verification (sty_da6c3874). Runs after --paths/--check-path
+# so those modes stay offline, and before BASE is used so a stale or
+# unreachable baseline never produces a verdict. Never fetches.
+REMOTE="${SERVE_TAG_REMOTE:-origin}"
+LOCAL=$(git tag -l 'serve-v*' --sort=-v:refname | head -1 || true)
+set +e
+REMOTE_LS=$(GIT_TERMINAL_PROMPT=0 git ls-remote --tags --refs "$REMOTE" 'serve-v*' 2>&1)
+REMOTE_LS_STATUS=$?
+set -e
+if [ "$REMOTE_LS_STATUS" -ne 0 ]; then
+  REMOTE_REASON=$(printf '%s' "$REMOTE_LS" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+  [ -n "$REMOTE_REASON" ] || REMOTE_REASON="ls-remote exited $REMOTE_LS_STATUS"
+  echo "check-serve-version: cannot verify the serve-tag baseline against $REMOTE ($REMOTE_REASON) — refusing to answer from the local tag list alone" >&2
+  exit 1
+fi
+REMOTE_NEWEST=$(printf '%s\n' "$REMOTE_LS" | awk '{print $2}' | sed 's|^refs/tags/||' | sort -V | tail -1)
+if [ -n "$REMOTE_NEWEST" ]; then
+  if [ -z "$LOCAL" ]; then
+    echo "check-serve-version: local newest serve tag is none but $REMOTE has $REMOTE_NEWEST — baseline is stale; run: git fetch --tags origin" >&2
+    exit 1
+  fi
+  # Same sort for both sides. If the version-sort max is the remote tag and
+  # the names differ, local is behind — refuse. If local is newer (unpushed
+  # local tag), continue with the local tag: it is at least as fresh, and
+  # refusing would block a legitimate pre-push state.
+  NEWEST=$(printf '%s\n' "$LOCAL" "$REMOTE_NEWEST" | sort -V | tail -1)
+  if [ "$NEWEST" = "$REMOTE_NEWEST" ] && [ "$LOCAL" != "$REMOTE_NEWEST" ]; then
+    echo "check-serve-version: local newest serve tag is $LOCAL but $REMOTE has $REMOTE_NEWEST — baseline is stale; run: git fetch --tags origin" >&2
+    exit 1
+  fi
+fi
 
 # Latest serve-v* tag (not latest CLI tag).
 BASE=$(git tag -l 'serve-v*' --sort=-v:refname | head -1 || true)
