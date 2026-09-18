@@ -1,3 +1,13 @@
+## [0.0.510] - 2026-09-18
+
+### Fixed
+- **A now-stamped stale snapshot can no longer revert story status after a transition is ledgered.** Follow-on to sty_2c71eff6. `Upsert` of an existing row keeps stored status (`UpsertForce` still overwrites). Field writes that carry a snapshot status stay body-only. `story estimate` / `actual` / restamp compare-and-set on status and never set it. (sty_38915987)
+
+## [serve-v0.0.46] - 2026-09-18
+
+### Changed
+- **Serve channel picks up the workitem Upsert status-preserve guard.** `internal/workitem` is on the satelled watch set. (sty_38915987)
+
 ## [0.0.509] - 2026-09-18
 
 ### Fixed

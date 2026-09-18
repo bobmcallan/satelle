@@ -11,6 +11,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/hosted"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/store"
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -171,5 +172,61 @@ func TestMaterializeLedgerAwareSkipWhenUpdatedAtRewound(t *testing.T) {
 		// row was already backlog — the point is we did not need to change it,
 		// and we must not have lost the later ledger event.
 		t.Errorf("status = %q", got.Status)
+	}
+}
+
+// sty_38915987 AC2: local plan + hosted in_progress with a matching ledger TO
+// must land in_progress after materialize (Upsert preserves status; SetStatus
+// applies when ledger TO equals incoming). DetectStatusDrift stays empty.
+func TestMaterializeAppliesHostedForwardWithLocalHistory(t *testing.T) {
+	a := testApp(t)
+	ctx := context.Background()
+	created := time.Date(2026, 9, 1, 5, 40, 0, 0, time.UTC)
+	hostedAt := created.Add(time.Hour)
+	it, err := a.Store.Stories.Create(ctx, workitem.CreateInput{
+		Kind: workitem.KindStory, Title: "T", Status: "plan",
+	}, created)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Local row is plan; hosted carries in_progress plus the transition ledger.
+	ledID := "evt_hosted_fwd"
+	ledRec, _ := json.Marshal(map[string]any{
+		"id": ledID, "story_id": it.ID, "kind": ledger.KindStatusTransition,
+		"body":       "plan → in_progress",
+		"payload":    map[string]string{"from": "plan", "to": "in_progress"},
+		"created_at": hostedAt,
+	})
+	ledRow := hosted.WorkstateLedgerRow{
+		ID: ledID, StoryID: it.ID, Kind: ledger.KindStatusTransition,
+		Record: ledRec,
+	}
+
+	nItems, nLedger, nKept, err := materializeWorkstate(ctx, a,
+		map[string]bool{"stories": true, "ledger": true},
+		[]hosted.WorkstateItem{hostedStory(it.ID, "in_progress", hostedAt)},
+		[]hosted.WorkstateLedgerRow{ledRow}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nItems != 1 || nKept != 0 {
+		t.Fatalf("applied=%d kept=%d, want applied=1 kept=0", nItems, nKept)
+	}
+	if nLedger != 1 {
+		t.Fatalf("ledger applied=%d, want 1", nLedger)
+	}
+	got, gerr := a.Store.Stories.Get(ctx, it.ID)
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	if got.Status != "in_progress" {
+		t.Errorf("status = %q, want in_progress", got.Status)
+	}
+	drifts, derr := verb.DetectStatusDrift(ctx, a.Store.Stories, a.Store.Ledger)
+	if derr != nil {
+		t.Fatal(derr)
+	}
+	if len(drifts) != 0 {
+		t.Fatalf("DetectStatusDrift = %+v, want clean", drifts)
 	}
 }

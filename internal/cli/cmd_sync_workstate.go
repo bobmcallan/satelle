@@ -559,6 +559,7 @@ func localWorkstateCount(ctx context.Context, a *app.App, area string) (int, err
 // On mid-batch error, reports how many landed and that re-run is safe.
 func materializeWorkstate(ctx context.Context, a *app.App, optIn map[string]bool, items []hosted.WorkstateItem, ledgerRows []hosted.WorkstateLedgerRow, force bool) (nItems, nLedger, nKept int, err error) {
 	now := time.Now().UTC()
+	var applied []workitem.Item
 	for _, hi := range items {
 		area := workstateAreaForKind(hi.Kind)
 		if area == "" || !optIn[area] {
@@ -579,9 +580,9 @@ func materializeWorkstate(ctx context.Context, a *app.App, optIn map[string]bool
 			}
 		}
 		// --force means the hosted copy wins outright, including a status the
-		// local row has already moved past — so it takes the store's explicit
-		// opt-out from the stale-status guard (sty_2c71eff6). The default path
-		// keeps the guard, on top of the newer-local check above.
+		// local row has already moved past — UpsertForce. The default path uses
+		// Upsert, which preserves stored status (sty_38915987); status is
+		// applied below after the hosted ledger lands.
 		upsert := a.Store.Stories.Upsert
 		if force {
 			upsert = a.Store.Stories.UpsertForce
@@ -589,6 +590,7 @@ func materializeWorkstate(ctx context.Context, a *app.App, optIn map[string]bool
 		if _, uerr := upsert(ctx, it, now); uerr != nil {
 			return nItems, nLedger, nKept, fmt.Errorf("upsert item %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", hi.ID, nItems, nLedger, uerr)
 		}
+		applied = append(applied, it)
 		nItems++
 	}
 	if optIn["ledger"] {
@@ -603,10 +605,46 @@ func materializeWorkstate(ctx context.Context, a *app.App, optIn map[string]bool
 			nLedger++
 		}
 	}
+	// Default Upsert no longer writes status. Forward it when the (now-hosted)
+	// ledger's latest TO matches the incoming row, or on first import with no
+	// local status_transition yet (sty_38915987). Force already wrote status.
+	if !force {
+		for _, incoming := range applied {
+			if serr := applyHostedWorkstateStatus(ctx, a, incoming, now); serr != nil {
+				return nItems, nLedger, nKept, fmt.Errorf("apply status for %s after %d item(s), %d ledger: %w — re-run is safe (upsert-by-id)", incoming.ID, nItems, nLedger, serr)
+			}
+		}
+	}
 	if _, _, verr := verb.SyncStoryBacklog(ctx, a.Store.Stories, now); verr != nil {
 		return nItems, nLedger, nKept, fmt.Errorf("regenerate story views after %d item(s), %d ledger: %w — store rows landed; re-run is safe", nItems, nLedger, verr)
 	}
 	return nItems, nLedger, nKept, nil
+}
+
+// applyHostedWorkstateStatus moves stored status to match a hosted row when the
+// ledger authorises it (latest status_transition TO == incoming), or when there
+// is no local transition history yet (first import / newer-stamp apply with no
+// ledger). A hosted FROM that disagrees with a ledgered TO is left alone —
+// Upsert already kept stored status.
+func applyHostedWorkstateStatus(ctx context.Context, a *app.App, incoming workitem.Item, now time.Time) error {
+	local, err := a.Store.Stories.Get(ctx, incoming.ID)
+	if err != nil {
+		return err
+	}
+	if local.Status == incoming.Status {
+		return nil
+	}
+	e, ok, lerr := verb.LatestStatusTransition(ctx, a.Store.Ledger, incoming.ID)
+	if lerr != nil {
+		return lerr
+	}
+	if ok {
+		if verb.TransitionTo(e) != incoming.Status {
+			return nil
+		}
+	}
+	_, err = a.Store.Stories.SetStatus(ctx, incoming.ID, incoming.Status, now)
+	return err
 }
 
 // keepLocalWorkstateItem reports whether the local row (or its ledger) is

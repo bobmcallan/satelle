@@ -182,16 +182,19 @@ func (s *Store) Create(ctx context.Context, in CreateInput, now time.Time) (Item
 // default to now so a hand-authored file without them still lands.
 //
 // Upsert is a FULL-ROW write (INSERT OR REPLACE), so an importer holding a
-// stale snapshot would otherwise rewrite status backwards. Upsert therefore
-// keeps the stored status when the incoming row is demonstrably older
-// (sty_2c71eff6); UpsertForce is the explicit opt-out.
+// stale snapshot would otherwise rewrite status backwards. On an existing row
+// Upsert therefore never applies incoming.Status — it keeps the stored status
+// and leaves status moves to SetStatus / Update (sty_38915987, follow-on to
+// sty_2c71eff6). A now-stamped FROM snapshot cannot revert a ledgered TO.
+// UpsertForce is the explicit opt-out.
 func (s *Store) Upsert(ctx context.Context, it Item, now time.Time) (Item, error) {
 	return s.upsert(ctx, it, now, false)
 }
 
-// UpsertForce is Upsert without the stale-status guard: the caller has decided
-// the incoming row wins outright (a `--force` workstate pull materialising the
-// hosted copy over local rows). Every other importer should use Upsert.
+// UpsertForce is Upsert without the status-preserve guard: the caller has
+// decided the incoming row wins outright (a `--force` workstate pull
+// materialising the hosted copy over local rows). Every other importer should
+// use Upsert and move status via SetStatus when authorised.
 func (s *Store) UpsertForce(ctx context.Context, it Item, now time.Time) (Item, error) {
 	return s.upsert(ctx, it, now, true)
 }
@@ -235,12 +238,12 @@ func (s *Store) upsert(ctx context.Context, it Item, now time.Time, force bool) 
 		if strings.TrimSpace(it.ParkOrigin) == "" {
 			it.ParkOrigin = existing.ParkOrigin
 		}
-		// Stale-snapshot guard (sty_2c71eff6): an incoming row stamped STRICTLY
-		// older than the stored one is a snapshot taken before the stored write,
-		// so its status is history — keep the stored status rather than let the
-		// import drag the row backwards. Equal or newer stamps still win, so a
-		// hand-authored file (timestamp defaulted to now, above) lands unchanged.
-		if !force && it.UpdatedAt.Before(existing.UpdatedAt) {
+		// Status-preserve guard (sty_38915987): a full-row Upsert never moves
+		// status on an existing row. A now-stamped FROM snapshot (planner
+		// dispatch payload, workstate wire, markdown import) must not revert a
+		// ledgered TO. Callers that intentionally move status use SetStatus or
+		// UpsertForce — no status rank and no workflow names here.
+		if !force {
 			it.Status = existing.Status
 		}
 	}

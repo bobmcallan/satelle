@@ -155,6 +155,46 @@ func writeTaskFile(t *testing.T, path, body string) {
 	}
 }
 
+// sty_38915987 AC2: Upsert preserves stored status; when the file's status
+// differs the file wins via SetStatus. A second sync with no further change is
+// a no-op (taskContentEqual still includes Status).
+func TestSyncTasksFileStatusWinsViaSetStatus(t *testing.T) {
+	db, dir, ctx := syncTasksFixture(t)
+	now := time.Now().UTC()
+	writeTaskFile(t, filepath.Join(dir, "tsk_stat01.md"), "---\nid: tsk_stat01\nkind: task\nstatus: backlog\n---\n\n# Status task\n\nDo; verify.\n")
+	if _, _, _, err := verb.SyncTasks(ctx, db.Stories, now); err != nil {
+		t.Fatalf("sync1: %v", err)
+	}
+	got, err := db.Stories.Get(ctx, "tsk_stat01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "backlog" {
+		t.Fatalf("initial status = %q, want backlog", got.Status)
+	}
+
+	writeTaskFile(t, filepath.Join(dir, "tsk_stat01.md"), "---\nid: tsk_stat01\nkind: task\nstatus: in_progress\n---\n\n# Status task\n\nDo; verify.\n")
+	if idx, _, _, err := verb.SyncTasks(ctx, db.Stories, now.Add(time.Second)); err != nil {
+		t.Fatalf("sync2: %v", err)
+	} else if idx < 1 {
+		t.Fatalf("indexed = %d, want >= 1 after status change", idx)
+	}
+	got, err = db.Stories.Get(ctx, "tsk_stat01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "in_progress" {
+		t.Errorf("file status did not win: got %q, want in_progress", got.Status)
+	}
+
+	// Idempotent: no further change → no upsert.
+	if idx, mig, _, err := verb.SyncTasks(ctx, db.Stories, now.Add(2*time.Second)); err != nil {
+		t.Fatalf("sync3: %v", err)
+	} else if idx != 0 || mig != 0 {
+		t.Errorf("re-sync should be a no-op; got indexed=%d migrated=%d", idx, mig)
+	}
+}
+
 // The observed defect (sty_0828e855): a hand-authored run file carrying no `id:`
 // aborted the ENTIRE task-sync leg with "workitem: upsert needs an id". Its
 // filename supplies the id, so it must ingest.

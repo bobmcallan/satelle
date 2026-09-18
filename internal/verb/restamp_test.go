@@ -3,8 +3,10 @@ package verb_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -178,6 +180,53 @@ func TestStoryRestampSameTargetIsANoop(t *testing.T) {
 	}
 	if stamped != 1 {
 		t.Errorf("same-target restamp must not add a ledger row: %d workflow_stamped rows", stamped)
+	}
+}
+
+// sty_38915987 AC3: drive refusal THROUGH story-restamp. Move status between
+// the verb's Get and Update via SetAfterTagCASGetHook so the test fails if
+// ExpectStatus is removed from storyRestamp.
+func TestStoryRestampRefusesWhenStatusMoved(t *testing.T) {
+	db := wire(t)
+	wireResolver(t, &fakeWorkflowResolver{
+		byCategory: map[string]string{"feature": "wf-a", "bug": "wf-b"},
+		states: map[string][]string{
+			"wf-a": {"backlog", "in_progress", "done"},
+			"wf-b": {"backlog", "in_progress", "done"},
+		},
+	})
+	var created workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{
+		"title": "T", "category": "feature",
+		"tags": []string{"workflow:wf-a", "keep-me"},
+	}), &created)
+
+	verb.SetAfterTagCASGetHook(func(c context.Context, id, statusAtGet string) {
+		if statusAtGet != workitem.StatusBacklog {
+			t.Errorf("restamp Get saw status %q, want backlog", statusAtGet)
+		}
+		if _, err := db.Stories.SetStatus(c, id, "in_progress", time.Now()); err != nil {
+			t.Errorf("SetStatus under restamp: %v", err)
+		}
+	})
+	t.Cleanup(func() { verb.SetAfterTagCASGetHook(nil) })
+
+	_, err := dispatchRaw(t, "story-restamp", map[string]any{"id": created.ID, "workflow": "wf-b"})
+	if !errors.Is(err, workitem.ErrStatusConflict) {
+		t.Fatalf("story-restamp err = %v, want ErrStatusConflict", err)
+	}
+	got, gerr := db.Stories.Get(context.Background(), created.ID)
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	if got.Status != "in_progress" {
+		t.Errorf("status = %q after refused restamp, want in_progress", got.Status)
+	}
+	if tagValue(got.Tags, "workflow") != "wf-a" {
+		t.Errorf("refused restamp changed workflow tag: %v", got.Tags)
+	}
+	if !hasTag(got.Tags, "keep-me") {
+		t.Errorf("unrelated tags changed: %v", got.Tags)
 	}
 }
 

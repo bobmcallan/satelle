@@ -326,13 +326,24 @@ func ingestItemBody(ctx context.Context, store *workitem.Store, name, body strin
 // the stored row — skipping unchanged files so the serve watcher (which resyncs
 // every couple of seconds) doesn't churn the store fingerprint and trigger
 // constant web refetches.
+//
+// Upsert preserves stored status (sty_38915987); when the file's status differs
+// the file wins via SetStatus after the upsert. taskContentEqual still includes
+// Status so a second sync with no further change is a no-op.
 func upsertIfChanged(ctx context.Context, store *workitem.Store, it workitem.Item, now time.Time) (bool, error) {
-	if existing, gerr := store.Get(ctx, it.ID); gerr == nil && taskContentEqual(existing, it) {
+	existing, gerr := store.Get(ctx, it.ID)
+	if gerr == nil && taskContentEqual(existing, it) {
 		return false, nil
 	}
+	wantStatus := it.Status
 	it.UpdatedAt = now
 	if _, uerr := store.Upsert(ctx, it, now); uerr != nil {
 		return false, uerr
+	}
+	if gerr == nil && existing.Status != wantStatus && strings.TrimSpace(wantStatus) != "" {
+		if _, serr := store.SetStatus(ctx, it.ID, wantStatus, now); serr != nil {
+			return false, serr
+		}
 	}
 	return true, nil
 }

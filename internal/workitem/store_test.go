@@ -150,9 +150,10 @@ func TestUpdateCompareAndSetRefusesStaleStatus(t *testing.T) {
 	}
 }
 
-// sty_2c71eff6: Upsert is a full-row write, so a stale import snapshot would
-// otherwise rewrite status backwards. The older stamp keeps the stored status;
-// UpsertForce is the explicit opt-out the --force workstate pull uses.
+// sty_2c71eff6 / sty_38915987: Upsert is a full-row write, so a stale import
+// snapshot would otherwise rewrite status backwards. Upsert keeps stored
+// status for any existing row (including a strictly-older stamp); UpsertForce
+// is the explicit opt-out the --force workstate pull uses.
 func TestUpsertKeepsStoredStatusForOlderSnapshot(t *testing.T) {
 	st := openStore(t)
 	ctx := context.Background()
@@ -193,6 +194,51 @@ func TestUpsertKeepsStoredStatusForOlderSnapshot(t *testing.T) {
 	}
 	if forced.Status != "backlog" {
 		t.Errorf("UpsertForce status = %q, want the incoming backlog", forced.Status)
+	}
+}
+
+// sty_38915987 AC2: a now-stamped incoming row whose status is older than the
+// stored status must not revert status either — the timestamp-only guard was
+// the remaining hole. Failure names both statuses.
+func TestUpsertKeepsStoredStatusForNowStampedOlderStatus(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	it, err := st.Create(ctx, CreateInput{
+		Kind: KindStory, Title: "now-stamped", Body: "b", AcceptanceCriteria: "1. a", Status: "backlog",
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SetStatus(ctx, it.ID, "in_progress", now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	incoming := it
+	incoming.Status = "backlog"
+	incoming.Body = "now-stamped from snapshot"
+	incoming.UpdatedAt = now.Add(2 * time.Minute) // newer than stored
+	if _, err := st.Upsert(ctx, incoming, now.Add(3*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Get(ctx, it.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "in_progress" {
+		t.Fatalf("Upsert reverted status: stored was in_progress, incoming was backlog, got %q", got.Status)
+	}
+	if got.Body != "now-stamped from snapshot" {
+		t.Errorf("non-status fields should still apply: body = %q", got.Body)
+	}
+	if _, err := st.UpsertForce(ctx, incoming, now.Add(4*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	forced, err := st.Get(ctx, it.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forced.Status != "backlog" {
+		t.Errorf("UpsertForce status = %q, want backlog", forced.Status)
 	}
 }
 

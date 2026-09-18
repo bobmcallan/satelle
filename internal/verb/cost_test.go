@@ -1,11 +1,15 @@
 package verb_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -75,6 +79,84 @@ func TestStoryEstimateRequiresAValue(t *testing.T) {
 	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x"}), &it)
 	if _, err := dispatchRaw(t, "story-estimate", map[string]any{"id": it.ID}); err == nil {
 		t.Error("estimate with neither tokens nor time should error")
+	}
+}
+
+// sty_38915987 AC3: drive refusal THROUGH story-estimate / story-actual.
+// Move status between the verb's Get and Update via SetAfterTagCASGetHook so
+// the test fails if ExpectStatus is removed from recordCost.
+func TestStoryEstimateRefusesWhenStatusMoved(t *testing.T) {
+	db := wire(t)
+	ctx := context.Background()
+	var it workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{
+		"title": "race-est", "tags": []string{"keep-me"},
+	}), &it)
+
+	verb.SetAfterTagCASGetHook(func(c context.Context, id, statusAtGet string) {
+		if statusAtGet != workitem.StatusBacklog {
+			t.Errorf("estimate Get saw status %q, want backlog", statusAtGet)
+		}
+		if _, err := db.Stories.SetStatus(c, id, "in_progress", time.Now()); err != nil {
+			t.Errorf("SetStatus under estimate: %v", err)
+		}
+	})
+	t.Cleanup(func() { verb.SetAfterTagCASGetHook(nil) })
+
+	_, err := dispatchRaw(t, "story-estimate", map[string]any{"id": it.ID, "time": "30m"})
+	if !errors.Is(err, workitem.ErrStatusConflict) {
+		t.Fatalf("story-estimate err = %v, want ErrStatusConflict", err)
+	}
+	got, gerr := db.Stories.Get(ctx, it.ID)
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	if got.Status != "in_progress" {
+		t.Errorf("status = %q after refused estimate, want in_progress", got.Status)
+	}
+	if hasTag(got.Tags, "estimate-minutes:30") {
+		t.Errorf("refused estimate leaked tag: %v", got.Tags)
+	}
+	if !hasTag(got.Tags, "keep-me") {
+		t.Errorf("unrelated tags changed: %v", got.Tags)
+	}
+}
+
+// sty_38915987 AC3: story-actual must refuse the same Get→Update race.
+func TestStoryActualRefusesWhenStatusMoved(t *testing.T) {
+	db := wire(t)
+	ctx := context.Background()
+	var it workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{
+		"title": "race-act", "tags": []string{"keep-me"},
+	}), &it)
+
+	verb.SetAfterTagCASGetHook(func(c context.Context, id, statusAtGet string) {
+		if statusAtGet != workitem.StatusBacklog {
+			t.Errorf("actual Get saw status %q, want backlog", statusAtGet)
+		}
+		if _, err := db.Stories.SetStatus(c, id, "in_progress", time.Now()); err != nil {
+			t.Errorf("SetStatus under actual: %v", err)
+		}
+	})
+	t.Cleanup(func() { verb.SetAfterTagCASGetHook(nil) })
+
+	_, err := dispatchRaw(t, "story-actual", map[string]any{"id": it.ID, "time": "45m"})
+	if !errors.Is(err, workitem.ErrStatusConflict) {
+		t.Fatalf("story-actual err = %v, want ErrStatusConflict", err)
+	}
+	got, gerr := db.Stories.Get(ctx, it.ID)
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	if got.Status != "in_progress" {
+		t.Errorf("status = %q after refused actual, want in_progress", got.Status)
+	}
+	if hasTag(got.Tags, "actual-minutes:45") {
+		t.Errorf("refused actual leaked tag: %v", got.Tags)
+	}
+	if !hasTag(got.Tags, "keep-me") {
+		t.Errorf("unrelated tags changed: %v", got.Tags)
 	}
 }
 

@@ -94,6 +94,89 @@ func TestDispatchedAgentSeesPreTransitionRowAndUnguardedLateWriteReverts(t *test
 	}
 }
 
+// sty_38915987 AC1 — the vire sty_983803f5 sequence: after backlog→TO with the
+// dispatcher holding the FROM row, a late story-set of body plus snapshot
+// status, and a now-stamped Upsert of the FROM row, must not leave stored
+// status at FROM while the last status_transition is TO.
+func TestLateSnapshotWriteCannotRevertStatus(t *testing.T) {
+	// Workflow DOT so refuseSkippedStep fences reverse in_progress→backlog
+	// (without a DOT the fence fail-opens and a transitioning reverse would land).
+	db := wireWithWorkflowsStore(t, freezeWF)
+	ctx := context.Background()
+	var seen workitem.Item
+	verb.SetExecutorDispatcher(dispatcherFunc(func(_ context.Context, it workitem.Item, _ string) (verb.DispatchResult, error) {
+		seen = it
+		return verb.DispatchResult{Dispatched: true, Agent: "planner", Command: "fake {system}", Skill: "plan"}, nil
+	}))
+	t.Cleanup(func() { verb.SetExecutorDispatcher(nil) })
+
+	var it workitem.Item
+	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "race-snap", "status": "backlog"}), &it); err != nil {
+		t.Fatal(err)
+	}
+	var moved workitem.Item
+	if err := json.Unmarshal(call(t, "story-set", map[string]any{"id": it.ID, "status": "in_progress"}), &moved); err != nil {
+		t.Fatal(err)
+	}
+	if moved.Status != "in_progress" {
+		t.Fatalf("transition did not enact: status = %q", moved.Status)
+	}
+	if seen.Status != workitem.StatusBacklog {
+		t.Fatalf("dispatched agent saw status %q, want backlog", seen.Status)
+	}
+
+	// Late story-set: body + snapshot status. Reverse is refuseSkippedStep;
+	// status must stay at TO whether the set errors or (body-only) succeeds.
+	_, setErr := dispatchRaw(t, "story-set", map[string]any{
+		"id": it.ID, "body": "planner output", "status": seen.Status,
+	})
+	afterSet, err := db.Stories.Get(ctx, it.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterSet.Status != "in_progress" {
+		t.Fatalf("after late story-set status = %q, want in_progress (set err = %v)", afterSet.Status, setErr)
+	}
+
+	// Now-stamped Upsert of the FROM row (markdown import / workstate shape).
+	from := seen
+	from.Body = "from upsert"
+	from.Status = workitem.StatusBacklog
+	from.UpdatedAt = time.Now().UTC()
+	if _, err := db.Stories.Upsert(ctx, from, time.Now().UTC()); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	afterUpsert, err := db.Stories.Get(ctx, it.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterUpsert.Status != "in_progress" {
+		t.Fatalf("now-stamped Upsert reverted status to %q, want in_progress", afterUpsert.Status)
+	}
+	if afterUpsert.Body != "from upsert" {
+		t.Errorf("Upsert should still apply body: got %q", afterUpsert.Body)
+	}
+
+	entries, lerr := db.Ledger.ListByStory(ctx, it.ID, ledger.KindStatusTransition)
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(entries) == 0 {
+		t.Fatal("want a status_transition row")
+	}
+	last := entries[len(entries)-1]
+	if to := verb.TransitionTo(last); to != "in_progress" {
+		t.Fatalf("last status_transition TO = %q, want in_progress (body %q)", to, last.Body)
+	}
+	drifts, derr := verb.DetectStatusDrift(ctx, db.Stories, db.Ledger)
+	if derr != nil {
+		t.Fatal(derr)
+	}
+	if len(drifts) != 0 {
+		t.Fatalf("DetectStatusDrift = %+v, want clean", drifts)
+	}
+}
+
 // AC2 + AC3 — the same late write, now carrying the snapshot it was derived from
 // as a compare-and-set (what every workItemSet write does after this fix): it
 // loses instead of clobbering, the status stays put, and reconcile is clean.

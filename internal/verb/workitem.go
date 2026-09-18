@@ -604,10 +604,18 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 	if transitioning {
 		parkOrigin = parkOriginForTransition(ctx, current, *req.Status)
 	}
+	// Status only on a real transition or same-status re-engage (sty_38915987).
+	// A planner body write (or any field edit) must not replay a FROM snapshot's
+	// status into the row after TO is ledgered — even when the request still
+	// carries it. Reverse FROM after TO is refuseSkippedStep above.
+	var statusForUpdate *string
+	if transitioning || sameStatusReengage {
+		statusForUpdate = req.Status
+	}
 	upd := workitem.UpdateInput{
 		Title:              req.Title,
 		Body:               req.Body,
-		Status:             req.Status,
+		Status:             statusForUpdate,
 		Priority:           req.Priority,
 		Category:           req.Category,
 		ParentID:           req.ParentID,
@@ -766,6 +774,24 @@ type restampReq struct {
 	Workflow string `json:"workflow,omitempty"`
 }
 
+// afterTagCASGetHook runs after a tags-only writer (recordCost / storyRestamp)
+// has Get'd the row and before it Update's with ExpectStatus. Tests inject a
+// SetStatus here to prove the CAS refuses when the row moved under the verb
+// (sty_38915987 AC3). Production leaves it nil.
+var afterTagCASGetHook func(ctx context.Context, id, statusAtGet string)
+
+// SetAfterTagCASGetHook wires the Get→Update race seam for tags-only writers.
+// Pass nil to clear (tests).
+func SetAfterTagCASGetHook(fn func(ctx context.Context, id, statusAtGet string)) {
+	afterTagCASGetHook = fn
+}
+
+func runAfterTagCASGet(ctx context.Context, id, statusAtGet string) {
+	if afterTagCASGetHook != nil {
+		afterTagCASGetHook(ctx, id, statusAtGet)
+	}
+}
+
 // storyRestamp re-stamps the governing workflow on an existing story
 // (sty_ed3386cf) — the first-class replacement for a hand-edited tag list. It
 // re-resolves from the story's CURRENT category through the same seam create
@@ -817,7 +843,12 @@ func storyRestamp(ctx context.Context, raw json.RawMessage) (json.RawMessage, er
 	}
 	merged := upsertKeyedTags(current.Tags, map[string]string{"workflow": target})
 	now := time.Now()
-	it, err := store.Update(ctx, req.ID, workitem.UpdateInput{Tags: &merged}, now)
+	// Tags-only write with CAS (sty_38915987): refuse if the row moved under us
+	// rather than land adjacent to a silent status revert. Never sets status.
+	runAfterTagCASGet(ctx, req.ID, current.Status)
+	it, err := store.Update(ctx, req.ID, workitem.UpdateInput{
+		Tags: &merged, ExpectStatus: &current.Status,
+	}, now)
 	if err != nil {
 		return nil, err
 	}
@@ -1078,7 +1109,13 @@ func recordCost(ctx context.Context, raw json.RawMessage, prefix, kind string) (
 	}
 	merged := upsertKeyedTags(current.Tags, kv)
 	now := time.Now()
-	it, err := store.Update(ctx, req.ID, workitem.UpdateInput{Tags: &merged}, now)
+	// Tags-only write with CAS (sty_38915987): estimate/actual never set status,
+	// and refuse if the row moved under the Get→Update window so they cannot sit
+	// adjacent to a silent revert.
+	runAfterTagCASGet(ctx, req.ID, current.Status)
+	it, err := store.Update(ctx, req.ID, workitem.UpdateInput{
+		Tags: &merged, ExpectStatus: &current.Status,
+	}, now)
 	if err != nil {
 		return nil, err
 	}
