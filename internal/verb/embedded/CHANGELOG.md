@@ -1,3 +1,8 @@
+## [0.0.508] - 2026-09-18
+
+### Fixed
+- Same slice as 0.0.507: `check-serve-version` refuses a stale local serve-v* baseline. Re-cut the CLI tag so HEAD has a successful release run after the serve-v0.0.44 bump. (sty_da6c3874)
+
 ## [0.0.507] - 2026-09-18
 
 ### Fixed
