@@ -3,6 +3,11 @@
 ### Fixed
 - **`make check-serve-version` refuses a stale local serve-v* baseline.** The gate compares the local newest `serve-v*` tag to origin via `git ls-remote` (never fetches). If origin is ahead, it names both tags and tells you to `git fetch --tags origin`. If origin cannot be queried, it refuses rather than answering ok from the local list. `--paths` / `--check-path` stay offline. (sty_da6c3874)
 
+## [serve-v0.0.44] - 2026-09-18
+
+### Changed
+- **Serve channel catches typesafe reviewer substrate on the watch set.** CLI 0.0.505–0.0.507 shipped `interface=typesafe` packages that `cmd/satelled` compiles; bump so `satelle update` refreshes the running service. (sty_da6c3874)
+
 ## [0.0.506] - 2026-09-18
 
 ### Fixed
