@@ -1,3 +1,13 @@
+## [0.0.509] - 2026-09-18
+
+### Fixed
+- **Mirror ingest no longer collides on duplicate doc names; workstate snapshot/pull push the local UI.** Docs are keyed by path (fallback `<kind>/<name>`). A genuine duplicate returns `CollisionError` naming kind and id instead of a SQLite UNIQUE 500. `satelle sync workstate snapshot` and `pull` POST a drain snapshot after materialising so pulled stories appear on `/r/<slug>/` without a fake mutation. (sty_e4e1a008)
+
+## [serve-v0.0.45] - 2026-09-18
+
+### Changed
+- **Serve channel picks up path-keyed mirror ingest.** `internal/mirror` is on the satelled watch set. (sty_e4e1a008)
+
 ## [0.0.508] - 2026-09-18
 
 ### Fixed

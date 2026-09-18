@@ -8,13 +8,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	sqlite "modernc.org/sqlite"
 )
 
 // DefaultDirName is the subdirectory under GlobalDir() for the serve mirror.
@@ -199,6 +200,37 @@ type KindRows struct {
 	Items []ItemRow
 }
 
+// CollisionError names a duplicate item identity inside a snapshot replace set
+// (sty_e4e1a008). The operator sees kind and id instead of a SQLite constraint code.
+type CollisionError struct {
+	Kind string
+	ID   string
+}
+
+func (e *CollisionError) Error() string {
+	return fmt.Sprintf("mirror: snapshot has duplicate item kind=%s id=%q", e.Kind, e.ID)
+}
+
+func duplicateItemID(items []ItemRow) (string, bool) {
+	seen := make(map[string]struct{}, len(items))
+	for _, it := range items {
+		if _, ok := seen[it.ID]; ok {
+			return it.ID, true
+		}
+		seen[it.ID] = struct{}{}
+	}
+	return "", false
+}
+
+func isUniqueConstraint(err error) bool {
+	var se *sqlite.Error
+	if errors.As(err, &se) {
+		// SQLITE_CONSTRAINT = 19; extended codes keep that low byte.
+		return se.Code()&0xff == 19
+	}
+	return strings.Contains(err.Error(), "UNIQUE constraint")
+}
+
 // ApplySnapshot applies every replace (delete+insert) and merge (upsert) kind
 // inside one transaction so a mid-apply failure leaves the partition unchanged
 // (sty_3562c820 AC2). Callers pass only the kinds they authorise.
@@ -214,6 +246,9 @@ func (s *Store) ApplySnapshot(ctx context.Context, repoKey string, replace, merg
 	defer func() { _ = tx.Rollback() }()
 	at := now.UTC().Format(time.RFC3339Nano)
 	for _, kr := range replace {
+		if id, dup := duplicateItemID(kr.Items); dup {
+			return &CollisionError{Kind: kr.Kind, ID: id}
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM items WHERE repo_key = ? AND kind = ?`, repoKey, kr.Kind); err != nil {
 			return err
 		}
@@ -221,6 +256,9 @@ func (s *Store) ApplySnapshot(ctx context.Context, repoKey string, replace, merg
 			if _, err := tx.ExecContext(ctx, `
 INSERT INTO items (repo_key, kind, id, payload, updated_at) VALUES (?, ?, ?, ?, ?)
 `, repoKey, kr.Kind, it.ID, it.Payload, at); err != nil {
+				if isUniqueConstraint(err) {
+					return &CollisionError{Kind: kr.Kind, ID: it.ID}
+				}
 				return err
 			}
 		}

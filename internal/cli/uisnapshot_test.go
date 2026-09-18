@@ -254,6 +254,79 @@ func TestBuildUIDrainSnapshotIsLight(t *testing.T) {
 	}
 }
 
+// TestBuildUISnapshotDuplicateDocNames (sty_e4e1a008 AC2): two authored docs
+// with the same kind and name but different paths both appear in snap.Docs.
+func TestBuildUISnapshotDuplicateDocNames(t *testing.T) {
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	repo := t.TempDir()
+	docRoot := filepath.Join(repo, ".satelle", "documents")
+	dirA := filepath.Join(docRoot, "a")
+	dirB := filepath.Join(docRoot, "b")
+	if err := os.MkdirAll(dirA, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dirB, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bodyA := "---\nname: parent-body\n---\n\n# a\n"
+	bodyB := "---\nname: parent-body\n---\n\n# b\n"
+	pathA := filepath.Join(dirA, "parent-body.md")
+	pathB := filepath.Join(dirB, "parent-body.md")
+	if err := os.WriteFile(pathA, []byte(bodyA), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pathB, []byte(bodyB), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	if db.DocIndex == nil {
+		t.Fatal("DocIndex required for duplicate-name fixture")
+	}
+	if _, err := db.DocIndex.Sync(ctx, map[string]string{"documents": docRoot}, time.Now().UTC()); err != nil {
+		t.Fatalf("doc sync: %v", err)
+	}
+
+	a := &app.App{Config: config.Config{}, RepoRoot: repo, Store: db}
+	snap, err := buildUISnapshot(ctx, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths, sources []string
+	for _, raw := range snap.Docs {
+		var doc map[string]any
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatal(err)
+		}
+		if doc["kind"] == "documents" && doc["name"] == "parent-body" {
+			p, _ := doc["path"].(string)
+			s, _ := doc["source"].(string)
+			paths = append(paths, p)
+			sources = append(sources, s)
+		}
+	}
+	if len(paths) != 2 {
+		t.Fatalf("parent-body docs = %d (%v), want 2", len(paths), paths)
+	}
+	if paths[0] == paths[1] {
+		t.Fatalf("expected distinct paths, both %q", paths[0])
+	}
+	for i, p := range paths {
+		if sources[i] != p {
+			t.Fatalf("parent-body[%d] source=%q path=%q, want source == path", i, sources[i], p)
+		}
+	}
+	if sources[0] == sources[1] {
+		t.Fatalf("expected distinct sources, both %q", sources[0])
+	}
+}
+
 // TestPostUISnapshotSurfacesConflictBody (sty_57d5ce25): 409 body reaches the
 // CLI error so workspace add can print the slug-collision remedy.
 func TestPostUISnapshotSurfacesConflictBody(t *testing.T) {

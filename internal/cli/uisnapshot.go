@@ -110,7 +110,12 @@ func buildUISnapshotOpts(ctx context.Context, a *app.App, drain bool) (*mirror.S
 		if a.Store.DocIndex != nil {
 			if rows, err := substrate.List(ctx, a.Store.DocIndex); err == nil {
 				for _, r := range rows {
-					key := r.Kind + "\x00" + r.Name
+					// Key by path (Source) so same-name docs in different dirs
+					// each keep provenance; fall back to kind+name when path empty.
+					key := r.Source
+					if key == "" {
+						key = r.Kind + "\x00" + r.Name
+					}
 					prov[key] = r.Provenance
 					src[key] = r.Source
 				}
@@ -119,8 +124,23 @@ func buildUISnapshotOpts(ctx context.Context, a *app.App, drain bool) (*mirror.S
 			if err != nil {
 				return nil, err
 			}
+			// Path-keyed source for every indexed doc (not only substrate.List
+			// process rows). Same-name docs in different dirs keep distinct
+			// sources; kind+name last-wins would share one.
 			for _, d := range docs {
-				key := d.Kind + "\x00" + d.Name
+				key := d.Path
+				if key == "" {
+					key = d.Kind + "\x00" + d.Name
+				}
+				if d.Path != "" {
+					src[key] = d.Path
+				}
+			}
+			for _, d := range docs {
+				key := d.Path
+				if key == "" {
+					key = d.Kind + "\x00" + d.Name
+				}
 				row := map[string]any{
 					"name":       d.Name,
 					"kind":       d.Kind,

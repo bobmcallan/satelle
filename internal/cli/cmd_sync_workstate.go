@@ -157,12 +157,43 @@ func runSyncWorkstateSnapshot(cmd *cobra.Command, serverArg string, force bool) 
 	if merr != nil {
 		return merr
 	}
+	if err := pushMirrorAfterWorkstate(cmd.Context(), a, nItems+nLedger); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "workstate: mirror push warning: %v\n", err)
+	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Snapshot work-state from project %q: %d item(s), %d ledger.\n",
 		project, nItems, nLedger)
 	if nKept > 0 {
 		fmt.Fprintf(cmd.OutOrStdout(), "%d item(s) kept — local copy is newer than hosted\n", nKept)
 	}
 	return nil
+}
+
+// pushMirrorAfterWorkstate posts a light drain snapshot to the local serve
+// mirror after workstate materialise so newly pulled stories appear on the
+// project page without a fake story mutation (sty_e4e1a008). No-op when nothing
+// was upserted or no serve endpoint resolves. Failures are returned for the
+// caller to warn on; they must not fail the sync.
+func pushMirrorAfterWorkstate(ctx context.Context, a *app.App, upserted int) error {
+	if upserted <= 0 || a == nil {
+		return nil
+	}
+	var ep string
+	if gc, err := config.LoadGlobal(); err == nil {
+		ep = gc.Service.ResolveEndpoint()
+	}
+	if ep == "" {
+		return nil
+	}
+	pushCtx, cancel := context.WithTimeout(ctx, uiDrainBudget)
+	defer cancel()
+	snap, err := buildUIDrainSnapshot(pushCtx, a)
+	if err != nil {
+		return err
+	}
+	if snap == nil {
+		return nil
+	}
+	return postUISnapshotContext(pushCtx, ep, snap)
 }
 
 // Chunk sizes for work-state push (package vars so tests can shrink them).
@@ -461,6 +492,9 @@ func runSyncWorkstatePull(cmd *cobra.Command, serverArg string, dryRun, force bo
 	if nItems == 0 && nLedger == 0 && nKept == 0 {
 		fmt.Fprintln(out, "No work-state rows to pull (hosted opted-in areas are empty).")
 		return nil
+	}
+	if err := pushMirrorAfterWorkstate(ctx, a, nItems+nLedger); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "workstate: mirror push warning: %v\n", err)
 	}
 	fmt.Fprintf(out, "Pulled work-state from project %q personal collection on %s: %d item(s), %d ledger entr(y/ies).\n",
 		project, server, nItems, nLedger)

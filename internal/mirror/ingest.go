@@ -263,7 +263,7 @@ func snapshotKindRows(snap Snapshot) (replace, merge []KindRows) {
 		{"story", rawToRows(snap.Stories, "id"), false},
 		{"task", rawToRows(snap.Tasks, "id"), false},
 		{"execution", rawToRows(snap.Executions, "id"), false},
-		{"doc", rawToRows(snap.Docs, "name"), false},
+		{"doc", docRows(snap.Docs), false},
 		{"ledger_event", rawToRows(snap.LedgerEvents, "id"), !full && mergeOK("ledger_event")},
 		{"story_doc", rawToRows(snap.StoryDocs, "id"), false},
 		{"seat", rawToRows(snap.Seats, "id"), false},
@@ -339,6 +339,38 @@ func rawToRows(raw []json.RawMessage, idKey string) []ItemRow {
 		}
 		if id == "" {
 			continue
+		}
+		out = append(out, ItemRow{ID: id, Payload: string(r)})
+	}
+	return out
+}
+
+// docRows builds ItemRows for snapshot docs. ID is path when set; otherwise
+// "<kind>/<name>" with kind defaulting to "documents". Docs with neither a
+// path nor a name are skipped (same as empty-id rows elsewhere).
+func docRows(raw []json.RawMessage) []ItemRow {
+	var out []ItemRow
+	for _, r := range raw {
+		var m map[string]any
+		if json.Unmarshal(r, &m) != nil {
+			continue
+		}
+		id := ""
+		if v, ok := m["path"].(string); ok {
+			id = strings.TrimSpace(v)
+		}
+		if id == "" {
+			name, _ := m["name"].(string)
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			kind, _ := m["kind"].(string)
+			kind = strings.TrimSpace(kind)
+			if kind == "" {
+				kind = "documents"
+			}
+			id = kind + "/" + name
 		}
 		out = append(out, ItemRow{ID: id, Payload: string(r)})
 	}
