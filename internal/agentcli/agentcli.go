@@ -302,20 +302,22 @@ func NewRunner(name string) (Runner, error) {
 // Interface names for RunnerFromBinding (mirror config.Interface* without importing
 // config — agentcli must not depend on the config package).
 const (
-	InterfaceCommand = "command"
-	InterfaceACP     = "acp"
-	InterfaceStream  = "stream"
+	InterfaceCommand  = "command"
+	InterfaceACP      = "acp"
+	InterfaceStream   = "stream"
+	InterfaceTypeSafe = "typesafe"
 )
 
 // RunnerFromBinding resolves an agents.toml transport + command to a Runner
 // (epic:agent-dispatch-transport). iface is "command" (default when empty),
-// "acp", or "stream".
+// "acp", "stream", or "typesafe".
 //
 //   - command / empty: same as RunnerFromCommand (full argv template; in-loop → nil).
 //   - acp: spawn line only (no {system}/{payload} substitution on argv); ACP session
 //     protocol carries system/payload. Does not silently fall back to command.
 //   - stream: Claude-style stream-json spawn; {system}/{payload} rejected (they
 //     ride the first user message) while {tools}/{model}/{effort} remain argv.
+//   - typesafe: single https:// System One endpoint URL; one-shot HTTP POST.
 func RunnerFromBinding(iface, command string) (Runner, error) {
 	switch strings.ToLower(strings.TrimSpace(iface)) {
 	case "", InterfaceCommand:
@@ -324,19 +326,23 @@ func RunnerFromBinding(iface, command string) (Runner, error) {
 		return newACPRunner(command)
 	case InterfaceStream:
 		return newStreamRunner(command)
+	case InterfaceTypeSafe:
+		return newTypeSafeRunner(command)
 	default:
-		return nil, fmt.Errorf("agentcli: unknown interface %q (want %q, %q, or %q)", iface, InterfaceCommand, InterfaceACP, InterfaceStream)
+		return nil, fmt.Errorf("agentcli: unknown interface %q (want %q, %q, %q, or %q)", iface, InterfaceCommand, InterfaceACP, InterfaceStream, InterfaceTypeSafe)
 	}
 }
 
 // ErrNotLiveCapable is returned by OpenerFromBinding for command / in-loop /
-// empty bindings that cannot open a Session (sty_1de7494c).
+// empty / typesafe bindings that cannot open a Session (sty_1de7494c,
+// sty_5f69cd89).
 var ErrNotLiveCapable = errors.New("agentcli: binding is not live-capable (want interface=acp or stream)")
 
 // OpenerFromBinding resolves an agents.toml transport + command to a
 // SessionOpener. acp and stream return the existing Open methods; command,
-// empty, and in-loop return ErrNotLiveCapable so the caller can fall back to
-// today's hook channel rather than guess.
+// empty, in-loop, and typesafe return ErrNotLiveCapable so the caller can fall
+// back to today's hook channel rather than guess. typesafe is deliberately
+// one-shot HTTP — story chat / rework must never route to it.
 func OpenerFromBinding(iface, command string) (SessionOpener, error) {
 	switch strings.ToLower(strings.TrimSpace(iface)) {
 	case InterfaceACP:
@@ -351,10 +357,10 @@ func OpenerFromBinding(iface, command string) (SessionOpener, error) {
 			return nil, err
 		}
 		return r.(streamRunner).Open, nil
-	case "", InterfaceCommand:
+	case "", InterfaceCommand, InterfaceTypeSafe:
 		return nil, ErrNotLiveCapable
 	default:
-		return nil, fmt.Errorf("agentcli: unknown interface %q (want %q, %q, or %q)", iface, InterfaceCommand, InterfaceACP, InterfaceStream)
+		return nil, fmt.Errorf("agentcli: unknown interface %q (want %q, %q, %q, or %q)", iface, InterfaceCommand, InterfaceACP, InterfaceStream, InterfaceTypeSafe)
 	}
 }
 

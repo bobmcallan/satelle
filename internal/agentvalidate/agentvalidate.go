@@ -16,6 +16,7 @@ package agentvalidate
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -34,8 +35,8 @@ import (
 // Env VALUES are never included (secrets); key names may appear in Notes.
 type Grant struct {
 	Name      string
-	Backend   string // in-loop | isolated:claude | isolated:grok | isolated:codex | isolated:<binary> | acp:<binary> | stream:<binary>
-	Interface string // command | acp | stream (epic:agent-dispatch-transport)
+	Backend   string // in-loop | isolated:claude | isolated:grok | isolated:codex | isolated:<binary> | acp:<binary> | stream:<binary> | typesafe:<host>
+	Interface string // command | acp | stream | typesafe (epic:agent-dispatch-transport)
 	// Command is the effective command template — the literal argv the operator
 	// can read. Surfaced as a field (not only inside Notes) so a provenance
 	// display can attribute it like any other resolved value (sty_c7dfeedf).
@@ -227,7 +228,7 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 	}
 
 	for _, sec := range sections {
-		g, _, _, fs := checkBinding(sec.name, sec.b)
+		g, _, _, fs := checkBinding(sec.name, sec.b, vars)
 		g.Sources = prov[sec.name]
 		r.Grants = append(r.Grants, g)
 		r.record(fs...)
@@ -634,7 +635,7 @@ func performerChannelProblem(workflow, node, section string, b config.AgentBindi
 // stable id (sty_e9da28e2): every defect gets the SAME identifier wherever it
 // surfaces — agent validate, init, doctor, or an engage refusal. The id is
 // chosen by the SITE that produced the finding, never by matching its text.
-func checkBinding(section string, b config.AgentBinding) (Grant, []string, []string, health.Findings) {
+func checkBinding(section string, b config.AgentBinding, vars map[string]string) (Grant, []string, []string, health.Findings) {
 	var problems, warnings []string
 	var fs health.Findings
 	// Recorders: append the prose (unchanged) AND the classified finding, so the
@@ -723,10 +724,10 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 	}
 
 	// Unknown interface (LoadAgents also rejects; keep validate defensive).
-	if iface != config.InterfaceCommand && iface != config.InterfaceACP && iface != config.InterfaceStream {
+	if iface != config.InterfaceCommand && iface != config.InterfaceACP && iface != config.InterfaceStream && iface != config.InterfaceTypeSafe {
 		bindingProblem(fmt.Sprintf(
-			"agents.toml [%s] interface %q: want %q, %q, or %q",
-			section, b.Interface, config.InterfaceCommand, config.InterfaceACP, config.InterfaceStream))
+			"agents.toml [%s] interface %q: want %q, %q, %q, or %q",
+			section, b.Interface, config.InterfaceCommand, config.InterfaceACP, config.InterfaceStream, config.InterfaceTypeSafe))
 		g.Backend = "invalid"
 		return g, problems, warnings, fs
 	}
@@ -735,6 +736,41 @@ func checkBinding(section string, b config.AgentBinding) (Grant, []string, []str
 	lower0 := ""
 	if len(fields) > 0 {
 		lower0 = strings.ToLower(fields[0])
+	}
+
+	// TypeSafe HTTP transport (sty_5f69cd89): endpoint URL via RunnerFromBinding;
+	// always read-only; tools grant is forbidden; API key must resolve.
+	if iface == config.InterfaceTypeSafe {
+		runner, err := agentcli.RunnerFromBinding(iface, cmd)
+		if err != nil {
+			bindingProblem(fmt.Sprintf("agents.toml [%s] typesafe: %v", section, err))
+			g.Backend = "invalid"
+		} else {
+			g.Backend = "typesafe:" + runner.Name()
+			if g.Notes == "" {
+				g.Notes = "typesafe endpoint: " + runner.Command()
+			} else {
+				g.Notes += "; typesafe endpoint: " + runner.Command()
+			}
+			g.ReadOnly = true
+		}
+		if strings.TrimSpace(b.Tools) != "" {
+			bindingProblem(fmt.Sprintf(
+				"agents.toml [%s] interface=typesafe must not set tools= (no tools grant on the typesafe binding)",
+				section))
+		}
+		// Missing key is advisory at validate: the optional prototype must not
+		// fail every engage/doctor run when the operator has not opted into a
+		// live key yet. Runtime still fails closed (runner errors → gate not enacted).
+		if typeSafeKeyResolved(b, vars) == "" {
+			bindingWarn(fmt.Sprintf(
+				"agents.toml [%s] interface=typesafe: %s is empty — set it under [vars] in satelle.local.toml or export it before dogfooding; the gate fails closed at run time without it",
+				section, agentcli.TypeSafeAPIKeyEnv))
+		}
+		if _, err := b.TimeoutDuration(0); err != nil {
+			bindingProblem(fmt.Sprintf("agents.toml [%s] timeout: %v", section, err))
+		}
+		return g, problems, warnings, fs
 	}
 
 	// ACP / stream transports: spawn line via RunnerFromBinding; ceiling is
@@ -965,6 +1001,27 @@ func dangerSandboxToken(resolved string) string {
 	default:
 		return "danger sandbox"
 	}
+}
+
+// typeSafeKeyResolved returns the effective TYPESAFE_API_KEY for validate: a
+// concrete binding env value wins; a pure ${VAR} reference resolves from vars
+// then the process environment. Empty means the key is not available.
+func typeSafeKeyResolved(b config.AgentBinding, vars map[string]string) string {
+	if b.Env != nil {
+		if v := strings.TrimSpace(b.Env[agentcli.TypeSafeAPIKeyEnv]); v != "" {
+			if strings.HasPrefix(v, "${") && strings.HasSuffix(v, "}") {
+				name := strings.TrimSuffix(strings.TrimPrefix(v, "${"), "}")
+				if vars != nil {
+					if vv := strings.TrimSpace(vars[name]); vv != "" {
+						return vv
+					}
+				}
+			} else {
+				return v
+			}
+		}
+	}
+	return strings.TrimSpace(os.Getenv(agentcli.TypeSafeAPIKeyEnv))
 }
 
 // toolsGrantMutators mirrors agentcli.toolsAllowMutators for validate-time

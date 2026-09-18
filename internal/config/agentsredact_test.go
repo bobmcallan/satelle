@@ -232,6 +232,13 @@ func TestEncodeAgentsRoundTrip(t *testing.T) {
 		Reviewer: AgentBinding{Role: "reviewer", Command: "claude -p {system}", Tools: "Read", Model: "opus", Timeout: "45m", Effort: "high", Principles: "session", Env: map[string]string{"A": ""}, InjectPrinciples: &yes},
 		Agents: map[string]AgentBinding{
 			"coder": {Role: "agent", Interface: "acp", Command: "grok agent stdio", Secondary: "reviewer"},
+			"reviewer-typesafe": {
+				Role:      "reviewer",
+				Interface: "typesafe",
+				Command:   "https://api.typesafe.ai/v1/systemone",
+				Model:     "jev-1.13.0",
+				Env:       map[string]string{"TYPESAFE_API_KEY": "${TYPESAFE_API_KEY}"},
+			},
 			"empty": {},
 		},
 	}
@@ -257,6 +264,13 @@ func TestEncodeAgentsRoundTrip(t *testing.T) {
 	}
 	if got.Agents["coder"].Interface != "acp" || got.Agents["coder"].Secondary != "reviewer" {
 		t.Errorf("named binding lost fields: %+v", got.Agents["coder"])
+	}
+	ts := got.Agents["reviewer-typesafe"]
+	if ts.Interface != "typesafe" || ts.Model != "jev-1.13.0" || ts.Env["TYPESAFE_API_KEY"] != "${TYPESAFE_API_KEY}" {
+		t.Errorf("typesafe binding lost fields: %+v", ts)
+	}
+	if strings.Contains(string(b), "ts_") || strings.Contains(string(b), "[vars]") {
+		t.Errorf("redaction must not invent secrets or [vars]:\n%s", b)
 	}
 	if _, ok := got.Agents["empty"]; !ok {
 		t.Errorf("an empty named table must still declare the name:\n%s", b)

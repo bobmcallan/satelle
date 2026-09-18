@@ -1,3 +1,8 @@
+## [0.0.505] - 2026-09-18
+
+### Added
+- **Optional `interface = "typesafe"` reviewer transport (prototype).** A `role=reviewer` binding may set `interface = "typesafe"` with a single `https://` System One endpoint, pinned model (e.g. `jev-1.13.0`), and `TYPESAFE_API_KEY` via binding env. The runner POSTs the satelle-built payload plus skill-authored ```typesafe questions, maps Choice accept/reject onto the existing `{"decision","notes"}` bytes, and reuses `parseDecision` / enact unchanged. Not live-capable (`story chat` / rework stay off this path). The default `[reviewer]` is unchanged — this is an opt-in surface behind a tag-scoped `[[gate]]` (`jev:prototype` + `satelle-plan-typesafe-review`), not a default reviewer replacement. Repo substrate ships the binding/gate **commented** so an older installed binary can still load `agents.toml` until `satelle update` after release. (sty_5f69cd89)
+
 ## [0.0.504] - 2026-09-16
 
 ### Changed

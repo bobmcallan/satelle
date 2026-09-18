@@ -309,11 +309,11 @@ func checkBindingInterface(file, section string, b AgentBinding) error {
 		return nil
 	}
 	switch strings.ToLower(raw) {
-	case InterfaceCommand, InterfaceACP, InterfaceStream:
+	case InterfaceCommand, InterfaceACP, InterfaceStream, InterfaceTypeSafe:
 		return nil
 	default:
-		return fmt.Errorf("%s [%s] interface %q: want %q, %q, or %q",
-			file, section, raw, InterfaceCommand, InterfaceACP, InterfaceStream)
+		return fmt.Errorf("%s [%s] interface %q: want %q, %q, %q, or %q",
+			file, section, raw, InterfaceCommand, InterfaceACP, InterfaceStream, InterfaceTypeSafe)
 	}
 }
 

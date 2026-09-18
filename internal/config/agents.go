@@ -99,11 +99,13 @@ const (
 // worker subprocess (epic:agent-dispatch-transport). Orthogonal to role:
 // command = full argv template (default; any CLI including Claude);
 // acp = Agent Client Protocol over stdio (spawn line only; satelle is client);
-// stream = Claude stream-json live session (sty_d244fe1b).
+// stream = Claude stream-json live session (sty_d244fe1b);
+// typesafe = one-shot HTTP System One reviewer (sty_5f69cd89; opt-in, not default).
 const (
-	InterfaceCommand = "command"
-	InterfaceACP     = "acp"
-	InterfaceStream  = "stream"
+	InterfaceCommand  = "command"
+	InterfaceACP      = "acp"
+	InterfaceStream   = "stream"
+	InterfaceTypeSafe = "typesafe"
 
 	// Dispatch marker environment keys identify an isolated performing step to
 	// harness hooks. They let the dispatched child use its authored tool grant
@@ -134,10 +136,11 @@ const (
 // (true→session, false→none); Principles wins when both are set.
 //
 // Interface selects the dispatch transport (epic:agent-dispatch-transport):
-// "command" (default), "acp", or "stream". Shared grant fields apply to all;
-// spawn shape differs.
+// "command" (default), "acp", "stream", or "typesafe". Shared grant fields apply
+// to all; spawn shape differs.
 type AgentBinding struct {
-	// Interface is "command" | "acp" | "stream". Empty means command. Unknown values fail at load.
+	// Interface is "command" | "acp" | "stream" | "typesafe". Empty means command.
+	// Unknown values fail at load.
 	Interface string `toml:"interface"`
 	// Command is the agent's spawn/template string.
 	//   command transport: multi-token full argv template with {system}/{tools}/
@@ -145,6 +148,8 @@ type AgentBinding struct {
 	//     only "in-loop"; bare claude/grok/codex rejected by agentvalidate.
 	//   acp transport: ACP stdio spawn only (e.g. "grok agent stdio") — no
 	//     {system}/{payload} placeholders (those ride the protocol).
+	//   typesafe transport: a single https:// endpoint URL (e.g.
+	//     "https://api.typesafe.ai/v1/systemone"); no argv placeholders.
 	// Prefer over retired harness= (no runtime fallback; MigrateAgents rewrites).
 	Command string `toml:"command"`
 	// Harness is retired: still decoded for MigrateAgents; CommandTemplate ignores it.
@@ -245,8 +250,8 @@ func (b AgentBinding) CommandTemplate() string {
 }
 
 // ResolvedInterface returns the effective dispatch transport: command (default),
-// acp, or stream. Unknown non-empty values are returned lowercased so LoadAgents /
-// agentvalidate can reject them (epic:agent-dispatch-transport).
+// acp, stream, or typesafe. Unknown non-empty values are returned lowercased so
+// LoadAgents / agentvalidate can reject them (epic:agent-dispatch-transport).
 func (b AgentBinding) ResolvedInterface() string {
 	switch strings.ToLower(strings.TrimSpace(b.Interface)) {
 	case "", InterfaceCommand:
@@ -255,6 +260,8 @@ func (b AgentBinding) ResolvedInterface() string {
 		return InterfaceACP
 	case InterfaceStream:
 		return InterfaceStream
+	case InterfaceTypeSafe:
+		return InterfaceTypeSafe
 	default:
 		return strings.ToLower(strings.TrimSpace(b.Interface))
 	}
@@ -268,6 +275,11 @@ func (b AgentBinding) IsACP() bool {
 // IsStream reports whether this binding uses the stream-json transport.
 func (b AgentBinding) IsStream() bool {
 	return b.ResolvedInterface() == InterfaceStream
+}
+
+// IsTypeSafe reports whether this binding uses the TypeSafe System One HTTP transport.
+func (b AgentBinding) IsTypeSafe() bool {
+	return b.ResolvedInterface() == InterfaceTypeSafe
 }
 
 // ResolvedRole returns the binding's effective role: the declared Role when set

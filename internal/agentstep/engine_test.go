@@ -2393,6 +2393,9 @@ func TestParseDecisionLenient(t *testing.T) {
 		{"```json\n{\"decision\": \"accept\"}\n```\nFinal: {\"decision\":\"reject\",\"notes\":\"no\"}", false, "no"},
 		// a brace inside the notes string must not unbalance extraction
 		{`{"decision":"reject","notes":"missing the {foo} block"}`, false, "missing the {foo} block"},
+		// typesafe runner appends {"typesafe_raw":…} with no decision key — last
+		// object must not steal the verdict (sty_5f69cd89).
+		{"{\"decision\":\"accept\",\"notes\":\"ok\",\"reasoning\":\"ok\"}\n{\"typesafe_raw\":{\"answers\":{\"verdict\":{\"choice\":\"reject\",\"confidence\":0.9}}}}", true, "ok"},
 	}
 	for _, c := range cases {
 		dec, err := parseDecision([]byte(c.in))
@@ -4105,6 +4108,91 @@ func TestDispatchRefusesReviewerRoleOnPerformingNode(t *testing.T) {
 		t.Fatalf("want reviewer-on-performing refuse, got %v", err)
 	}
 	_ = called
+}
+
+// TestTypeSafeGateBindingAndSkip pins sty_5f69cd89 AC4: a tag-scoped [[gate]]
+// with agent=reviewer-typesafe resolves the named role=reviewer binding, and an
+// untagged story skips the gate (scoped-gate-skipped).
+func TestTypeSafeGateBindingAndSkip(t *testing.T) {
+	wf := spineWF("", "",
+		`[[gate]]
+skill = "satelle-plan-typesafe-review"
+agent = "reviewer-typesafe"
+on = ["in_progress"]
+applies_to = ["jev:prototype"]
+
+[[gate]]
+skill = "satelle-estimate-actual-review"
+agent = "reviewer"
+on = ["in_progress"]
+`,
+		"in_progress|executor|code|satelle-story-intent-review",
+		"done|||satelle-story-done-review")
+
+	typesafeSkill := `---
+name: satelle-plan-typesafe-review
+type: skill
+description: optional typesafe plan gate
+---
+
+The runner emits {"decision":"accept"|"reject","notes":"…"}.
+
+` + "```typesafe\n" + `{"questions":{"verdict":{"type":"choice","instructions":"x","criteria":{"accept":null,"reject":null}}},"verdict":"verdict"}
+` + "```\n"
+
+	docs := fakeDocs{
+		workflow:   wf,
+		skillFound: true,
+		extraSkills: []docindex.Doc{
+			{Kind: "skills", Name: "satelle-plan-typesafe-review", Body: typesafeSkill},
+			skillDoc("satelle-story-intent-review"),
+			skillDoc("satelle-estimate-actual-review"),
+			skillDoc("code"),
+		},
+	}
+	g, _ := newEngine(t, `{"decision":"accept"}`, docs)
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		if name == "reviewer-typesafe" {
+			return config.AgentBinding{
+				Interface: config.InterfaceTypeSafe,
+				Command:   agentcli.DefaultTypeSafeEndpoint,
+				Role:      config.RoleReviewer,
+				Model:     "jev-1.13.0",
+			}, true
+		}
+		return config.AgentBinding{}, false
+	})
+
+	b, section, err := g.gateBinding("reviewer-typesafe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if section != "reviewer-typesafe" || !b.IsTypeSafe() {
+		t.Fatalf("gateBinding = %q %+v", section, b)
+	}
+	if config.ResolvedRole(section, b) != config.RoleReviewer {
+		t.Fatalf("role = %q", config.ResolvedRole(section, b))
+	}
+
+	recs := captureTelemetry(g)
+	_, err = g.Gate(context.Background(), workitem.Item{
+		ID: "sty_plain", Status: "backlog", Tags: []string{"surface:cli"},
+	}, "in_progress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	skipped := false
+	for _, r := range *recs {
+		if r.kind == "scoped-gate-skipped" && r.data["skill"] == "satelle-plan-typesafe-review" {
+			skipped = true
+			if r.data["reason"] != "applies_to" {
+				t.Errorf("reason = %v", r.data["reason"])
+			}
+		}
+	}
+	if !skipped {
+		t.Fatalf("untagged story must skip typesafe gate, got %#v", *recs)
+	}
 }
 
 // TestGateBindingEmptyDegradesToReviewer pins sty_4cebc624 AC4: an omitted
