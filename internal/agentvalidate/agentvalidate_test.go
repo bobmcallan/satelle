@@ -598,7 +598,7 @@ func TestValidate_StreamInterface(t *testing.T) {
 	}
 }
 
-func TestValidate_TypeSafeInterface(t *testing.T) {
+func TestValidate_TypeSafeInterfaceRejected(t *testing.T) {
 	agents := config.AgentsConfig{
 		Executor: config.AgentBinding{Command: "in-loop"},
 		Reviewer: config.AgentBinding{
@@ -610,74 +610,19 @@ func TestValidate_TypeSafeInterface(t *testing.T) {
 		Agents: map[string]config.AgentBinding{
 			"reviewer-typesafe": {
 				Interface: "typesafe",
-				Command:   agentcli.DefaultTypeSafeEndpoint,
+				Command:   "https://api.typesafe.ai/v1/systemone",
 				Role:      "reviewer",
 				Model:     "jev-1.13.0",
-				Env:       map[string]string{agentcli.TypeSafeAPIKeyEnv: "${TYPESAFE_API_KEY}"},
 			},
 		},
 	}
-	// ${VAR} resolves from the [vars] KV (same as other secret bindings).
-	r := Validate(agents, map[string]string{agentcli.TypeSafeAPIKeyEnv: "ts_test_key"}, nil)
-	if !r.OK() {
-		t.Fatalf("valid typesafe reviewer problems: %v", r.Problems)
-	}
-	var g Grant
-	for _, x := range r.Grants {
-		if x.Name == "reviewer-typesafe" {
-			g = x
-		}
-	}
-	if g.Interface != "typesafe" || !strings.HasPrefix(g.Backend, "typesafe:") {
-		t.Errorf("grant = %+v, want interface=typesafe backend typesafe:*", g)
-	}
-	if !g.ReadOnly {
-		t.Error("typesafe grant must be ReadOnly")
-	}
-	// Default [reviewer] unchanged — still command/grok.
-	var rev Grant
-	for _, x := range r.Grants {
-		if x.Name == "reviewer" {
-			rev = x
-		}
-	}
-	if rev.Interface != config.InterfaceCommand {
-		t.Errorf("default reviewer interface = %q, want command", rev.Interface)
-	}
-
-	// tools= is a problem on typesafe.
-	agents.Agents["reviewer-typesafe"] = config.AgentBinding{
-		Interface: "typesafe",
-		Command:   agentcli.DefaultTypeSafeEndpoint,
-		Role:      "reviewer",
-		Model:     "jev-1.13.0",
-		Tools:     "read_file",
-		Env:       map[string]string{agentcli.TypeSafeAPIKeyEnv: "ts_test_key"},
-	}
-	r = Validate(agents, nil, nil)
+	r := Validate(agents, nil, nil)
 	if r.OK() {
-		t.Fatal("typesafe with tools= must fail validate")
+		t.Fatal("interface=typesafe must be rejected as unknown")
 	}
 	joined := strings.Join(r.Problems, "\n")
-	if !strings.Contains(joined, "tools") {
-		t.Errorf("problems should mention tools, got: %s", joined)
-	}
-
-	// Missing key (no [vars], no process env, no literal) is a WARN — optional
-	// prototype must not fail repo-wide validate; runtime still fails closed.
-	t.Setenv(agentcli.TypeSafeAPIKeyEnv, "")
-	agents.Agents["reviewer-typesafe"] = config.AgentBinding{
-		Interface: "typesafe",
-		Command:   agentcli.DefaultTypeSafeEndpoint,
-		Role:      "reviewer",
-		Model:     "jev-1.13.0",
-	}
-	r = Validate(agents, nil, nil)
-	if !r.OK() {
-		t.Fatalf("empty typesafe key must not be a hard problem, got: %v", r.Problems)
-	}
-	if !strings.Contains(strings.Join(r.Warnings, "\n"), agentcli.TypeSafeAPIKeyEnv) {
-		t.Errorf("warnings should name %s: %v", agentcli.TypeSafeAPIKeyEnv, r.Warnings)
+	if !strings.Contains(joined, "typesafe") || !strings.Contains(joined, "interface") {
+		t.Errorf("problems should name the unknown interface, got: %s", joined)
 	}
 }
 

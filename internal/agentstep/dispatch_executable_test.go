@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
@@ -58,29 +57,5 @@ func TestLookupRunnerResolvesOnLocalPath(t *testing.T) {
 	var enf *ExecutableNotFoundError
 	if !errors.As(err, &enf) || enf.Token != "satelle-nonexistent-xyz" {
 		t.Fatalf("want ExecutableNotFoundError naming the token, got %v", err)
-	}
-}
-
-// TestLookupRunnerTypeSafeSkipsLookPath (sty_6b6a2f98 AC1): interface=typesafe
-// treats command as an HTTPS System One URL. LookPath must not run — nothing is
-// spawned — so lookupRunner returns a runner without ExecutableNotFoundError.
-// The skip is keyed on the interface: the same URL under interface=command still
-// refuses (AC2 negative).
-func TestLookupRunnerTypeSafeSkipsLookPath(t *testing.T) {
-	r, err := lookupRunner(config.InterfaceTypeSafe, agentcli.DefaultTypeSafeEndpoint)
-	if err != nil {
-		t.Fatalf("typesafe + System One URL: want nil err, got %v", err)
-	}
-	if r == nil {
-		t.Fatal("typesafe + System One URL: want non-nil runner")
-	}
-	var enf *ExecutableNotFoundError
-	if errors.As(err, &enf) {
-		t.Fatalf("typesafe must not return ExecutableNotFoundError, got %v", enf)
-	}
-
-	_, err = lookupRunner(config.InterfaceCommand, agentcli.DefaultTypeSafeEndpoint)
-	if !errors.As(err, &enf) {
-		t.Fatalf("command + System One URL must still LookPath-refuse, got %v", err)
 	}
 }

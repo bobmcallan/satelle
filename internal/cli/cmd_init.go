@@ -1764,22 +1764,6 @@ model   = ""                   # empty inherits the CLI's default; each binding 
 # command   = "claude -p --input-format stream-json --output-format stream-json --verbose --allowedTools {tools} --model {model} --effort {effort}"
 # tools     = "Read,Grep,Glob,Edit,Write,Bash(satelle:*)"
 # model     = "opus"
-#
-# Optional TypeSafe/Jev cold-gate reviewer (sty_5f69cd89). Not the default
-# [reviewer]. Keep COMMENTED until a satelle binary that understands
-# interface=typesafe is installed; an older binary refuses to load agents.toml
-# if this table is live. Then: uncomment, set TYPESAFE_API_KEY under [vars] in
-# satelle.local.toml (or export it), uncomment the matching [[gate]] in
-# step.toml, tag a story jev:prototype. No tools grant — missing evidence is a
-# reject, not a Go hunter. One-shot HTTP only — not live-capable (chat/rework).
-#
-# [reviewer-typesafe]
-# role       = "reviewer"
-# interface  = "typesafe"
-# command    = "https://api.typesafe.ai/v1/systemone"
-# model      = "jev-1.13.0"
-# principles = "session"
-# env        = { TYPESAFE_API_KEY = "${TYPESAFE_API_KEY}" }
 `, "REVIEWER_COMMAND_TEMPLATE", agentcli.DefaultClaudeCommand)
 
 // scaffoldConstitution is the project-constitution template a fresh init writes to

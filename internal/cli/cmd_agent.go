@@ -311,9 +311,7 @@ are both visible here rather than at the next dispatch.`,
 				// or not — names a program; THIS machine decides whether it exists.
 				// A warning here, a hard refusal at dispatch: an operator may inspect
 				// a machine that intentionally lacks a binding without bricking validate.
-				// typesafe is HTTP (command is the System One URL) — nothing is
-				// spawned, so LookPath would always WARN on https://… (sty_6b6a2f98).
-				if g.Backend != "in-loop" && g.Backend != "invalid" && g.Interface != config.InterfaceTypeSafe {
+				if g.Backend != "in-loop" && g.Backend != "invalid" {
 					if tok := config.ExecutableToken(g.Command); tok != "" {
 						if _, lerr := exec.LookPath(tok); lerr != nil {
 							fmt.Fprintf(out, "WARN  [%s] command %q is not executable on this machine (%v) — dispatch will refuse; install it or rebind the agent\n", g.Name, tok, lerr)

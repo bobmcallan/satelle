@@ -28,6 +28,22 @@ func TestRunnerFromBinding_CommandDefault(t *testing.T) {
 	}
 }
 
+// TestRunnerFromBindingRejectsTypeSafe (sty_e3eca0b7 AC1): retired interface=
+// typesafe is the same unknown-interface class as any other bogus value.
+func TestRunnerFromBindingRejectsTypeSafe(t *testing.T) {
+	_, errTS := RunnerFromBinding("typesafe", "https://api.typesafe.ai/v1/systemone")
+	_, errBogus := RunnerFromBinding("bogus", "https://example.invalid/v1")
+	if errTS == nil || errBogus == nil {
+		t.Fatal("want unknown-interface errors for typesafe and bogus")
+	}
+	if !strings.Contains(errTS.Error(), "unknown interface") {
+		t.Fatalf("typesafe err = %v", errTS)
+	}
+	if !strings.Contains(errBogus.Error(), "unknown interface") {
+		t.Fatalf("bogus err = %v", errBogus)
+	}
+}
+
 func TestRunnerFromBinding_ACPRejectsPlaceholders(t *testing.T) {
 	if _, err := RunnerFromBinding(InterfaceACP, "grok agent stdio {system}"); err == nil {
 		t.Fatal("expected error for {system} in acp command")

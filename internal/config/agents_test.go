@@ -365,37 +365,37 @@ func TestResolvedInterfaceAndLoad(t *testing.T) {
 	if got := (AgentBinding{Interface: "stream"}).ResolvedInterface(); got != InterfaceStream {
 		t.Errorf("stream = %q", got)
 	}
-	if got := (AgentBinding{Interface: "typesafe"}).ResolvedInterface(); got != InterfaceTypeSafe {
-		t.Errorf("typesafe = %q", got)
-	}
 	if !(AgentBinding{Interface: "acp"}).IsACP() {
 		t.Error("IsACP should be true")
 	}
 	if !(AgentBinding{Interface: "stream"}).IsStream() {
 		t.Error("IsStream should be true")
 	}
-	if !(AgentBinding{Interface: "typesafe"}).IsTypeSafe() {
-		t.Error("IsTypeSafe should be true")
-	}
 	if (AgentBinding{Interface: "acp"}).IsStream() {
 		t.Error("IsStream should be false for acp")
+	}
+	// Retired typesafe is an ordinary unknown string at resolve time; load rejects it.
+	if got := (AgentBinding{Interface: "typesafe"}).ResolvedInterface(); got != "typesafe" {
+		t.Errorf("typesafe passthrough = %q", got)
 	}
 	if (AgentBinding{Interface: "typesafe"}).IsACP() || (AgentBinding{Interface: "typesafe"}).IsStream() {
 		t.Error("typesafe must not report as acp/stream")
 	}
 
 	dir := t.TempDir()
-	// Unknown interface fails at load.
-	bad := "[reviewer]\ninterface = \"rpc\"\ncommand = \"claude -p {system}\"\n"
-	if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(bad), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := LoadAgents(dir); err == nil || !strings.Contains(err.Error(), "interface") {
-		t.Fatalf("want interface load error, got %v", err)
+	// Unknown interfaces fail at load (rpc and retired typesafe alike).
+	for _, iface := range []string{"rpc", "typesafe"} {
+		bad := "[reviewer]\ninterface = \"" + iface + "\"\ncommand = \"claude -p {system}\"\n"
+		if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(bad), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadAgents(dir); err == nil || !strings.Contains(err.Error(), "interface") {
+			t.Fatalf("want interface load error for %q, got %v", iface, err)
+		}
 	}
 
-	// Valid acp + stream + typesafe + omit interface still load.
-	ok := "[reviewer]\ninterface = \"acp\"\ncommand = \"grok agent stdio\"\ntools = \"read_file\"\n[planner]\ncommand = \"claude -p {system}\"\n[orchestrator]\ninterface = \"stream\"\ncommand = \"claude -p --input-format stream-json --output-format stream-json --verbose --allowedTools {tools}\"\n[reviewer-typesafe]\nrole = \"reviewer\"\ninterface = \"typesafe\"\ncommand = \"https://api.typesafe.ai/v1/systemone\"\nmodel = \"jev-1.13.0\"\n"
+	// Valid acp + stream + omit interface still load.
+	ok := "[reviewer]\ninterface = \"acp\"\ncommand = \"grok agent stdio\"\ntools = \"read_file\"\n[planner]\ncommand = \"claude -p {system}\"\n[orchestrator]\ninterface = \"stream\"\ncommand = \"claude -p --input-format stream-json --output-format stream-json --verbose --allowedTools {tools}\"\n"
 	if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(ok), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -411,9 +411,6 @@ func TestResolvedInterfaceAndLoad(t *testing.T) {
 	}
 	if ac.Agents["orchestrator"].ResolvedInterface() != InterfaceStream {
 		t.Errorf("orchestrator interface = %q", ac.Agents["orchestrator"].ResolvedInterface())
-	}
-	if ac.Agents["reviewer-typesafe"].ResolvedInterface() != InterfaceTypeSafe || !ac.Agents["reviewer-typesafe"].IsTypeSafe() {
-		t.Errorf("reviewer-typesafe interface = %q", ac.Agents["reviewer-typesafe"].ResolvedInterface())
 	}
 }
 

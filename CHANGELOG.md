@@ -1,3 +1,13 @@
+## [0.0.511] - 2026-09-19
+
+### Removed
+- **Optional TypeSafe/Jev reviewer prototype is gone from the product surface.** `interface=typesafe` is an unknown interface. The HTTP runner, `satelle-plan-typesafe-review` skill, commented `[reviewer-typesafe]` init scaffold, and `jev:prototype` gate are deleted. Default `[reviewer]` stays an LLM. The prototype did not pass as a working-lane gate (sty_5f69cd89; sty_38915987 dogfood). Historical 0.0.505–0.0.508 entries stay as the record that it was tried. (sty_e3eca0b7)
+
+## [serve-v0.0.47] - 2026-09-19
+
+### Changed
+- **Serve channel drops the typesafe transport and the retired Jev skill.** `internal/agentcli` and `internal/config` are on the satelled watch set. (sty_e3eca0b7)
+
 ## [0.0.510] - 2026-09-18
 
 ### Fixed

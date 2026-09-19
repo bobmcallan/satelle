@@ -232,12 +232,12 @@ func TestEncodeAgentsRoundTrip(t *testing.T) {
 		Reviewer: AgentBinding{Role: "reviewer", Command: "claude -p {system}", Tools: "Read", Model: "opus", Timeout: "45m", Effort: "high", Principles: "session", Env: map[string]string{"A": ""}, InjectPrinciples: &yes},
 		Agents: map[string]AgentBinding{
 			"coder": {Role: "agent", Interface: "acp", Command: "grok agent stdio", Secondary: "reviewer"},
-			"reviewer-typesafe": {
+			"consult": {
 				Role:      "reviewer",
-				Interface: "typesafe",
-				Command:   "https://api.typesafe.ai/v1/systemone",
-				Model:     "jev-1.13.0",
-				Env:       map[string]string{"TYPESAFE_API_KEY": "${TYPESAFE_API_KEY}"},
+				Interface: "acp",
+				Command:   "grok agent stdio",
+				Model:     "grok-4.5",
+				Env:       map[string]string{"API_TOKEN": "${API_TOKEN}"},
 			},
 			"empty": {},
 		},
@@ -265,9 +265,9 @@ func TestEncodeAgentsRoundTrip(t *testing.T) {
 	if got.Agents["coder"].Interface != "acp" || got.Agents["coder"].Secondary != "reviewer" {
 		t.Errorf("named binding lost fields: %+v", got.Agents["coder"])
 	}
-	ts := got.Agents["reviewer-typesafe"]
-	if ts.Interface != "typesafe" || ts.Model != "jev-1.13.0" || ts.Env["TYPESAFE_API_KEY"] != "${TYPESAFE_API_KEY}" {
-		t.Errorf("typesafe binding lost fields: %+v", ts)
+	consult := got.Agents["consult"]
+	if consult.Interface != "acp" || consult.Model != "grok-4.5" || consult.Env["API_TOKEN"] != "${API_TOKEN}" {
+		t.Errorf("consult binding lost secret-bearing fields: %+v", consult)
 	}
 	if strings.Contains(string(b), "ts_") || strings.Contains(string(b), "[vars]") {
 		t.Errorf("redaction must not invent secrets or [vars]:\n%s", b)

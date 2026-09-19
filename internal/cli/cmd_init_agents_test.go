@@ -40,20 +40,16 @@ func TestScaffoldAgentsTomlFullyDefined(t *testing.T) {
 	if strings.Contains(scaffoldAgentsToml, "\n[orchestrator]\n") || strings.Contains(scaffoldAgentsToml, "\n[coder]\n") {
 		t.Error("scaffold [orchestrator]/[coder] examples must stay fully commented")
 	}
-	// Optional typesafe reviewer stays commented (sty_5f69cd89): not a default
-	// switch; fresh init must not activate interface=typesafe.
-	for _, want := range []string{
-		"# [reviewer-typesafe]",
-		`# interface  = "typesafe"`,
-		"jev-1.13.0",
-		"TYPESAFE_API_KEY",
+	// Failed Jev/typesafe prototype removed (sty_e3eca0b7): scaffold must not
+	// ship a dormant reviewer-typesafe / interface=typesafe switch.
+	for _, ban := range []string{
+		"reviewer-typesafe",
+		`interface  = "typesafe"`,
+		`interface = "typesafe"`,
 	} {
-		if !strings.Contains(scaffoldAgentsToml, want) {
-			t.Errorf("scaffold missing commented [reviewer-typesafe] example %q", want)
+		if strings.Contains(scaffoldAgentsToml, ban) {
+			t.Errorf("scaffold must not contain %q", ban)
 		}
-	}
-	if strings.Contains(scaffoldAgentsToml, "\n[reviewer-typesafe]\n") {
-		t.Error("scaffold [reviewer-typesafe] must stay fully commented")
 	}
 	// The scaffold header must DOCUMENT full-template requirement + placeholders
 	// (AC4, sty_6752e35b) so an operator editing the file sees that bare presets

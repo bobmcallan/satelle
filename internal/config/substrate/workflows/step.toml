@@ -155,15 +155,3 @@ for = ["*", "docs", "epic-parent", "parent"]
 skill = "satelle-estimate-actual-review"
 on = ["in_progress", "done"]
 for = ["*"]
-
-# Optional Jev/typesafe gate on in_progress. Keep COMMENTED until a
-# typesafe-capable binary is installed and [reviewer-typesafe] is uncommented
-# in agents.toml. Fires only on stories tagged jev:prototype. Default
-# [reviewer] and satelle-story-plan-review are unchanged.
-#
-# [[gate]]
-# skill      = "satelle-plan-typesafe-review"
-# agent      = "reviewer-typesafe"
-# on         = ["in_progress"]
-# applies_to = ["jev:prototype"]
-# for        = ["*"]

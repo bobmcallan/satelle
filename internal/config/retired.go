@@ -40,6 +40,12 @@ var RetiredSubstrate = map[string]RetiredEntry{
 		Replacement: "",
 		Note:        "folded into the constitution's \"Configuration over code\" section",
 	},
+	"satelle-plan-typesafe-review": {
+		Kind:        "skills",
+		Version:     "0.0.511",
+		Replacement: "",
+		Note:        "Jev/typesafe reviewer prototype did not pass (sty_38915987 dogfood); not a shipped reviewer",
+	},
 }
 
 // LookupRetired returns the retirement entry for name, if any.
