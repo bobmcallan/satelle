@@ -118,14 +118,55 @@ while True:
 	}
 }
 
+// reworkEnvEchoPeer is a sibling of reworkPeer whose reply text includes the
+// process env the verb exported into that spawn (sty_7567f047 AC1/AC3). The
+// scripted marker line stays last so parseReadyMarker still reads it.
+func reworkEnvEchoPeer(t *testing.T, path, replyEnv string) {
+	t.Helper()
+	script := `#!/usr/bin/env python3
+import json, os, sys
+replies = os.environ[` + "\"" + replyEnv + "\"" + `].split("|")
+n = 0
+def send(o):
+    sys.stdout.write(json.dumps(o) + "\n"); sys.stdout.flush()
+while True:
+    line = sys.stdin.readline()
+    if not line:
+        break
+    msg = json.loads(line)
+    if msg.get("type") != "user":
+        continue
+    body = replies[n] if n < len(replies) else "(exhausted)"
+    n += 1
+    text = ("relay=" + os.environ.get("SATELLE_RELAY_BINDING", "") +
+            " session=" + os.environ.get("SATELLE_SESSION", "") +
+            "\n" + body)
+    send({"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":text}]}})
+    send({"type":"result","result":text})
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // reworkRepo sets up a repo whose in_progress step is allocated to a live
 // [coder] binding and declares a rework loop with a live [consultant].
 func reworkRepo(t *testing.T, rounds, consultReplies, coderReplies string) (repo, id string) {
+	return reworkRepoWith(t, rounds, consultReplies, coderReplies, reworkPeer, "")
+}
+
+// reworkRepoWith is reworkRepo with a pluggable peer writer and an optional
+// lease session stamped at engage (tempRepo clears SATELLE_SESSION, so a
+// caller cannot set the lease id before the helper runs).
+func reworkRepoWith(t *testing.T, rounds, consultReplies, coderReplies string, writePeer func(*testing.T, string, string), leaseSession string) (repo, id string) {
 	t.Helper()
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not available")
 	}
 	repo = tempRepo(t)
+	if leaseSession != "" {
+		t.Setenv(config.SessionEnv, leaseSession)
+	}
 	t.Chdir(repo)
 	wfDir := filepath.Join(repo, ".satelle", "workflows")
 	writeRoute(t, wfDir,
@@ -150,8 +191,8 @@ requires = ["coded"]
 
 	coderPeer := filepath.Join(t.TempDir(), "fake-coder")
 	consultPeer := filepath.Join(t.TempDir(), "fake-consultant")
-	reworkPeer(t, coderPeer, "E2E_CODER_REPLIES")
-	reworkPeer(t, consultPeer, "E2E_CONSULT_REPLIES")
+	writePeer(t, coderPeer, "E2E_CODER_REPLIES")
+	writePeer(t, consultPeer, "E2E_CONSULT_REPLIES")
 
 	agents := "[executor]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n" +
 		"[orchestrator]\nrole = \"agent\"\ncommand = \"in-loop\"\n\n" +
@@ -340,5 +381,48 @@ func TestStoryReworkRefusesAStepWithNoLoop(t *testing.T) {
 		t.Fatalf("want a refusal at a step with no rework key:\n%s", out)
 	} else if !strings.Contains(err.Error(), "declares no rework loop") {
 		t.Errorf("refusal should name the missing key, got: %v", err)
+	}
+}
+
+// TestStoryReworkExportsLeaseSessionAndRelayMarkerOnlyOnCoder drives the real
+// verb (sty_7567f047 AC1/AC3): lease stamped sess-lease at engage, process
+// SATELLE_SESSION switched to sess-other before rework, env-echo peers prove
+// the coder spawn got relay=coder + session=sess-lease and the consultant got
+// an empty relay marker.
+func TestStoryReworkExportsLeaseSessionAndRelayMarkerOnlyOnCoder(t *testing.T) {
+	_, id := reworkRepoWith(t, "1",
+		"NOT READY: need env proof",
+		"fixed under adopted seat",
+		reworkEnvEchoPeer,
+		"sess-lease",
+	)
+	t.Setenv(config.SessionEnv, "sess-other")
+
+	out, err := runRoot(t, "story", "rework", id)
+	if err != nil {
+		t.Fatalf("rework: %v\n%s", err, out)
+	}
+
+	rows := reworkMessages(t, id)
+	var coderBody, consultBody string
+	for _, r := range rows {
+		switch r.From {
+		case "coder":
+			coderBody = r.Body
+		case "consultant":
+			consultBody = r.Body
+		}
+	}
+	if coderBody == "" || consultBody == "" {
+		t.Fatalf("want both roles in messages, got: %+v", rows)
+	}
+	if !strings.Contains(coderBody, "relay=coder") || !strings.Contains(coderBody, "session=sess-lease") {
+		t.Fatalf("coder must inherit relay marker and adopted lease session, got: %q", coderBody)
+	}
+	if !strings.Contains(consultBody, "relay= ") {
+		t.Fatalf("consultant must show empty relay marker (relay= ), got: %q", consultBody)
+	}
+	if strings.Contains(consultBody, "relay=coder") {
+		t.Fatalf("consultant must not inherit the coder relay marker, got: %q", consultBody)
 	}
 }

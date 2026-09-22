@@ -1,3 +1,13 @@
+## [0.0.512] - 2026-09-22
+
+### Fixed
+- **The PreToolUse hook no longer denies the rework relay's coder.** `satelle story rework` exports the lease's stamped session id to its children, so the coder's hook and the relay's own permission policy resolve the same live seat. Before, a differing `SATELLE_SESSION` made `pickSessionSeat` drop it. The verb marks only the coder spawn with `SATELLE_RELAY_BINDING` / `SATELLE_RELAY_ITEM`. `hook gate` and `hook commitgate` then apply the relay's allocated-binding rule (`dispatchedPerformerPermitted`) at a committed status, bound to that exact story. The consultant and every unmarked session, including the driving orchestrator, keep today's `editPermitted` branches and deny text. A refused relay coder is now told why: the seat is not bound (naming both session ids), the seat is stale or missing, a transition is in flight, or the binding is not allocated. It no longer sees "without a performing story" or "allocated to agent=executor". (sty_7567f047)
+
+## [serve-v0.0.48] - 2026-09-22
+
+### Changed
+- **Serve channel picks up the relay marker env keys and help text.** `internal/config` and `internal/help` are on the satelled watch set. (sty_7567f047)
+
 ## [0.0.511] - 2026-09-19
 
 ### Removed

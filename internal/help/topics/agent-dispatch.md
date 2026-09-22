@@ -445,7 +445,11 @@ ready, or after a declared number of gate rejections on the same edge — parks 
 The coder's rule is the route's own allocation, read from the seat — not a state
 name compiled into the binary. The consultant's grant is already read-only; the
 policy is the second, non-negotiable refusal, because a consultant that can edit
-is a reviewer marking its own work.
+is a reviewer marking its own work. PreToolUse `gate` / `commitgate` honour the
+same allocated-binding rule when the rework verb marks the coder spawn with
+`SATELLE_RELAY_BINDING` / `SATELLE_RELAY_ITEM` (and exports the lease's session
+id so the hook binds that seat); unmarked sessions stay on the driving-session
+and in-flight dispatch branches.
 
 ### Workspace bindings layer — `satelle sync bindings` (sty_01949949)
 

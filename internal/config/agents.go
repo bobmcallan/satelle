@@ -113,6 +113,13 @@ const (
 	DispatchAgentEnv = "SATELLE_DISPATCH_AGENT"
 	DispatchStepEnv  = "SATELLE_DISPATCH_STEP"
 	DispatchItemEnv  = "SATELLE_DISPATCH_ITEM"
+
+	// Relay marker environment keys identify a rework-relay coder spawn to
+	// harness hooks (sty_7567f047). Distinct from SATELLE_DISPATCH_*: the
+	// dispatch branch requires InFlight, and the relay runs at a committed
+	// status. Same honest-posture boundary as the dispatch markers.
+	RelayBindingEnv = "SATELLE_RELAY_BINDING"
+	RelayItemEnv    = "SATELLE_RELAY_ITEM"
 )
 
 // Principles selector tokens for AgentBinding.Principles — which principles ride

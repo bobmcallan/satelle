@@ -155,8 +155,11 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 			raw, _ := io.ReadAll(cmd.InOrStdin())
 			// currentSeatTouch is resolved once so deny reasons can name a non-live
 			// holder without a second store open (sty_1738f973 AC6). A live
-			// owner-held seat is also heartbeated (sty_3bb1d8be).
-			info, engaged, engErr := resolveSeat(true, bindSessionID(raw))
+			// owner-held seat is also heartbeated (sty_3bb1d8be). resolveSeats
+			// (not resolveSeat) so a marked relay coder can name a live seat the
+			// session did not bind (sty_7567f047 AC5).
+			sid := bindSessionID(raw)
+			info, engaged, live, engErr := resolveSeats(true, sid)
 			p := filePathFromEvent(raw)
 			command := bashCommandFromEvent(raw)
 			if p != "" {
@@ -210,10 +213,11 @@ silently allowing it on a broken deployment (sty_f3d5d4b8).`,
 				return denyPreToolUse(cmd, raw, "satelle: "+engErr.Error())
 			}
 			_ = engaged // broad engagement remains available to other hook surfaces
-			if editPermitted(info, currentDispatchMarker()) {
+			dm, rm := currentDispatchMarker(), currentRelayMarker()
+			if hookEditPermitted(info, dm, rm) {
 				return nil
 			}
-			return denyPreToolUse(cmd, raw, editPermissionDenyReason(info, time.Now().UTC()))
+			return denyPreToolUse(cmd, raw, hookDenyReason(info, live, dm, rm, sid, time.Now().UTC()))
 		},
 	}
 
@@ -250,16 +254,20 @@ behaviour exactly as above — opt-in, not a satelle default.`,
 			}
 			var info seatInfo
 			var engaged bool
+			var live []seatInfo
 			var seatResolved bool
+			var sid string
 			if bashMutatesTree(command, sessionAnchor()) {
 				var err error
-				info, engaged, err = resolveSeat(true, bindSessionID(raw))
+				sid = bindSessionID(raw)
+				info, engaged, live, err = resolveSeats(true, sid)
 				seatResolved = true
 				if err != nil {
 					return denyPreToolUse(cmd, raw, "satelle: "+err.Error())
 				}
-				if !editPermitted(info, currentDispatchMarker()) {
-					return denyPreToolUse(cmd, raw, editPermissionDenyReason(info, time.Now().UTC()))
+				dm, rm := currentDispatchMarker(), currentRelayMarker()
+				if !hookEditPermitted(info, dm, rm) {
+					return denyPreToolUse(cmd, raw, hookDenyReason(info, live, dm, rm, sid, time.Now().UTC()))
 				}
 			}
 			// Engage gate still applies only to commit/push (today's default).
@@ -789,6 +797,34 @@ func currentDispatchMarker() dispatchMarker {
 		Step:  os.Getenv(config.DispatchStepEnv),
 		Item:  os.Getenv(config.DispatchItemEnv),
 	}
+}
+
+// relayMarker identifies a rework-relay coder spawn to the PreToolUse hooks
+// (sty_7567f047). Distinct from dispatchMarker: that branch requires InFlight,
+// and the relay runs at a committed status. Honest-posture boundary — same as
+// SATELLE_DISPATCH_*: a process that spoofs the env is outside the contract.
+type relayMarker struct {
+	Binding string
+	Item    string
+}
+
+func currentRelayMarker() relayMarker {
+	return relayMarker{
+		Binding: os.Getenv(config.RelayBindingEnv),
+		Item:    os.Getenv(config.RelayItemEnv),
+	}
+}
+
+// hookEditPermitted is the PreToolUse permission predicate for gate and
+// commitgate. A non-empty relay marker takes the allocated-binding rule at a
+// committed status (dispatchedPerformerPermitted); otherwise today's
+// editPermitted branches apply unchanged for the driving session and for
+// in-flight dispatch.
+func hookEditPermitted(info seatInfo, dm dispatchMarker, rm relayMarker) bool {
+	if rm.Binding != "" {
+		return info.ItemID == rm.Item && dispatchedPerformerPermitted(info, rm.Binding)
+	}
+	return editPermitted(info, dm)
 }
 
 // editPermitted separates lease engagement from source-edit authorization.
@@ -1334,6 +1370,87 @@ func editPermissionDenyReason(info seatInfo, now time.Time) string {
 	return fmt.Sprintf(
 		"satelle: story %s is at %q, which its workflow allocates to %q; source edits are permitted only in route steps allocated to agent=executor (%s). Do not work ahead. %s",
 		info.ItemID, info.StoryStatus, agent, states, pre)
+}
+
+// hookDenyReason selects the agent-facing deny text for gate/commitgate.
+// A marked relay coder gets relayDenyReason; unmarked sessions keep
+// editPermissionDenyReason byte-for-byte (sty_7567f047 AC5).
+func hookDenyReason(info seatInfo, live []seatInfo, dm dispatchMarker, rm relayMarker, sessionID string, now time.Time) string {
+	_ = dm // dispatch deny text stays inside editPermissionDenyReason
+	if rm.Binding != "" {
+		return relayDenyReason(info, live, rm, sessionID, now)
+	}
+	return editPermissionDenyReason(info, now)
+}
+
+// relayDenyReason names why a marked rework-relay coder was refused. It never
+// uses the unmarked "without a performing story" or "allocated to agent=executor"
+// wording — those mis-diagnose the 23:04 / 23:08 auctelle failures.
+func relayDenyReason(info seatInfo, live []seatInfo, rm relayMarker, sessionID string, now time.Time) string {
+	pre := readOnlyPreflightReason()
+	item := strings.TrimSpace(rm.Item)
+	binding := strings.TrimSpace(rm.Binding)
+	sid := strings.TrimSpace(sessionID)
+
+	if item != "" && info.ItemID != "" && info.ItemID != item {
+		return fmt.Sprintf(
+			"satelle: rework relay marker names story %s but this session resolved seat %s — the marker must match the live seat the relay is driving. %s",
+			item, info.ItemID, pre)
+	}
+
+	if info.ItemID == "" || !info.Engaged {
+		// Prefer naming a live seat for the marked item that this session did
+		// not bind (the 23:04 pickSessionSeat mismatch) over the generic
+		// "without a performing story" text.
+		for _, s := range live {
+			if s.ItemID == item && !s.Stale {
+				leaseSID := strings.TrimSpace(s.SessionID)
+				return fmt.Sprintf(
+					"satelle: rework relay for story %s did not bind the live seat (lease session %q, this session %q) — the rework relay exports the lease's session id to its coder so pickSessionSeat can select it. %s",
+					item, leaseSID, sid, pre)
+			}
+		}
+		return fmt.Sprintf(
+			"satelle: rework relay for story %s requires a live, non-stale seat at a committed status allocated to the binding — none is bound for this session. %s",
+			item, pre)
+	}
+	if info.Stale {
+		return fmt.Sprintf(
+			"satelle: rework relay for story %s requires a live, non-stale seat at a committed status allocated to the binding — the seat is stale. %s%s",
+			info.ItemID, pre, seatSuffix(info, now))
+	}
+	if info.InFlight {
+		target := info.State
+		if target == "" {
+			target = "the next state"
+		}
+		return fmt.Sprintf(
+			"satelle: rework relay coder cannot edit while story %s has a transition to %q in flight. %s",
+			info.ItemID, target, pre)
+	}
+
+	status := info.StoryStatus
+	if status == "" {
+		status = info.State
+	}
+	agents := info.DispatchAgents[status]
+	if len(agents) == 0 && status == info.State && info.StateAgent != "" {
+		agents = []string{info.StateAgent}
+	}
+	allocated := strings.Join(agents, ", ")
+	if allocated == "" {
+		allocated = "(none)"
+	}
+	if !slices.Contains(agents, binding) {
+		return fmt.Sprintf(
+			"satelle: story %s is at %q, which its route allocates to [%s]; the rework relay permits edits only from the binding allocated to the committed status (this session is marked %q). %s",
+			info.ItemID, status, allocated, binding, pre)
+	}
+	// Seat resolved and binding allocated — caller should have allowed. Keep a
+	// precise fallback that still names the relay rule.
+	return fmt.Sprintf(
+		"satelle: rework relay for story %s refused a mutator under the live, non-stale, committed-status allocation rule for binding %q. %s",
+		info.ItemID, binding, pre)
 }
 
 // firstDroppedPerformingSeat finds a story/task whose committed status is

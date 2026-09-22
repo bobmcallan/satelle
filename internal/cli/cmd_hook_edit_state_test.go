@@ -11,6 +11,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/store"
+	"github.com/bobmcallan/satelle/internal/testutil"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -418,5 +419,219 @@ func TestCommitGateDeniesInTreeShellMutationOutsideEditState(t *testing.T) {
 	out, err := runRootIn(t, bashEvent("sed -i s/a/b/ internal/foo.go"), "hook", "commitgate")
 	if err == nil || !strings.Contains(err.Error(), `at "plan"`) {
 		t.Fatalf("commitgate allowed in-tree mutation outside an edit state: err=%v out=%s", err, out)
+	}
+}
+
+func TestHookEditPermittedRelay(t *testing.T) {
+	base := seatInfo{
+		ItemID: "sty_x", State: "in_progress", StoryStatus: "in_progress",
+		StateAgent: "coder", Engaged: true, EditCapable: false,
+		DispatchAgents: map[string][]string{"in_progress": {"coder"}},
+		EditStates:     []string{"integration", "release"},
+	}
+	cases := []struct {
+		name string
+		info seatInfo
+		dm   dispatchMarker
+		rm   relayMarker
+		want bool
+	}{
+		{"relay coder allocated", base, dispatchMarker{}, relayMarker{Binding: "coder", Item: "sty_x"}, true},
+		{"relay binding not allocated", base, dispatchMarker{}, relayMarker{Binding: "reviewer-consult", Item: "sty_x"}, false},
+		{"relay wrong item", base, dispatchMarker{}, relayMarker{Binding: "coder", Item: "sty_other"}, false},
+		{"relay stale", withSeat(base, func(s *seatInfo) { s.Stale = true }), dispatchMarker{}, relayMarker{Binding: "coder", Item: "sty_x"}, false},
+		{"relay in flight", withSeat(base, func(s *seatInfo) { s.InFlight = true }), dispatchMarker{}, relayMarker{Binding: "coder", Item: "sty_x"}, false},
+		{"no marker driving at in_progress", base, dispatchMarker{}, relayMarker{}, false},
+		{"no marker at executor status", withSeat(base, func(s *seatInfo) {
+			s.StoryStatus = "integration"
+			s.State = "integration"
+			s.StateAgent = "executor"
+			s.EditCapable = true
+			s.DispatchAgents = map[string][]string{"integration": {"executor"}}
+		}), dispatchMarker{}, relayMarker{}, true},
+		{"in-flight dispatch marker unchanged", withSeat(base, func(s *seatInfo) {
+			s.InFlight = true
+			s.State = "integration"
+			s.TargetState = "integration"
+			s.StoryStatus = "in_progress"
+			s.StateAgent = "coder"
+			s.DispatchAgents = map[string][]string{"integration": {"coder"}}
+		}), dispatchMarker{Agent: "coder", Step: "integration", Item: "sty_x"}, relayMarker{}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hookEditPermitted(tc.info, tc.dm, tc.rm); got != tc.want {
+				t.Fatalf("hookEditPermitted = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRelayDenyReason(t *testing.T) {
+	now := time.Now().UTC()
+	leaseA := "a4de0ec7-5809-4d35-8356-9f7c01769098"
+	sessionB := "31261381-b59d-49af-8306-a8a2c925a9fe"
+	liveForItem := []seatInfo{{
+		ItemID: "sty_x", SessionID: leaseA, Engaged: true,
+		State: "in_progress", StoryStatus: "in_progress", StateAgent: "coder",
+	}}
+	resolved := seatInfo{
+		ItemID: "sty_x", State: "in_progress", StoryStatus: "in_progress",
+		StateAgent: "coder", Engaged: true, EditCapable: false,
+		DispatchAgents: map[string][]string{"in_progress": {"coder"}},
+	}
+	cases := []struct {
+		name   string
+		info   seatInfo
+		live   []seatInfo
+		rm     relayMarker
+		sid    string
+		want   []string
+		forbid []string
+	}{
+		{
+			name: "seat not bound but live exists",
+			info: seatInfo{}, live: liveForItem,
+			rm: relayMarker{Binding: "coder", Item: "sty_x"}, sid: sessionB,
+			want:   []string{"sty_x", leaseA, sessionB, "rework relay"},
+			forbid: []string{"without a performing story"},
+		},
+		{
+			name: "no live seat for item",
+			info: seatInfo{}, live: nil,
+			rm: relayMarker{Binding: "coder", Item: "sty_x"}, sid: sessionB,
+			want:   []string{"sty_x", "live, non-stale seat", "committed status"},
+			forbid: []string{"without a performing story"},
+		},
+		{
+			name: "stale seat",
+			info: withSeat(resolved, func(s *seatInfo) { s.Stale = true }),
+			rm:   relayMarker{Binding: "coder", Item: "sty_x"}, sid: leaseA,
+			want: []string{"live, non-stale seat", "stale"},
+		},
+		{
+			name: "in flight",
+			info: withSeat(resolved, func(s *seatInfo) { s.InFlight = true; s.State = "integration" }),
+			rm:   relayMarker{Binding: "coder", Item: "sty_x"}, sid: leaseA,
+			want: []string{"in flight", "integration"},
+		},
+		{
+			name: "binding not allocated",
+			info: resolved,
+			rm:   relayMarker{Binding: "reviewer-consult", Item: "sty_x"}, sid: leaseA,
+			want:   []string{"rework relay", "reviewer-consult", "[coder]"},
+			forbid: []string{"allocated to agent=executor"},
+		},
+		{
+			name: "item mismatch",
+			info: resolved,
+			rm:   relayMarker{Binding: "coder", Item: "sty_other"}, sid: leaseA,
+			want: []string{"sty_other", "sty_x"},
+		},
+		{
+			name: "allocated binding resolved never names executor rule",
+			info: resolved,
+			rm:   relayMarker{Binding: "coder", Item: "sty_x"}, sid: leaseA,
+			forbid: []string{"allocated to agent=executor"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := relayDenyReason(tc.info, tc.live, tc.rm, tc.sid, now)
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("missing %q in: %s", w, got)
+				}
+			}
+			for _, f := range tc.forbid {
+				if strings.Contains(got, f) {
+					t.Errorf("forbidden %q in: %s", f, got)
+				}
+			}
+		})
+	}
+}
+
+func TestUnmarkedDenyReasonUnchanged(t *testing.T) {
+	// empty seatInfo reaches firstDroppedPerformingSeat → app.Open → GlobalDir.
+	testutil.IsolateHome(t)
+	t.Chdir(t.TempDir())
+	now := time.Now().UTC()
+	cases := []seatInfo{
+		{}, // not engaged
+		{ItemID: "sty_x", State: "plan", StoryStatus: "plan", StateAgent: "planner", Engaged: true},
+		{ItemID: "sty_x", State: "integration", StoryStatus: "in_progress", StateAgent: "executor", Engaged: true, InFlight: true, Mine: true},
+	}
+	for i, info := range cases {
+		want := editPermissionDenyReason(info, now)
+		got := hookDenyReason(info, nil, dispatchMarker{}, relayMarker{}, "sess", now)
+		if got != want {
+			t.Errorf("case %d: unmarked hookDenyReason diverged from editPermissionDenyReason\n got: %s\nwant: %s", i, got, want)
+		}
+	}
+}
+
+func TestHookGateAllowsRelayCoderAndDeniesUnmarked(t *testing.T) {
+	prevHarness := hookHarnessFlag
+	hookHarnessFlag = ""
+	t.Cleanup(func() { hookHarnessFlag = prevHarness })
+
+	leaseA := "a4de0ec7-5809-4d35-8356-9f7c01769098"
+	repo, storyID := coderAllocatedRepo(t, leaseA)
+	origTree := sessionWorktree
+	t.Cleanup(func() { sessionWorktree = origTree })
+	sessionWorktree = func() string { return repo }
+
+	t.Setenv(config.SessionEnv, leaseA)
+	t.Setenv(config.RelayBindingEnv, "coder")
+	t.Setenv(config.RelayItemEnv, storyID)
+	if out, err := runRootIn(t, `{"tool_input":{"file_path":"internal/cli/foo.go"}}`, "hook", "gate"); err != nil {
+		t.Fatalf("gate must allow marked relay coder: %v\n%s", err, out)
+	}
+	if out, err := runRootIn(t, bashEvent("sed -i s/a/b/ internal/cli/foo.go"), "hook", "commitgate"); err != nil {
+		t.Fatalf("commitgate must allow marked relay coder: %v\n%s", err, out)
+	}
+
+	t.Setenv(config.RelayBindingEnv, "")
+	t.Setenv(config.RelayItemEnv, "")
+	out, err := runRootIn(t, `{"tool_input":{"file_path":"internal/cli/foo.go"}}`, "hook", "gate")
+	if err == nil {
+		t.Fatalf("unmarked session at coder-allocated status must deny:\n%s", out)
+	}
+	if strings.Contains(err.Error(), "rework relay") {
+		t.Fatalf("unmarked deny must stay on editPermissionDenyReason, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "allocated to agent=executor") {
+		t.Fatalf("unmarked deny should name executor rule: %v", err)
+	}
+}
+
+func TestHookGateRelaySessionMismatchNamesBoundFailure(t *testing.T) {
+	prevHarness := hookHarnessFlag
+	hookHarnessFlag = ""
+	t.Cleanup(func() { hookHarnessFlag = prevHarness })
+
+	leaseA := "a4de0ec7-5809-4d35-8356-9f7c01769098"
+	sessionB := "31261381-b59d-49af-8306-a8a2c925a9fe"
+	repo, storyID := coderAllocatedRepo(t, leaseA)
+	origTree := sessionWorktree
+	t.Cleanup(func() { sessionWorktree = origTree })
+	sessionWorktree = func() string { return repo }
+
+	t.Setenv(config.SessionEnv, sessionB)
+	t.Setenv(config.RelayBindingEnv, "coder")
+	t.Setenv(config.RelayItemEnv, storyID)
+	out, err := runRootIn(t, `{"tool_input":{"file_path":"internal/cli/foo.go"}}`, "hook", "gate")
+	if err == nil {
+		t.Fatalf("session mismatch must deny:\n%s", out)
+	}
+	msg := err.Error() + out
+	for _, want := range []string{"rework relay", leaseA, sessionB, storyID} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("relay not-bound deny missing %q:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "without a performing story") {
+		t.Errorf("must not use noEngagedStoryEditReason:\n%s", msg)
 	}
 }

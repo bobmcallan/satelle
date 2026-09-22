@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -123,12 +125,28 @@ func runStoryRework(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("satelle story rework: no [%s] binding in .satelle/workflows/agents.toml — the step allocates it as the performer", rw.CoderBinding)
 	}
 
-	sid := config.ResolveSession()
-	if sid != "" {
-		config.PublishSession(sid)
-		_ = os.Setenv(config.SessionEnv, sid)
+	// Adopt the lease's stamped session so the coder's hook and the relay
+	// policy resolve the same live seat (sty_7567f047). Set only on this
+	// process env — do not PublishSession an adopted lease id, or the parent
+	// shell's later CLI calls would re-bind to it.
+	fallbackSID := config.ResolveSession()
+	var leaseRow lease.Lease
+	leaseFound := false
+	if a.Store.Leases != nil {
+		if l, lerr := a.Store.Leases.Get(ctx, it.ID); lerr == nil {
+			leaseRow, leaseFound = l, true
+		} else if !errors.Is(lerr, lease.ErrNotFound) {
+			return fmt.Errorf("satelle story rework: lease lookup: %w", lerr)
+		}
 	}
-	seat := func() (seatInfo, bool, error) { return resolveSeat(true, config.ResolveSession()) }
+	sid := reworkSessionID(leaseRow, leaseFound, fallbackSID)
+	if sid != "" {
+		_ = os.Setenv(config.SessionEnv, sid)
+		if sid == fallbackSID {
+			config.PublishSession(sid)
+		}
+	}
+	seat := func() (seatInfo, bool, error) { return resolveSeat(true, sid) }
 
 	out := cmd.OutOrStdout()
 	coderLedger := &storeChatLedger{ctx: ctx, storyID: it.ID, ls: a.Store.Ledger, actor: rw.CoderBinding}
@@ -137,16 +155,23 @@ func runStoryRework(cmd *cobra.Command, args []string) error {
 	// The coder DRIVES its own edits (executor charter, own grant, seat-checked);
 	// the consultant is ASKED (consult charter, mutators refused outright). The
 	// role is stated, not inferred from the binding name — a repo may name its
-	// coder anything (sty_8e0b29a0).
-	coder, err := eng.OpenSessionAs(ctx, rw.CoderBinding, agentstep.SessionRoleDriving, it,
-		reworkCoderPolicy(rw.CoderBinding, coderBinding.Tools, seat, invocationRecorder(coderLedger)),
-		reworkEventHandler(coderLedger))
+	// coder anything (sty_8e0b29a0). The relay marker rides only the coder
+	// spawn: ACP/stream snapshot os.Environ at open, and the consultant must
+	// not inherit a marker that names the coder binding.
+	var coder agentcli.Session
+	err = withRelayMarker(rw.CoderBinding, it.ID, func() error {
+		var openErr error
+		coder, openErr = reworkSessionOpener(ctx, eng, rw.CoderBinding, agentstep.SessionRoleDriving, it,
+			reworkCoderPolicy(rw.CoderBinding, coderBinding.Tools, seat, invocationRecorder(coderLedger)),
+			reworkEventHandler(coderLedger))
+		return openErr
+	})
 	if err != nil {
 		return err
 	}
 	defer func() { _ = coder.Close() }()
 
-	consultant, err := eng.OpenSessionAs(ctx, rw.ConsultBinding, agentstep.SessionRoleConsult, it,
+	consultant, err := reworkSessionOpener(ctx, eng, rw.ConsultBinding, agentstep.SessionRoleConsult, it,
 		reworkConsultPolicy(invocationRecorder(consultLedger)),
 		reworkEventHandler(consultLedger))
 	if err != nil {
@@ -279,4 +304,55 @@ func reworkEventHandler(l chatLedger) agentcli.EventHandler {
 			_ = l.WriteInvocation(ev.Tool, ev.Status, "end", "session")
 		}
 	}
+}
+
+// reworkSessionID returns the session identity the rework relay exports into
+// its children. A stamped lease wins so pickSessionSeat binds the seat the
+// relay is driving; an unstamped or absent lease keeps today's ResolveSession
+// fallback (tree-routing still works).
+func reworkSessionID(l lease.Lease, found bool, fallback string) string {
+	if found {
+		if id := strings.TrimSpace(l.SessionID); id != "" {
+			return id
+		}
+	}
+	return strings.TrimSpace(fallback)
+}
+
+// withRelayMarker sets SATELLE_RELAY_BINDING / SATELLE_RELAY_ITEM on the process
+// environment for the duration of fn, then clears both. The rework verb wraps
+// only the coder OpenSessionAs in this helper so the consultant's env snapshot
+// has no marker (ACP and stream compose os.Environ at open time).
+func withRelayMarker(binding, item string, fn func() error) error {
+	prevBinding, hadBinding := os.LookupEnv(config.RelayBindingEnv)
+	prevItem, hadItem := os.LookupEnv(config.RelayItemEnv)
+	_ = os.Setenv(config.RelayBindingEnv, binding)
+	_ = os.Setenv(config.RelayItemEnv, item)
+	defer func() {
+		if hadBinding {
+			_ = os.Setenv(config.RelayBindingEnv, prevBinding)
+		} else {
+			_ = os.Unsetenv(config.RelayBindingEnv)
+		}
+		if hadItem {
+			_ = os.Setenv(config.RelayItemEnv, prevItem)
+		} else {
+			_ = os.Unsetenv(config.RelayItemEnv)
+		}
+	}()
+	return fn()
+}
+
+// reworkSessionOpener opens a live session for the rework relay. Tests may
+// replace it to observe the process env at each open (sty_7567f047 AC3).
+var reworkSessionOpener = func(
+	ctx context.Context,
+	eng *agentstep.Engine,
+	binding string,
+	role agentstep.SessionRole,
+	it workitem.Item,
+	pol agentcli.PermissionPolicy,
+	onEvent agentcli.EventHandler,
+) (agentcli.Session, error) {
+	return eng.OpenSessionAs(ctx, binding, role, it, pol, onEvent)
 }
