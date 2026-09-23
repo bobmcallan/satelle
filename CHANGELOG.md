@@ -1,3 +1,16 @@
+## [0.0.526] - 2026-09-24
+
+### Added
+- **Binding env values in `agents.toml` can reference `${SATELLE_SCRATCH}`.** It is substituted per dispatch with that agent's own scratch directory, for one-shot dispatches, live sessions (orchestrator and relay) and the summariser alike.
+  - `[vars]` references still expand as before, and an unknown `${NAME}` still fails fast.
+  - **Example:** point Go installs into scratch so a dispatched agent's `go install` cannot shadow your installed tools: `env = { GOBIN = "${SATELLE_SCRATCH}/bin" }`.
+  - **Requires satelle ≥ 0.0.526.** An older binary rejects the whole `agents.toml` as an unknown `[vars]` reference, so upgrade before adding it. (sty_87ffce38)
+
+## [serve-v0.0.61] - 2026-09-24
+
+### Changed
+- **The serve channel picks up the reserved `${SATELLE_SCRATCH}` handling in `[vars]` expansion.** (sty_87ffce38)
+
 ## [0.0.525] - 2026-09-24
 
 ### Added

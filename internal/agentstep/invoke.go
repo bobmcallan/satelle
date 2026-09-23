@@ -288,14 +288,7 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 		return InvokeResult{Err: screrr}
 	}
 	inv.scratch = scratchDir
-	env := make(map[string]string, len(inv.env)+2)
-	for k, v := range inv.env {
-		env[k] = v
-	}
-	for k, v := range scratchEnv(scratchDir) {
-		env[k] = v
-	}
-	inv.env = env
+	inv.env = overlayScratchEnv(inv.env, scratchDir)
 
 	agentReq, err := g.buildRequest(ctx, inv)
 	if err != nil {

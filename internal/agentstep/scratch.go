@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
@@ -55,6 +56,25 @@ func scratchEnv(dir string) map[string]string {
 		"TMPDIR":          dir,
 		config.ScratchEnv: dir,
 	}
+}
+
+// overlayScratchEnv returns a copy of env with ${SATELLE_SCRATCH} in every value
+// replaced by dir, then the reserved scratchEnv pair overlaid. It is the single
+// place a dispatch's scratch path reaches binding env, so every dispatch shape
+// (one-shot, live session, summariser) behaves the same. env is not mutated.
+func overlayScratchEnv(env map[string]string, dir string) map[string]string {
+	out := make(map[string]string, len(env)+2)
+	ref := "${" + config.ScratchEnv + "}"
+	for k, v := range env {
+		if dir != "" {
+			v = strings.ReplaceAll(v, ref, dir)
+		}
+		out[k] = v
+	}
+	for k, v := range scratchEnv(dir) {
+		out[k] = v
+	}
+	return out
 }
 
 // scratchBriefing is the charter sentence every isolated/live agent receives

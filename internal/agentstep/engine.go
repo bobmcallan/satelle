@@ -2070,9 +2070,7 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 	if sid := strings.TrimSpace(os.Getenv(config.SessionEnv)); sid != "" {
 		req.Env[config.SessionEnv] = sid
 	}
-	for k, v := range scratchEnv(scratchDir) {
-		req.Env[k] = v
-	}
+	req.Env = overlayScratchEnv(req.Env, scratchDir)
 	// A DRIVING session (the coder rework seat, story chat) may edit the tree,
 	// so it is the one that can leave debris; snapshot the untracked files at
 	// open so Close can tell what THIS session created (sty_e7aaf8b1 AC5).
@@ -2782,13 +2780,7 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 		})
 		finishScratch(scratchDir, true)
 	}()
-	scratchedEnv := make(map[string]string, len(env)+2)
-	for k, v := range env {
-		scratchedEnv[k] = v
-	}
-	for k, v := range scratchEnv(scratchDir) {
-		scratchedEnv[k] = v
-	}
+	scratchedEnv := overlayScratchEnv(env, scratchDir)
 	// The summariser prompt is rubric-only (no charter, principles=none) so it
 	// stays a plain narrator — buildRequest omits empty sections. Grant is read-only.
 	req, err := g.buildRequest(ctx, invocation{

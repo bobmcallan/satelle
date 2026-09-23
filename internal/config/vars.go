@@ -20,10 +20,16 @@ var varRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 // error naming the missing var — never a silent empty, so a mistyped or absent
 // key fails loudly rather than dispatching an agent with a blank credential.
 // There is no escape syntax: a literal ${...} has no use case in an env value here.
+// ${SATELLE_SCRATCH} (ScratchEnv) is RESERVED: its value only exists per dispatch,
+// so it is left in place here (never an error, never taken from vars) and
+// substituted at dispatch time.
 func ExpandVars(s string, vars map[string]string) (string, error) {
 	var missing []string
 	out := varRef.ReplaceAllStringFunc(s, func(m string) string {
 		name := varRef.FindStringSubmatch(m)[1]
+		if name == ScratchEnv {
+			return m
+		}
 		if v, ok := vars[name]; ok {
 			return v
 		}
