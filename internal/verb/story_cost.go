@@ -3,6 +3,7 @@ package verb
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -25,6 +26,13 @@ type StoryCostRow struct {
 	TokensTotal    int    `json:"tokens_total"`
 	DurationMs     int64  `json:"duration_ms"`
 	UsageAvailable bool   `json:"usage_available"`
+	// TokensInFresh/TokensCacheWrite/TokensCacheRead split TokensIn into its
+	// disjoint components (sty_363eaf55). Zero on a row recorded before this
+	// split existed — reported as "unsplit" by the --by-skill roll-up rather
+	// than mistaken for a measured zero.
+	TokensInFresh    int `json:"tokens_in_fresh,omitempty"`
+	TokensCacheWrite int `json:"tokens_cache_write,omitempty"`
+	TokensCacheRead  int `json:"tokens_cache_read,omitempty"`
 }
 
 // EventTelemetry is the verb-package façade over ledger.EventTelemetry so
@@ -186,17 +194,20 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 			}
 			tel := ledger.EventTelemetry(e)
 			row := StoryCostRow{
-				From:           meta.From,
-				To:             meta.To,
-				Agent:          meta.Agent,
-				Skill:          meta.Skill,
-				Model:          meta.Model,
-				ModelResolved:  tel.ModelResolved,
-				TokensIn:       tel.TokensIn,
-				TokensOut:      tel.TokensOut,
-				TokensTotal:    tel.TokensTotal,
-				DurationMs:     tel.DurationMs,
-				UsageAvailable: tel.UsageAvailable,
+				From:             meta.From,
+				To:               meta.To,
+				Agent:            meta.Agent,
+				Skill:            meta.Skill,
+				Model:            meta.Model,
+				ModelResolved:    tel.ModelResolved,
+				TokensIn:         tel.TokensIn,
+				TokensOut:        tel.TokensOut,
+				TokensTotal:      tel.TokensTotal,
+				DurationMs:       tel.DurationMs,
+				UsageAvailable:   tel.UsageAvailable,
+				TokensInFresh:    tel.TokensInFresh,
+				TokensCacheWrite: tel.TokensCacheWrite,
+				TokensCacheRead:  tel.TokensCacheRead,
 			}
 			// Prefer telemetry agent/model when meta left them empty (defensive).
 			if row.Agent == "" {
@@ -289,4 +300,125 @@ func HasStepSelfReport(ctx context.Context, storyID, step string) bool {
 		}
 	}
 	return false
+}
+
+// SkillRollupRow is one gate/dispatch skill's aggregated cost across every
+// agent_invocation row the roll-up scanned (sty_363eaf55 AC4) — the baseline
+// figure a context-compression effort measures savings against.
+//
+// FreshTokens/CacheWriteTokens/CacheReadTokens sum only rows that carry the
+// split (this story's cache accounting, sty_363eaf55 AC1). UnsplitTokens sums
+// TokensIn from measured rows recorded BEFORE that split existed, so the two
+// figures together still reconcile to TotalInputTokens without conflating an
+// unmeasured legacy row with a genuinely fresh one.
+type SkillRollupRow struct {
+	Skill                string `json:"skill"`
+	Invocations          int    `json:"invocations"`
+	MeasuredRows         int    `json:"measured_rows"`
+	UnmeasuredRows       int    `json:"unmeasured_rows"`
+	FreshTokens          int    `json:"fresh_tokens"`
+	CacheWriteTokens     int    `json:"cache_write_tokens"`
+	CacheReadTokens      int    `json:"cache_read_tokens"`
+	UnsplitTokens        int    `json:"unsplit_tokens"`
+	TotalInputTokens     int    `json:"total_input_tokens"`
+	TotalOutputTokens    int    `json:"total_output_tokens"`
+	AvgSystemPromptBytes int    `json:"avg_system_prompt_bytes"`
+	AvgPayloadBytes      int    `json:"avg_payload_bytes"`
+}
+
+// SkillRollup is the `--by-skill` view: every skill's SkillRollupRow, sorted
+// by skill name for a deterministic report.
+type SkillRollup struct {
+	Rows []SkillRollupRow `json:"rows"`
+}
+
+// ComputeSkillRollup aggregates agent_invocation ledger rows by skill, across
+// every story when storyID is empty ("--all"), or scoped to one story
+// (sty_363eaf55 AC4). It is a QUERY over stored evidence — mechanism, not a
+// gate decision (the constitution's "no gate as code" does not apply to a
+// roll-up).
+func ComputeSkillRollup(ctx context.Context, storyID string) (SkillRollup, error) {
+	store, err := requireLedger()
+	if err != nil {
+		return SkillRollup{}, err
+	}
+
+	type acc struct {
+		invocations                           int
+		measured, unmeasured                  int
+		fresh, cacheWrite, cacheRead, unsplit int
+		totalIn, totalOut                     int
+		sysBytesSum, payloadBytesSum          int
+		bytesRows                             int
+	}
+	bySkill := map[string]*acc{}
+	var order []string
+	// ForEachKind pages internally rather than a single capped List call, so
+	// --all's scan of every story's agent_invocation rows is never silently
+	// truncated to the oldest page (sty_363eaf55 rework).
+	err = store.ForEachKind(ctx, storyID, ledger.KindAgentInvocation, func(e ledger.Entry) error {
+		var meta struct {
+			Skill string `json:"skill"`
+			Agent string `json:"agent"`
+		}
+		if err := json.Unmarshal(e.Payload, &meta); err != nil {
+			return nil
+		}
+		key := meta.Skill
+		if key == "" {
+			key = meta.Agent
+		}
+		if key == "" {
+			return nil
+		}
+		a, ok := bySkill[key]
+		if !ok {
+			a = &acc{}
+			bySkill[key] = a
+			order = append(order, key)
+		}
+		tel := ledger.EventTelemetry(e)
+		a.invocations++
+		if tel.UsageAvailable {
+			a.measured++
+			a.totalIn += tel.TokensIn
+			a.totalOut += tel.TokensOut
+			if tel.TokensInFresh > 0 || tel.TokensCacheWrite > 0 || tel.TokensCacheRead > 0 {
+				a.fresh += tel.TokensInFresh
+				a.cacheWrite += tel.TokensCacheWrite
+				a.cacheRead += tel.TokensCacheRead
+			} else {
+				a.unsplit += tel.TokensIn
+			}
+		} else {
+			a.unmeasured++
+		}
+		if tel.SystemPromptBytes > 0 || tel.PayloadBytes > 0 {
+			a.sysBytesSum += tel.SystemPromptBytes
+			a.payloadBytesSum += tel.PayloadBytes
+			a.bytesRows++
+		}
+		return nil
+	})
+	if err != nil {
+		return SkillRollup{}, err
+	}
+
+	sort.Strings(order)
+	rollup := SkillRollup{}
+	for _, k := range order {
+		a := bySkill[k]
+		row := SkillRollupRow{
+			Skill: k, Invocations: a.invocations,
+			MeasuredRows: a.measured, UnmeasuredRows: a.unmeasured,
+			FreshTokens: a.fresh, CacheWriteTokens: a.cacheWrite, CacheReadTokens: a.cacheRead,
+			UnsplitTokens: a.unsplit, TotalInputTokens: a.totalIn, TotalOutputTokens: a.totalOut,
+		}
+		if a.bytesRows > 0 {
+			row.AvgSystemPromptBytes = a.sysBytesSum / a.bytesRows
+			row.AvgPayloadBytes = a.payloadBytesSum / a.bytesRows
+		}
+		rollup.Rows = append(rollup.Rows, row)
+	}
+	return rollup, nil
 }

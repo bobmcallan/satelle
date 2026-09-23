@@ -505,7 +505,9 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 			reviewers = []ReviewerVerdict{{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, Command: dec.Command, Context: dec.Context, Model: dec.Model,
 				ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 				TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
-				UsageAvailable: dec.UsageAvailable}}
+				UsageAvailable: dec.UsageAvailable,
+				TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead,
+				SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes}}
 		}
 		// Ledger ALL verdicts first (accepts and rejects), then refuse if any
 		// rejected — so parallel multi-reviewer rounds record every row
@@ -1476,13 +1478,22 @@ func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
 		TokensTotal    int          `json:"tokens_total,omitempty"`
 		DurationMs     int64        `json:"duration_ms,omitempty"`
 		UsageAvailable bool         `json:"usage_available"` // unconditional — tri-state (sty_56aae77a)
-		ArtifactName   string       `json:"artifact_name,omitempty"`
-		ArtifactType   string       `json:"artifact_type,omitempty"`
+		// TokensInFresh/TokensCacheWrite/TokensCacheRead split TokensIn (sty_363eaf55).
+		TokensInFresh    int `json:"tokens_in_fresh,omitempty"`
+		TokensCacheWrite int `json:"tokens_cache_write,omitempty"`
+		TokensCacheRead  int `json:"tokens_cache_read,omitempty"`
+		// SystemPromptBytes/PayloadBytes: byte lengths satelle sent, never content.
+		SystemPromptBytes int    `json:"system_prompt_bytes,omitempty"`
+		PayloadBytes      int    `json:"payload_bytes,omitempty"`
+		ArtifactName      string `json:"artifact_name,omitempty"`
+		ArtifactType      string `json:"artifact_type,omitempty"`
 	}{From: from, To: to, Agent: res.Agent, Skill: res.Skill, Command: res.Command, Model: res.Model,
 		ModelResolved: res.ModelResolved, ModelSource: res.ModelSource, Models: res.Models,
 		TokensIn: res.TokensIn, TokensOut: res.TokensOut, TokensTotal: res.TokensTotal, DurationMs: res.DurationMs,
 		UsageAvailable: res.UsageAvailable,
-		ArtifactName:   res.ArtifactName, ArtifactType: res.ArtifactType}
+		TokensInFresh:  res.TokensInFresh, TokensCacheWrite: res.TokensCacheWrite, TokensCacheRead: res.TokensCacheRead,
+		SystemPromptBytes: res.SystemPromptBytes, PayloadBytes: res.PayloadBytes,
+		ArtifactName: res.ArtifactName, ArtifactType: res.ArtifactType}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil
@@ -1537,10 +1548,19 @@ func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		TokensTotal    int          `json:"tokens_total,omitempty"`
 		DurationMs     int64        `json:"duration_ms,omitempty"`
 		UsageAvailable bool         `json:"usage_available"` // unconditional — tri-state (sty_56aae77a)
+		// TokensInFresh/TokensCacheWrite/TokensCacheRead split TokensIn (sty_363eaf55).
+		TokensInFresh    int `json:"tokens_in_fresh,omitempty"`
+		TokensCacheWrite int `json:"tokens_cache_write,omitempty"`
+		TokensCacheRead  int `json:"tokens_cache_read,omitempty"`
+		// SystemPromptBytes/PayloadBytes: byte lengths satelle sent, never content.
+		SystemPromptBytes int `json:"system_prompt_bytes,omitempty"`
+		PayloadBytes      int `json:"payload_bytes,omitempty"`
 	}{From: from, To: to, Agent: "reviewer", Skill: rv.Skill, Command: rv.Command, Context: rv.Context, Model: rv.Model,
 		ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models,
 		TokensIn: rv.TokensIn, TokensOut: rv.TokensOut, TokensTotal: rv.TokensTotal, DurationMs: rv.DurationMs,
-		UsageAvailable: rv.UsageAvailable}
+		UsageAvailable: rv.UsageAvailable,
+		TokensInFresh:  rv.TokensInFresh, TokensCacheWrite: rv.TokensCacheWrite, TokensCacheRead: rv.TokensCacheRead,
+		SystemPromptBytes: rv.SystemPromptBytes, PayloadBytes: rv.PayloadBytes}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil
@@ -1569,10 +1589,19 @@ func summariserInvocationPayload(from, to string, result SummaryResult) json.Raw
 		TokensTotal    int          `json:"tokens_total,omitempty"`
 		DurationMs     int64        `json:"duration_ms,omitempty"`
 		UsageAvailable bool         `json:"usage_available"` // unconditional — tri-state (sty_56aae77a)
+		// TokensInFresh/TokensCacheWrite/TokensCacheRead split TokensIn (sty_363eaf55).
+		TokensInFresh    int `json:"tokens_in_fresh,omitempty"`
+		TokensCacheWrite int `json:"tokens_cache_write,omitempty"`
+		TokensCacheRead  int `json:"tokens_cache_read,omitempty"`
+		// SystemPromptBytes/PayloadBytes: byte lengths satelle sent, never content.
+		SystemPromptBytes int `json:"system_prompt_bytes,omitempty"`
+		PayloadBytes      int `json:"payload_bytes,omitempty"`
 	}{From: from, To: to, Agent: "reviewer", Skill: result.Context, Command: result.Command, Context: result.Context, Model: result.Model,
 		ModelResolved: result.ModelResolved, ModelSource: result.ModelSource, Models: result.Models,
 		TokensIn: result.TokensIn, TokensOut: result.TokensOut, TokensTotal: result.TokensTotal, DurationMs: result.DurationMs,
-		UsageAvailable: result.UsageAvailable}
+		UsageAvailable: result.UsageAvailable,
+		TokensInFresh:  result.TokensInFresh, TokensCacheWrite: result.TokensCacheWrite, TokensCacheRead: result.TokensCacheRead,
+		SystemPromptBytes: result.SystemPromptBytes, PayloadBytes: result.PayloadBytes}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil

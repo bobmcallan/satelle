@@ -149,14 +149,18 @@ func usageFromMap(v map[string]any) *UsageResult {
 	if raw == nil {
 		return nil
 	}
-	in := intValue(raw["input_tokens"]) +
-		intValue(raw["cache_creation_input_tokens"]) +
-		intValue(raw["cache_read_input_tokens"])
+	fresh := intValue(raw["input_tokens"])
+	cacheCreate := intValue(raw["cache_creation_input_tokens"])
+	cacheRead := intValue(raw["cache_read_input_tokens"])
+	in := fresh + cacheCreate + cacheRead
 	out := intValue(raw["output_tokens"])
 	u := &UsageResult{
-		InputTokens:  in,
-		OutputTokens: out,
-		Available:    true,
+		InputTokens:              in,
+		FreshInputTokens:         fresh,
+		CacheCreationInputTokens: cacheCreate,
+		CacheReadInputTokens:     cacheRead,
+		OutputTokens:             out,
+		Available:                true,
 	}
 	derived := in + out
 	reported := intValue(raw["total_tokens"])

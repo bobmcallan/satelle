@@ -21,6 +21,11 @@ type ModelUsage struct {
 	ID           string
 	InputTokens  int
 	OutputTokens int
+	// CacheCreationInputTokens/CacheReadInputTokens are the cache components of
+	// this model's InputTokens, when the transport reported them per-model
+	// (sty_363eaf55). Zero when unreported.
+	CacheCreationInputTokens int
+	CacheReadInputTokens     int
 	// CostUSD is nil when the transport did not report a per-model cost.
 	CostUSD *float64
 }
@@ -68,6 +73,8 @@ func parseModelUsage(v any) (primary string, models []ModelUsage, reported bool)
 		if entry != nil {
 			mu.InputTokens = intValue(entry["inputTokens"])
 			mu.OutputTokens = intValue(entry["outputTokens"])
+			mu.CacheCreationInputTokens = intValue(entry["cacheCreationInputTokens"])
+			mu.CacheReadInputTokens = intValue(entry["cacheReadInputTokens"])
 			if c, ok := entry["costUSD"].(float64); ok {
 				cost := c
 				mu.CostUSD = &cost

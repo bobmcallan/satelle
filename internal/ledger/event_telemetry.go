@@ -60,6 +60,20 @@ type Telemetry struct {
 	// (legacy) tokens_total > 0 when the field is absent. False means
 	// unreported, never "measured zero".
 	UsageAvailable bool
+	// TokensInFresh/TokensCacheWrite/TokensCacheRead split TokensIn into its
+	// disjoint components (sty_363eaf55). Zero on a row written before this
+	// field existed (an "unsplit" legacy row) or on a transport that reports
+	// no cache split — indistinguishable from each other by design; the split
+	// is additive evidence, never a correction of TokensIn.
+	TokensInFresh    int
+	TokensCacheWrite int
+	TokensCacheRead  int
+	// SystemPromptBytes/PayloadBytes are the byte lengths of the system prompt
+	// and stdin payload satelle sent for this invocation (sty_363eaf55) —
+	// lengths only, never content. Zero on a row written before this field
+	// existed.
+	SystemPromptBytes int
+	PayloadBytes      int
 }
 
 // EventTelemetry extracts Telemetry from a single ledger entry.
@@ -136,15 +150,20 @@ func invocationTelemetry(payload []byte) Telemetry {
 		return Telemetry{}
 	}
 	var row struct {
-		Agent          string `json:"agent"`
-		Model          string `json:"model"`
-		ModelResolved  string `json:"model_resolved"`
-		ModelSource    string `json:"model_source"`
-		TokensIn       int    `json:"tokens_in"`
-		TokensOut      int    `json:"tokens_out"`
-		TokensTotal    int    `json:"tokens_total"`
-		DurationMs     int64  `json:"duration_ms"`
-		UsageAvailable *bool  `json:"usage_available"`
+		Agent             string `json:"agent"`
+		Model             string `json:"model"`
+		ModelResolved     string `json:"model_resolved"`
+		ModelSource       string `json:"model_source"`
+		TokensIn          int    `json:"tokens_in"`
+		TokensOut         int    `json:"tokens_out"`
+		TokensTotal       int    `json:"tokens_total"`
+		DurationMs        int64  `json:"duration_ms"`
+		UsageAvailable    *bool  `json:"usage_available"`
+		TokensInFresh     int    `json:"tokens_in_fresh"`
+		TokensCacheWrite  int    `json:"tokens_cache_write"`
+		TokensCacheRead   int    `json:"tokens_cache_read"`
+		SystemPromptBytes int    `json:"system_prompt_bytes"`
+		PayloadBytes      int    `json:"payload_bytes"`
 	}
 	if err := json.Unmarshal(payload, &row); err != nil {
 		return Telemetry{}
@@ -156,15 +175,20 @@ func invocationTelemetry(payload []byte) Telemetry {
 		avail = true
 	}
 	return Telemetry{
-		Agent:          row.Agent,
-		Model:          row.Model,
-		ModelResolved:  row.ModelResolved,
-		ModelSource:    row.ModelSource,
-		TokensIn:       row.TokensIn,
-		TokensOut:      row.TokensOut,
-		TokensTotal:    row.TokensTotal,
-		DurationMs:     row.DurationMs,
-		UsageAvailable: avail,
+		Agent:             row.Agent,
+		Model:             row.Model,
+		ModelResolved:     row.ModelResolved,
+		ModelSource:       row.ModelSource,
+		TokensIn:          row.TokensIn,
+		TokensOut:         row.TokensOut,
+		TokensTotal:       row.TokensTotal,
+		DurationMs:        row.DurationMs,
+		UsageAvailable:    avail,
+		TokensInFresh:     row.TokensInFresh,
+		TokensCacheWrite:  row.TokensCacheWrite,
+		TokensCacheRead:   row.TokensCacheRead,
+		SystemPromptBytes: row.SystemPromptBytes,
+		PayloadBytes:      row.PayloadBytes,
 	}
 }
 

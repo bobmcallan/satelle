@@ -771,20 +771,60 @@ prior entry.`,
 	// cost recorded on the story's agent_invocation ledger entries, so an operator
 	// sees which reviewer/dispatch spent what. Distinct from estimate/actual (the
 	// plan's own time/token figures) — this is measured runtime cost.
+	var bySkill, allStories bool
+	var skillStoryID string
 	cost := &cobra.Command{
-		Use:   "cost <id>",
+		Use:   "cost [id]",
 		Short: "Show the measured per-gate token + wall-time cost recorded for a story",
 		Long: `Show what a story actually cost to run: per-gate tokens and wall time, taken
 from the agent-invocation ledger entries, plus a per-step roll-up.
 
 This is MEASURED transport cost, distinct from the estimate/actual tags, which
 are the session's own figures. A row printed as "—" is unmeasured, never free:
-an in-loop step reports nothing unless a step self-report was logged.`,
-		Args:        cobra.ExactArgs(1),
+an in-loop step reports nothing unless a step self-report was logged.
+
+--by-skill rolls up agent_invocation rows by gate/dispatch skill instead of by
+story — pass --all for every story, or --story <id> for one. Rows recorded
+before the fresh/cache-write/cache-read split (sty_363eaf55) report as
+"unsplit" input so the totals still reconcile.`,
+		Args:        cobra.MaximumNArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if _, err := appFrom(cmd); err != nil {
 				return err
+			}
+			if bySkill {
+				scope := skillStoryID
+				if !allStories && scope == "" {
+					if len(args) == 1 {
+						scope = args[0]
+					} else {
+						return fmt.Errorf("story cost --by-skill: pass --all, --story <id>, or a story id")
+					}
+				} else if allStories && (scope != "" || len(args) == 1) {
+					return fmt.Errorf("story cost --by-skill: --all and --story/<id> are mutually exclusive")
+				}
+				rollup, err := verb.ComputeSkillRollup(cmd.Context(), scope)
+				if err != nil {
+					return err
+				}
+				rw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+				fmt.Fprintln(rw, "SKILL\tINVOCATIONS\tFRESH\tCACHE-WRITE\tCACHE-READ\tUNSPLIT\tTOTAL IN\tTOTAL OUT\tAVG SYS BYTES\tAVG PAYLOAD BYTES")
+				for _, r := range rollup.Rows {
+					fmt.Fprintf(rw, "%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
+						r.Skill, r.Invocations, r.FreshTokens, r.CacheWriteTokens, r.CacheReadTokens,
+						r.UnsplitTokens, r.TotalInputTokens, r.TotalOutputTokens,
+						r.AvgSystemPromptBytes, r.AvgPayloadBytes)
+				}
+				if err := rw.Flush(); err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(),
+					"note: UNSPLIT is measured input from rows recorded before the cache split existed — add it to FRESH+CACHE-WRITE+CACHE-READ to reconcile TOTAL IN.")
+				return nil
+			}
+			if len(args) != 1 {
+				return fmt.Errorf("story cost: a story id is required (or pass --by-skill)")
 			}
 			sc, err := verb.ComputeStoryCost(cmd.Context(), args[0])
 			if err != nil {
@@ -833,6 +873,9 @@ an in-loop step reports nothing unless a step self-report was logged.`,
 			return nil
 		},
 	}
+	cost.Flags().BoolVar(&bySkill, "by-skill", false, "roll up agent_invocation rows by skill instead of by story (needs --all or --story)")
+	cost.Flags().BoolVar(&allStories, "all", false, "with --by-skill, roll up across every story")
+	cost.Flags().StringVar(&skillStoryID, "story", "", "with --by-skill, roll up one story only")
 
 	// resummarise — re-run the step summariser for one edge to close a missing-
 	// summary gap (sty_a1151fb0). The remediation `satelle story cost`/the done-time

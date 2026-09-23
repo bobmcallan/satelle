@@ -1,3 +1,18 @@
+## [0.0.520] - 2026-09-23
+
+### Added
+- **The ledger now separates fresh, cache-write and cache-read input tokens.** They are recorded on every gate verdict, dispatch, summariser run, artifact attempt and live session, as new `tokens_in_fresh`, `tokens_cache_write` and `tokens_cache_read` fields, and in each per-model `model_usage` entry. `tokens_in` stays their sum, so route, cost and web views are unchanged; older rows read as unsplit. (sty_363eaf55)
+- **Gate and dispatch rows record the size of what satelle sent.** They carry `system_prompt_bytes` and `payload_bytes`, lengths only, never content. (sty_363eaf55)
+- **`satelle story cost --by-skill`** rolls up input tokens by gate skill (fresh, cache-write, cache-read and unsplit) across one story or all stories (`--all`). It pages through the whole ledger rather than stopping at a row cap. (sty_363eaf55)
+
+### Fixed
+- **A live relay or chat session now records the sum of all its turns, not only the last.** The close row carries the summed tokens (including the cache split) and a `turns` count. (sty_363eaf55)
+
+## [serve-v0.0.55] - 2026-09-23
+
+### Changed
+- **The serve channel picks up the cache-split ledger fields and the paged ledger scan.** (sty_363eaf55)
+
 ## [0.0.519] - 2026-09-23
 
 ### Changed

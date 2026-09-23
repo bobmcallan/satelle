@@ -3,6 +3,7 @@ package verb_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/bobmcallan/satelle/internal/ledger"
@@ -121,6 +122,52 @@ func TestGateInvocationRowCarriesModelSource(t *testing.T) {
 	}
 }
 
+// TestGateInvocationRowCarriesPromptByteCounts pins sty_363eaf55 AC3: the
+// reviewer's own agent_invocation row (invocationPayload) records the byte
+// LENGTHS of the system prompt and payload satelle sent — never the text
+// itself — so the ledger row is auditable without ever storing a prompt.
+func TestGateInvocationRowCarriesPromptByteCounts(t *testing.T) {
+	db := wire(t)
+	const fakeSystemPrompt = "## You are an isolated satelle reviewer — judge only, never mutate"
+	const fakePayload = `{"story":{"id":"sty_1"},"from":"in_progress","to":"done"}`
+	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{
+		Gated: true, Accept: true, Skill: "satelle-story-done-review", Notes: "n",
+		Command: "claude -p", Context: "satelle-story-done-review",
+		SystemPromptBytes: len(fakeSystemPrompt), PayloadBytes: len(fakePayload),
+	}})
+	t.Cleanup(func() { verb.SetTransitionGater(nil) })
+
+	var it workitem.Item
+	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = dispatchRaw(t, "story-set", map[string]any{"id": it.ID, "status": "done"})
+
+	entries, err := db.Ledger.ListByStory(context.Background(), it.ID, ledger.KindAgentInvocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("want 1 agent_invocation row, got %d: %+v", len(entries), entries)
+	}
+	if strings.Contains(string(entries[0].Payload), fakeSystemPrompt) || strings.Contains(string(entries[0].Payload), fakePayload) {
+		t.Fatalf("ledger row must never carry prompt/payload TEXT, only byte counts: %s", entries[0].Payload)
+	}
+	var row struct {
+		SystemPromptBytes int `json:"system_prompt_bytes"`
+		PayloadBytes      int `json:"payload_bytes"`
+	}
+	if err := json.Unmarshal(entries[0].Payload, &row); err != nil {
+		t.Fatal(err)
+	}
+	if row.SystemPromptBytes != len(fakeSystemPrompt) {
+		t.Errorf("system_prompt_bytes = %d, want %d", row.SystemPromptBytes, len(fakeSystemPrompt))
+	}
+	if row.PayloadBytes != len(fakePayload) {
+		t.Errorf("payload_bytes = %d, want %d", row.PayloadBytes, len(fakePayload))
+	}
+}
+
 // TestDispatchInvocationRowCarriesModelSource pins a named-executor dispatch's
 // agent_invocation row (dispatchPayload, workitem.go:1463 — Actor "executor"):
 // model_source round-trips through a real ledger.Store and
@@ -157,6 +204,52 @@ func TestDispatchInvocationRowCarriesModelSource(t *testing.T) {
 	}
 	if tel.ModelSource != "step" {
 		t.Errorf("EventTelemetry.ModelSource = %q, want step", tel.ModelSource)
+	}
+}
+
+// TestDispatchInvocationRowCarriesPromptByteCounts pins sty_363eaf55 AC3: a
+// named-executor dispatch's agent_invocation row (dispatchPayload,
+// workitem.go:1465 — Actor "executor") records the byte LENGTHS of the system
+// prompt and payload satelle sent — never the text itself.
+func TestDispatchInvocationRowCarriesPromptByteCounts(t *testing.T) {
+	db := wire(t)
+	const fakeSystemPrompt = "## You are architect, dispatched to plan this story"
+	const fakePayload = `{"story":{"id":"sty_1"},"from":"backlog","to":"in_progress"}`
+	d := &dispatcherStub{res: verb.DispatchResult{
+		Dispatched: true, Agent: "architect", Command: "fake {system}",
+		SystemPromptBytes: len(fakeSystemPrompt), PayloadBytes: len(fakePayload),
+	}}
+	verb.SetExecutorDispatcher(d)
+	t.Cleanup(func() { verb.SetExecutorDispatcher(nil) })
+
+	var it workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "backlog"}), &it)
+	if _, err := dispatchRaw(t, "story-set", map[string]any{"id": it.ID, "status": "in_progress"}); err != nil {
+		t.Fatalf("dispatch success must enact: %v", err)
+	}
+
+	entries, err := db.Ledger.ListByStory(context.Background(), it.ID, ledger.KindAgentInvocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("want 1 agent_invocation row, got %d: %+v", len(entries), entries)
+	}
+	if strings.Contains(string(entries[0].Payload), fakeSystemPrompt) || strings.Contains(string(entries[0].Payload), fakePayload) {
+		t.Fatalf("ledger row must never carry prompt/payload TEXT, only byte counts: %s", entries[0].Payload)
+	}
+	var row struct {
+		SystemPromptBytes int `json:"system_prompt_bytes"`
+		PayloadBytes      int `json:"payload_bytes"`
+	}
+	if err := json.Unmarshal(entries[0].Payload, &row); err != nil {
+		t.Fatal(err)
+	}
+	if row.SystemPromptBytes != len(fakeSystemPrompt) {
+		t.Errorf("system_prompt_bytes = %d, want %d", row.SystemPromptBytes, len(fakeSystemPrompt))
+	}
+	if row.PayloadBytes != len(fakePayload) {
+		t.Errorf("payload_bytes = %d, want %d", row.PayloadBytes, len(fakePayload))
 	}
 }
 
@@ -203,6 +296,238 @@ func TestSummariserInvocationRowCarriesModelSource(t *testing.T) {
 	}
 	if tel.ModelSource != "creator" {
 		t.Errorf("EventTelemetry.ModelSource = %q, want creator", tel.ModelSource)
+	}
+}
+
+// byteSummariser is a StepSummariser whose result carries a billable
+// invocation with known system-prompt/payload byte counts.
+type byteSummariser struct {
+	systemPromptBytes, payloadBytes int
+}
+
+func (b byteSummariser) Summarise(context.Context, workitem.Item, string, string) (verb.SummaryResult, error) {
+	return verb.SummaryResult{
+		Text: "the recap", Command: "claude -p", Context: "satelle-step-summary",
+		SystemPromptBytes: b.systemPromptBytes, PayloadBytes: b.payloadBytes,
+	}, nil
+}
+func (byteSummariser) MandatorySummary(context.Context, workitem.Item) bool { return true }
+
+// TestSummariserInvocationRowCarriesPromptByteCounts pins sty_363eaf55 AC3:
+// the step summariser's OWN agent_invocation row (summariserInvocationPayload,
+// workitem.go:1575) records the byte LENGTHS of the system prompt and payload
+// satelle sent — never the text itself.
+func TestSummariserInvocationRowCarriesPromptByteCounts(t *testing.T) {
+	db := wire(t)
+	const fakeSystemPrompt = "## You are the step summariser — recap only, never mutate"
+	const fakePayload = `{"story":{"id":"sty_1"},"from":"plan","to":"in_progress"}`
+	verb.SetStepSummariser(byteSummariser{systemPromptBytes: len(fakeSystemPrompt), payloadBytes: len(fakePayload)})
+	t.Cleanup(func() { verb.SetStepSummariser(nil) })
+
+	var it workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "acceptance_criteria": "1. ok"}), &it)
+	call(t, "story-resummarise", map[string]any{"id": it.ID, "from": "plan", "to": "in_progress"})
+
+	entries, err := db.Ledger.ListByStory(context.Background(), it.ID, ledger.KindAgentInvocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("want 1 agent_invocation row, got %d: %+v", len(entries), entries)
+	}
+	if strings.Contains(string(entries[0].Payload), fakeSystemPrompt) || strings.Contains(string(entries[0].Payload), fakePayload) {
+		t.Fatalf("ledger row must never carry prompt/payload TEXT, only byte counts: %s", entries[0].Payload)
+	}
+	var row struct {
+		SystemPromptBytes int `json:"system_prompt_bytes"`
+		PayloadBytes      int `json:"payload_bytes"`
+	}
+	if err := json.Unmarshal(entries[0].Payload, &row); err != nil {
+		t.Fatal(err)
+	}
+	if row.SystemPromptBytes != len(fakeSystemPrompt) {
+		t.Errorf("system_prompt_bytes = %d, want %d", row.SystemPromptBytes, len(fakeSystemPrompt))
+	}
+	if row.PayloadBytes != len(fakePayload) {
+		t.Errorf("payload_bytes = %d, want %d", row.PayloadBytes, len(fakePayload))
+	}
+}
+
+// TestReviewVerdictRowCarriesModelCacheSplit pins reviewerPayload's per-model
+// cache split (sty_363eaf55): the single-reviewer synthesis at workitem.go
+// (workItemSet) copies dec.Models onto the synthesised ReviewerVerdict, and
+// reviewerPayload copies that verdict's Models onto the review_accept row —
+// a model's TokensCacheWrite/TokensCacheRead must survive both hops, not just
+// its plain TokensOut.
+func TestReviewVerdictRowCarriesModelCacheSplit(t *testing.T) {
+	db := wire(t)
+	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{
+		Gated: true, Accept: true, Skill: "satelle-story-done-review", Notes: "n",
+		ModelResolved: "claude-opus-5-5", ModelSource: "inherited-in-loop",
+		Models: []verb.ModelUsage{{ID: "claude-opus-5-5", TokensIn: 41, TokensOut: 5, TokensCacheWrite: 17, TokensCacheRead: 23}},
+	}})
+	t.Cleanup(func() { verb.SetTransitionGater(nil) })
+
+	var it workitem.Item
+	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = dispatchRaw(t, "story-set", map[string]any{"id": it.ID, "status": "done"})
+
+	entries, err := db.Ledger.ListByStory(context.Background(), it.ID, ledger.KindReviewAccept)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("want 1 review_accept row, got %d: %+v", len(entries), entries)
+	}
+	var row struct {
+		Models []verb.ModelUsage `json:"model_usage"`
+	}
+	if err := json.Unmarshal(entries[0].Payload, &row); err != nil {
+		t.Fatal(err)
+	}
+	if len(row.Models) != 1 || row.Models[0].TokensCacheWrite != 17 || row.Models[0].TokensCacheRead != 23 {
+		t.Fatalf("model_usage cache split = %+v, want write=17 read=23", row.Models)
+	}
+}
+
+// TestGateInvocationRowCarriesCacheSplit pins invocationPayload's cache split
+// (sty_363eaf55): the reviewer's own agent_invocation row must carry
+// tokens_in_fresh/tokens_cache_write/tokens_cache_read — both the top-level
+// split (copied from the single-reviewer GateDecision synthesis) and the
+// per-model split.
+func TestGateInvocationRowCarriesCacheSplit(t *testing.T) {
+	db := wire(t)
+	verb.SetTransitionGater(stubGater{dec: verb.GateDecision{
+		Gated: true, Accept: true, Skill: "satelle-story-done-review", Notes: "n",
+		Command: "claude -p", Context: "satelle-story-done-review",
+		TokensInFresh: 41, TokensCacheWrite: 17, TokensCacheRead: 23,
+		Models: []verb.ModelUsage{{ID: "claude-opus-5-5", TokensCacheWrite: 17, TokensCacheRead: 23}},
+	}})
+	t.Cleanup(func() { verb.SetTransitionGater(nil) })
+
+	var it workitem.Item
+	if err := json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "in_progress"}), &it); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = dispatchRaw(t, "story-set", map[string]any{"id": it.ID, "status": "done"})
+
+	entries, err := db.Ledger.ListByStory(context.Background(), it.ID, ledger.KindAgentInvocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("want 1 agent_invocation row, got %d: %+v", len(entries), entries)
+	}
+	var row struct {
+		TokensInFresh    int               `json:"tokens_in_fresh"`
+		TokensCacheWrite int               `json:"tokens_cache_write"`
+		TokensCacheRead  int               `json:"tokens_cache_read"`
+		Models           []verb.ModelUsage `json:"model_usage"`
+	}
+	if err := json.Unmarshal(entries[0].Payload, &row); err != nil {
+		t.Fatal(err)
+	}
+	if row.TokensInFresh != 41 || row.TokensCacheWrite != 17 || row.TokensCacheRead != 23 {
+		t.Fatalf("cache split = fresh=%d write=%d read=%d, want 41/17/23", row.TokensInFresh, row.TokensCacheWrite, row.TokensCacheRead)
+	}
+	if len(row.Models) != 1 || row.Models[0].TokensCacheWrite != 17 || row.Models[0].TokensCacheRead != 23 {
+		t.Fatalf("model_usage cache split = %+v, want write=17 read=23", row.Models)
+	}
+}
+
+// TestDispatchInvocationRowCarriesCacheSplit pins dispatchPayload's cache
+// split (sty_363eaf55): a named-executor dispatch's agent_invocation row must
+// carry tokens_in_fresh/tokens_cache_write/tokens_cache_read, top-level and
+// per-model.
+func TestDispatchInvocationRowCarriesCacheSplit(t *testing.T) {
+	db := wire(t)
+	d := &dispatcherStub{res: verb.DispatchResult{
+		Dispatched: true, Agent: "architect", Command: "fake {system}",
+		TokensInFresh: 41, TokensCacheWrite: 17, TokensCacheRead: 23,
+		Models: []verb.ModelUsage{{ID: "claude-sonnet-5", TokensCacheWrite: 17, TokensCacheRead: 23}},
+	}}
+	verb.SetExecutorDispatcher(d)
+	t.Cleanup(func() { verb.SetExecutorDispatcher(nil) })
+
+	var it workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "status": "backlog"}), &it)
+	if _, err := dispatchRaw(t, "story-set", map[string]any{"id": it.ID, "status": "in_progress"}); err != nil {
+		t.Fatalf("dispatch success must enact: %v", err)
+	}
+
+	entries, err := db.Ledger.ListByStory(context.Background(), it.ID, ledger.KindAgentInvocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("want 1 agent_invocation row, got %d: %+v", len(entries), entries)
+	}
+	var row struct {
+		TokensInFresh    int               `json:"tokens_in_fresh"`
+		TokensCacheWrite int               `json:"tokens_cache_write"`
+		TokensCacheRead  int               `json:"tokens_cache_read"`
+		Models           []verb.ModelUsage `json:"model_usage"`
+	}
+	if err := json.Unmarshal(entries[0].Payload, &row); err != nil {
+		t.Fatal(err)
+	}
+	if row.TokensInFresh != 41 || row.TokensCacheWrite != 17 || row.TokensCacheRead != 23 {
+		t.Fatalf("cache split = fresh=%d write=%d read=%d, want 41/17/23", row.TokensInFresh, row.TokensCacheWrite, row.TokensCacheRead)
+	}
+	if len(row.Models) != 1 || row.Models[0].TokensCacheWrite != 17 || row.Models[0].TokensCacheRead != 23 {
+		t.Fatalf("model_usage cache split = %+v, want write=17 read=23", row.Models)
+	}
+}
+
+// cacheSplitSummariser is a StepSummariser whose result carries a known
+// cache split, for TestSummariserInvocationRowCarriesCacheSplit.
+type cacheSplitSummariser struct{}
+
+func (cacheSplitSummariser) Summarise(context.Context, workitem.Item, string, string) (verb.SummaryResult, error) {
+	return verb.SummaryResult{
+		Text: "the recap", Command: "claude -p", Context: "satelle-step-summary",
+		TokensInFresh: 41, TokensCacheWrite: 17, TokensCacheRead: 23,
+		Models: []verb.ModelUsage{{ID: "claude-sonnet-5", TokensCacheWrite: 17, TokensCacheRead: 23}},
+	}, nil
+}
+func (cacheSplitSummariser) MandatorySummary(context.Context, workitem.Item) bool { return true }
+
+// TestSummariserInvocationRowCarriesCacheSplit pins
+// summariserInvocationPayload's cache split (sty_363eaf55): the step
+// summariser's own agent_invocation row must carry tokens_in_fresh/
+// tokens_cache_write/tokens_cache_read, top-level and per-model.
+func TestSummariserInvocationRowCarriesCacheSplit(t *testing.T) {
+	db := wire(t)
+	verb.SetStepSummariser(cacheSplitSummariser{})
+	t.Cleanup(func() { verb.SetStepSummariser(nil) })
+
+	var it workitem.Item
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "x", "acceptance_criteria": "1. ok"}), &it)
+	call(t, "story-resummarise", map[string]any{"id": it.ID, "from": "plan", "to": "in_progress"})
+
+	entries, err := db.Ledger.ListByStory(context.Background(), it.ID, ledger.KindAgentInvocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("want 1 agent_invocation row, got %d: %+v", len(entries), entries)
+	}
+	var row struct {
+		TokensInFresh    int               `json:"tokens_in_fresh"`
+		TokensCacheWrite int               `json:"tokens_cache_write"`
+		TokensCacheRead  int               `json:"tokens_cache_read"`
+		Models           []verb.ModelUsage `json:"model_usage"`
+	}
+	if err := json.Unmarshal(entries[0].Payload, &row); err != nil {
+		t.Fatal(err)
+	}
+	if row.TokensInFresh != 41 || row.TokensCacheWrite != 17 || row.TokensCacheRead != 23 {
+		t.Fatalf("cache split = fresh=%d write=%d read=%d, want 41/17/23", row.TokensInFresh, row.TokensCacheWrite, row.TokensCacheRead)
+	}
+	if len(row.Models) != 1 || row.Models[0].TokensCacheWrite != 17 || row.Models[0].TokensCacheRead != 23 {
+		t.Fatalf("model_usage cache split = %+v, want write=17 read=23", row.Models)
 	}
 }
 

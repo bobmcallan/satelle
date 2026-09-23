@@ -85,6 +85,32 @@ func TestUsageFromMapCacheTokens(t *testing.T) {
 	}
 }
 
+// TestUsageFromMapCacheSplit pins sty_363eaf55 AC1: the stream-json path keeps
+// fresh/cache-creation/cache-read individually readable, not just summed into
+// InputTokens. It runs a real Claude stream-json "result" line — the actual
+// JSONL bytes a `claude ... --output-format stream-json` process writes to
+// stdout — through commandAdapter.Adapt, the same decode path Run() uses, so
+// the assertion covers json.Unmarshal-into-map[string]any and the "result"
+// case in adaptJSONEvent, not just usageFromMap called on a hand-built map.
+func TestUsageFromMapCacheSplit(t *testing.T) {
+	line := []byte(`{"type":"result","subtype":"success","is_error":false,"duration_ms":4521,` +
+		`"result":"the verdict text","usage":{"input_tokens":22,"cache_creation_input_tokens":11000,` +
+		`"cache_read_input_tokens":2500,"output_tokens":13394}}`)
+
+	evs := commandAdapter{}.Adapt(line, false)
+	if len(evs) != 1 || evs[0].Kind != EventUsage || evs[0].Usage == nil {
+		t.Fatalf("Adapt(result line) = %+v, want one EventUsage with non-nil Usage", evs)
+	}
+	got := evs[0].Usage
+	if got.FreshInputTokens != 22 || got.CacheCreationInputTokens != 11000 || got.CacheReadInputTokens != 2500 {
+		t.Errorf("cache split = fresh=%d create=%d read=%d, want 22/11000/2500",
+			got.FreshInputTokens, got.CacheCreationInputTokens, got.CacheReadInputTokens)
+	}
+	if got.InputTokens != 13522 || got.OutputTokens != 13394 || !got.Available {
+		t.Errorf("usage = %+v, want InputTokens=13522 OutputTokens=13394 Available=true", got)
+	}
+}
+
 // TestUsageFromMapModelUsage pins AC2: a stream-json result event whose
 // top-level modelUsage is keyed by canonical id stores both the alias
 // (recorded by the caller) and the resolved id, alongside the token fields.

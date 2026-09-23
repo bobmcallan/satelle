@@ -93,6 +93,151 @@ func TestComputeStoryCost(t *testing.T) {
 	}
 }
 
+// TestComputeSkillRollup pins sty_363eaf55 AC4: the --by-skill roll-up
+// aggregates agent_invocation rows across STORIES by skill, keeping the
+// fresh/cache-write/cache-read split separate from legacy "unsplit" input so
+// a row recorded before the split existed still reconciles into the total.
+func TestComputeSkillRollup(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	verb.SetLedgerStore(db.Ledger)
+	verb.SetTxRunner(db.InTx)
+	defer verb.SetLedgerStore(nil)
+	verb.SetTxRunner(nil)
+
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0)
+	appendInv := func(storyID string, payload json.RawMessage) {
+		if _, err := db.Ledger.Append(ctx, ledger.AppendInput{
+			StoryID: storyID, Kind: ledger.KindAgentInvocation, Actor: "reviewer", Body: "invoked", Payload: payload,
+		}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Two stories, same skill, split usage — must aggregate across stories.
+	split := func(skill string, fresh, write, read, out, sysBytes, payloadBytes int) json.RawMessage {
+		b, _ := json.Marshal(map[string]any{
+			"agent": "reviewer", "skill": skill,
+			"tokens_in": fresh + write + read, "tokens_out": out, "tokens_total": fresh + write + read + out,
+			"tokens_in_fresh": fresh, "tokens_cache_write": write, "tokens_cache_read": read,
+			"usage_available": true, "system_prompt_bytes": sysBytes, "payload_bytes": payloadBytes,
+		})
+		return b
+	}
+	appendInv("sty_a", split("satelle-story-done-review", 100, 30, 20, 10, 1000, 200))
+	appendInv("sty_b", split("satelle-story-done-review", 50, 10, 5, 5, 2000, 400))
+	// A legacy row (pre-split) on a different skill, same and other story.
+	legacy, _ := json.Marshal(map[string]any{
+		"agent": "reviewer", "skill": "satelle-story-plan-review",
+		"tokens_in": 500, "tokens_out": 50, "tokens_total": 550, "usage_available": true,
+	})
+	appendInv("sty_a", legacy)
+	// An unmeasured row must not feed any total.
+	unmeasured, _ := json.Marshal(map[string]any{"agent": "reviewer", "skill": "satelle-story-plan-review", "usage_available": false})
+	appendInv("sty_b", unmeasured)
+
+	// --all: both skills, summed across both stories.
+	rollup, err := verb.ComputeSkillRollup(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rollup.Rows) != 2 {
+		t.Fatalf("rows = %d, want 2 skills: %+v", len(rollup.Rows), rollup.Rows)
+	}
+	var done, plan *verb.SkillRollupRow
+	for i := range rollup.Rows {
+		switch rollup.Rows[i].Skill {
+		case "satelle-story-done-review":
+			done = &rollup.Rows[i]
+		case "satelle-story-plan-review":
+			plan = &rollup.Rows[i]
+		}
+	}
+	if done == nil || plan == nil {
+		t.Fatalf("expected both skills present: %+v", rollup.Rows)
+	}
+	if done.Invocations != 2 || done.FreshTokens != 150 || done.CacheWriteTokens != 40 || done.CacheReadTokens != 25 ||
+		done.TotalInputTokens != 215 || done.TotalOutputTokens != 15 {
+		t.Errorf("done-review rollup = %+v, want invocations=2 fresh=150 write=40 read=25 in=215 out=15", done)
+	}
+	if done.AvgSystemPromptBytes != 1500 || done.AvgPayloadBytes != 300 {
+		t.Errorf("done-review avg bytes = sys=%d payload=%d, want 1500/300", done.AvgSystemPromptBytes, done.AvgPayloadBytes)
+	}
+	if plan.Invocations != 2 || plan.MeasuredRows != 1 || plan.UnmeasuredRows != 1 ||
+		plan.UnsplitTokens != 500 || plan.FreshTokens != 0 || plan.TotalInputTokens != 500 {
+		t.Errorf("plan-review rollup = %+v, want invocations=2 measured=1 unmeasured=1 unsplit=500 total=500", plan)
+	}
+
+	// --story sty_a: scoped to one story only.
+	scoped, err := verb.ComputeSkillRollup(ctx, "sty_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scoped.Rows) != 2 {
+		t.Fatalf("scoped rows = %d, want 2: %+v", len(scoped.Rows), scoped.Rows)
+	}
+	for _, r := range scoped.Rows {
+		if r.Skill == "satelle-story-done-review" && r.Invocations != 1 {
+			t.Errorf("scoped done-review invocations = %d, want 1 (only sty_a's row)", r.Invocations)
+		}
+	}
+}
+
+// TestComputeSkillRollupPagesBeyondOnePage pins the integration-review rework
+// of sty_363eaf55 AC4: --all must not silently drop rows past the first page
+// when the ledger holds more agent_invocation rows than a single query page.
+// ledger.ForEachKindPageSize is lowered as a test seam so pagination across
+// several pages (including a final partial page, where the newest rows land)
+// is exercised without seeding thousands of real rows.
+func TestComputeSkillRollupPagesBeyondOnePage(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	verb.SetLedgerStore(db.Ledger)
+	verb.SetTxRunner(db.InTx)
+	defer verb.SetLedgerStore(nil)
+	verb.SetTxRunner(nil)
+
+	orig := ledger.ForEachKindPageSize
+	ledger.ForEachKindPageSize = 3
+	defer func() { ledger.ForEachKindPageSize = orig }()
+
+	ctx := context.Background()
+	base := time.Unix(1_700_000_000, 0)
+	const rowCount = 10 // 4 pages at page size 3 (3,3,3,1) — exercises a trailing partial page
+	for i := 0; i < rowCount; i++ {
+		payload, _ := json.Marshal(map[string]any{
+			"agent": "reviewer", "skill": "satelle-story-plan-review",
+			"tokens_in": i + 1, "tokens_out": 0, "tokens_total": i + 1, "usage_available": true,
+		})
+		if _, err := db.Ledger.Append(ctx, ledger.AppendInput{
+			StoryID: "sty_page", Kind: ledger.KindAgentInvocation, Actor: "reviewer", Body: "invoked", Payload: payload,
+		}, base.Add(time.Duration(i)*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rollup, err := verb.ComputeSkillRollup(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rollup.Rows) != 1 {
+		t.Fatalf("rows = %d, want 1 skill: %+v", len(rollup.Rows), rollup.Rows)
+	}
+	// Sum of tokens_in 1..10 = 55. If the scan stopped after the first page
+	// (3 of 10 rows, oldest-first) this would be 1+2+3=6 — the newest rows,
+	// including the whole trailing partial page, must be counted too.
+	if rollup.Rows[0].Invocations != rowCount || rollup.Rows[0].UnsplitTokens != 55 {
+		t.Errorf("rollup = %+v, want invocations=%d unsplit=55 (all pages counted, not just the first)",
+			rollup.Rows[0], rowCount)
+	}
+}
+
 // TestComputeStoryCostRecordsResolvedModel pins the "story cost" surface of
 // AC6/AC7 (sty_87b86044): a row's ModelResolved is read straight off the
 // agent_invocation payload (via the shared ledger.EventTelemetry reader), so

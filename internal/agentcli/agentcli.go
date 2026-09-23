@@ -198,7 +198,15 @@ type UsageResult struct {
 	InputTokens  int
 	OutputTokens int
 	TotalTokens  int
-	Duration     time.Duration
+	// FreshInputTokens/CacheCreationInputTokens/CacheReadInputTokens are the
+	// disjoint components InputTokens sums (sty_363eaf55) — kept alongside the
+	// total so a caller can tell whether a change cut fresh tokens or only cache
+	// reads, which are priced differently. Zero on a transport/envelope that
+	// reports no cache split (InputTokens still carries the uncached figure).
+	FreshInputTokens         int
+	CacheCreationInputTokens int
+	CacheReadInputTokens     int
+	Duration                 time.Duration
 	// Available distinguishes a transport-reported zero from usage that was not
 	// reported at all.
 	Available bool
@@ -265,6 +273,9 @@ func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 			u.Available = true
 			// Sum uncached + cache-creation + cache-read: the three fields are
 			// disjoint components of one prompt (sty_8178f1c6).
+			u.FreshInputTokens = claude.Usage.InputTokens
+			u.CacheCreationInputTokens = claude.Usage.CacheCreationInputTokens
+			u.CacheReadInputTokens = claude.Usage.CacheReadInputTokens
 			u.InputTokens = claude.Usage.InputTokens +
 				claude.Usage.CacheCreationInputTokens +
 				claude.Usage.CacheReadInputTokens

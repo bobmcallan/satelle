@@ -1167,6 +1167,8 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 		result.ModelResolved, result.Models = dec.ModelResolved, dec.Models
 		result.ModelSource = dec.ModelSource
 		result.TokensIn, result.TokensOut, result.TokensTotal = dec.TokensIn, dec.TokensOut, dec.TokensTotal
+		result.TokensInFresh, result.TokensCacheWrite, result.TokensCacheRead = dec.TokensInFresh, dec.TokensCacheWrite, dec.TokensCacheRead
+		result.SystemPromptBytes, result.PayloadBytes = dec.SystemPromptBytes, dec.PayloadBytes
 		result.DurationMs = dec.DurationMs
 		result.UsageAvailable = dec.UsageAvailable
 		result.Reviewers = append(result.Reviewers, verb.ReviewerVerdict{
@@ -1175,6 +1177,8 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 			ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 			TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 			UsageAvailable: dec.UsageAvailable,
+			TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead,
+			SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes,
 		})
 		if !dec.Accept {
 			return result, nil // a reject blocks the edge — do not run later reviewers
@@ -1261,6 +1265,8 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 			ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 			TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 			UsageAvailable: dec.UsageAvailable,
+			TokensInFresh:  dec.TokensInFresh, TokensCacheWrite: dec.TokensCacheWrite, TokensCacheRead: dec.TokensCacheRead,
+			SystemPromptBytes: dec.SystemPromptBytes, PayloadBytes: dec.PayloadBytes,
 		})
 		d := dec
 		lastGated = &d
@@ -1286,6 +1292,8 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 		result.ModelResolved, result.Models = pick.ModelResolved, pick.Models
 		result.ModelSource = pick.ModelSource
 		result.TokensIn, result.TokensOut, result.TokensTotal = pick.TokensIn, pick.TokensOut, pick.TokensTotal
+		result.TokensInFresh, result.TokensCacheWrite, result.TokensCacheRead = pick.TokensInFresh, pick.TokensCacheWrite, pick.TokensCacheRead
+		result.SystemPromptBytes, result.PayloadBytes = pick.SystemPromptBytes, pick.PayloadBytes
 		result.DurationMs = pick.DurationMs
 		result.UsageAvailable = pick.UsageAvailable
 		if firstReject == nil {
@@ -1643,6 +1651,8 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		ModelResolved: dispatchModelResolved, Models: dispatchModels, ModelSource: modelChoice.Source,
 		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
 		DurationMs: invRes.Usage.Duration.Milliseconds(), UsageAvailable: invRes.Usage.Available,
+		TokensInFresh: invRes.Usage.FreshInputTokens, TokensCacheWrite: invRes.Usage.CacheCreationInputTokens, TokensCacheRead: invRes.Usage.CacheReadInputTokens,
+		SystemPromptBytes: invRes.SystemPromptBytes, PayloadBytes: invRes.PayloadBytes,
 		Output: string(invRes.Stdout),
 	}
 	g.logExecutorRun(dispatchAgent, item.ID, toStatus, invRes.Stdout, invRes.Err)
@@ -1798,6 +1808,8 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item, modelOverri
 		ModelResolved: retroModelResolved, Models: retroModels, ModelSource: retroModelSource,
 		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
 		DurationMs: invRes.Usage.Duration.Milliseconds(), UsageAvailable: invRes.Usage.Available,
+		TokensInFresh: invRes.Usage.FreshInputTokens, TokensCacheWrite: invRes.Usage.CacheCreationInputTokens, TokensCacheRead: invRes.Usage.CacheReadInputTokens,
+		SystemPromptBytes: invRes.SystemPromptBytes, PayloadBytes: invRes.PayloadBytes,
 		Output: string(invRes.Stdout),
 	}
 	g.logExecutorRun(retrospectAgent, item.ID, "retrospect", invRes.Stdout, invRes.Err)
@@ -1971,6 +1983,7 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 	g.recordInvocation(ctx, item.ID, map[string]any{
 		"agent": name, "phase": "open", "model": binding.Model, "model_source": modelSource,
 		"model_resolved": agentcli.ModelUnavailable, "usage_available": false,
+		"system_prompt_bytes": len(req.SystemPrompt), "payload_bytes": len(req.Payload),
 	})
 	if req.Env == nil {
 		req.Env = map[string]string{}
@@ -2006,23 +2019,38 @@ func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role S
 		scratch: scratchDir, repoRoot: g.repoRoot, sweepBefore: leftoverBefore}, nil
 }
 
-// liveUsageTracker records the last EventUsage a live session reports, so its
-// close row can carry the same model_resolved/usage a one-shot dispatch does
-// (sty_7069bced). Guarded: EventHandler may be called from concurrent
-// stdout/stderr reader goroutines.
+// liveUsageTracker accumulates every EventUsage a live session reports across
+// its turns, so its close row carries the SUM of the session — a Claude
+// stream-json `result` usage is per turn, not cumulative, so keeping only the
+// last turn understates a multi-turn session (sty_363eaf55 AC2). Guarded:
+// EventHandler may be called from concurrent stdout/stderr reader goroutines.
 type liveUsageTracker struct {
 	mu    sync.Mutex
 	usage agentcli.UsageResult
+	turns int
 }
 
-// wrap returns an EventHandler that records EventUsage and then forwards to
-// next (which may be nil) unchanged — the caller's own handler still sees
-// every event.
+// wrap returns an EventHandler that folds each EventUsage into the running
+// total and then forwards to next (which may be nil) unchanged — the
+// caller's own handler still sees every event.
 func (t *liveUsageTracker) wrap(next agentcli.EventHandler) agentcli.EventHandler {
 	return func(ev agentcli.Event) {
 		if ev.Kind == agentcli.EventUsage && ev.Usage != nil {
 			t.mu.Lock()
-			t.usage = *ev.Usage
+			t.turns++
+			u := ev.Usage
+			t.usage.Available = t.usage.Available || u.Available
+			t.usage.InputTokens += u.InputTokens
+			t.usage.OutputTokens += u.OutputTokens
+			t.usage.TotalTokens += u.TotalTokens
+			t.usage.FreshInputTokens += u.FreshInputTokens
+			t.usage.CacheCreationInputTokens += u.CacheCreationInputTokens
+			t.usage.CacheReadInputTokens += u.CacheReadInputTokens
+			t.usage.Duration += u.Duration
+			if u.ModelResolved != "" {
+				t.usage.ModelResolved = u.ModelResolved
+			}
+			t.mergeModelsLocked(u.Models)
 			t.mu.Unlock()
 		}
 		if next != nil {
@@ -2031,10 +2059,51 @@ func (t *liveUsageTracker) wrap(next agentcli.EventHandler) agentcli.EventHandle
 	}
 }
 
-func (t *liveUsageTracker) last() agentcli.UsageResult {
+// mergeModelsLocked folds one turn's per-model usage into the running total,
+// merged by model id in a deterministic (sorted) order — same determinism
+// rule as agentcli.parseModelUsage, so Go's randomized map order can never
+// affect the recorded result. Caller holds t.mu.
+func (t *liveUsageTracker) mergeModelsLocked(models []agentcli.ModelUsage) {
+	if len(models) == 0 {
+		return
+	}
+	byID := make(map[string]agentcli.ModelUsage, len(t.usage.Models)+len(models))
+	for _, m := range t.usage.Models {
+		byID[m.ID] = m
+	}
+	for _, m := range models {
+		cur := byID[m.ID]
+		cur.ID = m.ID
+		cur.InputTokens += m.InputTokens
+		cur.OutputTokens += m.OutputTokens
+		cur.CacheCreationInputTokens += m.CacheCreationInputTokens
+		cur.CacheReadInputTokens += m.CacheReadInputTokens
+		if m.CostUSD != nil {
+			sum := *m.CostUSD
+			if cur.CostUSD != nil {
+				sum += *cur.CostUSD
+			}
+			cur.CostUSD = &sum
+		}
+		byID[m.ID] = cur
+	}
+	ids := make([]string, 0, len(byID))
+	for id := range byID {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	merged := make([]agentcli.ModelUsage, 0, len(ids))
+	for _, id := range ids {
+		merged = append(merged, byID[id])
+	}
+	t.usage.Models = merged
+}
+
+// total returns the accumulated usage across every turn and the turn count.
+func (t *liveUsageTracker) total() (agentcli.UsageResult, int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.usage
+	return t.usage, t.turns
 }
 
 // liveModelSession decorates agentcli.Session to ledger a close row
@@ -2061,13 +2130,15 @@ type liveModelSession struct {
 func (s *liveModelSession) Close() error {
 	err := s.Session.Close()
 	s.closeOnce.Do(func() {
-		u := s.tracker.last()
+		u, turns := s.tracker.total()
 		modelResolved, models := toVerbModels(u)
 		data := map[string]any{
 			"agent": s.agent, "phase": "close", "model": s.model, "model_source": s.modelSource,
 			"model_resolved": modelResolved, "usage_available": u.Available,
 			"tokens_in": u.InputTokens, "tokens_out": u.OutputTokens, "tokens_total": u.TotalTokens,
+			"tokens_in_fresh": u.FreshInputTokens, "tokens_cache_write": u.CacheCreationInputTokens, "tokens_cache_read": u.CacheReadInputTokens,
 			"duration_ms": u.Duration.Milliseconds(),
+			"turns":       turns,
 		}
 		if len(models) > 0 {
 			data["model_usage"] = models
@@ -2109,6 +2180,8 @@ func (s *liveModelSession) Close() error {
 // effective model used for this run (binding/override), not only the engine cache.
 func (g *Engine) setDecisionUsage(d *verb.GateDecision, u agentcli.UsageResult, model string) {
 	d.TokensIn, d.TokensOut, d.TokensTotal = u.InputTokens, u.OutputTokens, u.TotalTokens
+	d.TokensInFresh, d.TokensCacheWrite, d.TokensCacheRead =
+		u.FreshInputTokens, u.CacheCreationInputTokens, u.CacheReadInputTokens
 	d.DurationMs = u.Duration.Milliseconds()
 	d.UsageAvailable = u.Available
 	if model != "" {
@@ -2134,7 +2207,11 @@ func toVerbModels(u agentcli.UsageResult) (string, []verb.ModelUsage) {
 	}
 	models := make([]verb.ModelUsage, len(u.Models))
 	for i, m := range u.Models {
-		models[i] = verb.ModelUsage{ID: m.ID, TokensIn: m.InputTokens, TokensOut: m.OutputTokens, CostUSD: m.CostUSD}
+		models[i] = verb.ModelUsage{
+			ID: m.ID, TokensIn: m.InputTokens, TokensOut: m.OutputTokens,
+			TokensCacheWrite: m.CacheCreationInputTokens, TokensCacheRead: m.CacheReadInputTokens,
+			CostUSD: m.CostUSD,
+		}
 	}
 	return resolved, models
 }
@@ -2451,6 +2528,8 @@ func (g *Engine) runReviewerWith(ctx context.Context, item workitem.Item, toStat
 			"reviewer: %s produced no decision", skill)
 	}
 	res.Decision.ModelSource = modelSource
+	res.Decision.SystemPromptBytes = res.SystemPromptBytes
+	res.Decision.PayloadBytes = res.PayloadBytes
 	return *res.Decision, nil
 }
 
@@ -2701,6 +2780,8 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 				ModelResolved: summaryModelResolved, Models: summaryModels, ModelSource: modelSource,
 				TokensIn: usage.InputTokens, TokensOut: usage.OutputTokens, TokensTotal: usage.TotalTokens,
 				DurationMs: usage.Duration.Milliseconds(), UsageAvailable: usage.Available,
+				TokensInFresh: usage.FreshInputTokens, TokensCacheWrite: usage.CacheCreationInputTokens, TokensCacheRead: usage.CacheReadInputTokens,
+				SystemPromptBytes: len(req.SystemPrompt), PayloadBytes: len(req.Payload),
 			}, nil
 		}
 		lastErr = fmt.Errorf("empty summary output")

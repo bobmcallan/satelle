@@ -514,6 +514,12 @@ func TestUnwrapUsage(t *testing.T) {
 	if !u.Available || u.InputTokens != 13522 || u.OutputTokens != 13394 || u.TotalTokens != 26916 {
 		t.Errorf("cached usage = %+v, want InputTokens=13522 OutputTokens=13394 TotalTokens=26916", u)
 	}
+	// The three components stay individually readable (sty_363eaf55 AC1) — not
+	// just summed into InputTokens.
+	if u.FreshInputTokens != 22 || u.CacheCreationInputTokens != 11000 || u.CacheReadInputTokens != 2500 {
+		t.Errorf("cache split = fresh=%d create=%d read=%d, want 22/11000/2500",
+			u.FreshInputTokens, u.CacheCreationInputTokens, u.CacheReadInputTokens)
+	}
 	// Plain text (a non-json harness) passes through verbatim with zero usage.
 	raw := "Verdict: accept.\n"
 	text, u = UnwrapUsage([]byte(raw))
@@ -550,13 +556,16 @@ func TestUnwrapUsage(t *testing.T) {
 // `claude -p --output-format json --model opus` output (Claude Code 2.1.280).
 func TestUnwrapUsage_ModelUsage(t *testing.T) {
 	env := `{"type":"result","result":"the verdict text","usage":{"input_tokens":2,"output_tokens":11},` +
-		`"modelUsage":{"claude-opus-5-5":{"inputTokens":2,"outputTokens":11,"costUSD":0.1065628,"canonicalModel":"claude-opus-5-5","provider":"first-party"}}}`
+		`"modelUsage":{"claude-opus-5-5":{"inputTokens":2,"outputTokens":11,"cacheCreationInputTokens":5,"cacheReadInputTokens":7,"costUSD":0.1065628,"canonicalModel":"claude-opus-5-5","provider":"first-party"}}}`
 	text, u := UnwrapUsage([]byte(env))
 	if string(text) != "the verdict text" {
 		t.Fatalf("result not extracted: %q", text)
 	}
 	if u.ModelResolved != "claude-opus-5-5" {
 		t.Errorf("ModelResolved = %q, want claude-opus-5-5", u.ModelResolved)
+	}
+	if len(u.Models) != 1 || u.Models[0].CacheCreationInputTokens != 5 || u.Models[0].CacheReadInputTokens != 7 {
+		t.Errorf("per-model cache split = %+v, want CacheCreationInputTokens=5 CacheReadInputTokens=7", u.Models)
 	}
 	if len(u.Models) != 1 || u.Models[0].ID != "claude-opus-5-5" ||
 		u.Models[0].InputTokens != 2 || u.Models[0].OutputTokens != 11 ||

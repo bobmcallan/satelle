@@ -51,6 +51,17 @@ type GateDecision struct {
 	TokensTotal    int
 	DurationMs     int64
 	UsageAvailable bool
+	// TokensInFresh/TokensCacheWrite/TokensCacheRead split TokensIn into its
+	// disjoint components (sty_363eaf55) — the same accounting UsageResult
+	// carries. Zero on a transport that reports no cache split.
+	TokensInFresh    int
+	TokensCacheWrite int
+	TokensCacheRead  int
+	// SystemPromptBytes/PayloadBytes are the byte lengths of the system prompt
+	// and stdin payload satelle sent for this invocation (sty_363eaf55) —
+	// lengths only, never content.
+	SystemPromptBytes int
+	PayloadBytes      int
 	// Unresolved names gate skills this edge DECLARED that do not resolve in the
 	// substrate. Those gates degrade to advisory — the edge advances with no
 	// reviewer and no verdict — which is deliberate, so a fresh repo works before
@@ -95,16 +106,28 @@ type ReviewerVerdict struct {
 	TokensTotal    int   `json:"tokens_total,omitempty"`
 	DurationMs     int64 `json:"duration_ms,omitempty"`
 	UsageAvailable bool  `json:"usage_available"`
+	// TokensInFresh/TokensCacheWrite/TokensCacheRead split TokensIn (sty_363eaf55).
+	TokensInFresh    int `json:"tokens_in_fresh,omitempty"`
+	TokensCacheWrite int `json:"tokens_cache_write,omitempty"`
+	TokensCacheRead  int `json:"tokens_cache_read,omitempty"`
+	// SystemPromptBytes/PayloadBytes are the byte lengths satelle sent — lengths
+	// only, never content (sty_363eaf55).
+	SystemPromptBytes int `json:"system_prompt_bytes,omitempty"`
+	PayloadBytes      int `json:"payload_bytes,omitempty"`
 }
 
 // ModelUsage is one model's token/cost entry from a transport's resolved-model
 // report (sty_87b86044). verb owns its own copy rather than importing agentcli
 // (review.go deliberately keeps this package free of the agent CLI package).
 type ModelUsage struct {
-	ID        string   `json:"id"`
-	TokensIn  int      `json:"tokens_in,omitempty"`
-	TokensOut int      `json:"tokens_out,omitempty"`
-	CostUSD   *float64 `json:"cost_usd,omitempty"`
+	ID        string `json:"id"`
+	TokensIn  int    `json:"tokens_in,omitempty"`
+	TokensOut int    `json:"tokens_out,omitempty"`
+	// TokensCacheWrite/TokensCacheRead are this model's cache components of
+	// TokensIn, when the transport reported them per-model (sty_363eaf55).
+	TokensCacheWrite int      `json:"tokens_cache_write,omitempty"`
+	TokensCacheRead  int      `json:"tokens_cache_read,omitempty"`
+	CostUSD          *float64 `json:"cost_usd,omitempty"`
 }
 
 // TransitionGater judges a requested status transition in an isolated,
@@ -230,12 +253,20 @@ type DispatchResult struct {
 	// Token/wall-time cost of the dispatch (sty_a699ad14), recorded on the
 	// agent_invocation entry. Zero for a plain-text harness with no usage envelope.
 	// UsageAvailable false means the tokens were not reported (sty_56aae77a).
-	TokensIn       int    `json:"-"`
-	TokensOut      int    `json:"-"`
-	TokensTotal    int    `json:"-"`
-	DurationMs     int64  `json:"-"`
-	UsageAvailable bool   `json:"-"`
-	Skill          string `json:"skill,omitempty"`
+	TokensIn       int   `json:"-"`
+	TokensOut      int   `json:"-"`
+	TokensTotal    int   `json:"-"`
+	DurationMs     int64 `json:"-"`
+	UsageAvailable bool  `json:"-"`
+	// TokensInFresh/TokensCacheWrite/TokensCacheRead split TokensIn (sty_363eaf55).
+	TokensInFresh    int `json:"-"`
+	TokensCacheWrite int `json:"-"`
+	TokensCacheRead  int `json:"-"`
+	// SystemPromptBytes/PayloadBytes are the byte lengths satelle sent — lengths
+	// only, never content (sty_363eaf55).
+	SystemPromptBytes int    `json:"-"`
+	PayloadBytes      int    `json:"-"`
+	Skill             string `json:"skill,omitempty"`
 	// Output is the dispatched agent's captured stdout (sty_890b86cb). For a task
 	// EXECUTION run, the verb layer writes it through as an OKF run-output document
 	// under the parent task's folder, so a run's evidence is discoverable per task
@@ -293,6 +324,14 @@ type SummaryResult struct {
 	TokensTotal    int
 	DurationMs     int64
 	UsageAvailable bool
+	// TokensInFresh/TokensCacheWrite/TokensCacheRead split TokensIn (sty_363eaf55).
+	TokensInFresh    int
+	TokensCacheWrite int
+	TokensCacheRead  int
+	// SystemPromptBytes/PayloadBytes are the byte lengths satelle sent — lengths
+	// only, never content (sty_363eaf55).
+	SystemPromptBytes int
+	PayloadBytes      int
 }
 
 // StepSummariser produces a read-only prose recap of an enacted transition,

@@ -678,4 +678,81 @@ func TestOpenSessionAsWithModelRecordsLiveInvocationRows(t *testing.T) {
 		closeRow["model_resolved"] != "claude-sonnet-5" || closeRow["usage_available"] != true {
 		t.Fatalf("close row = %#v", closeRow)
 	}
+	// The open row carries the byte lengths of what satelle actually sent
+	// (sty_363eaf55 AC3) — never a measured zero for a real prompt/payload.
+	if b, ok := open["system_prompt_bytes"].(int); !ok || b <= 0 {
+		t.Fatalf("open row system_prompt_bytes = %#v, want a positive int", open["system_prompt_bytes"])
+	}
+	if b, ok := open["payload_bytes"].(int); !ok || b <= 0 {
+		t.Fatalf("open row payload_bytes = %#v, want a positive int", open["payload_bytes"])
+	}
+}
+
+// TestOpenSessionAsWithModelSumsMultiTurnUsage pins sty_363eaf55 AC2: a
+// Claude stream-json `result` usage is PER TURN, not cumulative, so the close
+// row must carry the SUM across every turn (not just the last one) — three
+// EventUsage events, including cache fields, must add up rather than overwrite.
+func TestOpenSessionAsWithModelSumsMultiTurnUsage(t *testing.T) {
+	g, _ := newEngine(t, "", fakeDocs{})
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		if name != "orchestrator" {
+			return config.AgentBinding{}, false
+		}
+		return config.AgentBinding{Interface: "stream", Tools: "Read,Grep,Glob,Bash(satelle:*)", Command: "claude -p {tools}"}, true
+	})
+	var rows []map[string]any
+	g.SetInvocationRecorder(func(_ context.Context, _ string, payload map[string]any) error {
+		rows = append(rows, payload)
+		return nil
+	})
+	turns := []agentcli.UsageResult{
+		{Available: true, InputTokens: 100, FreshInputTokens: 50, CacheCreationInputTokens: 30, CacheReadInputTokens: 20,
+			OutputTokens: 10, TotalTokens: 110, ModelResolved: "claude-sonnet-5"},
+		{Available: true, InputTokens: 200, FreshInputTokens: 60, CacheCreationInputTokens: 40, CacheReadInputTokens: 100,
+			OutputTokens: 20, TotalTokens: 220, ModelResolved: "claude-sonnet-5"},
+		{Available: true, InputTokens: 300, FreshInputTokens: 70, CacheCreationInputTokens: 130, CacheReadInputTokens: 100,
+			OutputTokens: 30, TotalTokens: 330, ModelResolved: "claude-opus-5-5"},
+	}
+	g.newOpener = func(string, string) (agentcli.SessionOpener, error) {
+		return func(_ context.Context, req agentcli.Request, _ agentcli.PermissionPolicy) (agentcli.Session, error) {
+			for _, u := range turns {
+				u := u
+				if req.OnEvent != nil {
+					req.OnEvent(agentcli.Event{Kind: agentcli.EventUsage, Usage: &u})
+				}
+			}
+			return closedSess{}, nil
+		}, nil
+	}
+	sess, err := g.OpenSessionAsWithModel(context.Background(), "orchestrator", SessionRoleDriving,
+		workitem.Item{ID: "sty_multi", Status: "in_progress"}, nil, nil, "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := sess.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2 (open, close): %#v", len(rows), rows)
+	}
+	closeRow := rows[1]
+	wantIn, wantOut, wantTotal := 600, 60, 660
+	wantFresh, wantCacheWrite, wantCacheRead := 180, 200, 220
+	if closeRow["tokens_in"] != wantIn || closeRow["tokens_out"] != wantOut || closeRow["tokens_total"] != wantTotal {
+		t.Fatalf("close row tokens = in=%v out=%v total=%v, want %d/%d/%d",
+			closeRow["tokens_in"], closeRow["tokens_out"], closeRow["tokens_total"], wantIn, wantOut, wantTotal)
+	}
+	if closeRow["tokens_in_fresh"] != wantFresh || closeRow["tokens_cache_write"] != wantCacheWrite || closeRow["tokens_cache_read"] != wantCacheRead {
+		t.Fatalf("close row cache split = fresh=%v write=%v read=%v, want %d/%d/%d",
+			closeRow["tokens_in_fresh"], closeRow["tokens_cache_write"], closeRow["tokens_cache_read"],
+			wantFresh, wantCacheWrite, wantCacheRead)
+	}
+	if closeRow["turns"] != 3 {
+		t.Fatalf("close row turns = %v, want 3", closeRow["turns"])
+	}
+	// The latest turn's resolved model wins (sty_363eaf55) — model_usage.go's
+	// primary-selection rule applies at parse time, not here.
+	if closeRow["model_resolved"] != "claude-opus-5-5" {
+		t.Fatalf("close row model_resolved = %v, want claude-opus-5-5 (last turn)", closeRow["model_resolved"])
+	}
 }

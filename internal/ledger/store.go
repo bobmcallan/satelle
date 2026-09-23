@@ -249,6 +249,84 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]Entry, error) {
 	return out, rows.Err()
 }
 
+// ForEachKindPageSize is the page size ForEachKind reads per round-trip.
+// Exported as a test seam so a test can exercise multi-page pagination by
+// lowering it, instead of seeding thousands of rows to exceed the
+// production default.
+var ForEachKindPageSize = 2000
+
+// ForEachKind scans every entry of kind (optionally scoped to storyID),
+// oldest-first, paging internally by (created_at, id) so a scan larger than
+// one page is never silently truncated the way a single List call (capped at
+// 2000 rows) would be (sty_363eaf55 rework: the --all skill roll-up read
+// only the oldest 2000 agent_invocation rows and dropped everything newer).
+// fn is called once per entry in order; an error from fn stops the scan and
+// is returned unchanged.
+func (s *Store) ForEachKind(ctx context.Context, storyID, kind string, fn func(Entry) error) error {
+	if strings.TrimSpace(kind) == "" {
+		return fmt.Errorf("ledger: kind required")
+	}
+	pageSize := ForEachKindPageSize
+	if pageSize <= 0 {
+		pageSize = 2000
+	}
+	var afterCreated, afterID string
+	for {
+		conds := []string{"kind = ?"}
+		args := []any{kind}
+		if strings.TrimSpace(storyID) != "" {
+			conds = append(conds, "story_id = ?")
+			args = append(args, storyID)
+		}
+		if afterCreated != "" {
+			conds = append(conds, "(created_at > ? OR (created_at = ? AND id > ?))")
+			args = append(args, afterCreated, afterCreated, afterID)
+		}
+		q := `SELECT id, story_id, project_id, kind, actor, body, payload, refs, created_at FROM evidence WHERE ` +
+			strings.Join(conds, " AND ") +
+			fmt.Sprintf(" ORDER BY created_at ASC, id ASC LIMIT %d", pageSize)
+
+		rows, err := s.db.QueryContext(ctx, q, args...)
+		if err != nil {
+			return fmt.Errorf("ledger: for each kind: %w", err)
+		}
+		var page []Entry
+		for rows.Next() {
+			var (
+				e             Entry
+				payload, refs string
+				created       string
+			)
+			if err := rows.Scan(&e.ID, &e.StoryID, &e.ProjectID, &e.Kind,
+				&e.Actor, &e.Body, &payload, &refs, &created); err != nil {
+				rows.Close()
+				return fmt.Errorf("ledger: scan: %w", err)
+			}
+			e.Payload = json.RawMessage(payload)
+			e.Refs = json.RawMessage(refs)
+			e.CreatedAt = parseTime(created)
+			page = append(page, e)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+
+		for _, e := range page {
+			if err := fn(e); err != nil {
+				return err
+			}
+		}
+		if len(page) < pageSize {
+			return nil
+		}
+		last := page[len(page)-1]
+		afterCreated = last.CreatedAt.UTC().Format(time.RFC3339Nano)
+		afterID = last.ID
+	}
+}
+
 // Count returns the total number of ledger entries. Cheaper than List+len and
 // not subject to List's "at least one filter required" guard.
 func (s *Store) Count(ctx context.Context) (int, error) {

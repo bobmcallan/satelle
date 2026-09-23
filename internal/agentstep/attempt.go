@@ -104,6 +104,9 @@ func (g *Engine) runArtifactAttempts(
 			totalUsage.InputTokens += lastResult.Usage.InputTokens
 			totalUsage.OutputTokens += lastResult.Usage.OutputTokens
 			totalUsage.TotalTokens += lastResult.Usage.TotalTokens
+			totalUsage.FreshInputTokens += lastResult.Usage.FreshInputTokens
+			totalUsage.CacheCreationInputTokens += lastResult.Usage.CacheCreationInputTokens
+			totalUsage.CacheReadInputTokens += lastResult.Usage.CacheReadInputTokens
 		}
 
 		if lastResult.Err != nil {
@@ -276,6 +279,9 @@ func (g *Engine) recordArtifactAttempt(
 		data["tokens_in"] = usage.InputTokens
 		data["tokens_out"] = usage.OutputTokens
 		data["tokens_total"] = usage.TotalTokens
+		data["tokens_in_fresh"] = usage.FreshInputTokens
+		data["tokens_cache_write"] = usage.CacheCreationInputTokens
+		data["tokens_cache_read"] = usage.CacheReadInputTokens
 	}
 	if len(findings) > 0 {
 		data["validator_findings"] = strings.Join(findings, " | ")

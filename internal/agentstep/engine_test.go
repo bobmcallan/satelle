@@ -1109,6 +1109,27 @@ func TestGateAcceptEnacts(t *testing.T) {
 	}
 }
 
+// TestGateRecordsSystemPromptAndPayloadBytes pins AC3 (sty_363eaf55): the
+// decision's byte counts must equal what the engine actually built and sent —
+// not a stubbed value plumbed in at the verb layer.
+func TestGateRecordsSystemPromptAndPayloadBytes(t *testing.T) {
+	g, r := newEngine(t, `{"decision":"accept","notes":"looks good"}`,
+		fakeDocs{workflow: testWorkflow, skillBody: "rubric body", skillFound: true})
+	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec.SystemPromptBytes != len(r.got.SystemPrompt) {
+		t.Errorf("SystemPromptBytes = %d, want len(sent system prompt) = %d", dec.SystemPromptBytes, len(r.got.SystemPrompt))
+	}
+	if dec.PayloadBytes != len(r.got.Payload) {
+		t.Errorf("PayloadBytes = %d, want len(sent payload) = %d", dec.PayloadBytes, len(r.got.Payload))
+	}
+	if dec.SystemPromptBytes == 0 || dec.PayloadBytes == 0 {
+		t.Fatalf("byte counts must be non-zero for a real gate run: %+v", dec)
+	}
+}
+
 func TestGateRejectBlocks(t *testing.T) {
 	g, _ := newEngine(t, `{"decision":"reject","notes":"no acceptance criteria"}`,
 		fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
@@ -1628,6 +1649,35 @@ func TestDispatchExecutorRunsNamedBinding(t *testing.T) {
 		if strings.Contains(r.got.SystemPrompt, banned) {
 			t.Errorf("reviewer-only context %q leaked into the executor dispatch prompt:\n%s", banned, r.got.SystemPrompt)
 		}
+	}
+}
+
+// TestDispatchExecutorRecordsSystemPromptAndPayloadBytes pins AC3 (sty_363eaf55):
+// a dispatch's recorded byte counts must equal what the engine actually built
+// and sent, not a stubbed value plumbed in at the verb layer.
+func TestDispatchExecutorRecordsSystemPromptAndPayloadBytes(t *testing.T) {
+	docs := fakeDocs{workflow: dispatchWF, skillBody: "alignment rubric", skillFound: true}
+	g, r := newEngine(t, "did the work", docs)
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		if name != "architect" {
+			return config.AgentBinding{}, false
+		}
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Grep,Glob,Bash(satelle:*)", Model: "fable"}, true
+	})
+	g.newRunner = func(string, string) (agentcli.Runner, error) { return r, nil }
+	res, err := g.DispatchExecutor(context.Background(),
+		workitem.Item{ID: "sty_1", Title: "Align the stories", Status: "backlog"}, "plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.SystemPromptBytes != len(r.got.SystemPrompt) {
+		t.Errorf("SystemPromptBytes = %d, want len(sent system prompt) = %d", res.SystemPromptBytes, len(r.got.SystemPrompt))
+	}
+	if res.PayloadBytes != len(r.got.Payload) {
+		t.Errorf("PayloadBytes = %d, want len(sent payload) = %d", res.PayloadBytes, len(r.got.Payload))
+	}
+	if res.SystemPromptBytes == 0 || res.PayloadBytes == 0 {
+		t.Fatalf("byte counts must be non-zero for a real dispatch run: %+v", res)
 	}
 }
 
@@ -2377,6 +2427,27 @@ func TestSummariseReturnsTrimmedProse(t *testing.T) {
 		if contains(r.got.AllowedTools, banned) {
 			t.Errorf("tool grant %q must not include %q", r.got.AllowedTools, banned)
 		}
+	}
+}
+
+// TestSummariseRecordsSystemPromptAndPayloadBytes pins AC3 (sty_363eaf55): the
+// step summariser's recorded byte counts must equal what the engine actually
+// built and sent — not a stubbed value plumbed in at the verb layer.
+func TestSummariseRecordsSystemPromptAndPayloadBytes(t *testing.T) {
+	g, r := newEngine(t, "Moved from in_progress to done after the criteria were met.",
+		fakeDocs{workflow: stepWF, skillBody: "summariser rubric", skillFound: true})
+	s, err := g.Summarise(context.Background(), workitem.Item{ID: "sty_1", Status: "in_progress"}, "in_progress", "done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.SystemPromptBytes != len(r.got.SystemPrompt) {
+		t.Errorf("SystemPromptBytes = %d, want len(sent system prompt) = %d", s.SystemPromptBytes, len(r.got.SystemPrompt))
+	}
+	if s.PayloadBytes != len(r.got.Payload) {
+		t.Errorf("PayloadBytes = %d, want len(sent payload) = %d", s.PayloadBytes, len(r.got.Payload))
+	}
+	if s.SystemPromptBytes == 0 || s.PayloadBytes == 0 {
+		t.Fatalf("byte counts must be non-zero for a real summariser run: %+v", s)
 	}
 }
 
@@ -3526,6 +3597,34 @@ func TestRetrospectDispatchesNamedAgent(t *testing.T) {
 	}
 	if !strings.Contains(r.got.Payload, "sty_1") {
 		t.Errorf("story payload missing: %q", r.got.Payload)
+	}
+}
+
+// TestRetrospectRecordsSystemPromptAndPayloadBytes pins AC3 (sty_363eaf55): a
+// retrospective dispatch's recorded byte counts must equal what the engine
+// actually built and sent, not a stubbed value plumbed in at the verb layer.
+func TestRetrospectRecordsSystemPromptAndPayloadBytes(t *testing.T) {
+	g, _ := newEngine(t, "PROPOSALS FILED: none", fakeDocs{skillBody: "retro rubric", skillFound: true})
+	r := &fakeRunner{out: "PROPOSALS FILED: none"}
+	g.SetNamedAgents(func(name string) (config.AgentBinding, bool) {
+		if name != "retrospective" {
+			return config.AgentBinding{}, false
+		}
+		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Bash(satelle:*)", Model: "glm-4.6"}, true
+	})
+	g.newRunner = func(string, string) (agentcli.Runner, error) { return r, nil }
+	res, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1", Title: "T", Status: "done"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.SystemPromptBytes != len(r.got.SystemPrompt) {
+		t.Errorf("SystemPromptBytes = %d, want len(sent system prompt) = %d", res.SystemPromptBytes, len(r.got.SystemPrompt))
+	}
+	if res.PayloadBytes != len(r.got.Payload) {
+		t.Errorf("PayloadBytes = %d, want len(sent payload) = %d", res.PayloadBytes, len(r.got.Payload))
+	}
+	if res.SystemPromptBytes == 0 || res.PayloadBytes == 0 {
+		t.Fatalf("byte counts must be non-zero for a real retrospective run: %+v", res)
 	}
 }
 

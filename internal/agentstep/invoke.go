@@ -90,6 +90,11 @@ type InvokeResult struct {
 	Command  string             // resolved harness command for ledger evidence
 	Decision *verb.GateDecision // non-nil when ExpectVerdict and parse succeeded
 	Err      error
+	// SystemPromptBytes/PayloadBytes are the byte lengths of the system prompt
+	// and stdin payload satelle sent for this invocation (sty_363eaf55) —
+	// lengths only, never content.
+	SystemPromptBytes int
+	PayloadBytes      int
 }
 
 // invocation is the internal prompt-assembly shape used by buildRequest.
@@ -406,6 +411,11 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	default: // ExpectVerdict
 		res = g.invokeVerdict(ctx, req, runner, agentReq, cmdStr, timeout, idle)
 	}
+	// Byte lengths of what satelle actually sent (sty_363eaf55) — lengths only,
+	// never content. Stamped uniformly regardless of outcome (success, failure,
+	// or stall) since the request was already dispatched by this point.
+	res.SystemPromptBytes = len(agentReq.SystemPrompt)
+	res.PayloadBytes = len(agentReq.Payload)
 
 	var swept []string
 	var sweepFailed bool
