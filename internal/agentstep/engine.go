@@ -44,6 +44,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
+	"github.com/bobmcallan/satelle/internal/retrieve"
 	"github.com/bobmcallan/satelle/internal/structure"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -117,6 +118,17 @@ type Engine struct {
 	// (sty_2db624d0). Nil-safe: an unwired resolver injects nothing. The
 	// resolver itself must never error — skip unreadable rows.
 	itemMessages func(ctx context.Context, itemID string, addresses []string) []MessageState
+	// diffCompressor reduces a gate payload's patch (noise-strip then ranked
+	// hunk selection, sty_918e2086) before diffPayloadCeiling is ever applied —
+	// the compressor is the PRIMARY reducer, the ceiling stays a backstop. Nil
+	// leaves fillDiff's patch handling exactly as before this story.
+	diffCompressor func(ctx context.Context, itemID, patch string) string
+	// diffOffload stores an oversized patch's overflow tail out of line for
+	// excerptOffload's backstop marker (sty_918e2086), independent of whether
+	// diffCompressor is wired — even an uncompressed patch gets a recoverable
+	// marker instead of a bare truncation. Nil falls back to the plain
+	// "… [truncated]" suffix excerpt() has always appended.
+	diffOffload func(ctx context.Context, itemID string, content []byte) (hash string, err error)
 	// trackingStory resolves the id of an OPEN story already diagnosing a failing
 	// authored document, so a refusal caused by that document points at the
 	// diagnosis instead of leaving it in backlog (sty_88d40a60). Injected because
@@ -553,6 +565,22 @@ func (g *Engine) SetMessagesResolver(fn func(ctx context.Context, itemID string,
 	g.itemMessages = fn
 }
 
+// SetDiffCompressor wires the ranked diff compressor (sty_918e2086) fillDiff
+// runs on a gate payload's patch before diffPayloadCeiling is applied. Nil
+// (unwired) leaves fillDiff's patch handling exactly as it was before this
+// story — the 64KiB ceiling is the sole reducer.
+func (g *Engine) SetDiffCompressor(fn func(ctx context.Context, itemID, patch string) string) {
+	g.diffCompressor = fn
+}
+
+// SetDiffOffloader wires the store fillDiff's excerptOffload backstop uses to
+// keep an oversized patch's overflow tail recoverable behind a marker
+// (sty_918e2086), independent of SetDiffCompressor. Nil keeps the backstop's
+// prior plain "… [truncated]" suffix.
+func (g *Engine) SetDiffOffloader(fn func(ctx context.Context, itemID string, content []byte) (hash string, err error)) {
+	g.diffOffload = fn
+}
+
 // SetModelRanking wires the [models] ranking table (sty_7069bced /
 // epic:model-selection order:3) — the power order config.SelectModel's
 // inherited tie-break reads. Nil/empty means no configured ranking.
@@ -906,8 +934,19 @@ func (g *Engine) fillDiff(ctx context.Context, itemID string, tp *transitionPayl
 		cp.Stat = excerpt(cp.Stat, diffStatCeiling)
 		cp.Truncated = true
 	}
+	// The compressor (noise-strip then ranked hunk selection) is the PRIMARY
+	// reducer for the patch; diffPayloadCeiling below stays only as a backstop
+	// (sty_918e2086). Composition: diffFilesCount/diffStatCeiling above are
+	// unrelated caps and run unchanged either way.
+	if g.diffCompressor != nil && cp.Patch != "" {
+		compressed := g.diffCompressor(ctx, itemID, cp.Patch)
+		if retrieve.MarkerRE.MatchString(compressed) {
+			cp.Truncated = true
+		}
+		cp.Patch = compressed
+	}
 	if len(cp.Patch) > diffPayloadCeiling {
-		cp.Patch = excerpt(cp.Patch, diffPayloadCeiling)
+		cp.Patch = g.excerptOffload(ctx, itemID, cp.Patch, diffPayloadCeiling)
 		cp.Truncated = true
 	}
 	if cp.NoBaseline {
@@ -954,6 +993,31 @@ func excerpt(s string, limit int) string {
 		cut = cut[:len(cut)-1]
 	}
 	return cut + "… [truncated]"
+}
+
+// excerptOffload is fillDiff's ceiling backstop for the patch field
+// (sty_918e2086): like excerpt, it cuts s to limit bytes on a rune boundary,
+// but offloads the overflow tail behind a retrieve marker via g.diffOffload
+// instead of dropping it — so even a patch the compressor left oversized (or
+// one with no compressor wired at all) stays recoverable. g.diffOffload nil,
+// or a failed Put, falls back to excerpt's plain "… [truncated]" suffix.
+func (g *Engine) excerptOffload(ctx context.Context, itemID, s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	cut := s[:limit]
+	for len(cut) > 0 && !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	overflow := s[len(cut):]
+	if g.diffOffload == nil {
+		return cut + "… [truncated]"
+	}
+	hash, err := g.diffOffload(ctx, itemID, []byte(overflow))
+	if err != nil {
+		return cut + "… [truncated]"
+	}
+	return cut + "… [truncated " + retrieve.MarkerKind(hash, "patch", len(overflow)) + "]"
 }
 
 // alwaysPrinciples returns the bodies of the SESSION-resident (principles:session)

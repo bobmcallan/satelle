@@ -18,6 +18,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/logfile"
+	"github.com/bobmcallan/satelle/internal/retrieve"
 	"github.com/bobmcallan/satelle/internal/store"
 	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
@@ -3313,6 +3314,185 @@ func TestGatePayloadDiffUnwiredOmitsKey(t *testing.T) {
 	if strings.Contains(r.got.Payload, `"diff"`) {
 		t.Errorf("unwired resolver must inject no diff:\n%s", r.got.Payload)
 	}
+}
+
+// diffOffloadStub is a minimal in-memory content store standing in for
+// internal/retrieve.Store in the diff-compressor/backstop tests (sty_918e2086).
+type diffOffloadStub struct {
+	blobs map[string][]byte
+}
+
+func newDiffOffloadStub() *diffOffloadStub { return &diffOffloadStub{blobs: map[string][]byte{}} }
+
+func (s *diffOffloadStub) put(b []byte) string {
+	hash := retrieve.Hash(b)
+	s.blobs[hash] = append([]byte(nil), b...)
+	return hash
+}
+
+// TestGatePayloadDiffCompressorReducesAndComposesWithExistingCaps
+// (sty_918e2086 AC2): a wired compressor is the primary reducer for the
+// patch — its markers ride inline, resolve to the exact dropped bytes, and
+// Truncated is set — while diffFilesCount/diffStatCeiling keep capping Files
+// and Stat exactly as they did before this story.
+func TestGatePayloadDiffCompressorReducesAndComposesWithExistingCaps(t *testing.T) {
+	store := newDiffOffloadStub()
+	dropped := "dropped-hunk-content\nmore dropped content\n"
+	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
+	g.SetDiffCompressor(func(_ context.Context, itemID, _ string) string {
+		if itemID != "sty_ranked" {
+			t.Errorf("compressor itemID = %q", itemID)
+		}
+		hash := store.put([]byte(dropped))
+		return "diff --git a/kept.go b/kept.go\n+kept line\n" + retrieve.MarkerKind(hash, "hunk", len(dropped)) + "\n"
+	})
+	g.SetDiffOffloader(func(_ context.Context, _ string, content []byte) (string, error) {
+		return store.put(content), nil
+	})
+
+	files := make([]string, 600)
+	for i := range files {
+		files[i] = fmt.Sprintf("file%03d.go", i)
+	}
+	g.SetDiffResolver(func(_ context.Context, _ string) *DiffState {
+		return &DiffState{
+			Baseline: "abc123",
+			Files:    files,
+			Stat:     strings.Repeat("x", diffStatCeiling+512),
+			Patch:    "irrelevant — the compressor replaces this entirely",
+		}
+	})
+
+	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_ranked", Status: "in_progress"}, "done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec.Accept {
+		t.Fatalf("compressed diff must not refuse the gate: %+v", dec)
+	}
+	probe := decodeDiffProbe(t, r.got.Payload)
+
+	if !strings.Contains(probe.Diff.Patch, "+kept line") {
+		t.Errorf("compressor's kept content missing from payload patch:\n%s", probe.Diff.Patch)
+	}
+	if strings.Contains(probe.Diff.Patch, dropped) {
+		t.Errorf("dropped content must not ride inline once offloaded:\n%s", probe.Diff.Patch)
+	}
+	if !retrieve.MarkerRE.MatchString(probe.Diff.Patch) {
+		t.Errorf("compressed patch must carry a retrieve marker:\n%s", probe.Diff.Patch)
+	}
+	if !probe.Diff.Truncated {
+		t.Error("a compressed (marker-bearing) patch must set truncated")
+	}
+	if len(probe.Diff.Files) != diffFilesCount {
+		t.Errorf("Files count = %d, want diffFilesCount (%d) — unchanged by this story", len(probe.Diff.Files), diffFilesCount)
+	}
+	if probe.Diff.Files[len(probe.Diff.Files)-1] != "file499.go" {
+		t.Errorf("Files list must keep the first diffFilesCount (500) files, last = %q", probe.Diff.Files[len(probe.Diff.Files)-1])
+	}
+	if len(probe.Diff.Stat) > diffStatCeiling+64 {
+		t.Errorf("Stat length = %d, want <= diffStatCeiling+marker (%d) — unchanged by this story", len(probe.Diff.Stat), diffStatCeiling+64)
+	}
+
+	hash, kind, size, ok := retrieve.ParseMarkerKind(extractMarker(t, probe.Diff.Patch))
+	if !ok {
+		t.Fatalf("could not parse marker out of patch:\n%s", probe.Diff.Patch)
+	}
+	if kind != "hunk" || size != len(dropped) {
+		t.Errorf("marker kind/size = %q/%d, want hunk/%d", kind, size, len(dropped))
+	}
+	got, ok := store.blobs[hash]
+	if !ok {
+		t.Fatalf("marker hash %q not found in store", hash)
+	}
+	if string(got) != dropped {
+		t.Errorf("marker round trip mismatch:\ngot:  %q\nwant: %q", got, dropped)
+	}
+}
+
+// TestGatePayloadDiffBackstopOffloadsOverflowWithNoCompressorWired
+// (sty_918e2086 AC2): with no compressor wired, the raw patch is unranked as
+// before, but the diffPayloadCeiling backstop no longer drops its overflow
+// blindly — it offloads the tail behind a marker that resolves to the exact
+// bytes cut.
+func TestGatePayloadDiffBackstopOffloadsOverflowWithNoCompressorWired(t *testing.T) {
+	store := newDiffOffloadStub()
+	huge := strings.Repeat("A", diffPayloadCeiling+4096)
+	g, r := newEngine(t, `{"decision":"accept"}`, fakeDocs{workflow: testWorkflow, skillBody: "rubric", skillFound: true})
+	g.SetDiffOffloader(func(_ context.Context, _ string, content []byte) (string, error) {
+		return store.put(content), nil
+	})
+	g.SetDiffResolver(func(_ context.Context, _ string) *DiffState {
+		return &DiffState{Baseline: "deadbeef", Files: []string{"x.go"}, Patch: huge}
+	})
+
+	dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_backstop", Status: "in_progress"}, "done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec.Accept {
+		t.Fatalf("an oversized patch must not refuse the gate: %+v", dec)
+	}
+	probe := decodeDiffProbe(t, r.got.Payload)
+	if !probe.Diff.Truncated {
+		t.Error("over-ceiling patch must still be marked truncated")
+	}
+	if !retrieve.MarkerRE.MatchString(probe.Diff.Patch) {
+		t.Errorf("no-compressor backstop must still offload behind a marker, not truncate blindly:\n%s", probe.Diff.Patch)
+	}
+	if !strings.HasPrefix(huge, probe.Diff.Patch[:diffPayloadCeiling]) {
+		t.Error("backstop must keep the patch's leading bytes verbatim up to the ceiling")
+	}
+	hash, kind, _, ok := retrieve.ParseMarkerKind(extractMarker(t, probe.Diff.Patch))
+	if !ok {
+		t.Fatalf("could not parse marker out of patch:\n%s", probe.Diff.Patch)
+	}
+	if kind != "patch" {
+		t.Errorf("backstop marker kind = %q, want patch", kind)
+	}
+	overflow, ok := store.blobs[hash]
+	if !ok {
+		t.Fatalf("marker hash %q not found in store", hash)
+	}
+	wantOverflow := huge[diffPayloadCeiling:]
+	if string(overflow) != wantOverflow {
+		t.Errorf("backstop overflow round trip mismatch: got %d bytes, want %d", len(overflow), len(wantOverflow))
+	}
+}
+
+// diffPayloadProbe decodes just enough of a gate payload to inspect the
+// injected diff — JSON-decoding rather than substring-matching the raw
+// payload, since json.Marshal HTML-escapes the '<'/'>' in a retrieve marker.
+type diffPayloadProbe struct {
+	Diff struct {
+		Files     []string `json:"files"`
+		Stat      string   `json:"stat"`
+		Patch     string   `json:"patch"`
+		Truncated bool     `json:"truncated"`
+	} `json:"diff"`
+}
+
+func decodeDiffProbe(t *testing.T, payload string) diffPayloadProbe {
+	t.Helper()
+	var p diffPayloadProbe
+	if err := json.Unmarshal([]byte(payload), &p); err != nil {
+		t.Fatalf("decode payload: %v\n%s", err, payload)
+	}
+	return p
+}
+
+// extractMarker pulls the first <<ccr:...>> marker out of s.
+func extractMarker(t *testing.T, s string) string {
+	t.Helper()
+	start := strings.Index(s, "<<ccr:")
+	if start < 0 {
+		t.Fatalf("no marker found in:\n%s", s)
+	}
+	end := strings.Index(s[start:], ">>")
+	if end < 0 {
+		t.Fatalf("unterminated marker in:\n%s", s)
+	}
+	return s[start : start+end+2]
 }
 
 func TestSetReviewerModel(t *testing.T) {

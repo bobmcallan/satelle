@@ -45,6 +45,12 @@ func compactRequested(cmd *cobra.Command, verbName string) bool {
 	if v, err := cmd.Flags().GetBool("json"); err == nil && v {
 		return false
 	}
+	// --full (story diff only — absent elsewhere, GetBool errors and is
+	// ignored) skips BOTH noise-stripping and ranking, printing the raw patch
+	// (sty_918e2086 AC3).
+	if v, err := cmd.Flags().GetBool("full"); err == nil && v {
+		return false
+	}
 	a, err := appFrom(cmd)
 	if err != nil || a == nil {
 		return false
@@ -94,6 +100,9 @@ func renderCompactDiff(cfg config.OutputConfig, raw json.RawMessage, off retriev
 		return "", false
 	}
 	compacted := compact.CompactPatch(patch, cfg.NoisePatterns, off)
+	if cfg.DiffRank.Enabled {
+		compacted = compact.RankPatch(compacted, cfg.DiffRank.Resolve(), off)
+	}
 	compacted = compact.Fold(compacted, compact.FoldRepeats(compacted, cfg.ResolveRepeatMin()),
 		func(s string) (string, error) { return compact.UnfoldRepeats(s), nil })
 

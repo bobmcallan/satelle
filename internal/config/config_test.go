@@ -383,6 +383,69 @@ func TestLoadOutputConfig(t *testing.T) {
 	}
 }
 
+// TestLoadOutputDiffRankConfig (sty_918e2086 AC1): every RankPatch knob comes
+// from [output.diff_rank], the zero value disables ranking, and Resolve maps
+// the table onto compact.RankConfig.
+func TestLoadOutputDiffRankConfig(t *testing.T) {
+	repo := t.TempDir()
+	satelleDir := filepath.Join(repo, ".satelle")
+	if err := os.MkdirAll(satelleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	committed := "[output.diff_rank]\n" +
+		"enabled = true\n" +
+		"passthrough_lines = 50\n" +
+		"max_files = 20\n" +
+		"max_hunks_per_file = 10\n" +
+		"context_lines = 2\n" +
+		"priority_patterns = [\"(?i)error\", \"(?i)todo|fixme|bug|fix\", \"(?i)security|auth|secret\"]\n"
+	if err := os.WriteFile(filepath.Join(satelleDir, ConfigName), []byte(committed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(filepath.Join(satelleDir, ConfigName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Output.DiffRank.Enabled {
+		t.Fatal("enabled did not parse true")
+	}
+	rc := cfg.Output.DiffRank.Resolve()
+	if rc.PassthroughLines != 50 || rc.MaxFiles != 20 || rc.MaxHunksPerFile != 10 || rc.ContextLines != 2 {
+		t.Errorf("Resolve() = %+v, want the authored thresholds — none may be a Go constant", rc)
+	}
+	if len(rc.PriorityPatterns) != 3 {
+		t.Errorf("PriorityPatterns = %v, want 3 authored patterns", rc.PriorityPatterns)
+	}
+
+	var empty Config
+	if empty.Output.DiffRank.Enabled {
+		t.Error("zero-value DiffRankConfig must be disabled — the binary ships no ranking default")
+	}
+	if zero := empty.Output.DiffRank.Resolve(); zero.MaxFiles != 0 || zero.MaxHunksPerFile != 0 {
+		t.Errorf("Resolve() on a disabled table = %+v, want the zero compact.RankConfig", zero)
+	}
+}
+
+// TestLoadRefusesInvalidDiffRankPattern (sty_918e2086, architecture note c):
+// an unparseable priority_patterns regex fails config Load itself, rather
+// than RankPatch silently dropping its bonus at gate/render time.
+func TestLoadRefusesInvalidDiffRankPattern(t *testing.T) {
+	repo := t.TempDir()
+	satelleDir := filepath.Join(repo, ".satelle")
+	if err := os.MkdirAll(satelleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	committed := "[output.diff_rank]\n" +
+		"enabled = true\n" +
+		"priority_patterns = [\"(unterminated\"]\n"
+	if err := os.WriteFile(filepath.Join(satelleDir, ConfigName), []byte(committed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Load(filepath.Join(satelleDir, ConfigName)); err == nil {
+		t.Fatal("Load must refuse an unparseable priority_patterns regex")
+	}
+}
+
 func TestIsAgentCaller(t *testing.T) {
 	t.Setenv(ScratchEnv, "")
 	t.Setenv("CLAUDECODE", "")

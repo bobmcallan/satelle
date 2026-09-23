@@ -15,9 +15,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/bobmcallan/satelle/internal/compact"
 )
 
 // Defaults applied when a key is unset. Every setting has one, so a repo with
@@ -177,6 +180,50 @@ type OutputConfig struct {
 	// no file is treated as noise — the binary ships no filename pattern of
 	// its own (sty_75b76691 AC2); a repo seeds its own (e.g. "go.sum").
 	NoisePatterns []string `toml:"noise_patterns"`
+	// DiffRank tunes the ranked diff compressor (internal/compact.RankPatch,
+	// sty_918e2086) that replaces the gate payload's unranked 64KiB cut, and —
+	// when enabled — story diff --patch's own rendering. Disabled (the zero
+	// value) keeps ranking off everywhere; the binary ships no threshold, cap,
+	// or pattern of its own.
+	DiffRank DiffRankConfig `toml:"diff_rank"`
+}
+
+// DiffRankConfig is the [output.diff_rank] table: every tunable
+// internal/compact.RankPatch applies (sty_918e2086). A disabled or absent
+// table (Enabled=false, the zero value) is a safe no-op — Resolve returns the
+// zero compact.RankConfig, which RankPatch itself treats as "do nothing".
+type DiffRankConfig struct {
+	Enabled bool `toml:"enabled"`
+	// PassthroughLines: a patch with this many lines or fewer, or that fails
+	// to parse as a unified diff, rides unranked.
+	PassthroughLines int `toml:"passthrough_lines"`
+	// MaxFiles is the largest number of file sections kept; the rest are
+	// dropped behind one retrieval marker per file.
+	MaxFiles int `toml:"max_files"`
+	// MaxHunksPerFile is the largest number of hunks kept per surviving file.
+	MaxHunksPerFile int `toml:"max_hunks_per_file"`
+	// ContextLines is how many unchanged lines are kept on each side of a
+	// change within a kept hunk.
+	ContextLines int `toml:"context_lines"`
+	// PriorityPatterns are regexes; a changed line matching one raises that
+	// hunk's retention score. Validated (compiled) at config Load time — an
+	// invalid pattern fails the load rather than silently losing its bonus.
+	PriorityPatterns []string `toml:"priority_patterns"`
+}
+
+// Resolve returns the compact.RankConfig this table configures, or the zero
+// value when disabled.
+func (c DiffRankConfig) Resolve() compact.RankConfig {
+	if !c.Enabled {
+		return compact.RankConfig{}
+	}
+	return compact.RankConfig{
+		PassthroughLines: c.PassthroughLines,
+		MaxFiles:         c.MaxFiles,
+		MaxHunksPerFile:  c.MaxHunksPerFile,
+		ContextLines:     c.ContextLines,
+		PriorityPatterns: c.PriorityPatterns,
+	}
 }
 
 // Compact-rendering defaults applied when the corresponding OutputConfig
@@ -696,7 +743,22 @@ func Load(explicitPath string) (Config, string, error) {
 	if err := ValidateEngagement(cfg, path); err != nil {
 		return Config{}, path, err
 	}
+	if err := validateDiffRankPatterns(cfg, path); err != nil {
+		return Config{}, path, err
+	}
 	return cfg, path, nil
+}
+
+// validateDiffRankPatterns refuses an unparseable [output.diff_rank]
+// priority_patterns regex at load time, rather than letting RankPatch drop it
+// silently at gate/render time (sty_918e2086).
+func validateDiffRankPatterns(cfg Config, path string) error {
+	for _, p := range cfg.Output.DiffRank.PriorityPatterns {
+		if _, err := regexp.Compile(p); err != nil {
+			return fmt.Errorf("config: %s: [output.diff_rank] priority_patterns %q: %w", path, p, err)
+		}
+	}
+	return nil
 }
 
 // resolvePath finds the committed config: an explicit path, then the

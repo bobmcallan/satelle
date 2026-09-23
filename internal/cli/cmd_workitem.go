@@ -561,7 +561,7 @@ found so the check is scriptable.`,
 // Id may be omitted when stdin is a transition payload `{story:{id},…}` so gate
 // functional checks can invoke without shell id plumbing.
 func storyDiffCommand() *cobra.Command {
-	var patch, recorded, includeSubstrate bool
+	var patch, recorded, includeSubstrate, full bool
 	cmd := &cobra.Command{
 		Use:   "diff [id]",
 		Short: "List files changed since engagement baseline (enumeration only)",
@@ -621,6 +621,7 @@ the tree the story was engaged from and refuses elsewhere.`,
 	cmd.Flags().BoolVar(&patch, "patch", false, "include full unified patch since baseline (tracked)")
 	cmd.Flags().BoolVar(&recorded, "recorded", false, "union change_record file lists instead of live git re-derive (sty_948ad5df)")
 	cmd.Flags().BoolVar(&includeSubstrate, "include-substrate", false, "opt-in: union substrate mtime leg (authored dirs + data dir); default live path stays git-only")
+	cmd.Flags().BoolVar(&full, "full", false, "skip compact rendering (noise-strip and ranking) and print the raw patch (sty_918e2086)")
 	return cmd
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/agentcli"
 	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/app"
+	"github.com/bobmcallan/satelle/internal/compact"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docstory"
 	"github.com/bobmcallan/satelle/internal/hosted"
@@ -273,6 +274,12 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// receive the live slice in the transition payload. Enumeration
 			// only; a missing baseline is a marker, never a refused gate.
 			rev.SetDiffResolver(diffResolver())
+			// Ranked diff compressor (sty_918e2086): noise-strip then ranked hunk
+			// selection are the gate payload's PRIMARY patch reducer; the backstop
+			// offloader keeps the diffPayloadCeiling ceiling's overflow recoverable
+			// even when the compressor alone was not enough (or is unwired).
+			rev.SetDiffCompressor(diffCompressor(a))
+			rev.SetDiffOffloader(diffOffloader(a))
 			rev.SetMessagesResolver(messagesResolver())
 			rev.SetArtifactAttacher(verb.AttachItemDoc)
 			// Structured retry/failure/timeout telemetry (sty_b73c3236): the engine
@@ -537,6 +544,40 @@ func diffResolver() func(ctx context.Context, itemID string) *agentstep.DiffStat
 			Note:     res.Note,
 			Source:   res.Source,
 		}
+	}
+}
+
+// diffCompressor wires the ranked diff compressor (sty_918e2086) a gate
+// payload runs on its patch before diffPayloadCeiling: order-3 noise
+// stripping (CompactPatch, cfg.NoisePatterns) always runs first, then order-4
+// ranked hunk selection (RankPatch) when [output.diff_rank] is enabled. Both
+// offload what they drop through the SAME retrieval store every other
+// offload/retrieve path in this codebase shares (retrieveAdapter), keyed to
+// itemID so retention/pruning covers it.
+func diffCompressor(a *app.App) func(ctx context.Context, itemID, patch string) string {
+	return func(ctx context.Context, itemID, patch string) string {
+		if a.Store == nil || a.Store.Retrieve == nil {
+			return patch
+		}
+		off := retrieveAdapter{ctx: ctx, store: a.Store.Retrieve, storyID: itemID}
+		out := compact.CompactPatch(patch, a.Config.Output.NoisePatterns, off)
+		if !a.Config.Output.DiffRank.Enabled {
+			return out
+		}
+		return compact.RankPatch(out, a.Config.Output.DiffRank.Resolve(), off)
+	}
+}
+
+// diffOffloader wires the store fillDiff's ceiling backstop uses to keep an
+// oversized patch's overflow tail recoverable (sty_918e2086) — the same
+// retrieval store diffCompressor's offloads share, so a marker either one
+// leaves resolves through the same `satelle retrieve <hash>` path.
+func diffOffloader(a *app.App) func(ctx context.Context, itemID string, content []byte) (string, error) {
+	return func(ctx context.Context, itemID string, content []byte) (string, error) {
+		if a.Store == nil || a.Store.Retrieve == nil {
+			return "", fmt.Errorf("diff offloader: no retrieval store wired")
+		}
+		return retrieveAdapter{ctx: ctx, store: a.Store.Retrieve, storyID: itemID}.Put(content)
 	}
 }
 

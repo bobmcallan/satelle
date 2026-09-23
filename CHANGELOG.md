@@ -1,3 +1,21 @@
+## [0.0.523] - 2026-09-23
+
+### Changed
+- **The gate payload's diff is now ranked rather than cut blindly at 64KiB.** When `[output.diff_rank]` in satelle.toml enables it (`passthrough_lines`, `max_files`, `max_hunks_per_file`, `context_lines`, `priority_patterns`), the patch gets noise stripping followed by ranked selection:
+  - the files with the most changes are kept;
+  - within each file, the first hunk, the last hunk, and the highest-scored hunks (by change count plus configured priority patterns) are kept;
+  - unchanged context is trimmed, with hunk headers rewritten.
+
+  Every dropped file, hunk or trimmed context carries a marker that `satelle retrieve` resolves byte-exactly. The file list and stat caps are unchanged. The 64KiB ceiling remains as a last-resort backstop, and its overflow is now offloaded behind a marker instead of lost. The binary ships ranking off, with no thresholds or patterns. (sty_918e2086)
+
+### Added
+- **`satelle story diff --full`** prints the raw patch, skipping noise stripping and ranking. (sty_918e2086)
+
+## [serve-v0.0.58] - 2026-09-23
+
+### Changed
+- **The serve channel picks up the `[output.diff_rank]` config.** (sty_918e2086)
+
 ## [0.0.522] - 2026-09-23
 
 ### Added

@@ -1,14 +1,18 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satelle/internal/compact"
 	"github.com/bobmcallan/satelle/internal/config"
@@ -357,5 +361,149 @@ func TestCompactStoryDiffOffloadsNoiseAndRetrieves(t *testing.T) {
 	}
 	if !strings.Contains(got, "example/one v1.0.1") {
 		t.Errorf("satelle retrieve did not return the exact original hunk: %q", got)
+	}
+}
+
+// rankFixturePatch builds a 10-file patch where each file's changed-line
+// count strictly decreases (f0 the most, f9 the fewest) and every changed
+// line carries enough padding that dropping the 8 smallest files under a
+// MaxFiles=2 cap shrinks the patch by far more than the CLI's JSON-wrapping
+// overhead — renderCompactDiff only folds when the result is provably
+// smaller (AC3 shares that guard with order-3 noise-stripping).
+func rankFixturePatch() string {
+	sec := func(name string, n int) string {
+		var b strings.Builder
+		fmt.Fprintf(&b, "diff --git a/%s b/%s\n--- a/%s\n+++ b/%s\n@@ -1,%d +1,%d @@\n", name, name, name, name, n, n)
+		for i := 0; i < n; i++ {
+			fmt.Fprintf(&b, "+%s line %d padded with enough filler text to make dropping this file matter\n", name, i)
+		}
+		return b.String()
+	}
+	var b strings.Builder
+	for i := 0; i < 10; i++ {
+		b.WriteString(sec(fmt.Sprintf("f%d.go", i), 20-2*i))
+	}
+	return b.String()
+}
+
+// TestCompactStoryDiffRanksWhenEnabledAndOffloadsDroppedFile (sty_918e2086
+// AC3): with [output.diff_rank] enabled, renderCompactDiff applies ranking
+// after noise-stripping — a file beyond max_files is dropped behind a marker
+// `satelle retrieve` resolves to its exact original section.
+func TestCompactStoryDiffRanksWhenEnabledAndOffloadsDroppedFile(t *testing.T) {
+	tempRepo(t)
+	id := createStory(t, "diff rank fixture")
+	patch := rankFixturePatch()
+
+	files := make([]string, 10)
+	for i := range files {
+		files[i] = fmt.Sprintf("f%d.go", i)
+	}
+	raw, err := json.Marshal(map[string]any{
+		"story_id":     id,
+		"baseline_sha": "deadbeef",
+		"files":        files,
+		"stat":         "10 files changed",
+		"patch":        patch,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := store.Open(runtimeDBPath(t))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+	off := retrieveAdapter{ctx: context.Background(), store: db.Retrieve, storyID: id}
+
+	var cfg config.OutputConfig
+	cfg.DiffRank = config.DiffRankConfig{
+		Enabled:          true,
+		PassthroughLines: 0,
+		MaxFiles:         2,
+		MaxHunksPerFile:  5,
+	}
+	out, ok := renderCompactDiff(cfg, raw, off)
+	if !ok {
+		t.Fatalf("renderCompactDiff: did not fold")
+	}
+	if !strings.Contains(out, "f0.go") || !strings.Contains(out, "f1.go") {
+		t.Errorf("ranked output missing kept files:\n%s", out)
+	}
+	for i := 2; i < 10; i++ {
+		if strings.Contains(out, fmt.Sprintf("f%d.go line 0", i)) {
+			t.Errorf("ranked output still carries dropped file f%d.go's body inline:\n%s", i, out)
+		}
+	}
+	hashes := retrieve.FindHashes(out)
+	if len(hashes) != 8 {
+		t.Fatalf("want one offload marker per dropped file (8), got %d in:\n%s", len(hashes), out)
+	}
+	f9Idx := strings.Index(out, "dropped file f9.go")
+	if f9Idx < 0 {
+		t.Fatalf("no dropped-file marker for f9.go in:\n%s", out)
+	}
+	f9Hash := retrieve.FindHashes(out[f9Idx:])[0]
+	got, err := runRoot(t, "retrieve", f9Hash)
+	if err != nil {
+		t.Fatalf("retrieve %s: %v\n%s", f9Hash, err, got)
+	}
+	if !strings.Contains(got, "f9.go line 0") || !strings.Contains(got, "f9.go line 1") {
+		t.Errorf("satelle retrieve did not return the exact dropped file section: %q", got)
+	}
+
+	// With ranking disabled (the zero value — see TestCompactStoryDiffOffloadsNoiseAndRetrieves,
+	// which uses the same zero-value DiffRank and folds on noise-stripping
+	// alone), RankPatch never runs — order-3 noise-stripping is the only
+	// reducer, matching this story's "disabled = today's behaviour" contract.
+	var disabledCfg config.OutputConfig
+	if disabledCfg.DiffRank.Enabled {
+		t.Fatal("zero-value OutputConfig must have ranking disabled")
+	}
+}
+
+// TestStoryDiffFullFlagBypassesCompactLikeJSON (sty_918e2086 AC3): --full
+// skips compact rendering (noise-strip AND ranking) the same way --json
+// always has, so its output is the raw verb response, byte-identical either
+// way.
+func TestStoryDiffFullFlagBypassesCompactLikeJSON(t *testing.T) {
+	raw := json.RawMessage(`{"patch":"diff --git a/x.go b/x.go\nindex 111..222 100644\n+hello\n","files":["x.go"]}`)
+
+	newCmd := func(flag string) (*cobra.Command, *bytes.Buffer) {
+		cmd := &cobra.Command{Use: "diff"}
+		cmd.Flags().Bool("json", false, "")
+		cmd.Flags().Bool("full", false, "")
+		cmd.Flags().Bool("compact", false, "")
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		if flag != "" {
+			if err := cmd.Flags().Set(flag, "true"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return cmd, &buf
+	}
+
+	jsonCmd, jsonBuf := newCmd("json")
+	if err := renderResponse(jsonCmd, "story-diff", "", raw); err != nil {
+		t.Fatalf("renderResponse --json: %v", err)
+	}
+	fullCmd, fullBuf := newCmd("full")
+	if err := renderResponse(fullCmd, "story-diff", "", raw); err != nil {
+		t.Fatalf("renderResponse --full: %v", err)
+	}
+	if jsonBuf.String() != fullBuf.String() {
+		t.Errorf("--full output differs from --json output:\n--json: %s\n--full: %s", jsonBuf.String(), fullBuf.String())
+	}
+
+	var want bytes.Buffer
+	plainCmd, _ := newCmd("")
+	plainCmd.SetOut(&want)
+	if err := printJSON(plainCmd, raw); err != nil {
+		t.Fatal(err)
+	}
+	if fullBuf.String() != want.String() {
+		t.Errorf("--full output is not the raw verb response:\ngot:  %s\nwant: %s", fullBuf.String(), want.String())
 	}
 }

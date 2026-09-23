@@ -84,6 +84,57 @@ A string cell over `long_cell_bytes` is replaced with a quoted retrieve marker
 An offload never applies unless the marker line it leaves behind is actually
 shorter than what it replaces — a tiny hunk stays inline.
 
+## Ranked diff compression (sty_918e2086)
+
+`[output.diff_rank]` layers a ranked reducer on top of the diff patch form
+above — order-3 noise-stripping (the previous section) always runs first,
+then this ranking, so `go.sum` never consumes a file slot ranking would
+otherwise spend on real content. It replaces the gate payload's old unranked
+byte cut, and — when enabled — also applies to `story diff --patch`'s compact
+rendering:
+
+```toml
+[output.diff_rank]
+enabled = true
+passthrough_lines = 50
+max_files = 20
+max_hunks_per_file = 10
+context_lines = 2
+priority_patterns = ["(?i)error", "(?i)todo|fixme|bug|fix", "(?i)security|auth|secret"]
+```
+
+- A patch at or under `passthrough_lines` lines, or one that fails to parse as
+  a unified diff, rides through unranked.
+- Otherwise, the `max_files` files with the most changed lines are kept (in
+  original order); every other file is dropped behind one retrieve marker
+  naming its path and changed-line count.
+- Within each kept file, up to `max_hunks_per_file` hunks are kept: always the
+  first and the last, then the highest-scored remainder. A contiguous run of
+  dropped hunks collapses to one marker.
+- A hunk's score is `0.03` per changed line (capped at `0.3`), `+0.3` when a
+  changed line matches a `priority_patterns` regex, the total capped at `1.0`
+  — so a one-line `// TODO` can outrank a much larger plain hunk.
+- Within a kept hunk, a run of unchanged context longer than `context_lines`
+  on either side of a change is trimmed to that width; the trimmed run is
+  offloaded behind a marker and the hunk's `@@ -a,b +c,d @@` header is
+  rewritten to match.
+
+Every threshold, cap, and pattern above is this repo's own configuration —
+`internal/compact.RankPatch` carries no default of its own; an absent or
+`enabled = false` table is a no-op, so a repo that never sets `[output.diff_rank]`
+sees no change from before this story.
+
+On the gate payload, ranking (when enabled) is the PRIMARY reducer for the
+patch a reviewer sees; the existing byte ceiling stays only as a backstop, and
+even that backstop now offloads its overflow tail behind a marker instead of
+dropping it silently. `diffFilesCount` (500) and `diffStatCeiling` (4 KiB) —
+which bound the separate files list and stat summary, not the patch — are
+unchanged by this story.
+
+`story diff --patch --full` skips BOTH noise-stripping and ranking, printing
+the verb's raw patch untouched — reach for it when you need to see exactly
+what git produced rather than what a reviewer would.
+
 ## Retrieving offloaded content
 
 An offloaded cell or hunk leaves an EXTENDED retrieve marker:

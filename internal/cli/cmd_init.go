@@ -1639,6 +1639,20 @@ stale_after = "24h"
 # long_cell_bytes = 200
 # repeat_min = 3
 # noise_patterns = ["go.sum"]
+
+# [output.diff_rank] — ranked diff compressor (sty_918e2086): the gate
+# payload's patch reducer (replacing an unranked byte cut), and — when
+# enabled — story diff --patch's own compact rendering. Disabled (unset, or
+# enabled = false) leaves diffPayloadCeiling's byte backstop as the only
+# reducer, as it always has been; the binary ships no threshold, cap, or
+# pattern of its own. --full always bypasses this for the raw patch.
+# [output.diff_rank]
+# enabled = true
+# passthrough_lines = 50           # a patch at or under this many lines rides unranked
+# max_files = 20                   # keep the N files with the most changed lines
+# max_hunks_per_file = 10          # per file: first, last, then top-scored up to N
+# context_lines = 2                # unchanged lines kept on each side of a change
+# priority_patterns = ["(?i)error", "(?i)todo|fixme|bug|fix", "(?i)security|auth|secret"]
 `
 
 // scaffoldAgentsToml is the documented agents layer a fresh init writes. The
