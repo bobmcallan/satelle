@@ -858,6 +858,19 @@ satelle:
   `content_regex` (the default — the binary ships no opinion, not even a Go
   test-file rule) disable the sweep entirely, with no extra `git` cost.
 
+- **Clearing debris the sweep did not catch (sty_d74e9b1b).** A coder can create
+  files but has no grant to delete them, and the scope gate rejects untracked
+  debris before anyone may delete. `satelle story tidy <id> <path>...` MOVES
+  such paths into a story-level tidy area (`<tmp>/satelle/<repo-key>/<story>/tidy/`,
+  a sibling of the per-dispatch scratch dirs, so it outlives them) and writes one
+  `tidy` ledger row per path; `satelle story untidy <id> [<path>...|--all]` moves
+  them back and writes `tidy_restore` rows. It works at any performing step, from
+  the driver or a dispatched session, and is all-or-nothing: a path that is
+  tracked, exists in HEAD or at the engagement baseline, predates the engagement
+  baseline, is missing, or lies outside the worktree refuses the whole call with
+  a reason per path, and untidy never overwrites. The scope-review skill
+  ends a debris rejection with the ready-to-run command.
+
 ## What makes a step safe to dispatch (sufficiency)
 
 - **Give the step a rubric.** A dispatched step needs `skills: <name>`.

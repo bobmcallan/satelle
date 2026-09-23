@@ -6,7 +6,6 @@ package agentstep
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -15,13 +14,6 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/config"
 )
-
-// repoKey is a short, stable, filesystem-safe stand-in for the repo root, so
-// scratch dirs for different repos never collide under the shared temp root.
-func repoKey(repoRoot string) string {
-	sum := sha256.Sum256([]byte(filepath.Clean(repoRoot)))
-	return hex.EncodeToString(sum[:])[:12]
-}
 
 // dispatchID is a timestamp plus a random suffix — unique per call, and sortable.
 func dispatchID() string {
@@ -44,7 +36,7 @@ func storyComponent(storyID string) string {
 // 0700, and returns its path. repoRoot may be empty in tests; os.TempDir()
 // still anchors the tree.
 func newScratch(repoRoot, storyID string) (string, error) {
-	dir := filepath.Join(os.TempDir(), "satelle", repoKey(repoRoot), storyComponent(storyID), dispatchID())
+	dir := filepath.Join(config.StoryScratchDirIn(os.TempDir(), repoRoot, storyComponent(storyID)), dispatchID())
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("scratch: create %s: %w", dir, err)
 	}

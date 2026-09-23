@@ -58,6 +58,25 @@ compact-output`); --json gives the plain form.
  - instruction: **revert or split** into the owning story — do not cancel
  siblings as "superseded" to hide bundling.
 
+### Stray untracked files — end the notes with the fix
+
+**Untracked debris.** An untracked file or directory in `files` that no AC or
+mechanical collateral explains (evidence dumps, scratch tests, generated
+fixtures) is debris the story created. A dispatched coder can create files but
+cannot delete them, so tell it how to clear them. When you reject for such
+paths, the notes **must end with a final line of exactly this form**, naming
+every offending path from the diff enumeration:
+
+```
+Fix: satelle story tidy <story.id> <path1> <path2> ...
+```
+
+`satelle story tidy` MOVES the paths into a story-level tidy area and records
+each on the ledger (`satelle story untidy <story.id> --all` restores them); it
+refuses tracked files and files that predate the engagement. Put that line last
+so it can be run as written. It is a hint, not a verdict: judge as usual, and
+add the line only when untracked debris is part of why you rejected.
+
 Fair gate: ACs as written, not perfectionism. Docs/tests for *this* slice are
 in-scope. Implementing five sibling stories under one engage is the canonical
 reject.

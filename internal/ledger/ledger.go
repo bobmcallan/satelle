@@ -108,6 +108,11 @@ const (
 	// engagement_sha}. Not KindComment — a directed engagement-scoped row is
 	// not a human comment.
 	KindAgentMessage = "agent_message"
+	// KindTidy / KindTidyRestore record one file `satelle story tidy` moved out
+	// of the tree, and its later restore (sty_d74e9b1b). Payload: src, dst,
+	// action — both absolute, so a restore needs nothing else.
+	KindTidy        = "tidy"
+	KindTidyRestore = "tidy_restore"
 )
 
 // Entry is one row of the evidence ledger. StoryID/ProjectID are optional

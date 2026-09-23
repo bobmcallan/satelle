@@ -1,3 +1,17 @@
+## [0.0.525] - 2026-09-24
+
+### Added
+- **`satelle story tidy <id> <path>...` clears stray files a story created without deleting them.** A dispatched coder can create files but not delete them, so this breaks the scope-gate deadlock over untracked debris.
+  - **Reversible.** Each path moves into a story-level tidy area under the satelle scratch directory, with one `tidy` ledger row per file. `satelle story untidy <id> [<path>...|--all]` moves it back and never overwrites.
+  - **Safe by construction.** A path is refused, and nothing moves, when it is tracked, exists in HEAD or at the engagement baseline, predates the engagement, or lies outside the worktree.
+  - **Usable at any performing step**, from the driver or a dispatched session. The edit gate does not block it.
+  - **Scope-review hint.** A scope-review rejection for untracked debris ends with a ready-to-run `Fix: satelle story tidy …` line, so the relay coder can clear it without help. (sty_d74e9b1b)
+
+## [serve-v0.0.60] - 2026-09-24
+
+### Changed
+- **The serve channel picks up the `tidy` / `tidy_restore` ledger kinds and the shared scratch-path helper.** (sty_d74e9b1b)
+
 ## [0.0.524] - 2026-09-24
 
 ### Changed

@@ -2,7 +2,6 @@ package agentstep
 
 import (
 	"context"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/fsmove"
 )
 
 // untrackedSnapshot lists repo-relative untracked paths under repoRoot. It is
@@ -102,37 +102,11 @@ func SweepLeftovers(repoRoot, scratch string, before map[string]bool, rule confi
 	for _, relpath := range matched {
 		src := filepath.Join(repoRoot, relpath)
 		dst := filepath.Join(scratch, "leftovers", relpath)
-		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		if err := fsmove.Move(src, dst); err != nil {
 			return matched, err
-		}
-		if err := os.Rename(src, dst); err != nil {
-			if cerr := copyThenRemove(src, dst); cerr != nil {
-				return matched, cerr
-			}
 		}
 	}
 	return matched, nil
-}
-
-// copyThenRemove is os.Rename's cross-device fallback.
-func copyThenRemove(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
-	}
-	if err := out.Close(); err != nil {
-		return err
-	}
-	return os.Remove(src)
 }
 
 // ledgerLeftovers records the leftovers sweep outcome, best-effort, so it is
