@@ -39,6 +39,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/docstory"
 	"github.com/bobmcallan/satelle/internal/lease"
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
 	"github.com/bobmcallan/satelle/internal/workitem"
@@ -491,13 +492,40 @@ func sessionIDFromHook(raw []byte) string {
 func bindSessionID(raw []byte) string {
 	if id := config.SessionFromEnv(); id != "" {
 		config.PublishSession(id)
+		publishInLoopModel(raw, id)
 		return id
 	}
 	if id := sessionIDFromHook(raw); id != "" {
 		config.PublishSession(id)
+		publishInLoopModel(raw, id)
 		return id
 	}
 	return config.ResolveSession()
+}
+
+// publishInLoopModel captures this hook invocation's caller model as the
+// in-loop session tier config.SelectModel's inherited/creator resolution
+// reads (sty_7069bced / epic:model-selection order:3). Runs on every hook
+// invocation that (re)binds a session identity — unconditional, not gated
+// behind gate.no_implement_models the way resolveCaller's ONLY other caller is.
+//
+// Harness is derived the same way a PreToolUse deny already picks one
+// (hookHarnessFlag, else harnessFromEvent sniffing the event envelope) —
+// never hardcoded to "claude", so a wrapper or a non-Claude harness is not
+// misreported as Claude's own executable (architecture review advisory,
+// sty_7069bced). Best-effort and fail-open: an unresolvable model publishes
+// "unknown" rather than skipping the write, so the resolver sees a definite
+// "nothing reported" instead of stale/absent data.
+func publishInLoopModel(raw []byte, sessionID string) {
+	model := strings.TrimSpace(resolveCaller(raw, osCallerFS{}).Model)
+	if model == "" {
+		model = "unknown"
+	}
+	h := hookHarnessFlag
+	if h == "" {
+		h = harnessFromEvent(raw)
+	}
+	config.PublishSessionModel(sessionID, verb.SessionModelRoleInLoop, model, h)
 }
 
 // resolveSeat is the shared seat lookup. When touch is true and a seat is

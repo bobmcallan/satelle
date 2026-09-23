@@ -45,6 +45,7 @@ See satelle help agent-dispatch.`,
 		RunE:        runStoryRework,
 	}
 	cmd.Flags().Int("rounds", 0, "lower the step's authored round budget for this run (never raises it)")
+	cmd.Flags().String("model", "", "model for the coder session, overriding agents.toml (recorded with source=agent)")
 	return cmd
 }
 
@@ -173,12 +174,14 @@ func runStoryRework(cmd *cobra.Command, args []string) error {
 	// coder anything (sty_8e0b29a0). The relay marker rides only the coder
 	// spawn: ACP/stream snapshot os.Environ at open, and the consultant must
 	// not inherit a marker that names the coder binding.
+	modelFlag, _ := cmd.Flags().GetString("model")
+
 	var coder agentcli.Session
 	err = withRelayMarker(rw.CoderBinding, it.ID, func() error {
 		var openErr error
 		coder, openErr = reworkSessionOpener(ctx, eng, rw.CoderBinding, agentstep.SessionRoleDriving, it,
 			reworkCoderPolicy(rw.CoderBinding, coderBinding.Tools, seat, invocationRecorder(coderLedger)),
-			reworkEventHandler(coderLedger))
+			reworkEventHandler(coderLedger), modelFlag)
 		return openErr
 	})
 	if err != nil {
@@ -188,7 +191,7 @@ func runStoryRework(cmd *cobra.Command, args []string) error {
 
 	consultant, err := reworkSessionOpener(ctx, eng, rw.ConsultBinding, agentstep.SessionRoleConsult, it,
 		reworkConsultPolicy(invocationRecorder(consultLedger)),
-		reworkEventHandler(consultLedger))
+		reworkEventHandler(consultLedger), "")
 	if err != nil {
 		return err
 	}
@@ -362,6 +365,9 @@ func withRelayMarker(binding, item string, fn func() error) error {
 
 // reworkSessionOpener opens a live session for the rework relay. Tests may
 // replace it to observe the process env at each open (sty_7567f047 AC3).
+// modelOverride is the --model flag value for THIS open (sty_7069bced) —
+// recorded with source=agent when non-empty. Only the coder open receives it;
+// the consultant always opens with an empty override.
 var reworkSessionOpener = func(
 	ctx context.Context,
 	eng *agentstep.Engine,
@@ -370,6 +376,7 @@ var reworkSessionOpener = func(
 	it workitem.Item,
 	pol agentcli.PermissionPolicy,
 	onEvent agentcli.EventHandler,
+	modelOverride string,
 ) (agentcli.Session, error) {
-	return eng.OpenSessionAs(ctx, binding, role, it, pol, onEvent)
+	return eng.OpenSessionAsWithModel(ctx, binding, role, it, pol, onEvent, modelOverride)
 }

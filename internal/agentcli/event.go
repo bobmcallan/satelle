@@ -25,6 +25,12 @@ const (
 	EventUsage             EventKind = "usage"
 	EventCompleted         EventKind = "completed"
 	EventFailed            EventKind = "failed"
+	// EventSessionInit fires once, when a stream-json transport's system/init
+	// message names the model the session actually opened with (sty_7069bced)
+	// — the orchestrator-session capture config.SelectModel's inherited tier
+	// reads. Only the stream transport emits it (ACP/command report no model
+	// at open); a caller that never sees one records the session as unknown.
+	EventSessionInit EventKind = "session_init"
 )
 
 // Event is the normalized execution record emitted by command and ACP runners.
@@ -39,6 +45,9 @@ type Event struct {
 	Usage  *UsageResult      `json:"usage,omitempty"`
 	Error  string            `json:"error,omitempty"`
 	Meta   map[string]string `json:"meta,omitempty"`
+	// Model is set on EventSessionInit only: the model the transport's own
+	// init message reported the session opened with (sty_7069bced).
+	Model string `json:"model,omitempty"`
 }
 
 // EventHandler receives normalized events as they happen. Implementations may

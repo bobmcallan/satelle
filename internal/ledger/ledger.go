@@ -95,6 +95,14 @@ const (
 	// correction, not merely that one happened. Enumeration only — the accept/
 	// reject decision belongs to the authored amend_review gate.
 	KindDefinitionAmended = "definition_amended"
+	// KindSessionModel records one session role's captured model for a story —
+	// the in-loop engaging/creating session, the orchestrator (story chat)
+	// session, or the story-creating session (sty_7069bced /
+	// epic:model-selection order:3). Payload: {role, model, executable}. model
+	// is "unknown" when the harness reported none. Enumeration only: the
+	// model-selection resolver reads the latest row per role and falls through
+	// on "unknown"/absent — no pass/fail in Go.
+	KindSessionModel = "session_model"
 	// KindAgentMessage is a directed, role-addressed agent message on a story
 	// (sty_2db624d0 / epic:agent-messaging). Payload: {from, to, body,
 	// engagement_sha}. Not KindComment — a directed engagement-scoped row is

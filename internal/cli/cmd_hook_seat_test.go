@@ -13,6 +13,7 @@ import (
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/lease"
 	"github.com/bobmcallan/satelle/internal/store"
+	"github.com/bobmcallan/satelle/internal/verb"
 	"github.com/bobmcallan/satelle/internal/workitem"
 )
 
@@ -176,6 +177,36 @@ func TestBindSessionIDPrefersEnvAndPublishesHook(t *testing.T) {
 	}
 	if got := config.ResolveSession(); got != "sess-hook" {
 		t.Fatalf("hook payload must be published for Acquire, got %q", got)
+	}
+}
+
+// TestBindSessionIDPublishesInLoopModel (sty_7069bced / epic:model-selection
+// order:3): every hook invocation that (re)binds a session identity also
+// captures the caller's model as the in-loop tier — known from the payload,
+// "unknown" when the payload carries none, never silently skipped.
+func TestBindSessionIDPublishesInLoopModel(t *testing.T) {
+	// hookHarnessFlag is a shared package var other hook tests set (--harness);
+	// pin it like they do so this test's expectation does not depend on suite
+	// run order.
+	prevHarness := hookHarnessFlag
+	hookHarnessFlag = ""
+	t.Cleanup(func() { hookHarnessFlag = prevHarness })
+
+	t.Setenv("SATELLE_HOME", t.TempDir())
+	t.Setenv(config.SessionEnv, "sess-model-a")
+	bindSessionID([]byte(`{"session_id":"sess-model-a","model":"claude-opus-5-5"}`))
+	model, exe := config.ResolveSessionModel("sess-model-a", verb.SessionModelRoleInLoop)
+	if model != "claude-opus-5-5" {
+		t.Fatalf("in-loop model = %q, want claude-opus-5-5", model)
+	}
+	if exe != "claude" {
+		t.Fatalf("in-loop executable = %q, want claude (harnessFromEvent default)", exe)
+	}
+
+	t.Setenv(config.SessionEnv, "sess-model-b")
+	bindSessionID([]byte(`{"session_id":"sess-model-b"}`))
+	if model, _ := config.ResolveSessionModel("sess-model-b", verb.SessionModelRoleInLoop); model != "unknown" {
+		t.Fatalf("no resolvable model must publish \"unknown\", got %q", model)
 	}
 }
 

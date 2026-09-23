@@ -871,9 +871,11 @@ routine close step.`,
 		Args:        cobra.ExactArgs(1),
 		Annotations: needsStore(),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return dispatch(cmd, "story-retrospect", map[string]any{"id": args[0]})
+			model, _ := cmd.Flags().GetString("model")
+			return dispatch(cmd, "story-retrospect", map[string]any{"id": args[0], "model": model})
 		},
 	}
+	retrospect.Flags().String("model", "", "model for this dispatch, overriding agents.toml (recorded with source=agent)")
 
 	return []*cobra.Command{estimate, actual, log, cost, resummarise, retrospect}
 }

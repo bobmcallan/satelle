@@ -80,14 +80,23 @@ type Grant struct {
 }
 
 // GateAllocation is one workflow gate/node's resolved binding (sty_a476a2f8).
-// EffectiveModel is the binding's model — agents.toml owns model, not the DOT.
+// EffectiveModel is what actually dispatches (sty_7069bced): the binding's own
+// model= wins outright; a step's model= is a per-dispatch override reported
+// only for a spine PERFORMER node (a gate/edge has no step tier of its own —
+// the retired DOT edge model=, sty_a476a2f8, stays retired). ModelSource names
+// which of the two supplied it, empty when neither did (the inherited/creator/
+// cli-default tiers are runtime-only — they depend on the story's sessions and
+// are not knowable at static validate time).
 type GateAllocation struct {
 	Workflow       string
 	Node           string // state name, "edge:from→to" for edge gates, or "hook:<operation>"
 	Skill          string
 	Agent          string // binding section that will run the gate
 	BindingModel   string
-	EffectiveModel string // same as BindingModel (no DOT override)
+	EffectiveModel string // BindingModel, else the step's model= override
+	// ModelSource is config.ModelSourceBinding, config.ModelSourceStep, or ""
+	// (neither set — validate cannot know the runtime-resolved tiers).
+	ModelSource string
 	// Operation is the lifecycle operation for a HOOK allocation (sty_ede16f51),
 	// empty for a DOT node or edge. Hooks fire outside the status graph, so they
 	// are surfaced alongside gates rather than being invisible.
@@ -367,7 +376,7 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 							doc.Name, st.Name, sec, sec))
 					}
 				}
-				r.Gates = append(r.Gates, gateAlloc(doc.Name, st.Name, st.Skill, sec, bm))
+				r.Gates = append(r.Gates, gateAlloc(doc.Name, st.Name, st.Skill, sec, bm, ""))
 			} else if st.Skill != "" && len(st.On) > 0 {
 				// Plan D2 / sty_a476a2f8: on= marks a scoped GATE (judge); spine
 				// (no on=) with agent=<name> is a PERFORMER. Split before role checks.
@@ -396,7 +405,7 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 								doc.Name, st.Name, sec, sec))
 						}
 					}
-					r.Gates = append(r.Gates, gateAlloc(doc.Name, st.Name, st.Skill, sec, bm))
+					r.Gates = append(r.Gates, gateAlloc(doc.Name, st.Name, st.Skill, sec, bm, ""))
 				}
 			} else if st.Agent != "" && st.Agent != "executor" && st.Agent != "reviewer" && len(st.On) == 0 {
 				// Named PERFORMER on a spine node (no on=).
@@ -415,7 +424,7 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 					if p := performerChannelProblem(doc.Name, st.Name, st.Agent, b); p != "" {
 						r.allocProblem(p)
 					}
-					r.Gates = append(r.Gates, gateAlloc(doc.Name, st.Name, st.Skill, st.Agent, b.Model))
+					r.Gates = append(r.Gates, gateAlloc(doc.Name, st.Name, st.Skill, st.Agent, b.Model, st.Model))
 				}
 			}
 			// on_enter_agent was validated here as a one-shot entry performer. Flat
@@ -455,7 +464,7 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 			}
 			edgeNode := "edge:" + tr.From + "→" + tr.To
 			for _, sk := range skills {
-				r.Gates = append(r.Gates, gateAlloc(doc.Name, edgeNode, sk, sec, bm))
+				r.Gates = append(r.Gates, gateAlloc(doc.Name, edgeNode, sk, sec, bm, ""))
 			}
 		}
 	}
@@ -614,7 +623,7 @@ func checkHooks(doc docindex.Doc, agents config.AgentsConfig, revModel string, u
 			// harsher severity, and would hard-fail every repo whose reviewer
 			// template the heuristic cannot classify.
 		}
-		alloc := gateAlloc(doc.Name, "hook:"+h.Operation, h.Skill, sec, bm)
+		alloc := gateAlloc(doc.Name, "hook:"+h.Operation, h.Skill, sec, bm, "")
 		alloc.Operation = h.Operation
 		alloc.Source = h.Source
 		r.Gates = append(r.Gates, alloc)
@@ -691,10 +700,19 @@ func skillShellsSatelle(body string) bool {
 }
 
 // gateAlloc builds a GateAllocation for the binding that will run the gate.
-func gateAlloc(workflow, node, skill, agent, bindingModel string) GateAllocation {
+// stepModel is the step's own model= (empty for a gate/edge/hook node, which
+// has no step tier — sty_7069bced).
+func gateAlloc(workflow, node, skill, agent, bindingModel, stepModel string) GateAllocation {
+	effective, source := bindingModel, ""
+	switch {
+	case strings.TrimSpace(bindingModel) != "":
+		source = config.ModelSourceBinding
+	case strings.TrimSpace(stepModel) != "":
+		effective, source = stepModel, config.ModelSourceStep
+	}
 	return GateAllocation{
 		Workflow: workflow, Node: node, Skill: skill, Agent: agent,
-		BindingModel: bindingModel, EffectiveModel: bindingModel,
+		BindingModel: bindingModel, EffectiveModel: effective, ModelSource: source,
 	}
 }
 

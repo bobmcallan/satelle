@@ -66,9 +66,9 @@ func RedactAgentsTransport(body []byte) ([]byte, error) {
 }
 
 // RedactAgents returns a deep copy of a with every binding redacted for
-// transport. The Defaults table carries no secrets and is kept.
+// transport. The Defaults and Models tables carry no secrets and are kept.
 func RedactAgents(a AgentsConfig) AgentsConfig {
-	out := AgentsConfig{Defaults: a.Defaults, Executor: redactBinding(a.Executor), Reviewer: redactBinding(a.Reviewer)}
+	out := AgentsConfig{Defaults: a.Defaults, Models: a.Models, Executor: redactBinding(a.Executor), Reviewer: redactBinding(a.Reviewer)}
 	if len(a.Agents) > 0 {
 		out.Agents = make(map[string]AgentBinding, len(a.Agents))
 		for name, b := range a.Agents {
@@ -375,6 +375,9 @@ func EncodeAgents(a AgentsConfig) ([]byte, error) {
 	if d := defaultsTable(a.Defaults); len(d) > 0 {
 		tables["defaults"] = d
 	}
+	if m := modelsTable(a.Models); len(m) > 0 {
+		tables["models"] = m
+	}
 	if t := bindingTable(a.Executor); len(t) > 0 {
 		tables["executor"] = t
 	}
@@ -383,7 +386,7 @@ func EncodeAgents(a AgentsConfig) ([]byte, error) {
 	}
 	for name, b := range a.Agents {
 		switch name {
-		case "defaults", "executor", "reviewer", "agents":
+		case "defaults", "models", "executor", "reviewer", "agents":
 			continue // cannot be a named binding in the flat form
 		}
 		t := bindingTable(b)
@@ -427,6 +430,14 @@ func defaultsTable(d AgentsDefaults) map[string]any {
 	}
 	if d.UseGlobalRoles {
 		out["use_global_roles"] = true
+	}
+	return out
+}
+
+func modelsTable(m ModelsConfig) map[string]any {
+	out := map[string]any{}
+	if len(m.Ranking) > 0 {
+		out["ranking"] = m.Ranking
 	}
 	return out
 }

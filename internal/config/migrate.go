@@ -56,6 +56,14 @@ func MigrateAgents(content string) (out string, changes []string, err error) {
 	harnessN, expandN, roleN := 0, 0, 0
 
 	for _, s := range sections {
+		// [defaults] and [models] are not agent bindings — they carry no
+		// command/role/principles of their own, so the per-binding migrations
+		// below must not touch them (a bare header would otherwise fall
+		// through bindingForHeader's default case and get a spurious
+		// role="agent" injected).
+		if s.header == "defaults" || s.header == "models" {
+			continue
+		}
 		// harness → command
 		if !hasKeyInSection(lines, s.header, "command") {
 			if renameKeyInSection(lines, s.header, "harness", "command") {
@@ -184,6 +192,10 @@ func decodeAgents(content string, legacyNested bool) (AgentsConfig, error) {
 		case "defaults":
 			if err := md.PrimitiveDecode(prim, &ac.Defaults); err != nil {
 				return AgentsConfig{}, fmt.Errorf("parse [defaults]: %w", err)
+			}
+		case "models":
+			if err := md.PrimitiveDecode(prim, &ac.Models); err != nil {
+				return AgentsConfig{}, fmt.Errorf("parse [models]: %w", err)
 			}
 		case "executor":
 			var b AgentBinding

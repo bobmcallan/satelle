@@ -37,6 +37,10 @@ def send(obj):
     sys.stdout.write(json.dumps(obj) + "\n")
     sys.stdout.flush()
 
+init_model = os.environ.get("STREAM_INIT_MODEL")
+if init_model:
+    send({"type":"system","subtype":"init","model":init_model,"session_id":"fake-sess"})
+
 def read():
     line = sys.stdin.readline()
     if not line:
@@ -176,6 +180,57 @@ func TestStreamSession_SecondTurn(t *testing.T) {
 	}
 	if n := strings.Count(string(b), "start"); n != 1 {
 		t.Fatalf("process started %d times, want 1", n)
+	}
+}
+
+// TestStreamSession_EmitsSessionInitEvent (sty_7069bced): a stream-json
+// transport's own system/init record — sent once, before any turn — names
+// the model the session actually opened with. cmd_story_chat's orchestrator
+// capture reads this to record the "orchestrator" session-model tier.
+func TestStreamSession_EmitsSessionInitEvent(t *testing.T) {
+	skipWithoutPython3(t)
+	peer := writeFakeStreamPeer(t)
+	r, err := newStreamRunner(peer + " --output-format stream-json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var seen []Event
+	initSeen := make(chan struct{}, 1)
+	sess, err := openStreamSession(context.Background(), r.(streamRunner), Request{
+		AllowedTools: "Read,Grep,Glob",
+		Env:          map[string]string{"STREAM_INIT_MODEL": "claude-opus-5-5"},
+		OnEvent: func(ev Event) {
+			mu.Lock()
+			seen = append(seen, ev)
+			mu.Unlock()
+			if ev.Kind == EventSessionInit {
+				select {
+				case initSeen <- struct{}{}:
+				default:
+				}
+			}
+		},
+	}, defaultPermissionPolicy(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+	select {
+	case <-initSeen:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no session_init event")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	var inits []Event
+	for _, ev := range seen {
+		if ev.Kind == EventSessionInit {
+			inits = append(inits, ev)
+		}
+	}
+	if len(inits) != 1 || inits[0].Model != "claude-opus-5-5" {
+		t.Fatalf("session_init events = %#v, want exactly one with model claude-opus-5-5", inits)
 	}
 }
 

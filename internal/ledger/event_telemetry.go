@@ -44,11 +44,17 @@ type Telemetry struct {
 	// (a legacy row); ModelLabel renders that the same as an explicit
 	// "unavailable" marker.
 	ModelResolved string
-	Outcome       string
-	TokensIn      int
-	TokensOut     int
-	TokensTotal   int
-	DurationMs    int64
+	// ModelSource names why Model/ModelResolved were chosen — binding, step,
+	// agent, inherited-orchestrator, inherited-in-loop, creator, or
+	// cli-default (config.SelectModel, sty_7069bced). Empty on a row written
+	// before this field existed, or a functional-check row that invokes no
+	// agent and so selects no model.
+	ModelSource string
+	Outcome     string
+	TokensIn    int
+	TokensOut   int
+	TokensTotal int
+	DurationMs  int64
 	// UsageAvailable is true when the row carries a measured token cost —
 	// either an explicit usage_available:true on a new agent_invocation, or
 	// (legacy) tokens_total > 0 when the field is absent. False means
@@ -111,10 +117,12 @@ func verdictTelemetry(payload []byte, outcome string) Telemetry {
 	var row struct {
 		Model         string `json:"model"`
 		ModelResolved string `json:"model_resolved"`
+		ModelSource   string `json:"model_source"`
 	}
 	if err := json.Unmarshal(payload, &row); err == nil {
 		tel.Model = row.Model
 		tel.ModelResolved = row.ModelResolved
+		tel.ModelSource = row.ModelSource
 	}
 	return tel
 }
@@ -131,6 +139,7 @@ func invocationTelemetry(payload []byte) Telemetry {
 		Agent          string `json:"agent"`
 		Model          string `json:"model"`
 		ModelResolved  string `json:"model_resolved"`
+		ModelSource    string `json:"model_source"`
 		TokensIn       int    `json:"tokens_in"`
 		TokensOut      int    `json:"tokens_out"`
 		TokensTotal    int    `json:"tokens_total"`
@@ -150,6 +159,7 @@ func invocationTelemetry(payload []byte) Telemetry {
 		Agent:          row.Agent,
 		Model:          row.Model,
 		ModelResolved:  row.ModelResolved,
+		ModelSource:    row.ModelSource,
 		TokensIn:       row.TokensIn,
 		TokensOut:      row.TokensOut,
 		TokensTotal:    row.TokensTotal,

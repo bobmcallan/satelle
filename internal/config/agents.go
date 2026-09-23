@@ -223,6 +223,19 @@ type AgentBinding struct {
 	Profile string `toml:"profile"`
 }
 
+// ModelsConfig is the optional [models] table in agents.toml (sty_7069bced /
+// epic:model-selection order:3) — the "no opinion as code" home for the
+// power-ranking config.SelectModel's inherited tier reads: the binary only
+// compares two model names against this list, never hardcodes which model
+// beats which.
+type ModelsConfig struct {
+	// Ranking orders models strongest-first for the inherited-model tie-break
+	// (config.SelectModel). Empty means no ranking is configured — every
+	// model is unranked, and an inherited pick falls back to "orchestrator
+	// wins the tie".
+	Ranking []string `toml:"ranking"`
+}
+
 // AgentsDefaults is the optional [defaults] table in agents.toml (sty_5bf61f89).
 type AgentsDefaults struct {
 	// Secondary is the default fallback binding name for isolated agents when
@@ -676,6 +689,7 @@ func normalizePrinciplesSelector(s string) string {
 // retained only for the legacy nested form.
 type AgentsConfig struct {
 	Defaults AgentsDefaults          `toml:"defaults"`
+	Models   ModelsConfig            `toml:"models"`
 	Executor AgentBinding            `toml:"executor"`
 	Reviewer AgentBinding            `toml:"reviewer"`
 	Agents   map[string]AgentBinding `toml:"agents"`

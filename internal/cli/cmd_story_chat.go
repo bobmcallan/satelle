@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -41,6 +42,7 @@ Does not change story status. See satelle help agent-dispatch.`,
 	}
 	cmd.Flags().String("agent", "", "binding to open the session with (default orchestrator)")
 	cmd.Flags().String("from", "", "role the driving side speaks as (default developer-agent under SATELLE_SESSION, else human)")
+	cmd.Flags().String("model", "", "model for this session, overriding agents.toml (recorded with source=agent)")
 	return cmd
 }
 
@@ -81,6 +83,7 @@ func runStoryChat(cmd *cobra.Command, args []string) error {
 
 	agentFlag, _ := cmd.Flags().GetString("agent")
 	fromFlag, _ := cmd.Flags().GetString("from")
+	modelFlag, _ := cmd.Flags().GetString("model")
 	binding := agentstep.ChatSessionBinding(agentFlag)
 	from := chatFromRole(fromFlag, sid)
 
@@ -90,11 +93,13 @@ func runStoryChat(cmd *cobra.Command, args []string) error {
 	// config here must not block chat (advisory: it degrades to the shipped
 	// default; the same value is validated hard at `satelle validate`).
 	idle := agentstep.DefaultIdleTimeout
+	var executable string
 	if eff, eerr := requireAgents(a); eerr == nil {
 		if bnd, found := eff.Agents.NamedBinding(binding); found {
 			if d, ierr := eff.Agents.ResolveIdleTimeout(bnd, agentstep.DefaultIdleTimeout); ierr == nil {
 				idle = d
 			}
+			executable = bnd.ExecutableToken()
 		}
 	}
 
@@ -120,12 +125,25 @@ func runStoryChat(cmd *cobra.Command, args []string) error {
 		loop.Ask = func(agentcli.PermissionRequest) bool { return false }
 	}
 
-	sess, err := eng.OpenSession(cmd.Context(), binding, it, loop.policy(), loop.EventHandler())
+	role := agentstep.SessionRoleConsult
+	if binding == orchestratorRole {
+		role = agentstep.SessionRoleDriving
+	}
+	// The orchestrator session's model (sty_7069bced) — config.SelectModel's
+	// inherited tier reads the latest session_model{orchestrator} row. `story
+	// chat` IS the orchestrator-driven consultation mechanism regardless of
+	// which binding it opens, so every chat session captures under that role.
+	baseHandler := loop.EventHandler()
+	captureHandler, closeCapture := orchestratorModelCapture(cmd.Context(), it.ID, sid, executable, baseHandler)
+	sess, err := eng.OpenSessionAsWithModel(cmd.Context(), binding, role, it, loop.policy(), captureHandler, modelFlag)
 	if err != nil {
 		return err
 	}
 	loop.Sess = sess
-	defer func() { _ = sess.Close() }()
+	defer func() {
+		_ = sess.Close()
+		closeCapture()
+	}()
 
 	fmt.Fprintf(out, "satelle story chat %s  (status %s; %s → %s; /quit to exit)\n", it.ID, it.Status, from, binding)
 	if err := loop.Run(cmd.Context(), in, out); err != nil {
@@ -133,6 +151,34 @@ func runStoryChat(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	return nil
+}
+
+// orchestratorModelCapture wraps base so the FIRST EventSessionInit records
+// the orchestrator session's model for storyID under
+// verb.SessionModelRoleOrchestrator (sty_7069bced) — config.SelectModel's
+// inherited-orchestrator tier reads it back via verb.SessionModels.
+// EventHandler may be called from concurrent stdout/stderr reader goroutines
+// (agentcli.EventHandler's own contract), so capture is guarded and one-shot
+// via initCaptured. The returned closeUnrecorded records "unknown" once, if
+// no init event ever arrived (ACP, or a stream transport that never reached
+// the init line) — callers run it when the session closes, alongside
+// sess.Close.
+func orchestratorModelCapture(ctx context.Context, storyID, sid, executable string, base agentcli.EventHandler) (handler agentcli.EventHandler, closeUnrecorded func()) {
+	var initCaptured atomic.Bool
+	handler = func(ev agentcli.Event) {
+		if ev.Kind == agentcli.EventSessionInit && initCaptured.CompareAndSwap(false, true) {
+			verb.RecordSessionModel(ctx, storyID, sid, verb.SessionModelRoleOrchestrator, ev.Model, executable)
+		}
+		if base != nil {
+			base(ev)
+		}
+	}
+	closeUnrecorded = func() {
+		if !initCaptured.Load() {
+			verb.RecordSessionModel(ctx, storyID, sid, verb.SessionModelRoleOrchestrator, "", executable)
+		}
+	}
+	return handler, closeUnrecorded
 }
 
 type storeChatLedger struct {

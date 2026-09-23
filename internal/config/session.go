@@ -48,6 +48,62 @@ func ResolveSession() string {
 	return publishedSession()
 }
 
+// PublishSessionModel records the model a session role reported, alongside
+// the executable that reported it (the cross-provider guard's evidence,
+// sty_7069bced). role is "in-loop" | "orchestrator" | "creator". Unlike
+// PublishSession this needs no pid-walk: the caller already knows sessionID
+// (from ResolveSession/bindSessionID), so the file is keyed directly.
+func PublishSessionModel(sessionID, role, model, executable string) {
+	sessionID = strings.TrimSpace(sessionID)
+	role = strings.TrimSpace(role)
+	if sessionID == "" || role == "" {
+		return
+	}
+	dir := sessionModelDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	body := strings.TrimSpace(model) + "\t" + strings.TrimSpace(executable) + "\n"
+	_ = os.WriteFile(filepath.Join(dir, sessionModelFile(sessionID, role)), []byte(body), 0o600)
+}
+
+// ResolveSessionModel returns the model a session role previously published
+// via PublishSessionModel, and the executable that reported it. Both are
+// empty when nothing was published for that (sessionID, role) pair — the
+// caller treats that exactly like an explicit "unknown".
+func ResolveSessionModel(sessionID, role string) (model, executable string) {
+	sessionID = strings.TrimSpace(sessionID)
+	role = strings.TrimSpace(role)
+	if sessionID == "" || role == "" {
+		return "", ""
+	}
+	b, err := os.ReadFile(filepath.Join(sessionModelDir(), sessionModelFile(sessionID, role)))
+	if err != nil {
+		return "", ""
+	}
+	parts := strings.SplitN(strings.TrimSpace(string(b)), "\t", 2)
+	model = parts[0]
+	if len(parts) > 1 {
+		executable = parts[1]
+	}
+	return model, executable
+}
+
+// sessionModelFile is the on-disk name for one (sessionID, role) pair. role is
+// a small closed set of path-safe tokens ("in-loop", "orchestrator",
+// "creator"); sessionID is a harness-issued UUID-shaped id, but the dot
+// separator keeps the two halves unambiguous even if that ever changes.
+func sessionModelFile(sessionID, role string) string {
+	return "model." + sessionID + "." + role
+}
+
+// sessionModelDir is sessionPublishDir's sibling for published session
+// models — same lifecycle and permissions, kept in its own subdirectory so a
+// directory listing of one is never confused with the other.
+func sessionModelDir() string {
+	return filepath.Join(sessionPublishDir(), "models")
+}
+
 func sessionPublishDir() string {
 	if h := strings.TrimSpace(os.Getenv("SATELLE_HOME")); h != "" {
 		return filepath.Join(h, "sessions")

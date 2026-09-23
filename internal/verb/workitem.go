@@ -184,6 +184,9 @@ func workItemCreate(kind workitem.Kind) func(context.Context, json.RawMessage) (
 			return nil, aerr
 		}
 		appendLedger(ctx, it.ID, ledgerKind, fmt.Sprintf("created %s %q", kind, it.Title), now)
+		if kind == workitem.KindStory {
+			recordCreatorSessionModel(ctx, it.ID)
+		}
 		if stampedWorkflow != "" {
 			appendLedger(ctx, it.ID, ledger.KindWorkflowStamped,
 				fmt.Sprintf("governing workflow: %s", stampedWorkflow), now)
@@ -500,7 +503,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		reviewers := dec.Reviewers
 		if len(reviewers) == 0 && dec.Gated {
 			reviewers = []ReviewerVerdict{{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, Command: dec.Command, Context: dec.Context, Model: dec.Model,
-				ModelResolved: dec.ModelResolved, Models: dec.Models,
+				ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 				TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 				UsageAvailable: dec.UsageAvailable}}
 		}
@@ -695,6 +698,13 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		// (sty_da169e03). Enumerates git HEAD for later satelle story diff;
 		// never a verdict. Idempotent across park/resume.
 		maybeRecordEngagementBaseline(ctx, it, current.Status, *req.Status, now)
+		// The engaging session's model is the in-loop tier config.SelectModel's
+		// inherited resolution reads (sty_7069bced). Recorded on every engaging
+		// transition, not just the first — a later engage (e.g. blocked→in_progress)
+		// may be driven by a different session than the one before it.
+		if engaging, ok := storyStatusIsEngaging(ctx, it, *req.Status); ok && engaging {
+			recordEngageSessionModel(ctx, it.ID)
+		}
 		// Record the change set for the step just closed (sty_948ad5df).
 		// Enumeration only; best-effort; never blocks the transition.
 		recordChangeSet(ctx, it, current.Status, *req.Status, now)
@@ -1030,6 +1040,14 @@ func storyResummarise(ctx context.Context, raw json.RawMessage) (json.RawMessage
 // improvement PROPOSALS as backlog stories. The dispatch's token/wall-time cost is
 // recorded on an agent_invocation entry so `satelle story cost` rolls it up like
 // any other gate/step.
+// retrospectReq is the request body for story-retrospect. Model is
+// `satelle story retrospect --model` (sty_7069bced) — a per-dispatch override
+// recorded with source=agent.
+type retrospectReq struct {
+	ID    string `json:"id"`
+	Model string `json:"model,omitempty"`
+}
+
 func storyRetrospect(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	if retrospector == nil {
 		return nil, fmt.Errorf("verb: no retrospective agent is wired")
@@ -1038,7 +1056,7 @@ func storyRetrospect(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	if err != nil {
 		return nil, err
 	}
-	var req idReq
+	var req retrospectReq
 	if err := decode(raw, &req); err != nil {
 		return nil, err
 	}
@@ -1049,7 +1067,7 @@ func storyRetrospect(ctx context.Context, raw json.RawMessage) (json.RawMessage,
 	if err != nil {
 		return nil, err
 	}
-	res, rerr := retrospector.Retrospect(ctx, it)
+	res, rerr := retrospector.Retrospect(ctx, it, req.Model)
 	now := time.Now()
 	if res.Dispatched {
 		// Record the dispatch's cost/model on an agent_invocation entry, so the
@@ -1275,6 +1293,28 @@ func appendLedger(ctx context.Context, storyID, kind, body string, now time.Time
 	appendLedgerEntry(ctx, storyID, kind, "", body, nil, now)
 }
 
+// AppendAgentInvocation records one agent_invocation ledger row for itemID
+// (sty_7069bced 4.2) — the seam agentstep.Engine.SetInvocationRecorder wires
+// so a LIVE session (story chat, the rework relay's coder seat) can ledger its
+// own open/close directly, the same way a one-shot dispatch's transition-gated
+// appendLedgerEntry does, so it shows up in `satelle story cost` and the web
+// timeline identically. actor is payload's own "agent" key — the binding the
+// live session was opened with. Best-effort: nil-safe when no ledger is wired.
+func AppendAgentInvocation(ctx context.Context, itemID string, payload map[string]any) error {
+	if ledgerStore == nil {
+		return nil
+	}
+	agent, _ := payload["agent"].(string)
+	phase, _ := payload["phase"].(string)
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	appendLedgerEntry(ctx, itemID, ledger.KindAgentInvocation, agent,
+		fmt.Sprintf("live session %s %s", phase, agent), raw, time.Now())
+	return nil
+}
+
 // appendLedgerEntry is appendLedger with an actor and structured payload — used
 // by the transition gate (review verdicts, status transitions). Best-effort.
 func appendLedgerEntry(ctx context.Context, storyID, kind, actor, body string, payload json.RawMessage, now time.Time) {
@@ -1405,10 +1445,11 @@ func reviewerPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		Accept        bool         `json:"accept"`
 		Model         string       `json:"model,omitempty"`
 		ModelResolved string       `json:"model_resolved,omitempty"`
+		ModelSource   string       `json:"model_source,omitempty"`
 		Models        []ModelUsage `json:"model_usage,omitempty"`
 	}{From: from, To: to, Skill: rv.Skill, Order: rv.Order, System: rv.System,
 		Notes: rv.Notes, Reasoning: rv.Reasoning, Accept: rv.Accept,
-		Model: rv.Model, ModelResolved: rv.ModelResolved, Models: rv.Models}
+		Model: rv.Model, ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil
@@ -1428,6 +1469,7 @@ func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
 		Command        string       `json:"command,omitempty"`
 		Model          string       `json:"model,omitempty"`
 		ModelResolved  string       `json:"model_resolved,omitempty"`
+		ModelSource    string       `json:"model_source,omitempty"`
 		Models         []ModelUsage `json:"model_usage,omitempty"`
 		TokensIn       int          `json:"tokens_in,omitempty"`
 		TokensOut      int          `json:"tokens_out,omitempty"`
@@ -1437,7 +1479,7 @@ func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
 		ArtifactName   string       `json:"artifact_name,omitempty"`
 		ArtifactType   string       `json:"artifact_type,omitempty"`
 	}{From: from, To: to, Agent: res.Agent, Skill: res.Skill, Command: res.Command, Model: res.Model,
-		ModelResolved: res.ModelResolved, Models: res.Models,
+		ModelResolved: res.ModelResolved, ModelSource: res.ModelSource, Models: res.Models,
 		TokensIn: res.TokensIn, TokensOut: res.TokensOut, TokensTotal: res.TokensTotal, DurationMs: res.DurationMs,
 		UsageAvailable: res.UsageAvailable,
 		ArtifactName:   res.ArtifactName, ArtifactType: res.ArtifactType}
@@ -1488,6 +1530,7 @@ func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		Context        string       `json:"context,omitempty"`
 		Model          string       `json:"model,omitempty"`
 		ModelResolved  string       `json:"model_resolved,omitempty"`
+		ModelSource    string       `json:"model_source,omitempty"`
 		Models         []ModelUsage `json:"model_usage,omitempty"`
 		TokensIn       int          `json:"tokens_in,omitempty"`
 		TokensOut      int          `json:"tokens_out,omitempty"`
@@ -1495,7 +1538,7 @@ func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 		DurationMs     int64        `json:"duration_ms,omitempty"`
 		UsageAvailable bool         `json:"usage_available"` // unconditional — tri-state (sty_56aae77a)
 	}{From: from, To: to, Agent: "reviewer", Skill: rv.Skill, Command: rv.Command, Context: rv.Context, Model: rv.Model,
-		ModelResolved: rv.ModelResolved, Models: rv.Models,
+		ModelResolved: rv.ModelResolved, ModelSource: rv.ModelSource, Models: rv.Models,
 		TokensIn: rv.TokensIn, TokensOut: rv.TokensOut, TokensTotal: rv.TokensTotal, DurationMs: rv.DurationMs,
 		UsageAvailable: rv.UsageAvailable}
 	b, err := json.Marshal(p)
@@ -1519,6 +1562,7 @@ func summariserInvocationPayload(from, to string, result SummaryResult) json.Raw
 		Context        string       `json:"context,omitempty"`
 		Model          string       `json:"model,omitempty"`
 		ModelResolved  string       `json:"model_resolved,omitempty"`
+		ModelSource    string       `json:"model_source,omitempty"`
 		Models         []ModelUsage `json:"model_usage,omitempty"`
 		TokensIn       int          `json:"tokens_in,omitempty"`
 		TokensOut      int          `json:"tokens_out,omitempty"`
@@ -1526,7 +1570,7 @@ func summariserInvocationPayload(from, to string, result SummaryResult) json.Raw
 		DurationMs     int64        `json:"duration_ms,omitempty"`
 		UsageAvailable bool         `json:"usage_available"` // unconditional — tri-state (sty_56aae77a)
 	}{From: from, To: to, Agent: "reviewer", Skill: result.Context, Command: result.Command, Context: result.Context, Model: result.Model,
-		ModelResolved: result.ModelResolved, Models: result.Models,
+		ModelResolved: result.ModelResolved, ModelSource: result.ModelSource, Models: result.Models,
 		TokensIn: result.TokensIn, TokensOut: result.TokensOut, TokensTotal: result.TokensTotal, DurationMs: result.DurationMs,
 		UsageAvailable: result.UsageAvailable}
 	b, err := json.Marshal(p)

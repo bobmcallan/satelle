@@ -102,6 +102,7 @@ func TestReworkOpenSequenceMarkerOnlyOnCoder(t *testing.T) {
 	type snap struct {
 		binding string
 		relay   string
+		model   string
 	}
 	var opens []snap
 	prev := reworkSessionOpener
@@ -114,29 +115,31 @@ func TestReworkOpenSequenceMarkerOnlyOnCoder(t *testing.T) {
 		_ workitem.Item,
 		_ agentcli.PermissionPolicy,
 		_ agentcli.EventHandler,
+		modelOverride string,
 	) (agentcli.Session, error) {
-		opens = append(opens, snap{binding: binding, relay: os.Getenv(config.RelayBindingEnv)})
+		opens = append(opens, snap{binding: binding, relay: os.Getenv(config.RelayBindingEnv), model: modelOverride})
 		return nopSession{}, nil
 	}
 
-	// Mirror the verb's open sequence: marker wraps coder only.
+	// Mirror the verb's open sequence: marker wraps coder only; --model rides
+	// only the coder open (sty_7069bced).
 	if err := withRelayMarker("coder", "sty_x", func() error {
-		_, err := reworkSessionOpener(context.Background(), nil, "coder", agentstep.SessionRoleDriving, workitem.Item{ID: "sty_x"}, nil, nil)
+		_, err := reworkSessionOpener(context.Background(), nil, "coder", agentstep.SessionRoleDriving, workitem.Item{ID: "sty_x"}, nil, nil, "haiku")
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reworkSessionOpener(context.Background(), nil, "reviewer-consult", agentstep.SessionRoleConsult, workitem.Item{ID: "sty_x"}, nil, nil); err != nil {
+	if _, err := reworkSessionOpener(context.Background(), nil, "reviewer-consult", agentstep.SessionRoleConsult, workitem.Item{ID: "sty_x"}, nil, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(opens) != 2 {
 		t.Fatalf("opens = %d, want 2", len(opens))
 	}
-	if opens[0].binding != "coder" || opens[0].relay != "coder" {
-		t.Fatalf("coder open = %+v, want binding=coder relay=coder", opens[0])
+	if opens[0].binding != "coder" || opens[0].relay != "coder" || opens[0].model != "haiku" {
+		t.Fatalf("coder open = %+v, want binding=coder relay=coder model=haiku", opens[0])
 	}
-	if opens[1].binding != "reviewer-consult" || opens[1].relay != "" {
-		t.Fatalf("consultant open = %+v, want empty relay marker", opens[1])
+	if opens[1].binding != "reviewer-consult" || opens[1].relay != "" || opens[1].model != "" {
+		t.Fatalf("consultant open = %+v, want empty relay marker and empty model", opens[1])
 	}
 }
 

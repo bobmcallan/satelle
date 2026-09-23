@@ -200,6 +200,17 @@ func (s *streamSession) readLoop() {
 		}
 		typ, _ := raw["type"].(string)
 		switch typ {
+		case "system":
+			// The stream-json transport's own init record names the model the
+			// session actually opened with (sty_7069bced) — the orchestrator
+			// session capture (cmd_story_chat) reads this once, before any turn.
+			if subtype, _ := raw["subtype"].(string); subtype == "init" {
+				if m, _ := raw["model"].(string); strings.TrimSpace(m) != "" {
+					ev := newEvent(EventSessionInit)
+					ev.Model = strings.TrimSpace(m)
+					emitEvent(s.onEvent, ev)
+				}
+			}
 		case "assistant":
 			// tool_use blocks are the tool boundary for tools the binding
 			// pre-allowed (no can_use_tool control request is raised for them),

@@ -208,6 +208,20 @@ type Engine struct {
 	// transition status commits. Nil refuses a contracted dispatch rather than
 	// silently dropping required output.
 	attachArtifact func(context.Context, workitem.Item, string, string, string) (string, string, error)
+	// modelRanking is the [models] ranking table (sty_7069bced) — strongest
+	// first. Nil/empty means no model ranks; config.SelectModel's inherited
+	// tie-break falls back to "orchestrator wins".
+	modelRanking []string
+	// sessionModels resolves the latest captured model per role (orchestrator,
+	// in-loop, creator) for a story — config.SelectModel's inherited/creator
+	// tiers (sty_7069bced). Nil-safe: an unwired resolver leaves every role
+	// unknown, so selection falls through those tiers to cli-default.
+	sessionModels func(ctx context.Context, storyID string) (orchestrator, inLoop, creator config.SessionModel)
+	// invocationRecorder appends an agent_invocation ledger row directly
+	// (sty_7069bced 4.2) — the seam a LIVE session's open/close uses, so it
+	// shows up in `satelle story cost` and the web timeline the same way a
+	// one-shot dispatch does. Nil-safe: an unwired recorder writes no rows.
+	invocationRecorder func(ctx context.Context, itemID string, payload map[string]any) error
 }
 
 // TelemetryFunc records one typed telemetry/quality event for storyID. Callers
@@ -528,6 +542,68 @@ func (g *Engine) SetDiffResolver(fn func(ctx context.Context, itemID string) *Di
 // that set or `to=="*"`. Nil-safe. Never fail a transition.
 func (g *Engine) SetMessagesResolver(fn func(ctx context.Context, itemID string, addresses []string) []MessageState) {
 	g.itemMessages = fn
+}
+
+// SetModelRanking wires the [models] ranking table (sty_7069bced /
+// epic:model-selection order:3) — the power order config.SelectModel's
+// inherited tie-break reads. Nil/empty means no configured ranking.
+func (g *Engine) SetModelRanking(ranking []string) { g.modelRanking = ranking }
+
+// SetSessionModelsResolver wires the resolver that returns the latest
+// captured model per role (orchestrator, in-loop, creator) for a story
+// (sty_7069bced). Nil-safe: an unwired resolver leaves every role unknown, so
+// selectModel falls through those tiers to cli-default.
+func (g *Engine) SetSessionModelsResolver(fn func(ctx context.Context, storyID string) (orchestrator, inLoop, creator config.SessionModel)) {
+	g.sessionModels = fn
+}
+
+// SetInvocationRecorder wires the seam a live session's open/close uses to
+// ledger its own agent_invocation rows directly (sty_7069bced 4.2), bypassing
+// the transition-gated appendLedgerEntry path a one-shot dispatch runs
+// through. Nil-safe: an unwired recorder writes no rows.
+func (g *Engine) SetInvocationRecorder(fn func(ctx context.Context, itemID string, payload map[string]any) error) {
+	g.invocationRecorder = fn
+}
+
+// recordInvocation calls the wired invocation recorder, if any. Best-effort:
+// a write failure never blocks the live session it is describing.
+func (g *Engine) recordInvocation(ctx context.Context, itemID string, payload map[string]any) {
+	if g.invocationRecorder == nil {
+		return
+	}
+	_ = g.invocationRecorder(ctx, itemID, payload)
+}
+
+// ModelChoice is one dispatch's already-resolved model selection
+// (sty_7069bced 4.1) — the result of a single selectModel call, carried
+// separately from config.AgentBinding so a resolved value is never mistaken
+// for an explicit agents.toml model= on a later re-selection (an attempt
+// loop's repair phase reuses it as-is rather than re-resolving against an
+// already-mutated binding).
+type ModelChoice struct {
+	Model  string
+	Source string
+}
+
+// selectModel resolves the model for one dispatch (sty_7069bced): binding
+// alias first, then a per-dispatch override (a workflow step's model= or a
+// dispatching agent's --model flag, named by overrideSource), then the
+// higher-ranked of the orchestrator/in-loop session models for storyID, then
+// the story-creating session's, else empty (cli-default). It never mutates
+// binding — callers apply the result to their own per-dispatch copy.
+func (g *Engine) selectModel(ctx context.Context, binding config.AgentBinding, storyID, override, overrideSource string) (model, source string) {
+	in := config.SelectInput{
+		Binding:           binding.Model,
+		DispatchOverride:  override,
+		DispatchSource:    overrideSource,
+		Ranking:           g.modelRanking,
+		CommandExecutable: binding.ExecutableToken(),
+		HasModelSlot:      config.HasModelSlot(binding.CommandTemplate()),
+	}
+	if g.sessionModels != nil && strings.TrimSpace(storyID) != "" {
+		in.Orchestrator, in.InLoop, in.Creator = g.sessionModels(ctx, storyID)
+	}
+	return config.SelectModel(in)
 }
 
 // docsPayloadCeiling bounds how many attachment body bytes ride in one payload
@@ -1080,13 +1156,14 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 		result.Context = dec.Context
 		result.Model = dec.Model
 		result.ModelResolved, result.Models = dec.ModelResolved, dec.Models
+		result.ModelSource = dec.ModelSource
 		result.TokensIn, result.TokensOut, result.TokensTotal = dec.TokensIn, dec.TokensOut, dec.TokensTotal
 		result.DurationMs = dec.DurationMs
 		result.UsageAvailable = dec.UsageAvailable
 		result.Reviewers = append(result.Reviewers, verb.ReviewerVerdict{
 			Skill: skill, Order: i, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, System: i >= sysStart,
 			Command: dec.Command, Context: dec.Context, Model: dec.Model,
-			ModelResolved: dec.ModelResolved, Models: dec.Models,
+			ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 			TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 			UsageAvailable: dec.UsageAvailable,
 		})
@@ -1172,7 +1249,7 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 		result.Reviewers = append(result.Reviewers, verb.ReviewerVerdict{
 			Skill: ref.skill, Order: i, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, System: i >= sysStart,
 			Command: dec.Command, Context: dec.Context, Model: dec.Model,
-			ModelResolved: dec.ModelResolved, Models: dec.Models,
+			ModelResolved: dec.ModelResolved, Models: dec.Models, ModelSource: dec.ModelSource,
 			TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 			UsageAvailable: dec.UsageAvailable,
 		})
@@ -1198,6 +1275,7 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 		result.Context = pick.Context
 		result.Model = pick.Model
 		result.ModelResolved, result.Models = pick.ModelResolved, pick.Models
+		result.ModelSource = pick.ModelSource
 		result.TokensIn, result.TokensOut, result.TokensTotal = pick.TokensIn, pick.TokensOut, pick.TokensTotal
 		result.DurationMs = pick.DurationMs
 		result.UsageAvailable = pick.UsageAvailable
@@ -1380,7 +1458,20 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 			"workflow %q allocates state %q to agent %q but .satelle/workflows/agents.toml defines no [%s] binding — define it, or reassign the step",
 			wfName, toStatus, dispatchAgent, dispatchAgent)
 	}
-	// model= on nodes is superseded (sty_a476a2f8); agents.toml owns the model.
+	// Model selection (sty_7069bced): binding.Model wins outright when set;
+	// otherwise the step's own model= (target.Model) is a per-dispatch
+	// override, then the inherited/creator session tiers, else cli-default.
+	// This is distinct from the RETIRED DOT edge model= (sty_a476a2f8, still
+	// retired) — that was a gate override on an edge; target.Model is a
+	// per-dispatch instruction for THIS state's performer.
+	//
+	// binding itself is NEVER mutated with the resolved value (4.1 fix): a
+	// mutated binding.Model would be misread by a later re-selection (inside
+	// runArtifactAttempts) as an explicit agents.toml model=, poisoning every
+	// attempt's recorded source to "binding". modelChoice carries the result;
+	// callers that need it applied build their OWN per-use copy.
+	modelResolved, modelSource := g.selectModel(ctx, binding, item.ID, target.Model, config.ModelSourceStep)
+	modelChoice := ModelChoice{Model: modelResolved, Source: modelSource}
 	// Design §9 (a): when the resolved binding is role=reviewer, it is a judge
 	// not a performer — do not dispatch as ExpectPerform (isNamedPerformer).
 	// Fail loud when a role=reviewer binding is allocated on a performing node.
@@ -1510,14 +1601,17 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		var attemptErr error
 		invRes, finalArtifact, attemptErr = g.runArtifactAttempts(
 			ctx, item, toStatus, dispatchSkill, dispatchAgent, rubric,
-			execPayload, charter, binding, runner, timeout, idle, rawSink, onEvent,
+			execPayload, charter, binding, modelChoice, target.Model, config.ModelSourceStep,
+			runner, timeout, idle, rawSink, onEvent,
 			outputContract, attemptPolicy)
 		if attemptErr != nil {
 			invRes.Err = attemptErr
 		}
 	} else {
+		invokeBinding := binding
+		invokeBinding.Model = modelChoice.Model
 		invRes = g.Invoke(ctx, InvokeRequest{
-			Binding:     binding,
+			Binding:     invokeBinding,
 			Section:     dispatchAgent,
 			Rubric:      rubric,
 			Payload:     execPayload,
@@ -1536,8 +1630,8 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	}
 	dispatchModelResolved, dispatchModels := toVerbModels(invRes.Usage)
 	res := verb.DispatchResult{
-		Dispatched: true, Agent: dispatchAgent, Command: invRes.Command, Model: binding.Model, Skill: dispatchSkill,
-		ModelResolved: dispatchModelResolved, Models: dispatchModels,
+		Dispatched: true, Agent: dispatchAgent, Command: invRes.Command, Model: modelChoice.Model, Skill: dispatchSkill,
+		ModelResolved: dispatchModelResolved, Models: dispatchModels, ModelSource: modelChoice.Source,
 		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
 		DurationMs: invRes.Usage.Duration.Milliseconds(), UsageAvailable: invRes.Usage.Available,
 		Output: string(invRes.Stdout),
@@ -1621,7 +1715,12 @@ const (
 // (visible via `satelle story cost`, sty_a699ad14) is measured before it is made
 // always-on. Returns the dispatch result (with captured output + token/wall-time
 // cost) so the verb layer can record an agent_invocation for the cost view.
-func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.DispatchResult, error) {
+//
+// modelOverride is `satelle story retrospect --model` (sty_7069bced): a
+// per-dispatch instruction recorded with source=agent, one tier below the
+// binding's own model= and above the inherited/creator session tiers. Empty
+// behaves exactly as before.
+func (g *Engine) Retrospect(ctx context.Context, item workitem.Item, modelOverride string) (verb.DispatchResult, error) {
 	if g.namedAgents == nil {
 		return verb.DispatchResult{}, fmt.Errorf("no agents layer is wired — cannot dispatch the %q agent", retrospectAgent)
 	}
@@ -1664,6 +1763,11 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.Dispa
 	g.emitProgress("running retrospective on %s (may take a few minutes)…", item.ID)
 	retroPayload := transitionPayload{Story: item, From: item.Status, To: item.Status, ReviewSkill: retrospectSkill}
 	g.fillPayloadDocs(ctx, item.ID, &retroPayload)
+	// Model selection (sty_7069bced): binding.Model wins outright when set;
+	// otherwise modelOverride (--model) is a per-dispatch instruction, then the
+	// inherited/creator session tiers apply, else cli-default.
+	retroModelResolvedInput, retroModelSource := g.selectModel(ctx, binding, item.ID, modelOverride, config.ModelSourceAgent)
+	binding.Model = retroModelResolvedInput
 	invRes := g.Invoke(ctx, InvokeRequest{
 		Binding:     binding,
 		Section:     retrospectAgent,
@@ -1682,7 +1786,7 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.Dispa
 	retroModelResolved, retroModels := toVerbModels(invRes.Usage)
 	res := verb.DispatchResult{
 		Dispatched: true, Agent: retrospectAgent, Command: invRes.Command, Model: binding.Model, Skill: retrospectSkill,
-		ModelResolved: retroModelResolved, Models: retroModels,
+		ModelResolved: retroModelResolved, Models: retroModels, ModelSource: retroModelSource,
 		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
 		DurationMs: invRes.Usage.Duration.Milliseconds(), UsageAvailable: invRes.Usage.Available,
 		Output: string(invRes.Stdout),
@@ -1781,6 +1885,14 @@ const (
 // OpenSessionAs is OpenSession with the charter role stated. OpenSession keeps
 // today's name-based selection so `satelle story chat` is byte-identical.
 func (g *Engine) OpenSessionAs(ctx context.Context, name string, role SessionRole, item workitem.Item, pol agentcli.PermissionPolicy, onEvent agentcli.EventHandler) (agentcli.Session, error) {
+	return g.OpenSessionAsWithModel(ctx, name, role, item, pol, onEvent, "")
+}
+
+// OpenSessionAsWithModel is OpenSessionAs with an explicit per-open model
+// override (sty_7069bced) — what `satelle story chat --model` / `satelle
+// story rework --model` feed through, recorded with source=agent. Empty
+// modelOverride behaves exactly as OpenSessionAs.
+func (g *Engine) OpenSessionAsWithModel(ctx context.Context, name string, role SessionRole, item workitem.Item, pol agentcli.PermissionPolicy, onEvent agentcli.EventHandler, modelOverride string) (agentcli.Session, error) {
 	name = ChatSessionBinding(name)
 	if g.namedAgents == nil {
 		return nil, fmt.Errorf("no agents layer is wired — cannot open the %q session", name)
@@ -1815,6 +1927,12 @@ func (g *Engine) OpenSessionAs(ctx context.Context, name string, role SessionRol
 	if role == SessionRoleConsult {
 		charter = consultCharter(name, config.ResolvedRole(name, binding), item.Status)
 	}
+	// Model selection (sty_7069bced): binding.Model wins outright when set;
+	// otherwise modelOverride (an explicit --model flag on this open) is a
+	// per-dispatch instruction, then the inherited/creator session tiers,
+	// else cli-default.
+	modelResolved, modelSource := g.selectModel(ctx, binding, item.ID, modelOverride, config.ModelSourceAgent)
+	binding.Model = modelResolved
 	req, err := g.buildRequest(ctx, invocation{
 		charter:    charter,
 		payload:    payload,
@@ -1828,16 +1946,97 @@ func (g *Engine) OpenSessionAs(ctx context.Context, name string, role SessionRol
 	if err != nil {
 		return nil, err
 	}
+	// A live session ledgers its own open as an agent_invocation row
+	// (sty_7069bced 4.2): the model chosen and why, so a live dispatch is as
+	// inspectable in `satelle story cost` and the web timeline as a one-shot
+	// one. model_resolved is "unavailable" at open — nothing has run yet; the
+	// close row (liveModelSession.Close) reports what actually happened.
+	g.recordInvocation(ctx, item.ID, map[string]any{
+		"agent": name, "phase": "open", "model": binding.Model, "model_source": modelSource,
+		"model_resolved": agentcli.ModelUnavailable, "usage_available": false,
+	})
 	if req.Env == nil {
 		req.Env = map[string]string{}
 	}
 	if sid := strings.TrimSpace(os.Getenv(config.SessionEnv)); sid != "" {
 		req.Env[config.SessionEnv] = sid
 	}
-	if onEvent != nil {
-		req.OnEvent = onEvent
+	// usageTracker captures the session's LAST EventUsage (sty_7069bced) — the
+	// same signal runOneShotUsage reads for a one-shot dispatch — so the close
+	// row below can report what the live session actually resolved/spent, not
+	// just what open intended. The caller's own onEvent still fires unchanged.
+	tracker := &liveUsageTracker{}
+	req.OnEvent = tracker.wrap(onEvent)
+	sess, err := opener(ctx, req, pol)
+	if err != nil {
+		return nil, err
 	}
-	return opener(ctx, req, pol)
+	return &liveModelSession{Session: sess, engine: g, ctx: ctx, storyID: item.ID, agent: name,
+		model: binding.Model, modelSource: modelSource, tracker: tracker}, nil
+}
+
+// liveUsageTracker records the last EventUsage a live session reports, so its
+// close row can carry the same model_resolved/usage a one-shot dispatch does
+// (sty_7069bced). Guarded: EventHandler may be called from concurrent
+// stdout/stderr reader goroutines.
+type liveUsageTracker struct {
+	mu    sync.Mutex
+	usage agentcli.UsageResult
+}
+
+// wrap returns an EventHandler that records EventUsage and then forwards to
+// next (which may be nil) unchanged — the caller's own handler still sees
+// every event.
+func (t *liveUsageTracker) wrap(next agentcli.EventHandler) agentcli.EventHandler {
+	return func(ev agentcli.Event) {
+		if ev.Kind == agentcli.EventUsage && ev.Usage != nil {
+			t.mu.Lock()
+			t.usage = *ev.Usage
+			t.mu.Unlock()
+		}
+		if next != nil {
+			next(ev)
+		}
+	}
+}
+
+func (t *liveUsageTracker) last() agentcli.UsageResult {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.usage
+}
+
+// liveModelSession decorates agentcli.Session to ledger a close row
+// (sty_7069bced): what the live session actually resolved/spent, mirroring
+// the open row OpenSessionAsWithModel already writes. Every other method
+// delegates unchanged via the embedded Session.
+type liveModelSession struct {
+	agentcli.Session
+	engine             *Engine
+	ctx                context.Context
+	storyID, agent     string
+	model, modelSource string
+	tracker            *liveUsageTracker
+	closeOnce          sync.Once
+}
+
+func (s *liveModelSession) Close() error {
+	err := s.Session.Close()
+	s.closeOnce.Do(func() {
+		u := s.tracker.last()
+		modelResolved, models := toVerbModels(u)
+		data := map[string]any{
+			"agent": s.agent, "phase": "close", "model": s.model, "model_source": s.modelSource,
+			"model_resolved": modelResolved, "usage_available": u.Available,
+			"tokens_in": u.InputTokens, "tokens_out": u.OutputTokens, "tokens_total": u.TotalTokens,
+			"duration_ms": u.Duration.Milliseconds(),
+		}
+		if len(models) > 0 {
+			data["model_usage"] = models
+		}
+		s.engine.recordInvocation(s.ctx, s.storyID, data)
+	})
+	return err
 }
 
 // setDecisionUsage copies an invocation's token/wall-time cost onto a gate
@@ -2129,6 +2328,14 @@ func (g *Engine) runReviewerWith(ctx context.Context, item workitem.Item, toStat
 			}
 		}
 	}
+	// Model selection (sty_7069bced): binding.Model already carries the
+	// explicit configured model or the engine-wide g.model fallback filled
+	// above, so this only descends the ladder (inherited/creator/cli-default)
+	// when BOTH are empty — an explicit model behaves exactly as before (AC6).
+	// A gate has no step/agent override tier of its own (edges superseded
+	// their DOT model= at sty_a476a2f8; this does not reverse that).
+	modelResolved, modelSource := g.selectModel(ctx, binding, item.ID, "", "")
+	binding.Model = modelResolved
 	// Mechanism: a gate needs an isolated verdict. command=in-loop cannot produce
 	// one — fail loud at gate time (design §6.4), not by policing tools/model.
 	if config.IsInLoopCommand(binding.CommandTemplate()) {
@@ -2179,6 +2386,7 @@ func (g *Engine) runReviewerWith(ctx context.Context, item workitem.Item, toStat
 		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf(
 			"reviewer: %s produced no decision", skill)
 	}
+	res.Decision.ModelSource = modelSource
 	return *res.Decision, nil
 }
 
@@ -2324,6 +2532,12 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 		}
 		runner = r
 	}
+	// Model selection (sty_7069bced): model already carries the explicit
+	// configured value or the g.model fallback above, so this only descends
+	// the ladder (inherited/creator/cli-default) when both are empty.
+	selectBinding := binding
+	selectBinding.Model = model
+	model, modelSource := g.selectModel(ctx, selectBinding, item.ID, "", "")
 	// The summariser prompt is rubric-only (no charter, principles=none) so it
 	// stays a plain narrator — buildRequest omits empty sections. Grant is read-only.
 	req, err := g.buildRequest(ctx, invocation{
@@ -2390,7 +2604,7 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 			summaryModelResolved, summaryModels := toVerbModels(usage)
 			return verb.SummaryResult{
 				Text: s, Command: runner.Command(), Context: summariserSkill, Model: model,
-				ModelResolved: summaryModelResolved, Models: summaryModels,
+				ModelResolved: summaryModelResolved, Models: summaryModels, ModelSource: modelSource,
 				TokensIn: usage.InputTokens, TokensOut: usage.OutputTokens, TokensTotal: usage.TotalTokens,
 				DurationMs: usage.Duration.Milliseconds(), UsageAvailable: usage.Available,
 			}, nil

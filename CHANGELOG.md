@@ -1,3 +1,20 @@
+## [0.0.517] - 2026-09-23
+
+### Added
+- **A binding that leaves `model` unset gets a deliberately chosen model, and every dispatch records why.** Precedence, first match wins:
+  1. the binding's `model`;
+  2. a per-dispatch choice, where `--model` on `story rework` / `story chat` / `story retrospect` beats a step's `model =` in step.toml;
+  3. the higher-ranked of the orchestrator's and in-loop session's models;
+  4. the model of the session that created the story;
+  5. the CLI default.
+
+  "Higher-ranked" is configuration: `[models] ranking = [...]` in agents.toml, strongest first; an unranked model loses to a ranked one. An inherited model is only passed to a command with the same executable, so a Claude model never reaches a Codex or Grok binding. Session models are captured from the harness (hook payload, transcript, stream init) and recorded as `session_model` ledger events, or as `unknown`. Every dispatch, gate verdict, summariser run, attempt/escalation and live session open/close records `model_source` next to `model` and `model_resolved`. `satelle agent validate` reports a step-level model as the effective model. The init scaffold ships a commented `[models]` example. (sty_7069bced)
+
+## [serve-v0.0.52] - 2026-09-23
+
+### Changed
+- **Serve channel picks up the model-selection config, the session-model ledger kind and the `model_source` telemetry field.** (sty_7069bced)
+
 ## [0.0.516] - 2026-09-23
 
 ### Changed

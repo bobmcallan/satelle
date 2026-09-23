@@ -144,6 +144,12 @@ type State struct {
 	Name     string
 	Agent    string
 	Terminal bool
+	// Model is the step's per-dispatch model override (Step.Model,
+	// sty_7069bced) — empty means none. Carried on State (like Agent) because
+	// it is dispatch input for the same performer Agent names, not a
+	// consultation/relay instruction (unlike Advisor/ReworkConsult, which stay
+	// off Spec deliberately).
+	Model string
 	// Skill is the step's own rubric — what an executor step performs, or the
 	// gate a reviewer step judges by (empty when the step names none). Populated
 	// from the step's `skills:`.

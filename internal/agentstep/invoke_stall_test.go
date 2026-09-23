@@ -127,7 +127,7 @@ func TestRetrospectHonorsNoImplicitCheckTimeoutCap(t *testing.T) {
 	})
 
 	start := time.Now()
-	res, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1", Status: "done"})
+	res, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1", Status: "done"}, "")
 	if err != nil {
 		t.Fatalf("Retrospect must not be cut by g.checkTimeout: %v", err)
 	}

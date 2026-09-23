@@ -32,6 +32,13 @@ type Step struct {
 	// Agent allocates the performer: executor (in-loop), a named isolated agent
 	// (planner, coder), or reviewer for a non-performing role state.
 	Agent string
+	// Model names a model for this step's dispatch — one precedence tier below
+	// the allocated binding's own agents.toml model=, above the inherited/
+	// creator session tiers (config.SelectModel, sty_7069bced). Empty means no
+	// step-level override. Distinct from the retired DOT edge model=
+	// (sty_a476a2f8): that was a gate override on an edge and stays retired;
+	// this is a per-dispatch instruction for the step's PERFORMER.
+	Model string
 	// Skills are the executor rubrics this step performs. A spine step carries
 	// one; declaring more is a construction error naming the step.
 	Skills []string
@@ -359,6 +366,7 @@ func assemble(ordered []Step, gates []RouteGate, l List) (Spec, error) {
 		spec.States = append(spec.States, State{
 			Name:       st.Name,
 			Agent:      st.Agent,
+			Model:      st.Model,
 			Skill:      firstOf(st.Skills),
 			Obligation: st.Provides,
 			Shape:      shape,

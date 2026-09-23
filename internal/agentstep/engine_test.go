@@ -3433,7 +3433,7 @@ func TestRetrospectDispatchesNamedAgent(t *testing.T) {
 		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Bash(satelle:*)", Model: "glm-4.6"}, true
 	})
 	g.newRunner = func(string, string) (agentcli.Runner, error) { return r, nil }
-	res, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1", Title: "T", Status: "done"})
+	res, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1", Title: "T", Status: "done"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3453,7 +3453,7 @@ func TestRetrospectDispatchesNamedAgent(t *testing.T) {
 func TestRetrospectMissingBindingErrors(t *testing.T) {
 	g, _ := newEngine(t, "", fakeDocs{})
 	g.SetNamedAgents(func(string) (config.AgentBinding, bool) { return config.AgentBinding{}, false })
-	if _, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1"}); err == nil {
+	if _, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1"}, ""); err == nil {
 		t.Fatal("want an error naming the missing [retrospective] binding")
 	}
 }
@@ -3466,7 +3466,7 @@ func TestRetrospectRequiresSatelleCLI(t *testing.T) {
 		return config.AgentBinding{Command: "fake -p {system}", Tools: "Read,Grep,Glob"}, true
 	})
 	g.newRunner = func(string, string) (agentcli.Runner, error) { return &fakeRunner{}, nil }
-	if _, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1"}); err == nil {
+	if _, err := g.Retrospect(context.Background(), workitem.Item{ID: "sty_1"}, ""); err == nil {
 		t.Fatal("want an error when the grant has no context channel")
 	}
 }

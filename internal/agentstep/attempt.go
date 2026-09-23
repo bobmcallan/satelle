@@ -25,6 +25,8 @@ func (g *Engine) runArtifactAttempts(
 	payload transitionPayload,
 	charter string,
 	initialBinding config.AgentBinding,
+	choice ModelChoice,
+	modelOverride, modelOverrideSource string,
 	initialRunner agentcli.Runner,
 	timeout, idle time.Duration,
 	sink io.Writer,
@@ -44,6 +46,13 @@ func (g *Engine) runArtifactAttempts(
 	section, binding, runner, runTimeout, runIdle := initialSection, initialBinding, initialRunner, timeout, idle
 	phase := "initial"
 	reason := ""
+	// current is the model choice THIS attempt applies (sty_7069bced 4.1).
+	// Initial and repair attempts reuse the dispatch's own choice unchanged —
+	// they never re-run selectModel against an already-resolved binding.Model,
+	// which is what produced every attempt row reading model_source=binding
+	// regardless of the true source. Only an escalation to a genuinely
+	// different EscalateBinding resolves its own choice, below.
+	current := choice
 	if policy.InitialEffort != "" {
 		binding.Effort = policy.InitialEffort
 	}
@@ -74,8 +83,15 @@ func (g *Engine) runArtifactAttempts(
 		if phase == "repair" || phase == "escalate" {
 			attemptRubric = rubric + repairAppendix(lastDraft, lastFindings, phase)
 		}
+		// Model selection (sty_7069bced 4.1): current already carries the
+		// resolved model/source for this phase — applied to a per-attempt copy
+		// of binding, never mutated onto binding itself (a mutated binding.Model
+		// would be misread as an explicit agents.toml model= on the next
+		// iteration's reset).
+		attemptBinding := binding
+		attemptBinding.Model = current.Model
 		lastResult = g.Invoke(ctx, InvokeRequest{
-			Binding: binding, Section: section, Rubric: attemptRubric,
+			Binding: attemptBinding, Section: section, Rubric: attemptRubric,
 			Payload: payload,
 			Charter: charter,
 			Expect:  ExpectPerform, Timeout: attemptTimeout, IdleTimeout: runIdle, Runner: runner,
@@ -91,7 +107,7 @@ func (g *Engine) runArtifactAttempts(
 		}
 
 		if lastResult.Err != nil {
-			g.recordArtifactAttempt(ctx, item.ID, attempt, phase, section, binding, lastResult.Usage,
+			g.recordArtifactAttempt(ctx, item.ID, attempt, phase, section, attemptBinding, current.Source, lastResult.Usage,
 				[]string{lastResult.Err.Error()}, reason)
 			if errors.Is(lastResult.Err, context.Canceled) || errors.Is(lastResult.Err, context.DeadlineExceeded) ||
 				errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -104,7 +120,7 @@ func (g *Engine) runArtifactAttempts(
 		lastFindings = nil
 		if decodeErr != nil {
 			if !contract.Required && errors.Is(decodeErr, agentartifact.ErrNoArtifact) {
-				g.recordArtifactAttempt(ctx, item.ID, attempt, phase, section, binding, lastResult.Usage, nil, reason)
+				g.recordArtifactAttempt(ctx, item.ID, attempt, phase, section, attemptBinding, current.Source, lastResult.Usage, nil, reason)
 				return withUsage(lastResult, totalUsage), nil, nil
 			}
 			lastFindings = []string{decodeErr.Error()}
@@ -115,11 +131,11 @@ func (g *Engine) runArtifactAttempts(
 			lastFindings = findings
 			lastDraft = boundedDraft(candidate.Body)
 			if len(findings) == 0 {
-				g.recordArtifactAttempt(ctx, item.ID, attempt, phase, section, binding, lastResult.Usage, nil, reason)
+				g.recordArtifactAttempt(ctx, item.ID, attempt, phase, section, attemptBinding, current.Source, lastResult.Usage, nil, reason)
 				return withUsage(lastResult, totalUsage), &candidate, nil
 			}
 		}
-		g.recordArtifactAttempt(ctx, item.ID, attempt, phase, section, binding, lastResult.Usage, lastFindings, reason)
+		g.recordArtifactAttempt(ctx, item.ID, attempt, phase, section, attemptBinding, current.Source, lastResult.Usage, lastFindings, reason)
 
 		if policy.TimeBudget > 0 && time.Since(started) >= policy.TimeBudget {
 			return withUsage(lastResult, totalUsage), nil, fmt.Errorf(
@@ -141,6 +157,7 @@ func (g *Engine) runArtifactAttempts(
 			phase = "repair"
 			reason = "validation-failed"
 			binding, section, runner, runTimeout, runIdle = initialBinding, initialSection, initialRunner, timeout, idle
+			current = choice
 			if policy.RepairEffort != "" {
 				binding.Effort = policy.RepairEffort
 			}
@@ -153,6 +170,9 @@ func (g *Engine) runArtifactAttempts(
 				reason = "validation-no-repair"
 			}
 			binding, section, runner, runTimeout, runIdle = initialBinding, initialSection, initialRunner, timeout, idle
+			// An escalation with no EscalateBinding falls back to the initial
+			// binding, so it reuses the dispatch's own choice unchanged (4.1).
+			current = choice
 			if policy.EscalateBinding != "" {
 				var ok bool
 				binding, ok = g.namedAgents(policy.EscalateBinding)
@@ -160,6 +180,11 @@ func (g *Engine) runArtifactAttempts(
 					return withUsage(lastResult, totalUsage), nil, fmt.Errorf(
 						"attempt_escalate_binding %q is not defined in .satelle/workflows/agents.toml", policy.EscalateBinding)
 				}
+				// A genuinely different binding resolves its OWN choice — same
+				// dispatch inputs (override/session models/ranking), but against
+				// THIS binding's own (unmutated) model= (4.1).
+				escModel, escSource := g.selectModel(ctx, binding, item.ID, modelOverride, modelOverrideSource)
+				current = ModelChoice{Model: escModel, Source: escSource}
 				section = policy.EscalateBinding
 				if config.ResolvedRole(section, binding) == config.RoleReviewer {
 					return withUsage(lastResult, totalUsage), nil, fmt.Errorf(
@@ -229,6 +254,7 @@ func (g *Engine) recordArtifactAttempt(
 	attempt int,
 	phase, section string,
 	binding config.AgentBinding,
+	modelSource string,
 	usage agentcli.UsageResult,
 	findings []string,
 	reason string,
@@ -238,6 +264,7 @@ func (g *Engine) recordArtifactAttempt(
 		"attempt": attempt, "phase": phase, "binding": section,
 		"model": binding.Model, "effort": binding.Effort,
 		"model_resolved":  modelResolved,
+		"model_source":    modelSource,
 		"duration_ms":     usage.Duration.Milliseconds(),
 		"usage_available": usage.Available,
 		"validator_ok":    len(findings) == 0,

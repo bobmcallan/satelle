@@ -192,6 +192,56 @@ obligations = ["x", "deployed"]
 	}
 }
 
+// TestParseStepsModel (sty_7069bced / epic:model-selection order:3): a step's
+// optional model= key parses onto Step.Model and survives into the derived
+// Spec's State — the per-dispatch override config.SelectModel's step tier reads.
+func TestParseStepsModel(t *testing.T) {
+	step := `[raised]
+status = "backlog"
+start = true
+
+[coded]
+status = "in_progress"
+agent = "coder"
+model = "haiku"
+skills = ["coder"]
+requires = ["raised"]
+`
+	cat, err := ParseSteps(step)
+	if err != nil {
+		t.Fatalf("ParseSteps: %v", err)
+	}
+	var got string
+	for _, st := range cat.Steps {
+		if st.Name == "in_progress" {
+			got = st.Model
+		}
+	}
+	if got != "haiku" {
+		t.Fatalf("Step.Model = %q, want haiku", got)
+	}
+
+	done := `["*"]
+obligations = ["raised", "coded"]
+`
+	spec, err := ParseRoute(done, step, "feature", nil)
+	if err != nil {
+		t.Fatalf("ParseRoute: %v", err)
+	}
+	found := false
+	for _, s := range spec.States {
+		if s.Name == "in_progress" {
+			found = true
+			if s.Model != "haiku" {
+				t.Errorf("State.Model = %q, want haiku", s.Model)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("in_progress state missing from assembled spec")
+	}
+}
+
 func TestUnresolvedObligations(t *testing.T) {
 	step := `[raised]
 status = "backlog"

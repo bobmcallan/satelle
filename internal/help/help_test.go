@@ -128,6 +128,30 @@ func TestAgentDispatchTopic(t *testing.T) {
 	}
 }
 
+// TestAgentDispatchTopicModelSelection (sty_7069bced / epic:model-selection
+// order:3 AC7): the precedence, the [models] ranking table, the step/agent
+// override syntax, and the cli-default fallback must all be teachable from
+// deployed docs alone.
+func TestAgentDispatchTopicModelSelection(t *testing.T) {
+	top, ok := Get("agent-dispatch")
+	if !ok {
+		t.Fatal("agent-dispatch topic not found")
+	}
+	for _, want := range []string{
+		"Model selection",
+		"[models]",
+		"ranking",
+		"agents.toml",
+		"model =",
+		"--model",
+		"cli-default",
+	} {
+		if !strings.Contains(top.Body, want) {
+			t.Errorf("agent-dispatch topic missing %q", want)
+		}
+	}
+}
+
 // TestReworkMarkerContractStatedIdentically: the READY contract appears in the
 // help topic AND in `satelle story rework --help`. A contract stated in two
 // places is a contract that drifts, so both are pinned to the same literals —

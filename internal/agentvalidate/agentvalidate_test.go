@@ -132,6 +132,65 @@ on = ["done"]
 	}
 }
 
+// TestValidate_StepModelOverride (sty_7069bced / epic:model-selection order:3):
+// a spine performer node's model= is reported as the effective model, with
+// source=step, when the allocated binding itself has no model=. A binding
+// model= still wins outright (source=binding) — AC3/AC6.
+func TestValidate_StepModelOverride(t *testing.T) {
+	agents := config.AgentsConfig{
+		Executor: config.AgentBinding{Command: "in-loop"},
+		Reviewer: config.AgentBinding{Command: agentcli.DefaultGrokCommand, Tools: "read_file,grep,list_dir", Model: "grok-4.5"},
+		Agents: map[string]config.AgentBinding{
+			"coder":   {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob,Bash(satelle:*)", Role: "agent"},
+			"planner": {Command: agentcli.DefaultClaudeCommand, Tools: "Read,Grep,Glob,Bash(satelle:*)", Model: "opus", Role: "agent"},
+		},
+	}
+	wfs := routeDocs(
+		`["*"]
+obligations = ["raised", "planned", "coded", "closed"]
+`,
+		`[raised]
+status = "backlog"
+start = true
+
+[planned]
+status = "plan"
+agent = "planner"
+model = "sonnet"
+skills = ["plan"]
+requires = ["raised"]
+
+[coded]
+status = "in_progress"
+agent = "coder"
+model = "haiku"
+skills = ["coder"]
+requires = ["planned"]
+
+[closed]
+status = "done"
+terminal = true
+requires = ["coded"]
+`)
+	r := Validate(agents, nil, wfs)
+	if !r.OK() {
+		t.Fatalf("problems: %v", r.Problems)
+	}
+	by := map[string]GateAllocation{}
+	for _, g := range r.Gates {
+		by[g.Node] = g
+	}
+	coded := by["in_progress"]
+	if coded.EffectiveModel != "haiku" || coded.ModelSource != config.ModelSourceStep {
+		t.Errorf("coded node = %+v, want effective=haiku source=step", coded)
+	}
+	// planner's binding already names a model — the step's model= must lose to it.
+	planned := by["plan"]
+	if planned.EffectiveModel != "opus" || planned.ModelSource != config.ModelSourceBinding {
+		t.Errorf("plan node = %+v, want effective=opus source=binding", planned)
+	}
+}
+
 // TestValidate_StepSummaryNamedReviewer (sty_8ee40f94): step-summary may allocate
 // a named role=reviewer (cheap summariser); not a performer, not orphaned.
 func TestValidate_StepSummaryNamedReviewer(t *testing.T) {

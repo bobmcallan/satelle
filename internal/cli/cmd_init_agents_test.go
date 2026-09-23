@@ -87,6 +87,22 @@ func TestScaffoldAgentsTomlFullyDefined(t *testing.T) {
 			t.Errorf("scaffold missing idle_timeout/timeout doc %q", want)
 		}
 	}
+	// Model selection (sty_7069bced): the scaffold must document that an empty
+	// model= is selected deliberately, not left to the CLI's own default, and
+	// must ship a commented [models] ranking example pointing at the help topic.
+	for _, want := range []string{
+		"selected deliberately, not left to the CLI's own default",
+		"§ Model selection",
+		"# [models]",
+		`# ranking = ["opus", "sonnet", "haiku"]`,
+	} {
+		if !strings.Contains(scaffoldAgentsToml, want) {
+			t.Errorf("scaffold missing model-selection doc %q", want)
+		}
+	}
+	if strings.Contains(scaffoldAgentsToml, "\n[models]\n") {
+		t.Error("scaffold [models] ranking example must stay commented")
+	}
 	// Parity: loading the scaffold yields the same effective reviewer binding as
 	// the coded defaults for an absent file.
 	dir := t.TempDir()

@@ -36,6 +36,11 @@ type GateDecision struct {
 	// nil respectively when the transport reported no model.
 	ModelResolved string
 	Models        []ModelUsage
+	// ModelSource names why ModelResolved was chosen — binding, step, agent,
+	// inherited-orchestrator, inherited-in-loop, creator, or cli-default
+	// (config.SelectModel, sty_7069bced). Empty for a functional-check gate,
+	// which invokes no agent and so selects no model.
+	ModelSource string
 	// TokensIn/Out/Total and DurationMs are the invocation's cost (sty_a699ad14),
 	// recorded on the agent_invocation ledger entry so per-gate cost is auditable.
 	// Zero for a functional-check gate or a plain-text harness that emits no usage.
@@ -78,6 +83,9 @@ type ReviewerVerdict struct {
 	// join to an agent_invocation row.
 	ModelResolved string       `json:"model_resolved,omitempty"`
 	Models        []ModelUsage `json:"model_usage,omitempty"`
+	// ModelSource mirrors GateDecision.ModelSource (sty_7069bced), stamped
+	// directly on this verdict's ledger row for the same reason ModelResolved is.
+	ModelSource string `json:"model_source,omitempty"`
 	// Token/wall-time cost of this reviewer's invocation (sty_a699ad14), recorded
 	// on its agent_invocation entry for the per-gate cost view.
 	// UsageAvailable is stamped without omitempty so unreported ≠ measured zero
@@ -216,6 +224,9 @@ type DispatchResult struct {
 	// every model a multi-model invocation reported.
 	ModelResolved string       `json:"model_resolved,omitempty"`
 	Models        []ModelUsage `json:"model_usage,omitempty"`
+	// ModelSource names why ModelResolved was chosen (config.SelectModel,
+	// sty_7069bced) — see GateDecision.ModelSource.
+	ModelSource string `json:"model_source,omitempty"`
 	// Token/wall-time cost of the dispatch (sty_a699ad14), recorded on the
 	// agent_invocation entry. Zero for a plain-text harness with no usage envelope.
 	// UsageAvailable false means the tokens were not reported (sty_56aae77a).
@@ -254,9 +265,9 @@ func SetExecutorDispatcher(d ExecutorDispatcher) { executorDispatcher = d }
 
 // Retrospector dispatches the retrospective agent over a finished story to emit
 // improvement proposals (sty_b53730e2). Implemented in internal/agentstep; verb
-// holds only the seam.
+// holds only the seam. modelOverride is `story retrospect --model` (sty_7069bced).
 type Retrospector interface {
-	Retrospect(ctx context.Context, item workitem.Item) (DispatchResult, error)
+	Retrospect(ctx context.Context, item workitem.Item, modelOverride string) (DispatchResult, error)
 }
 
 var retrospector Retrospector
@@ -276,6 +287,7 @@ type SummaryResult struct {
 	Model          string
 	ModelResolved  string // resolved model id the summariser actually ran (sty_87b86044)
 	Models         []ModelUsage
+	ModelSource    string // why ModelResolved was chosen (config.SelectModel, sty_7069bced)
 	TokensIn       int
 	TokensOut      int
 	TokensTotal    int

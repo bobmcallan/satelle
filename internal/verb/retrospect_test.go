@@ -11,11 +11,15 @@ import (
 )
 
 type fakeRetro struct {
-	res verb.DispatchResult
-	err error
+	res           verb.DispatchResult
+	err           error
+	gotModel      string
+	gotModelCalls int
 }
 
-func (f fakeRetro) Retrospect(ctx context.Context, item workitem.Item) (verb.DispatchResult, error) {
+func (f *fakeRetro) Retrospect(ctx context.Context, item workitem.Item, modelOverride string) (verb.DispatchResult, error) {
+	f.gotModel = modelOverride
+	f.gotModelCalls++
 	return f.res, f.err
 }
 
@@ -24,7 +28,7 @@ func (f fakeRetro) Retrospect(ctx context.Context, item workitem.Item) (verb.Dis
 // numbers (sty_b53730e2).
 func TestStoryRetrospectRecordsInvocation(t *testing.T) {
 	wire(t)
-	verb.SetRetrospector(fakeRetro{res: verb.DispatchResult{
+	verb.SetRetrospector(&fakeRetro{res: verb.DispatchResult{
 		Dispatched: true, Agent: "retrospective", Model: "glm-4.6", Skill: "satelle-retrospective",
 		TokensTotal: 100, DurationMs: 5000, Output: "## PROPOSALS FILED\nnone",
 		UsageAvailable: true, // transport reported usage (sty_56aae77a)
@@ -50,6 +54,28 @@ func TestStoryRetrospectRecordsInvocation(t *testing.T) {
 	json.Unmarshal(call(t, "ledger-list", map[string]any{"story_id": created.ID, "kind": ledger.KindAgentInvocation}), &entries)
 	if len(entries) == 0 {
 		t.Fatal("no agent_invocation recorded for the retrospective dispatch")
+	}
+}
+
+// TestStoryRetrospectPassesModelOverride (sty_7069bced / epic:model-selection
+// order:3): `satelle story retrospect --model` reaches the dispatcher as a
+// per-dispatch override, so AC3's agent-flag tier applies to retrospect too.
+func TestStoryRetrospectPassesModelOverride(t *testing.T) {
+	wire(t)
+	fake := &fakeRetro{res: verb.DispatchResult{Dispatched: true, Agent: "retrospective"}}
+	verb.SetRetrospector(fake)
+	defer verb.SetRetrospector(nil)
+
+	var created struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(call(t, "story-create", map[string]any{"title": "T", "body": "b", "acceptance": "1. x", "category": "feature"}), &created)
+
+	if _, err := verb.Dispatch(context.Background(), "story-retrospect", mustJSON(t, map[string]any{"id": created.ID, "model": "haiku"})); err != nil {
+		t.Fatalf("story-retrospect: %v", err)
+	}
+	if fake.gotModelCalls != 1 || fake.gotModel != "haiku" {
+		t.Fatalf("Retrospect called with model=%q (%d calls), want haiku once", fake.gotModel, fake.gotModelCalls)
 	}
 }
 

@@ -285,6 +285,14 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// agent=<name> allocation runs that binding's harness at the transition.
 			// agents.toml defines WHO, the DOT defines WHERE, the binary only runs it.
 			rev.SetNamedAgents(agents.NamedBinding)
+			// Model selection (sty_7069bced): the [models] ranking table and the
+			// session-model resolver feed config.SelectModel's inherited/creator
+			// tiers. Without these two, tiers 3 and 4 of the precedence never
+			// apply — every dispatch with no explicit/step/agent model falls
+			// straight to cli-default.
+			rev.SetModelRanking(agents.Models.Ranking)
+			rev.SetSessionModelsResolver(verb.SessionModels)
+			rev.SetInvocationRecorder(verb.AppendAgentInvocation)
 			// A live session (story chat, the rework relay's coder seat and
 			// rework.consult binding) resolves an unset interface= to the
 			// binding CLI's best live transport, not always command
@@ -404,6 +412,9 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 	}
 	rev.SetNamedAgents(eff.Agents.NamedBinding)
 	rev.SetLiveNamedAgents(eff.Agents.LiveBinding)
+	rev.SetModelRanking(eff.Agents.Models.Ranking)
+	rev.SetSessionModelsResolver(verb.SessionModels)
+	rev.SetInvocationRecorder(verb.AppendAgentInvocation)
 	return rev, a, nil
 }
 

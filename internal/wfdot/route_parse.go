@@ -97,8 +97,16 @@ type stepWire struct {
 	// per route family. The KEY is the obligation, which is the step's actual
 	// identity and is unique by construction — BuildRoute already refuses two
 	// steps providing the same obligation in one route (sty_81bb0dde).
-	Status        string   `toml:"status"`
-	Agent         string   `toml:"agent"`
+	Status string `toml:"status"`
+	Agent  string `toml:"agent"`
+	// Model names a model for THIS step's dispatch (sty_7069bced /
+	// epic:model-selection order:3) — one precedence tier below the
+	// agents.toml binding's own model=, above the inherited/creator session
+	// tiers. Distinct from the retired DOT edge model= (sty_a476a2f8, which
+	// stays retired): that was a GATE override; this is a per-dispatch
+	// instruction for the step's PERFORMER, resolved by config.SelectModel
+	// alongside the binding, never baked into a Go branch.
+	Model         string   `toml:"model"`
 	Skills        []string `toml:"skills"`
 	Reviewers     []string `toml:"reviewers"`
 	ReviewerAgent string   `toml:"reviewer_agent"`
@@ -303,6 +311,7 @@ func ParseSteps(body string) (Catalogue, error) {
 			Name:          s.Status,
 			Provides:      provides,
 			Agent:         s.Agent,
+			Model:         s.Model,
 			Skills:        s.Skills,
 			Reviewers:     s.Reviewers,
 			ReviewerAgent: s.ReviewerAgent,

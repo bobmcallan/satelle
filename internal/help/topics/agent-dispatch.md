@@ -909,5 +909,77 @@ backend keeps a weak alternate-model output from reaching the build.
 See also: `satelle help workflows` (choosing a lifecycle) and
 `satelle help reviewer-checks` (gate skills).
 
+## Model selection (sty_7069bced)
 
-A step names the binding that gates it with `reviewer_agent:` (default `[reviewer]`). Models live in agents.toml only.
+`model` is optional in agents.toml. When a binding leaves it unset, satelle
+selects one deliberately instead of silently taking the CLI's own default, and
+records WHY next to the alias and the resolved id (`satelle story cost`, the
+web timeline). Precedence, first match wins:
+
+1. **binding** — the binding's own `model =` in `.satelle/workflows/agents.toml`.
+2. **step** or **agent** — a model named for THIS ONE dispatch: a workflow
+   step's `model =` in `step.toml` (a spine performer node only — a gate/edge
+   has no step tier of its own), or a dispatching agent's `--model` flag
+   (`satelle story rework --model`, `satelle story chat --model`, `satelle
+   story retrospect --model`). An agent flag wins over a step default when
+   both would apply to the same dispatch.
+3. **inherited-orchestrator** / **inherited-in-loop** — the higher-ranked (by
+   `[models] ranking`, below) of the orchestrator session's (`satelle story
+   chat`) and the in-loop engaging session's models on this story. An
+   unranked model always loses to a ranked one; the orchestrator wins a tie
+   (it is the live driving session). Both are guarded so a Claude session's
+   model id can never reach a Codex/Grok dispatch — see "cross-provider
+   guard" below.
+4. **creator** — the model of the session that created the story, same guard.
+5. **cli-default** — none of the above resolved: the `{model}` placeholder is
+   dropped and the CLI's own default runs. Recorded as `cli-default`, not left
+   silent.
+
+Every dispatch — a gate, a named-agent step, a live chat/rework session, a
+retrospective, quality escalation — records BOTH the resolved model and which
+of these seven values (`binding`, `step`, `agent`, `inherited-orchestrator`,
+`inherited-in-loop`, `creator`, `cli-default`) picked it, on the same
+`agent_invocation` / `review_accept` / `review_reject` row that already
+carries `model_resolved`. `satelle agent validate` reports a step's
+`model =` as the node's effective model (source `step`) whenever the
+allocated binding itself has no `model =` (source `binding` wins outright).
+
+### `[models] ranking` — the power order, in configuration
+
+Tier 3's "higher-ranked" reads a table the OPERATOR authors — the binary only
+compares two model names against it, never hardcodes an opinion about which
+model beats which (constitution: no opinion as code):
+
+```toml
+# .satelle/workflows/agents.toml
+[models]
+ranking = ["opus", "sonnet", "haiku"]   # strongest first
+```
+
+Change the list and the next dispatch's inherited pick changes with it, no
+recompile. A model absent from `ranking` is unranked and always loses to a
+ranked one, however capable it may actually be — name every model you want the
+inherited tier to prefer.
+
+### The cross-provider guard
+
+An inherited or creator model is applied only when the dispatch binding's own
+command template carries a `{model}` placeholder (a slot to fill) AND the
+captured session's executable matches the binding's own command executable
+(e.g. both `claude`). A Grok-native or Codex session's model id never rides
+into a Claude dispatch, or the reverse — a guard failure simply falls through
+to the next precedence tier instead of erroring.
+
+### What each harness reports
+
+- **Claude Code** — the in-loop hook payload's `model` field (or the
+  transcript's last assistant entry) captures the in-loop tier; a `stream`
+  session's own `system`/`init` record captures the orchestrator tier
+  (`satelle story chat`).
+- **Codex** — reports a model only when its own payload happens to carry one;
+  otherwise the session is recorded `unknown` and the rule falls through.
+- **Grok / ACP** — report no model at all; always recorded `unknown`.
+
+An explicit `model =` on a binding is unaffected by any of this — it wins
+outright, unchanged from before this story, and no session capture or ranking
+lookup ever runs for that dispatch.
