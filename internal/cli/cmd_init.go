@@ -1723,6 +1723,27 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# workflows/agents.toml — the age
 # the machine has a catalog. Precedence: repo inline > referenced profile > an opt-in
 # [defaults] use_global_roles role default > satelle's embedded fallback. The catalog
 # is execution configuration ONLY — workflows and skills stay repo substrate here.
+#
+# DEFAULT LIVE TRANSPORT (epic:model-selection child 2) — a binding with no
+# interface= that is opened as a LIVE session (a rework relay seat, a
+# rework.consult binding, or satelle story chat) resolves to the first
+# transport below that can actually open its AUTHORED command: stream only for
+# a Claude command whose argv really parses as a live stream session (a
+# one-shot command, e.g. one carrying --append-system-prompt {system}, does
+# not — {system}/{payload} ride the live protocol, not argv); acp only for any
+# other spawn line that parses as an ACP spawn. A binding with no command yet
+# is a candidate only for a transport with a shipped default line to fill in
+# (stream has one; acp has none — it needs an authored spawn line satelle
+# cannot guess), so an unauthored command never resolves to acp regardless of
+# this order. A one-shot dispatch (gate reviewer, planner, edge advisor)
+# always resolves to command, unaffected by this order. An explicit interface=
+# always wins over both.
+# [defaults]
+# live_interfaces = ["stream", "acp"]   # shipped default — list only "acp" (or
+#                                        # only "stream") to exclude a
+#                                        # transport; mechanism decides which
+#                                        # one an authored command can serve,
+#                                        # not list order
 
 [executor]
 role    = "agent"              # declared contract (agent | reviewer); do not leave inferred

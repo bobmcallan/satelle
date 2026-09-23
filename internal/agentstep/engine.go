@@ -168,6 +168,11 @@ type Engine struct {
 	// (.satelle/workflows/agents.toml [<name>] sections) for executor dispatch
 	// (sty_fd427546). Nil keeps every step in-loop.
 	namedAgents func(name string) (config.AgentBinding, bool)
+	// liveNamedAgents resolves a NAMED binding for a LIVE session
+	// (OpenSessionAs) as AgentsConfig.LiveBinding — EffectiveBinding(UseLive)
+	// over the raw binding, so an unset interface= picks the CLI's best live
+	// transport (epic:model-selection child 2). Nil falls back to namedAgents.
+	liveNamedAgents func(name string) (config.AgentBinding, bool)
 	// resolveSecondary returns a fallback binding for rate-limit failover
 	// (sty_5bf61f89). Nil disables secondary retry.
 	resolveSecondary func(section string, b config.AgentBinding) (config.AgentBinding, string, bool)
@@ -1212,6 +1217,17 @@ func (g *Engine) guardWorkflowStructure(ctx context.Context, item workitem.Item,
 // agent=<name> allocation (sty_fd427546). Nil keeps every step in-loop.
 func (g *Engine) SetNamedAgents(fn func(name string) (config.AgentBinding, bool)) { g.namedAgents = fn }
 
+// SetLiveNamedAgents wires the resolver OpenSessionAs uses to open a LIVE
+// session: name's binding through AgentsConfig.LiveBinding, i.e.
+// EffectiveBinding(UseLive) over the RAW (undefaulted) binding — an unset
+// interface= resolves to the binding CLI's best live transport instead of
+// always command (epic:model-selection child 2). Nil falls back to
+// namedAgents, so a caller that never wires this resolves exactly as before
+// (an unset interface stays command and OpenSessionAs refuses it).
+func (g *Engine) SetLiveNamedAgents(fn func(name string) (config.AgentBinding, bool)) {
+	g.liveNamedAgents = fn
+}
+
 // SetArtifactAttacher wires the verb-owned typed document writer used by
 // structured step output contracts.
 func (g *Engine) SetArtifactAttacher(fn func(context.Context, workitem.Item, string, string, string) (string, string, error)) {
@@ -1664,7 +1680,11 @@ func (g *Engine) OpenSessionAs(ctx context.Context, name string, role SessionRol
 	if g.namedAgents == nil {
 		return nil, fmt.Errorf("no agents layer is wired — cannot open the %q session", name)
 	}
-	binding, found := g.namedAgents(name)
+	resolve := g.liveNamedAgents
+	if resolve == nil {
+		resolve = g.namedAgents
+	}
+	binding, found := resolve(name)
 	if !found {
 		return nil, fmt.Errorf("no [%s] binding in .satelle/workflows/agents.toml — define interface=acp or stream to open a live session", name)
 	}

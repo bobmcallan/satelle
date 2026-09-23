@@ -162,6 +162,113 @@ func TestValidate_ReworkConsultNotLiveCapableWarns(t *testing.T) {
 	}
 }
 
+// TestValidate_ReworkUnsetInterfaceLiveNoWarn (AC6, epic:model-selection child
+// 2): a relay whose coder seat and consult binding both OMIT interface= is
+// live-capable by resolution — no not-live-capable WARN — because validate
+// judges the consult binding through LiveBinding (EffectiveBinding(UseLive)),
+// the same seam OpenSessionAs opens it through.
+func TestValidate_ReworkUnsetInterfaceLiveNoWarn(t *testing.T) {
+	agents := reworkAgents(config.AgentBinding{
+		Role: config.RoleReviewer, Tools: "Read,Grep,Glob", Model: "opus",
+	})
+	agents.Agents["coder"] = config.AgentBinding{
+		Role:  config.RoleAgent,
+		Tools: "Read,Grep,Glob,Edit,Write,Bash(satelle:*)", Model: "opus",
+	}
+	r := Validate(agents, nil, routeDocs(reworkDone, reworkStep("consultant")))
+	if !r.OK() {
+		t.Fatalf("an unset-interface relay must not produce hard problems: %v", r.Problems)
+	}
+	for _, w := range r.Warnings {
+		if strings.Contains(w, "not live-capable") {
+			t.Errorf("an unset interface= must resolve live, not WARN: %q", w)
+		}
+	}
+}
+
+// TestValidate_GrantsReportInterfaceReason (AC5): each grant's Interface and
+// InterfaceReason reflect explicit / one-shot / live-use resolution — a
+// one-shot [reviewer] stays command, the live coder/consultant seats resolve
+// to stream with reason "live use".
+func TestValidate_GrantsReportInterfaceReason(t *testing.T) {
+	agents := reworkAgents(config.AgentBinding{
+		Role: config.RoleReviewer, Tools: "Read,Grep,Glob", Model: "opus",
+	})
+	agents.Agents["coder"] = config.AgentBinding{
+		Role:  config.RoleAgent,
+		Tools: "Read,Grep,Glob,Edit,Write,Bash(satelle:*)", Model: "opus",
+	}
+	r := Validate(agents, nil, routeDocs(reworkDone, reworkStep("consultant")))
+	byName := map[string]Grant{}
+	for _, g := range r.Grants {
+		byName[g.Name] = g
+	}
+	if g := byName["reviewer"]; g.Interface != config.InterfaceCommand || g.InterfaceReason != "one-shot default" {
+		t.Errorf("reviewer grant = interface=%q reason=%q, want command/one-shot default", g.Interface, g.InterfaceReason)
+	}
+	if g := byName["coder"]; g.Interface != config.InterfaceStream || g.InterfaceReason != "live use" {
+		t.Errorf("coder grant = interface=%q reason=%q, want stream/live use", g.Interface, g.InterfaceReason)
+	}
+	if g := byName["consultant"]; g.Interface != config.InterfaceStream || g.InterfaceReason != "live use" {
+		t.Errorf("consultant grant = interface=%q reason=%q, want stream/live use", g.Interface, g.InterfaceReason)
+	}
+}
+
+// TestValidate_GrantsAgreeWithRuntimeForLiveExecutor (sty_119f6fda): a
+// rework.consult=executor with an unset [executor] command must report the
+// SAME thing OpenSessionAs actually does — refused as in-loop — not "stream
+// (live use)". The grant loop used to compute this from the bare RawBinding,
+// which skips ExecutorBinding's in-loop default and disagreed with
+// LiveBinding/the runtime.
+func TestValidate_GrantsAgreeWithRuntimeForLiveExecutor(t *testing.T) {
+	agents := reworkAgents(liveConsultant())
+	agents.Executor = config.AgentBinding{} // no command authored — in-loop by default
+	r := Validate(agents, nil, routeDocs(reworkDone, reworkStep("executor")))
+	var found bool
+	for _, g := range r.Grants {
+		if g.Name != "executor" {
+			continue
+		}
+		found = true
+		if g.Interface != config.InterfaceCommand || g.InterfaceReason != "live use: in-loop" {
+			t.Errorf("executor grant = interface=%q reason=%q, want command/live use: in-loop (matching the runtime refusal)", g.Interface, g.InterfaceReason)
+		}
+	}
+	if !found {
+		t.Fatal("no grant reported for executor")
+	}
+	got := reworkFindings(t, r, "rework consult=executor")
+	if len(got) == 0 {
+		t.Fatalf("no finding names the not-live-capable executor consult: %v", r.Warnings)
+	}
+}
+
+// TestValidate_GrantsAgreeWithRuntimeForLiveReviewer (sty_119f6fda): a
+// rework.consult=reviewer with no authored tools must report the SAME
+// read-only ceiling ReviewerBinding()/LiveBinding give the reviewer
+// elsewhere — not an empty grant computed from the bare RawBinding.
+func TestValidate_GrantsAgreeWithRuntimeForLiveReviewer(t *testing.T) {
+	agents := reworkAgents(liveConsultant())
+	agents.Reviewer = config.AgentBinding{Role: config.RoleReviewer} // no tools, no command authored
+	r := Validate(agents, nil, routeDocs(reworkDone, reworkStep("reviewer")))
+	var found bool
+	for _, g := range r.Grants {
+		if g.Name != "reviewer" {
+			continue
+		}
+		found = true
+		if g.Tools != config.DefaultReviewerTools {
+			t.Errorf("reviewer grant tools = %q, want %q (LiveBinding's default ceiling)", g.Tools, config.DefaultReviewerTools)
+		}
+		if g.Interface != config.InterfaceStream || g.InterfaceReason != "live use" {
+			t.Errorf("reviewer grant = interface=%q reason=%q, want stream/live use", g.Interface, g.InterfaceReason)
+		}
+	}
+	if !found {
+		t.Fatal("no grant reported for reviewer")
+	}
+}
+
 // A route with NO rework key produces no rework finding at all — the AC1 no-op
 // guarantee on the validate surface.
 func TestValidate_NoReworkKeyNoReworkFinding(t *testing.T) {

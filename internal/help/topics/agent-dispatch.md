@@ -113,7 +113,7 @@ runtime refusal and validate, so they cannot disagree.
 
 | `interface` | Meaning |
 |-------------|---------|
-| **`command`** (default; omit = command) | Full multi-token argv template; any CLI (Claude Code, `grok -p`, wrappers, custom). One-shot stdin/argv; reviewers stay here. |
+| **`command`** (default for a one-shot use) | Full multi-token argv template; any CLI (Claude Code, `grok -p`, wrappers, custom). One-shot stdin/argv; reviewers stay here. |
 | **`acp`** | Agent Client Protocol over stdio; `command` is the **spawn line only** (e.g. `grok agent stdio`). System/payload ride the session, not `{placeholders}`. |
 | **`stream`** | Claude stream-json live session (`DefaultClaudeStreamCommand`). `{system}`/`{payload}` are rejected — they ride the first user message; `{tools}`/`{model}`/`{effort}` remain argv. For the orchestrator binding (live turns), not reviewers. |
 
@@ -124,6 +124,56 @@ live-session option for an orchestrator binding. An ACP-capable CLI is usable
 when it implements ACP agent stdio **and** the binding sets `interface = "acp"`.
 Workers never advance story status; they return text/verdicts that satelle
 enacts after gates.
+
+### Default interface (epic:model-selection child 2)
+
+Omitting `interface` no longer means "always command" — the resolved
+transport now depends on **how the binding is used**:
+
+- **Live** (a rework relay's coder seat, a `rework.consult` binding, or the
+  binding `satelle story chat` opens) resolves to the first entry in
+  `[defaults] live_interfaces` that can actually open the binding's AUTHORED
+  command — two questions, both must hold: MECHANISM (which CLI is this? only
+  `stream` for a Claude command, `ExecutableToken` == `claude`; `acp` for any
+  other spawn line) and SHAPE (does the argv actually parse for that
+  transport? checked by the same construction the runtime opens with, not
+  guessed — an authored ONE-SHOT command, e.g. the `[reviewer]` shape's
+  `--append-system-prompt {system}`, fails both `stream` and `acp`
+  construction, since `{system}`/`{payload}` ride the live protocol, not
+  argv, so it is correctly excluded rather than waved through on "first token
+  is claude"). A binding with **no `command` yet** is a candidate only for a
+  transport that has a shipped default command line to fill in —
+  `DefaultClaudeStreamCommand` for `stream`; `acp` has none (it needs an
+  authored spawn line satelle cannot guess), so an unauthored command never
+  resolves to `acp`, whatever the configured order. When no candidate can
+  open the command, it falls back to `command` and names the gap:
+  `live use: in-loop` when the command is the in-loop preset (no live
+  transport exists for it at all), or `live use: not live-capable` otherwise
+  — the existing not-live-capable WARN/refusal then fires with that reason.
+- **One-shot** (a gate reviewer, a planner, an edge advisor) always resolves
+  to `command`, exactly as before.
+- **Explicit** always wins, on either path — an `interface=` that names a
+  transport its CLI cannot serve live still produces the not-live-capable WARN
+  from `satelle agent validate` and is refused at session open, unchanged.
+
+The preference order between `stream` and `acp` for a live binding is
+configuration, not a compiled opinion — `[defaults] live_interfaces` in
+`.satelle/workflows/agents.toml`:
+
+```toml
+[defaults]
+live_interfaces = ["stream", "acp"]   # shipped default — list only "acp" (or
+                                       # only "stream") to exclude a transport;
+                                       # mechanism, not list order, decides
+                                       # which one an authored command can
+                                       # serve, since a Claude command can
+                                       # never be acp-capable or vice versa
+```
+
+`satelle agent validate` prints each binding's resolved interface and why:
+`interface=stream (live use)`, `interface=command (one-shot default)`,
+`interface=acp (explicit)`, `interface=command (live use: in-loop)`,
+`interface=command (live use: not live-capable)`.
 
 ### Progressive execution diagnostics
 
@@ -310,7 +360,9 @@ Role constant.
 ```toml
 [orchestrator]
 role      = "agent"
-interface = "stream"   # or "acp"; omit / "command" / in-loop = hook channel
+interface = "stream"   # or "acp"; explicit "command" / in-loop = hook channel
+                        # (omitting interface here also resolves to stream — a
+                        # story-chat binding is always a live use)
 command   = "claude -p --input-format stream-json --output-format stream-json --verbose --allowedTools {tools} --model {model} --effort {effort}"
 tools     = "Read,Grep,Glob,Bash(satelle:*)"
 model     = "opus"

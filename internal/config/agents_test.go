@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bobmcallan/satelle/internal/agentcli"
 )
 
 // TestTimeoutDuration pins the per-binding dispatch bound resolution (sty_446c38b7):
@@ -539,5 +541,213 @@ func TestIsInLoopCommand(t *testing.T) {
 		if got := IsInLoopCommand(tc.cmd); got != tc.want {
 			t.Errorf("IsInLoopCommand(%q) = %v, want %v", tc.cmd, got, tc.want)
 		}
+	}
+}
+
+// TestResolveInterface_ExplicitWins — an explicit interface= is never
+// overridden, whatever the use (AC3, epic:model-selection child 2).
+func TestResolveInterface_ExplicitWins(t *testing.T) {
+	var ac AgentsConfig
+	for _, use := range []InterfaceUse{UseOneShot, UseLive} {
+		b := AgentBinding{Interface: "command"}
+		if iface, reason := ac.ResolveInterface(b, use); iface != InterfaceCommand || reason != "explicit" {
+			t.Errorf("explicit command, use=%v: got (%q, %q)", use, iface, reason)
+		}
+		b = AgentBinding{Interface: "acp"}
+		if iface, reason := ac.ResolveInterface(b, use); iface != InterfaceACP || reason != "explicit" {
+			t.Errorf("explicit acp, use=%v: got (%q, %q)", use, iface, reason)
+		}
+	}
+}
+
+// TestResolveInterface_OneShotAlwaysCommand — a one-shot dispatch (gate
+// reviewer, planner, edge advisor) with no interface= always resolves to
+// command, regardless of the binding's command line (AC2).
+func TestResolveInterface_OneShotAlwaysCommand(t *testing.T) {
+	var ac AgentsConfig
+	cases := []AgentBinding{
+		{},                              // no command at all
+		{Command: "claude -p {system}"}, // claude-shaped
+		{Command: "grok agent stdio"},   // acp-shaped spawn line
+	}
+	for _, b := range cases {
+		iface, reason := ac.ResolveInterface(b, UseOneShot)
+		if iface != InterfaceCommand || reason != "one-shot default" {
+			t.Errorf("ResolveInterface(%+v, UseOneShot) = (%q, %q), want (command, one-shot default)", b, iface, reason)
+		}
+	}
+}
+
+// TestResolveInterface_LiveUnsetClaude — a stream-SHAPED claude command used
+// live resolves to stream, the shipped default order's first candidate the
+// CLI can serve (AC1).
+func TestResolveInterface_LiveUnsetClaude(t *testing.T) {
+	var ac AgentsConfig
+	b := AgentBinding{Command: "claude -p --input-format stream-json --output-format stream-json --allowedTools {tools}"}
+	iface, reason := ac.ResolveInterface(b, UseLive)
+	if iface != InterfaceStream || reason != "live use" {
+		t.Errorf("ResolveInterface(claude, UseLive) = (%q, %q), want (stream, live use)", iface, reason)
+	}
+}
+
+// TestResolveInterface_LiveUnsetClaudeOneShotShaped — a claude command
+// AUTHORED one-shot (the [reviewer]/DefaultReviewerCommand shape: `-p
+// --output-format json … {system}`) used live must NOT be waved through as
+// stream just because its first token is claude: {system} rides the first
+// live-session message, not argv, so newStreamRunner rejects the command and
+// this must fall back to command — the existing not-live-capable WARN/refusal
+// then names the gap explicitly, rather than the session opening broken (the
+// AC6 regression: a relay coder/consult binding with an authored one-shot
+// command silently "succeeding" resolution and then failing, or opening
+// broken, at session-open time).
+func TestResolveInterface_LiveUnsetClaudeOneShotShaped(t *testing.T) {
+	var ac AgentsConfig
+	b := AgentBinding{Command: "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools}"}
+	iface, reason := ac.ResolveInterface(b, UseLive)
+	if iface != InterfaceCommand || reason != "live use: not live-capable" {
+		t.Errorf("ResolveInterface(one-shot claude, UseLive) = (%q, %q), want (command, live use: not live-capable)", iface, reason)
+	}
+}
+
+// TestResolveInterface_LiveUnsetACPSpawn — any non-claude spawn line used live
+// resolves to acp (AC1).
+func TestResolveInterface_LiveUnsetACPSpawn(t *testing.T) {
+	var ac AgentsConfig
+	b := AgentBinding{Command: "gemini --experimental-acp"}
+	iface, reason := ac.ResolveInterface(b, UseLive)
+	if iface != InterfaceACP || reason != "live use" {
+		t.Errorf("ResolveInterface(gemini, UseLive) = (%q, %q), want (acp, live use)", iface, reason)
+	}
+}
+
+// TestResolveInterface_LivePreferenceFromConfig (AC4): the preference order
+// between live-capable transports is read from [defaults] live_interfaces,
+// not hardcoded — editing ONLY that config changes ResolveInterface's result,
+// no code change. An UNAUTHORED command's own capability still has a floor,
+// though: acp has no default spawn line (DefaultCommandFor("acp") == ""), so
+// narrowing the order to acp-only must NOT "resolve" an empty command to acp
+// with a blank command that could never open — it must fall back to command
+// and name the gap.
+func TestResolveInterface_LivePreferenceFromConfig(t *testing.T) {
+	bodyDefault := "[critic]\nrole = \"reviewer\"\n"
+	acDefault, err := loadAgentsBody(bodyDefault)
+	if err != nil {
+		t.Fatalf("load default body: %v", err)
+	}
+	critic, ok := acDefault.RawBinding("critic")
+	if !ok {
+		t.Fatal("critic binding not found")
+	}
+	iface, reason := acDefault.ResolveInterface(critic, UseLive)
+	if iface != InterfaceStream || reason != "live use" {
+		t.Fatalf("default order: got (%q, %q), want (stream, live use)", iface, reason)
+	}
+	eb := acDefault.EffectiveBinding(critic, UseLive)
+	if eb.Command != agentcli.DefaultClaudeStreamCommand {
+		t.Errorf("default order: effective command = %q, want the stream default", eb.Command)
+	}
+
+	bodyACPOnly := "[defaults]\nlive_interfaces = [\"acp\"]\n\n[critic]\nrole = \"reviewer\"\n"
+	acACPOnly, err := loadAgentsBody(bodyACPOnly)
+	if err != nil {
+		t.Fatalf("load acp-only body: %v", err)
+	}
+	criticACPOnly, ok := acACPOnly.RawBinding("critic")
+	if !ok {
+		t.Fatal("critic binding not found (acp-only)")
+	}
+	iface, reason = acACPOnly.ResolveInterface(criticACPOnly, UseLive)
+	if iface != InterfaceCommand || reason != "live use: not live-capable" {
+		t.Fatalf("acp-only order: got (%q, %q), want (command, live use: not live-capable) — acp has no default spawn line for an unauthored command", iface, reason)
+	}
+	ebACPOnly := acACPOnly.EffectiveBinding(criticACPOnly, UseLive)
+	if ebACPOnly.Command != DefaultReviewerCommand {
+		t.Errorf("acp-only order: effective command = %q, want the command default — never a blank acp spawn line", ebACPOnly.Command)
+	}
+
+	// A command actually SHAPED for acp (a non-claude token) resolves to acp
+	// under that same narrowed order — the gap above was about an unauthored
+	// command with no default line, not about acp being unreachable.
+	bodySpawner := "[defaults]\nlive_interfaces = [\"acp\"]\n\n[spawner]\nrole = \"agent\"\ncommand = \"gemini --experimental-acp\"\n"
+	acSpawner, err := loadAgentsBody(bodySpawner)
+	if err != nil {
+		t.Fatalf("load spawner body: %v", err)
+	}
+	spawner, ok := acSpawner.RawBinding("spawner")
+	if !ok {
+		t.Fatal("spawner binding not found")
+	}
+	iface, reason = acSpawner.ResolveInterface(spawner, UseLive)
+	if iface != InterfaceACP || reason != "live use" {
+		t.Fatalf("spawner: got (%q, %q), want (acp, live use)", iface, reason)
+	}
+
+	if _, err := loadAgentsBody("[defaults]\nlive_interfaces = [\"bogus\"]\n"); err == nil {
+		t.Error("live_interfaces with an unknown token must fail load")
+	}
+}
+
+// TestLiveBinding_NoCommandYet — a live binding with no command authored gets
+// the resolved interface's default command line filled in.
+func TestLiveBinding_NoCommandYet(t *testing.T) {
+	ac, err := loadAgentsBody("[coder]\nrole = \"agent\"\n")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	b, ok := ac.LiveBinding("coder")
+	if !ok {
+		t.Fatal("coder binding not found")
+	}
+	if b.Interface != InterfaceStream {
+		t.Errorf("interface = %q, want stream", b.Interface)
+	}
+	if b.Command != agentcli.DefaultClaudeStreamCommand {
+		t.Errorf("command = %q, want the stream default", b.Command)
+	}
+}
+
+// TestLiveBinding_ReviewerGetsDefaultTools — a rework.consult=reviewer (or any
+// live open of the [reviewer] section) with no authored tools must still get
+// the read-only ceiling ReviewerBinding() gives the one-shot gate path, not a
+// bare empty grant just because it went through the live seam instead.
+func TestLiveBinding_ReviewerGetsDefaultTools(t *testing.T) {
+	ac, err := loadAgentsBody("[reviewer]\nrole = \"reviewer\"\n")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	b, ok := ac.LiveBinding("reviewer")
+	if !ok {
+		t.Fatal("reviewer binding not found")
+	}
+	if b.Tools != DefaultReviewerTools {
+		t.Errorf("tools = %q, want %q (the same ceiling ReviewerBinding() applies)", b.Tools, DefaultReviewerTools)
+	}
+	// An authored grant is never overridden.
+	ac2, err := loadAgentsBody("[reviewer]\nrole = \"reviewer\"\ntools = \"Read\"\n")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	b2, ok := ac2.LiveBinding("reviewer")
+	if !ok {
+		t.Fatal("reviewer binding not found")
+	}
+	if b2.Tools != "Read" {
+		t.Errorf("tools = %q, want the authored grant Read", b2.Tools)
+	}
+}
+
+// TestLiveBinding_ExecutorEmptyCommandStaysInLoop — an unset [executor]
+// command has an established meaning ALREADY (ExecutorBinding: the driving
+// agent itself). LiveBinding must resolve it to "in-loop", not read the empty
+// command as "no shape yet, pick me a live default" and quietly turn the
+// driving session into a spawned Claude stream session.
+func TestLiveBinding_ExecutorEmptyCommandStaysInLoop(t *testing.T) {
+	var ac AgentsConfig
+	b, ok := ac.LiveBinding("executor")
+	if !ok {
+		t.Fatal("executor binding not found")
+	}
+	if !IsInLoopCommand(b.CommandTemplate()) {
+		t.Errorf("executor command = %q, want the in-loop default", b.CommandTemplate())
 	}
 }

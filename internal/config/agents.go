@@ -225,6 +225,23 @@ type AgentsDefaults struct {
 	// precedence ladder is skipped entirely and the catalog can only reach a
 	// binding that explicitly asks for it.
 	UseGlobalRoles bool `toml:"use_global_roles"`
+	// LiveInterfaceOrder is the preference order ResolveInterface walks for a
+	// binding with no interface= that is used LIVE (epic:model-selection child
+	// 2) — the constitution's "no opinion as code": the binary only detects
+	// which transports a binding's CLI can serve, and this configuration says
+	// which capable one it prefers. Empty means the shipped default order
+	// (LiveInterfaces()).
+	LiveInterfaceOrder []string `toml:"live_interfaces"`
+}
+
+// LiveInterfaces returns the preference order ResolveInterface walks for a
+// live use: the configured live_interfaces when set, else the shipped default
+// [stream, acp].
+func (d AgentsDefaults) LiveInterfaces() []string {
+	if len(d.LiveInterfaceOrder) > 0 {
+		return d.LiveInterfaceOrder
+	}
+	return []string{InterfaceStream, InterfaceACP}
 }
 
 // TimeoutDuration resolves this binding's dispatch bound: the parsed Timeout when
@@ -266,6 +283,218 @@ func (b AgentBinding) ResolvedInterface() string {
 	default:
 		return strings.ToLower(strings.TrimSpace(b.Interface))
 	}
+}
+
+// InterfaceUse says how a binding will be invoked, so ResolveInterface can pick
+// the best transport for an unset interface= (epic:model-selection child 2):
+// a one-shot dispatch (gate reviewer, planner, edge advisor) always resolves to
+// command; a live session (rework relay seat, rework.consult, story chat /
+// orchestrator) resolves to the CLI's best live transport.
+type InterfaceUse int
+
+const (
+	// UseOneShot is a single request/response dispatch — a gate verdict, a
+	// planner run, a step summary. Always resolves to command.
+	UseOneShot InterfaceUse = iota
+	// UseLive is a multi-turn session the caller keeps open and talks to.
+	UseLive
+)
+
+// liveCapableInterface reports whether iface is a live transport the binding's
+// AUTHORED command can actually open. Two independent questions, both must
+// hold:
+//
+//   - MECHANISM: which CLI is this? Only Claude speaks the stream-json
+//     protocol, so stream is restricted to a "claude" ExecutableToken; any
+//     other token is an ACP-capable spawn line and is restricted to acp. This
+//     is detection, not opinion — the binary observes what the CLI IS.
+//   - SHAPE: can the authored argv actually serve that transport? This is
+//     answered by running the SAME construction the runtime opens with
+//     (agentcli.RunnerFromBinding), not guessed. A "claude" token is
+//     necessary but not sufficient: an authored ONE-SHOT command (e.g.
+//     DefaultReviewerCommand's `claude -p --output-format json …
+//     --append-system-prompt {system} …`) carries {system}, which
+//     newStreamRunner rejects (system/payload ride the live protocol, not
+//     argv) — so it correctly reads as not stream-capable rather than being
+//     waved through on "first token is claude" and failing (or opening
+//     broken) at session-open time.
+//
+// An empty command has no shape yet, so the transport still needs to supply
+// its OWN default command line (DefaultCommandFor) for the binding to ever
+// open — acp has none (satelle cannot guess an ACP spawn line), so an empty
+// command is a candidate only for a transport DefaultCommandFor actually
+// fills in. Without this, live_interfaces = ["acp", "stream"] would resolve
+// an empty-command binding to acp with an empty spawn line — a "resolution"
+// that can never open, exactly the kind of broken result this function
+// exists to rule out.
+func liveCapableInterface(command, iface string) bool {
+	if strings.TrimSpace(command) == "" {
+		return DefaultCommandFor(iface) != ""
+	}
+	token := ExecutableToken(command)
+	switch iface {
+	case InterfaceStream:
+		if token != "claude" {
+			return false
+		}
+	case InterfaceACP:
+		if token == "claude" {
+			return false
+		}
+	default:
+		return false
+	}
+	_, err := agentcli.RunnerFromBinding(iface, command)
+	return err == nil
+}
+
+// ResolveInterface resolves a binding's effective transport for use, and states
+// why:
+//
+//   - "explicit" — Interface is set; never overridden, whatever use is.
+//   - "one-shot default" — a genuine UseOneShot dispatch (gate, planner, edge
+//     advisor): always resolves to command.
+//   - "live use: in-loop" — UseLive, but the command is the in-loop preset,
+//     which has no live transport at all (command is inert there, never a
+//     fabricated live one). Distinct from "one-shot default": this IS a live
+//     use, it just cannot be one, and the reason says so rather than
+//     borrowing the one-shot label.
+//   - "live use" — UseLive, resolved to the first live-capable transport in
+//     a.Defaults.LiveInterfaces() that can actually open the binding's RAW,
+//     undefaulted command (liveCapableInterface reuses the real runner
+//     construction and requires a usable default command line for an
+//     unauthored command, so "no command yet" only credits a transport that
+//     can really open, and an authored one-shot command that cannot serve a
+//     live transport is excluded rather than guessed capable from its first
+//     token).
+//   - "live use: not live-capable" — UseLive, but no configured live
+//     transport could serve the command (or, for an empty command, none of
+//     them has a usable default line) — falls back to command, and the
+//     existing not-live-capable WARN/refusal fires with this reason named
+//     explicitly rather than the resolution reading as an ordinary success.
+func (a AgentsConfig) ResolveInterface(b AgentBinding, use InterfaceUse) (iface, reason string) {
+	if strings.TrimSpace(b.Interface) != "" {
+		return b.ResolvedInterface(), "explicit"
+	}
+	if use == UseOneShot {
+		return b.ResolvedInterface(), "one-shot default"
+	}
+	if IsInLoopCommand(b.Command) {
+		return b.ResolvedInterface(), "live use: in-loop"
+	}
+	for _, cand := range a.Defaults.LiveInterfaces() {
+		if liveCapableInterface(b.Command, cand) {
+			return cand, "live use"
+		}
+	}
+	return InterfaceCommand, "live use: not live-capable"
+}
+
+// DefaultCommandFor returns the command template a resolved interface supplies
+// when a binding has no command of its own — "" for acp, which needs an
+// authored spawn line (satelle cannot guess one).
+func DefaultCommandFor(iface string) string {
+	switch iface {
+	case InterfaceStream:
+		return agentcli.DefaultClaudeStreamCommand
+	case InterfaceCommand:
+		return DefaultReviewerCommand
+	default:
+		return ""
+	}
+}
+
+// EffectiveBinding returns a copy of b with Interface resolved for use
+// (ResolveInterface) and, when b.Command is empty, Command filled from the
+// resolved interface's default. This is the SINGLE seam live callers
+// (agentstep.Engine.OpenSessionAs) and `satelle agent validate` share, so
+// neither can resolve or report a transport the other would not open
+// (sty_8e0b29a0's validate/runtime invariant, extended to the derived default).
+func (a AgentsConfig) EffectiveBinding(b AgentBinding, use InterfaceUse) AgentBinding {
+	iface, _ := a.ResolveInterface(b, use)
+	eb := b
+	eb.Interface = iface
+	if strings.TrimSpace(eb.Command) == "" {
+		eb.Command = DefaultCommandFor(iface)
+	}
+	return eb
+}
+
+// RawBinding returns the binding named name exactly as authored — the
+// executor/reviewer sections or an [<name>] entry — with NO command
+// defaulting, so EffectiveBinding can tell "no command yet" (every live
+// transport a candidate) from "already claude-shaped". Unlike NamedBinding,
+// this is not a dispatch resolver: it is the raw material ResolveInterface,
+// EffectiveBinding and LiveBinding resolve from — exported so a caller that
+// needs the resolved reason alongside the effective binding (e.g. `satelle
+// agent validate`) can call ResolveInterface itself on the same raw value.
+func (a AgentsConfig) RawBinding(name string) (AgentBinding, bool) {
+	switch name {
+	case "executor":
+		return a.Executor, true
+	case "reviewer":
+		return a.Reviewer, true
+	}
+	b, ok := a.Agents[name]
+	return b, ok
+}
+
+// LiveRawBinding is RawBinding plus each role's OWN baseline default — the
+// same one its one-shot resolver (ExecutorBinding / ReviewerBinding) would
+// apply — so a caller that needs BOTH the resolved reason (ResolveInterface)
+// and the effective binding (EffectiveBinding) for a live use of "executor" or
+// "reviewer" computes them from the identical starting point LiveBinding uses,
+// rather than re-deriving from the bare RawBinding and disagreeing with it
+// (sty_119f6fda: `satelle agent validate`'s grant loop did exactly that).
+//
+// "executor" and "reviewer" are reachable as a live-use name (rework.consult=
+// executor or =reviewer is a legitimate config, checked by agentvalidate's
+// rework-alloc rule) but RawBinding deliberately returns them with NO role
+// defaulting, so this layers each role's default in first, before
+// ResolveInterface/EffectiveBinding ever see Interface/Command:
+//
+//   - reviewer: an empty Tools grant becomes DefaultReviewerTools (read-only),
+//     matching the ceiling ReviewerBinding() gives the one-shot gate path — a
+//     consulted reviewer must not silently lose that ceiling just because it
+//     is opened live instead of dispatched as a gate.
+//   - executor: an empty Command becomes DefaultExecutorCommand ("in-loop").
+//     Unlike every other binding, an unset executor command has an ESTABLISHED
+//     meaning already (ExecutorBinding: "the driving agent itself") — it is
+//     not "no command yet, pick me a live default". Defaulting it here BEFORE
+//     ResolveInterface/EffectiveBinding lets IsInLoopCommand see "in-loop" and
+//     resolve/report it as such, instead of the empty command reading as
+//     "every live transport is a candidate" and reporting (or opening) a real
+//     Claude subprocess for what is configured to be the driving session
+//     itself.
+func (a AgentsConfig) LiveRawBinding(name string) (AgentBinding, bool) {
+	b, ok := a.RawBinding(name)
+	if !ok {
+		return AgentBinding{}, false
+	}
+	switch name {
+	case "reviewer":
+		if b.Tools == "" {
+			b.Tools = DefaultReviewerTools
+		}
+	case "executor":
+		if b.Command == "" {
+			b.Command = DefaultExecutorCommand
+		}
+	}
+	return b, true
+}
+
+// LiveBinding resolves name's binding as EffectiveBinding(UseLive) over
+// LiveRawBinding(name) — the transport and command a live session
+// (agentstep.Engine.OpenSessionAs, and so `satelle story chat` and the rework
+// relay) actually opens, and what `satelle agent validate` reports for a live
+// use of that binding.
+func (a AgentsConfig) LiveBinding(name string) (AgentBinding, bool) {
+	b, ok := a.LiveRawBinding(name)
+	if !ok {
+		return AgentBinding{}, false
+	}
+	return a.EffectiveBinding(b, UseLive), true
 }
 
 // IsACP reports whether this binding uses the ACP transport.
@@ -598,7 +827,9 @@ func (a AgentsConfig) validateTimeouts() error {
 }
 
 // validateInterfaces fails fast on an unknown interface= value
-// (epic:agent-dispatch-transport). Empty is fine (defaults to command).
+// (epic:agent-dispatch-transport), or an unknown token in [defaults]
+// live_interfaces (epic:model-selection child 2). Empty is fine (defaults to
+// command / the shipped live order).
 func (a AgentsConfig) validateInterfaces() error {
 	check := func(section string, b AgentBinding) error {
 		return checkBindingInterface(AgentsConfigName, section, b)
@@ -612,6 +843,14 @@ func (a AgentsConfig) validateInterfaces() error {
 	for name, b := range a.Agents {
 		if err := check(name, b); err != nil {
 			return err
+		}
+	}
+	for _, raw := range a.Defaults.LiveInterfaceOrder {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case InterfaceStream, InterfaceACP:
+		default:
+			return fmt.Errorf("%s [defaults] live_interfaces %q: want %q or %q",
+				AgentsConfigName, raw, InterfaceStream, InterfaceACP)
 		}
 	}
 	return nil

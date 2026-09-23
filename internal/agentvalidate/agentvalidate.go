@@ -36,6 +36,16 @@ type Grant struct {
 	Name      string
 	Backend   string // in-loop | isolated:claude | isolated:grok | isolated:codex | isolated:<binary> | acp:<binary> | stream:<binary>
 	Interface string // command | acp | stream (epic:agent-dispatch-transport)
+	// InterfaceReason states why Interface resolved the way it did:
+	// "explicit" (the binding set interface= itself), "one-shot default" (a
+	// gate/planner/advisor dispatch always resolves to command), "live use"
+	// (a rework seat, rework.consult, or story-chat/orchestrator binding
+	// resolved to its CLI's best live transport), "live use: in-loop" (a live
+	// use whose command is the in-loop preset, which has no live transport),
+	// or "live use: not live-capable" (a live use where no configured live
+	// transport could actually open the command) — config.AgentsConfig.
+	// ResolveInterface's own reason (epic:model-selection child 2).
+	InterfaceReason string
 	// Command is the effective command template — the literal argv the operator
 	// can read. Surfaced as a field (not only inside Notes) so a provenance
 	// display can attribute it like any other resolved value (sty_c7dfeedf).
@@ -226,8 +236,39 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 		sections = append(sections, named{name, b})
 	}
 
+	// A binding used LIVE (a rework relay seat, rework.consult, or the
+	// orchestrator/story-chat binding) resolves an unset interface= to its
+	// CLI's best live transport; everything else resolves one-shot to command
+	// (epic:model-selection child 2). ResolveInterface needs the RAW binding
+	// to tell "no command yet" from "already claude-shaped" — sec.b above is
+	// already command-defaulted by NamedBinding/*Binding for dispatch, so the
+	// reason/effective-command are computed from the raw form. For a LIVE use,
+	// that raw form must be LiveRawBinding, not the bare RawBinding: "executor"
+	// and "reviewer" carry their own role default (in-loop / DefaultReviewerTools)
+	// that only LiveRawBinding applies, and this must compute from the SAME
+	// starting point LiveBinding (what OpenSessionAs actually opens) uses, or
+	// this report and the runtime disagree (sty_119f6fda).
+	live := liveUsedSections(workflows)
 	for _, sec := range sections {
-		g, _, _, fs := checkBinding(sec.name, sec.b, vars)
+		use := config.UseOneShot
+		if live[sec.name] {
+			use = config.UseLive
+		}
+		b := sec.b
+		iface, reason := b.ResolvedInterface(), "one-shot default"
+		raw, ok := agents.RawBinding(sec.name)
+		if ok && use == config.UseLive {
+			raw, ok = agents.LiveRawBinding(sec.name)
+		}
+		if ok {
+			iface, reason = agents.ResolveInterface(raw, use)
+			if use == config.UseLive {
+				b = agents.EffectiveBinding(raw, use)
+			}
+		}
+		g, _, _, fs := checkBinding(sec.name, b, vars)
+		g.Interface = iface
+		g.InterfaceReason = reason
 		g.Sources = prov[sec.name]
 		r.Grants = append(r.Grants, g)
 		r.record(fs...)
@@ -277,7 +318,7 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 			if w.Consult != "reviewer" && w.Consult != "executor" {
 				usedNamed[w.Consult] = true
 			}
-			b, found := agents.NamedBinding(w.Consult)
+			b, found := agents.LiveBinding(w.Consult)
 			if !found {
 				r.record(health.Warn(health.IDNodeAlloc, "Rework consult binding missing", fmt.Sprintf(
 					"workflow %q step %q declares rework consult=%s rounds=%d with no [%s] binding in agents.toml — satelle story rework cannot open it",
@@ -452,6 +493,50 @@ func validate(agents config.AgentsConfig, vars map[string]string, workflows []do
 		}
 	}
 	return r
+}
+
+// orchestratorSection is the binding name `satelle story chat` opens by
+// default (agentstep.ChatSessionBinding("")) — always a live use, whether or
+// not any workflow names it (it is consumed by a VERB, not a node).
+const orchestratorSection = "orchestrator"
+
+// liveUsedSections returns the binding names used as a LIVE session across the
+// given workflows — validate's own usage signal for
+// config.AgentsConfig.ResolveInterface's `use` parameter (epic:model-selection
+// child 2), not a general "is this binding live" authority:
+//   - a rework's consult= binding (the relay opens it live to converge),
+//   - the agent= seat on the step that declares the rework (the relay's coder
+//     seat, opened live alongside its consultant),
+//   - "orchestrator", always — `satelle story chat` opens it live regardless
+//     of workflow wiring.
+//
+// Everything else in the agents layer resolves one-shot.
+func liveUsedSections(workflows []docindex.Doc) map[string]bool {
+	live := map[string]bool{orchestratorSection: true}
+	for _, doc := range expandRouteSources(workflows) {
+		if len(doc.reworks) == 0 {
+			continue
+		}
+		for _, w := range doc.reworks {
+			if w.Consult != "" {
+				live[w.Consult] = true
+			}
+		}
+		spec, ok := doc.spec()
+		if !ok {
+			continue
+		}
+		agentOf := make(map[string]string, len(spec.States))
+		for _, st := range spec.States {
+			agentOf[st.Name] = st.Agent
+		}
+		for _, w := range doc.reworks {
+			if agent := agentOf[w.Step]; agent != "" {
+				live[agent] = true
+			}
+		}
+	}
+	return live
 }
 
 // notLiveCapable reports, in prose, why a binding cannot be opened as a live

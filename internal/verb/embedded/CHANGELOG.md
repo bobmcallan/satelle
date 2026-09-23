@@ -1,3 +1,13 @@
+## [0.0.515] - 2026-09-23
+
+### Added
+- **An unset `interface` now resolves by how the binding is used.** A binding with no `interface` that is opened as a live session (the rework relay's coder seat, a `rework.consult` binding, or `satelle story chat`) resolves to the first transport in `[defaults] live_interfaces` (shipped `["stream", "acp"]`) that its **authored** command can actually open. A stream-json Claude line gets `stream`, and an ACP spawn line gets `acp`. A binding with no command gets the default stream command line. An authored one-shot command (e.g. `claude -p --output-format json … {system}`) is not treated as live: it resolves to `command` with the reason `live use: not live-capable`, so the existing warning and refusal still fire. One-shot dispatches (gate reviewers, planners, edge advisors) always resolve to `command`. An explicit `interface` always wins. Live opens of `[reviewer]` and `[executor]` now go through their per-role resolvers, so their default tool grants apply. `satelle agent validate` prints each binding's resolved interface and the reason (`explicit`, `live use`, `one-shot default`, `live use: in-loop`, `live use: not live-capable`). (sty_119f6fda)
+
+## [serve-v0.0.50] - 2026-09-23
+
+### Changed
+- **Serve channel picks up the use-aware interface resolution and its help text.** `internal/config` and `internal/help` are on the satelled watch set. (sty_119f6fda)
+
 ## [0.0.514] - 2026-09-23
 
 ### Changed

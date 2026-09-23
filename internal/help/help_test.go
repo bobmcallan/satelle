@@ -105,6 +105,12 @@ func TestAgentDispatchTopic(t *testing.T) {
 		"READY",
 		"blocked",
 		"orchestrator skill",
+		// Default live transport (epic:model-selection child 2, sty_119f6fda):
+		// an unset interface= resolves from HOW the binding is used, and the
+		// preference order between live transports is configuration.
+		"live_interfaces",
+		"one-shot",
+		"live use",
 	} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("agent-dispatch topic missing %q", want)

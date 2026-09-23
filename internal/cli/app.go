@@ -275,6 +275,11 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// agent=<name> allocation runs that binding's harness at the transition.
 			// agents.toml defines WHO, the DOT defines WHERE, the binary only runs it.
 			rev.SetNamedAgents(agents.NamedBinding)
+			// A live session (story chat, the rework relay's coder seat and
+			// rework.consult binding) resolves an unset interface= to the
+			// binding CLI's best live transport, not always command
+			// (epic:model-selection child 2) — the seam agent validate shares.
+			rev.SetLiveNamedAgents(agents.LiveBinding)
 			// Rate-limit secondary failover (sty_5bf61f89): per-binding secondary=
 			// or [defaults] secondary names a fallback binding for one retry.
 			agentsCfg := agents
@@ -379,6 +384,7 @@ func engineForCmd(cmd *cobra.Command) (*agentstep.Engine, *app.App, error) {
 		return nil, nil, err
 	}
 	rev.SetNamedAgents(eff.Agents.NamedBinding)
+	rev.SetLiveNamedAgents(eff.Agents.LiveBinding)
 	return rev, a, nil
 }
 

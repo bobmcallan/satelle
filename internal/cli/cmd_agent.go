@@ -301,8 +301,12 @@ are both visible here rather than at the next dispatch.`,
 				if g.RoleInferred {
 					roleNote += " (inferred)"
 				}
+				ifaceNote := g.Interface
+				if g.InterfaceReason != "" {
+					ifaceNote = fmt.Sprintf("%s (%s)", g.Interface, g.InterfaceReason)
+				}
 				fmt.Fprintf(out, "  GRANT [%s] role=%s principles=%s constitution=%s interface=%s backend=%s %s tools=%q model=%q effort=%q timeout=%q inject_principles=%v\n",
-					g.Name, roleNote, g.Principles, consti, g.Interface, g.Backend, ro, g.Tools, g.Model, g.Effort, g.Timeout, g.InjectsPrinciples)
+					g.Name, roleNote, g.Principles, consti, ifaceNote, g.Backend, ro, g.Tools, g.Model, g.Effort, g.Timeout, g.InjectsPrinciples)
 				if g.Notes != "" {
 					fmt.Fprintf(out, "         notes: %s\n", g.Notes)
 				}

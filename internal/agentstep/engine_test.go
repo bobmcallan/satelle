@@ -3622,6 +3622,115 @@ func TestOpenOrchestratorInjectsSessionEnv(t *testing.T) {
 	}
 }
 
+// TestOpenSessionAsResolvesLiveInterfaceFromSetLiveNamedAgents (AC1, AC6,
+// epic:model-selection child 2): a binding with no interface= that
+// SetLiveNamedAgents resolves via AgentsConfig.LiveBinding opens with the
+// CLI's best live transport — stream for a claude command, acp for any other
+// spawn line — covering the rework relay's coder seat, its rework.consult
+// binding, and the story-chat/orchestrator binding alike, since all three
+// open through this one method.
+func TestOpenSessionAsResolvesLiveInterfaceFromSetLiveNamedAgents(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		binding     string
+		command     string
+		wantIface   string
+		wantCommand string
+		// wantErrIs, when set, is the error OpenSessionAs must fail with —
+		// otherwise it must succeed and gotIface/gotCommand must match.
+		wantErrIs string
+	}{
+		// An already-authored, stream-SHAPED command stays exactly as written —
+		// EffectiveBinding only fills a DEFAULT command when none is authored
+		// (AC1); here it just flips the resolved interface to the CLI's live
+		// transport, and the session actually opens (AC6).
+		{name: "coder seat (claude, stream-shaped)", binding: "coder",
+			command:     "claude -p --input-format stream-json --output-format stream-json --allowedTools {tools}",
+			wantIface:   "stream",
+			wantCommand: "claude -p --input-format stream-json --output-format stream-json --allowedTools {tools}"},
+		{name: "rework consult (claude, stream-shaped)", binding: "reviewer-consult",
+			command:     "claude -p --input-format stream-json --output-format stream-json --allowedTools {tools}",
+			wantIface:   "stream",
+			wantCommand: "claude -p --input-format stream-json --output-format stream-json --allowedTools {tools}"},
+		{name: "story chat orchestrator (acp spawn)", binding: "orchestrator",
+			command: "gemini --experimental-acp", wantIface: "acp", wantCommand: "gemini --experimental-acp"},
+		// No command authored yet: every live transport is a candidate, the
+		// shipped default order picks stream, and stream's default command line
+		// is filled in (AC1's "a resolved default supplies the matching default
+		// command line when command is also unset").
+		{name: "no command yet", binding: "coder",
+			wantIface: "stream", wantCommand: agentcli.DefaultClaudeStreamCommand},
+		// An authored ONE-SHOT claude command (the [reviewer]/DefaultReviewerCommand
+		// shape: `-p --output-format json … {system}`) cannot serve stream — it has
+		// no --input-format stream-json and carries {system}, which the real
+		// stream/acp construction rejects (system/payload ride the live protocol,
+		// not argv). This must NOT be waved through as "stream (live use)" just
+		// because the first token is claude (the AC6 regression) — it resolves to
+		// command and is refused as not-live-capable, exactly like an explicit
+		// interface=command would be.
+		{name: "coder seat (claude, one-shot-shaped) cannot serve a live use", binding: "coder",
+			command:   "claude -p --output-format json --append-system-prompt {system} --allowedTools {tools}",
+			wantErrIs: "not live-capable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g, _ := newEngine(t, "", fakeDocs{})
+			raw := config.AgentBinding{Role: "agent", Command: tc.command}
+			g.SetNamedAgents(func(string) (config.AgentBinding, bool) { return raw, true })
+			g.SetLiveNamedAgents(func(name string) (config.AgentBinding, bool) {
+				var ac config.AgentsConfig
+				return ac.EffectiveBinding(raw, config.UseLive), true
+			})
+			var gotIface, gotCommand string
+			g.newOpener = func(iface, command string) (agentcli.SessionOpener, error) {
+				// Run the REAL construction the runtime opens with — a fake that
+				// accepts any (iface, command) pair would hide exactly the bug this
+				// test guards against: an authored one-shot claude command being
+				// waved through as stream-capable.
+				if _, err := agentcli.OpenerFromBinding(iface, command); err != nil {
+					return nil, err
+				}
+				gotIface, gotCommand = iface, command
+				return func(_ context.Context, _ agentcli.Request, _ agentcli.PermissionPolicy) (agentcli.Session, error) {
+					return closedSess{}, nil
+				}, nil
+			}
+			_, err := g.OpenSessionAs(context.Background(), tc.binding, SessionRoleConsult,
+				workitem.Item{ID: "sty_1", Status: "in_progress"}, nil, nil)
+			if tc.wantErrIs != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErrIs) {
+					t.Fatalf("err = %v, want containing %q", err, tc.wantErrIs)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("OpenSessionAs: %v", err)
+			}
+			if gotIface != tc.wantIface {
+				t.Errorf("interface = %q, want %q", gotIface, tc.wantIface)
+			}
+			if gotCommand != tc.wantCommand {
+				t.Errorf("command = %q, want %q", gotCommand, tc.wantCommand)
+			}
+		})
+	}
+}
+
+// TestOpenSessionAsFallsBackToNamedAgentsWithoutLiveResolver: a caller that
+// never wires SetLiveNamedAgents keeps today's behaviour — an unset interface=
+// still resolves to command and is refused as not-live-capable, byte-identical
+// to before epic:model-selection child 2.
+func TestOpenSessionAsFallsBackToNamedAgentsWithoutLiveResolver(t *testing.T) {
+	g, _ := newEngine(t, "", fakeDocs{})
+	g.SetNamedAgents(func(string) (config.AgentBinding, bool) {
+		return config.AgentBinding{Role: "agent", Command: "claude -p --output-format json {system}"}, true
+	})
+	_, err := g.OpenSessionAs(context.Background(), "coder", SessionRoleConsult,
+		workitem.Item{ID: "sty_1", Status: "in_progress"}, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "not live-capable") {
+		t.Fatalf("want not-live-capable refusal, got %v", err)
+	}
+}
+
 type closedSess struct{}
 
 func (closedSess) Send(context.Context, agentcli.Turn) error { return nil }
