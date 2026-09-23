@@ -453,6 +453,14 @@ func (g *Engine) runOnce(ctx context.Context, runner agentcli.Runner, req agentc
 		defer cancel()
 	}
 	start := time.Now()
+	// A transport that can report its own resolved-model usage (stream: modelUsage
+	// arrives on an EventUsage, never inside the returned bytes) is preferred over
+	// sniffing Run's output for a JSON envelope (sty_87b86044 AC2).
+	if ur, ok := runner.(agentcli.UsageRunner); ok {
+		text, usage, err := ur.RunUsage(ctx, req)
+		usage.Duration = time.Since(start)
+		return text, usage, err
+	}
 	raw, err := runner.Run(ctx, req)
 	elapsed := time.Since(start)
 	if err != nil {

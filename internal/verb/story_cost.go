@@ -19,6 +19,7 @@ type StoryCostRow struct {
 	Agent          string `json:"agent"`
 	Skill          string `json:"skill,omitempty"`
 	Model          string `json:"model,omitempty"`
+	ModelResolved  string `json:"model_resolved,omitempty"`
 	TokensIn       int    `json:"tokens_in"`
 	TokensOut      int    `json:"tokens_out"`
 	TokensTotal    int    `json:"tokens_total"`
@@ -190,6 +191,7 @@ func ComputeStoryCost(ctx context.Context, storyID string) (StoryCost, error) {
 				Agent:          meta.Agent,
 				Skill:          meta.Skill,
 				Model:          meta.Model,
+				ModelResolved:  tel.ModelResolved,
 				TokensIn:       tel.TokensIn,
 				TokensOut:      tel.TokensOut,
 				TokensTotal:    tel.TokensTotal,

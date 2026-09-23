@@ -538,6 +538,97 @@ func TestUnwrapUsage(t *testing.T) {
 	if u.TotalTokens != 0 {
 		t.Errorf("grok envelope has no usage fields in this shape: %+v", u)
 	}
+	if u.ModelResolved != ModelUnavailable {
+		t.Errorf("grok envelope should mark model unavailable, got %q", u.ModelResolved)
+	}
+}
+
+// TestUnwrapUsage_ModelUsage pins AC1: a command-transport result whose
+// modelUsage is keyed by a canonical id stores both the configured alias
+// (elsewhere, at the caller) and the resolved id — here, in UsageResult
+// distinct from the token fields. Envelope shape matches the real
+// `claude -p --output-format json --model opus` output (Claude Code 2.1.280).
+func TestUnwrapUsage_ModelUsage(t *testing.T) {
+	env := `{"type":"result","result":"the verdict text","usage":{"input_tokens":2,"output_tokens":11},` +
+		`"modelUsage":{"claude-opus-5-5":{"inputTokens":2,"outputTokens":11,"costUSD":0.1065628,"canonicalModel":"claude-opus-5-5","provider":"first-party"}}}`
+	text, u := UnwrapUsage([]byte(env))
+	if string(text) != "the verdict text" {
+		t.Fatalf("result not extracted: %q", text)
+	}
+	if u.ModelResolved != "claude-opus-5-5" {
+		t.Errorf("ModelResolved = %q, want claude-opus-5-5", u.ModelResolved)
+	}
+	if len(u.Models) != 1 || u.Models[0].ID != "claude-opus-5-5" ||
+		u.Models[0].InputTokens != 2 || u.Models[0].OutputTokens != 11 ||
+		u.Models[0].CostUSD == nil || *u.Models[0].CostUSD != 0.1065628 {
+		t.Errorf("Models = %+v, want one claude-opus-5-5 entry with tokens+cost", u.Models)
+	}
+}
+
+// TestParseModelUsage_Multiple pins AC3: several models in one modelUsage map
+// are all recorded with their own tokens/cost, the primary is the entry with
+// the highest OutputTokens regardless of map order, and a tie breaks toward
+// the smallest id. Run repeatedly since Go's map iteration order is
+// randomized — a bug that depends on map order would not fail every run.
+func TestParseModelUsage_Multiple(t *testing.T) {
+	raw := map[string]any{
+		"claude-opus-5-5": map[string]any{
+			"inputTokens": float64(2), "outputTokens": float64(11), "costUSD": 0.1065628,
+		},
+		"claude-haiku-4-5": map[string]any{
+			"inputTokens": float64(50), "outputTokens": float64(300), "costUSD": 0.002,
+		},
+	}
+	for i := 0; i < 50; i++ {
+		primary, models, ok := parseModelUsage(raw)
+		if !ok {
+			t.Fatalf("iteration %d: parseModelUsage reported not-found", i)
+		}
+		if primary != "claude-haiku-4-5" {
+			t.Fatalf("iteration %d: primary = %q, want claude-haiku-4-5 (highest output tokens)", i, primary)
+		}
+		if len(models) != 2 {
+			t.Fatalf("iteration %d: models = %+v, want 2 entries", i, models)
+		}
+		byID := map[string]ModelUsage{}
+		for _, m := range models {
+			byID[m.ID] = m
+		}
+		opus, haiku := byID["claude-opus-5-5"], byID["claude-haiku-4-5"]
+		if opus.InputTokens != 2 || opus.OutputTokens != 11 || opus.CostUSD == nil || *opus.CostUSD != 0.1065628 {
+			t.Fatalf("iteration %d: opus entry = %+v", i, opus)
+		}
+		if haiku.InputTokens != 50 || haiku.OutputTokens != 300 || haiku.CostUSD == nil || *haiku.CostUSD != 0.002 {
+			t.Fatalf("iteration %d: haiku entry = %+v", i, haiku)
+		}
+	}
+
+	// Tie on OutputTokens: smallest id wins.
+	tie := map[string]any{
+		"model-b": map[string]any{"outputTokens": float64(100)},
+		"model-a": map[string]any{"outputTokens": float64(100)},
+	}
+	primary, _, ok := parseModelUsage(tie)
+	if !ok || primary != "model-a" {
+		t.Errorf("tie primary = %q, ok=%v, want model-a", primary, ok)
+	}
+
+	// No cost reported: CostUSD stays nil (never a fabricated zero).
+	noCost := map[string]any{"solo": map[string]any{"outputTokens": float64(5)}}
+	_, models, ok := parseModelUsage(noCost)
+	if !ok || len(models) != 1 || models[0].CostUSD != nil {
+		t.Errorf("no-cost entry = %+v, ok=%v, want CostUSD nil", models, ok)
+	}
+
+	// Empty/absent modelUsage: reported=false, so the caller leaves
+	// ModelResolved for a higher-level "unavailable" normalization instead of
+	// treating a zero value as legitimately resolved.
+	if _, _, ok := parseModelUsage(nil); ok {
+		t.Errorf("nil modelUsage should report not-found")
+	}
+	if _, _, ok := parseModelUsage(map[string]any{}); ok {
+		t.Errorf("empty modelUsage should report not-found")
+	}
 }
 
 // TestRunStreamsOutputBeforeExit pins AC1/AC3: a non-nil Sink observes stdout

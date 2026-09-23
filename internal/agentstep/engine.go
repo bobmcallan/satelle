@@ -1010,12 +1010,14 @@ func (g *Engine) Gate(ctx context.Context, item workitem.Item, toStatus string) 
 		result.Command = dec.Command
 		result.Context = dec.Context
 		result.Model = dec.Model
+		result.ModelResolved, result.Models = dec.ModelResolved, dec.Models
 		result.TokensIn, result.TokensOut, result.TokensTotal = dec.TokensIn, dec.TokensOut, dec.TokensTotal
 		result.DurationMs = dec.DurationMs
 		result.UsageAvailable = dec.UsageAvailable
 		result.Reviewers = append(result.Reviewers, verb.ReviewerVerdict{
 			Skill: skill, Order: i, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, System: i >= sysStart,
 			Command: dec.Command, Context: dec.Context, Model: dec.Model,
+			ModelResolved: dec.ModelResolved, Models: dec.Models,
 			TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 			UsageAvailable: dec.UsageAvailable,
 		})
@@ -1101,6 +1103,7 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 		result.Reviewers = append(result.Reviewers, verb.ReviewerVerdict{
 			Skill: ref.skill, Order: i, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, System: i >= sysStart,
 			Command: dec.Command, Context: dec.Context, Model: dec.Model,
+			ModelResolved: dec.ModelResolved, Models: dec.Models,
 			TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 			UsageAvailable: dec.UsageAvailable,
 		})
@@ -1125,6 +1128,7 @@ func (g *Engine) runGateParallel(ctx context.Context, item workitem.Item, toStat
 		result.Command = pick.Command
 		result.Context = pick.Context
 		result.Model = pick.Model
+		result.ModelResolved, result.Models = pick.ModelResolved, pick.Models
 		result.TokensIn, result.TokensOut, result.TokensTotal = pick.TokensIn, pick.TokensOut, pick.TokensTotal
 		result.DurationMs = pick.DurationMs
 		result.UsageAvailable = pick.UsageAvailable
@@ -1419,8 +1423,10 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 			Actor:   "executor",
 		})
 	}
+	dispatchModelResolved, dispatchModels := toVerbModels(invRes.Usage)
 	res := verb.DispatchResult{
 		Dispatched: true, Agent: dispatchAgent, Command: invRes.Command, Model: binding.Model, Skill: dispatchSkill,
+		ModelResolved: dispatchModelResolved, Models: dispatchModels,
 		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
 		DurationMs: invRes.Usage.Duration.Milliseconds(), UsageAvailable: invRes.Usage.Available,
 		Output: string(invRes.Stdout),
@@ -1548,8 +1554,10 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.Dispa
 		Skill:   retrospectSkill,
 		Actor:   "executor",
 	})
+	retroModelResolved, retroModels := toVerbModels(invRes.Usage)
 	res := verb.DispatchResult{
 		Dispatched: true, Agent: retrospectAgent, Command: invRes.Command, Model: binding.Model, Skill: retrospectSkill,
+		ModelResolved: retroModelResolved, Models: retroModels,
 		TokensIn: invRes.Usage.InputTokens, TokensOut: invRes.Usage.OutputTokens, TokensTotal: invRes.Usage.TotalTokens,
 		DurationMs: invRes.Usage.Duration.Milliseconds(), UsageAvailable: invRes.Usage.Available,
 		Output: string(invRes.Stdout),
@@ -1716,6 +1724,27 @@ func (g *Engine) setDecisionUsage(d *verb.GateDecision, u agentcli.UsageResult, 
 	} else {
 		d.Model = g.model
 	}
+	d.ModelResolved, d.Models = toVerbModels(u)
+}
+
+// toVerbModels converts a transport's resolved-model usage into the verb
+// package's own types, normalizing an unreported resolution to
+// agentcli.ModelUnavailable HERE — the single point where a new write can
+// never land empty (sty_87b86044): every population site (gate decisions,
+// dispatch results, the summariser) funnels through this one helper.
+func toVerbModels(u agentcli.UsageResult) (string, []verb.ModelUsage) {
+	resolved := u.ModelResolved
+	if resolved == "" {
+		resolved = agentcli.ModelUnavailable
+	}
+	if len(u.Models) == 0 {
+		return resolved, nil
+	}
+	models := make([]verb.ModelUsage, len(u.Models))
+	for i, m := range u.Models {
+		models[i] = verb.ModelUsage{ID: m.ID, TokensIn: m.InputTokens, TokensOut: m.OutputTokens, CostUSD: m.CostUSD}
+	}
+	return resolved, models
 }
 
 // isNamedPerformer reports whether a workflow node agent=<name> should run as a
@@ -2212,8 +2241,10 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 			// The summariser's own token/wall-time cost (sty_a699ad14, a documented
 			// gap now closed): the verb layer folds this into an agent_invocation row
 			// alongside the step_summary text, so `satelle story cost` sees it too.
+			summaryModelResolved, summaryModels := toVerbModels(usage)
 			return verb.SummaryResult{
 				Text: s, Command: runner.Command(), Context: summariserSkill, Model: model,
+				ModelResolved: summaryModelResolved, Models: summaryModels,
 				TokensIn: usage.InputTokens, TokensOut: usage.OutputTokens, TokensTotal: usage.TotalTokens,
 				DurationMs: usage.Duration.Milliseconds(), UsageAvailable: usage.Available,
 			}, nil

@@ -202,6 +202,15 @@ type UsageResult struct {
 	// Available distinguishes a transport-reported zero from usage that was not
 	// reported at all.
 	Available bool
+	// ModelResolved is the canonical model id the transport actually ran
+	// (sty_87b86044) — e.g. "claude-opus-5-5" for the configured alias "opus".
+	// Empty when the transport did not report it (ACP, plain text, or a JSON
+	// envelope without a modelUsage map); callers normalize that to
+	// ModelUnavailable before recording it, so a stored value is never empty.
+	ModelResolved string
+	// Models is every entry a transport's modelUsage map reported — several
+	// when a background model ran beside the main one. Nil when unreported.
+	Models []ModelUsage
 }
 
 // claudeJSONEnvelope is the shape of `claude -p --output-format json` output: the
@@ -219,6 +228,11 @@ type claudeJSONEnvelope struct {
 		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	} `json:"usage"`
+	// ModelUsage keys resolved-model usage by canonical model id (sty_87b86044),
+	// e.g. {"claude-opus-5-5":{"inputTokens":2,"outputTokens":11,"costUSD":0.1}}.
+	// Parsed lazily via parseModelUsage — kept raw here so an absent field
+	// unmarshals as nil without needing a second pass.
+	ModelUsage json.RawMessage `json:"modelUsage"`
 }
 
 // grokJSONEnvelope is the shape of `grok -p … --output-format json` headless
@@ -257,11 +271,18 @@ func UnwrapUsage(stdout []byte) ([]byte, UsageResult) {
 			u.OutputTokens = claude.Usage.OutputTokens
 			u.TotalTokens = u.InputTokens + u.OutputTokens
 		}
+		if primary, models, ok := parseModelUsage(claude.ModelUsage); ok {
+			u.ModelResolved = primary
+			u.Models = models
+		}
 		return []byte(claude.Result), u
 	}
 	var grok grokJSONEnvelope
 	if err := json.Unmarshal(trimmed, &grok); err == nil && strings.TrimSpace(grok.Text) != "" {
-		return []byte(grok.Text), UsageResult{}
+		// The grok envelope carries no usage or model, but it IS a recognized
+		// envelope — mark the model explicitly unavailable rather than leaving
+		// the zero value for a caller to guess at (sty_87b86044).
+		return []byte(grok.Text), UsageResult{ModelResolved: ModelUnavailable}
 	}
 	return stdout, UsageResult{}
 }
@@ -278,6 +299,18 @@ type Runner interface {
 	Command() string
 	// Run executes the agent over req and returns its raw stdout.
 	Run(ctx context.Context, req Request) ([]byte, error)
+}
+
+// UsageRunner is implemented by transports whose resolved-model usage cannot be
+// recovered by sniffing Run's returned bytes for a JSON envelope (UnwrapUsage) —
+// the stream transport's modelUsage arrives on a `result` event alongside the
+// already-unwrapped decision text, never inside it. runOnce prefers RunUsage
+// over Run+UnwrapUsage when a Runner implements this (sty_87b86044 AC2).
+type UsageRunner interface {
+	Runner
+	// RunUsage behaves like Run but also returns the usage the transport
+	// reported for the turn, including any resolved model(s).
+	RunUsage(ctx context.Context, req Request) ([]byte, UsageResult, error)
 }
 
 // NewRunner returns the Runner for a bare CLI NAME — the preset. An empty name

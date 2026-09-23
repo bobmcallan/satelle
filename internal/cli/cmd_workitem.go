@@ -16,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/verb"
 )
 
@@ -799,7 +800,7 @@ an in-loop step reports nothing unless a step self-report was logged.`,
 					step = r.Skill
 				}
 				fmt.Fprintf(w, "%s→%s\t%s\t%s\t%s\t%s\t%s\n",
-					r.From, r.To, step, dashIfEmpty(r.Model),
+					r.From, r.To, step, ledger.ModelLabel(r.Model, r.ModelResolved),
 					rowTokensIO(r.TokensIn, r.TokensOut, r.UsageAvailable),
 					rowTokensTotal(r.TokensTotal, r.UsageAvailable),
 					fmtDurationMs(r.DurationMs))
@@ -969,13 +970,6 @@ func fmtDurationMs(ms int64) string {
 		return "-"
 	}
 	return (time.Duration(ms) * time.Millisecond).Round(100 * time.Millisecond).String()
-}
-
-func dashIfEmpty(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
 }
 
 // storyRestampCommand builds `satelle story restamp <id> [--workflow <name>]`:

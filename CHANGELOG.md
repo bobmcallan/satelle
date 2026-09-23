@@ -1,3 +1,19 @@
+## [0.0.513] - 2026-09-23
+
+### Added
+- **The ledger records the model that actually ran, not only the configured alias.** Every dispatch, verdict row (`review_accept` / `review_reject`), summariser run and attempt/escalation now stores `model_resolved` (the canonical id, e.g. `claude-opus-5-5`) and `model_usage` (every model the CLI reported, with tokens and cost) beside `model`, which stays the configured alias (e.g. `opus`). When a result reports several models, the primary is the one with the most output tokens, independent of map order. A transport that reports no model (ACP, the Grok envelope, or a result without `modelUsage`) records `"unavailable"`, never an empty value. (sty_87b86044)
+
+### Changed
+- **`story route`, `story cost` and the web timeline chip show the resolved model.** They render the canonical id when one was recorded and `<alias> (unknown)` when not. Rows written before this release load unchanged and show as unknown; nothing is back-filled. The web chip no longer falls back to the agent name when a row has no model. (sty_87b86044)
+
+### Fixed
+- **Stream-transport dispatches now record their usage.** A `stream` binding's result usage (tokens and model) arrived only on an event that nothing consumed, so it was recorded as unavailable. The stream runner now reports it to the engine directly. (sty_87b86044)
+
+## [serve-v0.0.49] - 2026-09-23
+
+### Changed
+- **Serve channel picks up the resolved-model ledger fields and the model chip rendering.** `internal/agentcli`, `internal/ledger` and `internal/web` are on the satelled watch set. (sty_87b86044)
+
 ## [0.0.512] - 2026-09-22
 
 ### Fixed

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/config"
+	"github.com/bobmcallan/satelle/internal/ledger"
 	"github.com/bobmcallan/satelle/internal/logsread"
 	"github.com/bobmcallan/satelle/internal/wfdot"
 	"github.com/bobmcallan/satelle/internal/wfgovern"
@@ -126,7 +127,7 @@ func renderOutcome(itemID, from, to string, verdicts []ReviewerVerdict, unresolv
 			fmt.Fprintf(&b, "  - reasoning: %s\n", reasoning)
 		}
 		fmt.Fprintf(&b, "  - full output: `satelle ledger list --story %s --kind %s`%s\n",
-			itemID, reviewKindFor(v.Accept), modelNote(v.Model))
+			itemID, reviewKindFor(v.Accept), modelNote(v))
 	}
 	if rel := dispatchLogRel(itemID, now); rel != "" {
 		fmt.Fprintf(&b, "- log: `%s`\n", rel)
@@ -233,11 +234,16 @@ func reviewKindFor(accept bool) string {
 	return "review_reject"
 }
 
-func modelNote(model string) string {
-	if strings.TrimSpace(model) == "" {
+// modelNote renders the model chip for one reviewer verdict, keyed off
+// Command (empty for a functional check, which invokes no agent and so has
+// nothing to say about a model — sty_87b86044). An LLM reviewer always prints
+// a label via ledger.ModelLabel, which reads "unknown" rather than blank when
+// neither the alias nor the resolved id was recorded (a legacy row).
+func modelNote(v ReviewerVerdict) string {
+	if strings.TrimSpace(v.Command) == "" {
 		return ""
 	}
-	return " (model " + model + ")"
+	return " (model " + ledger.ModelLabel(v.Model, v.ModelResolved) + ")"
 }
 
 // routeExcerptLimit bounds a verdict's prose in the route. The route records a

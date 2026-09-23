@@ -29,7 +29,13 @@ type GateDecision struct {
 	// (sty_fb3e0873). They mirror the deciding reviewer for the single-reviewer path.
 	Command string
 	Context string
-	Model   string // the reviewer's resolved model id (sty_a699ad14) — for the cost view
+	Model   string // the reviewer's configured model alias (sty_a699ad14) — for the cost view
+	// ModelResolved is the canonical model id the transport actually ran
+	// (sty_87b86044), distinct from Model (the configured alias). Models is
+	// every model a multi-model invocation reported. Both are ModelUnavailable/
+	// nil respectively when the transport reported no model.
+	ModelResolved string
+	Models        []ModelUsage
 	// TokensIn/Out/Total and DurationMs are the invocation's cost (sty_a699ad14),
 	// recorded on the agent_invocation ledger entry so per-gate cost is auditable.
 	// Zero for a functional-check gate or a plain-text harness that emits no usage.
@@ -65,7 +71,13 @@ type ReviewerVerdict struct {
 	// records HOW it was judged, not just the outcome. Empty for a functional check.
 	Command string `json:"command,omitempty"`
 	Context string `json:"context,omitempty"`
-	Model   string `json:"model,omitempty"` // reviewer's resolved model id (sty_a699ad14)
+	Model   string `json:"model,omitempty"` // reviewer's configured model alias (sty_a699ad14)
+	// ModelResolved/Models mirror GateDecision's fields of the same name
+	// (sty_87b86044) — stamped directly on this verdict's ledger row so a
+	// review_accept/review_reject entry stands alone after compaction, with no
+	// join to an agent_invocation row.
+	ModelResolved string       `json:"model_resolved,omitempty"`
+	Models        []ModelUsage `json:"model_usage,omitempty"`
 	// Token/wall-time cost of this reviewer's invocation (sty_a699ad14), recorded
 	// on its agent_invocation entry for the per-gate cost view.
 	// UsageAvailable is stamped without omitempty so unreported ≠ measured zero
@@ -75,6 +87,16 @@ type ReviewerVerdict struct {
 	TokensTotal    int   `json:"tokens_total,omitempty"`
 	DurationMs     int64 `json:"duration_ms,omitempty"`
 	UsageAvailable bool  `json:"usage_available"`
+}
+
+// ModelUsage is one model's token/cost entry from a transport's resolved-model
+// report (sty_87b86044). verb owns its own copy rather than importing agentcli
+// (review.go deliberately keeps this package free of the agent CLI package).
+type ModelUsage struct {
+	ID        string   `json:"id"`
+	TokensIn  int      `json:"tokens_in,omitempty"`
+	TokensOut int      `json:"tokens_out,omitempty"`
+	CostUSD   *float64 `json:"cost_usd,omitempty"`
 }
 
 // TransitionGater judges a requested status transition in an isolated,
@@ -182,12 +204,18 @@ type DispatchResult struct {
 	Dispatched bool   `json:"dispatched"`
 	Agent      string `json:"agent,omitempty"`
 	Command    string `json:"command,omitempty"`
-	// Model is the binding's resolved model id ({model}), recorded on the
-	// agent_invocation so the ledger shows WHICH model actually ran a step — the
-	// audit signal for per-step model mixing (e.g. a GLM planner vs an opus
+	// Model is the binding's configured model alias ({model}), recorded on the
+	// agent_invocation so the ledger shows WHICH model was asked to run a step —
+	// the audit signal for per-step model mixing (e.g. a GLM planner vs an opus
 	// in-loop session, sty_5d48317b). The model id is not a secret; the binding's
-	// env (endpoint + token) is deliberately NEVER recorded.
+	// env (endpoint + token) is deliberately NEVER recorded. ModelResolved below
+	// is what the transport actually ran.
 	Model string `json:"model,omitempty"`
+	// ModelResolved/Models mirror GateDecision's fields of the same name
+	// (sty_87b86044) — the canonical model id the dispatch actually ran, and
+	// every model a multi-model invocation reported.
+	ModelResolved string       `json:"model_resolved,omitempty"`
+	Models        []ModelUsage `json:"model_usage,omitempty"`
 	// Token/wall-time cost of the dispatch (sty_a699ad14), recorded on the
 	// agent_invocation entry. Zero for a plain-text harness with no usage envelope.
 	// UsageAvailable false means the tokens were not reported (sty_56aae77a).
@@ -246,6 +274,8 @@ type SummaryResult struct {
 	Command        string
 	Context        string
 	Model          string
+	ModelResolved  string // resolved model id the summariser actually ran (sty_87b86044)
+	Models         []ModelUsage
 	TokensIn       int
 	TokensOut      int
 	TokensTotal    int

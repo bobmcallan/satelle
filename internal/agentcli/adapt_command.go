@@ -165,6 +165,10 @@ func usageFromMap(v map[string]any) *UsageResult {
 	} else {
 		u.TotalTokens = derived
 	}
+	if primary, models, ok := parseModelUsage(v["modelUsage"]); ok {
+		u.ModelResolved = primary
+		u.Models = models
+	}
 	return u
 }
 

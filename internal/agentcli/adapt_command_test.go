@@ -84,3 +84,30 @@ func TestUsageFromMapCacheTokens(t *testing.T) {
 		})
 	}
 }
+
+// TestUsageFromMapModelUsage pins AC2: a stream-json result event whose
+// top-level modelUsage is keyed by canonical id stores both the alias
+// (recorded by the caller) and the resolved id, alongside the token fields.
+func TestUsageFromMapModelUsage(t *testing.T) {
+	v := map[string]any{
+		"usage": map[string]any{
+			"input_tokens":  float64(2),
+			"output_tokens": float64(11),
+		},
+		"modelUsage": map[string]any{
+			"claude-opus-5-5": map[string]any{
+				"inputTokens": float64(2), "outputTokens": float64(11), "costUSD": 0.1065628,
+			},
+		},
+	}
+	got := usageFromMap(v)
+	if got == nil {
+		t.Fatal("usageFromMap = nil, want non-nil")
+	}
+	if got.ModelResolved != "claude-opus-5-5" {
+		t.Errorf("ModelResolved = %q, want claude-opus-5-5", got.ModelResolved)
+	}
+	if len(got.Models) != 1 || got.Models[0].ID != "claude-opus-5-5" {
+		t.Errorf("Models = %+v, want one claude-opus-5-5 entry", got.Models)
+	}
+}

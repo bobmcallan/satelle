@@ -48,12 +48,21 @@ func (s streamRunner) Open(ctx context.Context, req Request, pol PermissionPolic
 }
 
 func (s streamRunner) Run(ctx context.Context, req Request) ([]byte, error) {
+	out, _, err := s.RunUsage(ctx, req)
+	return out, err
+}
+
+// RunUsage implements UsageRunner: a stream-json result's modelUsage arrives on
+// an EventUsage alongside the already-unwrapped decision text, so Run's bytes
+// alone never carry it — runOnce reads it from here instead of UnwrapUsage
+// (sty_87b86044 AC2).
+func (s streamRunner) RunUsage(ctx context.Context, req Request) ([]byte, UsageResult, error) {
 	pol := defaultPermissionPolicy(toolsAllowMutators(req.AllowedTools))
 	sess, err := openStreamSession(ctx, s, req, pol)
 	if err != nil {
-		return nil, err
+		return nil, UsageResult{}, err
 	}
-	return runOneShot(ctx, sess, req)
+	return runOneShotUsage(ctx, sess, req)
 }
 
 type streamSession struct {

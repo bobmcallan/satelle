@@ -93,6 +93,73 @@ func TestComputeStoryCost(t *testing.T) {
 	}
 }
 
+// TestComputeStoryCostRecordsResolvedModel pins the "story cost" surface of
+// AC6/AC7 (sty_87b86044): a row's ModelResolved is read straight off the
+// agent_invocation payload (via the shared ledger.EventTelemetry reader), so
+// `satelle story cost` renders the resolved id via ledger.ModelLabel when one
+// was recorded, the alias marked unknown when only that was, and a bare
+// "unknown" for a legacy row that predates both fields — without back-filling
+// the stored payload.
+func TestComputeStoryCostRecordsResolvedModel(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "satelle.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	verb.SetLedgerStore(db.Ledger)
+	verb.SetTxRunner(db.InTx)
+	defer verb.SetLedgerStore(nil)
+	verb.SetTxRunner(nil)
+
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0)
+	appendInv := func(payload json.RawMessage) {
+		if _, err := db.Ledger.Append(ctx, ledger.AppendInput{
+			StoryID: "sty_cost_resolved", Kind: ledger.KindAgentInvocation, Actor: "reviewer", Body: "invoked", Payload: payload,
+		}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resolved, _ := json.Marshal(map[string]any{
+		"from": "plan", "to": "in_progress", "agent": "reviewer", "model": "opus",
+		"model_resolved": "claude-opus-5-5", "usage_available": true,
+	})
+	appendInv(resolved)
+	aliasOnly, _ := json.Marshal(map[string]any{
+		"from": "in_progress", "to": "integration", "agent": "reviewer", "model": "opus", "usage_available": true,
+	})
+	appendInv(aliasOnly)
+	// Legacy row: predates the model field entirely.
+	appendInv(json.RawMessage(`{"from":"integration","to":"release","agent":"reviewer"}`))
+
+	sc, err := verb.ComputeStoryCost(ctx, "sty_cost_resolved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sc.Rows) != 3 {
+		t.Fatalf("rows = %d, want 3", len(sc.Rows))
+	}
+	byEdge := map[string]verb.StoryCostRow{}
+	for _, r := range sc.Rows {
+		byEdge[r.From+"→"+r.To] = r
+	}
+	if r, ok := byEdge["plan→in_progress"]; !ok {
+		t.Fatalf("missing plan→in_progress row: %+v", sc.Rows)
+	} else if got := ledger.ModelLabel(r.Model, r.ModelResolved); got != "claude-opus-5-5" {
+		t.Errorf("resolved row label = %q, want claude-opus-5-5", got)
+	}
+	if r, ok := byEdge["in_progress→integration"]; !ok {
+		t.Fatalf("missing in_progress→integration row: %+v", sc.Rows)
+	} else if got := ledger.ModelLabel(r.Model, r.ModelResolved); got != "opus (unknown)" {
+		t.Errorf("alias-only row label = %q, want opus (unknown)", got)
+	}
+	if r, ok := byEdge["integration→release"]; !ok {
+		t.Fatalf("missing integration→release row: %+v", sc.Rows)
+	} else if got := ledger.ModelLabel(r.Model, r.ModelResolved); got != "unknown" {
+		t.Errorf("legacy row label = %q, want unknown", got)
+	}
+}
+
 // TestComputeStoryCostSteps pins the per-step report (sty_3b2e55f5): each step's
 // WALL-TIME is derived from the deltas between status_transition timestamps — so
 // IN-LOOP steps (which spawn no measurable subprocess) get a duration — and a

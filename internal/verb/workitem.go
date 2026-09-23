@@ -500,6 +500,7 @@ func workItemSet(ctx context.Context, raw json.RawMessage) (json.RawMessage, err
 		reviewers := dec.Reviewers
 		if len(reviewers) == 0 && dec.Gated {
 			reviewers = []ReviewerVerdict{{Skill: dec.Skill, Accept: dec.Accept, Notes: dec.Notes, Reasoning: dec.Reasoning, Command: dec.Command, Context: dec.Context, Model: dec.Model,
+				ModelResolved: dec.ModelResolved, Models: dec.Models,
 				TokensIn: dec.TokensIn, TokensOut: dec.TokensOut, TokensTotal: dec.TokensTotal, DurationMs: dec.DurationMs,
 				UsageAvailable: dec.UsageAvailable}}
 		}
@@ -1394,16 +1395,20 @@ func transitionPayload(from, to, skill string) json.RawMessage {
 // system layer.
 func reviewerPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 	p := struct {
-		From      string `json:"from"`
-		To        string `json:"to"`
-		Skill     string `json:"skill,omitempty"`
-		Order     int    `json:"order"`
-		System    bool   `json:"system,omitempty"`
-		Notes     string `json:"notes,omitempty"`
-		Reasoning string `json:"reasoning,omitempty"`
-		Accept    bool   `json:"accept"`
+		From          string       `json:"from"`
+		To            string       `json:"to"`
+		Skill         string       `json:"skill,omitempty"`
+		Order         int          `json:"order"`
+		System        bool         `json:"system,omitempty"`
+		Notes         string       `json:"notes,omitempty"`
+		Reasoning     string       `json:"reasoning,omitempty"`
+		Accept        bool         `json:"accept"`
+		Model         string       `json:"model,omitempty"`
+		ModelResolved string       `json:"model_resolved,omitempty"`
+		Models        []ModelUsage `json:"model_usage,omitempty"`
 	}{From: from, To: to, Skill: rv.Skill, Order: rv.Order, System: rv.System,
-		Notes: rv.Notes, Reasoning: rv.Reasoning, Accept: rv.Accept}
+		Notes: rv.Notes, Reasoning: rv.Reasoning, Accept: rv.Accept,
+		Model: rv.Model, ModelResolved: rv.ModelResolved, Models: rv.Models}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil
@@ -1416,20 +1421,23 @@ func reviewerPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 // dispatched step (planner, coder) the same way it does a reviewer gate.
 func dispatchPayload(from, to string, res DispatchResult) json.RawMessage {
 	p := struct {
-		From           string `json:"from"`
-		To             string `json:"to"`
-		Agent          string `json:"agent"`
-		Skill          string `json:"skill,omitempty"`
-		Command        string `json:"command,omitempty"`
-		Model          string `json:"model,omitempty"`
-		TokensIn       int    `json:"tokens_in,omitempty"`
-		TokensOut      int    `json:"tokens_out,omitempty"`
-		TokensTotal    int    `json:"tokens_total,omitempty"`
-		DurationMs     int64  `json:"duration_ms,omitempty"`
-		UsageAvailable bool   `json:"usage_available"` // unconditional — tri-state (sty_56aae77a)
-		ArtifactName   string `json:"artifact_name,omitempty"`
-		ArtifactType   string `json:"artifact_type,omitempty"`
+		From           string       `json:"from"`
+		To             string       `json:"to"`
+		Agent          string       `json:"agent"`
+		Skill          string       `json:"skill,omitempty"`
+		Command        string       `json:"command,omitempty"`
+		Model          string       `json:"model,omitempty"`
+		ModelResolved  string       `json:"model_resolved,omitempty"`
+		Models         []ModelUsage `json:"model_usage,omitempty"`
+		TokensIn       int          `json:"tokens_in,omitempty"`
+		TokensOut      int          `json:"tokens_out,omitempty"`
+		TokensTotal    int          `json:"tokens_total,omitempty"`
+		DurationMs     int64        `json:"duration_ms,omitempty"`
+		UsageAvailable bool         `json:"usage_available"` // unconditional — tri-state (sty_56aae77a)
+		ArtifactName   string       `json:"artifact_name,omitempty"`
+		ArtifactType   string       `json:"artifact_type,omitempty"`
 	}{From: from, To: to, Agent: res.Agent, Skill: res.Skill, Command: res.Command, Model: res.Model,
+		ModelResolved: res.ModelResolved, Models: res.Models,
 		TokensIn: res.TokensIn, TokensOut: res.TokensOut, TokensTotal: res.TokensTotal, DurationMs: res.DurationMs,
 		UsageAvailable: res.UsageAvailable,
 		ArtifactName:   res.ArtifactName, ArtifactType: res.ArtifactType}
@@ -1472,19 +1480,22 @@ func multiRejectError(from, to string, rejects []ReviewerVerdict) error {
 // timeline can show HOW the agent was invoked alongside its verdict (sty_fb3e0873).
 func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 	p := struct {
-		From           string `json:"from"`
-		To             string `json:"to"`
-		Agent          string `json:"agent"`
-		Skill          string `json:"skill,omitempty"`
-		Command        string `json:"command,omitempty"`
-		Context        string `json:"context,omitempty"`
-		Model          string `json:"model,omitempty"`
-		TokensIn       int    `json:"tokens_in,omitempty"`
-		TokensOut      int    `json:"tokens_out,omitempty"`
-		TokensTotal    int    `json:"tokens_total,omitempty"`
-		DurationMs     int64  `json:"duration_ms,omitempty"`
-		UsageAvailable bool   `json:"usage_available"` // unconditional — tri-state (sty_56aae77a)
+		From           string       `json:"from"`
+		To             string       `json:"to"`
+		Agent          string       `json:"agent"`
+		Skill          string       `json:"skill,omitempty"`
+		Command        string       `json:"command,omitempty"`
+		Context        string       `json:"context,omitempty"`
+		Model          string       `json:"model,omitempty"`
+		ModelResolved  string       `json:"model_resolved,omitempty"`
+		Models         []ModelUsage `json:"model_usage,omitempty"`
+		TokensIn       int          `json:"tokens_in,omitempty"`
+		TokensOut      int          `json:"tokens_out,omitempty"`
+		TokensTotal    int          `json:"tokens_total,omitempty"`
+		DurationMs     int64        `json:"duration_ms,omitempty"`
+		UsageAvailable bool         `json:"usage_available"` // unconditional — tri-state (sty_56aae77a)
 	}{From: from, To: to, Agent: "reviewer", Skill: rv.Skill, Command: rv.Command, Context: rv.Context, Model: rv.Model,
+		ModelResolved: rv.ModelResolved, Models: rv.Models,
 		TokensIn: rv.TokensIn, TokensOut: rv.TokensOut, TokensTotal: rv.TokensTotal, DurationMs: rv.DurationMs,
 		UsageAvailable: rv.UsageAvailable}
 	b, err := json.Marshal(p)
@@ -1500,19 +1511,22 @@ func invocationPayload(from, to string, rv ReviewerVerdict) json.RawMessage {
 // (closing the documented gap, sty_a699ad14 / sty_b73c3236).
 func summariserInvocationPayload(from, to string, result SummaryResult) json.RawMessage {
 	p := struct {
-		From           string `json:"from"`
-		To             string `json:"to"`
-		Agent          string `json:"agent"`
-		Skill          string `json:"skill,omitempty"`
-		Command        string `json:"command,omitempty"`
-		Context        string `json:"context,omitempty"`
-		Model          string `json:"model,omitempty"`
-		TokensIn       int    `json:"tokens_in,omitempty"`
-		TokensOut      int    `json:"tokens_out,omitempty"`
-		TokensTotal    int    `json:"tokens_total,omitempty"`
-		DurationMs     int64  `json:"duration_ms,omitempty"`
-		UsageAvailable bool   `json:"usage_available"` // unconditional — tri-state (sty_56aae77a)
+		From           string       `json:"from"`
+		To             string       `json:"to"`
+		Agent          string       `json:"agent"`
+		Skill          string       `json:"skill,omitempty"`
+		Command        string       `json:"command,omitempty"`
+		Context        string       `json:"context,omitempty"`
+		Model          string       `json:"model,omitempty"`
+		ModelResolved  string       `json:"model_resolved,omitempty"`
+		Models         []ModelUsage `json:"model_usage,omitempty"`
+		TokensIn       int          `json:"tokens_in,omitempty"`
+		TokensOut      int          `json:"tokens_out,omitempty"`
+		TokensTotal    int          `json:"tokens_total,omitempty"`
+		DurationMs     int64        `json:"duration_ms,omitempty"`
+		UsageAvailable bool         `json:"usage_available"` // unconditional — tri-state (sty_56aae77a)
 	}{From: from, To: to, Agent: "reviewer", Skill: result.Context, Command: result.Command, Context: result.Context, Model: result.Model,
+		ModelResolved: result.ModelResolved, Models: result.Models,
 		TokensIn: result.TokensIn, TokensOut: result.TokensOut, TokensTotal: result.TokensTotal, DurationMs: result.DurationMs,
 		UsageAvailable: result.UsageAvailable}
 	b, err := json.Marshal(p)

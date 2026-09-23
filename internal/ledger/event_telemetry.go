@@ -1,6 +1,33 @@
 package ledger
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
+
+// modelUnavailable mirrors agentcli.ModelUnavailable's literal (sty_87b86044).
+// internal/ledger imports no other internal package, so the two constants
+// cannot share a definition — keep this string in sync with agentcli's by hand.
+const modelUnavailable = "unavailable"
+
+// ModelLabel renders the display string for a row's model fields: the
+// resolved canonical id when one was recorded, the configured alias marked
+// unknown when only that was, or a bare "unknown" when neither was (a legacy
+// row, or a transport that reported nothing at all). resolved ==
+// modelUnavailable and resolved == "" render identically — the distinction
+// between "explicitly reported no model" and "row predates this field" lives
+// in storage, not in the label (sty_87b86044).
+func ModelLabel(alias, resolved string) string {
+	alias = strings.TrimSpace(alias)
+	resolved = strings.TrimSpace(resolved)
+	if resolved != "" && resolved != modelUnavailable {
+		return resolved
+	}
+	if alias != "" {
+		return alias + " (unknown)"
+	}
+	return "unknown"
+}
 
 // Telemetry is display-ready agent-action fields from a single ledger entry
 // (sty_43d228e4 / sty_80233c10 / sty_56aae77a). Owned by ledger so the push-fed
@@ -8,13 +35,20 @@ import "encoding/json"
 // verb. A named struct (not positional returns) keeps the usage-availability
 // flag from being transposed with a token count at call sites.
 type Telemetry struct {
-	Agent       string
-	Model       string
-	Outcome     string
-	TokensIn    int
-	TokensOut   int
-	TokensTotal int
-	DurationMs  int64
+	Agent string
+	Model string
+	// ModelResolved is the canonical model id the transport actually ran
+	// (sty_87b86044), read alongside Model (the configured alias) from an
+	// agent_invocation OR a review_accept/review_reject row — both carry it
+	// directly, with no join. Empty on a row written before this field existed
+	// (a legacy row); ModelLabel renders that the same as an explicit
+	// "unavailable" marker.
+	ModelResolved string
+	Outcome       string
+	TokensIn      int
+	TokensOut     int
+	TokensTotal   int
+	DurationMs    int64
 	// UsageAvailable is true when the row carries a measured token cost —
 	// either an explicit usage_available:true on a new agent_invocation, or
 	// (legacy) tokens_total > 0 when the field is absent. False means
@@ -54,14 +88,35 @@ func EventTelemetry(e Entry) Telemetry {
 			}
 		}
 	case KindReviewAccept:
-		return Telemetry{Outcome: "accept"}
+		return verdictTelemetry(e.Payload, "accept")
 	case KindReviewReject:
-		return Telemetry{Outcome: "reject"}
+		return verdictTelemetry(e.Payload, "reject")
 	case KindGateSkipped:
 		// Not an accept: nothing judged this edge (sty_d59ec6a9).
 		return Telemetry{Outcome: "skipped"}
 	}
 	return Telemetry{}
+}
+
+// verdictTelemetry decodes a review_accept/review_reject payload, which
+// carries model and model_resolved directly on the row (sty_87b86044, no join
+// to an agent_invocation entry) — the row stands alone after ledger compaction.
+// Legacy rows written before this field existed decode with both empty, which
+// ModelLabel renders as unknown, never back-filled.
+func verdictTelemetry(payload []byte, outcome string) Telemetry {
+	tel := Telemetry{Outcome: outcome}
+	if len(payload) == 0 {
+		return tel
+	}
+	var row struct {
+		Model         string `json:"model"`
+		ModelResolved string `json:"model_resolved"`
+	}
+	if err := json.Unmarshal(payload, &row); err == nil {
+		tel.Model = row.Model
+		tel.ModelResolved = row.ModelResolved
+	}
+	return tel
 }
 
 // invocationTelemetry decodes an agent_invocation payload. Sole owner of the
@@ -75,6 +130,7 @@ func invocationTelemetry(payload []byte) Telemetry {
 	var row struct {
 		Agent          string `json:"agent"`
 		Model          string `json:"model"`
+		ModelResolved  string `json:"model_resolved"`
 		TokensIn       int    `json:"tokens_in"`
 		TokensOut      int    `json:"tokens_out"`
 		TokensTotal    int    `json:"tokens_total"`
@@ -93,6 +149,7 @@ func invocationTelemetry(payload []byte) Telemetry {
 	return Telemetry{
 		Agent:          row.Agent,
 		Model:          row.Model,
+		ModelResolved:  row.ModelResolved,
 		TokensIn:       row.TokensIn,
 		TokensOut:      row.TokensOut,
 		TokensTotal:    row.TokensTotal,

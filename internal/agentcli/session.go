@@ -89,40 +89,53 @@ func toolNameKind(name string) string {
 }
 
 func runOneShot(ctx context.Context, sess Session, req Request) ([]byte, error) {
+	out, _, err := runOneShotUsage(ctx, sess, req)
+	return out, err
+}
+
+// runOneShotUsage drives one open Session through a single turn like runOneShot,
+// but also captures the last EventUsage the session reports before completing —
+// the stream transport's modelUsage arrives only on that event, never inside
+// Captured() (sty_87b86044 AC2).
+func runOneShotUsage(ctx context.Context, sess Session, req Request) ([]byte, UsageResult, error) {
+	var usage UsageResult
 	if err := sess.Send(ctx, Turn{System: req.SystemPrompt, Text: req.Payload}); err != nil {
 		closeErr := sess.Close()
 		out := sess.Captured()
 		if closeErr != nil {
-			return out, closeErr
+			return out, usage, closeErr
 		}
-		return out, err
+		return out, usage, err
 	}
 	for {
 		select {
 		case <-ctx.Done():
 			_ = sess.Cancel()
 			_ = sess.Close()
-			return sess.Captured(), ctx.Err()
+			return sess.Captured(), usage, ctx.Err()
 		case ev, ok := <-sess.Events():
 			if !ok {
 				out := sess.Captured()
 				err := sess.Close()
-				return out, err
+				return out, usage, err
+			}
+			if ev.Kind == EventUsage && ev.Usage != nil {
+				usage = *ev.Usage
 			}
 			if ev.Kind == EventFailed {
 				closeErr := sess.Close()
 				if closeErr != nil {
-					return sess.Captured(), closeErr
+					return sess.Captured(), usage, closeErr
 				}
 				if ev.Error != "" {
-					return sess.Captured(), fmt.Errorf("%s", ev.Error)
+					return sess.Captured(), usage, fmt.Errorf("%s", ev.Error)
 				}
-				return sess.Captured(), fmt.Errorf("agentcli: session failed")
+				return sess.Captured(), usage, fmt.Errorf("agentcli: session failed")
 			}
 			if ev.Kind == EventCompleted {
 				out := sess.Captured()
 				err := sess.Close()
-				return out, err
+				return out, usage, err
 			}
 		}
 	}

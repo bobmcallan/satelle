@@ -570,10 +570,16 @@ func eventChips(e ledger.Entry) []chipVM {
 	if tel.UsageAvailable && tel.TokensTotal > 0 {
 		chips = append(chips, chipVM{Type: "tokens", Label: humanTokens(tel.TokensTotal) + " tok"})
 	}
-	if tel.Model != "" {
-		chips = append(chips, chipVM{Type: "model", Label: tel.Model})
-	} else if tel.Agent != "" && tel.Agent != "reviewer" && tel.Agent != "executor" {
-		chips = append(chips, chipVM{Type: "model", Label: tel.Agent})
+	// A verdict row (review_accept/review_reject) or an agent_invocation row
+	// always names a model — even a legacy row with neither the alias nor the
+	// resolved id renders "unknown" rather than no chip at all, matching
+	// `satelle story cost`'s unconditional Model column (cmd_workitem.go)
+	// (sty_87b86044). The agent-name fallback for a model-less row is gone —
+	// an agent name is not a model.
+	isVerdict := tel.Outcome == "accept" || tel.Outcome == "reject"
+	isInvocation := e.Kind == ledger.KindAgentInvocation
+	if isVerdict || isInvocation {
+		chips = append(chips, chipVM{Type: "model", Label: ledger.ModelLabel(tel.Model, tel.ModelResolved)})
 	}
 	return chips
 }

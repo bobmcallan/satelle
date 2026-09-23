@@ -229,12 +229,17 @@ func (g *Engine) recordArtifactAttempt(
 	findings []string,
 	reason string,
 ) {
+	modelResolved, models := toVerbModels(usage)
 	data := map[string]any{
 		"attempt": attempt, "phase": phase, "binding": section,
 		"model": binding.Model, "effort": binding.Effort,
+		"model_resolved":  modelResolved,
 		"duration_ms":     usage.Duration.Milliseconds(),
 		"usage_available": usage.Available,
 		"validator_ok":    len(findings) == 0,
+	}
+	if len(models) > 0 {
+		data["model_usage"] = models
 	}
 	if usage.Available {
 		data["tokens_in"] = usage.InputTokens
