@@ -1,3 +1,14 @@
+## [0.0.519] - 2026-09-23
+
+### Changed
+- **`satelle-agent-goals` now states that an epic closes on its children.** An epic or parent container is complete only when every child story is terminal. The agent keeps driving the children, one at a time, until the container can close. Intermediate stages are waypoints, never a point to hand back control. This is part of the embedded principle every session receives. A repo whose deployed copy is stamped from an older binary shows it as drifted until `satelle init` / `satelle rebase` runs there. (sty_930d404a)
+- **This repo's AGENTS.md is a short pointer.** It no longer restates rules the session-injected principles and the release skill already carry. (sty_930d404a)
+
+## [serve-v0.0.54] - 2026-09-23
+
+### Changed
+- **Serve channel picks up the updated embedded `satelle-agent-goals` principle.** (sty_930d404a)
+
 ## [0.0.518] - 2026-09-23
 
 ### Added

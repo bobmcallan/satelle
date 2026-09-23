@@ -28,6 +28,12 @@ the workflow, not a normal step on its path.
 **One story at a time.** Drive a single engaged story to its terminal state
 before engaging another.
 
+**Epics close on their children.** An epic (an `epic-parent`/parent container)
+is complete only when every child story is terminal. Keep driving the
+children, one at a time, until the container can close. Intermediate stages
+(plan, in_progress, integration, release, and so on) are waypoints, never a
+point to hand back control.
+
 ## When an engaged story cannot satisfy its ACs
 
 Do **not** weaken the ACs (definition freeze). Diagnose:
