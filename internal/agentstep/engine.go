@@ -42,6 +42,7 @@ import (
 
 	"github.com/bobmcallan/satelle/internal/agentartifact"
 	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/compact"
 	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/docindex"
 	"github.com/bobmcallan/satelle/internal/retrieve"
@@ -129,6 +130,12 @@ type Engine struct {
 	// marker instead of a bare truncation. Nil falls back to the plain
 	// "… [truncated]" suffix excerpt() has always appended.
 	diffOffload func(ctx context.Context, itemID string, content []byte) (hash string, err error)
+	// checkLogCompressor reduces a failing functional check's captured output
+	// into the gate's reject notes (internal/compact.CompressLog,
+	// sty_ef930f81), offloading the full raw log behind a retrieval marker.
+	// Nil falls back to compact.CompressLog(out, compact.LogConfig{}, nil) —
+	// bounded head/tail notes with no marker.
+	checkLogCompressor func(ctx context.Context, itemID, log string) string
 	// trackingStory resolves the id of an OPEN story already diagnosing a failing
 	// authored document, so a refusal caused by that document points at the
 	// diagnosis instead of leaving it in backlog (sty_88d40a60). Injected because
@@ -579,6 +586,14 @@ func (g *Engine) SetDiffCompressor(fn func(ctx context.Context, itemID, patch st
 // prior plain "… [truncated]" suffix.
 func (g *Engine) SetDiffOffloader(fn func(ctx context.Context, itemID string, content []byte) (hash string, err error)) {
 	g.diffOffload = fn
+}
+
+// SetCheckLogCompressor wires the log compressor (sty_ef930f81) runCheck uses
+// to build a failing check's reject notes. Nil falls back to
+// compact.CompressLog(out, compact.LogConfig{}, nil) — bounded head/tail
+// notes with no retrieval marker.
+func (g *Engine) SetCheckLogCompressor(fn func(ctx context.Context, itemID, log string) string) {
+	g.checkLogCompressor = fn
 }
 
 // SetModelRanking wires the [models] ranking table (sty_7069bced /
@@ -2505,7 +2520,7 @@ func (g *Engine) runReviewerWith(ctx context.Context, item workitem.Item, toStat
 	// output tail as notes. No LLM (the command IS the decision). This is the
 	// constitution's "skill + functional check" gate. Stays OUTSIDE Invoke (design §4.2).
 	if command := skillCheck(body); command != "" {
-		return g.runCheck(ctx, skill, command, string(payload)), nil
+		return g.runCheck(ctx, item.ID, skill, command, string(payload)), nil
 	}
 	// LLM path: shared Invoke (sty_ba860c8a / sty_e21cbc08). Pre-flight (skill,
 	// structure, functional-check, missing-rubric advisory) stays here.
@@ -3411,9 +3426,10 @@ func referencedWorkflowSkills(body string) []string {
 }
 
 // runCheck runs a skill's functional-check command and returns a deterministic
-// verdict: exit 0 accepts, any non-zero (or a run error / timeout) rejects with
-// the command's output tail as actionable notes.
-func (g *Engine) runCheck(ctx context.Context, skill, command, payload string) verb.GateDecision {
+// verdict: exit 0 accepts, any non-zero (or a run error / timeout) rejects
+// with the command's output — reduced by the wired log compressor
+// (sty_ef930f81) — as actionable notes.
+func (g *Engine) runCheck(ctx context.Context, itemID, skill, command, payload string) verb.GateDecision {
 	timeout := g.checkTimeout
 	if timeout <= 0 {
 		timeout = defaultCheckTimeout
@@ -3424,7 +3440,13 @@ func (g *Engine) runCheck(ctx context.Context, skill, command, payload string) v
 	dec := verb.GateDecision{Gated: true, Skill: skill}
 	if err != nil {
 		dec.Accept = false
-		dec.Notes = fmt.Sprintf("functional check failed (`%s`): %v\n%s", command, err, tailLines(out, 40))
+		var notes string
+		if g.checkLogCompressor != nil {
+			notes = g.checkLogCompressor(ctx, itemID, out)
+		} else {
+			notes = compact.CompressLog(out, compact.LogConfig{}, nil)
+		}
+		dec.Notes = fmt.Sprintf("functional check failed (`%s`): %v\n%s", command, err, notes)
 		return dec
 	}
 	dec.Accept = true
@@ -3438,16 +3460,6 @@ func (g *Engine) runCheck(ctx context.Context, skill, command, payload string) v
 // Empty when the skill carries no check (an LLM reviewer).
 func skillCheck(body string) string {
 	return structure.CheckCommand(body)
-}
-
-// tailLines returns the last n non-trailing-empty lines of s, so a long check log
-// is summarised to its most relevant (final) output for the reject notes.
-func tailLines(s string, n int) string {
-	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	return strings.Join(lines, "\n")
 }
 
 // frontmatterList parses a list-valued key from a markdown frontmatter block,

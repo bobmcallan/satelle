@@ -1,3 +1,19 @@
+## [0.0.524] - 2026-09-24
+
+### Changed
+- **A failing functional check's reject notes keep what matters from anywhere in the log.** They no longer keep only the last 40 lines.
+  - **With `[output.check_log]` configured**, the notes keep every line matching the configured keep patterns, with context. Configured stack traces are collapsed to their first frames plus app frames, and repeated warnings are deduplicated.
+  - **With nothing configured**, the notes are the head and tail of the log.
+  - **Either way**, the notes end with an omission footer and a `<<ccr:…,log,N>>` marker that `satelle retrieve` resolves to the full raw output.
+  - **Configuration.** The binary ships no language patterns. This repo configures its Go values (`--- FAIL`, `panic:` with goroutine traces, `file.go:N:M:`).
+  - **Verdict unchanged.** Accept/reject still depends only on the check's exit code.
+  - **Build-unit check.** `satelle-build-unit-check` no longer tails build or test output, so the compressor sees the full log. (sty_ef930f81)
+
+## [serve-v0.0.59] - 2026-09-24
+
+### Changed
+- **The serve channel picks up the `[output.check_log]` config.** (sty_ef930f81)
+
 ## [0.0.523] - 2026-09-23
 
 ### Changed

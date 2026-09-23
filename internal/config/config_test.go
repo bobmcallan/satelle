@@ -446,6 +446,92 @@ func TestLoadRefusesInvalidDiffRankPattern(t *testing.T) {
 	}
 }
 
+// TestLoadOutputCheckLogConfig (sty_ef930f81 AC1): every CompressLog knob
+// comes from [output.check_log], and Resolve maps the table onto
+// compact.LogConfig. A disabled/absent table still resolves to the zero
+// LogConfig — CompressLog's own mechanism-level size fallbacks apply, but no
+// pattern is ever synthesised.
+func TestLoadOutputCheckLogConfig(t *testing.T) {
+	repo := t.TempDir()
+	satelleDir := filepath.Join(repo, ".satelle")
+	if err := os.MkdirAll(satelleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	committed := "[output.check_log]\n" +
+		"enabled = true\n" +
+		"passthrough_lines = 60\n" +
+		"context_lines = 3\n" +
+		"head_lines = 20\n" +
+		"tail_lines = 20\n" +
+		"max_kept_lines = 400\n" +
+		"keep_patterns = [\"^--- FAIL\", \"^panic:\"]\n" +
+		"warn_patterns = [\"(?i)^warning:\"]\n" +
+		"trace_start = \"^goroutine \\\\d+ \\\\[\"\n" +
+		"trace_frame = \"^\\\\s+\\\\S+\\\\.go:\\\\d+\"\n" +
+		"trace_app_frame = \"github.com/bobmcallan/satelle\"\n" +
+		"trace_keep_frames = 3\n"
+	if err := os.WriteFile(filepath.Join(satelleDir, ConfigName), []byte(committed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(filepath.Join(satelleDir, ConfigName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Output.CheckLog.Enabled {
+		t.Fatal("enabled did not parse true")
+	}
+	lc := cfg.Output.CheckLog.Resolve()
+	if lc.PassthroughLines != 60 || lc.ContextLines != 3 || lc.HeadLines != 20 || lc.TailLines != 20 || lc.MaxKeptLines != 400 {
+		t.Errorf("Resolve() = %+v, want the authored thresholds — none may be a Go constant", lc)
+	}
+	if len(lc.KeepPatterns) != 2 || len(lc.WarnPatterns) != 1 {
+		t.Errorf("Resolve() patterns = %+v, want 2 keep + 1 warn authored pattern", lc)
+	}
+	if lc.TraceStart == "" || lc.TraceFrame == "" || lc.TraceAppFrame == "" || lc.TraceKeepFrames != 3 {
+		t.Errorf("Resolve() trace fields = %+v, want the authored trace config", lc)
+	}
+
+	var empty Config
+	if empty.Output.CheckLog.Enabled {
+		t.Error("zero-value CheckLogConfig must be disabled — the binary ships no check-log default")
+	}
+	zero := empty.Output.CheckLog.Resolve()
+	if zero.PassthroughLines != 0 || zero.KeepPatterns != nil || zero.TraceStart != "" {
+		t.Errorf("Resolve() on a disabled table = %+v, want the zero compact.LogConfig", zero)
+	}
+}
+
+// TestLoadRefusesInvalidCheckLogPattern (sty_ef930f81): an unparseable
+// [output.check_log] regex fails config Load itself, rather than CompressLog
+// silently skipping it at check time.
+func TestLoadRefusesInvalidCheckLogPattern(t *testing.T) {
+	cases := []struct {
+		name string
+		toml string
+	}{
+		{"keep_patterns", "[output.check_log]\nenabled = true\nkeep_patterns = [\"(unterminated\"]\n"},
+		{"warn_patterns", "[output.check_log]\nenabled = true\nwarn_patterns = [\"(unterminated\"]\n"},
+		{"trace_start", "[output.check_log]\nenabled = true\ntrace_start = \"(unterminated\"\n"},
+		{"trace_frame", "[output.check_log]\nenabled = true\ntrace_frame = \"(unterminated\"\n"},
+		{"trace_app_frame", "[output.check_log]\nenabled = true\ntrace_app_frame = \"(unterminated\"\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			satelleDir := filepath.Join(repo, ".satelle")
+			if err := os.MkdirAll(satelleDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(satelleDir, ConfigName), []byte(tc.toml), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := Load(filepath.Join(satelleDir, ConfigName)); err == nil {
+				t.Fatalf("Load must refuse an unparseable %s regex", tc.name)
+			}
+		})
+	}
+}
+
 func TestIsAgentCaller(t *testing.T) {
 	t.Setenv(ScratchEnv, "")
 	t.Setenv("CLAUDECODE", "")

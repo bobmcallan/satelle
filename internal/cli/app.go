@@ -280,6 +280,10 @@ func openAppForCmd(cmd *cobra.Command) error {
 			// even when the compressor alone was not enough (or is unwired).
 			rev.SetDiffCompressor(diffCompressor(a))
 			rev.SetDiffOffloader(diffOffloader(a))
+			// Functional-check log compressor (sty_ef930f81): a failing check's
+			// reject notes get the same ranked-keep treatment a gate payload's
+			// patch does, through the SAME retrieval store.
+			rev.SetCheckLogCompressor(checkLogCompressor(a))
 			rev.SetMessagesResolver(messagesResolver())
 			rev.SetArtifactAttacher(verb.AttachItemDoc)
 			// Structured retry/failure/timeout telemetry (sty_b73c3236): the engine
@@ -578,6 +582,20 @@ func diffOffloader(a *app.App) func(ctx context.Context, itemID string, content 
 			return "", fmt.Errorf("diff offloader: no retrieval store wired")
 		}
 		return retrieveAdapter{ctx: ctx, store: a.Store.Retrieve, storyID: itemID}.Put(content)
+	}
+}
+
+// checkLogCompressor wires the log compressor (sty_ef930f81) runCheck uses to
+// build a failing functional check's reject notes, through the SAME
+// retrieval store every other offload/retrieve path in this codebase shares
+// (retrieveAdapter), keyed to itemID so retention/pruning covers it.
+func checkLogCompressor(a *app.App) func(ctx context.Context, itemID, log string) string {
+	return func(ctx context.Context, itemID, log string) string {
+		if a.Store == nil || a.Store.Retrieve == nil {
+			return compact.CompressLog(log, a.Config.Output.CheckLog.Resolve(), nil)
+		}
+		off := retrieveAdapter{ctx: ctx, store: a.Store.Retrieve, storyID: itemID}
+		return compact.CompressLog(log, a.Config.Output.CheckLog.Resolve(), off)
 	}
 }
 

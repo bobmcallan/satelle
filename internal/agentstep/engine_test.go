@@ -2740,6 +2740,59 @@ func TestFunctionalCheckGate(t *testing.T) {
 			t.Errorf("reject notes should carry the check output tail, got %q", dec.Notes)
 		}
 	})
+
+	t.Run("fail routes output through the wired log compressor (sty_ef930f81)", func(t *testing.T) {
+		g, _ := newEngine(t, ``, fakeDocs{workflow: wf, skillBody: checkSkill, skillFound: true})
+		g.check = func(_ context.Context, dir, command, payload string) (string, error) {
+			return "raw check output\n", errFakeExit
+		}
+		var gotItemID, gotLog string
+		g.SetCheckLogCompressor(func(_ context.Context, itemID, log string) string {
+			gotItemID, gotLog = itemID, log
+			return "COMPRESSED NOTES"
+		})
+		dec, err := g.Gate(context.Background(), workitem.Item{ID: "sty_abc", Status: "in_progress"}, "integrated")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if dec.Accept {
+			t.Fatalf("want reject, got %+v", dec)
+		}
+		if !strings.Contains(dec.Notes, "COMPRESSED NOTES") {
+			t.Errorf("reject notes should be the wired compressor's output, got %q", dec.Notes)
+		}
+		if gotItemID != "sty_abc" {
+			t.Errorf("compressor itemID = %q, want sty_abc", gotItemID)
+		}
+		if gotLog != "raw check output\n" {
+			t.Errorf("compressor log = %q, want the raw check output", gotLog)
+		}
+	})
+
+	t.Run("pass leaves notes untouched by any wired compressor", func(t *testing.T) {
+		g, _ := newEngine(t, `{"decision":"reject"}`, fakeDocs{workflow: wf, skillBody: checkSkill, skillFound: true})
+		g.check = func(_ context.Context, dir, command, payload string) (string, error) {
+			return "ok\n", nil
+		}
+		called := false
+		g.SetCheckLogCompressor(func(_ context.Context, itemID, log string) string {
+			called = true
+			return "should not be used"
+		})
+		dec, err := g.Gate(context.Background(), workitem.Item{Status: "in_progress"}, "integrated")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !dec.Accept {
+			t.Fatalf("want accept, got %+v", dec)
+		}
+		if called {
+			t.Errorf("a passing check must never invoke the log compressor")
+		}
+		if !strings.Contains(dec.Notes, "functional check passed") {
+			t.Errorf("passing notes unexpectedly changed: %q", dec.Notes)
+		}
+	})
 }
 
 var errFakeExit = errFake("exit status 1")

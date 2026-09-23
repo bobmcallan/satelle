@@ -186,6 +186,12 @@ type OutputConfig struct {
 	// value) keeps ranking off everywhere; the binary ships no threshold, cap,
 	// or pattern of its own.
 	DiffRank DiffRankConfig `toml:"diff_rank"`
+	// CheckLog tunes the log compressor (internal/compact.CompressLog,
+	// sty_ef930f81) that builds a failing functional check's reject notes in
+	// place of a bare tail. Disabled (the zero value) still produces bounded
+	// head/tail notes — CompressLog's own size fallbacks apply — but keeps
+	// every language-specific pattern empty; the binary ships none of its own.
+	CheckLog CheckLogConfig `toml:"check_log"`
 }
 
 // DiffRankConfig is the [output.diff_rank] table: every tunable
@@ -223,6 +229,62 @@ func (c DiffRankConfig) Resolve() compact.RankConfig {
 		MaxHunksPerFile:  c.MaxHunksPerFile,
 		ContextLines:     c.ContextLines,
 		PriorityPatterns: c.PriorityPatterns,
+	}
+}
+
+// CheckLogConfig is the [output.check_log] table: every tunable
+// internal/compact.CompressLog applies (sty_ef930f81) to a failing functional
+// check's reject notes. Enabled=false (the zero value) still resolves to a
+// LogConfig — CompressLog degrades to bounded head/tail notes on its own
+// mechanism-level size fallbacks — but every pattern field resolves empty, so
+// a disabled or absent table never applies a language-specific rule.
+type CheckLogConfig struct {
+	Enabled bool `toml:"enabled"`
+	// PassthroughLines: a log with this many lines or fewer rides verbatim.
+	PassthroughLines int `toml:"passthrough_lines"`
+	// ContextLines is how many lines of context are kept around each kept line.
+	ContextLines int `toml:"context_lines"`
+	// HeadLines/TailLines bound the fallback used when nothing matched.
+	HeadLines int `toml:"head_lines"`
+	TailLines int `toml:"tail_lines"`
+	// MaxKeptLines caps the notes' total kept-line count.
+	MaxKeptLines int `toml:"max_kept_lines"`
+	// KeepPatterns are regexes; a matching line is always kept. Validated
+	// (compiled) at config Load time.
+	KeepPatterns []string `toml:"keep_patterns"`
+	// WarnPatterns are regexes; a matching line is deduplicated to its first
+	// occurrence. Validated at config Load time.
+	WarnPatterns []string `toml:"warn_patterns"`
+	// TraceStart/TraceFrame/TraceAppFrame/TraceKeepFrames tune stack-trace
+	// collapsing. Validated at config Load time.
+	TraceStart      string `toml:"trace_start"`
+	TraceFrame      string `toml:"trace_frame"`
+	TraceAppFrame   string `toml:"trace_app_frame"`
+	TraceKeepFrames int    `toml:"trace_keep_frames"`
+}
+
+// Resolve returns the compact.LogConfig this table configures. Unlike
+// DiffRankConfig.Resolve, a disabled table does NOT return the zero value:
+// CompressLog treats an all-zero LogConfig as "compress with mechanism
+// defaults and no patterns", which is the correct disabled behaviour here
+// (bounded head/tail notes, never a raw untruncated dump) — so Resolve always
+// passes the (possibly all-empty) pattern fields through.
+func (c CheckLogConfig) Resolve() compact.LogConfig {
+	if !c.Enabled {
+		return compact.LogConfig{}
+	}
+	return compact.LogConfig{
+		PassthroughLines: c.PassthroughLines,
+		ContextLines:     c.ContextLines,
+		HeadLines:        c.HeadLines,
+		TailLines:        c.TailLines,
+		MaxKeptLines:     c.MaxKeptLines,
+		KeepPatterns:     c.KeepPatterns,
+		WarnPatterns:     c.WarnPatterns,
+		TraceStart:       c.TraceStart,
+		TraceFrame:       c.TraceFrame,
+		TraceAppFrame:    c.TraceAppFrame,
+		TraceKeepFrames:  c.TraceKeepFrames,
 	}
 }
 
@@ -746,6 +808,9 @@ func Load(explicitPath string) (Config, string, error) {
 	if err := validateDiffRankPatterns(cfg, path); err != nil {
 		return Config{}, path, err
 	}
+	if err := validateCheckLogPatterns(cfg, path); err != nil {
+		return Config{}, path, err
+	}
 	return cfg, path, nil
 }
 
@@ -756,6 +821,37 @@ func validateDiffRankPatterns(cfg Config, path string) error {
 	for _, p := range cfg.Output.DiffRank.PriorityPatterns {
 		if _, err := regexp.Compile(p); err != nil {
 			return fmt.Errorf("config: %s: [output.diff_rank] priority_patterns %q: %w", path, p, err)
+		}
+	}
+	return nil
+}
+
+// validateCheckLogPatterns refuses an unparseable [output.check_log] regex
+// (keep, warn, or trace pattern) at load time, rather than letting
+// CompressLog silently skip it at check time (sty_ef930f81).
+func validateCheckLogPatterns(cfg Config, path string) error {
+	c := cfg.Output.CheckLog
+	named := map[string]string{
+		"trace_start":     c.TraceStart,
+		"trace_frame":     c.TraceFrame,
+		"trace_app_frame": c.TraceAppFrame,
+	}
+	for field, p := range named {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		if _, err := regexp.Compile(p); err != nil {
+			return fmt.Errorf("config: %s: [output.check_log] %s %q: %w", path, field, p, err)
+		}
+	}
+	for _, p := range c.KeepPatterns {
+		if _, err := regexp.Compile(p); err != nil {
+			return fmt.Errorf("config: %s: [output.check_log] keep_patterns %q: %w", path, p, err)
+		}
+	}
+	for _, p := range c.WarnPatterns {
+		if _, err := regexp.Compile(p); err != nil {
+			return fmt.Errorf("config: %s: [output.check_log] warn_patterns %q: %w", path, p, err)
 		}
 	}
 	return nil
