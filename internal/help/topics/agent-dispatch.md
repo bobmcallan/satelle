@@ -118,7 +118,7 @@ runtime refusal and validate, so they cannot disagree.
 | **`stream`** | Claude stream-json live session (`DefaultClaudeStreamCommand`). `{system}`/`{payload}` are rejected — they ride the first user message; `{tools}`/`{model}`/`{effort}` remain argv. For the orchestrator binding (live turns), not reviewers. |
 
 Shared fields on all three: `role`, `tools`, `model`, `effort`, `secondary`,
-`principles`, `env`, `timeout`, `settings`. Reviewers keep Claude on
+`principles`, `env`, `timeout`, `idle_timeout`, `settings`. Reviewers keep Claude on
 `interface = command` (cold one-shot, verdict contract). `stream` is the
 live-session option for an orchestrator binding. An ACP-capable CLI is usable
 when it implements ACP agent stdio **and** the binding sets `interface = "acp"`.
@@ -190,6 +190,44 @@ sibling `-raw.log`; raw traces are opt-in because provider traffic may be
 sensitive. Satelle filters hidden reasoning and redacts obvious credential
 shapes from both surfaces, but operators should still protect and remove raw
 traces after diagnosis.
+
+### Idle-stall detection vs a hard timeout (`idle_timeout` / `timeout`, sty_752c4ef2)
+
+A dispatch runs for as long as it keeps making progress. Satelle stops it only
+when it has genuinely **stalled** — no REAL event (a tool start/end, a
+message, or a usage report) for `idle_timeout`. A heartbeat alone does not
+reset the clock: a heartbeat proves the transport is still alive, not that the
+agent is doing anything, so a dispatch that heartbeats forever with no real
+event is still judged stalled.
+
+- **`idle_timeout`** is a Go duration string (`"5m"`), set per binding or once
+  for every binding under `[defaults]`:
+
+  ```toml
+  [defaults]
+  idle_timeout = "5m"   # shipped default when neither level sets one
+
+  [coder]
+  idle_timeout = "10m"  # this binding's own override wins over [defaults]
+  ```
+
+  There is **no compiled wall-clock cap** — a binding that authors no
+  `idle_timeout` and whose `[defaults]` is also silent still gets the shipped
+  default (currently 5 minutes of no real event), not an unbounded run.
+- **`timeout`** is now an *optional hard ceiling* on one dispatch's total
+  wall-clock time. It is **unset by default** — a progressing agent is never
+  cut off by elapsed time alone. An operator who genuinely wants an upper
+  bound (e.g. a cost or CI-slot limit) still sets `timeout = "20m"` on the
+  binding; when set, it wins over the stall detector even for an agent that is
+  still emitting real events.
+- A stall is recorded as its own outcome, **`stalled`** — distinct from
+  `timeout` (the hard ceiling fired) or `error` (the process failed) — carrying
+  the idle duration and the last real event's label. It is ledgered as
+  `agent-stalled` telemetry, and the refusal text names the stall (`"stalled:
+  no activity for 5m0s (last event: tool: Bash)"`), not a generic deadline.
+- Applies to every transport (`command`, `stream`, `acp`) and to a live
+  session's own turn (a `story chat` reply, a rework relay coder/consult
+  round) — not only the one-shot dispatch path.
 
 ### Structured step artifacts
 

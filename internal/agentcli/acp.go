@@ -153,7 +153,7 @@ func openACPSession(ctx context.Context, a acpRunner, req Request, pol Permissio
 	}
 
 	fanout, evCh, closeEv := fanoutEvents(onEvent)
-	emitEvent(fanout, newEvent(EventStart))
+	emitEvent(fanout, newStartEvent(cmd.Process.Pid))
 
 	var stderrBuf bytes.Buffer
 	sess := &acpSession{

@@ -124,6 +124,21 @@ func runStoryRework(cmd *cobra.Command, args []string) error {
 	if !found {
 		return fmt.Errorf("satelle story rework: no [%s] binding in .satelle/workflows/agents.toml — the step allocates it as the performer", rw.CoderBinding)
 	}
+	consultBinding, found := eff.Agents.NamedBinding(rw.ConsultBinding)
+	if !found {
+		return fmt.Errorf("satelle story rework: no [%s] binding in .satelle/workflows/agents.toml — the step allocates it as the consultant", rw.ConsultBinding)
+	}
+	// Idle-stall bound for each side's turns (sty_752c4ef2), resolved the same
+	// way a one-shot dispatch resolves it: binding idle_timeout= over the
+	// shared [defaults] table over the shipped default.
+	coderIdle, ierr := eff.Agents.ResolveIdleTimeout(coderBinding, agentstep.DefaultIdleTimeout)
+	if ierr != nil {
+		return fmt.Errorf("satelle story rework: invalid idle_timeout in .satelle/workflows/agents.toml [%s]: %w", rw.CoderBinding, ierr)
+	}
+	consultIdle, ierr := eff.Agents.ResolveIdleTimeout(consultBinding, agentstep.DefaultIdleTimeout)
+	if ierr != nil {
+		return fmt.Errorf("satelle story rework: invalid idle_timeout in .satelle/workflows/agents.toml [%s]: %w", rw.ConsultBinding, ierr)
+	}
 
 	// Adopt the lease's stamped session so the coder's hook and the relay
 	// policy resolve the same live seat (sty_7567f047). Set only on this
@@ -196,11 +211,13 @@ func runStoryRework(cmd *cobra.Command, args []string) error {
 	loop := &reworkLoop{
 		Coder: coder, Consultant: consultant,
 		CoderRole: rw.CoderBinding, ConsultRole: rw.ConsultBinding,
-		Rounds:    rw.Rounds,
-		Ledger:    consultLedger,
-		Out:       out,
-		Seed:      consultPayload + "\n\n" + reworkSeed(rw),
-		CoderSeed: coderPayload + "\n\n" + reworkCoderSeed(rw),
+		Rounds:             rw.Rounds,
+		Ledger:             consultLedger,
+		Out:                out,
+		Seed:               consultPayload + "\n\n" + reworkSeed(rw),
+		CoderSeed:          coderPayload + "\n\n" + reworkCoderSeed(rw),
+		CoderIdleTimeout:   coderIdle,
+		ConsultIdleTimeout: consultIdle,
 	}
 	res, runErr := loop.Run(ctx)
 	// The RESULT is recorded whether or not the relay finished cleanly: a relay

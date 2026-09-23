@@ -932,27 +932,53 @@ func TestGate_emitsActivity(t *testing.T) {
 	}
 }
 
-// TestDefaultAgentTimeoutIsTwentyMinutes pins the fallback bound on one nested
-// agent invocation at 20m (sty_a7089cb6): a whole coded step now dispatches to
-// a coder under this bound, and 10m cut a real implementation off mid-AC
-// (sty_87b86044).
-func TestDefaultAgentTimeoutIsTwentyMinutes(t *testing.T) {
-	if defaultAgentTimeout != 20*time.Minute {
-		t.Fatalf("defaultAgentTimeout = %v, want 20m", defaultAgentTimeout)
+// TestDefaultHardTimeoutIsUnset pins the fallback hard ceiling on one nested
+// agent invocation at UNSET (sty_752c4ef2): a wall-clock cap killed working
+// agents mid-implementation (sty_87b86044 at 10m, sty_7069bced at 20m), so the
+// default no longer bounds a progressing dispatch by elapsed time alone — the
+// idle-stall detector (TestDefaultIdleTimeoutIsFiveMinutes) does that job. An
+// explicit binding timeout= still wins.
+func TestDefaultHardTimeoutIsUnset(t *testing.T) {
+	if defaultHardTimeout != 0 {
+		t.Fatalf("defaultHardTimeout = %v, want 0 (unset)", defaultHardTimeout)
 	}
 	g := New(nil, fakeDocs{}, "/repo", "")
-	if g.agentTimeout != 20*time.Minute {
-		t.Errorf("New() seeded agentTimeout = %v, want 20m", g.agentTimeout)
+	if g.agentTimeout != 0 {
+		t.Errorf("New() seeded agentTimeout = %v, want 0 (unset)", g.agentTimeout)
 	}
-	got, err := config.AgentBinding{}.TimeoutDuration(defaultAgentTimeout)
+	got, err := config.AgentBinding{}.TimeoutDuration(defaultHardTimeout)
 	if err != nil {
 		t.Fatalf("TimeoutDuration: %v", err)
 	}
-	if got != 20*time.Minute {
-		t.Errorf("no-timeout binding resolved to %v, want 20m", got)
+	if got != 0 {
+		t.Errorf("no-timeout binding resolved to %v, want 0 (no cap)", got)
 	}
-	if explicit, err := (config.AgentBinding{Timeout: "5m"}).TimeoutDuration(defaultAgentTimeout); err != nil || explicit != 5*time.Minute {
+	if explicit, err := (config.AgentBinding{Timeout: "5m"}).TimeoutDuration(defaultHardTimeout); err != nil || explicit != 5*time.Minute {
 		t.Errorf("explicit timeout should still win, got %v, err %v", explicit, err)
+	}
+}
+
+// TestDefaultIdleTimeoutIsFiveMinutes pins the shipped idle-stall default
+// (sty_752c4ef2): long enough for a slow model's thinking pause between tool
+// calls, short enough to catch a genuinely hung process. An explicit binding
+// idle_timeout= still wins.
+func TestDefaultIdleTimeoutIsFiveMinutes(t *testing.T) {
+	if defaultIdleTimeout != 5*time.Minute {
+		t.Fatalf("defaultIdleTimeout = %v, want 5m", defaultIdleTimeout)
+	}
+	g := New(nil, fakeDocs{}, "/repo", "")
+	if g.idleTimeout != 5*time.Minute {
+		t.Errorf("New() seeded idleTimeout = %v, want 5m", g.idleTimeout)
+	}
+	got, err := config.AgentBinding{}.IdleTimeoutDuration(defaultIdleTimeout)
+	if err != nil {
+		t.Fatalf("IdleTimeoutDuration: %v", err)
+	}
+	if got != 5*time.Minute {
+		t.Errorf("no-idle-timeout binding resolved to %v, want 5m", got)
+	}
+	if explicit, err := (config.AgentBinding{IdleTimeout: "90s"}).IdleTimeoutDuration(defaultIdleTimeout); err != nil || explicit != 90*time.Second {
+		t.Errorf("explicit idle_timeout should still win, got %v, err %v", explicit, err)
 	}
 }
 

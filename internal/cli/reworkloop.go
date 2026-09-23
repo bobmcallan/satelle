@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
 )
@@ -57,6 +58,10 @@ type reworkLoop struct {
 	// Both are supplied by the command so the prose stays out of the loop.
 	Seed      string
 	CoderSeed string
+	// CoderIdleTimeout / ConsultIdleTimeout bound one turn on their respective
+	// session with a Watchdog (sty_752c4ef2) — each side may configure its own
+	// idle_timeout=. ≤0 disables stall detection for that side.
+	CoderIdleTimeout, ConsultIdleTimeout time.Duration
 }
 
 // Run drives the relay. The consultant speaks first (it reviews the slice as it
@@ -76,7 +81,7 @@ func (l *reworkLoop) Run(ctx context.Context) (reworkResult, error) {
 	turn := l.Seed
 	for round := 1; round <= l.Rounds; round++ {
 		fmt.Fprintf(l.Out, "\n— round %d/%d: %s —\n", round, l.Rounds, l.ConsultRole)
-		verdict, err := l.exchange(ctx, l.Consultant, l.ConsultRole, l.CoderRole, turn)
+		verdict, err := l.exchange(ctx, l.Consultant, l.ConsultRole, l.CoderRole, turn, l.ConsultIdleTimeout)
 		if err != nil {
 			return res, err
 		}
@@ -94,7 +99,7 @@ func (l *reworkLoop) Run(ctx context.Context) (reworkResult, error) {
 		if round == 1 && strings.TrimSpace(l.CoderSeed) != "" {
 			ask = l.CoderSeed + "\n\n" + objection
 		}
-		reply, err := l.exchange(ctx, l.Coder, l.CoderRole, l.ConsultRole, ask)
+		reply, err := l.exchange(ctx, l.Coder, l.CoderRole, l.ConsultRole, ask, l.CoderIdleTimeout)
 		if err != nil {
 			return res, err
 		}
@@ -106,14 +111,14 @@ func (l *reworkLoop) Run(ctx context.Context) (reworkResult, error) {
 // exchange sends one turn to a session, ledgers the reply under its real
 // direction, and returns it. An empty reply is not an error — the budget still
 // advanced, and the caller treats it as the contract violation it is.
-func (l *reworkLoop) exchange(ctx context.Context, sess agentcli.Session, from, to, text string) (string, error) {
+func (l *reworkLoop) exchange(ctx context.Context, sess agentcli.Session, from, to, text string, idle time.Duration) (string, error) {
 	if strings.TrimSpace(text) == "" {
 		text = "(no message)"
 	}
 	if err := sess.Send(ctx, agentcli.Turn{Text: text}); err != nil {
 		return "", err
 	}
-	rendered, err := drainReply(ctx, sess, l.Out, from)
+	rendered, err := drainReply(ctx, sess, l.Out, from, idle)
 	reply := turnResult(sess, rendered)
 	if err != nil {
 		return reply, err

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -102,6 +103,20 @@ func FormatEvent(ev Event) string {
 
 func newEvent(kind EventKind) Event {
 	return Event{Kind: kind, At: time.Now().UTC()}
+}
+
+// EventMetaPid is the Event.Meta key carrying the spawned child's OS pid on
+// EventStart, set by every transport (command, stream, ACP) right after
+// cmd.Start(). It lets a caller (agentstep's ActivityDetail, sty_752c4ef2)
+// report which process is behind an in-flight dispatch without importing
+// os/exec itself.
+const EventMetaPid = "pid"
+
+// newStartEvent builds the EventStart event carrying pid in Meta.
+func newStartEvent(pid int) Event {
+	ev := newEvent(EventStart)
+	ev.Meta = map[string]string{EventMetaPid: strconv.Itoa(pid)}
+	return ev
 }
 
 func emitEvent(fn EventHandler, ev Event) {

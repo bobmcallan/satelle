@@ -111,6 +111,16 @@ func TestAgentDispatchTopic(t *testing.T) {
 		"live_interfaces",
 		"one-shot",
 		"live use",
+		// Idle-stall detector supersedes the wall-clock cap (sty_752c4ef2):
+		// idle_timeout is the config that bounds a dispatch, timeout is the
+		// optional hard ceiling (unset by default), and a stall is its own
+		// named outcome, distinct from a hard-timeout deadline.
+		"idle_timeout",
+		"no compiled wall-clock cap",
+		"unset by default",
+		"stalled",
+		"agent-stalled",
+		"heartbeat alone does not",
 	} {
 		if !strings.Contains(top.Body, want) {
 			t.Errorf("agent-dispatch topic missing %q", want)

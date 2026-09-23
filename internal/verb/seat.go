@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/bobmcallan/satelle/internal/config"
 	"github.com/bobmcallan/satelle/internal/lease"
 )
 
@@ -47,6 +48,17 @@ type seatRow struct {
 	ActivityIndex int    `json:"activity_index,omitempty"`
 	ActivityTotal int    `json:"activity_total,omitempty"`
 	ActivityAge   string `json:"activity_age,omitempty"`
+	// In-flight DISPATCH metadata (sty_752c4ef2) — which agent/model/pid is
+	// running the dispatch, the last real event it produced, and this repo's
+	// configured idle-stall bound for that binding. Omitted when Activity is
+	// empty (no dispatch has stamped detail on this lease yet).
+	Agent        string `json:"agent,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Pid          int    `json:"pid,omitempty"`
+	LastEvent    string `json:"last_event,omitempty"`
+	LastEventAge string `json:"last_event_age,omitempty"`
+	EventCount   int    `json:"event_count,omitempty"`
+	IdleTimeout  string `json:"idle_timeout,omitempty"`
 }
 
 // storySeatList reaps stale leases then lists remaining rows with age/stale flags
@@ -119,7 +131,36 @@ func seatRowFromLease(l lease.Lease, now time.Time) seatRow {
 		row.ActivityTotal = total
 		row.ActivityAge = formatAge(elapsed)
 	}
+	if d, ok := lease.EffectiveActivityDetail(l, now); ok {
+		row.Agent = d.Agent
+		row.Model = d.Model
+		row.Pid = d.Pid
+		row.LastEvent = d.EventLabel
+		row.LastEventAge = formatAge(now.Sub(d.EventAt))
+		row.EventCount = d.EventCount
+		row.IdleTimeout = resolveDisplayIdleTimeout(d.Agent)
+	}
 	return row
+}
+
+// resolveDisplayIdleTimeout resolves agent's idle-stall bound the same way the
+// engine does (binding idle_timeout=, else [defaults], else the shipped
+// default) purely for display on an in-flight seat row. Empty when the agents
+// layer is unwired (tests / pre-init) or the binding is unknown — never a
+// refusal, since this is read-only observability (sty_752c4ef2 AC7).
+func resolveDisplayIdleTimeout(agent string) string {
+	if !agentsWired || agent == "" {
+		return ""
+	}
+	b, ok := agentsLayer.NamedBinding(agent)
+	if !ok {
+		return ""
+	}
+	idle, err := agentsLayer.ResolveIdleTimeout(b, config.DefaultIdleTimeout)
+	if err != nil {
+		return ""
+	}
+	return idle.String()
 }
 
 // formatAge renders a duration as a short human age (minutes/hours/days).

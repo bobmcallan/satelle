@@ -119,6 +119,12 @@ type topBar struct {
 type rowVM struct {
 	workitem.Item
 	Lights []reviewLight
+	// Dispatch is the running indicator for an in-flight dispatch (sty_752c4ef2
+	// AC6) — nil when nothing is in flight. Distinct from Lights: a pip records
+	// a PAST transition's outcome (pass/fail/current), Dispatch narrates what is
+	// happening RIGHT NOW, so a refused earlier attempt's fail pip is never the
+	// only signal on a story a live agent is currently working.
+	Dispatch *dispatchVM
 }
 
 type reviewLight struct {

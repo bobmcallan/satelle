@@ -181,6 +181,15 @@ type AgentBinding struct {
 	// config, not a compiled constant (sty_446c38b7). Applies to a DISPATCHED named
 	// executor; reviewer/summariser gate invocations keep the engine's agent bound.
 	Timeout string `toml:"timeout"`
+	// IdleTimeout bounds how long ONE dispatch of this binding may go with no
+	// REAL event (tool start/end, message, usage — heartbeats excluded) before
+	// it is judged stalled and stopped (sty_752c4ef2). A Go duration string
+	// (e.g. "5m"). Empty inherits the shared [defaults] idle_timeout, then the
+	// binary's shipped default. Unlike Timeout — now an optional HARD ceiling
+	// that is unset unless authored — idle_timeout is what actually bounds a
+	// dispatch by default: a progressing agent is never cut off by elapsed
+	// time alone.
+	IdleTimeout string `toml:"idle_timeout"`
 	// InjectPrinciples is retired (MigrateAgents → principles=). Not used at runtime.
 	InjectPrinciples *bool `toml:"inject_principles"`
 	// Settings MIRRORS claude's settings.local.json schema (env, model, permissions)
@@ -232,6 +241,10 @@ type AgentsDefaults struct {
 	// which capable one it prefers. Empty means the shipped default order
 	// (LiveInterfaces()).
 	LiveInterfaceOrder []string `toml:"live_interfaces"`
+	// IdleTimeout is the repo-wide idle-stall bound (sty_752c4ef2) for a
+	// binding that omits its own idle_timeout=. Empty falls to the binary's
+	// shipped default.
+	IdleTimeout string `toml:"idle_timeout"`
 }
 
 // LiveInterfaces returns the preference order ResolveInterface walks for a
@@ -249,15 +262,31 @@ func (d AgentsDefaults) LiveInterfaces() []string {
 // validates it at load (validateTimeouts) so a dispatch never silently falls back
 // on a typo (sty_446c38b7).
 func (b AgentBinding) TimeoutDuration(def time.Duration) (time.Duration, error) {
-	if b.Timeout == "" {
+	return parsePositiveDuration(b.Timeout, "timeout", def)
+}
+
+// IdleTimeoutDuration resolves this binding's idle-stall bound: the parsed
+// IdleTimeout when set, else def. Same fail-fast contract as TimeoutDuration
+// (sty_752c4ef2) — a malformed or non-positive idle_timeout is caught at load,
+// not at first dispatch.
+func (b AgentBinding) IdleTimeoutDuration(def time.Duration) (time.Duration, error) {
+	return parsePositiveDuration(b.IdleTimeout, "idle_timeout", def)
+}
+
+// parsePositiveDuration parses raw (a toml duration string) when non-empty,
+// requiring a positive result; empty returns def unparsed. field names the
+// source in the error so a malformed timeout and idle_timeout are never
+// ambiguous.
+func parsePositiveDuration(raw, field string, def time.Duration) (time.Duration, error) {
+	if raw == "" {
 		return def, nil
 	}
-	d, err := time.ParseDuration(b.Timeout)
+	d, err := time.ParseDuration(raw)
 	if err != nil {
 		return 0, err
 	}
 	if d <= 0 {
-		return 0, fmt.Errorf("timeout %q must be positive", b.Timeout)
+		return 0, fmt.Errorf("%s %q must be positive", field, raw)
 	}
 	return d, nil
 }
@@ -652,6 +681,29 @@ type AgentsConfig struct {
 	Agents   map[string]AgentBinding `toml:"agents"`
 }
 
+// DefaultIdleTimeout is the shipped default idle-stall bound (sty_752c4ef2):
+// long enough for a slow model's thinking pause between tool calls, short
+// enough to catch a genuinely hung process. The single source of truth for
+// every caller that resolves a binding's idle_timeout with no override —
+// agentstep.DefaultIdleTimeout re-exports it for callers already importing
+// that package; verb (which agentstep itself imports) uses this directly to
+// avoid an import cycle.
+const DefaultIdleTimeout = 5 * time.Minute
+
+// ResolveIdleTimeout resolves b's idle-stall bound against the shared
+// [defaults] table: b.IdleTimeout wins, else Defaults.IdleTimeout, else def
+// (the binary's shipped default) — the same binding-then-defaults ladder
+// ResolveSecondary walks (sty_752c4ef2).
+func (a AgentsConfig) ResolveIdleTimeout(b AgentBinding, def time.Duration) (time.Duration, error) {
+	if b.IdleTimeout != "" {
+		return b.IdleTimeoutDuration(def)
+	}
+	if a.Defaults.IdleTimeout != "" {
+		return parsePositiveDuration(a.Defaults.IdleTimeout, "idle_timeout", def)
+	}
+	return def, nil
+}
+
 // ResolveSecondary returns the fallback binding for section/b when secondary is
 // configured (per-binding wins over [defaults] secondary). ok is false when
 // unconfigured or the named binding is missing (sty_5bf61f89).
@@ -821,6 +873,11 @@ func (a AgentsConfig) validateTimeouts() error {
 	for name, b := range a.Agents {
 		if err := check(name, b); err != nil {
 			return err
+		}
+	}
+	if a.Defaults.IdleTimeout != "" {
+		if _, err := parsePositiveDuration(a.Defaults.IdleTimeout, "idle_timeout", 0); err != nil {
+			return fmt.Errorf("%s [defaults] idle_timeout: %w", AgentsConfigName, err)
 		}
 	}
 	return nil

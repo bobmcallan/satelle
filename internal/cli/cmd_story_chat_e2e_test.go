@@ -33,6 +33,23 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
+	// Isolate gate/seat tests from the AMBIENT process environment: when this
+	// test binary itself runs under a real satelle dispatch (a named-agent
+	// step, or — as when this test was written — a rework-relay coder session
+	// working on THIS story), SATELLE_DISPATCH_*/SATELLE_RELAY_* are already
+	// set on the host process. hookDenyReason and friends read them via
+	// os.Getenv with no test-injection seam, so an unrelated gate test that
+	// never calls t.Setenv would otherwise silently pick up a REAL dispatch
+	// marker and take the relay-deny branch instead of the plain one it
+	// asserts on (sty_752c4ef2 rework-relay review round). Clear them once
+	// here so every test starts from a clean marker state; a test that wants
+	// one sets it itself via t.Setenv.
+	for _, k := range []string{
+		config.DispatchAgentEnv, config.DispatchStepEnv, config.DispatchItemEnv,
+		config.RelayBindingEnv, config.RelayItemEnv,
+	} {
+		_ = os.Unsetenv(k)
+	}
 	os.Exit(m.Run())
 }
 

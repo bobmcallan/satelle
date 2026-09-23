@@ -422,6 +422,73 @@ func TestSetActivityRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSetActivityDetailRoundTrip (sty_752c4ef2 AC5): the in-flight dispatch
+// metadata (agent, model, pid, last event label/count) round-trips through the
+// SAME lease row SetActivity uses, and refreshing detail does not disturb the
+// existing phase label/index/total.
+func TestSetActivityDetailRoundTrip(t *testing.T) {
+	s := openTestDB(t)
+	ctx := context.Background()
+	_, out, _, err := s.Acquire(ctx, "sty_detail", "story", "alice", "in_progress", true)
+	if err != nil || out != OutcomeAcquired {
+		t.Fatalf("acquire: %v %v", out, err)
+	}
+	if err := s.SetActivity(ctx, "sty_detail", "dispatch:in_progress", 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	eventAt := time.Now().UTC().Add(-2 * time.Second)
+	if err := s.SetActivityDetail(ctx, "sty_detail", ActivityDetail{
+		Agent: "coder", Model: "sonnet", Pid: 4242, EventLabel: "tool: Bash", EventAt: eventAt, EventCount: 3,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	l, err := s.Get(ctx, "sty_detail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The existing phase label survives a detail refresh (sty_598a8e1b semantics unchanged).
+	label, idx, total, _, ok := EffectiveActivity(l, time.Now().UTC())
+	if !ok || label != "dispatch:in_progress" || idx != 1 || total != 1 {
+		t.Fatalf("EffectiveActivity = (%q,%d,%d,_,%v), want phase label preserved", label, idx, total, ok)
+	}
+	d, ok := EffectiveActivityDetail(l, time.Now().UTC())
+	if !ok {
+		t.Fatal("EffectiveActivityDetail not ok")
+	}
+	if d.Agent != "coder" || d.Model != "sonnet" || d.Pid != 4242 || d.EventLabel != "tool: Bash" || d.EventCount != 3 {
+		t.Fatalf("ActivityDetail = %+v", d)
+	}
+	if d.EventAt.IsZero() || d.EventAt.Sub(eventAt).Abs() > time.Second {
+		t.Fatalf("EventAt = %v, want ~%v", d.EventAt, eventAt)
+	}
+	// A second refresh advances EventAt/EventCount without touching the phase label.
+	if err := s.SetActivityDetail(ctx, "sty_detail", ActivityDetail{
+		Agent: "coder", Model: "sonnet", Pid: 4242, EventLabel: "message", EventCount: 4,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	l2, _ := s.Get(ctx, "sty_detail")
+	d2, ok := EffectiveActivityDetail(l2, time.Now().UTC())
+	if !ok || d2.EventLabel != "message" || d2.EventCount != 4 {
+		t.Fatalf("second ActivityDetail = %+v", d2)
+	}
+	if !d2.EventAt.After(d.EventAt) {
+		t.Errorf("EventAt did not advance: first=%v second=%v", d.EventAt, d2.EventAt)
+	}
+	label2, idx2, total2, _, ok2 := EffectiveActivity(l2, time.Now().UTC())
+	if !ok2 || label2 != "dispatch:in_progress" || idx2 != 1 || total2 != 1 {
+		t.Fatalf("phase label disturbed by detail refresh: (%q,%d,%d,%v)", label2, idx2, total2, ok2)
+	}
+	// Clearing in_flight (Confirm/ClearInFlight) clears detail too.
+	if err := s.ClearInFlight(ctx, "sty_detail"); err != nil {
+		t.Fatal(err)
+	}
+	l3, _ := s.Get(ctx, "sty_detail")
+	if _, ok := EffectiveActivityDetail(l3, time.Now().UTC()); ok {
+		t.Fatal("ActivityDetail must not be effective after ClearInFlight")
+	}
+}
+
 // TestEffectiveActivityDeadPidNotOk: activity never surfaces for a dead driver.
 func TestEffectiveActivityDeadPidNotOk(t *testing.T) {
 	now := time.Now().UTC()

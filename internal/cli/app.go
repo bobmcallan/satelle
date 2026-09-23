@@ -244,6 +244,16 @@ func openAppForCmd(cmd *cobra.Command) error {
 				}
 				_ = leases.SetActivity(context.Background(), itemID, act.Label, act.Index, act.Total)
 			})
+			// In-flight dispatch metadata on the SAME lease row (sty_752c4ef2):
+			// agent, model, pid, and the last real event, refreshed throttled
+			// (agentstep.activityDetailThrottle) rather than once per phase.
+			// Pushed to the local serve mirror on the same throttled beat
+			// (activityDetailSink) so a running dispatch's web indicator
+			// (AC6) and `satelle story seat` (AC7) stay fresh WHILE it runs.
+			pushEndpoint := gc.Service.ResolveEndpoint()
+			rev.SetActivityDetail(func(itemID string, d agentstep.ActivityDetail) {
+				activityDetailSink(leases, a, pushEndpoint, itemID, d)
+			})
 			if aerr := applyAgentGrants(rev, a, agents); aerr != nil {
 				_ = a.Close()
 				return aerr
@@ -285,6 +295,15 @@ func openAppForCmd(cmd *cobra.Command) error {
 			agentsCfg := agents
 			rev.SetSecondaryResolver(func(section string, b config.AgentBinding) (config.AgentBinding, string, bool) {
 				return agentsCfg.ResolveSecondary(section, b)
+			})
+			// Idle-stall bound resolution (sty_752c4ef2): a binding's own
+			// idle_timeout= wins over [defaults] idle_timeout, which wins over
+			// the shipped default — the same ladder listSeatsJSON and
+			// `satelle story seat` already display, so a gate, dispatch,
+			// retrospective or summary actually stalls where the web/CLI say
+			// it will.
+			rev.SetIdleTimeoutResolver(func(section string, b config.AgentBinding) (time.Duration, error) {
+				return agentsCfg.ResolveIdleTimeout(b, agentstep.DefaultIdleTimeout)
 			})
 			verb.SetExecutorDispatcher(rev)
 			// The retrospective dispatcher (sty_b53730e2): `satelle story retrospect`

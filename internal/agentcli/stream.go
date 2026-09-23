@@ -118,7 +118,7 @@ func openStreamSession(ctx context.Context, s streamRunner, req Request, pol Per
 	}
 	go sess.readLoop()
 	go io.Copy(io.Discard, stderr)
-	emitEvent(onEvent, newEvent(EventStart))
+	emitEvent(onEvent, newStartEvent(cmd.Process.Pid))
 	return sess, nil
 }
 

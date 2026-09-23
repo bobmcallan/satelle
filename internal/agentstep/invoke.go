@@ -9,6 +9,7 @@ import (
 	"io"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -51,8 +52,17 @@ type InvokeRequest struct {
 	Charter string              // optional override; empty → charter from role/expect
 	// Expect selects the contract. Zero value is ExpectVerdict — callers that
 	// perform must set ExpectPerform explicitly.
-	Expect  Expect
-	Timeout time.Duration // ≤0 → no per-run deadline (tests) or caller-supplied 0
+	Expect Expect
+	// Timeout is an OPTIONAL hard ceiling on this ONE run. ≤0 (the default,
+	// sty_752c4ef2) means no wall-clock cap — IdleTimeout is what actually
+	// bounds a progressing dispatch. An empty Timeout with expect=ExpectVerdict
+	// still falls back to the engine's g.agentTimeout (also unset by default).
+	Timeout time.Duration
+	// IdleTimeout bounds how long this run may go with no REAL event (tool
+	// start/end, message, usage — heartbeats excluded) before Watchdog judges
+	// it stalled and cancels it (sty_752c4ef2). ≤0 falls back to the engine's
+	// g.idleTimeout.
+	IdleTimeout time.Duration
 	// Runner overrides the runner built from Binding.Command. Reviewer path
 	// passes g.runner (bootstrap-resolved); named dispatch builds from the binding.
 	Runner agentcli.Runner
@@ -266,6 +276,14 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	}
 	var eventMu sync.Mutex
 	var lastMessage time.Time
+	// Throttled in-flight activity-detail refresh (sty_752c4ef2 AC5): only for
+	// a genuine DISPATCH (ExpectPerform) with a story to attribute it to. Not
+	// gate reviewers or the summariser — those are not the "in-flight dispatch"
+	// AC6/AC7 render.
+	var actCount int
+	var actPid int
+	var lastActivityPush time.Time
+	trackActivity := expect == ExpectPerform && g.activityDetail != nil && req.StoryID != ""
 	agentReq.OnEvent = func(ev agentcli.Event) {
 		eventMu.Lock()
 		defer eventMu.Unlock()
@@ -275,6 +293,9 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 		switch ev.Kind {
 		case agentcli.EventStart:
 			g.emitProgress("agent %s started", section)
+			if pid, err := strconv.Atoi(ev.Meta[agentcli.EventMetaPid]); err == nil {
+				actPid = pid
+			}
 		case agentcli.EventHeartbeat:
 			g.emitProgress("agent %s still running…", section)
 		case agentcli.EventToolStart:
@@ -290,6 +311,17 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 			}
 		case agentcli.EventFailed:
 			g.emitProgress("agent %s failed: %s", section, progressLabel(ev.Error))
+		}
+		if trackActivity && isRealEvent(ev.Kind) {
+			actCount++
+			now := time.Now()
+			if actCount == 1 || now.Sub(lastActivityPush) >= activityDetailThrottle {
+				lastActivityPush = now
+				g.activityDetail(req.StoryID, ActivityDetail{
+					Agent: section, Model: agentReq.Model, Pid: actPid, EventLabel: eventLabel(ev),
+					EventAt: now, EventCount: actCount,
+				})
+			}
 		}
 	}
 	// Verdict parsing extracts decision JSON from anywhere in the blob
@@ -319,14 +351,53 @@ func (g *Engine) invokePrimary(ctx context.Context, req InvokeRequest) InvokeRes
 	if timeout <= 0 && expect == ExpectVerdict {
 		timeout = g.agentTimeout
 	}
+	idle := req.IdleTimeout
+	if idle <= 0 {
+		idle = g.idleTimeout
+	}
 
 	switch expect {
 	case ExpectPerform:
-		out, usage, runErr := g.runOnce(ctx, runner, agentReq, timeout)
+		out, usage, runErr := g.runOnce(ctx, runner, agentReq, timeout, idle)
+		if se := asStallError(runErr); se != nil {
+			res := g.stallResult(ctx, req, cmdStr, se)
+			res.Usage = usage
+			return res
+		}
 		return InvokeResult{Stdout: out, Usage: usage, Command: cmdStr, Err: runErr}
 	default: // ExpectVerdict
-		return g.invokeVerdict(ctx, req, runner, agentReq, cmdStr, timeout)
+		return g.invokeVerdict(ctx, req, runner, agentReq, cmdStr, timeout, idle)
 	}
+}
+
+// asStallError extracts a *StallError from err via errors.As, or nil.
+func asStallError(err error) *StallError {
+	var se *StallError
+	if errors.As(err, &se) {
+		return se
+	}
+	return nil
+}
+
+// stallResult builds the ledgered "agent-stalled" telemetry and the refusal
+// InvokeResult for a stalled dispatch (AC2), shared by the verdict retry loop
+// and the perform path so a Watchdog firing is recorded and phrased
+// identically wherever it happens.
+func (g *Engine) stallResult(ctx context.Context, req InvokeRequest, cmdStr string, se *StallError) InvokeResult {
+	name := req.Skill
+	if name == "" {
+		name = req.Section
+	}
+	actor := req.Actor
+	if actor == "" {
+		actor = "executor"
+	}
+	g.telemetryEvent(ctx, req.StoryID, actor, "agent-stalled", map[string]any{
+		"skill": name, "step": req.Step, "idle": se.Idle.String(),
+		"last_event": se.LastEvent, "last_event_at": se.LastEventAt,
+	})
+	return InvokeResult{Command: cmdStr, Err: fmt.Errorf(
+		"agent %q %w — the transition was NOT enacted", name, se)}
 }
 
 func progressLabel(s string) string {
@@ -363,7 +434,7 @@ func IsRateLimitOrUnavailable(err error, stdout []byte) bool {
 
 // invokeVerdict runs the ExpectVerdict retry loop: parse JSON/prose decision,
 // retry transient no-verdict, fail loud on timeout after attempts.
-func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner agentcli.Runner, agentReq agentcli.Request, cmdStr string, timeout time.Duration) InvokeResult {
+func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner agentcli.Runner, agentReq agentcli.Request, cmdStr string, timeout, idle time.Duration) InvokeResult {
 	skill := req.Skill
 	if skill == "" {
 		skill = "reviewer"
@@ -389,8 +460,11 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 			return InvokeResult{Command: cmdStr, Err: werr}
 		}
 		g.emitProgress("running reviewer %s (attempt %d/%d, may take several minutes)…", skill, attempt, attempts)
-		out, usage, rerr := g.runOnce(ctx, runner, agentReq, timeout)
+		out, usage, rerr := g.runOnce(ctx, runner, agentReq, timeout, idle)
 		if rerr != nil {
+			if se := asStallError(rerr); se != nil {
+				return g.stallResult(ctx, req, cmdStr, se)
+			}
 			if errors.Is(rerr, context.DeadlineExceeded) && ctx.Err() == nil {
 				g.logReviewerFailure(skill, attempt, attempts, rerr, nil)
 				g.telemetryEvent(ctx, storyID, actor, "agent-timeout", map[string]any{
@@ -443,14 +517,46 @@ func (g *Engine) invokeVerdict(ctx context.Context, req InvokeRequest, runner ag
 		skill, attempts, lastErr, outputTail(lastOut), where)}
 }
 
-// runOnce executes a single bounded agent run against a caller-supplied runner and
-// timeout. timeout ≤0 disables the deadline (tests). Prefer Invoke for LLM steps;
-// runOnce remains the primitive used by Invoke and by Summarise (until folded).
-func (g *Engine) runOnce(ctx context.Context, runner agentcli.Runner, req agentcli.Request, timeout time.Duration) ([]byte, agentcli.UsageResult, error) {
-	if timeout > 0 {
+// runOnce executes a single bounded agent run against a caller-supplied
+// runner, an OPTIONAL hard deadline, and an OPTIONAL idle-stall bound
+// (sty_752c4ef2). hard ≤0 disables the wall-clock deadline; idle ≤0 disables
+// the Watchdog. Prefer Invoke for LLM steps; runOnce remains the primitive
+// used by Invoke and by Summarise (until folded).
+//
+// The Watchdog sits ABOVE the runner: it wraps ctx (context.WithCancelCause)
+// and req.OnEvent, so every transport — which spawns its child via
+// exec.CommandContext(ctx, …) against this SAME context — is bounded with no
+// transport-specific code. A run that ends because the watchdog fired surfaces
+// as a *StallError (retrievable via errors.As or StallCause(ctx)), which the
+// caller maps to the "stalled" outcome and refusal text instead of a bare
+// context.Canceled.
+func (g *Engine) runOnce(ctx context.Context, runner agentcli.Runner, req agentcli.Request, hard, idle time.Duration) ([]byte, agentcli.UsageResult, error) {
+	if hard > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
+		ctx, cancel = context.WithTimeout(ctx, hard)
 		defer cancel()
+	}
+	if idle > 0 {
+		wd := NewWatchdog(idle)
+		var stop func()
+		ctx, stop = wd.Start(ctx)
+		defer stop()
+		parent := req.OnEvent
+		req.OnEvent = func(ev agentcli.Event) {
+			wd.TouchEvent(ev)
+			if parent != nil {
+				parent(ev)
+			}
+		}
+	}
+	mapStall := func(err error) error {
+		if err == nil {
+			return nil
+		}
+		if se := StallCause(ctx); se != nil {
+			return se
+		}
+		return err
 	}
 	start := time.Now()
 	// A transport that can report its own resolved-model usage (stream: modelUsage
@@ -459,12 +565,12 @@ func (g *Engine) runOnce(ctx context.Context, runner agentcli.Runner, req agentc
 	if ur, ok := runner.(agentcli.UsageRunner); ok {
 		text, usage, err := ur.RunUsage(ctx, req)
 		usage.Duration = time.Since(start)
-		return text, usage, err
+		return text, usage, mapStall(err)
 	}
 	raw, err := runner.Run(ctx, req)
 	elapsed := time.Since(start)
 	if err != nil {
-		return raw, agentcli.UsageResult{Duration: elapsed}, err
+		return raw, agentcli.UsageResult{Duration: elapsed}, mapStall(err)
 	}
 	text, usage := agentcli.UnwrapUsage(raw)
 	usage.Duration = elapsed

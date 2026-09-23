@@ -318,9 +318,14 @@ func checkBindingInterface(file, section string, b AgentBinding) error {
 }
 
 // checkBindingTimeout is the shared timeout check (see checkBindingInterface).
+// It validates both the optional hard Timeout ceiling and idle_timeout
+// (sty_752c4ef2) — a typo in either is caught at load, not at first dispatch.
 func checkBindingTimeout(file, section string, b AgentBinding) error {
 	if _, err := b.TimeoutDuration(0); err != nil {
 		return fmt.Errorf("%s [%s] timeout: %w", file, section, err)
+	}
+	if _, err := b.IdleTimeoutDuration(0); err != nil {
+		return fmt.Errorf("%s [%s] idle_timeout: %w", file, section, err)
 	}
 	return nil
 }

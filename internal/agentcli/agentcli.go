@@ -639,7 +639,7 @@ func runProcess(ctx context.Context, binary string, args []string, req Request) 
 		emitEvent(onEvent, ev)
 		return nil, fmt.Errorf("agentcli: %s: %w", binary, err)
 	}
-	emitEvent(onEvent, newEvent(EventStart))
+	emitEvent(onEvent, newStartEvent(cmd.Process.Pid))
 
 	var stdout, stderr bytes.Buffer
 	var wg sync.WaitGroup

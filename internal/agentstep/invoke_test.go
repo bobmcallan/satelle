@@ -158,7 +158,7 @@ func TestRunOnceUsesSuppliedRunnerAndTimeout(t *testing.T) {
 	g := New(&fakeRunner{out: "ENGINE"}, fakeDocs{workflow: testWorkflow}, "/repo", "")
 
 	supplied := &fakeRunner{out: "SUPPLIED"}
-	out, _, err := g.runOnce(context.Background(), supplied, agentcli.Request{SystemPrompt: "x"}, 0)
+	out, _, err := g.runOnce(context.Background(), supplied, agentcli.Request{SystemPrompt: "x"}, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestRunOnceUsesSuppliedRunnerAndTimeout(t *testing.T) {
 		t.Errorf("request not passed through to the supplied runner: %+v", supplied.got)
 	}
 
-	if _, _, err := g.runOnce(context.Background(), &blockingRunner{}, agentcli.Request{}, time.Millisecond); !errors.Is(err, context.DeadlineExceeded) {
+	if _, _, err := g.runOnce(context.Background(), &blockingRunner{}, agentcli.Request{}, time.Millisecond, 0); !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("runOnce must honour the per-invocation timeout, got %v", err)
 	}
 }

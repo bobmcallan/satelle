@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satelle/internal/agentcli"
+	"github.com/bobmcallan/satelle/internal/agentstep"
 	"github.com/bobmcallan/satelle/internal/verb"
 )
 
@@ -48,6 +49,10 @@ type chatLoop struct {
 	Seat    func() (seatInfo, bool, error)
 	Now     func() time.Time
 	lastMsg time.Time
+	// IdleTimeout bounds how long ONE turn may go with no real event (tool
+	// start/end, message, usage — heartbeats excluded) before it is judged
+	// stalled and cancelled (sty_752c4ef2). ≤0 disables stall detection.
+	IdleTimeout time.Duration
 }
 
 func (l *chatLoop) policy() agentcli.PermissionPolicy {
@@ -153,7 +158,7 @@ func (l *chatLoop) Run(ctx context.Context, in io.Reader, out io.Writer) error {
 		if err := l.Sess.Send(ctx, agentcli.Turn{Text: text}); err != nil {
 			return err
 		}
-		reply, err := drainReply(ctx, l.Sess, out, l.To)
+		reply, err := drainReply(ctx, l.Sess, out, l.To, l.IdleTimeout)
 		if err != nil {
 			return err
 		}
@@ -216,15 +221,36 @@ func (l *chatLoop) prependInbox(line string) string {
 // session in the failure message. Shared by the interactive chat loop and the
 // headless rework relay — one reply-accumulation implementation, not two
 // (sty_8e0b29a0).
-func drainReply(ctx context.Context, sess agentcli.Session, out io.Writer, who string) (string, error) {
+//
+// idle bounds this ONE turn with a Watchdog (sty_752c4ef2): idle ≤0 disables
+// stall detection (today's behaviour — only ctx cancellation ends the turn
+// early). The watchdog sits above the transport exactly as it does for a
+// one-shot dispatch (agentstep.runOnce): it wraps ctx and resets its clock on
+// every REAL event pulled off sess.Events() (heartbeats do not reset it), and
+// a fired watchdog surfaces as a *agentstep.StallError instead of a bare
+// context.Canceled.
+func drainReply(ctx context.Context, sess agentcli.Session, out io.Writer, who string, idle time.Duration) (string, error) {
+	var wd *agentstep.Watchdog
+	if idle > 0 {
+		wd = agentstep.NewWatchdog(idle)
+		var stop func()
+		ctx, stop = wd.Start(ctx)
+		defer stop()
+	}
 	var reply strings.Builder
 	for {
 		select {
 		case <-ctx.Done():
+			if se := agentstep.StallCause(ctx); se != nil {
+				return reply.String(), se
+			}
 			return reply.String(), ctx.Err()
 		case ev, ok := <-sess.Events():
 			if !ok {
 				return reply.String(), nil
+			}
+			if wd != nil {
+				wd.TouchEvent(ev)
 			}
 			switch ev.Kind {
 			case agentcli.EventMessage:

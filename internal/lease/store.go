@@ -58,14 +58,20 @@ CREATE TABLE IF NOT EXISTS engagement_lease (
     activity_index     INTEGER NOT NULL DEFAULT 0,
     activity_total     INTEGER NOT NULL DEFAULT 0,
     activity_at        TEXT NOT NULL DEFAULT '',
-    session_id         TEXT NOT NULL DEFAULT ''
+    session_id         TEXT NOT NULL DEFAULT '',
+    activity_agent       TEXT NOT NULL DEFAULT '',
+    activity_model       TEXT NOT NULL DEFAULT '',
+    activity_pid         INTEGER NOT NULL DEFAULT 0,
+    activity_event_label TEXT NOT NULL DEFAULT '',
+    activity_event_at    TEXT NOT NULL DEFAULT '',
+    activity_event_count INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_engagement_lease_seat ON engagement_lease(story_seat);
 `
 
 // leaseCols is the column list every SELECT shares — one source so a new column
 // cannot reach some read paths and not others.
-const leaseCols = `item_id, kind, story_seat, seat_key, worktree, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid, activity_label, activity_index, activity_total, activity_at, session_id`
+const leaseCols = `item_id, kind, story_seat, seat_key, worktree, owner, state, acquired_at, heartbeat_at, stop_requested_by, stop_reason, in_flight, in_flight_at, in_flight_pid, activity_label, activity_index, activity_total, activity_at, session_id, activity_agent, activity_model, activity_pid, activity_event_label, activity_event_at, activity_event_count`
 
 // Lease is one engagement seat row.
 type Lease struct {
@@ -110,6 +116,29 @@ type Lease struct {
 	ActivityIndex int
 	ActivityTotal int
 	ActivityAt    time.Time
+	// ActivityAgent/Model/Pid/EventLabel/EventAt/EventCount extend the SAME
+	// activity record with in-flight DISPATCH metadata (sty_752c4ef2) — which
+	// agent binding and model are running, the OS pid, and the last REAL event
+	// (tool start/end, message, usage) seen. Refreshed via SetActivityDetail
+	// on real events, throttled, not only once per phase like ActivityLabel.
+	// Empty/zero when no dispatch has stamped detail yet. No second table.
+	ActivityAgent      string
+	ActivityModel      string
+	ActivityPid        int
+	ActivityEventLabel string
+	ActivityEventAt    time.Time
+	ActivityEventCount int
+}
+
+// ActivityDetail is the in-flight dispatch metadata SetActivityDetail writes
+// and EffectiveActivityDetail reads (sty_752c4ef2).
+type ActivityDetail struct {
+	Agent      string
+	Model      string
+	Pid        int
+	EventLabel string
+	EventAt    time.Time
+	EventCount int
 }
 
 // Outcome of Acquire.
@@ -227,6 +256,23 @@ func Migrate(db *sql.DB) error {
 	if _, err := db.Exec(`ALTER TABLE engagement_lease ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`); err != nil &&
 		!strings.Contains(err.Error(), "duplicate column") {
 		return fmt.Errorf("lease: migrate session_id: %w", err)
+	}
+	// In-flight dispatch metadata, extending the existing activity record
+	// (sty_752c4ef2): additive and nullable-by-default, so a binary reading an
+	// upgraded row before this column existed is unaffected, and a lease held
+	// across the upgrade keeps behaving exactly as it did.
+	for _, col := range []string{
+		"activity_agent TEXT NOT NULL DEFAULT ''",
+		"activity_model TEXT NOT NULL DEFAULT ''",
+		"activity_pid INTEGER NOT NULL DEFAULT 0",
+		"activity_event_label TEXT NOT NULL DEFAULT ''",
+		"activity_event_at TEXT NOT NULL DEFAULT ''",
+		"activity_event_count INTEGER NOT NULL DEFAULT 0",
+	} {
+		if _, err := db.Exec(`ALTER TABLE engagement_lease ADD COLUMN ` + col); err != nil &&
+			!strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("lease: migrate activity detail: %w", err)
+		}
 	}
 	// Backfill so pre-upgrade stuck in_flight rows age from a real clock, not
 	// from a hook-refreshed heartbeat. Without this, zero-InFlightAt residue
@@ -488,7 +534,7 @@ func (s *Store) Confirm(ctx context.Context, itemID, committedState string) erro
 	}
 	nowS := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE engagement_lease SET state = ?, in_flight = 0, in_flight_at = '', in_flight_pid = 0, activity_label = '', activity_index = 0, activity_total = 0, activity_at = '', heartbeat_at = ? WHERE item_id = ?`,
+		`UPDATE engagement_lease SET state = ?, in_flight = 0, in_flight_at = '', in_flight_pid = 0, activity_label = '', activity_index = 0, activity_total = 0, activity_at = '', heartbeat_at = ?, activity_agent = '', activity_model = '', activity_pid = 0, activity_event_label = '', activity_event_at = '', activity_event_count = 0 WHERE item_id = ?`,
 		committedState, nowS, itemID)
 	if err != nil {
 		return fmt.Errorf("lease: confirm: %w", err)
@@ -503,7 +549,7 @@ func (s *Store) ClearInFlight(ctx context.Context, itemID string) error {
 		return errors.New("lease: store not configured")
 	}
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE engagement_lease SET in_flight = 0, in_flight_at = '', in_flight_pid = 0, activity_label = '', activity_index = 0, activity_total = 0, activity_at = '' WHERE item_id = ?`, itemID)
+		`UPDATE engagement_lease SET in_flight = 0, in_flight_at = '', in_flight_pid = 0, activity_label = '', activity_index = 0, activity_total = 0, activity_at = '', activity_agent = '', activity_model = '', activity_pid = 0, activity_event_label = '', activity_event_at = '', activity_event_count = 0 WHERE item_id = ?`, itemID)
 	if err != nil {
 		return fmt.Errorf("lease: clear in_flight: %w", err)
 	}
@@ -645,10 +691,11 @@ func scanLeases(rows *sql.Rows, qerr error) ([]Lease, error) {
 	var out []Lease
 	for rows.Next() {
 		var l Lease
-		var seat, inflight, inflightPid, actIdx, actTotal int
-		var acq, beat, inflightAt, actAt string
+		var seat, inflight, inflightPid, actIdx, actTotal, actPid, actEventCount int
+		var acq, beat, inflightAt, actAt, actEventAt string
 		if err := rows.Scan(&l.ItemID, &l.Kind, &seat, &l.SeatKey, &l.Worktree, &l.Owner, &l.State, &acq, &beat, &l.StopRequestedBy, &l.StopReason,
-			&inflight, &inflightAt, &inflightPid, &l.ActivityLabel, &actIdx, &actTotal, &actAt, &l.SessionID); err != nil {
+			&inflight, &inflightAt, &inflightPid, &l.ActivityLabel, &actIdx, &actTotal, &actAt, &l.SessionID,
+			&l.ActivityAgent, &l.ActivityModel, &actPid, &l.ActivityEventLabel, &actEventAt, &actEventCount); err != nil {
 			return nil, fmt.Errorf("lease: list scan: %w", err)
 		}
 		l.StorySeat = seat != 0
@@ -656,10 +703,13 @@ func scanLeases(rows *sql.Rows, qerr error) ([]Lease, error) {
 		l.InFlightPid = inflightPid
 		l.ActivityIndex = actIdx
 		l.ActivityTotal = actTotal
+		l.ActivityPid = actPid
+		l.ActivityEventCount = actEventCount
 		l.AcquiredAt = parseLeaseTime(acq)
 		l.HeartbeatAt = parseLeaseTime(beat)
 		l.InFlightAt = parseLeaseTime(inflightAt)
 		l.ActivityAt = parseLeaseTime(actAt)
+		l.ActivityEventAt = parseLeaseTime(actEventAt)
 		out = append(out, l)
 	}
 	if err := rows.Err(); err != nil {
@@ -758,10 +808,11 @@ func (s *Store) SetInFlightAt(ctx context.Context, itemID string, at time.Time) 
 
 func scanLease(row *sql.Row) (Lease, error) {
 	var l Lease
-	var seat, inflight, inflightPid, actIdx, actTotal int
-	var acq, beat, inflightAt, actAt string
+	var seat, inflight, inflightPid, actIdx, actTotal, actPid, actEventCount int
+	var acq, beat, inflightAt, actAt, actEventAt string
 	err := row.Scan(&l.ItemID, &l.Kind, &seat, &l.SeatKey, &l.Worktree, &l.Owner, &l.State, &acq, &beat, &l.StopRequestedBy, &l.StopReason,
-		&inflight, &inflightAt, &inflightPid, &l.ActivityLabel, &actIdx, &actTotal, &actAt, &l.SessionID)
+		&inflight, &inflightAt, &inflightPid, &l.ActivityLabel, &actIdx, &actTotal, &actAt, &l.SessionID,
+		&l.ActivityAgent, &l.ActivityModel, &actPid, &l.ActivityEventLabel, &actEventAt, &actEventCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Lease{}, ErrNotFound
 	}
@@ -773,10 +824,13 @@ func scanLease(row *sql.Row) (Lease, error) {
 	l.InFlightPid = inflightPid
 	l.ActivityIndex = actIdx
 	l.ActivityTotal = actTotal
+	l.ActivityPid = actPid
+	l.ActivityEventCount = actEventCount
 	l.AcquiredAt = parseLeaseTime(acq)
 	l.HeartbeatAt = parseLeaseTime(beat)
 	l.InFlightAt = parseLeaseTime(inflightAt)
 	l.ActivityAt = parseLeaseTime(actAt)
+	l.ActivityEventAt = parseLeaseTime(actEventAt)
 	return l, nil
 }
 
@@ -813,6 +867,50 @@ func EffectiveActivity(l Lease, now time.Time) (label string, index, total int, 
 		return "", 0, 0, 0, false
 	}
 	return l.ActivityLabel, l.ActivityIndex, l.ActivityTotal, now.Sub(l.ActivityAt), true
+}
+
+// SetActivityDetail extends the EXISTING activity record with in-flight
+// dispatch metadata (sty_752c4ef2) — agent binding, model, pid, and the last
+// real event's label/count. It does not touch the phase label/index/total
+// SetActivity owns, so a caller may refresh detail far more often (throttled,
+// on every real event) without disturbing the once-per-phase stamp. No second
+// table. Best-effort: observability must not fail a dispatch.
+func (s *Store) SetActivityDetail(ctx context.Context, itemID string, d ActivityDetail) error {
+	if s == nil || s.db == nil {
+		return errors.New("lease: store not configured")
+	}
+	eventAt := d.EventAt
+	if eventAt.IsZero() {
+		eventAt = time.Now().UTC()
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE engagement_lease SET activity_agent = ?, activity_model = ?, activity_pid = ?, activity_event_label = ?, activity_event_at = ?, activity_event_count = ? WHERE item_id = ?`,
+		d.Agent, d.Model, d.Pid, d.EventLabel, eventAt.UTC().Format(time.RFC3339Nano), d.EventCount, itemID)
+	if err != nil {
+		return fmt.Errorf("lease: set activity detail: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// EffectiveActivityDetail returns the in-flight dispatch metadata alongside
+// the phase activity (sty_752c4ef2). ok is false under the same rule
+// EffectiveActivity applies: not effectively in flight, or no detail has been
+// stamped yet.
+func EffectiveActivityDetail(l Lease, now time.Time) (d ActivityDetail, ok bool) {
+	if !EffectiveInFlight(l, now) {
+		return ActivityDetail{}, false
+	}
+	if l.ActivityEventAt.IsZero() && l.ActivityAgent == "" {
+		return ActivityDetail{}, false
+	}
+	return ActivityDetail{
+		Agent: l.ActivityAgent, Model: l.ActivityModel, Pid: l.ActivityPid,
+		EventLabel: l.ActivityEventLabel, EventAt: l.ActivityEventAt, EventCount: l.ActivityEventCount,
+	}, true
 }
 
 func parseLeaseTime(s string) time.Time {

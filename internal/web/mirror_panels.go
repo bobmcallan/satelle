@@ -131,6 +131,7 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 	entriesByStory, _ := decodeLedgerByStory(ctx, s, repoKey)
 	liveSeat, _ := decodeLiveSeats(ctx, s, repoKey)
 	engagedIDs, _ := decodeEngagedStorySeats(ctx, s, repoKey)
+	dispatches, _ := decodeDispatchSeats(ctx, s, repoKey)
 	catStepOf := categoryStepOf(byKind["workflows"])
 
 	projectName := id.ProjectName
@@ -155,11 +156,11 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 		SyncReason:      syncSt.PushReason,
 		SyncLocal:       syncSt.Scope == "local",
 		SyncLogPath:     logPath,
-		Stories:         attachLightsFrom(entriesByStory, stories, liveSeat, catStepOf),
+		Stories:         attachLightsFrom(entriesByStory, stories, liveSeat, dispatches, catStepOf),
 		BacklogCount:    backlog,
 		EngagementCount: len(engagedIDs),
 		EngagedStoryIDs: engagedIDs,
-		Tasks:           attachLightsFrom(entriesByStory, tasks, liveSeat, catStepOf),
+		Tasks:           attachLightsFrom(entriesByStory, tasks, liveSeat, dispatches, catStepOf),
 		DocKinds:        kinds,
 		DocCount:        len(docs),
 		Workflows:       workflowRows(byKind["workflows"], prov, src),
@@ -170,11 +171,14 @@ func mirrorLoadPanels(ctx context.Context, s *mirror.Store, repoKey, slug string
 }
 
 // attachLightsFrom is the mirror-side attachLights: ledger rows already loaded.
-func attachLightsFrom(entriesByStory map[string][]ledger.Entry, items []workitem.Item, liveSeat map[string]bool, catStepOf func(category, state string) int) []rowVM {
+func attachLightsFrom(entriesByStory map[string][]ledger.Entry, items []workitem.Item, liveSeat map[string]bool, dispatches map[string]*dispatchVM, catStepOf func(category, state string) int) []rowVM {
 	out := make([]rowVM, len(items))
 	for i, it := range items {
 		stepOf := func(s string) int { return catStepOf(it.Category, s) }
-		out[i] = rowVM{Item: it, Lights: buildLights(entriesByStory[it.ID], it.Status, liveSeat[it.ID], stepOf)}
+		out[i] = rowVM{
+			Item: it, Lights: buildLights(entriesByStory[it.ID], it.Status, liveSeat[it.ID], stepOf),
+			Dispatch: dispatches[it.ID],
+		}
 	}
 	return out
 }
@@ -292,6 +296,73 @@ type seatPayload struct {
 	StorySeat bool   `json:"story_seat"`
 	InFlight  bool   `json:"in_flight"`
 	Stale     bool   `json:"stale"`
+	// In-flight DISPATCH metadata (sty_752c4ef2 AC6) — omitted on the wire
+	// when no dispatch has stamped detail on this seat yet.
+	Agent             string    `json:"agent,omitempty"`
+	Model             string    `json:"model,omitempty"`
+	LastEvent         string    `json:"last_event,omitempty"`
+	LastEventAt       time.Time `json:"last_event_at,omitempty"`
+	ActivityStartedAt time.Time `json:"activity_started_at,omitempty"`
+	IdleTimeoutNs     int64     `json:"idle_timeout_ns,omitempty"`
+}
+
+// dispatchVM is the web story row's running indicator (sty_752c4ef2 AC6):
+// which agent/model dispatch is in flight, how long it has run, when it last
+// produced a real event, and whether idle time has crossed the warn
+// threshold (half of idle_timeout) — computed server-side so the template
+// stays presentation-only.
+type dispatchVM struct {
+	Agent       string
+	Model       string
+	LastEvent   string
+	LastEventAt time.Time
+	StartedAt   time.Time
+	Warn        bool
+}
+
+// buildDispatchIndicator returns the running indicator for an in-flight,
+// non-stale seat that has stamped agent/model detail, or nil when there is
+// nothing to show (not in flight, stale, or no dispatch detail yet — a
+// gate-only phase stamp with no ActivityDetail). Warn fires once idle time
+// (now - LastEventAt) passes half the seat's resolved idle_timeout; a seat
+// with no known idle_timeout (agents layer unresolved) never warns.
+func buildDispatchIndicator(seat seatPayload, now time.Time) *dispatchVM {
+	if !seat.InFlight || seat.Stale || seat.Agent == "" {
+		return nil
+	}
+	vm := &dispatchVM{
+		Agent: seat.Agent, Model: seat.Model, LastEvent: seat.LastEvent,
+		LastEventAt: seat.LastEventAt, StartedAt: seat.ActivityStartedAt,
+	}
+	if seat.IdleTimeoutNs > 0 && !seat.LastEventAt.IsZero() {
+		idle := now.Sub(seat.LastEventAt)
+		vm.Warn = idle >= time.Duration(seat.IdleTimeoutNs)/2
+	}
+	return vm
+}
+
+// decodeDispatchSeats builds the id → running-indicator map for every
+// in-flight, non-stale seat carrying dispatch detail (sty_752c4ef2 AC6).
+func decodeDispatchSeats(ctx context.Context, s *mirror.Store, repoKey string) (map[string]*dispatchVM, error) {
+	rows, err := s.ListItems(ctx, repoKey, "seat")
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	out := map[string]*dispatchVM{}
+	for _, r := range rows {
+		var seat seatPayload
+		if err := json.Unmarshal([]byte(r.Payload), &seat); err != nil {
+			continue
+		}
+		if seat.ID == "" {
+			seat.ID = r.ID
+		}
+		if vm := buildDispatchIndicator(seat, now); vm != nil {
+			out[seat.ID] = vm
+		}
+	}
+	return out, nil
 }
 
 // engagedStorySeatIDs returns non-stale story seats (story_seat && !stale).

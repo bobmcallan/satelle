@@ -305,6 +305,16 @@ func listSeatsJSON(ctx context.Context, a *app.App) ([]json.RawMessage, error) {
 		return nil, err
 	}
 	now := time.Now().UTC()
+	// Best-effort idle_timeout resolution per dispatched binding (sty_752c4ef2
+	// AC6): the mirror-side render needs it to decide the warn threshold, and
+	// the push-fed web has no other access to this repo's agents.toml. A
+	// missing/broken agents layer must never fail a seat push — it just omits
+	// idle_timeout on every row.
+	dataDir := a.DataDir
+	if dataDir == "" {
+		dataDir = a.Config.ResolveDataDir(a.RepoRoot)
+	}
+	agentsLayer, agentsErr := config.LoadAgents(dataDir)
 	out := make([]json.RawMessage, 0, len(all))
 	for _, l := range all {
 		row := map[string]any{
@@ -319,6 +329,31 @@ func listSeatsJSON(ctx context.Context, a *app.App) ([]json.RawMessage, error) {
 			"state":     l.State,
 			"in_flight": lease.EffectiveInFlight(l, now),
 			"stale":     lease.IsStale(l, now),
+		}
+		// In-flight DISPATCH metadata (sty_752c4ef2 AC6): which agent binding
+		// and model are running, the OS pid, and the last real event — the web
+		// story row's running indicator renders straight from these, the same
+		// fields `satelle story seat` (AC7) prints.
+		if d, ok := lease.EffectiveActivityDetail(l, now); ok {
+			row["agent"] = d.Agent
+			row["model"] = d.Model
+			row["pid"] = d.Pid
+			row["last_event"] = d.EventLabel
+			row["last_event_at"] = d.EventAt
+			row["event_count"] = d.EventCount
+			if agentsErr == nil {
+				if b, ok := agentsLayer.NamedBinding(d.Agent); ok {
+					if idle, ierr := agentsLayer.ResolveIdleTimeout(b, config.DefaultIdleTimeout); ierr == nil {
+						row["idle_timeout_ns"] = int64(idle)
+					}
+				}
+			}
+		}
+		if label, idx, total, elapsed, ok := lease.EffectiveActivity(l, now); ok {
+			row["activity"] = label
+			row["activity_index"] = idx
+			row["activity_total"] = total
+			row["activity_started_at"] = now.Add(-elapsed)
 		}
 		b, err := json.Marshal(row)
 		if err != nil {

@@ -52,7 +52,10 @@ type Grant struct {
 	Command string
 	// Secondary is the rate-limit failover binding name (sty_5bf61f89), empty
 	// when unconfigured.
-	Secondary         string
+	Secondary string
+	// IdleTimeout is the raw idle_timeout= (sty_752c4ef2), empty when the
+	// binding inherits [defaults]/the shipped default.
+	IdleTimeout       string
 	Tools             string
 	Model             string
 	Effort            string // optional reasoning effort (sty_657f77b9)
@@ -763,11 +766,23 @@ func checkBinding(section string, b config.AgentBinding, vars map[string]string)
 		Model:             b.Model,
 		Effort:            b.Effort,
 		Timeout:           b.Timeout,
+		IdleTimeout:       b.IdleTimeout,
 		InjectsPrinciples: b.InjectsPrinciples(),
 		Role:              role,
 		Principles:        b.ResolvedPrinciples(),
 		RoleInferred:      config.RoleInferred(b),
 		ContextChannel:    config.GrantsContextChannel(b.Tools),
+	}
+	// idle_timeout is what actually bounds a dispatch; an explicit hard timeout
+	// smaller than it would cut a progressing agent before the stall detector
+	// ever gets a say — advisory only, the operator may want exactly that
+	// ceiling (sty_752c4ef2).
+	if hard, herr := b.TimeoutDuration(0); herr == nil && hard > 0 {
+		if idle, ierr := b.IdleTimeoutDuration(0); ierr == nil && idle > 0 && idle > hard {
+			bindingWarn(fmt.Sprintf(
+				"agents.toml [%s] idle_timeout %s exceeds timeout %s — the hard ceiling fires first and the stall detector never gets a chance",
+				section, b.IdleTimeout, b.Timeout))
+		}
 	}
 	if g.RoleInferred {
 		bindingWarn(fmt.Sprintf(

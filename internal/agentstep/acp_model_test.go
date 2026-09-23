@@ -85,7 +85,7 @@ func TestACPDispatch_ModelUnavailable(t *testing.T) {
 		SystemPrompt: "rubric",
 		Payload:      `{"story":{"id":"sty_1"}}`,
 		Model:        alias,
-	}, 0)
+	}, 0, 0)
 	if err != nil {
 		t.Fatalf("runOnce: %v", err)
 	}

@@ -1744,6 +1744,22 @@ var scaffoldAgentsToml = strings.ReplaceAll(`# workflows/agents.toml — the age
 #                                        # transport; mechanism decides which
 #                                        # one an authored command can serve,
 #                                        # not list order
+# idle_timeout    = "5m"                # shipped default when a binding sets
+#                                        # none of its own — a dispatch is
+#                                        # STALLED (and stopped) only after
+#                                        # this long with NO real event (tool
+#                                        # start/end, message, usage) —
+#                                        # heartbeats alone never reset it. A
+#                                        # binding overrides with its own
+#                                        # idle_timeout = "…" below.
+#
+# TIMEOUT vs IDLE_TIMEOUT (sty_752c4ef2): idle_timeout is what actually bounds
+# a dispatch — a progressing agent is never cut off by elapsed time alone.
+# timeout= is an OPTIONAL hard ceiling on one dispatch's total wall-clock time,
+# UNSET by default; set it on a binding only when you want a genuine upper
+# bound regardless of progress (e.g. [coder] timeout = "30m"). A stall is
+# ledgered and refused as its own outcome, "stalled" — distinct from a
+# timeout= ceiling firing.
 
 [executor]
 role    = "agent"              # declared contract (agent | reviewer); do not leave inferred

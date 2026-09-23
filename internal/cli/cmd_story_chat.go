@@ -84,6 +84,20 @@ func runStoryChat(cmd *cobra.Command, args []string) error {
 	binding := agentstep.ChatSessionBinding(agentFlag)
 	from := chatFromRole(fromFlag, sid)
 
+	// Idle-stall bound for this session's turns (sty_752c4ef2): the binding's
+	// own idle_timeout=, else the shared [defaults] table, else the shipped
+	// default — same ladder Invoke resolves for a one-shot dispatch. A broken
+	// config here must not block chat (advisory: it degrades to the shipped
+	// default; the same value is validated hard at `satelle validate`).
+	idle := agentstep.DefaultIdleTimeout
+	if eff, eerr := requireAgents(a); eerr == nil {
+		if bnd, found := eff.Agents.NamedBinding(binding); found {
+			if d, ierr := eff.Agents.ResolveIdleTimeout(bnd, agentstep.DefaultIdleTimeout); ierr == nil {
+				idle = d
+			}
+		}
+	}
+
 	loop := &chatLoop{
 		StoryID: it.ID,
 		From:    from,
@@ -92,7 +106,8 @@ func runStoryChat(cmd *cobra.Command, args []string) error {
 		Seat: func() (seatInfo, bool, error) {
 			return resolveSeat(true, config.ResolveSession())
 		},
-		Now: time.Now,
+		Now:         time.Now,
+		IdleTimeout: idle,
 	}
 	in := cmd.InOrStdin()
 	out := cmd.OutOrStdout()

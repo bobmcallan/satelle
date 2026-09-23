@@ -69,6 +69,24 @@ func TestScaffoldAgentsTomlFullyDefined(t *testing.T) {
 	if strings.Contains(scaffoldAgentsToml, "SINGLE token is a built-in PRESET") {
 		t.Error("scaffold must not advertise bare CLI presets")
 	}
+	// idle_timeout / timeout documentation (sty_752c4ef2 AC8): the scaffold must
+	// teach the stall detector — idle_timeout is what bounds a dispatch, timeout
+	// is the optional unset-by-default hard ceiling, and a stall is its own
+	// named outcome — so an operator editing the file never reads it as a
+	// wall-clock cap.
+	for _, want := range []string{
+		`idle_timeout    = "5m"`,
+		"STALLED",
+		"heartbeats alone never reset it",
+		"idle_timeout is what actually bounds",
+		"OPTIONAL hard ceiling",
+		"UNSET by default",
+		`"stalled"`,
+	} {
+		if !strings.Contains(scaffoldAgentsToml, want) {
+			t.Errorf("scaffold missing idle_timeout/timeout doc %q", want)
+		}
+	}
 	// Parity: loading the scaffold yields the same effective reviewer binding as
 	// the coded defaults for an absent file.
 	dir := t.TempDir()

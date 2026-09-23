@@ -448,6 +448,59 @@ model = "grok-4.5"
 	}
 }
 
+// TestResolveIdleTimeout pins the resolution ladder ResolveIdleTimeout walks
+// (sty_752c4ef2): a binding's own idle_timeout= wins, else [defaults]
+// idle_timeout, else the caller's shipped default — and a malformed
+// [defaults] idle_timeout is rejected at LOAD, not deferred to dispatch.
+func TestResolveIdleTimeout(t *testing.T) {
+	def := 5 * time.Minute
+	ac := AgentsConfig{Defaults: AgentsDefaults{IdleTimeout: "10m"}}
+
+	t.Run("binding wins over defaults", func(t *testing.T) {
+		got, err := ac.ResolveIdleTimeout(AgentBinding{IdleTimeout: "3m"}, def)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != 3*time.Minute {
+			t.Fatalf("resolved = %v, want 3m", got)
+		}
+	})
+
+	t.Run("defaults wins over the shipped default", func(t *testing.T) {
+		got, err := ac.ResolveIdleTimeout(AgentBinding{}, def)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != 10*time.Minute {
+			t.Fatalf("resolved = %v, want 10m (from [defaults])", got)
+		}
+	})
+
+	t.Run("shipped default when neither is set", func(t *testing.T) {
+		bare := AgentsConfig{}
+		got, err := bare.ResolveIdleTimeout(AgentBinding{}, def)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != def {
+			t.Fatalf("resolved = %v, want the shipped default %v", got, def)
+		}
+	})
+
+	t.Run("malformed defaults idle_timeout is rejected at load", func(t *testing.T) {
+		dir := t.TempDir()
+		body := "[defaults]\nidle_timeout = \"notaduration\"\n\n[reviewer]\ncommand = \"claude -p {system}\"\n"
+		if err := os.WriteFile(filepath.Join(dir, AgentsConfigName), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadAgents(dir); err == nil {
+			t.Fatal("LoadAgents must reject a malformed [defaults] idle_timeout")
+		} else if !strings.Contains(err.Error(), "idle_timeout") || !strings.Contains(err.Error(), "defaults") {
+			t.Errorf("error should name [defaults] idle_timeout, got: %v", err)
+		}
+	})
+}
+
 func TestLoadAgentsEffortAndSecondaryFields(t *testing.T) {
 	dir := t.TempDir()
 	body := "[reviewer]\ncommand = \"claude -p {system}\"\neffort = \"medium\"\nsecondary = \"x\"\n"

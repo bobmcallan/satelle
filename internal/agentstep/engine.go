@@ -159,11 +159,26 @@ type Engine struct {
 	// expose which gate is running without the dispatching terminal (sty_598a8e1b).
 	// Callback includes the story id so the sink stays stateless.
 	activity func(itemID string, a Activity)
-	// agentTimeout bounds EACH nested agent invocation (a reviewer attempt or a
-	// step summary) with a context deadline, so a wedged subprocess yields a
-	// clear bounded failure instead of an open-ended block (sty_6c88ca10).
-	// Zero/negative disables the bound (tests).
+	// activityDetail, when set, receives throttled in-flight DISPATCH metadata
+	// on real events (sty_752c4ef2) — see SetActivityDetail.
+	activityDetail func(itemID string, d ActivityDetail)
+	// agentTimeout is an OPTIONAL hard ceiling on EACH nested agent invocation
+	// (a reviewer attempt, a named dispatch, or a step summary) with a context
+	// deadline (sty_6c88ca10). Zero/negative — the default (sty_752c4ef2) —
+	// disables it: the idle-stall detector (idleTimeout) is what actually
+	// bounds a dispatch, so a progressing agent is never cut off by elapsed
+	// time alone. An operator sets a hard ceiling explicitly (binding
+	// timeout=) when they want one anyway.
 	agentTimeout time.Duration
+	// idleTimeout bounds how long ONE nested agent invocation may go with no
+	// REAL event (tool start/end, message, usage — heartbeats excluded)
+	// before a Watchdog judges it stalled and cancels it (sty_752c4ef2).
+	// Zero/negative disables stall detection (tests). resolveIdleTimeout, when
+	// wired, resolves a NAMED binding's own idle_timeout against the shared
+	// [defaults] table; unwired dispatches (gate reviewer, step summary) fall
+	// back to this engine-wide default.
+	idleTimeout        time.Duration
+	resolveIdleTimeout func(section string, b config.AgentBinding) (time.Duration, error)
 	// namedAgents resolves a NAMED agent binding from the agents layer
 	// (.satelle/workflows/agents.toml [<name>] sections) for executor dispatch
 	// (sty_fd427546). Nil keeps every step in-loop.
@@ -223,6 +238,9 @@ func classifyOutcome(err error) string {
 	if err == nil {
 		return "no-verdict"
 	}
+	if asStallError(err) != nil {
+		return "stalled"
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "timeout"
 	}
@@ -239,7 +257,8 @@ func New(runner agentcli.Runner, docs DocGetter, repoRoot, model string) *Engine
 		runner: runner, docs: docs, repoRoot: repoRoot, model: model, tools: defaultTools,
 		checkTimeout: defaultCheckTimeout, check: execCheck, injectPrinciples: true,
 		attempts: defaultReviewerAttempts, backoff: defaultReviewerBackoff,
-		agentTimeout: defaultAgentTimeout, newRunner: lookupRunner,
+		agentTimeout: defaultHardTimeout, idleTimeout: defaultIdleTimeout,
+		newRunner: lookupRunner,
 		newOpener: agentcli.OpenerFromBinding,
 	}
 }
@@ -275,14 +294,27 @@ func lookupRunner(iface, command string) (agentcli.Runner, error) {
 	return agentcli.RunnerFromBinding(iface, command)
 }
 
-// defaultAgentTimeout bounds one nested agent invocation. A real review takes
-// ~3-6 minutes, but the coded step now dispatches a whole implementation to a
-// coder (converge-then-gate) under this same bound, so ten minutes is too
-// tight — a real implementation was cut off mid-AC (sty_87b86044). Twenty
-// gives that step honest slack while still turning a wedged subprocess into a
-// bounded, legible failure instead of an indefinite block (sty_6c88ca10,
-// sty_a7089cb6).
-const defaultAgentTimeout = 20 * time.Minute
+// defaultHardTimeout is the shipped default for the OPTIONAL hard ceiling on
+// one nested agent invocation: unset (sty_752c4ef2). A wall-clock cap killed
+// working agents mid-implementation twice (sty_87b86044 at 10m, sty_7069bced
+// at 20m, both while tool events were still arriving seconds before the
+// cut) — the timeout existed to catch a STUCK process, not to limit a
+// progressing one. defaultIdleTimeout now does that job; an operator who
+// still wants a hard cap sets a binding's timeout= explicitly.
+const defaultHardTimeout = 0
+
+// defaultIdleTimeout is the shipped default idle-stall bound (sty_752c4ef2).
+// Per-binding idle_timeout=, or the shared [defaults] table, overrides it
+// without a recompile. config.DefaultIdleTimeout is the single source of
+// truth — defined there (not here) so verb, which this package imports, can
+// use the same default without an import cycle.
+const defaultIdleTimeout = config.DefaultIdleTimeout
+
+// DefaultIdleTimeout exports defaultIdleTimeout for callers outside this
+// package (the cli package's live-session turn loops — chat, rework relay —
+// which resolve a binding's idle-stall bound themselves and need the same
+// shipped fallback the engine uses internally).
+const DefaultIdleTimeout = defaultIdleTimeout
 
 // SetProgress wires the sink for one-line gate progress messages (the CLI
 // prints them to stderr). nil disables emission.
@@ -298,6 +330,34 @@ type Activity struct {
 
 // SetActivity wires the structured progress sink (CLI stamps the lease row).
 func (g *Engine) SetActivity(fn func(itemID string, a Activity)) { g.activity = fn }
+
+// ActivityDetail is in-flight DISPATCH metadata (sty_752c4ef2), distinct from
+// the phase-level Activity above: which agent binding and model are running,
+// the last real event's label, and how many real events have been seen. It
+// rides the SAME lease row (extended, not duplicated) — the CLI wiring folds
+// it into lease.Store.SetActivityDetail.
+type ActivityDetail struct {
+	Agent      string
+	Model      string
+	Pid        int
+	EventLabel string
+	EventAt    time.Time
+	EventCount int
+}
+
+// SetActivityDetail wires the throttled in-flight dispatch sink (sty_752c4ef2).
+// Invoke calls it on real events (tool start/end, message, usage) during an
+// ExpectPerform dispatch, throttled to activityDetailThrottle, so a long
+// dispatch's lease row — and the mirror push the wired sink performs — stays
+// fresh without a write per event. Nil (the default) disables it.
+func (g *Engine) SetActivityDetail(fn func(itemID string, d ActivityDetail)) { g.activityDetail = fn }
+
+// activityDetailThrottle bounds how often SetActivityDetail's sink is called
+// per dispatch (sty_752c4ef2) — named and documented per the architecture
+// review: real-event volume (ACP message chunks especially) must not become a
+// write per token. A var, not a const, so a test can shorten it rather than
+// running a real 5s span.
+var activityDetailThrottle = 5 * time.Second
 
 // emitProgress sends one progress line to the wired sink, if any.
 func (g *Engine) emitProgress(format string, a ...any) {
@@ -1240,6 +1300,26 @@ func (g *Engine) SetSecondaryResolver(fn func(section string, b config.AgentBind
 	g.resolveSecondary = fn
 }
 
+// SetIdleTimeoutResolver wires the resolver a NAMED binding's idle-stall bound
+// is resolved through (sty_752c4ef2) — normally config.AgentsConfig.
+// ResolveIdleTimeout, so a binding's own idle_timeout= wins over the shared
+// [defaults] table, which wins over the shipped default. Nil (the zero value)
+// falls back to binding.IdleTimeoutDuration(g.idleTimeout) — binding-level
+// only, no [defaults] table — so a caller that never wires this still
+// resolves sanely.
+func (g *Engine) SetIdleTimeoutResolver(fn func(section string, b config.AgentBinding) (time.Duration, error)) {
+	g.resolveIdleTimeout = fn
+}
+
+// idleTimeoutFor resolves section/b's idle-stall bound: through the wired
+// resolver when set, else the binding alone against the engine-wide default.
+func (g *Engine) idleTimeoutFor(section string, b config.AgentBinding) (time.Duration, error) {
+	if g.resolveIdleTimeout != nil {
+		return g.resolveIdleTimeout(section, b)
+	}
+	return b.IdleTimeoutDuration(g.idleTimeout)
+}
+
 // DispatchExecutor implements verb.ExecutorDispatcher: when the TARGET state of
 // an accepted transition is allocated to a NAMED agent (agent=<name>, neither
 // "executor" nor "reviewer"), the binding's harness performs the step
@@ -1379,9 +1459,19 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 	if rerr != nil {
 		return verb.DispatchResult{}, rerr
 	}
-	timeout, terr := binding.TimeoutDuration(g.checkTimeout)
+	// The hard ceiling falls back to g.agentTimeout (unset by default,
+	// sty_752c4ef2), NOT g.checkTimeout (defaultCheckTimeout, a functional-
+	// check bound out of this story's scope) — a dispatched performer like the
+	// coder is a whole implementation, not a check, and used to inherit
+	// checkTimeout's 20m by accident (the exact cap that killed sty_87b86044's
+	// and sty_7069bced's coder dispatches).
+	timeout, terr := binding.TimeoutDuration(g.agentTimeout)
 	if terr != nil {
 		return verb.DispatchResult{}, fmt.Errorf("named agent %q: invalid timeout in .satelle/workflows/agents.toml [%s]: %w", dispatchAgent, dispatchAgent, terr)
+	}
+	idle, ierr := g.idleTimeoutFor(dispatchAgent, binding)
+	if ierr != nil {
+		return verb.DispatchResult{}, fmt.Errorf("named agent %q: invalid idle_timeout in .satelle/workflows/agents.toml [%s]: %w", dispatchAgent, dispatchAgent, ierr)
 	}
 	eventSink, sinkPath, closeSink := g.dispatchSink(dispatchAgent, item.ID)
 	if closeSink != nil {
@@ -1420,27 +1510,28 @@ func (g *Engine) DispatchExecutor(ctx context.Context, item workitem.Item, toSta
 		var attemptErr error
 		invRes, finalArtifact, attemptErr = g.runArtifactAttempts(
 			ctx, item, toStatus, dispatchSkill, dispatchAgent, rubric,
-			execPayload, charter, binding, runner, timeout, rawSink, onEvent,
+			execPayload, charter, binding, runner, timeout, idle, rawSink, onEvent,
 			outputContract, attemptPolicy)
 		if attemptErr != nil {
 			invRes.Err = attemptErr
 		}
 	} else {
 		invRes = g.Invoke(ctx, InvokeRequest{
-			Binding: binding,
-			Section: dispatchAgent,
-			Rubric:  rubric,
-			Payload: execPayload,
-			Charter: charter,
-			Expect:  ExpectPerform,
-			Timeout: timeout,
-			Runner:  runner,
-			Sink:    rawSink,
-			OnEvent: onEvent,
-			StoryID: item.ID,
-			Step:    toStatus,
-			Skill:   dispatchSkill,
-			Actor:   "executor",
+			Binding:     binding,
+			Section:     dispatchAgent,
+			Rubric:      rubric,
+			Payload:     execPayload,
+			Charter:     charter,
+			Expect:      ExpectPerform,
+			Timeout:     timeout,
+			IdleTimeout: idle,
+			Runner:      runner,
+			Sink:        rawSink,
+			OnEvent:     onEvent,
+			StoryID:     item.ID,
+			Step:        toStatus,
+			Skill:       dispatchSkill,
+			Actor:       "executor",
 		})
 	}
 	dispatchModelResolved, dispatchModels := toVerbModels(invRes.Usage)
@@ -1556,23 +1647,37 @@ func (g *Engine) Retrospect(ctx context.Context, item workitem.Item) (verb.Dispa
 	} else if !errors.Is(rerr, docindex.ErrNotFound) {
 		return verb.DispatchResult{}, rerr
 	}
+	// Hard ceiling falls back to g.agentTimeout (unset by default), NOT
+	// g.checkTimeout (defaultCheckTimeout, a functional-check bound out of
+	// this story's scope) — the retrospective is a dispatched executor like
+	// the coder, and used to inherit checkTimeout's 20m by accident
+	// (sty_752c4ef2).
+	retroTimeout, rterr := binding.TimeoutDuration(g.agentTimeout)
+	if rterr != nil {
+		return verb.DispatchResult{}, fmt.Errorf("named agent %q: invalid timeout in .satelle/workflows/agents.toml [%s]: %w", retrospectAgent, retrospectAgent, rterr)
+	}
+	retroIdle, rierr := g.idleTimeoutFor(retrospectAgent, binding)
+	if rierr != nil {
+		return verb.DispatchResult{}, fmt.Errorf("named agent %q: invalid idle_timeout in .satelle/workflows/agents.toml [%s]: %w", retrospectAgent, retrospectAgent, rierr)
+	}
 	g.emitActivity(item.ID, "retrospective", 1, 1)
 	g.emitProgress("running retrospective on %s (may take a few minutes)…", item.ID)
 	retroPayload := transitionPayload{Story: item, From: item.Status, To: item.Status, ReviewSkill: retrospectSkill}
 	g.fillPayloadDocs(ctx, item.ID, &retroPayload)
 	invRes := g.Invoke(ctx, InvokeRequest{
-		Binding: binding,
-		Section: retrospectAgent,
-		Rubric:  rubric,
-		Payload: retroPayload,
-		Charter: executorCharter(retrospectAgent, "retrospect", "post-story retrospective"),
-		Expect:  ExpectPerform,
-		Timeout: g.checkTimeout,
-		Runner:  runner,
-		StoryID: item.ID,
-		Step:    "retrospect",
-		Skill:   retrospectSkill,
-		Actor:   "executor",
+		Binding:     binding,
+		Section:     retrospectAgent,
+		Rubric:      rubric,
+		Payload:     retroPayload,
+		Charter:     executorCharter(retrospectAgent, "retrospect", "post-story retrospective"),
+		Expect:      ExpectPerform,
+		Timeout:     retroTimeout,
+		IdleTimeout: retroIdle,
+		Runner:      runner,
+		StoryID:     item.ID,
+		Step:        "retrospect",
+		Skill:       retrospectSkill,
+		Actor:       "executor",
 	})
 	retroModelResolved, retroModels := toVerbModels(invRes.Usage)
 	res := verb.DispatchResult{
@@ -2047,20 +2152,25 @@ func (g *Engine) runReviewerWith(ctx context.Context, item workitem.Item, toStat
 		}
 		gateRunner = g.runner
 	}
+	idle, ierr := g.idleTimeoutFor(section, binding)
+	if ierr != nil {
+		return verb.GateDecision{Gated: true, Skill: skill}, fmt.Errorf("reviewer: invalid idle_timeout in .satelle/workflows/agents.toml [%s]: %w", section, ierr)
+	}
 	res := g.Invoke(ctx, InvokeRequest{
-		Binding:  binding,
-		Section:  section,
-		Rubric:   body,
-		Payload:  tp,
-		Charter:  reviewerCharter(),
-		Expect:   ExpectVerdict,
-		Timeout:  g.agentTimeout,
-		Runner:   gateRunner,
-		Attempts: g.attempts,
-		StoryID:  item.ID,
-		Step:     toStatus,
-		Skill:    skill,
-		Actor:    section,
+		Binding:     binding,
+		Section:     section,
+		Rubric:      body,
+		Payload:     tp,
+		Charter:     reviewerCharter(),
+		Expect:      ExpectVerdict,
+		Timeout:     g.agentTimeout,
+		IdleTimeout: idle,
+		Runner:      gateRunner,
+		Attempts:    g.attempts,
+		StoryID:     item.ID,
+		Step:        toStatus,
+		Skill:       skill,
+		Actor:       section,
 	})
 	if res.Err != nil {
 		return verb.GateDecision{Gated: true, Skill: skill}, res.Err
@@ -2240,14 +2350,26 @@ func (g *Engine) Summarise(ctx context.Context, item workitem.Item, from, to str
 	if attempts < 1 {
 		attempts = 1
 	}
+	idle, ierr := g.idleTimeoutFor(section, binding)
+	if ierr != nil {
+		return soft("step summary invalid idle_timeout in .satelle/workflows/agents.toml [%s]: %v", section, ierr)
+	}
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
 		if werr := g.retryWait(ctx, attempt); werr != nil {
 			lastErr = werr
 			break
 		}
-		out, usage, rerr := g.runOnce(ctx, runner, req, g.agentTimeout)
+		out, usage, rerr := g.runOnce(ctx, runner, req, g.agentTimeout, idle)
 		if rerr != nil {
+			var se *StallError
+			if errors.As(rerr, &se) {
+				g.telemetryEvent(ctx, item.ID, section, "agent-stalled", map[string]any{
+					"skill": summariserSkill, "step": to, "attempt": attempt, "attempts": attempts,
+					"idle": se.Idle.String(), "last_event": se.LastEvent,
+				})
+				return soft("mandatory step summary stalled: no activity for %s (last event: %s)", se.Idle.Round(time.Second), se.LastEvent)
+			}
 			if errors.Is(rerr, context.DeadlineExceeded) && ctx.Err() == nil {
 				g.telemetryEvent(ctx, item.ID, section, "agent-timeout", map[string]any{
 					"skill": summariserSkill, "step": to, "attempt": attempt, "attempts": attempts,

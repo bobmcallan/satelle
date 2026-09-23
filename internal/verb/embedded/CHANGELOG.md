@@ -1,3 +1,16 @@
+## [0.0.516] - 2026-09-23
+
+### Changed
+- **A dispatched agent now runs for as long as it makes progress.** The wall-clock agent timeout is gone as a default. A dispatch is stopped only when it **stalls**: no real event (tool start/end, message, usage) for `idle_timeout`. Heartbeats do not count. `idle_timeout` is set per binding or in `[defaults]` in agents.toml, and ships as 5m. `timeout` remains as an optional hard ceiling, unset by default. This applies to command, stream and ACP transports, one-shot dispatches, the retrospective, and live `story rework` / `story chat` sessions. A stall is recorded as outcome `stalled` with `agent-stalled` telemetry (idle duration and last event), and the refusal says the agent stalled rather than "context deadline exceeded". (sty_752c4ef2)
+
+### Added
+- **In-flight dispatches are visible.** The seat's activity record now carries the agent, model, pid, last event, last-event time and event count. It refreshes on real events and is pushed to the web mirror while the dispatch runs, not only on status changes. The story row shows e.g. `coder (sonnet) running · 18m · last activity 10s ago: tool: Bash`, and turns to a warning once idle passes half of `idle_timeout`. A pip for an earlier refused attempt is drawn differently from the step currently running. `satelle story seat` prints the same fields. (sty_752c4ef2)
+
+## [serve-v0.0.51] - 2026-09-23
+
+### Changed
+- **Serve channel picks up the dispatch running indicator, the warning token, and the extended seat activity.** `internal/web`, `internal/lease`, `internal/config` and `internal/help` are on the satelled watch set. (sty_752c4ef2)
+
 ## [0.0.515] - 2026-09-23
 
 ### Added

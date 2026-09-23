@@ -21,6 +21,9 @@
   /* A MUTED/soft red — used ONLY for the brand mark's disconnected ◐ state, where
      the saturated --fail reads too alarmingly for a transient live-stream drop. */
   --fail-soft: #bf6b62;
+  /* Idle-past-half-of-idle_timeout warning — a darker amber than dark theme's so
+     10.5px text stays legible on --bg #fbfbfa. */
+  --warn: #9a6b00;
   /* One content-width knob (sty_aed93a00) shared by every page container: the
      in-flow .wrap AND the full-bleed navbar's inner row, so their left edges align. */
   --content-w: 80%; --content-max: 1600px;
@@ -33,6 +36,7 @@
   --accent: #5fae86; --chip: #1b1e23; --panel: #16191e;
   --row-hover: #1a1d22; --expand-bg: #121418;
   --fail-soft: #cf837b;
+  --warn: #e0a622;
 }
 * { box-sizing: border-box; }
 
@@ -96,6 +100,13 @@ footer { margin-top: 40px; color: var(--muted); font-size: 12px; border-top: 1px
 
 /* Title cell + tags-under-title */
 .wi-tags { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
+/* In-flight dispatch running indicator (sty_752c4ef2): distinct from the
+   review-light pips — a pip records a PAST transition's outcome, this narrates
+   what is happening RIGHT NOW, so a refused earlier attempt's red fail pip is
+   never the only signal on a story a live agent is currently working. */
+.dispatch-indicator { margin-top: 4px; font-size: 10.5px; color: var(--accent); }
+.dispatch-indicator::before { content: "● "; }
+.dispatch-warn { color: var(--warn); font-weight: 600; }
 .tagchip { font-size: 10.5px; color: var(--muted); background: var(--chip); border-radius: 0; padding: 0 6px; line-height: 1.6; }
 /* Key:value tag chip (e.g. epic:summariser) — the satellites language (sty_aed93a00):
    ONE uniform, low-contrast chip, not a loud filled-key/tinted-value split. A single

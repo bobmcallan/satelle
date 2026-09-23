@@ -26,7 +26,7 @@ func (g *Engine) runArtifactAttempts(
 	charter string,
 	initialBinding config.AgentBinding,
 	initialRunner agentcli.Runner,
-	timeout time.Duration,
+	timeout, idle time.Duration,
 	sink io.Writer,
 	onEvent agentcli.EventHandler,
 	contract agentartifact.Contract,
@@ -41,7 +41,7 @@ func (g *Engine) runArtifactAttempts(
 	}
 
 	started := time.Now()
-	section, binding, runner, runTimeout := initialSection, initialBinding, initialRunner, timeout
+	section, binding, runner, runTimeout, runIdle := initialSection, initialBinding, initialRunner, timeout, idle
 	phase := "initial"
 	reason := ""
 	if policy.InitialEffort != "" {
@@ -78,7 +78,7 @@ func (g *Engine) runArtifactAttempts(
 			Binding: binding, Section: section, Rubric: attemptRubric,
 			Payload: payload,
 			Charter: charter,
-			Expect:  ExpectPerform, Timeout: attemptTimeout, Runner: runner,
+			Expect:  ExpectPerform, Timeout: attemptTimeout, IdleTimeout: runIdle, Runner: runner,
 			Sink: sink, OnEvent: onEvent, StoryID: item.ID, Step: toStatus,
 			Skill: skill, Actor: "executor",
 		})
@@ -140,7 +140,7 @@ func (g *Engine) runArtifactAttempts(
 			repairUsed++
 			phase = "repair"
 			reason = "validation-failed"
-			binding, section, runner, runTimeout = initialBinding, initialSection, initialRunner, timeout
+			binding, section, runner, runTimeout, runIdle = initialBinding, initialSection, initialRunner, timeout, idle
 			if policy.RepairEffort != "" {
 				binding.Effort = policy.RepairEffort
 			}
@@ -152,7 +152,7 @@ func (g *Engine) runArtifactAttempts(
 			} else {
 				reason = "validation-no-repair"
 			}
-			binding, section, runner, runTimeout = initialBinding, initialSection, initialRunner, timeout
+			binding, section, runner, runTimeout, runIdle = initialBinding, initialSection, initialRunner, timeout, idle
 			if policy.EscalateBinding != "" {
 				var ok bool
 				binding, ok = g.namedAgents(policy.EscalateBinding)
@@ -179,7 +179,11 @@ func (g *Engine) runArtifactAttempts(
 					return withUsage(lastResult, totalUsage), nil, fmt.Errorf(
 						"attempt_escalate_binding %q is in-loop and cannot run an isolated escalation", section)
 				}
-				runTimeout, err = binding.TimeoutDuration(g.checkTimeout)
+				runTimeout, err = binding.TimeoutDuration(g.agentTimeout)
+				if err != nil {
+					return withUsage(lastResult, totalUsage), nil, err
+				}
+				runIdle, err = g.idleTimeoutFor(section, binding)
 				if err != nil {
 					return withUsage(lastResult, totalUsage), nil, err
 				}
