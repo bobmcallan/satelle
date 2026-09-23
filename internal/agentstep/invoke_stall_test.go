@@ -236,6 +236,14 @@ func TestHeartbeatOnlyAgentStalls_ExpectVerdict(t *testing.T) {
 // TestIdleTimeoutConfigMovesStallPoint (AC3): idle_timeout is read from
 // configuration; changing it moves the stall point with no code change.
 func TestIdleTimeoutConfigMovesStallPoint(t *testing.T) {
+	// The ceiling is the NEXT configured value, not a multiple of this one: the
+	// point under test is that the stall point MOVES with configuration, and a
+	// fixed 2x bound flaked on a loaded CI runner (50ms config stalled at 129ms,
+	// sty_ef930f81 release). 50ms must still stall before 200ms could.
+	ceilings := map[time.Duration]time.Duration{
+		50 * time.Millisecond:  200 * time.Millisecond,
+		200 * time.Millisecond: 800 * time.Millisecond,
+	}
 	for _, idle := range []time.Duration{50 * time.Millisecond, 200 * time.Millisecond} {
 		t.Run(idle.String(), func(t *testing.T) {
 			r := &heartbeatOnlyRunner{}
@@ -263,8 +271,8 @@ func TestIdleTimeoutConfigMovesStallPoint(t *testing.T) {
 			if elapsed < idle {
 				t.Errorf("stalled after %v, want >= configured idle_timeout %v", elapsed, idle)
 			}
-			if elapsed > idle+idle {
-				t.Errorf("stalled after %v, want close to configured idle_timeout %v (within slack)", elapsed, idle)
+			if elapsed >= ceilings[idle] {
+				t.Errorf("stalled after %v, want before %v (configured idle_timeout %v must move the stall point)", elapsed, ceilings[idle], idle)
 			}
 		})
 	}
